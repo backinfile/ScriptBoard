@@ -11,6 +11,8 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -20,6 +22,8 @@ import (
 
 	"golang.org/x/crypto/argon2"
 	_ "modernc.org/sqlite"
+
+	"scriptboard/internal/managedfiles"
 )
 
 const initialPasswordFilename = "initial-admin-password"
@@ -41,6 +45,7 @@ type Config struct {
 type App struct {
 	db        *sql.DB
 	stateRoot string
+	managed   *managedfiles.Store
 	handler   http.Handler
 }
 
@@ -55,7 +60,7 @@ func Open(config Config) (*App, error) {
 		return nil, err
 	}
 
-	application := &App{db: db, stateRoot: stateRoot}
+	application := &App{db: db, stateRoot: stateRoot, managed: managedfiles.Open(managedRoot)}
 	if err := application.initializeAdmin(stateRoot); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -142,6 +147,14 @@ func openDatabase(path string) (*sql.DB, error) {
 			target TEXT NOT NULL,
 			result TEXT NOT NULL,
 			source_address TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS trash_entries (
+			id TEXT PRIMARY KEY,
+			original_path TEXT NOT NULL,
+			stored_name TEXT NOT NULL UNIQUE,
+			deleted_at INTEGER NOT NULL,
+			size INTEGER NOT NULL,
+			is_directory INTEGER NOT NULL
 		)`,
 	} {
 		if _, err := db.Exec(statement); err != nil {
@@ -270,11 +283,202 @@ func (a *App) routes(_ string) http.Handler {
 		_ = accountTemplate.Execute(response, struct{ CSRFToken string }{CSRFToken: current.csrfToken})
 	})))
 	mux.Handle("POST /settings/account", a.requireSession(true, http.HandlerFunc(a.changePassword)))
-	mux.Handle("GET /files/", a.requireSession(false, http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
-		response.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = response.Write([]byte("<!doctype html><html lang=\"zh-CN\"><title>文件</title><body>文件</body></html>"))
-	})))
+	mux.Handle("GET /files/", a.requireSession(false, http.HandlerFunc(a.filesPage)))
+	mux.Handle("POST /files/mkdir", a.requireSession(false, http.HandlerFunc(a.createDirectory)))
+	mux.Handle("POST /files/upload", a.requireSession(false, http.HandlerFunc(a.uploadFiles)))
+	mux.Handle("GET /files/download/{path...}", a.requireSession(false, http.HandlerFunc(a.downloadFile)))
+	mux.Handle("POST /files/delete", a.requireSession(false, http.HandlerFunc(a.deleteFile)))
+	mux.Handle("GET /trash", a.requireSession(false, http.HandlerFunc(a.trashPage)))
+	mux.Handle("POST /trash/restore", a.requireSession(false, http.HandlerFunc(a.restoreTrash)))
 	return mux
+}
+
+func (a *App) downloadFile(response http.ResponseWriter, request *http.Request) {
+	relative := request.PathValue("path")
+	file, info, err := a.managed.OpenRegular(relative)
+	if err != nil {
+		http.Error(response, "无法下载文件："+err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": info.Name()})
+	response.Header().Set("Content-Disposition", disposition)
+	response.Header().Set("X-Content-Type-Options", "nosniff")
+	http.ServeContent(response, request, info.Name(), info.ModTime(), file)
+}
+
+func (a *App) deleteFile(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
+		return
+	}
+	id, err := randomToken(18)
+	if err != nil {
+		http.Error(response, "无法创建回收条目", http.StatusInternalServerError)
+		return
+	}
+	trashed, err := a.managed.MoveToTrash(request.FormValue("path"), id)
+	if err != nil {
+		http.Error(response, "无法删除条目："+err.Error(), http.StatusBadRequest)
+		return
+	}
+	_, err = a.db.Exec(
+		"INSERT INTO trash_entries (id, original_path, stored_name, deleted_at, size, is_directory) VALUES (?, ?, ?, ?, ?, ?)",
+		id, trashed.OriginalPath, trashed.StoredName, time.Now().UTC().Unix(), trashed.Size, trashed.Directory,
+	)
+	if err != nil {
+		_ = a.managed.RestoreFromTrash(trashed.StoredName, trashed.OriginalPath)
+		http.Error(response, "无法记录回收条目", http.StatusInternalServerError)
+		return
+	}
+	a.recordAudit("trash_entry", trashed.OriginalPath, "succeeded", request.RemoteAddr)
+	http.Redirect(response, request, "/trash", http.StatusSeeOther)
+}
+
+type trashView struct {
+	ID           string
+	OriginalPath string
+	DeletedAt    time.Time
+	Size         int64
+	Directory    bool
+}
+
+func (a *App) trashPage(response http.ResponseWriter, request *http.Request) {
+	rows, err := a.db.Query("SELECT id, original_path, deleted_at, size, is_directory FROM trash_entries ORDER BY deleted_at DESC")
+	if err != nil {
+		http.Error(response, "无法读取回收站", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	var entries []trashView
+	for rows.Next() {
+		var entry trashView
+		var deletedAt int64
+		if err := rows.Scan(&entry.ID, &entry.OriginalPath, &deletedAt, &entry.Size, &entry.Directory); err != nil {
+			http.Error(response, "无法读取回收条目", http.StatusInternalServerError)
+			return
+		}
+		entry.DeletedAt = time.Unix(deletedAt, 0).UTC()
+		entries = append(entries, entry)
+	}
+	current := request.Context().Value(sessionContextKey).(session)
+	response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = trashTemplate.Execute(response, struct {
+		Entries   []trashView
+		CSRFToken string
+	}{Entries: entries, CSRFToken: current.csrfToken})
+}
+
+func (a *App) restoreTrash(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
+		return
+	}
+	id := request.FormValue("id")
+	var original, stored string
+	if err := a.db.QueryRow("SELECT original_path, stored_name FROM trash_entries WHERE id = ?", id).Scan(&original, &stored); err != nil {
+		http.Error(response, "回收条目不存在", http.StatusNotFound)
+		return
+	}
+	if err := a.managed.RestoreFromTrash(stored, original); err != nil {
+		http.Error(response, "无法恢复条目："+err.Error(), http.StatusConflict)
+		return
+	}
+	if _, err := a.db.Exec("DELETE FROM trash_entries WHERE id = ?", id); err != nil {
+		_, _ = a.managed.MoveToTrash(original, stored)
+		http.Error(response, "无法更新回收站记录", http.StatusInternalServerError)
+		return
+	}
+	a.recordAudit("restore_trash", original, "succeeded", request.RemoteAddr)
+	http.Redirect(response, request, "/files/", http.StatusSeeOther)
+}
+
+func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
+	request.Body = http.MaxBytesReader(response, request.Body, 2<<30)
+	reader, err := request.MultipartReader()
+	if err != nil {
+		http.Error(response, "上传请求必须使用 multipart/form-data", http.StatusBadRequest)
+		return
+	}
+	var csrfToken, relative string
+	fileCount := 0
+	for {
+		part, nextErr := reader.NextPart()
+		if errors.Is(nextErr, io.EOF) {
+			break
+		}
+		if nextErr != nil {
+			http.Error(response, "读取上传请求失败："+nextErr.Error(), http.StatusBadRequest)
+			return
+		}
+		if part.FileName() == "" {
+			value, readErr := io.ReadAll(io.LimitReader(part, 64<<10))
+			_ = part.Close()
+			if readErr != nil {
+				http.Error(response, "读取上传字段失败", http.StatusBadRequest)
+				return
+			}
+			switch part.FormName() {
+			case "csrf_token":
+				csrfToken = string(value)
+			case "path":
+				relative = string(value)
+			}
+			continue
+		}
+		current := request.Context().Value(sessionContextKey).(session)
+		if subtle.ConstantTimeCompare([]byte(current.csrfToken), []byte(csrfToken)) != 1 {
+			_ = part.Close()
+			http.Error(response, "CSRF Token 无效", http.StatusForbidden)
+			return
+		}
+		fileCount++
+		if fileCount > 100 {
+			_ = part.Close()
+			http.Error(response, "单批最多上传 100 个文件", http.StatusRequestEntityTooLarge)
+			return
+		}
+		filename := part.FileName()
+		if err := a.managed.Upload(relative, filename, part, 1<<30); err != nil {
+			_ = part.Close()
+			http.Error(response, "上传失败："+err.Error(), http.StatusBadRequest)
+			return
+		}
+		_ = part.Close()
+		a.recordAudit("upload_file", filename, "succeeded", request.RemoteAddr)
+	}
+	if fileCount == 0 {
+		http.Error(response, "未选择上传文件", http.StatusBadRequest)
+		return
+	}
+	http.Redirect(response, request, "/files/", http.StatusSeeOther)
+}
+
+func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
+	entries, err := a.managed.List("")
+	if err != nil {
+		http.Error(response, "无法读取受管根目录："+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	current := request.Context().Value(sessionContextKey).(session)
+	response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = filesTemplate.Execute(response, struct {
+		Entries   []managedfiles.Entry
+		CSRFToken string
+	}{Entries: entries, CSRFToken: current.csrfToken})
+}
+
+func (a *App) createDirectory(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
+		return
+	}
+	if err := a.managed.CreateDirectory(request.FormValue("path"), request.FormValue("name")); err != nil {
+		http.Error(response, "无法创建目录："+err.Error(), http.StatusBadRequest)
+		return
+	}
+	a.recordAudit("create_directory", request.FormValue("name"), "succeeded", request.RemoteAddr)
+	http.Redirect(response, request, "/files/", http.StatusSeeOther)
 }
 
 func (a *App) changePassword(response http.ResponseWriter, request *http.Request) {
@@ -401,6 +605,11 @@ type session struct {
 	mustChange bool
 }
 
+func validSessionCSRF(request *http.Request) bool {
+	current, ok := request.Context().Value(sessionContextKey).(session)
+	return ok && subtle.ConstantTimeCompare([]byte(current.csrfToken), []byte(request.FormValue("csrf_token"))) == 1
+}
+
 func (a *App) requireSession(allowPasswordChange bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		cookie, err := request.Cookie(sessionCookieName)
@@ -476,3 +685,22 @@ var accountTemplate = template.Must(template.New("account").Parse(`<!doctype htm
 <button type="submit">保存新密码</button>
 </form></main></body>
 </html>`))
+
+var filesTemplate = template.Must(template.New("files").Parse(`<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>文件 · ScriptBoard</title></head>
+<body><main><h1>文件</h1>
+<form method="post" action="/files/mkdir"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value=""><label>目录名 <input name="name" required></label><button type="submit">新建目录</button></form>
+<form method="post" action="/files/upload" enctype="multipart/form-data"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value=""><label>文件 <input name="files" type="file" multiple required></label><button type="submit">上传</button></form>
+<table><thead><tr><th>名称</th><th>类型</th><th>大小</th><th>修改时间</th></tr></thead><tbody>
+{{range .Entries}}<tr><td>{{.Name}}</td><td>{{if eq .Kind "directory"}}目录{{else if eq .Kind "regular"}}文件{{else}}受限{{end}}</td><td>{{.Size}}</td><td>{{.ModifiedAt}}</td></tr>
+{{else}}<tr><td colspan="4">目录为空</td></tr>{{end}}
+</tbody></table></main></body>
+</html>`))
+
+var trashTemplate = template.Must(template.New("trash").Parse(`<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>回收站 · ScriptBoard</title></head>
+<body><main><h1>回收站</h1><table><thead><tr><th>原路径</th><th>删除时间</th><th>大小</th><th>操作</th></tr></thead><tbody>
+{{range .Entries}}<tr><td>{{.OriginalPath}}</td><td>{{.DeletedAt}}</td><td>{{.Size}}</td><td><form method="post" action="/trash/restore"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button type="submit">恢复</button></form></td></tr>
+{{else}}<tr><td colspan="4">回收站为空</td></tr>{{end}}
+</tbody></table></main></body></html>`))

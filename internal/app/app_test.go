@@ -255,11 +255,74 @@ func login(t *testing.T, client *http.Client, serverURL, password string, wantSt
 	return response
 }
 
+func authenticatedClient(t *testing.T, managedRoot, stateRoot string) (*http.Client, string) {
+	t.Helper()
+	application, err := app.Open(app.Config{ManagedRoot: managedRoot, StateRoot: stateRoot})
+	if err != nil {
+		t.Fatalf("open application: %v", err)
+	}
+	t.Cleanup(func() { _ = application.Close() })
+	server := httptest.NewServer(application.Handler())
+	t.Cleanup(server.Close)
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("create cookie jar: %v", err)
+	}
+	client := &http.Client{
+		Jar: jar,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	passwordBytes, err := os.ReadFile(filepath.Join(stateRoot, "secrets", "initial-admin-password"))
+	if err != nil {
+		t.Fatalf("read initial password: %v", err)
+	}
+	initialPassword := strings.TrimSpace(string(passwordBytes))
+	login(t, client, server.URL, initialPassword, http.StatusSeeOther)
+
+	response, err := client.Get(server.URL + "/settings/account")
+	if err != nil {
+		t.Fatalf("get account settings: %v", err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read account settings: %v", err)
+	}
+	const password = "用于自动测试的专用安全密码"
+	response, err = client.PostForm(server.URL+"/settings/account", url.Values{
+		"current_password": {initialPassword},
+		"new_password":     {password},
+		"confirm_password": {password},
+		"csrf_token":       {formToken(t, body)},
+	})
+	if err != nil {
+		t.Fatalf("change password: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("change password status = %d", response.StatusCode)
+	}
+	login(t, client, server.URL, password, http.StatusSeeOther)
+	return client, server.URL
+}
+
 func formToken(t *testing.T, body []byte) string {
 	t.Helper()
 	match := regexp.MustCompile(`name="csrf_token" value="([^"]+)"`).FindSubmatch(body)
 	if len(match) != 2 {
 		t.Fatalf("csrf token not found in response: %q", body)
+	}
+	return string(match[1])
+}
+
+func hiddenValue(t *testing.T, body []byte, name string) string {
+	t.Helper()
+	pattern := regexp.MustCompile(`name="` + regexp.QuoteMeta(name) + `" value="([^"]+)"`)
+	match := pattern.FindSubmatch(body)
+	if len(match) != 2 {
+		t.Fatalf("hidden %s not found in response: %q", name, body)
 	}
 	return string(match[1])
 }
