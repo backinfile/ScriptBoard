@@ -426,11 +426,15 @@ func readEvents(path string) ([]Event, error) {
 
 func (m *Manager) Close() {
 	m.mu.Lock()
+	processes := make([]*os.Process, 0, len(m.active))
 	for _, active := range m.active {
 		active.terminal = "cancelled"
-		_ = terminateProcess(active.command.Process, true)
+		processes = append(processes, active.command.Process)
 	}
 	m.mu.Unlock()
+	for _, process := range processes {
+		_ = terminateProcess(process, true)
+	}
 	m.wg.Wait()
 }
 

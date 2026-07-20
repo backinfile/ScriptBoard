@@ -79,6 +79,26 @@ func TestFirstStartCreatesCredentialAndProtectsFiles(t *testing.T) {
 	}
 }
 
+func TestSecondInstanceUsingSameStateRootIsRejected(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	config := app.Config{ManagedRoot: filepath.Join(root, "managed"), StateRoot: filepath.Join(root, "state")}
+	first, err := app.Open(config)
+	if err != nil {
+		t.Fatalf("open first instance: %v", err)
+	}
+	t.Cleanup(func() { _ = first.Close() })
+	second, err := app.Open(config)
+	if err == nil {
+		_ = second.Close()
+		t.Fatal("second instance unexpectedly opened the same State Root")
+	}
+	if !strings.Contains(err.Error(), "另一个 ScriptBoard 实例") {
+		t.Fatalf("second instance error = %q", err)
+	}
+}
+
 func TestInitialPasswordLoginRequiresPasswordChange(t *testing.T) {
 	t.Parallel()
 

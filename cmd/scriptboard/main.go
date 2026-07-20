@@ -3,17 +3,16 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"runtime"
 	"time"
 
 	"scriptboard/internal/app"
+	"scriptboard/internal/config"
+	"scriptboard/internal/doctor"
 )
 
 func main() {
@@ -33,34 +32,60 @@ func run(arguments []string) error {
 	case "version":
 		fmt.Fprintln(os.Stdout, "ScriptBoard development")
 		return nil
+	case "config":
+		if len(arguments) < 2 || arguments[1] != "validate" {
+			return errors.New("可用配置命令：config validate")
+		}
+		return validateConfig(arguments[2:])
+	case "doctor":
+		return runDoctor(arguments[1:])
 	default:
 		return fmt.Errorf("未知命令 %q；可用命令：serve、version", arguments[0])
 	}
 }
 
-func serve(arguments []string) error {
-	managedDefault, stateDefault := defaultRoots()
-	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
-	flags.SetOutput(os.Stderr)
-	managedRoot := flags.String("managed-root", managedDefault, "受管根目录")
-	stateRoot := flags.String("state-root", stateDefault, "内部状态目录")
-	listenAddress := flags.String("listen", "127.0.0.1:8787", "HTTP 监听地址")
-	if err := flags.Parse(arguments); err != nil {
+func runDoctor(arguments []string) error {
+	loaded, err := config.Load(arguments, os.Getenv)
+	if err != nil {
 		return err
 	}
-	if err := requireLoopback(*listenAddress); err != nil {
+	report := doctor.Run(doctor.Config{
+		ManagedRoot: loaded.ManagedRoot, StateRoot: loaded.StateRoot, GitExecutable: loaded.GitExecutable,
+	})
+	for _, check := range report.Checks {
+		status := "OK"
+		if !check.Healthy {
+			status = "FAIL"
+		}
+		fmt.Fprintf(os.Stdout, "[%s] %s: %s\n", status, check.Name, check.Detail)
+	}
+	if !report.Healthy {
+		return errors.New("doctor found unhealthy checks")
+	}
+	return nil
+}
+
+func serve(arguments []string) error {
+	loaded, err := config.Load(arguments, os.Getenv)
+	if err != nil {
+		return err
+	}
+	if err := requireLoopback(loaded.Listen); err != nil {
 		return err
 	}
 
-	application, err := app.Open(app.Config{ManagedRoot: *managedRoot, StateRoot: *stateRoot})
+	application, err := app.Open(app.Config{
+		ManagedRoot: loaded.ManagedRoot, StateRoot: loaded.StateRoot,
+		RunTimeoutGrace: loaded.RunTimeoutGrace, GitExecutable: loaded.GitExecutable,
+	})
 	if err != nil {
 		return err
 	}
 	defer application.Close()
 
-	listener, err := net.Listen("tcp", *listenAddress)
+	listener, err := net.Listen("tcp", loaded.Listen)
 	if err != nil {
-		return fmt.Errorf("监听 %s: %w", *listenAddress, err)
+		return fmt.Errorf("监听 %s: %w", loaded.Listen, err)
 	}
 	defer listener.Close()
 
@@ -87,6 +112,21 @@ func serve(arguments []string) error {
 	return nil
 }
 
+func validateConfig(arguments []string) error {
+	loaded, err := config.Load(arguments, os.Getenv)
+	if err != nil {
+		return err
+	}
+	if loaded.ManagedRoot == "" || loaded.StateRoot == "" {
+		return errors.New("Managed Root 和 State Root 不能为空")
+	}
+	if err := requireLoopback(loaded.Listen); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stdout, "配置有效\nManaged Root: %s\nState Root: %s\nListen: %s\n", loaded.ManagedRoot, loaded.StateRoot, loaded.Listen)
+	return nil
+}
+
 func requireLoopback(address string) error {
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
@@ -100,16 +140,4 @@ func requireLoopback(address string) error {
 		return errors.New("明文 HTTP 只能监听回环地址")
 	}
 	return nil
-}
-
-func defaultRoots() (string, string) {
-	if runtime.GOOS == "windows" {
-		programData := os.Getenv("ProgramData")
-		if programData == "" {
-			programData = `C:\ProgramData`
-		}
-		base := filepath.Join(programData, "ScriptBoard")
-		return filepath.Join(base, "managed"), filepath.Join(base, "state")
-	}
-	return "/var/lib/scriptboard/managed", "/var/lib/scriptboard/state"
 }

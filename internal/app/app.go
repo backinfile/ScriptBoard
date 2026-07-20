@@ -29,12 +29,14 @@ import (
 	_ "modernc.org/sqlite"
 
 	"scriptboard/internal/gitprotect"
+	"scriptboard/internal/instancelock"
 	"scriptboard/internal/managedfiles"
 	"scriptboard/internal/runmanager"
 	"scriptboard/internal/scheduler"
 )
 
 const initialPasswordFilename = "initial-admin-password"
+const currentSchemaVersion = 1
 
 const (
 	sessionCookieName   = "scriptboard_session"
@@ -61,6 +63,7 @@ type App struct {
 	runs          *runmanager.Manager
 	scheduler     *scheduler.Manager
 	gitProtection *gitprotect.Manager
+	instanceLock  *instancelock.Lock
 	handler       http.Handler
 }
 
@@ -69,13 +72,23 @@ func Open(config Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	instanceLock, err := instancelock.Acquire(stateRoot)
+	if err != nil {
+		return nil, err
+	}
+	opened := false
+	defer func() {
+		if !opened {
+			_ = instanceLock.Close()
+		}
+	}()
 
 	db, err := openDatabase(filepath.Join(stateRoot, "app.db"))
 	if err != nil {
 		return nil, err
 	}
 
-	application := &App{db: db, stateRoot: stateRoot, managed: managedfiles.Open(managedRoot)}
+	application := &App{db: db, stateRoot: stateRoot, managed: managedfiles.Open(managedRoot), instanceLock: instanceLock}
 	if err := application.initializeAdmin(stateRoot); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -93,6 +106,7 @@ func Open(config Config) (*App, error) {
 	application.runs.SetLifecycle(application.gitProtection)
 	application.scheduler = scheduler.New(db, application.runs, application.loadVariables, config.SchedulerNow, config.SchedulerTick)
 	application.handler = application.routes(managedRoot)
+	opened = true
 	return application, nil
 }
 
@@ -107,7 +121,12 @@ func (a *App) Close() error {
 	if a.runs != nil {
 		a.runs.Close()
 	}
-	return a.db.Close()
+	dbErr := a.db.Close()
+	lockErr := a.instanceLock.Close()
+	if dbErr != nil {
+		return dbErr
+	}
+	return lockErr
 }
 
 func prepareRoots(managed, state string) (string, string, error) {
@@ -150,16 +169,49 @@ func pathContains(parent, child string) bool {
 }
 
 func openDatabase(path string) (*sql.DB, error) {
+	info, statErr := os.Stat(path)
+	existingDatabase := statErr == nil && info.Size() > 0
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("打开 SQLite: %w", err)
 	}
 	db.SetMaxOpenConns(1)
+	for _, statement := range []string{"PRAGMA journal_mode=WAL", "PRAGMA synchronous=FULL", "PRAGMA foreign_keys=ON", "PRAGMA busy_timeout=5000"} {
+		if _, err := db.Exec(statement); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("configure SQLite: %w", err)
+		}
+	}
+	var integrity string
+	if err := db.QueryRow("PRAGMA integrity_check").Scan(&integrity); err != nil || integrity != "ok" {
+		_ = db.Close()
+		return nil, fmt.Errorf("SQLite integrity check failed: result=%q error=%v", integrity, err)
+	}
+	var schemaVersion int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&schemaVersion); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("read SQLite schema version: %w", err)
+	}
+	if schemaVersion > currentSchemaVersion {
+		_ = db.Close()
+		return nil, fmt.Errorf("database schema version %d is newer than supported version %d", schemaVersion, currentSchemaVersion)
+	}
+	if existingDatabase && schemaVersion < currentSchemaVersion {
+		snapshot := path + fmt.Sprintf(".pre-migration-v%d", schemaVersion)
+		_ = os.Remove(snapshot)
+		quoted := strings.ReplaceAll(filepath.ToSlash(snapshot), "'", "''")
+		if _, err := db.Exec("VACUUM INTO '" + quoted + "'"); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("create pre-migration database snapshot: %w", err)
+		}
+	}
+	migration, err := db.Begin()
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("begin SQLite migration: %w", err)
+	}
+	defer func() { _ = migration.Rollback() }()
 	for _, statement := range []string{
-		"PRAGMA journal_mode=WAL",
-		"PRAGMA synchronous=FULL",
-		"PRAGMA foreign_keys=ON",
-		"PRAGMA busy_timeout=5000",
 		`CREATE TABLE IF NOT EXISTS admin (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			username TEXT NOT NULL UNIQUE,
@@ -257,10 +309,22 @@ func openDatabase(path string) (*sql.DB, error) {
 			updated_at INTEGER NOT NULL
 		)`,
 	} {
-		if _, err := db.Exec(statement); err != nil {
+		if _, err := migration.Exec(statement); err != nil {
 			_ = db.Close()
 			return nil, fmt.Errorf("初始化 SQLite: %w", err)
 		}
+	}
+	if _, err := migration.Exec(fmt.Sprintf("PRAGMA user_version=%d", currentSchemaVersion)); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("record SQLite schema version: %w", err)
+	}
+	if _, err := migration.Exec(`UPDATE runs SET status = 'disconnected', finished_at = ?, error = CASE WHEN error = '' THEN 'service supervision was lost' ELSE error END WHERE status IN ('starting', 'running', 'stopping', 'timing_out')`, time.Now().UnixNano()); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("recover disconnected runs: %w", err)
+	}
+	if err := migration.Commit(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("commit SQLite migration: %w", err)
 	}
 	return db, nil
 }
