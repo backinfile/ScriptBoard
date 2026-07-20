@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"scriptboard/internal/app"
 )
 
 func TestAdminCanRunScriptAndReadCompletedOutput(t *testing.T) {
@@ -292,6 +294,130 @@ func TestNonZeroRunFailsAndPreservesOutputSources(t *testing.T) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("failed run result missing: %s", page)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+func TestRunTimeoutEndsAsTimedOut(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+		t.Fatalf("create managed root: %v", err)
+	}
+	scriptName := "timeout.sh"
+	scriptContent := "sleep 30\n"
+	if runtime.GOOS == "windows" {
+		scriptName = "timeout.cmd"
+		scriptContent = "@echo off\r\nping 127.0.0.1 -n 31 >nul\r\n"
+	}
+	if err := os.WriteFile(filepath.Join(managedRoot, scriptName), []byte(scriptContent), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{ManagedRoot: managedRoot, StateRoot: stateRoot, RunTimeoutGrace: 100 * time.Millisecond})
+	response, err := client.Get(serverURL + "/files/")
+	if err != nil {
+		t.Fatalf("get files: %v", err)
+	}
+	filesPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/runs/start", url.Values{
+		"script":          {scriptName},
+		"timeout_seconds": {"1"},
+		"csrf_token":      {formToken(t, filesPage)},
+	})
+	if err != nil {
+		t.Fatalf("start timed run: %v", err)
+	}
+	_ = response.Body.Close()
+	runURL := serverURL + response.Header.Get("Location")
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		response, err = client.Get(runURL)
+		if err != nil {
+			t.Fatalf("get timed run: %v", err)
+		}
+		body, _ := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if strings.Contains(string(body), "timed_out") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("run did not time out: %s", body)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+func TestRunResolvesVariableAsWholeArgument(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+		t.Fatalf("create managed root: %v", err)
+	}
+	scriptName := "argument.sh"
+	scriptContent := "printf '[%s]\\n' \"$1\"\n"
+	if runtime.GOOS == "windows" {
+		scriptName = "argument.cmd"
+		scriptContent = "@echo off\r\necho [%~1]\r\n"
+	}
+	if err := os.WriteFile(filepath.Join(managedRoot, scriptName), []byte(scriptContent), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	response, err := client.Get(serverURL + "/variables")
+	if err != nil {
+		t.Fatalf("get variables: %v", err)
+	}
+	variablesPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/variables", url.Values{
+		"name":       {"GREETING"},
+		"value":      {"hello variable"},
+		"csrf_token": {formToken(t, variablesPage)},
+	})
+	if err != nil {
+		t.Fatalf("create variable: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("create variable status = %d", response.StatusCode)
+	}
+	response, err = client.Get(serverURL + "/files/")
+	if err != nil {
+		t.Fatalf("get files: %v", err)
+	}
+	filesPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/runs/start", url.Values{
+		"script":     {scriptName},
+		"arguments":  {"{{GREETING}}"},
+		"csrf_token": {formToken(t, filesPage)},
+	})
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	_ = response.Body.Close()
+	runURL := serverURL + response.Header.Get("Location")
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		response, err = client.Get(runURL)
+		if err != nil {
+			t.Fatalf("get run: %v", err)
+		}
+		body, _ := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if strings.Contains(string(body), "succeeded") && strings.Contains(string(body), "[hello variable]") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("resolved variable output missing: %s", body)
 		}
 		time.Sleep(25 * time.Millisecond)
 	}

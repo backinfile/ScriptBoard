@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -26,6 +27,8 @@ type StartRequest struct {
 	ScriptPath        string
 	ArgumentsTemplate string
 	SourceType        string
+	TimeoutSeconds    int
+	Variables         map[string]string
 }
 
 type Run struct {
@@ -34,6 +37,7 @@ type Run struct {
 	ScriptDigest      string
 	ArgumentsTemplate string
 	Arguments         []string
+	TemplateArguments []string
 	Executor          string
 	Status            string
 	CreatedAt         time.Time
@@ -41,6 +45,7 @@ type Run struct {
 	FinishedAt        *time.Time
 	ExitCode          *int
 	Error             string
+	TimeoutSeconds    int
 	Events            []Event
 }
 
@@ -59,34 +64,40 @@ type persistedEvent struct {
 }
 
 type activeRun struct {
-	command    *exec.Cmd
-	terminal   string
-	scriptPath string
+	command      *exec.Cmd
+	terminal     string
+	scriptPath   string
+	timeoutTimer *time.Timer
 }
 
 type Manager struct {
-	db        *sql.DB
-	managed   *managedfiles.Store
-	stateRoot string
-	mu        sync.Mutex
-	active    map[string]*activeRun
-	wg        sync.WaitGroup
+	db           *sql.DB
+	managed      *managedfiles.Store
+	stateRoot    string
+	mu           sync.Mutex
+	active       map[string]*activeRun
+	wg           sync.WaitGroup
+	timeoutGrace time.Duration
 }
 
-func New(db *sql.DB, managed *managedfiles.Store, stateRoot string) *Manager {
-	return &Manager{db: db, managed: managed, stateRoot: stateRoot, active: make(map[string]*activeRun)}
+func New(db *sql.DB, managed *managedfiles.Store, stateRoot string, timeoutGrace time.Duration) *Manager {
+	return &Manager{db: db, managed: managed, stateRoot: stateRoot, active: make(map[string]*activeRun), timeoutGrace: timeoutGrace}
 }
 
 func (m *Manager) Start(request StartRequest) (string, error) {
 	if len([]byte(request.ArgumentsTemplate)) > 16<<10 {
 		return "", fmt.Errorf("参数模板超过 16 KiB")
 	}
-	arguments, err := ParseArguments(request.ArgumentsTemplate)
+	templateArguments, err := ParseArguments(request.ArgumentsTemplate)
 	if err != nil {
 		return "", err
 	}
-	if len(arguments) > 256 {
+	if len(templateArguments) > 256 {
 		return "", fmt.Errorf("参数数量超过 256 个")
+	}
+	arguments, err := resolveVariables(templateArguments, request.Variables)
+	if err != nil {
+		return "", err
 	}
 	script, err := m.managed.PrepareScript(request.ScriptPath)
 	if err != nil {
@@ -110,11 +121,12 @@ func (m *Manager) Start(request StartRequest) (string, error) {
 		return "", fmt.Errorf("创建 Run Log: %w", err)
 	}
 	argumentJSON, _ := json.Marshal(arguments)
+	templateArgumentJSON, _ := json.Marshal(templateArguments)
 	now := time.Now().UTC()
 	if _, err := m.db.Exec(`INSERT INTO runs
-		(id, script_path, script_sha256, arguments_template, arguments_json, executor, source_type, status, created_at, log_path)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?)`,
-		id, request.ScriptPath, script.Digest, request.ArgumentsTemplate, string(argumentJSON), executor, request.SourceType, now.UnixNano(), logPath,
+		(id, script_path, script_sha256, arguments_template, template_arguments_json, arguments_json, executor, source_type, status, created_at, timeout_seconds, log_path)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?)`,
+		id, request.ScriptPath, script.Digest, request.ArgumentsTemplate, string(templateArgumentJSON), string(argumentJSON), executor, request.SourceType, now.UnixNano(), request.TimeoutSeconds, logPath,
 	); err != nil {
 		_ = logFile.Close()
 		return "", fmt.Errorf("创建 Run: %w", err)
@@ -146,7 +158,11 @@ func (m *Manager) Start(request StartRequest) (string, error) {
 	started := time.Now().UTC()
 	_, _ = m.db.Exec("UPDATE runs SET status = 'running', started_at = ? WHERE id = ?", started.UnixNano(), id)
 	m.mu.Lock()
-	m.active[id] = &activeRun{command: command, scriptPath: normalizeManagedPath(request.ScriptPath)}
+	active := &activeRun{command: command, scriptPath: normalizeManagedPath(request.ScriptPath)}
+	m.active[id] = active
+	if request.TimeoutSeconds > 0 {
+		active.timeoutTimer = time.AfterFunc(time.Duration(request.TimeoutSeconds)*time.Second, func() { m.timeout(id) })
+	}
 	m.mu.Unlock()
 	m.wg.Add(1)
 	go m.supervise(id, command, stdout, stderr, logFile)
@@ -211,6 +227,9 @@ func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.Read
 	finished := time.Now().UTC()
 	m.mu.Lock()
 	active := m.active[id]
+	if active != nil && active.timeoutTimer != nil {
+		active.timeoutTimer.Stop()
+	}
 	m.mu.Unlock()
 	status := "succeeded"
 	exitCode := 0
@@ -234,6 +253,28 @@ func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.Read
 	m.mu.Lock()
 	delete(m.active, id)
 	m.mu.Unlock()
+}
+
+func (m *Manager) timeout(id string) {
+	m.mu.Lock()
+	active := m.active[id]
+	if active == nil || active.terminal != "" {
+		m.mu.Unlock()
+		return
+	}
+	active.terminal = "timed_out"
+	process := active.command.Process
+	m.mu.Unlock()
+	_, _ = m.db.Exec("UPDATE runs SET status = 'timing_out' WHERE id = ? AND status = 'running'", id)
+	_ = terminateProcess(process, false)
+	time.AfterFunc(m.timeoutGrace, func() {
+		m.mu.Lock()
+		stillActive := m.active[id]
+		m.mu.Unlock()
+		if stillActive != nil && stillActive.terminal == "timed_out" {
+			_ = terminateProcess(stillActive.command.Process, true)
+		}
+	})
 }
 
 func (m *Manager) Stop(id string) error {
@@ -265,13 +306,13 @@ func (m *Manager) Stop(id string) error {
 
 func (m *Manager) Get(id string) (Run, error) {
 	var result Run
-	var argumentJSON, logPath string
+	var argumentJSON, templateArgumentJSON, logPath string
 	var createdAt int64
 	var startedAt, finishedAt, exitCode sql.NullInt64
-	err := m.db.QueryRow(`SELECT id, script_path, script_sha256, arguments_template, arguments_json, executor,
-		status, created_at, started_at, finished_at, exit_code, error, log_path FROM runs WHERE id = ?`, id).Scan(
-		&result.ID, &result.ScriptPath, &result.ScriptDigest, &result.ArgumentsTemplate, &argumentJSON, &result.Executor,
-		&result.Status, &createdAt, &startedAt, &finishedAt, &exitCode, &result.Error, &logPath,
+	err := m.db.QueryRow(`SELECT id, script_path, script_sha256, arguments_template, template_arguments_json, arguments_json, executor,
+		status, created_at, started_at, finished_at, exit_code, error, timeout_seconds, log_path FROM runs WHERE id = ?`, id).Scan(
+		&result.ID, &result.ScriptPath, &result.ScriptDigest, &result.ArgumentsTemplate, &templateArgumentJSON, &argumentJSON, &result.Executor,
+		&result.Status, &createdAt, &startedAt, &finishedAt, &exitCode, &result.Error, &result.TimeoutSeconds, &logPath,
 	)
 	if err != nil {
 		return Run{}, err
@@ -290,8 +331,31 @@ func (m *Manager) Get(id string) (Run, error) {
 		result.ExitCode = &value
 	}
 	_ = json.Unmarshal([]byte(argumentJSON), &result.Arguments)
+	_ = json.Unmarshal([]byte(templateArgumentJSON), &result.TemplateArguments)
 	result.Events, _ = readEvents(logPath)
 	return result, nil
+}
+
+var variableReference = regexp.MustCompile(`^\{\{([A-Z][A-Z0-9_]{0,63})\}\}$`)
+
+func resolveVariables(arguments []string, variables map[string]string) ([]string, error) {
+	resolved := make([]string, len(arguments))
+	for index, argument := range arguments {
+		match := variableReference.FindStringSubmatch(argument)
+		if len(match) == 2 {
+			value, exists := variables[match[1]]
+			if !exists {
+				return nil, fmt.Errorf("Variable %s 不存在", match[1])
+			}
+			resolved[index] = value
+			continue
+		}
+		if strings.Contains(argument, "{{") || strings.Contains(argument, "}}") {
+			return nil, fmt.Errorf("Variable 引用必须独占一个参数")
+		}
+		resolved[index] = argument
+	}
+	return resolved, nil
 }
 
 func readEvents(path string) ([]Event, error) {

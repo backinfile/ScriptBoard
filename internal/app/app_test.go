@@ -257,7 +257,12 @@ func login(t *testing.T, client *http.Client, serverURL, password string, wantSt
 
 func authenticatedClient(t *testing.T, managedRoot, stateRoot string) (*http.Client, string) {
 	t.Helper()
-	application, err := app.Open(app.Config{ManagedRoot: managedRoot, StateRoot: stateRoot})
+	return authenticatedClientWithConfig(t, app.Config{ManagedRoot: managedRoot, StateRoot: stateRoot})
+}
+
+func authenticatedClientWithConfig(t *testing.T, config app.Config) (*http.Client, string) {
+	t.Helper()
+	application, err := app.Open(config)
 	if err != nil {
 		t.Fatalf("open application: %v", err)
 	}
@@ -274,7 +279,7 @@ func authenticatedClient(t *testing.T, managedRoot, stateRoot string) (*http.Cli
 			return http.ErrUseLastResponse
 		},
 	}
-	passwordBytes, err := os.ReadFile(filepath.Join(stateRoot, "secrets", "initial-admin-password"))
+	passwordBytes, err := os.ReadFile(filepath.Join(config.StateRoot, "secrets", "initial-admin-password"))
 	if err != nil {
 		t.Fatalf("read initial password: %v", err)
 	}

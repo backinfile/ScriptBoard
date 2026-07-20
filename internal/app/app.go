@@ -18,6 +18,8 @@ import (
 	"os"
 	pathpkg "path"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -41,8 +43,9 @@ type contextKey string
 const sessionContextKey contextKey = "session"
 
 type Config struct {
-	ManagedRoot string
-	StateRoot   string
+	ManagedRoot     string
+	StateRoot       string
+	RunTimeoutGrace time.Duration
 }
 
 type App struct {
@@ -69,7 +72,11 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	application.runs = runmanager.New(db, application.managed, stateRoot)
+	timeoutGrace := config.RunTimeoutGrace
+	if timeoutGrace <= 0 {
+		timeoutGrace = 30 * time.Second
+	}
+	application.runs = runmanager.New(db, application.managed, stateRoot, timeoutGrace)
 	application.handler = application.routes(managedRoot)
 	return application, nil
 }
@@ -169,6 +176,7 @@ func openDatabase(path string) (*sql.DB, error) {
 			script_path TEXT NOT NULL,
 			script_sha256 TEXT NOT NULL,
 			arguments_template TEXT NOT NULL,
+			template_arguments_json TEXT NOT NULL DEFAULT '[]',
 			arguments_json TEXT NOT NULL,
 			executor TEXT NOT NULL,
 			source_type TEXT NOT NULL,
@@ -178,7 +186,14 @@ func openDatabase(path string) (*sql.DB, error) {
 			finished_at INTEGER,
 			exit_code INTEGER,
 			error TEXT NOT NULL DEFAULT '',
+			timeout_seconds INTEGER NOT NULL DEFAULT 0,
 			log_path TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS variables (
+			name TEXT PRIMARY KEY,
+			value TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
 		)`,
 	} {
 		if _, err := db.Exec(statement); err != nil {
@@ -321,7 +336,66 @@ func (a *App) routes(_ string) http.Handler {
 	mux.Handle("POST /runs/start", a.requireSession(false, http.HandlerFunc(a.startRun)))
 	mux.Handle("GET /runs/{id}", a.requireSession(false, http.HandlerFunc(a.runDetails)))
 	mux.Handle("POST /runs/{id}/stop", a.requireSession(false, http.HandlerFunc(a.stopRun)))
+	mux.Handle("GET /variables", a.requireSession(false, http.HandlerFunc(a.variablesPage)))
+	mux.Handle("POST /variables", a.requireSession(false, http.HandlerFunc(a.createVariable)))
 	return mux
+}
+
+type variableView struct {
+	Name  string
+	Value string
+}
+
+func (a *App) variablesPage(response http.ResponseWriter, request *http.Request) {
+	rows, err := a.db.Query("SELECT name, value FROM variables ORDER BY name")
+	if err != nil {
+		http.Error(response, "无法读取 Variable", http.StatusInternalServerError)
+		return
+	}
+	var variables []variableView
+	for rows.Next() {
+		var variable variableView
+		if err := rows.Scan(&variable.Name, &variable.Value); err != nil {
+			_ = rows.Close()
+			http.Error(response, "无法读取 Variable", http.StatusInternalServerError)
+			return
+		}
+		variables = append(variables, variable)
+	}
+	_ = rows.Close()
+	current := request.Context().Value(sessionContextKey).(session)
+	response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = variablesTemplate.Execute(response, struct {
+		Variables []variableView
+		CSRFToken string
+	}{Variables: variables, CSRFToken: current.csrfToken})
+}
+
+var variableNamePattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,63}$`)
+
+func (a *App) createVariable(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
+		return
+	}
+	name := request.FormValue("name")
+	value := request.FormValue("value")
+	if !variableNamePattern.MatchString(name) || len([]byte(value)) > 4<<10 {
+		http.Error(response, "Variable 名称或值无效", http.StatusBadRequest)
+		return
+	}
+	var count int
+	if err := a.db.QueryRow("SELECT COUNT(*) FROM variables").Scan(&count); err != nil || count >= 1000 {
+		http.Error(response, "Variable 数量已达到上限", http.StatusBadRequest)
+		return
+	}
+	now := time.Now().UTC().Unix()
+	if _, err := a.db.Exec("INSERT INTO variables (name, value, created_at, updated_at) VALUES (?, ?, ?, ?)", name, value, now, now); err != nil {
+		http.Error(response, "Variable 已存在或无法保存", http.StatusConflict)
+		return
+	}
+	a.recordAudit("create_variable", name, "succeeded", request.RemoteAddr)
+	http.Redirect(response, request, "/variables", http.StatusSeeOther)
 }
 
 func (a *App) stopRun(response http.ResponseWriter, request *http.Request) {
@@ -343,10 +417,37 @@ func (a *App) startRun(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
 		return
 	}
+	timeoutSeconds := 0
+	if value := request.FormValue("timeout_seconds"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 0 || parsed > 24*60*60 {
+			http.Error(response, "超时必须是 0 到 86400 秒", http.StatusBadRequest)
+			return
+		}
+		timeoutSeconds = parsed
+	}
+	variables := make(map[string]string)
+	rows, err := a.db.Query("SELECT name, value FROM variables")
+	if err != nil {
+		http.Error(response, "无法读取 Variable", http.StatusInternalServerError)
+		return
+	}
+	for rows.Next() {
+		var name, value string
+		if err := rows.Scan(&name, &value); err != nil {
+			_ = rows.Close()
+			http.Error(response, "无法读取 Variable", http.StatusInternalServerError)
+			return
+		}
+		variables[name] = value
+	}
+	_ = rows.Close()
 	id, err := a.runs.Start(runmanager.StartRequest{
 		ScriptPath:        request.FormValue("script"),
 		ArgumentsTemplate: request.FormValue("arguments"),
 		SourceType:        "admin/manual",
+		TimeoutSeconds:    timeoutSeconds,
+		Variables:         variables,
 	})
 	if err != nil {
 		a.recordAudit("start_run", request.FormValue("script"), "rejected", request.RemoteAddr)
@@ -923,4 +1024,10 @@ var runTemplate = template.Must(template.New("run").Parse(`<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><title>Run {{.Run.ID}} · ScriptBoard</title></head>
 <body><main><h1>Run {{.Run.ID}}</h1><dl><dt>Script</dt><dd>{{.Run.ScriptPath}}</dd><dt>状态</dt><dd>{{.Run.Status}}</dd><dt>执行器</dt><dd>{{.Run.Executor}}</dd></dl>
 {{if .Run.Error}}<p>{{.Run.Error}}</p>{{end}}{{if or (eq .Run.Status "running") (eq .Run.Status "stopping")}}<form method="post" action="/runs/{{.Run.ID}}/stop"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button type="submit">{{if eq .Run.Status "stopping"}}强制停止{{else}}停止{{end}}</button></form>{{end}}<pre>{{range .Run.Events}}<span data-sequence="{{.Sequence}}" data-source="{{.Source}}">{{.Data}}</span>{{end}}</pre>
+</main></body></html>`))
+
+var variablesTemplate = template.Must(template.New("variables").Parse(`<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>Variable · ScriptBoard</title></head>
+<body><main><h1>Variable</h1><form method="post" action="/variables"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label>名称 <input name="name" required></label><label>值 <textarea name="value"></textarea></label><button type="submit">创建</button></form>
+<table><thead><tr><th>名称</th><th>值</th></tr></thead><tbody>{{range .Variables}}<tr><td>{{.Name}}</td><td>{{.Value}}</td></tr>{{else}}<tr><td colspan="2">暂无 Variable</td></tr>{{end}}</tbody></table>
 </main></body></html>`))
