@@ -28,6 +28,7 @@ import (
 	"golang.org/x/crypto/argon2"
 	_ "modernc.org/sqlite"
 
+	"scriptboard/internal/gitprotect"
 	"scriptboard/internal/managedfiles"
 	"scriptboard/internal/runmanager"
 	"scriptboard/internal/scheduler"
@@ -50,15 +51,17 @@ type Config struct {
 	RunTimeoutGrace time.Duration
 	SchedulerNow    func() time.Time
 	SchedulerTick   time.Duration
+	GitExecutable   string
 }
 
 type App struct {
-	db        *sql.DB
-	stateRoot string
-	managed   *managedfiles.Store
-	runs      *runmanager.Manager
-	scheduler *scheduler.Manager
-	handler   http.Handler
+	db            *sql.DB
+	stateRoot     string
+	managed       *managedfiles.Store
+	runs          *runmanager.Manager
+	scheduler     *scheduler.Manager
+	gitProtection *gitprotect.Manager
+	handler       http.Handler
 }
 
 func Open(config Config) (*App, error) {
@@ -82,6 +85,12 @@ func Open(config Config) (*App, error) {
 		timeoutGrace = 30 * time.Second
 	}
 	application.runs = runmanager.New(db, application.managed, stateRoot, timeoutGrace)
+	application.gitProtection, err = gitprotect.New(db, managedRoot, config.GitExecutable, stateRoot)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	application.runs.SetLifecycle(application.gitProtection)
 	application.scheduler = scheduler.New(db, application.runs, application.loadVariables, config.SchedulerNow, config.SchedulerTick)
 	application.handler = application.routes(managedRoot)
 	return application, nil
@@ -235,6 +244,18 @@ func openDatabase(path string) (*sql.DB, error) {
 			run_id TEXT NOT NULL,
 			error TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS git_state (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			status TEXT NOT NULL,
+			enabled INTEGER NOT NULL,
+			branch TEXT NOT NULL,
+			git_executable TEXT NOT NULL,
+			max_tracked_file_bytes INTEGER NOT NULL,
+			max_repository_bytes INTEGER NOT NULL,
+			last_commit TEXT NOT NULL,
+			abnormal_reason TEXT NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`,
 	} {
 		if _, err := db.Exec(statement); err != nil {
 			_ = db.Close()
@@ -385,7 +406,81 @@ func (a *App) routes(_ string) http.Handler {
 	mux.Handle("GET /schedules", a.requireSession(false, http.HandlerFunc(a.schedulesPage)))
 	mux.Handle("POST /schedules", a.requireSession(false, http.HandlerFunc(a.createSchedule)))
 	mux.Handle("GET /audit", a.requireSession(false, http.HandlerFunc(a.auditPage)))
+	mux.Handle("GET /settings/version-protection", a.requireSession(false, http.HandlerFunc(a.versionProtectionPage)))
+	mux.Handle("POST /settings/version-protection/enable", a.requireSession(false, http.HandlerFunc(a.enableVersionProtection)))
+	mux.Handle("POST /settings/version-protection/checkpoint", a.requireSession(false, http.HandlerFunc(a.checkpointVersionProtection)))
+	mux.Handle("POST /settings/version-protection/restore", a.requireSession(false, http.HandlerFunc(a.restoreVersionedFile)))
 	return mux
+}
+
+func (a *App) checkpointVersionProtection(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
+		return
+	}
+	if a.runs.HasActive() {
+		http.Error(response, "存在活动 Run，不能创建 Git checkpoint", http.StatusConflict)
+		return
+	}
+	if err := a.gitProtection.Checkpoint("ScriptBoard manual checkpoint\n\nScriptBoard-Operation: manual-checkpoint"); err != nil {
+		http.Error(response, "无法创建 checkpoint："+err.Error(), http.StatusBadRequest)
+		return
+	}
+	a.recordAudit("git_checkpoint", "git", "succeeded", request.RemoteAddr)
+	http.Redirect(response, request, "/settings/version-protection", http.StatusSeeOther)
+}
+
+func (a *App) restoreVersionedFile(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
+		return
+	}
+	if a.runs.HasActive() {
+		http.Error(response, "存在活动 Run，不能恢复 Versioned File", http.StatusConflict)
+		return
+	}
+	if err := a.gitProtection.RestoreFile(request.FormValue("path"), request.FormValue("commit")); err != nil {
+		http.Error(response, "无法恢复 Versioned File："+err.Error(), http.StatusBadRequest)
+		return
+	}
+	a.recordAudit("restore_versioned_file", request.FormValue("path"), "succeeded", request.RemoteAddr)
+	http.Redirect(response, request, filesURL(pathpkg.Dir(request.FormValue("path"))), http.StatusSeeOther)
+}
+
+func (a *App) versionProtectionPage(response http.ResponseWriter, request *http.Request) {
+	state, err := a.gitProtection.State()
+	if err != nil {
+		http.Error(response, "无法读取 Version Protection 状态", http.StatusInternalServerError)
+		return
+	}
+	current := request.Context().Value(sessionContextKey).(session)
+	response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = versionProtectionTemplate.Execute(response, struct {
+		State     gitprotect.State
+		CSRFToken string
+	}{State: state, CSRFToken: current.csrfToken})
+}
+
+func (a *App) enableVersionProtection(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
+		return
+	}
+	if request.FormValue("confirm") != "yes" {
+		http.Error(response, "启用 Version Protection 需要明确确认", http.StatusBadRequest)
+		return
+	}
+	if a.runs.HasActive() {
+		http.Error(response, "存在活动 Run，不能启用 Version Protection", http.StatusConflict)
+		return
+	}
+	if err := a.gitProtection.Enable(); err != nil {
+		a.recordAudit("enable_version_protection", "git", "failed", request.RemoteAddr)
+		http.Error(response, "无法启用 Version Protection："+err.Error(), http.StatusBadRequest)
+		return
+	}
+	a.recordAudit("enable_version_protection", "git", "succeeded", request.RemoteAddr)
+	http.Redirect(response, request, "/settings/version-protection", http.StatusSeeOther)
 }
 
 type auditView struct {
@@ -1316,6 +1411,12 @@ var schedulesTemplate = template.Must(template.New("schedules").Parse(`<!doctype
 var auditTemplate = template.Must(template.New("audit").Parse(`<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><title>Audit Event · ScriptBoard</title></head><body><main><h1>Audit Event</h1>
 <table><thead><tr><th>时间</th><th>操作</th><th>目标</th><th>结果</th><th>来源</th></tr></thead><tbody>{{range .}}<tr><td>{{.OccurredAt}}</td><td>{{.Action}}</td><td>{{.Target}}</td><td>{{.Result}}</td><td>{{.Source}}</td></tr>{{else}}<tr><td colspan="5">暂无 Audit Event</td></tr>{{end}}</tbody></table>
+</main></body></html>`))
+
+var versionProtectionTemplate = template.Must(template.New("version-protection").Parse(`<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>Version Protection · ScriptBoard</title></head><body><main><h1>Version Protection</h1>
+<dl><dt>状态</dt><dd>{{.State.Status}}</dd><dt>最近提交</dt><dd>{{.State.LastCommit}}</dd>{{if .State.AbnormalReason}}<dt>异常</dt><dd>{{.State.AbnormalReason}}</dd>{{end}}</dl>
+{{if not .State.Enabled}}<form method="post" action="/settings/version-protection/enable"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label><input type="checkbox" name="confirm" value="yes" required>确认启用本地 Git 保护</label><button type="submit">启用</button></form>{{else}}<form method="post" action="/settings/version-protection/checkpoint"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button type="submit">立即创建 checkpoint</button></form><form method="post" action="/settings/version-protection/restore"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label>路径 <input name="path" required></label><label>Commit <input name="commit" required></label><button type="submit">恢复单个文件</button></form>{{end}}
 </main></body></html>`))
 
 var variablesTemplate = template.Must(template.New("variables").Parse(`<!doctype html>

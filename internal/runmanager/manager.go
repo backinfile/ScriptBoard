@@ -56,6 +56,11 @@ type Event struct {
 	Data     string
 }
 
+type Lifecycle interface {
+	BeginRun(id string) error
+	EndRun(id string)
+}
+
 type persistedEvent struct {
 	Sequence int64  `json:"sequence"`
 	Time     int64  `json:"time"`
@@ -78,10 +83,15 @@ type Manager struct {
 	active       map[string]*activeRun
 	wg           sync.WaitGroup
 	timeoutGrace time.Duration
+	lifecycle    Lifecycle
 }
 
 func New(db *sql.DB, managed *managedfiles.Store, stateRoot string, timeoutGrace time.Duration) *Manager {
 	return &Manager{db: db, managed: managed, stateRoot: stateRoot, active: make(map[string]*activeRun), timeoutGrace: timeoutGrace}
+}
+
+func (m *Manager) SetLifecycle(lifecycle Lifecycle) {
+	m.lifecycle = lifecycle
 }
 
 func (m *Manager) Start(request StartRequest) (string, error) {
@@ -111,6 +121,18 @@ func (m *Manager) Start(request StartRequest) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	lifecycleBegun := false
+	if m.lifecycle != nil {
+		if err := m.lifecycle.BeginRun(id); err != nil {
+			return "", err
+		}
+		lifecycleBegun = true
+	}
+	defer func() {
+		if lifecycleBegun && m.lifecycle != nil {
+			m.lifecycle.EndRun(id)
+		}
+	}()
 	logRoot := filepath.Join(m.stateRoot, "runs", id)
 	if err := os.MkdirAll(logRoot, 0o700); err != nil {
 		return "", fmt.Errorf("创建 Run 日志目录: %w", err)
@@ -166,6 +188,7 @@ func (m *Manager) Start(request StartRequest) (string, error) {
 	m.mu.Unlock()
 	m.wg.Add(1)
 	go m.supervise(id, command, stdout, stderr, logFile)
+	lifecycleBegun = false
 	return id, nil
 }
 
@@ -193,6 +216,12 @@ func (m *Manager) IsActiveScript(relative string) bool {
 	return false
 }
 
+func (m *Manager) HasActive() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.active) != 0
+}
+
 func normalizeManagedPath(relative string) string {
 	value := strings.Trim(filepath.ToSlash(filepath.Clean(filepath.FromSlash(relative))), "/")
 	if runtime.GOOS == "windows" {
@@ -208,6 +237,9 @@ func (m *Manager) failStart(id string, startErr error) {
 
 func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.ReadCloser, logFile *os.File) {
 	defer m.wg.Done()
+	if m.lifecycle != nil {
+		defer m.lifecycle.EndRun(id)
+	}
 	var eventMu sync.Mutex
 	var sequence int64
 	var readers sync.WaitGroup
