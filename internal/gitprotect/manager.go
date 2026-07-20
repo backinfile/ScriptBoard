@@ -15,10 +15,12 @@ import (
 const managedBranch = "scriptboard-managed"
 
 type State struct {
-	Status         string
-	Enabled        bool
-	LastCommit     string
-	AbnormalReason string
+	Status          string
+	Enabled         bool
+	LastCommit      string
+	AbnormalReason  string
+	RepositoryBytes int64
+	StorageWarning  bool
 }
 
 type Manager struct {
@@ -95,6 +97,10 @@ func (m *Manager) State() (State, error) {
 	if errors.Is(err, sql.ErrNoRows) {
 		return State{Status: "disabled"}, nil
 	}
+	if err == nil {
+		state.RepositoryBytes, _ = directorySize(filepath.Join(m.root, ".git"))
+		state.StorageWarning = state.RepositoryBytes >= 4<<30
+	}
 	return state, err
 }
 
@@ -107,7 +113,23 @@ func (m *Manager) Enable() error {
 		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf(".git 必须是真实本地目录")
 		}
-		return fmt.Errorf("已有 Git 仓库的接管需要单独确认")
+		state, stateErr := m.State()
+		if stateErr != nil || state.LastCommit == "" {
+			return fmt.Errorf("已有 Git 仓库的接管需要单独确认")
+		}
+		branch, branchErr := m.output("branch", "--show-current")
+		if branchErr != nil || strings.TrimSpace(branch) != managedBranch {
+			return fmt.Errorf("现有 ScriptBoard 仓库不在专用分支")
+		}
+		if err := m.checkpoint("ScriptBoard re-enable checkpoint\n\nScriptBoard-Operation: re-enable"); err != nil {
+			return m.abnormal(err.Error())
+		}
+		head, err := m.output("rev-parse", "HEAD")
+		if err != nil {
+			return m.abnormal(err.Error())
+		}
+		_, err = m.db.Exec("UPDATE git_state SET status = 'healthy', enabled = 1, last_commit = ?, abnormal_reason = '', updated_at = ? WHERE id = 1", strings.TrimSpace(head), time.Now().UTC().Unix())
+		return err
 	} else if !os.IsNotExist(err) {
 		return err
 	}
@@ -133,7 +155,48 @@ func (m *Manager) Enable() error {
 	return err
 }
 
+func (m *Manager) Disable() error {
+	state, err := m.State()
+	if err != nil {
+		return err
+	}
+	if !state.Enabled {
+		return nil
+	}
+	_, err = m.db.Exec("UPDATE git_state SET status = 'disabled', enabled = 0, updated_at = ? WHERE id = 1", time.Now().UTC().Unix())
+	return err
+}
+
+type Commit struct {
+	Hash, Time, Subject string
+}
+
+func (m *Manager) History(relative string) ([]Commit, error) {
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(relative)))
+	if clean == "." || strings.HasPrefix(clean, "../") || filepath.IsAbs(clean) {
+		return nil, fmt.Errorf("历史路径无效")
+	}
+	output, err := m.command("log", "--format=%H%x09%cI%x09%s", "--", clean).Output()
+	if err != nil {
+		return nil, err
+	}
+	var commits []Commit
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) == 3 {
+			commits = append(commits, Commit{Hash: parts[0], Time: parts[1], Subject: parts[2]})
+		}
+	}
+	return commits, nil
+}
+
 func (m *Manager) checkpoint(message string) error {
+	if err := m.validateSafeRepository(); err != nil {
+		return err
+	}
+	if size, _ := directorySize(filepath.Join(m.root, ".git")); size >= 5<<30 {
+		return fmt.Errorf("Git 仓库已达到 5 GiB 上限")
+	}
 	branch, err := m.output("branch", "--show-current")
 	if err != nil || strings.TrimSpace(branch) != managedBranch {
 		return fmt.Errorf("Git HEAD 不在专用分支 %s", managedBranch)
@@ -159,6 +222,60 @@ func (m *Manager) checkpoint(message string) error {
 		return fmt.Errorf("Git commit 失败: %w: %s", err, output)
 	}
 	return nil
+}
+
+func (m *Manager) validateSafeRepository() error {
+	if _, err := os.Lstat(filepath.Join(m.root, ".gitmodules")); err == nil {
+		return fmt.Errorf("仓库包含子模块配置")
+	}
+	configBytes, err := os.ReadFile(filepath.Join(m.root, ".git", "config"))
+	if err == nil {
+		lower := strings.ToLower(string(configBytes))
+		for _, forbidden := range []string{"[remote ", "[submodule ", "[filter ", "credential.helper", "fsmonitor", "diff.external"} {
+			if strings.Contains(lower, forbidden) {
+				return fmt.Errorf("Git 配置包含禁止项 %s", forbidden)
+			}
+		}
+	}
+	return filepath.WalkDir(m.root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() && entry.Name() == ".git" {
+			return filepath.SkipDir
+		}
+		if entry.Name() != ".gitattributes" {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		lower := strings.ToLower(string(content))
+		if strings.Contains(lower, "filter=") || strings.Contains(lower, "diff=") || strings.Contains(lower, "textconv") {
+			return fmt.Errorf(".gitattributes 包含可执行 filter/diff 配置")
+		}
+		return nil
+	})
+}
+
+func directorySize(root string) (int64, error) {
+	var total int64
+	err := filepath.WalkDir(root, func(_ string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if os.IsNotExist(walkErr) {
+				return nil
+			}
+			return walkErr
+		}
+		if !entry.IsDir() {
+			if info, err := entry.Info(); err == nil {
+				total += info.Size()
+			}
+		}
+		return nil
+	})
+	return total, err
 }
 
 func (m *Manager) Checkpoint(message string) error {

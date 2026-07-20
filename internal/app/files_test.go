@@ -393,6 +393,7 @@ func TestAdminCanPermanentlyPurgeTrashEntry(t *testing.T) {
 	_ = response.Body.Close()
 	response, err = client.PostForm(serverURL+"/trash/purge", url.Values{
 		"id":         {hiddenValue(t, trashPage, "id")},
+		"confirm":    {"yes"},
 		"csrf_token": {formToken(t, trashPage)},
 	})
 	if err != nil {

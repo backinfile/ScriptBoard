@@ -19,6 +19,8 @@ type Config struct {
 	StateRoot       string        `yaml:"state_root"`
 	Listen          string        `yaml:"listen"`
 	GitExecutable   string        `yaml:"git_executable"`
+	TLSCert         string        `yaml:"tls_cert"`
+	TLSKey          string        `yaml:"tls_key"`
 	RunTimeoutGrace time.Duration `yaml:"-"`
 	ConfigPath      string        `yaml:"-"`
 }
@@ -28,6 +30,8 @@ type yamlConfig struct {
 	StateRoot              string `yaml:"state_root"`
 	Listen                 string `yaml:"listen"`
 	GitExecutable          string `yaml:"git_executable"`
+	TLSCert                string `yaml:"tls_cert"`
+	TLSKey                 string `yaml:"tls_key"`
 	RunTimeoutGraceSeconds *int   `yaml:"run_timeout_grace_seconds"`
 }
 
@@ -59,6 +63,8 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 	flags.StringVar(&result.StateRoot, "state-root", result.StateRoot, "内部状态目录")
 	flags.StringVar(&result.Listen, "listen", result.Listen, "HTTP 监听地址")
 	flags.StringVar(&result.GitExecutable, "git-executable", result.GitExecutable, "Git CLI 绝对路径")
+	flags.StringVar(&result.TLSCert, "tls-cert", result.TLSCert, "TLS 证书路径")
+	flags.StringVar(&result.TLSKey, "tls-key", result.TLSKey, "TLS 私钥路径")
 	flags.DurationVar(&result.RunTimeoutGrace, "run-timeout-grace", result.RunTimeoutGrace, "自动超时强杀宽限")
 	if err := flags.Parse(arguments); err != nil {
 		return Config{}, err
@@ -113,6 +119,12 @@ func applyYAML(result *Config, values yamlConfig) {
 	if values.GitExecutable != "" {
 		result.GitExecutable = values.GitExecutable
 	}
+	if values.TLSCert != "" {
+		result.TLSCert = values.TLSCert
+	}
+	if values.TLSKey != "" {
+		result.TLSKey = values.TLSKey
+	}
 	if values.RunTimeoutGraceSeconds != nil {
 		result.RunTimeoutGrace = time.Duration(*values.RunTimeoutGraceSeconds) * time.Second
 	}
@@ -130,6 +142,12 @@ func applyEnvironment(result *Config, getenv func(string) string) {
 	}
 	if value := getenv("SCRIPTBOARD_GIT_EXECUTABLE"); value != "" {
 		result.GitExecutable = value
+	}
+	if value := getenv("SCRIPTBOARD_TLS_CERT"); value != "" {
+		result.TLSCert = value
+	}
+	if value := getenv("SCRIPTBOARD_TLS_KEY"); value != "" {
+		result.TLSKey = value
 	}
 	if value := getenv("SCRIPTBOARD_RUN_TIMEOUT_GRACE_SECONDS"); value != "" {
 		if seconds, err := strconv.Atoi(value); err == nil {

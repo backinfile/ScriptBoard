@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -20,6 +21,7 @@ import (
 	"time"
 	"unicode"
 
+	"scriptboard/internal/diskspace"
 	"scriptboard/internal/managedfiles"
 )
 
@@ -27,6 +29,7 @@ type StartRequest struct {
 	ScriptPath        string
 	ArgumentsTemplate string
 	SourceType        string
+	SourceName        string
 	TimeoutSeconds    int
 	Variables         map[string]string
 }
@@ -39,6 +42,9 @@ type Run struct {
 	Arguments         []string
 	TemplateArguments []string
 	Executor          string
+	SourceType        string
+	SourceName        string
+	RuntimeIdentity   string
 	Status            string
 	CreatedAt         time.Time
 	StartedAt         *time.Time
@@ -95,6 +101,9 @@ func (m *Manager) SetLifecycle(lifecycle Lifecycle) {
 }
 
 func (m *Manager) Start(request StartRequest) (string, error) {
+	if err := diskspace.Require(m.stateRoot, diskspace.MinimumWritableBytes); err != nil {
+		return "", err
+	}
 	if len([]byte(request.ArgumentsTemplate)) > 16<<10 {
 		return "", fmt.Errorf("参数模板超过 16 KiB")
 	}
@@ -145,10 +154,14 @@ func (m *Manager) Start(request StartRequest) (string, error) {
 	argumentJSON, _ := json.Marshal(arguments)
 	templateArgumentJSON, _ := json.Marshal(templateArguments)
 	now := time.Now().UTC()
+	runtimeIdentity := "unknown"
+	if currentUser, userErr := user.Current(); userErr == nil {
+		runtimeIdentity = currentUser.Username
+	}
 	if _, err := m.db.Exec(`INSERT INTO runs
-		(id, script_path, script_sha256, arguments_template, template_arguments_json, arguments_json, executor, source_type, status, created_at, timeout_seconds, log_path)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?)`,
-		id, request.ScriptPath, script.Digest, request.ArgumentsTemplate, string(templateArgumentJSON), string(argumentJSON), executor, request.SourceType, now.UnixNano(), request.TimeoutSeconds, logPath,
+		(id, script_path, script_sha256, arguments_template, template_arguments_json, arguments_json, executor, source_type, source_name, runtime_identity, status, created_at, timeout_seconds, log_path)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?)`,
+		id, request.ScriptPath, script.Digest, request.ArgumentsTemplate, string(templateArgumentJSON), string(argumentJSON), executor, request.SourceType, request.SourceName, runtimeIdentity, now.UnixNano(), request.TimeoutSeconds, logPath,
 	); err != nil {
 		_ = logFile.Close()
 		return "", fmt.Errorf("创建 Run: %w", err)
@@ -353,9 +366,9 @@ func (m *Manager) Get(id string) (Run, error) {
 	var argumentJSON, templateArgumentJSON, logPath string
 	var createdAt int64
 	var startedAt, finishedAt, exitCode sql.NullInt64
-	err := m.db.QueryRow(`SELECT id, script_path, script_sha256, arguments_template, template_arguments_json, arguments_json, executor,
+	err := m.db.QueryRow(`SELECT id, script_path, script_sha256, arguments_template, template_arguments_json, arguments_json, executor, source_type, source_name, runtime_identity,
 		status, created_at, started_at, finished_at, exit_code, error, timeout_seconds, log_path FROM runs WHERE id = ?`, id).Scan(
-		&result.ID, &result.ScriptPath, &result.ScriptDigest, &result.ArgumentsTemplate, &templateArgumentJSON, &argumentJSON, &result.Executor,
+		&result.ID, &result.ScriptPath, &result.ScriptDigest, &result.ArgumentsTemplate, &templateArgumentJSON, &argumentJSON, &result.Executor, &result.SourceType, &result.SourceName, &result.RuntimeIdentity,
 		&result.Status, &createdAt, &startedAt, &finishedAt, &exitCode, &result.Error, &result.TimeoutSeconds, &logPath,
 	)
 	if err != nil {
@@ -378,6 +391,38 @@ func (m *Manager) Get(id string) (Run, error) {
 	_ = json.Unmarshal([]byte(templateArgumentJSON), &result.TemplateArguments)
 	result.Events, _ = readEvents(logPath)
 	return result, nil
+}
+
+func (m *Manager) List(limit int) ([]Run, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	rows, err := m.db.Query("SELECT id FROM runs ORDER BY created_at DESC LIMIT ?", limit)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	runs := make([]Run, 0, len(ids))
+	for _, id := range ids {
+		run, err := m.Get(id)
+		if err != nil {
+			return nil, err
+		}
+		run.Events = nil
+		runs = append(runs, run)
+	}
+	return runs, nil
 }
 
 var variableReference = regexp.MustCompile(`^\{\{([A-Z][A-Z0-9_]{0,63})\}\}$`)

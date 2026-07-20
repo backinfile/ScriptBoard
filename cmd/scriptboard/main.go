@@ -2,17 +2,20 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"time"
 
 	"scriptboard/internal/app"
 	"scriptboard/internal/config"
 	"scriptboard/internal/doctor"
+	"scriptboard/internal/platformservice"
 )
 
 func main() {
@@ -24,7 +27,7 @@ func main() {
 
 func run(arguments []string) error {
 	if len(arguments) == 0 {
-		return errors.New("请指定命令；可用命令：serve")
+		return errors.New("请指定命令；可用命令：serve、service、admin、config、doctor、version")
 	}
 	switch arguments[0] {
 	case "serve":
@@ -39,9 +42,61 @@ func run(arguments []string) error {
 		return validateConfig(arguments[2:])
 	case "doctor":
 		return runDoctor(arguments[1:])
+	case "admin":
+		if len(arguments) < 2 || arguments[1] != "reset" {
+			return errors.New("可用管理员命令：admin reset")
+		}
+		return resetAdmin(arguments[2:])
+	case "service":
+		if len(arguments) < 2 {
+			return errors.New("可用服务命令：service install|uninstall|start|stop|restart|status")
+		}
+		return runService(arguments[1], arguments[2:])
 	default:
-		return fmt.Errorf("未知命令 %q；可用命令：serve、version", arguments[0])
+		return fmt.Errorf("未知命令 %q；可用命令：serve、service、admin、config、doctor、version", arguments[0])
 	}
+}
+
+func runService(action string, arguments []string) error {
+	switch action {
+	case "install":
+		loaded, err := config.Load(arguments, os.Getenv)
+		if err != nil {
+			return err
+		}
+		return platformservice.Install(loaded.ConfigPath)
+	case "uninstall":
+		return platformservice.Uninstall()
+	case "start":
+		return platformservice.Start()
+	case "stop":
+		return platformservice.Stop()
+	case "restart":
+		return platformservice.Restart()
+	case "status":
+		status, err := platformservice.Status()
+		fmt.Fprint(os.Stdout, status)
+		return err
+	default:
+		return fmt.Errorf("未知服务命令 %q", action)
+	}
+}
+
+func resetAdmin(arguments []string) error {
+	loaded, err := config.Load(arguments, os.Getenv)
+	if err != nil {
+		return err
+	}
+	application, err := app.Open(app.Config{ManagedRoot: loaded.ManagedRoot, StateRoot: loaded.StateRoot, RunTimeoutGrace: loaded.RunTimeoutGrace, GitExecutable: loaded.GitExecutable})
+	if err != nil {
+		return err
+	}
+	defer application.Close()
+	if _, err := application.ResetAdminCredentials("admin"); err != nil {
+		return fmt.Errorf("重置管理员凭据: %w", err)
+	}
+	fmt.Fprintln(os.Stdout, "管理员已重置；一次性密码位于 "+filepath.Join(loaded.StateRoot, "secrets", "initial-admin-password"))
+	return nil
 }
 
 func runDoctor(arguments []string) error {
@@ -70,7 +125,7 @@ func serve(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	if err := requireLoopback(loaded.Listen); err != nil {
+	if err := requireSafeNetwork(loaded.Listen, loaded.TLSCert, loaded.TLSKey); err != nil {
 		return err
 	}
 
@@ -94,7 +149,11 @@ func serve(arguments []string) error {
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
-	fmt.Fprintln(os.Stdout, "ScriptBoard 已启动：http://"+listener.Addr().String())
+	scheme := "http"
+	if loaded.TLSCert != "" {
+		scheme = "https"
+	}
+	fmt.Fprintln(os.Stdout, "ScriptBoard 已启动："+scheme+"://"+listener.Addr().String())
 
 	interruptContext, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -105,7 +164,11 @@ func serve(arguments []string) error {
 		_ = server.Shutdown(shutdownContext)
 	}()
 
-	err = server.Serve(listener)
+	if loaded.TLSCert != "" {
+		err = server.ServeTLS(listener, loaded.TLSCert, loaded.TLSKey)
+	} else {
+		err = server.Serve(listener)
+	}
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("HTTP 服务失败: %w", err)
 	}
@@ -120,14 +183,23 @@ func validateConfig(arguments []string) error {
 	if loaded.ManagedRoot == "" || loaded.StateRoot == "" {
 		return errors.New("Managed Root 和 State Root 不能为空")
 	}
-	if err := requireLoopback(loaded.Listen); err != nil {
+	if err := requireSafeNetwork(loaded.Listen, loaded.TLSCert, loaded.TLSKey); err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stdout, "配置有效\nManaged Root: %s\nState Root: %s\nListen: %s\n", loaded.ManagedRoot, loaded.StateRoot, loaded.Listen)
 	return nil
 }
 
-func requireLoopback(address string) error {
+func requireSafeNetwork(address, certificate, key string) error {
+	if (certificate == "") != (key == "") {
+		return errors.New("TLS 证书与私钥必须同时配置")
+	}
+	if certificate != "" {
+		if _, err := tls.LoadX509KeyPair(certificate, key); err != nil {
+			return fmt.Errorf("TLS 证书或私钥无效: %w", err)
+		}
+		return nil
+	}
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
 		return fmt.Errorf("无效监听地址 %q: %w", address, err)

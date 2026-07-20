@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	_ "modernc.org/sqlite"
+
+	"scriptboard/internal/diskspace"
 )
 
 type Config struct {
@@ -56,6 +58,8 @@ func Run(config Config) Report {
 	}
 	checkDirectory("managed-root", config.ManagedRoot)
 	checkDirectory("state-root", config.StateRoot)
+	checkDisk(&report, "managed-disk", config.ManagedRoot)
+	checkDisk(&report, "state-disk", config.StateRoot)
 	checkSQLite(&report, filepath.Join(config.StateRoot, "app.db"))
 	checkGit(&report, config.GitExecutable)
 	checkExecutors(&report)
@@ -84,6 +88,57 @@ func checkSQLite(report *Report, path string) {
 		detail = err.Error()
 	}
 	report.Checks = append(report.Checks, Check{Name: "sqlite-integrity", Healthy: healthy, Detail: detail})
+	if !healthy {
+		report.Healthy = false
+	}
+	var journal string
+	var version int
+	if err := db.QueryRow("PRAGMA journal_mode").Scan(&journal); err == nil {
+		healthy = strings.EqualFold(journal, "wal")
+		report.Checks = append(report.Checks, Check{Name: "sqlite-wal", Healthy: healthy, Detail: journal})
+		if !healthy {
+			report.Healthy = false
+		}
+	}
+	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err == nil {
+		report.Checks = append(report.Checks, Check{Name: "sqlite-schema", Healthy: version > 0, Detail: fmt.Sprintf("version %d", version)})
+		if version <= 0 {
+			report.Healthy = false
+		}
+	}
+	checkRunLogs(report, db)
+}
+
+func checkRunLogs(report *Report, db *sql.DB) {
+	rows, err := db.Query("SELECT id, log_path FROM runs WHERE log_path <> ''")
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	missing := 0
+	for rows.Next() {
+		var id, path string
+		if rows.Scan(&id, &path) == nil {
+			if _, err := os.Stat(path); os.IsNotExist(err) {
+				missing++
+			}
+		}
+	}
+	healthy := missing == 0
+	report.Checks = append(report.Checks, Check{Name: "run-logs", Healthy: healthy, Detail: fmt.Sprintf("missing %d", missing)})
+	if !healthy {
+		report.Healthy = false
+	}
+}
+
+func checkDisk(report *Report, name, path string) {
+	available, err := diskspace.Available(path)
+	healthy := err == nil && available >= diskspace.MinimumWritableBytes
+	detail := fmt.Sprintf("%d bytes available", available)
+	if err != nil {
+		detail = err.Error()
+	}
+	report.Checks = append(report.Checks, Check{Name: name, Healthy: healthy, Detail: detail})
 	if !healthy {
 		report.Healthy = false
 	}

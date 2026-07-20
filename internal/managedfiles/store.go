@@ -49,30 +49,33 @@ type Script struct {
 	Digest string
 }
 
-func (s *Store) Upload(relative, name string, source io.Reader, maxBytes int64) error {
+func (s *Store) Upload(relative, name string, source io.Reader, maxBytes int64, replace bool, storedName string) (*Trashed, error) {
 	if err := validateName(name); err != nil {
-		return err
+		return nil, err
 	}
 	parent, err := s.resolveDirectory(relative)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	target := filepath.Join(parent, name)
-	if _, err := os.Lstat(target); err == nil {
-		return fmt.Errorf("同名条目已存在")
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("检查上传目标: %w", err)
+	existing, existingErr := os.Lstat(target)
+	if existingErr == nil && !replace {
+		return nil, fmt.Errorf("同名条目已存在")
+	} else if existingErr == nil && (!existing.Mode().IsRegular() || existing.Mode()&os.ModeSymlink != 0) {
+		return nil, fmt.Errorf("只能替换普通文件")
+	} else if !os.IsNotExist(existingErr) {
+		return nil, fmt.Errorf("检查上传目标: %w", existingErr)
 	}
 
 	temporary, err := os.CreateTemp(parent, ".scriptboard-upload-*")
 	if err != nil {
-		return fmt.Errorf("创建上传临时文件: %w", err)
+		return nil, fmt.Errorf("创建上传临时文件: %w", err)
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
 	if err := temporary.Chmod(0o644); err != nil {
 		_ = temporary.Close()
-		return fmt.Errorf("设置上传文件权限: %w", err)
+		return nil, fmt.Errorf("设置上传文件权限: %w", err)
 	}
 	written, copyErr := io.Copy(temporary, io.LimitReader(source, maxBytes+1))
 	if copyErr == nil && written > maxBytes {
@@ -85,12 +88,23 @@ func (s *Store) Upload(relative, name string, source io.Reader, maxBytes int64) 
 		copyErr = closeErr
 	}
 	if copyErr != nil {
-		return fmt.Errorf("写入上传文件: %w", copyErr)
+		return nil, fmt.Errorf("写入上传文件: %w", copyErr)
+	}
+	var trashed *Trashed
+	if existingErr == nil {
+		old, err := s.MoveToTrash(filepath.ToSlash(filepath.Join(filepath.FromSlash(relative), name)), storedName)
+		if err != nil {
+			return nil, err
+		}
+		trashed = &old
 	}
 	if err := os.Rename(temporaryPath, target); err != nil {
-		return fmt.Errorf("提交上传文件: %w", err)
+		if trashed != nil {
+			_ = s.RestoreFromTrash(trashed.StoredName, trashed.OriginalPath)
+		}
+		return nil, fmt.Errorf("提交上传文件: %w", err)
 	}
-	return nil
+	return trashed, nil
 }
 
 func (s *Store) OpenRegular(relative string) (*os.File, os.FileInfo, error) {
@@ -299,8 +313,13 @@ func (s *Store) List(relative string) ([]Entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	directoryEntries, err := os.ReadDir(directory)
+	handle, err := os.Open(directory)
 	if err != nil {
+		return nil, fmt.Errorf("读取目录: %w", err)
+	}
+	defer handle.Close()
+	directoryEntries, err := handle.ReadDir(100_001)
+	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("读取目录: %w", err)
 	}
 	if len(directoryEntries) > 100_000 {
