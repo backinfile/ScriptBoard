@@ -47,6 +47,7 @@ type TextDocument struct {
 type Script struct {
 	Path   string
 	Digest string
+	Info   os.FileInfo
 }
 
 func (s *Store) Upload(relative, name string, source io.Reader, maxBytes int64, replace bool, storedName string) (*Trashed, error) {
@@ -132,7 +133,7 @@ func (s *Store) OpenRegular(relative string) (*os.File, os.FileInfo, error) {
 }
 
 func (s *Store) PrepareScript(relative string) (Script, error) {
-	file, _, err := s.OpenRegular(relative)
+	file, info, err := s.OpenRegular(relative)
 	if err != nil {
 		return Script{}, err
 	}
@@ -141,7 +142,30 @@ func (s *Store) PrepareScript(relative string) (Script, error) {
 	if _, err := io.Copy(hash, file); err != nil {
 		return Script{}, fmt.Errorf("计算脚本摘要: %w", err)
 	}
-	return Script{Path: file.Name(), Digest: hex.EncodeToString(hash.Sum(nil))}, nil
+	return Script{Path: file.Name(), Digest: hex.EncodeToString(hash.Sum(nil)), Info: info}, nil
+}
+
+func (s *Store) Info(relative string) (os.FileInfo, error) {
+	_, info, err := s.resolveEntry(relative)
+	return info, err
+}
+
+func (s *Store) ToggleOwnerExecute(relative string) (bool, error) {
+	target, info, err := s.resolveEntry(relative)
+	if err != nil || !info.Mode().IsRegular() {
+		return false, fmt.Errorf("只能修改普通文件的 owner execute 位")
+	}
+	mode := info.Mode().Perm()
+	enabled := mode&0o100 == 0
+	if enabled {
+		mode |= 0o100
+	} else {
+		mode &^= 0o100
+	}
+	if err := os.Chmod(target, mode); err != nil {
+		return false, err
+	}
+	return enabled, nil
 }
 
 func (s *Store) MoveToTrash(relative, storedName string) (Trashed, error) {
@@ -339,7 +363,7 @@ func (s *Store) List(relative string) ([]Entry, error) {
 		switch {
 		case info.Mode().IsRegular():
 			kind = Regular
-		case info.IsDir():
+		case info.IsDir() && sameFilesystem(s.root, filepath.Join(directory, directoryEntry.Name())):
 			kind = Directory
 		}
 		entries = append(entries, Entry{
@@ -356,9 +380,44 @@ func (s *Store) List(relative string) ([]Entry, error) {
 		if entries[left].Kind != Directory && entries[right].Kind == Directory {
 			return false
 		}
-		return strings.ToLower(entries[left].Name) < strings.ToLower(entries[right].Name)
+		return naturalLess(entries[left].Name, entries[right].Name)
 	})
 	return entries, nil
+}
+
+func naturalLess(left, right string) bool {
+	a, b := strings.ToLower(left), strings.ToLower(right)
+	for len(a) > 0 && len(b) > 0 {
+		if a[0] >= '0' && a[0] <= '9' && b[0] >= '0' && b[0] <= '9' {
+			ai, bi := 0, 0
+			for ai < len(a) && a[ai] >= '0' && a[ai] <= '9' {
+				ai++
+			}
+			for bi < len(b) && b[bi] >= '0' && b[bi] <= '9' {
+				bi++
+			}
+			an, bn := strings.TrimLeft(a[:ai], "0"), strings.TrimLeft(b[:bi], "0")
+			if an == "" {
+				an = "0"
+			}
+			if bn == "" {
+				bn = "0"
+			}
+			if len(an) != len(bn) {
+				return len(an) < len(bn)
+			}
+			if an != bn {
+				return an < bn
+			}
+			a, b = a[ai:], b[bi:]
+			continue
+		}
+		if a[0] != b[0] {
+			return a[0] < b[0]
+		}
+		a, b = a[1:], b[1:]
+	}
+	return len(a) < len(b)
 }
 
 func (s *Store) CreateDirectory(relative, name string) error {
@@ -436,6 +495,9 @@ func (s *Store) resolveDirectory(relative string) (string, error) {
 		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			return "", fmt.Errorf("路径不是可进入的普通目录")
 		}
+		if !sameFilesystem(s.root, current) {
+			return "", fmt.Errorf("受限挂载不可进入")
+		}
 	}
 	return current, nil
 }
@@ -464,6 +526,9 @@ func (s *Store) resolveEntry(relative string) (string, os.FileInfo, error) {
 		}
 		if index < len(parts)-1 && !info.IsDir() {
 			return "", nil, fmt.Errorf("路径祖先不是普通目录")
+		}
+		if info.IsDir() && !sameFilesystem(s.root, current) {
+			return "", nil, fmt.Errorf("受限挂载不可读取")
 		}
 		if index == len(parts)-1 {
 			return current, info, nil

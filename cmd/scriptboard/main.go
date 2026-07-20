@@ -18,7 +18,16 @@ import (
 	"scriptboard/internal/platformservice"
 )
 
+var version = "development"
+
 func main() {
+	if handled, err := runAsWindowsService(os.Args[1:]); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Windows 服务错误："+err.Error())
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "错误："+err.Error())
 		os.Exit(1)
@@ -27,13 +36,18 @@ func main() {
 
 func run(arguments []string) error {
 	if len(arguments) == 0 {
-		return errors.New("请指定命令；可用命令：serve、service、admin、config、doctor、version")
+		printUsage()
+		return nil
+	}
+	if arguments[0] == "help" || arguments[0] == "-h" || arguments[0] == "--help" || (len(arguments) > 1 && (arguments[1] == "-h" || arguments[1] == "--help")) {
+		printUsage()
+		return nil
 	}
 	switch arguments[0] {
 	case "serve":
 		return serve(arguments[1:])
 	case "version":
-		fmt.Fprintln(os.Stdout, "ScriptBoard development")
+		fmt.Fprintln(os.Stdout, "ScriptBoard "+version)
 		return nil
 	case "config":
 		if len(arguments) < 2 || arguments[1] != "validate" {
@@ -55,6 +69,27 @@ func run(arguments []string) error {
 	default:
 		return fmt.Errorf("未知命令 %q；可用命令：serve、service、admin、config、doctor、version", arguments[0])
 	}
+}
+
+func printUsage() {
+	fmt.Fprintln(os.Stdout, `ScriptBoard — 单机可信脚本管理器
+
+用法：
+  scriptboard serve [配置选项]
+  scriptboard service install|uninstall|start|stop|restart|status
+  scriptboard admin reset [配置选项]
+  scriptboard config validate [配置选项]
+  scriptboard doctor [配置选项]
+  scriptboard version
+
+常用配置选项：
+  --config PATH              YAML 配置文件
+  --managed-root PATH        受管根目录
+  --state-root PATH          内部状态目录
+  --listen ADDRESS           HTTP 监听地址
+  --tls-cert PATH            TLS 证书
+  --tls-key PATH             TLS 私钥
+  --trusted-proxy IP_OR_CIDR 可信反向代理（可重复）`)
 }
 
 func runService(action string, arguments []string) error {
@@ -87,7 +122,7 @@ func resetAdmin(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	application, err := app.Open(app.Config{ManagedRoot: loaded.ManagedRoot, StateRoot: loaded.StateRoot, RunTimeoutGrace: loaded.RunTimeoutGrace, GitExecutable: loaded.GitExecutable})
+	application, err := app.Open(app.Config{ManagedRoot: loaded.ManagedRoot, StateRoot: loaded.StateRoot, RunTimeoutGrace: loaded.RunTimeoutGrace, GitExecutable: loaded.GitExecutable, ExecutorChains: loaded.ExecutorChains})
 	if err != nil {
 		return err
 	}
@@ -106,6 +141,7 @@ func runDoctor(arguments []string) error {
 	}
 	report := doctor.Run(doctor.Config{
 		ManagedRoot: loaded.ManagedRoot, StateRoot: loaded.StateRoot, GitExecutable: loaded.GitExecutable,
+		ConfigPath: loaded.ConfigPath, Listen: loaded.Listen, TLSCert: loaded.TLSCert, TLSKey: loaded.TLSKey,
 	})
 	for _, check := range report.Checks {
 		status := "OK"
@@ -115,23 +151,29 @@ func runDoctor(arguments []string) error {
 		fmt.Fprintf(os.Stdout, "[%s] %s: %s\n", status, check.Name, check.Detail)
 	}
 	if !report.Healthy {
-		return errors.New("doctor found unhealthy checks")
+		return errors.New("doctor 发现不健康检查项")
 	}
 	return nil
 }
 
 func serve(arguments []string) error {
+	interruptContext, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	return serveContext(interruptContext, arguments)
+}
+
+func serveContext(runContext context.Context, arguments []string) error {
 	loaded, err := config.Load(arguments, os.Getenv)
 	if err != nil {
 		return err
 	}
-	if err := requireSafeNetwork(loaded.Listen, loaded.TLSCert, loaded.TLSKey); err != nil {
+	if err := requireSafeNetwork(loaded.Listen, loaded.TLSCert, loaded.TLSKey, loaded.TrustedProxies); err != nil {
 		return err
 	}
 
 	application, err := app.Open(app.Config{
 		ManagedRoot: loaded.ManagedRoot, StateRoot: loaded.StateRoot,
-		RunTimeoutGrace: loaded.RunTimeoutGrace, GitExecutable: loaded.GitExecutable,
+		RunTimeoutGrace: loaded.RunTimeoutGrace, GitExecutable: loaded.GitExecutable, ExecutorChains: loaded.ExecutorChains, AdminUsername: loaded.AdminUsername, AdminPassword: loaded.AdminPassword, AdminPasswordFile: loaded.AdminPasswordFile, TrustedProxies: loaded.TrustedProxies,
 	})
 	if err != nil {
 		return err
@@ -155,10 +197,8 @@ func serve(arguments []string) error {
 	}
 	fmt.Fprintln(os.Stdout, "ScriptBoard 已启动："+scheme+"://"+listener.Addr().String())
 
-	interruptContext, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
 	go func() {
-		<-interruptContext.Done()
+		<-runContext.Done()
 		shutdownContext, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_ = server.Shutdown(shutdownContext)
@@ -183,14 +223,14 @@ func validateConfig(arguments []string) error {
 	if loaded.ManagedRoot == "" || loaded.StateRoot == "" {
 		return errors.New("Managed Root 和 State Root 不能为空")
 	}
-	if err := requireSafeNetwork(loaded.Listen, loaded.TLSCert, loaded.TLSKey); err != nil {
+	if err := requireSafeNetwork(loaded.Listen, loaded.TLSCert, loaded.TLSKey, loaded.TrustedProxies); err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stdout, "配置有效\nManaged Root: %s\nState Root: %s\nListen: %s\n", loaded.ManagedRoot, loaded.StateRoot, loaded.Listen)
 	return nil
 }
 
-func requireSafeNetwork(address, certificate, key string) error {
+func requireSafeNetwork(address, certificate, key string, _ []string) error {
 	if (certificate == "") != (key == "") {
 		return errors.New("TLS 证书与私钥必须同时配置")
 	}

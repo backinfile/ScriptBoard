@@ -23,6 +23,7 @@ import (
 	pathpkg "path"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -42,7 +43,7 @@ import (
 )
 
 const initialPasswordFilename = "initial-admin-password"
-const currentSchemaVersion = 3
+const currentSchemaVersion = 5
 
 const (
 	sessionCookieName   = "scriptboard_session"
@@ -51,29 +52,39 @@ const (
 
 type contextKey string
 
-const sessionContextKey contextKey = "session"
+const (
+	sessionContextKey contextKey = "session"
+	secureContextKey  contextKey = "secure-request"
+)
 
 type Config struct {
-	ManagedRoot     string
-	StateRoot       string
-	RunTimeoutGrace time.Duration
-	SchedulerNow    func() time.Time
-	SchedulerTick   time.Duration
-	GitExecutable   string
+	ManagedRoot       string
+	StateRoot         string
+	RunTimeoutGrace   time.Duration
+	SchedulerNow      func() time.Time
+	SchedulerTick     time.Duration
+	GitExecutable     string
+	ExecutorChains    map[string][]string
+	AdminUsername     string
+	AdminPassword     string
+	AdminPasswordFile string
+	TrustedProxies    []string
 }
 
 type App struct {
-	db            *sql.DB
-	stateRoot     string
-	managedRoot   string
-	managed       *managedfiles.Store
-	runs          *runmanager.Manager
-	scheduler     *scheduler.Manager
-	gitProtection *gitprotect.Manager
-	instanceLock  *instancelock.Lock
-	handler       http.Handler
-	loginMu       sync.Mutex
-	loginFailures map[string]loginFailure
+	db                 *sql.DB
+	stateRoot          string
+	managedRoot        string
+	managed            *managedfiles.Store
+	runs               *runmanager.Manager
+	scheduler          *scheduler.Manager
+	gitProtection      *gitprotect.Manager
+	instanceLock       *instancelock.Lock
+	handler            http.Handler
+	loginMu            sync.Mutex
+	loginFailures      map[string]loginFailure
+	credentialOverride bool
+	trustedProxies     []*net.IPNet
 }
 
 type loginFailure struct {
@@ -102,8 +113,17 @@ func Open(config Config) (*App, error) {
 		return nil, err
 	}
 
-	application := &App{db: db, stateRoot: stateRoot, managedRoot: managedRoot, managed: managedfiles.Open(managedRoot), instanceLock: instanceLock, loginFailures: make(map[string]loginFailure)}
+	trustedProxies, err := parseTrustedProxies(config.TrustedProxies)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	application := &App{db: db, stateRoot: stateRoot, managedRoot: managedRoot, managed: managedfiles.Open(managedRoot), instanceLock: instanceLock, loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies}
 	if err := application.initializeAdmin(stateRoot); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := application.applyCredentialOverride(config.AdminUsername, config.AdminPassword, config.AdminPasswordFile); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -112,7 +132,13 @@ func Open(config Config) (*App, error) {
 	if timeoutGrace <= 0 {
 		timeoutGrace = 30 * time.Second
 	}
-	application.runs = runmanager.New(db, application.managed, stateRoot, timeoutGrace)
+	application.runs = runmanager.New(db, application.managed, stateRoot, timeoutGrace, config.ExecutorChains)
+	if cleaned, cleanupErr := application.runs.CleanupLogs(90*24*time.Hour, 1<<30); cleanupErr != nil {
+		_ = db.Close()
+		return nil, cleanupErr
+	} else if cleaned > 0 {
+		application.recordAudit("cleanup_run_logs", fmt.Sprintf("%d logs", cleaned), "succeeded", "system")
+	}
 	application.gitProtection, err = gitprotect.New(db, managedRoot, config.GitExecutable, stateRoot)
 	if err != nil {
 		_ = db.Close()
@@ -127,6 +153,74 @@ func Open(config Config) (*App, error) {
 
 func (a *App) Handler() http.Handler {
 	return a.handler
+}
+
+func parseTrustedProxies(values []string) ([]*net.IPNet, error) {
+	result := make([]*net.IPNet, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if ip := net.ParseIP(value); ip != nil {
+			bits := 128
+			if ip.To4() != nil {
+				ip = ip.To4()
+				bits = 32
+			}
+			result = append(result, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
+			continue
+		}
+		_, network, err := net.ParseCIDR(value)
+		if err != nil {
+			return nil, fmt.Errorf("无效可信代理 %q", value)
+		}
+		result = append(result, network)
+	}
+	return result, nil
+}
+
+func (a *App) applyTrustedProxy(request *http.Request) *http.Request {
+	host, _, err := net.SplitHostPort(request.RemoteAddr)
+	if err != nil {
+		host = request.RemoteAddr
+	}
+	peer := net.ParseIP(host)
+	trusted := false
+	for _, network := range a.trustedProxies {
+		if peer != nil && network.Contains(peer) {
+			trusted = true
+			break
+		}
+	}
+	if !trusted {
+		return request
+	}
+	forwarded := strings.Split(request.Header.Get("X-Forwarded-For"), ",")
+	for index := len(forwarded) - 1; index >= 0; index-- {
+		client := net.ParseIP(strings.TrimSpace(forwarded[index]))
+		if client == nil {
+			continue
+		}
+		clientTrusted := false
+		for _, network := range a.trustedProxies {
+			if network.Contains(client) {
+				clientTrusted = true
+				break
+			}
+		}
+		if !clientTrusted {
+			request.RemoteAddr = client.String()
+			break
+		}
+	}
+	forwardedProto := strings.Split(request.Header.Get("X-Forwarded-Proto"), ",")
+	if strings.EqualFold(strings.TrimSpace(forwardedProto[len(forwardedProto)-1]), "https") {
+		request = request.WithContext(context.WithValue(request.Context(), secureContextKey, true))
+	}
+	return request
+}
+
+func isSecureRequest(request *http.Request) bool {
+	secure, _ := request.Context().Value(secureContextKey).(bool)
+	return request.TLS != nil || secure
 }
 
 func (a *App) ResetAdminCredentials(username string) (string, error) {
@@ -164,6 +258,64 @@ func (a *App) ResetAdminCredentials(username string) (string, error) {
 	}
 	a.recordAudit("admin_reset", username, "succeeded", "local-cli")
 	return password, nil
+}
+
+func (a *App) applyCredentialOverride(username, password, passwordFile string) error {
+	if passwordFile != "" {
+		content, err := os.ReadFile(passwordFile)
+		if err != nil {
+			return fmt.Errorf("读取管理员密码文件: %w", err)
+		}
+		password = strings.TrimSuffix(strings.TrimSuffix(string(content), "\n"), "\r")
+	}
+	if username == "" && password == "" {
+		return nil
+	}
+	var currentUsername, currentHash string
+	if err := a.db.QueryRow("SELECT username, password_hash FROM admin WHERE id = 1").Scan(&currentUsername, &currentHash); err != nil {
+		return err
+	}
+	if username == "" {
+		username = currentUsername
+	}
+	if !utf8.ValidString(username) || utf8.RuneCountInString(username) == 0 || utf8.RuneCountInString(username) > 64 {
+		return errors.New("管理员用户名覆盖无效")
+	}
+	changed := username != currentUsername
+	newHash := currentHash
+	if password != "" {
+		if !utf8.ValidString(password) || utf8.RuneCountInString(password) < 12 || len([]byte(password)) > 256 || password == username {
+			return errors.New("管理员密码覆盖不符合长度规则")
+		}
+		if !verifyPassword(password, currentHash) {
+			changed = true
+			hash, err := hashPassword(password)
+			if err != nil {
+				return err
+			}
+			newHash = hash
+		}
+	}
+	a.credentialOverride = true
+	if !changed {
+		return nil
+	}
+	transaction, err := a.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer transaction.Rollback()
+	if _, err := transaction.Exec("UPDATE admin SET username = ?, password_hash = ?, must_change_password = 0 WHERE id = 1", username, newHash); err != nil {
+		return err
+	}
+	if _, err := transaction.Exec("DELETE FROM sessions"); err != nil {
+		return err
+	}
+	if err := transaction.Commit(); err != nil {
+		return err
+	}
+	a.recordAudit("startup_credential_override", username, "succeeded", "system")
+	return nil
 }
 
 func (a *App) Close() error {
@@ -312,6 +464,10 @@ func openDatabase(path string) (*sql.DB, error) {
 			log_path TEXT NOT NULL
 			, source_name TEXT NOT NULL DEFAULT ''
 			, runtime_identity TEXT NOT NULL DEFAULT ''
+			, log_expired INTEGER NOT NULL DEFAULT 0
+			, log_incomplete INTEGER NOT NULL DEFAULT 0
+			, log_truncated INTEGER NOT NULL DEFAULT 0
+			, dropped_bytes INTEGER NOT NULL DEFAULT 0
 		)`,
 		`CREATE TABLE IF NOT EXISTS variables (
 			name TEXT PRIMARY KEY,
@@ -351,6 +507,13 @@ func openDatabase(path string) (*sql.DB, error) {
 			run_id TEXT NOT NULL,
 			error TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS schedule_trigger_aggregates (
+			schedule_id TEXT NOT NULL REFERENCES schedules(id),
+			period TEXT NOT NULL,
+			result TEXT NOT NULL,
+			trigger_count INTEGER NOT NULL,
+			PRIMARY KEY (schedule_id, period, result)
+		)`,
 		`CREATE TABLE IF NOT EXISTS git_state (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			status TEXT NOT NULL,
@@ -383,6 +546,19 @@ func openDatabase(path string) (*sql.DB, error) {
 		if _, err := migration.Exec("ALTER TABLE runs ADD COLUMN runtime_identity TEXT NOT NULL DEFAULT ''"); err != nil {
 			_ = db.Close()
 			return nil, fmt.Errorf("migrate runs runtime identity: %w", err)
+		}
+	}
+	if schemaVersion > 0 && schemaVersion < 4 {
+		for _, statement := range []string{
+			"ALTER TABLE runs ADD COLUMN log_expired INTEGER NOT NULL DEFAULT 0",
+			"ALTER TABLE runs ADD COLUMN log_incomplete INTEGER NOT NULL DEFAULT 0",
+			"ALTER TABLE runs ADD COLUMN log_truncated INTEGER NOT NULL DEFAULT 0",
+			"ALTER TABLE runs ADD COLUMN dropped_bytes INTEGER NOT NULL DEFAULT 0",
+		} {
+			if _, err := migration.Exec(statement); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("migrate Run log metadata: %w", err)
+			}
 		}
 	}
 	if _, err := migration.Exec(fmt.Sprintf("PRAGMA user_version=%d", currentSchemaVersion)); err != nil {
@@ -494,6 +670,16 @@ func verifyPassword(password, encoded string) bool {
 
 func (a *App) routes(_ string) http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /assets/app.css", func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("Content-Type", "text/css; charset=utf-8")
+		response.Header().Set("Cache-Control", "public, max-age=86400")
+		_, _ = io.WriteString(response, appCSS)
+	})
+	mux.HandleFunc("GET /assets/app.js", func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		response.Header().Set("Cache-Control", "public, max-age=86400")
+		_, _ = io.WriteString(response, appJS)
+	})
 	mux.HandleFunc("GET /login", func(response http.ResponseWriter, request *http.Request) {
 		token, err := randomToken(32)
 		if err != nil {
@@ -505,7 +691,7 @@ func (a *App) routes(_ string) http.Handler {
 			Value:    token,
 			Path:     "/login",
 			HttpOnly: true,
-			Secure:   request.TLS != nil,
+			Secure:   isSecureRequest(request),
 			SameSite: http.SameSiteStrictMode,
 		})
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -521,15 +707,20 @@ func (a *App) routes(_ string) http.Handler {
 			return
 		}
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = accountTemplate.Execute(response, struct{ Username, CSRFToken string }{Username: username, CSRFToken: current.csrfToken})
+		_ = accountTemplate.Execute(response, struct {
+			Username, CSRFToken string
+			CredentialOverride  bool
+		}{Username: username, CSRFToken: current.csrfToken, CredentialOverride: a.credentialOverride})
 	})))
 	mux.Handle("POST /settings/account", a.requireSession(true, http.HandlerFunc(a.changePassword)))
 	mux.Handle("GET /files/{path...}", a.requireSession(false, http.HandlerFunc(a.filesPage)))
 	mux.Handle("POST /files/mkdir", a.requireSession(false, http.HandlerFunc(a.createDirectory)))
 	mux.Handle("POST /files/upload", a.requireSession(false, http.HandlerFunc(a.uploadFiles)))
 	mux.Handle("GET /files/download/{path...}", a.requireSession(false, http.HandlerFunc(a.downloadFile)))
+	mux.Handle("GET /files/preview/{path...}", a.requireSession(false, http.HandlerFunc(a.previewImage)))
 	mux.Handle("POST /files/delete", a.requireSession(false, http.HandlerFunc(a.deleteFile)))
 	mux.Handle("POST /files/move", a.requireSession(false, http.HandlerFunc(a.moveFile)))
+	mux.Handle("POST /files/toggle-executable", a.requireSession(false, http.HandlerFunc(a.toggleExecutable)))
 	mux.Handle("GET /trash", a.requireSession(false, http.HandlerFunc(a.trashPage)))
 	mux.Handle("POST /trash/restore", a.requireSession(false, http.HandlerFunc(a.restoreTrash)))
 	mux.Handle("POST /trash/purge", a.requireSession(false, http.HandlerFunc(a.purgeTrash)))
@@ -558,20 +749,70 @@ func (a *App) routes(_ string) http.Handler {
 	mux.Handle("GET /audit.csv", a.requireSession(false, http.HandlerFunc(a.auditDownload)))
 	mux.Handle("GET /settings/version-protection", a.requireSession(false, http.HandlerFunc(a.versionProtectionPage)))
 	mux.Handle("POST /settings/version-protection/enable", a.requireSession(false, http.HandlerFunc(a.enableVersionProtection)))
+	mux.Handle("POST /settings/version-protection/adopt", a.requireSession(false, http.HandlerFunc(a.adoptVersionProtection)))
 	mux.Handle("POST /settings/version-protection/disable", a.requireSession(false, http.HandlerFunc(a.disableVersionProtection)))
 	mux.Handle("POST /settings/version-protection/checkpoint", a.requireSession(false, http.HandlerFunc(a.checkpointVersionProtection)))
 	mux.Handle("POST /settings/version-protection/restore", a.requireSession(false, http.HandlerFunc(a.restoreVersionedFile)))
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		request = a.applyTrustedProxy(request)
 		response.Header().Set("X-Content-Type-Options", "nosniff")
 		response.Header().Set("X-Frame-Options", "DENY")
 		response.Header().Set("Referrer-Policy", "no-referrer")
 		response.Header().Set("Content-Security-Policy", "default-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'")
-		if request.TLS != nil {
+		if isSecureRequest(request) {
 			response.Header().Set("Strict-Transport-Security", "max-age=31536000")
 		}
 		mux.ServeHTTP(response, request)
 	})
 }
+
+const appCSS = `
+:root{color-scheme:dark;--bg:#0b0f12;--surface:#11171b;--line:#263138;--text:#ecf2f2;--muted:#93a3a7;--accent:#58d6b0;--danger:#ff786f;font:15px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text)}main{width:min(1180px,calc(100% - 40px));margin:0 auto;padding:36px 0 72px;overflow-x:auto;animation:arrive .28s ease-out}main:before{content:"SCRIPTBOARD / LOCAL CONTROL";display:block;margin-bottom:28px;color:var(--accent);font:700 12px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.16em}h1{font-size:clamp(28px,5vw,52px);line-height:1.02;letter-spacing:-.045em;margin:0 0 30px}h2{margin-top:36px}p,dd{color:var(--muted)}a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}nav{display:flex;gap:18px;overflow-x:auto;white-space:nowrap;border-bottom:1px solid var(--line);padding:0 0 16px;margin-bottom:28px}form{display:flex;align-items:end;gap:10px;flex-wrap:wrap;margin:12px 0}label{display:grid;gap:6px;color:var(--muted);font-size:13px}input,textarea,select,button{font:inherit;border:1px solid var(--line);border-radius:7px;background:var(--surface);color:var(--text);padding:9px 11px}textarea{min-width:min(560px,90vw);min-height:110px}button{cursor:pointer;background:var(--accent);border-color:var(--accent);color:#062119;font-weight:700;transition:transform .14s ease,filter .14s ease}button:hover{filter:brightness(1.08);transform:translateY(-1px)}button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}table{width:100%;border-collapse:collapse;margin-top:24px;min-width:680px}th,td{text-align:left;padding:13px 10px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em}tbody tr{transition:background .16s ease}tbody tr:hover{background:#11191d}pre{background:#06090b;border:1px solid var(--line);padding:18px;border-radius:8px;white-space:pre-wrap;word-break:break-word;max-height:65vh;overflow:auto;font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}dl{display:grid;grid-template-columns:max-content 1fr;gap:8px 20px}dt{color:var(--muted)}dd{margin:0;word-break:break-all}img{display:block;border-radius:6px;margin-bottom:8px;border:1px solid var(--line)}[data-source="stderr"]{color:#ffb09f}[data-source="system"],[data-encoding-error="true"]{color:#f3d27a}
+@keyframes arrive{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}@media(max-width:640px){main{width:min(100% - 24px,1180px);padding-top:24px}main:before{margin-bottom:20px}form{align-items:stretch;flex-direction:column}input,textarea,select,button{width:100%;min-height:44px}table{min-width:620px}h1{margin-bottom:22px}}@media(prefers-reduced-motion:reduce){*,*:before{animation:none!important;transition:none!important}}
+`
+
+const appJS = `
+(()=>{
+  const root=document.querySelector('[data-run-events-url]');
+  const log=document.querySelector('[data-run-log]');
+  if(!root||!log||!window.EventSource)return;
+  const pause=document.querySelector('[data-run-pause]');
+  const state=document.querySelector('[data-run-live-state]');
+  const limit=2000;
+  let paused=false;
+  let pending=[];
+  const trim=()=>{while(log.children.length>limit)log.firstElementChild.remove()};
+  const append=(data,sequence)=>{
+    const span=document.createElement('span');
+    span.dataset.sequence=sequence;
+    span.dataset.source=data.source||'output';
+    span.textContent=data.text||'';
+    if(data.encoding_error)span.title='输出包含无效 UTF-8，已替换显示';
+    log.append(span);trim();log.scrollTop=log.scrollHeight;
+  };
+  let last=Number(log.lastElementChild?.dataset.sequence||0);
+  const url=new URL(root.dataset.runEventsUrl,location.href);
+  if(last>0)url.searchParams.set('after',String(last));
+  const stream=new EventSource(url);
+  stream.addEventListener('open',()=>{if(state)state.textContent='实时连接已建立'});
+  stream.addEventListener('error',()=>{if(state)state.textContent='连接中断，正在自动重连…'});
+  stream.addEventListener('output',event=>{
+    let data;try{data=JSON.parse(event.data)}catch{return}
+    last=Number(event.lastEventId||last);
+    if(paused){pending.push([data,last]);if(pending.length>limit)pending.shift();return}
+    append(data,last);
+  });
+  stream.addEventListener('complete',event=>{
+    stream.close();if(state)state.textContent='Run 已结束：'+event.data;
+  });
+  pause?.addEventListener('click',()=>{
+    paused=!paused;pause.textContent=paused?'继续显示':'暂停显示';
+    if(state)state.textContent=paused?'显示已暂停；后台仍在接收':'实时显示中';
+    if(!paused){for(const item of pending)append(item[0],item[1]);pending=[]}
+  });
+})();
+`
 
 func (a *App) checkpointVersionProtection(response http.ResponseWriter, request *http.Request) {
 	if !validSessionCSRF(request) {
@@ -672,6 +913,24 @@ func (a *App) enableVersionProtection(response http.ResponseWriter, request *htt
 		return
 	}
 	a.recordAudit("enable_version_protection", "git", "succeeded", request.RemoteAddr)
+	http.Redirect(response, request, "/settings/version-protection", http.StatusSeeOther)
+}
+
+func (a *App) adoptVersionProtection(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) || request.FormValue("confirm") != "adopt-clean-repository" {
+		http.Error(response, "接管已有仓库需要明确确认", http.StatusForbidden)
+		return
+	}
+	if a.runs.HasActive() {
+		http.Error(response, "存在活动 Run，不能接管 Git 仓库", http.StatusConflict)
+		return
+	}
+	if err := a.gitProtection.Adopt(); err != nil {
+		a.recordAudit("adopt_version_protection", "git", "failed", request.RemoteAddr)
+		http.Error(response, "无法接管 Git 仓库："+err.Error(), http.StatusBadRequest)
+		return
+	}
+	a.recordAudit("adopt_version_protection", "git", "succeeded", request.RemoteAddr)
 	http.Redirect(response, request, "/settings/version-protection", http.StatusSeeOther)
 }
 
@@ -830,6 +1089,11 @@ type quickRunView struct {
 	ScriptPath        string
 	ArgumentsTemplate string
 	TimeoutSeconds    int
+	Valid             bool
+}
+
+type overlapView struct {
+	Action, Script, Arguments, Timeout, CSRFToken string
 }
 
 func (a *App) saveQuickRun(response http.ResponseWriter, request *http.Request) {
@@ -880,6 +1144,9 @@ func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request)
 			http.Error(response, "无法读取 Quick Run", http.StatusInternalServerError)
 			return
 		}
+		if info, infoErr := a.managed.Info(quick.ScriptPath); infoErr == nil && info.Mode().IsRegular() {
+			quick.Valid = true
+		}
 		quickRuns = append(quickRuns, quick)
 	}
 	_ = rows.Close()
@@ -901,6 +1168,12 @@ func (a *App) startQuickRun(response http.ResponseWriter, request *http.Request)
 		&quick.ID, &quick.Name, &quick.ScriptPath, &quick.ArgumentsTemplate, &quick.TimeoutSeconds,
 	); err != nil {
 		http.Error(response, "Quick Run 不存在", http.StatusNotFound)
+		return
+	}
+	if a.runs.IsActiveScript(quick.ScriptPath) && request.FormValue("confirm_overlap") != "yes" {
+		current := request.Context().Value(sessionContextKey).(session)
+		response.WriteHeader(http.StatusConflict)
+		_ = overlapTemplate.Execute(response, overlapView{Action: "/quick-runs/" + url.PathEscape(quick.ID) + "/start", Script: quick.ScriptPath, CSRFToken: current.csrfToken})
 		return
 	}
 	variables, err := a.loadVariables()
@@ -983,6 +1256,11 @@ func (a *App) deleteQuickRun(response http.ResponseWriter, request *http.Request
 
 func (a *App) runEvents(response http.ResponseWriter, request *http.Request) {
 	lastSequence := int64(0)
+	if value := request.URL.Query().Get("after"); value != "" {
+		if parsed, err := strconv.ParseInt(value, 10, 64); err == nil && parsed >= 0 {
+			lastSequence = parsed
+		}
+	}
 	if value := request.Header.Get("Last-Event-ID"); value != "" {
 		if parsed, err := strconv.ParseInt(value, 10, 64); err == nil && parsed >= 0 {
 			lastSequence = parsed
@@ -1008,12 +1286,14 @@ func (a *App) runEvents(response http.ResponseWriter, request *http.Request) {
 			if event.Sequence <= lastSequence {
 				continue
 			}
-			payload, _ := json.Marshal(map[string]any{"source": event.Source, "text": event.Data, "time": event.Time})
+			payload, _ := json.Marshal(map[string]any{"source": event.Source, "text": event.Data, "time": event.Time, "encoding_error": event.EncodingError})
 			_, _ = fmt.Fprintf(response, "id: %d\nevent: output\ndata: %s\n\n", event.Sequence, payload)
 			lastSequence = event.Sequence
 		}
 		flusher.Flush()
 		if run.Status != "starting" && run.Status != "running" && run.Status != "stopping" && run.Status != "timing_out" {
+			_, _ = fmt.Fprintf(response, "event: complete\ndata: %s\n\n", run.Status)
+			flusher.Flush()
 			return
 		}
 		select {
@@ -1171,6 +1451,14 @@ func (a *App) startRun(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
 		return
 	}
+	if a.runs.IsActiveScript(request.FormValue("script")) && request.FormValue("confirm_overlap") != "yes" {
+		current := request.Context().Value(sessionContextKey).(session)
+		response.WriteHeader(http.StatusConflict)
+		_ = overlapTemplate.Execute(response, overlapView{
+			Action: "/runs/start", Script: request.FormValue("script"), Arguments: request.FormValue("arguments"), Timeout: request.FormValue("timeout_seconds"), CSRFToken: current.csrfToken,
+		})
+		return
+	}
 	timeoutSeconds := 0
 	if value := request.FormValue("timeout_seconds"); value != "" {
 		parsed, err := strconv.Atoi(value)
@@ -1233,6 +1521,9 @@ func (a *App) runDetails(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "无法读取 Run："+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if len(run.Events) > 1000 {
+		run.Events = run.Events[len(run.Events)-1000:]
+	}
 	current := request.Context().Value(sessionContextKey).(session)
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = runTemplate.Execute(response, struct {
@@ -1294,6 +1585,36 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 	}
 	a.recordAudit("move_entry", source+" -> "+destination, "succeeded", request.RemoteAddr)
 	parent := pathpkg.Dir(filepath.ToSlash(destination))
+	if parent == "." {
+		parent = ""
+	}
+	http.Redirect(response, request, filesURL(parent), http.StatusSeeOther)
+}
+
+func (a *App) toggleExecutable(response http.ResponseWriter, request *http.Request) {
+	if runtime.GOOS != "linux" {
+		http.NotFound(response, request)
+		return
+	}
+	if !validSessionCSRF(request) {
+		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
+		return
+	}
+	path := request.FormValue("path")
+	if a.runs.ConflictsPath(path) {
+		http.Error(response, "活动 Run 持有该 Script 的 Run Lease", http.StatusConflict)
+		return
+	}
+	if _, err := a.managed.ToggleOwnerExecute(path); err != nil {
+		http.Error(response, "无法切换 owner execute："+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := a.checkpointWebMutation("toggle-owner-execute", path); err != nil {
+		http.Error(response, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	a.recordAudit("toggle_owner_execute", path, "succeeded", request.RemoteAddr)
+	parent := pathpkg.Dir(path)
 	if parent == "." {
 		parent = ""
 	}
@@ -1380,6 +1701,27 @@ func (a *App) downloadFile(response http.ResponseWriter, request *http.Request) 
 	http.ServeContent(response, request, info.Name(), info.ModTime(), file)
 }
 
+func (a *App) previewImage(response http.ResponseWriter, request *http.Request) {
+	relative := request.PathValue("path")
+	extension := strings.ToLower(filepath.Ext(relative))
+	contentTypes := map[string]string{".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp"}
+	contentType, allowed := contentTypes[extension]
+	if !allowed {
+		http.Error(response, "该格式只能下载，不能内嵌预览", http.StatusUnsupportedMediaType)
+		return
+	}
+	file, info, err := a.managed.OpenRegular(relative)
+	if err != nil {
+		http.Error(response, "无法预览图片："+err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+	response.Header().Set("Content-Type", contentType)
+	response.Header().Set("Content-Disposition", "inline")
+	response.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	http.ServeContent(response, request, info.Name(), info.ModTime(), file)
+}
+
 func (a *App) deleteFile(response http.ResponseWriter, request *http.Request) {
 	if !validSessionCSRF(request) {
 		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
@@ -1387,6 +1729,22 @@ func (a *App) deleteFile(response http.ResponseWriter, request *http.Request) {
 	}
 	if a.runs.ConflictsPath(request.FormValue("path")) {
 		http.Error(response, "活动 Run 持有该 Script 或其后代的 Run Lease", http.StatusConflict)
+		return
+	}
+	path := filepath.ToSlash(strings.Trim(request.FormValue("path"), "/"))
+	like := path + "/%"
+	var quickCount, scheduleCount int
+	_ = a.db.QueryRow("SELECT COUNT(*) FROM quick_runs WHERE script_path = ? OR script_path LIKE ?", path, like).Scan(&quickCount)
+	_ = a.db.QueryRow("SELECT COUNT(*) FROM schedules WHERE deleted = 0 AND (script_path = ? OR script_path LIKE ?)", path, like).Scan(&scheduleCount)
+	if (quickCount > 0 || scheduleCount > 0) && request.FormValue("confirm_references") != "yes" {
+		current := request.Context().Value(sessionContextKey).(session)
+		response.Header().Set("Content-Type", "text/html; charset=utf-8")
+		response.WriteHeader(http.StatusConflict)
+		_ = deleteImpactTemplate.Execute(response, struct {
+			Path                 string
+			QuickRuns, Schedules int
+			CSRFToken            string
+		}{Path: path, QuickRuns: quickCount, Schedules: scheduleCount, CSRFToken: current.csrfToken})
 		return
 	}
 	id, err := randomToken(18)
@@ -1408,8 +1766,8 @@ func (a *App) deleteFile(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "无法记录回收条目", http.StatusInternalServerError)
 		return
 	}
-	path := filepath.ToSlash(strings.TrimSuffix(trashed.OriginalPath, "/"))
-	like := path + "/%"
+	path = filepath.ToSlash(strings.TrimSuffix(trashed.OriginalPath, "/"))
+	like = path + "/%"
 	if _, err := a.db.Exec("UPDATE schedules SET enabled = 0, updated_at = ? WHERE deleted = 0 AND (script_path = ? OR script_path LIKE ?)", time.Now().UTC().UnixNano(), path, like); err != nil {
 		_ = a.managed.RestoreFromTrash(trashed.StoredName, trashed.OriginalPath)
 		_, _ = a.db.Exec("DELETE FROM trash_entries WHERE id = ?", id)
@@ -1527,6 +1885,12 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 	var csrfToken, relative string
 	replace := false
 	fileCount := 0
+	type uploadResult struct {
+		Name, Result, Detail string
+		Succeeded            bool
+	}
+	var results []uploadResult
+	succeeded := 0
 	for {
 		part, nextErr := reader.NextPart()
 		if errors.Is(nextErr, io.EOF) {
@@ -1569,41 +1933,56 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 		targetPath := pathpkg.Join(filepath.ToSlash(relative), filename)
 		if a.runs.ConflictsPath(targetPath) {
 			_ = part.Close()
-			http.Error(response, "活动 Run 持有该上传目标的 Run Lease", http.StatusConflict)
-			return
+			results = append(results, uploadResult{Name: filename, Result: "失败", Detail: "活动 Run 持有该上传目标的 Run Lease"})
+			a.recordAudit("upload_file", filename, "rejected", request.RemoteAddr)
+			continue
 		}
 		storedID, idErr := randomToken(18)
 		if idErr != nil {
 			_ = part.Close()
-			http.Error(response, "无法创建上传事务", http.StatusInternalServerError)
-			return
+			results = append(results, uploadResult{Name: filename, Result: "失败", Detail: "无法创建上传事务"})
+			continue
 		}
 		trashed, uploadErr := a.managed.Upload(relative, filename, part, 1<<30, replace, storedID)
 		if uploadErr != nil {
 			_ = part.Close()
-			http.Error(response, "上传失败："+uploadErr.Error(), http.StatusBadRequest)
-			return
+			results = append(results, uploadResult{Name: filename, Result: "失败", Detail: uploadErr.Error()})
+			a.recordAudit("upload_file", filename, "rejected", request.RemoteAddr)
+			continue
 		}
 		_ = part.Close()
 		if trashed != nil {
 			_, err = a.db.Exec("INSERT INTO trash_entries (id, original_path, stored_name, deleted_at, size, is_directory) VALUES (?, ?, ?, ?, ?, 0)", storedID, trashed.OriginalPath, trashed.StoredName, time.Now().UTC().Unix(), trashed.Size)
 			if err != nil {
 				_ = a.managed.RollbackTextSave(targetPath, storedID)
-				http.Error(response, "替换已回滚：无法记录旧文件", http.StatusInternalServerError)
-				return
+				results = append(results, uploadResult{Name: filename, Result: "失败", Detail: "替换已回滚：无法记录旧文件"})
+				a.recordAudit("upload_file", filename, "failed", request.RemoteAddr)
+				continue
 			}
 		}
 		a.recordAudit("upload_file", filename, "succeeded", request.RemoteAddr)
+		results = append(results, uploadResult{Name: filename, Result: "成功", Detail: "文件已保存", Succeeded: true})
+		succeeded++
 	}
 	if fileCount == 0 {
 		http.Error(response, "未选择上传文件", http.StatusBadRequest)
 		return
 	}
-	if err := a.checkpointWebMutation("upload", relative); err != nil {
-		http.Error(response, "文件已上传，但 Version Protection checkpoint 失败："+err.Error(), http.StatusInternalServerError)
-		return
+	if succeeded > 0 {
+		if err := a.checkpointWebMutation("upload", relative); err != nil {
+			results = append(results, uploadResult{Name: "Version Protection", Result: "失败", Detail: "文件已上传，但 checkpoint 失败：" + err.Error()})
+		}
 	}
-	http.Redirect(response, request, filesURL(relative), http.StatusSeeOther)
+	response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if succeeded < fileCount || len(results) > fileCount {
+		response.WriteHeader(http.StatusMultiStatus)
+	}
+	if err := uploadResultsTemplate.Execute(response, struct {
+		Link    string
+		Results []uploadResult
+	}{Link: filesURL(relative), Results: results}); err != nil {
+		http.Error(response, "文件已上传，但 Version Protection checkpoint 失败："+err.Error(), http.StatusInternalServerError)
+	}
 }
 
 func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
@@ -1648,7 +2027,8 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 	end := min(start+pageSize, len(entries))
 	type fileView struct {
 		managedfiles.Entry
-		Path, BrowseURL, DownloadURL, EditURL string
+		Path, BrowseURL, DownloadURL, EditURL, PreviewURL string
+		Protection                                        string
 	}
 	views := make([]fileView, 0, end-start)
 	for _, entry := range entries[start:end] {
@@ -1657,24 +2037,30 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		if entry.Kind == managedfiles.Directory {
 			view.BrowseURL = filesURL(path)
 		} else if entry.Kind == managedfiles.Regular {
+			view.Protection = a.gitProtection.ProtectionReason(path, entry.Size)
 			view.DownloadURL = routeFileURL("/files/download/", path)
 			view.EditURL = routeFileURL("/files/edit/", path)
+			switch strings.ToLower(filepath.Ext(path)) {
+			case ".png", ".jpg", ".jpeg", ".gif", ".webp":
+				view.PreviewURL = routeFileURL("/files/preview/", path)
+			}
 		}
 		views = append(views, view)
 	}
 	current := request.Context().Value(sessionContextKey).(session)
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = filesTemplate.Execute(response, struct {
-		Entries      []fileView
-		CSRFToken    string
-		CurrentPath  string
-		Query        string
-		Page         int
-		PreviousPage int
-		NextPage     int
-		HasPrevious  bool
-		HasNext      bool
-	}{Entries: views, CSRFToken: current.csrfToken, CurrentPath: relative, Query: query, Page: page, PreviousPage: page - 1, NextPage: page + 1, HasPrevious: page > 1, HasNext: end < len(entries)})
+		Entries             []fileView
+		CSRFToken           string
+		CurrentPath         string
+		Query               string
+		Page                int
+		PreviousPage        int
+		NextPage            int
+		HasPrevious         bool
+		HasNext             bool
+		CanToggleExecutable bool
+	}{Entries: views, CSRFToken: current.csrfToken, CurrentPath: relative, Query: query, Page: page, PreviousPage: page - 1, NextPage: page + 1, HasPrevious: page > 1, HasNext: end < len(entries), CanToggleExecutable: runtime.GOOS == "linux"})
 }
 
 func routeFileURL(prefix, relative string) string {
@@ -1839,7 +2225,7 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   request.TLS != nil,
+		Secure:   isSecureRequest(request),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   7 * 24 * 60 * 60,
 	})
@@ -1967,7 +2353,7 @@ func (a *App) checkpointWebMutation(action, target string) error {
 
 var loginTemplate = template.Must(template.New("login").Parse(`<!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><title>登录 · ScriptBoard</title></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css"><title>登录 · ScriptBoard</title></head>
 <body><main><h1>登录</h1>
 <form method="post" action="/login">
 <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
@@ -1979,8 +2365,9 @@ var loginTemplate = template.Must(template.New("login").Parse(`<!doctype html>
 
 var accountTemplate = template.Must(template.New("account").Parse(`<!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>账户设置 · ScriptBoard</title></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css"><title>账户设置 · ScriptBoard</title></head>
 <body><main><h1>账户设置</h1>
+{{if .CredentialOverride}}<p>当前实例配置了启动凭据覆盖；此处修改只在下次重启前有效。要永久保留网页修改，请移除启动配置中的覆盖值。</p>{{end}}
 <form method="post" action="/settings/account">
 <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
 <label>用户名 <input name="username" value="{{.Username}}" autocomplete="username" required></label>
@@ -1995,68 +2382,76 @@ var accountTemplate = template.Must(template.New("account").Parse(`<!doctype htm
 
 var filesTemplate = template.Must(template.New("files").Parse(`<!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><title>文件 · ScriptBoard</title></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css"><title>文件 · ScriptBoard</title></head>
 <body><main><h1>文件</h1>
 <nav><a href="/files/">文件</a> · <a href="/trash">回收站</a> · <a href="/quick-runs">Quick Run</a> · <a href="/schedules">Schedule</a> · <a href="/variables">Variable</a> · <a href="/audit">审计</a></nav>
 <form method="get"><label>搜索当前目录 <input name="q" value="{{.Query}}"></label><select name="sort"><option value="">自然顺序</option><option value="name">名称</option><option value="size">大小</option><option value="modified">修改时间</option></select><select name="direction"><option value="asc">升序</option><option value="desc">降序</option></select><button>筛选</button></form>
 <form method="post" action="/files/mkdir"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value="{{.CurrentPath}}"><label>目录名 <input name="name" required></label><button type="submit">新建目录</button></form>
 <form method="post" action="/files/upload" enctype="multipart/form-data"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value="{{.CurrentPath}}"><label><input name="replace" type="checkbox" value="yes">同名时替换并将旧文件移入回收站</label><label>文件 <input name="files" type="file" multiple required></label><button type="submit">上传</button></form>
-<table><thead><tr><th>名称</th><th>类型</th><th>大小</th><th>修改时间</th><th>操作</th></tr></thead><tbody>
-{{range .Entries}}<tr><td>{{if .BrowseURL}}<a href="{{.BrowseURL}}">{{.Name}}</a>{{else}}{{.Name}}{{end}}</td><td>{{if eq .Kind "directory"}}目录{{else if eq .Kind "regular"}}文件{{else}}受限{{end}}</td><td>{{.Size}}</td><td>{{.ModifiedAt}}</td><td>{{if .DownloadURL}}<a href="{{.DownloadURL}}">下载</a> <a href="{{.EditURL}}">编辑</a>{{end}}{{if ne .Kind "restricted"}}<form method="post" action="/runs/start"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="script" value="{{.Path}}">{{if eq .Kind "regular"}}<button>运行</button>{{end}}</form><form method="post" action="/files/move"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="source" value="{{.Path}}"><input name="destination" placeholder="新路径" required><button>移动/重命名</button></form><form method="post" action="/files/delete"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button name="path" value="{{.Path}}">移入回收站</button></form>{{end}}</td></tr>
-{{else}}<tr><td colspan="5">目录为空</td></tr>{{end}}
+<table><thead><tr><th>名称</th><th>类型</th><th>大小</th><th>版本保护</th><th>修改时间</th><th>操作</th></tr></thead><tbody>
+{{range .Entries}}<tr><td>{{if .BrowseURL}}<a href="{{.BrowseURL}}">{{.Name}}</a>{{else}}{{.Name}}{{end}}</td><td>{{if eq .Kind "directory"}}目录{{else if eq .Kind "regular"}}文件{{else}}受限{{end}}</td><td>{{.Size}}</td><td>{{.Protection}}</td><td>{{.ModifiedAt}}</td><td>{{if .PreviewURL}}<a href="{{.PreviewURL}}"><img src="{{.PreviewURL}}" alt="{{.Name}}" width="96" loading="lazy"></a>{{end}}{{if .DownloadURL}}<a href="{{.DownloadURL}}">下载</a> <a href="{{.EditURL}}">编辑</a>{{end}}{{if ne .Kind "restricted"}}<form method="post" action="/runs/start"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="script" value="{{.Path}}">{{if eq .Kind "regular"}}<button>运行</button>{{end}}</form><form method="post" action="/files/move"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="source" value="{{.Path}}"><input name="destination" placeholder="新路径" required><button>移动/重命名</button></form>{{if and $.CanToggleExecutable (eq .Kind "regular")}}<form method="post" action="/files/toggle-executable"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button name="path" value="{{.Path}}">切换 owner execute</button></form>{{end}}<form method="post" action="/files/delete"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button name="path" value="{{.Path}}">移入回收站</button></form>{{end}}</td></tr>
+{{else}}<tr><td colspan="6">目录为空</td></tr>{{end}}
 </tbody></table><p>第 {{.Page}} 页 {{if .HasPrevious}}<a href="?q={{urlquery .Query}}&page={{.PreviousPage}}">上一页</a>{{end}} {{if .HasNext}}<a href="?q={{urlquery .Query}}&page={{.NextPage}}">下一页</a>{{end}}</p></main></body>
 </html>`))
 
+var uploadResultsTemplate = template.Must(template.New("upload-results").Parse(`<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css"><title>上传结果 · ScriptBoard</title></head><body><main><h1>上传结果</h1><table><thead><tr><th>文件</th><th>结果</th><th>详情</th></tr></thead><tbody>{{range .Results}}<tr><td>{{.Name}}</td><td>{{.Result}}</td><td>{{.Detail}}</td></tr>{{end}}</tbody></table><p><a href="{{.Link}}">返回文件列表</a></p></main></body></html>`))
+
+var deleteImpactTemplate = template.Must(template.New("delete-impact").Parse(`<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css"><title>确认引用影响 · ScriptBoard</title></head><body><main><h1>确认引用影响</h1><p>删除 {{.Path}} 将使 {{.QuickRuns}} 个 Quick Run 路径失效，并停用 {{.Schedules}} 个 Schedule。恢复文件不会自动重新启用 Schedule。</p><form method="post" action="/files/delete"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value="{{.Path}}"><button name="confirm_references" value="yes">确认移入回收站</button></form></main></body></html>`))
+
 var trashTemplate = template.Must(template.New("trash").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><title>回收站 · ScriptBoard</title></head>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css"><title>回收站 · ScriptBoard</title></head>
 <body><main><h1>回收站</h1><table><thead><tr><th>原路径</th><th>删除时间</th><th>大小</th><th>操作</th></tr></thead><tbody>
 {{range .Entries}}<tr><td>{{.OriginalPath}}</td><td>{{.DeletedAt}}</td><td>{{.Size}}</td><td><form method="post" action="/trash/restore"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button type="submit">恢复</button></form><form method="post" action="/trash/purge"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button name="confirm" value="yes" type="submit">永久清理</button></form></td></tr>
 {{else}}<tr><td colspan="4">回收站为空</td></tr>{{end}}
 </tbody></table></main></body></html>`))
 
 var textEditorTemplate = template.Must(template.New("text-editor").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><title>编辑 {{.Path}} · ScriptBoard</title></head>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css"><title>编辑 {{.Path}} · ScriptBoard</title></head>
 <body><main><h1>编辑 {{.Path}}</h1><form method="post" action="/files/edit/{{.Path}}">
 <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="digest" value="{{.Digest}}">
 <textarea name="content" required>{{.Content}}</textarea><button type="submit">保存</button>
 </form></main></body></html>`))
 
 var runTemplate = template.Must(template.New("run").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><title>Run {{.Run.ID}} · ScriptBoard</title></head>
-<body><main><h1>Run {{.Run.ID}}</h1><dl><dt>Script</dt><dd>{{.Run.ScriptPath}}</dd><dt>状态</dt><dd>{{.Run.Status}}</dd><dt>来源</dt><dd>{{.Run.SourceType}} / {{.Run.SourceName}}</dd><dt>运行身份</dt><dd>{{.Run.RuntimeIdentity}}</dd><dt>执行器</dt><dd>{{.Run.Executor}}</dd><dt>SHA-256</dt><dd>{{.Run.ScriptDigest}}</dd></dl>
-{{if .Run.Error}}<p>{{.Run.Error}}</p>{{end}}{{if or (eq .Run.Status "running") (eq .Run.Status "stopping")}}<form method="post" action="/runs/{{.Run.ID}}/stop"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button type="submit">{{if eq .Run.Status "stopping"}}强制停止{{else}}停止{{end}}</button></form>{{end}}<form method="post" action="/runs/{{.Run.ID}}/quick-run"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label>Quick Run 名称 <input name="name" required></label><button type="submit">保存 Quick Run</button></form><pre>{{range .Run.Events}}<span data-sequence="{{.Sequence}}" data-source="{{.Source}}">{{.Data}}</span>{{end}}</pre>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css"><script defer src="/assets/app.js"></script><title>Run {{.Run.ID}} · ScriptBoard</title></head>
+<body><main data-run-events-url="/runs/{{.Run.ID}}/events"><h1>Run {{.Run.ID}}</h1><dl><dt>Script</dt><dd>{{.Run.ScriptPath}}</dd><dt>状态</dt><dd>{{.Run.Status}}</dd><dt>来源</dt><dd>{{.Run.SourceType}} / {{.Run.SourceName}}</dd><dt>运行身份</dt><dd>{{.Run.RuntimeIdentity}}</dd><dt>执行器</dt><dd>{{.Run.Executor}}</dd><dt>SHA-256</dt><dd>{{.Run.ScriptDigest}}</dd></dl>
+{{if .Run.Error}}<p>{{.Run.Error}}</p>{{end}}{{if .Run.LogExpired}}<p>Run Log 已按保留策略清理。</p>{{end}}{{if .Run.LogIncomplete}}<p>Run Log 写入不完整。</p>{{end}}{{if .Run.LogTruncated}}<p>Run Log 已达到上限，丢弃 {{.Run.DroppedBytes}} 字节。</p>{{end}}{{if or (eq .Run.Status "running") (eq .Run.Status "stopping")}}<form method="post" action="/runs/{{.Run.ID}}/stop"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button type="submit">{{if eq .Run.Status "stopping"}}强制停止{{else}}停止{{end}}</button></form>{{end}}<form method="post" action="/runs/{{.Run.ID}}/quick-run"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label>Quick Run 名称 <input name="name" required></label><button type="submit">保存 Quick Run</button></form><p><button type="button" data-run-pause>暂停显示</button> <span data-run-live-state>正在连接实时输出…</span></p><pre data-run-log>{{range .Run.Events}}<span data-sequence="{{.Sequence}}" data-source="{{.Source}}" {{if .EncodingError}}data-encoding-error="true" title="输出包含无效 UTF-8，已替换显示"{{end}}>{{.Data}}</span>{{end}}</pre>
 </main></body></html>`))
 
-var runsTemplate = template.Must(template.New("runs").Parse(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Run 历史 · ScriptBoard</title></head><body><main><h1>Run 历史</h1><table><thead><tr><th>时间</th><th>Script</th><th>来源</th><th>状态</th><th>执行器</th></tr></thead><tbody>{{range .}}<tr><td>{{.CreatedAt}}</td><td><a href="/runs/{{.ID}}">{{.ScriptPath}}</a></td><td>{{.SourceType}} / {{.SourceName}}</td><td>{{.Status}}</td><td>{{.Executor}}</td></tr>{{else}}<tr><td colspan="5">暂无 Run</td></tr>{{end}}</tbody></table></main></body></html>`))
+var runsTemplate = template.Must(template.New("runs").Parse(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css"><title>Run 历史 · ScriptBoard</title></head><body><main><h1>Run 历史</h1><table><thead><tr><th>时间</th><th>Script</th><th>来源</th><th>状态</th><th>执行器</th></tr></thead><tbody>{{range .}}<tr><td>{{.CreatedAt}}</td><td><a href="/runs/{{.ID}}">{{.ScriptPath}}</a></td><td>{{.SourceType}} / {{.SourceName}}</td><td>{{.Status}}</td><td>{{.Executor}}</td></tr>{{else}}<tr><td colspan="5">暂无 Run</td></tr>{{end}}</tbody></table></main></body></html>`))
+
+var overlapTemplate = template.Must(template.New("overlap").Parse(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css"><title>确认重叠运行 · ScriptBoard</title></head><body><main><h1>确认重叠运行</h1><p>{{.Script}} 已有活动 Run。确认后将并发启动另一个 Run。</p><form method="post" action="{{.Action}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="script" value="{{.Script}}"><input type="hidden" name="arguments" value="{{.Arguments}}"><input type="hidden" name="timeout_seconds" value="{{.Timeout}}"><button name="confirm_overlap" value="yes">确认并发启动</button></form></main></body></html>`))
 
 var quickRunsTemplate = template.Must(template.New("quick-runs").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><title>Quick Run · ScriptBoard</title></head><body><main><h1>Quick Run</h1>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css"><title>Quick Run · ScriptBoard</title></head><body><main><h1>Quick Run</h1>
 <table><thead><tr><th>名称</th><th>Script</th><th>参数</th><th>操作</th></tr></thead><tbody>{{range .QuickRuns}}<tr><td>{{.Name}}</td><td>{{.ScriptPath}}</td><td>{{.ArgumentsTemplate}}</td><td>
-<form method="post" action="/quick-runs/{{.ID}}/start"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button type="submit">启动</button></form>
+<form method="post" action="/quick-runs/{{.ID}}/start"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button type="submit" {{if not .Valid}}disabled title="Script 路径已失效"{{end}}>{{if .Valid}}启动{{else}}路径失效{{end}}</button></form>
 <form method="post" action="/quick-runs/{{.ID}}/move"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button name="direction" value="up">上移</button><button name="direction" value="down">下移</button></form>
 <form method="post" action="/quick-runs/{{.ID}}/delete"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button name="confirm" value="yes">删除</button></form>
 </td></tr>{{else}}<tr><td colspan="4">暂无 Quick Run</td></tr>{{end}}</tbody></table>
 </main></body></html>`))
 
 var schedulesTemplate = template.Must(template.New("schedules").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><title>Schedule · ScriptBoard</title></head><body><main><h1>Schedule</h1>
-<form method="post" action="/schedules"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label>名称 <input name="name" required></label><label>Script <input name="script" required></label><label>参数 <input name="arguments"></label><label>五段 cron <input name="expression" placeholder="* * * * *" required></label><label>超时秒数 <input name="timeout_seconds" type="number" min="0" max="86400"></label><label><input name="disallow_overlap" type="checkbox" value="1">禁止重叠</label><button type="submit">创建</button></form>
-<table><thead><tr><th>配置</th><th>下次触发</th><th>最近结果</th><th>操作</th></tr></thead><tbody>{{range .Schedules}}<tr><td><form method="post" action="/schedules/{{.ID}}/update"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input name="name" value="{{.Name}}" required><input name="script" value="{{.ScriptPath}}" required><input name="arguments" value="{{.ArgumentsTemplate}}"><input name="expression" value="{{.Expression}}" required><input name="timeout_seconds" type="number" value="{{.TimeoutSeconds}}"><label><input name="disallow_overlap" type="checkbox" value="1" {{if not .AllowOverlap}}checked{{end}}>禁止重叠</label><button>保存</button></form></td><td>{{.NextFireAt}}</td><td>{{.LastResult}}<input type="hidden" name="last_run_id" value="{{.LastRunID}}"></td><td><form method="post" action="/schedules/{{.ID}}/toggle"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button name="enabled" value="{{if .Enabled}}0{{else}}1{{end}}">{{if .Enabled}}停用{{else}}启用{{end}}</button></form><form method="post" action="/schedules/{{.ID}}/delete"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button name="confirm" value="yes">删除</button></form></td></tr>{{else}}<tr><td colspan="4">暂无 Schedule</td></tr>{{end}}</tbody></table>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css"><title>Schedule · ScriptBoard</title></head><body><main><h1>Schedule</h1>
+<form method="post" action="/schedules"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label>名称 <input name="name" required></label><label>Script <input name="script" required></label><label>参数 <input name="arguments"></label><label>五段 cron <input name="expression" list="cron-presets" placeholder="* * * * *" required><datalist id="cron-presets"><option value="*/5 * * * *">每 5 分钟</option><option value="0 * * * *">每小时</option><option value="0 0 * * *">每天</option><option value="0 0 * * 1">每周一</option><option value="0 0 1 * *">每月首日</option></datalist></label><label>超时秒数 <input name="timeout_seconds" type="number" min="0" max="86400"></label><label><input name="disallow_overlap" type="checkbox" value="1">禁止重叠</label><button type="submit">创建</button></form>
+<table><thead><tr><th>配置</th><th>未来五次触发</th><th>最近结果</th><th>操作</th></tr></thead><tbody>{{range .Schedules}}<tr><td><form method="post" action="/schedules/{{.ID}}/update"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input name="name" value="{{.Name}}" required><input name="script" value="{{.ScriptPath}}" required><input name="arguments" value="{{.ArgumentsTemplate}}"><input name="expression" value="{{.Expression}}" required><input name="timeout_seconds" type="number" value="{{.TimeoutSeconds}}"><label><input name="disallow_overlap" type="checkbox" value="1" {{if not .AllowOverlap}}checked{{end}}>禁止重叠</label><button>保存</button></form></td><td><ol>{{range .NextFive}}<li>{{.}}</li>{{end}}</ol></td><td>{{.LastResult}}{{if .LastError}}<br>{{.LastError}}{{end}}<input type="hidden" name="last_run_id" value="{{.LastRunID}}"></td><td><form method="post" action="/schedules/{{.ID}}/toggle"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button name="enabled" value="{{if .Enabled}}0{{else}}1{{end}}">{{if .Enabled}}停用{{else}}启用{{end}}</button></form><form method="post" action="/schedules/{{.ID}}/delete"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button name="confirm" value="yes">删除</button></form></td></tr>{{else}}<tr><td colspan="4">暂无 Schedule</td></tr>{{end}}</tbody></table>
 </main></body></html>`))
 
 var auditTemplate = template.Must(template.New("audit").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><title>Audit Event · ScriptBoard</title></head><body><main><h1>Audit Event</h1><p><a href="/audit.csv">下载 CSV</a></p>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css"><title>Audit Event · ScriptBoard</title></head><body><main><h1>Audit Event</h1><p><a href="/audit.csv">下载 CSV</a></p>
 <table><thead><tr><th>时间</th><th>操作</th><th>目标</th><th>结果</th><th>来源</th></tr></thead><tbody>{{range .}}<tr><td>{{.OccurredAt}}</td><td>{{.Action}}</td><td>{{.Target}}</td><td>{{.Result}}</td><td>{{.Source}}</td></tr>{{else}}<tr><td colspan="5">暂无 Audit Event</td></tr>{{end}}</tbody></table>
 </main></body></html>`))
 
 var versionProtectionTemplate = template.Must(template.New("version-protection").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><title>Version Protection · ScriptBoard</title></head><body><main><h1>Version Protection</h1>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css"><title>Version Protection · ScriptBoard</title></head><body><main><h1>Version Protection</h1>
 <dl><dt>状态</dt><dd>{{.State.Status}}</dd><dt>仓库字节数</dt><dd>{{.State.RepositoryBytes}}{{if .State.StorageWarning}}（已超过容量上限的 80%）{{end}}</dd><dt>最近提交</dt><dd>{{.State.LastCommit}}</dd>{{if .State.AbnormalReason}}<dt>异常</dt><dd>{{.State.AbnormalReason}}</dd>{{end}}</dl>
-{{if not .State.Enabled}}<form method="post" action="/settings/version-protection/enable"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label><input type="checkbox" name="confirm" value="yes" required>确认启用或重新启用本地 Git 保护</label><button type="submit">启用</button></form>{{else}}<form method="post" action="/settings/version-protection/checkpoint"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button type="submit">立即创建 checkpoint</button></form><form method="get"><label>文件路径 <input name="path" value="{{.HistoryPath}}"></label><button>查看历史</button></form>{{if .History}}<table><tbody>{{range .History}}<tr><td>{{.Time}}</td><td>{{.Hash}}</td><td>{{.Subject}}</td></tr>{{end}}</tbody></table>{{end}}<form method="post" action="/settings/version-protection/restore"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label>路径 <input name="path" required></label><label>Commit <input name="commit" required></label><button type="submit">恢复单个文件</button></form><form method="post" action="/settings/version-protection/disable"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button name="confirm" value="yes">停用（保留历史）</button></form>{{end}}
+{{if not .State.Enabled}}<form method="post" action="/settings/version-protection/enable"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label><input type="checkbox" name="confirm" value="yes" required>确认启用或重新启用本地 Git 保护</label><button type="submit">启用</button></form><form method="post" action="/settings/version-protection/adopt"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><p>若 Managed Root 已是干净且安全的 Git 仓库，可明确接管。</p><button name="confirm" value="adopt-clean-repository">接管已有仓库</button></form>{{else}}<form method="post" action="/settings/version-protection/checkpoint"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button type="submit">立即创建 checkpoint</button></form><form method="get"><label>文件路径 <input name="path" value="{{.HistoryPath}}"></label><button>查看历史</button></form>{{if .History}}<table><tbody>{{range .History}}<tr><td>{{.Time}}</td><td>{{.Hash}}</td><td>{{.Subject}}</td></tr>{{end}}</tbody></table>{{end}}<form method="post" action="/settings/version-protection/restore"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label>路径 <input name="path" required></label><label>Commit <input name="commit" required></label><button type="submit">恢复单个文件</button></form><form method="post" action="/settings/version-protection/disable"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button name="confirm" value="yes">停用（保留历史）</button></form>{{end}}
 </main></body></html>`))
 
 var variablesTemplate = template.Must(template.New("variables").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><title>Variable · ScriptBoard</title></head>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css"><title>Variable · ScriptBoard</title></head>
 <body><main><h1>Variable</h1><form method="post" action="/variables"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label>名称 <input name="name" required></label><label>值 <textarea name="value"></textarea></label><button type="submit">创建</button></form>
 <table><thead><tr><th>名称</th><th>值</th><th>操作</th></tr></thead><tbody>{{range .Variables}}<tr><td colspan="2"><form method="post" action="/variables/{{.Name}}/update"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input name="name" value="{{.Name}}" required><textarea name="value">{{.Value}}</textarea><button>保存</button></form></td><td><form method="post" action="/variables/{{.Name}}/delete"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button name="confirm" value="yes">删除</button></form></td></tr>{{else}}<tr><td colspan="3">暂无 Variable</td></tr>{{end}}</tbody></table>
 </main></body></html>`))

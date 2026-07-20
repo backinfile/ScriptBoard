@@ -1,5 +1,7 @@
-/scriptboard
-/scriptboard.exe
-*.test
 /dist/
-
+/scriptboard.exe
+/scriptboard-tray.exe
+/scriptboard
+/.scratch/browser-qa-managed/
+/.scratch/browser-qa-state/
+/.scratch/cross-build/

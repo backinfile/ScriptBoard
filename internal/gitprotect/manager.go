@@ -104,6 +104,25 @@ func (m *Manager) State() (State, error) {
 	return state, err
 }
 
+func (m *Manager) ProtectionReason(relative string, size int64) string {
+	state, err := m.State()
+	if err != nil || !state.Enabled {
+		return "Version Protection 已停用"
+	}
+	if size > m.maxFileBytes {
+		return "未保护：超过 10 MiB"
+	}
+	err = m.command("check-ignore", "--quiet", "--", filepath.ToSlash(relative)).Run()
+	if err == nil {
+		return "未保护：被 .gitignore 排除"
+	}
+	var exitError *exec.ExitError
+	if errors.As(err, &exitError) && exitError.ExitCode() == 1 {
+		return "已受保护"
+	}
+	return "保护状态未知"
+}
+
 func (m *Manager) Enable() error {
 	if m.gitExecutable == "" {
 		return fmt.Errorf("未找到系统 Git CLI")
@@ -205,6 +224,24 @@ func (m *Manager) checkpoint(message string) error {
 	if err != nil {
 		return err
 	}
+	eligible := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		eligible[path] = struct{}{}
+	}
+	trackedOutput, _ := m.command("ls-files", "-z").Output()
+	for _, tracked := range strings.Split(string(trackedOutput), "\x00") {
+		if tracked == "" {
+			continue
+		}
+		if _, keep := eligible[tracked]; keep {
+			continue
+		}
+		if info, statErr := os.Lstat(filepath.Join(m.root, filepath.FromSlash(tracked))); statErr == nil && info.Mode().IsRegular() {
+			if output, err := m.command("rm", "--cached", "--ignore-unmatch", "--", tracked).CombinedOutput(); err != nil {
+				return fmt.Errorf("Git 停止跟踪不符合资格的文件失败: %w: %s", err, output)
+			}
+		}
+	}
 	if m.command("rev-parse", "--verify", "HEAD").Run() == nil {
 		if output, err := m.command("add", "-u", "--", ".").CombinedOutput(); err != nil {
 			return fmt.Errorf("Git add -u 失败: %w: %s", err, output)
@@ -224,6 +261,52 @@ func (m *Manager) checkpoint(message string) error {
 	return nil
 }
 
+func (m *Manager) Adopt() error {
+	if m.gitExecutable == "" {
+		return fmt.Errorf("未找到系统 Git CLI")
+	}
+	gitPath := filepath.Join(m.root, ".git")
+	info, err := os.Lstat(gitPath)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("只能接管 .git 为真实目录的非 bare 仓库")
+	}
+	bare, err := m.output("rev-parse", "--is-bare-repository")
+	if err != nil || strings.TrimSpace(bare) != "false" {
+		return fmt.Errorf("不能接管 bare 仓库")
+	}
+	status, err := m.output("status", "--porcelain=v1", "--untracked-files=all")
+	if err != nil || strings.TrimSpace(status) != "" {
+		return fmt.Errorf("接管前仓库必须完全 clean")
+	}
+	if output, err := m.command("fsck", "--full", "--no-dangling").CombinedOutput(); err != nil {
+		return fmt.Errorf("Git fsck 失败: %w: %s", err, output)
+	}
+	if err := m.validateSafeRepository(); err != nil {
+		return err
+	}
+	if m.command("show-ref", "--verify", "--quiet", "refs/heads/"+managedBranch).Run() == nil {
+		return fmt.Errorf("已有同名专用分支，拒绝自动接管")
+	}
+	if output, err := m.command("switch", "-c", managedBranch).CombinedOutput(); err != nil {
+		return fmt.Errorf("创建专用分支失败: %w: %s", err, output)
+	}
+	if err := m.writeMandatoryExcludes(); err != nil {
+		return err
+	}
+	if err := m.checkpoint("ScriptBoard adoption checkpoint\n\nScriptBoard-Operation: adopt"); err != nil {
+		return m.abnormal(err.Error())
+	}
+	head, err := m.output("rev-parse", "HEAD")
+	if err != nil {
+		return err
+	}
+	_, err = m.db.Exec(`INSERT INTO git_state (id, status, enabled, branch, git_executable, max_tracked_file_bytes, max_repository_bytes, last_commit, abnormal_reason, updated_at)
+		VALUES (1, 'healthy', 1, ?, ?, ?, ?, ?, '', ?)
+		ON CONFLICT(id) DO UPDATE SET status='healthy', enabled=1, branch=excluded.branch, git_executable=excluded.git_executable, last_commit=excluded.last_commit, abnormal_reason='', updated_at=excluded.updated_at`,
+		managedBranch, m.gitExecutable, m.maxFileBytes, int64(5<<30), strings.TrimSpace(head), time.Now().UTC().Unix())
+	return err
+}
+
 func (m *Manager) validateSafeRepository() error {
 	if _, err := os.Lstat(filepath.Join(m.root, ".gitmodules")); err == nil {
 		return fmt.Errorf("仓库包含子模块配置")
@@ -231,7 +314,7 @@ func (m *Manager) validateSafeRepository() error {
 	configBytes, err := os.ReadFile(filepath.Join(m.root, ".git", "config"))
 	if err == nil {
 		lower := strings.ToLower(string(configBytes))
-		for _, forbidden := range []string{"[remote ", "[submodule ", "[filter ", "credential.helper", "fsmonitor", "diff.external"} {
+		for _, forbidden := range []string{"[submodule ", "[filter ", "credential.helper", "fsmonitor", "diff.external"} {
 			if strings.Contains(lower, forbidden) {
 				return fmt.Errorf("Git 配置包含禁止项 %s", forbidden)
 			}

@@ -5,34 +5,46 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"go.yaml.in/yaml/v3"
 )
 
 type Config struct {
-	ManagedRoot     string        `yaml:"managed_root"`
-	StateRoot       string        `yaml:"state_root"`
-	Listen          string        `yaml:"listen"`
-	GitExecutable   string        `yaml:"git_executable"`
-	TLSCert         string        `yaml:"tls_cert"`
-	TLSKey          string        `yaml:"tls_key"`
-	RunTimeoutGrace time.Duration `yaml:"-"`
-	ConfigPath      string        `yaml:"-"`
+	ManagedRoot       string              `yaml:"managed_root"`
+	StateRoot         string              `yaml:"state_root"`
+	Listen            string              `yaml:"listen"`
+	GitExecutable     string              `yaml:"git_executable"`
+	TLSCert           string              `yaml:"tls_cert"`
+	TLSKey            string              `yaml:"tls_key"`
+	ExecutorChains    map[string][]string `yaml:"executor_chains"`
+	AdminUsername     string              `yaml:"admin_username"`
+	AdminPassword     string              `yaml:"admin_password"`
+	AdminPasswordFile string              `yaml:"admin_password_file"`
+	TrustedProxies    []string            `yaml:"trusted_proxies"`
+	RunTimeoutGrace   time.Duration       `yaml:"-"`
+	ConfigPath        string              `yaml:"-"`
 }
 
 type yamlConfig struct {
-	ManagedRoot            string `yaml:"managed_root"`
-	StateRoot              string `yaml:"state_root"`
-	Listen                 string `yaml:"listen"`
-	GitExecutable          string `yaml:"git_executable"`
-	TLSCert                string `yaml:"tls_cert"`
-	TLSKey                 string `yaml:"tls_key"`
-	RunTimeoutGraceSeconds *int   `yaml:"run_timeout_grace_seconds"`
+	ManagedRoot            string              `yaml:"managed_root"`
+	StateRoot              string              `yaml:"state_root"`
+	Listen                 string              `yaml:"listen"`
+	GitExecutable          string              `yaml:"git_executable"`
+	TLSCert                string              `yaml:"tls_cert"`
+	TLSKey                 string              `yaml:"tls_key"`
+	ExecutorChains         map[string][]string `yaml:"executor_chains"`
+	AdminUsername          string              `yaml:"admin_username"`
+	AdminPassword          string              `yaml:"admin_password"`
+	AdminPasswordFile      string              `yaml:"admin_password_file"`
+	TrustedProxies         []string            `yaml:"trusted_proxies"`
+	RunTimeoutGraceSeconds *int                `yaml:"run_timeout_grace_seconds"`
 }
 
 func Load(arguments []string, getenv func(string) string) (Config, error) {
@@ -66,11 +78,43 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 	flags.StringVar(&result.TLSCert, "tls-cert", result.TLSCert, "TLS 证书路径")
 	flags.StringVar(&result.TLSKey, "tls-key", result.TLSKey, "TLS 私钥路径")
 	flags.DurationVar(&result.RunTimeoutGrace, "run-timeout-grace", result.RunTimeoutGrace, "自动超时强杀宽限")
+	flags.StringVar(&result.AdminUsername, "admin-username", result.AdminUsername, "权威管理员用户名覆盖")
+	flags.StringVar(&result.AdminPassword, "admin-password", result.AdminPassword, "权威管理员密码覆盖")
+	flags.StringVar(&result.AdminPasswordFile, "admin-password-file", result.AdminPasswordFile, "权威管理员密码文件")
+	trustedProxyFlagSeen := false
+	flags.Func("trusted-proxy", "可信反向代理 IP 或 CIDR（可重复）", func(value string) error {
+		if !trustedProxyFlagSeen {
+			result.TrustedProxies = nil
+			trustedProxyFlagSeen = true
+		}
+		result.TrustedProxies = append(result.TrustedProxies, value)
+		return nil
+	})
 	if err := flags.Parse(arguments); err != nil {
 		return Config{}, err
 	}
 	if flags.NArg() != 0 {
 		return Config{}, fmt.Errorf("未知位置参数: %v", flags.Args())
+	}
+	if result.RunTimeoutGrace <= 0 {
+		return Config{}, fmt.Errorf("Run 超时强杀宽限必须大于零")
+	}
+	for extension, chain := range result.ExecutorChains {
+		if extension == "" || extension[0] != '.' || len(chain) == 0 {
+			return Config{}, fmt.Errorf("执行器链 %q 无效", extension)
+		}
+		for _, executable := range chain {
+			if !filepath.IsAbs(executable) {
+				return Config{}, fmt.Errorf("执行器路径必须为绝对路径: %s", executable)
+			}
+		}
+	}
+	for _, trusted := range result.TrustedProxies {
+		if net.ParseIP(trusted) == nil {
+			if _, _, err := net.ParseCIDR(trusted); err != nil {
+				return Config{}, fmt.Errorf("可信代理 %q 无效", trusted)
+			}
+		}
 	}
 	return result, nil
 }
@@ -125,6 +169,21 @@ func applyYAML(result *Config, values yamlConfig) {
 	if values.TLSKey != "" {
 		result.TLSKey = values.TLSKey
 	}
+	if values.ExecutorChains != nil {
+		result.ExecutorChains = values.ExecutorChains
+	}
+	if values.AdminUsername != "" {
+		result.AdminUsername = values.AdminUsername
+	}
+	if values.AdminPassword != "" {
+		result.AdminPassword = values.AdminPassword
+	}
+	if values.AdminPasswordFile != "" {
+		result.AdminPasswordFile = values.AdminPasswordFile
+	}
+	if values.TrustedProxies != nil {
+		result.TrustedProxies = append([]string(nil), values.TrustedProxies...)
+	}
 	if values.RunTimeoutGraceSeconds != nil {
 		result.RunTimeoutGrace = time.Duration(*values.RunTimeoutGraceSeconds) * time.Second
 	}
@@ -153,5 +212,23 @@ func applyEnvironment(result *Config, getenv func(string) string) {
 		if seconds, err := strconv.Atoi(value); err == nil {
 			result.RunTimeoutGrace = time.Duration(seconds) * time.Second
 		}
+	}
+	if value := getenv("SCRIPTBOARD_ADMIN_USERNAME"); value != "" {
+		result.AdminUsername = value
+	}
+	if value := getenv("SCRIPTBOARD_ADMIN_PASSWORD"); value != "" {
+		result.AdminPassword = value
+	}
+	if value := getenv("SCRIPTBOARD_ADMIN_PASSWORD_FILE"); value != "" {
+		result.AdminPasswordFile = value
+	}
+	if value := getenv("SCRIPTBOARD_TRUSTED_PROXIES"); value != "" {
+		result.TrustedProxies = strings.Split(value, ",")
+		for index := range result.TrustedProxies {
+			result.TrustedProxies[index] = strings.TrimSpace(result.TrustedProxies[index])
+		}
+	}
+	if result.AdminPassword != "" && result.AdminPasswordFile != "" {
+		result.AdminPassword = ""
 	}
 }
