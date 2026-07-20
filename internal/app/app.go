@@ -290,7 +290,59 @@ func (a *App) routes(_ string) http.Handler {
 	mux.Handle("POST /files/delete", a.requireSession(false, http.HandlerFunc(a.deleteFile)))
 	mux.Handle("GET /trash", a.requireSession(false, http.HandlerFunc(a.trashPage)))
 	mux.Handle("POST /trash/restore", a.requireSession(false, http.HandlerFunc(a.restoreTrash)))
+	mux.Handle("GET /files/edit/{path...}", a.requireSession(false, http.HandlerFunc(a.editTextPage)))
+	mux.Handle("POST /files/edit/{path...}", a.requireSession(false, http.HandlerFunc(a.saveText)))
 	return mux
+}
+
+func (a *App) editTextPage(response http.ResponseWriter, request *http.Request) {
+	relative := request.PathValue("path")
+	document, err := a.managed.ReadText(relative, 1<<20)
+	if err != nil {
+		http.Error(response, "无法编辑文件："+err.Error(), http.StatusBadRequest)
+		return
+	}
+	current := request.Context().Value(sessionContextKey).(session)
+	response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = textEditorTemplate.Execute(response, struct {
+		Path      string
+		Content   string
+		Digest    string
+		CSRFToken string
+	}{Path: relative, Content: document.Content, Digest: document.Digest, CSRFToken: current.csrfToken})
+}
+
+func (a *App) saveText(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
+		return
+	}
+	id, err := randomToken(18)
+	if err != nil {
+		http.Error(response, "无法创建回收条目", http.StatusInternalServerError)
+		return
+	}
+	relative := request.PathValue("path")
+	trashed, err := a.managed.SaveText(relative, request.FormValue("digest"), request.FormValue("content"), id, 1<<20)
+	if errors.Is(err, managedfiles.ErrConflict) {
+		http.Error(response, "文件已被外部修改，请重新打开后再保存", http.StatusConflict)
+		return
+	}
+	if err != nil {
+		http.Error(response, "无法保存文件："+err.Error(), http.StatusBadRequest)
+		return
+	}
+	_, err = a.db.Exec(
+		"INSERT INTO trash_entries (id, original_path, stored_name, deleted_at, size, is_directory) VALUES (?, ?, ?, ?, ?, 0)",
+		id, trashed.OriginalPath, trashed.StoredName, time.Now().UTC().Unix(), trashed.Size,
+	)
+	if err != nil {
+		_ = a.managed.RollbackTextSave(relative, trashed.StoredName)
+		http.Error(response, "无法记录文件旧版本", http.StatusInternalServerError)
+		return
+	}
+	a.recordAudit("edit_text", relative, "succeeded", request.RemoteAddr)
+	http.Redirect(response, request, "/files/", http.StatusSeeOther)
 }
 
 func (a *App) downloadFile(response http.ResponseWriter, request *http.Request) {
@@ -704,3 +756,10 @@ var trashTemplate = template.Must(template.New("trash").Parse(`<!doctype html>
 {{range .Entries}}<tr><td>{{.OriginalPath}}</td><td>{{.DeletedAt}}</td><td>{{.Size}}</td><td><form method="post" action="/trash/restore"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button type="submit">恢复</button></form></td></tr>
 {{else}}<tr><td colspan="4">回收站为空</td></tr>{{end}}
 </tbody></table></main></body></html>`))
+
+var textEditorTemplate = template.Must(template.New("text-editor").Parse(`<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>编辑 {{.Path}} · ScriptBoard</title></head>
+<body><main><h1>编辑 {{.Path}}</h1><form method="post" action="/files/edit/{{.Path}}">
+<input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="digest" value="{{.Digest}}">
+<textarea name="content" required>{{.Content}}</textarea><button type="submit">保存</button>
+</form></main></body></html>`))

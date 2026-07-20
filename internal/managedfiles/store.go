@@ -1,6 +1,10 @@
 package managedfiles
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -8,7 +12,10 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
+
+var ErrConflict = errors.New("文件已被外部修改")
 
 type Kind string
 
@@ -30,6 +37,11 @@ type Trashed struct {
 	StoredName   string
 	Size         int64
 	Directory    bool
+}
+
+type TextDocument struct {
+	Content string
+	Digest  string
 }
 
 func (s *Store) Upload(relative, name string, source io.Reader, maxBytes int64) error {
@@ -155,6 +167,84 @@ func (s *Store) RestoreFromTrash(storedName, original string) error {
 		return fmt.Errorf("恢复回收条目: %w", err)
 	}
 	return nil
+}
+
+func (s *Store) ReadText(relative string, maxBytes int64) (TextDocument, error) {
+	file, info, err := s.OpenRegular(relative)
+	if err != nil {
+		return TextDocument{}, err
+	}
+	defer file.Close()
+	if info.Size() > maxBytes {
+		return TextDocument{}, fmt.Errorf("文本文件超过 %d 字节上限", maxBytes)
+	}
+	content, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+	if err != nil {
+		return TextDocument{}, fmt.Errorf("读取文本文件: %w", err)
+	}
+	if int64(len(content)) > maxBytes || !utf8.Valid(content) || bytes.IndexByte(content, 0) >= 0 {
+		return TextDocument{}, fmt.Errorf("文件不是可编辑的 UTF-8 文本")
+	}
+	digest := sha256.Sum256(content)
+	return TextDocument{Content: string(content), Digest: hex.EncodeToString(digest[:])}, nil
+}
+
+func (s *Store) SaveText(relative, expectedDigest, content, storedName string, maxBytes int64) (Trashed, error) {
+	if int64(len([]byte(content))) > maxBytes || !utf8.ValidString(content) || strings.IndexByte(content, 0) >= 0 {
+		return Trashed{}, fmt.Errorf("内容不是上限内的有效 UTF-8 文本")
+	}
+	current, err := s.ReadText(relative, maxBytes)
+	if err != nil {
+		return Trashed{}, err
+	}
+	if current.Digest != expectedDigest {
+		return Trashed{}, ErrConflict
+	}
+	target, info, err := s.resolveEntry(relative)
+	if err != nil {
+		return Trashed{}, err
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(target), ".scriptboard-upload-*")
+	if err != nil {
+		return Trashed{}, fmt.Errorf("创建编辑临时文件: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(info.Mode().Perm()); err != nil {
+		_ = temporary.Close()
+		return Trashed{}, fmt.Errorf("保留文件权限: %w", err)
+	}
+	if _, err := io.WriteString(temporary, content); err != nil {
+		_ = temporary.Close()
+		return Trashed{}, fmt.Errorf("写入编辑内容: %w", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return Trashed{}, fmt.Errorf("同步编辑内容: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return Trashed{}, fmt.Errorf("关闭编辑临时文件: %w", err)
+	}
+	trashed, err := s.MoveToTrash(relative, storedName)
+	if err != nil {
+		return Trashed{}, err
+	}
+	if err := os.Rename(temporaryPath, target); err != nil {
+		_ = s.RestoreFromTrash(trashed.StoredName, trashed.OriginalPath)
+		return Trashed{}, fmt.Errorf("提交编辑内容: %w", err)
+	}
+	return trashed, nil
+}
+
+func (s *Store) RollbackTextSave(relative, storedName string) error {
+	target, _, err := s.resolveEntry(relative)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(target); err != nil {
+		return err
+	}
+	return s.RestoreFromTrash(storedName, relative)
 }
 
 type Store struct {

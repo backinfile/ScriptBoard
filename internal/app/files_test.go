@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -273,5 +274,121 @@ func TestAdminCanMoveFileToTrashAndRestoreIt(t *testing.T) {
 	}
 	if string(content) != "recover me" {
 		t.Fatalf("restored content = %q", content)
+	}
+}
+
+func TestTextEditRejectsAnExternalChange(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+		t.Fatalf("create managed root: %v", err)
+	}
+	filePath := filepath.Join(managedRoot, "note.txt")
+	if err := os.WriteFile(filePath, []byte("original"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+
+	response, err := client.Get(serverURL + "/files/edit/note.txt")
+	if err != nil {
+		t.Fatalf("get editor: %v", err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read editor: %v", err)
+	}
+	if !strings.Contains(string(page), "original") {
+		t.Fatalf("editor does not contain original text: %s", page)
+	}
+	if err := os.WriteFile(filePath, []byte("external change"), 0o644); err != nil {
+		t.Fatalf("write external change: %v", err)
+	}
+
+	response, err = client.PostForm(serverURL+"/files/edit/note.txt", url.Values{
+		"content":    {"my change"},
+		"digest":     {hiddenValue(t, page, "digest")},
+		"csrf_token": {formToken(t, page)},
+	})
+	if err != nil {
+		t.Fatalf("save text: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusConflict {
+		t.Fatalf("save status = %d, want %d", response.StatusCode, http.StatusConflict)
+	}
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read file after conflict: %v", err)
+	}
+	if string(content) != "external change" {
+		t.Fatalf("external change was overwritten: %q", content)
+	}
+}
+
+func TestTextEditAtomicallySavesAndKeepsOldVersionInTrash(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+		t.Fatalf("create managed root: %v", err)
+	}
+	filePath := filepath.Join(managedRoot, "note.txt")
+	if err := os.WriteFile(filePath, []byte("before"), 0o640); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+
+	response, err := client.Get(serverURL + "/files/edit/note.txt")
+	if err != nil {
+		t.Fatalf("get editor: %v", err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read editor: %v", err)
+	}
+	response, err = client.PostForm(serverURL+"/files/edit/note.txt", url.Values{
+		"content":    {"after"},
+		"digest":     {hiddenValue(t, page, "digest")},
+		"csrf_token": {formToken(t, page)},
+	})
+	if err != nil {
+		t.Fatalf("save text: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("save status = %d, want %d", response.StatusCode, http.StatusSeeOther)
+	}
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read saved file: %v", err)
+	}
+	if string(content) != "after" {
+		t.Fatalf("saved content = %q", content)
+	}
+	info, err := os.Stat(filePath)
+	if err != nil {
+		t.Fatalf("stat saved file: %v", err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o640 {
+		t.Fatalf("saved permissions = %o, want 640", info.Mode().Perm())
+	}
+	response, err = client.Get(serverURL + "/trash")
+	if err != nil {
+		t.Fatalf("get trash: %v", err)
+	}
+	trashPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read trash: %v", err)
+	}
+	if !strings.Contains(string(trashPage), "note.txt") {
+		t.Fatalf("old version missing from trash: %s", trashPage)
 	}
 }
