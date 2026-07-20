@@ -44,6 +44,11 @@ type TextDocument struct {
 	Digest  string
 }
 
+type Script struct {
+	Path   string
+	Digest string
+}
+
 func (s *Store) Upload(relative, name string, source io.Reader, maxBytes int64) error {
 	if err := validateName(name); err != nil {
 		return err
@@ -110,6 +115,19 @@ func (s *Store) OpenRegular(relative string) (*os.File, os.FileInfo, error) {
 		return nil, nil, fmt.Errorf("文件在打开期间发生变化")
 	}
 	return file, openedInfo, nil
+}
+
+func (s *Store) PrepareScript(relative string) (Script, error) {
+	file, _, err := s.OpenRegular(relative)
+	if err != nil {
+		return Script{}, err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return Script{}, fmt.Errorf("计算脚本摘要: %w", err)
+	}
+	return Script{Path: file.Name(), Digest: hex.EncodeToString(hash.Sum(nil))}, nil
 }
 
 func (s *Store) MoveToTrash(relative, storedName string) (Trashed, error) {

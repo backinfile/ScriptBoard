@@ -26,6 +26,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"scriptboard/internal/managedfiles"
+	"scriptboard/internal/runmanager"
 )
 
 const initialPasswordFilename = "initial-admin-password"
@@ -48,6 +49,7 @@ type App struct {
 	db        *sql.DB
 	stateRoot string
 	managed   *managedfiles.Store
+	runs      *runmanager.Manager
 	handler   http.Handler
 }
 
@@ -67,6 +69,7 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	application.runs = runmanager.New(db, application.managed, stateRoot)
 	application.handler = application.routes(managedRoot)
 	return application, nil
 }
@@ -76,6 +79,9 @@ func (a *App) Handler() http.Handler {
 }
 
 func (a *App) Close() error {
+	if a.runs != nil {
+		a.runs.Close()
+	}
 	return a.db.Close()
 }
 
@@ -157,6 +163,22 @@ func openDatabase(path string) (*sql.DB, error) {
 			deleted_at INTEGER NOT NULL,
 			size INTEGER NOT NULL,
 			is_directory INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS runs (
+			id TEXT PRIMARY KEY,
+			script_path TEXT NOT NULL,
+			script_sha256 TEXT NOT NULL,
+			arguments_template TEXT NOT NULL,
+			arguments_json TEXT NOT NULL,
+			executor TEXT NOT NULL,
+			source_type TEXT NOT NULL,
+			status TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			started_at INTEGER,
+			finished_at INTEGER,
+			exit_code INTEGER,
+			error TEXT NOT NULL DEFAULT '',
+			log_path TEXT NOT NULL
 		)`,
 	} {
 		if _, err := db.Exec(statement); err != nil {
@@ -296,7 +318,61 @@ func (a *App) routes(_ string) http.Handler {
 	mux.Handle("POST /trash/purge", a.requireSession(false, http.HandlerFunc(a.purgeTrash)))
 	mux.Handle("GET /files/edit/{path...}", a.requireSession(false, http.HandlerFunc(a.editTextPage)))
 	mux.Handle("POST /files/edit/{path...}", a.requireSession(false, http.HandlerFunc(a.saveText)))
+	mux.Handle("POST /runs/start", a.requireSession(false, http.HandlerFunc(a.startRun)))
+	mux.Handle("GET /runs/{id}", a.requireSession(false, http.HandlerFunc(a.runDetails)))
+	mux.Handle("POST /runs/{id}/stop", a.requireSession(false, http.HandlerFunc(a.stopRun)))
 	return mux
+}
+
+func (a *App) stopRun(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
+		return
+	}
+	id := request.PathValue("id")
+	if err := a.runs.Stop(id); err != nil {
+		http.Error(response, "无法停止 Run："+err.Error(), http.StatusConflict)
+		return
+	}
+	a.recordAudit("stop_run", id, "accepted", request.RemoteAddr)
+	http.Redirect(response, request, "/runs/"+url.PathEscape(id), http.StatusSeeOther)
+}
+
+func (a *App) startRun(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
+		return
+	}
+	id, err := a.runs.Start(runmanager.StartRequest{
+		ScriptPath:        request.FormValue("script"),
+		ArgumentsTemplate: request.FormValue("arguments"),
+		SourceType:        "admin/manual",
+	})
+	if err != nil {
+		a.recordAudit("start_run", request.FormValue("script"), "rejected", request.RemoteAddr)
+		http.Error(response, "无法启动 Script："+err.Error(), http.StatusBadRequest)
+		return
+	}
+	a.recordAudit("start_run", id, "accepted", request.RemoteAddr)
+	http.Redirect(response, request, "/runs/"+url.PathEscape(id), http.StatusSeeOther)
+}
+
+func (a *App) runDetails(response http.ResponseWriter, request *http.Request) {
+	run, err := a.runs.Get(request.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(response, "Run 不存在", http.StatusNotFound)
+			return
+		}
+		http.Error(response, "无法读取 Run："+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	current := request.Context().Value(sessionContextKey).(session)
+	response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = runTemplate.Execute(response, struct {
+		Run       runmanager.Run
+		CSRFToken string
+	}{Run: run, CSRFToken: current.csrfToken})
 }
 
 func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
@@ -306,6 +382,10 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 	}
 	source := request.FormValue("source")
 	destination := request.FormValue("destination")
+	if a.runs.ConflictsPath(source) {
+		http.Error(response, "活动 Run 持有该 Script 或其后代的 Run Lease", http.StatusConflict)
+		return
+	}
 	if err := a.managed.Move(source, destination); err != nil {
 		http.Error(response, "无法移动条目："+err.Error(), http.StatusBadRequest)
 		return
@@ -346,6 +426,10 @@ func (a *App) saveText(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	relative := request.PathValue("path")
+	if a.runs.ConflictsPath(relative) {
+		http.Error(response, "活动 Run 持有该 Script 的 Run Lease", http.StatusConflict)
+		return
+	}
 	trashed, err := a.managed.SaveText(relative, request.FormValue("digest"), request.FormValue("content"), id, 1<<20)
 	if errors.Is(err, managedfiles.ErrConflict) {
 		http.Error(response, "文件已被外部修改，请重新打开后再保存", http.StatusConflict)
@@ -389,6 +473,10 @@ func (a *App) downloadFile(response http.ResponseWriter, request *http.Request) 
 func (a *App) deleteFile(response http.ResponseWriter, request *http.Request) {
 	if !validSessionCSRF(request) {
 		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
+		return
+	}
+	if a.runs.ConflictsPath(request.FormValue("path")) {
+		http.Error(response, "活动 Run 持有该 Script 或其后代的 Run Lease", http.StatusConflict)
 		return
 	}
 	id, err := randomToken(18)
@@ -830,3 +918,9 @@ var textEditorTemplate = template.Must(template.New("text-editor").Parse(`<!doct
 <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="digest" value="{{.Digest}}">
 <textarea name="content" required>{{.Content}}</textarea><button type="submit">保存</button>
 </form></main></body></html>`))
+
+var runTemplate = template.Must(template.New("run").Parse(`<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>Run {{.Run.ID}} · ScriptBoard</title></head>
+<body><main><h1>Run {{.Run.ID}}</h1><dl><dt>Script</dt><dd>{{.Run.ScriptPath}}</dd><dt>状态</dt><dd>{{.Run.Status}}</dd><dt>执行器</dt><dd>{{.Run.Executor}}</dd></dl>
+{{if .Run.Error}}<p>{{.Run.Error}}</p>{{end}}{{if or (eq .Run.Status "running") (eq .Run.Status "stopping")}}<form method="post" action="/runs/{{.Run.ID}}/stop"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button type="submit">{{if eq .Run.Status "stopping"}}强制停止{{else}}停止{{end}}</button></form>{{end}}<pre>{{range .Run.Events}}<span data-sequence="{{.Sequence}}" data-source="{{.Source}}">{{.Data}}</span>{{end}}</pre>
+</main></body></html>`))
