@@ -79,6 +79,141 @@ func TestAdminCanRunScriptAndReadCompletedOutput(t *testing.T) {
 	}
 }
 
+func TestRunEventsAreAvailableAsSSE(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+		t.Fatalf("create managed root: %v", err)
+	}
+	scriptName := "sse.sh"
+	scriptContent := "printf 'sse-output\\n'\n"
+	if runtime.GOOS == "windows" {
+		scriptName = "sse.cmd"
+		scriptContent = "@echo off\r\necho sse-output\r\n"
+	}
+	if err := os.WriteFile(filepath.Join(managedRoot, scriptName), []byte(scriptContent), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	response, err := client.Get(serverURL + "/files/")
+	if err != nil {
+		t.Fatalf("get files: %v", err)
+	}
+	filesPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/runs/start", url.Values{
+		"script":     {scriptName},
+		"csrf_token": {formToken(t, filesPage)},
+	})
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	_ = response.Body.Close()
+	runPath := response.Header.Get("Location")
+	request, err := http.NewRequest(http.MethodGet, serverURL+runPath+"/events", nil)
+	if err != nil {
+		t.Fatalf("create SSE request: %v", err)
+	}
+	response, err = client.Do(request)
+	if err != nil {
+		t.Fatalf("read SSE: %v", err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read SSE body: %v", err)
+	}
+	if !strings.HasPrefix(response.Header.Get("Content-Type"), "text/event-stream") {
+		t.Fatalf("SSE content type = %q", response.Header.Get("Content-Type"))
+	}
+	if !strings.Contains(string(body), "id: 1") || !strings.Contains(string(body), "sse-output") || !strings.Contains(string(body), `"source":"stdout"`) {
+		t.Fatalf("unexpected SSE body: %s", body)
+	}
+}
+
+func TestAdminCanSaveAndStartQuickRunFromHistory(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+		t.Fatalf("create managed root: %v", err)
+	}
+	scriptName := "quick.sh"
+	scriptContent := "printf 'quick-output\\n'\n"
+	if runtime.GOOS == "windows" {
+		scriptName = "quick.cmd"
+		scriptContent = "@echo off\r\necho quick-output\r\n"
+	}
+	if err := os.WriteFile(filepath.Join(managedRoot, scriptName), []byte(scriptContent), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	response, err := client.Get(serverURL + "/files/")
+	if err != nil {
+		t.Fatalf("get files: %v", err)
+	}
+	filesPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/runs/start", url.Values{
+		"script":     {scriptName},
+		"csrf_token": {formToken(t, filesPage)},
+	})
+	if err != nil {
+		t.Fatalf("start source run: %v", err)
+	}
+	_ = response.Body.Close()
+	runPath := response.Header.Get("Location")
+	deadline := time.Now().Add(10 * time.Second)
+	var runPage []byte
+	for {
+		response, _ = client.Get(serverURL + runPath)
+		runPage, _ = io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if strings.Contains(string(runPage), "succeeded") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("source run did not finish: %s", runPage)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	response, err = client.PostForm(serverURL+runPath+"/quick-run", url.Values{
+		"name":       {"常用执行"},
+		"csrf_token": {formToken(t, runPage)},
+	})
+	if err != nil {
+		t.Fatalf("save quick run: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/quick-runs" {
+		t.Fatalf("save quick run response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+	response, err = client.Get(serverURL + "/quick-runs")
+	if err != nil {
+		t.Fatalf("get quick runs: %v", err)
+	}
+	quickPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if !strings.Contains(string(quickPage), "常用执行") {
+		t.Fatalf("saved quick run missing: %s", quickPage)
+	}
+	response, err = client.PostForm(serverURL+"/quick-runs/"+hiddenValue(t, quickPage, "id")+"/start", url.Values{
+		"csrf_token": {formToken(t, quickPage)},
+	})
+	if err != nil {
+		t.Fatalf("start quick run: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || !strings.HasPrefix(response.Header.Get("Location"), "/runs/") {
+		t.Fatalf("quick start response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+}
+
 func TestAdminCanStopRunningScript(t *testing.T) {
 	t.Parallel()
 

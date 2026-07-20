@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -195,6 +196,16 @@ func openDatabase(path string) (*sql.DB, error) {
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS quick_runs (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			script_path TEXT NOT NULL,
+			arguments_template TEXT NOT NULL,
+			timeout_seconds INTEGER NOT NULL,
+			source_run_id TEXT NOT NULL REFERENCES runs(id),
+			sort_order INTEGER NOT NULL,
+			created_at INTEGER NOT NULL
+		)`,
 	} {
 		if _, err := db.Exec(statement); err != nil {
 			_ = db.Close()
@@ -336,9 +347,156 @@ func (a *App) routes(_ string) http.Handler {
 	mux.Handle("POST /runs/start", a.requireSession(false, http.HandlerFunc(a.startRun)))
 	mux.Handle("GET /runs/{id}", a.requireSession(false, http.HandlerFunc(a.runDetails)))
 	mux.Handle("POST /runs/{id}/stop", a.requireSession(false, http.HandlerFunc(a.stopRun)))
+	mux.Handle("GET /runs/{id}/events", a.requireSession(false, http.HandlerFunc(a.runEvents)))
 	mux.Handle("GET /variables", a.requireSession(false, http.HandlerFunc(a.variablesPage)))
 	mux.Handle("POST /variables", a.requireSession(false, http.HandlerFunc(a.createVariable)))
+	mux.Handle("POST /runs/{id}/quick-run", a.requireSession(false, http.HandlerFunc(a.saveQuickRun)))
+	mux.Handle("GET /quick-runs", a.requireSession(false, http.HandlerFunc(a.quickRunsPage)))
+	mux.Handle("POST /quick-runs/{id}/start", a.requireSession(false, http.HandlerFunc(a.startQuickRun)))
 	return mux
+}
+
+type quickRunView struct {
+	ID                string
+	Name              string
+	ScriptPath        string
+	ArgumentsTemplate string
+	TimeoutSeconds    int
+}
+
+func (a *App) saveQuickRun(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
+		return
+	}
+	name := strings.TrimSpace(request.FormValue("name"))
+	if name == "" || len([]byte(name)) > 256 {
+		http.Error(response, "Quick Run 名称无效", http.StatusBadRequest)
+		return
+	}
+	source, err := a.runs.Get(request.PathValue("id"))
+	if err != nil {
+		http.Error(response, "来源 Run 不存在", http.StatusNotFound)
+		return
+	}
+	id, err := randomToken(18)
+	if err != nil {
+		http.Error(response, "无法创建 Quick Run", http.StatusInternalServerError)
+		return
+	}
+	var sortOrder int
+	_ = a.db.QueryRow("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM quick_runs").Scan(&sortOrder)
+	if _, err := a.db.Exec(`INSERT INTO quick_runs
+		(id, name, script_path, arguments_template, timeout_seconds, source_run_id, sort_order, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, name, source.ScriptPath, source.ArgumentsTemplate, source.TimeoutSeconds, source.ID, sortOrder, time.Now().UTC().Unix(),
+	); err != nil {
+		http.Error(response, "无法保存 Quick Run", http.StatusInternalServerError)
+		return
+	}
+	a.recordAudit("create_quick_run", id, "succeeded", request.RemoteAddr)
+	http.Redirect(response, request, "/quick-runs", http.StatusSeeOther)
+}
+
+func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request) {
+	rows, err := a.db.Query("SELECT id, name, script_path, arguments_template, timeout_seconds FROM quick_runs ORDER BY sort_order, created_at")
+	if err != nil {
+		http.Error(response, "无法读取 Quick Run", http.StatusInternalServerError)
+		return
+	}
+	var quickRuns []quickRunView
+	for rows.Next() {
+		var quick quickRunView
+		if err := rows.Scan(&quick.ID, &quick.Name, &quick.ScriptPath, &quick.ArgumentsTemplate, &quick.TimeoutSeconds); err != nil {
+			_ = rows.Close()
+			http.Error(response, "无法读取 Quick Run", http.StatusInternalServerError)
+			return
+		}
+		quickRuns = append(quickRuns, quick)
+	}
+	_ = rows.Close()
+	current := request.Context().Value(sessionContextKey).(session)
+	response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = quickRunsTemplate.Execute(response, struct {
+		QuickRuns []quickRunView
+		CSRFToken string
+	}{QuickRuns: quickRuns, CSRFToken: current.csrfToken})
+}
+
+func (a *App) startQuickRun(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
+		return
+	}
+	var quick quickRunView
+	if err := a.db.QueryRow("SELECT id, name, script_path, arguments_template, timeout_seconds FROM quick_runs WHERE id = ?", request.PathValue("id")).Scan(
+		&quick.ID, &quick.Name, &quick.ScriptPath, &quick.ArgumentsTemplate, &quick.TimeoutSeconds,
+	); err != nil {
+		http.Error(response, "Quick Run 不存在", http.StatusNotFound)
+		return
+	}
+	variables, err := a.loadVariables()
+	if err != nil {
+		http.Error(response, "无法读取 Variable", http.StatusInternalServerError)
+		return
+	}
+	id, err := a.runs.Start(runmanager.StartRequest{
+		ScriptPath: quick.ScriptPath, ArgumentsTemplate: quick.ArgumentsTemplate, TimeoutSeconds: quick.TimeoutSeconds,
+		SourceType: "admin/quick-run", Variables: variables,
+	})
+	if err != nil {
+		http.Error(response, "无法启动 Quick Run："+err.Error(), http.StatusBadRequest)
+		return
+	}
+	a.recordAudit("start_quick_run", quick.ID, "accepted", request.RemoteAddr)
+	http.Redirect(response, request, "/runs/"+url.PathEscape(id), http.StatusSeeOther)
+}
+
+func (a *App) runEvents(response http.ResponseWriter, request *http.Request) {
+	lastSequence := int64(0)
+	if value := request.Header.Get("Last-Event-ID"); value != "" {
+		if parsed, err := strconv.ParseInt(value, 10, 64); err == nil && parsed >= 0 {
+			lastSequence = parsed
+		}
+	}
+	run, err := a.runs.Get(request.PathValue("id"))
+	if err != nil {
+		http.Error(response, "Run 不存在", http.StatusNotFound)
+		return
+	}
+	flusher, ok := response.(http.Flusher)
+	if !ok {
+		http.Error(response, "当前连接不支持 SSE", http.StatusInternalServerError)
+		return
+	}
+	response.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	response.Header().Set("Cache-Control", "no-cache")
+	response.Header().Set("X-Content-Type-Options", "nosniff")
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		for _, event := range run.Events {
+			if event.Sequence <= lastSequence {
+				continue
+			}
+			payload, _ := json.Marshal(map[string]any{"source": event.Source, "text": event.Data, "time": event.Time})
+			_, _ = fmt.Fprintf(response, "id: %d\nevent: output\ndata: %s\n\n", event.Sequence, payload)
+			lastSequence = event.Sequence
+		}
+		flusher.Flush()
+		if run.Status != "starting" && run.Status != "running" && run.Status != "stopping" && run.Status != "timing_out" {
+			return
+		}
+		select {
+		case <-request.Context().Done():
+			return
+		case <-ticker.C:
+		}
+		run, err = a.runs.Get(request.PathValue("id"))
+		if err != nil {
+			return
+		}
+	}
 }
 
 type variableView struct {
@@ -426,22 +584,11 @@ func (a *App) startRun(response http.ResponseWriter, request *http.Request) {
 		}
 		timeoutSeconds = parsed
 	}
-	variables := make(map[string]string)
-	rows, err := a.db.Query("SELECT name, value FROM variables")
+	variables, err := a.loadVariables()
 	if err != nil {
 		http.Error(response, "无法读取 Variable", http.StatusInternalServerError)
 		return
 	}
-	for rows.Next() {
-		var name, value string
-		if err := rows.Scan(&name, &value); err != nil {
-			_ = rows.Close()
-			http.Error(response, "无法读取 Variable", http.StatusInternalServerError)
-			return
-		}
-		variables[name] = value
-	}
-	_ = rows.Close()
 	id, err := a.runs.Start(runmanager.StartRequest{
 		ScriptPath:        request.FormValue("script"),
 		ArgumentsTemplate: request.FormValue("arguments"),
@@ -456,6 +603,27 @@ func (a *App) startRun(response http.ResponseWriter, request *http.Request) {
 	}
 	a.recordAudit("start_run", id, "accepted", request.RemoteAddr)
 	http.Redirect(response, request, "/runs/"+url.PathEscape(id), http.StatusSeeOther)
+}
+
+func (a *App) loadVariables() (map[string]string, error) {
+	variables := make(map[string]string)
+	rows, err := a.db.Query("SELECT name, value FROM variables")
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var name, value string
+		if err := rows.Scan(&name, &value); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		variables[name] = value
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	return variables, rows.Close()
 }
 
 func (a *App) runDetails(response http.ResponseWriter, request *http.Request) {
@@ -1023,7 +1191,12 @@ var textEditorTemplate = template.Must(template.New("text-editor").Parse(`<!doct
 var runTemplate = template.Must(template.New("run").Parse(`<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><title>Run {{.Run.ID}} · ScriptBoard</title></head>
 <body><main><h1>Run {{.Run.ID}}</h1><dl><dt>Script</dt><dd>{{.Run.ScriptPath}}</dd><dt>状态</dt><dd>{{.Run.Status}}</dd><dt>执行器</dt><dd>{{.Run.Executor}}</dd></dl>
-{{if .Run.Error}}<p>{{.Run.Error}}</p>{{end}}{{if or (eq .Run.Status "running") (eq .Run.Status "stopping")}}<form method="post" action="/runs/{{.Run.ID}}/stop"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button type="submit">{{if eq .Run.Status "stopping"}}强制停止{{else}}停止{{end}}</button></form>{{end}}<pre>{{range .Run.Events}}<span data-sequence="{{.Sequence}}" data-source="{{.Source}}">{{.Data}}</span>{{end}}</pre>
+{{if .Run.Error}}<p>{{.Run.Error}}</p>{{end}}{{if or (eq .Run.Status "running") (eq .Run.Status "stopping")}}<form method="post" action="/runs/{{.Run.ID}}/stop"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button type="submit">{{if eq .Run.Status "stopping"}}强制停止{{else}}停止{{end}}</button></form>{{end}}<form method="post" action="/runs/{{.Run.ID}}/quick-run"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label>Quick Run 名称 <input name="name" required></label><button type="submit">保存 Quick Run</button></form><pre>{{range .Run.Events}}<span data-sequence="{{.Sequence}}" data-source="{{.Source}}">{{.Data}}</span>{{end}}</pre>
+</main></body></html>`))
+
+var quickRunsTemplate = template.Must(template.New("quick-runs").Parse(`<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>Quick Run · ScriptBoard</title></head><body><main><h1>Quick Run</h1>
+<table><thead><tr><th>名称</th><th>Script</th><th>参数</th><th>操作</th></tr></thead><tbody>{{range .QuickRuns}}<tr><td>{{.Name}}</td><td>{{.ScriptPath}}</td><td>{{.ArgumentsTemplate}}</td><td><form method="post" action="/quick-runs/{{.ID}}/start"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button type="submit">启动</button></form></td></tr>{{else}}<tr><td colspan="4">暂无 Quick Run</td></tr>{{end}}</tbody></table>
 </main></body></html>`))
 
 var variablesTemplate = template.Must(template.New("variables").Parse(`<!doctype html>
