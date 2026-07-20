@@ -670,14 +670,19 @@ func verifyPassword(password, encoded string) bool {
 
 func (a *App) routes(_ string) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /assets/app.css", func(response http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /assets/app-v2.css", func(response http.ResponseWriter, _ *http.Request) {
 		response.Header().Set("Content-Type", "text/css; charset=utf-8")
-		response.Header().Set("Cache-Control", "public, max-age=86400")
+		response.Header().Set("Cache-Control", "no-cache")
 		_, _ = io.WriteString(response, appCSS)
 	})
-	mux.HandleFunc("GET /assets/app.js", func(response http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /assets/app.css", func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("Content-Type", "text/css; charset=utf-8")
+		response.Header().Set("Cache-Control", "no-cache")
+		_, _ = io.WriteString(response, appCSS)
+	})
+	mux.HandleFunc("GET /assets/app-v2.js", func(response http.ResponseWriter, _ *http.Request) {
 		response.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-		response.Header().Set("Cache-Control", "public, max-age=86400")
+		response.Header().Set("Cache-Control", "no-cache")
 		_, _ = io.WriteString(response, appJS)
 	})
 	mux.HandleFunc("GET /login", func(response http.ResponseWriter, request *http.Request) {
@@ -781,6 +786,7 @@ const appJS = `
   const state=document.querySelector('[data-run-live-state]');
   const limit=2000;
   let paused=false;
+  let completed='';
   let pending=[];
   const trim=()=>{while(log.children.length>limit)log.firstElementChild.remove()};
   const append=(data,sequence)=>{
@@ -804,11 +810,14 @@ const appJS = `
     append(data,last);
   });
   stream.addEventListener('complete',event=>{
-    stream.close();if(state)state.textContent='Run 已结束：'+event.data;
+    completed=event.data;stream.close();
+    if(state)state.textContent='Run 已结束：'+completed;
+    const runStatus=document.querySelector('[data-run-status]');if(runStatus)runStatus.textContent=completed;
+    const stopForm=document.querySelector('[data-run-stop-form]');if(stopForm)stopForm.hidden=true;
   });
   pause?.addEventListener('click',()=>{
     paused=!paused;pause.textContent=paused?'继续显示':'暂停显示';
-    if(state)state.textContent=paused?'显示已暂停；后台仍在接收':'实时显示中';
+    if(state)state.textContent=paused?'显示已暂停；后台仍在接收':(completed?'Run 已结束：'+completed:'实时显示中');
     if(!paused){for(const item of pending)append(item[0],item[1]);pending=[]}
   });
 })();
@@ -2415,9 +2424,9 @@ var textEditorTemplate = template.Must(template.New("text-editor").Parse(`<!doct
 </form></main></body></html>`))
 
 var runTemplate = template.Must(template.New("run").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css"><script defer src="/assets/app.js"></script><title>Run {{.Run.ID}} · ScriptBoard</title></head>
-<body><main data-run-events-url="/runs/{{.Run.ID}}/events"><h1>Run {{.Run.ID}}</h1><dl><dt>Script</dt><dd>{{.Run.ScriptPath}}</dd><dt>状态</dt><dd>{{.Run.Status}}</dd><dt>来源</dt><dd>{{.Run.SourceType}} / {{.Run.SourceName}}</dd><dt>运行身份</dt><dd>{{.Run.RuntimeIdentity}}</dd><dt>执行器</dt><dd>{{.Run.Executor}}</dd><dt>SHA-256</dt><dd>{{.Run.ScriptDigest}}</dd></dl>
-{{if .Run.Error}}<p>{{.Run.Error}}</p>{{end}}{{if .Run.LogExpired}}<p>Run Log 已按保留策略清理。</p>{{end}}{{if .Run.LogIncomplete}}<p>Run Log 写入不完整。</p>{{end}}{{if .Run.LogTruncated}}<p>Run Log 已达到上限，丢弃 {{.Run.DroppedBytes}} 字节。</p>{{end}}{{if or (eq .Run.Status "running") (eq .Run.Status "stopping")}}<form method="post" action="/runs/{{.Run.ID}}/stop"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button type="submit">{{if eq .Run.Status "stopping"}}强制停止{{else}}停止{{end}}</button></form>{{end}}<form method="post" action="/runs/{{.Run.ID}}/quick-run"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label>Quick Run 名称 <input name="name" required></label><button type="submit">保存 Quick Run</button></form><p><button type="button" data-run-pause>暂停显示</button> <span data-run-live-state>正在连接实时输出…</span></p><pre data-run-log>{{range .Run.Events}}<span data-sequence="{{.Sequence}}" data-source="{{.Source}}" {{if .EncodingError}}data-encoding-error="true" title="输出包含无效 UTF-8，已替换显示"{{end}}>{{.Data}}</span>{{end}}</pre>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app-v2.css"><script defer src="/assets/app-v2.js"></script><title>Run {{.Run.ID}} · ScriptBoard</title></head>
+<body><main data-run-events-url="/runs/{{.Run.ID}}/events"><h1>Run {{.Run.ID}}</h1><dl><dt>Script</dt><dd>{{.Run.ScriptPath}}</dd><dt>状态</dt><dd data-run-status>{{.Run.Status}}</dd><dt>来源</dt><dd>{{.Run.SourceType}} / {{.Run.SourceName}}</dd><dt>运行身份</dt><dd>{{.Run.RuntimeIdentity}}</dd><dt>执行器</dt><dd>{{.Run.Executor}}</dd><dt>SHA-256</dt><dd>{{.Run.ScriptDigest}}</dd></dl>
+{{if .Run.Error}}<p>{{.Run.Error}}</p>{{end}}{{if .Run.LogExpired}}<p>Run Log 已按保留策略清理。</p>{{end}}{{if .Run.LogIncomplete}}<p>Run Log 写入不完整。</p>{{end}}{{if .Run.LogTruncated}}<p>Run Log 已达到上限，丢弃 {{.Run.DroppedBytes}} 字节。</p>{{end}}{{if or (eq .Run.Status "running") (eq .Run.Status "stopping")}}<form data-run-stop-form method="post" action="/runs/{{.Run.ID}}/stop"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button type="submit">{{if eq .Run.Status "stopping"}}强制停止{{else}}停止{{end}}</button></form>{{end}}<form method="post" action="/runs/{{.Run.ID}}/quick-run"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label>Quick Run 名称 <input name="name" required></label><button type="submit">保存 Quick Run</button></form><p><button type="button" data-run-pause>暂停显示</button> <span data-run-live-state>正在连接实时输出…</span></p><pre data-run-log>{{range .Run.Events}}<span data-sequence="{{.Sequence}}" data-source="{{.Source}}" {{if .EncodingError}}data-encoding-error="true" title="输出包含无效 UTF-8，已替换显示"{{end}}>{{.Data}}</span>{{end}}</pre>
 </main></body></html>`))
 
 var runsTemplate = template.Must(template.New("runs").Parse(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css"><title>Run 历史 · ScriptBoard</title></head><body><main><h1>Run 历史</h1><table><thead><tr><th>时间</th><th>Script</th><th>来源</th><th>状态</th><th>执行器</th></tr></thead><tbody>{{range .}}<tr><td>{{.CreatedAt}}</td><td><a href="/runs/{{.ID}}">{{.ScriptPath}}</a></td><td>{{.SourceType}} / {{.SourceName}}</td><td>{{.Status}}</td><td>{{.Executor}}</td></tr>{{else}}<tr><td colspan="5">暂无 Run</td></tr>{{end}}</tbody></table></main></body></html>`))
