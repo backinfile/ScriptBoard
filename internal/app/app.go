@@ -30,6 +30,7 @@ import (
 
 	"scriptboard/internal/managedfiles"
 	"scriptboard/internal/runmanager"
+	"scriptboard/internal/scheduler"
 )
 
 const initialPasswordFilename = "initial-admin-password"
@@ -47,6 +48,8 @@ type Config struct {
 	ManagedRoot     string
 	StateRoot       string
 	RunTimeoutGrace time.Duration
+	SchedulerNow    func() time.Time
+	SchedulerTick   time.Duration
 }
 
 type App struct {
@@ -54,6 +57,7 @@ type App struct {
 	stateRoot string
 	managed   *managedfiles.Store
 	runs      *runmanager.Manager
+	scheduler *scheduler.Manager
 	handler   http.Handler
 }
 
@@ -78,6 +82,7 @@ func Open(config Config) (*App, error) {
 		timeoutGrace = 30 * time.Second
 	}
 	application.runs = runmanager.New(db, application.managed, stateRoot, timeoutGrace)
+	application.scheduler = scheduler.New(db, application.runs, application.loadVariables, config.SchedulerNow, config.SchedulerTick)
 	application.handler = application.routes(managedRoot)
 	return application, nil
 }
@@ -87,6 +92,9 @@ func (a *App) Handler() http.Handler {
 }
 
 func (a *App) Close() error {
+	if a.scheduler != nil {
+		a.scheduler.Close()
+	}
 	if a.runs != nil {
 		a.runs.Close()
 	}
@@ -205,6 +213,27 @@ func openDatabase(path string) (*sql.DB, error) {
 			source_run_id TEXT NOT NULL REFERENCES runs(id),
 			sort_order INTEGER NOT NULL,
 			created_at INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS schedules (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			script_path TEXT NOT NULL,
+			arguments_template TEXT NOT NULL,
+			expression TEXT NOT NULL,
+			timeout_seconds INTEGER NOT NULL,
+			enabled INTEGER NOT NULL,
+			allow_overlap INTEGER NOT NULL,
+			next_fire_at INTEGER NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS schedule_triggers (
+			id TEXT PRIMARY KEY,
+			schedule_id TEXT NOT NULL REFERENCES schedules(id),
+			scheduled_for INTEGER NOT NULL,
+			result TEXT NOT NULL,
+			run_id TEXT NOT NULL,
+			error TEXT NOT NULL
 		)`,
 	} {
 		if _, err := db.Exec(statement); err != nil {
@@ -353,7 +382,86 @@ func (a *App) routes(_ string) http.Handler {
 	mux.Handle("POST /runs/{id}/quick-run", a.requireSession(false, http.HandlerFunc(a.saveQuickRun)))
 	mux.Handle("GET /quick-runs", a.requireSession(false, http.HandlerFunc(a.quickRunsPage)))
 	mux.Handle("POST /quick-runs/{id}/start", a.requireSession(false, http.HandlerFunc(a.startQuickRun)))
+	mux.Handle("GET /schedules", a.requireSession(false, http.HandlerFunc(a.schedulesPage)))
+	mux.Handle("POST /schedules", a.requireSession(false, http.HandlerFunc(a.createSchedule)))
+	mux.Handle("GET /audit", a.requireSession(false, http.HandlerFunc(a.auditPage)))
 	return mux
+}
+
+type auditView struct {
+	OccurredAt time.Time
+	Action     string
+	Target     string
+	Result     string
+	Source     string
+}
+
+func (a *App) auditPage(response http.ResponseWriter, _ *http.Request) {
+	rows, err := a.db.Query("SELECT occurred_at, action, target, result, source_address FROM audit_events ORDER BY occurred_at DESC LIMIT 1000")
+	if err != nil {
+		http.Error(response, "无法读取 Audit Event", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	var events []auditView
+	for rows.Next() {
+		var event auditView
+		var occurredAt int64
+		if err := rows.Scan(&occurredAt, &event.Action, &event.Target, &event.Result, &event.Source); err != nil {
+			http.Error(response, "无法读取 Audit Event", http.StatusInternalServerError)
+			return
+		}
+		event.OccurredAt = time.Unix(occurredAt, 0).UTC()
+		events = append(events, event)
+	}
+	response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = auditTemplate.Execute(response, events)
+}
+
+func (a *App) schedulesPage(response http.ResponseWriter, request *http.Request) {
+	schedules, err := a.scheduler.List()
+	if err != nil {
+		http.Error(response, "无法读取 Schedule", http.StatusInternalServerError)
+		return
+	}
+	current := request.Context().Value(sessionContextKey).(session)
+	response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = schedulesTemplate.Execute(response, struct {
+		Schedules []scheduler.Schedule
+		CSRFToken string
+	}{Schedules: schedules, CSRFToken: current.csrfToken})
+}
+
+func (a *App) createSchedule(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
+		return
+	}
+	name := strings.TrimSpace(request.FormValue("name"))
+	if name == "" || len([]byte(name)) > 256 {
+		http.Error(response, "Schedule 名称无效", http.StatusBadRequest)
+		return
+	}
+	timeoutSeconds := 0
+	if value := request.FormValue("timeout_seconds"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 0 || parsed > 24*60*60 {
+			http.Error(response, "超时必须是 0 到 86400 秒", http.StatusBadRequest)
+			return
+		}
+		timeoutSeconds = parsed
+	}
+	id, err := a.scheduler.Create(scheduler.CreateRequest{
+		Name: name, ScriptPath: request.FormValue("script"), ArgumentsTemplate: request.FormValue("arguments"),
+		Expression: request.FormValue("expression"), TimeoutSeconds: timeoutSeconds,
+		AllowOverlap: request.FormValue("disallow_overlap") == "",
+	})
+	if err != nil {
+		http.Error(response, "无法创建 Schedule："+err.Error(), http.StatusBadRequest)
+		return
+	}
+	a.recordAudit("create_schedule", id, "succeeded", request.RemoteAddr)
+	http.Redirect(response, request, "/schedules", http.StatusSeeOther)
 }
 
 type quickRunView struct {
@@ -1197,6 +1305,17 @@ var runTemplate = template.Must(template.New("run").Parse(`<!doctype html>
 var quickRunsTemplate = template.Must(template.New("quick-runs").Parse(`<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><title>Quick Run · ScriptBoard</title></head><body><main><h1>Quick Run</h1>
 <table><thead><tr><th>名称</th><th>Script</th><th>参数</th><th>操作</th></tr></thead><tbody>{{range .QuickRuns}}<tr><td>{{.Name}}</td><td>{{.ScriptPath}}</td><td>{{.ArgumentsTemplate}}</td><td><form method="post" action="/quick-runs/{{.ID}}/start"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button type="submit">启动</button></form></td></tr>{{else}}<tr><td colspan="4">暂无 Quick Run</td></tr>{{end}}</tbody></table>
+</main></body></html>`))
+
+var schedulesTemplate = template.Must(template.New("schedules").Parse(`<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>Schedule · ScriptBoard</title></head><body><main><h1>Schedule</h1>
+<form method="post" action="/schedules"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label>名称 <input name="name" required></label><label>Script <input name="script" required></label><label>参数 <input name="arguments"></label><label>五段 cron <input name="expression" placeholder="* * * * *" required></label><label>超时秒数 <input name="timeout_seconds" type="number" min="0" max="86400"></label><label><input name="disallow_overlap" type="checkbox" value="1">禁止重叠</label><button type="submit">创建</button></form>
+<table><thead><tr><th>名称</th><th>Script</th><th>cron</th><th>下次触发</th><th>最近结果</th></tr></thead><tbody>{{range .Schedules}}<tr><td>{{.Name}}</td><td>{{.ScriptPath}}</td><td>{{.Expression}}</td><td>{{.NextFireAt}}</td><td>{{.LastResult}}<input type="hidden" name="last_run_id" value="{{.LastRunID}}"></td></tr>{{else}}<tr><td colspan="5">暂无 Schedule</td></tr>{{end}}</tbody></table>
+</main></body></html>`))
+
+var auditTemplate = template.Must(template.New("audit").Parse(`<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>Audit Event · ScriptBoard</title></head><body><main><h1>Audit Event</h1>
+<table><thead><tr><th>时间</th><th>操作</th><th>目标</th><th>结果</th><th>来源</th></tr></thead><tbody>{{range .}}<tr><td>{{.OccurredAt}}</td><td>{{.Action}}</td><td>{{.Target}}</td><td>{{.Result}}</td><td>{{.Source}}</td></tr>{{else}}<tr><td colspan="5">暂无 Audit Event</td></tr>{{end}}</tbody></table>
 </main></body></html>`))
 
 var variablesTemplate = template.Must(template.New("variables").Parse(`<!doctype html>

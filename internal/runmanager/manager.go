@@ -181,6 +181,18 @@ func (m *Manager) ConflictsPath(relative string) bool {
 	return false
 }
 
+func (m *Manager) IsActiveScript(relative string) bool {
+	candidate := normalizeManagedPath(relative)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, active := range m.active {
+		if active.scriptPath == candidate {
+			return true
+		}
+	}
+	return false
+}
+
 func normalizeManagedPath(relative string) string {
 	value := strings.Trim(filepath.ToSlash(filepath.Clean(filepath.FromSlash(relative))), "/")
 	if runtime.GOOS == "windows" {
