@@ -169,6 +169,27 @@ func (s *Store) RestoreFromTrash(storedName, original string) error {
 	return nil
 }
 
+func (s *Store) PurgeTrash(storedName string) error {
+	if err := validateName(storedName); err != nil {
+		return fmt.Errorf("回收条目标识无效: %w", err)
+	}
+	storedPath := filepath.Join(s.root, ".scriptboard-trash", storedName)
+	info, err := os.Lstat(storedPath)
+	if err != nil {
+		return fmt.Errorf("回收条目不存在: %w", err)
+	}
+	if info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+		if err := os.RemoveAll(storedPath); err != nil {
+			return fmt.Errorf("清理回收目录: %w", err)
+		}
+		return nil
+	}
+	if err := os.Remove(storedPath); err != nil {
+		return fmt.Errorf("清理回收条目: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) ReadText(relative string, maxBytes int64) (TextDocument, error) {
 	file, info, err := s.OpenRegular(relative)
 	if err != nil {
@@ -313,6 +334,43 @@ func (s *Store) CreateDirectory(relative, name string) error {
 	}
 	if err := os.Mkdir(filepath.Join(parent, name), 0o755); err != nil {
 		return fmt.Errorf("创建目录: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) Move(source, destination string) error {
+	sourceClean := filepath.Clean(filepath.FromSlash(source))
+	destinationClean := filepath.Clean(filepath.FromSlash(destination))
+	if sourceClean == "." || destinationClean == "." || filepath.IsAbs(destinationClean) || destinationClean == ".." || strings.HasPrefix(destinationClean, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("源或目标路径无效")
+	}
+	sourcePath, sourceInfo, err := s.resolveEntry(filepath.ToSlash(sourceClean))
+	if err != nil {
+		return err
+	}
+	if sourceInfo.IsDir() && (destinationClean == sourceClean || strings.HasPrefix(destinationClean, sourceClean+string(filepath.Separator))) {
+		return fmt.Errorf("目录不能移动到自身内部")
+	}
+	name := filepath.Base(destinationClean)
+	if err := validateName(name); err != nil {
+		return err
+	}
+	parentRelative := filepath.Dir(destinationClean)
+	if parentRelative == "." {
+		parentRelative = ""
+	}
+	parent, err := s.resolveDirectory(filepath.ToSlash(parentRelative))
+	if err != nil {
+		return err
+	}
+	targetPath := filepath.Join(parent, name)
+	if _, err := os.Lstat(targetPath); err == nil {
+		return fmt.Errorf("目标路径已有同名条目")
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("检查移动目标: %w", err)
+	}
+	if err := os.Rename(sourcePath, targetPath); err != nil {
+		return fmt.Errorf("移动条目: %w", err)
 	}
 	return nil
 }

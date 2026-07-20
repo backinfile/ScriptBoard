@@ -62,6 +62,87 @@ func TestFilesPageListsManagedEntriesAndHidesReservedPaths(t *testing.T) {
 	}
 }
 
+func TestAdminCanBrowseNestedDirectories(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(filepath.Join(managedRoot, "子目录"), 0o755); err != nil {
+		t.Fatalf("create nested directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(managedRoot, "子目录", "inside.txt"), []byte("inside"), 0o644); err != nil {
+		t.Fatalf("create nested file: %v", err)
+	}
+	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+
+	response, err := client.Get(serverURL + "/files/%E5%AD%90%E7%9B%AE%E5%BD%95/")
+	if err != nil {
+		t.Fatalf("browse nested directory: %v", err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read nested directory: %v", err)
+	}
+	if response.StatusCode != http.StatusOK || !strings.Contains(string(body), "inside.txt") {
+		t.Fatalf("nested directory response: status=%d body=%s", response.StatusCode, body)
+	}
+	if !strings.Contains(string(body), `name="path" value="子目录"`) {
+		t.Fatalf("nested operations do not preserve current path: %s", body)
+	}
+}
+
+func TestAdminCanMoveAndRenameManagedEntry(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(filepath.Join(managedRoot, "source"), 0o755); err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(managedRoot, "target"), 0o755); err != nil {
+		t.Fatalf("create target: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(managedRoot, "source", "old.txt"), []byte("move me"), 0o644); err != nil {
+		t.Fatalf("create source file: %v", err)
+	}
+	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	response, err := client.Get(serverURL + "/files/source/")
+	if err != nil {
+		t.Fatalf("get source directory: %v", err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read source directory: %v", err)
+	}
+
+	response, err = client.PostForm(serverURL+"/files/move", url.Values{
+		"source":      {"source/old.txt"},
+		"destination": {"target/new.txt"},
+		"csrf_token":  {formToken(t, page)},
+	})
+	if err != nil {
+		t.Fatalf("move file: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/files/target/" {
+		t.Fatalf("move response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+	if _, err := os.Stat(filepath.Join(managedRoot, "source", "old.txt")); !os.IsNotExist(err) {
+		t.Fatalf("source still exists: %v", err)
+	}
+	content, err := os.ReadFile(filepath.Join(managedRoot, "target", "new.txt"))
+	if err != nil {
+		t.Fatalf("read moved file: %v", err)
+	}
+	if string(content) != "move me" {
+		t.Fatalf("moved content = %q", content)
+	}
+}
+
 func TestAdminCanStreamUploadAFile(t *testing.T) {
 	t.Parallel()
 
@@ -274,6 +355,59 @@ func TestAdminCanMoveFileToTrashAndRestoreIt(t *testing.T) {
 	}
 	if string(content) != "recover me" {
 		t.Fatalf("restored content = %q", content)
+	}
+}
+
+func TestAdminCanPermanentlyPurgeTrashEntry(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+		t.Fatalf("create managed root: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(managedRoot, "purge.txt"), []byte("delete forever"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	response, err := client.Get(serverURL + "/files/")
+	if err != nil {
+		t.Fatalf("get files: %v", err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/files/delete", url.Values{
+		"path":       {"purge.txt"},
+		"csrf_token": {formToken(t, page)},
+	})
+	if err != nil {
+		t.Fatalf("trash file: %v", err)
+	}
+	_ = response.Body.Close()
+	response, err = client.Get(serverURL + "/trash")
+	if err != nil {
+		t.Fatalf("get trash: %v", err)
+	}
+	trashPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/trash/purge", url.Values{
+		"id":         {hiddenValue(t, trashPage, "id")},
+		"csrf_token": {formToken(t, trashPage)},
+	})
+	if err != nil {
+		t.Fatalf("purge trash: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/trash" {
+		t.Fatalf("purge response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+	entries, err := os.ReadDir(filepath.Join(managedRoot, ".scriptboard-trash"))
+	if err != nil {
+		t.Fatalf("read trash directory: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("purged content remains: %v", entries)
 	}
 }
 
