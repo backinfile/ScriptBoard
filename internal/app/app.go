@@ -812,6 +812,7 @@ const appJS = `
   stream.addEventListener('complete',event=>{
     completed=event.data;stream.close();
     if(state)state.textContent='Run 已结束：'+completed;
+    if(pause)pause.hidden=true;
     const runStatus=document.querySelector('[data-run-status]');if(runStatus)runStatus.textContent=completed;
     const stopForm=document.querySelector('[data-run-stop-form]');if(stopForm)stopForm.hidden=true;
   });
