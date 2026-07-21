@@ -685,6 +685,9 @@ func (a *App) routes(_ string) http.Handler {
 		response.Header().Set("Cache-Control", "no-cache")
 		_, _ = io.WriteString(response, appJS)
 	})
+	mux.Handle("GET /", a.requireSession(false, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		http.Redirect(response, request, "/files/", http.StatusSeeOther)
+	})))
 	mux.HandleFunc("GET /login", func(response http.ResponseWriter, request *http.Request) {
 		token, err := randomToken(32)
 		if err != nil {

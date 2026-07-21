@@ -79,6 +79,38 @@ func TestFirstStartCreatesCredentialAndProtectsFiles(t *testing.T) {
 	}
 }
 
+func TestRootRedirectsToLoginWhenUnauthenticated(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	application, err := app.Open(app.Config{
+		ManagedRoot: filepath.Join(root, "managed"),
+		StateRoot:   filepath.Join(root, "state"),
+	})
+	if err != nil {
+		t.Fatalf("open application: %v", err)
+	}
+	t.Cleanup(func() { _ = application.Close() })
+
+	server := httptest.NewServer(application.Handler())
+	t.Cleanup(server.Close)
+	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+
+	response, err := client.Get(server.URL + "/")
+	if err != nil {
+		t.Fatalf("get root: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("root status = %d, want %d", response.StatusCode, http.StatusSeeOther)
+	}
+	if location := response.Header.Get("Location"); location != "/login" {
+		t.Fatalf("root redirect = %q, want /login", location)
+	}
+}
+
 func TestSecondInstanceUsingSameStateRootIsRejected(t *testing.T) {
 	t.Parallel()
 
