@@ -244,7 +244,7 @@ func (a *App) ResetAdminCredentials(username string) (string, error) {
 		return "", err
 	}
 	defer transaction.Rollback()
-	if _, err := transaction.Exec("UPDATE admin SET username = ?, password_hash = ?, must_change_password = 1 WHERE id = 1", username, hash); err != nil {
+	if _, err := transaction.Exec("UPDATE admin SET username = ?, password_hash = ?, must_change_password = 0 WHERE id = 1", username, hash); err != nil {
 		return "", err
 	}
 	if _, err := transaction.Exec("DELETE FROM sessions"); err != nil {
@@ -603,7 +603,7 @@ func (a *App) initializeAdmin(stateRoot string) error {
 		return err
 	}
 	if _, err := transaction.Exec(
-		"INSERT INTO admin (id, username, password_hash, must_change_password) VALUES (1, 'admin', ?, 1)",
+		"INSERT INTO admin (id, username, password_hash, must_change_password) VALUES (1, 'admin', ?, 0)",
 		hash,
 	); err != nil {
 		return fmt.Errorf("创建 admin: %w", err)
@@ -687,23 +687,19 @@ func (a *App) routes(_ string) http.Handler {
 		response.Header().Set("Cache-Control", "no-cache, must-revalidate")
 		_, _ = io.WriteString(response, appJS)
 	})
-	mux.Handle("GET /", a.requireSession(false, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	mux.Handle("GET /", a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		http.Redirect(response, request, "/files/", http.StatusSeeOther)
 	})))
 	mux.HandleFunc("GET /login", func(response http.ResponseWriter, request *http.Request) {
-		if current, _, ok := a.loadSession(request); ok {
-			if current.mustChange {
-				http.Redirect(response, request, "/settings/account", http.StatusSeeOther)
-			} else {
-				http.Redirect(response, request, "/files/", http.StatusSeeOther)
-			}
+		if _, _, ok := a.loadSession(request); ok {
+			http.Redirect(response, request, "/files/", http.StatusSeeOther)
 			return
 		}
 		renderLoginPage(response, request, http.StatusOK, "", "")
 	})
 	mux.HandleFunc("POST /login", a.login)
-	mux.Handle("POST /logout", a.requireSession(false, http.HandlerFunc(a.logout)))
-	mux.Handle("GET /settings/account", a.requireSession(true, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	mux.Handle("POST /logout", a.requireSession(http.HandlerFunc(a.logout)))
+	mux.Handle("GET /settings/account", a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		current := request.Context().Value(sessionContextKey).(session)
 		var username string
 		if err := a.db.QueryRow("SELECT username FROM admin WHERE id = 1").Scan(&username); err != nil {
@@ -716,47 +712,47 @@ func (a *App) routes(_ string) http.Handler {
 			CredentialOverride  bool
 		}{Username: username, CSRFToken: current.csrfToken, CredentialOverride: a.credentialOverride})
 	})))
-	mux.Handle("POST /settings/account", a.requireSession(true, http.HandlerFunc(a.changePassword)))
-	mux.Handle("GET /files/{path...}", a.requireSession(false, http.HandlerFunc(a.filesPage)))
-	mux.Handle("POST /files/mkdir", a.requireSession(false, http.HandlerFunc(a.createDirectory)))
-	mux.Handle("POST /files/upload", a.requireSession(false, http.HandlerFunc(a.uploadFiles)))
-	mux.Handle("GET /files/download/{path...}", a.requireSession(false, http.HandlerFunc(a.downloadFile)))
-	mux.Handle("GET /files/preview/{path...}", a.requireSession(false, http.HandlerFunc(a.previewImage)))
-	mux.Handle("POST /files/delete", a.requireSession(false, http.HandlerFunc(a.deleteFile)))
-	mux.Handle("POST /files/move", a.requireSession(false, http.HandlerFunc(a.moveFile)))
-	mux.Handle("POST /files/toggle-executable", a.requireSession(false, http.HandlerFunc(a.toggleExecutable)))
-	mux.Handle("GET /trash", a.requireSession(false, http.HandlerFunc(a.trashPage)))
-	mux.Handle("POST /trash/restore", a.requireSession(false, http.HandlerFunc(a.restoreTrash)))
-	mux.Handle("POST /trash/purge", a.requireSession(false, http.HandlerFunc(a.purgeTrash)))
-	mux.Handle("GET /files/edit/{path...}", a.requireSession(false, http.HandlerFunc(a.editTextPage)))
-	mux.Handle("POST /files/edit/{path...}", a.requireSession(false, http.HandlerFunc(a.saveText)))
-	mux.Handle("POST /runs/start", a.requireSession(false, http.HandlerFunc(a.startRun)))
-	mux.Handle("GET /runs", a.requireSession(false, http.HandlerFunc(a.runsPage)))
-	mux.Handle("GET /runs/{id}", a.requireSession(false, http.HandlerFunc(a.runDetails)))
-	mux.Handle("POST /runs/{id}/stop", a.requireSession(false, http.HandlerFunc(a.stopRun)))
-	mux.Handle("GET /runs/{id}/events", a.requireSession(false, http.HandlerFunc(a.runEvents)))
-	mux.Handle("GET /variables", a.requireSession(false, http.HandlerFunc(a.variablesPage)))
-	mux.Handle("POST /variables", a.requireSession(false, http.HandlerFunc(a.createVariable)))
-	mux.Handle("POST /variables/{name}/update", a.requireSession(false, http.HandlerFunc(a.updateVariable)))
-	mux.Handle("POST /variables/{name}/delete", a.requireSession(false, http.HandlerFunc(a.deleteVariable)))
-	mux.Handle("POST /runs/{id}/quick-run", a.requireSession(false, http.HandlerFunc(a.saveQuickRun)))
-	mux.Handle("GET /quick-runs", a.requireSession(false, http.HandlerFunc(a.quickRunsPage)))
-	mux.Handle("POST /quick-runs/{id}/start", a.requireSession(false, http.HandlerFunc(a.startQuickRun)))
-	mux.Handle("POST /quick-runs/{id}/move", a.requireSession(false, http.HandlerFunc(a.moveQuickRun)))
-	mux.Handle("POST /quick-runs/{id}/delete", a.requireSession(false, http.HandlerFunc(a.deleteQuickRun)))
-	mux.Handle("GET /schedules", a.requireSession(false, http.HandlerFunc(a.schedulesPage)))
-	mux.Handle("POST /schedules", a.requireSession(false, http.HandlerFunc(a.createSchedule)))
-	mux.Handle("POST /schedules/{id}/update", a.requireSession(false, http.HandlerFunc(a.updateSchedule)))
-	mux.Handle("POST /schedules/{id}/toggle", a.requireSession(false, http.HandlerFunc(a.toggleSchedule)))
-	mux.Handle("POST /schedules/{id}/delete", a.requireSession(false, http.HandlerFunc(a.deleteSchedule)))
-	mux.Handle("GET /audit", a.requireSession(false, http.HandlerFunc(a.auditPage)))
-	mux.Handle("GET /audit.csv", a.requireSession(false, http.HandlerFunc(a.auditDownload)))
-	mux.Handle("GET /settings/version-protection", a.requireSession(false, http.HandlerFunc(a.versionProtectionPage)))
-	mux.Handle("POST /settings/version-protection/enable", a.requireSession(false, http.HandlerFunc(a.enableVersionProtection)))
-	mux.Handle("POST /settings/version-protection/adopt", a.requireSession(false, http.HandlerFunc(a.adoptVersionProtection)))
-	mux.Handle("POST /settings/version-protection/disable", a.requireSession(false, http.HandlerFunc(a.disableVersionProtection)))
-	mux.Handle("POST /settings/version-protection/checkpoint", a.requireSession(false, http.HandlerFunc(a.checkpointVersionProtection)))
-	mux.Handle("POST /settings/version-protection/restore", a.requireSession(false, http.HandlerFunc(a.restoreVersionedFile)))
+	mux.Handle("POST /settings/account", a.requireSession(http.HandlerFunc(a.changePassword)))
+	mux.Handle("GET /files/{path...}", a.requireSession(http.HandlerFunc(a.filesPage)))
+	mux.Handle("POST /files/mkdir", a.requireSession(http.HandlerFunc(a.createDirectory)))
+	mux.Handle("POST /files/upload", a.requireSession(http.HandlerFunc(a.uploadFiles)))
+	mux.Handle("GET /files/download/{path...}", a.requireSession(http.HandlerFunc(a.downloadFile)))
+	mux.Handle("GET /files/preview/{path...}", a.requireSession(http.HandlerFunc(a.previewImage)))
+	mux.Handle("POST /files/delete", a.requireSession(http.HandlerFunc(a.deleteFile)))
+	mux.Handle("POST /files/move", a.requireSession(http.HandlerFunc(a.moveFile)))
+	mux.Handle("POST /files/toggle-executable", a.requireSession(http.HandlerFunc(a.toggleExecutable)))
+	mux.Handle("GET /trash", a.requireSession(http.HandlerFunc(a.trashPage)))
+	mux.Handle("POST /trash/restore", a.requireSession(http.HandlerFunc(a.restoreTrash)))
+	mux.Handle("POST /trash/purge", a.requireSession(http.HandlerFunc(a.purgeTrash)))
+	mux.Handle("GET /files/edit/{path...}", a.requireSession(http.HandlerFunc(a.editTextPage)))
+	mux.Handle("POST /files/edit/{path...}", a.requireSession(http.HandlerFunc(a.saveText)))
+	mux.Handle("POST /runs/start", a.requireSession(http.HandlerFunc(a.startRun)))
+	mux.Handle("GET /runs", a.requireSession(http.HandlerFunc(a.runsPage)))
+	mux.Handle("GET /runs/{id}", a.requireSession(http.HandlerFunc(a.runDetails)))
+	mux.Handle("POST /runs/{id}/stop", a.requireSession(http.HandlerFunc(a.stopRun)))
+	mux.Handle("GET /runs/{id}/events", a.requireSession(http.HandlerFunc(a.runEvents)))
+	mux.Handle("GET /variables", a.requireSession(http.HandlerFunc(a.variablesPage)))
+	mux.Handle("POST /variables", a.requireSession(http.HandlerFunc(a.createVariable)))
+	mux.Handle("POST /variables/{name}/update", a.requireSession(http.HandlerFunc(a.updateVariable)))
+	mux.Handle("POST /variables/{name}/delete", a.requireSession(http.HandlerFunc(a.deleteVariable)))
+	mux.Handle("POST /runs/{id}/quick-run", a.requireSession(http.HandlerFunc(a.saveQuickRun)))
+	mux.Handle("GET /quick-runs", a.requireSession(http.HandlerFunc(a.quickRunsPage)))
+	mux.Handle("POST /quick-runs/{id}/start", a.requireSession(http.HandlerFunc(a.startQuickRun)))
+	mux.Handle("POST /quick-runs/{id}/move", a.requireSession(http.HandlerFunc(a.moveQuickRun)))
+	mux.Handle("POST /quick-runs/{id}/delete", a.requireSession(http.HandlerFunc(a.deleteQuickRun)))
+	mux.Handle("GET /schedules", a.requireSession(http.HandlerFunc(a.schedulesPage)))
+	mux.Handle("POST /schedules", a.requireSession(http.HandlerFunc(a.createSchedule)))
+	mux.Handle("POST /schedules/{id}/update", a.requireSession(http.HandlerFunc(a.updateSchedule)))
+	mux.Handle("POST /schedules/{id}/toggle", a.requireSession(http.HandlerFunc(a.toggleSchedule)))
+	mux.Handle("POST /schedules/{id}/delete", a.requireSession(http.HandlerFunc(a.deleteSchedule)))
+	mux.Handle("GET /audit", a.requireSession(http.HandlerFunc(a.auditPage)))
+	mux.Handle("GET /audit.csv", a.requireSession(http.HandlerFunc(a.auditDownload)))
+	mux.Handle("GET /settings/version-protection", a.requireSession(http.HandlerFunc(a.versionProtectionPage)))
+	mux.Handle("POST /settings/version-protection/enable", a.requireSession(http.HandlerFunc(a.enableVersionProtection)))
+	mux.Handle("POST /settings/version-protection/adopt", a.requireSession(http.HandlerFunc(a.adoptVersionProtection)))
+	mux.Handle("POST /settings/version-protection/disable", a.requireSession(http.HandlerFunc(a.disableVersionProtection)))
+	mux.Handle("POST /settings/version-protection/checkpoint", a.requireSession(http.HandlerFunc(a.checkpointVersionProtection)))
+	mux.Handle("POST /settings/version-protection/restore", a.requireSession(http.HandlerFunc(a.restoreVersionedFile)))
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		request = a.applyTrustedProxy(request)
 		response.Header().Set("X-Content-Type-Options", "nosniff")
@@ -2405,11 +2401,9 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 	}
 
 	var username, passwordHash string
-	var mustChange bool
-	err = a.db.QueryRow("SELECT username, password_hash, must_change_password FROM admin WHERE id = 1").Scan(
+	err = a.db.QueryRow("SELECT username, password_hash FROM admin WHERE id = 1").Scan(
 		&username,
 		&passwordHash,
-		&mustChange,
 	)
 	if err != nil {
 		renderLoginFailure(response, request, http.StatusInternalServerError, request.FormValue("username"), "暂时无法登录，请稍后重试")
@@ -2452,10 +2446,6 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 	})
 	http.SetCookie(response, &http.Cookie{Name: loginCSRFCookieName, Path: "/login", MaxAge: -1})
 	a.recordAudit("login", "admin", "succeeded", request.RemoteAddr)
-	if mustChange {
-		completeLogin(response, request, "/settings/account")
-		return
-	}
 	completeLogin(response, request, "/files/")
 }
 
@@ -2513,8 +2503,7 @@ func (a *App) clearLoginFailures(keys ...string) {
 }
 
 type session struct {
-	csrfToken  string
-	mustChange bool
+	csrfToken string
 }
 
 func (a *App) loadSession(request *http.Request) (session, string, bool) {
@@ -2526,11 +2515,10 @@ func (a *App) loadSession(request *http.Request) (session, string, bool) {
 	var username string
 	var lastSeen, expiresAt int64
 	err = a.db.QueryRow(`
-		SELECT sessions.csrf_token, sessions.last_seen_at, sessions.expires_at,
-			admin.must_change_password, admin.username
+		SELECT sessions.csrf_token, sessions.last_seen_at, sessions.expires_at, admin.username
 		FROM sessions CROSS JOIN admin
 		WHERE sessions.token_hash = ? AND admin.id = 1`, hashToken(cookie.Value),
-	).Scan(&current.csrfToken, &lastSeen, &expiresAt, &current.mustChange, &username)
+	).Scan(&current.csrfToken, &lastSeen, &expiresAt, &username)
 	now := time.Now().UTC()
 	if err != nil || now.Unix() >= expiresAt || now.Sub(time.Unix(lastSeen, 0)) >= 12*time.Hour {
 		if err == nil {
@@ -2546,7 +2534,7 @@ func validSessionCSRF(request *http.Request) bool {
 	return ok && subtle.ConstantTimeCompare([]byte(current.csrfToken), []byte(request.FormValue("csrf_token"))) == 1
 }
 
-func (a *App) requireSession(allowPasswordChange bool, next http.Handler) http.Handler {
+func (a *App) requireSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		current, _, ok := a.loadSession(request)
 		if !ok {
@@ -2556,10 +2544,6 @@ func (a *App) requireSession(allowPasswordChange bool, next http.Handler) http.H
 		cookie, _ := request.Cookie(sessionCookieName)
 		now := time.Now().UTC()
 		_, _ = a.db.Exec("UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?", now.Unix(), hashToken(cookie.Value))
-		if current.mustChange && !allowPasswordChange {
-			http.Redirect(response, request, "/settings/account", http.StatusSeeOther)
-			return
-		}
 		next.ServeHTTP(response, request.WithContext(context.WithValue(request.Context(), sessionContextKey, current)))
 	})
 }

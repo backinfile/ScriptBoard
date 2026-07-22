@@ -349,8 +349,8 @@ func TestAJAXLoginReturnsServerSelectedRedirect(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("AJAX login status = %d, want %d", response.StatusCode, http.StatusOK)
 	}
-	if payload.Redirect != "/settings/account" {
-		t.Fatalf("AJAX login redirect = %q, want /settings/account", payload.Redirect)
+	if payload.Redirect != "/files/" {
+		t.Fatalf("AJAX login redirect = %q, want /files/", payload.Redirect)
 	}
 
 	response, err = client.Get(server.URL + payload.Redirect)
@@ -563,7 +563,7 @@ func TestSecondInstanceUsingSameStateRootIsRejected(t *testing.T) {
 	}
 }
 
-func TestInitialPasswordLoginRequiresPasswordChange(t *testing.T) {
+func TestInitialPasswordLoginCanAccessApplication(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -618,8 +618,8 @@ func TestInitialPasswordLoginRequiresPasswordChange(t *testing.T) {
 	if response.StatusCode != http.StatusSeeOther {
 		t.Fatalf("login status = %d, want %d", response.StatusCode, http.StatusSeeOther)
 	}
-	if location := response.Header.Get("Location"); location != "/settings/account" {
-		t.Fatalf("login redirect = %q, want /settings/account", location)
+	if location := response.Header.Get("Location"); location != "/files/" {
+		t.Fatalf("login redirect = %q, want /files/", location)
 	}
 
 	response, err = client.Get(server.URL + "/login")
@@ -627,7 +627,7 @@ func TestInitialPasswordLoginRequiresPasswordChange(t *testing.T) {
 		t.Fatalf("get login while authenticated: %v", err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/settings/account" {
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/files/" {
 		t.Fatalf("authenticated login page response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
 
@@ -636,8 +636,8 @@ func TestInitialPasswordLoginRequiresPasswordChange(t *testing.T) {
 		t.Fatalf("get files: %v", err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/settings/account" {
-		t.Fatalf("files while password change required: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("authenticated files status = %d, want %d", response.StatusCode, http.StatusOK)
 	}
 }
 
