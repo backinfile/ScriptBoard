@@ -938,7 +938,7 @@ form{display:flex;align-items:end;gap:10px;flex-wrap:wrap;margin:14px 0;padding:
 table{width:100%;border-collapse:separate;border-spacing:0;margin-top:28px;min-width:720px;background:var(--paper);border-top:1px solid var(--ink);border-bottom:1px solid var(--line)}th,td{text-align:left;padding:15px 14px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.06em;font-weight:750;background:#f6f6f1}tbody tr{transition:background .14s ease,transform .14s ease}tbody tr:hover{background:#f1f2e9}tbody tr:last-child td{border-bottom:0}td:first-child{font-weight:650}td a{font-weight:700}td ol{margin:0;padding-left:18px}td img{max-width:96px;height:auto}
 pre{position:relative;background:var(--terminal);color:var(--terminal-ink);border:0;border-radius:4px;padding:24px;white-space:pre-wrap;word-break:break-word;max-height:65vh;overflow:auto;box-shadow:inset 0 0 0 1px #30312d;font:13px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace}pre:before{content:"SCRIPTBOARD OUTPUT";display:block;margin-bottom:18px;color:#92958a;font-size:10px;letter-spacing:.1em}dl{display:grid;grid-template-columns:minmax(120px,max-content) 1fr;gap:0;border-top:1px solid var(--ink);border-bottom:1px solid var(--line);background:var(--paper)}dt,dd{padding:12px 14px;border-bottom:1px solid var(--line)}dt{color:var(--muted);font-size:12px;font-weight:700}dd{margin:0;word-break:break-all;color:var(--ink)}dt:last-of-type,dt:last-of-type+dd{border-bottom:0}img{display:block;border-radius:3px;margin-bottom:8px;border:1px solid var(--line)}[data-source="stderr"]{color:#ff8e82}[data-source="system"],[data-encoding-error="true"]{color:var(--accent)}[data-run-live-state]{font:650 12px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--muted)}
 .login-page{display:grid;place-items:center;background:var(--terminal);color:var(--terminal-ink)}.login-page:after{opacity:.35;background-image:linear-gradient(rgba(231,243,75,.07) 1px,transparent 1px),linear-gradient(90deg,rgba(231,243,75,.07) 1px,transparent 1px)}.login-page main{width:min(440px,calc(100% - 32px));margin:0;padding:54px 46px;background:var(--paper);color:var(--ink);overflow:visible;box-shadow:18px 18px 0 var(--accent)}.login-page main:before{content:"SCRIPTBOARD / ADMIN ACCESS"}.login-page h1{font-size:48px;margin-bottom:36px}.login-page form{display:grid;align-items:stretch;padding:0;border:0}.login-page input,.login-page button{width:100%}.login-page .app-header{display:none}.login-error{display:grid;gap:3px;margin:-16px 0 24px;padding:13px 14px;border-left:3px solid var(--danger);background:#f8e9e7;color:var(--danger);animation:error-in .2s ease-out}.login-error strong{font-size:12px}.login-error span{font-size:13px;color:#74312b}
-.page-error{max-width:720px;padding:18px;border-left:3px solid var(--danger);background:#f8e9e7;color:#74312b}.error-code{margin:0 0 10px;font:700 12px/1 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--danger)}.error-return{display:inline-block;margin-top:12px;font-weight:750}
+.login-error[hidden]{display:none}.page-error{max-width:720px;padding:18px;border-left:3px solid var(--danger);background:#f8e9e7;color:#74312b}.error-code{margin:0 0 10px;font:700 12px/1 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--danger)}.error-return{display:inline-block;margin-top:12px;font-weight:750}
 @keyframes arrive{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}@keyframes error-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}@media(max-width:1050px){.app-header__inner{width:min(100% - 28px,1180px);grid-template-columns:auto 1fr;padding:10px 0}.app-user{justify-self:end}.app-nav{grid-column:1/-1;order:3;width:100%;padding-bottom:2px}main{width:min(100% - 28px,1180px);padding-top:38px}h1{margin-bottom:30px}}@media(max-width:640px){.brand__word{font-size:15px}.app-header__inner{gap:10px}.app-user{gap:7px}.app-user>a{display:none}.app-status{font-size:10px}main{padding-bottom:56px}main:before{margin-bottom:10px}h1{font-size:36px}form{align-items:stretch;flex-direction:column}td form{display:flex;align-items:stretch}input,textarea,select,button{width:100%;min-height:44px}input[type="checkbox"]{width:18px}table{display:block;width:100%;max-width:100%;min-width:0;overflow-x:auto}.login-page main{padding:40px 28px;box-shadow:10px 10px 0 var(--accent)}}@media(prefers-reduced-motion:reduce){*,*:before{animation:none!important;transition:none!important}}
 `
 
@@ -948,6 +948,38 @@ const appJS = `
   const main=document.querySelector('main');
   if(path==='/login'){
     document.body.classList.add('login-page');
+    const form=document.querySelector('[data-login-form]');
+    const error=document.querySelector('[data-login-error]');
+    const errorMessage=document.querySelector('[data-login-error-message]');
+    if(form&&error&&errorMessage&&window.fetch){
+      form.addEventListener('submit',async event=>{
+        event.preventDefault();
+        const submit=form.querySelector('[type="submit"]');
+        const csrf=form.querySelector('[name="csrf_token"]');
+        const password=form.querySelector('[name="password"]');
+        const originalLabel=submit?.textContent||'登录';
+        error.hidden=true;
+        form.setAttribute('aria-busy','true');
+        if(submit){submit.disabled=true;submit.textContent='登录中…'}
+        try{
+          const response=await fetch(form.action,{
+            method:'POST',
+            body:new URLSearchParams(new FormData(form)),
+            headers:{Accept:'application/json'}
+          });
+          const payload=await response.json();
+          if(response.ok&&payload.redirect){location.assign(payload.redirect);return}
+          if(csrf&&payload.csrf_token)csrf.value=payload.csrf_token;
+          errorMessage.textContent=payload.error||'暂时无法登录，请稍后重试';
+        }catch{
+          errorMessage.textContent='网络连接失败，请稍后重试';
+        }
+        error.hidden=false;
+        password?.focus();
+        form.removeAttribute('aria-busy');
+        if(submit){submit.disabled=false;submit.textContent=originalLabel}
+      });
+    }
   }else if(main){
     const links=[
       ['/files/','文件'],['/runs','运行记录'],['/quick-runs','快捷执行'],
@@ -2357,7 +2389,7 @@ func (a *App) changePassword(response http.ResponseWriter, request *http.Request
 func (a *App) login(response http.ResponseWriter, request *http.Request) {
 	csrfCookie, err := request.Cookie(loginCSRFCookieName)
 	if err != nil || subtle.ConstantTimeCompare([]byte(csrfCookie.Value), []byte(request.FormValue("csrf_token"))) != 1 {
-		renderLoginPage(response, request, http.StatusForbidden, request.FormValue("username"), "登录页面已过期，请重试")
+		renderLoginFailure(response, request, http.StatusForbidden, request.FormValue("username"), "登录页面已过期，请重试")
 		return
 	}
 	remoteHost, _, splitErr := net.SplitHostPort(request.RemoteAddr)
@@ -2368,7 +2400,7 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 	if retryAfter := a.loginRetryAfter(loginKeys...); retryAfter > 0 {
 		response.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(retryAfter.Seconds()))))
 		a.recordAudit("login", "admin", "rate_limited", request.RemoteAddr)
-		renderLoginPage(response, request, http.StatusTooManyRequests, request.FormValue("username"), "登录尝试过于频繁，请稍后重试")
+		renderLoginFailure(response, request, http.StatusTooManyRequests, request.FormValue("username"), "登录尝试过于频繁，请稍后重试")
 		return
 	}
 
@@ -2380,25 +2412,25 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 		&mustChange,
 	)
 	if err != nil {
-		renderLoginPage(response, request, http.StatusInternalServerError, request.FormValue("username"), "暂时无法登录，请稍后重试")
+		renderLoginFailure(response, request, http.StatusInternalServerError, request.FormValue("username"), "暂时无法登录，请稍后重试")
 		return
 	}
 	if request.FormValue("username") != username || !verifyPassword(request.FormValue("password"), passwordHash) {
 		a.recordLoginFailure(loginKeys...)
 		a.recordAudit("login", "admin", "failed", request.RemoteAddr)
-		renderLoginPage(response, request, http.StatusUnauthorized, request.FormValue("username"), "用户名或密码错误")
+		renderLoginFailure(response, request, http.StatusUnauthorized, request.FormValue("username"), "用户名或密码错误")
 		return
 	}
 	a.clearLoginFailures(loginKeys...)
 
 	token, err := randomToken(32)
 	if err != nil {
-		renderLoginPage(response, request, http.StatusInternalServerError, request.FormValue("username"), "暂时无法登录，请稍后重试")
+		renderLoginFailure(response, request, http.StatusInternalServerError, request.FormValue("username"), "暂时无法登录，请稍后重试")
 		return
 	}
 	sessionCSRF, err := randomToken(32)
 	if err != nil {
-		renderLoginPage(response, request, http.StatusInternalServerError, request.FormValue("username"), "暂时无法登录，请稍后重试")
+		renderLoginFailure(response, request, http.StatusInternalServerError, request.FormValue("username"), "暂时无法登录，请稍后重试")
 		return
 	}
 	now := time.Now().UTC()
@@ -2406,7 +2438,7 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 		"INSERT INTO sessions (token_hash, csrf_token, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?)",
 		hashToken(token), sessionCSRF, now.Unix(), now.Unix(), now.Add(7*24*time.Hour).Unix(),
 	); err != nil {
-		renderLoginPage(response, request, http.StatusInternalServerError, request.FormValue("username"), "暂时无法登录，请稍后重试")
+		renderLoginFailure(response, request, http.StatusInternalServerError, request.FormValue("username"), "暂时无法登录，请稍后重试")
 		return
 	}
 	http.SetCookie(response, &http.Cookie{
@@ -2421,10 +2453,10 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 	http.SetCookie(response, &http.Cookie{Name: loginCSRFCookieName, Path: "/login", MaxAge: -1})
 	a.recordAudit("login", "admin", "succeeded", request.RemoteAddr)
 	if mustChange {
-		http.Redirect(response, request, "/settings/account", http.StatusSeeOther)
+		completeLogin(response, request, "/settings/account")
 		return
 	}
-	http.Redirect(response, request, "/files/", http.StatusSeeOther)
+	completeLogin(response, request, "/files/")
 }
 
 func (a *App) logout(response http.ResponseWriter, request *http.Request) {
@@ -2597,12 +2629,50 @@ func renderLoginPage(response http.ResponseWriter, request *http.Request, status
 	_ = loginTemplate.Execute(response, loginPageData{CSRFToken: token, Username: username, Error: errorMessage})
 }
 
+func renderLoginFailure(response http.ResponseWriter, request *http.Request, status int, username, errorMessage string) {
+	if !acceptsJSON(request) {
+		renderLoginPage(response, request, status, username, errorMessage)
+		return
+	}
+	token, err := randomToken(32)
+	if err != nil {
+		http.Error(response, "无法创建登录表单", http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(response, &http.Cookie{
+		Name:     loginCSRFCookieName,
+		Value:    token,
+		Path:     "/login",
+		HttpOnly: true,
+		Secure:   isSecureRequest(request),
+		SameSite: http.SameSiteStrictMode,
+	})
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Content-Type", "application/json; charset=utf-8")
+	response.WriteHeader(status)
+	_ = json.NewEncoder(response).Encode(map[string]string{"error": errorMessage, "csrf_token": token})
+}
+
+func completeLogin(response http.ResponseWriter, request *http.Request, destination string) {
+	if !acceptsJSON(request) {
+		http.Redirect(response, request, destination, http.StatusSeeOther)
+		return
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(response).Encode(map[string]string{"redirect": destination})
+}
+
+func acceptsJSON(request *http.Request) bool {
+	return strings.Contains(request.Header.Get("Accept"), "application/json")
+}
+
 var loginTemplate = template.Must(template.New("login").Parse(`<!doctype html>
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=5"><script defer src="/assets/app-v2.js?v=5"></script><title>登录 · ScriptBoard</title></head>
 <body class="login-page"><main><h1>登录</h1>
-{{if .Error}}<div class="login-error" role="alert"><strong>登录失败</strong><span>{{.Error}}</span></div>{{end}}
-<form method="post" action="/login">
+<div class="login-error" role="alert" aria-live="polite" data-login-error {{if not .Error}}hidden{{end}}><strong>登录失败</strong><span data-login-error-message>{{.Error}}</span></div>
+<form method="post" action="/login" data-login-form>
 <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
 <label>用户名 <input name="username" {{if not .Error}}autofocus {{end}}value="{{.Username}}" autocomplete="username" required></label>
 <label>密码 <input name="password" type="password" autocomplete="current-password" required {{if .Error}}autofocus{{end}}></label>

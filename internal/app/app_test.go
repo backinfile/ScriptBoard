@@ -1,6 +1,8 @@
 package app_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -121,6 +123,42 @@ func TestRootRedirectsToLoginWhenUnauthenticated(t *testing.T) {
 	}
 }
 
+func TestLoginPageExposesAJAXEnhancementHooks(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	application, err := app.Open(app.Config{
+		ManagedRoot: filepath.Join(root, "managed"),
+		StateRoot:   filepath.Join(root, "state"),
+	})
+	if err != nil {
+		t.Fatalf("open application: %v", err)
+	}
+	t.Cleanup(func() { _ = application.Close() })
+	server := httptest.NewServer(application.Handler())
+	t.Cleanup(server.Close)
+
+	response, err := http.Get(server.URL + "/login")
+	if err != nil {
+		t.Fatalf("get login: %v", err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read login: %v", err)
+	}
+	for _, expected := range []string{
+		`data-login-form`,
+		`data-login-error`,
+		`data-login-error-message`,
+		`aria-live="polite"`,
+	} {
+		if !bytes.Contains(page, []byte(expected)) {
+			t.Fatalf("login page does not contain %q: %s", expected, page)
+		}
+	}
+}
+
 func TestInvalidLoginRendersInlineErrorPage(t *testing.T) {
 	t.Parallel()
 
@@ -177,6 +215,151 @@ func TestInvalidLoginRendersInlineErrorPage(t *testing.T) {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("invalid login page does not contain %q: %s", expected, page)
 		}
+	}
+}
+
+func TestInvalidAJAXLoginReturnsStructuredErrorAndFreshCSRFToken(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	application, err := app.Open(app.Config{
+		ManagedRoot: filepath.Join(root, "managed"),
+		StateRoot:   filepath.Join(root, "state"),
+	})
+	if err != nil {
+		t.Fatalf("open application: %v", err)
+	}
+	t.Cleanup(func() { _ = application.Close() })
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("create cookie jar: %v", err)
+	}
+	server := httptest.NewServer(application.Handler())
+	t.Cleanup(server.Close)
+	client := &http.Client{Jar: jar}
+
+	response, err := client.Get(server.URL + "/login")
+	if err != nil {
+		t.Fatalf("get login: %v", err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read login: %v", err)
+	}
+
+	form := url.Values{
+		"username":   {"admin"},
+		"password":   {"wrong-password"},
+		"csrf_token": {formToken(t, page)},
+	}
+	request, err := http.NewRequest(http.MethodPost, server.URL+"/login", strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatalf("create AJAX login request: %v", err)
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response, err = client.Do(request)
+	if err != nil {
+		t.Fatalf("post AJAX login: %v", err)
+	}
+	defer response.Body.Close()
+
+	var payload struct {
+		Error     string `json:"error"`
+		CSRFToken string `json:"csrf_token"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode AJAX login response: %v", err)
+	}
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("AJAX login status = %d, want %d", response.StatusCode, http.StatusUnauthorized)
+	}
+	if contentType := response.Header.Get("Content-Type"); !strings.HasPrefix(contentType, "application/json") {
+		t.Fatalf("AJAX login content type = %q, want JSON", contentType)
+	}
+	if payload.Error != "用户名或密码错误" {
+		t.Fatalf("AJAX login error = %q", payload.Error)
+	}
+	if payload.CSRFToken == "" || payload.CSRFToken == form.Get("csrf_token") {
+		t.Fatalf("AJAX login did not return a fresh CSRF token")
+	}
+}
+
+func TestAJAXLoginReturnsServerSelectedRedirect(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	stateRoot := filepath.Join(root, "state")
+	application, err := app.Open(app.Config{
+		ManagedRoot: filepath.Join(root, "managed"),
+		StateRoot:   stateRoot,
+	})
+	if err != nil {
+		t.Fatalf("open application: %v", err)
+	}
+	t.Cleanup(func() { _ = application.Close() })
+	password, err := os.ReadFile(filepath.Join(stateRoot, "secrets", "initial-admin-password"))
+	if err != nil {
+		t.Fatalf("read initial password: %v", err)
+	}
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("create cookie jar: %v", err)
+	}
+	server := httptest.NewServer(application.Handler())
+	t.Cleanup(server.Close)
+	client := &http.Client{Jar: jar}
+
+	response, err := client.Get(server.URL + "/login")
+	if err != nil {
+		t.Fatalf("get login: %v", err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read login: %v", err)
+	}
+
+	form := url.Values{
+		"username":   {"admin"},
+		"password":   {strings.TrimSpace(string(password))},
+		"csrf_token": {formToken(t, page)},
+	}
+	request, err := http.NewRequest(http.MethodPost, server.URL+"/login", strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatalf("create AJAX login request: %v", err)
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response, err = client.Do(request)
+	if err != nil {
+		t.Fatalf("post AJAX login: %v", err)
+	}
+	defer response.Body.Close()
+
+	var payload struct {
+		Redirect string `json:"redirect"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode AJAX login response: %v", err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("AJAX login status = %d, want %d", response.StatusCode, http.StatusOK)
+	}
+	if payload.Redirect != "/settings/account" {
+		t.Fatalf("AJAX login redirect = %q, want /settings/account", payload.Redirect)
+	}
+
+	response, err = client.Get(server.URL + payload.Redirect)
+	if err != nil {
+		t.Fatalf("follow AJAX login redirect: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("authenticated redirect status = %d, want %d", response.StatusCode, http.StatusOK)
 	}
 }
 
