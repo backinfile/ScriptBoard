@@ -71,8 +71,11 @@ func TestFirstStartCreatesCredentialAndProtectsFiles(t *testing.T) {
 	if cacheControl := response.Header.Get("Cache-Control"); cacheControl != "no-store" {
 		t.Fatalf("login cache control = %q, want no-store", cacheControl)
 	}
-	if !strings.Contains(string(loginBody), `name="username" autofocus`) {
-		t.Fatalf("login username is not initially focused: %s", loginBody)
+	if strings.Contains(string(loginBody), "autofocus") {
+		t.Fatalf("login page uses unconditional autofocus: %s", loginBody)
+	}
+	if !strings.Contains(string(loginBody), `name="username" value="" autocomplete="username" spellcheck="false"`) {
+		t.Fatalf("login username field is missing input metadata: %s", loginBody)
 	}
 	if !strings.Contains(string(loginBody), `<body class="login-page">`) {
 		t.Fatalf("login page styling depends on JavaScript: %s", loginBody)
@@ -155,6 +158,72 @@ func TestLoginPageExposesAJAXEnhancementHooks(t *testing.T) {
 	} {
 		if !bytes.Contains(page, []byte(expected)) {
 			t.Fatalf("login page does not contain %q: %s", expected, page)
+		}
+	}
+}
+
+func TestPrimaryNavigationAvoidsFullPageReloads(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	if err := os.MkdirAll(managedRoot, 0o700); err != nil {
+		t.Fatalf("create managed root: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(managedRoot, "preview.png"), []byte("preview"), 0o600); err != nil {
+		t.Fatalf("create preview fixture: %v", err)
+	}
+	client, serverURL := authenticatedClient(t, managedRoot, filepath.Join(root, "state"))
+
+	response, err := client.Get(serverURL + "/files/")
+	if err != nil {
+		t.Fatalf("get files page: %v", err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read files page: %v", err)
+	}
+	for _, expected := range []string{
+		`data-pjax-nav`, `class="skip-link" href="#main-content"`, `main id="main-content"`,
+		`autocomplete="off" placeholder="例如：backup.ps1…"`, `width="96" height="64"`, `data-local-time`,
+	} {
+		if !bytes.Contains(page, []byte(expected)) {
+			t.Fatalf("files page does not contain %q: %s", expected, page)
+		}
+	}
+
+	for _, asset := range []string{"/assets/app.css?v=9", "/assets/app-v2.js?v=9"} {
+		response, err = client.Get(serverURL + asset)
+		if err != nil {
+			t.Fatalf("get %s: %v", asset, err)
+		}
+		body, readErr := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if readErr != nil {
+			t.Fatalf("read %s: %v", asset, readErr)
+		}
+		if cacheControl := response.Header.Get("Cache-Control"); cacheControl != "public, max-age=31536000, immutable" {
+			t.Errorf("%s cache control = %q, want immutable versioned caching", asset, cacheControl)
+		}
+		if strings.HasSuffix(asset, ".js?v=9") {
+			for _, expected := range []string{"preventDefault()", "DOMParser", "history.pushState", "popstate", "replaceWith", "beforeunload", "confirmDiscard", "Intl.DateTimeFormat", "submitterMirror"} {
+				if !bytes.Contains(body, []byte(expected)) {
+					t.Errorf("interaction script does not contain %q", expected)
+				}
+			}
+		}
+		if strings.HasSuffix(asset, ".css?v=9") {
+			for _, expected := range []string{"main[data-pjax]", "summary:focus-visible", "overscroll-behavior:contain", "touch-action:manipulation", "*::after", ".button--danger"} {
+				if !bytes.Contains(body, []byte(expected)) {
+					t.Errorf("stylesheet does not contain %q", expected)
+				}
+			}
+			for _, forbidden := range []string{`form:first-of-type`, `button[name="path"]`} {
+				if bytes.Contains(body, []byte(forbidden)) {
+					t.Errorf("stylesheet retains fragile selector %q", forbidden)
+				}
+			}
 		}
 	}
 }
