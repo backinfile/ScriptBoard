@@ -524,10 +524,23 @@ func (m *Manager) Get(id string) (Run, error) {
 }
 
 func (m *Manager) List(limit int) ([]Run, error) {
+	return m.ListPage(limit, 0)
+}
+
+func (m *Manager) Count() (int, error) {
+	var count int
+	err := m.db.QueryRow("SELECT COUNT(*) FROM runs").Scan(&count)
+	return count, err
+}
+
+func (m *Manager) ListPage(limit, offset int) ([]Run, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
-	rows, err := m.db.Query("SELECT id FROM runs ORDER BY created_at DESC LIMIT ?", limit)
+	if offset < 0 {
+		offset = 0
+	}
+	rows, err := m.db.Query("SELECT id FROM runs ORDER BY created_at DESC LIMIT ? OFFSET ?", limit, offset)
 	if err != nil {
 		return nil, err
 	}

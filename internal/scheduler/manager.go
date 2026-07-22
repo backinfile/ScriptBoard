@@ -215,12 +215,28 @@ func (m *Manager) Create(request CreateRequest) (string, error) {
 }
 
 func (m *Manager) List() ([]Schedule, error) {
+	return m.ListPage(1000, 0)
+}
+
+func (m *Manager) Count() (int, error) {
+	var count int
+	err := m.db.QueryRow("SELECT COUNT(*) FROM schedules WHERE deleted = 0").Scan(&count)
+	return count, err
+}
+
+func (m *Manager) ListPage(limit, offset int) ([]Schedule, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
 	rows, err := m.db.Query(`SELECT s.id, s.name, s.script_path, s.arguments_template, s.expression, s.timeout_seconds,
 		s.enabled, s.allow_overlap, s.next_fire_at,
 		COALESCE((SELECT result FROM schedule_triggers t WHERE t.schedule_id = s.id ORDER BY t.scheduled_for DESC LIMIT 1), ''),
 		COALESCE((SELECT run_id FROM schedule_triggers t WHERE t.schedule_id = s.id ORDER BY t.scheduled_for DESC LIMIT 1), ''),
 		COALESCE((SELECT error FROM schedule_triggers t WHERE t.schedule_id = s.id ORDER BY t.scheduled_for DESC LIMIT 1), '')
-		FROM schedules s WHERE s.deleted = 0 ORDER BY s.created_at`)
+		FROM schedules s WHERE s.deleted = 0 ORDER BY s.created_at LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, err
 	}

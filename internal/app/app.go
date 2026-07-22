@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
+	"embed"
 	"encoding/base64"
 	"encoding/csv"
 	"encoding/hex"
@@ -46,6 +47,21 @@ import (
 
 const initialPasswordFilename = "initial-admin-password"
 const currentSchemaVersion = 5
+
+//go:embed web/assets/* web/templates/*
+var webFiles embed.FS
+
+func mustWebAsset(path string) string {
+	content, err := webFiles.ReadFile(path)
+	if err != nil {
+		panic(err)
+	}
+	return string(content)
+}
+
+func mustWebTemplate(name, path string) *template.Template {
+	return template.Must(template.New(name).Parse(mustWebAsset(path)))
+}
 
 const (
 	sessionCookieName   = "scriptboard_session"
@@ -844,6 +860,40 @@ type navigationItem struct {
 	Current bool
 }
 
+const listPageSize = 20
+
+type paginationView struct {
+	Page, PageCount, Total, Start, End int
+	PreviousURL, NextURL               string
+	HasPrevious, HasNext               bool
+}
+
+func newPagination(request *http.Request, total int) paginationView {
+	pageCount := max(1, (total+listPageSize-1)/listPageSize)
+	page := 1
+	if parsed, err := strconv.Atoi(request.URL.Query().Get("page")); err == nil && parsed > 0 {
+		page = min(parsed, pageCount)
+	}
+	start := min((page-1)*listPageSize, total)
+	end := min(start+listPageSize, total)
+	view := paginationView{
+		Page: page, PageCount: pageCount, Total: total, Start: start, End: end,
+		HasPrevious: page > 1, HasNext: page < pageCount,
+	}
+	pageURL := func(target int) string {
+		query := request.URL.Query()
+		query.Set("page", strconv.Itoa(target))
+		return "?" + query.Encode()
+	}
+	if view.HasPrevious {
+		view.PreviousURL = pageURL(page - 1)
+	}
+	if view.HasNext {
+		view.NextURL = pageURL(page + 1)
+	}
+	return view
+}
+
 type applicationHeaderData struct {
 	Username    string
 	CSRFToken   string
@@ -925,110 +975,9 @@ func renderApplicationError(request *http.Request, status int, message string) [
 	return page.Bytes()
 }
 
-const appCSS = `
-:root{color-scheme:light;--canvas:#f3f3ef;--paper:#fbfbf8;--ink:#161713;--muted:#6d7068;--line:#d8d9d2;--line-strong:#bfc1b7;--accent:#e7f34b;--accent-strong:#d7e432;--danger:#b83b2f;--terminal:#151613;--terminal-ink:#f1f2e9;font:15px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
-*{box-sizing:border-box}html{background:var(--canvas)}body{margin:0;background:var(--canvas);color:var(--ink);min-height:100vh}body:after{content:"";position:fixed;inset:0;pointer-events:none;opacity:.22;background-image:linear-gradient(rgba(20,21,18,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(20,21,18,.045) 1px,transparent 1px);background-size:32px 32px;mask-image:linear-gradient(to bottom,black,transparent 38%)}
-.app-header{position:sticky;top:0;z-index:20;background:rgba(243,243,239,.94);border-bottom:1px solid var(--line);backdrop-filter:blur(14px)}.app-header__inner{width:min(1440px,calc(100% - 48px));min-height:72px;margin:auto;display:grid;grid-template-columns:190px 1fr auto;align-items:center;gap:20px}.brand{display:flex;align-items:center;gap:11px;color:var(--ink);font-weight:800;text-decoration:none}.brand__mark{display:grid;place-items:center;width:28px;height:28px;background:var(--ink);color:var(--accent);font:800 15px/1 ui-monospace,SFMono-Regular,Consolas,monospace}.brand__word{font-size:17px}.app-nav{display:flex;align-items:center;gap:4px;overflow-x:auto;white-space:nowrap;scrollbar-width:none}.app-nav::-webkit-scrollbar{display:none}.app-nav a{color:var(--muted);padding:8px 11px;text-decoration:none;font-size:13px;font-weight:650;border-radius:4px;transition:background .16s ease,color .16s ease}.app-nav a:hover{background:rgba(22,23,19,.06);color:var(--ink)}.app-nav a[aria-current="page"]{background:var(--ink);color:#fff}.app-user{display:flex;align-items:center;justify-content:flex-end;gap:10px;white-space:nowrap}.app-user>a{font-size:12px;font-weight:700}.app-user form{display:block;margin:0;padding:0;border:0}.app-user input{display:none}.app-user button{min-height:32px;padding:6px 9px;background:transparent;border-color:var(--line-strong);color:var(--ink);font-size:12px}.app-status{display:flex;align-items:center;gap:7px;color:var(--muted);font:700 11px/1 ui-monospace,SFMono-Regular,Consolas,monospace}.app-status:before{content:"";width:7px;height:7px;background:#50a852;border-radius:50%;box-shadow:0 0 0 3px rgba(80,168,82,.12)}
-main{position:relative;z-index:1;width:min(1180px,calc(100% - 48px));margin:0 auto;padding:58px 0 84px;overflow-x:visible;animation:arrive .34s cubic-bezier(.2,.8,.2,1)}main:before{content:"WORKSPACE / " attr(data-section);display:block;margin-bottom:14px;color:var(--muted);font:700 11px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.08em;text-transform:uppercase}h1{max-width:920px;font-size:clamp(34px,4.6vw,64px);line-height:1.02;letter-spacing:0;margin:0 0 42px;font-weight:750}h2{margin:42px 0 18px;font-size:20px;letter-spacing:0}p,dd,li{color:var(--muted)}a{color:var(--ink);text-decoration-color:var(--line-strong);text-underline-offset:3px}a:hover{text-decoration-color:var(--ink)}
-form{display:flex;align-items:end;gap:10px;flex-wrap:wrap;margin:14px 0;padding:18px 0;border-top:1px solid var(--line)}td form{display:inline-flex;margin:2px 6px 2px 0;padding:0;border:0;align-items:center}label{display:grid;gap:7px;color:var(--muted);font-size:12px;font-weight:650}label:has(input[type="checkbox"]){display:flex;align-items:center;min-height:38px;padding:0 4px}input,textarea,select,button{font:inherit;border:1px solid var(--line-strong);border-radius:4px;background:var(--paper);color:var(--ink);padding:9px 11px;min-height:40px}input,select{min-width:150px}input[type="checkbox"]{min-width:16px;width:16px;min-height:16px;accent-color:var(--ink)}input[type="file"]{padding:6px}textarea{min-width:min(620px,88vw);min-height:130px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Consolas,monospace}button{cursor:pointer;background:var(--ink);border-color:var(--ink);color:#fff;font-weight:720;transition:transform .14s ease,background .14s ease,color .14s ease}button:hover{background:#2d2f29;transform:translateY(-1px)}button:disabled{cursor:not-allowed;opacity:.45;transform:none}form:first-of-type button[type="submit"],form:first-of-type button:not([type]){background:var(--accent);border-color:var(--accent-strong);color:var(--ink)}button[name="confirm"],button[name="path"]{background:transparent;color:var(--danger);border-color:#d9aaa5}button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid rgba(204,217,37,.7);outline-offset:2px}
-table{width:100%;border-collapse:separate;border-spacing:0;margin-top:28px;min-width:720px;background:var(--paper);border-top:1px solid var(--ink);border-bottom:1px solid var(--line)}th,td{text-align:left;padding:15px 14px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.06em;font-weight:750;background:#f6f6f1}tbody tr{transition:background .14s ease,transform .14s ease}tbody tr:hover{background:#f1f2e9}tbody tr:last-child td{border-bottom:0}td:first-child{font-weight:650}td a{font-weight:700}td ol{margin:0;padding-left:18px}td img{max-width:96px;height:auto}
-pre{position:relative;background:var(--terminal);color:var(--terminal-ink);border:0;border-radius:4px;padding:24px;white-space:pre-wrap;word-break:break-word;max-height:65vh;overflow:auto;box-shadow:inset 0 0 0 1px #30312d;font:13px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace}pre:before{content:"SCRIPTBOARD OUTPUT";display:block;margin-bottom:18px;color:#92958a;font-size:10px;letter-spacing:.1em}dl{display:grid;grid-template-columns:minmax(120px,max-content) 1fr;gap:0;border-top:1px solid var(--ink);border-bottom:1px solid var(--line);background:var(--paper)}dt,dd{padding:12px 14px;border-bottom:1px solid var(--line)}dt{color:var(--muted);font-size:12px;font-weight:700}dd{margin:0;word-break:break-all;color:var(--ink)}dt:last-of-type,dt:last-of-type+dd{border-bottom:0}img{display:block;border-radius:3px;margin-bottom:8px;border:1px solid var(--line)}[data-source="stderr"]{color:#ff8e82}[data-source="system"],[data-encoding-error="true"]{color:var(--accent)}[data-run-live-state]{font:650 12px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--muted)}
-.login-page{display:grid;place-items:center;background:var(--terminal);color:var(--terminal-ink)}.login-page:after{opacity:.35;background-image:linear-gradient(rgba(231,243,75,.07) 1px,transparent 1px),linear-gradient(90deg,rgba(231,243,75,.07) 1px,transparent 1px)}.login-page main{width:min(440px,calc(100% - 32px));margin:0;padding:54px 46px;background:var(--paper);color:var(--ink);overflow:visible;box-shadow:18px 18px 0 var(--accent)}.login-page main:before{content:"SCRIPTBOARD / ADMIN ACCESS"}.login-page h1{font-size:48px;margin-bottom:36px}.login-page form{display:grid;align-items:stretch;padding:0;border:0}.login-page input,.login-page button{width:100%}.login-page .app-header{display:none}.login-error{display:grid;gap:3px;margin:-16px 0 24px;padding:13px 14px;border-left:3px solid var(--danger);background:#f8e9e7;color:var(--danger);animation:error-in .2s ease-out}.login-error strong{font-size:12px}.login-error span{font-size:13px;color:#74312b}
-.login-error[hidden]{display:none}.page-error{max-width:720px;padding:18px;border-left:3px solid var(--danger);background:#f8e9e7;color:#74312b}.error-code{margin:0 0 10px;font:700 12px/1 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--danger)}.error-return{display:inline-block;margin-top:12px;font-weight:750}
-@keyframes arrive{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}@keyframes error-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}@media(max-width:1050px){.app-header__inner{width:min(100% - 28px,1180px);grid-template-columns:auto 1fr;padding:10px 0}.app-user{justify-self:end}.app-nav{grid-column:1/-1;order:3;width:100%;padding-bottom:2px}main{width:min(100% - 28px,1180px);padding-top:38px}h1{margin-bottom:30px}}@media(max-width:640px){.brand__word{font-size:15px}.app-header__inner{gap:10px}.app-user{gap:7px}.app-user>a{display:none}.app-status{font-size:10px}main{padding-bottom:56px}main:before{margin-bottom:10px}h1{font-size:36px}form{align-items:stretch;flex-direction:column}td form{display:flex;align-items:stretch}input,textarea,select,button{width:100%;min-height:44px}input[type="checkbox"]{width:18px}table{display:block;width:100%;max-width:100%;min-width:0;overflow-x:auto}.login-page main{padding:40px 28px;box-shadow:10px 10px 0 var(--accent)}}@media(prefers-reduced-motion:reduce){*,*:before{animation:none!important;transition:none!important}}
-`
+var appCSS = mustWebAsset("web/assets/app.css")
 
-const appJS = `
-(()=>{
-  const path=location.pathname;
-  const main=document.querySelector('main');
-  if(path==='/login'){
-    document.body.classList.add('login-page');
-    const form=document.querySelector('[data-login-form]');
-    const error=document.querySelector('[data-login-error]');
-    const errorMessage=document.querySelector('[data-login-error-message]');
-    if(form&&error&&errorMessage&&window.fetch){
-      form.addEventListener('submit',async event=>{
-        event.preventDefault();
-        const submit=form.querySelector('[type="submit"]');
-        const csrf=form.querySelector('[name="csrf_token"]');
-        const password=form.querySelector('[name="password"]');
-        const originalLabel=submit?.textContent||'登录';
-        error.hidden=true;
-        form.setAttribute('aria-busy','true');
-        if(submit){submit.disabled=true;submit.textContent='登录中…'}
-        try{
-          const response=await fetch(form.action,{
-            method:'POST',
-            body:new URLSearchParams(new FormData(form)),
-            headers:{Accept:'application/json'}
-          });
-          const payload=await response.json();
-          if(response.ok&&payload.redirect){location.assign(payload.redirect);return}
-          if(csrf&&payload.csrf_token)csrf.value=payload.csrf_token;
-          errorMessage.textContent=payload.error||'暂时无法登录，请稍后重试';
-        }catch{
-          errorMessage.textContent='网络连接失败，请稍后重试';
-        }
-        error.hidden=false;
-        password?.focus();
-        form.removeAttribute('aria-busy');
-        if(submit){submit.disabled=false;submit.textContent=originalLabel}
-      });
-    }
-  }else if(main){
-    const links=[
-      ['/files/','文件'],['/runs','运行记录'],['/quick-runs','快捷执行'],
-      ['/schedules','计划'],['/variables','变量'],['/audit','审计'],
-      ['/settings/version-protection','版本保护'],['/settings/account','账户']
-    ];
-    const section=links.find(([href])=>href==='/files/'?path.startsWith('/files')||path==='/trash':path.startsWith(href));
-    main.dataset.section=section?.[1]||'控制台';
-  }
-  const root=document.querySelector('[data-run-events-url]');
-  const log=document.querySelector('[data-run-log]');
-  if(!root||!log||!window.EventSource)return;
-  const pause=document.querySelector('[data-run-pause]');
-  const state=document.querySelector('[data-run-live-state]');
-  const limit=2000;
-  let paused=false;
-  let completed='';
-  let pending=[];
-  const trim=()=>{while(log.children.length>limit)log.firstElementChild.remove()};
-  const append=(data,sequence)=>{
-    const span=document.createElement('span');
-    span.dataset.sequence=sequence;
-    span.dataset.source=data.source||'output';
-    span.textContent=data.text||'';
-    if(data.encoding_error)span.title='输出包含无效 UTF-8，已替换显示';
-    log.append(span);trim();log.scrollTop=log.scrollHeight;
-  };
-  let last=Number(log.lastElementChild?.dataset.sequence||0);
-  const url=new URL(root.dataset.runEventsUrl,location.href);
-  if(last>0)url.searchParams.set('after',String(last));
-  const stream=new EventSource(url);
-  stream.addEventListener('open',()=>{if(state)state.textContent='实时连接已建立'});
-  stream.addEventListener('error',()=>{if(state)state.textContent='连接中断，正在自动重连…'});
-  stream.addEventListener('output',event=>{
-    let data;try{data=JSON.parse(event.data)}catch{return}
-    last=Number(event.lastEventId||last);
-    if(paused){pending.push([data,last]);if(pending.length>limit)pending.shift();return}
-    append(data,last);
-  });
-  stream.addEventListener('complete',event=>{
-    completed=event.data;stream.close();
-    if(state)state.textContent='Run 已结束：'+completed;
-    if(pause)pause.hidden=true;
-    const runStatus=document.querySelector('[data-run-status]');if(runStatus)runStatus.textContent=completed;
-    const stopForm=document.querySelector('[data-run-stop-form]');if(stopForm)stopForm.hidden=true;
-  });
-  pause?.addEventListener('click',()=>{
-    paused=!paused;pause.textContent=paused?'继续显示':'暂停显示';
-    if(state)state.textContent=paused?'显示已暂停；后台仍在接收':(completed?'Run 已结束：'+completed:'实时显示中');
-    if(!paused){for(const item of pending)append(item[0],item[1]);pending=[]}
-  });
-})();
-`
+var appJS = mustWebAsset("web/assets/app.js")
 
 func (a *App) checkpointVersionProtection(response http.ResponseWriter, request *http.Request) {
 	if !validSessionCSRF(request) {
@@ -1084,13 +1033,18 @@ func (a *App) versionProtectionPage(response http.ResponseWriter, request *http.
 			return
 		}
 	}
+	pagination := newPagination(request, len(history))
+	if len(history) > 0 {
+		history = history[pagination.Start:pagination.End]
+	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = versionProtectionTemplate.Execute(response, struct {
 		State       gitprotect.State
 		CSRFToken   string
 		HistoryPath string
 		History     []gitprotect.Commit
-	}{State: state, CSRFToken: current.csrfToken, HistoryPath: historyPath, History: history})
+		Pagination  paginationView
+	}{State: state, CSRFToken: current.csrfToken, HistoryPath: historyPath, History: history, Pagination: pagination})
 }
 
 func (a *App) disableVersionProtection(response http.ResponseWriter, request *http.Request) {
@@ -1158,8 +1112,14 @@ type auditView struct {
 	Source     string
 }
 
-func (a *App) auditPage(response http.ResponseWriter, _ *http.Request) {
-	rows, err := a.db.Query("SELECT occurred_at, action, target, result, source_address FROM audit_events ORDER BY occurred_at DESC LIMIT 1000")
+func (a *App) auditPage(response http.ResponseWriter, request *http.Request) {
+	var total int
+	if err := a.db.QueryRow("SELECT COUNT(*) FROM audit_events").Scan(&total); err != nil {
+		http.Error(response, "无法读取审计事件", http.StatusInternalServerError)
+		return
+	}
+	pagination := newPagination(request, total)
+	rows, err := a.db.Query("SELECT occurred_at, action, target, result, source_address FROM audit_events ORDER BY occurred_at DESC LIMIT ? OFFSET ?", listPageSize, pagination.Start)
 	if err != nil {
 		http.Error(response, "无法读取审计事件", http.StatusInternalServerError)
 		return
@@ -1177,7 +1137,10 @@ func (a *App) auditPage(response http.ResponseWriter, _ *http.Request) {
 		events = append(events, event)
 	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = auditTemplate.Execute(response, events)
+	_ = auditTemplate.Execute(response, struct {
+		Events     []auditView
+		Pagination paginationView
+	}{Events: events, Pagination: pagination})
 }
 
 func (a *App) auditDownload(response http.ResponseWriter, _ *http.Request) {
@@ -1203,7 +1166,13 @@ func (a *App) auditDownload(response http.ResponseWriter, _ *http.Request) {
 }
 
 func (a *App) schedulesPage(response http.ResponseWriter, request *http.Request) {
-	schedules, err := a.scheduler.List()
+	total, err := a.scheduler.Count()
+	if err != nil {
+		http.Error(response, "无法读取计划", http.StatusInternalServerError)
+		return
+	}
+	pagination := newPagination(request, total)
+	schedules, err := a.scheduler.ListPage(listPageSize, pagination.Start)
 	if err != nil {
 		http.Error(response, "无法读取计划", http.StatusInternalServerError)
 		return
@@ -1211,9 +1180,10 @@ func (a *App) schedulesPage(response http.ResponseWriter, request *http.Request)
 	current := request.Context().Value(sessionContextKey).(session)
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = schedulesTemplate.Execute(response, struct {
-		Schedules []scheduler.Schedule
-		CSRFToken string
-	}{Schedules: schedules, CSRFToken: current.csrfToken})
+		Schedules  []scheduler.Schedule
+		CSRFToken  string
+		Pagination paginationView
+	}{Schedules: schedules, CSRFToken: current.csrfToken, Pagination: pagination})
 }
 
 func (a *App) createSchedule(response http.ResponseWriter, request *http.Request) {
@@ -1347,7 +1317,13 @@ func (a *App) saveQuickRun(response http.ResponseWriter, request *http.Request) 
 }
 
 func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request) {
-	rows, err := a.db.Query("SELECT id, name, script_path, arguments_template, timeout_seconds FROM quick_runs ORDER BY sort_order, created_at")
+	var total int
+	if err := a.db.QueryRow("SELECT COUNT(*) FROM quick_runs").Scan(&total); err != nil {
+		http.Error(response, "无法读取快捷执行", http.StatusInternalServerError)
+		return
+	}
+	pagination := newPagination(request, total)
+	rows, err := a.db.Query("SELECT id, name, script_path, arguments_template, timeout_seconds FROM quick_runs ORDER BY sort_order, created_at LIMIT ? OFFSET ?", listPageSize, pagination.Start)
 	if err != nil {
 		http.Error(response, "无法读取快捷执行", http.StatusInternalServerError)
 		return
@@ -1369,9 +1345,10 @@ func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request)
 	current := request.Context().Value(sessionContextKey).(session)
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = quickRunsTemplate.Execute(response, struct {
-		QuickRuns []quickRunView
-		CSRFToken string
-	}{QuickRuns: quickRuns, CSRFToken: current.csrfToken})
+		QuickRuns  []quickRunView
+		CSRFToken  string
+		Pagination paginationView
+	}{QuickRuns: quickRuns, CSRFToken: current.csrfToken, Pagination: pagination})
 }
 
 func (a *App) startQuickRun(response http.ResponseWriter, request *http.Request) {
@@ -1530,7 +1507,13 @@ type variableView struct {
 }
 
 func (a *App) variablesPage(response http.ResponseWriter, request *http.Request) {
-	rows, err := a.db.Query("SELECT name, value FROM variables ORDER BY name")
+	var total int
+	if err := a.db.QueryRow("SELECT COUNT(*) FROM variables").Scan(&total); err != nil {
+		http.Error(response, "无法读取变量", http.StatusInternalServerError)
+		return
+	}
+	pagination := newPagination(request, total)
+	rows, err := a.db.Query("SELECT name, value FROM variables ORDER BY name LIMIT ? OFFSET ?", listPageSize, pagination.Start)
 	if err != nil {
 		http.Error(response, "无法读取变量", http.StatusInternalServerError)
 		return
@@ -1549,9 +1532,10 @@ func (a *App) variablesPage(response http.ResponseWriter, request *http.Request)
 	current := request.Context().Value(sessionContextKey).(session)
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = variablesTemplate.Execute(response, struct {
-		Variables []variableView
-		CSRFToken string
-	}{Variables: variables, CSRFToken: current.csrfToken})
+		Variables  []variableView
+		CSRFToken  string
+		Pagination paginationView
+	}{Variables: variables, CSRFToken: current.csrfToken, Pagination: pagination})
 }
 
 var variableNamePattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,63}$`)
@@ -1748,14 +1732,23 @@ func (a *App) runDetails(response http.ResponseWriter, request *http.Request) {
 	}{Run: run, CSRFToken: current.csrfToken})
 }
 
-func (a *App) runsPage(response http.ResponseWriter, _ *http.Request) {
-	runs, err := a.runs.List(500)
+func (a *App) runsPage(response http.ResponseWriter, request *http.Request) {
+	total, err := a.runs.Count()
+	if err != nil {
+		http.Error(response, "无法读取运行记录："+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	pagination := newPagination(request, total)
+	runs, err := a.runs.ListPage(listPageSize, pagination.Start)
 	if err != nil {
 		http.Error(response, "无法读取运行记录："+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = runsTemplate.Execute(response, runs)
+	_ = runsTemplate.Execute(response, struct {
+		Runs       []runmanager.Run
+		Pagination paginationView
+	}{Runs: runs, Pagination: pagination})
 }
 
 func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
@@ -2007,7 +2000,13 @@ type trashView struct {
 }
 
 func (a *App) trashPage(response http.ResponseWriter, request *http.Request) {
-	rows, err := a.db.Query("SELECT id, original_path, deleted_at, size, is_directory FROM trash_entries ORDER BY deleted_at DESC")
+	var total int
+	if err := a.db.QueryRow("SELECT COUNT(*) FROM trash_entries").Scan(&total); err != nil {
+		http.Error(response, "无法读取回收站", http.StatusInternalServerError)
+		return
+	}
+	pagination := newPagination(request, total)
+	rows, err := a.db.Query("SELECT id, original_path, deleted_at, size, is_directory FROM trash_entries ORDER BY deleted_at DESC LIMIT ? OFFSET ?", listPageSize, pagination.Start)
 	if err != nil {
 		http.Error(response, "无法读取回收站", http.StatusInternalServerError)
 		return
@@ -2027,9 +2026,10 @@ func (a *App) trashPage(response http.ResponseWriter, request *http.Request) {
 	current := request.Context().Value(sessionContextKey).(session)
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = trashTemplate.Execute(response, struct {
-		Entries   []trashView
-		CSRFToken string
-	}{Entries: entries, CSRFToken: current.csrfToken})
+		Entries    []trashView
+		CSRFToken  string
+		Pagination paginationView
+	}{Entries: entries, CSRFToken: current.csrfToken, Pagination: pagination})
 }
 
 func (a *App) restoreTrash(response http.ResponseWriter, request *http.Request) {
@@ -2234,20 +2234,14 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 			return comparison < 0
 		})
 	}
-	page := 1
-	if parsed, parseErr := strconv.Atoi(request.URL.Query().Get("page")); parseErr == nil && parsed > 0 {
-		page = parsed
-	}
-	const pageSize = 100
-	start := min((page-1)*pageSize, len(entries))
-	end := min(start+pageSize, len(entries))
+	pagination := newPagination(request, len(entries))
 	type fileView struct {
 		managedfiles.Entry
 		Path, BrowseURL, DownloadURL, EditURL, PreviewURL string
 		Protection                                        string
 	}
-	views := make([]fileView, 0, end-start)
-	for _, entry := range entries[start:end] {
+	views := make([]fileView, 0, pagination.End-pagination.Start)
+	for _, entry := range entries[pagination.Start:pagination.End] {
 		path := pathpkg.Join(relative, entry.Name)
 		view := fileView{Entry: entry, Path: path}
 		if entry.Kind == managedfiles.Directory {
@@ -2270,13 +2264,11 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		CSRFToken           string
 		CurrentPath         string
 		Query               string
-		Page                int
-		PreviousPage        int
-		NextPage            int
-		HasPrevious         bool
-		HasNext             bool
+		SortField           string
+		Direction           string
+		Pagination          paginationView
 		CanToggleExecutable bool
-	}{Entries: views, CSRFToken: current.csrfToken, CurrentPath: relative, Query: query, Page: page, PreviousPage: page - 1, NextPage: page + 1, HasPrevious: page > 1, HasNext: end < len(entries), CanToggleExecutable: runtime.GOOS == "linux"})
+	}{Entries: views, CSRFToken: current.csrfToken, CurrentPath: relative, Query: query, SortField: sortField, Direction: direction, Pagination: pagination, CanToggleExecutable: runtime.GOOS == "linux"})
 }
 
 func routeFileURL(prefix, relative string) string {
@@ -2680,18 +2672,7 @@ var accountTemplate = template.Must(template.New("account").Parse(`<!doctype htm
 </main></body>
 </html>`))
 
-var filesTemplate = template.Must(template.New("files").Parse(`<!doctype html>
-<html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=5"><script defer src="/assets/app-v2.js?v=5"></script><title>文件 · ScriptBoard</title></head>
-<body><main><h1>文件</h1>
-<form method="get"><label>搜索当前目录 <input name="q" value="{{.Query}}"></label><select name="sort"><option value="">自然顺序</option><option value="name">名称</option><option value="size">大小</option><option value="modified">修改时间</option></select><select name="direction"><option value="asc">升序</option><option value="desc">降序</option></select><button>筛选</button></form>
-<form method="post" action="/files/mkdir"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value="{{.CurrentPath}}"><label>目录名 <input name="name" required></label><button type="submit">新建目录</button></form>
-<form method="post" action="/files/upload" enctype="multipart/form-data"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value="{{.CurrentPath}}"><label><input name="replace" type="checkbox" value="yes">同名时替换并将旧文件移入回收站</label><label>文件 <input name="files" type="file" multiple required></label><button type="submit">上传</button></form>
-<table><thead><tr><th>名称</th><th>类型</th><th>大小</th><th>版本保护</th><th>修改时间</th><th>操作</th></tr></thead><tbody>
-{{range .Entries}}<tr><td>{{if .BrowseURL}}<a href="{{.BrowseURL}}">{{.Name}}</a>{{else}}{{.Name}}{{end}}</td><td>{{if eq .Kind "directory"}}目录{{else if eq .Kind "regular"}}文件{{else}}受限{{end}}</td><td>{{.Size}}</td><td>{{.Protection}}</td><td>{{.ModifiedAt}}</td><td>{{if .PreviewURL}}<a href="{{.PreviewURL}}"><img src="{{.PreviewURL}}" alt="{{.Name}}" width="96" loading="lazy"></a>{{end}}{{if .DownloadURL}}<a href="{{.DownloadURL}}">下载</a> <a href="{{.EditURL}}">编辑</a>{{end}}{{if ne .Kind "restricted"}}<form method="post" action="/runs/start"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="script" value="{{.Path}}">{{if eq .Kind "regular"}}<button>运行</button>{{end}}</form><form method="post" action="/files/move"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="source" value="{{.Path}}"><input name="destination" placeholder="新路径" required><button>移动/重命名</button></form>{{if and $.CanToggleExecutable (eq .Kind "regular")}}<form method="post" action="/files/toggle-executable"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button name="path" value="{{.Path}}">切换 owner execute</button></form>{{end}}<form method="post" action="/files/delete"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button name="path" value="{{.Path}}">移入回收站</button></form>{{end}}</td></tr>
-{{else}}<tr><td colspan="6">目录为空</td></tr>{{end}}
-</tbody></table><p>第 {{.Page}} 页 {{if .HasPrevious}}<a href="?q={{urlquery .Query}}&page={{.PreviousPage}}">上一页</a>{{end}} {{if .HasNext}}<a href="?q={{urlquery .Query}}&page={{.NextPage}}">下一页</a>{{end}}</p></main></body>
-</html>`))
+var filesTemplate = mustWebTemplate("files", "web/templates/files.html")
 
 var uploadResultsTemplate = template.Must(template.New("upload-results").Parse(`<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=5"><script defer src="/assets/app-v2.js?v=5"></script><title>上传结果 · ScriptBoard</title></head><body><main><h1>上传结果</h1><table><thead><tr><th>文件</th><th>结果</th><th>详情</th></tr></thead><tbody>{{range .Results}}<tr><td>{{.Name}}</td><td>{{.Result}}</td><td>{{.Detail}}</td></tr>{{end}}</tbody></table><p><a href="{{.Link}}">返回文件列表</a></p></main></body></html>`))
@@ -2699,12 +2680,7 @@ var uploadResultsTemplate = template.Must(template.New("upload-results").Parse(`
 var deleteImpactTemplate = template.Must(template.New("delete-impact").Parse(`<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=5"><script defer src="/assets/app-v2.js?v=5"></script><title>确认引用影响 · ScriptBoard</title></head><body><main><h1>确认引用影响</h1><p>删除 {{.Path}} 将使 {{.QuickRuns}} 个快捷执行路径失效，并停用 {{.Schedules}} 个计划。恢复文件不会自动重新启用计划。</p><form method="post" action="/files/delete"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value="{{.Path}}"><button name="confirm_references" value="yes">确认移入回收站</button></form></main></body></html>`))
 
-var trashTemplate = template.Must(template.New("trash").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=5"><script defer src="/assets/app-v2.js?v=5"></script><title>回收站 · ScriptBoard</title></head>
-<body><main><h1>回收站</h1><table><thead><tr><th>原路径</th><th>删除时间</th><th>大小</th><th>操作</th></tr></thead><tbody>
-{{range .Entries}}<tr><td>{{.OriginalPath}}</td><td>{{.DeletedAt}}</td><td>{{.Size}}</td><td><form method="post" action="/trash/restore"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button type="submit">恢复</button></form><form method="post" action="/trash/purge"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button name="confirm" value="yes" type="submit">永久清理</button></form></td></tr>
-{{else}}<tr><td colspan="4">回收站为空</td></tr>{{end}}
-</tbody></table></main></body></html>`))
+var trashTemplate = mustWebTemplate("trash", "web/templates/trash.html")
 
 var textEditorTemplate = template.Must(template.New("text-editor").Parse(`<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=5"><script defer src="/assets/app-v2.js?v=5"></script><title>编辑 {{.Path}} · ScriptBoard</title></head>
@@ -2719,38 +2695,16 @@ var runTemplate = template.Must(template.New("run").Parse(`<!doctype html>
 {{if .Run.Error}}<p>{{.Run.Error}}</p>{{end}}{{if .Run.LogExpired}}<p>运行日志已按保留策略清理。</p>{{end}}{{if .Run.LogIncomplete}}<p>运行日志写入不完整。</p>{{end}}{{if .Run.LogTruncated}}<p>运行日志已达到上限，丢弃 {{.Run.DroppedBytes}} 字节。</p>{{end}}{{if or (eq .Run.Status "running") (eq .Run.Status "stopping")}}<form data-run-stop-form method="post" action="/runs/{{.Run.ID}}/stop"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button type="submit">{{if eq .Run.Status "stopping"}}强制停止{{else}}停止{{end}}</button></form>{{end}}<form method="post" action="/runs/{{.Run.ID}}/quick-run"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label>快捷执行名称 <input name="name" required></label><button type="submit">保存快捷执行</button></form><p><button type="button" data-run-pause>暂停显示</button> <span data-run-live-state>正在连接实时输出…</span></p><pre data-run-log>{{range .Run.Events}}<span data-sequence="{{.Sequence}}" data-source="{{.Source}}" {{if .EncodingError}}data-encoding-error="true" title="输出包含无效 UTF-8，已替换显示"{{end}}>{{.Data}}</span>{{end}}</pre>
 </main></body></html>`))
 
-var runsTemplate = template.Must(template.New("runs").Parse(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=5"><script defer src="/assets/app-v2.js?v=5"></script><title>运行记录 · ScriptBoard</title></head><body><main><h1>运行记录</h1><table><thead><tr><th>时间</th><th>脚本</th><th>来源</th><th>状态</th><th>执行器</th></tr></thead><tbody>{{range .}}<tr><td>{{.CreatedAt}}</td><td><a href="/runs/{{.ID}}">{{.ScriptPath}}</a></td><td>{{.SourceType}} / {{.SourceName}}</td><td>{{.Status}}</td><td>{{.Executor}}</td></tr>{{else}}<tr><td colspan="5">暂无运行记录</td></tr>{{end}}</tbody></table></main></body></html>`))
+var runsTemplate = mustWebTemplate("runs", "web/templates/runs.html")
 
 var overlapTemplate = template.Must(template.New("overlap").Parse(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=5"><script defer src="/assets/app-v2.js?v=5"></script><title>确认并发运行 · ScriptBoard</title></head><body><main><h1>确认并发运行</h1><p>{{.Script}} 已有活动运行。确认后将并发启动另一个运行。</p><form method="post" action="{{.Action}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="script" value="{{.Script}}"><input type="hidden" name="arguments" value="{{.Arguments}}"><input type="hidden" name="timeout_seconds" value="{{.Timeout}}"><button name="confirm_overlap" value="yes">确认并发启动</button></form></main></body></html>`))
 
-var quickRunsTemplate = template.Must(template.New("quick-runs").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=5"><script defer src="/assets/app-v2.js?v=5"></script><title>快捷执行 · ScriptBoard</title></head><body><main><h1>快捷执行</h1>
-<table><thead><tr><th>名称</th><th>脚本</th><th>参数</th><th>操作</th></tr></thead><tbody>{{range .QuickRuns}}<tr><td>{{.Name}}</td><td>{{.ScriptPath}}</td><td>{{.ArgumentsTemplate}}</td><td>
-<form method="post" action="/quick-runs/{{.ID}}/start"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button type="submit" {{if not .Valid}}disabled title="Script 路径已失效"{{end}}>{{if .Valid}}启动{{else}}路径失效{{end}}</button></form>
-<form method="post" action="/quick-runs/{{.ID}}/move"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button name="direction" value="up">上移</button><button name="direction" value="down">下移</button></form>
-<form method="post" action="/quick-runs/{{.ID}}/delete"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button name="confirm" value="yes">删除</button></form>
-</td></tr>{{else}}<tr><td colspan="4">暂无快捷执行</td></tr>{{end}}</tbody></table>
-</main></body></html>`))
+var quickRunsTemplate = mustWebTemplate("quick-runs", "web/templates/quick-runs.html")
 
-var schedulesTemplate = template.Must(template.New("schedules").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=5"><script defer src="/assets/app-v2.js?v=5"></script><title>计划 · ScriptBoard</title></head><body><main><h1>计划</h1>
-<form method="post" action="/schedules"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label>名称 <input name="name" required></label><label>脚本 <input name="script" required></label><label>参数 <input name="arguments"></label><label>五段 cron <input name="expression" list="cron-presets" placeholder="* * * * *" required><datalist id="cron-presets"><option value="*/5 * * * *">每 5 分钟</option><option value="0 * * * *">每小时</option><option value="0 0 * * *">每天</option><option value="0 0 * * 1">每周一</option><option value="0 0 1 * *">每月首日</option></datalist></label><label>超时秒数 <input name="timeout_seconds" type="number" min="0" max="86400"></label><label><input name="disallow_overlap" type="checkbox" value="1">禁止重叠</label><button type="submit">创建</button></form>
-<table><thead><tr><th>配置</th><th>未来五次触发</th><th>最近结果</th><th>操作</th></tr></thead><tbody>{{range .Schedules}}<tr><td><form method="post" action="/schedules/{{.ID}}/update"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input name="name" value="{{.Name}}" required><input name="script" value="{{.ScriptPath}}" required><input name="arguments" value="{{.ArgumentsTemplate}}"><input name="expression" value="{{.Expression}}" required><input name="timeout_seconds" type="number" value="{{.TimeoutSeconds}}"><label><input name="disallow_overlap" type="checkbox" value="1" {{if not .AllowOverlap}}checked{{end}}>禁止重叠</label><button>保存</button></form></td><td><ol>{{range .NextFive}}<li>{{.}}</li>{{end}}</ol></td><td>{{.LastResult}}{{if .LastError}}<br>{{.LastError}}{{end}}<input type="hidden" name="last_run_id" value="{{.LastRunID}}"></td><td><form method="post" action="/schedules/{{.ID}}/toggle"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button name="enabled" value="{{if .Enabled}}0{{else}}1{{end}}">{{if .Enabled}}停用{{else}}启用{{end}}</button></form><form method="post" action="/schedules/{{.ID}}/delete"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button name="confirm" value="yes">删除</button></form></td></tr>{{else}}<tr><td colspan="4">暂无计划</td></tr>{{end}}</tbody></table>
-</main></body></html>`))
+var schedulesTemplate = mustWebTemplate("schedules", "web/templates/schedules.html")
 
-var auditTemplate = template.Must(template.New("audit").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=5"><script defer src="/assets/app-v2.js?v=5"></script><title>审计事件 · ScriptBoard</title></head><body><main><h1>审计事件</h1><p><a href="/audit.csv">下载 CSV</a></p>
-<table><thead><tr><th>时间</th><th>操作</th><th>目标</th><th>结果</th><th>来源</th></tr></thead><tbody>{{range .}}<tr><td>{{.OccurredAt}}</td><td>{{.Action}}</td><td>{{.Target}}</td><td>{{.Result}}</td><td>{{.Source}}</td></tr>{{else}}<tr><td colspan="5">暂无审计事件</td></tr>{{end}}</tbody></table>
-</main></body></html>`))
+var auditTemplate = mustWebTemplate("audit", "web/templates/audit.html")
 
-var versionProtectionTemplate = template.Must(template.New("version-protection").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=5"><script defer src="/assets/app-v2.js?v=5"></script><title>版本保护 · ScriptBoard</title></head><body><main><h1>版本保护</h1>
-<dl><dt>状态</dt><dd>{{.State.Status}}</dd><dt>仓库字节数</dt><dd>{{.State.RepositoryBytes}}{{if .State.StorageWarning}}（已超过容量上限的 80%）{{end}}</dd><dt>最近提交</dt><dd>{{.State.LastCommit}}</dd>{{if .State.AbnormalReason}}<dt>异常</dt><dd>{{.State.AbnormalReason}}</dd>{{end}}</dl>
-{{if not .State.Enabled}}<form method="post" action="/settings/version-protection/enable"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label><input type="checkbox" name="confirm" value="yes" required>确认启用或重新启用本地 Git 保护</label><button type="submit">启用</button></form><form method="post" action="/settings/version-protection/adopt"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><p>若 Managed Root 已是干净且安全的 Git 仓库，可明确接管。</p><button name="confirm" value="adopt-clean-repository">接管已有仓库</button></form>{{else}}<form method="post" action="/settings/version-protection/checkpoint"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button type="submit">立即创建 checkpoint</button></form><form method="get"><label>文件路径 <input name="path" value="{{.HistoryPath}}"></label><button>查看历史</button></form>{{if .History}}<table><tbody>{{range .History}}<tr><td>{{.Time}}</td><td>{{.Hash}}</td><td>{{.Subject}}</td></tr>{{end}}</tbody></table>{{end}}<form method="post" action="/settings/version-protection/restore"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label>路径 <input name="path" required></label><label>Commit <input name="commit" required></label><button type="submit">恢复单个文件</button></form><form method="post" action="/settings/version-protection/disable"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button name="confirm" value="yes">停用（保留历史）</button></form>{{end}}
-</main></body></html>`))
+var versionProtectionTemplate = mustWebTemplate("version-protection", "web/templates/version-protection.html")
 
-var variablesTemplate = template.Must(template.New("variables").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=5"><script defer src="/assets/app-v2.js?v=5"></script><title>变量 · ScriptBoard</title></head>
-<body><main><h1>变量</h1><form method="post" action="/variables"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label>名称 <input name="name" required></label><label>值 <textarea name="value"></textarea></label><button type="submit">创建</button></form>
-<table><thead><tr><th>名称</th><th>值</th><th>操作</th></tr></thead><tbody>{{range .Variables}}<tr><td colspan="2"><form method="post" action="/variables/{{.Name}}/update"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input name="name" value="{{.Name}}" required><textarea name="value">{{.Value}}</textarea><button>保存</button></form></td><td><form method="post" action="/variables/{{.Name}}/delete"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button name="confirm" value="yes">删除</button></form></td></tr>{{else}}<tr><td colspan="3">暂无变量</td></tr>{{end}}</tbody></table>
-</main></body></html>`))
+var variablesTemplate = mustWebTemplate("variables", "web/templates/variables.html")
