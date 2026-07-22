@@ -60,10 +60,13 @@ func (s *Store) Upload(relative, name string, source io.Reader, maxBytes int64, 
 	}
 	target := filepath.Join(parent, name)
 	existing, existingErr := os.Lstat(target)
-	if existingErr == nil && !replace {
-		return nil, fmt.Errorf("同名条目已存在")
-	} else if existingErr == nil && (!existing.Mode().IsRegular() || existing.Mode()&os.ModeSymlink != 0) {
-		return nil, fmt.Errorf("只能替换普通文件")
+	if existingErr == nil {
+		if !replace {
+			return nil, fmt.Errorf("同名条目已存在")
+		}
+		if !existing.Mode().IsRegular() || existing.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("只能替换普通文件")
+		}
 	} else if !os.IsNotExist(existingErr) {
 		return nil, fmt.Errorf("检查上传目标: %w", existingErr)
 	}
@@ -267,15 +270,16 @@ func (s *Store) ReadText(relative string, maxBytes int64) (TextDocument, error) 
 }
 
 func (s *Store) SaveText(relative, expectedDigest, content, storedName string, maxBytes int64) (Trashed, error) {
-	if int64(len([]byte(content))) > maxBytes || !utf8.ValidString(content) || strings.IndexByte(content, 0) >= 0 {
-		return Trashed{}, fmt.Errorf("内容不是上限内的有效 UTF-8 文本")
-	}
 	current, err := s.ReadText(relative, maxBytes)
 	if err != nil {
 		return Trashed{}, err
 	}
 	if current.Digest != expectedDigest {
 		return Trashed{}, ErrConflict
+	}
+	content = preserveLineEndingStyle(current.Content, content)
+	if int64(len([]byte(content))) > maxBytes || !utf8.ValidString(content) || strings.IndexByte(content, 0) >= 0 {
+		return Trashed{}, fmt.Errorf("内容不是上限内的有效 UTF-8 文本")
 	}
 	target, info, err := s.resolveEntry(relative)
 	if err != nil {
@@ -311,6 +315,19 @@ func (s *Store) SaveText(relative, expectedDigest, content, storedName string, m
 		return Trashed{}, fmt.Errorf("提交编辑内容: %w", err)
 	}
 	return trashed, nil
+}
+
+func preserveLineEndingStyle(original, submitted string) string {
+	normalized := strings.ReplaceAll(strings.ReplaceAll(submitted, "\r\n", "\n"), "\r", "\n")
+	withoutCRLF := strings.ReplaceAll(original, "\r\n", "")
+	switch {
+	case strings.Contains(original, "\r\n") && !strings.ContainsAny(withoutCRLF, "\r\n"):
+		return strings.ReplaceAll(normalized, "\n", "\r\n")
+	case !strings.Contains(original, "\r\n") && strings.Contains(original, "\r") && !strings.Contains(original, "\n"):
+		return strings.ReplaceAll(normalized, "\n", "\r")
+	default:
+		return normalized
+	}
 }
 
 func (s *Store) RollbackTextSave(relative, storedName string) error {

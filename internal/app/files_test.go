@@ -201,6 +201,61 @@ func TestAdminCanStreamUploadAFile(t *testing.T) {
 	if string(content) != "hello from upload" {
 		t.Fatalf("uploaded content = %q", content)
 	}
+
+	response, err = client.Get(serverURL + "/files/")
+	if err != nil {
+		t.Fatalf("get files before replacement: %v", err)
+	}
+	page, err = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read files before replacement: %v", err)
+	}
+	requestBody.Reset()
+	writer = multipart.NewWriter(&requestBody)
+	for name, value := range map[string]string{
+		"csrf_token": formToken(t, page),
+		"path":       "",
+		"replace":    "yes",
+	} {
+		if err := writer.WriteField(name, value); err != nil {
+			t.Fatalf("write replacement field %s: %v", name, err)
+		}
+	}
+	filePart, err = writer.CreateFormFile("files", "hello.txt")
+	if err != nil {
+		t.Fatalf("create replacement file part: %v", err)
+	}
+	if _, err := filePart.Write([]byte("replacement upload")); err != nil {
+		t.Fatalf("write replacement file part: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close replacement multipart writer: %v", err)
+	}
+	request, err = http.NewRequest(http.MethodPost, serverURL+"/files/upload", &requestBody)
+	if err != nil {
+		t.Fatalf("create replacement upload request: %v", err)
+	}
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	response, err = client.Do(request)
+	if err != nil {
+		t.Fatalf("replace uploaded file: %v", err)
+	}
+	resultPage, err = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read replacement response: %v", err)
+	}
+	if response.StatusCode != http.StatusOK || !bytes.Contains(resultPage, []byte("成功")) {
+		t.Fatalf("replacement response: status=%d body=%q", response.StatusCode, resultPage)
+	}
+	content, err = os.ReadFile(filepath.Join(managedRoot, "hello.txt"))
+	if err != nil {
+		t.Fatalf("read replacement file: %v", err)
+	}
+	if string(content) != "replacement upload" {
+		t.Fatalf("replacement content = %q", content)
+	}
 	matches, err := filepath.Glob(filepath.Join(managedRoot, ".scriptboard-upload-*"))
 	if err != nil {
 		t.Fatalf("glob upload temporary files: %v", err)
@@ -526,5 +581,76 @@ func TestTextEditAtomicallySavesAndKeepsOldVersionInTrash(t *testing.T) {
 	}
 	if !strings.Contains(string(trashPage), "note.txt") {
 		t.Fatalf("old version missing from trash: %s", trashPage)
+	}
+}
+
+func TestTextEditPreservesExistingLineEndingStyle(t *testing.T) {
+	t.Parallel()
+
+	for _, testCase := range []struct {
+		name      string
+		original  string
+		submitted string
+		want      string
+	}{
+		{
+			name:      "LF",
+			original:  "#!/bin/sh\necho before\n",
+			submitted: "#!/bin/sh\r\necho after\r\n",
+			want:      "#!/bin/sh\necho after\n",
+		},
+		{
+			name:      "CRLF",
+			original:  "@echo off\r\necho before\r\n",
+			submitted: "@echo off\r\necho after\r\n",
+			want:      "@echo off\r\necho after\r\n",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			root := t.TempDir()
+			managedRoot := filepath.Join(root, "managed")
+			stateRoot := filepath.Join(root, "state")
+			if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+				t.Fatalf("create managed root: %v", err)
+			}
+			filePath := filepath.Join(managedRoot, "script.txt")
+			if err := os.WriteFile(filePath, []byte(testCase.original), 0o644); err != nil {
+				t.Fatalf("write file: %v", err)
+			}
+			client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+
+			response, err := client.Get(serverURL + "/files/edit/script.txt")
+			if err != nil {
+				t.Fatalf("get editor: %v", err)
+			}
+			page, err := io.ReadAll(response.Body)
+			_ = response.Body.Close()
+			if err != nil {
+				t.Fatalf("read editor: %v", err)
+			}
+
+			response, err = client.PostForm(serverURL+"/files/edit/script.txt", url.Values{
+				"content":    {testCase.submitted},
+				"digest":     {hiddenValue(t, page, "digest")},
+				"csrf_token": {formToken(t, page)},
+			})
+			if err != nil {
+				t.Fatalf("save text: %v", err)
+			}
+			_ = response.Body.Close()
+			if response.StatusCode != http.StatusSeeOther {
+				t.Fatalf("save status = %d, want %d", response.StatusCode, http.StatusSeeOther)
+			}
+
+			content, err := os.ReadFile(filePath)
+			if err != nil {
+				t.Fatalf("read saved file: %v", err)
+			}
+			if string(content) != testCase.want {
+				t.Fatalf("saved content = %q, want %q", content, testCase.want)
+			}
+		})
 	}
 }

@@ -368,6 +368,7 @@ func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.Read
 	readers.Add(2)
 	go writeEvents("stdout", stdout)
 	go writeEvents("stderr", stderr)
+	readers.Wait()
 	waitErr := command.Wait()
 	if activeCleanup := func() func() {
 		m.mu.Lock()
@@ -379,7 +380,6 @@ func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.Read
 	}(); activeCleanup != nil {
 		activeCleanup()
 	}
-	readers.Wait()
 	if tailFile != nil {
 		_ = tailFile.Sync()
 		_ = tailFile.Close()
