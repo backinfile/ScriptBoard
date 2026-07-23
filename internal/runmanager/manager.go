@@ -20,7 +20,6 @@ import (
 	"sync"
 	"time"
 	"unicode"
-	"unicode/utf8"
 
 	"scriptboard/internal/diskspace"
 	"scriptboard/internal/managedfiles"
@@ -659,8 +658,8 @@ func readEvents(path string) ([]Event, error) {
 	for scanner.Scan() {
 		var persisted persistedEvent
 		if json.Unmarshal(scanner.Bytes(), &persisted) == nil {
-			raw := string(persisted.Data)
-			events = append(events, Event{Sequence: persisted.Sequence, Time: time.Unix(0, persisted.Time).UTC(), Source: persisted.Source, Data: strings.ToValidUTF8(raw, "�"), EncodingError: !utf8.ValidString(raw)})
+			text, encodingError := decodeOutput(persisted.Data)
+			events = append(events, Event{Sequence: persisted.Sequence, Time: time.Unix(0, persisted.Time).UTC(), Source: persisted.Source, Data: text, EncodingError: encodingError})
 		}
 	}
 	return events, scanner.Err()

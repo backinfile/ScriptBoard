@@ -79,6 +79,69 @@ func TestAdminCanRunScriptAndReadCompletedOutput(t *testing.T) {
 	}
 }
 
+func TestRunDisplaysLocalizedOutput(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+		t.Fatalf("create managed root: %v", err)
+	}
+	const expected = "输出日志：中文正常"
+	scriptName := "unicode.sh"
+	scriptContent := []byte("printf '输出日志：中文正常\\n'\n")
+	if runtime.GOOS == "windows" {
+		scriptName = "unicode.ps1"
+		scriptContent = []byte("$text = -join [char[]](0x8F93,0x51FA,0x65E5,0x5FD7,0xFF1A,0x4E2D,0x6587,0x6B63,0x5E38)\r\n$bytes = [Text.Encoding]::GetEncoding(936).GetBytes($text + [Environment]::NewLine)\r\n[Console]::OpenStandardOutput().Write($bytes, 0, $bytes.Length)\r\n")
+	}
+	if err := os.WriteFile(filepath.Join(managedRoot, scriptName), scriptContent, 0o755); err != nil {
+		t.Fatalf("write unicode script: %v", err)
+	}
+	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	response, err := client.Get(serverURL + "/files/")
+	if err != nil {
+		t.Fatalf("get files: %v", err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read files: %v", err)
+	}
+	response, err = client.PostForm(serverURL+"/runs/start", url.Values{
+		"script":     {scriptName},
+		"csrf_token": {formToken(t, page)},
+	})
+	if err != nil {
+		t.Fatalf("start unicode run: %v", err)
+	}
+	_ = response.Body.Close()
+	runURL := serverURL + response.Header.Get("Location")
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		response, err = client.Get(runURL)
+		if err != nil {
+			t.Fatalf("get unicode run: %v", err)
+		}
+		body, readErr := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if readErr != nil {
+			t.Fatalf("read unicode run: %v", readErr)
+		}
+		text := string(body)
+		if strings.Contains(text, "succeeded") {
+			if !strings.Contains(text, expected) {
+				t.Fatalf("completed run output is not valid UTF-8 text %q: %s", expected, text)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("unicode run did not complete: status=%d body=%s", response.StatusCode, text)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 func TestRunEventsAreAvailableAsSSE(t *testing.T) {
 	t.Parallel()
 

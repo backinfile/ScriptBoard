@@ -39,6 +39,7 @@ import (
 
 	"scriptboard/internal/diskspace"
 	"scriptboard/internal/gitprotect"
+	"scriptboard/internal/hoststatus"
 	"scriptboard/internal/instancelock"
 	"scriptboard/internal/managedfiles"
 	"scriptboard/internal/runmanager"
@@ -46,7 +47,7 @@ import (
 )
 
 const initialPasswordFilename = "initial-admin-password"
-const currentSchemaVersion = 5
+const currentSchemaVersion = 7
 
 //go:embed web/assets/* web/templates/*
 var webFiles embed.FS
@@ -77,7 +78,50 @@ func webTemplateFunctions() template.FuncMap {
 			}
 			return value.UTC().Format(time.RFC3339)
 		},
+		"humanBytes": humanBytes,
+		"humanRate":  func(value float64) string { return humanBytes(uint64(math.Max(0, value))) + "/s" },
+		"percent":    func(value float64) string { return fmt.Sprintf("%.1f%%", value) },
+		"duration":   humanDuration,
+		"slice":      func(values ...string) []string { return values },
+		"deref": func(value *float64) float64 {
+			if value == nil {
+				return 0
+			}
+			return *value
+		},
 	}
+}
+
+func humanBytes(value uint64) string {
+	units := []string{"B", "KiB", "MiB", "GiB", "TiB"}
+	amount := float64(value)
+	unit := 0
+	for amount >= 1024 && unit < len(units)-1 {
+		amount /= 1024
+		unit++
+	}
+	if unit == 0 {
+		return fmt.Sprintf("%d %s", value, units[unit])
+	}
+	return fmt.Sprintf("%.1f %s", amount, units[unit])
+}
+
+func humanDuration(value time.Duration) string {
+	if value < 0 {
+		value = 0
+	}
+	days := int(value / (24 * time.Hour))
+	value %= 24 * time.Hour
+	hours := int(value / time.Hour)
+	value %= time.Hour
+	minutes := int(value / time.Minute)
+	if days > 0 {
+		return fmt.Sprintf("%d 天 %d 小时", days, hours)
+	}
+	if hours > 0 {
+		return fmt.Sprintf("%d 小时 %d 分钟", hours, minutes)
+	}
+	return fmt.Sprintf("%d 分钟", minutes)
 }
 
 const (
@@ -114,6 +158,7 @@ type App struct {
 	runs               *runmanager.Manager
 	scheduler          *scheduler.Manager
 	gitProtection      *gitprotect.Manager
+	hostStatus         *hoststatus.Monitor
 	instanceLock       *instancelock.Lock
 	handler            http.Handler
 	loginMu            sync.Mutex
@@ -181,6 +226,15 @@ func Open(config Config) (*App, error) {
 	}
 	application.runs.SetLifecycle(application.gitProtection)
 	application.scheduler = scheduler.New(db, application.runs, application.loadVariables, config.SchedulerNow, config.SchedulerTick)
+	probe, _ := hoststatus.NewSystemProbe(managedRoot, stateRoot)
+	application.hostStatus, err = hoststatus.New(db, probe, hoststatus.Options{})
+	if err != nil {
+		application.scheduler.Close()
+		application.runs.Close()
+		_ = db.Close()
+		return nil, err
+	}
+	application.hostStatus.Start(context.Background())
 	application.handler = application.routes(managedRoot)
 	opened = true
 	return application, nil
@@ -354,6 +408,9 @@ func (a *App) applyCredentialOverride(username, password, passwordFile string) e
 }
 
 func (a *App) Close() error {
+	if a.hostStatus != nil {
+		a.hostStatus.Close()
+	}
 	if a.scheduler != nil {
 		a.scheduler.Close()
 	}
@@ -507,6 +564,7 @@ func openDatabase(path string) (*sql.DB, error) {
 		`CREATE TABLE IF NOT EXISTS variables (
 			name TEXT PRIMARY KEY,
 			value TEXT NOT NULL,
+			is_password INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		)`,
@@ -561,6 +619,12 @@ func openDatabase(path string) (*sql.DB, error) {
 			abnormal_reason TEXT NOT NULL,
 			updated_at INTEGER NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS host_metric_minutes (
+			bucket_at INTEGER PRIMARY KEY,
+			sample_count INTEGER NOT NULL,
+			average_json TEXT NOT NULL,
+			maximum_json TEXT NOT NULL
+		)`,
 	} {
 		if _, err := migration.Exec(statement); err != nil {
 			_ = db.Close()
@@ -594,6 +658,12 @@ func openDatabase(path string) (*sql.DB, error) {
 				_ = db.Close()
 				return nil, fmt.Errorf("migrate Run log metadata: %w", err)
 			}
+		}
+	}
+	if schemaVersion > 0 && schemaVersion < 7 {
+		if _, err := migration.Exec("ALTER TABLE variables ADD COLUMN is_password INTEGER NOT NULL DEFAULT 0"); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("migrate variable display types: %w", err)
 		}
 	}
 	if _, err := migration.Exec(fmt.Sprintf("PRAGMA user_version=%d", currentSchemaVersion)); err != nil {
@@ -715,17 +785,19 @@ func (a *App) routes(_ string) http.Handler {
 		serveWebAsset(response, request, "text/javascript; charset=utf-8", appJS)
 	})
 	mux.Handle("GET /", a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		http.Redirect(response, request, "/files/", http.StatusSeeOther)
+		http.Redirect(response, request, "/overview", http.StatusSeeOther)
 	})))
 	mux.HandleFunc("GET /login", func(response http.ResponseWriter, request *http.Request) {
 		if _, _, ok := a.loadSession(request); ok {
-			http.Redirect(response, request, "/files/", http.StatusSeeOther)
+			http.Redirect(response, request, "/overview", http.StatusSeeOther)
 			return
 		}
 		renderLoginPage(response, request, http.StatusOK, "", "")
 	})
 	mux.HandleFunc("POST /login", a.login)
 	mux.Handle("POST /logout", a.requireSession(http.HandlerFunc(a.logout)))
+	mux.Handle("GET /overview", a.requireSession(http.HandlerFunc(a.overviewPage)))
+	mux.Handle("GET /overview/data", a.requireSession(http.HandlerFunc(a.overviewData)))
 	mux.Handle("GET /settings/account", a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		current := request.Context().Value(sessionContextKey).(session)
 		var username string
@@ -745,6 +817,7 @@ func (a *App) routes(_ string) http.Handler {
 	mux.Handle("POST /files/upload", a.requireSession(http.HandlerFunc(a.uploadFiles)))
 	mux.Handle("GET /files/download/{path...}", a.requireSession(http.HandlerFunc(a.downloadFile)))
 	mux.Handle("GET /files/preview/{path...}", a.requireSession(http.HandlerFunc(a.previewImage)))
+	mux.Handle("GET /files/view/{path...}", a.requireSession(http.HandlerFunc(a.previewTextPage)))
 	mux.Handle("POST /files/delete", a.requireSession(http.HandlerFunc(a.deleteFile)))
 	mux.Handle("POST /files/move", a.requireSession(http.HandlerFunc(a.moveFile)))
 	mux.Handle("POST /files/toggle-executable", a.requireSession(http.HandlerFunc(a.toggleExecutable)))
@@ -771,6 +844,7 @@ func (a *App) routes(_ string) http.Handler {
 	mux.Handle("POST /schedules", a.requireSession(http.HandlerFunc(a.createSchedule)))
 	mux.Handle("POST /schedules/{id}/update", a.requireSession(http.HandlerFunc(a.updateSchedule)))
 	mux.Handle("POST /schedules/{id}/toggle", a.requireSession(http.HandlerFunc(a.toggleSchedule)))
+	mux.Handle("POST /schedules/{id}/run", a.requireSession(http.HandlerFunc(a.runScheduleNow)))
 	mux.Handle("POST /schedules/{id}/delete", a.requireSession(http.HandlerFunc(a.deleteSchedule)))
 	mux.Handle("GET /audit", a.requireSession(http.HandlerFunc(a.auditPage)))
 	mux.Handle("GET /audit.csv", a.requireSession(http.HandlerFunc(a.auditDownload)))
@@ -889,6 +963,117 @@ type paginationView struct {
 	HasPrevious, HasNext               bool
 }
 
+type overviewRunView struct {
+	ID         string    `json:"id"`
+	ScriptPath string    `json:"scriptPath"`
+	Status     string    `json:"status"`
+	StartedAt  time.Time `json:"startedAt"`
+}
+
+type overviewResponse struct {
+	hoststatus.Overview
+	ActiveRuns    []overviewRunView `json:"activeRuns"`
+	HostUptime    time.Duration     `json:"hostUptime"`
+	ServiceUptime time.Duration     `json:"serviceUptime"`
+}
+
+func validOverviewRange(value string) bool {
+	switch value {
+	case "", hoststatus.Range15Minutes, hoststatus.Range1Hour, hoststatus.Range6Hours, hoststatus.Range24Hours:
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *App) loadOverview(request *http.Request, selectedRange string) (overviewResponse, error) {
+	if selectedRange == "" {
+		selectedRange = hoststatus.Range1Hour
+	}
+	overview, err := a.hostStatus.Overview(request.Context(), selectedRange)
+	if err != nil {
+		return overviewResponse{}, err
+	}
+	runs, err := a.activeOverviewRuns()
+	if err != nil {
+		return overviewResponse{}, err
+	}
+	now := time.Now().UTC()
+	response := overviewResponse{Overview: overview, ActiveRuns: runs}
+	if !overview.Facts.BootedAt.IsZero() {
+		response.HostUptime = now.Sub(overview.Facts.BootedAt)
+	}
+	if !overview.Facts.ServiceStartedAt.IsZero() {
+		response.ServiceUptime = now.Sub(overview.Facts.ServiceStartedAt)
+	}
+	return response, nil
+}
+
+func (a *App) overviewPage(response http.ResponseWriter, request *http.Request) {
+	selectedRange := request.URL.Query().Get("range")
+	if !validOverviewRange(selectedRange) {
+		selectedRange = hoststatus.Range1Hour
+	}
+	if selectedRange == "" {
+		selectedRange = hoststatus.Range1Hour
+	}
+	view, err := a.loadOverview(request, selectedRange)
+	if err != nil {
+		http.Error(response, "无法读取宿主状态："+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = overviewTemplate.Execute(response, struct {
+		overviewResponse
+		Range string
+	}{overviewResponse: view, Range: selectedRange})
+}
+
+func (a *App) overviewData(response http.ResponseWriter, request *http.Request) {
+	selectedRange := request.URL.Query().Get("range")
+	if !validOverviewRange(selectedRange) {
+		http.Error(response, "无效的概览时间范围", http.StatusBadRequest)
+		return
+	}
+	if selectedRange == "" {
+		selectedRange = hoststatus.Range1Hour
+	}
+	view, err := a.loadOverview(request, selectedRange)
+	if err != nil {
+		http.Error(response, "无法读取宿主状态："+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(response).Encode(view)
+}
+
+func (a *App) activeOverviewRuns() ([]overviewRunView, error) {
+	rows, err := a.db.Query(`SELECT id, script_path, status, started_at, created_at FROM runs
+		WHERE status IN ('starting', 'running', 'stopping', 'timing_out') ORDER BY created_at DESC LIMIT 5`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []overviewRunView
+	for rows.Next() {
+		var value overviewRunView
+		var started sql.NullInt64
+		var created int64
+		if err := rows.Scan(&value.ID, &value.ScriptPath, &value.Status, &started, &created); err != nil {
+			return nil, err
+		}
+		stamp := created
+		if started.Valid {
+			stamp = started.Int64
+		}
+		value.StartedAt = time.Unix(0, stamp).UTC()
+		result = append(result, value)
+	}
+	return result, rows.Err()
+}
+
 func newPagination(request *http.Request, total int) paginationView {
 	pageCount := max(1, (total+listPageSize-1)/listPageSize)
 	page := 1
@@ -939,11 +1124,12 @@ func (a *App) addApplicationHeader(request *http.Request, body []byte) []byte {
 		environment = "远程"
 	}
 	items := []navigationItem{
+		{Href: "/overview", Label: "概览"},
 		{Href: "/files/", Label: "文件"},
-		{Href: "/runs", Label: "运行记录"},
 		{Href: "/quick-runs", Label: "快捷执行"},
 		{Href: "/schedules", Label: "计划"},
 		{Href: "/variables", Label: "变量"},
+		{Href: "/runs", Label: "运行记录"},
 		{Href: "/audit", Label: "审计"},
 		{Href: "/settings/version-protection", Label: "版本保护"},
 	}
@@ -984,6 +1170,8 @@ func (a *App) addApplicationHeader(request *http.Request, body []byte) []byte {
 func renderApplicationError(request *http.Request, status int, message string) []byte {
 	destination, label := "/files/", "返回文件"
 	switch {
+	case strings.HasPrefix(request.URL.Path, "/overview"):
+		destination, label = "/overview", "返回概览"
 	case strings.HasPrefix(request.URL.Path, "/settings/account"):
 		destination, label = "/settings/account", "返回账户设置"
 	case strings.HasPrefix(request.URL.Path, "/settings/version-protection"):
@@ -1146,13 +1334,17 @@ type auditView struct {
 }
 
 func (a *App) auditPage(response http.ResponseWriter, request *http.Request) {
+	query := strings.TrimSpace(request.URL.Query().Get("q"))
+	like := "%" + query + "%"
 	var total int
-	if err := a.db.QueryRow("SELECT COUNT(*) FROM audit_events").Scan(&total); err != nil {
+	if err := a.db.QueryRow(`SELECT COUNT(*) FROM audit_events WHERE ? = '' OR action LIKE ? OR target LIKE ? OR result LIKE ? OR source_address LIKE ?`, query, like, like, like, like).Scan(&total); err != nil {
 		http.Error(response, "无法读取审计事件", http.StatusInternalServerError)
 		return
 	}
 	pagination := newPagination(request, total)
-	rows, err := a.db.Query("SELECT occurred_at, action, target, result, source_address FROM audit_events ORDER BY occurred_at DESC LIMIT ? OFFSET ?", listPageSize, pagination.Start)
+	rows, err := a.db.Query(`SELECT occurred_at, action, target, result, source_address FROM audit_events
+		WHERE ? = '' OR action LIKE ? OR target LIKE ? OR result LIKE ? OR source_address LIKE ?
+		ORDER BY occurred_at DESC LIMIT ? OFFSET ?`, query, like, like, like, like, listPageSize, pagination.Start)
 	if err != nil {
 		http.Error(response, "无法读取审计事件", http.StatusInternalServerError)
 		return
@@ -1173,7 +1365,8 @@ func (a *App) auditPage(response http.ResponseWriter, request *http.Request) {
 	_ = auditTemplate.Execute(response, struct {
 		Events     []auditView
 		Pagination paginationView
-	}{Events: events, Pagination: pagination})
+		Query      string
+	}{Events: events, Pagination: pagination, Query: query})
 }
 
 func (a *App) auditDownload(response http.ResponseWriter, _ *http.Request) {
@@ -1289,6 +1482,20 @@ func (a *App) toggleSchedule(response http.ResponseWriter, request *http.Request
 	http.Redirect(response, request, "/schedules", http.StatusSeeOther)
 }
 
+func (a *App) runScheduleNow(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
+		return
+	}
+	id, err := a.scheduler.RunNow(request.PathValue("id"))
+	if err != nil {
+		http.Error(response, "无法立即执行计划："+err.Error(), http.StatusConflict)
+		return
+	}
+	a.recordAudit("run_schedule_now", request.PathValue("id"), "accepted", request.RemoteAddr)
+	http.Redirect(response, request, "/runs/"+url.PathEscape(id), http.StatusSeeOther)
+}
+
 func (a *App) deleteSchedule(response http.ResponseWriter, request *http.Request) {
 	if !validSessionCSRF(request) || request.FormValue("confirm") != "yes" {
 		http.Error(response, "删除计划需要页面安全令牌和明确确认", http.StatusForbidden)
@@ -1346,7 +1553,11 @@ func (a *App) saveQuickRun(response http.ResponseWriter, request *http.Request) 
 		return
 	}
 	a.recordAudit("create_quick_run", id, "succeeded", request.RemoteAddr)
-	http.Redirect(response, request, "/quick-runs", http.StatusSeeOther)
+	destination := "/quick-runs"
+	if request.Header.Get("X-ScriptBoard-Navigation") == "pjax" {
+		destination = "/runs/" + url.PathEscape(source.ID)
+	}
+	http.Redirect(response, request, destination, http.StatusSeeOther)
 }
 
 func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request) {
@@ -1535,8 +1746,9 @@ func (a *App) runEvents(response http.ResponseWriter, request *http.Request) {
 }
 
 type variableView struct {
-	Name  string
-	Value string
+	Name       string
+	Value      string
+	IsPassword bool
 }
 
 func (a *App) variablesPage(response http.ResponseWriter, request *http.Request) {
@@ -1546,7 +1758,7 @@ func (a *App) variablesPage(response http.ResponseWriter, request *http.Request)
 		return
 	}
 	pagination := newPagination(request, total)
-	rows, err := a.db.Query("SELECT name, value FROM variables ORDER BY name LIMIT ? OFFSET ?", listPageSize, pagination.Start)
+	rows, err := a.db.Query("SELECT name, value, is_password FROM variables ORDER BY name LIMIT ? OFFSET ?", listPageSize, pagination.Start)
 	if err != nil {
 		http.Error(response, "无法读取变量", http.StatusInternalServerError)
 		return
@@ -1554,7 +1766,7 @@ func (a *App) variablesPage(response http.ResponseWriter, request *http.Request)
 	var variables []variableView
 	for rows.Next() {
 		var variable variableView
-		if err := rows.Scan(&variable.Name, &variable.Value); err != nil {
+		if err := rows.Scan(&variable.Name, &variable.Value, &variable.IsPassword); err != nil {
 			_ = rows.Close()
 			http.Error(response, "无法读取变量", http.StatusInternalServerError)
 			return
@@ -1580,6 +1792,7 @@ func (a *App) createVariable(response http.ResponseWriter, request *http.Request
 	}
 	name := request.FormValue("name")
 	value := request.FormValue("value")
+	isPassword := request.FormValue("is_password") == "1"
 	if !variableNamePattern.MatchString(name) || len([]byte(value)) > 4<<10 {
 		http.Error(response, "变量名称或值无效", http.StatusBadRequest)
 		return
@@ -1590,7 +1803,7 @@ func (a *App) createVariable(response http.ResponseWriter, request *http.Request
 		return
 	}
 	now := time.Now().UTC().Unix()
-	if _, err := a.db.Exec("INSERT INTO variables (name, value, created_at, updated_at) VALUES (?, ?, ?, ?)", name, value, now, now); err != nil {
+	if _, err := a.db.Exec("INSERT INTO variables (name, value, is_password, created_at, updated_at) VALUES (?, ?, ?, ?, ?)", name, value, isPassword, now, now); err != nil {
 		http.Error(response, "变量已存在或无法保存", http.StatusConflict)
 		return
 	}
@@ -1605,6 +1818,7 @@ func (a *App) updateVariable(response http.ResponseWriter, request *http.Request
 	}
 	original := request.PathValue("name")
 	name, value := request.FormValue("name"), request.FormValue("value")
+	isPassword := request.FormValue("is_password") == "1"
 	if !variableNamePattern.MatchString(name) || len([]byte(value)) > 4<<10 {
 		http.Error(response, "变量名称或值无效", http.StatusBadRequest)
 		return
@@ -1615,7 +1829,7 @@ func (a *App) updateVariable(response http.ResponseWriter, request *http.Request
 		return
 	}
 	defer transaction.Rollback()
-	result, err := transaction.Exec("UPDATE variables SET name = ?, value = ?, updated_at = ? WHERE name = ?", name, value, time.Now().UTC().Unix(), original)
+	result, err := transaction.Exec("UPDATE variables SET name = ?, value = ?, is_password = ?, updated_at = ? WHERE name = ?", name, value, isPassword, time.Now().UTC().Unix(), original)
 	if err == nil && name != original {
 		oldReference, newReference := "{{"+original+"}}", "{{"+name+"}}"
 		_, err = transaction.Exec("UPDATE quick_runs SET arguments_template = replace(arguments_template, ?, ?)", oldReference, newReference)
@@ -1871,13 +2085,37 @@ func (a *App) editTextPage(response http.ResponseWriter, request *http.Request) 
 		return
 	}
 	current := request.Context().Value(sessionContextKey).(session)
+	parent := pathpkg.Dir(relative)
+	if parent == "." {
+		parent = ""
+	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = textEditorTemplate.Execute(response, struct {
-		Path      string
-		Content   string
-		Digest    string
-		CSRFToken string
-	}{Path: relative, Content: document.Content, Digest: document.Digest, CSRFToken: current.csrfToken})
+		Path, Content, Digest, CSRFToken, BackURL, ViewURL, DownloadURL, Action string
+	}{
+		Path: relative, Content: document.Content, Digest: document.Digest, CSRFToken: current.csrfToken,
+		BackURL: filesURL(parent), ViewURL: routeFileURL("/files/view/", relative), DownloadURL: routeFileURL("/files/download/", relative), Action: routeFileURL("/files/edit/", relative),
+	})
+}
+
+func (a *App) previewTextPage(response http.ResponseWriter, request *http.Request) {
+	relative := request.PathValue("path")
+	document, err := a.managed.ReadText(relative, 1<<20)
+	if err != nil {
+		http.Error(response, "无法预览文件："+err.Error(), http.StatusBadRequest)
+		return
+	}
+	parent := pathpkg.Dir(relative)
+	if parent == "." {
+		parent = ""
+	}
+	response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = textPreviewTemplate.Execute(response, struct {
+		Path, Content, BackURL, EditURL, DownloadURL string
+	}{
+		Path: relative, Content: document.Content, BackURL: filesURL(parent),
+		EditURL: routeFileURL("/files/edit/", relative), DownloadURL: routeFileURL("/files/download/", relative),
+	})
 }
 
 func (a *App) saveText(response http.ResponseWriter, request *http.Request) {
@@ -2270,25 +2508,63 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 	pagination := newPagination(request, len(entries))
 	type fileView struct {
 		managedfiles.Entry
-		Path, BrowseURL, DownloadURL, EditURL, PreviewURL string
-		Protection                                        string
+		Path, BrowseURL, DownloadURL, EditURL, PreviewURL, ViewURL string
+		Protection, IconClass                                      string
+		Runnable                                                   bool
+		RecentArguments                                            []string
+		ArgumentListID                                             string
 	}
+	protectionState, _ := a.gitProtection.State()
 	views := make([]fileView, 0, pagination.End-pagination.Start)
-	for _, entry := range entries[pagination.Start:pagination.End] {
+	for index, entry := range entries[pagination.Start:pagination.End] {
 		path := pathpkg.Join(relative, entry.Name)
-		view := fileView{Entry: entry, Path: path}
+		view := fileView{Entry: entry, Path: path, IconClass: "file"}
 		if entry.Kind == managedfiles.Directory {
 			view.BrowseURL = filesURL(path)
+			view.IconClass = "directory"
 		} else if entry.Kind == managedfiles.Regular {
-			view.Protection = a.gitProtection.ProtectionReason(path, entry.Size)
+			if protectionState.Enabled {
+				view.Protection = a.gitProtection.ProtectionReason(path, entry.Size)
+			}
 			view.DownloadURL = routeFileURL("/files/download/", path)
-			view.EditURL = routeFileURL("/files/edit/", path)
 			switch strings.ToLower(filepath.Ext(path)) {
 			case ".png", ".jpg", ".jpeg", ".gif", ".webp":
 				view.PreviewURL = routeFileURL("/files/preview/", path)
+				view.IconClass = "image"
+			default:
+				if isTextPreviewExtension(path) {
+					view.ViewURL = routeFileURL("/files/view/", path)
+					view.EditURL = routeFileURL("/files/edit/", path)
+					view.IconClass = "text"
+					if isScriptExtension(path) {
+						view.IconClass = "script"
+						view.Runnable = true
+						view.ArgumentListID = fmt.Sprintf("run-arguments-%d", index)
+						rows, queryErr := a.db.Query(`SELECT arguments_template FROM runs WHERE script_path = ? AND TRIM(arguments_template) <> '' GROUP BY arguments_template ORDER BY MAX(created_at) DESC LIMIT 8`, path)
+						if queryErr == nil {
+							for rows.Next() {
+								var arguments string
+								if rows.Scan(&arguments) == nil {
+									view.RecentArguments = append(view.RecentArguments, arguments)
+								}
+							}
+							_ = rows.Close()
+						}
+					}
+				}
 			}
+		} else {
+			view.IconClass = "restricted"
 		}
 		views = append(views, view)
+	}
+	parentURL := ""
+	if relative != "" {
+		parent := pathpkg.Dir(relative)
+		if parent == "." {
+			parent = ""
+		}
+		parentURL = filesURL(parent)
 	}
 	current := request.Context().Value(sessionContextKey).(session)
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -2301,7 +2577,27 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		Direction           string
 		Pagination          paginationView
 		CanToggleExecutable bool
-	}{Entries: views, CSRFToken: current.csrfToken, CurrentPath: relative, Query: query, SortField: sortField, Direction: direction, Pagination: pagination, CanToggleExecutable: runtime.GOOS == "linux"})
+		ParentURL           string
+		VersionProtection   bool
+	}{Entries: views, CSRFToken: current.csrfToken, CurrentPath: relative, Query: query, SortField: sortField, Direction: direction, Pagination: pagination, CanToggleExecutable: runtime.GOOS == "linux", ParentURL: parentURL, VersionProtection: protectionState.Enabled})
+}
+
+func isTextPreviewExtension(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".txt", ".md", ".json", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg", ".log", ".csv", ".tsv", ".xml", ".html", ".css", ".js", ".ts", ".go", ".py", ".ps1", ".cmd", ".bat", ".sh", ".sql":
+		return true
+	default:
+		return false
+	}
+}
+
+func isScriptExtension(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".ps1", ".cmd", ".bat", ".sh", ".py":
+		return true
+	default:
+		return false
+	}
 }
 
 func routeFileURL(prefix, relative string) string {
@@ -2471,7 +2767,7 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 	})
 	http.SetCookie(response, &http.Cookie{Name: loginCSRFCookieName, Path: "/login", MaxAge: -1})
 	a.recordAudit("login", "admin", "succeeded", request.RemoteAddr)
-	completeLogin(response, request, "/files/")
+	completeLogin(response, request, "/overview")
 }
 
 func (a *App) logout(response http.ResponseWriter, request *http.Request) {
@@ -2609,29 +2905,36 @@ type loginPageData struct {
 
 var applicationHeaderTemplate = template.Must(template.New("application-header").Parse(`<a class="skip-link" href="#main-content">跳至主要内容</a><header class="app-header" data-pjax-nav>
 <div class="app-header__inner">
-<a class="brand" href="/files/" aria-label="ScriptBoard 首页"><span class="brand__mark">&gt;_</span><span class="brand__word">ScriptBoard</span></a>
+<a class="brand" href="/overview" aria-label="ScriptBoard 首页"><span class="brand__mark">&gt;_</span><span class="brand__word">ScriptBoard</span></a>
 <nav class="app-nav" aria-label="主导航">{{range .Navigation}}<a href="{{.Href}}" {{if .Current}}aria-current="page"{{end}}>{{.Label}}</a>{{end}}</nav>
 <div class="app-user"><span class="app-status">{{.Environment}} · {{.ActiveRuns}} 个运行</span><a href="/settings/account">{{.Username}}</a><form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button type="submit">退出</button></form></div>
 </div></header>`))
 
 var applicationErrorTemplate = template.Must(template.New("application-error").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=9"><script defer src="/assets/app-v2.js?v=9"></script><title>操作未完成 · ScriptBoard</title></head>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=16"></script><title>操作未完成 · ScriptBoard</title></head>
 <body><main class="error-page"><p class="error-code">HTTP {{.Status}}</p><h1>操作未完成</h1><div class="page-error" role="alert">{{.Message}}</div><p><a class="error-return" href="{{.Destination}}">{{.Label}}</a></p></main></body></html>`))
 
 func renderLoginPage(response http.ResponseWriter, request *http.Request, status int, username, errorMessage string) {
-	token, err := randomToken(32)
-	if err != nil {
-		http.Error(response, "无法创建登录表单", http.StatusInternalServerError)
-		return
+	token := ""
+	if cookie, err := request.Cookie(loginCSRFCookieName); err == nil {
+		token = cookie.Value
 	}
-	http.SetCookie(response, &http.Cookie{
-		Name:     loginCSRFCookieName,
-		Value:    token,
-		Path:     "/login",
-		HttpOnly: true,
-		Secure:   isSecureRequest(request),
-		SameSite: http.SameSiteStrictMode,
-	})
+	if token == "" {
+		var err error
+		token, err = randomToken(32)
+		if err != nil {
+			http.Error(response, "无法创建登录表单", http.StatusInternalServerError)
+			return
+		}
+		http.SetCookie(response, &http.Cookie{
+			Name:     loginCSRFCookieName,
+			Value:    token,
+			Path:     "/login",
+			HttpOnly: true,
+			Secure:   isSecureRequest(request),
+			SameSite: http.SameSiteStrictMode,
+		})
+	}
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	response.WriteHeader(status)
@@ -2678,7 +2981,7 @@ func acceptsJSON(request *http.Request) bool {
 
 var loginTemplate = template.Must(template.New("login").Parse(`<!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=9"><script defer src="/assets/app-v2.js?v=9"></script><title>登录 · ScriptBoard</title></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=16"></script><title>登录 · ScriptBoard</title></head>
 <body class="login-page"><main><h1>登录</h1>
 <div class="login-error" role="alert" aria-live="polite" data-login-error {{if not .Error}}hidden{{end}}><strong>登录失败</strong><span data-login-error-message>{{.Error}}</span></div>
 <form method="post" action="/login" data-login-form>
@@ -2691,46 +2994,57 @@ var loginTemplate = template.Must(template.New("login").Parse(`<!doctype html>
 
 var accountTemplate = template.Must(template.New("account").Parse(`<!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=9"><script defer src="/assets/app-v2.js?v=9"></script><title>账户设置 · ScriptBoard</title></head>
-<body><main><h1>账户设置</h1>
-{{if .CredentialOverride}}<p>当前实例配置了启动凭据覆盖；此处修改只在下次重启前有效。要永久保留网页修改，请移除启动配置中的覆盖值。</p>{{end}}
-<form method="post" action="/settings/account">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=16"></script><title>账户设置 · ScriptBoard</title></head>
+<body><main><header class="workspace-heading"><h1>账户设置</h1><p>管理当前唯一管理员账户的登录凭据。</p></header>
+<dl class="account-summary"><dt>当前用户名</dt><dd>{{.Username}}</dd><dt>凭据来源</dt><dd>{{if .CredentialOverride}}启动配置覆盖{{else}}ScriptBoard 数据库{{end}}</dd></dl>
+{{if .CredentialOverride}}<p class="account-notice">当前实例配置了启动凭据覆盖；修改只在下次重启前有效。要永久保留网页修改，请移除启动配置中的覆盖值。</p>{{end}}
+<details class="row-editor account-dialog"><summary>修改账户凭据</summary><div class="row-editor__panel" role="dialog" aria-modal="true" aria-label="修改账户凭据"><button class="dialog-close" type="button" data-close-panel>取消</button>
+<form class="account-form" method="post" action="/settings/account">
 <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
 <label>用户名 <input name="username" value="{{.Username}}" autocomplete="username" spellcheck="false" required></label>
 <label>当前密码 <input name="current_password" type="password" autocomplete="current-password" required></label>
 <label>新密码 <input name="new_password" type="password" autocomplete="new-password" required></label>
 <label>确认新密码 <input name="confirm_password" type="password" autocomplete="new-password" required></label>
 <button class="button--primary" type="submit" data-pending-label="保存中…">保存账户凭据</button>
-</form>
+</form></div></details>
 </main></body>
 </html>`))
 
 var filesTemplate = mustWebTemplate("files", "web/templates/files.html")
 
+var overviewTemplate = mustWebTemplate("overview", "web/templates/overview.html")
+
 var uploadResultsTemplate = template.Must(template.New("upload-results").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=9"><script defer src="/assets/app-v2.js?v=9"></script><title>上传结果 · ScriptBoard</title></head><body><main><h1>上传结果</h1><table><thead><tr><th>文件</th><th>结果</th><th>详情</th></tr></thead><tbody>{{range .Results}}<tr><td>{{.Name}}</td><td>{{.Result}}</td><td>{{.Detail}}</td></tr>{{end}}</tbody></table><p><a href="{{.Link}}">返回文件列表</a></p></main></body></html>`))
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=16"></script><title>上传结果 · ScriptBoard</title></head><body><main><h1>上传结果</h1><table><thead><tr><th>文件</th><th>结果</th><th>详情</th></tr></thead><tbody>{{range .Results}}<tr><td>{{.Name}}</td><td>{{.Result}}</td><td>{{.Detail}}</td></tr>{{end}}</tbody></table><p><a href="{{.Link}}">返回文件列表</a></p></main></body></html>`))
 
 var deleteImpactTemplate = template.Must(template.New("delete-impact").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=9"><script defer src="/assets/app-v2.js?v=9"></script><title>确认引用影响 · ScriptBoard</title></head><body><main><h1>确认引用影响</h1><p>删除 {{.Path}} 将使 {{.QuickRuns}} 个快捷执行路径失效，并停用 {{.Schedules}} 个计划。恢复文件不会自动重新启用计划。</p><form method="post" action="/files/delete"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value="{{.Path}}"><button name="confirm_references" value="yes">确认移入回收站</button></form></main></body></html>`))
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=16"></script><title>确认引用影响 · ScriptBoard</title></head><body><main><h1>确认引用影响</h1><p>删除 {{.Path}} 将使 {{.QuickRuns}} 个快捷执行路径失效，并停用 {{.Schedules}} 个计划。恢复文件不会自动重新启用计划。</p><form method="post" action="/files/delete" data-async><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value="{{.Path}}"><button name="confirm_references" value="yes">确认移入回收站</button></form></main></body></html>`))
+
+var textPreviewTemplate = template.Must(template.New("text-preview").Parse(`<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=16"></script><title>预览 {{.Path}} · ScriptBoard</title></head>
+<body><main><header class="workspace-heading"><h1>文本预览</h1><p>{{.Path}}</p></header><nav class="preview-actions" aria-label="文件操作"><a href="{{.BackURL}}">← 返回目录</a><a href="{{.DownloadURL}}">下载</a><a class="button-link button-link--primary" href="{{.EditURL}}">编辑文件</a></nav><pre class="text-preview">{{.Content}}</pre></main></body></html>`))
 
 var trashTemplate = mustWebTemplate("trash", "web/templates/trash.html")
 
 var textEditorTemplate = template.Must(template.New("text-editor").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=9"><script defer src="/assets/app-v2.js?v=9"></script><title>编辑 {{.Path}} · ScriptBoard</title></head>
-<body><main><h1>编辑 {{.Path}}</h1><form method="post" action="/files/edit/{{.Path}}">
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=16"></script><title>编辑 {{.Path}} · ScriptBoard</title></head>
+<body><main class="editor-page"><header class="editor-heading"><div><a class="back-link" href="{{.BackURL}}">← 返回目录</a><h1>编辑文件</h1><p><code>{{.Path}}</code></p></div><nav class="editor-links" aria-label="文件操作"><a href="{{.ViewURL}}">只读预览</a><a href="{{.DownloadURL}}" data-native>下载</a></nav></header><form class="text-editor-form" method="post" action="{{.Action}}" data-async>
 <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="digest" value="{{.Digest}}">
-<textarea name="content" autocomplete="off" spellcheck="false" required>{{.Content}}</textarea><button class="button--primary" type="submit" data-pending-label="保存中…">保存</button>
+<div class="editor-surface"><div class="editor-surface__bar"><span>UTF-8 文本</span><span>最大 1 MiB</span></div><label class="sr-only" for="file-content">文件内容</label><textarea id="file-content" name="content" autocomplete="off" spellcheck="false" required>{{.Content}}</textarea></div><footer class="editor-actions"><span>保存时会校验文件是否已被其他程序修改。</span><a href="{{.BackURL}}">取消</a><button class="button--primary" type="submit" data-pending-label="保存中…">保存文件</button></footer>
 </form></main></body></html>`))
 
-var runTemplate = template.Must(template.New("run").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app-v2.css?v=9"><script defer src="/assets/app-v2.js?v=9"></script><title>运行 {{.Run.ID}} · ScriptBoard</title></head>
-<body><main data-run-events-url="/runs/{{.Run.ID}}/events"><h1>运行 {{.Run.ID}}</h1><dl><dt>脚本</dt><dd>{{.Run.ScriptPath}}</dd><dt>状态</dt><dd data-run-status>{{.Run.Status}}</dd><dt>来源</dt><dd>{{.Run.SourceType}} / {{.Run.SourceName}}</dd><dt>运行身份</dt><dd>{{.Run.RuntimeIdentity}}</dd><dt>执行器</dt><dd>{{.Run.Executor}}</dd><dt>SHA-256</dt><dd>{{.Run.ScriptDigest}}</dd></dl>
-{{if .Run.Error}}<p>{{.Run.Error}}</p>{{end}}{{if .Run.LogExpired}}<p>运行日志已按保留策略清理。</p>{{end}}{{if .Run.LogIncomplete}}<p>运行日志写入不完整。</p>{{end}}{{if .Run.LogTruncated}}<p>运行日志已达到上限，丢弃 {{.Run.DroppedBytes}} 字节。</p>{{end}}{{if or (eq .Run.Status "running") (eq .Run.Status "stopping")}}<form data-run-stop-form method="post" action="/runs/{{.Run.ID}}/stop"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button--danger" type="submit" data-pending-label="正在停止…">{{if eq .Run.Status "stopping"}}强制停止{{else}}停止{{end}}</button></form>{{end}}<form method="post" action="/runs/{{.Run.ID}}/quick-run"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label>快捷执行名称 <input name="name" autocomplete="off" required></label><button class="button--primary" type="submit" data-pending-label="保存中…">保存快捷执行</button></form><p><button type="button" data-run-pause>暂停显示</button> <span data-run-live-state aria-live="polite">正在连接实时输出…</span></p><pre data-run-log>{{range .Run.Events}}<span data-sequence="{{.Sequence}}" data-source="{{.Source}}" {{if .EncodingError}}data-encoding-error="true" title="输出包含无效 UTF-8，已替换显示"{{end}}>{{.Data}}</span>{{end}}</pre>
+var runTemplate = template.Must(template.New("run").Funcs(webTemplateFunctions()).Parse(`<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app-v2.css?v=16"><script defer src="/assets/app-v2.js?v=16"></script><title>{{.Run.ScriptPath}} · 运行详情 · ScriptBoard</title></head>
+<body><main class="run-page" data-run-events-url="/runs/{{.Run.ID}}/events"><header class="run-heading"><div><a class="back-link" href="/runs">← 返回运行记录</a><h1>{{.Run.ScriptPath}}</h1><p>运行 ID <code>{{.Run.ID}}</code></p></div><div class="run-heading__actions">{{if or (eq .Run.Status "running") (eq .Run.Status "stopping")}}<form data-run-stop-form method="post" action="/runs/{{.Run.ID}}/stop" data-async><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button--danger" type="submit" data-pending-label="正在停止…">{{if eq .Run.Status "stopping"}}强制停止{{else}}停止运行{{end}}</button></form>{{end}}<details class="row-editor quick-save-dialog"><summary>保存为快捷执行</summary><div class="row-editor__panel" role="dialog" aria-modal="true" aria-label="保存为快捷执行"><button class="dialog-close" type="button" data-close-panel>关闭</button><form class="quick-save-form" method="post" action="/runs/{{.Run.ID}}/quick-run" data-async><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><p>保存当前脚本、参数和超时设置，之后可一键再次运行。</p><label>快捷执行名称 <input name="name" autocomplete="off" placeholder="例如：每日备份（手动）" required></label><button class="button--primary" type="submit" data-pending-label="保存中…">保存快捷执行</button></form></div></details></div></header>
+<section class="run-summary-panel" aria-label="运行概览"><div class="run-primary-status"><span>当前状态</span><strong class="run-status" data-run-status>{{.Run.Status}}</strong>{{if .Run.ExitCode}}<small>退出码 {{.Run.ExitCode}}</small>{{end}}</div><dl class="run-facts"><div><dt>发起时间</dt><dd><time datetime="{{machineTime .Run.CreatedAt}}" data-local-time>{{displayTime .Run.CreatedAt}}</time></dd></div><div><dt>来源</dt><dd>{{.Run.SourceType}} / {{.Run.SourceName}}</dd></div><div><dt>执行身份</dt><dd>{{.Run.RuntimeIdentity}}</dd></div><div><dt>超时</dt><dd>{{.Run.TimeoutSeconds}} 秒</dd></div></dl></section>
+<details class="run-technical"><summary>执行参数与技术信息</summary><dl><div><dt>参数模板</dt><dd><code>{{if .Run.ArgumentsTemplate}}{{.Run.ArgumentsTemplate}}{{else}}无{{end}}</code></dd></div><div><dt>执行器</dt><dd><code>{{.Run.Executor}}</code></dd></div><div><dt>脚本 SHA-256</dt><dd><code>{{.Run.ScriptDigest}}</code></dd></div></dl></details>
+{{if .Run.Error}}<p class="notice notice--danger"><strong>运行错误：</strong>{{.Run.Error}}</p>{{end}}{{if .Run.LogExpired}}<p class="notice">运行日志已按保留策略清理。</p>{{end}}{{if .Run.LogIncomplete}}<p class="notice notice--danger">运行日志写入不完整。</p>{{end}}{{if .Run.LogTruncated}}<p class="notice">运行日志已达到上限，丢弃 {{.Run.DroppedBytes}} 字节。</p>{{end}}
+<section class="run-log-section"><header><div><h2>输出日志</h2><span data-run-live-state aria-live="polite">正在连接实时输出…</span></div><button type="button" data-run-pause>暂停显示</button></header><pre data-run-log>{{range .Run.Events}}<span data-sequence="{{.Sequence}}" data-source="{{.Source}}" {{if .EncodingError}}data-encoding-error="true" title="输出包含无效 UTF-8，已替换显示"{{end}}>{{.Data}}</span>{{end}}</pre></section>
 </main></body></html>`))
 
 var runsTemplate = mustWebTemplate("runs", "web/templates/runs.html")
 
-var overlapTemplate = template.Must(template.New("overlap").Parse(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=9"><script defer src="/assets/app-v2.js?v=9"></script><title>确认并发运行 · ScriptBoard</title></head><body><main><h1>确认并发运行</h1><p>{{.Script}} 已有活动运行。确认后将并发启动另一个运行。</p><form method="post" action="{{.Action}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="script" value="{{.Script}}"><input type="hidden" name="arguments" value="{{.Arguments}}"><input type="hidden" name="timeout_seconds" value="{{.Timeout}}"><button name="confirm_overlap" value="yes">确认并发启动</button></form></main></body></html>`))
+var overlapTemplate = template.Must(template.New("overlap").Parse(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=16"></script><title>确认并发运行 · ScriptBoard</title></head><body><main><h1>确认并发运行</h1><p>{{.Script}} 已有活动运行。确认后将并发启动另一个运行。</p><form method="post" action="{{.Action}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="script" value="{{.Script}}"><input type="hidden" name="arguments" value="{{.Arguments}}"><input type="hidden" name="timeout_seconds" value="{{.Timeout}}"><button name="confirm_overlap" value="yes">确认并发启动</button></form></main></body></html>`))
 
 var quickRunsTemplate = mustWebTemplate("quick-runs", "web/templates/quick-runs.html")
 

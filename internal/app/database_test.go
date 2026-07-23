@@ -32,6 +32,9 @@ func TestOpenDatabaseSnapshotsAndMigratesLegacyDatabase(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != currentSchemaVersion {
 		t.Fatalf("schema version=%d err=%v", version, err)
 	}
+	if _, err := db.Exec(`INSERT INTO host_metric_minutes(bucket_at, sample_count, average_json, maximum_json) VALUES (1, 1, '{}', '{}')`); err != nil {
+		t.Fatalf("host metric history table is unavailable after migration: %v", err)
+	}
 
 	snapshotPath := path + ".pre-migration-v0"
 	if _, err := os.Stat(snapshotPath); err != nil {
@@ -62,6 +65,40 @@ func TestOpenDatabaseRejectsNewerSchema(t *testing.T) {
 	_, err = openDatabase(path)
 	if err == nil || !strings.Contains(err.Error(), "newer than supported") {
 		t.Fatalf("expected newer-schema rejection, got %v", err)
+	}
+}
+
+func TestOpenDatabaseMigratesVariablePasswordDisplayFlag(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	db, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO variables(name, value, created_at, updated_at) VALUES ('TOKEN', 'plain-value', 1, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`ALTER TABLE variables DROP COLUMN is_password`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`PRAGMA user_version=6`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err = openDatabase(path)
+	if err != nil {
+		t.Fatalf("migrate variable display type: %v", err)
+	}
+	defer db.Close()
+	var value string
+	var isPassword bool
+	if err := db.QueryRow(`SELECT value, is_password FROM variables WHERE name = 'TOKEN'`).Scan(&value, &isPassword); err != nil {
+		t.Fatal(err)
+	}
+	if value != "plain-value" || isPassword {
+		t.Fatalf("value=%q is_password=%v", value, isPassword)
 	}
 }
 

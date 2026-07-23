@@ -126,6 +126,56 @@ func TestRootRedirectsToLoginWhenUnauthenticated(t *testing.T) {
 	}
 }
 
+func TestAuthenticatedRootRedirectsToOverviewAndOverviewDataIsPrivate(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
+	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+
+	response, err := client.Get(serverURL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/overview" {
+		t.Fatalf("root status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+
+	response, err = client.Get(serverURL + "/overview")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK || !bytes.Contains(page, []byte("宿主概览")) || !bytes.Contains(page, []byte(`data-host-overview`)) {
+		t.Fatalf("overview status=%d body=%s", response.StatusCode, page)
+	}
+
+	response, err = client.Get(serverURL + "/overview/data?range=1h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("data status=%d", response.StatusCode)
+	}
+	if got := response.Header.Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("cache-control=%q", got)
+	}
+	if got := response.Header.Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
+		t.Fatalf("content-type=%q", got)
+	}
+
+	response, err = client.Get(serverURL + "/overview/data?range=forever")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid range status=%d", response.StatusCode)
+	}
+}
+
 func TestLoginPageExposesAJAXEnhancementHooks(t *testing.T) {
 	t.Parallel()
 
@@ -187,13 +237,14 @@ func TestPrimaryNavigationAvoidsFullPageReloads(t *testing.T) {
 	for _, expected := range []string{
 		`data-pjax-nav`, `class="skip-link" href="#main-content"`, `main id="main-content"`,
 		`autocomplete="off" placeholder="例如：backup.ps1…"`, `width="96" height="64"`, `data-local-time`,
+		`/assets/app.css?v=16`, `/assets/app-v2.js?v=16`,
 	} {
 		if !bytes.Contains(page, []byte(expected)) {
 			t.Fatalf("files page does not contain %q: %s", expected, page)
 		}
 	}
 
-	for _, asset := range []string{"/assets/app.css?v=9", "/assets/app-v2.js?v=9"} {
+	for _, asset := range []string{"/assets/app.css?v=16", "/assets/app-v2.js?v=16"} {
 		response, err = client.Get(serverURL + asset)
 		if err != nil {
 			t.Fatalf("get %s: %v", asset, err)
@@ -206,15 +257,15 @@ func TestPrimaryNavigationAvoidsFullPageReloads(t *testing.T) {
 		if cacheControl := response.Header.Get("Cache-Control"); cacheControl != "public, max-age=31536000, immutable" {
 			t.Errorf("%s cache control = %q, want immutable versioned caching", asset, cacheControl)
 		}
-		if strings.HasSuffix(asset, ".js?v=9") {
-			for _, expected := range []string{"preventDefault()", "DOMParser", "history.pushState", "popstate", "replaceWith", "beforeunload", "confirmDiscard", "Intl.DateTimeFormat", "submitterMirror"} {
+		if strings.HasSuffix(asset, ".js?v=16") {
+			for _, expected := range []string{"preventDefault()", "DOMParser", "history.pushState", "popstate", "replaceWith", "beforeunload", "confirmDiscard", "Intl.DateTimeFormat", "submitterMirror", "revealCurrentNavigation", "aria-current"} {
 				if !bytes.Contains(body, []byte(expected)) {
 					t.Errorf("interaction script does not contain %q", expected)
 				}
 			}
 		}
-		if strings.HasSuffix(asset, ".css?v=9") {
-			for _, expected := range []string{"main[data-pjax]", "summary:focus-visible", "overscroll-behavior:contain", "touch-action:manipulation", "*::after", ".button--danger"} {
+		if strings.HasSuffix(asset, ".css?v=16") {
+			for _, expected := range []string{"main[data-pjax]", "summary:focus-visible", "overscroll-behavior:contain", "touch-action:manipulation", "*::after", ".button--danger", ".empty-state__action", "font-size:clamp(34px,3.2vw,42px)", ".sort-direction__options"} {
 				if !bytes.Contains(body, []byte(expected)) {
 					t.Errorf("stylesheet does not contain %q", expected)
 				}
@@ -225,6 +276,139 @@ func TestPrimaryNavigationAvoidsFullPageReloads(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestEmptyCollectionPagesProvideNextStepWithoutPagination(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
+	tests := []struct {
+		path     string
+		expected []string
+	}{
+		{path: "/quick-runs", expected: []string{`class="empty-state"`, "还没有快捷执行", "浏览脚本"}},
+		{path: "/schedules", expected: []string{`class="empty-state"`, "还没有计划", "创建计划"}},
+		{path: "/runs", expected: []string{`class="empty-state"`, "还没有运行记录", "运行脚本"}},
+	}
+	for _, test := range tests {
+		response, err := client.Get(serverURL + test.path)
+		if err != nil {
+			t.Fatalf("get %s: %v", test.path, err)
+		}
+		page, readErr := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if readErr != nil {
+			t.Fatalf("read %s: %v", test.path, readErr)
+		}
+		html := string(page)
+		for _, expected := range test.expected {
+			if !strings.Contains(html, expected) {
+				t.Errorf("%s does not contain %q: %s", test.path, expected, html)
+			}
+		}
+		if strings.Contains(html, `class="pagination"`) {
+			t.Errorf("%s shows pagination for an empty collection: %s", test.path, html)
+		}
+	}
+}
+
+func TestFileWorkspaceExposesNavigationPreviewAndRunConfiguration(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	if err := os.MkdirAll(filepath.Join(managedRoot, "scripts"), 0o700); err != nil {
+		t.Fatalf("create scripts directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(managedRoot, "scripts", "demo.ps1"), []byte("Write-Output 'preview me'\n"), 0o600); err != nil {
+		t.Fatalf("write preview fixture: %v", err)
+	}
+	client, serverURL := authenticatedClient(t, managedRoot, filepath.Join(root, "state"))
+
+	response, err := client.Get(serverURL + "/files/")
+	if err != nil {
+		t.Fatalf("get root files page: %v", err)
+	}
+	rootPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read root files page: %v", err)
+	}
+	rootHTML := string(rootPage)
+	for _, expected := range []string{
+		`class="file-icon file-icon--directory"`, `>scripts/</a>`, `class="sort-direction"`, `class="sort-direction__options"`,
+	} {
+		if !strings.Contains(rootHTML, expected) {
+			t.Fatalf("root files page does not contain %q: %s", expected, rootHTML)
+		}
+	}
+	for _, forbidden := range []string{`<th>类型</th>`, `<th>版本保护</th>`, `action="/files/move"`} {
+		if strings.Contains(rootHTML, forbidden) {
+			t.Fatalf("root files page unexpectedly contains %q: %s", forbidden, rootHTML)
+		}
+	}
+
+	response, err = client.Get(serverURL + "/files/scripts/")
+	if err != nil {
+		t.Fatalf("get nested files page: %v", err)
+	}
+	nestedPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read nested files page: %v", err)
+	}
+	nestedHTML := string(nestedPage)
+	for _, expected := range []string{
+		`class="parent-link" href="/files/"`, `href="/files/view/scripts/demo.ps1"`,
+		`name="arguments"`, `name="timeout_seconds"`, `class="file-icon file-icon--script"`,
+	} {
+		if !strings.Contains(nestedHTML, expected) {
+			t.Fatalf("nested files page does not contain %q: %s", expected, nestedHTML)
+		}
+	}
+
+	response, err = client.Get(serverURL + "/files/view/scripts/demo.ps1")
+	if err != nil {
+		t.Fatalf("get text preview: %v", err)
+	}
+	previewPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read text preview: %v", err)
+	}
+	for _, expected := range []string{"文本预览", "Write-Output &#39;preview me&#39;", `href="/files/scripts/"`} {
+		if !strings.Contains(string(previewPage), expected) {
+			t.Fatalf("text preview does not contain %q: %s", expected, previewPage)
+		}
+	}
+}
+
+func TestAccountCredentialsAreHiddenInDialogAndRunNavigationFollowsVariables(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
+	response, err := client.Get(serverURL + "/settings/account")
+	if err != nil {
+		t.Fatalf("get account settings: %v", err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read account settings: %v", err)
+	}
+	html := string(page)
+	for _, expected := range []string{`class="row-editor account-dialog"`, `role="dialog"`, `data-close-panel`, `class="account-summary"`} {
+		if !strings.Contains(html, expected) {
+			t.Fatalf("account settings does not contain %q: %s", expected, html)
+		}
+	}
+	variablesIndex := strings.Index(html, `href="/variables"`)
+	runsIndex := strings.Index(html, `href="/runs"`)
+	if variablesIndex < 0 || runsIndex < 0 || runsIndex < variablesIndex {
+		t.Fatalf("run navigation does not follow variables: %s", html)
 	}
 }
 
@@ -418,8 +602,8 @@ func TestAJAXLoginReturnsServerSelectedRedirect(t *testing.T) {
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("AJAX login status = %d, want %d", response.StatusCode, http.StatusOK)
 	}
-	if payload.Redirect != "/files/" {
-		t.Fatalf("AJAX login redirect = %q, want /files/", payload.Redirect)
+	if payload.Redirect != "/overview" {
+		t.Fatalf("AJAX login redirect = %q, want /overview", payload.Redirect)
 	}
 
 	response, err = client.Get(server.URL + payload.Redirect)
@@ -429,6 +613,74 @@ func TestAJAXLoginReturnsServerSelectedRedirect(t *testing.T) {
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("authenticated redirect status = %d, want %d", response.StatusCode, http.StatusOK)
+	}
+}
+
+func TestLoginFormRemainsValidWhenLoginPageIsLoadedAgain(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	stateRoot := filepath.Join(root, "state")
+	application, err := app.Open(app.Config{
+		ManagedRoot: filepath.Join(root, "managed"),
+		StateRoot:   stateRoot,
+	})
+	if err != nil {
+		t.Fatalf("open application: %v", err)
+	}
+	t.Cleanup(func() { _ = application.Close() })
+	password, err := os.ReadFile(filepath.Join(stateRoot, "secrets", "initial-admin-password"))
+	if err != nil {
+		t.Fatalf("read initial password: %v", err)
+	}
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("create cookie jar: %v", err)
+	}
+	server := httptest.NewServer(application.Handler())
+	t.Cleanup(server.Close)
+	client := &http.Client{
+		Jar: jar,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	response, err := client.Get(server.URL + "/login")
+	if err != nil {
+		t.Fatalf("get first login page: %v", err)
+	}
+	firstPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read first login page: %v", err)
+	}
+
+	response, err = client.Get(server.URL + "/login")
+	if err != nil {
+		t.Fatalf("get second login page: %v", err)
+	}
+	_ = response.Body.Close()
+
+	response, err = client.PostForm(server.URL+"/login", url.Values{
+		"username":   {"admin"},
+		"password":   {strings.TrimSpace(string(password))},
+		"csrf_token": {formToken(t, firstPage)},
+	})
+	if err != nil {
+		t.Fatalf("post first login form: %v", err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read login response: %v", err)
+	}
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("first login status = %d, want %d; body=%q", response.StatusCode, http.StatusSeeOther, body)
+	}
+	if location := response.Header.Get("Location"); location != "/overview" {
+		t.Fatalf("first login redirect = %q, want /overview", location)
 	}
 }
 
@@ -687,8 +939,8 @@ func TestInitialPasswordLoginCanAccessApplication(t *testing.T) {
 	if response.StatusCode != http.StatusSeeOther {
 		t.Fatalf("login status = %d, want %d", response.StatusCode, http.StatusSeeOther)
 	}
-	if location := response.Header.Get("Location"); location != "/files/" {
-		t.Fatalf("login redirect = %q, want /files/", location)
+	if location := response.Header.Get("Location"); location != "/overview" {
+		t.Fatalf("login redirect = %q, want /overview", location)
 	}
 
 	response, err = client.Get(server.URL + "/login")
@@ -696,7 +948,7 @@ func TestInitialPasswordLoginCanAccessApplication(t *testing.T) {
 		t.Fatalf("get login while authenticated: %v", err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/files/" {
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/overview" {
 		t.Fatalf("authenticated login page response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
 
@@ -786,8 +1038,8 @@ func TestFirstPasswordChangeRevokesSessionAndRemovesCredentialFile(t *testing.T)
 
 	login(t, client, server.URL, initialPassword, http.StatusUnauthorized)
 	response = login(t, client, server.URL, newPassword, http.StatusSeeOther)
-	if response.Header.Get("Location") != "/files/" {
-		t.Fatalf("new password login redirect = %q, want /files/", response.Header.Get("Location"))
+	if response.Header.Get("Location") != "/overview" {
+		t.Fatalf("new password login redirect = %q, want /overview", response.Header.Get("Location"))
 	}
 }
 

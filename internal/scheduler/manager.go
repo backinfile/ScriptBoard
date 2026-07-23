@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -216,6 +217,38 @@ func (m *Manager) Create(request CreateRequest) (string, error) {
 
 func (m *Manager) List() ([]Schedule, error) {
 	return m.ListPage(1000, 0)
+}
+
+func (m *Manager) RunNow(id string) (string, error) {
+	var schedule Schedule
+	if err := m.db.QueryRow(`SELECT id, name, script_path, arguments_template, timeout_seconds, allow_overlap
+		FROM schedules WHERE id = ? AND deleted = 0`, id).Scan(
+		&schedule.ID, &schedule.Name, &schedule.ScriptPath, &schedule.ArgumentsTemplate, &schedule.TimeoutSeconds, &schedule.AllowOverlap,
+	); err != nil {
+		return "", err
+	}
+	if !schedule.AllowOverlap && m.runs.IsActiveScript(schedule.ScriptPath) {
+		return "", errors.New("该脚本已有活动运行，计划禁止重叠执行")
+	}
+	variables, err := m.loadVariables()
+	if err != nil {
+		return "", err
+	}
+	runID, err := m.runs.Start(runmanager.StartRequest{
+		ScriptPath: schedule.ScriptPath, ArgumentsTemplate: schedule.ArgumentsTemplate, TimeoutSeconds: schedule.TimeoutSeconds,
+		SourceType: "admin/schedule-now", SourceName: schedule.Name, Variables: variables,
+	})
+	triggerID, _ := randomID()
+	result, errorText := "created", ""
+	if err != nil {
+		result, errorText = "rejected", err.Error()
+	}
+	_, _ = m.db.Exec("INSERT INTO schedule_triggers (id, schedule_id, scheduled_for, result, run_id, error) VALUES (?, ?, ?, ?, ?, ?)", triggerID, schedule.ID, m.now().UnixNano(), result, runID, errorText)
+	m.recordAudit("schedule_run_now", schedule.Name, result)
+	if err != nil {
+		return "", err
+	}
+	return runID, nil
 }
 
 func (m *Manager) Count() (int, error) {
