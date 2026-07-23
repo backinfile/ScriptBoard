@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/assets/app.css?v=18">
+  <script defer src="/assets/app-v2.js?v=18"></script>
+  <title>{{.Conversation.Title}} · AI · ScriptBoard</title>
+</head>
+<body>
+<main class="ai-chat" data-ai-conversation="{{.Conversation.ID}}">
+  <header class="ai-chat__header">
+    <div><a class="back-link" href="/ai">← AI 工作区</a><h1>{{.Conversation.Title}}</h1><p>{{.Profile.Name}} · {{.Profile.Model}}</p></div>
+    <div class="ai-chat__controls">
+      {{if .CanRetry}}<form method="post" action="/ai/conversations/{{.Conversation.ID}}/retry"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button>从同一消息新建 attempt</button></form>{{end}}
+      <form method="post" action="/ai/conversations/{{.Conversation.ID}}/stop"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button>停止生成/剩余动作</button></form>
+      <details><summary>会话管理</summary><div class="ai-chat__menu">
+        <form method="post" action="/ai/conversations/{{.Conversation.ID}}/profile"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><select name="profile_id">{{range .Profiles}}<option value="{{.ID}}"{{if eq .ID $.Conversation.ProfileID}} selected{{end}}>{{.Name}}</option>{{end}}</select><button>切换模型</button></form>
+        <form method="post" action="/ai/conversations/{{.Conversation.ID}}/rename"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input name="title" value="{{.Conversation.Title}}" maxlength="120" required><button>重命名</button></form>
+        <form method="post" action="/ai/conversations/{{.Conversation.ID}}/delete" data-confirm="删除该会话、附件和待处理批次？运行、计划、文件历史和审计不会删除。"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button--danger">删除会话</button></form>
+      </div></details>
+    </div>
+  </header>
+
+  {{if .Conversation.ContextType}}<aside class="ai-context"><strong>上下文入口</strong><span>{{.Conversation.ContextType}} / {{.Conversation.ContextID}}</span><p>{{.Conversation.ContextSummary}}</p></aside>{{end}}
+  <details class="ai-attachments"><summary>附件 {{len .Attachments}} / 会话上限 500 MiB</summary><form method="post" enctype="multipart/form-data" action="/ai/conversations/{{.Conversation.ID}}/attachments"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="file" name="attachment" required><button>上传到会话 staging</button></form>{{range .Attachments}}<p><code>{{.ID}}</code> · {{.Name}} · {{humanBytes .Size}} · SHA-256 {{.SHA256}}</p>{{end}}</details>
+
+  <section class="ai-transcript" aria-live="polite">
+    {{range .Messages}}
+      {{if eq .Message.Role "user"}}<article class="ai-message ai-message--user"><header>你</header><div>{{.Message.Text}}</div></article>{{end}}
+      {{if eq .Message.Role "assistant"}}<article class="ai-message ai-message--assistant"><header>AI</header>{{if .Message.Text}}<div class="ai-message__text">{{.Message.Text}}</div>{{end}}{{range .Message.ToolCalls}}<details class="ai-tool"><summary>Tool · {{.Name}}</summary><pre>{{jsonText .Arguments}}</pre></details>{{end}}</article>{{end}}
+      {{if eq .Message.Role "tool"}}<article class="ai-message ai-message--tool"><details><summary>Tool Result{{if .Message.ToolResult.IsError}} · 错误{{end}}</summary><pre>{{.Message.ToolResult.Content}}</pre></details></article>{{end}}
+    {{else}}<div class="empty-state">发送第一条消息开始。</div>{{end}}
+    <div data-ai-live></div>
+  </section>
+
+  {{if .Batches}}<section class="ai-batches"><h2>动作批次</h2>{{range .Batches}}<a href="/ai/batches/{{.ID}}"><strong>{{.Status}}</strong><span>{{len .Actions}} 个动作</span><code>{{.Digest}}</code></a>{{end}}</section>{{end}}
+
+  <form class="ai-composer" method="post" action="/ai/conversations/{{.Conversation.ID}}/messages">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <textarea name="message" required placeholder="{{if .InputLocked}}动作批次处理完成前，会话输入已锁定{{else}}继续询问，或让 AI 查询最新状态{{end}}"{{if .InputLocked}} disabled{{end}}></textarea>
+    <button class="button--primary"{{if .InputLocked}} disabled{{end}}>发送</button>
+  </form>
+</main>
+</body>
+</html>

@@ -176,6 +176,84 @@ func TestAuthenticatedRootRedirectsToOverviewAndOverviewDataIsPrivate(t *testing
 	}
 }
 
+func TestAIWorkspaceConfiguresProfileAndCreatesConversation(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
+	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+
+	response, err := client.Get(serverURL + "/ai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK || !bytes.Contains(page, []byte("AI 工作区")) || !bytes.Contains(page, []byte("配置模型")) {
+		t.Fatalf("AI workspace status=%d body=%s", response.StatusCode, page)
+	}
+
+	response, err = client.Get(serverURL + "/settings/ai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	settingsPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	form := url.Values{
+		"csrf_token":                  {formToken(t, settingsPage)},
+		"name":                        {"Local test"},
+		"protocol":                    {"openai_chat"},
+		"base_url":                    {"http://127.0.0.1:9191/v1"},
+		"model":                       {"test-model"},
+		"auth_mode":                   {"none"},
+		"context_window":              {"128000"},
+		"max_output_tokens":           {"4096"},
+		"default_run_timeout_seconds": {"300"},
+		"execute":                     {"1"},
+		"modify":                      {"1"},
+		"auto_approve":                {"1"},
+		"risk_confirmed":              {"1"},
+	}
+	response, err = client.PostForm(serverURL+"/settings/ai/profiles", form)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("create AI profile status=%d", response.StatusCode)
+	}
+	response, err = client.Get(serverURL + "/settings/ai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	updatedSettingsPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK || !bytes.Contains(updatedSettingsPage, []byte("Local test")) {
+		t.Fatalf("updated AI settings status=%d body=%s", response.StatusCode, updatedSettingsPage)
+	}
+
+	response, err = client.Get(serverURL + "/ai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if !bytes.Contains(page, []byte("Local test")) {
+		t.Fatalf("AI profile missing from workspace: %s", page)
+	}
+	form = url.Values{
+		"csrf_token": {formToken(t, page)},
+		"permission": {"readonly"},
+	}
+	response, err = client.PostForm(serverURL+"/ai/conversations", form)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || !strings.HasPrefix(response.Header.Get("Location"), "/ai/conversations/") {
+		t.Fatalf("create conversation status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+}
+
 func TestLoginPageExposesAJAXEnhancementHooks(t *testing.T) {
 	t.Parallel()
 

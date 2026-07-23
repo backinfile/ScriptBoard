@@ -37,6 +37,7 @@ import (
 	"golang.org/x/crypto/argon2"
 	_ "modernc.org/sqlite"
 
+	"scriptboard/internal/ai"
 	"scriptboard/internal/diskspace"
 	"scriptboard/internal/gitprotect"
 	"scriptboard/internal/hoststatus"
@@ -47,7 +48,7 @@ import (
 )
 
 const initialPasswordFilename = "initial-admin-password"
-const currentSchemaVersion = 7
+const currentSchemaVersion = 8
 
 //go:embed web/assets/* web/templates/*
 var webFiles embed.FS
@@ -66,7 +67,14 @@ func mustWebTemplate(name, path string) *template.Template {
 
 func webTemplateFunctions() template.FuncMap {
 	return template.FuncMap{
-		"displayTime": func(value time.Time) string {
+		"displayTime": func(input any) string {
+			value, ok := input.(time.Time)
+			if pointer, pointerOK := input.(*time.Time); pointerOK && pointer != nil {
+				value, ok = *pointer, true
+			}
+			if !ok {
+				return "—"
+			}
 			if value.IsZero() {
 				return "—"
 			}
@@ -83,6 +91,13 @@ func webTemplateFunctions() template.FuncMap {
 		"percent":    func(value float64) string { return fmt.Sprintf("%.1f%%", value) },
 		"duration":   humanDuration,
 		"slice":      func(values ...string) []string { return values },
+		"jsonText": func(value json.RawMessage) string {
+			var output bytes.Buffer
+			if json.Indent(&output, value, "", "  ") == nil {
+				return output.String()
+			}
+			return string(value)
+		},
 		"deref": func(value *float64) float64 {
 			if value == nil {
 				return 0
@@ -165,6 +180,13 @@ type App struct {
 	loginFailures      map[string]loginFailure
 	credentialOverride bool
 	trustedProxies     []*net.IPNet
+	aiStore            *ai.Store
+	aiVault            *ai.SecretVault
+	aiCoordinator      *ai.Coordinator
+	aiCleanupCancel    context.CancelFunc
+	aiCleanupDone      chan struct{}
+	aiContext          context.Context
+	aiTurnWG           sync.WaitGroup
 }
 
 type loginFailure struct {
@@ -199,6 +221,20 @@ func Open(config Config) (*App, error) {
 		return nil, err
 	}
 	application := &App{db: db, stateRoot: stateRoot, managedRoot: managedRoot, managed: managedfiles.Open(managedRoot), instanceLock: instanceLock, loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies}
+	application.aiStore = ai.NewStore(db, stateRoot)
+	if err := application.aiStore.Initialize(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := application.aiStore.RecoverInterrupted(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	application.aiVault, err = ai.OpenSecretVault(stateRoot)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	if err := application.initializeAdmin(stateRoot); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -235,6 +271,46 @@ func Open(config Config) (*App, error) {
 		return nil, err
 	}
 	application.hostStatus.Start(context.Background())
+	aiRegistry := ai.NewToolRegistry()
+	aiTools := &aiDomain{app: application}
+	if err := aiTools.register(aiRegistry); err != nil {
+		application.hostStatus.Close()
+		application.scheduler.Close()
+		application.runs.Close()
+		_ = db.Close()
+		return nil, err
+	}
+	application.aiCoordinator, err = ai.NewCoordinator(application.aiStore, aiRegistry, aiTools, func(profile ai.ModelProfile) (ai.ModelClient, error) {
+		return ai.NewModelClient(profile, application.aiVault.Read)
+	})
+	if err != nil {
+		application.hostStatus.Close()
+		application.scheduler.Close()
+		application.runs.Close()
+		_ = db.Close()
+		return nil, err
+	}
+	application.aiCoordinator.SetAuditSink(func(action, target, result string) {
+		application.recordAudit(action, target, result, "ai")
+	})
+	cleanupContext, cleanupCancel := context.WithCancel(context.Background())
+	application.aiContext = cleanupContext
+	application.aiCleanupCancel = cleanupCancel
+	application.aiCleanupDone = make(chan struct{})
+	go func() {
+		defer close(application.aiCleanupDone)
+		_, _ = application.aiStore.CleanupExpiredAttachments(cleanupContext)
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-cleanupContext.Done():
+				return
+			case <-ticker.C:
+				_, _ = application.aiStore.CleanupExpiredAttachments(cleanupContext)
+			}
+		}
+	}()
 	application.handler = application.routes(managedRoot)
 	opened = true
 	return application, nil
@@ -408,6 +484,15 @@ func (a *App) applyCredentialOverride(username, password, passwordFile string) e
 }
 
 func (a *App) Close() error {
+	if a.aiCleanupCancel != nil {
+		a.aiCleanupCancel()
+		<-a.aiCleanupDone
+	}
+	if a.aiCoordinator != nil {
+		a.aiCoordinator.StopAll()
+		a.aiTurnWG.Wait()
+		a.aiCoordinator.Wait()
+	}
 	if a.hostStatus != nil {
 		a.hostStatus.Close()
 	}
@@ -631,6 +716,12 @@ func openDatabase(path string) (*sql.DB, error) {
 			return nil, fmt.Errorf("初始化 SQLite: %w", err)
 		}
 	}
+	for _, statement := range ai.SchemaStatements {
+		if _, err := migration.Exec(statement); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("initialize AI SQLite schema: %w", err)
+		}
+	}
 	if schemaVersion == 1 {
 		if _, err := migration.Exec("ALTER TABLE schedules ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0"); err != nil {
 			_ = db.Close()
@@ -812,6 +903,26 @@ func (a *App) routes(_ string) http.Handler {
 		}{Username: username, CSRFToken: current.csrfToken, CredentialOverride: a.credentialOverride})
 	})))
 	mux.Handle("POST /settings/account", a.requireSession(http.HandlerFunc(a.changePassword)))
+	mux.Handle("GET /ai", a.requireSession(http.HandlerFunc(a.aiWorkspace)))
+	mux.Handle("POST /ai/conversations", a.requireSession(http.HandlerFunc(a.createAIConversation)))
+	mux.Handle("GET /ai/conversations/{id}", a.requireSession(http.HandlerFunc(a.aiConversationPage)))
+	mux.Handle("POST /ai/conversations/{id}/messages", a.requireSession(http.HandlerFunc(a.sendAIMessage)))
+	mux.Handle("POST /ai/conversations/{id}/retry", a.requireSession(http.HandlerFunc(a.retryAIMessage)))
+	mux.Handle("POST /ai/conversations/{id}/attachments", a.requireSession(http.HandlerFunc(a.uploadAIAttachment)))
+	mux.Handle("POST /ai/conversations/{id}/stop", a.requireSession(http.HandlerFunc(a.stopAIConversation)))
+	mux.Handle("POST /ai/conversations/{id}/rename", a.requireSession(http.HandlerFunc(a.renameAIConversation)))
+	mux.Handle("POST /ai/conversations/{id}/profile", a.requireSession(http.HandlerFunc(a.switchAIConversationProfile)))
+	mux.Handle("POST /ai/conversations/{id}/delete", a.requireSession(http.HandlerFunc(a.deleteAIConversation)))
+	mux.Handle("GET /ai/conversations/{id}/events", a.requireSession(http.HandlerFunc(a.aiEvents)))
+	mux.Handle("GET /ai/batches/{id}", a.requireSession(http.HandlerFunc(a.aiBatchPage)))
+	mux.Handle("POST /ai/batches/{id}/approve", a.requireSession(http.HandlerFunc(a.approveAIBatch)))
+	mux.Handle("POST /ai/batches/{id}/reject", a.requireSession(http.HandlerFunc(a.rejectAIBatch)))
+	mux.Handle("GET /settings/ai", a.requireSession(http.HandlerFunc(a.aiSettingsPage)))
+	mux.Handle("POST /settings/ai", a.requireSession(http.HandlerFunc(a.saveAISettings)))
+	mux.Handle("POST /settings/ai/profiles", a.requireSession(http.HandlerFunc(a.createAIProfile)))
+	mux.Handle("POST /settings/ai/profiles/{id}", a.requireSession(http.HandlerFunc(a.updateAIProfile)))
+	mux.Handle("POST /settings/ai/profiles/{id}/test", a.requireSession(http.HandlerFunc(a.testAIProfile)))
+	mux.Handle("POST /settings/ai/profiles/{id}/delete", a.requireSession(http.HandlerFunc(a.deleteAIProfile)))
 	mux.Handle("GET /files/{path...}", a.requireSession(http.HandlerFunc(a.filesPage)))
 	mux.Handle("POST /files/mkdir", a.requireSession(http.HandlerFunc(a.createDirectory)))
 	mux.Handle("POST /files/upload", a.requireSession(http.HandlerFunc(a.uploadFiles)))
@@ -1124,6 +1235,7 @@ func (a *App) addApplicationHeader(request *http.Request, body []byte) []byte {
 		environment = "远程"
 	}
 	items := []navigationItem{
+		{Href: "/ai", Label: "AI 工作区"},
 		{Href: "/overview", Label: "概览"},
 		{Href: "/files/", Label: "文件"},
 		{Href: "/quick-runs", Label: "快捷执行"},
@@ -1134,7 +1246,8 @@ func (a *App) addApplicationHeader(request *http.Request, body []byte) []byte {
 		{Href: "/settings/version-protection", Label: "版本保护"},
 	}
 	for index := range items {
-		items[index].Current = items[index].Href == "/files/" && (strings.HasPrefix(request.URL.Path, "/files") || request.URL.Path == "/trash") ||
+		items[index].Current = items[index].Href == "/ai" && strings.HasPrefix(request.URL.Path, "/settings/ai") ||
+			items[index].Href == "/files/" && (strings.HasPrefix(request.URL.Path, "/files") || request.URL.Path == "/trash") ||
 			items[index].Href != "/files/" && strings.HasPrefix(request.URL.Path, items[index].Href)
 	}
 	var header bytes.Buffer
@@ -1172,6 +1285,8 @@ func renderApplicationError(request *http.Request, status int, message string) [
 	switch {
 	case strings.HasPrefix(request.URL.Path, "/overview"):
 		destination, label = "/overview", "返回概览"
+	case strings.HasPrefix(request.URL.Path, "/ai"):
+		destination, label = "/ai", "返回 AI 工作区"
 	case strings.HasPrefix(request.URL.Path, "/settings/account"):
 		destination, label = "/settings/account", "返回账户设置"
 	case strings.HasPrefix(request.URL.Path, "/settings/version-protection"):
@@ -3055,3 +3170,11 @@ var auditTemplate = mustWebTemplate("audit", "web/templates/audit.html")
 var versionProtectionTemplate = mustWebTemplate("version-protection", "web/templates/version-protection.html")
 
 var variablesTemplate = mustWebTemplate("variables", "web/templates/variables.html")
+
+var aiWorkspaceTemplate = mustWebTemplate("ai", "web/templates/ai.html")
+
+var aiConversationTemplate = mustWebTemplate("ai-conversation", "web/templates/ai-conversation.html")
+
+var aiSettingsTemplate = mustWebTemplate("ai-settings", "web/templates/ai-settings.html")
+
+var aiBatchTemplate = mustWebTemplate("ai-batch", "web/templates/ai-batch.html")

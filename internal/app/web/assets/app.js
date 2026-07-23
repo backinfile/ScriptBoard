@@ -3,6 +3,7 @@
   let navigationController;
 
   const sectionLinks=[
+    ['/ai','AI 工作区'],
     ['/overview','概览'],['/files/','文件'],['/quick-runs','快捷执行'],['/schedules','计划'],
     ['/variables','变量'],['/runs','运行记录'],['/audit','审计'],
     ['/settings/version-protection','版本保护'],['/settings/account','账户']
@@ -167,6 +168,38 @@
     const main=document.querySelector('main');
     resetSubmitting();
     updateLocalTimes();
+    if((path.startsWith('/files')||path.startsWith('/runs')||path.startsWith('/schedules'))&&main&&!main.querySelector('[data-ai-context-entry]')){
+      const heading=main.querySelector('.workspace-heading,.run-heading');
+      if(heading){
+        const link=document.createElement('a');
+        link.className='compact-action';link.dataset.aiContextEntry='';
+        link.href='/ai?context_type='+encodeURIComponent(path.split('/')[1]||'page')+'&context_id='+encodeURIComponent(path);
+        link.textContent='询问 AI';
+        heading.append(link);
+      }
+    }
+    const aiConversation=main?.querySelector('[data-ai-conversation]');
+    if(aiConversation&&window.EventSource){
+      const live=aiConversation.querySelector('[data-ai-live]');
+      const stream=new EventSource('/ai/conversations/'+encodeURIComponent(aiConversation.dataset.aiConversation)+'/events');
+      stream.addEventListener('model_event',event=>{
+        try{
+          const value=JSON.parse(event.data);
+          const delta=value.TextDelta||value.text_delta;
+          if(delta&&live){live.textContent+=delta;live.className='ai-message ai-message--assistant ai-message--live'}
+        }catch(_){}
+      });
+      for(const type of ['turn_finished','batch_finished','batch_summary_finished'])stream.addEventListener(type,()=>navigate(location.href,false));
+      const previousCleanup=pageCleanup;
+      pageCleanup=()=>{stream.close();previousCleanup()};
+    }
+    const aiBatchConversation=main?.querySelector('[data-ai-batch-conversation]');
+    if(aiBatchConversation&&window.EventSource){
+      const stream=new EventSource('/ai/conversations/'+encodeURIComponent(aiBatchConversation.dataset.aiBatchConversation)+'/events?after='+encodeURIComponent(aiBatchConversation.dataset.aiAfter||'0'));
+      for(const type of ['batch_action','batch_finished'])stream.addEventListener(type,()=>navigate(location.href,false));
+      const previousCleanup=pageCleanup;
+      pageCleanup=()=>{stream.close();previousCleanup()};
+    }
     if(path==='/login'){
       document.body.classList.add('login-page');
       const form=document.querySelector('[data-login-form]');
