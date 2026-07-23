@@ -315,14 +315,14 @@ func TestPrimaryNavigationAvoidsFullPageReloads(t *testing.T) {
 	for _, expected := range []string{
 		`data-pjax-nav`, `class="skip-link" href="#main-content"`, `main id="main-content"`,
 		`autocomplete="off" placeholder="例如：backup.ps1…"`, `width="96" height="64"`, `data-local-time`,
-		`/assets/app.css?v=16`, `/assets/app-v2.js?v=16`,
+		`/assets/app.css?v=16`, `/assets/app-v2.js?v=19`,
 	} {
 		if !bytes.Contains(page, []byte(expected)) {
 			t.Fatalf("files page does not contain %q: %s", expected, page)
 		}
 	}
 
-	for _, asset := range []string{"/assets/app.css?v=16", "/assets/app-v2.js?v=16"} {
+	for _, asset := range []string{"/assets/app.css?v=16", "/assets/app-v2.js?v=19"} {
 		response, err = client.Get(serverURL + asset)
 		if err != nil {
 			t.Fatalf("get %s: %v", asset, err)

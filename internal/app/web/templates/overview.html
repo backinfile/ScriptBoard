@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=17"><script defer src="/assets/app-v2.js?v=17"></script><title>概览 · ScriptBoard</title></head><body>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=17"><script defer src="/assets/app-v2.js?v=19"></script><title>概览 · ScriptBoard</title></head><body>
 <main class="overview-page" data-host-overview data-range="{{.Range}}">
 <header class="overview-heading">
 <div><p class="overview-kicker">HOST / {{if .Facts.Hostname}}{{.Facts.Hostname}}{{else}}采集中{{end}}</p><h1>宿主概览</h1><p>{{.Facts.Platform}} {{.Facts.PlatformVersion}} · {{.Facts.Architecture}} · 已运行 {{duration .HostUptime}}</p></div>

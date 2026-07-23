@@ -3026,7 +3026,7 @@ var applicationHeaderTemplate = template.Must(template.New("application-header")
 </div></header>`))
 
 var applicationErrorTemplate = template.Must(template.New("application-error").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=16"></script><title>操作未完成 · ScriptBoard</title></head>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=19"></script><title>操作未完成 · ScriptBoard</title></head>
 <body><main class="error-page"><p class="error-code">HTTP {{.Status}}</p><h1>操作未完成</h1><div class="page-error" role="alert">{{.Message}}</div><p><a class="error-return" href="{{.Destination}}">{{.Label}}</a></p></main></body></html>`))
 
 func renderLoginPage(response http.ResponseWriter, request *http.Request, status int, username, errorMessage string) {
@@ -3096,7 +3096,7 @@ func acceptsJSON(request *http.Request) bool {
 
 var loginTemplate = template.Must(template.New("login").Parse(`<!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=16"></script><title>登录 · ScriptBoard</title></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=19"></script><title>登录 · ScriptBoard</title></head>
 <body class="login-page"><main><h1>登录</h1>
 <div class="login-error" role="alert" aria-live="polite" data-login-error {{if not .Error}}hidden{{end}}><strong>登录失败</strong><span data-login-error-message>{{.Error}}</span></div>
 <form method="post" action="/login" data-login-form>
@@ -3109,7 +3109,7 @@ var loginTemplate = template.Must(template.New("login").Parse(`<!doctype html>
 
 var accountTemplate = template.Must(template.New("account").Parse(`<!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=16"></script><title>账户设置 · ScriptBoard</title></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=19"></script><title>账户设置 · ScriptBoard</title></head>
 <body><main><header class="workspace-heading"><h1>账户设置</h1><p>管理当前唯一管理员账户的登录凭据。</p></header>
 <dl class="account-summary"><dt>当前用户名</dt><dd>{{.Username}}</dd><dt>凭据来源</dt><dd>{{if .CredentialOverride}}启动配置覆盖{{else}}ScriptBoard 数据库{{end}}</dd></dl>
 {{if .CredentialOverride}}<p class="account-notice">当前实例配置了启动凭据覆盖；修改只在下次重启前有效。要永久保留网页修改，请移除启动配置中的覆盖值。</p>{{end}}
@@ -3130,26 +3130,26 @@ var filesTemplate = mustWebTemplate("files", "web/templates/files.html")
 var overviewTemplate = mustWebTemplate("overview", "web/templates/overview.html")
 
 var uploadResultsTemplate = template.Must(template.New("upload-results").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=16"></script><title>上传结果 · ScriptBoard</title></head><body><main><h1>上传结果</h1><table><thead><tr><th>文件</th><th>结果</th><th>详情</th></tr></thead><tbody>{{range .Results}}<tr><td>{{.Name}}</td><td>{{.Result}}</td><td>{{.Detail}}</td></tr>{{end}}</tbody></table><p><a href="{{.Link}}">返回文件列表</a></p></main></body></html>`))
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=19"></script><title>上传结果 · ScriptBoard</title></head><body><main><h1>上传结果</h1><table><thead><tr><th>文件</th><th>结果</th><th>详情</th></tr></thead><tbody>{{range .Results}}<tr><td>{{.Name}}</td><td>{{.Result}}</td><td>{{.Detail}}</td></tr>{{end}}</tbody></table><p><a href="{{.Link}}">返回文件列表</a></p></main></body></html>`))
 
 var deleteImpactTemplate = template.Must(template.New("delete-impact").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=16"></script><title>确认引用影响 · ScriptBoard</title></head><body><main><h1>确认引用影响</h1><p>删除 {{.Path}} 将使 {{.QuickRuns}} 个快捷执行路径失效，并停用 {{.Schedules}} 个计划。恢复文件不会自动重新启用计划。</p><form method="post" action="/files/delete" data-async><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value="{{.Path}}"><button name="confirm_references" value="yes">确认移入回收站</button></form></main></body></html>`))
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=19"></script><title>确认引用影响 · ScriptBoard</title></head><body><main><h1>确认引用影响</h1><p>删除 {{.Path}} 将使 {{.QuickRuns}} 个快捷执行路径失效，并停用 {{.Schedules}} 个计划。恢复文件不会自动重新启用计划。</p><form method="post" action="/files/delete" data-async><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value="{{.Path}}"><button name="confirm_references" value="yes">确认移入回收站</button></form></main></body></html>`))
 
 var textPreviewTemplate = template.Must(template.New("text-preview").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=16"></script><title>预览 {{.Path}} · ScriptBoard</title></head>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=19"></script><title>预览 {{.Path}} · ScriptBoard</title></head>
 <body><main><header class="workspace-heading"><h1>文本预览</h1><p>{{.Path}}</p></header><nav class="preview-actions" aria-label="文件操作"><a href="{{.BackURL}}">← 返回目录</a><a href="{{.DownloadURL}}">下载</a><a class="button-link button-link--primary" href="{{.EditURL}}">编辑文件</a></nav><pre class="text-preview">{{.Content}}</pre></main></body></html>`))
 
 var trashTemplate = mustWebTemplate("trash", "web/templates/trash.html")
 
 var textEditorTemplate = template.Must(template.New("text-editor").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=16"></script><title>编辑 {{.Path}} · ScriptBoard</title></head>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=19"></script><title>编辑 {{.Path}} · ScriptBoard</title></head>
 <body><main class="editor-page"><header class="editor-heading"><div><a class="back-link" href="{{.BackURL}}">← 返回目录</a><h1>编辑文件</h1><p><code>{{.Path}}</code></p></div><nav class="editor-links" aria-label="文件操作"><a href="{{.ViewURL}}">只读预览</a><a href="{{.DownloadURL}}" data-native>下载</a></nav></header><form class="text-editor-form" method="post" action="{{.Action}}" data-async>
 <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="digest" value="{{.Digest}}">
 <div class="editor-surface"><div class="editor-surface__bar"><span>UTF-8 文本</span><span>最大 1 MiB</span></div><label class="sr-only" for="file-content">文件内容</label><textarea id="file-content" name="content" autocomplete="off" spellcheck="false" required>{{.Content}}</textarea></div><footer class="editor-actions"><span>保存时会校验文件是否已被其他程序修改。</span><a href="{{.BackURL}}">取消</a><button class="button--primary" type="submit" data-pending-label="保存中…">保存文件</button></footer>
 </form></main></body></html>`))
 
 var runTemplate = template.Must(template.New("run").Funcs(webTemplateFunctions()).Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app-v2.css?v=16"><script defer src="/assets/app-v2.js?v=16"></script><title>{{.Run.ScriptPath}} · 运行详情 · ScriptBoard</title></head>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app-v2.css?v=16"><script defer src="/assets/app-v2.js?v=19"></script><title>{{.Run.ScriptPath}} · 运行详情 · ScriptBoard</title></head>
 <body><main class="run-page" data-run-events-url="/runs/{{.Run.ID}}/events"><header class="run-heading"><div><a class="back-link" href="/runs">← 返回运行记录</a><h1>{{.Run.ScriptPath}}</h1><p>运行 ID <code>{{.Run.ID}}</code></p></div><div class="run-heading__actions">{{if or (eq .Run.Status "running") (eq .Run.Status "stopping")}}<form data-run-stop-form method="post" action="/runs/{{.Run.ID}}/stop" data-async><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button--danger" type="submit" data-pending-label="正在停止…">{{if eq .Run.Status "stopping"}}强制停止{{else}}停止运行{{end}}</button></form>{{end}}<details class="row-editor quick-save-dialog"><summary>保存为快捷执行</summary><div class="row-editor__panel" role="dialog" aria-modal="true" aria-label="保存为快捷执行"><button class="dialog-close" type="button" data-close-panel>关闭</button><form class="quick-save-form" method="post" action="/runs/{{.Run.ID}}/quick-run" data-async><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><p>保存当前脚本、参数和超时设置，之后可一键再次运行。</p><label>快捷执行名称 <input name="name" autocomplete="off" placeholder="例如：每日备份（手动）" required></label><button class="button--primary" type="submit" data-pending-label="保存中…">保存快捷执行</button></form></div></details></div></header>
 <section class="run-summary-panel" aria-label="运行概览"><div class="run-primary-status"><span>当前状态</span><strong class="run-status" data-run-status>{{.Run.Status}}</strong>{{if .Run.ExitCode}}<small>退出码 {{.Run.ExitCode}}</small>{{end}}</div><dl class="run-facts"><div><dt>发起时间</dt><dd><time datetime="{{machineTime .Run.CreatedAt}}" data-local-time>{{displayTime .Run.CreatedAt}}</time></dd></div><div><dt>来源</dt><dd>{{.Run.SourceType}} / {{.Run.SourceName}}</dd></div><div><dt>执行身份</dt><dd>{{.Run.RuntimeIdentity}}</dd></div><div><dt>超时</dt><dd>{{.Run.TimeoutSeconds}} 秒</dd></div></dl></section>
 <details class="run-technical"><summary>执行参数与技术信息</summary><dl><div><dt>参数模板</dt><dd><code>{{if .Run.ArgumentsTemplate}}{{.Run.ArgumentsTemplate}}{{else}}无{{end}}</code></dd></div><div><dt>执行器</dt><dd><code>{{.Run.Executor}}</code></dd></div><div><dt>脚本 SHA-256</dt><dd><code>{{.Run.ScriptDigest}}</code></dd></div></dl></details>
@@ -3159,7 +3159,7 @@ var runTemplate = template.Must(template.New("run").Funcs(webTemplateFunctions()
 
 var runsTemplate = mustWebTemplate("runs", "web/templates/runs.html")
 
-var overlapTemplate = template.Must(template.New("overlap").Parse(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=16"></script><title>确认并发运行 · ScriptBoard</title></head><body><main><h1>确认并发运行</h1><p>{{.Script}} 已有活动运行。确认后将并发启动另一个运行。</p><form method="post" action="{{.Action}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="script" value="{{.Script}}"><input type="hidden" name="arguments" value="{{.Arguments}}"><input type="hidden" name="timeout_seconds" value="{{.Timeout}}"><button name="confirm_overlap" value="yes">确认并发启动</button></form></main></body></html>`))
+var overlapTemplate = template.Must(template.New("overlap").Parse(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=19"></script><title>确认并发运行 · ScriptBoard</title></head><body><main><h1>确认并发运行</h1><p>{{.Script}} 已有活动运行。确认后将并发启动另一个运行。</p><form method="post" action="{{.Action}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="script" value="{{.Script}}"><input type="hidden" name="arguments" value="{{.Arguments}}"><input type="hidden" name="timeout_seconds" value="{{.Timeout}}"><button name="confirm_overlap" value="yes">确认并发启动</button></form></main></body></html>`))
 
 var quickRunsTemplate = mustWebTemplate("quick-runs", "web/templates/quick-runs.html")
 

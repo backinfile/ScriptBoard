@@ -178,7 +178,7 @@
         heading.append(link);
       }
     }
-    const aiConversation=main?.querySelector('[data-ai-conversation]');
+    const aiConversation=main?.matches('[data-ai-conversation]')?main:main?.querySelector('[data-ai-conversation]');
     if(aiConversation&&window.EventSource){
       const live=aiConversation.querySelector('[data-ai-live]');
       const stream=new EventSource('/ai/conversations/'+encodeURIComponent(aiConversation.dataset.aiConversation)+'/events');
@@ -193,7 +193,7 @@
       const previousCleanup=pageCleanup;
       pageCleanup=()=>{stream.close();previousCleanup()};
     }
-    const aiBatchConversation=main?.querySelector('[data-ai-batch-conversation]');
+    const aiBatchConversation=main?.matches('[data-ai-batch-conversation]')?main:main?.querySelector('[data-ai-batch-conversation]');
     if(aiBatchConversation&&window.EventSource){
       const stream=new EventSource('/ai/conversations/'+encodeURIComponent(aiBatchConversation.dataset.aiBatchConversation)+'/events?after='+encodeURIComponent(aiBatchConversation.dataset.aiAfter||'0'));
       for(const type of ['batch_action','batch_finished'])stream.addEventListener(type,()=>navigate(location.href,false));
