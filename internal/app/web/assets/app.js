@@ -3,11 +3,143 @@
   let navigationController;
 
   const sectionLinks=[
-    ['/ai','AI 工作区'],
     ['/overview','概览'],['/files/','文件'],['/quick-runs','快捷执行'],['/schedules','计划'],
     ['/variables','变量'],['/runs','运行记录'],['/audit','审计'],
     ['/settings/version-protection','版本保护'],['/settings/account','账户']
   ];
+
+  const lucidePaths={
+    'square-terminal':'<path d="M7 7l3 3-3 3"/><path d="M13 13h4"/><rect width="18" height="18" x="3" y="3" rx="2"/>',
+    'activity':'<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+    'folder-code':'<path d="M10 10.5 8 12l2 1.5"/><path d="m14 10.5 2 1.5-2 1.5"/><path d="M2 6h5l2 2h13"/><path d="M2 6v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8"/>',
+    'zap':'<path d="M4 14a1 1 0 0 1-.78-1.63l9-11a.5.5 0 0 1 .87.46l-1.05 6.68A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9 11a.5.5 0 0 1-.87-.46l1.05-6.68A1 1 0 0 0 11 14z"/>',
+    'calendar-clock':'<path d="M16 2v4"/><path d="M3 10h18"/><path d="M8 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M17 14v2l1 1"/>',
+    'braces':'<path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"/><path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/>',
+    'history':'<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
+    'scroll-text':'<path d="M15 12h-5"/><path d="M15 8h-5"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1H11v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2h4"/>',
+    'shield-check':'<path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3z"/><path d="m9 12 2 2 4-4"/>',
+    'user-round-cog':'<path d="M2 21a8 8 0 0 1 10.4-7.6"/><circle cx="10" cy="7" r="4"/><circle cx="18" cy="18" r="3"/><path d="m19.5 14.3-.4.9"/><path d="m16.9 20.8-.4.9"/><path d="m21.7 19.5-.9-.4"/><path d="m15.2 16.9-.9-.4"/><path d="m21.7 16.5-.9.4"/><path d="m15.2 19.1-.9.4"/><path d="m19.5 21.7-.4-.9"/><path d="m16.9 15.2-.4-.9"/>',
+    'search':'<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+    'plus':'<path d="M5 12h14"/><path d="M12 5v14"/>',
+    'upload':'<path d="M12 3v12"/><path d="m17 8-5-5-5 5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>',
+    'download':'<path d="M12 15V3"/><path d="m7 10 5 5 5-5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>',
+    'arrow-left':'<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
+    'arrow-right':'<path d="m12 5 7 7-7 7"/><path d="M5 12h14"/>',
+    'play':'<path d="m6 3 14 9-14 9z"/>',
+    'pause':'<rect width="4" height="16" x="6" y="4" rx="1"/><rect width="4" height="16" x="14" y="4" rx="1"/>',
+    'pencil':'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+    'trash-2':'<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/>',
+    'rotate-ccw':'<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
+    'save':'<path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/>',
+    'ellipsis':'<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+    'x':'<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+    'log-out':'<path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>',
+    'power':'<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/>'
+    ,'folder':'<path d="M3 6h5l2 2h11v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'
+    ,'file-text':'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h8"/>'
+    ,'file-code-2':'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="m10 13-2 2 2 2"/><path d="m14 17 2-2-2-2"/>'
+    ,'image':'<rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>'
+    ,'shield-alert':'<path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3z"/><path d="M12 8v4"/><path d="M12 16h.01"/>'
+    ,'arrow-up':'<path d="m18 15-6-6-6 6"/><path d="M12 9v12"/>'
+    ,'cpu':'<rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3"/><path d="M15 1v3"/><path d="M9 20v3"/><path d="M15 20v3"/><path d="M20 9h3"/><path d="M20 14h3"/><path d="M1 9h3"/><path d="M1 14h3"/>'
+    ,'memory-stick':'<path d="M6 19v-3"/><path d="M10 19v-3"/><path d="M14 19v-3"/><path d="M18 19v-3"/><path d="M8 11V9"/><path d="M16 11V9"/><rect x="2" y="5" width="20" height="11" rx="2"/>'
+    ,'hard-drive':'<line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/>'
+    ,'network':'<rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-3h14v3"/><path d="M12 12V8"/>'
+    ,'server':'<rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/>'
+    ,'radio-tower':'<path d="M4.9 19.1a10 10 0 0 1 0-14.2"/><path d="M7.8 16.2a6 6 0 0 1 0-8.4"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8a6 6 0 0 1 0 8.4"/><path d="M19.1 4.9a10 10 0 0 1 0 14.2"/>'
+    ,'gauge':'<path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>'
+    ,'play-circle':'<circle cx="12" cy="12" r="10"/><path d="m10 8 6 4-6 4z"/>'
+  };
+  const navIcons=['activity','folder-code','zap','calendar-clock','braces','history','scroll-text','shield-check'];
+  const headingIcons=[
+    ['回收站','trash-2'],['版本保护','shield-check'],['运行','history'],['审计','scroll-text'],
+    ['计划','calendar-clock'],['快捷执行','zap'],['变量','braces'],['文件','folder-code'],
+    ['账户','user-round-cog'],['编辑','pencil'],['预览','file-text']
+  ];
+
+  function lucide(name){
+    const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+    svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('fill','none');svg.setAttribute('stroke','currentColor');
+    svg.setAttribute('stroke-linecap','round');svg.setAttribute('stroke-linejoin','round');svg.setAttribute('aria-hidden','true');
+    svg.classList.add('lucide',`lucide-${name}`);svg.innerHTML=lucidePaths[name]||lucidePaths.activity;
+    return svg;
+  }
+
+  function actionIcon(label,element){
+    if(element.matches('.parent-link,.back-link')||/返回|上一页/.test(label))return'arrow-left';
+    if(/下一页/.test(label))return'arrow-right';
+    if(/下载/.test(label))return'download';
+    if(/上传/.test(label))return'upload';
+    if(/搜索|查询|查看历史/.test(label))return'search';
+    if(/新建|创建/.test(label))return'plus';
+    if(/启动|运行|执行一次/.test(label))return'play';
+    if(/暂停/.test(label))return'pause';
+    if(/编辑/.test(label))return'pencil';
+    if(/删除|清理|回收站/.test(label))return'trash-2';
+    if(/恢复/.test(label))return'rotate-ccw';
+    if(/保存/.test(label))return'save';
+    if(/更多/.test(label))return'ellipsis';
+    if(/关闭|取消/.test(label))return'x';
+    if(/退出/.test(label))return'log-out';
+    if(/启用|停用/.test(label))return'power';
+    return'';
+  }
+
+  function renderLucideIcons(root=document){
+    for(const target of root.querySelectorAll('[data-lucide]:not([data-icon-ready])')){
+      target.append(lucide(target.dataset.lucide));target.dataset.iconReady='';
+    }
+    const nav=root.querySelector('.app-nav');
+    if(nav)for(const [index,link] of [...nav.querySelectorAll('a')].entries()){
+      if(!link.querySelector('svg')){const label=document.createElement('span');label.textContent=link.textContent.trim();link.replaceChildren(lucide(navIcons[index]||'activity'),label)}
+      link.dataset.navIndex=String(index+1).padStart(2,'0');
+    }
+    for(const heading of root.querySelectorAll('.workspace-heading,.editor-heading,.run-heading')){
+      if(heading.querySelector(':scope > .page-heading-icon'))continue;
+      const title=heading.querySelector('h1')?.textContent.trim()||'';
+      const match=headingIcons.find(([label])=>title.includes(label))||
+        (heading.classList.contains('run-heading')?['运行','history']:null);
+      if(!match)continue;
+      const marker=document.createElement('span');
+      marker.className='page-heading-icon';
+      marker.setAttribute('aria-hidden','true');
+      marker.append(lucide(match[1]));
+      heading.prepend(marker);
+    }
+    for(const fileIcon of root.querySelectorAll('.file-icon:not([data-icon-ready])')){
+      const name=fileIcon.classList.contains('file-icon--directory')?'folder':
+        fileIcon.classList.contains('file-icon--script')?'file-code-2':
+        fileIcon.classList.contains('file-icon--image')?'image':
+        fileIcon.classList.contains('file-icon--restricted')?'shield-alert':'file-text';
+      fileIcon.append(lucide(name));fileIcon.dataset.iconReady='';
+    }
+    for(const element of root.querySelectorAll('button,a,summary')){
+      if(element.dataset.iconReady!==undefined||element.closest('.app-nav')||element.classList.contains('brand'))continue;
+      const label=element.textContent.trim().replace(/^[←→↑↓＋]\s*|\s*[←→]$/g,'');
+      const name=actionIcon(label,element);
+      if(!name)continue;
+      for(const node of [...element.childNodes])if(node.nodeType===Node.TEXT_NODE)node.textContent=node.textContent.replace(/[←→↑↓＋]/g,'').trimStart();
+      element.prepend(lucide(name));element.dataset.iconReady='';
+    }
+  }
+
+  function initSignalCanvas(){
+    if(document.querySelector('.signal-canvas')||matchMedia('(prefers-reduced-motion: reduce)').matches)return;
+    const canvas=document.createElement('canvas');canvas.className='signal-canvas';canvas.setAttribute('aria-hidden','true');document.body.prepend(canvas);
+    const context=canvas.getContext('2d',{alpha:true});let width=0,height=0,ratio=1,pointerX=.72,pointerY=.2;
+    const nodes=Array.from({length:28},(_,index)=>({x:(index*83%997)/997,y:(index*149%983)/983,phase:index*.73,speed:.18+(index%5)*.025}));
+    const resize=()=>{ratio=Math.min(devicePixelRatio||1,1.6);width=innerWidth;height=innerHeight;canvas.width=Math.round(width*ratio);canvas.height=Math.round(height*ratio);canvas.style.width=width+'px';canvas.style.height=height+'px';context.setTransform(ratio,0,0,ratio,0,0)};
+    const move=event=>{pointerX=event.clientX/width;pointerY=event.clientY/height};
+    const draw=time=>{
+      context.clearRect(0,0,width,height);const t=time*.0001;
+      const positions=nodes.map(node=>({x:(node.x*width+Math.sin(t*node.speed*20+node.phase)*24+(pointerX-.5)*10),y:(node.y*height+Math.cos(t*node.speed*17+node.phase)*18+(pointerY-.5)*8)}));
+      context.lineWidth=.6;
+      for(let i=0;i<positions.length;i++)for(let j=i+1;j<positions.length;j++){const a=positions[i],b=positions[j],distance=Math.hypot(a.x-b.x,a.y-b.y);if(distance>155)continue;context.strokeStyle=`rgba(215,255,69,${(1-distance/155)*.055})`;context.beginPath();context.moveTo(a.x,a.y);context.lineTo(b.x,b.y);context.stroke()}
+      for(const point of positions){context.fillStyle='rgba(215,255,69,.18)';context.fillRect(point.x,point.y,1.2,1.2)}
+      requestAnimationFrame(draw);
+    };
+    resize();addEventListener('resize',resize,{passive:true});addEventListener('pointermove',move,{passive:true});requestAnimationFrame(draw);
+  }
 
   const unsavedMessage='有尚未保存的更改，确定要放弃吗？';
   let currentURL=location.href;
@@ -22,13 +154,13 @@
   }
 
   const formatBytes=value=>{
-    if(!Number.isFinite(Number(value)))return '—';
+    if(!Number.isFinite(Number(value)))return '-';
     const units=['B','KiB','MiB','GiB','TiB'];let amount=Math.max(0,Number(value)),unit=0;
     while(amount>=1024&&unit<units.length-1){amount/=1024;unit++}
     return (unit===0?Math.round(amount):amount.toFixed(1))+' '+units[unit];
   };
   const formatRate=value=>(value==null?'0 B':formatBytes(value))+'/s';
-  const formatPercent=value=>Number.isFinite(Number(value))?Number(value).toFixed(1)+'%':'—';
+  const formatPercent=value=>Number.isFinite(Number(value))?Number(value).toFixed(1)+'%':'-';
 
   function chartPath(points,key,kind){
     const values=points.map(point=>point?.[kind]?.values?.[key]);
@@ -69,8 +201,8 @@
     const cpuDetail=(payload.facts?.logicalCores||0)+' 个逻辑核心'+(current.cpu?.Load1!=null?' · Load '+Number(current.cpu.Load1).toFixed(2):'')+(payload.capabilities?.cpuIOWait&&current.cpu?' · I/O 等待 '+formatPercent(current.cpu.IOWaitPercent):'');
     const memoryDetail=current.memory?`${formatBytes(current.memory.UsedBytes)} / ${formatBytes(current.memory.TotalBytes)} · 可用 ${formatBytes(current.memory.AvailableBytes)}`+(Number(current.memory.SwapTotalBytes)>0?' · Swap '+formatBytes(current.memory.SwapUsedBytes):'')+(payload.capabilities?.committedMemory?' · 已提交 '+formatBytes(current.memory.CommittedBytes):''):'等待采集';
     card('cpu',current.cpu?formatPercent(current.cpu.UsedPercent):'采集中',cpuDetail);
-    card('memory',current.memory?formatPercent(current.memory.UsedPercent):'—',memoryDetail);
-    card('storage',current.storage?formatPercent(current.storage.UsedPercent):'—',current.storage?`${current.storage.Mountpoint} · 可用 ${formatBytes(current.storage.AvailableBytes)}`:'等待采集关键卷');
+    card('memory',current.memory?formatPercent(current.memory.UsedPercent):'-',memoryDetail);
+    card('storage',current.storage?formatPercent(current.storage.UsedPercent):'-',current.storage?`${current.storage.Mountpoint} · 可用 ${formatBytes(current.storage.AvailableBytes)}`:'等待采集关键卷');
     const storageCard=root.querySelector('[data-metric-card="storage"]');storageCard?.classList.toggle('metric-card--danger',Number(current.storage?.AvailableBytes)<104857600);
     card('network',current.network?formatRate(current.network.ReceivedBytesPerSecond):'采集中',current.network?`接收 ${formatRate(current.network.ReceivedBytesPerSecond)} · 发送 ${formatRate(current.network.SentBytesPerSecond)}`:'需要两个样本计算速率');
     for(const chart of root.querySelectorAll('[data-metric-chart]')){
@@ -84,13 +216,13 @@
     if(errorBox){const entries=Object.entries(payload.errors||{});errorBox.hidden=entries.length===0;errorBox.replaceChildren();if(entries.length){const strong=document.createElement('strong');strong.textContent='部分指标暂不可用';const list=document.createElement('ul');for(const [name,message] of entries){const item=document.createElement('li');item.textContent=`${name}：${message}`;list.append(item)}errorBox.append(strong,list)}}
 
     const historyIDs=kind=>new Set((payload.series||[]).flatMap(point=>Object.keys(point?.average?.[kind]||{})));
-    const offlineRows=(kind,currentIDs,columnCount=5)=>[...historyIDs(kind)].filter(id=>!currentIDs.has(id)).map(id=>cells(id,'当前离线',...Array(columnCount-2).fill('—')));
+    const offlineRows=(kind,currentIDs,columnCount=5)=>[...historyIDs(kind)].filter(id=>!currentIDs.has(id)).map(id=>cells(id,'当前离线',...Array(columnCount-2).fill('-')));
     const filesystems=current.filesystems||[],filesystemIDs=new Set(filesystems.map(value=>value.ID));
-    replaceRows(root.querySelector('[data-filesystem-rows]'),filesystems.map(value=>cells(`${value.Mountpoint}\n${value.Device} · ${value.Type}`,(value.Roles||[]).map(role=>role==='managed'?'受管目录':'内部状态').join(' / ')||'—',formatPercent(value.UsedPercent),formatBytes(value.AvailableBytes),formatBytes(value.TotalBytes))).concat(offlineRows('filesystems',filesystemIDs)),'等待文件系统采集');
+    replaceRows(root.querySelector('[data-filesystem-rows]'),filesystems.map(value=>cells(`${value.Mountpoint}\n${value.Device} · ${value.Type}`,(value.Roles||[]).map(role=>role==='managed'?'受管目录':'内部状态').join(' / ')||'-',formatPercent(value.UsedPercent),formatBytes(value.AvailableBytes),formatBytes(value.TotalBytes))).concat(offlineRows('filesystems',filesystemIDs)),'等待文件系统采集');
     const disks=current.disks||[],diskIDs=new Set(disks.map(value=>value.ID));
-    replaceRows(root.querySelector('[data-disk-rows]'),disks.map(value=>cells(value.Name,formatRate(value.ReadBytesPerSecond),formatRate(value.WriteBytesPerSecond),Number(value.ReadOperationsPerSecond||0).toFixed(1),Number(value.WriteOperationsPerSecond||0).toFixed(1),value.ReadLatencyMS==null?'—':Number(value.ReadLatencyMS).toFixed(1)+' ms',value.WriteLatencyMS==null?'—':Number(value.WriteLatencyMS).toFixed(1)+' ms')).concat(offlineRows('disks',diskIDs,7)),'需要两个样本计算磁盘速率');
+    replaceRows(root.querySelector('[data-disk-rows]'),disks.map(value=>cells(value.Name,formatRate(value.ReadBytesPerSecond),formatRate(value.WriteBytesPerSecond),Number(value.ReadOperationsPerSecond||0).toFixed(1),Number(value.WriteOperationsPerSecond||0).toFixed(1),value.ReadLatencyMS==null?'-':Number(value.ReadLatencyMS).toFixed(1)+' ms',value.WriteLatencyMS==null?'-':Number(value.WriteLatencyMS).toFixed(1)+' ms')).concat(offlineRows('disks',diskIDs,7)),'需要两个样本计算磁盘速率');
     const interfaces=current.interfaces||[],interfaceIDs=new Set(interfaces.map(value=>value.ID));
-    replaceRows(root.querySelector('[data-network-rows]'),interfaces.map(value=>cells(value.Name,(value.Addresses||[]).join(' · ')||'—',formatRate(value.ReceivedBytesPerSecond),formatRate(value.SentBytesPerSecond),`${value.ReceivedErrors||0} / ${value.ReceivedDrops||0}`)).concat(offlineRows('networks',interfaceIDs)),'需要两个样本计算网络速率');
+    replaceRows(root.querySelector('[data-network-rows]'),interfaces.map(value=>cells(value.Name,(value.Addresses||[]).join(' · ')||'-',formatRate(value.ReceivedBytesPerSecond),formatRate(value.SentBytesPerSecond),`${value.ReceivedErrors||0} / ${value.ReceivedDrops||0}`)).concat(offlineRows('networks',interfaceIDs)),'需要两个样本计算网络速率');
     const processFacts=root.querySelector('[data-process-facts]');
     if(processFacts&&current.process){processFacts.replaceChildren();const processRows=[['CPU',formatPercent(current.process.CPUPercent)],['常驻内存',formatBytes(current.process.ResidentMemoryBytes)],['线程',String(current.process.Threads||0)],payload.capabilities?.processHandles?['句柄',String(current.process.Handles||0)]:['打开文件',String(current.process.OpenFiles||0)]];for(const [label,value] of processRows){const item=document.createElement('div'),term=document.createElement('dt'),detail=document.createElement('dd');term.textContent=label;detail.textContent=value;item.append(term,detail);processFacts.append(item)}}
     const runList=root.querySelector('[data-active-runs]');
@@ -156,6 +288,7 @@
       if(submit){
         submit.disabled=false;
         submit.textContent=submit.dataset.submitOriginalLabel;
+        delete submit.dataset.iconReady;
         delete submit.dataset.submitOriginalLabel;
       }
     }
@@ -168,38 +301,8 @@
     const main=document.querySelector('main');
     resetSubmitting();
     updateLocalTimes();
-    if((path.startsWith('/files')||path.startsWith('/runs')||path.startsWith('/schedules'))&&main&&!main.querySelector('[data-ai-context-entry]')){
-      const heading=main.querySelector('.workspace-heading,.run-heading');
-      if(heading){
-        const link=document.createElement('a');
-        link.className='compact-action';link.dataset.aiContextEntry='';
-        link.href='/ai?context_type='+encodeURIComponent(path.split('/')[1]||'page')+'&context_id='+encodeURIComponent(path);
-        link.textContent='询问 AI';
-        heading.append(link);
-      }
-    }
-    const aiConversation=main?.matches('[data-ai-conversation]')?main:main?.querySelector('[data-ai-conversation]');
-    if(aiConversation&&window.EventSource){
-      const live=aiConversation.querySelector('[data-ai-live]');
-      const stream=new EventSource('/ai/conversations/'+encodeURIComponent(aiConversation.dataset.aiConversation)+'/events');
-      stream.addEventListener('model_event',event=>{
-        try{
-          const value=JSON.parse(event.data);
-          const delta=value.TextDelta||value.text_delta;
-          if(delta&&live){live.textContent+=delta;live.className='ai-message ai-message--assistant ai-message--live'}
-        }catch(_){}
-      });
-      for(const type of ['turn_finished','batch_finished','batch_summary_finished'])stream.addEventListener(type,()=>navigate(location.href,false));
-      const previousCleanup=pageCleanup;
-      pageCleanup=()=>{stream.close();previousCleanup()};
-    }
-    const aiBatchConversation=main?.matches('[data-ai-batch-conversation]')?main:main?.querySelector('[data-ai-batch-conversation]');
-    if(aiBatchConversation&&window.EventSource){
-      const stream=new EventSource('/ai/conversations/'+encodeURIComponent(aiBatchConversation.dataset.aiBatchConversation)+'/events?after='+encodeURIComponent(aiBatchConversation.dataset.aiAfter||'0'));
-      for(const type of ['batch_action','batch_finished'])stream.addEventListener(type,()=>navigate(location.href,false));
-      const previousCleanup=pageCleanup;
-      pageCleanup=()=>{stream.close();previousCleanup()};
-    }
+    renderLucideIcons();
+    initSignalCanvas();
     if(path==='/login'){
       document.body.classList.add('login-page');
       const form=document.querySelector('[data-login-form]');

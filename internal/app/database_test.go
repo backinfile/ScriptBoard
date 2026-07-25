@@ -102,6 +102,34 @@ func TestOpenDatabaseMigratesVariablePasswordDisplayFlag(t *testing.T) {
 	}
 }
 
+func TestOpenDatabaseRemovesLegacyAIStorage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.Exec(`CREATE TABLE ai_settings (id INTEGER PRIMARY KEY); PRAGMA user_version=8`); err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := openDatabase(path)
+	if err != nil {
+		t.Fatalf("remove legacy AI storage: %v", err)
+	}
+	defer db.Close()
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name LIKE 'ai_%'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("legacy AI tables remaining = %d", count)
+	}
+}
+
 func TestOpenDatabaseMarksUnsupervisedRunDisconnected(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "app.db")
 	db, err := openDatabase(path)

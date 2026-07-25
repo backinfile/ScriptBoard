@@ -176,84 +176,6 @@ func TestAuthenticatedRootRedirectsToOverviewAndOverviewDataIsPrivate(t *testing
 	}
 }
 
-func TestAIWorkspaceConfiguresProfileAndCreatesConversation(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
-	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
-
-	response, err := client.Get(serverURL + "/ai")
-	if err != nil {
-		t.Fatal(err)
-	}
-	page, _ := io.ReadAll(response.Body)
-	_ = response.Body.Close()
-	if response.StatusCode != http.StatusOK || !bytes.Contains(page, []byte("AI 工作区")) || !bytes.Contains(page, []byte("配置模型")) {
-		t.Fatalf("AI workspace status=%d body=%s", response.StatusCode, page)
-	}
-
-	response, err = client.Get(serverURL + "/settings/ai")
-	if err != nil {
-		t.Fatal(err)
-	}
-	settingsPage, _ := io.ReadAll(response.Body)
-	_ = response.Body.Close()
-	form := url.Values{
-		"csrf_token":                  {formToken(t, settingsPage)},
-		"name":                        {"Local test"},
-		"protocol":                    {"openai_chat"},
-		"base_url":                    {"http://127.0.0.1:9191/v1"},
-		"model":                       {"test-model"},
-		"auth_mode":                   {"none"},
-		"context_window":              {"128000"},
-		"max_output_tokens":           {"4096"},
-		"default_run_timeout_seconds": {"300"},
-		"execute":                     {"1"},
-		"modify":                      {"1"},
-		"auto_approve":                {"1"},
-		"risk_confirmed":              {"1"},
-	}
-	response, err = client.PostForm(serverURL+"/settings/ai/profiles", form)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther {
-		t.Fatalf("create AI profile status=%d", response.StatusCode)
-	}
-	response, err = client.Get(serverURL + "/settings/ai")
-	if err != nil {
-		t.Fatal(err)
-	}
-	updatedSettingsPage, _ := io.ReadAll(response.Body)
-	_ = response.Body.Close()
-	if response.StatusCode != http.StatusOK || !bytes.Contains(updatedSettingsPage, []byte("Local test")) {
-		t.Fatalf("updated AI settings status=%d body=%s", response.StatusCode, updatedSettingsPage)
-	}
-
-	response, err = client.Get(serverURL + "/ai")
-	if err != nil {
-		t.Fatal(err)
-	}
-	page, _ = io.ReadAll(response.Body)
-	_ = response.Body.Close()
-	if !bytes.Contains(page, []byte("Local test")) {
-		t.Fatalf("AI profile missing from workspace: %s", page)
-	}
-	form = url.Values{
-		"csrf_token": {formToken(t, page)},
-		"permission": {"readonly"},
-	}
-	response, err = client.PostForm(serverURL+"/ai/conversations", form)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther || !strings.HasPrefix(response.Header.Get("Location"), "/ai/conversations/") {
-		t.Fatalf("create conversation status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
-	}
-}
-
 func TestLoginPageExposesAJAXEnhancementHooks(t *testing.T) {
 	t.Parallel()
 
@@ -303,7 +225,7 @@ func TestPrimaryNavigationAvoidsFullPageReloads(t *testing.T) {
 	}
 	client, serverURL := authenticatedClient(t, managedRoot, filepath.Join(root, "state"))
 
-	response, err := client.Get(serverURL + "/files/")
+	response, err := client.Get(serverURL + "/files/?q=preview")
 	if err != nil {
 		t.Fatalf("get files page: %v", err)
 	}
@@ -315,14 +237,14 @@ func TestPrimaryNavigationAvoidsFullPageReloads(t *testing.T) {
 	for _, expected := range []string{
 		`data-pjax-nav`, `class="skip-link" href="#main-content"`, `main id="main-content"`,
 		`autocomplete="off" placeholder="例如：backup.ps1…"`, `width="96" height="64"`, `data-local-time`,
-		`/assets/app.css?v=16`, `/assets/app-v2.js?v=19`,
+		`/assets/app.css?v=55`, `/assets/app-v2.js?v=55`,
 	} {
 		if !bytes.Contains(page, []byte(expected)) {
 			t.Fatalf("files page does not contain %q: %s", expected, page)
 		}
 	}
 
-	for _, asset := range []string{"/assets/app.css?v=16", "/assets/app-v2.js?v=19"} {
+	for _, asset := range []string{"/assets/app.css?v=55", "/assets/app-v2.js?v=55"} {
 		response, err = client.Get(serverURL + asset)
 		if err != nil {
 			t.Fatalf("get %s: %v", asset, err)
@@ -335,15 +257,15 @@ func TestPrimaryNavigationAvoidsFullPageReloads(t *testing.T) {
 		if cacheControl := response.Header.Get("Cache-Control"); cacheControl != "public, max-age=31536000, immutable" {
 			t.Errorf("%s cache control = %q, want immutable versioned caching", asset, cacheControl)
 		}
-		if strings.HasSuffix(asset, ".js?v=16") {
+		if strings.HasSuffix(asset, ".js?v=55") {
 			for _, expected := range []string{"preventDefault()", "DOMParser", "history.pushState", "popstate", "replaceWith", "beforeunload", "confirmDiscard", "Intl.DateTimeFormat", "submitterMirror", "revealCurrentNavigation", "aria-current"} {
 				if !bytes.Contains(body, []byte(expected)) {
 					t.Errorf("interaction script does not contain %q", expected)
 				}
 			}
 		}
-		if strings.HasSuffix(asset, ".css?v=16") {
-			for _, expected := range []string{"main[data-pjax]", "summary:focus-visible", "overscroll-behavior:contain", "touch-action:manipulation", "*::after", ".button--danger", ".empty-state__action", "font-size:clamp(34px,3.2vw,42px)", ".sort-direction__options"} {
+		if strings.HasSuffix(asset, ".css?v=55") {
+			for _, expected := range []string{"main[data-pjax]", ":focus-visible", "@media(prefers-reduced-motion", ".button--danger", ".empty-state__action", ".sort-direction__options", "--signal", ".metric-grid"} {
 				if !bytes.Contains(body, []byte(expected)) {
 					t.Errorf("stylesheet does not contain %q", expected)
 				}

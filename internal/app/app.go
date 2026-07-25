@@ -37,7 +37,6 @@ import (
 	"golang.org/x/crypto/argon2"
 	_ "modernc.org/sqlite"
 
-	"scriptboard/internal/ai"
 	"scriptboard/internal/diskspace"
 	"scriptboard/internal/gitprotect"
 	"scriptboard/internal/hoststatus"
@@ -48,7 +47,7 @@ import (
 )
 
 const initialPasswordFilename = "initial-admin-password"
-const currentSchemaVersion = 8
+const currentSchemaVersion = 9
 
 //go:embed web/assets/* web/templates/*
 var webFiles embed.FS
@@ -73,10 +72,10 @@ func webTemplateFunctions() template.FuncMap {
 				value, ok = *pointer, true
 			}
 			if !ok {
-				return "—"
+				return "-"
 			}
 			if value.IsZero() {
-				return "—"
+				return "-"
 			}
 			return value.Local().Format("2006-01-02 15:04:05")
 		},
@@ -180,13 +179,6 @@ type App struct {
 	loginFailures      map[string]loginFailure
 	credentialOverride bool
 	trustedProxies     []*net.IPNet
-	aiStore            *ai.Store
-	aiVault            *ai.SecretVault
-	aiCoordinator      *ai.Coordinator
-	aiCleanupCancel    context.CancelFunc
-	aiCleanupDone      chan struct{}
-	aiContext          context.Context
-	aiTurnWG           sync.WaitGroup
 }
 
 type loginFailure struct {
@@ -221,20 +213,6 @@ func Open(config Config) (*App, error) {
 		return nil, err
 	}
 	application := &App{db: db, stateRoot: stateRoot, managedRoot: managedRoot, managed: managedfiles.Open(managedRoot), instanceLock: instanceLock, loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies}
-	application.aiStore = ai.NewStore(db, stateRoot)
-	if err := application.aiStore.Initialize(context.Background()); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-	if err := application.aiStore.RecoverInterrupted(context.Background()); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-	application.aiVault, err = ai.OpenSecretVault(stateRoot)
-	if err != nil {
-		_ = db.Close()
-		return nil, err
-	}
 	if err := application.initializeAdmin(stateRoot); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -271,46 +249,6 @@ func Open(config Config) (*App, error) {
 		return nil, err
 	}
 	application.hostStatus.Start(context.Background())
-	aiRegistry := ai.NewToolRegistry()
-	aiTools := &aiDomain{app: application}
-	if err := aiTools.register(aiRegistry); err != nil {
-		application.hostStatus.Close()
-		application.scheduler.Close()
-		application.runs.Close()
-		_ = db.Close()
-		return nil, err
-	}
-	application.aiCoordinator, err = ai.NewCoordinator(application.aiStore, aiRegistry, aiTools, func(profile ai.ModelProfile) (ai.ModelClient, error) {
-		return ai.NewModelClient(profile, application.aiVault.Read)
-	})
-	if err != nil {
-		application.hostStatus.Close()
-		application.scheduler.Close()
-		application.runs.Close()
-		_ = db.Close()
-		return nil, err
-	}
-	application.aiCoordinator.SetAuditSink(func(action, target, result string) {
-		application.recordAudit(action, target, result, "ai")
-	})
-	cleanupContext, cleanupCancel := context.WithCancel(context.Background())
-	application.aiContext = cleanupContext
-	application.aiCleanupCancel = cleanupCancel
-	application.aiCleanupDone = make(chan struct{})
-	go func() {
-		defer close(application.aiCleanupDone)
-		_, _ = application.aiStore.CleanupExpiredAttachments(cleanupContext)
-		ticker := time.NewTicker(time.Hour)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-cleanupContext.Done():
-				return
-			case <-ticker.C:
-				_, _ = application.aiStore.CleanupExpiredAttachments(cleanupContext)
-			}
-		}
-	}()
 	application.handler = application.routes(managedRoot)
 	opened = true
 	return application, nil
@@ -484,15 +422,6 @@ func (a *App) applyCredentialOverride(username, password, passwordFile string) e
 }
 
 func (a *App) Close() error {
-	if a.aiCleanupCancel != nil {
-		a.aiCleanupCancel()
-		<-a.aiCleanupDone
-	}
-	if a.aiCoordinator != nil {
-		a.aiCoordinator.StopAll()
-		a.aiTurnWG.Wait()
-		a.aiCoordinator.Wait()
-	}
 	if a.hostStatus != nil {
 		a.hostStatus.Close()
 	}
@@ -716,12 +645,6 @@ func openDatabase(path string) (*sql.DB, error) {
 			return nil, fmt.Errorf("初始化 SQLite: %w", err)
 		}
 	}
-	for _, statement := range ai.SchemaStatements {
-		if _, err := migration.Exec(statement); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("initialize AI SQLite schema: %w", err)
-		}
-	}
 	if schemaVersion == 1 {
 		if _, err := migration.Exec("ALTER TABLE schedules ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0"); err != nil {
 			_ = db.Close()
@@ -755,6 +678,24 @@ func openDatabase(path string) (*sql.DB, error) {
 		if _, err := migration.Exec("ALTER TABLE variables ADD COLUMN is_password INTEGER NOT NULL DEFAULT 0"); err != nil {
 			_ = db.Close()
 			return nil, fmt.Errorf("migrate variable display types: %w", err)
+		}
+	}
+	for _, statement := range []string{
+		"DROP TABLE IF EXISTS ai_events",
+		"DROP TABLE IF EXISTS ai_skill_usage",
+		"DROP TABLE IF EXISTS ai_attachments",
+		"DROP TABLE IF EXISTS ai_batch_actions",
+		"DROP TABLE IF EXISTS ai_batches",
+		"DROP TABLE IF EXISTS ai_turns",
+		"DROP TABLE IF EXISTS ai_messages",
+		"DROP TABLE IF EXISTS ai_history_summaries",
+		"DROP TABLE IF EXISTS ai_conversations",
+		"DROP TABLE IF EXISTS ai_profiles",
+		"DROP TABLE IF EXISTS ai_settings",
+	} {
+		if _, err := migration.Exec(statement); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("remove legacy AI storage: %w", err)
 		}
 	}
 	if _, err := migration.Exec(fmt.Sprintf("PRAGMA user_version=%d", currentSchemaVersion)); err != nil {
@@ -875,7 +816,7 @@ func (a *App) routes(_ string) http.Handler {
 	mux.HandleFunc("GET /assets/app-v2.js", func(response http.ResponseWriter, request *http.Request) {
 		serveWebAsset(response, request, "text/javascript; charset=utf-8", appJS)
 	})
-	mux.Handle("GET /", a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	mux.Handle("GET /{$}", a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		http.Redirect(response, request, "/overview", http.StatusSeeOther)
 	})))
 	mux.HandleFunc("GET /login", func(response http.ResponseWriter, request *http.Request) {
@@ -903,26 +844,6 @@ func (a *App) routes(_ string) http.Handler {
 		}{Username: username, CSRFToken: current.csrfToken, CredentialOverride: a.credentialOverride})
 	})))
 	mux.Handle("POST /settings/account", a.requireSession(http.HandlerFunc(a.changePassword)))
-	mux.Handle("GET /ai", a.requireSession(http.HandlerFunc(a.aiWorkspace)))
-	mux.Handle("POST /ai/conversations", a.requireSession(http.HandlerFunc(a.createAIConversation)))
-	mux.Handle("GET /ai/conversations/{id}", a.requireSession(http.HandlerFunc(a.aiConversationPage)))
-	mux.Handle("POST /ai/conversations/{id}/messages", a.requireSession(http.HandlerFunc(a.sendAIMessage)))
-	mux.Handle("POST /ai/conversations/{id}/retry", a.requireSession(http.HandlerFunc(a.retryAIMessage)))
-	mux.Handle("POST /ai/conversations/{id}/attachments", a.requireSession(http.HandlerFunc(a.uploadAIAttachment)))
-	mux.Handle("POST /ai/conversations/{id}/stop", a.requireSession(http.HandlerFunc(a.stopAIConversation)))
-	mux.Handle("POST /ai/conversations/{id}/rename", a.requireSession(http.HandlerFunc(a.renameAIConversation)))
-	mux.Handle("POST /ai/conversations/{id}/profile", a.requireSession(http.HandlerFunc(a.switchAIConversationProfile)))
-	mux.Handle("POST /ai/conversations/{id}/delete", a.requireSession(http.HandlerFunc(a.deleteAIConversation)))
-	mux.Handle("GET /ai/conversations/{id}/events", a.requireSession(http.HandlerFunc(a.aiEvents)))
-	mux.Handle("GET /ai/batches/{id}", a.requireSession(http.HandlerFunc(a.aiBatchPage)))
-	mux.Handle("POST /ai/batches/{id}/approve", a.requireSession(http.HandlerFunc(a.approveAIBatch)))
-	mux.Handle("POST /ai/batches/{id}/reject", a.requireSession(http.HandlerFunc(a.rejectAIBatch)))
-	mux.Handle("GET /settings/ai", a.requireSession(http.HandlerFunc(a.aiSettingsPage)))
-	mux.Handle("POST /settings/ai", a.requireSession(http.HandlerFunc(a.saveAISettings)))
-	mux.Handle("POST /settings/ai/profiles", a.requireSession(http.HandlerFunc(a.createAIProfile)))
-	mux.Handle("POST /settings/ai/profiles/{id}", a.requireSession(http.HandlerFunc(a.updateAIProfile)))
-	mux.Handle("POST /settings/ai/profiles/{id}/test", a.requireSession(http.HandlerFunc(a.testAIProfile)))
-	mux.Handle("POST /settings/ai/profiles/{id}/delete", a.requireSession(http.HandlerFunc(a.deleteAIProfile)))
 	mux.Handle("GET /files/{path...}", a.requireSession(http.HandlerFunc(a.filesPage)))
 	mux.Handle("POST /files/mkdir", a.requireSession(http.HandlerFunc(a.createDirectory)))
 	mux.Handle("POST /files/upload", a.requireSession(http.HandlerFunc(a.uploadFiles)))
@@ -1235,21 +1156,20 @@ func (a *App) addApplicationHeader(request *http.Request, body []byte) []byte {
 		environment = "远程"
 	}
 	items := []navigationItem{
-		{Href: "/ai", Label: "AI 工作区"},
 		{Href: "/overview", Label: "概览"},
-		{Href: "/files/", Label: "文件"},
+		{Href: "/files/", Label: "脚本文件"},
 		{Href: "/quick-runs", Label: "快捷执行"},
 		{Href: "/schedules", Label: "计划"},
 		{Href: "/variables", Label: "变量"},
-		{Href: "/runs", Label: "运行记录"},
+		{Href: "/runs", Label: "运行"},
 		{Href: "/audit", Label: "审计"},
 		{Href: "/settings/version-protection", Label: "版本保护"},
 	}
 	for index := range items {
-		items[index].Current = items[index].Href == "/ai" && strings.HasPrefix(request.URL.Path, "/settings/ai") ||
-			items[index].Href == "/files/" && (strings.HasPrefix(request.URL.Path, "/files") || request.URL.Path == "/trash") ||
+		items[index].Current = items[index].Href == "/files/" && (strings.HasPrefix(request.URL.Path, "/files") || request.URL.Path == "/trash") ||
 			items[index].Href != "/files/" && strings.HasPrefix(request.URL.Path, items[index].Href)
 	}
+
 	var header bytes.Buffer
 	_ = applicationHeaderTemplate.Execute(&header, applicationHeaderData{
 		Username: username, CSRFToken: current.csrfToken, Environment: environment,
@@ -1275,6 +1195,8 @@ func (a *App) addApplicationHeader(request *http.Request, body []byte) []byte {
 		}
 	}
 	bodyStart = strings.Index(bodyText, "<body")
+	bodyText = bodyText[:bodyStart+len("<body")] + ` data-app-shell` + bodyText[bodyStart+len("<body"):]
+	bodyStart = strings.Index(bodyText, "<body")
 	bodyEnd = strings.Index(bodyText[bodyStart:], ">")
 	insertAt := bodyStart + bodyEnd + 1
 	return []byte(bodyText[:insertAt] + header.String() + bodyText[insertAt:])
@@ -1285,8 +1207,6 @@ func renderApplicationError(request *http.Request, status int, message string) [
 	switch {
 	case strings.HasPrefix(request.URL.Path, "/overview"):
 		destination, label = "/overview", "返回概览"
-	case strings.HasPrefix(request.URL.Path, "/ai"):
-		destination, label = "/ai", "返回 AI 工作区"
 	case strings.HasPrefix(request.URL.Path, "/settings/account"):
 		destination, label = "/settings/account", "返回账户设置"
 	case strings.HasPrefix(request.URL.Path, "/settings/version-protection"):
@@ -3020,13 +2940,13 @@ type loginPageData struct {
 
 var applicationHeaderTemplate = template.Must(template.New("application-header").Parse(`<a class="skip-link" href="#main-content">跳至主要内容</a><header class="app-header" data-pjax-nav>
 <div class="app-header__inner">
-<a class="brand" href="/overview" aria-label="ScriptBoard 首页"><span class="brand__mark">&gt;_</span><span class="brand__word">ScriptBoard</span></a>
+<a class="brand" href="/overview" aria-label="ScriptBoard 首页"><span class="brand__mark" aria-hidden="true">S/</span><span class="brand__word">ScriptBoard</span></a>
 <nav class="app-nav" aria-label="主导航">{{range .Navigation}}<a href="{{.Href}}" {{if .Current}}aria-current="page"{{end}}>{{.Label}}</a>{{end}}</nav>
-<div class="app-user"><span class="app-status">{{.Environment}} · {{.ActiveRuns}} 个运行</span><a href="/settings/account">{{.Username}}</a><form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button type="submit">退出</button></form></div>
+<div class="app-user"><span class="app-status">{{.Environment}} · {{.ActiveRuns}} 个运行</span><span data-lucide="user-round-cog" aria-hidden="true"></span><a href="/settings/account">{{.Username}}</a><form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button type="submit">退出</button></form></div>
 </div></header>`))
 
 var applicationErrorTemplate = template.Must(template.New("application-error").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=19"></script><title>操作未完成 · ScriptBoard</title></head>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=55"><script defer src="/assets/app-v2.js?v=55"></script><title>操作未完成 · ScriptBoard</title></head>
 <body><main class="error-page"><p class="error-code">HTTP {{.Status}}</p><h1>操作未完成</h1><div class="page-error" role="alert">{{.Message}}</div><p><a class="error-return" href="{{.Destination}}">{{.Label}}</a></p></main></body></html>`))
 
 func renderLoginPage(response http.ResponseWriter, request *http.Request, status int, username, errorMessage string) {
@@ -3096,7 +3016,7 @@ func acceptsJSON(request *http.Request) bool {
 
 var loginTemplate = template.Must(template.New("login").Parse(`<!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=19"></script><title>登录 · ScriptBoard</title></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=55"><script defer src="/assets/app-v2.js?v=55"></script><title>登录 · ScriptBoard</title></head>
 <body class="login-page"><main><h1>登录</h1>
 <div class="login-error" role="alert" aria-live="polite" data-login-error {{if not .Error}}hidden{{end}}><strong>登录失败</strong><span data-login-error-message>{{.Error}}</span></div>
 <form method="post" action="/login" data-login-form>
@@ -3109,7 +3029,7 @@ var loginTemplate = template.Must(template.New("login").Parse(`<!doctype html>
 
 var accountTemplate = template.Must(template.New("account").Parse(`<!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=19"></script><title>账户设置 · ScriptBoard</title></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=55"><script defer src="/assets/app-v2.js?v=55"></script><title>账户设置 · ScriptBoard</title></head>
 <body><main><header class="workspace-heading"><h1>账户设置</h1><p>管理当前唯一管理员账户的登录凭据。</p></header>
 <dl class="account-summary"><dt>当前用户名</dt><dd>{{.Username}}</dd><dt>凭据来源</dt><dd>{{if .CredentialOverride}}启动配置覆盖{{else}}ScriptBoard 数据库{{end}}</dd></dl>
 {{if .CredentialOverride}}<p class="account-notice">当前实例配置了启动凭据覆盖；修改只在下次重启前有效。要永久保留网页修改，请移除启动配置中的覆盖值。</p>{{end}}
@@ -3130,27 +3050,27 @@ var filesTemplate = mustWebTemplate("files", "web/templates/files.html")
 var overviewTemplate = mustWebTemplate("overview", "web/templates/overview.html")
 
 var uploadResultsTemplate = template.Must(template.New("upload-results").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=19"></script><title>上传结果 · ScriptBoard</title></head><body><main><h1>上传结果</h1><table><thead><tr><th>文件</th><th>结果</th><th>详情</th></tr></thead><tbody>{{range .Results}}<tr><td>{{.Name}}</td><td>{{.Result}}</td><td>{{.Detail}}</td></tr>{{end}}</tbody></table><p><a href="{{.Link}}">返回文件列表</a></p></main></body></html>`))
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=55"><script defer src="/assets/app-v2.js?v=55"></script><title>上传结果 · ScriptBoard</title></head><body><main><h1>上传结果</h1><table><thead><tr><th>文件</th><th>结果</th><th>详情</th></tr></thead><tbody>{{range .Results}}<tr><td>{{.Name}}</td><td>{{.Result}}</td><td>{{.Detail}}</td></tr>{{end}}</tbody></table><p><a href="{{.Link}}">返回文件列表</a></p></main></body></html>`))
 
 var deleteImpactTemplate = template.Must(template.New("delete-impact").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=19"></script><title>确认引用影响 · ScriptBoard</title></head><body><main><h1>确认引用影响</h1><p>删除 {{.Path}} 将使 {{.QuickRuns}} 个快捷执行路径失效，并停用 {{.Schedules}} 个计划。恢复文件不会自动重新启用计划。</p><form method="post" action="/files/delete" data-async><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value="{{.Path}}"><button name="confirm_references" value="yes">确认移入回收站</button></form></main></body></html>`))
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=55"><script defer src="/assets/app-v2.js?v=55"></script><title>确认引用影响 · ScriptBoard</title></head><body><main><h1>确认引用影响</h1><p>删除 {{.Path}} 将使 {{.QuickRuns}} 个快捷执行路径失效，并停用 {{.Schedules}} 个计划。恢复文件不会自动重新启用计划。</p><form method="post" action="/files/delete" data-async><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value="{{.Path}}"><button name="confirm_references" value="yes">确认移入回收站</button></form></main></body></html>`))
 
 var textPreviewTemplate = template.Must(template.New("text-preview").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=19"></script><title>预览 {{.Path}} · ScriptBoard</title></head>
-<body><main><header class="workspace-heading"><h1>文本预览</h1><p>{{.Path}}</p></header><nav class="preview-actions" aria-label="文件操作"><a href="{{.BackURL}}">← 返回目录</a><a href="{{.DownloadURL}}">下载</a><a class="button-link button-link--primary" href="{{.EditURL}}">编辑文件</a></nav><pre class="text-preview">{{.Content}}</pre></main></body></html>`))
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=55"><script defer src="/assets/app-v2.js?v=55"></script><title>预览 {{.Path}} · ScriptBoard</title></head>
+<body><main><header class="workspace-heading"><h1>文本预览</h1><p>{{.Path}}</p></header><nav class="preview-actions" aria-label="文件操作"><a href="{{.BackURL}}">返回目录</a><a href="{{.DownloadURL}}">下载</a><a class="button-link button-link--primary" href="{{.EditURL}}">编辑文件</a></nav><pre class="text-preview">{{.Content}}</pre></main></body></html>`))
 
 var trashTemplate = mustWebTemplate("trash", "web/templates/trash.html")
 
 var textEditorTemplate = template.Must(template.New("text-editor").Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=19"></script><title>编辑 {{.Path}} · ScriptBoard</title></head>
-<body><main class="editor-page"><header class="editor-heading"><div><a class="back-link" href="{{.BackURL}}">← 返回目录</a><h1>编辑文件</h1><p><code>{{.Path}}</code></p></div><nav class="editor-links" aria-label="文件操作"><a href="{{.ViewURL}}">只读预览</a><a href="{{.DownloadURL}}" data-native>下载</a></nav></header><form class="text-editor-form" method="post" action="{{.Action}}" data-async>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=55"><script defer src="/assets/app-v2.js?v=55"></script><title>编辑 {{.Path}} · ScriptBoard</title></head>
+<body><main class="editor-page"><header class="editor-heading"><div><a class="back-link" href="{{.BackURL}}">返回目录</a><h1>编辑文件</h1><p><code>{{.Path}}</code></p></div><nav class="editor-links" aria-label="文件操作"><a href="{{.ViewURL}}">只读预览</a><a href="{{.DownloadURL}}" data-native>下载</a></nav></header><form class="text-editor-form" method="post" action="{{.Action}}" data-async>
 <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="digest" value="{{.Digest}}">
 <div class="editor-surface"><div class="editor-surface__bar"><span>UTF-8 文本</span><span>最大 1 MiB</span></div><label class="sr-only" for="file-content">文件内容</label><textarea id="file-content" name="content" autocomplete="off" spellcheck="false" required>{{.Content}}</textarea></div><footer class="editor-actions"><span>保存时会校验文件是否已被其他程序修改。</span><a href="{{.BackURL}}">取消</a><button class="button--primary" type="submit" data-pending-label="保存中…">保存文件</button></footer>
 </form></main></body></html>`))
 
 var runTemplate = template.Must(template.New("run").Funcs(webTemplateFunctions()).Parse(`<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app-v2.css?v=16"><script defer src="/assets/app-v2.js?v=19"></script><title>{{.Run.ScriptPath}} · 运行详情 · ScriptBoard</title></head>
-<body><main class="run-page" data-run-events-url="/runs/{{.Run.ID}}/events"><header class="run-heading"><div><a class="back-link" href="/runs">← 返回运行记录</a><h1>{{.Run.ScriptPath}}</h1><p>运行 ID <code>{{.Run.ID}}</code></p></div><div class="run-heading__actions">{{if or (eq .Run.Status "running") (eq .Run.Status "stopping")}}<form data-run-stop-form method="post" action="/runs/{{.Run.ID}}/stop" data-async><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button--danger" type="submit" data-pending-label="正在停止…">{{if eq .Run.Status "stopping"}}强制停止{{else}}停止运行{{end}}</button></form>{{end}}<details class="row-editor quick-save-dialog"><summary>保存为快捷执行</summary><div class="row-editor__panel" role="dialog" aria-modal="true" aria-label="保存为快捷执行"><button class="dialog-close" type="button" data-close-panel>关闭</button><form class="quick-save-form" method="post" action="/runs/{{.Run.ID}}/quick-run" data-async><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><p>保存当前脚本、参数和超时设置，之后可一键再次运行。</p><label>快捷执行名称 <input name="name" autocomplete="off" placeholder="例如：每日备份（手动）" required></label><button class="button--primary" type="submit" data-pending-label="保存中…">保存快捷执行</button></form></div></details></div></header>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=55"><script defer src="/assets/app-v2.js?v=55"></script><title>{{.Run.ScriptPath}} · 运行详情 · ScriptBoard</title></head>
+<body><main class="run-page" data-run-events-url="/runs/{{.Run.ID}}/events"><header class="run-heading"><div><a class="back-link" href="/runs">返回运行记录</a><h1>{{.Run.ScriptPath}}</h1><p>运行 ID <code>{{.Run.ID}}</code></p></div><div class="run-heading__actions">{{if or (eq .Run.Status "running") (eq .Run.Status "stopping")}}<form data-run-stop-form method="post" action="/runs/{{.Run.ID}}/stop" data-async><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button--danger" type="submit" data-pending-label="正在停止…">{{if eq .Run.Status "stopping"}}强制停止{{else}}停止运行{{end}}</button></form>{{end}}<details class="row-editor quick-save-dialog"><summary>保存为快捷执行</summary><div class="row-editor__panel" role="dialog" aria-modal="true" aria-label="保存为快捷执行"><button class="dialog-close" type="button" data-close-panel>关闭</button><form class="quick-save-form" method="post" action="/runs/{{.Run.ID}}/quick-run" data-async><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><p>保存当前脚本、参数和超时设置，之后可一键再次运行。</p><label>快捷执行名称 <input name="name" autocomplete="off" placeholder="例如：每日备份（手动）" required></label><button class="button--primary" type="submit" data-pending-label="保存中…">保存快捷执行</button></form></div></details></div></header>
 <section class="run-summary-panel" aria-label="运行概览"><div class="run-primary-status"><span>当前状态</span><strong class="run-status" data-run-status>{{.Run.Status}}</strong>{{if .Run.ExitCode}}<small>退出码 {{.Run.ExitCode}}</small>{{end}}</div><dl class="run-facts"><div><dt>发起时间</dt><dd><time datetime="{{machineTime .Run.CreatedAt}}" data-local-time>{{displayTime .Run.CreatedAt}}</time></dd></div><div><dt>来源</dt><dd>{{.Run.SourceType}} / {{.Run.SourceName}}</dd></div><div><dt>执行身份</dt><dd>{{.Run.RuntimeIdentity}}</dd></div><div><dt>超时</dt><dd>{{.Run.TimeoutSeconds}} 秒</dd></div></dl></section>
 <details class="run-technical"><summary>执行参数与技术信息</summary><dl><div><dt>参数模板</dt><dd><code>{{if .Run.ArgumentsTemplate}}{{.Run.ArgumentsTemplate}}{{else}}无{{end}}</code></dd></div><div><dt>执行器</dt><dd><code>{{.Run.Executor}}</code></dd></div><div><dt>脚本 SHA-256</dt><dd><code>{{.Run.ScriptDigest}}</code></dd></div></dl></details>
 {{if .Run.Error}}<p class="notice notice--danger"><strong>运行错误：</strong>{{.Run.Error}}</p>{{end}}{{if .Run.LogExpired}}<p class="notice">运行日志已按保留策略清理。</p>{{end}}{{if .Run.LogIncomplete}}<p class="notice notice--danger">运行日志写入不完整。</p>{{end}}{{if .Run.LogTruncated}}<p class="notice">运行日志已达到上限，丢弃 {{.Run.DroppedBytes}} 字节。</p>{{end}}
@@ -3159,7 +3079,7 @@ var runTemplate = template.Must(template.New("run").Funcs(webTemplateFunctions()
 
 var runsTemplate = mustWebTemplate("runs", "web/templates/runs.html")
 
-var overlapTemplate = template.Must(template.New("overlap").Parse(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=19"></script><title>确认并发运行 · ScriptBoard</title></head><body><main><h1>确认并发运行</h1><p>{{.Script}} 已有活动运行。确认后将并发启动另一个运行。</p><form method="post" action="{{.Action}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="script" value="{{.Script}}"><input type="hidden" name="arguments" value="{{.Arguments}}"><input type="hidden" name="timeout_seconds" value="{{.Timeout}}"><button name="confirm_overlap" value="yes">确认并发启动</button></form></main></body></html>`))
+var overlapTemplate = template.Must(template.New("overlap").Parse(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=55"><script defer src="/assets/app-v2.js?v=55"></script><title>确认并发运行 · ScriptBoard</title></head><body><main><h1>确认并发运行</h1><p>{{.Script}} 已有活动运行。确认后将并发启动另一个运行。</p><form method="post" action="{{.Action}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="script" value="{{.Script}}"><input type="hidden" name="arguments" value="{{.Arguments}}"><input type="hidden" name="timeout_seconds" value="{{.Timeout}}"><button name="confirm_overlap" value="yes">确认并发启动</button></form></main></body></html>`))
 
 var quickRunsTemplate = mustWebTemplate("quick-runs", "web/templates/quick-runs.html")
 
@@ -3170,11 +3090,3 @@ var auditTemplate = mustWebTemplate("audit", "web/templates/audit.html")
 var versionProtectionTemplate = mustWebTemplate("version-protection", "web/templates/version-protection.html")
 
 var variablesTemplate = mustWebTemplate("variables", "web/templates/variables.html")
-
-var aiWorkspaceTemplate = mustWebTemplate("ai", "web/templates/ai.html")
-
-var aiConversationTemplate = mustWebTemplate("ai-conversation", "web/templates/ai-conversation.html")
-
-var aiSettingsTemplate = mustWebTemplate("ai-settings", "web/templates/ai-settings.html")
-
-var aiBatchTemplate = mustWebTemplate("ai-batch", "web/templates/ai-batch.html")
