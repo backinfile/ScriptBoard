@@ -8,6 +8,8 @@
 # Local runtime, test, preview, and design-tool state
 /.scratch/
 /.impeccable/
+/integration/browser/node_modules/
+/integration/browser/test-results/
 
 # Editor and operating-system noise
 .DS_Store

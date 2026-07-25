@@ -10,6 +10,8 @@
 - [ADR-0025](./0025-skip-busy-cron-triggers-without-queueing.md) → [ADR-0027](./0027-allow-unbounded-concurrent-runs-without-a-queue.md)：全局繁忙跳过改为并发执行；计划仍可按项禁止同脚本重叠。
 - [ADR-0026](./0026-trigger-cron-runs-through-a-local-control-socket.md) → [ADR-0030](./0030-use-an-internal-scheduler-instead-of-crontab.md)：移除 crontab 与本机触发 Socket。
 - [ADR-0074](./0074-provide-cli-backup-for-private-application-state.md) → [ADR-0100](./0100-do-not-provide-user-facing-backup-commands.md)：移除用户备份/恢复命令。
+- [ADR-0081](./0081-ship-a-simplified-chinese-only-mvp.md) → [ADR-0108](./0108-localize-the-web-in-zh-cn-and-en-us.md)：Web 改为简体中文和美式英语双语，CLI 与托盘仍为简体中文。
+- [ADR-0083](./0083-support-modern-desktop-and-mobile-browsers.md) → [ADR-0110](./0110-use-desktop-chromium-as-the-browser-gate.md)：浏览器自动化门禁收敛为桌面 Chromium，其他现代浏览器最佳努力兼容。
 
 ## 冻结文档
 

@@ -1,39 +1,116 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=55"><script defer src="/assets/app-v2.js?v=55"></script><title>概览 · ScriptBoard</title></head><body>
-<main class="overview-page" data-host-overview data-range="{{.Range}}">
-<header class="overview-heading">
-<div><p class="overview-kicker">HOST / {{if .Facts.Hostname}}{{.Facts.Hostname}}{{else}}采集中{{end}}</p><h1>宿主概览</h1><p>{{.Facts.Platform}} {{.Facts.PlatformVersion}} · {{.Facts.Architecture}} · 已运行 {{duration .HostUptime}}</p></div>
-<div class="overview-freshness {{if .Stale}}overview-freshness--stale{{end}}" data-overview-freshness><span>{{if .Stale}}数据已过期{{else}}实时采集中{{end}}</span><time datetime="{{machineTime .CollectedAt}}" data-local-time data-collected-at>{{displayTime .CollectedAt}}</time></div>
-</header>
+<!doctype html>
+<html lang="{{.Locale}}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/assets/app.css?v=20260725">
+  <script defer src="/assets/app-v2.js?v=20260725"></script>
+  <title>{{t .Locale "overview.title"}} · ScriptBoard</title>
+</head>
+<body>
+<main class="workspace overview-page" data-host-overview data-range="{{.Range}}" data-overview-url="/monitor/data">
+  <header class="page-heading">
+    <div>
+      <p class="page-eyebrow">{{t .Locale "overview.eyebrow"}} / {{if .Facts.Hostname}}{{.Facts.Hostname}}{{else}}{{t .Locale "overview.collecting"}}{{end}}</p>
+      <h1>{{t .Locale "overview.title"}}</h1>
+      <p>{{.Facts.Platform}} {{.Facts.PlatformVersion}} · {{.Facts.Architecture}} · {{t .Locale "overview.host_uptime"}} {{localDuration .Locale .HostUptime}}</p>
+    </div>
+    <a class="button button--primary" href="/resources/files/"><span data-lucide="play" aria-hidden="true"></span>{{t .Locale "overview.run_script"}}</a>
+  </header>
 
-<nav class="overview-command-strip" aria-label="常用操作">
-<a href="/files/" data-icon-ready><span data-lucide="folder-code"></span><strong>浏览脚本</strong><small>管理与执行文件</small></a>
-<a href="/quick-runs" data-icon-ready><span data-lucide="zap"></span><strong>快捷执行</strong><small>启动常用任务</small></a>
-<a href="/schedules" data-icon-ready><span data-lucide="calendar-clock"></span><strong>检查计划</strong><small>查看调度状态</small></a>
-<a href="/runs" data-icon-ready><span data-lucide="play-circle"></span><strong>运行现场</strong><small>追踪实时输出</small></a>
-</nav>
+  <section class="observation-verdict" data-state="{{if .Stale}}stale{{else if .Errors}}attention{{else}}current{{end}}" aria-labelledby="verdict-title">
+    <div class="verdict-marker" aria-hidden="true"><span data-lucide="{{if .Stale}}clock-alert{{else if .Errors}}triangle-alert{{else}}check{{end}}"></span></div>
+    <div class="verdict-copy">
+      <p>{{t .Locale "overview.observation_verdict"}}</p>
+      <h2 id="verdict-title" data-verdict-title>{{if .Stale}}{{t .Locale "status.stale"}}{{else if .Errors}}{{t .Locale "status.attention"}}{{else}}{{t .Locale "status.current"}}{{end}}</h2>
+      <span data-verdict-description>{{if .Stale}}{{t .Locale "overview.stale_description"}}{{else if .Errors}}{{t .Locale "overview.attention_description"}}{{else}}{{t .Locale "overview.current_description"}}{{end}}</span>
+    </div>
+    <div class="verdict-time">
+      <span>{{t .Locale "overview.collected_at"}}</span>
+      <time datetime="{{machineTime .CollectedAt}}" data-local-time data-collected-at>{{localTime .Locale .CollectedAt}}</time>
+    </div>
+  </section>
 
-<nav class="range-switcher" aria-label="历史时间范围">
-{{range $value := (slice "15m" "1h" "6h" "24h")}}<a href="/overview?range={{$value}}" data-overview-range="{{$value}}" {{if eq $.Range $value}}aria-current="page"{{end}}>{{if eq $value "15m"}}15 分钟{{else if eq $value "1h"}}1 小时{{else if eq $value "6h"}}6 小时{{else}}24 小时{{end}}</a>{{end}}
-</nav>
+  {{if .Errors}}
+  <section class="issue-ledger" role="status" data-overview-errors>
+    <header><span data-lucide="triangle-alert" aria-hidden="true"></span><h2>{{t .Locale "overview.issues"}}</h2><span>{{len .Errors}}</span></header>
+    <ul>{{range $category, $message := .Errors}}<li><code>{{$category}}</code><span>{{$message}}</span></li>{{end}}</ul>
+  </section>
+  {{else}}<section class="issue-ledger" data-overview-errors hidden></section>{{end}}
 
-{{if .Errors}}<section class="overview-errors" role="status" data-overview-errors><strong>部分指标暂不可用</strong><ul>{{range $category,$message := .Errors}}<li><b>{{$category}}</b>：{{$message}}</li>{{end}}</ul></section>{{else}}<section class="overview-errors" data-overview-errors hidden></section>{{end}}
+  <div class="section-heading section-heading--with-control">
+    <div><p class="section-index">01</p><h2>{{t .Locale "overview.measurements"}}</h2></div>
+    <nav class="segmented-control" aria-label="{{t .Locale "overview.history_range"}}">
+      {{range $value := (slice "15m" "1h" "6h" "24h")}}<a href="/monitor?range={{$value}}" data-overview-range="{{$value}}" {{if eq $.Range $value}}aria-current="page"{{end}}>{{if eq $value "15m"}}15m{{else if eq $value "1h"}}1h{{else if eq $value "6h"}}6h{{else}}24h{{end}}</a>{{end}}
+    </nav>
+  </div>
 
-<section class="metric-grid" aria-label="核心资源">
-<article class="metric-card" data-metric-card="cpu"><header><span class="metric-card__icon" data-lucide="cpu"></span><span>CPU</span><strong data-metric-value>{{if .Current.CPU}}{{percent .Current.CPU.UsedPercent}}{{else}}采集中{{end}}</strong></header><p data-metric-detail>{{.Facts.LogicalCores}} 个逻辑核心{{if and .Current.CPU .Current.CPU.Load1}} · Load {{printf "%.2f" (deref .Current.CPU.Load1)}}{{end}}{{if and .Current.CPU (index .Capabilities "cpuIOWait")}} · I/O 等待 {{percent .Current.CPU.IOWaitPercent}}{{end}}</p><svg viewBox="0 0 320 96" role="img" aria-label="CPU 使用率趋势" data-metric-chart="cpu.usedPercent"><path class="chart-peak" data-chart-peak></path><path class="chart-average" data-chart-average></path></svg></article>
-<article class="metric-card" data-metric-card="memory"><header><span class="metric-card__icon" data-lucide="memory-stick"></span><span>内存</span><strong data-metric-value>{{if .Current.Memory}}{{percent .Current.Memory.UsedPercent}}{{else}}-{{end}}</strong></header><p data-metric-detail>{{if .Current.Memory}}{{humanBytes .Current.Memory.UsedBytes}} / {{humanBytes .Current.Memory.TotalBytes}} · 可用 {{humanBytes .Current.Memory.AvailableBytes}}{{if gt .Current.Memory.SwapTotalBytes 0}} · Swap {{humanBytes .Current.Memory.SwapUsedBytes}}{{end}}{{if index .Capabilities "committedMemory"}} · 已提交 {{humanBytes .Current.Memory.CommittedBytes}}{{end}}{{else}}等待采集{{end}}</p><svg viewBox="0 0 320 96" role="img" aria-label="内存使用率趋势" data-metric-chart="memory.usedPercent"><path class="chart-peak" data-chart-peak></path><path class="chart-average" data-chart-average></path></svg></article>
-<article class="metric-card {{if and .Current.Storage (lt .Current.Storage.AvailableBytes 104857600)}}metric-card--danger{{end}}" data-metric-card="storage"><header><span class="metric-card__icon" data-lucide="hard-drive"></span><span>存储</span><strong data-metric-value>{{if .Current.Storage}}{{percent .Current.Storage.UsedPercent}}{{else}}-{{end}}</strong></header><p data-metric-detail>{{if .Current.Storage}}{{.Current.Storage.Mountpoint}} · 可用 {{humanBytes .Current.Storage.AvailableBytes}}{{else}}等待采集关键卷{{end}}</p><svg viewBox="0 0 320 96" role="img" aria-label="关键卷使用率趋势" data-metric-chart="storage.usedPercent"><path class="chart-peak" data-chart-peak></path><path class="chart-average" data-chart-average></path></svg></article>
-<article class="metric-card" data-metric-card="network"><header><span class="metric-card__icon" data-lucide="network"></span><span>网络</span><strong data-metric-value>{{if .Current.Network}}{{humanRate .Current.Network.ReceivedBytesPerSecond}}{{else}}采集中{{end}}</strong></header><p data-metric-detail>{{if .Current.Network}}接收 {{humanRate .Current.Network.ReceivedBytesPerSecond}} · 发送 {{humanRate .Current.Network.SentBytesPerSecond}}{{else}}需要两个样本计算速率{{end}}</p><svg viewBox="0 0 320 96" role="img" aria-label="网络吞吐趋势" data-metric-chart="network.receivedBytesPerSecond"><path class="chart-peak" data-chart-peak></path><path class="chart-average" data-chart-average></path></svg></article>
-</section>
+  <section class="measurement-ledger" aria-label="{{t .Locale "overview.measurements"}}">
+    <article class="measurement-band" data-metric-card="cpu">
+      <header><span data-lucide="cpu" aria-hidden="true"></span><h3>CPU</h3><strong data-metric-value>{{if .Current.CPU}}{{percent .Current.CPU.UsedPercent}}{{else}}—{{end}}</strong></header>
+      <p data-metric-detail>{{.Facts.LogicalCores}} {{t .Locale "overview.logical_cores"}}{{if and .Current.CPU .Current.CPU.Load1}} · Load {{printf "%.2f" (deref .Current.CPU.Load1)}}{{end}}</p>
+      <svg viewBox="0 0 1000 80" preserveAspectRatio="none" role="img" aria-label="{{t .Locale "overview.cpu_history"}}" data-metric-chart="cpu.usedPercent"><path class="chart-grid" d="M0 79H1000 M0 40H1000 M0 1H1000"></path><path class="chart-peak" data-chart-peak></path><path class="chart-average" data-chart-average></path></svg>
+    </article>
+    <article class="measurement-band" data-metric-card="memory">
+      <header><span data-lucide="memory-stick" aria-hidden="true"></span><h3>{{t .Locale "overview.memory"}}</h3><strong data-metric-value>{{if .Current.Memory}}{{percent .Current.Memory.UsedPercent}}{{else}}—{{end}}</strong></header>
+      <p data-metric-detail>{{if .Current.Memory}}{{humanBytes .Current.Memory.UsedBytes}} / {{humanBytes .Current.Memory.TotalBytes}} · {{t .Locale "overview.available"}} {{humanBytes .Current.Memory.AvailableBytes}}{{else}}{{t .Locale "overview.collecting"}}{{end}}</p>
+      <svg viewBox="0 0 1000 80" preserveAspectRatio="none" role="img" aria-label="{{t .Locale "overview.memory_history"}}" data-metric-chart="memory.usedPercent"><path class="chart-grid" d="M0 79H1000 M0 40H1000 M0 1H1000"></path><path class="chart-peak" data-chart-peak></path><path class="chart-average" data-chart-average></path></svg>
+    </article>
+    <article class="measurement-band {{if and .Current.Storage (lt .Current.Storage.AvailableBytes 104857600)}}measurement-band--danger{{end}}" data-metric-card="storage">
+      <header><span data-lucide="hard-drive" aria-hidden="true"></span><h3>{{t .Locale "overview.storage"}}</h3><strong data-metric-value>{{if .Current.Storage}}{{percent .Current.Storage.UsedPercent}}{{else}}—{{end}}</strong></header>
+      <p data-metric-detail>{{if .Current.Storage}}{{.Current.Storage.Mountpoint}} · {{t .Locale "overview.available"}} {{humanBytes .Current.Storage.AvailableBytes}}{{else}}{{t .Locale "overview.collecting"}}{{end}}</p>
+      <svg viewBox="0 0 1000 80" preserveAspectRatio="none" role="img" aria-label="{{t .Locale "overview.storage_history"}}" data-metric-chart="storage.usedPercent"><path class="chart-grid" d="M0 79H1000 M0 40H1000 M0 1H1000"></path><path class="chart-peak" data-chart-peak></path><path class="chart-average" data-chart-average></path></svg>
+    </article>
+    <article class="measurement-band" data-metric-card="network">
+      <header><span data-lucide="network" aria-hidden="true"></span><h3>{{t .Locale "overview.network"}}</h3><strong data-metric-value>{{if .Current.Network}}{{humanRate .Current.Network.ReceivedBytesPerSecond}}{{else}}—{{end}}</strong></header>
+      <p data-metric-detail>{{if .Current.Network}}{{t .Locale "overview.receive"}} {{humanRate .Current.Network.ReceivedBytesPerSecond}} · {{t .Locale "overview.send"}} {{humanRate .Current.Network.SentBytesPerSecond}}{{else}}{{t .Locale "overview.collecting_rate"}}{{end}}</p>
+      <svg viewBox="0 0 1000 80" preserveAspectRatio="none" role="img" aria-label="{{t .Locale "overview.network_history"}}" data-metric-chart="network.receivedBytesPerSecond"><path class="chart-grid" d="M0 79H1000 M0 40H1000 M0 1H1000"></path><path class="chart-peak" data-chart-peak></path><path class="chart-average" data-chart-average></path></svg>
+    </article>
+  </section>
 
-<section class="overview-section"><header><div><h2>存储与 I/O</h2><p>受管目录和内部状态目录所在卷会被特别标记。</p></div></header><div class="table-shell"><table><thead><tr><th>文件系统</th><th>用途</th><th>已用</th><th>可用</th><th>容量</th></tr></thead><tbody data-filesystem-rows>{{range .Current.Filesystems}}<tr><td>{{.Mountpoint}}<small>{{.Device}} · {{.Type}}</small></td><td>{{range .Roles}}<span class="status-chip">{{if eq . "managed"}}受管目录{{else}}内部状态{{end}}</span> {{else}}-{{end}}</td><td>{{percent .UsedPercent}}</td><td>{{humanBytes .AvailableBytes}}</td><td>{{humanBytes .TotalBytes}}</td></tr>{{else}}<tr><td colspan="5">等待文件系统采集</td></tr>{{end}}</tbody></table></div>
-<div class="table-shell"><table><thead><tr><th>物理设备</th><th>读取</th><th>写入</th><th>读 IOPS</th><th>写 IOPS</th><th>读延迟</th><th>写延迟</th></tr></thead><tbody data-disk-rows>{{range .Current.Disks}}<tr><td>{{.Name}}</td><td>{{humanRate .ReadBytesPerSecond}}</td><td>{{humanRate .WriteBytesPerSecond}}</td><td>{{printf "%.1f" .ReadOperationsPerSecond}}</td><td>{{printf "%.1f" .WriteOperationsPerSecond}}</td><td>{{if .ReadLatencyMS}}{{printf "%.1f ms" (deref .ReadLatencyMS)}}{{else}}-{{end}}</td><td>{{if .WriteLatencyMS}}{{printf "%.1f ms" (deref .WriteLatencyMS)}}{{else}}-{{end}}</td></tr>{{else}}<tr><td colspan="7">需要两个样本计算磁盘速率</td></tr>{{end}}</tbody></table></div></section>
+  <section class="overview-grid">
+    <article class="ledger-section">
+      <header class="section-heading"><div><p class="section-index">02</p><h2>{{t .Locale "overview.active_runs"}}</h2></div><a href="/monitor/runs">{{t .Locale "overview.view_all"}}</a></header>
+      <ol class="activity-list" data-active-runs>
+        {{range .ActiveRuns}}<li><span class="status-mark" data-state="{{.Status}}" aria-hidden="true"></span><div><a href="/monitor/runs/{{.ID}}">{{.ScriptPath}}</a><small>{{statusText $.Locale .Status}} · <time datetime="{{machineTime .StartedAt}}" data-local-time>{{localTime $.Locale .StartedAt}}</time></small></div></li>
+        {{else}}<li class="empty-row">{{t .Locale "overview.no_active_runs"}}</li>{{end}}
+      </ol>
+    </article>
+    <article class="ledger-section">
+      <header class="section-heading"><div><p class="section-index">03</p><h2>{{t .Locale "overview.service"}}</h2></div></header>
+      <dl class="fact-grid" data-process-facts>
+        <div><dt>{{t .Locale "overview.service_uptime"}}</dt><dd>{{localDuration .Locale .ServiceUptime}}</dd></div>
+        {{if .Current.Process}}
+        <div><dt>CPU</dt><dd>{{percent .Current.Process.CPUPercent}}</dd></div>
+        <div><dt>{{t .Locale "overview.resident_memory"}}</dt><dd>{{humanBytes .Current.Process.ResidentMemoryBytes}}</dd></div>
+        <div><dt>{{t .Locale "overview.threads"}}</dt><dd>{{.Current.Process.Threads}}</dd></div>
+        {{end}}
+      </dl>
+    </article>
+  </section>
 
-<section class="overview-section"><header><div><h2>网络接口</h2><p>仅聚合活动的非回环接口；虚拟和 VPN 接口保留原始名称。</p></div></header><div class="table-shell"><table><thead><tr><th>接口</th><th>地址</th><th>接收</th><th>发送</th><th>错误 / 丢包</th></tr></thead><tbody data-network-rows>{{range .Current.Interfaces}}<tr><td>{{.Name}}</td><td>{{range .Addresses}}<code>{{.}}</code> {{else}}-{{end}}</td><td>{{humanRate .ReceivedBytesPerSecond}}</td><td>{{humanRate .SentBytesPerSecond}}</td><td>{{.ReceivedErrors}} / {{.ReceivedDrops}}</td></tr>{{else}}<tr><td colspan="5">需要两个样本计算网络速率</td></tr>{{end}}</tbody></table></div></section>
+  <details class="ledger-disclosure">
+    <summary><span><span data-lucide="database" aria-hidden="true"></span>{{t .Locale "overview.storage_io"}}</span><small>{{len .Current.Filesystems}} {{t .Locale "overview.filesystems"}} · {{len .Current.Disks}} {{t .Locale "overview.devices"}}</small></summary>
+    <div class="table-shell"><table><thead><tr><th>{{t .Locale "overview.filesystem"}}</th><th>{{t .Locale "overview.role"}}</th><th>{{t .Locale "overview.used"}}</th><th>{{t .Locale "overview.available"}}</th><th>{{t .Locale "overview.capacity"}}</th></tr></thead><tbody data-filesystem-rows>{{range .Current.Filesystems}}<tr><td>{{.Mountpoint}}<small>{{.Device}} · {{.Type}}</small></td><td>{{range .Roles}}<span class="status-chip">{{roleText $.Locale .}}</span>{{else}}—{{end}}</td><td>{{percent .UsedPercent}}</td><td>{{humanBytes .AvailableBytes}}</td><td>{{humanBytes .TotalBytes}}</td></tr>{{else}}<tr><td colspan="5">{{t .Locale "overview.collecting"}}</td></tr>{{end}}</tbody></table></div>
+  </details>
 
-<section class="overview-split">
-<article class="overview-section"><header><div><h2>ScriptBoard 服务</h2><p>服务已运行 {{duration .ServiceUptime}}</p></div></header><dl class="overview-facts" data-process-facts>{{if .Current.Process}}<div><dt>CPU</dt><dd>{{percent .Current.Process.CPUPercent}}</dd></div><div><dt>常驻内存</dt><dd>{{humanBytes .Current.Process.ResidentMemoryBytes}}</dd></div><div><dt>线程</dt><dd>{{.Current.Process.Threads}}</dd></div>{{if index .Capabilities "processHandles"}}<div><dt>句柄</dt><dd>{{.Current.Process.Handles}}</dd></div>{{else}}<div><dt>打开文件</dt><dd>{{.Current.Process.OpenFiles}}</dd></div>{{end}}{{else}}<div><dt>状态</dt><dd>等待进程指标</dd></div>{{end}}</dl></article>
-<article class="overview-section"><header><div><h2>正在运行</h2><p>最近 5 条活动 Run。</p></div><a href="/runs">查看全部</a></header><ol class="active-run-list" data-active-runs>{{range .ActiveRuns}}<li><a href="/runs/{{.ID}}">{{.ScriptPath}}</a><span>{{.Status}} · <time datetime="{{machineTime .StartedAt}}" data-local-time>{{displayTime .StartedAt}}</time></span></li>{{else}}<li class="active-run-list__empty">当前没有活动 Run</li>{{end}}</ol></article>
-</section>
+  <details class="ledger-disclosure">
+    <summary><span><span data-lucide="network" aria-hidden="true"></span>{{t .Locale "overview.network_interfaces"}}</span><small>{{len .Current.Interfaces}} {{t .Locale "overview.interfaces"}}</small></summary>
+    <div class="table-shell"><table><thead><tr><th>{{t .Locale "overview.interface"}}</th><th>{{t .Locale "overview.address"}}</th><th>{{t .Locale "overview.receive"}}</th><th>{{t .Locale "overview.send"}}</th><th>{{t .Locale "overview.errors_drops"}}</th></tr></thead><tbody data-network-rows>{{range .Current.Interfaces}}<tr><td>{{.Name}}</td><td>{{range .Addresses}}<code>{{.}}</code>{{else}}—{{end}}</td><td>{{humanRate .ReceivedBytesPerSecond}}</td><td>{{humanRate .SentBytesPerSecond}}</td><td>{{.ReceivedErrors}} / {{.ReceivedDrops}}</td></tr>{{else}}<tr><td colspan="5">{{t .Locale "overview.collecting_rate"}}</td></tr>{{end}}</tbody></table></div>
+  </details>
 
-<section class="overview-section"><header><div><h2>宿主信息</h2><p>常用系统与网络身份，不展示 MAC 或硬件序列号。</p></div></header><dl class="overview-facts"><div><dt>主机名</dt><dd>{{.Facts.Hostname}}</dd></div><div><dt>系统</dt><dd>{{.Facts.Platform}} {{.Facts.PlatformVersion}}</dd></div><div><dt>架构</dt><dd>{{.Facts.Architecture}}</dd></div><div><dt>CPU</dt><dd>{{.Facts.CPUModel}}</dd></div><div><dt>逻辑核心</dt><dd>{{.Facts.LogicalCores}}</dd></div><div><dt>物理内存</dt><dd>{{humanBytes .Facts.TotalMemoryBytes}}</dd></div><div><dt>启动时间</dt><dd><time datetime="{{machineTime .Facts.BootedAt}}" data-local-time>{{displayTime .Facts.BootedAt}}</time></dd></div></dl></section>
-</main></body></html>
+  <section class="ledger-section host-facts">
+    <header class="section-heading"><div><p class="section-index">04</p><h2>{{t .Locale "overview.host_facts"}}</h2></div></header>
+    <dl class="fact-grid">
+      <div><dt>{{t .Locale "overview.hostname"}}</dt><dd>{{.Facts.Hostname}}</dd></div>
+      <div><dt>{{t .Locale "overview.system"}}</dt><dd>{{.Facts.Platform}} {{.Facts.PlatformVersion}}</dd></div>
+      <div><dt>{{t .Locale "overview.architecture"}}</dt><dd>{{.Facts.Architecture}}</dd></div>
+      <div><dt>CPU</dt><dd>{{.Facts.CPUModel}}</dd></div>
+      <div><dt>{{t .Locale "overview.logical_cores_label"}}</dt><dd>{{.Facts.LogicalCores}}</dd></div>
+      <div><dt>{{t .Locale "overview.physical_memory"}}</dt><dd>{{humanBytes .Facts.TotalMemoryBytes}}</dd></div>
+      <div><dt>{{t .Locale "overview.booted_at"}}</dt><dd><time datetime="{{machineTime .Facts.BootedAt}}" data-local-time>{{localTime .Locale .Facts.BootedAt}}</time></dd></div>
+    </dl>
+  </section>
+</main>
+</body>
+</html>

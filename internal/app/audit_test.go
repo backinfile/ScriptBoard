@@ -14,14 +14,14 @@ func TestAuditRecordsActionWithoutVariableValue(t *testing.T) {
 
 	root := t.TempDir()
 	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
-	response, err := client.Get(serverURL + "/variables")
+	response, err := client.Get(serverURL + "/resources/variables")
 	if err != nil {
 		t.Fatalf("get variables: %v", err)
 	}
 	page, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	const sensitiveValue = "must-not-appear-in-audit"
-	response, err = client.PostForm(serverURL+"/variables", url.Values{
+	response, err = client.PostForm(serverURL+"/resources/variables", url.Values{
 		"name":       {"AUDITED"},
 		"value":      {sensitiveValue},
 		"csrf_token": {formToken(t, page)},
@@ -30,7 +30,7 @@ func TestAuditRecordsActionWithoutVariableValue(t *testing.T) {
 		t.Fatalf("create variable: %v", err)
 	}
 	_ = response.Body.Close()
-	response, err = client.Get(serverURL + "/audit")
+	response, err = client.Get(serverURL + "/history/audit")
 	if err != nil {
 		t.Fatalf("get audit: %v", err)
 	}

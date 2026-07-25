@@ -35,7 +35,7 @@ func TestFilesPageListsManagedEntriesAndHidesReservedPaths(t *testing.T) {
 	linkCreated := os.Symlink(root, filepath.Join(managedRoot, "outside")) == nil
 	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
 
-	response, err := client.Get(serverURL + "/files/")
+	response, err := client.Get(serverURL + "/resources/files/")
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestAdminCanBrowseNestedDirectories(t *testing.T) {
 	}
 	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
 
-	response, err := client.Get(serverURL + "/files/%E5%AD%90%E7%9B%AE%E5%BD%95/")
+	response, err := client.Get(serverURL + "/resources/files/%E5%AD%90%E7%9B%AE%E5%BD%95/")
 	if err != nil {
 		t.Fatalf("browse nested directory: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestAdminCanBrowseNestedDirectories(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !strings.Contains(string(body), "inside.txt") {
 		t.Fatalf("nested directory response: status=%d body=%s", response.StatusCode, body)
 	}
-	if !strings.Contains(string(body), `name="path" value="子目录"`) {
+	if !strings.Contains(string(body), `?path=%E5%AD%90%E7%9B%AE%E5%BD%95`) {
 		t.Fatalf("nested operations do not preserve current path: %s", body)
 	}
 }
@@ -109,7 +109,7 @@ func TestAdminCanMoveAndRenameManagedEntry(t *testing.T) {
 		t.Fatalf("create source file: %v", err)
 	}
 	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
-	response, err := client.Get(serverURL + "/files/source/")
+	response, err := client.Get(serverURL + "/resources/files/source/")
 	if err != nil {
 		t.Fatalf("get source directory: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestAdminCanMoveAndRenameManagedEntry(t *testing.T) {
 		t.Fatalf("read source directory: %v", err)
 	}
 
-	response, err = client.PostForm(serverURL+"/files/move", url.Values{
+	response, err = client.PostForm(serverURL+"/resources/files/move", url.Values{
 		"source":      {"source/old.txt"},
 		"destination": {"target/new.txt"},
 		"csrf_token":  {formToken(t, page)},
@@ -128,7 +128,7 @@ func TestAdminCanMoveAndRenameManagedEntry(t *testing.T) {
 		t.Fatalf("move file: %v", err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/files/target/" {
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/resources/files/target/" {
 		t.Fatalf("move response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
 	if _, err := os.Stat(filepath.Join(managedRoot, "source", "old.txt")); !os.IsNotExist(err) {
@@ -151,7 +151,7 @@ func TestAdminCanStreamUploadAFile(t *testing.T) {
 	stateRoot := filepath.Join(root, "state")
 	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
 
-	response, err := client.Get(serverURL + "/files/")
+	response, err := client.Get(serverURL + "/resources/files/")
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestAdminCanStreamUploadAFile(t *testing.T) {
 		t.Fatalf("close multipart writer: %v", err)
 	}
 
-	request, err := http.NewRequest(http.MethodPost, serverURL+"/files/upload", &requestBody)
+	request, err := http.NewRequest(http.MethodPost, serverURL+"/resources/files/upload", &requestBody)
 	if err != nil {
 		t.Fatalf("create upload request: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestAdminCanStreamUploadAFile(t *testing.T) {
 		t.Fatalf("uploaded content = %q", content)
 	}
 
-	response, err = client.Get(serverURL + "/files/")
+	response, err = client.Get(serverURL + "/resources/files/")
 	if err != nil {
 		t.Fatalf("get files before replacement: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestAdminCanStreamUploadAFile(t *testing.T) {
 	if err := writer.Close(); err != nil {
 		t.Fatalf("close replacement multipart writer: %v", err)
 	}
-	request, err = http.NewRequest(http.MethodPost, serverURL+"/files/upload", &requestBody)
+	request, err = http.NewRequest(http.MethodPost, serverURL+"/resources/files/upload", &requestBody)
 	if err != nil {
 		t.Fatalf("create replacement upload request: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestAdminCanCreateDirectory(t *testing.T) {
 	stateRoot := filepath.Join(root, "state")
 	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
 
-	response, err := client.Get(serverURL + "/files/")
+	response, err := client.Get(serverURL + "/resources/files/")
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
@@ -283,7 +283,7 @@ func TestAdminCanCreateDirectory(t *testing.T) {
 		t.Fatalf("read files: %v", err)
 	}
 
-	response, err = client.PostForm(serverURL+"/files/mkdir", url.Values{
+	response, err = client.PostForm(serverURL+"/resources/files/mkdir", url.Values{
 		"path":       {""},
 		"name":       {"新目录"},
 		"csrf_token": {formToken(t, body)},
@@ -292,7 +292,7 @@ func TestAdminCanCreateDirectory(t *testing.T) {
 		t.Fatalf("create directory: %v", err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/files/" {
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/resources/files/" {
 		t.Fatalf("create directory response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
 	info, err := os.Stat(filepath.Join(managedRoot, "新目录"))
@@ -318,7 +318,7 @@ func TestAdminCanDownloadARegularFileWithRange(t *testing.T) {
 	}
 	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
 
-	request, err := http.NewRequest(http.MethodGet, serverURL+"/files/download/report.txt", nil)
+	request, err := http.NewRequest(http.MethodGet, serverURL+"/resources/files/download/report.txt", nil)
 	if err != nil {
 		t.Fatalf("create download request: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestAdminCanMoveFileToTrashAndRestoreIt(t *testing.T) {
 	}
 	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
 
-	response, err := client.Get(serverURL + "/files/")
+	response, err := client.Get(serverURL + "/resources/files/")
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
@@ -366,7 +366,7 @@ func TestAdminCanMoveFileToTrashAndRestoreIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read files: %v", err)
 	}
-	response, err = client.PostForm(serverURL+"/files/delete", url.Values{
+	response, err = client.PostForm(serverURL+"/resources/files/delete", url.Values{
 		"path":       {"recover.txt"},
 		"csrf_token": {formToken(t, page)},
 	})
@@ -374,14 +374,14 @@ func TestAdminCanMoveFileToTrashAndRestoreIt(t *testing.T) {
 		t.Fatalf("delete file: %v", err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/trash" {
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/resources/trash" {
 		t.Fatalf("delete response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
 	if _, err := os.Stat(filepath.Join(managedRoot, "recover.txt")); !os.IsNotExist(err) {
 		t.Fatalf("deleted file remains at original path: %v", err)
 	}
 
-	response, err = client.Get(serverURL + "/trash")
+	response, err = client.Get(serverURL + "/resources/trash")
 	if err != nil {
 		t.Fatalf("get trash: %v", err)
 	}
@@ -394,7 +394,7 @@ func TestAdminCanMoveFileToTrashAndRestoreIt(t *testing.T) {
 		t.Fatalf("trash entry missing: %s", trashPage)
 	}
 
-	response, err = client.PostForm(serverURL+"/trash/restore", url.Values{
+	response, err = client.PostForm(serverURL+"/resources/trash/restore", url.Values{
 		"id":         {hiddenValue(t, trashPage, "id")},
 		"csrf_token": {formToken(t, trashPage)},
 	})
@@ -402,7 +402,7 @@ func TestAdminCanMoveFileToTrashAndRestoreIt(t *testing.T) {
 		t.Fatalf("restore file: %v", err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/files/" {
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/resources/files/" {
 		t.Fatalf("restore response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
 	content, err := os.ReadFile(filepath.Join(managedRoot, "recover.txt"))
@@ -427,13 +427,13 @@ func TestAdminCanPermanentlyPurgeTrashEntry(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
-	response, err := client.Get(serverURL + "/files/")
+	response, err := client.Get(serverURL + "/resources/files/")
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
 	page, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/files/delete", url.Values{
+	response, err = client.PostForm(serverURL+"/resources/files/delete", url.Values{
 		"path":       {"purge.txt"},
 		"csrf_token": {formToken(t, page)},
 	})
@@ -441,13 +441,13 @@ func TestAdminCanPermanentlyPurgeTrashEntry(t *testing.T) {
 		t.Fatalf("trash file: %v", err)
 	}
 	_ = response.Body.Close()
-	response, err = client.Get(serverURL + "/trash")
+	response, err = client.Get(serverURL + "/resources/trash")
 	if err != nil {
 		t.Fatalf("get trash: %v", err)
 	}
 	trashPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/trash/purge", url.Values{
+	response, err = client.PostForm(serverURL+"/resources/trash/purge", url.Values{
 		"id":         {hiddenValue(t, trashPage, "id")},
 		"confirm":    {"yes"},
 		"csrf_token": {formToken(t, trashPage)},
@@ -456,7 +456,7 @@ func TestAdminCanPermanentlyPurgeTrashEntry(t *testing.T) {
 		t.Fatalf("purge trash: %v", err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/trash" {
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/resources/trash" {
 		t.Fatalf("purge response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
 	entries, err := os.ReadDir(filepath.Join(managedRoot, ".scriptboard-trash"))
@@ -483,7 +483,7 @@ func TestTextEditRejectsAnExternalChange(t *testing.T) {
 	}
 	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
 
-	response, err := client.Get(serverURL + "/files/edit/note.txt")
+	response, err := client.Get(serverURL + "/resources/files/edit/note.txt")
 	if err != nil {
 		t.Fatalf("get editor: %v", err)
 	}
@@ -499,7 +499,7 @@ func TestTextEditRejectsAnExternalChange(t *testing.T) {
 		t.Fatalf("write external change: %v", err)
 	}
 
-	response, err = client.PostForm(serverURL+"/files/edit/note.txt", url.Values{
+	response, err = client.PostForm(serverURL+"/resources/files/edit/note.txt", url.Values{
 		"content":    {"my change"},
 		"digest":     {hiddenValue(t, page, "digest")},
 		"csrf_token": {formToken(t, page)},
@@ -535,7 +535,7 @@ func TestTextEditAtomicallySavesAndKeepsOldVersionInTrash(t *testing.T) {
 	}
 	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
 
-	response, err := client.Get(serverURL + "/files/edit/note.txt")
+	response, err := client.Get(serverURL + "/resources/files/edit/note.txt")
 	if err != nil {
 		t.Fatalf("get editor: %v", err)
 	}
@@ -544,7 +544,7 @@ func TestTextEditAtomicallySavesAndKeepsOldVersionInTrash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read editor: %v", err)
 	}
-	response, err = client.PostForm(serverURL+"/files/edit/note.txt", url.Values{
+	response, err = client.PostForm(serverURL+"/resources/files/edit/note.txt", url.Values{
 		"content":    {"after"},
 		"digest":     {hiddenValue(t, page, "digest")},
 		"csrf_token": {formToken(t, page)},
@@ -570,7 +570,7 @@ func TestTextEditAtomicallySavesAndKeepsOldVersionInTrash(t *testing.T) {
 	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o640 {
 		t.Fatalf("saved permissions = %o, want 640", info.Mode().Perm())
 	}
-	response, err = client.Get(serverURL + "/trash")
+	response, err = client.Get(serverURL + "/resources/trash")
 	if err != nil {
 		t.Fatalf("get trash: %v", err)
 	}
@@ -621,7 +621,7 @@ func TestTextEditPreservesExistingLineEndingStyle(t *testing.T) {
 			}
 			client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
 
-			response, err := client.Get(serverURL + "/files/edit/script.txt")
+			response, err := client.Get(serverURL + "/resources/files/edit/script.txt")
 			if err != nil {
 				t.Fatalf("get editor: %v", err)
 			}
@@ -631,7 +631,7 @@ func TestTextEditPreservesExistingLineEndingStyle(t *testing.T) {
 				t.Fatalf("read editor: %v", err)
 			}
 
-			response, err = client.PostForm(serverURL+"/files/edit/script.txt", url.Values{
+			response, err = client.PostForm(serverURL+"/resources/files/edit/script.txt", url.Values{
 				"content":    {testCase.submitted},
 				"digest":     {hiddenValue(t, page, "digest")},
 				"csrf_token": {formToken(t, page)},

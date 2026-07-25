@@ -42,13 +42,13 @@ func TestScheduleTriggersRunAtNextCronTime(t *testing.T) {
 		SchedulerNow:  func() time.Time { return time.Unix(0, clock.Load()).UTC() },
 		SchedulerTick: 10 * time.Millisecond,
 	})
-	response, err := client.Get(serverURL + "/schedules")
+	response, err := client.Get(serverURL + "/config/schedules")
 	if err != nil {
 		t.Fatalf("get schedules: %v", err)
 	}
 	page, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/schedules", url.Values{
+	response, err = client.PostForm(serverURL+"/config/schedules", url.Values{
 		"name":       {"每分钟计划"},
 		"script":     {scriptName},
 		"expression": {"1 0 * * *"},
@@ -58,7 +58,7 @@ func TestScheduleTriggersRunAtNextCronTime(t *testing.T) {
 		t.Fatalf("create schedule: %v", err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/schedules" {
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/config/schedules" {
 		t.Fatalf("create schedule response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
 
@@ -66,7 +66,7 @@ func TestScheduleTriggersRunAtNextCronTime(t *testing.T) {
 	deadline := time.Now().Add(10 * time.Second)
 	var runID string
 	for {
-		response, err = client.Get(serverURL + "/schedules")
+		response, err = client.Get(serverURL + "/config/schedules")
 		if err != nil {
 			t.Fatalf("get schedules after trigger: %v", err)
 		}
@@ -84,7 +84,7 @@ func TestScheduleTriggersRunAtNextCronTime(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	for {
-		response, err = client.Get(serverURL + "/runs/" + runID)
+		response, err = client.Get(serverURL + "/monitor/runs/" + runID)
 		if err != nil {
 			t.Fatalf("get scheduled run: %v", err)
 		}

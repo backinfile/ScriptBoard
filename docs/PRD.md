@@ -33,28 +33,41 @@ MVP 优先保持单服务进程、SQLite、单机文件系统与平台原生服�
 
 ## 4. 信息架构
 
-主导航：
+桌面端采用固定分组侧栏，移动端采用抽屉导航。导航按操作者意图组织：
 
 ```text
-概览 | 文件 | 快捷执行 | 计划 | 变量 | 执行记录 | 审计 | 版本保护
+监控
+  宿主概览 | 执行记录
+资源
+  文件 | 变量 | 回收站
+配置
+  快捷执行 | 计划
+历史
+  审计
+设置
+  账户 | 版本保护
 ```
 
-右侧显示当前运行数、admin 菜单和退出登录。回收站从文件页面进入，不占主导航。
+侧栏底部显示服务状态、当前运行数、语言选择和账户入口。新增、上传、运行、编辑与保存等聚焦任务使用可分享的语义化 GET 地址；支持 JavaScript 时在当前工作区右侧任务面板打开，不支持时显示完整服务端页面。
 
 主要路由：
 
 - `/login`
-- `/overview`
-- `/overview/data`
-- `/files/*`
-- `/runs`
-- `/runs/{id}`
-- `/quick-runs`
-- `/schedules`
-- `/variables`
-- `/audit`
+- `/monitor`
+- `/monitor/data`
+- `/monitor/status`
+- `/monitor/runs`
+- `/monitor/runs/{id}`
+- `/resources/files/*`
+- `/resources/variables`
+- `/resources/trash`
+- `/config/quick-runs`
+- `/config/schedules`
+- `/history/audit`
 - `/settings/account`
-- `/trash`
+- `/settings/version-protection`
+
+根路径与已登录访问 `/login` 均重定向到 `/monitor`。本次信息架构是破坏性升级，不为旧 Web 路由提供重定向或兼容别名。
 
 ### 4.1 宿主概览
 
@@ -443,8 +456,8 @@ scriptboard version
 - 正式平台：Windows 10/11、Windows Server 2019+、systemd Linux；amd64 与 arm64。
 - Windows 发布 ZIP，Linux 发布 tar.gz，并提供 SHA-256；MVP 不制作 MSI/DEB/RPM。
 - 不自动更新，不联网检查版本。
-- MVP 界面、错误、托盘和 CLI 帮助只提供简体中文；结构化标识保持英文。
-- 支持当前及前一个主要版本的 Chrome、Edge、Firefox、Safari，并提供可用的移动端核心操作。
+- Web 界面、状态、动作、错误和日期完整提供简体中文与美式英语；首次访问按 `Accept-Language` 协商，中文语言范围选择简体中文，其余选择美式英语，之后由 Cookie 记忆。URL 不带语言前缀；结构化标识和技术详情保持稳定英文。托盘和 CLI 帮助仍只提供简体中文。
+- 自动化浏览器门禁固定为桌面 Chromium；Chrome、Edge、Firefox 和 Safari 为最佳努力兼容。移动端必须可完成核心操作，但不进入当前自动化截图门禁。
 - 正式支持每台主机单实例；状态目录持有排他实例锁。
 
 ## 19. 非目标
@@ -462,7 +475,7 @@ scriptboard version
 - 文件夹上传、ZIP 打包下载和服务端解压
 - 通用 chmod/chown 文件权限管理
 - 自动更新
-- 多语言和正式多实例支持
+- Web 之外界面的多语言和正式多实例支持
 
 ## 20. 关联文档
 

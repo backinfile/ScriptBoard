@@ -1,274 +1,200 @@
 ---
-name: ScriptBoard Signal Deck
-description: An industrial signal console for operating scripts on a single host.
+name: ScriptBoard Calibration Ledger
+description: A light, precise operating ledger for observing one host and running scripts with confidence.
 colors:
-  void: "#0a0b0d"
-  deck: "#101216"
-  deck-raised: "#171a20"
-  signal: "#d7ff45"
-  signal-deep: "#b6df22"
-  frost: "#f0f2ea"
-  graphite: "#b5bab1"
-  graphite-dim: "#858b82"
-  seam: "#2c3038"
-  danger: "#ff635e"
-  warning: "#ffc857"
-  nav-index: "#555b55"
-  icon-muted: "#7e857c"
-  interaction-seam: "#626975"
-  signal-hover: "#e4ff81"
-  danger-muted: "#ff928e"
-  placeholder: "#7f867d"
-  hover-seam: "#5a616c"
-  trace-label: "#454b46"
-  peak-trace: "#5f6854"
-  row-seam: "#23272d"
-  row-text: "#d5d8d1"
-  status-seam: "#4d5932"
-  terminal-ink: "#d9f6c4"
-  signal-ink: "#445113"
-  shadow-inset: "rgba(0,0,0,.18)"
-  shadow-terminal: "rgba(0,0,0,.28)"
+  canvas: "#F6F7F9"
+  surface: "#FFFFFF"
+  ink: "#171A1F"
+  muted: "#5F6875"
+  faint: "#7B8491"
+  rule: "#D9DEE7"
+  rule-strong: "#BBC3CF"
+  accent: "#3659C9"
+  accent-hover: "#2949B0"
+  accent-soft: "#EDF1FF"
+  success: "#18794E"
+  success-soft: "#EAF6F0"
+  warning: "#8A5A00"
+  warning-soft: "#FFF5DA"
+  danger: "#B42318"
+  danger-soft: "#FFF0EE"
+  danger-border: "#DFA19B"
+  warning-border: "#E9C789"
+  terminal: "#171A1F"
+  terminal-ink: "#ECF0F5"
+  terminal-rule: "#363B43"
+  terminal-muted: "#AEB7C4"
+  terminal-danger: "#FFAAA4"
 typography:
-  display:
-    fontFamily: "Bahnschrift SemiCondensed, Microsoft YaHei UI, sans-serif"
-    fontSize: "clamp(2.75rem, 6.2vw, 5.25rem)"
-    fontWeight: 700
-    lineHeight: 0.94
-    letterSpacing: "-0.03em"
-  body:
-    fontFamily: "Segoe UI Variable Text, Microsoft YaHei UI, sans-serif"
-    fontSize: "0.9375rem"
-    fontWeight: 480
-    lineHeight: 1.65
-  label:
-    fontFamily: "Cascadia Mono, SFMono-Regular, Consolas, monospace"
-    fontSize: "0.6875rem"
-    fontWeight: 650
-    lineHeight: 1.35
-    letterSpacing: "0.06em"
   micro:
-    fontFamily: "Cascadia Mono, Consolas, monospace"
-    fontSize: "10px"
-    fontWeight: 650
-    lineHeight: 1.35
-  meta:
-    fontFamily: "Cascadia Mono, Consolas, monospace"
-    fontSize: "10px"
-    fontWeight: 650
-    lineHeight: 1.3
-  control:
-    fontFamily: "Segoe UI Variable Text, Microsoft YaHei UI, sans-serif"
-    fontSize: "13px"
+    fontSize: "0.7rem"
+  detail:
+    fontSize: "0.72rem"
+  label:
+    fontFamily: "Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, system-ui, sans-serif"
+    fontSize: "0.75rem"
     fontWeight: 650
     lineHeight: 1.3
-  compact-control:
-    fontFamily: "Segoe UI Variable Text, Microsoft YaHei UI, sans-serif"
-    fontSize: "12px"
+    letterSpacing: "0.025em"
+  mono:
+    fontFamily: "Cascadia Mono, SFMono-Regular, Consolas, monospace"
+    fontSize: "0.8125rem"
+    fontWeight: 450
+    lineHeight: 1.55
+  compact:
+    fontSize: "0.85rem"
+  table:
+    fontSize: "0.86rem"
+  supporting:
+    fontSize: "0.88rem"
+  body:
+    fontFamily: "Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, system-ui, sans-serif"
+    fontSize: "0.9375rem"
+    fontWeight: 450
+    lineHeight: 1.55
+  subheading:
+    fontSize: "1rem"
     fontWeight: 650
     lineHeight: 1.3
-  input:
-    fontFamily: "Segoe UI Variable Text, Microsoft YaHei UI, sans-serif"
-    fontSize: "14px"
-    fontWeight: 520
-    lineHeight: 1.45
-  mobile-input:
-    fontFamily: "Segoe UI Variable Text, Microsoft YaHei UI, sans-serif"
-    fontSize: "16px"
-    fontWeight: 520
-    lineHeight: 1.45
-  support:
-    fontFamily: "Segoe UI Variable Text, Microsoft YaHei UI, sans-serif"
-    fontSize: "13px"
-    fontWeight: 480
-    lineHeight: 1.65
-  brand:
-    fontFamily: "Segoe UI Variable Text, Microsoft YaHei UI, sans-serif"
-    fontSize: "17px"
-    fontWeight: 730
-    lineHeight: 1.2
+  panelHeading:
+    fontSize: "1.35rem"
+  taskHeading:
+    fontSize: "1.65rem"
+  heading:
+    fontFamily: "Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI, system-ui, sans-serif"
+    fontSize: "clamp(1.8rem, 3vw, 2.5rem)"
+    fontWeight: 650
+    lineHeight: 1.1
+    letterSpacing: "-0.025em"
+  verdict:
+    fontSize: "clamp(1.35rem, 2.2vw, 1.8rem)"
+  mobileHero:
+    fontSize: "clamp(1.6rem, 8vw, 2.4rem)"
   section:
-    fontFamily: "Segoe UI Variable Text, Microsoft YaHei UI, sans-serif"
-    fontSize: "clamp(20px, 2vw, 28px)"
-    fontWeight: 700
-    lineHeight: 1.2
-  metric:
-    fontFamily: "Bahnschrift SemiCondensed, Microsoft YaHei UI, sans-serif"
-    fontSize: "clamp(40px, 5vw, 70px)"
-    fontWeight: 680
-    lineHeight: 0.94
-  state:
-    fontFamily: "Bahnschrift SemiCondensed, Microsoft YaHei UI, sans-serif"
-    fontSize: "clamp(30px, 4vw, 54px)"
-    fontWeight: 680
-    lineHeight: 1
-  empty-state:
-    fontFamily: "Bahnschrift SemiCondensed, Microsoft YaHei UI, sans-serif"
-    fontSize: "clamp(28px, 4vw, 52px)"
-    fontWeight: 700
-    lineHeight: 1.05
-  login-display:
-    fontFamily: "Bahnschrift SemiCondensed, Microsoft YaHei UI, sans-serif"
-    fontSize: "clamp(52px, 12vw, 84px)"
-    fontWeight: 720
-    lineHeight: 0.9
-  mobile-brand:
-    fontFamily: "Segoe UI Variable Text, Microsoft YaHei UI, sans-serif"
-    fontSize: "15px"
-    fontWeight: 730
-    lineHeight: 1.2
-  mobile-display:
-    fontFamily: "Bahnschrift SemiCondensed, Microsoft YaHei UI, sans-serif"
-    fontSize: "clamp(38px, 12vw, 54px)"
-    fontWeight: 700
-    lineHeight: 0.98
+    fontFamily: "Segoe UI Variable Display, Segoe UI, Microsoft YaHei UI, system-ui, sans-serif"
+    fontSize: "1.125rem"
+    fontWeight: 650
+    lineHeight: 1.25
 rounded:
-  micro: "4px"
+  compact: "4px"
+  small: "5px"
   control: "6px"
-  switcher: "8px"
-  panel: "12px"
+  menu: "8px"
+  panel: "10px"
   pill: "999px"
 spacing:
   micro: "4px"
-  control: "10px"
+  control: "8px"
   group: "20px"
-  section: "48px"
+  section: "40px"
 components:
   button-primary:
-    backgroundColor: "{colors.signal}"
-    textColor: "{colors.void}"
+    backgroundColor: "{colors.accent}"
+    textColor: "{colors.surface}"
     rounded: "{rounded.control}"
-    padding: "10px 16px"
+    padding: "9px 14px"
   input:
-    backgroundColor: "{colors.deck}"
-    textColor: "{colors.frost}"
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.ink}"
     rounded: "{rounded.control}"
-    padding: "10px 12px"
+    padding: "9px 11px"
 ---
 
-# Design System: ScriptBoard Signal Deck
+# Design System: ScriptBoard Calibration Ledger
 
-## Overview
+## Creative direction
 
-**Creative North Star: "Signal Deck"**
+ScriptBoard is a quiet operational ledger, not a dramatic command center. It should feel like a calibrated instrument sheet: cool white paper, graphite rules, compact labels, precise measurements, and one muted blue that always means selection or action.
 
-ScriptBoard feels like a live operations surface assembled from industrial control panels, technical publishing and broadcast telemetry. The interface is dark because operators may monitor it for long periods; depth comes from black material layers, precise seams and moving light rather than decorative glow.
+The interface is visually light while remaining information-dense. Hierarchy comes from alignment, spacing, rule weight, and typography—not dark panels, gradients, ornamental canvases, or stacks of floating cards.
 
-Expression concentrates in scale, crop and motion. Page titles behave like equipment labels enlarged into architectural type, while real data remains compact and calm. The system rejects generic dashboard mosaics and neon cyberpunk ornament.
+## Core principles
 
-**Key Characteristics:**
+1. **Verdict before telemetry.** The overview begins with what deserves attention, then exposes measurements and recent activity.
+2. **Flat at rest.** Persistent regions use tonal change and one-pixel rules. Shadows belong only to drawers, dialogs, and task panels.
+3. **Blue has a job.** Calibration blue marks current selection, focus, and the primary action. It is not ambient decoration.
+4. **Facts stay honest.** CPU and memory are measurements, not invented health judgments. Status is derived only from stale data, collection errors, and existing storage rules.
+5. **One primary action.** Each page has one obvious next action. Advanced and destructive actions stay progressively disclosed.
+6. **Bilingual by construction.** Chinese and English share the same information hierarchy. Layout must tolerate longer English labels without truncating meaning.
+7. **Icons are functional.** Use Lucide only. Never use emoji, custom logo glyphs, or icons where text is clearer.
 
-- Asymmetric page composition with one oversized typographic anchor.
-- Acid signal color reserved for active state and primary action.
-- Live data expressed through motion, trace lines and temporal transitions.
-- Dense tables remain flat, aligned and highly scannable.
-- Lucide is the only icon language; the interface contains no emoji.
+## Visual language
 
-## Colors
+### Color
 
-The palette is restrained industrial black with a single high-visibility signal color.
+- Canvas `#F6F7F9`; working surfaces `#FFFFFF`.
+- Primary text `#171A1F`; secondary text `#5F6875`.
+- Rules `#D9DEE7`, strengthened to `#BBC3CF` where separation must be explicit.
+- Calibration blue `#3659C9`, with `#EDF1FF` for selected rows and quiet focus context.
+- Success, warning, and danger colors always pair with text or an icon; color never carries state alone.
+- The log terminal is the only persistent dark surface because it is a distinct reading mode.
 
-### Primary
+All body copy and controls target WCAG 2.2 AA contrast. Muted copy remains at least 4.5:1 against its resting surface.
 
-- **Signal Acid:** Used only for primary actions, live state and the most important current selection.
+### Typography
 
-### Secondary
+- Use the operating-system UI stack. Do not fetch fonts.
+- Page titles are compact, sentence-case, and never become decorative monuments.
+- Use monospace only for paths, identifiers, commands, log output, and numeric measurements that benefit from fixed alignment.
+- Labels are short, slightly tracked, and structurally quiet.
 
-- **Failure Coral:** Reserved for destructive actions and states that require recovery.
-- **Caution Amber:** Used for stale, waiting and degraded states.
+### Shape and elevation
 
-### Neutral
+- Inline actions use 4–5px corners, standard controls use 6px, menus use 8px, and task panels or dialogs use 10px.
+- Tables and page sections remain unboxed.
+- Pills are reserved for short status labels and filters.
+- No gradient, glass, glow, backdrop blur, or ambient drop shadow.
 
-- **Machine Void:** The page-scale background and deepest terminal surfaces.
-- **Instrument Deck:** The default working surface.
-- **Raised Deck:** Temporary panels and interactive elevation.
-- **Cold Frost:** Primary text and high-contrast glyphs.
-- **Graphite Trace:** Secondary text, timestamps and inactive labels.
-- **Mechanical Seam:** Dividers and control boundaries.
+## Application shell
 
-**The Signal Is State Rule.** The acid color never acts as ambient decoration; it always identifies an action, selection or live condition.
+Desktop uses a fixed 232px sidebar with grouped destinations:
 
-## Typography
+- Monitor: Overview, Runs
+- Resources: Files, Variables
+- Configuration: Quick runs, Schedules
+- History: Audit
 
-**Display Font:** Bahnschrift SemiCondensed with Chinese system fallbacks
-**Body Font:** Segoe UI Variable Text with Microsoft YaHei UI fallback
-**Label/Mono Font:** Cascadia Mono with Consolas fallback
+Status, language, settings, and account controls live at the bottom. The wordmark is plain text. Settings is a separate workspace that includes account and version protection.
 
-**Character:** Condensed display type gives page titles the force of industrial labels without sacrificing Chinese legibility. Monospace appears only for code, paths, measurements and machine state.
+Below 1024px the sidebar becomes a modal drawer with a scrim. The underlying page does not reflow into a second navigation system.
 
-### Hierarchy
+## Page patterns
 
-- **Display:** Oversized page identity, limited to one per surface.
-- **Headline:** Section orientation and modal task titles.
-- **Title:** Record names and focused data labels.
-- **Body:** Operational explanation, kept concise and under 72 characters where possible.
-- **Label:** Machine state, timestamps, navigation indexes and field metadata.
+### Overview
 
-**The One Monument Rule.** Every page gets one typographic monument; supporting headings stay compact.
+Use a single-page drilldown:
 
-## Layout
+1. observation verdict and collection timestamp;
+2. exceptional conditions, if any;
+3. thin inline-SVG measurement bands for CPU, memory, and storage;
+4. active and recent runs;
+5. compact environment facts.
 
-Desktop uses one fixed horizontal command rail and a wide working deck. The first content row is intentionally asymmetric: host or task identity leads while live context stays compact. Tables run wide and flat instead of being broken into cards. On mobile the command rail becomes a horizontally scrollable navigation strip without introducing a second application shell.
+Measurements are not generic statistic cards. Their baseline, current value, and peak belong to one horizontal reading band.
 
-Spacing follows four roles: micro relationships, control interiors, grouped content and major section separation. Dense data may be tight; task changes receive obvious breathing room.
+### Dense records
 
-## Elevation & Depth
+Desktop records use flat tables with sticky or persistent column meaning where helpful. On mobile, each row becomes a compact labeled record while preserving the same actions and core facts.
 
-The system is flat at rest. Tonal layers and one-pixel seams establish hierarchy. Shadows appear only for floating editors, open menus and focused task panels, with a downward offset and broad black blur. A subtle canvas-rendered signal field gives the overall surface atmospheric depth without obscuring content.
+### Files
 
-**The Resting Surface Rule.** Persistent page regions do not float; only transient interaction earns elevation.
+Breadcrumbs and a directory list define place. Search and the one primary creation action sit in the page header. Destructive actions are secondary and explicit.
 
-## Shapes
+### Run detail
 
-Controls use clipped, compact corners. Persistent panels use restrained 12px radii only where a boundary is functionally necessary; tables and page sections remain unboxed. Pills are limited to status and tightly scoped filters.
+The log is the primary surface. Status, timing, script path, arguments, and stop/save actions form a compact header around it. Pause/resume is available by button and keyboard shortcut.
 
-## Components
+### Task panels
 
-### Buttons
+Create and edit flows use a right-side task panel on capable clients. Every panel owns a semantic GET URL and renders as a complete page without JavaScript.
 
-- **Shape:** Compact mechanical corners.
-- **Primary:** Signal-acid fill with near-black type.
-- **Hover / Focus:** Fast physical lift, stronger contrast and a clearly visible focus ring.
-- **Secondary:** Transparent or raised-deck surface with a mechanical seam.
+## Motion
 
-### Chips
+Motion explains state: drawer entry, task-panel entry, row insertion, acquisition refresh, or status transition. Use 140–220ms transitions with restrained easing. Honor `prefers-reduced-motion` by removing nonessential movement.
 
-- **Style:** Small mono labels with status color and explicit text.
-- **State:** Selected filters use signal fill; status never relies on color alone.
+## Copy
 
-### Cards / Containers
-
-- **Corner Style:** Restrained panel corners only where grouping cannot be expressed by layout.
-- **Background:** Tonal black layers.
-- **Shadow Strategy:** Flat at rest; shadows are transient.
-- **Border:** A single mechanical seam, never paired with an ambient card shadow.
-
-### Inputs / Fields
-
-- **Style:** The label, control and supporting copy form one recessed field unit; inputs are not isolated boxes floating inside forms.
-- **Focus:** The complete field unit receives a signal boundary while the control keeps a precise inner baseline.
-- **Error / Disabled:** Error color plus explanatory copy; disabled controls retain readable contrast.
-
-### Navigation
-
-The global command rail pairs Lucide icons with short Chinese labels and never shares its axis with a second global navigation. Active state uses a restrained signal wash and a precise baseline marker. Contextual navigation is visually quieter and owns only records or views inside the current destination. Mobile preserves global order in a scrollable dock.
-
-### Live Trace
-
-Real-time charts and status lines use thin traces, restrained peak overlays and animated acquisition feedback. Motion stops under reduced-motion preferences.
-
-## Do's and Don'ts
-
-### Do:
-
-- **Do** make current state and next action understandable before adding atmosphere.
-- **Do** use oversized type once per page to create identity.
-- **Do** keep operational tables aligned, flat and horizontally recoverable on small screens.
-- **Do** pair every icon-only control with an accessible name.
-
-### Don't:
-
-- **Don't** use emoji, icon fonts or mixed icon families.
-- **Don't** scatter the signal color across passive decoration.
-- **Don't** build dashboard mosaics from interchangeable cards.
-- **Don't** use glow, blur or animation where it does not communicate state or depth.
+- Use concrete verbs: “Run script”, “Create schedule”, “Restore file”.
+- Localize human-facing status labels; preserve raw identifiers only in technical details.
+- Empty states contain one sentence and one primary action.
+- Confirmation language scales with recoverability: reversible moves are concise; permanent deletion states the consequence.

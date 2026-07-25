@@ -27,7 +27,7 @@ func TestOperationsModeHasNoAIWorkspace(t *testing.T) {
 		}
 	}
 
-	for _, path := range []string{"/overview", "/assets/app.css", "/assets/app-v2.js"} {
+	for _, path := range []string{"/monitor", "/assets/app.css", "/assets/app-v2.js"} {
 		response, err := client.Get(serverURL + path)
 		if err != nil {
 			t.Fatalf("GET %s: %v", path, err)

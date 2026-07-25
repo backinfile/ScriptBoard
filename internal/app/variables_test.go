@@ -16,7 +16,7 @@ func TestPasswordVariableIsStoredNormallyAndMaskedByDefault(t *testing.T) {
 	root := t.TempDir()
 	stateRoot := filepath.Join(root, "state")
 	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), stateRoot)
-	response, err := client.Get(serverURL + "/variables")
+	response, err := client.Get(serverURL + "/resources/variables")
 	if err != nil {
 		t.Fatalf("get variables: %v", err)
 	}
@@ -26,7 +26,7 @@ func TestPasswordVariableIsStoredNormallyAndMaskedByDefault(t *testing.T) {
 		t.Fatalf("read variables page: %v", err)
 	}
 
-	response, err = client.PostForm(serverURL+"/variables", url.Values{
+	response, err = client.PostForm(serverURL+"/resources/variables", url.Values{
 		"name":        {"API_TOKEN"},
 		"value":       {"plain-secret-value"},
 		"is_password": {"1"},
@@ -54,7 +54,7 @@ func TestPasswordVariableIsStoredNormallyAndMaskedByDefault(t *testing.T) {
 		t.Fatalf("value=%q is_password=%v", value, isPassword)
 	}
 
-	response, err = client.Get(serverURL + "/variables")
+	response, err = client.Get(serverURL + "/resources/variables")
 	if err != nil {
 		t.Fatalf("get variables after create: %v", err)
 	}
@@ -65,18 +65,17 @@ func TestPasswordVariableIsStoredNormallyAndMaskedByDefault(t *testing.T) {
 	}
 	html := string(page)
 	for _, marker := range []string{
-		`<small class="variable-type">密码</small>`,
-		`data-password-mask aria-label="密码值已隐藏"`,
-		`data-password-content hidden>plain-secret-value</pre>`,
-		`data-toggle-password aria-expanded="false">显示</button>`,
-		`name="is_password" value="1" data-password-type checked`,
+		`<small>Password type</small>`,
+		`data-password-mask aria-label="Variable value hidden"`,
+		`data-password-content hidden>plain-secret-value</code>`,
+		`data-toggle-password aria-expanded="false">Show</button>`,
 	} {
 		if !strings.Contains(html, marker) {
 			t.Fatalf("password variable page is missing %q: %s", marker, html)
 		}
 	}
 
-	response, err = client.PostForm(serverURL+"/variables/API_TOKEN/update", url.Values{
+	response, err = client.PostForm(serverURL+"/resources/variables/API_TOKEN/update", url.Values{
 		"name":       {"API_TOKEN"},
 		"value":      {"updated-plain-value"},
 		"csrf_token": {formToken(t, page)},

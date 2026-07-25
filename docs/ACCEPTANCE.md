@@ -137,20 +137,31 @@
 - [ ] Windows amd64/arm64 ZIP 含服务与托盘二进制；Linux amd64/arm64 tar.gz 含服务二进制。
 - [ ] 发布 SHA-256 文件；不依赖 Node.js、Redis、消息队列或外部运行时。
 - [ ] Windows 10/11、Server 2019+ 与至少两个代表性 systemd Linux 发行版通过服务生命周期测试。
-- [ ] 当前及前一个主要版本的 Chrome、Edge、Firefox、Safari 完成核心流程测试。
-- [ ] 移动端可登录、浏览、启动、看日志、快捷执行和停止。
-- [ ] 所有用户界面、错误、托盘和 CLI 帮助为简体中文，结构化标识保持英文。
+- [ ] 桌面 Chromium 自动化覆盖登录、分组导航、任务面板、运行详情和关键视觉快照。
+- [ ] Chrome、Edge、Firefox、Safari 保持最佳努力兼容；它们不作为每次提交的自动化门禁。
+- [ ] 移动端可登录、导航、浏览文件、启动、看日志、快捷执行、停止和配置计划，且不依赖桌面悬停操作。
+- [ ] Web 的导航、状态、动作、错误和日期在简体中文与美式英语下完整本地化；首次访问按 `Accept-Language` 选择，Cookie 可覆盖并持久化选择。
+- [ ] 托盘和 CLI 帮助为简体中文；结构化标识与展开后的技术详情保持英文。
 
 ## 13. 明确不验收
 
-MVP 不验收多用户/RBAC、沙箱、公共 API、DAG、多服务器、Docker 正式部署、系统 crontab、Git 远程/LFS、用户备份命令、通知、插件、交互终端、目录打包、通用权限编辑、自动更新、多语言或正式多实例。
+MVP 不验收多用户/RBAC、沙箱、公共 API、DAG、多服务器、Docker 正式部署、系统 crontab、Git 远程/LFS、用户备份命令、通知、插件、交互终端、目录打包、通用权限编辑、自动更新、Web 之外界面的多语言或正式多实例。
 
 ## 14. 宿主概览
 
-- 登录、已登录访问 `/login`、根路径和品牌入口最终进入 `/overview`；未登录仍只能进入登录页。
+- 登录、已登录访问 `/login`、根路径和品牌入口最终进入 `/monitor`；未登录仍只能进入登录页。
 - 概览在两个采样周期内显示 CPU、内存、存储、磁盘 I/O、网络和 ScriptBoard 进程的可用指标，并显示最近五条活动 Run。
 - 15 分钟视图使用五秒实时样本；1 小时、6 小时和 24 小时视图使用跨重启保留的分钟平均值与峰值。
-- `/overview/data` 只允许有效 Session，拒绝未知时间范围并设置 `Cache-Control: no-store`。
+- `/monitor/data` 与 `/monitor/status` 只允许有效 Session，拒绝未知时间范围并设置 `Cache-Control: no-store`。
 - 单类采集失败、设备消失、历史写入失败或服务重启形成明确错误或图表缺口，不能伪造零值，也不能影响核心功能。
 - 关键卷低于 100 MiB、采集失败或连续 15 秒没有新样本时显示客观异常；高 CPU、内存本身不自动判定为异常。
 - Windows/Linux 的公共核心页面一致，平台独有指标只在可用时显示；桌面和移动布局均可完成时间切换和 Run 详情跳转。
+
+## 15. Web 信息架构与渐进增强
+
+- [ ] 桌面端固定侧栏按监控、资源、配置、历史和设置分组；移动端以可关闭抽屉呈现同一导航。
+- [ ] `/monitor`、`/monitor/runs`、`/resources/files`、`/resources/variables`、`/resources/trash`、`/config/quick-runs`、`/config/schedules`、`/history/audit` 和 `/settings/*` 均只允许有效 Session。
+- [ ] 旧 `/overview`、`/files`、`/runs`、`/quick-runs`、`/schedules`、`/variables`、`/audit` 与 `/trash` 路由返回 404，不提供兼容重定向。
+- [ ] 新建目录、上传、运行文件、新建或编辑变量、新建或编辑计划、保存快捷执行均有语义化 GET 页面，可复制链接并在禁用 JavaScript 时完整操作。
+- [ ] 启用 JavaScript 时，上述 GET 页面在右侧任务面板打开；浏览器前进、后退和 Escape 能恢复正确上下文。
+- [ ] 概览判断只由采集失败、超过 15 秒的数据过期和关键卷低于 100 MiB 产生；CPU、内存与网络只作为事实展示。

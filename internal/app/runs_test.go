@@ -33,7 +33,7 @@ func TestAdminCanRunScriptAndReadCompletedOutput(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
-	response, err := client.Get(serverURL + "/files/")
+	response, err := client.Get(serverURL + "/resources/files/")
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestAdminCanRunScriptAndReadCompletedOutput(t *testing.T) {
 		t.Fatalf("read files: %v", err)
 	}
 
-	response, err = client.PostForm(serverURL+"/runs/start", url.Values{
+	response, err = client.PostForm(serverURL+"/monitor/runs/start", url.Values{
 		"script":     {scriptName},
 		"arguments":  {""},
 		"csrf_token": {formToken(t, page)},
@@ -52,7 +52,7 @@ func TestAdminCanRunScriptAndReadCompletedOutput(t *testing.T) {
 		t.Fatalf("start run: %v", err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther || !strings.HasPrefix(response.Header.Get("Location"), "/runs/") {
+	if response.StatusCode != http.StatusSeeOther || !strings.HasPrefix(response.Header.Get("Location"), "/monitor/runs/") {
 		t.Fatalf("start response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
 	runURL := serverURL + response.Header.Get("Location")
@@ -99,7 +99,7 @@ func TestRunDisplaysLocalizedOutput(t *testing.T) {
 		t.Fatalf("write unicode script: %v", err)
 	}
 	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
-	response, err := client.Get(serverURL + "/files/")
+	response, err := client.Get(serverURL + "/resources/files/")
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestRunDisplaysLocalizedOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read files: %v", err)
 	}
-	response, err = client.PostForm(serverURL+"/runs/start", url.Values{
+	response, err = client.PostForm(serverURL+"/monitor/runs/start", url.Values{
 		"script":     {scriptName},
 		"csrf_token": {formToken(t, page)},
 	})
@@ -161,13 +161,13 @@ func TestRunEventsAreAvailableAsSSE(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
-	response, err := client.Get(serverURL + "/files/")
+	response, err := client.Get(serverURL + "/resources/files/")
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
 	filesPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/runs/start", url.Values{
+	response, err = client.PostForm(serverURL+"/monitor/runs/start", url.Values{
 		"script":     {scriptName},
 		"csrf_token": {formToken(t, filesPage)},
 	})
@@ -216,13 +216,13 @@ func TestAdminCanSaveAndStartQuickRunFromHistory(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
-	response, err := client.Get(serverURL + "/files/")
+	response, err := client.Get(serverURL + "/resources/files/")
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
 	filesPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/runs/start", url.Values{
+	response, err = client.PostForm(serverURL+"/monitor/runs/start", url.Values{
 		"script":     {scriptName},
 		"csrf_token": {formToken(t, filesPage)},
 	})
@@ -253,10 +253,10 @@ func TestAdminCanSaveAndStartQuickRunFromHistory(t *testing.T) {
 		t.Fatalf("save quick run: %v", err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/quick-runs" {
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/config/quick-runs" {
 		t.Fatalf("save quick run response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
-	response, err = client.Get(serverURL + "/quick-runs")
+	response, err = client.Get(serverURL + "/config/quick-runs")
 	if err != nil {
 		t.Fatalf("get quick runs: %v", err)
 	}
@@ -265,14 +265,14 @@ func TestAdminCanSaveAndStartQuickRunFromHistory(t *testing.T) {
 	if !strings.Contains(string(quickPage), "常用执行") {
 		t.Fatalf("saved quick run missing: %s", quickPage)
 	}
-	response, err = client.PostForm(serverURL+"/quick-runs/"+hiddenValue(t, quickPage, "id")+"/start", url.Values{
+	response, err = client.PostForm(serverURL+"/config/quick-runs/"+hiddenValue(t, quickPage, "id")+"/start", url.Values{
 		"csrf_token": {formToken(t, quickPage)},
 	})
 	if err != nil {
 		t.Fatalf("start quick run: %v", err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther || !strings.HasPrefix(response.Header.Get("Location"), "/runs/") {
+	if response.StatusCode != http.StatusSeeOther || !strings.HasPrefix(response.Header.Get("Location"), "/monitor/runs/") {
 		t.Fatalf("quick start response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
 }
@@ -296,13 +296,13 @@ func TestAdminCanStopRunningScript(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
-	response, err := client.Get(serverURL + "/files/")
+	response, err := client.Get(serverURL + "/resources/files/")
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
 	filesPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/runs/start", url.Values{
+	response, err = client.PostForm(serverURL+"/monitor/runs/start", url.Values{
 		"script":     {scriptName},
 		"csrf_token": {formToken(t, filesPage)},
 	})
@@ -311,7 +311,7 @@ func TestAdminCanStopRunningScript(t *testing.T) {
 	}
 	_ = response.Body.Close()
 	runPath := response.Header.Get("Location")
-	if !strings.HasPrefix(runPath, "/runs/") {
+	if !strings.HasPrefix(runPath, "/monitor/runs/") {
 		t.Fatalf("run location = %q", runPath)
 	}
 
@@ -395,13 +395,13 @@ func TestRunningScriptCannotBeDeleted(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
-	response, err := client.Get(serverURL + "/files/")
+	response, err := client.Get(serverURL + "/resources/files/")
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
 	filesPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/runs/start", url.Values{
+	response, err = client.PostForm(serverURL+"/monitor/runs/start", url.Values{
 		"script":     {scriptName},
 		"csrf_token": {formToken(t, filesPage)},
 	})
@@ -424,7 +424,7 @@ func TestRunningScriptCannotBeDeleted(t *testing.T) {
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	response, err = client.PostForm(serverURL+"/files/delete", url.Values{
+	response, err = client.PostForm(serverURL+"/resources/files/delete", url.Values{
 		"path":       {scriptName},
 		"csrf_token": {formToken(t, filesPage)},
 	})
@@ -460,13 +460,13 @@ func TestNonZeroRunFailsAndPreservesOutputSources(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
-	response, err := client.Get(serverURL + "/files/")
+	response, err := client.Get(serverURL + "/resources/files/")
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
 	filesPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/runs/start", url.Values{
+	response, err = client.PostForm(serverURL+"/monitor/runs/start", url.Values{
 		"script":     {scriptName},
 		"csrf_token": {formToken(t, filesPage)},
 	})
@@ -516,13 +516,13 @@ func TestRunTimeoutEndsAsTimedOut(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{ManagedRoot: managedRoot, StateRoot: stateRoot, RunTimeoutGrace: 100 * time.Millisecond})
-	response, err := client.Get(serverURL + "/files/")
+	response, err := client.Get(serverURL + "/resources/files/")
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
 	filesPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/runs/start", url.Values{
+	response, err = client.PostForm(serverURL+"/monitor/runs/start", url.Values{
 		"script":          {scriptName},
 		"timeout_seconds": {"1"},
 		"csrf_token":      {formToken(t, filesPage)},
@@ -569,13 +569,13 @@ func TestRunResolvesVariableAsWholeArgument(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
-	response, err := client.Get(serverURL + "/variables")
+	response, err := client.Get(serverURL + "/resources/variables")
 	if err != nil {
 		t.Fatalf("get variables: %v", err)
 	}
 	variablesPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/variables", url.Values{
+	response, err = client.PostForm(serverURL+"/resources/variables", url.Values{
 		"name":       {"GREETING"},
 		"value":      {"hello variable"},
 		"csrf_token": {formToken(t, variablesPage)},
@@ -587,13 +587,13 @@ func TestRunResolvesVariableAsWholeArgument(t *testing.T) {
 	if response.StatusCode != http.StatusSeeOther {
 		t.Fatalf("create variable status = %d", response.StatusCode)
 	}
-	response, err = client.Get(serverURL + "/files/")
+	response, err = client.Get(serverURL + "/resources/files/")
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
 	filesPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/runs/start", url.Values{
+	response, err = client.PostForm(serverURL+"/monitor/runs/start", url.Values{
 		"script":     {scriptName},
 		"arguments":  {"{{GREETING}}"},
 		"csrf_token": {formToken(t, filesPage)},

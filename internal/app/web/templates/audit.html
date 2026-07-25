@@ -1,7 +1,19 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=55"><script defer src="/assets/app-v2.js?v=55"></script><title>审计事件 · ScriptBoard</title></head><body><main>
-<header class="workspace-heading"><h1>审计事件</h1><p>追踪管理操作、目标、结果和请求来源。</p></header>
-<div class="section-tools audit-tools"><form class="audit-search" method="get" data-async data-async-push><label>搜索审计记录 <input type="search" name="q" value="{{.Query}}" autocomplete="off" placeholder="操作、目标、结果或来源…"></label><button type="submit" data-pending-label="搜索中…">搜索</button>{{if .Query}}<a href="/audit">清除</a>{{end}}</form><a href="/audit.csv" data-native>下载完整 CSV</a></div>
-<div class="table-shell"><table class="audit-table"><thead><tr><th>时间</th><th>操作</th><th>目标</th><th>结果</th><th>来源</th></tr></thead><tbody>{{range .Events}}<tr><td><time datetime="{{machineTime .OccurredAt}}" data-local-time>{{displayTime .OccurredAt}}</time></td><td><code>{{.Action}}</code></td><td>{{.Target}}</td><td><span class="status-chip {{if eq .Result "failed"}}status-chip--danger{{end}}">{{.Result}}</span></td><td>{{.Source}}</td></tr>{{else}}<tr><td colspan="5">{{if .Query}}没有匹配“{{.Query}}”的审计事件{{else}}暂无审计事件{{end}}</td></tr>{{end}}</tbody></table></div>
-<nav class="pagination" aria-label="审计事件分页"><span class="pagination__summary">共 {{.Pagination.Total}} 条 · 第 {{.Pagination.Page}} / {{.Pagination.PageCount}} 页</span><span class="pagination__actions">{{if .Pagination.HasPrevious}}<a href="{{.Pagination.PreviousURL}}">上一页</a>{{else}}<span class="pagination__disabled">上一页</span>{{end}}{{if .Pagination.HasNext}}<a href="{{.Pagination.NextURL}}">下一页</a>{{else}}<span class="pagination__disabled">下一页</span>{{end}}</span></nav>
-</main></body></html>
+<html lang="{{.Locale}}">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=20260725"><script defer src="/assets/app-v2.js?v=20260725"></script><title>{{t .Locale "audit.title"}} · ScriptBoard</title></head>
+<body>
+<main class="workspace">
+  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "audit.eyebrow"}}</p><h1>{{t .Locale "audit.title"}}</h1><p>{{t .Locale "audit.description"}}</p></div><a class="button button--quiet" href="/history/audit.csv" data-native><span data-lucide="download" aria-hidden="true"></span>{{t .Locale "audit.download_csv"}}</a></header>
+  <section class="section-tools">
+    <form class="search-form" method="get" data-async data-async-push><label class="search-field"><span data-lucide="search" aria-hidden="true"></span><span class="sr-only">{{t .Locale "audit.search"}}</span><input type="search" name="q" value="{{.Query}}" autocomplete="off" placeholder="{{t .Locale "audit.search_placeholder"}}"></label><button type="submit">{{t .Locale "common.search"}}</button>{{if .Query}}<a href="/history/audit">{{t .Locale "common.clear"}}</a>{{end}}</form>
+  </section>
+  {{if .Events}}
+  <div class="table-shell"><table class="records-table audit-table">
+    <thead><tr><th>{{t .Locale "common.time"}}</th><th>{{t .Locale "audit.operation"}}</th><th>{{t .Locale "common.target"}}</th><th>{{t .Locale "common.result"}}</th><th>{{t .Locale "common.source"}}</th></tr></thead>
+    <tbody>{{range .Events}}<tr><td data-label="{{t $.Locale "common.time"}}"><time datetime="{{machineTime .OccurredAt}}" data-local-time>{{localTime $.Locale .OccurredAt}}</time></td><td data-label="{{t $.Locale "audit.operation"}}"><code>{{.Action}}</code></td><td data-label="{{t $.Locale "common.target"}}">{{.Target}}</td><td data-label="{{t $.Locale "common.result"}}"><span class="status-chip" data-state="{{.Result}}">{{resultText $.Locale .Result}}</span></td><td data-label="{{t $.Locale "common.source"}}"><code>{{.Source}}</code></td></tr>{{end}}</tbody>
+  </table></div>
+  {{else}}<section class="empty-state"><span data-lucide="scroll-text" aria-hidden="true"></span><p>{{t .Locale "audit.empty"}}</p><a class="button" href="/history/audit">{{t .Locale "common.clear"}}</a></section>{{end}}
+  <nav class="pagination" aria-label="{{t .Locale "audit.pagination"}}"><span>{{.Pagination.Total}} {{t .Locale "common.records"}} · {{.Pagination.Page}} / {{.Pagination.PageCount}}</span><div>{{if .Pagination.HasPrevious}}<a href="{{.Pagination.PreviousURL}}">{{t .Locale "common.previous"}}</a>{{else}}<span aria-disabled="true">{{t .Locale "common.previous"}}</span>{{end}}{{if .Pagination.HasNext}}<a href="{{.Pagination.NextURL}}">{{t .Locale "common.next"}}</a>{{else}}<span aria-disabled="true">{{t .Locale "common.next"}}</span>{{end}}</div></nav>
+</main>
+</body>
+</html>

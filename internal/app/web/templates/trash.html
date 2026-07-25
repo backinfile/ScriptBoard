@@ -1,6 +1,21 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=55"><script defer src="/assets/app-v2.js?v=55"></script><title>回收站 · ScriptBoard</title></head>
-<body><main><header class="workspace-heading"><h1>回收站</h1><p>已移除的文件暂存在这里，可恢复或永久清理。</p></header><div class="table-shell"><table><thead><tr><th>原路径</th><th>删除时间</th><th>大小</th><th>操作</th></tr></thead><tbody>
-{{range .Entries}}<tr><td>{{.OriginalPath}}</td><td><time datetime="{{machineTime .DeletedAt}}" data-local-time>{{displayTime .DeletedAt}}</time></td><td>{{.Size}}</td><td><form method="post" action="/trash/restore" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button class="button--primary" type="submit" data-pending-label="恢复中…">恢复</button></form><form method="post" action="/trash/purge" data-confirm="确认永久清理此条目？此操作无法撤销。" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button class="button--danger" name="confirm" value="yes" type="submit" data-pending-label="清理中…">永久清理</button></form></td></tr>
-{{else}}<tr><td colspan="4">回收站为空</td></tr>{{end}}
-</tbody></table></div><nav class="pagination" aria-label="回收站分页"><span class="pagination__summary">共 {{.Pagination.Total}} 条 · 第 {{.Pagination.Page}} / {{.Pagination.PageCount}} 页</span><span class="pagination__actions">{{if .Pagination.HasPrevious}}<a href="{{.Pagination.PreviousURL}}">上一页</a>{{else}}<span class="pagination__disabled">上一页</span>{{end}}{{if .Pagination.HasNext}}<a href="{{.Pagination.NextURL}}">下一页</a>{{else}}<span class="pagination__disabled">下一页</span>{{end}}</span></nav></main></body></html>
+<html lang="{{.Locale}}">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=20260725"><script defer src="/assets/app-v2.js?v=20260725"></script><title>{{t .Locale "trash.title"}} · ScriptBoard</title></head>
+<body>
+<main class="workspace">
+  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "trash.eyebrow"}}</p><h1>{{t .Locale "trash.title"}}</h1><p>{{t .Locale "trash.description"}}</p></div><a class="button button--quiet" href="/resources/files/"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "trash.back_to_files"}}</a></header>
+  {{if .Entries}}
+  <div class="table-shell"><table class="records-table">
+    <thead><tr><th>{{t .Locale "common.path"}}</th><th>{{t .Locale "trash.deleted_at"}}</th><th>{{t .Locale "common.size"}}</th><th><span class="sr-only">{{t .Locale "common.actions"}}</span></th></tr></thead>
+    <tbody>{{range .Entries}}<tr>
+      <td data-label="{{t $.Locale "common.path"}}" class="record-primary"><span class="record-icon" data-lucide="{{if .Directory}}folder{{else}}file{{end}}" aria-hidden="true"></span><code>{{.OriginalPath}}</code></td>
+      <td data-label="{{t $.Locale "trash.deleted_at"}}"><time datetime="{{machineTime .DeletedAt}}" data-local-time>{{localTime $.Locale .DeletedAt}}</time></td>
+      <td data-label="{{t $.Locale "common.size"}}">{{.Size}}</td>
+      <td class="record-actions"><form method="post" action="/resources/trash/restore" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button class="button--primary" type="submit"><span data-lucide="rotate-ccw" aria-hidden="true"></span>{{t $.Locale "trash.restore"}}</button></form><form method="post" action="/resources/trash/purge" data-confirm="{{t $.Locale "trash.purge_confirm"}}" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button class="button--danger" name="confirm" value="yes" type="submit"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "trash.purge"}}</button></form></td>
+    </tr>{{end}}</tbody>
+  </table></div>
+  <nav class="pagination" aria-label="{{t .Locale "trash.pagination"}}"><span>{{.Pagination.Total}} {{t .Locale "common.records"}} · {{.Pagination.Page}} / {{.Pagination.PageCount}}</span><div>{{if .Pagination.HasPrevious}}<a href="{{.Pagination.PreviousURL}}">{{t .Locale "common.previous"}}</a>{{else}}<span aria-disabled="true">{{t .Locale "common.previous"}}</span>{{end}}{{if .Pagination.HasNext}}<a href="{{.Pagination.NextURL}}">{{t .Locale "common.next"}}</a>{{else}}<span aria-disabled="true">{{t .Locale "common.next"}}</span>{{end}}</div></nav>
+  {{else}}<section class="empty-state"><span data-lucide="trash-2" aria-hidden="true"></span><p>{{t .Locale "trash.empty"}}</p><a class="button button--primary" href="/resources/files/">{{t .Locale "trash.back_to_files"}}</a></section>{{end}}
+</main>
+</body>
+</html>

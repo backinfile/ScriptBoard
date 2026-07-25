@@ -93,13 +93,13 @@ func TestVersionProtectionCheckpointsAroundRunBatch(t *testing.T) {
 		t.Fatalf("enable version protection: %v", err)
 	}
 	_ = response.Body.Close()
-	response, err = client.Get(serverURL + "/files/")
+	response, err = client.Get(serverURL + "/resources/files/")
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
 	filesPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/runs/start", url.Values{"script": {scriptName}, "csrf_token": {formToken(t, filesPage)}})
+	response, err = client.PostForm(serverURL+"/monitor/runs/start", url.Values{"script": {scriptName}, "csrf_token": {formToken(t, filesPage)}})
 	if err != nil {
 		t.Fatalf("start run: %v", err)
 	}

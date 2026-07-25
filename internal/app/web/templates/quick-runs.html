@@ -1,8 +1,28 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=55"><script defer src="/assets/app-v2.js?v=55"></script><title>快捷执行 · ScriptBoard</title></head><body><main><header class="workspace-heading"><h1>快捷执行</h1><p>一键启动常用脚本配置，并让高频任务保持在手边。</p></header>
-{{if .QuickRuns}}<div class="table-shell"><table><thead><tr><th>名称</th><th>脚本</th><th>参数</th><th>操作</th></tr></thead><tbody>{{range .QuickRuns}}<tr><td>{{.Name}}</td><td>{{.ScriptPath}}</td><td>{{.ArgumentsTemplate}}</td><td>
-<form method="post" action="/quick-runs/{{.ID}}/start"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button class="button--primary" type="submit" data-pending-label="启动中…" {{if not .Valid}}disabled title="Script 路径已失效"{{end}}>{{if .Valid}}启动{{else}}路径失效{{end}}</button></form>
-<form method="post" action="/quick-runs/{{.ID}}/move" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button name="direction" value="up">上移</button><button name="direction" value="down">下移</button></form>
-<form method="post" action="/quick-runs/{{.ID}}/delete" data-confirm="确认删除快捷执行“{{.Name}}”？此操作无法撤销。" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="button--danger" name="confirm" value="yes" data-pending-label="删除中…">删除</button></form>
-</td></tr>{{end}}</tbody></table>
-</div><nav class="pagination" aria-label="快捷执行分页"><span class="pagination__summary">共 {{.Pagination.Total}} 条 · 第 {{.Pagination.Page}} / {{.Pagination.PageCount}} 页</span><span class="pagination__actions">{{if .Pagination.HasPrevious}}<a href="{{.Pagination.PreviousURL}}">上一页</a>{{else}}<span class="pagination__disabled">上一页</span>{{end}}{{if .Pagination.HasNext}}<a href="{{.Pagination.NextURL}}">下一页</a>{{else}}<span class="pagination__disabled">下一页</span>{{end}}</span></nav>{{else}}<section class="empty-state"><h2>还没有快捷执行</h2><p>先从文件页运行一次脚本，再在运行详情中将当前配置保存为快捷执行。</p><a class="empty-state__action" href="/files/">浏览脚本</a></section>{{end}}</main></body></html>
+<html lang="{{.Locale}}">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=20260725"><script defer src="/assets/app-v2.js?v=20260725"></script><title>{{t .Locale "quick_runs.title"}} · ScriptBoard</title></head>
+<body>
+<main class="workspace">
+  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "quick_runs.eyebrow"}}</p><h1>{{t .Locale "quick_runs.title"}}</h1><p>{{t .Locale "quick_runs.description"}}</p></div></header>
+  {{if .QuickRuns}}
+  <ol class="ordered-records">
+    {{range $index, $quick := .QuickRuns}}<li>
+      <div class="record-order" aria-hidden="true">{{printf "%02d" $index}}</div>
+      <div class="ordered-record__identity"><span data-lucide="zap" aria-hidden="true"></span><div><h2>{{.Name}}</h2><code>{{.ScriptPath}}</code></div></div>
+      <dl class="ordered-record__facts"><div><dt>{{t $.Locale "common.arguments"}}</dt><dd>{{if .ArgumentsTemplate}}<code>{{.ArgumentsTemplate}}</code>{{else}}—{{end}}</dd></div><div><dt>{{t $.Locale "common.timeout"}}</dt><dd>{{.TimeoutSeconds}}s</dd></div></dl>
+      <div class="record-actions">
+        <form method="post" action="/config/quick-runs/{{.ID}}/start"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button class="button--primary" type="submit" {{if not .Valid}}disabled aria-disabled="true"{{end}} title="{{if not .Valid}}{{t $.Locale "quick_runs.invalid_path"}}{{end}}"><span data-lucide="play" aria-hidden="true"></span>{{if .Valid}}{{t $.Locale "common.run"}}{{else}}{{t $.Locale "quick_runs.invalid"}}{{end}}</button></form>
+        <details class="action-menu"><summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
+          <form method="post" action="/config/quick-runs/{{.ID}}/move" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button name="direction" value="up"><span data-lucide="arrow-up" aria-hidden="true"></span>{{t $.Locale "quick_runs.move_up"}}</button><button name="direction" value="down"><span data-lucide="arrow-down" aria-hidden="true"></span>{{t $.Locale "quick_runs.move_down"}}</button></form>
+          <form method="post" action="/config/quick-runs/{{.ID}}/delete" data-confirm="{{t $.Locale "quick_runs.delete_confirm"}}" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-action" name="confirm" value="yes"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "common.delete"}}</button></form>
+        </div></details>
+      </div>
+    </li>{{end}}
+  </ol>
+  <nav class="pagination" aria-label="{{t .Locale "quick_runs.pagination"}}"><span>{{.Pagination.Total}} {{t .Locale "common.records"}} · {{.Pagination.Page}} / {{.Pagination.PageCount}}</span><div>{{if .Pagination.HasPrevious}}<a href="{{.Pagination.PreviousURL}}">{{t .Locale "common.previous"}}</a>{{else}}<span aria-disabled="true">{{t .Locale "common.previous"}}</span>{{end}}{{if .Pagination.HasNext}}<a href="{{.Pagination.NextURL}}">{{t .Locale "common.next"}}</a>{{else}}<span aria-disabled="true">{{t .Locale "common.next"}}</span>{{end}}</div></nav>
+  {{else}}
+  <section class="empty-state"><span data-lucide="zap" aria-hidden="true"></span><p>{{t .Locale "quick_runs.empty"}}</p><a class="button button--primary" href="/resources/files/">{{t .Locale "quick_runs.browse_scripts"}}</a></section>
+  {{end}}
+</main>
+</body>
+</html>
