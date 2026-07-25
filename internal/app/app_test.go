@@ -2,6 +2,8 @@ package app_test
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -237,14 +239,23 @@ func TestPrimaryNavigationAvoidsFullPageReloads(t *testing.T) {
 	for _, expected := range []string{
 		`data-pjax-nav`, `class="skip-link" href="#main-content"`, `main id="main-content"`,
 		`type="search"`, `data-lucide="image"`, `data-local-time`,
-		`/assets/app.css?v=20260725`, `/assets/app-v2.js?v=20260725`,
 	} {
 		if !bytes.Contains(page, []byte(expected)) {
 			t.Fatalf("files page does not contain %q: %s", expected, page)
 		}
 	}
 
-	for _, asset := range []string{"/assets/app.css?v=20260725", "/assets/app-v2.js?v=20260725"} {
+	assetPattern := regexp.MustCompile(`/assets/(app\.css|app-v2\.js)\?v=([a-f0-9]{12})`)
+	assetMatches := assetPattern.FindAllSubmatch(page, -1)
+	if len(assetMatches) != 2 {
+		t.Fatalf("files page asset URLs = %q, want one CSS and one JS fingerprint", assetMatches)
+	}
+	assetBodies := make(map[string][]byte, len(assetMatches))
+	assetVersions := make(map[string]string, len(assetMatches))
+	for _, match := range assetMatches {
+		name := string(match[1])
+		version := string(match[2])
+		asset := "/assets/" + name + "?v=" + version
 		response, err = client.Get(serverURL + asset)
 		if err != nil {
 			t.Fatalf("get %s: %v", asset, err)
@@ -257,14 +268,16 @@ func TestPrimaryNavigationAvoidsFullPageReloads(t *testing.T) {
 		if cacheControl := response.Header.Get("Cache-Control"); cacheControl != "public, max-age=31536000, immutable" {
 			t.Errorf("%s cache control = %q, want immutable versioned caching", asset, cacheControl)
 		}
-		if strings.HasSuffix(asset, ".js?v=20260725") {
+		assetBodies[name] = body
+		assetVersions[name] = version
+		if name == "app-v2.js" {
 			for _, expected := range []string{"preventDefault()", "DOMParser", "history.pushState", "popstate", "replaceWith", "Intl.DateTimeFormat", "task-panel", "EventSource"} {
 				if !bytes.Contains(body, []byte(expected)) {
 					t.Errorf("interaction script does not contain %q", expected)
 				}
 			}
 		}
-		if strings.HasSuffix(asset, ".css?v=20260725") {
+		if name == "app.css" {
 			for _, expected := range []string{":focus-visible", "@media (prefers-reduced-motion", ".button--danger", ".empty-state", ".segmented-control", "--accent", ".measurement-ledger"} {
 				if !bytes.Contains(body, []byte(expected)) {
 					t.Errorf("stylesheet does not contain %q", expected)
@@ -275,6 +288,17 @@ func TestPrimaryNavigationAvoidsFullPageReloads(t *testing.T) {
 					t.Errorf("stylesheet retains fragile selector %q", forbidden)
 				}
 			}
+		}
+	}
+	combined := make([]byte, 0, len(assetBodies["app.css"])+1+len(assetBodies["app-v2.js"]))
+	combined = append(combined, assetBodies["app.css"]...)
+	combined = append(combined, 0)
+	combined = append(combined, assetBodies["app-v2.js"]...)
+	digest := sha256.Sum256(combined)
+	expectedVersion := hex.EncodeToString(digest[:6])
+	for name, version := range assetVersions {
+		if version != expectedVersion {
+			t.Errorf("%s asset version = %q, want content fingerprint %q", name, version, expectedVersion)
 		}
 	}
 }

@@ -32,7 +32,7 @@ type taskPageData struct {
 
 var taskPageTemplate = template.Must(template.New("task-page").Funcs(webTemplateFunctions()).Parse(`<!doctype html>
 <html lang="{{.Locale}}">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=20260725"><script defer src="/assets/app-v2.js?v=20260725"></script><title>{{.Title}} · ScriptBoard</title></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{.Title}} · ScriptBoard</title></head>
 <body>
 <main class="workspace task-page" data-task-page data-task-kind="{{.Kind}}">
   <a class="task-back" href="{{.BackURL}}"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "common.back"}}</a>
