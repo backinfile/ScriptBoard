@@ -679,7 +679,7 @@ func (a *App) testAIProfile(response http.ResponseWriter, request *http.Request)
 					Name: "scriptboard_probe", Description: "A harmless connectivity probe.",
 					InputSchema: json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
 				}},
-				ToolChoice: "required", MaxTokens: 128,
+				ToolChoice: "auto", MaxTokens: 128,
 			}, func(ai.ModelEvent) {})
 			err = callErr
 			if err == nil && len(first.Message.ToolCalls) == 0 {
