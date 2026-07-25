@@ -22,6 +22,7 @@
     "download": '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>',
     "ellipsis": '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
     "eye": '<path d="M2.1 12a10.7 10.7 0 0 1 19.8 0 10.7 10.7 0 0 1-19.8 0"/><circle cx="12" cy="12" r="3"/>',
+    "eye-off": '<path d="m2 2 20 20"/><path d="M6.7 6.7A11.7 11.7 0 0 0 2.1 12a10.7 10.7 0 0 0 14.1 5.2"/><path d="M10.7 10.7a3 3 0 0 0 4.2 4.2"/><path d="M14.3 5.2A10.7 10.7 0 0 1 21.9 12a11.8 11.8 0 0 1-2.2 3.2"/>',
     "file": '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>',
     "file-cog": '<path d="M14 2H6a2 2 0 0 0-2 2v8"/><path d="M14 2v6h6"/><circle cx="13" cy="18" r="3"/><path d="m15.6 16.5.9-.5M10.4 19.5l-.9.5M15.6 19.5l.9.5M10.4 16.5l-.9-.5"/>',
     "file-lock-2": '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h7"/><path d="M14 2v6h6"/><rect x="14" y="15" width="8" height="6" rx="1"/><path d="M16 15v-2a2 2 0 0 1 4 0v2"/>',
@@ -70,7 +71,6 @@
       current: "数据正常", attention: "需要关注", stale: "数据已过期",
       activeRuns: "个活动 Run", processing: "处理中…", complete: "实时输出已结束",
       connected: "实时输出已连接", disconnected: "实时输出连接中断",
-      show: "显示", hide: "隐藏",
       statuses: {
         starting: "正在启动", running: "运行中", stopping: "正在停止", timing_out: "正在超时终止",
         succeeded: "成功", failed: "失败", stopped: "已停止", timed_out: "已超时", rejected: "已拒绝"
@@ -80,7 +80,6 @@
       current: "Data current", attention: "Attention needed", stale: "Data stale",
       activeRuns: "active Runs", processing: "Processing…", complete: "Live output complete",
       connected: "Live output connected", disconnected: "Live output disconnected",
-      show: "Show", hide: "Hide",
       statuses: {
         starting: "Starting", running: "Running", stopping: "Stopping", timing_out: "Timing out",
         succeeded: "Succeeded", failed: "Failed", stopped: "Stopped", timed_out: "Timed out", rejected: "Rejected"
@@ -402,20 +401,77 @@
     cleanups.push(() => window.clearInterval(timer));
   }
 
-  function initPasswordToggles(root = document) {
-    root.querySelectorAll("[data-toggle-password]").forEach(button => {
-      button.addEventListener("click", () => {
-        const container = button.closest("[data-password-value]");
-        const content = container?.querySelector("[data-password-content]");
-        const mask = container?.querySelector("[data-password-mask]");
-        if (!content || !mask) return;
+  function setControlIcon(target, name) {
+    if (target) target.replaceChildren(makeIcon(name));
+  }
+
+  function initPasswordControls(root = document, cleanups = []) {
+    const feedbackTimers = new Map();
+
+    root.querySelectorAll("[data-password-value]").forEach(container => {
+      const content = container.querySelector("[data-password-content]");
+      const mask = container.querySelector("[data-password-mask]");
+      const toggle = container.querySelector("[data-toggle-password]");
+      const toggleIcon = container.querySelector("[data-password-toggle-icon]");
+      const copyButton = container.querySelector("[data-copy-password]");
+      const copyIcon = container.querySelector("[data-password-copy-icon]");
+      const status = container.querySelector("[data-password-status]");
+      if (!content || !mask || !toggle || !copyButton) return;
+
+      container.hidden = false;
+
+      toggle.addEventListener("click", () => {
         const reveal = content.hidden;
         content.hidden = !reveal;
         mask.hidden = reveal;
-        button.textContent = reveal ? words().hide : words().show;
-        button.setAttribute("aria-expanded", String(reveal));
+        toggle.setAttribute("aria-expanded", String(reveal));
+        toggle.setAttribute("aria-label", reveal ? toggle.dataset.hideLabel : toggle.dataset.showLabel);
+        toggle.title = reveal ? toggle.dataset.hideLabel : toggle.dataset.showLabel;
+        setControlIcon(toggleIcon, reveal ? "eye-off" : "eye");
+      });
+
+      copyButton.addEventListener("click", async () => {
+        if (copyButton.dataset.copying === "true") return;
+        const existingTimer = feedbackTimers.get(copyButton);
+        if (existingTimer) {
+          window.clearTimeout(existingTimer);
+          feedbackTimers.delete(copyButton);
+        }
+        copyButton.dataset.copying = "true";
+        copyButton.setAttribute("aria-busy", "true");
+
+        try {
+          if (!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable");
+          await navigator.clipboard.writeText(content.textContent);
+          copyButton.dataset.state = "success";
+          copyButton.setAttribute("aria-label", copyButton.dataset.copiedLabel);
+          copyButton.title = copyButton.dataset.copiedLabel;
+          setControlIcon(copyIcon, "check");
+          if (status) status.textContent = copyButton.dataset.copiedLabel;
+        } catch {
+          copyButton.dataset.state = "error";
+          copyButton.setAttribute("aria-label", copyButton.dataset.copyFailedLabel);
+          copyButton.title = copyButton.dataset.copyFailedLabel;
+          setControlIcon(copyIcon, "triangle-alert");
+          if (status) status.textContent = copyButton.dataset.copyFailedLabel;
+        } finally {
+          copyButton.removeAttribute("aria-busy");
+          delete copyButton.dataset.copying;
+        }
+
+        const timer = window.setTimeout(() => {
+          copyButton.removeAttribute("data-state");
+          copyButton.setAttribute("aria-label", copyButton.dataset.copyLabel);
+          copyButton.title = copyButton.dataset.copyLabel;
+          setControlIcon(copyIcon, "copy");
+          if (status) status.textContent = "";
+          feedbackTimers.delete(copyButton);
+        }, 1600);
+        feedbackTimers.set(copyButton, timer);
       });
     });
+
+    cleanups.push(() => feedbackTimers.forEach(timer => window.clearTimeout(timer)));
   }
 
   function initPage() {
@@ -423,7 +479,7 @@
     cleanupPage = () => cleanups.splice(0).forEach(cleanup => cleanup());
     renderIcons();
     localizeTimes();
-    initPasswordToggles();
+    initPasswordControls(document, cleanups);
     initOverview(cleanups);
     initRun(cleanups);
     initStatus(cleanups);

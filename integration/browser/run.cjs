@@ -56,6 +56,21 @@ async function assertNoHorizontalOverflow(page, label) {
   const dimensions = await page.evaluate(() => ({
     viewport: window.innerWidth,
     document: document.documentElement.scrollWidth,
+    offenders: [...document.querySelectorAll("body *")]
+      .filter(element => {
+        const bounds = element.getBoundingClientRect();
+        return bounds.right > window.innerWidth + 1 || bounds.left < -1;
+      })
+      .slice(0, 8)
+      .map(element => {
+        const bounds = element.getBoundingClientRect();
+        return {
+          element: `${element.tagName.toLowerCase()}${element.className ? `.${String(element.className).replaceAll(" ", ".")}` : ""}`,
+          left: Math.round(bounds.left),
+          right: Math.round(bounds.right),
+          width: Math.round(bounds.width),
+        };
+      }),
   }));
   assert.ok(dimensions.document <= dimensions.viewport + 1, `${label} overflows horizontally: ${JSON.stringify(dimensions)}`);
 }
@@ -66,6 +81,18 @@ async function saveSnapshot(page, name) {
     fullPage: true,
     animations: "disabled",
   });
+}
+
+async function createVariable(page, name, value, password = false) {
+  await page.locator('a[href="/resources/variables/new"]').first().click();
+  await page.waitForURL("**/resources/variables/new");
+  await page.locator('[data-task-panel] input[name="name"]').fill(name);
+  await page.locator('[data-task-panel] textarea[name="value"]').fill(value);
+  if (password) await page.locator('[data-task-panel] input[name="is_password"]').check();
+  await page.locator('[data-task-panel] button[type="submit"]').click();
+  await page.waitForURL("**/resources/variables");
+  await page.locator("[data-task-panel]").waitFor({ state: "detached" });
+  await page.getByText(name, { exact: true }).waitFor();
 }
 
 (async () => {
@@ -152,13 +179,91 @@ async function saveSnapshot(page, name) {
     await saveSnapshot(page, "files");
 
     await page.goto(`${fixture.baseURL}/resources/variables`);
-    await page.locator('a[href="/resources/variables/new"]').first().click();
-    await page.waitForURL("**/resources/variables/new");
-    await page.locator('[data-task-panel] input[name="name"]').fill("DEPLOY_REGION");
-    await page.locator('[data-task-panel] textarea[name="value"]').fill("west-europe");
-    await page.locator('[data-task-panel] button[type="submit"]').click();
-    await page.waitForURL("**/resources/variables");
-    await page.getByText("DEPLOY_REGION", { exact: true }).waitFor();
+    await createVariable(page, "DEPLOY_REGION", "west-europe");
+    await createVariable(page, "PRIMARY_TOKEN", "line-one\nline-two-with-a-long-value-that-must-not-expand-the-table", true);
+    await createVariable(page, "SECONDARY_TOKEN", "second-secret", true);
+
+    const primarySecretRow = page.locator("tbody tr").filter({ hasText: "PRIMARY_TOKEN" });
+    const secondarySecretRow = page.locator("tbody tr").filter({ hasText: "SECONDARY_TOKEN" });
+    const primaryToggle = primarySecretRow.locator("[data-toggle-password]");
+    const primaryContent = primarySecretRow.locator("[data-password-content]");
+    const secondaryContent = secondarySecretRow.locator("[data-password-content]");
+
+    assert.equal(await primarySecretRow.locator("[data-password-mask]").textContent(), "••••••••");
+    assert.equal(await primaryContent.isHidden(), true);
+    assert.equal(await secondaryContent.isHidden(), true);
+    assert.deepEqual(
+      await primarySecretRow.locator(".secret-controls button").evaluateAll(buttons => buttons.map(button => button.hasAttribute("data-toggle-password") ? "toggle" : "copy")),
+      ["toggle", "copy"],
+    );
+
+    await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: fixture.baseURL });
+    await primarySecretRow.locator("[data-copy-password]").click();
+    await primarySecretRow.locator('[data-copy-password][data-state="success"]').waitFor();
+    assert.equal(
+      await page.evaluate(() => navigator.clipboard.readText()),
+      "line-one\r\nline-two-with-a-long-value-that-must-not-expand-the-table",
+    );
+    assert.equal(await primaryContent.isHidden(), true);
+    await page.evaluate(() => {
+      navigator.clipboard.writeText = async () => {
+        throw new Error("simulated clipboard failure");
+      };
+    });
+    await secondarySecretRow.locator("[data-copy-password]").click();
+    await secondarySecretRow.locator('[data-copy-password][data-state="error"]').waitFor();
+    assert.match(await secondarySecretRow.locator("[data-password-status]").textContent(), /Copy failed/);
+    assert.equal(await secondaryContent.isHidden(), true);
+
+    await primaryToggle.focus();
+    await page.keyboard.press("Enter");
+    assert.equal(await primaryToggle.getAttribute("aria-expanded"), "true");
+    assert.match(await primaryToggle.getAttribute("aria-label"), /^Hide variable value/);
+    assert.equal(await primaryContent.isVisible(), true);
+    assert.equal(await secondaryContent.isHidden(), true);
+    assert.equal(await primaryToggle.locator("svg").getAttribute("class"), "lucide lucide-eye-off");
+    assert.deepEqual(
+      await primaryContent.evaluate(element => {
+        const style = getComputedStyle(element);
+        return { textOverflow: style.textOverflow, whiteSpace: style.whiteSpace };
+      }),
+      { textOverflow: "ellipsis", whiteSpace: "nowrap" },
+    );
+
+    const desktopActionMetrics = await primarySecretRow.locator(".action-menu > summary").evaluate(element => {
+      const style = getComputedStyle(element);
+      return { width: element.getBoundingClientRect().width, height: element.getBoundingClientRect().height, borderStyle: style.borderStyle };
+    });
+    assert.deepEqual(desktopActionMetrics, { width: 34, height: 34, borderStyle: "solid" });
+    const primaryActionMenu = primarySecretRow.locator(".action-menu");
+    await primaryActionMenu.locator("summary").focus();
+    await page.keyboard.press("Enter");
+    assert.notEqual(await primaryActionMenu.getAttribute("open"), null);
+    await page.keyboard.press("Escape");
+    assert.equal(await primaryActionMenu.getAttribute("open"), null);
+    await primaryToggle.focus();
+    await page.locator("[data-copy-password][data-state]").first().waitFor({ state: "detached" });
+    assert.match(await primarySecretRow.locator("[data-copy-password]").getAttribute("aria-label"), /^Copy variable value/);
+    await saveSnapshot(page, "variables");
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.reload();
+    await assertNoHorizontalOverflow(page, "variables mobile");
+    const mobileControlSizes = await primarySecretRow.locator("[data-toggle-password], [data-copy-password], .action-menu > summary").evaluateAll(elements =>
+      elements.map(element => {
+        const bounds = element.getBoundingClientRect();
+        return { width: bounds.width, height: bounds.height };
+      }),
+    );
+    assert.ok(mobileControlSizes.every(size => size.width >= 44 && size.height >= 44), JSON.stringify(mobileControlSizes));
+    await page.evaluate(() => {
+      document.activeElement?.blur();
+      window.scrollTo(0, 0);
+    });
+    await page.waitForTimeout(50);
+    assert.equal(await page.locator(".skip-link").evaluate(element => element.matches(":focus")), false);
+    await saveSnapshot(page, "variables-mobile");
+    await page.setViewportSize({ width: 1440, height: 1000 });
 
     const chineseContext = await browser.newContext({
       viewport: { width: 1440, height: 1000 },
@@ -192,6 +297,29 @@ async function saveSnapshot(page, name) {
     assert.equal(await chinesePage.getAttribute("html", "lang"), "en-US");
     assert.equal(await chinesePage.locator("main h1").textContent(), "Host overview");
     await chineseContext.close();
+
+    const noScriptContext = await browser.newContext({
+      viewport: { width: 1440, height: 1000 },
+      locale: "en-US",
+      javaScriptEnabled: false,
+    });
+    const noScriptPage = await noScriptContext.newPage();
+    await noScriptPage.goto(`${fixture.baseURL}/login`);
+    await noScriptPage.locator('input[name="username"]').fill("admin");
+    await noScriptPage.locator('input[name="password"]').fill("calibration-ledger-2026");
+    await Promise.all([
+      noScriptPage.waitForURL("**/monitor"),
+      noScriptPage.locator('button[type="submit"]').first().click(),
+    ]);
+    await noScriptPage.goto(`${fixture.baseURL}/resources/variables`);
+    const noScriptRow = noScriptPage.locator("tbody tr").filter({ hasText: "PRIMARY_TOKEN" });
+    assert.equal(await noScriptRow.locator("[data-password-value]").isHidden(), true);
+    const noScriptSecret = noScriptRow.locator(".no-js-secret");
+    assert.equal(await noScriptSecret.getAttribute("open"), null);
+    await noScriptSecret.locator("summary").click();
+    assert.notEqual(await noScriptSecret.getAttribute("open"), null);
+    assert.match(await noScriptSecret.locator("code").textContent(), /line-one\r?\nline-two/);
+    await noScriptContext.close();
 
     assert.deepEqual(consoleErrors, [], `Browser console errors:\n${consoleErrors.join("\n")}`);
     process.stdout.write(`Chromium desktop gate passed. Snapshots: ${snapshotRoot}\n`);

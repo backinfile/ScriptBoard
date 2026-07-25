@@ -66,9 +66,16 @@ func TestPasswordVariableIsStoredNormallyAndMaskedByDefault(t *testing.T) {
 	html := string(page)
 	for _, marker := range []string{
 		`<small>Password type</small>`,
-		`data-password-mask aria-label="Variable value hidden"`,
-		`data-password-content hidden>plain-secret-value</code>`,
-		`data-toggle-password aria-expanded="false">Show</button>`,
+		`class="secret-value" data-password-value hidden`,
+		`data-toggle-password aria-controls="variable-secret-0" aria-expanded="false"`,
+		`data-lucide="eye"`,
+		`data-copy-password`,
+		`data-password-mask aria-label="Variable value hidden">••••••••</span>`,
+		`id="variable-secret-0" class="secret-content" data-password-content hidden>plain-secret-value</code>`,
+		`<noscript><details class="no-js-secret">`,
+		`data-no-js-show>Show variable value</span>`,
+		`data-no-js-hide>Hide variable value</span>`,
+		`class="no-js-secret__mask" aria-label="Variable value hidden">••••••••</span>`,
 	} {
 		if !strings.Contains(html, marker) {
 			t.Fatalf("password variable page is missing %q: %s", marker, html)
