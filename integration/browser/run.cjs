@@ -168,6 +168,29 @@ async function saveSnapshot(page, name) {
     await chinesePage.goto(`${fixture.baseURL}/login`);
     assert.equal(await chinesePage.getAttribute("html", "lang"), "zh-CN");
     assert.equal(await chinesePage.locator("h1").textContent(), "登录");
+    await Promise.all([
+      chinesePage.waitForNavigation(),
+      chinesePage.locator('form.login-locale button[name="locale"][value="en-US"]').click(),
+    ]);
+    assert.equal(await chinesePage.getAttribute("html", "lang"), "en-US");
+    assert.equal(await chinesePage.locator("h1").textContent(), "Sign in");
+    await Promise.all([
+      chinesePage.waitForNavigation(),
+      chinesePage.locator('form.login-locale button[name="locale"][value="zh-CN"]').click(),
+    ]);
+    assert.equal(await chinesePage.getAttribute("html", "lang"), "zh-CN");
+    await chinesePage.locator('input[name="username"]').fill("admin");
+    await chinesePage.locator('input[name="password"]').fill("calibration-ledger-2026");
+    await Promise.all([
+      chinesePage.waitForURL("**/monitor"),
+      chinesePage.locator('[data-login-form] button[type="submit"]').click(),
+    ]);
+    await Promise.all([
+      chinesePage.waitForNavigation(),
+      chinesePage.locator('form[action="/settings/locale"] button[name="locale"][value="en-US"]').click(),
+    ]);
+    assert.equal(await chinesePage.getAttribute("html", "lang"), "en-US");
+    assert.equal(await chinesePage.locator("main h1").textContent(), "Host overview");
     await chineseContext.close();
 
     assert.deepEqual(consoleErrors, [], `Browser console errors:\n${consoleErrors.join("\n")}`);

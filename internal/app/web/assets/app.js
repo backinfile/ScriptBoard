@@ -482,6 +482,14 @@
     }
     const submitter = event.submitter;
     if (submitter) {
+      if (submitter.name) {
+        const mirror = document.createElement("input");
+        mirror.type = "hidden";
+        mirror.name = submitter.name;
+        mirror.value = submitter.value;
+        mirror.dataset.submitterMirror = "";
+        form.append(mirror);
+      }
       submitter.dataset.submitOriginal = submitter.innerHTML;
       submitter.textContent = submitter.dataset.pendingLabel || words().processing;
       submitter.disabled = true;
