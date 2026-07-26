@@ -10,7 +10,7 @@
     <tbody>{{range .Schedules}}<tr>
       <td data-label="{{t $.Locale "common.name"}}" class="record-primary"><div class="record-primary__content"><span class="record-icon" data-lucide="calendar-clock" aria-hidden="true"></span><div><strong>{{.Name}}</strong><small><code>{{.ScriptPath}}</code></small></div></div></td>
       <td data-label="{{t $.Locale "schedules.timing"}}"><code>{{.Expression}}</code><small>{{if .AllowOverlap}}{{t $.Locale "schedules.overlap_allowed"}}{{else}}{{t $.Locale "schedules.overlap_blocked"}}{{end}} · {{.TimeoutSeconds}}s</small></td>
-      <td data-label="{{t $.Locale "schedules.next_run"}}">{{if and .Enabled (not .NextFireAt.IsZero)}}<time datetime="{{machineTime .NextFireAt}}" data-local-time>{{localTime $.Locale .NextFireAt}}</time>{{else}}—{{end}}</td>
+      <td data-label="{{t $.Locale "schedules.next_run"}}">{{if and .Enabled (not .NextFireAt.IsZero)}}<time datetime="{{instanceMachineTime .NextFireAt}}">{{instanceTime $.Locale .NextFireAt}}</time>{{else}}—{{end}}</td>
       <td data-label="{{t $.Locale "common.status"}}"><span class="status-chip" data-state="{{if .Enabled}}enabled{{else}}disabled{{end}}"><span class="status-dot" aria-hidden="true"></span>{{if .Enabled}}{{t $.Locale "common.enabled"}}{{else}}{{t $.Locale "common.disabled"}}{{end}}</span>{{if .LastResult}}<small>{{resultText $.Locale .LastResult}}{{if .LastRunID}} · <a href="/monitor/runs/{{.LastRunID}}">{{t $.Locale "schedules.view_run"}}</a>{{end}}</small>{{end}}<input type="hidden" name="last_run_id" value="{{.LastRunID}}"></td>
       <td class="record-actions">
         <div class="record-actions__group">

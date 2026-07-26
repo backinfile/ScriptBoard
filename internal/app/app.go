@@ -140,6 +140,21 @@ func webTemplateFunctions() template.FuncMap {
 			}
 			return value.Local().Format("Jan 2, 2006 15:04")
 		},
+		"instanceMachineTime": func(value time.Time) string {
+			if value.IsZero() {
+				return ""
+			}
+			return value.Format(time.RFC3339)
+		},
+		"instanceTime": func(locale webLocale, value time.Time) string {
+			if value.IsZero() {
+				return webText(locale, "common.not_available")
+			}
+			if locale == localeSimplifiedChinese {
+				return value.Format("2006年1月2日 15:04")
+			}
+			return value.Format("Jan 2, 2006 15:04")
+		},
 		"statusText": func(locale webLocale, status string) string {
 			if label := webText(locale, "run.status."+status); label != "run.status."+status {
 				return label
@@ -939,6 +954,8 @@ func (a *App) routes(_ string) http.Handler {
 	mux.Handle("GET /config/schedules", a.requireSession(http.HandlerFunc(a.schedulesPage)))
 	mux.Handle("GET /config/schedules/new", a.requireSession(http.HandlerFunc(a.newScheduleTask)))
 	mux.Handle("GET /config/schedules/{id}/edit", a.requireSession(http.HandlerFunc(a.editScheduleTask)))
+	mux.Handle("POST /config/schedules/preview", a.requireSession(http.HandlerFunc(a.previewScheduleCron)))
+	mux.Handle("POST /config/schedules/{id}/preview", a.requireSession(http.HandlerFunc(a.previewScheduleCron)))
 	mux.Handle("POST /config/schedules", a.requireSession(http.HandlerFunc(a.createSchedule)))
 	mux.Handle("POST /config/schedules/{id}/update", a.requireSession(http.HandlerFunc(a.updateSchedule)))
 	mux.Handle("POST /config/schedules/{id}/toggle", a.requireSession(http.HandlerFunc(a.toggleSchedule)))
@@ -1473,6 +1490,10 @@ func (a *App) createSchedule(response http.ResponseWriter, request *http.Request
 	}
 	id, err := a.scheduler.Create(values)
 	if err != nil {
+		if isScheduleCronError(err) {
+			a.renderScheduleCronSubmissionError(response, request, err)
+			return
+		}
 		http.Error(response, "无法创建计划："+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -1510,6 +1531,10 @@ func (a *App) updateSchedule(response http.ResponseWriter, request *http.Request
 		err = a.scheduler.Update(request.PathValue("id"), values)
 	}
 	if err != nil {
+		if isScheduleCronError(err) {
+			a.renderScheduleCronSubmissionError(response, request, err)
+			return
+		}
 		http.Error(response, "无法更新计划："+err.Error(), http.StatusBadRequest)
 		return
 	}

@@ -277,7 +277,8 @@
     const data = new FormData(form);
     if (submitter?.name) data.set(submitter.name, submitter.value);
     try {
-      const result = await fetchDocument(form.action, { method: form.method, body: data });
+      const action = submitter?.hasAttribute("formaction") ? submitter.formAction : form.action;
+      const result = await fetchDocument(action, { method: form.method, body: data });
       if (result.response.redirected && result.response.ok) {
         const destination = result.response.url;
         if (taskPanelState) {
@@ -615,6 +616,167 @@
     });
   }
 
+  function initScheduleCron(cleanups) {
+    const form = document.querySelector("[data-schedule-form]");
+    if (!form) return;
+    const input = form.querySelector("[data-cron-expression]");
+    const feedback = form.querySelector("[data-cron-feedback]");
+    const presets = Array.from(form.querySelectorAll("[data-cron-preset]"));
+    const previewButton = form.querySelector("[data-cron-preview-submit]");
+    if (!input || !feedback) return;
+
+    let debounceTimer = 0;
+    let requestController = null;
+    let requestSequence = 0;
+
+    const node = (tag, className, text) => {
+      const element = document.createElement(tag);
+      if (className) element.className = className;
+      if (text !== undefined) element.textContent = text;
+      return element;
+    };
+    const normalizedInput = () => input.value.trim().replace(/\s+/g, " ").toUpperCase();
+    const syncPresets = () => {
+      const value = normalizedInput();
+      presets.forEach(button => {
+        const active = value === button.dataset.cronPreset.toUpperCase();
+        button.classList.toggle("is-active", active);
+        button.setAttribute("aria-pressed", String(active));
+      });
+    };
+    const renderMessage = (state, iconName, message, alert = false) => {
+      feedback.dataset.state = state;
+      const wrapper = node("div", "cron-feedback__message");
+      if (alert) wrapper.setAttribute("role", "alert");
+      const icon = node("span");
+      icon.dataset.lucide = iconName;
+      icon.setAttribute("aria-hidden", "true");
+      wrapper.append(icon, node("p", "", message));
+      feedback.replaceChildren(wrapper);
+      renderIcons(feedback);
+    };
+    const renderValid = payload => {
+      feedback.dataset.state = "valid";
+      input.removeAttribute("aria-invalid");
+      const result = node("div", "cron-feedback__result");
+      const header = node("header");
+      const lead = node("div");
+      const icon = node("span");
+      icon.dataset.lucide = "calendar-clock";
+      icon.setAttribute("aria-hidden", "true");
+      const copy = node("div");
+      copy.append(node("strong", "", payload.summary), node("small", "", payload.timezone));
+      lead.append(icon, copy);
+      header.append(lead, node("span", "", form.dataset.cronNextLabel));
+      result.append(header);
+      if (payload.day_or_warning) {
+        const warning = node("p", "cron-day-warning");
+        const warningIcon = node("span");
+        warningIcon.dataset.lucide = "triangle-alert";
+        warningIcon.setAttribute("aria-hidden", "true");
+        warning.append(warningIcon, document.createTextNode(payload.day_or_warning));
+        result.append(warning);
+      }
+      const times = node("ol");
+      (payload.next || []).forEach(item => {
+        const listItem = node("li");
+        const time = node("time", "", item.label);
+        time.dateTime = item.datetime;
+        time.dataset.cronTime = "";
+        listItem.append(time);
+        times.append(listItem);
+      });
+      result.append(times);
+      feedback.replaceChildren(result);
+      renderIcons(feedback);
+    };
+    const renderIdle = () => {
+      input.removeAttribute("aria-invalid");
+      renderMessage("idle", "info", form.dataset.cronIdle);
+    };
+
+    const preview = async ({ normalize = false } = {}) => {
+      window.clearTimeout(debounceTimer);
+      const expression = input.value.trim();
+      if (!expression) {
+        requestController?.abort();
+        renderIdle();
+        syncPresets();
+        return;
+      }
+      requestController?.abort();
+      requestController = new AbortController();
+      const sequence = ++requestSequence;
+      renderMessage("pending", "calendar-clock", form.dataset.cronPending);
+      try {
+        const response = await fetch(form.dataset.previewAction, {
+          method: "POST",
+          body: new FormData(form),
+          credentials: "same-origin",
+          cache: "no-store",
+          headers: { "Accept": "application/json" },
+          signal: requestController.signal,
+        });
+        const payload = await response.json();
+        if (sequence !== requestSequence) return;
+        if (response.ok && payload.valid) {
+          if (normalize && payload.normalized_expression) input.value = payload.normalized_expression;
+          syncPresets();
+          renderValid(payload);
+          return;
+        }
+        input.setAttribute("aria-invalid", "true");
+        renderMessage("invalid", "circle-x", payload.error || form.dataset.cronUnavailable, true);
+      } catch (error) {
+        if (error.name === "AbortError" || sequence !== requestSequence) return;
+        input.removeAttribute("aria-invalid");
+        renderMessage("unavailable", "triangle-alert", form.dataset.cronUnavailable);
+      }
+    };
+
+    const onInput = () => {
+      requestController?.abort();
+      requestController = null;
+      requestSequence += 1;
+      syncPresets();
+      window.clearTimeout(debounceTimer);
+      if (!input.value.trim()) {
+        renderIdle();
+        return;
+      }
+      renderMessage("pending", "calendar-clock", form.dataset.cronPending);
+      debounceTimer = window.setTimeout(() => preview(), 300);
+    };
+    const onBlur = () => preview({ normalize: true });
+    const onSubmit = event => {
+      if (!event.submitter?.matches("[data-cron-preview-submit]")) return;
+      event.preventDefault();
+      preview({ normalize: true });
+    };
+    const onPreset = event => {
+      input.value = event.currentTarget.dataset.cronPreset;
+      input.focus();
+      syncPresets();
+      preview({ normalize: true });
+    };
+
+    input.addEventListener("input", onInput);
+    input.addEventListener("blur", onBlur);
+    form.addEventListener("submit", onSubmit);
+    presets.forEach(button => button.addEventListener("click", onPreset));
+    syncPresets();
+    if (input.value.trim() && feedback.dataset.state === "idle") preview();
+
+    cleanups.push(() => {
+      window.clearTimeout(debounceTimer);
+      requestController?.abort();
+      input.removeEventListener("input", onInput);
+      input.removeEventListener("blur", onBlur);
+      form.removeEventListener("submit", onSubmit);
+      presets.forEach(button => button.removeEventListener("click", onPreset));
+    });
+  }
+
   function initPage() {
     const cleanups = [];
     cleanupPage = () => cleanups.splice(0).forEach(cleanup => cleanup());
@@ -625,6 +787,7 @@
     initOverview(cleanups);
     initRun(cleanups);
     initStatus(cleanups);
+    initScheduleCron(cleanups);
   }
 
   document.addEventListener("click", event => {
