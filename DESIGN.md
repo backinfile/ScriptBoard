@@ -149,10 +149,10 @@ All body copy and controls target WCAG 2.2 AA contrast. Muted copy remains at le
 
 Desktop uses a fixed 232px sidebar with grouped destinations:
 
-- Monitor: Overview, Runs
+- Monitor: Overview
 - Resources: Files, Variables
 - Configuration: Quick runs, Schedules
-- History: Audit
+- History: Runs, Audit
 
 Status, language, settings, and account controls live at the bottom. The wordmark is plain text. Settings is a separate workspace that includes account and version protection.
 

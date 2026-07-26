@@ -36,10 +36,10 @@ ScriptBoard 将分散在文件系统中的脚本变成一套可浏览、可执�
 
 ## Information Architecture
 
-- 监控：`/monitor`、`/monitor/runs`、`/monitor/runs/{id}`
+- 监控：`/monitor`
 - 资源：`/resources/files`、`/resources/variables`、`/resources/trash`
 - 配置：`/config/quick-runs`、`/config/schedules`
-- 历史：`/history/audit`
+- 历史：`/monitor/runs`、`/monitor/runs/{id}`、`/history/audit`
 - 设置：`/settings/account`、`/settings/version-protection`
 - 任务链接使用语义化 GET 地址，可直接打开完整页面；增强模式在当前工作区右侧打开同一内容。
 

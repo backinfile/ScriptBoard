@@ -306,6 +306,32 @@ func TestAuthenticatedPagesExposeLocalizedGroupedApplicationShell(t *testing.T) 
 	}
 }
 
+func TestRunsNavigationLivesInHistoryGroup(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
+	response, err := client.Get(serverURL + "/monitor/runs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	page := string(body)
+
+	monitorStart := strings.Index(page, "<h2>Monitor</h2>")
+	resourcesStart := strings.Index(page, "<h2>Resources</h2>")
+	historyStart := strings.Index(page, "<h2>History</h2>")
+	runsLink := strings.Index(page, `href="/monitor/runs" aria-current="page"`)
+	auditLink := strings.Index(page, `href="/history/audit"`)
+	if monitorStart < 0 || resourcesStart <= monitorStart || historyStart <= resourcesStart || runsLink <= historyStart || auditLink <= runsLink {
+		t.Fatalf("runs navigation is not ordered under History: %s", page)
+	}
+	if strings.Contains(page[monitorStart:resourcesStart], `href="/monitor/runs"`) {
+		t.Fatalf("runs navigation remains in Monitor: %s", page[monitorStart:resourcesStart])
+	}
+}
+
 func TestPrimaryWorkspacesRenderCompleteLocalizedDocuments(t *testing.T) {
 	t.Parallel()
 

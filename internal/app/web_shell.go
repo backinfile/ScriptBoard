@@ -182,10 +182,10 @@ func shellNavigation(locale webLocale, path string) []shellNavigationGroup {
 		key   string
 		items []itemSpec
 	}{
-		{key: "nav.monitor", items: []itemSpec{{"/monitor", "nav.overview", "activity"}, {"/monitor/runs", "nav.runs", "square-terminal"}}},
+		{key: "nav.monitor", items: []itemSpec{{"/monitor", "nav.overview", "activity"}}},
 		{key: "nav.resources", items: []itemSpec{{"/resources/files/", "nav.files", "folder-code"}, {"/resources/variables", "nav.variables", "braces"}}},
 		{key: "nav.configuration", items: []itemSpec{{"/config/quick-runs", "nav.quick_runs", "zap"}, {"/config/schedules", "nav.schedules", "calendar-clock"}}},
-		{key: "nav.history", items: []itemSpec{{"/history/audit", "nav.audit", "scroll-text"}}},
+		{key: "nav.history", items: []itemSpec{{"/monitor/runs", "nav.runs", "square-terminal"}, {"/history/audit", "nav.audit", "scroll-text"}}},
 	}
 	groups := make([]shellNavigationGroup, 0, len(specs))
 	for _, group := range specs {
