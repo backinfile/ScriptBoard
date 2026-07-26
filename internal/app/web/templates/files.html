@@ -74,6 +74,7 @@
           <td data-label="{{t $.Locale "common.size"}}">{{.Size}}</td>
           <td data-label="{{t $.Locale "common.modified"}}"><time datetime="{{machineTime .ModifiedAt}}" data-local-time>{{localTime $.Locale .ModifiedAt}}</time></td>
           <td class="record-actions">
+            <div class="record-actions__group">
             {{if .BrowseURL}}<a class="button button--quiet" href="{{.BrowseURL}}">{{t $.Locale "common.open"}}</a>{{end}}
             {{if .Runnable}}<a class="button button--primary" href="/resources/files/run/{{.Path}}" data-task-link><span data-lucide="play" aria-hidden="true"></span>{{t $.Locale "common.run"}}</a>{{end}}
             {{if ne .Kind "restricted"}}
@@ -88,6 +89,7 @@
               </div>
             </details>
             {{end}}
+            </div>
           </td>
         </tr>
       {{else}}

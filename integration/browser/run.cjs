@@ -75,6 +75,21 @@ async function assertNoHorizontalOverflow(page, label) {
   assert.ok(dimensions.document <= dimensions.viewport + 1, `${label} overflows horizontally: ${JSON.stringify(dimensions)}`);
 }
 
+async function assertNoTableHorizontalScrollbar(page, label) {
+  const shells = await page.locator(".table-shell").evaluateAll(elements => elements
+    .filter(element => element.getClientRects().length > 0)
+    .map(element => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+      overflowX: getComputedStyle(element).overflowX,
+    })));
+  assert.ok(shells.length > 0, `${label} has no visible table shell`);
+  assert.ok(
+    shells.every(shell => shell.scrollWidth <= shell.clientWidth + 1),
+    `${label} shows an unnecessary horizontal table scrollbar: ${JSON.stringify(shells)}`,
+  );
+}
+
 async function saveSnapshot(page, name) {
   await page.screenshot({
     path: path.join(snapshotRoot, `${name}.png`),
@@ -203,6 +218,24 @@ async function createVariable(page, name, value, password = false) {
       page.getByRole("link", { name: "Back to files" }).click(),
     ]);
     await page.getByRole("link", { name: "drag-upload.txt", exact: true }).waitFor();
+    await assertNoTableHorizontalScrollbar(page, "files desktop");
+    const lastFileActionMenu = page.locator(".file-table tbody tr").last().locator(".action-menu");
+    await lastFileActionMenu.evaluate(menu => menu.scrollIntoView({ block: "center" }));
+    await lastFileActionMenu.locator("summary").click();
+    const lastFileMenuMetrics = await lastFileActionMenu.evaluate(menu => {
+      const panelBounds = menu.querySelector(":scope > div").getBoundingClientRect();
+      const triggerBounds = menu.querySelector(":scope > summary").getBoundingClientRect();
+      const probe = document.elementFromPoint(panelBounds.left + 12, panelBounds.bottom - 12);
+      return {
+        opensAbove: panelBounds.bottom < triggerBounds.top,
+        insideViewport: panelBounds.top >= 0 && panelBounds.bottom <= window.innerHeight,
+        visible: probe === menu || menu.contains(probe),
+      };
+    });
+    assert.deepEqual(lastFileMenuMetrics, { opensAbove: true, insideViewport: true, visible: true });
+    await assertNoTableHorizontalScrollbar(page, "files desktop action menu");
+    await page.keyboard.press("Escape");
+    await page.evaluate(() => document.activeElement?.blur());
     await saveSnapshot(page, "files");
 
     await page.setViewportSize({ width: 390, height: 844 });
@@ -237,6 +270,7 @@ async function createVariable(page, name, value, password = false) {
     await createVariable(page, "DEPLOY_REGION", "west-europe");
     await createVariable(page, "PRIMARY_TOKEN", "line-one\nline-two-with-a-long-value-that-must-not-expand-the-table", true);
     await createVariable(page, "SECONDARY_TOKEN", "second-secret", true);
+    await assertNoTableHorizontalScrollbar(page, "variables desktop");
 
     const primarySecretRow = page.locator("tbody tr").filter({ hasText: "PRIMARY_TOKEN" });
     const secondarySecretRow = page.locator("tbody tr").filter({ hasText: "SECONDARY_TOKEN" });
@@ -304,18 +338,22 @@ async function createVariable(page, name, value, password = false) {
       const shell = menu.closest(".table-shell");
       const panelBounds = panel.getBoundingClientRect();
       const shellBounds = shell.getBoundingClientRect();
+      const triggerBounds = menu.querySelector(":scope > summary").getBoundingClientRect();
       const probe = document.elementFromPoint(panelBounds.left + 12, panelBounds.bottom - 12);
       return {
         position: getComputedStyle(panel).position,
-        extendsPastShell: panelBounds.bottom > shellBounds.bottom,
-        visiblePastShell: probe === panel || panel.contains(probe),
+        opensAbove: panelBounds.bottom < triggerBounds.top,
+        insideShellWidth: panelBounds.left >= shellBounds.left && panelBounds.right <= shellBounds.right,
+        visible: probe === panel || panel.contains(probe),
       };
     });
     assert.deepEqual(tableMenuMetrics, {
       position: "absolute",
-      extendsPastShell: true,
-      visiblePastShell: true,
+      opensAbove: true,
+      insideShellWidth: true,
+      visible: true,
     });
+    await assertNoTableHorizontalScrollbar(page, "variables desktop action menu");
     await saveSnapshot(page, "variables-menu-open");
     await page.keyboard.press("Escape");
     assert.equal(await secondaryActionMenu.getAttribute("open"), null);
@@ -424,9 +462,9 @@ async function createVariable(page, name, value, password = false) {
     await noScriptActionMenu.locator("summary").click();
     assert.equal(await noScriptActionMenu.evaluate(menu => {
       const panelBounds = menu.querySelector(":scope > div").getBoundingClientRect();
-      const shellBounds = menu.closest(".table-shell").getBoundingClientRect();
+      const triggerBounds = menu.querySelector(":scope > summary").getBoundingClientRect();
       const probe = document.elementFromPoint(panelBounds.left + 12, panelBounds.bottom - 12);
-      return panelBounds.bottom > shellBounds.bottom && (probe === menu || menu.contains(probe));
+      return panelBounds.bottom < triggerBounds.top && (probe === menu || menu.contains(probe));
     }), true);
     await noScriptPage.goto(`${fixture.baseURL}/resources/files/`);
     assert.equal(await noScriptPage.locator("[data-file-drop-form]").count(), 1);

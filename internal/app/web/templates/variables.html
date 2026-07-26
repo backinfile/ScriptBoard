@@ -30,8 +30,10 @@
         </details></noscript>
       {{else}}<pre class="value-preview">{{.Value}}</pre>{{end}}</td>
       <td class="record-actions">
+        <div class="record-actions__group">
         <a class="button button--quiet" href="/resources/variables/{{.Name}}/edit" data-task-link><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a>
         <details class="action-menu"><summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div><form method="post" action="/resources/variables/{{.Name}}/delete" data-confirm="{{t $.Locale "variables.delete_confirm"}}" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-action" name="confirm" value="yes"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "common.delete"}}</button></form></div></details>
+        </div>
       </td>
     </tr>{{end}}</tbody>
   </table></div>

@@ -176,7 +176,7 @@ Measurements are not generic statistic cards. Their baseline, current value, and
 
 Desktop records use flat tables with sticky or persistent column meaning where helpful. On mobile, each row becomes a compact labeled record while preserving the same actions and core facts.
 
-Secondary record actions use the same 34px horizontal ellipsis trigger across files, variables, Quick Runs, and schedules, expanding to a 44px touch target on mobile. Open menus overlay record and table boundaries without being clipped by scrolling containers.
+Secondary record actions use the same 34px horizontal ellipsis trigger across files, variables, Quick Runs, and schedules, expanding to a 44px touch target on mobile. Open menus overlay record and table boundaries without being clipped by scrolling containers; terminal-row menus open upward, and tables expose horizontal scrolling only when their content is genuinely wider than the available space.
 
 ### Files
 

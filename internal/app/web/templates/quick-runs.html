@@ -10,7 +10,7 @@
       <div class="record-order" aria-hidden="true">{{printf "%02d" $index}}</div>
       <div class="ordered-record__identity"><span data-lucide="zap" aria-hidden="true"></span><div><h2>{{.Name}}</h2><code>{{.ScriptPath}}</code></div></div>
       <dl class="ordered-record__facts"><div><dt>{{t $.Locale "common.arguments"}}</dt><dd>{{if .ArgumentsTemplate}}<code>{{.ArgumentsTemplate}}</code>{{else}}—{{end}}</dd></div><div><dt>{{t $.Locale "common.timeout"}}</dt><dd>{{.TimeoutSeconds}}s</dd></div></dl>
-      <div class="record-actions">
+      <div class="record-actions record-actions__group">
         <form method="post" action="/config/quick-runs/{{.ID}}/start"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button class="button--primary" type="submit" {{if not .Valid}}disabled aria-disabled="true"{{end}} title="{{if not .Valid}}{{t $.Locale "quick_runs.invalid_path"}}{{end}}"><span data-lucide="play" aria-hidden="true"></span>{{if .Valid}}{{t $.Locale "common.run"}}{{else}}{{t $.Locale "quick_runs.invalid"}}{{end}}</button></form>
         <details class="action-menu"><summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
           <form method="post" action="/config/quick-runs/{{.ID}}/move" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button name="direction" value="up"><span data-lucide="arrow-up" aria-hidden="true"></span>{{t $.Locale "quick_runs.move_up"}}</button><button name="direction" value="down"><span data-lucide="arrow-down" aria-hidden="true"></span>{{t $.Locale "quick_runs.move_down"}}</button></form>

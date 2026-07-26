@@ -13,12 +13,14 @@
       <td data-label="{{t $.Locale "schedules.next_run"}}">{{if and .Enabled (not .NextFireAt.IsZero)}}<time datetime="{{machineTime .NextFireAt}}" data-local-time>{{localTime $.Locale .NextFireAt}}</time>{{else}}—{{end}}</td>
       <td data-label="{{t $.Locale "common.status"}}"><span class="status-chip" data-state="{{if .Enabled}}enabled{{else}}disabled{{end}}"><span class="status-dot" aria-hidden="true"></span>{{if .Enabled}}{{t $.Locale "common.enabled"}}{{else}}{{t $.Locale "common.disabled"}}{{end}}</span>{{if .LastResult}}<small>{{resultText $.Locale .LastResult}}{{if .LastRunID}} · <a href="/monitor/runs/{{.LastRunID}}">{{t $.Locale "schedules.view_run"}}</a>{{end}}</small>{{end}}<input type="hidden" name="last_run_id" value="{{.LastRunID}}"></td>
       <td class="record-actions">
+        <div class="record-actions__group">
         <form method="post" action="/config/schedules/{{.ID}}/run"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="button--primary" type="submit"><span data-lucide="play" aria-hidden="true"></span>{{t $.Locale "schedules.run_now"}}</button></form>
         <details class="action-menu"><summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
           <a href="/config/schedules/{{.ID}}/edit" data-task-link><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a>
           <form method="post" action="/config/schedules/{{.ID}}/toggle" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button name="enabled" value="{{if .Enabled}}0{{else}}1{{end}}"><span data-lucide="{{if .Enabled}}pause{{else}}play{{end}}" aria-hidden="true"></span>{{if .Enabled}}{{t $.Locale "common.disable"}}{{else}}{{t $.Locale "common.enable"}}{{end}}</button></form>
           <form method="post" action="/config/schedules/{{.ID}}/delete" data-confirm="{{t $.Locale "schedules.delete_confirm"}}" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-action" name="confirm" value="yes"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "common.delete"}}</button></form>
         </div></details>
+        </div>
       </td>
     </tr>{{end}}</tbody>
   </table></div>
