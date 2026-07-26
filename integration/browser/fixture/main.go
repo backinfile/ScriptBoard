@@ -19,7 +19,7 @@ const (
 )
 
 func main() {
-	root, err := os.MkdirTemp("", "scriptboard-browser-")
+	root, err := os.MkdirTemp("", "scriptboard-browser-managed-root-location-with-a-long-path-")
 	if err != nil {
 		panic(err)
 	}

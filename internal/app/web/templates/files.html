@@ -18,6 +18,10 @@
     <a href="/resources/files/"><span data-lucide="hard-drive" aria-hidden="true"></span>{{t .Locale "files.root"}}</a>
     {{if .CurrentPath}}<span data-lucide="chevron-right" aria-hidden="true"></span><code>{{.CurrentPath}}</code>{{end}}
   </nav>
+  <dl class="managed-root-location">
+    <dt>{{t .Locale "files.managed_root_location"}}</dt>
+    <dd><code title="{{.ManagedRoot}}">{{.ManagedRoot}}</code></dd>
+  </dl>
 
   <section class="section-tools" aria-label="{{t .Locale "files.tools"}}">
     <form class="search-form" method="get" data-async data-async-push>

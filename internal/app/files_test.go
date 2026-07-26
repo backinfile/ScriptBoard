@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"bytes"
+	"html"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -12,6 +13,39 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestFilesPageShowsManagedRootLocation(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed & scripts")
+	stateRoot := filepath.Join(root, "state")
+	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+
+	response, err := client.Get(serverURL + "/resources/files/")
+	if err != nil {
+		t.Fatalf("get files: %v", err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read files: %v", err)
+	}
+	absoluteRoot, err := filepath.Abs(managedRoot)
+	if err != nil {
+		t.Fatalf("resolve managed root: %v", err)
+	}
+	page := string(body)
+	for _, expected := range []string{
+		`class="managed-root-location"`,
+		"Managed root location",
+		html.EscapeString(absoluteRoot),
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("files page does not contain %q: %s", expected, page)
+		}
+	}
+}
 
 func TestFilesPageListsManagedEntriesAndHidesReservedPaths(t *testing.T) {
 	t.Parallel()

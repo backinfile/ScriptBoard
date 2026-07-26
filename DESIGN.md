@@ -180,7 +180,7 @@ Secondary record actions use the same 34px horizontal ellipsis trigger across fi
 
 ### Files
 
-Breadcrumbs and a directory list define place. Search and the one primary creation action sit in the page header. Destructive actions are secondary and explicit.
+Breadcrumbs and a directory list define place. The canonical absolute managed-root location sits directly beneath the relative breadcrumb as selectable technical context. Search and the one primary creation action sit in the page header. Destructive actions are secondary and explicit.
 
 ### Run detail
 

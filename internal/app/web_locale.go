@@ -151,6 +151,7 @@ var webMessages = map[string]localizedMessage{
 	"files.upload":                   {"上传文件", "Upload files"},
 	"files.breadcrumb":               {"文件路径", "File path"},
 	"files.root":                     {"根目录", "Root"},
+	"files.managed_root_location":    {"受管目录位置", "Managed root location"},
 	"files.tools":                    {"目录工具", "Directory tools"},
 	"files.search":                   {"搜索当前目录", "Search this directory"},
 	"files.search_placeholder":       {"搜索文件名…", "Search filenames…"},

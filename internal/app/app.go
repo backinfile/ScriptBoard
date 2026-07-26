@@ -2634,6 +2634,7 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 	_ = filesTemplate.Execute(response, struct {
 		Entries             []fileView
 		CSRFToken           string
+		ManagedRoot         string
 		CurrentPath         string
 		Query               string
 		SortField           string
@@ -2643,7 +2644,7 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		ParentURL           string
 		VersionProtection   bool
 		Locale              webLocale
-	}{Entries: views, CSRFToken: current.csrfToken, CurrentPath: relative, Query: query, SortField: sortField, Direction: direction, Pagination: pagination, CanToggleExecutable: runtime.GOOS == "linux", ParentURL: parentURL, VersionProtection: protectionState.Enabled, Locale: resolveWebLocale(request)})
+	}{Entries: views, CSRFToken: current.csrfToken, ManagedRoot: a.managedRoot, CurrentPath: relative, Query: query, SortField: sortField, Direction: direction, Pagination: pagination, CanToggleExecutable: runtime.GOOS == "linux", ParentURL: parentURL, VersionProtection: protectionState.Enabled, Locale: resolveWebLocale(request)})
 }
 
 func isTextPreviewExtension(path string) bool {

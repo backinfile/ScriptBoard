@@ -176,7 +176,30 @@ async function createVariable(page, name, value, password = false) {
     await page.keyboard.press("Escape");
     await page.waitForURL("**/resources/files/");
     await page.locator("[data-task-panel]").waitFor({ state: "detached" });
+    const managedRootLocation = page.locator(".managed-root-location");
+    assert.equal((await managedRootLocation.locator("dt").textContent()).trim(), "Managed root location");
+    const managedRootPath = (await managedRootLocation.locator("code").textContent()).trim();
+    assert.equal(path.isAbsolute(managedRootPath), true);
     await saveSnapshot(page, "files");
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.reload();
+    await assertNoHorizontalOverflow(page, "files mobile");
+    const managedRootMobileMetrics = await page.locator(".managed-root-location code").evaluate(element => {
+      const bounds = element.getBoundingClientRect();
+      return {
+        wraps: bounds.height > Number.parseFloat(getComputedStyle(element).lineHeight) * 1.5,
+        fitsWidth: element.scrollWidth <= element.clientWidth,
+      };
+    });
+    assert.deepEqual(managedRootMobileMetrics, { wraps: true, fitsWidth: true });
+    await page.evaluate(() => {
+      document.activeElement?.blur();
+      window.scrollTo(0, 0);
+    });
+    await page.waitForTimeout(50);
+    await saveSnapshot(page, "files-mobile");
+    await page.setViewportSize({ width: 1440, height: 1000 });
 
     await page.goto(`${fixture.baseURL}/resources/variables`);
     await createVariable(page, "DEPLOY_REGION", "west-europe");
