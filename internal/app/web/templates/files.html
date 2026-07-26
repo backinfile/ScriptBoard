@@ -37,6 +37,30 @@
     </div>
   </section>
 
+  <form class="file-drop-form" method="post" action="/resources/files/upload" enctype="multipart/form-data" data-file-drop-form
+    data-default-title="{{t .Locale "files.drop_title"}}"
+    data-default-description="{{t .Locale "files.drop_description"}}"
+    data-active-title="{{t .Locale "files.drop_active"}}"
+    data-active-description="{{t .Locale "files.drop_active_description"}}"
+    data-uploading-title="{{t .Locale "files.drop_uploading"}}"
+    data-uploading-description="{{t .Locale "files.drop_uploading_detail"}}"
+    data-directory-error="{{t .Locale "files.drop_directory_error"}}"
+    data-count-error="{{t .Locale "files.drop_count_error"}}"
+    data-input-error="{{t .Locale "files.drop_input_error"}}">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <input type="hidden" name="path" value="{{.CurrentPath}}">
+    <label class="file-drop-zone" data-file-drop-zone>
+      <input class="file-drop-input" name="files" type="file" multiple required aria-label="{{t .Locale "files.choose_files"}}" aria-describedby="file-drop-status">
+      <span class="file-drop-icon" data-lucide="upload" aria-hidden="true"></span>
+      <span class="file-drop-copy">
+        <strong data-file-drop-title>{{t .Locale "files.drop_title"}}</strong>
+        <small id="file-drop-status" data-file-drop-status role="status" aria-live="polite">{{t .Locale "files.drop_description"}}</small>
+      </span>
+      <span class="file-drop-action" aria-hidden="true">{{t .Locale "files.choose_files"}}</span>
+    </label>
+    <noscript><button class="button" type="submit">{{t .Locale "task.start_upload"}}</button></noscript>
+  </form>
+
   <div class="table-shell">
     <table class="records-table file-table">
       <thead><tr><th>{{t .Locale "common.name"}}</th><th>{{t .Locale "common.size"}}</th><th>{{t .Locale "common.modified"}}</th><th><span class="sr-only">{{t .Locale "common.actions"}}</span></th></tr></thead>

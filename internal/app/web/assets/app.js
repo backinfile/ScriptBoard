@@ -474,12 +474,110 @@
     cleanups.push(() => feedbackTimers.forEach(timer => window.clearTimeout(timer)));
   }
 
+  function initFileDropUpload(root = document, cleanups = []) {
+    root.querySelectorAll("[data-file-drop-form]").forEach(form => {
+      const zone = form.querySelector("[data-file-drop-zone]");
+      const input = form.querySelector(".file-drop-input");
+      const title = form.querySelector("[data-file-drop-title]");
+      const status = form.querySelector("[data-file-drop-status]");
+      if (!zone || !input || !title || !status) return;
+
+      let dragDepth = 0;
+      const isFileDrag = dataTransfer => Array.from(dataTransfer?.types || []).includes("Files");
+      const setState = (state, nextTitle, nextDescription) => {
+        if (state) zone.dataset.state = state;
+        else zone.removeAttribute("data-state");
+        title.textContent = nextTitle;
+        status.textContent = nextDescription;
+      };
+      const resetState = () => setState("", form.dataset.defaultTitle, form.dataset.defaultDescription);
+      const showError = message => setState("error", form.dataset.defaultTitle, message);
+      const containsDirectory = dataTransfer => Array.from(dataTransfer?.items || []).some(item => {
+        if (item.kind !== "file" || typeof item.webkitGetAsEntry !== "function") return false;
+        return item.webkitGetAsEntry()?.isDirectory === true;
+      });
+      const submitFiles = files => {
+        if (!files?.length) return;
+        if (files.length > 100) {
+          input.value = "";
+          showError(form.dataset.countError);
+          return;
+        }
+        setState("uploading", form.dataset.uploadingTitle, form.dataset.uploadingDescription);
+        form.setAttribute("aria-busy", "true");
+        window.requestAnimationFrame(() => form.requestSubmit());
+      };
+
+      const onDragEnter = event => {
+        if (!isFileDrag(event.dataTransfer)) return;
+        event.preventDefault();
+        dragDepth += 1;
+        setState("active", form.dataset.activeTitle, form.dataset.activeDescription);
+      };
+      const onDragOver = event => {
+        if (!isFileDrag(event.dataTransfer)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+      };
+      const onDragLeave = event => {
+        if (!isFileDrag(event.dataTransfer)) return;
+        event.preventDefault();
+        dragDepth = Math.max(0, dragDepth - 1);
+        if (dragDepth === 0) resetState();
+      };
+      const onDrop = event => {
+        if (!isFileDrag(event.dataTransfer)) return;
+        event.preventDefault();
+        dragDepth = 0;
+        if (containsDirectory(event.dataTransfer)) {
+          showError(form.dataset.directoryError);
+          return;
+        }
+        try {
+          input.files = event.dataTransfer.files;
+        } catch {
+          showError(form.dataset.inputError);
+          return;
+        }
+        if (input.files.length !== event.dataTransfer.files.length) {
+          input.value = "";
+          showError(form.dataset.inputError);
+          return;
+        }
+        submitFiles(input.files);
+      };
+      const onChange = () => submitFiles(input.files);
+      const preventFileNavigation = event => {
+        if (!isFileDrag(event.dataTransfer) || zone.contains(event.target)) return;
+        event.preventDefault();
+      };
+
+      zone.addEventListener("dragenter", onDragEnter);
+      zone.addEventListener("dragover", onDragOver);
+      zone.addEventListener("dragleave", onDragLeave);
+      zone.addEventListener("drop", onDrop);
+      input.addEventListener("change", onChange);
+      document.addEventListener("dragover", preventFileNavigation);
+      document.addEventListener("drop", preventFileNavigation);
+      cleanups.push(() => {
+        zone.removeEventListener("dragenter", onDragEnter);
+        zone.removeEventListener("dragover", onDragOver);
+        zone.removeEventListener("dragleave", onDragLeave);
+        zone.removeEventListener("drop", onDrop);
+        input.removeEventListener("change", onChange);
+        document.removeEventListener("dragover", preventFileNavigation);
+        document.removeEventListener("drop", preventFileNavigation);
+      });
+    });
+  }
+
   function initPage() {
     const cleanups = [];
     cleanupPage = () => cleanups.splice(0).forEach(cleanup => cleanup());
     renderIcons();
     localizeTimes();
     initPasswordControls(document, cleanups);
+    initFileDropUpload(document, cleanups);
     initOverview(cleanups);
     initRun(cleanups);
     initStatus(cleanups);

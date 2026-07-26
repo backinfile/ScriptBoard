@@ -180,6 +180,29 @@ async function createVariable(page, name, value, password = false) {
     assert.equal((await managedRootLocation.locator("dt").textContent()).trim(), "Managed root location");
     const managedRootPath = (await managedRootLocation.locator("code").textContent()).trim();
     assert.equal(path.isAbsolute(managedRootPath), true);
+    const fileDropZone = page.locator("[data-file-drop-zone]");
+    assert.equal((await fileDropZone.locator("[data-file-drop-title]").textContent()).trim(), "Drop files here to upload");
+    assert.equal(await page.locator('[data-file-drop-form] input[name="path"]').inputValue(), "");
+    const dropData = await page.evaluateHandle(() => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File(["uploaded by drag and drop"], "drag-upload.txt", { type: "text/plain" }));
+      return transfer;
+    });
+    await fileDropZone.dispatchEvent("dragenter", { dataTransfer: dropData });
+    assert.equal(await fileDropZone.getAttribute("data-state"), "active");
+    assert.equal((await fileDropZone.locator("[data-file-drop-title]").textContent()).trim(), "Release to upload");
+    await saveSnapshot(page, "files-drop-active");
+    await Promise.all([
+      page.waitForURL("**/resources/files/upload"),
+      fileDropZone.dispatchEvent("drop", { dataTransfer: dropData }),
+    ]);
+    assert.equal((await page.locator("main h1").textContent()).trim(), "Upload results");
+    await page.getByText("drag-upload.txt", { exact: true }).waitFor();
+    await Promise.all([
+      page.waitForURL("**/resources/files/"),
+      page.getByRole("link", { name: "Back to files" }).click(),
+    ]);
+    await page.getByRole("link", { name: "drag-upload.txt", exact: true }).waitFor();
     await saveSnapshot(page, "files");
 
     await page.setViewportSize({ width: 390, height: 844 });
@@ -193,6 +216,15 @@ async function createVariable(page, name, value, password = false) {
       };
     });
     assert.deepEqual(managedRootMobileMetrics, { wraps: true, fitsWidth: true });
+    const fileDropMobileMetrics = await page.locator("[data-file-drop-zone]").evaluate(element => {
+      const bounds = element.getBoundingClientRect();
+      const actionBounds = element.querySelector(".file-drop-action").getBoundingClientRect();
+      return {
+        fitsWidth: bounds.right <= window.innerWidth,
+        actionHeight: Math.round(actionBounds.height),
+      };
+    });
+    assert.deepEqual(fileDropMobileMetrics, { fitsWidth: true, actionHeight: 44 });
     await page.evaluate(() => {
       document.activeElement?.blur();
       window.scrollTo(0, 0);
@@ -396,6 +428,10 @@ async function createVariable(page, name, value, password = false) {
       const probe = document.elementFromPoint(panelBounds.left + 12, panelBounds.bottom - 12);
       return panelBounds.bottom > shellBounds.bottom && (probe === menu || menu.contains(probe));
     }), true);
+    await noScriptPage.goto(`${fixture.baseURL}/resources/files/`);
+    assert.equal(await noScriptPage.locator("[data-file-drop-form]").count(), 1);
+    assert.equal(await noScriptPage.locator('[data-file-drop-form] input[type="file"][multiple]').count(), 1);
+    assert.equal((await noScriptPage.locator("[data-file-drop-form] button[type='submit']").textContent()).trim(), "Start upload");
     await noScriptContext.close();
 
     assert.deepEqual(consoleErrors, [], `Browser console errors:\n${consoleErrors.join("\n")}`);

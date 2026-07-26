@@ -47,6 +47,44 @@ func TestFilesPageShowsManagedRootLocation(t *testing.T) {
 	}
 }
 
+func TestFilesPageOffersDropUploadForCurrentDirectory(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(filepath.Join(managedRoot, "nested"), 0o755); err != nil {
+		t.Fatalf("create nested directory: %v", err)
+	}
+	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+
+	response, err := client.Get(serverURL + "/resources/files/nested/")
+	if err != nil {
+		t.Fatalf("get nested files: %v", err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read nested files: %v", err)
+	}
+	page := string(body)
+	for _, expected := range []string{
+		`data-file-drop-form`,
+		`action="/resources/files/upload"`,
+		`enctype="multipart/form-data"`,
+		`name="path" value="nested"`,
+		`name="files" type="file" multiple required`,
+		`data-file-drop-zone`,
+		`Drop files here to upload`,
+		`Choose files`,
+		`<noscript>`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("files page does not contain %q: %s", expected, page)
+		}
+	}
+}
+
 func TestFilesPageListsManagedEntriesAndHidesReservedPaths(t *testing.T) {
 	t.Parallel()
 

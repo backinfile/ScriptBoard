@@ -9,7 +9,7 @@ ScriptBoard is a trusted-script manager for a single machine and a single admini
 
 ## Highlights
 
-- Upload, download, move, rename, preview, and edit managed files in a browser
+- Select or drag files to upload, then download, move, rename, preview, and edit managed files in a browser
 - Run PowerShell, Python, shell, and batch scripts with live output
 - Preserve run history and audit records that cannot be deleted from the UI
 - Save common tasks as Quick Runs or schedule them with five-field Cron expressions
