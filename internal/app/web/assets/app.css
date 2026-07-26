@@ -519,6 +519,7 @@ td > small, td > div > small { margin-top: 3px; }
   box-shadow: 0 14px 32px rgba(23, 26, 31, .14);
   text-align: left;
 }
+.table-shell:has(.action-menu[open]) { overflow: visible; }
 .action-menu a, .action-menu button {
   display: flex;
   width: 100%;
@@ -839,6 +840,7 @@ body.has-task-panel { overflow: hidden; }
   .records-table__empty td { display: block; }
   .record-actions > form, .record-actions > .button, .record-actions > details { margin: 0 4px 0 0; }
   .action-menu > summary { width: 44px; height: 44px; }
+  .action-menu > div { right: auto; left: 0; }
   .secret-control { width: 44px; height: 44px; min-height: 44px; }
   .secret-value { width: 100%; gap: 6px; }
   .pagination { align-items: flex-start; flex-direction: column; }

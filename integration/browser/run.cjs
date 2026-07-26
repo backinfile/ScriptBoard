@@ -241,8 +241,30 @@ async function createVariable(page, name, value, password = false) {
     assert.notEqual(await primaryActionMenu.getAttribute("open"), null);
     await page.keyboard.press("Escape");
     assert.equal(await primaryActionMenu.getAttribute("open"), null);
+    await page.waitForFunction(() => !document.querySelector("[data-copy-password][data-state]"));
+    const secondaryActionMenu = secondarySecretRow.locator(".action-menu");
+    await secondaryActionMenu.locator("summary").click();
+    const tableMenuMetrics = await secondaryActionMenu.evaluate(menu => {
+      const panel = menu.querySelector(":scope > div");
+      const shell = menu.closest(".table-shell");
+      const panelBounds = panel.getBoundingClientRect();
+      const shellBounds = shell.getBoundingClientRect();
+      const probe = document.elementFromPoint(panelBounds.left + 12, panelBounds.bottom - 12);
+      return {
+        position: getComputedStyle(panel).position,
+        extendsPastShell: panelBounds.bottom > shellBounds.bottom,
+        visiblePastShell: probe === panel || panel.contains(probe),
+      };
+    });
+    assert.deepEqual(tableMenuMetrics, {
+      position: "absolute",
+      extendsPastShell: true,
+      visiblePastShell: true,
+    });
+    await saveSnapshot(page, "variables-menu-open");
+    await page.keyboard.press("Escape");
+    assert.equal(await secondaryActionMenu.getAttribute("open"), null);
     await primaryToggle.focus();
-    await page.locator("[data-copy-password][data-state]").first().waitFor({ state: "detached" });
     assert.match(await primarySecretRow.locator("[data-copy-password]").getAttribute("aria-label"), /^Copy variable value/);
     await saveSnapshot(page, "variables");
 
@@ -256,6 +278,30 @@ async function createVariable(page, name, value, password = false) {
       }),
     );
     assert.ok(mobileControlSizes.every(size => size.width >= 44 && size.height >= 44), JSON.stringify(mobileControlSizes));
+    await page.evaluate(() => {
+      document.activeElement?.blur();
+      window.scrollTo(0, 0);
+    });
+    const mobileActionMenu = secondarySecretRow.locator(".action-menu");
+    await mobileActionMenu.locator("summary").click();
+    const mobileMenuMetrics = await mobileActionMenu.evaluate(menu => {
+      const panel = menu.querySelector(":scope > div");
+      const panelBounds = panel.getBoundingClientRect();
+      const probe = document.elementFromPoint(panelBounds.left + 12, panelBounds.bottom - 12);
+      return {
+        insideViewport: panelBounds.left >= 0 && panelBounds.right <= window.innerWidth,
+        visible: probe === panel || panel.contains(probe),
+      };
+    });
+    assert.deepEqual(mobileMenuMetrics, { insideViewport: true, visible: true });
+    await assertNoHorizontalOverflow(page, "variables mobile action menu");
+    await page.evaluate(() => {
+      document.activeElement?.blur();
+      window.scrollTo(0, 0);
+    });
+    await page.waitForTimeout(50);
+    await saveSnapshot(page, "variables-menu-mobile-open");
+    await page.keyboard.press("Escape");
     await page.evaluate(() => {
       document.activeElement?.blur();
       window.scrollTo(0, 0);
@@ -319,6 +365,14 @@ async function createVariable(page, name, value, password = false) {
     await noScriptSecret.locator("summary").click();
     assert.notEqual(await noScriptSecret.getAttribute("open"), null);
     assert.match(await noScriptSecret.locator("code").textContent(), /line-one\r?\nline-two/);
+    const noScriptActionMenu = noScriptPage.locator("tbody tr").last().locator(".action-menu");
+    await noScriptActionMenu.locator("summary").click();
+    assert.equal(await noScriptActionMenu.evaluate(menu => {
+      const panelBounds = menu.querySelector(":scope > div").getBoundingClientRect();
+      const shellBounds = menu.closest(".table-shell").getBoundingClientRect();
+      const probe = document.elementFromPoint(panelBounds.left + 12, panelBounds.bottom - 12);
+      return panelBounds.bottom > shellBounds.bottom && (probe === menu || menu.contains(probe));
+    }), true);
     await noScriptContext.close();
 
     assert.deepEqual(consoleErrors, [], `Browser console errors:\n${consoleErrors.join("\n")}`);
