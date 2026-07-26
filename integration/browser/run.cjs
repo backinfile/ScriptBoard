@@ -90,6 +90,40 @@ async function assertNoTableHorizontalScrollbar(page, label) {
   );
 }
 
+async function assertTableRowsAligned(page, tableSelector, label) {
+  const rows = await page.locator(`${tableSelector} tbody > tr`).evaluateAll(elements => elements
+    .filter(element => element.getClientRects().length > 0)
+    .map((row, rowIndex) => {
+      const rowBounds = row.getBoundingClientRect();
+      return {
+        row: rowIndex + 1,
+        height: Math.round(rowBounds.height * 100) / 100,
+        cells: [...row.cells].map((cell, columnIndex) => {
+          const cellBounds = cell.getBoundingClientRect();
+          const primaryContent = cell.querySelector(":scope > .record-primary__content");
+          return {
+            column: columnIndex + 1,
+            display: getComputedStyle(cell).display,
+            primary: cell.classList.contains("record-primary"),
+            primaryContentDisplay: primaryContent ? getComputedStyle(primaryContent).display : null,
+            topDelta: Math.round((cellBounds.top - rowBounds.top) * 100) / 100,
+            bottomDelta: Math.round((rowBounds.bottom - cellBounds.bottom) * 100) / 100,
+          };
+        }),
+      };
+    }));
+  assert.ok(rows.length > 0, `${label} has no visible table rows`);
+  assert.ok(
+    rows.every(row => row.cells.every(cell => Math.abs(cell.topDelta) <= 1 && Math.abs(cell.bottomDelta) <= 1)),
+    `${label} has cells that do not share their row edges: ${JSON.stringify(rows)}`,
+  );
+  assert.ok(
+    rows.every(row => row.cells.every(cell =>
+      !cell.primary || (cell.display === "table-cell" && cell.primaryContentDisplay === "flex"))),
+    `${label} has a primary cell outside the table layout contract: ${JSON.stringify(rows)}`,
+  );
+}
+
 async function saveSnapshot(page, name) {
   await page.screenshot({
     path: path.join(snapshotRoot, `${name}.png`),
@@ -179,6 +213,23 @@ async function createVariable(page, name, value, password = false) {
     await assertNoHorizontalOverflow(page, "run detail");
     await saveSnapshot(page, "run-detail");
 
+    await page.goto(`${fixture.baseURL}/monitor/runs`);
+    await page.locator(".runs-table").waitFor();
+    await assertTableRowsAligned(page, ".runs-table", "runs desktop");
+
+    await page.goto(`${fixture.baseURL}/config/schedules`);
+    await page.locator('a[href="/config/schedules/new"]').first().click();
+    await page.locator('[data-task-panel] [data-task-kind="schedule-new"]').waitFor();
+    await page.locator('[data-task-panel] input[name="name"]').fill("Nightly safety check");
+    await page.locator('[data-task-panel] input[name="script"]').fill("automation/weekly-system-check.ps1");
+    await page.locator('[data-task-panel] input[name="expression"]').fill("0 2 * * *");
+    await page.locator('[data-task-panel] input[name="timeout_seconds"]').fill("90");
+    await page.locator('[data-task-panel] button[type="submit"]').click();
+    await page.waitForURL("**/config/schedules");
+    await page.locator("[data-task-panel]").waitFor({ state: "detached" });
+    await page.getByText("Nightly safety check", { exact: true }).waitFor();
+    await assertTableRowsAligned(page, ".schedules-table", "schedules desktop");
+
     await page.goto(`${fixture.baseURL}/monitor`);
     await page.locator("[data-host-overview]").waitFor();
     await page.waitForTimeout(250);
@@ -239,6 +290,7 @@ async function createVariable(page, name, value, password = false) {
     ]);
     await page.getByRole("link", { name: "drag-upload.txt", exact: true }).waitFor();
     await assertNoTableHorizontalScrollbar(page, "files desktop");
+    await assertTableRowsAligned(page, ".file-table", "files desktop");
     const lastFileActionMenu = page.locator(".file-table tbody tr").last().locator(".action-menu");
     await lastFileActionMenu.evaluate(menu => menu.scrollIntoView({ block: "center" }));
     await lastFileActionMenu.locator("summary").click();
@@ -286,11 +338,23 @@ async function createVariable(page, name, value, password = false) {
     await saveSnapshot(page, "files-mobile");
     await page.setViewportSize({ width: 1440, height: 1000 });
 
+    await page.goto(`${fixture.baseURL}/resources/files/`);
+    const readmeRow = page.locator(".file-table tbody tr").filter({
+      has: page.getByRole("link", { name: "README.md", exact: true }),
+    });
+    await readmeRow.locator(".action-menu summary").click();
+    await readmeRow.getByRole("button", { name: "Move to trash" }).click();
+    await readmeRow.waitFor({ state: "detached" });
+    await page.goto(`${fixture.baseURL}/resources/trash`);
+    await page.getByText("README.md", { exact: true }).waitFor();
+    await assertTableRowsAligned(page, ".records-table", "trash desktop");
+
     await page.goto(`${fixture.baseURL}/resources/variables`);
     await createVariable(page, "DEPLOY_REGION", "west-europe");
     await createVariable(page, "PRIMARY_TOKEN", "line-one\nline-two-with-a-long-value-that-must-not-expand-the-table", true);
     await createVariable(page, "SECONDARY_TOKEN", "second-secret", true);
     await assertNoTableHorizontalScrollbar(page, "variables desktop");
+    await assertTableRowsAligned(page, ".variables-table", "variables desktop");
 
     const primarySecretRow = page.locator("tbody tr").filter({ hasText: "PRIMARY_TOKEN" });
     const secondarySecretRow = page.locator("tbody tr").filter({ hasText: "SECONDARY_TOKEN" });

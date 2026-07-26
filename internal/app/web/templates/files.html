@@ -68,8 +68,10 @@
       {{range .Entries}}
         <tr>
           <td data-label="{{t $.Locale "common.name"}}" class="record-primary">
-            <span class="record-icon" aria-hidden="true" data-lucide="{{if .BrowseURL}}folder{{else if eq .Kind "restricted"}}file-lock-2{{else if .PreviewURL}}image{{else if .Runnable}}file-terminal{{else}}file{{end}}"></span>
-            <div>{{if .BrowseURL}}<a href="{{.BrowseURL}}">{{.Name}}</a>{{else if .ViewURL}}<a href="{{.ViewURL}}">{{.Name}}</a>{{else}}<span>{{.Name}}</span>{{end}}<small><code>{{.Path}}</code></small></div>
+            <div class="record-primary__content">
+              <span class="record-icon" aria-hidden="true" data-lucide="{{if .BrowseURL}}folder{{else if eq .Kind "restricted"}}file-lock-2{{else if .PreviewURL}}image{{else if .Runnable}}file-terminal{{else}}file{{end}}"></span>
+              <div>{{if .BrowseURL}}<a href="{{.BrowseURL}}">{{.Name}}</a>{{else if .ViewURL}}<a href="{{.ViewURL}}">{{.Name}}</a>{{else}}<span>{{.Name}}</span>{{end}}<small><code>{{.Path}}</code></small></div>
+            </div>
           </td>
           <td data-label="{{t $.Locale "common.size"}}">{{.Size}}</td>
           <td data-label="{{t $.Locale "common.modified"}}"><time datetime="{{machineTime .ModifiedAt}}" data-local-time>{{localTime $.Locale .ModifiedAt}}</time></td>
