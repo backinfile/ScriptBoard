@@ -293,6 +293,7 @@ body[data-app-shell] { padding-left: var(--sidebar-width); }
 .button--quiet { color: var(--muted); background: transparent; border-color: transparent; }
 .button--quiet:hover { background: var(--surface); border-color: var(--rule); }
 button:disabled, .button[aria-disabled="true"] { opacity: .48; cursor: not-allowed; }
+[data-task-link][aria-busy="true"] { opacity: .62; cursor: progress; }
 .icon-button {
   display: inline-grid;
   width: 38px;

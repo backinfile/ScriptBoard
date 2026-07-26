@@ -64,6 +64,7 @@
   let cleanupPage = () => {};
   let navigationBusy = false;
   let taskPanelState = null;
+  let taskPanelRequest = null;
 
   const locale = () => document.documentElement.lang === "zh-CN" ? "zh-CN" : "en-US";
   const copy = {
@@ -146,8 +147,27 @@
     if (current && next) current.replaceWith(document.importNode(next, true));
   }
 
+  function setTaskLinkBusy(link, busy) {
+    if (!link) return;
+    link.toggleAttribute("aria-busy", busy);
+    if (busy) {
+      link.setAttribute("aria-disabled", "true");
+    } else {
+      link.removeAttribute("aria-disabled");
+    }
+  }
+
+  function cancelTaskPanelRequest() {
+    const request = taskPanelRequest;
+    if (!request) return;
+    taskPanelRequest = null;
+    request.controller.abort();
+    setTaskLinkBusy(request.trigger, false);
+  }
+
   async function navigate(url, push = true) {
     if (navigationBusy) return;
+    cancelTaskPanelRequest();
     navigationBusy = true;
     document.documentElement.setAttribute("aria-busy", "true");
     try {
@@ -195,18 +215,42 @@
     localizeTimes(host);
   }
 
-  async function openTask(url, push = true) {
-    try {
-      const result = await fetchDocument(url);
-      const main = result.document?.querySelector("main[data-task-page]");
-      if (!main || !result.response.ok) {
-        await navigate(url, push);
-        return;
+  function openTask(url, push = true, trigger = null) {
+    const destination = new URL(url, location.href).href;
+    if (navigationBusy) return Promise.resolve();
+    if (taskPanelRequest?.url === destination) return taskPanelRequest.promise;
+    cancelTaskPanelRequest();
+
+    const request = {
+      url: destination,
+      controller: new AbortController(),
+      trigger,
+      promise: null
+    };
+    taskPanelRequest = request;
+    setTaskLinkBusy(trigger, true);
+
+    request.promise = (async () => {
+      try {
+        const result = await fetchDocument(destination, { signal: request.controller.signal });
+        if (taskPanelRequest !== request) return;
+        const main = result.document?.querySelector("main[data-task-page]");
+        if (!main || !result.response.ok) {
+          await navigate(destination, push);
+          return;
+        }
+        if (taskPanelRequest !== request) return;
+        buildTaskPanel(main, result.response.url, push);
+      } catch (error) {
+        if (error?.name !== "AbortError" && taskPanelRequest === request) {
+          location.assign(destination);
+        }
+      } finally {
+        setTaskLinkBusy(trigger, false);
+        if (taskPanelRequest === request) taskPanelRequest = null;
       }
-      buildTaskPanel(main, result.response.url, push);
-    } catch {
-      location.assign(url);
-    }
+    })();
+    return request.promise;
   }
 
   function closeTaskPanel(useHistory = true) {
@@ -602,6 +646,7 @@
     const destination = new URL(link.href, location.href);
     if (isNativeLink(link, destination)) return;
     event.preventDefault();
+    if (link.getAttribute("aria-disabled") === "true") return;
     if (taskPanelState && link.closest(".task-panel")) {
       const returnURL = taskPanelState.returnURL;
       if (destination.href === returnURL) {
@@ -614,7 +659,7 @@
       return;
     }
     if (link.matches("[data-task-link]") && matchMedia("(min-width: 761px)").matches) {
-      openTask(destination.href, true);
+      openTask(destination.href, true, link);
     } else {
       navigate(destination.href, true);
     }
@@ -661,6 +706,11 @@
   document.addEventListener("keydown", event => {
     const editing = event.target.matches("input,textarea,select,[contenteditable='true']");
     if (event.key === "Escape") {
+      if (taskPanelRequest) {
+        event.preventDefault();
+        cancelTaskPanelRequest();
+        return;
+      }
       if (taskPanelState) {
         event.preventDefault();
         closeTaskPanel(true);

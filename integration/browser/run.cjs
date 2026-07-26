@@ -185,6 +185,26 @@ async function createVariable(page, name, value, password = false) {
     await saveSnapshot(page, "monitor");
 
     await page.goto(`${fixture.baseURL}/resources/files/`);
+    const uploadTaskRequests = [];
+    const recordUploadTaskRequest = request => {
+      const requestURL = new URL(request.url());
+      if (request.method() === "GET" && requestURL.pathname === "/resources/files/upload") {
+        uploadTaskRequests.push(request.url());
+      }
+    };
+    page.on("request", recordUploadTaskRequest);
+    await page.locator('a[href^="/resources/files/upload"]').first().evaluate(link => {
+      for (let index = 0; index < 5; index += 1) {
+        link.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+      }
+    });
+    await page.locator("[data-task-panel]").waitFor();
+    await page.waitForTimeout(250);
+    page.off("request", recordUploadTaskRequest);
+    assert.equal(uploadTaskRequests.length, 1, `Upload task fetched ${uploadTaskRequests.length} times`);
+    await page.keyboard.press("Escape");
+    await page.waitForURL("**/resources/files/");
+    await page.locator("[data-task-panel]").waitFor({ state: "detached" });
     await page.locator('a[href^="/resources/files/new-directory"]').click();
     await page.waitForURL("**/resources/files/new-directory?path=");
     await page.locator("[data-task-panel]").waitFor();
