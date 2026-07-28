@@ -58,7 +58,8 @@ func mustWebAsset(path string) string {
 	return string(content)
 }
 
-func mustWebTemplate(name, path string) *template.Template {
+func mustWebTemplate(name string) *template.Template {
+	path := "web/templates/" + name + ".html"
 	return template.Must(template.New(name).Funcs(webTemplateFunctions()).Parse(mustWebAsset(path)))
 }
 
@@ -3503,10 +3504,6 @@ type loginPageData struct {
 	Locale    webLocale
 }
 
-var applicationErrorTemplate = template.Must(template.New("application-error").Funcs(webTemplateFunctions()).Parse(`<!doctype html>
-<html lang="{{.Locale}}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "error.title"}} · ScriptBoard</title></head>
-<body><main class="workspace error-page"><p class="error-code">HTTP {{.Status}}</p><h1>{{t .Locale "error.title"}}</h1><div class="page-error" role="alert">{{.Summary}}</div><details class="ledger-disclosure"><summary><span>{{t .Locale "error.technical_details"}}</span></summary><div class="disclosure-body"><code>{{.Message}}</code></div></details><p><a class="button button--primary" href="{{.Destination}}"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "error.return"}}</a></p></main></body></html>`))
-
 func renderLoginPage(response http.ResponseWriter, request *http.Request, status int, username, errorMessage string) {
 	token := ""
 	if cookie, err := request.Cookie(loginCSRFCookieName); err == nil {
@@ -3573,106 +3570,3 @@ func completeLogin(response http.ResponseWriter, request *http.Request, destinat
 func acceptsJSON(request *http.Request) bool {
 	return strings.Contains(request.Header.Get("Accept"), "application/json")
 }
-
-var loginTemplate = template.Must(template.New("login").Funcs(webTemplateFunctions()).Parse(`<!doctype html>
-<html lang="{{.Locale}}">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "login.title"}} · ScriptBoard</title></head>
-<body class="login-page">
-<main class="login-layout">
-  <section class="login-intro"><a class="brand-wordmark" href="/login">ScriptBoard</a><p>{{t .Locale "login.description"}}</p><div class="login-calibration" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div></section>
-  <section class="login-sheet">
-    <header><p class="page-eyebrow">ADMIN / LOCAL</p><h1>{{t .Locale "login.title"}}</h1></header>
-    <div class="login-error" role="alert" aria-live="polite" data-login-error {{if not .Error}}hidden{{end}}><strong>{{t .Locale "login.failure"}}</strong><span data-login-error-message>{{.Error}}</span></div>
-    <form method="post" action="/login" data-login-form data-network-error="{{t .Locale "login.network_error"}}">
-      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <label>{{t .Locale "login.username"}} <input name="username" value="{{.Username}}" autocomplete="username" spellcheck="false" required></label>
-      <label>{{t .Locale "login.password"}} <input name="password" type="password" autocomplete="current-password" required></label>
-      <button class="button--primary" type="submit" data-pending-label="{{t .Locale "login.pending"}}">{{t .Locale "login.submit"}}<span data-lucide="arrow-right" aria-hidden="true"></span></button>
-    </form>
-    <form class="login-locale" method="post" action="/settings/locale">
-      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="return_to" value="/login">
-      <button type="submit" name="locale" value="{{if eq .Locale "zh-CN"}}en-US{{else}}zh-CN{{end}}"><span data-lucide="languages" aria-hidden="true"></span>{{t .Locale "login.language"}}</button>
-    </form>
-  </section>
-</main>
-</body>
-</html>`))
-
-var accountTemplate = template.Must(template.New("account").Funcs(webTemplateFunctions()).Parse(`<!doctype html>
-<html lang="{{.Locale}}">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "account.title"}} · ScriptBoard</title></head>
-<body>
-<main class="workspace settings-workspace">
-  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "settings.eyebrow"}}</p><h1>{{t .Locale "settings.title"}}</h1><p>{{t .Locale "settings.description"}}</p></div></header>
-  <div class="settings-layout">
-    <nav class="settings-nav" aria-label="{{t .Locale "settings.sections"}}"><a href="/settings/account" aria-current="page"><span data-lucide="user-round" aria-hidden="true"></span>{{t .Locale "settings.account"}}</a><a href="/settings/version-protection"><span data-lucide="git-branch" aria-hidden="true"></span>{{t .Locale "protection.title"}}</a></nav>
-    <section class="settings-content">
-      <header class="settings-section-heading"><div><h2>{{t .Locale "account.title"}}</h2><p>{{t .Locale "account.description"}}</p></div></header>
-      <dl class="settings-summary"><div><dt>{{t .Locale "account.current_username"}}</dt><dd>{{.Username}}</dd></div><div><dt>{{t .Locale "account.credential_source"}}</dt><dd>{{if .CredentialOverride}}{{t .Locale "account.source_override"}}{{else}}{{t .Locale "account.source_database"}}{{end}}</dd></div></dl>
-      {{if .CredentialOverride}}<aside class="inline-notice"><span data-lucide="info" aria-hidden="true"></span><p>{{t .Locale "account.override_notice"}}</p></aside>{{end}}
-      <section class="settings-block"><h3>{{t .Locale "account.change"}}</h3><form class="account-form" method="post" action="/settings/account">
-        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <label>{{t .Locale "login.username"}} <input name="username" value="{{.Username}}" autocomplete="username" spellcheck="false" required></label>
-        <label>{{t .Locale "account.current_password"}} <input name="current_password" type="password" autocomplete="current-password" required></label>
-        <label>{{t .Locale "account.new_password"}} <input name="new_password" type="password" autocomplete="new-password" required></label>
-        <label>{{t .Locale "account.confirm_password"}} <input name="confirm_password" type="password" autocomplete="new-password" required></label>
-        <button class="button--primary" type="submit">{{t .Locale "account.save"}}</button>
-      </form></section>
-    </section>
-  </div>
-</main>
-</body>
-</html>`))
-
-var filesTemplate = mustWebTemplate("files", "web/templates/files.html")
-
-var overviewTemplate = mustWebTemplate("overview", "web/templates/overview.html")
-
-var uploadResultsTemplate = template.Must(template.New("upload-results").Funcs(webTemplateFunctions()).Parse(`<!doctype html>
-<html lang="{{.Locale}}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "upload_results.title"}} · ScriptBoard</title></head><body><main class="workspace"><header class="page-heading"><div><p class="page-eyebrow">RESOURCES / UPLOAD</p><h1>{{t .Locale "upload_results.title"}}</h1></div></header><div class="table-shell"><table><thead><tr><th>{{t .Locale "common.name"}}</th><th>{{t .Locale "common.result"}}</th><th>{{t .Locale "common.details"}}</th></tr></thead><tbody>{{range .Results}}<tr><td>{{.Name}}</td><td>{{.Result}}</td><td>{{.Detail}}</td></tr>{{end}}</tbody></table></div><p><a class="button button--primary" href="{{.Link}}">{{t .Locale "trash.back_to_files"}}</a></p></main></body></html>`))
-
-var deleteImpactTemplate = template.Must(template.New("delete-impact").Funcs(webTemplateFunctions()).Parse(`<!doctype html>
-<html lang="{{.Locale}}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "delete_impact.title"}} · ScriptBoard</title></head><body><main class="workspace confirmation-page"><span class="confirmation-icon" data-lucide="triangle-alert" aria-hidden="true"></span><h1>{{t .Locale "delete_impact.title"}}</h1><p>{{t .Locale "delete_impact.description"}}</p><dl class="confirmation-facts"><div><dt>{{t .Locale "common.path"}}</dt><dd><code>{{.Path}}</code></dd></div><div><dt>Quick Runs</dt><dd>{{.QuickRuns}}</dd></div><div><dt>{{t .Locale "schedules.title"}}</dt><dd>{{.Schedules}}</dd></div></dl><form method="post" action="/resources/files/delete" data-async><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value="{{.Path}}"><button class="button--danger" name="confirm_references" value="yes">{{t .Locale "delete_impact.confirm"}}</button></form></main></body></html>`))
-
-var textPreviewTemplate = template.Must(template.New("text-preview").Funcs(webTemplateFunctions()).Parse(`<!doctype html>
-<html lang="{{.Locale}}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "editor.preview_title"}} · ScriptBoard</title></head>
-<body><main class="workspace editor-page"><header class="page-heading"><div><a class="task-back" href="{{.BackURL}}"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "editor.back_directory"}}</a><h1>{{t .Locale "editor.preview_title"}}</h1><p><code>{{.Path}}</code></p></div><div class="heading-actions"><a class="button" href="{{.DownloadURL}}" data-native><span data-lucide="download" aria-hidden="true"></span>{{t .Locale "common.download"}}</a><a class="button button--primary" href="{{.EditURL}}"><span data-lucide="square-pen" aria-hidden="true"></span>{{t .Locale "common.edit"}}</a></div></header><pre class="text-preview">{{.Content}}</pre></main></body></html>`))
-
-var trashTemplate = mustWebTemplate("trash", "web/templates/trash.html")
-
-var textEditorTemplate = template.Must(template.New("text-editor").Funcs(webTemplateFunctions()).Parse(`<!doctype html>
-<html lang="{{.Locale}}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "editor.edit_title"}} · ScriptBoard</title></head>
-<body><main class="workspace editor-page"><header class="page-heading"><div><a class="task-back" href="{{.BackURL}}"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "editor.back_directory"}}</a><h1>{{t .Locale "editor.edit_title"}}</h1><p><code>{{.Path}}</code></p></div><div class="heading-actions"><a class="button" href="{{.ViewURL}}">{{t .Locale "editor.read_only"}}</a><a class="button" href="{{.DownloadURL}}" data-native><span data-lucide="download" aria-hidden="true"></span>{{t .Locale "common.download"}}</a></div></header><form class="text-editor-form" method="post" action="{{.Action}}" data-async>
-<input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="digest" value="{{.Digest}}">
-<div class="editor-surface"><div class="editor-surface__bar"><span>UTF-8</span><span>1 MiB MAX</span></div><label class="sr-only" for="file-content">{{t .Locale "editor.content"}}</label><textarea id="file-content" name="content" autocomplete="off" spellcheck="false" required>{{.Content}}</textarea></div><footer class="editor-actions"><span>{{t .Locale "editor.save_notice"}}</span><a class="button" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button--primary" type="submit">{{t .Locale "editor.save_file"}}</button></footer>
-</form></main></body></html>`))
-
-var runTemplate = template.Must(template.New("run").Funcs(webTemplateFunctions()).Parse(`<!doctype html>
-<html lang="{{.Locale}}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{.Run.ScriptPath}} · {{t .Locale "run_detail.title"}} · ScriptBoard</title></head>
-<body><main class="workspace run-page" data-run-events-url="/monitor/runs/{{.Run.ID}}/events">
-  <header class="run-heading">
-    <div><a class="task-back" href="/monitor/runs"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "run_detail.back"}}</a><p class="page-eyebrow">{{t .Locale "run_detail.title"}}</p><h1>{{.Run.ScriptPath}}</h1><p>{{t .Locale "run_detail.run_id"}} <code>{{.Run.ID}}</code></p></div>
-    <div class="heading-actions"><span class="run-status status-chip" data-run-status data-state="{{.Run.Status}}"><span class="status-dot" aria-hidden="true"></span>{{statusText .Locale .Run.Status}}</span>{{if or (eq .Run.Status "running") (eq .Run.Status "stopping")}}<form data-run-stop-form method="post" action="/monitor/runs/{{.Run.ID}}/stop" data-async><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button--danger" type="submit"><span data-lucide="square" aria-hidden="true"></span>{{if eq .Run.Status "stopping"}}{{t .Locale "run_detail.force_stop"}}{{else}}{{t .Locale "run_detail.stop"}}{{end}}</button></form>{{end}}<a class="button" href="/monitor/runs/{{.Run.ID}}/save-quick-run" data-task-link><span data-lucide="bookmark-plus" aria-hidden="true"></span>{{t .Locale "run_detail.save_quick"}}</a></div>
-  </header>
-  {{if .Run.Error}}<aside class="inline-notice inline-notice--danger"><span data-lucide="circle-x" aria-hidden="true"></span><p>{{.Run.Error}}</p></aside>{{end}}
-  {{if .Run.LogExpired}}<aside class="inline-notice"><span data-lucide="info" aria-hidden="true"></span><p>{{t .Locale "run_detail.log_expired"}}</p></aside>{{end}}
-  {{if .Run.LogIncomplete}}<aside class="inline-notice inline-notice--danger"><span data-lucide="triangle-alert" aria-hidden="true"></span><p>{{t .Locale "run_detail.log_incomplete"}}</p></aside>{{end}}
-  {{if .Run.LogTruncated}}<aside class="inline-notice"><span data-lucide="info" aria-hidden="true"></span><p>{{t .Locale "run_detail.log_truncated"}} {{.Run.DroppedBytes}} B</p></aside>{{end}}
-  <section class="run-log-section"><header><div><h2>{{t .Locale "run_detail.output"}}</h2><span data-run-live-state aria-live="polite">{{t .Locale "run_detail.connecting"}}</span></div><button type="button" data-run-pause data-pause-label="{{t .Locale "run_detail.pause"}}" data-resume-label="{{t .Locale "run_detail.resume"}}"><span data-lucide="pause" aria-hidden="true"></span>{{t .Locale "run_detail.pause"}}</button></header><pre data-run-log tabindex="0">{{range .Run.Events}}<span data-sequence="{{.Sequence}}" data-source="{{.Source}}" {{if .EncodingError}}data-encoding-error="true"{{end}}>{{.Data}}</span>{{end}}</pre></section>
-  <section class="run-fact-strip" aria-label="{{t .Locale "run_detail.title"}}"><dl><div><dt>{{t .Locale "run_detail.created"}}</dt><dd><time datetime="{{machineTime .Run.CreatedAt}}" data-local-time>{{localTime .Locale .Run.CreatedAt}}</time></dd></div><div><dt>{{t .Locale "common.source"}}</dt><dd>{{.Run.SourceType}} / {{.Run.SourceName}}</dd></div><div><dt>{{t .Locale "run_detail.runtime_identity"}}</dt><dd>{{.Run.RuntimeIdentity}}</dd></div><div><dt>{{t .Locale "common.timeout"}}</dt><dd>{{.Run.TimeoutSeconds}}s</dd></div>{{if .Run.ExitCode}}<div><dt>Exit</dt><dd>{{.Run.ExitCode}}</dd></div>{{end}}</dl></section>
-  <details class="ledger-disclosure run-technical"><summary><span><span data-lucide="braces" aria-hidden="true"></span>{{t .Locale "run_detail.technical"}}</span></summary><dl class="fact-grid"><div><dt>{{t .Locale "run_detail.arguments_template"}}</dt><dd><code>{{if .Run.ArgumentsTemplate}}{{.Run.ArgumentsTemplate}}{{else}}—{{end}}</code></dd></div><div><dt>{{t .Locale "runs.executor"}}</dt><dd><code>{{.Run.Executor}}</code></dd></div><div><dt>SHA-256</dt><dd><code>{{.Run.ScriptDigest}}</code></dd></div></dl></details>
-</main></body></html>`))
-
-var runsTemplate = mustWebTemplate("runs", "web/templates/runs.html")
-
-var overlapTemplate = template.Must(template.New("overlap").Funcs(webTemplateFunctions()).Parse(`<!doctype html><html lang="{{.Locale}}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "overlap.title"}} · ScriptBoard</title></head><body><main class="workspace confirmation-page"><span class="confirmation-icon" data-lucide="copy" aria-hidden="true"></span><h1>{{t .Locale "overlap.title"}}</h1><p>{{t .Locale "overlap.description"}}</p><code>{{.Script}}</code><form method="post" action="{{.Action}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="script" value="{{.Script}}"><input type="hidden" name="arguments" value="{{.Arguments}}"><input type="hidden" name="timeout_seconds" value="{{.Timeout}}"><button class="button--primary" name="confirm_overlap" value="yes">{{t .Locale "overlap.confirm"}}</button></form></main></body></html>`))
-
-var quickRunsTemplate = mustWebTemplate("quick-runs", "web/templates/quick-runs.html")
-
-var schedulesTemplate = mustWebTemplate("schedules", "web/templates/schedules.html")
-
-var auditTemplate = mustWebTemplate("audit", "web/templates/audit.html")
-
-var versionProtectionTemplate = mustWebTemplate("version-protection", "web/templates/version-protection.html")
-
-var variablesTemplate = mustWebTemplate("variables", "web/templates/variables.html")

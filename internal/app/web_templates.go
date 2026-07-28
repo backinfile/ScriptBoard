@@ -1,0 +1,26 @@
+package app
+
+// Inline-free template declarations keep page markup in web/templates while
+// preserving the single-binary deployment provided by go:embed.
+var (
+	accountTemplate           = mustWebTemplate("account")
+	applicationErrorTemplate  = mustWebTemplate("application-error")
+	applicationShellTemplate  = mustWebTemplate("application-shell")
+	auditTemplate             = mustWebTemplate("audit")
+	deleteImpactTemplate      = mustWebTemplate("delete-impact")
+	filesTemplate             = mustWebTemplate("files")
+	loginTemplate             = mustWebTemplate("login")
+	overlapTemplate           = mustWebTemplate("overlap")
+	overviewTemplate          = mustWebTemplate("overview")
+	quickRunsTemplate         = mustWebTemplate("quick-runs")
+	runTemplate               = mustWebTemplate("run")
+	runsTemplate              = mustWebTemplate("runs")
+	schedulesTemplate         = mustWebTemplate("schedules")
+	taskPageTemplate          = mustWebTemplate("task-page")
+	textEditorTemplate        = mustWebTemplate("text-editor")
+	textPreviewTemplate       = mustWebTemplate("text-preview")
+	trashTemplate             = mustWebTemplate("trash")
+	uploadResultsTemplate     = mustWebTemplate("upload-results")
+	variablesTemplate         = mustWebTemplate("variables")
+	versionProtectionTemplate = mustWebTemplate("version-protection")
+)

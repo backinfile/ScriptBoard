@@ -3,7 +3,6 @@ package app
 import (
 	"bytes"
 	"encoding/json"
-	"html/template"
 	"net"
 	"net/http"
 	"strings"
@@ -64,51 +63,6 @@ type applicationShellData struct {
 	Navigation                            []shellNavigationGroup
 	SettingsCurrent, ChineseLocaleCurrent bool
 }
-
-var applicationShellTemplate = template.Must(template.New("application-shell").Funcs(template.FuncMap{
-	"shellText": func(key string, locale webLocale) string {
-		return webText(locale, key)
-	},
-}).Parse(`
-<a class="skip-link" href="#main-content">{{.Locale | shellText "shell.skip"}}</a>
-<button class="sidebar-toggle" type="button" data-sidebar-toggle aria-controls="app-sidebar" aria-expanded="false">
-<span data-lucide="panel-left-open" aria-hidden="true"></span><span class="sr-only">{{.Locale | shellText "shell.open_navigation"}}</span>
-</button>
-<div class="sidebar-scrim" data-sidebar-close hidden></div>
-<aside class="app-sidebar" id="app-sidebar" data-pjax-nav aria-label="{{.Locale | shellText "shell.navigation"}}">
-  <div class="sidebar-head">
-    <a class="brand-wordmark" href="/monitor" aria-label="ScriptBoard">{{"ScriptBoard"}}</a>
-    <button class="sidebar-close" type="button" data-sidebar-close><span data-lucide="x" aria-hidden="true"></span><span class="sr-only">{{.Locale | shellText "shell.close_navigation"}}</span></button>
-  </div>
-  <nav class="sidebar-nav">
-    {{range .Navigation}}
-    <section class="nav-group">
-      <h2>{{.Label}}</h2>
-      {{range .Items}}<a href="{{.Href}}" {{if .Current}}aria-current="page"{{end}}><span data-lucide="{{.Icon}}" aria-hidden="true"></span><span>{{.Label}}</span></a>{{end}}
-    </section>
-    {{end}}
-  </nav>
-  <footer class="sidebar-footer">
-    <a class="sidebar-status" href="/monitor" data-shell-status data-state="{{.StatusState}}">
-      <span class="status-dot" aria-hidden="true"></span>
-      <span><strong>{{.Status}}</strong><small>{{.Environment}} · {{.ActiveRuns}} {{.Locale | shellText "shell.active_runs"}}</small></span>
-    </a>
-    <div class="sidebar-utilities">
-      <form method="post" action="/settings/locale" data-native>
-        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <input type="hidden" name="return_to" value="{{.ReturnTo}}">
-        <button type="submit" name="locale" value="{{if .ChineseLocaleCurrent}}en-US{{else}}zh-CN{{end}}" aria-label="{{.Locale | shellText "shell.change_language"}}">
-          <span data-lucide="languages" aria-hidden="true"></span>{{if .ChineseLocaleCurrent}}EN{{else}}中文{{end}}
-        </button>
-      </form>
-      <a href="/settings/account" {{if .SettingsCurrent}}aria-current="page"{{end}}><span data-lucide="settings" aria-hidden="true"></span><span>{{.Locale | shellText "shell.settings"}}</span></a>
-    </div>
-    <div class="sidebar-account">
-      <a href="/settings/account"><span data-lucide="circle-user-round" aria-hidden="true"></span><span>{{.Username}}</span></a>
-      <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button type="submit"><span data-lucide="log-out" aria-hidden="true"></span><span>{{.Locale | shellText "shell.sign_out"}}</span></button></form>
-    </div>
-  </footer>
-</aside>`))
 
 func (a *App) addApplicationShell(request *http.Request, body []byte) []byte {
 	current, username, ok := a.loadSession(request)

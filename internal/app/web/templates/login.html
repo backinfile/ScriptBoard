@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="{{.Locale}}">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "login.title"}} · ScriptBoard</title></head>
+<body class="login-page">
+<main class="login-layout">
+  <section class="login-intro"><a class="brand-wordmark" href="/login">ScriptBoard</a><p>{{t .Locale "login.description"}}</p><div class="login-calibration" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div></section>
+  <section class="login-sheet">
+    <header><p class="page-eyebrow">ADMIN / LOCAL</p><h1>{{t .Locale "login.title"}}</h1></header>
+    <div class="login-error" role="alert" aria-live="polite" data-login-error {{if not .Error}}hidden{{end}}><strong>{{t .Locale "login.failure"}}</strong><span data-login-error-message>{{.Error}}</span></div>
+    <form method="post" action="/login" data-login-form data-network-error="{{t .Locale "login.network_error"}}">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <label>{{t .Locale "login.username"}} <input name="username" value="{{.Username}}" autocomplete="username" spellcheck="false" required></label>
+      <label>{{t .Locale "login.password"}} <input name="password" type="password" autocomplete="current-password" required></label>
+      <button class="button--primary" type="submit" data-pending-label="{{t .Locale "login.pending"}}">{{t .Locale "login.submit"}}<span data-lucide="arrow-right" aria-hidden="true"></span></button>
+    </form>
+    <form class="login-locale" method="post" action="/settings/locale">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="return_to" value="/login">
+      <button type="submit" name="locale" value="{{if eq .Locale "zh-CN"}}en-US{{else}}zh-CN{{end}}"><span data-lucide="languages" aria-hidden="true"></span>{{t .Locale "login.language"}}</button>
+    </form>
+  </section>
+</main>
+</body>
+</html>
