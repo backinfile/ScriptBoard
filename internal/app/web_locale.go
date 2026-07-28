@@ -487,6 +487,7 @@ var webMessages = map[string]localizedMessage{
 	"run_detail.stop":                       {"停止 Run", "Stop Run"},
 	"run_detail.force_stop":                 {"强制停止", "Force stop"},
 	"run_detail.save_quick":                 {"保存为快捷执行", "Save as Quick Run"},
+	"runs.open_script_directory":            {"打开脚本目录", "Open script directory"},
 	"run_detail.quick_name":                 {"快捷执行名称", "Quick Run name"},
 	"run_detail.created":                    {"发起时间", "Created"},
 	"run_detail.runtime_identity":           {"执行身份", "Runtime identity"},

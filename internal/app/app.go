@@ -2698,12 +2698,12 @@ func (a *App) runsPage(response http.ResponseWriter, request *http.Request) {
 	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = runsTemplate.Execute(response, struct {
-		Runs         []runmanager.Run
+		Runs         []runListItemView
 		Pagination   paginationView
 		Filters      runFilters
 		Locale       webLocale
 		DeferredData bool
-	}{Runs: runs, Pagination: pagination, Filters: filters, Locale: locale})
+	}{Runs: newRunListItemViews(runs), Pagination: pagination, Filters: filters, Locale: locale})
 }
 
 func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
