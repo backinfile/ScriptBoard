@@ -19,7 +19,7 @@ ScriptBoard is a trusted-script manager for a single machine and a single admini
 - Responsive web interface for desktop and mobile browsers
 
 > [!NOTE]
-> The application UI, tray menus, errors, and CLI help are currently available in Simplified Chinese only.
+> The Web interface supports Simplified Chinese and American English. Tray menus and CLI help remain available in Simplified Chinese only.
 
 ## Supported platforms
 
