@@ -3,6 +3,7 @@ package app
 import (
 	"io/fs"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -90,6 +91,46 @@ func TestIconOnlyControlsHaveAccessibleNames(t *testing.T) {
 					t.Errorf("%s contains an icon-only <%s> without an accessible name: %s", path, element, match[0])
 				}
 			}
+		}
+	}
+}
+
+func TestCreateGroupButtonsShareTheSecondaryContract(t *testing.T) {
+	t.Parallel()
+
+	targets := []struct {
+		path string
+		href string
+	}{
+		{"web/templates/quick-runs.html", "/config/quick-runs/groups/new"},
+		{"web/templates/schedules.html", "/config/schedules/groups/new"},
+	}
+
+	var expectedClasses string
+	for _, target := range targets {
+		source, err := webFiles.ReadFile(target.path)
+		if err != nil {
+			t.Fatalf("read %s: %v", target.path, err)
+		}
+		anchorPattern := regexp.MustCompile(`(?i)<a\b[^>]*\bhref="` + regexp.QuoteMeta(target.href) + `"[^>]*>`)
+		anchor := anchorPattern.FindString(string(source))
+		if anchor == "" {
+			t.Fatalf("%s does not contain the create-group control", target.path)
+		}
+		classMatch := regexp.MustCompile(`(?i)\bclass="([^"]*)"`).FindStringSubmatch(anchor)
+		if len(classMatch) != 2 {
+			t.Fatalf("%s create-group control has no class attribute: %s", target.path, anchor)
+		}
+		classes := strings.Fields(classMatch[1])
+		slices.Sort(classes)
+		normalized := strings.Join(classes, " ")
+		if slices.Contains(classes, "button--primary") {
+			t.Errorf("%s create-group control must remain secondary: %s", target.path, anchor)
+		}
+		if expectedClasses == "" {
+			expectedClasses = normalized
+		} else if normalized != expectedClasses {
+			t.Errorf("create-group controls use inconsistent classes: want %q, got %q in %s", expectedClasses, normalized, target.path)
 		}
 	}
 }

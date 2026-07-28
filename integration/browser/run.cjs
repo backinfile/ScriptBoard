@@ -322,7 +322,13 @@ async function createVariable(page, name, value, password = false) {
     await page.setViewportSize({ width: 1440, height: 1000 });
 
     await page.goto(`${fixture.baseURL}/config/schedules`);
-    await page.locator('a[href="/config/schedules/groups/new"]').click();
+    const scheduleCreateGroupControl = page.locator('a[href="/config/schedules/groups/new"]');
+    const scheduleCreateGroupContract = await scheduleCreateGroupControl.evaluate(element => ({
+      classes: [...element.classList].sort(),
+      insideHeadingActions: Boolean(element.closest(".heading-actions")),
+    }));
+    assert.deepEqual(scheduleCreateGroupContract, { classes: ["button"], insideHeadingActions: true });
+    await scheduleCreateGroupControl.click();
     const scheduleGroupTask = page.locator('[data-task-panel] [data-task-kind="schedule-group-new"]');
     await scheduleGroupTask.waitFor();
     await scheduleGroupTask.locator('input[name="name"]').fill("Operations");
@@ -367,6 +373,10 @@ async function createVariable(page, name, value, password = false) {
       }),
     );
     assert.ok(scheduleMobileActions.every(size => size.width >= 44 && size.height >= 44), JSON.stringify(scheduleMobileActions));
+    const scheduleCreateGroupMobileSize = await page.locator('a[href="/config/schedules/groups/new"]').evaluate(element => {
+      const bounds = element.getBoundingClientRect();
+      return { width: Math.round(bounds.width), height: Math.round(bounds.height) };
+    });
     await assertNoHorizontalOverflow(page, "grouped schedules mobile");
     await saveSnapshot(page, "schedules-mobile");
     await page.setViewportSize({ width: 1440, height: 1000 });
@@ -413,7 +423,13 @@ async function createVariable(page, name, value, password = false) {
     await page.goto(`${fixture.baseURL}/config/quick-runs`);
     await page.getByText("Weekly safety check", { exact: true }).waitFor();
     await page.getByText("-Environment production", { exact: true }).waitFor();
-    await page.locator('a[href="/config/quick-runs/groups/new"]').click();
+    const quickCreateGroupControl = page.locator('a[href="/config/quick-runs/groups/new"]');
+    const quickCreateGroupContract = await quickCreateGroupControl.evaluate(element => ({
+      classes: [...element.classList].sort(),
+      insideHeadingActions: Boolean(element.closest(".heading-actions")),
+    }));
+    assert.deepEqual(quickCreateGroupContract, scheduleCreateGroupContract);
+    await quickCreateGroupControl.click();
     await page.locator('[data-task-panel] [data-task-kind="quick-group-new"]').waitFor();
     await page.locator('[data-task-panel] input[name="name"]').fill("Operations");
     await page.locator('[data-task-panel] button[type="submit"]').click();
@@ -480,6 +496,11 @@ async function createVariable(page, name, value, password = false) {
       }),
     );
     assert.ok(quickRunMobileActions.every(size => size.width >= 44 && size.height >= 44), JSON.stringify(quickRunMobileActions));
+    const quickCreateGroupMobileSize = await page.locator('a[href="/config/quick-runs/groups/new"]').evaluate(element => {
+      const bounds = element.getBoundingClientRect();
+      return { width: Math.round(bounds.width), height: Math.round(bounds.height) };
+    });
+    assert.deepEqual(quickCreateGroupMobileSize, scheduleCreateGroupMobileSize);
     await page.evaluate(() => {
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
       scrollTo(0, 0);
