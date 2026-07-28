@@ -242,6 +242,7 @@ type App struct {
 	scheduler          *scheduler.Manager
 	gitProtection      *gitprotect.Manager
 	hostStatus         *hoststatus.Monitor
+	shellStatusCache   *shellStatusCache
 	instanceLock       *instancelock.Lock
 	handler            http.Handler
 	loginMu            sync.Mutex
@@ -318,6 +319,7 @@ func Open(config Config) (*App, error) {
 		return nil, err
 	}
 	application.hostStatus.Start(context.Background())
+	application.shellStatusCache = newShellStatusCache(5*time.Second, time.Now, application.loadShellStatus)
 	application.handler = application.routes(managedRoot)
 	opened = true
 	return application, nil
@@ -1280,10 +1282,14 @@ func (w *pageResponseWriter) finish(a *App, request *http.Request) {
 		body = renderApplicationError(request, w.status, strings.TrimSpace(string(body)))
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	}
-	if request.URL.Path != "/login" {
-		body = a.addApplicationShell(request, body)
-	}
 	locale := resolveWebLocale(request)
+	if request.URL.Path != "/login" {
+		if request.Header.Get("X-ScriptBoard-Navigation") == "pjax" {
+			body = []byte(prepareApplicationDocument(body, locale))
+		} else {
+			body = a.addApplicationShell(request, body)
+		}
+	}
 	w.Header().Set("Content-Language", string(locale))
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Del("Content-Length")

@@ -1,6 +1,7 @@
 package app_test
 
 import (
+	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -46,6 +47,106 @@ func TestShellStatusEndpointReturnsAuthenticatedNoStoreVerdict(t *testing.T) {
 	if payload.CollectedAt == "" {
 		t.Fatal("collectedAt is empty")
 	}
+}
+
+func TestPJAXPageReturnsBusinessDocumentWithoutApplicationShell(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
+
+	fullResponse, err := client.Get(serverURL + "/resources/variables")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fullBody, _ := io.ReadAll(fullResponse.Body)
+	_ = fullResponse.Body.Close()
+	if fullResponse.StatusCode != http.StatusOK {
+		t.Fatalf("full page status=%d, want %d", fullResponse.StatusCode, http.StatusOK)
+	}
+	if !strings.Contains(string(fullBody), `class="app-sidebar"`) || !strings.Contains(string(fullBody), `data-app-shell`) {
+		t.Fatalf("ordinary GET does not contain the application shell: %s", fullBody)
+	}
+
+	request, err := http.NewRequest(http.MethodGet, serverURL+"/resources/variables", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("X-ScriptBoard-Navigation", "pjax")
+	request.Header.Set("Accept", "text/html")
+	pjaxResponse, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pjaxBody, _ := io.ReadAll(pjaxResponse.Body)
+	_ = pjaxResponse.Body.Close()
+	if pjaxResponse.StatusCode != http.StatusOK {
+		t.Fatalf("PJAX status=%d, want %d", pjaxResponse.StatusCode, http.StatusOK)
+	}
+	page := string(pjaxBody)
+	for _, expected := range []string{`<title>`, `lang="en-US"`, `<main id="main-content"`} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("PJAX response is missing %q: %s", expected, page)
+		}
+	}
+	if strings.Contains(page, `class="app-sidebar"`) || strings.Contains(page, `data-app-shell`) {
+		t.Fatalf("PJAX response contains a duplicate application shell: %s", page)
+	}
+}
+
+func TestApplicationShellAndStatusEndpointShareFiveSecondSnapshot(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	stateRoot := filepath.Join(root, "state")
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), stateRoot)
+
+	pageResponse, err := client.Get(serverURL + "/resources/variables")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, pageResponse.Body)
+	_ = pageResponse.Body.Close()
+	if pageResponse.StatusCode != http.StatusOK {
+		t.Fatalf("page status=%d, want %d", pageResponse.StatusCode, http.StatusOK)
+	}
+
+	db, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO runs
+		(id, script_path, script_sha256, arguments_template, arguments_json, executor, source_type, status, created_at, error, log_path)
+		VALUES ('cached-shell-status', 'job.cmd', 'digest', '', '[]', 'cmd.exe', 'manual', 'running', 1, '', '')`); err != nil {
+		t.Fatal(err)
+	}
+
+	statusResponse, err := client.Get(serverURL + "/monitor/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer statusResponse.Body.Close()
+	var status shellStatusPayload
+	if err := json.NewDecoder(statusResponse.Body).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	if statusResponse.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d, want %d", statusResponse.StatusCode, http.StatusOK)
+	}
+	if status.ActiveRuns != 0 {
+		t.Fatalf("activeRuns=%d, want the application shell's cached value 0", status.ActiveRuns)
+	}
+	if cache := statusResponse.Header.Get("Cache-Control"); cache != "no-store" {
+		t.Fatalf("cache control=%q, want no-store", cache)
+	}
+}
+
+type shellStatusPayload struct {
+	State       string `json:"state"`
+	CollectedAt string `json:"collectedAt"`
+	IssueCount  int    `json:"issueCount"`
+	ActiveRuns  int    `json:"activeRuns"`
 }
 
 func TestAuthenticatedNavigationUsesGroupedMonitorRoute(t *testing.T) {

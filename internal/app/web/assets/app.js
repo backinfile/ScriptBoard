@@ -38,6 +38,7 @@
     "info": '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
     "key-round": '<path d="M2.6 16.8a6 6 0 1 0 8.6-8.3A6 6 0 0 0 2.6 16.8"/><path d="m15 9 6-6M17 5l2 2M14 8l2 2"/>',
     "languages": '<path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/>',
+    "loader-circle": '<path d="M21 12a9 9 0 1 1-6.2-8.6"/>',
     "lock": '<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
     "log-out": '<path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>',
     "memory-stick": '<path d="M6 19v-3M10 19v-3M14 19v-3M18 19v-3M8 11V9M16 11V9"/><rect x="2" y="5" width="20" height="11" rx="2"/>',
@@ -73,6 +74,8 @@
   let markdownLibrariesPromise = null;
   const scriptAssetPromises = new Map();
   let navigationBusy = false;
+  let navigationSequence = 0;
+  let navigationRequest = null;
   let taskPanelState = null;
   let taskPanelRequest = null;
 
@@ -82,6 +85,7 @@
       current: "数据正常", attention: "需要关注", stale: "数据已过期",
       activeRuns: "个活动 Run", processing: "处理中…", complete: "实时输出已结束",
       connected: "实时输出已连接", disconnected: "实时输出连接中断",
+      loading: "加载中…", loadFailed: "页面加载失败", retry: "重试",
       statuses: {
         starting: "正在启动", running: "运行中", stopping: "正在停止", timing_out: "正在超时终止",
         succeeded: "成功", failed: "失败", stopped: "已停止", timed_out: "已超时", rejected: "已拒绝"
@@ -91,6 +95,7 @@
       current: "Data current", attention: "Attention needed", stale: "Data stale",
       activeRuns: "active Runs", processing: "Processing…", complete: "Live output complete",
       connected: "Live output connected", disconnected: "Live output disconnected",
+      loading: "Loading…", loadFailed: "Unable to load this page", retry: "Retry",
       statuses: {
         starting: "Starting", running: "Running", stopping: "Stopping", timing_out: "Timing out",
         succeeded: "Succeeded", failed: "Failed", stopped: "Stopped", timed_out: "Timed out", rejected: "Rejected"
@@ -401,10 +406,99 @@
     return { response, document: new DOMParser().parseFromString(text, "text/html") };
   }
 
-  function updateShell(nextDocument) {
-    const current = document.querySelector(".app-sidebar");
-    const next = nextDocument.querySelector(".app-sidebar");
-    if (current && next) current.replaceWith(document.importNode(next, true));
+  function navigationOwnsPath(linkPath, path) {
+    if (linkPath === "/monitor") return path === "/monitor";
+    if (linkPath === "/resources/files/") {
+      return path.startsWith("/resources/files/") || path === "/resources/trash";
+    }
+    return path === linkPath || path.startsWith(`${linkPath}/`);
+  }
+
+  function mainNavigationLink(url, exact = false) {
+    const path = new URL(url, location.href).pathname;
+    return Array.from(document.querySelectorAll(".sidebar-nav a[href]")).find(link => {
+      const linkPath = new URL(link.href, location.href).pathname;
+      return exact ? linkPath === path : navigationOwnsPath(linkPath, path);
+    }) || null;
+  }
+
+  function navigationTitle(link) {
+    const label = link?.querySelector("span:last-child")?.textContent.trim();
+    return label ? `${label} · ScriptBoard` : document.title;
+  }
+
+  function updateShellLocation(url) {
+    const destination = new URL(url, location.href);
+    const current = mainNavigationLink(destination.href);
+    document.querySelectorAll(".sidebar-nav a[aria-current='page']").forEach(link => link.removeAttribute("aria-current"));
+    current?.setAttribute("aria-current", "page");
+
+    const settings = document.querySelector('.sidebar-utilities a[href="/settings/account"]');
+    if (settings) {
+      if (destination.pathname.startsWith("/settings/")) settings.setAttribute("aria-current", "page");
+      else settings.removeAttribute("aria-current");
+    }
+    const returnTo = document.querySelector('form[action="/settings/locale"] input[name="return_to"]');
+    if (returnTo) returnTo.value = `${destination.pathname}${destination.search}${destination.hash}`;
+  }
+
+  function createNavigationState(state, url, title) {
+    const main = document.createElement("main");
+    main.id = "main-content";
+    main.className = "workspace navigation-state";
+    main.dataset.navigationState = state;
+    main.tabIndex = -1;
+    const content = document.createElement("div");
+    content.className = "navigation-state__content";
+
+    if (state === "loading") {
+      main.setAttribute("aria-busy", "true");
+      content.setAttribute("role", "status");
+      content.setAttribute("aria-live", "polite");
+      const icon = document.createElement("span");
+      icon.className = "navigation-state__icon navigation-state__icon--loading";
+      icon.dataset.lucide = "loader-circle";
+      const message = document.createElement("p");
+      message.textContent = words().loading;
+      content.append(icon, message);
+    } else {
+      content.setAttribute("role", "alert");
+      const icon = document.createElement("span");
+      icon.className = "navigation-state__icon navigation-state__icon--error";
+      icon.dataset.lucide = "triangle-alert";
+      const heading = document.createElement("h1");
+      heading.textContent = words().loadFailed;
+      const retry = document.createElement("button");
+      retry.className = "button button--primary";
+      retry.type = "button";
+      const retryIcon = document.createElement("span");
+      retryIcon.dataset.lucide = "rotate-ccw";
+      const retryLabel = document.createElement("span");
+      retryLabel.textContent = words().retry;
+      retry.append(retryIcon, retryLabel);
+      retry.addEventListener("click", () => navigate(url, false, { deferred: true, title }));
+      content.append(icon, heading, retry);
+    }
+    main.append(content);
+    renderIcons(main);
+    return main;
+  }
+
+  function commitDeferredNavigation(url, push, title) {
+    cleanupPage();
+    const currentMain = document.querySelector("main");
+    const loading = createNavigationState("loading", url, title);
+    currentMain?.replaceWith(loading);
+    if (push) history.pushState({ pjax: true }, "", url);
+    document.title = title;
+    updateShellLocation(url);
+    setSidebar(false);
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }
+
+  function showNavigationFailure(url, title) {
+    const currentMain = document.querySelector("main");
+    currentMain?.replaceWith(createNavigationState("error", url, title));
   }
 
   function setTaskLinkBusy(link, busy) {
@@ -426,14 +520,33 @@
   }
 
   async function navigate(url, push = true, options = {}) {
-    if (navigationBusy) return;
     cancelTaskPanelRequest();
+    navigationRequest?.controller.abort();
+    const request = {
+      sequence: ++navigationSequence,
+      controller: new AbortController(),
+    };
+    navigationRequest = request;
     navigationBusy = true;
     document.documentElement.setAttribute("aria-busy", "true");
+    const deferred = options.deferred === true;
+    const title = options.title || navigationTitle(mainNavigationLink(url));
+    if (deferred) {
+      commitDeferredNavigation(url, push, title);
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      if (navigationRequest !== request) return;
+    }
     try {
-      const result = await fetchDocument(url);
-      if (!result.document || !result.response.ok) {
+      const result = await fetchDocument(url, { signal: request.controller.signal });
+      if (navigationRequest !== request || request.sequence !== navigationSequence) return;
+      const responseURL = new URL(result.response.url || url, location.href);
+      if (!result.document || responseURL.pathname === "/login") {
         location.assign(result.response.url || url);
+        return;
+      }
+      if (!result.response.ok) {
+        if (deferred) showNavigationFailure(url, title);
+        else location.assign(result.response.url || url);
         return;
       }
       const nextMain = result.document.querySelector("main");
@@ -442,12 +555,16 @@
         location.assign(result.response.url || url);
         return;
       }
-      cleanupPage();
+      if (!deferred) cleanupPage();
       currentMain.replaceWith(document.importNode(nextMain, true));
       document.title = result.document.title;
       document.documentElement.lang = result.document.documentElement.lang || document.documentElement.lang;
-      updateShell(result.document);
-      if (push) history.pushState({ pjax: true }, "", result.response.url);
+      if (deferred) {
+        if (location.href !== result.response.url) history.replaceState({ pjax: true }, "", result.response.url);
+      } else if (push) {
+        history.pushState({ pjax: true }, "", result.response.url);
+      }
+      updateShellLocation(result.response.url);
       setSidebar(false);
       window.scrollTo({ top: 0, behavior: "auto" });
       initPage();
@@ -459,11 +576,16 @@
           focusTarget.setSelectionRange(end, end);
         }
       }
-    } catch {
-      location.assign(url);
+    } catch (error) {
+      if (error?.name === "AbortError" || navigationRequest !== request) return;
+      if (deferred) showNavigationFailure(url, title);
+      else location.assign(url);
     } finally {
-      navigationBusy = false;
-      document.documentElement.removeAttribute("aria-busy");
+      if (navigationRequest === request) {
+        navigationRequest = null;
+        navigationBusy = false;
+        document.documentElement.removeAttribute("aria-busy");
+      }
     }
   }
 
@@ -735,7 +857,7 @@
     cleanups.push(() => source.close());
   }
 
-  function initStatus(cleanups) {
+  function initStatus() {
     const status = document.querySelector("[data-shell-status]");
     if (!status) return;
     const update = async () => {
@@ -754,7 +876,7 @@
       } catch { /* status remains at last known value */ }
     };
     const timer = window.setInterval(update, 30000);
-    cleanups.push(() => window.clearInterval(timer));
+    window.addEventListener("pagehide", () => window.clearInterval(timer), { once: true });
   }
 
   function setControlIcon(target, name) {
@@ -1366,7 +1488,6 @@
     initFileDropUpload(document, cleanups);
     initOverview(cleanups);
     initRun(cleanups);
-    initStatus(cleanups);
     initGroupedRecords(cleanups);
     initScheduleCron(cleanups);
   }
@@ -1405,7 +1526,12 @@
     if (link.matches("[data-task-link]") && matchMedia("(min-width: 761px)").matches) {
       openTask(destination.href, true, link);
     } else {
-      navigate(destination.href, true, { focusSelector: link.dataset.focusAfterNavigation });
+      const deferred = link.matches(".sidebar-nav a");
+      navigate(destination.href, true, {
+        deferred,
+        title: deferred ? navigationTitle(link) : undefined,
+        focusSelector: link.dataset.focusAfterNavigation,
+      });
     }
   });
 
@@ -1506,8 +1632,13 @@
       openTask(event.state.taskURL || location.href, false);
       return;
     }
-    navigate(location.href, false);
+    const navigationLink = mainNavigationLink(location.href, true);
+    navigate(location.href, false, {
+      deferred: Boolean(navigationLink),
+      title: navigationLink ? navigationTitle(navigationLink) : undefined,
+    });
   });
 
   initPage();
+  initStatus();
 })();

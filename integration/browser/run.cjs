@@ -145,6 +145,207 @@ async function createVariable(page, name, value, password = false) {
   await page.getByText(name, { exact: true }).waitFor();
 }
 
+async function assertDeferredMainNavigation(page) {
+  let releaseResponse;
+  const responseGate = new Promise(resolve => {
+    releaseResponse = resolve;
+  });
+  let resolveRequestStarted;
+  const requestStarted = new Promise(resolve => {
+    resolveRequestStarted = resolve;
+  });
+  const routeHandler = async route => {
+    const request = route.request();
+    if (request.headers()["x-scriptboard-navigation"] !== "pjax") {
+      await route.continue().catch(error => {
+        if (!String(error).includes("already handled")) throw error;
+      });
+      return;
+    }
+    resolveRequestStarted();
+    await responseGate;
+    await route.continue().catch(error => {
+      if (!String(error).includes("already handled")) throw error;
+    });
+  };
+  await page.route("**/resources/variables", routeHandler);
+  try {
+    await page.locator('.sidebar-nav a[href="/resources/variables"]').click();
+    assert.equal(new URL(page.url()).pathname, "/resources/variables", "main navigation did not update the URL immediately");
+    assert.equal(await page.title(), "Variables · ScriptBoard", "main navigation did not update the title immediately");
+    assert.equal(
+      await page.locator('.sidebar-nav a[href="/resources/variables"]').getAttribute("aria-current"),
+      "page",
+      "main navigation did not update the active tab immediately",
+    );
+    const loading = page.locator('main[data-navigation-state="loading"]');
+    await loading.waitFor({ state: "visible", timeout: 500 });
+    assert.equal((await loading.textContent()).trim(), "Loading…");
+    await requestStarted;
+    releaseResponse();
+    await page.locator("main h1").getByText("Variables", { exact: true }).waitFor();
+    await loading.waitFor({ state: "detached" });
+  } finally {
+    releaseResponse();
+    await page.unroute("**/resources/variables", routeHandler);
+  }
+
+  assert.equal(
+    await page.evaluate(() => window.__scriptboardStatusIntervalCount),
+    1,
+    "PJAX navigation created another common-status poller",
+  );
+  await page.locator('.sidebar-nav a[href="/monitor"]').click();
+  await page.locator("main h1").getByText("Host overview", { exact: true }).waitFor();
+}
+
+async function assertRapidMainNavigationIgnoresLateResponses(page) {
+  let releaseVariables;
+  const variablesGate = new Promise(resolve => {
+    releaseVariables = resolve;
+  });
+  let resolveVariablesStarted;
+  const variablesStarted = new Promise(resolve => {
+    resolveVariablesStarted = resolve;
+  });
+  const routeHandler = async route => {
+    if (route.request().headers()["x-scriptboard-navigation"] !== "pjax") {
+      await route.continue();
+      return;
+    }
+    resolveVariablesStarted();
+    await variablesGate;
+    await route.continue().catch(error => {
+      if (!String(error).includes("already handled")) throw error;
+    });
+  };
+  await page.route("**/resources/variables", routeHandler);
+  await page.evaluate(() => {
+    window.__scriptboardNativeFetch = window.fetch;
+    window.fetch = (input, options = {}) => {
+      const requestURL = new URL(typeof input === "string" ? input : input.url, location.href);
+      if (requestURL.pathname === "/resources/variables") {
+        const { signal: _signal, ...optionsWithoutSignal } = options;
+        return window.__scriptboardNativeFetch(input, optionsWithoutSignal);
+      }
+      return window.__scriptboardNativeFetch(input, options);
+    };
+  });
+  try {
+    await page.locator('.sidebar-nav a[href="/resources/variables"]').click();
+    await variablesStarted;
+    await page.locator('.sidebar-nav a[href="/config/quick-runs"]').click();
+    assert.equal(new URL(page.url()).pathname, "/config/quick-runs");
+    assert.equal(await page.title(), "Quick Runs · ScriptBoard");
+    await page.getByRole("heading", { name: "Quick Runs", exact: true }).waitFor();
+    releaseVariables();
+    await page.waitForTimeout(100);
+    assert.equal(new URL(page.url()).pathname, "/config/quick-runs", "late response changed the URL");
+    assert.equal(
+      await page.getByRole("heading", { name: "Quick Runs", exact: true }).count(),
+      1,
+      "late response replaced the current page",
+    );
+  } finally {
+    releaseVariables();
+    await page.unroute("**/resources/variables", routeHandler);
+    await page.evaluate(() => {
+      if (window.__scriptboardNativeFetch) {
+        window.fetch = window.__scriptboardNativeFetch;
+        delete window.__scriptboardNativeFetch;
+      }
+    });
+  }
+}
+
+async function assertNavigationFailureCanRetry(page) {
+  await page.evaluate(() => {
+    window.__scriptboardNativeFetch = window.fetch;
+    let failNextRequest = true;
+    window.fetch = (input, options) => {
+      const requestURL = new URL(typeof input === "string" ? input : input.url, location.href);
+      if (failNextRequest && requestURL.pathname === "/resources/variables") {
+        failNextRequest = false;
+        return Promise.reject(new TypeError("Simulated navigation failure"));
+      }
+      return window.__scriptboardNativeFetch(input, options);
+    };
+  });
+  try {
+    await page.locator('.sidebar-nav a[href="/resources/variables"]').click();
+    const errorState = page.locator('main[data-navigation-state="error"]');
+    await errorState.waitFor();
+    assert.equal(new URL(page.url()).pathname, "/resources/variables");
+    assert.equal((await errorState.getByRole("heading").textContent()).trim(), "Unable to load this page");
+    const retry = errorState.getByRole("button", { name: "Retry", exact: true });
+    assert.equal(await retry.locator("svg.lucide-rotate-ccw").count(), 1, "retry action does not use its Lucide icon");
+    await retry.click();
+    await page.getByRole("heading", { name: "Variables", exact: true }).waitFor();
+  } finally {
+    await page.evaluate(() => {
+      window.fetch = window.__scriptboardNativeFetch;
+      delete window.__scriptboardNativeFetch;
+    });
+  }
+}
+
+async function assertHistoryNavigationUsesLoadingState(page) {
+  await page.locator('.sidebar-nav a[href="/config/quick-runs"]').click();
+  await page.getByRole("heading", { name: "Quick Runs", exact: true }).waitFor();
+
+  let releaseBack;
+  const backGate = new Promise(resolve => {
+    releaseBack = resolve;
+  });
+  const variablesRoute = async route => {
+    await backGate;
+    await route.continue().catch(error => {
+      if (!String(error).includes("already handled")) throw error;
+    });
+  };
+  await page.route("**/resources/variables", variablesRoute);
+  await page.evaluate(() => history.back());
+  await page.waitForURL("**/resources/variables");
+  await page.locator('main[data-navigation-state="loading"]').waitFor({ timeout: 500 });
+  releaseBack();
+  await page.getByRole("heading", { name: "Variables", exact: true }).waitFor();
+  await page.unroute("**/resources/variables", variablesRoute);
+
+  let releaseForward;
+  const forwardGate = new Promise(resolve => {
+    releaseForward = resolve;
+  });
+  const quickRunsRoute = async route => {
+    await forwardGate;
+    await route.continue().catch(error => {
+      if (!String(error).includes("already handled")) throw error;
+    });
+  };
+  await page.route("**/config/quick-runs", quickRunsRoute);
+  await page.evaluate(() => history.forward());
+  await page.waitForURL("**/config/quick-runs");
+  await page.locator('main[data-navigation-state="loading"]').waitFor({ timeout: 500 });
+  releaseForward();
+  await page.getByRole("heading", { name: "Quick Runs", exact: true }).waitFor();
+  await page.unroute("**/config/quick-runs", quickRunsRoute);
+}
+
+async function assertExpiredSessionUsesFullNavigation(page, context) {
+  await context.clearCookies();
+  await page.locator('.sidebar-nav a[href="/resources/variables"]').click();
+  await page.waitForURL("**/login");
+  await page.getByRole("heading", { name: "Sign in", exact: true }).waitFor();
+  assert.equal(await page.locator("[data-app-shell]").count(), 0, "expired session kept the authenticated shell");
+
+  await page.locator('input[name="username"]').fill("admin");
+  await page.locator('input[name="password"]').fill("calibration-ledger-2026");
+  await Promise.all([
+    page.waitForURL("**/monitor"),
+    page.locator('[data-login-form] button[type="submit"]').click(),
+  ]);
+  await page.locator("[data-app-shell]").waitFor();
+}
+
 (async () => {
   const fixture = await startFixture();
   let browser;
@@ -157,6 +358,14 @@ async function createVariable(page, name, value, password = false) {
       locale: "en-US",
       colorScheme: "light",
       reducedMotion: "reduce",
+    });
+    await context.addInitScript(() => {
+      const originalSetInterval = window.setInterval.bind(window);
+      window.__scriptboardStatusIntervalCount = 0;
+      window.setInterval = (callback, delay, ...args) => {
+        if (delay === 30000) window.__scriptboardStatusIntervalCount += 1;
+        return originalSetInterval(callback, delay, ...args);
+      };
     });
     const page = await context.newPage();
     page.on("console", message => {
@@ -174,6 +383,15 @@ async function createVariable(page, name, value, password = false) {
     ]);
     await page.locator("[data-app-shell]").waitFor();
     await assertNoHorizontalOverflow(page, "monitor");
+    await assertDeferredMainNavigation(page);
+    await assertRapidMainNavigationIgnoresLateResponses(page);
+    await assertNavigationFailureCanRetry(page);
+    await assertHistoryNavigationUsesLoadingState(page);
+    await assertExpiredSessionUsesFullNavigation(page, context);
+    if (process.env.SCRIPTBOARD_BROWSER_SCOPE === "navigation") {
+      process.stdout.write("Chromium deferred-navigation regressions passed.\n");
+      return;
+    }
 
     const status = await page.evaluate(async () => {
       const response = await fetch("/monitor/status", { cache: "no-store" });
