@@ -271,14 +271,14 @@ func TestPrimaryNavigationAvoidsFullPageReloads(t *testing.T) {
 		assetBodies[name] = body
 		assetVersions[name] = version
 		if name == "app-v2.js" {
-			for _, expected := range []string{"preventDefault()", "DOMParser", "history.pushState", "popstate", "replaceWith", "Intl.DateTimeFormat", "task-panel", "EventSource"} {
+			for _, expected := range []string{"preventDefault()", "DOMParser", "history.pushState", "popstate", "replaceWith", "Intl.DateTimeFormat", "task-panel", "EventSource", "data-markdown-preview", "data-script-preview", "DOMPurify", "markdownit", "hljs.highlight"} {
 				if !bytes.Contains(body, []byte(expected)) {
 					t.Errorf("interaction script does not contain %q", expected)
 				}
 			}
 		}
 		if name == "app.css" {
-			for _, expected := range []string{":focus-visible", "@media (prefers-reduced-motion", ".button--danger", ".empty-state", ".segmented-control", "--accent", ".measurement-ledger"} {
+			for _, expected := range []string{":focus-visible", "@media (prefers-reduced-motion", ".button--danger", ".empty-state", ".segmented-control", "--accent", ".measurement-ledger", ".markdown-preview", ".hljs-keyword"} {
 				if !bytes.Contains(body, []byte(expected)) {
 					t.Errorf("stylesheet does not contain %q", expected)
 				}
@@ -290,10 +290,53 @@ func TestPrimaryNavigationAvoidsFullPageReloads(t *testing.T) {
 			}
 		}
 	}
-	combined := make([]byte, 0, len(assetBodies["app.css"])+1+len(assetBodies["app-v2.js"]))
-	combined = append(combined, assetBodies["app.css"]...)
-	combined = append(combined, 0)
-	combined = append(combined, assetBodies["app-v2.js"]...)
+	version := assetVersions["app-v2.js"]
+	vendorAssets := map[string]string{
+		"markdown-it.min.js":          "markdown-it 14.3.0",
+		"purify.min.js":               "DOMPurify 3.4.12",
+		"highlight.min.js":            "Highlight.js v11.11.1",
+		"highlight-powershell.min.js": "powershell` grammar compiled for Highlight.js 11.11.1",
+		"highlight-dos.min.js":        "dos` grammar compiled for Highlight.js 11.11.1",
+	}
+	for name, marker := range vendorAssets {
+		asset := "/assets/" + name + "?v=" + version
+		response, err = client.Get(serverURL + asset)
+		if err != nil {
+			t.Fatalf("get %s: %v", asset, err)
+		}
+		body, readErr := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if readErr != nil {
+			t.Fatalf("read %s: %v", asset, readErr)
+		}
+		if cacheControl := response.Header.Get("Cache-Control"); cacheControl != "public, max-age=31536000, immutable" {
+			t.Errorf("%s cache control = %q, want immutable versioned caching", asset, cacheControl)
+		}
+		if contentType := response.Header.Get("Content-Type"); !strings.Contains(contentType, "javascript") {
+			t.Errorf("%s content type = %q, want JavaScript", asset, contentType)
+		}
+		if !bytes.Contains(body, []byte(marker)) {
+			t.Errorf("%s does not contain version marker %q", asset, marker)
+		}
+		assetBodies[name] = body
+		assetVersions[name] = version
+	}
+	orderedAssets := []string{
+		"app.css",
+		"app-v2.js",
+		"markdown-it.min.js",
+		"purify.min.js",
+		"highlight.min.js",
+		"highlight-powershell.min.js",
+		"highlight-dos.min.js",
+	}
+	combined := make([]byte, 0)
+	for index, name := range orderedAssets {
+		if index > 0 {
+			combined = append(combined, 0)
+		}
+		combined = append(combined, assetBodies[name]...)
+	}
 	digest := sha256.Sum256(combined)
 	expectedVersion := hex.EncodeToString(digest[:6])
 	for name, version := range assetVersions {
@@ -402,10 +445,105 @@ func TestFileWorkspaceExposesNavigationPreviewAndRunConfiguration(t *testing.T) 
 	if err != nil {
 		t.Fatalf("read text preview: %v", err)
 	}
-	for _, expected := range []string{"Text preview", "Write-Output &#39;preview me&#39;", `href="/resources/files/scripts/"`} {
+	for _, expected := range []string{
+		"Script preview",
+		"Write-Output &#39;preview me&#39;",
+		`href="/resources/files/scripts/"`,
+		`data-script-preview`,
+		`data-highlight-language="powershell"`,
+	} {
 		if !strings.Contains(string(previewPage), expected) {
 			t.Fatalf("text preview does not contain %q: %s", expected, previewPage)
 		}
+	}
+}
+
+func TestScriptPreviewUsesDeterministicHighlightLanguages(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	tests := map[string]string{
+		"health.ps1": "powershell",
+		"health.cmd": "dos",
+		"health.bat": "dos",
+		"health.sh":  "bash",
+		"health.py":  "python",
+		"health.txt": "",
+	}
+	if err := os.MkdirAll(managedRoot, 0o700); err != nil {
+		t.Fatalf("create managed root: %v", err)
+	}
+	for name := range tests {
+		if err := os.WriteFile(filepath.Join(managedRoot, name), []byte("if ready\n"), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	client, serverURL := authenticatedClient(t, managedRoot, filepath.Join(root, "state"))
+
+	for name, expected := range tests {
+		response, err := client.Get(serverURL + "/resources/files/view/" + name)
+		if err != nil {
+			t.Fatalf("get %s preview: %v", name, err)
+		}
+		page, readErr := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if readErr != nil {
+			t.Fatalf("read %s preview: %v", name, readErr)
+		}
+		html := string(page)
+		if expected == "" {
+			if strings.Contains(html, "data-script-preview") {
+				t.Errorf("%s unexpectedly enables script highlighting: %s", name, html)
+			}
+			continue
+		}
+		for _, marker := range []string{`data-script-preview`, `data-highlight-language="` + expected + `"`} {
+			if !strings.Contains(html, marker) {
+				t.Errorf("%s preview does not contain %q: %s", name, marker, html)
+			}
+		}
+	}
+}
+
+func TestMarkdownPreviewProgressivelyEnhancesEscapedSource(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	if err := os.MkdirAll(filepath.Join(managedRoot, "docs"), 0o700); err != nil {
+		t.Fatalf("create docs directory: %v", err)
+	}
+	content := "# Runbook\n\n[Sibling](other.md)\n\n![Diagram](diagram.png)\n\n```powershell\nif ($Ready) { Write-Output 'ready' }\n```\n\n</pre><script>alert('xss')</script>\n"
+	if err := os.WriteFile(filepath.Join(managedRoot, "docs", "runbook.md"), []byte(content), 0o600); err != nil {
+		t.Fatalf("write markdown fixture: %v", err)
+	}
+	client, serverURL := authenticatedClient(t, managedRoot, filepath.Join(root, "state"))
+
+	response, err := client.Get(serverURL + "/resources/files/view/docs/runbook.md")
+	if err != nil {
+		t.Fatalf("get markdown preview: %v", err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read markdown preview: %v", err)
+	}
+	html := string(page)
+	for _, expected := range []string{
+		`data-markdown-preview`,
+		`data-markdown-source`,
+		`data-markdown-base="/resources/files/view/docs/"`,
+		`&lt;/pre&gt;&lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;`,
+		"```powershell",
+		`# Runbook`,
+	} {
+		if !strings.Contains(html, expected) {
+			t.Errorf("markdown preview does not contain %q: %s", expected, html)
+		}
+	}
+	if strings.Contains(html, `<script>alert('xss')</script>`) {
+		t.Fatalf("markdown source escaped its preview container: %s", html)
 	}
 }
 

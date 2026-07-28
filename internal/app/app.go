@@ -1075,6 +1075,21 @@ func (a *App) routes(_ string) http.Handler {
 	mux.HandleFunc("GET /assets/app-v2.js", func(response http.ResponseWriter, request *http.Request) {
 		serveWebAsset(response, request, "text/javascript; charset=utf-8", appJS)
 	})
+	mux.HandleFunc("GET /assets/markdown-it.min.js", func(response http.ResponseWriter, request *http.Request) {
+		serveWebAsset(response, request, "text/javascript; charset=utf-8", markdownItJS)
+	})
+	mux.HandleFunc("GET /assets/purify.min.js", func(response http.ResponseWriter, request *http.Request) {
+		serveWebAsset(response, request, "text/javascript; charset=utf-8", domPurifyJS)
+	})
+	mux.HandleFunc("GET /assets/highlight.min.js", func(response http.ResponseWriter, request *http.Request) {
+		serveWebAsset(response, request, "text/javascript; charset=utf-8", highlightJS)
+	})
+	mux.HandleFunc("GET /assets/highlight-powershell.min.js", func(response http.ResponseWriter, request *http.Request) {
+		serveWebAsset(response, request, "text/javascript; charset=utf-8", highlightPowerShellJS)
+	})
+	mux.HandleFunc("GET /assets/highlight-dos.min.js", func(response http.ResponseWriter, request *http.Request) {
+		serveWebAsset(response, request, "text/javascript; charset=utf-8", highlightDOSJS)
+	})
 	mux.Handle("GET /{$}", a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		http.Redirect(response, request, "/monitor", http.StatusSeeOther)
 	})))
@@ -1468,8 +1483,26 @@ var appCSS = mustWebAsset("web/assets/app.css")
 
 var appJS = mustWebAsset("web/assets/app.js")
 
+var markdownItJS = mustWebAsset("web/assets/markdown-it.min.js")
+
+var domPurifyJS = mustWebAsset("web/assets/purify.min.js")
+
+var highlightJS = mustWebAsset("web/assets/highlight.min.js")
+
+var highlightPowerShellJS = mustWebAsset("web/assets/highlight-powershell.min.js")
+
+var highlightDOSJS = mustWebAsset("web/assets/highlight-dos.min.js")
+
 var webAssetVersion = func() string {
-	digest := sha256.Sum256([]byte(appCSS + "\x00" + appJS))
+	digest := sha256.Sum256([]byte(strings.Join([]string{
+		appCSS,
+		appJS,
+		markdownItJS,
+		domPurifyJS,
+		highlightJS,
+		highlightPowerShellJS,
+		highlightDOSJS,
+	}, "\x00")))
 	return hex.EncodeToString(digest[:6])
 }()
 
@@ -2709,14 +2742,28 @@ func (a *App) previewTextPage(response http.ResponseWriter, request *http.Reques
 	if parent == "." {
 		parent = ""
 	}
+	markdown := strings.EqualFold(filepath.Ext(relative), ".md")
+	highlightLanguage := highlightLanguageForPath(relative)
+	title := webText(resolveWebLocale(request), "editor.preview_title")
+	if markdown {
+		title = webText(resolveWebLocale(request), "editor.markdown_preview_title")
+	} else if highlightLanguage != "" {
+		title = webText(resolveWebLocale(request), "editor.script_preview_title")
+	}
+	markdownBaseURL := "/resources/files/view/"
+	if parent != "" {
+		markdownBaseURL = routeFileURL("/resources/files/view/", parent) + "/"
+	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = textPreviewTemplate.Execute(response, struct {
 		Path, Content, BackURL, EditURL, DownloadURL string
+		Title, MarkdownBaseURL, HighlightLanguage    string
+		Markdown                                     bool
 		Locale                                       webLocale
 	}{
 		Path: relative, Content: document.Content, BackURL: filesURL(parent),
 		EditURL: routeFileURL("/resources/files/edit/", relative), DownloadURL: routeFileURL("/resources/files/download/", relative),
-		Locale: resolveWebLocale(request),
+		Title: title, Markdown: markdown, MarkdownBaseURL: markdownBaseURL, HighlightLanguage: highlightLanguage, Locale: resolveWebLocale(request),
 	})
 }
 
@@ -3197,6 +3244,21 @@ func isScriptExtension(path string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func highlightLanguageForPath(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".ps1":
+		return "powershell"
+	case ".cmd", ".bat":
+		return "dos"
+	case ".sh":
+		return "bash"
+	case ".py":
+		return "python"
+	default:
+		return ""
 	}
 }
 

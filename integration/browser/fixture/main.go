@@ -94,7 +94,23 @@ Write-Output "result=passed"
 		"automation/maintenance/rebuild-local-index.ps1": "Write-Output \"index=rebuilt\"\n",
 		"data/exports/host-inventory.csv":                "host,platform,state\nfixture,windows,ready\n",
 		"documentation/operator-notes.txt":               "Keep scripts small, observable, and reversible.\n",
-		"documentation/recovery-checklist.md":            "# Recovery checklist\n\n1. Read the last Run.\n2. Verify the target.\n3. Restore deliberately.\n",
+		"documentation/recovery-checklist.md": `# Recovery checklist
+
+1. Read the last Run.
+2. Verify the target.
+3. Restore deliberately.
+
+[Return to the fixture guide](../README.md).
+
+` + "```powershell" + `
+param([string]$Target)
+if ($Target) { Write-Output "ready" }
+` + "```" + `
+
+![Remote fixture diagram](https://example.invalid/scriptboard-fixture.png)
+
+<script>alert("fixture")</script>
+`,
 	}
 	for path, content := range files {
 		target := filepath.Join(root, filepath.FromSlash(path))

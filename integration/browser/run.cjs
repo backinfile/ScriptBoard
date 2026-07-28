@@ -183,7 +183,73 @@ async function createVariable(page, name, value, password = false) {
     assert.equal(status.cache, "no-store");
     assert.equal(typeof status.body.activeRuns, "number");
 
-    await page.goto(`${fixture.baseURL}/resources/files/automation`);
+    const markdownRequests = [];
+    const recordMarkdownRequest = request => {
+      const requestURL = new URL(request.url());
+      if (requestURL.pathname.endsWith("markdown-it.min.js") ||
+          requestURL.pathname.endsWith("purify.min.js") ||
+          requestURL.pathname.includes("/assets/highlight") ||
+          requestURL.hostname === "example.invalid") {
+        markdownRequests.push(requestURL);
+      }
+    };
+    page.on("request", recordMarkdownRequest);
+    await page.goto(`${fixture.baseURL}/resources/files/view/documentation/recovery-checklist.md`);
+    const markdownPreview = page.locator("[data-markdown-preview]");
+    await markdownPreview.waitFor({ state: "visible" });
+    assert.equal((await markdownPreview.locator("h1").textContent()).trim(), "Recovery checklist");
+    assert.equal(await page.locator("[data-markdown-source]").isHidden(), true);
+    assert.equal(await markdownPreview.locator("script").count(), 0);
+    assert.match(await markdownPreview.textContent(), /alert\("fixture"\)/);
+    const markdownCode = markdownPreview.locator("pre code.hljs");
+    await markdownCode.waitFor();
+    assert.equal(await markdownCode.getAttribute("class"), "language-powershell hljs");
+    assert.match(await markdownCode.locator(".hljs-keyword").allTextContents().then(parts => parts.join(" ")), /param|if/);
+    assert.equal(
+      await markdownPreview.getByRole("link", { name: "Return to the fixture guide" }).getAttribute("href"),
+      "/resources/files/view/README.md",
+    );
+    assert.equal(await markdownPreview.locator("img").count(), 0);
+    assert.equal(
+      await markdownPreview.locator(".markdown-external-image a").getAttribute("href"),
+      "https://example.invalid/scriptboard-fixture.png",
+    );
+    assert.equal(markdownRequests.filter(url => url.pathname.endsWith("markdown-it.min.js")).length, 1);
+    assert.equal(markdownRequests.filter(url => url.pathname.endsWith("purify.min.js")).length, 1);
+    assert.equal(markdownRequests.filter(url => url.pathname.endsWith("/highlight.min.js")).length, 1);
+    assert.equal(markdownRequests.filter(url => url.pathname.endsWith("/highlight-powershell.min.js")).length, 1);
+    assert.equal(markdownRequests.filter(url => url.pathname.endsWith("/highlight-dos.min.js")).length, 0);
+    assert.equal(markdownRequests.filter(url => url.hostname === "example.invalid").length, 0);
+    await assertNoHorizontalOverflow(page, "Markdown preview");
+    await saveSnapshot(page, "markdown-preview");
+
+    await Promise.all([
+      page.waitForURL("**/resources/files/"),
+      page.locator('.app-sidebar a[href="/resources/files/"]').click(),
+    ]);
+    await Promise.all([
+      page.waitForURL("**/resources/files/automation/"),
+      page.locator('a[href="/resources/files/automation/"]').first().click(),
+    ]);
+    await Promise.all([
+      page.waitForURL("**/resources/files/view/automation/weekly-system-check.ps1"),
+      page.locator('a[href="/resources/files/view/automation/weekly-system-check.ps1"]').first().click(),
+    ]);
+    const scriptPreview = page.locator("[data-script-preview]");
+    await scriptPreview.locator(".hljs-keyword").first().waitFor();
+    assert.equal(await scriptPreview.getAttribute("data-highlight-language"), "powershell");
+    assert.match(await scriptPreview.locator(".hljs-keyword").allTextContents().then(parts => parts.join(" ")), /param/);
+    assert.equal(await scriptPreview.locator("script").count(), 0);
+    page.off("request", recordMarkdownRequest);
+    assert.equal(markdownRequests.filter(url => url.pathname.endsWith("/highlight.min.js")).length, 1);
+    assert.equal(markdownRequests.filter(url => url.pathname.endsWith("/highlight-powershell.min.js")).length, 1);
+    await assertNoHorizontalOverflow(page, "PowerShell preview");
+    await saveSnapshot(page, "script-preview");
+
+    await Promise.all([
+      page.waitForURL("**/resources/files/automation/"),
+      page.locator('.task-back[href="/resources/files/automation/"]').click(),
+    ]);
     await page.waitForFunction(() => document.querySelector('a[href="/resources/files/run/automation/weekly-system-check.ps1"] svg'));
     const filesWorkspaceURL = page.url();
     await page.locator('a[href="/resources/files/run/automation/weekly-system-check.ps1"]').click();
@@ -901,6 +967,14 @@ async function createVariable(page, name, value, password = false) {
     assert.equal(await noScriptPage.locator("[data-file-drop-form]").count(), 1);
     assert.equal(await noScriptPage.locator('[data-file-drop-form] input[type="file"][multiple]').count(), 1);
     assert.equal((await noScriptPage.locator("[data-file-drop-form] button[type='submit']").textContent()).trim(), "Start upload");
+    await noScriptPage.goto(`${fixture.baseURL}/resources/files/view/documentation/recovery-checklist.md`);
+    assert.equal(await noScriptPage.locator("[data-markdown-preview]").isHidden(), true);
+    assert.equal(await noScriptPage.locator("[data-markdown-source]").isVisible(), true);
+    assert.match(await noScriptPage.locator("[data-markdown-source]").textContent(), /# Recovery checklist/);
+    await noScriptPage.goto(`${fixture.baseURL}/resources/files/view/automation/weekly-system-check.ps1`);
+    assert.equal(await noScriptPage.locator("[data-script-preview]").isVisible(), true);
+    assert.equal(await noScriptPage.locator("[data-script-preview]").getAttribute("class"), null);
+    assert.match(await noScriptPage.locator("[data-script-preview]").textContent(), /param\(\[string\]\$Environment/);
     await noScriptPage.goto(`${fixture.baseURL}/config/schedules`);
     assert.equal(await noScriptPage.locator('[data-group-name="Operations"] [data-group-body]').isVisible(), true);
     await noScriptPage.goto(`${fixture.baseURL}/config/quick-runs`);

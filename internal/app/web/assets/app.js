@@ -63,7 +63,15 @@
     "zap": '<path d="M4 14a1 1 0 0 1-.8-1.6l9-11a.5.5 0 0 1 .9.4L12 8.5A1 1 0 0 0 13 10h7a1 1 0 0 1 .8 1.6l-9 11a.5.5 0 0 1-.9-.4L12 15.5A1 1 0 0 0 11 14z"/>'
   };
 
+  const appScript = document.currentScript || document.querySelector('script[src*="/assets/app-v2.js"]');
+  const appAssetVersion = appScript ? new URL(appScript.src, location.href).searchParams.get("v") : "";
+  const versionedAssetURL = path => appAssetVersion
+    ? `${path}?v=${encodeURIComponent(appAssetVersion)}`
+    : path;
+
   let cleanupPage = () => {};
+  let markdownLibrariesPromise = null;
+  const scriptAssetPromises = new Map();
   let navigationBusy = false;
   let taskPanelState = null;
   let taskPanelRequest = null;
@@ -114,6 +122,256 @@
     root.querySelectorAll("time[data-local-time][datetime]").forEach(element => {
       const value = new Date(element.dateTime);
       if (!Number.isNaN(value.valueOf())) element.textContent = formatter.format(value);
+    });
+  }
+
+  function loadScriptAsset(path, ready) {
+    const current = ready();
+    if (current) return Promise.resolve(current);
+    if (scriptAssetPromises.has(path)) return scriptAssetPromises.get(path);
+    const promise = new Promise((resolve, reject) => {
+      const source = versionedAssetURL(path);
+      const existing = Array.from(document.scripts).find(script => {
+        try {
+          return new URL(script.src, location.href).pathname === path;
+        } catch {
+          return false;
+        }
+      });
+      const script = existing || document.createElement("script");
+      const finish = () => {
+        const loaded = ready();
+        if (loaded) resolve(loaded);
+        else reject(new Error(`${path} did not initialize`));
+      };
+      script.addEventListener("load", finish, { once: true });
+      script.addEventListener("error", () => reject(new Error(`Unable to load ${path}`)), { once: true });
+      if (!existing) {
+        script.src = source;
+        script.async = true;
+        script.dataset.scriptboardAsset = path;
+        document.head.append(script);
+      }
+    });
+    scriptAssetPromises.set(path, promise);
+    return promise;
+  }
+
+  function loadMarkdownLibraries() {
+    if (!markdownLibrariesPromise) {
+      markdownLibrariesPromise = Promise.all([
+        loadScriptAsset("/assets/markdown-it.min.js", () => window.markdownit),
+        loadScriptAsset("/assets/purify.min.js", () => window.DOMPurify)
+      ]);
+    }
+    return markdownLibrariesPromise;
+  }
+
+  function supplementalHighlightAsset(language) {
+    switch (language.toLowerCase()) {
+      case "powershell":
+      case "ps1":
+        return { language: "powershell", path: "/assets/highlight-powershell.min.js" };
+      case "dos":
+      case "bat":
+      case "batch":
+      case "cmd":
+        return { language: "dos", path: "/assets/highlight-dos.min.js" };
+      default:
+        return null;
+    }
+  }
+
+  async function loadHighlightLanguages(languages) {
+    const [highlighter] = await Promise.all([
+      loadScriptAsset("/assets/highlight.min.js", () => window.hljs),
+      loadScriptAsset("/assets/purify.min.js", () => window.DOMPurify)
+    ]);
+    const supplemental = new Map();
+    languages.forEach(language => {
+      if (highlighter.getLanguage(language)) return;
+      const asset = supplementalHighlightAsset(language);
+      if (asset) supplemental.set(asset.path, asset.language);
+    });
+    await Promise.all(Array.from(supplemental, ([path, language]) =>
+      loadScriptAsset(path, () => window.hljs?.getLanguage(language))));
+    return highlighter;
+  }
+
+  function sanitizedHighlight(source, language) {
+    if (!window.hljs?.getLanguage(language)) return null;
+    const highlighted = window.hljs.highlight(source, {
+      language,
+      ignoreIllegals: true
+    });
+    return window.DOMPurify.sanitize(highlighted.value, {
+      ALLOWED_TAGS: ["span"],
+      ALLOWED_ATTR: ["class"],
+      ALLOW_ARIA_ATTR: false,
+      ALLOW_DATA_ATTR: false,
+      RETURN_DOM_FRAGMENT: true
+    });
+  }
+
+  function highlightElement(element, language) {
+    const fragment = sanitizedHighlight(element.textContent, language);
+    if (!fragment) return false;
+    element.replaceChildren(fragment);
+    element.classList.add("hljs");
+    return true;
+  }
+
+  function fencedCodeLanguage(element) {
+    const languageClass = Array.from(element.classList)
+      .find(className => className.startsWith("language-"));
+    if (!languageClass) return "";
+    const language = languageClass.slice("language-".length);
+    return /^[a-z0-9_+#.-]+$/i.test(language) ? language : "";
+  }
+
+  async function highlightMarkdownCode(root) {
+    const blocks = Array.from(root.querySelectorAll("pre > code"))
+      .map(element => ({ element, language: fencedCodeLanguage(element) }))
+      .filter(block => block.language);
+    if (blocks.length === 0) return;
+    await loadHighlightLanguages(blocks.map(block => block.language));
+    blocks.forEach(block => highlightElement(block.element, block.language));
+  }
+
+  function initScriptPreview() {
+    const source = document.querySelector("[data-script-preview]");
+    if (!source) return;
+    const language = source.dataset.highlightLanguage || "";
+    const container = source.closest("pre");
+    container?.setAttribute("aria-busy", "true");
+    loadHighlightLanguages([language]).then(() => {
+      if (source.isConnected) highlightElement(source, language);
+      container?.removeAttribute("aria-busy");
+    }).catch(() => {
+      container?.removeAttribute("aria-busy");
+    });
+  }
+
+  function managedMarkdownURL(reference, baseURL) {
+    try {
+      const resolved = new URL(reference, new URL(baseURL, location.origin));
+      const prefix = "/resources/files/view/";
+      if (resolved.origin !== location.origin || !resolved.pathname.startsWith(prefix)) return null;
+      return resolved;
+    } catch {
+      return null;
+    }
+  }
+
+  function managedRouteURL(url, prefix) {
+    const path = url.pathname.slice("/resources/files/view/".length);
+    return `${prefix}${path}${url.search}${url.hash}`;
+  }
+
+  function replaceExternalMarkdownImage(image, reference) {
+    const replacement = document.createElement("span");
+    replacement.className = "markdown-external-image";
+    replacement.append(makeIcon("image"));
+    const label = image.getAttribute("alt")?.trim() || reference;
+    try {
+      const target = new URL(reference, location.href);
+      if (target.protocol === "http:" || target.protocol === "https:") {
+        const link = document.createElement("a");
+        link.href = target.href;
+        link.rel = "noopener noreferrer";
+        link.dataset.native = "";
+        link.textContent = label;
+        replacement.append(link);
+      } else {
+        replacement.append(document.createTextNode(label));
+      }
+    } catch {
+      replacement.append(document.createTextNode(label));
+    }
+    image.replaceWith(replacement);
+  }
+
+  function rewriteMarkdownResources(root, baseURL) {
+    root.querySelectorAll("a[href]").forEach(link => {
+      const reference = link.getAttribute("href") || "";
+      if (reference.startsWith("#")) return;
+      const managed = managedMarkdownURL(reference, baseURL);
+      if (managed) {
+        const extension = managed.pathname.slice(managed.pathname.lastIndexOf(".")).toLowerCase();
+        if (managed.pathname.endsWith("/")) {
+          link.href = managedRouteURL(managed, "/resources/files/");
+        } else if (extension === ".md") {
+          link.href = managedRouteURL(managed, "/resources/files/view/");
+        } else {
+          link.href = managedRouteURL(managed, "/resources/files/download/");
+          link.dataset.native = "";
+        }
+        return;
+      }
+      try {
+        const target = new URL(reference, location.href);
+        if (!["http:", "https:", "mailto:"].includes(target.protocol)) {
+          link.removeAttribute("href");
+          return;
+        }
+        if (target.origin !== location.origin) link.rel = "noopener noreferrer";
+      } catch {
+        link.removeAttribute("href");
+      }
+    });
+
+    root.querySelectorAll("img").forEach(image => {
+      const reference = image.getAttribute("src") || "";
+      const managed = managedMarkdownURL(reference, baseURL);
+      if (managed) {
+        image.src = managedRouteURL(managed, "/resources/files/preview/");
+        image.loading = "lazy";
+        image.decoding = "async";
+        return;
+      }
+      try {
+        const target = new URL(reference, location.href);
+        if (target.origin === location.origin && ["http:", "https:"].includes(target.protocol)) {
+          image.src = target.href;
+          image.loading = "lazy";
+          image.decoding = "async";
+          return;
+        }
+      } catch {
+        // Invalid and non-local images are replaced below.
+      }
+      replaceExternalMarkdownImage(image, reference);
+    });
+  }
+
+  function initMarkdownPreview() {
+    const preview = document.querySelector("[data-markdown-preview]");
+    const source = document.querySelector("[data-markdown-source]");
+    if (!preview || !source) return;
+    preview.setAttribute("aria-busy", "true");
+    loadMarkdownLibraries().then(async () => {
+      if (!preview.isConnected || !source.isConnected) return;
+      const renderer = window.markdownit({
+        html: false,
+        linkify: true
+      });
+      const fragment = window.DOMPurify.sanitize(renderer.render(source.textContent), {
+        USE_PROFILES: { html: true },
+        SANITIZE_NAMED_PROPS: true,
+        ALLOW_DATA_ATTR: false,
+        FORBID_TAGS: ["style", "form", "input", "button", "textarea", "select", "option"],
+        FORBID_ATTR: ["style"],
+        RETURN_DOM_FRAGMENT: true
+      });
+      rewriteMarkdownResources(fragment, preview.dataset.markdownBase || "/resources/files/view/");
+      await highlightMarkdownCode(fragment);
+      if (!preview.isConnected || !source.isConnected) return;
+      preview.replaceChildren(fragment);
+      preview.hidden = false;
+      preview.removeAttribute("aria-busy");
+      source.hidden = true;
+    }).catch(() => {
+      preview.removeAttribute("aria-busy");
     });
   }
 
@@ -1095,6 +1353,8 @@
     cleanupPage = () => cleanups.splice(0).forEach(cleanup => cleanup());
     renderIcons();
     localizeTimes();
+    initMarkdownPreview();
+    initScriptPreview();
     initPasswordControls(document, cleanups);
     initCopyControls(document, cleanups);
     initFileDropUpload(document, cleanups);

@@ -497,6 +497,8 @@ var webMessages = map[string]localizedMessage{
 	"run_detail.log_incomplete":             {"运行日志写入不完整。", "The Run log is incomplete."},
 	"run_detail.log_truncated":              {"运行日志已达到上限。", "The Run log reached its size limit."},
 	"editor.preview_title":                  {"文本预览", "Text preview"},
+	"editor.markdown_preview_title":         {"Markdown 预览", "Markdown preview"},
+	"editor.script_preview_title":           {"脚本预览", "Script preview"},
 	"editor.edit_title":                     {"编辑文件", "Edit file"},
 	"editor.back_directory":                 {"返回目录", "Back to directory"},
 	"editor.read_only":                      {"只读预览", "Read-only preview"},
