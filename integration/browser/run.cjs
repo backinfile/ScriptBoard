@@ -162,6 +162,10 @@ async function assertDeferredMainNavigation(page) {
       });
       return;
     }
+    if (request.headers()["x-scriptboard-data"] === "shell") {
+      await route.continue();
+      return;
+    }
     resolveRequestStarted();
     await responseGate;
     await route.continue().catch(error => {
@@ -178,13 +182,24 @@ async function assertDeferredMainNavigation(page) {
       "page",
       "main navigation did not update the active tab immediately",
     );
-    const loading = page.locator('main[data-navigation-state="loading"]');
+    await page.getByRole("heading", { name: "Variables", exact: true }).waitFor({ timeout: 500 });
+    await page.getByText("Password type only hides the value by default in this page.", { exact: false }).waitFor();
+    const loading = page.locator('[data-deferred-region] [data-deferred-state="loading"]');
     await loading.waitFor({ state: "visible", timeout: 500 });
-    assert.equal((await loading.textContent()).trim(), "Loading…");
+    assert.match((await loading.textContent()).trim(), /^Loading/);
+    assert.equal(
+      await page.locator('main[data-navigation-state="loading"]').count(),
+      0,
+      "heavy-data navigation replaced the whole main region",
+    );
     await requestStarted;
     releaseResponse();
-    await page.locator("main h1").getByText("Variables", { exact: true }).waitFor();
     await loading.waitFor({ state: "detached" });
+    assert.equal(
+      await page.locator("[data-deferred-region] [data-deferred-state]").count(),
+      0,
+      "loaded data region kept a loading or error state",
+    );
   } finally {
     releaseResponse();
     await page.unroute("**/resources/variables", routeHandler);
@@ -264,7 +279,9 @@ async function assertNavigationFailureCanRetry(page) {
     let failNextRequest = true;
     window.fetch = (input, options) => {
       const requestURL = new URL(typeof input === "string" ? input : input.url, location.href);
-      if (failNextRequest && requestURL.pathname === "/resources/variables") {
+      const requestHeaders = new Headers(options?.headers || {});
+      const isShellRequest = requestHeaders.get("X-ScriptBoard-Data") === "shell";
+      if (failNextRequest && requestURL.pathname === "/resources/variables" && !isShellRequest) {
         failNextRequest = false;
         return Promise.reject(new TypeError("Simulated navigation failure"));
       }
@@ -273,14 +290,16 @@ async function assertNavigationFailureCanRetry(page) {
   });
   try {
     await page.locator('.sidebar-nav a[href="/resources/variables"]').click();
-    const errorState = page.locator('main[data-navigation-state="error"]');
+    const errorState = page.locator('[data-deferred-region] [data-deferred-state="error"]');
     await errorState.waitFor();
     assert.equal(new URL(page.url()).pathname, "/resources/variables");
+    await page.getByRole("heading", { name: "Variables", exact: true }).waitFor();
     assert.equal((await errorState.getByRole("heading").textContent()).trim(), "Unable to load this page");
     const retry = errorState.getByRole("button", { name: "Retry", exact: true });
     assert.equal(await retry.locator("svg.lucide-rotate-ccw").count(), 1, "retry action does not use its Lucide icon");
     await retry.click();
     await page.getByRole("heading", { name: "Variables", exact: true }).waitFor();
+    await errorState.waitFor({ state: "detached" });
   } finally {
     await page.evaluate(() => {
       window.fetch = window.__scriptboardNativeFetch;
@@ -298,6 +317,10 @@ async function assertHistoryNavigationUsesLoadingState(page) {
     releaseBack = resolve;
   });
   const variablesRoute = async route => {
+    if (route.request().headers()["x-scriptboard-data"] === "shell") {
+      await route.continue();
+      return;
+    }
     await backGate;
     await route.continue().catch(error => {
       if (!String(error).includes("already handled")) throw error;
@@ -306,9 +329,11 @@ async function assertHistoryNavigationUsesLoadingState(page) {
   await page.route("**/resources/variables", variablesRoute);
   await page.evaluate(() => history.back());
   await page.waitForURL("**/resources/variables");
-  await page.locator('main[data-navigation-state="loading"]').waitFor({ timeout: 500 });
+  await page.getByRole("heading", { name: "Variables", exact: true }).waitFor({ timeout: 500 });
+  const backLoading = page.locator('[data-deferred-region] [data-deferred-state="loading"]');
+  await backLoading.waitFor({ timeout: 500 });
   releaseBack();
-  await page.getByRole("heading", { name: "Variables", exact: true }).waitFor();
+  await backLoading.waitFor({ state: "detached" });
   await page.unroute("**/resources/variables", variablesRoute);
 
   let releaseForward;
@@ -316,6 +341,10 @@ async function assertHistoryNavigationUsesLoadingState(page) {
     releaseForward = resolve;
   });
   const quickRunsRoute = async route => {
+    if (route.request().headers()["x-scriptboard-data"] === "shell") {
+      await route.continue();
+      return;
+    }
     await forwardGate;
     await route.continue().catch(error => {
       if (!String(error).includes("already handled")) throw error;
@@ -324,9 +353,11 @@ async function assertHistoryNavigationUsesLoadingState(page) {
   await page.route("**/config/quick-runs", quickRunsRoute);
   await page.evaluate(() => history.forward());
   await page.waitForURL("**/config/quick-runs");
-  await page.locator('main[data-navigation-state="loading"]').waitFor({ timeout: 500 });
+  await page.getByRole("heading", { name: "Quick Runs", exact: true }).waitFor({ timeout: 500 });
+  const forwardLoading = page.locator('[data-deferred-region] [data-deferred-state="loading"]');
+  await forwardLoading.waitFor({ timeout: 500 });
   releaseForward();
-  await page.getByRole("heading", { name: "Quick Runs", exact: true }).waitFor();
+  await forwardLoading.waitFor({ state: "detached" });
   await page.unroute("**/config/quick-runs", quickRunsRoute);
 }
 

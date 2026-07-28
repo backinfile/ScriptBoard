@@ -94,6 +94,133 @@ func TestPJAXPageReturnsBusinessDocumentWithoutApplicationShell(t *testing.T) {
 	}
 }
 
+func TestPJAXHeavyDataShellReturnsPageChromeWithOnlyItsDataRegionLoading(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	stateRoot := filepath.Join(root, "state")
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), stateRoot)
+
+	db, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("INSERT INTO variables (name, value, is_password, created_at, updated_at) VALUES ('LARGE_RESULT_MARKER', 'must only be in the data response', 0, 1, 1)"); err != nil {
+		t.Fatal(err)
+	}
+
+	request, err := http.NewRequest(http.MethodGet, serverURL+"/resources/variables", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("X-ScriptBoard-Navigation", "pjax")
+	request.Header.Set("X-ScriptBoard-Data", "shell")
+	request.Header.Set("Accept", "text/html")
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("shell status=%d, want %d", response.StatusCode, http.StatusOK)
+	}
+	page := string(body)
+	for _, expected := range []string{
+		`<h1>Variables</h1>`,
+		`data-deferred-region`,
+		`data-deferred-state="loading"`,
+		`aria-busy="true"`,
+		`Loading`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("heavy-data shell is missing %q: %s", expected, page)
+		}
+	}
+	if strings.Contains(page, "LARGE_RESULT_MARKER") {
+		t.Fatalf("heavy-data shell contains a business-data row: %s", page)
+	}
+	if strings.Contains(page, `data-navigation-state="loading"`) {
+		t.Fatalf("heavy-data shell replaced the whole main region: %s", page)
+	}
+
+	dataRequest, err := http.NewRequest(http.MethodGet, serverURL+"/resources/variables", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataRequest.Header.Set("X-ScriptBoard-Navigation", "pjax")
+	dataRequest.Header.Set("Accept", "text/html")
+	dataResponse, err := client.Do(dataRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataBody, _ := io.ReadAll(dataResponse.Body)
+	_ = dataResponse.Body.Close()
+	if dataResponse.StatusCode != http.StatusOK {
+		t.Fatalf("data status=%d, want %d", dataResponse.StatusCode, http.StatusOK)
+	}
+	if !strings.Contains(string(dataBody), "LARGE_RESULT_MARKER") {
+		t.Fatalf("business-data response is missing the seeded row: %s", dataBody)
+	}
+}
+
+func TestPJAXDataShellIsLimitedToLargeListRoutes(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
+
+	runsPath := "/history/runs"
+	probe, err := client.Get(serverURL + runsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = probe.Body.Close()
+	if probe.StatusCode == http.StatusNotFound {
+		runsPath = "/monitor/runs"
+	}
+
+	tests := []struct {
+		path     string
+		deferred bool
+	}{
+		{path: "/resources/files/", deferred: true},
+		{path: "/resources/variables", deferred: true},
+		{path: "/config/quick-runs", deferred: true},
+		{path: "/config/schedules", deferred: true},
+		{path: runsPath, deferred: true},
+		{path: "/history/audit", deferred: true},
+		{path: "/resources/trash", deferred: true},
+		{path: "/monitor", deferred: false},
+		{path: "/settings/account", deferred: false},
+	}
+	for _, test := range tests {
+		t.Run(test.path, func(t *testing.T) {
+			request, err := http.NewRequest(http.MethodGet, serverURL+test.path, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request.Header.Set("X-ScriptBoard-Navigation", "pjax")
+			request.Header.Set("X-ScriptBoard-Data", "shell")
+			request.Header.Set("Accept", "text/html")
+			response, err := client.Do(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, _ := io.ReadAll(response.Body)
+			_ = response.Body.Close()
+			if response.StatusCode != http.StatusOK {
+				t.Fatalf("status=%d, want %d: %s", response.StatusCode, http.StatusOK, body)
+			}
+			hasLoadingRegion := strings.Contains(string(body), `data-deferred-state="loading"`)
+			if hasLoadingRegion != test.deferred {
+				t.Fatalf("loading region=%t, want %t: %s", hasLoadingRegion, test.deferred, body)
+			}
+		})
+	}
+}
+
 func TestApplicationShellAndStatusEndpointShareFiveSecondSnapshot(t *testing.T) {
 	t.Parallel()
 

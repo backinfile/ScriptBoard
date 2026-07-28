@@ -4,6 +4,10 @@
 <body>
 <main class="workspace">
   <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "trash.eyebrow"}}</p><h1>{{t .Locale "trash.title"}}</h1><p>{{t .Locale "trash.description"}}</p></div><a class="button button--quiet" href="/resources/files/"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "trash.back_to_files"}}</a></header>
+  <div data-deferred-region>
+  {{if .DeferredData}}
+  {{template "deferred-loading" .}}
+  {{else}}
   {{if .Entries}}
   <div class="table-shell"><table class="records-table">
     <thead><tr><th>{{t .Locale "common.path"}}</th><th>{{t .Locale "trash.deleted_at"}}</th><th>{{t .Locale "common.size"}}</th><th><span class="sr-only">{{t .Locale "common.actions"}}</span></th></tr></thead>
@@ -16,6 +20,8 @@
   </table></div>
   <nav class="pagination" aria-label="{{t .Locale "trash.pagination"}}"><span>{{.Pagination.Total}} {{t .Locale "common.records"}} · {{.Pagination.Page}} / {{.Pagination.PageCount}}</span><div>{{if .Pagination.HasPrevious}}<a href="{{.Pagination.PreviousURL}}">{{t .Locale "common.previous"}}</a>{{else}}<span aria-disabled="true">{{t .Locale "common.previous"}}</span>{{end}}{{if .Pagination.HasNext}}<a href="{{.Pagination.NextURL}}">{{t .Locale "common.next"}}</a>{{else}}<span aria-disabled="true">{{t .Locale "common.next"}}</span>{{end}}</div></nav>
   {{else}}<section class="empty-state"><span data-lucide="trash-2" aria-hidden="true"></span><p>{{t .Locale "trash.empty"}}</p><a class="button button--primary" href="/resources/files/">{{t .Locale "trash.back_to_files"}}</a></section>{{end}}
+  {{end}}
+  </div>
 </main>
 </body>
 </html>

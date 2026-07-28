@@ -60,7 +60,9 @@ func mustWebAsset(path string) string {
 
 func mustWebTemplate(name string) *template.Template {
 	path := "web/templates/" + name + ".html"
-	return template.Must(template.New(name).Funcs(webTemplateFunctions()).Parse(mustWebAsset(path)))
+	return template.Must(template.New(name).Funcs(webTemplateFunctions()).Parse(
+		mustWebAsset("web/templates/deferred-region.html") + mustWebAsset(path),
+	))
 }
 
 func webTemplateFunctions() template.FuncMap {
@@ -1299,6 +1301,11 @@ func (w *pageResponseWriter) finish(a *App, request *http.Request) {
 
 const listPageSize = 20
 
+func isDeferredDataShell(request *http.Request) bool {
+	return request.Header.Get("X-ScriptBoard-Navigation") == "pjax" &&
+		request.Header.Get("X-ScriptBoard-Data") == "shell"
+}
+
 type paginationView struct {
 	Page, PageCount, Total, Start, End int
 	PreviousURL, NextURL               string
@@ -1729,6 +1736,18 @@ func (a *App) auditPage(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, webText(resolveWebLocale(request), key), http.StatusBadRequest)
 		return
 	}
+	locale := resolveWebLocale(request)
+	if isDeferredDataShell(request) {
+		response.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = auditTemplate.Execute(response, struct {
+			Events       []auditView
+			Pagination   paginationView
+			Filters      auditFilters
+			Locale       webLocale
+			DeferredData bool
+		}{Filters: filters, Locale: locale, DeferredData: true})
+		return
+	}
 	like := "%" + filters.Query + "%"
 	var total int
 	if err := a.db.QueryRow(`SELECT COUNT(*) FROM audit_events
@@ -1769,11 +1788,12 @@ func (a *App) auditPage(response http.ResponseWriter, request *http.Request) {
 	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = auditTemplate.Execute(response, struct {
-		Events     []auditView
-		Pagination paginationView
-		Filters    auditFilters
-		Locale     webLocale
-	}{Events: events, Pagination: pagination, Filters: filters, Locale: resolveWebLocale(request)})
+		Events       []auditView
+		Pagination   paginationView
+		Filters      auditFilters
+		Locale       webLocale
+		DeferredData bool
+	}{Events: events, Pagination: pagination, Filters: filters, Locale: locale})
 }
 
 func (a *App) auditDownload(response http.ResponseWriter, _ *http.Request) {
@@ -1799,6 +1819,19 @@ func (a *App) auditDownload(response http.ResponseWriter, _ *http.Request) {
 }
 
 func (a *App) schedulesPage(response http.ResponseWriter, request *http.Request) {
+	current := request.Context().Value(sessionContextKey).(session)
+	locale := resolveWebLocale(request)
+	if isDeferredDataShell(request) {
+		response.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = schedulesTemplate.Execute(response, struct {
+			Schedules    []scheduler.Schedule
+			Groups       []scheduleGroup
+			CSRFToken    string
+			Locale       webLocale
+			DeferredData bool
+		}{CSRFToken: current.csrfToken, Locale: locale, DeferredData: true})
+		return
+	}
 	groups, err := a.loadScheduleGroups()
 	if err != nil {
 		http.Error(response, "无法读取计划分组", http.StatusInternalServerError)
@@ -1809,14 +1842,13 @@ func (a *App) schedulesPage(response http.ResponseWriter, request *http.Request)
 		http.Error(response, "无法读取计划", http.StatusInternalServerError)
 		return
 	}
-	current := request.Context().Value(sessionContextKey).(session)
-	locale := resolveWebLocale(request)
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = schedulesTemplate.Execute(response, struct {
-		Schedules []scheduler.Schedule
-		Groups    []scheduleGroup
-		CSRFToken string
-		Locale    webLocale
+		Schedules    []scheduler.Schedule
+		Groups       []scheduleGroup
+		CSRFToken    string
+		Locale       webLocale
+		DeferredData bool
 	}{
 		Schedules: schedules, Groups: organizeScheduleGroups(groups, schedules, locale),
 		CSRFToken: current.csrfToken, Locale: locale,
@@ -2082,6 +2114,19 @@ func (a *App) createQuickRunFromFile(response http.ResponseWriter, request *http
 }
 
 func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request) {
+	current := request.Context().Value(sessionContextKey).(session)
+	locale := resolveWebLocale(request)
+	if isDeferredDataShell(request) {
+		response.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = quickRunsTemplate.Execute(response, struct {
+			QuickRuns    []quickRunView
+			Groups       []quickRunGroup
+			CSRFToken    string
+			Locale       webLocale
+			DeferredData bool
+		}{CSRFToken: current.csrfToken, Locale: locale, DeferredData: true})
+		return
+	}
 	groups, err := a.loadQuickRunGroups()
 	if err != nil {
 		http.Error(response, "无法读取快捷执行分组", http.StatusInternalServerError)
@@ -2127,18 +2172,18 @@ func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request)
 	}
 	if len(ungrouped) > 0 {
 		groups = append(groups, quickRunGroup{
-			ID: "ungrouped", Name: webText(resolveWebLocale(request), "quick_runs.ungrouped"),
+			ID: "ungrouped", Name: webText(locale, "quick_runs.ungrouped"),
 			QuickRunCount: len(ungrouped), Items: ungrouped, Ungrouped: true,
 		})
 	}
-	current := request.Context().Value(sessionContextKey).(session)
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := quickRunsTemplate.Execute(response, struct {
-		QuickRuns []quickRunView
-		Groups    []quickRunGroup
-		CSRFToken string
-		Locale    webLocale
-	}{QuickRuns: quickRuns, Groups: groups, CSRFToken: current.csrfToken, Locale: resolveWebLocale(request)}); err != nil {
+		QuickRuns    []quickRunView
+		Groups       []quickRunGroup
+		CSRFToken    string
+		Locale       webLocale
+		DeferredData bool
+	}{QuickRuns: quickRuns, Groups: groups, CSRFToken: current.csrfToken, Locale: locale}); err != nil {
 		http.Error(response, "Unable to render Quick Runs: "+err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -2314,6 +2359,19 @@ type variableView struct {
 }
 
 func (a *App) variablesPage(response http.ResponseWriter, request *http.Request) {
+	current := request.Context().Value(sessionContextKey).(session)
+	locale := resolveWebLocale(request)
+	if isDeferredDataShell(request) {
+		response.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = variablesTemplate.Execute(response, struct {
+			Variables    []variableView
+			CSRFToken    string
+			Pagination   paginationView
+			Locale       webLocale
+			DeferredData bool
+		}{CSRFToken: current.csrfToken, Locale: locale, DeferredData: true})
+		return
+	}
 	var total int
 	if err := a.db.QueryRow("SELECT COUNT(*) FROM variables").Scan(&total); err != nil {
 		http.Error(response, "无法读取变量", http.StatusInternalServerError)
@@ -2336,14 +2394,14 @@ func (a *App) variablesPage(response http.ResponseWriter, request *http.Request)
 		variables = append(variables, variable)
 	}
 	_ = rows.Close()
-	current := request.Context().Value(sessionContextKey).(session)
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = variablesTemplate.Execute(response, struct {
-		Variables  []variableView
-		CSRFToken  string
-		Pagination paginationView
-		Locale     webLocale
-	}{Variables: variables, CSRFToken: current.csrfToken, Pagination: pagination, Locale: resolveWebLocale(request)})
+		Variables    []variableView
+		CSRFToken    string
+		Pagination   paginationView
+		Locale       webLocale
+		DeferredData bool
+	}{Variables: variables, CSRFToken: current.csrfToken, Pagination: pagination, Locale: locale})
 }
 
 var variableNamePattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,63}$`)
@@ -2603,6 +2661,18 @@ func (a *App) runsPage(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, webText(resolveWebLocale(request), key), http.StatusBadRequest)
 		return
 	}
+	locale := resolveWebLocale(request)
+	if isDeferredDataShell(request) {
+		response.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = runsTemplate.Execute(response, struct {
+			Runs         []runmanager.Run
+			Pagination   paginationView
+			Filters      runFilters
+			Locale       webLocale
+			DeferredData bool
+		}{Filters: filters, Locale: locale, DeferredData: true})
+		return
+	}
 	managerQuery := filters.Query
 	if filters.ScheduleID != "" {
 		managerQuery = ""
@@ -2628,11 +2698,12 @@ func (a *App) runsPage(response http.ResponseWriter, request *http.Request) {
 	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = runsTemplate.Execute(response, struct {
-		Runs       []runmanager.Run
-		Pagination paginationView
-		Filters    runFilters
-		Locale     webLocale
-	}{Runs: runs, Pagination: pagination, Filters: filters, Locale: resolveWebLocale(request)})
+		Runs         []runmanager.Run
+		Pagination   paginationView
+		Filters      runFilters
+		Locale       webLocale
+		DeferredData bool
+	}{Runs: runs, Pagination: pagination, Filters: filters, Locale: locale})
 }
 
 func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
@@ -2927,6 +2998,19 @@ type trashView struct {
 }
 
 func (a *App) trashPage(response http.ResponseWriter, request *http.Request) {
+	current := request.Context().Value(sessionContextKey).(session)
+	locale := resolveWebLocale(request)
+	if isDeferredDataShell(request) {
+		response.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = trashTemplate.Execute(response, struct {
+			Entries      []trashView
+			CSRFToken    string
+			Pagination   paginationView
+			Locale       webLocale
+			DeferredData bool
+		}{CSRFToken: current.csrfToken, Locale: locale, DeferredData: true})
+		return
+	}
 	var total int
 	if err := a.db.QueryRow("SELECT COUNT(*) FROM trash_entries").Scan(&total); err != nil {
 		http.Error(response, "无法读取回收站", http.StatusInternalServerError)
@@ -2950,14 +3034,14 @@ func (a *App) trashPage(response http.ResponseWriter, request *http.Request) {
 		entry.DeletedAt = time.Unix(deletedAt, 0).UTC()
 		entries = append(entries, entry)
 	}
-	current := request.Context().Value(sessionContextKey).(session)
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = trashTemplate.Execute(response, struct {
-		Entries    []trashView
-		CSRFToken  string
-		Pagination paginationView
-		Locale     webLocale
-	}{Entries: entries, CSRFToken: current.csrfToken, Pagination: pagination, Locale: resolveWebLocale(request)})
+		Entries      []trashView
+		CSRFToken    string
+		Pagination   paginationView
+		Locale       webLocale
+		DeferredData bool
+	}{Entries: entries, CSRFToken: current.csrfToken, Pagination: pagination, Locale: locale})
 }
 
 func (a *App) restoreTrash(response http.ResponseWriter, request *http.Request) {
@@ -3132,13 +3216,30 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 
 func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 	relative := strings.Trim(request.PathValue("path"), "/")
+	query := strings.TrimSpace(request.URL.Query().Get("q"))
+	sortField, direction := normalizeFileSort(request.URL.Query().Get("sort"), request.URL.Query().Get("direction"))
+	current := request.Context().Value(sessionContextKey).(session)
+	locale := resolveWebLocale(request)
+	if isDeferredDataShell(request) {
+		response.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = filesTemplate.Execute(response, struct {
+			CSRFToken, ManagedRoot, CurrentPath, Query, SortField, Direction string
+			SortSummary, RootURL, SearchURL                                  string
+			Locale                                                           webLocale
+			DeferredData                                                     bool
+		}{
+			CSRFToken: current.csrfToken, ManagedRoot: a.managedRoot, CurrentPath: relative,
+			Query: query, SortField: sortField, Direction: direction, SortSummary: fileSortSummary(locale, sortField, direction),
+			RootURL: filesStateURL("", "", sortField, direction, 0), SearchURL: filesURL(relative),
+			Locale: locale, DeferredData: true,
+		})
+		return
+	}
 	entries, err := a.managed.List(relative)
 	if err != nil {
 		http.Error(response, "无法读取受管根目录："+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	query := strings.TrimSpace(request.URL.Query().Get("q"))
-	sortField, direction := normalizeFileSort(request.URL.Query().Get("sort"), request.URL.Query().Get("direction"))
 	listing := prepareFileListing(entries, relative, query, sortField, direction)
 	pagination := newPagination(request, len(listing))
 	if pagination.HasPrevious {
@@ -3159,7 +3260,6 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 	}
 	protectionState, _ := a.gitProtection.State()
 	views := make([]fileView, 0, pagination.End-pagination.Start)
-	locale := resolveWebLocale(request)
 	for index, listed := range listing[pagination.Start:pagination.End] {
 		entry, path := listed.Entry, listed.Path
 		view := fileView{
@@ -3206,7 +3306,6 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		}
 		parentURL = filesStateURL(parent, "", sortField, direction, 0)
 	}
-	current := request.Context().Value(sessionContextKey).(session)
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = filesTemplate.Execute(response, struct {
 		Entries             []fileView
@@ -3225,6 +3324,7 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		ParentURL           string
 		VersionProtection   bool
 		Locale              webLocale
+		DeferredData        bool
 	}{
 		Entries: views, CSRFToken: current.csrfToken, ManagedRoot: a.managedRoot, CurrentPath: relative,
 		Query: query, SortField: sortField, Direction: direction, SortSummary: fileSortSummary(locale, sortField, direction),

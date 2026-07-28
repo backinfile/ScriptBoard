@@ -4,6 +4,10 @@
 <body>
 <main class="workspace" data-grouped-records="schedule-groups">
   <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "schedules.eyebrow"}}</p><h1>{{t .Locale "schedules.title"}}</h1><p>{{t .Locale "schedules.description"}}</p></div><div class="heading-actions"><a class="button" href="/config/schedules/groups/new" data-task-link><span data-lucide="folder-plus" aria-hidden="true"></span>{{t .Locale "schedules.create_group"}}</a><a class="button button--primary" href="/config/schedules/new" data-task-link><span data-lucide="calendar-plus" aria-hidden="true"></span>{{t .Locale "schedules.create"}}</a></div></header>
+  <div data-deferred-region>
+  {{if .DeferredData}}
+  {{template "deferred-loading" .}}
+  {{else}}
   {{range .Groups}}
   <section class="quick-run-group" data-record-group="{{.ID}}" data-schedule-group="{{.ID}}" data-group-name="{{.Name}}">
     <header class="quick-run-group__header">
@@ -52,6 +56,8 @@
   {{if and (not .Schedules) (not .Groups)}}
   <section class="empty-state"><span data-lucide="calendar-clock" aria-hidden="true"></span><p>{{t .Locale "schedules.empty"}}</p><a class="button" href="/config/schedules/new" data-task-link>{{t .Locale "schedules.create"}}</a></section>
   {{end}}
+  {{end}}
+  </div>
 </main>
 </body>
 </html>

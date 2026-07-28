@@ -1,0 +1,6 @@
+{{define "deferred-loading"}}
+<div class="data-load-state" data-deferred-state="loading" role="status" aria-live="polite" aria-busy="true">
+  <span class="data-load-state__icon" data-lucide="loader-circle" aria-hidden="true"></span>
+  <p>{{t .Locale "common.loading"}}</p>
+</div>
+{{end}}

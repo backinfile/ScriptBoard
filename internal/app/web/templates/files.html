@@ -93,6 +93,10 @@
     </form>
   </section>
 
+  <div data-deferred-region>
+  {{if .DeferredData}}
+  {{template "deferred-loading" .}}
+  {{else}}
   {{if .Query}}
   <div class="file-search-results" data-search-results>
     <p role="status" aria-live="polite">
@@ -154,6 +158,8 @@
   <nav class="pagination" aria-label="{{t .Locale "files.pagination"}}"><span>{{.Pagination.Total}} {{t .Locale "common.records"}} · {{.Pagination.Page}} / {{.Pagination.PageCount}}</span><div>{{if .Pagination.HasPrevious}}<a href="{{.Pagination.PreviousURL}}">{{t .Locale "common.previous"}}</a>{{else}}<span aria-disabled="true">{{t .Locale "common.previous"}}</span>{{end}}{{if .Pagination.HasNext}}<a href="{{.Pagination.NextURL}}">{{t .Locale "common.next"}}</a>{{else}}<span aria-disabled="true">{{t .Locale "common.next"}}</span>{{end}}</div></nav>
   {{end}}
   {{end}}
+  {{end}}
+  </div>
 </main>
 </body>
 </html>

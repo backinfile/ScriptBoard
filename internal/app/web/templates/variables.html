@@ -5,6 +5,10 @@
 <main class="workspace">
   <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "variables.eyebrow"}}</p><h1>{{t .Locale "variables.title"}}</h1><p>{{t .Locale "variables.description"}}</p></div><a class="button button--primary" href="/resources/variables/new" data-task-link><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "variables.create"}}</a></header>
   <aside class="inline-notice"><span data-lucide="info" aria-hidden="true"></span><p>{{t .Locale "variables.plaintext_notice"}}</p></aside>
+  <div data-deferred-region>
+  {{if .DeferredData}}
+  {{template "deferred-loading" .}}
+  {{else}}
   {{if .Variables}}
   <div class="table-shell"><table class="records-table variables-table">
     <thead><tr><th>{{t .Locale "common.name"}}</th><th>{{t .Locale "common.value"}}</th><th><span class="sr-only">{{t .Locale "common.actions"}}</span></th></tr></thead>
@@ -58,6 +62,8 @@
   {{else}}
   <section class="empty-state"><span data-lucide="braces" aria-hidden="true"></span><p>{{t .Locale "variables.empty"}}</p><a class="button" href="/resources/variables/new" data-task-link>{{t .Locale "variables.create"}}</a></section>
   {{end}}
+  {{end}}
+  </div>
 </main>
 </body>
 </html>

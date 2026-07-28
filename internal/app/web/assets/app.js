@@ -397,8 +397,8 @@
   async function fetchDocument(url, options = {}) {
     const response = await fetch(url, {
       credentials: "same-origin",
-      headers: { "X-ScriptBoard-Navigation": "pjax", "Accept": "text/html", ...(options.headers || {}) },
-      ...options
+      ...options,
+      headers: { "X-ScriptBoard-Navigation": "pjax", "Accept": "text/html", ...(options.headers || {}) }
     });
     const type = response.headers.get("content-type") || "";
     if (!type.includes("text/html")) return { response, document: null };
@@ -442,63 +442,54 @@
     if (returnTo) returnTo.value = `${destination.pathname}${destination.search}${destination.hash}`;
   }
 
-  function createNavigationState(state, url, title) {
-    const main = document.createElement("main");
-    main.id = "main-content";
-    main.className = "workspace navigation-state";
-    main.dataset.navigationState = state;
-    main.tabIndex = -1;
-    const content = document.createElement("div");
-    content.className = "navigation-state__content";
-
-    if (state === "loading") {
-      main.setAttribute("aria-busy", "true");
-      content.setAttribute("role", "status");
-      content.setAttribute("aria-live", "polite");
-      const icon = document.createElement("span");
-      icon.className = "navigation-state__icon navigation-state__icon--loading";
-      icon.dataset.lucide = "loader-circle";
-      const message = document.createElement("p");
-      message.textContent = words().loading;
-      content.append(icon, message);
-    } else {
-      content.setAttribute("role", "alert");
-      const icon = document.createElement("span");
-      icon.className = "navigation-state__icon navigation-state__icon--error";
-      icon.dataset.lucide = "triangle-alert";
-      const heading = document.createElement("h1");
-      heading.textContent = words().loadFailed;
-      const retry = document.createElement("button");
-      retry.className = "button button--primary";
-      retry.type = "button";
-      const retryIcon = document.createElement("span");
-      retryIcon.dataset.lucide = "rotate-ccw";
-      const retryLabel = document.createElement("span");
-      retryLabel.textContent = words().retry;
-      retry.append(retryIcon, retryLabel);
-      retry.addEventListener("click", () => navigate(url, false, { deferred: true, title }));
-      content.append(icon, heading, retry);
+  function isDeferredDataURL(url) {
+    const path = new URL(url, location.href).pathname;
+    if (path === "/resources/variables" ||
+        path === "/config/quick-runs" ||
+        path === "/config/schedules" ||
+        path === "/history/runs" ||
+        path === "/monitor/runs" ||
+        path === "/history/audit" ||
+        path === "/resources/trash") {
+      return true;
     }
-    main.append(content);
-    renderIcons(main);
-    return main;
+    if (!path.startsWith("/resources/files/")) return false;
+    const relative = path.slice("/resources/files/".length);
+    return !["new-directory", "upload", "run/", "quick-run/", "download/", "preview/", "view/", "edit/"]
+      .some(prefix => relative === prefix.replace(/\/$/, "") || relative.startsWith(prefix));
   }
 
-  function commitDeferredNavigation(url, push, title) {
+  function createDeferredDataFailure(url, title) {
+    const content = document.createElement("div");
+    content.className = "data-load-state data-load-state--error";
+    content.dataset.deferredState = "error";
+    content.setAttribute("role", "alert");
+    const icon = document.createElement("span");
+    icon.className = "data-load-state__icon";
+    icon.dataset.lucide = "triangle-alert";
+    const heading = document.createElement("h2");
+    heading.textContent = words().loadFailed;
+    const retry = document.createElement("button");
+    retry.className = "button button--primary";
+    retry.type = "button";
+    const retryIcon = document.createElement("span");
+    retryIcon.dataset.lucide = "rotate-ccw";
+    const retryLabel = document.createElement("span");
+    retryLabel.textContent = words().retry;
+    retry.append(retryIcon, retryLabel);
+    retry.addEventListener("click", () => navigate(url, false, { deferredData: true, title }));
+    content.append(icon, heading, retry);
+    renderIcons(content);
+    return content;
+  }
+
+  function showDeferredDataFailure(url, title) {
+    const currentRegion = document.querySelector("[data-deferred-region]");
+    if (!currentRegion) return false;
     cleanupPage();
-    const currentMain = document.querySelector("main");
-    const loading = createNavigationState("loading", url, title);
-    currentMain?.replaceWith(loading);
-    if (push) history.pushState({ pjax: true }, "", url);
-    document.title = title;
-    updateShellLocation(url);
-    setSidebar(false);
-    window.scrollTo({ top: 0, behavior: "auto" });
-  }
-
-  function showNavigationFailure(url, title) {
-    const currentMain = document.querySelector("main");
-    currentMain?.replaceWith(createNavigationState("error", url, title));
+    currentRegion.replaceChildren(createDeferredDataFailure(url, title));
+    initPage();
+    return true;
   }
 
   function setTaskLinkBusy(link, busy) {
@@ -529,15 +520,22 @@
     navigationRequest = request;
     navigationBusy = true;
     document.documentElement.setAttribute("aria-busy", "true");
-    const deferred = options.deferred === true;
+    const deferredData = options.deferredData ?? isDeferredDataURL(url);
+    const immediate = deferredData && options.immediate === true;
     const title = options.title || navigationTitle(mainNavigationLink(url));
-    if (deferred) {
-      commitDeferredNavigation(url, push, title);
-      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-      if (navigationRequest !== request) return;
+    let shellCommitted = false;
+    if (immediate) {
+      if (push) history.pushState({ pjax: true }, "", url);
+      document.title = title;
+      updateShellLocation(url);
+      setSidebar(false);
+      window.scrollTo({ top: 0, behavior: "auto" });
     }
     try {
-      const result = await fetchDocument(url, { signal: request.controller.signal });
+      const result = await fetchDocument(url, {
+        signal: request.controller.signal,
+        headers: deferredData ? { "X-ScriptBoard-Data": "shell" } : {},
+      });
       if (navigationRequest !== request || request.sequence !== navigationSequence) return;
       const responseURL = new URL(result.response.url || url, location.href);
       if (!result.document || responseURL.pathname === "/login") {
@@ -545,8 +543,7 @@
         return;
       }
       if (!result.response.ok) {
-        if (deferred) showNavigationFailure(url, title);
-        else location.assign(result.response.url || url);
+        location.assign(result.response.url || url);
         return;
       }
       const nextMain = result.document.querySelector("main");
@@ -555,12 +552,15 @@
         location.assign(result.response.url || url);
         return;
       }
-      if (!deferred) cleanupPage();
+      cleanupPage();
       currentMain.replaceWith(document.importNode(nextMain, true));
       document.title = result.document.title;
       document.documentElement.lang = result.document.documentElement.lang || document.documentElement.lang;
-      if (deferred) {
-        if (location.href !== result.response.url) history.replaceState({ pjax: true }, "", result.response.url);
+      if (deferredData) {
+        shellCommitted = true;
+        if (immediate && location.href !== result.response.url) {
+          history.replaceState({ pjax: true }, "", result.response.url);
+        }
       } else if (push) {
         history.pushState({ pjax: true }, "", result.response.url);
       }
@@ -568,6 +568,40 @@
       setSidebar(false);
       window.scrollTo({ top: 0, behavior: "auto" });
       initPage();
+
+      if (deferredData) {
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        if (navigationRequest !== request || request.sequence !== navigationSequence) return;
+        const dataResult = await fetchDocument(result.response.url || url, { signal: request.controller.signal });
+        if (navigationRequest !== request || request.sequence !== navigationSequence) return;
+        const dataResponseURL = new URL(dataResult.response.url || url, location.href);
+        if (!dataResult.document || dataResponseURL.pathname === "/login") {
+          location.assign(dataResult.response.url || url);
+          return;
+        }
+        if (!dataResult.response.ok) {
+          showDeferredDataFailure(url, title);
+          return;
+        }
+        const nextRegion = dataResult.document.querySelector("[data-deferred-region]");
+        const currentRegion = document.querySelector("[data-deferred-region]");
+        if (!nextRegion || !currentRegion) {
+          location.assign(dataResult.response.url || url);
+          return;
+        }
+        cleanupPage();
+        currentRegion.replaceWith(document.importNode(nextRegion, true));
+        document.title = dataResult.document.title;
+        document.documentElement.lang = dataResult.document.documentElement.lang || document.documentElement.lang;
+        if (!immediate && push) {
+          history.pushState({ pjax: true }, "", dataResult.response.url);
+        } else if (location.href !== dataResult.response.url) {
+          history.replaceState({ pjax: true }, "", dataResult.response.url);
+        }
+        updateShellLocation(dataResult.response.url);
+        initPage();
+      }
+
       if (options.focusSelector) {
         const focusTarget = document.querySelector(options.focusSelector);
         focusTarget?.focus();
@@ -578,8 +612,7 @@
       }
     } catch (error) {
       if (error?.name === "AbortError" || navigationRequest !== request) return;
-      if (deferred) showNavigationFailure(url, title);
-      else location.assign(url);
+      if (!shellCommitted || !showDeferredDataFailure(url, title)) location.assign(url);
     } finally {
       if (navigationRequest === request) {
         navigationRequest = null;
@@ -1526,10 +1559,11 @@
     if (link.matches("[data-task-link]") && matchMedia("(min-width: 761px)").matches) {
       openTask(destination.href, true, link);
     } else {
-      const deferred = link.matches(".sidebar-nav a");
+      const mainNavigation = link.matches(".sidebar-nav a");
       navigate(destination.href, true, {
-        deferred,
-        title: deferred ? navigationTitle(link) : undefined,
+        deferredData: isDeferredDataURL(destination.href),
+        immediate: mainNavigation,
+        title: mainNavigation ? navigationTitle(link) : undefined,
         focusSelector: link.dataset.focusAfterNavigation,
       });
     }
@@ -1634,7 +1668,7 @@
     }
     const navigationLink = mainNavigationLink(location.href, true);
     navigate(location.href, false, {
-      deferred: Boolean(navigationLink),
+      deferredData: isDeferredDataURL(location.href),
       title: navigationLink ? navigationTitle(navigationLink) : undefined,
     });
   });

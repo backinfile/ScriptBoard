@@ -4,6 +4,10 @@
 <body>
 <main class="workspace" data-quick-runs-page data-grouped-records="quick-run-groups">
   <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "quick_runs.eyebrow"}}</p><h1>{{t .Locale "quick_runs.title"}}</h1><p>{{t .Locale "quick_runs.description"}}</p></div><div class="heading-actions"><a class="button" href="/config/quick-runs/groups/new" data-task-link><span data-lucide="folder-plus" aria-hidden="true"></span>{{t .Locale "quick_runs.create_group"}}</a></div></header>
+  <div data-deferred-region>
+  {{if .DeferredData}}
+  {{template "deferred-loading" .}}
+  {{else}}
   {{range .Groups}}
   <section class="quick-run-group" data-record-group="{{.ID}}" data-quick-run-group="{{.ID}}" data-group-name="{{.Name}}">
     <header class="quick-run-group__header">
@@ -47,6 +51,8 @@
   {{if and (not .QuickRuns) (not .Groups)}}
   <section class="empty-state"><span data-lucide="zap" aria-hidden="true"></span><p>{{t .Locale "quick_runs.empty"}}</p><a class="button" href="/resources/files/">{{t .Locale "quick_runs.browse_scripts"}}</a></section>
   {{end}}
+  {{end}}
+  </div>
 </main>
 </body>
 </html>

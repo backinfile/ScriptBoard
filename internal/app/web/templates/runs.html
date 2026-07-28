@@ -20,6 +20,10 @@
       </div>
     </form>
   </section>
+  <div data-deferred-region>
+  {{if .DeferredData}}
+  {{template "deferred-loading" .}}
+  {{else}}
   {{if .Runs}}
   <div class="table-shell"><table class="records-table runs-table">
     <thead><tr><th>{{t .Locale "common.time"}}</th><th>{{t .Locale "common.script"}}</th><th>{{t .Locale "common.source"}}</th><th>{{t .Locale "common.status"}}</th><th>{{t .Locale "runs.executor"}}</th></tr></thead>
@@ -37,6 +41,8 @@
   {{else}}
   <section class="empty-state"><span data-lucide="square-terminal" aria-hidden="true"></span><p>{{t .Locale "runs.empty"}}</p><a class="button" href="/resources/files/">{{t .Locale "overview.run_script"}}</a></section>
   {{end}}
+  {{end}}
+  </div>
 </main>
 </body>
 </html>
