@@ -61,7 +61,7 @@
           <input type="search" name="q" value="{{.Query}}" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="{{t .Locale "files.search_placeholder"}}" data-search-input>
           <kbd aria-label="{{t .Locale "files.search_shortcut"}}">/</kbd>
         </label>
-        <button class="button--primary file-search-submit" type="submit" data-search-submit data-pending-label="{{t .Locale "files.search_pending"}}">{{t .Locale "files.search_button"}}</button>
+        <button class="button file-search-submit" type="submit" data-search-submit data-pending-label="{{t .Locale "files.search_pending"}}">{{t .Locale "files.search_button"}}</button>
       </div>
       <details class="file-sort" data-file-sort>
         <summary>
@@ -87,7 +87,7 @@
               <option value="desc" {{if eq .Direction "desc"}}selected{{end}}>{{t .Locale "files.descending"}}</option>
             </select>
           </label>
-          <button type="submit" data-sort-submit data-pending-label="{{t .Locale "files.sort_pending"}}">{{t .Locale "files.apply_sort"}}</button>
+          <button class="button" type="submit" data-sort-submit data-pending-label="{{t .Locale "files.sort_pending"}}">{{t .Locale "files.apply_sort"}}</button>
         </div>
       </details>
     </form>
@@ -107,7 +107,7 @@
   <section class="no-search-results" data-no-search-results>
     <span data-lucide="search-x" aria-hidden="true"></span>
     <p>{{t .Locale "files.no_results_before"}} <code>{{.Query}}</code> {{t .Locale "files.no_results_after"}}</p>
-    <a class="button" href="{{.ClearURL}}" data-focus-after-navigation="[data-search-input]">{{t .Locale "files.clear_search"}}</a>
+    <a class="button button--quiet" href="{{.ClearURL}}" data-focus-after-navigation="[data-search-input]">{{t .Locale "files.clear_search"}}</a>
   </section>
   {{else}}
   <div class="table-shell">
@@ -126,8 +126,8 @@
           <td data-label="{{t $.Locale "common.modified"}}"><time datetime="{{machineTime .ModifiedAt}}" data-local-time>{{localTime $.Locale .ModifiedAt}}</time></td>
           <td class="record-actions">
             <div class="record-actions__group">
-            {{if .BrowseURL}}<a class="button button--quiet" href="{{.BrowseURL}}">{{t $.Locale "common.open"}}</a>{{end}}
-            {{if .Runnable}}<a class="button button--primary" href="/resources/files/run/{{.Path}}" data-task-link><span data-lucide="play" aria-hidden="true"></span>{{t $.Locale "common.run"}}</a>{{end}}
+            {{if .BrowseURL}}<a class="button button--quiet button--compact" href="{{.BrowseURL}}">{{t $.Locale "common.open"}}</a>{{end}}
+            {{if .Runnable}}<a class="button button--compact" href="/resources/files/run/{{.Path}}" data-task-link><span data-lucide="play" aria-hidden="true"></span>{{t $.Locale "common.run"}}</a>{{end}}
             {{if ne .Kind "restricted"}}
             <details class="action-menu">
               <summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary>
@@ -136,8 +136,8 @@
                 {{if .ViewURL}}<a href="{{.ViewURL}}"><span data-lucide="eye" aria-hidden="true"></span>{{t $.Locale "common.preview"}}</a>{{end}}
                 {{if .EditURL}}<a href="{{.EditURL}}"><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a>{{end}}
                 {{if .DownloadURL}}<a href="{{.DownloadURL}}" data-native><span data-lucide="download" aria-hidden="true"></span>{{t $.Locale "common.download"}}</a>{{end}}
-                {{if and $.CanToggleExecutable (eq .Kind "regular")}}<form method="post" action="/resources/files/toggle-executable" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button name="path" value="{{.Path}}"><span data-lucide="file-cog" aria-hidden="true"></span>{{t $.Locale "files.executable"}}</button></form>{{end}}
-                <form method="post" action="/resources/files/delete" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-action" name="path" value="{{.Path}}"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "files.move_to_trash"}}</button></form>
+                {{if and $.CanToggleExecutable (eq .Kind "regular")}}<form method="post" action="/resources/files/toggle-executable" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" name="path" value="{{.Path}}"><span data-lucide="file-cog" aria-hidden="true"></span>{{t $.Locale "files.executable"}}</button></form>{{end}}
+                <form method="post" action="/resources/files/delete" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-action" type="submit" name="path" value="{{.Path}}"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "files.move_to_trash"}}</button></form>
               </div>
             </details>
             {{end}}

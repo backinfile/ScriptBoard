@@ -15,7 +15,7 @@
         <label><span class="sr-only">{{t .Locale "common.end_date"}}</span><input type="date" name="to" value="{{.Filters.ToDate}}" aria-label="{{t .Locale "common.end_date"}}"></label>
       </fieldset>
       <div class="history-filter-actions">
-        <button class="button--primary" type="submit"><span data-lucide="search" aria-hidden="true"></span>{{t .Locale "common.search"}}</button>
+        <button class="button" type="submit"><span data-lucide="search" aria-hidden="true"></span>{{t .Locale "common.search"}}</button>
         {{if .Filters.HasActiveSelection}}<a class="button button--quiet" href="/monitor/runs" data-focus-after-navigation="#run-search"><span data-lucide="x" aria-hidden="true"></span>{{t .Locale "common.clear"}}</a>{{end}}
       </div>
     </form>
@@ -35,7 +35,7 @@
   {{else if .Filters.HasActiveSelection}}
   <section class="empty-state"><span data-lucide="search-x" aria-hidden="true"></span><p>{{t .Locale "runs.no_matches"}}</p><a class="button button--quiet" href="/monitor/runs" data-focus-after-navigation="#run-search">{{t .Locale "common.clear"}}</a></section>
   {{else}}
-  <section class="empty-state"><span data-lucide="square-terminal" aria-hidden="true"></span><p>{{t .Locale "runs.empty"}}</p><a class="button button--primary" href="/resources/files/">{{t .Locale "overview.run_script"}}</a></section>
+  <section class="empty-state"><span data-lucide="square-terminal" aria-hidden="true"></span><p>{{t .Locale "runs.empty"}}</p><a class="button" href="/resources/files/">{{t .Locale "overview.run_script"}}</a></section>
   {{end}}
 </main>
 </body>

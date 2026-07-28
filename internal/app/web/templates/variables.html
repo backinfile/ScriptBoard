@@ -48,15 +48,15 @@
       {{end}}</td>
       <td class="record-actions">
         <div class="record-actions__group">
-        <a class="button button--quiet" href="/resources/variables/{{.Name}}/edit" data-task-link><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a>
-        <details class="action-menu"><summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div><form method="post" action="/resources/variables/{{.Name}}/delete" data-confirm="{{t $.Locale "variables.delete_confirm"}}" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-action" name="confirm" value="yes"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "common.delete"}}</button></form></div></details>
+        <a class="button button--quiet button--compact" href="/resources/variables/{{.Name}}/edit" data-task-link><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a>
+        <details class="action-menu"><summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div><form method="post" action="/resources/variables/{{.Name}}/delete" data-confirm="{{t $.Locale "variables.delete_confirm"}}" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-action" type="submit" name="confirm" value="yes"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "common.delete"}}</button></form></div></details>
         </div>
       </td>
     </tr>{{end}}</tbody>
   </table></div>
   <nav class="pagination" aria-label="{{t .Locale "variables.pagination"}}"><span>{{.Pagination.Total}} {{t .Locale "common.records"}} · {{.Pagination.Page}} / {{.Pagination.PageCount}}</span><div>{{if .Pagination.HasPrevious}}<a href="{{.Pagination.PreviousURL}}">{{t .Locale "common.previous"}}</a>{{else}}<span aria-disabled="true">{{t .Locale "common.previous"}}</span>{{end}}{{if .Pagination.HasNext}}<a href="{{.Pagination.NextURL}}">{{t .Locale "common.next"}}</a>{{else}}<span aria-disabled="true">{{t .Locale "common.next"}}</span>{{end}}</div></nav>
   {{else}}
-  <section class="empty-state"><span data-lucide="braces" aria-hidden="true"></span><p>{{t .Locale "variables.empty"}}</p><a class="button button--primary" href="/resources/variables/new" data-task-link>{{t .Locale "variables.create"}}</a></section>
+  <section class="empty-state"><span data-lucide="braces" aria-hidden="true"></span><p>{{t .Locale "variables.empty"}}</p><a class="button" href="/resources/variables/new" data-task-link>{{t .Locale "variables.create"}}</a></section>
   {{end}}
 </main>
 </body>

@@ -2,7 +2,7 @@
 <html lang="{{.Locale}}">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{.Title}} · ScriptBoard</title></head>
 <body>
-<main class="workspace task-page" data-task-page data-task-kind="{{.Kind}}">
+<main class="workspace task-page" data-task-page data-task-kind="{{.Kind}}" data-task-close-label="{{t .Locale "common.close"}}">
   <a class="task-back" href="{{.BackURL}}"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "common.back"}}</a>
   <section class="task-sheet">
     <header><div><p class="page-eyebrow">{{t .Locale "common.create"}}</p><h1>{{.Title}}</h1><p>{{.Description}}</p></div><a class="icon-button" href="{{.BackURL}}" aria-label="{{t .Locale "common.close"}}"><span data-lucide="x" aria-hidden="true"></span></a></header>
@@ -10,14 +10,14 @@
     <form method="post" action="{{.Action}}" data-async>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value="{{.Path}}">
       <label>{{t .Locale "task.directory_name"}} <input name="name" autocomplete="off" spellcheck="false" required autofocus></label>
-      <footer><a class="button" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button--primary" type="submit">{{t .Locale "common.create"}}</button></footer>
+      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "common.create"}}</button></footer>
     </form>
     {{else if eq .Kind "upload"}}
     <form method="post" action="{{.Action}}" enctype="multipart/form-data" data-native>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value="{{.Path}}">
       <label class="file-picker">{{t .Locale "task.select_files"}} <input name="files" type="file" multiple required autofocus></label>
       <label class="check-field"><input name="replace" type="checkbox" value="yes"> {{t .Locale "task.replace_existing"}}</label>
-      <footer><a class="button" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button--primary" type="submit">{{t .Locale "task.start_upload"}}</button></footer>
+      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "task.start_upload"}}</button></footer>
     </form>
     {{else if eq .Kind "run"}}
     <form method="post" action="{{.Action}}">
@@ -25,7 +25,7 @@
       <div class="field-readonly"><span>{{t .Locale "common.script"}}</span><code>{{.Path}}</code></div>
       <label>{{t .Locale "task.arguments"}} <input name="arguments" autocomplete="off" spellcheck="false" value="{{.Arguments}}" autofocus></label>
       <label>{{t .Locale "task.timeout_seconds"}} <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}"></label>
-      <footer><a class="button" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button--primary" type="submit"><span data-lucide="play" aria-hidden="true"></span>{{t .Locale "task.start_run"}}</button></footer>
+      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="play" aria-hidden="true"></span>{{t .Locale "task.start_run"}}</button></footer>
     </form>
     {{else if eq .Kind "quick-save"}}
     <form method="post" action="{{.Action}}" data-async>
@@ -33,7 +33,7 @@
       <div class="field-readonly"><span>{{t .Locale "common.script"}}</span><code>{{.Path}}</code></div>
       <label>{{t .Locale "run_detail.quick_name"}} <input name="name" autocomplete="off" required autofocus></label>
       <label>{{t .Locale "quick_runs.group"}} <select name="group_id"><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></label>
-      <footer><a class="button" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button--primary" type="submit">{{t .Locale "run_detail.save_quick"}}</button></footer>
+      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "run_detail.save_quick"}}</button></footer>
     </form>
     {{else if eq .Kind "quick-new"}}
     <form method="post" action="{{.Action}}" data-async>
@@ -43,20 +43,20 @@
       <label>{{t .Locale "task.arguments"}} <input name="arguments" autocomplete="off" spellcheck="false" value="{{.Arguments}}"></label>
       <label>{{t .Locale "task.timeout_seconds"}} <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}"></label>
       <label>{{t .Locale "quick_runs.group"}} <select name="group_id"><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}" {{if eq .ID $.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}</select></label>
-      <footer><a class="button" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button--primary" type="submit"><span data-lucide="bookmark-plus" aria-hidden="true"></span>{{t .Locale "run_detail.save_quick"}}</button></footer>
+      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="bookmark-plus" aria-hidden="true"></span>{{t .Locale "run_detail.save_quick"}}</button></footer>
     </form>
     {{else if or (or (eq .Kind "quick-group-new") (eq .Kind "quick-group-edit")) (or (eq .Kind "schedule-group-new") (eq .Kind "schedule-group-edit"))}}
     <form method="post" action="{{.Action}}" data-async>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <label>{{t .Locale "common.name"}} <input name="name" autocomplete="off" maxlength="256" value="{{.Name}}" required autofocus></label>
-      <footer><a class="button" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button--primary" type="submit">{{if or (eq .Kind "quick-group-edit") (eq .Kind "schedule-group-edit")}}{{t .Locale "task.save_changes"}}{{else}}{{t .Locale "common.create"}}{{end}}</button></footer>
+      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{if or (eq .Kind "quick-group-edit") (eq .Kind "schedule-group-edit")}}{{t .Locale "task.save_changes"}}{{else}}{{t .Locale "common.create"}}{{end}}</button></footer>
     </form>
     {{else if eq .Kind "quick-move-group"}}
     <form method="post" action="{{.Action}}" data-async>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <div class="field-readonly"><span>{{t .Locale "run_detail.quick_name"}}</span><strong>{{.Name}}</strong></div>
       <label>{{t .Locale "quick_runs.group"}} <select name="group_id" autofocus><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}" {{if eq .ID $.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}</select></label>
-      <footer><a class="button" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button--primary" type="submit">{{t .Locale "quick_runs.move_group"}}</button></footer>
+      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "quick_runs.move_group"}}</button></footer>
     </form>
     {{else if eq .Kind "quick-edit"}}
     <form method="post" action="{{.Action}}" data-async>
@@ -65,7 +65,7 @@
       <label>{{t .Locale "run_detail.quick_name"}} <input name="name" autocomplete="off" value="{{.Name}}" required autofocus></label>
       <label>{{t .Locale "task.arguments"}} <input name="arguments" autocomplete="off" spellcheck="false" value="{{.Arguments}}"></label>
       <label>{{t .Locale "task.timeout_seconds"}} <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}"></label>
-      <footer><a class="button" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button--primary" type="submit">{{t .Locale "task.save_changes"}}</button></footer>
+      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "task.save_changes"}}</button></footer>
     </form>
     {{else if eq .Kind "quick-copy"}}
     <form method="post" action="{{.Action}}" data-async>
@@ -75,7 +75,7 @@
       <label>{{t .Locale "task.arguments"}} <input name="arguments" autocomplete="off" spellcheck="false" value="{{.Arguments}}"></label>
       <label>{{t .Locale "task.timeout_seconds"}} <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}"></label>
       <label>{{t .Locale "quick_runs.group"}} <select name="group_id"><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}" {{if eq .ID $.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}</select></label>
-      <footer><a class="button" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button--primary" type="submit"><span data-lucide="copy" aria-hidden="true"></span>{{t .Locale "quick_runs.copy"}}</button></footer>
+      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="copy" aria-hidden="true"></span>{{t .Locale "quick_runs.copy"}}</button></footer>
     </form>
     {{else if or (eq .Kind "variable-new") (eq .Kind "variable-edit")}}
     <form method="post" action="{{.Action}}" data-async>
@@ -83,7 +83,7 @@
       <label>{{t .Locale "common.name"}} <input name="name" autocomplete="off" spellcheck="false" pattern="[A-Z][A-Z0-9_]{0,63}" value="{{.Name}}" required autofocus></label>
       <label>{{t .Locale "common.value"}} <textarea name="value" autocomplete="off" maxlength="4096">{{.Value}}</textarea></label>
       <label class="check-field"><input type="checkbox" name="is_password" value="1" {{if .IsPassword}}checked{{end}}> {{t .Locale "task.password_type"}}</label>
-      <footer><a class="button" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button--primary" type="submit">{{if eq .Kind "variable-edit"}}{{t .Locale "task.save_changes"}}{{else}}{{t .Locale "common.create"}}{{end}}</button></footer>
+      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{if eq .Kind "variable-edit"}}{{t .Locale "task.save_changes"}}{{else}}{{t .Locale "common.create"}}{{end}}</button></footer>
     </form>
     {{else if or (eq .Kind "schedule-new") (eq .Kind "schedule-edit")}}
     <form class="schedule-plan-form" method="post" action="{{.Action}}" data-async data-schedule-form data-preview-action="{{.PreviewAction}}" data-cron-next-label="{{t .Locale "cron.next_five"}}" data-cron-idle="{{t .Locale "cron.preview_idle"}}" data-cron-pending="{{t .Locale "cron.preview_pending"}}" data-cron-unavailable="{{t .Locale "cron.preview_unavailable"}}" data-cron-guided-synced="{{t .Locale "cron.guided_synced"}}" data-cron-guided-waiting="{{t .Locale "cron.guided_waiting"}}" data-cron-guided-parsed="{{t .Locale "cron.guided_parsed"}}" data-cron-guided-custom="{{t .Locale "cron.guided_custom"}}">
@@ -136,7 +136,7 @@
             <details class="cron-disclosure cron-raw-editor" open>
               <summary><span data-lucide="braces" aria-hidden="true"></span>{{t .Locale "cron.raw_editor"}}</summary>
               <div>
-                <label class="cron-expression-field"><span>{{t .Locale "task.cron_expression"}}</span><span class="cron-expression-row"><input name="expression" autocomplete="off" spellcheck="false" maxlength="256" value="{{.Expression}}" placeholder="0 2 * * *" aria-describedby="cron-field-order cron-guided-status cron-feedback" data-cron-expression {{if .CronError}}aria-invalid="true"{{end}} required><button type="button" data-cron-parse><span data-lucide="arrow-up-from-line" aria-hidden="true"></span>{{t .Locale "cron.parse_to_guided"}}</button></span></label>
+                <label class="cron-expression-field"><span>{{t .Locale "task.cron_expression"}}</span><span class="cron-expression-row"><input name="expression" autocomplete="off" spellcheck="false" maxlength="256" value="{{.Expression}}" placeholder="0 2 * * *" aria-describedby="cron-field-order cron-guided-status cron-feedback" data-cron-expression {{if .CronError}}aria-invalid="true"{{end}} required><button class="button" type="button" data-cron-parse><span data-lucide="arrow-up-from-line" aria-hidden="true"></span>{{t .Locale "cron.parse_to_guided"}}</button></span></label>
                 <p class="cron-guided-status" id="cron-guided-status" data-cron-guided-status aria-live="polite">{{t .Locale "cron.guided_synced"}}</p>
                 <dl class="cron-field-ruler" id="cron-field-order">
                   <div><dt>{{t .Locale "cron.field.minute"}}</dt><dd>0–59</dd></div>
@@ -167,7 +167,7 @@
           <label class="check-field schedule-switch"><input name="disallow_overlap" type="checkbox" value="1" {{if .DisallowOverlap}}checked{{end}}> <span><strong>{{t .Locale "task.disallow_overlap"}}</strong><small>{{t .Locale "schedules.overlap_hint"}}</small></span></label>
         </div>
       </section>
-      <footer class="schedule-form-actions"><a class="button" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><div><button type="submit" formaction="{{.PreviewAction}}" formnovalidate data-cron-preview-submit><span data-lucide="calendar-clock" aria-hidden="true"></span>{{t .Locale "cron.preview_action"}}</button><button class="button--primary" type="submit">{{if eq .Kind "schedule-edit"}}{{t .Locale "task.save_changes"}}{{else}}{{t .Locale "common.create"}}{{end}}</button></div></footer>
+      <footer class="schedule-form-actions"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><div><button class="button" type="submit" formaction="{{.PreviewAction}}" formnovalidate data-cron-preview-submit><span data-lucide="calendar-clock" aria-hidden="true"></span>{{t .Locale "cron.preview_action"}}</button><button class="button button--primary" type="submit">{{if eq .Kind "schedule-edit"}}{{t .Locale "task.save_changes"}}{{else}}{{t .Locale "common.create"}}{{end}}</button></div></footer>
     </form>
     {{end}}
   </section>

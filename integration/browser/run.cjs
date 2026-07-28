@@ -266,6 +266,9 @@ async function createVariable(page, name, value, password = false) {
     }
     assert.equal(page.url(), filesWorkspaceURL, "opening the Run task changed the workspace URL");
     assert.equal(await page.locator("[data-task-panel]").getAttribute("aria-modal"), "true");
+    assert.equal(await page.locator(".task-panel-scrim").getAttribute("aria-label"), "Close");
+    assert.equal(await page.locator("[data-task-panel] .button--primary").count(), 1);
+    assert.equal(Math.round(await page.locator("[data-task-panel] .button--primary").evaluate(element => element.getBoundingClientRect().height)), 38);
     await page.locator('[data-task-panel] input[name="arguments"]').fill("-Environment staging");
     await saveSnapshot(page, "files-run-task");
     await Promise.all([
@@ -357,10 +360,22 @@ async function createVariable(page, name, value, password = false) {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload();
     await scheduleRecord.waitFor();
+    const scheduleMobileActions = await scheduleRecord.locator(".button--compact, .action-menu > summary").evaluateAll(elements =>
+      elements.map(element => {
+        const bounds = element.getBoundingClientRect();
+        return { width: Math.round(bounds.width), height: Math.round(bounds.height) };
+      }),
+    );
+    assert.ok(scheduleMobileActions.every(size => size.width >= 44 && size.height >= 44), JSON.stringify(scheduleMobileActions));
     await assertNoHorizontalOverflow(page, "grouped schedules mobile");
+    await saveSnapshot(page, "schedules-mobile");
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.reload();
     await scheduleRecord.waitFor();
+    const scheduleRunButton = scheduleRecord.getByRole("button", { name: "Run now", exact: true });
+    assert.equal(await scheduleRunButton.evaluate(element => element.classList.contains("button--primary")), false);
+    assert.equal(Math.round(await scheduleRunButton.evaluate(element => element.getBoundingClientRect().height)), 34);
+    await saveSnapshot(page, "schedules");
     const scheduleID = await scheduleRecord.getAttribute("data-schedule-id");
     assert.ok(scheduleID);
     await scheduleRecord.getByRole("button", { name: "Run now", exact: true }).click();
@@ -450,11 +465,21 @@ async function createVariable(page, name, value, password = false) {
     assert.equal(await quickRunRow.locator('[data-locked-action="edit"][aria-disabled="true"]').count(), 1);
     assert.equal(await quickRunRow.locator('[data-locked-action="delete"][aria-disabled="true"]').count(), 1);
     await quickRunRow.locator(".action-menu summary").click();
+    const quickRunButton = quickRunRow.getByRole("button", { name: "Run", exact: true });
+    assert.equal(await quickRunButton.evaluate(element => element.classList.contains("button--primary")), false);
+    assert.equal(Math.round(await quickRunButton.evaluate(element => element.getBoundingClientRect().height)), 34);
     await assertNoHorizontalOverflow(page, "Quick Runs desktop");
     await saveSnapshot(page, "quick-runs");
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload();
+    const quickRunMobileActions = await page.locator("[data-quick-run-id]").first().locator(".button--compact, .action-menu > summary").evaluateAll(elements =>
+      elements.map(element => {
+        const bounds = element.getBoundingClientRect();
+        return { width: Math.round(bounds.width), height: Math.round(bounds.height) };
+      }),
+    );
+    assert.ok(quickRunMobileActions.every(size => size.width >= 44 && size.height >= 44), JSON.stringify(quickRunMobileActions));
     await page.evaluate(() => {
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
       scrollTo(0, 0);
@@ -559,6 +584,27 @@ async function createVariable(page, name, value, password = false) {
     const fileSearch = page.locator("[data-file-search]");
     const fileSearchInput = fileSearch.locator("[data-search-input]");
     const fileSearchButton = fileSearch.locator("[data-search-submit]");
+    const fileSearchButtonMetrics = await fileSearchButton.evaluate(element => {
+      const style = getComputedStyle(element);
+      const primary = element.closest(".file-search-primary");
+      const input = primary.querySelector("input");
+      return {
+        height: Math.round(element.getBoundingClientRect().height),
+        inputHeight: Math.round(input.getBoundingClientRect().height),
+        minHeight: style.minHeight,
+        padding: style.padding,
+        alignSelf: style.alignSelf,
+        parentHeight: Math.round(element.parentElement.getBoundingClientRect().height),
+      };
+    });
+    assert.deepEqual(fileSearchButtonMetrics, {
+      height: 42,
+      inputHeight: 42,
+      minHeight: "42px",
+      padding: "8px 18px",
+      alignSelf: "auto",
+      parentHeight: 42,
+    }, JSON.stringify(fileSearchButtonMetrics));
     await page.keyboard.press("/");
     assert.equal(await fileSearchInput.evaluate(input => document.activeElement === input), true);
     await page.waitForFunction(() => getComputedStyle(document.querySelector("[data-file-search] kbd")).opacity === "0");
@@ -576,9 +622,12 @@ async function createVariable(page, name, value, password = false) {
       await route.continue();
     }, { times: 1 });
     await fileSearchInput.fill("auto");
+    const searchButtonWidth = Math.round(await fileSearchButton.evaluate(button => button.getBoundingClientRect().width));
     await fileSearchInput.press("Enter");
     assert.equal(await fileSearch.getAttribute("aria-busy"), "true");
     assert.equal(await fileSearchButton.isDisabled(), true);
+    assert.equal(await fileSearchButton.getAttribute("aria-busy"), "true");
+    assert.equal(Math.round(await fileSearchButton.evaluate(button => button.getBoundingClientRect().width)), searchButtonWidth);
     assert.equal((await fileSearchButton.textContent()).trim(), "Searching…");
     const searchedFilesURL = page.waitForURL(url =>
       url.pathname === "/resources/files/" && url.searchParams.get("q") === "auto");
@@ -674,10 +723,11 @@ async function createVariable(page, name, value, password = false) {
       return {
         fitsWidth: bounds.right <= window.innerWidth,
         sameRow: inputBounds.top < buttonBounds.bottom && buttonBounds.top < inputBounds.bottom,
+        buttonHeight: Math.round(buttonBounds.height),
         shortcutHidden: getComputedStyle(primary.querySelector("kbd")).display === "none",
       };
     });
-    assert.deepEqual(mobileSearchMetrics, { fitsWidth: true, sameRow: true, shortcutHidden: true });
+    assert.deepEqual(mobileSearchMetrics, { fitsWidth: true, sameRow: true, buttonHeight: 44, shortcutHidden: true });
     const mobileSort = page.locator("[data-file-sort]");
     await mobileSort.locator("summary").click();
     assert.equal(await mobileSort.locator(".file-sort-panel").evaluate(panel => getComputedStyle(panel).position), "static");
@@ -700,6 +750,12 @@ async function createVariable(page, name, value, password = false) {
     await page.goto(`${fixture.baseURL}/resources/trash`);
     await page.getByText("README.md", { exact: true }).waitFor();
     await assertTableRowsAligned(page, ".records-table", "trash desktop");
+    const trashRow = page.locator(".records-table tbody tr").filter({ hasText: "README.md" });
+    const restoreButton = trashRow.getByRole("button", { name: "Restore", exact: true });
+    assert.equal(await restoreButton.evaluate(element => element.classList.contains("button--primary")), false);
+    assert.equal(Math.round(await restoreButton.evaluate(element => element.getBoundingClientRect().height)), 34);
+    assert.equal(await trashRow.getByRole("button", { name: "Purge permanently", exact: true }).evaluate(element => element.classList.contains("button--danger")), true);
+    await saveSnapshot(page, "trash");
 
     await page.goto(`${fixture.baseURL}/history/audit`);
     const auditSearch = page.locator('form[data-async-push]');

@@ -472,7 +472,8 @@
     const host = document.createElement("div");
     const cleanups = [];
     host.className = "task-panel-host";
-    host.innerHTML = '<button class="task-panel-scrim" type="button" aria-label="Close"></button><section class="task-panel" role="dialog" aria-modal="true" data-task-panel></section>';
+    host.innerHTML = '<button class="task-panel-scrim" type="button"></button><section class="task-panel" role="dialog" aria-modal="true" data-task-panel></section>';
+    host.querySelector(".task-panel-scrim").setAttribute("aria-label", main.dataset.taskCloseLabel);
     host.querySelector(".task-panel").append(document.importNode(main, true));
     document.body.append(host);
     document.body.classList.add("has-task-panel");
@@ -545,7 +546,12 @@
     form.querySelectorAll("[data-submit-original]").forEach(button => {
       button.innerHTML = button.dataset.submitOriginal;
       button.disabled = false;
+      button.removeAttribute("aria-busy");
+      button.style.minWidth = button.dataset.submitOriginalMinWidth;
+      button.style.width = button.dataset.submitOriginalWidth;
       delete button.dataset.submitOriginal;
+      delete button.dataset.submitOriginalMinWidth;
+      delete button.dataset.submitOriginalWidth;
     });
     form.querySelectorAll("[data-submitter-mirror]").forEach(input => input.remove());
   }
@@ -1432,8 +1438,14 @@
         form.append(mirror);
       }
       submitter.dataset.submitOriginal = submitter.innerHTML;
+      submitter.dataset.submitOriginalMinWidth = submitter.style.minWidth;
+      submitter.dataset.submitOriginalWidth = submitter.style.width;
+      const submitterWidth = `${submitter.getBoundingClientRect().width}px`;
+      submitter.style.minWidth = submitterWidth;
+      submitter.style.width = submitterWidth;
       submitter.textContent = submitter.dataset.pendingLabel || words().processing;
       submitter.disabled = true;
+      submitter.setAttribute("aria-busy", "true");
     }
     form.setAttribute("aria-busy", "true");
     if (form.matches("[data-login-form]")) {

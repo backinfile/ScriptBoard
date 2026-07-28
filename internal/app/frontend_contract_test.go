@@ -258,7 +258,9 @@ func TestCreateAndEditTasksHaveSemanticGETRoutes(t *testing.T) {
 		}
 		body, _ := io.ReadAll(response.Body)
 		_ = response.Body.Close()
-		if response.StatusCode != http.StatusOK || !strings.Contains(string(body), `data-task-page`) {
+		if response.StatusCode != http.StatusOK ||
+			!strings.Contains(string(body), `data-task-page`) ||
+			!strings.Contains(string(body), `data-task-close-label="Close"`) {
 			t.Errorf("%s status=%d body=%s", path, response.StatusCode, body)
 		}
 	}
@@ -361,6 +363,47 @@ func TestPrimaryWorkspacesRenderCompleteLocalizedDocuments(t *testing.T) {
 		}
 		if strings.Contains(page, "overview.title") || strings.Contains(page, "common.") {
 			t.Errorf("%s contains an untranslated message key: %s", path, page)
+		}
+	}
+}
+
+func TestEachWorkspaceAndTaskExposeAtMostOnePrimaryAction(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
+	for _, path := range []string{
+		"/monitor",
+		"/monitor/runs",
+		"/resources/files/",
+		"/resources/files/new-directory",
+		"/resources/files/upload",
+		"/resources/variables",
+		"/resources/variables/new",
+		"/resources/trash",
+		"/config/quick-runs",
+		"/config/quick-runs/groups/new",
+		"/config/schedules",
+		"/config/schedules/new",
+		"/config/schedules/groups/new",
+		"/history/audit",
+		"/settings/account",
+		"/settings/version-protection",
+	} {
+		response, err := client.Get(serverURL + path)
+		if err != nil {
+			t.Fatalf("get %s: %v", path, err)
+		}
+		body, err := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("%s status=%d, want %d", path, response.StatusCode, http.StatusOK)
+		}
+		if count := strings.Count(string(body), "button--primary"); count > 1 {
+			t.Errorf("%s renders %d primary actions, want at most one", path, count)
 		}
 	}
 }

@@ -88,11 +88,31 @@ spacing:
   group: "20px"
   section: "40px"
 components:
+  button:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.ink}"
+    rounded: "{rounded.control}"
+    padding: "8px 13px"
   button-primary:
     backgroundColor: "{colors.accent}"
     textColor: "{colors.surface}"
     rounded: "{rounded.control}"
-    padding: "9px 14px"
+    padding: "8px 13px"
+  button-quiet:
+    backgroundColor: "transparent"
+    textColor: "{colors.muted}"
+    rounded: "{rounded.control}"
+    padding: "8px 13px"
+  button-danger:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.danger}"
+    rounded: "{rounded.control}"
+    padding: "8px 13px"
+  button-compact:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.ink}"
+    rounded: "{rounded.small}"
+    padding: "6px 10px"
   input:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.ink}"
@@ -144,6 +164,26 @@ All body copy and controls target WCAG 2.2 AA contrast. Muted copy remains at le
 - Tables and page sections remain unboxed.
 - Pills are reserved for short status labels and filters.
 - No gradient, glass, glow, backdrop blur, or ambient drop shadow.
+
+### Button system
+
+Buttons use an explicit, opt-in base class; raw `button` elements do not inherit the standard visual treatment. This keeps menu items, disclosure triggers, schedule choices, and icon controls semantically distinct.
+
+| Function | Contract | Use |
+| --- | --- | --- |
+| Primary | `.button.button--primary` | The single page, task-panel, or confirmation action: create, save, upload, or the page’s principal search. |
+| Secondary | `.button` | Visible alternatives such as create group, preview, download, or a neutral form action. |
+| Quiet | `.button.button--quiet` | Back, cancel, clear, open, and edit actions that should not compete with the primary action. |
+| Danger | `.button.button--danger` | Standalone stop, purge, disable, or destructive confirmation actions; destructive menu items use danger text instead. |
+| Compact | `.button.button--compact` | Repeated record actions such as Run, Run now, Restore, and row-level Open/Edit. Compact never implies primary. |
+| Icon | `.icon-button` or a named contextual control | Close, more actions, copy, reveal, and navigation toggles. Every icon-only control has a localized accessible name. |
+| Choice/disclosure | Contextual selectors with `aria-pressed` or `aria-expanded` | Cron modes, weekdays, grouped records, menus, and technical disclosures. State remains legible without color alone. |
+
+- A rendered page or task panel has at most one blue primary action. A single empty-state action may be primary only when the same scope has no other primary action.
+- Standard buttons are 38px high; buttons aligned with fields are 42px; compact desktop actions are 34px. Key mobile controls and all compact/icon actions expand to at least 44px.
+- Button-like navigation remains an anchor and uses GET. State changes remain explicit `button type="submit"` controls inside CSRF-protected POST forms; client-only controls use `type="button"`.
+- Hover, active, focus-visible, disabled, busy, success, and error states preserve layout and communicate through text, icon, border, or shape as well as color.
+- Icons are Lucide at the shared 1rem scale with an 8px text gap. Text remains the accessible name whenever it is present; icon-only controls require a localized `aria-label`.
 
 ## Application shell
 
