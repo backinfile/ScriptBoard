@@ -30,6 +30,7 @@ type StartRequest struct {
 	ArgumentsTemplate string
 	SourceType        string
 	SourceName        string
+	SourceID          string
 	TimeoutSeconds    int
 	Variables         map[string]string
 }
@@ -44,6 +45,7 @@ type Run struct {
 	Executor          string
 	SourceType        string
 	SourceName        string
+	SourceID          string
 	RuntimeIdentity   string
 	Status            string
 	CreatedAt         time.Time
@@ -57,6 +59,15 @@ type Run struct {
 	LogIncomplete     bool
 	LogTruncated      bool
 	DroppedBytes      int64
+}
+
+type Filter struct {
+	Query                    string
+	ScheduleID               string
+	CreatedFromUnixNano      int64
+	CreatedBeforeUnixNano    int64
+	HasCreatedFromBoundary   bool
+	HasCreatedBeforeBoundary bool
 }
 
 type Event struct {
@@ -113,21 +124,34 @@ func (m *Manager) SetLifecycle(lifecycle Lifecycle) {
 	m.lifecycle = lifecycle
 }
 
+func prepareArguments(argumentsTemplate string, variables map[string]string) ([]string, []string, error) {
+	if len([]byte(argumentsTemplate)) > 16<<10 {
+		return nil, nil, fmt.Errorf("参数模板超过 16 KiB")
+	}
+	templateArguments, err := ParseArguments(argumentsTemplate)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(templateArguments) > 256 {
+		return nil, nil, fmt.Errorf("参数数量超过 256 个")
+	}
+	arguments, err := resolveVariables(templateArguments, variables)
+	if err != nil {
+		return nil, nil, err
+	}
+	return templateArguments, arguments, nil
+}
+
+func ValidateArgumentsTemplate(argumentsTemplate string, variables map[string]string) error {
+	_, _, err := prepareArguments(argumentsTemplate, variables)
+	return err
+}
+
 func (m *Manager) Start(request StartRequest) (string, error) {
 	if err := diskspace.Require(m.stateRoot, diskspace.MinimumWritableBytes); err != nil {
 		return "", err
 	}
-	if len([]byte(request.ArgumentsTemplate)) > 16<<10 {
-		return "", fmt.Errorf("参数模板超过 16 KiB")
-	}
-	templateArguments, err := ParseArguments(request.ArgumentsTemplate)
-	if err != nil {
-		return "", err
-	}
-	if len(templateArguments) > 256 {
-		return "", fmt.Errorf("参数数量超过 256 个")
-	}
-	arguments, err := resolveVariables(templateArguments, request.Variables)
+	templateArguments, arguments, err := prepareArguments(request.ArgumentsTemplate, request.Variables)
 	if err != nil {
 		return "", err
 	}
@@ -172,9 +196,9 @@ func (m *Manager) Start(request StartRequest) (string, error) {
 		runtimeIdentity = currentUser.Username
 	}
 	if _, err := m.db.Exec(`INSERT INTO runs
-		(id, script_path, script_sha256, arguments_template, template_arguments_json, arguments_json, executor, source_type, source_name, runtime_identity, status, created_at, timeout_seconds, log_path)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?)`,
-		id, request.ScriptPath, script.Digest, request.ArgumentsTemplate, string(templateArgumentJSON), string(argumentJSON), executors[0].path, request.SourceType, request.SourceName, runtimeIdentity, now.UnixNano(), request.TimeoutSeconds, logPath,
+		(id, script_path, script_sha256, arguments_template, template_arguments_json, arguments_json, executor, source_type, source_name, source_id, runtime_identity, status, created_at, timeout_seconds, log_path)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?)`,
+		id, request.ScriptPath, script.Digest, request.ArgumentsTemplate, string(templateArgumentJSON), string(argumentJSON), executors[0].path, request.SourceType, request.SourceName, request.SourceID, runtimeIdentity, now.UnixNano(), request.TimeoutSeconds, logPath,
 	); err != nil {
 		_ = logFile.Close()
 		return "", fmt.Errorf("创建 Run: %w", err)
@@ -495,9 +519,9 @@ func (m *Manager) Get(id string) (Run, error) {
 	var argumentJSON, templateArgumentJSON, logPath string
 	var createdAt int64
 	var startedAt, finishedAt, exitCode sql.NullInt64
-	err := m.db.QueryRow(`SELECT id, script_path, script_sha256, arguments_template, template_arguments_json, arguments_json, executor, source_type, source_name, runtime_identity,
+	err := m.db.QueryRow(`SELECT id, script_path, script_sha256, arguments_template, template_arguments_json, arguments_json, executor, source_type, source_name, source_id, runtime_identity,
 		status, created_at, started_at, finished_at, exit_code, error, timeout_seconds, log_path, log_expired, log_incomplete, log_truncated, dropped_bytes FROM runs WHERE id = ?`, id).Scan(
-		&result.ID, &result.ScriptPath, &result.ScriptDigest, &result.ArgumentsTemplate, &templateArgumentJSON, &argumentJSON, &result.Executor, &result.SourceType, &result.SourceName, &result.RuntimeIdentity,
+		&result.ID, &result.ScriptPath, &result.ScriptDigest, &result.ArgumentsTemplate, &templateArgumentJSON, &argumentJSON, &result.Executor, &result.SourceType, &result.SourceName, &result.SourceID, &result.RuntimeIdentity,
 		&result.Status, &createdAt, &startedAt, &finishedAt, &exitCode, &result.Error, &result.TimeoutSeconds, &logPath, &result.LogExpired, &result.LogIncomplete, &result.LogTruncated, &result.DroppedBytes,
 	)
 	if err != nil {
@@ -527,19 +551,47 @@ func (m *Manager) List(limit int) ([]Run, error) {
 }
 
 func (m *Manager) Count() (int, error) {
+	return m.CountFiltered(Filter{})
+}
+
+func (m *Manager) CountFiltered(filter Filter) (int, error) {
 	var count int
-	err := m.db.QueryRow("SELECT COUNT(*) FROM runs").Scan(&count)
+	like := "%" + filter.Query + "%"
+	err := m.db.QueryRow(`SELECT COUNT(*) FROM runs
+		WHERE (? = '' OR (source_id = ? AND source_type IN ('scheduler', 'admin/schedule-now')))
+		AND (? = '' OR id LIKE ? OR script_path LIKE ? OR source_type LIKE ? OR source_name LIKE ? OR status LIKE ? OR executor LIKE ?)
+		AND (? = 0 OR created_at >= ?)
+		AND (? = 0 OR created_at < ?)`,
+		filter.ScheduleID, filter.ScheduleID,
+		filter.Query, like, like, like, like, like, like,
+		filter.HasCreatedFromBoundary, filter.CreatedFromUnixNano,
+		filter.HasCreatedBeforeBoundary, filter.CreatedBeforeUnixNano).Scan(&count)
 	return count, err
 }
 
 func (m *Manager) ListPage(limit, offset int) ([]Run, error) {
+	return m.ListPageFiltered(Filter{}, limit, offset)
+}
+
+func (m *Manager) ListPageFiltered(filter Filter, limit, offset int) ([]Run, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
 	if offset < 0 {
 		offset = 0
 	}
-	rows, err := m.db.Query("SELECT id FROM runs ORDER BY created_at DESC LIMIT ? OFFSET ?", limit, offset)
+	like := "%" + filter.Query + "%"
+	rows, err := m.db.Query(`SELECT id FROM runs
+		WHERE (? = '' OR (source_id = ? AND source_type IN ('scheduler', 'admin/schedule-now')))
+		AND (? = '' OR id LIKE ? OR script_path LIKE ? OR source_type LIKE ? OR source_name LIKE ? OR status LIKE ? OR executor LIKE ?)
+		AND (? = 0 OR created_at >= ?)
+		AND (? = 0 OR created_at < ?)
+		ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+		filter.ScheduleID, filter.ScheduleID,
+		filter.Query, like, like, like, like, like, like,
+		filter.HasCreatedFromBoundary, filter.CreatedFromUnixNano,
+		filter.HasCreatedBeforeBoundary, filter.CreatedBeforeUnixNano,
+		limit, offset)
 	if err != nil {
 		return nil, err
 	}

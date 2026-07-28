@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -65,6 +66,7 @@ func TestScheduleTriggersRunAtNextCronTime(t *testing.T) {
 	clock.Store(time.Date(2026, 1, 1, 0, 1, 0, 0, time.UTC).UnixNano())
 	deadline := time.Now().Add(10 * time.Second)
 	var runID string
+	var scheduleID string
 	for {
 		response, err = client.Get(serverURL + "/config/schedules")
 		if err != nil {
@@ -75,6 +77,13 @@ func TestScheduleTriggersRunAtNextCronTime(t *testing.T) {
 		if strings.Contains(string(page), `name="last_run_id" value="`) && !strings.Contains(string(page), `name="last_run_id" value=""`) {
 			runID = hiddenValue(t, page, "last_run_id")
 			if runID != "" {
+				historyLink := regexp.MustCompile(`href="/monitor/runs\?q=` + regexp.QuoteMeta(url.QueryEscape("每分钟计划")) + `&amp;schedule_id=([^&"]+)&amp;focus=search"`).FindStringSubmatch(string(page))
+				if len(historyLink) != 2 ||
+					!strings.Contains(string(page), `data-focus-after-navigation="#run-search"`) ||
+					strings.Contains(string(page), `href="/monitor/runs/`+runID+`"`) {
+					t.Fatalf("schedule does not link to focused run history: %s", page)
+				}
+				scheduleID = historyLink[1]
 				break
 			}
 		}
@@ -82,6 +91,19 @@ func TestScheduleTriggersRunAtNextCronTime(t *testing.T) {
 			t.Fatalf("schedule did not create Run: %s", page)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+	response, err = client.Get(serverURL + "/monitor/runs?q=" + url.QueryEscape("每分钟计划") + "&schedule_id=" + url.QueryEscape(scheduleID) + "&focus=search")
+	if err != nil {
+		t.Fatalf("get filtered run history: %v", err)
+	}
+	page, _ = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if !strings.Contains(string(page), runID) ||
+		!strings.Contains(string(page), `value="每分钟计划"`) ||
+		!strings.Contains(string(page), `name="schedule_id" value="`+scheduleID+`"`) ||
+		!strings.Contains(string(page), `id="run-search"`) ||
+		!strings.Contains(string(page), `autofocus`) {
+		t.Fatalf("focused run history does not show the scheduled Run: %s", page)
 	}
 	for {
 		response, err = client.Get(serverURL + "/monitor/runs/" + runID)

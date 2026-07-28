@@ -49,10 +49,10 @@ func TestVariableListUsesServerSidePagination(t *testing.T) {
 	firstPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	firstBody := string(firstPage)
-	if !strings.Contains(firstBody, "21 records · 1 / 2") || !strings.Contains(firstBody, `<code>VAR_00</code>`) {
+	if !strings.Contains(firstBody, "21 records · 1 / 2") || !strings.Contains(firstBody, `>VAR_00</code>`) {
 		t.Fatalf("first page is missing pagination metadata or first row: %s", firstBody)
 	}
-	if strings.Contains(firstBody, `<code>VAR_20</code>`) {
+	if strings.Contains(firstBody, `>VAR_20</code>`) {
 		t.Fatalf("first page contains a row from the second page: %s", firstBody)
 	}
 
@@ -63,7 +63,7 @@ func TestVariableListUsesServerSidePagination(t *testing.T) {
 	secondPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	secondBody := string(secondPage)
-	if !strings.Contains(secondBody, "21 records · 2 / 2") || !strings.Contains(secondBody, `<code>VAR_20</code>`) {
+	if !strings.Contains(secondBody, "21 records · 2 / 2") || !strings.Contains(secondBody, `>VAR_20</code>`) {
 		t.Fatalf("second page is missing pagination metadata or final row: %s", secondBody)
 	}
 	if strings.Contains(secondBody, `value="VAR_00"`) {

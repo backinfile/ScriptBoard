@@ -38,6 +38,7 @@
     "info": '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
     "key-round": '<path d="M2.6 16.8a6 6 0 1 0 8.6-8.3A6 6 0 0 0 2.6 16.8"/><path d="m15 9 6-6M17 5l2 2M14 8l2 2"/>',
     "languages": '<path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/>',
+    "lock": '<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
     "log-out": '<path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>',
     "memory-stick": '<path d="M6 19v-3M10 19v-3M14 19v-3M18 19v-3M8 11V9M16 11V9"/><rect x="2" y="5" width="20" height="11" rx="2"/>',
     "network": '<rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-3h14v3M12 12V8"/>',
@@ -55,6 +56,7 @@
     "square-terminal": '<path d="m7 7 3 3-3 3M13 13h4"/><rect x="3" y="3" width="18" height="18" rx="2"/>',
     "trash-2": '<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v5M14 11v5"/>',
     "triangle-alert": '<path d="m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3z"/><path d="M12 9v4M12 17h.01"/>',
+    "unlock": '<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>',
     "upload": '<path d="M12 3v12M17 8l-5-5-5 5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>',
     "user-round": '<circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/>',
     "x": '<path d="M18 6 6 18M6 6l12 12"/>',
@@ -165,7 +167,7 @@
     setTaskLinkBusy(request.trigger, false);
   }
 
-  async function navigate(url, push = true) {
+  async function navigate(url, push = true, options = {}) {
     if (navigationBusy) return;
     cancelTaskPanelRequest();
     navigationBusy = true;
@@ -191,6 +193,14 @@
       setSidebar(false);
       window.scrollTo({ top: 0, behavior: "auto" });
       initPage();
+      if (options.focusSelector) {
+        const focusTarget = document.querySelector(options.focusSelector);
+        focusTarget?.focus();
+        if (focusTarget instanceof HTMLInputElement) {
+          const end = focusTarget.value.length;
+          focusTarget.setSelectionRange(end, end);
+        }
+      }
     } catch {
       location.assign(url);
     } finally {
@@ -202,17 +212,25 @@
   function buildTaskPanel(main, url, push) {
     closeTaskPanel(false);
     const host = document.createElement("div");
+    const cleanups = [];
     host.className = "task-panel-host";
     host.innerHTML = '<button class="task-panel-scrim" type="button" aria-label="Close"></button><section class="task-panel" role="dialog" aria-modal="true" data-task-panel></section>';
     host.querySelector(".task-panel").append(document.importNode(main, true));
     document.body.append(host);
     document.body.classList.add("has-task-panel");
-    taskPanelState = { host, returnURL: location.href };
-    if (push) history.pushState({ task: true, returnURL: taskPanelState.returnURL }, "", url);
+    taskPanelState = { host, returnURL: location.href, taskURL: url, cleanups };
+    if (push) {
+      history.pushState(
+        { task: true, returnURL: taskPanelState.returnURL, taskURL: taskPanelState.taskURL },
+        "",
+        taskPanelState.returnURL,
+      );
+    }
     requestAnimationFrame(() => host.classList.add("is-open"));
     host.querySelector("input:not([type='hidden']),textarea,select,button,a[href]")?.focus();
     renderIcons(host);
     localizeTimes(host);
+    initScheduleCron(cleanups, host);
   }
 
   function openTask(url, push = true, trigger = null) {
@@ -255,8 +273,9 @@
 
   function closeTaskPanel(useHistory = true) {
     if (!taskPanelState) return;
-    const { host } = taskPanelState;
+    const { host, cleanups = [] } = taskPanelState;
     taskPanelState = null;
+    cleanups.splice(0).forEach(cleanup => cleanup());
     host.classList.remove("is-open");
     document.body.classList.remove("has-task-panel");
     window.setTimeout(() => host.remove(), 210);
@@ -276,13 +295,41 @@
   async function submitAsync(form, submitter) {
     const data = new FormData(form);
     if (submitter?.name) data.set(submitter.name, submitter.value);
+    if (form.method.toLowerCase() === "get") {
+      const destination = new URL(form.action || location.href, location.href);
+      destination.search = "";
+      data.forEach((value, name) => {
+        if (typeof value === "string" && value !== "") destination.searchParams.append(name, value);
+      });
+      const scheduleSearch = form.querySelector("[data-schedule-filter-name]");
+      if (scheduleSearch && scheduleSearch.value.trim() !== scheduleSearch.dataset.scheduleFilterName) {
+        destination.searchParams.delete("schedule_id");
+      }
+      if (form.matches("[data-file-search]") && !destination.searchParams.get("sort")) {
+        destination.searchParams.delete("direction");
+      }
+      try {
+        await navigate(destination.href, form.hasAttribute("data-async-push"), {
+          focusSelector: form.dataset.focusAfterNavigation,
+        });
+      } finally {
+        resetSubmit(form);
+      }
+      return;
+    }
     try {
       const action = submitter?.hasAttribute("formaction") ? submitter.formAction : form.action;
       const result = await fetchDocument(action, { method: form.method, body: data });
       if (result.response.redirected && result.response.ok) {
         const destination = result.response.url;
         if (taskPanelState) {
+          const returnURL = taskPanelState.returnURL;
           closeTaskPanel(false);
+          if (destination === returnURL && history.state?.task) {
+            history.replaceState({ pjax: true }, "", destination);
+            history.back();
+            return;
+          }
           history.replaceState({ pjax: true }, "", destination);
           await navigate(destination, false);
         } else {
@@ -451,31 +498,40 @@
   }
 
   function initPasswordControls(root = document, cleanups = []) {
-    const feedbackTimers = new Map();
-
     root.querySelectorAll("[data-password-value]").forEach(container => {
       const content = container.querySelector("[data-password-content]");
       const mask = container.querySelector("[data-password-mask]");
       const toggle = container.querySelector("[data-toggle-password]");
       const toggleIcon = container.querySelector("[data-password-toggle-icon]");
-      const copyButton = container.querySelector("[data-copy-password]");
-      const copyIcon = container.querySelector("[data-password-copy-icon]");
-      const status = container.querySelector("[data-password-status]");
-      if (!content || !mask || !toggle || !copyButton) return;
+      if (!content || !mask || !toggle) return;
 
       container.hidden = false;
 
-      toggle.addEventListener("click", () => {
+      const onToggle = () => {
         const reveal = content.hidden;
         content.hidden = !reveal;
         mask.hidden = reveal;
         toggle.setAttribute("aria-expanded", String(reveal));
         toggle.setAttribute("aria-label", reveal ? toggle.dataset.hideLabel : toggle.dataset.showLabel);
-        toggle.title = reveal ? toggle.dataset.hideLabel : toggle.dataset.showLabel;
+        toggle.dataset.tooltip = reveal ? toggle.dataset.hideTooltip : toggle.dataset.showTooltip;
         setControlIcon(toggleIcon, reveal ? "eye-off" : "eye");
-      });
+      };
+      toggle.addEventListener("click", onToggle);
+      cleanups.push(() => toggle.removeEventListener("click", onToggle));
+    });
+  }
 
-      copyButton.addEventListener("click", async () => {
+  function initCopyControls(root = document, cleanups = []) {
+    const feedbackTimers = new Map();
+
+    root.querySelectorAll("[data-copy-text]").forEach(copyButton => {
+      const content = document.getElementById(copyButton.dataset.copyTarget);
+      const copyIcon = copyButton.querySelector("[data-copy-icon]");
+      const status = copyButton.closest("[data-copy-field]")?.querySelector("[data-copy-status]");
+      if (!content || !copyIcon) return;
+
+      copyButton.hidden = false;
+      const onCopy = async () => {
         if (copyButton.dataset.copying === "true") return;
         const existingTimer = feedbackTimers.get(copyButton);
         if (existingTimer) {
@@ -490,13 +546,13 @@
           await navigator.clipboard.writeText(content.textContent);
           copyButton.dataset.state = "success";
           copyButton.setAttribute("aria-label", copyButton.dataset.copiedLabel);
-          copyButton.title = copyButton.dataset.copiedLabel;
+          copyButton.dataset.tooltip = copyButton.dataset.copiedLabel;
           setControlIcon(copyIcon, "check");
           if (status) status.textContent = copyButton.dataset.copiedLabel;
         } catch {
           copyButton.dataset.state = "error";
           copyButton.setAttribute("aria-label", copyButton.dataset.copyFailedLabel);
-          copyButton.title = copyButton.dataset.copyFailedLabel;
+          copyButton.dataset.tooltip = copyButton.dataset.copyFailedLabel;
           setControlIcon(copyIcon, "triangle-alert");
           if (status) status.textContent = copyButton.dataset.copyFailedLabel;
         } finally {
@@ -507,13 +563,15 @@
         const timer = window.setTimeout(() => {
           copyButton.removeAttribute("data-state");
           copyButton.setAttribute("aria-label", copyButton.dataset.copyLabel);
-          copyButton.title = copyButton.dataset.copyLabel;
+          copyButton.dataset.tooltip = copyButton.dataset.copyTooltip;
           setControlIcon(copyIcon, "copy");
           if (status) status.textContent = "";
           feedbackTimers.delete(copyButton);
         }, 1600);
         feedbackTimers.set(copyButton, timer);
-      });
+      };
+      copyButton.addEventListener("click", onCopy);
+      cleanups.push(() => copyButton.removeEventListener("click", onCopy));
     });
 
     cleanups.push(() => feedbackTimers.forEach(timer => window.clearTimeout(timer)));
@@ -616,18 +674,76 @@
     });
   }
 
-  function initScheduleCron(cleanups) {
-    const form = document.querySelector("[data-schedule-form]");
+  function initGroupedRecords(cleanups) {
+    document.querySelectorAll("[data-grouped-records]").forEach(page => {
+      const namespace = page.dataset.groupedRecords;
+      if (!namespace) return;
+      const storageKey = `scriptboard.${namespace}.collapsed`;
+      let collapsed = new Set();
+      try {
+        const stored = JSON.parse(localStorage.getItem(storageKey) || "[]");
+        if (Array.isArray(stored)) collapsed = new Set(stored.filter(value => typeof value === "string"));
+      } catch {
+        collapsed = new Set();
+      }
+
+      const persist = () => {
+        try {
+          localStorage.setItem(storageKey, JSON.stringify([...collapsed]));
+        } catch {
+          // Storage may be unavailable in hardened or private browser sessions.
+        }
+      };
+
+      page.querySelectorAll("[data-record-group]").forEach(group => {
+        const id = group.dataset.recordGroup;
+        const toggle = group.querySelector("[data-group-toggle]");
+        const body = group.querySelector("[data-group-body]");
+        if (!id || !toggle || !body) return;
+
+        const render = isCollapsed => {
+          group.classList.toggle("is-collapsed", isCollapsed);
+          toggle.setAttribute("aria-expanded", String(!isCollapsed));
+          body.hidden = isCollapsed;
+        };
+        render(collapsed.has(id));
+
+        const onToggle = () => {
+          if (collapsed.has(id)) collapsed.delete(id);
+          else collapsed.add(id);
+          render(collapsed.has(id));
+          persist();
+        };
+        toggle.addEventListener("click", onToggle);
+        cleanups.push(() => toggle.removeEventListener("click", onToggle));
+      });
+    });
+  }
+
+  function initScheduleCron(cleanups, root = document) {
+    const form = root.querySelector("[data-schedule-form]");
     if (!form) return;
     const input = form.querySelector("[data-cron-expression]");
     const feedback = form.querySelector("[data-cron-feedback]");
     const presets = Array.from(form.querySelectorAll("[data-cron-preset]"));
-    const previewButton = form.querySelector("[data-cron-preview-submit]");
+    const guided = form.querySelector("[data-cron-guided]");
+    const modeButtons = Array.from(form.querySelectorAll("[data-cron-mode]"));
+    const sentenceLead = form.querySelector("[data-cron-sentence-lead]");
+    const intervalInput = form.querySelector("[data-cron-interval]");
+    const unitSelect = form.querySelector("[data-cron-unit]");
+    const monthDayInput = form.querySelector("[data-cron-month-day]");
+    const timeInput = form.querySelector("[data-cron-guided-time-input]");
+    const weekdays = form.querySelector("[data-cron-weekdays]");
+    const currentExpression = form.querySelector("[data-cron-current]");
+    const guidedStatus = form.querySelector("[data-cron-guided-status]");
+    const customNote = form.querySelector("[data-cron-custom-note]");
+    const parseButton = form.querySelector("[data-cron-parse]");
     if (!input || !feedback) return;
 
     let debounceTimer = 0;
     let requestController = null;
     let requestSequence = 0;
+    let guidedMode = "";
 
     const node = (tag, className, text) => {
       const element = document.createElement(tag);
@@ -636,6 +752,14 @@
       return element;
     };
     const normalizedInput = () => input.value.trim().replace(/\s+/g, " ").toUpperCase();
+    const setGuidedStatus = (message, state = "") => {
+      if (!guidedStatus) return;
+      guidedStatus.textContent = message;
+      guidedStatus.dataset.state = state;
+    };
+    const setCurrentExpression = expression => {
+      if (currentExpression) currentExpression.textContent = expression || "—";
+    };
     const syncPresets = () => {
       const value = normalizedInput();
       presets.forEach(button => {
@@ -643,6 +767,145 @@
         button.classList.toggle("is-active", active);
         button.setAttribute("aria-pressed", String(active));
       });
+    };
+    const setGuidedMode = mode => {
+      guidedMode = mode;
+      modeButtons.forEach(button => {
+        const active = button.dataset.cronMode === mode;
+        button.classList.toggle("is-active", active);
+        button.setAttribute("aria-pressed", String(active));
+        if (active && sentenceLead) sentenceLead.textContent = button.textContent.trim();
+      });
+      form.querySelectorAll("[data-cron-field]").forEach(field => {
+        const kind = field.dataset.cronField;
+        const visible = (kind === "interval" || kind === "unit") ? mode === "interval" :
+          kind === "month-day" ? mode === "monthly" :
+            kind === "time" ? mode !== "interval" && mode !== "custom" : false;
+        field.hidden = !visible;
+      });
+      if (weekdays) weekdays.hidden = mode !== "weekly";
+      if (customNote) customNote.hidden = mode !== "custom";
+      if (mode === "custom" && sentenceLead) sentenceLead.textContent = "Cron";
+    };
+    const setTime = (hour, minute) => {
+      if (!timeInput) return;
+      timeInput.value = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+    };
+    const cronWeekdayNames = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+    const toWeekday = value => {
+      if (cronWeekdayNames.includes(value)) return cronWeekdayNames.indexOf(value);
+      if (!/^\d+$/.test(value)) return null;
+      const numeric = Number(value);
+      if (numeric === 7) return 0;
+      return numeric >= 0 && numeric <= 6 ? numeric : null;
+    };
+    const expandWeekdays = field => {
+      const result = new Set();
+      for (const part of field.split(",")) {
+        const range = part.split("-");
+        if (range.length === 1) {
+          const day = toWeekday(range[0]);
+          if (day === null) return null;
+          result.add(day);
+          continue;
+        }
+        if (range.length !== 2) return null;
+        const start = toWeekday(range[0]);
+        const end = toWeekday(range[1]);
+        if (start === null || end === null || start > end) return null;
+        for (let day = start; day <= end; day += 1) result.add(day);
+      }
+      return Array.from(result).sort((left, right) => left - right);
+    };
+    const selectWeekdays = selectedDays => {
+      if (!weekdays) return;
+      weekdays.querySelectorAll("[data-cron-weekday]").forEach(button => {
+        const selected = selectedDays.includes(Number(button.dataset.cronWeekday));
+        button.classList.toggle("is-active", selected);
+        button.setAttribute("aria-pressed", String(selected));
+      });
+    };
+    const syncGuidedFromExpression = expression => {
+      if (!guided) return false;
+      const fields = expression.trim().replace(/\s+/g, " ").toUpperCase().split(" ");
+      if (fields.length !== 5) return false;
+      const [minuteField, hourField, dayField, monthField, weekdayField] = fields;
+      const minuteInterval = minuteField.match(/^\*\/(\d+)$/);
+      if (minuteInterval && Number(minuteInterval[1]) <= 59 &&
+          hourField === "*" && dayField === "*" && monthField === "*" && weekdayField === "*") {
+        setGuidedMode("interval");
+        intervalInput.value = minuteInterval[1];
+        unitSelect.value = "minute";
+      } else if (minuteField === "*" && hourField === "*" && dayField === "*" && monthField === "*" && weekdayField === "*") {
+        setGuidedMode("interval");
+        intervalInput.value = "1";
+        unitSelect.value = "minute";
+      } else {
+        const hourInterval = hourField.match(/^\*\/(\d+)$/);
+        if (minuteField === "0" && hourInterval && Number(hourInterval[1]) <= 23 &&
+            dayField === "*" && monthField === "*" && weekdayField === "*") {
+          setGuidedMode("interval");
+          intervalInput.value = hourInterval[1];
+          unitSelect.value = "hour";
+        } else if (minuteField === "0" && hourField === "*" && dayField === "*" && monthField === "*" && weekdayField === "*") {
+          setGuidedMode("interval");
+          intervalInput.value = "1";
+          unitSelect.value = "hour";
+        } else if (/^\d+$/.test(minuteField) && /^\d+$/.test(hourField) && monthField === "*") {
+          setTime(Number(hourField), Number(minuteField));
+          if (dayField === "*" && weekdayField === "*") {
+            setGuidedMode("daily");
+          } else if (dayField === "*" && weekdayField !== "*") {
+            const parsedDays = expandWeekdays(weekdayField);
+            if (!parsedDays?.length) {
+              setGuidedMode("custom");
+              setCurrentExpression(expression);
+              setGuidedStatus(form.dataset.cronGuidedCustom);
+              return false;
+            }
+            selectWeekdays(parsedDays);
+            setGuidedMode("weekly");
+          } else if (/^\d+$/.test(dayField) && weekdayField === "*") {
+            monthDayInput.value = String(Number(dayField));
+            setGuidedMode("monthly");
+          } else {
+            setGuidedMode("custom");
+            setCurrentExpression(expression);
+            setGuidedStatus(form.dataset.cronGuidedCustom);
+            return false;
+          }
+        } else {
+          setGuidedMode("custom");
+          setCurrentExpression(expression);
+          setGuidedStatus(form.dataset.cronGuidedCustom);
+          return false;
+        }
+      }
+      setCurrentExpression(expression);
+      setGuidedStatus(form.dataset.cronGuidedParsed);
+      return true;
+    };
+    const buildGuidedExpression = () => {
+      if (guidedMode === "interval") {
+        const amount = Math.max(1, Number(intervalInput.value) || 1);
+        return unitSelect.value === "hour" ? `0 */${amount} * * *` : `*/${amount} * * * *`;
+      }
+      const time = timeInput.value || "02:00";
+      const [hour, minute] = time.split(":").map(Number);
+      if (guidedMode === "weekly") {
+        let selected = Array.from(weekdays.querySelectorAll("[data-cron-weekday][aria-pressed='true']"))
+          .map(button => button.dataset.cronWeekday);
+        if (!selected.length) {
+          selected = ["1"];
+          selectWeekdays([1]);
+        }
+        return `${minute} ${hour} * * ${selected.join(",")}`;
+      }
+      if (guidedMode === "monthly") {
+        const day = Math.min(31, Math.max(1, Number(monthDayInput.value) || 1));
+        return `${minute} ${hour} ${day} * *`;
+      }
+      return `${minute} ${hour} * * *`;
     };
     const renderMessage = (state, iconName, message, alert = false) => {
       feedback.dataset.state = state;
@@ -722,10 +985,14 @@
         if (response.ok && payload.valid) {
           if (normalize && payload.normalized_expression) input.value = payload.normalized_expression;
           syncPresets();
+          const normalized = payload.normalized_expression || normalizedInput();
+          setCurrentExpression(normalized);
+          syncGuidedFromExpression(normalized);
           renderValid(payload);
-          return;
+          return payload;
         }
         input.setAttribute("aria-invalid", "true");
+        setGuidedStatus(payload.error || form.dataset.cronUnavailable, "error");
         renderMessage("invalid", "circle-x", payload.error || form.dataset.cronUnavailable, true);
       } catch (error) {
         if (error.name === "AbortError" || sequence !== requestSequence) return;
@@ -739,6 +1006,8 @@
       requestController = null;
       requestSequence += 1;
       syncPresets();
+      setCurrentExpression(normalizedInput());
+      setGuidedStatus(form.dataset.cronGuidedWaiting);
       window.clearTimeout(debounceTimer);
       if (!input.value.trim()) {
         renderIdle();
@@ -759,12 +1028,49 @@
       syncPresets();
       preview({ normalize: true });
     };
+    const onMode = event => {
+      setGuidedMode(event.currentTarget.dataset.cronMode);
+      const expression = buildGuidedExpression();
+      input.value = expression;
+      setCurrentExpression(expression);
+      setGuidedStatus(form.dataset.cronGuidedSynced);
+      preview({ normalize: true });
+    };
+    const onGuidedControl = () => {
+      if (!guidedMode || guidedMode === "custom") return;
+      const expression = buildGuidedExpression();
+      input.value = expression;
+      setCurrentExpression(expression);
+      setGuidedStatus(form.dataset.cronGuidedSynced);
+      preview({ normalize: true });
+    };
+    const onWeekday = event => {
+      const selected = event.currentTarget.getAttribute("aria-pressed") !== "true";
+      event.currentTarget.classList.toggle("is-active", selected);
+      event.currentTarget.setAttribute("aria-pressed", String(selected));
+      onGuidedControl();
+    };
+    const onParse = () => {
+      input.focus();
+      preview({ normalize: true });
+    };
 
     input.addEventListener("input", onInput);
     input.addEventListener("blur", onBlur);
     form.addEventListener("submit", onSubmit);
     presets.forEach(button => button.addEventListener("click", onPreset));
+    modeButtons.forEach(button => button.addEventListener("click", onMode));
+    [intervalInput, unitSelect, monthDayInput, timeInput].filter(Boolean).forEach(control => {
+      control.addEventListener("input", onGuidedControl);
+      control.addEventListener("change", onGuidedControl);
+    });
+    weekdays?.querySelectorAll("[data-cron-weekday]").forEach(button => button.addEventListener("click", onWeekday));
+    parseButton?.addEventListener("click", onParse);
     syncPresets();
+    if (guided) {
+      guided.hidden = false;
+      if (!syncGuidedFromExpression(normalizedInput())) setGuidedMode(normalizedInput() ? "custom" : "daily");
+    }
     if (input.value.trim() && feedback.dataset.state === "idle") preview();
 
     cleanups.push(() => {
@@ -774,6 +1080,13 @@
       input.removeEventListener("blur", onBlur);
       form.removeEventListener("submit", onSubmit);
       presets.forEach(button => button.removeEventListener("click", onPreset));
+      modeButtons.forEach(button => button.removeEventListener("click", onMode));
+      [intervalInput, unitSelect, monthDayInput, timeInput].filter(Boolean).forEach(control => {
+        control.removeEventListener("input", onGuidedControl);
+        control.removeEventListener("change", onGuidedControl);
+      });
+      weekdays?.querySelectorAll("[data-cron-weekday]").forEach(button => button.removeEventListener("click", onWeekday));
+      parseButton?.removeEventListener("click", onParse);
     });
   }
 
@@ -783,10 +1096,12 @@
     renderIcons();
     localizeTimes();
     initPasswordControls(document, cleanups);
+    initCopyControls(document, cleanups);
     initFileDropUpload(document, cleanups);
     initOverview(cleanups);
     initRun(cleanups);
     initStatus(cleanups);
+    initGroupedRecords(cleanups);
     initScheduleCron(cleanups);
   }
 
@@ -824,7 +1139,7 @@
     if (link.matches("[data-task-link]") && matchMedia("(min-width: 761px)").matches) {
       openTask(destination.href, true, link);
     } else {
-      navigate(destination.href, true);
+      navigate(destination.href, true, { focusSelector: link.dataset.focusAfterNavigation });
     }
   });
 
@@ -832,6 +1147,10 @@
     const menu = event.target.closest(".action-menu");
     document.querySelectorAll(".action-menu[open]").forEach(open => {
       if (open !== menu) open.removeAttribute("open");
+    });
+    const fileSort = event.target.closest(".file-sort");
+    document.querySelectorAll(".file-sort[open]").forEach(open => {
+      if (open !== fileSort) open.removeAttribute("open");
     });
   });
 
@@ -842,7 +1161,7 @@
       event.preventDefault();
       return;
     }
-    const submitter = event.submitter;
+    const submitter = event.submitter || (form.matches("[data-file-search]") ? form.querySelector("[data-search-submit]") : null);
     if (submitter) {
       if (submitter.name) {
         const mirror = document.createElement("input");
@@ -884,7 +1203,7 @@
         setSidebar(false);
         return;
       }
-      const openMenu = document.querySelector(".action-menu[open],.ledger-disclosure[open]");
+      const openMenu = document.querySelector(".action-menu[open],.ledger-disclosure[open],.file-sort[open]");
       if (openMenu) {
         event.preventDefault();
         openMenu.removeAttribute("open");
@@ -912,7 +1231,7 @@
       return;
     }
     if (event.state?.task) {
-      openTask(location.href, false);
+      openTask(event.state.taskURL || location.href, false);
       return;
     }
     navigate(location.href, false);

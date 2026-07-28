@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"bytes"
+	"fmt"
 	"html"
 	"io"
 	"mime/multipart"
@@ -81,6 +82,210 @@ func TestFilesPageOffersDropUploadForCurrentDirectory(t *testing.T) {
 	} {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("files page does not contain %q: %s", expected, page)
+		}
+	}
+}
+
+func TestFilesPageSearchesCurrentDirectoryAndHighlightsMatches(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(filepath.Join(managedRoot, "nested"), 0o755); err != nil {
+		t.Fatalf("create nested directory: %v", err)
+	}
+	for name, content := range map[string]string{
+		"Deploy & Verify.ps1": "Write-Output verified",
+		"notes.txt":           "deploy belongs in content only",
+	} {
+		if err := os.WriteFile(filepath.Join(managedRoot, name), []byte(content), 0o644); err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(managedRoot, "nested", "nested-deploy.ps1"), []byte("nested"), 0o644); err != nil {
+		t.Fatalf("create nested match: %v", err)
+	}
+	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+
+	response, err := client.Get(serverURL + "/resources/files/?q=%20DEPLOY%20")
+	if err != nil {
+		t.Fatalf("search files: %v", err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read files search: %v", err)
+	}
+	page := string(body)
+	for _, expected := range []string{
+		`data-file-search`,
+		`data-search-input`,
+		`value="DEPLOY"`,
+		`Found <strong>1</strong> item in this directory`,
+		`<mark>Deploy</mark> &amp; Verify.ps1`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("files search does not contain %q: %s", expected, page)
+		}
+	}
+	for _, excluded := range []string{"notes.txt", "nested-deploy.ps1"} {
+		if strings.Contains(page, excluded) {
+			t.Fatalf("files search unexpectedly contains %q: %s", excluded, page)
+		}
+	}
+}
+
+func TestFilesPageSortsByVisibleTypeAndPreservesSortAcrossDirectories(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(filepath.Join(managedRoot, "workspace"), 0o755); err != nil {
+		t.Fatalf("create workspace directory: %v", err)
+	}
+	for name := range map[string]struct{}{
+		"automation.ps1": {},
+		"diagram.png":    {},
+		"notes.txt":      {},
+		"archive.bin":    {},
+	} {
+		if err := os.WriteFile(filepath.Join(managedRoot, name), []byte(name), 0o644); err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+	}
+	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+
+	response, err := client.Get(serverURL + "/resources/files/?sort=type&direction=asc&q=auto")
+	if err != nil {
+		t.Fatalf("get typed file sort: %v", err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read typed file sort: %v", err)
+	}
+	filteredPage := string(body)
+	for _, expected := range []string{
+		`value="type" selected`,
+		`Type · Ascending`,
+		`Runnable script`,
+		`href="/resources/files/?direction=asc&amp;sort=type"`,
+	} {
+		if !strings.Contains(filteredPage, expected) {
+			t.Fatalf("typed file sort does not contain %q: %s", expected, filteredPage)
+		}
+	}
+
+	response, err = client.Get(serverURL + "/resources/files/?sort=type&direction=asc")
+	if err != nil {
+		t.Fatalf("get all typed files: %v", err)
+	}
+	body, err = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read all typed files: %v", err)
+	}
+	page := string(body)
+	ordered := []string{"workspace", "automation.ps1", "diagram.png", "notes.txt", "archive.bin"}
+	last := -1
+	for _, name := range ordered {
+		position := strings.Index(page, ">"+name+"<")
+		if position < 0 {
+			t.Fatalf("typed file sort is missing %q: %s", name, page)
+		}
+		if position <= last {
+			t.Fatalf("typed file sort order %v is not preserved: %s", ordered, page)
+		}
+		last = position
+	}
+	for _, label := range []string{"Directory", "Runnable script", "Image", "Previewable text", "Other file"} {
+		if !strings.Contains(page, label) {
+			t.Fatalf("typed file sort is missing label %q: %s", label, page)
+		}
+	}
+	if !strings.Contains(page, `href="/resources/files/workspace/?direction=asc&amp;sort=type"`) {
+		t.Fatalf("directory link does not clear the query and preserve sorting: %s", page)
+	}
+}
+
+func TestFilesPageNormalizesSortAndShowsDedicatedNoResultsState(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+		t.Fatalf("create managed root: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(managedRoot, "visible.txt"), []byte("visible"), 0o644); err != nil {
+		t.Fatalf("create visible file: %v", err)
+	}
+	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+
+	response, err := client.Get(serverURL + "/resources/files/?q=missing&sort=unknown&direction=desc&page=9")
+	if err != nil {
+		t.Fatalf("get empty search result: %v", err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read empty search result: %v", err)
+	}
+	page := string(body)
+	for _, expected := range []string{
+		`data-no-search-results`,
+		`No filenames match`,
+		`<code>missing</code>`,
+		`href="/resources/files/"`,
+		`<option value="" selected>Natural order</option>`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("empty search result does not contain %q: %s", expected, page)
+		}
+	}
+	for _, excluded := range []string{`class="file-table"`, `class="pagination"`, `visible.txt`, `files.unknown`} {
+		if strings.Contains(page, excluded) {
+			t.Fatalf("empty search result unexpectedly contains %q: %s", excluded, page)
+		}
+	}
+}
+
+func TestFilesPagePaginationPreservesNormalizedSearchState(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+		t.Fatalf("create managed root: %v", err)
+	}
+	for index := 1; index <= 22; index++ {
+		name := fmt.Sprintf("report-%02d.txt", index)
+		if err := os.WriteFile(filepath.Join(managedRoot, name), []byte(name), 0o644); err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+	}
+	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+
+	response, err := client.Get(serverURL + "/resources/files/?q=%20REPORT%20&sort=name&direction=desc")
+	if err != nil {
+		t.Fatalf("get paginated file search: %v", err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read paginated file search: %v", err)
+	}
+	page := string(body)
+	for _, expected := range []string{
+		`Found <strong>22</strong> items in this directory`,
+		`href="/resources/files/?direction=desc&amp;page=2&amp;q=REPORT&amp;sort=name"`,
+		`href="/resources/files/?direction=desc&amp;sort=name"`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("paginated file search does not contain %q: %s", expected, page)
 		}
 	}
 }

@@ -9,26 +9,43 @@
   <div class="table-shell"><table class="records-table variables-table">
     <thead><tr><th>{{t .Locale "common.name"}}</th><th>{{t .Locale "common.value"}}</th><th><span class="sr-only">{{t .Locale "common.actions"}}</span></th></tr></thead>
     <tbody>{{range $index, $variable := .Variables}}<tr>
-      <td data-label="{{t $.Locale "common.name"}}" class="record-primary"><div class="record-primary__content"><span class="record-icon" data-lucide="{{if .IsPassword}}key-round{{else}}braces{{end}}" aria-hidden="true"></span><div><code>{{.Name}}</code>{{if .IsPassword}}<small>{{t $.Locale "variables.password_type"}}</small>{{end}}</div></div></td>
+      <td data-label="{{t $.Locale "common.name"}}" class="record-primary"><div class="record-primary__content"><span class="record-icon" data-lucide="{{if .IsPassword}}key-round{{else}}braces{{end}}" aria-hidden="true"></span><div class="variable-name-details">
+        <div class="copyable-field copyable-field--name" data-copy-field>
+          <code id="variable-name-{{$index}}">{{.Name}}</code>
+          <button type="button" class="copy-control icon-tooltip" data-copy-text data-copy-name data-copy-target="variable-name-{{$index}}" aria-label="{{t $.Locale "variables.copy_name"}} {{.Name}}" data-tooltip="{{t $.Locale "variables.copy_name"}}" data-copy-label="{{t $.Locale "variables.copy_name"}} {{.Name}}" data-copy-tooltip="{{t $.Locale "variables.copy_name"}}" data-copied-label="{{t $.Locale "variables.copied"}}" data-copy-failed-label="{{t $.Locale "variables.copy_failed"}}" hidden>
+            <span data-copy-icon data-lucide="copy" aria-hidden="true"></span>
+          </button>
+          <span class="sr-only" role="status" aria-live="polite" data-copy-status></span>
+        </div>
+        {{if .IsPassword}}<small>{{t $.Locale "variables.password_type"}}</small>{{end}}
+      </div></div></td>
       <td data-label="{{t $.Locale "common.value"}}">{{if .IsPassword}}
-        <div class="secret-value" data-password-value hidden>
-          <span class="secret-controls">
-            <button type="button" class="secret-control" data-toggle-password aria-controls="variable-secret-{{$index}}" aria-expanded="false" aria-label="{{t $.Locale "variables.show_value"}} {{.Name}}" title="{{t $.Locale "variables.show_value"}}" data-show-label="{{t $.Locale "variables.show_value"}} {{.Name}}" data-hide-label="{{t $.Locale "variables.hide_value"}} {{.Name}}">
-              <span data-password-toggle-icon data-lucide="eye" aria-hidden="true"></span>
-            </button>
-            <button type="button" class="secret-control" data-copy-password aria-label="{{t $.Locale "variables.copy_value"}} {{.Name}}" title="{{t $.Locale "variables.copy_value"}}" data-copy-label="{{t $.Locale "variables.copy_value"}} {{.Name}}" data-copied-label="{{t $.Locale "variables.copied"}}" data-copy-failed-label="{{t $.Locale "variables.copy_failed"}}">
-              <span data-password-copy-icon data-lucide="copy" aria-hidden="true"></span>
-            </button>
-          </span>
+        <div class="secret-value" data-password-value data-copy-field hidden>
           <span class="secret-mask" data-password-mask aria-label="{{t $.Locale "variables.hidden"}}">••••••••</span>
           <code id="variable-secret-{{$index}}" class="secret-content" data-password-content hidden>{{.Value}}</code>
-          <span class="sr-only" role="status" aria-live="polite" data-password-status></span>
+          <span class="secret-controls">
+            <button type="button" class="secret-control icon-tooltip" data-toggle-password aria-controls="variable-secret-{{$index}}" aria-expanded="false" aria-label="{{t $.Locale "variables.show_value"}} {{.Name}}" data-tooltip="{{t $.Locale "variables.show_value"}}" data-show-label="{{t $.Locale "variables.show_value"}} {{.Name}}" data-hide-label="{{t $.Locale "variables.hide_value"}} {{.Name}}" data-show-tooltip="{{t $.Locale "variables.show_value"}}" data-hide-tooltip="{{t $.Locale "variables.hide_value"}}">
+              <span data-password-toggle-icon data-lucide="eye" aria-hidden="true"></span>
+            </button>
+            <button type="button" class="copy-control icon-tooltip" data-copy-text data-copy-password data-copy-target="variable-secret-{{$index}}" aria-label="{{t $.Locale "variables.copy_value"}} {{.Name}}" data-tooltip="{{t $.Locale "variables.copy_value"}}" data-copy-label="{{t $.Locale "variables.copy_value"}} {{.Name}}" data-copy-tooltip="{{t $.Locale "variables.copy_value"}}" data-copied-label="{{t $.Locale "variables.copied"}}" data-copy-failed-label="{{t $.Locale "variables.copy_failed"}}" hidden>
+              <span data-copy-icon data-lucide="copy" aria-hidden="true"></span>
+            </button>
+          </span>
+          <span class="sr-only" role="status" aria-live="polite" data-copy-status data-password-status></span>
         </div>
         <noscript><details class="no-js-secret">
           <summary><span data-no-js-show>{{t $.Locale "variables.show_value"}}</span><span data-no-js-hide>{{t $.Locale "variables.hide_value"}}</span><span class="no-js-secret__mask" aria-label="{{t $.Locale "variables.hidden"}}">••••••••</span></summary>
           <code>{{.Value}}</code>
         </details></noscript>
-      {{else}}<pre class="value-preview">{{.Value}}</pre>{{end}}</td>
+      {{else}}
+        <div class="copyable-field copyable-field--value" data-copy-field>
+          <pre id="variable-value-{{$index}}" class="value-preview">{{.Value}}</pre>
+          <button type="button" class="copy-control icon-tooltip" data-copy-text data-copy-value data-copy-target="variable-value-{{$index}}" aria-label="{{t $.Locale "variables.copy_value"}} {{.Name}}" data-tooltip="{{t $.Locale "variables.copy_value"}}" data-copy-label="{{t $.Locale "variables.copy_value"}} {{.Name}}" data-copy-tooltip="{{t $.Locale "variables.copy_value"}}" data-copied-label="{{t $.Locale "variables.copied"}}" data-copy-failed-label="{{t $.Locale "variables.copy_failed"}}" hidden>
+            <span data-copy-icon data-lucide="copy" aria-hidden="true"></span>
+          </button>
+          <span class="sr-only" role="status" aria-live="polite" data-copy-status></span>
+        </div>
+      {{end}}</td>
       <td class="record-actions">
         <div class="record-actions__group">
         <a class="button button--quiet" href="/resources/variables/{{.Name}}/edit" data-task-link><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a>

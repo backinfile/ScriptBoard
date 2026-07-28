@@ -69,6 +69,17 @@
 
 删除前必须检查 QuickRun 和 Schedule 引用；重命名在同一事务更新活动引用。
 
+### QuickRunGroup
+
+| 字段 | 约束 |
+|---|---|
+| id | UUID |
+| name | 管理员定义；忽略大小写唯一 |
+| sort_order | 分组显示顺序 |
+| created_at / updated_at | UTC |
+
+“未分组”是 `QuickRun.group_id` 为空时的派生展示区域，不保存为 QuickRunGroup。删除分组时，其中快捷执行项按原组内顺序追加到“未分组”，不会级联删除。
+
 ### QuickRun
 
 | 字段 | 约束 |
@@ -80,10 +91,25 @@
 | argument_template | 解析后的模板数组 |
 | timeout_seconds | 可空代表无超时 |
 | always_confirm | 默认 false |
-| source_run_id | 关联不可删除 Run |
-| sort_order | 管理员排序 |
+| source_run_id | 可空；从历史创建时关联不可删除 Run，从文件创建时为空 |
+| group_id | 可空；引用 QuickRunGroup，删除分组时置空 |
+| sort_order | 当前分组内排序；未分组条目共享独立排序域 |
+| locked | 默认 false；仅阻止管理员编辑和删除 |
 | validity | 派生值，不作为唯一事实来源 |
 | created_at / updated_at | UTC |
+
+复制 QuickRun 时保留脚本路径、参数模板、超时与可空来源 Run ID，但生成新 ID 且 `locked=false`。复制到原分组时新项紧随来源项；移动到其他分组或“未分组”时追加到目标排序域。软锁不阻止启动、复制、分组移动、排序或系统维护路径引用。
+
+### ScheduleGroup
+
+| 字段 | 约束 |
+|---|---|
+| id | UUID |
+| name | 管理员定义；忽略大小写唯一 |
+| sort_order | 分组显示顺序 |
+| created_at / updated_at | UTC |
+
+“未分组”是 `Schedule.group_id` 为空时的派生展示区域，不保存为 ScheduleGroup。删除分组只移除容器，其中计划保留并转为未分组。
 
 ### Schedule
 
@@ -91,6 +117,7 @@
 |---|---|
 | id | UUID |
 | name | 管理员定义 |
+| group_id | 可空；引用 ScheduleGroup，删除分组时置空 |
 | script_path | 规范相对路径 |
 | argument_text / argument_template | 变量引用模板 |
 | cron_expression | 标准五段 cron |

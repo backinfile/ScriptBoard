@@ -2,7 +2,6 @@ package app
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -27,7 +26,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -47,7 +45,7 @@ import (
 )
 
 const initialPasswordFilename = "initial-admin-password"
-const currentSchemaVersion = 9
+const currentSchemaVersion = 14
 
 //go:embed web/assets/* web/templates/*
 var webFiles embed.FS
@@ -639,6 +637,7 @@ func openDatabase(path string) (*sql.DB, error) {
 			timeout_seconds INTEGER NOT NULL DEFAULT 0,
 			log_path TEXT NOT NULL
 			, source_name TEXT NOT NULL DEFAULT ''
+			, source_id TEXT NOT NULL DEFAULT ''
 			, runtime_identity TEXT NOT NULL DEFAULT ''
 			, log_expired INTEGER NOT NULL DEFAULT 0
 			, log_incomplete INTEGER NOT NULL DEFAULT 0
@@ -652,19 +651,38 @@ func openDatabase(path string) (*sql.DB, error) {
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS quick_run_groups (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+			sort_order INTEGER NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS quick_runs (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
 			script_path TEXT NOT NULL,
 			arguments_template TEXT NOT NULL,
 			timeout_seconds INTEGER NOT NULL,
-			source_run_id TEXT NOT NULL REFERENCES runs(id),
+			source_run_id TEXT REFERENCES runs(id),
 			sort_order INTEGER NOT NULL,
-			created_at INTEGER NOT NULL
+			created_at INTEGER NOT NULL,
+			group_id TEXT REFERENCES quick_run_groups(id) ON DELETE SET NULL,
+			locked INTEGER NOT NULL DEFAULT 0,
+			updated_at INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE IF NOT EXISTS schedule_groups (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+			sort_order INTEGER NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS schedules (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
+			group_name TEXT NOT NULL DEFAULT '',
+			group_id TEXT REFERENCES schedule_groups(id) ON DELETE SET NULL,
 			script_path TEXT NOT NULL,
 			arguments_template TEXT NOT NULL,
 			expression TEXT NOT NULL,
@@ -748,6 +766,176 @@ func openDatabase(path string) (*sql.DB, error) {
 		if _, err := migration.Exec("ALTER TABLE variables ADD COLUMN is_password INTEGER NOT NULL DEFAULT 0"); err != nil {
 			_ = db.Close()
 			return nil, fmt.Errorf("migrate variable display types: %w", err)
+		}
+	}
+	if schemaVersion > 0 && schemaVersion < 10 {
+		for _, statement := range []string{
+			`CREATE TABLE quick_runs_v10 (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				script_path TEXT NOT NULL,
+				arguments_template TEXT NOT NULL,
+				timeout_seconds INTEGER NOT NULL,
+				source_run_id TEXT REFERENCES runs(id),
+				sort_order INTEGER NOT NULL,
+				created_at INTEGER NOT NULL
+			)`,
+			`INSERT INTO quick_runs_v10
+				(id, name, script_path, arguments_template, timeout_seconds, source_run_id, sort_order, created_at)
+				SELECT id, name, script_path, arguments_template, timeout_seconds, source_run_id, sort_order, created_at FROM quick_runs`,
+			"DROP TABLE quick_runs",
+			"ALTER TABLE quick_runs_v10 RENAME TO quick_runs",
+		} {
+			if _, err := migration.Exec(statement); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("migrate file-created Quick Runs: %w", err)
+			}
+		}
+	}
+	if schemaVersion > 0 && schemaVersion < 11 {
+		for _, statement := range []string{
+			`CREATE TABLE IF NOT EXISTS quick_run_groups (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+				sort_order INTEGER NOT NULL,
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL
+			)`,
+			"ALTER TABLE quick_runs ADD COLUMN group_id TEXT REFERENCES quick_run_groups(id) ON DELETE SET NULL",
+			"ALTER TABLE quick_runs ADD COLUMN locked INTEGER NOT NULL DEFAULT 0",
+			"ALTER TABLE quick_runs ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0",
+			"UPDATE quick_runs SET updated_at = created_at",
+		} {
+			if _, err := migration.Exec(statement); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("migrate Quick Run organization: %w", err)
+			}
+		}
+	}
+	if schemaVersion < 12 {
+		var groupColumnExists int
+		if err := migration.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('schedules') WHERE name = 'group_name'`).Scan(&groupColumnExists); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("inspect Schedule groups migration: %w", err)
+		}
+		if groupColumnExists == 0 {
+			if _, err := migration.Exec("ALTER TABLE schedules ADD COLUMN group_name TEXT NOT NULL DEFAULT ''"); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("migrate Schedule groups: %w", err)
+			}
+		}
+	}
+	if schemaVersion < 13 {
+		var sourceIDColumnExists int
+		if err := migration.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('runs') WHERE name = 'source_id'`).Scan(&sourceIDColumnExists); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("inspect Run source ID migration: %w", err)
+		}
+		if sourceIDColumnExists == 0 {
+			if _, err := migration.Exec("ALTER TABLE runs ADD COLUMN source_id TEXT NOT NULL DEFAULT ''"); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("migrate Run source IDs: %w", err)
+			}
+		}
+		if _, err := migration.Exec(`UPDATE runs
+			SET source_id = COALESCE((
+				SELECT schedule_id FROM schedule_triggers
+				WHERE schedule_triggers.run_id = runs.id
+				ORDER BY scheduled_for DESC
+				LIMIT 1
+			), '')
+			WHERE source_id = '' AND source_type IN ('scheduler', 'admin/schedule-now')`); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("backfill Run schedule IDs: %w", err)
+		}
+	}
+	if schemaVersion < 14 {
+		if _, err := migration.Exec(`CREATE TABLE IF NOT EXISTS schedule_groups (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+			sort_order INTEGER NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("create Schedule groups: %w", err)
+		}
+		var groupIDColumnExists int
+		if err := migration.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('schedules') WHERE name = 'group_id'`).Scan(&groupIDColumnExists); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("inspect Schedule group IDs migration: %w", err)
+		}
+		if groupIDColumnExists == 0 {
+			if _, err := migration.Exec("ALTER TABLE schedules ADD COLUMN group_id TEXT REFERENCES schedule_groups(id) ON DELETE SET NULL"); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("migrate Schedule group IDs: %w", err)
+			}
+		}
+		rows, err := migration.Query(`SELECT MIN(TRIM(group_name))
+			FROM schedules
+			WHERE deleted = 0 AND TRIM(group_name) <> ''
+			GROUP BY LOWER(TRIM(group_name))
+			ORDER BY MIN(created_at)`)
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("read legacy Schedule groups: %w", err)
+		}
+		var names []string
+		for rows.Next() {
+			var name string
+			if err := rows.Scan(&name); err != nil {
+				_ = rows.Close()
+				_ = db.Close()
+				return nil, fmt.Errorf("scan legacy Schedule group: %w", err)
+			}
+			names = append(names, name)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			_ = db.Close()
+			return nil, fmt.Errorf("read legacy Schedule groups: %w", err)
+		}
+		_ = rows.Close()
+		var sortOrder int
+		if err := migration.QueryRow("SELECT COALESCE(MAX(sort_order), 0) FROM schedule_groups").Scan(&sortOrder); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("read Schedule group order: %w", err)
+		}
+		now := time.Now().UTC().Unix()
+		for _, name := range names {
+			var groupID string
+			err := migration.QueryRow("SELECT id FROM schedule_groups WHERE name = ? COLLATE NOCASE", name).Scan(&groupID)
+			if errors.Is(err, sql.ErrNoRows) {
+				groupID, err = randomToken(18)
+				if err == nil {
+					sortOrder++
+					_, err = migration.Exec(`INSERT INTO schedule_groups (id, name, sort_order, created_at, updated_at)
+						VALUES (?, ?, ?, ?, ?)`, groupID, name, sortOrder, now, now)
+				}
+			}
+			if err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("migrate Schedule group %q: %w", name, err)
+			}
+			if _, err := migration.Exec(`UPDATE schedules SET group_id = ?
+				WHERE group_id IS NULL AND deleted = 0 AND TRIM(group_name) = ? COLLATE NOCASE`,
+				groupID, name); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("assign migrated Schedule group %q: %w", name, err)
+			}
+		}
+	}
+	for _, statement := range []string{
+		"CREATE INDEX IF NOT EXISTS quick_run_groups_order_idx ON quick_run_groups(sort_order, created_at)",
+		"CREATE INDEX IF NOT EXISTS quick_runs_group_order_idx ON quick_runs(group_id, sort_order, created_at)",
+		"CREATE INDEX IF NOT EXISTS schedules_group_idx ON schedules(group_name, created_at)",
+		"CREATE INDEX IF NOT EXISTS schedule_groups_order_idx ON schedule_groups(sort_order, created_at)",
+		"CREATE INDEX IF NOT EXISTS schedules_group_order_idx ON schedules(group_id, created_at)",
+		"CREATE INDEX IF NOT EXISTS runs_source_idx ON runs(source_type, source_id, created_at DESC)",
+	} {
+		if _, err := migration.Exec(statement); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("index Quick Run organization: %w", err)
 		}
 	}
 	for _, statement := range []string{
@@ -920,6 +1108,7 @@ func (a *App) routes(_ string) http.Handler {
 	mux.Handle("GET /resources/files/new-directory", a.requireSession(http.HandlerFunc(a.newDirectoryTask)))
 	mux.Handle("GET /resources/files/upload", a.requireSession(http.HandlerFunc(a.uploadTask)))
 	mux.Handle("GET /resources/files/run/{path...}", a.requireSession(http.HandlerFunc(a.runFileTask)))
+	mux.Handle("GET /resources/files/quick-run/{path...}", a.requireSession(http.HandlerFunc(a.quickRunFromFileTask)))
 	mux.Handle("GET /resources/files/{path...}", a.requireSession(http.HandlerFunc(a.filesPage)))
 	mux.Handle("POST /resources/files/mkdir", a.requireSession(http.HandlerFunc(a.createDirectory)))
 	mux.Handle("POST /resources/files/upload", a.requireSession(http.HandlerFunc(a.uploadFiles)))
@@ -948,10 +1137,30 @@ func (a *App) routes(_ string) http.Handler {
 	mux.Handle("POST /resources/variables/{name}/delete", a.requireSession(http.HandlerFunc(a.deleteVariable)))
 	mux.Handle("POST /monitor/runs/{id}/quick-run", a.requireSession(http.HandlerFunc(a.saveQuickRun)))
 	mux.Handle("GET /config/quick-runs", a.requireSession(http.HandlerFunc(a.quickRunsPage)))
+	mux.Handle("POST /config/quick-runs", a.requireSession(http.HandlerFunc(a.createQuickRunFromFile)))
+	mux.Handle("GET /config/quick-runs/groups/new", a.requireSession(http.HandlerFunc(a.newQuickRunGroupTask)))
+	mux.Handle("POST /config/quick-runs/groups", a.requireSession(http.HandlerFunc(a.createQuickRunGroup)))
+	mux.Handle("GET /config/quick-runs/groups/{id}/edit", a.requireSession(http.HandlerFunc(a.editQuickRunGroupTask)))
+	mux.Handle("POST /config/quick-runs/groups/{id}/update", a.requireSession(http.HandlerFunc(a.updateQuickRunGroup)))
+	mux.Handle("POST /config/quick-runs/groups/{id}/move", a.requireSession(http.HandlerFunc(a.moveQuickRunGroup)))
+	mux.Handle("POST /config/quick-runs/groups/{id}/delete", a.requireSession(http.HandlerFunc(a.deleteQuickRunGroup)))
+	mux.Handle("GET /config/quick-runs/{id}/move-group", a.requireSession(http.HandlerFunc(a.moveQuickRunToGroupTask)))
+	mux.Handle("POST /config/quick-runs/{id}/move-group", a.requireSession(http.HandlerFunc(a.moveQuickRunToGroup)))
+	mux.Handle("GET /config/quick-runs/{id}/edit", a.requireSession(http.HandlerFunc(a.editQuickRunTask)))
+	mux.Handle("POST /config/quick-runs/{id}/update", a.requireSession(http.HandlerFunc(a.updateQuickRun)))
+	mux.Handle("GET /config/quick-runs/{id}/copy", a.requireSession(http.HandlerFunc(a.copyQuickRunTask)))
+	mux.Handle("POST /config/quick-runs/{id}/copy", a.requireSession(http.HandlerFunc(a.copyQuickRun)))
+	mux.Handle("POST /config/quick-runs/{id}/lock", a.requireSession(http.HandlerFunc(a.setQuickRunLocked)))
 	mux.Handle("POST /config/quick-runs/{id}/start", a.requireSession(http.HandlerFunc(a.startQuickRun)))
 	mux.Handle("POST /config/quick-runs/{id}/move", a.requireSession(http.HandlerFunc(a.moveQuickRun)))
 	mux.Handle("POST /config/quick-runs/{id}/delete", a.requireSession(http.HandlerFunc(a.deleteQuickRun)))
 	mux.Handle("GET /config/schedules", a.requireSession(http.HandlerFunc(a.schedulesPage)))
+	mux.Handle("GET /config/schedules/groups/new", a.requireSession(http.HandlerFunc(a.newScheduleGroupTask)))
+	mux.Handle("POST /config/schedules/groups", a.requireSession(http.HandlerFunc(a.createScheduleGroup)))
+	mux.Handle("GET /config/schedules/groups/{id}/edit", a.requireSession(http.HandlerFunc(a.editScheduleGroupTask)))
+	mux.Handle("POST /config/schedules/groups/{id}/update", a.requireSession(http.HandlerFunc(a.updateScheduleGroup)))
+	mux.Handle("POST /config/schedules/groups/{id}/move", a.requireSession(http.HandlerFunc(a.moveScheduleGroup)))
+	mux.Handle("POST /config/schedules/groups/{id}/delete", a.requireSession(http.HandlerFunc(a.deleteScheduleGroup)))
 	mux.Handle("GET /config/schedules/new", a.requireSession(http.HandlerFunc(a.newScheduleTask)))
 	mux.Handle("GET /config/schedules/{id}/edit", a.requireSession(http.HandlerFunc(a.editScheduleTask)))
 	mux.Handle("POST /config/schedules/preview", a.requireSession(http.HandlerFunc(a.previewScheduleCron)))
@@ -1397,18 +1606,111 @@ type auditView struct {
 	Source     string
 }
 
+var (
+	errInvalidDateRange = errors.New("invalid date range")
+	errDateRangeOrder   = errors.New("start date is after end date")
+)
+
+type localDateRange struct {
+	FromDate    string
+	ToDate      string
+	From        time.Time
+	ToExclusive time.Time
+	HasFromDate bool
+	HasToDate   bool
+}
+
+func parseLocalDateRange(values url.Values) (localDateRange, error) {
+	dateRange := localDateRange{
+		FromDate: strings.TrimSpace(values.Get("from")),
+		ToDate:   strings.TrimSpace(values.Get("to")),
+	}
+	var err error
+	if dateRange.FromDate != "" {
+		dateRange.From, err = time.ParseInLocation(time.DateOnly, dateRange.FromDate, time.Local)
+		if err != nil {
+			return localDateRange{}, errInvalidDateRange
+		}
+		dateRange.HasFromDate = true
+	}
+	if dateRange.ToDate != "" {
+		to, parseErr := time.ParseInLocation(time.DateOnly, dateRange.ToDate, time.Local)
+		err = parseErr
+		if err != nil {
+			return localDateRange{}, errInvalidDateRange
+		}
+		dateRange.ToExclusive = to.AddDate(0, 0, 1)
+		dateRange.HasToDate = true
+	}
+	if dateRange.HasFromDate && dateRange.HasToDate && dateRange.From.After(dateRange.ToExclusive.AddDate(0, 0, -1)) {
+		return localDateRange{}, errDateRangeOrder
+	}
+	return dateRange, nil
+}
+
+type auditFilters struct {
+	Query              string
+	FromDate           string
+	ToDate             string
+	FromUnix           int64
+	ToExclusiveUnix    int64
+	HasFromDate        bool
+	HasToDate          bool
+	HasActiveSelection bool
+}
+
+func parseAuditFilters(values url.Values) (auditFilters, error) {
+	dateRange, err := parseLocalDateRange(values)
+	if err != nil {
+		return auditFilters{}, err
+	}
+	filters := auditFilters{
+		Query:       strings.TrimSpace(values.Get("q")),
+		FromDate:    dateRange.FromDate,
+		ToDate:      dateRange.ToDate,
+		FromUnix:    dateRange.From.Unix(),
+		HasFromDate: dateRange.HasFromDate,
+		HasToDate:   dateRange.HasToDate,
+	}
+	if dateRange.HasToDate {
+		filters.ToExclusiveUnix = dateRange.ToExclusive.Unix()
+	}
+	filters.HasActiveSelection = filters.Query != "" || filters.HasFromDate || filters.HasToDate
+	return filters, nil
+}
+
 func (a *App) auditPage(response http.ResponseWriter, request *http.Request) {
-	query := strings.TrimSpace(request.URL.Query().Get("q"))
-	like := "%" + query + "%"
+	filters, err := parseAuditFilters(request.URL.Query())
+	if err != nil {
+		key := "common.invalid_date_range"
+		if errors.Is(err, errDateRangeOrder) {
+			key = "common.invalid_date_order"
+		}
+		http.Error(response, webText(resolveWebLocale(request), key), http.StatusBadRequest)
+		return
+	}
+	like := "%" + filters.Query + "%"
 	var total int
-	if err := a.db.QueryRow(`SELECT COUNT(*) FROM audit_events WHERE ? = '' OR action LIKE ? OR target LIKE ? OR result LIKE ? OR source_address LIKE ?`, query, like, like, like, like).Scan(&total); err != nil {
+	if err := a.db.QueryRow(`SELECT COUNT(*) FROM audit_events
+		WHERE (? = '' OR action LIKE ? OR target LIKE ? OR result LIKE ? OR source_address LIKE ?)
+		AND (? = 0 OR occurred_at >= ?)
+		AND (? = 0 OR occurred_at < ?)`,
+		filters.Query, like, like, like, like,
+		filters.HasFromDate, filters.FromUnix,
+		filters.HasToDate, filters.ToExclusiveUnix).Scan(&total); err != nil {
 		http.Error(response, "无法读取审计事件", http.StatusInternalServerError)
 		return
 	}
 	pagination := newPagination(request, total)
 	rows, err := a.db.Query(`SELECT occurred_at, action, target, result, source_address FROM audit_events
-		WHERE ? = '' OR action LIKE ? OR target LIKE ? OR result LIKE ? OR source_address LIKE ?
-		ORDER BY occurred_at DESC LIMIT ? OFFSET ?`, query, like, like, like, like, listPageSize, pagination.Start)
+		WHERE (? = '' OR action LIKE ? OR target LIKE ? OR result LIKE ? OR source_address LIKE ?)
+		AND (? = 0 OR occurred_at >= ?)
+		AND (? = 0 OR occurred_at < ?)
+		ORDER BY occurred_at DESC LIMIT ? OFFSET ?`,
+		filters.Query, like, like, like, like,
+		filters.HasFromDate, filters.FromUnix,
+		filters.HasToDate, filters.ToExclusiveUnix,
+		listPageSize, pagination.Start)
 	if err != nil {
 		http.Error(response, "无法读取审计事件", http.StatusInternalServerError)
 		return
@@ -1429,9 +1731,9 @@ func (a *App) auditPage(response http.ResponseWriter, request *http.Request) {
 	_ = auditTemplate.Execute(response, struct {
 		Events     []auditView
 		Pagination paginationView
-		Query      string
+		Filters    auditFilters
 		Locale     webLocale
-	}{Events: events, Pagination: pagination, Query: query, Locale: resolveWebLocale(request)})
+	}{Events: events, Pagination: pagination, Filters: filters, Locale: resolveWebLocale(request)})
 }
 
 func (a *App) auditDownload(response http.ResponseWriter, _ *http.Request) {
@@ -1457,25 +1759,28 @@ func (a *App) auditDownload(response http.ResponseWriter, _ *http.Request) {
 }
 
 func (a *App) schedulesPage(response http.ResponseWriter, request *http.Request) {
-	total, err := a.scheduler.Count()
+	groups, err := a.loadScheduleGroups()
 	if err != nil {
-		http.Error(response, "无法读取计划", http.StatusInternalServerError)
+		http.Error(response, "无法读取计划分组", http.StatusInternalServerError)
 		return
 	}
-	pagination := newPagination(request, total)
-	schedules, err := a.scheduler.ListPage(listPageSize, pagination.Start)
+	schedules, err := a.scheduler.List()
 	if err != nil {
 		http.Error(response, "无法读取计划", http.StatusInternalServerError)
 		return
 	}
 	current := request.Context().Value(sessionContextKey).(session)
+	locale := resolveWebLocale(request)
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = schedulesTemplate.Execute(response, struct {
-		Schedules  []scheduler.Schedule
-		CSRFToken  string
-		Pagination paginationView
-		Locale     webLocale
-	}{Schedules: schedules, CSRFToken: current.csrfToken, Pagination: pagination, Locale: resolveWebLocale(request)})
+		Schedules []scheduler.Schedule
+		Groups    []scheduleGroup
+		CSRFToken string
+		Locale    webLocale
+	}{
+		Schedules: schedules, Groups: organizeScheduleGroups(groups, schedules, locale),
+		CSRFToken: current.csrfToken, Locale: locale,
+	})
 }
 
 func (a *App) createSchedule(response http.ResponseWriter, request *http.Request) {
@@ -1483,7 +1788,7 @@ func (a *App) createSchedule(response http.ResponseWriter, request *http.Request
 		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
 		return
 	}
-	values, err := scheduleRequest(request)
+	values, err := a.scheduleRequest(request)
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
@@ -1501,21 +1806,26 @@ func (a *App) createSchedule(response http.ResponseWriter, request *http.Request
 	http.Redirect(response, request, "/config/schedules", http.StatusSeeOther)
 }
 
-func scheduleRequest(request *http.Request) (scheduler.CreateRequest, error) {
+func (a *App) scheduleRequest(request *http.Request) (scheduler.CreateRequest, error) {
 	name := strings.TrimSpace(request.FormValue("name"))
 	if name == "" || len([]byte(name)) > 256 {
 		return scheduler.CreateRequest{}, errors.New("计划名称无效")
 	}
+	groupID, groupName, err := a.resolveScheduleGroup(request.FormValue("group_id"))
+	if err != nil {
+		return scheduler.CreateRequest{}, errors.New("计划分组不存在")
+	}
 	timeoutSeconds := 0
 	if value := request.FormValue("timeout_seconds"); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil || parsed < 0 || parsed > 24*60*60 {
+		parsed, parseErr := strconv.Atoi(value)
+		if parseErr != nil || parsed < 0 || parsed > 24*60*60 {
 			return scheduler.CreateRequest{}, errors.New("超时必须是 0 到 86400 秒")
 		}
 		timeoutSeconds = parsed
 	}
 	return scheduler.CreateRequest{
-		Name: name, ScriptPath: request.FormValue("script"), ArgumentsTemplate: request.FormValue("arguments"),
+		Name: name, GroupID: groupID, GroupName: groupName,
+		ScriptPath: request.FormValue("script"), ArgumentsTemplate: request.FormValue("arguments"),
 		Expression: request.FormValue("expression"), TimeoutSeconds: timeoutSeconds,
 		AllowOverlap: request.FormValue("disallow_overlap") == "",
 	}, nil
@@ -1526,7 +1836,7 @@ func (a *App) updateSchedule(response http.ResponseWriter, request *http.Request
 		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
 		return
 	}
-	values, err := scheduleRequest(request)
+	values, err := a.scheduleRequest(request)
 	if err == nil {
 		err = a.scheduler.Update(request.PathValue("id"), values)
 	}
@@ -1589,12 +1899,52 @@ type quickRunView struct {
 	ScriptPath        string
 	ArgumentsTemplate string
 	TimeoutSeconds    int
+	GroupID           string
 	Valid             bool
+	Locked            bool
 }
 
 type overlapView struct {
 	Action, Script, Arguments, Timeout, CSRFToken string
 	Locale                                        webLocale
+}
+
+type quickRunCreateRequest struct {
+	Name              string
+	ScriptPath        string
+	ArgumentsTemplate string
+	TimeoutSeconds    int
+	SourceRunID       *string
+	GroupID           *string
+}
+
+func (a *App) createQuickRun(values quickRunCreateRequest) (string, error) {
+	id, err := randomToken(18)
+	if err != nil {
+		return "", err
+	}
+	transaction, err := a.db.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer transaction.Rollback()
+	var sortOrder int
+	if err := transaction.QueryRow("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM quick_runs WHERE group_id IS ?", values.GroupID).Scan(&sortOrder); err != nil {
+		return "", err
+	}
+	now := time.Now().UTC().Unix()
+	if _, err := transaction.Exec(`INSERT INTO quick_runs
+		(id, name, script_path, arguments_template, timeout_seconds, source_run_id, sort_order, created_at, group_id, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, values.Name, values.ScriptPath, values.ArgumentsTemplate, values.TimeoutSeconds,
+		values.SourceRunID, sortOrder, now, values.GroupID, now,
+	); err != nil {
+		return "", err
+	}
+	if err := transaction.Commit(); err != nil {
+		return "", err
+	}
+	return id, nil
 }
 
 func (a *App) saveQuickRun(response http.ResponseWriter, request *http.Request) {
@@ -1612,18 +1962,16 @@ func (a *App) saveQuickRun(response http.ResponseWriter, request *http.Request) 
 		http.Error(response, "来源运行不存在", http.StatusNotFound)
 		return
 	}
-	id, err := randomToken(18)
+	groupID, err := a.resolveQuickRunGroupID(request.FormValue("group_id"))
 	if err != nil {
-		http.Error(response, "无法创建快捷执行", http.StatusInternalServerError)
+		http.Error(response, "快捷执行分组不存在", http.StatusConflict)
 		return
 	}
-	var sortOrder int
-	_ = a.db.QueryRow("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM quick_runs").Scan(&sortOrder)
-	if _, err := a.db.Exec(`INSERT INTO quick_runs
-		(id, name, script_path, arguments_template, timeout_seconds, source_run_id, sort_order, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, name, source.ScriptPath, source.ArgumentsTemplate, source.TimeoutSeconds, source.ID, sortOrder, time.Now().UTC().Unix(),
-	); err != nil {
+	id, err := a.createQuickRun(quickRunCreateRequest{
+		Name: name, ScriptPath: source.ScriptPath, ArgumentsTemplate: source.ArgumentsTemplate,
+		TimeoutSeconds: source.TimeoutSeconds, SourceRunID: &source.ID, GroupID: groupID,
+	})
+	if err != nil {
 		http.Error(response, "无法保存快捷执行", http.StatusInternalServerError)
 		return
 	}
@@ -1635,14 +1983,72 @@ func (a *App) saveQuickRun(response http.ResponseWriter, request *http.Request) 
 	http.Redirect(response, request, destination, http.StatusSeeOther)
 }
 
-func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request) {
-	var total int
-	if err := a.db.QueryRow("SELECT COUNT(*) FROM quick_runs").Scan(&total); err != nil {
-		http.Error(response, "无法读取快捷执行", http.StatusInternalServerError)
+func (a *App) createQuickRunFromFile(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
 		return
 	}
-	pagination := newPagination(request, total)
-	rows, err := a.db.Query("SELECT id, name, script_path, arguments_template, timeout_seconds FROM quick_runs ORDER BY sort_order, created_at LIMIT ? OFFSET ?", listPageSize, pagination.Start)
+	name := strings.TrimSpace(request.FormValue("name"))
+	if name == "" || len([]byte(name)) > 256 {
+		http.Error(response, "快捷执行名称无效", http.StatusBadRequest)
+		return
+	}
+	scriptPath := filepath.ToSlash(strings.Trim(request.FormValue("script"), "/"))
+	info, err := a.managed.Info(scriptPath)
+	if err != nil || !info.Mode().IsRegular() || !isScriptExtension(scriptPath) {
+		http.Error(response, "脚本不存在或不可运行", http.StatusBadRequest)
+		return
+	}
+	timeoutSeconds := 0
+	if value := request.FormValue("timeout_seconds"); value != "" {
+		parsed, parseErr := strconv.Atoi(value)
+		if parseErr != nil || parsed < 0 || parsed > 24*60*60 {
+			http.Error(response, "超时必须是 0 到 86400 秒", http.StatusBadRequest)
+			return
+		}
+		timeoutSeconds = parsed
+	}
+	variables, err := a.loadVariables()
+	if err != nil {
+		http.Error(response, "无法读取变量", http.StatusInternalServerError)
+		return
+	}
+	argumentsTemplate := request.FormValue("arguments")
+	if err := runmanager.ValidateArgumentsTemplate(argumentsTemplate, variables); err != nil {
+		http.Error(response, "参数无效："+err.Error(), http.StatusBadRequest)
+		return
+	}
+	groupID, err := a.resolveQuickRunGroupID(request.FormValue("group_id"))
+	if err != nil {
+		http.Error(response, "快捷执行分组不存在", http.StatusConflict)
+		return
+	}
+	id, err := a.createQuickRun(quickRunCreateRequest{
+		Name: name, ScriptPath: scriptPath, ArgumentsTemplate: argumentsTemplate,
+		TimeoutSeconds: timeoutSeconds, SourceRunID: nil, GroupID: groupID,
+	})
+	if err != nil {
+		http.Error(response, "无法保存快捷执行", http.StatusInternalServerError)
+		return
+	}
+	a.recordAudit("create_quick_run", id, "succeeded", request.RemoteAddr)
+	destination := "/config/quick-runs"
+	if request.Header.Get("X-ScriptBoard-Navigation") == "pjax" {
+		if returnTo := safeFilesReturnTo(request.FormValue("return_to")); returnTo != "" {
+			destination = returnTo
+		}
+	}
+	http.Redirect(response, request, destination, http.StatusSeeOther)
+}
+
+func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request) {
+	groups, err := a.loadQuickRunGroups()
+	if err != nil {
+		http.Error(response, "无法读取快捷执行分组", http.StatusInternalServerError)
+		return
+	}
+	rows, err := a.db.Query(`SELECT id, name, script_path, arguments_template, timeout_seconds, group_id, locked
+		FROM quick_runs ORDER BY sort_order, created_at`)
 	if err != nil {
 		http.Error(response, "无法读取快捷执行", http.StatusInternalServerError)
 		return
@@ -1650,7 +2056,8 @@ func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request)
 	var quickRuns []quickRunView
 	for rows.Next() {
 		var quick quickRunView
-		if err := rows.Scan(&quick.ID, &quick.Name, &quick.ScriptPath, &quick.ArgumentsTemplate, &quick.TimeoutSeconds); err != nil {
+		var groupID sql.NullString
+		if err := rows.Scan(&quick.ID, &quick.Name, &quick.ScriptPath, &quick.ArgumentsTemplate, &quick.TimeoutSeconds, &groupID, &quick.Locked); err != nil {
 			_ = rows.Close()
 			http.Error(response, "无法读取快捷执行", http.StatusInternalServerError)
 			return
@@ -1658,17 +2065,40 @@ func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request)
 		if info, infoErr := a.managed.Info(quick.ScriptPath); infoErr == nil && info.Mode().IsRegular() {
 			quick.Valid = true
 		}
+		if groupID.Valid {
+			quick.GroupID = groupID.String
+		}
 		quickRuns = append(quickRuns, quick)
 	}
 	_ = rows.Close()
+	groupIndexes := make(map[string]int, len(groups))
+	for index := range groups {
+		groupIndexes[groups[index].ID] = index
+		groups[index].QuickRunCount = 0
+	}
+	var ungrouped []quickRunView
+	for _, quick := range quickRuns {
+		if index, ok := groupIndexes[quick.GroupID]; ok {
+			groups[index].Items = append(groups[index].Items, quick)
+			groups[index].QuickRunCount++
+		} else {
+			ungrouped = append(ungrouped, quick)
+		}
+	}
+	if len(ungrouped) > 0 {
+		groups = append(groups, quickRunGroup{
+			ID: "ungrouped", Name: webText(resolveWebLocale(request), "quick_runs.ungrouped"),
+			QuickRunCount: len(ungrouped), Items: ungrouped, Ungrouped: true,
+		})
+	}
 	current := request.Context().Value(sessionContextKey).(session)
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := quickRunsTemplate.Execute(response, struct {
-		QuickRuns  []quickRunView
-		CSRFToken  string
-		Pagination paginationView
-		Locale     webLocale
-	}{QuickRuns: quickRuns, CSRFToken: current.csrfToken, Pagination: pagination, Locale: resolveWebLocale(request)}); err != nil {
+		QuickRuns []quickRunView
+		Groups    []quickRunGroup
+		CSRFToken string
+		Locale    webLocale
+	}{QuickRuns: quickRuns, Groups: groups, CSRFToken: current.csrfToken, Locale: resolveWebLocale(request)}); err != nil {
 		http.Error(response, "Unable to render Quick Runs: "+err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -1698,7 +2128,7 @@ func (a *App) startQuickRun(response http.ResponseWriter, request *http.Request)
 	}
 	id, err := a.runs.Start(runmanager.StartRequest{
 		ScriptPath: quick.ScriptPath, ArgumentsTemplate: quick.ArgumentsTemplate, TimeoutSeconds: quick.TimeoutSeconds,
-		SourceType: "admin/quick-run", SourceName: quick.Name, Variables: variables,
+		SourceType: "admin/quick-run", SourceName: quick.Name, SourceID: quick.ID, Variables: variables,
 	})
 	if err != nil {
 		http.Error(response, "无法启动快捷执行："+err.Error(), http.StatusBadRequest)
@@ -1728,14 +2158,19 @@ func (a *App) moveQuickRun(response http.ResponseWriter, request *http.Request) 
 	}
 	defer transaction.Rollback()
 	var currentOrder int
-	if err := transaction.QueryRow("SELECT sort_order FROM quick_runs WHERE id = ?", request.PathValue("id")).Scan(&currentOrder); err != nil {
+	var groupID sql.NullString
+	if err := transaction.QueryRow("SELECT sort_order, group_id FROM quick_runs WHERE id = ?", request.PathValue("id")).Scan(&currentOrder, &groupID); err != nil {
 		http.Error(response, "快捷执行不存在", http.StatusNotFound)
 		return
 	}
+	var groupValue any
+	if groupID.Valid {
+		groupValue = groupID.String
+	}
 	var neighborID string
 	var neighborOrder int
-	query := "SELECT id, sort_order FROM quick_runs WHERE sort_order " + operator + " ? ORDER BY sort_order " + order + " LIMIT 1"
-	if scanErr := transaction.QueryRow(query, currentOrder).Scan(&neighborID, &neighborOrder); scanErr == nil {
+	query := "SELECT id, sort_order FROM quick_runs WHERE group_id IS ? AND sort_order " + operator + " ? ORDER BY sort_order " + order + " LIMIT 1"
+	if scanErr := transaction.QueryRow(query, groupValue, currentOrder).Scan(&neighborID, &neighborOrder); scanErr == nil {
 		_, err = transaction.Exec("UPDATE quick_runs SET sort_order = CASE id WHEN ? THEN ? WHEN ? THEN ? END WHERE id IN (?, ?)", request.PathValue("id"), neighborOrder, neighborID, currentOrder, request.PathValue("id"), neighborID)
 	} else if !errors.Is(scanErr, sql.ErrNoRows) {
 		err = scanErr
@@ -1756,16 +2191,25 @@ func (a *App) deleteQuickRun(response http.ResponseWriter, request *http.Request
 		http.Error(response, "删除快捷执行需要页面安全令牌和明确确认", http.StatusForbidden)
 		return
 	}
-	result, err := a.db.Exec("DELETE FROM quick_runs WHERE id = ?", request.PathValue("id"))
+	id := request.PathValue("id")
+	result, err := a.db.Exec("DELETE FROM quick_runs WHERE id = ? AND locked = 0", id)
 	count := int64(0)
 	if err == nil {
 		count, _ = result.RowsAffected()
 	}
-	if err != nil || count == 0 {
+	if err != nil {
+		http.Error(response, "无法删除快捷执行", http.StatusInternalServerError)
+		return
+	}
+	if count == 0 {
+		if quick, loadErr := a.loadQuickRun(id); loadErr == nil && quick.Locked {
+			http.Error(response, "快捷执行已锁定，请先解锁", http.StatusConflict)
+			return
+		}
 		http.Error(response, "快捷执行不存在", http.StatusNotFound)
 		return
 	}
-	a.recordAudit("delete_quick_run", request.PathValue("id"), "succeeded", request.RemoteAddr)
+	a.recordAudit("delete_quick_run", id, "succeeded", request.RemoteAddr)
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }
 
@@ -2059,14 +2503,85 @@ func (a *App) runDetails(response http.ResponseWriter, request *http.Request) {
 	}{Run: run, CSRFToken: current.csrfToken, Locale: resolveWebLocale(request)})
 }
 
+type runFilters struct {
+	Query               string
+	FromDate            string
+	ToDate              string
+	FromUnixNano        int64
+	ToExclusiveUnixNano int64
+	HasFromDate         bool
+	HasToDate           bool
+	HasActiveSelection  bool
+	FocusSearch         bool
+	ScheduleID          string
+}
+
+func exactUnixNano(value time.Time) (int64, bool) {
+	unixNano := value.UnixNano()
+	return unixNano, time.Unix(0, unixNano).UTC().Equal(value.UTC())
+}
+
+func parseRunFilters(values url.Values) (runFilters, error) {
+	dateRange, err := parseLocalDateRange(values)
+	if err != nil {
+		return runFilters{}, err
+	}
+	filters := runFilters{
+		Query:       strings.TrimSpace(values.Get("q")),
+		FromDate:    dateRange.FromDate,
+		ToDate:      dateRange.ToDate,
+		HasFromDate: dateRange.HasFromDate,
+		HasToDate:   dateRange.HasToDate,
+		FocusSearch: values.Get("focus") == "search",
+		ScheduleID:  strings.TrimSpace(values.Get("schedule_id")),
+	}
+	if filters.HasFromDate {
+		var ok bool
+		filters.FromUnixNano, ok = exactUnixNano(dateRange.From)
+		if !ok {
+			return runFilters{}, errInvalidDateRange
+		}
+	}
+	if filters.HasToDate {
+		var ok bool
+		filters.ToExclusiveUnixNano, ok = exactUnixNano(dateRange.ToExclusive)
+		if !ok {
+			return runFilters{}, errInvalidDateRange
+		}
+	}
+	filters.HasActiveSelection = filters.Query != "" || filters.ScheduleID != "" || filters.HasFromDate || filters.HasToDate
+	return filters, nil
+}
+
 func (a *App) runsPage(response http.ResponseWriter, request *http.Request) {
-	total, err := a.runs.Count()
+	filters, err := parseRunFilters(request.URL.Query())
+	if err != nil {
+		key := "common.invalid_date_range"
+		if errors.Is(err, errDateRangeOrder) {
+			key = "common.invalid_date_order"
+		}
+		http.Error(response, webText(resolveWebLocale(request), key), http.StatusBadRequest)
+		return
+	}
+	managerQuery := filters.Query
+	if filters.ScheduleID != "" {
+		managerQuery = ""
+	}
+	managerFilters := runmanager.Filter{
+		Query:                    managerQuery,
+		ScheduleID:               filters.ScheduleID,
+		CreatedFromUnixNano:      filters.FromUnixNano,
+		CreatedBeforeUnixNano:    filters.ToExclusiveUnixNano,
+		HasCreatedFromBoundary:   filters.HasFromDate,
+		HasCreatedBeforeBoundary: filters.HasToDate,
+	}
+	total, err := a.runs.CountFiltered(managerFilters)
 	if err != nil {
 		http.Error(response, "无法读取运行记录："+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	pagination := newPagination(request, total)
-	runs, err := a.runs.ListPage(listPageSize, pagination.Start)
+	runs, err := a.runs.ListPageFiltered(managerFilters, listPageSize, pagination.Start)
 	if err != nil {
 		http.Error(response, "无法读取运行记录："+err.Error(), http.StatusInternalServerError)
 		return
@@ -2075,8 +2590,9 @@ func (a *App) runsPage(response http.ResponseWriter, request *http.Request) {
 	_ = runsTemplate.Execute(response, struct {
 		Runs       []runmanager.Run
 		Pagination paginationView
+		Filters    runFilters
 		Locale     webLocale
-	}{Runs: runs, Pagination: pagination, Locale: resolveWebLocale(request)})
+	}{Runs: runs, Pagination: pagination, Filters: filters, Locale: resolveWebLocale(request)})
 }
 
 func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
@@ -2568,81 +3084,63 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	query := strings.TrimSpace(request.URL.Query().Get("q"))
-	if query != "" {
-		filtered := entries[:0]
-		for _, entry := range entries {
-			if strings.Contains(strings.ToLower(entry.Name), strings.ToLower(query)) {
-				filtered = append(filtered, entry)
-			}
-		}
-		entries = filtered
+	sortField, direction := normalizeFileSort(request.URL.Query().Get("sort"), request.URL.Query().Get("direction"))
+	listing := prepareFileListing(entries, relative, query, sortField, direction)
+	pagination := newPagination(request, len(listing))
+	if pagination.HasPrevious {
+		pagination.PreviousURL = filesStateURL(relative, query, sortField, direction, pagination.Page-1)
 	}
-	sortField, direction := request.URL.Query().Get("sort"), request.URL.Query().Get("direction")
-	if sortField != "" {
-		sort.SliceStable(entries, func(i, j int) bool {
-			comparison := strings.Compare(strings.ToLower(entries[i].Name), strings.ToLower(entries[j].Name))
-			switch sortField {
-			case "size":
-				comparison = cmp.Compare(entries[i].Size, entries[j].Size)
-			case "modified":
-				comparison = entries[i].ModifiedAt.Compare(entries[j].ModifiedAt)
-			}
-			if direction == "desc" {
-				return comparison > 0
-			}
-			return comparison < 0
-		})
+	if pagination.HasNext {
+		pagination.NextURL = filesStateURL(relative, query, sortField, direction, pagination.Page+1)
 	}
-	pagination := newPagination(request, len(entries))
 	type fileView struct {
 		managedfiles.Entry
-		Path, BrowseURL, DownloadURL, EditURL, PreviewURL, ViewURL string
-		Protection, IconClass                                      string
-		Runnable                                                   bool
-		RecentArguments                                            []string
-		ArgumentListID                                             string
+		Path, BrowseURL, DownloadURL, EditURL, PreviewURL, ViewURL, QuickRunURL string
+		Protection, IconClass                                                   string
+		Runnable                                                                bool
+		RecentArguments                                                         []string
+		ArgumentListID                                                          string
+		NameParts                                                               []fileNamePart
+		CategoryLabel                                                           string
 	}
 	protectionState, _ := a.gitProtection.State()
 	views := make([]fileView, 0, pagination.End-pagination.Start)
-	for index, entry := range entries[pagination.Start:pagination.End] {
-		path := pathpkg.Join(relative, entry.Name)
-		view := fileView{Entry: entry, Path: path, IconClass: "file"}
+	locale := resolveWebLocale(request)
+	for index, listed := range listing[pagination.Start:pagination.End] {
+		entry, path := listed.Entry, listed.Path
+		view := fileView{
+			Entry: entry, Path: path, IconClass: fileCategoryIcon(listed.Category),
+			NameParts: splitFileNameMatches(entry.Name, query), CategoryLabel: fileCategoryLabel(locale, listed.Category),
+		}
 		if entry.Kind == managedfiles.Directory {
-			view.BrowseURL = filesURL(path)
-			view.IconClass = "directory"
+			view.BrowseURL = filesStateURL(path, "", sortField, direction, 0)
 		} else if entry.Kind == managedfiles.Regular {
 			if protectionState.Enabled {
 				view.Protection = a.gitProtection.ProtectionReason(path, entry.Size)
 			}
 			view.DownloadURL = routeFileURL("/resources/files/download/", path)
-			switch strings.ToLower(filepath.Ext(path)) {
-			case ".png", ".jpg", ".jpeg", ".gif", ".webp":
+			switch listed.Category {
+			case fileCategoryImage:
 				view.PreviewURL = routeFileURL("/resources/files/preview/", path)
-				view.IconClass = "image"
-			default:
-				if isTextPreviewExtension(path) {
-					view.ViewURL = routeFileURL("/resources/files/view/", path)
-					view.EditURL = routeFileURL("/resources/files/edit/", path)
-					view.IconClass = "text"
-					if isScriptExtension(path) {
-						view.IconClass = "script"
-						view.Runnable = true
-						view.ArgumentListID = fmt.Sprintf("run-arguments-%d", index)
-						rows, queryErr := a.db.Query(`SELECT arguments_template FROM runs WHERE script_path = ? AND TRIM(arguments_template) <> '' GROUP BY arguments_template ORDER BY MAX(created_at) DESC LIMIT 8`, path)
-						if queryErr == nil {
-							for rows.Next() {
-								var arguments string
-								if rows.Scan(&arguments) == nil {
-									view.RecentArguments = append(view.RecentArguments, arguments)
-								}
+			case fileCategoryText, fileCategoryScript:
+				view.ViewURL = routeFileURL("/resources/files/view/", path)
+				view.EditURL = routeFileURL("/resources/files/edit/", path)
+				if listed.Category == fileCategoryScript {
+					view.Runnable = true
+					view.QuickRunURL = routeFileURL("/resources/files/quick-run/", path) + "?return_to=" + url.QueryEscape(request.URL.RequestURI())
+					view.ArgumentListID = fmt.Sprintf("run-arguments-%d", index)
+					rows, queryErr := a.db.Query(`SELECT arguments_template FROM runs WHERE script_path = ? AND TRIM(arguments_template) <> '' GROUP BY arguments_template ORDER BY MAX(created_at) DESC LIMIT 8`, path)
+					if queryErr == nil {
+						for rows.Next() {
+							var arguments string
+							if rows.Scan(&arguments) == nil {
+								view.RecentArguments = append(view.RecentArguments, arguments)
 							}
-							_ = rows.Close()
 						}
+						_ = rows.Close()
 					}
 				}
 			}
-		} else {
-			view.IconClass = "restricted"
 		}
 		views = append(views, view)
 	}
@@ -2652,7 +3150,7 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		if parent == "." {
 			parent = ""
 		}
-		parentURL = filesURL(parent)
+		parentURL = filesStateURL(parent, "", sortField, direction, 0)
 	}
 	current := request.Context().Value(sessionContextKey).(session)
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -2664,12 +3162,23 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		Query               string
 		SortField           string
 		Direction           string
+		SortSummary         string
+		RootURL             string
+		ClearURL            string
+		SearchURL           string
 		Pagination          paginationView
 		CanToggleExecutable bool
 		ParentURL           string
 		VersionProtection   bool
 		Locale              webLocale
-	}{Entries: views, CSRFToken: current.csrfToken, ManagedRoot: a.managedRoot, CurrentPath: relative, Query: query, SortField: sortField, Direction: direction, Pagination: pagination, CanToggleExecutable: runtime.GOOS == "linux", ParentURL: parentURL, VersionProtection: protectionState.Enabled, Locale: resolveWebLocale(request)})
+	}{
+		Entries: views, CSRFToken: current.csrfToken, ManagedRoot: a.managedRoot, CurrentPath: relative,
+		Query: query, SortField: sortField, Direction: direction, SortSummary: fileSortSummary(locale, sortField, direction),
+		RootURL: filesStateURL("", "", sortField, direction, 0), ClearURL: filesStateURL(relative, "", sortField, direction, 0),
+		SearchURL:  filesURL(relative),
+		Pagination: pagination, CanToggleExecutable: runtime.GOOS == "linux", ParentURL: parentURL,
+		VersionProtection: protectionState.Enabled, Locale: locale,
+	})
 }
 
 func isTextPreviewExtension(path string) bool {

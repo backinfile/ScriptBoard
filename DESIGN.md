@@ -188,7 +188,7 @@ The log is the primary surface. Status, timing, script path, arguments, and stop
 
 ### Task panels
 
-Create and edit flows use a right-side task panel on capable clients. Every panel owns a semantic GET URL and renders as a complete page without JavaScript.
+Create and edit flows use a right-side task panel on capable clients. Every panel owns a semantic GET URL and renders as a complete page without JavaScript. Opening a desktop panel keeps the workspace URL in the address bar while browser Back closes the panel and Forward restores it.
 
 ## Motion
 

@@ -170,6 +170,7 @@ func TestScheduleCronPreviewRendersNoScriptTaskWithoutLosingFormValues(t *testin
 			return now
 		},
 	})
+	maintenanceGroupID, _ := createScheduleGroupForTest(t, client, serverURL, "日常维护")
 	response, err := client.Get(serverURL + "/config/schedules/new")
 	if err != nil {
 		t.Fatalf("get schedule task: %v", err)
@@ -186,6 +187,7 @@ func TestScheduleCronPreviewRendersNoScriptTaskWithoutLosingFormValues(t *testin
 	response, err = client.PostForm(serverURL+"/config/schedules/preview", url.Values{
 		"csrf_token":       {formToken(t, taskBody)},
 		"name":             {"晨间 <报告>"},
+		"group_id":         {maintenanceGroupID},
 		"script":           {"reports/morning.ps1"},
 		"arguments":        {"--format detailed"},
 		"expression":       {"0 9 * * MON"},
@@ -207,6 +209,8 @@ func TestScheduleCronPreviewRendersNoScriptTaskWithoutLosingFormValues(t *testin
 	for _, expected := range []string{
 		`action="/config/schedules"`,
 		`value="晨间 &lt;报告&gt;"`,
+		`value="` + maintenanceGroupID + `" selected`,
+		`>日常维护</option>`,
 		`value="reports/morning.ps1"`,
 		`value="--format detailed"`,
 		`value="0 9 * * MON"`,
@@ -225,11 +229,132 @@ func TestScheduleCronPreviewRendersNoScriptTaskWithoutLosingFormValues(t *testin
 	}
 }
 
+func TestScheduleGroupsPersistAcrossCreateAndEdit(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	location := time.FixedZone("CST", 8*60*60)
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{
+		ManagedRoot: filepath.Join(root, "managed"),
+		StateRoot:   filepath.Join(root, "state"),
+		SchedulerNow: func() time.Time {
+			return time.Date(2026, 7, 26, 8, 30, 0, 0, location)
+		},
+	})
+	securityGroupID, _ := createScheduleGroupForTest(t, client, serverURL, "Security")
+	response, err := client.Get(serverURL + "/config/schedules/new")
+	if err != nil {
+		t.Fatalf("get schedule task: %v", err)
+	}
+	taskBody, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	taskPage := string(taskBody)
+	for _, expected := range []string{
+		`class="schedule-plan-form"`,
+		`name="group_id"`,
+		`value="` + securityGroupID + `"`,
+		`data-cron-guided hidden`,
+		`data-cron-parse`,
+		`name="arguments"`,
+	} {
+		if !strings.Contains(taskPage, expected) {
+			t.Fatalf("schedule task missing %q: %s", expected, taskPage)
+		}
+	}
+
+	response, err = client.PostForm(serverURL+"/config/schedules", url.Values{
+		"csrf_token":       {formToken(t, taskBody)},
+		"name":             {"Daily security check"},
+		"group_id":         {securityGroupID},
+		"script":           {"checks/security.ps1"},
+		"arguments":        {`--report "{{REPORT_PATH}}"`},
+		"expression":       {"0 2 * * *"},
+		"timeout_seconds":  {"90"},
+		"disallow_overlap": {"1"},
+	})
+	if err != nil {
+		t.Fatalf("create grouped schedule: %v", err)
+	}
+	_ = response.Body.Close()
+	response, err = client.Get(serverURL + "/config/schedules")
+	if err != nil {
+		t.Fatalf("get grouped schedules: %v", err)
+	}
+	listBody, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	listPage := string(listBody)
+	if !strings.Contains(listPage, "Daily security check") || !strings.Contains(listPage, "Security") {
+		t.Fatalf("grouped schedule is missing from list: %s", listBody)
+	}
+	for _, expected := range []string{
+		`data-grouped-records="schedule-groups"`,
+		`data-schedule-group="` + securityGroupID + `"`,
+		`data-group-name="Security"`,
+		`data-schedule-id="`,
+		`class="quick-run-group__toggle"`,
+	} {
+		if !strings.Contains(listPage, expected) {
+			t.Fatalf("grouped schedule list missing %q: %s", expected, listPage)
+		}
+	}
+	match := regexp.MustCompile(`/config/schedules/([^"/]+)/edit`).FindSubmatch(listBody)
+	if len(match) != 2 {
+		t.Fatalf("find grouped schedule id: %s", listBody)
+	}
+	id := string(match[1])
+
+	response, err = client.Get(serverURL + "/config/schedules/" + id + "/edit")
+	if err != nil {
+		t.Fatalf("get grouped schedule edit task: %v", err)
+	}
+	editBody, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	editPage := string(editBody)
+	if !strings.Contains(editPage, `name="group_id"`) ||
+		!strings.Contains(editPage, `value="`+securityGroupID+`" selected`) ||
+		!strings.Contains(editPage, `>Security</option>`) {
+		t.Fatalf("edit task did not preserve the Schedule group: %s", editPage)
+	}
+
+	infrastructureGroupID, _ := createScheduleGroupForTest(t, client, serverURL, "Infrastructure")
+	response, err = client.PostForm(serverURL+"/config/schedules/"+id+"/update", url.Values{
+		"csrf_token":       {formToken(t, editBody)},
+		"name":             {"Daily security check"},
+		"group_id":         {infrastructureGroupID},
+		"script":           {"checks/security.ps1"},
+		"arguments":        {`--report "{{REPORT_PATH}}"`},
+		"expression":       {"0 2 * * *"},
+		"timeout_seconds":  {"90"},
+		"disallow_overlap": {"1"},
+	})
+	if err != nil {
+		t.Fatalf("update grouped schedule: %v", err)
+	}
+	_ = response.Body.Close()
+	response, err = client.Get(serverURL + "/config/schedules")
+	if err != nil {
+		t.Fatalf("get updated grouped schedules: %v", err)
+	}
+	listBody, _ = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if !strings.Contains(string(listBody), "Infrastructure") ||
+		!regexp.MustCompile(`data-group-name="Infrastructure"[\s\S]*?Daily security check`).Match(listBody) {
+		t.Fatalf("updated Schedule group is not reflected in the list: %s", listBody)
+	}
+}
+
 func TestScheduleSubmissionRendersCronErrorsWithoutWriting(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
+	location := time.FixedZone("CST", 8*60*60)
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{
+		ManagedRoot: filepath.Join(root, "managed"),
+		StateRoot:   filepath.Join(root, "state"),
+		SchedulerNow: func() time.Time {
+			return time.Date(2026, 7, 26, 8, 30, 0, 0, location)
+		},
+	})
 	response, err := client.Get(serverURL + "/config/schedules/new")
 	if err != nil {
 		t.Fatalf("get schedule task: %v", err)

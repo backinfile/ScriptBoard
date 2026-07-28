@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,7 +46,7 @@ func (a *App) previewScheduleCron(response http.ResponseWriter, request *http.Re
 		if acceptsJSON(request) {
 			a.writeScheduleCronPreviewJSON(response, http.StatusUnprocessableEntity, payload)
 		} else {
-			data := scheduleTaskDataFromRequest(request)
+			data := a.scheduleTaskDataFromRequest(request)
 			data.CronError = payload.Error
 			a.renderTaskPageStatus(response, request, http.StatusUnprocessableEntity, data)
 		}
@@ -56,13 +57,13 @@ func (a *App) previewScheduleCron(response http.ResponseWriter, request *http.Re
 		a.writeScheduleCronPreviewJSON(response, http.StatusOK, payload)
 		return
 	}
-	data := scheduleTaskDataFromRequest(request)
+	data := a.scheduleTaskDataFromRequest(request)
 	data.Expression = preview.Expression
 	data.CronPreview = payload
 	a.renderTaskPageStatus(response, request, http.StatusOK, data)
 }
 
-func scheduleTaskDataFromRequest(request *http.Request) taskPageData {
+func (a *App) scheduleTaskDataFromRequest(request *http.Request) taskPageData {
 	id := request.PathValue("id")
 	kind := "schedule-new"
 	titleKey := "task.schedule_new.title"
@@ -75,11 +76,13 @@ func scheduleTaskDataFromRequest(request *http.Request) taskPageData {
 		previewAction = "/config/schedules/" + url.PathEscape(id) + "/preview"
 	}
 	locale := resolveWebLocale(request)
+	groups, _ := a.loadScheduleGroups()
 	return taskPageData{
 		Kind: kind, Title: webText(locale, titleKey),
 		Description: webText(locale, "task.schedule_description"),
 		BackURL:     "/config/schedules", Action: action, PreviewAction: previewAction,
-		Name: request.FormValue("name"), Script: request.FormValue("script"),
+		Name: request.FormValue("name"), ScheduleGroupID: strings.TrimSpace(request.FormValue("group_id")),
+		ScheduleGroups: groups, Script: request.FormValue("script"),
 		Arguments: request.FormValue("arguments"), Expression: request.FormValue("expression"),
 		TimeoutInput:    request.FormValue("timeout_seconds"),
 		DisallowOverlap: request.FormValue("disallow_overlap") != "",
@@ -154,10 +157,116 @@ func scheduleCronSummary(locale webLocale, fields [5]string) string {
 	if key != "" {
 		return webText(locale, key)
 	}
+	if fields[1] == "*" && fields[2] == "*" && fields[3] == "*" && fields[4] == "*" && strings.HasPrefix(fields[0], "*/") {
+		if amount, err := strconv.Atoi(strings.TrimPrefix(fields[0], "*/")); err == nil && amount > 0 {
+			if locale == localeSimplifiedChinese {
+				return fmt.Sprintf("每 %d 分钟执行一次。", amount)
+			}
+			return fmt.Sprintf("Every %d minutes.", amount)
+		}
+	}
+	if fields[0] == "0" && fields[2] == "*" && fields[3] == "*" && fields[4] == "*" && strings.HasPrefix(fields[1], "*/") {
+		if amount, err := strconv.Atoi(strings.TrimPrefix(fields[1], "*/")); err == nil && amount > 0 {
+			if locale == localeSimplifiedChinese {
+				return fmt.Sprintf("每 %d 小时执行一次。", amount)
+			}
+			return fmt.Sprintf("Every %d hours.", amount)
+		}
+	}
+	minute, minuteErr := strconv.Atoi(fields[0])
+	hour, hourErr := strconv.Atoi(fields[1])
+	if minuteErr == nil && hourErr == nil && fields[3] == "*" {
+		timeLabel := fmt.Sprintf("%02d:%02d", hour, minute)
+		switch {
+		case fields[2] == "*" && fields[4] == "*":
+			if locale == localeSimplifiedChinese {
+				return fmt.Sprintf("每天 %s 执行。", timeLabel)
+			}
+			return fmt.Sprintf("Every day at %s.", timeLabel)
+		case fields[4] == "*":
+			if day, err := strconv.Atoi(fields[2]); err == nil {
+				if locale == localeSimplifiedChinese {
+					return fmt.Sprintf("每月 %d 日 %s 执行。", day, timeLabel)
+				}
+				return fmt.Sprintf("Day %d of every month at %s.", day, timeLabel)
+			}
+		case fields[2] == "*":
+			if weekdays, ok := scheduleCronWeekdaySummary(locale, fields[4]); ok {
+				if locale == localeSimplifiedChinese {
+					return fmt.Sprintf("%s %s 执行。", weekdays, timeLabel)
+				}
+				return fmt.Sprintf("%s at %s.", weekdays, timeLabel)
+			}
+		}
+	}
 	if locale == localeSimplifiedChinese {
 		return fmt.Sprintf("分钟 %s · 小时 %s · 日期 %s · 月份 %s · 星期 %s", fields[0], fields[1], fields[2], fields[3], fields[4])
 	}
 	return fmt.Sprintf("Minute %s · hour %s · day %s · month %s · weekday %s", fields[0], fields[1], fields[2], fields[3], fields[4])
+}
+
+func scheduleCronWeekdaySummary(locale webLocale, field string) (string, bool) {
+	english := [...]string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
+	chinese := [...]string{"周日", "周一", "周二", "周三", "周四", "周五", "周六"}
+	names := map[string]int{"SUN": 0, "MON": 1, "TUE": 2, "WED": 3, "THU": 4, "FRI": 5, "SAT": 6}
+	toDay := func(value string) (int, bool) {
+		if day, ok := names[value]; ok {
+			return day, true
+		}
+		day, err := strconv.Atoi(value)
+		if err != nil || day < 0 || day > 7 {
+			return 0, false
+		}
+		if day == 7 {
+			day = 0
+		}
+		return day, true
+	}
+	seen := map[int]bool{}
+	var days []int
+	for _, part := range strings.Split(field, ",") {
+		rangeParts := strings.Split(part, "-")
+		if len(rangeParts) == 1 {
+			day, ok := toDay(rangeParts[0])
+			if !ok {
+				return "", false
+			}
+			if !seen[day] {
+				seen[day] = true
+				days = append(days, day)
+			}
+			continue
+		}
+		if len(rangeParts) != 2 {
+			return "", false
+		}
+		start, startOK := toDay(rangeParts[0])
+		end, endOK := toDay(rangeParts[1])
+		if !startOK || !endOK || start > end {
+			return "", false
+		}
+		for day := start; day <= end; day++ {
+			if !seen[day] {
+				seen[day] = true
+				days = append(days, day)
+			}
+		}
+	}
+	if len(days) == 0 {
+		return "", false
+	}
+	labels := make([]string, 0, len(days))
+	for _, day := range days {
+		if locale == localeSimplifiedChinese {
+			labels = append(labels, chinese[day])
+		} else {
+			labels = append(labels, english[day])
+		}
+	}
+	if locale == localeSimplifiedChinese {
+		return strings.Join(labels, "、"), true
+	}
+	return strings.Join(labels, ", "), true
 }
 
 func scheduleCronErrorText(locale webLocale, err error) string {
@@ -178,7 +287,7 @@ func isScheduleCronError(err error) bool {
 }
 
 func (a *App) renderScheduleCronSubmissionError(response http.ResponseWriter, request *http.Request, err error) {
-	data := scheduleTaskDataFromRequest(request)
+	data := a.scheduleTaskDataFromRequest(request)
 	data.CronError = scheduleCronErrorText(resolveWebLocale(request), err)
 	a.renderTaskPageStatus(response, request, http.StatusUnprocessableEntity, data)
 }

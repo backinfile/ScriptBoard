@@ -4,8 +4,20 @@
 <body>
 <main class="workspace">
   <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "audit.eyebrow"}}</p><h1>{{t .Locale "audit.title"}}</h1><p>{{t .Locale "audit.description"}}</p></div><a class="button button--quiet" href="/history/audit.csv" data-native><span data-lucide="download" aria-hidden="true"></span>{{t .Locale "audit.download_csv"}}</a></header>
-  <section class="section-tools">
-    <form class="search-form" method="get" data-async data-async-push><label class="search-field"><span data-lucide="search" aria-hidden="true"></span><span class="sr-only">{{t .Locale "audit.search"}}</span><input type="search" name="q" value="{{.Query}}" autocomplete="off" placeholder="{{t .Locale "audit.search_placeholder"}}"></label><button type="submit">{{t .Locale "common.search"}}</button>{{if .Query}}<a href="/history/audit">{{t .Locale "common.clear"}}</a>{{end}}</form>
+  <section class="section-tools section-tools--history">
+    <form class="history-filter-form" method="get" data-async data-async-push>
+      <label class="search-field history-filter-search"><span data-lucide="search" aria-hidden="true"></span><span class="sr-only">{{t .Locale "audit.search"}}</span><input type="search" name="q" value="{{.Filters.Query}}" autocomplete="off" placeholder="{{t .Locale "audit.search_placeholder"}}"></label>
+      <fieldset class="history-date-range">
+        <legend class="sr-only">{{t .Locale "common.date_range"}}</legend>
+        <label><span class="sr-only">{{t .Locale "common.start_date"}}</span><input type="date" name="from" value="{{.Filters.FromDate}}" aria-label="{{t .Locale "common.start_date"}}"></label>
+        <span class="history-date-separator" data-lucide="arrow-right" aria-hidden="true"></span>
+        <label><span class="sr-only">{{t .Locale "common.end_date"}}</span><input type="date" name="to" value="{{.Filters.ToDate}}" aria-label="{{t .Locale "common.end_date"}}"></label>
+      </fieldset>
+      <div class="history-filter-actions">
+        <button class="button--primary" type="submit"><span data-lucide="search" aria-hidden="true"></span>{{t .Locale "common.search"}}</button>
+        {{if .Filters.HasActiveSelection}}<a class="button button--quiet" href="/history/audit"><span data-lucide="x" aria-hidden="true"></span>{{t .Locale "common.clear"}}</a>{{end}}
+      </div>
+    </form>
   </section>
   {{if .Events}}
   <div class="table-shell"><table class="records-table audit-table">

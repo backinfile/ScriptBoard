@@ -4,6 +4,22 @@
 <body>
 <main class="workspace">
   <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "runs.eyebrow"}}</p><h1>{{t .Locale "runs.title"}}</h1><p>{{t .Locale "runs.description"}}</p></div><a class="button button--primary" href="/resources/files/"><span data-lucide="play" aria-hidden="true"></span>{{t .Locale "overview.run_script"}}</a></header>
+  <section class="section-tools section-tools--history">
+    <form class="history-filter-form" method="get" data-async data-async-push data-focus-after-navigation="#run-search">
+      {{if .Filters.ScheduleID}}<input type="hidden" name="schedule_id" value="{{.Filters.ScheduleID}}">{{end}}
+      <label class="search-field history-filter-search"><span data-lucide="search" aria-hidden="true"></span><span class="sr-only">{{t .Locale "runs.search"}}</span><input id="run-search" type="search" name="q" value="{{.Filters.Query}}" autocomplete="off" placeholder="{{t .Locale "runs.search_placeholder"}}"{{if .Filters.ScheduleID}} data-schedule-filter-name="{{.Filters.Query}}"{{end}}{{if .Filters.FocusSearch}} autofocus{{end}}></label>
+      <fieldset class="history-date-range">
+        <legend class="sr-only">{{t .Locale "common.date_range"}}</legend>
+        <label><span class="sr-only">{{t .Locale "common.start_date"}}</span><input type="date" name="from" value="{{.Filters.FromDate}}" aria-label="{{t .Locale "common.start_date"}}"></label>
+        <span class="history-date-separator" data-lucide="arrow-right" aria-hidden="true"></span>
+        <label><span class="sr-only">{{t .Locale "common.end_date"}}</span><input type="date" name="to" value="{{.Filters.ToDate}}" aria-label="{{t .Locale "common.end_date"}}"></label>
+      </fieldset>
+      <div class="history-filter-actions">
+        <button class="button--primary" type="submit"><span data-lucide="search" aria-hidden="true"></span>{{t .Locale "common.search"}}</button>
+        {{if .Filters.HasActiveSelection}}<a class="button button--quiet" href="/monitor/runs" data-focus-after-navigation="#run-search"><span data-lucide="x" aria-hidden="true"></span>{{t .Locale "common.clear"}}</a>{{end}}
+      </div>
+    </form>
+  </section>
   {{if .Runs}}
   <div class="table-shell"><table class="records-table runs-table">
     <thead><tr><th>{{t .Locale "common.time"}}</th><th>{{t .Locale "common.script"}}</th><th>{{t .Locale "common.source"}}</th><th>{{t .Locale "common.status"}}</th><th>{{t .Locale "runs.executor"}}</th></tr></thead>
@@ -16,6 +32,8 @@
     </tr>{{end}}</tbody>
   </table></div>
   <nav class="pagination" aria-label="{{t .Locale "runs.pagination"}}"><span>{{.Pagination.Total}} {{t .Locale "common.records"}} · {{.Pagination.Page}} / {{.Pagination.PageCount}}</span><div>{{if .Pagination.HasPrevious}}<a href="{{.Pagination.PreviousURL}}">{{t .Locale "common.previous"}}</a>{{else}}<span aria-disabled="true">{{t .Locale "common.previous"}}</span>{{end}}{{if .Pagination.HasNext}}<a href="{{.Pagination.NextURL}}">{{t .Locale "common.next"}}</a>{{else}}<span aria-disabled="true">{{t .Locale "common.next"}}</span>{{end}}</div></nav>
+  {{else if .Filters.HasActiveSelection}}
+  <section class="empty-state"><span data-lucide="search-x" aria-hidden="true"></span><p>{{t .Locale "runs.no_matches"}}</p><a class="button button--quiet" href="/monitor/runs" data-focus-after-navigation="#run-search">{{t .Locale "common.clear"}}</a></section>
   {{else}}
   <section class="empty-state"><span data-lucide="square-terminal" aria-hidden="true"></span><p>{{t .Locale "runs.empty"}}</p><a class="button button--primary" href="/resources/files/">{{t .Locale "overview.run_script"}}</a></section>
   {{end}}
