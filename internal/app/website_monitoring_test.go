@@ -32,6 +32,7 @@ func TestAdminCreatesWebsiteMonitorAndReadsItsResult(t *testing.T) {
 			}),
 		},
 	})
+	setWebsiteTestLocale(t, client, serverURL, "zh-CN")
 
 	response, err := client.Get(serverURL + "/monitor/websites/new")
 	if err != nil {
@@ -178,6 +179,7 @@ func TestNginxScanPreviewsBeforeASeparateImport(t *testing.T) {
 			}),
 		},
 	})
+	setWebsiteTestLocale(t, client, serverURL, "zh-CN")
 	response, err := client.Get(serverURL + "/monitor/websites/nginx")
 	if err != nil {
 		t.Fatal(err)
@@ -229,6 +231,185 @@ func TestNginxScanPreviewsBeforeASeparateImport(t *testing.T) {
 	if !bytes.Contains(afterImport, []byte("imported.local")) {
 		t.Fatalf("imported candidate is missing: %s", afterImport)
 	}
+}
+
+func TestWebsiteMonitoringLocalizesEnglishAndShowsCheckedZeroLatency(t *testing.T) {
+	root := t.TempDir()
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{
+		ManagedRoot: filepath.Join(root, "managed"),
+		StateRoot:   filepath.Join(root, "state"),
+		WebsiteMonitorOptions: websitemonitor.Options{
+			Probe: websiteProbeFunc(func(context.Context, websitemonitor.Config) websitemonitor.Evidence {
+				return websitemonitor.Evidence{
+					Success:    true,
+					StatusCode: http.StatusOK,
+					Latency:    0,
+					Summary:    "网站返回 HTTP 200",
+				}
+			}),
+		},
+	})
+	setWebsiteTestLocale(t, client, serverURL, "en-US")
+
+	response, err := client.Get(serverURL + "/monitor/websites/new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		`<html lang="en-US">`, "Add Website", "Application message check",
+		"Save and check",
+	} {
+		if !bytes.Contains(newPage, []byte(expected)) {
+			t.Fatalf("English new monitor page does not contain %q: %s", expected, newPage)
+		}
+	}
+
+	response, err = client.PostForm(serverURL+"/monitor/websites", url.Values{
+		"csrf_token":        {formToken(t, newPage)},
+		"name":              {"Invalid monitor"},
+		"scope":             {"local"},
+		"kind":              {"http"},
+		"url":               {"http://127.0.0.1/"},
+		"frequency_seconds": {"7"},
+		"timeout_seconds":   {"2"},
+		"http_method":       {"GET"},
+		"http_success_mode": {"exact"},
+		"expected_statuses": {"99"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid create status=%d", response.StatusCode)
+	}
+	for _, expected := range []string{
+		"Check frequency must be 30 seconds, 1 minute, 5 minutes, or 15 minutes",
+		"Maximum wait must be 3, 5, 10, or 30 seconds",
+		"Status codes must be numbers from 100 through 599",
+	} {
+		if !bytes.Contains(invalidPage, []byte(expected)) {
+			t.Fatalf("English validation page does not contain %q: %s", expected, invalidPage)
+		}
+	}
+
+	response, err = client.PostForm(serverURL+"/monitor/websites", url.Values{
+		"csrf_token":        {formToken(t, invalidPage)},
+		"name":              {"Fast local endpoint"},
+		"scope":             {"local"},
+		"kind":              {"http"},
+		"url":               {"http://127.0.0.1:18803/health"},
+		"frequency_seconds": {"60"},
+		"timeout_seconds":   {"10"},
+		"http_method":       {"GET"},
+		"follow_redirects":  {"1"},
+		"verify_tls":        {"1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("create status=%d", response.StatusCode)
+	}
+	location := response.Header.Get("Location")
+	if !strings.HasPrefix(location, "/monitor/websites/") {
+		t.Fatalf("create redirect=%q", location)
+	}
+
+	var detail []byte
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		response, err = client.Get(serverURL + location)
+		if err != nil {
+			t.Fatal(err)
+		}
+		detail, err = io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(detail, []byte("HTTP 200")) && bytes.Contains(detail, []byte("0 ms")) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	for _, expected := range []string{
+		"Back to Website Monitoring", "Check now", "Connection security", "0 ms",
+		"1 minute", "10 seconds",
+	} {
+		if !bytes.Contains(detail, []byte(expected)) {
+			t.Fatalf("English detail page does not contain %q: %s", expected, detail)
+		}
+	}
+
+	response, err = client.Get(serverURL + "/monitor/websites")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"Website Monitoring", "Scan Nginx", "Add Website",
+		`aria-label="Complete website status ledger"`, "1 website", "0 ms",
+	} {
+		if !bytes.Contains(listPage, []byte(expected)) {
+			t.Fatalf("English list page does not contain %q: %s", expected, listPage)
+		}
+	}
+
+	response, err = client.Get(serverURL + location + "/edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	editPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"Edit Website", "Save and check again"} {
+		if !bytes.Contains(editPage, []byte(expected)) {
+			t.Fatalf("English edit page does not contain %q: %s", expected, editPage)
+		}
+	}
+
+	response, err = client.Get(serverURL + "/monitor/websites/nginx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nginxPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"Back to Website Monitoring", "Scan Nginx", "Find websites"} {
+		if !bytes.Contains(nginxPage, []byte(expected)) {
+			t.Fatalf("English Nginx page does not contain %q: %s", expected, nginxPage)
+		}
+	}
+}
+
+func setWebsiteTestLocale(t *testing.T, client *http.Client, serverURL, locale string) {
+	t.Helper()
+	baseURL, err := url.Parse(serverURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Jar.SetCookies(baseURL, []*http.Cookie{{
+		Name: "scriptboard_locale", Value: locale, Path: "/",
+	}})
 }
 
 type websiteProbeFunc func(context.Context, websitemonitor.Config) websitemonitor.Evidence

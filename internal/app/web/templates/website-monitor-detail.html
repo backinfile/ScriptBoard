@@ -1,87 +1,87 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="{{.Locale}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}">
 <script defer src="/assets/app-v2.js?v={{assetVersion}}"></script>
-<title>{{.Monitor.Name}} · 网站监控 · ScriptBoard</title>
+<title>{{.Monitor.Name}} · {{t .Locale "website.title"}} · ScriptBoard</title>
 </head>
 <body>
 <main class="workspace website-detail-page" data-website-detail data-status-url="/monitor/websites/{{.Monitor.ID}}/data" data-monitor-state="{{.Monitor.State}}" data-monitor-latest="{{.Monitor.LatestLabel}}" data-monitor-summary="{{.Monitor.LatestSummary}}" data-monitor-latency="{{.Monitor.LatencyLabel}}" data-monitor-checked="{{.Monitor.CheckedToken}}">
 <header class="website-detail-heading">
 <div>
-<a href="/monitor/websites">返回网站监控</a>
+<a href="/monitor/websites">{{t .Locale "website.back"}}</a>
 <div><h1>{{.Monitor.Name}}</h1><span class="website-status website-status--{{.Monitor.State}}">{{.Monitor.StateLabel}}</span><span>{{.Monitor.ScopeLabel}}</span><span>{{.Monitor.MethodLabel}}</span></div>
 <code>{{.Monitor.URL}}</code>
 </div>
 <div class="website-detail-actions">
-<form method="post" action="/monitor/websites/{{.Monitor.ID}}/check"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--primary" type="submit">立即检查</button></form>
-<a class="button" href="/monitor/websites/{{.Monitor.ID}}/edit">编辑设置</a>
-<form method="post" action="/monitor/websites/{{.Monitor.ID}}/{{if eq .Monitor.State "paused"}}resume{{else}}pause{{end}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button" type="submit">{{if eq .Monitor.State "paused"}}恢复监控{{else}}暂停监控{{end}}</button></form>
+<form method="post" action="/monitor/websites/{{.Monitor.ID}}/check"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--primary" type="submit">{{t .Locale "website.detail.check_now"}}</button></form>
+<a class="button" href="/monitor/websites/{{.Monitor.ID}}/edit">{{t .Locale "website.detail.edit"}}</a>
+<form method="post" action="/monitor/websites/{{.Monitor.ID}}/{{if eq .Monitor.State "paused"}}resume{{else}}pause{{end}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button" type="submit">{{if eq .Monitor.State "paused"}}{{t .Locale "website.detail.resume"}}{{else}}{{t .Locale "website.detail.pause"}}{{end}}</button></form>
 </div>
 </header>
 
 <section class="website-detail-verdict website-detail-verdict--{{.Monitor.State}}">
-<div><p class="website-kicker">当前判断</p><h2>{{.Monitor.StateLabel}}</h2><p>{{if .Monitor.LatestSummary}}{{.Monitor.LatestSummary}}{{else}}已保存，正在等待第一次检查。{{end}}</p></div>
-<div><strong>{{.Monitor.LatestLabel}}</strong><span>{{.Monitor.LatencyLabel}}</span>{{if not .Monitor.LastCheckedAt.IsZero}}<time datetime="{{machineTime .Monitor.LastCheckedAt}}" data-local-time>{{displayTime .Monitor.LastCheckedAt}}</time>{{end}}</div>
+<div><p class="website-kicker">{{t .Locale "website.detail.current_verdict"}}</p><h2>{{.Monitor.StateLabel}}</h2><p>{{if .Monitor.LatestSummary}}{{.Monitor.LatestSummary}}{{else}}{{t .Locale "website.detail.saved_waiting"}}{{end}}</p></div>
+<div><strong>{{.Monitor.LatestLabel}}</strong><span>{{.Monitor.LatencyLabel}}</span>{{if not .Monitor.LastCheckedAt.IsZero}}<time datetime="{{machineTime .Monitor.LastCheckedAt}}" data-local-time>{{localTime .Locale .Monitor.LastCheckedAt}}</time>{{end}}</div>
 </section>
 
 {{if .Monitor.LatestTechnical}}
-<details class="website-technical-evidence"><summary>查看技术证据</summary><code>{{.Monitor.LatestTechnical}}</code></details>
+<details class="website-technical-evidence"><summary>{{t .Locale "website.detail.technical_evidence"}}</summary><code>{{.Monitor.LatestTechnical}}</code></details>
 {{end}}
 
 <section class="website-detail-section">
-<header><div><h2>最近 24 小时</h2><p>空白表示 ScriptBoard 没有执行检查，不会被计作成功或失败。</p></div></header>
-<div class="website-availability website-availability--detail" aria-label="最近 24 小时可用性">{{range .Monitor.Availability}}<span class="website-availability__{{.}}"></span>{{end}}</div>
-<div class="website-availability__axis"><span>24 小时前</span><span>12 小时</span><span>现在</span></div>
+<header><div><h2>{{t .Locale "website.ledger.last_24h"}}</h2><p>{{t .Locale "website.detail.last_24h_description"}}</p></div></header>
+<div class="website-availability website-availability--detail" aria-label="{{t .Locale "website.availability_aria"}}">{{range .Monitor.Availability}}<span class="website-availability__{{.}}"></span>{{end}}</div>
+<div class="website-availability__axis"><span>{{t .Locale "website.hours_ago_24"}}</span><span>{{t .Locale "website.hours_ago_12"}}</span><span>{{t .Locale "website.now"}}</span></div>
 </section>
 
 <section class="website-detail-section">
-<header><div><h2>最近一次检查</h2><p>管理员判断问题影响时优先使用这些事实。</p></div></header>
+<header><div><h2>{{t .Locale "website.ledger.latest_check"}}</h2><p>{{t .Locale "website.detail.latest_description"}}</p></div></header>
 <dl class="website-facts">
-<div><dt>结果</dt><dd>{{.Monitor.StateLabel}}</dd></div>
-<div><dt>响应</dt><dd>{{.Monitor.LatestLabel}}</dd></div>
-<div><dt>耗时</dt><dd>{{.Monitor.LatencyLabel}}</dd></div>
-<div><dt>检查时间</dt><dd>{{if .Monitor.LastCheckedAt.IsZero}}等待检查{{else}}<time datetime="{{machineTime .Monitor.LastCheckedAt}}" data-local-time>{{displayTime .Monitor.LastCheckedAt}}</time>{{end}}</dd></div>
+<div><dt>{{t .Locale "common.result"}}</dt><dd>{{.Monitor.StateLabel}}</dd></div>
+<div><dt>{{t .Locale "website.detail.response"}}</dt><dd>{{.Monitor.LatestLabel}}</dd></div>
+<div><dt>{{t .Locale "website.detail.latency"}}</dt><dd>{{.Monitor.LatencyLabel}}</dd></div>
+<div><dt>{{t .Locale "website.detail.checked_at"}}</dt><dd>{{if .Monitor.LastCheckedAt.IsZero}}{{t .Locale "website.detail.waiting"}}{{else}}<time datetime="{{machineTime .Monitor.LastCheckedAt}}" data-local-time>{{localTime .Locale .Monitor.LastCheckedAt}}</time>{{end}}</dd></div>
 </dl>
 </section>
 
 <section class="website-detail-section">
-<header><div><h2>证书与连接安全</h2><p>来自最近一次成功建立的 TLS 连接。</p></div></header>
+<header><div><h2>{{t .Locale "website.detail.security"}}</h2><p>{{t .Locale "website.detail.security_description"}}</p></div></header>
 <div class="website-security website-security--{{.Monitor.SecurityTone}}">
 <svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v6c0 5 3.4 8.2 8 9 4.6-.8 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg>
 <div><strong>{{.Monitor.SecurityTitle}}</strong><p>{{.Monitor.SecurityDescription}}</p></div>
 </div>
 <dl class="website-facts">
-<div><dt>颁发机构</dt><dd>{{if .Monitor.Certificate.Issuer}}{{.Monitor.Certificate.Issuer}}{{else}}—{{end}}</dd></div>
-<div><dt>有效期至</dt><dd>{{if .Monitor.Certificate.NotAfter.IsZero}}—{{else}}<time datetime="{{machineTime .Monitor.Certificate.NotAfter}}" data-local-time>{{displayTime .Monitor.Certificate.NotAfter}}</time>{{end}}</dd></div>
-<div><dt>剩余时间</dt><dd>{{if .Monitor.Certificate.NotAfter.IsZero}}—{{else}}{{.Monitor.Certificate.DaysRemaining}} 天{{end}}</dd></div>
-<div><dt>TLS 版本</dt><dd>{{if .Monitor.Certificate.TLSVersion}}{{.Monitor.Certificate.TLSVersion}}{{else}}未使用 TLS{{end}}</dd></div>
+<div><dt>{{t .Locale "website.detail.issuer"}}</dt><dd>{{if .Monitor.Certificate.Issuer}}{{.Monitor.Certificate.Issuer}}{{else}}—{{end}}</dd></div>
+<div><dt>{{t .Locale "website.detail.valid_until"}}</dt><dd>{{if .Monitor.Certificate.NotAfter.IsZero}}—{{else}}<time datetime="{{machineTime .Monitor.Certificate.NotAfter}}" data-local-time>{{localTime .Locale .Monitor.Certificate.NotAfter}}</time>{{end}}</dd></div>
+<div><dt>{{t .Locale "website.detail.remaining"}}</dt><dd>{{if .Monitor.Certificate.NotAfter.IsZero}}—{{else}}{{.Monitor.Certificate.DaysRemaining}} {{if eq .Monitor.Certificate.DaysRemaining 1}}{{t .Locale "website.detail.day"}}{{else}}{{t .Locale "website.detail.days"}}{{end}}{{end}}</dd></div>
+<div><dt>{{t .Locale "website.detail.tls_version"}}</dt><dd>{{if .Monitor.Certificate.TLSVersion}}{{.Monitor.Certificate.TLSVersion}}{{else}}{{t .Locale "website.detail.no_tls"}}{{end}}</dd></div>
 </dl>
 </section>
 
 {{if .Incidents}}
 <section class="website-detail-section">
-<header><div><h2>故障时间线</h2><p>确认故障保留一年；暂停或删除会写明关闭原因。</p></div></header>
-<ol class="website-incident-list">{{range .Incidents}}<li><strong>{{.Summary}}</strong><span>{{.Category}}</span><time datetime="{{machineTime .StartedAt}}" data-local-time>{{displayTime .StartedAt}}</time>{{if .EndedAt.IsZero}}<em>尚未恢复</em>{{else}}<span>已结束：{{.CloseReason}}</span>{{end}}</li>{{end}}</ol>
+<header><div><h2>{{t .Locale "website.detail.incidents"}}</h2><p>{{t .Locale "website.detail.incidents_description"}}</p></div></header>
+<ol class="website-incident-list">{{range .Incidents}}<li><strong>{{.Summary}}</strong><span>{{.Category}}</span><time datetime="{{machineTime .StartedAt}}" data-local-time>{{localTime $.Locale .StartedAt}}</time>{{if .EndedAt.IsZero}}<em>{{t $.Locale "website.detail.not_recovered"}}</em>{{else}}<span>{{t $.Locale "website.detail.ended"}} {{.CloseReason}}</span>{{end}}</li>{{end}}</ol>
 </section>
 {{end}}
 
 <section class="website-detail-section">
-<header><div><h2>检查设置</h2><p>{{.Raw.Config.Source}}</p></div></header>
+<header><div><h2>{{t .Locale "website.detail.settings"}}</h2><p>{{.Raw.Config.Source}}</p></div></header>
 <dl class="website-facts">
-<div><dt>检查方式</dt><dd>{{.Monitor.KindLabel}}</dd></div>
-<div><dt>请求 / 条件</dt><dd>{{.Monitor.MethodLabel}}</dd></div>
-<div><dt>检查频率</dt><dd>{{.Monitor.FrequencyLabel}}</dd></div>
-<div><dt>最长等待</dt><dd>{{.Monitor.TimeoutLabel}}</dd></div>
+<div><dt>{{t .Locale "website.form.check_type"}}</dt><dd>{{.Monitor.KindLabel}}</dd></div>
+<div><dt>{{t .Locale "website.detail.request_condition"}}</dt><dd>{{.Monitor.MethodLabel}}</dd></div>
+<div><dt>{{t .Locale "website.detail.frequency"}}</dt><dd>{{.Monitor.FrequencyLabel}}</dd></div>
+<div><dt>{{t .Locale "website.detail.max_wait"}}</dt><dd>{{.Monitor.TimeoutLabel}}</dd></div>
 </dl>
 </section>
 <section class="website-detail-section website-danger-zone">
-<header><div><h2>删除网站监控</h2><p>网站会从活动台账中移除；既有检查与故障记录仍按保留期保存。</p></div></header>
-<form method="post" action="/monitor/websites/{{.Monitor.ID}}/delete" data-confirm="确认删除网站监控“{{.Monitor.Name}}”？">
+<header><div><h2>{{t .Locale "website.detail.delete_title"}}</h2><p>{{t .Locale "website.detail.delete_description"}}</p></div></header>
+<form method="post" action="/monitor/websites/{{.Monitor.ID}}/delete" data-confirm="{{t .Locale "website.detail.delete_confirm"}} “{{.Monitor.Name}}”?">
 <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-<button class="button button--danger" name="confirm" value="yes" type="submit">删除网站监控</button>
+<button class="button button--danger" name="confirm" value="yes" type="submit">{{t .Locale "website.detail.delete_title"}}</button>
 </form>
 </section>
 </main>

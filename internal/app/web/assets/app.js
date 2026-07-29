@@ -1718,9 +1718,9 @@
     const updatePingCount=()=>{
       if(!pingCount||!pingFormat||!pingPayload)return;
       const size=pingPayloadSize(pingFormat.value,pingPayload.value);
-      pingCount.textContent=size==null?' · 输入格式无效':` · 已解码 ${size} / 125 字节`;
+      pingCount.textContent=size==null?` · ${form.dataset.pingInvalid||'Invalid input format'}`:` · ${form.dataset.pingDecoded||'Decoded'} ${size} / 125 ${form.dataset.pingBytes||'bytes'}`;
       pingCount.classList.toggle('field-error',size==null||size>125);
-      pingPayload.setCustomValidity(size==null?'Ping 载荷与所选输入格式不匹配':size>125?'Ping 载荷解码后不能超过 125 字节':'');
+      pingPayload.setCustomValidity(size==null?(form.dataset.pingFormatMismatch||'The Ping payload does not match the selected input format'):size>125?(form.dataset.pingTooLarge||'The decoded Ping payload cannot exceed 125 bytes'):'');
     };
     const sync=()=>{
       const isWebSocket=kind?.value==='websocket';
@@ -1784,13 +1784,13 @@
       if(!root.dataset.reorderUrl)return;
       const body=new URLSearchParams({csrf_token:root.dataset.csrfToken||''});
       for(const row of root.querySelectorAll('[data-monitor-id]'))body.append('id',row.dataset.monitorId);
-      if(status)status.textContent='正在保存顺序…';
+      if(status)status.textContent=root.dataset.reorderSaving||'Saving order…';
       try{
         const response=await fetch(root.dataset.reorderUrl,{method:'POST',body,headers:{Accept:'text/plain'}});
         if(!response.ok)throw new Error(await response.text());
-        if(status)status.textContent='顺序已保存';
+        if(status)status.textContent=root.dataset.reorderSaved||'Order saved';
       }catch(_){
-        if(status)status.textContent='顺序未保存，正在恢复列表。';
+        if(status)status.textContent=root.dataset.reorderFailed||'Order was not saved. Restoring the list.';
         navigate(location.href,false);
       }
     };
