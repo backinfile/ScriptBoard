@@ -354,6 +354,20 @@ sudo scriptboard admin reset --config /etc/scriptboard/config.yaml
 
 The new initial password is written to `secrets/initial-admin-password` under `state_root`.
 
+## Website monitoring
+
+After signing in, open **Website Monitoring** to check HTTP/HTTPS and
+WebSocket/WSS endpoints from the ScriptBoard host. Monitors can be created,
+edited, checked immediately, paused, resumed, and kept in an administrator
+defined order. The page shows bounded availability history and TLS certificate
+facts. Nginx discovery is an explicit read-only preview followed by a separate
+selected import; it never modifies or reloads Nginx.
+
+WebSocket application text/binary messages and RFC 6455 Ping/Pong control
+frames are separate success rules. A Ping/Pong check succeeds only for an
+actual Pong control frame with a byte-for-byte matching payload. ScriptBoard
+does not send email, SMS, or webhook notifications.
+
 ### A script does not start
 
 Run the read-only diagnostics:

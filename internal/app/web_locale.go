@@ -47,6 +47,7 @@ var webMessages = map[string]localizedMessage{
 	"status.stale":                          {"数据已过期", "Data stale"},
 	"nav.monitor":                           {"监控", "Monitor"},
 	"nav.overview":                          {"概览", "Overview"},
+	"nav.websites":                          {"网站监控", "Website Monitoring"},
 	"nav.runs":                              {"运行记录", "Runs"},
 	"nav.resources":                         {"资源", "Resources"},
 	"nav.files":                             {"文件", "Managed Files"},

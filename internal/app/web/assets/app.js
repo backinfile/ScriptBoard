@@ -1597,6 +1597,158 @@
     });
   }
 
+  function pingPayloadSize(format,value){
+    try{
+      if(format==='none')return 0;
+      if(format==='text')return new TextEncoder().encode(value).byteLength;
+      if(format==='hex'){
+        const compact=value.replace(/\s/g,'');
+        if(compact.length%2||!/^[0-9a-f]*$/i.test(compact))return null;
+        return compact.length/2;
+      }
+      if(format==='base64')return Uint8Array.from(atob(value.trim()),character=>character.charCodeAt(0)).byteLength;
+    }catch(_){}
+    return null;
+  }
+
+  function initWebsiteMonitorForm(form){
+    const kind=form.querySelector('[data-monitor-kind]');
+    const frequency=form.querySelector('[data-monitor-frequency]');
+    const httpFields=form.querySelector('[data-http-monitor-fields]');
+    const websocketFields=form.querySelector('[data-websocket-monitor-fields]');
+    const httpMethod=form.querySelector('[data-http-method]');
+    const httpBody=form.querySelector('[data-http-body-field]');
+    const websocketSuccess=form.querySelector('[data-websocket-success]');
+    const messageFields=form.querySelector('[data-websocket-message-fields]');
+    const pingFields=form.querySelector('[data-websocket-ping-fields]');
+    const receiveType=form.querySelector('[name="receive_type"]');
+    const expectedMessage=form.querySelector('[name="expected_message"]');
+    const pingFormat=form.querySelector('[name="ping_payload_format"]');
+    const pingPayload=form.querySelector('[name="ping_payload"]');
+    const pingCount=form.querySelector('[data-ping-byte-count]');
+    const setSection=(section,visible)=>{
+      if(!section)return;
+      section.hidden=!visible;
+      for(const control of section.querySelectorAll('input,select,textarea'))control.disabled=!visible;
+    };
+    const updatePingCount=()=>{
+      if(!pingCount||!pingFormat||!pingPayload)return;
+      const size=pingPayloadSize(pingFormat.value,pingPayload.value);
+      pingCount.textContent=size==null?' · 输入格式无效':` · 已解码 ${size} / 125 字节`;
+      pingCount.classList.toggle('field-error',size==null||size>125);
+      pingPayload.setCustomValidity(size==null?'Ping 载荷与所选输入格式不匹配':size>125?'Ping 载荷解码后不能超过 125 字节':'');
+    };
+    const sync=()=>{
+      const isWebSocket=kind?.value==='websocket';
+      setSection(httpFields,!isWebSocket);
+      setSection(websocketFields,isWebSocket);
+      if(!isWebSocket){
+        setSection(httpBody,httpMethod?.value==='POST');
+      }else{
+        const condition=websocketSuccess?.value;
+        setSection(messageFields,condition==='any-message'||condition==='matching-message');
+        setSection(pingFields,condition==='ping-pong');
+        if(expectedMessage)expectedMessage.required=condition==='matching-message';
+        if(receiveType)receiveType.required=condition==='matching-message';
+      }
+      updatePingCount();
+    };
+    const kindChanged=()=>{
+      if(frequency){
+        if(kind.value==='websocket'&&frequency.value==='60')frequency.value='300';
+        else if(kind.value==='http'&&frequency.value==='300')frequency.value='60';
+      }
+      sync();
+    };
+    kind?.addEventListener('change',kindChanged);
+    httpMethod?.addEventListener('change',sync);
+    websocketSuccess?.addEventListener('change',sync);
+    pingFormat?.addEventListener('change',updatePingCount);
+    pingPayload?.addEventListener('input',updatePingCount);
+    sync();
+    return ()=>{};
+  }
+
+  function websiteSnapshotChanged(root,payload){
+    if(root.matches('[data-website-detail]')){
+      return root.dataset.monitorState!==payload.State||
+        root.dataset.monitorLatest!==payload.LatestLabel||
+        root.dataset.monitorSummary!==payload.LatestSummary||
+        root.dataset.monitorLatency!==payload.LatencyLabel||
+        root.dataset.monitorChecked!==String(payload.CheckedToken);
+    }
+    const monitors=payload.monitors||payload.Monitors||[];
+    const rows=[...root.querySelectorAll('[data-monitor-id]')];
+    if(rows.length!==monitors.length)return true;
+    const current=new Map(rows.map(row=>[row.dataset.monitorId,row]));
+    return monitors.some(monitor=>{
+      const row=current.get(monitor.ID);
+      return !row||row.dataset.monitorState!==monitor.State||
+        row.dataset.monitorLatest!==monitor.LatestLabel||
+        row.dataset.monitorSummary!==monitor.LatestSummary||
+        row.dataset.monitorLatency!==monitor.LatencyLabel||
+        row.dataset.monitorChecked!==String(monitor.CheckedToken);
+    });
+  }
+
+  function initWebsiteMonitoring(root){
+    let stopped=false;
+    let busy=false;
+    let dragged;
+    const status=root.querySelector('[data-reorder-status]');
+    const saveOrder=async()=>{
+      if(!root.dataset.reorderUrl)return;
+      const body=new URLSearchParams({csrf_token:root.dataset.csrfToken||''});
+      for(const row of root.querySelectorAll('[data-monitor-id]'))body.append('id',row.dataset.monitorId);
+      if(status)status.textContent='正在保存顺序…';
+      try{
+        const response=await fetch(root.dataset.reorderUrl,{method:'POST',body,headers:{Accept:'text/plain'}});
+        if(!response.ok)throw new Error(await response.text());
+        if(status)status.textContent='顺序已保存';
+      }catch(_){
+        if(status)status.textContent='顺序未保存，正在恢复列表。';
+        navigate(location.href,false);
+      }
+    };
+    if(root.dataset.reorderUrl){
+      for(const row of root.querySelectorAll('[data-monitor-id]')){
+        row.addEventListener('dragstart',event=>{
+          dragged=row;
+          row.classList.add('is-dragging');
+          event.dataTransfer.effectAllowed='move';
+          event.dataTransfer.setData('text/plain',row.dataset.monitorId);
+        });
+        row.addEventListener('dragend',()=>{
+          row.classList.remove('is-dragging');
+          dragged=undefined;
+        });
+        row.addEventListener('dragover',event=>{
+          if(!dragged||dragged===row)return;
+          event.preventDefault();
+          const before=event.clientY<row.getBoundingClientRect().top+row.offsetHeight/2;
+          row.parentElement.insertBefore(dragged,before?row:row.nextSibling);
+        });
+        row.addEventListener('drop',event=>{event.preventDefault();saveOrder()});
+      }
+      return ()=>{stopped=true};
+    }
+    const refresh=async()=>{
+      if(stopped||busy||document.hidden)return;
+      busy=true;
+      try{
+        const response=await fetch(root.dataset.statusUrl,{headers:{Accept:'application/json'},cache:'no-store'});
+        if(!response.ok)throw new Error('status refresh failed');
+        const payload=await response.json();
+        if(!stopped&&websiteSnapshotChanged(root,payload))await navigate(location.href,false);
+      }catch(_){}
+      busy=false;
+    };
+    const timer=setInterval(refresh,10000);
+    const visibility=()=>{if(!document.hidden)refresh()};
+    document.addEventListener('visibilitychange',visibility);
+    return ()=>{stopped=true;clearInterval(timer);document.removeEventListener('visibilitychange',visibility)};
+  }
+
   function initPage() {
     const cleanups = [];
     cleanupPage = () => cleanups.splice(0).forEach(cleanup => cleanup());
@@ -1611,6 +1763,10 @@
     initRun(cleanups);
     initGroupedRecords(cleanups);
     initScheduleCron(cleanups);
+    const websiteForm = document.querySelector("[data-website-monitor-form]");
+    if (websiteForm) cleanups.push(initWebsiteMonitorForm(websiteForm));
+    const websiteMonitoring = document.querySelector("[data-website-monitoring],[data-website-detail]");
+    if (websiteMonitoring) cleanups.push(initWebsiteMonitoring(websiteMonitoring));
   }
 
   document.addEventListener("click", event => {

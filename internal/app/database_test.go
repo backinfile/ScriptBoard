@@ -437,3 +437,42 @@ func TestOpenDatabaseMarksUnsupervisedRunDisconnected(t *testing.T) {
 		t.Fatalf("status=%q message=%q finished_at=%v", status, message, finishedAt)
 	}
 }
+
+func TestOpenDatabaseMigratesWebsiteMonitoringSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.Exec(`CREATE TABLE legacy_marker (value TEXT);
+		INSERT INTO legacy_marker VALUES ('schema-14');
+		PRAGMA user_version=14`); err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := openDatabase(path)
+	if err != nil {
+		t.Fatalf("migrate schema 14 database: %v", err)
+	}
+	defer db.Close()
+	for _, table := range []string{
+		"website_monitors",
+		"website_check_results",
+		"website_hourly_aggregates",
+		"website_incidents",
+	} {
+		var exists bool
+		if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?)`, table).Scan(&exists); err != nil {
+			t.Fatal(err)
+		}
+		if !exists {
+			t.Errorf("table %s was not created", table)
+		}
+	}
+	if _, err := os.Stat(path + ".pre-migration-v14"); err != nil {
+		t.Fatalf("schema 14 snapshot: %v", err)
+	}
+}

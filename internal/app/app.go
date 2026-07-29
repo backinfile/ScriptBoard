@@ -45,6 +45,7 @@ import (
 	"scriptboard/internal/runmanager"
 	"scriptboard/internal/scheduler"
 	updatepkg "scriptboard/internal/update"
+	"scriptboard/internal/websitemonitor"
 )
 
 const initialPasswordFilename = "initial-admin-password"
@@ -225,21 +226,22 @@ const (
 )
 
 type Config struct {
-	ManagedRoot       string
-	StateRoot         string
-	RunTimeoutGrace   time.Duration
-	SchedulerNow      func() time.Time
-	SchedulerTick     time.Duration
-	GitExecutable     string
-	ExecutorChains    map[string][]string
-	AdminUsername     string
-	AdminPassword     string
-	AdminPasswordFile string
-	TrustedProxies    []string
-	UpdateCheck       bool
-	UpdateInterval    time.Duration
-	UpdateSource      updatepkg.ReleaseSource
-	RequestShutdown   func()
+	ManagedRoot           string
+	StateRoot             string
+	RunTimeoutGrace       time.Duration
+	SchedulerNow          func() time.Time
+	SchedulerTick         time.Duration
+	GitExecutable         string
+	ExecutorChains        map[string][]string
+	AdminUsername         string
+	AdminPassword         string
+	AdminPasswordFile     string
+	TrustedProxies        []string
+	WebsiteMonitorOptions websitemonitor.Options
+	UpdateCheck           bool
+	UpdateInterval        time.Duration
+	UpdateSource          updatepkg.ReleaseSource
+	RequestShutdown       func()
 }
 
 type App struct {
@@ -252,6 +254,7 @@ type App struct {
 	gitProtection      *gitprotect.Manager
 	hostStatus         *hoststatus.Monitor
 	shellStatusCache   *shellStatusCache
+	websiteMonitor     *websitemonitor.Manager
 	instanceLock       *instancelock.Lock
 	handler            http.Handler
 	loginMu            sync.Mutex
@@ -351,6 +354,14 @@ func Open(config Config) (*App, error) {
 	}
 	if !validating {
 		application.hostStatus.Start(context.Background())
+	}
+	application.websiteMonitor, err = websitemonitor.New(db, config.WebsiteMonitorOptions)
+	if err != nil {
+		application.hostStatus.Close()
+		application.scheduler.Close()
+		application.runs.Close()
+		_ = db.Close()
+		return nil, err
 	}
 	application.updateContext, application.updateCancel = context.WithCancel(context.Background())
 	application.updates = updatepkg.NewManager(updatepkg.ManagerConfig{
@@ -630,6 +641,9 @@ func (a *App) Close() error {
 	if a.hostStatus != nil {
 		a.hostStatus.Close()
 	}
+	if a.websiteMonitor != nil {
+		a.websiteMonitor.Close()
+	}
 	if a.scheduler != nil {
 		a.scheduler.Close()
 	}
@@ -869,6 +883,12 @@ func openDatabase(path string) (*sql.DB, error) {
 		if _, err := migration.Exec(statement); err != nil {
 			_ = db.Close()
 			return nil, fmt.Errorf("初始化 SQLite: %w", err)
+		}
+	}
+	for _, statement := range websitemonitor.SchemaStatements {
+		if _, err := migration.Exec(statement); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("initialize Website Monitor SQLite schema: %w", err)
 		}
 	}
 	if schemaVersion == 1 {
@@ -1243,6 +1263,23 @@ func (a *App) routes(_ string) http.Handler {
 	mux.Handle("GET /monitor", a.requireSession(http.HandlerFunc(a.overviewPage)))
 	mux.Handle("GET /monitor/data", a.requireSession(http.HandlerFunc(a.overviewData)))
 	mux.Handle("GET /monitor/status", a.requireSession(http.HandlerFunc(a.shellStatus)))
+	mux.Handle("GET /monitor/websites", a.requireSession(http.HandlerFunc(a.websiteMonitorList)))
+	mux.Handle("GET /monitor/websites/data", a.requireSession(http.HandlerFunc(a.websiteMonitorData)))
+	mux.Handle("GET /monitor/websites/new", a.requireSession(http.HandlerFunc(a.websiteMonitorCreateTask)))
+	mux.Handle("POST /monitor/websites", a.requireSession(http.HandlerFunc(a.createWebsiteMonitor)))
+	mux.Handle("POST /monitor/websites/reorder", a.requireSession(http.HandlerFunc(a.reorderWebsiteMonitors)))
+	mux.Handle("GET /monitor/websites/nginx", a.requireSession(http.HandlerFunc(a.websiteMonitorNginxTask)))
+	mux.Handle("POST /monitor/websites/nginx/scan", a.requireSession(http.HandlerFunc(a.scanWebsiteMonitorNginx)))
+	mux.Handle("POST /monitor/websites/nginx/import", a.requireSession(http.HandlerFunc(a.importWebsiteMonitorNginx)))
+	mux.Handle("GET /monitor/websites/{id}/edit", a.requireSession(http.HandlerFunc(a.websiteMonitorEditTask)))
+	mux.Handle("POST /monitor/websites/{id}", a.requireSession(http.HandlerFunc(a.updateWebsiteMonitor)))
+	mux.Handle("GET /monitor/websites/{id}", a.requireSession(http.HandlerFunc(a.websiteMonitorDetail)))
+	mux.Handle("GET /monitor/websites/{id}/data", a.requireSession(http.HandlerFunc(a.websiteMonitorDetailData)))
+	mux.Handle("POST /monitor/websites/{id}/check", a.requireSession(http.HandlerFunc(a.checkWebsiteMonitorNow)))
+	mux.Handle("POST /monitor/websites/{id}/pause", a.requireSession(http.HandlerFunc(a.pauseWebsiteMonitor)))
+	mux.Handle("POST /monitor/websites/{id}/resume", a.requireSession(http.HandlerFunc(a.resumeWebsiteMonitor)))
+	mux.Handle("POST /monitor/websites/{id}/move", a.requireSession(http.HandlerFunc(a.moveWebsiteMonitor)))
+	mux.Handle("POST /monitor/websites/{id}/delete", a.requireSession(http.HandlerFunc(a.deleteWebsiteMonitor)))
 	mux.Handle("GET /settings/account", a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		current := request.Context().Value(sessionContextKey).(session)
 		var username string
@@ -1596,6 +1633,8 @@ func newPagination(request *http.Request, total int) paginationView {
 func renderApplicationError(request *http.Request, status int, message string) []byte {
 	destination, label := "/resources/files/", "返回文件"
 	switch {
+	case strings.HasPrefix(request.URL.Path, "/monitor/websites"):
+		destination, label = "/monitor/websites", "返回网站监控"
 	case strings.HasPrefix(request.URL.Path, "/monitor"):
 		destination, label = "/monitor", "返回概览"
 	case strings.HasPrefix(request.URL.Path, "/settings/account"):

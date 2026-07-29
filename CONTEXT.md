@@ -147,3 +147,15 @@ _Avoid_: 只读模式、安全模式、降级模式
 **便携安装（Portable Installation）**：
 从任意解压目录直接运行、没有新版安装元数据和受管 Install Root 的部署形态；可以检查更新，但不能由 ScriptBoard 原地切换版本。
 _Avoid_: 受管服务安装、旧式服务安装
+
+**网站监控（Website Monitor）**：
+由当前 ScriptBoard 主机主动检查的 HTTP、HTTPS、WebSocket 或 WSS 端点配置，以及其短期可用性证据、确认故障和故障时间线。它与宿主状态是相邻上下文，不提供外部通知、跨主机采集或长期可观测性。
+_Avoid_: 宿主状态、端口扫描、告警平台、服务发现
+
+**应用消息（Application Message）**：
+WebSocket 连接中的文本帧或二进制帧，可配置发送内容和匹配规则；它不包括 Ping、Pong 或 Close 控制帧。
+_Avoid_: Ping 消息、Pong 消息、控制帧文本
+
+**活性检查（Ping/Pong Check）**：
+按 RFC 6455 发送 Ping 控制帧，并且只在收到载荷逐字节完全一致的 Pong 控制帧时成功的检查。相同字节的文本帧或二进制帧不构成成功。
+_Avoid_: 文本心跳、应用消息检查、字符串 Ping

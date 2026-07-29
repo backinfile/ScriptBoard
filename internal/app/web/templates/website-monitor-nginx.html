@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}">
+<script defer src="/assets/app-v2.js?v={{assetVersion}}"></script>
+<title>扫描 Nginx · 网站监控 · ScriptBoard</title>
+</head>
+<body>
+<main class="workspace website-task-page website-nginx-page">
+<header class="website-task-heading">
+<a href="/monitor/websites">返回网站监控</a>
+<p class="website-kicker">MONITOR / NGINX</p>
+<h1>扫描 Nginx</h1>
+<p>ScriptBoard 只读取配置，不会启动 Nginx、扫描端口、修改配置或重新加载服务。</p>
+</header>
+{{if .Error}}<p class="page-error" role="alert">{{.Error}}</p>{{end}}
+
+{{if .Preview}}
+<section class="nginx-preview-heading">
+<div>
+<h2>选择要监控的网站</h2>
+<p>查找结果不会自动加入监控。勾选确认后，ScriptBoard 才会保存所选网站。</p>
+</div>
+<strong>{{len .Preview.Candidates}} 个候选</strong>
+</section>
+{{if .Preview.Warnings}}
+<details class="nginx-warnings"><summary>{{len .Preview.Warnings}} 条扫描说明</summary><ul>{{range .Preview.Warnings}}<li>{{.}}</li>{{end}}</ul></details>
+{{end}}
+<form method="post" action="/monitor/websites/nginx/import">
+<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+<input type="hidden" name="config_path" value="{{.ConfigPath}}">
+<div class="nginx-candidate-list">
+{{range .Preview.Candidates}}
+<label class="nginx-candidate {{if .Duplicate}}nginx-candidate--duplicate{{end}}">
+<input type="checkbox" name="digest" value="{{.Digest}}" {{if .Duplicate}}disabled{{end}}>
+<span><strong>{{.Name}}</strong><code>{{.URL}}</code><small>{{.Source}} · 直连 {{.DialHost}}</small></span>
+<b>{{if .Duplicate}}已在监控{{else}}可以加入{{end}}</b>
+</label>
+{{else}}
+<div class="website-empty website-empty--compact"><h2>没有可导入的网站</h2><p>查看扫描说明，或返回修改配置文件路径后重试。</p></div>
+{{end}}
+</div>
+<footer class="website-form-actions"><a href="/monitor/websites/nginx">重新扫描</a><button class="button button--primary" type="submit" data-pending-label="加入中…">加入监控</button></footer>
+</form>
+{{else}}
+<form class="website-monitor-form" method="post" action="/monitor/websites/nginx/scan">
+<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+<fieldset>
+<legend>配置来源</legend>
+<label>Nginx 配置文件（可选）
+<input name="config_path" value="{{.ConfigPath}}" autocomplete="off" spellcheck="false" placeholder="例如：C:/nginx/conf/nginx.conf">
+<span class="field-hint">必须填写绝对路径；留空时从运行中 Nginx 的 -p / -c 参数与平台默认位置查找。</span>
+</label>
+<div class="website-protocol-rule">
+<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/><path d="m14.5 14.5 3 3"/></svg>
+<span>扫描会递归读取 include；单文件 2 MiB、总计 16 MiB、最多 256 个文件与 16 层 include。</span>
+</div>
+</fieldset>
+<footer class="website-form-actions"><a href="/monitor/websites">取消</a><button class="button button--primary" type="submit" data-pending-label="正在查找…">查找网站</button></footer>
+</form>
+{{end}}
+</main>
+</body>
+</html>

@@ -4,6 +4,7 @@ go 1.26
 
 require (
 	github.com/getlantern/systray v1.2.2
+	github.com/gorilla/websocket v1.5.3
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/shirou/gopsutil/v4 v4.26.6
 	go.yaml.in/yaml/v3 v3.0.4
