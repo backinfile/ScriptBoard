@@ -3,15 +3,18 @@
 
   const iconPaths = {
     "activity": '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+    "app-window": '<rect width="20" height="16" x="2" y="4" rx="2"/><path d="M2 8h20"/><path d="M6 6h.01"/><path d="M10 6h.01"/>',
     "arrow-down": '<path d="m6 9 6 6 6-6"/><path d="M12 3v12"/>',
     "arrow-left": '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
     "arrow-right": '<path d="m12 5 7 7-7 7"/><path d="M5 12h14"/>',
     "arrow-up": '<path d="m18 15-6-6-6 6"/><path d="M12 21V9"/>',
     "bookmark-plus": '<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h5"/><path d="M19 3v6"/><path d="M16 6h6"/>',
+    "box": '<path d="m21 8-9-5-9 5 9 5 9-5Z"/><path d="m3 8 9 5 9-5"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/>',
     "braces": '<path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"/><path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/>',
     "calendar-clock": '<path d="M16 2v4"/><path d="M3 10h18"/><path d="M8 2v4"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M17 14v2l1 1"/>',
     "calendar-plus": '<path d="M16 2v4"/><path d="M3 10h18"/><path d="M8 2v4"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M12 14v4"/><path d="M10 16h4"/>',
     "check": '<path d="m20 6-11 11-5-5"/>',
+    "chevrons-up-down": '<path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/>',
     "chevron-right": '<path d="m9 18 6-6-6-6"/>',
     "circle-user-round": '<path d="M18 20a6 6 0 0 0-12 0"/><circle cx="12" cy="10" r="4"/><circle cx="12" cy="12" r="10"/>',
     "circle-x": '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
@@ -45,6 +48,8 @@
     "network": '<rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-3h14v3M12 12V8"/>',
     "panel-left-open": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/>',
     "pause": '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>',
+    "pin": '<path d="M12 17v5"/><path d="M5 17h14"/><path d="M15 3.5c0 2 1 3.5 2 4.5H7c1-1 2-2.5 2-4.5"/><path d="M9 3h6"/>',
+    "pin-off": '<path d="M12 17v5"/><path d="M5 17h12"/><path d="M4 4 20 20"/><path d="M9 3h6"/><path d="M15 3.5c0 2 1 3.5 2 4.5h-4"/><path d="M7 8c.7-.7 1.4-1.8 1.8-3"/>',
     "play": '<path d="m6 3 14 9-14 9z"/>',
     "plus": '<path d="M5 12h14M12 5v14"/>',
     "power": '<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/>',
@@ -54,6 +59,7 @@
     "search": '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
     "settings": '<path d="M12.2 2h-.4a2 2 0 0 0-2 2v.2a2 2 0 0 1-1 1.7l-.4.2a2 2 0 0 1-2 0l-.1-.1a2 2 0 0 0-2.7.7l-.2.4a2 2 0 0 0 .7 2.7l.1.1a2 2 0 0 1 1 1.7v.5a2 2 0 0 1-1 1.7l-.1.1a2 2 0 0 0-.7 2.7l.2.4a2 2 0 0 0 2.7.7l.1-.1a2 2 0 0 1 2 0l.4.2a2 2 0 0 1 1 1.7v.2a2 2 0 0 0 2 2h.4a2 2 0 0 0 2-2v-.2a2 2 0 0 1 1-1.7l.4-.2a2 2 0 0 1 2 0l.1.1a2 2 0 0 0 2.7-.7l.2-.4a2 2 0 0 0-.7-2.7l-.1-.1a2 2 0 0 1-1-1.7v-.5a2 2 0 0 1 1-1.7l.1-.1a2 2 0 0 0 .7-2.7l-.2-.4a2 2 0 0 0-2.7-.7l-.1.1a2 2 0 0 1-2 0l-.4-.2a2 2 0 0 1-1-1.7V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
     "shield-check": '<path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3z"/><path d="m9 12 2 2 4-4"/>',
+    "shield-alert": '<path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3z"/><path d="M12 8v4"/><path d="M12 16h.01"/>',
     "square": '<rect x="3" y="3" width="18" height="18" rx="2"/>',
     "square-pen": '<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.4 2.6a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z"/>',
     "square-terminal": '<path d="m7 7 3 3-3 3M13 13h4"/><rect x="3" y="3" width="18" height="18" rx="2"/>',
@@ -900,6 +906,84 @@
     }
   }
 
+  function initApplications(cleanups) {
+    const root = document.querySelector("[data-applications-page]");
+    if (!root) return;
+    const switches = Array.from(root.querySelectorAll("[data-applications-refresh]"));
+
+    const replaceFromSnapshot = (snapshot, scope) => {
+      const facts = snapshot.querySelector(".applications-fact-strip");
+      const currentFacts = root.querySelector(".applications-fact-strip");
+      if (facts && currentFacts) currentFacts.replaceWith(document.importNode(facts, true));
+      if (scope === "pinned") {
+        const source = snapshot.querySelector("[data-pinned-applications]");
+        const target = root.querySelector("[data-pinned-applications]");
+        if (source && target) target.replaceChildren(...Array.from(source.children, child => document.importNode(child, true)));
+      } else {
+        const sourceBody = snapshot.querySelector(".applications-table tbody");
+        const targetBody = root.querySelector(".applications-table tbody");
+        if (sourceBody && targetBody) targetBody.replaceChildren(...Array.from(sourceBody.children, child => document.importNode(child, true)));
+        const sourceSummary = snapshot.querySelector(".application-result-summary");
+        const targetSummary = root.querySelector(".application-result-summary");
+        if (sourceSummary && targetSummary) targetSummary.replaceChildren(...Array.from(sourceSummary.childNodes, child => document.importNode(child, true)));
+      }
+      renderIcons(root);
+      localizeTimes(root);
+    };
+
+    const refresh = async (scope, state) => {
+      if (!state.enabled || state.pending) return;
+      state.pending = new AbortController();
+      try {
+        const result = await fetchDocument(location.href, { cache: "no-store", signal: state.pending.signal });
+        if (result.response.ok && result.document && state.enabled) replaceFromSnapshot(result.document, scope);
+      } catch (error) {
+        if (error.name !== "AbortError") console.debug("Application snapshot update unavailable");
+      } finally {
+        state.pending = null;
+      }
+    };
+
+    switches.forEach(control => {
+      const scope = control.dataset.applicationsRefresh;
+      const label = control.closest(".applications-refresh")?.querySelector("span");
+      const state = {
+        enabled: control.getAttribute("aria-checked") === "true",
+        pending: null,
+        timer: null,
+      };
+      const renderState = () => {
+        control.setAttribute("aria-checked", String(state.enabled));
+        control.setAttribute("aria-label", state.enabled ? control.dataset.pauseLabel : control.dataset.startLabel);
+        if (label) {
+          const strong = label.querySelector("strong");
+          const small = label.querySelector("small");
+          if (strong) strong.textContent = state.enabled ? control.dataset.enabledLabel : control.dataset.disabledLabel;
+          if (small) small.textContent = state.enabled ? control.dataset.enabledDescription : control.dataset.disabledDescription;
+        }
+      };
+      const schedule = () => {
+        if (state.timer) window.clearInterval(state.timer);
+        state.timer = state.enabled ? window.setInterval(() => refresh(scope, state), 5000) : null;
+      };
+      const onToggle = () => {
+        state.enabled = !state.enabled;
+        if (!state.enabled) state.pending?.abort();
+        renderState();
+        schedule();
+        if (state.enabled) refresh(scope, state);
+      };
+      control.addEventListener("click", onToggle);
+      renderState();
+      schedule();
+      cleanups.push(() => {
+        control.removeEventListener("click", onToggle);
+        if (state.timer) window.clearInterval(state.timer);
+        state.pending?.abort();
+      });
+    });
+  }
+
   function initRun(cleanups) {
     const root = document.querySelector("[data-run-events-url]");
     if (!root || !window.EventSource) return;
@@ -1608,6 +1692,7 @@
     initCopyControls(document, cleanups);
     initFileDropUpload(document, cleanups);
     initOverview(cleanups);
+    initApplications(cleanups);
     initRun(cleanups);
     initGroupedRecords(cleanups);
     initScheduleCron(cleanups);

@@ -15,6 +15,7 @@
 - [ADR-0077](./0077-ship-portable-archives-instead-of-native-installers.md) → [ADR-0117](./0117-use-versioned-service-installs-and-an-external-updater.md)：继续发布便携归档，但服务安装改为包含 updater 的版本化 Install Root。
 - [ADR-0081](./0081-ship-a-simplified-chinese-only-mvp.md) → [ADR-0108](./0108-localize-the-web-in-zh-cn-and-en-us.md)：Web 改为简体中文和美式英语双语，CLI 与托盘仍为简体中文。
 - [ADR-0083](./0083-support-modern-desktop-and-mobile-browsers.md) → [ADR-0110](./0110-use-desktop-chromium-as-the-browser-gate.md)：浏览器自动化门禁收敛为桌面 Chromium，其他现代浏览器最佳努力兼容。
+- [ADR-0107](./0107-provide-bounded-local-host-status.md) → [ADR-0118](./0118-observe-host-applications-and-local-docker-containers.md)：保留有界宿主概览，但将“Top 进程”排除项重新决策为独立、只读的应用观测页面。
 
 ## 冻结文档
 

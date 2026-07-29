@@ -1,0 +1,126 @@
+<!doctype html>
+<!--
+THESIS: Current application pressure comes first; deeper history and runtime facts unfold in place.
+OWN-WORLD: ScriptBoard's cold-white calibration ledger, graphite rules, and one measured blue.
+STORY: Review pinned applications, then discover host and Docker workload pressure.
+FIRST VIEWPORT: Current pinned facts precede the sortable running snapshot.
+FORM: Flat measurement rails and a responsive record ledger; no control-plane actions.
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/assets/app-v2.css?v={{assetVersion}}">
+  <script defer src="/assets/app-v2.js?v={{assetVersion}}"></script>
+  <title>{{t .Locale "applications.title"}} · ScriptBoard</title>
+</head>
+<body>
+<main class="workspace applications-page" data-applications-page data-applications-url="/monitor/applications/data">
+  <header class="page-heading applications-heading">
+    <div>
+      <p class="eyebrow">{{t .Locale "applications.eyebrow"}}</p>
+      <h1>{{t .Locale "applications.title"}}</h1>
+      <p>{{t .Locale "applications.description"}}</p>
+    </div>
+  </header>
+
+  <dl class="applications-fact-strip" aria-label="{{t .Locale "applications.snapshot_facts"}}">
+    <div><dt>{{t .Locale "applications.host_count"}}</dt><dd>{{.HostCount}}</dd></div>
+    <div><dt>{{t .Locale "applications.docker_count"}}</dt><dd>{{if .DockerAvailable}}{{.DockerCount}}{{else}}<span class="application-source-unavailable">{{t .Locale "applications.source_unavailable"}}</span>{{end}}</dd></div>
+    <div><dt>{{t .Locale "applications.pinned_count"}}</dt><dd>{{len .Pinned}}</dd></div>
+    <div><dt>{{t .Locale "applications.collected"}}</dt><dd><time datetime="{{machineTime .CollectedAt}}" data-local-time>{{localTime .Locale .CollectedAt}}</time></dd></div>
+  </dl>
+
+  <section class="applications-section" aria-labelledby="pinned-applications-heading">
+    <header class="applications-section-heading">
+      <div><p class="section-index">{{t .Locale "applications.focus"}}</p><h2 id="pinned-applications-heading">{{t .Locale "applications.pinned"}}</h2><p>{{t .Locale "applications.pinned_description"}}</p></div>
+      <div class="applications-refresh">
+        <span><strong>{{t .Locale "applications.live_on"}}</strong><small>{{t .Locale "applications.every_five_seconds"}}</small></span>
+        <button type="button" class="applications-switch" role="switch" aria-checked="true" aria-label="{{t .Locale "applications.pause_pinned_live"}}" data-applications-refresh="pinned" data-enabled-label="{{t .Locale "applications.live_on"}}" data-disabled-label="{{t .Locale "applications.live_off"}}" data-enabled-description="{{t .Locale "applications.every_five_seconds"}}" data-disabled-description="{{t .Locale "applications.last_snapshot"}}" data-pause-label="{{t .Locale "applications.pause_pinned_live"}}" data-start-label="{{t .Locale "applications.start_pinned_live"}}"></button>
+      </div>
+    </header>
+    <div class="pinned-application-list" data-pinned-applications>
+      {{range .Pinned}}
+      <article class="pinned-application" data-application-id="{{.ID}}">
+        <div class="pinned-application__identity">
+          <span data-lucide="{{if eq .Kind "docker"}}box{{else}}app-window{{end}}" aria-hidden="true"></span>
+          <div><h3>{{.Name}}{{if eq .Kind "docker"}} <span class="application-kind">Docker</span>{{end}}</h3><p>{{.Technical}}</p><small>{{if .Running}}{{t $.Locale "applications.running"}}{{else}}{{t $.Locale "applications.stopped"}}{{end}}</small></div>
+        </div>
+        <dl class="pinned-application__metrics">
+          <div><dt>CPU</dt><dd>{{if .RateAvailable}}{{percent .CPUPercent}}{{else}}&ndash;{{end}}</dd></div>
+          <div><dt>{{t $.Locale "applications.memory"}}</dt><dd>{{humanBytes .MemoryBytes}}</dd></div>
+          <div><dt>{{t $.Locale "applications.disk_io"}}</dt><dd>{{if .RateAvailable}}{{humanRate .ReadBytesPerSecond}} / {{humanRate .WriteBytesPerSecond}}{{else}}&ndash;{{end}}</dd></div>
+        </dl>
+        <form method="post" action="/monitor/applications/{{.ID}}/unpin">
+          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+          <button class="icon-button" type="submit" aria-label="{{t $.Locale "applications.unpin"}} {{.Name}}"><span data-lucide="pin-off" aria-hidden="true"></span></button>
+        </form>
+      </article>
+      {{else}}
+      <div class="applications-empty"><span data-lucide="pin" aria-hidden="true"></span><p>{{t .Locale "applications.no_pins"}}</p><a href="#running-applications">{{t .Locale "applications.find_running"}}</a></div>
+      {{end}}
+    </div>
+  </section>
+
+  <section class="applications-section" id="running-applications" aria-labelledby="running-applications-heading" data-running-applications>
+    <header class="applications-section-heading">
+      <div><p class="section-index">{{t .Locale "applications.all"}}</p><h2 id="running-applications-heading">{{t .Locale "applications.running_title"}}</h2><p>{{t .Locale "applications.running_description"}}</p></div>
+      <div class="applications-refresh">
+        <span><strong>{{t .Locale "applications.live_off"}}</strong><small>{{t .Locale "applications.last_snapshot"}}</small></span>
+        <button type="button" class="applications-switch" role="switch" aria-checked="false" aria-label="{{t .Locale "applications.start_running_live"}}" data-applications-refresh="running" data-enabled-label="{{t .Locale "applications.live_on"}}" data-disabled-label="{{t .Locale "applications.live_off"}}" data-enabled-description="{{t .Locale "applications.every_five_seconds"}}" data-disabled-description="{{t .Locale "applications.last_snapshot"}}" data-pause-label="{{t .Locale "applications.pause_running_live"}}" data-start-label="{{t .Locale "applications.start_running_live"}}"></button>
+      </div>
+    </header>
+
+    <form class="applications-toolbar" method="get" action="/monitor/applications">
+      <label class="applications-search"><span data-lucide="search" aria-hidden="true"></span><span class="sr-only">{{t .Locale "common.search"}}</span><input type="search" name="query" value="{{.Query.Search}}" placeholder="{{t .Locale "applications.search_placeholder"}}"></label>
+      <input type="hidden" name="sort" value="{{.Query.Sort}}">
+      <input type="hidden" name="direction" value="{{.Query.Direction}}">
+      <label class="applications-kind-select"><span>{{t .Locale "applications.kind"}}</span><select name="kind"><option value="all" {{if eq .Query.Kind ""}}selected{{end}}>{{t .Locale "applications.kind_all"}}</option><option value="host" {{if eq .Query.Kind "host"}}selected{{end}}>{{t .Locale "applications.kind_host"}}</option><option value="docker" {{if eq .Query.Kind "docker"}}selected{{end}}>Docker</option></select></label>
+      <button class="button button--compact" type="submit">{{t .Locale "common.search"}}</button>
+    </form>
+
+    <div class="applications-mobile-sort">
+      <form method="get" action="/monitor/applications">
+        <input type="hidden" name="query" value="{{.Query.Search}}">
+        <input type="hidden" name="kind" value="{{.Query.Kind}}">
+        <label>{{t .Locale "applications.sort"}}<select name="sort"><option value="pinned" {{if eq .Query.Sort "pinned"}}selected{{end}}>{{t .Locale "applications.pin"}}</option><option value="name" {{if eq .Query.Sort "name"}}selected{{end}}>{{t .Locale "applications.application"}}</option><option value="cpu" {{if eq .Query.Sort "cpu"}}selected{{end}}>CPU</option><option value="memory" {{if eq .Query.Sort "memory"}}selected{{end}}>{{t .Locale "applications.memory"}}</option><option value="read" {{if eq .Query.Sort "read"}}selected{{end}}>{{t .Locale "applications.read"}}</option><option value="write" {{if eq .Query.Sort "write"}}selected{{end}}>{{t .Locale "applications.write"}}</option><option value="processes" {{if eq .Query.Sort "processes"}}selected{{end}}>{{t .Locale "applications.processes"}}</option></select></label>
+        <label>{{t .Locale "applications.direction"}}<select name="direction"><option value="desc" {{if eq .Query.Direction "desc"}}selected{{end}}>{{t .Locale "applications.descending"}}</option><option value="asc" {{if eq .Query.Direction "asc"}}selected{{end}}>{{t .Locale "applications.ascending"}}</option></select></label>
+        <button class="button button--compact" type="submit">{{t .Locale "common.apply"}}</button>
+      </form>
+    </div>
+
+    <div class="application-result-summary">{{t .Locale "applications.showing"}} {{len .Applications}} / {{.Matched}}{{if .Truncated}} · {{t .Locale "applications.top_100"}}{{end}}</div>
+    <div class="table-shell applications-table-shell">
+      <table class="records-table applications-table">
+        <thead><tr>
+          {{$pin := index .SortLinks "pinned"}}<th aria-sort="{{$pin.AriaSort}}"><a href="{{$pin.URL}}">{{t .Locale "applications.pin"}}<span data-lucide="chevrons-up-down" aria-hidden="true"></span></a></th>
+          {{$name := index .SortLinks "name"}}<th aria-sort="{{$name.AriaSort}}"><a href="{{$name.URL}}">{{t .Locale "applications.application"}}<span data-lucide="chevrons-up-down" aria-hidden="true"></span></a></th>
+          {{$cpu := index .SortLinks "cpu"}}<th aria-sort="{{$cpu.AriaSort}}" class="numeric"><a href="{{$cpu.URL}}">CPU<span data-lucide="chevrons-up-down" aria-hidden="true"></span></a></th>
+          {{$memory := index .SortLinks "memory"}}<th aria-sort="{{$memory.AriaSort}}" class="numeric"><a href="{{$memory.URL}}">{{t .Locale "applications.memory"}}<span data-lucide="chevrons-up-down" aria-hidden="true"></span></a></th>
+          {{$read := index .SortLinks "read"}}<th aria-sort="{{$read.AriaSort}}" class="numeric"><a href="{{$read.URL}}">{{t .Locale "applications.read"}}<span data-lucide="chevrons-up-down" aria-hidden="true"></span></a></th>
+          {{$write := index .SortLinks "write"}}<th aria-sort="{{$write.AriaSort}}" class="numeric"><a href="{{$write.URL}}">{{t .Locale "applications.write"}}<span data-lucide="chevrons-up-down" aria-hidden="true"></span></a></th>
+          {{$processes := index .SortLinks "processes"}}<th aria-sort="{{$processes.AriaSort}}" class="numeric"><a href="{{$processes.URL}}">{{t .Locale "applications.processes"}}<span data-lucide="chevrons-up-down" aria-hidden="true"></span></a></th>
+        </tr></thead>
+        <tbody>
+        {{range .Applications}}
+          <tr data-application-row data-kind="{{.Kind}}" data-application-id="{{.ID}}">
+            <td data-label="{{t $.Locale "applications.pin"}}">
+              {{if .Pinnable}}<form method="post" action="/monitor/applications/{{.ID}}/{{if .Pinned}}unpin{{else}}pin{{end}}"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="icon-button{{if .Pinned}} is-selected{{end}}" type="submit" aria-label="{{if .Pinned}}{{t $.Locale "applications.unpin"}}{{else}}{{t $.Locale "applications.pin"}}{{end}} {{.Name}}"><span data-lucide="pin" aria-hidden="true"></span></button></form>{{else}}<span class="application-restricted" title="{{t $.Locale "applications.identity_restricted"}}"><span data-lucide="shield-alert" aria-hidden="true"></span></span>{{end}}
+            </td>
+            <td class="record-primary" data-label="{{t $.Locale "applications.application"}}"><div class="record-primary__content"><div><strong>{{.Name}}{{if eq .Kind "docker"}} <span class="application-kind">Docker</span>{{end}}</strong><small>{{.Technical}}</small></div></div></td>
+            <td class="numeric application-metric" data-label="CPU">{{if .RateAvailable}}{{percent .CPUPercent}}{{else}}&ndash;{{end}}</td>
+            <td class="numeric application-metric" data-label="{{t $.Locale "applications.memory"}}">{{humanBytes .MemoryBytes}}{{if and (eq .Kind "docker") (gt .MemoryLimitBytes 0)}} / {{humanBytes .MemoryLimitBytes}}{{end}}<small>{{percent .MemoryPercent}}</small></td>
+            <td class="numeric application-metric" data-label="{{t $.Locale "applications.read"}}">{{if .RateAvailable}}{{humanRate .ReadBytesPerSecond}}{{else}}&ndash;{{end}}</td>
+            <td class="numeric application-metric" data-label="{{t $.Locale "applications.write"}}">{{if .RateAvailable}}{{humanRate .WriteBytesPerSecond}}{{else}}&ndash;{{end}}</td>
+            <td class="numeric application-metric" data-label="{{t $.Locale "applications.processes"}}">{{.ProcessCount}}{{if eq .Kind "docker"}}<small>{{t $.Locale "applications.pids"}}</small>{{else}}<small>{{.ThreadCount}} {{t $.Locale "applications.threads"}}</small>{{end}}</td>
+          </tr>
+        {{else}}
+          <tr class="records-table__empty"><td colspan="7">{{t .Locale "applications.no_results"}}</td></tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+</body>
+</html>

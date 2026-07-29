@@ -177,8 +177,20 @@ MVP 不验收多用户/RBAC、沙箱、公共 API、DAG、多服务器、Docker 
 ## 15. Web 信息架构与渐进增强
 
 - [ ] 桌面端固定侧栏按监控、资源、配置、历史和设置分组，运行记录与审计归入历史；移动端以可关闭抽屉呈现同一导航。
-- [ ] `/monitor`、`/history/runs`、`/resources/files`、`/resources/variables`、`/resources/trash`、`/config/quick-runs`、`/config/schedules`、`/history/audit` 和 `/settings/*` 均只允许有效 Session。
+- [ ] `/monitor`、`/monitor/applications`、`/history/runs`、`/resources/files`、`/resources/variables`、`/resources/trash`、`/config/quick-runs`、`/config/schedules`、`/history/audit` 和 `/settings/*` 均只允许有效 Session。
 - [ ] 旧 `/overview`、`/monitor/runs`、`/files`、`/runs`、`/quick-runs`、`/schedules`、`/variables`、`/audit` 与 `/trash` 路由返回 404，不提供兼容重定向。
 - [ ] 新建目录、上传、运行文件、新建或编辑变量、新建或编辑计划、保存快捷执行均有语义化 GET 页面，可复制链接并在禁用 JavaScript 时完整操作；桌面任务面板打开时保持当前工作区 URL，后退关闭、前进恢复。
 - [ ] 启用 JavaScript 时，上述 GET 页面在右侧任务面板打开；浏览器前进、后退和 Escape 能恢复正确上下文。
 - [ ] 概览判断只由采集失败、超过 15 秒的数据过期和关键卷低于 100 MiB 产生；CPU、内存与网络只作为事实展示。
+
+## 16. 应用与 Docker 容器观测
+
+- [ ] 宿主进程按规范化可执行路径聚合，多 PID 的 CPU、内存、磁盘 I/O、进程数和线程数口径正确；PID 复用、计数器回退和路径不可读不会制造错误速率或可 Pin 身份。
+- [ ] 只读自动探测本机 Docker Unix socket 或 named pipe，使用 API 协商和有界单次 stats；不读取远程 Docker endpoint，不提供容器控制。
+- [ ] Docker 不可用或局部 stats 失败不阻断宿主应用采集；Linux 上已识别的容器 cgroup 进程不重复计入宿主应用。
+- [ ] 正在运行列表先对完整快照搜索和类型筛选，再按 Pin、应用、CPU、内存、读取、写入或进程数升降序返回前 100 项。
+- [ ] Pin 与 Unpin 保存到 SQLite，要求有效 Session 与 CSRF；服务重启后仍存在，且无 JavaScript 时完整可用。
+- [ ] 已 Pin 刷新默认开启、正在运行刷新默认关闭，两者可独立切换；桌面与 390px 移动布局没有水平溢出，移动端提供独立排序控件和至少 44px 的 Pin 操作。
+- [ ] `/monitor/applications/data` 只允许有效 Session，使用 `Cache-Control: no-store`，返回当前、Pin、计数、截断、Docker 能力和局部错误。
+- [ ] 连续快照、指标、审计和服务日志不包含命令行参数；认证管理员明确展开运行详情时可按需查看和复制实际命令，环境变量值默认不展示。
+- [ ] 审计不记录路径、镜像或实际命令；页面不提供进程终止、容器启停、阈值告警、通知或导出。

@@ -189,7 +189,7 @@ Buttons use an explicit, opt-in base class; raw `button` elements do not inherit
 
 Desktop uses a fixed 232px sidebar with grouped destinations:
 
-- Monitor: Overview
+- Monitor: Overview, Applications
 - Resources: Files, Variables
 - Configuration: Quick runs, Schedules
 - History: Runs, Audit
@@ -211,6 +211,14 @@ Use a single-page drilldown:
 5. compact environment facts.
 
 Measurements are not generic statistic cards. Their baseline, current value, and peak belong to one horizontal reading band.
+
+### Applications
+
+Lead with the current application snapshot. A flat fact strip reports host applications, Docker containers, pinned applications, and collection time. The pinned section follows, showing only current CPU, memory, and disk I/O; deeper history and runtime facts unfold in place when those capabilities are available.
+
+Pinned and running records own independent refresh switches. Pinned refresh starts on, while the running list starts off so a stable sorted snapshot remains readable. Desktop sorting lives in every table heading, including Pin and process count; mobile uses explicit sort and direction controls before the labeled records.
+
+Host applications show no redundant type tag. Docker containers use one quiet Docker tag beside the container name and show the image as technical context. Pin and Unpin remain CSRF-protected POST actions that work without JavaScript. The page never offers process termination, container control, health thresholds, or alert actions.
 
 ### Dense records
 

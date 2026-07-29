@@ -36,6 +36,7 @@ import (
 	"golang.org/x/crypto/argon2"
 	_ "modernc.org/sqlite"
 
+	"scriptboard/internal/appstatus"
 	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/diskspace"
 	"scriptboard/internal/gitprotect"
@@ -240,6 +241,7 @@ type Config struct {
 	UpdateInterval    time.Duration
 	UpdateSource      updatepkg.ReleaseSource
 	RequestShutdown   func()
+	ApplicationProbe  appstatus.Probe
 }
 
 type App struct {
@@ -251,6 +253,7 @@ type App struct {
 	scheduler          *scheduler.Manager
 	gitProtection      *gitprotect.Manager
 	hostStatus         *hoststatus.Monitor
+	applicationStatus  *appstatus.Monitor
 	shellStatusCache   *shellStatusCache
 	instanceLock       *instancelock.Lock
 	handler            http.Handler
@@ -349,8 +352,21 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	applicationProbe := config.ApplicationProbe
+	if applicationProbe == nil {
+		applicationProbe = appstatus.NewSystemProbe()
+	}
+	application.applicationStatus, err = appstatus.New(db, applicationProbe, appstatus.Options{})
+	if err != nil {
+		application.hostStatus.Close()
+		application.scheduler.Close()
+		application.runs.Close()
+		_ = db.Close()
+		return nil, err
+	}
 	if !validating {
 		application.hostStatus.Start(context.Background())
+		application.applicationStatus.Start(context.Background())
 	}
 	application.updateContext, application.updateCancel = context.WithCancel(context.Background())
 	application.updates = updatepkg.NewManager(updatepkg.ManagerConfig{
@@ -410,6 +426,7 @@ func (a *App) monitorUpdateValidation(operationID string) {
 				a.runs.LeaveMaintenance()
 				a.scheduler.Resume()
 				a.hostStatus.Start(context.Background())
+				a.applicationStatus.Start(context.Background())
 				a.updates.Start(a.updateContext)
 				return
 			}
@@ -629,6 +646,9 @@ func (a *App) Close() error {
 	}
 	if a.hostStatus != nil {
 		a.hostStatus.Close()
+	}
+	if a.applicationStatus != nil {
+		a.applicationStatus.Close()
 	}
 	if a.scheduler != nil {
 		a.scheduler.Close()
@@ -865,6 +885,31 @@ func openDatabase(path string) (*sql.DB, error) {
 			average_json TEXT NOT NULL,
 			maximum_json TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS application_pins (
+			id TEXT PRIMARY KEY,
+			kind TEXT NOT NULL CHECK (kind IN ('host', 'docker')),
+			identity TEXT NOT NULL,
+			name TEXT NOT NULL,
+			technical TEXT NOT NULL,
+			sort_order INTEGER NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			UNIQUE (kind, identity)
+		)`,
+		`CREATE TABLE IF NOT EXISTS application_metric_minutes (
+			application_id TEXT NOT NULL,
+			bucket_at INTEGER NOT NULL,
+			sample_count INTEGER NOT NULL,
+			cpu_average REAL NOT NULL,
+			cpu_maximum REAL NOT NULL,
+			memory_average INTEGER NOT NULL,
+			memory_maximum INTEGER NOT NULL,
+			read_average REAL NOT NULL,
+			read_maximum REAL NOT NULL,
+			write_average REAL NOT NULL,
+			write_maximum REAL NOT NULL,
+			PRIMARY KEY (application_id, bucket_at)
+		)`,
 	} {
 		if _, err := migration.Exec(statement); err != nil {
 			_ = db.Close()
@@ -1070,6 +1115,8 @@ func openDatabase(path string) (*sql.DB, error) {
 		"CREATE INDEX IF NOT EXISTS schedule_groups_order_idx ON schedule_groups(sort_order, created_at)",
 		"CREATE INDEX IF NOT EXISTS schedules_group_order_idx ON schedules(group_id, created_at)",
 		"CREATE INDEX IF NOT EXISTS runs_source_idx ON runs(source_type, source_id, created_at DESC)",
+		"CREATE INDEX IF NOT EXISTS application_pins_order_idx ON application_pins(sort_order, created_at)",
+		"CREATE INDEX IF NOT EXISTS application_metric_minutes_bucket_idx ON application_metric_minutes(bucket_at)",
 	} {
 		if _, err := migration.Exec(statement); err != nil {
 			_ = db.Close()
@@ -1243,6 +1290,10 @@ func (a *App) routes(_ string) http.Handler {
 	mux.Handle("GET /monitor", a.requireSession(http.HandlerFunc(a.overviewPage)))
 	mux.Handle("GET /monitor/data", a.requireSession(http.HandlerFunc(a.overviewData)))
 	mux.Handle("GET /monitor/status", a.requireSession(http.HandlerFunc(a.shellStatus)))
+	mux.Handle("GET /monitor/applications", a.requireSession(http.HandlerFunc(a.applicationsPage)))
+	mux.Handle("GET /monitor/applications/data", a.requireSession(http.HandlerFunc(a.applicationsData)))
+	mux.Handle("POST /monitor/applications/{id}/pin", a.requireSession(http.HandlerFunc(a.pinApplication)))
+	mux.Handle("POST /monitor/applications/{id}/unpin", a.requireSession(http.HandlerFunc(a.unpinApplication)))
 	mux.Handle("GET /settings/account", a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		current := request.Context().Value(sessionContextKey).(session)
 		var username string

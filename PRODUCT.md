@@ -21,7 +21,7 @@ ScriptBoard 将分散在文件系统中的脚本变成一套可浏览、可执�
 ## Operating Context
 
 - 单台主机、单管理员上下文，通过受保护的服务端渲染网页操作。
-- 文件与目录、脚本参数、运行日志、快捷执行、计划任务、变量、审计事件和本地 Git 版本历史是核心工作材料。
+- 文件与目录、脚本参数、运行日志、快捷执行、计划任务、变量、审计事件、本地 Git 版本历史和本机应用资源事实是核心工作材料。
 - 桌面端是高密度操作的主界面；移动端保留全部关键流程，并采用抽屉导航和可重排布局。
 - 产品正式支持 Windows 10/11、Windows Server 2019+ 与 systemd Linux。
 - 正式 Release 安装为版本化受管服务；旧式单文件服务安装不迁移、不兼容。
@@ -34,12 +34,13 @@ ScriptBoard 将分散在文件系统中的脚本变成一套可浏览、可执�
 - 所有关键页面和任务均保留无 JavaScript 的服务端页面；JavaScript 只增强为局部导航、右侧任务面板、实时状态和快捷键。
 - Run 不进入队列；并发、停止、超时与日志保留遵循现有领域状态机。
 - 受管文件操作、版本保护与审计必须清晰呈现风险、边界和不可逆影响。
+- 应用观测只读采集宿主应用与本机 Docker 容器应用；不能借此加入进程控制、容器编排、通用阈值告警或远程监控。
 - 正式构建可自动检查固定官方仓库的稳定版，但更新必须先验证 Ed25519 签名和归档摘要，再由管理员明确确认安装；有活动 Run 时不得切换版本。
 - 便携运行只提供版本检查与手工下载提示，源码开发构建不联网检查；第一版不提供无人值守安装。
 
 ## Information Architecture
 
-- 监控：`/monitor`
+- 监控：`/monitor`、`/monitor/applications`
 - 资源：`/resources/files`、`/resources/variables`、`/resources/trash`
 - 配置：`/config/quick-runs`、`/config/schedules`
 - 历史：`/history/runs`、`/history/runs/{id}`、`/history/audit`

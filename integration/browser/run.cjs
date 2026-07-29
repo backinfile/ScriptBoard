@@ -16,7 +16,7 @@ fs.mkdirSync(snapshotRoot, { recursive: true });
 fs.rmSync(resultRoot, { recursive: true, force: true });
 fs.mkdirSync(resultRoot, { recursive: true });
 
-const build = spawnSync("go", ["build", "-o", fixtureBinary, "./integration/browser/fixture"], {
+const build = spawnSync("go", ["build", "-buildvcs=false", "-o", fixtureBinary, "./integration/browser/fixture"], {
   cwd: repositoryRoot,
   encoding: "utf8",
 });
@@ -377,6 +377,84 @@ async function assertExpiredSessionUsesFullNavigation(page, context) {
   await page.locator("[data-app-shell]").waitFor();
 }
 
+async function assertApplicationMonitoring(page, baseURL) {
+  await page.goto(`${baseURL}/monitor/applications`);
+  const applications = page.locator("[data-applications-page]");
+  await applications.waitFor();
+  assert.equal(
+    await page.locator('.sidebar-nav a[href="/monitor/applications"]').getAttribute("aria-current"),
+    "page",
+    "Applications navigation is not selected",
+  );
+  await page.locator('.applications-table tr[data-kind="docker"]').filter({ hasText: "api-prod" }).waitFor();
+  await page.getByText("Host Agent", { exact: true }).waitFor();
+  assert.equal(await page.locator('.applications-table th[aria-sort="descending"]').getAttribute("aria-sort"), "descending");
+  assert.match((await page.locator(".applications-table tbody tr").first().textContent()).trim(), /api-prod/);
+  assert.equal(await page.locator('.applications-table tr[data-kind="docker"] .application-kind').count(), 2);
+  assert.equal(
+    await page.locator('.applications-table tr[data-kind="host"] .application-kind').count(),
+    0,
+    "host applications must not show a type tag",
+  );
+
+  const pinnedRefresh = page.locator('[data-applications-refresh="pinned"]');
+  const runningRefresh = page.locator('[data-applications-refresh="running"]');
+  assert.equal(await pinnedRefresh.getAttribute("aria-checked"), "true");
+  assert.equal(await runningRefresh.getAttribute("aria-checked"), "false");
+  await runningRefresh.click();
+  assert.equal(await runningRefresh.getAttribute("aria-checked"), "true");
+  await runningRefresh.click();
+  assert.equal(await runningRefresh.getAttribute("aria-checked"), "false");
+
+  const apiRow = page.locator('.applications-table tr[data-kind="docker"]').filter({ hasText: "api-prod" });
+  await Promise.all([
+    page.waitForNavigation(),
+    apiRow.getByRole("button", { name: "Pin api-prod", exact: true }).click(),
+  ]);
+  const pinnedAPI = page.locator("[data-pinned-applications] .pinned-application").filter({ hasText: "api-prod" });
+  await pinnedAPI.waitFor();
+  assert.match(await pinnedAPI.textContent(), /CPU/);
+  assert.match(await pinnedAPI.textContent(), /Memory/);
+  assert.match(await pinnedAPI.textContent(), /Disk I\/O/);
+  await assertNoHorizontalOverflow(page, "Applications desktop");
+  await assertNoTableHorizontalScrollbar(page, "Applications desktop");
+  await assertTableRowsAligned(page, ".applications-table", "Applications desktop");
+  await saveSnapshot(page, "applications");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await pinnedAPI.waitFor();
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.waitForTimeout(50);
+  assert.equal(
+    await page.evaluate(() => document.activeElement?.classList.contains("skip-link") || false),
+    false,
+    "mobile snapshot retained focus on the skip link",
+  );
+  const mobileSkipLink = await page.locator(".skip-link").evaluate(element => {
+    const bounds = element.getBoundingClientRect();
+    return {
+      focused: element.matches(":focus"),
+      transform: getComputedStyle(element).transform,
+      top: Math.round(bounds.top),
+      bottom: Math.round(bounds.bottom),
+    };
+  });
+  assert.ok(mobileSkipLink.bottom <= 0, `inactive mobile skip link remains visible: ${JSON.stringify(mobileSkipLink)}`);
+  assert.equal(await page.locator(".applications-mobile-sort").isVisible(), true);
+  assert.equal(await page.locator(".applications-table thead").isHidden(), true);
+  const mobilePinSizes = await page.locator(".applications-table .icon-button, .pinned-application .icon-button").evaluateAll(elements =>
+    elements.map(element => {
+      const bounds = element.getBoundingClientRect();
+      return { width: Math.round(bounds.width), height: Math.round(bounds.height) };
+    }),
+  );
+  assert.ok(mobilePinSizes.every(size => size.width >= 44 && size.height >= 44), JSON.stringify(mobilePinSizes));
+  await assertNoHorizontalOverflow(page, "Applications mobile");
+  await saveSnapshot(page, "applications-mobile");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+}
+
 (async () => {
   const fixture = await startFixture();
   let browser;
@@ -423,6 +501,8 @@ async function assertExpiredSessionUsesFullNavigation(page, context) {
       process.stdout.write("Chromium deferred-navigation regressions passed.\n");
       return;
     }
+
+    await assertApplicationMonitoring(page, fixture.baseURL);
 
     const status = await page.evaluate(async () => {
       const response = await fetch("/monitor/status", { cache: "no-store" });
@@ -1318,6 +1398,11 @@ async function assertExpiredSessionUsesFullNavigation(page, context) {
     assert.equal(await noScriptPage.locator('[data-group-name="Operations"] [data-group-body]').isVisible(), true);
     await noScriptPage.goto(`${fixture.baseURL}/config/quick-runs`);
     assert.equal(await noScriptPage.locator('[data-group-name="Operations"] [data-group-body]').isVisible(), true);
+    await noScriptPage.goto(`${fixture.baseURL}/monitor/applications?kind=docker&query=cache&sort=memory&direction=asc`);
+    assert.equal(await noScriptPage.locator("[data-application-row]").count(), 1);
+    assert.match(await noScriptPage.locator("[data-application-row]").textContent(), /cache-local/);
+    assert.equal(await noScriptPage.locator(".applications-mobile-sort").count(), 1);
+    assert.equal(await noScriptPage.locator('[data-application-row] form[method="post"] input[name="csrf_token"]').count(), 1);
     await noScriptContext.close();
 
     assert.deepEqual(consoleErrors, [], `Browser console errors:\n${consoleErrors.join("\n")}`);

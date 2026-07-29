@@ -68,6 +68,44 @@ func TestOpenDatabaseRejectsNewerSchema(t *testing.T) {
 	}
 }
 
+func TestOpenDatabaseMigratesApplicationMonitoringStorageFromVersion14(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	db, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		"DROP TABLE IF EXISTS application_metric_minutes",
+		"DROP TABLE IF EXISTS application_pins",
+		"PRAGMA user_version=14",
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err = openDatabase(path)
+	if err != nil {
+		t.Fatalf("migrate application monitoring storage: %v", err)
+	}
+	defer db.Close()
+	if currentSchemaVersion != 15 {
+		t.Fatalf("schema version=%d, want 15", currentSchemaVersion)
+	}
+	for _, table := range []string{"application_pins", "application_metric_minutes"} {
+		var name string
+		if err := db.QueryRow("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", table).Scan(&name); err != nil {
+			t.Fatalf("%s was not created: %v", table, err)
+		}
+	}
+	if _, err := os.Stat(path + ".pre-migration-v14"); err != nil {
+		t.Fatalf("pre-migration snapshot: %v", err)
+	}
+}
+
 func TestOpenDatabaseMigratesVariablePasswordDisplayFlag(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "app.db")
 	db, err := openDatabase(path)
