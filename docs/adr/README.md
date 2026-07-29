@@ -16,3 +16,9 @@
 - [MVP 产品需求](../PRD.md)
 - [数据模型与状态机](../DATA-MODEL.md)
 - [验收标准](../ACCEPTANCE.md)
+
+## 后续能力
+
+- [ADR-0107](./0107-provide-bounded-local-host-status.md)：提供有界的本机宿主状态。
+- [ADR-0108](./0108-embed-a-tool-constrained-ai-agent.md)：嵌入工具受限的 AI Agent。
+- [ADR-0109](./0109-own-website-monitoring-in-a-bounded-module.md)：在独立有界模块中实现网站监控。

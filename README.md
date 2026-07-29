@@ -149,6 +149,17 @@ scriptboard version
 
 新的初始密码将写入 State Root 的 `secrets/initial-admin-password`。
 
+## 网站监控
+
+登录后打开“网站监控”，可以从当前主机检查 HTTP/HTTPS 和 WebSocket/WSS
+端点。支持手动创建与编辑、立即检查、暂停/恢复、固定顺序、短期可用性和
+TLS 证书事实。Nginx 入口只会在管理员主动操作时读取配置并预览候选项，
+确认所选项后才导入；它不会修改或重载 Nginx。
+
+WebSocket 应用层文本/二进制消息与 RFC 6455 Ping/Pong 控制帧是两套独立
+成功条件。Ping/Pong 检查仅在收到载荷逐字节一致的 Pong 控制帧时成功。
+ScriptBoard 当前不发送邮件、短信或 Webhook 通知。
+
 ## 网络与安全
 
 - 默认只监听 `127.0.0.1:8787`，不会直接暴露到局域网或互联网。

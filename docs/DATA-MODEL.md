@@ -323,3 +323,33 @@ state-root/
 ```
 
 受管根目录与状态目录可覆盖，但必须互不包含；`.git/` 与回收站不得成为状态数据库或秘密存储位置。
+
+## 8. 网站监控
+
+| 实体 | 关键字段与保留 |
+| --- | --- |
+| WebsiteMonitor | 配置 JSON、范围、协议、管理员顺序、状态、失败计数、配置代次、下一检查时间；删除后保留一年 |
+| WebsiteCheckResult | 成功、状态码、耗时、错误类别、技术证据、证书快照；保留 24 小时 |
+| WebsiteHourlyAggregate | 每小时检查数、成功/失败数、平均/最大耗时与错误类别计数；保留 30 天 |
+| WebsiteIncident | 确认故障的开始、结束、首个错误事实与关闭原因；完成后保留一年 |
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending
+    pending --> up: first check succeeds
+    pending --> verifying: first check fails
+    up --> verifying: check fails
+    verifying --> down: confirmation check fails
+    verifying --> up: confirmation check succeeds
+    down --> up: later check succeeds
+    pending --> paused: admin pauses
+    up --> paused: admin pauses
+    verifying --> paused: admin pauses
+    down --> paused: admin pauses
+    paused --> pending: admin resumes
+```
+
+配置更新递增 generation、清除旧证据并立即重新检查；较旧 generation
+的在途结果不得回写。管理员暂停或删除时同样递增 generation。WebSocket
+应用消息规则只处理文本帧和二进制帧；Ping/Pong 规则只处理 RFC 6455
+控制帧。

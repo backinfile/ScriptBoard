@@ -60,6 +60,7 @@ data: [DONE]
 		"protocol":                    {"openai_chat"},
 		"base_url":                    {modelServer.URL},
 		"model":                       {"model"},
+		"auth_mode":                   {"none"},
 		"context_window":              {"128000"},
 		"max_output_tokens":           {"64"},
 		"default_run_timeout_seconds": {"300"},
@@ -93,9 +94,10 @@ data: [DONE]
 	if err != nil {
 		t.Fatal(err)
 	}
+	diagnosticBody, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusSeeOther {
-		t.Fatalf("diagnostic status = %d, want %d", response.StatusCode, http.StatusSeeOther)
+		t.Fatalf("diagnostic status = %d, want %d: %s", response.StatusCode, http.StatusSeeOther, diagnosticBody)
 	}
 	if requestCount != 2 {
 		t.Fatalf("model request count = %d, want 2", requestCount)

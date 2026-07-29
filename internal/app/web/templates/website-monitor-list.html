@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="/assets/app.css?v=19">
+<script defer src="/assets/app-v2.js?v=22"></script>
+<title>网站监控 · ScriptBoard</title>
+</head>
+<body>
+<main class="website-monitor-page" data-website-monitoring data-status-url="{{.DataURL}}" {{if .Reorder}}data-reorder-url="/monitor/websites/reorder" data-csrf-token="{{.CSRFToken}}"{{end}}>
+<header class="website-page-heading">
+<div>
+<p class="website-kicker">MONITOR / WEBSITES</p>
+<h1>网站监控</h1>
+<p>从当前主机检查本机服务和外部网站，集中查看可用性、响应证据与连接安全。</p>
+</div>
+<div class="website-heading-actions">
+<a class="button-link" href="/monitor/websites/nginx">
+<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/><path d="m14.5 14.5 3 3"/></svg>
+扫描 Nginx
+</a>
+<a class="button-link button-link--primary" href="/monitor/websites/new" data-monitor-task>
+<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+新增网站
+</a>
+</div>
+</header>
+
+{{if .HasAny}}
+<section class="website-verdict website-verdict--{{if gt .Counts.Down 0}}down{{else if gt .Counts.Verifying 0}}verifying{{else}}up{{end}}" aria-labelledby="website-verdict-title">
+<div class="website-verdict__main">
+<span class="website-verdict__icon" aria-hidden="true">
+<svg class="lucide" viewBox="0 0 24 24"><path d="M10.3 3.7 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+</span>
+<div>
+<p class="website-kicker">当前状态</p>
+<h2 id="website-verdict-title">{{if gt .NeedsCare 0}}{{.NeedsCare}} 个网站需要处理{{else}}全部网站当前正常{{end}}</h2>
+<p>{{if gt .Counts.Down 0}}{{.Counts.Down}} 个已确认故障。{{end}}{{if gt .Counts.Verifying 0}}{{.Counts.Verifying}} 个正在自动复核。{{end}}{{if eq .NeedsCare 0}}最近一次检查均未发现可用性故障。{{end}}</p>
+</div>
+</div>
+<dl class="website-counts">
+<div><dt>正常</dt><dd>{{.Counts.Up}}</dd></div>
+<div><dt>复核中</dt><dd>{{.Counts.Verifying}}</dd></div>
+<div><dt>故障</dt><dd>{{.Counts.Down}}</dd></div>
+<div><dt>暂停</dt><dd>{{.Counts.Paused}}</dd></div>
+</dl>
+</section>
+
+{{range .Alerts}}
+<section class="website-alert website-alert--{{.State}}">
+<div><span class="website-status website-status--{{.State}}">{{.StateLabel}}</span><h3><a href="/monitor/websites/{{.ID}}">{{.Name}}</a></h3><small>{{.ScopeLabel}} · {{.MethodLabel}}</small></div>
+<p>{{.LatestSummary}}{{if not .LatestSummary}}检查结果需要管理员确认。{{end}}</p>
+<div><strong>{{.LatestLabel}}</strong><small>{{if .LastCheckedAt.IsZero}}尚未检查{{else}}最近检查于 <time datetime="{{machineTime .LastCheckedAt}}" data-local-time>{{displayTime .LastCheckedAt}}</time>{{end}}</small></div>
+</section>
+{{end}}
+
+{{if .Reorder}}
+<section class="website-reorder-guidance" aria-label="调整网站顺序">
+<div>
+<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg>
+<strong>正在调整网站顺序</strong>
+<span>拖动网站，或使用上移、下移按钮。状态变化不会改写这个顺序。</span>
+</div>
+<a class="button-link button-link--primary" href="/monitor/websites">完成排序</a>
+</section>
+<p class="website-reorder-status" data-reorder-status aria-live="polite"></p>
+{{else}}
+<form class="website-filters" method="get" action="/monitor/websites">
+<label>状态
+<select name="state">
+<option value="">全部状态</option>
+<option value="down" {{if eq .State "down"}}selected{{end}}>故障</option>
+<option value="verifying" {{if eq .State "verifying"}}selected{{end}}>复核中</option>
+<option value="up" {{if eq .State "up"}}selected{{end}}>正常</option>
+<option value="paused" {{if eq .State "paused"}}selected{{end}}>已暂停</option>
+</select>
+</label>
+<label>范围
+<select name="scope">
+<option value="">全部范围</option>
+<option value="local" {{if eq .Scope "local"}}selected{{end}}>本机</option>
+<option value="external" {{if eq .Scope "external"}}selected{{end}}>外部</option>
+</select>
+</label>
+<button type="submit">筛选</button>
+{{if .HasFilters}}<a href="/monitor/websites">清除筛选</a>{{end}}
+<span>{{.Total}} 个网站</span>
+<a class="button-link website-reorder-link" href="/monitor/websites?reorder=1">
+<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg>
+调整顺序
+</a>
+</form>
+{{end}}
+
+<section class="website-ledger" data-website-ledger aria-label="完整网站状态台账">
+<header class="website-ledger__head"><span>网站</span><span>最近 24 小时</span><span>最近一次检查</span><span>{{if .Reorder}}移动{{end}}</span></header>
+{{range .Monitors}}
+<article class="website-ledger__row" data-monitor-id="{{.ID}}" data-monitor-state="{{.State}}" data-monitor-latest="{{.LatestLabel}}" data-monitor-summary="{{.LatestSummary}}" data-monitor-latency="{{.LatencyLabel}}" data-monitor-checked="{{.CheckedToken}}" draggable="{{if $.Reorder}}true{{else}}false{{end}}">
+<div class="website-identity">
+<div class="website-identity__title"><a href="/monitor/websites/{{.ID}}">{{.Name}}</a><span class="website-status website-status--{{.State}}">{{.StateLabel}}</span></div>
+<code>{{.URL}}</code>
+<div><span>{{.ScopeLabel}}</span><span>{{.MethodLabel}}</span>{{if .TLSAttention}}<span class="website-attention">证书临期</span>{{end}}</div>
+</div>
+<div>
+<div class="website-availability" aria-label="{{.Name}} 最近 24 小时可用性">{{range .Availability}}<span class="website-availability__{{.}}"></span>{{end}}</div>
+<div class="website-availability__axis"><span>24 小时前</span><span>12 小时</span><span>现在</span></div>
+</div>
+<div class="website-evidence">
+<strong>{{.LatestLabel}} · {{.LatencyLabel}}</strong>
+<span>{{.LatestSummary}}</span>
+<small>{{if .LastCheckedAt.IsZero}}等待第一次检查{{else}}<time datetime="{{machineTime .LastCheckedAt}}" data-local-time>{{displayTime .LastCheckedAt}}</time>{{end}}</small>
+</div>
+{{if $.Reorder}}
+<form class="website-move-actions" method="post" action="/monitor/websites/{{.ID}}/move">
+<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+<button name="direction" value="up" aria-label="上移 {{.Name}}"><svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="m18 15-6-6-6 6"/></svg></button>
+<button name="direction" value="down" aria-label="下移 {{.Name}}"><svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+</form>
+{{else}}
+<a class="website-row-action" href="/monitor/websites/{{.ID}}" aria-label="查看 {{.Name}} 详情"><svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></a>
+{{end}}
+</article>
+{{else}}
+<div class="website-empty website-empty--compact"><h2>没有符合筛选条件的网站</h2><p>清除筛选后可查看完整台账。</p></div>
+{{end}}
+</section>
+{{else}}
+<section class="website-empty">
+<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+<h2>还没有网站监控</h2>
+<p>手动新增一个网站，或主动扫描本机 Nginx 配置后选择要加入的候选项。</p>
+<div><a class="button-link button-link--primary" href="/monitor/websites/new">新增网站</a><a class="button-link" href="/monitor/websites/nginx">扫描 Nginx</a></div>
+</section>
+{{end}}
+</main>
+</body>
+</html>

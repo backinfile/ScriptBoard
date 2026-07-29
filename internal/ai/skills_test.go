@@ -19,3 +19,13 @@ func TestBuiltInSkillsAreDiscoverableAndVersioned(t *testing.T) {
 		}
 	}
 }
+
+func TestParseSkillAcceptsWindowsLineEndings(t *testing.T) {
+	skill, err := parseSkill("---\r\nname: windows\r\ndescription: CRLF fixture\r\nversion: 1\r\n---\r\nBody\r\n")
+	if err != nil {
+		t.Fatalf("parse CRLF skill: %v", err)
+	}
+	if skill.ID != "windows" || skill.Description != "CRLF fixture" || skill.Version != "1" {
+		t.Fatalf("skill = %#v", skill)
+	}
+}

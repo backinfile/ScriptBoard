@@ -44,6 +44,7 @@ func BuiltInSkills() ([]Skill, error) {
 }
 
 func parseSkill(content string) (Skill, error) {
+	content = strings.ReplaceAll(content, "\r\n", "\n")
 	if !strings.HasPrefix(content, "---\n") {
 		return Skill{}, fmt.Errorf("missing front matter")
 	}

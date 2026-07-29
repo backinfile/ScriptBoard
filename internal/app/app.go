@@ -45,10 +45,11 @@ import (
 	"scriptboard/internal/managedfiles"
 	"scriptboard/internal/runmanager"
 	"scriptboard/internal/scheduler"
+	"scriptboard/internal/websitemonitor"
 )
 
 const initialPasswordFilename = "initial-admin-password"
-const currentSchemaVersion = 8
+const currentSchemaVersion = 9
 
 //go:embed web/assets/* web/templates/*
 var webFiles embed.FS
@@ -152,17 +153,18 @@ const (
 )
 
 type Config struct {
-	ManagedRoot       string
-	StateRoot         string
-	RunTimeoutGrace   time.Duration
-	SchedulerNow      func() time.Time
-	SchedulerTick     time.Duration
-	GitExecutable     string
-	ExecutorChains    map[string][]string
-	AdminUsername     string
-	AdminPassword     string
-	AdminPasswordFile string
-	TrustedProxies    []string
+	ManagedRoot           string
+	StateRoot             string
+	RunTimeoutGrace       time.Duration
+	SchedulerNow          func() time.Time
+	SchedulerTick         time.Duration
+	GitExecutable         string
+	ExecutorChains        map[string][]string
+	AdminUsername         string
+	AdminPassword         string
+	AdminPasswordFile     string
+	TrustedProxies        []string
+	WebsiteMonitorOptions websitemonitor.Options
 }
 
 type App struct {
@@ -174,6 +176,7 @@ type App struct {
 	scheduler          *scheduler.Manager
 	gitProtection      *gitprotect.Manager
 	hostStatus         *hoststatus.Monitor
+	websiteMonitor     *websitemonitor.Manager
 	instanceLock       *instancelock.Lock
 	handler            http.Handler
 	loginMu            sync.Mutex
@@ -271,9 +274,18 @@ func Open(config Config) (*App, error) {
 		return nil, err
 	}
 	application.hostStatus.Start(context.Background())
+	application.websiteMonitor, err = websitemonitor.New(db, config.WebsiteMonitorOptions)
+	if err != nil {
+		application.hostStatus.Close()
+		application.scheduler.Close()
+		application.runs.Close()
+		_ = db.Close()
+		return nil, err
+	}
 	aiRegistry := ai.NewToolRegistry()
 	aiTools := &aiDomain{app: application}
 	if err := aiTools.register(aiRegistry); err != nil {
+		application.websiteMonitor.Close()
 		application.hostStatus.Close()
 		application.scheduler.Close()
 		application.runs.Close()
@@ -284,6 +296,7 @@ func Open(config Config) (*App, error) {
 		return ai.NewModelClient(profile, application.aiVault.Read)
 	})
 	if err != nil {
+		application.websiteMonitor.Close()
 		application.hostStatus.Close()
 		application.scheduler.Close()
 		application.runs.Close()
@@ -495,6 +508,9 @@ func (a *App) Close() error {
 	}
 	if a.hostStatus != nil {
 		a.hostStatus.Close()
+	}
+	if a.websiteMonitor != nil {
+		a.websiteMonitor.Close()
 	}
 	if a.scheduler != nil {
 		a.scheduler.Close()
@@ -722,6 +738,12 @@ func openDatabase(path string) (*sql.DB, error) {
 			return nil, fmt.Errorf("initialize AI SQLite schema: %w", err)
 		}
 	}
+	for _, statement := range websitemonitor.SchemaStatements {
+		if _, err := migration.Exec(statement); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("initialize Website Monitor SQLite schema: %w", err)
+		}
+	}
 	if schemaVersion == 1 {
 		if _, err := migration.Exec("ALTER TABLE schedules ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0"); err != nil {
 			_ = db.Close()
@@ -889,6 +911,23 @@ func (a *App) routes(_ string) http.Handler {
 	mux.Handle("POST /logout", a.requireSession(http.HandlerFunc(a.logout)))
 	mux.Handle("GET /overview", a.requireSession(http.HandlerFunc(a.overviewPage)))
 	mux.Handle("GET /overview/data", a.requireSession(http.HandlerFunc(a.overviewData)))
+	mux.Handle("GET /monitor/websites", a.requireSession(http.HandlerFunc(a.websiteMonitorList)))
+	mux.Handle("GET /monitor/websites/data", a.requireSession(http.HandlerFunc(a.websiteMonitorData)))
+	mux.Handle("GET /monitor/websites/new", a.requireSession(http.HandlerFunc(a.websiteMonitorCreateTask)))
+	mux.Handle("POST /monitor/websites", a.requireSession(http.HandlerFunc(a.createWebsiteMonitor)))
+	mux.Handle("POST /monitor/websites/reorder", a.requireSession(http.HandlerFunc(a.reorderWebsiteMonitors)))
+	mux.Handle("GET /monitor/websites/nginx", a.requireSession(http.HandlerFunc(a.websiteMonitorNginxTask)))
+	mux.Handle("POST /monitor/websites/nginx/scan", a.requireSession(http.HandlerFunc(a.scanWebsiteMonitorNginx)))
+	mux.Handle("POST /monitor/websites/nginx/import", a.requireSession(http.HandlerFunc(a.importWebsiteMonitorNginx)))
+	mux.Handle("GET /monitor/websites/{id}/edit", a.requireSession(http.HandlerFunc(a.websiteMonitorEditTask)))
+	mux.Handle("POST /monitor/websites/{id}", a.requireSession(http.HandlerFunc(a.updateWebsiteMonitor)))
+	mux.Handle("GET /monitor/websites/{id}", a.requireSession(http.HandlerFunc(a.websiteMonitorDetail)))
+	mux.Handle("GET /monitor/websites/{id}/data", a.requireSession(http.HandlerFunc(a.websiteMonitorDetailData)))
+	mux.Handle("POST /monitor/websites/{id}/check", a.requireSession(http.HandlerFunc(a.checkWebsiteMonitorNow)))
+	mux.Handle("POST /monitor/websites/{id}/pause", a.requireSession(http.HandlerFunc(a.pauseWebsiteMonitor)))
+	mux.Handle("POST /monitor/websites/{id}/resume", a.requireSession(http.HandlerFunc(a.resumeWebsiteMonitor)))
+	mux.Handle("POST /monitor/websites/{id}/move", a.requireSession(http.HandlerFunc(a.moveWebsiteMonitor)))
+	mux.Handle("POST /monitor/websites/{id}/delete", a.requireSession(http.HandlerFunc(a.deleteWebsiteMonitor)))
 	mux.Handle("GET /settings/account", a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		current := request.Context().Value(sessionContextKey).(session)
 		var username string
@@ -1237,6 +1276,7 @@ func (a *App) addApplicationHeader(request *http.Request, body []byte) []byte {
 	items := []navigationItem{
 		{Href: "/ai", Label: "AI 工作区"},
 		{Href: "/overview", Label: "概览"},
+		{Href: "/monitor/websites", Label: "网站监控"},
 		{Href: "/files/", Label: "文件"},
 		{Href: "/quick-runs", Label: "快捷执行"},
 		{Href: "/schedules", Label: "计划"},
@@ -1285,6 +1325,8 @@ func renderApplicationError(request *http.Request, status int, message string) [
 	switch {
 	case strings.HasPrefix(request.URL.Path, "/overview"):
 		destination, label = "/overview", "返回概览"
+	case strings.HasPrefix(request.URL.Path, "/monitor/websites"):
+		destination, label = "/monitor/websites", "返回网站监控"
 	case strings.HasPrefix(request.URL.Path, "/ai"):
 		destination, label = "/ai", "返回 AI 工作区"
 	case strings.HasPrefix(request.URL.Path, "/settings/account"):
@@ -3128,6 +3170,14 @@ var accountTemplate = template.Must(template.New("account").Parse(`<!doctype htm
 var filesTemplate = mustWebTemplate("files", "web/templates/files.html")
 
 var overviewTemplate = mustWebTemplate("overview", "web/templates/overview.html")
+
+var websiteMonitorListTemplate = mustWebTemplate("website-monitor-list", "web/templates/website-monitor-list.html")
+
+var websiteMonitorFormTemplate = mustWebTemplate("website-monitor-form", "web/templates/website-monitor-form.html")
+
+var websiteMonitorDetailTemplate = mustWebTemplate("website-monitor-detail", "web/templates/website-monitor-detail.html")
+
+var websiteMonitorNginxTemplate = mustWebTemplate("website-monitor-nginx", "web/templates/website-monitor-nginx.html")
 
 var uploadResultsTemplate = template.Must(template.New("upload-results").Parse(`<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=16"><script defer src="/assets/app-v2.js?v=19"></script><title>上传结果 · ScriptBoard</title></head><body><main><h1>上传结果</h1><table><thead><tr><th>文件</th><th>结果</th><th>详情</th></tr></thead><tbody>{{range .Results}}<tr><td>{{.Name}}</td><td>{{.Result}}</td><td>{{.Detail}}</td></tr>{{end}}</tbody></table><p><a href="{{.Link}}">返回文件列表</a></p></main></body></html>`))

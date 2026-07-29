@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="/assets/app.css?v=19">
+<script defer src="/assets/app-v2.js?v=22"></script>
+<title>{{.Monitor.Name}} · 网站监控 · ScriptBoard</title>
+</head>
+<body>
+<main class="website-detail-page" data-website-detail data-status-url="/monitor/websites/{{.Monitor.ID}}/data" data-monitor-state="{{.Monitor.State}}" data-monitor-latest="{{.Monitor.LatestLabel}}" data-monitor-summary="{{.Monitor.LatestSummary}}" data-monitor-latency="{{.Monitor.LatencyLabel}}" data-monitor-checked="{{.Monitor.CheckedToken}}">
+<header class="website-detail-heading">
+<div>
+<a href="/monitor/websites">返回网站监控</a>
+<div><h1>{{.Monitor.Name}}</h1><span class="website-status website-status--{{.Monitor.State}}">{{.Monitor.StateLabel}}</span><span>{{.Monitor.ScopeLabel}}</span><span>{{.Monitor.MethodLabel}}</span></div>
+<code>{{.Monitor.URL}}</code>
+</div>
+<div class="website-detail-actions">
+<form method="post" action="/monitor/websites/{{.Monitor.ID}}/check"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button--primary" type="submit">立即检查</button></form>
+<a class="button-link" href="/monitor/websites/{{.Monitor.ID}}/edit">编辑设置</a>
+<form method="post" action="/monitor/websites/{{.Monitor.ID}}/{{if eq .Monitor.State "paused"}}resume{{else}}pause{{end}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button type="submit">{{if eq .Monitor.State "paused"}}恢复监控{{else}}暂停监控{{end}}</button></form>
+</div>
+</header>
+
+<section class="website-detail-verdict website-detail-verdict--{{.Monitor.State}}">
+<div><p class="website-kicker">当前判断</p><h2>{{.Monitor.StateLabel}}</h2><p>{{if .Monitor.LatestSummary}}{{.Monitor.LatestSummary}}{{else}}已保存，正在等待第一次检查。{{end}}</p></div>
+<div><strong>{{.Monitor.LatestLabel}}</strong><span>{{.Monitor.LatencyLabel}}</span>{{if not .Monitor.LastCheckedAt.IsZero}}<time datetime="{{machineTime .Monitor.LastCheckedAt}}" data-local-time>{{displayTime .Monitor.LastCheckedAt}}</time>{{end}}</div>
+</section>
+
+{{if .Monitor.LatestTechnical}}
+<details class="website-technical-evidence"><summary>查看技术证据</summary><code>{{.Monitor.LatestTechnical}}</code></details>
+{{end}}
+
+<section class="website-detail-section">
+<header><div><h2>最近 24 小时</h2><p>空白表示 ScriptBoard 没有执行检查，不会被计作成功或失败。</p></div></header>
+<div class="website-availability website-availability--detail" aria-label="最近 24 小时可用性">{{range .Monitor.Availability}}<span class="website-availability__{{.}}"></span>{{end}}</div>
+<div class="website-availability__axis"><span>24 小时前</span><span>12 小时</span><span>现在</span></div>
+</section>
+
+<section class="website-detail-section">
+<header><div><h2>最近一次检查</h2><p>管理员判断问题影响时优先使用这些事实。</p></div></header>
+<dl class="website-facts">
+<div><dt>结果</dt><dd>{{.Monitor.StateLabel}}</dd></div>
+<div><dt>响应</dt><dd>{{.Monitor.LatestLabel}}</dd></div>
+<div><dt>耗时</dt><dd>{{.Monitor.LatencyLabel}}</dd></div>
+<div><dt>检查时间</dt><dd>{{if .Monitor.LastCheckedAt.IsZero}}等待检查{{else}}<time datetime="{{machineTime .Monitor.LastCheckedAt}}" data-local-time>{{displayTime .Monitor.LastCheckedAt}}</time>{{end}}</dd></div>
+</dl>
+</section>
+
+<section class="website-detail-section">
+<header><div><h2>证书与连接安全</h2><p>来自最近一次成功建立的 TLS 连接。</p></div></header>
+<div class="website-security website-security--{{.Monitor.SecurityTone}}">
+<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v6c0 5 3.4 8.2 8 9 4.6-.8 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg>
+<div><strong>{{.Monitor.SecurityTitle}}</strong><p>{{.Monitor.SecurityDescription}}</p></div>
+</div>
+<dl class="website-facts">
+<div><dt>颁发机构</dt><dd>{{if .Monitor.Certificate.Issuer}}{{.Monitor.Certificate.Issuer}}{{else}}—{{end}}</dd></div>
+<div><dt>有效期至</dt><dd>{{if .Monitor.Certificate.NotAfter.IsZero}}—{{else}}<time datetime="{{machineTime .Monitor.Certificate.NotAfter}}" data-local-time>{{displayTime .Monitor.Certificate.NotAfter}}</time>{{end}}</dd></div>
+<div><dt>剩余时间</dt><dd>{{if .Monitor.Certificate.NotAfter.IsZero}}—{{else}}{{.Monitor.Certificate.DaysRemaining}} 天{{end}}</dd></div>
+<div><dt>TLS 版本</dt><dd>{{if .Monitor.Certificate.TLSVersion}}{{.Monitor.Certificate.TLSVersion}}{{else}}未使用 TLS{{end}}</dd></div>
+</dl>
+</section>
+
+{{if .Incidents}}
+<section class="website-detail-section">
+<header><div><h2>故障时间线</h2><p>确认故障保留一年；暂停或删除会写明关闭原因。</p></div></header>
+<ol class="website-incident-list">{{range .Incidents}}<li><strong>{{.Summary}}</strong><span>{{.Category}}</span><time datetime="{{machineTime .StartedAt}}" data-local-time>{{displayTime .StartedAt}}</time>{{if .EndedAt.IsZero}}<em>尚未恢复</em>{{else}}<span>已结束：{{.CloseReason}}</span>{{end}}</li>{{end}}</ol>
+</section>
+{{end}}
+
+<section class="website-detail-section">
+<header><div><h2>检查设置</h2><p>{{.Raw.Config.Source}}</p></div></header>
+<dl class="website-facts">
+<div><dt>检查方式</dt><dd>{{.Monitor.KindLabel}}</dd></div>
+<div><dt>请求 / 条件</dt><dd>{{.Monitor.MethodLabel}}</dd></div>
+<div><dt>检查频率</dt><dd>{{.Monitor.FrequencyLabel}}</dd></div>
+<div><dt>最长等待</dt><dd>{{.Monitor.TimeoutLabel}}</dd></div>
+</dl>
+</section>
+<section class="website-detail-section website-danger-zone">
+<header><div><h2>删除网站监控</h2><p>网站会从活动台账中移除；既有检查与故障记录仍按保留期保存。</p></div></header>
+<form method="post" action="/monitor/websites/{{.Monitor.ID}}/delete" data-confirm="确认删除网站监控“{{.Monitor.Name}}”？">
+<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+<button class="button--danger" name="confirm" value="yes" type="submit">删除网站监控</button>
+</form>
+</section>
+</main>
+</body>
+</html>
