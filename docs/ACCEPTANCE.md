@@ -124,7 +124,7 @@
 - [ ] 手动运行时继承当前用户且不因不是最高权限而拒绝启动。
 - [ ] 服务安装、卸载、启停、状态、admin reset、config validate、doctor、version 命令可用。
 - [ ] 卸载服务不删除配置、文件、数据库或 Git 历史。
-- [ ] 不存在用户 backup/restore 或自动更新命令。
+- [ ] 不存在用户 backup/restore 命令；`update status|check|recover` 命令可用且恢复命令要求完整 Operation ID 二次确认。
 - [ ] Windows 托盘无主窗口、单实例，菜单与 PRD 一致；退出托盘不停止服务。
 - [ ] 托盘区分服务进程运行与 HTTP 就绪；端口错误时显示异常并可打开日志。
 - [ ] 默认配置优先级正确，命令行覆盖不写回 YAML。
@@ -141,8 +141,18 @@
 
 ## 12. 发布与兼容
 
-- [ ] Windows amd64/arm64 ZIP 含服务与托盘二进制；Linux amd64/arm64 tar.gz 含服务二进制。
-- [ ] 发布 SHA-256 文件；不依赖 Node.js、Redis、消息队列或外部运行时。
+- [ ] Windows amd64/arm64 ZIP 含服务、托盘、托盘启动器和 updater；Linux amd64/arm64 tar.gz 含服务和 updater。
+- [ ] 正式 Tag Release 生成四个平台归档、`SHA256SUMS`、归档内 `RELEASE.json`、严格发布清单及其 Ed25519 detached signature；缺少签名 Secret 时发布失败。
+- [ ] `version --json`、Git Tag、清单、归档名和 `RELEASE.json` 的版本、Commit、平台及协议一致；不依赖 Node.js、Redis、消息队列或外部运行时。
+- [ ] 新版服务安装采用版本化 Install Root；Linux 使用稳定 `current` 入口，Windows 服务明确指向当前 Installed Release；同名旧式服务、缺失新版安装元数据或从不完整发布包安装时明确拒绝，不执行猜测、迁移或清理。
+- [ ] 正式构建默认按配置周期检查固定官方仓库的最新非 Draft、非 Prerelease 稳定版；开发构建不联网，便携构建不可应用更新。
+- [ ] 未签名、未知 key ID、签名错误、Tag/版本/仓库不一致、平台不匹配、摘要错误、协议过新、超限或含路径穿越/链接/重复条目的归档全部拒绝。
+- [ ] 更新只能由已登录管理员通过 CSRF 保护的动作发起；安装前有明确二次确认，不提供无人值守安装。
+- [ ] 进入维护门后调度暂停且新 Run 被同步拒绝；存在任何活动 Run 时返回冲突、恢复正常入口且不停止 Run。
+- [ ] updater 在主进程退出后保存数据库快照、切换目标版本并启动 Validation Mode；验证期间不触发计划、不接受 Run 或业务写请求。
+- [ ] 目标服务只有在服务状态、精确版本运行标记与 HTTP 就绪持续通过后才提交；启动、迁移或验活失败自动恢复旧版本和数据库。
+- [ ] Update Operation 每个重要阶段持久化；中断后能继续、回滚或进入带 Operation ID 的明确人工恢复状态，最终结果只导入审计一次。
+- [ ] Web 更新页显示构建、安装形态、检查错误、发布说明、验证/准备状态、活动 Run 和跨重启结果；断线期间自动等待服务恢复。
 - [ ] Windows 10/11、Server 2019+ 与至少两个代表性 systemd Linux 发行版通过服务生命周期测试。
 - [ ] 桌面 Chromium 自动化覆盖登录、分组导航、任务面板、运行详情和关键视觉快照。
 - [ ] Chrome、Edge、Firefox、Safari 保持最佳努力兼容；它们不作为每次提交的自动化门禁。
@@ -152,7 +162,7 @@
 
 ## 13. 明确不验收
 
-MVP 不验收多用户/RBAC、沙箱、公共 API、DAG、多服务器、Docker 正式部署、系统 crontab、Git 远程/LFS、用户备份命令、通知、插件、交互终端、目录打包、通用权限编辑、自动更新、Web 之外界面的多语言或正式多实例。
+MVP 不验收多用户/RBAC、沙箱、公共 API、DAG、多服务器、Docker 正式部署、系统 crontab、Git 远程/LFS、用户备份命令、通知、插件、交互终端、目录打包、通用权限编辑、无人值守自动安装、自定义更新源/频道、旧式服务迁移、Web 之外界面的多语言或正式多实例。
 
 ## 14. 宿主概览
 

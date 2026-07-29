@@ -29,12 +29,14 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
 	"golang.org/x/crypto/argon2"
 	_ "modernc.org/sqlite"
 
+	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/diskspace"
 	"scriptboard/internal/gitprotect"
 	"scriptboard/internal/hoststatus"
@@ -42,10 +44,11 @@ import (
 	"scriptboard/internal/managedfiles"
 	"scriptboard/internal/runmanager"
 	"scriptboard/internal/scheduler"
+	updatepkg "scriptboard/internal/update"
 )
 
 const initialPasswordFilename = "initial-admin-password"
-const currentSchemaVersion = 14
+const currentSchemaVersion = buildinfo.DatabaseSchemaVersion
 
 //go:embed web/assets/* web/templates/*
 var webFiles embed.FS
@@ -233,6 +236,10 @@ type Config struct {
 	AdminPassword     string
 	AdminPasswordFile string
 	TrustedProxies    []string
+	UpdateCheck       bool
+	UpdateInterval    time.Duration
+	UpdateSource      updatepkg.ReleaseSource
+	RequestShutdown   func()
 }
 
 type App struct {
@@ -251,6 +258,11 @@ type App struct {
 	loginFailures      map[string]loginFailure
 	credentialOverride bool
 	trustedProxies     []*net.IPNet
+	updates            *updatepkg.Manager
+	updateCancel       context.CancelFunc
+	updateContext      context.Context
+	validation         atomic.Bool
+	validationID       string
 }
 
 type loginFailure struct {
@@ -273,6 +285,7 @@ func Open(config Config) (*App, error) {
 			_ = instanceLock.Close()
 		}
 	}()
+	validationID, validating := updatepkg.PendingValidation(stateRoot, buildinfo.Current())
 
 	db, err := openDatabase(filepath.Join(stateRoot, "app.db"))
 	if err != nil {
@@ -285,25 +298,37 @@ func Open(config Config) (*App, error) {
 		return nil, err
 	}
 	application := &App{db: db, stateRoot: stateRoot, managedRoot: managedRoot, managed: managedfiles.Open(managedRoot), instanceLock: instanceLock, loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies}
-	if err := application.initializeAdmin(stateRoot); err != nil {
-		_ = db.Close()
-		return nil, err
+	if !validating {
+		if err := application.initializeAdmin(stateRoot); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+		if err := application.applyCredentialOverride(config.AdminUsername, config.AdminPassword, config.AdminPasswordFile); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+		_, _ = db.Exec("DELETE FROM audit_events WHERE occurred_at < ?", time.Now().UTC().AddDate(-1, 0, 0).Unix())
 	}
-	if err := application.applyCredentialOverride(config.AdminUsername, config.AdminPassword, config.AdminPasswordFile); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-	_, _ = db.Exec("DELETE FROM audit_events WHERE occurred_at < ?", time.Now().UTC().AddDate(-1, 0, 0).Unix())
 	timeoutGrace := config.RunTimeoutGrace
 	if timeoutGrace <= 0 {
 		timeoutGrace = 30 * time.Second
 	}
 	application.runs = runmanager.New(db, application.managed, stateRoot, timeoutGrace, config.ExecutorChains)
-	if cleaned, cleanupErr := application.runs.CleanupLogs(90*24*time.Hour, 1<<30); cleanupErr != nil {
-		_ = db.Close()
-		return nil, cleanupErr
-	} else if cleaned > 0 {
-		application.recordAudit("cleanup_run_logs", fmt.Sprintf("%d logs", cleaned), "succeeded", "system")
+	if validating {
+		if _, entered := application.runs.EnterMaintenance(); !entered {
+			_ = db.Close()
+			return nil, errors.New("validation mode cannot start while a Run is active")
+		}
+		application.validation.Store(true)
+		application.validationID = validationID
+	}
+	if !validating {
+		if cleaned, cleanupErr := application.runs.CleanupLogs(90*24*time.Hour, 1<<30); cleanupErr != nil {
+			_ = db.Close()
+			return nil, cleanupErr
+		} else if cleaned > 0 {
+			application.recordAudit("cleanup_run_logs", fmt.Sprintf("%d logs", cleaned), "succeeded", "system")
+		}
 	}
 	application.gitProtection, err = gitprotect.New(db, managedRoot, config.GitExecutable, stateRoot)
 	if err != nil {
@@ -311,16 +336,33 @@ func Open(config Config) (*App, error) {
 		return nil, err
 	}
 	application.runs.SetLifecycle(application.gitProtection)
-	application.scheduler = scheduler.New(db, application.runs, application.loadVariables, config.SchedulerNow, config.SchedulerTick)
+	if validating {
+		application.scheduler = scheduler.NewPaused(db, application.runs, application.loadVariables, config.SchedulerNow, config.SchedulerTick)
+	} else {
+		application.scheduler = scheduler.New(db, application.runs, application.loadVariables, config.SchedulerNow, config.SchedulerTick)
+	}
 	probe, _ := hoststatus.NewSystemProbe(managedRoot, stateRoot)
-	application.hostStatus, err = hoststatus.New(db, probe, hoststatus.Options{})
+	application.hostStatus, err = hoststatus.New(db, probe, hoststatus.Options{SkipInitialCleanup: validating})
 	if err != nil {
 		application.scheduler.Close()
 		application.runs.Close()
 		_ = db.Close()
 		return nil, err
 	}
-	application.hostStatus.Start(context.Background())
+	if !validating {
+		application.hostStatus.Start(context.Background())
+	}
+	application.updateContext, application.updateCancel = context.WithCancel(context.Background())
+	application.updates = updatepkg.NewManager(updatepkg.ManagerConfig{
+		StateRoot: stateRoot, CheckEnabled: config.UpdateCheck, CheckInterval: config.UpdateInterval,
+		Source: config.UpdateSource, RequestShutdown: config.RequestShutdown,
+	})
+	if validating {
+		go application.monitorUpdateValidation(validationID)
+	} else {
+		application.updates.Start(application.updateContext)
+	}
+	go application.monitorUpdateResults()
 	application.shellStatusCache = newShellStatusCache(5*time.Second, time.Now, application.loadShellStatus)
 	application.handler = application.routes(managedRoot)
 	opened = true
@@ -329,6 +371,93 @@ func Open(config Config) (*App, error) {
 
 func (a *App) Handler() http.Handler {
 	return a.handler
+}
+
+func (a *App) ValidationOperationID() string {
+	return a.validationID
+}
+
+func (a *App) beginUpdateMaintenance() (int, bool) {
+	a.scheduler.PauseAndWait()
+	active, entered := a.runs.EnterMaintenance()
+	if !entered {
+		a.scheduler.Resume()
+		return active, false
+	}
+	return 0, true
+}
+
+func (a *App) endUpdateMaintenance() {
+	a.runs.LeaveMaintenance()
+	a.scheduler.Resume()
+}
+
+func (a *App) monitorUpdateValidation(operationID string) {
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-a.updateContext.Done():
+			return
+		case <-ticker.C:
+			operation, err := updatepkg.LoadOperation(a.stateRoot, operationID)
+			if err != nil {
+				continue
+			}
+			switch operation.Phase {
+			case updatepkg.PhaseCommitted, updatepkg.PhaseRolledBack, updatepkg.PhaseFailedSafe:
+				a.validation.Store(false)
+				a.runs.LeaveMaintenance()
+				a.scheduler.Resume()
+				a.hostStatus.Start(context.Background())
+				a.updates.Start(a.updateContext)
+				return
+			}
+		}
+	}
+}
+
+func (a *App) monitorUpdateResults() {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-a.updateContext.Done():
+			return
+		case <-ticker.C:
+			if a.validation.Load() {
+				continue
+			}
+			active, err := updatepkg.LoadActive(a.stateRoot)
+			if err != nil {
+				continue
+			}
+			operation, err := updatepkg.LoadOperation(a.stateRoot, active.OperationID)
+			if err != nil {
+				continue
+			}
+			var action, result string
+			switch operation.Phase {
+			case updatepkg.PhaseCommitted:
+				action, result = "update_succeeded", "succeeded"
+			case updatepkg.PhaseRolledBack:
+				action, result = "update_rolled_back", "failed"
+			case updatepkg.PhaseNeedsRecovery:
+				action, result = "update_recovery_required", "failed"
+			case updatepkg.PhaseFailedSafe:
+				action, result = "update_failed_safe", "failed"
+			default:
+				continue
+			}
+			root, _ := updatepkg.OperationDirectory(a.stateRoot, operation.ID)
+			imported := filepath.Join(root, "audit-imported")
+			if _, err := os.Stat(imported); err == nil {
+				continue
+			}
+			a.recordAudit(action, operation.TargetVersion, result, "system")
+			_ = os.WriteFile(imported, []byte(time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o600)
+		}
+	}
 }
 
 func parseTrustedProxies(values []string) ([]*net.IPNet, error) {
@@ -495,6 +624,9 @@ func (a *App) applyCredentialOverride(username, password, passwordFile string) e
 }
 
 func (a *App) Close() error {
+	if a.updateCancel != nil {
+		a.updateCancel()
+	}
 	if a.hostStatus != nil {
 		a.hostStatus.Close()
 	}
@@ -504,6 +636,7 @@ func (a *App) Close() error {
 	if a.runs != nil {
 		a.runs.Close()
 	}
+	_, _ = a.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
 	dbErr := a.db.Close()
 	lockErr := a.instanceLock.Close()
 	if dbErr != nil {
@@ -1125,6 +1258,11 @@ func (a *App) routes(_ string) http.Handler {
 		}{Username: username, CSRFToken: current.csrfToken, CredentialOverride: a.credentialOverride, Locale: resolveWebLocale(request)})
 	})))
 	mux.Handle("POST /settings/account", a.requireSession(http.HandlerFunc(a.changePassword)))
+	mux.Handle("GET /settings/updates", a.requireSession(http.HandlerFunc(a.updatesPage)))
+	mux.Handle("GET /settings/updates/status", a.requireSession(http.HandlerFunc(a.updateStatus)))
+	mux.Handle("POST /settings/updates/check", a.requireSession(http.HandlerFunc(a.checkUpdate)))
+	mux.Handle("POST /settings/updates/prepare", a.requireSession(http.HandlerFunc(a.prepareUpdate)))
+	mux.Handle("POST /settings/updates/apply", a.requireSession(http.HandlerFunc(a.applyUpdate)))
 	mux.Handle("GET /resources/files/new-directory", a.requireSession(http.HandlerFunc(a.newDirectoryTask)))
 	mux.Handle("GET /resources/files/upload", a.requireSession(http.HandlerFunc(a.uploadTask)))
 	mux.Handle("GET /resources/files/run/{path...}", a.requireSession(http.HandlerFunc(a.runFileTask)))
@@ -1206,6 +1344,11 @@ func (a *App) routes(_ string) http.Handler {
 		response.Header().Set("Content-Security-Policy", "default-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'")
 		if isSecureRequest(request) {
 			response.Header().Set("Strict-Transport-Security", "max-age=31536000")
+		}
+		if a.validation.Load() && request.Method != http.MethodGet {
+			response.Header().Set("Retry-After", "2")
+			http.Error(response, webText(resolveWebLocale(request), "updates.validation_write_blocked"), http.StatusServiceUnavailable)
+			return
 		}
 		pageResponse := &pageResponseWriter{ResponseWriter: response}
 		mux.ServeHTTP(pageResponse, request)
@@ -3632,7 +3775,9 @@ func (a *App) requireSession(next http.Handler) http.Handler {
 		}
 		cookie, _ := request.Cookie(sessionCookieName)
 		now := time.Now().UTC()
-		_, _ = a.db.Exec("UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?", now.Unix(), hashToken(cookie.Value))
+		if !a.validation.Load() {
+			_, _ = a.db.Exec("UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?", now.Unix(), hashToken(cookie.Value))
+		}
 		next.ServeHTTP(response, request.WithContext(context.WithValue(request.Context(), sessionContextKey, current)))
 	})
 }

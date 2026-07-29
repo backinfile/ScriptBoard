@@ -44,17 +44,29 @@ type Schedule struct {
 }
 
 type Manager struct {
-	db            *sql.DB
-	runs          *runmanager.Manager
-	loadVariables VariableLoader
-	now           func() time.Time
-	tick          time.Duration
-	stop          chan struct{}
-	done          chan struct{}
-	closeOnce     sync.Once
+	db             *sql.DB
+	runs           *runmanager.Manager
+	loadVariables  VariableLoader
+	now            func() time.Time
+	tick           time.Duration
+	stop           chan struct{}
+	done           chan struct{}
+	closeOnce      sync.Once
+	initializeOnce sync.Once
+	pauseMu        sync.Mutex
+	fireMu         sync.Mutex
+	paused         bool
 }
 
 func New(db *sql.DB, runs *runmanager.Manager, loadVariables VariableLoader, now func() time.Time, tick time.Duration) *Manager {
+	return newManager(db, runs, loadVariables, now, tick, false)
+}
+
+func NewPaused(db *sql.DB, runs *runmanager.Manager, loadVariables VariableLoader, now func() time.Time, tick time.Duration) *Manager {
+	return newManager(db, runs, loadVariables, now, tick, true)
+}
+
+func newManager(db *sql.DB, runs *runmanager.Manager, loadVariables VariableLoader, now func() time.Time, tick time.Duration, paused bool) *Manager {
 	if now == nil {
 		now = time.Now
 	}
@@ -63,13 +75,23 @@ func New(db *sql.DB, runs *runmanager.Manager, loadVariables VariableLoader, now
 	}
 	manager := &Manager{
 		db: db, runs: runs, loadVariables: loadVariables,
-		now: now, tick: tick, stop: make(chan struct{}), done: make(chan struct{}),
+		now: now, tick: tick, stop: make(chan struct{}), done: make(chan struct{}), paused: paused,
 	}
-	manager.disableInvalidSchedules()
-	manager.aggregateOldTriggers()
-	manager.reconcileMissed()
+	if !paused {
+		manager.initialize()
+	}
 	go manager.loop()
 	return manager
+}
+
+var ErrPaused = errors.New("scheduler is paused for update maintenance")
+
+func (m *Manager) initialize() {
+	m.initializeOnce.Do(func() {
+		m.disableInvalidSchedules()
+		m.aggregateOldTriggers()
+		m.reconcileMissed()
+	})
 }
 
 func (m *Manager) aggregateOldTriggers() {
@@ -225,6 +247,12 @@ func (m *Manager) List() ([]Schedule, error) {
 }
 
 func (m *Manager) RunNow(id string) (string, error) {
+	m.pauseMu.Lock()
+	paused := m.paused
+	m.pauseMu.Unlock()
+	if paused {
+		return "", ErrPaused
+	}
 	var schedule Schedule
 	if err := m.db.QueryRow(`SELECT id, name, script_path, arguments_template, timeout_seconds, allow_overlap
 		FROM schedules WHERE id = ? AND deleted = 0`, id).Scan(
@@ -312,9 +340,37 @@ func (m *Manager) loop() {
 		case <-m.stop:
 			return
 		case <-ticker.C:
-			m.fireDue()
+			m.pauseMu.Lock()
+			paused := m.paused
+			m.pauseMu.Unlock()
+			if !paused {
+				m.fireMu.Lock()
+				m.fireDue()
+				m.fireMu.Unlock()
+			}
 		}
 	}
+}
+
+func (m *Manager) PauseAndWait() {
+	m.pauseMu.Lock()
+	m.paused = true
+	m.pauseMu.Unlock()
+	m.fireMu.Lock()
+	m.fireMu.Unlock()
+}
+
+func (m *Manager) Resume() {
+	m.initialize()
+	m.pauseMu.Lock()
+	m.paused = false
+	m.pauseMu.Unlock()
+}
+
+func (m *Manager) Paused() bool {
+	m.pauseMu.Lock()
+	defer m.pauseMu.Unlock()
+	return m.paused
 }
 
 func (m *Manager) fireDue() {

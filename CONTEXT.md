@@ -115,3 +115,35 @@ _Avoid_: 操作系统文件锁、依赖锁、目录冻结
 **宿主状态（Host Status）**：
 当前 ScriptBoard 实例所在宿主机的资源事实与短期历史，包括 CPU、内存、存储、磁盘 I/O、网络和 ScriptBoard 服务进程。它用于日常观察与定位资源压力，不构成资源隔离、告警平台或长期可观测性系统。
 _Avoid_: 集群监控、资源配额、告警中心、机器管理
+
+**安装根目录（Install Root）**：
+操作系统级的 ScriptBoard 程序目录，用于保存版本化程序文件、当前版本选择信息和安装元数据；Linux 通过稳定 `current` 入口选择版本，Windows 通过服务目标选择版本。它不包含受管根目录或内部状态目录。
+_Avoid_: 受管根目录、内部状态目录、数据目录
+
+**已安装 Release（Installed Release）**：
+已经完整写入 `Install Root/versions/<version>`、通过本地内容校验并可由系统服务切换到的正式 Release。
+_Avoid_: 当前版本、源码 Commit、下载缓存
+
+**更新 Release（Update Release）**：
+固定官方 GitHub 仓库中，由签名更新清单描述并面向一个正式稳定 Tag 发布的一组平台归档。
+_Avoid_: 已安装 Release、受管文件版本、Git 工作区
+
+**更新清单（Update Manifest）**：
+由 Release 工具生成、经 Ed25519 签名的规范 JSON，声明产品、仓库、版本、Tag、Commit、数据库 Schema、updater 协议及各平台归档的名称、大小和摘要。
+_Avoid_: `SHA256SUMS`、`RELEASE.json`、GitHub Release 说明
+
+**更新操作（Update Operation）**：
+从准备、交接、版本切换、验证到提交或回滚的一次持久化更新事务，拥有稳定 Operation ID 和可恢复阶段。
+_Avoid_: 下载任务、Run、数据库迁移
+
+**更新程序（Update Helper）**：
+独立于 ScriptBoard 主服务进程运行、负责停止/启动服务、保存数据库快照、切换 Installed Release、验活和失败回滚的受信程序。
+_Avoid_: 后台下载器、主服务、安装向导
+
+**验证模式（Validation Mode）**：
+目标版本首次启动但更新尚未提交时的维护状态；计划暂停，Run 与业务写请求被拒绝，只提供完成验活所需的最小读取能力。
+_Avoid_: 只读模式、安全模式、降级模式
+
+**便携安装（Portable Installation）**：
+从任意解压目录直接运行、没有新版安装元数据和受管 Install Root 的部署形态；可以检查更新，但不能由 ScriptBoard 原地切换版本。
+_Avoid_: 受管服务安装、旧式服务安装

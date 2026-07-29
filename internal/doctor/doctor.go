@@ -3,6 +3,7 @@ package doctor
 import (
 	"crypto/tls"
 	"database/sql"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"os"
@@ -14,8 +15,11 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/diskspace"
+	"scriptboard/internal/installation"
 	"scriptboard/internal/platformservice"
+	updatepkg "scriptboard/internal/update"
 )
 
 type Config struct {
@@ -74,7 +78,89 @@ func Run(config Config) Report {
 	checkExecutors(&report)
 	checkNetwork(&report, config.Listen, config.TLSCert, config.TLSKey)
 	checkService(&report)
+	checkUpdateInstallation(&report, config.StateRoot)
 	return report
+}
+
+func checkUpdateInstallation(report *Report, stateRoot string) {
+	build := buildinfo.Current()
+	if !build.ValidRelease() {
+		report.Checks = append(report.Checks,
+			Check{Name: "update-signing-key", Healthy: true, Detail: "development build; update trust is disabled"},
+			Check{Name: "update-installation", Healthy: true, Detail: "development or portable installation"},
+		)
+		return
+	}
+	keyHealthy := validEmbeddedPublicKey(buildinfo.UpdatePublicKeyID, buildinfo.UpdatePublicKeyBase64)
+	if buildinfo.UpdateNextKeyID != "" || buildinfo.UpdateNextKeyBase64 != "" {
+		keyHealthy = keyHealthy && validEmbeddedPublicKey(buildinfo.UpdateNextKeyID, buildinfo.UpdateNextKeyBase64) &&
+			buildinfo.UpdateNextKeyID != buildinfo.UpdatePublicKeyID
+	}
+	detail := "embedded Ed25519 update key is valid"
+	if !keyHealthy {
+		detail = "formal release is missing a valid embedded update signing key"
+		report.Healthy = false
+	}
+	report.Checks = append(report.Checks, Check{Name: "update-signing-key", Healthy: keyHealthy, Detail: detail})
+
+	metadata, err := installation.Load(stateRoot)
+	if os.IsNotExist(err) {
+		report.Checks = append(report.Checks, Check{Name: "update-installation", Healthy: true, Detail: "portable installation"})
+		return
+	}
+	if err != nil {
+		report.Checks = append(report.Checks, Check{Name: "update-installation", Healthy: false, Detail: err.Error()})
+		report.Healthy = false
+		return
+	}
+	info, err := installation.ReadVersionInfo(metadata, metadata.Current)
+	if err == nil {
+		err = installation.ValidateVersion(metadata, metadata.Current, info)
+	}
+	if err == nil {
+		var matches bool
+		matches, err = platformservice.MatchesExecutable(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath)
+		if err == nil && !matches {
+			err = fmt.Errorf("service target does not match the active Installed Release")
+		}
+	}
+	healthy := err == nil
+	detail = metadata.InstallRoot + " (" + metadata.Current + ")"
+	if err != nil {
+		detail = err.Error()
+		report.Healthy = false
+	}
+	report.Checks = append(report.Checks, Check{Name: "update-installation", Healthy: healthy, Detail: detail})
+	checkDisk(report, "install-disk", metadata.InstallRoot)
+
+	active, activeErr := updatepkg.LoadActive(stateRoot)
+	if os.IsNotExist(activeErr) {
+		report.Checks = append(report.Checks, Check{Name: "update-operation", Healthy: true, Detail: "no update operation"})
+		return
+	}
+	if activeErr != nil {
+		report.Checks = append(report.Checks, Check{Name: "update-operation", Healthy: false, Detail: activeErr.Error()})
+		report.Healthy = false
+		return
+	}
+	operation, operationErr := updatepkg.LoadOperation(stateRoot, active.OperationID)
+	operationHealthy := operationErr == nil && operation.Phase != updatepkg.PhaseNeedsRecovery
+	operationDetail := fmt.Sprintf("%s (%s)", active.OperationID, operation.Phase)
+	if operationErr != nil {
+		operationDetail = operationErr.Error()
+	}
+	if !operationHealthy {
+		report.Healthy = false
+	}
+	report.Checks = append(report.Checks, Check{Name: "update-operation", Healthy: operationHealthy, Detail: operationDetail})
+}
+
+func validEmbeddedPublicKey(id, encoded string) bool {
+	if id == "" || encoded == "" {
+		return false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	return err == nil && len(decoded) == 32
 }
 
 func checkSQLite(report *Report, path string) {

@@ -346,7 +346,38 @@ state-root/
     scriptboard.log.1 ...
   migrations/
     pre-upgrade.db            # 最近一次升级前内部快照
+  runtime.json                # 当前进程写入的精确构建运行标记
+  updates/
+    cache.json                # 最近一次有效检查、ETag 与错误摘要
+    check.json                # 最近一次检查时间与错误（包括首次失败）
+    active.json               # 当前 Update Operation
+    operations/{id}/
+      operation.json          # 持久阶段、目标与恢复信息
+      result.json             # 提交、回滚或人工恢复结果
+      database-before-update.db # helper 在旧进程退出后创建的一致快照
+      release-manifest.json
+      release-manifest.json.sig
+      scriptboard-v*.{zip,tar.gz}
+      extracted/              # 安全解压后的 Release 内容
+      helper/                 # Windows 本次事务使用的独立 helper
   tmp/
 ```
 
 受管根目录与状态目录可覆盖，但必须互不包含；`.git/` 与回收站不得成为状态数据库或秘密存储位置。
+
+正式受管服务另有独立的程序布局，不属于 State Root：
+
+```text
+install-root/
+  install.json
+  current -> versions/<version>    # Linux 原子符号链接；Windows 服务配置指向版本目录
+  versions/<version>/
+    RELEASE.json
+    scriptboard[.exe]
+    scriptboard-updater[.exe]
+    ...                            # 对应平台完整 Release 内容
+  scriptboard-updater              # 仅 Linux；切换前原子刷新、供恢复使用的独立 helper
+  scriptboard-tray-launcher.exe    # 仅 Windows；稳定托盘入口
+```
+
+Update Operation 是文件系统持久化事务，不写入 SQLite 作为事实来源，以便数据库本身被恢复时仍能继续判断更新阶段。终态结果由应用在正常启动后幂等导入审计一次。

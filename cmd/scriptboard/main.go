@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -13,12 +14,13 @@ import (
 	"time"
 
 	"scriptboard/internal/app"
+	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/config"
 	"scriptboard/internal/doctor"
+	"scriptboard/internal/installation"
 	"scriptboard/internal/platformservice"
+	updatepkg "scriptboard/internal/update"
 )
-
-var version = "development"
 
 func main() {
 	if handled, err := runAsWindowsService(os.Args[1:]); handled {
@@ -47,7 +49,18 @@ func run(arguments []string) error {
 	case "serve":
 		return serve(arguments[1:])
 	case "version":
-		fmt.Fprintln(os.Stdout, "ScriptBoard "+version)
+		if len(arguments) > 1 && arguments[1] == "--json" {
+			encoded, err := buildinfo.JSON()
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(os.Stdout, string(encoded))
+			return nil
+		}
+		if len(arguments) > 1 {
+			return fmt.Errorf("未知 version 参数: %v", arguments[1:])
+		}
+		fmt.Fprintln(os.Stdout, "ScriptBoard "+buildinfo.Current().Version)
 		return nil
 	case "config":
 		if len(arguments) < 2 || arguments[1] != "validate" {
@@ -66,8 +79,13 @@ func run(arguments []string) error {
 			return errors.New("可用服务命令：service install|uninstall|start|stop|restart|status")
 		}
 		return runService(arguments[1], arguments[2:])
+	case "update":
+		if len(arguments) < 2 {
+			return errors.New("可用更新命令：update status|check|recover")
+		}
+		return runUpdate(arguments[1], arguments[2:])
 	default:
-		return fmt.Errorf("未知命令 %q；可用命令：serve、service、admin、config、doctor、version", arguments[0])
+		return fmt.Errorf("未知命令 %q；可用命令：serve、service、update、admin、config、doctor、version", arguments[0])
 	}
 }
 
@@ -77,6 +95,7 @@ func printUsage() {
 用法：
   scriptboard serve [配置选项]
   scriptboard service install|uninstall|start|stop|restart|status
+  scriptboard update status|check|recover
   scriptboard admin reset [配置选项]
   scriptboard config validate [配置选项]
   scriptboard doctor [配置选项]
@@ -93,6 +112,87 @@ func printUsage() {
   --trusted-proxy IP_OR_CIDR 可信反向代理（可重复）`)
 }
 
+func runUpdate(action string, arguments []string) error {
+	jsonOutput, arguments := takeBooleanArgument(arguments, "--json")
+	switch action {
+	case "status", "check":
+		loaded, err := config.Load(arguments, os.Getenv)
+		if err != nil {
+			return err
+		}
+		manager := updatepkg.NewManager(updatepkg.ManagerConfig{
+			StateRoot: loaded.StateRoot, CheckEnabled: loaded.UpdateCheck, CheckInterval: loaded.UpdateInterval,
+		})
+		snapshot := manager.Snapshot()
+		if action == "check" {
+			checkContext, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			defer cancel()
+			snapshot, err = manager.Check(checkContext, true)
+			if err != nil {
+				return err
+			}
+		}
+		if jsonOutput {
+			return json.NewEncoder(os.Stdout).Encode(snapshot)
+		}
+		fmt.Fprintf(os.Stdout, "当前版本: %s\n安装方式: %s\n", snapshot.Build.Version, snapshot.InstallMode)
+		if snapshot.Latest != nil {
+			fmt.Fprintf(os.Stdout, "最新版本: %s\n", snapshot.Latest.Version)
+		}
+		if snapshot.Operation != nil {
+			fmt.Fprintf(os.Stdout, "更新操作: %s (%s)\n", snapshot.Operation.ID, snapshot.Operation.Phase)
+		}
+		if snapshot.LastError != "" {
+			fmt.Fprintf(os.Stdout, "最近错误: %s\n", snapshot.LastError)
+		}
+		return nil
+	case "recover":
+		operationID, remaining := takeStringArgument(arguments, "--operation")
+		confirmation, remaining := takeStringArgument(remaining, "--confirm-operation")
+		if operationID == "" || confirmation != operationID {
+			return errors.New("recover 需要匹配的 --operation ID 与 --confirm-operation ID")
+		}
+		loaded, err := config.Load(remaining, os.Getenv)
+		if err != nil {
+			return err
+		}
+		running, err := platformservice.IsRunning()
+		if err == nil && running {
+			return errors.New("执行 update recover 前必须先停止 ScriptBoard 服务")
+		}
+		return updatepkg.RecoverOperation(context.Background(), loaded.StateRoot, operationID)
+	default:
+		return fmt.Errorf("未知更新命令 %q", action)
+	}
+}
+
+func takeBooleanArgument(arguments []string, name string) (bool, []string) {
+	result := make([]string, 0, len(arguments))
+	found := false
+	for _, argument := range arguments {
+		if argument == name {
+			found = true
+			continue
+		}
+		result = append(result, argument)
+	}
+	return found, result
+}
+
+func takeStringArgument(arguments []string, name string) (string, []string) {
+	result := make([]string, 0, len(arguments))
+	value := ""
+	for index := 0; index < len(arguments); index++ {
+		if arguments[index] == name && index+1 < len(arguments) {
+			value = arguments[index+1]
+			index++
+			continue
+		}
+		result = append(result, arguments[index])
+	}
+	return value, result
+}
+
 func runService(action string, arguments []string) error {
 	switch action {
 	case "install":
@@ -100,9 +200,43 @@ func runService(action string, arguments []string) error {
 		if err != nil {
 			return err
 		}
-		return platformservice.Install(loaded.ConfigPath)
+		exists, err := platformservice.Exists()
+		if err != nil {
+			return err
+		}
+		if exists {
+			metadata, loadErr := installation.Load(loaded.StateRoot)
+			if loadErr != nil || installation.ValidateVersion(metadata, metadata.Current, buildinfo.Current()) != nil {
+				return errors.New("已存在的 ScriptBoard 服务不是受支持的新版 managed service；请先手工卸载旧服务再全新安装")
+			}
+			if metadata.Current != buildinfo.Current().Version {
+				return errors.New("服务已经由新版安装流程管理；请通过应用更新功能升级")
+			}
+			if err := platformservice.Install(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, installation.ServiceUpdaterExecutable(metadata), metadata.StateRoot); err != nil {
+				return err
+			}
+			return platformservice.InstallTrayAutostart(filepath.Join(metadata.InstallRoot, "scriptboard-tray-launcher.exe"), metadata.ConfigPath)
+		}
+		executable, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		metadata, err := installation.Prepare(installation.PrepareOptions{
+			SourceRoot: filepath.Dir(executable), InstallRoot: installation.DefaultRoot(),
+			StateRoot: loaded.StateRoot, ConfigPath: loaded.ConfigPath, Build: buildinfo.Current(),
+		})
+		if err != nil {
+			return err
+		}
+		if err := platformservice.Install(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, installation.ServiceUpdaterExecutable(metadata), metadata.StateRoot); err != nil {
+			return err
+		}
+		return platformservice.InstallTrayAutostart(filepath.Join(metadata.InstallRoot, "scriptboard-tray-launcher.exe"), metadata.ConfigPath)
 	case "uninstall":
-		return platformservice.Uninstall()
+		if err := platformservice.Uninstall(); err != nil {
+			return err
+		}
+		return platformservice.RemoveTrayAutostart()
 	case "start":
 		return platformservice.Start()
 	case "stop":
@@ -171,10 +305,18 @@ func serveContext(runContext context.Context, arguments []string) error {
 	if err := requireSafeNetwork(loaded.Listen, loaded.TLSCert, loaded.TLSKey, loaded.TrustedProxies); err != nil {
 		return err
 	}
+	updateShutdown := make(chan struct{}, 1)
 
 	application, err := app.Open(app.Config{
 		ManagedRoot: loaded.ManagedRoot, StateRoot: loaded.StateRoot,
 		RunTimeoutGrace: loaded.RunTimeoutGrace, GitExecutable: loaded.GitExecutable, ExecutorChains: loaded.ExecutorChains, AdminUsername: loaded.AdminUsername, AdminPassword: loaded.AdminPassword, AdminPasswordFile: loaded.AdminPasswordFile, TrustedProxies: loaded.TrustedProxies,
+		UpdateCheck: loaded.UpdateCheck, UpdateInterval: loaded.UpdateInterval,
+		RequestShutdown: func() {
+			select {
+			case updateShutdown <- struct{}{}:
+			default:
+			}
+		},
 	})
 	if err != nil {
 		return err
@@ -186,6 +328,10 @@ func serveContext(runContext context.Context, arguments []string) error {
 		return fmt.Errorf("监听 %s: %w", loaded.Listen, err)
 	}
 	defer listener.Close()
+	if _, err := updatepkg.WriteRuntimeMarker(loaded.StateRoot, application.ValidationOperationID()); err != nil {
+		return fmt.Errorf("写入运行时标记: %w", err)
+	}
+	defer updatepkg.RemoveRuntimeMarker(loaded.StateRoot)
 
 	server := &http.Server{
 		Handler:           application.Handler(),
@@ -199,7 +345,10 @@ func serveContext(runContext context.Context, arguments []string) error {
 	fmt.Fprintln(os.Stdout, "ScriptBoard 已启动："+scheme+"://"+listener.Addr().String())
 
 	go func() {
-		<-runContext.Done()
+		select {
+		case <-runContext.Done():
+		case <-updateShutdown:
+		}
 		shutdownContext, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		_ = server.Shutdown(shutdownContext)

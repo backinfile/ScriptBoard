@@ -29,6 +29,8 @@ type Config struct {
 	AdminPasswordFile string              `yaml:"admin_password_file"`
 	TrustedProxies    []string            `yaml:"trusted_proxies"`
 	RunTimeoutGrace   time.Duration       `yaml:"-"`
+	UpdateCheck       bool                `yaml:"update_check"`
+	UpdateInterval    time.Duration       `yaml:"-"`
 	ConfigPath        string              `yaml:"-"`
 }
 
@@ -45,6 +47,8 @@ type yamlConfig struct {
 	AdminPasswordFile      string              `yaml:"admin_password_file"`
 	TrustedProxies         []string            `yaml:"trusted_proxies"`
 	RunTimeoutGraceSeconds *int                `yaml:"run_timeout_grace_seconds"`
+	UpdateCheck            *bool               `yaml:"update_check"`
+	UpdateIntervalHours    *int                `yaml:"update_check_interval_hours"`
 }
 
 func Load(arguments []string, getenv func(string) string) (Config, error) {
@@ -80,6 +84,8 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 	flags.StringVar(&result.TLSCert, "tls-cert", result.TLSCert, "TLS 证书路径")
 	flags.StringVar(&result.TLSKey, "tls-key", result.TLSKey, "TLS 私钥路径")
 	flags.DurationVar(&result.RunTimeoutGrace, "run-timeout-grace", result.RunTimeoutGrace, "自动超时强杀宽限")
+	flags.BoolVar(&result.UpdateCheck, "update-check", result.UpdateCheck, "定期检查正式版更新")
+	flags.DurationVar(&result.UpdateInterval, "update-check-interval", result.UpdateInterval, "更新检查间隔")
 	flags.StringVar(&result.AdminUsername, "admin-username", result.AdminUsername, "权威管理员用户名覆盖")
 	flags.StringVar(&result.AdminPassword, "admin-password", result.AdminPassword, "权威管理员密码覆盖")
 	flags.StringVar(&result.AdminPasswordFile, "admin-password-file", result.AdminPasswordFile, "权威管理员密码文件")
@@ -117,6 +123,9 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 	if result.RunTimeoutGrace <= 0 {
 		return Config{}, fmt.Errorf("Run 超时强杀宽限必须大于零")
 	}
+	if result.UpdateInterval < time.Hour || result.UpdateInterval > 168*time.Hour {
+		return Config{}, fmt.Errorf("更新检查间隔必须在 1 到 168 小时之间")
+	}
 	for extension, chain := range result.ExecutorChains {
 		if extension == "" || extension[0] != '.' || len(chain) == 0 {
 			return Config{}, fmt.Errorf("执行器链 %q 无效", extension)
@@ -146,12 +155,14 @@ func defaults() Config {
 		base := filepath.Join(programData, "ScriptBoard")
 		return Config{
 			ManagedRoot: filepath.Join(base, "managed"), StateRoot: filepath.Join(base, "state"),
-			Listen: "127.0.0.1:8787", RunTimeoutGrace: 30 * time.Second, ConfigPath: filepath.Join(base, "config.yaml"),
+			Listen: "127.0.0.1:8787", RunTimeoutGrace: 30 * time.Second,
+			UpdateCheck: true, UpdateInterval: 6 * time.Hour, ConfigPath: filepath.Join(base, "config.yaml"),
 		}
 	}
 	return Config{
 		ManagedRoot: "/var/lib/scriptboard/managed", StateRoot: "/var/lib/scriptboard/state",
-		Listen: "127.0.0.1:8787", RunTimeoutGrace: 30 * time.Second, ConfigPath: "/etc/scriptboard/config.yaml",
+		Listen: "127.0.0.1:8787", RunTimeoutGrace: 30 * time.Second,
+		UpdateCheck: true, UpdateInterval: 6 * time.Hour, ConfigPath: "/etc/scriptboard/config.yaml",
 	}
 }
 
@@ -205,6 +216,12 @@ func applyYAML(result *Config, values yamlConfig) {
 	if values.RunTimeoutGraceSeconds != nil {
 		result.RunTimeoutGrace = time.Duration(*values.RunTimeoutGraceSeconds) * time.Second
 	}
+	if values.UpdateCheck != nil {
+		result.UpdateCheck = *values.UpdateCheck
+	}
+	if values.UpdateIntervalHours != nil {
+		result.UpdateInterval = time.Duration(*values.UpdateIntervalHours) * time.Hour
+	}
 }
 
 func applyEnvironment(result *Config, getenv func(string) string) {
@@ -229,6 +246,16 @@ func applyEnvironment(result *Config, getenv func(string) string) {
 	if value := getenv("SCRIPTBOARD_RUN_TIMEOUT_GRACE_SECONDS"); value != "" {
 		if seconds, err := strconv.Atoi(value); err == nil {
 			result.RunTimeoutGrace = time.Duration(seconds) * time.Second
+		}
+	}
+	if value := getenv("SCRIPTBOARD_UPDATE_CHECK"); value != "" {
+		if enabled, err := strconv.ParseBool(value); err == nil {
+			result.UpdateCheck = enabled
+		}
+	}
+	if value := getenv("SCRIPTBOARD_UPDATE_CHECK_INTERVAL_HOURS"); value != "" {
+		if hours, err := strconv.Atoi(value); err == nil {
+			result.UpdateInterval = time.Duration(hours) * time.Hour
 		}
 	}
 	if value := getenv("SCRIPTBOARD_ADMIN_USERNAME"); value != "" {

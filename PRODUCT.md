@@ -16,7 +16,7 @@ ScriptBoard 将分散在文件系统中的脚本变成一套可浏览、可执�
 
 ## Positioning
 
-产品直接执行受管目录中的现有脚本，不要求注册、复制或改造成流水线；执行、日志、计划、文件管理、版本保护与审计围绕同一台主机形成闭环。
+产品直接执行受管目录中的现有脚本，不要求注册、复制或改造成流水线；执行、日志、计划、文件管理、版本保护、审计与应用更新围绕同一台主机形成闭环。
 
 ## Operating Context
 
@@ -24,6 +24,7 @@ ScriptBoard 将分散在文件系统中的脚本变成一套可浏览、可执�
 - 文件与目录、脚本参数、运行日志、快捷执行、计划任务、变量、审计事件和本地 Git 版本历史是核心工作材料。
 - 桌面端是高密度操作的主界面；移动端保留全部关键流程，并采用抽屉导航和可重排布局。
 - 产品正式支持 Windows 10/11、Windows Server 2019+ 与 systemd Linux。
+- 正式 Release 安装为版本化受管服务；旧式单文件服务安装不迁移、不兼容。
 
 ## Capabilities and Constraints
 
@@ -33,6 +34,8 @@ ScriptBoard 将分散在文件系统中的脚本变成一套可浏览、可执�
 - 所有关键页面和任务均保留无 JavaScript 的服务端页面；JavaScript 只增强为局部导航、右侧任务面板、实时状态和快捷键。
 - Run 不进入队列；并发、停止、超时与日志保留遵循现有领域状态机。
 - 受管文件操作、版本保护与审计必须清晰呈现风险、边界和不可逆影响。
+- 正式构建可自动检查固定官方仓库的稳定版，但更新必须先验证 Ed25519 签名和归档摘要，再由管理员明确确认安装；有活动 Run 时不得切换版本。
+- 便携运行只提供版本检查与手工下载提示，源码开发构建不联网检查；第一版不提供无人值守安装。
 
 ## Information Architecture
 
@@ -40,7 +43,7 @@ ScriptBoard 将分散在文件系统中的脚本变成一套可浏览、可执�
 - 资源：`/resources/files`、`/resources/variables`、`/resources/trash`
 - 配置：`/config/quick-runs`、`/config/schedules`
 - 历史：`/history/runs`、`/history/runs/{id}`、`/history/audit`
-- 设置：`/settings/account`、`/settings/version-protection`
+- 设置：`/settings/account`、`/settings/version-protection`、`/settings/updates`
 - 任务链接使用语义化 GET 地址，可直接打开完整页面；增强模式在当前工作区右侧打开同一内容且不替换地址栏中的工作区 URL。
 
 ## Brand Commitments

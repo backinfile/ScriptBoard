@@ -174,9 +174,10 @@ type Probe interface {
 }
 
 type Options struct {
-	Interval  time.Duration
-	Retention time.Duration
-	Now       func() time.Time
+	Interval           time.Duration
+	Retention          time.Duration
+	Now                func() time.Time
+	SkipInitialCleanup bool
 }
 
 type Monitor struct {
@@ -215,8 +216,10 @@ func New(db *sql.DB, probe Probe, options Options) (*Monitor, error) {
 	if err != nil {
 		monitor.factErr = err.Error()
 	}
-	if cleanupErr := monitor.cleanup(context.Background()); cleanupErr != nil {
-		monitor.historyErr = cleanupErr.Error()
+	if !options.SkipInitialCleanup {
+		if cleanupErr := monitor.cleanup(context.Background()); cleanupErr != nil {
+			monitor.historyErr = cleanupErr.Error()
+		}
 	}
 	return monitor, nil
 }

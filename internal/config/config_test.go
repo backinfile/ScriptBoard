@@ -70,6 +70,21 @@ func TestLoadRejectsHereWithManagedRoot(t *testing.T) {
 	}
 }
 
+func TestLoadUpdateCheckConfiguration(t *testing.T) {
+	t.Parallel()
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("update_check: false\nupdate_check_interval_hours: 12\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := config.Load([]string{"--config", configPath}, func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.UpdateCheck || loaded.UpdateInterval.Hours() != 12 {
+		t.Fatalf("update check=%v interval=%s", loaded.UpdateCheck, loaded.UpdateInterval)
+	}
+}
+
 func writeEmptyConfig(t *testing.T) string {
 	t.Helper()
 

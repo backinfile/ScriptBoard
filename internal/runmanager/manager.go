@@ -114,11 +114,15 @@ type Manager struct {
 	timeoutGrace   time.Duration
 	lifecycle      Lifecycle
 	executorChains map[string][]string
+	startMu        sync.Mutex
+	accepting      bool
 }
 
 func New(db *sql.DB, managed *managedfiles.Store, stateRoot string, timeoutGrace time.Duration, executorChains map[string][]string) *Manager {
-	return &Manager{db: db, managed: managed, stateRoot: stateRoot, active: make(map[string]*activeRun), timeoutGrace: timeoutGrace, executorChains: executorChains}
+	return &Manager{db: db, managed: managed, stateRoot: stateRoot, active: make(map[string]*activeRun), timeoutGrace: timeoutGrace, executorChains: executorChains, accepting: true}
 }
+
+var ErrMaintenance = errors.New("ScriptBoard is entering update maintenance mode")
 
 func (m *Manager) SetLifecycle(lifecycle Lifecycle) {
 	m.lifecycle = lifecycle
@@ -148,6 +152,11 @@ func ValidateArgumentsTemplate(argumentsTemplate string, variables map[string]st
 }
 
 func (m *Manager) Start(request StartRequest) (string, error) {
+	m.startMu.Lock()
+	defer m.startMu.Unlock()
+	if !m.accepting {
+		return "", ErrMaintenance
+	}
 	if err := diskspace.Require(m.stateRoot, diskspace.MinimumWritableBytes); err != nil {
 		return "", err
 	}
@@ -263,6 +272,31 @@ func (m *Manager) Start(request StartRequest) (string, error) {
 	return id, nil
 }
 
+func (m *Manager) EnterMaintenance() (int, bool) {
+	m.startMu.Lock()
+	defer m.startMu.Unlock()
+	m.mu.Lock()
+	active := len(m.active)
+	m.mu.Unlock()
+	if active != 0 {
+		return active, false
+	}
+	m.accepting = false
+	return 0, true
+}
+
+func (m *Manager) LeaveMaintenance() {
+	m.startMu.Lock()
+	m.accepting = true
+	m.startMu.Unlock()
+}
+
+func (m *Manager) Accepting() bool {
+	m.startMu.Lock()
+	defer m.startMu.Unlock()
+	return m.accepting
+}
+
 func (m *Manager) ConflictsPath(relative string) bool {
 	candidate := normalizeManagedPath(relative)
 	candidateInfo, _ := m.managed.Info(relative)
@@ -293,6 +327,12 @@ func (m *Manager) HasActive() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.active) != 0
+}
+
+func (m *Manager) ActiveCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.active)
 }
 
 func normalizeManagedPath(relative string) string {

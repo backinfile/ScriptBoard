@@ -23,4 +23,5 @@ var (
 	uploadResultsTemplate     = mustWebTemplate("upload-results")
 	variablesTemplate         = mustWebTemplate("variables")
 	versionProtectionTemplate = mustWebTemplate("version-protection")
+	updatesTemplate           = mustWebTemplate("updates")
 )

@@ -436,6 +436,7 @@ func TestGroupedWebRoutesReplaceLegacyModulePaths(t *testing.T) {
 		"/history/audit",
 		"/settings/account",
 		"/settings/version-protection",
+		"/settings/updates",
 	} {
 		response, err := client.Get(serverURL + path)
 		if err != nil {
@@ -608,6 +609,7 @@ func TestPrimaryWorkspacesRenderCompleteLocalizedDocuments(t *testing.T) {
 		"/history/audit",
 		"/settings/account",
 		"/settings/version-protection",
+		"/settings/updates",
 	} {
 		response, err := client.Get(serverURL + path)
 		if err != nil {
@@ -647,6 +649,7 @@ func TestEachWorkspaceAndTaskExposeAtMostOnePrimaryAction(t *testing.T) {
 		"/history/audit",
 		"/settings/account",
 		"/settings/version-protection",
+		"/settings/updates",
 	} {
 		response, err := client.Get(serverURL + path)
 		if err != nil {

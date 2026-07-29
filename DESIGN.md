@@ -194,7 +194,7 @@ Desktop uses a fixed 232px sidebar with grouped destinations:
 - Configuration: Quick runs, Schedules
 - History: Runs, Audit
 
-Status, language, settings, and account controls live at the bottom. The wordmark is plain text. Settings is a separate workspace that includes account and version protection.
+Status, language, settings, and account controls live at the bottom. The wordmark is plain text. Settings is a separate workspace that includes account, version protection, and application updates.
 
 Below 1024px the sidebar becomes a modal drawer with a scrim. The underlying page does not reflow into a second navigation system.
 
@@ -217,6 +217,12 @@ Measurements are not generic statistic cards. Their baseline, current value, and
 Desktop records use flat tables with sticky or persistent column meaning where helpful. On mobile, each row becomes a compact labeled record while preserving the same actions and core facts.
 
 Secondary record actions use the same 34px horizontal ellipsis trigger across files, variables, Quick Runs, and schedules, expanding to a 44px touch target on mobile. Open menus overlay record and table boundaries without being clipped by scrolling containers; terminal-row menus open upward, and tables expose horizontal scrolling only when their content is genuinely wider than the available space.
+
+### Application updates
+
+The update page is an operational handoff, not a promotional release screen. It leads with the installed build, installation mode, latest verified stable release, check time, and active Run count. Release notes remain plain readable text. “Download and verify” is the only primary action until preparation succeeds; “Install and restart” replaces it and requires explicit confirmation.
+
+During service handoff, an `aria-live` status notice explains the temporary disconnect and the page reconnects automatically. Signature, digest, platform, protocol, validation, rollback, and recovery failures remain visible as text rather than color-only states. Portable and development modes explain their capability boundary instead of showing a disabled installation control without context.
 
 ### Files
 

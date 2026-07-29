@@ -26,6 +26,7 @@ ScriptBoard 是一个面向单台 Windows 或 Linux 主机的自托管脚本操�
 | 排查问题 | 查看不可从 Web 界面删除的执行历史、运行结果和审计记录 |
 | 防止误改 | 使用应用回收站恢复误删文件；可选启用本地 Git 版本保护 |
 | 观察主机 | 查看 CPU、内存、存储、磁盘 I/O、网络和 ScriptBoard 进程状态 |
+| 保持应用更新 | 自动检查官方稳定版，由管理员确认后完成下载、校验、重启和失败回滚 |
 
 Web 界面支持简体中文和美式英语，会根据浏览器语言自动选择，也可以在界面中随时切换。桌面和移动浏览器均可使用。
 
@@ -38,16 +39,16 @@ ScriptBoard 适合以下情况：
 - 你需要实时日志、执行历史、定时运行和基础文件恢复；
 - 这台主机由一名可信管理员负责。
 
-如果你需要多用户权限、逐脚本授权、不可信代码隔离、多主机编排、任务队列、公共 API、通知、交互式终端或高可用部署，ScriptBoard 当前并不适合。它也不提供正式的 Docker 部署方案和自动更新。
+如果你需要多用户权限、逐脚本授权、不可信代码隔离、多主机编排、任务队列、公共 API、通知、交互式终端或高可用部署，ScriptBoard 当前并不适合。它也不提供正式的 Docker 部署方案。
 
 ## 支持的平台
 
 | 操作系统 | 架构 | 发布包 |
 | --- | --- | --- |
-| Windows 10/11、Windows Server 2019+ | amd64、arm64 | ZIP，包含服务程序和托盘程序 |
-| 使用 systemd 的 Linux | amd64、arm64 | tar.gz，包含服务程序 |
+| Windows 10/11、Windows Server 2019+ | amd64、arm64 | ZIP，包含服务、托盘、托盘启动器和更新程序 |
+| 使用 systemd 的 Linux | amd64、arm64 | tar.gz，包含服务和更新程序 |
 
-请从 [GitHub Releases](https://github.com/backinfile/ScriptBoard/releases/latest) 下载与系统匹配的压缩包。发布页中的 `SHA256SUMS` 可用于校验文件完整性。
+请从 [GitHub Releases](https://github.com/backinfile/ScriptBoard/releases/latest) 下载与系统匹配的完整压缩包，不要只复制其中一个可执行文件。发布页中的 `SHA256SUMS` 可用于手工校验；应用更新还会强制验证签名发布清单和归档 SHA-256。
 
 运行某种脚本前，宿主机上还需要安装对应的解释器，例如 PowerShell、Python 或 Bash。ScriptBoard 会自动选择实际存在的解释器。
 
@@ -142,7 +143,12 @@ cat ./state/secrets/initial-admin-password
 
 ## 安装为系统服务
 
-确认试用正常后，可以把 ScriptBoard 安装为开机自动运行的系统服务。服务安装会记录当前可执行文件和配置文件的绝对路径，因此请先把程序移动到长期使用的位置。
+确认试用正常后，可以把 ScriptBoard 安装为开机自动运行的系统服务。请在完整发布包的解压目录中执行安装命令；ScriptBoard 会自行复制到版本化安装目录：
+
+- Windows：`C:\Program Files\ScriptBoard`
+- Linux：`/opt/scriptboard`
+
+这是新的全新安装基线，不兼容早期“服务直接指向单个可执行文件”的安装方式。如果主机上已经存在旧式 `ScriptBoard` 服务，请先自行停止并卸载旧服务，再按本节全新安装。安装程序不会猜测、迁移或删除旧目录。
 
 ### Windows 服务
 
@@ -166,7 +172,7 @@ run_timeout_grace_seconds: 30
 
 Windows 服务默认以 `LocalSystem` 身份运行。脚本也会继承该身份的权限和环境。
 
-发布包中的托盘程序可以显示服务与 HTTP 就绪状态、启停服务、打开管理页面和数据目录：
+安装命令会为当前 Windows 用户配置托盘自启动。托盘可以显示服务与 HTTP 就绪状态、启停服务、打开管理页面、应用更新页和数据目录。也可以从发布包中手动运行：
 
 ```powershell
 .\scriptboard-tray.exe --config C:\ProgramData\ScriptBoard\config.yaml
@@ -175,12 +181,6 @@ Windows 服务默认以 `LocalSystem` 身份运行。脚本也会继承该身份
 退出托盘程序不会停止 ScriptBoard 服务。
 
 ### Linux systemd 服务
-
-先安装二进制：
-
-```bash
-sudo install -m 0755 ./scriptboard /usr/local/bin/scriptboard
-```
 
 将下面的配置保存为 `/etc/scriptboard/config.yaml`：
 
@@ -194,13 +194,43 @@ run_timeout_grace_seconds: 30
 安装并启动 systemd 服务：
 
 ```bash
-sudo scriptboard config validate --config /etc/scriptboard/config.yaml
-sudo scriptboard service install --config /etc/scriptboard/config.yaml
-sudo scriptboard service start
-sudo scriptboard service status
+sudo ./scriptboard config validate --config /etc/scriptboard/config.yaml
+sudo ./scriptboard service install --config /etc/scriptboard/config.yaml
+sudo /opt/scriptboard/current/scriptboard service start
+sudo /opt/scriptboard/current/scriptboard service status
 ```
 
-systemd 服务默认以 `root` 身份运行。卸载服务不会删除配置、受管文件、数据库、日志或本地 Git 历史。
+安装命令会同时创建主服务和独立的更新 helper unit。systemd 服务默认以 `root` 身份运行。卸载服务不会删除配置、受管文件、数据库、日志、本地 Git 历史或已安装版本目录。
+
+## 应用更新
+
+正式 Release 默认每 6 小时检查一次官方稳定版。打开“设置 → 应用更新”可以查看当前版本、最新版本、发布说明、签名验证状态和最近一次更新操作。
+
+更新不会在后台自行安装。管理员点击“下载并验证”后，ScriptBoard 会先完成签名、SHA-256、平台和归档安全检查；再次点击“安装并重启”才会进入短暂停机：
+
+1. 暂停计划触发并关闭新的 Run 入口；
+2. 如果仍有活动 Run，拒绝更新且不会停止这些 Run；
+3. 正常退出服务并保存一致的 SQLite 快照；
+4. 切换到新版本，以只读验证模式启动；
+5. 连续验活成功后恢复正常运行；启动、迁移或验活失败则自动恢复旧版本和更新前数据库。
+
+浏览器会在重启期间自动重连。便携运行可以检查新版本，但不能从任意目录自动替换自身；源码 `development` 构建不会联网检查。
+
+如果更新页显示 `needs_recovery`，不要删除 `state_root/updates` 或手工覆盖版本目录。先停止 ScriptBoard 服务，保存 Install Root 与 State Root 的现场副本，再使用页面显示的 Operation ID 执行；如果页面无法打开，可从 `state_root/updates/active.json` 读取同一个 ID：
+
+```text
+scriptboard update recover --operation <ID> --confirm-operation <ID>
+```
+
+该命令只恢复尚未提交的更新事务，不是通用降级或备份恢复工具。命令仍失败时，应保持服务停止，并从你自己的异机备份恢复。
+
+自动检查只访问 `backinfile/ScriptBoard` 的 GitHub Releases，不上传脚本、配置或主机信息。若不希望定期联网，可在配置中设置：
+
+```yaml
+update_check: false
+```
+
+关闭后仍可在更新页或使用 `scriptboard update check` 手工检查。由于本功能不兼容旧式服务安装，第一个包含更新程序的版本必须全新安装；自动更新从它的下一个正式版本开始生效。
 
 ## 配置
 
@@ -221,6 +251,8 @@ systemd 服务默认以 `root` 身份运行。卸载服务不会删除配置、�
 | `trusted_proxies` | 空 | 允许提供转发头的可信代理 IP 或 CIDR |
 | `git_executable` | 自动查找 | 系统 Git CLI 的绝对路径 |
 | `run_timeout_grace_seconds` | `30` | 自动超时后，强制结束进程树前的宽限秒数 |
+| `update_check` | `true` | 是否定期检查官方稳定版；不会自动安装 |
+| `update_check_interval_hours` | `6` | 自动检查间隔，允许 1–168 小时 |
 | `admin_username` | 空 | 启动时覆盖管理员用户名 |
 | `admin_password_file` | 空 | 从权限受限文件读取启动密码 |
 | `executor_chains` | 平台默认 | 按脚本扩展名覆盖解释器链 |
@@ -247,6 +279,8 @@ trusted_proxies:
 
 git_executable: C:\Program Files\Git\cmd\git.exe
 run_timeout_grace_seconds: 30
+update_check: true
+update_check_interval_hours: 6
 
 admin_username: admin
 admin_password_file: C:\ProgramData\ScriptBoard\secrets\admin-password
@@ -267,6 +301,8 @@ SCRIPTBOARD_TLS_CERT
 SCRIPTBOARD_TLS_KEY
 SCRIPTBOARD_TRUSTED_PROXIES
 SCRIPTBOARD_RUN_TIMEOUT_GRACE_SECONDS
+SCRIPTBOARD_UPDATE_CHECK
+SCRIPTBOARD_UPDATE_CHECK_INTERVAL_HOURS
 SCRIPTBOARD_ADMIN_USERNAME
 SCRIPTBOARD_ADMIN_PASSWORD
 SCRIPTBOARD_ADMIN_PASSWORD_FILE
@@ -349,18 +385,9 @@ scriptboard doctor --config CONFIG_PATH
 | 内部状态 | `state_root` | SQLite 数据库、执行日志、会话、审计和内部状态 |
 | 配置 | Windows：`C:\ProgramData\ScriptBoard\config.yaml`<br>Linux：`/etc/scriptboard/config.yaml` | 服务启动配置 |
 
-升级步骤：
+对于新版 managed service，优先使用“设置 → 应用更新”。系统会在更新验证窗口内维护自己的数据库快照和失败回滚，但这不能替代你的长期、异机备份。
 
-1. 停止服务；
-2. 备份 `managed_root`、`state_root` 和配置文件；
-3. 用新版本替换原可执行文件；
-4. 启动服务并运行 `service status` 或 `doctor` 检查状态。
-
-```text
-scriptboard service stop
-scriptboard service start
-scriptboard service status
-```
+便携运行仍需手工下载完整发布包、停止旧进程并从新目录启动。不要在服务运行时覆盖版本目录中的文件，也不要把某个新 EXE 单独复制进现有 managed 安装。
 
 ScriptBoard 启动时会自动执行只向前兼容的 SQLite 迁移，并在迁移旧数据库前创建内部快照。不要使用旧版本打开已经由新版本升级过的 `state_root`。
 
@@ -369,10 +396,12 @@ ScriptBoard 启动时会自动执行只向前兼容的 SQLite 迁移，并在迁
 ```text
 scriptboard serve
 scriptboard service install|uninstall|start|stop|restart|status
+scriptboard update status|check
+scriptboard update recover --operation ID --confirm-operation ID
 scriptboard admin reset
 scriptboard config validate
 scriptboard doctor
-scriptboard version
+scriptboard version [--json]
 ```
 
 运行 `scriptboard help` 可以查看常用命令行参数。
@@ -397,6 +426,8 @@ go build ./cmd/scriptboard-tray
 ```powershell
 ./scripts/build-release.ps1 -Version development
 ```
+
+正式 Tag 构建还需要发布签名密钥。密钥生成、GitHub Environment 配置和发布步骤见 [发布指南](./docs/RELEASING.md)。
 
 项目设计与开发资料：
 

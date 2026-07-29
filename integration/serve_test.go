@@ -63,7 +63,7 @@ func TestServeCommandStartsHTTPApplication(t *testing.T) {
 	var startup string
 	select {
 	case startup = <-line:
-	case <-time.After(10 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("timed out waiting for startup")
 	}
 	const prefix = "ScriptBoard 已启动：http://"

@@ -1090,6 +1090,10 @@ td.record-actions { width: 1%; }
 .settings-block { margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--rule-strong); }
 .settings-block > p { max-width: 68ch; color: var(--muted); }
 .settings-actions { display: flex; justify-content: space-between; gap: 10px; padding: 18px 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+.update-release-notes { max-height: 260px; overflow: auto; padding: 16px; border: 1px solid var(--rule); background: var(--surface); color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+.update-reconnect { display: flex; align-items: center; gap: 14px; margin-bottom: 24px; padding: 18px; border: 1px solid var(--accent); background: var(--accent-soft); }
+.update-reconnect svg { flex: 0 0 auto; color: var(--accent); animation: data-load-spin .9s linear infinite; }
+.update-reconnect p { margin: 4px 0 0; color: var(--muted); }
 .account-form { display: grid; max-width: 620px; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .account-form button { justify-self: start; }
 .check-list { display: grid; gap: 8px; padding: 0; list-style: none; }

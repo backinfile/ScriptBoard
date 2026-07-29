@@ -26,6 +26,7 @@ It is designed for personal servers, home labs, small workstations, and script h
 | Investigate problems | Review run results, audit records, and run history that cannot be deleted from the Web interface |
 | Recover from mistakes | Restore files from the application trash or enable optional local Git version protection |
 | Observe the host | View CPU, memory, storage, disk I/O, network, and ScriptBoard process status |
+| Keep the application current | Check official stable releases automatically, then download, verify, restart, and roll back after administrator approval |
 
 The Web interface supports Simplified Chinese and American English. It follows the browser language by default and can be switched at any time. Both desktop and mobile browsers are supported.
 
@@ -38,16 +39,16 @@ ScriptBoard is a good fit when:
 - you need live logs, run history, schedules, and basic file recovery;
 - one trusted administrator is responsible for the machine.
 
-ScriptBoard is not intended for multiple users, per-script permissions, untrusted-code isolation, multi-host orchestration, job queues, public APIs, notifications, interactive terminals, or high-availability deployments. It also does not provide an official Docker deployment or automatic updates.
+ScriptBoard is not intended for multiple users, per-script permissions, untrusted-code isolation, multi-host orchestration, job queues, public APIs, notifications, interactive terminals, or high-availability deployments. It also does not provide an official Docker deployment.
 
 ## Supported platforms
 
 | Operating system | Architecture | Release package |
 | --- | --- | --- |
-| Windows 10/11 and Windows Server 2019+ | amd64, arm64 | ZIP containing the service and tray executables |
-| Linux with systemd | amd64, arm64 | tar.gz containing the service executable |
+| Windows 10/11 and Windows Server 2019+ | amd64, arm64 | ZIP containing the service, tray, tray launcher, and updater |
+| Linux with systemd | amd64, arm64 | tar.gz containing the service and updater |
 
-Download the archive for your system from [GitHub Releases](https://github.com/backinfile/ScriptBoard/releases/latest). Use the release's `SHA256SUMS` file to verify its integrity.
+Download the complete archive for your system from [GitHub Releases](https://github.com/backinfile/ScriptBoard/releases/latest); do not copy only one executable. `SHA256SUMS` supports manual verification. Application updates additionally require a signed release manifest and the archive's SHA-256 digest.
 
 The host must also have an interpreter for each script type you want to run, such as PowerShell, Python, or Bash. ScriptBoard automatically selects an interpreter that is actually available.
 
@@ -142,7 +143,12 @@ Version protection helps recover accidental changes; it is not an off-machine ba
 
 ## Install as a system service
 
-After confirming the trial setup works, install ScriptBoard as a system service so it starts automatically. Service installation records the absolute paths of the current executable and configuration file, so move the executable to its permanent location first.
+After confirming the trial setup works, install ScriptBoard as a system service so it starts automatically. Run the install command from the complete extracted release. ScriptBoard copies the release into a versioned installation root:
+
+- Windows: `C:\Program Files\ScriptBoard`
+- Linux: `/opt/scriptboard`
+
+This is a new clean-install baseline. It does not support the earlier layout where a service pointed directly to one executable. If a legacy `ScriptBoard` service already exists, stop and uninstall it yourself before following this section. The installer will not guess, migrate, or delete legacy directories.
 
 ### Windows service
 
@@ -166,7 +172,7 @@ Run these commands from an elevated PowerShell window:
 
 The Windows service runs as `LocalSystem` by default. Scripts inherit that identity's permissions and environment.
 
-The tray application included in the Windows release shows service and HTTP readiness, starts and stops the service, and opens the management page or data directories:
+The install command configures tray autostart for the current Windows user. The tray shows service and HTTP readiness, starts and stops the service, and opens the management page, application updates, or data directories. You can also launch it manually from the release:
 
 ```powershell
 .\scriptboard-tray.exe --config C:\ProgramData\ScriptBoard\config.yaml
@@ -175,12 +181,6 @@ The tray application included in the Windows release shows service and HTTP read
 Closing the tray application does not stop the ScriptBoard service.
 
 ### Linux systemd service
-
-Install the executable first:
-
-```bash
-sudo install -m 0755 ./scriptboard /usr/local/bin/scriptboard
-```
 
 Save the following configuration as `/etc/scriptboard/config.yaml`:
 
@@ -194,13 +194,43 @@ run_timeout_grace_seconds: 30
 Install and start the systemd service:
 
 ```bash
-sudo scriptboard config validate --config /etc/scriptboard/config.yaml
-sudo scriptboard service install --config /etc/scriptboard/config.yaml
-sudo scriptboard service start
-sudo scriptboard service status
+sudo ./scriptboard config validate --config /etc/scriptboard/config.yaml
+sudo ./scriptboard service install --config /etc/scriptboard/config.yaml
+sudo /opt/scriptboard/current/scriptboard service start
+sudo /opt/scriptboard/current/scriptboard service status
 ```
 
-The systemd service runs as `root` by default. Uninstalling the service does not remove the configuration, managed files, database, logs, or local Git history.
+The install command creates both the main service and an independent updater helper unit. The systemd service runs as `root` by default. Uninstalling it does not remove configuration, managed files, the database, logs, local Git history, or installed release directories.
+
+## Application updates
+
+Formal releases check for a new official stable release every six hours by default. Open **Settings → Application updates** to view the installed build, latest release, release notes, verification status, and the most recent update operation.
+
+Updates are never installed silently. After an administrator selects **Download and verify**, ScriptBoard verifies the signature, SHA-256 digest, platform, and archive structure. Selecting **Install and restart** then starts a short maintenance window:
+
+1. Schedule triggering pauses and new Runs are blocked.
+2. If any Runs are still active, the update is rejected without stopping them.
+3. The service exits normally and a consistent SQLite snapshot is created.
+4. The new release starts in read-only validation mode.
+5. After continuous health checks pass, normal operation resumes. Startup, migration, or health-check failures restore the previous release and pre-update database automatically.
+
+The browser reconnects automatically during the restart. Portable releases can check for updates but cannot replace themselves from an arbitrary directory. Source `development` builds never make update-check requests.
+
+If the update page shows `needs_recovery`, do not delete `state_root/updates` or overwrite a version directory manually. Stop the ScriptBoard service, preserve copies of the Install Root and State Root, and run the following command with the Operation ID shown on the page. If the page is unavailable, read the same ID from `state_root/updates/active.json`:
+
+```text
+scriptboard update recover --operation <ID> --confirm-operation <ID>
+```
+
+This command only recovers an update transaction that has not committed. It is not a general downgrade or backup-restore tool. If it still fails, keep the service stopped and restore from your own off-machine backup.
+
+Automatic checks only contact GitHub Releases for `backinfile/ScriptBoard`; scripts, configuration, and host information are not uploaded. To disable periodic network checks:
+
+```yaml
+update_check: false
+```
+
+You can still check explicitly from the page or with `scriptboard update check`. Because legacy service layouts are unsupported, the first release containing the updater must be installed cleanly. Automatic installation starts with the following formal release.
 
 ## Configuration
 
@@ -221,6 +251,8 @@ Common settings:
 | `trusted_proxies` | Empty | Trusted proxy IP addresses or CIDR ranges allowed to provide forwarding headers |
 | `git_executable` | Auto-detected | Absolute path to the system Git CLI |
 | `run_timeout_grace_seconds` | `30` | Grace period before a timed-out process tree is forcibly terminated |
+| `update_check` | `true` | Periodically check the official stable release; never installs silently |
+| `update_check_interval_hours` | `6` | Check interval from 1 to 168 hours |
 | `admin_username` | Empty | Administrator username override applied at startup |
 | `admin_password_file` | Empty | Read the startup password from a permission-restricted file |
 | `executor_chains` | Platform defaults | Override interpreters by script extension |
@@ -247,6 +279,8 @@ trusted_proxies:
 
 git_executable: C:\Program Files\Git\cmd\git.exe
 run_timeout_grace_seconds: 30
+update_check: true
+update_check_interval_hours: 6
 
 admin_username: admin
 admin_password_file: C:\ProgramData\ScriptBoard\secrets\admin-password
@@ -267,6 +301,8 @@ SCRIPTBOARD_TLS_CERT
 SCRIPTBOARD_TLS_KEY
 SCRIPTBOARD_TRUSTED_PROXIES
 SCRIPTBOARD_RUN_TIMEOUT_GRACE_SECONDS
+SCRIPTBOARD_UPDATE_CHECK
+SCRIPTBOARD_UPDATE_CHECK_INTERVAL_HOURS
 SCRIPTBOARD_ADMIN_USERNAME
 SCRIPTBOARD_ADMIN_PASSWORD
 SCRIPTBOARD_ADMIN_PASSWORD_FILE
@@ -349,18 +385,9 @@ Include both `managed_root` and `state_root` in your backup:
 | Application state | `state_root` | SQLite database, run logs, sessions, audit records, and internal state |
 | Configuration | Windows: `C:\ProgramData\ScriptBoard\config.yaml`<br>Linux: `/etc/scriptboard/config.yaml` | Service startup configuration |
 
-To upgrade:
+For a new managed service installation, prefer **Settings → Application updates**. ScriptBoard maintains an internal database snapshot and automatic rollback during the update validation window, but that is not a replacement for a long-term off-machine backup.
 
-1. Stop the service.
-2. Back up `managed_root`, `state_root`, and the configuration file.
-3. Replace the existing executable with the new version.
-4. Start the service and check it with `service status` or `doctor`.
-
-```text
-scriptboard service stop
-scriptboard service start
-scriptboard service status
-```
+Portable runs still require downloading the complete release, stopping the old process, and starting the new directory manually. Do not overwrite files inside a managed version directory while the service is running, and do not copy a single new executable into an existing managed installation.
 
 ScriptBoard applies forward-only SQLite migrations at startup and creates an internal snapshot before migrating an older database. Do not open an upgraded `state_root` with an older ScriptBoard version.
 
@@ -369,10 +396,12 @@ ScriptBoard applies forward-only SQLite migrations at startup and creates an int
 ```text
 scriptboard serve
 scriptboard service install|uninstall|start|stop|restart|status
+scriptboard update status|check
+scriptboard update recover --operation ID --confirm-operation ID
 scriptboard admin reset
 scriptboard config validate
 scriptboard doctor
-scriptboard version
+scriptboard version [--json]
 ```
 
 Run `scriptboard help` to see the common command-line flags.
@@ -397,6 +426,8 @@ Build portable Windows/Linux packages for amd64 and arm64:
 ```powershell
 ./scripts/build-release.ps1 -Version development
 ```
+
+Formal tag builds also require release signing keys. See the [release guide](./docs/RELEASING.md) for key generation, GitHub Environment setup, and the release procedure.
 
 Project design and development documentation:
 
