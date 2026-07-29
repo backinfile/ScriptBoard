@@ -20,7 +20,7 @@ func TestServeCommandStartsHTTPApplication(t *testing.T) {
 		binary += ".exe"
 	}
 
-	build := exec.Command("go", "build", "-o", binary, "./cmd/scriptboard")
+	build := exec.Command("go", "build", "-buildvcs=false", "-o", binary, "./cmd/scriptboard")
 	build.Dir = ".."
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build scriptboard: %v\n%s", err, output)

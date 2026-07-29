@@ -116,6 +116,22 @@ _Avoid_: 操作系统文件锁、依赖锁、目录冻结
 当前 ScriptBoard 实例所在宿主机的资源事实与短期历史，包括 CPU、内存、存储、磁盘 I/O、网络和 ScriptBoard 服务进程。它用于日常观察与定位资源压力，不构成资源隔离、告警平台或长期可观测性系统。
 _Avoid_: 集群监控、资源配额、告警中心、机器管理
 
+**应用观测（Application Observation）**：
+当前 ScriptBoard 实例对本机宿主应用和本机 Docker 容器应用资源事实的只读采集、聚合与展示。它帮助管理员定位当前资源压力，不提供进程或容器控制、阈值告警、通知或远程监控。
+_Avoid_: 应用管理、容器编排、告警平台、APM
+
+**宿主应用（Host Application）**：
+由同一规范化可执行路径标识的一组本机进程。多个 PID 的 CPU、内存、磁盘 I/O、进程数和线程数聚合为一个应用观测条目；无法读取路径的进程可以显示，但身份受限且不能 Pin。
+_Avoid_: Top 进程、服务、Run
+
+**Docker 容器应用（Docker Container Application）**：
+由本机 Docker Engine 与规范化容器名共同标识的运行容器。容器以整体展示 CPU、内存、块 I/O 和 PID 数，不拆分容器内进程，也不表示 ScriptBoard 自身支持容器化部署。
+_Avoid_: 容器服务、Pod、工作负载
+
+**应用 Pin（Application Pin）**：
+管理员保存到 ScriptBoard 本机状态中的应用观测关注项。Pin 只改变展示优先级；它不启动、停止、保护或改变对应进程与容器。
+_Avoid_: 收藏、监控规则、资源策略
+
 **安装根目录（Install Root）**：
 操作系统级的 ScriptBoard 程序目录，用于保存版本化程序文件、当前版本选择信息和安装元数据；Linux 通过稳定 `current` 入口选择版本，Windows 通过服务目标选择版本。它不包含受管根目录或内部状态目录。
 _Avoid_: 受管根目录、内部状态目录、数据目录

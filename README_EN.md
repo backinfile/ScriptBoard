@@ -25,7 +25,7 @@ It is designed for personal servers, home labs, small workstations, and script h
 | Run on a schedule | Create five-field Cron schedules, preview trigger times, and configure timeout and overlap behavior |
 | Investigate problems | Review run results, audit records, and run history that cannot be deleted from the Web interface |
 | Recover from mistakes | Restore files from the application trash or enable optional local Git version protection |
-| Observe the host | View CPU, memory, storage, disk I/O, network, and ScriptBoard process status |
+| Observe the host and applications | View host resources plus CPU, memory, and disk I/O for local applications and Docker containers; pin applications that need attention |
 | Keep the application current | Check official stable releases automatically, then download, verify, restart, and roll back after administrator approval |
 
 The Web interface supports Simplified Chinese and American English. It follows the browser language by default and can be switched at any time. Both desktop and mobile browsers are supported.

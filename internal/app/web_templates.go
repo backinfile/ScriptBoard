@@ -6,6 +6,7 @@ var (
 	accountTemplate              = mustWebTemplate("account")
 	applicationErrorTemplate     = mustWebTemplate("application-error")
 	applicationShellTemplate     = mustWebTemplate("application-shell")
+	applicationsTemplate         = mustWebTemplate("applications")
 	auditTemplate                = mustWebTemplate("audit")
 	deleteImpactTemplate         = mustWebTemplate("delete-impact")
 	filesTemplate                = mustWebTemplate("files")

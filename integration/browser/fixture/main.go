@@ -8,15 +8,68 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"scriptboard/internal/app"
+	"scriptboard/internal/appstatus"
 )
 
 const (
 	fixtureUsername = "admin"
 	fixturePassword = "calibration-ledger-2026"
 )
+
+type applicationProbe struct {
+	mu    sync.Mutex
+	index int
+}
+
+func (p *applicationProbe) Snapshot(context.Context) appstatus.RawSnapshot {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	collectedAt := time.Date(2026, 7, 29, 8, 30, 0, 0, time.UTC).Add(time.Duration(p.index) * 5 * time.Second)
+	step := uint64(p.index)
+	p.index++
+	return appstatus.RawSnapshot{
+		CollectedAt:      collectedAt,
+		LogicalCores:     4,
+		TotalMemoryBytes: 16 << 30,
+		DockerAvailable:  true,
+		Processes: []appstatus.RawProcess{
+			{
+				PID: 201, CreatedAt: collectedAt.Add(-2 * time.Hour), Name: "Host Agent",
+				ExecutablePath: `C:\Program Files\ScriptBoard Fixture\host-agent.exe`,
+				CPUSeconds:     10 + float64(p.index), ResidentMemoryBytes: 480 << 20, Threads: 9,
+				ReadBytes: 1_000_000 + step*2_000_000, WriteBytes: 2_000_000 + step*1_000_000,
+			},
+			{
+				PID: 301, CreatedAt: collectedAt.Add(-time.Hour), Name: "Worker",
+				ExecutablePath: `C:\Tools\worker.exe`,
+				CPUSeconds:     5 + float64(p.index)/2, ResidentMemoryBytes: 220 << 20, Threads: 4,
+				ReadBytes: 500_000 + step*500_000, WriteBytes: 700_000 + step*250_000,
+			},
+			{
+				PID: 302, CreatedAt: collectedAt.Add(-45 * time.Minute), Name: "Worker",
+				ExecutablePath: `c:\tools\WORKER.exe`,
+				CPUSeconds:     4 + float64(p.index)/2, ResidentMemoryBytes: 180 << 20, Threads: 3,
+				ReadBytes: 400_000 + step*400_000, WriteBytes: 600_000 + step*200_000,
+			},
+		},
+		Containers: []appstatus.RawContainer{
+			{
+				Name: "api-prod", Image: "ghcr.io/example/api:2026.07", CPUPercent: 32.5,
+				MemoryBytes: 720 << 20, MemoryLimitBytes: 2 << 30,
+				ReadBytesPerSecond: 4 << 20, WriteBytesPerSecond: 2 << 20, ProcessCount: 18,
+			},
+			{
+				Name: "cache-local", Image: "redis:7.4-alpine", CPUPercent: 8.25,
+				MemoryBytes: 192 << 20, MemoryLimitBytes: 1 << 30,
+				ReadBytesPerSecond: 512 << 10, WriteBytesPerSecond: 256 << 10, ProcessCount: 6,
+			},
+		},
+	}
+}
 
 func main() {
 	root, err := os.MkdirTemp("", "scriptboard-browser-managed-root-location-with-a-long-path-")
@@ -32,10 +85,11 @@ func main() {
 	}
 
 	application, err := app.Open(app.Config{
-		ManagedRoot:   managedRoot,
-		StateRoot:     stateRoot,
-		AdminUsername: fixtureUsername,
-		AdminPassword: fixturePassword,
+		ManagedRoot:      managedRoot,
+		StateRoot:        stateRoot,
+		AdminUsername:    fixtureUsername,
+		AdminPassword:    fixturePassword,
+		ApplicationProbe: &applicationProbe{},
 	})
 	if err != nil {
 		panic(err)

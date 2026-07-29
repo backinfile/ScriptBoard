@@ -15,6 +15,31 @@
 
 未完成分钟不持久化；服务停止或异常退出会形成明确历史缺口。设备消失后的分钟历史保留至自然过期，当前状态标记为离线。该表属于可自动清理的诊断数据，不是审计记录。
 
+## 应用 Pin（Application Pin）
+
+| 字段 | 约束与语义 |
+| --- | --- |
+| id | 稳定应用 ID，主键 |
+| kind / identity | `host` 或 `docker` 与规范身份；组合唯一 |
+| name / technical | 最近一次显示名称与可执行路径或镜像 |
+| sort_order | 无上限 Pin 列表中的稳定顺序 |
+| created_at / updated_at | UTC |
+
+Pin 是展示状态，不赋予应用控制能力。当前快照存在时由实时事实覆盖保存的名称与技术信息；应用停止或 Docker 数据源不可用时仍保留 Pin 身份。
+
+## 应用分钟指标（Application Metric Minute）
+
+| 字段 | 约束与语义 |
+| --- | --- |
+| application_id / bucket_at | 应用 ID 与 UTC 自然分钟起点，组合主键 |
+| sample_count | 参与聚合的有效五秒样本数 |
+| cpu_average / cpu_maximum | 整机归一 CPU 平均值与峰值 |
+| memory_average / memory_maximum | 使用字节平均值与峰值 |
+| read_average / read_maximum | 读取速率平均值与峰值 |
+| write_average / write_maximum | 写入速率平均值与峰值 |
+
+该表只服务已 Pin 应用的 24 小时诊断历史，不是审计记录或长期监控存储。
+
 ## 1. 核心原则
 
 - 文件系统是受管条目的事实来源，不建立通用 File 表。

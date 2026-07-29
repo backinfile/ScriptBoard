@@ -201,7 +201,7 @@ func shellNavigation(locale webLocale, path string) []shellNavigationGroup {
 		key   string
 		items []itemSpec
 	}{
-		{key: "nav.monitor", items: []itemSpec{{"/monitor", "nav.overview", "activity"}, {"/monitor/websites", "nav.websites", "network"}}},
+		{key: "nav.monitor", items: []itemSpec{{"/monitor", "nav.overview", "activity"}, {"/monitor/applications", "nav.applications", "app-window"}, {"/monitor/websites", "nav.websites", "network"}}},
 		{key: "nav.resources", items: []itemSpec{{"/resources/files/", "nav.files", "folder-code"}, {"/resources/variables", "nav.variables", "braces"}}},
 		{key: "nav.configuration", items: []itemSpec{{"/config/quick-runs", "nav.quick_runs", "zap"}, {"/config/schedules", "nav.schedules", "calendar-clock"}}},
 		{key: "nav.history", items: []itemSpec{{"/history/runs", "nav.runs", "square-terminal"}, {"/history/audit", "nav.audit", "scroll-text"}}},
