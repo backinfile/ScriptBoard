@@ -70,8 +70,10 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 
 	flags := flag.NewFlagSet("scriptboard", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
+	here := false
 	flags.StringVar(&result.ConfigPath, "config", result.ConfigPath, "YAML 配置文件")
 	flags.StringVar(&result.ManagedRoot, "managed-root", result.ManagedRoot, "受管根目录")
+	flags.BoolVar(&here, "here", false, "使用当前目录作为受管根目录")
 	flags.StringVar(&result.StateRoot, "state-root", result.StateRoot, "内部状态目录")
 	flags.StringVar(&result.Listen, "listen", result.Listen, "HTTP 监听地址")
 	flags.StringVar(&result.GitExecutable, "git-executable", result.GitExecutable, "Git CLI 绝对路径")
@@ -92,6 +94,22 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 	})
 	if err := flags.Parse(arguments); err != nil {
 		return Config{}, err
+	}
+	if here {
+		managedRootSet := false
+		flags.Visit(func(selected *flag.Flag) {
+			if selected.Name == "managed-root" {
+				managedRootSet = true
+			}
+		})
+		if managedRootSet {
+			return Config{}, fmt.Errorf("--here 不能与 --managed-root 同时使用")
+		}
+		currentDirectory, err := os.Getwd()
+		if err != nil {
+			return Config{}, fmt.Errorf("读取当前目录: %w", err)
+		}
+		result.ManagedRoot = currentDirectory
 	}
 	if flags.NArg() != 0 {
 		return Config{}, fmt.Errorf("未知位置参数: %v", flags.Args())

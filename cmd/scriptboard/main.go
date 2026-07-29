@@ -85,6 +85,7 @@ func printUsage() {
 常用配置选项：
   --config PATH              YAML 配置文件
   --managed-root PATH        受管根目录
+  --here                     使用当前目录作为受管根目录
   --state-root PATH          内部状态目录
   --listen ADDRESS           HTTP 监听地址
   --tls-cert PATH            TLS 证书
