@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -15,35 +16,45 @@ import (
 )
 
 type websiteMonitorPageView struct {
-	ID                  string
-	Name                string
-	URL                 string
-	Scope               websitemonitor.Scope
-	ScopeLabel          string
-	Kind                websitemonitor.Kind
-	KindLabel           string
-	MethodLabel         string
-	State               websitemonitor.State
-	StateLabel          string
-	LatestLabel         string
-	LatestSummary       string
-	LatestTechnical     string
-	LatencyLabel        string
-	LastCheckedAt       time.Time
-	CheckedToken        int64
-	FrequencyLabel      string
-	TimeoutLabel        string
-	TLSAttention        bool
-	SecurityTone        string
-	SecurityTitle       string
-	SecurityDescription string
-	Certificate         websitemonitor.Certificate
-	SortOrder           int
-	Availability        []string
+	ID                    string
+	Name                  string
+	URL                   string
+	Scope                 websitemonitor.Scope
+	ScopeLabel            string
+	Kind                  websitemonitor.Kind
+	KindLabel             string
+	MethodLabel           string
+	State                 websitemonitor.State
+	StateLabel            string
+	LatestLabel           string
+	LatestSummary         string
+	LatestTechnical       string
+	LatencyLabel          string
+	LastCheckedAt         time.Time
+	CheckedToken          int64
+	FrequencyLabel        string
+	TimeoutLabel          string
+	TLSAttention          bool
+	SecurityTone          string
+	SecurityTitle         string
+	SecurityDescription   string
+	Certificate           websitemonitor.Certificate
+	SortOrder             int
+	Availability          []string
+	FailureCount          int
+	NextCheckAt           time.Time
+	IncidentStartedAt     time.Time
+	IncidentDuration      time.Duration
+	IncidentDurationLabel string
+	CanMoveUp             bool
+	CanMoveDown           bool
 }
 
 type websiteMonitorCounts struct {
-	Up, Verifying, Down, Paused int
+	Up        int `json:"up"`
+	Verifying int `json:"verifying"`
+	Down      int `json:"down"`
+	Paused    int `json:"paused"`
 }
 
 type websiteMonitorListView struct {
@@ -75,11 +86,79 @@ type websiteMonitorFormView struct {
 }
 
 type websiteMonitorNginxView struct {
-	ConfigPath string
-	Preview    *websitemonitor.NginxPreview
-	Error      string
-	Locale     webLocale
-	CSRFToken  string
+	ConfigPath    string
+	Preview       *websitemonitor.NginxPreview
+	Error         string
+	ImportedCount int
+	Success       string
+	Locale        webLocale
+	CSRFToken     string
+}
+
+type websiteMonitorListDataView struct {
+	Monitors  []websiteMonitorPageView `json:"monitors"`
+	Alerts    []websiteMonitorPageView `json:"alerts"`
+	Counts    websiteMonitorCounts     `json:"counts"`
+	Total     int                      `json:"total"`
+	NeedsCare int                      `json:"needsCare"`
+}
+
+type websiteMonitorDetailDataView struct {
+	websiteMonitorPageView
+	DetailAvailability  []websiteMonitorAvailabilityBucketView
+	AvailabilityPercent float64
+	AvailabilityLabel   string
+	AverageLatency      time.Duration
+	AverageLatencyLabel string
+	P95Latency          time.Duration
+	P95LatencyLabel     string
+	TotalChecks         int
+	SuccessfulChecks    int
+	FailedChecks        int
+	IncidentCount       int
+	RecentChecks        []websitemonitor.Evidence
+	CurrentIncident     *websitemonitor.IncidentSnapshot
+	Incidents           []websitemonitor.Incident
+}
+
+type websiteMonitorAvailabilityBucketView struct {
+	StartedAt        time.Time
+	EndedAt          time.Time
+	State            websitemonitor.Availability
+	Title            string
+	TotalChecks      int
+	SuccessfulChecks int
+	FailedChecks     int
+}
+
+type websiteMonitorDetailView struct {
+	Monitor             websiteMonitorPageView
+	Raw                 websitemonitor.Monitor
+	Snapshot            websitemonitor.DetailSnapshot
+	DetailAvailability  []websiteMonitorAvailabilityBucketView
+	AvailabilityPercent float64
+	AvailabilityLabel   string
+	AverageLatency      time.Duration
+	AverageLatencyLabel string
+	P95Latency          time.Duration
+	P95LatencyLabel     string
+	TotalChecks         int
+	SuccessfulChecks    int
+	FailedChecks        int
+	IncidentCount       int
+	RecentChecks        []websitemonitor.Evidence
+	CurrentIncident     *websitemonitor.IncidentSnapshot
+	Incidents           []websitemonitor.Incident
+	Locale              webLocale
+	CSRFToken           string
+}
+
+type websiteMonitorAPIError struct {
+	Error struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+		Field   string `json:"field,omitempty"`
+	} `json:"error"`
 }
 
 func (a *App) websiteMonitorList(response http.ResponseWriter, request *http.Request) {
@@ -94,7 +173,7 @@ func (a *App) websiteMonitorList(response http.ResponseWriter, request *http.Req
 		http.Error(response, webText(locale, "website.error.invalid_scope_filter"), http.StatusBadRequest)
 		return
 	}
-	monitors, err := a.websiteMonitor.List(request.Context(), websitemonitor.Filter{State: state, Scope: scope})
+	monitors, err := a.websiteMonitorsForPage(request.Context(), state, scope)
 	if err != nil {
 		http.Error(response, webText(locale, "website.error.read_monitors")+": "+err.Error(), http.StatusInternalServerError)
 		return
@@ -116,25 +195,11 @@ func (a *App) websiteMonitorList(response http.ResponseWriter, request *http.Req
 	if encoded := query.Encode(); encoded != "" {
 		view.DataURL += "?" + encoded
 	}
-	for _, monitor := range monitors {
-		view.Monitors = append(view.Monitors, a.newWebsiteMonitorPageView(request.Context(), monitor, locale))
-	}
-	for _, monitor := range all {
-		item := a.newWebsiteMonitorPageView(request.Context(), monitor, locale)
-		switch monitor.State {
-		case websitemonitor.StateUp:
-			view.Counts.Up++
-		case websitemonitor.StateVerifying:
-			view.Counts.Verifying++
-			view.Alerts = append(view.Alerts, item)
-		case websitemonitor.StateDown:
-			view.Counts.Down++
-			view.Alerts = append(view.Alerts, item)
-		case websitemonitor.StatePaused:
-			view.Counts.Paused++
-		}
-	}
-	view.NeedsCare = view.Counts.Verifying + view.Counts.Down
+	snapshot := a.newWebsiteMonitorListDataView(request.Context(), monitors, all, locale)
+	view.Monitors = snapshot.Monitors
+	view.Alerts = snapshot.Alerts
+	view.Counts = snapshot.Counts
+	view.NeedsCare = snapshot.NeedsCare
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = websiteMonitorListTemplate.Execute(response, view)
@@ -145,26 +210,78 @@ func (a *App) websiteMonitorData(response http.ResponseWriter, request *http.Req
 	state := websitemonitor.State(request.URL.Query().Get("state"))
 	scope := websitemonitor.Scope(request.URL.Query().Get("scope"))
 	if !validWebsiteStateFilter(state) || !validWebsiteScopeFilter(scope) {
-		http.Error(response, webText(locale, "website.error.invalid_filter"), http.StatusBadRequest)
+		writeWebsiteMonitorJSONError(response, http.StatusBadRequest,
+			string(websitemonitor.ErrorInvalidInput), webText(locale, "website.error.invalid_filter"), "")
 		return
 	}
-	monitors, err := a.websiteMonitor.List(request.Context(), websitemonitor.Filter{State: state, Scope: scope})
+	monitors, err := a.websiteMonitorsForPage(request.Context(), state, scope)
 	if err != nil {
-		http.Error(response, webText(locale, "website.error.read_monitors")+": "+err.Error(), http.StatusInternalServerError)
+		writeWebsiteMonitorJSONError(response, http.StatusInternalServerError,
+			"read_failed", webText(locale, "website.error.read_monitors"), "")
+		return
+	}
+	all, err := a.websiteMonitor.List(request.Context(), websitemonitor.Filter{})
+	if err != nil {
+		writeWebsiteMonitorJSONError(response, http.StatusInternalServerError,
+			"read_failed", webText(locale, "website.error.summarize_monitors"), "")
 		return
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(response).Encode(struct {
-		Monitors []websiteMonitorPageView `json:"monitors"`
-	}{Monitors: a.websiteMonitorPageViews(request.Context(), monitors, locale)})
+	_ = json.NewEncoder(response).Encode(
+		a.newWebsiteMonitorListDataView(request.Context(), monitors, all, locale),
+	)
 }
 
-func (a *App) websiteMonitorPageViews(ctx context.Context, monitors []websitemonitor.Monitor, locale webLocale) []websiteMonitorPageView {
-	result := make([]websiteMonitorPageView, 0, len(monitors))
-	for _, monitor := range monitors {
-		result = append(result, a.newWebsiteMonitorPageView(ctx, monitor, locale))
+func (a *App) newWebsiteMonitorListDataView(
+	ctx context.Context,
+	monitors []websitemonitor.Monitor,
+	all []websitemonitor.Monitor,
+	locale webLocale,
+) websiteMonitorListDataView {
+	result := websiteMonitorListDataView{
+		Monitors: make([]websiteMonitorPageView, 0, len(monitors)),
+		Total:    len(monitors),
 	}
+	fullIndex := make(map[string]int, len(all))
+	for index, monitor := range all {
+		fullIndex[monitor.ID] = index
+	}
+	viewByID := make(map[string]websiteMonitorPageView, len(monitors))
+	for _, monitor := range monitors {
+		item := a.newWebsiteMonitorPageView(ctx, monitor, locale)
+		if index, ok := fullIndex[monitor.ID]; ok {
+			item.CanMoveUp = index > 0
+			item.CanMoveDown = index < len(all)-1
+		}
+		result.Monitors = append(result.Monitors, item)
+		viewByID[monitor.ID] = item
+	}
+	for index, monitor := range all {
+		item, ok := viewByID[monitor.ID]
+		if !ok {
+			item = a.newWebsiteMonitorPageView(ctx, monitor, locale)
+			item.CanMoveUp = index > 0
+			item.CanMoveDown = index < len(all)-1
+		}
+		switch monitor.State {
+		case websitemonitor.StateUp:
+			result.Counts.Up++
+		case websitemonitor.StatePending, websitemonitor.StateVerifying:
+			result.Counts.Verifying++
+		case websitemonitor.StateDown:
+			result.Counts.Down++
+			if incident, err := a.websiteMonitor.CurrentIncident(ctx, monitor.ID); err == nil && incident != nil {
+				item.IncidentStartedAt = incident.StartedAt
+				item.IncidentDuration = incident.Duration
+				item.IncidentDurationLabel = websiteElapsedLabel(locale, incident.Duration)
+			}
+			result.Alerts = append(result.Alerts, item)
+		case websitemonitor.StatePaused:
+			result.Counts.Paused++
+		}
+	}
+	result.NeedsCare = result.Counts.Verifying + result.Counts.Down
 	return result
 }
 
@@ -197,13 +314,24 @@ func (a *App) websiteMonitorEditTask(response http.ResponseWriter, request *http
 
 func (a *App) websiteMonitorNginxTask(response http.ResponseWriter, request *http.Request) {
 	current := request.Context().Value(sessionContextKey).(session)
-	renderWebsiteMonitorNginx(response, http.StatusOK, websiteMonitorNginxView{
+	view := websiteMonitorNginxView{
 		Locale: resolveWebLocale(request), CSRFToken: current.csrfToken,
-	})
+	}
+	if imported, err := strconv.Atoi(request.URL.Query().Get("imported")); err == nil &&
+		imported > 0 && imported <= 100 {
+		view.ImportedCount = imported
+		view.Success = "imported"
+	}
+	renderWebsiteMonitorNginx(response, http.StatusOK, view)
 }
 
 func (a *App) scanWebsiteMonitorNginx(response http.ResponseWriter, request *http.Request) {
 	if !validSessionCSRF(request) {
+		if websiteMonitorWantsJSON(request) {
+			writeWebsiteMonitorJSONError(response, http.StatusForbidden, "csrf",
+				webText(resolveWebLocale(request), "website.error.csrf"), "")
+			return
+		}
 		http.Error(response, webText(resolveWebLocale(request), "website.error.csrf"), http.StatusForbidden)
 		return
 	}
@@ -212,9 +340,20 @@ func (a *App) scanWebsiteMonitorNginx(response http.ResponseWriter, request *htt
 	current := request.Context().Value(sessionContextKey).(session)
 	locale := resolveWebLocale(request)
 	if err != nil {
+		if websiteMonitorWantsJSON(request) {
+			writeWebsiteMonitorJSONError(response, http.StatusUnprocessableEntity,
+				string(websitemonitor.ErrorInvalidInput), err.Error(), "config_path")
+			return
+		}
 		renderWebsiteMonitorNginx(response, http.StatusUnprocessableEntity, websiteMonitorNginxView{
 			ConfigPath: configPath, Error: err.Error(), Locale: locale, CSRFToken: current.csrfToken,
 		})
+		return
+	}
+	if websiteMonitorWantsJSON(request) {
+		response.Header().Set("Cache-Control", "no-store")
+		response.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(response).Encode(preview)
 		return
 	}
 	renderWebsiteMonitorNginx(response, http.StatusOK, websiteMonitorNginxView{
@@ -224,6 +363,11 @@ func (a *App) scanWebsiteMonitorNginx(response http.ResponseWriter, request *htt
 
 func (a *App) importWebsiteMonitorNginx(response http.ResponseWriter, request *http.Request) {
 	if !validSessionCSRF(request) {
+		if websiteMonitorWantsJSON(request) {
+			writeWebsiteMonitorJSONError(response, http.StatusForbidden, "csrf",
+				webText(resolveWebLocale(request), "website.error.csrf"), "")
+			return
+		}
 		http.Error(response, webText(resolveWebLocale(request), "website.error.csrf"), http.StatusForbidden)
 		return
 	}
@@ -234,6 +378,11 @@ func (a *App) importWebsiteMonitorNginx(response http.ResponseWriter, request *h
 		Digests: request.Form["digest"],
 	})
 	if err != nil {
+		if websiteMonitorWantsJSON(request) {
+			code, field := websiteMonitorOperationError(err, websitemonitor.ErrorConflict)
+			writeWebsiteMonitorJSONError(response, http.StatusUnprocessableEntity, code, err.Error(), field)
+			return
+		}
 		current := request.Context().Value(sessionContextKey).(session)
 		preview, _ := a.websiteMonitor.ScanNginx(request.Context(), websitemonitor.NginxScanRequest{ConfigPath: configPath})
 		renderWebsiteMonitorNginx(response, http.StatusUnprocessableEntity, websiteMonitorNginxView{
@@ -243,7 +392,24 @@ func (a *App) importWebsiteMonitorNginx(response http.ResponseWriter, request *h
 		return
 	}
 	a.recordAudit("import_nginx_website_monitors", fmt.Sprintf("%d monitors", len(imported)), "succeeded", request.RemoteAddr)
-	http.Redirect(response, request, "/monitor/websites", http.StatusSeeOther)
+	if websiteMonitorWantsJSON(request) {
+		response.Header().Set("Cache-Control", "no-store")
+		response.Header().Set("Content-Type", "application/json; charset=utf-8")
+		response.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(response).Encode(struct {
+			ImportedCount int                      `json:"importedCount"`
+			Monitors      []websitemonitor.Monitor `json:"monitors"`
+			RedirectURL   string                   `json:"redirectURL"`
+		}{
+			ImportedCount: len(imported),
+			Monitors:      imported, RedirectURL: "/monitor/websites",
+		})
+		return
+	}
+	http.Redirect(response, request,
+		fmt.Sprintf("/monitor/websites/nginx?imported=%d", len(imported)),
+		http.StatusSeeOther,
+	)
 }
 
 func (a *App) createWebsiteMonitor(response http.ResponseWriter, request *http.Request) {
@@ -294,53 +460,155 @@ func (a *App) updateWebsiteMonitor(response http.ResponseWriter, request *http.R
 }
 
 func (a *App) websiteMonitorDetail(response http.ResponseWriter, request *http.Request) {
-	monitor, err := a.websiteMonitor.Get(request.Context(), request.PathValue("id"))
-	if err != nil || monitor.DeletedAt != nil {
+	snapshot, err := a.websiteMonitor.DetailSnapshot(request.Context(), request.PathValue("id"))
+	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			http.Error(response, webText(resolveWebLocale(request), "website.error.request_canceled"), http.StatusRequestTimeout)
 			return
 		}
-		http.NotFound(response, request)
+		if errors.Is(err, sql.ErrNoRows) {
+			http.NotFound(response, request)
+			return
+		}
+		http.Error(response, webText(resolveWebLocale(request), "website.error.read_monitors")+": "+err.Error(),
+			http.StatusInternalServerError)
 		return
 	}
 	current := request.Context().Value(sessionContextKey).(session)
 	locale := resolveWebLocale(request)
-	incidents, _ := a.websiteMonitor.Incidents(request.Context(), monitor.ID)
+	details := a.newWebsiteMonitorDetailDataView(request.Context(), snapshot, locale)
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = websiteMonitorDetailTemplate.Execute(response, struct {
-		Monitor   websiteMonitorPageView
-		Raw       websitemonitor.Monitor
-		Incidents []websitemonitor.Incident
-		Locale    webLocale
-		CSRFToken string
-	}{
-		Monitor: a.newWebsiteMonitorPageView(request.Context(), monitor, locale), Raw: monitor,
-		Incidents: incidents, Locale: locale, CSRFToken: current.csrfToken,
+	_ = websiteMonitorDetailTemplate.Execute(response, websiteMonitorDetailView{
+		Monitor: details.websiteMonitorPageView, Raw: snapshot.Monitor, Snapshot: snapshot,
+		DetailAvailability:  details.DetailAvailability,
+		AvailabilityPercent: details.AvailabilityPercent,
+		AvailabilityLabel:   details.AvailabilityLabel,
+		AverageLatency:      details.AverageLatency, AverageLatencyLabel: details.AverageLatencyLabel,
+		P95Latency: details.P95Latency, P95LatencyLabel: details.P95LatencyLabel,
+		TotalChecks: details.TotalChecks, SuccessfulChecks: details.SuccessfulChecks,
+		FailedChecks: details.FailedChecks, IncidentCount: details.IncidentCount,
+		RecentChecks: details.RecentChecks, CurrentIncident: details.CurrentIncident,
+		Incidents: details.Incidents, Locale: locale, CSRFToken: current.csrfToken,
 	})
 }
 
 func (a *App) websiteMonitorDetailData(response http.ResponseWriter, request *http.Request) {
-	monitor, err := a.websiteMonitor.Get(request.Context(), request.PathValue("id"))
-	if err != nil || monitor.DeletedAt != nil {
-		http.NotFound(response, request)
+	locale := resolveWebLocale(request)
+	snapshot, err := a.websiteMonitor.DetailSnapshot(request.Context(), request.PathValue("id"))
+	if err != nil {
+		status := http.StatusInternalServerError
+		code := "read_failed"
+		message := webText(locale, "website.error.read_monitors")
+		if errors.Is(err, sql.ErrNoRows) {
+			status = http.StatusNotFound
+			code = string(websitemonitor.ErrorNotFound)
+			message = http.StatusText(http.StatusNotFound)
+		} else if errors.Is(err, context.Canceled) {
+			status = http.StatusRequestTimeout
+			code = "request_canceled"
+			message = webText(locale, "website.error.request_canceled")
+		}
+		writeWebsiteMonitorJSONError(response, status, code, message, "")
 		return
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(response).Encode(a.newWebsiteMonitorPageView(
-		request.Context(), monitor, resolveWebLocale(request),
-	))
+	_ = json.NewEncoder(response).Encode(
+		a.newWebsiteMonitorDetailDataView(request.Context(), snapshot, locale),
+	)
+}
+
+func (a *App) newWebsiteMonitorDetailDataView(
+	ctx context.Context,
+	snapshot websitemonitor.DetailSnapshot,
+	locale webLocale,
+) websiteMonitorDetailDataView {
+	result := websiteMonitorDetailDataView{
+		websiteMonitorPageView: a.newWebsiteMonitorPageView(ctx, snapshot.Monitor, locale),
+		AvailabilityPercent:    snapshot.AvailabilityPercent,
+		AverageLatency:         snapshot.AverageLatency,
+		P95Latency:             snapshot.P95Latency,
+		TotalChecks:            snapshot.TotalChecks,
+		SuccessfulChecks:       snapshot.SuccessfulChecks,
+		FailedChecks:           snapshot.FailedChecks,
+		IncidentCount:          snapshot.IncidentCount,
+		RecentChecks:           append([]websitemonitor.Evidence(nil), snapshot.RecentChecks...),
+		Incidents:              append([]websitemonitor.Incident(nil), snapshot.Incidents...),
+	}
+	if snapshot.CurrentIncident != nil {
+		currentIncident := *snapshot.CurrentIncident
+		currentIncident.Summary = localizeWebsiteMonitorSummary(locale, currentIncident.Summary)
+		result.CurrentIncident = &currentIncident
+	}
+	if snapshot.TotalChecks == 0 {
+		result.AvailabilityLabel = "—"
+		result.AverageLatencyLabel = "—"
+		result.P95LatencyLabel = "—"
+	} else {
+		result.AvailabilityLabel = fmt.Sprintf("%.2f%%", snapshot.AvailabilityPercent)
+		result.AverageLatencyLabel = fmt.Sprintf("%d ms", snapshot.AverageLatency.Milliseconds())
+		result.P95LatencyLabel = fmt.Sprintf("%d ms", snapshot.P95Latency.Milliseconds())
+	}
+	for index := range result.RecentChecks {
+		result.RecentChecks[index].Summary =
+			localizeWebsiteMonitorSummary(locale, result.RecentChecks[index].Summary)
+	}
+	for index := range result.Incidents {
+		result.Incidents[index].Summary =
+			localizeWebsiteMonitorSummary(locale, result.Incidents[index].Summary)
+	}
+	result.DetailAvailability = make(
+		[]websiteMonitorAvailabilityBucketView, 0, len(snapshot.Availability),
+	)
+	for _, bucket := range snapshot.Availability {
+		endedAt := bucket.StartedAt.Add(20 * time.Minute)
+		result.DetailAvailability = append(result.DetailAvailability, websiteMonitorAvailabilityBucketView{
+			StartedAt: bucket.StartedAt, EndedAt: endedAt, State: bucket.State,
+			Title: fmt.Sprintf("%s–%s · %s",
+				bucket.StartedAt.Format("2006-01-02 15:04"),
+				endedAt.Format("15:04"),
+				websiteAvailabilityLabel(locale, bucket.State)),
+			TotalChecks: bucket.TotalChecks, SuccessfulChecks: bucket.SuccessfulChecks,
+			FailedChecks: bucket.FailedChecks,
+		})
+	}
+	return result
 }
 
 func (a *App) checkWebsiteMonitorNow(response http.ResponseWriter, request *http.Request) {
 	locale := resolveWebLocale(request)
 	if !validSessionCSRF(request) {
+		if websiteMonitorWantsJSON(request) {
+			writeWebsiteMonitorJSONError(response, http.StatusForbidden, "csrf",
+				webText(locale, "website.error.csrf"), "")
+			return
+		}
 		http.Error(response, webText(locale, "website.error.csrf"), http.StatusForbidden)
 		return
 	}
 	if err := a.websiteMonitor.CheckNow(request.Context(), request.PathValue("id")); err != nil {
+		if websiteMonitorWantsJSON(request) {
+			code := string(websitemonitor.ErrorConflict)
+			status := http.StatusConflict
+			if errors.Is(err, sql.ErrNoRows) {
+				code = string(websitemonitor.ErrorNotFound)
+				status = http.StatusNotFound
+			}
+			writeWebsiteMonitorJSONError(response, status, code,
+				webText(locale, "website.error.check_now")+": "+err.Error(), "")
+			return
+		}
 		http.Error(response, webText(locale, "website.error.check_now")+": "+err.Error(), http.StatusConflict)
+		return
+	}
+	if websiteMonitorWantsJSON(request) {
+		response.Header().Set("Cache-Control", "no-store")
+		response.Header().Set("Content-Type", "application/json; charset=utf-8")
+		response.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(response).Encode(map[string]string{
+			"status": "checking", "monitorID": request.PathValue("id"),
+		})
 		return
 	}
 	http.Redirect(response, request, "/monitor/websites/"+request.PathValue("id"), http.StatusSeeOther)
@@ -349,28 +617,77 @@ func (a *App) checkWebsiteMonitorNow(response http.ResponseWriter, request *http
 func (a *App) pauseWebsiteMonitor(response http.ResponseWriter, request *http.Request) {
 	locale := resolveWebLocale(request)
 	if !validSessionCSRF(request) {
+		if websiteMonitorWantsJSON(request) {
+			writeWebsiteMonitorJSONError(response, http.StatusForbidden, "csrf",
+				webText(locale, "website.error.csrf"), "")
+			return
+		}
 		http.Error(response, webText(locale, "website.error.csrf"), http.StatusForbidden)
 		return
 	}
 	if err := a.websiteMonitor.Pause(request.Context(), request.PathValue("id")); err != nil {
+		if websiteMonitorWantsJSON(request) {
+			code := string(websitemonitor.ErrorConflict)
+			status := http.StatusConflict
+			if errors.Is(err, sql.ErrNoRows) {
+				code = string(websitemonitor.ErrorNotFound)
+				status = http.StatusNotFound
+			}
+			writeWebsiteMonitorJSONError(response, status, code,
+				webText(locale, "website.error.pause")+": "+err.Error(), "")
+			return
+		}
 		http.Error(response, webText(locale, "website.error.pause")+": "+err.Error(), http.StatusConflict)
 		return
 	}
 	a.recordAudit("pause_website_monitor", request.PathValue("id"), "succeeded", request.RemoteAddr)
+	if websiteMonitorWantsJSON(request) {
+		response.Header().Set("Cache-Control", "no-store")
+		response.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(response).Encode(map[string]string{
+			"status": "paused", "monitorID": request.PathValue("id"),
+		})
+		return
+	}
 	http.Redirect(response, request, "/monitor/websites/"+request.PathValue("id"), http.StatusSeeOther)
 }
 
 func (a *App) resumeWebsiteMonitor(response http.ResponseWriter, request *http.Request) {
 	locale := resolveWebLocale(request)
 	if !validSessionCSRF(request) {
+		if websiteMonitorWantsJSON(request) {
+			writeWebsiteMonitorJSONError(response, http.StatusForbidden, "csrf",
+				webText(locale, "website.error.csrf"), "")
+			return
+		}
 		http.Error(response, webText(locale, "website.error.csrf"), http.StatusForbidden)
 		return
 	}
 	if err := a.websiteMonitor.Resume(request.Context(), request.PathValue("id")); err != nil {
+		if websiteMonitorWantsJSON(request) {
+			code := string(websitemonitor.ErrorConflict)
+			status := http.StatusConflict
+			if errors.Is(err, sql.ErrNoRows) {
+				code = string(websitemonitor.ErrorNotFound)
+				status = http.StatusNotFound
+			}
+			writeWebsiteMonitorJSONError(response, status, code,
+				webText(locale, "website.error.resume")+": "+err.Error(), "")
+			return
+		}
 		http.Error(response, webText(locale, "website.error.resume")+": "+err.Error(), http.StatusConflict)
 		return
 	}
 	a.recordAudit("resume_website_monitor", request.PathValue("id"), "succeeded", request.RemoteAddr)
+	if websiteMonitorWantsJSON(request) {
+		response.Header().Set("Cache-Control", "no-store")
+		response.Header().Set("Content-Type", "application/json; charset=utf-8")
+		response.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(response).Encode(map[string]string{
+			"status": "checking", "monitorID": request.PathValue("id"),
+		})
+		return
+	}
 	http.Redirect(response, request, "/monitor/websites/"+request.PathValue("id"), http.StatusSeeOther)
 }
 
@@ -457,6 +774,35 @@ func renderWebsiteMonitorNginx(response http.ResponseWriter, status int, view we
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	response.WriteHeader(status)
 	_ = websiteMonitorNginxTemplate.Execute(response, view)
+}
+
+func websiteMonitorWantsJSON(request *http.Request) bool {
+	return strings.Contains(strings.ToLower(request.Header.Get("Accept")), "application/json")
+}
+
+func writeWebsiteMonitorJSONError(
+	response http.ResponseWriter,
+	status int,
+	code string,
+	message string,
+	field string,
+) {
+	payload := websiteMonitorAPIError{}
+	payload.Error.Code = code
+	payload.Error.Message = message
+	payload.Error.Field = field
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Content-Type", "application/json; charset=utf-8")
+	response.WriteHeader(status)
+	_ = json.NewEncoder(response).Encode(payload)
+}
+
+func websiteMonitorOperationError(err error, fallback websitemonitor.ErrorCode) (string, string) {
+	var operationError *websitemonitor.OperationError
+	if errors.As(err, &operationError) {
+		return string(operationError.Code), operationError.Field
+	}
+	return string(fallback), ""
 }
 
 func websiteMonitorConfigFromRequest(request *http.Request) (websitemonitor.Config, map[string]string) {
@@ -546,6 +892,27 @@ func validWebsiteStateFilter(value websitemonitor.State) bool {
 	}
 }
 
+func (a *App) websiteMonitorsForPage(
+	ctx context.Context,
+	state websitemonitor.State,
+	scope websitemonitor.Scope,
+) ([]websitemonitor.Monitor, error) {
+	if state != websitemonitor.StateVerifying {
+		return a.websiteMonitor.List(ctx, websitemonitor.Filter{State: state, Scope: scope})
+	}
+	candidates, err := a.websiteMonitor.List(ctx, websitemonitor.Filter{Scope: scope})
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]websitemonitor.Monitor, 0, len(candidates))
+	for _, monitor := range candidates {
+		if monitor.State == websitemonitor.StatePending || monitor.State == websitemonitor.StateVerifying {
+			filtered = append(filtered, monitor)
+		}
+	}
+	return filtered, nil
+}
+
 func validWebsiteScopeFilter(value websitemonitor.Scope) bool {
 	return value == "" || value == websitemonitor.ScopeLocal || value == websitemonitor.ScopeExternal
 }
@@ -562,6 +929,7 @@ func (a *App) newWebsiteMonitorPageView(ctx context.Context, monitor websitemoni
 		FrequencyLabel: websiteDurationLabel(locale, monitor.Config.Frequency),
 		TimeoutLabel:   websiteDurationLabel(locale, monitor.Config.Timeout),
 		Certificate:    monitor.Latest.Certificate, SortOrder: monitor.SortOrder,
+		FailureCount: monitor.FailureCount, NextCheckAt: monitor.NextCheckAt,
 	}
 	if monitor.Config.Kind == websitemonitor.KindWebSocket {
 		view.MethodLabel = "WebSocket"
@@ -582,7 +950,7 @@ func (a *App) newWebsiteMonitorPageView(ctx context.Context, monitor websitemoni
 		view.LatencyLabel = "—"
 	}
 	view.SecurityTone, view.SecurityTitle, view.SecurityDescription = websiteSecuritySummary(locale, monitor)
-	view.TLSAttention = monitor.Latest.Certificate.DaysRemaining > 0 &&
+	view.TLSAttention = !monitor.Latest.Certificate.NotAfter.IsZero() &&
 		monitor.Latest.Certificate.DaysRemaining <= 14
 	history, err := a.websiteMonitor.Availability24h(ctx, monitor.ID)
 	if err != nil || len(history) != 48 {
@@ -634,10 +1002,22 @@ func websiteSecuritySummary(locale webLocale, monitor websitemonitor.Monitor) (s
 	if monitor.Latest.CheckedAt.IsZero() || monitor.Latest.Certificate.NotAfter.IsZero() {
 		return "neutral", webText(locale, "website.security.unavailable_title"), webText(locale, "website.security.unavailable_description")
 	}
+	if !monitor.Latest.Certificate.NotAfter.After(monitor.Latest.CheckedAt) {
+		if locale == localeSimplifiedChinese {
+			return "danger", "证书已过期", "最近一次连接读取到的证书已经超过有效期。"
+		}
+		return "danger", "Certificate expired", "The certificate read during the latest connection is past its validity period."
+	}
 	if monitor.Config.SkipTLSVerification {
 		return "warning", webText(locale, "website.security.verification_off_title"), webText(locale, "website.security.verification_off_description")
 	}
 	if monitor.Latest.Certificate.DaysRemaining <= 14 {
+		if monitor.Latest.Certificate.DaysRemaining <= 0 {
+			if locale == localeSimplifiedChinese {
+				return "warning", "证书将在 24 小时内到期", "请尽快更新证书，避免检查因 TLS 验证失败转为故障。"
+			}
+			return "warning", "Certificate expires within 24 hours", "Renew the certificate soon to avoid a TLS verification failure."
+		}
 		expiryKey := "website.security.expires_in_days"
 		if monitor.Latest.Certificate.DaysRemaining == 1 {
 			expiryKey = "website.security.expires_in_day"
@@ -668,6 +1048,60 @@ func websiteDurationLabel(locale webLocale, duration time.Duration) string {
 		return "1 second"
 	}
 	return fmt.Sprintf("%d seconds", seconds)
+}
+
+func websiteElapsedLabel(locale webLocale, duration time.Duration) string {
+	if duration < 0 {
+		duration = 0
+	}
+	totalSeconds := int64(duration / time.Second)
+	days := totalSeconds / 86400
+	hours := totalSeconds % 86400 / 3600
+	minutes := totalSeconds % 3600 / 60
+	seconds := totalSeconds % 60
+	if locale == localeSimplifiedChinese {
+		switch {
+		case days > 0:
+			return fmt.Sprintf("%d 天 %d 小时", days, hours)
+		case hours > 0:
+			return fmt.Sprintf("%d 小时 %d 分钟", hours, minutes)
+		case minutes > 0:
+			return fmt.Sprintf("%d 分 %d 秒", minutes, seconds)
+		default:
+			return fmt.Sprintf("%d 秒", seconds)
+		}
+	}
+	switch {
+	case days > 0:
+		return fmt.Sprintf("%dd %dh", days, hours)
+	case hours > 0:
+		return fmt.Sprintf("%dh %dm", hours, minutes)
+	case minutes > 0:
+		return fmt.Sprintf("%dm %ds", minutes, seconds)
+	default:
+		return fmt.Sprintf("%ds", seconds)
+	}
+}
+
+func websiteAvailabilityLabel(locale webLocale, availability websitemonitor.Availability) string {
+	if locale == localeSimplifiedChinese {
+		switch availability {
+		case websitemonitor.AvailabilityUp:
+			return "正常"
+		case websitemonitor.AvailabilityDown:
+			return "故障"
+		default:
+			return "无检查"
+		}
+	}
+	switch availability {
+	case websitemonitor.AvailabilityUp:
+		return "Up"
+	case websitemonitor.AvailabilityDown:
+		return "Down"
+	default:
+		return "No check"
+	}
 }
 
 func localizeWebsiteMonitorSummary(locale webLocale, summary string) string {

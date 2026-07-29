@@ -133,6 +133,64 @@ func (a *App) unpinApplication(response http.ResponseWriter, request *http.Reque
 	http.Redirect(response, request, "/monitor/applications", http.StatusSeeOther)
 }
 
+func (a *App) applicationDetails(response http.ResponseWriter, request *http.Request) {
+	response.Header().Set("Cache-Control", "no-store")
+	if _, err := a.loadApplications(request, appstatus.Query{Limit: 1}); err != nil {
+		writeApplicationJSONError(response, http.StatusInternalServerError, "snapshot_unavailable", "Unable to read application status")
+		return
+	}
+	details, err := a.applicationStatus.Details(
+		request.Context(),
+		request.PathValue("id"),
+		request.URL.Query().Get("range"),
+	)
+	if errors.Is(err, appstatus.ErrApplicationNotFound) {
+		writeApplicationJSONError(response, http.StatusNotFound, "application_not_found", "Application not found")
+		return
+	}
+	if err != nil {
+		if errors.Is(err, appstatus.ErrUnsupportedHistoryRange) {
+			writeApplicationJSONError(response, http.StatusBadRequest, "invalid_history_range", "Invalid application history range")
+			return
+		}
+		writeApplicationJSONError(response, http.StatusInternalServerError, "details_unavailable", "Unable to read application details")
+		return
+	}
+	response.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(response).Encode(details)
+}
+
+func writeApplicationJSONError(response http.ResponseWriter, status int, code, message string) {
+	response.Header().Set("Content-Type", "application/json; charset=utf-8")
+	response.WriteHeader(status)
+	_ = json.NewEncoder(response).Encode(map[string]any{
+		"error": map[string]string{"code": code, "message": message},
+	})
+}
+
+func (a *App) movePinnedApplication(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "CSRF validation failed", http.StatusForbidden)
+		return
+	}
+	id := request.PathValue("id")
+	direction := request.FormValue("direction")
+	if err := a.applicationStatus.MovePin(request.Context(), id, direction); err != nil {
+		http.Error(response, "Unable to move pinned application", http.StatusBadRequest)
+		return
+	}
+	a.recordAudit("move_pinned_application", id, "succeeded", request.RemoteAddr)
+	if acceptsJSON(request) {
+		response.Header().Set("Cache-Control", "no-store")
+		response.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(response).Encode(map[string]string{
+			"id": id, "direction": strings.ToLower(strings.TrimSpace(direction)),
+		})
+		return
+	}
+	http.Redirect(response, request, "/monitor/applications", http.StatusSeeOther)
+}
+
 func applicationSortLinks(query appstatus.Query) map[string]applicationSortLink {
 	result := make(map[string]applicationSortLink)
 	for _, field := range []string{"pinned", "name", "cpu", "memory", "read", "write", "processes"} {

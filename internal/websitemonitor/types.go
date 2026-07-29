@@ -2,6 +2,7 @@ package websitemonitor
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -117,6 +118,7 @@ type Monitor struct {
 	State        State
 	FailureCount int
 	SortOrder    int
+	NextCheckAt  time.Time
 	Latest       Evidence
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
@@ -141,6 +143,90 @@ const (
 	AvailabilityUp   Availability = "up"
 	AvailabilityDown Availability = "down"
 )
+
+// AvailabilityBucket describes one twenty-minute segment in a detail
+// snapshot. A failed check wins the bucket state so a short outage remains
+// visible even when a later check recovered inside the same segment.
+type AvailabilityBucket struct {
+	StartedAt        time.Time
+	State            Availability
+	TotalChecks      int
+	SuccessfulChecks int
+	FailedChecks     int
+}
+
+// IncidentSnapshot adds live scheduling context to the currently open
+// incident. FailureCount is the monitor's current consecutive failure count.
+type IncidentSnapshot struct {
+	Incident
+	FailureCount int
+	Duration     time.Duration
+	NextCheckAt  time.Time
+}
+
+// DetailSnapshot is the complete read model used by the website detail
+// surface. Statistics and recent checks cover the preceding 24 hours.
+type DetailSnapshot struct {
+	Monitor             Monitor
+	Availability        []AvailabilityBucket
+	AvailabilityPercent float64
+	AverageLatency      time.Duration
+	P95Latency          time.Duration
+	TotalChecks         int
+	SuccessfulChecks    int
+	FailedChecks        int
+	IncidentCount       int
+	RecentChecks        []Evidence
+	CurrentIncident     *IncidentSnapshot
+	Incidents           []Incident
+}
+
+type ErrorCode string
+
+const (
+	ErrorSelectionRequired ErrorCode = "selection_required"
+	ErrorDuplicate         ErrorCode = "duplicate"
+	ErrorStaleScan         ErrorCode = "stale_scan"
+	ErrorInvalidInput      ErrorCode = "invalid_input"
+	ErrorConflict          ErrorCode = "conflict"
+	ErrorNotFound          ErrorCode = "not_found"
+)
+
+// OperationError gives browser clients a stable error code while preserving a
+// useful human-readable message for the no-JavaScript HTML flow.
+type OperationError struct {
+	Code    ErrorCode
+	Message string
+	Field   string
+	Err     error
+}
+
+func (e *OperationError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.Message != "" {
+		return e.Message
+	}
+	if e.Err != nil {
+		return e.Err.Error()
+	}
+	return string(e.Code)
+}
+
+func (e *OperationError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+func operationError(code ErrorCode, message, field string, err error) error {
+	if message == "" && err == nil {
+		message = fmt.Sprintf("website monitor operation failed: %s", code)
+	}
+	return &OperationError{Code: code, Message: message, Field: field, Err: err}
+}
 
 type Filter struct {
 	State          State

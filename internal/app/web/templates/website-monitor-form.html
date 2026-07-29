@@ -8,15 +8,15 @@
 <title>{{if .Editing}}{{t .Locale "website.form.edit_title"}} · {{.Config.Name}}{{else}}{{t .Locale "website.form.add_title"}}{{end}} · {{t .Locale "website.title"}} · ScriptBoard</title>
 </head>
 <body>
-<main class="workspace website-task-page">
+<main class="workspace website-task-page" data-task-page data-task-kind="{{if .Editing}}website-edit{{else}}website-new{{end}}" data-task-close-label="{{t .Locale "common.close"}}">
 <header class="website-task-heading">
 <a href="/monitor/websites">{{t .Locale "website.back"}}</a>
-<p class="website-kicker">MONITOR / {{if .Editing}}EDIT{{else}}ADD{{end}}</p>
+<p class="website-kicker">{{if .Editing}}{{t .Locale "website.form.edit_eyebrow"}}{{else}}{{t .Locale "website.form.add_eyebrow"}}{{end}}</p>
 <h1>{{if .Editing}}{{t .Locale "website.form.edit_title"}}{{else}}{{t .Locale "website.form.add_title"}}{{end}}</h1>
 <p>{{if .Editing}}{{t .Locale "website.form.edit_description"}}{{else}}{{t .Locale "website.form.add_description"}}{{end}}</p>
 </header>
 {{with index .Errors "form"}}<p class="page-error" role="alert">{{.}}</p>{{end}}
-<form class="website-monitor-form" method="post" action="{{if .Editing}}/monitor/websites/{{.ID}}{{else}}/monitor/websites{{end}}" data-website-monitor-form data-ping-invalid="{{t .Locale "website.form.ping_invalid"}}" data-ping-decoded="{{t .Locale "website.form.ping_decoded"}}" data-ping-bytes="{{t .Locale "website.form.bytes"}}" data-ping-format-mismatch="{{t .Locale "website.form.ping_format_mismatch"}}" data-ping-too-large="{{t .Locale "website.form.ping_too_large"}}">
+<form class="website-monitor-form" method="post" action="{{if .Editing}}/monitor/websites/{{.ID}}{{else}}/monitor/websites{{end}}" data-website-monitor-form data-async data-http-placeholder="{{t .Locale "website.form.http_url_placeholder"}}" data-websocket-placeholder="{{t .Locale "website.form.websocket_url_placeholder"}}" data-http-url-hint="{{t .Locale "website.form.http_url_hint"}}" data-websocket-url-hint="{{t .Locale "website.form.websocket_url_hint"}}" data-send-text-label="{{t .Locale "website.form.send_payload_text"}}" data-send-binary-label="{{t .Locale "website.form.send_payload_binary"}}" data-send-text-hint="{{t .Locale "website.form.text_payload_hint"}}" data-send-binary-hint="{{t .Locale "website.form.binary_payload_hint"}}" data-expected-text-label="{{t .Locale "website.form.expected_text"}}" data-expected-binary-label="{{t .Locale "website.form.expected_binary"}}" data-expected-text-hint="{{t .Locale "website.form.text_payload_hint"}}" data-expected-binary-hint="{{t .Locale "website.form.binary_payload_hint"}}" data-ping-invalid="{{t .Locale "website.form.ping_invalid"}}" data-ping-decoded="{{t .Locale "website.form.ping_decoded"}}" data-ping-bytes="{{t .Locale "website.form.bytes"}}" data-ping-format-mismatch="{{t .Locale "website.form.ping_format_mismatch"}}" data-ping-too-large="{{t .Locale "website.form.ping_too_large"}}">
 <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
 <fieldset>
 <legend>{{t .Locale "website.form.identity"}}</legend>
@@ -31,7 +31,8 @@
 </select>
 </label>
 <label>URL
-<input name="url" value="{{.Config.URL}}" autocomplete="off" spellcheck="false" placeholder="https://example.com/health" required>
+<input name="url" value="{{.Config.URL}}" autocomplete="off" spellcheck="false" placeholder="{{t .Locale "website.form.http_url_placeholder"}}" data-monitor-url required>
+<span class="field-hint" data-monitor-url-hint>{{t .Locale "website.form.http_url_hint"}}</span>
 {{with index .Errors "url"}}<span class="field-error">{{.}}</span>{{end}}
 </label>
 <div class="website-form-pair">
@@ -71,7 +72,7 @@
 <label>{{t .Locale "website.form.request_method"}}
 <select name="http_method" data-http-method><option value="GET" {{if eq .Config.HTTPMethod "GET"}}selected{{end}}>GET</option><option value="POST" {{if eq .Config.HTTPMethod "POST"}}selected{{end}}>POST</option></select>
 </label>
-<label>{{t .Locale "website.form.content_type"}}
+<label data-http-post-field>{{t .Locale "website.form.content_type"}}
 <select name="http_content_type"><option value="application/json" {{if eq .Config.HTTPContentType "application/json"}}selected{{end}}>application/json</option><option value="application/x-www-form-urlencoded" {{if eq .Config.HTTPContentType "application/x-www-form-urlencoded"}}selected{{end}}>application/x-www-form-urlencoded</option><option value="text/plain" {{if eq .Config.HTTPContentType "text/plain"}}selected{{end}}>text/plain</option></select>
 </label>
 </div>
@@ -80,9 +81,9 @@
 </label>
 <div class="website-form-pair">
 <label>{{t .Locale "website.form.status_rule"}}
-<select name="http_success_mode"><option value="range" {{if eq .Config.HTTPSuccessMode "range"}}selected{{end}}>200–399</option><option value="exact" {{if eq .Config.HTTPSuccessMode "exact"}}selected{{end}}>{{t .Locale "website.form.exact_statuses"}}</option></select>
+<select name="http_success_mode" data-http-success-mode><option value="range" {{if eq .Config.HTTPSuccessMode "range"}}selected{{end}}>200–399</option><option value="exact" {{if eq .Config.HTTPSuccessMode "exact"}}selected{{end}}>{{t .Locale "website.form.exact_statuses"}}</option></select>
 </label>
-<label>{{t .Locale "website.form.exact_statuses"}}
+<label data-exact-statuses-field>{{t .Locale "website.form.exact_statuses"}}
 <input name="expected_statuses" value="{{.ExpectedStatusesText}}" inputmode="numeric" autocomplete="off" placeholder="{{t .Locale "website.form.statuses_placeholder"}}">
 {{with index .Errors "expected_statuses"}}<span class="field-error">{{.}}</span>{{end}}
 </label>
@@ -110,18 +111,20 @@
 <header><strong>{{t .Locale "website.form.application_message"}}</strong><span>{{t .Locale "website.form.application_frames_only"}}</span></header>
 <div class="website-form-pair">
 <label>{{t .Locale "website.form.send_type"}}
-<select name="send_type"><option value="none" {{if or (eq .Config.SendType "") (eq .Config.SendType "none")}}selected{{end}}>{{t .Locale "website.form.send_none"}}</option><option value="text" {{if eq .Config.SendType "text"}}selected{{end}}>{{t .Locale "website.form.text_frame"}}</option><option value="binary" {{if eq .Config.SendType "binary"}}selected{{end}}>{{t .Locale "website.form.binary_frame"}}</option></select>
+<select name="send_type" data-websocket-send-type><option value="none" {{if or (eq .Config.SendType "") (eq .Config.SendType "none")}}selected{{end}}>{{t .Locale "website.form.send_none"}}</option><option value="text" {{if eq .Config.SendType "text"}}selected{{end}}>{{t .Locale "website.form.text_frame"}}</option><option value="binary" {{if eq .Config.SendType "binary"}}selected{{end}}>{{t .Locale "website.form.binary_frame"}}</option></select>
 </label>
 <label>{{t .Locale "website.form.receive_type"}}
-<select name="receive_type"><option value="text" {{if or (eq .Config.ReceiveType "") (eq .Config.ReceiveType "text")}}selected{{end}}>{{t .Locale "website.form.text_frame"}}</option><option value="binary" {{if eq .Config.ReceiveType "binary"}}selected{{end}}>{{t .Locale "website.form.binary_frame"}}</option></select>
+<select name="receive_type" data-websocket-receive-type><option value="text" {{if or (eq .Config.ReceiveType "") (eq .Config.ReceiveType "text")}}selected{{end}}>{{t .Locale "website.form.text_frame"}}</option><option value="binary" {{if eq .Config.ReceiveType "binary"}}selected{{end}}>{{t .Locale "website.form.binary_frame"}}</option></select>
 </label>
 </div>
-<label>{{t .Locale "website.form.send_payload"}}
+<label data-websocket-send-payload><span data-send-payload-label>{{if eq .Config.SendType "binary"}}{{t .Locale "website.form.send_payload_binary"}}{{else}}{{t .Locale "website.form.send_payload_text"}}{{end}}</span>
 <textarea name="send_payload" spellcheck="false">{{.Config.SendPayload}}</textarea>
+<span class="field-hint" data-send-payload-hint>{{if eq .Config.SendType "binary"}}{{t .Locale "website.form.binary_payload_hint"}}{{else}}{{t .Locale "website.form.text_payload_hint"}}{{end}}</span>
 {{with index .Errors "send_payload"}}<span class="field-error">{{.}}</span>{{end}}
 </label>
-<label>{{t .Locale "website.form.expected_message"}}
+<label><span data-expected-message-label>{{if eq .Config.ReceiveType "binary"}}{{t .Locale "website.form.expected_binary"}}{{else}}{{t .Locale "website.form.expected_text"}}{{end}}</span>
 <input name="expected_message" value="{{.Config.ExpectedMessage}}" autocomplete="off" spellcheck="false">
+<span class="field-hint" data-expected-message-hint>{{if eq .Config.ReceiveType "binary"}}{{t .Locale "website.form.binary_payload_hint"}}{{else}}{{t .Locale "website.form.text_payload_hint"}}{{end}}</span>
 </label>
 </section>
 <section class="website-protocol-box" data-websocket-ping-fields>
@@ -129,7 +132,7 @@
 <label>{{t .Locale "website.form.ping_format"}}
 <select name="ping_payload_format"><option value="none" {{if or (eq .Config.PingPayloadFormat "") (eq .Config.PingPayloadFormat "none")}}selected{{end}}>{{t .Locale "website.form.none_default"}}</option><option value="text" {{if eq .Config.PingPayloadFormat "text"}}selected{{end}}>UTF-8</option><option value="hex" {{if eq .Config.PingPayloadFormat "hex"}}selected{{end}}>Hex</option><option value="base64" {{if eq .Config.PingPayloadFormat "base64"}}selected{{end}}>Base64</option></select>
 </label>
-<label>{{t .Locale "website.form.ping_payload"}}
+<label data-ping-payload-field>{{t .Locale "website.form.ping_payload"}}
 <textarea name="ping_payload" spellcheck="false">{{.Config.PingPayload}}</textarea>
 <span class="field-hint">{{t .Locale "website.form.ping_payload_hint"}}<b data-ping-byte-count aria-live="polite"></b></span>
 </label>
@@ -138,7 +141,7 @@
 <label class="website-check-row"><input type="checkbox" name="verify_tls" value="1" {{if not .Config.SkipTLSVerification}}checked{{end}}>{{t .Locale "website.form.verify_wss"}}</label>
 </fieldset>
 
-<footer class="website-form-actions"><a href="{{if .Editing}}/monitor/websites/{{.ID}}{{else}}/monitor/websites{{end}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit" data-pending-label="{{t .Locale "website.form.saving"}}">{{if .Editing}}{{t .Locale "website.form.save_again"}}{{else}}{{t .Locale "website.form.save"}}{{end}}</button></footer>
+<footer class="website-form-actions"><a href="{{if .Editing}}/monitor/websites/{{.ID}}{{else}}/monitor/websites{{end}}" data-task-link>{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit" data-pending-label="{{t .Locale "website.form.saving"}}">{{if .Editing}}{{t .Locale "website.form.save_again"}}{{else}}{{t .Locale "website.form.save"}}{{end}}</button></footer>
 </form>
 </main>
 </body>

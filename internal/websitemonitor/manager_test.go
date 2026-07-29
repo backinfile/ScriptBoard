@@ -89,6 +89,10 @@ func TestTwoConsecutiveFailuresConfirmAnIncident(t *testing.T) {
 	if len(incidents) != 1 || !incidents[0].EndedAt.IsZero() {
 		t.Fatalf("incidents = %#v, want one open incident", incidents)
 	}
+	if !incidents[0].StartedAt.Equal(verifying.Latest.CheckedAt) {
+		t.Fatalf("incident started at %v, want first failure at %v",
+			incidents[0].StartedAt, verifying.Latest.CheckedAt)
+	}
 }
 
 func TestPingPongRequiresAMatchingPongControlFrame(t *testing.T) {
@@ -485,6 +489,107 @@ func TestAvailabilityUsesPersistedChecksAndMaintainsBoundedHistory(t *testing.T)
 		now.Add(-30*24*time.Hour).Truncate(time.Hour).UnixNano()).Scan(&oldAggregates)
 	if oldResults != 0 || oldAggregates != 0 {
 		t.Fatalf("retention left raw=%d aggregate=%d", oldResults, oldAggregates)
+	}
+}
+
+func TestDetailSnapshotAggregatesTwentyMinuteHistoryAndActiveIncident(t *testing.T) {
+	now := time.Date(2026, time.July, 29, 12, 17, 0, 0, time.UTC)
+	manager := newTestManager(t, Options{
+		Now: func() time.Time { return now },
+		Probe: probeFunc(func(context.Context, Config) Evidence {
+			return Evidence{Success: true, StatusCode: http.StatusOK, Latency: time.Millisecond}
+		}),
+	})
+	created, err := manager.Create(context.Background(), Config{
+		Name: "详情统计网站", Kind: KindHTTP, URL: "https://detail.example/",
+		Frequency: time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForMonitor(t, manager, created.ID, func(value Monitor) bool { return value.State == StateUp })
+
+	if _, err := manager.db.Exec(`DELETE FROM website_check_results WHERE monitor_id = ?`, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	checks := []struct {
+		ago     time.Duration
+		success bool
+		latency int
+		summary string
+	}{
+		{2 * time.Minute, false, 100, "最近检查失败"},
+		{9 * time.Minute, false, 50, "再次失败"},
+		{31 * time.Minute, true, 40, "正常"},
+		{49 * time.Minute, true, 30, "正常"},
+		{2 * time.Hour, true, 20, "正常"},
+		{23 * time.Hour, true, 10, "正常"},
+	}
+	for _, check := range checks {
+		if _, err := manager.db.Exec(`INSERT INTO website_check_results
+			(monitor_id, checked_at, success, status_code, latency_ms, error_category, summary)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			created.ID, now.Add(-check.ago).UnixNano(), check.success, http.StatusOK,
+			check.latency, "connect", check.summary); err != nil {
+			t.Fatal(err)
+		}
+	}
+	nextCheckAt := now.Add(10 * time.Second)
+	if _, err := manager.db.Exec(`UPDATE website_monitors SET
+		state = 'down', failure_count = 3, next_check_at = ? WHERE id = ?`,
+		nextCheckAt.UnixNano(), created.ID); err != nil {
+		t.Fatal(err)
+	}
+	activeStartedAt := now.Add(-5 * time.Minute)
+	if _, err := manager.db.Exec(`INSERT INTO website_incidents
+		(id, monitor_id, started_at, start_category, start_summary)
+		VALUES ('active', ?, ?, 'connect', '连接失败')`,
+		created.ID, activeStartedAt.UnixNano()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.db.Exec(`INSERT INTO website_incidents
+		(id, monitor_id, started_at, ended_at, start_category, start_summary, close_reason)
+		VALUES ('closed', ?, ?, ?, 'http', 'HTTP 500', 'recovered')`,
+		created.ID, now.Add(-4*time.Hour).UnixNano(), now.Add(-3*time.Hour).UnixNano()); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot, err := manager.DetailSnapshot(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("detail snapshot: %v", err)
+	}
+	if len(snapshot.Availability) != 72 {
+		t.Fatalf("availability buckets = %d, want 72", len(snapshot.Availability))
+	}
+	if last := snapshot.Availability[len(snapshot.Availability)-1]; last.State != AvailabilityDown ||
+		last.TotalChecks != 2 || last.FailedChecks != 2 {
+		t.Fatalf("latest availability bucket = %#v", last)
+	}
+	if snapshot.TotalChecks != 6 || snapshot.SuccessfulChecks != 4 ||
+		snapshot.FailedChecks != 2 {
+		t.Fatalf("check totals = %#v", snapshot)
+	}
+	if snapshot.AvailabilityPercent < 66.66 || snapshot.AvailabilityPercent > 66.67 {
+		t.Fatalf("availability percent = %f, want about 66.67", snapshot.AvailabilityPercent)
+	}
+	if snapshot.AverageLatency != 41*time.Millisecond ||
+		snapshot.P95Latency != 100*time.Millisecond {
+		t.Fatalf("latency average=%v p95=%v", snapshot.AverageLatency, snapshot.P95Latency)
+	}
+	if len(snapshot.RecentChecks) != 5 ||
+		snapshot.RecentChecks[0].Summary != "最近检查失败" {
+		t.Fatalf("recent checks = %#v", snapshot.RecentChecks)
+	}
+	if snapshot.IncidentCount != 2 || snapshot.CurrentIncident == nil {
+		t.Fatalf("incidents = %#v", snapshot)
+	}
+	if snapshot.CurrentIncident.FailureCount != 3 ||
+		snapshot.CurrentIncident.Duration != 5*time.Minute ||
+		!snapshot.CurrentIncident.NextCheckAt.Equal(nextCheckAt) {
+		t.Fatalf("active incident = %#v", snapshot.CurrentIncident)
+	}
+	if !snapshot.Monitor.NextCheckAt.Equal(nextCheckAt) {
+		t.Fatalf("monitor next check = %v, want %v", snapshot.Monitor.NextCheckAt, nextCheckAt)
 	}
 }
 

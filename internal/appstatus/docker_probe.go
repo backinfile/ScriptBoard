@@ -113,7 +113,7 @@ func (c *dockerCollector) Snapshot(ctx context.Context, logicalCores int, now ti
 		ids[item.index] = summary.ID
 		if item.err != nil {
 			failures++
-			containers[item.index] = RawContainer{Name: containerName(summary), Image: summary.Image}
+			containers[item.index] = RawContainer{ID: summary.ID, Name: containerName(summary), Image: summary.Image}
 			continue
 		}
 		containers[item.index] = item.container
@@ -163,7 +163,7 @@ func deriveDockerContainer(summary containertypes.Summary, stats containertypes.
 		processCount = int(stats.NumProcs)
 	}
 	return RawContainer{
-		Name: containerName(summary), Image: summary.Image,
+		ID: summary.ID, Name: containerName(summary), Image: summary.Image,
 		CPUPercent: dockerCPUPercent(stats, logicalCores), MemoryBytes: memoryBytes,
 		MemoryLimitBytes: stats.MemoryStats.Limit, ReadBytesPerSecond: readRate,
 		WriteBytesPerSecond: writeRate, ProcessCount: processCount,

@@ -2,6 +2,7 @@ package websitemonitor
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -88,6 +89,16 @@ func TestImportNginxAddsOnlySelectedFreshCandidatesAndMarksDuplicates(t *testing
 	if len(preview.Candidates) != 2 {
 		t.Fatalf("preview = %#v", preview)
 	}
+	if preview.SelectableCount != 2 || preview.DuplicateCount != 0 {
+		t.Fatalf("preview counts = selectable %d duplicate %d", preview.SelectableCount, preview.DuplicateCount)
+	}
+	_, err = manager.ImportNginx(context.Background(), NginxImportRequest{
+		Scan: NginxScanRequest{ConfigPath: mainConfig},
+	})
+	var operationError *OperationError
+	if !errors.As(err, &operationError) || operationError.Code != ErrorSelectionRequired {
+		t.Fatalf("empty selection error = %#v, want %q", err, ErrorSelectionRequired)
+	}
 	selected := preview.Candidates[0]
 	imported, err := manager.ImportNginx(context.Background(), NginxImportRequest{
 		Scan:    NginxScanRequest{ConfigPath: mainConfig},
@@ -114,6 +125,17 @@ func TestImportNginxAddsOnlySelectedFreshCandidatesAndMarksDuplicates(t *testing
 	}
 	if duplicates != 1 {
 		t.Fatalf("duplicate candidates = %#v", nextPreview.Candidates)
+	}
+	if nextPreview.SelectableCount != 1 || nextPreview.DuplicateCount != 1 {
+		t.Fatalf("next preview counts = selectable %d duplicate %d",
+			nextPreview.SelectableCount, nextPreview.DuplicateCount)
+	}
+	_, err = manager.ImportNginx(context.Background(), NginxImportRequest{
+		Scan: NginxScanRequest{ConfigPath: mainConfig}, Digests: []string{selected.Digest},
+	})
+	operationError = nil
+	if !errors.As(err, &operationError) || operationError.Code != ErrorDuplicate {
+		t.Fatalf("duplicate error = %#v, want %q", err, ErrorDuplicate)
 	}
 }
 

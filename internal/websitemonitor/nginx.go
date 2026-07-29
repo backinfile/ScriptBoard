@@ -41,9 +41,11 @@ type NginxCandidate struct {
 }
 
 type NginxPreview struct {
-	Candidates []NginxCandidate
-	Warnings   []string
-	Sources    []string
+	Candidates      []NginxCandidate
+	Warnings        []string
+	Sources         []string
+	SelectableCount int
+	DuplicateCount  int
 }
 
 type NginxImportRequest struct {
@@ -126,6 +128,13 @@ func (m *Manager) ScanNginx(ctx context.Context, request NginxScanRequest) (Ngin
 	slices.SortFunc(preview.Candidates, func(left, right NginxCandidate) int {
 		return strings.Compare(left.URL+"\x00"+left.DialHost, right.URL+"\x00"+right.DialHost)
 	})
+	for _, candidate := range preview.Candidates {
+		if candidate.Duplicate {
+			preview.DuplicateCount++
+		} else {
+			preview.SelectableCount++
+		}
+	}
 	return preview, nil
 }
 
@@ -233,7 +242,9 @@ func nginxProcessArguments(process NginxProcess) (string, string) {
 
 func (m *Manager) ImportNginx(ctx context.Context, request NginxImportRequest) ([]Monitor, error) {
 	if len(request.Digests) == 0 {
-		return nil, errors.New("请至少选择一个 Nginx 网站")
+		return nil, operationError(
+			ErrorSelectionRequired, "请至少选择一个 Nginx 网站", "digest", nil,
+		)
 	}
 	preview, err := m.ScanNginx(ctx, request.Scan)
 	if err != nil {
@@ -253,10 +264,14 @@ func (m *Manager) ImportNginx(ctx context.Context, request NginxImportRequest) (
 		seenDigests[digest] = true
 		candidate, ok := available[digest]
 		if !ok {
-			return nil, errors.New("Nginx 配置已变化，请重新扫描后再加入")
+			return nil, operationError(
+				ErrorStaleScan, "Nginx 配置已变化，请重新扫描后再加入", "digest", nil,
+			)
 		}
 		if candidate.Duplicate {
-			return nil, fmt.Errorf("%s 已在监控，不能重复加入", candidate.URL)
+			return nil, operationError(
+				ErrorDuplicate, fmt.Sprintf("%s 已在监控，不能重复加入", candidate.URL), "digest", nil,
+			)
 		}
 		nameCounts[candidate.Name]++
 		name := candidate.Name

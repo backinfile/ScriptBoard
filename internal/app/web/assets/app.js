@@ -94,6 +94,11 @@
       activeRuns: "个活动 Run", processing: "处理中…", complete: "实时输出已结束",
       connected: "实时输出已连接", disconnected: "实时输出连接中断",
       loading: "加载中…", loadFailed: "页面加载失败", retry: "重试",
+      submitFailed: "操作未完成，请检查网络后重试。为避免重复操作，ScriptBoard 不会自动再次提交。",
+      websiteNormal: "网站监控正常", websiteNoOpenIssues: "没有故障或待复核项",
+      websiteDownOne: "个网站故障", websiteDownMany: "个网站故障",
+      websiteVerifyingOne: "个正在复核", websiteVerifyingMany: "个正在复核",
+      websiteNoConfirmedFailure: "没有已确认的网站故障",
       statuses: {
         starting: "正在启动", running: "运行中", stopping: "正在停止", timing_out: "正在超时终止",
         succeeded: "成功", failed: "失败", stopped: "已停止", timed_out: "已超时", rejected: "已拒绝"
@@ -104,6 +109,11 @@
       activeRuns: "active Runs", processing: "Processing…", complete: "Live output complete",
       connected: "Live output connected", disconnected: "Live output disconnected",
       loading: "Loading…", loadFailed: "Unable to load this page", retry: "Retry",
+      submitFailed: "The action did not complete. Check your connection and retry. ScriptBoard will not resubmit it automatically.",
+      websiteNormal: "Website monitoring normal", websiteNoOpenIssues: "No failures or pending verifications",
+      websiteDownOne: "website down", websiteDownMany: "websites down",
+      websiteVerifyingOne: "website under verification", websiteVerifyingMany: "websites under verification",
+      websiteNoConfirmedFailure: "No confirmed website failures",
       statuses: {
         starting: "Starting", running: "Running", stopping: "Stopping", timing_out: "Timing out",
         succeeded: "Succeeded", failed: "Failed", stopped: "Stopped", timed_out: "Timed out", rejected: "Rejected"
@@ -631,16 +641,33 @@
   }
 
   function buildTaskPanel(main, url, push) {
-    closeTaskPanel(false);
+    const returnFocus = taskPanelState?.returnFocus || document.activeElement;
+    closeTaskPanel(false, false);
     const host = document.createElement("div");
     const cleanups = [];
     host.className = "task-panel-host";
-    host.innerHTML = '<button class="task-panel-scrim" type="button"></button><section class="task-panel" role="dialog" aria-modal="true" data-task-panel></section>';
-    host.querySelector(".task-panel-scrim").setAttribute("aria-label", main.dataset.taskCloseLabel);
-    host.querySelector(".task-panel").append(document.importNode(main, true));
+    host.innerHTML = '<button class="task-panel-scrim" type="button"></button><section class="task-panel" role="dialog" aria-modal="true" tabindex="-1" data-task-panel><button class="task-panel-close" type="button" data-task-panel-close><span data-lucide="x" aria-hidden="true"></span></button></section>';
+    const closeLabel = main.dataset.taskCloseLabel || words().loadFailed;
+    host.querySelector(".task-panel-scrim").setAttribute("aria-label", closeLabel);
+    host.querySelector(".task-panel-close").setAttribute("aria-label", closeLabel);
+    const panel = host.querySelector(".task-panel");
+    const panelMain = document.importNode(main, true);
+    const heading = panelMain.querySelector("h1");
+    if (heading) {
+      heading.id ||= `task-panel-heading-${Date.now()}`;
+      panel.setAttribute("aria-labelledby", heading.id);
+    }
+    panel.append(panelMain);
     document.body.append(host);
     document.body.classList.add("has-task-panel");
-    taskPanelState = { host, returnURL: location.href, taskURL: url, cleanups };
+    const background = [...document.body.children]
+      .filter(child => child !== host && child instanceof HTMLElement)
+      .map(child => ({
+        child,
+        inert: child.inert,
+        ariaHidden: child.getAttribute("aria-hidden"),
+      }));
+    taskPanelState = { host, returnURL: location.href, taskURL: url, cleanups, background, returnFocus };
     if (push) {
       history.pushState(
         { task: true, returnURL: taskPanelState.returnURL, taskURL: taskPanelState.taskURL },
@@ -649,10 +676,20 @@
       );
     }
     requestAnimationFrame(() => host.classList.add("is-open"));
-    host.querySelector("input:not([type='hidden']),textarea,select,button,a[href]")?.focus();
+    host.querySelector("[data-task-panel-close]")?.focus();
+    background.forEach(({ child }) => {
+      child.inert = true;
+      child.setAttribute("aria-hidden", "true");
+    });
     renderIcons(host);
     localizeTimes(host);
     initScheduleCron(cleanups, host);
+    const websiteForm = host.querySelector("[data-website-monitor-form]");
+    if (websiteForm) cleanups.push(initWebsiteMonitorForm(websiteForm));
+    const websiteMonitoring = host.querySelector("[data-website-monitoring],[data-website-detail]");
+    if (websiteMonitoring) cleanups.push(initWebsiteMonitoring(websiteMonitoring));
+    const websiteNginx = host.querySelector("[data-website-nginx]");
+    if (websiteNginx) cleanups.push(initWebsiteNginx(websiteNginx));
   }
 
   function openTask(url, push = true, trigger = null) {
@@ -693,14 +730,20 @@
     return request.promise;
   }
 
-  function closeTaskPanel(useHistory = true) {
+  function closeTaskPanel(useHistory = true, restoreFocus = true) {
     if (!taskPanelState) return;
-    const { host, cleanups = [] } = taskPanelState;
+    const { host, cleanups = [], background = [], returnFocus } = taskPanelState;
     taskPanelState = null;
     cleanups.splice(0).forEach(cleanup => cleanup());
+    background.forEach(({ child, inert, ariaHidden }) => {
+      child.inert = inert;
+      if (ariaHidden === null) child.removeAttribute("aria-hidden");
+      else child.setAttribute("aria-hidden", ariaHidden);
+    });
     host.classList.remove("is-open");
     document.body.classList.remove("has-task-panel");
     window.setTimeout(() => host.remove(), 210);
+    if (restoreFocus && returnFocus instanceof HTMLElement && returnFocus.isConnected) returnFocus.focus();
     if (useHistory) history.back();
   }
 
@@ -720,6 +763,8 @@
   }
 
   async function submitAsync(form, submitter) {
+    form.querySelector("[data-async-submit-error]")?.remove();
+    const submittingTaskState = taskPanelState?.host.contains(form) ? taskPanelState : null;
     const data = new FormData(form);
     if (submitter?.name) data.set(submitter.name, submitter.value);
     if (form.method.toLowerCase() === "get") {
@@ -747,10 +792,23 @@
     try {
       const action = submitter?.hasAttribute("formaction") ? submitter.formAction : form.action;
       const result = await fetchDocument(action, { method: form.method, body: data });
+      if (submittingTaskState && taskPanelState !== submittingTaskState) return;
+      if (!submittingTaskState && !form.isConnected) return;
       if (result.response.redirected && result.response.ok) {
         const destination = result.response.url;
-        if (taskPanelState) {
-          const returnURL = taskPanelState.returnURL;
+        if (submittingTaskState) {
+          const returnURL = submittingTaskState.returnURL;
+          const nextTask = result.document?.querySelector("main[data-task-page]");
+          if (nextTask) {
+            buildTaskPanel(nextTask, destination, false);
+            taskPanelState.returnURL = returnURL;
+            history.replaceState(
+              { task: true, returnURL, taskURL: destination },
+              "",
+              returnURL,
+            );
+            return;
+          }
           closeTaskPanel(false);
           if (destination === returnURL && history.state?.task) {
             history.replaceState({ pjax: true }, "", destination);
@@ -766,15 +824,33 @@
       }
       const nextMain = result.document?.querySelector("main");
       if (nextMain) {
-        const target = taskPanelState ? taskPanelState.host.querySelector("main") : document.querySelector("main");
+        if (submittingTaskState && nextMain.matches("[data-task-page]")) {
+          const returnURL = submittingTaskState.returnURL;
+          buildTaskPanel(nextMain, result.response.url, false);
+          taskPanelState.returnURL = returnURL;
+          history.replaceState(
+            { task: true, returnURL, taskURL: result.response.url },
+            "",
+            returnURL,
+          );
+          return;
+        }
+        const target = submittingTaskState ? submittingTaskState.host.querySelector("main") : document.querySelector("main");
         target?.replaceWith(document.importNode(nextMain, true));
-        if (!taskPanelState) document.title = result.document.title;
+        if (!submittingTaskState) document.title = result.document.title;
         initPage();
         return;
       }
       if (!result.response.ok) throw new Error(`HTTP ${result.response.status}`);
     } catch {
-      form.submit();
+      const message = document.createElement("p");
+      message.className = "async-submit-error";
+      message.dataset.asyncSubmitError = "";
+      message.setAttribute("role", "alert");
+      message.tabIndex = -1;
+      message.textContent = words().submitFailed;
+      form.prepend(message);
+      message.focus();
     } finally {
       resetSubmit(form);
     }
@@ -906,19 +982,320 @@
     }
   }
 
+  const applicationDetailCopy = {
+    "zh-CN": {
+      loading: "正在读取运行详情",
+      loadingHint: "正在获取历史指标、命令、启动信息和关联进程。",
+      loadFailed: "暂时无法读取运行详情",
+      retry: "重试",
+      history: "历史趋势",
+      runtime: "运行详情",
+      noHistory: "所选时间范围内还没有足够的指标数据。",
+      unavailable: "当前运行详情不可用",
+      partial: "部分事实因权限或平台能力不可读取。",
+      runtimeReasons: {
+        not_running: "应用当前未运行",
+        detail_probe_unavailable: "运行详情采集器不可用",
+        detail_unavailable: "运行详情未返回可读结果",
+        unsupported_application_kind: "暂不支持此类应用的运行详情",
+        process_exited: "进程已在采集期间退出",
+        container_exited: "容器已在采集期间退出",
+        identity_restricted: "进程身份受系统权限限制",
+        permission_denied: "当前服务账户无权读取这些事实",
+        runtime_partially_readable: "仅能读取部分运行事实",
+        docker_unavailable: "Docker 当前不可用",
+        docker_inspect_unavailable: "无法读取容器配置",
+        docker_top_unavailable: "无法读取容器进程",
+      },
+      requestErrors: {
+        application_not_found: "应用已不在当前快照中",
+        snapshot_unavailable: "暂时无法刷新应用快照",
+        invalid_history_range: "时间范围无效",
+        details_unavailable: "暂时无法读取应用详情",
+      },
+      average: "平均",
+      maximum: "峰值",
+      cpu: "CPU",
+      memory: "内存",
+      disk: "磁盘吞吐",
+      read: "读取",
+      write: "写入",
+      commandLine: "实际命令",
+      pid: "PID",
+      parentPid: "父 PID",
+      user: "用户",
+      startedAt: "启动时间",
+      durationSeconds: "运行时长",
+      architecture: "架构",
+      threads: "线程",
+      handles: "句柄",
+      executablePath: "可执行文件",
+      workingDirectory: "工作目录",
+      listeningPorts: "监听端口",
+      connections: "连接",
+      startMethod: "启动方式",
+      containerId: "容器 ID",
+      hostPid: "宿主 PID",
+      containerPid: "容器 PID",
+      health: "健康状态",
+      restartPolicy: "重启策略",
+      restartCount: "重启次数",
+      image: "镜像",
+      ports: "端口映射",
+      networkMode: "网络模式",
+      mounts: "挂载",
+      relatedProcesses: "关联进程",
+      copy: "复制命令",
+      copied: "已复制",
+      seconds: "秒",
+      minutes: "分钟",
+      hours: "小时",
+      empty: "—"
+    },
+    "en-US": {
+      loading: "Reading runtime details",
+      loadingHint: "Collecting history, command, startup facts, and related processes.",
+      loadFailed: "Runtime details are temporarily unavailable",
+      retry: "Retry",
+      history: "History",
+      runtime: "Runtime details",
+      noHistory: "There is not enough metric data in this time range yet.",
+      unavailable: "Runtime details are unavailable",
+      partial: "Some facts cannot be read because of permissions or platform support.",
+      runtimeReasons: {
+        not_running: "The application is not running",
+        detail_probe_unavailable: "The runtime detail collector is unavailable",
+        detail_unavailable: "The runtime detail collector returned no readable result",
+        unsupported_application_kind: "Runtime details are not supported for this application kind",
+        process_exited: "The process exited while details were collected",
+        container_exited: "The container exited while details were collected",
+        identity_restricted: "The process identity is restricted by the operating system",
+        permission_denied: "The service account cannot read these runtime facts",
+        runtime_partially_readable: "Only part of the runtime facts can be read",
+        docker_unavailable: "Docker is unavailable",
+        docker_inspect_unavailable: "Container configuration cannot be read",
+        docker_top_unavailable: "Container processes cannot be read",
+      },
+      requestErrors: {
+        application_not_found: "The application is no longer in the current snapshot",
+        snapshot_unavailable: "The application snapshot cannot be refreshed right now",
+        invalid_history_range: "The selected time range is invalid",
+        details_unavailable: "Application details cannot be read right now",
+      },
+      average: "Average",
+      maximum: "Peak",
+      cpu: "CPU",
+      memory: "Memory",
+      disk: "Disk throughput",
+      read: "Read",
+      write: "Write",
+      commandLine: "Command",
+      pid: "PID",
+      parentPid: "Parent PID",
+      user: "User",
+      startedAt: "Started",
+      durationSeconds: "Uptime",
+      architecture: "Architecture",
+      threads: "Threads",
+      handles: "Handles",
+      executablePath: "Executable",
+      workingDirectory: "Working directory",
+      listeningPorts: "Listening ports",
+      connections: "Connections",
+      startMethod: "Start method",
+      containerId: "Container ID",
+      hostPid: "Host PID",
+      containerPid: "Container PID",
+      health: "Health",
+      restartPolicy: "Restart policy",
+      restartCount: "Restart count",
+      image: "Image",
+      ports: "Port mappings",
+      networkMode: "Network mode",
+      mounts: "Mounts",
+      relatedProcesses: "Related processes",
+      copy: "Copy command",
+      copied: "Copied",
+      seconds: "seconds",
+      minutes: "minutes",
+      hours: "hours",
+      empty: "—"
+    }
+  };
+
+  const applicationWords = () => applicationDetailCopy[locale()];
+  const applicationValue = (object, camel, pascal = camel[0].toUpperCase() + camel.slice(1)) =>
+    object?.[camel] ?? object?.[pascal];
+  const escapeMarkup = value => String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+  const formatApplicationBytes = value => {
+    let bytes = Number(value);
+    if (!Number.isFinite(bytes) || bytes < 0) return applicationWords().empty;
+    const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let unit = 0;
+    while (bytes >= 1024 && unit < units.length - 1) {
+      bytes /= 1024;
+      unit += 1;
+    }
+    return `${bytes >= 100 || unit === 0 ? bytes.toFixed(0) : bytes.toFixed(1)} ${units[unit]}`;
+  };
+  const formatApplicationRate = value => `${formatApplicationBytes(value)}/s`;
+  const formatApplicationDuration = value => {
+    const seconds = Math.max(0, Number(value) || 0);
+    if (seconds >= 3600) return `${(seconds / 3600).toFixed(seconds >= 36000 ? 0 : 1)} ${applicationWords().hours}`;
+    if (seconds >= 60) return `${Math.round(seconds / 60)} ${applicationWords().minutes}`;
+    return `${Math.round(seconds)} ${applicationWords().seconds}`;
+  };
+  const formatApplicationTime = value => {
+    if (!value) return applicationWords().empty;
+    const date = new Date(value);
+    if (Number.isNaN(date.valueOf())) return String(value);
+    return new Intl.DateTimeFormat(locale(), {
+      year: "numeric", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit"
+    }).format(date);
+  };
+  const formatApplicationList = value => {
+    if (!Array.isArray(value)) return value || applicationWords().empty;
+    return value.length ? value.map(item => {
+      if (item == null) return "";
+      if (typeof item === "string" || typeof item === "number") return String(item);
+      return Object.values(item).filter(part => part !== "" && part != null).join(" · ");
+    }).filter(Boolean).join(", ") : applicationWords().empty;
+  };
+
+  function applicationSeriesPath(points, key, maximum) {
+    if (!points.length || maximum <= 0) return "";
+    return points.map((point, index) => {
+      const value = Number(applicationValue(point, key)) || 0;
+      const x = points.length === 1 ? 0 : (index / (points.length - 1)) * 640;
+      const y = 76 - Math.min(1, value / maximum) * 68;
+      return `${index ? "L" : "M"}${x.toFixed(2)} ${y.toFixed(2)}`;
+    }).join(" ");
+  }
+
+  function applicationChart(title, points, series, formatter) {
+    const values = points.flatMap(point => series.map(item => Number(applicationValue(point, item.key)) || 0));
+    const maximum = Math.max(0, ...values);
+    const legend = series.map(item => {
+      const average = points.length
+        ? points.reduce((total, point) => total + (Number(applicationValue(point, item.key)) || 0), 0) / points.length
+        : 0;
+      return `<span><i style="--series:${item.color}"></i>${escapeMarkup(item.label)} ${escapeMarkup(applicationWords().average)} ${escapeMarkup(formatter(average))}</span>`;
+    }).join("");
+    const paths = series.map(item =>
+      `<path d="${applicationSeriesPath(points, item.key, maximum)}" style="--series:${item.color}"></path>`
+    ).join("");
+    return `<figure class="application-history-chart">
+      <figcaption><strong>${escapeMarkup(title)}</strong><span>${legend}</span></figcaption>
+      <svg viewBox="0 0 640 84" preserveAspectRatio="none" role="img" aria-label="${escapeMarkup(title)}">
+        <line x1="0" y1="76" x2="640" y2="76"></line>
+        <line x1="0" y1="42" x2="640" y2="42"></line>
+        <line x1="0" y1="8" x2="640" y2="8"></line>
+        ${paths}
+      </svg>
+      <small>${escapeMarkup(applicationWords().maximum)} ${escapeMarkup(formatter(maximum))}</small>
+    </figure>`;
+  }
+
+  function renderApplicationHistory(payload) {
+    const history = applicationValue(payload, "history") || {};
+    const points = applicationValue(history, "points") || [];
+    if (!points.length) return `<div class="application-detail-empty">${escapeMarkup(applicationWords().noHistory)}</div>`;
+    return `<div class="application-history-grid">
+      ${applicationChart(applicationWords().cpu, points, [
+        { key: "cpuAverage", label: applicationWords().average, color: "var(--accent)" },
+        { key: "cpuMaximum", label: applicationWords().maximum, color: "var(--faint)" }
+      ], value => `${Number(value).toFixed(1)}%`)}
+      ${applicationChart(applicationWords().memory, points, [
+        { key: "memoryAverage", label: applicationWords().average, color: "var(--accent)" },
+        { key: "memoryMaximum", label: applicationWords().maximum, color: "var(--faint)" }
+      ], formatApplicationBytes)}
+      ${applicationChart(applicationWords().disk, points, [
+        { key: "readAverage", label: applicationWords().read, color: "var(--accent)" },
+        { key: "writeAverage", label: applicationWords().write, color: "var(--warning)" }
+      ], formatApplicationRate)}
+    </div>`;
+  }
+
+  function renderApplicationRuntime(payload) {
+    const runtime = applicationValue(payload, "runtime") || {};
+    const state = applicationValue(runtime, "state") || "unavailable";
+    const reasonCode = applicationValue(runtime, "code") || "";
+    const reason = applicationWords().runtimeReasons[reasonCode]
+      || (state === "partial" ? applicationWords().partial : applicationWords().unavailable);
+    const facts = applicationValue(runtime, "kind") === "docker"
+      ? applicationValue(runtime, "docker") || {}
+      : applicationValue(runtime, "host") || {};
+    const notice = state === "available" ? "" : `<div class="application-runtime-notice" data-state="${escapeMarkup(state)}">
+      <span data-lucide="${state === "restricted" ? "shield-alert" : "info"}" aria-hidden="true"></span>
+      <div><strong>${escapeMarkup(reason)}</strong>
+      <p>${escapeMarkup(reasonCode)}</p></div>
+    </div>`;
+    const keys = applicationValue(runtime, "kind") === "docker"
+      ? ["commandLine", "containerId", "hostPid", "containerPid", "startedAt", "durationSeconds", "health", "restartPolicy", "restartCount", "image", "workingDirectory", "ports", "networkMode", "mounts"]
+      : ["commandLine", "pid", "parentPid", "user", "startedAt", "durationSeconds", "architecture", "threads", "handles", "executablePath", "workingDirectory", "listeningPorts", "connections", "startMethod"];
+    const factsHTML = keys.map(key => {
+      let value = applicationValue(facts, key);
+      if (key === "startedAt") value = formatApplicationTime(value);
+      else if (key === "durationSeconds") value = formatApplicationDuration(value);
+      else if (Array.isArray(value)) value = formatApplicationList(value);
+      else if (value === "" || value == null) value = applicationWords().empty;
+      const command = key === "commandLine" && value !== applicationWords().empty
+        ? `<button class="application-copy-command" type="button" data-copy-runtime-command data-copy-label="${escapeMarkup(applicationWords().copy)}" data-copied-label="${escapeMarkup(applicationWords().copied)}"><span data-lucide="copy" aria-hidden="true"></span>${escapeMarkup(applicationWords().copy)}</button>`
+        : "";
+      return `<div class="${key === "commandLine" ? "application-runtime-fact--wide" : ""}">
+        <dt>${escapeMarkup(applicationWords()[key] || key)}</dt>
+        <dd>${key === "commandLine" ? `<code data-runtime-command>${escapeMarkup(value)}</code>` : escapeMarkup(value)}${command}</dd>
+      </div>`;
+    }).join("");
+    const related = applicationValue(facts, "relatedProcesses") || [];
+    const relatedHTML = related.length
+      ? `<section class="application-related-processes"><h4>${escapeMarkup(applicationWords().relatedProcesses)}</h4><div class="application-process-list">${
+          related.map(process => `<div><strong>${escapeMarkup(applicationValue(process, "name") || applicationValue(process, "command") || applicationWords().empty)}</strong><span>PID ${escapeMarkup(applicationValue(process, "pid") ?? applicationWords().empty)}</span><code>${escapeMarkup(applicationValue(process, "commandLine") || applicationValue(process, "path") || "")}</code></div>`).join("")
+        }</div></section>`
+      : "";
+    return `${notice}<dl class="application-runtime-facts">${factsHTML}</dl>${relatedHTML}`;
+  }
+
+  function applicationDetailLoading() {
+    return `<div class="application-detail-loading" role="status"><span data-lucide="loader-circle" aria-hidden="true"></span><div><strong>${escapeMarkup(applicationWords().loading)}</strong><p>${escapeMarkup(applicationWords().loadingHint)}</p></div></div>`;
+  }
+
   function initApplications(cleanups) {
     const root = document.querySelector("[data-applications-page]");
     if (!root) return;
     const switches = Array.from(root.querySelectorAll("[data-applications-refresh]"));
+    const detailCache = new Map();
+    const pendingDetails = new Map();
+    let restorePinnedState = () => {};
 
     const replaceFromSnapshot = (snapshot, scope) => {
       const facts = snapshot.querySelector(".applications-fact-strip");
       const currentFacts = root.querySelector(".applications-fact-strip");
       if (facts && currentFacts) currentFacts.replaceWith(document.importNode(facts, true));
+      const sourceTime = snapshot.querySelector(`[data-applications-refresh-time="${scope}"]`);
+      const currentTime = root.querySelector(`[data-applications-refresh-time="${scope}"]`);
+      if (sourceTime && currentTime) {
+        currentTime.dateTime = sourceTime.dateTime;
+        currentTime.textContent = sourceTime.textContent;
+      }
       if (scope === "pinned") {
+        detailCache.clear();
         const source = snapshot.querySelector("[data-pinned-applications]");
         const target = root.querySelector("[data-pinned-applications]");
-        if (source && target) target.replaceChildren(...Array.from(source.children, child => document.importNode(child, true)));
+        if (source && target) {
+          const expanded = Array.from(target.querySelectorAll(".pinned-application[data-expanded='true']")).map(article => ({
+            id: article.dataset.applicationId,
+            range: article.querySelector("[data-application-range][aria-pressed='true']")?.dataset.applicationRange || "1h",
+            tab: article.querySelector("[data-application-detail-tab][aria-selected='true']")?.dataset.applicationDetailTab || "history"
+          }));
+          target.replaceChildren(...Array.from(source.children, child => document.importNode(child, true)));
+          restorePinnedState(expanded);
+        }
       } else {
         const sourceBody = snapshot.querySelector(".applications-table tbody");
         const targetBody = root.querySelector(".applications-table tbody");
@@ -936,11 +1313,19 @@
       state.pending = new AbortController();
       try {
         const result = await fetchDocument(location.href, { cache: "no-store", signal: state.pending.signal });
-        if (result.response.ok && result.document && state.enabled) replaceFromSnapshot(result.document, scope);
+        if (result.response.ok && result.document && state.enabled) {
+          replaceFromSnapshot(result.document, scope);
+          state.failed = false;
+          state.seconds = 5;
+        }
       } catch (error) {
-        if (error.name !== "AbortError") console.debug("Application snapshot update unavailable");
+        if (error.name !== "AbortError") {
+          state.failed = true;
+          console.debug("Application snapshot update unavailable");
+        }
       } finally {
         state.pending = null;
+        state.render?.();
       }
     };
 
@@ -951,6 +1336,8 @@
         enabled: control.getAttribute("aria-checked") === "true",
         pending: null,
         timer: null,
+        seconds: 5,
+        failed: false,
       };
       const renderState = () => {
         control.setAttribute("aria-checked", String(state.enabled));
@@ -959,15 +1346,36 @@
           const strong = label.querySelector("strong");
           const small = label.querySelector("small");
           if (strong) strong.textContent = state.enabled ? control.dataset.enabledLabel : control.dataset.disabledLabel;
-          if (small) small.textContent = state.enabled ? control.dataset.enabledDescription : control.dataset.disabledDescription;
+          if (small) {
+            if (state.failed) small.textContent = root.dataset.refreshUnavailable || control.dataset.disabledDescription;
+            else if (state.enabled) small.textContent = `${control.dataset.enabledDescription} · ${state.seconds}s`;
+            else small.textContent = control.dataset.disabledDescription;
+          }
+        }
+        if (scope === "pinned") {
+          const fact = root.querySelector("[data-pinned-live-fact]");
+          if (fact) {
+            fact.textContent = state.enabled ? control.dataset.enabledLabel : control.dataset.disabledLabel;
+            fact.dataset.state = state.enabled ? "on" : "off";
+          }
         }
       };
+      state.render = renderState;
       const schedule = () => {
         if (state.timer) window.clearInterval(state.timer);
-        state.timer = state.enabled ? window.setInterval(() => refresh(scope, state), 5000) : null;
+        state.seconds = 5;
+        state.timer = state.enabled ? window.setInterval(() => {
+          state.seconds -= 1;
+          if (state.seconds <= 0) {
+            state.seconds = 5;
+            refresh(scope, state);
+          }
+          renderState();
+        }, 1000) : null;
       };
       const onToggle = () => {
         state.enabled = !state.enabled;
+        state.failed = false;
         if (!state.enabled) state.pending?.abort();
         renderState();
         schedule();
@@ -981,6 +1389,225 @@
         if (state.timer) window.clearInterval(state.timer);
         state.pending?.abort();
       });
+    });
+
+    const detailsURL = (element, range) => {
+      const url = new URL(element.dataset.applicationDetailUrl, location.href);
+      url.searchParams.set("range", range);
+      return url.href;
+    };
+    const loadDetails = async (element, range = "1h", force = false) => {
+      const url = detailsURL(element, range);
+      if (!force && detailCache.has(url)) return detailCache.get(url);
+      if (pendingDetails.has(url)) return pendingDetails.get(url);
+      const controller = new AbortController();
+      const request = fetch(url, {
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+        signal: controller.signal
+      }).then(async response => {
+        if (!response.ok) {
+          const error = await response.json().catch(() => null);
+          const code = error?.error?.code || "";
+          throw new Error(applicationWords().requestErrors[code] || applicationWords().loadFailed);
+        }
+        const payload = await response.json();
+        detailCache.set(url, payload);
+        return payload;
+      }).finally(() => pendingDetails.delete(url));
+      request.controller = controller;
+      pendingDetails.set(url, request);
+      return request;
+    };
+
+    const selectPinnedTab = (article, tabName) => {
+      article.querySelectorAll("[data-application-detail-tab]").forEach(tab => {
+        const selected = tab.dataset.applicationDetailTab === tabName;
+        tab.setAttribute("aria-selected", String(selected));
+        tab.tabIndex = selected ? 0 : -1;
+      });
+      article.querySelectorAll("[data-application-detail-panel]").forEach(panel => {
+        panel.hidden = panel.dataset.applicationDetailPanel !== tabName;
+      });
+    };
+
+    const renderPinnedDetails = (article, payload, range) => {
+      const historyPanel = article.querySelector("[data-application-history-output]");
+      const runtimePanel = article.querySelector("[data-application-detail-panel='runtime']");
+      if (historyPanel) historyPanel.innerHTML = renderApplicationHistory(payload);
+      if (runtimePanel) runtimePanel.innerHTML = renderApplicationRuntime(payload);
+      article.querySelectorAll("[data-application-range]").forEach(button => {
+        button.setAttribute("aria-pressed", String(button.dataset.applicationRange === range));
+      });
+      renderIcons(article);
+      localizeTimes(article);
+    };
+
+    const showPinnedError = (article, range, error) => {
+      const target = article.querySelector("[data-application-history-output]");
+      if (!target) return;
+      target.innerHTML = `<div class="application-detail-error" role="alert"><span data-lucide="triangle-alert" aria-hidden="true"></span><div><strong>${escapeMarkup(applicationWords().loadFailed)}</strong><p>${escapeMarkup(error?.message || "")}</p><button class="button button--compact" type="button" data-application-detail-retry data-range="${escapeMarkup(range)}">${escapeMarkup(applicationWords().retry)}</button></div></div>`;
+      renderIcons(target);
+    };
+
+    const expandPinned = async (article, range = "1h", tab = "history") => {
+      const detail = article.querySelector("[data-application-detail]");
+      const toggle = article.querySelector("[data-application-detail-toggle]");
+      if (!detail || !toggle) return;
+      article.dataset.expanded = "true";
+      detail.hidden = false;
+      toggle.setAttribute("aria-expanded", "true");
+      selectPinnedTab(article, tab);
+      const historyPanel = article.querySelector("[data-application-history-output]");
+      const runtimePanel = article.querySelector("[data-application-detail-panel='runtime']");
+      if (historyPanel) historyPanel.innerHTML = applicationDetailLoading();
+      if (runtimePanel) runtimePanel.innerHTML = applicationDetailLoading();
+      renderIcons(detail);
+      try {
+        const payload = await loadDetails(article, range);
+        if (article.dataset.expanded === "true") renderPinnedDetails(article, payload, range);
+      } catch (error) {
+        showPinnedError(article, range, error);
+        if (runtimePanel) runtimePanel.innerHTML = `<div class="application-detail-empty">${escapeMarkup(error?.message || applicationWords().unavailable)}</div>`;
+      }
+    };
+
+    const collapsePinned = article => {
+      article.dataset.expanded = "false";
+      const detail = article.querySelector("[data-application-detail]");
+      if (detail) detail.hidden = true;
+      article.querySelector("[data-application-detail-toggle]")?.setAttribute("aria-expanded", "false");
+    };
+
+    restorePinnedState = expanded => {
+      expanded.forEach(item => {
+        const article = Array.from(root.querySelectorAll(".pinned-application")).find(candidate => candidate.dataset.applicationId === item.id);
+        if (article) expandPinned(article, item.range, item.tab);
+      });
+    };
+
+    const runningDetailRow = row => {
+      const id = row.dataset.applicationId;
+      return Array.from(root.querySelectorAll("[data-running-detail-for]")).find(detail => detail.dataset.runningDetailFor === id);
+    };
+    const closeRunningDetails = except => {
+      root.querySelectorAll("[data-application-row][aria-expanded='true']").forEach(row => {
+        if (row === except) return;
+        row.setAttribute("aria-expanded", "false");
+        const detail = runningDetailRow(row);
+        if (detail) detail.hidden = true;
+      });
+    };
+    const toggleRunningDetail = async row => {
+      const detail = runningDetailRow(row);
+      if (!detail) return;
+      const expanded = row.getAttribute("aria-expanded") === "true";
+      if (expanded) {
+        row.setAttribute("aria-expanded", "false");
+        detail.hidden = true;
+        return;
+      }
+      closeRunningDetails(row);
+      row.setAttribute("aria-expanded", "true");
+      detail.hidden = false;
+      const target = detail.querySelector("[data-running-detail-content]");
+      if (target) target.innerHTML = applicationDetailLoading();
+      renderIcons(detail);
+      try {
+        const payload = await loadDetails(row, "15m");
+        if (row.getAttribute("aria-expanded") === "true" && target) {
+          target.innerHTML = renderApplicationRuntime(payload);
+          renderIcons(target);
+        }
+      } catch (error) {
+        if (target) target.innerHTML = `<div class="application-detail-error" role="alert"><span data-lucide="triangle-alert" aria-hidden="true"></span><div><strong>${escapeMarkup(applicationWords().loadFailed)}</strong><p>${escapeMarkup(error?.message || "")}</p><button class="button button--compact" type="button" data-running-detail-retry>${escapeMarkup(applicationWords().retry)}</button></div></div>`;
+        renderIcons(detail);
+      }
+    };
+
+    const onApplicationsClick = async event => {
+      const copyButton = event.target.closest("[data-copy-runtime-command]");
+      if (copyButton) {
+        const command = copyButton.closest("dd")?.querySelector("[data-runtime-command]")?.textContent || "";
+        const original = copyButton.innerHTML;
+        try {
+          await navigator.clipboard.writeText(command.trim());
+          copyButton.textContent = copyButton.dataset.copiedLabel;
+          window.setTimeout(() => {
+            copyButton.innerHTML = original;
+          }, 1500);
+        } catch {
+          copyButton.focus();
+        }
+        return;
+      }
+      const retryPinned = event.target.closest("[data-application-detail-retry]");
+      if (retryPinned) {
+        const article = retryPinned.closest(".pinned-application");
+        if (article) {
+          const url = detailsURL(article, retryPinned.dataset.range || "1h");
+          detailCache.delete(url);
+          expandPinned(article, retryPinned.dataset.range || "1h", "history");
+        }
+        return;
+      }
+      const retryRunning = event.target.closest("[data-running-detail-retry]");
+      if (retryRunning) {
+        const detail = retryRunning.closest("[data-running-detail-for]");
+        const row = Array.from(root.querySelectorAll("[data-application-row]")).find(candidate => candidate.dataset.applicationId === detail?.dataset.runningDetailFor);
+        if (row) {
+          detailCache.delete(detailsURL(row, "15m"));
+          row.setAttribute("aria-expanded", "false");
+          toggleRunningDetail(row);
+        }
+        return;
+      }
+      const range = event.target.closest("[data-application-range]");
+      if (range) {
+        const article = range.closest(".pinned-application");
+        if (article) expandPinned(article, range.dataset.applicationRange, "history");
+        return;
+      }
+      const tab = event.target.closest("[data-application-detail-tab]");
+      if (tab) {
+        const article = tab.closest(".pinned-application");
+        if (article) selectPinnedTab(article, tab.dataset.applicationDetailTab);
+        return;
+      }
+      const toggle = event.target.closest("[data-application-detail-toggle]");
+      if (toggle) {
+        const article = toggle.closest(".pinned-application");
+        if (!article) return;
+        if (article.dataset.expanded === "true") collapsePinned(article);
+        else expandPinned(article);
+        return;
+      }
+      const row = event.target.closest("[data-application-row]");
+      if (row && !event.target.closest("a,button,input,select,textarea,form,summary,details")) toggleRunningDetail(row);
+    };
+
+    const onApplicationsKeydown = event => {
+      const row = event.target.closest("[data-application-row]");
+      if (row && event.target === row && (event.key === "Enter" || event.key === " ")) {
+        event.preventDefault();
+        toggleRunningDetail(row);
+      }
+      const tab = event.target.closest("[data-application-detail-tab]");
+      if (tab && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+        const tabs = Array.from(tab.parentElement.querySelectorAll("[data-application-detail-tab]"));
+        const next = tabs[(tabs.indexOf(tab) + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length];
+        next.focus();
+        next.click();
+      }
+    };
+    root.addEventListener("click", onApplicationsClick);
+    root.addEventListener("keydown", onApplicationsKeydown);
+    cleanups.push(() => {
+      root.removeEventListener("click", onApplicationsClick);
+      root.removeEventListener("keydown", onApplicationsKeydown);
+      pendingDetails.forEach(request => request.controller?.abort());
+      pendingDetails.clear();
     });
   }
 
@@ -1064,20 +1691,44 @@
 
   function initStatus() {
     const status = document.querySelector("[data-shell-status]");
-    if (!status) return;
+    const websiteStatus = document.querySelector("[data-shell-website-status]");
+    if (!status && !websiteStatus) return;
+    const updateWebsiteStatus = data => {
+      if (!websiteStatus) return;
+      const down = Math.max(0, Number(data.websiteDown) || 0);
+      const verifying = Math.max(0, Number(data.websiteVerifying) || 0);
+      websiteStatus.dataset.state = data.websiteState;
+      websiteStatus.dataset.down = String(down);
+      websiteStatus.dataset.verifying = String(verifying);
+      const primary = websiteStatus.querySelector("[data-shell-website-primary]");
+      const secondary = websiteStatus.querySelector("[data-shell-website-secondary]");
+      if (down > 0) {
+        if (primary) primary.textContent = `${down} ${down === 1 ? words().websiteDownOne : words().websiteDownMany}`;
+        if (secondary) secondary.textContent = `${verifying} ${verifying === 1 ? words().websiteVerifyingOne : words().websiteVerifyingMany}`;
+      } else if (verifying > 0) {
+        if (primary) primary.textContent = `${verifying} ${verifying === 1 ? words().websiteVerifyingOne : words().websiteVerifyingMany}`;
+        if (secondary) secondary.textContent = words().websiteNoConfirmedFailure;
+      } else {
+        if (primary) primary.textContent = words().websiteNormal;
+        if (secondary) secondary.textContent = words().websiteNoOpenIssues;
+      }
+    };
     const update = async () => {
       try {
         const response = await fetch("/monitor/status", { credentials: "same-origin", cache: "no-store" });
         if (!response.ok) return;
         const data = await response.json();
-        status.dataset.state = data.state;
-        const strong = status.querySelector("strong");
-        const small = status.querySelector("small");
-        if (strong) strong.textContent = words()[data.state] || data.state;
-        if (small) {
-          const environment = small.textContent.split("·")[0].trim();
-          small.textContent = `${environment} · ${data.activeRuns} ${words().activeRuns}`;
+        if (status) {
+          status.dataset.state = data.state;
+          const strong = status.querySelector("strong");
+          const small = status.querySelector("small");
+          if (strong) strong.textContent = words()[data.state] || data.state;
+          if (small) {
+            const environment = small.textContent.split("·")[0].trim();
+            small.textContent = `${environment} · ${data.activeRuns} ${words().activeRuns}`;
+          }
         }
+        updateWebsiteStatus(data);
       } catch { /* status remains at last known value */ }
     };
     const timer = window.setInterval(update, 30000);
@@ -1700,15 +2351,27 @@
     const frequency=form.querySelector('[data-monitor-frequency]');
     const httpFields=form.querySelector('[data-http-monitor-fields]');
     const websocketFields=form.querySelector('[data-websocket-monitor-fields]');
+    const url=form.querySelector('[data-monitor-url]');
+    const urlHint=form.querySelector('[data-monitor-url-hint]');
     const httpMethod=form.querySelector('[data-http-method]');
     const httpBody=form.querySelector('[data-http-body-field]');
+    const httpPostField=form.querySelector('[data-http-post-field]');
+    const httpSuccessMode=form.querySelector('[data-http-success-mode]');
+    const exactStatuses=form.querySelector('[data-exact-statuses-field]');
     const websocketSuccess=form.querySelector('[data-websocket-success]');
     const messageFields=form.querySelector('[data-websocket-message-fields]');
     const pingFields=form.querySelector('[data-websocket-ping-fields]');
+    const sendType=form.querySelector('[data-websocket-send-type]');
+    const sendPayload=form.querySelector('[data-websocket-send-payload]');
+    const sendPayloadLabel=form.querySelector('[data-send-payload-label]');
+    const sendPayloadHint=form.querySelector('[data-send-payload-hint]');
     const receiveType=form.querySelector('[name="receive_type"]');
     const expectedMessage=form.querySelector('[name="expected_message"]');
+    const expectedMessageLabel=form.querySelector('[data-expected-message-label]');
+    const expectedMessageHint=form.querySelector('[data-expected-message-hint]');
     const pingFormat=form.querySelector('[name="ping_payload_format"]');
     const pingPayload=form.querySelector('[name="ping_payload"]');
+    const pingPayloadField=form.querySelector('[data-ping-payload-field]');
     const pingCount=form.querySelector('[data-ping-byte-count]');
     const setSection=(section,visible)=>{
       if(!section)return;
@@ -1726,14 +2389,29 @@
       const isWebSocket=kind?.value==='websocket';
       setSection(httpFields,!isWebSocket);
       setSection(websocketFields,isWebSocket);
+      if(url)url.placeholder=isWebSocket?(form.dataset.websocketPlaceholder||'wss://example.com/socket'):(form.dataset.httpPlaceholder||'https://example.com/health');
+      if(urlHint)urlHint.textContent=isWebSocket?(form.dataset.websocketUrlHint||'Use ws:// or wss://'):(form.dataset.httpUrlHint||'Use http:// or https://');
       if(!isWebSocket){
-        setSection(httpBody,httpMethod?.value==='POST');
+        const isPost=httpMethod?.value==='POST';
+        setSection(httpPostField,isPost);
+        setSection(httpBody,isPost);
+        setSection(exactStatuses,httpSuccessMode?.value==='exact');
       }else{
         const condition=websocketSuccess?.value;
-        setSection(messageFields,condition==='any-message'||condition==='matching-message');
+        const messageCondition=condition==='any-message'||condition==='matching-message';
+        setSection(messageFields,messageCondition);
         setSection(pingFields,condition==='ping-pong');
+        setSection(sendPayload,messageCondition&&sendType?.value!=='none');
+        setSection(expectedMessage?.closest('label'),messageCondition&&condition==='matching-message');
+        setSection(pingPayloadField,condition==='ping-pong'&&pingFormat?.value!=='none');
         if(expectedMessage)expectedMessage.required=condition==='matching-message';
         if(receiveType)receiveType.required=condition==='matching-message';
+        const sendsBinary=sendType?.value==='binary';
+        const receivesBinary=receiveType?.value==='binary';
+        if(sendPayloadLabel)sendPayloadLabel.textContent=sendsBinary?(form.dataset.sendBinaryLabel||'Binary payload'):(form.dataset.sendTextLabel||'Text payload');
+        if(sendPayloadHint)sendPayloadHint.textContent=sendsBinary?(form.dataset.sendBinaryHint||'Enter Base64-encoded bytes.'):(form.dataset.sendTextHint||'Enter UTF-8 text.');
+        if(expectedMessageLabel)expectedMessageLabel.textContent=receivesBinary?(form.dataset.expectedBinaryLabel||'Expected binary message'):(form.dataset.expectedTextLabel||'Expected text message');
+        if(expectedMessageHint)expectedMessageHint.textContent=receivesBinary?(form.dataset.expectedBinaryHint||'Enter Base64-encoded bytes.'):(form.dataset.expectedTextHint||'Enter UTF-8 text.');
       }
       updatePingCount();
     };
@@ -1746,11 +2424,104 @@
     };
     kind?.addEventListener('change',kindChanged);
     httpMethod?.addEventListener('change',sync);
+    httpSuccessMode?.addEventListener('change',sync);
     websocketSuccess?.addEventListener('change',sync);
-    pingFormat?.addEventListener('change',updatePingCount);
+    sendType?.addEventListener('change',sync);
+    receiveType?.addEventListener('change',sync);
+    pingFormat?.addEventListener('change',sync);
     pingPayload?.addEventListener('input',updatePingCount);
     sync();
-    return ()=>{};
+    return ()=>{
+      kind?.removeEventListener('change',kindChanged);
+      httpMethod?.removeEventListener('change',sync);
+      httpSuccessMode?.removeEventListener('change',sync);
+      websocketSuccess?.removeEventListener('change',sync);
+      sendType?.removeEventListener('change',sync);
+      receiveType?.removeEventListener('change',sync);
+      pingFormat?.removeEventListener('change',sync);
+      pingPayload?.removeEventListener('input',updatePingCount);
+    };
+  }
+
+  function initWebsiteNginx(root){
+    const form=root.querySelector('form[action="/monitor/websites/nginx/import"]');
+    if(!form)return ()=>{};
+    const selectAll=form.querySelector('[data-nginx-select-all]');
+    const candidates=[...form.querySelectorAll('[data-nginx-candidate]:not(:disabled)')];
+    const count=form.querySelector('[data-nginx-selected-count]');
+    const button=form.querySelector('[data-nginx-import-button]');
+    const buttonCount=form.querySelector('[data-nginx-import-count]');
+    const sync=()=>{
+      const selected=candidates.filter(candidate=>candidate.checked).length;
+      if(count)count.textContent=String(selected);
+      if(buttonCount)buttonCount.textContent=`(${selected})`;
+      if(button)button.disabled=selected===0;
+      if(selectAll){
+        selectAll.checked=candidates.length>0&&selected===candidates.length;
+        selectAll.indeterminate=selected>0&&selected<candidates.length;
+        selectAll.disabled=candidates.length===0;
+      }
+    };
+    const onSelectAll=()=>{
+      candidates.forEach(candidate=>{candidate.checked=selectAll.checked});
+      sync();
+    };
+    const onChange=event=>{
+      if(event.target.matches('[data-nginx-candidate]'))sync();
+    };
+    const onSubmit=async event=>{
+      if(!window.fetch||button?.disabled)return;
+      event.preventDefault();
+      const original=button?.innerHTML;
+      if(button){
+        button.disabled=true;
+        button.setAttribute('aria-busy','true');
+        button.textContent=button.dataset.pendingLabel||'';
+      }
+      try{
+        const response=await fetch(form.action,{
+          method:'POST',
+          body:new FormData(form),
+          credentials:'same-origin',
+          headers:{Accept:'application/json'}
+        });
+        const payload=await response.json().catch(()=>null);
+        if(!response.ok)throw new Error(payload?.error?.message||'Import failed');
+        const imported=payload?.importedCount??0;
+        const success=document.createElement('section');
+        success.className='nginx-import-success';
+        success.setAttribute('role','status');
+        success.innerHTML=`<span data-lucide="check" aria-hidden="true"></span><div><h2>${escapeMarkup(root.dataset.successTitle||'Websites added')}</h2><p>${escapeMarkup(imported)} ${escapeMarkup(root.dataset.successDescription||'')}</p></div><a class="button button--primary" href="${escapeMarkup(payload?.redirectURL||'/monitor/websites')}">${escapeMarkup(root.dataset.viewLedger||'View website ledger')}</a>`;
+        form.previousElementSibling?.matches('.nginx-warnings')&&form.previousElementSibling.remove();
+        form.replaceWith(success);
+        renderIcons(success);
+        success.querySelector('a')?.focus();
+      }catch(error){
+        let alert=root.querySelector('.page-error[data-nginx-import-error]');
+        if(!alert){
+          alert=document.createElement('p');
+          alert.className='page-error';
+          alert.dataset.nginxImportError='';
+          alert.setAttribute('role','alert');
+          form.before(alert);
+        }
+        alert.textContent=error?.message||'Import failed';
+        if(button){
+          button.innerHTML=original;
+          button.removeAttribute('aria-busy');
+        }
+        sync();
+      }
+    };
+    selectAll?.addEventListener('change',onSelectAll);
+    form.addEventListener('change',onChange);
+    form.addEventListener('submit',onSubmit);
+    sync();
+    return ()=>{
+      selectAll?.removeEventListener('change',onSelectAll);
+      form.removeEventListener('change',onChange);
+      form.removeEventListener('submit',onSubmit);
+    };
   }
 
   function websiteSnapshotChanged(root,payload){
@@ -1762,6 +2533,17 @@
         root.dataset.monitorChecked!==String(payload.CheckedToken);
     }
     const monitors=payload.monitors||payload.Monitors||[];
+    const counts=payload.counts||payload.Counts||{};
+    const alerts=payload.alerts||payload.Alerts||[];
+    const countsToken=[
+      counts.up??counts.Up??0,
+      counts.verifying??counts.Verifying??0,
+      counts.down??counts.Down??0,
+      counts.paused??counts.Paused??0,
+      payload.needsCare??payload.NeedsCare??0,
+      alerts.length
+    ].join(':');
+    if(root.dataset.countsToken&&root.dataset.countsToken!==countsToken)return true;
     const rows=[...root.querySelectorAll('[data-monitor-id]')];
     if(rows.length!==monitors.length)return true;
     const current=new Map(rows.map(row=>[row.dataset.monitorId,row]));
@@ -1779,23 +2561,72 @@
     let stopped=false;
     let busy=false;
     let dragged;
+    let checkController;
     const status=root.querySelector('[data-reorder-status]');
+    const refreshStatus=root.querySelector('[data-website-refresh-status]');
+    const ledger=root.querySelector('[data-website-ledger]');
+    const initialOrder=[...root.querySelectorAll('[data-monitor-id]')].map(row=>row.dataset.monitorId);
+    const rows=()=>[...root.querySelectorAll('[data-monitor-id]')];
+    const updateMoveButtons=()=>{
+      const current=rows();
+      current.forEach((row,index)=>{
+        const buttons=row.querySelectorAll('[data-reorder-move-form] button');
+        if(buttons[0])buttons[0].disabled=index===0;
+        if(buttons[1])buttons[1].disabled=index===current.length-1;
+      });
+    };
+    const markOrderChanged=()=>{
+      updateMoveButtons();
+      if(status)status.textContent='';
+    };
     const saveOrder=async()=>{
       if(!root.dataset.reorderUrl)return;
       const body=new URLSearchParams({csrf_token:root.dataset.csrfToken||''});
-      for(const row of root.querySelectorAll('[data-monitor-id]'))body.append('id',row.dataset.monitorId);
+      for(const row of rows())body.append('id',row.dataset.monitorId);
       if(status)status.textContent=root.dataset.reorderSaving||'Saving order…';
       try{
         const response=await fetch(root.dataset.reorderUrl,{method:'POST',body,headers:{Accept:'text/plain'}});
         if(!response.ok)throw new Error(await response.text());
         if(status)status.textContent=root.dataset.reorderSaved||'Order saved';
+        await navigate('/monitor/websites',true);
       }catch(_){
         if(status)status.textContent=root.dataset.reorderFailed||'Order was not saved. Restoring the list.';
-        navigate(location.href,false);
+        initialOrder.forEach(id=>{
+          const row=rows().find(candidate=>candidate.dataset.monitorId===id);
+          if(row)ledger?.append(row);
+        });
+        updateMoveButtons();
       }
     };
     if(root.dataset.reorderUrl){
-      for(const row of root.querySelectorAll('[data-monitor-id]')){
+      const onMove=event=>{
+        const form=event.target.closest('[data-reorder-move-form]');
+        if(!form)return;
+        event.preventDefault();
+        const row=form.closest('[data-monitor-id]');
+        const direction=event.submitter?.value;
+        if(!row||!direction)return;
+        if(direction==='up'&&row.previousElementSibling?.matches('[data-monitor-id]'))ledger.insertBefore(row,row.previousElementSibling);
+        if(direction==='down'&&row.nextElementSibling?.matches('[data-monitor-id]'))ledger.insertBefore(row.nextElementSibling,row);
+        row.focus();
+        markOrderChanged();
+      };
+      const onFinish=()=>saveOrder();
+      const onCancel=()=>navigate('/monitor/websites',true);
+      const onReorderKey=event=>{
+        const row=event.target.closest('[data-monitor-id]');
+        if(!row||!['ArrowUp','ArrowDown'].includes(event.key))return;
+        event.preventDefault();
+        if(event.key==='ArrowUp'&&row.previousElementSibling?.matches('[data-monitor-id]'))ledger.insertBefore(row,row.previousElementSibling);
+        if(event.key==='ArrowDown'&&row.nextElementSibling?.matches('[data-monitor-id]'))ledger.insertBefore(row.nextElementSibling,row);
+        row.focus();
+        markOrderChanged();
+      };
+      root.addEventListener('submit',onMove);
+      root.querySelector('[data-reorder-finish]')?.addEventListener('click',onFinish);
+      root.querySelector('[data-reorder-cancel]')?.addEventListener('click',onCancel);
+      root.addEventListener('keydown',onReorderKey);
+      for(const row of rows()){
         row.addEventListener('dragstart',event=>{
           dragged=row;
           row.classList.add('is-dragging');
@@ -1812,10 +2643,89 @@
           const before=event.clientY<row.getBoundingClientRect().top+row.offsetHeight/2;
           row.parentElement.insertBefore(dragged,before?row:row.nextSibling);
         });
-        row.addEventListener('drop',event=>{event.preventDefault();saveOrder()});
+        row.addEventListener('drop',event=>{event.preventDefault();markOrderChanged()});
       }
-      return ()=>{stopped=true};
+      updateMoveButtons();
+      return ()=>{
+        stopped=true;
+        root.removeEventListener('submit',onMove);
+        root.querySelector('[data-reorder-finish]')?.removeEventListener('click',onFinish);
+        root.querySelector('[data-reorder-cancel]')?.removeEventListener('click',onCancel);
+        root.removeEventListener('keydown',onReorderKey);
+      };
     }
+    const surfaceTaskURL=root.closest('.task-panel')?taskPanelState?.taskURL:'';
+    const reloadCurrentSurface=async()=>{
+      if(stopped||!root.isConnected)return;
+      if(surfaceTaskURL){
+        if(taskPanelState?.taskURL===surfaceTaskURL&&taskPanelState.host.contains(root))await openTask(surfaceTaskURL,false);
+        return;
+      }
+      await navigate(location.href,false);
+    };
+    const openRowDetail=target=>{
+      const row=target.closest('[data-detail-href]');
+      if(!row||target.closest('a,button,input,select,textarea,form'))return;
+      if(matchMedia('(min-width: 761px)').matches)openTask(row.dataset.detailHref,true,row);
+      else navigate(row.dataset.detailHref,true);
+    };
+    const onLedgerClick=event=>openRowDetail(event.target);
+    const onLedgerKey=event=>{
+      if(!event.target.matches('[data-detail-href]')||!['Enter',' '].includes(event.key))return;
+      event.preventDefault();
+      openRowDetail(event.target);
+    };
+    root.addEventListener('click',onLedgerClick);
+    root.addEventListener('keydown',onLedgerKey);
+    const checkForm=root.querySelector('[data-website-check-form]');
+    const onCheck=async event=>{
+      event.preventDefault();
+      if(busy)return;
+      const button=event.submitter||checkForm.querySelector('button');
+      const original=button.textContent;
+      const startingToken=root.dataset.monitorChecked;
+      const controller=new AbortController();
+      checkController?.abort();
+      checkController=controller;
+      busy=true;
+      button.disabled=true;
+      button.setAttribute('aria-busy','true');
+      button.textContent=checkForm.dataset.checkingLabel||original;
+      try{
+        const response=await fetch(checkForm.action,{method:'POST',body:new FormData(checkForm),credentials:'same-origin',signal:controller.signal});
+        if(!response.ok)throw new Error(await response.text());
+        const configuredTimeout=Number(checkForm.dataset.checkTimeoutMs)||30000;
+        const deadline=Date.now()+Math.max(15000,configuredTimeout+10000);
+        let completed=false;
+        while(Date.now()<deadline){
+          await new Promise(resolve=>setTimeout(resolve,500));
+          if(stopped||controller.signal.aborted)return;
+          const result=await fetch(root.dataset.statusUrl,{headers:{Accept:'application/json'},cache:'no-store',signal:controller.signal});
+          if(!result.ok)continue;
+          const snapshot=await result.json();
+          const token=String(snapshot.CheckedToken??snapshot.checkedToken??'');
+          if(token&&token!==startingToken){
+            completed=true;
+            break;
+          }
+        }
+        if(!completed)throw new Error(root.dataset.refreshFailed||'The latest check result is not available yet.');
+        if(stopped||controller.signal.aborted||!root.isConnected)return;
+        button.textContent=checkForm.dataset.completeLabel||original;
+        await new Promise(resolve=>setTimeout(resolve,650));
+        if(stopped||controller.signal.aborted||!root.isConnected)return;
+        busy=false;
+        await reloadCurrentSurface();
+      }catch(error){
+        if(error?.name==='AbortError')return;
+        busy=false;
+        button.disabled=false;
+        button.removeAttribute('aria-busy');
+        button.textContent=original;
+        if(refreshStatus)refreshStatus.textContent=error?.message||root.dataset.refreshFailed||'';
+      }
+    };
+    checkForm?.addEventListener('submit',onCheck);
     const refresh=async()=>{
       if(stopped||busy||document.hidden)return;
       busy=true;
@@ -1823,14 +2733,25 @@
         const response=await fetch(root.dataset.statusUrl,{headers:{Accept:'application/json'},cache:'no-store'});
         if(!response.ok)throw new Error('status refresh failed');
         const payload=await response.json();
-        if(!stopped&&websiteSnapshotChanged(root,payload))await navigate(location.href,false);
-      }catch(_){}
+        if(refreshStatus)refreshStatus.textContent='';
+        if(!stopped&&websiteSnapshotChanged(root,payload))await reloadCurrentSurface();
+      }catch(_){
+        if(refreshStatus)refreshStatus.textContent=root.dataset.refreshFailed||'';
+      }
       busy=false;
     };
     const timer=setInterval(refresh,10000);
     const visibility=()=>{if(!document.hidden)refresh()};
     document.addEventListener('visibilitychange',visibility);
-    return ()=>{stopped=true;clearInterval(timer);document.removeEventListener('visibilitychange',visibility)};
+    return ()=>{
+      stopped=true;
+      checkController?.abort();
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange',visibility);
+      root.removeEventListener('click',onLedgerClick);
+      root.removeEventListener('keydown',onLedgerKey);
+      checkForm?.removeEventListener('submit',onCheck);
+    };
   }
 
   function initPage() {
@@ -1852,6 +2773,8 @@
     if (websiteForm) cleanups.push(initWebsiteMonitorForm(websiteForm));
     const websiteMonitoring = document.querySelector("[data-website-monitoring],[data-website-detail]");
     if (websiteMonitoring) cleanups.push(initWebsiteMonitoring(websiteMonitoring));
+    const websiteNginx = document.querySelector("[data-website-nginx]");
+    if (websiteNginx) cleanups.push(initWebsiteNginx(websiteNginx));
   }
 
   document.addEventListener("click", event => {
@@ -1864,7 +2787,7 @@
       setSidebar(false);
       return;
     }
-    if (taskPanelState && event.target.closest(".task-panel-scrim")) {
+    if (taskPanelState && event.target.closest(".task-panel-scrim,[data-task-panel-close]")) {
       closeTaskPanel(true);
       return;
     }
@@ -1878,6 +2801,8 @@
       const returnURL = taskPanelState.returnURL;
       if (destination.href === returnURL) {
         closeTaskPanel(true);
+      } else if (link.matches("[data-task-link]") && matchMedia("(min-width: 761px)").matches) {
+        openTask(destination.href, false, link);
       } else {
         closeTaskPanel(false);
         history.replaceState({ pjax: true }, "", destination.href);
@@ -1951,6 +2876,25 @@
 
   document.addEventListener("keydown", event => {
     const editing = event.target.matches("input,textarea,select,[contenteditable='true']");
+    if (taskPanelState && event.key === "Tab") {
+      const panel = taskPanelState.host.querySelector("[data-task-panel]");
+      const focusable = [...panel.querySelectorAll("a[href],button:not([disabled]),input:not([disabled]):not([type='hidden']),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex='-1'])")]
+        .filter(element => !element.hidden && element.getClientRects().length > 0);
+      if (!focusable.length) {
+        event.preventDefault();
+        panel.focus();
+      } else {
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && (event.target === first || !panel.contains(event.target))) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && event.target === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    }
     if (event.key === "Escape") {
       if (taskPanelRequest) {
         event.preventDefault();

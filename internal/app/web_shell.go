@@ -11,13 +11,17 @@ import (
 	"time"
 
 	"scriptboard/internal/hoststatus"
+	"scriptboard/internal/websitemonitor"
 )
 
 type shellStatusResponse struct {
-	State       string    `json:"state"`
-	CollectedAt time.Time `json:"collectedAt"`
-	IssueCount  int       `json:"issueCount"`
-	ActiveRuns  int       `json:"activeRuns"`
+	State            string    `json:"state"`
+	CollectedAt      time.Time `json:"collectedAt"`
+	IssueCount       int       `json:"issueCount"`
+	ActiveRuns       int       `json:"activeRuns"`
+	WebsiteState     string    `json:"websiteState"`
+	WebsiteDown      int       `json:"websiteDown"`
+	WebsiteVerifying int       `json:"websiteVerifying"`
 }
 
 type shellStatusCache struct {
@@ -89,6 +93,11 @@ func (a *App) loadShellStatus(ctx context.Context) (shellStatusResponse, error) 
 	if err := a.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM runs WHERE status IN ('starting', 'running', 'stopping', 'timing_out')").Scan(&activeRuns); err != nil {
 		return shellStatusResponse{}, err
 	}
+	websiteMonitors, err := a.websiteMonitor.List(ctx, websitemonitor.Filter{})
+	if err != nil {
+		return shellStatusResponse{}, err
+	}
+	websiteState, websiteDown, websiteVerifying := summarizeWebsiteShellStatus(websiteMonitors)
 	state := "current"
 	if overview.Stale {
 		state = "stale"
@@ -96,11 +105,32 @@ func (a *App) loadShellStatus(ctx context.Context) (shellStatusResponse, error) 
 		state = "attention"
 	}
 	return shellStatusResponse{
-		State:       state,
-		CollectedAt: overview.CollectedAt,
-		IssueCount:  len(overview.Errors),
-		ActiveRuns:  activeRuns,
+		State:            state,
+		CollectedAt:      overview.CollectedAt,
+		IssueCount:       len(overview.Errors),
+		ActiveRuns:       activeRuns,
+		WebsiteState:     websiteState,
+		WebsiteDown:      websiteDown,
+		WebsiteVerifying: websiteVerifying,
 	}, nil
+}
+
+func summarizeWebsiteShellStatus(monitors []websitemonitor.Monitor) (state string, down int, verifying int) {
+	for _, monitor := range monitors {
+		switch monitor.State {
+		case websitemonitor.StateDown:
+			down++
+		case websitemonitor.StatePending, websitemonitor.StateVerifying:
+			verifying++
+		}
+	}
+	if down > 0 {
+		return "down", down, verifying
+	}
+	if verifying > 0 {
+		return "verifying", down, verifying
+	}
+	return "up", down, verifying
 }
 
 func (a *App) shellStatus(response http.ResponseWriter, request *http.Request) {
@@ -129,6 +159,8 @@ type applicationShellData struct {
 	Username, CSRFToken, ReturnTo         string
 	Environment, Status, StatusState      string
 	ActiveRuns                            int
+	WebsiteState                          string
+	WebsiteDown, WebsiteVerifying         int
 	Navigation                            []shellNavigationGroup
 	SettingsCurrent, ChineseLocaleCurrent bool
 }
@@ -158,6 +190,7 @@ func (a *App) addApplicationShell(request *http.Request, body []byte) []byte {
 	_ = applicationShellTemplate.Execute(&shell, applicationShellData{
 		Locale: locale, Username: username, CSRFToken: current.csrfToken, ReturnTo: request.URL.RequestURI(),
 		Environment: environment, Status: status, StatusState: statusState, ActiveRuns: shellStatus.ActiveRuns,
+		WebsiteState: shellStatus.WebsiteState, WebsiteDown: shellStatus.WebsiteDown, WebsiteVerifying: shellStatus.WebsiteVerifying,
 		Navigation: navigation, SettingsCurrent: strings.HasPrefix(request.URL.Path, "/settings/"),
 		ChineseLocaleCurrent: locale == localeSimplifiedChinese,
 	})

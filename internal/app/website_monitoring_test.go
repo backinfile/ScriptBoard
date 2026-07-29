@@ -3,7 +3,9 @@ package app_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
@@ -210,6 +212,40 @@ func TestNginxScanPreviewsBeforeASeparateImport(t *testing.T) {
 		t.Fatalf("scan imported a candidate: %s", beforeImport)
 	}
 
+	emptyImportForm := url.Values{
+		"csrf_token":  {formToken(t, preview)},
+		"config_path": {configPath},
+	}
+	emptyImportRequest, err := http.NewRequest(
+		http.MethodPost,
+		serverURL+"/monitor/websites/nginx/import",
+		strings.NewReader(emptyImportForm.Encode()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	emptyImportRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	emptyImportRequest.Header.Set("Accept", "application/json")
+	response, err = client.Do(emptyImportRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var errorPayload struct {
+		Error struct {
+			Code  string `json:"code"`
+			Field string `json:"field"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&errorPayload); err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusUnprocessableEntity ||
+		errorPayload.Error.Code != string(websitemonitor.ErrorSelectionRequired) ||
+		errorPayload.Error.Field != "digest" {
+		t.Fatalf("empty Nginx import status=%d payload=%#v", response.StatusCode, errorPayload)
+	}
+
 	response, err = client.PostForm(serverURL+"/monitor/websites/nginx/import", url.Values{
 		"csrf_token":  {formToken(t, preview)},
 		"config_path": {configPath},
@@ -219,8 +255,22 @@ func TestNginxScanPreviewsBeforeASeparateImport(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/monitor/websites" {
+	if response.StatusCode != http.StatusSeeOther ||
+		response.Header.Get("Location") != "/monitor/websites/nginx?imported=1" {
 		t.Fatalf("import status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+	response, err = client.Get(serverURL + response.Header.Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	successPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK ||
+		!bytes.Contains(successPage, []byte(`class="nginx-import-success"`)) {
+		t.Fatalf("Nginx import success page status=%d body=%s", response.StatusCode, successPage)
 	}
 	response, err = client.Get(serverURL + "/monitor/websites")
 	if err != nil {
@@ -230,6 +280,79 @@ func TestNginxScanPreviewsBeforeASeparateImport(t *testing.T) {
 	_ = response.Body.Close()
 	if !bytes.Contains(afterImport, []byte("imported.local")) {
 		t.Fatalf("imported candidate is missing: %s", afterImport)
+	}
+}
+
+func TestNginxJSONImportAcceptsMultipartFormAndReturnsSuccessContract(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "nginx.conf")
+	if err := os.WriteFile(configPath, []byte(`
+		http { server { listen 8080; server_name json-import.local; } }
+	`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{
+		ManagedRoot: filepath.Join(root, "managed"),
+		StateRoot:   filepath.Join(root, "state"),
+		WebsiteMonitorOptions: websitemonitor.Options{
+			Probe: websiteProbeFunc(func(context.Context, websitemonitor.Config) websitemonitor.Evidence {
+				return websitemonitor.Evidence{Success: true}
+			}),
+		},
+	})
+	response, err := client.Get(serverURL + "/monitor/websites/nginx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/monitor/websites/nginx/scan", url.Values{
+		"csrf_token":  {formToken(t, taskPage)},
+		"config_path": {configPath},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	for key, value := range map[string]string{
+		"csrf_token":  formToken(t, preview),
+		"config_path": configPath,
+		"digest":      hiddenValue(t, preview, "digest"),
+	} {
+		if err := writer.WriteField(key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequest(
+		http.MethodPost, serverURL+"/monitor/websites/nginx/import", &body,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.Header.Set("Accept", "application/json")
+	response, err = client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		ImportedCount int    `json:"importedCount"`
+		RedirectURL   string `json:"redirectURL"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusCreated || payload.ImportedCount != 1 ||
+		payload.RedirectURL != "/monitor/websites" {
+		t.Fatalf("JSON import status=%d payload=%#v", response.StatusCode, payload)
 	}
 }
 
@@ -398,6 +521,138 @@ func TestWebsiteMonitoringLocalizesEnglishAndShowsCheckedZeroLatency(t *testing.
 		if !bytes.Contains(nginxPage, []byte(expected)) {
 			t.Fatalf("English Nginx page does not contain %q: %s", expected, nginxPage)
 		}
+	}
+}
+
+func TestWebsiteMonitoringDataReturnsCompletePollingAndDetailSnapshots(t *testing.T) {
+	root := t.TempDir()
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{
+		ManagedRoot: filepath.Join(root, "managed"),
+		StateRoot:   filepath.Join(root, "state"),
+		WebsiteMonitorOptions: websitemonitor.Options{
+			Probe: websiteProbeFunc(func(context.Context, websitemonitor.Config) websitemonitor.Evidence {
+				return websitemonitor.Evidence{
+					ErrorCategory: "connect",
+					Summary:       "网站拒绝连接",
+				}
+			}),
+			Tick:       5 * time.Millisecond,
+			RetryDelay: 10 * time.Millisecond,
+		},
+	})
+	setWebsiteTestLocale(t, client, serverURL, "zh-CN")
+
+	response, err := client.Get(serverURL + "/monitor/websites/new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/monitor/websites", url.Values{
+		"csrf_token":        {formToken(t, newPage)},
+		"name":              {"轮询失败样本"},
+		"scope":             {"local"},
+		"kind":              {"http"},
+		"url":               {"http://127.0.0.1:1/"},
+		"frequency_seconds": {"60"},
+		"timeout_seconds":   {"3"},
+		"http_method":       {"GET"},
+		"http_success_mode": {"range"},
+		"follow_redirects":  {"1"},
+		"verify_tls":        {"1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	location := response.Header.Get("Location")
+
+	type item struct {
+		ID                string
+		FailureCount      int
+		NextCheckAt       time.Time
+		IncidentStartedAt time.Time
+	}
+	var listSnapshot struct {
+		Monitors []item `json:"monitors"`
+		Alerts   []item `json:"alerts"`
+		Counts   struct {
+			Down int `json:"down"`
+		} `json:"counts"`
+		Total     int `json:"total"`
+		NeedsCare int `json:"needsCare"`
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		response, err = client.Get(serverURL + "/monitor/websites/data")
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = json.NewDecoder(response.Body).Decode(&listSnapshot)
+		_ = response.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if listSnapshot.Counts.Down == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if listSnapshot.Counts.Down != 1 || listSnapshot.NeedsCare != 1 ||
+		listSnapshot.Total != 1 || len(listSnapshot.Monitors) != 1 ||
+		len(listSnapshot.Alerts) != 1 {
+		t.Fatalf("list snapshot = %#v", listSnapshot)
+	}
+	if listSnapshot.Alerts[0].FailureCount < 2 ||
+		listSnapshot.Alerts[0].NextCheckAt.IsZero() ||
+		listSnapshot.Alerts[0].IncidentStartedAt.IsZero() {
+		t.Fatalf("alert evidence = %#v", listSnapshot.Alerts[0])
+	}
+
+	response, err = client.Get(serverURL + location + "/data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var detailSnapshot struct {
+		ID                 string
+		DetailAvailability []struct {
+			State websitemonitor.Availability
+			Title string
+		}
+		AvailabilityPercent float64
+		RecentChecks        []websitemonitor.Evidence
+		IncidentCount       int
+		CurrentIncident     *websitemonitor.IncidentSnapshot
+		AverageLatencyLabel string
+		P95LatencyLabel     string
+		AvailabilityLabel   string
+	}
+	if err := json.NewDecoder(response.Body).Decode(&detailSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if detailSnapshot.ID == "" || len(detailSnapshot.DetailAvailability) != 72 ||
+		len(detailSnapshot.RecentChecks) < 2 || detailSnapshot.IncidentCount != 1 ||
+		detailSnapshot.CurrentIncident == nil {
+		t.Fatalf("detail snapshot = %#v", detailSnapshot)
+	}
+
+	response, err = client.Get(serverURL + "/monitor/websites/missing/data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var missingPayload struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&missingPayload); err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusNotFound ||
+		missingPayload.Error.Code != string(websitemonitor.ErrorNotFound) {
+		t.Fatalf("missing detail status=%d payload=%#v", response.StatusCode, missingPayload)
 	}
 }
 

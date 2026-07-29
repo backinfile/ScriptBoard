@@ -6,7 +6,7 @@ STORY: Review pinned applications, then discover host and Docker workload pressu
 FIRST VIEWPORT: Current pinned facts precede the sortable running snapshot.
 FORM: Flat measurement rails and a responsive record ledger; no control-plane actions.
 -->
-<html lang="zh-CN">
+<html lang="{{.Locale}}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -15,7 +15,7 @@ FORM: Flat measurement rails and a responsive record ledger; no control-plane ac
   <title>{{t .Locale "applications.title"}} · ScriptBoard</title>
 </head>
 <body>
-<main class="workspace applications-page" data-applications-page data-applications-url="/monitor/applications/data">
+<main class="workspace applications-page" data-applications-page data-applications-url="/monitor/applications/data" data-refresh-unavailable="{{t .Locale "applications.refresh_unavailable"}}">
   <header class="page-heading applications-heading">
     <div>
       <p class="eyebrow">{{t .Locale "applications.eyebrow"}}</p>
@@ -28,33 +28,63 @@ FORM: Flat measurement rails and a responsive record ledger; no control-plane ac
     <div><dt>{{t .Locale "applications.host_count"}}</dt><dd>{{.HostCount}}</dd></div>
     <div><dt>{{t .Locale "applications.docker_count"}}</dt><dd>{{if .DockerAvailable}}{{.DockerCount}}{{else}}<span class="application-source-unavailable">{{t .Locale "applications.source_unavailable"}}</span>{{end}}</dd></div>
     <div><dt>{{t .Locale "applications.pinned_count"}}</dt><dd>{{len .Pinned}}</dd></div>
-    <div><dt>{{t .Locale "applications.collected"}}</dt><dd><time datetime="{{machineTime .CollectedAt}}" data-local-time>{{localTime .Locale .CollectedAt}}</time></dd></div>
+    <div><dt>{{t .Locale "applications.pin_live_update"}}</dt><dd class="application-live-fact" data-pinned-live-fact data-state="on">{{t .Locale "applications.live_on"}}</dd></div>
   </dl>
 
   <section class="applications-section" aria-labelledby="pinned-applications-heading">
     <header class="applications-section-heading">
       <div><p class="section-index">{{t .Locale "applications.focus"}}</p><h2 id="pinned-applications-heading">{{t .Locale "applications.pinned"}}</h2><p>{{t .Locale "applications.pinned_description"}}</p></div>
       <div class="applications-refresh">
-        <span><strong>{{t .Locale "applications.live_on"}}</strong><small>{{t .Locale "applications.every_five_seconds"}}</small></span>
+        <span><strong>{{t .Locale "applications.live_on"}}</strong><time datetime="{{machineTime .CollectedAt}}" data-local-time data-applications-refresh-time="pinned">{{localTime .Locale .CollectedAt}}</time><small>{{t .Locale "applications.every_five_seconds"}}</small></span>
         <button type="button" class="applications-switch" role="switch" aria-checked="true" aria-label="{{t .Locale "applications.pause_pinned_live"}}" data-applications-refresh="pinned" data-enabled-label="{{t .Locale "applications.live_on"}}" data-disabled-label="{{t .Locale "applications.live_off"}}" data-enabled-description="{{t .Locale "applications.every_five_seconds"}}" data-disabled-description="{{t .Locale "applications.last_snapshot"}}" data-pause-label="{{t .Locale "applications.pause_pinned_live"}}" data-start-label="{{t .Locale "applications.start_pinned_live"}}"></button>
       </div>
     </header>
     <div class="pinned-application-list" data-pinned-applications>
       {{range .Pinned}}
-      <article class="pinned-application" data-application-id="{{.ID}}">
-        <div class="pinned-application__identity">
-          <span data-lucide="{{if eq .Kind "docker"}}box{{else}}app-window{{end}}" aria-hidden="true"></span>
-          <div><h3>{{.Name}}{{if eq .Kind "docker"}} <span class="application-kind">Docker</span>{{end}}</h3><p>{{.Technical}}</p><small>{{if .Running}}{{t $.Locale "applications.running"}}{{else}}{{t $.Locale "applications.stopped"}}{{end}}</small></div>
+      <article class="pinned-application" data-application-id="{{.ID}}" data-application-detail-url="/monitor/applications/{{.ID}}/details" data-expanded="false">
+        <div class="pinned-application__summary">
+          <div class="pinned-application__identity">
+            <span data-lucide="{{if eq .Kind "docker"}}box{{else}}app-window{{end}}" aria-hidden="true"></span>
+            <div><h3>{{.Name}}{{if eq .Kind "docker"}} <span class="application-kind">Docker</span>{{end}}</h3><p>{{.Technical}}</p><small>{{if .Running}}{{t $.Locale "applications.running"}}{{else}}{{t $.Locale "applications.stopped"}}{{end}} · {{.ProcessCount}} {{t $.Locale "applications.processes"}}</small></div>
+          </div>
+          <dl class="pinned-application__metrics">
+            <div><dt>CPU</dt><dd>{{if .RateAvailable}}{{percent .CPUPercent}}{{else}}&ndash;{{end}}<small>{{t $.Locale "applications.current_value"}}</small></dd></div>
+            <div><dt>{{t $.Locale "applications.memory"}}</dt><dd>{{humanBytes .MemoryBytes}}{{if and (eq .Kind "docker") (gt .MemoryLimitBytes 0)}} / {{humanBytes .MemoryLimitBytes}}{{end}}<small>{{percent .MemoryPercent}}</small></dd></div>
+            <div><dt>{{t $.Locale "applications.disk_io"}}</dt><dd>{{if .RateAvailable}}{{humanRate .ReadBytesPerSecond}} / {{humanRate .WriteBytesPerSecond}}{{else}}&ndash;{{end}}<small>{{t $.Locale "applications.read"}} / {{t $.Locale "applications.write"}}</small></dd></div>
+          </dl>
+          <div class="pinned-application__actions">
+            <button class="button button--quiet button--compact pinned-application__toggle" type="button" aria-expanded="false" aria-controls="pinned-detail-{{.ID}}" data-application-detail-toggle>
+              <span data-lucide="chevron-right" aria-hidden="true"></span><span>{{t $.Locale "applications.view_details"}}</span>
+            </button>
+            <details class="action-menu pinned-application__menu">
+              <summary aria-label="{{t $.Locale "applications.more_actions"}} {{.Name}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary>
+              <div>
+                <form method="post" action="/monitor/applications/{{.ID}}/move"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="direction" value="up"><button type="submit" {{if not .CanMoveUp}}disabled{{end}}><span data-lucide="arrow-up" aria-hidden="true"></span>{{t $.Locale "applications.move_up"}}</button></form>
+                <form method="post" action="/monitor/applications/{{.ID}}/move"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="direction" value="down"><button type="submit" {{if not .CanMoveDown}}disabled{{end}}><span data-lucide="arrow-down" aria-hidden="true"></span>{{t $.Locale "applications.move_down"}}</button></form>
+                <form method="post" action="/monitor/applications/{{.ID}}/unpin"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="action-menu__danger" type="submit"><span data-lucide="pin-off" aria-hidden="true"></span>{{t $.Locale "applications.unpin"}}</button></form>
+              </div>
+            </details>
+          </div>
         </div>
-        <dl class="pinned-application__metrics">
-          <div><dt>CPU</dt><dd>{{if .RateAvailable}}{{percent .CPUPercent}}{{else}}&ndash;{{end}}</dd></div>
-          <div><dt>{{t $.Locale "applications.memory"}}</dt><dd>{{humanBytes .MemoryBytes}}</dd></div>
-          <div><dt>{{t $.Locale "applications.disk_io"}}</dt><dd>{{if .RateAvailable}}{{humanRate .ReadBytesPerSecond}} / {{humanRate .WriteBytesPerSecond}}{{else}}&ndash;{{end}}</dd></div>
-        </dl>
-        <form method="post" action="/monitor/applications/{{.ID}}/unpin">
-          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-          <button class="icon-button" type="submit" aria-label="{{t $.Locale "applications.unpin"}} {{.Name}}"><span data-lucide="pin-off" aria-hidden="true"></span></button>
-        </form>
+        <section class="pinned-application__detail" id="pinned-detail-{{.ID}}" data-application-detail hidden>
+          <div class="application-detail-tabs" role="tablist" aria-label="{{t $.Locale "applications.detail_tabs"}}">
+            <button id="pinned-history-tab-{{.ID}}" type="button" role="tab" aria-selected="true" aria-controls="pinned-history-panel-{{.ID}}" data-application-detail-tab="history">{{t $.Locale "applications.history"}}</button>
+            <button id="pinned-runtime-tab-{{.ID}}" type="button" role="tab" aria-selected="false" aria-controls="pinned-runtime-panel-{{.ID}}" tabindex="-1" data-application-detail-tab="runtime">{{t $.Locale "applications.runtime_details"}}</button>
+          </div>
+          <div id="pinned-history-panel-{{.ID}}" role="tabpanel" aria-labelledby="pinned-history-tab-{{.ID}}" data-application-detail-panel="history">
+            <div class="application-detail-toolbar">
+              <div><strong>{{t $.Locale "applications.history"}}</strong><span>{{t $.Locale "applications.history_description"}}</span></div>
+              <div class="application-range-switch" aria-label="{{t $.Locale "applications.time_range"}}">
+                <button type="button" aria-pressed="false" data-application-range="15m">15m</button>
+                <button type="button" aria-pressed="true" data-application-range="1h">1h</button>
+                <button type="button" aria-pressed="false" data-application-range="6h">6h</button>
+                <button type="button" aria-pressed="false" data-application-range="24h">24h</button>
+              </div>
+            </div>
+            <div data-application-history-output></div>
+          </div>
+          <div id="pinned-runtime-panel-{{.ID}}" role="tabpanel" aria-labelledby="pinned-runtime-tab-{{.ID}}" data-application-detail-panel="runtime" hidden></div>
+        </section>
       </article>
       {{else}}
       <div class="applications-empty"><span data-lucide="pin" aria-hidden="true"></span><p>{{t .Locale "applications.no_pins"}}</p><a href="#running-applications">{{t .Locale "applications.find_running"}}</a></div>
@@ -66,7 +96,7 @@ FORM: Flat measurement rails and a responsive record ledger; no control-plane ac
     <header class="applications-section-heading">
       <div><p class="section-index">{{t .Locale "applications.all"}}</p><h2 id="running-applications-heading">{{t .Locale "applications.running_title"}}</h2><p>{{t .Locale "applications.running_description"}}</p></div>
       <div class="applications-refresh">
-        <span><strong>{{t .Locale "applications.live_off"}}</strong><small>{{t .Locale "applications.last_snapshot"}}</small></span>
+        <span><strong>{{t .Locale "applications.live_off"}}</strong><time datetime="{{machineTime .CollectedAt}}" data-local-time data-applications-refresh-time="running">{{localTime .Locale .CollectedAt}}</time><small>{{t .Locale "applications.last_snapshot"}}</small></span>
         <button type="button" class="applications-switch" role="switch" aria-checked="false" aria-label="{{t .Locale "applications.start_running_live"}}" data-applications-refresh="running" data-enabled-label="{{t .Locale "applications.live_on"}}" data-disabled-label="{{t .Locale "applications.live_off"}}" data-enabled-description="{{t .Locale "applications.every_five_seconds"}}" data-disabled-description="{{t .Locale "applications.last_snapshot"}}" data-pause-label="{{t .Locale "applications.pause_running_live"}}" data-start-label="{{t .Locale "applications.start_running_live"}}"></button>
       </div>
     </header>
@@ -75,7 +105,12 @@ FORM: Flat measurement rails and a responsive record ledger; no control-plane ac
       <label class="applications-search"><span data-lucide="search" aria-hidden="true"></span><span class="sr-only">{{t .Locale "common.search"}}</span><input type="search" name="query" value="{{.Query.Search}}" placeholder="{{t .Locale "applications.search_placeholder"}}"></label>
       <input type="hidden" name="sort" value="{{.Query.Sort}}">
       <input type="hidden" name="direction" value="{{.Query.Direction}}">
-      <label class="applications-kind-select"><span>{{t .Locale "applications.kind"}}</span><select name="kind"><option value="all" {{if eq .Query.Kind ""}}selected{{end}}>{{t .Locale "applications.kind_all"}}</option><option value="host" {{if eq .Query.Kind "host"}}selected{{end}}>{{t .Locale "applications.kind_host"}}</option><option value="docker" {{if eq .Query.Kind "docker"}}selected{{end}}>Docker</option></select></label>
+      <fieldset class="applications-kind-switch">
+        <legend class="sr-only">{{t .Locale "applications.kind"}}</legend>
+        <label><input type="radio" name="kind" value="" {{if eq .Query.Kind ""}}checked{{end}}><span>{{t .Locale "applications.kind_all"}}</span></label>
+        <label><input type="radio" name="kind" value="host" {{if eq .Query.Kind "host"}}checked{{end}}><span>{{t .Locale "applications.kind_host"}}</span></label>
+        <label><input type="radio" name="kind" value="docker" {{if eq .Query.Kind "docker"}}checked{{end}}><span>Docker</span></label>
+      </fieldset>
       <button class="button button--compact" type="submit">{{t .Locale "common.search"}}</button>
     </form>
 
@@ -103,7 +138,7 @@ FORM: Flat measurement rails and a responsive record ledger; no control-plane ac
         </tr></thead>
         <tbody>
         {{range .Applications}}
-          <tr data-application-row data-kind="{{.Kind}}" data-application-id="{{.ID}}">
+          <tr class="application-running-row" data-application-row data-kind="{{.Kind}}" data-application-id="{{.ID}}" data-application-detail-url="/monitor/applications/{{.ID}}/details" tabindex="0" aria-expanded="false" aria-controls="running-detail-{{.ID}}" aria-label="{{t $.Locale "applications.view_details"}} {{.Name}}">
             <td data-label="{{t $.Locale "applications.pin"}}">
               {{if .Pinnable}}<form method="post" action="/monitor/applications/{{.ID}}/{{if .Pinned}}unpin{{else}}pin{{end}}"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="icon-button{{if .Pinned}} is-selected{{end}}" type="submit" aria-label="{{if .Pinned}}{{t $.Locale "applications.unpin"}}{{else}}{{t $.Locale "applications.pin"}}{{end}} {{.Name}}"><span data-lucide="pin" aria-hidden="true"></span></button></form>{{else}}<span class="application-restricted" title="{{t $.Locale "applications.identity_restricted"}}"><span data-lucide="shield-alert" aria-hidden="true"></span></span>{{end}}
             </td>
@@ -113,6 +148,9 @@ FORM: Flat measurement rails and a responsive record ledger; no control-plane ac
             <td class="numeric application-metric" data-label="{{t $.Locale "applications.read"}}">{{if .RateAvailable}}{{humanRate .ReadBytesPerSecond}}{{else}}&ndash;{{end}}</td>
             <td class="numeric application-metric" data-label="{{t $.Locale "applications.write"}}">{{if .RateAvailable}}{{humanRate .WriteBytesPerSecond}}{{else}}&ndash;{{end}}</td>
             <td class="numeric application-metric" data-label="{{t $.Locale "applications.processes"}}">{{.ProcessCount}}{{if eq .Kind "docker"}}<small>{{t $.Locale "applications.pids"}}</small>{{else}}<small>{{.ThreadCount}} {{t $.Locale "applications.threads"}}</small>{{end}}</td>
+          </tr>
+          <tr class="application-running-detail-row" id="running-detail-{{.ID}}" data-running-detail-for="{{.ID}}" hidden>
+            <td colspan="7"><div class="application-running-detail" data-running-detail-content></div></td>
           </tr>
         {{else}}
           <tr class="records-table__empty"><td colspan="7">{{t .Locale "applications.no_results"}}</td></tr>

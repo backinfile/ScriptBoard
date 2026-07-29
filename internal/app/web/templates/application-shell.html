@@ -21,6 +21,14 @@
       <span class="status-dot" aria-hidden="true"></span>
       <span><strong>{{.Status}}</strong><small>{{.Environment}} · {{.ActiveRuns}} {{t .Locale "shell.active_runs"}}</small></span>
     </a>
+    <a class="sidebar-status sidebar-status--website" href="/monitor/websites" data-shell-website-status data-state="{{.WebsiteState}}" data-down="{{.WebsiteDown}}" data-verifying="{{.WebsiteVerifying}}">
+      <span class="status-dot" aria-hidden="true"></span>
+      <span>
+        <strong data-shell-website-primary>{{if gt .WebsiteDown 0}}{{.WebsiteDown}} {{if eq .WebsiteDown 1}}{{t .Locale "shell.website_down_one"}}{{else}}{{t .Locale "shell.website_down_many"}}{{end}}{{else if gt .WebsiteVerifying 0}}{{.WebsiteVerifying}} {{if eq .WebsiteVerifying 1}}{{t .Locale "shell.website_verifying_one"}}{{else}}{{t .Locale "shell.website_verifying_many"}}{{end}}{{else}}{{t .Locale "shell.website_normal"}}{{end}}</strong>
+        <small data-shell-website-secondary>{{if gt .WebsiteDown 0}}{{.WebsiteVerifying}} {{if eq .WebsiteVerifying 1}}{{t .Locale "shell.website_verifying_one"}}{{else}}{{t .Locale "shell.website_verifying_many"}}{{end}}{{else if gt .WebsiteVerifying 0}}{{t .Locale "shell.website_no_confirmed_failure"}}{{else}}{{t .Locale "shell.website_no_open_issues"}}{{end}}</small>
+      </span>
+      <span class="sidebar-status__chevron" data-lucide="chevron-right" aria-hidden="true"></span>
+    </a>
     <div class="sidebar-utilities">
       <form method="post" action="/settings/locale" data-native>
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">

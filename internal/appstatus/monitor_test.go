@@ -16,6 +16,21 @@ type snapshotProbe struct {
 	index     int
 }
 
+type detailSnapshotProbe struct {
+	snapshot appstatus.RawSnapshot
+	detail   appstatus.RuntimeDetail
+	request  appstatus.DetailRequest
+}
+
+func (p *detailSnapshotProbe) Snapshot(context.Context) appstatus.RawSnapshot {
+	return p.snapshot
+}
+
+func (p *detailSnapshotProbe) RuntimeDetail(_ context.Context, request appstatus.DetailRequest) appstatus.RuntimeDetail {
+	p.request = request
+	return p.detail
+}
+
 func (p *snapshotProbe) Snapshot(context.Context) appstatus.RawSnapshot {
 	if p.index >= len(p.snapshots) {
 		return p.snapshots[len(p.snapshots)-1]
@@ -338,6 +353,226 @@ func TestViewFiltersBeforeApplyingTheResultLimit(t *testing.T) {
 	}
 }
 
+func TestHistoryPersistsMinuteAggregatesAndSupportsEveryReferenceRange(t *testing.T) {
+	t.Parallel()
+
+	started := time.Date(2026, 7, 29, 9, 0, 10, 0, time.UTC)
+	now := started.Add(30 * time.Second)
+	probe := &snapshotProbe{snapshots: []appstatus.RawSnapshot{
+		{
+			CollectedAt:      started,
+			LogicalCores:     1,
+			TotalMemoryBytes: 1_000,
+			Processes: []appstatus.RawProcess{{
+				PID: 81, CreatedAt: started.Add(-time.Hour), Name: "worker",
+				ExecutablePath: "/opt/worker", CPUSeconds: 10, ResidentMemoryBytes: 100,
+				ReadBytes: 100, WriteBytes: 200,
+			}},
+		},
+		{
+			CollectedAt:      started.Add(20 * time.Second),
+			LogicalCores:     1,
+			TotalMemoryBytes: 1_000,
+			Processes: []appstatus.RawProcess{{
+				PID: 81, CreatedAt: started.Add(-time.Hour), Name: "worker",
+				ExecutablePath: "/opt/worker", CPUSeconds: 12, ResidentMemoryBytes: 300,
+				ReadBytes: 300, WriteBytes: 600,
+			}},
+		},
+	}}
+	monitor, err := appstatus.New(openStore(t), probe, appstatus.Options{
+		HostOS: "linux",
+		Now:    func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := monitor.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := monitor.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	view, err := monitor.View(context.Background(), appstatus.Query{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := view.Applications[0].ID
+
+	for _, test := range []struct {
+		selectedRange string
+		bucketSeconds int
+	}{{"15m", 60}, {"1h", 60}, {"6h", 300}, {"24h", 1200}} {
+		history, err := monitor.History(context.Background(), id, test.selectedRange)
+		if err != nil {
+			t.Fatalf("history %s: %v", test.selectedRange, err)
+		}
+		if history.Range != test.selectedRange || history.BucketSeconds != test.bucketSeconds || len(history.Points) != 1 {
+			t.Fatalf("history %s = %#v", test.selectedRange, history)
+		}
+		point := history.Points[0]
+		if point.SampleCount != 2 || point.CPUAverage != 5 || point.CPUMaximum != 10 ||
+			point.MemoryAverage != 200 || point.MemoryMaximum != 300 ||
+			point.ReadAverage != 5 || point.ReadMaximum != 10 ||
+			point.WriteAverage != 10 || point.WriteMaximum != 20 {
+			t.Fatalf("aggregated point = %#v", point)
+		}
+	}
+	if _, err := monitor.History(context.Background(), id, "7d"); err == nil {
+		t.Fatal("unsupported history range was accepted")
+	}
+}
+
+func TestMovePinPersistsTheRequestedOrderAndExposesMoveBounds(t *testing.T) {
+	t.Parallel()
+
+	probe := &snapshotProbe{snapshots: []appstatus.RawSnapshot{{
+		CollectedAt: time.Date(2026, 7, 29, 9, 0, 0, 0, time.UTC),
+		Containers: []appstatus.RawContainer{
+			{Name: "alpha"}, {Name: "beta"}, {Name: "gamma"},
+		},
+	}}}
+	monitor, err := appstatus.New(openStore(t), probe, appstatus.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := monitor.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	view, err := monitor.View(context.Background(), appstatus.Query{Sort: "name", Direction: "asc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, application := range view.Applications {
+		if err := monitor.Pin(context.Background(), application.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := monitor.MovePin(context.Background(), view.Applications[2].ID, "up"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := monitor.View(context.Background(), appstatus.Query{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := []string{after.Pinned[0].Name, after.Pinned[1].Name, after.Pinned[2].Name}; got[0] != "alpha" || got[1] != "gamma" || got[2] != "beta" {
+		t.Fatalf("pin order = %v, want [alpha gamma beta]", got)
+	}
+	if after.Pinned[0].CanMoveUp || !after.Pinned[0].CanMoveDown ||
+		!after.Pinned[1].CanMoveUp || !after.Pinned[1].CanMoveDown ||
+		!after.Pinned[2].CanMoveUp || after.Pinned[2].CanMoveDown {
+		t.Fatalf("move bounds = %#v", after.Pinned)
+	}
+	byID := make(map[string]appstatus.Application, len(after.Applications))
+	for _, application := range after.Applications {
+		byID[application.ID] = application
+	}
+	for _, pinned := range after.Pinned {
+		current := byID[pinned.ID]
+		if !current.Pinned || current.CanMoveUp != pinned.CanMoveUp || current.CanMoveDown != pinned.CanMoveDown {
+			t.Fatalf("running application move bounds = %#v, pinned = %#v", current, pinned)
+		}
+	}
+}
+
+func TestDetailsCombinesCurrentRuntimeFactsWithRequestedHistory(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 7, 29, 9, 1, 0, 0, time.UTC)
+	probe := &detailSnapshotProbe{
+		snapshot: appstatus.RawSnapshot{
+			CollectedAt: now,
+			Processes: []appstatus.RawProcess{{
+				PID: 91, ParentPID: 1, CreatedAt: now.Add(-time.Hour),
+				Name: "postgres", ExecutablePath: "/usr/bin/postgres",
+				ResidentMemoryBytes: 512, Threads: 4,
+			}},
+		},
+		detail: appstatus.RuntimeDetail{
+			State: appstatus.RuntimeAvailable,
+			Kind:  appstatus.KindHost,
+			Host: &appstatus.HostRuntimeDetail{
+				CommandLine: "/usr/bin/postgres -D /var/lib/postgres",
+				PID:         91,
+			},
+		},
+	}
+	monitor, err := appstatus.New(openStore(t), probe, appstatus.Options{
+		HostOS: "linux",
+		Now:    func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := monitor.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	view, err := monitor.View(context.Background(), appstatus.Query{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	details, err := monitor.Details(context.Background(), view.Applications[0].ID, "1h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if details.Application.Name != "postgres" || details.Runtime.Host == nil ||
+		details.Runtime.Host.CommandLine != "/usr/bin/postgres -D /var/lib/postgres" ||
+		details.History.Range != "1h" || len(details.History.Points) != 1 {
+		t.Fatalf("details = %#v", details)
+	}
+	if probe.request.Application.ID != details.Application.ID ||
+		len(probe.request.Processes) != 1 || probe.request.Processes[0].PID != 91 {
+		t.Fatalf("detail request = %#v", probe.request)
+	}
+}
+
+func TestDetailsKeepsHistoryAndAReasonWhenAPinnedApplicationStops(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 7, 29, 9, 1, 0, 0, time.UTC)
+	probe := &snapshotProbe{snapshots: []appstatus.RawSnapshot{
+		{
+			CollectedAt: now.Add(-time.Minute),
+			Containers: []appstatus.RawContainer{{
+				ID: "api-id", Name: "api", Image: "example/api",
+			}},
+		},
+		{CollectedAt: now},
+	}}
+	monitor, err := appstatus.New(openStore(t), probe, appstatus.Options{
+		Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := monitor.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	view, err := monitor.View(context.Background(), appstatus.Query{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := view.Applications[0].ID
+	if err := monitor.Pin(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	if err := monitor.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	details, err := monitor.Details(context.Background(), id, "1h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if details.Application.Running ||
+		details.Runtime.State != appstatus.RuntimeUnavailable ||
+		details.Runtime.Code != "not_running" ||
+		len(details.History.Points) != 1 {
+		t.Fatalf("stopped details = %#v", details)
+	}
+}
+
 func openStore(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite", "file:"+t.Name()+"?mode=memory&cache=shared")
@@ -355,6 +590,22 @@ func openStore(t *testing.T) *sql.DB {
 		created_at INTEGER NOT NULL,
 		updated_at INTEGER NOT NULL,
 		UNIQUE(kind, identity)
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE application_metric_minutes (
+		application_id TEXT NOT NULL,
+		bucket_at INTEGER NOT NULL,
+		sample_count INTEGER NOT NULL,
+		cpu_average REAL NOT NULL,
+		cpu_maximum REAL NOT NULL,
+		memory_average INTEGER NOT NULL,
+		memory_maximum INTEGER NOT NULL,
+		read_average REAL NOT NULL,
+		read_maximum REAL NOT NULL,
+		write_average REAL NOT NULL,
+		write_maximum REAL NOT NULL,
+		PRIMARY KEY(application_id, bucket_at)
 	)`); err != nil {
 		t.Fatal(err)
 	}

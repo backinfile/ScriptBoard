@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -324,14 +325,14 @@ func (m *Manager) Get(ctx context.Context, id string) (Monitor, error) {
 	var value Monitor
 	var configJSON, certificateJSON string
 	var lastSuccess bool
-	var lastLatencyMS, createdAt, updatedAt, checkedAt int64
+	var lastLatencyMS, createdAt, updatedAt, checkedAt, nextCheckAt int64
 	var deletedAt sql.NullInt64
 	err := m.db.QueryRowContext(ctx, `SELECT id, config_json, state, failure_count, sort_order, generation,
-		last_success, last_status_code, last_latency_ms, last_checked_at, last_error_category,
+		next_check_at, last_success, last_status_code, last_latency_ms, last_checked_at, last_error_category,
 		last_summary, last_technical_error, last_certificate_json, created_at, updated_at, deleted_at
 		FROM website_monitors WHERE id = ?`, id).Scan(
 		&value.ID, &configJSON, &value.State, &value.FailureCount, &value.SortOrder, &value.generation,
-		&lastSuccess, &value.Latest.StatusCode, &lastLatencyMS, &checkedAt, &value.Latest.ErrorCategory,
+		&nextCheckAt, &lastSuccess, &value.Latest.StatusCode, &lastLatencyMS, &checkedAt, &value.Latest.ErrorCategory,
 		&value.Latest.Summary, &value.Latest.TechnicalError, &certificateJSON, &createdAt, &updatedAt, &deletedAt,
 	)
 	if err != nil {
@@ -343,6 +344,9 @@ func (m *Manager) Get(ctx context.Context, id string) (Monitor, error) {
 	_ = json.Unmarshal([]byte(certificateJSON), &value.Latest.Certificate)
 	value.Latest.Success = lastSuccess
 	value.Latest.Latency = time.Duration(lastLatencyMS) * time.Millisecond
+	if nextCheckAt != 0 {
+		value.NextCheckAt = time.Unix(0, nextCheckAt).UTC()
+	}
 	if checkedAt != 0 {
 		value.Latest.CheckedAt = time.Unix(0, checkedAt).UTC()
 	}
@@ -684,10 +688,21 @@ func (m *Manager) recordResult(id string, generation int64, evidence Evidence) {
 		if randomErr != nil {
 			return
 		}
+		incidentStartedAt := evidence.CheckedAt.UnixNano()
+		var firstFailureAt int64
+		firstFailureErr := transaction.QueryRow(`SELECT checked_at
+			FROM website_check_results
+			WHERE monitor_id = ? AND success = 0
+			ORDER BY checked_at DESC LIMIT 1`, id).Scan(&firstFailureAt)
+		if firstFailureErr == nil {
+			incidentStartedAt = firstFailureAt
+		} else if !errors.Is(firstFailureErr, sql.ErrNoRows) {
+			return
+		}
 		if _, err := transaction.Exec(`INSERT INTO website_incidents
 			(id, monitor_id, started_at, start_category, start_summary)
 			VALUES (?, ?, ?, ?, ?)`,
-			incidentID, id, evidence.CheckedAt.UnixNano(), evidence.ErrorCategory, evidence.Summary); err != nil {
+			incidentID, id, incidentStartedAt, evidence.ErrorCategory, evidence.Summary); err != nil {
 			return
 		}
 	}
@@ -810,6 +825,133 @@ func (m *Manager) Availability24h(ctx context.Context, monitorID string) ([]Avai
 	return result, rows.Err()
 }
 
+// DetailSnapshot returns the complete 24-hour read model for one monitor.
+// Detail bands use 72 twenty-minute buckets while the compact list continues
+// to use Availability24h's 48 half-hour buckets.
+func (m *Manager) DetailSnapshot(ctx context.Context, monitorID string) (DetailSnapshot, error) {
+	monitor, err := m.Get(ctx, monitorID)
+	if err != nil {
+		return DetailSnapshot{}, err
+	}
+	if monitor.DeletedAt != nil {
+		return DetailSnapshot{}, sql.ErrNoRows
+	}
+
+	const bucketSize = 20 * time.Minute
+	now := m.options.Now().UTC()
+	start := now.Truncate(bucketSize).Add(-71 * bucketSize)
+	snapshot := DetailSnapshot{
+		Monitor:      monitor,
+		Availability: make([]AvailabilityBucket, 72),
+	}
+	for index := range snapshot.Availability {
+		snapshot.Availability[index] = AvailabilityBucket{
+			StartedAt: start.Add(time.Duration(index) * bucketSize),
+			State:     AvailabilityGap,
+		}
+	}
+
+	rows, err := m.db.QueryContext(ctx, `SELECT checked_at, success, status_code, latency_ms,
+		error_category, summary, technical_error, certificate_json
+		FROM website_check_results
+		WHERE monitor_id = ? AND checked_at >= ? AND checked_at <= ?
+		ORDER BY checked_at DESC`,
+		monitorID, start.UnixNano(), now.UnixNano())
+	if err != nil {
+		return DetailSnapshot{}, err
+	}
+	var latencyValues []int64
+	var latencyTotal int64
+	for rows.Next() {
+		var (
+			checkedAt       int64
+			latencyMS       int64
+			certificateJSON string
+			evidence        Evidence
+		)
+		if err := rows.Scan(
+			&checkedAt, &evidence.Success, &evidence.StatusCode, &latencyMS,
+			&evidence.ErrorCategory, &evidence.Summary, &evidence.TechnicalError,
+			&certificateJSON,
+		); err != nil {
+			_ = rows.Close()
+			return DetailSnapshot{}, err
+		}
+		evidence.CheckedAt = time.Unix(0, checkedAt).UTC()
+		evidence.Latency = time.Duration(latencyMS) * time.Millisecond
+		_ = json.Unmarshal([]byte(certificateJSON), &evidence.Certificate)
+		if len(snapshot.RecentChecks) < 5 {
+			snapshot.RecentChecks = append(snapshot.RecentChecks, evidence)
+		}
+
+		snapshot.TotalChecks++
+		if evidence.Success {
+			snapshot.SuccessfulChecks++
+		} else {
+			snapshot.FailedChecks++
+		}
+		latencyValues = append(latencyValues, latencyMS)
+		latencyTotal += latencyMS
+
+		bucketIndex := int(evidence.CheckedAt.Sub(start) / bucketSize)
+		if bucketIndex < 0 || bucketIndex >= len(snapshot.Availability) {
+			continue
+		}
+		bucket := &snapshot.Availability[bucketIndex]
+		bucket.TotalChecks++
+		if evidence.Success {
+			bucket.SuccessfulChecks++
+			if bucket.State == AvailabilityGap {
+				bucket.State = AvailabilityUp
+			}
+		} else {
+			bucket.FailedChecks++
+			bucket.State = AvailabilityDown
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return DetailSnapshot{}, err
+	}
+	if err := rows.Close(); err != nil {
+		return DetailSnapshot{}, err
+	}
+
+	if snapshot.TotalChecks > 0 {
+		snapshot.AvailabilityPercent =
+			float64(snapshot.SuccessfulChecks) * 100 / float64(snapshot.TotalChecks)
+		snapshot.AverageLatency =
+			time.Duration(latencyTotal/int64(snapshot.TotalChecks)) * time.Millisecond
+		slices.Sort(latencyValues)
+		p95Index := (95*len(latencyValues)+99)/100 - 1
+		snapshot.P95Latency = time.Duration(latencyValues[p95Index]) * time.Millisecond
+	}
+
+	snapshot.Incidents, err = m.Incidents(ctx, monitorID)
+	if err != nil {
+		return DetailSnapshot{}, err
+	}
+	for index := range snapshot.Incidents {
+		incident := snapshot.Incidents[index]
+		if !incident.StartedAt.Before(start) {
+			snapshot.IncidentCount++
+		}
+		if snapshot.CurrentIncident == nil && incident.EndedAt.IsZero() {
+			duration := now.Sub(incident.StartedAt)
+			if duration < 0 {
+				duration = 0
+			}
+			snapshot.CurrentIncident = &IncidentSnapshot{
+				Incident:     incident,
+				FailureCount: monitor.FailureCount,
+				Duration:     duration,
+				NextCheckAt:  monitor.NextCheckAt,
+			}
+		}
+	}
+	return snapshot, nil
+}
+
 // Maintain enforces the bounded history windows owned by this module.
 func (m *Manager) Maintain(ctx context.Context) error {
 	now := m.options.Now().UTC()
@@ -890,6 +1032,44 @@ func (m *Manager) Incidents(ctx context.Context, monitorID string) ([]Incident, 
 		result = append(result, value)
 	}
 	return result, rows.Err()
+}
+
+// CurrentIncident returns live evidence for the open confirmed incident. A
+// monitor in the one-failure verifying state intentionally has no incident yet.
+func (m *Manager) CurrentIncident(ctx context.Context, monitorID string) (*IncidentSnapshot, error) {
+	monitor, err := m.Get(ctx, monitorID)
+	if err != nil {
+		return nil, err
+	}
+	var (
+		incident  Incident
+		startedAt int64
+	)
+	err = m.db.QueryRowContext(ctx, `SELECT id, monitor_id, started_at,
+		start_category, start_summary, close_reason
+		FROM website_incidents
+		WHERE monitor_id = ? AND ended_at IS NULL
+		ORDER BY started_at DESC LIMIT 1`, monitorID).Scan(
+		&incident.ID, &incident.MonitorID, &startedAt,
+		&incident.Category, &incident.Summary, &incident.CloseReason,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	incident.StartedAt = time.Unix(0, startedAt).UTC()
+	duration := m.options.Now().UTC().Sub(incident.StartedAt)
+	if duration < 0 {
+		duration = 0
+	}
+	return &IncidentSnapshot{
+		Incident:     incident,
+		FailureCount: monitor.FailureCount,
+		Duration:     duration,
+		NextCheckAt:  monitor.NextCheckAt,
+	}, nil
 }
 
 func (m *Manager) Close() {

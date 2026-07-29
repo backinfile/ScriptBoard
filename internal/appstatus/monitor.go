@@ -33,7 +33,7 @@ type RawProcess struct {
 }
 
 type RawContainer struct {
-	Name, Image                             string
+	ID, Name, Image                         string
 	CPUPercent                              float64
 	MemoryBytes, MemoryLimitBytes           uint64
 	ReadBytesPerSecond, WriteBytesPerSecond float64
@@ -78,6 +78,8 @@ type Application struct {
 	WriteBytesPerSecond float64 `json:"writeBytesPerSecond"`
 	ProcessCount        int     `json:"processCount"`
 	ThreadCount         int     `json:"threadCount"`
+	CanMoveUp           bool    `json:"canMoveUp"`
+	CanMoveDown         bool    `json:"canMoveDown"`
 }
 
 type Query struct {
@@ -109,14 +111,15 @@ type Monitor struct {
 	probe   Probe
 	options Options
 
-	refreshMu sync.Mutex
-	mu        sync.RWMutex
-	current   RawSnapshot
-	previous  map[processIdentity]RawProcess
-	apps      []Application
-	cancel    context.CancelFunc
-	done      chan struct{}
-	close     sync.Once
+	refreshMu       sync.Mutex
+	mu              sync.RWMutex
+	current         RawSnapshot
+	previous        map[processIdentity]RawProcess
+	apps            []Application
+	metricCleanupAt time.Time
+	cancel          context.CancelFunc
+	done            chan struct{}
+	close           sync.Once
 }
 
 func New(db *sql.DB, probe Probe, options Options) (*Monitor, error) {
@@ -147,7 +150,6 @@ func (m *Monitor) Refresh(ctx context.Context) error {
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	apps := deriveApplications(raw, m.previous, m.current.CollectedAt, m.options.HostOS)
 	previous := make(map[processIdentity]RawProcess, len(raw.Processes))
 	for _, process := range raw.Processes {
@@ -156,6 +158,17 @@ func (m *Monitor) Refresh(ctx context.Context) error {
 	m.current = raw
 	m.previous = previous
 	m.apps = apps
+	m.mu.Unlock()
+	if err := m.persistMetricSamples(ctx, raw.CollectedAt, apps); err != nil {
+		return err
+	}
+	now := m.options.Now().UTC()
+	if m.metricCleanupAt.IsZero() || now.Sub(m.metricCleanupAt) >= time.Hour {
+		if err := m.cleanupMetricSamples(ctx); err != nil {
+			return err
+		}
+		m.metricCleanupAt = now
+	}
 	return nil
 }
 
@@ -310,6 +323,71 @@ func (m *Monitor) Unpin(ctx context.Context, id string) error {
 	return nil
 }
 
+func (m *Monitor) MovePin(ctx context.Context, id, direction string) error {
+	id = strings.TrimSpace(id)
+	direction = strings.ToLower(strings.TrimSpace(direction))
+	if id == "" {
+		return errors.New("application id is required")
+	}
+	if direction != "up" && direction != "down" {
+		return errors.New("pin direction must be up or down")
+	}
+	transaction, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer transaction.Rollback()
+	rows, err := transaction.QueryContext(ctx, `SELECT id, sort_order
+		FROM application_pins ORDER BY sort_order, created_at, id`)
+	if err != nil {
+		return err
+	}
+	type pinPosition struct {
+		id    string
+		order int
+	}
+	var positions []pinPosition
+	for rows.Next() {
+		var position pinPosition
+		if err := rows.Scan(&position.id, &position.order); err != nil {
+			rows.Close()
+			return err
+		}
+		positions = append(positions, position)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	index := -1
+	for position := range positions {
+		if positions[position].id == id {
+			index = position
+			break
+		}
+	}
+	if index < 0 {
+		return errors.New("application is not pinned")
+	}
+	target := index - 1
+	if direction == "down" {
+		target = index + 1
+	}
+	if target < 0 || target >= len(positions) {
+		return errors.New("application pin is already at the requested edge")
+	}
+	positions[index], positions[target] = positions[target], positions[index]
+	now := m.options.Now().UTC().UnixNano()
+	for position, pin := range positions {
+		if _, err := transaction.ExecContext(ctx,
+			"UPDATE application_pins SET sort_order = ?, updated_at = ? WHERE id = ?",
+			position+1, now, pin.id,
+		); err != nil {
+			return err
+		}
+	}
+	return transaction.Commit()
+}
+
 func (m *Monitor) loadPins(ctx context.Context, applications []Application) ([]Application, error) {
 	rows, err := m.db.QueryContext(ctx, `SELECT id, kind, identity, name, technical
 		FROM application_pins ORDER BY sort_order, created_at`)
@@ -336,7 +414,18 @@ func (m *Monitor) loadPins(ctx context.Context, applications []Application) ([]A
 			result = append(result, stored)
 		}
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for position := range result {
+		result[position].CanMoveUp = position > 0
+		result[position].CanMoveDown = position+1 < len(result)
+		if applicationPosition, ok := index[result[position].ID]; ok {
+			applications[applicationPosition].CanMoveUp = result[position].CanMoveUp
+			applications[applicationPosition].CanMoveDown = result[position].CanMoveDown
+		}
+	}
+	return result, nil
 }
 
 func deriveApplications(raw RawSnapshot, previous map[processIdentity]RawProcess, previousAt time.Time, hostOS string) []Application {
