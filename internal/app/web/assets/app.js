@@ -2655,8 +2655,9 @@
       };
     }
     const surfaceTaskURL=root.closest('.task-panel')?taskPanelState?.taskURL:'';
+    const backgroundSurfaceBlocked=()=>!surfaceTaskURL&&Boolean(taskPanelState);
     const reloadCurrentSurface=async()=>{
-      if(stopped||!root.isConnected)return;
+      if(stopped||!root.isConnected||backgroundSurfaceBlocked())return;
       if(surfaceTaskURL){
         if(taskPanelState?.taskURL===surfaceTaskURL&&taskPanelState.host.contains(root))await openTask(surfaceTaskURL,false);
         return;
@@ -2727,7 +2728,7 @@
     };
     checkForm?.addEventListener('submit',onCheck);
     const refresh=async()=>{
-      if(stopped||busy||document.hidden)return;
+      if(stopped||busy||document.hidden||backgroundSurfaceBlocked())return;
       busy=true;
       try{
         const response=await fetch(root.dataset.statusUrl,{headers:{Accept:'application/json'},cache:'no-store'});

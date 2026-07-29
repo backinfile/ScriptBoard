@@ -119,6 +119,7 @@ func TestApplicationsPageExposesLiveFactsAndExpandableObservationDetails(t *test
 		`ScriptBoard will not resubmit it automatically.`,
 		`taskPanelState !== submittingTaskState`,
 		`signal:controller.signal`,
+		`backgroundSurfaceBlocked`,
 	)
 	if bytes.Contains(script, []byte(`form.submit();`)) {
 		t.Fatal("async POST failures must not replay the form submission")
