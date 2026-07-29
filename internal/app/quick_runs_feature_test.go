@@ -369,7 +369,7 @@ func TestAdminCanSaveHistoricalRunIntoAGroup(t *testing.T) {
 	}
 	filesPage, _ := io.ReadAll(filesPageResponse.Body)
 	_ = filesPageResponse.Body.Close()
-	response, err := client.PostForm(serverURL+"/monitor/runs/start", url.Values{
+	response, err := client.PostForm(serverURL+"/history/runs/start", url.Values{
 		"csrf_token": {formToken(t, filesPage)},
 		"script":     {scriptName},
 	})

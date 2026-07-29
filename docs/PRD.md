@@ -56,8 +56,8 @@ MVP 优先保持单服务进程、SQLite、单机文件系统与平台原生服�
 - `/monitor`
 - `/monitor/data`
 - `/monitor/status`
-- `/monitor/runs`
-- `/monitor/runs/{id}`
+- `/history/runs`
+- `/history/runs/{id}`
 - `/resources/files/*`
 - `/resources/variables`
 - `/resources/trash`

@@ -77,10 +77,10 @@ func TestScheduleTriggersRunAtNextCronTime(t *testing.T) {
 		if strings.Contains(string(page), `name="last_run_id" value="`) && !strings.Contains(string(page), `name="last_run_id" value=""`) {
 			runID = hiddenValue(t, page, "last_run_id")
 			if runID != "" {
-				historyLink := regexp.MustCompile(`href="/monitor/runs\?q=` + regexp.QuoteMeta(url.QueryEscape("每分钟计划")) + `&amp;schedule_id=([^&"]+)&amp;focus=search"`).FindStringSubmatch(string(page))
+				historyLink := regexp.MustCompile(`href="/history/runs\?q=` + regexp.QuoteMeta(url.QueryEscape("每分钟计划")) + `&amp;schedule_id=([^&"]+)&amp;focus=search"`).FindStringSubmatch(string(page))
 				if len(historyLink) != 2 ||
 					!strings.Contains(string(page), `data-focus-after-navigation="#run-search"`) ||
-					strings.Contains(string(page), `href="/monitor/runs/`+runID+`"`) {
+					strings.Contains(string(page), `href="/history/runs/`+runID+`"`) {
 					t.Fatalf("schedule does not link to focused run history: %s", page)
 				}
 				scheduleID = historyLink[1]
@@ -92,7 +92,7 @@ func TestScheduleTriggersRunAtNextCronTime(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	response, err = client.Get(serverURL + "/monitor/runs?q=" + url.QueryEscape("每分钟计划") + "&schedule_id=" + url.QueryEscape(scheduleID) + "&focus=search")
+	response, err = client.Get(serverURL + "/history/runs?q=" + url.QueryEscape("每分钟计划") + "&schedule_id=" + url.QueryEscape(scheduleID) + "&focus=search")
 	if err != nil {
 		t.Fatalf("get filtered run history: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestScheduleTriggersRunAtNextCronTime(t *testing.T) {
 		t.Fatalf("focused run history does not show the scheduled Run: %s", page)
 	}
 	for {
-		response, err = client.Get(serverURL + "/monitor/runs/" + runID)
+		response, err = client.Get(serverURL + "/history/runs/" + runID)
 		if err != nil {
 			t.Fatalf("get scheduled run: %v", err)
 		}

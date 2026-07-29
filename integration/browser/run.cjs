@@ -521,7 +521,7 @@ async function assertExpiredSessionUsesFullNavigation(page, context) {
     await page.locator('[data-task-panel] input[name="arguments"]').fill("-Environment staging");
     await saveSnapshot(page, "files-run-task");
     await Promise.all([
-      page.waitForURL(/\/monitor\/runs\/[^/]+$/),
+      page.waitForURL(/\/history\/runs\/[^/]+$/),
       page.locator('[data-task-panel] button[type="submit"]').click(),
     ]);
     await page.locator("[data-run-log]").waitFor();
@@ -530,10 +530,23 @@ async function assertExpiredSessionUsesFullNavigation(page, context) {
     await page.waitForFunction(() => document.querySelector("[data-run-live-state]")?.textContent.includes("complete"));
     assert.equal((await page.locator("[data-run-status]").textContent()).trim(), "Succeeded");
     assert.equal(await page.locator("[data-run-stop-form]").count(), 0);
+    await page.reload();
+    await page.waitForFunction(() => document.querySelector("[data-run-live-state]")?.textContent.includes("complete"));
+    const completedRunLog = await page.locator("[data-run-log]").textContent();
+    const runLogRegression = {
+      environmentOccurrences: completedRunLog.split("environment=staging").length - 1,
+      resultOccurrences: completedRunLog.split("result=passed").length - 1,
+      pauseControls: await page.locator("[data-run-pause]").count(),
+    };
+    assert.deepEqual(runLogRegression, {
+      environmentOccurrences: 1,
+      resultOccurrences: 1,
+      pauseControls: 0,
+    }, `completed Run log regression: ${JSON.stringify(runLogRegression)}`);
     await assertNoHorizontalOverflow(page, "run detail");
     await saveSnapshot(page, "run-detail");
 
-    await page.goto(`${fixture.baseURL}/monitor/runs`);
+    await page.goto(`${fixture.baseURL}/history/runs`);
     await page.locator(".runs-table").waitFor();
     await assertTableRowsAligned(page, ".runs-table", "runs desktop");
     const runSearch = page.locator(".history-filter-form");
@@ -547,7 +560,7 @@ async function assertExpiredSessionUsesFullNavigation(page, context) {
     await runSearch.locator('input[name="from"]').fill(runDateValue);
     await runSearch.locator('input[name="to"]').fill(runDateValue);
     await Promise.all([
-      page.waitForURL(url => url.pathname === "/monitor/runs" &&
+      page.waitForURL(url => url.pathname === "/history/runs" &&
         url.searchParams.get("q") === "weekly-system-check" &&
         url.searchParams.get("from") === runDateValue &&
         url.searchParams.get("to") === runDateValue),
@@ -638,12 +651,12 @@ async function assertExpiredSessionUsesFullNavigation(page, context) {
     const scheduleID = await scheduleRecord.getAttribute("data-schedule-id");
     assert.ok(scheduleID);
     await scheduleRecord.getByRole("button", { name: "Run now", exact: true }).click();
-    await page.waitForURL(/\/monitor\/runs\/[^/?]+$/);
+    await page.waitForURL(/\/history\/runs\/[^/?]+$/);
     await page.locator('.status-chip[data-state="succeeded"]').waitFor({ timeout: 15_000 });
     await page.goto(`${fixture.baseURL}/config/schedules`);
     scheduleRecord = page.locator("[data-schedule-id]").filter({ hasText: "Nightly safety check" });
     await scheduleRecord.getByRole("link", { name: "View run history", exact: true }).click();
-    await page.waitForURL(url => url.pathname === "/monitor/runs" &&
+    await page.waitForURL(url => url.pathname === "/history/runs" &&
       url.searchParams.get("q") === "Nightly safety check" &&
       url.searchParams.get("schedule_id") === scheduleID &&
       url.searchParams.get("focus") === "search");

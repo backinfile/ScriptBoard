@@ -427,7 +427,7 @@ func TestGroupedWebRoutesReplaceLegacyModulePaths(t *testing.T) {
 	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
 
 	for _, path := range []string{
-		"/monitor/runs",
+		"/history/runs",
 		"/resources/files/",
 		"/resources/variables",
 		"/resources/trash",
@@ -450,6 +450,7 @@ func TestGroupedWebRoutesReplaceLegacyModulePaths(t *testing.T) {
 
 	for _, path := range []string{
 		"/overview",
+		"/monitor/runs",
 		"/runs",
 		"/files/",
 		"/variables",
@@ -515,7 +516,7 @@ func TestAuthenticatedPagesExposeLocalizedGroupedApplicationShell(t *testing.T) 
 		`>Resources<`,
 		`>Configuration<`,
 		`>History<`,
-		`href="/monitor/runs"`,
+		`href="/history/runs"`,
 		`href="/resources/files/"`,
 		`href="/resources/variables"`,
 		`href="/config/quick-runs"`,
@@ -541,7 +542,7 @@ func TestRunsNavigationLivesInHistoryGroup(t *testing.T) {
 
 	root := t.TempDir()
 	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
-	response, err := client.Get(serverURL + "/monitor/runs")
+	response, err := client.Get(serverURL + "/history/runs")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -552,13 +553,42 @@ func TestRunsNavigationLivesInHistoryGroup(t *testing.T) {
 	monitorStart := strings.Index(page, "<h2>Monitor</h2>")
 	resourcesStart := strings.Index(page, "<h2>Resources</h2>")
 	historyStart := strings.Index(page, "<h2>History</h2>")
-	runsLink := strings.Index(page, `href="/monitor/runs" aria-current="page"`)
+	runsLink := strings.Index(page, `href="/history/runs" aria-current="page"`)
 	auditLink := strings.Index(page, `href="/history/audit"`)
 	if monitorStart < 0 || resourcesStart <= monitorStart || historyStart <= resourcesStart || runsLink <= historyStart || auditLink <= runsLink {
 		t.Fatalf("runs navigation is not ordered under History: %s", page)
 	}
-	if strings.Contains(page[monitorStart:resourcesStart], `href="/monitor/runs"`) {
+	if strings.Contains(page[monitorStart:resourcesStart], `href="/history/runs"`) {
 		t.Fatalf("runs navigation remains in Monitor: %s", page[monitorStart:resourcesStart])
+	}
+}
+
+func TestRunHistoryUsesHistoryRouteNamespace(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
+
+	response, err := client.Get(serverURL + "/history/runs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("/history/runs status=%d, want %d", response.StatusCode, http.StatusOK)
+	}
+	if !strings.Contains(string(body), `href="/history/runs" aria-current="page"`) {
+		t.Fatalf("run history navigation does not use the History namespace: %s", body)
+	}
+
+	response, err = client.Get(serverURL + "/monitor/runs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("legacy /monitor/runs status=%d, want %d", response.StatusCode, http.StatusNotFound)
 	}
 }
 
@@ -569,7 +599,7 @@ func TestPrimaryWorkspacesRenderCompleteLocalizedDocuments(t *testing.T) {
 	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
 	for _, path := range []string{
 		"/monitor",
-		"/monitor/runs",
+		"/history/runs",
 		"/resources/files/",
 		"/resources/variables",
 		"/resources/trash",
@@ -602,7 +632,7 @@ func TestEachWorkspaceAndTaskExposeAtMostOnePrimaryAction(t *testing.T) {
 	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
 	for _, path := range []string{
 		"/monitor",
-		"/monitor/runs",
+		"/history/runs",
 		"/resources/files/",
 		"/resources/files/new-directory",
 		"/resources/files/upload",

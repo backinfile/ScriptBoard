@@ -167,8 +167,8 @@ MVP 不验收多用户/RBAC、沙箱、公共 API、DAG、多服务器、Docker 
 ## 15. Web 信息架构与渐进增强
 
 - [ ] 桌面端固定侧栏按监控、资源、配置、历史和设置分组，运行记录与审计归入历史；移动端以可关闭抽屉呈现同一导航。
-- [ ] `/monitor`、`/monitor/runs`、`/resources/files`、`/resources/variables`、`/resources/trash`、`/config/quick-runs`、`/config/schedules`、`/history/audit` 和 `/settings/*` 均只允许有效 Session。
-- [ ] 旧 `/overview`、`/files`、`/runs`、`/quick-runs`、`/schedules`、`/variables`、`/audit` 与 `/trash` 路由返回 404，不提供兼容重定向。
+- [ ] `/monitor`、`/history/runs`、`/resources/files`、`/resources/variables`、`/resources/trash`、`/config/quick-runs`、`/config/schedules`、`/history/audit` 和 `/settings/*` 均只允许有效 Session。
+- [ ] 旧 `/overview`、`/monitor/runs`、`/files`、`/runs`、`/quick-runs`、`/schedules`、`/variables`、`/audit` 与 `/trash` 路由返回 404，不提供兼容重定向。
 - [ ] 新建目录、上传、运行文件、新建或编辑变量、新建或编辑计划、保存快捷执行均有语义化 GET 页面，可复制链接并在禁用 JavaScript 时完整操作；桌面任务面板打开时保持当前工作区 URL，后退关闭、前进恢复。
 - [ ] 启用 JavaScript 时，上述 GET 页面在右侧任务面板打开；浏览器前进、后退和 Escape 能恢复正确上下文。
 - [ ] 概览判断只由采集失败、超过 15 秒的数据过期和关键卷低于 100 MiB 产生；CPU、内存与网络只作为事实展示。

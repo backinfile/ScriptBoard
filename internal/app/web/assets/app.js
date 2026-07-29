@@ -844,22 +844,41 @@
     const log = root.querySelector("[data-run-log]");
     const state = root.querySelector("[data-run-live-state]");
     const pause = root.querySelector("[data-run-pause]");
+    const pauseLabel = pause?.querySelector("[data-run-pause-label]");
     let paused = false;
+    let completed = false;
     let buffer = [];
+    let lastSequence = Array.from(log.querySelectorAll("[data-sequence]")).reduce(
+      (highest, entry) => Math.max(highest, Number(entry.dataset.sequence) || 0),
+      0,
+    );
     const append = payload => {
+      const sequence = Number(payload.sequence);
+      if (Number.isSafeInteger(sequence) && sequence > 0) {
+        if (sequence <= lastSequence) return;
+        lastSequence = sequence;
+      }
       const span = document.createElement("span");
+      if (Number.isSafeInteger(sequence) && sequence > 0) span.dataset.sequence = String(sequence);
       span.dataset.source = payload.source || "stdout";
       span.textContent = payload.text || "";
       log.append(span);
       log.scrollTop = log.scrollHeight;
     };
-    const source = new EventSource(root.dataset.runEventsUrl);
+    const finishPauseControl = () => {
+      pause?.remove();
+      root._toggleLogPause = null;
+    };
+    const eventsURL = new URL(root.dataset.runEventsUrl, location.href);
+    eventsURL.searchParams.set("after", String(lastSequence));
+    const source = new EventSource(eventsURL);
     source.addEventListener("open", () => { if (state) state.textContent = words().connected; });
     source.addEventListener("output", event => {
-      const payload = JSON.parse(event.data);
+      const payload = { ...JSON.parse(event.data), sequence: Number(event.lastEventId) };
       if (paused) buffer.push(payload); else append(payload);
     });
     source.addEventListener("complete", event => {
+      completed = true;
       source.close();
       if (state) state.textContent = words().complete;
       const status = root.querySelector("[data-run-status]");
@@ -872,22 +891,29 @@
         status.replaceChildren(dot, document.createTextNode(words().statuses[runState] || runState));
       }
       root.querySelector("[data-run-stop-form]")?.remove();
+      if (!paused || buffer.length === 0) finishPauseControl();
     });
     source.addEventListener("error", () => { if (state && source.readyState !== EventSource.CLOSED) state.textContent = words().disconnected; });
     const toggle = () => {
+      if (completed && !paused) return;
       paused = !paused;
       if (pause) {
-        pause.lastChild.textContent = paused ? pause.dataset.resumeLabel : pause.dataset.pauseLabel;
+        if (pauseLabel) pauseLabel.textContent = paused ? pause.dataset.resumeLabel : pause.dataset.pauseLabel;
         pause.querySelector("svg")?.replaceWith(makeIcon(paused ? "play" : "pause"));
       }
       if (!paused) {
         buffer.forEach(append);
         buffer = [];
+        if (completed) finishPauseControl();
       }
     };
     pause?.addEventListener("click", toggle);
     root._toggleLogPause = toggle;
-    cleanups.push(() => source.close());
+    cleanups.push(() => {
+      source.close();
+      pause?.removeEventListener("click", toggle);
+      if (root._toggleLogPause === toggle) root._toggleLogPause = null;
+    });
   }
 
   function initStatus() {

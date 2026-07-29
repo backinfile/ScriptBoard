@@ -43,7 +43,7 @@ func TestAdminCanRunScriptAndReadCompletedOutput(t *testing.T) {
 		t.Fatalf("read files: %v", err)
 	}
 
-	response, err = client.PostForm(serverURL+"/monitor/runs/start", url.Values{
+	response, err = client.PostForm(serverURL+"/history/runs/start", url.Values{
 		"script":     {scriptName},
 		"arguments":  {""},
 		"csrf_token": {formToken(t, page)},
@@ -52,7 +52,7 @@ func TestAdminCanRunScriptAndReadCompletedOutput(t *testing.T) {
 		t.Fatalf("start run: %v", err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther || !strings.HasPrefix(response.Header.Get("Location"), "/monitor/runs/") {
+	if response.StatusCode != http.StatusSeeOther || !strings.HasPrefix(response.Header.Get("Location"), "/history/runs/") {
 		t.Fatalf("start response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
 	runURL := serverURL + response.Header.Get("Location")
@@ -108,7 +108,7 @@ func TestRunDisplaysLocalizedOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read files: %v", err)
 	}
-	response, err = client.PostForm(serverURL+"/monitor/runs/start", url.Values{
+	response, err = client.PostForm(serverURL+"/history/runs/start", url.Values{
 		"script":     {scriptName},
 		"csrf_token": {formToken(t, page)},
 	})
@@ -167,7 +167,7 @@ func TestRunEventsAreAvailableAsSSE(t *testing.T) {
 	}
 	filesPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/monitor/runs/start", url.Values{
+	response, err = client.PostForm(serverURL+"/history/runs/start", url.Values{
 		"script":     {scriptName},
 		"csrf_token": {formToken(t, filesPage)},
 	})
@@ -222,7 +222,7 @@ func TestAdminCanSaveAndStartQuickRunFromHistory(t *testing.T) {
 	}
 	filesPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/monitor/runs/start", url.Values{
+	response, err = client.PostForm(serverURL+"/history/runs/start", url.Values{
 		"script":     {scriptName},
 		"csrf_token": {formToken(t, filesPage)},
 	})
@@ -272,7 +272,7 @@ func TestAdminCanSaveAndStartQuickRunFromHistory(t *testing.T) {
 		t.Fatalf("start quick run: %v", err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther || !strings.HasPrefix(response.Header.Get("Location"), "/monitor/runs/") {
+	if response.StatusCode != http.StatusSeeOther || !strings.HasPrefix(response.Header.Get("Location"), "/history/runs/") {
 		t.Fatalf("quick start response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
 }
@@ -353,7 +353,7 @@ func TestAdminCanCreateQuickRunFromManagedFileWithoutStartingIt(t *testing.T) {
 		}
 	}
 
-	response, err = client.Get(serverURL + "/monitor/runs")
+	response, err = client.Get(serverURL + "/history/runs")
 	if err != nil {
 		t.Fatalf("get Runs: %v", err)
 	}
@@ -371,7 +371,7 @@ func TestAdminCanCreateQuickRunFromManagedFileWithoutStartingIt(t *testing.T) {
 	}
 	_ = response.Body.Close()
 	runPath := response.Header.Get("Location")
-	if response.StatusCode != http.StatusSeeOther || !strings.HasPrefix(runPath, "/monitor/runs/") {
+	if response.StatusCode != http.StatusSeeOther || !strings.HasPrefix(runPath, "/history/runs/") {
 		t.Fatalf("start file-created Quick Run response: status=%d location=%q", response.StatusCode, runPath)
 	}
 	response, err = client.Get(serverURL + runPath)
@@ -506,7 +506,7 @@ func TestAdminCanStopRunningScript(t *testing.T) {
 	}
 	filesPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/monitor/runs/start", url.Values{
+	response, err = client.PostForm(serverURL+"/history/runs/start", url.Values{
 		"script":     {scriptName},
 		"csrf_token": {formToken(t, filesPage)},
 	})
@@ -515,7 +515,7 @@ func TestAdminCanStopRunningScript(t *testing.T) {
 	}
 	_ = response.Body.Close()
 	runPath := response.Header.Get("Location")
-	if !strings.HasPrefix(runPath, "/monitor/runs/") {
+	if !strings.HasPrefix(runPath, "/history/runs/") {
 		t.Fatalf("run location = %q", runPath)
 	}
 
@@ -605,7 +605,7 @@ func TestRunningScriptCannotBeDeleted(t *testing.T) {
 	}
 	filesPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/monitor/runs/start", url.Values{
+	response, err = client.PostForm(serverURL+"/history/runs/start", url.Values{
 		"script":     {scriptName},
 		"csrf_token": {formToken(t, filesPage)},
 	})
@@ -670,7 +670,7 @@ func TestNonZeroRunFailsAndPreservesOutputSources(t *testing.T) {
 	}
 	filesPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/monitor/runs/start", url.Values{
+	response, err = client.PostForm(serverURL+"/history/runs/start", url.Values{
 		"script":     {scriptName},
 		"csrf_token": {formToken(t, filesPage)},
 	})
@@ -726,7 +726,7 @@ func TestRunTimeoutEndsAsTimedOut(t *testing.T) {
 	}
 	filesPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/monitor/runs/start", url.Values{
+	response, err = client.PostForm(serverURL+"/history/runs/start", url.Values{
 		"script":          {scriptName},
 		"timeout_seconds": {"1"},
 		"csrf_token":      {formToken(t, filesPage)},
@@ -797,7 +797,7 @@ func TestRunResolvesVariableAsWholeArgument(t *testing.T) {
 	}
 	filesPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/monitor/runs/start", url.Values{
+	response, err = client.PostForm(serverURL+"/history/runs/start", url.Values{
 		"script":     {scriptName},
 		"arguments":  {"{{GREETING}}"},
 		"csrf_token": {formToken(t, filesPage)},

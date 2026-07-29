@@ -70,9 +70,9 @@
 
   <section class="overview-grid">
     <article class="ledger-section">
-      <header class="section-heading"><div><p class="section-index">02</p><h2>{{t .Locale "overview.active_runs"}}</h2></div><a href="/monitor/runs">{{t .Locale "overview.view_all"}}</a></header>
+      <header class="section-heading"><div><p class="section-index">02</p><h2>{{t .Locale "overview.active_runs"}}</h2></div><a href="/history/runs">{{t .Locale "overview.view_all"}}</a></header>
       <ol class="activity-list" data-active-runs>
-        {{range .ActiveRuns}}<li><span class="status-mark" data-state="{{.Status}}" aria-hidden="true"></span><div><a href="/monitor/runs/{{.ID}}">{{.ScriptPath}}</a><small>{{statusText $.Locale .Status}} · <time datetime="{{machineTime .StartedAt}}" data-local-time>{{localTime $.Locale .StartedAt}}</time></small></div></li>
+        {{range .ActiveRuns}}<li><span class="status-mark" data-state="{{.Status}}" aria-hidden="true"></span><div><a href="/history/runs/{{.ID}}">{{.ScriptPath}}</a><small>{{statusText $.Locale .Status}} · <time datetime="{{machineTime .StartedAt}}" data-local-time>{{localTime $.Locale .StartedAt}}</time></small></div></li>
         {{else}}<li class="empty-row">{{t .Locale "overview.no_active_runs"}}</li>{{end}}
       </ol>
     </article>

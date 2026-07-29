@@ -33,7 +33,7 @@
         <div class="ordered-record__identity"><span data-lucide="calendar-clock" aria-hidden="true"></span><div>
           <h3>{{.Name}}</h3>
           <code>{{.ScriptPath}}</code>
-          <div class="schedule-record__state"><span class="status-chip" data-state="{{if .Enabled}}enabled{{else}}disabled{{end}}"><span class="status-dot" aria-hidden="true"></span>{{if .Enabled}}{{t $.Locale "common.enabled"}}{{else}}{{t $.Locale "common.disabled"}}{{end}}</span>{{if .LastResult}}<small>{{resultText $.Locale .LastResult}}{{if .LastRunID}} · <a href="/monitor/runs?q={{urlquery .Name}}&amp;schedule_id={{urlquery .ID}}&amp;focus=search" data-focus-after-navigation="#run-search">{{t $.Locale "schedules.view_run"}}</a>{{end}}</small>{{end}}</div>
+          <div class="schedule-record__state"><span class="status-chip" data-state="{{if .Enabled}}enabled{{else}}disabled{{end}}"><span class="status-dot" aria-hidden="true"></span>{{if .Enabled}}{{t $.Locale "common.enabled"}}{{else}}{{t $.Locale "common.disabled"}}{{end}}</span>{{if .LastResult}}<small>{{resultText $.Locale .LastResult}}{{if .LastRunID}} · <a href="/history/runs?q={{urlquery .Name}}&amp;schedule_id={{urlquery .ID}}&amp;focus=search" data-focus-after-navigation="#run-search">{{t $.Locale "schedules.view_run"}}</a>{{end}}</small>{{end}}</div>
           <input type="hidden" name="last_run_id" value="{{.LastRunID}}">
         </div></div>
         <dl class="ordered-record__facts schedule-record__facts">

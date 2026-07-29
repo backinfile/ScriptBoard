@@ -357,7 +357,7 @@ func TestEmptyCollectionPagesProvideNextStepWithoutPagination(t *testing.T) {
 	}{
 		{path: "/config/quick-runs", expected: []string{`class="empty-state"`, "There are no Quick Runs yet", "Browse scripts"}},
 		{path: "/config/schedules", expected: []string{`class="empty-state"`, "There are no schedules yet", "Create schedule"}},
-		{path: "/monitor/runs", expected: []string{`class="empty-state"`, "There are no Runs yet", "Run script"}},
+		{path: "/history/runs", expected: []string{`class="empty-state"`, "There are no Runs yet", "Run script"}},
 	}
 	for _, test := range tests {
 		response, err := client.Get(serverURL + test.path)
@@ -568,7 +568,7 @@ func TestAccountCredentialsAreHiddenInDialogAndRunNavigationFollowsVariables(t *
 		}
 	}
 	variablesIndex := strings.Index(html, `href="/resources/variables"`)
-	runsIndex := strings.Index(html, `href="/monitor/runs"`)
+	runsIndex := strings.Index(html, `href="/history/runs"`)
 	if variablesIndex < 0 || runsIndex < 0 {
 		t.Fatalf("grouped run and variable navigation is missing: %s", html)
 	}

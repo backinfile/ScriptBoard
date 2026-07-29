@@ -1143,19 +1143,19 @@ func (a *App) routes(_ string) http.Handler {
 	mux.Handle("POST /resources/trash/purge", a.requireSession(http.HandlerFunc(a.purgeTrash)))
 	mux.Handle("GET /resources/files/edit/{path...}", a.requireSession(http.HandlerFunc(a.editTextPage)))
 	mux.Handle("POST /resources/files/edit/{path...}", a.requireSession(http.HandlerFunc(a.saveText)))
-	mux.Handle("POST /monitor/runs/start", a.requireSession(http.HandlerFunc(a.startRun)))
-	mux.Handle("GET /monitor/runs", a.requireSession(http.HandlerFunc(a.runsPage)))
-	mux.Handle("GET /monitor/runs/{id}/save-quick-run", a.requireSession(http.HandlerFunc(a.saveQuickRunTask)))
-	mux.Handle("GET /monitor/runs/{id}", a.requireSession(http.HandlerFunc(a.runDetails)))
-	mux.Handle("POST /monitor/runs/{id}/stop", a.requireSession(http.HandlerFunc(a.stopRun)))
-	mux.Handle("GET /monitor/runs/{id}/events", a.requireSession(http.HandlerFunc(a.runEvents)))
+	mux.Handle("POST /history/runs/start", a.requireSession(http.HandlerFunc(a.startRun)))
+	mux.Handle("GET /history/runs", a.requireSession(http.HandlerFunc(a.runsPage)))
+	mux.Handle("GET /history/runs/{id}/save-quick-run", a.requireSession(http.HandlerFunc(a.saveQuickRunTask)))
+	mux.Handle("GET /history/runs/{id}", a.requireSession(http.HandlerFunc(a.runDetails)))
+	mux.Handle("POST /history/runs/{id}/stop", a.requireSession(http.HandlerFunc(a.stopRun)))
+	mux.Handle("GET /history/runs/{id}/events", a.requireSession(http.HandlerFunc(a.runEvents)))
 	mux.Handle("GET /resources/variables", a.requireSession(http.HandlerFunc(a.variablesPage)))
 	mux.Handle("GET /resources/variables/new", a.requireSession(http.HandlerFunc(a.newVariableTask)))
 	mux.Handle("GET /resources/variables/{name}/edit", a.requireSession(http.HandlerFunc(a.editVariableTask)))
 	mux.Handle("POST /resources/variables", a.requireSession(http.HandlerFunc(a.createVariable)))
 	mux.Handle("POST /resources/variables/{name}/update", a.requireSession(http.HandlerFunc(a.updateVariable)))
 	mux.Handle("POST /resources/variables/{name}/delete", a.requireSession(http.HandlerFunc(a.deleteVariable)))
-	mux.Handle("POST /monitor/runs/{id}/quick-run", a.requireSession(http.HandlerFunc(a.saveQuickRun)))
+	mux.Handle("POST /history/runs/{id}/quick-run", a.requireSession(http.HandlerFunc(a.saveQuickRun)))
 	mux.Handle("GET /config/quick-runs", a.requireSession(http.HandlerFunc(a.quickRunsPage)))
 	mux.Handle("POST /config/quick-runs", a.requireSession(http.HandlerFunc(a.createQuickRunFromFile)))
 	mux.Handle("GET /config/quick-runs/groups/new", a.requireSession(http.HandlerFunc(a.newQuickRunGroupTask)))
@@ -1949,7 +1949,7 @@ func (a *App) runScheduleNow(response http.ResponseWriter, request *http.Request
 		return
 	}
 	a.recordAudit("run_schedule_now", request.PathValue("id"), "accepted", request.RemoteAddr)
-	http.Redirect(response, request, "/monitor/runs/"+url.PathEscape(id), http.StatusSeeOther)
+	http.Redirect(response, request, "/history/runs/"+url.PathEscape(id), http.StatusSeeOther)
 }
 
 func (a *App) deleteSchedule(response http.ResponseWriter, request *http.Request) {
@@ -2050,7 +2050,7 @@ func (a *App) saveQuickRun(response http.ResponseWriter, request *http.Request) 
 	a.recordAudit("create_quick_run", id, "succeeded", request.RemoteAddr)
 	destination := "/config/quick-runs"
 	if request.Header.Get("X-ScriptBoard-Navigation") == "pjax" {
-		destination = "/monitor/runs/" + url.PathEscape(source.ID)
+		destination = "/history/runs/" + url.PathEscape(source.ID)
 	}
 	http.Redirect(response, request, destination, http.StatusSeeOther)
 }
@@ -2220,7 +2220,7 @@ func (a *App) startQuickRun(response http.ResponseWriter, request *http.Request)
 		return
 	}
 	a.recordAudit("start_quick_run", quick.ID, "accepted", request.RemoteAddr)
-	http.Redirect(response, request, "/monitor/runs/"+url.PathEscape(id), http.StatusSeeOther)
+	http.Redirect(response, request, "/history/runs/"+url.PathEscape(id), http.StatusSeeOther)
 }
 
 func (a *App) moveQuickRun(response http.ResponseWriter, request *http.Request) {
@@ -2511,7 +2511,7 @@ func (a *App) stopRun(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	a.recordAudit("stop_run", id, "accepted", request.RemoteAddr)
-	http.Redirect(response, request, "/monitor/runs/"+url.PathEscape(id), http.StatusSeeOther)
+	http.Redirect(response, request, "/history/runs/"+url.PathEscape(id), http.StatusSeeOther)
 }
 
 func (a *App) startRun(response http.ResponseWriter, request *http.Request) {
@@ -2523,7 +2523,7 @@ func (a *App) startRun(response http.ResponseWriter, request *http.Request) {
 		current := request.Context().Value(sessionContextKey).(session)
 		response.WriteHeader(http.StatusConflict)
 		_ = overlapTemplate.Execute(response, overlapView{
-			Action: "/monitor/runs/start", Script: request.FormValue("script"), Arguments: request.FormValue("arguments"), Timeout: request.FormValue("timeout_seconds"), CSRFToken: current.csrfToken, Locale: resolveWebLocale(request),
+			Action: "/history/runs/start", Script: request.FormValue("script"), Arguments: request.FormValue("arguments"), Timeout: request.FormValue("timeout_seconds"), CSRFToken: current.csrfToken, Locale: resolveWebLocale(request),
 		})
 		return
 	}
@@ -2555,7 +2555,7 @@ func (a *App) startRun(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	a.recordAudit("start_run", id, "accepted", request.RemoteAddr)
-	http.Redirect(response, request, "/monitor/runs/"+url.PathEscape(id), http.StatusSeeOther)
+	http.Redirect(response, request, "/history/runs/"+url.PathEscape(id), http.StatusSeeOther)
 }
 
 func (a *App) loadVariables() (map[string]string, error) {

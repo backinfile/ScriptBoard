@@ -52,7 +52,7 @@ func TestRunsPageFiltersBySearchAndInclusiveLocalDateRange(t *testing.T) {
 	insertSource("range_run_same_source_quick", "admin/quick-run", "Nightly backup", "schedule-id-1", localTime(2026, time.January, 11, 14, 0))
 	insertSource("range_run_other_schedule", "scheduler", "Nightly backup", "schedule-id-2", localTime(2026, time.January, 11, 15, 0))
 
-	response, err := client.Get(serverURL + "/monitor/runs?q=Nightly+backup&schedule_id=schedule-id-1&from=2026-01-10&to=2026-01-12&focus=search")
+	response, err := client.Get(serverURL + "/history/runs?q=Nightly+backup&schedule_id=schedule-id-1&from=2026-01-10&to=2026-01-12&focus=search")
 	if err != nil {
 		t.Fatalf("get filtered runs: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestRunsPageFiltersBySearchAndInclusiveLocalDateRange(t *testing.T) {
 		}
 	}
 
-	response, err = client.Get(serverURL + "/monitor/runs?q=Nightly+backup&schedule_id=schedule-id-1&from=2026-01-10&to=2026-01-12&page=2")
+	response, err = client.Get(serverURL + "/history/runs?q=Nightly+backup&schedule_id=schedule-id-1&from=2026-01-10&to=2026-01-12&page=2")
 	if err != nil {
 		t.Fatalf("get second filtered runs page: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestRunsPageRejectsInvalidDateRanges(t *testing.T) {
 		{query: "from=1500-01-01", message: "The date range is invalid"},
 	}
 	for _, test := range tests {
-		response, err := client.Get(serverURL + "/monitor/runs?" + test.query)
+		response, err := client.Get(serverURL + "/history/runs?" + test.query)
 		if err != nil {
 			t.Fatalf("get runs with %s: %v", test.query, err)
 		}

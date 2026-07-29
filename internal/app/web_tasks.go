@@ -83,7 +83,7 @@ func (a *App) runFileTask(response http.ResponseWriter, request *http.Request) {
 	a.renderTaskPage(response, request, taskPageData{
 		Kind: "run", Title: webText(resolveWebLocale(request), "task.run.title"),
 		Description: webText(resolveWebLocale(request), "task.run.description"),
-		BackURL:     filesURL(parent), Action: "/monitor/runs/start", Path: relative,
+		BackURL:     filesURL(parent), Action: "/history/runs/start", Path: relative,
 	})
 }
 
@@ -140,7 +140,7 @@ func (a *App) saveQuickRunTask(response http.ResponseWriter, request *http.Reque
 		http.Error(response, "Run not found", http.StatusNotFound)
 		return
 	}
-	backURL := "/monitor/runs/" + url.PathEscape(run.ID)
+	backURL := "/history/runs/" + url.PathEscape(run.ID)
 	groups, err := a.loadQuickRunGroups()
 	if err != nil {
 		http.Error(response, "Unable to read Quick Run groups", http.StatusInternalServerError)
