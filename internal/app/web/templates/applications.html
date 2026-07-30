@@ -85,9 +85,9 @@ FORM: Flat measurement rails and a responsive record ledger; no control-plane ac
       <label class="applications-search"><span data-lucide="search" aria-hidden="true"></span><span class="sr-only">{{t .Locale "common.search"}}</span><input type="search" name="query" value="{{.Query.Search}}" placeholder="{{t .Locale "applications.search_placeholder"}}"></label>
       <fieldset class="applications-kind-switch">
         <legend class="sr-only">{{t .Locale "applications.kind"}}</legend>
-        <label><input type="radio" name="kind" value="" {{if eq .Query.Kind ""}}checked{{end}}><span>{{t .Locale "applications.kind_all"}}</span></label>
-        <label><input type="radio" name="kind" value="host" {{if eq .Query.Kind "host"}}checked{{end}}><span>{{t .Locale "applications.kind_host"}}</span></label>
-        <label><input type="radio" name="kind" value="docker" {{if eq .Query.Kind "docker"}}checked{{end}}><span>Docker</span></label>
+        <label><input type="radio" name="kind" value="" data-applications-kind-filter {{if eq .Query.Kind ""}}checked{{end}}><span>{{t .Locale "applications.kind_all"}}</span></label>
+        <label><input type="radio" name="kind" value="host" data-applications-kind-filter {{if eq .Query.Kind "host"}}checked{{end}}><span>{{t .Locale "applications.kind_host"}}</span></label>
+        <label><input type="radio" name="kind" value="docker" data-applications-kind-filter {{if eq .Query.Kind "docker"}}checked{{end}}><span>Docker</span></label>
       </fieldset>
       <div class="applications-sort-fields">
         <label><span>{{t .Locale "applications.sort"}}</span><select name="sort"><option value="pinned" {{if eq .Query.Sort "pinned"}}selected{{end}}>{{t .Locale "applications.pin"}}</option><option value="name" {{if eq .Query.Sort "name"}}selected{{end}}>{{t .Locale "applications.application"}}</option><option value="cpu" {{if eq .Query.Sort "cpu"}}selected{{end}}>CPU</option><option value="memory" {{if eq .Query.Sort "memory"}}selected{{end}}>{{t .Locale "applications.memory"}}</option><option value="read" {{if eq .Query.Sort "read"}}selected{{end}}>{{t .Locale "applications.read"}}</option><option value="write" {{if eq .Query.Sort "write"}}selected{{end}}>{{t .Locale "applications.write"}}</option><option value="processes" {{if eq .Query.Sort "processes"}}selected{{end}}>{{t .Locale "applications.processes"}}</option></select></label>

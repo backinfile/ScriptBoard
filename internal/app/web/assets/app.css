@@ -46,7 +46,7 @@ SEED: 94d9bb9f.
 }
 
 * { box-sizing: border-box; }
-html { min-width: 320px; background: var(--canvas); font-size: 17px; }
+html { min-width: 320px; background: var(--canvas); font-size: 17px; scrollbar-gutter: stable; }
 html[data-website-fault-color="magenta"] {
   --website-fault: #a32167;
   --website-fault-soft: #fff0f7;

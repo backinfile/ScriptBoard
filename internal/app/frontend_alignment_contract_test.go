@@ -102,6 +102,7 @@ func TestApplicationsPageExposesLiveFactsAndExpandableObservationDetails(t *test
 		`data-application-history-output`,
 		`data-application-detail-panel="runtime"`,
 		`data-application-runtime-output`,
+		`data-applications-kind-filter`,
 		`name="direction" value="top"`,
 		`class="application-record pinned-application running-application"`,
 		`tabindex="0" aria-haspopup="dialog"`,
@@ -128,12 +129,24 @@ func TestApplicationsPageExposesLiveFactsAndExpandableObservationDetails(t *test
 		`backgroundSurfaceBlocked`,
 		`drawerNavigation.hidden = activeMode === "runtime"`,
 		`loadDrawerDetails(true)`,
+		`kindFilter.form?.requestSubmit()`,
 		`application-series--${item.color}`,
 		`state !== "available" && state !== "partial"`,
 	)
 	if bytes.Contains(script, []byte(`form.submit();`)) {
 		t.Fatal("async POST failures must not replay the form submission")
 	}
+
+	response, err = client.Get(serverURL + "/assets/app-v2.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stylesheet, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireAlignmentFragments(t, stylesheet, `scrollbar-gutter: stable`)
 }
 
 func TestWebsiteCreateEditNginxAndDetailArePanelSafeTasks(t *testing.T) {

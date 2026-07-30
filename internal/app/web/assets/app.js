@@ -1645,10 +1645,16 @@
         next.click();
       }
     };
+    const onApplicationsChange = event => {
+      const kindFilter = event.target.closest("[data-applications-kind-filter]");
+      if (kindFilter?.checked) kindFilter.form?.requestSubmit();
+    };
     root.addEventListener("click", onApplicationsClick);
+    root.addEventListener("change", onApplicationsChange);
     root.addEventListener("keydown", onApplicationsKeydown);
     cleanups.push(() => {
       root.removeEventListener("click", onApplicationsClick);
+      root.removeEventListener("change", onApplicationsChange);
       root.removeEventListener("keydown", onApplicationsKeydown);
       closeDrawer(false);
       pendingDetails.forEach(request => request.controller?.abort());
