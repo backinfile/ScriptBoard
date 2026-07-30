@@ -14,6 +14,8 @@ colors:
   accent-soft: "#EDF1FF"
   success: "#18794E"
   success-soft: "#EAF6F0"
+  website-fault-red: "#C42B21"
+  website-fault-magenta: "#A32167"
   warning: "#8A5A00"
   warning-soft: "#FFF5DA"
   danger: "#B42318"
@@ -26,6 +28,8 @@ colors:
   terminal-muted: "#AEB7C4"
   terminal-danger: "#FFAAA4"
 typography:
+  root:
+    fontSize: "17px"
   micro:
     fontSize: "0.7rem"
   detail:
@@ -153,7 +157,7 @@ All body copy and controls target WCAG 2.2 AA contrast. Muted copy remains at le
 
 ### Typography
 
-- Use the operating-system UI stack. Do not fetch fonts.
+- Use a 17px root size with the operating-system UI stack. Do not fetch fonts.
 - Page titles are compact, sentence-case, and never become decorative monuments.
 - Use monospace only for paths, identifiers, commands, log output, and numeric measurements that benefit from fixed alignment.
 - Labels are short, slightly tracked, and structurally quiet.
@@ -194,7 +198,7 @@ Desktop uses a fixed 232px sidebar with grouped destinations:
 - Configuration: Quick runs, Schedules
 - History: Runs, Audit
 
-Status, language, settings, and account controls live at the bottom. The wordmark is plain text. Settings is a separate workspace that includes account, version protection, and application updates.
+Status, language, settings, and account controls live at the bottom. The wordmark is plain text. Settings is a separate workspace that includes account, status display, version protection, and application updates. Website fault-color choice is a browser-local display preference and never changes monitoring truth.
 
 Below 1024px the sidebar becomes a modal drawer with a scrim. The underlying page does not reflow into a second navigation system.
 
@@ -214,9 +218,11 @@ Measurements are not generic statistic cards. Their baseline, current value, and
 
 ### Applications
 
-Lead with the current application snapshot. A flat fact strip reports host applications, Docker containers, pinned applications, and collection time. The pinned section follows, showing only current CPU, memory, and disk I/O; deeper history and runtime facts unfold in place when those capabilities are available.
+Lead with the current application snapshot. A flat fact strip reports host applications, Docker containers, pinned applications, and collection time. Pinned and running applications share one flat measurement-row grammar. Selecting a row opens a right-side details drawer while preserving the application list as context.
 
-Pinned and running records own independent refresh switches. Pinned refresh starts on, while the running list starts off so a stable sorted snapshot remains readable. Desktop sorting lives in every table heading, including Pin and process count; mobile uses explicit sort and direction controls before the labeled records.
+Pinned and running records own independent refresh switches. Pinned refresh starts on, while the running list starts off so a stable sorted snapshot remains readable. Search, kind, sort, and direction controls sit together before the running records and keep the same order on mobile.
+
+Pinned application drawers expose History and Runtime details. Running-application drawers expose Runtime details only; they never imply that an unpinned item owns retained history. Drawer facts do not follow the five-second list refresh. They update only when the drawer opens, the history range changes, or the administrator requests a manual refresh.
 
 Host applications show no redundant type tag. Docker containers use one quiet Docker tag beside the container name and show the image as technical context. Pin and Unpin remain CSRF-protected POST actions that work without JavaScript. The page never offers process termination, container control, health thresholds, or alert actions.
 

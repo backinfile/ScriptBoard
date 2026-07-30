@@ -1349,6 +1349,12 @@ func (a *App) routes(_ string) http.Handler {
 		}{Username: username, CSRFToken: current.csrfToken, CredentialOverride: a.credentialOverride, Locale: resolveWebLocale(request)})
 	})))
 	mux.Handle("POST /settings/account", a.requireSession(http.HandlerFunc(a.changePassword)))
+	mux.Handle("GET /settings/display", a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = displaySettingsTemplate.Execute(response, struct {
+			Locale webLocale
+		}{Locale: resolveWebLocale(request)})
+	})))
 	mux.Handle("GET /settings/updates", a.requireSession(http.HandlerFunc(a.updatesPage)))
 	mux.Handle("GET /settings/updates/status", a.requireSession(http.HandlerFunc(a.updateStatus)))
 	mux.Handle("POST /settings/updates/check", a.requireSession(http.HandlerFunc(a.checkUpdate)))
@@ -1693,6 +1699,8 @@ func renderApplicationError(request *http.Request, status int, message string) [
 		destination, label = "/monitor", "返回概览"
 	case strings.HasPrefix(request.URL.Path, "/settings/account"):
 		destination, label = "/settings/account", "返回账户设置"
+	case strings.HasPrefix(request.URL.Path, "/settings/display"):
+		destination, label = "/settings/display", "返回状态显示设置"
 	case strings.HasPrefix(request.URL.Path, "/settings/version-protection"):
 		destination, label = "/settings/version-protection", "返回版本保护"
 	case strings.HasPrefix(request.URL.Path, "/config/quick-runs"):

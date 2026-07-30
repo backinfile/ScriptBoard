@@ -9,6 +9,7 @@ var (
 	applicationsTemplate         = mustWebTemplate("applications")
 	auditTemplate                = mustWebTemplate("audit")
 	deleteImpactTemplate         = mustWebTemplate("delete-impact")
+	displaySettingsTemplate      = mustWebTemplate("display-settings")
 	filesTemplate                = mustWebTemplate("files")
 	loginTemplate                = mustWebTemplate("login")
 	overlapTemplate              = mustWebTemplate("overlap")

@@ -338,6 +338,29 @@ func TestMovePinnedApplicationRoutePersistsOrderAndRequiresCSRF(t *testing.T) {
 		t.Fatalf("pin order after move = %v", got)
 	}
 
+	response, err = client.PostForm(serverURL+"/monitor/applications/"+gammaID+"/move", url.Values{
+		"csrf_token": {token},
+		"direction":  {"top"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("move to top status=%d", response.StatusCode)
+	}
+	response, err = client.Get(serverURL + "/monitor/applications/data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.NewDecoder(response.Body).Decode(&view); err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if got := []string{view.Pinned[0].Name, view.Pinned[1].Name, view.Pinned[2].Name}; got[0] != "gamma" || got[1] != "alpha" || got[2] != "beta" {
+		t.Fatalf("pin order after move to top = %v", got)
+	}
+
 	response, err = client.PostForm(serverURL+"/monitor/applications/"+gammaID+"/move", url.Values{"direction": {"up"}})
 	if err != nil {
 		t.Fatal(err)

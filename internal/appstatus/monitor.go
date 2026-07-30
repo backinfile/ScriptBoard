@@ -329,8 +329,8 @@ func (m *Monitor) MovePin(ctx context.Context, id, direction string) error {
 	if id == "" {
 		return errors.New("application id is required")
 	}
-	if direction != "up" && direction != "down" {
-		return errors.New("pin direction must be up or down")
+	if direction != "top" && direction != "up" && direction != "down" {
+		return errors.New("pin direction must be top, up, or down")
 	}
 	transaction, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -368,14 +368,20 @@ func (m *Monitor) MovePin(ctx context.Context, id, direction string) error {
 	if index < 0 {
 		return errors.New("application is not pinned")
 	}
-	target := index - 1
-	if direction == "down" {
-		target = index + 1
-	}
-	if target < 0 || target >= len(positions) {
+	if (direction == "top" || direction == "up") && index == 0 ||
+		direction == "down" && index == len(positions)-1 {
 		return errors.New("application pin is already at the requested edge")
 	}
-	positions[index], positions[target] = positions[target], positions[index]
+	switch direction {
+	case "top":
+		moved := positions[index]
+		copy(positions[1:index+1], positions[:index])
+		positions[0] = moved
+	case "up":
+		positions[index], positions[index-1] = positions[index-1], positions[index]
+	case "down":
+		positions[index], positions[index+1] = positions[index+1], positions[index]
+	}
 	now := m.options.Now().UTC().UnixNano()
 	for position, pin := range positions {
 		if _, err := transaction.ExecContext(ctx,

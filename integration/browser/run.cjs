@@ -386,16 +386,17 @@ async function assertApplicationMonitoring(page, baseURL) {
     "page",
     "Applications navigation is not selected",
   );
-  await page.locator('.applications-table tr[data-kind="docker"]').filter({ hasText: "api-prod" }).waitFor();
+  await page.locator('[data-running-applications-list] [data-kind="docker"]').filter({ hasText: "api-prod" }).waitFor();
   await page.getByText("Host Agent", { exact: true }).waitFor();
-  assert.equal(await page.locator('.applications-table th[aria-sort="descending"]').getAttribute("aria-sort"), "descending");
-  assert.match((await page.locator(".applications-table tbody tr").first().textContent()).trim(), /api-prod/);
-  assert.equal(await page.locator('.applications-table tr[data-kind="docker"] .application-kind').count(), 2);
+  assert.equal(await page.locator('.applications-sort-fields select[name="sort"]').inputValue(), "cpu");
+  assert.match((await page.locator("[data-running-applications-list] [data-application-row]").first().textContent()).trim(), /api-prod/);
+  assert.equal(await page.locator('[data-running-applications-list] [data-kind="docker"] .application-kind').count(), 2);
   assert.equal(
-    await page.locator('.applications-table tr[data-kind="host"] .application-kind').count(),
+    await page.locator('[data-running-applications-list] [data-kind="host"] .application-kind').count(),
     0,
     "host applications must not show a type tag",
   );
+  assert.equal(await page.getByRole("button", { name: "View details", exact: true }).count(), 0);
 
   const pinnedRefresh = page.locator('[data-applications-refresh="pinned"]');
   const runningRefresh = page.locator('[data-applications-refresh="running"]');
@@ -406,7 +407,17 @@ async function assertApplicationMonitoring(page, baseURL) {
   await runningRefresh.click();
   assert.equal(await runningRefresh.getAttribute("aria-checked"), "false");
 
-  const apiRow = page.locator('.applications-table tr[data-kind="docker"]').filter({ hasText: "api-prod" });
+  const apiRow = page.locator('[data-running-applications-list] [data-kind="docker"]').filter({ hasText: "api-prod" });
+  await apiRow.click();
+  const applicationDrawer = page.locator("[data-application-drawer]");
+  await page.waitForFunction(() => document.querySelector(".application-drawer")?.getBoundingClientRect().left < innerWidth);
+  await applicationDrawer.locator("[data-application-runtime-output] .application-runtime-facts").waitFor();
+  assert.equal(await applicationDrawer.getAttribute("aria-hidden"), "false");
+  assert.equal(await applicationDrawer.locator("[data-application-drawer-navigation]").isHidden(), true);
+  assert.equal(await applicationDrawer.locator('[data-application-detail-panel="history"]').isHidden(), true);
+  assert.equal(await applicationDrawer.locator('[data-application-detail-panel="runtime"]').isVisible(), true);
+  await applicationDrawer.getByRole("button", { name: "Close application details", exact: true }).last().click();
+
   await Promise.all([
     page.waitForNavigation(),
     apiRow.getByRole("button", { name: "Pin api-prod", exact: true }).click(),
@@ -416,9 +427,27 @@ async function assertApplicationMonitoring(page, baseURL) {
   assert.match(await pinnedAPI.textContent(), /CPU/);
   assert.match(await pinnedAPI.textContent(), /Memory/);
   assert.match(await pinnedAPI.textContent(), /Disk I\/O/);
+  await pinnedAPI.click();
+  await page.waitForFunction(() => document.querySelector(".application-drawer")?.getBoundingClientRect().left < innerWidth);
+  await page.waitForFunction(() => {
+    const output = document.querySelector("[data-application-history-output]");
+    return output?.children.length > 0 && !output.querySelector(".application-detail-loading");
+  });
+  assert.equal(await applicationDrawer.locator("[data-application-drawer-navigation]").isVisible(), true);
+  assert.equal(await applicationDrawer.locator('[data-application-detail-panel="history"]').isVisible(), true);
+  assert.match(await applicationDrawer.textContent(), /Details do not refresh automatically/);
+  const historyPath = applicationDrawer.locator("[data-application-history-output] svg path").first();
+  if (await historyPath.count()) {
+    assert.notEqual(
+      await historyPath.evaluate(path => getComputedStyle(path).stroke),
+      "none",
+      "application history paths must have a visible stroke",
+    );
+  }
+  await applicationDrawer.getByRole("tab", { name: /Runtime details/ }).click();
+  assert.equal(await applicationDrawer.locator('[data-application-detail-panel="runtime"]').isVisible(), true);
+  await applicationDrawer.getByRole("button", { name: "Close application details", exact: true }).last().click();
   await assertNoHorizontalOverflow(page, "Applications desktop");
-  await assertNoTableHorizontalScrollbar(page, "Applications desktop");
-  await assertTableRowsAligned(page, ".applications-table", "Applications desktop");
   await saveSnapshot(page, "applications");
 
   await page.setViewportSize({ width: 390, height: 844 });
@@ -441,18 +470,56 @@ async function assertApplicationMonitoring(page, baseURL) {
     };
   });
   assert.ok(mobileSkipLink.bottom <= 0, `inactive mobile skip link remains visible: ${JSON.stringify(mobileSkipLink)}`);
-  assert.equal(await page.locator(".applications-mobile-sort").isVisible(), true);
-  assert.equal(await page.locator(".applications-table thead").isHidden(), true);
-  const mobilePinSizes = await page.locator(".applications-table .icon-button, .pinned-application .icon-button").evaluateAll(elements =>
+  assert.equal(await page.locator(".applications-sort-fields").isVisible(), true);
+  const mobilePinSizes = await page.locator(".pinned-application .icon-button").evaluateAll(elements =>
     elements.map(element => {
       const bounds = element.getBoundingClientRect();
       return { width: Math.round(bounds.width), height: Math.round(bounds.height) };
     }),
   );
   assert.ok(mobilePinSizes.every(size => size.width >= 44 && size.height >= 44), JSON.stringify(mobilePinSizes));
+  const mobileRuntimeRow = page.locator('[data-running-applications-list] [data-kind="docker"]').filter({ hasText: "cache-local" });
+  await mobileRuntimeRow.click();
+  await page.waitForFunction(() => document.querySelector(".application-drawer")?.getBoundingClientRect().left < innerWidth);
+  await applicationDrawer.locator("[data-application-runtime-output] .application-runtime-facts").waitFor();
+  assert.equal(await applicationDrawer.locator("[data-application-drawer-navigation]").isHidden(), true);
+  assert.equal(Math.round(await applicationDrawer.locator(".application-drawer").evaluate(element => element.getBoundingClientRect().width)), 390);
+  await applicationDrawer.getByRole("button", { name: "Close application details", exact: true }).last().click();
   await assertNoHorizontalOverflow(page, "Applications mobile");
+  await page.locator(".skip-link").evaluate(element => {
+    element.style.display = "none";
+  });
   await saveSnapshot(page, "applications-mobile");
   await page.setViewportSize({ width: 1440, height: 1000 });
+}
+
+async function assertStatusDisplaySettings(page, baseURL) {
+  await page.goto(`${baseURL}/settings/display`);
+  const settings = page.locator("[data-display-settings]");
+  await settings.waitFor();
+  assert.equal(
+    await page.locator('.settings-nav a[href="/settings/display"]').getAttribute("aria-current"),
+    "page",
+  );
+  const magenta = settings.locator('input[name="website_fault_color"][value="magenta"]');
+  await magenta.check();
+  assert.equal(await page.locator("html").getAttribute("data-website-fault-color"), "magenta");
+  assert.equal(await page.evaluate(() => localStorage.getItem("scriptboard.websiteFaultColor")), "magenta");
+  const colors = await page.evaluate(() => {
+    const style = getComputedStyle(document.documentElement);
+    return {
+      healthy: style.getPropertyValue("--success").trim(),
+      fault: style.getPropertyValue("--website-fault").trim(),
+    };
+  });
+  assert.notEqual(colors.healthy, colors.fault);
+  await saveSnapshot(page, "settings-display");
+  await page.goto(`${baseURL}/monitor/websites`);
+  assert.equal(await page.locator("html").getAttribute("data-website-fault-color"), "magenta");
+  await page.evaluate(() => {
+    localStorage.setItem("scriptboard.websiteFaultColor", "red");
+    document.documentElement.dataset.websiteFaultColor = "red";
+  });
 }
 
 (async () => {
@@ -503,6 +570,7 @@ async function assertApplicationMonitoring(page, baseURL) {
     }
 
     await assertApplicationMonitoring(page, fixture.baseURL);
+    await assertStatusDisplaySettings(page, fixture.baseURL);
 
     const status = await page.evaluate(async () => {
       const response = await fetch("/monitor/status", { cache: "no-store" });
@@ -1399,10 +1467,11 @@ async function assertApplicationMonitoring(page, baseURL) {
     await noScriptPage.goto(`${fixture.baseURL}/config/quick-runs`);
     assert.equal(await noScriptPage.locator('[data-group-name="Operations"] [data-group-body]').isVisible(), true);
     await noScriptPage.goto(`${fixture.baseURL}/monitor/applications?kind=docker&query=cache&sort=memory&direction=asc`);
-    assert.equal(await noScriptPage.locator("[data-application-row]").count(), 1);
-    assert.match(await noScriptPage.locator("[data-application-row]").textContent(), /cache-local/);
-    assert.equal(await noScriptPage.locator(".applications-mobile-sort").count(), 1);
-    assert.equal(await noScriptPage.locator('[data-application-row] form[method="post"] input[name="csrf_token"]').count(), 1);
+    const noScriptRunning = noScriptPage.locator("[data-running-applications-list] [data-application-row]");
+    assert.equal(await noScriptRunning.count(), 1);
+    assert.match(await noScriptRunning.textContent(), /cache-local/);
+    assert.equal(await noScriptPage.locator(".applications-sort-fields").count(), 1);
+    assert.equal(await noScriptRunning.locator('form[method="post"] input[name="csrf_token"]').count(), 1);
     await noScriptContext.close();
 
     assert.deepEqual(consoleErrors, [], `Browser console errors:\n${consoleErrors.join("\n")}`);

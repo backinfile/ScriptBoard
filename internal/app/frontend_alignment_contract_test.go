@@ -88,7 +88,9 @@ func TestApplicationsPageExposesLiveFactsAndExpandableObservationDetails(t *test
 		`class="applications-fact-strip"`,
 		`data-pinned-live-fact data-state="on"`,
 		`>Pinned live updates<`,
-		`data-application-detail-toggle`,
+		`data-application-mode="pinned"`,
+		`data-application-mode="runtime"`,
+		`data-application-drawer aria-hidden="true"`,
 		`role="tablist"`,
 		`data-application-detail-tab="history"`,
 		`data-application-detail-tab="runtime"`,
@@ -99,11 +101,15 @@ func TestApplicationsPageExposesLiveFactsAndExpandableObservationDetails(t *test
 		`data-application-detail-panel="history"`,
 		`data-application-history-output`,
 		`data-application-detail-panel="runtime"`,
-		`class="application-running-row" data-application-row`,
-		`tabindex="0" aria-expanded="false"`,
-		`data-running-detail-for="`,
-		`data-running-detail-content`,
+		`data-application-runtime-output`,
+		`name="direction" value="top"`,
+		`class="application-record pinned-application running-application"`,
+		`tabindex="0" aria-haspopup="dialog"`,
 	)
+	if bytes.Contains(page, []byte(`data-application-detail-toggle`)) ||
+		bytes.Contains(page, []byte(`data-running-detail-for`)) {
+		t.Fatal("application details must use the shared drawer instead of inline expansion")
+	}
 
 	response, err = client.Get(serverURL + "/assets/app-v2.js")
 	if err != nil {
@@ -120,6 +126,9 @@ func TestApplicationsPageExposesLiveFactsAndExpandableObservationDetails(t *test
 		`taskPanelState !== submittingTaskState`,
 		`signal:controller.signal`,
 		`backgroundSurfaceBlocked`,
+		`drawerNavigation.hidden = activeMode === "runtime"`,
+		`loadDrawerDetails(true)`,
+		`application-series--${item.color}`,
 	)
 	if bytes.Contains(script, []byte(`form.submit();`)) {
 		t.Fatal("async POST failures must not replay the form submission")

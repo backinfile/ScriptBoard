@@ -4,22 +4,16 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"scriptboard/internal/appstatus"
 )
-
-type applicationSortLink struct {
-	URL, AriaSort string
-}
 
 type applicationsPageView struct {
 	appstatus.View
 	Locale    webLocale
 	CSRFToken string
 	Query     appstatus.Query
-	SortLinks map[string]applicationSortLink
 }
 
 func parseApplicationsQuery(request *http.Request) (appstatus.Query, error) {
@@ -83,7 +77,6 @@ func (a *App) applicationsPage(response http.ResponseWriter, request *http.Reque
 	current := request.Context().Value(sessionContextKey).(session)
 	page := applicationsPageView{
 		View: view, Locale: resolveWebLocale(request), CSRFToken: current.csrfToken, Query: query,
-		SortLinks: applicationSortLinks(query),
 	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = applicationsTemplate.Execute(response, page)
@@ -189,41 +182,4 @@ func (a *App) movePinnedApplication(response http.ResponseWriter, request *http.
 		return
 	}
 	http.Redirect(response, request, "/monitor/applications", http.StatusSeeOther)
-}
-
-func applicationSortLinks(query appstatus.Query) map[string]applicationSortLink {
-	result := make(map[string]applicationSortLink)
-	for _, field := range []string{"pinned", "name", "cpu", "memory", "read", "write", "processes"} {
-		direction := "desc"
-		if field == "name" {
-			direction = "asc"
-		}
-		ariaSort := "none"
-		if query.Sort == field {
-			ariaSort = map[string]string{"asc": "ascending", "desc": "descending"}[query.Direction]
-			if query.Direction == "asc" {
-				direction = "desc"
-			} else {
-				direction = "asc"
-			}
-		}
-		values := applicationQueryValues(query)
-		values.Set("sort", field)
-		values.Set("direction", direction)
-		result[field] = applicationSortLink{URL: "/monitor/applications?" + values.Encode(), AriaSort: ariaSort}
-	}
-	return result
-}
-
-func applicationQueryValues(query appstatus.Query) url.Values {
-	values := make(url.Values)
-	if query.Search != "" {
-		values.Set("query", query.Search)
-	}
-	if query.Kind != "" {
-		values.Set("kind", string(query.Kind))
-	}
-	values.Set("sort", query.Sort)
-	values.Set("direction", query.Direction)
-	return values
 }

@@ -8,6 +8,7 @@
     "arrow-left": '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
     "arrow-right": '<path d="m12 5 7 7-7 7"/><path d="M5 12h14"/>',
     "arrow-up": '<path d="m18 15-6-6-6 6"/><path d="M12 21V9"/>',
+    "arrow-up-to-line": '<path d="M5 3h14"/><path d="m18 13-6-6-6 6"/><path d="M12 7v14"/>',
     "bookmark-plus": '<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h5"/><path d="M19 3v6"/><path d="M16 6h6"/>',
     "box": '<path d="m21 8-9-5-9 5 9 5 9-5Z"/><path d="m3 8 9 5 9-5"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/>',
     "braces": '<path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"/><path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/>',
@@ -57,6 +58,7 @@
     "rotate-ccw": '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
     "scroll-text": '<path d="M15 12h-5M15 8h-5"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1H11v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2h4"/>',
     "search": '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+    "search-x": '<path d="m13.5 8.5-5 5"/><path d="m8.5 8.5 5 5"/><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
     "settings": '<path d="M12.2 2h-.4a2 2 0 0 0-2 2v.2a2 2 0 0 1-1 1.7l-.4.2a2 2 0 0 1-2 0l-.1-.1a2 2 0 0 0-2.7.7l-.2.4a2 2 0 0 0 .7 2.7l.1.1a2 2 0 0 1 1 1.7v.5a2 2 0 0 1-1 1.7l-.1.1a2 2 0 0 0-.7 2.7l.2.4a2 2 0 0 0 2.7.7l.1-.1a2 2 0 0 1 2 0l.4.2a2 2 0 0 1 1 1.7v.2a2 2 0 0 0 2 2h.4a2 2 0 0 0 2-2v-.2a2 2 0 0 1 1-1.7l.4-.2a2 2 0 0 1 2 0l.1.1a2 2 0 0 0 2.7-.7l.2-.4a2 2 0 0 0-.7-2.7l-.1-.1a2 2 0 0 1-1-1.7v-.5a2 2 0 0 1 1-1.7l.1-.1a2 2 0 0 0 .7-2.7l-.2-.4a2 2 0 0 0-2.7-.7l-.1.1a2 2 0 0 1-2 0l-.4-.2a2 2 0 0 1-1-1.7V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
     "shield-check": '<path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3z"/><path d="m9 12 2 2 4-4"/>',
     "shield-alert": '<path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3z"/><path d="M12 8v4"/><path d="M12 16h.01"/>',
@@ -77,6 +79,19 @@
   const versionedAssetURL = path => appAssetVersion
     ? `${path}?v=${encodeURIComponent(appAssetVersion)}`
     : path;
+  const websiteFaultColorKey = "scriptboard.websiteFaultColor";
+  const readWebsiteFaultColor = () => {
+    try {
+      const value = localStorage.getItem(websiteFaultColorKey);
+      return value === "magenta" ? "magenta" : "red";
+    } catch {
+      return "red";
+    }
+  };
+  const applyWebsiteFaultColor = color => {
+    document.documentElement.dataset.websiteFaultColor = color === "magenta" ? "magenta" : "red";
+  };
+  applyWebsiteFaultColor(readWebsiteFaultColor());
 
   let cleanupPage = () => {};
   let markdownLibrariesPromise = null;
@@ -1184,10 +1199,10 @@
       const average = points.length
         ? points.reduce((total, point) => total + (Number(applicationValue(point, item.key)) || 0), 0) / points.length
         : 0;
-      return `<span><i style="--series:${item.color}"></i>${escapeMarkup(item.label)} ${escapeMarkup(applicationWords().average)} ${escapeMarkup(formatter(average))}</span>`;
+      return `<span><i class="application-series application-series--${item.color}"></i>${escapeMarkup(item.label)} ${escapeMarkup(formatter(average))}</span>`;
     }).join("");
     const paths = series.map(item =>
-      `<path d="${applicationSeriesPath(points, item.key, maximum)}" style="--series:${item.color}"></path>`
+      `<path class="application-series application-series--${item.color}" d="${applicationSeriesPath(points, item.key, maximum)}"></path>`
     ).join("");
     return `<figure class="application-history-chart">
       <figcaption><strong>${escapeMarkup(title)}</strong><span>${legend}</span></figcaption>
@@ -1207,16 +1222,16 @@
     if (!points.length) return `<div class="application-detail-empty">${escapeMarkup(applicationWords().noHistory)}</div>`;
     return `<div class="application-history-grid">
       ${applicationChart(applicationWords().cpu, points, [
-        { key: "cpuAverage", label: applicationWords().average, color: "var(--accent)" },
-        { key: "cpuMaximum", label: applicationWords().maximum, color: "var(--faint)" }
+        { key: "cpuAverage", label: applicationWords().average, color: "accent" },
+        { key: "cpuMaximum", label: applicationWords().maximum, color: "faint" }
       ], value => `${Number(value).toFixed(1)}%`)}
       ${applicationChart(applicationWords().memory, points, [
-        { key: "memoryAverage", label: applicationWords().average, color: "var(--accent)" },
-        { key: "memoryMaximum", label: applicationWords().maximum, color: "var(--faint)" }
+        { key: "memoryAverage", label: applicationWords().average, color: "accent" },
+        { key: "memoryMaximum", label: applicationWords().maximum, color: "faint" }
       ], formatApplicationBytes)}
       ${applicationChart(applicationWords().disk, points, [
-        { key: "readAverage", label: applicationWords().read, color: "var(--accent)" },
-        { key: "writeAverage", label: applicationWords().write, color: "var(--warning)" }
+        { key: "readAverage", label: applicationWords().read, color: "accent" },
+        { key: "writeAverage", label: applicationWords().write, color: "warning" }
       ], formatApplicationRate)}
     </div>`;
   }
@@ -1271,7 +1286,18 @@
     const switches = Array.from(root.querySelectorAll("[data-applications-refresh]"));
     const detailCache = new Map();
     const pendingDetails = new Map();
-    let restorePinnedState = () => {};
+    const drawerHost = root.querySelector("[data-application-drawer]");
+    const drawer = drawerHost?.querySelector(".application-drawer");
+    const drawerNavigation = drawerHost?.querySelector("[data-application-drawer-navigation]");
+    const detailTabs = Array.from(drawerHost?.querySelectorAll("[data-application-detail-tab]") || []);
+    const detailPanels = Array.from(drawerHost?.querySelectorAll("[data-application-detail-panel]") || []);
+    const historyOutput = drawerHost?.querySelector("[data-application-history-output]");
+    const runtimeOutput = drawerHost?.querySelector("[data-application-runtime-output]");
+    const detailTimes = Array.from(drawerHost?.querySelectorAll("[data-application-detail-time]") || []);
+    let opener = null;
+    let activeRange = "1h";
+    let activeMode = "pinned";
+    let drawerRequestToken = 0;
 
     const replaceFromSnapshot = (snapshot, scope) => {
       const facts = snapshot.querySelector(".applications-fact-strip");
@@ -1284,25 +1310,25 @@
         currentTime.textContent = sourceTime.textContent;
       }
       if (scope === "pinned") {
-        detailCache.clear();
         const source = snapshot.querySelector("[data-pinned-applications]");
         const target = root.querySelector("[data-pinned-applications]");
         if (source && target) {
-          const expanded = Array.from(target.querySelectorAll(".pinned-application[data-expanded='true']")).map(article => ({
-            id: article.dataset.applicationId,
-            range: article.querySelector("[data-application-range][aria-pressed='true']")?.dataset.applicationRange || "1h",
-            tab: article.querySelector("[data-application-detail-tab][aria-selected='true']")?.dataset.applicationDetailTab || "history"
-          }));
           target.replaceChildren(...Array.from(source.children, child => document.importNode(child, true)));
-          restorePinnedState(expanded);
         }
       } else {
-        const sourceBody = snapshot.querySelector(".applications-table tbody");
-        const targetBody = root.querySelector(".applications-table tbody");
-        if (sourceBody && targetBody) targetBody.replaceChildren(...Array.from(sourceBody.children, child => document.importNode(child, true)));
+        const sourceList = snapshot.querySelector("[data-running-applications-list]");
+        const targetList = root.querySelector("[data-running-applications-list]");
+        if (sourceList && targetList) targetList.replaceChildren(...Array.from(sourceList.children, child => document.importNode(child, true)));
         const sourceSummary = snapshot.querySelector(".application-result-summary");
         const targetSummary = root.querySelector(".application-result-summary");
         if (sourceSummary && targetSummary) targetSummary.replaceChildren(...Array.from(sourceSummary.childNodes, child => document.importNode(child, true)));
+      }
+      if (drawerHost?.classList.contains("is-open")) {
+        opener = Array.from(root.querySelectorAll("[data-application-row]")).find(candidate =>
+          candidate.dataset.applicationId === drawerHost.dataset.applicationId &&
+          candidate.dataset.applicationMode === drawerHost.dataset.applicationMode
+        ) || opener;
+        opener?.classList.add("is-selected");
       }
       renderIcons(root);
       localizeTimes(root);
@@ -1421,109 +1447,126 @@
       return request;
     };
 
-    const selectPinnedTab = (article, tabName) => {
-      article.querySelectorAll("[data-application-detail-tab]").forEach(tab => {
+    const selectDetailTab = tabName => {
+      detailTabs.forEach(tab => {
         const selected = tab.dataset.applicationDetailTab === tabName;
         tab.setAttribute("aria-selected", String(selected));
         tab.tabIndex = selected ? 0 : -1;
       });
-      article.querySelectorAll("[data-application-detail-panel]").forEach(panel => {
+      detailPanels.forEach(panel => {
         panel.hidden = panel.dataset.applicationDetailPanel !== tabName;
       });
     };
 
-    const renderPinnedDetails = (article, payload, range) => {
-      const historyPanel = article.querySelector("[data-application-history-output]");
-      const runtimePanel = article.querySelector("[data-application-detail-panel='runtime']");
-      if (historyPanel) historyPanel.innerHTML = renderApplicationHistory(payload);
-      if (runtimePanel) runtimePanel.innerHTML = renderApplicationRuntime(payload);
-      article.querySelectorAll("[data-application-range]").forEach(button => {
+    const markDetailFetched = () => {
+      const value = new Intl.DateTimeFormat(locale(), {
+        hour: "2-digit", minute: "2-digit", second: "2-digit"
+      }).format(new Date());
+      detailTimes.forEach(time => {
+        time.dateTime = new Date().toISOString();
+        time.textContent = value;
+      });
+    };
+
+    const renderDrawerDetails = (payload, range) => {
+      if (activeMode === "pinned" && historyOutput) historyOutput.innerHTML = renderApplicationHistory(payload);
+      if (runtimeOutput) runtimeOutput.innerHTML = renderApplicationRuntime(payload);
+      drawerHost.querySelectorAll("[data-application-range]").forEach(button => {
         button.setAttribute("aria-pressed", String(button.dataset.applicationRange === range));
       });
-      renderIcons(article);
-      localizeTimes(article);
+      markDetailFetched();
+      renderIcons(drawerHost);
+      localizeTimes(drawerHost);
     };
 
-    const showPinnedError = (article, range, error) => {
-      const target = article.querySelector("[data-application-history-output]");
-      if (!target) return;
-      target.innerHTML = `<div class="application-detail-error" role="alert"><span data-lucide="triangle-alert" aria-hidden="true"></span><div><strong>${escapeMarkup(applicationWords().loadFailed)}</strong><p>${escapeMarkup(error?.message || "")}</p><button class="button button--compact" type="button" data-application-detail-retry data-range="${escapeMarkup(range)}">${escapeMarkup(applicationWords().retry)}</button></div></div>`;
-      renderIcons(target);
+    const drawerErrorMarkup = error =>
+      `<div class="application-detail-error" role="alert"><span data-lucide="triangle-alert" aria-hidden="true"></span><div><strong>${escapeMarkup(applicationWords().loadFailed)}</strong><p>${escapeMarkup(error?.message || "")}</p><button class="button button--compact" type="button" data-application-detail-retry>${escapeMarkup(applicationWords().retry)}</button></div></div>`;
+
+    const showDrawerError = error => {
+      const markup = drawerErrorMarkup(error);
+      if (activeMode === "pinned" && historyOutput) historyOutput.innerHTML = markup;
+      if (runtimeOutput) runtimeOutput.innerHTML = markup;
+      renderIcons(drawerHost);
     };
 
-    const expandPinned = async (article, range = "1h", tab = "history") => {
-      const detail = article.querySelector("[data-application-detail]");
-      const toggle = article.querySelector("[data-application-detail-toggle]");
-      if (!detail || !toggle) return;
-      article.dataset.expanded = "true";
-      detail.hidden = false;
-      toggle.setAttribute("aria-expanded", "true");
-      selectPinnedTab(article, tab);
-      const historyPanel = article.querySelector("[data-application-history-output]");
-      const runtimePanel = article.querySelector("[data-application-detail-panel='runtime']");
-      if (historyPanel) historyPanel.innerHTML = applicationDetailLoading();
-      if (runtimePanel) runtimePanel.innerHTML = applicationDetailLoading();
-      renderIcons(detail);
-      try {
-        const payload = await loadDetails(article, range);
-        if (article.dataset.expanded === "true") renderPinnedDetails(article, payload, range);
-      } catch (error) {
-        showPinnedError(article, range, error);
-        if (runtimePanel) runtimePanel.innerHTML = `<div class="application-detail-empty">${escapeMarkup(error?.message || applicationWords().unavailable)}</div>`;
-      }
+    const setDrawerLoading = () => {
+      if (activeMode === "pinned" && historyOutput) historyOutput.innerHTML = applicationDetailLoading();
+      if (runtimeOutput) runtimeOutput.innerHTML = applicationDetailLoading();
+      renderIcons(drawerHost);
     };
 
-    const collapsePinned = article => {
-      article.dataset.expanded = "false";
-      const detail = article.querySelector("[data-application-detail]");
-      if (detail) detail.hidden = true;
-      article.querySelector("[data-application-detail-toggle]")?.setAttribute("aria-expanded", "false");
-    };
-
-    restorePinnedState = expanded => {
-      expanded.forEach(item => {
-        const article = Array.from(root.querySelectorAll(".pinned-application")).find(candidate => candidate.dataset.applicationId === item.id);
-        if (article) expandPinned(article, item.range, item.tab);
+    const updateDrawerHeader = row => {
+      const values = {
+        "[data-application-drawer-name]": row.dataset.applicationName,
+        "[data-application-drawer-kind]": row.dataset.applicationKindLabel,
+        "[data-application-drawer-technical]": row.dataset.applicationTechnical,
+        "[data-application-drawer-status]": row.dataset.applicationStatus,
+        "[data-application-drawer-cpu]": row.dataset.applicationCpu,
+        "[data-application-drawer-memory]": row.dataset.applicationMemory,
+        "[data-application-drawer-io]": row.dataset.applicationIo,
+      };
+      Object.entries(values).forEach(([selector, value]) => {
+        const target = drawerHost.querySelector(selector);
+        if (target) target.textContent = value || applicationWords().empty;
       });
+      const status = drawerHost.querySelector("[data-application-drawer-status]");
+      if (status) status.dataset.state = row.dataset.applicationRunning === "true" ? "running" : "stopped";
     };
 
-    const runningDetailRow = row => {
-      const id = row.dataset.applicationId;
-      return Array.from(root.querySelectorAll("[data-running-detail-for]")).find(detail => detail.dataset.runningDetailFor === id);
-    };
-    const closeRunningDetails = except => {
-      root.querySelectorAll("[data-application-row][aria-expanded='true']").forEach(row => {
-        if (row === except) return;
-        row.setAttribute("aria-expanded", "false");
-        const detail = runningDetailRow(row);
-        if (detail) detail.hidden = true;
+    const loadDrawerDetails = async (force = false) => {
+      if (!opener || !drawerHost?.classList.contains("is-open")) return;
+      const requestToken = ++drawerRequestToken;
+      const refreshButtons = drawerHost.querySelectorAll("[data-application-detail-refresh]");
+      refreshButtons.forEach(button => {
+        button.disabled = true;
+        button.setAttribute("aria-busy", "true");
       });
-    };
-    const toggleRunningDetail = async row => {
-      const detail = runningDetailRow(row);
-      if (!detail) return;
-      const expanded = row.getAttribute("aria-expanded") === "true";
-      if (expanded) {
-        row.setAttribute("aria-expanded", "false");
-        detail.hidden = true;
-        return;
-      }
-      closeRunningDetails(row);
-      row.setAttribute("aria-expanded", "true");
-      detail.hidden = false;
-      const target = detail.querySelector("[data-running-detail-content]");
-      if (target) target.innerHTML = applicationDetailLoading();
-      renderIcons(detail);
+      setDrawerLoading();
       try {
-        const payload = await loadDetails(row, "15m");
-        if (row.getAttribute("aria-expanded") === "true" && target) {
-          target.innerHTML = renderApplicationRuntime(payload);
-          renderIcons(target);
+        const payload = await loadDetails(opener, activeRange, force);
+        if (requestToken === drawerRequestToken && drawerHost.classList.contains("is-open")) {
+          renderDrawerDetails(payload, activeRange);
         }
       } catch (error) {
-        if (target) target.innerHTML = `<div class="application-detail-error" role="alert"><span data-lucide="triangle-alert" aria-hidden="true"></span><div><strong>${escapeMarkup(applicationWords().loadFailed)}</strong><p>${escapeMarkup(error?.message || "")}</p><button class="button button--compact" type="button" data-running-detail-retry>${escapeMarkup(applicationWords().retry)}</button></div></div>`;
-        renderIcons(detail);
+        if (requestToken === drawerRequestToken && drawerHost.classList.contains("is-open")) showDrawerError(error);
+      } finally {
+        if (requestToken === drawerRequestToken) {
+          refreshButtons.forEach(button => {
+            button.disabled = false;
+            button.removeAttribute("aria-busy");
+          });
+        }
       }
+    };
+
+    const openDrawer = row => {
+      if (!drawerHost || !drawer) return;
+      opener = row;
+      activeMode = row.dataset.applicationMode === "runtime" ? "runtime" : "pinned";
+      activeRange = activeMode === "runtime" ? "15m" : "1h";
+      drawerHost.dataset.applicationId = row.dataset.applicationId;
+      drawerHost.dataset.applicationMode = activeMode;
+      updateDrawerHeader(row);
+      if (drawerNavigation) drawerNavigation.hidden = activeMode === "runtime";
+      selectDetailTab(activeMode === "runtime" ? "runtime" : "history");
+      root.querySelectorAll("[data-application-row]").forEach(candidate => candidate.classList.toggle("is-selected", candidate === row));
+      drawerHost.setAttribute("aria-hidden", "false");
+      drawerHost.classList.add("is-open");
+      const scrollRegion = drawerHost.querySelector(".application-drawer__scroll");
+      if (scrollRegion) scrollRegion.scrollTop = 0;
+      document.body.style.overflow = "hidden";
+      loadDrawerDetails(true);
+      window.setTimeout(() => drawerHost.querySelector(".application-drawer__close")?.focus(), 180);
+    };
+
+    const closeDrawer = (restoreFocus = true) => {
+      if (!drawerHost?.classList.contains("is-open")) return;
+      drawerRequestToken += 1;
+      drawerHost.classList.remove("is-open");
+      drawerHost.setAttribute("aria-hidden", "true");
+      document.body.style.overflow = "";
+      root.querySelectorAll("[data-application-row]").forEach(candidate => candidate.classList.remove("is-selected"));
+      if (restoreFocus && opener?.isConnected) opener.focus();
     };
 
     const onApplicationsClick = async event => {
@@ -1542,56 +1585,59 @@
         }
         return;
       }
-      const retryPinned = event.target.closest("[data-application-detail-retry]");
-      if (retryPinned) {
-        const article = retryPinned.closest(".pinned-application");
-        if (article) {
-          const url = detailsURL(article, retryPinned.dataset.range || "1h");
-          detailCache.delete(url);
-          expandPinned(article, retryPinned.dataset.range || "1h", "history");
-        }
+      if (event.target.closest("[data-application-drawer-close]")) {
+        closeDrawer();
         return;
       }
-      const retryRunning = event.target.closest("[data-running-detail-retry]");
-      if (retryRunning) {
-        const detail = retryRunning.closest("[data-running-detail-for]");
-        const row = Array.from(root.querySelectorAll("[data-application-row]")).find(candidate => candidate.dataset.applicationId === detail?.dataset.runningDetailFor);
-        if (row) {
-          detailCache.delete(detailsURL(row, "15m"));
-          row.setAttribute("aria-expanded", "false");
-          toggleRunningDetail(row);
-        }
+      if (event.target.closest("[data-application-detail-retry]")) {
+        loadDrawerDetails(true);
+        return;
+      }
+      if (event.target.closest("[data-application-detail-refresh]")) {
+        loadDrawerDetails(true);
         return;
       }
       const range = event.target.closest("[data-application-range]");
       if (range) {
-        const article = range.closest(".pinned-application");
-        if (article) expandPinned(article, range.dataset.applicationRange, "history");
+        activeRange = range.dataset.applicationRange;
+        selectDetailTab("history");
+        loadDrawerDetails(true);
         return;
       }
       const tab = event.target.closest("[data-application-detail-tab]");
       if (tab) {
-        const article = tab.closest(".pinned-application");
-        if (article) selectPinnedTab(article, tab.dataset.applicationDetailTab);
-        return;
-      }
-      const toggle = event.target.closest("[data-application-detail-toggle]");
-      if (toggle) {
-        const article = toggle.closest(".pinned-application");
-        if (!article) return;
-        if (article.dataset.expanded === "true") collapsePinned(article);
-        else expandPinned(article);
+        selectDetailTab(tab.dataset.applicationDetailTab);
         return;
       }
       const row = event.target.closest("[data-application-row]");
-      if (row && !event.target.closest("a,button,input,select,textarea,form,summary,details")) toggleRunningDetail(row);
+      if (row && !event.target.closest("a,button,input,select,textarea,form,summary,details")) openDrawer(row);
     };
 
     const onApplicationsKeydown = event => {
+      if (event.key === "Escape" && drawerHost?.classList.contains("is-open")) {
+        event.preventDefault();
+        closeDrawer();
+        return;
+      }
+      if (event.key === "Tab" && drawerHost?.classList.contains("is-open")) {
+        const focusable = Array.from(drawer.querySelectorAll("button:not([disabled]),a[href],[tabindex]:not([tabindex='-1'])"))
+          .filter(element => !element.hidden && element.getClientRects().length > 0);
+        if (focusable.length) {
+          const first = focusable[0];
+          const last = focusable[focusable.length - 1];
+          if (event.shiftKey && (event.target === first || !drawer.contains(event.target))) {
+            event.preventDefault();
+            last.focus();
+          } else if (!event.shiftKey && event.target === last) {
+            event.preventDefault();
+            first.focus();
+          }
+        }
+      }
       const row = event.target.closest("[data-application-row]");
       if (row && event.target === row && (event.key === "Enter" || event.key === " ")) {
         event.preventDefault();
-        toggleRunningDetail(row);
+        openDrawer(row);
       }
       const tab = event.target.closest("[data-application-detail-tab]");
       if (tab && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
@@ -1606,6 +1652,7 @@
     cleanups.push(() => {
       root.removeEventListener("click", onApplicationsClick);
       root.removeEventListener("keydown", onApplicationsKeydown);
+      closeDrawer(false);
       pendingDetails.forEach(request => request.controller?.abort());
       pendingDetails.clear();
     });
@@ -2755,6 +2802,27 @@
     };
   }
 
+  function initDisplaySettings(cleanups) {
+    const root = document.querySelector("[data-display-settings]");
+    if (!root) return;
+    const options = Array.from(root.querySelectorAll('input[name="website_fault_color"]'));
+    const selected = readWebsiteFaultColor();
+    options.forEach(option => {
+      option.checked = option.value === selected;
+      const onChange = () => {
+        if (!option.checked) return;
+        applyWebsiteFaultColor(option.value);
+        try {
+          localStorage.setItem(websiteFaultColorKey, option.value);
+        } catch {
+          // The visual preference remains active for this page when storage is unavailable.
+        }
+      };
+      option.addEventListener("change", onChange);
+      cleanups.push(() => option.removeEventListener("change", onChange));
+    });
+  }
+
   function initPage() {
     const cleanups = [];
     cleanupPage = () => cleanups.splice(0).forEach(cleanup => cleanup());
@@ -2770,6 +2838,7 @@
     initRun(cleanups);
     initGroupedRecords(cleanups);
     initScheduleCron(cleanups);
+    initDisplaySettings(cleanups);
     const websiteForm = document.querySelector("[data-website-monitor-form]");
     if (websiteForm) cleanups.push(initWebsiteMonitorForm(websiteForm));
     const websiteMonitoring = document.querySelector("[data-website-monitoring],[data-website-detail]");

@@ -194,6 +194,7 @@ func TestPJAXDataShellIsLimitedToLargeListRoutes(t *testing.T) {
 		{path: "/resources/trash", deferred: true},
 		{path: "/monitor", deferred: false},
 		{path: "/settings/account", deferred: false},
+		{path: "/settings/display", deferred: false},
 	}
 	for _, test := range tests {
 		t.Run(test.path, func(t *testing.T) {
@@ -435,6 +436,7 @@ func TestGroupedWebRoutesReplaceLegacyModulePaths(t *testing.T) {
 		"/config/schedules",
 		"/history/audit",
 		"/settings/account",
+		"/settings/display",
 		"/settings/version-protection",
 		"/settings/updates",
 	} {
@@ -608,6 +610,7 @@ func TestPrimaryWorkspacesRenderCompleteLocalizedDocuments(t *testing.T) {
 		"/config/schedules",
 		"/history/audit",
 		"/settings/account",
+		"/settings/display",
 		"/settings/version-protection",
 		"/settings/updates",
 	} {
@@ -648,6 +651,7 @@ func TestEachWorkspaceAndTaskExposeAtMostOnePrimaryAction(t *testing.T) {
 		"/config/schedules/groups/new",
 		"/history/audit",
 		"/settings/account",
+		"/settings/display",
 		"/settings/version-protection",
 		"/settings/updates",
 	} {
