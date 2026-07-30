@@ -41,7 +41,7 @@ FORM: Flat measurement rails and a responsive record ledger; no control-plane ac
     </header>
     <div class="pinned-application-list" data-pinned-applications>
       {{range .Pinned}}
-      <article class="application-record pinned-application" tabindex="0" aria-haspopup="dialog" aria-label="{{t $.Locale "applications.open_details"}} {{.Name}}" data-application-row data-application-mode="pinned" data-application-running="{{if .Running}}true{{else}}false{{end}}" data-application-id="{{.ID}}" data-application-name="{{.Name}}" data-application-kind="{{.Kind}}" data-application-kind-label="{{if eq .Kind "docker"}}Docker {{t $.Locale "applications.container"}}{{else}}{{t $.Locale "applications.host_application"}}{{end}}" data-application-technical="{{.Technical}}" data-application-status="{{if .Running}}{{t $.Locale "applications.running"}}{{else}}{{t $.Locale "applications.stopped"}}{{end}}" data-application-cpu="{{if .RateAvailable}}{{percent .CPUPercent}}{{else}}–{{end}}" data-application-memory="{{humanBytes .MemoryBytes}}" data-application-io="{{if .RateAvailable}}{{humanRate .ReadBytesPerSecond}} / {{humanRate .WriteBytesPerSecond}}{{else}}–{{end}}" data-application-detail-url="/monitor/applications/{{.ID}}/details">
+      <article class="application-record pinned-application" tabindex="0" aria-haspopup="dialog" aria-label="{{t $.Locale "applications.open_details"}} {{.Name}}" data-application-row data-application-mode="pinned" data-application-running="{{if .Running}}true{{else}}false{{end}}" data-application-id="{{.ID}}" data-application-name="{{.Name}}" data-application-kind="{{.Kind}}" data-application-kind-label="{{if eq .Kind "docker"}}Docker {{t $.Locale "applications.container"}}{{else}}{{t $.Locale "applications.host_application"}}{{end}}" data-application-technical="{{.Technical}}" data-application-status="{{if .Running}}{{t $.Locale "applications.running"}}{{else}}{{t $.Locale "applications.stopped"}}{{end}}" data-application-cpu="{{if .RateAvailable}}{{percent .CPUPercent}}{{else}}–{{end}}" data-application-memory="{{humanBytes .MemoryBytes}}" data-application-io="{{if .RateAvailable}}{{humanRate .ReadBytesPerSecond}} / {{humanRate .WriteBytesPerSecond}}{{else}}–{{end}}" {{if eq .Kind "docker"}}data-application-log-url="/monitor/applications/{{.ID}}/logs"{{end}} data-application-detail-url="/monitor/applications/{{.ID}}/details">
         <div class="pinned-application__summary">
           <div class="pinned-application__identity">
             <span data-lucide="{{if eq .Kind "docker"}}box{{else}}app-window{{end}}" aria-hidden="true"></span>
@@ -53,6 +53,7 @@ FORM: Flat measurement rails and a responsive record ledger; no control-plane ac
             <div><dt>{{t $.Locale "applications.disk_io"}}</dt><dd>{{if .RateAvailable}}{{humanRate .ReadBytesPerSecond}} / {{humanRate .WriteBytesPerSecond}}{{else}}&ndash;{{end}}<small>{{t $.Locale "applications.read"}} / {{t $.Locale "applications.write"}}</small></dd></div>
           </dl>
           <div class="pinned-application__actions">
+            {{if eq .Kind "docker"}}<a class="icon-button application-log-link" href="/monitor/applications/{{.ID}}/logs" aria-label="{{t $.Locale "logs.follow"}} {{.Name}}" title="{{t $.Locale "logs.follow"}}"><span data-lucide="scroll-text" aria-hidden="true"></span></a>{{end}}
             <span class="application-record__cue" data-lucide="chevron-right" aria-hidden="true"></span>
             <details class="action-menu pinned-application__menu">
               <summary aria-label="{{t $.Locale "applications.more_actions"}} {{.Name}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary>
@@ -128,7 +129,7 @@ FORM: Flat measurement rails and a responsive record ledger; no control-plane ac
         </thead>
         <tbody data-running-applications-list>
           {{range .Applications}}
-          <tr class="application-running-row" tabindex="0" aria-haspopup="dialog" aria-label="{{t $.Locale "applications.open_details"}} {{.Name}}" data-application-row data-application-mode="runtime" data-application-running="true" data-kind="{{.Kind}}" data-application-id="{{.ID}}" data-application-name="{{.Name}}" data-application-kind="{{.Kind}}" data-application-kind-label="{{if eq .Kind "docker"}}Docker {{t $.Locale "applications.container"}}{{else}}{{t $.Locale "applications.host_application"}}{{end}}" data-application-technical="{{.Technical}}" data-application-status="{{t $.Locale "applications.running"}}" data-application-cpu="{{if .RateAvailable}}{{percent .CPUPercent}}{{else}}–{{end}}" data-application-memory="{{humanBytes .MemoryBytes}}" data-application-io="{{if .RateAvailable}}{{humanRate .ReadBytesPerSecond}} / {{humanRate .WriteBytesPerSecond}}{{else}}–{{end}}" data-application-detail-url="/monitor/applications/{{.ID}}/details">
+          <tr class="application-running-row" tabindex="0" aria-haspopup="dialog" aria-label="{{t $.Locale "applications.open_details"}} {{.Name}}" data-application-row data-application-mode="runtime" data-application-running="true" data-kind="{{.Kind}}" data-application-id="{{.ID}}" data-application-name="{{.Name}}" data-application-kind="{{.Kind}}" data-application-kind-label="{{if eq .Kind "docker"}}Docker {{t $.Locale "applications.container"}}{{else}}{{t $.Locale "applications.host_application"}}{{end}}" data-application-technical="{{.Technical}}" data-application-status="{{t $.Locale "applications.running"}}" data-application-cpu="{{if .RateAvailable}}{{percent .CPUPercent}}{{else}}–{{end}}" data-application-memory="{{humanBytes .MemoryBytes}}" data-application-io="{{if .RateAvailable}}{{humanRate .ReadBytesPerSecond}} / {{humanRate .WriteBytesPerSecond}}{{else}}–{{end}}" {{if eq .Kind "docker"}}data-application-log-url="/monitor/applications/{{.ID}}/logs"{{end}} data-application-detail-url="/monitor/applications/{{.ID}}/details">
             <td class="application-running-pin" data-label="{{t $.Locale "applications.pin"}}">
               {{if .Pinnable}}<form method="post" action="/monitor/applications/{{.ID}}/{{if .Pinned}}unpin{{else}}pin{{end}}"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="icon-button{{if .Pinned}} is-selected{{end}}" type="submit" aria-label="{{if .Pinned}}{{t $.Locale "applications.unpin"}}{{else}}{{t $.Locale "applications.pin"}}{{end}} {{.Name}}"><span data-lucide="pin" aria-hidden="true"></span></button></form>{{else}}<span class="application-restricted" title="{{t $.Locale "applications.identity_restricted"}}"><span data-lucide="shield-alert" aria-hidden="true"></span></span>{{end}}
             </td>
@@ -143,7 +144,7 @@ FORM: Flat measurement rails and a responsive record ledger; no control-plane ac
             <td class="application-table-metric" data-label="{{t $.Locale "applications.read"}}"><strong>{{if .RateAvailable}}{{humanRate .ReadBytesPerSecond}}{{else}}&ndash;{{end}}</strong><small>{{t $.Locale "applications.disk_io"}}</small></td>
             <td class="application-table-metric" data-label="{{t $.Locale "applications.write"}}"><strong>{{if .RateAvailable}}{{humanRate .WriteBytesPerSecond}}{{else}}&ndash;{{end}}</strong><small>{{t $.Locale "applications.disk_io"}}</small></td>
             <td class="application-table-metric" data-label="{{t $.Locale "applications.processes"}}"><strong>{{.ProcessCount}}</strong><small>{{t $.Locale "applications.processes"}}</small></td>
-            <td class="application-running-table__open"><span class="application-record__cue" data-lucide="chevron-right" aria-hidden="true"></span></td>
+            <td class="application-running-table__open">{{if eq .Kind "docker"}}<a class="icon-button application-log-link" href="/monitor/applications/{{.ID}}/logs" aria-label="{{t $.Locale "logs.follow"}} {{.Name}}" title="{{t $.Locale "logs.follow"}}"><span data-lucide="scroll-text" aria-hidden="true"></span></a>{{else}}<span class="application-record__cue" data-lucide="chevron-right" aria-hidden="true"></span>{{end}}</td>
           </tr>
           {{else}}
           <tr><td colspan="8"><div class="applications-empty"><span data-lucide="search-x" aria-hidden="true"></span><p>{{t .Locale "applications.no_results"}}</p></div></td></tr>
@@ -162,7 +163,10 @@ FORM: Flat measurement rails and a responsive record ledger; no control-plane ac
           <h2 id="application-drawer-title"><span data-application-drawer-name></span> <span class="application-drawer__status" data-application-drawer-status></span></h2>
           <code data-application-drawer-technical></code>
         </div>
-        <button class="icon-button application-drawer__close" type="button" aria-label="{{t .Locale "applications.close_details"}}" data-application-drawer-close><span data-lucide="x" aria-hidden="true"></span></button>
+        <div class="application-drawer__head-actions">
+          <a class="button button--compact" href="/monitor/applications" data-application-drawer-logs hidden><span data-lucide="scroll-text" aria-hidden="true"></span>{{t .Locale "logs.follow"}}</a>
+          <button class="icon-button application-drawer__close" type="button" aria-label="{{t .Locale "applications.close_details"}}" data-application-drawer-close><span data-lucide="x" aria-hidden="true"></span></button>
+        </div>
       </header>
 
       <dl class="application-drawer__metrics">

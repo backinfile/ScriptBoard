@@ -13,6 +13,7 @@ var (
 	fileConflictTemplate         = mustWebTemplate("file-conflict")
 	filesTemplate                = mustWebTemplate("files")
 	loginTemplate                = mustWebTemplate("login")
+	liveLogTemplate              = mustWebTemplate("live-log")
 	overlapTemplate              = mustWebTemplate("overlap")
 	overviewTemplate             = mustWebTemplate("overview")
 	quickRunsTemplate            = mustWebTemplate("quick-runs")

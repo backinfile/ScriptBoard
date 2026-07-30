@@ -9,6 +9,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"scriptboard/internal/appstatus"
+	"scriptboard/internal/logstream"
 )
 
 type snapshotProbe struct {
@@ -20,6 +21,35 @@ type detailSnapshotProbe struct {
 	snapshot appstatus.RawSnapshot
 	detail   appstatus.RuntimeDetail
 	request  appstatus.DetailRequest
+}
+
+type logSnapshotProbe struct {
+	snapshot appstatus.RawSnapshot
+	request  appstatus.LogRequest
+	source   logstream.Source
+}
+
+func (p *logSnapshotProbe) Snapshot(context.Context) appstatus.RawSnapshot {
+	return p.snapshot
+}
+
+func (p *logSnapshotProbe) LogSource(_ context.Context, request appstatus.LogRequest) (logstream.Source, error) {
+	p.request = request
+	return p.source, nil
+}
+
+type inertLogSource struct{}
+
+func (inertLogSource) Metadata() logstream.Metadata {
+	return logstream.Metadata{Kind: "docker", Name: "api"}
+}
+
+func (inertLogSource) History(context.Context, string) (logstream.Page, error) {
+	return logstream.Page{}, nil
+}
+
+func (inertLogSource) Follow(context.Context, string, func(logstream.Event) error) error {
+	return nil
 }
 
 func (p *detailSnapshotProbe) Snapshot(context.Context) appstatus.RawSnapshot {
@@ -91,6 +121,78 @@ func TestViewAggregatesMatchingWindowsExecutablesAndDerivesRates(t *testing.T) {
 	}
 	if application.CPUPercent != 20 || application.ReadBytesPerSecond != 60 || application.WriteBytesPerSecond != 90 {
 		t.Fatalf("derived rates = CPU %.1f read %.1f write %.1f", application.CPUPercent, application.ReadBytesPerSecond, application.WriteBytesPerSecond)
+	}
+}
+
+func TestLogSourceResolvesAVisibleDockerApplicationThroughTheProbe(t *testing.T) {
+	t.Parallel()
+
+	probe := &logSnapshotProbe{
+		snapshot: appstatus.RawSnapshot{
+			CollectedAt: time.Now().UTC(), DockerAvailable: true,
+			Containers: []appstatus.RawContainer{{ID: "container-123", Name: "api", Image: "example/api"}},
+		},
+		source: inertLogSource{},
+	}
+	monitor, err := appstatus.New(openStore(t), probe, appstatus.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := monitor.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	view, err := monitor.View(context.Background(), appstatus.Query{Kind: appstatus.KindDocker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Applications) != 1 {
+		t.Fatalf("applications = %#v", view.Applications)
+	}
+	source, err := monitor.LogSource(context.Background(), view.Applications[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source == nil || probe.request.Container == nil || probe.request.Container.ID != "container-123" ||
+		probe.request.Application.ID != view.Applications[0].ID {
+		t.Fatalf("log request = %#v source=%#v", probe.request, source)
+	}
+}
+
+func TestLogSourceKeepsAPinnedStoppedDockerApplicationAddressable(t *testing.T) {
+	t.Parallel()
+
+	probe := &logSnapshotProbe{
+		snapshot: appstatus.RawSnapshot{
+			CollectedAt: time.Now().UTC(), DockerAvailable: true,
+			Containers: []appstatus.RawContainer{{ID: "container-old", Name: "api", Image: "example/api"}},
+		},
+		source: inertLogSource{},
+	}
+	monitor, err := appstatus.New(openStore(t), probe, appstatus.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := monitor.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	view, err := monitor.View(context.Background(), appstatus.Query{Kind: appstatus.KindDocker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := view.Applications[0].ID
+	if err := monitor.Pin(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	probe.snapshot = appstatus.RawSnapshot{CollectedAt: time.Now().UTC().Add(time.Second), DockerAvailable: true}
+	if err := monitor.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := monitor.LogSource(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	if probe.request.Container != nil || probe.request.Application.Running {
+		t.Fatalf("stopped log request = %#v", probe.request)
 	}
 }
 

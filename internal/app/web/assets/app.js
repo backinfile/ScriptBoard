@@ -5,6 +5,7 @@
     "activity": '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
     "app-window": '<rect width="20" height="16" x="2" y="4" rx="2"/><path d="M2 8h20"/><path d="M6 6h.01"/><path d="M10 6h.01"/>',
     "arrow-down": '<path d="m6 9 6 6 6-6"/><path d="M12 3v12"/>',
+    "arrow-down-to-line": '<path d="M12 17V3"/><path d="m6 11 6 6 6-6"/><path d="M19 21H5"/>',
     "arrow-left": '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
     "arrow-right": '<path d="m12 5 7 7-7 7"/><path d="M5 12h14"/>',
     "arrow-up": '<path d="m18 15-6-6-6 6"/><path d="M12 21V9"/>',
@@ -27,6 +28,7 @@
     "database": '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"/>',
     "download": '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>',
     "ellipsis": '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+    "eraser": '<path d="m7 21-4-4a2.8 2.8 0 0 1 0-4L13 3a2.8 2.8 0 0 1 4 0l4 4a2.8 2.8 0 0 1 0 4L11 21"/><path d="m5 11 9 9"/><path d="M5 21h14"/>',
     "eye": '<path d="M2.1 12a10.7 10.7 0 0 1 19.8 0 10.7 10.7 0 0 1-19.8 0"/><circle cx="12" cy="12" r="3"/>',
     "eye-off": '<path d="m2 2 20 20"/><path d="M6.7 6.7A11.7 11.7 0 0 0 2.1 12a10.7 10.7 0 0 0 14.1 5.2"/><path d="M10.7 10.7a3 3 0 0 0 4.2 4.2"/><path d="M14.3 5.2A10.7 10.7 0 0 1 21.9 12a11.8 11.8 0 0 1-2.2 3.2"/>',
     "external-link": '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
@@ -1749,6 +1751,11 @@
       });
       const status = drawerHost.querySelector("[data-application-drawer-status]");
       if (status) status.dataset.state = row.dataset.applicationRunning === "true" ? "running" : "stopped";
+      const logsLink = drawerHost.querySelector("[data-application-drawer-logs]");
+      if (logsLink) {
+        logsLink.hidden = !row.dataset.applicationLogUrl;
+        if (row.dataset.applicationLogUrl) logsLink.href = row.dataset.applicationLogUrl;
+      }
     };
 
     const loadDrawerDetails = async (force = false) => {
@@ -3108,6 +3115,337 @@
     });
   }
 
+  function initLiveLog(cleanups) {
+    const root = document.querySelector("[data-live-log-viewer]");
+    if (!root) return;
+    const output = root.querySelector("[data-log-output]");
+    const historySentinel = root.querySelector("[data-log-history-sentinel]");
+    const historyLabel = root.querySelector("[data-log-history-label]");
+    const state = root.querySelector("[data-log-state]");
+    const stateLabel = root.querySelector("[data-log-state-label]");
+    const pause = root.querySelector("[data-log-pause]");
+    const pauseLabel = root.querySelector("[data-log-pause-label]");
+    const autoFollow = root.querySelector("[data-log-autofollow]");
+    const copyButton = root.querySelector("[data-log-copy]");
+    const copyLabel = root.querySelector("[data-log-copy-label]");
+    const clearButton = root.querySelector("[data-log-clear]");
+    const newLinesButton = root.querySelector("[data-log-new-lines]");
+    const newLinesLabel = root.querySelector("[data-log-new-lines-label]");
+    if (!output || !historySentinel) return;
+
+    const MAX_LOG_ENTRIES = 20000;
+    const MAX_LOG_BYTES = 16 * 1024 * 1024;
+    const textEncoder = new TextEncoder();
+    let before = "";
+    let hasMore = true;
+    let historyLoading = false;
+    let initialLoaded = false;
+    let eventSource = null;
+    let lastCursor = "";
+    let loadedBytes = 0;
+    let paused = false;
+    let complete = false;
+    let shouldFollow = true;
+    let unseenLines = 0;
+    let disposed = false;
+
+    const setState = (name, label = "") => {
+      if (state) state.dataset.state = name;
+      if (stateLabel) {
+        const fallback = root.dataset[`logLabel${name.charAt(0).toUpperCase()}${name.slice(1)}`];
+        stateLabel.textContent = label || fallback || name;
+      }
+    };
+    const localizedState = name => {
+      if (!name) return "";
+      return root.dataset[`logLabel${name.charAt(0).toUpperCase()}${name.slice(1)}`] || "";
+    };
+
+    const scrollToLatest = behavior => {
+      output.scrollTo({ top: output.scrollHeight, behavior });
+    };
+
+    const updateNewLines = () => {
+      if (!newLinesButton || !newLinesLabel) return;
+      newLinesButton.hidden = unseenLines === 0 || shouldFollow;
+      newLinesLabel.textContent = unseenLines
+        ? `${unseenLines} ${root.dataset.logLabelNewLines || "new lines"}`
+        : "";
+    };
+
+    const setAutoFollow = enabled => {
+      shouldFollow = enabled;
+      autoFollow?.setAttribute("aria-pressed", String(enabled));
+      root.classList.toggle("is-following", enabled);
+      if (enabled) {
+        unseenLines = 0;
+        updateNewLines();
+        scrollToLatest("smooth");
+      }
+    };
+
+    const entryBytes = entry => textEncoder.encode(entry.text || "").byteLength;
+
+    const createEntryRow = entry => {
+      const row = document.createElement("div");
+      row.className = "live-log-entry";
+      row.dataset.severity = entry.severity || "normal";
+      row.dataset.source = entry.source || "combined";
+      row.dataset.cursor = entry.cursor || "";
+      row.dataset.logText = entry.text || "";
+      row.dataset.logBytes = String(entryBytes(entry));
+      if (entry.continuation) row.dataset.continuation = "true";
+      if (entry.encodingError) row.dataset.encodingError = "true";
+
+      const time = document.createElement("time");
+      time.className = "live-log-entry__time";
+      if (entry.time) {
+        const timestamp = new Date(entry.time);
+        if (!Number.isNaN(timestamp.valueOf())) {
+          time.dateTime = timestamp.toISOString();
+          time.textContent = new Intl.DateTimeFormat(locale(), {
+            hour: "2-digit", minute: "2-digit", second: "2-digit",
+            fractionalSecondDigits: 3, hour12: false
+          }).format(timestamp);
+        }
+      }
+      if (!time.textContent) time.textContent = "—";
+
+      const level = document.createElement("strong");
+      level.className = "live-log-entry__level";
+      level.textContent = row.dataset.severity === "error"
+        ? "ERROR"
+        : row.dataset.severity === "warning" ? "WARN" : "INFO";
+
+      const source = document.createElement("span");
+      source.className = "live-log-entry__source";
+      source.textContent = String(entry.source || "combined").toUpperCase();
+
+      const message = document.createElement("span");
+      message.className = "live-log-entry__message";
+      message.textContent = entry.text || "";
+      row.append(time, level, source, message);
+      return row;
+    };
+
+    const trimEntries = () => {
+      let rows = output.querySelectorAll(".live-log-entry");
+      let trimmed = false;
+      while (rows.length > MAX_LOG_ENTRIES || loadedBytes > MAX_LOG_BYTES) {
+        const row = rows[0];
+        if (!row) break;
+        loadedBytes -= Number(row.dataset.logBytes) || 0;
+        row.remove();
+        trimmed = true;
+        rows = output.querySelectorAll(".live-log-entry");
+      }
+      if (trimmed) {
+        const oldestRetained = rows[0];
+        if (oldestRetained?.dataset.cursor) before = oldestRetained.dataset.cursor;
+        hasMore = true;
+      }
+    };
+
+    const appendEntries = (entries, older = false) => {
+      if (!Array.isArray(entries) || entries.length === 0) return;
+      const fragment = document.createDocumentFragment();
+      entries.forEach(entry => {
+        const row = createEntryRow(entry);
+        loadedBytes += Number(row.dataset.logBytes) || 0;
+        fragment.append(row);
+        if (!older && entry.cursor) lastCursor = entry.cursor;
+      });
+      if (older) {
+        const previousHeight = output.scrollHeight;
+        output.insertBefore(fragment, historySentinel.nextSibling);
+        output.scrollTop += output.scrollHeight - previousHeight;
+      } else {
+        output.append(fragment);
+        if (shouldFollow) {
+          unseenLines = 0;
+          scrollToLatest(initialLoaded ? "smooth" : "auto");
+        } else {
+          unseenLines += entries.length;
+        }
+        updateNewLines();
+      }
+      trimEntries();
+    };
+
+    const addNotice = (tone, message) => {
+      if (!message) return;
+      const notice = document.createElement("div");
+      notice.className = "live-log-notice";
+      notice.dataset.tone = tone;
+      notice.setAttribute("role", tone === "error" ? "alert" : "status");
+      notice.textContent = message;
+      output.append(notice);
+      if (shouldFollow) scrollToLatest("smooth");
+    };
+
+    const loadHistory = async (initial = false) => {
+      if (historyLoading || (!initial && !hasMore)) return;
+      historyLoading = true;
+      historySentinel.dataset.state = "loading";
+      try {
+        const url = new URL(root.dataset.logHistoryUrl, location.href);
+        if (!initial && before) url.searchParams.set("before", before);
+        const response = await fetch(url, {
+          credentials: "same-origin", cache: "no-store",
+          headers: { Accept: "application/json" }
+        });
+        if (!response.ok) throw new Error((await response.text()).trim() || `HTTP ${response.status}`);
+        const page = await response.json();
+        if (page.sourceVersion && root.dataset.logSourceVersion &&
+            page.sourceVersion !== root.dataset.logSourceVersion) {
+          addNotice("gap", localizedState("gap") || "Log continuity could not be verified.");
+        }
+        before = page.before || "";
+        hasMore = Boolean(page.hasMore);
+        appendEntries(page.entries || [], !initial);
+        if (initial && page.entries?.length) {
+          lastCursor = page.entries[page.entries.length - 1].cursor || "";
+        }
+        historySentinel.dataset.state = hasMore ? "ready" : "complete";
+        if (historyLabel) {
+          historyLabel.textContent = hasMore
+            ? root.dataset.logLabelLoadingHistory || "Load earlier output"
+            : root.dataset.logLabelHistoryEnd || "Beginning of available output";
+        }
+      } catch (error) {
+        historySentinel.dataset.state = "error";
+        if (historyLabel) historyLabel.textContent = error.message;
+        setState("error", error.message);
+      } finally {
+        historyLoading = false;
+      }
+    };
+
+    const parseEvent = event => {
+      try {
+        return JSON.parse(event.data);
+      } catch {
+        return null;
+      }
+    };
+
+    const closeEvents = () => {
+      eventSource?.close();
+      eventSource = null;
+    };
+
+    const connect = () => {
+      if (disposed || paused || complete || !window.EventSource) return;
+      closeEvents();
+      const url = new URL(root.dataset.logEventsUrl, location.href);
+      if (lastCursor) url.searchParams.set("after", lastCursor);
+      setState("connecting");
+      eventSource = new EventSource(url.href);
+      eventSource.addEventListener("entry", event => {
+        const payload = parseEvent(event);
+        if (!payload?.entry) return;
+        appendEntries([payload.entry]);
+      });
+      eventSource.addEventListener("state", event => {
+        const payload = parseEvent(event);
+        if (!payload) return;
+        if (payload.state === "live") {
+          setState("live");
+          return;
+        }
+        const connectionState = payload.state === "error" ? "error" : "reconnecting";
+        const message = payload.state === "error"
+          ? payload.message || localizedState("error")
+          : localizedState(payload.state) || payload.state;
+        setState(connectionState, message);
+        addNotice(payload.state === "error" ? "error" : "state", message);
+      });
+      eventSource.addEventListener("gap", () => {
+        const message = localizedState("gap") || "Log continuity could not be verified.";
+        setState("reconnecting", message);
+        addNotice("gap", message);
+      });
+      eventSource.addEventListener("complete", () => {
+        complete = true;
+        closeEvents();
+        const message = localizedState("complete") || "Complete";
+        setState("complete", message);
+        addNotice("state", message);
+      });
+      eventSource.addEventListener("error", () => {
+        if (!paused && !complete) setState("reconnecting");
+      });
+    };
+
+    const onScroll = () => {
+      const distanceFromBottom = output.scrollHeight - output.scrollTop - output.clientHeight;
+      if (distanceFromBottom > 64 && shouldFollow) setAutoFollow(false);
+      if (output.scrollTop < 48 && hasMore) loadHistory(false);
+    };
+    const onPause = () => {
+      paused = !paused;
+      if (paused) {
+        closeEvents();
+        setState("paused");
+      } else {
+        complete = false;
+        connect();
+      }
+      if (pauseLabel) pauseLabel.textContent = paused
+        ? root.dataset.logLabelResume || "Resume"
+        : root.dataset.logLabelPause || "Pause";
+      pause?.setAttribute("aria-pressed", String(paused));
+    };
+    const onAutoFollow = () => setAutoFollow(!shouldFollow);
+    const onNewLines = () => setAutoFollow(true);
+    const onClear = () => {
+      output.querySelectorAll(".live-log-entry,.live-log-notice").forEach(row => row.remove());
+      loadedBytes = 0;
+      unseenLines = 0;
+      updateNewLines();
+    };
+    const onCopy = async () => {
+      const text = Array.from(output.querySelectorAll(".live-log-entry"))
+        .map(row => row.dataset.logText || "")
+        .join("\n");
+      try {
+        await navigator.clipboard.writeText(text);
+        if (copyLabel) copyLabel.textContent = root.dataset.logLabelCopied || "Copied";
+        window.setTimeout(() => {
+          if (copyLabel) copyLabel.textContent = root.dataset.logLabelCopy || "Copy";
+        }, 1500);
+      } catch {
+        copyButton?.focus();
+      }
+    };
+
+    output.addEventListener("scroll", onScroll, { passive: true });
+    pause?.addEventListener("click", onPause);
+    autoFollow?.addEventListener("click", onAutoFollow);
+    newLinesButton?.addEventListener("click", onNewLines);
+    clearButton?.addEventListener("click", onClear);
+    copyButton?.addEventListener("click", onCopy);
+    setAutoFollow(true);
+
+    loadHistory(true).finally(() => {
+      if (disposed) return;
+      initialLoaded = true;
+      scrollToLatest("auto");
+      connect();
+    });
+
+    cleanups.push(() => {
+      disposed = true;
+      closeEvents();
+      output.removeEventListener("scroll", onScroll);
+      pause?.removeEventListener("click", onPause);
+      autoFollow?.removeEventListener("click", onAutoFollow);
+      newLinesButton?.removeEventListener("click", onNewLines);
+      clearButton?.removeEventListener("click", onClear);
+      copyButton?.removeEventListener("click", onCopy);
+    });
+  }
+
   function initPage() {
     const cleanups = [];
     cleanupPage = () => cleanups.splice(0).forEach(cleanup => cleanup());
@@ -3120,6 +3458,7 @@
     initFileDropUpload(document, cleanups);
     initOverview(cleanups);
     initApplications(cleanups);
+    initLiveLog(cleanups);
     initRun(cleanups);
     initGroupedRecords(cleanups);
     initScheduleCron(cleanups);

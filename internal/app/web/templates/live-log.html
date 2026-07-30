@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="{{.Locale}}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}">
+  <script defer src="/assets/app-v2.js?v={{assetVersion}}"></script>
+  <title>{{.Metadata.Name}} · {{t .Locale "logs.title"}} · ScriptBoard</title>
+</head>
+<body class="live-log-body">
+<main
+  class="workspace live-log-page"
+  data-live-log-viewer
+  data-log-history-url="{{.HistoryURL}}"
+  data-log-events-url="{{.EventsURL}}"
+  data-log-source-version="{{.Metadata.SourceVersion}}"
+  data-log-label-connecting="{{t .Locale "logs.connecting"}}"
+  data-log-label-live="{{t .Locale "logs.live"}}"
+  data-log-label-paused="{{t .Locale "logs.paused"}}"
+  data-log-label-reconnecting="{{t .Locale "logs.reconnecting"}}"
+  data-log-label-copy="{{t .Locale "logs.copy"}}"
+  data-log-label-copied="{{t .Locale "logs.copied"}}"
+  data-log-label-pause="{{t .Locale "logs.pause"}}"
+  data-log-label-resume="{{t .Locale "logs.resume"}}"
+  data-log-label-new-lines="{{t .Locale "logs.new_lines"}}"
+  data-log-label-loading-history="{{t .Locale "logs.loading_history"}}"
+  data-log-label-history-end="{{t .Locale "logs.history_end"}}"
+  data-log-label-waiting="{{t .Locale "logs.waiting"}}"
+  data-log-label-rotated="{{t .Locale "logs.rotated"}}"
+  data-log-label-truncated="{{t .Locale "logs.truncated"}}"
+  data-log-label-gap="{{t .Locale "logs.gap"}}"
+  data-log-label-complete="{{t .Locale "logs.complete"}}"
+  data-log-label-error="{{t .Locale "logs.error"}}"
+>
+  <header class="live-log-heading">
+    <div class="live-log-heading__identity">
+      <a class="task-back" href="{{.BackURL}}">
+        <span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "common.back"}}
+      </a>
+      <p class="page-eyebrow">{{if eq .Metadata.Kind "docker"}}Docker{{else}}{{t .Locale "logs.file_source"}}{{end}} / {{t .Locale "logs.live_view"}}</p>
+      <h1>{{.Metadata.Name}}</h1>
+      {{if .Metadata.Technical}}<code>{{.Metadata.Technical}}</code>{{end}}
+    </div>
+    <div class="live-log-heading__status">
+      <span class="live-log-status" data-log-state data-state="connecting" aria-live="polite">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span data-log-state-label>{{t .Locale "logs.connecting"}}</span>
+      </span>
+      {{if .DownloadURL}}<a class="button button--compact" href="{{.DownloadURL}}" data-native>
+        <span data-lucide="download" aria-hidden="true"></span>{{t .Locale "common.download"}}
+      </a>{{end}}
+    </div>
+  </header>
+
+  <section class="live-log-stage" aria-labelledby="live-log-output-title">
+    <header class="live-log-toolbar">
+      <div>
+        <h2 id="live-log-output-title">{{t .Locale "logs.output"}}</h2>
+        <p>{{t .Locale "logs.description"}}</p>
+      </div>
+      <div class="live-log-toolbar__actions">
+        <button class="button button--compact" type="button" data-log-autofollow aria-pressed="true">
+          <span data-lucide="arrow-down-to-line" aria-hidden="true"></span>
+          <span>{{t .Locale "logs.auto_follow"}}</span>
+        </button>
+        <button class="button button--compact" type="button" data-log-copy>
+          <span data-lucide="copy" aria-hidden="true"></span>
+          <span data-log-copy-label>{{t .Locale "logs.copy"}}</span>
+        </button>
+        <button class="button button--compact" type="button" data-log-clear>
+          <span data-lucide="eraser" aria-hidden="true"></span>
+          <span>{{t .Locale "logs.clear_view"}}</span>
+        </button>
+        <button class="button button--compact button--primary" type="button" data-log-pause>
+          <span data-lucide="pause" aria-hidden="true"></span>
+          <span data-log-pause-label>{{t .Locale "logs.pause"}}</span>
+        </button>
+      </div>
+    </header>
+
+    <div class="live-log-column-head" aria-hidden="true">
+      <span>{{t .Locale "logs.time"}}</span><span>{{t .Locale "logs.level"}}</span><span>{{t .Locale "logs.source"}}</span><span>{{t .Locale "logs.message"}}</span>
+    </div>
+    <div class="live-log-output" data-log-output tabindex="0" role="log" aria-live="off" aria-relevant="additions">
+      <div class="live-log-history-sentinel" data-log-history-sentinel>
+        <span data-lucide="loader-circle" aria-hidden="true"></span>
+        <span data-log-history-label>{{t .Locale "logs.loading_history"}}</span>
+      </div>
+    </div>
+    <button class="live-log-new-lines" type="button" data-log-new-lines hidden aria-label="{{t .Locale "logs.new_lines"}}">
+      <span data-lucide="arrow-down" aria-hidden="true"></span>
+      <span data-log-new-lines-label></span>
+    </button>
+  </section>
+
+  <footer class="live-log-legend">
+    <span><i data-tone="error"></i>ERROR / FATAL / PANIC</span>
+    <span><i data-tone="warning"></i>WARN / WARNING</span>
+    <span><i data-tone="normal"></i>{{t .Locale "logs.normal"}}</span>
+    <small>{{t .Locale "logs.ephemeral"}}</small>
+  </footer>
+  <noscript><p class="inline-notice">{{t .Locale "logs.javascript_required"}}</p></noscript>
+</main>
+</body>
+</html>

@@ -444,6 +444,7 @@ async function assertApplicationMonitoring(page, baseURL) {
     const output = document.querySelector("[data-application-history-output]");
     return output?.children.length > 0 && !output.querySelector(".application-detail-loading");
   });
+  await applicationDrawer.locator("[data-application-drawer-navigation]").waitFor({ state: "visible" });
   assert.equal(await applicationDrawer.locator("[data-application-drawer-navigation]").isVisible(), true);
   assert.equal(await applicationDrawer.locator('[data-application-detail-panel="history"]').isVisible(), true);
   assert.match(await applicationDrawer.textContent(), /Details do not refresh automatically/);
@@ -502,6 +503,66 @@ async function assertApplicationMonitoring(page, baseURL) {
   });
   await saveSnapshot(page, "applications-mobile");
   await page.setViewportSize({ width: 1440, height: 1000 });
+}
+
+async function assertLiveLogViewer(page, baseURL) {
+  await page.goto(`${baseURL}/resources/files/log?path=data%2Fexports%2Fservice.log`);
+  const viewer = page.locator("[data-live-log-viewer]");
+  const output = viewer.locator("[data-log-output]");
+  await viewer.waitFor();
+  await page.waitForFunction(() => document.querySelectorAll(".live-log-entry").length === 500);
+  assert.equal(await viewer.locator('.live-log-entry[data-severity="error"]').count(), 1);
+  assert.equal(await viewer.locator('.live-log-entry[data-severity="warning"]').count(), 0);
+  const errorPresentation = await viewer.locator('.live-log-entry[data-severity="error"]').evaluate(element => ({
+    level: element.querySelector(".live-log-entry__level")?.textContent,
+    background: getComputedStyle(element).backgroundImage,
+    rail: getComputedStyle(element).boxShadow,
+  }));
+  assert.equal(errorPresentation.level, "ERROR");
+  assert.notEqual(errorPresentation.background, "none");
+  assert.match(errorPresentation.rail, /rgb/);
+
+  await output.evaluate(element => {
+    element.scrollTop = 0;
+  });
+  await page.waitForFunction(() => document.querySelectorAll(".live-log-entry").length === 650);
+  assert.equal(await viewer.locator('.live-log-entry[data-severity="warning"]').count(), 1);
+  assert.equal(await viewer.locator("[data-log-autofollow]").getAttribute("aria-pressed"), "false");
+
+  await viewer.locator("[data-log-copy]").click();
+  await page.waitForFunction(() => document.querySelector("[data-log-copy-label]")?.textContent.trim() === "Copied");
+  assert.match(await page.evaluate(() => navigator.clipboard.readText()), /line 650 request ERROR fixture boundary/);
+
+  const pause = viewer.locator("[data-log-pause]");
+  await pause.click();
+  assert.equal((await viewer.locator("[data-log-state-label]").textContent()).trim(), "Paused");
+  assert.equal((await viewer.locator("[data-log-pause-label]").textContent()).trim(), "Resume");
+  await pause.click();
+  await page.waitForFunction(() => document.querySelector("[data-log-state]")?.dataset.state === "live");
+
+  await assertNoHorizontalOverflow(page, "File live logs desktop");
+  await saveSnapshot(page, "live-logs-file");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await page.waitForFunction(() => document.querySelectorAll(".live-log-entry").length === 500);
+  await assertNoHorizontalOverflow(page, "File live logs mobile");
+  await saveSnapshot(page, "live-logs-file-mobile");
+
+  await viewer.locator("[data-log-clear]").click();
+  assert.equal(await viewer.locator(".live-log-entry").count(), 0);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+
+  await page.goto(`${baseURL}/monitor/applications`);
+  const dockerLogURL = await page.locator(
+    '[data-running-applications-list] [data-kind="docker"] .application-log-link',
+  ).first().getAttribute("href");
+  assert.ok(dockerLogURL, "Docker rows do not expose a log entry");
+  await page.goto(`${baseURL}${dockerLogURL}`);
+  await page.waitForFunction(() => document.querySelectorAll(".live-log-entry").length >= 4);
+  assert.equal(await page.locator('.live-log-entry[data-severity="error"]').count(), 1);
+  assert.ok(await page.locator('.live-log-entry[data-severity="warning"]').count() >= 2);
+  await assertNoHorizontalOverflow(page, "Docker live logs desktop");
+  await saveSnapshot(page, "live-logs-docker");
 }
 
 async function assertWebsiteMonitoring(page, baseURL) {
@@ -655,6 +716,7 @@ async function assertStatusDisplaySettings(page, baseURL) {
       locale: "en-US",
       colorScheme: "light",
       reducedMotion: "reduce",
+      permissions: ["clipboard-read", "clipboard-write"],
     });
     await context.addInitScript(() => {
       const originalSetInterval = window.setInterval.bind(window);
@@ -691,6 +753,7 @@ async function assertStatusDisplaySettings(page, baseURL) {
     }
 
     await assertApplicationMonitoring(page, fixture.baseURL);
+    await assertLiveLogViewer(page, fixture.baseURL);
     await assertWebsiteMonitoring(page, fixture.baseURL);
     await assertStatusDisplaySettings(page, fixture.baseURL);
 

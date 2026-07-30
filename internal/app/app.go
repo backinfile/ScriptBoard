@@ -272,6 +272,8 @@ type App struct {
 	gitProtection      *gitprotect.Manager
 	hostStatus         *hoststatus.Monitor
 	applicationStatus  *appstatus.Monitor
+	logStreamSlots     chan struct{}
+	logHistorySlots    chan struct{}
 	shellStatusCache   *shellStatusCache
 	websiteMonitor     *websitemonitor.Manager
 	instanceLock       *instancelock.Lock
@@ -319,7 +321,12 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	application := &App{db: db, stateRoot: stateRoot, managedRoot: managedRoot, managed: managedfiles.Open(managedRoot), instanceLock: instanceLock, loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies}
+	application := &App{
+		db: db, stateRoot: stateRoot, managedRoot: managedRoot,
+		managed: managedfiles.Open(managedRoot), instanceLock: instanceLock,
+		loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies,
+		logStreamSlots: make(chan struct{}, 8), logHistorySlots: make(chan struct{}, 4),
+	}
 	if !validating {
 		if err := application.initializeAdmin(stateRoot); err != nil {
 			_ = db.Close()
@@ -1329,6 +1336,9 @@ func (a *App) routes(_ string) http.Handler {
 	mux.Handle("GET /monitor/status", a.requireSession(http.HandlerFunc(a.shellStatus)))
 	mux.Handle("GET /monitor/applications", a.requireSession(http.HandlerFunc(a.applicationsPage)))
 	mux.Handle("GET /monitor/applications/data", a.requireSession(http.HandlerFunc(a.applicationsData)))
+	mux.Handle("GET /monitor/applications/{id}/logs", a.requireSession(http.HandlerFunc(a.applicationLogPage)))
+	mux.Handle("GET /monitor/applications/{id}/logs/history", a.requireSession(http.HandlerFunc(a.applicationLogHistory)))
+	mux.Handle("GET /monitor/applications/{id}/logs/events", a.requireSession(http.HandlerFunc(a.applicationLogEvents)))
 	mux.Handle("GET /monitor/applications/{id}/details", a.requireSession(http.HandlerFunc(a.applicationDetails)))
 	mux.Handle("POST /monitor/applications/{id}/pin", a.requireSession(http.HandlerFunc(a.pinApplication)))
 	mux.Handle("POST /monitor/applications/{id}/unpin", a.requireSession(http.HandlerFunc(a.unpinApplication)))
@@ -1378,6 +1388,9 @@ func (a *App) routes(_ string) http.Handler {
 	mux.Handle("POST /settings/updates/apply", a.requireSession(http.HandlerFunc(a.applyUpdate)))
 	mux.Handle("GET /resources/files/new-directory", a.requireSession(http.HandlerFunc(a.newDirectoryTask)))
 	mux.Handle("GET /resources/files/upload", a.requireSession(http.HandlerFunc(a.uploadTask)))
+	mux.Handle("GET /resources/files/log", a.requireSession(http.HandlerFunc(a.fileLogPage)))
+	mux.Handle("GET /resources/files/log/history", a.requireSession(http.HandlerFunc(a.fileLogHistory)))
+	mux.Handle("GET /resources/files/log/events", a.requireSession(http.HandlerFunc(a.fileLogEvents)))
 	mux.Handle("GET /resources/files/run/{path...}", a.requireSession(http.HandlerFunc(a.runFileTask)))
 	mux.Handle("GET /resources/files/quick-run/{path...}", a.requireSession(http.HandlerFunc(a.quickRunFromFileTask)))
 	mux.Handle("GET /resources/files/{path...}", a.requireSession(http.HandlerFunc(a.filesPage)))
@@ -3171,13 +3184,15 @@ func (a *App) previewTextPage(response http.ResponseWriter, request *http.Reques
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = textPreviewTemplate.Execute(response, struct {
 		Path, Content, BackURL, EditURL, DownloadURL string
+		LogURL                                       string
 		Title, MarkdownBaseURL, HighlightLanguage    string
 		Markdown                                     bool
 		Locale                                       webLocale
 	}{
 		Path: relative, Content: document.Content, BackURL: filesURL(parent),
 		EditURL: routeFileURL("/resources/files/edit/", relative), DownloadURL: routeFileURL("/resources/files/download/", relative),
-		Title: title, Markdown: markdown, MarkdownBaseURL: markdownBaseURL, HighlightLanguage: highlightLanguage, Locale: resolveWebLocale(request),
+		LogURL: "/resources/files/log?" + url.Values{"path": {relative}}.Encode(),
+		Title:  title, Markdown: markdown, MarkdownBaseURL: markdownBaseURL, HighlightLanguage: highlightLanguage, Locale: resolveWebLocale(request),
 	})
 }
 
@@ -3669,6 +3684,7 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 	type fileView struct {
 		managedfiles.Entry
 		Path, BrowseURL, DownloadURL, EditURL, PreviewURL, ViewURL, QuickRunURL string
+		LogURL                                                                  string
 		Protection, IconClass                                                   string
 		Runnable                                                                bool
 		RecentArguments                                                         []string
@@ -3697,6 +3713,7 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 			case fileCategoryText, fileCategoryScript:
 				view.ViewURL = routeFileURL("/resources/files/view/", path)
 				view.EditURL = routeFileURL("/resources/files/edit/", path)
+				view.LogURL = "/resources/files/log?" + url.Values{"path": {path}}.Encode()
 				if listed.Category == fileCategoryScript {
 					view.Runnable = true
 					view.QuickRunURL = routeFileURL("/resources/files/quick-run/", path) + "?return_to=" + url.QueryEscape(request.URL.RequestURI())

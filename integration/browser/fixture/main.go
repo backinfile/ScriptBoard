@@ -8,11 +8,13 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"scriptboard/internal/app"
 	"scriptboard/internal/appstatus"
+	"scriptboard/internal/logstream"
 )
 
 const (
@@ -58,17 +60,77 @@ func (p *applicationProbe) Snapshot(context.Context) appstatus.RawSnapshot {
 		},
 		Containers: []appstatus.RawContainer{
 			{
-				Name: "api-prod", Image: "ghcr.io/example/api:2026.07", CPUPercent: 32.5,
+				ID: "fixture-api-prod", Name: "api-prod", Image: "ghcr.io/example/api:2026.07", CPUPercent: 32.5,
 				MemoryBytes: 720 << 20, MemoryLimitBytes: 2 << 30,
 				ReadBytesPerSecond: 4 << 20, WriteBytesPerSecond: 2 << 20, ProcessCount: 18,
 			},
 			{
-				Name: "cache-local", Image: "redis:7.4-alpine", CPUPercent: 8.25,
+				ID: "fixture-cache-local", Name: "cache-local", Image: "redis:7.4-alpine", CPUPercent: 8.25,
 				MemoryBytes: 192 << 20, MemoryLimitBytes: 1 << 30,
 				ReadBytesPerSecond: 512 << 10, WriteBytesPerSecond: 256 << 10, ProcessCount: 6,
 			},
 		},
 	}
+}
+
+func (p *applicationProbe) LogSource(_ context.Context, request appstatus.LogRequest) (logstream.Source, error) {
+	sourceVersion := request.Application.ID
+	if request.Container != nil && request.Container.ID != "" {
+		sourceVersion = request.Container.ID
+	}
+	return &fixtureLogSource{metadata: logstream.Metadata{
+		Kind: "docker", Name: request.Application.Name, Technical: request.Application.Technical,
+		SourceVersion: sourceVersion, Running: request.Application.Running,
+	}}, nil
+}
+
+type fixtureLogSource struct {
+	metadata logstream.Metadata
+}
+
+func (source *fixtureLogSource) Metadata() logstream.Metadata {
+	return source.metadata
+}
+
+func (source *fixtureLogSource) History(_ context.Context, _ string) (logstream.Page, error) {
+	lines := []struct {
+		at     time.Time
+		source logstream.EntrySource
+		text   string
+	}{
+		{time.Date(2026, 7, 29, 8, 30, 1, 0, time.UTC), logstream.SourceStdout, "API server ready"},
+		{time.Date(2026, 7, 29, 8, 30, 2, 0, time.UTC), logstream.SourceStderr, "cache WARNING threshold reached"},
+		{time.Date(2026, 7, 29, 8, 30, 3, 0, time.UTC), logstream.SourceStdout, "request ERROR fixture boundary"},
+	}
+	entries := make([]logstream.Entry, 0, len(lines))
+	for index, line := range lines {
+		entry := logstream.NewEntry(line.source, []byte(line.text), false)
+		entry.Time = &line.at
+		entry.Cursor = fmt.Sprintf("fixture-history-%d", index+1)
+		entries = append(entries, entry)
+	}
+	return logstream.Page{Entries: entries, SourceVersion: source.metadata.SourceVersion}, nil
+}
+
+func (source *fixtureLogSource) Follow(
+	ctx context.Context,
+	after string,
+	emit func(logstream.Event) error,
+) error {
+	if err := emit(logstream.Event{Kind: logstream.EventState, State: "live"}); err != nil {
+		return err
+	}
+	if after != "fixture-live-1" {
+		at := time.Date(2026, 7, 29, 8, 30, 4, 0, time.UTC)
+		entry := logstream.NewEntry(logstream.SourceStdout, []byte("live worker WARN retry"), false)
+		entry.Time = &at
+		entry.Cursor = "fixture-live-1"
+		if err := emit(logstream.Event{Kind: logstream.EventEntry, Entry: &entry}); err != nil {
+			return err
+		}
+	}
+	<-ctx.Done()
+	return ctx.Err()
 }
 
 func main() {
@@ -166,6 +228,18 @@ if ($Target) { Write-Output "ready" }
 <script>alert("fixture")</script>
 `,
 	}
+	var serviceLog strings.Builder
+	for line := 1; line <= 650; line++ {
+		switch line {
+		case 100:
+			_, _ = fmt.Fprintf(&serviceLog, "line %03d cache WARNING threshold\n", line)
+		case 650:
+			_, _ = fmt.Fprintf(&serviceLog, "line %03d request ERROR fixture boundary\n", line)
+		default:
+			_, _ = fmt.Fprintf(&serviceLog, "line %03d ready\n", line)
+		}
+	}
+	files["data/exports/service.log"] = serviceLog.String()
 	for path, content := range files {
 		target := filepath.Join(root, filepath.FromSlash(path))
 		if err := os.WriteFile(target, []byte(content), 0o644); err != nil {

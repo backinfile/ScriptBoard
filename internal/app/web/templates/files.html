@@ -139,6 +139,7 @@
               <div>
                 {{if .Runnable}}<a href="{{.QuickRunURL}}" data-task-link><span data-lucide="bookmark-plus" aria-hidden="true"></span>{{t $.Locale "files.add_to_quick_runs"}}</a>{{end}}
                 {{if .ViewURL}}<a href="{{.ViewURL}}"><span data-lucide="eye" aria-hidden="true"></span>{{t $.Locale "common.preview"}}</a>{{end}}
+                {{if .LogURL}}<a href="{{.LogURL}}"><span data-lucide="scroll-text" aria-hidden="true"></span>{{t $.Locale "logs.follow"}}</a>{{end}}
                 {{if .EditURL}}<a href="{{.EditURL}}"><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a>{{end}}
                 {{if .DownloadURL}}<a href="{{.DownloadURL}}" data-native><span data-lucide="download" aria-hidden="true"></span>{{t $.Locale "common.download"}}</a>{{end}}
                 {{if and $.CanToggleExecutable (eq .Kind "regular")}}<form method="post" action="/resources/files/toggle-executable" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" name="path" value="{{.Path}}"><span data-lucide="file-cog" aria-hidden="true"></span>{{t $.Locale "files.executable"}}</button></form>{{end}}
