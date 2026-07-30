@@ -14,6 +14,9 @@ colors:
   accent-soft: "#EDF1FF"
   success: "#18794E"
   success-soft: "#EAF6F0"
+  website-success: "#007F5F"
+  website-success-signal: "#00B884"
+  website-success-soft: "#E2F8F0"
   website-fault-red: "#C42B21"
   website-fault-magenta: "#A32167"
   warning: "#8A5A00"
@@ -150,7 +153,8 @@ The interface is visually light while remaining information-dense. Hierarchy com
 - Primary text `#171A1F`; secondary text `#5F6875`.
 - Rules `#D9DEE7`, strengthened to `#BBC3CF` where separation must be explicit.
 - Calibration blue `#3659C9`, with `#EDF1FF` for selected rows and quiet focus context.
-- Success, warning, and danger colors always pair with text or an icon; color never carries state alone.
+- Website-monitoring success text uses accessible emerald `#007F5F`; compact success signals use brighter teal-green `#00B884` so healthy and fault states retain a strong luminance and hue difference under reduced red-green perception.
+- Success, warning, and danger colors always pair with text, shape, or an icon; color never carries state alone.
 - The log terminal is the only persistent dark surface because it is a distinct reading mode.
 
 All body copy and controls target WCAG 2.2 AA contrast. Muted copy remains at least 4.5:1 against its resting surface.
@@ -240,7 +244,7 @@ During service handoff, an `aria-live` status notice explains the temporary disc
 
 ### Files
 
-Breadcrumbs and a directory list define place. The canonical absolute managed-root location sits directly beneath the relative breadcrumb as selectable technical context. Search and the one primary creation action sit in the page header. A compact drop target above the directory list accepts files for immediate upload into the current path; replacement remains an explicit option in the full upload task. Destructive actions are secondary and explicit.
+Breadcrumbs and a directory list define place. The canonical absolute managed-root location sits directly beneath the relative breadcrumb as selectable technical context. Search and the one primary creation action sit in the page header. A compact drop target above the directory list accepts files for immediate upload into the current path. Upload, move, rename, and Trash restore never overwrite a same-name item by default; a focused conflict dialog offers skip, recoverable overwrite, or rename. Destructive actions are secondary and explicit.
 
 ### Run detail
 

@@ -52,6 +52,51 @@ func (p applicationFixtureProbe) RuntimeDetail(_ context.Context, request appsta
 	}
 }
 
+func TestDockerSourceFailureStaysOnApplicationsPageAndOutOfShellAttention(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{
+		ManagedRoot: filepath.Join(root, "managed"),
+		StateRoot:   filepath.Join(root, "state"),
+		ApplicationProbe: applicationFixtureProbe{snapshot: appstatus.RawSnapshot{
+			CollectedAt:     time.Now().UTC(),
+			DockerAvailable: false,
+			Errors:          map[string]string{"docker": "Docker is not available"},
+		}},
+	})
+
+	response, err := client.Get(serverURL + "/monitor/applications")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK ||
+		!bytes.Contains(page, []byte("Source unavailable")) ||
+		!bytes.Contains(page, []byte(`data-shell-attention-item="applications" hidden`)) {
+		t.Fatalf("docker source failure leaked into shell attention: status=%d body=%s", response.StatusCode, page)
+	}
+
+	response, err = client.Get(serverURL + "/monitor/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status struct {
+		ApplicationIssueCount int `json:"applicationIssueCount"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if status.ApplicationIssueCount != 0 {
+		t.Fatalf("application issue count=%d, want 0 for docker-only failure", status.ApplicationIssueCount)
+	}
+}
+
 func TestApplicationsPageListsDeterministicProbeDataAndPersistsPin(t *testing.T) {
 	t.Parallel()
 

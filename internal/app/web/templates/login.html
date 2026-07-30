@@ -5,7 +5,7 @@
 <main class="login-layout">
   <section class="login-intro"><a class="brand-wordmark" href="/login">ScriptBoard</a><p>{{t .Locale "login.description"}}</p><div class="login-calibration" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div></section>
   <section class="login-sheet">
-    <header><p class="page-eyebrow">ADMIN / LOCAL</p><h1>{{t .Locale "login.title"}}</h1></header>
+    <header><p class="page-eyebrow">{{t .Locale "login.eyebrow"}}</p><h1>{{t .Locale "login.title"}}</h1></header>
     <div class="login-error" role="alert" aria-live="polite" data-login-error {{if not .Error}}hidden{{end}}><strong>{{t .Locale "login.failure"}}</strong><span data-login-error-message>{{.Error}}</span></div>
     <form method="post" action="/login" data-login-form data-network-error="{{t .Locale "login.network_error"}}">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">

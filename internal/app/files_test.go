@@ -71,9 +71,11 @@ func TestFilesPageOffersDropUploadForCurrentDirectory(t *testing.T) {
 	page := string(body)
 	for _, expected := range []string{
 		`data-file-drop-form`,
+		`data-file-upload-form`,
 		`action="/resources/files/upload"`,
 		`enctype="multipart/form-data"`,
 		`name="path" value="nested"`,
+		`name="conflict_action" value=""`,
 		`name="files" type="file" multiple required`,
 		`data-file-drop-zone`,
 		`Drop files here to upload`,
@@ -83,6 +85,9 @@ func TestFilesPageOffersDropUploadForCurrentDirectory(t *testing.T) {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("files page does not contain %q: %s", expected, page)
 		}
+	}
+	if strings.Contains(page, `name="replace"`) {
+		t.Fatalf("files page still exposes a replace-by-default control: %s", page)
 	}
 }
 
@@ -420,6 +425,242 @@ func TestAdminCanMoveAndRenameManagedEntry(t *testing.T) {
 	}
 }
 
+func TestMoveNameConflictRequiresAChoiceAndKeepsOverwriteRecoverable(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	for _, directory := range []string{"source", "target"} {
+		if err := os.MkdirAll(filepath.Join(managedRoot, directory), 0o755); err != nil {
+			t.Fatalf("create %s: %v", directory, err)
+		}
+	}
+	for relative, content := range map[string]string{
+		"source/item.txt":      "incoming",
+		"target/item.txt":      "current",
+		"source/overwrite.txt": "incoming overwrite",
+		"target/overwrite.txt": "current overwrite",
+	} {
+		if err := os.WriteFile(filepath.Join(managedRoot, filepath.FromSlash(relative)), []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", relative, err)
+		}
+	}
+	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	response, err := client.Get(serverURL + "/resources/files/source/")
+	if err != nil {
+		t.Fatalf("get source directory: %v", err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read source directory: %v", err)
+	}
+
+	response, err = client.PostForm(serverURL+"/resources/files/move", url.Values{
+		"source":      {"source/item.txt"},
+		"destination": {"target/item.txt"},
+		"csrf_token":  {formToken(t, page)},
+	})
+	if err != nil {
+		t.Fatalf("request move conflict: %v", err)
+	}
+	conflictPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read move conflict: %v", err)
+	}
+	if response.StatusCode != http.StatusConflict ||
+		!bytes.Contains(conflictPage, []byte(`data-file-conflict`)) ||
+		!bytes.Contains(conflictPage, []byte(`value="item (2).txt"`)) {
+		t.Fatalf("move conflict response: status=%d body=%s", response.StatusCode, conflictPage)
+	}
+	if current, err := os.ReadFile(filepath.Join(managedRoot, "target", "item.txt")); err != nil || string(current) != "current" {
+		t.Fatalf("move conflict changed current target: content=%q err=%v", current, err)
+	}
+
+	response, err = client.PostForm(serverURL+"/resources/files/move", url.Values{
+		"source":          {"source/item.txt"},
+		"destination":     {"target/item.txt"},
+		"csrf_token":      {formToken(t, conflictPage)},
+		"conflict_action": {"rename"},
+		"new_name":        {"../escaped.txt"},
+	})
+	if err != nil {
+		t.Fatalf("reject path-like rename: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("path-like rename status=%d, want %d", response.StatusCode, http.StatusBadRequest)
+	}
+	if _, err := os.Stat(filepath.Join(managedRoot, "source", "item.txt")); err != nil {
+		t.Fatalf("path-like rename changed source: %v", err)
+	}
+
+	response, err = client.PostForm(serverURL+"/resources/files/move", url.Values{
+		"source":          {"source/item.txt"},
+		"destination":     {"target/item.txt"},
+		"csrf_token":      {formToken(t, conflictPage)},
+		"conflict_action": {"rename"},
+		"new_name":        {"item-copy.txt"},
+	})
+	if err != nil {
+		t.Fatalf("rename incoming move: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/resources/files/target/" {
+		t.Fatalf("rename move response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+	if renamed, err := os.ReadFile(filepath.Join(managedRoot, "target", "item-copy.txt")); err != nil || string(renamed) != "incoming" {
+		t.Fatalf("renamed move content=%q err=%v", renamed, err)
+	}
+
+	response, err = client.PostForm(serverURL+"/resources/files/move", url.Values{
+		"source":          {"source/overwrite.txt"},
+		"destination":     {"target/overwrite.txt"},
+		"csrf_token":      {formToken(t, page)},
+		"conflict_action": {"overwrite"},
+	})
+	if err != nil {
+		t.Fatalf("overwrite move target: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("overwrite move status=%d", response.StatusCode)
+	}
+	if overwritten, err := os.ReadFile(filepath.Join(managedRoot, "target", "overwrite.txt")); err != nil || string(overwritten) != "incoming overwrite" {
+		t.Fatalf("overwrite move content=%q err=%v", overwritten, err)
+	}
+	response, err = client.Get(serverURL + "/resources/trash")
+	if err != nil {
+		t.Fatalf("get trash after overwrite move: %v", err)
+	}
+	trashPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read trash after overwrite move: %v", err)
+	}
+	if !bytes.Contains(trashPage, []byte("target/overwrite.txt")) {
+		t.Fatalf("overwritten move target was not retained in trash: %s", trashPage)
+	}
+}
+
+func postManagedUpload(t *testing.T, client *http.Client, serverURL, csrfToken, relative, name, content, conflictAction string) (int, []byte) {
+	t.Helper()
+	var requestBody bytes.Buffer
+	writer := multipart.NewWriter(&requestBody)
+	for _, field := range []struct{ name, value string }{
+		{name: "csrf_token", value: csrfToken},
+		{name: "path", value: relative},
+		{name: "conflict_action", value: conflictAction},
+	} {
+		if err := writer.WriteField(field.name, field.value); err != nil {
+			t.Fatalf("write upload field %s: %v", field.name, err)
+		}
+	}
+	filePart, err := writer.CreateFormFile("files", name)
+	if err != nil {
+		t.Fatalf("create upload part: %v", err)
+	}
+	if _, err := filePart.Write([]byte(content)); err != nil {
+		t.Fatalf("write upload part: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close upload body: %v", err)
+	}
+	request, err := http.NewRequest(http.MethodPost, serverURL+"/resources/files/upload", &requestBody)
+	if err != nil {
+		t.Fatalf("create upload request: %v", err)
+	}
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatalf("upload file: %v", err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read upload response: %v", err)
+	}
+	return response.StatusCode, body
+}
+
+func TestUploadNameConflictDefaultsToSkipAndSupportsRename(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+		t.Fatalf("create managed root: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(managedRoot, "same.txt"), []byte("current"), 0o644); err != nil {
+		t.Fatalf("write current file: %v", err)
+	}
+	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	response, err := client.Get(serverURL + "/resources/files/")
+	if err != nil {
+		t.Fatalf("get files: %v", err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read files: %v", err)
+	}
+	csrfToken := formToken(t, page)
+
+	response, err = client.PostForm(serverURL+"/resources/files/conflicts", url.Values{
+		"csrf_token": {csrfToken},
+		"path":       {""},
+		"name":       {"same.txt", "new.txt"},
+	})
+	if err != nil {
+		t.Fatalf("preflight upload conflicts: %v", err)
+	}
+	preflight, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read upload conflicts: %v", err)
+	}
+	if response.StatusCode != http.StatusOK ||
+		!bytes.Contains(preflight, []byte(`"name":"same.txt"`)) ||
+		!bytes.Contains(preflight, []byte(`"suggested":"same (2).txt"`)) ||
+		bytes.Contains(preflight, []byte(`"name":"new.txt"`)) {
+		t.Fatalf("upload conflict preflight: status=%d body=%s", response.StatusCode, preflight)
+	}
+	response, err = client.PostForm(serverURL+"/resources/files/conflicts", url.Values{
+		"csrf_token": {csrfToken},
+		"path":       {""},
+		"name":       {"../outside.txt"},
+	})
+	if err != nil {
+		t.Fatalf("preflight invalid upload name: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid upload name status=%d, want %d", response.StatusCode, http.StatusBadRequest)
+	}
+
+	status, result := postManagedUpload(t, client, serverURL, csrfToken, "", "same.txt", "incoming", "")
+	if status != http.StatusMultiStatus || !bytes.Contains(result, []byte("Skipped")) {
+		t.Fatalf("default conflict result: status=%d body=%s", status, result)
+	}
+	if current, err := os.ReadFile(filepath.Join(managedRoot, "same.txt")); err != nil || string(current) != "current" {
+		t.Fatalf("default conflict changed current file: content=%q err=%v", current, err)
+	}
+
+	status, result = postManagedUpload(t, client, serverURL, csrfToken, "", "same.txt", "incoming", "rename")
+	if status != http.StatusOK || !bytes.Contains(result, []byte("same (2).txt")) {
+		t.Fatalf("rename conflict result: status=%d body=%s", status, result)
+	}
+	if renamed, err := os.ReadFile(filepath.Join(managedRoot, "same (2).txt")); err != nil || string(renamed) != "incoming" {
+		t.Fatalf("renamed upload content=%q err=%v", renamed, err)
+	}
+	if current, err := os.ReadFile(filepath.Join(managedRoot, "same.txt")); err != nil || string(current) != "current" {
+		t.Fatalf("renamed upload changed current file: content=%q err=%v", current, err)
+	}
+}
+
 func TestAdminCanStreamUploadAFile(t *testing.T) {
 	t.Parallel()
 
@@ -468,7 +709,7 @@ func TestAdminCanStreamUploadAFile(t *testing.T) {
 	}
 	resultPage, err := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusOK || !bytes.Contains(resultPage, []byte("hello.txt")) || !bytes.Contains(resultPage, []byte("成功")) {
+	if response.StatusCode != http.StatusOK || !bytes.Contains(resultPage, []byte("hello.txt")) || !bytes.Contains(resultPage, []byte("Succeeded")) {
 		t.Fatalf("upload response: status=%d body=%q", response.StatusCode, resultPage)
 	}
 	content, err := os.ReadFile(filepath.Join(managedRoot, "hello.txt"))
@@ -491,9 +732,9 @@ func TestAdminCanStreamUploadAFile(t *testing.T) {
 	requestBody.Reset()
 	writer = multipart.NewWriter(&requestBody)
 	for name, value := range map[string]string{
-		"csrf_token": formToken(t, page),
-		"path":       "",
-		"replace":    "yes",
+		"csrf_token":      formToken(t, page),
+		"path":            "",
+		"conflict_action": "overwrite",
 	} {
 		if err := writer.WriteField(name, value); err != nil {
 			t.Fatalf("write replacement field %s: %v", name, err)
@@ -523,7 +764,7 @@ func TestAdminCanStreamUploadAFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read replacement response: %v", err)
 	}
-	if response.StatusCode != http.StatusOK || !bytes.Contains(resultPage, []byte("成功")) {
+	if response.StatusCode != http.StatusOK || !bytes.Contains(resultPage, []byte("Succeeded")) {
 		t.Fatalf("replacement response: status=%d body=%q", response.StatusCode, resultPage)
 	}
 	content, err = os.ReadFile(filepath.Join(managedRoot, "hello.txt"))
@@ -688,6 +929,114 @@ func TestAdminCanMoveFileToTrashAndRestoreIt(t *testing.T) {
 	}
 	if string(content) != "recover me" {
 		t.Fatalf("restored content = %q", content)
+	}
+}
+
+func TestAdminCanRestoreTrashEntryWhenOriginalPathIsOccupied(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+		t.Fatalf("create managed root: %v", err)
+	}
+	originalPath := filepath.Join(managedRoot, "recover.txt")
+	if err := os.WriteFile(originalPath, []byte("recover me"), 0o644); err != nil {
+		t.Fatalf("write original file: %v", err)
+	}
+	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+
+	response, err := client.Get(serverURL + "/resources/files/")
+	if err != nil {
+		t.Fatalf("get files: %v", err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read files: %v", err)
+	}
+	response, err = client.PostForm(serverURL+"/resources/files/delete", url.Values{
+		"path":       {"recover.txt"},
+		"csrf_token": {formToken(t, page)},
+	})
+	if err != nil {
+		t.Fatalf("delete file: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("delete response status = %d", response.StatusCode)
+	}
+	if err := os.WriteFile(originalPath, []byte("new file"), 0o644); err != nil {
+		t.Fatalf("write replacement file: %v", err)
+	}
+
+	response, err = client.Get(serverURL + "/resources/trash")
+	if err != nil {
+		t.Fatalf("get trash: %v", err)
+	}
+	trashPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read trash: %v", err)
+	}
+	response, err = client.PostForm(serverURL+"/resources/trash/restore", url.Values{
+		"id":         {hiddenValue(t, trashPage, "id")},
+		"csrf_token": {formToken(t, trashPage)},
+	})
+	if err != nil {
+		t.Fatalf("request restore conflict: %v", err)
+	}
+	conflictPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read restore conflict: %v", err)
+	}
+	if response.StatusCode != http.StatusConflict ||
+		!bytes.Contains(conflictPage, []byte(`data-file-conflict`)) ||
+		!bytes.Contains(conflictPage, []byte(`value="overwrite"`)) ||
+		!bytes.Contains(conflictPage, []byte(`value="rename"`)) ||
+		!bytes.Contains(conflictPage, []byte(`value="recover (2).txt"`)) {
+		t.Fatalf("restore conflict response: status=%d body=%s", response.StatusCode, conflictPage)
+	}
+	current, err := os.ReadFile(originalPath)
+	if err != nil {
+		t.Fatalf("read current file: %v", err)
+	}
+	if string(current) != "new file" {
+		t.Fatalf("current content = %q", current)
+	}
+
+	response, err = client.PostForm(serverURL+"/resources/trash/restore", url.Values{
+		"id":              {hiddenValue(t, conflictPage, "id")},
+		"csrf_token":      {formToken(t, conflictPage)},
+		"conflict_action": {"overwrite"},
+	})
+	if err != nil {
+		t.Fatalf("overwrite occupied restore target: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/resources/files/" {
+		t.Fatalf("overwrite restore response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+	restored, err := os.ReadFile(originalPath)
+	if err != nil {
+		t.Fatalf("read restored file: %v", err)
+	}
+	if string(restored) != "recover me" {
+		t.Fatalf("restored content = %q", restored)
+	}
+	response, err = client.Get(serverURL + "/resources/trash")
+	if err != nil {
+		t.Fatalf("get trash after overwrite restore: %v", err)
+	}
+	updatedTrashPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read trash after overwrite restore: %v", err)
+	}
+	if !bytes.Contains(updatedTrashPage, []byte("recover.txt")) {
+		t.Fatalf("overwritten current file was not retained in trash: %s", updatedTrashPage)
 	}
 }
 

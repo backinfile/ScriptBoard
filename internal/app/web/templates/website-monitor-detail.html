@@ -129,12 +129,19 @@
 </section>
 
 <section class="website-detail-section" data-website-detail-section="settings">
-<header><div><h2>{{t .Locale "website.detail.settings"}}</h2><p>{{.Raw.Config.Source}}</p></div></header>
-<dl class="website-facts website-settings-facts">
+<header class="website-settings-heading">
+<div><h2>{{t .Locale "website.detail.settings"}}</h2></div>
+<span class="website-settings-source"><span data-lucide="{{if eq .Raw.Config.Source "nginx"}}file-input{{else}}square-pen{{end}}" aria-hidden="true"></span>{{if eq .Raw.Config.Source "nginx"}}{{t .Locale "website.detail.source_nginx"}}{{else}}{{t .Locale "website.detail.source_manual"}}{{end}}</span>
+</header>
+<dl class="website-settings-summary">
 <div><dt>{{t .Locale "website.form.check_type"}}</dt><dd>{{.Monitor.KindLabel}}</dd></div>
 <div><dt>{{t .Locale "website.detail.request_condition"}}</dt><dd>{{.Monitor.MethodLabel}}</dd></div>
 <div><dt>{{t .Locale "website.detail.frequency"}}</dt><dd>{{.Monitor.FrequencyLabel}}</dd></div>
 <div><dt>{{t .Locale "website.detail.max_wait"}}</dt><dd>{{.Monitor.TimeoutLabel}}</dd></div>
+</dl>
+<div class="website-settings-rules">
+<h3>{{t .Locale "website.detail.connection_rules"}}</h3>
+<dl class="website-settings-list">
 <div><dt>{{t .Locale "website.filter.scope"}}</dt><dd>{{.Monitor.ScopeLabel}}</dd></div>
 <div><dt>{{t .Locale "website.form.dial_host"}}</dt><dd>{{if .Raw.Config.DialHost}}{{.Raw.Config.DialHost}}{{else}}—{{end}}</dd></div>
 {{if eq .Raw.Config.Kind "http"}}
@@ -152,6 +159,7 @@
 <div><dt>{{t .Locale "website.form.verify_wss"}}</dt><dd>{{if .Raw.Config.SkipTLSVerification}}{{t .Locale "common.no"}}{{else}}{{t .Locale "common.yes"}}{{end}}</dd></div>
 {{end}}
 </dl>
+</div>
 </section>
 
 <section class="website-detail-section" data-website-detail-section="technical">

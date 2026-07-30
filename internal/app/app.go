@@ -168,6 +168,21 @@ func webTemplateFunctions() template.FuncMap {
 			}
 			return status
 		},
+		"runSourceText": func(locale webLocale, source string) string {
+			key := map[string]string{
+				"manual":             "run.source.manual",
+				"admin/manual":       "run.source.manual",
+				"quick_run":          "run.source.quick_run",
+				"admin/quick-run":    "run.source.quick_run",
+				"schedule":           "run.source.scheduled",
+				"scheduler":          "run.source.scheduled",
+				"admin/schedule-now": "run.source.schedule_now",
+			}[source]
+			if key == "" {
+				return source
+			}
+			return webText(locale, key)
+		},
 		"resultText": func(locale webLocale, result string) string {
 			if label := webText(locale, "result."+result); label != "result."+result {
 				return label
@@ -1367,6 +1382,7 @@ func (a *App) routes(_ string) http.Handler {
 	mux.Handle("GET /resources/files/quick-run/{path...}", a.requireSession(http.HandlerFunc(a.quickRunFromFileTask)))
 	mux.Handle("GET /resources/files/{path...}", a.requireSession(http.HandlerFunc(a.filesPage)))
 	mux.Handle("POST /resources/files/mkdir", a.requireSession(http.HandlerFunc(a.createDirectory)))
+	mux.Handle("POST /resources/files/conflicts", a.requireSession(http.HandlerFunc(a.uploadConflicts)))
 	mux.Handle("POST /resources/files/upload", a.requireSession(http.HandlerFunc(a.uploadFiles)))
 	mux.Handle("GET /resources/files/download/{path...}", a.requireSession(http.HandlerFunc(a.downloadFile)))
 	mux.Handle("GET /resources/files/preview/{path...}", a.requireSession(http.HandlerFunc(a.previewImage)))
@@ -2958,11 +2974,87 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 	}
 	source := request.FormValue("source")
 	destination := request.FormValue("destination")
+	sourceParent, _ := parentAndName(source)
+	action := request.FormValue("conflict_action")
+	if !validConflictAction(action) {
+		http.Error(response, "同名文件处理方式无效", http.StatusBadRequest)
+		return
+	}
+	if action == conflictActionSkip || pathpkg.Clean(source) == pathpkg.Clean(destination) {
+		http.Redirect(response, request, filesURL(sourceParent), http.StatusSeeOther)
+		return
+	}
 	if a.runs.ConflictsPath(source) {
 		http.Error(response, "活动运行持有该脚本或其后代的运行租约", http.StatusConflict)
 		return
 	}
+	destinationParent, destinationName := parentAndName(destination)
+	if action == conflictActionRename {
+		newName := strings.TrimSpace(request.FormValue("new_name"))
+		if newName == "" {
+			http.Error(response, "请输入新的文件名", http.StatusBadRequest)
+			return
+		}
+		if err := managedfiles.ValidateName(newName); err != nil {
+			http.Error(response, "新文件名无效："+err.Error(), http.StatusBadRequest)
+			return
+		}
+		destination = childPath(destinationParent, newName)
+		destinationName = newName
+	}
+	_, targetErr := a.managed.Info(destination)
+	targetExists := targetErr == nil
+	if targetErr != nil && !os.IsNotExist(targetErr) {
+		http.Error(response, "无法检查移动目标："+targetErr.Error(), http.StatusBadRequest)
+		return
+	}
+	if targetExists && action != conflictActionOverwrite {
+		suggested, err := a.managed.AvailableName(destinationParent, destinationName)
+		if err != nil {
+			http.Error(response, "无法生成可用名称："+err.Error(), http.StatusBadRequest)
+			return
+		}
+		relatedPath := strings.HasPrefix(source+"/", destination+"/") || strings.HasPrefix(destination+"/", source+"/")
+		a.renderFileConflict(response, request, fileConflictView{
+			Action: "/resources/files/move", BackURL: filesURL(sourceParent),
+			Source: source, Destination: destination, ItemPath: destination, SuggestedName: suggested,
+			CanOverwrite: !relatedPath && !a.runs.ConflictsPath(destination),
+		})
+		return
+	}
+	if targetExists && action == conflictActionOverwrite && a.runs.ConflictsPath(destination) {
+		http.Error(response, "活动运行正在使用同名目标，不能覆盖", http.StatusConflict)
+		return
+	}
+	var displacedID string
+	var displaced *managedfiles.Trashed
+	if targetExists && action == conflictActionOverwrite {
+		var err error
+		displacedID, err = randomToken(18)
+		if err != nil {
+			http.Error(response, "无法创建覆盖事务", http.StatusInternalServerError)
+			return
+		}
+		moved, err := a.managed.MoveToTrash(destination, displacedID)
+		if err != nil {
+			http.Error(response, "无法暂存同名目标："+err.Error(), http.StatusConflict)
+			return
+		}
+		displaced = &moved
+		if _, err := a.db.Exec(
+			"INSERT INTO trash_entries (id, original_path, stored_name, deleted_at, size, is_directory) VALUES (?, ?, ?, ?, ?, ?)",
+			displacedID, moved.OriginalPath, moved.StoredName, time.Now().UTC().Unix(), moved.Size, moved.Directory,
+		); err != nil {
+			_ = a.managed.RestoreFromTrash(moved.StoredName, moved.OriginalPath)
+			http.Error(response, "无法记录被覆盖的条目", http.StatusInternalServerError)
+			return
+		}
+	}
 	if err := a.managed.Move(source, destination); err != nil {
+		if displaced != nil {
+			_, _ = a.db.Exec("DELETE FROM trash_entries WHERE id = ?", displacedID)
+			_ = a.managed.RestoreFromTrash(displaced.StoredName, displaced.OriginalPath)
+		}
 		http.Error(response, "无法移动条目："+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -2985,6 +3077,10 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 			_ = transaction.Rollback()
 		}
 		_ = a.managed.Move(destination, source)
+		if displaced != nil {
+			_, _ = a.db.Exec("DELETE FROM trash_entries WHERE id = ?", displacedID)
+			_ = a.managed.RestoreFromTrash(displaced.StoredName, displaced.OriginalPath)
+		}
 		http.Error(response, "无法同步更新引用："+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -2993,11 +3089,7 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	a.recordAudit("move_entry", source+" -> "+destination, "succeeded", request.RemoteAddr)
-	parent := pathpkg.Dir(filepath.ToSlash(destination))
-	if parent == "." {
-		parent = ""
-	}
-	http.Redirect(response, request, filesURL(parent), http.StatusSeeOther)
+	http.Redirect(response, request, filesURL(destinationParent), http.StatusSeeOther)
 }
 
 func (a *App) toggleExecutable(response http.ResponseWriter, request *http.Request) {
@@ -3294,30 +3386,71 @@ func (a *App) restoreTrash(response http.ResponseWriter, request *http.Request) 
 		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
 		return
 	}
+	action := request.FormValue("conflict_action")
+	if !validConflictAction(action) {
+		http.Error(response, "同名文件处理方式无效", http.StatusBadRequest)
+		return
+	}
+	if action == conflictActionSkip {
+		http.Redirect(response, request, "/resources/trash", http.StatusSeeOther)
+		return
+	}
 	id := request.FormValue("id")
 	var original, stored string
 	if err := a.db.QueryRow("SELECT original_path, stored_name FROM trash_entries WHERE id = ?", id).Scan(&original, &stored); err != nil {
 		http.Error(response, "回收条目不存在", http.StatusNotFound)
 		return
 	}
-	if err := a.managed.RestoreFromTrash(stored, original); err != nil {
+	parent, originalName := parentAndName(original)
+	destination := original
+	if action == conflictActionRename {
+		newName := strings.TrimSpace(request.FormValue("new_name"))
+		if newName == "" {
+			http.Error(response, "请输入新的文件名", http.StatusBadRequest)
+			return
+		}
+		if err := managedfiles.ValidateName(newName); err != nil {
+			http.Error(response, "新文件名无效："+err.Error(), http.StatusBadRequest)
+			return
+		}
+		destination = childPath(parent, newName)
+	}
+	_, targetErr := a.managed.Info(destination)
+	targetExists := targetErr == nil
+	if targetErr != nil && !os.IsNotExist(targetErr) {
+		http.Error(response, "无法检查恢复目标："+targetErr.Error(), http.StatusConflict)
+		return
+	}
+	if targetExists && action != conflictActionOverwrite {
+		suggested, err := a.managed.AvailableName(parent, originalName)
+		if action == conflictActionRename {
+			_, requestedName := parentAndName(destination)
+			suggested, err = a.managed.AvailableName(parent, requestedName)
+		}
+		if err != nil {
+			http.Error(response, "无法生成可用名称："+err.Error(), http.StatusConflict)
+			return
+		}
+		a.renderFileConflict(response, request, fileConflictView{
+			Action: "/resources/trash/restore", BackURL: "/resources/trash", ID: id,
+			ItemPath: destination, SuggestedName: suggested,
+			CanOverwrite: !a.runs.ConflictsPath(destination),
+		})
+		return
+	}
+	if action == conflictActionOverwrite && targetExists && a.runs.ConflictsPath(destination) {
+		http.Error(response, "活动运行正在使用同名目标，不能覆盖", http.StatusConflict)
+		return
+	}
+	if err := a.commitTrashRestore(id, stored, destination, action == conflictActionOverwrite && targetExists); err != nil {
 		http.Error(response, "无法恢复条目："+err.Error(), http.StatusConflict)
 		return
 	}
-	if _, err := a.db.Exec("DELETE FROM trash_entries WHERE id = ?", id); err != nil {
-		_, _ = a.managed.MoveToTrash(original, stored)
-		http.Error(response, "无法更新回收站记录", http.StatusInternalServerError)
-		return
-	}
-	if err := a.checkpointWebMutation("restore-trash", original); err != nil {
+	if err := a.checkpointWebMutation("restore-trash", destination); err != nil {
 		http.Error(response, "条目已恢复，但版本保护检查点失败："+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	a.recordAudit("restore_trash", original, "succeeded", request.RemoteAddr)
-	parent := pathpkg.Dir(filepath.ToSlash(original))
-	if parent == "." {
-		parent = ""
-	}
+	a.recordAudit("restore_trash", destination, "succeeded", request.RemoteAddr)
 	http.Redirect(response, request, filesURL(parent), http.StatusSeeOther)
 }
 
@@ -3349,6 +3482,7 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, err.Error(), http.StatusInsufficientStorage)
 		return
 	}
+	locale := resolveWebLocale(request)
 	request.Body = http.MaxBytesReader(response, request.Body, 2<<30)
 	reader, err := request.MultipartReader()
 	if err != nil {
@@ -3356,7 +3490,7 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	var csrfToken, relative string
-	replace := false
+	conflictAction := ""
 	fileCount := 0
 	type uploadResult struct {
 		Name, Result, Detail string
@@ -3386,7 +3520,11 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 			case "path":
 				relative = string(value)
 			case "replace":
-				replace = string(value) == "yes"
+				if string(value) == "yes" {
+					conflictAction = conflictActionOverwrite
+				}
+			case "conflict_action":
+				conflictAction = string(value)
 			}
 			continue
 		}
@@ -3404,22 +3542,53 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 		}
 		filename := part.FileName()
 		targetPath := pathpkg.Join(filepath.ToSlash(relative), filename)
-		if a.runs.ConflictsPath(targetPath) {
+		if !validConflictAction(conflictAction) {
 			_ = part.Close()
-			results = append(results, uploadResult{Name: filename, Result: "失败", Detail: "活动 Run 持有该上传目标的 Run Lease"})
+			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: webText(locale, "upload_results.invalid_conflict_action")})
+			continue
+		}
+		targetInfo, targetErr := a.managed.Info(targetPath)
+		targetExists := targetErr == nil
+		if targetErr != nil && !os.IsNotExist(targetErr) {
+			_ = part.Close()
+			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: "无法检查同名文件：" + targetErr.Error()})
+			continue
+		}
+		uploadName := filename
+		replace := targetExists && conflictAction == conflictActionOverwrite
+		if targetExists {
+			switch conflictAction {
+			case "", conflictActionSkip:
+				_ = part.Close()
+				results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.skipped"), Detail: webText(locale, "upload_results.kept_current")})
+				a.recordAudit("upload_file", filename, "skipped", request.RemoteAddr)
+				continue
+			case conflictActionRename:
+				uploadName, err = a.managed.AvailableName(relative, filename)
+				if err != nil {
+					_ = part.Close()
+					results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: "无法生成可用名称：" + err.Error()})
+					continue
+				}
+				targetPath = pathpkg.Join(filepath.ToSlash(relative), uploadName)
+			}
+		}
+		if replace && (!targetInfo.Mode().IsRegular() || a.runs.ConflictsPath(targetPath)) {
+			_ = part.Close()
+			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: webText(locale, "upload_results.cannot_overwrite")})
 			a.recordAudit("upload_file", filename, "rejected", request.RemoteAddr)
 			continue
 		}
 		storedID, idErr := randomToken(18)
 		if idErr != nil {
 			_ = part.Close()
-			results = append(results, uploadResult{Name: filename, Result: "失败", Detail: "无法创建上传事务"})
+			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: "无法创建上传事务"})
 			continue
 		}
-		trashed, uploadErr := a.managed.Upload(relative, filename, part, 1<<30, replace, storedID)
+		trashed, uploadErr := a.managed.Upload(relative, uploadName, part, 1<<30, replace, storedID)
 		if uploadErr != nil {
 			_ = part.Close()
-			results = append(results, uploadResult{Name: filename, Result: "失败", Detail: uploadErr.Error()})
+			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: uploadErr.Error()})
 			a.recordAudit("upload_file", filename, "rejected", request.RemoteAddr)
 			continue
 		}
@@ -3428,13 +3597,17 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 			_, err = a.db.Exec("INSERT INTO trash_entries (id, original_path, stored_name, deleted_at, size, is_directory) VALUES (?, ?, ?, ?, ?, 0)", storedID, trashed.OriginalPath, trashed.StoredName, time.Now().UTC().Unix(), trashed.Size)
 			if err != nil {
 				_ = a.managed.RollbackTextSave(targetPath, storedID)
-				results = append(results, uploadResult{Name: filename, Result: "失败", Detail: "替换已回滚：无法记录旧文件"})
+				results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: "替换已回滚：无法记录旧文件"})
 				a.recordAudit("upload_file", filename, "failed", request.RemoteAddr)
 				continue
 			}
 		}
-		a.recordAudit("upload_file", filename, "succeeded", request.RemoteAddr)
-		results = append(results, uploadResult{Name: filename, Result: "成功", Detail: "文件已保存", Succeeded: true})
+		a.recordAudit("upload_file", uploadName, "succeeded", request.RemoteAddr)
+		detail := webText(locale, "upload_results.saved")
+		if uploadName != filename {
+			detail = fmt.Sprintf(webText(locale, "upload_results.renamed"), uploadName)
+		}
+		results = append(results, uploadResult{Name: uploadName, Result: webText(locale, "upload_results.succeeded"), Detail: detail, Succeeded: true})
 		succeeded++
 	}
 	if fileCount == 0 {
@@ -3443,7 +3616,7 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 	}
 	if succeeded > 0 {
 		if err := a.checkpointWebMutation("upload", relative); err != nil {
-			results = append(results, uploadResult{Name: "Version Protection", Result: "失败", Detail: "文件已上传，但 checkpoint 失败：" + err.Error()})
+			results = append(results, uploadResult{Name: "Version Protection", Result: webText(locale, "upload_results.failed"), Detail: "文件已上传，但 checkpoint 失败：" + err.Error()})
 		}
 	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -3454,7 +3627,7 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 		Link    string
 		Results []uploadResult
 		Locale  webLocale
-	}{Link: filesURL(relative), Results: results, Locale: resolveWebLocale(request)}); err != nil {
+	}{Link: filesURL(relative), Results: results, Locale: locale}); err != nil {
 		http.Error(response, "文件已上传，但版本保护检查点失败："+err.Error(), http.StatusInternalServerError)
 	}
 }

@@ -28,7 +28,7 @@
     <a class="button button--quiet" href="/resources/trash"><span data-lucide="trash-2" aria-hidden="true"></span>{{t .Locale "files.trash"}}</a>
   </nav>
 
-  <form class="file-drop-form" method="post" action="/resources/files/upload" enctype="multipart/form-data" data-file-drop-form
+  <form class="file-drop-form" method="post" action="/resources/files/upload" enctype="multipart/form-data" data-file-drop-form data-file-upload-form
     data-default-title="{{t .Locale "files.drop_title"}}"
     data-default-description="{{t .Locale "files.drop_description"}}"
     data-active-title="{{t .Locale "files.drop_active"}}"
@@ -40,6 +40,7 @@
     data-input-error="{{t .Locale "files.drop_input_error"}}">
     <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
     <input type="hidden" name="path" value="{{.CurrentPath}}">
+    <input type="hidden" name="conflict_action" value="">
     <label class="file-drop-zone" data-file-drop-zone>
       <input class="file-drop-input" name="files" type="file" multiple required aria-label="{{t .Locale "files.choose_files"}}" aria-describedby="file-drop-status">
       <span class="file-drop-icon" data-lucide="upload" aria-hidden="true"></span>

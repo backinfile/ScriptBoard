@@ -526,9 +526,14 @@ async function assertWebsiteMonitoring(page, baseURL) {
     return Number(snapshot.CheckedToken || snapshot.checkedToken || 0) > 0;
   }, detailURL);
 
+  await page.setViewportSize({ width: 1440, height: 600 });
   await page.goto(`${baseURL}/monitor/websites`);
   const row = page.locator("[data-monitor-id]").filter({ hasText: monitorName });
   await row.waitFor();
+  await page.evaluate(() => {
+    const maximum = document.documentElement.scrollHeight - innerHeight;
+    scrollTo(0, Math.min(320, maximum));
+  });
   const rowExternal = row.locator(".website-row-external");
   assert.equal(await rowExternal.getAttribute("target"), "_blank");
   assert.equal(await rowExternal.getAttribute("rel"), "noopener noreferrer");
@@ -574,15 +579,27 @@ async function assertWebsiteMonitoring(page, baseURL) {
   assert.equal(preserved.hostCount, 1);
   assert.ok(Math.abs(preserved.scrollTop - scrollBefore) <= 1, JSON.stringify({ scrollBefore, preserved }));
   assert.equal(preserved.focusKey, "check");
-  assert.match(preserved.refreshed, /Updated in the current drawer/);
+  assert.match(preserved.refreshed, /Latest result updated/);
   await assertNoHorizontalOverflow(page, "Website detail drawer desktop");
+  const listScrollBeforeClose = await page.evaluate(() => window.scrollY);
+  assert.ok(listScrollBeforeClose > 0, `Website monitor list did not scroll before drawer close: ${listScrollBeforeClose}`);
   await page.keyboard.press("Escape");
   await panel.waitFor({ state: "detached" });
+  const listScrollAfterClose = await page.evaluate(() => window.scrollY);
+  assert.ok(
+    Math.abs(listScrollAfterClose - listScrollBeforeClose) <= 1,
+    JSON.stringify({ listScrollBeforeClose, listScrollAfterClose }),
+  );
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.reload();
   const refreshedRow = page.locator("[data-monitor-id]").filter({ hasText: monitorName });
   await refreshedRow.locator(".website-row-action").click();
   await panel.locator("[data-website-detail]").waitFor();
   assert.equal(await panel.locator('[data-website-detail-section="incident"].website-detail-incident--down').count(), 1);
+  const checkSettings = panel.locator('[data-website-detail-section="settings"]');
+  assert.equal(await checkSettings.locator(".website-settings-summary > div").count(), 4);
+  assert.ok(await checkSettings.locator(".website-settings-list > div").count() >= 6);
+  assert.equal((await checkSettings.locator(".website-settings-source").textContent()).trim(), "Added manually");
   await saveSnapshot(page, "website-monitor-detail");
   await page.keyboard.press("Escape");
   await panel.waitFor({ state: "detached" });
@@ -1096,6 +1113,33 @@ async function assertStatusDisplaySettings(page, baseURL) {
       page.getByRole("link", { name: "Back to files" }).click(),
     ]);
     await page.getByRole("link", { name: "drag-upload.txt", exact: true }).waitFor();
+    const duplicateDropData = await page.evaluateHandle(() => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File(["renamed duplicate upload"], "drag-upload.txt", { type: "text/plain" }));
+      return transfer;
+    });
+    await fileDropZone.dispatchEvent("drop", { dataTransfer: duplicateDropData });
+    const conflictDialog = page.locator("dialog.file-conflict-dialog[open]");
+    await conflictDialog.waitFor();
+    assert.equal((await conflictDialog.getByRole("heading").textContent()).trim(), "A file with this name already exists");
+    assert.equal(await conflictDialog.getByRole("button", { name: "Skip", exact: true }).count(), 1);
+    assert.equal(await conflictDialog.getByRole("button", { name: "Overwrite", exact: true }).count(), 1);
+    assert.equal(await conflictDialog.getByRole("button", { name: "Rename", exact: true }).count(), 1);
+    assert.equal(
+      await conflictDialog.getByRole("button", { name: "Skip", exact: true }).evaluate(element => document.activeElement === element),
+      true,
+    );
+    await saveSnapshot(page, "file-conflict");
+    await Promise.all([
+      page.waitForURL("**/resources/files/upload"),
+      conflictDialog.getByRole("button", { name: "Rename", exact: true }).click(),
+    ]);
+    await page.getByText("drag-upload (2).txt", { exact: true }).waitFor();
+    await Promise.all([
+      page.waitForURL("**/resources/files/"),
+      page.getByRole("link", { name: "Back to files" }).click(),
+    ]);
+    await page.getByRole("link", { name: "drag-upload (2).txt", exact: true }).waitFor();
     await assertNoTableHorizontalScrollbar(page, "files desktop");
     await assertTableRowsAligned(page, ".file-table", "files desktop");
     const lastFileActionMenu = page.locator(".file-table tbody tr").last().locator(".action-menu");

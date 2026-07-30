@@ -13,10 +13,9 @@
       <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "common.create"}}</button></footer>
     </form>
     {{else if eq .Kind "upload"}}
-    <form method="post" action="{{.Action}}" enctype="multipart/form-data" data-native>
-      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value="{{.Path}}">
+    <form method="post" action="{{.Action}}" enctype="multipart/form-data" data-native data-file-upload-form>
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value="{{.Path}}"><input type="hidden" name="conflict_action" value="">
       <label class="file-picker">{{t .Locale "task.select_files"}} <input name="files" type="file" multiple required autofocus></label>
-      <label class="check-field"><input name="replace" type="checkbox" value="yes"> {{t .Locale "task.replace_existing"}}</label>
       <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "task.start_upload"}}</button></footer>
     </form>
     {{else if eq .Kind "run"}}

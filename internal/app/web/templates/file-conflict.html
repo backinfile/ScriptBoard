@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="{{.Locale}}">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "file_conflict.title"}} · ScriptBoard</title></head>
+<body>
+<main class="workspace file-conflict-page" data-file-conflict data-task-close-label="{{t .Locale "common.close"}}">
+  <section class="file-conflict-sheet" aria-labelledby="file-conflict-title">
+    <header>
+      <span class="file-conflict-icon" data-lucide="files" aria-hidden="true"></span>
+      <div><p class="page-eyebrow">{{t .Locale "file_conflict.eyebrow"}}</p><h1 id="file-conflict-title">{{t .Locale "file_conflict.title"}}</h1><p>{{t .Locale "file_conflict.description"}}</p></div>
+    </header>
+    <dl><div><dt>{{t .Locale "common.path"}}</dt><dd><code>{{.ItemPath}}</code></dd></div></dl>
+    <form method="post" action="{{.Action}}" data-async>
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      {{if .ID}}<input type="hidden" name="id" value="{{.ID}}">{{end}}
+      {{if .Source}}<input type="hidden" name="source" value="{{.Source}}">{{end}}
+      {{if .Destination}}<input type="hidden" name="destination" value="{{.Destination}}">{{end}}
+      <label>{{t .Locale "file_conflict.new_name"}} <input name="new_name" value="{{.SuggestedName}}" autocomplete="off" spellcheck="false" required></label>
+      <p class="file-conflict-note"><span data-lucide="archive-restore" aria-hidden="true"></span><span>{{t .Locale "file_conflict.overwrite_note"}}</span></p>
+      <footer>
+        <a class="button button--quiet" href="{{.BackURL}}" data-conflict-skip>{{t .Locale "file_conflict.skip"}}</a>
+        {{if .CanOverwrite}}<button class="button button--danger" type="submit" name="conflict_action" value="overwrite"><span data-lucide="archive-restore" aria-hidden="true"></span>{{t .Locale "file_conflict.overwrite"}}</button>{{end}}
+        <button class="button button--primary" type="submit" name="conflict_action" value="rename"><span data-lucide="file-pen-line" aria-hidden="true"></span>{{t .Locale "file_conflict.rename"}}</button>
+      </footer>
+    </form>
+  </section>
+</main>
+</body>
+</html>

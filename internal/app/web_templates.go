@@ -10,6 +10,7 @@ var (
 	auditTemplate                = mustWebTemplate("audit")
 	deleteImpactTemplate         = mustWebTemplate("delete-impact")
 	displaySettingsTemplate      = mustWebTemplate("display-settings")
+	fileConflictTemplate         = mustWebTemplate("file-conflict")
 	filesTemplate                = mustWebTemplate("files")
 	loginTemplate                = mustWebTemplate("login")
 	overlapTemplate              = mustWebTemplate("overlap")

@@ -67,7 +67,7 @@ func TestApplicationShellShowsOnlyCurrentAttentionItems(t *testing.T) {
 		`2 active Runs`,
 		`1 website down`,
 		`Stopped pinned applications 4`,
-		`Application collection issues 2`,
+		`Application data is temporarily unavailable 2`,
 	} {
 		if !bytes.Contains(rendered.Bytes(), []byte(expected)) {
 			t.Fatalf("attention summary is missing %q: %s", expected, page)

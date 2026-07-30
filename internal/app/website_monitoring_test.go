@@ -334,7 +334,7 @@ func TestNginxScanPreviewsBeforeASeparateImport(t *testing.T) {
 	}
 	preview, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, expected := range []string{"imported.local", "查找结果不会自动加入监控", "加入监控"} {
+	for _, expected := range []string{"imported.local", "勾选要监控的网站", "加入监控"} {
 		if !bytes.Contains(preview, []byte(expected)) {
 			t.Fatalf("scan preview does not contain %q: %s", expected, preview)
 		}
@@ -605,7 +605,8 @@ func TestWebsiteMonitoringLocalizesEnglishAndShowsCheckedZeroLatency(t *testing.
 	}
 	for _, expected := range []string{
 		"Back to Website Monitoring", "Check now", "Connection security", "0 ms",
-		"1 minute", "10 seconds",
+		"1 minute", "10 seconds", "Connection and success rules",
+		`class="website-settings-summary"`, `class="website-settings-list"`,
 	} {
 		if !bytes.Contains(detail, []byte(expected)) {
 			t.Fatalf("English detail page does not contain %q: %s", expected, detail)
@@ -623,7 +624,7 @@ func TestWebsiteMonitoringLocalizesEnglishAndShowsCheckedZeroLatency(t *testing.
 	}
 	for _, expected := range []string{
 		"Website Monitoring", "Scan Nginx", "Add Website",
-		`aria-label="Complete website status ledger"`, "1 website", "0 ms",
+		`aria-label="Website status list"`, "1 website", "0 ms",
 	} {
 		if !bytes.Contains(listPage, []byte(expected)) {
 			t.Fatalf("English list page does not contain %q: %s", expected, listPage)

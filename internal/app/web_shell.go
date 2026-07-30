@@ -107,7 +107,11 @@ func (a *App) loadShellStatus(ctx context.Context) (shellStatusResponse, error) 
 	if applicationErr != nil || applicationView.CollectedAt.IsZero() {
 		applicationIssueCount = 1
 	} else {
-		applicationIssueCount = len(applicationView.Errors)
+		for source := range applicationView.Errors {
+			if source != "docker" {
+				applicationIssueCount++
+			}
+		}
 		for _, application := range applicationView.Pinned {
 			if !application.Running {
 				stoppedPinnedApplications++

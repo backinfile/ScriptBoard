@@ -105,6 +105,8 @@
   let navigationRequest = null;
   let taskPanelState = null;
   let taskPanelRequest = null;
+  let taskPanelHistoryClosePending = false;
+  let activeFileConflictDialog = null;
 
   const locale = () => document.documentElement.lang === "zh-CN" ? "zh-CN" : "en-US";
   const copy = {
@@ -118,6 +120,12 @@
       websiteDownOne: "个网站故障", websiteDownMany: "个网站故障",
       websiteVerifyingOne: "个正在复核", websiteVerifyingMany: "个正在复核",
       websiteNoConfirmedFailure: "没有已确认的网站故障",
+      conflictTitle: "已有同名文件", conflictDescription: "选择如何处理同名文件。默认不会覆盖任何内容。",
+      conflictBatchDescription: "这个选择将应用到本次上传中的所有同名文件。",
+      conflictSkip: "跳过", conflictOverwrite: "覆盖", conflictRename: "重命名", conflictClose: "关闭",
+      conflictOverwriteNote: "覆盖前，当前文件会先移入回收站。",
+      conflictOverwriteUnavailable: "部分条目正在使用或不是普通文件，不能覆盖。",
+      conflictMore: "个其他同名文件",
       statuses: {
         starting: "正在启动", running: "运行中", stopping: "正在停止", timing_out: "正在超时终止",
         succeeded: "成功", failed: "失败", stopped: "已停止", timed_out: "已超时", rejected: "已拒绝"
@@ -133,6 +141,13 @@
       websiteDownOne: "website down", websiteDownMany: "websites down",
       websiteVerifyingOne: "website under verification", websiteVerifyingMany: "websites under verification",
       websiteNoConfirmedFailure: "No confirmed website failures",
+      conflictTitle: "A file with this name already exists",
+      conflictDescription: "Choose how to handle name conflicts. Nothing is overwritten by default.",
+      conflictBatchDescription: "Your choice applies to every name conflict in this upload.",
+      conflictSkip: "Skip", conflictOverwrite: "Overwrite", conflictRename: "Rename", conflictClose: "Close",
+      conflictOverwriteNote: "Before overwriting, the current file is moved to Trash.",
+      conflictOverwriteUnavailable: "Some items are in use or are not regular files and cannot be overwritten.",
+      conflictMore: "more name conflicts",
       statuses: {
         starting: "Starting", running: "Running", stopping: "Stopping", timing_out: "Timing out",
         succeeded: "Succeeded", failed: "Failed", stopped: "Stopped", timed_out: "Timed out", rejected: "Rejected"
@@ -548,6 +563,7 @@
   }
 
   async function navigate(url, push = true, options = {}) {
+    closeFileConflictDialog();
     cancelTaskPanelRequest();
     navigationRequest?.controller.abort();
     const request = {
@@ -809,7 +825,10 @@
     document.body.classList.remove("has-task-panel");
     window.setTimeout(() => host.remove(), 210);
     if (restoreFocus && returnFocus instanceof HTMLElement && returnFocus.isConnected) returnFocus.focus();
-    if (useHistory) history.back();
+    if (useHistory && history.state?.task) {
+      taskPanelHistoryClosePending = true;
+      history.back();
+    }
   }
 
   function resetSubmit(form) {
@@ -825,6 +844,175 @@
       delete button.dataset.submitOriginalWidth;
     });
     form.querySelectorAll("[data-submitter-mirror]").forEach(input => input.remove());
+  }
+
+  function closeFileConflictDialog() {
+    const dialog = activeFileConflictDialog;
+    if (!dialog) return;
+    activeFileConflictDialog = null;
+    if (dialog.open) dialog.close();
+    dialog.remove();
+  }
+
+  function openDocumentFileConflict(main) {
+    closeFileConflictDialog();
+    const sheet = main.querySelector(".file-conflict-sheet");
+    if (!sheet) return false;
+    const dialog = document.createElement("dialog");
+    dialog.className = "file-conflict-dialog";
+    dialog.append(document.importNode(sheet, true));
+    activeFileConflictDialog = dialog;
+    document.body.append(dialog);
+    const skip = dialog.querySelector("[data-conflict-skip]");
+    skip?.addEventListener("click", event => {
+      event.preventDefault();
+      closeFileConflictDialog();
+    });
+    dialog.addEventListener("close", () => {
+      if (activeFileConflictDialog === dialog) {
+        activeFileConflictDialog = null;
+        dialog.remove();
+      }
+    }, { once: true });
+    renderIcons(dialog);
+    dialog.showModal();
+    skip?.focus();
+    return true;
+  }
+
+  function chooseUploadConflict(conflicts) {
+    closeFileConflictDialog();
+    return new Promise(resolve => {
+      const dialog = document.createElement("dialog");
+      dialog.className = "file-conflict-dialog";
+      const sheet = document.createElement("section");
+      sheet.className = "file-conflict-sheet";
+      const header = document.createElement("header");
+      const icon = document.createElement("span");
+      icon.className = "file-conflict-icon";
+      icon.dataset.lucide = "files";
+      icon.setAttribute("aria-hidden", "true");
+      const copy = document.createElement("div");
+      const heading = document.createElement("h2");
+      heading.id = `file-conflict-title-${Date.now()}`;
+      heading.textContent = words().conflictTitle;
+      const description = document.createElement("p");
+      description.textContent = `${words().conflictDescription} ${words().conflictBatchDescription}`;
+      copy.append(heading, description);
+      const close = document.createElement("button");
+      close.className = "icon-button";
+      close.type = "button";
+      close.setAttribute("aria-label", words().conflictClose);
+      close.append(makeIcon("x"));
+      header.append(icon, copy, close);
+
+      const list = document.createElement("ul");
+      list.className = "file-conflict-list";
+      conflicts.slice(0, 6).forEach(conflict => {
+        const item = document.createElement("li");
+        const current = document.createElement("code");
+        current.textContent = conflict.name;
+        const arrow = makeIcon("arrow-right");
+        const suggested = document.createElement("code");
+        suggested.textContent = conflict.suggested;
+        item.append(current, arrow, suggested);
+        list.append(item);
+      });
+      if (conflicts.length > 6) {
+        const more = document.createElement("li");
+        more.className = "file-conflict-list__more";
+        more.textContent = `+${conflicts.length - 6} ${words().conflictMore}`;
+        list.append(more);
+      }
+
+      const note = document.createElement("p");
+      note.className = "file-conflict-note";
+      const noteCopy = document.createElement("span");
+      noteCopy.textContent = words().conflictOverwriteNote;
+      note.append(makeIcon("archive-restore"), noteCopy);
+      const canOverwrite = conflicts.every(conflict => conflict.canOverwrite);
+      if (!canOverwrite) {
+        const unavailable = document.createElement("span");
+        unavailable.className = "file-conflict-note__detail";
+        unavailable.textContent = words().conflictOverwriteUnavailable;
+        noteCopy.append(unavailable);
+      }
+
+      const footer = document.createElement("footer");
+      const skip = document.createElement("button");
+      skip.className = "button button--quiet";
+      skip.type = "button";
+      skip.textContent = words().conflictSkip;
+      const overwrite = document.createElement("button");
+      overwrite.className = "button button--danger";
+      overwrite.type = "button";
+      overwrite.disabled = !canOverwrite;
+      overwrite.append(makeIcon("archive-restore"), document.createTextNode(words().conflictOverwrite));
+      const rename = document.createElement("button");
+      rename.className = "button button--primary";
+      rename.type = "button";
+      rename.append(makeIcon("file-pen-line"), document.createTextNode(words().conflictRename));
+      footer.append(skip, overwrite, rename);
+      sheet.append(header, list, note, footer);
+      dialog.append(sheet);
+      dialog.setAttribute("aria-labelledby", heading.id);
+      document.body.append(dialog);
+      activeFileConflictDialog = dialog;
+
+      let settled = false;
+      const finish = value => {
+        if (settled) return;
+        settled = true;
+        activeFileConflictDialog = null;
+        if (dialog.open) dialog.close();
+        dialog.remove();
+        resolve(value);
+      };
+      close.addEventListener("click", () => finish(""));
+      skip.addEventListener("click", () => finish("skip"));
+      overwrite.addEventListener("click", () => finish("overwrite"));
+      rename.addEventListener("click", () => finish("rename"));
+      dialog.addEventListener("cancel", event => {
+        event.preventDefault();
+        finish("");
+      });
+      renderIcons(dialog);
+      dialog.showModal();
+      skip.focus();
+    });
+  }
+
+  async function submitFileUpload(form) {
+    const data = new FormData(form);
+    const files = data.getAll("files").filter(value => value instanceof File && value.name);
+    const preflight = new URLSearchParams();
+    preflight.set("csrf_token", String(data.get("csrf_token") || ""));
+    preflight.set("path", String(data.get("path") || ""));
+    files.forEach(file => preflight.append("name", file.name));
+    let action = "skip";
+    try {
+      const response = await fetch("/resources/files/conflicts", {
+        method: "POST",
+        body: preflight,
+        credentials: "same-origin",
+        headers: { "Accept": "application/json" },
+      });
+      if (response.ok) {
+        const payload = await response.json();
+        const conflicts = Array.isArray(payload.conflicts) ? payload.conflicts : [];
+        if (conflicts.length) {
+          action = await chooseUploadConflict(conflicts);
+          if (!action) {
+            resetSubmit(form);
+            form.dispatchEvent(new CustomEvent("file-upload-cancelled"));
+            return;
+          }
+        }
+      }
+    } catch { /* the upload remains safe because the server defaults to skip */ }
+    const actionInput = form.querySelector('input[name="conflict_action"]');
+    if (actionInput) actionInput.value = action;
+    HTMLFormElement.prototype.submit.call(form);
   }
 
   async function submitAsync(form, submitter) {
@@ -859,6 +1047,8 @@
       const result = await fetchDocument(action, { method: form.method, body: data });
       if (submittingTaskState && taskPanelState !== submittingTaskState) return;
       if (!submittingTaskState && !form.isConnected) return;
+      const fileConflict = result.document?.querySelector("main[data-file-conflict]");
+      if (fileConflict && openDocumentFileConflict(fileConflict)) return;
       if (result.response.redirected && result.response.ok) {
         const destination = result.response.url;
         if (submittingTaskState) {
@@ -2024,6 +2214,10 @@
         submitFiles(input.files);
       };
       const onChange = () => submitFiles(input.files);
+      const onCancelled = () => {
+        input.value = "";
+        resetState();
+      };
       const preventFileNavigation = event => {
         if (!isFileDrag(event.dataTransfer) || zone.contains(event.target)) return;
         event.preventDefault();
@@ -2034,6 +2228,7 @@
       zone.addEventListener("dragleave", onDragLeave);
       zone.addEventListener("drop", onDrop);
       input.addEventListener("change", onChange);
+      form.addEventListener("file-upload-cancelled", onCancelled);
       document.addEventListener("dragover", preventFileNavigation);
       document.addEventListener("drop", preventFileNavigation);
       cleanups.push(() => {
@@ -2042,6 +2237,7 @@
         zone.removeEventListener("dragleave", onDragLeave);
         zone.removeEventListener("drop", onDrop);
         input.removeEventListener("change", onChange);
+        form.removeEventListener("file-upload-cancelled", onCancelled);
         document.removeEventListener("dragover", preventFileNavigation);
         document.removeEventListener("drop", preventFileNavigation);
       });
@@ -3024,6 +3220,9 @@
     if (form.matches("[data-login-form]")) {
       event.preventDefault();
       submitLogin(form, submitter);
+    } else if (form.hasAttribute("data-file-upload-form")) {
+      event.preventDefault();
+      submitFileUpload(form);
     } else if (form.hasAttribute("data-update-apply")) {
       event.preventDefault();
       submitUpdateApply(form, submitter);
@@ -3035,6 +3234,7 @@
 
   document.addEventListener("keydown", event => {
     const editing = event.target.matches("input,textarea,select,[contenteditable='true']");
+    if (event.key === "Escape" && activeFileConflictDialog) return;
     if (taskPanelState && event.key === "Tab") {
       const panel = taskPanelState.host.querySelector("[data-task-panel]");
       const focusable = [...panel.querySelectorAll("a[href],button:not([disabled]),input:not([disabled]):not([type='hidden']),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex='-1'])")]
@@ -3093,6 +3293,10 @@
   });
 
   window.addEventListener("popstate", event => {
+    if (taskPanelHistoryClosePending) {
+      taskPanelHistoryClosePending = false;
+      return;
+    }
     if (taskPanelState) {
       closeTaskPanel(false);
       return;
