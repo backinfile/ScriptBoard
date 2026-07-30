@@ -10,18 +10,21 @@ import (
 	"sync"
 	"time"
 
+	"scriptboard/internal/appstatus"
 	"scriptboard/internal/hoststatus"
 	"scriptboard/internal/websitemonitor"
 )
 
 type shellStatusResponse struct {
-	State            string    `json:"state"`
-	CollectedAt      time.Time `json:"collectedAt"`
-	IssueCount       int       `json:"issueCount"`
-	ActiveRuns       int       `json:"activeRuns"`
-	WebsiteState     string    `json:"websiteState"`
-	WebsiteDown      int       `json:"websiteDown"`
-	WebsiteVerifying int       `json:"websiteVerifying"`
+	State                     string    `json:"state"`
+	CollectedAt               time.Time `json:"collectedAt"`
+	IssueCount                int       `json:"issueCount"`
+	ActiveRuns                int       `json:"activeRuns"`
+	WebsiteState              string    `json:"websiteState"`
+	WebsiteDown               int       `json:"websiteDown"`
+	WebsiteVerifying          int       `json:"websiteVerifying"`
+	StoppedPinnedApplications int       `json:"stoppedPinnedApplications"`
+	ApplicationIssueCount     int       `json:"applicationIssueCount"`
 }
 
 type shellStatusCache struct {
@@ -98,6 +101,19 @@ func (a *App) loadShellStatus(ctx context.Context) (shellStatusResponse, error) 
 		return shellStatusResponse{}, err
 	}
 	websiteState, websiteDown, websiteVerifying := summarizeWebsiteShellStatus(websiteMonitors)
+	stoppedPinnedApplications := 0
+	applicationIssueCount := 0
+	applicationView, applicationErr := a.applicationStatus.View(ctx, appstatus.Query{Limit: 1})
+	if applicationErr != nil || applicationView.CollectedAt.IsZero() {
+		applicationIssueCount = 1
+	} else {
+		applicationIssueCount = len(applicationView.Errors)
+		for _, application := range applicationView.Pinned {
+			if !application.Running {
+				stoppedPinnedApplications++
+			}
+		}
+	}
 	state := "current"
 	if overview.Stale {
 		state = "stale"
@@ -105,13 +121,15 @@ func (a *App) loadShellStatus(ctx context.Context) (shellStatusResponse, error) 
 		state = "attention"
 	}
 	return shellStatusResponse{
-		State:            state,
-		CollectedAt:      overview.CollectedAt,
-		IssueCount:       len(overview.Errors),
-		ActiveRuns:       activeRuns,
-		WebsiteState:     websiteState,
-		WebsiteDown:      websiteDown,
-		WebsiteVerifying: websiteVerifying,
+		State:                     state,
+		CollectedAt:               overview.CollectedAt,
+		IssueCount:                len(overview.Errors),
+		ActiveRuns:                activeRuns,
+		WebsiteState:              websiteState,
+		WebsiteDown:               websiteDown,
+		WebsiteVerifying:          websiteVerifying,
+		StoppedPinnedApplications: stoppedPinnedApplications,
+		ApplicationIssueCount:     applicationIssueCount,
 	}, nil
 }
 
@@ -161,6 +179,8 @@ type applicationShellData struct {
 	ActiveRuns                            int
 	WebsiteState                          string
 	WebsiteDown, WebsiteVerifying         int
+	StoppedPinnedApplications             int
+	ApplicationIssueCount                 int
 	Navigation                            []shellNavigationGroup
 	SettingsCurrent, ChineseLocaleCurrent bool
 }
@@ -191,6 +211,7 @@ func (a *App) addApplicationShell(request *http.Request, body []byte) []byte {
 		Locale: locale, Username: username, CSRFToken: current.csrfToken, ReturnTo: request.URL.RequestURI(),
 		Environment: environment, Status: status, StatusState: statusState, ActiveRuns: shellStatus.ActiveRuns,
 		WebsiteState: shellStatus.WebsiteState, WebsiteDown: shellStatus.WebsiteDown, WebsiteVerifying: shellStatus.WebsiteVerifying,
+		StoppedPinnedApplications: shellStatus.StoppedPinnedApplications, ApplicationIssueCount: shellStatus.ApplicationIssueCount,
 		Navigation: navigation, SettingsCurrent: strings.HasPrefix(request.URL.Path, "/settings/"),
 		ChineseLocaleCurrent: locale == localeSimplifiedChinese,
 	})

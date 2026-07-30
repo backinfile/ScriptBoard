@@ -8,6 +8,7 @@
     "arrow-left": '<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>',
     "arrow-right": '<path d="m12 5 7 7-7 7"/><path d="M5 12h14"/>',
     "arrow-up": '<path d="m18 15-6-6-6 6"/><path d="M12 21V9"/>',
+    "arrow-up-down": '<path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/>',
     "arrow-up-to-line": '<path d="M5 3h14"/><path d="m18 13-6-6-6 6"/><path d="M12 7v14"/>',
     "bookmark-plus": '<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h5"/><path d="M19 3v6"/><path d="M16 6h6"/>',
     "box": '<path d="m21 8-9-5-9 5 9 5 9-5Z"/><path d="m3 8 9 5 9-5"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/>',
@@ -15,6 +16,7 @@
     "calendar-clock": '<path d="M16 2v4"/><path d="M3 10h18"/><path d="M8 2v4"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M17 14v2l1 1"/>',
     "calendar-plus": '<path d="M16 2v4"/><path d="M3 10h18"/><path d="M8 2v4"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M12 14v4"/><path d="M10 16h4"/>',
     "check": '<path d="m20 6-11 11-5-5"/>',
+    "circle-check": '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
     "chevrons-up-down": '<path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/>',
     "chevron-right": '<path d="m9 18 6-6-6-6"/>',
     "circle-user-round": '<path d="M18 20a6 6 0 0 0-12 0"/><circle cx="12" cy="10" r="4"/><circle cx="12" cy="12" r="10"/>',
@@ -27,6 +29,7 @@
     "ellipsis": '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
     "eye": '<path d="M2.1 12a10.7 10.7 0 0 1 19.8 0 10.7 10.7 0 0 1-19.8 0"/><circle cx="12" cy="12" r="3"/>',
     "eye-off": '<path d="m2 2 20 20"/><path d="M6.7 6.7A11.7 11.7 0 0 0 2.1 12a10.7 10.7 0 0 0 14.1 5.2"/><path d="M10.7 10.7a3 3 0 0 0 4.2 4.2"/><path d="M14.3 5.2A10.7 10.7 0 0 1 21.9 12a11.8 11.8 0 0 1-2.2 3.2"/>',
+    "external-link": '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
     "file": '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>',
     "file-cog": '<path d="M14 2H6a2 2 0 0 0-2 2v8"/><path d="M14 2v6h6"/><circle cx="13" cy="18" r="3"/><path d="m15.6 16.5.9-.5M10.4 19.5l-.9.5M15.6 19.5l.9.5M10.4 16.5l-.9-.5"/>',
     "file-lock-2": '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h7"/><path d="M14 2v6h6"/><rect x="14" y="15" width="8" height="6" rx="1"/><path d="M16 15v-2a2 2 0 0 1 4 0v2"/>',
@@ -37,6 +40,7 @@
     "folder-plus": '<path d="M12 10v6M9 13h6"/><path d="M3 6h5l2 2h11v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
     "git-branch": '<line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
     "git-commit-horizontal": '<circle cx="12" cy="12" r="3"/><line x1="3" x2="9" y1="12" y2="12"/><line x1="15" x2="21" y1="12" y2="12"/>',
+    "globe-2": '<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 0 20"/><path d="M12 2a15.3 15.3 0 0 0 0 20"/>',
     "hard-drive": '<path d="M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.8 4H7.2a2 2 0 0 0-1.7 1.1z"/><path d="M2 12h20"/><path d="M6 16h.01M10 16h.01"/>',
     "image": '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3-3a2 2 0 0 0-3 0l-9 9"/>',
     "info": '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
@@ -655,6 +659,22 @@
     }
   }
 
+  function initTaskPanelMain(main, cleanups) {
+    renderIcons(main);
+    localizeTimes(main);
+    initScheduleCron(cleanups, main);
+    const websiteForm = main.querySelector("[data-website-monitor-form]");
+    if (websiteForm) cleanups.push(initWebsiteMonitorForm(websiteForm));
+    const websiteMonitoring = main.matches("[data-website-monitoring],[data-website-detail]")
+      ? main
+      : main.querySelector("[data-website-monitoring],[data-website-detail]");
+    if (websiteMonitoring) cleanups.push(initWebsiteMonitoring(websiteMonitoring));
+    const websiteNginx = main.matches("[data-website-nginx]")
+      ? main
+      : main.querySelector("[data-website-nginx]");
+    if (websiteNginx) cleanups.push(initWebsiteNginx(websiteNginx));
+  }
+
   function buildTaskPanel(main, url, push) {
     const returnFocus = taskPanelState?.returnFocus || document.activeElement;
     closeTaskPanel(false, false);
@@ -666,6 +686,7 @@
     host.querySelector(".task-panel-scrim").setAttribute("aria-label", closeLabel);
     host.querySelector(".task-panel-close").setAttribute("aria-label", closeLabel);
     const panel = host.querySelector(".task-panel");
+    if (main.dataset.taskKind) panel.classList.add(`task-panel--${main.dataset.taskKind}`);
     const panelMain = document.importNode(main, true);
     const heading = panelMain.querySelector("h1");
     if (heading) {
@@ -696,15 +717,44 @@
       child.inert = true;
       child.setAttribute("aria-hidden", "true");
     });
-    renderIcons(host);
-    localizeTimes(host);
-    initScheduleCron(cleanups, host);
-    const websiteForm = host.querySelector("[data-website-monitor-form]");
-    if (websiteForm) cleanups.push(initWebsiteMonitorForm(websiteForm));
-    const websiteMonitoring = host.querySelector("[data-website-monitoring],[data-website-detail]");
-    if (websiteMonitoring) cleanups.push(initWebsiteMonitoring(websiteMonitoring));
-    const websiteNginx = host.querySelector("[data-website-nginx]");
-    if (websiteNginx) cleanups.push(initWebsiteNginx(websiteNginx));
+    renderIcons(host.querySelector("[data-task-panel-close]"));
+    initTaskPanelMain(panelMain, cleanups);
+  }
+
+  async function refreshTaskPanelMain(url, expectedKind, preferredFocusKey = "") {
+    const state = taskPanelState;
+    const panel = state?.host.querySelector("[data-task-panel]");
+    const currentMain = panel?.querySelector("main[data-task-page]");
+    if (!state || !panel || !currentMain || (expectedKind && currentMain.dataset.taskKind !== expectedKind)) return null;
+
+    const currentScroller = currentMain.querySelector("[data-website-detail-scroll]") || panel;
+    const scrollTop = currentScroller.scrollTop;
+    const focused = document.activeElement;
+    const focusKey = preferredFocusKey || (focused instanceof HTMLElement && currentMain.contains(focused)
+      ? focused.dataset.websiteFocusKey || ""
+      : "");
+    const refreshError = currentMain.dataset.refreshFailed || words().loadFailed;
+    const result = await fetchDocument(url, { cache: "no-store" });
+    if (taskPanelState !== state || !result.response.ok) throw new Error(refreshError);
+    const nextMain = result.document?.querySelector(`main[data-task-page]${expectedKind ? `[data-task-kind="${expectedKind}"]` : ""}`);
+    if (!nextMain) throw new Error(refreshError);
+
+    state.cleanups.splice(0).forEach(cleanup => cleanup());
+    const imported = document.importNode(nextMain, true);
+    const heading = imported.querySelector("h1");
+    if (heading) {
+      heading.id ||= `task-panel-heading-${Date.now()}`;
+      panel.setAttribute("aria-labelledby", heading.id);
+    }
+    currentMain.replaceWith(imported);
+    initTaskPanelMain(imported, state.cleanups);
+    const nextScroller = imported.querySelector("[data-website-detail-scroll]") || panel;
+    nextScroller.scrollTop = scrollTop;
+    if (focusKey) {
+      const focusTarget = imported.querySelector(`[data-website-focus-key="${CSS.escape(focusKey)}"]`);
+      focusTarget?.focus({ preventScroll: true });
+    }
+    return imported;
   }
 
   function openTask(url, push = true, trigger = null) {
@@ -1741,45 +1791,76 @@
   }
 
   function initStatus() {
-    const status = document.querySelector("[data-shell-status]");
-    const websiteStatus = document.querySelector("[data-shell-website-status]");
-    if (!status && !websiteStatus) return;
+    const attention = document.querySelector("[data-shell-attention]");
+    if (!attention) return;
+    const empty = attention.querySelector("[data-shell-attention-empty]");
+    const host = attention.querySelector('[data-shell-attention-item="host"]');
+    const runs = attention.querySelector('[data-shell-attention-item="runs"]');
+    const websites = attention.querySelector('[data-shell-attention-item="websites"]');
+    const applications = attention.querySelector('[data-shell-attention-item="applications"]');
+    const setVisible = (item, visible) => {
+      if (item) item.hidden = !visible;
+      return visible;
+    };
     const updateWebsiteStatus = data => {
-      if (!websiteStatus) return;
       const down = Math.max(0, Number(data.websiteDown) || 0);
       const verifying = Math.max(0, Number(data.websiteVerifying) || 0);
-      websiteStatus.dataset.state = data.websiteState;
-      websiteStatus.dataset.down = String(down);
-      websiteStatus.dataset.verifying = String(verifying);
-      const primary = websiteStatus.querySelector("[data-shell-website-primary]");
-      const secondary = websiteStatus.querySelector("[data-shell-website-secondary]");
+      if (!websites) return down > 0 || verifying > 0;
+      websites.dataset.state = data.websiteState;
+      websites.dataset.down = String(down);
+      websites.dataset.verifying = String(verifying);
+      const primary = websites.querySelector("[data-shell-website-primary]");
+      const secondary = websites.querySelector("[data-shell-website-secondary]");
       if (down > 0) {
         if (primary) primary.textContent = `${down} ${down === 1 ? words().websiteDownOne : words().websiteDownMany}`;
         if (secondary) secondary.textContent = `${verifying} ${verifying === 1 ? words().websiteVerifyingOne : words().websiteVerifyingMany}`;
       } else if (verifying > 0) {
         if (primary) primary.textContent = `${verifying} ${verifying === 1 ? words().websiteVerifyingOne : words().websiteVerifyingMany}`;
         if (secondary) secondary.textContent = words().websiteNoConfirmedFailure;
-      } else {
-        if (primary) primary.textContent = words().websiteNormal;
-        if (secondary) secondary.textContent = words().websiteNoOpenIssues;
       }
+      return setVisible(websites, down > 0 || verifying > 0);
     };
     const update = async () => {
       try {
         const response = await fetch("/monitor/status", { credentials: "same-origin", cache: "no-store" });
         if (!response.ok) return;
         const data = await response.json();
-        if (status) {
-          status.dataset.state = data.state;
-          const strong = status.querySelector("strong");
-          const small = status.querySelector("small");
+        let visibleCount = 0;
+        if (host) {
+          const hostVisible = data.state !== "current";
+          host.dataset.state = data.state;
+          const strong = host.querySelector("[data-shell-host-primary]");
+          const small = host.querySelector("[data-shell-host-secondary]");
           if (strong) strong.textContent = words()[data.state] || data.state;
-          if (small) {
-            const environment = small.textContent.split("·")[0].trim();
-            small.textContent = `${environment} · ${data.activeRuns} ${words().activeRuns}`;
-          }
+          if (small) small.textContent = attention.dataset.environment || small.textContent;
+          if (setVisible(host, hostVisible)) visibleCount += 1;
         }
-        updateWebsiteStatus(data);
+        const activeRuns = Math.max(0, Number(data.activeRuns) || 0);
+        if (runs) {
+          const primary = runs.querySelector("[data-shell-runs-primary]");
+          if (primary) primary.textContent = `${activeRuns} ${attention.dataset.activeRunsLabel || words().activeRuns}`;
+          if (setVisible(runs, activeRuns > 0)) visibleCount += 1;
+        }
+        if (updateWebsiteStatus(data)) visibleCount += 1;
+        if (applications) {
+          const stopped = Math.max(0, Number(data.stoppedPinnedApplications) || 0);
+          const issues = Math.max(0, Number(data.applicationIssueCount) || 0);
+          const primary = applications.querySelector("[data-shell-applications-primary]");
+          const secondary = applications.querySelector("[data-shell-applications-secondary]");
+          applications.dataset.state = issues > 0 ? "attention" : "stale";
+          if (primary) {
+            primary.textContent = stopped > 0
+              ? `${attention.dataset.stoppedPinnedLabel || "Stopped pinned applications"} ${stopped}`
+              : attention.dataset.applicationAttentionLabel || "Application observation needs attention";
+          }
+          if (secondary) {
+            secondary.textContent = issues > 0
+              ? `${attention.dataset.applicationIssuesLabel || "Application collection issues"} ${issues}`
+              : attention.dataset.reviewApplicationsLabel || "Review pinned applications";
+          }
+          if (setVisible(applications, stopped > 0 || issues > 0)) visibleCount += 1;
+        }
+        if (empty) empty.hidden = visibleCount > 0;
       } catch { /* status remains at last known value */ }
     };
     const timer = window.setInterval(update, 30000);
@@ -2707,10 +2788,14 @@
     }
     const surfaceTaskURL=root.closest('.task-panel')?taskPanelState?.taskURL:'';
     const backgroundSurfaceBlocked=()=>!surfaceTaskURL&&Boolean(taskPanelState);
-    const reloadCurrentSurface=async()=>{
+    const reloadCurrentSurface=async(preferredFocusKey='')=>{
       if(stopped||!root.isConnected||backgroundSurfaceBlocked())return;
       if(surfaceTaskURL){
-        if(taskPanelState?.taskURL===surfaceTaskURL&&taskPanelState.host.contains(root))await openTask(surfaceTaskURL,false);
+        if(taskPanelState?.taskURL===surfaceTaskURL&&taskPanelState.host.contains(root)){
+          const nextRoot=await refreshTaskPanelMain(surfaceTaskURL,'website-detail',preferredFocusKey);
+          const nextStatus=nextRoot?.querySelector('[data-website-refresh-status]');
+          if(nextStatus)nextStatus.textContent=nextRoot.dataset.refreshedLabel||'';
+        }
         return;
       }
       await navigate(location.href,false);
@@ -2767,7 +2852,7 @@
         await new Promise(resolve=>setTimeout(resolve,650));
         if(stopped||controller.signal.aborted||!root.isConnected)return;
         busy=false;
-        await reloadCurrentSurface();
+        await reloadCurrentSurface('check');
       }catch(error){
         if(error?.name==='AbortError')return;
         busy=false;

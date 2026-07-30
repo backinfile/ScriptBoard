@@ -97,28 +97,59 @@ FORM: Flat measurement rails and a responsive record ledger; no control-plane ac
     </form>
 
     <div class="application-result-summary">{{t .Locale "applications.showing"}} {{len .Applications}} / {{.Matched}}{{if .Truncated}} · {{t .Locale "applications.top_100"}}{{end}}</div>
-    <div class="application-running-list" data-running-applications-list>
-      {{range .Applications}}
-      <article class="application-record pinned-application running-application" tabindex="0" aria-haspopup="dialog" aria-label="{{t $.Locale "applications.open_details"}} {{.Name}}" data-application-row data-application-mode="runtime" data-application-running="true" data-kind="{{.Kind}}" data-application-id="{{.ID}}" data-application-name="{{.Name}}" data-application-kind="{{.Kind}}" data-application-kind-label="{{if eq .Kind "docker"}}Docker {{t $.Locale "applications.container"}}{{else}}{{t $.Locale "applications.host_application"}}{{end}}" data-application-technical="{{.Technical}}" data-application-status="{{t $.Locale "applications.running"}}" data-application-cpu="{{if .RateAvailable}}{{percent .CPUPercent}}{{else}}–{{end}}" data-application-memory="{{humanBytes .MemoryBytes}}" data-application-io="{{if .RateAvailable}}{{humanRate .ReadBytesPerSecond}} / {{humanRate .WriteBytesPerSecond}}{{else}}–{{end}}" data-application-detail-url="/monitor/applications/{{.ID}}/details">
-        <div class="pinned-application__summary">
-          <div class="pinned-application__identity">
-            <span data-lucide="{{if eq .Kind "docker"}}box{{else}}app-window{{end}}" aria-hidden="true"></span>
-            <div><h3>{{.Name}}{{if eq .Kind "docker"}} <span class="application-kind">Docker</span>{{end}}</h3><p>{{.Technical}}</p><small>{{t $.Locale "applications.running"}} · {{.ProcessCount}} {{t $.Locale "applications.processes"}}{{if eq .Kind "host"}} · {{.ThreadCount}} {{t $.Locale "applications.threads"}}{{end}}</small></div>
-          </div>
-          <dl class="pinned-application__metrics">
-            <div><dt>CPU</dt><dd>{{if .RateAvailable}}{{percent .CPUPercent}}{{else}}&ndash;{{end}}<small>{{t $.Locale "applications.current_value"}}</small></dd></div>
-            <div><dt>{{t $.Locale "applications.memory"}}</dt><dd>{{humanBytes .MemoryBytes}}{{if and (eq .Kind "docker") (gt .MemoryLimitBytes 0)}} / {{humanBytes .MemoryLimitBytes}}{{end}}<small>{{percent .MemoryPercent}}</small></dd></div>
-            <div><dt>{{t $.Locale "applications.disk_io"}}</dt><dd>{{if .RateAvailable}}{{humanRate .ReadBytesPerSecond}} / {{humanRate .WriteBytesPerSecond}}{{else}}&ndash;{{end}}<small>{{t $.Locale "applications.read"}} / {{t $.Locale "applications.write"}}</small></dd></div>
-          </dl>
-          <div class="pinned-application__actions">
-            {{if .Pinnable}}<form method="post" action="/monitor/applications/{{.ID}}/{{if .Pinned}}unpin{{else}}pin{{end}}"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="icon-button{{if .Pinned}} is-selected{{end}}" type="submit" aria-label="{{if .Pinned}}{{t $.Locale "applications.unpin"}}{{else}}{{t $.Locale "applications.pin"}}{{end}} {{.Name}}"><span data-lucide="pin" aria-hidden="true"></span></button></form>{{else}}<span class="application-restricted" title="{{t $.Locale "applications.identity_restricted"}}"><span data-lucide="shield-alert" aria-hidden="true"></span></span>{{end}}
-            <span class="application-record__cue" data-lucide="chevron-right" aria-hidden="true"></span>
-          </div>
-        </div>
-      </article>
-      {{else}}
-      <div class="applications-empty"><span data-lucide="search-x" aria-hidden="true"></span><p>{{t .Locale "applications.no_results"}}</p></div>
-      {{end}}
+    <div class="application-running-table-shell">
+      <table class="application-running-table">
+        <caption class="sr-only">{{t .Locale "applications.running_title"}}</caption>
+        <thead>
+          <tr>
+            <th scope="col" {{if eq .Query.Sort "pinned"}}aria-sort="{{if eq .Query.Direction "asc"}}ascending{{else}}descending{{end}}"{{end}}>
+              <a class="application-sort-link" data-application-sort="pinned" href="{{applicationSortURL .Query "pinned"}}"><span>{{t .Locale "applications.pin"}}</span><span data-lucide="{{if eq .Query.Sort "pinned"}}{{if eq .Query.Direction "asc"}}arrow-up{{else}}arrow-down{{end}}{{else}}arrow-up-down{{end}}" aria-hidden="true"></span></a>
+            </th>
+            <th scope="col" {{if eq .Query.Sort "name"}}aria-sort="{{if eq .Query.Direction "asc"}}ascending{{else}}descending{{end}}"{{end}}>
+              <a class="application-sort-link" data-application-sort="name" href="{{applicationSortURL .Query "name"}}"><span>{{t .Locale "applications.application"}}</span><span data-lucide="{{if eq .Query.Sort "name"}}{{if eq .Query.Direction "asc"}}arrow-up{{else}}arrow-down{{end}}{{else}}arrow-up-down{{end}}" aria-hidden="true"></span></a>
+            </th>
+            <th scope="col" {{if eq .Query.Sort "cpu"}}aria-sort="{{if eq .Query.Direction "asc"}}ascending{{else}}descending{{end}}"{{end}}>
+              <a class="application-sort-link" data-application-sort="cpu" href="{{applicationSortURL .Query "cpu"}}"><span>CPU</span><span data-lucide="{{if eq .Query.Sort "cpu"}}{{if eq .Query.Direction "asc"}}arrow-up{{else}}arrow-down{{end}}{{else}}arrow-up-down{{end}}" aria-hidden="true"></span></a>
+            </th>
+            <th scope="col" {{if eq .Query.Sort "memory"}}aria-sort="{{if eq .Query.Direction "asc"}}ascending{{else}}descending{{end}}"{{end}}>
+              <a class="application-sort-link" data-application-sort="memory" href="{{applicationSortURL .Query "memory"}}"><span>{{t .Locale "applications.memory"}}</span><span data-lucide="{{if eq .Query.Sort "memory"}}{{if eq .Query.Direction "asc"}}arrow-up{{else}}arrow-down{{end}}{{else}}arrow-up-down{{end}}" aria-hidden="true"></span></a>
+            </th>
+            <th scope="col" {{if eq .Query.Sort "read"}}aria-sort="{{if eq .Query.Direction "asc"}}ascending{{else}}descending{{end}}"{{end}}>
+              <a class="application-sort-link" data-application-sort="read" href="{{applicationSortURL .Query "read"}}"><span>{{t .Locale "applications.read"}}</span><span data-lucide="{{if eq .Query.Sort "read"}}{{if eq .Query.Direction "asc"}}arrow-up{{else}}arrow-down{{end}}{{else}}arrow-up-down{{end}}" aria-hidden="true"></span></a>
+            </th>
+            <th scope="col" {{if eq .Query.Sort "write"}}aria-sort="{{if eq .Query.Direction "asc"}}ascending{{else}}descending{{end}}"{{end}}>
+              <a class="application-sort-link" data-application-sort="write" href="{{applicationSortURL .Query "write"}}"><span>{{t .Locale "applications.write"}}</span><span data-lucide="{{if eq .Query.Sort "write"}}{{if eq .Query.Direction "asc"}}arrow-up{{else}}arrow-down{{end}}{{else}}arrow-up-down{{end}}" aria-hidden="true"></span></a>
+            </th>
+            <th scope="col" {{if eq .Query.Sort "processes"}}aria-sort="{{if eq .Query.Direction "asc"}}ascending{{else}}descending{{end}}"{{end}}>
+              <a class="application-sort-link" data-application-sort="processes" href="{{applicationSortURL .Query "processes"}}"><span>{{t .Locale "applications.processes"}}</span><span data-lucide="{{if eq .Query.Sort "processes"}}{{if eq .Query.Direction "asc"}}arrow-up{{else}}arrow-down{{end}}{{else}}arrow-up-down{{end}}" aria-hidden="true"></span></a>
+            </th>
+            <th class="application-running-table__open" scope="col"><span class="sr-only">{{t .Locale "applications.open_details"}}</span></th>
+          </tr>
+        </thead>
+        <tbody data-running-applications-list>
+          {{range .Applications}}
+          <tr class="application-running-row" tabindex="0" aria-haspopup="dialog" aria-label="{{t $.Locale "applications.open_details"}} {{.Name}}" data-application-row data-application-mode="runtime" data-application-running="true" data-kind="{{.Kind}}" data-application-id="{{.ID}}" data-application-name="{{.Name}}" data-application-kind="{{.Kind}}" data-application-kind-label="{{if eq .Kind "docker"}}Docker {{t $.Locale "applications.container"}}{{else}}{{t $.Locale "applications.host_application"}}{{end}}" data-application-technical="{{.Technical}}" data-application-status="{{t $.Locale "applications.running"}}" data-application-cpu="{{if .RateAvailable}}{{percent .CPUPercent}}{{else}}–{{end}}" data-application-memory="{{humanBytes .MemoryBytes}}" data-application-io="{{if .RateAvailable}}{{humanRate .ReadBytesPerSecond}} / {{humanRate .WriteBytesPerSecond}}{{else}}–{{end}}" data-application-detail-url="/monitor/applications/{{.ID}}/details">
+            <td class="application-running-pin" data-label="{{t $.Locale "applications.pin"}}">
+              {{if .Pinnable}}<form method="post" action="/monitor/applications/{{.ID}}/{{if .Pinned}}unpin{{else}}pin{{end}}"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="icon-button{{if .Pinned}} is-selected{{end}}" type="submit" aria-label="{{if .Pinned}}{{t $.Locale "applications.unpin"}}{{else}}{{t $.Locale "applications.pin"}}{{end}} {{.Name}}"><span data-lucide="pin" aria-hidden="true"></span></button></form>{{else}}<span class="application-restricted" title="{{t $.Locale "applications.identity_restricted"}}"><span data-lucide="shield-alert" aria-hidden="true"></span></span>{{end}}
+            </td>
+            <td class="application-table-identity" data-label="{{t $.Locale "applications.application"}}">
+              <div class="application-table-identity__content">
+                <span data-lucide="{{if eq .Kind "docker"}}box{{else}}app-window{{end}}" aria-hidden="true"></span>
+                <div><strong>{{.Name}}{{if eq .Kind "docker"}} <span class="application-kind">Docker</span>{{end}}</strong><code>{{.Technical}}</code><small>{{t $.Locale "applications.running"}}{{if eq .Kind "host"}} · {{.ThreadCount}} {{t $.Locale "applications.threads"}}{{end}}</small></div>
+              </div>
+            </td>
+            <td class="application-table-metric" data-label="CPU"><strong>{{if .RateAvailable}}{{percent .CPUPercent}}{{else}}&ndash;{{end}}</strong><small>{{t $.Locale "applications.current_value"}}</small></td>
+            <td class="application-table-metric" data-label="{{t $.Locale "applications.memory"}}"><strong>{{humanBytes .MemoryBytes}}{{if and (eq .Kind "docker") (gt .MemoryLimitBytes 0)}} / {{humanBytes .MemoryLimitBytes}}{{end}}</strong><small>{{percent .MemoryPercent}}</small></td>
+            <td class="application-table-metric" data-label="{{t $.Locale "applications.read"}}"><strong>{{if .RateAvailable}}{{humanRate .ReadBytesPerSecond}}{{else}}&ndash;{{end}}</strong><small>{{t $.Locale "applications.disk_io"}}</small></td>
+            <td class="application-table-metric" data-label="{{t $.Locale "applications.write"}}"><strong>{{if .RateAvailable}}{{humanRate .WriteBytesPerSecond}}{{else}}&ndash;{{end}}</strong><small>{{t $.Locale "applications.disk_io"}}</small></td>
+            <td class="application-table-metric" data-label="{{t $.Locale "applications.processes"}}"><strong>{{.ProcessCount}}</strong><small>{{t $.Locale "applications.processes"}}</small></td>
+            <td class="application-running-table__open"><span class="application-record__cue" data-lucide="chevron-right" aria-hidden="true"></span></td>
+          </tr>
+          {{else}}
+          <tr><td colspan="8"><div class="applications-empty"><span data-lucide="search-x" aria-hidden="true"></span><p>{{t .Locale "applications.no_results"}}</p></div></td></tr>
+          {{end}}
+        </tbody>
+      </table>
     </div>
   </section>
 

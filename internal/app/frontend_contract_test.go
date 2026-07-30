@@ -27,10 +27,12 @@ func TestShellStatusEndpointReturnsAuthenticatedNoStoreVerdict(t *testing.T) {
 	defer response.Body.Close()
 
 	var payload struct {
-		State       string `json:"state"`
-		CollectedAt string `json:"collectedAt"`
-		IssueCount  int    `json:"issueCount"`
-		ActiveRuns  int    `json:"activeRuns"`
+		State                     string `json:"state"`
+		CollectedAt               string `json:"collectedAt"`
+		IssueCount                int    `json:"issueCount"`
+		ActiveRuns                int    `json:"activeRuns"`
+		StoppedPinnedApplications *int   `json:"stoppedPinnedApplications"`
+		ApplicationIssueCount     *int   `json:"applicationIssueCount"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
 		t.Fatal(err)
@@ -46,6 +48,9 @@ func TestShellStatusEndpointReturnsAuthenticatedNoStoreVerdict(t *testing.T) {
 	}
 	if payload.CollectedAt == "" {
 		t.Fatal("collectedAt is empty")
+	}
+	if payload.StoppedPinnedApplications == nil || payload.ApplicationIssueCount == nil {
+		t.Fatalf("application attention fields are missing: %#v", payload)
 	}
 }
 

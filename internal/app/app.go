@@ -92,10 +92,11 @@ func webTemplateFunctions() template.FuncMap {
 			}
 			return value.UTC().Format(time.RFC3339)
 		},
-		"humanBytes": humanBytes,
-		"humanRate":  func(value float64) string { return humanBytes(uint64(math.Max(0, value))) + "/s" },
-		"percent":    func(value float64) string { return fmt.Sprintf("%.1f%%", value) },
-		"duration":   humanDuration,
+		"humanBytes":         humanBytes,
+		"humanRate":          func(value float64) string { return humanBytes(uint64(math.Max(0, value))) + "/s" },
+		"percent":            func(value float64) string { return fmt.Sprintf("%.1f%%", value) },
+		"applicationSortURL": applicationSortURL,
+		"duration":           humanDuration,
 		"localDuration": func(locale webLocale, value time.Duration) string {
 			if locale == localeSimplifiedChinese {
 				return humanDuration(value)

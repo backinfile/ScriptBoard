@@ -986,7 +986,7 @@ func TestProtectedErrorsRenderInsideTheApplicationShell(t *testing.T) {
 	}
 	for _, expected := range []string{
 		`class="app-sidebar"`, `aria-label="Primary navigation"`, `action="/logout"`,
-		`role="alert"`, `error-page`, "Return to workspace", "Local · 0 active Runs",
+		`role="alert"`, `error-page`, "Return to workspace", `data-environment="Local"`,
 		`<span>admin</span>`,
 	} {
 		if !strings.Contains(page, expected) {
@@ -1021,7 +1021,7 @@ func TestApplicationShellMarksTrustedProxyRequestsAsRemote(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read files page: %v", err)
 	}
-	if !strings.Contains(string(body), "Remote · 0 active Runs") {
+	if !strings.Contains(string(body), `data-environment="Remote"`) {
 		t.Fatalf("files page does not identify remote management: %s", body)
 	}
 }

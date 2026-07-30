@@ -8,32 +8,86 @@
 <title>{{.Monitor.Name}} · {{t .Locale "website.title"}} · ScriptBoard</title>
 </head>
 <body>
-<main class="workspace website-detail-page" data-task-page data-task-kind="website-detail" data-task-close-label="{{t .Locale "common.close"}}" data-website-detail data-status-url="/monitor/websites/{{.Monitor.ID}}/data" data-refresh-failed="{{t .Locale "website.refresh_failed"}}" data-monitor-state="{{.Monitor.State}}" data-monitor-latest="{{.Monitor.LatestLabel}}" data-monitor-summary="{{.Monitor.LatestSummary}}" data-monitor-latency="{{.Monitor.LatencyLabel}}" data-monitor-checked="{{.Monitor.CheckedToken}}">
-<header class="website-detail-heading">
-<div>
-<a href="/monitor/websites">{{t .Locale "website.back"}}</a>
-<div><h1>{{.Monitor.Name}}</h1><span class="website-status website-status--{{.Monitor.State}}">{{.Monitor.StateLabel}}</span><span>{{.Monitor.ScopeLabel}}</span><span>{{.Monitor.MethodLabel}}</span></div>
+<main class="workspace website-detail-page" data-task-page data-task-kind="website-detail" data-task-close-label="{{t .Locale "common.close"}}" data-website-detail data-status-url="/monitor/websites/{{.Monitor.ID}}/data" data-detail-url="/monitor/websites/{{.Monitor.ID}}" data-refresh-failed="{{t .Locale "website.refresh_failed"}}" data-refreshed-label="{{t .Locale "website.detail.refreshed_in_place"}}" data-monitor-state="{{.Monitor.State}}" data-monitor-latest="{{.Monitor.LatestLabel}}" data-monitor-summary="{{.Monitor.LatestSummary}}" data-monitor-latency="{{.Monitor.LatencyLabel}}" data-monitor-checked="{{.Monitor.CheckedToken}}">
+<header class="website-detail-identity">
+<div class="website-detail-identity__copy">
+<a class="website-detail-back" href="/monitor/websites">{{t .Locale "website.back"}}</a>
+<div class="website-detail-title-row">
+<h1>{{.Monitor.Name}}</h1>
+<span class="website-status website-status--{{.Monitor.State}}">{{.Monitor.StateLabel}}</span>
+<span class="website-detail-tag">{{.Monitor.ScopeLabel}}</span>
+<span class="website-detail-tag">{{.Monitor.MethodLabel}}</span>
+</div>
+<div class="website-detail-url">
+<span data-lucide="globe-2" aria-hidden="true"></span>
 <code>{{.Monitor.URL}}</code>
 </div>
+</div>
 <div class="website-detail-actions">
-<form method="post" action="/monitor/websites/{{.Monitor.ID}}/check" data-website-check-form data-check-timeout-ms="{{.Raw.Config.Timeout.Milliseconds}}" data-checking-label="{{t .Locale "website.detail.checking"}}" data-complete-label="{{t .Locale "website.detail.check_complete"}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--primary" type="submit">{{t .Locale "website.detail.check_now"}}</button></form>
-<a class="button" href="/monitor/websites/{{.Monitor.ID}}/edit" data-task-link>{{t .Locale "website.detail.edit"}}</a>
-<form method="post" action="/monitor/websites/{{.Monitor.ID}}/{{if eq .Monitor.State "paused"}}resume{{else}}pause{{end}}" data-async><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button" type="submit">{{if eq .Monitor.State "paused"}}{{t .Locale "website.detail.resume"}}{{else}}{{t .Locale "website.detail.pause"}}{{end}}</button></form>
+<form method="post" action="/monitor/websites/{{.Monitor.ID}}/check" data-website-check-form data-check-timeout-ms="{{.Raw.Config.Timeout.Milliseconds}}" data-checking-label="{{t .Locale "website.detail.checking"}}" data-complete-label="{{t .Locale "website.detail.check_complete"}}">
+<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+<button class="button button--primary" type="submit" data-website-focus-key="check"><span data-lucide="refresh-cw" aria-hidden="true"></span>{{t .Locale "website.detail.check_now"}}</button>
+</form>
+{{if eq .Raw.Config.Kind "http"}}<a class="button website-open-external" href="{{.Monitor.URL}}" target="_blank" rel="noopener noreferrer" data-native data-website-focus-key="open-site"><span data-lucide="external-link" aria-hidden="true"></span>{{t .Locale "website.open_site"}}</a>{{end}}
+<a class="button" href="/monitor/websites/{{.Monitor.ID}}/edit" data-task-link data-website-focus-key="edit"><span data-lucide="square-pen" aria-hidden="true"></span>{{t .Locale "website.detail.edit"}}</a>
+<form method="post" action="/monitor/websites/{{.Monitor.ID}}/{{if eq .Monitor.State "paused"}}resume{{else}}pause{{end}}" data-async>
+<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+<button class="button" type="submit" data-website-focus-key="pause"><span data-lucide="{{if eq .Monitor.State "paused"}}play{{else}}pause{{end}}" aria-hidden="true"></span>{{if eq .Monitor.State "paused"}}{{t .Locale "website.detail.resume"}}{{else}}{{t .Locale "website.detail.pause"}}{{end}}</button>
+</form>
 </div>
 </header>
+
+<div class="website-detail-refresh-rail">
+<span>{{t .Locale "website.detail.frequency"}} {{.Monitor.FrequencyLabel}} · {{t .Locale "website.next_check"}} {{if .Monitor.NextCheckAt.IsZero}}—{{else}}<time datetime="{{machineTime .Monitor.NextCheckAt}}" data-local-time>{{localTime .Locale .Monitor.NextCheckAt}}</time>{{end}}</span>
 <p class="website-refresh-status" data-website-refresh-status aria-live="polite"></p>
+</div>
 
-<section class="website-detail-verdict website-detail-verdict--{{.Monitor.State}}">
-<div><p class="website-kicker">{{t .Locale "website.detail.current_verdict"}}</p><h2>{{.Monitor.StateLabel}}</h2><p>{{if .Monitor.LatestSummary}}{{.Monitor.LatestSummary}}{{else}}{{t .Locale "website.detail.saved_waiting"}}{{end}}</p></div>
-<div><strong>{{.Monitor.LatestLabel}}</strong><span>{{.Monitor.LatencyLabel}}</span>{{if not .Monitor.LastCheckedAt.IsZero}}<time datetime="{{machineTime .Monitor.LastCheckedAt}}" data-local-time>{{localTime .Locale .Monitor.LastCheckedAt}}</time>{{end}}</div>
+<div class="website-detail-scroll" data-website-detail-scroll>
+{{with .CurrentIncident}}
+<section class="website-detail-incident website-detail-incident--down" data-website-detail-section="incident" aria-labelledby="current-incident-heading">
+<header>
+<div><p class="website-kicker">{{t $.Locale "website.detail.active_incident"}}</p><h2 id="current-incident-heading">{{.Summary}}</h2><p>{{t $.Locale "website.detail.incident_confirmed_description"}}</p></div>
+<span class="website-status website-status--down">{{t $.Locale "website.state.down"}}</span>
+</header>
+<dl>
+<div><dt>{{t $.Locale "website.failure_count"}}</dt><dd>{{.FailureCount}}</dd></div>
+<div><dt>{{t $.Locale "website.incident_started"}}</dt><dd><time datetime="{{machineTime .StartedAt}}" data-local-time>{{localTime $.Locale .StartedAt}}</time></dd></div>
+<div><dt>{{t $.Locale "website.incident_duration"}}</dt><dd>{{localDuration $.Locale .Duration}}</dd></div>
+<div><dt>{{t $.Locale "website.next_check"}}</dt><dd>{{if .NextCheckAt.IsZero}}—{{else}}<time datetime="{{machineTime .NextCheckAt}}" data-local-time>{{localTime $.Locale .NextCheckAt}}</time>{{end}}</dd></div>
+</dl>
 </section>
-
-{{if .Monitor.LatestTechnical}}
-<details class="website-technical-evidence"><summary>{{t .Locale "website.detail.technical_evidence"}}</summary><code>{{.Monitor.LatestTechnical}}</code></details>
+{{else}}
+{{if or (eq .Monitor.State "verifying") (eq .Monitor.State "pending")}}
+<section class="website-detail-incident website-detail-incident--verifying" data-website-detail-section="incident" aria-labelledby="verification-heading">
+<header>
+<div><p class="website-kicker">{{t .Locale "website.detail.verification_pending"}}</p><h2 id="verification-heading">{{if .Monitor.LatestSummary}}{{.Monitor.LatestSummary}}{{else}}{{t .Locale "website.detail.saved_waiting"}}{{end}}</h2><p>{{t .Locale "website.detail.verification_description"}}</p></div>
+<span class="website-status website-status--{{.Monitor.State}}">{{.Monitor.StateLabel}}</span>
+</header>
+<dl>
+<div><dt>{{t .Locale "website.failure_count"}}</dt><dd>{{.Monitor.FailureCount}}</dd></div>
+<div><dt>{{t .Locale "website.first_failure"}}</dt><dd>{{if or (eq .Monitor.State "pending") .Monitor.LastCheckedAt.IsZero}}—{{else}}<time datetime="{{machineTime .Monitor.LastCheckedAt}}" data-local-time>{{localTime .Locale .Monitor.LastCheckedAt}}</time>{{end}}</dd></div>
+<div><dt>{{t .Locale "website.incident_duration"}}</dt><dd>—</dd></div>
+<div><dt>{{t .Locale "website.next_check"}}</dt><dd>{{if .Monitor.NextCheckAt.IsZero}}—{{else}}<time datetime="{{machineTime .Monitor.NextCheckAt}}" data-local-time>{{localTime .Locale .Monitor.NextCheckAt}}</time>{{end}}</dd></div>
+</dl>
+</section>
+{{else}}
+<section class="website-detail-incident website-detail-incident--{{.Monitor.State}}" data-website-detail-section="incident" aria-labelledby="current-verdict-heading">
+<header>
+<div><p class="website-kicker">{{t .Locale "website.detail.current_verdict"}}</p><h2 id="current-verdict-heading">{{.Monitor.StateLabel}}</h2><p>{{if .Monitor.LatestSummary}}{{.Monitor.LatestSummary}}{{else}}{{t .Locale "website.detail.saved_waiting"}}{{end}}</p></div>
+<span class="website-status website-status--{{.Monitor.State}}">{{.Monitor.StateLabel}}</span>
+</header>
+<dl>
+<div><dt>{{t .Locale "common.result"}}</dt><dd>{{.Monitor.LatestLabel}}</dd></div>
+<div><dt>{{t .Locale "website.detail.latency"}}</dt><dd>{{.Monitor.LatencyLabel}}</dd></div>
+<div><dt>{{t .Locale "website.detail.checked_at"}}</dt><dd>{{if .Monitor.LastCheckedAt.IsZero}}—{{else}}<time datetime="{{machineTime .Monitor.LastCheckedAt}}" data-local-time>{{localTime .Locale .Monitor.LastCheckedAt}}</time>{{end}}</dd></div>
+<div><dt>{{t .Locale "website.next_check"}}</dt><dd>{{if .Monitor.NextCheckAt.IsZero}}—{{else}}<time datetime="{{machineTime .Monitor.NextCheckAt}}" data-local-time>{{localTime .Locale .Monitor.NextCheckAt}}</time>{{end}}</dd></div>
+</dl>
+</section>
+{{end}}
 {{end}}
 
-<section class="website-detail-section">
-<header><div><h2>{{t .Locale "website.ledger.last_24h"}}</h2><p>{{t .Locale "website.detail.last_24h_description"}}</p></div></header>
+<section class="website-detail-section" data-website-detail-section="availability">
+<header><div><h2>{{t .Locale "website.ledger.last_24h"}}</h2><p>{{t .Locale "website.detail.last_24h_description"}}</p></div><span>{{len .DetailAvailability}} {{t .Locale "website.detail.windows"}}</span></header>
 <div class="website-availability website-availability--detail" aria-label="{{t .Locale "website.availability_aria"}}">{{range .DetailAvailability}}<span class="website-availability__{{.Tone}}{{if .Provisional}} website-availability__provisional{{end}}" title="{{.Title}}" {{if .Provisional}}role="img" aria-label="{{.Title}}"{{else}}aria-hidden="true"{{end}}></span>{{end}}</div>
 <div class="website-availability__axis"><span>{{t .Locale "website.hours_ago_24"}}</span><span>{{t .Locale "website.hours_ago_12"}}</span><span>{{t .Locale "website.now"}}</span></div>
 <dl class="website-detail-stats">
@@ -44,45 +98,22 @@
 </dl>
 </section>
 
-{{with .CurrentIncident}}
-<section class="website-current-incident" aria-labelledby="current-incident-heading">
-<header><div><p class="website-kicker">{{t $.Locale "website.detail.active_incident"}}</p><h2 id="current-incident-heading">{{.Summary}}</h2></div><span class="website-status website-status--down">{{t $.Locale "website.state.down"}}</span></header>
-<dl>
-<div><dt>{{t $.Locale "website.failure_count"}}</dt><dd>{{.FailureCount}}</dd></div>
-<div><dt>{{t $.Locale "website.incident_started"}}</dt><dd><time datetime="{{machineTime .StartedAt}}" data-local-time>{{localTime $.Locale .StartedAt}}</time></dd></div>
-<div><dt>{{t $.Locale "website.incident_duration"}}</dt><dd>{{localDuration $.Locale .Duration}}</dd></div>
-<div><dt>{{t $.Locale "website.next_check"}}</dt><dd>{{if .NextCheckAt.IsZero}}—{{else}}<time datetime="{{machineTime .NextCheckAt}}" data-local-time>{{localTime $.Locale .NextCheckAt}}</time>{{end}}</dd></div>
-</dl>
-</section>
-{{else}}
-{{if or (eq .Monitor.State "verifying") (eq .Monitor.State "pending")}}
-<section class="website-current-incident website-current-incident--verifying" aria-labelledby="verification-heading">
-<header><div><p class="website-kicker">{{t .Locale "website.detail.verification_pending"}}</p><h2 id="verification-heading">{{if .Monitor.LatestSummary}}{{.Monitor.LatestSummary}}{{else}}{{t .Locale "website.detail.saved_waiting"}}{{end}}</h2></div><span class="website-status website-status--{{.Monitor.State}}">{{.Monitor.StateLabel}}</span></header>
-<dl>
-<div><dt>{{t .Locale "website.failure_count"}}</dt><dd>{{.Monitor.FailureCount}}</dd></div>
-<div><dt>{{t .Locale "website.first_failure"}}</dt><dd>{{if or (eq .Monitor.State "pending") .Monitor.LastCheckedAt.IsZero}}—{{else}}<time datetime="{{machineTime .Monitor.LastCheckedAt}}" data-local-time>{{localTime .Locale .Monitor.LastCheckedAt}}</time>{{end}}</dd></div>
-<div><dt>{{t .Locale "website.incident_duration"}}</dt><dd>—</dd></div>
-<div><dt>{{t .Locale "website.next_check"}}</dt><dd>{{if .Monitor.NextCheckAt.IsZero}}—{{else}}<time datetime="{{machineTime .Monitor.NextCheckAt}}" data-local-time>{{localTime .Locale .Monitor.NextCheckAt}}</time>{{end}}</dd></div>
-</dl>
-</section>
-{{end}}
-{{end}}
-
-<section class="website-detail-section">
-<header><div><h2>{{t .Locale "website.detail.recent_checks"}}</h2><p>{{t .Locale "website.detail.recent_checks_description"}}</p></div></header>
+<section class="website-detail-section" data-website-detail-section="checks">
+<header><div><h2>{{t .Locale "website.detail.recent_checks"}}</h2><p>{{t .Locale "website.detail.recent_checks_description"}}</p></div><span>{{len .RecentChecks}} {{t .Locale "website.detail.records"}}</span></header>
 <div class="website-recent-checks table-shell">
 <table>
 <thead><tr><th>{{t .Locale "common.time"}}</th><th>{{t .Locale "common.result"}}</th><th>{{t .Locale "website.detail.response"}}</th><th>{{t .Locale "website.detail.latency"}}</th></tr></thead>
-<tbody>{{range .RecentChecks}}<tr><td><time datetime="{{machineTime .CheckedAt}}" data-local-time>{{localTime $.Locale .CheckedAt}}</time></td><td><span class="website-status website-status--{{if .Success}}up{{else}}down{{end}}">{{if .Success}}{{t $.Locale "website.state.up"}}{{else}}{{t $.Locale "website.state.down"}}{{end}}</span></td><td><strong>{{if gt .StatusCode 0}}HTTP {{.StatusCode}}{{else}}{{.Summary}}{{end}}</strong><small>{{.Summary}}</small></td><td>{{.Latency.Milliseconds}} ms</td></tr>{{else}}<tr><td colspan="4">{{t .Locale "website.detail.no_recent_checks"}}</td></tr>{{end}}</tbody>
+<tbody>{{range .RecentChecks}}<tr><td data-label="{{t $.Locale "common.time"}}"><time datetime="{{machineTime .CheckedAt}}" data-local-time>{{localTime $.Locale .CheckedAt}}</time></td><td data-label="{{t $.Locale "common.result"}}"><span class="website-status website-status--{{if .Success}}up{{else}}down{{end}}">{{if .Success}}{{t $.Locale "website.state.up"}}{{else}}{{t $.Locale "website.state.down"}}{{end}}</span></td><td data-label="{{t $.Locale "website.detail.response"}}"><strong>{{if gt .StatusCode 0}}HTTP {{.StatusCode}}{{else}}{{.Summary}}{{end}}</strong><small>{{.Summary}}</small></td><td data-label="{{t $.Locale "website.detail.latency"}}">{{.Latency.Milliseconds}} ms</td></tr>{{else}}<tr><td colspan="4">{{t .Locale "website.detail.no_recent_checks"}}</td></tr>{{end}}</tbody>
 </table>
 </div>
 </section>
 
-<section class="website-detail-section">
+<section class="website-detail-section" data-website-detail-section="security">
 <header><div><h2>{{t .Locale "website.detail.security"}}</h2><p>{{t .Locale "website.detail.security_description"}}</p></div></header>
 <div class="website-security website-security--{{.Monitor.SecurityTone}}">
-<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v6c0 5 3.4 8.2 8 9 4.6-.8 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg>
+<span data-lucide="{{if eq .Monitor.SecurityTone "success"}}shield-check{{else}}shield-alert{{end}}" aria-hidden="true"></span>
 <div><strong>{{.Monitor.SecurityTitle}}</strong><p>{{.Monitor.SecurityDescription}}</p></div>
+{{if not .Monitor.Certificate.NotAfter.IsZero}}<span>{{.Monitor.Certificate.DaysRemaining}} {{if eq .Monitor.Certificate.DaysRemaining 1}}{{t .Locale "website.detail.day"}}{{else}}{{t .Locale "website.detail.days"}}{{end}}</span>{{end}}
 </div>
 <dl class="website-facts">
 <div><dt>{{t .Locale "website.detail.issuer"}}</dt><dd>{{if .Monitor.Certificate.Issuer}}{{.Monitor.Certificate.Issuer}}{{else}}—{{end}}</dd></div>
@@ -92,14 +123,12 @@
 </dl>
 </section>
 
-{{if .Incidents}}
-<section class="website-detail-section">
-<header><div><h2>{{t .Locale "website.detail.incidents"}}</h2><p>{{t .Locale "website.detail.incidents_description"}}</p></div></header>
-<ol class="website-incident-list">{{range .Incidents}}<li><strong>{{.Summary}}</strong><span>{{.Category}}</span><time datetime="{{machineTime .StartedAt}}" data-local-time>{{localTime $.Locale .StartedAt}}</time>{{if .EndedAt.IsZero}}<em>{{t $.Locale "website.detail.not_recovered"}}</em>{{else}}<span>{{t $.Locale "website.detail.ended"}} {{.CloseReason}}</span>{{end}}</li>{{end}}</ol>
+<section class="website-detail-section" data-website-detail-section="incidents">
+<header><div><h2>{{t .Locale "website.detail.incidents"}}</h2><p>{{t .Locale "website.detail.incidents_description"}}</p></div><span>{{len .Incidents}} {{t .Locale "website.detail.records"}}</span></header>
+{{if .Incidents}}<ol class="website-incident-list">{{range .Incidents}}<li><time datetime="{{machineTime .StartedAt}}" data-local-time>{{localTime $.Locale .StartedAt}}</time><div><strong>{{.Summary}}</strong><span>{{.Category}}</span></div>{{if .EndedAt.IsZero}}<em>{{t $.Locale "website.detail.not_recovered"}}</em>{{else}}<span>{{t $.Locale "website.detail.ended"}} {{.CloseReason}}</span>{{end}}</li>{{end}}</ol>{{else}}<p class="website-detail-empty">{{t .Locale "website.detail.no_incidents"}}</p>{{end}}
 </section>
-{{end}}
 
-<section class="website-detail-section">
+<section class="website-detail-section" data-website-detail-section="settings">
 <header><div><h2>{{t .Locale "website.detail.settings"}}</h2><p>{{.Raw.Config.Source}}</p></div></header>
 <dl class="website-facts website-settings-facts">
 <div><dt>{{t .Locale "website.form.check_type"}}</dt><dd>{{.Monitor.KindLabel}}</dd></div>
@@ -124,13 +153,22 @@
 {{end}}
 </dl>
 </section>
-<section class="website-detail-section website-danger-zone">
+
+<section class="website-detail-section" data-website-detail-section="technical">
+<details class="website-technical-evidence">
+<summary data-website-focus-key="technical">{{t .Locale "website.detail.technical_evidence"}}</summary>
+<code>{{if .Monitor.LatestTechnical}}{{.Monitor.LatestTechnical}}{{else}}{{t .Locale "website.detail.no_technical_evidence"}}{{end}}</code>
+</details>
+</section>
+
+<section class="website-detail-section website-danger-zone" data-website-detail-section="danger">
 <header><div><h2>{{t .Locale "website.detail.delete_title"}}</h2><p>{{t .Locale "website.detail.delete_description"}}</p></div></header>
-<form method="post" action="/monitor/websites/{{.Monitor.ID}}/delete" data-async data-confirm="{{t .Locale "website.detail.delete_confirm"}} “{{.Monitor.Name}}”?">
+<form method="post" action="/monitor/websites/{{.Monitor.ID}}/delete" data-async data-confirm="{{t .Locale "website.detail.delete_confirm"}} “{{.Monitor.Name}}”">
 <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-<button class="button button--danger" name="confirm" value="yes" type="submit">{{t .Locale "website.detail.delete_title"}}</button>
+<button class="button button--danger" name="confirm" value="yes" type="submit" data-website-focus-key="delete">{{t .Locale "website.detail.delete_title"}}</button>
 </form>
 </section>
+</div>
 </main>
 </body>
 </html>

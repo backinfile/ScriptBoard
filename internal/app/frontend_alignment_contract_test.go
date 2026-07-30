@@ -107,7 +107,9 @@ func TestApplicationsPageExposesLiveFactsAndExpandableObservationDetails(t *test
 		`data-application-runtime-output`,
 		`data-applications-kind-filter`,
 		`name="direction" value="top"`,
-		`class="application-record pinned-application running-application"`,
+		`class="application-running-table"`,
+		`class="application-running-row"`,
+		`data-application-sort="cpu"`,
 		`tabindex="0" aria-haspopup="dialog"`,
 	)
 	if bytes.Contains(page, []byte(`data-application-detail-toggle`)) ||
@@ -282,11 +284,41 @@ func TestWebsiteCreateEditNginxAndDetailArePanelSafeTasks(t *testing.T) {
 		`data-task-page`,
 		`data-task-kind="website-detail"`,
 		`data-task-close-label="Close"`,
+		`class="website-detail-identity"`,
+		`class="website-detail-scroll" data-website-detail-scroll`,
 		`data-website-check-form`,
 		`data-check-timeout-ms="10000"`,
+		`href="https://panel-safe.example/health" target="_blank" rel="noopener noreferrer"`,
+		`data-website-focus-key="check"`,
 		`href="`+detailPath+`/edit" data-task-link`,
 		`action="`+detailPath+`/pause" data-async`,
 		`action="`+detailPath+`/delete" data-async`,
+	)
+	sectionOrder := []string{"incident", "availability", "checks", "security", "incidents", "settings", "technical", "danger"}
+	previous := -1
+	for _, section := range sectionOrder {
+		current := bytes.Index(detailPage, []byte(`data-website-detail-section="`+section+`"`))
+		if current < 0 {
+			t.Fatalf("website detail is missing %q section: %s", section, detailPage)
+		}
+		if current <= previous {
+			t.Fatalf("website detail section %q is out of order: %s", section, detailPage)
+		}
+		previous = current
+	}
+
+	response, err = client.Get(serverURL + "/monitor/websites")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listWithMonitor, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireAlignmentFragments(t, listWithMonitor,
+		`class="website-row-external" href="https://panel-safe.example/health" target="_blank" rel="noopener noreferrer"`,
+		`data-lucide="external-link"`,
 	)
 }
 
@@ -380,7 +412,7 @@ func TestPendingWebsiteIsReportedAndFilteredAsAwaitingVerification(t *testing.T)
 		t.Fatal(err)
 	}
 	requireAlignmentFragments(t, detailPage,
-		`website-current-incident--verifying`,
+		`website-detail-incident--verifying`,
 		`Awaiting confirmation`,
 		`Consecutive failures`,
 		`First failure`,

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"scriptboard/internal/appstatus"
@@ -14,6 +15,24 @@ type applicationsPageView struct {
 	Locale    webLocale
 	CSRFToken string
 	Query     appstatus.Query
+}
+
+func applicationSortURL(query appstatus.Query, field string) string {
+	direction := "desc"
+	if query.Sort == field && query.Direction == "desc" {
+		direction = "asc"
+	}
+	values := url.Values{
+		"direction": {direction},
+		"sort":      {field},
+	}
+	if query.Kind != "" {
+		values.Set("kind", string(query.Kind))
+	}
+	if query.Search != "" {
+		values.Set("query", query.Search)
+	}
+	return "/monitor/applications?" + values.Encode()
 }
 
 func parseApplicationsQuery(request *http.Request) (appstatus.Query, error) {

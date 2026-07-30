@@ -136,7 +136,10 @@ FORM: Responsive signal ledger with a right-side detail task on capable clients 
 <button type="submit" name="direction" value="down" {{if not .CanMoveDown}}disabled{{end}} aria-label="{{t $.Locale "website.move_down"}} {{.Name}}"><svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
 </form>
 {{else}}
+<div class="website-row-actions">
+{{if eq .Kind "http"}}<a class="website-row-external" href="{{.URL}}" target="_blank" rel="noopener noreferrer" data-native aria-label="{{t $.Locale "website.open_in_new_tab"}} {{.Name}}" title="{{t $.Locale "website.open_in_new_tab"}}"><span data-lucide="external-link" aria-hidden="true"></span></a>{{end}}
 <a class="website-row-action" href="/monitor/websites/{{.ID}}" data-task-link aria-label="{{t $.Locale "website.view_details"}} {{.Name}}"><svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></a>
+</div>
 {{end}}
 </article>
 {{else}}

@@ -129,7 +129,8 @@ func TestApplicationShellRendersWebsiteSignalCopy(t *testing.T) {
 				WebsiteVerifying: 1,
 			},
 			want: []string{
-				`data-shell-website-status`,
+				`aria-label="Current status"`,
+				`data-shell-attention-item="websites"`,
 				`data-state="down"`,
 				`2 websites down`,
 				`1 website under verification`,
@@ -140,12 +141,14 @@ func TestApplicationShellRendersWebsiteSignalCopy(t *testing.T) {
 			name: "quiet normal state",
 			data: applicationShellData{
 				Locale:       localeEnglishUS,
+				StatusState:  "current",
 				WebsiteState: "up",
 			},
 			want: []string{
-				`data-state="up"`,
-				`Website monitoring normal`,
-				`No failures or pending verifications`,
+				`aria-label="Current status"`,
+				`data-shell-attention-empty`,
+				`Nothing needs attention`,
+				`data-shell-attention-item="websites" hidden`,
 			},
 			notWanted: "websites down",
 		},

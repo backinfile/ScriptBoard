@@ -389,7 +389,17 @@ async function assertApplicationMonitoring(page, baseURL) {
   await page.locator('[data-running-applications-list] [data-kind="docker"]').filter({ hasText: "api-prod" }).waitFor();
   await page.getByText("Host Agent", { exact: true }).waitFor();
   assert.equal(await page.locator('.applications-sort-fields select[name="sort"]').inputValue(), "cpu");
+  assert.equal(await page.locator('th[aria-sort="descending"] [data-application-sort="cpu"]').count(), 1);
   assert.match((await page.locator("[data-running-applications-list] [data-application-row]").first().textContent()).trim(), /api-prod/);
+  const memorySort = page.locator('[data-application-sort="memory"]');
+  await memorySort.click();
+  await page.waitForFunction(() => new URL(location.href).searchParams.get("sort") === "memory" &&
+    new URL(location.href).searchParams.get("direction") === "desc");
+  assert.equal(await page.locator('th[aria-sort="descending"] [data-application-sort="memory"]').count(), 1);
+  await memorySort.click();
+  await page.waitForFunction(() => new URL(location.href).searchParams.get("sort") === "memory" &&
+    new URL(location.href).searchParams.get("direction") === "asc");
+  assert.equal(await page.locator('th[aria-sort="ascending"] [data-application-sort="memory"]').count(), 1);
   assert.equal(await page.locator('[data-running-applications-list] [data-kind="docker"] .application-kind').count(), 2);
   assert.equal(
     await page.locator('[data-running-applications-list] [data-kind="host"] .application-kind').count(),
@@ -494,6 +504,99 @@ async function assertApplicationMonitoring(page, baseURL) {
   await page.setViewportSize({ width: 1440, height: 1000 });
 }
 
+async function assertWebsiteMonitoring(page, baseURL) {
+  const monitorName = "Production API";
+  const targetURL = `${baseURL}/missing-scriptboard-monitor-target`;
+  await page.goto(`${baseURL}/monitor/websites/new`);
+  const form = page.locator("[data-website-monitor-form]");
+  await form.locator('input[name="name"]').fill(monitorName);
+  await form.locator('select[name="kind"]').selectOption("http");
+  await form.locator('input[name="url"]').fill(targetURL);
+  await form.locator('select[name="frequency_seconds"]').selectOption("30");
+  await form.locator('select[name="timeout_seconds"]').selectOption("3");
+  await Promise.all([
+    page.waitForURL(url => /^\/monitor\/websites\/[^/]+$/.test(url.pathname) && !url.pathname.endsWith("/new")),
+    form.locator('button[type="submit"]').click(),
+  ]);
+  const detailURL = page.url();
+  await page.waitForFunction(async url => {
+    const response = await fetch(`${url}/data`, { cache: "no-store" });
+    if (!response.ok) return false;
+    const snapshot = await response.json();
+    return Number(snapshot.CheckedToken || snapshot.checkedToken || 0) > 0;
+  }, detailURL);
+
+  await page.goto(`${baseURL}/monitor/websites`);
+  const row = page.locator("[data-monitor-id]").filter({ hasText: monitorName });
+  await row.waitFor();
+  const rowExternal = row.locator(".website-row-external");
+  assert.equal(await rowExternal.getAttribute("target"), "_blank");
+  assert.equal(await rowExternal.getAttribute("rel"), "noopener noreferrer");
+  const popupPromise = page.waitForEvent("popup");
+  await rowExternal.click();
+  const popup = await popupPromise;
+  await popup.waitForLoadState("domcontentloaded");
+  assert.equal(popup.url(), targetURL);
+  await popup.close();
+
+  await row.locator(".website-row-action").click();
+  const panel = page.locator("[data-task-panel]");
+  const detail = panel.locator("[data-website-detail]");
+  await detail.waitFor();
+  assert.equal(Math.round(await panel.evaluate(element => element.getBoundingClientRect().width)), 760);
+  assert.equal(await detail.locator(".website-open-external").getAttribute("target"), "_blank");
+  const originalToken = await detail.getAttribute("data-monitor-checked");
+  const scrollBefore = await detail.locator("[data-website-detail-scroll]").evaluate(element => {
+    element.scrollTop = Math.min(360, element.scrollHeight - element.clientHeight);
+    window.__websiteTaskHost = document.querySelector(".task-panel-host");
+    window.__websiteTaskPanel = document.querySelector("[data-task-panel]");
+    return element.scrollTop;
+  });
+  await detail.locator('[data-website-focus-key="check"]').click();
+  await page.waitForFunction(token => {
+    const current = document.querySelector("[data-website-detail]");
+    return current && current.dataset.monitorChecked !== token;
+  }, originalToken, { timeout: 20000 });
+  const preserved = await page.evaluate(() => {
+    const detailRoot = document.querySelector("[data-website-detail]");
+    const scroller = detailRoot.querySelector("[data-website-detail-scroll]");
+    return {
+      sameHost: window.__websiteTaskHost === document.querySelector(".task-panel-host"),
+      samePanel: window.__websiteTaskPanel === document.querySelector("[data-task-panel]"),
+      hostCount: document.querySelectorAll(".task-panel-host").length,
+      scrollTop: scroller.scrollTop,
+      focusKey: document.activeElement?.dataset.websiteFocusKey || "",
+      refreshed: detailRoot.querySelector("[data-website-refresh-status]")?.textContent.trim() || "",
+    };
+  });
+  assert.equal(preserved.sameHost, true);
+  assert.equal(preserved.samePanel, true);
+  assert.equal(preserved.hostCount, 1);
+  assert.ok(Math.abs(preserved.scrollTop - scrollBefore) <= 1, JSON.stringify({ scrollBefore, preserved }));
+  assert.equal(preserved.focusKey, "check");
+  assert.match(preserved.refreshed, /Updated in the current drawer/);
+  await assertNoHorizontalOverflow(page, "Website detail drawer desktop");
+  await page.keyboard.press("Escape");
+  await panel.waitFor({ state: "detached" });
+  await page.reload();
+  const refreshedRow = page.locator("[data-monitor-id]").filter({ hasText: monitorName });
+  await refreshedRow.locator(".website-row-action").click();
+  await panel.locator("[data-website-detail]").waitFor();
+  assert.equal(await panel.locator('[data-website-detail-section="incident"].website-detail-incident--down').count(), 1);
+  await saveSnapshot(page, "website-monitor-detail");
+  await page.keyboard.press("Escape");
+  await panel.waitFor({ state: "detached" });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(detailURL);
+  await page.locator("[data-website-detail]").waitFor();
+  assert.equal(await page.locator(".website-open-external").getAttribute("target"), "_blank");
+  await assertNoHorizontalOverflow(page, "Website detail mobile");
+  await assertNoTableHorizontalScrollbar(page, "Website detail mobile");
+  await saveSnapshot(page, "website-monitor-detail-mobile");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+}
+
 async function assertStatusDisplaySettings(page, baseURL) {
   await page.goto(`${baseURL}/settings/display`);
   const settings = page.locator("[data-display-settings]");
@@ -571,6 +674,7 @@ async function assertStatusDisplaySettings(page, baseURL) {
     }
 
     await assertApplicationMonitoring(page, fixture.baseURL);
+    await assertWebsiteMonitoring(page, fixture.baseURL);
     await assertStatusDisplaySettings(page, fixture.baseURL);
 
     const status = await page.evaluate(async () => {

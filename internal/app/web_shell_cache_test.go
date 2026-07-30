@@ -1,12 +1,84 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestApplicationShellCondensesAQuietHostToOneAttentionSummary(t *testing.T) {
+	var rendered bytes.Buffer
+	err := applicationShellTemplate.Execute(&rendered, applicationShellData{
+		Locale:       localeEnglishUS,
+		Environment:  "Local",
+		Status:       "Data current",
+		StatusState:  "current",
+		WebsiteState: "up",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	page := rendered.String()
+	for _, expected := range []string{
+		`aria-label="Current status"`,
+		`<strong>Current status</strong>`,
+		`data-shell-attention`,
+		`data-shell-attention-empty`,
+		`data-shell-attention-item="host" hidden`,
+		`data-shell-attention-item="runs" hidden`,
+		`data-shell-attention-item="websites" hidden`,
+		`data-shell-attention-item="applications" hidden`,
+	} {
+		if !bytes.Contains(rendered.Bytes(), []byte(expected)) {
+			t.Fatalf("quiet attention summary is missing %q: %s", expected, page)
+		}
+	}
+}
+
+func TestApplicationShellShowsOnlyCurrentAttentionItems(t *testing.T) {
+	var rendered bytes.Buffer
+	err := applicationShellTemplate.Execute(&rendered, applicationShellData{
+		Locale:                    localeEnglishUS,
+		Environment:               "Remote",
+		Status:                    "Data stale",
+		StatusState:               "stale",
+		ActiveRuns:                2,
+		WebsiteState:              "down",
+		WebsiteDown:               1,
+		WebsiteVerifying:          3,
+		StoppedPinnedApplications: 4,
+		ApplicationIssueCount:     2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	page := rendered.String()
+	for _, expected := range []string{
+		`data-shell-attention-empty hidden`,
+		`data-shell-attention-item="host"`,
+		`data-shell-attention-item="runs"`,
+		`data-shell-attention-item="websites"`,
+		`data-shell-attention-item="applications"`,
+		`2 active Runs`,
+		`1 website down`,
+		`Stopped pinned applications 4`,
+		`Application collection issues 2`,
+	} {
+		if !bytes.Contains(rendered.Bytes(), []byte(expected)) {
+			t.Fatalf("attention summary is missing %q: %s", expected, page)
+		}
+	}
+	for _, item := range []string{"host", "runs", "websites", "applications"} {
+		if bytes.Contains(rendered.Bytes(), []byte(`data-shell-attention-item="`+item+`" hidden`)) {
+			t.Fatalf("attention item %q is unexpectedly hidden: %s", item, page)
+		}
+	}
+}
 
 type observedDoneContext struct {
 	context.Context

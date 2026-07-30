@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -164,6 +165,48 @@ func TestApplicationsPageListsDeterministicProbeDataAndPersistsPin(t *testing.T)
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusBadRequest || response.Header.Get("Cache-Control") != "no-store" {
 		t.Fatalf("invalid applications query status=%d cache=%q", response.StatusCode, response.Header.Get("Cache-Control"))
+	}
+}
+
+func TestApplicationsPageSortHeadersToggleDirectionAndPreserveFilters(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{
+		ManagedRoot: filepath.Join(root, "managed"),
+		StateRoot:   filepath.Join(root, "state"),
+		ApplicationProbe: applicationFixtureProbe{snapshot: appstatus.RawSnapshot{
+			CollectedAt: time.Now().UTC(),
+			Processes: []appstatus.RawProcess{{
+				PID: 201, CreatedAt: time.Now().UTC().Add(-time.Hour), Name: "Host Agent",
+				ExecutablePath: "/opt/host-agent", ResidentMemoryBytes: 256 << 20,
+			}},
+		}},
+	})
+
+	response, err := client.Get(serverURL + "/monitor/applications?kind=host&query=agent&sort=memory&direction=desc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.StatusCode, page)
+	}
+
+	rendered := string(page)
+	for _, expected := range []string{
+		`class="application-running-table"`,
+		`aria-sort="descending"`,
+		`data-application-sort="memory" href="/monitor/applications?direction=asc&amp;kind=host&amp;query=agent&amp;sort=memory"`,
+		`data-application-sort="cpu" href="/monitor/applications?direction=desc&amp;kind=host&amp;query=agent&amp;sort=cpu"`,
+	} {
+		if !strings.Contains(rendered, expected) {
+			t.Fatalf("sortable application table is missing %q: %s", expected, rendered)
+		}
 	}
 }
 
