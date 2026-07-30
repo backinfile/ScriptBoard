@@ -18,13 +18,13 @@ FORM: Flat measurement rails and a responsive record ledger; no control-plane ac
 <main class="workspace applications-page" data-applications-page data-applications-url="/monitor/applications/data" data-refresh-unavailable="{{t .Locale "applications.refresh_unavailable"}}">
   <header class="page-heading applications-heading">
     <div>
-      <p class="eyebrow">{{t .Locale "applications.eyebrow"}}</p>
+      <p class="page-eyebrow">{{t .Locale "applications.eyebrow"}}</p>
       <h1>{{t .Locale "applications.title"}}</h1>
       <p>{{t .Locale "applications.description"}}</p>
     </div>
   </header>
 
-  <dl class="applications-fact-strip" aria-label="{{t .Locale "applications.snapshot_facts"}}">
+  <dl class="fact-strip applications-fact-strip" aria-label="{{t .Locale "applications.snapshot_facts"}}">
     <div><dt>{{t .Locale "applications.host_count"}}</dt><dd>{{.HostCount}}</dd></div>
     <div><dt>{{t .Locale "applications.docker_count"}}</dt><dd>{{if .DockerAvailable}}{{.DockerCount}}{{else}}<span class="application-source-unavailable">{{t .Locale "applications.source_unavailable"}}</span>{{end}}</dd></div>
     <div><dt>{{t .Locale "applications.pinned_count"}}</dt><dd>{{len .Pinned}}</dd></div>
@@ -32,7 +32,7 @@ FORM: Flat measurement rails and a responsive record ledger; no control-plane ac
   </dl>
 
   <section class="applications-section" aria-labelledby="pinned-applications-heading">
-    <header class="applications-section-heading">
+    <header class="section-heading applications-section-heading">
       <div><p class="section-index">{{t .Locale "applications.focus"}}</p><h2 id="pinned-applications-heading">{{t .Locale "applications.pinned"}}</h2><p>{{t .Locale "applications.pinned_description"}}</p></div>
       <div class="applications-refresh">
         <span><strong>{{t .Locale "applications.live_on"}}</strong><time datetime="{{machineTime .CollectedAt}}" data-local-time data-applications-refresh-time="pinned">{{localTime .Locale .CollectedAt}}</time><small>{{t .Locale "applications.every_five_seconds"}}</small></span>
@@ -73,7 +73,7 @@ FORM: Flat measurement rails and a responsive record ledger; no control-plane ac
   </section>
 
   <section class="applications-section" id="running-applications" aria-labelledby="running-applications-heading" data-running-applications>
-    <header class="applications-section-heading">
+    <header class="section-heading applications-section-heading">
       <div><p class="section-index">{{t .Locale "applications.all"}}</p><h2 id="running-applications-heading">{{t .Locale "applications.running_title"}}</h2><p>{{t .Locale "applications.running_description"}}</p></div>
       <div class="applications-refresh">
         <span><strong>{{t .Locale "applications.live_off"}}</strong><time datetime="{{machineTime .CollectedAt}}" data-local-time data-applications-refresh-time="running">{{localTime .Locale .CollectedAt}}</time><small>{{t .Locale "applications.last_snapshot"}}</small></span>
@@ -81,7 +81,7 @@ FORM: Flat measurement rails and a responsive record ledger; no control-plane ac
       </div>
     </header>
 
-    <form class="applications-toolbar" method="get" action="/monitor/applications">
+    <form class="filter-toolbar applications-toolbar" method="get" action="/monitor/applications">
       <label class="applications-search"><span data-lucide="search" aria-hidden="true"></span><span class="sr-only">{{t .Locale "common.search"}}</span><input type="search" name="query" value="{{.Query.Search}}" placeholder="{{t .Locale "applications.search_placeholder"}}"></label>
       <fieldset class="applications-kind-switch">
         <legend class="sr-only">{{t .Locale "applications.kind"}}</legend>

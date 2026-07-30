@@ -16,13 +16,13 @@ FORM: Responsive signal ledger with a right-side detail task on capable clients 
 </head>
 <body>
 <main class="workspace website-monitor-page" data-website-monitoring data-status-url="{{.DataURL}}" data-refresh-failed="{{t .Locale "website.refresh_failed"}}" data-counts-token="{{.Counts.Up}}:{{.Counts.Verifying}}:{{.Counts.Down}}:{{.Counts.Paused}}:{{.NeedsCare}}:{{len .Alerts}}" {{if .Reorder}}data-reorder-url="/monitor/websites/reorder" data-csrf-token="{{.CSRFToken}}" data-reorder-saving="{{t .Locale "website.reorder_saving"}}" data-reorder-saved="{{t .Locale "website.reorder_saved"}}" data-reorder-failed="{{t .Locale "website.reorder_failed"}}"{{end}}>
-<header class="website-page-heading">
+<header class="page-heading website-page-heading">
 <div>
-<p class="website-kicker">{{t .Locale "website.eyebrow"}}</p>
+<p class="page-eyebrow">{{t .Locale "website.eyebrow"}}</p>
 <h1>{{t .Locale "website.title"}}</h1>
 <p>{{t .Locale "website.description"}}</p>
 </div>
-<div class="website-heading-actions">
+<div class="heading-actions website-heading-actions">
 <a class="button" href="/monitor/websites/nginx" data-task-link>
 <svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/><path d="m14.5 14.5 3 3"/></svg>
 {{t .Locale "website.scan_nginx"}}
@@ -46,7 +46,7 @@ FORM: Responsive signal ledger with a right-side detail task on capable clients 
 <p>{{if gt .Counts.Down 0}}{{.Counts.Down}} {{t .Locale "website.confirmed_down"}}{{end}}{{if and (gt .Counts.Down 0) (gt .Counts.Verifying 0)}} {{end}}{{if gt .Counts.Verifying 0}}{{.Counts.Verifying}} {{t .Locale "website.verifying_count"}}{{end}}{{if eq .NeedsCare 0}}{{t .Locale "website.recent_checks_healthy"}}{{end}}</p>
 </div>
 </div>
-<dl class="website-counts">
+<dl class="fact-strip website-counts">
 <div><dt>{{t .Locale "website.state.up"}}</dt><dd>{{.Counts.Up}}</dd></div>
 <div><dt>{{t .Locale "website.state.verifying"}}</dt><dd>{{.Counts.Verifying}}</dd></div>
 <div><dt>{{t .Locale "website.state.down"}}</dt><dd>{{.Counts.Down}}</dd></div>
@@ -83,7 +83,7 @@ FORM: Responsive signal ledger with a right-side detail task on capable clients 
 </section>
 <p class="website-reorder-status" data-reorder-status aria-live="polite"></p>
 {{else}}
-<form class="website-filters" method="get" action="/monitor/websites">
+<form class="filter-toolbar website-filters" method="get" action="/monitor/websites">
 <label>{{t .Locale "website.filter.state"}}
 <select name="state">
 <option value="">{{t .Locale "website.filter.all_states"}}</option>
@@ -149,7 +149,6 @@ FORM: Responsive signal ledger with a right-side detail task on capable clients 
 <svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
 <h2>{{t .Locale "website.empty_title"}}</h2>
 <p>{{t .Locale "website.empty_description"}}</p>
-<div><a class="button" href="/monitor/websites/new" data-task-link>{{t .Locale "website.add"}}</a><a class="button" href="/monitor/websites/nginx" data-task-link>{{t .Locale "website.scan_nginx"}}</a></div>
 </section>
 {{end}}
 </main>

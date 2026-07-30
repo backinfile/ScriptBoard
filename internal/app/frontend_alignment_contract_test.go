@@ -85,7 +85,10 @@ func TestApplicationsPageExposesLiveFactsAndExpandableObservationDetails(t *test
 		t.Fatal(err)
 	}
 	requireAlignmentFragments(t, page,
-		`class="applications-fact-strip"`,
+		`class="page-eyebrow"`,
+		`class="fact-strip applications-fact-strip"`,
+		`class="section-heading applications-section-heading"`,
+		`class="filter-toolbar applications-toolbar"`,
 		`data-pinned-live-fact data-state="on"`,
 		`>Pinned live updates<`,
 		`data-application-mode="pinned"`,
@@ -146,7 +149,15 @@ func TestApplicationsPageExposesLiveFactsAndExpandableObservationDetails(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	requireAlignmentFragments(t, stylesheet, `scrollbar-gutter: stable`)
+	requireAlignmentFragments(t, stylesheet,
+		`scrollbar-gutter: stable`,
+		`.fact-strip {`,
+		`.filter-toolbar {`,
+		`.pinned-application__identity h3 {`,
+		`overflow-wrap: anywhere;`,
+		`.application-drawer-host {`,
+		`@media (max-width: 1400px) {`,
+	)
 }
 
 func TestWebsiteCreateEditNginxAndDetailArePanelSafeTasks(t *testing.T) {
@@ -163,7 +174,28 @@ func TestWebsiteCreateEditNginxAndDetailArePanelSafeTasks(t *testing.T) {
 		},
 	})
 
-	response, err := client.Get(serverURL + "/monitor/websites/new")
+	response, err := client.Get(serverURL + "/monitor/websites")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireAlignmentFragments(t, listPage,
+		`class="page-heading website-page-heading"`,
+		`class="page-eyebrow"`,
+		`class="heading-actions website-heading-actions"`,
+	)
+	if count := bytes.Count(listPage, []byte(`href="/monitor/websites/new"`)); count != 1 {
+		t.Fatalf("website add action count=%d, want one page-level action", count)
+	}
+	if count := bytes.Count(listPage, []byte(`href="/monitor/websites/nginx"`)); count != 1 {
+		t.Fatalf("website scan action count=%d, want one page-level action", count)
+	}
+
+	response, err = client.Get(serverURL + "/monitor/websites/new")
 	if err != nil {
 		t.Fatal(err)
 	}
