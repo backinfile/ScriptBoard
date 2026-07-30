@@ -40,7 +40,7 @@ type websiteMonitorPageView struct {
 	SecurityDescription   string
 	Certificate           websitemonitor.Certificate
 	SortOrder             int
-	Availability          []string
+	Availability          []websiteMonitorAvailabilityBucketView
 	FailureCount          int
 	NextCheckAt           time.Time
 	IncidentStartedAt     time.Time
@@ -125,6 +125,8 @@ type websiteMonitorAvailabilityBucketView struct {
 	StartedAt        time.Time
 	EndedAt          time.Time
 	State            websitemonitor.Availability
+	Tone             string
+	Provisional      bool
 	Title            string
 	TotalChecks      int
 	SuccessfulChecks int
@@ -562,16 +564,16 @@ func (a *App) newWebsiteMonitorDetailDataView(
 		[]websiteMonitorAvailabilityBucketView, 0, len(snapshot.Availability),
 	)
 	for _, bucket := range snapshot.Availability {
-		endedAt := bucket.StartedAt.Add(20 * time.Minute)
-		result.DetailAvailability = append(result.DetailAvailability, websiteMonitorAvailabilityBucketView{
-			StartedAt: bucket.StartedAt, EndedAt: endedAt, State: bucket.State,
-			Title: fmt.Sprintf("%s–%s · %s",
-				bucket.StartedAt.Format("2006-01-02 15:04"),
-				endedAt.Format("15:04"),
-				websiteAvailabilityLabel(locale, bucket.State)),
-			TotalChecks: bucket.TotalChecks, SuccessfulChecks: bucket.SuccessfulChecks,
-			FailedChecks: bucket.FailedChecks,
-		})
+		result.DetailAvailability = append(
+			result.DetailAvailability,
+			newWebsiteMonitorAvailabilityBucketView(
+				locale,
+				bucket,
+				20*time.Minute,
+				snapshot.Monitor.Latest.CheckedAt,
+				snapshot.Monitor.State,
+			),
+		)
 	}
 	return result
 }
@@ -954,16 +956,71 @@ func (a *App) newWebsiteMonitorPageView(ctx context.Context, monitor websitemoni
 		monitor.Latest.Certificate.DaysRemaining <= 14
 	history, err := a.websiteMonitor.Availability24h(ctx, monitor.ID)
 	if err != nil || len(history) != 48 {
-		history = make([]websitemonitor.Availability, 48)
+		history = make([]websitemonitor.AvailabilityBucket, 48)
 	}
-	view.Availability = make([]string, len(history))
-	for index, bucket := range history {
-		if bucket == "" {
-			bucket = websitemonitor.AvailabilityGap
+	view.Availability = make([]websiteMonitorAvailabilityBucketView, len(history))
+	for index := range history {
+		if history[index].State == "" {
+			history[index].State = websitemonitor.AvailabilityGap
 		}
-		view.Availability[index] = string(bucket)
+		view.Availability[index] = newWebsiteMonitorAvailabilityBucketView(
+			locale,
+			history[index],
+			30*time.Minute,
+			monitor.Latest.CheckedAt,
+			monitor.State,
+		)
 	}
 	return view
+}
+
+func newWebsiteMonitorAvailabilityBucketView(
+	locale webLocale,
+	bucket websitemonitor.AvailabilityBucket,
+	bucketSize time.Duration,
+	latestCheckedAt time.Time,
+	monitorState websitemonitor.State,
+) websiteMonitorAvailabilityBucketView {
+	endedAt := bucket.StartedAt.Add(bucketSize)
+	tone := string(bucket.State)
+	title := websiteAvailabilityLabel(locale, bucket.State)
+	if !bucket.StartedAt.IsZero() {
+		title = fmt.Sprintf(
+			"%s–%s · %s",
+			bucket.StartedAt.Format("2006-01-02 15:04"),
+			endedAt.Format("15:04"),
+			title,
+		)
+	}
+	if bucket.Provisional {
+		provisionalLabel := websiteAvailabilityLabel(locale, bucket.State)
+		switch monitorState {
+		case websitemonitor.StateUp, websitemonitor.StateVerifying, websitemonitor.StateDown:
+			tone = string(monitorState)
+			provisionalLabel = websiteStateLabel(locale, monitorState)
+		}
+		title = fmt.Sprintf(
+			webText(locale, "website.availability_provisional"),
+			provisionalLabel,
+			websiteAvailabilityCheckedAtLabel(locale, latestCheckedAt),
+		)
+	}
+	return websiteMonitorAvailabilityBucketView{
+		StartedAt: bucket.StartedAt, EndedAt: endedAt, State: bucket.State,
+		Tone: tone, Provisional: bucket.Provisional, Title: title,
+		TotalChecks: bucket.TotalChecks, SuccessfulChecks: bucket.SuccessfulChecks,
+		FailedChecks: bucket.FailedChecks,
+	}
+}
+
+func websiteAvailabilityCheckedAtLabel(locale webLocale, value time.Time) string {
+	if value.IsZero() {
+		return webText(locale, "website.never_checked")
+	}
+	if locale == localeSimplifiedChinese {
+		return value.Local().Format("2006年01月02日 15:04:05")
+	}
+	return value.Local().Format("Jan 2, 2006 15:04:05")
 }
 
 func websiteStateLabel(locale webLocale, state websitemonitor.State) string {

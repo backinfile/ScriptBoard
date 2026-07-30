@@ -455,7 +455,7 @@ func TestAvailabilityUsesPersistedChecksAndMaintainsBoundedHistory(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(buckets) != 48 || buckets[47] != AvailabilityUp {
+	if len(buckets) != 48 || buckets[47].State != AvailabilityUp {
 		t.Fatalf("availability = %#v", buckets)
 	}
 	var total, successful, average int
@@ -489,6 +489,165 @@ func TestAvailabilityUsesPersistedChecksAndMaintainsBoundedHistory(t *testing.T)
 		now.Add(-30*24*time.Hour).Truncate(time.Hour).UnixNano()).Scan(&oldAggregates)
 	if oldResults != 0 || oldAggregates != 0 {
 		t.Fatalf("retention left raw=%d aggregate=%d", oldResults, oldAggregates)
+	}
+}
+
+func TestAvailability24hCarriesRecentStateIntoCurrentBucketUntilFirstCheck(t *testing.T) {
+	now := time.Date(2026, time.July, 29, 12, 29, 59, 0, time.UTC)
+	manager := newTestManager(t, Options{
+		Now: func() time.Time { return now },
+		Probe: probeFunc(func(context.Context, Config) Evidence {
+			return Evidence{Success: true, StatusCode: http.StatusOK}
+		}),
+	})
+	created, err := manager.Create(context.Background(), Config{
+		Name: "边界网站", Kind: KindHTTP, URL: "https://boundary.example/",
+		Frequency: time.Minute, Timeout: 10 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForMonitor(t, manager, created.ID, func(value Monitor) bool {
+		return value.State == StateUp
+	})
+
+	now = time.Date(2026, time.July, 29, 12, 30, 0, 0, time.UTC)
+	buckets, err := manager.Availability24h(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if previous := buckets[len(buckets)-2]; previous.State != AvailabilityUp ||
+		previous.Provisional {
+		t.Fatalf("previous bucket = %#v, want real up", previous)
+	}
+	if historical := buckets[len(buckets)-3]; historical.State != AvailabilityGap ||
+		historical.Provisional {
+		t.Fatalf("historical empty bucket = %#v, want a real gap", historical)
+	}
+	if current := buckets[len(buckets)-1]; current.State != AvailabilityUp ||
+		!current.Provisional || current.TotalChecks != 0 {
+		t.Fatalf("current bucket = %#v, want provisional up without a fabricated check", current)
+	}
+
+	now = time.Date(2026, time.July, 29, 12, 30, 1, 0, time.UTC)
+	if _, err := manager.db.Exec(`INSERT INTO website_check_results
+		(monitor_id, checked_at, success, status_code)
+		VALUES (?, ?, 1, ?)`, created.ID, now.UnixNano(), http.StatusOK); err != nil {
+		t.Fatal(err)
+	}
+	buckets, err = manager.Availability24h(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current := buckets[len(buckets)-1]; current.State != AvailabilityUp ||
+		current.Provisional || current.TotalChecks != 1 {
+		t.Fatalf("current bucket after its first check = %#v, want real up", current)
+	}
+}
+
+func TestAvailability24hLeavesCurrentBucketGapWhenLatestCheckIsStale(t *testing.T) {
+	now := time.Date(2026, time.July, 29, 12, 29, 0, 0, time.UTC)
+	manager := newTestManager(t, Options{
+		Now: func() time.Time { return now },
+		Probe: probeFunc(func(context.Context, Config) Evidence {
+			return Evidence{Success: true, StatusCode: http.StatusOK}
+		}),
+	})
+	created, err := manager.Create(context.Background(), Config{
+		Name: "逾期网站", Kind: KindHTTP, URL: "https://stale.example/",
+		Frequency: time.Minute, Timeout: 10 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForMonitor(t, manager, created.ID, func(value Monitor) bool {
+		return value.State == StateUp
+	})
+
+	now = time.Date(2026, time.July, 29, 12, 31, 0, 1, time.UTC)
+	buckets, err := manager.Availability24h(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current := buckets[len(buckets)-1]; current.State != AvailabilityGap ||
+		current.Provisional || current.TotalChecks != 0 {
+		t.Fatalf("stale current bucket = %#v, want a real gap", current)
+	}
+}
+
+func TestAvailability24hDoesNotCarryPendingOrPausedMonitorState(t *testing.T) {
+	now := time.Date(2026, time.July, 29, 12, 29, 59, 0, time.UTC)
+	manager := newTestManager(t, Options{
+		Now: func() time.Time { return now },
+		Probe: probeFunc(func(context.Context, Config) Evidence {
+			return Evidence{Success: true, StatusCode: http.StatusOK}
+		}),
+	})
+	created, err := manager.Create(context.Background(), Config{
+		Name: "非活动网站", Kind: KindHTTP, URL: "https://inactive.example/",
+		Frequency: time.Minute, Timeout: 10 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForMonitor(t, manager, created.ID, func(value Monitor) bool {
+		return value.State == StateUp
+	})
+
+	now = time.Date(2026, time.July, 29, 12, 30, 0, 0, time.UTC)
+	for _, state := range []State{StatePending, StatePaused} {
+		if _, err := manager.db.Exec(
+			`UPDATE website_monitors SET state = ? WHERE id = ?`,
+			state, created.ID,
+		); err != nil {
+			t.Fatal(err)
+		}
+		buckets, err := manager.Availability24h(context.Background(), created.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if current := buckets[len(buckets)-1]; current.State != AvailabilityGap ||
+			current.Provisional {
+			t.Fatalf("%s current bucket = %#v, want a real gap", state, current)
+		}
+	}
+}
+
+func TestAvailability24hCarriesRecentFailureAsProvisionalDown(t *testing.T) {
+	now := time.Date(2026, time.July, 29, 12, 29, 59, 0, time.UTC)
+	manager := newTestManager(t, Options{
+		Now:        func() time.Time { return now },
+		RetryDelay: time.Hour,
+		Probe: probeFunc(func(context.Context, Config) Evidence {
+			return Evidence{
+				ErrorCategory: "connect",
+				Summary:       "连接失败",
+			}
+		}),
+	})
+	created, err := manager.Create(context.Background(), Config{
+		Name: "失败边界网站", Kind: KindHTTP, URL: "https://failure-boundary.example/",
+		Frequency: time.Minute, Timeout: 10 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForMonitor(t, manager, created.ID, func(value Monitor) bool {
+		return value.State == StateVerifying
+	})
+
+	now = time.Date(2026, time.July, 29, 12, 30, 0, 0, time.UTC)
+	buckets, err := manager.Availability24h(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if previous := buckets[len(buckets)-2]; previous.State != AvailabilityDown ||
+		previous.Provisional {
+		t.Fatalf("previous bucket = %#v, want real down", previous)
+	}
+	if current := buckets[len(buckets)-1]; current.State != AvailabilityDown ||
+		!current.Provisional || current.TotalChecks != 0 {
+		t.Fatalf("current bucket = %#v, want provisional down", current)
 	}
 }
 
@@ -590,6 +749,64 @@ func TestDetailSnapshotAggregatesTwentyMinuteHistoryAndActiveIncident(t *testing
 	}
 	if !snapshot.Monitor.NextCheckAt.Equal(nextCheckAt) {
 		t.Fatalf("monitor next check = %v, want %v", snapshot.Monitor.NextCheckAt, nextCheckAt)
+	}
+}
+
+func TestDetailSnapshotCarriesRecentStateIntoCurrentBucketWithoutChangingStatistics(t *testing.T) {
+	now := time.Date(2026, time.July, 29, 12, 39, 59, 0, time.UTC)
+	manager := newTestManager(t, Options{
+		Now: func() time.Time { return now },
+		Probe: probeFunc(func(context.Context, Config) Evidence {
+			return Evidence{
+				Success: true, StatusCode: http.StatusOK,
+				Latency: 25 * time.Millisecond,
+			}
+		}),
+	})
+	created, err := manager.Create(context.Background(), Config{
+		Name: "详情边界网站", Kind: KindHTTP, URL: "https://detail-boundary.example/",
+		Frequency: time.Minute, Timeout: 10 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForMonitor(t, manager, created.ID, func(value Monitor) bool {
+		return value.State == StateUp
+	})
+
+	now = time.Date(2026, time.July, 29, 12, 40, 0, 0, time.UTC)
+	snapshot, err := manager.DetailSnapshot(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if previous := snapshot.Availability[len(snapshot.Availability)-2]; previous.State != AvailabilityUp ||
+		previous.Provisional {
+		t.Fatalf("previous detail bucket = %#v, want real up", previous)
+	}
+	if current := snapshot.Availability[len(snapshot.Availability)-1]; current.State != AvailabilityUp ||
+		!current.Provisional || current.TotalChecks != 0 {
+		t.Fatalf("current detail bucket = %#v, want provisional up", current)
+	}
+	if snapshot.TotalChecks != 1 || snapshot.SuccessfulChecks != 1 ||
+		snapshot.FailedChecks != 0 || snapshot.AvailabilityPercent != 100 ||
+		snapshot.AverageLatency != 25*time.Millisecond ||
+		snapshot.P95Latency != 25*time.Millisecond {
+		t.Fatalf("provisional bucket changed real statistics: %#v", snapshot)
+	}
+
+	now = time.Date(2026, time.July, 29, 12, 40, 1, 0, time.UTC)
+	if _, err := manager.db.Exec(`INSERT INTO website_check_results
+		(monitor_id, checked_at, success, status_code, latency_ms)
+		VALUES (?, ?, 1, ?, 30)`, created.ID, now.UnixNano(), http.StatusOK); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err = manager.DetailSnapshot(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current := snapshot.Availability[len(snapshot.Availability)-1]; current.State != AvailabilityUp ||
+		current.Provisional || current.TotalChecks != 1 {
+		t.Fatalf("current detail bucket after its first check = %#v, want real up", current)
 	}
 }
 

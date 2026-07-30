@@ -828,6 +828,14 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .website-availability__paused,
 .website-availability__pending { background: var(--faint) !important; }
 .website-availability__gap { background: var(--rule) !important; }
+.website-availability__provisional {
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 2px,
+    var(--surface) 2px 3px
+  ) !important;
+  background-size: 5px 5px;
+}
 .website-availability__axis { display: flex; justify-content: space-between; margin-top: 5px; color: var(--muted); font-size: .7rem; }
 
 .website-empty { display: grid; justify-items: start; gap: 9px; margin-top: 28px; padding: 30px 0; border-top: 1px solid var(--rule-strong); border-bottom: 1px solid var(--rule); }

@@ -121,7 +121,7 @@ FORM: Responsive signal ledger with a right-side detail task on capable clients 
 <div><span>{{.ScopeLabel}}</span><span>{{.MethodLabel}}</span>{{if .TLSAttention}}<span class="website-attention">{{t $.Locale "website.certificate_expiring"}}</span>{{end}}</div>
 </div>
 <div class="website-history-cell">
-<div class="website-availability" aria-label="{{.Name}} {{t $.Locale "website.availability_aria"}}">{{range .Availability}}<span class="website-availability__{{.}}"></span>{{end}}</div>
+<div class="website-availability" aria-label="{{.Name}} {{t $.Locale "website.availability_aria"}}">{{range .Availability}}<span class="website-availability__{{.Tone}}{{if .Provisional}} website-availability__provisional{{end}}" title="{{.Title}}" {{if .Provisional}}role="img" aria-label="{{.Title}}"{{else}}aria-hidden="true"{{end}}></span>{{end}}</div>
 <div class="website-availability__axis"><span>{{t $.Locale "website.hours_ago_24"}}</span><span>{{t $.Locale "website.hours_ago_12"}}</span><span>{{t $.Locale "website.now"}}</span></div>
 </div>
 <div class="website-evidence">

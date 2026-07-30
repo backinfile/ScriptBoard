@@ -144,12 +144,15 @@ const (
 	AvailabilityDown Availability = "down"
 )
 
-// AvailabilityBucket describes one twenty-minute segment in a detail
-// snapshot. A failed check wins the bucket state so a short outage remains
-// visible even when a later check recovered inside the same segment.
+// AvailabilityBucket describes one time segment in an availability history.
+// A failed check wins the bucket state so a short outage remains visible even
+// when a later check recovered inside the same segment. Provisional marks the
+// current empty segment as a fresh continuation of the latest known state; it
+// never increases the check counters.
 type AvailabilityBucket struct {
 	StartedAt        time.Time
 	State            Availability
+	Provisional      bool
 	TotalChecks      int
 	SuccessfulChecks int
 	FailedChecks     int

@@ -34,7 +34,7 @@
 
 <section class="website-detail-section">
 <header><div><h2>{{t .Locale "website.ledger.last_24h"}}</h2><p>{{t .Locale "website.detail.last_24h_description"}}</p></div></header>
-<div class="website-availability website-availability--detail" aria-label="{{t .Locale "website.availability_aria"}}">{{range .DetailAvailability}}<span class="website-availability__{{.State}}" title="{{.Title}}"></span>{{end}}</div>
+<div class="website-availability website-availability--detail" aria-label="{{t .Locale "website.availability_aria"}}">{{range .DetailAvailability}}<span class="website-availability__{{.Tone}}{{if .Provisional}} website-availability__provisional{{end}}" title="{{.Title}}" {{if .Provisional}}role="img" aria-label="{{.Title}}"{{else}}aria-hidden="true"{{end}}></span>{{end}}</div>
 <div class="website-availability__axis"><span>{{t .Locale "website.hours_ago_24"}}</span><span>{{t .Locale "website.hours_ago_12"}}</span><span>{{t .Locale "website.now"}}</span></div>
 <dl class="website-detail-stats">
 <div><dt>{{t .Locale "website.detail.availability"}}</dt><dd>{{.AvailabilityLabel}}</dd></div>

@@ -791,17 +791,31 @@ func (m *Manager) maybeMaintain() {
 }
 
 // Availability24h returns 48 half-hour buckets backed by persisted check
-// results. A failed check wins within a bucket; absent checks remain gaps.
-func (m *Manager) Availability24h(ctx context.Context, monitorID string) ([]Availability, error) {
+// results. A failed check wins within a bucket; historical absent checks remain
+// gaps. The current empty bucket may provisionally continue a fresh latest
+// state without fabricating a check.
+func (m *Manager) Availability24h(ctx context.Context, monitorID string) ([]AvailabilityBucket, error) {
+	monitor, err := m.Get(ctx, monitorID)
+	if err != nil {
+		return nil, err
+	}
+	if monitor.DeletedAt != nil {
+		return nil, sql.ErrNoRows
+	}
+
 	const bucketSize = 30 * time.Minute
-	start := m.options.Now().UTC().Truncate(bucketSize).Add(-47 * bucketSize)
-	result := make([]Availability, 48)
+	now := m.options.Now().UTC()
+	start := now.Truncate(bucketSize).Add(-47 * bucketSize)
+	result := make([]AvailabilityBucket, 48)
 	for index := range result {
-		result[index] = AvailabilityGap
+		result[index] = AvailabilityBucket{
+			StartedAt: start.Add(time.Duration(index) * bucketSize),
+			State:     AvailabilityGap,
+		}
 	}
 	rows, err := m.db.QueryContext(ctx, `SELECT checked_at, success FROM website_check_results
-		WHERE monitor_id = ? AND checked_at >= ? ORDER BY checked_at`,
-		monitorID, start.UnixNano())
+		WHERE monitor_id = ? AND checked_at >= ? AND checked_at <= ? ORDER BY checked_at`,
+		monitorID, start.UnixNano(), now.UnixNano())
 	if err != nil {
 		return nil, err
 	}
@@ -816,13 +830,45 @@ func (m *Manager) Availability24h(ctx context.Context, monitorID string) ([]Avai
 		if index < 0 || index >= len(result) {
 			continue
 		}
+		bucket := &result[index]
+		bucket.TotalChecks++
 		if !success {
-			result[index] = AvailabilityDown
-		} else if result[index] == AvailabilityGap {
-			result[index] = AvailabilityUp
+			bucket.FailedChecks++
+			bucket.State = AvailabilityDown
+		} else {
+			bucket.SuccessfulChecks++
+			if bucket.State == AvailabilityGap {
+				bucket.State = AvailabilityUp
+			}
 		}
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	m.applyProvisionalAvailability(&result[len(result)-1], monitor, now)
+	return result, nil
+}
+
+func (m *Manager) applyProvisionalAvailability(
+	bucket *AvailabilityBucket,
+	monitor Monitor,
+	now time.Time,
+) {
+	if bucket == nil || bucket.TotalChecks != 0 ||
+		monitor.State == StatePending || monitor.State == StatePaused ||
+		monitor.Latest.CheckedAt.IsZero() {
+		return
+	}
+	freshFor := monitor.Config.Frequency + monitor.Config.Timeout + m.options.Tick
+	age := now.Sub(monitor.Latest.CheckedAt)
+	if freshFor <= 0 || age < 0 || age > freshFor {
+		return
+	}
+	bucket.State = AvailabilityDown
+	if monitor.Latest.Success {
+		bucket.State = AvailabilityUp
+	}
+	bucket.Provisional = true
 }
 
 // DetailSnapshot returns the complete 24-hour read model for one monitor.
@@ -916,6 +962,11 @@ func (m *Manager) DetailSnapshot(ctx context.Context, monitorID string) (DetailS
 	if err := rows.Close(); err != nil {
 		return DetailSnapshot{}, err
 	}
+	m.applyProvisionalAvailability(
+		&snapshot.Availability[len(snapshot.Availability)-1],
+		monitor,
+		now,
+	)
 
 	if snapshot.TotalChecks > 0 {
 		snapshot.AvailabilityPercent =

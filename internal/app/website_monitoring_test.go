@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,142 @@ import (
 	"scriptboard/internal/app"
 	"scriptboard/internal/websitemonitor"
 )
+
+func TestWebsiteAvailabilityRendersFreshCurrentBucketAsProvisional(t *testing.T) {
+	now := time.Date(2026, time.July, 29, 12, 59, 59, 0, time.UTC)
+	root := t.TempDir()
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{
+		ManagedRoot: filepath.Join(root, "managed"),
+		StateRoot:   filepath.Join(root, "state"),
+		WebsiteMonitorOptions: websitemonitor.Options{
+			Now: func() time.Time { return now },
+			Probe: websiteProbeFunc(func(_ context.Context, config websitemonitor.Config) websitemonitor.Evidence {
+				if config.Name == "复核边界网站" {
+					return websitemonitor.Evidence{
+						ErrorCategory: "connect", Summary: "连接失败",
+					}
+				}
+				return websitemonitor.Evidence{
+					Success: true, StatusCode: http.StatusNoContent,
+					Latency: 18 * time.Millisecond, Summary: "网站返回 HTTP 204",
+				}
+			}),
+		},
+	})
+	setWebsiteTestLocale(t, client, serverURL, "zh-CN")
+
+	response, err := client.Get(serverURL + "/monitor/websites/new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	csrfToken := formToken(t, newPage)
+	response, err = client.PostForm(serverURL+"/monitor/websites", url.Values{
+		"csrf_token":        {csrfToken},
+		"name":              {"桶边界网站"},
+		"scope":             {"external"},
+		"kind":              {"http"},
+		"url":               {"https://boundary.example/"},
+		"frequency_seconds": {"60"},
+		"timeout_seconds":   {"10"},
+		"http_method":       {"GET"},
+		"follow_redirects":  {"1"},
+		"verify_tls":        {"1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("create status=%d", response.StatusCode)
+	}
+	detailPath := response.Header.Get("Location")
+	waitForWebsiteCheckCount(t, client, serverURL, detailPath, 1)
+
+	response, err = client.PostForm(serverURL+"/monitor/websites", url.Values{
+		"csrf_token":        {csrfToken},
+		"name":              {"复核边界网站"},
+		"scope":             {"external"},
+		"kind":              {"http"},
+		"url":               {"https://verifying-boundary.example/"},
+		"frequency_seconds": {"60"},
+		"timeout_seconds":   {"10"},
+		"http_method":       {"GET"},
+		"follow_redirects":  {"1"},
+		"verify_tls":        {"1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("create verifying monitor status=%d", response.StatusCode)
+	}
+	verifyingDetailPath := response.Header.Get("Location")
+	waitForWebsiteCheckCount(t, client, serverURL, verifyingDetailPath, 1)
+
+	now = time.Date(2026, time.July, 29, 13, 0, 0, 0, time.UTC)
+	stateClass := regexp.MustCompile(`class="website-availability__(?:gap|up|down|verifying)(?: website-availability__provisional)?"`)
+	provisionalLabel := regexp.MustCompile(`aria-label="本时间段尚未完成检查；最近状态：正常（[^"]+）"`)
+	var listPage []byte
+
+	for _, path := range []string{"/monitor/websites", detailPath} {
+		response, err = client.Get(serverURL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		page, readErr := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		wantBuckets := 96
+		if path == detailPath {
+			wantBuckets = 72
+		}
+		if count := len(stateClass.FindAll(page, -1)); count != wantBuckets {
+			t.Fatalf("%s availability buckets=%d, want %d: %s", path, count, wantBuckets, page)
+		}
+		wantProvisional := 1
+		if path == "/monitor/websites" {
+			wantProvisional = 2
+			listPage = page
+		}
+		if count := bytes.Count(page, []byte("website-availability__provisional")); count != wantProvisional {
+			t.Fatalf("%s provisional buckets=%d, want %d: %s", path, count, wantProvisional, page)
+		}
+		if !provisionalLabel.Match(page) {
+			t.Fatalf("%s provisional accessible label missing: %s", path, page)
+		}
+	}
+	if !bytes.Contains(listPage, []byte(
+		`class="website-availability__verifying website-availability__provisional"`,
+	)) || !bytes.Contains(listPage, []byte(
+		`aria-label="本时间段尚未完成检查；最近状态：复核中（`,
+	)) {
+		t.Fatalf("verifying provisional tone or label missing: %s", listPage)
+	}
+
+	setWebsiteTestLocale(t, client, serverURL, "en-US")
+	response, err = client.Get(serverURL + detailPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	englishPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(englishPage, []byte(
+		`aria-label="No check has completed in this period; latest state: Up (`,
+	)) {
+		t.Fatalf("English provisional accessible label missing: %s", englishPage)
+	}
+}
 
 func TestAdminCreatesWebsiteMonitorAndReadsItsResult(t *testing.T) {
 	root := t.TempDir()

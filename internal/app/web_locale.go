@@ -292,6 +292,7 @@ var webMessages = map[string]localizedMessage{
 	"website.ledger.move":                           {"移动", "Move"},
 	"website.certificate_expiring":                  {"证书临期", "Certificate expiring"},
 	"website.availability_aria":                     {"最近 24 小时可用性", "availability over the last 24 hours"},
+	"website.availability_provisional":              {"本时间段尚未完成检查；最近状态：%s（%s）", "No check has completed in this period; latest state: %s (%s)"},
 	"website.hours_ago_24":                          {"24 小时前", "24 hours ago"},
 	"website.hours_ago_12":                          {"12 小时", "12 hours"},
 	"website.now":                                   {"现在", "Now"},
