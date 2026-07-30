@@ -416,6 +416,7 @@ async function assertApplicationMonitoring(page, baseURL) {
   assert.equal(await applicationDrawer.locator("[data-application-drawer-navigation]").isHidden(), true);
   assert.equal(await applicationDrawer.locator('[data-application-detail-panel="history"]').isHidden(), true);
   assert.equal(await applicationDrawer.locator('[data-application-detail-panel="runtime"]').isVisible(), true);
+  assert.equal(await applicationDrawer.getByText("Only part of the runtime facts can be read", { exact: true }).count(), 0);
   await applicationDrawer.getByRole("button", { name: "Close application details", exact: true }).last().click();
 
   await Promise.all([

@@ -129,6 +129,7 @@ func TestApplicationsPageExposesLiveFactsAndExpandableObservationDetails(t *test
 		`drawerNavigation.hidden = activeMode === "runtime"`,
 		`loadDrawerDetails(true)`,
 		`application-series--${item.color}`,
+		`state !== "available" && state !== "partial"`,
 	)
 	if bytes.Contains(script, []byte(`form.submit();`)) {
 		t.Fatal("async POST failures must not replay the form submission")
