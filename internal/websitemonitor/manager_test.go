@@ -95,6 +95,39 @@ func TestTwoConsecutiveFailuresConfirmAnIncident(t *testing.T) {
 	}
 }
 
+func TestNextWakeDelaySkipsMonitorAlreadyBeingChecked(t *testing.T) {
+	manager := newTestManager(t, Options{
+		Probe: probeFunc(func(context.Context, Config) Evidence {
+			return Evidence{Success: true, StatusCode: http.StatusOK}
+		}),
+	})
+	created, err := manager.Create(context.Background(), Config{
+		Name: "正在检查", Kind: KindHTTP, URL: "https://in-flight.example/",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	monitor := waitForMonitor(t, manager, created.ID, func(value Monitor) bool {
+		return value.State == StateUp
+	})
+	manager.Close()
+
+	now := time.Now().UTC()
+	manager.ctx = context.Background()
+	manager.options.Now = func() time.Time { return now }
+	manager.maintainedAt = now
+	if _, err := manager.db.Exec("UPDATE website_monitors SET next_check_at = ? WHERE id = ?",
+		now.Add(-time.Second).UnixNano(), created.ID); err != nil {
+		t.Fatal(err)
+	}
+	manager.inFlight[created.ID] = monitor.generation
+
+	delay, scheduled := manager.nextWakeDelay()
+	if !scheduled || delay < 59*time.Minute {
+		t.Fatalf("next wake = %v, scheduled=%t; want hourly maintenance rather than a busy loop", delay, scheduled)
+	}
+}
+
 func TestPingPongRequiresAMatchingPongControlFrame(t *testing.T) {
 	t.Run("matching pong succeeds", func(t *testing.T) {
 		server := newWebSocketServer(t, nil)
@@ -959,7 +992,9 @@ func newTestManager(t *testing.T, options Options) *Manager {
 	}
 	t.Cleanup(func() {
 		manager.Close()
-		_ = db.Close()
+		if err := db.Close(); err != nil {
+			t.Errorf("close monitor database: %v", err)
+		}
 	})
 	return manager
 }

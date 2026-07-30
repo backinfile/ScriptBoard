@@ -68,6 +68,71 @@ func TestOpenDatabaseRejectsNewerSchema(t *testing.T) {
 	}
 }
 
+func TestOpenDatabaseCreatesIndexesForPeriodicAndTimeOrderedQueries(t *testing.T) {
+	db, err := openDatabase(filepath.Join(t.TempDir(), "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	tests := []struct {
+		name  string
+		index string
+		query string
+	}{
+		{
+			name:  "next enabled schedule",
+			index: "schedules_due_idx",
+			query: `SELECT MIN(next_fire_at) FROM schedules WHERE enabled = 1 AND deleted = 0`,
+		},
+		{
+			name:  "newest runs",
+			index: "runs_created_idx",
+			query: `SELECT id FROM runs ORDER BY created_at DESC LIMIT 50`,
+		},
+		{
+			name:  "newest audit events",
+			index: "audit_events_occurred_idx",
+			query: `SELECT id FROM audit_events ORDER BY occurred_at DESC LIMIT 50`,
+		},
+		{
+			name:  "newest trash entries",
+			index: "trash_entries_deleted_idx",
+			query: `SELECT id FROM trash_entries ORDER BY deleted_at DESC LIMIT 50`,
+		},
+		{
+			name:  "latest trigger for schedule",
+			index: "schedule_triggers_schedule_time_idx",
+			query: `SELECT result FROM schedule_triggers WHERE schedule_id = 'schedule-1' ORDER BY scheduled_for DESC LIMIT 1`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rows, err := db.Query("EXPLAIN QUERY PLAN " + test.query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var plan strings.Builder
+			for rows.Next() {
+				var id, parent, unused int
+				var detail string
+				if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+					_ = rows.Close()
+					t.Fatal(err)
+				}
+				plan.WriteString(detail)
+				plan.WriteByte('\n')
+			}
+			if err := rows.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(plan.String(), test.index) {
+				t.Fatalf("query plan does not use %s:\n%s", test.index, plan.String())
+			}
+		})
+	}
+}
+
 func TestOpenDatabaseMigratesApplicationMonitoringStorageFromVersion15(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "app.db")
 	db, err := openDatabase(path)
@@ -92,8 +157,8 @@ func TestOpenDatabaseMigratesApplicationMonitoringStorageFromVersion15(t *testin
 		t.Fatalf("migrate application monitoring storage: %v", err)
 	}
 	defer db.Close()
-	if currentSchemaVersion != 17 {
-		t.Fatalf("schema version=%d, want 17", currentSchemaVersion)
+	if currentSchemaVersion != 18 {
+		t.Fatalf("schema version=%d, want 18", currentSchemaVersion)
 	}
 	for _, table := range []string{"application_pins", "application_metric_minutes"} {
 		var name string
@@ -111,6 +176,36 @@ func TestOpenDatabaseMigratesApplicationMonitoringStorageFromVersion15(t *testin
 		}
 	}
 	if _, err := os.Stat(path + ".pre-migration-v15"); err != nil {
+		t.Fatalf("pre-migration snapshot: %v", err)
+	}
+}
+
+func TestOpenDatabaseMigratesRunLogByteCountsFromVersion17(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	db, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("ALTER TABLE runs DROP COLUMN log_bytes; PRAGMA user_version=17"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err = openDatabase(path)
+	if err != nil {
+		t.Fatalf("migrate Run Log byte counts: %v", err)
+	}
+	defer db.Close()
+	var exists int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('runs') WHERE name = 'log_bytes'`).Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if exists != 1 {
+		t.Fatal("runs.log_bytes was not created")
+	}
+	if _, err := os.Stat(path + ".pre-migration-v17"); err != nil {
 		t.Fatalf("pre-migration snapshot: %v", err)
 	}
 }

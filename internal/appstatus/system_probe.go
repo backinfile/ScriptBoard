@@ -46,9 +46,10 @@ func (p *SystemProbe) Snapshot(ctx context.Context) RawSnapshot {
 	if err != nil {
 		result.Errors["host"] = err.Error()
 	} else {
+		threadCounts, _ := snapshotThreadCounts(ctx)
 		result.Processes = make([]RawProcess, 0, len(processes))
 		for _, item := range processes {
-			raw, ok := collectProcess(ctx, item)
+			raw, ok := collectProcess(ctx, item, threadCounts)
 			if ok {
 				result.Processes = append(result.Processes, raw)
 			}
@@ -122,7 +123,7 @@ func stringProcessID(value int32) string {
 	return string(buffer[position:])
 }
 
-func collectProcess(ctx context.Context, item *process.Process) (RawProcess, bool) {
+func collectProcess(ctx context.Context, item *process.Process, threadCounts map[int32]int32) (RawProcess, bool) {
 	name, nameErr := item.NameWithContext(ctx)
 	if nameErr != nil || name == "" {
 		return RawProcess{}, false
@@ -144,7 +145,9 @@ func collectProcess(ctx context.Context, item *process.Process) (RawProcess, boo
 	if value, err := item.MemoryInfoWithContext(ctx); err == nil {
 		raw.ResidentMemoryBytes = value.RSS
 	}
-	if value, err := item.NumThreadsWithContext(ctx); err == nil {
+	if value, ok := threadCounts[item.Pid]; ok {
+		raw.Threads = value
+	} else if value, err := item.NumThreadsWithContext(ctx); err == nil {
 		raw.Threads = value
 	}
 	if value, err := item.IOCountersWithContext(ctx); err == nil {

@@ -27,6 +27,7 @@ type Manager struct {
 	inFlight     map[string]int64
 	queued       map[string]int64
 	slots        chan struct{}
+	wake         chan struct{}
 	maintainedAt time.Time
 }
 
@@ -58,6 +59,10 @@ func New(db *sql.DB, options Options) (*Manager, error) {
 		inFlight: make(map[string]int64),
 		queued:   make(map[string]int64),
 		slots:    make(chan struct{}, options.MaxConcurrency),
+		wake:     make(chan struct{}, 1),
+		// Preserve the previous contract: the first retention pass happens
+		// after one Tick rather than racing Manager construction and shutdown.
+		maintainedAt: options.Now().UTC().Add(-time.Hour).Add(options.Tick),
 	}
 	manager.wg.Add(1)
 	go manager.loop()
@@ -133,9 +138,7 @@ func (m *Manager) Update(ctx context.Context, id string, config Config) (Monitor
 	if err != nil {
 		return Monitor{}, err
 	}
-	if updated.State != StatePaused {
-		m.startCheck(id, updated.generation)
-	}
+	m.signalWake()
 	return updated, nil
 }
 
@@ -201,8 +204,8 @@ func (m *Manager) createMany(ctx context.Context, configs []Config) ([]Monitor, 
 			return nil, err
 		}
 		created = append(created, monitor)
-		m.startCheck(id, monitor.generation)
 	}
+	m.signalWake()
 	return created, nil
 }
 
@@ -514,7 +517,11 @@ func (m *Manager) Pause(ctx context.Context, id string) error {
 		WHERE monitor_id = ? AND ended_at IS NULL`, now.UnixNano(), id); err != nil {
 		return err
 	}
-	return transaction.Commit()
+	if err := transaction.Commit(); err != nil {
+		return err
+	}
+	m.signalWake()
+	return nil
 }
 
 func (m *Manager) Resume(ctx context.Context, id string) error {
@@ -546,11 +553,7 @@ func (m *Manager) Resume(ctx context.Context, id string) error {
 	if err := transaction.Commit(); err != nil {
 		return err
 	}
-	monitor, err := m.Get(ctx, id)
-	if err != nil {
-		return err
-	}
-	m.startCheck(id, monitor.generation)
+	m.signalWake()
 	return nil
 }
 
@@ -589,7 +592,11 @@ func (m *Manager) Delete(ctx context.Context, id string) error {
 		WHERE monitor_id = ? AND ended_at IS NULL`, now.UnixNano(), id); err != nil {
 		return err
 	}
-	return transaction.Commit()
+	if err := transaction.Commit(); err != nil {
+		return err
+	}
+	m.signalWake()
+	return nil
 }
 
 func (m *Manager) startCheck(id string, generation int64) {
@@ -618,6 +625,7 @@ func (m *Manager) startCheck(id string, generation int64) {
 			if queued {
 				m.startCheck(id, queuedGeneration)
 			}
+			m.signalWake()
 			m.wg.Done()
 		}()
 		select {
@@ -760,21 +768,110 @@ func (m *Manager) recordResult(id string, generation int64, evidence Evidence) {
 			return
 		}
 	}
-	_ = transaction.Commit()
+	if transaction.Commit() == nil {
+		m.signalWake()
+	}
 }
 
 func (m *Manager) loop() {
 	defer m.wg.Done()
-	ticker := time.NewTicker(m.options.Tick)
-	defer ticker.Stop()
+	initial := time.NewTimer(m.options.Tick)
+	select {
+	case <-m.ctx.Done():
+		initial.Stop()
+		return
+	case <-m.wake:
+		if !initial.Stop() {
+			select {
+			case <-initial.C:
+			default:
+			}
+		}
+	case <-initial.C:
+	}
 	for {
 		select {
 		case <-m.ctx.Done():
 			return
-		case <-ticker.C:
-			m.startDue()
-			m.maybeMaintain()
+		default:
 		}
+		m.startDue()
+		m.maybeMaintain()
+		delay, scheduled := m.nextWakeDelay()
+		var timer *time.Timer
+		var timerChannel <-chan time.Time
+		if scheduled {
+			timer = time.NewTimer(delay)
+			timerChannel = timer.C
+		}
+		select {
+		case <-m.ctx.Done():
+			if timer != nil {
+				timer.Stop()
+			}
+			return
+		case <-m.wake:
+			if timer != nil && !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+		case <-timerChannel:
+		}
+	}
+}
+
+func (m *Manager) nextWakeDelay() (time.Duration, bool) {
+	now := m.options.Now().UTC()
+	m.mu.Lock()
+	maintainedAt := m.maintainedAt
+	inFlight := make(map[string]struct{}, len(m.inFlight))
+	for id := range m.inFlight {
+		inFlight[id] = struct{}{}
+	}
+	m.mu.Unlock()
+
+	maintenanceDelay := time.Duration(0)
+	if !maintainedAt.IsZero() {
+		maintenanceDelay = maintainedAt.Add(time.Hour).Sub(now)
+		if maintenanceDelay < 0 {
+			maintenanceDelay = 0
+		}
+	}
+
+	query := `SELECT MIN(next_check_at) FROM website_monitors
+		WHERE deleted_at IS NULL AND state <> 'paused'`
+	arguments := make([]any, 0, len(inFlight))
+	if len(inFlight) > 0 {
+		query += " AND id NOT IN (?" + strings.Repeat(",?", len(inFlight)-1) + ")"
+		for id := range inFlight {
+			arguments = append(arguments, id)
+		}
+	}
+	var nextCheckAt sql.NullInt64
+	// Close waits for the loop, so let this bounded local query finish. Cancelling
+	// an in-flight modernc SQLite query can otherwise retain the file handle on Windows.
+	if err := m.db.QueryRow(query, arguments...).Scan(&nextCheckAt); err != nil {
+		return m.options.Tick, true
+	}
+	checkDelay := time.Duration(0)
+	if nextCheckAt.Valid {
+		checkDelay = time.Unix(0, nextCheckAt.Int64).UTC().Sub(now)
+		if checkDelay < 0 {
+			checkDelay = 0
+		}
+	}
+	if !nextCheckAt.Valid || maintenanceDelay <= checkDelay {
+		return maintenanceDelay, true
+	}
+	return checkDelay, true
+}
+
+func (m *Manager) signalWake() {
+	select {
+	case m.wake <- struct{}{}:
+	default:
 	}
 }
 
@@ -1036,7 +1133,9 @@ func (m *Manager) Maintain(ctx context.Context) error {
 }
 
 func (m *Manager) startDue() {
-	rows, err := m.db.QueryContext(m.ctx, `SELECT id, generation FROM website_monitors
+	// See nextWakeDelay: complete the bounded query before loop shutdown instead
+	// of cancelling it while the SQLite driver is finalizing its statement.
+	rows, err := m.db.Query(`SELECT id, generation FROM website_monitors
 		WHERE deleted_at IS NULL AND state <> 'paused' AND next_check_at <= ?
 		ORDER BY next_check_at LIMIT 100`, m.options.Now().UTC().UnixNano())
 	if err != nil {

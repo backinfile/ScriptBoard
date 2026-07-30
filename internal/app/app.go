@@ -286,6 +286,7 @@ type App struct {
 	updates            *updatepkg.Manager
 	updateCancel       context.CancelFunc
 	updateContext      context.Context
+	updateResultsWake  chan struct{}
 	validation         atomic.Bool
 	validationID       string
 }
@@ -327,6 +328,7 @@ func Open(config Config) (*App, error) {
 		managed: managedfiles.Open(managedRoot), instanceLock: instanceLock,
 		loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies,
 		logStreamSlots: make(chan struct{}, 8), logHistorySlots: make(chan struct{}, 4),
+		updateResultsWake: make(chan struct{}, 1),
 	}
 	if !validating {
 		if err := application.initializeAdmin(stateRoot); err != nil {
@@ -464,6 +466,7 @@ func (a *App) monitorUpdateValidation(operationID string) {
 				a.hostStatus.Start(context.Background())
 				a.applicationStatus.Start(context.Background())
 				a.updates.Start(a.updateContext)
+				a.signalUpdateResults()
 				return
 			}
 		}
@@ -471,45 +474,77 @@ func (a *App) monitorUpdateValidation(operationID string) {
 }
 
 func (a *App) monitorUpdateResults() {
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
 	for {
+		shouldPoll := a.inspectUpdateResult()
+		var timer *time.Timer
+		var retry <-chan time.Time
+		if shouldPoll {
+			timer = time.NewTimer(500 * time.Millisecond)
+			retry = timer.C
+		}
 		select {
 		case <-a.updateContext.Done():
+			if timer != nil {
+				timer.Stop()
+			}
 			return
-		case <-ticker.C:
-			if a.validation.Load() {
-				continue
+		case <-a.updateResultsWake:
+			if timer != nil && !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
 			}
-			active, err := updatepkg.LoadActive(a.stateRoot)
-			if err != nil {
-				continue
-			}
-			operation, err := updatepkg.LoadOperation(a.stateRoot, active.OperationID)
-			if err != nil {
-				continue
-			}
-			var action, result string
-			switch operation.Phase {
-			case updatepkg.PhaseCommitted:
-				action, result = "update_succeeded", "succeeded"
-			case updatepkg.PhaseRolledBack:
-				action, result = "update_rolled_back", "failed"
-			case updatepkg.PhaseNeedsRecovery:
-				action, result = "update_recovery_required", "failed"
-			case updatepkg.PhaseFailedSafe:
-				action, result = "update_failed_safe", "failed"
-			default:
-				continue
-			}
-			root, _ := updatepkg.OperationDirectory(a.stateRoot, operation.ID)
-			imported := filepath.Join(root, "audit-imported")
-			if _, err := os.Stat(imported); err == nil {
-				continue
-			}
-			a.recordAudit(action, operation.TargetVersion, result, "system")
-			_ = os.WriteFile(imported, []byte(time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o600)
+		case <-retry:
 		}
+	}
+}
+
+func (a *App) inspectUpdateResult() bool {
+	if a.validation.Load() {
+		return false
+	}
+	active, err := updatepkg.LoadActive(a.stateRoot)
+	if err != nil {
+		_, statErr := os.Stat(filepath.Join(a.stateRoot, "updates", "active.json"))
+		return statErr == nil
+	}
+	operation, err := updatepkg.LoadOperation(a.stateRoot, active.OperationID)
+	if err != nil {
+		return true
+	}
+	var action, result string
+	switch operation.Phase {
+	case updatepkg.PhasePrepared:
+		return false
+	case updatepkg.PhaseCommitted:
+		action, result = "update_succeeded", "succeeded"
+	case updatepkg.PhaseRolledBack:
+		action, result = "update_rolled_back", "failed"
+	case updatepkg.PhaseNeedsRecovery:
+		action, result = "update_recovery_required", "failed"
+	case updatepkg.PhaseFailedSafe:
+		action, result = "update_failed_safe", "failed"
+	default:
+		return true
+	}
+	root, err := updatepkg.OperationDirectory(a.stateRoot, operation.ID)
+	if err != nil {
+		return true
+	}
+	imported := filepath.Join(root, "audit-imported")
+	if _, err := os.Stat(imported); err == nil {
+		return false
+	}
+	a.recordAudit(action, operation.TargetVersion, result, "system")
+	_ = os.WriteFile(imported, []byte(time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o600)
+	return false
+}
+
+func (a *App) signalUpdateResults() {
+	select {
+	case a.updateResultsWake <- struct{}{}:
+	default:
 	}
 }
 
@@ -845,6 +880,7 @@ func openDatabase(path string) (*sql.DB, error) {
 			, source_filename TEXT NOT NULL DEFAULT ''
 			, source_expired INTEGER NOT NULL DEFAULT 0
 			, source_audit_event_id INTEGER REFERENCES audit_events(id)
+			, log_bytes INTEGER NOT NULL DEFAULT -1
 		)`,
 		`CREATE TABLE IF NOT EXISTS variables (
 			name TEXT PRIMARY KEY,
@@ -1181,6 +1217,19 @@ func openDatabase(path string) (*sql.DB, error) {
 			}
 		}
 	}
+	if schemaVersion < 18 {
+		var logBytesColumnExists int
+		if err := migration.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('runs') WHERE name = 'log_bytes'`).Scan(&logBytesColumnExists); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("inspect Run Log byte-count migration: %w", err)
+		}
+		if logBytesColumnExists == 0 {
+			if _, err := migration.Exec("ALTER TABLE runs ADD COLUMN log_bytes INTEGER NOT NULL DEFAULT -1"); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("migrate Run Log byte counts: %w", err)
+			}
+		}
+	}
 	for _, statement := range []string{
 		"CREATE INDEX IF NOT EXISTS quick_run_groups_order_idx ON quick_run_groups(sort_order, created_at)",
 		"CREATE INDEX IF NOT EXISTS quick_runs_group_order_idx ON quick_runs(group_id, sort_order, created_at)",
@@ -1189,12 +1238,19 @@ func openDatabase(path string) (*sql.DB, error) {
 		"CREATE INDEX IF NOT EXISTS schedules_group_order_idx ON schedules(group_id, created_at)",
 		"CREATE INDEX IF NOT EXISTS runs_source_idx ON runs(source_type, source_id, created_at DESC)",
 		"CREATE INDEX IF NOT EXISTS runs_source_audit_idx ON runs(source_audit_event_id)",
+		"CREATE INDEX IF NOT EXISTS runs_created_idx ON runs(created_at DESC)",
+		"CREATE INDEX IF NOT EXISTS runs_log_cleanup_idx ON runs(log_expired, created_at)",
+		"CREATE INDEX IF NOT EXISTS audit_events_occurred_idx ON audit_events(occurred_at DESC)",
+		"CREATE INDEX IF NOT EXISTS trash_entries_deleted_idx ON trash_entries(deleted_at DESC)",
+		"CREATE INDEX IF NOT EXISTS schedules_due_idx ON schedules(next_fire_at) WHERE enabled = 1 AND deleted = 0",
+		"CREATE INDEX IF NOT EXISTS schedule_triggers_schedule_time_idx ON schedule_triggers(schedule_id, scheduled_for DESC)",
+		"CREATE INDEX IF NOT EXISTS schedule_triggers_unlinked_time_idx ON schedule_triggers(scheduled_for) WHERE run_id = ''",
 		"CREATE INDEX IF NOT EXISTS application_pins_order_idx ON application_pins(sort_order, created_at)",
 		"CREATE INDEX IF NOT EXISTS application_metric_minutes_bucket_idx ON application_metric_minutes(bucket_at)",
 	} {
 		if _, err := migration.Exec(statement); err != nil {
 			_ = db.Close()
-			return nil, fmt.Errorf("index Quick Run organization: %w", err)
+			return nil, fmt.Errorf("initialize SQLite indexes: %w", err)
 		}
 	}
 	for _, statement := range []string{
@@ -2624,8 +2680,8 @@ func (a *App) runEvents(response http.ResponseWriter, request *http.Request) {
 			lastSequence = parsed
 		}
 	}
-	run, err := a.runs.Get(request.PathValue("id"))
-	if err != nil {
+	runID := request.PathValue("id")
+	if _, err := a.runs.GetMetadata(runID); err != nil {
 		http.Error(response, "运行不存在", http.StatusNotFound)
 		return
 	}
@@ -2637,33 +2693,19 @@ func (a *App) runEvents(response http.ResponseWriter, request *http.Request) {
 	response.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	response.Header().Set("Cache-Control", "no-cache")
 	response.Header().Set("X-Content-Type-Options", "nosniff")
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		for _, event := range run.Events {
-			if event.Sequence <= lastSequence {
-				continue
-			}
-			payload, _ := json.Marshal(map[string]any{"source": event.Source, "text": event.Data, "time": event.Time, "encoding_error": event.EncodingError})
-			_, _ = fmt.Fprintf(response, "id: %d\nevent: output\ndata: %s\n\n", event.Sequence, payload)
-			lastSequence = event.Sequence
+	status, err := a.runs.FollowEvents(request.Context(), runID, lastSequence, func(event runmanager.Event) error {
+		payload, _ := json.Marshal(map[string]any{"source": event.Source, "text": event.Data, "time": event.Time, "encoding_error": event.EncodingError})
+		if _, err := fmt.Fprintf(response, "id: %d\nevent: output\ndata: %s\n\n", event.Sequence, payload); err != nil {
+			return err
 		}
 		flusher.Flush()
-		if run.Status != "starting" && run.Status != "running" && run.Status != "stopping" && run.Status != "timing_out" {
-			_, _ = fmt.Fprintf(response, "event: complete\ndata: %s\n\n", run.Status)
-			flusher.Flush()
-			return
-		}
-		select {
-		case <-request.Context().Done():
-			return
-		case <-ticker.C:
-		}
-		run, err = a.runs.Get(request.PathValue("id"))
-		if err != nil {
-			return
-		}
+		return nil
+	})
+	if err != nil {
+		return
 	}
+	_, _ = fmt.Fprintf(response, "event: complete\ndata: %s\n\n", status)
+	flusher.Flush()
 }
 
 type variableView struct {
@@ -3727,14 +3769,21 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		LogURL                                                                  string
 		Protection, IconClass                                                   string
 		Runnable                                                                bool
-		RecentArguments                                                         []string
-		ArgumentListID                                                          string
 		NameParts                                                               []fileNamePart
 		CategoryLabel                                                           string
 	}
-	protectionState, _ := a.gitProtection.State()
+	pageEntries := listing[pagination.Start:pagination.End]
+	protectionFiles := make([]gitprotect.File, 0, len(pageEntries))
+	for _, listed := range pageEntries {
+		if listed.Entry.Kind != managedfiles.Regular {
+			continue
+		}
+		protectionFiles = append(protectionFiles, gitprotect.File{Path: listed.Path, Size: listed.Entry.Size})
+	}
+	protectionDescription, _ := a.gitProtection.DescribeEntries(protectionFiles)
+	protectionState := protectionDescription.State
 	views := make([]fileView, 0, pagination.End-pagination.Start)
-	for index, listed := range listing[pagination.Start:pagination.End] {
+	for _, listed := range pageEntries {
 		entry, path := listed.Entry, listed.Path
 		view := fileView{
 			Entry: entry, Path: path, IconClass: fileCategoryIcon(listed.Category),
@@ -3744,7 +3793,7 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 			view.BrowseURL = filesStateURL(path, "", sortField, direction, 0)
 		} else if entry.Kind == managedfiles.Regular {
 			if protectionState.Enabled {
-				view.Protection = a.gitProtection.ProtectionReason(path, entry.Size)
+				view.Protection = protectionDescription.Reasons[path]
 			}
 			view.DownloadURL = routeFileURL("/resources/files/download/", path)
 			switch listed.Category {
@@ -3757,17 +3806,6 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 				if listed.Category == fileCategoryScript {
 					view.Runnable = true
 					view.QuickRunURL = routeFileURL("/resources/files/quick-run/", path) + "?return_to=" + url.QueryEscape(request.URL.RequestURI())
-					view.ArgumentListID = fmt.Sprintf("run-arguments-%d", index)
-					rows, queryErr := a.db.Query(`SELECT arguments_template FROM runs WHERE script_path = ? AND TRIM(arguments_template) <> '' GROUP BY arguments_template ORDER BY MAX(created_at) DESC LIMIT 8`, path)
-					if queryErr == nil {
-						for rows.Next() {
-							var arguments string
-							if rows.Scan(&arguments) == nil {
-								view.RecentArguments = append(view.RecentArguments, arguments)
-							}
-						}
-						_ = rows.Close()
-					}
 				}
 			}
 		}

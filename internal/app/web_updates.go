@@ -120,6 +120,7 @@ func (a *App) applyUpdate(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, webText(locale, "updates.handoff_failed")+": "+err.Error(), http.StatusConflict)
 		return
 	}
+	a.signalUpdateResults()
 	a.recordAudit("update_apply_requested", operation.TargetVersion, "succeeded", request.RemoteAddr)
 	response.Header().Set("Connection", "close")
 	response.Header().Set("Content-Type", "application/json; charset=utf-8")

@@ -2,6 +2,7 @@ package runmanager
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -115,6 +116,7 @@ type executorCandidate struct {
 type activeRun struct {
 	command              *exec.Cmd
 	terminal             string
+	changed              chan struct{}
 	scriptPath           string
 	timeoutTimer         *time.Timer
 	cleanup              func()
@@ -122,6 +124,16 @@ type activeRun struct {
 	workingDirectory     string
 	workingDirectoryInfo os.FileInfo
 	oneTime              bool
+}
+
+func (r *activeRun) signalChanged() {
+	if r == nil || r.changed == nil {
+		return
+	}
+	select {
+	case r.changed <- struct{}{}:
+	default:
+	}
 }
 
 type Manager struct {
@@ -442,7 +454,7 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 	_, _ = m.db.Exec("UPDATE runs SET status = 'running', started_at = ? WHERE id = ?", started.UnixNano(), id)
 	m.mu.Lock()
 	active := &activeRun{
-		command: command, cleanup: cleanup, fileInfo: prepared.script.Info,
+		command: command, cleanup: cleanup, fileInfo: prepared.script.Info, changed: make(chan struct{}, 1),
 		scriptPath:           normalizeManagedPath(prepared.displayPath),
 		workingDirectory:     normalizeManagedPath(prepared.workingDirectory.RelativePath),
 		workingDirectoryInfo: prepared.workingDirectory.Info,
@@ -454,7 +466,7 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 	}
 	m.mu.Unlock()
 	m.wg.Add(1)
-	go m.supervise(id, command, stdout, stderr, logFile)
+	go m.supervise(id, command, stdout, stderr, logFile, active)
 	lifecycleBegun = false
 	return id, nil
 }
@@ -538,10 +550,17 @@ func normalizeManagedPath(relative string) string {
 
 func (m *Manager) failStart(id string, startErr error) {
 	now := time.Now().UTC().UnixNano()
-	_, _ = m.db.Exec("UPDATE runs SET status = 'failed', finished_at = ?, error = ? WHERE id = ?", now, startErr.Error(), id)
+	logBytes := int64(-1)
+	var logPath string
+	if m.db.QueryRow("SELECT log_path FROM runs WHERE id = ?", id).Scan(&logPath) == nil {
+		if info, err := os.Stat(logPath); err == nil {
+			logBytes = info.Size()
+		}
+	}
+	_, _ = m.db.Exec("UPDATE runs SET status = 'failed', finished_at = ?, error = ?, log_bytes = ? WHERE id = ?", now, startErr.Error(), logBytes, id)
 }
 
-func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.ReadCloser, logFile *os.File) {
+func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.ReadCloser, logFile *os.File, activeRun *activeRun) {
 	defer m.wg.Done()
 	if m.lifecycle != nil {
 		defer m.lifecycle.EndRun(id)
@@ -615,6 +634,7 @@ func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.Read
 					}
 				}
 				eventMu.Unlock()
+				activeRun.signalChanged()
 			}
 			if readErr != nil {
 				return
@@ -667,6 +687,10 @@ func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.Read
 	}
 	_ = logFile.Sync()
 	_ = logFile.Close()
+	logBytes := int64(-1)
+	if info, err := os.Stat(logFile.Name()); err == nil {
+		logBytes = info.Size()
+	}
 	finished := time.Now().UTC()
 	m.mu.Lock()
 	active := m.active[id]
@@ -692,7 +716,8 @@ func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.Read
 			exitCode = -1
 		}
 	}
-	_, _ = m.db.Exec("UPDATE runs SET status = ?, finished_at = ?, exit_code = ?, error = ?, log_incomplete = ?, log_truncated = ?, dropped_bytes = ? WHERE id = ?", status, finished.UnixNano(), exitCode, errorText, logIncomplete, droppedBytes > 0, droppedBytes, id)
+	_, _ = m.db.Exec("UPDATE runs SET status = ?, finished_at = ?, exit_code = ?, error = ?, log_incomplete = ?, log_truncated = ?, dropped_bytes = ?, log_bytes = ? WHERE id = ?", status, finished.UnixNano(), exitCode, errorText, logIncomplete, droppedBytes > 0, droppedBytes, logBytes, id)
+	activeRun.signalChanged()
 	m.mu.Lock()
 	delete(m.active, id)
 	m.mu.Unlock()
@@ -709,6 +734,7 @@ func (m *Manager) timeout(id string) {
 	process := active.command.Process
 	m.mu.Unlock()
 	_, _ = m.db.Exec("UPDATE runs SET status = 'timing_out' WHERE id = ? AND status = 'running'", id)
+	active.signalChanged()
 	_ = terminateProcess(process, false)
 	time.AfterFunc(m.timeoutGrace, func() {
 		m.mu.Lock()
@@ -738,6 +764,7 @@ func (m *Manager) Stop(id string) error {
 	if !force {
 		_, _ = m.db.Exec("UPDATE runs SET status = 'stopping' WHERE id = ? AND status = 'running'", id)
 	}
+	active.signalChanged()
 	if err := terminateProcess(process, force); err != nil {
 		if force {
 			return nil
@@ -747,21 +774,27 @@ func (m *Manager) Stop(id string) error {
 	return nil
 }
 
-func (m *Manager) Get(id string) (Run, error) {
+const runMetadataColumns = `id, script_path, script_sha256, arguments_template, template_arguments_json, arguments_json, executor, source_type, source_name, source_id, runtime_identity,
+	status, created_at, started_at, finished_at, exit_code, error, timeout_seconds, log_path, log_expired, log_incomplete, log_truncated, dropped_bytes,
+	script_kind, working_directory, source_filename, source_expired, source_audit_event_id`
+
+type runScanner interface {
+	Scan(...any) error
+}
+
+func scanRunMetadata(scanner runScanner) (Run, string, error) {
 	var result Run
 	var argumentJSON, templateArgumentJSON, logPath string
 	var createdAt int64
 	var startedAt, finishedAt, exitCode sql.NullInt64
 	var sourceAuditEventID sql.NullInt64
-	err := m.db.QueryRow(`SELECT id, script_path, script_sha256, arguments_template, template_arguments_json, arguments_json, executor, source_type, source_name, source_id, runtime_identity,
-		status, created_at, started_at, finished_at, exit_code, error, timeout_seconds, log_path, log_expired, log_incomplete, log_truncated, dropped_bytes,
-		script_kind, working_directory, source_filename, source_expired, source_audit_event_id FROM runs WHERE id = ?`, id).Scan(
+	err := scanner.Scan(
 		&result.ID, &result.ScriptPath, &result.ScriptDigest, &result.ArgumentsTemplate, &templateArgumentJSON, &argumentJSON, &result.Executor, &result.SourceType, &result.SourceName, &result.SourceID, &result.RuntimeIdentity,
 		&result.Status, &createdAt, &startedAt, &finishedAt, &exitCode, &result.Error, &result.TimeoutSeconds, &logPath, &result.LogExpired, &result.LogIncomplete, &result.LogTruncated, &result.DroppedBytes,
 		&result.ScriptKind, &result.WorkingDirectory, &result.SourceFilename, &result.SourceExpired, &sourceAuditEventID,
 	)
 	if err != nil {
-		return Run{}, err
+		return Run{}, "", err
 	}
 	result.CreatedAt = time.Unix(0, createdAt).UTC()
 	if startedAt.Valid {
@@ -781,8 +814,99 @@ func (m *Manager) Get(id string) (Run, error) {
 	}
 	_ = json.Unmarshal([]byte(argumentJSON), &result.Arguments)
 	_ = json.Unmarshal([]byte(templateArgumentJSON), &result.TemplateArguments)
+	return result, logPath, nil
+}
+
+func (m *Manager) getMetadata(id string) (Run, string, error) {
+	return scanRunMetadata(m.db.QueryRow(`SELECT `+runMetadataColumns+` FROM runs WHERE id = ?`, id))
+}
+
+func (m *Manager) GetMetadata(id string) (Run, error) {
+	result, _, err := m.getMetadata(id)
+	return result, err
+}
+
+func (m *Manager) Get(id string) (Run, error) {
+	result, logPath, err := m.getMetadata(id)
+	if err != nil {
+		return Run{}, err
+	}
 	result.Events, _ = readEvents(logPath)
 	return result, nil
+}
+
+func (m *Manager) FollowEvents(ctx context.Context, id string, afterSequence int64, emit func(Event) error) (string, error) {
+	run, logPath, err := m.getMetadata(id)
+	if err != nil {
+		return "", err
+	}
+	status := run.Status
+	var offset int64
+	for {
+		events, nextOffset, readErr := readEventsAfter(logPath, offset, afterSequence)
+		if readErr != nil {
+			return "", readErr
+		}
+		offset = nextOffset
+		for _, event := range events {
+			if err := emit(event); err != nil {
+				return "", err
+			}
+			afterSequence = event.Sequence
+		}
+
+		if err := m.db.QueryRow("SELECT status FROM runs WHERE id = ?", id).Scan(&status); err != nil {
+			return "", err
+		}
+		if !runStatusIsActive(status) {
+			events, _, readErr = readEventsAfter(logPath, offset, afterSequence)
+			if readErr != nil {
+				return "", readErr
+			}
+			for _, event := range events {
+				if err := emit(event); err != nil {
+					return "", err
+				}
+				afterSequence = event.Sequence
+			}
+			return status, nil
+		}
+		if err := m.waitForRunChange(ctx, id); err != nil {
+			return "", err
+		}
+	}
+}
+
+func runStatusIsActive(status string) bool {
+	switch status {
+	case "starting", "running", "stopping", "timing_out":
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *Manager) waitForRunChange(ctx context.Context, id string) error {
+	m.mu.Lock()
+	active := m.active[id]
+	m.mu.Unlock()
+	if active != nil {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-active.changed:
+			return nil
+		}
+	}
+
+	timer := time.NewTimer(500 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (m *Manager) ReadSource(id string) ([]byte, error) {
@@ -857,7 +981,7 @@ func (m *Manager) ListPageFiltered(filter Filter, limit, offset int) ([]Run, err
 		offset = 0
 	}
 	like := "%" + filter.Query + "%"
-	rows, err := m.db.Query(`SELECT id FROM runs
+	rows, err := m.db.Query(`SELECT `+runMetadataColumns+` FROM runs
 		WHERE (? = '' OR (source_id = ? AND source_type IN ('scheduler', 'admin/schedule-now')))
 		AND (? = '' OR id LIKE ? OR script_path LIKE ? OR source_type LIKE ? OR source_name LIKE ? OR status LIKE ? OR executor LIKE ?)
 		AND (? = 0 OR created_at >= ?)
@@ -871,32 +995,27 @@ func (m *Manager) ListPageFiltered(filter Filter, limit, offset int) ([]Run, err
 	if err != nil {
 		return nil, err
 	}
-	var ids []string
+	runs := make([]Run, 0, limit)
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		run, _, err := scanRunMetadata(rows)
+		if err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
-		ids = append(ids, id)
+		runs = append(runs, run)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
-	}
-	runs := make([]Run, 0, len(ids))
-	for _, id := range ids {
-		run, err := m.Get(id)
-		if err != nil {
-			return nil, err
-		}
-		run.Events = nil
-		runs = append(runs, run)
 	}
 	return runs, nil
 }
 
 func (m *Manager) CleanupLogs(retention time.Duration, maxBytes int64) (int, error) {
-	rows, err := m.db.Query(`SELECT id, created_at, log_path FROM runs WHERE log_expired = 0 AND status NOT IN ('starting','running','stopping','timing_out') ORDER BY created_at`)
+	rows, err := m.db.Query(`SELECT id, created_at, log_path, log_bytes FROM runs WHERE log_expired = 0 AND status NOT IN ('starting','running','stopping','timing_out') ORDER BY created_at`)
 	if err != nil {
 		return 0, err
 	}
@@ -905,32 +1024,58 @@ func (m *Manager) CleanupLogs(retention time.Duration, maxBytes int64) (int, err
 		created, size int64
 	}
 	var candidates []candidate
+	backfill := make(map[string]int64)
 	var total int64
 	for rows.Next() {
 		var item candidate
-		if err := rows.Scan(&item.id, &item.created, &item.path); err != nil {
+		if err := rows.Scan(&item.id, &item.created, &item.path, &item.size); err != nil {
 			_ = rows.Close()
 			return 0, err
 		}
-		if info, statErr := os.Stat(item.path); statErr == nil {
-			item.size = info.Size()
-			total += item.size
-		}
-		if relative, relErr := filepath.Rel(m.stateRoot, item.path); relErr == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-			if staleTail, globErr := filepath.Glob(item.path + ".tail-*"); globErr == nil {
-				for _, stalePath := range staleTail {
-					_ = os.Remove(stalePath)
+		if item.size < 0 {
+			item.size = 0
+			if info, statErr := os.Stat(item.path); statErr == nil {
+				item.size = info.Size()
+			}
+			backfill[item.id] = item.size
+			if relative, relErr := filepath.Rel(m.stateRoot, item.path); relErr == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+				if staleTail, globErr := filepath.Glob(item.path + ".tail-*"); globErr == nil {
+					for _, stalePath := range staleTail {
+						_ = os.Remove(stalePath)
+					}
 				}
 			}
 		}
+		total += item.size
 		candidates = append(candidates, item)
 	}
-	_ = rows.Close()
+	if err := rows.Close(); err != nil {
+		return 0, err
+	}
+	if len(backfill) > 0 {
+		transaction, err := m.db.Begin()
+		if err != nil {
+			return 0, err
+		}
+		for id, size := range backfill {
+			if _, err := transaction.Exec("UPDATE runs SET log_bytes = ? WHERE id = ? AND log_bytes < 0", size, id); err != nil {
+				_ = transaction.Rollback()
+				return 0, err
+			}
+		}
+		if err := transaction.Commit(); err != nil {
+			return 0, err
+		}
+	}
 	cutoff := time.Now().Add(-retention).UnixNano()
 	cleaned := 0
 	for _, item := range candidates {
 		if item.created >= cutoff && total <= maxBytes {
 			continue
+		}
+		if info, statErr := os.Stat(item.path); statErr == nil && info.Size() != item.size {
+			total += info.Size() - item.size
+			item.size = info.Size()
 		}
 		relative, relErr := filepath.Rel(m.stateRoot, item.path)
 		if relErr != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
@@ -971,26 +1116,35 @@ func resolveVariables(arguments []string, variables map[string]string) ([]string
 }
 
 func readEvents(path string) ([]Event, error) {
+	events, _, err := readEventsAfter(path, 0, 0)
+	return events, err
+}
+
+func readEventsAfter(path string, offset, afterSequence int64) ([]Event, int64, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil, offset, nil
 		}
-		return nil, err
+		return nil, offset, err
 	}
 	defer file.Close()
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		return nil, offset, err
+	}
 	var events []Event
 	scanner := bufio.NewScanner(file)
 	buffer := make([]byte, 64<<10)
 	scanner.Buffer(buffer, 1<<20)
 	for scanner.Scan() {
+		offset += int64(len(scanner.Bytes()) + 1)
 		var persisted persistedEvent
-		if json.Unmarshal(scanner.Bytes(), &persisted) == nil {
+		if json.Unmarshal(scanner.Bytes(), &persisted) == nil && persisted.Sequence > afterSequence {
 			text, encodingError := decodeOutput(persisted.Data)
 			events = append(events, Event{Sequence: persisted.Sequence, Time: time.Unix(0, persisted.Time).UTC(), Source: persisted.Source, Data: text, EncodingError: encodingError})
 		}
 	}
-	return events, scanner.Err()
+	return events, offset, scanner.Err()
 }
 
 func (m *Manager) Close() {

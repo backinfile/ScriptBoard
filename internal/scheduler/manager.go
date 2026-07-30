@@ -51,6 +51,8 @@ type Manager struct {
 	tick           time.Duration
 	stop           chan struct{}
 	done           chan struct{}
+	wake           chan struct{}
+	pollClock      bool
 	closeOnce      sync.Once
 	initializeOnce sync.Once
 	pauseMu        sync.Mutex
@@ -67,6 +69,7 @@ func NewPaused(db *sql.DB, runs *runmanager.Manager, loadVariables VariableLoade
 }
 
 func newManager(db *sql.DB, runs *runmanager.Manager, loadVariables VariableLoader, now func() time.Time, tick time.Duration, paused bool) *Manager {
+	pollClock := now != nil
 	if now == nil {
 		now = time.Now
 	}
@@ -75,7 +78,8 @@ func newManager(db *sql.DB, runs *runmanager.Manager, loadVariables VariableLoad
 	}
 	manager := &Manager{
 		db: db, runs: runs, loadVariables: loadVariables,
-		now: now, tick: tick, stop: make(chan struct{}), done: make(chan struct{}), paused: paused,
+		now: now, tick: tick, stop: make(chan struct{}), done: make(chan struct{}),
+		wake: make(chan struct{}, 1), pollClock: pollClock, paused: paused,
 	}
 	if !paused {
 		manager.initialize()
@@ -152,6 +156,7 @@ func (m *Manager) Update(id string, request CreateRequest) error {
 	if count, _ := result.RowsAffected(); count == 0 {
 		return sql.ErrNoRows
 	}
+	m.signalWake()
 	return nil
 }
 
@@ -163,6 +168,7 @@ func (m *Manager) SetEnabled(id string, enabled bool) error {
 	if count, _ := result.RowsAffected(); count == 0 {
 		return sql.ErrNoRows
 	}
+	m.signalWake()
 	return nil
 }
 
@@ -174,6 +180,7 @@ func (m *Manager) Delete(id string) error {
 	if count, _ := result.RowsAffected(); count == 0 {
 		return sql.ErrNoRows
 	}
+	m.signalWake()
 	return nil
 }
 
@@ -239,6 +246,7 @@ func (m *Manager) Create(request CreateRequest) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("保存 Schedule: %w", err)
 	}
+	m.signalWake()
 	return id, nil
 }
 
@@ -333,22 +341,69 @@ func (m *Manager) Preview(expression string) (ExpressionPreview, error) {
 
 func (m *Manager) loop() {
 	defer close(m.done)
-	ticker := time.NewTicker(m.tick)
-	defer ticker.Stop()
 	for {
+		m.pauseMu.Lock()
+		paused := m.paused
+		m.pauseMu.Unlock()
+		if !paused {
+			m.fireMu.Lock()
+			m.fireDue()
+			m.fireMu.Unlock()
+		}
+
+		delay, scheduled := m.nextWakeDelay(paused)
+		var timer *time.Timer
+		var timerChannel <-chan time.Time
+		if scheduled {
+			timer = time.NewTimer(delay)
+			timerChannel = timer.C
+		}
 		select {
 		case <-m.stop:
-			return
-		case <-ticker.C:
-			m.pauseMu.Lock()
-			paused := m.paused
-			m.pauseMu.Unlock()
-			if !paused {
-				m.fireMu.Lock()
-				m.fireDue()
-				m.fireMu.Unlock()
+			if timer != nil {
+				timer.Stop()
 			}
+			return
+		case <-m.wake:
+			if timer != nil && !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+		case <-timerChannel:
 		}
+	}
+}
+
+func (m *Manager) nextWakeDelay(paused bool) (time.Duration, bool) {
+	if paused {
+		return 0, false
+	}
+	var next sql.NullInt64
+	if err := m.db.QueryRow("SELECT MIN(next_fire_at) FROM schedules WHERE enabled = 1 AND deleted = 0").Scan(&next); err != nil {
+		return m.tick, true
+	}
+	if !next.Valid {
+		if m.pollClock {
+			return m.tick, true
+		}
+		return 0, false
+	}
+	delay := time.Unix(0, next.Int64).Sub(m.now())
+	if delay < 0 {
+		delay = 0
+	}
+	if m.pollClock && delay > m.tick {
+		delay = m.tick
+	}
+	return delay, true
+}
+
+func (m *Manager) signalWake() {
+	select {
+	case m.wake <- struct{}{}:
+	default:
 	}
 }
 
@@ -356,6 +411,7 @@ func (m *Manager) PauseAndWait() {
 	m.pauseMu.Lock()
 	m.paused = true
 	m.pauseMu.Unlock()
+	m.signalWake()
 	m.fireMu.Lock()
 	m.fireMu.Unlock()
 }
@@ -365,6 +421,7 @@ func (m *Manager) Resume() {
 	m.pauseMu.Lock()
 	m.paused = false
 	m.pauseMu.Unlock()
+	m.signalWake()
 }
 
 func (m *Manager) Paused() bool {
