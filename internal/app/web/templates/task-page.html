@@ -18,6 +18,40 @@
       <label class="file-picker">{{t .Locale "task.select_files"}} <input name="files" type="file" multiple required autofocus></label>
       <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "task.start_upload"}}</button></footer>
     </form>
+    {{else if eq .Kind "one-time-run"}}
+    <form method="post" action="{{.Action}}">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <div data-directory-picker data-endpoint="/resources/directories" data-root-label="{{t .Locale "task.directory_picker.root"}}" data-use-label="{{t .Locale "task.directory_picker.use"}}" data-loading-label="{{t .Locale "task.directory_picker.loading"}}" data-empty-label="{{t .Locale "task.directory_picker.empty"}}"><label>{{t .Locale "task.working_directory"}} <input name="working_directory" autocomplete="off" spellcheck="false" value="{{.WorkingDirectory}}" placeholder="." required autofocus></label><button class="button button--quiet" type="button" data-directory-browse><span data-lucide="folder-open" aria-hidden="true"></span>{{t .Locale "task.directory_picker.browse"}}</button><div data-directory-options hidden></div></div>
+      <label>{{t .Locale "task.language"}} <select name="language" required>{{range .Languages}}<option value="{{.ID}}" {{if eq .ID $.Language}}selected{{end}}>{{.Label}} ({{.Extension}})</option>{{end}}</select></label>
+      <label>{{t .Locale "task.source"}} <textarea name="source" autocomplete="off" spellcheck="false" maxlength="1048576" required>{{.Source}}</textarea></label>
+      <label>{{t .Locale "task.arguments"}} <input name="arguments" autocomplete="off" spellcheck="false" value="{{.Arguments}}"></label>
+      <label>{{t .Locale "task.timeout_seconds"}} <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}"></label>
+      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="play" aria-hidden="true"></span>{{t .Locale "quick_runs.run_once"}}</button></footer>
+    </form>
+    {{else if eq .Kind "quick-create"}}
+    <form method="post" action="{{.Action}}" data-async>
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <div data-directory-picker data-endpoint="/resources/directories" data-root-label="{{t .Locale "task.directory_picker.root"}}" data-use-label="{{t .Locale "task.directory_picker.use"}}" data-loading-label="{{t .Locale "task.directory_picker.loading"}}" data-empty-label="{{t .Locale "task.directory_picker.empty"}}"><label>{{t .Locale "task.working_directory"}} <input name="working_directory" autocomplete="off" spellcheck="false" value="{{.WorkingDirectory}}" placeholder="." required autofocus></label><button class="button button--quiet" type="button" data-directory-browse><span data-lucide="folder-open" aria-hidden="true"></span>{{t .Locale "task.directory_picker.browse"}}</button><div data-directory-options hidden></div></div>
+      <label>{{t .Locale "task.language"}} <select name="language" required>{{range .Languages}}<option value="{{.ID}}" {{if eq .ID $.Language}}selected{{end}}>{{.Label}} ({{.Extension}})</option>{{end}}</select></label>
+      <label>{{t .Locale "task.file_name"}} <input name="file_name" autocomplete="off" spellcheck="false" value="{{.FileName}}" required></label>
+      <label>{{t .Locale "task.source"}} <textarea name="source" autocomplete="off" spellcheck="false" maxlength="1048576" required>{{.Source}}</textarea></label>
+      <label>{{t .Locale "run_detail.quick_name"}} <input name="name" autocomplete="off" value="{{.Name}}" required data-quick-name></label>
+      <label>{{t .Locale "task.arguments"}} <input name="arguments" autocomplete="off" spellcheck="false" value="{{.Arguments}}"></label>
+      <label>{{t .Locale "task.timeout_seconds"}} <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}"></label>
+      <label>{{t .Locale "quick_runs.group"}} <select name="group_id"><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}" {{if eq .ID $.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}</select></label>
+      {{if .Conflict}}
+      <section class="page-error" role="alert">
+        <strong>{{t .Locale "task.source_conflict.title"}}</strong>
+        <p>{{t .Locale "task.source_conflict.description"}} <code>{{.ConflictPath}}</code></p>
+        <p>{{t .Locale "task.source_conflict.references"}} {{.QuickReferences}} {{t .Locale "task.source_conflict.quick_runs"}}, {{.ScheduleReferences}} {{t .Locale "task.source_conflict.schedules"}}.</p>
+        {{if not .CanOverwrite}}<p>{{t .Locale "task.source_conflict.overwrite_blocked"}}</p>{{end}}
+        <label>{{t .Locale "task.source_conflict.rename"}} <input name="rename_file_name" value="{{.SuggestedName}}" autocomplete="off" spellcheck="false"></label>
+      </section>
+      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button" type="submit" name="conflict_action" value="rename"><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "task.source_conflict.use_rename"}}</button>{{if .CanOverwrite}}<button class="button button--primary" type="submit" name="conflict_action" value="overwrite"><span data-lucide="refresh-cw" aria-hidden="true"></span>{{t .Locale "task.source_conflict.overwrite"}}</button>{{end}}</footer>
+      {{else}}
+      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "common.create"}}</button></footer>
+      {{end}}
+    </form>
     {{else if eq .Kind "run"}}
     <form method="post" action="{{.Action}}">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="script" value="{{.Path}}">

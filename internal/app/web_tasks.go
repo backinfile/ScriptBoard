@@ -11,31 +11,42 @@ import (
 )
 
 type taskPageData struct {
-	Locale          webLocale
-	Kind            string
-	Title           string
-	Description     string
-	BackURL         string
-	Action          string
-	CSRFToken       string
-	Path            string
-	Name            string
-	Value           string
-	Script          string
-	Arguments       string
-	Expression      string
-	TimeoutSeconds  int
-	IsPassword      bool
-	DisallowOverlap bool
-	GroupID         string
-	Groups          []quickRunGroup
-	ScheduleGroupID string
-	ScheduleGroups  []scheduleGroup
-	ReturnTo        string
-	PreviewAction   string
-	TimeoutInput    string
-	CronPreview     scheduleCronPreviewPayload
-	CronError       string
+	Locale             webLocale
+	Kind               string
+	Title              string
+	Description        string
+	BackURL            string
+	Action             string
+	CSRFToken          string
+	Path               string
+	Name               string
+	Value              string
+	Script             string
+	Arguments          string
+	Expression         string
+	TimeoutSeconds     int
+	IsPassword         bool
+	DisallowOverlap    bool
+	GroupID            string
+	Groups             []quickRunGroup
+	ScheduleGroupID    string
+	ScheduleGroups     []scheduleGroup
+	ReturnTo           string
+	PreviewAction      string
+	TimeoutInput       string
+	CronPreview        scheduleCronPreviewPayload
+	CronError          string
+	Source             string
+	WorkingDirectory   string
+	FileName           string
+	Languages          []scriptLanguageOption
+	Language           string
+	Conflict           bool
+	ConflictPath       string
+	SuggestedName      string
+	CanOverwrite       bool
+	QuickReferences    int
+	ScheduleReferences int
 }
 
 func (a *App) renderTaskPage(response http.ResponseWriter, request *http.Request, data taskPageData) {
@@ -138,6 +149,10 @@ func (a *App) saveQuickRunTask(response http.ResponseWriter, request *http.Reque
 	run, err := a.runs.Get(request.PathValue("id"))
 	if err != nil {
 		http.Error(response, "Run not found", http.StatusNotFound)
+		return
+	}
+	if run.ScriptKind == "one_time" {
+		http.Error(response, "One-time Runs cannot be saved directly as Quick Runs", http.StatusConflict)
 		return
 	}
 	backURL := "/history/runs/" + url.PathEscape(run.ID)

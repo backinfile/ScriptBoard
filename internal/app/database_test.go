@@ -92,13 +92,22 @@ func TestOpenDatabaseMigratesApplicationMonitoringStorageFromVersion15(t *testin
 		t.Fatalf("migrate application monitoring storage: %v", err)
 	}
 	defer db.Close()
-	if currentSchemaVersion != 16 {
-		t.Fatalf("schema version=%d, want 16", currentSchemaVersion)
+	if currentSchemaVersion != 17 {
+		t.Fatalf("schema version=%d, want 17", currentSchemaVersion)
 	}
 	for _, table := range []string{"application_pins", "application_metric_minutes"} {
 		var name string
 		if err := db.QueryRow("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", table).Scan(&name); err != nil {
 			t.Fatalf("%s was not created: %v", table, err)
+		}
+	}
+	for _, column := range []string{"script_kind", "working_directory", "source_filename", "source_expired", "source_audit_event_id"} {
+		var exists int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('runs') WHERE name = ?`, column).Scan(&exists); err != nil {
+			t.Fatalf("inspect runs.%s: %v", column, err)
+		}
+		if exists != 1 {
+			t.Fatalf("runs.%s was not created", column)
 		}
 	}
 	if _, err := os.Stat(path + ".pre-migration-v15"); err != nil {

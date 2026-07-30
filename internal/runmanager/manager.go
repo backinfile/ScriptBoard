@@ -3,6 +3,7 @@ package runmanager
 import (
 	"bufio"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -20,6 +21,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"scriptboard/internal/diskspace"
 	"scriptboard/internal/managedfiles"
@@ -35,30 +37,45 @@ type StartRequest struct {
 	Variables         map[string]string
 }
 
-type Run struct {
-	ID                string
-	ScriptPath        string
-	ScriptDigest      string
+type OneTimeStartRequest struct {
+	WorkingDirectory  string
+	Extension         string
+	Source            string
 	ArgumentsTemplate string
-	Arguments         []string
-	TemplateArguments []string
-	Executor          string
-	SourceType        string
-	SourceName        string
-	SourceID          string
-	RuntimeIdentity   string
-	Status            string
-	CreatedAt         time.Time
-	StartedAt         *time.Time
-	FinishedAt        *time.Time
-	ExitCode          *int
-	Error             string
 	TimeoutSeconds    int
-	Events            []Event
-	LogExpired        bool
-	LogIncomplete     bool
-	LogTruncated      bool
-	DroppedBytes      int64
+	Variables         map[string]string
+	AuditSource       string
+}
+
+type Run struct {
+	ID                 string
+	ScriptPath         string
+	ScriptDigest       string
+	ArgumentsTemplate  string
+	Arguments          []string
+	TemplateArguments  []string
+	Executor           string
+	SourceType         string
+	SourceName         string
+	SourceID           string
+	RuntimeIdentity    string
+	Status             string
+	CreatedAt          time.Time
+	StartedAt          *time.Time
+	FinishedAt         *time.Time
+	ExitCode           *int
+	Error              string
+	TimeoutSeconds     int
+	Events             []Event
+	LogExpired         bool
+	LogIncomplete      bool
+	LogTruncated       bool
+	DroppedBytes       int64
+	ScriptKind         string
+	WorkingDirectory   string
+	SourceFilename     string
+	SourceExpired      bool
+	SourceAuditEventID int64
 }
 
 type Filter struct {
@@ -96,12 +113,15 @@ type executorCandidate struct {
 }
 
 type activeRun struct {
-	command      *exec.Cmd
-	terminal     string
-	scriptPath   string
-	timeoutTimer *time.Timer
-	cleanup      func()
-	fileInfo     os.FileInfo
+	command              *exec.Cmd
+	terminal             string
+	scriptPath           string
+	timeoutTimer         *time.Timer
+	cleanup              func()
+	fileInfo             os.FileInfo
+	workingDirectory     string
+	workingDirectoryInfo os.FileInfo
+	oneTime              bool
 }
 
 type Manager struct {
@@ -123,6 +143,8 @@ func New(db *sql.DB, managed *managedfiles.Store, stateRoot string, timeoutGrace
 }
 
 var ErrMaintenance = errors.New("ScriptBoard is entering update maintenance mode")
+var ErrSourceExpired = errors.New("one-time source has expired")
+var ErrSourceUnavailable = errors.New("one-time source is unavailable")
 
 func (m *Manager) SetLifecycle(lifecycle Lifecycle) {
 	m.lifecycle = lifecycle
@@ -151,6 +173,11 @@ func ValidateArgumentsTemplate(argumentsTemplate string, variables map[string]st
 	return err
 }
 
+func (m *Manager) ValidateExecutor(extension string) error {
+	_, err := resolveExecutors(extension, m.executorChains)
+	return err
+}
+
 func (m *Manager) Start(request StartRequest) (string, error) {
 	m.startMu.Lock()
 	defer m.startMu.Unlock()
@@ -172,10 +199,128 @@ func (m *Manager) Start(request StartRequest) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	parent := filepath.ToSlash(filepath.Dir(filepath.FromSlash(request.ScriptPath)))
+	if parent == "." {
+		parent = ""
+	}
+	workingDirectory, err := m.managed.PrepareDirectory(parent)
+	if err != nil {
+		return "", fmt.Errorf("脚本工作目录不可用: %w", err)
+	}
 	id, err := randomID()
 	if err != nil {
 		return "", err
 	}
+	return m.startPrepared(preparedStart{
+		id: id, displayPath: request.ScriptPath, script: script, workingDirectory: workingDirectory,
+		scriptKind: "managed", executors: executors, templateArguments: templateArguments, arguments: arguments,
+		argumentsTemplate: request.ArgumentsTemplate, sourceType: request.SourceType, sourceName: request.SourceName,
+		sourceID: request.SourceID, timeoutSeconds: request.TimeoutSeconds,
+	})
+}
+
+type preparedStart struct {
+	id                string
+	displayPath       string
+	script            managedfiles.Script
+	workingDirectory  managedfiles.PreparedDirectory
+	scriptKind        string
+	sourceFilename    string
+	executors         []executorCandidate
+	templateArguments []string
+	arguments         []string
+	argumentsTemplate string
+	sourceType        string
+	sourceName        string
+	sourceID          string
+	timeoutSeconds    int
+	auditSource       string
+}
+
+func (m *Manager) StartOneTime(request OneTimeStartRequest) (string, error) {
+	m.startMu.Lock()
+	defer m.startMu.Unlock()
+	if !m.accepting {
+		return "", ErrMaintenance
+	}
+	if err := diskspace.Require(m.stateRoot, diskspace.MinimumWritableBytes); err != nil {
+		return "", err
+	}
+	if len([]byte(request.Source)) == 0 || len([]byte(request.Source)) > 1<<20 || !utf8.ValidString(request.Source) || strings.ContainsRune(request.Source, 0) {
+		return "", errors.New("one-time source must be valid UTF-8 without NUL bytes and no larger than 1 MiB")
+	}
+	extension := strings.ToLower(request.Extension)
+	switch extension {
+	case ".cmd", ".ps1", ".py", ".sh":
+	default:
+		return "", errors.New("one-time source extension is not supported")
+	}
+	templateArguments, arguments, err := prepareArguments(request.ArgumentsTemplate, request.Variables)
+	if err != nil {
+		return "", err
+	}
+	executors, err := resolveExecutors(extension, m.executorChains)
+	if err != nil {
+		return "", err
+	}
+	workingDirectory, err := m.managed.PrepareDirectory(request.WorkingDirectory)
+	if err != nil {
+		return "", fmt.Errorf("working directory is invalid: %w", err)
+	}
+	id, err := randomID()
+	if err != nil {
+		return "", err
+	}
+	runRoot := filepath.Join(m.stateRoot, "runs", id)
+	if err := os.MkdirAll(filepath.Dir(runRoot), 0o700); err != nil {
+		return "", fmt.Errorf("create Run root: %w", err)
+	}
+	if err := os.Mkdir(runRoot, 0o700); err != nil {
+		return "", fmt.Errorf("create private Run directory: %w", err)
+	}
+	sourceFilename := "source" + extension
+	sourcePath := filepath.Join(runRoot, sourceFilename)
+	sourceFile, err := os.OpenFile(sourcePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		_ = os.Remove(runRoot)
+		return "", fmt.Errorf("create one-time source: %w", err)
+	}
+	_, writeErr := io.WriteString(sourceFile, request.Source)
+	if writeErr == nil {
+		writeErr = sourceFile.Sync()
+	}
+	if closeErr := sourceFile.Close(); writeErr == nil {
+		writeErr = closeErr
+	}
+	if writeErr == nil {
+		writeErr = os.Chmod(sourcePath, 0o400)
+	}
+	if writeErr != nil {
+		_ = os.RemoveAll(runRoot)
+		return "", fmt.Errorf("write one-time source: %w", writeErr)
+	}
+	sourceInfo, err := os.Lstat(sourcePath)
+	if err != nil || !sourceInfo.Mode().IsRegular() || sourceInfo.Mode()&os.ModeSymlink != 0 {
+		_ = os.RemoveAll(runRoot)
+		return "", errors.New("one-time source is not a regular file")
+	}
+	digest := sha256.Sum256([]byte(request.Source))
+	runID, err := m.startPrepared(preparedStart{
+		id: id, displayPath: sourceFilename,
+		script:           managedfiles.Script{Path: sourcePath, Digest: fmt.Sprintf("%x", digest[:]), Info: sourceInfo},
+		workingDirectory: workingDirectory, scriptKind: "one_time", sourceFilename: sourceFilename,
+		executors: executors, templateArguments: templateArguments, arguments: arguments,
+		argumentsTemplate: request.ArgumentsTemplate, sourceType: "one_time", sourceName: "one-time",
+		timeoutSeconds: request.TimeoutSeconds, auditSource: request.AuditSource,
+	})
+	if err != nil {
+		_ = os.RemoveAll(runRoot)
+	}
+	return runID, err
+}
+
+func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
+	id := prepared.id
 	lifecycleBegun := false
 	if m.lifecycle != nil {
 		if err := m.lifecycle.BeginRun(id); err != nil {
@@ -197,31 +342,67 @@ func (m *Manager) Start(request StartRequest) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("创建 Run Log: %w", err)
 	}
-	argumentJSON, _ := json.Marshal(arguments)
-	templateArgumentJSON, _ := json.Marshal(templateArguments)
+	argumentJSON, _ := json.Marshal(prepared.arguments)
+	templateArgumentJSON, _ := json.Marshal(prepared.templateArguments)
 	now := time.Now().UTC()
 	runtimeIdentity := "unknown"
 	if currentUser, userErr := user.Current(); userErr == nil {
 		runtimeIdentity = currentUser.Username
 	}
-	if _, err := m.db.Exec(`INSERT INTO runs
-		(id, script_path, script_sha256, arguments_template, template_arguments_json, arguments_json, executor, source_type, source_name, source_id, runtime_identity, status, created_at, timeout_seconds, log_path)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?)`,
-		id, request.ScriptPath, script.Digest, request.ArgumentsTemplate, string(templateArgumentJSON), string(argumentJSON), executors[0].path, request.SourceType, request.SourceName, request.SourceID, runtimeIdentity, now.UnixNano(), request.TimeoutSeconds, logPath,
+	transaction, err := m.db.Begin()
+	if err != nil {
+		_ = logFile.Close()
+		return "", fmt.Errorf("begin Run record: %w", err)
+	}
+	defer transaction.Rollback()
+	var auditID any
+	if prepared.auditSource != "" {
+		result, auditErr := transaction.Exec(`INSERT INTO audit_events
+			(occurred_at, action, target, result, source_address) VALUES (?, 'start_one_time_run', ?, 'accepted', ?)`,
+			now.Unix(), id, prepared.auditSource)
+		if auditErr != nil {
+			_ = logFile.Close()
+			return "", fmt.Errorf("record one-time Run audit: %w", auditErr)
+		}
+		value, auditErr := result.LastInsertId()
+		if auditErr != nil {
+			_ = logFile.Close()
+			return "", fmt.Errorf("read one-time Run audit ID: %w", auditErr)
+		}
+		auditID = value
+	}
+	if _, err := transaction.Exec(`INSERT INTO runs
+		(id, script_path, script_sha256, arguments_template, template_arguments_json, arguments_json, executor,
+		source_type, source_name, source_id, runtime_identity, status, created_at, timeout_seconds, log_path,
+		script_kind, working_directory, source_filename, source_audit_event_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?, ?, ?, ?, ?)`,
+		id, prepared.displayPath, prepared.script.Digest, prepared.argumentsTemplate, string(templateArgumentJSON), string(argumentJSON), prepared.executors[0].path,
+		prepared.sourceType, prepared.sourceName, prepared.sourceID, runtimeIdentity, now.UnixNano(), prepared.timeoutSeconds, logPath,
+		prepared.scriptKind, prepared.workingDirectory.RelativePath, prepared.sourceFilename, auditID,
 	); err != nil {
 		_ = logFile.Close()
-		return "", fmt.Errorf("创建 Run: %w", err)
+		return "", fmt.Errorf("create Run: %w", err)
+	}
+	if err := transaction.Commit(); err != nil {
+		_ = logFile.Close()
+		return "", fmt.Errorf("commit Run: %w", err)
 	}
 
 	var command *exec.Cmd
 	var stdout, stderr io.ReadCloser
 	var startErrors []string
-	for _, executor := range executors {
-		commandArguments := append(append([]string{}, executor.prefix...), script.Path)
-		commandArguments = append(commandArguments, arguments...)
+	currentDirectoryInfo, directoryErr := os.Lstat(prepared.workingDirectory.Path)
+	if directoryErr != nil || !currentDirectoryInfo.IsDir() || currentDirectoryInfo.Mode()&os.ModeSymlink != 0 || !os.SameFile(currentDirectoryInfo, prepared.workingDirectory.Info) {
+		_ = logFile.Close()
+		m.failStart(id, errors.New("working directory changed before execution"))
+		return id, nil
+	}
+	for _, executor := range prepared.executors {
+		commandArguments := append(append([]string{}, executor.prefix...), prepared.script.Path)
+		commandArguments = append(commandArguments, prepared.arguments...)
 		candidate := exec.Command(executor.path, commandArguments...)
-		candidate.Dir = filepath.Dir(script.Path)
-		candidate.Env = append(os.Environ(), "SCRIPTBOARD_RUN_ID="+id, "SCRIPTBOARD_SCRIPT_PATH="+request.ScriptPath)
+		candidate.Dir = prepared.workingDirectory.Path
+		candidate.Env = append(os.Environ(), "SCRIPTBOARD_RUN_ID="+id, "SCRIPTBOARD_SCRIPT_PATH="+prepared.displayPath)
 		configureProcess(candidate)
 		candidateStdout, pipeErr := candidate.StdoutPipe()
 		if pipeErr != nil {
@@ -260,10 +441,16 @@ func (m *Manager) Start(request StartRequest) (string, error) {
 	started := time.Now().UTC()
 	_, _ = m.db.Exec("UPDATE runs SET status = 'running', started_at = ? WHERE id = ?", started.UnixNano(), id)
 	m.mu.Lock()
-	active := &activeRun{command: command, scriptPath: normalizeManagedPath(request.ScriptPath), cleanup: cleanup, fileInfo: script.Info}
+	active := &activeRun{
+		command: command, cleanup: cleanup, fileInfo: prepared.script.Info,
+		scriptPath:           normalizeManagedPath(prepared.displayPath),
+		workingDirectory:     normalizeManagedPath(prepared.workingDirectory.RelativePath),
+		workingDirectoryInfo: prepared.workingDirectory.Info,
+		oneTime:              prepared.scriptKind == "one_time",
+	}
 	m.active[id] = active
-	if request.TimeoutSeconds > 0 {
-		active.timeoutTimer = time.AfterFunc(time.Duration(request.TimeoutSeconds)*time.Second, func() { m.timeout(id) })
+	if prepared.timeoutSeconds > 0 {
+		active.timeoutTimer = time.AfterFunc(time.Duration(prepared.timeoutSeconds)*time.Second, func() { m.timeout(id) })
 	}
 	m.mu.Unlock()
 	m.wg.Add(1)
@@ -303,6 +490,9 @@ func (m *Manager) ConflictsPath(relative string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, active := range m.active {
+		if active.oneTime && (active.workingDirectory == "" || candidate == active.workingDirectory || strings.HasPrefix(candidate, active.workingDirectory+"/")) {
+			return true
+		}
 		if active.scriptPath == candidate || strings.HasPrefix(active.scriptPath, candidate+"/") || (candidateInfo != nil && active.fileInfo != nil && os.SameFile(candidateInfo, active.fileInfo)) {
 			return true
 		}
@@ -337,6 +527,9 @@ func (m *Manager) ActiveCount() int {
 
 func normalizeManagedPath(relative string) string {
 	value := strings.Trim(filepath.ToSlash(filepath.Clean(filepath.FromSlash(relative))), "/")
+	if value == "." {
+		value = ""
+	}
 	if runtime.GOOS == "windows" {
 		value = strings.ToLower(value)
 	}
@@ -559,10 +752,13 @@ func (m *Manager) Get(id string) (Run, error) {
 	var argumentJSON, templateArgumentJSON, logPath string
 	var createdAt int64
 	var startedAt, finishedAt, exitCode sql.NullInt64
+	var sourceAuditEventID sql.NullInt64
 	err := m.db.QueryRow(`SELECT id, script_path, script_sha256, arguments_template, template_arguments_json, arguments_json, executor, source_type, source_name, source_id, runtime_identity,
-		status, created_at, started_at, finished_at, exit_code, error, timeout_seconds, log_path, log_expired, log_incomplete, log_truncated, dropped_bytes FROM runs WHERE id = ?`, id).Scan(
+		status, created_at, started_at, finished_at, exit_code, error, timeout_seconds, log_path, log_expired, log_incomplete, log_truncated, dropped_bytes,
+		script_kind, working_directory, source_filename, source_expired, source_audit_event_id FROM runs WHERE id = ?`, id).Scan(
 		&result.ID, &result.ScriptPath, &result.ScriptDigest, &result.ArgumentsTemplate, &templateArgumentJSON, &argumentJSON, &result.Executor, &result.SourceType, &result.SourceName, &result.SourceID, &result.RuntimeIdentity,
 		&result.Status, &createdAt, &startedAt, &finishedAt, &exitCode, &result.Error, &result.TimeoutSeconds, &logPath, &result.LogExpired, &result.LogIncomplete, &result.LogTruncated, &result.DroppedBytes,
+		&result.ScriptKind, &result.WorkingDirectory, &result.SourceFilename, &result.SourceExpired, &sourceAuditEventID,
 	)
 	if err != nil {
 		return Run{}, err
@@ -580,10 +776,50 @@ func (m *Manager) Get(id string) (Run, error) {
 		value := int(exitCode.Int64)
 		result.ExitCode = &value
 	}
+	if sourceAuditEventID.Valid {
+		result.SourceAuditEventID = sourceAuditEventID.Int64
+	}
 	_ = json.Unmarshal([]byte(argumentJSON), &result.Arguments)
 	_ = json.Unmarshal([]byte(templateArgumentJSON), &result.TemplateArguments)
 	result.Events, _ = readEvents(logPath)
 	return result, nil
+}
+
+func (m *Manager) ReadSource(id string) ([]byte, error) {
+	var storedID, kind, filename, digest string
+	var expired bool
+	if err := m.db.QueryRow(`SELECT id, script_kind, source_filename, source_expired, script_sha256
+		FROM runs WHERE id = ?`, id).Scan(&storedID, &kind, &filename, &expired, &digest); err != nil {
+		return nil, err
+	}
+	if kind != "one_time" || filename == "" {
+		return nil, ErrSourceUnavailable
+	}
+	if expired {
+		return nil, ErrSourceExpired
+	}
+	if storedID != filepath.Base(storedID) || filename != filepath.Base(filename) || strings.ContainsAny(storedID+filename, `/\`) {
+		return nil, ErrSourceUnavailable
+	}
+	path := filepath.Join(m.stateRoot, "runs", storedID, filename)
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, ErrSourceUnavailable
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, ErrSourceUnavailable
+	}
+	defer file.Close()
+	source, err := io.ReadAll(io.LimitReader(file, (1<<20)+1))
+	if err != nil || len(source) > 1<<20 {
+		return nil, ErrSourceUnavailable
+	}
+	hash := sha256.Sum256(source)
+	if !strings.EqualFold(fmt.Sprintf("%x", hash[:]), digest) {
+		return nil, ErrSourceUnavailable
+	}
+	return source, nil
 }
 
 func (m *Manager) List(limit int) ([]Run, error) {

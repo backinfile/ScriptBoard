@@ -177,6 +177,7 @@ func webTemplateFunctions() template.FuncMap {
 				"schedule":           "run.source.scheduled",
 				"scheduler":          "run.source.scheduled",
 				"admin/schedule-now": "run.source.schedule_now",
+				"one_time":           "run.source.one_time",
 			}[source]
 			if key == "" {
 				return source
@@ -336,7 +337,7 @@ func Open(config Config) (*App, error) {
 			_ = db.Close()
 			return nil, err
 		}
-		_, _ = db.Exec("DELETE FROM audit_events WHERE occurred_at < ?", time.Now().UTC().AddDate(-1, 0, 0).Unix())
+		_, _ = cleanupExpiredAuditEvents(db, stateRoot, time.Now().UTC().AddDate(-1, 0, 0))
 	}
 	timeoutGrace := config.RunTimeoutGrace
 	if timeoutGrace <= 0 {
@@ -839,6 +840,11 @@ func openDatabase(path string) (*sql.DB, error) {
 			, log_incomplete INTEGER NOT NULL DEFAULT 0
 			, log_truncated INTEGER NOT NULL DEFAULT 0
 			, dropped_bytes INTEGER NOT NULL DEFAULT 0
+			, script_kind TEXT NOT NULL DEFAULT 'managed'
+			, working_directory TEXT NOT NULL DEFAULT ''
+			, source_filename TEXT NOT NULL DEFAULT ''
+			, source_expired INTEGER NOT NULL DEFAULT 0
+			, source_audit_event_id INTEGER REFERENCES audit_events(id)
 		)`,
 		`CREATE TABLE IF NOT EXISTS variables (
 			name TEXT PRIMARY KEY,
@@ -1152,6 +1158,29 @@ func openDatabase(path string) (*sql.DB, error) {
 			}
 		}
 	}
+	if schemaVersion < 17 {
+		for _, column := range []struct {
+			name, definition string
+		}{
+			{"script_kind", "TEXT NOT NULL DEFAULT 'managed'"},
+			{"working_directory", "TEXT NOT NULL DEFAULT ''"},
+			{"source_filename", "TEXT NOT NULL DEFAULT ''"},
+			{"source_expired", "INTEGER NOT NULL DEFAULT 0"},
+			{"source_audit_event_id", "INTEGER REFERENCES audit_events(id)"},
+		} {
+			var exists int
+			if err := migration.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('runs') WHERE name = ?`, column.name).Scan(&exists); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("inspect one-time Run migration: %w", err)
+			}
+			if exists == 0 {
+				if _, err := migration.Exec("ALTER TABLE runs ADD COLUMN " + column.name + " " + column.definition); err != nil {
+					_ = db.Close()
+					return nil, fmt.Errorf("migrate one-time Runs: %w", err)
+				}
+			}
+		}
+	}
 	for _, statement := range []string{
 		"CREATE INDEX IF NOT EXISTS quick_run_groups_order_idx ON quick_run_groups(sort_order, created_at)",
 		"CREATE INDEX IF NOT EXISTS quick_runs_group_order_idx ON quick_runs(group_id, sort_order, created_at)",
@@ -1159,6 +1188,7 @@ func openDatabase(path string) (*sql.DB, error) {
 		"CREATE INDEX IF NOT EXISTS schedule_groups_order_idx ON schedule_groups(sort_order, created_at)",
 		"CREATE INDEX IF NOT EXISTS schedules_group_order_idx ON schedules(group_id, created_at)",
 		"CREATE INDEX IF NOT EXISTS runs_source_idx ON runs(source_type, source_id, created_at DESC)",
+		"CREATE INDEX IF NOT EXISTS runs_source_audit_idx ON runs(source_audit_event_id)",
 		"CREATE INDEX IF NOT EXISTS application_pins_order_idx ON application_pins(sort_order, created_at)",
 		"CREATE INDEX IF NOT EXISTS application_metric_minutes_bucket_idx ON application_metric_minutes(bucket_at)",
 	} {
@@ -1388,6 +1418,7 @@ func (a *App) routes(_ string) http.Handler {
 	mux.Handle("POST /settings/updates/apply", a.requireSession(http.HandlerFunc(a.applyUpdate)))
 	mux.Handle("GET /resources/files/new-directory", a.requireSession(http.HandlerFunc(a.newDirectoryTask)))
 	mux.Handle("GET /resources/files/upload", a.requireSession(http.HandlerFunc(a.uploadTask)))
+	mux.Handle("GET /resources/directories", a.requireSession(http.HandlerFunc(a.managedDirectories)))
 	mux.Handle("GET /resources/files/log", a.requireSession(http.HandlerFunc(a.fileLogPage)))
 	mux.Handle("GET /resources/files/log/history", a.requireSession(http.HandlerFunc(a.fileLogHistory)))
 	mux.Handle("GET /resources/files/log/events", a.requireSession(http.HandlerFunc(a.fileLogEvents)))
@@ -1411,6 +1442,7 @@ func (a *App) routes(_ string) http.Handler {
 	mux.Handle("POST /history/runs/start", a.requireSession(http.HandlerFunc(a.startRun)))
 	mux.Handle("GET /history/runs", a.requireSession(http.HandlerFunc(a.runsPage)))
 	mux.Handle("GET /history/runs/{id}/save-quick-run", a.requireSession(http.HandlerFunc(a.saveQuickRunTask)))
+	mux.Handle("GET /history/runs/{id}/source", a.requireSession(http.HandlerFunc(a.runSource)))
 	mux.Handle("GET /history/runs/{id}", a.requireSession(http.HandlerFunc(a.runDetails)))
 	mux.Handle("POST /history/runs/{id}/stop", a.requireSession(http.HandlerFunc(a.stopRun)))
 	mux.Handle("GET /history/runs/{id}/events", a.requireSession(http.HandlerFunc(a.runEvents)))
@@ -1423,6 +1455,10 @@ func (a *App) routes(_ string) http.Handler {
 	mux.Handle("POST /history/runs/{id}/quick-run", a.requireSession(http.HandlerFunc(a.saveQuickRun)))
 	mux.Handle("GET /config/quick-runs", a.requireSession(http.HandlerFunc(a.quickRunsPage)))
 	mux.Handle("POST /config/quick-runs", a.requireSession(http.HandlerFunc(a.createQuickRunFromFile)))
+	mux.Handle("GET /config/quick-runs/one-time/new", a.requireSession(http.HandlerFunc(a.oneTimeRunTask)))
+	mux.Handle("POST /config/quick-runs/one-time", a.requireSession(http.HandlerFunc(a.startOneTimeRun)))
+	mux.Handle("GET /config/quick-runs/from-source/new", a.requireSession(http.HandlerFunc(a.quickCreateTask)))
+	mux.Handle("POST /config/quick-runs/from-source", a.requireSession(http.HandlerFunc(a.createQuickRunFromSource)))
 	mux.Handle("GET /config/quick-runs/groups/new", a.requireSession(http.HandlerFunc(a.newQuickRunGroupTask)))
 	mux.Handle("POST /config/quick-runs/groups", a.requireSession(http.HandlerFunc(a.createQuickRunGroup)))
 	mux.Handle("GET /config/quick-runs/groups/{id}/edit", a.requireSession(http.HandlerFunc(a.editQuickRunGroupTask)))
@@ -2306,6 +2342,10 @@ func (a *App) saveQuickRun(response http.ResponseWriter, request *http.Request) 
 	source, err := a.runs.Get(request.PathValue("id"))
 	if err != nil {
 		http.Error(response, "来源运行不存在", http.StatusNotFound)
+		return
+	}
+	if source.ScriptKind == "one_time" {
+		http.Error(response, "One-time Runs cannot be saved directly as Quick Runs", http.StatusConflict)
 		return
 	}
 	groupID, err := a.resolveQuickRunGroupID(request.FormValue("group_id"))

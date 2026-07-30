@@ -680,6 +680,8 @@
   function initTaskPanelMain(main, cleanups) {
     renderIcons(main);
     localizeTimes(main);
+    initDirectoryPickers(main, cleanups);
+    initQuickCreateDefaults(main, cleanups);
     initScheduleCron(cleanups, main);
     const websiteForm = main.querySelector("[data-website-monitor-form]");
     if (websiteForm) cleanups.push(initWebsiteMonitorForm(websiteForm));
@@ -691,6 +693,110 @@
       ? main
       : main.querySelector("[data-website-nginx]");
     if (websiteNginx) cleanups.push(initWebsiteNginx(websiteNginx));
+  }
+
+  function initDirectoryPickers(scope, cleanups) {
+    scope.querySelectorAll("[data-directory-picker]").forEach(root => {
+      const input = root.querySelector('input[name="working_directory"]');
+      const browse = root.querySelector("[data-directory-browse]");
+      const options = root.querySelector("[data-directory-options]");
+      if (!input || !browse || !options) return;
+      let controller = null;
+      const render = payload => {
+        const current = payload.path || ".";
+        options.replaceChildren();
+        const heading = document.createElement("div");
+        heading.className = "heading-actions";
+        const use = document.createElement("button");
+        use.type = "button";
+        use.className = "button button--primary";
+        use.textContent = root.dataset.useLabel || "Use this directory";
+        use.addEventListener("click", () => {
+          input.value = current;
+          options.hidden = true;
+          input.focus();
+        });
+        heading.append(use);
+        if (current !== ".") {
+          const parent = document.createElement("button");
+          parent.type = "button";
+          parent.className = "button button--quiet";
+          parent.textContent = root.dataset.rootLabel || "Managed root";
+          parent.addEventListener("click", () => {
+            const parts = current.split("/").filter(Boolean);
+            parts.pop();
+            load(parts.join("/") || ".");
+          });
+          heading.prepend(parent);
+        }
+        options.append(heading);
+        const list = document.createElement("div");
+        list.className = "heading-actions";
+        if (!payload.directories?.length) {
+          const empty = document.createElement("p");
+          empty.textContent = root.dataset.emptyLabel || "No child directories";
+          list.append(empty);
+        } else {
+          payload.directories.forEach(name => {
+            const child = document.createElement("button");
+            child.type = "button";
+            child.className = "button button--quiet";
+            child.textContent = name;
+            child.addEventListener("click", () => load(current === "." ? name : `${current}/${name}`));
+            list.append(child);
+          });
+        }
+        options.append(list);
+        options.hidden = false;
+      };
+      const load = async path => {
+        controller?.abort();
+        controller = new AbortController();
+        options.hidden = false;
+        options.textContent = root.dataset.loadingLabel || "Loading directories…";
+        try {
+          const endpoint = new URL(root.dataset.endpoint, location.href);
+          endpoint.searchParams.set("path", path === "." ? "" : path);
+          const response = await fetch(endpoint, { headers: { Accept: "application/json" }, cache: "no-store", signal: controller.signal });
+          if (!response.ok) throw new Error(await response.text());
+          render(await response.json());
+        } catch (error) {
+          if (error?.name !== "AbortError") options.textContent = error?.message || words().loadFailed;
+        }
+      };
+      const onBrowse = () => load(input.value.trim() || ".");
+      browse.addEventListener("click", onBrowse);
+      cleanups.push(() => {
+        controller?.abort();
+        browse.removeEventListener("click", onBrowse);
+      });
+    });
+  }
+
+  function initQuickCreateDefaults(scope, cleanups) {
+    const roots = [
+      ...(scope.matches?.('[data-task-kind="quick-create"]') ? [scope] : []),
+      ...scope.querySelectorAll('[data-task-kind="quick-create"]'),
+    ];
+    roots.forEach(root => {
+      const fileName = root.querySelector('input[name="file_name"]');
+      const quickName = root.querySelector("[data-quick-name]");
+      if (!fileName || !quickName) return;
+      let followsFileName = quickName.value.trim() === "";
+      const onFileName = () => {
+        if (followsFileName) quickName.value = fileName.value.trim();
+      };
+      const onQuickName = () => {
+        followsFileName = quickName.value.trim() === "" || quickName.value === fileName.value.trim();
+      };
+      fileName.addEventListener("input", onFileName);
+      quickName.addEventListener("input", onQuickName);
+      onFileName();
+      cleanups.push(() => {
+        fileName.removeEventListener("input", onFileName);
+        quickName.removeEventListener("input", onQuickName);
+      });
+    });
   }
 
   function buildTaskPanel(main, url, push) {
@@ -3456,6 +3562,8 @@
     initPasswordControls(document, cleanups);
     initCopyControls(document, cleanups);
     initFileDropUpload(document, cleanups);
+    initDirectoryPickers(document, cleanups);
+    initQuickCreateDefaults(document, cleanups);
     initOverview(cleanups);
     initApplications(cleanups);
     initLiveLog(cleanups);

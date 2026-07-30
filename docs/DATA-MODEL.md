@@ -436,3 +436,19 @@ stateDiagram-v2
 的在途结果不得回写。管理员暂停或删除时同样递增 generation。WebSocket
 应用消息规则只处理文本帧和二进制帧；Ping/Pong 规则只处理 RFC 6455
 控制帧。
+
+## 9. 一次性 Run 源码
+
+`Run.script_kind` 区分 `managed` 与 `one_time`。一次性 Run 额外保存：
+
+| 字段 | 语义 |
+| --- | --- |
+| working_directory | 相对 Managed Root 的执行 workdir；空值表示根目录 |
+| source_filename | 私有 Run 目录内固定的 `source.{ext}` |
+| source_expired | 源码已回收，源码入口返回 410 |
+| source_audit_event_id | 回收前关联的 `start_one_time_run` 审计主键 |
+| script_sha256 | 实际执行源码的内容摘要，源码回收后仍保留 |
+
+源码不是 Managed Entry 或 Trash Entry。审计清理先删除源码，再在同一数据库事务中
+设置 `source_expired=1`、清空审计引用并删除审计条目。文件删除失败时三个数据库
+变更均不得发生。RunLogManifest 的 90 天/容量清理不处理源码文件。

@@ -1,5 +1,8 @@
 # 即时执行临时脚本实施计划
 
+> **已被取代。** 本文中的临时脚本位置与保留策略不再有效；当前实施方案见
+> [ONE-TIME-AND-QUICK-EXECUTION-PLAN.md](ONE-TIME-AND-QUICK-EXECUTION-PLAN.md)。
+
 状态：Draft
 
 ## 1. 目标
@@ -493,4 +496,3 @@ ad_hoc_execution:
 - Run 历史准确区分即时脚本和受管脚本。
 - 源码与日志由同一保留策略安全清理。
 - 现有受管脚本、Quick Run、Schedule、停止和日志行为全部通过回归测试。
-

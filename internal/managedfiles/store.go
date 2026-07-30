@@ -50,6 +50,28 @@ type Script struct {
 	Info   os.FileInfo
 }
 
+type PreparedDirectory struct {
+	RelativePath string
+	Path         string
+	Info         os.FileInfo
+}
+
+func (s *Store) PrepareDirectory(relative string) (PreparedDirectory, error) {
+	path, err := s.resolveDirectory(relative)
+	if err != nil {
+		return PreparedDirectory{}, err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return PreparedDirectory{}, err
+	}
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(relative)))
+	if clean == "." {
+		clean = ""
+	}
+	return PreparedDirectory{RelativePath: clean, Path: path, Info: info}, nil
+}
+
 func (s *Store) Upload(relative, name string, source io.Reader, maxBytes int64, replace bool, storedName string) (*Trashed, error) {
 	if err := validateName(name); err != nil {
 		return nil, err
@@ -146,6 +168,19 @@ func (s *Store) PrepareScript(relative string) (Script, error) {
 		return Script{}, fmt.Errorf("计算脚本摘要: %w", err)
 	}
 	return Script{Path: file.Name(), Digest: hex.EncodeToString(hash.Sum(nil)), Info: info}, nil
+}
+
+// RemoveRegular removes one regular managed file without following links. It is
+// intended for rolling back a file that was created by the same operation.
+func (s *Store) RemoveRegular(relative string) error {
+	target, info, err := s.resolveEntry(relative)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("only a regular file can be removed")
+	}
+	return os.Remove(target)
 }
 
 func (s *Store) Info(relative string) (os.FileInfo, error) {
