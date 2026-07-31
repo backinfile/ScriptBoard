@@ -244,7 +244,7 @@ During service handoff, an `aria-live` status notice explains the temporary disc
 
 ### Files
 
-Breadcrumbs and a directory list define place. The canonical absolute managed-root location sits directly beneath the relative breadcrumb as selectable technical context. Search and the one primary creation action sit in the page header. A compact drop target above the directory list accepts files for immediate upload into the current path. Upload, move, rename, and Trash restore never overwrite a same-name item by default; a focused conflict dialog offers skip, recoverable overwrite, or rename. Destructive actions are secondary and explicit.
+Breadcrumbs and a directory list define place. The canonical absolute managed-root location is available only in Files settings as selectable, read-only technical context; the file workspace stays relative to that root. New directory and Upload files form one header action group, with Upload files as the single primary action. Browser-local Quick access stores pinned folders, renders one folder per row, and starts collapsed. Dot-prefixed entries are hidden by default and a toolbar switch exposes them without losing the current search or sort state. The complete file-browser surface accepts dragged files for immediate upload into the current path and reveals its boundary and status only while a drag, upload, or error is active. Upload, move, rename, and Trash restore never overwrite a same-name item by default; a focused conflict dialog offers skip, recoverable overwrite, or rename. Destructive actions remain secondary and explicit, with Trash at the far edge of the file toolbar.
 
 ### Run detail
 

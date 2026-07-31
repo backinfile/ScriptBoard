@@ -183,6 +183,7 @@ func main() {
 
 func seedManagedRoot(root string) error {
 	directories := []string{
+		".config",
 		"automation",
 		"automation/maintenance",
 		"data/exports",
@@ -194,6 +195,7 @@ func seedManagedRoot(root string) error {
 		}
 	}
 	files := map[string]string{
+		".env":      "SCRIPTBOARD_FIXTURE=hidden\n",
 		"README.md": "# ScriptBoard fixture\n\nDeterministic files for the Chromium desktop gate.\n",
 		"automation/weekly-system-check.ps1": `param([string]$Environment = "production")
 $ErrorActionPreference = "Stop"

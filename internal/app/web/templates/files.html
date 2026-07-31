@@ -11,159 +11,173 @@
 <main class="workspace files-page">
   <header class="page-heading">
     <div><p class="page-eyebrow">{{t .Locale "files.eyebrow"}}</p><h1>{{t .Locale "files.title"}}</h1><p>{{t .Locale "files.description"}}</p></div>
-    {{if .CanWrite}}<a class="button button--primary" href="/resources/files/upload?path={{urlquery .CurrentPath}}" data-task-link><span data-lucide="upload" aria-hidden="true"></span>{{t .Locale "files.upload"}}</a>{{end}}
+    {{if .CanWrite}}<div class="heading-actions files-heading-actions">
+      <a class="button" href="/resources/files/new-directory?path={{urlquery .CurrentPath}}" data-task-link><span data-lucide="folder-plus" aria-hidden="true"></span>{{t .Locale "files.new_directory"}}</a>
+      <a class="button button--primary" href="/resources/files/upload?path={{urlquery .CurrentPath}}" data-task-link><span data-lucide="upload" aria-hidden="true"></span>{{t .Locale "files.upload"}}</a>
+    </div>{{end}}
   </header>
 
   <nav class="breadcrumb" aria-label="{{t .Locale "files.breadcrumb"}}">
     <a href="{{.RootURL}}"><span data-lucide="hard-drive" aria-hidden="true"></span>{{t .Locale "files.root"}}</a>
     {{if .CurrentPath}}<span data-lucide="chevron-right" aria-hidden="true"></span><code>{{.CurrentPath}}</code>{{end}}
   </nav>
-  <dl class="managed-root-location">
-    <dt>{{t .Locale "files.managed_root_location"}}</dt>
-    <dd><code title="{{.ManagedRoot}}">{{.ManagedRoot}}</code></dd>
-  </dl>
-
-  {{if .CanWrite}}<nav class="directory-actions" aria-label="{{t .Locale "files.tools"}}">
-    <a class="button" href="/resources/files/new-directory?path={{urlquery .CurrentPath}}" data-task-link><span data-lucide="folder-plus" aria-hidden="true"></span>{{t .Locale "files.new_directory"}}</a>
-    <a class="button button--quiet" href="/resources/trash"><span data-lucide="trash-2" aria-hidden="true"></span>{{t .Locale "files.trash"}}</a>
-  </nav>{{end}}
 
   {{if .CanWrite}}
-  <form class="file-drop-form" method="post" action="/resources/files/upload" enctype="multipart/form-data" data-file-drop-form data-file-upload-form
-    data-default-title="{{t .Locale "files.drop_title"}}"
-    data-default-description="{{t .Locale "files.drop_description"}}"
+  <form id="file-drop-upload-form" class="file-upload-form" method="post" action="/resources/files/upload" enctype="multipart/form-data" hidden
+    data-file-drop-form data-file-upload-form data-file-drop-surface="file-drop-surface"
     data-active-title="{{t .Locale "files.drop_active"}}"
     data-active-description="{{t .Locale "files.drop_active_description"}}"
     data-uploading-title="{{t .Locale "files.drop_uploading"}}"
     data-uploading-description="{{t .Locale "files.drop_uploading_detail"}}"
+    data-error-title="{{t .Locale "files.drop_error_title"}}"
     data-directory-error="{{t .Locale "files.drop_directory_error"}}"
     data-count-error="{{t .Locale "files.drop_count_error"}}"
     data-input-error="{{t .Locale "files.drop_input_error"}}">
     <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
     <input type="hidden" name="path" value="{{.CurrentPath}}">
     <input type="hidden" name="conflict_action" value="">
-    <label class="file-drop-zone" data-file-drop-zone>
-      <input class="file-drop-input" name="files" type="file" multiple required aria-label="{{t .Locale "files.choose_files"}}" aria-describedby="file-drop-status">
-      <span class="file-drop-icon" data-lucide="upload" aria-hidden="true"></span>
-      <span class="file-drop-copy">
-        <strong data-file-drop-title>{{t .Locale "files.drop_title"}}</strong>
-        <small id="file-drop-status" data-file-drop-status role="status" aria-live="polite">{{t .Locale "files.drop_description"}}</small>
-      </span>
-      <span class="file-drop-action" aria-hidden="true">{{t .Locale "files.choose_files"}}</span>
-    </label>
-    <noscript><button class="button" type="submit">{{t .Locale "task.start_upload"}}</button></noscript>
+    <input class="file-drop-input" name="files" type="file" multiple required hidden>
   </form>
   {{end}}
 
-  <section class="file-search-region" aria-label="{{t .Locale "files.search"}}">
-    <form class="file-search-form" method="get" action="{{.SearchURL}}" data-async data-async-push data-file-search data-focus-after-navigation="[data-search-input]">
-      <div class="file-search-primary">
-        <label class="file-search-field">
-          <span data-lucide="search" aria-hidden="true"></span>
-          <span class="sr-only">{{t .Locale "files.search"}}</span>
-          <input type="search" name="q" value="{{.Query}}" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="{{t .Locale "files.search_placeholder"}}" data-search-input>
-          <kbd aria-label="{{t .Locale "files.search_shortcut"}}">/</kbd>
-        </label>
-        <button class="button file-search-submit" type="submit" data-search-submit data-pending-label="{{t .Locale "files.search_pending"}}">{{t .Locale "files.search_button"}}</button>
+  <section id="file-drop-surface" class="file-browser"{{if .CanWrite}} data-file-drop-zone{{end}}>
+    {{if .CanWrite}}<div class="file-drop-feedback" role="status" aria-live="polite">
+      <span data-lucide="upload" aria-hidden="true"></span>
+      <span><strong data-file-drop-title></strong><small id="file-drop-status" data-file-drop-status></small></span>
+    </div>{{end}}
+
+    <details class="file-quick-access" data-file-quick-access hidden
+      data-remove-label="{{t .Locale "files.remove_quick_access"}}">
+      <summary>
+        <span class="file-quick-access__icon" data-lucide="pin" aria-hidden="true"></span>
+        <span><strong>{{t .Locale "files.quick_access"}}</strong><small>{{t .Locale "files.quick_access_description"}}</small></span>
+        <span class="file-quick-access__count"><span data-file-quick-count>0</span> <span data-file-quick-count-label>{{t .Locale "files.quick_access_folders"}}</span></span>
+        <span data-lucide="chevron-down" aria-hidden="true"></span>
+      </summary>
+      <div class="file-quick-access__body">
+        <p data-file-quick-empty>{{t .Locale "files.quick_access_empty"}}</p>
+        <ul data-file-quick-list></ul>
       </div>
-      <details class="file-sort" data-file-sort>
-        <summary>
-          <span data-lucide="arrow-up-down" aria-hidden="true"></span>
-          <span>{{.SortSummary}}</span>
-          <span data-lucide="chevron-down" aria-hidden="true"></span>
-        </summary>
-        <div class="file-sort-panel" aria-label="{{t .Locale "files.sort_controls"}}">
-          <label>
-            <span>{{t .Locale "files.sort"}}</span>
-            <select name="sort" data-file-sort-field>
-              <option value="" {{if eq .SortField ""}}selected{{end}}>{{t .Locale "files.natural_order"}}</option>
-              <option value="name" {{if eq .SortField "name"}}selected{{end}}>{{t .Locale "common.name"}}</option>
-              <option value="type" {{if eq .SortField "type"}}selected{{end}}>{{t .Locale "files.sort.type"}}</option>
-              <option value="size" {{if eq .SortField "size"}}selected{{end}}>{{t .Locale "common.size"}}</option>
-              <option value="modified" {{if eq .SortField "modified"}}selected{{end}}>{{t .Locale "common.modified"}}</option>
-            </select>
+      <span hidden data-file-quick-one-label>{{t .Locale "files.quick_access_folder"}}</span>
+      <span hidden data-file-quick-many-label>{{t .Locale "files.quick_access_folders"}}</span>
+    </details>
+
+    <section class="file-search-region" aria-label="{{t .Locale "files.search"}}">
+      <form class="file-search-form" method="get" action="{{.SearchURL}}" data-async data-async-push data-file-search data-focus-after-navigation="[data-search-input]">
+        <div class="file-search-primary">
+          <label class="file-search-field">
+            <span data-lucide="search" aria-hidden="true"></span>
+            <span class="sr-only">{{t .Locale "files.search"}}</span>
+            <input type="search" name="q" value="{{.Query}}" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="{{t .Locale "files.search_placeholder"}}" data-search-input>
+            <kbd aria-label="{{t .Locale "files.search_shortcut"}}">/</kbd>
           </label>
-          <label class="file-sort-direction">
-            <span>{{t .Locale "files.direction"}}</span>
-            <select name="direction">
-              <option value="asc" {{if ne .Direction "desc"}}selected{{end}}>{{t .Locale "files.ascending"}}</option>
-              <option value="desc" {{if eq .Direction "desc"}}selected{{end}}>{{t .Locale "files.descending"}}</option>
-            </select>
-          </label>
-          <button class="button" type="submit" data-sort-submit data-pending-label="{{t .Locale "files.sort_pending"}}">{{t .Locale "files.apply_sort"}}</button>
+          <button class="button file-search-submit" type="submit" data-search-submit data-pending-label="{{t .Locale "files.search_pending"}}">{{t .Locale "files.search_button"}}</button>
         </div>
-      </details>
-    </form>
-  </section>
+        <details class="file-sort" data-file-sort>
+          <summary>
+            <span data-lucide="arrow-up-down" aria-hidden="true"></span>
+            <span>{{.SortSummary}}</span>
+            <span data-lucide="chevron-down" aria-hidden="true"></span>
+          </summary>
+          <div class="file-sort-panel" aria-label="{{t .Locale "files.sort_controls"}}">
+            <label>
+              <span>{{t .Locale "files.sort"}}</span>
+              <select name="sort" data-file-sort-field>
+                <option value="" {{if eq .SortField ""}}selected{{end}}>{{t .Locale "files.natural_order"}}</option>
+                <option value="name" {{if eq .SortField "name"}}selected{{end}}>{{t .Locale "common.name"}}</option>
+                <option value="type" {{if eq .SortField "type"}}selected{{end}}>{{t .Locale "files.sort.type"}}</option>
+                <option value="size" {{if eq .SortField "size"}}selected{{end}}>{{t .Locale "common.size"}}</option>
+                <option value="modified" {{if eq .SortField "modified"}}selected{{end}}>{{t .Locale "common.modified"}}</option>
+              </select>
+            </label>
+            <label class="file-sort-direction">
+              <span>{{t .Locale "files.direction"}}</span>
+              <select name="direction">
+                <option value="asc" {{if ne .Direction "desc"}}selected{{end}}>{{t .Locale "files.ascending"}}</option>
+                <option value="desc" {{if eq .Direction "desc"}}selected{{end}}>{{t .Locale "files.descending"}}</option>
+              </select>
+            </label>
+            <button class="button" type="submit" data-sort-submit data-pending-label="{{t .Locale "files.sort_pending"}}">{{t .Locale "files.apply_sort"}}</button>
+          </div>
+        </details>
+        <label class="file-hidden-toggle">
+          <input type="checkbox" role="switch" name="show_hidden" value="1" {{if .ShowHidden}}checked{{end}} data-file-hidden-toggle>
+          <span class="file-hidden-toggle__track" aria-hidden="true"><span></span></span>
+          <span>{{t .Locale "files.show_hidden"}}</span>
+        </label>
+        {{if .CanWrite}}<a class="button button--quiet file-trash-link" href="/resources/trash"><span data-lucide="trash-2" aria-hidden="true"></span>{{t .Locale "files.trash"}}</a>{{end}}
+      </form>
+    </section>
 
-  <div data-deferred-region>
-  {{if .DeferredData}}
-  {{template "deferred-loading" .}}
-  {{else}}
-  {{if .Query}}
-  <div class="file-search-results" data-search-results>
-    <p role="status" aria-live="polite">
-      <span data-lucide="scan-search" aria-hidden="true"></span>
-      <span>{{t .Locale "files.results_found"}} <strong>{{.Pagination.Total}}</strong> {{if eq .Pagination.Total 1}}{{t .Locale "files.result_item"}}{{else}}{{t .Locale "files.result_items"}}{{end}} {{t .Locale "files.results_scope"}} · <code>{{.Query}}</code></span>
-    </p>
-    <a href="{{.ClearURL}}" data-search-clear data-focus-after-navigation="[data-search-input]"><span data-lucide="x" aria-hidden="true"></span>{{t .Locale "files.clear_search"}}</a>
-  </div>
-  {{end}}
+    <div data-deferred-region>
+    {{if .DeferredData}}
+    {{template "deferred-loading" .}}
+    {{else}}
+    {{if .Query}}
+    <div class="file-search-results" data-search-results>
+      <p role="status" aria-live="polite">
+        <span data-lucide="scan-search" aria-hidden="true"></span>
+        <span>{{t .Locale "files.results_found"}} <strong>{{.Pagination.Total}}</strong> {{if eq .Pagination.Total 1}}{{t .Locale "files.result_item"}}{{else}}{{t .Locale "files.result_items"}}{{end}} {{t .Locale "files.results_scope"}} · <code>{{.Query}}</code></span>
+      </p>
+      <a href="{{.ClearURL}}" data-search-clear data-focus-after-navigation="[data-search-input]"><span data-lucide="x" aria-hidden="true"></span>{{t .Locale "files.clear_search"}}</a>
+    </div>
+    {{end}}
 
-  {{if and .Query (not .Entries)}}
-  <section class="no-search-results" data-no-search-results>
-    <span data-lucide="search-x" aria-hidden="true"></span>
-    <p>{{t .Locale "files.no_results_before"}} <code>{{.Query}}</code> {{t .Locale "files.no_results_after"}}</p>
-    <a class="button button--quiet" href="{{.ClearURL}}" data-focus-after-navigation="[data-search-input]">{{t .Locale "files.clear_search"}}</a>
-  </section>
-  {{else}}
-  <div class="table-shell">
-    <table class="records-table file-table">
-      <thead><tr><th>{{t .Locale "common.name"}}</th><th>{{t .Locale "common.size"}}</th><th>{{t .Locale "common.modified"}}</th><th><span class="sr-only">{{t .Locale "common.actions"}}</span></th></tr></thead>
-      <tbody>
-      {{range .Entries}}
-        <tr>
-          <td data-label="{{t $.Locale "common.name"}}" class="record-primary">
-            <div class="record-primary__content">
-              <span class="record-icon" aria-hidden="true" data-lucide="{{.IconClass}}"></span>
-              <div>{{if .BrowseURL}}<a href="{{.BrowseURL}}">{{range .NameParts}}{{if .Match}}<mark>{{.Text}}</mark>{{else}}{{.Text}}{{end}}{{end}}</a>{{else if .ViewURL}}<a href="{{.ViewURL}}">{{range .NameParts}}{{if .Match}}<mark>{{.Text}}</mark>{{else}}{{.Text}}{{end}}{{end}}</a>{{else}}<span>{{range .NameParts}}{{if .Match}}<mark>{{.Text}}</mark>{{else}}{{.Text}}{{end}}{{end}}</span>{{end}}<small><span>{{.CategoryLabel}}</span> · <code>{{.Path}}</code></small></div>
-            </div>
-          </td>
-          <td data-label="{{t $.Locale "common.size"}}">{{.Size}}</td>
-          <td data-label="{{t $.Locale "common.modified"}}"><time datetime="{{machineTime .ModifiedAt}}" data-local-time>{{localTime $.Locale .ModifiedAt}}</time></td>
-          <td class="record-actions">
-            <div class="record-actions__group">
-            {{if .BrowseURL}}<a class="button button--quiet button--compact" href="{{.BrowseURL}}">{{t $.Locale "common.open"}}</a>{{end}}
-            {{if and $.CanExecute .Runnable}}<a class="button button--compact" href="/resources/files/run/{{.Path}}" data-task-link><span data-lucide="play" aria-hidden="true"></span>{{t $.Locale "common.run"}}</a>{{end}}
-            {{if ne .Kind "restricted"}}
-            <details class="action-menu">
-              <summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary>
-              <div>
-                {{if and $.CanManageExecution .Runnable}}<a href="{{.QuickRunURL}}" data-task-link><span data-lucide="bookmark-plus" aria-hidden="true"></span>{{t $.Locale "files.add_to_quick_runs"}}</a>{{end}}
-                {{if .ViewURL}}<a href="{{.ViewURL}}"><span data-lucide="eye" aria-hidden="true"></span>{{t $.Locale "common.preview"}}</a>{{end}}
-                {{if .LogURL}}<a href="{{.LogURL}}"><span data-lucide="scroll-text" aria-hidden="true"></span>{{t $.Locale "logs.follow"}}</a>{{end}}
-                {{if and $.CanWrite .EditURL}}<a href="{{.EditURL}}"><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a>{{end}}
-                {{if .DownloadURL}}<a href="{{.DownloadURL}}" data-native><span data-lucide="download" aria-hidden="true"></span>{{t $.Locale "common.download"}}</a>{{end}}
-                {{if and $.CanToggleExecutable (eq .Kind "regular")}}<form method="post" action="/resources/files/toggle-executable" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" name="path" value="{{.Path}}"><span data-lucide="file-cog" aria-hidden="true"></span>{{t $.Locale "files.executable"}}</button></form>{{end}}
-                {{if $.CanWrite}}<form method="post" action="/resources/files/delete" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-action" type="submit" name="path" value="{{.Path}}"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "files.move_to_trash"}}</button></form>{{end}}
+    {{if and .Query (not .Entries)}}
+    <section class="no-search-results" data-no-search-results>
+      <span data-lucide="search-x" aria-hidden="true"></span>
+      <p>{{t .Locale "files.no_results_before"}} <code>{{.Query}}</code> {{t .Locale "files.no_results_after"}}</p>
+      <a class="button button--quiet" href="{{.ClearURL}}" data-focus-after-navigation="[data-search-input]">{{t .Locale "files.clear_search"}}</a>
+    </section>
+    {{else}}
+    <div class="table-shell">
+      <table class="records-table file-table">
+        <thead><tr><th>{{t .Locale "common.name"}}</th><th>{{t .Locale "common.size"}}</th><th>{{t .Locale "common.modified"}}</th><th><span class="sr-only">{{t .Locale "common.actions"}}</span></th></tr></thead>
+        <tbody>
+        {{range .Entries}}
+          <tr>
+            <td data-label="{{t $.Locale "common.name"}}" class="record-primary">
+              <div class="record-primary__content">
+                <span class="record-icon" aria-hidden="true" data-lucide="{{.IconClass}}"></span>
+                <div>{{if .BrowseURL}}<a href="{{.BrowseURL}}">{{range .NameParts}}{{if .Match}}<mark>{{.Text}}</mark>{{else}}{{.Text}}{{end}}{{end}}</a>{{else if .ViewURL}}<a href="{{.ViewURL}}">{{range .NameParts}}{{if .Match}}<mark>{{.Text}}</mark>{{else}}{{.Text}}{{end}}{{end}}</a>{{else}}<span>{{range .NameParts}}{{if .Match}}<mark>{{.Text}}</mark>{{else}}{{.Text}}{{end}}{{end}}</span>{{end}}<small><span>{{.CategoryLabel}}</span>{{if .IsHidden}}<span class="file-hidden-badge">{{t $.Locale "files.hidden"}}</span>{{end}} · <code>{{.Path}}</code></small></div>
               </div>
-            </details>
-            {{end}}
-            </div>
-          </td>
-        </tr>
-      {{else}}
-        <tr class="records-table__empty"><td colspan="4"><div class="empty-inline"><span data-lucide="folder-open" aria-hidden="true"></span><span>{{t .Locale "files.empty"}}</span>{{if .CanWrite}}<a href="/resources/files/upload?path={{urlquery .CurrentPath}}" data-task-link>{{t .Locale "files.upload"}}</a>{{end}}</div></td></tr>
-      {{end}}
-      </tbody>
-    </table>
-  </div>
-  {{if .Entries}}
-  <nav class="pagination" aria-label="{{t .Locale "files.pagination"}}"><span>{{.Pagination.Total}} {{t .Locale "common.records"}} · {{.Pagination.Page}} / {{.Pagination.PageCount}}</span><div>{{if .Pagination.HasPrevious}}<a href="{{.Pagination.PreviousURL}}">{{t .Locale "common.previous"}}</a>{{else}}<span aria-disabled="true">{{t .Locale "common.previous"}}</span>{{end}}{{if .Pagination.HasNext}}<a href="{{.Pagination.NextURL}}">{{t .Locale "common.next"}}</a>{{else}}<span aria-disabled="true">{{t .Locale "common.next"}}</span>{{end}}</div></nav>
-  {{end}}
-  {{end}}
-  {{end}}
-  </div>
+            </td>
+            <td data-label="{{t $.Locale "common.size"}}">{{.Size}}</td>
+            <td data-label="{{t $.Locale "common.modified"}}"><time datetime="{{machineTime .ModifiedAt}}" data-local-time>{{localTime $.Locale .ModifiedAt}}</time></td>
+            <td class="record-actions">
+              <div class="record-actions__group">
+              {{if .BrowseURL}}<button class="icon-button file-pin-button" type="button" hidden data-file-pin data-file-pin-path="{{.Path}}" data-file-pin-label="{{.Name}}" data-file-pin-href="{{.PinURL}}" data-pin-label="{{t $.Locale "files.pin_directory"}}" data-unpin-label="{{t $.Locale "files.unpin_directory"}}" aria-label="{{t $.Locale "files.pin_directory"}}" aria-pressed="false"><span data-lucide="pin" aria-hidden="true"></span></button><a class="button button--quiet button--compact" href="{{.BrowseURL}}">{{t $.Locale "common.open"}}</a>{{end}}
+              {{if and $.CanExecute .Runnable}}<a class="button button--compact" href="/resources/files/run/{{.Path}}" data-task-link><span data-lucide="play" aria-hidden="true"></span>{{t $.Locale "common.run"}}</a>{{end}}
+              {{if ne .Kind "restricted"}}
+              <details class="action-menu">
+                <summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary>
+                <div>
+                  {{if and $.CanManageExecution .Runnable}}<a href="{{.QuickRunURL}}" data-task-link><span data-lucide="bookmark-plus" aria-hidden="true"></span>{{t $.Locale "files.add_to_quick_runs"}}</a>{{end}}
+                  {{if .ViewURL}}<a href="{{.ViewURL}}"><span data-lucide="eye" aria-hidden="true"></span>{{t $.Locale "common.preview"}}</a>{{end}}
+                  {{if .LogURL}}<a href="{{.LogURL}}"><span data-lucide="scroll-text" aria-hidden="true"></span>{{t $.Locale "logs.follow"}}</a>{{end}}
+                  {{if and $.CanWrite .EditURL}}<a href="{{.EditURL}}"><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a>{{end}}
+                  {{if .DownloadURL}}<a href="{{.DownloadURL}}" data-native><span data-lucide="download" aria-hidden="true"></span>{{t $.Locale "common.download"}}</a>{{end}}
+                  {{if and $.CanToggleExecutable (eq .Kind "regular")}}<form method="post" action="/resources/files/toggle-executable" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" name="path" value="{{.Path}}"><span data-lucide="file-cog" aria-hidden="true"></span>{{t $.Locale "files.executable"}}</button></form>{{end}}
+                  {{if $.CanWrite}}<form method="post" action="/resources/files/delete" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-action" type="submit" name="path" value="{{.Path}}"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "files.move_to_trash"}}</button></form>{{end}}
+                </div>
+              </details>
+              {{end}}
+              </div>
+            </td>
+          </tr>
+        {{else}}
+          <tr class="records-table__empty"><td colspan="4"><div class="empty-inline"><span data-lucide="folder-open" aria-hidden="true"></span><span>{{t .Locale "files.empty"}}</span>{{if .CanWrite}}<a href="/resources/files/upload?path={{urlquery .CurrentPath}}" data-task-link>{{t .Locale "files.upload"}}</a>{{end}}</div></td></tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{if .Entries}}
+    <nav class="pagination" aria-label="{{t .Locale "files.pagination"}}"><span>{{.Pagination.Total}} {{t .Locale "common.records"}} · {{.Pagination.Page}} / {{.Pagination.PageCount}}</span><div>{{if .Pagination.HasPrevious}}<a href="{{.Pagination.PreviousURL}}">{{t .Locale "common.previous"}}</a>{{else}}<span aria-disabled="true">{{t .Locale "common.previous"}}</span>{{end}}{{if .Pagination.HasNext}}<a href="{{.Pagination.NextURL}}">{{t .Locale "common.next"}}</a>{{else}}<span aria-disabled="true">{{t .Locale "common.next"}}</span>{{end}}</div></nav>
+    {{end}}
+    {{end}}
+    {{end}}
+    </div>
+  </section>
 </main>
 </body>
 </html>

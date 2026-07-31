@@ -772,7 +772,7 @@ async function assertAccountSettings(page, baseURL) {
   assert.equal(await page.locator(".app-sidebar .sidebar-account").count(), 0);
   assert.equal(await page.locator('.app-sidebar a[href="/settings/users"]').count(), 0);
   assert.equal(await page.locator('.settings-nav a[href="/settings/users"]').count(), 1);
-  assert.equal(await page.locator(".settings-nav a").count(), 5);
+  assert.equal(await page.locator(".settings-nav a").count(), 6);
   assert.equal(await page.locator(".settings-layout").count(), 0);
   const settingsLayout = await page.locator(".settings-nav, .settings-content").evaluateAll(elements =>
     elements.map(element => ({
@@ -1306,12 +1306,73 @@ async function assertAccountSettings(page, baseURL) {
     assert.equal(page.url(), `${fixture.baseURL}/resources/files/`, "restoring a task with Forward changed the workspace URL");
     await page.keyboard.press("Escape");
     await page.locator("[data-task-panel]").waitFor({ state: "detached" });
-    const managedRootLocation = page.locator(".managed-root-location");
-    assert.equal((await managedRootLocation.locator("dt").textContent()).trim(), "Managed root location");
+    assert.equal(await page.locator(".managed-root-location").count(), 0);
+    await page.evaluate(() => localStorage.removeItem("scriptboard.files.pinnedDirectories.v1"));
+    await page.reload();
+
+    const quickAccess = page.locator("[data-file-quick-access]");
+    await quickAccess.waitFor({ state: "visible" });
+    assert.equal(await quickAccess.getAttribute("open"), null, "Quick access was not collapsed by default");
+    assert.equal((await quickAccess.locator("[data-file-quick-count]").textContent()).trim(), "0");
+    const automationRow = page.locator(".file-table tbody tr").filter({
+      has: page.getByRole("link", { name: "automation", exact: true }),
+    });
+    const automationPin = automationRow.getByRole("button", { name: "Pin directory" });
+    await automationPin.waitFor({ state: "visible" });
+    await automationPin.click();
+    assert.equal(await automationPin.getAttribute("aria-pressed"), "true");
+    assert.equal((await quickAccess.locator("[data-file-quick-count]").textContent()).trim(), "1");
+    await quickAccess.locator("summary").click();
+    await quickAccess.getByRole("link", { name: /automation/ }).waitFor();
+    await saveSnapshot(page, "files-quick-access");
+    await Promise.all([
+      page.waitForURL("**/resources/files/automation/"),
+      quickAccess.getByRole("link", { name: /automation/ }).click(),
+    ]);
+    await page.goto(`${fixture.baseURL}/resources/files/`);
+    const restoredQuickAccess = page.locator("[data-file-quick-access]");
+    await restoredQuickAccess.locator("summary").click();
+    assert.equal(await restoredQuickAccess.getByRole("link", { name: /automation/ }).count(), 1);
+    const restoredAutomationRow = page.locator(".file-table tbody tr").filter({
+      has: page.getByRole("link", { name: "automation", exact: true }),
+    });
+    const restoredAutomationPin = restoredAutomationRow.getByRole("button", { name: "Unpin directory" });
+    await restoredAutomationPin.click();
+    assert.equal((await restoredQuickAccess.locator("[data-file-quick-count]").textContent()).trim(), "0");
+    await restoredQuickAccess.locator("summary").click();
+
+    const hiddenToggle = page.locator("[data-file-hidden-toggle]");
+    assert.equal(await hiddenToggle.isChecked(), false);
+    assert.equal(await page.getByText(".env", { exact: true }).count(), 0);
+    await Promise.all([
+      page.waitForURL(url => url.pathname === "/resources/files/" && url.searchParams.get("show_hidden") === "1"),
+      page.locator(".file-hidden-toggle").click(),
+    ]);
+    assert.equal(await page.locator("[data-file-hidden-toggle]").isChecked(), true);
+    assert.equal(await page.locator("[data-file-hidden-toggle]").evaluate(input => document.activeElement === input), true);
+    const hiddenFileName = page.getByText(".env", { exact: true }).first();
+    await hiddenFileName.waitFor();
+    assert.ok(await page.locator(".file-hidden-badge").count() >= 2);
+    await saveSnapshot(page, "files-hidden");
+    await Promise.all([
+      page.waitForURL(url => url.pathname === "/resources/files/" && !url.searchParams.has("show_hidden")),
+      page.locator(".file-hidden-toggle").click(),
+    ]);
+    await hiddenFileName.waitFor({ state: "detached" });
+    assert.equal(await page.getByText(".env", { exact: true }).count(), 0);
+
+    await page.goto(`${fixture.baseURL}/settings/files`);
+    const managedRootLocation = page.locator("[data-readonly-root]");
     const managedRootPath = (await managedRootLocation.locator("code").textContent()).trim();
     assert.equal(path.isAbsolute(managedRootPath), true);
+    assert.equal(await managedRootLocation.locator("input, textarea, [contenteditable='true']").count(), 0);
+    assert.match((await managedRootLocation.textContent()).replace(/\s+/g, " "), /Managed root location.*Read only/);
+    await saveSnapshot(page, "settings-files");
+    await page.goto(`${fixture.baseURL}/resources/files/`);
+
     const fileDropZone = page.locator("[data-file-drop-zone]");
-    assert.equal((await fileDropZone.locator("[data-file-drop-title]").textContent()).trim(), "Drop files here to upload");
+    assert.equal(await fileDropZone.locator(".file-drop-feedback").isHidden(), true);
+    assert.equal((await fileDropZone.locator("[data-file-drop-title]").textContent()).trim(), "");
     assert.equal(await page.locator('[data-file-drop-form] input[name="path"]').inputValue(), "");
     const dropData = await page.evaluateHandle(() => {
       const transfer = new DataTransfer();
@@ -1320,6 +1381,7 @@ async function assertAccountSettings(page, baseURL) {
     });
     await fileDropZone.dispatchEvent("dragenter", { dataTransfer: dropData });
     assert.equal(await fileDropZone.getAttribute("data-state"), "active");
+    assert.equal(await fileDropZone.locator(".file-drop-feedback").isVisible(), true);
     assert.equal((await fileDropZone.locator("[data-file-drop-title]").textContent()).trim(), "Release to upload");
     await saveSnapshot(page, "files-drop-active");
     await Promise.all([
@@ -1495,11 +1557,13 @@ async function assertAccountSettings(page, baseURL) {
     assert.equal(await page.locator(".pagination").count(), 0);
     await saveSnapshot(page, "files-search-empty");
 
+    await page.setViewportSize({ width: 820, height: 900 });
     await page.goto(`${fixture.baseURL}/resources/files/`);
+    await assertNoHorizontalOverflow(page, "files tablet");
+
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.reload();
-    await assertNoHorizontalOverflow(page, "files mobile");
-    const managedRootMobileMetrics = await page.locator(".managed-root-location code").evaluate(element => {
+    await page.goto(`${fixture.baseURL}/settings/files`);
+    const managedRootMobileMetrics = await page.locator("[data-readonly-root] code").evaluate(element => {
       const bounds = element.getBoundingClientRect();
       return {
         wraps: bounds.height > Number.parseFloat(getComputedStyle(element).lineHeight) * 1.5,
@@ -1507,15 +1571,28 @@ async function assertAccountSettings(page, baseURL) {
       };
     });
     assert.deepEqual(managedRootMobileMetrics, { wraps: true, fitsWidth: true });
+    await assertNoHorizontalOverflow(page, "file settings mobile");
+    await saveSnapshot(page, "settings-files-mobile");
+
+    await page.goto(`${fixture.baseURL}/resources/files/`);
+    await assertNoHorizontalOverflow(page, "files mobile");
     const fileDropMobileMetrics = await page.locator("[data-file-drop-zone]").evaluate(element => {
       const bounds = element.getBoundingClientRect();
-      const actionBounds = element.querySelector(".file-drop-action").getBoundingClientRect();
       return {
         fitsWidth: bounds.right <= window.innerWidth,
-        actionHeight: Math.round(actionBounds.height),
+        feedbackHidden: getComputedStyle(element.querySelector(".file-drop-feedback")).display === "none",
       };
     });
-    assert.deepEqual(fileDropMobileMetrics, { fitsWidth: true, actionHeight: 44 });
+    assert.deepEqual(fileDropMobileMetrics, { fitsWidth: true, feedbackHidden: true });
+    const fileHeadingActionSizes = await page.locator(".files-heading-actions .button").evaluateAll(elements =>
+      elements.map(element => ({
+        width: Math.round(element.getBoundingClientRect().width),
+        height: Math.round(element.getBoundingClientRect().height),
+      })),
+    );
+    assert.equal(fileHeadingActionSizes.length, 2);
+    assert.equal(fileHeadingActionSizes[0].width, fileHeadingActionSizes[1].width);
+    assert.ok(fileHeadingActionSizes.every(size => size.height >= 44));
     const mobileSearchMetrics = await page.locator(".file-search-primary").evaluate(primary => {
       const bounds = primary.getBoundingClientRect();
       const inputBounds = primary.querySelector("input").getBoundingClientRect();
@@ -1830,7 +1907,9 @@ async function assertAccountSettings(page, baseURL) {
     await noScriptPage.goto(`${fixture.baseURL}/resources/files/`);
     assert.equal(await noScriptPage.locator("[data-file-drop-form]").count(), 1);
     assert.equal(await noScriptPage.locator('[data-file-drop-form] input[type="file"][multiple]').count(), 1);
-    assert.equal((await noScriptPage.locator("[data-file-drop-form] button[type='submit']").textContent()).trim(), "Start upload");
+    assert.equal(await noScriptPage.locator("[data-file-drop-form]").isHidden(), true);
+    assert.equal(await noScriptPage.locator(".file-drop-feedback").isVisible(), false);
+    assert.equal(await noScriptPage.locator('a[href^="/resources/files/upload"][data-task-link]').count(), 1);
     await noScriptPage.goto(`${fixture.baseURL}/resources/files/view/documentation/recovery-checklist.md`);
     assert.equal(await noScriptPage.locator("[data-markdown-preview]").isHidden(), true);
     assert.equal(await noScriptPage.locator("[data-markdown-source]").isVisible(), true);

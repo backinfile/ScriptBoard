@@ -1551,6 +1551,7 @@ func (a *App) routes(_ string) http.Handler {
 	mux.Handle("POST /settings/account/username", a.requireSession(http.HandlerFunc(a.changeUsername)))
 	mux.Handle("GET /settings/account/password", a.requireSession(http.HandlerFunc(a.accountPasswordTask)))
 	mux.Handle("POST /settings/account/password", a.requireSession(http.HandlerFunc(a.changePassword)))
+	mux.Handle("GET /settings/files", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.fileSettingsPage)))
 	mux.Handle("GET /settings/users", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.usersPage)))
 	mux.Handle("POST /settings/users", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.createUser)))
 	mux.Handle("GET /settings/users/{id}/edit", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.editUserTask)))
@@ -3926,22 +3927,23 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 	relative := strings.Trim(request.PathValue("path"), "/")
 	query := strings.TrimSpace(request.URL.Query().Get("q"))
+	showHidden := request.URL.Query().Get("show_hidden") == "1"
 	sortField, direction := normalizeFileSort(request.URL.Query().Get("sort"), request.URL.Query().Get("direction"))
 	current := request.Context().Value(sessionContextKey).(session)
 	locale := resolveWebLocale(request)
 	if isDeferredDataShell(request) {
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = filesTemplate.Execute(response, struct {
-			CSRFToken, ManagedRoot, CurrentPath, Query, SortField, Direction string
-			SortSummary, RootURL, SearchURL                                  string
-			Locale                                                           webLocale
-			DeferredData                                                     bool
-			CanWrite, CanExecute, CanManageExecution                         bool
+			CSRFToken, CurrentPath, Query, SortField, Direction string
+			SortSummary, RootURL, SearchURL                     string
+			Locale                                              webLocale
+			DeferredData, ShowHidden                            bool
+			CanWrite, CanExecute, CanManageExecution            bool
 		}{
-			CSRFToken: current.csrfToken, ManagedRoot: a.managedRoot, CurrentPath: relative,
+			CSRFToken: current.csrfToken, CurrentPath: relative,
 			Query: query, SortField: sortField, Direction: direction, SortSummary: fileSortSummary(locale, sortField, direction),
-			RootURL: filesStateURL("", "", sortField, direction, 0), SearchURL: filesURL(relative),
-			Locale: locale, DeferredData: true,
+			RootURL: filesStateURL("", "", sortField, direction, showHidden, 0), SearchURL: filesURL(relative),
+			Locale: locale, DeferredData: true, ShowHidden: showHidden,
 			CanWrite: roleAllows(current.role, permissionWriteFiles), CanExecute: roleAllows(current.role, permissionExecute),
 			CanManageExecution: roleAllows(current.role, permissionManageExecution),
 		})
@@ -3952,22 +3954,22 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "无法读取受管根目录："+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	listing := prepareFileListing(entries, relative, query, sortField, direction)
+	listing := prepareFileListing(entries, relative, query, sortField, direction, showHidden)
 	pagination := newPagination(request, len(listing))
 	if pagination.HasPrevious {
-		pagination.PreviousURL = filesStateURL(relative, query, sortField, direction, pagination.Page-1)
+		pagination.PreviousURL = filesStateURL(relative, query, sortField, direction, showHidden, pagination.Page-1)
 	}
 	if pagination.HasNext {
-		pagination.NextURL = filesStateURL(relative, query, sortField, direction, pagination.Page+1)
+		pagination.NextURL = filesStateURL(relative, query, sortField, direction, showHidden, pagination.Page+1)
 	}
 	type fileView struct {
 		managedfiles.Entry
-		Path, BrowseURL, DownloadURL, EditURL, PreviewURL, ViewURL, QuickRunURL string
-		LogURL                                                                  string
-		Protection, IconClass                                                   string
-		Runnable                                                                bool
-		NameParts                                                               []fileNamePart
-		CategoryLabel                                                           string
+		Path, BrowseURL, PinURL, DownloadURL, EditURL, PreviewURL, ViewURL, QuickRunURL string
+		LogURL                                                                          string
+		Protection, IconClass                                                           string
+		Runnable, IsHidden                                                              bool
+		NameParts                                                                       []fileNamePart
+		CategoryLabel                                                                   string
 	}
 	pageEntries := listing[pagination.Start:pagination.End]
 	protectionFiles := make([]gitprotect.File, 0, len(pageEntries))
@@ -3985,9 +3987,11 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		view := fileView{
 			Entry: entry, Path: path, IconClass: fileCategoryIcon(listed.Category),
 			NameParts: splitFileNameMatches(entry.Name, query), CategoryLabel: fileCategoryLabel(locale, listed.Category),
+			IsHidden: strings.HasPrefix(entry.Name, "."),
 		}
 		if entry.Kind == managedfiles.Directory {
-			view.BrowseURL = filesStateURL(path, "", sortField, direction, 0)
+			view.BrowseURL = filesStateURL(path, "", sortField, direction, showHidden, 0)
+			view.PinURL = filesURL(path)
 		} else if entry.Kind == managedfiles.Regular {
 			if protectionState.Enabled {
 				view.Protection = protectionDescription.Reasons[path]
@@ -4014,13 +4018,12 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		if parent == "." {
 			parent = ""
 		}
-		parentURL = filesStateURL(parent, "", sortField, direction, 0)
+		parentURL = filesStateURL(parent, "", sortField, direction, showHidden, 0)
 	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = filesTemplate.Execute(response, struct {
 		Entries             []fileView
 		CSRFToken           string
-		ManagedRoot         string
 		CurrentPath         string
 		Query               string
 		SortField           string
@@ -4038,15 +4041,30 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		VersionProtection   bool
 		Locale              webLocale
 		DeferredData        bool
+		ShowHidden          bool
 	}{
-		Entries: views, CSRFToken: current.csrfToken, ManagedRoot: a.managedRoot, CurrentPath: relative,
+		Entries: views, CSRFToken: current.csrfToken, CurrentPath: relative,
 		Query: query, SortField: sortField, Direction: direction, SortSummary: fileSortSummary(locale, sortField, direction),
-		RootURL: filesStateURL("", "", sortField, direction, 0), ClearURL: filesStateURL(relative, "", sortField, direction, 0),
+		RootURL: filesStateURL("", "", sortField, direction, showHidden, 0), ClearURL: filesStateURL(relative, "", sortField, direction, showHidden, 0),
 		SearchURL:  filesURL(relative),
 		Pagination: pagination, CanToggleExecutable: runtime.GOOS == "linux" && roleAllows(current.role, permissionWriteFiles), ParentURL: parentURL,
 		CanWrite: roleAllows(current.role, permissionWriteFiles), CanExecute: roleAllows(current.role, permissionExecute),
 		CanManageExecution: roleAllows(current.role, permissionManageExecution),
-		VersionProtection:  protectionState.Enabled, Locale: locale,
+		VersionProtection:  protectionState.Enabled, Locale: locale, ShowHidden: showHidden,
+	})
+}
+
+func (a *App) fileSettingsPage(response http.ResponseWriter, request *http.Request) {
+	current := request.Context().Value(sessionContextKey).(session)
+	locale := resolveWebLocale(request)
+	response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = fileSettingsTemplate.Execute(response, struct {
+		ManagedRoot        string
+		Locale             webLocale
+		SettingsNavigation settingsNavigationData
+	}{
+		ManagedRoot: a.managedRoot, Locale: locale,
+		SettingsNavigation: newSettingsNavigation(current, locale, "files"),
 	})
 }
 

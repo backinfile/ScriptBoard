@@ -35,9 +35,12 @@ type fileNamePart struct {
 	Match bool
 }
 
-func prepareFileListing(entries []managedfiles.Entry, relative, query, sortField, direction string) []listedFile {
+func prepareFileListing(entries []managedfiles.Entry, relative, query, sortField, direction string, showHidden bool) []listedFile {
 	result := make([]listedFile, 0, len(entries))
 	for _, entry := range entries {
+		if !showHidden && strings.HasPrefix(entry.Name, ".") {
+			continue
+		}
 		if query != "" && !fileNameMatches(entry.Name, query) {
 			continue
 		}
@@ -175,7 +178,7 @@ func fileSortSummary(locale webLocale, field, direction string) string {
 	return fieldLabel + " · " + directionLabel
 }
 
-func filesStateURL(relative, query, sortField, direction string, page int) string {
+func filesStateURL(relative, query, sortField, direction string, showHidden bool, page int) string {
 	values := url.Values{}
 	if query != "" {
 		values.Set("q", query)
@@ -183,6 +186,9 @@ func filesStateURL(relative, query, sortField, direction string, page int) strin
 	if sortField != "" {
 		values.Set("sort", sortField)
 		values.Set("direction", direction)
+	}
+	if showHidden {
+		values.Set("show_hidden", "1")
 	}
 	if page > 1 {
 		values.Set("page", strconv.Itoa(page))

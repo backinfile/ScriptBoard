@@ -18,6 +18,7 @@
     "calendar-plus": '<path d="M16 2v4"/><path d="M3 10h18"/><path d="M8 2v4"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M12 14v4"/><path d="M10 16h4"/>',
     "check": '<path d="m20 6-11 11-5-5"/>',
     "circle-check": '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+    "chevron-down": '<path d="m6 9 6 6 6-6"/>',
     "chevrons-up-down": '<path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/>',
     "chevron-right": '<path d="m9 18 6-6-6-6"/>',
     "circle-user-round": '<path d="M18 20a6 6 0 0 0-12 0"/><circle cx="12" cy="10" r="4"/><circle cx="12" cy="12" r="10"/>',
@@ -36,6 +37,7 @@
     "file-cog": '<path d="M14 2H6a2 2 0 0 0-2 2v8"/><path d="M14 2v6h6"/><circle cx="13" cy="18" r="3"/><path d="m15.6 16.5.9-.5M10.4 19.5l-.9.5M15.6 19.5l.9.5M10.4 16.5l-.9-.5"/>',
     "file-lock-2": '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h7"/><path d="M14 2v6h6"/><rect x="14" y="15" width="8" height="6" rx="1"/><path d="M16 15v-2a2 2 0 0 1 4 0v2"/>',
     "file-terminal": '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="m8 13 2 2-2 2"/><path d="M12 17h4"/>',
+    "files": '<path d="M20 7h-3a2 2 0 0 1-2-2V2"/><path d="M9 18a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h7l4 4v10a2 2 0 0 1-2 2Z"/><path d="M3 7v13a2 2 0 0 0 2 2h9"/>',
     "folder": '<path d="M3 6h5l2 2h11v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
     "folder-code": '<path d="M10 10.5 8 12l2 1.5M14 10.5l2 1.5-2 1.5"/><path d="M2 6h5l2 2h13"/><path d="M2 6v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8"/>',
     "folder-open": '<path d="M6 14l1.5-3h13l-2 7a2 2 0 0 1-2 1H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v1"/>',
@@ -64,6 +66,7 @@
     "rotate-ccw": '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
     "scroll-text": '<path d="M15 12h-5M15 8h-5"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1H11v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2h4"/>',
     "search": '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+    "scan-search": '<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/><path d="m16 16-1.9-1.9"/>',
     "search-x": '<path d="m13.5 8.5-5 5"/><path d="m8.5 8.5 5 5"/><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
     "settings": '<path d="M12.2 2h-.4a2 2 0 0 0-2 2v.2a2 2 0 0 1-1 1.7l-.4.2a2 2 0 0 1-2 0l-.1-.1a2 2 0 0 0-2.7.7l-.2.4a2 2 0 0 0 .7 2.7l.1.1a2 2 0 0 1 1 1.7v.5a2 2 0 0 1-1 1.7l-.1.1a2 2 0 0 0-.7 2.7l.2.4a2 2 0 0 0 2.7.7l.1-.1a2 2 0 0 1 2 0l.4.2a2 2 0 0 1 1 1.7v.2a2 2 0 0 0 2 2h.4a2 2 0 0 0 2-2v-.2a2 2 0 0 1 1-1.7l.4-.2a2 2 0 0 1 2 0l.1.1a2 2 0 0 0 2.7-.7l.2-.4a2 2 0 0 0-.7-2.7l-.1-.1a2 2 0 0 1-1-1.7v-.5a2 2 0 0 1 1-1.7l.1-.1a2 2 0 0 0 .7-2.7l-.2-.4a2 2 0 0 0-2.7-.7l-.1.1a2 2 0 0 1-2 0l-.4-.2a2 2 0 0 1-1-1.7V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
     "shield-check": '<path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3z"/><path d="m9 12 2 2 4-4"/>',
@@ -76,6 +79,7 @@
     "unlock": '<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>',
     "upload": '<path d="M12 3v12M17 8l-5-5-5 5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>',
     "user-round": '<circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/>',
+    "users": '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
     "x": '<path d="M18 6 6 18M6 6l12 12"/>',
     "zap": '<path d="M4 14a1 1 0 0 1-.8-1.6l9-11a.5.5 0 0 1 .9.4L12 8.5A1 1 0 0 0 13 10h7a1 1 0 0 1 .8 1.6l-9 11a.5.5 0 0 1-.9-.4L12 15.5A1 1 0 0 0 11 14z"/>'
   };
@@ -660,7 +664,7 @@
       if (options.focusSelector) {
         const focusTarget = document.querySelector(options.focusSelector);
         focusTarget?.focus();
-        if (focusTarget instanceof HTMLInputElement) {
+        if (focusTarget instanceof HTMLInputElement && ["text", "search", "tel", "url", "password"].includes(focusTarget.type)) {
           const end = focusTarget.value.length;
           focusTarget.setSelectionRange(end, end);
         }
@@ -2363,10 +2367,10 @@
 
   function initFileDropUpload(root = document, cleanups = []) {
     root.querySelectorAll("[data-file-drop-form]").forEach(form => {
-      const zone = form.querySelector("[data-file-drop-zone]");
+      const zone = document.getElementById(form.dataset.fileDropSurface || "");
       const input = form.querySelector(".file-drop-input");
-      const title = form.querySelector("[data-file-drop-title]");
-      const status = form.querySelector("[data-file-drop-status]");
+      const title = zone?.querySelector("[data-file-drop-title]");
+      const status = zone?.querySelector("[data-file-drop-status]");
       if (!zone || !input || !title || !status) return;
 
       let dragDepth = 0;
@@ -2377,8 +2381,8 @@
         title.textContent = nextTitle;
         status.textContent = nextDescription;
       };
-      const resetState = () => setState("", form.dataset.defaultTitle, form.dataset.defaultDescription);
-      const showError = message => setState("error", form.dataset.defaultTitle, message);
+      const resetState = () => setState("", "", "");
+      const showError = message => setState("error", form.dataset.errorTitle, message);
       const containsDirectory = dataTransfer => Array.from(dataTransfer?.items || []).some(item => {
         if (item.kind !== "file" || typeof item.webkitGetAsEntry !== "function") return false;
         return item.webkitGetAsEntry()?.isDirectory === true;
@@ -2462,6 +2466,139 @@
         document.removeEventListener("drop", preventFileNavigation);
       });
     });
+  }
+
+  function initFileVisibilityToggle(root = document, cleanups = []) {
+    root.querySelectorAll("[data-file-hidden-toggle]").forEach(toggle => {
+      const form = toggle.closest("form");
+      if (!form) return;
+      const onChange = () => {
+        if (form.getAttribute("aria-busy") === "true") return;
+        form.dataset.focusAfterNavigation = "[data-file-hidden-toggle]";
+        form.requestSubmit(form.querySelector("[data-search-submit]"));
+      };
+      toggle.addEventListener("change", onChange);
+      cleanups.push(() => toggle.removeEventListener("change", onChange));
+    });
+  }
+
+  function initFileQuickAccess(root = document, cleanups = []) {
+    const disclosure = root.querySelector("[data-file-quick-access]");
+    if (!disclosure) return;
+    const list = disclosure.querySelector("[data-file-quick-list]");
+    const empty = disclosure.querySelector("[data-file-quick-empty]");
+    const count = disclosure.querySelector("[data-file-quick-count]");
+    const countLabel = disclosure.querySelector("[data-file-quick-count-label]");
+    const oneLabel = disclosure.querySelector("[data-file-quick-one-label]");
+    const manyLabel = disclosure.querySelector("[data-file-quick-many-label]");
+    if (!list || !empty || !count || !countLabel || !oneLabel || !manyLabel) return;
+
+    const storageKey = "scriptboard.files.pinnedDirectories.v1";
+    const isValidPin = pin => {
+      if (!pin || typeof pin.path !== "string" || pin.path.length === 0 ||
+        typeof pin.label !== "string" || pin.label.length === 0 ||
+        typeof pin.href !== "string" || !pin.href.startsWith("/")) return false;
+      try {
+        const target = new URL(pin.href, location.origin);
+        return target.origin === location.origin && target.pathname.startsWith("/resources/files/");
+      } catch {
+        return false;
+      }
+    };
+    let pins = [];
+    try {
+      const stored = JSON.parse(localStorage.getItem(storageKey) || "[]");
+      if (Array.isArray(stored)) {
+        const paths = new Set();
+        pins = stored.filter(isValidPin).filter(pin => {
+          if (paths.has(pin.path)) return false;
+          paths.add(pin.path);
+          return true;
+        }).slice(0, 30);
+      }
+    } catch {
+      pins = [];
+    }
+
+    const persist = () => {
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(pins));
+      } catch {
+        // Storage may be unavailable in hardened or private browser sessions.
+      }
+    };
+    const pinControls = Array.from(root.querySelectorAll("[data-file-pin]"));
+    const renderControl = control => {
+      const pinned = pins.some(pin => pin.path === control.dataset.filePinPath);
+      const label = pinned ? control.dataset.unpinLabel : control.dataset.pinLabel;
+      control.hidden = false;
+      control.setAttribute("aria-pressed", String(pinned));
+      control.setAttribute("aria-label", label);
+      control.dataset.tooltip = label;
+      setControlIcon(control.querySelector("span"), pinned ? "pin-off" : "pin");
+    };
+    const render = () => {
+      count.textContent = String(pins.length);
+      countLabel.textContent = pins.length === 1 ? oneLabel.textContent : manyLabel.textContent;
+      empty.hidden = pins.length > 0;
+      list.hidden = pins.length === 0;
+      list.replaceChildren();
+      pins.forEach(pin => {
+        const item = document.createElement("li");
+        item.className = "file-quick-row";
+
+        const link = document.createElement("a");
+        link.setAttribute("href", pin.href);
+        const icon = document.createElement("span");
+        icon.className = "file-quick-row__icon";
+        icon.append(makeIcon("folder"));
+        const copy = document.createElement("span");
+        const label = document.createElement("strong");
+        label.textContent = pin.label;
+        const path = document.createElement("small");
+        path.textContent = pin.path;
+        copy.append(label, path);
+        link.append(icon, copy);
+
+        const remove = document.createElement("button");
+        remove.className = "icon-button";
+        remove.type = "button";
+        remove.setAttribute("aria-label", `${disclosure.dataset.removeLabel}: ${pin.label}`);
+        remove.dataset.tooltip = disclosure.dataset.removeLabel;
+        remove.append(makeIcon("pin-off"));
+        remove.addEventListener("click", () => {
+          pins = pins.filter(candidate => candidate.path !== pin.path);
+          persist();
+          render();
+        });
+        item.append(link, remove);
+        list.append(item);
+      });
+      pinControls.forEach(renderControl);
+    };
+
+    pinControls.forEach(control => {
+      const onToggle = () => {
+        const path = control.dataset.filePinPath;
+        if (pins.some(pin => pin.path === path)) {
+          pins = pins.filter(pin => pin.path !== path);
+        } else {
+          const pin = {
+            path,
+            label: control.dataset.filePinLabel,
+            href: control.dataset.filePinHref,
+          };
+          if (isValidPin(pin)) pins = [...pins, pin].slice(-30);
+        }
+        persist();
+        render();
+      };
+      control.addEventListener("click", onToggle);
+      cleanups.push(() => control.removeEventListener("click", onToggle));
+    });
+
+    disclosure.hidden = false;
+    render();
   }
 
   function initGroupedRecords(cleanups) {
@@ -3669,6 +3806,8 @@
     initPasswordControls(document, cleanups);
     initCopyControls(document, cleanups);
     initFileDropUpload(document, cleanups);
+    initFileVisibilityToggle(document, cleanups);
+    initFileQuickAccess(document, cleanups);
     initDirectoryPickers(document, cleanups);
     initQuickCreateDefaults(document, cleanups);
     initOverview(cleanups);

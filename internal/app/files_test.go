@@ -15,7 +15,7 @@ import (
 	"testing"
 )
 
-func TestFilesPageShowsManagedRootLocation(t *testing.T) {
+func TestManagedRootLocationMovesToReadOnlyFileSettings(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -40,14 +40,42 @@ func TestFilesPageShowsManagedRootLocation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve managed root: %v", err)
 	}
-	page := string(body)
-	for _, expected := range []string{
+	filesPage := string(body)
+	for _, excluded := range []string{
 		`class="managed-root-location"`,
 		"Managed root location",
 		html.EscapeString(absoluteRoot),
 	} {
+		if strings.Contains(filesPage, excluded) {
+			t.Fatalf("files page unexpectedly contains %q: %s", excluded, filesPage)
+		}
+	}
+
+	response, err = client.Get(serverURL + "/settings/files")
+	if err != nil {
+		t.Fatalf("get file settings: %v", err)
+	}
+	body, err = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read file settings: %v", err)
+	}
+	page := string(body)
+	for _, expected := range []string{
+		`data-file-settings`,
+		`class="managed-root-readonly"`,
+		`data-readonly-root`,
+		"Managed root location",
+		"Read only",
+		html.EscapeString(absoluteRoot),
+	} {
 		if !strings.Contains(page, expected) {
-			t.Fatalf("files page does not contain %q: %s", expected, page)
+			t.Fatalf("file settings do not contain %q: %s", expected, page)
+		}
+	}
+	for _, excluded := range []string{`name="managed_root"`, `contenteditable="true"`} {
+		if strings.Contains(page, excluded) {
+			t.Fatalf("file settings expose an editable root through %q: %s", excluded, page)
 		}
 	}
 }
@@ -74,24 +102,181 @@ func TestFilesPageOffersDropUploadForCurrentDirectory(t *testing.T) {
 	}
 	page := string(body)
 	for _, expected := range []string{
+		`id="file-drop-upload-form"`,
+		`class="file-upload-form"`,
 		`data-file-drop-form`,
 		`data-file-upload-form`,
+		`data-file-drop-surface="file-drop-surface"`,
 		`action="/resources/files/upload"`,
 		`enctype="multipart/form-data"`,
 		`name="path" value="nested"`,
 		`name="conflict_action" value=""`,
-		`name="files" type="file" multiple required`,
+		`name="files" type="file" multiple required hidden`,
+		`id="file-drop-surface"`,
 		`data-file-drop-zone`,
-		`Drop files here to upload`,
-		`Choose files`,
-		`<noscript>`,
+		`class="file-drop-feedback"`,
+		`data-file-drop-title`,
 	} {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("files page does not contain %q: %s", expected, page)
 		}
 	}
-	if strings.Contains(page, `name="replace"`) {
-		t.Fatalf("files page still exposes a replace-by-default control: %s", page)
+	for _, excluded := range []string{`name="replace"`, `Drop files here to upload`, `Choose files`, `<noscript>`} {
+		if strings.Contains(page, excluded) {
+			t.Fatalf("files page unexpectedly contains %q: %s", excluded, page)
+		}
+	}
+}
+
+func TestFilesPageHidesDotEntriesByDefaultAndPreservesTheVisibilityChoice(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(filepath.Join(managedRoot, ".config"), 0o755); err != nil {
+		t.Fatalf("create hidden directory: %v", err)
+	}
+	for name, content := range map[string]string{
+		".env":        "SECRET=fixture",
+		"visible.txt": "visible",
+	} {
+		if err := os.WriteFile(filepath.Join(managedRoot, name), []byte(content), 0o644); err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+	}
+	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+
+	response, err := client.Get(serverURL + "/resources/files/")
+	if err != nil {
+		t.Fatalf("get files: %v", err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read files: %v", err)
+	}
+	page := string(body)
+	for _, expected := range []string{`name="show_hidden" value="1"`, "Show hidden files", "visible.txt"} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("default files page does not contain %q: %s", expected, page)
+		}
+	}
+	for _, excluded := range []string{".config", ".env", `name="show_hidden" value="1" checked`} {
+		if strings.Contains(page, excluded) {
+			t.Fatalf("default files page unexpectedly contains %q: %s", excluded, page)
+		}
+	}
+
+	response, err = client.Get(serverURL + "/resources/files/?show_hidden=1&sort=name&direction=desc")
+	if err != nil {
+		t.Fatalf("get files with hidden entries: %v", err)
+	}
+	body, err = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read files with hidden entries: %v", err)
+	}
+	page = string(body)
+	for _, expected := range []string{
+		`name="show_hidden" value="1" checked`,
+		`.config`,
+		`.env`,
+		`class="file-hidden-badge"`,
+		`href="/resources/files/.config/?direction=desc&amp;show_hidden=1&amp;sort=name"`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("visible-hidden files page does not contain %q: %s", expected, page)
+		}
+	}
+}
+
+func TestFilesPageOffersCollapsedBrowserLocalQuickAccess(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(filepath.Join(managedRoot, "automation"), 0o755); err != nil {
+		t.Fatalf("create directory: %v", err)
+	}
+	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+
+	response, err := client.Get(serverURL + "/resources/files/")
+	if err != nil {
+		t.Fatalf("get files: %v", err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read files: %v", err)
+	}
+	page := string(body)
+	for _, expected := range []string{
+		`class="file-quick-access"`,
+		`data-file-quick-access hidden`,
+		`data-file-quick-list`,
+		`data-file-pin-path="automation"`,
+		`data-file-pin-label="automation"`,
+		`data-file-pin-href="/resources/files/automation/"`,
+		`data-file-quick-one-label>folder</span>`,
+		`data-file-quick-many-label>folders</span>`,
+		"Quick access",
+		"Pin directory",
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("files page does not contain %q: %s", expected, page)
+		}
+	}
+	if strings.Contains(page, `data-file-quick-access hidden open`) {
+		t.Fatalf("quick access should be collapsed by default: %s", page)
+	}
+}
+
+func TestOperatorGetsReadOnlyFilesWithoutAnUploadDropTarget(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	admin, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	operator := createRoleUserClient(t, admin, serverURL, "files-operator", "operator")
+
+	response, err := operator.Get(serverURL + "/resources/files/")
+	if err != nil {
+		t.Fatalf("get files as operator: %v", err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read files as operator: %v", err)
+	}
+	page := string(body)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("operator files status=%d, want %d: %s", response.StatusCode, http.StatusOK, page)
+	}
+	for _, expected := range []string{`data-file-quick-access`, `name="show_hidden" value="1"`} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("operator files page does not contain %q: %s", expected, page)
+		}
+	}
+	for _, excluded := range []string{`data-file-drop-form`, `data-file-drop-zone`, `/resources/files/new-directory`, `/resources/files/upload?`, `href="/resources/trash"`} {
+		if strings.Contains(page, excluded) {
+			t.Fatalf("operator files page exposes write control %q: %s", excluded, page)
+		}
+	}
+
+	response, err = operator.Get(serverURL + "/settings/files")
+	if err != nil {
+		t.Fatalf("get file settings as operator: %v", err)
+	}
+	body, err = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read file settings as operator: %v", err)
+	}
+	if response.StatusCode != http.StatusOK || !bytes.Contains(body, []byte(`data-readonly-root`)) {
+		t.Fatalf("operator file settings status=%d body=%s", response.StatusCode, body)
 	}
 }
 
