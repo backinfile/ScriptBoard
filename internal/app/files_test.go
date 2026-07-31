@@ -32,7 +32,11 @@ func TestFilesPageShowsManagedRootLocation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read files: %v", err)
 	}
-	absoluteRoot, err := filepath.Abs(managedRoot)
+	canonicalRoot, err := filepath.EvalSymlinks(managedRoot)
+	if err != nil {
+		t.Fatalf("resolve managed root links: %v", err)
+	}
+	absoluteRoot, err := filepath.Abs(canonicalRoot)
 	if err != nil {
 		t.Fatalf("resolve managed root: %v", err)
 	}
