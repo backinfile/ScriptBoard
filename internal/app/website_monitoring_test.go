@@ -736,7 +736,9 @@ func TestWebsiteMonitoringDataReturnsCompletePollingAndDetailSnapshots(t *testin
 		if err != nil {
 			t.Fatal(err)
 		}
-		if listSnapshot.Counts.Down == 1 {
+		if listSnapshot.Counts.Down == 1 &&
+			len(listSnapshot.Alerts) == 1 &&
+			listSnapshot.Alerts[0].FailureCount >= 2 {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
