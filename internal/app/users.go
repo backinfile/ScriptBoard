@@ -18,11 +18,12 @@ type userView struct {
 }
 
 type usersPageData struct {
-	Users             []userView
-	GeneratedPassword string
-	GeneratedUsername string
-	CSRFToken         string
-	Locale            webLocale
+	Users              []userView
+	GeneratedPassword  string
+	GeneratedUsername  string
+	CSRFToken          string
+	Locale             webLocale
+	SettingsNavigation settingsNavigationData
 }
 
 func validUsername(username string) bool {
@@ -67,11 +68,32 @@ func (a *App) renderUsersPage(response http.ResponseWriter, request *http.Reques
 	_ = usersTemplate.Execute(response, usersPageData{
 		Users: users, GeneratedUsername: generatedUsername, GeneratedPassword: generatedPassword,
 		CSRFToken: current.csrfToken, Locale: resolveWebLocale(request),
+		SettingsNavigation: newSettingsNavigation(current, resolveWebLocale(request), "users"),
 	})
 }
 
 func (a *App) usersPage(response http.ResponseWriter, request *http.Request) {
 	a.renderUsersPage(response, request, http.StatusOK, "", "")
+}
+
+func (a *App) editUserTask(response http.ResponseWriter, request *http.Request) {
+	user, err := a.userByID(request.PathValue("id"))
+	if userNotFound(err) {
+		http.Error(response, webText(resolveWebLocale(request), "users.not_found"), http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(response, webText(resolveWebLocale(request), "users.read_failed"), http.StatusInternalServerError)
+		return
+	}
+	a.renderTaskPage(response, request, taskPageData{
+		Kind:        "user-edit",
+		Title:       user.Username,
+		Description: webText(resolveWebLocale(request), "users.edit_description"),
+		BackURL:     "/settings/users",
+		Action:      "/settings/users/" + user.ID + "/update",
+		User:        user,
+	})
 }
 
 func (a *App) createUser(response http.ResponseWriter, request *http.Request) {

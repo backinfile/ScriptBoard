@@ -152,6 +152,9 @@ func TestAuthenticatedRootRedirectsToOverviewAndOverviewDataIsPrivate(t *testing
 	if response.StatusCode != http.StatusOK || !bytes.Contains(page, []byte("Host overview")) || !bytes.Contains(page, []byte(`data-host-overview`)) {
 		t.Fatalf("overview status=%d body=%s", response.StatusCode, page)
 	}
+	if bytes.Contains(page, []byte(`class="button button--primary" href="/resources/files/"`)) {
+		t.Fatalf("overview should not promote script execution: %s", page)
+	}
 
 	response, err = client.Get(serverURL + "/monitor/data?range=1h")
 	if err != nil {
@@ -547,7 +550,7 @@ func TestMarkdownPreviewProgressivelyEnhancesEscapedSource(t *testing.T) {
 	}
 }
 
-func TestAccountCredentialsAreHiddenInDialogAndRunNavigationFollowsVariables(t *testing.T) {
+func TestAccountCredentialsStayReadOnlyUntilTheirTaskPanelsOpen(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -562,16 +565,83 @@ func TestAccountCredentialsAreHiddenInDialogAndRunNavigationFollowsVariables(t *
 		t.Fatalf("read account settings: %v", err)
 	}
 	html := string(page)
-	for _, expected := range []string{`class="settings-layout"`, `class="settings-nav"`, `class="account-form"`, `class="settings-summary"`} {
+	for _, expected := range []string{
+		`class="settings-nav"`,
+		`class="settings-summary"`,
+		`href="/settings/account/username" data-task-link`,
+		`href="/settings/account/password" data-task-link`,
+		`action="/logout"`,
+	} {
 		if !strings.Contains(html, expected) {
 			t.Fatalf("account settings does not contain %q: %s", expected, html)
 		}
 	}
-	variablesIndex := strings.Index(html, `href="/resources/variables"`)
-	runsIndex := strings.Index(html, `href="/history/runs"`)
-	if variablesIndex < 0 || runsIndex < 0 {
-		t.Fatalf("grouped run and variable navigation is missing: %s", html)
+	for _, forbidden := range []string{`name="current_password"`, `name="new_password"`, `name="confirm_password"`, `autocomplete="username"`} {
+		if strings.Contains(html, forbidden) {
+			t.Fatalf("account settings exposes editable credential field %q: %s", forbidden, html)
+		}
 	}
+
+	for _, task := range []struct {
+		path     string
+		kind     string
+		expected []string
+	}{
+		{"/settings/account/username", "account-username", []string{`name="username"`, `name="current_password"`}},
+		{"/settings/account/password", "account-password", []string{`name="current_password"`, `name="new_password"`, `name="confirm_password"`}},
+	} {
+		response, err = client.Get(serverURL + task.path)
+		if err != nil {
+			t.Fatalf("get %s task: %v", task.kind, err)
+		}
+		taskBody, readErr := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if readErr != nil {
+			t.Fatalf("read %s task: %v", task.kind, readErr)
+		}
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("%s task status=%d, body=%s", task.kind, response.StatusCode, taskBody)
+		}
+		taskHTML := string(taskBody)
+		for _, expected := range append([]string{`data-task-kind="` + task.kind + `"`}, task.expected...) {
+			if !strings.Contains(taskHTML, expected) {
+				t.Fatalf("%s task does not contain %q: %s", task.kind, expected, taskHTML)
+			}
+		}
+	}
+}
+
+func TestAdministratorRenamesAccountFromFocusedTask(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
+	response, err := client.Get(serverURL + "/settings/account/username")
+	if err != nil {
+		t.Fatalf("get username task: %v", err)
+	}
+	taskPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read username task: %v", err)
+	}
+
+	const password = "用于自动测试的专用安全密码"
+	response, err = client.PostForm(serverURL+"/settings/account/username", url.Values{
+		"csrf_token":       {formToken(t, taskPage)},
+		"username":         {"renamed-admin"},
+		"current_password": {password},
+	})
+	if err != nil {
+		t.Fatalf("rename administrator: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/login" {
+		t.Fatalf("rename status=%d location=%q, want 303 /login", response.StatusCode, response.Header.Get("Location"))
+	}
+
+	loginAs(t, client, serverURL, "admin", password, http.StatusUnauthorized)
+	loginAs(t, client, serverURL, "renamed-admin", password, http.StatusSeeOther)
 }
 
 func TestInvalidLoginRendersInlineErrorPage(t *testing.T) {
@@ -985,12 +1055,16 @@ func TestProtectedErrorsRenderInsideTheApplicationShell(t *testing.T) {
 		t.Fatalf("account error content type = %q, want HTML", contentType)
 	}
 	for _, expected := range []string{
-		`class="app-sidebar"`, `aria-label="Primary navigation"`, `action="/logout"`,
+		`class="app-sidebar"`, `aria-label="Primary navigation"`, `href="/settings/account"`,
 		`role="alert"`, `error-page`, "Return to workspace", `data-environment="Local"`,
-		`<span>admin</span>`,
 	} {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("account error page does not contain %q: %s", expected, page)
+		}
+	}
+	for _, removed := range []string{`class="sidebar-account"`, `action="/logout"`, `<span>admin</span>`} {
+		if strings.Contains(page, removed) {
+			t.Fatalf("account error page still contains removed sidebar account UI %q: %s", removed, page)
 		}
 	}
 	if strings.Contains(page, "LOCAL / READY") {

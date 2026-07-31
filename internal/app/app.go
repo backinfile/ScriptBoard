@@ -66,7 +66,9 @@ func mustWebAsset(path string) string {
 func mustWebTemplate(name string) *template.Template {
 	path := "web/templates/" + name + ".html"
 	return template.Must(template.New(name).Funcs(webTemplateFunctions()).Parse(
-		mustWebAsset("web/templates/deferred-region.html") + mustWebAsset(path),
+		mustWebAsset("web/templates/deferred-region.html") +
+			mustWebAsset("web/templates/settings-navigation.html") +
+			mustWebAsset(path),
 	))
 }
 
@@ -190,11 +192,12 @@ func webTemplateFunctions() template.FuncMap {
 			}
 			return result
 		},
-		"roleText": func(locale webLocale, role string) string {
-			if label := webText(locale, "users.role."+role); label != "users.role."+role {
+		"roleText": func(locale webLocale, role any) string {
+			roleName := fmt.Sprint(role)
+			if label := webText(locale, "users.role."+roleName); label != "users.role."+roleName {
 				return label
 			}
-			return role
+			return roleName
 		},
 	}
 }
@@ -1467,30 +1470,35 @@ func (a *App) routes(_ string) http.Handler {
 			Username, CSRFToken string
 			CredentialOverride  bool
 			CanRename           bool
-			CanManageSystem     bool
-			CanManageUsers      bool
 			Locale              webLocale
+			SettingsNavigation  settingsNavigationData
 		}{
 			Username: current.username, CSRFToken: current.csrfToken,
 			CredentialOverride: a.credentialOverride && current.role == roleAdministrator,
-			CanRename:          current.role == roleAdministrator,
-			CanManageSystem:    roleAllows(current.role, permissionManageSystem),
-			CanManageUsers:     roleAllows(current.role, permissionManageUsers),
-			Locale:             resolveWebLocale(request),
+			CanRename:          current.role == roleAdministrator, Locale: resolveWebLocale(request),
+			SettingsNavigation: newSettingsNavigation(current, resolveWebLocale(request), "account"),
 		})
 	})))
 	mux.Handle("POST /settings/account", a.requireSession(http.HandlerFunc(a.changePassword)))
+	mux.Handle("GET /settings/account/username", a.requireSession(http.HandlerFunc(a.accountUsernameTask)))
+	mux.Handle("POST /settings/account/username", a.requireSession(http.HandlerFunc(a.changeUsername)))
+	mux.Handle("GET /settings/account/password", a.requireSession(http.HandlerFunc(a.accountPasswordTask)))
+	mux.Handle("POST /settings/account/password", a.requireSession(http.HandlerFunc(a.changePassword)))
 	mux.Handle("GET /settings/users", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.usersPage)))
 	mux.Handle("POST /settings/users", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.createUser)))
+	mux.Handle("GET /settings/users/{id}/edit", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.editUserTask)))
 	mux.Handle("POST /settings/users/{id}/disable", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.disableUser)))
 	mux.Handle("POST /settings/users/{id}/enable", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.enableUser)))
 	mux.Handle("POST /settings/users/{id}/update", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.updateUser)))
 	mux.Handle("POST /settings/users/{id}/reset-password", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.resetUserPassword)))
 	mux.Handle("GET /settings/display", a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		current := request.Context().Value(sessionContextKey).(session)
+		locale := resolveWebLocale(request)
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = displaySettingsTemplate.Execute(response, struct {
-			Locale webLocale
-		}{Locale: resolveWebLocale(request)})
+			Locale             webLocale
+			SettingsNavigation settingsNavigationData
+		}{Locale: locale, SettingsNavigation: newSettingsNavigation(current, locale, "display")})
 	})))
 	mux.Handle("GET /settings/updates", a.requireSession(http.HandlerFunc(a.updatesPage)))
 	mux.Handle("GET /settings/updates/status", a.requireSession(http.HandlerFunc(a.updateStatus)))
@@ -1970,13 +1978,17 @@ func (a *App) versionProtectionPage(response http.ResponseWriter, request *http.
 	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = versionProtectionTemplate.Execute(response, struct {
-		State       gitprotect.State
-		CSRFToken   string
-		HistoryPath string
-		History     []gitprotect.Commit
-		Pagination  paginationView
-		Locale      webLocale
-	}{State: state, CSRFToken: current.csrfToken, HistoryPath: historyPath, History: history, Pagination: pagination, Locale: resolveWebLocale(request)})
+		State              gitprotect.State
+		CSRFToken          string
+		HistoryPath        string
+		History            []gitprotect.Commit
+		Pagination         paginationView
+		Locale             webLocale
+		SettingsNavigation settingsNavigationData
+	}{
+		State: state, CSRFToken: current.csrfToken, HistoryPath: historyPath, History: history, Pagination: pagination,
+		Locale: resolveWebLocale(request), SettingsNavigation: newSettingsNavigation(current, resolveWebLocale(request), "version-protection"),
+	})
 }
 
 func (a *App) disableVersionProtection(response http.ResponseWriter, request *http.Request) {
@@ -3999,9 +4011,94 @@ func (a *App) createDirectory(response http.ResponseWriter, request *http.Reques
 	http.Redirect(response, request, filesURL(request.FormValue("path")), http.StatusSeeOther)
 }
 
+func (a *App) accountUsernameTask(response http.ResponseWriter, request *http.Request) {
+	current := request.Context().Value(sessionContextKey).(session)
+	if current.role != roleAdministrator {
+		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
+		return
+	}
+	a.renderTaskPage(response, request, taskPageData{
+		Kind:        "account-username",
+		Title:       webText(resolveWebLocale(request), "account.change_username"),
+		Description: webText(resolveWebLocale(request), "account.change_username_description"),
+		BackURL:     "/settings/account",
+		Action:      "/settings/account/username",
+		Name:        current.username,
+	})
+}
+
+func (a *App) accountPasswordTask(response http.ResponseWriter, request *http.Request) {
+	a.renderTaskPage(response, request, taskPageData{
+		Kind:        "account-password",
+		Title:       webText(resolveWebLocale(request), "account.change_password"),
+		Description: webText(resolveWebLocale(request), "account.change_password_description"),
+		BackURL:     "/settings/account",
+		Action:      "/settings/account/password",
+	})
+}
+
+func (a *App) changeUsername(response http.ResponseWriter, request *http.Request) {
+	current := request.Context().Value(sessionContextKey).(session)
+	if !validSessionCSRF(request) {
+		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
+		return
+	}
+	if current.role != roleAdministrator {
+		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
+		return
+	}
+
+	var username, passwordHash string
+	if err := a.db.QueryRow("SELECT username, password_hash FROM users WHERE id = ?", current.userID).Scan(&username, &passwordHash); err != nil {
+		http.Error(response, "无法读取用户账号", http.StatusInternalServerError)
+		return
+	}
+	if !verifyPassword(request.FormValue("current_password"), passwordHash) {
+		http.Error(response, "当前密码错误", http.StatusUnauthorized)
+		return
+	}
+	newUsername := strings.TrimSpace(request.FormValue("username"))
+	if !validUsername(newUsername) {
+		http.Error(response, "用户名必须为 1 至 64 个有效 Unicode 字符", http.StatusBadRequest)
+		return
+	}
+	if newUsername == username {
+		http.Redirect(response, request, "/settings/account", http.StatusSeeOther)
+		return
+	}
+
+	transaction, err := a.db.Begin()
+	if err != nil {
+		http.Error(response, "无法保存用户名", http.StatusInternalServerError)
+		return
+	}
+	defer func() { _ = transaction.Rollback() }()
+	if _, err := transaction.Exec("UPDATE users SET username = ?, auth_version = auth_version + 1, updated_at = ? WHERE id = ?",
+		newUsername, time.Now().UTC().Unix(), current.userID); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "unique") {
+			http.Error(response, "用户名已存在", http.StatusConflict)
+			return
+		}
+		http.Error(response, "无法保存用户名", http.StatusInternalServerError)
+		return
+	}
+	if _, err := transaction.Exec("DELETE FROM sessions WHERE user_id = ?", current.userID); err != nil {
+		http.Error(response, "无法撤销会话", http.StatusInternalServerError)
+		return
+	}
+	if err := transaction.Commit(); err != nil {
+		http.Error(response, "无法保存用户名", http.StatusInternalServerError)
+		return
+	}
+	a.cancelAuthenticatedRequests(current.userID)
+	a.recordAuditForRequest(request, "rename_self", username+" -> "+newUsername, "succeeded")
+	http.SetCookie(response, &http.Cookie{Name: sessionCookieName, Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	http.Redirect(response, request, "/login", http.StatusSeeOther)
+}
+
 func (a *App) changePassword(response http.ResponseWriter, request *http.Request) {
 	current := request.Context().Value(sessionContextKey).(session)
-	if subtle.ConstantTimeCompare([]byte(current.csrfToken), []byte(request.FormValue("csrf_token"))) != 1 {
+	if !validSessionCSRF(request) {
 		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
 		return
 	}
@@ -4015,23 +4112,12 @@ func (a *App) changePassword(response http.ResponseWriter, request *http.Request
 		http.Error(response, "当前密码错误", http.StatusUnauthorized)
 		return
 	}
-	newUsername := username
-	if current.role == roleAdministrator {
-		newUsername = strings.TrimSpace(request.FormValue("username"))
-		if newUsername == "" {
-			newUsername = username
-		}
-	}
-	if !utf8.ValidString(newUsername) || utf8.RuneCountInString(newUsername) > 64 || strings.ContainsAny(newUsername, "\r\n\x00") {
-		http.Error(response, "用户名必须为 1 至 64 个有效 Unicode 字符", http.StatusBadRequest)
-		return
-	}
 	newPassword := request.FormValue("new_password")
 	if newPassword != request.FormValue("confirm_password") {
 		http.Error(response, "两次输入的新密码不一致", http.StatusBadRequest)
 		return
 	}
-	if !utf8.ValidString(newPassword) || utf8.RuneCountInString(newPassword) < 12 || len([]byte(newPassword)) > 256 || newPassword == newUsername {
+	if !utf8.ValidString(newPassword) || utf8.RuneCountInString(newPassword) < 12 || len([]byte(newPassword)) > 256 || newPassword == username {
 		http.Error(response, "密码必须至少包含 12 个 Unicode 字符、不超过 256 个 UTF-8 字节，且不能与用户名相同", http.StatusBadRequest)
 		return
 	}
@@ -4047,7 +4133,7 @@ func (a *App) changePassword(response http.ResponseWriter, request *http.Request
 		return
 	}
 	defer func() { _ = transaction.Rollback() }()
-	if _, err := transaction.Exec("UPDATE users SET username = ?, password_hash = ?, auth_version = auth_version + 1, updated_at = ? WHERE id = ?", newUsername, newHash, time.Now().UTC().Unix(), current.userID); err != nil {
+	if _, err := transaction.Exec("UPDATE users SET password_hash = ?, auth_version = auth_version + 1, updated_at = ? WHERE id = ?", newHash, time.Now().UTC().Unix(), current.userID); err != nil {
 		http.Error(response, "无法保存新密码", http.StatusInternalServerError)
 		return
 	}
@@ -4067,8 +4153,8 @@ func (a *App) changePassword(response http.ResponseWriter, request *http.Request
 		return
 	}
 	a.cancelAuthenticatedRequests(current.userID)
-	a.recordAuditForRequest(request, "change_credentials", newUsername, "succeeded")
-	http.SetCookie(response, &http.Cookie{Name: sessionCookieName, Path: "/", MaxAge: -1, HttpOnly: true})
+	a.recordAuditForRequest(request, "change_password", username, "succeeded")
+	http.SetCookie(response, &http.Cookie{Name: sessionCookieName, Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 	http.Redirect(response, request, "/login", http.StatusSeeOther)
 }
 

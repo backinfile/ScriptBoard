@@ -156,6 +156,7 @@ func TestApplicationsPageExposesLiveFactsAndExpandableObservationDetails(t *test
 		`.fact-strip {`,
 		`.filter-toolbar {`,
 		`.pinned-application__identity h3 {`,
+		`grid-template-columns: minmax(280px, 1.15fr) minmax(420px, 1fr) 104px;`,
 		`overflow-wrap: anywhere;`,
 		`.application-drawer-host {`,
 		`@media (max-width: 1400px) {`,

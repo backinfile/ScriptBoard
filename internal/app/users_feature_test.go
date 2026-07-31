@@ -53,6 +53,38 @@ func TestAdministratorCreatesMaintainerWhoCanSignIn(t *testing.T) {
 	if len(match) != 2 {
 		t.Fatalf("generated password missing from one-time response: %s", created)
 	}
+	userMatch := regexp.MustCompile(`data-user-id="([^"]+)" data-username="maintainer-one"`).FindSubmatch(created)
+	if len(userMatch) != 2 {
+		t.Fatalf("created user row missing: %s", created)
+	}
+	if row := regexp.MustCompile(`(?s)<tr data-user-id="[^"]+" data-username="maintainer-one">(.*?)</tr>`).FindSubmatch(created); len(row) != 2 ||
+		strings.Contains(string(row[1]), `<input`) || strings.Contains(string(row[1]), `<select`) {
+		t.Fatalf("user row exposes inline editing controls: %s", created)
+	}
+
+	response, err = admin.Get(serverURL + "/settings/users/" + url.PathEscape(string(userMatch[1])) + "/edit")
+	if err != nil {
+		t.Fatalf("get user edit task: %v", err)
+	}
+	editPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read user edit task: %v", err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("user edit task status=%d, body=%s", response.StatusCode, editPage)
+	}
+	for _, expected := range []string{
+		`data-task-kind="user-edit"`,
+		`name="username" value="maintainer-one"`,
+		`<option value="maintainer" selected>`,
+		`action="/settings/users/` + string(userMatch[1]) + `/reset-password"`,
+		`action="/settings/users/` + string(userMatch[1]) + `/disable"`,
+	} {
+		if !strings.Contains(string(editPage), expected) {
+			t.Fatalf("user edit task does not contain %q: %s", expected, editPage)
+		}
+	}
 
 	jar, err := cookiejar.New(nil)
 	if err != nil {
@@ -623,9 +655,29 @@ func TestOrdinaryUserChangesOnlyTheirOwnPassword(t *testing.T) {
 	if strings.Contains(string(accountPage), `autocomplete="username"`) {
 		t.Fatal("ordinary account page exposed username editing")
 	}
+	if strings.Contains(string(accountPage), `href="/settings/users"`) {
+		t.Fatal("ordinary account page exposed user management navigation")
+	}
+	response, err = viewer.Get(serverURL + "/settings/account/username")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("ordinary username task status=%d, want 403", response.StatusCode)
+	}
+	response, err = viewer.Get(serverURL + "/settings/account/password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	passwordPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK || !strings.Contains(string(passwordPage), `data-task-kind="account-password"`) {
+		t.Fatalf("ordinary password task status=%d body=%s", response.StatusCode, passwordPage)
+	}
 	newPassword := "replacement-password-2026"
-	response, err = viewer.PostForm(serverURL+"/settings/account", url.Values{
-		"csrf_token":       {formToken(t, accountPage)},
+	response, err = viewer.PostForm(serverURL+"/settings/account/password", url.Values{
+		"csrf_token":       {formToken(t, passwordPage)},
 		"username":         {"forged-rename"},
 		"current_password": {oldPassword},
 		"new_password":     {newPassword},

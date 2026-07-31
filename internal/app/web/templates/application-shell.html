@@ -59,11 +59,6 @@
         </button>
       </form>
       <a href="/settings/account" {{if .SettingsCurrent}}aria-current="page"{{end}}><span data-lucide="settings" aria-hidden="true"></span><span>{{t .Locale "shell.settings"}}</span></a>
-      {{if .CanManageUsers}}<a href="/settings/users"><span data-lucide="users" aria-hidden="true"></span><span>{{t .Locale "users.title"}}</span></a>{{end}}
-    </div>
-    <div class="sidebar-account">
-      <a href="/settings/account"><span data-lucide="circle-user-round" aria-hidden="true"></span><span>{{.Username}}</span><small>{{roleText .Locale .Role}}</small></a>
-      <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button type="submit"><span data-lucide="log-out" aria-hidden="true"></span><span>{{t .Locale "shell.sign_out"}}</span></button></form>
     </div>
   </footer>
 </aside>

@@ -478,6 +478,44 @@ func TestGroupedWebRoutesReplaceLegacyModulePaths(t *testing.T) {
 	}
 }
 
+func TestAdministratorAlwaysSeesUsersTabAcrossSettingsPages(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
+	for _, path := range []string{
+		"/settings/account",
+		"/settings/users",
+		"/settings/display",
+		"/settings/version-protection",
+		"/settings/updates",
+	} {
+		response, err := client.Get(serverURL + path)
+		if err != nil {
+			t.Fatalf("get %s: %v", path, err)
+		}
+		body, readErr := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if readErr != nil {
+			t.Fatalf("read %s: %v", path, readErr)
+		}
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("%s status=%d, want %d", path, response.StatusCode, http.StatusOK)
+		}
+		if count := strings.Count(string(body), `href="/settings/users"`); count != 1 {
+			t.Errorf("%s users tab count=%d, want 1", path, count)
+		}
+		if strings.Contains(string(body), `class="settings-layout"`) {
+			t.Errorf("%s still uses the former left-column settings layout", path)
+		}
+		if navigation := strings.Index(string(body), `class="settings-nav"`); navigation < 0 {
+			t.Errorf("%s is missing the shared settings navigation", path)
+		} else if content := strings.Index(string(body), `class="settings-content"`); content < navigation {
+			t.Errorf("%s renders settings content before its top navigation", path)
+		}
+	}
+}
+
 func TestCreateAndEditTasksHaveSemanticGETRoutes(t *testing.T) {
 	t.Parallel()
 

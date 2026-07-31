@@ -62,7 +62,10 @@ func TestFixedRolesCoverEveryProtectedRouteClass(t *testing.T) {
 		{"audit download", http.MethodGet, "/history/audit.csv", []userRole{roleAdministrator, roleMaintainer}},
 		{"system settings", http.MethodGet, "/settings/updates/status", []userRole{roleAdministrator, roleMaintainer}},
 		{"user management", http.MethodGet, "/settings/users", []userRole{roleAdministrator}},
+		{"user edit task", http.MethodGet, "/settings/users/user-one/edit", []userRole{roleAdministrator}},
 		{"own account", http.MethodPost, "/settings/account", []userRole{roleAdministrator, roleMaintainer, roleOperator, roleViewer}},
+		{"own password task", http.MethodGet, "/settings/account/password", []userRole{roleAdministrator, roleMaintainer, roleOperator, roleViewer}},
+		{"own username task", http.MethodGet, "/settings/account/username", []userRole{roleAdministrator, roleMaintainer, roleOperator, roleViewer}},
 	}
 
 	roles := []userRole{roleAdministrator, roleMaintainer, roleOperator, roleViewer}

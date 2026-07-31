@@ -4,14 +4,8 @@
 <body>
 <main class="workspace settings-workspace" data-updates-page data-update-installing-title="{{t .Locale "updates.installing_title"}}" data-update-installing-description="{{t .Locale "updates.installing_description"}}" data-update-start-error="{{t .Locale "updates.start_error"}}">
   <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "settings.eyebrow"}}</p><h1>{{t .Locale "settings.title"}}</h1><p>{{t .Locale "settings.description"}}</p></div></header>
-  <div class="settings-layout">
-    <nav class="settings-nav" aria-label="{{t .Locale "settings.sections"}}">
-      <a href="/settings/account"><span data-lucide="user-round" aria-hidden="true"></span>{{t .Locale "settings.account"}}</a>
-      <a href="/settings/display"><span data-lucide="eye" aria-hidden="true"></span>{{t .Locale "display.title"}}</a>
-      <a href="/settings/version-protection"><span data-lucide="git-branch" aria-hidden="true"></span>{{t .Locale "protection.title"}}</a>
-      <a href="/settings/updates" aria-current="page"><span data-lucide="refresh-cw" aria-hidden="true"></span>{{t .Locale "updates.title"}}</a>
-    </nav>
-    <section class="settings-content">
+  {{template "settings-navigation" .SettingsNavigation}}
+  <section class="settings-content">
       <header class="settings-section-heading"><div><h2>{{t .Locale "updates.title"}}</h2><p>{{t .Locale "updates.description"}}</p></div>
         <span class="status-chip" data-state="{{if .Snapshot.UpdateAvailable}}attention{{else}}enabled{{end}}"><span class="status-dot" aria-hidden="true"></span>{{if .Snapshot.UpdateAvailable}}{{t .Locale "updates.available"}}{{else if .Snapshot.LocalNewer}}{{t .Locale "updates.local_newer"}}{{else}}{{t .Locale "updates.current"}}{{end}}</span>
       </header>
@@ -48,8 +42,7 @@
       </section>
       {{end}}
       {{if .Snapshot.Operation}}<section class="settings-block"><h3>{{t .Locale "updates.operation"}}</h3><dl class="settings-summary"><div><dt>ID</dt><dd><code>{{.Snapshot.Operation.ID}}</code></dd></div><div><dt>{{t .Locale "common.status"}}</dt><dd><code>{{.Snapshot.Operation.Phase}}</code></dd></div><div><dt>{{t .Locale "updates.target"}}</dt><dd><code>{{.Snapshot.Operation.TargetVersion}}</code></dd></div><div><dt>{{t .Locale "updates.operation_started"}}</dt><dd><time datetime="{{.Snapshot.Operation.CreatedAt}}" data-local-time>{{.Snapshot.Operation.CreatedAt}}</time></dd></div></dl>{{if .Snapshot.Operation.Error}}<p class="field-error">{{.Snapshot.Operation.Error}}</p>{{end}}</section>{{end}}
-    </section>
-  </div>
+  </section>
 </main>
 </body>
 </html>

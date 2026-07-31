@@ -11,17 +11,18 @@ import (
 )
 
 type updatesPageData struct {
-	Snapshot        updatepkg.Snapshot
-	CSRFToken       string
-	Locale          webLocale
-	ActiveRuns      int
-	LatestAsset     string
-	LatestSize      string
-	LatestPublished time.Time
-	BuiltAt         time.Time
-	PreparedID      string
-	Prepared        bool
-	Capability      string
+	Snapshot           updatepkg.Snapshot
+	CSRFToken          string
+	Locale             webLocale
+	ActiveRuns         int
+	LatestAsset        string
+	LatestSize         string
+	LatestPublished    time.Time
+	BuiltAt            time.Time
+	PreparedID         string
+	Prepared           bool
+	Capability         string
+	SettingsNavigation settingsNavigationData
 }
 
 func (a *App) updatesPage(response http.ResponseWriter, request *http.Request) {
@@ -31,6 +32,7 @@ func (a *App) updatesPage(response http.ResponseWriter, request *http.Request) {
 	data := updatesPageData{
 		Snapshot: snapshot, CSRFToken: current.csrfToken,
 		Locale: locale, ActiveRuns: a.runs.ActiveCount(),
+		SettingsNavigation: newSettingsNavigation(current, locale, "updates"),
 	}
 	switch snapshot.InstallMode {
 	case "development":

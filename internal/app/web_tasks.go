@@ -47,6 +47,7 @@ type taskPageData struct {
 	CanOverwrite       bool
 	QuickReferences    int
 	ScheduleReferences int
+	User               userView
 }
 
 func (a *App) renderTaskPage(response http.ResponseWriter, request *http.Request, data taskPageData) {

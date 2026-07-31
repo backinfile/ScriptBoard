@@ -57,10 +57,13 @@ func TestQuickRunPageOffersOneTimeAndCreateActions(t *testing.T) {
 		if response.StatusCode != http.StatusOK || !bytes.Contains(body, []byte(`data-task-kind="`+task.kind+`"`)) {
 			t.Fatalf("%s status=%d body=%s", task.path, response.StatusCode, body)
 		}
-		for _, expected := range []string{`name="source"`, `name="working_directory"`, `name="language"`} {
+		for _, expected := range []string{`name="source"`, `type="hidden" name="working_directory"`, `name="language"`, `data-directory-tree`} {
 			if !bytes.Contains(body, []byte(expected)) {
 				t.Fatalf("%s is missing %q: %s", task.path, expected, body)
 			}
+		}
+		if bytes.Contains(body, []byte(`data-directory-browse`)) || bytes.Contains(body, []byte(`name="working_directory" autocomplete=`)) {
+			t.Fatalf("%s still exposes a manually editable working directory: %s", task.path, body)
 		}
 	}
 }

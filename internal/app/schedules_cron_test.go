@@ -254,12 +254,16 @@ func TestScheduleGroupsPersistAcrossCreateAndEdit(t *testing.T) {
 		`name="group_id"`,
 		`value="` + securityGroupID + `"`,
 		`data-cron-guided hidden`,
+		`class="cron-disclosure cron-raw-editor"`,
 		`data-cron-parse`,
 		`name="arguments"`,
 	} {
 		if !strings.Contains(taskPage, expected) {
 			t.Fatalf("schedule task missing %q: %s", expected, taskPage)
 		}
+	}
+	if strings.Contains(taskPage, `class="cron-disclosure cron-raw-editor" open`) {
+		t.Fatalf("raw cron editor should be collapsed by default: %s", taskPage)
 	}
 
 	response, err = client.PostForm(serverURL+"/config/schedules", url.Values{

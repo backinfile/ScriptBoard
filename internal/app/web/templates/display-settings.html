@@ -4,14 +4,8 @@
 <body>
 <main class="workspace settings-workspace" data-display-settings>
   <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "settings.eyebrow"}}</p><h1>{{t .Locale "settings.title"}}</h1><p>{{t .Locale "settings.description"}}</p></div></header>
-  <div class="settings-layout">
-    <nav class="settings-nav" aria-label="{{t .Locale "settings.sections"}}">
-      <a href="/settings/account"><span data-lucide="user-round" aria-hidden="true"></span>{{t .Locale "settings.account"}}</a>
-      <a href="/settings/display" aria-current="page"><span data-lucide="eye" aria-hidden="true"></span>{{t .Locale "display.title"}}</a>
-      <a href="/settings/version-protection"><span data-lucide="git-branch" aria-hidden="true"></span>{{t .Locale "protection.title"}}</a>
-      <a href="/settings/updates"><span data-lucide="refresh-cw" aria-hidden="true"></span>{{t .Locale "updates.title"}}</a>
-    </nav>
-    <section class="settings-content">
+  {{template "settings-navigation" .SettingsNavigation}}
+  <section class="settings-content">
       <header class="settings-section-heading"><div><h2>{{t .Locale "display.title"}}</h2><p>{{t .Locale "display.description"}}</p></div></header>
       <section class="settings-block status-display-settings">
         <header><h3>{{t .Locale "display.website_status_color"}}</h3><p>{{t .Locale "display.website_status_color_description"}}</p></header>
@@ -30,8 +24,7 @@
         </fieldset>
         <p class="status-display-feedback" data-status-display-feedback aria-live="polite">{{t .Locale "display.browser_preference"}}</p>
       </section>
-    </section>
-  </div>
+  </section>
 </main>
 </body>
 </html>

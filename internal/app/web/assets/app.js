@@ -698,77 +698,184 @@
   function initDirectoryPickers(scope, cleanups) {
     scope.querySelectorAll("[data-directory-picker]").forEach(root => {
       const input = root.querySelector('input[name="working_directory"]');
-      const browse = root.querySelector("[data-directory-browse]");
-      const options = root.querySelector("[data-directory-options]");
-      if (!input || !browse || !options) return;
+      const tree = root.querySelector("[data-directory-tree]");
+      const selection = root.querySelector("[data-directory-selection]");
+      if (!input || !tree || !selection) return;
       let controller = null;
-      const render = payload => {
-        const current = payload.path || ".";
-        options.replaceChildren();
-        const heading = document.createElement("div");
-        heading.className = "heading-actions";
-        const use = document.createElement("button");
-        use.type = "button";
-        use.className = "button button--primary";
-        use.textContent = root.dataset.useLabel || "Use this directory";
-        use.addEventListener("click", () => {
-          input.value = current;
-          options.hidden = true;
-          input.focus();
-        });
-        heading.append(use);
-        if (current !== ".") {
-          const parent = document.createElement("button");
-          parent.type = "button";
-          parent.className = "button button--quiet";
-          parent.textContent = root.dataset.rootLabel || "Managed root";
-          parent.addEventListener("click", () => {
-            const parts = current.split("/").filter(Boolean);
-            parts.pop();
-            load(parts.join("/") || ".");
-          });
-          heading.prepend(parent);
-        }
-        options.append(heading);
-        const list = document.createElement("div");
-        list.className = "heading-actions";
-        if (!payload.directories?.length) {
-          const empty = document.createElement("p");
-          empty.textContent = root.dataset.emptyLabel || "No child directories";
-          list.append(empty);
-        } else {
-          payload.directories.forEach(name => {
-            const child = document.createElement("button");
-            child.type = "button";
-            child.className = "button button--quiet";
-            child.textContent = name;
-            child.addEventListener("click", () => load(current === "." ? name : `${current}/${name}`));
-            list.append(child);
-          });
-        }
-        options.append(list);
-        options.hidden = false;
+      const nodes = new Map();
+      const normalizePath = value => String(value || "").split("/").filter(Boolean).join("/") || ".";
+      let selectedPath = normalizePath(input.value);
+
+      const setSelected = (path, focus = false) => {
+        selectedPath = normalizePath(path);
+        input.value = selectedPath;
+        selection.textContent = selectedPath === "." ? (root.dataset.rootLabel || "Managed root") : selectedPath;
+        nodes.forEach(node => node.row.setAttribute("aria-selected", String(node.path === selectedPath)));
+        if (focus) nodes.get(selectedPath)?.row.focus({ preventScroll: true });
       };
-      const load = async path => {
+
+      const setExpanded = (node, expanded) => {
+        if (!node.loaded || node.leaf) return;
+        node.row.setAttribute("aria-expanded", String(expanded));
+        node.group.hidden = !expanded;
+      };
+
+      const createNode = (path, label) => {
+        const item = document.createElement("li");
+        item.setAttribute("role", "none");
+
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "directory-tree-picker__item";
+        row.setAttribute("role", "treeitem");
+        row.setAttribute("aria-selected", String(path === selectedPath));
+        row.setAttribute("aria-expanded", "false");
+        row.dataset.directoryPath = path;
+
+        const chevron = document.createElement("span");
+        chevron.className = "directory-tree-picker__chevron";
+        chevron.dataset.lucide = "chevron-right";
+        chevron.setAttribute("aria-hidden", "true");
+        const folder = document.createElement("span");
+        folder.dataset.lucide = path === "." ? "hard-drive" : "folder";
+        folder.setAttribute("aria-hidden", "true");
+        const name = document.createElement("span");
+        name.textContent = label;
+        const check = document.createElement("span");
+        check.className = "directory-tree-picker__check";
+        check.dataset.lucide = "check";
+        check.setAttribute("aria-hidden", "true");
+        row.append(chevron, folder, name, check);
+
+        const group = document.createElement("ul");
+        group.setAttribute("role", "group");
+        group.hidden = true;
+        item.append(row, group);
+
+        const node = { path, item, row, group, loaded: false, leaf: false };
+        nodes.set(path, node);
+        row.addEventListener("click", () => {
+          setSelected(path);
+          if (!node.loaded) {
+            loadNode(node, true);
+            return;
+          }
+          setExpanded(node, row.getAttribute("aria-expanded") !== "true");
+        });
+        return node;
+      };
+
+      const loadNode = async (node, expand) => {
+        if (node.loaded) {
+          setExpanded(node, expand);
+          return true;
+        }
         controller?.abort();
         controller = new AbortController();
-        options.hidden = false;
-        options.textContent = root.dataset.loadingLabel || "Loading directories…";
+        node.row.setAttribute("aria-busy", "true");
+        node.group.hidden = false;
+        const loading = document.createElement("li");
+        loading.className = "directory-tree-picker__status";
+        loading.textContent = root.dataset.loadingLabel || "Loading directories…";
+        node.group.replaceChildren(loading);
         try {
           const endpoint = new URL(root.dataset.endpoint, location.href);
-          endpoint.searchParams.set("path", path === "." ? "" : path);
+          endpoint.searchParams.set("path", node.path === "." ? "" : node.path);
           const response = await fetch(endpoint, { headers: { Accept: "application/json" }, cache: "no-store", signal: controller.signal });
           if (!response.ok) throw new Error(await response.text());
-          render(await response.json());
+          const payload = await response.json();
+          const directories = Array.isArray(payload.directories) ? payload.directories : [];
+          node.group.replaceChildren();
+          directories.forEach(directory => {
+            const path = node.path === "." ? directory : `${node.path}/${directory}`;
+            node.group.append(createNode(path, directory).item);
+          });
+          node.loaded = true;
+          node.leaf = directories.length === 0;
+          if (node.leaf) {
+            node.row.removeAttribute("aria-expanded");
+            node.group.hidden = true;
+          } else {
+            setExpanded(node, expand);
+          }
+          renderIcons(node.item);
+          return true;
         } catch (error) {
-          if (error?.name !== "AbortError") options.textContent = error?.message || words().loadFailed;
+          if (error?.name === "AbortError") return false;
+          const failure = document.createElement("li");
+          failure.className = "directory-tree-picker__status";
+          failure.textContent = error?.message || words().loadFailed;
+          node.group.replaceChildren(failure);
+          node.group.hidden = false;
+          return false;
+        } finally {
+          node.row.removeAttribute("aria-busy");
         }
       };
-      const onBrowse = () => load(input.value.trim() || ".");
-      browse.addEventListener("click", onBrowse);
+
+      const list = document.createElement("ul");
+      list.setAttribute("role", "tree");
+      list.setAttribute("aria-label", tree.getAttribute("aria-label") || "");
+      const rootNode = createNode(".", root.dataset.rootLabel || "Managed root");
+      list.append(rootNode.item);
+      tree.replaceChildren(list);
+      renderIcons(tree);
+      setSelected(selectedPath);
+
+      const revealSelection = async () => {
+        let currentNode = rootNode;
+        let currentPath = ".";
+        if (!await loadNode(currentNode, true)) return;
+        for (const part of selectedPath === "." ? [] : selectedPath.split("/")) {
+          currentPath = currentPath === "." ? part : `${currentPath}/${part}`;
+          const nextNode = nodes.get(currentPath);
+          if (!nextNode) {
+            setSelected(".");
+            return;
+          }
+          currentNode = nextNode;
+          if (currentPath !== selectedPath && !await loadNode(currentNode, true)) return;
+        }
+        setSelected(selectedPath, root.hasAttribute("data-autofocus"));
+      };
+
+      const onKeydown = event => {
+        const row = event.target.closest('[role="treeitem"]');
+        if (!row || !tree.contains(row)) return;
+        const visibleRows = Array.from(tree.querySelectorAll('[role="treeitem"]')).filter(item => item.offsetParent !== null);
+        const index = visibleRows.indexOf(row);
+        if (event.key === "ArrowDown" && index < visibleRows.length - 1) {
+          event.preventDefault();
+          visibleRows[index + 1].focus();
+        } else if (event.key === "ArrowUp" && index > 0) {
+          event.preventDefault();
+          visibleRows[index - 1].focus();
+        } else if (event.key === "Home") {
+          event.preventDefault();
+          visibleRows[0]?.focus();
+        } else if (event.key === "End") {
+          event.preventDefault();
+          visibleRows.at(-1)?.focus();
+        } else if (event.key === "ArrowRight") {
+          event.preventDefault();
+          const node = nodes.get(row.dataset.directoryPath);
+          if (node && !node.leaf) loadNode(node, true);
+        } else if (event.key === "ArrowLeft") {
+          const node = nodes.get(row.dataset.directoryPath);
+          if (!node) return;
+          event.preventDefault();
+          if (row.getAttribute("aria-expanded") === "true") {
+            setExpanded(node, false);
+          } else {
+            node.item.parentElement?.closest("li")?.querySelector(':scope > [role="treeitem"]')?.focus();
+          }
+        }
+      };
+      tree.addEventListener("keydown", onKeydown);
+      revealSelection();
       cleanups.push(() => {
         controller?.abort();
-        browse.removeEventListener("click", onBrowse);
+        tree.removeEventListener("keydown", onKeydown);
       });
     });
   }

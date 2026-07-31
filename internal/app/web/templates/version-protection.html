@@ -4,9 +4,8 @@
 <body>
 <main class="workspace settings-workspace">
   <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "settings.eyebrow"}}</p><h1>{{t .Locale "settings.title"}}</h1><p>{{t .Locale "settings.description"}}</p></div></header>
-  <div class="settings-layout">
-    <nav class="settings-nav" aria-label="{{t .Locale "settings.sections"}}"><a href="/settings/account"><span data-lucide="user-round" aria-hidden="true"></span>{{t .Locale "settings.account"}}</a><a href="/settings/display"><span data-lucide="eye" aria-hidden="true"></span>{{t .Locale "display.title"}}</a><a href="/settings/version-protection" aria-current="page"><span data-lucide="git-branch" aria-hidden="true"></span>{{t .Locale "protection.title"}}</a><a href="/settings/updates"><span data-lucide="refresh-cw" aria-hidden="true"></span>{{t .Locale "updates.title"}}</a></nav>
-    <section class="settings-content">
+  {{template "settings-navigation" .SettingsNavigation}}
+  <section class="settings-content">
       <header class="settings-section-heading"><div><h2>{{t .Locale "protection.title"}}</h2><p>{{t .Locale "protection.description"}}</p></div><span class="status-chip" data-state="{{if .State.Enabled}}enabled{{else}}disabled{{end}}"><span class="status-dot" aria-hidden="true"></span>{{if .State.Enabled}}{{t .Locale "protection.enabled"}}{{else}}{{t .Locale "protection.disabled"}}{{end}}</span></header>
       <dl class="settings-summary"><div><dt>{{t .Locale "common.status"}}</dt><dd><code>{{.State.Status}}</code></dd></div><div><dt>{{t .Locale "protection.repository_size"}}</dt><dd>{{.State.RepositoryBytes}} B{{if .State.StorageWarning}}<small>{{t .Locale "protection.storage_warning"}}</small>{{end}}</dd></div><div><dt>{{t .Locale "protection.last_commit"}}</dt><dd>{{if .State.LastCommit}}<code>{{.State.LastCommit}}</code>{{else}}—{{end}}</dd></div></dl>
       {{if .State.AbnormalReason}}<aside class="inline-notice inline-notice--danger"><span data-lucide="triangle-alert" aria-hidden="true"></span><p>{{.State.AbnormalReason}}</p></aside>{{end}}
@@ -18,8 +17,7 @@
       <section class="settings-block"><header class="section-heading"><div><h3>{{t .Locale "protection.file_history"}}</h3><p>{{t .Locale "protection.history_description"}}</p></div></header><form class="search-form" method="get" data-async data-async-push><label class="search-field"><span data-lucide="search" aria-hidden="true"></span><span class="sr-only">{{t .Locale "common.path"}}</span><input name="path" autocomplete="off" spellcheck="false" value="{{.HistoryPath}}" placeholder="scripts/backup.ps1"></label><button class="button" type="submit">{{t .Locale "protection.view_history"}}</button></form>
       {{if .HistoryPath}}{{if .History}}<div class="table-shell"><table><thead><tr><th>{{t .Locale "common.time"}}</th><th>Commit</th><th>{{t .Locale "common.details"}}</th><th><span class="sr-only">{{t .Locale "common.actions"}}</span></th></tr></thead><tbody>{{range .History}}<tr><td><time datetime="{{.Time}}" data-local-time>{{.Time}}</time></td><td><code>{{.Hash}}</code></td><td>{{.Subject}}</td><td><form method="post" action="/settings/version-protection/restore" data-confirm="{{t $.Locale "protection.restore_confirm"}}" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="path" value="{{$.HistoryPath}}"><button class="button button--compact" type="submit" name="commit" value="{{.Hash}}">{{t $.Locale "protection.restore"}}</button></form></td></tr>{{end}}</tbody></table></div>{{else}}<p class="empty-copy">{{t .Locale "protection.no_history"}}</p>{{end}}{{else}}<p class="empty-copy">{{t .Locale "protection.enter_path"}}</p>{{end}}</section>
       {{end}}
-    </section>
-  </div>
+  </section>
 </main>
 </body>
 </html>

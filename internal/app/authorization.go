@@ -55,7 +55,7 @@ func permissionForRequest(request *http.Request) permission {
 	if strings.HasPrefix(path, "/settings/users") {
 		return permissionManageUsers
 	}
-	if path == "/settings/account" || path == "/logout" {
+	if strings.HasPrefix(path, "/settings/account") || path == "/logout" {
 		return permissionObserve
 	}
 	if strings.HasPrefix(path, "/settings/") {

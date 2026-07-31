@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -29,6 +31,54 @@ type fakeDockerLogAPI struct {
 	inspection  client.ContainerInspectResult
 	listOptions client.ContainerListOptions
 	inspectID   string
+}
+
+type dockerTestRecord struct {
+	timestamp time.Time
+	text      string
+}
+
+type tailBeforeUntilDockerClient struct {
+	records []dockerTestRecord
+}
+
+func (f *tailBeforeUntilDockerClient) ContainerLogs(
+	_ context.Context,
+	_ string,
+	options client.ContainerLogsOptions,
+) (client.ContainerLogsResult, error) {
+	records := append([]dockerTestRecord(nil), f.records...)
+	if options.Tail != "" && options.Tail != "all" {
+		count, err := strconv.Atoi(options.Tail)
+		if err != nil {
+			return nil, err
+		}
+		if len(records) > count {
+			records = records[len(records)-count:]
+		}
+	}
+	if options.Until != "" {
+		until, err := time.Parse(time.RFC3339Nano, options.Until)
+		if err != nil {
+			return nil, err
+		}
+		filtered := records[:0]
+		for _, record := range records {
+			if record.timestamp.Before(until) {
+				filtered = append(filtered, record)
+			}
+		}
+		records = filtered
+	}
+	var stream bytes.Buffer
+	for _, record := range records {
+		writeDockerFrame(
+			&stream,
+			stdcopy.Stdout,
+			[]byte(record.timestamp.Format(time.RFC3339Nano)+" "+record.text+"\n"),
+		)
+	}
+	return io.NopCloser(bytes.NewReader(stream.Bytes())), nil
 }
 
 func (f *fakeDockerLogAPI) ContainerList(
@@ -146,7 +196,7 @@ func TestDockerLogSourceResumesWithSinceAndDeduplicatesTheBoundary(t *testing.T)
 		t.Fatalf("older entries = %#v, want only the entry before the boundary", older.Entries)
 	}
 	if api.options.Until != "2026-07-30T10:00:01.000000003Z" ||
-		api.options.Tail != "500" || api.options.Follow {
+		api.options.Tail != "" || api.options.Follow {
 		t.Fatalf("history options = %#v", api.options)
 	}
 
@@ -159,6 +209,45 @@ func TestDockerLogSourceResumesWithSinceAndDeduplicatesTheBoundary(t *testing.T)
 	}
 	if _, err := source.History(context.Background(), invalidBoundary); !errors.Is(err, logstream.ErrInvalidCursor) {
 		t.Fatalf("invalid history boundary error = %v, want ErrInvalidCursor", err)
+	}
+}
+
+func TestDockerLogSourcePaginatesAfterNewEntriesMoveTheBoundaryPastTheTail(t *testing.T) {
+	t.Parallel()
+
+	start := time.Date(2026, 7, 30, 10, 0, 0, 0, time.UTC)
+	api := &tailBeforeUntilDockerClient{}
+	for index := 0; index < 501; index++ {
+		api.records = append(api.records, dockerTestRecord{
+			timestamp: start.Add(time.Duration(index) * time.Second),
+			text:      fmt.Sprintf("entry-%03d", index),
+		})
+	}
+	source := &dockerLogSource{
+		client: api, containerID: "container-123", sourceVersion: "version-123",
+		name: "api", tty: false, running: true,
+	}
+
+	latest, err := source.History(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(latest.Entries) != logstream.DefaultPageLines ||
+		latest.Entries[0].Text != "entry-001" || !latest.HasMore {
+		t.Fatalf("latest page = first %q, entries=%d, hasMore=%v",
+			latest.Entries[0].Text, len(latest.Entries), latest.HasMore)
+	}
+
+	api.records = append(api.records, dockerTestRecord{
+		timestamp: start.Add(501 * time.Second),
+		text:      "entry-501",
+	})
+	older, err := source.History(context.Background(), latest.Before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(older.Entries) != 1 || older.Entries[0].Text != "entry-000" {
+		t.Fatalf("older page = %#v, want entry-000", older.Entries)
 	}
 }
 

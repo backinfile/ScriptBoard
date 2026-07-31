@@ -5,8 +5,49 @@
 <main class="workspace task-page" data-task-page data-task-kind="{{.Kind}}" data-task-close-label="{{t .Locale "common.close"}}">
   <a class="task-back" href="{{.BackURL}}"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "common.back"}}</a>
   <section class="task-sheet">
-    <header><div><p class="page-eyebrow">{{t .Locale "common.create"}}</p><h1>{{.Title}}</h1><p>{{.Description}}</p></div><a class="icon-button" href="{{.BackURL}}" aria-label="{{t .Locale "common.close"}}"><span data-lucide="x" aria-hidden="true"></span></a></header>
-    {{if eq .Kind "new-directory"}}
+    <header><div><p class="page-eyebrow">{{if eq .Kind "user-edit"}}{{t .Locale "users.accounts"}}{{else if or (eq .Kind "account-username") (eq .Kind "account-password")}}{{t .Locale "settings.account"}}{{else}}{{t .Locale "common.create"}}{{end}}</p><h1>{{.Title}}</h1><p>{{.Description}}</p></div><a class="icon-button" href="{{.BackURL}}" aria-label="{{t .Locale "common.close"}}"><span data-lucide="x" aria-hidden="true"></span></a></header>
+    {{if eq .Kind "user-edit"}}
+    <div class="user-edit-content">
+      <dl class="user-edit-summary">
+        <div><dt>{{t .Locale "login.username"}}</dt><dd>{{.User.Username}}</dd></div>
+        <div><dt>{{t .Locale "users.role"}}</dt><dd>{{roleText .Locale .User.Role}}</dd></div>
+        <div><dt>{{t .Locale "common.status"}}</dt><dd><span class="status-chip" data-state="{{if .User.Enabled}}succeeded{{else}}cancelled{{end}}"><span class="status-dot" aria-hidden="true"></span>{{if .User.Enabled}}{{t .Locale "users.enabled"}}{{else}}{{t .Locale "users.disabled"}}{{end}}</span></dd></div>
+        <div><dt>{{t .Locale "users.created_at"}}</dt><dd><time datetime="{{machineTime .User.CreatedAt}}" data-local-time>{{localTime .Locale .User.CreatedAt}}</time></dd></div>
+      </dl>
+      {{if eq .User.Role "administrator"}}
+      <aside class="inline-notice"><span data-lucide="shield-check" aria-hidden="true"></span><p>{{t .Locale "users.administrator_notice"}}</p></aside>
+      {{else}}
+      <form class="user-edit-form" method="post" action="{{.Action}}">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <label>{{t .Locale "login.username"}} <input name="username" value="{{.User.Username}}" autocomplete="off" spellcheck="false" required autofocus></label>
+        <label>{{t .Locale "users.role"}} <select name="role"><option value="maintainer" {{if eq .User.Role "maintainer"}}selected{{end}}>{{t .Locale "users.role.maintainer"}}</option><option value="operator" {{if eq .User.Role "operator"}}selected{{end}}>{{t .Locale "users.role.operator"}}</option><option value="viewer" {{if eq .User.Role "viewer"}}selected{{end}}>{{t .Locale "users.role.viewer"}}</option></select></label>
+        <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="save" aria-hidden="true"></span>{{t .Locale "task.save_changes"}}</button></footer>
+      </form>
+      <section class="user-access-actions" aria-labelledby="user-access-actions-title">
+        <div><h2 id="user-access-actions-title">{{t .Locale "users.access_actions"}}</h2><p>{{t .Locale "users.access_actions_description"}}</p></div>
+        <div class="button-row">
+          <form method="post" action="/settings/users/{{.User.ID}}/reset-password"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--quiet" type="submit"><span data-lucide="key-round" aria-hidden="true"></span>{{t .Locale "users.reset_password"}}</button></form>
+          <form method="post" action="/settings/users/{{.User.ID}}/{{if .User.Enabled}}disable{{else}}enable{{end}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button {{if .User.Enabled}}button--danger{{else}}button--quiet{{end}}" type="submit"><span data-lucide="{{if .User.Enabled}}user-x{{else}}user-check{{end}}" aria-hidden="true"></span>{{if .User.Enabled}}{{t .Locale "users.disable"}}{{else}}{{t .Locale "users.enable"}}{{end}}</button></form>
+        </div>
+      </section>
+      {{end}}
+    </div>
+    {{else if eq .Kind "account-username"}}
+    <form method="post" action="{{.Action}}">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <label>{{t .Locale "login.username"}} <input name="username" value="{{.Name}}" autocomplete="username" spellcheck="false" required autofocus></label>
+      <label>{{t .Locale "account.current_password"}} <input name="current_password" type="password" autocomplete="current-password" required></label>
+      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "task.save_changes"}}</button></footer>
+    </form>
+    {{else if eq .Kind "account-password"}}
+    <form method="post" action="{{.Action}}">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <label>{{t .Locale "account.current_password"}} <input name="current_password" type="password" autocomplete="current-password" required autofocus></label>
+      <label>{{t .Locale "account.new_password"}} <input name="new_password" type="password" autocomplete="new-password" required></label>
+      <label>{{t .Locale "account.confirm_password"}} <input name="confirm_password" type="password" autocomplete="new-password" required></label>
+      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "account.save"}}</button></footer>
+    </form>
+    {{else if eq .Kind "new-directory"}}
     <form method="post" action="{{.Action}}" data-async>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value="{{.Path}}">
       <label>{{t .Locale "task.directory_name"}} <input name="name" autocomplete="off" spellcheck="false" required autofocus></label>
@@ -21,7 +62,11 @@
     {{else if eq .Kind "one-time-run"}}
     <form method="post" action="{{.Action}}">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <div data-directory-picker data-endpoint="/resources/directories" data-root-label="{{t .Locale "task.directory_picker.root"}}" data-use-label="{{t .Locale "task.directory_picker.use"}}" data-loading-label="{{t .Locale "task.directory_picker.loading"}}" data-empty-label="{{t .Locale "task.directory_picker.empty"}}"><label>{{t .Locale "task.working_directory"}} <input name="working_directory" autocomplete="off" spellcheck="false" value="{{.WorkingDirectory}}" placeholder="." required autofocus></label><button class="button button--quiet" type="button" data-directory-browse><span data-lucide="folder-open" aria-hidden="true"></span>{{t .Locale "task.directory_picker.browse"}}</button><div data-directory-options hidden></div></div>
+      <div class="directory-tree-picker" data-directory-picker data-endpoint="/resources/directories" data-root-label="{{t .Locale "task.directory_picker.root"}}" data-loading-label="{{t .Locale "task.directory_picker.loading"}}" data-empty-label="{{t .Locale "task.directory_picker.empty"}}" data-autofocus>
+        <input type="hidden" name="working_directory" value="{{.WorkingDirectory}}" required>
+        <div class="directory-tree-picker__heading"><span>{{t .Locale "task.working_directory"}}</span><code data-directory-selection>{{.WorkingDirectory}}</code></div>
+        <div class="directory-tree-picker__tree" data-directory-tree data-directory-options aria-label="{{t .Locale "task.working_directory"}}"></div>
+      </div>
       <label>{{t .Locale "task.language"}} <select name="language" required>{{range .Languages}}<option value="{{.ID}}" {{if eq .ID $.Language}}selected{{end}}>{{.Label}} ({{.Extension}})</option>{{end}}</select></label>
       <label>{{t .Locale "task.source"}} <textarea name="source" autocomplete="off" spellcheck="false" maxlength="1048576" required>{{.Source}}</textarea></label>
       <label>{{t .Locale "task.arguments"}} <input name="arguments" autocomplete="off" spellcheck="false" value="{{.Arguments}}"></label>
@@ -31,7 +76,11 @@
     {{else if eq .Kind "quick-create"}}
     <form method="post" action="{{.Action}}" data-async>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <div data-directory-picker data-endpoint="/resources/directories" data-root-label="{{t .Locale "task.directory_picker.root"}}" data-use-label="{{t .Locale "task.directory_picker.use"}}" data-loading-label="{{t .Locale "task.directory_picker.loading"}}" data-empty-label="{{t .Locale "task.directory_picker.empty"}}"><label>{{t .Locale "task.working_directory"}} <input name="working_directory" autocomplete="off" spellcheck="false" value="{{.WorkingDirectory}}" placeholder="." required autofocus></label><button class="button button--quiet" type="button" data-directory-browse><span data-lucide="folder-open" aria-hidden="true"></span>{{t .Locale "task.directory_picker.browse"}}</button><div data-directory-options hidden></div></div>
+      <div class="directory-tree-picker" data-directory-picker data-endpoint="/resources/directories" data-root-label="{{t .Locale "task.directory_picker.root"}}" data-loading-label="{{t .Locale "task.directory_picker.loading"}}" data-empty-label="{{t .Locale "task.directory_picker.empty"}}" data-autofocus>
+        <input type="hidden" name="working_directory" value="{{.WorkingDirectory}}" required>
+        <div class="directory-tree-picker__heading"><span>{{t .Locale "task.working_directory"}}</span><code data-directory-selection>{{.WorkingDirectory}}</code></div>
+        <div class="directory-tree-picker__tree" data-directory-tree data-directory-options aria-label="{{t .Locale "task.working_directory"}}"></div>
+      </div>
       <label>{{t .Locale "task.language"}} <select name="language" required>{{range .Languages}}<option value="{{.ID}}" {{if eq .ID $.Language}}selected{{end}}>{{.Label}} ({{.Extension}})</option>{{end}}</select></label>
       <label>{{t .Locale "task.file_name"}} <input name="file_name" autocomplete="off" spellcheck="false" value="{{.FileName}}" required></label>
       <label>{{t .Locale "task.source"}} <textarea name="source" autocomplete="off" spellcheck="false" maxlength="1048576" required>{{.Source}}</textarea></label>
@@ -166,7 +215,7 @@
               <p class="cron-custom-note" data-cron-custom-note hidden>{{t .Locale "cron.guided_custom"}}</p>
               <div class="cron-current-expression"><span>{{t .Locale "cron.current_expression"}}</span><code data-cron-current>{{.Expression}}</code></div>
             </div>
-            <details class="cron-disclosure cron-raw-editor" open>
+            <details class="cron-disclosure cron-raw-editor"{{if .CronError}} open{{end}}>
               <summary><span data-lucide="braces" aria-hidden="true"></span>{{t .Locale "cron.raw_editor"}}</summary>
               <div>
                 <label class="cron-expression-field"><span>{{t .Locale "task.cron_expression"}}</span><span class="cron-expression-row"><input name="expression" autocomplete="off" spellcheck="false" maxlength="256" value="{{.Expression}}" placeholder="0 2 * * *" aria-describedby="cron-field-order cron-guided-status cron-feedback" data-cron-expression {{if .CronError}}aria-invalid="true"{{end}} required><button class="button" type="button" data-cron-parse><span data-lucide="arrow-up-from-line" aria-hidden="true"></span>{{t .Locale "cron.parse_to_guided"}}</button></span></label>

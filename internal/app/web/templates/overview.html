@@ -15,7 +15,6 @@
       <h1>{{t .Locale "overview.title"}}</h1>
       <p>{{.Facts.Platform}} {{.Facts.PlatformVersion}} · {{.Facts.Architecture}} · {{t .Locale "overview.host_uptime"}} {{localDuration .Locale .HostUptime}}</p>
     </div>
-    <a class="button button--primary" href="/resources/files/"><span data-lucide="play" aria-hidden="true"></span>{{t .Locale "overview.run_script"}}</a>
   </header>
 
   <section class="observation-verdict" data-state="{{if .Stale}}stale{{else if .Errors}}attention{{else}}current{{end}}" aria-labelledby="verdict-title">

@@ -1,0 +1,11 @@
+{{define "settings-navigation"}}
+<nav class="settings-nav" aria-label="{{t .Locale "settings.sections"}}">
+  <a href="/settings/account" {{if eq .Current "account"}}aria-current="page"{{end}}><span data-lucide="user-round" aria-hidden="true"></span>{{t .Locale "settings.account"}}</a>
+  {{if .CanManageUsers}}<a href="/settings/users" {{if eq .Current "users"}}aria-current="page"{{end}}><span data-lucide="users" aria-hidden="true"></span>{{t .Locale "users.title"}}</a>{{end}}
+  {{if .CanManageSystem}}
+  <a href="/settings/display" {{if eq .Current "display"}}aria-current="page"{{end}}><span data-lucide="eye" aria-hidden="true"></span>{{t .Locale "display.title"}}</a>
+  <a href="/settings/version-protection" {{if eq .Current "version-protection"}}aria-current="page"{{end}}><span data-lucide="git-branch" aria-hidden="true"></span>{{t .Locale "protection.title"}}</a>
+  <a href="/settings/updates" {{if eq .Current "updates"}}aria-current="page"{{end}}><span data-lucide="refresh-cw" aria-hidden="true"></span>{{t .Locale "updates.title"}}</a>
+  {{end}}
+</nav>
+{{end}}

@@ -607,6 +607,11 @@ func TestWebsiteMonitoringLocalizesEnglishAndShowsCheckedZeroLatency(t *testing.
 		"Back to Website Monitoring", "Check now", "Connection security", "0 ms",
 		"1 minute", "10 seconds", "Connection and success rules",
 		`class="website-settings-summary"`, `class="website-settings-list"`,
+		`website-security-summary website-security-summary--`,
+		`class="website-security-summary__signal"`,
+		`class="website-security-summary__issuer"`,
+		`class="website-security-summary__valid-until"`,
+		`class="website-security-summary__remaining"`,
 	} {
 		if !bytes.Contains(detail, []byte(expected)) {
 			t.Fatalf("English detail page does not contain %q: %s", expected, detail)

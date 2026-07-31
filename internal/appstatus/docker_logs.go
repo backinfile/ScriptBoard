@@ -62,6 +62,12 @@ func (s *dockerLogSource) History(ctx context.Context, before string) (logstream
 		boundary = cursor
 		// Ask Docker for the boundary itself so its digest can be revalidated.
 		// History still excludes that entry and everything after it below.
+		//
+		// Docker applies Tail before Until. Keeping Tail=500 here would make a
+		// valid boundary disappear as soon as one new log entry arrives after
+		// the initial page. Until alone preserves the boundary; the decoder
+		// below still retains only the final bounded page in memory.
+		options.Tail = ""
 		options.Until = cursor.Time.Add(time.Nanosecond).UTC().Format(time.RFC3339Nano)
 	}
 	stream, err := s.client.ContainerLogs(ctx, s.containerID, options)

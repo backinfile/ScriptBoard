@@ -114,17 +114,25 @@
 
 <section class="website-detail-section" data-website-detail-section="security">
 <header><div><h2>{{t .Locale "website.detail.security"}}</h2><p>{{t .Locale "website.detail.security_description"}}</p></div></header>
-<div class="website-security website-security--{{.Monitor.SecurityTone}}">
-<span data-lucide="{{if eq .Monitor.SecurityTone "success"}}shield-check{{else}}shield-alert{{end}}" aria-hidden="true"></span>
-<div><strong>{{.Monitor.SecurityTitle}}</strong><p>{{.Monitor.SecurityDescription}}</p></div>
-{{if not .Monitor.Certificate.NotAfter.IsZero}}<span>{{.Monitor.Certificate.DaysRemaining}} {{if eq .Monitor.Certificate.DaysRemaining 1}}{{t .Locale "website.detail.day"}}{{else}}{{t .Locale "website.detail.days"}}{{end}}</span>{{end}}
+<dl class="website-settings-summary website-security-summary website-security-summary--{{.Monitor.SecurityTone}}">
+<div class="website-security-summary__result">
+<dt>{{t .Locale "common.result"}}</dt>
+<dd>
+<span class="website-security-summary__signal"><span data-lucide="{{if eq .Monitor.SecurityTone "success"}}shield-check{{else}}shield-alert{{end}}" aria-hidden="true"></span><strong>{{.Monitor.SecurityTitle}}</strong></span>
+<small>{{.Monitor.SecurityDescription}}</small>
+</dd>
 </div>
-<dl class="website-facts">
-<div><dt>{{t .Locale "website.detail.issuer"}}</dt><dd>{{if .Monitor.Certificate.Issuer}}{{.Monitor.Certificate.Issuer}}{{else}}—{{end}}</dd></div>
-<div><dt>{{t .Locale "website.detail.valid_until"}}</dt><dd>{{if .Monitor.Certificate.NotAfter.IsZero}}—{{else}}<time datetime="{{machineTime .Monitor.Certificate.NotAfter}}" data-local-time>{{localTime .Locale .Monitor.Certificate.NotAfter}}</time>{{end}}</dd></div>
-<div><dt>{{t .Locale "website.detail.remaining"}}</dt><dd>{{if .Monitor.Certificate.NotAfter.IsZero}}—{{else}}{{.Monitor.Certificate.DaysRemaining}} {{if eq .Monitor.Certificate.DaysRemaining 1}}{{t .Locale "website.detail.day"}}{{else}}{{t .Locale "website.detail.days"}}{{end}}{{end}}</dd></div>
-<div><dt>{{t .Locale "website.detail.tls_version"}}</dt><dd>{{if .Monitor.Certificate.TLSVersion}}{{.Monitor.Certificate.TLSVersion}}{{else}}{{t .Locale "website.detail.no_tls"}}{{end}}</dd></div>
+<div class="website-security-summary__issuer"><dt>{{t .Locale "website.detail.issuer"}}</dt><dd>{{if .Monitor.Certificate.Issuer}}{{.Monitor.Certificate.Issuer}}{{else}}—{{end}}</dd></div>
+<div class="website-security-summary__valid-until"><dt>{{t .Locale "website.detail.valid_until"}}</dt><dd>{{if .Monitor.Certificate.NotAfter.IsZero}}—{{else}}<time datetime="{{machineTime .Monitor.Certificate.NotAfter}}" data-local-time>{{localTime .Locale .Monitor.Certificate.NotAfter}}</time>{{end}}</dd></div>
+<div class="website-security-summary__remaining"><dt>{{t .Locale "website.detail.remaining"}}</dt><dd>{{if .Monitor.Certificate.NotAfter.IsZero}}—{{else}}{{.Monitor.Certificate.DaysRemaining}} {{if eq .Monitor.Certificate.DaysRemaining 1}}{{t .Locale "website.detail.day"}}{{else}}{{t .Locale "website.detail.days"}}{{end}}{{end}}</dd></div>
 </dl>
+<div class="website-settings-rules website-security-rules">
+<h3>{{t .Locale "website.detail.connection_rules"}}</h3>
+<dl class="website-settings-list">
+<div><dt>{{t .Locale "website.detail.tls_version"}}</dt><dd>{{if .Monitor.Certificate.TLSVersion}}{{.Monitor.Certificate.TLSVersion}}{{else}}{{t .Locale "website.detail.no_tls"}}{{end}}</dd></div>
+<div><dt>{{if eq .Raw.Config.Kind "http"}}{{t .Locale "website.form.verify_tls"}}{{else}}{{t .Locale "website.form.verify_wss"}}{{end}}</dt><dd>{{if .Raw.Config.SkipTLSVerification}}{{t .Locale "common.no"}}{{else}}{{t .Locale "common.yes"}}{{end}}</dd></div>
+</dl>
+</div>
 </section>
 
 <section class="website-detail-section" data-website-detail-section="incidents">

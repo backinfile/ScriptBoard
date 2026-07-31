@@ -641,6 +641,26 @@ async function assertWebsiteMonitoring(page, baseURL) {
   assert.ok(Math.abs(preserved.scrollTop - scrollBefore) <= 1, JSON.stringify({ scrollBefore, preserved }));
   assert.equal(preserved.focusKey, "check");
   assert.match(preserved.refreshed, /Latest result updated/);
+  const securitySummary = detail.locator(".website-security-summary");
+  const issuerValue = securitySummary.locator(".website-security-summary__issuer dd");
+  await issuerValue.evaluate(element => {
+    element.textContent = "CN=Cloudflare TLS Issuing ECC CA 3,O=SSL Corporation,C=US";
+  });
+  const securityLayout = await securitySummary.evaluate(element => {
+    const result = element.querySelector(".website-security-summary__result").getBoundingClientRect();
+    const issuer = element.querySelector(".website-security-summary__issuer");
+    const issuerBounds = issuer.getBoundingClientRect();
+    return {
+      fits: element.scrollWidth <= element.clientWidth + 1,
+      issuerFits: issuer.scrollWidth <= issuer.clientWidth + 1,
+      resultAboveIssuer: result.bottom <= issuerBounds.top + 1,
+      issuerWhiteSpace: getComputedStyle(issuer.querySelector("dd")).whiteSpace,
+    };
+  });
+  assert.equal(securityLayout.fits, true, JSON.stringify(securityLayout));
+  assert.equal(securityLayout.issuerFits, true, JSON.stringify(securityLayout));
+  assert.equal(securityLayout.resultAboveIssuer, true, JSON.stringify(securityLayout));
+  assert.equal(securityLayout.issuerWhiteSpace, "normal");
   await assertNoHorizontalOverflow(page, "Website detail drawer desktop");
   const listScrollBeforeClose = await page.evaluate(() => window.scrollY);
   assert.ok(listScrollBeforeClose > 0, `Website monitor list did not scroll before drawer close: ${listScrollBeforeClose}`);
@@ -727,8 +747,16 @@ async function assertUserManagement(page, baseURL) {
   assert.ok(password.length >= 20, "generated user password was not shown once");
   const viewerRow = page.locator('[data-username="browser-viewer"]');
   await viewerRow.waitFor();
-  assert.equal(await viewerRow.locator('select[name="role"]').inputValue(), "viewer");
-  assert.equal(await viewerRow.locator('form[action$="/reset-password"]').count(), 1);
+  assert.equal(await viewerRow.locator("input, select").count(), 0);
+  assert.equal((await viewerRow.locator(".user-role-label").textContent()).trim(), "Viewer");
+  await viewerRow.locator(".user-account-link").click();
+  const editPanel = page.locator('.task-panel [data-task-kind="user-edit"]');
+  await editPanel.waitFor();
+  assert.equal(await editPanel.locator('input[name="username"]').inputValue(), "browser-viewer");
+  assert.equal(await editPanel.locator('select[name="role"]').inputValue(), "viewer");
+  assert.equal(await editPanel.locator('form[action$="/reset-password"]').count(), 1);
+  await page.locator("[data-task-panel-close]").click();
+  await page.locator("[data-task-panel]").waitFor({ state: "detached" });
   await page.goto(`${baseURL}/settings/users`);
   assert.equal(await page.locator("[data-generated-password]").count(), 0);
 
@@ -736,6 +764,54 @@ async function assertUserManagement(page, baseURL) {
   await page.reload();
   await assertNoHorizontalOverflow(page, "Users mobile");
   assert.equal(await page.locator('[data-username="browser-viewer"]').count(), 1);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+}
+
+async function assertAccountSettings(page, baseURL) {
+  await page.goto(`${baseURL}/settings/account`);
+  assert.equal(await page.locator(".app-sidebar .sidebar-account").count(), 0);
+  assert.equal(await page.locator('.app-sidebar a[href="/settings/users"]').count(), 0);
+  assert.equal(await page.locator('.settings-nav a[href="/settings/users"]').count(), 1);
+  assert.equal(await page.locator(".settings-nav a").count(), 5);
+  assert.equal(await page.locator(".settings-layout").count(), 0);
+  const settingsLayout = await page.locator(".settings-nav, .settings-content").evaluateAll(elements =>
+    elements.map(element => ({
+      className: element.className,
+      top: element.getBoundingClientRect().top,
+      bottom: element.getBoundingClientRect().bottom,
+      display: getComputedStyle(element).display,
+    })));
+  assert.equal(settingsLayout[0].className, "settings-nav");
+  assert.equal(settingsLayout[0].display, "flex");
+  assert.equal(settingsLayout[1].className, "settings-content");
+  assert.ok(settingsLayout[0].bottom < settingsLayout[1].top, "settings tabs are not above the content");
+  assert.equal(await page.locator('.settings-content form[action="/logout"]').count(), 1);
+  assert.equal(await page.locator('.settings-content input[name="current_password"]').count(), 0);
+  assert.equal(await page.locator('.settings-content input[name="new_password"]').count(), 0);
+  assert.equal((await page.locator(".settings-summary dd").textContent()).trim(), "admin");
+
+  await page.locator('a[href="/settings/account/username"][data-task-link]').click();
+  const usernamePanel = page.locator('.task-panel [data-task-kind="account-username"]');
+  await usernamePanel.waitFor();
+  assert.equal(await usernamePanel.locator('input[name="username"]').inputValue(), "admin");
+  assert.equal(await usernamePanel.locator('input[name="current_password"]').count(), 1);
+  await page.locator("[data-task-panel-close]").click();
+  await page.locator("[data-task-panel]").waitFor({ state: "detached" });
+
+  await page.locator('a[href="/settings/account/password"][data-task-link]').click();
+  const passwordPanel = page.locator('.task-panel [data-task-kind="account-password"]');
+  await passwordPanel.waitFor();
+  assert.equal(await passwordPanel.locator('input[name="current_password"]').count(), 1);
+  assert.equal(await passwordPanel.locator('input[name="new_password"]').count(), 1);
+  assert.equal(await passwordPanel.locator('input[name="confirm_password"]').count(), 1);
+  await page.locator("[data-task-panel-close]").click();
+  await page.locator("[data-task-panel]").waitFor({ state: "detached" });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await assertNoHorizontalOverflow(page, "Account settings mobile");
+  assert.equal(await page.locator('.settings-nav a[href="/settings/users"]').isVisible(), true);
+  assert.equal(await page.locator(".settings-nav").evaluate(element => getComputedStyle(element).overflowX), "auto");
   await page.setViewportSize({ width: 1440, height: 1000 });
 }
 
@@ -791,6 +867,7 @@ async function assertUserManagement(page, baseURL) {
     await assertLiveLogViewer(page, fixture.baseURL);
     await assertWebsiteMonitoring(page, fixture.baseURL);
     await assertStatusDisplaySettings(page, fixture.baseURL);
+    await assertAccountSettings(page, fixture.baseURL);
     await assertUserManagement(page, fixture.baseURL);
 
     const status = await page.evaluate(async () => {
@@ -978,6 +1055,9 @@ async function assertUserManagement(page, baseURL) {
     await scheduleTask.locator('select[name="group_id"]').selectOption({ label: "Operations" });
     await scheduleTask.locator('input[name="script"]').fill("automation/weekly-system-check.ps1");
     await scheduleTask.locator('input[name="arguments"]').fill("-Environment production");
+    const rawCronEditor = scheduleTask.locator(".cron-raw-editor");
+    assert.equal(await rawCronEditor.getAttribute("open"), null);
+    await rawCronEditor.locator("summary").click();
     await scheduleTask.locator('input[name="expression"]').fill("0 9 * * 1-5");
     await scheduleTask.locator("[data-cron-parse]").click();
     await scheduleTask.locator('[data-cron-mode="weekly"][aria-pressed="true"]').waitFor();
@@ -1058,6 +1138,42 @@ async function assertUserManagement(page, baseURL) {
     await page.goto(`${fixture.baseURL}/config/quick-runs`);
     await page.getByText("Weekly safety check", { exact: true }).waitFor();
     await page.getByText("-Environment production", { exact: true }).waitFor();
+    const quickHeadingActions = page.locator(".quick-run-heading-actions > .button");
+    assert.equal(await quickHeadingActions.count(), 3);
+    const quickHeadingMetrics = await quickHeadingActions.evaluateAll(actions => actions.map(action => {
+      const bounds = action.getBoundingClientRect();
+      return { top: Math.round(bounds.top), height: Math.round(bounds.height) };
+    }));
+    assert.equal(new Set(quickHeadingMetrics.map(metric => metric.top)).size, 1, JSON.stringify(quickHeadingMetrics));
+    assert.equal(new Set(quickHeadingMetrics.map(metric => metric.height)).size, 1, JSON.stringify(quickHeadingMetrics));
+    assert.deepEqual(
+      await quickHeadingActions.evaluateAll(actions => actions.map(action => new URL(action.href).pathname)),
+      ["/config/quick-runs/groups/new", "/config/quick-runs/one-time/new", "/config/quick-runs/from-source/new"],
+    );
+
+    const assertWorkingDirectoryTree = async (href, kind) => {
+      await page.locator(`a[href="${href}"]`).click();
+      const task = page.locator(`[data-task-panel] [data-task-kind="${kind}"]`);
+      await task.waitFor();
+      const workingDirectory = task.locator('input[name="working_directory"]');
+      assert.equal(await workingDirectory.getAttribute("type"), "hidden");
+      assert.equal(await task.locator('input[name="working_directory"]:not([type="hidden"])').count(), 0);
+      const tree = task.locator('[role="tree"]');
+      await tree.waitFor();
+      const rootDirectory = tree.getByRole("treeitem", { name: "Managed root", exact: true });
+      await rootDirectory.waitFor();
+      assert.equal(await rootDirectory.getAttribute("aria-selected"), "true");
+      const automationDirectory = tree.getByRole("treeitem", { name: "automation", exact: true });
+      await automationDirectory.waitFor();
+      await automationDirectory.click();
+      assert.equal(await workingDirectory.inputValue(), "automation");
+      assert.equal(await automationDirectory.getAttribute("aria-selected"), "true");
+      await page.locator("[data-task-panel-close]").click();
+      await page.locator("[data-task-panel]").waitFor({ state: "detached" });
+    };
+    await assertWorkingDirectoryTree("/config/quick-runs/one-time/new", "one-time-run");
+    await assertWorkingDirectoryTree("/config/quick-runs/from-source/new", "quick-create");
+
     const quickCreateGroupControl = page.locator('a[href="/config/quick-runs/groups/new"]');
     const quickCreateGroupContract = await quickCreateGroupControl.evaluate(element => ({
       classes: [...element.classList].sort(),
@@ -1146,6 +1262,7 @@ async function assertUserManagement(page, baseURL) {
 
     await page.goto(`${fixture.baseURL}/monitor`);
     await page.locator("[data-host-overview]").waitFor();
+    assert.equal(await page.locator('.overview-page > .page-heading a[href="/resources/files/"]').count(), 0);
     await page.waitForTimeout(250);
     await saveSnapshot(page, "monitor");
 
@@ -1726,6 +1843,14 @@ async function assertUserManagement(page, baseURL) {
     assert.equal(await noScriptPage.locator('[data-group-name="Operations"] [data-group-body]').isVisible(), true);
     await noScriptPage.goto(`${fixture.baseURL}/config/quick-runs`);
     assert.equal(await noScriptPage.locator('[data-group-name="Operations"] [data-group-body]').isVisible(), true);
+    await noScriptPage.goto(`${fixture.baseURL}/settings/account`);
+    assert.equal(await noScriptPage.locator('.settings-content input[name="current_password"]').count(), 0);
+    await noScriptPage.locator('a[href="/settings/account/username"]').click();
+    assert.equal(await noScriptPage.locator('[data-task-kind="account-username"]').count(), 1);
+    await noScriptPage.goto(`${fixture.baseURL}/settings/users`);
+    await noScriptPage.locator('[data-username="browser-viewer"] .user-account-link').click();
+    assert.equal(await noScriptPage.locator('[data-task-kind="user-edit"]').count(), 1);
+    assert.equal(await noScriptPage.locator('input[name="username"]').inputValue(), "browser-viewer");
     await noScriptPage.goto(`${fixture.baseURL}/monitor/applications?kind=docker&query=cache&sort=memory&direction=asc`);
     const noScriptRunning = noScriptPage.locator("[data-running-applications-list] [data-application-row]");
     assert.equal(await noScriptRunning.count(), 1);
