@@ -88,6 +88,7 @@ jobs:
           set -euo pipefail
           mkdir unpacked
           tar -xzf "dist/scriptboard-${GITHUB_REF_NAME}-linux-amd64.tar.gz" -C unpacked
+          chmod +x ./unpacked/scriptboard
           test "$(./unpacked/scriptboard version --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag"])')" = "$GITHUB_REF_NAME"
 
   publish:
