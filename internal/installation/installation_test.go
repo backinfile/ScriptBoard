@@ -66,17 +66,26 @@ func TestPrepareCreatesVersionedInstallation(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		wantUpdater = filepath.Join(install, "versions", "1.2.3", "scriptboard-updater.exe")
 	}
-	if got := ServiceUpdaterExecutable(metadata); got != wantUpdater {
-		t.Fatalf("service updater executable = %q", got)
-	}
+	assertSameFile(t, "service updater executable", ServiceUpdaterExecutable(metadata), wantUpdater)
 	wantService := filepath.Join(install, "current", "scriptboard")
 	if runtime.GOOS == "windows" {
 		wantService = filepath.Join(install, "versions", "1.2.3", "scriptboard.exe")
 	}
-	if got := ServiceEntryExecutable(metadata); got != wantService {
-		t.Fatalf("service entry executable = %q", got)
+	assertSameFile(t, "service entry executable", ServiceEntryExecutable(metadata), wantService)
+	assertSameFile(t, "state root", metadata.StateRoot, state)
+}
+
+func assertSameFile(t *testing.T, label, got, want string) {
+	t.Helper()
+	gotInfo, err := os.Stat(got)
+	if err != nil {
+		t.Fatalf("%s %q: %v", label, got, err)
 	}
-	if metadata.StateRoot != state {
-		t.Fatalf("state root = %q, want %q", metadata.StateRoot, state)
+	wantInfo, err := os.Stat(want)
+	if err != nil {
+		t.Fatalf("%s expected path %q: %v", label, want, err)
+	}
+	if !os.SameFile(gotInfo, wantInfo) {
+		t.Fatalf("%s = %q, want same file as %q", label, got, want)
 	}
 }
