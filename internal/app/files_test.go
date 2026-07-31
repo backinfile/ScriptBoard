@@ -339,7 +339,7 @@ func TestFilesPageListsManagedEntriesAndHidesReservedPaths(t *testing.T) {
 	if strings.Index(page, "alpha") > strings.Index(page, "zeta.txt") {
 		t.Fatalf("directory is not listed before file: %s", page)
 	}
-	if linkCreated && (!strings.Contains(page, "outside") || !strings.Contains(page, "受限")) {
+	if linkCreated && (!strings.Contains(page, "outside") || !strings.Contains(page, "Restricted entry")) {
 		t.Fatalf("link is not shown as restricted: %s", page)
 	}
 }
