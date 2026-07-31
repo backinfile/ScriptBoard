@@ -49,7 +49,10 @@ func TestScanNginxReturnsCandidatesWithoutImporting(t *testing.T) {
 		if candidate.URL != "https://"+candidate.Name+"/" {
 			t.Errorf("candidate URL = %q for %q", candidate.URL, candidate.Name)
 		}
-		if candidate.DialHost != "127.0.0.1" || candidate.Digest == "" || candidate.Source != childConfig {
+		sourceInfo, sourceErr := os.Stat(candidate.Source)
+		childInfo, childErr := os.Stat(childConfig)
+		sameSource := sourceErr == nil && childErr == nil && os.SameFile(sourceInfo, childInfo)
+		if candidate.DialHost != "127.0.0.1" || candidate.Digest == "" || !sameSource {
 			t.Errorf("candidate = %#v", candidate)
 		}
 		if candidate.Duplicate {
