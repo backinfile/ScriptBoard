@@ -1,0 +1,66 @@
+package appstatus
+
+import (
+	"testing"
+	"time"
+
+	containertypes "github.com/moby/moby/api/types/container"
+)
+
+func TestDeriveDockerContainerNormalizesWholeHostCPUAndBlockRates(t *testing.T) {
+	collectedAt := time.Date(2026, 7, 29, 9, 0, 5, 0, time.UTC)
+	summary := containertypes.Summary{
+		ID:    "1234567890abcdef",
+		Names: []string{"/api-prod"},
+		Image: "ghcr.io/example/api:2026.07",
+	}
+	stats := containertypes.StatsResponse{
+		Read: collectedAt,
+		CPUStats: containertypes.CPUStats{
+			CPUUsage:    containertypes.CPUUsage{TotalUsage: 5_000_000_000},
+			SystemUsage: 100_000_000_000,
+		},
+		PreCPUStats: containertypes.CPUStats{
+			CPUUsage:    containertypes.CPUUsage{TotalUsage: 3_000_000_000},
+			SystemUsage: 90_000_000_000,
+		},
+		MemoryStats: containertypes.MemoryStats{
+			Usage: 740 << 20, Limit: 2 << 30,
+			Stats: map[string]uint64{"inactive_file": 20 << 20},
+		},
+		PidsStats: containertypes.PidsStats{Current: 18},
+		BlkioStats: containertypes.BlkioStats{IoServiceBytesRecursive: []containertypes.BlkioStatEntry{
+			{Op: "Read", Value: 300},
+			{Op: "Write", Value: 500},
+		}},
+	}
+	container, sample := deriveDockerContainer(summary, stats, dockerBlockSample{
+		readBytes: 100, writeBytes: 200, collectedAt: collectedAt.Add(-5 * time.Second),
+	}, 4, collectedAt)
+
+	if container.Name != "api-prod" || container.Image != summary.Image {
+		t.Fatalf("identity = %#v", container)
+	}
+	if container.CPUPercent != 20 {
+		t.Fatalf("CPU = %.1f%%, want 20%% of the whole host", container.CPUPercent)
+	}
+	if container.MemoryBytes != 720<<20 || container.MemoryLimitBytes != 2<<30 || container.ProcessCount != 18 {
+		t.Fatalf("memory/processes = %#v", container)
+	}
+	if container.ReadBytesPerSecond != 40 || container.WriteBytesPerSecond != 60 {
+		t.Fatalf("block rates = %.1f / %.1f", container.ReadBytesPerSecond, container.WriteBytesPerSecond)
+	}
+	if sample.readBytes != 300 || sample.writeBytes != 500 || !sample.collectedAt.Equal(collectedAt) {
+		t.Fatalf("sample = %#v", sample)
+	}
+}
+
+func TestCgroupMatchesOnlyKnownLocalDockerContainers(t *testing.T) {
+	content := "0::/system.slice/docker-1234567890abcdef.scope\n"
+	if !cgroupMatchesContainer(content, []string{"1234567890abcdef"}) {
+		t.Fatal("known Docker cgroup was not recognized")
+	}
+	if cgroupMatchesContainer(content, []string{"fedcba0987654321"}) {
+		t.Fatal("unrelated Docker cgroup was recognized")
+	}
+}

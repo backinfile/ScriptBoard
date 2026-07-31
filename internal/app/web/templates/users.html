@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="{{.Locale}}">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "users.title"}} · ScriptBoard</title></head>
+<body>
+<main class="workspace settings-workspace">
+  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "users.eyebrow"}}</p><h1>{{t .Locale "users.title"}}</h1><p>{{t .Locale "users.description"}}</p></div></header>
+  {{template "settings-navigation" .SettingsNavigation}}
+  <div class="settings-content">
+  {{if .GeneratedPassword}}<aside class="inline-notice"><span data-lucide="key-round" aria-hidden="true"></span><div><strong>{{t .Locale "users.password_once"}}</strong><p>{{.GeneratedUsername}}</p><code data-generated-password>{{.GeneratedPassword}}</code></div></aside>{{end}}
+  <section class="settings-block">
+    <h2>{{t .Locale "users.create"}}</h2>
+    <form class="account-form" method="post" action="/settings/users">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <label>{{t .Locale "login.username"}} <input name="username" autocomplete="off" spellcheck="false" required></label>
+      <label>{{t .Locale "users.role"}}
+        <select name="role" required>
+          <option value="maintainer">{{t .Locale "users.role.maintainer"}}</option>
+          <option value="operator">{{t .Locale "users.role.operator"}}</option>
+          <option value="viewer">{{t .Locale "users.role.viewer"}}</option>
+        </select>
+      </label>
+      <button class="button button--primary" type="submit"><span data-lucide="user-plus" aria-hidden="true"></span>{{t .Locale "users.create"}}</button>
+    </form>
+  </section>
+  <section class="settings-block">
+    <h2>{{t .Locale "users.accounts"}}</h2>
+    <div class="table-shell"><table class="records-table">
+      <thead><tr><th>{{t .Locale "login.username"}}</th><th>{{t .Locale "users.role"}}</th><th>{{t .Locale "common.status"}}</th></tr></thead>
+      <tbody>{{range .Users}}<tr data-user-id="{{.ID}}" data-username="{{.Username}}">
+        <td class="record-primary"><a class="user-account-link" href="/settings/users/{{.ID}}/edit" data-task-link aria-label="{{t $.Locale "users.open"}} {{.Username}}"><span class="record-icon" data-lucide="circle-user-round" aria-hidden="true"></span><strong>{{.Username}}</strong><span data-lucide="chevron-right" aria-hidden="true"></span></a></td>
+        <td data-label="{{t $.Locale "users.role"}}"><span class="user-role-label">{{roleText $.Locale .Role}}</span></td>
+        <td data-label="{{t $.Locale "common.status"}}"><span class="status-chip" data-state="{{if .Enabled}}succeeded{{else}}cancelled{{end}}"><span class="status-dot" aria-hidden="true"></span>{{if .Enabled}}{{t $.Locale "users.enabled"}}{{else}}{{t $.Locale "users.disabled"}}{{end}}</span></td>
+      </tr>{{end}}</tbody>
+    </table></div>
+  </section>
+  </div>
+</main>
+</body>
+</html>

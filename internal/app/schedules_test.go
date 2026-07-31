@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -42,13 +43,13 @@ func TestScheduleTriggersRunAtNextCronTime(t *testing.T) {
 		SchedulerNow:  func() time.Time { return time.Unix(0, clock.Load()).UTC() },
 		SchedulerTick: 10 * time.Millisecond,
 	})
-	response, err := client.Get(serverURL + "/schedules")
+	response, err := client.Get(serverURL + "/config/schedules")
 	if err != nil {
 		t.Fatalf("get schedules: %v", err)
 	}
 	page, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/schedules", url.Values{
+	response, err = client.PostForm(serverURL+"/config/schedules", url.Values{
 		"name":       {"每分钟计划"},
 		"script":     {scriptName},
 		"expression": {"1 0 * * *"},
@@ -58,15 +59,16 @@ func TestScheduleTriggersRunAtNextCronTime(t *testing.T) {
 		t.Fatalf("create schedule: %v", err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/schedules" {
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/config/schedules" {
 		t.Fatalf("create schedule response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
 
 	clock.Store(time.Date(2026, 1, 1, 0, 1, 0, 0, time.UTC).UnixNano())
 	deadline := time.Now().Add(10 * time.Second)
 	var runID string
+	var scheduleID string
 	for {
-		response, err = client.Get(serverURL + "/schedules")
+		response, err = client.Get(serverURL + "/config/schedules")
 		if err != nil {
 			t.Fatalf("get schedules after trigger: %v", err)
 		}
@@ -75,6 +77,13 @@ func TestScheduleTriggersRunAtNextCronTime(t *testing.T) {
 		if strings.Contains(string(page), `name="last_run_id" value="`) && !strings.Contains(string(page), `name="last_run_id" value=""`) {
 			runID = hiddenValue(t, page, "last_run_id")
 			if runID != "" {
+				historyLink := regexp.MustCompile(`href="/history/runs\?q=` + regexp.QuoteMeta(url.QueryEscape("每分钟计划")) + `&amp;schedule_id=([^&"]+)&amp;focus=search"`).FindStringSubmatch(string(page))
+				if len(historyLink) != 2 ||
+					!strings.Contains(string(page), `data-focus-after-navigation="#run-search"`) ||
+					strings.Contains(string(page), `href="/history/runs/`+runID+`"`) {
+					t.Fatalf("schedule does not link to focused run history: %s", page)
+				}
+				scheduleID = historyLink[1]
 				break
 			}
 		}
@@ -83,8 +92,21 @@ func TestScheduleTriggersRunAtNextCronTime(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+	response, err = client.Get(serverURL + "/history/runs?q=" + url.QueryEscape("每分钟计划") + "&schedule_id=" + url.QueryEscape(scheduleID) + "&focus=search")
+	if err != nil {
+		t.Fatalf("get filtered run history: %v", err)
+	}
+	page, _ = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if !strings.Contains(string(page), runID) ||
+		!strings.Contains(string(page), `value="每分钟计划"`) ||
+		!strings.Contains(string(page), `name="schedule_id" value="`+scheduleID+`"`) ||
+		!strings.Contains(string(page), `id="run-search"`) ||
+		!strings.Contains(string(page), `autofocus`) {
+		t.Fatalf("focused run history does not show the scheduled Run: %s", page)
+	}
 	for {
-		response, err = client.Get(serverURL + "/runs/" + runID)
+		response, err = client.Get(serverURL + "/history/runs/" + runID)
 		if err != nil {
 			t.Fatalf("get scheduled run: %v", err)
 		}

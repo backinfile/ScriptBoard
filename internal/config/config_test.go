@@ -34,3 +34,63 @@ func TestLoadLayersYAMLThenEnvironmentThenCLI(t *testing.T) {
 		t.Fatalf("listen = %q", loaded.Listen)
 	}
 }
+
+func TestLoadHereUsesCurrentDirectoryAsManagedRoot(t *testing.T) {
+	t.Parallel()
+
+	currentDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get current directory: %v", err)
+	}
+	configPath := writeEmptyConfig(t)
+	loaded, err := config.Load([]string{"--config", configPath, "--here"}, func(name string) string {
+		if name == "SCRIPTBOARD_MANAGED_ROOT" {
+			return "environment-managed-root"
+		}
+		return ""
+	})
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if loaded.ManagedRoot != currentDirectory {
+		t.Fatalf("managed root = %q, want current directory %q", loaded.ManagedRoot, currentDirectory)
+	}
+}
+
+func TestLoadRejectsHereWithManagedRoot(t *testing.T) {
+	t.Parallel()
+
+	_, err := config.Load([]string{
+		"--config", writeEmptyConfig(t),
+		"--here",
+		"--managed-root", "somewhere-else",
+	}, func(string) string { return "" })
+	if err == nil {
+		t.Fatal("load config succeeded with both --here and --managed-root")
+	}
+}
+
+func TestLoadUpdateCheckConfiguration(t *testing.T) {
+	t.Parallel()
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("update_check: false\nupdate_check_interval_hours: 12\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := config.Load([]string{"--config", configPath}, func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.UpdateCheck || loaded.UpdateInterval.Hours() != 12 {
+		t.Fatalf("update check=%v interval=%s", loaded.UpdateCheck, loaded.UpdateInterval)
+	}
+}
+
+func writeEmptyConfig(t *testing.T) string {
+	t.Helper()
+
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return configPath
+}

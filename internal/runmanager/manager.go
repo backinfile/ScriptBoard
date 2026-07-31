@@ -2,7 +2,9 @@ package runmanager
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -31,33 +33,66 @@ type StartRequest struct {
 	ArgumentsTemplate string
 	SourceType        string
 	SourceName        string
+	SourceID          string
 	TimeoutSeconds    int
 	Variables         map[string]string
+	InitiatorUserID   string
+	InitiatorUsername string
+}
+
+type OneTimeStartRequest struct {
+	WorkingDirectory  string
+	Extension         string
+	Source            string
+	ArgumentsTemplate string
+	TimeoutSeconds    int
+	Variables         map[string]string
+	AuditSource       string
+	InitiatorUserID   string
+	InitiatorUsername string
+	InitiatorRole     string
 }
 
 type Run struct {
-	ID                string
-	ScriptPath        string
-	ScriptDigest      string
-	ArgumentsTemplate string
-	Arguments         []string
-	TemplateArguments []string
-	Executor          string
-	SourceType        string
-	SourceName        string
-	RuntimeIdentity   string
-	Status            string
-	CreatedAt         time.Time
-	StartedAt         *time.Time
-	FinishedAt        *time.Time
-	ExitCode          *int
-	Error             string
-	TimeoutSeconds    int
-	Events            []Event
-	LogExpired        bool
-	LogIncomplete     bool
-	LogTruncated      bool
-	DroppedBytes      int64
+	ID                 string
+	ScriptPath         string
+	ScriptDigest       string
+	ArgumentsTemplate  string
+	Arguments          []string
+	TemplateArguments  []string
+	Executor           string
+	SourceType         string
+	SourceName         string
+	SourceID           string
+	RuntimeIdentity    string
+	Status             string
+	CreatedAt          time.Time
+	StartedAt          *time.Time
+	FinishedAt         *time.Time
+	ExitCode           *int
+	Error              string
+	TimeoutSeconds     int
+	Events             []Event
+	LogExpired         bool
+	LogIncomplete      bool
+	LogTruncated       bool
+	DroppedBytes       int64
+	ScriptKind         string
+	WorkingDirectory   string
+	SourceFilename     string
+	SourceExpired      bool
+	SourceAuditEventID int64
+	InitiatorUserID    string
+	InitiatorUsername  string
+}
+
+type Filter struct {
+	Query                    string
+	ScheduleID               string
+	CreatedFromUnixNano      int64
+	CreatedBeforeUnixNano    int64
+	HasCreatedFromBoundary   bool
+	HasCreatedBeforeBoundary bool
 }
 
 type Event struct {
@@ -86,12 +121,26 @@ type executorCandidate struct {
 }
 
 type activeRun struct {
-	command      *exec.Cmd
-	terminal     string
-	scriptPath   string
-	timeoutTimer *time.Timer
-	cleanup      func()
-	fileInfo     os.FileInfo
+	command              *exec.Cmd
+	terminal             string
+	changed              chan struct{}
+	scriptPath           string
+	timeoutTimer         *time.Timer
+	cleanup              func()
+	fileInfo             os.FileInfo
+	workingDirectory     string
+	workingDirectoryInfo os.FileInfo
+	oneTime              bool
+}
+
+func (r *activeRun) signalChanged() {
+	if r == nil || r.changed == nil {
+		return
+	}
+	select {
+	case r.changed <- struct{}{}:
+	default:
+	}
 }
 
 type Manager struct {
@@ -104,31 +153,60 @@ type Manager struct {
 	timeoutGrace   time.Duration
 	lifecycle      Lifecycle
 	executorChains map[string][]string
+	startMu        sync.Mutex
+	accepting      bool
 }
 
 func New(db *sql.DB, managed *managedfiles.Store, stateRoot string, timeoutGrace time.Duration, executorChains map[string][]string) *Manager {
-	return &Manager{db: db, managed: managed, stateRoot: stateRoot, active: make(map[string]*activeRun), timeoutGrace: timeoutGrace, executorChains: executorChains}
+	return &Manager{db: db, managed: managed, stateRoot: stateRoot, active: make(map[string]*activeRun), timeoutGrace: timeoutGrace, executorChains: executorChains, accepting: true}
 }
+
+var ErrMaintenance = errors.New("ScriptBoard is entering update maintenance mode")
+var ErrSourceExpired = errors.New("one-time source has expired")
+var ErrSourceUnavailable = errors.New("one-time source is unavailable")
 
 func (m *Manager) SetLifecycle(lifecycle Lifecycle) {
 	m.lifecycle = lifecycle
 }
 
+func prepareArguments(argumentsTemplate string, variables map[string]string) ([]string, []string, error) {
+	if len([]byte(argumentsTemplate)) > 16<<10 {
+		return nil, nil, fmt.Errorf("参数模板超过 16 KiB")
+	}
+	templateArguments, err := ParseArguments(argumentsTemplate)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(templateArguments) > 256 {
+		return nil, nil, fmt.Errorf("参数数量超过 256 个")
+	}
+	arguments, err := resolveVariables(templateArguments, variables)
+	if err != nil {
+		return nil, nil, err
+	}
+	return templateArguments, arguments, nil
+}
+
+func ValidateArgumentsTemplate(argumentsTemplate string, variables map[string]string) error {
+	_, _, err := prepareArguments(argumentsTemplate, variables)
+	return err
+}
+
+func (m *Manager) ValidateExecutor(extension string) error {
+	_, err := resolveExecutors(extension, m.executorChains)
+	return err
+}
+
 func (m *Manager) Start(request StartRequest) (string, error) {
+	m.startMu.Lock()
+	defer m.startMu.Unlock()
+	if !m.accepting {
+		return "", ErrMaintenance
+	}
 	if err := diskspace.Require(m.stateRoot, diskspace.MinimumWritableBytes); err != nil {
 		return "", err
 	}
-	if len([]byte(request.ArgumentsTemplate)) > 16<<10 {
-		return "", fmt.Errorf("参数模板超过 16 KiB")
-	}
-	templateArguments, err := ParseArguments(request.ArgumentsTemplate)
-	if err != nil {
-		return "", err
-	}
-	if len(templateArguments) > 256 {
-		return "", fmt.Errorf("参数数量超过 256 个")
-	}
-	arguments, err := resolveVariables(templateArguments, request.Variables)
+	templateArguments, arguments, err := prepareArguments(request.ArgumentsTemplate, request.Variables)
 	if err != nil {
 		return "", err
 	}
@@ -140,10 +218,133 @@ func (m *Manager) Start(request StartRequest) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	parent := filepath.ToSlash(filepath.Dir(filepath.FromSlash(request.ScriptPath)))
+	if parent == "." {
+		parent = ""
+	}
+	workingDirectory, err := m.managed.PrepareDirectory(parent)
+	if err != nil {
+		return "", fmt.Errorf("脚本工作目录不可用: %w", err)
+	}
 	id, err := randomID()
 	if err != nil {
 		return "", err
 	}
+	return m.startPrepared(preparedStart{
+		id: id, displayPath: request.ScriptPath, script: script, workingDirectory: workingDirectory,
+		scriptKind: "managed", executors: executors, templateArguments: templateArguments, arguments: arguments,
+		argumentsTemplate: request.ArgumentsTemplate, sourceType: request.SourceType, sourceName: request.SourceName,
+		sourceID: request.SourceID, timeoutSeconds: request.TimeoutSeconds,
+		initiatorUserID: request.InitiatorUserID, initiatorUsername: request.InitiatorUsername,
+	})
+}
+
+type preparedStart struct {
+	id                string
+	displayPath       string
+	script            managedfiles.Script
+	workingDirectory  managedfiles.PreparedDirectory
+	scriptKind        string
+	sourceFilename    string
+	executors         []executorCandidate
+	templateArguments []string
+	arguments         []string
+	argumentsTemplate string
+	sourceType        string
+	sourceName        string
+	sourceID          string
+	timeoutSeconds    int
+	auditSource       string
+	initiatorUserID   string
+	initiatorUsername string
+	initiatorRole     string
+}
+
+func (m *Manager) StartOneTime(request OneTimeStartRequest) (string, error) {
+	m.startMu.Lock()
+	defer m.startMu.Unlock()
+	if !m.accepting {
+		return "", ErrMaintenance
+	}
+	if err := diskspace.Require(m.stateRoot, diskspace.MinimumWritableBytes); err != nil {
+		return "", err
+	}
+	if len([]byte(request.Source)) == 0 || len([]byte(request.Source)) > 1<<20 || !utf8.ValidString(request.Source) || strings.ContainsRune(request.Source, 0) {
+		return "", errors.New("one-time source must be valid UTF-8 without NUL bytes and no larger than 1 MiB")
+	}
+	extension := strings.ToLower(request.Extension)
+	switch extension {
+	case ".cmd", ".ps1", ".py", ".sh":
+	default:
+		return "", errors.New("one-time source extension is not supported")
+	}
+	templateArguments, arguments, err := prepareArguments(request.ArgumentsTemplate, request.Variables)
+	if err != nil {
+		return "", err
+	}
+	executors, err := resolveExecutors(extension, m.executorChains)
+	if err != nil {
+		return "", err
+	}
+	workingDirectory, err := m.managed.PrepareDirectory(request.WorkingDirectory)
+	if err != nil {
+		return "", fmt.Errorf("working directory is invalid: %w", err)
+	}
+	id, err := randomID()
+	if err != nil {
+		return "", err
+	}
+	runRoot := filepath.Join(m.stateRoot, "runs", id)
+	if err := os.MkdirAll(filepath.Dir(runRoot), 0o700); err != nil {
+		return "", fmt.Errorf("create Run root: %w", err)
+	}
+	if err := os.Mkdir(runRoot, 0o700); err != nil {
+		return "", fmt.Errorf("create private Run directory: %w", err)
+	}
+	sourceFilename := "source" + extension
+	sourcePath := filepath.Join(runRoot, sourceFilename)
+	sourceFile, err := os.OpenFile(sourcePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		_ = os.Remove(runRoot)
+		return "", fmt.Errorf("create one-time source: %w", err)
+	}
+	_, writeErr := io.WriteString(sourceFile, request.Source)
+	if writeErr == nil {
+		writeErr = sourceFile.Sync()
+	}
+	if closeErr := sourceFile.Close(); writeErr == nil {
+		writeErr = closeErr
+	}
+	if writeErr == nil {
+		writeErr = os.Chmod(sourcePath, 0o400)
+	}
+	if writeErr != nil {
+		_ = os.RemoveAll(runRoot)
+		return "", fmt.Errorf("write one-time source: %w", writeErr)
+	}
+	sourceInfo, err := os.Lstat(sourcePath)
+	if err != nil || !sourceInfo.Mode().IsRegular() || sourceInfo.Mode()&os.ModeSymlink != 0 {
+		_ = os.RemoveAll(runRoot)
+		return "", errors.New("one-time source is not a regular file")
+	}
+	digest := sha256.Sum256([]byte(request.Source))
+	runID, err := m.startPrepared(preparedStart{
+		id: id, displayPath: sourceFilename,
+		script:           managedfiles.Script{Path: sourcePath, Digest: fmt.Sprintf("%x", digest[:]), Info: sourceInfo},
+		workingDirectory: workingDirectory, scriptKind: "one_time", sourceFilename: sourceFilename,
+		executors: executors, templateArguments: templateArguments, arguments: arguments,
+		argumentsTemplate: request.ArgumentsTemplate, sourceType: "one_time", sourceName: "one-time",
+		timeoutSeconds: request.TimeoutSeconds, auditSource: request.AuditSource,
+		initiatorUserID: request.InitiatorUserID, initiatorUsername: request.InitiatorUsername, initiatorRole: request.InitiatorRole,
+	})
+	if err != nil {
+		_ = os.RemoveAll(runRoot)
+	}
+	return runID, err
+}
+
+func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
+	id := prepared.id
 	lifecycleBegun := false
 	if m.lifecycle != nil {
 		if err := m.lifecycle.BeginRun(id); err != nil {
@@ -165,31 +366,69 @@ func (m *Manager) Start(request StartRequest) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("创建 Run Log: %w", err)
 	}
-	argumentJSON, _ := json.Marshal(arguments)
-	templateArgumentJSON, _ := json.Marshal(templateArguments)
+	argumentJSON, _ := json.Marshal(prepared.arguments)
+	templateArgumentJSON, _ := json.Marshal(prepared.templateArguments)
 	now := time.Now().UTC()
 	runtimeIdentity := "unknown"
 	if currentUser, userErr := user.Current(); userErr == nil {
 		runtimeIdentity = currentUser.Username
 	}
-	if _, err := m.db.Exec(`INSERT INTO runs
-		(id, script_path, script_sha256, arguments_template, template_arguments_json, arguments_json, executor, source_type, source_name, runtime_identity, status, created_at, timeout_seconds, log_path)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?)`,
-		id, request.ScriptPath, script.Digest, request.ArgumentsTemplate, string(templateArgumentJSON), string(argumentJSON), executors[0].path, request.SourceType, request.SourceName, runtimeIdentity, now.UnixNano(), request.TimeoutSeconds, logPath,
+	transaction, err := m.db.Begin()
+	if err != nil {
+		_ = logFile.Close()
+		return "", fmt.Errorf("begin Run record: %w", err)
+	}
+	defer transaction.Rollback()
+	var auditID any
+	if prepared.auditSource != "" {
+		result, auditErr := transaction.Exec(`INSERT INTO audit_events
+			(occurred_at, action, target, result, source_address, actor_user_id, actor_username, actor_role)
+			VALUES (?, 'start_one_time_run', ?, 'accepted', ?, ?, ?, ?)`,
+			now.Unix(), id, prepared.auditSource, prepared.initiatorUserID, prepared.initiatorUsername, prepared.initiatorRole)
+		if auditErr != nil {
+			_ = logFile.Close()
+			return "", fmt.Errorf("record one-time Run audit: %w", auditErr)
+		}
+		value, auditErr := result.LastInsertId()
+		if auditErr != nil {
+			_ = logFile.Close()
+			return "", fmt.Errorf("read one-time Run audit ID: %w", auditErr)
+		}
+		auditID = value
+	}
+	if _, err := transaction.Exec(`INSERT INTO runs
+		(id, script_path, script_sha256, arguments_template, template_arguments_json, arguments_json, executor,
+		source_type, source_name, source_id, runtime_identity, status, created_at, timeout_seconds, log_path,
+		script_kind, working_directory, source_filename, source_audit_event_id, initiated_by_user_id, initiated_by_username)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, prepared.displayPath, prepared.script.Digest, prepared.argumentsTemplate, string(templateArgumentJSON), string(argumentJSON), prepared.executors[0].path,
+		prepared.sourceType, prepared.sourceName, prepared.sourceID, runtimeIdentity, now.UnixNano(), prepared.timeoutSeconds, logPath,
+		prepared.scriptKind, prepared.workingDirectory.RelativePath, prepared.sourceFilename, auditID,
+		prepared.initiatorUserID, prepared.initiatorUsername,
 	); err != nil {
 		_ = logFile.Close()
-		return "", fmt.Errorf("创建 Run: %w", err)
+		return "", fmt.Errorf("create Run: %w", err)
+	}
+	if err := transaction.Commit(); err != nil {
+		_ = logFile.Close()
+		return "", fmt.Errorf("commit Run: %w", err)
 	}
 
 	var command *exec.Cmd
 	var stdout, stderr io.ReadCloser
 	var startErrors []string
-	for _, executor := range executors {
-		commandArguments := append(append([]string{}, executor.prefix...), script.Path)
-		commandArguments = append(commandArguments, arguments...)
+	currentDirectoryInfo, directoryErr := os.Lstat(prepared.workingDirectory.Path)
+	if directoryErr != nil || !currentDirectoryInfo.IsDir() || currentDirectoryInfo.Mode()&os.ModeSymlink != 0 || !os.SameFile(currentDirectoryInfo, prepared.workingDirectory.Info) {
+		_ = logFile.Close()
+		m.failStart(id, errors.New("working directory changed before execution"))
+		return id, nil
+	}
+	for _, executor := range prepared.executors {
+		commandArguments := append(append([]string{}, executor.prefix...), prepared.script.Path)
+		commandArguments = append(commandArguments, prepared.arguments...)
 		candidate := exec.Command(executor.path, commandArguments...)
-		candidate.Dir = filepath.Dir(script.Path)
-		candidate.Env = append(os.Environ(), "SCRIPTBOARD_RUN_ID="+id, "SCRIPTBOARD_SCRIPT_PATH="+request.ScriptPath)
+		candidate.Dir = prepared.workingDirectory.Path
+		candidate.Env = append(os.Environ(), "SCRIPTBOARD_RUN_ID="+id, "SCRIPTBOARD_SCRIPT_PATH="+prepared.displayPath)
 		configureProcess(candidate)
 		candidateStdout, pipeErr := candidate.StdoutPipe()
 		if pipeErr != nil {
@@ -228,16 +467,47 @@ func (m *Manager) Start(request StartRequest) (string, error) {
 	started := time.Now().UTC()
 	_, _ = m.db.Exec("UPDATE runs SET status = 'running', started_at = ? WHERE id = ?", started.UnixNano(), id)
 	m.mu.Lock()
-	active := &activeRun{command: command, scriptPath: normalizeManagedPath(request.ScriptPath), cleanup: cleanup, fileInfo: script.Info}
+	active := &activeRun{
+		command: command, cleanup: cleanup, fileInfo: prepared.script.Info, changed: make(chan struct{}, 1),
+		scriptPath:           normalizeManagedPath(prepared.displayPath),
+		workingDirectory:     normalizeManagedPath(prepared.workingDirectory.RelativePath),
+		workingDirectoryInfo: prepared.workingDirectory.Info,
+		oneTime:              prepared.scriptKind == "one_time",
+	}
 	m.active[id] = active
-	if request.TimeoutSeconds > 0 {
-		active.timeoutTimer = time.AfterFunc(time.Duration(request.TimeoutSeconds)*time.Second, func() { m.timeout(id) })
+	if prepared.timeoutSeconds > 0 {
+		active.timeoutTimer = time.AfterFunc(time.Duration(prepared.timeoutSeconds)*time.Second, func() { m.timeout(id) })
 	}
 	m.mu.Unlock()
 	m.wg.Add(1)
-	go m.supervise(id, command, stdout, stderr, logFile)
+	go m.supervise(id, command, stdout, stderr, logFile, active)
 	lifecycleBegun = false
 	return id, nil
+}
+
+func (m *Manager) EnterMaintenance() (int, bool) {
+	m.startMu.Lock()
+	defer m.startMu.Unlock()
+	m.mu.Lock()
+	active := len(m.active)
+	m.mu.Unlock()
+	if active != 0 {
+		return active, false
+	}
+	m.accepting = false
+	return 0, true
+}
+
+func (m *Manager) LeaveMaintenance() {
+	m.startMu.Lock()
+	m.accepting = true
+	m.startMu.Unlock()
+}
+
+func (m *Manager) Accepting() bool {
+	m.startMu.Lock()
+	defer m.startMu.Unlock()
+	return m.accepting
 }
 
 func (m *Manager) ConflictsPath(relative string) bool {
@@ -246,6 +516,9 @@ func (m *Manager) ConflictsPath(relative string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, active := range m.active {
+		if active.oneTime && (active.workingDirectory == "" || candidate == active.workingDirectory || strings.HasPrefix(candidate, active.workingDirectory+"/")) {
+			return true
+		}
 		if active.scriptPath == candidate || strings.HasPrefix(active.scriptPath, candidate+"/") || (candidateInfo != nil && active.fileInfo != nil && os.SameFile(candidateInfo, active.fileInfo)) {
 			return true
 		}
@@ -272,8 +545,17 @@ func (m *Manager) HasActive() bool {
 	return len(m.active) != 0
 }
 
+func (m *Manager) ActiveCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.active)
+}
+
 func normalizeManagedPath(relative string) string {
 	value := strings.Trim(filepath.ToSlash(filepath.Clean(filepath.FromSlash(relative))), "/")
+	if value == "." {
+		value = ""
+	}
 	if runtime.GOOS == "windows" {
 		value = strings.ToLower(value)
 	}
@@ -282,10 +564,17 @@ func normalizeManagedPath(relative string) string {
 
 func (m *Manager) failStart(id string, startErr error) {
 	now := time.Now().UTC().UnixNano()
-	_, _ = m.db.Exec("UPDATE runs SET status = 'failed', finished_at = ?, error = ? WHERE id = ?", now, startErr.Error(), id)
+	logBytes := int64(-1)
+	var logPath string
+	if m.db.QueryRow("SELECT log_path FROM runs WHERE id = ?", id).Scan(&logPath) == nil {
+		if info, err := os.Stat(logPath); err == nil {
+			logBytes = info.Size()
+		}
+	}
+	_, _ = m.db.Exec("UPDATE runs SET status = 'failed', finished_at = ?, error = ?, log_bytes = ? WHERE id = ?", now, startErr.Error(), logBytes, id)
 }
 
-func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.ReadCloser, logFile *os.File) {
+func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.ReadCloser, logFile *os.File, activeRun *activeRun) {
 	defer m.wg.Done()
 	if m.lifecycle != nil {
 		defer m.lifecycle.EndRun(id)
@@ -359,6 +648,7 @@ func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.Read
 					}
 				}
 				eventMu.Unlock()
+				activeRun.signalChanged()
 			}
 			if readErr != nil {
 				return
@@ -411,6 +701,10 @@ func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.Read
 	}
 	_ = logFile.Sync()
 	_ = logFile.Close()
+	logBytes := int64(-1)
+	if info, err := os.Stat(logFile.Name()); err == nil {
+		logBytes = info.Size()
+	}
 	finished := time.Now().UTC()
 	m.mu.Lock()
 	active := m.active[id]
@@ -436,7 +730,8 @@ func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.Read
 			exitCode = -1
 		}
 	}
-	_, _ = m.db.Exec("UPDATE runs SET status = ?, finished_at = ?, exit_code = ?, error = ?, log_incomplete = ?, log_truncated = ?, dropped_bytes = ? WHERE id = ?", status, finished.UnixNano(), exitCode, errorText, logIncomplete, droppedBytes > 0, droppedBytes, id)
+	_, _ = m.db.Exec("UPDATE runs SET status = ?, finished_at = ?, exit_code = ?, error = ?, log_incomplete = ?, log_truncated = ?, dropped_bytes = ?, log_bytes = ? WHERE id = ?", status, finished.UnixNano(), exitCode, errorText, logIncomplete, droppedBytes > 0, droppedBytes, logBytes, id)
+	activeRun.signalChanged()
 	m.mu.Lock()
 	delete(m.active, id)
 	m.mu.Unlock()
@@ -453,6 +748,7 @@ func (m *Manager) timeout(id string) {
 	process := active.command.Process
 	m.mu.Unlock()
 	_, _ = m.db.Exec("UPDATE runs SET status = 'timing_out' WHERE id = ? AND status = 'running'", id)
+	active.signalChanged()
 	_ = terminateProcess(process, false)
 	time.AfterFunc(m.timeoutGrace, func() {
 		m.mu.Lock()
@@ -482,6 +778,7 @@ func (m *Manager) Stop(id string) error {
 	if !force {
 		_, _ = m.db.Exec("UPDATE runs SET status = 'stopping' WHERE id = ? AND status = 'running'", id)
 	}
+	active.signalChanged()
 	if err := terminateProcess(process, force); err != nil {
 		if force {
 			return nil
@@ -491,18 +788,28 @@ func (m *Manager) Stop(id string) error {
 	return nil
 }
 
-func (m *Manager) Get(id string) (Run, error) {
+const runMetadataColumns = `id, script_path, script_sha256, arguments_template, template_arguments_json, arguments_json, executor, source_type, source_name, source_id, runtime_identity,
+	status, created_at, started_at, finished_at, exit_code, error, timeout_seconds, log_path, log_expired, log_incomplete, log_truncated, dropped_bytes,
+	script_kind, working_directory, source_filename, source_expired, source_audit_event_id, initiated_by_user_id, initiated_by_username`
+
+type runScanner interface {
+	Scan(...any) error
+}
+
+func scanRunMetadata(scanner runScanner) (Run, string, error) {
 	var result Run
 	var argumentJSON, templateArgumentJSON, logPath string
 	var createdAt int64
 	var startedAt, finishedAt, exitCode sql.NullInt64
-	err := m.db.QueryRow(`SELECT id, script_path, script_sha256, arguments_template, template_arguments_json, arguments_json, executor, source_type, source_name, runtime_identity,
-		status, created_at, started_at, finished_at, exit_code, error, timeout_seconds, log_path, log_expired, log_incomplete, log_truncated, dropped_bytes FROM runs WHERE id = ?`, id).Scan(
-		&result.ID, &result.ScriptPath, &result.ScriptDigest, &result.ArgumentsTemplate, &templateArgumentJSON, &argumentJSON, &result.Executor, &result.SourceType, &result.SourceName, &result.RuntimeIdentity,
+	var sourceAuditEventID sql.NullInt64
+	err := scanner.Scan(
+		&result.ID, &result.ScriptPath, &result.ScriptDigest, &result.ArgumentsTemplate, &templateArgumentJSON, &argumentJSON, &result.Executor, &result.SourceType, &result.SourceName, &result.SourceID, &result.RuntimeIdentity,
 		&result.Status, &createdAt, &startedAt, &finishedAt, &exitCode, &result.Error, &result.TimeoutSeconds, &logPath, &result.LogExpired, &result.LogIncomplete, &result.LogTruncated, &result.DroppedBytes,
+		&result.ScriptKind, &result.WorkingDirectory, &result.SourceFilename, &result.SourceExpired, &sourceAuditEventID,
+		&result.InitiatorUserID, &result.InitiatorUsername,
 	)
 	if err != nil {
-		return Run{}, err
+		return Run{}, "", err
 	}
 	result.CreatedAt = time.Unix(0, createdAt).UTC()
 	if startedAt.Valid {
@@ -517,10 +824,141 @@ func (m *Manager) Get(id string) (Run, error) {
 		value := int(exitCode.Int64)
 		result.ExitCode = &value
 	}
+	if sourceAuditEventID.Valid {
+		result.SourceAuditEventID = sourceAuditEventID.Int64
+	}
 	_ = json.Unmarshal([]byte(argumentJSON), &result.Arguments)
 	_ = json.Unmarshal([]byte(templateArgumentJSON), &result.TemplateArguments)
+	return result, logPath, nil
+}
+
+func (m *Manager) getMetadata(id string) (Run, string, error) {
+	return scanRunMetadata(m.db.QueryRow(`SELECT `+runMetadataColumns+` FROM runs WHERE id = ?`, id))
+}
+
+func (m *Manager) GetMetadata(id string) (Run, error) {
+	result, _, err := m.getMetadata(id)
+	return result, err
+}
+
+func (m *Manager) Get(id string) (Run, error) {
+	result, logPath, err := m.getMetadata(id)
+	if err != nil {
+		return Run{}, err
+	}
 	result.Events, _ = readEvents(logPath)
 	return result, nil
+}
+
+func (m *Manager) FollowEvents(ctx context.Context, id string, afterSequence int64, emit func(Event) error) (string, error) {
+	run, logPath, err := m.getMetadata(id)
+	if err != nil {
+		return "", err
+	}
+	status := run.Status
+	var offset int64
+	for {
+		events, nextOffset, readErr := readEventsAfter(logPath, offset, afterSequence)
+		if readErr != nil {
+			return "", readErr
+		}
+		offset = nextOffset
+		for _, event := range events {
+			if err := emit(event); err != nil {
+				return "", err
+			}
+			afterSequence = event.Sequence
+		}
+
+		if err := m.db.QueryRow("SELECT status FROM runs WHERE id = ?", id).Scan(&status); err != nil {
+			return "", err
+		}
+		if !runStatusIsActive(status) {
+			events, _, readErr = readEventsAfter(logPath, offset, afterSequence)
+			if readErr != nil {
+				return "", readErr
+			}
+			for _, event := range events {
+				if err := emit(event); err != nil {
+					return "", err
+				}
+				afterSequence = event.Sequence
+			}
+			return status, nil
+		}
+		if err := m.waitForRunChange(ctx, id); err != nil {
+			return "", err
+		}
+	}
+}
+
+func runStatusIsActive(status string) bool {
+	switch status {
+	case "starting", "running", "stopping", "timing_out":
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *Manager) waitForRunChange(ctx context.Context, id string) error {
+	m.mu.Lock()
+	active := m.active[id]
+	m.mu.Unlock()
+	if active != nil {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-active.changed:
+			return nil
+		}
+	}
+
+	timer := time.NewTimer(500 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func (m *Manager) ReadSource(id string) ([]byte, error) {
+	var storedID, kind, filename, digest string
+	var expired bool
+	if err := m.db.QueryRow(`SELECT id, script_kind, source_filename, source_expired, script_sha256
+		FROM runs WHERE id = ?`, id).Scan(&storedID, &kind, &filename, &expired, &digest); err != nil {
+		return nil, err
+	}
+	if kind != "one_time" || filename == "" {
+		return nil, ErrSourceUnavailable
+	}
+	if expired {
+		return nil, ErrSourceExpired
+	}
+	if storedID != filepath.Base(storedID) || filename != filepath.Base(filename) || strings.ContainsAny(storedID+filename, `/\`) {
+		return nil, ErrSourceUnavailable
+	}
+	path := filepath.Join(m.stateRoot, "runs", storedID, filename)
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, ErrSourceUnavailable
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, ErrSourceUnavailable
+	}
+	defer file.Close()
+	source, err := io.ReadAll(io.LimitReader(file, (1<<20)+1))
+	if err != nil || len(source) > 1<<20 {
+		return nil, ErrSourceUnavailable
+	}
+	hash := sha256.Sum256(source)
+	if !strings.EqualFold(fmt.Sprintf("%x", hash[:]), digest) {
+		return nil, ErrSourceUnavailable
+	}
+	return source, nil
 }
 
 func (m *Manager) List(limit int) ([]Run, error) {
@@ -528,48 +966,71 @@ func (m *Manager) List(limit int) ([]Run, error) {
 }
 
 func (m *Manager) Count() (int, error) {
+	return m.CountFiltered(Filter{})
+}
+
+func (m *Manager) CountFiltered(filter Filter) (int, error) {
 	var count int
-	err := m.db.QueryRow("SELECT COUNT(*) FROM runs").Scan(&count)
+	like := "%" + filter.Query + "%"
+	err := m.db.QueryRow(`SELECT COUNT(*) FROM runs
+		WHERE (? = '' OR (source_id = ? AND source_type IN ('scheduler', 'admin/schedule-now')))
+		AND (? = '' OR id LIKE ? OR script_path LIKE ? OR source_type LIKE ? OR source_name LIKE ? OR status LIKE ? OR executor LIKE ? OR initiated_by_username LIKE ?)
+		AND (? = 0 OR created_at >= ?)
+		AND (? = 0 OR created_at < ?)`,
+		filter.ScheduleID, filter.ScheduleID,
+		filter.Query, like, like, like, like, like, like, like,
+		filter.HasCreatedFromBoundary, filter.CreatedFromUnixNano,
+		filter.HasCreatedBeforeBoundary, filter.CreatedBeforeUnixNano).Scan(&count)
 	return count, err
 }
 
 func (m *Manager) ListPage(limit, offset int) ([]Run, error) {
+	return m.ListPageFiltered(Filter{}, limit, offset)
+}
+
+func (m *Manager) ListPageFiltered(filter Filter, limit, offset int) ([]Run, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
 	if offset < 0 {
 		offset = 0
 	}
-	rows, err := m.db.Query("SELECT id FROM runs ORDER BY created_at DESC LIMIT ? OFFSET ?", limit, offset)
+	like := "%" + filter.Query + "%"
+	rows, err := m.db.Query(`SELECT `+runMetadataColumns+` FROM runs
+		WHERE (? = '' OR (source_id = ? AND source_type IN ('scheduler', 'admin/schedule-now')))
+		AND (? = '' OR id LIKE ? OR script_path LIKE ? OR source_type LIKE ? OR source_name LIKE ? OR status LIKE ? OR executor LIKE ? OR initiated_by_username LIKE ?)
+		AND (? = 0 OR created_at >= ?)
+		AND (? = 0 OR created_at < ?)
+		ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+		filter.ScheduleID, filter.ScheduleID,
+		filter.Query, like, like, like, like, like, like, like,
+		filter.HasCreatedFromBoundary, filter.CreatedFromUnixNano,
+		filter.HasCreatedBeforeBoundary, filter.CreatedBeforeUnixNano,
+		limit, offset)
 	if err != nil {
 		return nil, err
 	}
-	var ids []string
+	runs := make([]Run, 0, limit)
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		run, _, err := scanRunMetadata(rows)
+		if err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
-		ids = append(ids, id)
+		runs = append(runs, run)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
-	}
-	runs := make([]Run, 0, len(ids))
-	for _, id := range ids {
-		run, err := m.Get(id)
-		if err != nil {
-			return nil, err
-		}
-		run.Events = nil
-		runs = append(runs, run)
 	}
 	return runs, nil
 }
 
 func (m *Manager) CleanupLogs(retention time.Duration, maxBytes int64) (int, error) {
-	rows, err := m.db.Query(`SELECT id, created_at, log_path FROM runs WHERE log_expired = 0 AND status NOT IN ('starting','running','stopping','timing_out') ORDER BY created_at`)
+	rows, err := m.db.Query(`SELECT id, created_at, log_path, log_bytes FROM runs WHERE log_expired = 0 AND status NOT IN ('starting','running','stopping','timing_out') ORDER BY created_at`)
 	if err != nil {
 		return 0, err
 	}
@@ -578,32 +1039,58 @@ func (m *Manager) CleanupLogs(retention time.Duration, maxBytes int64) (int, err
 		created, size int64
 	}
 	var candidates []candidate
+	backfill := make(map[string]int64)
 	var total int64
 	for rows.Next() {
 		var item candidate
-		if err := rows.Scan(&item.id, &item.created, &item.path); err != nil {
+		if err := rows.Scan(&item.id, &item.created, &item.path, &item.size); err != nil {
 			_ = rows.Close()
 			return 0, err
 		}
-		if info, statErr := os.Stat(item.path); statErr == nil {
-			item.size = info.Size()
-			total += item.size
-		}
-		if relative, relErr := filepath.Rel(m.stateRoot, item.path); relErr == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-			if staleTail, globErr := filepath.Glob(item.path + ".tail-*"); globErr == nil {
-				for _, stalePath := range staleTail {
-					_ = os.Remove(stalePath)
+		if item.size < 0 {
+			item.size = 0
+			if info, statErr := os.Stat(item.path); statErr == nil {
+				item.size = info.Size()
+			}
+			backfill[item.id] = item.size
+			if relative, relErr := filepath.Rel(m.stateRoot, item.path); relErr == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+				if staleTail, globErr := filepath.Glob(item.path + ".tail-*"); globErr == nil {
+					for _, stalePath := range staleTail {
+						_ = os.Remove(stalePath)
+					}
 				}
 			}
 		}
+		total += item.size
 		candidates = append(candidates, item)
 	}
-	_ = rows.Close()
+	if err := rows.Close(); err != nil {
+		return 0, err
+	}
+	if len(backfill) > 0 {
+		transaction, err := m.db.Begin()
+		if err != nil {
+			return 0, err
+		}
+		for id, size := range backfill {
+			if _, err := transaction.Exec("UPDATE runs SET log_bytes = ? WHERE id = ? AND log_bytes < 0", size, id); err != nil {
+				_ = transaction.Rollback()
+				return 0, err
+			}
+		}
+		if err := transaction.Commit(); err != nil {
+			return 0, err
+		}
+	}
 	cutoff := time.Now().Add(-retention).UnixNano()
 	cleaned := 0
 	for _, item := range candidates {
 		if item.created >= cutoff && total <= maxBytes {
 			continue
+		}
+		if info, statErr := os.Stat(item.path); statErr == nil && info.Size() != item.size {
+			total += info.Size() - item.size
+			item.size = info.Size()
 		}
 		relative, relErr := filepath.Rel(m.stateRoot, item.path)
 		if relErr != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
@@ -644,26 +1131,35 @@ func resolveVariables(arguments []string, variables map[string]string) ([]string
 }
 
 func readEvents(path string) ([]Event, error) {
+	events, _, err := readEventsAfter(path, 0, 0)
+	return events, err
+}
+
+func readEventsAfter(path string, offset, afterSequence int64) ([]Event, int64, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil, offset, nil
 		}
-		return nil, err
+		return nil, offset, err
 	}
 	defer file.Close()
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		return nil, offset, err
+	}
 	var events []Event
 	scanner := bufio.NewScanner(file)
 	buffer := make([]byte, 64<<10)
 	scanner.Buffer(buffer, 1<<20)
 	for scanner.Scan() {
+		offset += int64(len(scanner.Bytes()) + 1)
 		var persisted persistedEvent
-		if json.Unmarshal(scanner.Bytes(), &persisted) == nil {
-			raw := string(persisted.Data)
-			events = append(events, Event{Sequence: persisted.Sequence, Time: time.Unix(0, persisted.Time).UTC(), Source: persisted.Source, Data: strings.ToValidUTF8(raw, "�"), EncodingError: !utf8.ValidString(raw)})
+		if json.Unmarshal(scanner.Bytes(), &persisted) == nil && persisted.Sequence > afterSequence {
+			text, encodingError := decodeOutput(persisted.Data)
+			events = append(events, Event{Sequence: persisted.Sequence, Time: time.Unix(0, persisted.Time).UTC(), Source: persisted.Source, Data: text, EncodingError: encodingError})
 		}
 	}
-	return events, scanner.Err()
+	return events, offset, scanner.Err()
 }
 
 func (m *Manager) Close() {

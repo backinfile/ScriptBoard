@@ -23,6 +23,16 @@ type State struct {
 	StorageWarning  bool
 }
 
+type File struct {
+	Path string
+	Size int64
+}
+
+type Description struct {
+	State   State
+	Reasons map[string]string
+}
+
 type Manager struct {
 	db            *sql.DB
 	root          string
@@ -105,22 +115,77 @@ func (m *Manager) State() (State, error) {
 }
 
 func (m *Manager) ProtectionReason(relative string, size int64) string {
-	state, err := m.State()
-	if err != nil || !state.Enabled {
+	description, err := m.DescribeEntries([]File{{Path: relative, Size: size}})
+	if err != nil {
 		return "Version Protection 已停用"
 	}
-	if size > m.maxFileBytes {
-		return "未保护：超过 10 MiB"
+	return description.Reasons[relative]
+}
+
+func (m *Manager) DescribeEntries(files []File) (Description, error) {
+	state, err := m.State()
+	if err != nil {
+		return Description{}, err
 	}
-	err = m.command("check-ignore", "--quiet", "--", filepath.ToSlash(relative)).Run()
-	if err == nil {
-		return "未保护：被 .gitignore 排除"
+	description := Description{
+		State:   state,
+		Reasons: make(map[string]string, len(files)),
 	}
-	var exitError *exec.ExitError
-	if errors.As(err, &exitError) && exitError.ExitCode() == 1 {
-		return "已受保护"
+	if !state.Enabled {
+		for _, file := range files {
+			description.Reasons[file.Path] = "Version Protection 已停用"
+		}
+		return description, nil
 	}
-	return "保护状态未知"
+
+	type candidate struct {
+		original   string
+		normalized string
+	}
+	eligible := make([]candidate, 0, len(files))
+	for _, file := range files {
+		if file.Size > m.maxFileBytes {
+			description.Reasons[file.Path] = "未保护：超过 10 MiB"
+			continue
+		}
+		eligible = append(eligible, candidate{original: file.Path, normalized: filepath.ToSlash(file.Path)})
+	}
+	if len(eligible) == 0 {
+		return description, nil
+	}
+
+	paths := make([]string, len(eligible))
+	for index := range eligible {
+		paths[index] = eligible[index].normalized
+	}
+	command := m.command("check-ignore", "--stdin", "-z")
+	command.Stdin = strings.NewReader(strings.Join(paths, "\x00") + "\x00")
+	output, commandErr := command.Output()
+	known := commandErr == nil
+	if commandErr != nil {
+		var exitError *exec.ExitError
+		known = errors.As(commandErr, &exitError) && exitError.ExitCode() == 1
+	}
+	ignored := make(map[string]struct{})
+	if known {
+		for _, path := range strings.Split(string(output), "\x00") {
+			if path != "" {
+				ignored[path] = struct{}{}
+			}
+		}
+	}
+	for _, file := range eligible {
+		_, isIgnored := ignored[file.normalized]
+		switch {
+		case !known:
+			description.Reasons[file.original] = "保护状态未知"
+		case isIgnored:
+			description.Reasons[file.original] = "未保护：被 .gitignore 排除"
+		default:
+			description.Reasons[file.original] = "已受保护"
+		}
+	}
+	return description, nil
 }
 
 func (m *Manager) Enable() error {

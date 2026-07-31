@@ -1,7 +1,18 @@
+# Build and release outputs
 /dist/
+/dist-*/
+/scriptboard
 /scriptboard.exe
 /scriptboard-tray.exe
-/scriptboard
-/.scratch/browser-qa-managed/
-/.scratch/browser-qa-state/
-/.scratch/cross-build/
+
+# Local runtime, test, preview, and design-tool state
+/.scratch/
+/.impeccable/
+/integration/browser/node_modules/
+/integration/browser/test-results/
+
+# Editor and operating-system noise
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp

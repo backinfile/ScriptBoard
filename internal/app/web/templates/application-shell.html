@@ -1,0 +1,64 @@
+<a class="skip-link" href="#main-content">{{t .Locale "shell.skip"}}</a>
+<button class="sidebar-toggle" type="button" data-sidebar-toggle aria-controls="app-sidebar" aria-expanded="false">
+<span data-lucide="panel-left-open" aria-hidden="true"></span><span class="sr-only">{{t .Locale "shell.open_navigation"}}</span>
+</button>
+<div class="sidebar-scrim" data-sidebar-close hidden></div>
+<aside class="app-sidebar" id="app-sidebar" data-pjax-nav aria-label="{{t .Locale "shell.navigation"}}">
+  <div class="sidebar-head">
+    <a class="brand-wordmark" href="/monitor" aria-label="ScriptBoard">{{"ScriptBoard"}}</a>
+    <button class="sidebar-close" type="button" data-sidebar-close><span data-lucide="x" aria-hidden="true"></span><span class="sr-only">{{t .Locale "shell.close_navigation"}}</span></button>
+  </div>
+  <nav class="sidebar-nav">
+    {{range .Navigation}}
+    <section class="nav-group">
+      <h2>{{.Label}}</h2>
+      {{range .Items}}<a href="{{.Href}}" {{if .Current}}aria-current="page"{{end}}><span data-lucide="{{.Icon}}" aria-hidden="true"></span><span>{{.Label}}</span></a>{{end}}
+    </section>
+    {{end}}
+  </nav>
+  <footer class="sidebar-footer">
+    <section class="sidebar-attention" data-shell-attention aria-label="{{t .Locale "shell.current_status"}}" data-environment="{{.Environment}}" data-active-runs-label="{{t .Locale "shell.active_runs"}}" data-stopped-pinned-label="{{t .Locale "shell.stopped_pinned"}}" data-application-attention-label="{{t .Locale "shell.application_attention"}}" data-application-issues-label="{{t .Locale "shell.application_issues"}}" data-review-applications-label="{{t .Locale "shell.review_applications"}}">
+      <header class="sidebar-attention__head"><strong>{{t .Locale "shell.current_status"}}</strong></header>
+      <a class="sidebar-attention__empty" href="/monitor" data-shell-attention-empty {{if or (ne .StatusState "current") (gt .ActiveRuns 0) (gt .WebsiteDown 0) (gt .WebsiteVerifying 0) (gt .StoppedPinnedApplications 0) (gt .ApplicationIssueCount 0)}}hidden{{end}}>
+        <span data-lucide="circle-check" aria-hidden="true"></span>
+        <strong>{{t .Locale "shell.no_attention"}}</strong>
+      </a>
+      <a class="sidebar-attention__item" href="/monitor" data-shell-attention-item="host" {{if eq .StatusState "current"}}hidden{{end}} data-state="{{.StatusState}}">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span><strong data-shell-host-primary>{{.Status}}</strong><small data-shell-host-secondary>{{.Environment}}</small></span>
+        <span class="sidebar-status__chevron" data-lucide="chevron-right" aria-hidden="true"></span>
+      </a>
+      <a class="sidebar-attention__item" href="/history/runs" data-shell-attention-item="runs" {{if eq .ActiveRuns 0}}hidden{{end}} data-state="running">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span><strong data-shell-runs-primary>{{.ActiveRuns}} {{t .Locale "shell.active_runs"}}</strong><small>{{t .Locale "shell.review_runs"}}</small></span>
+        <span class="sidebar-status__chevron" data-lucide="chevron-right" aria-hidden="true"></span>
+      </a>
+      <a class="sidebar-attention__item" href="/monitor/websites" data-shell-attention-item="websites" {{if and (eq .WebsiteDown 0) (eq .WebsiteVerifying 0)}}hidden{{end}} data-state="{{.WebsiteState}}" data-down="{{.WebsiteDown}}" data-verifying="{{.WebsiteVerifying}}">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span>
+          <strong data-shell-website-primary>{{if gt .WebsiteDown 0}}{{.WebsiteDown}} {{if eq .WebsiteDown 1}}{{t .Locale "shell.website_down_one"}}{{else}}{{t .Locale "shell.website_down_many"}}{{end}}{{else}}{{.WebsiteVerifying}} {{if eq .WebsiteVerifying 1}}{{t .Locale "shell.website_verifying_one"}}{{else}}{{t .Locale "shell.website_verifying_many"}}{{end}}{{end}}</strong>
+          <small data-shell-website-secondary>{{if gt .WebsiteDown 0}}{{.WebsiteVerifying}} {{if eq .WebsiteVerifying 1}}{{t .Locale "shell.website_verifying_one"}}{{else}}{{t .Locale "shell.website_verifying_many"}}{{end}}{{else}}{{t .Locale "shell.website_no_confirmed_failure"}}{{end}}</small>
+        </span>
+        <span class="sidebar-status__chevron" data-lucide="chevron-right" aria-hidden="true"></span>
+      </a>
+      <a class="sidebar-attention__item" href="/monitor/applications" data-shell-attention-item="applications" {{if and (eq .StoppedPinnedApplications 0) (eq .ApplicationIssueCount 0)}}hidden{{end}} data-state="attention">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span>
+          <strong data-shell-applications-primary>{{if gt .StoppedPinnedApplications 0}}{{t .Locale "shell.stopped_pinned"}} {{.StoppedPinnedApplications}}{{else}}{{t .Locale "shell.application_attention"}}{{end}}</strong>
+          <small data-shell-applications-secondary>{{if gt .ApplicationIssueCount 0}}{{t .Locale "shell.application_issues"}} {{.ApplicationIssueCount}}{{else}}{{t .Locale "shell.review_applications"}}{{end}}</small>
+        </span>
+        <span class="sidebar-status__chevron" data-lucide="chevron-right" aria-hidden="true"></span>
+      </a>
+    </section>
+    <div class="sidebar-utilities">
+      <form method="post" action="/settings/locale" data-native>
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <input type="hidden" name="return_to" value="{{.ReturnTo}}">
+        <button type="submit" name="locale" value="{{if .ChineseLocaleCurrent}}en-US{{else}}zh-CN{{end}}" aria-label="{{t .Locale "shell.change_language"}}">
+          <span data-lucide="languages" aria-hidden="true"></span>{{if .ChineseLocaleCurrent}}EN{{else}}中文{{end}}
+        </button>
+      </form>
+      <a href="/settings/account" {{if .SettingsCurrent}}aria-current="page"{{end}}><span data-lucide="settings" aria-hidden="true"></span><span>{{t .Locale "shell.settings"}}</span></a>
+    </div>
+  </footer>
+</aside>

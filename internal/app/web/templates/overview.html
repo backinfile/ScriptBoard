@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="{{.Locale}}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}">
+  <script defer src="/assets/app-v2.js?v={{assetVersion}}"></script>
+  <title>{{t .Locale "overview.title"}} · ScriptBoard</title>
+</head>
+<body>
+<main class="workspace overview-page" data-host-overview data-range="{{.Range}}" data-overview-url="/monitor/data">
+  <header class="page-heading">
+    <div>
+      <p class="page-eyebrow">{{t .Locale "overview.eyebrow"}} / {{if .Facts.Hostname}}{{.Facts.Hostname}}{{else}}{{t .Locale "overview.collecting"}}{{end}}</p>
+      <h1>{{t .Locale "overview.title"}}</h1>
+      <p>{{.Facts.Platform}} {{.Facts.PlatformVersion}} · {{.Facts.Architecture}} · {{t .Locale "overview.host_uptime"}} {{localDuration .Locale .HostUptime}}</p>
+    </div>
+  </header>
+
+  <section class="observation-verdict" data-state="{{if .Stale}}stale{{else if .Errors}}attention{{else}}current{{end}}" aria-labelledby="verdict-title">
+    <div class="verdict-marker" aria-hidden="true"><span data-lucide="{{if .Stale}}clock-alert{{else if .Errors}}triangle-alert{{else}}check{{end}}"></span></div>
+    <div class="verdict-copy">
+      <p>{{t .Locale "overview.observation_verdict"}}</p>
+      <h2 id="verdict-title" data-verdict-title>{{if .Stale}}{{t .Locale "status.stale"}}{{else if .Errors}}{{t .Locale "status.attention"}}{{else}}{{t .Locale "status.current"}}{{end}}</h2>
+      <span data-verdict-description>{{if .Stale}}{{t .Locale "overview.stale_description"}}{{else if .Errors}}{{t .Locale "overview.attention_description"}}{{else}}{{t .Locale "overview.current_description"}}{{end}}</span>
+    </div>
+    <div class="verdict-time">
+      <span>{{t .Locale "overview.collected_at"}}</span>
+      <time datetime="{{machineTime .CollectedAt}}" data-local-time data-collected-at>{{localTime .Locale .CollectedAt}}</time>
+    </div>
+  </section>
+
+  {{if .Errors}}
+  <section class="issue-ledger" role="status" data-overview-errors>
+    <header><span data-lucide="triangle-alert" aria-hidden="true"></span><h2>{{t .Locale "overview.issues"}}</h2><span>{{len .Errors}}</span></header>
+    <ul>{{range $category, $message := .Errors}}<li><code>{{$category}}</code><span>{{$message}}</span></li>{{end}}</ul>
+  </section>
+  {{else}}<section class="issue-ledger" data-overview-errors hidden></section>{{end}}
+
+  <div class="section-heading section-heading--with-control">
+    <div><p class="section-index">01</p><h2>{{t .Locale "overview.measurements"}}</h2></div>
+    <nav class="segmented-control" aria-label="{{t .Locale "overview.history_range"}}">
+      {{range $value := (slice "15m" "1h" "6h" "24h")}}<a href="/monitor?range={{$value}}" data-overview-range="{{$value}}" {{if eq $.Range $value}}aria-current="page"{{end}}>{{if eq $value "15m"}}15m{{else if eq $value "1h"}}1h{{else if eq $value "6h"}}6h{{else}}24h{{end}}</a>{{end}}
+    </nav>
+  </div>
+
+  <section class="measurement-ledger" aria-label="{{t .Locale "overview.measurements"}}">
+    <article class="measurement-band" data-metric-card="cpu">
+      <header><span data-lucide="cpu" aria-hidden="true"></span><h3>CPU</h3><strong data-metric-value>{{if .Current.CPU}}{{percent .Current.CPU.UsedPercent}}{{else}}—{{end}}</strong></header>
+      <p data-metric-detail>{{.Facts.LogicalCores}} {{t .Locale "overview.logical_cores"}}{{if and .Current.CPU .Current.CPU.Load1}} · Load {{printf "%.2f" (deref .Current.CPU.Load1)}}{{end}}</p>
+      <svg viewBox="0 0 1000 80" preserveAspectRatio="none" role="img" aria-label="{{t .Locale "overview.cpu_history"}}" data-metric-chart="cpu.usedPercent"><path class="chart-grid" d="M0 79H1000 M0 40H1000 M0 1H1000"></path><path class="chart-peak" data-chart-peak></path><path class="chart-average" data-chart-average></path></svg>
+    </article>
+    <article class="measurement-band" data-metric-card="memory">
+      <header><span data-lucide="memory-stick" aria-hidden="true"></span><h3>{{t .Locale "overview.memory"}}</h3><strong data-metric-value>{{if .Current.Memory}}{{percent .Current.Memory.UsedPercent}}{{else}}—{{end}}</strong></header>
+      <p data-metric-detail>{{if .Current.Memory}}{{humanBytes .Current.Memory.UsedBytes}} / {{humanBytes .Current.Memory.TotalBytes}} · {{t .Locale "overview.available"}} {{humanBytes .Current.Memory.AvailableBytes}}{{else}}{{t .Locale "overview.collecting"}}{{end}}</p>
+      <svg viewBox="0 0 1000 80" preserveAspectRatio="none" role="img" aria-label="{{t .Locale "overview.memory_history"}}" data-metric-chart="memory.usedPercent"><path class="chart-grid" d="M0 79H1000 M0 40H1000 M0 1H1000"></path><path class="chart-peak" data-chart-peak></path><path class="chart-average" data-chart-average></path></svg>
+    </article>
+    <article class="measurement-band {{if and .Current.Storage (lt .Current.Storage.AvailableBytes 104857600)}}measurement-band--danger{{end}}" data-metric-card="storage">
+      <header><span data-lucide="hard-drive" aria-hidden="true"></span><h3>{{t .Locale "overview.storage"}}</h3><strong data-metric-value>{{if .Current.Storage}}{{percent .Current.Storage.UsedPercent}}{{else}}—{{end}}</strong></header>
+      <p data-metric-detail>{{if .Current.Storage}}{{.Current.Storage.Mountpoint}} · {{t .Locale "overview.available"}} {{humanBytes .Current.Storage.AvailableBytes}}{{else}}{{t .Locale "overview.collecting"}}{{end}}</p>
+      <svg viewBox="0 0 1000 80" preserveAspectRatio="none" role="img" aria-label="{{t .Locale "overview.storage_history"}}" data-metric-chart="storage.usedPercent"><path class="chart-grid" d="M0 79H1000 M0 40H1000 M0 1H1000"></path><path class="chart-peak" data-chart-peak></path><path class="chart-average" data-chart-average></path></svg>
+    </article>
+    <article class="measurement-band" data-metric-card="network">
+      <header><span data-lucide="network" aria-hidden="true"></span><h3>{{t .Locale "overview.network"}}</h3><strong data-metric-value>{{if .Current.Network}}{{humanRate .Current.Network.ReceivedBytesPerSecond}}{{else}}—{{end}}</strong></header>
+      <p data-metric-detail>{{if .Current.Network}}{{t .Locale "overview.receive"}} {{humanRate .Current.Network.ReceivedBytesPerSecond}} · {{t .Locale "overview.send"}} {{humanRate .Current.Network.SentBytesPerSecond}}{{else}}{{t .Locale "overview.collecting_rate"}}{{end}}</p>
+      <svg viewBox="0 0 1000 80" preserveAspectRatio="none" role="img" aria-label="{{t .Locale "overview.network_history"}}" data-metric-chart="network.receivedBytesPerSecond"><path class="chart-grid" d="M0 79H1000 M0 40H1000 M0 1H1000"></path><path class="chart-peak" data-chart-peak></path><path class="chart-average" data-chart-average></path></svg>
+    </article>
+  </section>
+
+  <section class="overview-grid">
+    <article class="ledger-section">
+      <header class="section-heading"><div><p class="section-index">02</p><h2>{{t .Locale "overview.active_runs"}}</h2></div><a href="/history/runs">{{t .Locale "overview.view_all"}}</a></header>
+      <ol class="activity-list" data-active-runs>
+        {{range .ActiveRuns}}<li><span class="status-mark" data-state="{{.Status}}" aria-hidden="true"></span><div><a href="/history/runs/{{.ID}}">{{.ScriptPath}}</a><small>{{statusText $.Locale .Status}} · <time datetime="{{machineTime .StartedAt}}" data-local-time>{{localTime $.Locale .StartedAt}}</time></small></div></li>
+        {{else}}<li class="empty-row">{{t .Locale "overview.no_active_runs"}}</li>{{end}}
+      </ol>
+    </article>
+    <article class="ledger-section">
+      <header class="section-heading"><div><p class="section-index">03</p><h2>{{t .Locale "overview.service"}}</h2></div></header>
+      <dl class="fact-grid" data-process-facts>
+        <div><dt>{{t .Locale "overview.service_uptime"}}</dt><dd>{{localDuration .Locale .ServiceUptime}}</dd></div>
+        {{if .Current.Process}}
+        <div><dt>CPU</dt><dd>{{percent .Current.Process.CPUPercent}}</dd></div>
+        <div><dt>{{t .Locale "overview.resident_memory"}}</dt><dd>{{humanBytes .Current.Process.ResidentMemoryBytes}}</dd></div>
+        <div><dt>{{t .Locale "overview.threads"}}</dt><dd>{{.Current.Process.Threads}}</dd></div>
+        {{end}}
+      </dl>
+    </article>
+  </section>
+
+  <details class="ledger-disclosure">
+    <summary><span><span data-lucide="database" aria-hidden="true"></span>{{t .Locale "overview.storage_io"}}</span><small>{{len .Current.Filesystems}} {{t .Locale "overview.filesystems"}} · {{len .Current.Disks}} {{t .Locale "overview.devices"}}</small></summary>
+    <div class="table-shell"><table><thead><tr><th>{{t .Locale "overview.filesystem"}}</th><th>{{t .Locale "overview.role"}}</th><th>{{t .Locale "overview.used"}}</th><th>{{t .Locale "overview.available"}}</th><th>{{t .Locale "overview.capacity"}}</th></tr></thead><tbody data-filesystem-rows>{{range .Current.Filesystems}}<tr><td>{{.Mountpoint}}<small>{{.Device}} · {{.Type}}</small></td><td>{{range .Roles}}<span class="status-chip">{{roleText $.Locale .}}</span>{{else}}—{{end}}</td><td>{{percent .UsedPercent}}</td><td>{{humanBytes .AvailableBytes}}</td><td>{{humanBytes .TotalBytes}}</td></tr>{{else}}<tr><td colspan="5">{{t .Locale "overview.collecting"}}</td></tr>{{end}}</tbody></table></div>
+  </details>
+
+  <details class="ledger-disclosure">
+    <summary><span><span data-lucide="network" aria-hidden="true"></span>{{t .Locale "overview.network_interfaces"}}</span><small>{{len .Current.Interfaces}} {{t .Locale "overview.interfaces"}}</small></summary>
+    <div class="table-shell"><table><thead><tr><th>{{t .Locale "overview.interface"}}</th><th>{{t .Locale "overview.address"}}</th><th>{{t .Locale "overview.receive"}}</th><th>{{t .Locale "overview.send"}}</th><th>{{t .Locale "overview.errors_drops"}}</th></tr></thead><tbody data-network-rows>{{range .Current.Interfaces}}<tr><td>{{.Name}}</td><td>{{range .Addresses}}<code>{{.}}</code>{{else}}—{{end}}</td><td>{{humanRate .ReceivedBytesPerSecond}}</td><td>{{humanRate .SentBytesPerSecond}}</td><td>{{.ReceivedErrors}} / {{.ReceivedDrops}}</td></tr>{{else}}<tr><td colspan="5">{{t .Locale "overview.collecting_rate"}}</td></tr>{{end}}</tbody></table></div>
+  </details>
+
+  <section class="ledger-section host-facts">
+    <header class="section-heading"><div><p class="section-index">04</p><h2>{{t .Locale "overview.host_facts"}}</h2></div></header>
+    <dl class="fact-grid">
+      <div><dt>{{t .Locale "overview.hostname"}}</dt><dd>{{.Facts.Hostname}}</dd></div>
+      <div><dt>{{t .Locale "overview.system"}}</dt><dd>{{.Facts.Platform}} {{.Facts.PlatformVersion}}</dd></div>
+      <div><dt>{{t .Locale "overview.architecture"}}</dt><dd>{{.Facts.Architecture}}</dd></div>
+      <div><dt>CPU</dt><dd>{{.Facts.CPUModel}}</dd></div>
+      <div><dt>{{t .Locale "overview.logical_cores_label"}}</dt><dd>{{.Facts.LogicalCores}}</dd></div>
+      <div><dt>{{t .Locale "overview.physical_memory"}}</dt><dd>{{humanBytes .Facts.TotalMemoryBytes}}</dd></div>
+      <div><dt>{{t .Locale "overview.booted_at"}}</dt><dd><time datetime="{{machineTime .Facts.BootedAt}}" data-local-time>{{localTime .Locale .Facts.BootedAt}}</time></dd></div>
+    </dl>
+  </section>
+</main>
+</body>
+</html>

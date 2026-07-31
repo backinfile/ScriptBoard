@@ -1,5 +1,69 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=6"><script defer src="/assets/app-v2.js?v=6"></script><title>变量 · ScriptBoard</title></head>
-<body><main><header class="workspace-heading"><h1>变量</h1><p>集中维护可在脚本参数模板中引用的运行变量。</p></header><details class="creator"><summary><span><strong>创建变量</strong><small>名称使用大写字母、数字与下划线，最多 64 个字符</small></span></summary><form class="creator-form" method="post" action="/variables"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label class="wide-field">名称 <input name="name" placeholder="例如：BACKUP_PATH" pattern="[A-Z][A-Z0-9_]{0,63}" required></label><label>值 <textarea name="value" maxlength="4096" placeholder="输入变量值"></textarea></label><button type="submit">创建变量</button></form></details>
-<div class="table-shell"><table><thead><tr><th>名称与值</th><th>操作</th></tr></thead><tbody>{{range .Variables}}<tr><td><form class="variable-editor" method="post" action="/variables/{{.Name}}/update"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input name="name" value="{{.Name}}" aria-label="变量名称" pattern="[A-Z][A-Z0-9_]{0,63}" required><textarea name="value" aria-label="变量值" maxlength="4096">{{.Value}}</textarea><button>保存</button></form></td><td><form method="post" action="/variables/{{.Name}}/delete"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button name="confirm" value="yes">删除</button></form></td></tr>{{else}}<tr><td colspan="2">暂无变量</td></tr>{{end}}</tbody></table></div>
-<nav class="pagination" aria-label="变量分页"><span class="pagination__summary">共 {{.Pagination.Total}} 条 · 第 {{.Pagination.Page}} / {{.Pagination.PageCount}} 页</span><span class="pagination__actions">{{if .Pagination.HasPrevious}}<a href="{{.Pagination.PreviousURL}}">← 上一页</a>{{else}}<span class="pagination__disabled">← 上一页</span>{{end}}{{if .Pagination.HasNext}}<a href="{{.Pagination.NextURL}}">下一页 →</a>{{else}}<span class="pagination__disabled">下一页 →</span>{{end}}</span></nav></main></body></html>
+<html lang="{{.Locale}}">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "variables.title"}} · ScriptBoard</title></head>
+<body>
+<main class="workspace">
+  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "variables.eyebrow"}}</p><h1>{{t .Locale "variables.title"}}</h1><p>{{t .Locale "variables.description"}}</p></div><a class="button button--primary" href="/resources/variables/new" data-task-link><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "variables.create"}}</a></header>
+  <aside class="inline-notice"><span data-lucide="info" aria-hidden="true"></span><p>{{t .Locale "variables.plaintext_notice"}}</p></aside>
+  <div data-deferred-region>
+  {{if .DeferredData}}
+  {{template "deferred-loading" .}}
+  {{else}}
+  {{if .Variables}}
+  <div class="table-shell"><table class="records-table variables-table">
+    <thead><tr><th>{{t .Locale "common.name"}}</th><th>{{t .Locale "common.value"}}</th><th><span class="sr-only">{{t .Locale "common.actions"}}</span></th></tr></thead>
+    <tbody>{{range $index, $variable := .Variables}}<tr>
+      <td data-label="{{t $.Locale "common.name"}}" class="record-primary"><div class="record-primary__content"><span class="record-icon" data-lucide="{{if .IsPassword}}key-round{{else}}braces{{end}}" aria-hidden="true"></span><div class="variable-name-details">
+        <div class="copyable-field copyable-field--name" data-copy-field>
+          <code id="variable-name-{{$index}}">{{.Name}}</code>
+          <button type="button" class="copy-control icon-tooltip" data-copy-text data-copy-name data-copy-target="variable-name-{{$index}}" aria-label="{{t $.Locale "variables.copy_name"}} {{.Name}}" data-tooltip="{{t $.Locale "variables.copy_name"}}" data-copy-label="{{t $.Locale "variables.copy_name"}} {{.Name}}" data-copy-tooltip="{{t $.Locale "variables.copy_name"}}" data-copied-label="{{t $.Locale "variables.copied"}}" data-copy-failed-label="{{t $.Locale "variables.copy_failed"}}" hidden>
+            <span data-copy-icon data-lucide="copy" aria-hidden="true"></span>
+          </button>
+          <span class="sr-only" role="status" aria-live="polite" data-copy-status></span>
+        </div>
+        {{if .IsPassword}}<small>{{t $.Locale "variables.password_type"}}</small>{{end}}
+      </div></div></td>
+      <td data-label="{{t $.Locale "common.value"}}">{{if .IsPassword}}
+        <div class="secret-value" data-password-value data-copy-field hidden>
+          <span class="secret-mask" data-password-mask aria-label="{{t $.Locale "variables.hidden"}}">••••••••</span>
+          <code id="variable-secret-{{$index}}" class="secret-content" data-password-content hidden>{{.Value}}</code>
+          <span class="secret-controls">
+            <button type="button" class="secret-control icon-tooltip" data-toggle-password aria-controls="variable-secret-{{$index}}" aria-expanded="false" aria-label="{{t $.Locale "variables.show_value"}} {{.Name}}" data-tooltip="{{t $.Locale "variables.show_value"}}" data-show-label="{{t $.Locale "variables.show_value"}} {{.Name}}" data-hide-label="{{t $.Locale "variables.hide_value"}} {{.Name}}" data-show-tooltip="{{t $.Locale "variables.show_value"}}" data-hide-tooltip="{{t $.Locale "variables.hide_value"}}">
+              <span data-password-toggle-icon data-lucide="eye" aria-hidden="true"></span>
+            </button>
+            <button type="button" class="copy-control icon-tooltip" data-copy-text data-copy-password data-copy-target="variable-secret-{{$index}}" aria-label="{{t $.Locale "variables.copy_value"}} {{.Name}}" data-tooltip="{{t $.Locale "variables.copy_value"}}" data-copy-label="{{t $.Locale "variables.copy_value"}} {{.Name}}" data-copy-tooltip="{{t $.Locale "variables.copy_value"}}" data-copied-label="{{t $.Locale "variables.copied"}}" data-copy-failed-label="{{t $.Locale "variables.copy_failed"}}" hidden>
+              <span data-copy-icon data-lucide="copy" aria-hidden="true"></span>
+            </button>
+          </span>
+          <span class="sr-only" role="status" aria-live="polite" data-copy-status data-password-status></span>
+        </div>
+        <noscript><details class="no-js-secret">
+          <summary><span data-no-js-show>{{t $.Locale "variables.show_value"}}</span><span data-no-js-hide>{{t $.Locale "variables.hide_value"}}</span><span class="no-js-secret__mask" aria-label="{{t $.Locale "variables.hidden"}}">••••••••</span></summary>
+          <code>{{.Value}}</code>
+        </details></noscript>
+      {{else}}
+        <div class="copyable-field copyable-field--value" data-copy-field>
+          <pre id="variable-value-{{$index}}" class="value-preview">{{.Value}}</pre>
+          <button type="button" class="copy-control icon-tooltip" data-copy-text data-copy-value data-copy-target="variable-value-{{$index}}" aria-label="{{t $.Locale "variables.copy_value"}} {{.Name}}" data-tooltip="{{t $.Locale "variables.copy_value"}}" data-copy-label="{{t $.Locale "variables.copy_value"}} {{.Name}}" data-copy-tooltip="{{t $.Locale "variables.copy_value"}}" data-copied-label="{{t $.Locale "variables.copied"}}" data-copy-failed-label="{{t $.Locale "variables.copy_failed"}}" hidden>
+            <span data-copy-icon data-lucide="copy" aria-hidden="true"></span>
+          </button>
+          <span class="sr-only" role="status" aria-live="polite" data-copy-status></span>
+        </div>
+      {{end}}</td>
+      <td class="record-actions">
+        <div class="record-actions__group">
+        <a class="button button--quiet button--compact" href="/resources/variables/{{.Name}}/edit" data-task-link><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a>
+        <details class="action-menu"><summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div><form method="post" action="/resources/variables/{{.Name}}/delete" data-confirm="{{t $.Locale "variables.delete_confirm"}}" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-action" type="submit" name="confirm" value="yes"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "common.delete"}}</button></form></div></details>
+        </div>
+      </td>
+    </tr>{{end}}</tbody>
+  </table></div>
+  <nav class="pagination" aria-label="{{t .Locale "variables.pagination"}}"><span>{{.Pagination.Total}} {{t .Locale "common.records"}} · {{.Pagination.Page}} / {{.Pagination.PageCount}}</span><div>{{if .Pagination.HasPrevious}}<a href="{{.Pagination.PreviousURL}}">{{t .Locale "common.previous"}}</a>{{else}}<span aria-disabled="true">{{t .Locale "common.previous"}}</span>{{end}}{{if .Pagination.HasNext}}<a href="{{.Pagination.NextURL}}">{{t .Locale "common.next"}}</a>{{else}}<span aria-disabled="true">{{t .Locale "common.next"}}</span>{{end}}</div></nav>
+  {{else}}
+  <section class="empty-state"><span data-lucide="braces" aria-hidden="true"></span><p>{{t .Locale "variables.empty"}}</p><a class="button" href="/resources/variables/new" data-task-link>{{t .Locale "variables.create"}}</a></section>
+  {{end}}
+  {{end}}
+  </div>
+</main>
+</body>
+</html>

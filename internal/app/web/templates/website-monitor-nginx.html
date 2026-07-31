@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="{{.Locale}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}">
+<script defer src="/assets/app-v2.js?v={{assetVersion}}"></script>
+<title>{{t .Locale "website.scan_nginx"}} · {{t .Locale "website.title"}} · ScriptBoard</title>
+</head>
+<body>
+<main class="workspace website-task-page website-nginx-page" data-task-page data-task-kind="website-nginx" data-task-close-label="{{t .Locale "common.close"}}" data-website-nginx data-selected-label="{{t .Locale "website.nginx.selected"}}" data-success-title="{{t .Locale "website.nginx.success_title"}}" data-success-description="{{t .Locale "website.nginx.success_description"}}" data-view-ledger="{{t .Locale "website.nginx.view_ledger"}}">
+<header class="website-task-heading">
+<a href="/monitor/websites">{{t .Locale "website.back"}}</a>
+<p class="website-kicker">{{t .Locale "website.nginx.eyebrow"}}</p>
+<h1>{{t .Locale "website.scan_nginx"}}</h1>
+<p>{{t .Locale "website.nginx.description"}}</p>
+</header>
+{{if .Error}}<p class="page-error" role="alert">{{.Error}}</p>{{end}}
+
+{{if .Success}}
+<section class="nginx-import-success" role="status">
+<span data-lucide="check" aria-hidden="true"></span>
+<div><h2>{{t .Locale "website.nginx.success_title"}}</h2><p>{{.ImportedCount}} {{t .Locale "website.nginx.success_description"}}</p></div>
+<a class="button button--primary" href="/monitor/websites">{{t .Locale "website.nginx.view_ledger"}}</a>
+</section>
+{{else if .Preview}}
+<section class="nginx-preview-heading">
+<div>
+<h2>{{t .Locale "website.nginx.select"}}</h2>
+<p>{{t .Locale "website.nginx.preview_description"}}</p>
+</div>
+<strong>{{len .Preview.Candidates}} {{if eq (len .Preview.Candidates) 1}}{{t .Locale "website.nginx.candidate_one"}}{{else}}{{t .Locale "website.nginx.candidates"}}{{end}}</strong>
+</section>
+<div class="nginx-selection-toolbar">
+<label><input type="checkbox" data-nginx-select-all>{{t .Locale "website.nginx.select_all"}}</label>
+<span><strong data-nginx-selected-count>0</strong> {{t .Locale "website.nginx.selected"}}</span>
+</div>
+{{if .Preview.Warnings}}
+<details class="nginx-warnings"><summary>{{len .Preview.Warnings}} {{if eq (len .Preview.Warnings) 1}}{{t .Locale "website.nginx.scan_note_one"}}{{else}}{{t .Locale "website.nginx.scan_notes"}}{{end}}</summary><ul>{{range .Preview.Warnings}}<li>{{.}}</li>{{end}}</ul></details>
+{{end}}
+<form method="post" action="/monitor/websites/nginx/import">
+<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+<input type="hidden" name="config_path" value="{{.ConfigPath}}">
+<div class="nginx-candidate-list">
+{{range .Preview.Candidates}}
+<label class="nginx-candidate {{if .Duplicate}}nginx-candidate--duplicate{{end}}">
+<input type="checkbox" name="digest" value="{{.Digest}}" data-nginx-candidate {{if .Duplicate}}disabled{{end}}>
+<span><strong>{{.Name}}</strong><code>{{.URL}}</code><small>{{.Source}} · {{t $.Locale "website.nginx.direct"}} {{.DialHost}}</small></span>
+<b>{{if .Duplicate}}{{t $.Locale "website.nginx.already_monitored"}}{{else}}{{t $.Locale "website.nginx.can_add"}}{{end}}</b>
+</label>
+{{else}}
+<div class="website-empty website-empty--compact"><h2>{{t .Locale "website.nginx.none_title"}}</h2><p>{{t .Locale "website.nginx.none_description"}}</p></div>
+{{end}}
+</div>
+<footer class="website-form-actions"><a href="/monitor/websites/nginx" data-task-link>{{t .Locale "website.nginx.rescan"}}</a><button class="button button--primary" type="submit" data-nginx-import-button data-pending-label="{{t .Locale "website.nginx.adding"}}" disabled><span data-nginx-import-label>{{t .Locale "website.nginx.add"}}</span> <span data-nginx-import-count>(0)</span></button></footer>
+</form>
+{{else}}
+<form class="website-monitor-form" method="post" action="/monitor/websites/nginx/scan" data-async>
+<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+<fieldset>
+<legend>{{t .Locale "website.nginx.source"}}</legend>
+<label>{{t .Locale "website.nginx.config_file"}}
+<input name="config_path" value="{{.ConfigPath}}" autocomplete="off" spellcheck="false" placeholder="{{t .Locale "website.nginx.config_placeholder"}}">
+<span class="field-hint">{{t .Locale "website.nginx.config_hint"}}</span>
+</label>
+<div class="website-protocol-rule">
+<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/><path d="m14.5 14.5 3 3"/></svg>
+<span>{{t .Locale "website.nginx.scan_limits"}}</span>
+</div>
+</fieldset>
+<footer class="website-form-actions"><a href="/monitor/websites">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit" data-pending-label="{{t .Locale "website.nginx.finding"}}">{{t .Locale "website.nginx.find"}}</button></footer>
+</form>
+{{end}}
+</main>
+</body>
+</html>

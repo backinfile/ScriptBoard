@@ -1,8 +1,58 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=6"><script defer src="/assets/app-v2.js?v=6"></script><title>快捷执行 · ScriptBoard</title></head><body><main><header class="workspace-heading"><h1>快捷执行</h1><p>启动已保存的脚本配置，并调整常用项顺序。</p></header>
-<div class="table-shell"><table><thead><tr><th>名称</th><th>脚本</th><th>参数</th><th>操作</th></tr></thead><tbody>{{range .QuickRuns}}<tr><td>{{.Name}}</td><td>{{.ScriptPath}}</td><td>{{.ArgumentsTemplate}}</td><td>
-<form method="post" action="/quick-runs/{{.ID}}/start"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button type="submit" {{if not .Valid}}disabled title="Script 路径已失效"{{end}}>{{if .Valid}}启动{{else}}路径失效{{end}}</button></form>
-<form method="post" action="/quick-runs/{{.ID}}/move"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button name="direction" value="up">上移</button><button name="direction" value="down">下移</button></form>
-<form method="post" action="/quick-runs/{{.ID}}/delete"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button name="confirm" value="yes">删除</button></form>
-</td></tr>{{else}}<tr><td colspan="4">暂无快捷执行</td></tr>{{end}}</tbody></table>
-</div><nav class="pagination" aria-label="快捷执行分页"><span class="pagination__summary">共 {{.Pagination.Total}} 条 · 第 {{.Pagination.Page}} / {{.Pagination.PageCount}} 页</span><span class="pagination__actions">{{if .Pagination.HasPrevious}}<a href="{{.Pagination.PreviousURL}}">← 上一页</a>{{else}}<span class="pagination__disabled">← 上一页</span>{{end}}{{if .Pagination.HasNext}}<a href="{{.Pagination.NextURL}}">下一页 →</a>{{else}}<span class="pagination__disabled">下一页 →</span>{{end}}</span></nav></main></body></html>
+<html lang="{{.Locale}}">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "quick_runs.title"}} · ScriptBoard</title></head>
+<body>
+<main class="workspace" data-quick-runs-page data-grouped-records="quick-run-groups">
+  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "quick_runs.eyebrow"}}</p><h1>{{t .Locale "quick_runs.title"}}</h1><p>{{t .Locale "quick_runs.description"}}</p></div>{{if .CanManage}}<div class="heading-actions quick-run-heading-actions"><a class="button" href="/config/quick-runs/groups/new" data-task-link><span data-lucide="folder-plus" aria-hidden="true"></span>{{t .Locale "quick_runs.create_group"}}</a><a class="button" href="/config/quick-runs/one-time/new" data-task-link><span data-lucide="play" aria-hidden="true"></span>{{t .Locale "quick_runs.run_once"}}</a><a class="button button--primary" href="/config/quick-runs/from-source/new" data-task-link><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "common.create"}}</a></div>{{end}}</header>
+  <div data-deferred-region>
+  {{if .DeferredData}}
+  {{template "deferred-loading" .}}
+  {{else}}
+  {{range .Groups}}
+  <section class="quick-run-group" data-record-group="{{.ID}}" data-quick-run-group="{{.ID}}" data-group-name="{{.Name}}">
+    <header class="quick-run-group__header">
+      <div class="quick-run-group__heading">
+        <h2><button class="quick-run-group__toggle" type="button" data-group-toggle aria-expanded="true" aria-controls="quick-run-group-{{.ID}}">
+          <span class="quick-run-group__chevron" data-lucide="chevron-right" aria-hidden="true"></span>
+          <span class="quick-run-group__identity"><span data-lucide="{{if .Ungrouped}}folder-open{{else}}folder{{end}}" aria-hidden="true"></span><span class="quick-run-group__name">{{.Name}}</span></span>
+        </button></h2>
+        <small>{{.QuickRunCount}} {{t $.Locale "quick_runs.items"}}</small>
+      </div>
+      {{if and $.CanManage (not .Ungrouped)}}
+      <details class="action-menu quick-run-group__menu"><summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
+        <a href="/config/quick-runs/groups/{{.ID}}/edit" data-task-link><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a>
+        <form method="post" action="/config/quick-runs/groups/{{.ID}}/move" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" name="direction" value="up"><span data-lucide="arrow-up" aria-hidden="true"></span>{{t $.Locale "quick_runs.move_up"}}</button><button type="submit" name="direction" value="down"><span data-lucide="arrow-down" aria-hidden="true"></span>{{t $.Locale "quick_runs.move_down"}}</button></form>
+        <form method="post" action="/config/quick-runs/groups/{{.ID}}/delete" data-confirm="{{t $.Locale "quick_runs.group_delete_confirm"}}" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-action" type="submit" name="confirm" value="yes"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "common.delete"}}</button></form>
+      </div></details>
+      {{end}}
+    </header>
+    <div class="quick-run-group__body" id="quick-run-group-{{.ID}}" data-group-body>
+    {{if .Items}}<ol class="ordered-records">
+      {{range $index, $quick := .Items}}<li data-quick-run-id="{{.ID}}" data-locked="{{if .Locked}}true{{else}}false{{end}}">
+        <div class="record-order" aria-hidden="true">{{printf "%02d" $index}}</div>
+        <div class="ordered-record__identity"><span data-lucide="zap" aria-hidden="true"></span><div><h3>{{.Name}}</h3><code>{{.ScriptPath}}</code>{{if .Locked}}<span class="status-chip" data-state="locked"><span data-lucide="lock" aria-hidden="true"></span>{{t $.Locale "quick_runs.locked"}}</span>{{end}}</div></div>
+        <dl class="ordered-record__facts"><div><dt>{{t $.Locale "common.arguments"}}</dt><dd>{{if .ArgumentsTemplate}}<code>{{.ArgumentsTemplate}}</code>{{else}}—{{end}}</dd></div><div><dt>{{t $.Locale "common.timeout"}}</dt><dd>{{.TimeoutSeconds}}s</dd></div></dl>
+        <div class="record-actions record-actions__group">
+          {{if $.CanExecute}}<form method="post" action="/config/quick-runs/{{.ID}}/start"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button class="button button--compact" type="submit" {{if not .Valid}}disabled aria-disabled="true"{{end}} title="{{if not .Valid}}{{t $.Locale "quick_runs.invalid_path"}}{{end}}"><span data-lucide="play" aria-hidden="true"></span>{{if .Valid}}{{t $.Locale "common.run"}}{{else}}{{t $.Locale "quick_runs.invalid"}}{{end}}</button></form>{{end}}
+          {{if $.CanManage}}<details class="action-menu"><summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
+            {{if .Locked}}<span class="action-menu__disabled" data-locked-action="edit" aria-disabled="true"><span data-lucide="lock" aria-hidden="true"></span>{{t $.Locale "common.edit"}}<small>{{t $.Locale "quick_runs.unlock_to_edit"}}</small></span>{{else}}<a href="/config/quick-runs/{{.ID}}/edit" data-task-link data-locked-action="edit"><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a>{{end}}
+            <a href="/config/quick-runs/{{.ID}}/copy" data-task-link><span data-lucide="copy" aria-hidden="true"></span>{{t $.Locale "quick_runs.copy"}}</a>
+            <a href="/config/quick-runs/{{.ID}}/move-group" data-task-link><span data-lucide="folder-open" aria-hidden="true"></span>{{t $.Locale "quick_runs.move_group"}}</a>
+            <form method="post" action="/config/quick-runs/{{.ID}}/lock" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" name="locked" value="{{if .Locked}}0{{else}}1{{end}}"><span data-lucide="{{if .Locked}}unlock{{else}}lock{{end}}" aria-hidden="true"></span>{{if .Locked}}{{t $.Locale "quick_runs.unlock"}}{{else}}{{t $.Locale "quick_runs.lock"}}{{end}}</button></form>
+            <form method="post" action="/config/quick-runs/{{.ID}}/move" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" name="direction" value="up"><span data-lucide="arrow-up" aria-hidden="true"></span>{{t $.Locale "quick_runs.move_up"}}</button><button type="submit" name="direction" value="down"><span data-lucide="arrow-down" aria-hidden="true"></span>{{t $.Locale "quick_runs.move_down"}}</button></form>
+            {{if .Locked}}<span class="action-menu__disabled action-menu__disabled--danger" data-locked-action="delete" aria-disabled="true"><span data-lucide="lock" aria-hidden="true"></span>{{t $.Locale "common.delete"}}<small>{{t $.Locale "quick_runs.unlock_to_delete"}}</small></span>{{else}}<form method="post" action="/config/quick-runs/{{.ID}}/delete" data-confirm="{{t $.Locale "quick_runs.delete_confirm"}}" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-action" type="submit" name="confirm" value="yes"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "common.delete"}}</button></form>{{end}}
+          </div></details>{{end}}
+        </div>
+      </li>{{end}}
+    </ol>{{else}}<p class="empty-copy">{{t $.Locale "quick_runs.group_empty"}}</p>{{end}}
+    </div>
+  </section>
+  {{end}}
+  {{if and (not .QuickRuns) (not .Groups)}}
+  <section class="empty-state"><span data-lucide="zap" aria-hidden="true"></span><p>{{t .Locale "quick_runs.empty"}}</p>{{if .CanReadFiles}}<a class="button" href="/resources/files/">{{t .Locale "quick_runs.browse_scripts"}}</a>{{end}}</section>
+  {{end}}
+  {{end}}
+  </div>
+</main>
+</body>
+</html>

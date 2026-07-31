@@ -50,6 +50,28 @@ type Script struct {
 	Info   os.FileInfo
 }
 
+type PreparedDirectory struct {
+	RelativePath string
+	Path         string
+	Info         os.FileInfo
+}
+
+func (s *Store) PrepareDirectory(relative string) (PreparedDirectory, error) {
+	path, err := s.resolveDirectory(relative)
+	if err != nil {
+		return PreparedDirectory{}, err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return PreparedDirectory{}, err
+	}
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(relative)))
+	if clean == "." {
+		clean = ""
+	}
+	return PreparedDirectory{RelativePath: clean, Path: path, Info: info}, nil
+}
+
 func (s *Store) Upload(relative, name string, source io.Reader, maxBytes int64, replace bool, storedName string) (*Trashed, error) {
 	if err := validateName(name); err != nil {
 		return nil, err
@@ -148,6 +170,19 @@ func (s *Store) PrepareScript(relative string) (Script, error) {
 	return Script{Path: file.Name(), Digest: hex.EncodeToString(hash.Sum(nil)), Info: info}, nil
 }
 
+// RemoveRegular removes one regular managed file without following links. It is
+// intended for rolling back a file that was created by the same operation.
+func (s *Store) RemoveRegular(relative string) error {
+	target, info, err := s.resolveEntry(relative)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("only a regular file can be removed")
+	}
+	return os.Remove(target)
+}
+
 func (s *Store) Info(relative string) (os.FileInfo, error) {
 	_, info, err := s.resolveEntry(relative)
 	return info, err
@@ -226,6 +261,90 @@ func (s *Store) RestoreFromTrash(storedName, original string) error {
 		return fmt.Errorf("恢复回收条目: %w", err)
 	}
 	return nil
+}
+
+func (s *Store) RestoreFromTrashToAvailablePath(storedName, original string) (string, error) {
+	if err := validateName(storedName); err != nil {
+		return "", fmt.Errorf("回收条目标识无效: %w", err)
+	}
+	clean := filepath.Clean(filepath.FromSlash(original))
+	name := filepath.Base(clean)
+	if err := validateName(name); err != nil {
+		return "", err
+	}
+	parentRelative := filepath.Dir(clean)
+	if parentRelative == "." {
+		parentRelative = ""
+	}
+	parent, err := s.resolveDirectory(filepath.ToSlash(parentRelative))
+	if err != nil {
+		return "", fmt.Errorf("恢复目标目录无效: %w", err)
+	}
+	storedPath := filepath.Join(s.root, ".scriptboard-trash", storedName)
+	if _, err := os.Lstat(storedPath); err != nil {
+		return "", fmt.Errorf("回收条目不存在: %w", err)
+	}
+	for attempt := 0; ; attempt++ {
+		candidate := name
+		if attempt > 0 {
+			candidate = restoredCandidateName(name, attempt)
+		}
+		target := filepath.Join(parent, candidate)
+		if _, err := os.Lstat(target); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			return "", fmt.Errorf("检查恢复目标: %w", err)
+		}
+		if err := os.Rename(storedPath, target); err != nil {
+			return "", fmt.Errorf("恢复回收条目: %w", err)
+		}
+		restored := filepath.Join(parentRelative, candidate)
+		return filepath.ToSlash(restored), nil
+	}
+}
+
+func (s *Store) AvailableName(relative, name string) (string, error) {
+	if err := validateName(name); err != nil {
+		return "", err
+	}
+	parent, err := s.resolveDirectory(relative)
+	if err != nil {
+		return "", err
+	}
+	for attempt := 1; ; attempt++ {
+		candidate := name
+		if attempt > 1 {
+			candidate = availableCandidateName(name, attempt)
+		}
+		if _, err := os.Lstat(filepath.Join(parent, candidate)); os.IsNotExist(err) {
+			return candidate, nil
+		} else if err != nil {
+			return "", fmt.Errorf("检查可用名称: %w", err)
+		}
+	}
+}
+
+func availableCandidateName(name string, attempt int) string {
+	extension := filepath.Ext(name)
+	stem := strings.TrimSuffix(name, extension)
+	if stem == "" {
+		stem = name
+		extension = ""
+	}
+	return fmt.Sprintf("%s (%d)%s", stem, attempt, extension)
+}
+
+func restoredCandidateName(name string, attempt int) string {
+	extension := filepath.Ext(name)
+	stem := strings.TrimSuffix(name, extension)
+	if stem == "" {
+		stem = name
+		extension = ""
+	}
+	if attempt == 1 {
+		return stem + " (restored)" + extension
+	}
+	return fmt.Sprintf("%s (restored %d)%s", stem, attempt, extension)
 }
 
 func (s *Store) PurgeTrash(storedName string) error {
@@ -566,4 +685,8 @@ func validateName(name string) error {
 		return fmt.Errorf("名称属于 ScriptBoard 保留条目")
 	}
 	return nil
+}
+
+func ValidateName(name string) error {
+	return validateName(name)
 }

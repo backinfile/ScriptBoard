@@ -1,0 +1,159 @@
+<!doctype html>
+<!--
+THESIS: Website monitoring is an evidence ledger: verdict first, then the exact checks that justify it.
+OWN-WORLD: Cold-white calibration paper, graphite rules, one measured blue, and status expressed by text plus signal dots.
+STORY: Resolve confirmed failures, scan the 24-hour record, then open one website without losing the ledger.
+FIRST VIEWPORT: A flat current verdict and four counts lead directly into actionable failure evidence.
+FORM: Responsive signal ledger with a right-side detail task on capable clients and complete full-page fallback.
+-->
+<html lang="{{.Locale}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}">
+<script defer src="/assets/app-v2.js?v={{assetVersion}}"></script>
+<title>{{t .Locale "website.title"}} · ScriptBoard</title>
+</head>
+<body>
+<main class="workspace website-monitor-page" data-website-monitoring data-status-url="{{.DataURL}}" data-refresh-failed="{{t .Locale "website.refresh_failed"}}" data-counts-token="{{.Counts.Up}}:{{.Counts.Verifying}}:{{.Counts.Down}}:{{.Counts.Paused}}:{{.NeedsCare}}:{{len .Alerts}}" {{if .Reorder}}data-reorder-url="/monitor/websites/reorder" data-csrf-token="{{.CSRFToken}}" data-reorder-saving="{{t .Locale "website.reorder_saving"}}" data-reorder-saved="{{t .Locale "website.reorder_saved"}}" data-reorder-failed="{{t .Locale "website.reorder_failed"}}"{{end}}>
+<header class="page-heading website-page-heading">
+<div>
+<p class="page-eyebrow">{{t .Locale "website.eyebrow"}}</p>
+<h1>{{t .Locale "website.title"}}</h1>
+<p>{{t .Locale "website.description"}}</p>
+</div>
+{{if .CanManage}}<div class="heading-actions website-heading-actions">
+<a class="button" href="/monitor/websites/nginx" data-task-link>
+<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/><path d="m14.5 14.5 3 3"/></svg>
+{{t .Locale "website.scan_nginx"}}
+</a>
+<a class="button button--primary" href="/monitor/websites/new" data-task-link>
+<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+{{t .Locale "website.add"}}
+</a>
+</div>{{end}}
+</header>
+
+{{if .HasAny}}
+<section class="website-verdict website-verdict--{{if gt .Counts.Down 0}}down{{else if gt .Counts.Verifying 0}}verifying{{else}}up{{end}}" aria-labelledby="website-verdict-title">
+<div class="website-verdict__main">
+<span class="website-verdict__icon" aria-hidden="true">
+{{if gt .NeedsCare 0}}<svg class="lucide" viewBox="0 0 24 24"><path d="M10.3 3.7 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>{{else}}<svg class="lucide" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.2 2.2 4.8-5"/></svg>{{end}}
+</span>
+<div>
+<p class="website-kicker">{{t .Locale "website.current_state"}}</p>
+<h2 id="website-verdict-title">{{if gt .NeedsCare 0}}{{.NeedsCare}} {{if eq .NeedsCare 1}}{{t .Locale "website.needs_attention_one"}}{{else}}{{t .Locale "website.needs_attention"}}{{end}}{{else}}{{t .Locale "website.all_normal"}}{{end}}</h2>
+<p>{{if gt .Counts.Down 0}}{{.Counts.Down}} {{t .Locale "website.confirmed_down"}}{{end}}{{if and (gt .Counts.Down 0) (gt .Counts.Verifying 0)}} {{end}}{{if gt .Counts.Verifying 0}}{{.Counts.Verifying}} {{t .Locale "website.verifying_count"}}{{end}}{{if eq .NeedsCare 0}}{{t .Locale "website.recent_checks_healthy"}}{{end}}</p>
+</div>
+</div>
+<dl class="fact-strip website-counts">
+<div><dt>{{t .Locale "website.state.up"}}</dt><dd>{{.Counts.Up}}</dd></div>
+<div><dt>{{t .Locale "website.state.verifying"}}</dt><dd>{{.Counts.Verifying}}</dd></div>
+<div><dt>{{t .Locale "website.state.down"}}</dt><dd>{{.Counts.Down}}</dd></div>
+<div><dt>{{t .Locale "website.state.paused"}}</dt><dd>{{.Counts.Paused}}</dd></div>
+</dl>
+</section>
+
+{{range .Alerts}}
+<section class="website-alert website-alert--{{.State}}">
+<div><span class="website-status website-status--{{.State}}">{{.StateLabel}}</span><h3><a href="/monitor/websites/{{.ID}}" data-task-link>{{.Name}}</a></h3><small>{{.ScopeLabel}} · {{.MethodLabel}}</small></div>
+<p>{{.LatestSummary}}{{if not .LatestSummary}}{{t $.Locale "website.result_needs_review"}}{{end}}</p>
+<dl class="website-alert__facts">
+<div><dt>{{t $.Locale "website.failure_count"}}</dt><dd>{{.FailureCount}}</dd></div>
+<div><dt>{{t $.Locale "website.incident_started"}}</dt><dd>{{if .IncidentStartedAt.IsZero}}—{{else}}<time datetime="{{machineTime .IncidentStartedAt}}" data-local-time>{{localTime $.Locale .IncidentStartedAt}}</time>{{end}}</dd></div>
+<div><dt>{{t $.Locale "website.incident_duration"}}</dt><dd>{{if .IncidentDurationLabel}}{{.IncidentDurationLabel}}{{else}}—{{end}}</dd></div>
+<div><dt>{{t $.Locale "website.next_check"}}</dt><dd>{{if .NextCheckAt.IsZero}}—{{else}}<time datetime="{{machineTime .NextCheckAt}}" data-local-time>{{localTime $.Locale .NextCheckAt}}</time>{{end}}</dd></div>
+</dl>
+<div class="website-alert__latest"><strong>{{.LatestLabel}}</strong><small>{{if .LastCheckedAt.IsZero}}{{t $.Locale "website.never_checked"}}{{else}}{{t $.Locale "website.checked_at"}} <time datetime="{{machineTime .LastCheckedAt}}" data-local-time>{{localTime $.Locale .LastCheckedAt}}</time>{{end}}</small></div>
+</section>
+{{end}}
+
+{{if .Reorder}}
+<section class="website-reorder-guidance" aria-label="{{t .Locale "website.reorder_label"}}">
+<div>
+<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg>
+<strong>{{t .Locale "website.reordering"}}</strong>
+<span>{{t .Locale "website.reorder_description"}}</span>
+</div>
+<div class="website-reorder-actions">
+<button class="button button--quiet" type="button" data-reorder-cancel>{{t .Locale "common.cancel"}}</button>
+<button class="button button--primary" type="button" data-reorder-finish>{{t .Locale "website.finish_reorder"}}</button>
+<noscript><a class="button button--primary" href="/monitor/websites">{{t .Locale "website.finish_reorder"}}</a></noscript>
+</div>
+</section>
+<p class="website-reorder-status" data-reorder-status aria-live="polite"></p>
+{{else}}
+<form class="filter-toolbar website-filters" method="get" action="/monitor/websites">
+<label>{{t .Locale "website.filter.state"}}
+<select name="state">
+<option value="">{{t .Locale "website.filter.all_states"}}</option>
+<option value="down" {{if eq .State "down"}}selected{{end}}>{{t .Locale "website.state.down"}}</option>
+<option value="verifying" {{if eq .State "verifying"}}selected{{end}}>{{t .Locale "website.state.verifying"}}</option>
+<option value="up" {{if eq .State "up"}}selected{{end}}>{{t .Locale "website.state.up"}}</option>
+<option value="paused" {{if eq .State "paused"}}selected{{end}}>{{t .Locale "website.state.paused"}}</option>
+</select>
+</label>
+<label>{{t .Locale "website.filter.scope"}}
+<select name="scope">
+<option value="">{{t .Locale "website.filter.all_scopes"}}</option>
+<option value="local" {{if eq .Scope "local"}}selected{{end}}>{{t .Locale "website.scope.local"}}</option>
+<option value="external" {{if eq .Scope "external"}}selected{{end}}>{{t .Locale "website.scope.external"}}</option>
+</select>
+</label>
+<button class="button" type="submit">{{t .Locale "website.filter.apply"}}</button>
+{{if .HasFilters}}<a href="/monitor/websites">{{t .Locale "website.filter.clear"}}</a>{{end}}
+<span>{{.Total}} {{if eq .Total 1}}{{t .Locale "website.total_one"}}{{else}}{{t .Locale "website.total_suffix"}}{{end}}</span>
+{{if .CanManage}}<a class="button website-reorder-link" href="/monitor/websites?reorder=1">
+<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg>
+{{t .Locale "website.reorder"}}
+</a>{{end}}
+</form>
+{{end}}
+
+<section class="website-ledger" data-website-ledger aria-label="{{t .Locale "website.ledger"}}">
+<header class="website-ledger__head">{{if .Reorder}}<span aria-hidden="true"></span>{{end}}<span>{{t .Locale "website.ledger.website"}}</span><span>{{t .Locale "website.ledger.last_24h"}}</span><span>{{t .Locale "website.ledger.latest_check"}}</span><span>{{if .Reorder}}{{t .Locale "website.ledger.move"}}{{end}}</span></header>
+{{range .Monitors}}
+<article class="website-ledger__row" data-monitor-id="{{.ID}}" data-monitor-state="{{.State}}" data-monitor-latest="{{.LatestLabel}}" data-monitor-summary="{{.LatestSummary}}" data-monitor-latency="{{.LatencyLabel}}" data-monitor-checked="{{.CheckedToken}}" data-detail-href="/monitor/websites/{{.ID}}" tabindex="0" draggable="{{if $.Reorder}}true{{else}}false{{end}}">
+{{if $.Reorder}}<span class="website-reorder-index" aria-hidden="true"></span>{{end}}
+<div class="website-identity">
+<div class="website-identity__title"><a href="/monitor/websites/{{.ID}}" data-task-link>{{.Name}}</a><span class="website-status website-status--{{.State}}">{{.StateLabel}}</span></div>
+<code>{{.URL}}</code>
+<div><span>{{.ScopeLabel}}</span><span>{{.MethodLabel}}</span>{{if .TLSAttention}}<span class="website-attention">{{t $.Locale "website.certificate_expiring"}}</span>{{end}}</div>
+</div>
+<div class="website-history-cell">
+<div class="website-availability" aria-label="{{.Name}} {{t $.Locale "website.availability_aria"}}">{{range .Availability}}<span class="website-availability__{{.Tone}}{{if .Provisional}} website-availability__provisional{{end}}" title="{{.Title}}" {{if .Provisional}}role="img" aria-label="{{.Title}}"{{else}}aria-hidden="true"{{end}}></span>{{end}}</div>
+<div class="website-availability__axis"><span>{{t $.Locale "website.hours_ago_24"}}</span><span>{{t $.Locale "website.hours_ago_12"}}</span><span>{{t $.Locale "website.now"}}</span></div>
+</div>
+<div class="website-evidence">
+<strong>{{.LatestLabel}} · {{.LatencyLabel}}</strong>
+<span>{{.LatestSummary}}</span>
+<small>{{if .LastCheckedAt.IsZero}}{{t $.Locale "website.waiting_first_check"}}{{else}}<time datetime="{{machineTime .LastCheckedAt}}" data-local-time>{{localTime $.Locale .LastCheckedAt}}</time>{{end}}</small>
+</div>
+{{if $.Reorder}}
+<form class="website-move-actions" method="post" action="/monitor/websites/{{.ID}}/move" data-reorder-move-form>
+<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+<button type="submit" name="direction" value="up" {{if not .CanMoveUp}}disabled{{end}} aria-label="{{t $.Locale "website.move_up"}} {{.Name}}"><svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="m18 15-6-6-6 6"/></svg></button>
+<button type="submit" name="direction" value="down" {{if not .CanMoveDown}}disabled{{end}} aria-label="{{t $.Locale "website.move_down"}} {{.Name}}"><svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+</form>
+{{else}}
+<div class="website-row-actions">
+{{if eq .Kind "http"}}<a class="website-row-external" href="{{.URL}}" target="_blank" rel="noopener noreferrer" data-native aria-label="{{t $.Locale "website.open_in_new_tab"}} {{.Name}}" title="{{t $.Locale "website.open_in_new_tab"}}"><span data-lucide="external-link" aria-hidden="true"></span></a>{{end}}
+<a class="website-row-action" href="/monitor/websites/{{.ID}}" data-task-link aria-label="{{t $.Locale "website.view_details"}} {{.Name}}"><svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></a>
+</div>
+{{end}}
+</article>
+{{else}}
+<div class="website-empty website-empty--compact"><h2>{{t .Locale "website.empty_filtered_title"}}</h2><p>{{t .Locale "website.empty_filtered_description"}}</p></div>
+{{end}}
+</section>
+<p class="website-refresh-status" data-website-refresh-status aria-live="polite"></p>
+{{else}}
+<section class="website-empty">
+<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+<h2>{{t .Locale "website.empty_title"}}</h2>
+<p>{{t .Locale "website.empty_description"}}</p>
+</section>
+{{end}}
+</main>
+</body>
+</html>

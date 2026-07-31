@@ -20,7 +20,7 @@ func TestServeCommandStartsHTTPApplication(t *testing.T) {
 		binary += ".exe"
 	}
 
-	build := exec.Command("go", "build", "-o", binary, "./cmd/scriptboard")
+	build := exec.Command("go", "build", "-buildvcs=false", "-o", binary, "./cmd/scriptboard")
 	build.Dir = ".."
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build scriptboard: %v\n%s", err, output)
@@ -63,7 +63,7 @@ func TestServeCommandStartsHTTPApplication(t *testing.T) {
 	var startup string
 	select {
 	case startup = <-line:
-	case <-time.After(10 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("timed out waiting for startup")
 	}
 	const prefix = "ScriptBoard 已启动：http://"

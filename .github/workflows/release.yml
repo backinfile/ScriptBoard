@@ -1,18 +1,59 @@
 name: release
+
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
-    inputs:
-      version:
-        description: Version label
-        required: true
-        default: development
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   portable-archives:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: windows-latest
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Test
+        shell: pwsh
+        run: go test ./... -count=1
+      - name: Build archives, checksums, and signed manifest
+        shell: pwsh
+        env:
+          SCRIPTBOARD_UPDATE_KEY_ID: ${{ secrets.SCRIPTBOARD_UPDATE_KEY_ID }}
+          SCRIPTBOARD_UPDATE_PUBLIC_KEY: ${{ secrets.SCRIPTBOARD_UPDATE_PUBLIC_KEY }}
+          SCRIPTBOARD_UPDATE_SIGNING_KEY: ${{ secrets.SCRIPTBOARD_UPDATE_SIGNING_KEY }}
+          SCRIPTBOARD_UPDATE_NEXT_KEY_ID: ${{ secrets.SCRIPTBOARD_UPDATE_NEXT_KEY_ID }}
+          SCRIPTBOARD_UPDATE_NEXT_PUBLIC_KEY: ${{ secrets.SCRIPTBOARD_UPDATE_NEXT_PUBLIC_KEY }}
+        run: ./scripts/build-release.ps1 -Version "${{ github.ref_name }}"
+      - name: Verify Windows amd64 binary metadata
+        shell: pwsh
+        run: |
+          Expand-Archive "dist/scriptboard-${env:GITHUB_REF_NAME}-windows-amd64.zip" -DestinationPath windows-smoke
+          $info = & ./windows-smoke/scriptboard.exe version --json | ConvertFrom-Json
+          if ($info.tag -ne $env:GITHUB_REF_NAME -or -not $info.release_build -or $info.commit -ne $env:GITHUB_SHA) {
+            throw "Windows release metadata does not match the tag"
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scriptboard-portable-archives
+          path: dist/*
+          if-no-files-found: error
+
+  development-archives:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -21,15 +62,48 @@ jobs:
       - name: Test
         shell: pwsh
         run: go test ./... -count=1
-      - name: Build archives and checksums
+      - name: Build unsigned development archives
         shell: pwsh
-        run: ./scripts/build-release.ps1 -Version "${{ inputs.version || github.ref_name }}"
+        run: ./scripts/build-release.ps1 -Version development
       - uses: actions/upload-artifact@v4
         with:
-          name: scriptboard-portable-archives
+          name: scriptboard-development-archives
           path: dist/*
+          if-no-files-found: error
+
+  linux-smoke:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: portable-archives
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: scriptboard-portable-archives
+          path: dist
+      - name: Verify Linux amd64 binary metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir unpacked
+          tar -xzf "dist/scriptboard-${GITHUB_REF_NAME}-linux-amd64.tar.gz" -C unpacked
+          test "$(./unpacked/scriptboard version --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag"])')" = "$GITHUB_REF_NAME"
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [portable-archives, linux-smoke]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: scriptboard-portable-archives
+          path: dist
       - uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
         with:
           generate_release_notes: true
+          fail_on_unmatched_files: true
           files: dist/*

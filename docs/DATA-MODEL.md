@@ -2,6 +2,44 @@
 
 本文描述冻结 MVP 的逻辑数据模型。字段类型用于表达约束，具体 SQL 类型由实现选择；所有 ID 建议使用不可预测的 UUID，所有绝对时间以 UTC 保存。
 
+## 宿主分钟指标（Host Metric Minute）
+
+宿主状态以五秒实时样本形成完整自然分钟聚合，固定保留 24 小时：
+
+| 字段 | 约束与语义 |
+| --- | --- |
+| bucket_at | UTC 自然分钟起点，主键 |
+| sample_count | 参与聚合的有效五秒样本数 |
+| average_json | 公共资源与设备维度的分钟平均值 |
+| maximum_json | 同一组指标的分钟峰值 |
+
+未完成分钟不持久化；服务停止或异常退出会形成明确历史缺口。设备消失后的分钟历史保留至自然过期，当前状态标记为离线。该表属于可自动清理的诊断数据，不是审计记录。
+
+## 应用 Pin（Application Pin）
+
+| 字段 | 约束与语义 |
+| --- | --- |
+| id | 稳定应用 ID，主键 |
+| kind / identity | `host` 或 `docker` 与规范身份；组合唯一 |
+| name / technical | 最近一次显示名称与可执行路径或镜像 |
+| sort_order | 无上限 Pin 列表中的稳定顺序 |
+| created_at / updated_at | UTC |
+
+Pin 是展示状态，不赋予应用控制能力。当前快照存在时由实时事实覆盖保存的名称与技术信息；应用停止或 Docker 数据源不可用时仍保留 Pin 身份。
+
+## 应用分钟指标（Application Metric Minute）
+
+| 字段 | 约束与语义 |
+| --- | --- |
+| application_id / bucket_at | 应用 ID 与 UTC 自然分钟起点，组合主键 |
+| sample_count | 参与聚合的有效五秒样本数 |
+| cpu_average / cpu_maximum | 整机归一 CPU 平均值与峰值 |
+| memory_average / memory_maximum | 使用字节平均值与峰值 |
+| read_average / read_maximum | 读取速率平均值与峰值 |
+| write_average / write_maximum | 写入速率平均值与峰值 |
+
+该表只服务已 Pin 应用的 24 小时诊断历史，不是审计记录或长期监控存储。
+
 ## 1. 核心原则
 
 - 文件系统是受管条目的事实来源，不建立通用 File 表。
@@ -12,35 +50,35 @@
 
 ## 2. 实体
 
-### Admin
+### User
 
 | 字段 | 约束 |
 |---|---|
-| id | 唯一固定管理员 ID |
-| username | 唯一；默认 `admin` |
+| id | 稳定、不可预测 ID |
+| username | 实例内唯一；系统管理员初始默认 `admin` |
 | password_hash | 版本化 Argon2id 编码 |
-| must_change_password | 首次登录为 true |
-| credential_version | 凭据变更时递增，用于撤销 Session |
+| role | `administrator`、`maintainer`、`operator`、`viewer` 之一 |
+| enabled | 系统管理员始终为 true |
+| auth_version | 密码、用户名、角色或状态变更时递增，用于撤销 Session |
 | created_at / updated_at | UTC |
+
+数据库约束最多一个 `administrator`。普通用户不能提升为系统管理员；账号不永久删除。
 
 ### Session
 
 | 字段 | 约束 |
 |---|---|
-| id | 内部 ID |
-| admin_id | 固定关联 Admin |
 | token_hash | 唯一；不保存浏览器原 Token |
-| csrf_secret | 服务端 CSRF 派生材料 |
-| credential_version | 必须等于 Admin 当前版本 |
+| user_id | 关联 User |
+| csrf_token | 随机 CSRF Token |
+| auth_version | 必须等于 User 当前版本 |
 | created_at / last_seen_at / expires_at | 12 小时空闲、7 天绝对期限 |
-| source_ip / user_agent | 审计辅助；按最小必要保存 |
-| revoked_at | 可空 |
 
 ### LoginThrottle
 
 | 字段 | 约束 |
 |---|---|
-| key_type / key_value_hash | IP 或 admin 维度；避免保存不必要原值 |
+| key_type / key_value | 来源 IP 或目标用户名维度 |
 | failure_count | 成功登录后清零 |
 | blocked_until | 最长 5 分钟 |
 | updated_at | UTC |
@@ -56,6 +94,17 @@
 
 删除前必须检查 QuickRun 和 Schedule 引用；重命名在同一事务更新活动引用。
 
+### QuickRunGroup
+
+| 字段 | 约束 |
+|---|---|
+| id | UUID |
+| name | 管理员定义；忽略大小写唯一 |
+| sort_order | 分组显示顺序 |
+| created_at / updated_at | UTC |
+
+“未分组”是 `QuickRun.group_id` 为空时的派生展示区域，不保存为 QuickRunGroup。删除分组时，其中快捷执行项按原组内顺序追加到“未分组”，不会级联删除。
+
 ### QuickRun
 
 | 字段 | 约束 |
@@ -67,10 +116,25 @@
 | argument_template | 解析后的模板数组 |
 | timeout_seconds | 可空代表无超时 |
 | always_confirm | 默认 false |
-| source_run_id | 关联不可删除 Run |
-| sort_order | 管理员排序 |
+| source_run_id | 可空；从历史创建时关联不可删除 Run，从文件创建时为空 |
+| group_id | 可空；引用 QuickRunGroup，删除分组时置空 |
+| sort_order | 当前分组内排序；未分组条目共享独立排序域 |
+| locked | 默认 false；仅阻止管理员编辑和删除 |
 | validity | 派生值，不作为唯一事实来源 |
 | created_at / updated_at | UTC |
+
+复制 QuickRun 时保留脚本路径、参数模板、超时与可空来源 Run ID，但生成新 ID 且 `locked=false`。复制到原分组时新项紧随来源项；移动到其他分组或“未分组”时追加到目标排序域。软锁不阻止启动、复制、分组移动、排序或系统维护路径引用。
+
+### ScheduleGroup
+
+| 字段 | 约束 |
+|---|---|
+| id | UUID |
+| name | 管理员定义；忽略大小写唯一 |
+| sort_order | 分组显示顺序 |
+| created_at / updated_at | UTC |
+
+“未分组”是 `Schedule.group_id` 为空时的派生展示区域，不保存为 ScheduleGroup。删除分组只移除容器，其中计划保留并转为未分组。
 
 ### Schedule
 
@@ -78,6 +142,7 @@
 |---|---|
 | id | UUID |
 | name | 管理员定义 |
+| group_id | 可空；引用 ScheduleGroup，删除分组时置空 |
 | script_path | 规范相对路径 |
 | argument_text / argument_template | 变量引用模板 |
 | cron_expression | 标准五段 cron |
@@ -124,6 +189,7 @@
 | resolved_arguments | 启动时实际参数数组 |
 | source_type | `manual`、`quick_run`、`schedule` |
 | source_id / source_name_snapshot | 可空；历史解释 |
+| initiator_user_id / initiator_username_snapshot | 系统计划触发时为空 |
 | runtime_identity_name / runtime_identity_id | 用户名/UID 或账号/SID |
 | executor | 实际可执行文件与固定前缀参数 |
 | executor_fallback_failures | 更早候选无法启动原因 |
@@ -176,7 +242,7 @@ Run 不允许删除。
 | entry_type | file 或 directory |
 | size | 删除时估算 |
 | deleted_at | UTC |
-| deleted_by | 固定 admin |
+| deleted_by | 操作者 User ID 与用户名快照 |
 | affected_quick_run_ids / schedule_ids | 可存快照或通过审计关联 |
 
 ### AuditEvent
@@ -185,14 +251,15 @@ Run 不允许删除。
 |---|---|
 | id | UUID/有序 ID |
 | occurred_at | UTC |
-| actor_type | `admin`、`scheduler`、`system`、`startup_config` |
+| actor_user_id | Web 用户稳定 ID；系统操作为空 |
+| actor_username / actor_role | 操作者当时的用户名和角色快照 |
 | action | 稳定英文标识 |
 | target_type / target_id / target_snapshot | 最小必要信息 |
 | outcome | success / failure |
 | source_ip | Web 操作时保存 |
 | details | 结构化、已脱敏 |
 
-不保存密码、Session、CSRF、变量值、文件内容或请求正文。默认保留一年，不允许逐条修改。
+不保存密码、Cookie、Session、CSRF、变量值、文件内容或请求正文。默认保留一年，不允许逐条修改。
 
 ### GitProtection
 
@@ -306,7 +373,84 @@ state-root/
     scriptboard.log.1 ...
   migrations/
     pre-upgrade.db            # 最近一次升级前内部快照
+  runtime.json                # 当前进程写入的精确构建运行标记
+  updates/
+    cache.json                # 最近一次有效检查、ETag 与错误摘要
+    check.json                # 最近一次检查时间与错误（包括首次失败）
+    active.json               # 当前 Update Operation
+    operations/{id}/
+      operation.json          # 持久阶段、目标与恢复信息
+      result.json             # 提交、回滚或人工恢复结果
+      database-before-update.db # helper 在旧进程退出后创建的一致快照
+      release-manifest.json
+      release-manifest.json.sig
+      scriptboard-v*.{zip,tar.gz}
+      extracted/              # 安全解压后的 Release 内容
+      helper/                 # Windows 本次事务使用的独立 helper
   tmp/
 ```
 
 受管根目录与状态目录可覆盖，但必须互不包含；`.git/` 与回收站不得成为状态数据库或秘密存储位置。
+
+正式受管服务另有独立的程序布局，不属于 State Root：
+
+```text
+install-root/
+  install.json
+  current -> versions/<version>    # Linux 原子符号链接；Windows 服务配置指向版本目录
+  versions/<version>/
+    RELEASE.json
+    scriptboard[.exe]
+    scriptboard-updater[.exe]
+    ...                            # 对应平台完整 Release 内容
+  scriptboard-updater              # 仅 Linux；切换前原子刷新、供恢复使用的独立 helper
+  scriptboard-tray-launcher.exe    # 仅 Windows；稳定托盘入口
+```
+
+Update Operation 是文件系统持久化事务，不写入 SQLite 作为事实来源，以便数据库本身被恢复时仍能继续判断更新阶段。终态结果由应用在正常启动后幂等导入审计一次。
+
+## 8. 网站监控
+
+| 实体 | 关键字段与保留 |
+| --- | --- |
+| WebsiteMonitor | 配置 JSON、范围、协议、管理员顺序、状态、失败计数、配置代次、下一检查时间；删除后保留一年 |
+| WebsiteCheckResult | 成功、状态码、耗时、错误类别、技术证据、证书快照；保留 24 小时 |
+| WebsiteHourlyAggregate | 每小时检查数、成功/失败数、平均/最大耗时与错误类别计数；保留 30 天 |
+| WebsiteIncident | 确认故障的开始、结束、首个错误事实与关闭原因；完成后保留一年 |
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending
+    pending --> up: first check succeeds
+    pending --> verifying: first check fails
+    up --> verifying: check fails
+    verifying --> down: confirmation check fails
+    verifying --> up: confirmation check succeeds
+    down --> up: later check succeeds
+    pending --> paused: admin pauses
+    up --> paused: admin pauses
+    verifying --> paused: admin pauses
+    down --> paused: admin pauses
+    paused --> pending: admin resumes
+```
+
+配置更新递增 generation、清除旧证据并立即重新检查；较旧 generation
+的在途结果不得回写。管理员暂停或删除时同样递增 generation。WebSocket
+应用消息规则只处理文本帧和二进制帧；Ping/Pong 规则只处理 RFC 6455
+控制帧。
+
+## 9. 一次性 Run 源码
+
+`Run.script_kind` 区分 `managed` 与 `one_time`。一次性 Run 额外保存：
+
+| 字段 | 语义 |
+| --- | --- |
+| working_directory | 相对 Managed Root 的执行 workdir；空值表示根目录 |
+| source_filename | 私有 Run 目录内固定的 `source.{ext}` |
+| source_expired | 源码已回收，源码入口返回 410 |
+| source_audit_event_id | 回收前关联的 `start_one_time_run` 审计主键 |
+| script_sha256 | 实际执行源码的内容摘要，源码回收后仍保留 |
+
+源码不是 Managed Entry 或 Trash Entry。审计清理先删除源码，再在同一数据库事务中
+设置 `source_expired=1`、清空审计引用并删除审计条目。文件删除失败时三个数据库
+变更均不得发生。RunLogManifest 的 90 天/容量清理不处理源码文件。

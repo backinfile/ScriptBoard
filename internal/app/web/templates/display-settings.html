@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="{{.Locale}}">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "display.title"}} · ScriptBoard</title></head>
+<body>
+<main class="workspace settings-workspace" data-display-settings>
+  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "settings.eyebrow"}}</p><h1>{{t .Locale "settings.title"}}</h1><p>{{t .Locale "settings.description"}}</p></div></header>
+  {{template "settings-navigation" .SettingsNavigation}}
+  <section class="settings-content">
+      <header class="settings-section-heading"><div><h2>{{t .Locale "display.title"}}</h2><p>{{t .Locale "display.description"}}</p></div></header>
+      <section class="settings-block status-display-settings">
+        <header><h3>{{t .Locale "display.website_status_color"}}</h3><p>{{t .Locale "display.website_status_color_description"}}</p></header>
+        <fieldset class="status-display-options">
+          <legend class="sr-only">{{t .Locale "display.website_status_color"}}</legend>
+          <label class="status-display-option">
+            <input type="radio" name="website_fault_color" value="red">
+            <span class="status-display-option__copy"><strong>{{t .Locale "display.red"}}</strong><small>{{t .Locale "display.red_description"}}</small></span>
+            <span class="status-display-option__sample" aria-hidden="true"><span class="website-status website-status--up">{{t .Locale "website.state.up"}}</span><span class="website-status website-status--down">{{t .Locale "website.state.down"}}</span></span>
+          </label>
+          <label class="status-display-option status-display-option--magenta">
+            <input type="radio" name="website_fault_color" value="magenta">
+            <span class="status-display-option__copy"><strong>{{t .Locale "display.magenta"}}</strong><small>{{t .Locale "display.magenta_description"}}</small></span>
+            <span class="status-display-option__sample" aria-hidden="true"><span class="website-status website-status--up">{{t .Locale "website.state.up"}}</span><span class="website-status website-status--down">{{t .Locale "website.state.down"}}</span></span>
+          </label>
+        </fieldset>
+        <p class="status-display-feedback" data-status-display-feedback aria-live="polite">{{t .Locale "display.browser_preference"}}</p>
+      </section>
+  </section>
+</main>
+</body>
+</html>

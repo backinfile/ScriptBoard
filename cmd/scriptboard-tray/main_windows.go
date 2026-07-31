@@ -18,6 +18,7 @@ import (
 	"github.com/getlantern/systray"
 	"golang.org/x/sys/windows"
 
+	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/config"
 	"scriptboard/internal/platformservice"
 )
@@ -41,11 +42,12 @@ func main() {
 func onReady() {
 	systray.SetIcon(trayIcon())
 	systray.SetTitle("ScriptBoard")
-	systray.SetTooltip("ScriptBoard 服务控制器")
+	systray.SetTooltip("ScriptBoard " + buildinfo.Current().Version + " 服务控制器")
 	status := systray.AddMenuItem("正在检查状态…", "服务进程与 HTTP 就绪状态")
 	status.Disable()
 	systray.AddSeparator()
 	openWeb := systray.AddMenuItem("打开管理页面", "在默认浏览器中打开 ScriptBoard")
+	openUpdates := systray.AddMenuItem("打开应用更新", "检查官方稳定版并管理更新")
 	start := systray.AddMenuItem("启动服务", "启动 Windows 服务")
 	stop := systray.AddMenuItem("停止服务", "停止服务及活动 Run")
 	restart := systray.AddMenuItem("重启服务", "重启 Windows 服务")
@@ -74,6 +76,7 @@ func onReady() {
 		}
 	}()
 	go menuAction(openWeb.ClickedCh, func() { openURL(serviceURL()) })
+	go menuAction(openUpdates.ClickedCh, func() { openURL(serviceURL() + "/settings/updates") })
 	actions := make(chan trayAction)
 	go func() {
 		for action := range actions {

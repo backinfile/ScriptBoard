@@ -33,7 +33,7 @@ func TestAdminCanRunScriptAndReadCompletedOutput(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
-	response, err := client.Get(serverURL + "/files/")
+	response, err := client.Get(serverURL + "/resources/files/")
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestAdminCanRunScriptAndReadCompletedOutput(t *testing.T) {
 		t.Fatalf("read files: %v", err)
 	}
 
-	response, err = client.PostForm(serverURL+"/runs/start", url.Values{
+	response, err = client.PostForm(serverURL+"/history/runs/start", url.Values{
 		"script":     {scriptName},
 		"arguments":  {""},
 		"csrf_token": {formToken(t, page)},
@@ -52,7 +52,7 @@ func TestAdminCanRunScriptAndReadCompletedOutput(t *testing.T) {
 		t.Fatalf("start run: %v", err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther || !strings.HasPrefix(response.Header.Get("Location"), "/runs/") {
+	if response.StatusCode != http.StatusSeeOther || !strings.HasPrefix(response.Header.Get("Location"), "/history/runs/") {
 		t.Fatalf("start response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
 	runURL := serverURL + response.Header.Get("Location")
@@ -79,6 +79,69 @@ func TestAdminCanRunScriptAndReadCompletedOutput(t *testing.T) {
 	}
 }
 
+func TestRunDisplaysLocalizedOutput(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+		t.Fatalf("create managed root: %v", err)
+	}
+	const expected = "输出日志：中文正常"
+	scriptName := "unicode.sh"
+	scriptContent := []byte("printf '输出日志：中文正常\\n'\n")
+	if runtime.GOOS == "windows" {
+		scriptName = "unicode.ps1"
+		scriptContent = []byte("$text = -join [char[]](0x8F93,0x51FA,0x65E5,0x5FD7,0xFF1A,0x4E2D,0x6587,0x6B63,0x5E38)\r\n$bytes = [Text.Encoding]::GetEncoding(936).GetBytes($text + [Environment]::NewLine)\r\n[Console]::OpenStandardOutput().Write($bytes, 0, $bytes.Length)\r\n")
+	}
+	if err := os.WriteFile(filepath.Join(managedRoot, scriptName), scriptContent, 0o755); err != nil {
+		t.Fatalf("write unicode script: %v", err)
+	}
+	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	response, err := client.Get(serverURL + "/resources/files/")
+	if err != nil {
+		t.Fatalf("get files: %v", err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read files: %v", err)
+	}
+	response, err = client.PostForm(serverURL+"/history/runs/start", url.Values{
+		"script":     {scriptName},
+		"csrf_token": {formToken(t, page)},
+	})
+	if err != nil {
+		t.Fatalf("start unicode run: %v", err)
+	}
+	_ = response.Body.Close()
+	runURL := serverURL + response.Header.Get("Location")
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		response, err = client.Get(runURL)
+		if err != nil {
+			t.Fatalf("get unicode run: %v", err)
+		}
+		body, readErr := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if readErr != nil {
+			t.Fatalf("read unicode run: %v", readErr)
+		}
+		text := string(body)
+		if strings.Contains(text, "succeeded") {
+			if !strings.Contains(text, expected) {
+				t.Fatalf("completed run output is not valid UTF-8 text %q: %s", expected, text)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("unicode run did not complete: status=%d body=%s", response.StatusCode, text)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 func TestRunEventsAreAvailableAsSSE(t *testing.T) {
 	t.Parallel()
 
@@ -98,13 +161,13 @@ func TestRunEventsAreAvailableAsSSE(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
-	response, err := client.Get(serverURL + "/files/")
+	response, err := client.Get(serverURL + "/resources/files/")
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
 	filesPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/runs/start", url.Values{
+	response, err = client.PostForm(serverURL+"/history/runs/start", url.Values{
 		"script":     {scriptName},
 		"csrf_token": {formToken(t, filesPage)},
 	})
@@ -153,13 +216,13 @@ func TestAdminCanSaveAndStartQuickRunFromHistory(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
-	response, err := client.Get(serverURL + "/files/")
+	response, err := client.Get(serverURL + "/resources/files/")
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
 	filesPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/runs/start", url.Values{
+	response, err = client.PostForm(serverURL+"/history/runs/start", url.Values{
 		"script":     {scriptName},
 		"csrf_token": {formToken(t, filesPage)},
 	})
@@ -190,10 +253,10 @@ func TestAdminCanSaveAndStartQuickRunFromHistory(t *testing.T) {
 		t.Fatalf("save quick run: %v", err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/quick-runs" {
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/config/quick-runs" {
 		t.Fatalf("save quick run response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
-	response, err = client.Get(serverURL + "/quick-runs")
+	response, err = client.Get(serverURL + "/config/quick-runs")
 	if err != nil {
 		t.Fatalf("get quick runs: %v", err)
 	}
@@ -202,15 +265,219 @@ func TestAdminCanSaveAndStartQuickRunFromHistory(t *testing.T) {
 	if !strings.Contains(string(quickPage), "常用执行") {
 		t.Fatalf("saved quick run missing: %s", quickPage)
 	}
-	response, err = client.PostForm(serverURL+"/quick-runs/"+hiddenValue(t, quickPage, "id")+"/start", url.Values{
+	response, err = client.PostForm(serverURL+"/config/quick-runs/"+hiddenValue(t, quickPage, "id")+"/start", url.Values{
 		"csrf_token": {formToken(t, quickPage)},
 	})
 	if err != nil {
 		t.Fatalf("start quick run: %v", err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther || !strings.HasPrefix(response.Header.Get("Location"), "/runs/") {
+	if response.StatusCode != http.StatusSeeOther || !strings.HasPrefix(response.Header.Get("Location"), "/history/runs/") {
 		t.Fatalf("quick start response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+}
+
+func TestAdminCanCreateQuickRunFromManagedFileWithoutStartingIt(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+		t.Fatalf("create managed root: %v", err)
+	}
+	scriptName := "daily-check.sh"
+	scriptContent := "printf 'daily-check\\n'\n"
+	if runtime.GOOS == "windows" {
+		scriptName = "daily-check.cmd"
+		scriptContent = "@echo off\r\necho daily-check\r\n"
+	}
+	if err := os.WriteFile(filepath.Join(managedRoot, scriptName), []byte(scriptContent), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+
+	response, err := client.Get(serverURL + "/resources/files/")
+	if err != nil {
+		t.Fatalf("get files: %v", err)
+	}
+	filesPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	quickTaskPath := "/resources/files/quick-run/" + scriptName
+	if !strings.Contains(string(filesPage), `href="`+quickTaskPath+`?return_to=`) {
+		t.Fatalf("files page does not offer direct Quick Run creation: %s", filesPage)
+	}
+
+	response, err = client.Get(serverURL + quickTaskPath)
+	if err != nil {
+		t.Fatalf("get Quick Run task: %v", err)
+	}
+	taskPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	for _, expected := range []string{
+		`data-task-kind="quick-new"`,
+		`name="script" value="` + scriptName + `"`,
+		`name="name" autocomplete="off" value="daily-check"`,
+		`name="arguments"`,
+		`name="timeout_seconds"`,
+	} {
+		if !strings.Contains(string(taskPage), expected) {
+			t.Fatalf("Quick Run task does not contain %q: %s", expected, taskPage)
+		}
+	}
+
+	response, err = client.PostForm(serverURL+"/config/quick-runs", url.Values{
+		"csrf_token":      {formToken(t, taskPage)},
+		"name":            {"Daily check"},
+		"script":          {scriptName},
+		"arguments":       {"--mode safe"},
+		"timeout_seconds": {"45"},
+	})
+	if err != nil {
+		t.Fatalf("create Quick Run from file: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/config/quick-runs" {
+		t.Fatalf("create Quick Run response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+
+	response, err = client.Get(serverURL + "/config/quick-runs")
+	if err != nil {
+		t.Fatalf("get Quick Runs: %v", err)
+	}
+	quickPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	for _, expected := range []string{"Daily check", scriptName, "--mode safe", "45s"} {
+		if !strings.Contains(string(quickPage), expected) {
+			t.Fatalf("created Quick Run does not contain %q: %s", expected, quickPage)
+		}
+	}
+
+	response, err = client.Get(serverURL + "/history/runs")
+	if err != nil {
+		t.Fatalf("get Runs: %v", err)
+	}
+	runsPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if strings.Contains(string(runsPage), scriptName) {
+		t.Fatalf("creating a Quick Run unexpectedly started the script: %s", runsPage)
+	}
+
+	response, err = client.PostForm(serverURL+"/config/quick-runs/"+hiddenValue(t, quickPage, "id")+"/start", url.Values{
+		"csrf_token": {formToken(t, quickPage)},
+	})
+	if err != nil {
+		t.Fatalf("start file-created Quick Run: %v", err)
+	}
+	_ = response.Body.Close()
+	runPath := response.Header.Get("Location")
+	if response.StatusCode != http.StatusSeeOther || !strings.HasPrefix(runPath, "/history/runs/") {
+		t.Fatalf("start file-created Quick Run response: status=%d location=%q", response.StatusCode, runPath)
+	}
+	response, err = client.Get(serverURL + runPath)
+	if err != nil {
+		t.Fatalf("get file-created Quick Run detail: %v", err)
+	}
+	runPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if !strings.Contains(string(runPage), "Daily check") {
+		t.Fatalf("Run detail does not retain Quick Run source name: %s", runPage)
+	}
+}
+
+func TestQuickRunFromFileRejectsInvalidConfiguration(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	managedRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+		t.Fatalf("create managed root: %v", err)
+	}
+	scriptName := "safe.sh"
+	if runtime.GOOS == "windows" {
+		scriptName = "safe.cmd"
+	}
+	if err := os.WriteFile(filepath.Join(managedRoot, scriptName), []byte("echo safe\n"), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(managedRoot, "notes.txt"), []byte("not executable"), 0o644); err != nil {
+		t.Fatalf("write non-script: %v", err)
+	}
+	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	response, err := client.Get(serverURL + "/resources/files/quick-run/" + scriptName)
+	if err != nil {
+		t.Fatalf("get Quick Run task: %v", err)
+	}
+	taskPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	token := formToken(t, taskPage)
+
+	response, err = client.Get(serverURL + "/resources/files/quick-run/notes.txt")
+	if err != nil {
+		t.Fatalf("get non-script Quick Run task: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("non-script Quick Run task status=%d, want %d", response.StatusCode, http.StatusNotFound)
+	}
+
+	valid := url.Values{
+		"csrf_token":      {token},
+		"name":            {"Safe"},
+		"script":          {scriptName},
+		"arguments":       {""},
+		"timeout_seconds": {"0"},
+	}
+	tests := []struct {
+		name   string
+		change func(url.Values)
+		status int
+	}{
+		{name: "missing CSRF", change: func(values url.Values) { values.Del("csrf_token") }, status: http.StatusForbidden},
+		{name: "empty name", change: func(values url.Values) { values.Set("name", " ") }, status: http.StatusBadRequest},
+		{name: "timeout too large", change: func(values url.Values) { values.Set("timeout_seconds", "86401") }, status: http.StatusBadRequest},
+		{name: "malformed arguments", change: func(values url.Values) { values.Set("arguments", `"unterminated`) }, status: http.StatusBadRequest},
+		{name: "missing variable", change: func(values url.Values) { values.Set("arguments", "{{MISSING}}") }, status: http.StatusBadRequest},
+		{name: "non-script file", change: func(values url.Values) { values.Set("script", "notes.txt") }, status: http.StatusBadRequest},
+		{name: "path traversal", change: func(values url.Values) { values.Set("script", "../outside.cmd") }, status: http.StatusBadRequest},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			values := url.Values{}
+			for key, items := range valid {
+				values[key] = append([]string(nil), items...)
+			}
+			test.change(values)
+			response, err := client.PostForm(serverURL+"/config/quick-runs", values)
+			if err != nil {
+				t.Fatalf("post invalid Quick Run: %v", err)
+			}
+			_ = response.Body.Close()
+			if response.StatusCode != test.status {
+				t.Fatalf("status=%d, want %d", response.StatusCode, test.status)
+			}
+		})
+	}
+
+	values := url.Values{}
+	for key, items := range valid {
+		values[key] = append([]string(nil), items...)
+	}
+	values.Set("return_to", "https://example.com/steal")
+	request, err := http.NewRequest(http.MethodPost, serverURL+"/config/quick-runs", strings.NewReader(values.Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("X-ScriptBoard-Navigation", "pjax")
+	response, err = client.Do(request)
+	if err != nil {
+		t.Fatalf("post Quick Run with external return target: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/config/quick-runs" {
+		t.Fatalf("unsafe return target was not rejected: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
 }
 
@@ -233,13 +500,13 @@ func TestAdminCanStopRunningScript(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
-	response, err := client.Get(serverURL + "/files/")
+	response, err := client.Get(serverURL + "/resources/files/")
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
 	filesPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/runs/start", url.Values{
+	response, err = client.PostForm(serverURL+"/history/runs/start", url.Values{
 		"script":     {scriptName},
 		"csrf_token": {formToken(t, filesPage)},
 	})
@@ -248,7 +515,7 @@ func TestAdminCanStopRunningScript(t *testing.T) {
 	}
 	_ = response.Body.Close()
 	runPath := response.Header.Get("Location")
-	if !strings.HasPrefix(runPath, "/runs/") {
+	if !strings.HasPrefix(runPath, "/history/runs/") {
 		t.Fatalf("run location = %q", runPath)
 	}
 
@@ -332,13 +599,13 @@ func TestRunningScriptCannotBeDeleted(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
-	response, err := client.Get(serverURL + "/files/")
+	response, err := client.Get(serverURL + "/resources/files/")
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
 	filesPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/runs/start", url.Values{
+	response, err = client.PostForm(serverURL+"/history/runs/start", url.Values{
 		"script":     {scriptName},
 		"csrf_token": {formToken(t, filesPage)},
 	})
@@ -361,7 +628,7 @@ func TestRunningScriptCannotBeDeleted(t *testing.T) {
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	response, err = client.PostForm(serverURL+"/files/delete", url.Values{
+	response, err = client.PostForm(serverURL+"/resources/files/delete", url.Values{
 		"path":       {scriptName},
 		"csrf_token": {formToken(t, filesPage)},
 	})
@@ -397,13 +664,13 @@ func TestNonZeroRunFailsAndPreservesOutputSources(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
-	response, err := client.Get(serverURL + "/files/")
+	response, err := client.Get(serverURL + "/resources/files/")
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
 	filesPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/runs/start", url.Values{
+	response, err = client.PostForm(serverURL+"/history/runs/start", url.Values{
 		"script":     {scriptName},
 		"csrf_token": {formToken(t, filesPage)},
 	})
@@ -453,13 +720,13 @@ func TestRunTimeoutEndsAsTimedOut(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{ManagedRoot: managedRoot, StateRoot: stateRoot, RunTimeoutGrace: 100 * time.Millisecond})
-	response, err := client.Get(serverURL + "/files/")
+	response, err := client.Get(serverURL + "/resources/files/")
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
 	filesPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/runs/start", url.Values{
+	response, err = client.PostForm(serverURL+"/history/runs/start", url.Values{
 		"script":          {scriptName},
 		"timeout_seconds": {"1"},
 		"csrf_token":      {formToken(t, filesPage)},
@@ -506,13 +773,13 @@ func TestRunResolvesVariableAsWholeArgument(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
-	response, err := client.Get(serverURL + "/variables")
+	response, err := client.Get(serverURL + "/resources/variables")
 	if err != nil {
 		t.Fatalf("get variables: %v", err)
 	}
 	variablesPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/variables", url.Values{
+	response, err = client.PostForm(serverURL+"/resources/variables", url.Values{
 		"name":       {"GREETING"},
 		"value":      {"hello variable"},
 		"csrf_token": {formToken(t, variablesPage)},
@@ -524,13 +791,13 @@ func TestRunResolvesVariableAsWholeArgument(t *testing.T) {
 	if response.StatusCode != http.StatusSeeOther {
 		t.Fatalf("create variable status = %d", response.StatusCode)
 	}
-	response, err = client.Get(serverURL + "/files/")
+	response, err = client.Get(serverURL + "/resources/files/")
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
 	filesPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/runs/start", url.Values{
+	response, err = client.PostForm(serverURL+"/history/runs/start", url.Values{
 		"script":     {scriptName},
 		"arguments":  {"{{GREETING}}"},
 		"csrf_token": {formToken(t, filesPage)},

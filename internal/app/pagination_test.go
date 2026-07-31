@@ -15,7 +15,7 @@ func TestVariableListUsesServerSidePagination(t *testing.T) {
 
 	root := t.TempDir()
 	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
-	response, err := client.Get(serverURL + "/variables")
+	response, err := client.Get(serverURL + "/resources/variables")
 	if err != nil {
 		t.Fatalf("get variables: %v", err)
 	}
@@ -28,7 +28,7 @@ func TestVariableListUsesServerSidePagination(t *testing.T) {
 
 	for index := 0; index < 21; index++ {
 		name := fmt.Sprintf("VAR_%02d", index)
-		response, err = client.PostForm(serverURL+"/variables", url.Values{
+		response, err = client.PostForm(serverURL+"/resources/variables", url.Values{
 			"name":       {name},
 			"value":      {fmt.Sprintf("value-%02d", index)},
 			"csrf_token": {csrfToken},
@@ -42,28 +42,28 @@ func TestVariableListUsesServerSidePagination(t *testing.T) {
 		}
 	}
 
-	response, err = client.Get(serverURL + "/variables")
+	response, err = client.Get(serverURL + "/resources/variables")
 	if err != nil {
 		t.Fatalf("get first variable page: %v", err)
 	}
 	firstPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	firstBody := string(firstPage)
-	if !strings.Contains(firstBody, "共 21 条 · 第 1 / 2 页") || !strings.Contains(firstBody, `value="VAR_00"`) {
+	if !strings.Contains(firstBody, "21 records · 1 / 2") || !strings.Contains(firstBody, `>VAR_00</code>`) {
 		t.Fatalf("first page is missing pagination metadata or first row: %s", firstBody)
 	}
-	if strings.Contains(firstBody, `value="VAR_20"`) {
+	if strings.Contains(firstBody, `>VAR_20</code>`) {
 		t.Fatalf("first page contains a row from the second page: %s", firstBody)
 	}
 
-	response, err = client.Get(serverURL + "/variables?page=2")
+	response, err = client.Get(serverURL + "/resources/variables?page=2")
 	if err != nil {
 		t.Fatalf("get second variable page: %v", err)
 	}
 	secondPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	secondBody := string(secondPage)
-	if !strings.Contains(secondBody, "共 21 条 · 第 2 / 2 页") || !strings.Contains(secondBody, `value="VAR_20"`) {
+	if !strings.Contains(secondBody, "21 records · 2 / 2") || !strings.Contains(secondBody, `>VAR_20</code>`) {
 		t.Fatalf("second page is missing pagination metadata or final row: %s", secondBody)
 	}
 	if strings.Contains(secondBody, `value="VAR_00"`) {

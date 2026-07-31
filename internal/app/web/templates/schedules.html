@@ -1,5 +1,63 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v=6"><script defer src="/assets/app-v2.js?v=6"></script><title>计划 · ScriptBoard</title></head><body><main><header class="workspace-heading"><h1>计划</h1><p>配置按时触发的脚本，集中查看下一次运行与最近结果。</p></header>
-<details class="creator"><summary><span><strong>创建计划</strong><small>指定脚本、Cron 表达式和运行限制</small></span></summary><form class="creator-form" method="post" action="/schedules"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label>名称 <input name="name" placeholder="例如：每日备份" required></label><label class="wide-field">脚本路径 <input name="script" placeholder="scripts/backup.ps1" required></label><label>参数 <input name="arguments" placeholder="可选"></label><label class="wide-field">五段 cron <input name="expression" list="cron-presets" placeholder="0 0 * * *" required><datalist id="cron-presets"><option value="*/5 * * * *">每 5 分钟</option><option value="0 * * * *">每小时</option><option value="0 0 * * *">每天</option><option value="0 0 * * 1">每周一</option><option value="0 0 1 * *">每月首日</option></datalist></label><label class="compact-field">超时秒数 <input name="timeout_seconds" type="number" min="0" max="86400" placeholder="0"></label><label class="check-field"><input name="disallow_overlap" type="checkbox" value="1">禁止重叠运行</label><button type="submit">创建计划</button></form></details>
-<div class="table-shell"><table><thead><tr><th>配置</th><th>未来五次触发</th><th>最近结果</th><th>操作</th></tr></thead><tbody>{{range .Schedules}}<tr><td><form class="record-editor" method="post" action="/schedules/{{.ID}}/update"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input name="name" value="{{.Name}}" aria-label="计划名称" required><input name="script" value="{{.ScriptPath}}" aria-label="脚本路径" required><input name="arguments" value="{{.ArgumentsTemplate}}" aria-label="参数"><input name="expression" value="{{.Expression}}" aria-label="Cron 表达式" required><input name="timeout_seconds" type="number" value="{{.TimeoutSeconds}}" aria-label="超时秒数"><label><input name="disallow_overlap" type="checkbox" value="1" {{if not .AllowOverlap}}checked{{end}}>禁止重叠</label><button>保存配置</button></form></td><td><ol>{{range .NextFive}}<li>{{.}}</li>{{end}}</ol></td><td><span class="status-chip {{if not .Enabled}}status-chip--off{{end}}">{{if .Enabled}}已启用{{else}}已停用{{end}}</span><br>{{.LastResult}}{{if .LastError}}<br>{{.LastError}}{{end}}<input type="hidden" name="last_run_id" value="{{.LastRunID}}"></td><td><form method="post" action="/schedules/{{.ID}}/toggle"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button name="enabled" value="{{if .Enabled}}0{{else}}1{{end}}">{{if .Enabled}}停用{{else}}启用{{end}}</button></form><form method="post" action="/schedules/{{.ID}}/delete"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button name="confirm" value="yes">删除</button></form></td></tr>{{else}}<tr><td colspan="4">暂无计划</td></tr>{{end}}</tbody></table></div>
-<nav class="pagination" aria-label="计划分页"><span class="pagination__summary">共 {{.Pagination.Total}} 条 · 第 {{.Pagination.Page}} / {{.Pagination.PageCount}} 页</span><span class="pagination__actions">{{if .Pagination.HasPrevious}}<a href="{{.Pagination.PreviousURL}}">← 上一页</a>{{else}}<span class="pagination__disabled">← 上一页</span>{{end}}{{if .Pagination.HasNext}}<a href="{{.Pagination.NextURL}}">下一页 →</a>{{else}}<span class="pagination__disabled">下一页 →</span>{{end}}</span></nav></main></body></html>
+<html lang="{{.Locale}}">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "schedules.title"}} · ScriptBoard</title></head>
+<body>
+<main class="workspace" data-grouped-records="schedule-groups">
+  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "schedules.eyebrow"}}</p><h1>{{t .Locale "schedules.title"}}</h1><p>{{t .Locale "schedules.description"}}</p></div>{{if .CanManage}}<div class="heading-actions"><a class="button" href="/config/schedules/groups/new" data-task-link><span data-lucide="folder-plus" aria-hidden="true"></span>{{t .Locale "schedules.create_group"}}</a><a class="button button--primary" href="/config/schedules/new" data-task-link><span data-lucide="calendar-plus" aria-hidden="true"></span>{{t .Locale "schedules.create"}}</a></div>{{end}}</header>
+  <div data-deferred-region>
+  {{if .DeferredData}}
+  {{template "deferred-loading" .}}
+  {{else}}
+  {{range .Groups}}
+  <section class="quick-run-group" data-record-group="{{.ID}}" data-schedule-group="{{.ID}}" data-group-name="{{.Name}}">
+    <header class="quick-run-group__header">
+      <div class="quick-run-group__heading">
+        <h2><button class="quick-run-group__toggle" type="button" data-group-toggle aria-expanded="true" aria-controls="schedule-group-{{.ID}}">
+          <span class="quick-run-group__chevron" data-lucide="chevron-right" aria-hidden="true"></span>
+          <span class="quick-run-group__identity"><span data-lucide="{{if .Ungrouped}}folder-open{{else}}folder{{end}}" aria-hidden="true"></span><span class="quick-run-group__name">{{.Name}}</span></span>
+        </button></h2>
+        <small>{{.ScheduleCount}} {{t $.Locale "schedules.items"}}</small>
+      </div>
+      {{if and $.CanManage (not .Ungrouped)}}
+      <details class="action-menu quick-run-group__menu"><summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
+        <a href="/config/schedules/groups/{{.ID}}/edit" data-task-link><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a>
+        <form method="post" action="/config/schedules/groups/{{.ID}}/move" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" name="direction" value="up"><span data-lucide="arrow-up" aria-hidden="true"></span>{{t $.Locale "schedules.move_up"}}</button><button type="submit" name="direction" value="down"><span data-lucide="arrow-down" aria-hidden="true"></span>{{t $.Locale "schedules.move_down"}}</button></form>
+        <form method="post" action="/config/schedules/groups/{{.ID}}/delete" data-confirm="{{t $.Locale "schedules.group_delete_confirm"}}" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-action" type="submit" name="confirm" value="yes"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "common.delete"}}</button></form>
+      </div></details>
+      {{end}}
+    </header>
+    <div class="quick-run-group__body" id="schedule-group-{{.ID}}" data-group-body>
+    {{if .Items}}<ol class="ordered-records schedule-records">
+      {{range $index, $schedule := .Items}}<li data-schedule-id="{{.ID}}">
+        <div class="record-order" aria-hidden="true">{{printf "%02d" $index}}</div>
+        <div class="ordered-record__identity"><span data-lucide="calendar-clock" aria-hidden="true"></span><div>
+          <h3>{{.Name}}</h3>
+          <code>{{.ScriptPath}}</code>
+          <div class="schedule-record__state"><span class="status-chip" data-state="{{if .Enabled}}enabled{{else}}disabled{{end}}"><span class="status-dot" aria-hidden="true"></span>{{if .Enabled}}{{t $.Locale "common.enabled"}}{{else}}{{t $.Locale "common.disabled"}}{{end}}</span>{{if .LastResult}}<small>{{resultText $.Locale .LastResult}}{{if .LastRunID}} · <a href="/history/runs?q={{urlquery .Name}}&amp;schedule_id={{urlquery .ID}}&amp;focus=search" data-focus-after-navigation="#run-search">{{t $.Locale "schedules.view_run"}}</a>{{end}}</small>{{end}}</div>
+          <input type="hidden" name="last_run_id" value="{{.LastRunID}}">
+        </div></div>
+        <dl class="ordered-record__facts schedule-record__facts">
+          <div><dt>{{t $.Locale "schedules.timing"}}</dt><dd><code>{{.Expression}}</code><small>{{if .AllowOverlap}}{{t $.Locale "schedules.overlap_allowed"}}{{else}}{{t $.Locale "schedules.overlap_blocked"}}{{end}} · {{.TimeoutSeconds}}s</small></dd></div>
+          <div><dt>{{t $.Locale "schedules.next_run"}}</dt><dd>{{if and .Enabled (not .NextFireAt.IsZero)}}<time datetime="{{instanceMachineTime .NextFireAt}}">{{instanceTime $.Locale .NextFireAt}}</time>{{else}}—{{end}}</dd></div>
+        </dl>
+        {{if $.CanManage}}<div class="record-actions record-actions__group">
+        <form method="post" action="/config/schedules/{{.ID}}/run"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="button button--compact" type="submit"><span data-lucide="play" aria-hidden="true"></span>{{t $.Locale "schedules.run_now"}}</button></form>
+        <details class="action-menu"><summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
+          <a href="/config/schedules/{{.ID}}/edit" data-task-link><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a>
+          <form method="post" action="/config/schedules/{{.ID}}/toggle" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" name="enabled" value="{{if .Enabled}}0{{else}}1{{end}}"><span data-lucide="{{if .Enabled}}pause{{else}}play{{end}}" aria-hidden="true"></span>{{if .Enabled}}{{t $.Locale "common.disable"}}{{else}}{{t $.Locale "common.enable"}}{{end}}</button></form>
+          <form method="post" action="/config/schedules/{{.ID}}/delete" data-confirm="{{t $.Locale "schedules.delete_confirm"}}" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-action" type="submit" name="confirm" value="yes"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "common.delete"}}</button></form>
+        </div></details>
+        </div>{{end}}
+      </li>{{end}}
+    </ol>{{else}}<p class="empty-copy">{{t $.Locale "schedules.group_empty"}}</p>{{end}}
+    </div>
+  </section>
+  {{end}}
+  {{if and (not .Schedules) (not .Groups)}}
+  <section class="empty-state"><span data-lucide="calendar-clock" aria-hidden="true"></span><p>{{t .Locale "schedules.empty"}}</p>{{if .CanManage}}<a class="button" href="/config/schedules/new" data-task-link>{{t .Locale "schedules.create"}}</a>{{end}}</section>
+  {{end}}
+  {{end}}
+  </div>
+</main>
+</body>
+</html>

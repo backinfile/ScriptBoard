@@ -1,0 +1,403 @@
+package app
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"os"
+	pathpkg "path"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"scriptboard/internal/managedfiles"
+	"scriptboard/internal/runmanager"
+)
+
+const maxQuickExecutionSourceBytes = 1 << 20
+
+type scriptLanguageOption struct {
+	ID        string
+	Label     string
+	Extension string
+}
+
+func platformScriptLanguages() []scriptLanguageOption {
+	if runtime.GOOS == "windows" {
+		return []scriptLanguageOption{
+			{ID: "powershell", Label: "PowerShell", Extension: ".ps1"},
+			{ID: "batch", Label: "Batch", Extension: ".cmd"},
+			{ID: "python", Label: "Python", Extension: ".py"},
+		}
+	}
+	return []scriptLanguageOption{
+		{ID: "shell", Label: "Shell", Extension: ".sh"},
+		{ID: "python", Label: "Python", Extension: ".py"},
+		{ID: "powershell", Label: "PowerShell", Extension: ".ps1"},
+	}
+}
+
+func platformScriptLanguage(id string) (scriptLanguageOption, error) {
+	for _, language := range platformScriptLanguages() {
+		if language.ID == id {
+			return language, nil
+		}
+	}
+	return scriptLanguageOption{}, errors.New("script language is not supported on this host")
+}
+
+func validateQuickExecutionSource(source string) error {
+	if source == "" {
+		return errors.New("source is required")
+	}
+	if len([]byte(source)) > maxQuickExecutionSourceBytes {
+		return fmt.Errorf("source exceeds the %d-byte limit", maxQuickExecutionSourceBytes)
+	}
+	if !utf8.ValidString(source) || strings.ContainsRune(source, 0) {
+		return errors.New("source must be valid UTF-8 without NUL bytes")
+	}
+	return nil
+}
+
+func parseQuickExecutionTimeout(value string) (int, error) {
+	if value == "" {
+		return 0, nil
+	}
+	seconds, err := strconv.Atoi(value)
+	if err != nil || seconds < 0 || seconds > 24*60*60 {
+		return 0, errors.New("timeout must be from 0 to 86400 seconds")
+	}
+	return seconds, nil
+}
+
+func (a *App) managedDirectories(response http.ResponseWriter, request *http.Request) {
+	relative := strings.Trim(request.URL.Query().Get("path"), "/")
+	entries, err := a.managed.List(relative)
+	if err != nil {
+		http.Error(response, "working directory is invalid: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	directories := make([]string, 0)
+	for _, entry := range entries {
+		if entry.Kind == managedfiles.Directory {
+			directories = append(directories, entry.Name)
+		}
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(response).Encode(struct {
+		Path        string   `json:"path"`
+		Directories []string `json:"directories"`
+	}{Path: filepath.ToSlash(relative), Directories: directories})
+}
+
+func (a *App) oneTimeRunTask(response http.ResponseWriter, request *http.Request) {
+	a.renderTaskPage(response, request, taskPageData{
+		Kind:             "one-time-run",
+		Title:            webText(resolveWebLocale(request), "task.one_time.title"),
+		Description:      webText(resolveWebLocale(request), "task.one_time.description"),
+		BackURL:          "/config/quick-runs",
+		Action:           "/config/quick-runs/one-time",
+		Languages:        platformScriptLanguages(),
+		WorkingDirectory: ".",
+	})
+}
+
+func (a *App) quickCreateTask(response http.ResponseWriter, request *http.Request) {
+	groups, err := a.loadQuickRunGroups()
+	if err != nil {
+		http.Error(response, "Unable to read Quick Run groups", http.StatusInternalServerError)
+		return
+	}
+	a.renderTaskPage(response, request, taskPageData{
+		Kind:             "quick-create",
+		Title:            webText(resolveWebLocale(request), "task.quick_create.title"),
+		Description:      webText(resolveWebLocale(request), "task.quick_create.description"),
+		BackURL:          "/config/quick-runs",
+		Action:           "/config/quick-runs/from-source",
+		Languages:        platformScriptLanguages(),
+		Groups:           groups,
+		WorkingDirectory: ".",
+	})
+}
+
+func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "CSRF token is invalid", http.StatusForbidden)
+		return
+	}
+	language, err := platformScriptLanguage(request.FormValue("language"))
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := a.runs.ValidateExecutor(language.Extension); err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
+	source := request.FormValue("source")
+	if err := validateQuickExecutionSource(source); err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
+	workingDirectory := strings.Trim(request.FormValue("working_directory"), "/")
+	if _, err := a.managed.List(workingDirectory); err != nil {
+		http.Error(response, "working directory is invalid: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	fileName := strings.TrimSpace(request.FormValue("file_name"))
+	if err := managedfiles.ValidateName(fileName); err != nil {
+		http.Error(response, "file name is invalid: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	fileName += language.Extension
+	name := strings.TrimSpace(request.FormValue("name"))
+	if name == "" {
+		name = strings.TrimSpace(request.FormValue("file_name"))
+	}
+	if name == "" || len([]byte(name)) > 256 {
+		http.Error(response, "Quick Run name is invalid", http.StatusBadRequest)
+		return
+	}
+	timeoutSeconds, err := parseQuickExecutionTimeout(request.FormValue("timeout_seconds"))
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
+	variables, err := a.loadVariables()
+	if err != nil {
+		http.Error(response, "Unable to read variables", http.StatusInternalServerError)
+		return
+	}
+	argumentsTemplate := request.FormValue("arguments")
+	if err := runmanager.ValidateArgumentsTemplate(argumentsTemplate, variables); err != nil {
+		http.Error(response, "Arguments are invalid: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	groupID, err := a.resolveQuickRunGroupID(request.FormValue("group_id"))
+	if err != nil {
+		http.Error(response, "Quick Run group does not exist", http.StatusConflict)
+		return
+	}
+
+	action := request.FormValue("conflict_action")
+	if !validConflictAction(action) || action == conflictActionSkip {
+		http.Error(response, "conflict action is invalid", http.StatusBadRequest)
+		return
+	}
+	targetPath := pathpkg.Join(workingDirectory, fileName)
+	targetInfo, targetErr := a.managed.Info(targetPath)
+	targetExists := targetErr == nil
+	if targetErr != nil && !os.IsNotExist(targetErr) {
+		http.Error(response, "Unable to inspect target: "+targetErr.Error(), http.StatusBadRequest)
+		return
+	}
+	if targetExists && action == "" {
+		suggested, suggestErr := a.managed.AvailableName(workingDirectory, fileName)
+		if suggestErr != nil {
+			http.Error(response, "Unable to suggest a file name", http.StatusInternalServerError)
+			return
+		}
+		a.renderQuickCreateConflict(response, request, quickCreateValues{
+			WorkingDirectory: workingDirectory, Language: language.ID, FileName: strings.TrimSuffix(fileName, language.Extension),
+			Source: source, Name: name, Arguments: argumentsTemplate, TimeoutSeconds: timeoutSeconds, GroupID: request.FormValue("group_id"),
+		}, targetPath, strings.TrimSuffix(suggested, language.Extension), targetInfo.Mode().IsRegular() && !a.runs.ConflictsPath(targetPath))
+		return
+	}
+	if targetExists && action == conflictActionOverwrite && (!targetInfo.Mode().IsRegular() || a.runs.ConflictsPath(targetPath)) {
+		http.Error(response, "the existing target cannot be overwritten while it is active or non-regular", http.StatusConflict)
+		return
+	}
+	if targetExists && action == conflictActionRename {
+		renamedStem := strings.TrimSpace(request.FormValue("rename_file_name"))
+		if err := managedfiles.ValidateName(renamedStem); err != nil {
+			http.Error(response, "renamed file name is invalid: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		fileName = renamedStem + language.Extension
+		targetPath = pathpkg.Join(workingDirectory, fileName)
+		if _, err := a.managed.Info(targetPath); err == nil {
+			http.Error(response, "renamed target already exists", http.StatusConflict)
+			return
+		} else if !os.IsNotExist(err) {
+			http.Error(response, "Unable to inspect renamed target: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		targetExists = false
+	}
+
+	var trashID string
+	if targetExists {
+		trashID, err = randomToken(18)
+		if err != nil {
+			http.Error(response, "Unable to prepare overwrite", http.StatusInternalServerError)
+			return
+		}
+	}
+	trashed, err := a.managed.Upload(workingDirectory, fileName, bytes.NewBufferString(source), maxQuickExecutionSourceBytes, targetExists, trashID)
+	if err != nil {
+		http.Error(response, "Unable to create script: "+err.Error(), http.StatusConflict)
+		return
+	}
+	rollbackFile := func() {
+		_ = a.managed.RemoveRegular(targetPath)
+		if trashed != nil {
+			_ = a.managed.RestoreFromTrash(trashed.StoredName, trashed.OriginalPath)
+		}
+	}
+
+	transaction, err := a.db.Begin()
+	if err != nil {
+		rollbackFile()
+		http.Error(response, "Unable to create Quick Run", http.StatusInternalServerError)
+		return
+	}
+	defer transaction.Rollback()
+	if trashed != nil {
+		if _, err = transaction.Exec(
+			"INSERT INTO trash_entries (id, original_path, stored_name, deleted_at, size, is_directory) VALUES (?, ?, ?, ?, ?, ?)",
+			trashID, trashed.OriginalPath, trashed.StoredName, time.Now().UTC().Unix(), trashed.Size, trashed.Directory,
+		); err != nil {
+			rollbackFile()
+			http.Error(response, "Unable to record overwritten script", http.StatusInternalServerError)
+			return
+		}
+	}
+	id, err := randomToken(18)
+	var sortOrder int
+	if err == nil {
+		err = transaction.QueryRow("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM quick_runs WHERE group_id IS ?", groupID).Scan(&sortOrder)
+	}
+	now := time.Now().UTC().Unix()
+	if err == nil {
+		_, err = transaction.Exec(`INSERT INTO quick_runs
+			(id, name, script_path, arguments_template, timeout_seconds, source_run_id, sort_order, created_at, group_id, updated_at)
+			VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
+			id, name, filepath.ToSlash(targetPath), argumentsTemplate, timeoutSeconds, sortOrder, now, groupID, now)
+	}
+	if err == nil {
+		err = transaction.Commit()
+	}
+	if err != nil {
+		rollbackFile()
+		http.Error(response, "Unable to create Quick Run", http.StatusInternalServerError)
+		return
+	}
+	a.recordAuditForRequest(request, "create_quick_run_from_source", id, "succeeded")
+	_ = a.checkpointWebMutation("create-quick-run-source", targetPath)
+	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
+}
+
+type quickCreateValues struct {
+	WorkingDirectory string
+	Language         string
+	FileName         string
+	Source           string
+	Name             string
+	Arguments        string
+	TimeoutSeconds   int
+	GroupID          string
+}
+
+func (a *App) renderQuickCreateConflict(response http.ResponseWriter, request *http.Request, values quickCreateValues, targetPath, suggestedName string, canOverwrite bool) {
+	groups, err := a.loadQuickRunGroups()
+	if err != nil {
+		http.Error(response, "Unable to read Quick Run groups", http.StatusInternalServerError)
+		return
+	}
+	var quickReferences, scheduleReferences int
+	if err := a.db.QueryRow("SELECT COUNT(*) FROM quick_runs WHERE script_path = ?", targetPath).Scan(&quickReferences); err != nil {
+		http.Error(response, "Unable to inspect Quick Run references", http.StatusInternalServerError)
+		return
+	}
+	if err := a.db.QueryRow("SELECT COUNT(*) FROM schedules WHERE deleted = 0 AND script_path = ?", targetPath).Scan(&scheduleReferences); err != nil {
+		http.Error(response, "Unable to inspect schedule references", http.StatusInternalServerError)
+		return
+	}
+	a.renderTaskPageStatus(response, request, http.StatusConflict, taskPageData{
+		Kind: "quick-create", Title: webText(resolveWebLocale(request), "task.quick_create.title"),
+		Description: webText(resolveWebLocale(request), "task.quick_create.description"),
+		BackURL:     "/config/quick-runs", Action: "/config/quick-runs/from-source", Languages: platformScriptLanguages(),
+		WorkingDirectory: values.WorkingDirectory, FileName: values.FileName, Source: values.Source, Name: values.Name,
+		Arguments: values.Arguments, TimeoutSeconds: values.TimeoutSeconds, GroupID: values.GroupID, Groups: groups, Language: values.Language,
+		Conflict: true, ConflictPath: targetPath, SuggestedName: suggestedName, CanOverwrite: canOverwrite,
+		QuickReferences: quickReferences, ScheduleReferences: scheduleReferences,
+	})
+}
+
+func (a *App) startOneTimeRun(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "CSRF token is invalid", http.StatusForbidden)
+		return
+	}
+	language, err := platformScriptLanguage(request.FormValue("language"))
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
+	source := request.FormValue("source")
+	if err := validateQuickExecutionSource(source); err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
+	workingDirectory := strings.Trim(request.FormValue("working_directory"), "/")
+	if _, err := a.managed.List(workingDirectory); err != nil {
+		http.Error(response, "working directory is invalid: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	timeoutSeconds, err := parseQuickExecutionTimeout(request.FormValue("timeout_seconds"))
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
+	variables, err := a.loadVariables()
+	if err != nil {
+		http.Error(response, "Unable to read variables", http.StatusInternalServerError)
+		return
+	}
+	argumentsTemplate := request.FormValue("arguments")
+	if err := runmanager.ValidateArgumentsTemplate(argumentsTemplate, variables); err != nil {
+		http.Error(response, "Arguments are invalid: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	current := request.Context().Value(sessionContextKey).(session)
+	id, err := a.runs.StartOneTime(runmanager.OneTimeStartRequest{
+		WorkingDirectory:  workingDirectory,
+		Extension:         language.Extension,
+		Source:            source,
+		ArgumentsTemplate: argumentsTemplate,
+		TimeoutSeconds:    timeoutSeconds,
+		Variables:         variables,
+		AuditSource:       request.RemoteAddr,
+		InitiatorUserID:   current.userID,
+		InitiatorUsername: current.username,
+		InitiatorRole:     string(current.role),
+	})
+	if err != nil {
+		http.Error(response, "Unable to start one-time Run: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	http.Redirect(response, request, "/history/runs/"+url.PathEscape(id), http.StatusSeeOther)
+}
+
+func (a *App) runSource(response http.ResponseWriter, request *http.Request) {
+	source, err := a.runs.ReadSource(request.PathValue("id"))
+	switch {
+	case errors.Is(err, runmanager.ErrSourceExpired):
+		http.Error(response, "one-time source has expired", http.StatusGone)
+		return
+	case err != nil:
+		http.Error(response, "one-time source is unavailable", http.StatusNotFound)
+		return
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	response.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = response.Write(source)
+}

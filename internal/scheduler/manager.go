@@ -4,11 +4,10 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
-
-	"github.com/robfig/cron/v3"
 
 	"scriptboard/internal/runmanager"
 )
@@ -17,6 +16,8 @@ type VariableLoader func() (map[string]string, error)
 
 type CreateRequest struct {
 	Name              string
+	GroupID           string
+	GroupName         string
 	ScriptPath        string
 	ArgumentsTemplate string
 	Expression        string
@@ -27,6 +28,8 @@ type CreateRequest struct {
 type Schedule struct {
 	ID                string
 	Name              string
+	GroupID           string
+	GroupName         string
 	ScriptPath        string
 	ArgumentsTemplate string
 	Expression        string
@@ -41,18 +44,32 @@ type Schedule struct {
 }
 
 type Manager struct {
-	db            *sql.DB
-	runs          *runmanager.Manager
-	loadVariables VariableLoader
-	parser        cron.Parser
-	now           func() time.Time
-	tick          time.Duration
-	stop          chan struct{}
-	done          chan struct{}
-	closeOnce     sync.Once
+	db             *sql.DB
+	runs           *runmanager.Manager
+	loadVariables  VariableLoader
+	now            func() time.Time
+	tick           time.Duration
+	stop           chan struct{}
+	done           chan struct{}
+	wake           chan struct{}
+	pollClock      bool
+	closeOnce      sync.Once
+	initializeOnce sync.Once
+	pauseMu        sync.Mutex
+	fireMu         sync.Mutex
+	paused         bool
 }
 
 func New(db *sql.DB, runs *runmanager.Manager, loadVariables VariableLoader, now func() time.Time, tick time.Duration) *Manager {
+	return newManager(db, runs, loadVariables, now, tick, false)
+}
+
+func NewPaused(db *sql.DB, runs *runmanager.Manager, loadVariables VariableLoader, now func() time.Time, tick time.Duration) *Manager {
+	return newManager(db, runs, loadVariables, now, tick, true)
+}
+
+func newManager(db *sql.DB, runs *runmanager.Manager, loadVariables VariableLoader, now func() time.Time, tick time.Duration, paused bool) *Manager {
+	pollClock := now != nil
 	if now == nil {
 		now = time.Now
 	}
@@ -61,13 +78,24 @@ func New(db *sql.DB, runs *runmanager.Manager, loadVariables VariableLoader, now
 	}
 	manager := &Manager{
 		db: db, runs: runs, loadVariables: loadVariables,
-		parser: cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow),
-		now:    now, tick: tick, stop: make(chan struct{}), done: make(chan struct{}),
+		now: now, tick: tick, stop: make(chan struct{}), done: make(chan struct{}),
+		wake: make(chan struct{}, 1), pollClock: pollClock, paused: paused,
 	}
-	manager.aggregateOldTriggers()
-	manager.reconcileMissed()
+	if !paused {
+		manager.initialize()
+	}
 	go manager.loop()
 	return manager
+}
+
+var ErrPaused = errors.New("scheduler is paused for update maintenance")
+
+func (m *Manager) initialize() {
+	m.initializeOnce.Do(func() {
+		m.disableInvalidSchedules()
+		m.aggregateOldTriggers()
+		m.reconcileMissed()
+	})
 }
 
 func (m *Manager) aggregateOldTriggers() {
@@ -113,19 +141,22 @@ func (m *Manager) aggregateOldTriggers() {
 }
 
 func (m *Manager) Update(id string, request CreateRequest) error {
-	spec, err := m.parser.Parse(request.Expression)
+	now := m.now()
+	preview, err := PreviewExpression(request.Expression, now)
 	if err != nil {
-		return fmt.Errorf("五段 cron 无效: %w", err)
+		return err
 	}
-	result, err := m.db.Exec(`UPDATE schedules SET name = ?, script_path = ?, arguments_template = ?, expression = ?, timeout_seconds = ?, allow_overlap = ?, next_fire_at = ?, updated_at = ? WHERE id = ? AND deleted = 0`,
-		request.Name, request.ScriptPath, request.ArgumentsTemplate, request.Expression, request.TimeoutSeconds, request.AllowOverlap,
-		spec.Next(m.now()).UnixNano(), m.now().UnixNano(), id)
+	groupID := sql.NullString{String: request.GroupID, Valid: request.GroupID != ""}
+	result, err := m.db.Exec(`UPDATE schedules SET name = ?, group_id = ?, group_name = ?, script_path = ?, arguments_template = ?, expression = ?, timeout_seconds = ?, allow_overlap = ?, next_fire_at = ?, updated_at = ? WHERE id = ? AND deleted = 0`,
+		request.Name, groupID, request.GroupName, request.ScriptPath, request.ArgumentsTemplate, preview.Expression, request.TimeoutSeconds, request.AllowOverlap,
+		preview.NextFive[0].UnixNano(), now.UnixNano(), id)
 	if err != nil {
 		return err
 	}
 	if count, _ := result.RowsAffected(); count == 0 {
 		return sql.ErrNoRows
 	}
+	m.signalWake()
 	return nil
 }
 
@@ -137,6 +168,7 @@ func (m *Manager) SetEnabled(id string, enabled bool) error {
 	if count, _ := result.RowsAffected(); count == 0 {
 		return sql.ErrNoRows
 	}
+	m.signalWake()
 	return nil
 }
 
@@ -148,6 +180,7 @@ func (m *Manager) Delete(id string) error {
 	if count, _ := result.RowsAffected(); count == 0 {
 		return sql.ErrNoRows
 	}
+	m.signalWake()
 	return nil
 }
 
@@ -170,12 +203,13 @@ func (m *Manager) reconcileMissed() {
 	}
 	_ = rows.Close()
 	for _, item := range items {
-		spec, err := m.parser.Parse(item.expression)
+		spec, _, err := parseExpression(item.expression, now)
 		if err != nil {
+			m.disableInvalidSchedule(item.id, item.expression)
 			continue
 		}
 		missedCount := 1
-		cursor := time.Unix(0, item.scheduledFor)
+		cursor := time.Unix(0, item.scheduledFor).In(now.Location())
 		for missedCount < 1_000_000 {
 			candidate := spec.Next(cursor)
 			if candidate.After(now) {
@@ -193,29 +227,74 @@ func (m *Manager) reconcileMissed() {
 }
 
 func (m *Manager) Create(request CreateRequest) (string, error) {
-	spec, err := m.parser.Parse(request.Expression)
+	now := m.now()
+	preview, err := PreviewExpression(request.Expression, now)
 	if err != nil {
-		return "", fmt.Errorf("五段 cron 无效: %w", err)
+		return "", err
 	}
-	next := spec.Next(m.now())
 	id, err := randomID()
 	if err != nil {
 		return "", err
 	}
+	groupID := sql.NullString{String: request.GroupID, Valid: request.GroupID != ""}
 	_, err = m.db.Exec(`INSERT INTO schedules
-		(id, name, script_path, arguments_template, expression, timeout_seconds, enabled, allow_overlap, next_fire_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
-		id, request.Name, request.ScriptPath, request.ArgumentsTemplate, request.Expression, request.TimeoutSeconds,
-		request.AllowOverlap, next.UnixNano(), m.now().UnixNano(), m.now().UnixNano(),
+		(id, name, group_id, group_name, script_path, arguments_template, expression, timeout_seconds, enabled, allow_overlap, next_fire_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+		id, request.Name, groupID, request.GroupName, request.ScriptPath, request.ArgumentsTemplate, preview.Expression, request.TimeoutSeconds,
+		request.AllowOverlap, preview.NextFive[0].UnixNano(), now.UnixNano(), now.UnixNano(),
 	)
 	if err != nil {
 		return "", fmt.Errorf("保存 Schedule: %w", err)
 	}
+	m.signalWake()
 	return id, nil
 }
 
 func (m *Manager) List() ([]Schedule, error) {
 	return m.ListPage(1000, 0)
+}
+
+func (m *Manager) RunNow(id string) (string, error) {
+	return m.RunNowAs(id, "", "")
+}
+
+func (m *Manager) RunNowAs(id, userID, username string) (string, error) {
+	m.pauseMu.Lock()
+	paused := m.paused
+	m.pauseMu.Unlock()
+	if paused {
+		return "", ErrPaused
+	}
+	var schedule Schedule
+	if err := m.db.QueryRow(`SELECT id, name, script_path, arguments_template, timeout_seconds, allow_overlap
+		FROM schedules WHERE id = ? AND deleted = 0`, id).Scan(
+		&schedule.ID, &schedule.Name, &schedule.ScriptPath, &schedule.ArgumentsTemplate, &schedule.TimeoutSeconds, &schedule.AllowOverlap,
+	); err != nil {
+		return "", err
+	}
+	if !schedule.AllowOverlap && m.runs.IsActiveScript(schedule.ScriptPath) {
+		return "", errors.New("该脚本已有活动运行，计划禁止重叠执行")
+	}
+	variables, err := m.loadVariables()
+	if err != nil {
+		return "", err
+	}
+	runID, err := m.runs.Start(runmanager.StartRequest{
+		ScriptPath: schedule.ScriptPath, ArgumentsTemplate: schedule.ArgumentsTemplate, TimeoutSeconds: schedule.TimeoutSeconds,
+		SourceType: "admin/schedule-now", SourceName: schedule.Name, SourceID: schedule.ID, Variables: variables,
+		InitiatorUserID: userID, InitiatorUsername: username,
+	})
+	triggerID, _ := randomID()
+	result, errorText := "created", ""
+	if err != nil {
+		result, errorText = "rejected", err.Error()
+	}
+	_, _ = m.db.Exec("INSERT INTO schedule_triggers (id, schedule_id, scheduled_for, result, run_id, error) VALUES (?, ?, ?, ?, ?, ?)", triggerID, schedule.ID, m.now().UnixNano(), result, runID, errorText)
+	m.recordAudit("schedule_run_now", schedule.Name, result)
+	if err != nil {
+		return "", err
+	}
+	return runID, nil
 }
 
 func (m *Manager) Count() (int, error) {
@@ -231,12 +310,14 @@ func (m *Manager) ListPage(limit, offset int) ([]Schedule, error) {
 	if offset < 0 {
 		offset = 0
 	}
-	rows, err := m.db.Query(`SELECT s.id, s.name, s.script_path, s.arguments_template, s.expression, s.timeout_seconds,
+	rows, err := m.db.Query(`SELECT s.id, s.name, COALESCE(s.group_id, ''), COALESCE(g.name, ''), s.script_path, s.arguments_template, s.expression, s.timeout_seconds,
 		s.enabled, s.allow_overlap, s.next_fire_at,
 		COALESCE((SELECT result FROM schedule_triggers t WHERE t.schedule_id = s.id ORDER BY t.scheduled_for DESC LIMIT 1), ''),
 		COALESCE((SELECT run_id FROM schedule_triggers t WHERE t.schedule_id = s.id ORDER BY t.scheduled_for DESC LIMIT 1), ''),
 		COALESCE((SELECT error FROM schedule_triggers t WHERE t.schedule_id = s.id ORDER BY t.scheduled_for DESC LIMIT 1), '')
-		FROM schedules s WHERE s.deleted = 0 ORDER BY s.created_at LIMIT ? OFFSET ?`, limit, offset)
+		FROM schedules s
+		LEFT JOIN schedule_groups g ON g.id = s.group_id
+		WHERE s.deleted = 0 ORDER BY s.created_at LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -245,49 +326,113 @@ func (m *Manager) ListPage(limit, offset int) ([]Schedule, error) {
 	for rows.Next() {
 		var schedule Schedule
 		var next int64
-		if err := rows.Scan(&schedule.ID, &schedule.Name, &schedule.ScriptPath, &schedule.ArgumentsTemplate, &schedule.Expression,
+		if err := rows.Scan(&schedule.ID, &schedule.Name, &schedule.GroupID, &schedule.GroupName, &schedule.ScriptPath, &schedule.ArgumentsTemplate, &schedule.Expression,
 			&schedule.TimeoutSeconds, &schedule.Enabled, &schedule.AllowOverlap, &next, &schedule.LastResult, &schedule.LastRunID, &schedule.LastError); err != nil {
 			return nil, err
 		}
-		schedule.NextFireAt = time.Unix(0, next)
-		if spec, parseErr := m.parser.Parse(schedule.Expression); parseErr == nil {
-			cursor := m.now()
-			for range 5 {
-				cursor = spec.Next(cursor)
-				schedule.NextFive = append(schedule.NextFive, cursor)
-			}
+		schedule.NextFireAt = time.Unix(0, next).In(m.now().Location())
+		if preview, parseErr := PreviewExpression(schedule.Expression, m.now()); parseErr == nil {
+			schedule.Expression = preview.Expression
+			schedule.NextFive = preview.NextFive
 		}
 		schedules = append(schedules, schedule)
 	}
 	return schedules, rows.Err()
 }
 
-func (m *Manager) Preview(expression string, count int) ([]time.Time, error) {
-	spec, err := m.parser.Parse(expression)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]time.Time, 0, count)
-	next := m.now()
-	for range count {
-		next = spec.Next(next)
-		result = append(result, next)
-	}
-	return result, nil
+func (m *Manager) Preview(expression string) (ExpressionPreview, error) {
+	return PreviewExpression(expression, m.now())
 }
 
 func (m *Manager) loop() {
 	defer close(m.done)
-	ticker := time.NewTicker(m.tick)
-	defer ticker.Stop()
 	for {
+		m.pauseMu.Lock()
+		paused := m.paused
+		m.pauseMu.Unlock()
+		if !paused {
+			m.fireMu.Lock()
+			m.fireDue()
+			m.fireMu.Unlock()
+		}
+
+		delay, scheduled := m.nextWakeDelay(paused)
+		var timer *time.Timer
+		var timerChannel <-chan time.Time
+		if scheduled {
+			timer = time.NewTimer(delay)
+			timerChannel = timer.C
+		}
 		select {
 		case <-m.stop:
+			if timer != nil {
+				timer.Stop()
+			}
 			return
-		case <-ticker.C:
-			m.fireDue()
+		case <-m.wake:
+			if timer != nil && !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+		case <-timerChannel:
 		}
 	}
+}
+
+func (m *Manager) nextWakeDelay(paused bool) (time.Duration, bool) {
+	if paused {
+		return 0, false
+	}
+	var next sql.NullInt64
+	if err := m.db.QueryRow("SELECT MIN(next_fire_at) FROM schedules WHERE enabled = 1 AND deleted = 0").Scan(&next); err != nil {
+		return m.tick, true
+	}
+	if !next.Valid {
+		if m.pollClock {
+			return m.tick, true
+		}
+		return 0, false
+	}
+	delay := time.Unix(0, next.Int64).Sub(m.now())
+	if delay < 0 {
+		delay = 0
+	}
+	if m.pollClock && delay > m.tick {
+		delay = m.tick
+	}
+	return delay, true
+}
+
+func (m *Manager) signalWake() {
+	select {
+	case m.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (m *Manager) PauseAndWait() {
+	m.pauseMu.Lock()
+	m.paused = true
+	m.pauseMu.Unlock()
+	m.signalWake()
+	m.fireMu.Lock()
+	m.fireMu.Unlock()
+}
+
+func (m *Manager) Resume() {
+	m.initialize()
+	m.pauseMu.Lock()
+	m.paused = false
+	m.pauseMu.Unlock()
+	m.signalWake()
+}
+
+func (m *Manager) Paused() bool {
+	m.pauseMu.Lock()
+	defer m.pauseMu.Unlock()
+	return m.paused
 }
 
 func (m *Manager) fireDue() {
@@ -312,8 +457,9 @@ func (m *Manager) fireDue() {
 	}
 	_ = rows.Close()
 	for _, item := range dueSchedules {
-		spec, err := m.parser.Parse(item.expression)
+		spec, _, err := parseExpression(item.expression, now)
 		if err != nil {
+			m.disableInvalidSchedule(item.id, item.expression)
 			continue
 		}
 		next := spec.Next(now)
@@ -332,7 +478,7 @@ func (m *Manager) fireDue() {
 		}
 		runID, startErr := m.runs.Start(runmanager.StartRequest{
 			ScriptPath: item.scriptPath, ArgumentsTemplate: item.arguments, TimeoutSeconds: item.timeout,
-			SourceType: "scheduler", SourceName: item.name, Variables: variables,
+			SourceType: "scheduler", SourceName: item.name, SourceID: item.id, Variables: variables,
 		})
 		if startErr != nil {
 			_, _ = m.db.Exec("INSERT INTO schedule_triggers (id, schedule_id, scheduled_for, result, run_id, error) VALUES (?, ?, ?, 'rejected', '', ?)", triggerID, item.id, item.scheduledFor, startErr.Error())
@@ -342,6 +488,38 @@ func (m *Manager) fireDue() {
 		_, _ = m.db.Exec("INSERT INTO schedule_triggers (id, schedule_id, scheduled_for, result, run_id, error) VALUES (?, ?, ?, 'created', ?, '')", triggerID, item.id, item.scheduledFor, runID)
 		m.recordAudit("schedule_trigger", item.name, "created")
 	}
+}
+
+func (m *Manager) disableInvalidSchedules() {
+	rows, err := m.db.Query("SELECT id, expression FROM schedules WHERE enabled = 1 AND deleted = 0")
+	if err != nil {
+		return
+	}
+	var schedules [][2]string
+	for rows.Next() {
+		var id, expression string
+		if rows.Scan(&id, &expression) == nil {
+			schedules = append(schedules, [2]string{id, expression})
+		}
+	}
+	_ = rows.Close()
+	for _, schedule := range schedules {
+		if _, err := PreviewExpression(schedule[1], m.now()); err != nil {
+			m.disableInvalidSchedule(schedule[0], schedule[1])
+		}
+	}
+}
+
+func (m *Manager) disableInvalidSchedule(id, expression string) {
+	now := m.now()
+	result, err := m.db.Exec("UPDATE schedules SET enabled = 0, updated_at = ? WHERE id = ? AND enabled = 1 AND deleted = 0", now.UnixNano(), id)
+	if err != nil {
+		return
+	}
+	if changed, _ := result.RowsAffected(); changed == 0 {
+		return
+	}
+	_, _ = m.db.Exec("INSERT INTO audit_events (occurred_at, action, target, result, source_address) VALUES (?, 'disable_invalid_schedule', ?, 'failed', 'scheduler')", now.UTC().Unix(), expression)
 }
 
 func (m *Manager) recordAudit(action, target, result string) {

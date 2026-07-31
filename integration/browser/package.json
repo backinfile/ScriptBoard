@@ -1,0 +1,12 @@
+{
+  "name": "scriptboard-browser-gate",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Test-only Chromium desktop regression gate for ScriptBoard.",
+  "scripts": {
+    "test": "node run.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.61.1"
+  }
+}
