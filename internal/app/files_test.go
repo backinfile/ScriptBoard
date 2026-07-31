@@ -15,15 +15,18 @@ import (
 	"testing"
 )
 
-func TestManagedRootLocationMovesToReadOnlyFileSettings(t *testing.T) {
+func TestFilesPageUsesAbsoluteHostPathsAndHasNoFileSettings(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed & scripts")
+	hostRoot := filepath.Join(root, "host & scripts")
 	stateRoot := filepath.Join(root, "state")
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatalf("create host directory: %v", err)
+	}
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 
-	response, err := client.Get(serverURL + "/resources/files/")
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
@@ -32,22 +35,10 @@ func TestManagedRootLocationMovesToReadOnlyFileSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read files: %v", err)
 	}
-	canonicalRoot, err := filepath.EvalSymlinks(managedRoot)
-	if err != nil {
-		t.Fatalf("resolve managed root links: %v", err)
-	}
-	absoluteRoot, err := filepath.Abs(canonicalRoot)
-	if err != nil {
-		t.Fatalf("resolve managed root: %v", err)
-	}
 	filesPage := string(body)
-	for _, excluded := range []string{
-		`class="managed-root-location"`,
-		"Managed root location",
-		html.EscapeString(absoluteRoot),
-	} {
-		if strings.Contains(filesPage, excluded) {
-			t.Fatalf("files page unexpectedly contains %q: %s", excluded, filesPage)
+	for _, expected := range []string{"This host", html.EscapeString(hostRoot), `name="path" value="` + html.EscapeString(hostRoot) + `"`} {
+		if !strings.Contains(filesPage, expected) {
+			t.Fatalf("files page does not contain %q: %s", expected, filesPage)
 		}
 	}
 
@@ -60,23 +51,100 @@ func TestManagedRootLocationMovesToReadOnlyFileSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read file settings: %v", err)
 	}
-	page := string(body)
-	for _, expected := range []string{
-		`data-file-settings`,
-		`class="managed-root-readonly"`,
-		`data-readonly-root`,
-		"Managed root location",
-		"Read only",
-		html.EscapeString(absoluteRoot),
-	} {
-		if !strings.Contains(page, expected) {
-			t.Fatalf("file settings do not contain %q: %s", expected, page)
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("removed file settings status=%d, want 404: %s", response.StatusCode, body)
+	}
+}
+
+func TestProtectedHostPathIsDeniedBeforeDeferredFilePageRendering(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "host")
+	stateRoot := filepath.Join(root, "state")
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
+	for _, deferred := range []bool{false, true} {
+		request, err := http.NewRequest(http.MethodGet, hostFilesRequestURL(serverURL, stateRoot), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if deferred {
+			request.Header.Set("X-ScriptBoard-Navigation", "pjax")
+			request.Header.Set("X-ScriptBoard-Data", "shell")
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusForbidden {
+			t.Fatalf("protected path deferred=%v status=%d, want %d", deferred, response.StatusCode, http.StatusForbidden)
 		}
 	}
-	for _, excluded := range []string{`name="managed_root"`, `contenteditable="true"`} {
-		if strings.Contains(page, excluded) {
-			t.Fatalf("file settings expose an editable root through %q: %s", excluded, page)
-		}
+}
+
+func TestFilesPageOffersAnAbsolutePathMoveTask(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "host")
+	sourceDirectory := filepath.Join(hostRoot, "source")
+	destinationDirectory := filepath.Join(hostRoot, "archive")
+	if err := os.MkdirAll(sourceDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(destinationDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(sourceDirectory, "report.txt")
+	if err := os.WriteFile(source, []byte("move me"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
+
+	response, err := client.Get(hostFilesRequestURL(serverURL, sourceDirectory))
+	if err != nil {
+		t.Fatal(err)
+	}
+	listing, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	moveURL := hostFileHref("/resources/files/move", source)
+	if !bytes.Contains(listing, []byte(`href="`+moveURL+`"`)) {
+		t.Fatalf("files page does not offer move task %q: %s", moveURL, listing)
+	}
+
+	response, err = client.Get(serverURL + moveURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK ||
+		!bytes.Contains(task, []byte(`data-task-kind="move-file"`)) ||
+		!bytes.Contains(task, []byte(`name="source" value="`+html.EscapeString(source)+`"`)) ||
+		!bytes.Contains(task, []byte(`name="working_directory" value="`+html.EscapeString(sourceDirectory)+`"`)) {
+		t.Fatalf("move task status=%d body=%s", response.StatusCode, task)
+	}
+
+	response, err = client.PostForm(serverURL+"/resources/files/move", url.Values{
+		"csrf_token":        {formToken(t, task)},
+		"source":            {source},
+		"working_directory": {destinationDirectory},
+		"name":              {"archived.txt"},
+		"conflict_action":   {""},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("move submission status=%d, want %d", response.StatusCode, http.StatusSeeOther)
+	}
+	if content, err := os.ReadFile(filepath.Join(destinationDirectory, "archived.txt")); err != nil || string(content) != "move me" {
+		t.Fatalf("moved content=%q error=%v", content, err)
+	}
+	if _, err := os.Stat(source); !os.IsNotExist(err) {
+		t.Fatalf("source still exists after move: %v", err)
 	}
 }
 
@@ -84,14 +152,14 @@ func TestFilesPageOffersDropUploadForCurrentDirectory(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(filepath.Join(managedRoot, "nested"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(hostRoot, "nested"), 0o755); err != nil {
 		t.Fatalf("create nested directory: %v", err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 
-	response, err := client.Get(serverURL + "/resources/files/nested/")
+	response, err := client.Get(hostFilesRequestURL(serverURL, filepath.Join(hostRoot, "nested")))
 	if err != nil {
 		t.Fatalf("get nested files: %v", err)
 	}
@@ -109,7 +177,7 @@ func TestFilesPageOffersDropUploadForCurrentDirectory(t *testing.T) {
 		`data-file-drop-surface="file-drop-surface"`,
 		`action="/resources/files/upload"`,
 		`enctype="multipart/form-data"`,
-		`name="path" value="nested"`,
+		`name="path" value="` + html.EscapeString(filepath.Join(hostRoot, "nested")) + `"`,
 		`name="conflict_action" value=""`,
 		`name="files" type="file" multiple required hidden`,
 		`id="file-drop-surface"`,
@@ -132,22 +200,22 @@ func TestFilesPageHidesDotEntriesByDefaultAndPreservesTheVisibilityChoice(t *tes
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(filepath.Join(managedRoot, ".config"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(hostRoot, ".config"), 0o755); err != nil {
 		t.Fatalf("create hidden directory: %v", err)
 	}
 	for name, content := range map[string]string{
 		".env":        "SECRET=fixture",
 		"visible.txt": "visible",
 	} {
-		if err := os.WriteFile(filepath.Join(managedRoot, name), []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(hostRoot, name), []byte(content), 0o644); err != nil {
 			t.Fatalf("create %s: %v", name, err)
 		}
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 
-	response, err := client.Get(serverURL + "/resources/files/")
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
@@ -168,7 +236,7 @@ func TestFilesPageHidesDotEntriesByDefaultAndPreservesTheVisibilityChoice(t *tes
 		}
 	}
 
-	response, err = client.Get(serverURL + "/resources/files/?show_hidden=1&sort=name&direction=desc")
+	response, err = client.Get(hostFilesRequestURL(serverURL, hostRoot) + "&show_hidden=1&sort=name&direction=desc")
 	if err != nil {
 		t.Fatalf("get files with hidden entries: %v", err)
 	}
@@ -183,7 +251,7 @@ func TestFilesPageHidesDotEntriesByDefaultAndPreservesTheVisibilityChoice(t *tes
 		`.config`,
 		`.env`,
 		`class="file-hidden-badge"`,
-		`href="/resources/files/.config/?direction=desc&amp;show_hidden=1&amp;sort=name"`,
+		html.EscapeString(hostFilesHrefWithQuery(filepath.Join(hostRoot, ".config"), url.Values{"direction": {"desc"}, "show_hidden": {"1"}, "sort": {"name"}})),
 	} {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("visible-hidden files page does not contain %q: %s", expected, page)
@@ -195,14 +263,14 @@ func TestFilesPageOffersCollapsedBrowserLocalQuickAccess(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(filepath.Join(managedRoot, "automation"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(hostRoot, "automation"), 0o755); err != nil {
 		t.Fatalf("create directory: %v", err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 
-	response, err := client.Get(serverURL + "/resources/files/")
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
@@ -214,11 +282,12 @@ func TestFilesPageOffersCollapsedBrowserLocalQuickAccess(t *testing.T) {
 	page := string(body)
 	for _, expected := range []string{
 		`class="file-quick-access"`,
-		`data-file-quick-access hidden`,
+		`data-file-quick-access`,
 		`data-file-quick-list`,
-		`data-file-pin-path="automation"`,
+		`data-file-pin-path="` + html.EscapeString(filepath.Join(hostRoot, "automation")) + `"`,
 		`data-file-pin-label="automation"`,
-		`data-file-pin-href="/resources/files/automation/"`,
+		`data-file-pin-href="` + html.EscapeString(hostFileHref("/resources/files", filepath.Join(hostRoot, "automation"))) + `"`,
+		`data-validation-url="/resources/files/validate"`,
 		`data-file-quick-one-label>folder</span>`,
 		`data-file-quick-many-label>folders</span>`,
 		"Quick access",
@@ -237,12 +306,12 @@ func TestOperatorGetsReadOnlyFilesWithoutAnUploadDropTarget(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	admin, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	admin, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 	operator := createRoleUserClient(t, admin, serverURL, "files-operator", "operator")
 
-	response, err := operator.Get(serverURL + "/resources/files/")
+	response, err := operator.Get(hostFilesRequestURL(serverURL, hostRoot))
 	if err != nil {
 		t.Fatalf("get files as operator: %v", err)
 	}
@@ -275,8 +344,8 @@ func TestOperatorGetsReadOnlyFilesWithoutAnUploadDropTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read file settings as operator: %v", err)
 	}
-	if response.StatusCode != http.StatusOK || !bytes.Contains(body, []byte(`data-readonly-root`)) {
-		t.Fatalf("operator file settings status=%d body=%s", response.StatusCode, body)
+	if response.StatusCode != http.StatusNotFound {
+		t.Fatalf("removed file settings status=%d body=%s", response.StatusCode, body)
 	}
 }
 
@@ -284,25 +353,25 @@ func TestFilesPageSearchesCurrentDirectoryAndHighlightsMatches(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(filepath.Join(managedRoot, "nested"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(hostRoot, "nested"), 0o755); err != nil {
 		t.Fatalf("create nested directory: %v", err)
 	}
 	for name, content := range map[string]string{
 		"Deploy & Verify.ps1": "Write-Output verified",
 		"notes.txt":           "deploy belongs in content only",
 	} {
-		if err := os.WriteFile(filepath.Join(managedRoot, name), []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(hostRoot, name), []byte(content), 0o644); err != nil {
 			t.Fatalf("create %s: %v", name, err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(managedRoot, "nested", "nested-deploy.ps1"), []byte("nested"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(hostRoot, "nested", "nested-deploy.ps1"), []byte("nested"), 0o644); err != nil {
 		t.Fatalf("create nested match: %v", err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 
-	response, err := client.Get(serverURL + "/resources/files/?q=%20DEPLOY%20")
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot) + "&q=%20DEPLOY%20")
 	if err != nil {
 		t.Fatalf("search files: %v", err)
 	}
@@ -334,9 +403,9 @@ func TestFilesPageSortsByVisibleTypeAndPreservesSortAcrossDirectories(t *testing
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(filepath.Join(managedRoot, "workspace"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(hostRoot, "workspace"), 0o755); err != nil {
 		t.Fatalf("create workspace directory: %v", err)
 	}
 	for name := range map[string]struct{}{
@@ -345,13 +414,13 @@ func TestFilesPageSortsByVisibleTypeAndPreservesSortAcrossDirectories(t *testing
 		"notes.txt":      {},
 		"archive.bin":    {},
 	} {
-		if err := os.WriteFile(filepath.Join(managedRoot, name), []byte(name), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(hostRoot, name), []byte(name), 0o644); err != nil {
 			t.Fatalf("create %s: %v", name, err)
 		}
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 
-	response, err := client.Get(serverURL + "/resources/files/?sort=type&direction=asc&q=auto")
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot) + "&sort=type&direction=asc&q=auto")
 	if err != nil {
 		t.Fatalf("get typed file sort: %v", err)
 	}
@@ -365,14 +434,14 @@ func TestFilesPageSortsByVisibleTypeAndPreservesSortAcrossDirectories(t *testing
 		`value="type" selected`,
 		`Type · Ascending`,
 		`Runnable script`,
-		`href="/resources/files/?direction=asc&amp;sort=type"`,
+		html.EscapeString(hostFilesHrefWithQuery(hostRoot, url.Values{"direction": {"asc"}, "sort": {"type"}})),
 	} {
 		if !strings.Contains(filteredPage, expected) {
 			t.Fatalf("typed file sort does not contain %q: %s", expected, filteredPage)
 		}
 	}
 
-	response, err = client.Get(serverURL + "/resources/files/?sort=type&direction=asc")
+	response, err = client.Get(hostFilesRequestURL(serverURL, hostRoot) + "&sort=type&direction=asc")
 	if err != nil {
 		t.Fatalf("get all typed files: %v", err)
 	}
@@ -399,7 +468,7 @@ func TestFilesPageSortsByVisibleTypeAndPreservesSortAcrossDirectories(t *testing
 			t.Fatalf("typed file sort is missing label %q: %s", label, page)
 		}
 	}
-	if !strings.Contains(page, `href="/resources/files/workspace/?direction=asc&amp;sort=type"`) {
+	if !strings.Contains(page, `href="`+html.EscapeString(hostFilesHrefWithQuery(filepath.Join(hostRoot, "workspace"), url.Values{"direction": {"asc"}, "sort": {"type"}}))+`"`) {
 		t.Fatalf("directory link does not clear the query and preserve sorting: %s", page)
 	}
 }
@@ -408,17 +477,17 @@ func TestFilesPageNormalizesSortAndShowsDedicatedNoResultsState(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
-		t.Fatalf("create managed root: %v", err)
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatalf("create host root: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(managedRoot, "visible.txt"), []byte("visible"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(hostRoot, "visible.txt"), []byte("visible"), 0o644); err != nil {
 		t.Fatalf("create visible file: %v", err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 
-	response, err := client.Get(serverURL + "/resources/files/?q=missing&sort=unknown&direction=desc&page=9")
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot) + "&q=missing&sort=unknown&direction=desc&page=9")
 	if err != nil {
 		t.Fatalf("get empty search result: %v", err)
 	}
@@ -432,7 +501,7 @@ func TestFilesPageNormalizesSortAndShowsDedicatedNoResultsState(t *testing.T) {
 		`data-no-search-results`,
 		`No filenames match`,
 		`<code>missing</code>`,
-		`href="/resources/files/"`,
+		`href="` + html.EscapeString(hostFileHref("/resources/files", hostRoot)) + `"`,
 		`<option value="" selected>Natural order</option>`,
 	} {
 		if !strings.Contains(page, expected) {
@@ -450,20 +519,20 @@ func TestFilesPagePaginationPreservesNormalizedSearchState(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
-		t.Fatalf("create managed root: %v", err)
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatalf("create host root: %v", err)
 	}
 	for index := 1; index <= 22; index++ {
 		name := fmt.Sprintf("report-%02d.txt", index)
-		if err := os.WriteFile(filepath.Join(managedRoot, name), []byte(name), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(hostRoot, name), []byte(name), 0o644); err != nil {
 			t.Fatalf("create %s: %v", name, err)
 		}
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 
-	response, err := client.Get(serverURL + "/resources/files/?q=%20REPORT%20&sort=name&direction=desc")
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot) + "&q=%20REPORT%20&sort=name&direction=desc")
 	if err != nil {
 		t.Fatalf("get paginated file search: %v", err)
 	}
@@ -475,8 +544,8 @@ func TestFilesPagePaginationPreservesNormalizedSearchState(t *testing.T) {
 	page := string(body)
 	for _, expected := range []string{
 		`Found <strong>22</strong> items in this directory`,
-		`href="/resources/files/?direction=desc&amp;page=2&amp;q=REPORT&amp;sort=name"`,
-		`href="/resources/files/?direction=desc&amp;sort=name"`,
+		`href="` + html.EscapeString(hostFilesHrefWithQuery(hostRoot, url.Values{"direction": {"desc"}, "page": {"2"}, "q": {"REPORT"}, "sort": {"name"}})) + `"`,
+		`href="` + html.EscapeString(hostFilesHrefWithQuery(hostRoot, url.Values{"direction": {"desc"}, "sort": {"name"}})) + `"`,
 	} {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("paginated file search does not contain %q: %s", expected, page)
@@ -484,29 +553,29 @@ func TestFilesPagePaginationPreservesNormalizedSearchState(t *testing.T) {
 	}
 }
 
-func TestFilesPageListsManagedEntriesAndHidesReservedPaths(t *testing.T) {
+func TestFilesPageListsHostEntriesAndHidesReservedPaths(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(filepath.Join(managedRoot, "alpha"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(hostRoot, "alpha"), 0o755); err != nil {
 		t.Fatalf("create directory: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(managedRoot, "zeta.txt"), []byte("hello"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(hostRoot, "zeta.txt"), []byte("hello"), 0o644); err != nil {
 		t.Fatalf("create file: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(managedRoot, ".scriptboard-trash"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(hostRoot, ".scriptboard-trash"), 0o755); err != nil {
 		t.Fatalf("create trash: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(managedRoot, ".scriptboard-trash", "hidden.txt"), []byte("hidden"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(hostRoot, ".scriptboard-trash", "hidden.txt"), []byte("hidden"), 0o644); err != nil {
 		t.Fatalf("create hidden file: %v", err)
 	}
 
-	linkCreated := os.Symlink(root, filepath.Join(managedRoot, "outside")) == nil
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	linkCreated := os.Symlink(root, filepath.Join(hostRoot, "outside")) == nil
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 
-	response, err := client.Get(serverURL + "/resources/files/")
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
@@ -520,7 +589,7 @@ func TestFilesPageListsManagedEntriesAndHidesReservedPaths(t *testing.T) {
 		t.Fatalf("files status = %d, want %d: %s", response.StatusCode, http.StatusOK, page)
 	}
 	if !strings.Contains(page, "alpha") || !strings.Contains(page, "zeta.txt") {
-		t.Fatalf("managed entries missing from page: %s", page)
+		t.Fatalf("host entries missing from page: %s", page)
 	}
 	if strings.Contains(page, ".scriptboard-trash") || strings.Contains(page, "hidden.txt") {
 		t.Fatalf("reserved trash leaked into page: %s", page)
@@ -537,17 +606,17 @@ func TestAdminCanBrowseNestedDirectories(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(filepath.Join(managedRoot, "子目录"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(hostRoot, "子目录"), 0o755); err != nil {
 		t.Fatalf("create nested directory: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(managedRoot, "子目录", "inside.txt"), []byte("inside"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(hostRoot, "子目录", "inside.txt"), []byte("inside"), 0o644); err != nil {
 		t.Fatalf("create nested file: %v", err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 
-	response, err := client.Get(serverURL + "/resources/files/%E5%AD%90%E7%9B%AE%E5%BD%95/")
+	response, err := client.Get(hostFilesRequestURL(serverURL, filepath.Join(hostRoot, "子目录")))
 	if err != nil {
 		t.Fatalf("browse nested directory: %v", err)
 	}
@@ -559,28 +628,28 @@ func TestAdminCanBrowseNestedDirectories(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !strings.Contains(string(body), "inside.txt") {
 		t.Fatalf("nested directory response: status=%d body=%s", response.StatusCode, body)
 	}
-	if !strings.Contains(string(body), `?path=%E5%AD%90%E7%9B%AE%E5%BD%95`) {
+	if !strings.Contains(string(body), `path=`+url.QueryEscape(filepath.Join(hostRoot, "子目录"))) {
 		t.Fatalf("nested operations do not preserve current path: %s", body)
 	}
 }
 
-func TestAdminCanMoveAndRenameManagedEntry(t *testing.T) {
+func TestAdminCanMoveAndRenameHostEntry(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(filepath.Join(managedRoot, "source"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(hostRoot, "source"), 0o755); err != nil {
 		t.Fatalf("create source: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(managedRoot, "target"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(hostRoot, "target"), 0o755); err != nil {
 		t.Fatalf("create target: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(managedRoot, "source", "old.txt"), []byte("move me"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(hostRoot, "source", "old.txt"), []byte("move me"), 0o644); err != nil {
 		t.Fatalf("create source file: %v", err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
-	response, err := client.Get(serverURL + "/resources/files/source/")
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
+	response, err := client.Get(hostFilesRequestURL(serverURL, filepath.Join(hostRoot, "source")))
 	if err != nil {
 		t.Fatalf("get source directory: %v", err)
 	}
@@ -591,21 +660,21 @@ func TestAdminCanMoveAndRenameManagedEntry(t *testing.T) {
 	}
 
 	response, err = client.PostForm(serverURL+"/resources/files/move", url.Values{
-		"source":      {"source/old.txt"},
-		"destination": {"target/new.txt"},
+		"source":      {filepath.Join(hostRoot, "source", "old.txt")},
+		"destination": {filepath.Join(hostRoot, "target", "new.txt")},
 		"csrf_token":  {formToken(t, page)},
 	})
 	if err != nil {
 		t.Fatalf("move file: %v", err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/resources/files/target/" {
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != hostFileHref("/resources/files", filepath.Join(hostRoot, "target")) {
 		t.Fatalf("move response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
-	if _, err := os.Stat(filepath.Join(managedRoot, "source", "old.txt")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(hostRoot, "source", "old.txt")); !os.IsNotExist(err) {
 		t.Fatalf("source still exists: %v", err)
 	}
-	content, err := os.ReadFile(filepath.Join(managedRoot, "target", "new.txt"))
+	content, err := os.ReadFile(filepath.Join(hostRoot, "target", "new.txt"))
 	if err != nil {
 		t.Fatalf("read moved file: %v", err)
 	}
@@ -618,10 +687,10 @@ func TestMoveNameConflictRequiresAChoiceAndKeepsOverwriteRecoverable(t *testing.
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
 	for _, directory := range []string{"source", "target"} {
-		if err := os.MkdirAll(filepath.Join(managedRoot, directory), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(hostRoot, directory), 0o755); err != nil {
 			t.Fatalf("create %s: %v", directory, err)
 		}
 	}
@@ -631,12 +700,12 @@ func TestMoveNameConflictRequiresAChoiceAndKeepsOverwriteRecoverable(t *testing.
 		"source/overwrite.txt": "incoming overwrite",
 		"target/overwrite.txt": "current overwrite",
 	} {
-		if err := os.WriteFile(filepath.Join(managedRoot, filepath.FromSlash(relative)), []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(hostRoot, filepath.FromSlash(relative)), []byte(content), 0o644); err != nil {
 			t.Fatalf("write %s: %v", relative, err)
 		}
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
-	response, err := client.Get(serverURL + "/resources/files/source/")
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
+	response, err := client.Get(hostFilesRequestURL(serverURL, filepath.Join(hostRoot, "source")))
 	if err != nil {
 		t.Fatalf("get source directory: %v", err)
 	}
@@ -647,8 +716,8 @@ func TestMoveNameConflictRequiresAChoiceAndKeepsOverwriteRecoverable(t *testing.
 	}
 
 	response, err = client.PostForm(serverURL+"/resources/files/move", url.Values{
-		"source":      {"source/item.txt"},
-		"destination": {"target/item.txt"},
+		"source":      {filepath.Join(hostRoot, "source", "item.txt")},
+		"destination": {filepath.Join(hostRoot, "target", "item.txt")},
 		"csrf_token":  {formToken(t, page)},
 	})
 	if err != nil {
@@ -664,13 +733,13 @@ func TestMoveNameConflictRequiresAChoiceAndKeepsOverwriteRecoverable(t *testing.
 		!bytes.Contains(conflictPage, []byte(`value="item (2).txt"`)) {
 		t.Fatalf("move conflict response: status=%d body=%s", response.StatusCode, conflictPage)
 	}
-	if current, err := os.ReadFile(filepath.Join(managedRoot, "target", "item.txt")); err != nil || string(current) != "current" {
+	if current, err := os.ReadFile(filepath.Join(hostRoot, "target", "item.txt")); err != nil || string(current) != "current" {
 		t.Fatalf("move conflict changed current target: content=%q err=%v", current, err)
 	}
 
 	response, err = client.PostForm(serverURL+"/resources/files/move", url.Values{
-		"source":          {"source/item.txt"},
-		"destination":     {"target/item.txt"},
+		"source":          {filepath.Join(hostRoot, "source", "item.txt")},
+		"destination":     {filepath.Join(hostRoot, "target", "item.txt")},
 		"csrf_token":      {formToken(t, conflictPage)},
 		"conflict_action": {"rename"},
 		"new_name":        {"../escaped.txt"},
@@ -682,13 +751,13 @@ func TestMoveNameConflictRequiresAChoiceAndKeepsOverwriteRecoverable(t *testing.
 	if response.StatusCode != http.StatusBadRequest {
 		t.Fatalf("path-like rename status=%d, want %d", response.StatusCode, http.StatusBadRequest)
 	}
-	if _, err := os.Stat(filepath.Join(managedRoot, "source", "item.txt")); err != nil {
+	if _, err := os.Stat(filepath.Join(hostRoot, "source", "item.txt")); err != nil {
 		t.Fatalf("path-like rename changed source: %v", err)
 	}
 
 	response, err = client.PostForm(serverURL+"/resources/files/move", url.Values{
-		"source":          {"source/item.txt"},
-		"destination":     {"target/item.txt"},
+		"source":          {filepath.Join(hostRoot, "source", "item.txt")},
+		"destination":     {filepath.Join(hostRoot, "target", "item.txt")},
 		"csrf_token":      {formToken(t, conflictPage)},
 		"conflict_action": {"rename"},
 		"new_name":        {"item-copy.txt"},
@@ -697,16 +766,16 @@ func TestMoveNameConflictRequiresAChoiceAndKeepsOverwriteRecoverable(t *testing.
 		t.Fatalf("rename incoming move: %v", err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/resources/files/target/" {
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != hostFileHref("/resources/files", filepath.Join(hostRoot, "target")) {
 		t.Fatalf("rename move response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
-	if renamed, err := os.ReadFile(filepath.Join(managedRoot, "target", "item-copy.txt")); err != nil || string(renamed) != "incoming" {
+	if renamed, err := os.ReadFile(filepath.Join(hostRoot, "target", "item-copy.txt")); err != nil || string(renamed) != "incoming" {
 		t.Fatalf("renamed move content=%q err=%v", renamed, err)
 	}
 
 	response, err = client.PostForm(serverURL+"/resources/files/move", url.Values{
-		"source":          {"source/overwrite.txt"},
-		"destination":     {"target/overwrite.txt"},
+		"source":          {filepath.Join(hostRoot, "source", "overwrite.txt")},
+		"destination":     {filepath.Join(hostRoot, "target", "overwrite.txt")},
 		"csrf_token":      {formToken(t, page)},
 		"conflict_action": {"overwrite"},
 	})
@@ -717,7 +786,7 @@ func TestMoveNameConflictRequiresAChoiceAndKeepsOverwriteRecoverable(t *testing.
 	if response.StatusCode != http.StatusSeeOther {
 		t.Fatalf("overwrite move status=%d", response.StatusCode)
 	}
-	if overwritten, err := os.ReadFile(filepath.Join(managedRoot, "target", "overwrite.txt")); err != nil || string(overwritten) != "incoming overwrite" {
+	if overwritten, err := os.ReadFile(filepath.Join(hostRoot, "target", "overwrite.txt")); err != nil || string(overwritten) != "incoming overwrite" {
 		t.Fatalf("overwrite move content=%q err=%v", overwritten, err)
 	}
 	response, err = client.Get(serverURL + "/resources/trash")
@@ -729,18 +798,18 @@ func TestMoveNameConflictRequiresAChoiceAndKeepsOverwriteRecoverable(t *testing.
 	if err != nil {
 		t.Fatalf("read trash after overwrite move: %v", err)
 	}
-	if !bytes.Contains(trashPage, []byte("target/overwrite.txt")) {
+	if !bytes.Contains(trashPage, []byte(html.EscapeString(filepath.Join(hostRoot, "target", "overwrite.txt")))) {
 		t.Fatalf("overwritten move target was not retained in trash: %s", trashPage)
 	}
 }
 
-func postManagedUpload(t *testing.T, client *http.Client, serverURL, csrfToken, relative, name, content, conflictAction string) (int, []byte) {
+func postHostUpload(t *testing.T, client *http.Client, serverURL, csrfToken, directory, name, content, conflictAction string) (int, []byte) {
 	t.Helper()
 	var requestBody bytes.Buffer
 	writer := multipart.NewWriter(&requestBody)
 	for _, field := range []struct{ name, value string }{
 		{name: "csrf_token", value: csrfToken},
-		{name: "path", value: relative},
+		{name: "path", value: directory},
 		{name: "conflict_action", value: conflictAction},
 	} {
 		if err := writer.WriteField(field.name, field.value); err != nil {
@@ -778,16 +847,16 @@ func TestUploadNameConflictDefaultsToSkipAndSupportsRename(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
-		t.Fatalf("create managed root: %v", err)
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatalf("create host root: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(managedRoot, "same.txt"), []byte("current"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(hostRoot, "same.txt"), []byte("current"), 0o644); err != nil {
 		t.Fatalf("write current file: %v", err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
-	response, err := client.Get(serverURL + "/resources/files/")
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
@@ -800,7 +869,7 @@ func TestUploadNameConflictDefaultsToSkipAndSupportsRename(t *testing.T) {
 
 	response, err = client.PostForm(serverURL+"/resources/files/conflicts", url.Values{
 		"csrf_token": {csrfToken},
-		"path":       {""},
+		"path":       {hostRoot},
 		"name":       {"same.txt", "new.txt"},
 	})
 	if err != nil {
@@ -819,7 +888,7 @@ func TestUploadNameConflictDefaultsToSkipAndSupportsRename(t *testing.T) {
 	}
 	response, err = client.PostForm(serverURL+"/resources/files/conflicts", url.Values{
 		"csrf_token": {csrfToken},
-		"path":       {""},
+		"path":       {hostRoot},
 		"name":       {"../outside.txt"},
 	})
 	if err != nil {
@@ -830,22 +899,22 @@ func TestUploadNameConflictDefaultsToSkipAndSupportsRename(t *testing.T) {
 		t.Fatalf("invalid upload name status=%d, want %d", response.StatusCode, http.StatusBadRequest)
 	}
 
-	status, result := postManagedUpload(t, client, serverURL, csrfToken, "", "same.txt", "incoming", "")
+	status, result := postHostUpload(t, client, serverURL, csrfToken, hostRoot, "same.txt", "incoming", "")
 	if status != http.StatusMultiStatus || !bytes.Contains(result, []byte("Skipped")) {
 		t.Fatalf("default conflict result: status=%d body=%s", status, result)
 	}
-	if current, err := os.ReadFile(filepath.Join(managedRoot, "same.txt")); err != nil || string(current) != "current" {
+	if current, err := os.ReadFile(filepath.Join(hostRoot, "same.txt")); err != nil || string(current) != "current" {
 		t.Fatalf("default conflict changed current file: content=%q err=%v", current, err)
 	}
 
-	status, result = postManagedUpload(t, client, serverURL, csrfToken, "", "same.txt", "incoming", "rename")
+	status, result = postHostUpload(t, client, serverURL, csrfToken, hostRoot, "same.txt", "incoming", "rename")
 	if status != http.StatusOK || !bytes.Contains(result, []byte("same (2).txt")) {
 		t.Fatalf("rename conflict result: status=%d body=%s", status, result)
 	}
-	if renamed, err := os.ReadFile(filepath.Join(managedRoot, "same (2).txt")); err != nil || string(renamed) != "incoming" {
+	if renamed, err := os.ReadFile(filepath.Join(hostRoot, "same (2).txt")); err != nil || string(renamed) != "incoming" {
 		t.Fatalf("renamed upload content=%q err=%v", renamed, err)
 	}
-	if current, err := os.ReadFile(filepath.Join(managedRoot, "same.txt")); err != nil || string(current) != "current" {
+	if current, err := os.ReadFile(filepath.Join(hostRoot, "same.txt")); err != nil || string(current) != "current" {
 		t.Fatalf("renamed upload changed current file: content=%q err=%v", current, err)
 	}
 }
@@ -854,11 +923,11 @@ func TestAdminCanStreamUploadAFile(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 
-	response, err := client.Get(serverURL + "/resources/files/")
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
@@ -873,7 +942,7 @@ func TestAdminCanStreamUploadAFile(t *testing.T) {
 	if err := writer.WriteField("csrf_token", formToken(t, page)); err != nil {
 		t.Fatalf("write csrf field: %v", err)
 	}
-	if err := writer.WriteField("path", ""); err != nil {
+	if err := writer.WriteField("path", hostRoot); err != nil {
 		t.Fatalf("write path field: %v", err)
 	}
 	filePart, err := writer.CreateFormFile("files", "hello.txt")
@@ -904,7 +973,7 @@ func TestAdminCanStreamUploadAFile(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !bytes.Contains(resultPage, []byte("hello.txt")) || !bytes.Contains(resultPage, []byte("Succeeded")) {
 		t.Fatalf("upload response: status=%d body=%q", response.StatusCode, resultPage)
 	}
-	content, err := os.ReadFile(filepath.Join(managedRoot, "hello.txt"))
+	content, err := os.ReadFile(filepath.Join(hostRoot, "hello.txt"))
 	if err != nil {
 		t.Fatalf("read uploaded file: %v", err)
 	}
@@ -912,7 +981,7 @@ func TestAdminCanStreamUploadAFile(t *testing.T) {
 		t.Fatalf("uploaded content = %q", content)
 	}
 
-	response, err = client.Get(serverURL + "/resources/files/")
+	response, err = client.Get(hostFilesRequestURL(serverURL, hostRoot))
 	if err != nil {
 		t.Fatalf("get files before replacement: %v", err)
 	}
@@ -925,7 +994,7 @@ func TestAdminCanStreamUploadAFile(t *testing.T) {
 	writer = multipart.NewWriter(&requestBody)
 	for name, value := range map[string]string{
 		"csrf_token":      formToken(t, page),
-		"path":            "",
+		"path":            hostRoot,
 		"conflict_action": "overwrite",
 	} {
 		if err := writer.WriteField(name, value); err != nil {
@@ -959,14 +1028,14 @@ func TestAdminCanStreamUploadAFile(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !bytes.Contains(resultPage, []byte("Succeeded")) {
 		t.Fatalf("replacement response: status=%d body=%q", response.StatusCode, resultPage)
 	}
-	content, err = os.ReadFile(filepath.Join(managedRoot, "hello.txt"))
+	content, err = os.ReadFile(filepath.Join(hostRoot, "hello.txt"))
 	if err != nil {
 		t.Fatalf("read replacement file: %v", err)
 	}
 	if string(content) != "replacement upload" {
 		t.Fatalf("replacement content = %q", content)
 	}
-	matches, err := filepath.Glob(filepath.Join(managedRoot, ".scriptboard-upload-*"))
+	matches, err := filepath.Glob(filepath.Join(hostRoot, ".scriptboard-upload-*"))
 	if err != nil {
 		t.Fatalf("glob upload temporary files: %v", err)
 	}
@@ -979,11 +1048,11 @@ func TestAdminCanCreateDirectory(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 
-	response, err := client.Get(serverURL + "/resources/files/")
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
@@ -994,7 +1063,7 @@ func TestAdminCanCreateDirectory(t *testing.T) {
 	}
 
 	response, err = client.PostForm(serverURL+"/resources/files/mkdir", url.Values{
-		"path":       {""},
+		"path":       {hostRoot},
 		"name":       {"新目录"},
 		"csrf_token": {formToken(t, body)},
 	})
@@ -1002,10 +1071,10 @@ func TestAdminCanCreateDirectory(t *testing.T) {
 		t.Fatalf("create directory: %v", err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/resources/files/" {
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != hostFileHref("/resources/files", hostRoot) {
 		t.Fatalf("create directory response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
-	info, err := os.Stat(filepath.Join(managedRoot, "新目录"))
+	info, err := os.Stat(filepath.Join(hostRoot, "新目录"))
 	if err != nil {
 		t.Fatalf("stat created directory: %v", err)
 	}
@@ -1018,17 +1087,17 @@ func TestAdminCanDownloadARegularFileWithRange(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
-		t.Fatalf("create managed root: %v", err)
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatalf("create host root: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(managedRoot, "report.txt"), []byte("0123456789"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(hostRoot, "report.txt"), []byte("0123456789"), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 
-	request, err := http.NewRequest(http.MethodGet, serverURL+"/resources/files/download/report.txt", nil)
+	request, err := http.NewRequest(http.MethodGet, hostFileRequestURL(serverURL, "/resources/files/download", filepath.Join(hostRoot, "report.txt")), nil)
 	if err != nil {
 		t.Fatalf("create download request: %v", err)
 	}
@@ -1057,17 +1126,17 @@ func TestAdminCanMoveFileToTrashAndRestoreIt(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
-		t.Fatalf("create managed root: %v", err)
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatalf("create host root: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(managedRoot, "recover.txt"), []byte("recover me"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(hostRoot, "recover.txt"), []byte("recover me"), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 
-	response, err := client.Get(serverURL + "/resources/files/")
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
@@ -1077,7 +1146,7 @@ func TestAdminCanMoveFileToTrashAndRestoreIt(t *testing.T) {
 		t.Fatalf("read files: %v", err)
 	}
 	response, err = client.PostForm(serverURL+"/resources/files/delete", url.Values{
-		"path":       {"recover.txt"},
+		"path":       {filepath.Join(hostRoot, "recover.txt")},
 		"csrf_token": {formToken(t, page)},
 	})
 	if err != nil {
@@ -1087,7 +1156,7 @@ func TestAdminCanMoveFileToTrashAndRestoreIt(t *testing.T) {
 	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/resources/trash" {
 		t.Fatalf("delete response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
-	if _, err := os.Stat(filepath.Join(managedRoot, "recover.txt")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(hostRoot, "recover.txt")); !os.IsNotExist(err) {
 		t.Fatalf("deleted file remains at original path: %v", err)
 	}
 
@@ -1112,10 +1181,10 @@ func TestAdminCanMoveFileToTrashAndRestoreIt(t *testing.T) {
 		t.Fatalf("restore file: %v", err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/resources/files/" {
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != hostFileHref("/resources/files", hostRoot) {
 		t.Fatalf("restore response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
-	content, err := os.ReadFile(filepath.Join(managedRoot, "recover.txt"))
+	content, err := os.ReadFile(filepath.Join(hostRoot, "recover.txt"))
 	if err != nil {
 		t.Fatalf("read restored file: %v", err)
 	}
@@ -1128,18 +1197,18 @@ func TestAdminCanRestoreTrashEntryWhenOriginalPathIsOccupied(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
-		t.Fatalf("create managed root: %v", err)
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatalf("create host root: %v", err)
 	}
-	originalPath := filepath.Join(managedRoot, "recover.txt")
+	originalPath := filepath.Join(hostRoot, "recover.txt")
 	if err := os.WriteFile(originalPath, []byte("recover me"), 0o644); err != nil {
 		t.Fatalf("write original file: %v", err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 
-	response, err := client.Get(serverURL + "/resources/files/")
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
@@ -1149,7 +1218,7 @@ func TestAdminCanRestoreTrashEntryWhenOriginalPathIsOccupied(t *testing.T) {
 		t.Fatalf("read files: %v", err)
 	}
 	response, err = client.PostForm(serverURL+"/resources/files/delete", url.Values{
-		"path":       {"recover.txt"},
+		"path":       {filepath.Join(hostRoot, "recover.txt")},
 		"csrf_token": {formToken(t, page)},
 	})
 	if err != nil {
@@ -1208,7 +1277,7 @@ func TestAdminCanRestoreTrashEntryWhenOriginalPathIsOccupied(t *testing.T) {
 		t.Fatalf("overwrite occupied restore target: %v", err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/resources/files/" {
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != hostFileHref("/resources/files", hostRoot) {
 		t.Fatalf("overwrite restore response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
 	restored, err := os.ReadFile(originalPath)
@@ -1236,23 +1305,23 @@ func TestAdminCanPermanentlyPurgeTrashEntry(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
-		t.Fatalf("create managed root: %v", err)
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatalf("create host root: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(managedRoot, "purge.txt"), []byte("delete forever"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(hostRoot, "purge.txt"), []byte("delete forever"), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
-	response, err := client.Get(serverURL + "/resources/files/")
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
 	page, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	response, err = client.PostForm(serverURL+"/resources/files/delete", url.Values{
-		"path":       {"purge.txt"},
+		"path":       {filepath.Join(hostRoot, "purge.txt")},
 		"csrf_token": {formToken(t, page)},
 	})
 	if err != nil {
@@ -1277,12 +1346,12 @@ func TestAdminCanPermanentlyPurgeTrashEntry(t *testing.T) {
 	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/resources/trash" {
 		t.Fatalf("purge response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
-	entries, err := os.ReadDir(filepath.Join(managedRoot, ".scriptboard-trash"))
+	entries, err := os.ReadDir(filepath.Join(hostRoot, ".scriptboard-trash"))
 	if err != nil {
 		t.Fatalf("read trash directory: %v", err)
 	}
-	if len(entries) != 0 {
-		t.Fatalf("purged content remains: %v", entries)
+	if len(entries) != 1 || entries[0].Name() != ".scriptboard-owner" {
+		t.Fatalf("purged content remains or ownership marker is missing: %v", entries)
 	}
 }
 
@@ -1290,18 +1359,18 @@ func TestTextEditRejectsAnExternalChange(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
-		t.Fatalf("create managed root: %v", err)
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatalf("create host root: %v", err)
 	}
-	filePath := filepath.Join(managedRoot, "note.txt")
+	filePath := filepath.Join(hostRoot, "note.txt")
 	if err := os.WriteFile(filePath, []byte("original"), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 
-	response, err := client.Get(serverURL + "/resources/files/edit/note.txt")
+	response, err := client.Get(hostFileRequestURL(serverURL, "/resources/files/edit", filepath.Join(hostRoot, "note.txt")))
 	if err != nil {
 		t.Fatalf("get editor: %v", err)
 	}
@@ -1317,7 +1386,7 @@ func TestTextEditRejectsAnExternalChange(t *testing.T) {
 		t.Fatalf("write external change: %v", err)
 	}
 
-	response, err = client.PostForm(serverURL+"/resources/files/edit/note.txt", url.Values{
+	response, err = client.PostForm(hostFileRequestURL(serverURL, "/resources/files/edit", filePath), url.Values{
 		"content":    {"my change"},
 		"digest":     {hiddenValue(t, page, "digest")},
 		"csrf_token": {formToken(t, page)},
@@ -1342,18 +1411,18 @@ func TestTextEditAtomicallySavesAndKeepsOldVersionInTrash(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
-		t.Fatalf("create managed root: %v", err)
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatalf("create host root: %v", err)
 	}
-	filePath := filepath.Join(managedRoot, "note.txt")
+	filePath := filepath.Join(hostRoot, "note.txt")
 	if err := os.WriteFile(filePath, []byte("before"), 0o640); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 
-	response, err := client.Get(serverURL + "/resources/files/edit/note.txt")
+	response, err := client.Get(hostFileRequestURL(serverURL, "/resources/files/edit", filepath.Join(hostRoot, "note.txt")))
 	if err != nil {
 		t.Fatalf("get editor: %v", err)
 	}
@@ -1362,7 +1431,7 @@ func TestTextEditAtomicallySavesAndKeepsOldVersionInTrash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read editor: %v", err)
 	}
-	response, err = client.PostForm(serverURL+"/resources/files/edit/note.txt", url.Values{
+	response, err = client.PostForm(hostFileRequestURL(serverURL, "/resources/files/edit", filePath), url.Values{
 		"content":    {"after"},
 		"digest":     {hiddenValue(t, page, "digest")},
 		"csrf_token": {formToken(t, page)},
@@ -1428,18 +1497,18 @@ func TestTextEditPreservesExistingLineEndingStyle(t *testing.T) {
 			t.Parallel()
 
 			root := t.TempDir()
-			managedRoot := filepath.Join(root, "managed")
+			hostRoot := filepath.Join(root, "managed")
 			stateRoot := filepath.Join(root, "state")
-			if err := os.MkdirAll(managedRoot, 0o755); err != nil {
-				t.Fatalf("create managed root: %v", err)
+			if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+				t.Fatalf("create host root: %v", err)
 			}
-			filePath := filepath.Join(managedRoot, "script.txt")
+			filePath := filepath.Join(hostRoot, "script.txt")
 			if err := os.WriteFile(filePath, []byte(testCase.original), 0o644); err != nil {
 				t.Fatalf("write file: %v", err)
 			}
-			client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+			client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 
-			response, err := client.Get(serverURL + "/resources/files/edit/script.txt")
+			response, err := client.Get(hostFileRequestURL(serverURL, "/resources/files/edit", filepath.Join(hostRoot, "script.txt")))
 			if err != nil {
 				t.Fatalf("get editor: %v", err)
 			}
@@ -1449,7 +1518,7 @@ func TestTextEditPreservesExistingLineEndingStyle(t *testing.T) {
 				t.Fatalf("read editor: %v", err)
 			}
 
-			response, err = client.PostForm(serverURL+"/resources/files/edit/script.txt", url.Values{
+			response, err = client.PostForm(hostFileRequestURL(serverURL, "/resources/files/edit", filePath), url.Values{
 				"content":    {testCase.submitted},
 				"digest":     {hiddenValue(t, page, "digest")},
 				"csrf_token": {formToken(t, page)},

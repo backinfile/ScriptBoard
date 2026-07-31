@@ -23,8 +23,7 @@ func TestWebsiteAvailabilityRendersFreshCurrentBucketAsProvisional(t *testing.T)
 	now := time.Date(2026, time.July, 29, 12, 59, 59, 0, time.UTC)
 	root := t.TempDir()
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 		WebsiteMonitorOptions: websitemonitor.Options{
 			Now: func() time.Time { return now },
 			Probe: websiteProbeFunc(func(_ context.Context, config websitemonitor.Config) websitemonitor.Evidence {
@@ -158,8 +157,7 @@ func TestWebsiteAvailabilityRendersFreshCurrentBucketAsProvisional(t *testing.T)
 func TestAdminCreatesWebsiteMonitorAndReadsItsResult(t *testing.T) {
 	root := t.TempDir()
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 		WebsiteMonitorOptions: websitemonitor.Options{
 			Probe: websiteProbeFunc(func(_ context.Context, config websitemonitor.Config) websitemonitor.Evidence {
 				return websitemonitor.Evidence{
@@ -310,8 +308,7 @@ func TestNginxScanPreviewsBeforeASeparateImport(t *testing.T) {
 		t.Fatal(err)
 	}
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 		WebsiteMonitorOptions: websitemonitor.Options{
 			Probe: websiteProbeFunc(func(context.Context, websitemonitor.Config) websitemonitor.Evidence {
 				return websitemonitor.Evidence{Success: true}
@@ -429,8 +426,7 @@ func TestNginxJSONImportAcceptsMultipartFormAndReturnsSuccessContract(t *testing
 		t.Fatal(err)
 	}
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 		WebsiteMonitorOptions: websitemonitor.Options{
 			Probe: websiteProbeFunc(func(context.Context, websitemonitor.Config) websitemonitor.Evidence {
 				return websitemonitor.Evidence{Success: true}
@@ -496,8 +492,7 @@ func TestNginxJSONImportAcceptsMultipartFormAndReturnsSuccessContract(t *testing
 func TestWebsiteMonitoringLocalizesEnglishAndShowsCheckedZeroLatency(t *testing.T) {
 	root := t.TempDir()
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 		WebsiteMonitorOptions: websitemonitor.Options{
 			Probe: websiteProbeFunc(func(context.Context, websitemonitor.Config) websitemonitor.Evidence {
 				return websitemonitor.Evidence{
@@ -670,8 +665,7 @@ func TestWebsiteMonitoringLocalizesEnglishAndShowsCheckedZeroLatency(t *testing.
 func TestWebsiteMonitoringDataReturnsCompletePollingAndDetailSnapshots(t *testing.T) {
 	root := t.TempDir()
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 		WebsiteMonitorOptions: websitemonitor.Options{
 			Probe: websiteProbeFunc(func(context.Context, websitemonitor.Config) websitemonitor.Evidence {
 				return websitemonitor.Evidence{

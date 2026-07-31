@@ -9,20 +9,22 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"scriptboard/internal/hostfiles"
 )
 
 func TestRunsPageLinksEveryRecordBackToItsScriptDirectory(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
 	directoryName := "ops #1"
-	if err := os.MkdirAll(filepath.Join(managedRoot, directoryName), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(hostRoot, directoryName), 0o755); err != nil {
 		t.Fatalf("create script directory: %v", err)
 	}
 
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 	db, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
 	if err != nil {
 		t.Fatalf("open database: %v", err)
@@ -31,15 +33,15 @@ func TestRunsPageLinksEveryRecordBackToItsScriptDirectory(t *testing.T) {
 	for _, fixture := range []struct {
 		id, scriptPath string
 	}{
-		{id: "nested-run", scriptPath: "ops #1/inspect.cmd"},
-		{id: "root-run", scriptPath: "root.cmd"},
+		{id: "nested-run", scriptPath: filepath.Join(hostRoot, directoryName, "inspect.cmd")},
+		{id: "root-run", scriptPath: filepath.Join(hostRoot, "root.cmd")},
 	} {
 		if _, err := db.Exec(`INSERT INTO runs
-			(id, script_path, script_sha256, arguments_template, template_arguments_json, arguments_json,
+			(id, script_path, script_path_key, script_sha256, arguments_template, template_arguments_json, arguments_json,
 			 executor, source_type, source_name, runtime_identity, status, created_at, timeout_seconds, log_path)
-			VALUES (?, ?, 'digest', '', '[]', '[]', 'cmd.exe', 'admin/manual', 'manual', 'test',
+			VALUES (?, ?, ?, 'digest', '', '[]', '[]', 'cmd.exe', 'admin/manual', 'manual', 'test',
 			 'succeeded', ?, 0, '')`,
-			fixture.id, fixture.scriptPath, time.Now().UnixNano()); err != nil {
+			fixture.id, fixture.scriptPath, hostfiles.ComparisonKey(fixture.scriptPath), time.Now().UnixNano()); err != nil {
 			t.Fatalf("insert %s: %v", fixture.id, err)
 		}
 	}
@@ -66,8 +68,8 @@ func TestRunsPageLinksEveryRecordBackToItsScriptDirectory(t *testing.T) {
 	for _, expected := range []string{
 		`data-script-directory-link`,
 		`data-lucide="folder-open"`,
-		`href="/resources/files/ops%20%231/"`,
-		`href="/resources/files/"`,
+		`href="` + strings.ReplaceAll(hostFilesHrefWithQuery(filepath.Join(hostRoot, directoryName), nil), "+", "&#43;") + `"`,
+		`href="` + hostFilesHrefWithQuery(hostRoot, nil) + `"`,
 		`Open script directory`,
 	} {
 		if !strings.Contains(runHTML, expected) {
@@ -78,7 +80,7 @@ func TestRunsPageLinksEveryRecordBackToItsScriptDirectory(t *testing.T) {
 		t.Fatalf("script directory link count=%d, want one for each of 2 records: %s", count, runHTML)
 	}
 
-	response, err = client.Get(serverURL + "/resources/files/ops%20%231/")
+	response, err = client.Get(hostFilesRequestURL(serverURL, filepath.Join(hostRoot, directoryName)))
 	if err != nil {
 		t.Fatalf("open script directory: %v", err)
 	}

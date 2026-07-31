@@ -57,8 +57,7 @@ func TestDockerSourceFailureStaysOnApplicationsPageAndOutOfShellAttention(t *tes
 
 	root := t.TempDir()
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 		ApplicationProbe: applicationFixtureProbe{snapshot: appstatus.RawSnapshot{
 			CollectedAt:     time.Now().UTC(),
 			DockerAvailable: false,
@@ -103,8 +102,7 @@ func TestApplicationsPageListsDeterministicProbeDataAndPersistsPin(t *testing.T)
 	root := t.TempDir()
 	collectedAt := time.Date(2026, 7, 29, 6, 30, 0, 0, time.UTC)
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 		ApplicationProbe: applicationFixtureProbe{snapshot: appstatus.RawSnapshot{
 			CollectedAt:      collectedAt,
 			LogicalCores:     4,
@@ -218,8 +216,7 @@ func TestApplicationsPageSortHeadersToggleDirectionAndPreserveFilters(t *testing
 
 	root := t.TempDir()
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 		ApplicationProbe: applicationFixtureProbe{snapshot: appstatus.RawSnapshot{
 			CollectedAt: time.Now().UTC(),
 			Processes: []appstatus.RawProcess{{
@@ -260,8 +257,7 @@ func TestApplicationsPinRequiresCSRF(t *testing.T) {
 
 	root := t.TempDir()
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 		ApplicationProbe: applicationFixtureProbe{snapshot: appstatus.RawSnapshot{
 			CollectedAt: time.Now().UTC(),
 			Containers:  []appstatus.RawContainer{{Name: "api-prod", Image: "example/api"}},
@@ -293,8 +289,7 @@ func TestApplicationDetailsRouteReturnsRuntimeAndHistoryJSON(t *testing.T) {
 	root := t.TempDir()
 	collectedAt := time.Now().UTC().Truncate(time.Second)
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 		ApplicationProbe: applicationFixtureProbe{snapshot: appstatus.RawSnapshot{
 			CollectedAt: collectedAt,
 			Processes: []appstatus.RawProcess{{
@@ -360,8 +355,7 @@ func TestMovePinnedApplicationRoutePersistsOrderAndRequiresCSRF(t *testing.T) {
 
 	root := t.TempDir()
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 		ApplicationProbe: applicationFixtureProbe{snapshot: appstatus.RawSnapshot{
 			CollectedAt: time.Now().UTC(),
 			Containers: []appstatus.RawContainer{
@@ -464,7 +458,6 @@ func TestApplicationMonitoringRoutesRequireASession(t *testing.T) {
 
 	root := t.TempDir()
 	application, err := app.Open(app.Config{
-		ManagedRoot:      filepath.Join(root, "managed"),
 		StateRoot:        filepath.Join(root, "state"),
 		ApplicationProbe: applicationFixtureProbe{snapshot: appstatus.RawSnapshot{CollectedAt: time.Now().UTC()}},
 	})

@@ -1,6 +1,6 @@
 //go:build windows
 
-package managedfiles
+package hostfiles
 
 import (
 	"fmt"

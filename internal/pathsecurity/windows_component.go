@@ -7,7 +7,7 @@ import (
 
 // UnsafeWindowsComponent reports names that Win32 can reinterpret as a
 // device, alternate data stream, or a different normalized filename.
-// Applying the rule on every platform keeps managed content portable.
+// Applying the rule on every platform keeps names created through the host-file UI portable.
 func UnsafeWindowsComponent(component string) bool {
 	if component == "" || !utf8.ValidString(component) ||
 		strings.ContainsAny(component, `<>:"/\|?*`) ||

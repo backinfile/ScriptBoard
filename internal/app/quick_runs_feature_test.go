@@ -127,26 +127,27 @@ func TestAdminCanReorderQuickRunGroups(t *testing.T) {
 	}
 }
 
-func TestAdminCanCreateQuickRunInAGroupFromManagedFile(t *testing.T) {
+func TestAdminCanCreateQuickRunInAGroupFromHostFile(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	scriptName, scriptContent := "grouped.sh", "printf 'grouped\\n'\n"
 	if runtime.GOOS == "windows" {
 		scriptName, scriptContent = "grouped.cmd", "@echo off\r\necho grouped\r\n"
 	}
-	if err := os.WriteFile(filepath.Join(managedRoot, scriptName), []byte(scriptContent), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(hostRoot, scriptName), []byte(scriptContent), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 	groupID, _ := createQuickRunGroup(t, client, serverURL, "Deployment")
 
-	response, err := client.Get(serverURL + "/resources/files/quick-run/" + scriptName)
+	scriptPath := filepath.Join(hostRoot, scriptName)
+	response, err := client.Get(hostFileRequestURL(serverURL, "/resources/files/quick-run", scriptPath))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +162,7 @@ func TestAdminCanCreateQuickRunInAGroupFromManagedFile(t *testing.T) {
 	response, err = client.PostForm(serverURL+"/config/quick-runs", url.Values{
 		"csrf_token": {formToken(t, taskPage)},
 		"name":       {"Grouped deploy"},
-		"script":     {scriptName},
+		"script":     {scriptPath},
 		"group_id":   {groupID},
 	})
 	if err != nil {
@@ -188,21 +189,21 @@ func TestDeletingQuickRunGroupMovesItsItemsToUngrouped(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	scriptName, scriptContent := "preserved.sh", "printf 'preserved\\n'\n"
 	if runtime.GOOS == "windows" {
 		scriptName, scriptContent = "preserved.cmd", "@echo off\r\necho preserved\r\n"
 	}
-	if err := os.WriteFile(filepath.Join(managedRoot, scriptName), []byte(scriptContent), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(hostRoot, scriptName), []byte(scriptContent), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 	groupID, token := createQuickRunGroup(t, client, serverURL, "Temporary")
-	createQuickRunFromFile(t, client, serverURL, scriptName, "Preserved item", groupID)
+	createQuickRunFromFile(t, client, serverURL, filepath.Join(hostRoot, scriptName), "Preserved item", groupID)
 
 	response, err := client.PostForm(serverURL+"/config/quick-runs/groups/"+groupID+"/delete", url.Values{
 		"csrf_token": {token},
@@ -235,22 +236,22 @@ func TestAdminCanMoveQuickRunBetweenGroups(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	scriptName, scriptContent := "movable.sh", "printf 'movable\\n'\n"
 	if runtime.GOOS == "windows" {
 		scriptName, scriptContent = "movable.cmd", "@echo off\r\necho movable\r\n"
 	}
-	if err := os.WriteFile(filepath.Join(managedRoot, scriptName), []byte(scriptContent), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(hostRoot, scriptName), []byte(scriptContent), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 	sourceGroupID, _ := createQuickRunGroup(t, client, serverURL, "Source")
 	targetGroupID, _ := createQuickRunGroup(t, client, serverURL, "Target")
-	createQuickRunFromFile(t, client, serverURL, scriptName, "Movable item", sourceGroupID)
+	createQuickRunFromFile(t, client, serverURL, filepath.Join(hostRoot, scriptName), "Movable item", sourceGroupID)
 	page := getQuickRunsPage(t, client, serverURL)
 	quickRunID := hiddenValue(t, page, "id")
 
@@ -288,24 +289,24 @@ func TestQuickRunReorderingStaysWithinCurrentGroup(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	scriptName, scriptContent := "ordered.sh", "printf 'ordered\\n'\n"
 	if runtime.GOOS == "windows" {
 		scriptName, scriptContent = "ordered.cmd", "@echo off\r\necho ordered\r\n"
 	}
-	if err := os.WriteFile(filepath.Join(managedRoot, scriptName), []byte(scriptContent), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(hostRoot, scriptName), []byte(scriptContent), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 	groupID, _ := createQuickRunGroup(t, client, serverURL, "Ordered")
 	otherGroupID, _ := createQuickRunGroup(t, client, serverURL, "Other")
-	createQuickRunFromFile(t, client, serverURL, scriptName, "First item", groupID)
-	createQuickRunFromFile(t, client, serverURL, scriptName, "Second item", groupID)
-	createQuickRunFromFile(t, client, serverURL, scriptName, "Other item", otherGroupID)
+	createQuickRunFromFile(t, client, serverURL, filepath.Join(hostRoot, scriptName), "First item", groupID)
+	createQuickRunFromFile(t, client, serverURL, filepath.Join(hostRoot, scriptName), "Second item", groupID)
+	createQuickRunFromFile(t, client, serverURL, filepath.Join(hostRoot, scriptName), "Other item", otherGroupID)
 	page := getQuickRunsPage(t, client, serverURL)
 	secondID := quickRunIDForName(t, page, "Second item")
 
@@ -349,21 +350,21 @@ func TestAdminCanSaveHistoricalRunIntoAGroup(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	scriptName, scriptContent := "historical.sh", "printf 'historical\\n'\n"
 	if runtime.GOOS == "windows" {
 		scriptName, scriptContent = "historical.cmd", "@echo off\r\necho historical\r\n"
 	}
-	if err := os.WriteFile(filepath.Join(managedRoot, scriptName), []byte(scriptContent), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(hostRoot, scriptName), []byte(scriptContent), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 	groupID, _ := createQuickRunGroup(t, client, serverURL, "History")
-	filesPageResponse, err := client.Get(serverURL + "/resources/files/")
+	filesPageResponse, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -371,7 +372,7 @@ func TestAdminCanSaveHistoricalRunIntoAGroup(t *testing.T) {
 	_ = filesPageResponse.Body.Close()
 	response, err := client.PostForm(serverURL+"/history/runs/start", url.Values{
 		"csrf_token": {formToken(t, filesPage)},
-		"script":     {scriptName},
+		"script":     {filepath.Join(hostRoot, scriptName)},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -426,20 +427,21 @@ func TestAdminCanEditQuickRunWithoutChangingItsScript(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	scriptName, scriptContent := "editable.sh", "printf 'editable\\n'\n"
 	if runtime.GOOS == "windows" {
 		scriptName, scriptContent = "editable.cmd", "@echo off\r\necho editable\r\n"
 	}
-	if err := os.WriteFile(filepath.Join(managedRoot, scriptName), []byte(scriptContent), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(hostRoot, scriptName), []byte(scriptContent), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
-	createQuickRunFromFile(t, client, serverURL, scriptName, "Original name", "")
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
+	scriptPath := filepath.Join(hostRoot, scriptName)
+	createQuickRunFromFile(t, client, serverURL, scriptPath, "Original name", "")
 	page := getQuickRunsPage(t, client, serverURL)
 	quickRunID := quickRunIDForName(t, page, "Original name")
 
@@ -454,7 +456,7 @@ func TestAdminCanEditQuickRunWithoutChangingItsScript(t *testing.T) {
 		`name="name" autocomplete="off" value="Original name"`,
 		`name="arguments"`,
 		`name="timeout_seconds"`,
-		`<code>` + scriptName + `</code>`,
+		`<code>` + scriptPath + `</code>`,
 	} {
 		if !strings.Contains(string(taskPage), expected) {
 			t.Fatalf("edit Quick Run task missing %q: %s", expected, taskPage)
@@ -493,21 +495,22 @@ func TestAdminCanCopyQuickRunNextToItsSource(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	scriptName, scriptContent := "copyable.sh", "printf 'copyable\\n'\n"
 	if runtime.GOOS == "windows" {
 		scriptName, scriptContent = "copyable.cmd", "@echo off\r\necho copyable\r\n"
 	}
-	if err := os.WriteFile(filepath.Join(managedRoot, scriptName), []byte(scriptContent), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(hostRoot, scriptName), []byte(scriptContent), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 	groupID, _ := createQuickRunGroup(t, client, serverURL, "Copies")
-	createQuickRunFromFile(t, client, serverURL, scriptName, "Original", groupID)
+	scriptPath := filepath.Join(hostRoot, scriptName)
+	createQuickRunFromFile(t, client, serverURL, scriptPath, "Original", groupID)
 	page := getQuickRunsPage(t, client, serverURL)
 	sourceID := quickRunIDForName(t, page, "Original")
 
@@ -520,7 +523,7 @@ func TestAdminCanCopyQuickRunNextToItsSource(t *testing.T) {
 	for _, expected := range []string{
 		`data-task-kind="quick-copy"`,
 		`name="name" autocomplete="off" value="Original copy"`,
-		`<code>` + scriptName + `</code>`,
+		`<code>` + scriptPath + `</code>`,
 		`value="` + groupID + `" selected`,
 	} {
 		if !strings.Contains(string(taskPage), expected) {
@@ -565,20 +568,20 @@ func TestQuickRunSoftLockBlocksEditingAndDeletionUntilUnlocked(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	scriptName, scriptContent := "locked.sh", "printf 'locked\\n'\n"
 	if runtime.GOOS == "windows" {
 		scriptName, scriptContent = "locked.cmd", "@echo off\r\necho locked\r\n"
 	}
-	if err := os.WriteFile(filepath.Join(managedRoot, scriptName), []byte(scriptContent), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(hostRoot, scriptName), []byte(scriptContent), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
-	createQuickRunFromFile(t, client, serverURL, scriptName, "Protected", "")
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
+	createQuickRunFromFile(t, client, serverURL, filepath.Join(hostRoot, scriptName), "Protected", "")
 	page := getQuickRunsPage(t, client, serverURL)
 	quickRunID := quickRunIDForName(t, page, "Protected")
 	token := formToken(t, page)
@@ -727,9 +730,9 @@ func getQuickRunsPage(t *testing.T, client *http.Client, serverURL string) []byt
 	return page
 }
 
-func createQuickRunFromFile(t *testing.T, client *http.Client, serverURL, scriptName, name, groupID string) {
+func createQuickRunFromFile(t *testing.T, client *http.Client, serverURL, scriptPath, name, groupID string) {
 	t.Helper()
-	response, err := client.Get(serverURL + "/resources/files/quick-run/" + scriptName)
+	response, err := client.Get(hostFileRequestURL(serverURL, "/resources/files/quick-run", scriptPath))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -738,7 +741,7 @@ func createQuickRunFromFile(t *testing.T, client *http.Client, serverURL, script
 	response, err = client.PostForm(serverURL+"/config/quick-runs", url.Values{
 		"csrf_token": {formToken(t, taskPage)},
 		"name":       {name},
-		"script":     {scriptName},
+		"script":     {scriptPath},
 		"group_id":   {groupID},
 	})
 	if err != nil {

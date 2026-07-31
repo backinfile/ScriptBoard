@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/runmanager"
 )
 
@@ -510,10 +511,10 @@ func (a *App) createQuickRunCopy(source quickRunRecord, name, arguments string, 
 	}
 	now := time.Now().UTC().Unix()
 	if _, err = transaction.Exec(`INSERT INTO quick_runs
-		(id, name, script_path, arguments_template, timeout_seconds, source_run_id,
+		(id, name, script_path, script_path_key, arguments_template, timeout_seconds, source_run_id,
 		sort_order, created_at, group_id, locked, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
-		id, name, source.ScriptPath, arguments, timeoutSeconds, source.SourceRunID,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+		id, name, source.ScriptPath, hostfiles.ComparisonKey(source.ScriptPath), arguments, timeoutSeconds, source.SourceRunID,
 		sortOrder, now, targetGroup, now); err != nil {
 		return "", err
 	}

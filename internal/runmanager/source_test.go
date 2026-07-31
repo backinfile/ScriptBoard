@@ -10,8 +10,6 @@ import (
 	"testing"
 
 	_ "modernc.org/sqlite"
-
-	"scriptboard/internal/managedfiles"
 )
 
 func TestReadSourceVerifiesSnapshotAndReportsExpiry(t *testing.T) {
@@ -45,7 +43,7 @@ func TestReadSourceVerifiesSnapshotAndReportsExpiry(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(runRoot, "source.sh"), source, 0o400); err != nil {
 		t.Fatal(err)
 	}
-	manager := New(db, managedfiles.Open(filepath.Join(root, "managed")), stateRoot, 0, nil)
+	manager := New(db, testHostFiles(t), stateRoot, 0, nil)
 
 	got, err := manager.ReadSource("run-1")
 	if err != nil || string(got) != string(source) {

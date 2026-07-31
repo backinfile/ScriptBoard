@@ -4,7 +4,7 @@
 
 > 在浏览器里管理、运行和计划一台主机上的可信脚本。
 
-ScriptBoard 是面向单台 Windows 或 Linux 主机的自托管脚本操作台。把现有脚本放进受管目录后，即可通过浏览器管理文件、填写参数、查看实时日志、复用常用操作、设置定时计划，并追踪每一次变更和执行。
+ScriptBoard 是面向单台 Windows 或 Linux 主机的自托管脚本操作台。它可以在浏览器中访问服务身份可见的主机文件系统，管理任意允许位置的文件、填写脚本参数、查看实时日志、复用常用操作并设置定时计划。
 
 [下载最新版本](https://github.com/backinfile/ScriptBoard/releases/latest) · [快速开始](#快速开始) · [部署为系统服务](#部署为系统服务) · [排查问题](#排查问题)
 
@@ -27,12 +27,12 @@ ScriptBoard 是面向单台 Windows 或 Linux 主机的自托管脚本操作台�
 
 | 使用场景 | ScriptBoard 提供的能力 |
 | --- | --- |
-| 集中管理脚本 | 浏览、搜索、上传、下载、移动、重命名、预览和在线编辑受管文件 |
+| 管理主机文件 | 浏览各卷或 Linux `/`，搜索、上传、下载、移动、重命名、预览和在线编辑普通文件 |
 | 手动执行 | 运行 PowerShell、Python、Shell、Batch 和 CMD 脚本，实时查看 stdout 与 stderr |
 | 复用常用操作 | 把脚本、参数模板和超时保存为快捷执行项，并进行分组、排序、复制和软锁 |
 | 定时运行 | 使用五字段 Cron 创建计划，预览触发时间，并设置超时和重叠策略 |
 | 观察与排障 | 查看执行历史、审计记录、宿主资源、本机应用、Docker 容器和网站端点 |
-| 防止误改 | 使用应用回收站恢复误删文件；可选启用本地 Git 版本保护 |
+| 防止误删 | 删除内容进入其所在文件系统的 ScriptBoard 私有回收区，可在应用回收站恢复 |
 | 安全更新 | 检查官方稳定版，由管理员确认后完成下载、签名校验、重启和失败回滚 |
 
 Web 界面支持简体中文和美式英语，会根据浏览器语言自动选择，也可以随时切换。桌面和移动浏览器均可使用。
@@ -59,10 +59,10 @@ ScriptBoard 适合个人服务器、家庭实验室、小型工作站，以及�
 
 ## 快速开始
 
-下面使用发布包解压目录中的 `managed` 和 `state` 文件夹进行试用，不会安装系统服务：
+> [!IMPORTANT]
+> 本版本不兼容旧配置和旧状态库。请删除旧字段并选择一个全新的 `state_root`；程序检测到旧 schema 时只会拒绝启动，不会迁移、覆盖或删除旧数据。
 
-- `managed`：浏览器可以管理和执行的文件；
-- `state`：数据库、日志、会话和登录凭据。
+下面使用发布包解压目录中的 `state` 文件夹保存数据库、日志、会话和登录凭据，不会安装系统服务。文件页不再配置专用文件目录，而是直接浏览 Windows 各卷或 Linux `/`。
 
 ### 1. 下载完整发布包
 
@@ -73,8 +73,8 @@ ScriptBoard 适合个人服务器、家庭实验室、小型工作站，以及�
 Windows PowerShell：
 
 ```powershell
-New-Item -ItemType Directory -Force .\managed, .\state
-.\scriptboard.exe serve --managed-root "$PWD\managed" --state-root "$PWD\state"
+New-Item -ItemType Directory -Force .\state
+.\scriptboard.exe serve --state-root "$PWD\state"
 ```
 
 另开一个 PowerShell 窗口，在同一目录读取初始密码：
@@ -87,10 +87,8 @@ Linux：
 
 ```bash
 chmod +x ./scriptboard
-mkdir -p ./managed ./state
-./scriptboard serve \
-  --managed-root "$PWD/managed" \
-  --state-root "$PWD/state"
+mkdir -p ./state
+./scriptboard serve --state-root "$PWD/state"
 ```
 
 另开一个终端，在同一目录读取初始密码：
@@ -104,7 +102,7 @@ cat ./state/secrets/initial-admin-password
 1. 打开 <http://127.0.0.1:8787>。
 2. 使用用户名 `admin` 和刚才读取的初始密码登录。
 3. 前往“账户”更换初始密码。
-4. 在“文件”页面上传脚本，或直接把脚本复制到 `managed`。
+4. 在“文件”页面进入已有目录并上传脚本，或选择主机上已有的脚本。
 5. 打开脚本，选择“运行”，填写参数和超时时间后启动。
 6. 在运行详情页查看实时输出、停止运行，或把配置保存为快捷执行项。
 
@@ -118,11 +116,13 @@ cat ./state/secrets/initial-admin-password
 - 预览文本、Markdown、代码和常见光栅图片；
 - 在线编辑不超过 1 MiB 的 UTF-8 文本；
 - 直接在脚本所在目录执行，主机上的外部修改会反映到 Web 界面；
-- 不跟随符号链接、Windows Junction 或跨卷挂载边界。
+- Windows 顶层列出可用卷，Linux 从 `/` 浏览；隐藏文件默认不展示；
+- 不跟随符号链接、Windows Junction、重解析点或特殊文件；Linux 内核虚拟文件系统只显示受限入口；
+- 同文件系统移动原子提交，跨文件系统移动显示持久化扫描、复制、校验和提交进度。
 
 ### 复用参数与操作
 
-快捷执行项保存脚本路径、参数模板和超时，可分组、排序、复制和软锁。它们可以从受管脚本或历史运行中创建。
+快捷执行项保存主机脚本的绝对路径、参数模板和超时，可分组、排序、复制和软锁。它们可以从文件页脚本或历史运行中创建；成功移动文件时相关快捷执行和计划会一并更新。
 
 变量可以在参数模板中复用，但变量值以明文保存在 SQLite 中。“密码类型”只会在界面上默认隐藏内容，不代表加密存储，也不能替代密码保险库。
 
@@ -144,20 +144,15 @@ cat ./state/secrets/initial-admin-password
 - “应用”只读聚合本机进程和 Docker 容器的资源事实，并允许 Pin 重点应用；
 - “网站监控”从当前主机检查 HTTP、HTTPS、WebSocket 和 WSS 端点；
 - “运行历史”和“审计”保留执行结果与高影响操作的追踪线索；
-- Docker 容器和受管文本文件支持按需实时日志。
+- Docker 容器和普通主机文本文件支持按需实时日志。
 
 网站监控支持短期可用性、TLS 证书事实和 Nginx 候选项预览。Nginx 配置只有在管理员主动操作时才会读取，ScriptBoard 不会修改或重载 Nginx，也不会发送邮件、短信或 Webhook 通知。
 
-### 恢复误删和误改
+### 恢复误删
 
-从 Web 界面删除或替换的文件会先进入应用回收站。需要更完整的修改历史时，可以在“设置 → 版本保护”中启用本地 Git 版本保护：
+从 Web 界面删除或替换的文件会先进入目标所在文件系统中、带实例所有权标记的 ScriptBoard 私有回收区。无法安全建立回收区时操作会被拒绝，不会降级为永久删除。回收站支持恢复和显式永久清理；发生同名冲突时默认保持两边不变。
 
-- 自动为受管文件建立变更检查点；
-- 查看单个文件的历史版本；
-- 通过新的本地提交恢复指定版本；
-- 不执行 `push`、`pull`、`fetch` 或其他远程操作。
-
-版本保护用于恢复误改，不是异机备份。
+ScriptBoard 不再提供内置 Git 版本保护。磁盘上已有 `.git` 目录和历史不会被修改或删除，之后按普通主机文件处理。需要修改历史或异机备份时，请使用独立的版本控制与备份工具。
 
 ## 部署与运维
 
@@ -175,7 +170,6 @@ cat ./state/secrets/initial-admin-password
 将配置保存为 `C:\ProgramData\ScriptBoard\config.yaml`：
 
 ```yaml
-managed_root: C:\ProgramData\ScriptBoard\managed
 state_root: C:\ProgramData\ScriptBoard\state
 listen: 127.0.0.1:8787
 run_timeout_grace_seconds: 30
@@ -197,7 +191,6 @@ Windows 服务默认以 `LocalSystem` 身份运行。安装命令还会为当前
 将配置保存为 `/etc/scriptboard/config.yaml`：
 
 ```yaml
-managed_root: /var/lib/scriptboard/managed
 state_root: /var/lib/scriptboard/state
 listen: 127.0.0.1:8787
 run_timeout_grace_seconds: 30
@@ -212,7 +205,7 @@ sudo /opt/scriptboard/current/scriptboard service start
 sudo /opt/scriptboard/current/scriptboard service status
 ```
 
-安装命令会同时创建主服务和独立的更新 helper unit。systemd 服务默认以 `root` 身份运行。卸载服务不会删除配置、受管文件、状态数据、本地 Git 历史或已安装版本目录。
+安装命令会同时创建主服务和独立的更新 helper unit。systemd 服务默认以 `root` 身份运行。卸载服务不会删除配置、主机文件、状态数据、已有 Git 历史或已安装版本目录。
 
 ### 应用更新
 
@@ -247,11 +240,11 @@ update_check: false
 
 | 数据 | 位置 |
 | --- | --- |
-| 受管文件 | `managed_root` |
+| 需要长期保留的主机文件 | 由管理员按实际卷和目录纳入系统备份 |
 | SQLite、执行日志、会话、审计和内部状态 | `state_root` |
 | 服务配置 | Windows：`C:\ProgramData\ScriptBoard\config.yaml`<br>Linux：`/etc/scriptboard/config.yaml` |
 
-应用更新所用的数据库快照和失败回滚不能替代备份。ScriptBoard 启动时会执行只向前兼容的 SQLite 迁移；不要使用旧版本打开已经由新版本升级过的 `state_root`。
+应用更新所用的数据库快照和失败回滚不能替代备份。本版本要求全新配置和全新 `state_root`，数据库 schema 为 20；发现任何旧状态库都会在写入前拒绝启动，不会迁移、修改或删除旧数据。
 
 ## 配置与安全
 
@@ -265,12 +258,10 @@ update_check: false
 
 | 配置项 | 默认值 | 说明 |
 | --- | --- | --- |
-| `managed_root` | 平台数据目录下的 `managed` | 浏览器可以管理的唯一文件目录 |
 | `state_root` | 平台数据目录下的 `state` | 数据库、日志、会话和内部状态目录 |
 | `listen` | `127.0.0.1:8787` | HTTP 或 HTTPS 监听地址 |
 | `tls_cert`、`tls_key` | 空 | TLS 证书和私钥；非回环监听时必须配置 |
 | `trusted_proxies` | 空 | 允许提供转发头的可信代理 IP 或 CIDR |
-| `git_executable` | 自动查找 | 系统 Git CLI 的绝对路径 |
 | `run_timeout_grace_seconds` | `30` | 自动超时后强制结束进程树前的宽限秒数 |
 | `update_check` | `true` | 是否定期检查官方稳定版；不会自动安装 |
 | `update_check_interval_hours` | `6` | 自动检查间隔，允许 1–168 小时 |
@@ -291,10 +282,8 @@ scriptboard doctor --config CONFIG_PATH
 支持的环境变量：
 
 ```text
-SCRIPTBOARD_MANAGED_ROOT
 SCRIPTBOARD_STATE_ROOT
 SCRIPTBOARD_LISTEN
-SCRIPTBOARD_GIT_EXECUTABLE
 SCRIPTBOARD_TLS_CERT
 SCRIPTBOARD_TLS_KEY
 SCRIPTBOARD_TRUSTED_PROXIES
@@ -331,6 +320,8 @@ SCRIPTBOARD_ADMIN_PASSWORD_FILE
 - 所有脚本都继承服务身份，应用不会切换身份或提供容器隔离；
 - 同一个 `state_root` 同时只允许一个 ScriptBoard 实例运行。
 
+文件页会隐藏并拒绝访问 `state_root`、安装目录、活动配置、管理员密码文件、TLS 私钥及各文件系统的 ScriptBoard 回收区。包含这些路径的祖先目录不能被编辑、移动、删除、覆盖或执行。除此之外，文件可见性和读写能力直接取决于服务身份；默认以 root 或 LocalSystem 部署意味着很大的主机访问范围。
+
 不要直接把 ScriptBoard 暴露到互联网。远程访问应通过可信 VPN、零信任网络或正确配置的 HTTPS 反向代理，并限制可访问来源。
 
 ### 用户角色
@@ -341,7 +332,7 @@ SCRIPTBOARD_ADMIN_PASSWORD_FILE
 | --- | --- |
 | 管理员 | 全部能力，包括用户管理和系统设置 |
 | 维护员 | 除用户管理外的运维、文件、执行、审计和系统设置 |
-| 执行员 | 查看页面和文件、启动执行；只能停止自己启动的 Run |
+| 执行员 | 读取服务身份可读的普通主机文件并启动执行；只能停止自己启动的 Run |
 | 观察员 | 只读查看监控、配置摘要和历史 |
 
 角色是实例级固定权限，不支持自定义角色或逐脚本授权。密码使用 Argon2id 哈希保存；参数变量仍是明文数据。
@@ -358,7 +349,7 @@ scriptboard doctor --config CONFIG_PATH
 | --- | --- |
 | 脚本无法启动 | 对应解释器是否安装；服务身份是否能读取脚本和工作目录；`executor_chains` 是否使用绝对路径 |
 | 页面无法打开 | 服务状态、`listen` 地址、端口占用，以及非本机访问的 TLS 或反向代理 |
-| 文件写入或 Run 被拒绝 | 磁盘可用空间是否低于 100 MiB；目标是否被活动 Run 的执行租约保护 |
+| 文件写入或 Run 被拒绝 | 目标文件系统可用空间是否低于 100 MiB；路径是否受保护、受限或被活动 Run/文件操作租约占用 |
 | 定时计划未补跑 | 服务停机期间错过的计划按设计不会补跑 |
 | 变量看似已加密 | “密码类型”只隐藏界面显示，变量仍以明文保存 |
 

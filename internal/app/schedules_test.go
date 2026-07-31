@@ -20,10 +20,10 @@ func TestScheduleTriggersRunAtNextCronTime(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
-		t.Fatalf("create managed root: %v", err)
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatalf("create host root: %v", err)
 	}
 	scriptName := "scheduled.sh"
 	scriptContent := "printf 'scheduled-output\\n'\n"
@@ -31,14 +31,13 @@ func TestScheduleTriggersRunAtNextCronTime(t *testing.T) {
 		scriptName = "scheduled.cmd"
 		scriptContent = "@echo off\r\necho scheduled-output\r\n"
 	}
-	if err := os.WriteFile(filepath.Join(managedRoot, scriptName), []byte(scriptContent), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(hostRoot, scriptName), []byte(scriptContent), 0o755); err != nil {
 		t.Fatalf("write script: %v", err)
 	}
 	initial := time.Date(2026, 1, 1, 0, 0, 30, 0, time.UTC)
 	var clock atomic.Int64
 	clock.Store(initial.UnixNano())
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{
-		ManagedRoot:   managedRoot,
 		StateRoot:     stateRoot,
 		SchedulerNow:  func() time.Time { return time.Unix(0, clock.Load()).UTC() },
 		SchedulerTick: 10 * time.Millisecond,
@@ -51,7 +50,7 @@ func TestScheduleTriggersRunAtNextCronTime(t *testing.T) {
 	_ = response.Body.Close()
 	response, err = client.PostForm(serverURL+"/config/schedules", url.Values{
 		"name":       {"每分钟计划"},
-		"script":     {scriptName},
+		"script":     {filepath.Join(hostRoot, scriptName)},
 		"expression": {"1 0 * * *"},
 		"csrf_token": {formToken(t, page)},
 	})

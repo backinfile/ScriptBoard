@@ -27,8 +27,7 @@ func TestApplicationsPageExposesLiveFactsAndExpandableObservationDetails(t *test
 	root := t.TempDir()
 	collectedAt := time.Now().UTC()
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 		ApplicationProbe: applicationFixtureProbe{snapshot: appstatus.RawSnapshot{
 			CollectedAt:      collectedAt,
 			LogicalCores:     4,
@@ -168,8 +167,7 @@ func TestWebsiteCreateEditNginxAndDetailArePanelSafeTasks(t *testing.T) {
 
 	root := t.TempDir()
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 		WebsiteMonitorOptions: websitemonitor.Options{
 			Probe: websiteProbeFunc(func(context.Context, websitemonitor.Config) websitemonitor.Evidence {
 				return websitemonitor.Evidence{Success: true, StatusCode: http.StatusNoContent}
@@ -332,8 +330,7 @@ func TestPendingWebsiteIsReportedAndFilteredAsAwaitingVerification(t *testing.T)
 	var startOnce sync.Once
 	defer close(release)
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 		WebsiteMonitorOptions: websitemonitor.Options{
 			Probe: websiteProbeFunc(func(ctx context.Context, _ websitemonitor.Config) websitemonitor.Evidence {
 				startOnce.Do(func() { close(started) })
@@ -427,8 +424,7 @@ func TestWebsiteDetailRendersSeventyTwoBucketsFiveChecksAndAlertFacts(t *testing
 	root := t.TempDir()
 	var probeCalls atomic.Int32
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 		WebsiteMonitorOptions: websitemonitor.Options{
 			Probe: websiteProbeFunc(func(context.Context, websitemonitor.Config) websitemonitor.Evidence {
 				call := probeCalls.Add(1)

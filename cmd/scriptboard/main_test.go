@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestHelpDocumentsHereShortcut(t *testing.T) {
+func TestHelpDoesNotDocumentRemovedManagedRootShortcuts(t *testing.T) {
 	originalStdout := os.Stdout
 	output, err := os.CreateTemp(t.TempDir(), "scriptboard-help-*.txt")
 	if err != nil {
@@ -31,7 +31,9 @@ func TestHelpDocumentsHereShortcut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read help output: %v", err)
 	}
-	if !strings.Contains(string(help), "--here") {
-		t.Fatalf("help does not document --here:\n%s", help)
+	for _, removed := range []string{"--here", "--managed-root"} {
+		if strings.Contains(string(help), removed) {
+			t.Fatalf("help still documents removed option %s:\n%s", removed, help)
+		}
 	}
 }

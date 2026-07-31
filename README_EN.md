@@ -4,7 +4,7 @@
 
 > Manage, run, and schedule trusted scripts on one host from a browser.
 
-ScriptBoard is a self-hosted script operations console for a single Windows or Linux host. Put existing scripts in a managed directory, then use the browser to manage files, enter arguments, follow live logs, reuse common operations, create schedules, and trace every change and run.
+ScriptBoard is a self-hosted script operations console for a single Windows or Linux host. It lets you browse the host filesystem visible to the service identity, manage files in any allowed location, enter script arguments, follow live logs, reuse common operations, and create schedules.
 
 [Download the latest release](https://github.com/backinfile/ScriptBoard/releases/latest) · [Quick start](#quick-start) · [Deploy as a system service](#deploy-as-a-system-service) · [Troubleshooting](#troubleshooting)
 
@@ -27,12 +27,12 @@ ScriptBoard is a self-hosted script operations console for a single Windows or L
 
 | Use case | What ScriptBoard provides |
 | --- | --- |
-| Manage scripts centrally | Browse, search, upload, download, move, rename, preview, and edit managed files |
+| Manage host files | Browse Windows volumes or Linux `/`, search, upload, download, move, rename, preview, and edit regular files |
 | Run scripts manually | Run PowerShell, Python, Shell, Batch, and CMD scripts while streaming stdout and stderr |
 | Reuse common operations | Save scripts, argument templates, and timeouts as Quick Runs; group, sort, copy, and soft-lock them |
 | Run on a schedule | Create five-field Cron schedules, preview trigger times, and configure timeouts and overlap policy |
 | Observe and troubleshoot | Inspect run history, audit records, host resources, local applications, Docker containers, and website endpoints |
-| Recover from mistakes | Restore deleted files from the application Trash; optionally enable local Git version protection |
+| Recover deleted files | Restore content from ScriptBoard's private trash area on the file's own filesystem |
 | Update safely | Check official stable releases, then let an administrator approve download, verification, restart, and rollback |
 
 The web interface supports Simplified Chinese and US English. It chooses a language from the browser by default and can be switched at any time. Both desktop and mobile browsers are supported.
@@ -59,10 +59,10 @@ The matching interpreter must also be installed on the host before a script can 
 
 ## Quick start
 
-This walkthrough uses `managed` and `state` directories inside the extracted release directory without installing a system service:
+> [!IMPORTANT]
+> This version is incompatible with old configurations and state databases. Remove old fields and choose a new `state_root`. When an older schema is detected, ScriptBoard only refuses startup; it does not migrate, overwrite, or delete old data.
 
-- `managed`: files the browser can manage and execute;
-- `state`: the database, logs, sessions, and sign-in credentials.
+This walkthrough uses a `state` directory inside the extracted release directory for the database, logs, sessions, and sign-in credentials, without installing a system service. Files no longer have a configured root: the Files page browses Windows volumes or Linux `/` directly.
 
 ### 1. Download the complete release
 
@@ -73,8 +73,8 @@ Download and fully extract the archive for your platform from [GitHub Releases](
 Windows PowerShell:
 
 ```powershell
-New-Item -ItemType Directory -Force .\managed, .\state
-.\scriptboard.exe serve --managed-root "$PWD\managed" --state-root "$PWD\state"
+New-Item -ItemType Directory -Force .\state
+.\scriptboard.exe serve --state-root "$PWD\state"
 ```
 
 Open another PowerShell window in the same directory and read the initial password:
@@ -87,10 +87,8 @@ Linux:
 
 ```bash
 chmod +x ./scriptboard
-mkdir -p ./managed ./state
-./scriptboard serve \
-  --managed-root "$PWD/managed" \
-  --state-root "$PWD/state"
+mkdir -p ./state
+./scriptboard serve --state-root "$PWD/state"
 ```
 
 Open another terminal in the same directory and read the initial password:
@@ -104,7 +102,7 @@ cat ./state/secrets/initial-admin-password
 1. Open <http://127.0.0.1:8787>.
 2. Sign in as `admin` with the initial password you just read.
 3. Open Account and replace the initial password.
-4. Upload a script from Files, or copy an existing script into `managed`.
+4. Open an existing directory in Files and upload a script, or select a script already on the host.
 5. Open the script, choose Run, enter arguments and a timeout, then start it.
 6. Follow live output, stop the run, or save its configuration as a Quick Run from the run detail page.
 
@@ -118,11 +116,13 @@ The argument field uses simplified shellwords syntax: whitespace separates argum
 - preview text, Markdown, code, and common raster images;
 - edit UTF-8 text files up to 1 MiB in the browser;
 - execute a script in its own directory and see external host changes reflected in the web interface;
-- refuse to follow symbolic links, Windows junctions, or cross-volume mount boundaries.
+- list available volumes on Windows and browse from `/` on Linux, with hidden files off by default;
+- never follow symbolic links, Windows junctions, reparse points, or special files; Linux kernel virtual filesystems appear only as restricted entries;
+- move atomically within a filesystem and show durable scan, copy, verification, and commit progress across filesystems.
 
 ### Reuse arguments and operations
 
-A Quick Run saves a script path, argument template, and timeout. Quick Runs can be grouped, sorted, copied, and soft-locked, and can be created from either a managed script or run history.
+A Quick Run saves a host script's absolute path, argument template, and timeout. Quick Runs can be grouped, sorted, copied, and soft-locked, and can be created from either Files or run history. Successful file moves update related Quick Runs and schedules transactionally.
 
 Variables can be reused in argument templates, but their values are stored as plaintext in SQLite. The password type only hides a value by default in the interface; it is not encrypted storage and is not a replacement for a secrets vault.
 
@@ -144,20 +144,15 @@ Triggers missed while the service is stopped are not caught up. ScriptBoard uses
 - Applications provides read-only resource facts for local processes and Docker containers, with pins for important applications;
 - Website Monitor checks HTTP, HTTPS, WebSocket, and WSS endpoints from the current host;
 - Run History and Audit retain execution outcomes and trace evidence for high-impact operations;
-- Docker containers and managed text files provide on-demand live logs.
+- Docker containers and regular host text files provide on-demand live logs.
 
 Website Monitor includes short-term availability, TLS certificate facts, and a preview of Nginx candidates. Nginx configuration is read only after an administrator explicitly asks for it. ScriptBoard never modifies or reloads Nginx, and it does not send email, SMS, or webhook notifications.
 
-### Recover deleted or changed files
+### Recover deleted files
 
-Files deleted or replaced through the web interface first move to the application Trash. For a more complete edit history, enable local Git version protection under Settings:
+Files deleted or replaced through the web interface first move to a ScriptBoard-private, instance-owned trash area on the target filesystem. If that trash area cannot be created safely, the operation is rejected and never falls back to permanent deletion. Trash supports restore and explicit permanent purge; name conflicts preserve both sides by default.
 
-- create automatic checkpoints for managed files;
-- inspect the history of one file;
-- restore an earlier version through a new local commit;
-- never run `push`, `pull`, `fetch`, or another remote operation.
-
-Version protection helps recover accidental edits. It is not an off-host backup.
+ScriptBoard no longer includes Git version protection. Existing `.git` directories and history on disk are not modified or deleted and are treated as ordinary host files. Use independent version-control and backup tools when you need edit history or off-host recovery.
 
 ## Deployment and operations
 
@@ -175,7 +170,6 @@ The current baseline is incompatible with the old service layout that directly t
 Save this configuration as `C:\ProgramData\ScriptBoard\config.yaml`:
 
 ```yaml
-managed_root: C:\ProgramData\ScriptBoard\managed
 state_root: C:\ProgramData\ScriptBoard\state
 listen: 127.0.0.1:8787
 run_timeout_grace_seconds: 30
@@ -197,7 +191,6 @@ The Windows service runs as `LocalSystem` by default. Installation also configur
 Save this configuration as `/etc/scriptboard/config.yaml`:
 
 ```yaml
-managed_root: /var/lib/scriptboard/managed
 state_root: /var/lib/scriptboard/state
 listen: 127.0.0.1:8787
 run_timeout_grace_seconds: 30
@@ -212,7 +205,7 @@ sudo /opt/scriptboard/current/scriptboard service start
 sudo /opt/scriptboard/current/scriptboard service status
 ```
 
-Installation creates both the main service and a separate updater helper unit. The systemd service runs as `root` by default. Uninstalling the service does not delete configuration, managed files, private state, local Git history, or installed version directories.
+Installation creates both the main service and a separate updater helper unit. The systemd service runs as `root` by default. Uninstalling the service does not delete configuration, host files, private state, existing Git history, or installed version directories.
 
 ### Application updates
 
@@ -247,11 +240,11 @@ Include all of these locations in a long-term, off-host backup:
 
 | Data | Location |
 | --- | --- |
-| Managed files | `managed_root` |
+| Host files that require long-term retention | Include their actual volumes and directories in system backups |
 | SQLite, run logs, sessions, audit, and internal state | `state_root` |
 | Service configuration | Windows: `C:\ProgramData\ScriptBoard\config.yaml`<br>Linux: `/etc/scriptboard/config.yaml` |
 
-The database snapshot and rollback used by application updates are not a backup. ScriptBoard runs forward-only SQLite migrations at startup; do not open an upgraded `state_root` with an older release.
+The database snapshot and rollback used by application updates are not a backup. This version requires a new configuration and a new `state_root` with database schema 20. Any older state database is rejected before it is modified; no old data is migrated or deleted.
 
 ## Configuration and security
 
@@ -265,12 +258,10 @@ Common settings:
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
-| `managed_root` | `managed` under the platform data directory | The only directory the browser can manage |
 | `state_root` | `state` under the platform data directory | Database, logs, sessions, and private internal state |
 | `listen` | `127.0.0.1:8787` | HTTP or HTTPS listen address |
 | `tls_cert`, `tls_key` | empty | TLS certificate and key; required for non-loopback listening |
 | `trusted_proxies` | empty | Trusted proxy IP addresses or CIDRs allowed to provide forwarding headers |
-| `git_executable` | auto-detected | Absolute path to the system Git CLI |
 | `run_timeout_grace_seconds` | `30` | Grace period before force-killing a process tree after automatic timeout |
 | `update_check` | `true` | Periodically check the official stable release; never installs automatically |
 | `update_check_interval_hours` | `6` | Automatic check interval, from 1 to 168 hours |
@@ -291,10 +282,8 @@ scriptboard doctor --config CONFIG_PATH
 Supported environment variables:
 
 ```text
-SCRIPTBOARD_MANAGED_ROOT
 SCRIPTBOARD_STATE_ROOT
 SCRIPTBOARD_LISTEN
-SCRIPTBOARD_GIT_EXECUTABLE
 SCRIPTBOARD_TLS_CERT
 SCRIPTBOARD_TLS_KEY
 SCRIPTBOARD_TRUSTED_PROXIES
@@ -331,6 +320,8 @@ Fallback happens only before a script starts. Once an interpreter successfully s
 - every script inherits the service identity; the application does not switch identity or provide container isolation;
 - only one ScriptBoard instance may use a given `state_root` at a time.
 
+Files hides and rejects `state_root`, the installation directory, the active configuration, administrator password file, TLS private key, and each filesystem's ScriptBoard trash area. Ancestors containing those paths cannot be edited, moved, deleted, overwritten, or executed. Everything else is governed by the service identity, so a default root or LocalSystem deployment has a broad host access scope.
+
 Do not expose ScriptBoard directly to the public internet. Remote access should use a trusted VPN, zero-trust network, or correctly configured HTTPS reverse proxy with restricted sources.
 
 ### User roles
@@ -341,7 +332,7 @@ The system Administrator is the single always-enabled account. It can create use
 | --- | --- |
 | Administrator | All capabilities, including user management and system settings |
 | Maintainer | Operations, files, execution, audit, and system settings, but not user management |
-| Operator | View pages and files and start runs; may stop only Runs they started |
+| Operator | Read regular host files visible to the service identity and start runs; may stop only Runs they started |
 | Viewer | Read-only access to monitoring, configuration summaries, and history |
 
 Roles are fixed instance-wide permissions. Custom roles and per-script authorization are not supported. Passwords are stored with Argon2id hashes; parameter variables remain plaintext data.
@@ -358,7 +349,7 @@ scriptboard doctor --config CONFIG_PATH
 | --- | --- |
 | A script does not start | Matching interpreter installation, service-account access to the script and work directory, and absolute paths in `executor_chains` |
 | The page does not open | Service status, the `listen` address, port conflicts, and TLS or reverse-proxy setup for remote access |
-| A file write or Run is rejected | Whether free disk space is below 100 MiB or an active Run lease protects the target |
+| A file write or Run is rejected | Whether the target filesystem is below 100 MiB, or the path is protected, restricted, or leased by an active Run/file operation |
 | A schedule was not caught up | Triggers missed while the service is stopped are deliberately not replayed |
 | A variable appears encrypted | The password type hides the UI value only; variables remain plaintext |
 

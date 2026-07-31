@@ -1,12 +1,20 @@
 package app
 
 import (
+	"bytes"
+	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
+
+	"scriptboard/internal/hostfiles"
 )
 
 func TestOpenDatabaseRejectsPreMultiUserSchemaWithoutChangingIt(t *testing.T) {
@@ -25,6 +33,11 @@ func TestOpenDatabaseRejectsPreMultiUserSchemaWithoutChangingIt(t *testing.T) {
 	if err := legacy.Close(); err != nil {
 		t.Fatal(err)
 	}
+	beforeDatabase, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeEntries := directoryEntryNames(t, filepath.Dir(path))
 
 	_, err = openDatabase(path)
 	if err == nil || !strings.Contains(err.Error(), "new State Root") {
@@ -43,6 +56,83 @@ func TestOpenDatabaseRejectsPreMultiUserSchemaWithoutChangingIt(t *testing.T) {
 	if username != "legacy-admin" || passwordHash != "preserve-me" {
 		t.Fatalf("legacy row changed to username=%q password_hash=%q", username, passwordHash)
 	}
+	afterDatabase, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(beforeDatabase, afterDatabase) {
+		t.Fatal("legacy database bytes changed while rejecting its schema")
+	}
+	if afterEntries := directoryEntryNames(t, filepath.Dir(path)); !reflect.DeepEqual(beforeEntries, afterEntries) {
+		t.Fatalf("legacy state directory changed: before=%v after=%v", beforeEntries, afterEntries)
+	}
+}
+
+func TestOpenRejectsLegacyStateRootBeforeCreatingLocksOrChangingPermissions(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "legacy-state")
+	if err := os.Mkdir(stateRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	databasePath := filepath.Join(stateRoot, "app.db")
+	legacy, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.Exec(`CREATE TABLE legacy (value TEXT); INSERT INTO legacy VALUES ('preserve'); PRAGMA user_version=18;`); err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+	beforeDatabase, err := os.ReadFile(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeEntries := directoryEntryNames(t, stateRoot)
+	beforeInfo, err := os.Stat(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	application, err := Open(Config{StateRoot: stateRoot})
+	if application != nil {
+		_ = application.Close()
+		t.Fatal("legacy State Root unexpectedly opened")
+	}
+	if err == nil || !strings.Contains(err.Error(), "new State Root") {
+		t.Fatalf("legacy State Root error = %v", err)
+	}
+	afterDatabase, err := os.ReadFile(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(beforeDatabase, afterDatabase) {
+		t.Fatal("legacy database bytes changed during application startup rejection")
+	}
+	if afterEntries := directoryEntryNames(t, stateRoot); !reflect.DeepEqual(beforeEntries, afterEntries) {
+		t.Fatalf("legacy State Root entries changed: before=%v after=%v", beforeEntries, afterEntries)
+	}
+	afterInfo, err := os.Stat(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if beforeInfo.Mode().Perm() != afterInfo.Mode().Perm() {
+		t.Fatalf("legacy State Root permissions changed from %#o to %#o", beforeInfo.Mode().Perm(), afterInfo.Mode().Perm())
+	}
+}
+
+func directoryEntryNames(t *testing.T, directory string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	sort.Strings(names)
+	return names
 }
 
 func TestOpenDatabaseCreatesFixedRoleUserSchema(t *testing.T) {
@@ -56,8 +146,8 @@ func TestOpenDatabaseCreatesFixedRoleUserSchema(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 19 {
-		t.Fatalf("schema version=%d, want 19", version)
+	if version != 20 {
+		t.Fatalf("schema version=%d, want 20", version)
 	}
 	var usersTable int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'users'`).Scan(&usersTable); err != nil {
@@ -72,6 +162,16 @@ func TestOpenDatabaseCreatesFixedRoleUserSchema(t *testing.T) {
 	}
 	if adminTable != 0 {
 		t.Fatal("legacy admin table should not exist")
+	}
+	for _, table := range []string{"file_operations", "trash_entries"} {
+		var count int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("required schema 20 table %q is missing: count=%d error=%v", table, count, err)
+		}
+	}
+	var gitState int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'git_state'`).Scan(&gitState); err != nil || gitState != 0 {
+		t.Fatalf("removed git_state table exists: count=%d error=%v", gitState, err)
 	}
 
 	if _, err := db.Exec(`INSERT INTO users
@@ -91,6 +191,73 @@ func TestOpenDatabaseCreatesFixedRoleUserSchema(t *testing.T) {
 	}
 }
 
+func TestFileOperationCommitRegistersRecoverableSourceTrash(t *testing.T) {
+	db, err := openDatabase(filepath.Join(t.TempDir(), "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	root := t.TempDir()
+	trashRoot := filepath.Join(root, ".scriptboard-trash")
+	if err := os.Mkdir(trashRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	trashPath := filepath.Join(trashRoot, "move-operation")
+	if err := os.WriteFile(trashPath, []byte("moved source"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	operation := hostfiles.FileOperation{
+		ID: "move-operation", Kind: "cross_filesystem_move",
+		SourcePath: filepath.Join(root, "source.txt"), SourcePathKey: hostfiles.ComparisonKey(filepath.Join(root, "source.txt")),
+		DestinationPath: filepath.Join(root, "destination.txt"), DestinationPathKey: hostfiles.ComparisonKey(filepath.Join(root, "destination.txt")),
+		TrashPath: trashPath, Phase: hostfiles.OperationSourceTrashed, CreatedAt: now, UpdatedAt: now,
+	}
+	store := newSQLiteFileOperationStore(db)
+	if err := store.Create(context.Background(), operation); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO quick_runs
+		(id, name, script_path, script_path_key, arguments_template, timeout_seconds, sort_order, created_at)
+		VALUES ('quick-moved', 'Moved', ?, ?, '', 0, 1, 1)`, operation.SourcePath, operation.SourcePathKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO schedules
+		(id, name, script_path, script_path_key, arguments_template, expression, timeout_seconds, enabled,
+		 allow_overlap, next_fire_at, created_at, updated_at)
+		VALUES ('schedule-moved', 'Moved', ?, ?, '', '* * * * *', 0, 1, 0, 1, 1, 1)`, operation.SourcePath, operation.SourcePathKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Commit(context.Background(), operation); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Commit(context.Background(), operation); err != nil {
+		t.Fatalf("repeat file operation commit should be idempotent: %v", err)
+	}
+
+	var originalPath, storedPath string
+	if err := db.QueryRow("SELECT original_path, stored_path FROM trash_entries WHERE id = ?", operation.ID).Scan(&originalPath, &storedPath); err != nil {
+		t.Fatalf("cross-filesystem source trash was not registered: %v", err)
+	}
+	if originalPath != operation.SourcePath || storedPath != operation.TrashPath {
+		t.Fatalf("trash entry = %q -> %q", originalPath, storedPath)
+	}
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM trash_entries WHERE id = ?", operation.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("idempotent commit trash row count = %d, error = %v", count, err)
+	}
+	for _, reference := range []struct{ table, id string }{{"quick_runs", "quick-moved"}, {"schedules", "schedule-moved"}} {
+		var path, key string
+		if err := db.QueryRow("SELECT script_path, script_path_key FROM "+reference.table+" WHERE id = ?", reference.id).Scan(&path, &key); err != nil {
+			t.Fatalf("read moved %s reference: %v", reference.table, err)
+		}
+		if path != operation.DestinationPath || key != operation.DestinationPathKey {
+			t.Fatalf("%s reference = %q (%q), want %q (%q)", reference.table, path, key, operation.DestinationPath, operation.DestinationPathKey)
+		}
+	}
+}
+
 func TestOpenDatabaseRejectsNewerSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "app.db")
 	db, err := sql.Open("sqlite", path)
@@ -103,7 +270,7 @@ func TestOpenDatabaseRejectsNewerSchema(t *testing.T) {
 	_ = db.Close()
 
 	_, err = openDatabase(path)
-	if err == nil || !strings.Contains(err.Error(), "newer than supported") {
+	if err == nil || !strings.Contains(err.Error(), "incompatible with schema 20") || !strings.Contains(err.Error(), "new State Root") {
 		t.Fatalf("expected newer-schema rejection, got %v", err)
 	}
 }
@@ -179,7 +346,7 @@ func TestOpenDatabaseMarksUnsupervisedRunDisconnected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.Exec(`INSERT INTO runs (id, script_path, script_sha256, arguments_template, arguments_json, executor, source_type, status, created_at, error, log_path) VALUES ('run-1', 'job.cmd', 'digest', '', '[]', 'cmd.exe', 'manual', 'running', 1, '', 'runs/run-1.jsonl')`)
+	_, err = db.Exec(`INSERT INTO runs (id, script_path, script_path_key, script_sha256, arguments_template, arguments_json, executor, source_type, status, created_at, error, log_path) VALUES ('run-1', 'C:\\jobs\\job.cmd', 'c:\\jobs\\job.cmd', 'digest', '', '[]', 'cmd.exe', 'manual', 'running', 1, '', 'runs/run-1.jsonl')`)
 	if err != nil {
 		t.Fatal(err)
 	}

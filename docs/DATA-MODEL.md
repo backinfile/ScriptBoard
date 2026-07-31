@@ -42,9 +42,9 @@ Pin 是展示状态，不赋予应用控制能力。当前快照存在时由实�
 
 ## 1. 核心原则
 
-- 文件系统是受管条目的事实来源，不建立通用 File 表。
-- 数据库只保存应用身份、引用、执行、计划、审计与 Git 管理状态。
-- 文件引用保存相对受管根目录的规范路径，并在使用时重新验证真实路径、设备/卷与文件类型。
+- 主机文件系统是文件与目录的事实来源，不建立通用 File 表。
+- 数据库只保存应用身份、绝对路径引用、执行、计划、审计、回收条目与持久化文件操作。
+- 文件引用同时保存规范绝对路径与平台比较键，并在每次使用时由主机文件模块重新验证保护策略、权限、文件系统和条目类型。
 - Run 是不可删除的执行事实；日志是有保留期的外部文件。
 - 参数同时保存模板与实际展开值，因为变量全部是普通明文数据。
 
@@ -111,7 +111,7 @@ Pin 是展示状态，不赋予应用控制能力。当前快照存在时由实�
 |---|---|
 | id | UUID |
 | name | 管理员定义 |
-| script_path | 规范相对路径 |
+| script_path / script_path_key | 规范绝对路径及平台比较键 |
 | argument_text | 原始模板文本 |
 | argument_template | 解析后的模板数组 |
 | timeout_seconds | 可空代表无超时 |
@@ -143,7 +143,7 @@ Pin 是展示状态，不赋予应用控制能力。当前快照存在时由实�
 | id | UUID |
 | name | 管理员定义 |
 | group_id | 可空；引用 ScheduleGroup，删除分组时置空 |
-| script_path | 规范相对路径 |
+| script_path / script_path_key | 规范绝对路径及平台比较键 |
 | argument_text / argument_template | 变量引用模板 |
 | cron_expression | 标准五段 cron |
 | timeout_seconds | 可空代表无超时 |
@@ -180,10 +180,9 @@ Pin 是展示状态，不赋予应用控制能力。当前快照存在时由实�
 | 字段 | 约束 |
 |---|---|
 | id | UUID |
-| script_path_snapshot | 启动时规范相对路径 |
-| script_file_id_snapshot | 平台文件身份，用于诊断 |
+| script_path / script_path_key | 启动时规范绝对路径及平台比较键 |
 | script_sha256 | 启动瞬间摘要 |
-| script_versioned | 启动时 Git 保护状态 |
+| script_kind | `host_file` 或 `one_time` |
 | argument_text | 原始参数模板 |
 | argument_template | 模板参数数组 |
 | resolved_arguments | 启动时实际参数数组 |
@@ -193,7 +192,7 @@ Pin 是展示状态，不赋予应用控制能力。当前快照存在时由实�
 | runtime_identity_name / runtime_identity_id | 用户名/UID 或账号/SID |
 | executor | 实际可执行文件与固定前缀参数 |
 | executor_fallback_failures | 更早候选无法启动原因 |
-| working_directory_snapshot | 启动时绝对路径或安全相对表达 |
+| working_directory / working_directory_key | 启动时规范绝对路径及平台比较键 |
 | status | 见状态机 |
 | pid / process_group_or_job_id | 活动期信息 |
 | exit_code | 可空 |
@@ -237,13 +236,12 @@ Run 不允许删除。
 | 字段 | 约束 |
 |---|---|
 | id | UUID |
-| original_path | 删除前相对路径 |
-| trash_path | 回收站内部随机路径 |
+| original_path / original_path_key | 删除前规范绝对路径及平台比较键 |
+| stored_path / stored_path_key | 源文件系统私有回收区中的规范绝对路径及比较键 |
 | entry_type | file 或 directory |
 | size | 删除时估算 |
 | deleted_at | UTC |
-| deleted_by | 操作者 User ID 与用户名快照 |
-| affected_quick_run_ids / schedule_ids | 可存快照或通过审计关联 |
+| affected_quick_run_ids / schedule_ids | 通过确认页和审计关联 |
 
 ### AuditEvent
 
@@ -261,25 +259,26 @@ Run 不允许删除。
 
 不保存密码、Cookie、Session、CSRF、变量值、文件内容或请求正文。默认保留一年，不允许逐条修改。
 
-### GitProtection
+### FileOperation
 
-单实例单记录：
+跨文件系统移动的持久化恢复记录：
 
 | 字段 | 约束 |
 |---|---|
-| enabled | 管理员开关 |
-| state | `disabled`、`healthy`、`abnormal` |
-| repository_id | ScriptBoard 仓库标记 |
-| branch | 固定 `scriptboard-managed` |
-| git_executable | 最终解析路径 |
-| max_tracked_file_bytes | 默认 10 MiB |
-| max_repository_bytes | 默认 5 GiB |
-| last_commit | 可空 |
-| pending_batch_run_ids | 活动批次摘要 |
-| abnormal_reason | 可空 |
-| updated_at | UTC |
+| id | UUID |
+| kind | 当前固定为 `cross_filesystem_move` |
+| source_path / source_path_key | 源规范绝对路径及平台比较键 |
+| destination_path / destination_path_key | 目标规范绝对路径及平台比较键 |
+| temporary_path | 目标同目录临时项；尚未建立时为空 |
+| trash_path | 源文件系统回收项；尚未提交源时为空 |
+| phase | 预扫描、复制、校验、提交目标、回收源、更新引用、完成或失败 |
+| bytes_total / bytes_completed | 扫描后总量与已复制进度 |
+| verification_digest | 内容校验摘要 |
+| cancel_requested | 持久化取消请求 |
+| error | 终态或待恢复错误，不含文件内容与秘密 |
+| created_at / updated_at | UTC |
 
-Git 是文件系统中的版本事实来源，数据库保存管理状态与审计关联。
+记录必须足以在进程崩溃后判断源、临时项、已提交目标和源回收项的状态，并幂等继续或回滚。
 
 ## 3. Run 状态机
 
@@ -306,35 +305,49 @@ stateDiagram-v2
 
 ### 状态不变量
 
-- 启动前路径、参数、变量、执行器和 Git 安全门校验失败时不创建 Run，只写审计。
+- 启动前路径、保护策略、权限、参数、变量或执行器校验失败时不创建 Run，只写审计。
 - Run 创建后初始为 starting；进程创建失败才产生 starting → failed。
 - stopping 的最终结果固定为 cancelled；timing_out 的最终结果固定为 timed_out。
 - disconnected 是 ScriptBoard 失去监督后的终态，不重新接管 PID。
 - 终态 Run 不可删除或回到活动状态。
 
-## 4. Git 保护状态机
+## 4. 跨文件系统移动状态机
 
 ```mermaid
 stateDiagram-v2
-    [*] --> disabled
-    disabled --> healthy: enable + baseline/adoption checkpoint
-    healthy --> disabled: final checkpoint + confirmed disable
-    healthy --> abnormal: checkpoint/config/HEAD/integrity failure
-    abnormal --> healthy: diagnose + successful retry
-    abnormal --> disabled: confirmed disable
+    [*] --> scanning
+    scanning --> copying: preflight and space check succeed
+    scanning --> failed: restricted entry, conflict, or insufficient space
+    scanning --> cancelled: cancellation succeeds before copying
+    copying --> ready_to_commit: bytes and metadata verify
+    copying --> failed: copy or verification fails
+    copying --> cancelled: cancellation cleans the temporary item
+    copying --> cleanup_pending: temporary cleanup must resume after restart
+    ready_to_commit --> target_committed: target atomically renamed into place
+    target_committed --> source_trashed: verified source enters its filesystem trash
+    source_trashed --> completed: trash registration and reference transaction commit
+    scanning --> rolled_back: startup recovery
+    copying --> rolled_back: startup recovery
+    ready_to_commit --> rolled_back: startup recovery before target commit
+    cleanup_pending --> rolled_back: startup cleanup succeeds
+    completed --> [*]
+    rolled_back --> [*]
+    cancelled --> [*]
+    failed --> [*]
 ```
 
-### Git 状态不变量
+### 文件操作状态不变量
 
-- healthy 才允许新的脚本执行和受保护文件修改。
-- 未跟踪文件资格不使仓库 abnormal。
-- 任意 Run 活动期间不执行 Git add/commit/restore/gc 或启停。
-- abnormal 不自动清理、reset 或切换分支。
+- 目标提交前失败或取消必须清理临时项并保持源不变。
+- 目标只通过同目录原子重命名变为可见；源只移动到带实例所有权标记的同文件系统回收区。
+- 目标提交后不得把操作伪装成未发生；重启恢复必须依据磁盘事实继续源回收和引用事务，或报告可解释失败。
+- 目录预扫描发现链接、特殊文件或无法无损保留的平台元数据时，在复制前拒绝。
+- 源和目标路径租约覆盖祖先与后代，阻止 Run 和其他文件事务竞争。
 
 ## 5. 文件引用不变量
 
-- QuickRun 与 Schedule 引用规范相对路径，不引用任意绝对路径。
-- 网页移动在文件系统变更和引用更新间提供补偿回滚。
+- QuickRun 与 Schedule 引用规范绝对路径和平台比较键，路径解释只能经过主机文件模块。
+- 同文件系统移动以原子重命名与数据库事务更新引用；跨文件系统移动由 FileOperation 恢复协议保证可解释状态。
 - 外部移动使引用失效，不按名称、摘要或 inode 猜测新路径。
 - Run 保存路径快照，不随当前文件移动。
 - 变量重命名更新 QuickRun 与 Schedule；Run 历史不改写。
@@ -343,21 +356,21 @@ stateDiagram-v2
 
 - Session(token_hash), Session(expires_at)
 - Variable(name)
-- QuickRun(sort_order), QuickRun(script_path)
-- Schedule(enabled, next_fire_at), Schedule(script_path)
+- QuickRun(sort_order), QuickRun(script_path_key)
+- Schedule(enabled, next_fire_at), Schedule(script_path_key)
 - ScheduleTrigger(schedule_id, scheduled_for), ScheduleTrigger(run_id)
-- Run(created_at DESC), Run(status, started_at), Run(script_path_snapshot, status)
+- Run(created_at DESC), Run(status, started_at), Run(script_path_key, status)
 - Run(source_type, source_id)
 - AuditEvent(occurred_at DESC), AuditEvent(action, occurred_at)
-- TrashEntry(original_path), TrashEntry(deleted_at)
+- TrashEntry(original_path_key), TrashEntry(deleted_at)
+- FileOperation(phase, updated_at), FileOperation(source_path_key), FileOperation(destination_path_key)
 
 ## 7. 文件布局
 
 ```text
-managed-root/
-  .git/                       # 可选、受保护且不经网页暴露
-  .scriptboard-trash/         # 保留回收站
-  ...                         # 管理员文件与脚本
+host-filesystems/
+  <ordinary host files>       # 文件系统本身是事实来源，不由 ScriptBoard 建表镜像
+  .scriptboard-trash/         # 每个发生删除的文件系统各自建立，带实例所有权标记并受保护
 
 state-root/
   app.db
@@ -371,8 +384,6 @@ state-root/
   logs/
     scriptboard.log
     scriptboard.log.1 ...
-  migrations/
-    pre-upgrade.db            # 最近一次升级前内部快照
   runtime.json                # 当前进程写入的精确构建运行标记
   updates/
     cache.json                # 最近一次有效检查、ETag 与错误摘要
@@ -390,9 +401,9 @@ state-root/
   tmp/
 ```
 
-受管根目录与状态目录可覆盖，但必须互不包含；`.git/` 与回收站不得成为状态数据库或秘密存储位置。
+State Root、Install Root、活动配置、管理员密码文件、TLS 私钥和各文件系统回收区均为受保护路径。文件页面不显示这些路径；其祖先不能执行会影响后代的写入、移动、删除、覆盖或执行。磁盘上已有 `.git/` 不属于应用状态，ScriptBoard 不修改或删除它。
 
-正式受管服务另有独立的程序布局，不属于 State Root：
+正式系统服务另有独立程序布局，不属于 State Root：
 
 ```text
 install-root/
@@ -441,16 +452,16 @@ stateDiagram-v2
 
 ## 9. 一次性 Run 源码
 
-`Run.script_kind` 区分 `managed` 与 `one_time`。一次性 Run 额外保存：
+`Run.script_kind` 区分 `host_file` 与 `one_time`。一次性 Run 额外保存：
 
 | 字段 | 语义 |
 | --- | --- |
-| working_directory | 相对 Managed Root 的执行 workdir；空值表示根目录 |
+| working_directory / working_directory_key | 允许的普通主机目录规范绝对路径及平台比较键 |
 | source_filename | 私有 Run 目录内固定的 `source.{ext}` |
 | source_expired | 源码已回收，源码入口返回 410 |
 | source_audit_event_id | 回收前关联的 `start_one_time_run` 审计主键 |
 | script_sha256 | 实际执行源码的内容摘要，源码回收后仍保留 |
 
-源码不是 Managed Entry 或 Trash Entry。审计清理先删除源码，再在同一数据库事务中
+源码不是 Host Entry 或 Trash Entry。审计清理先删除源码，再在同一数据库事务中
 设置 `source_expired=1`、清空审计引用并删除审计条目。文件删除失败时三个数据库
 变更均不得发生。RunLogManifest 的 90 天/容量清理不处理源码文件。

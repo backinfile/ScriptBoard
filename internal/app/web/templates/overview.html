@@ -90,7 +90,7 @@
 
   <details class="ledger-disclosure">
     <summary><span><span data-lucide="database" aria-hidden="true"></span>{{t .Locale "overview.storage_io"}}</span><small>{{len .Current.Filesystems}} {{t .Locale "overview.filesystems"}} · {{len .Current.Disks}} {{t .Locale "overview.devices"}}</small></summary>
-    <div class="table-shell"><table><thead><tr><th>{{t .Locale "overview.filesystem"}}</th><th>{{t .Locale "overview.role"}}</th><th>{{t .Locale "overview.used"}}</th><th>{{t .Locale "overview.available"}}</th><th>{{t .Locale "overview.capacity"}}</th></tr></thead><tbody data-filesystem-rows>{{range .Current.Filesystems}}<tr><td>{{.Mountpoint}}<small>{{.Device}} · {{.Type}}</small></td><td>{{range .Roles}}<span class="status-chip">{{roleText $.Locale .}}</span>{{else}}—{{end}}</td><td>{{percent .UsedPercent}}</td><td>{{humanBytes .AvailableBytes}}</td><td>{{humanBytes .TotalBytes}}</td></tr>{{else}}<tr><td colspan="5">{{t .Locale "overview.collecting"}}</td></tr>{{end}}</tbody></table></div>
+    <div class="table-shell"><table><thead><tr><th>{{t .Locale "overview.filesystem"}}</th><th>{{t .Locale "overview.role"}}</th><th>{{t .Locale "overview.used"}}</th><th>{{t .Locale "overview.available"}}</th><th>{{t .Locale "overview.capacity"}}</th></tr></thead><tbody data-filesystem-rows>{{range .Current.Filesystems}}<tr><td>{{.Mountpoint}}<small>{{.Device}} · {{.Type}}</small></td><td>{{range .Roles}}<span class="status-chip">{{filesystemRoleText $.Locale .}}</span>{{else}}—{{end}}</td><td>{{percent .UsedPercent}}</td><td>{{humanBytes .AvailableBytes}}</td><td>{{humanBytes .TotalBytes}}</td></tr>{{else}}<tr><td colspan="5">{{t .Locale "overview.collecting"}}</td></tr>{{end}}</tbody></table></div>
   </details>
 
   <details class="ledger-disclosure">

@@ -1,4 +1,4 @@
-package managedfiles
+package hostfiles
 
 import (
 	"bytes"
@@ -20,13 +20,17 @@ var ErrLogSourceChanged = errors.New("日志文件已经轮转或替换")
 const fileLogPollInterval = 500 * time.Millisecond
 
 type LogSource struct {
-	store         *Store
+	store         *Manager
 	relative      string
 	sourceVersion string
 }
 
-func (s *Store) OpenLogSource(relative string) (*LogSource, error) {
-	file, _, err := s.openLogRegular(relative)
+func (s *Manager) OpenLogSource(relative string) (*LogSource, error) {
+	target, err := s.CanonicalExisting(relative)
+	if err != nil {
+		return nil, err
+	}
+	file, _, err := s.openLogRegular(target)
 	if err != nil {
 		return nil, err
 	}
@@ -35,7 +39,7 @@ func (s *Store) OpenLogSource(relative string) (*LogSource, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &LogSource{store: s, relative: relative, sourceVersion: version}, nil
+	return &LogSource{store: s, relative: target, sourceVersion: version}, nil
 }
 
 func (s *LogSource) Metadata() logstream.Metadata {
@@ -478,7 +482,7 @@ func logFileVersion(file *os.File) (string, error) {
 	return hex.EncodeToString(digest[:16]), nil
 }
 
-func (s *Store) openLogRegular(relative string) (*os.File, os.FileInfo, error) {
+func (s *Manager) openLogRegular(relative string) (*os.File, os.FileInfo, error) {
 	target, info, err := s.resolveEntry(relative)
 	if err != nil {
 		return nil, nil, err

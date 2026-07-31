@@ -2,6 +2,8 @@
 
 > **已被取代。** 本文中的临时脚本位置与保留策略不再有效；当前实施方案见
 > [ONE-TIME-AND-QUICK-EXECUTION-PLAN.md](ONE-TIME-AND-QUICK-EXECUTION-PLAN.md)。
+> 本文中的受管根目录、相对路径和 `managedfiles` 设计也已被
+> [ADR-0122](adr/0122-browse-the-host-filesystem-with-protected-paths.md) 的主机绝对路径模型取代。
 
 状态：Draft
 

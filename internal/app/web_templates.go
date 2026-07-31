@@ -5,7 +5,6 @@ type settingsNavigationData struct {
 	Current         string
 	CanManageUsers  bool
 	CanManageSystem bool
-	CanReadFiles    bool
 }
 
 func newSettingsNavigation(current session, locale webLocale, active string) settingsNavigationData {
@@ -13,7 +12,6 @@ func newSettingsNavigation(current session, locale webLocale, active string) set
 		Locale: locale, Current: active,
 		CanManageUsers:  roleAllows(current.role, permissionManageUsers),
 		CanManageSystem: roleAllows(current.role, permissionManageSystem),
-		CanReadFiles:    roleAllows(current.role, permissionReadFiles),
 	}
 }
 
@@ -27,8 +25,8 @@ var (
 	auditTemplate                = mustWebTemplate("audit")
 	deleteImpactTemplate         = mustWebTemplate("delete-impact")
 	displaySettingsTemplate      = mustWebTemplate("display-settings")
-	fileSettingsTemplate         = mustWebTemplate("file-settings")
 	fileConflictTemplate         = mustWebTemplate("file-conflict")
+	fileOperationTemplate        = mustWebTemplate("file-operation")
 	filesTemplate                = mustWebTemplate("files")
 	loginTemplate                = mustWebTemplate("login")
 	liveLogTemplate              = mustWebTemplate("live-log")
@@ -44,7 +42,6 @@ var (
 	trashTemplate                = mustWebTemplate("trash")
 	uploadResultsTemplate        = mustWebTemplate("upload-results")
 	variablesTemplate            = mustWebTemplate("variables")
-	versionProtectionTemplate    = mustWebTemplate("version-protection")
 	updatesTemplate              = mustWebTemplate("updates")
 	usersTemplate                = mustWebTemplate("users")
 	websiteMonitorDetailTemplate = mustWebTemplate("website-monitor-detail")

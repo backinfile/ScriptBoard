@@ -11,7 +11,7 @@
 <main class="workspace files-page">
   <header class="page-heading">
     <div><p class="page-eyebrow">{{t .Locale "files.eyebrow"}}</p><h1>{{t .Locale "files.title"}}</h1><p>{{t .Locale "files.description"}}</p></div>
-    {{if .CanWrite}}<div class="heading-actions files-heading-actions">
+    {{if .CanMutateCurrent}}<div class="heading-actions files-heading-actions">
       <a class="button" href="/resources/files/new-directory?path={{urlquery .CurrentPath}}" data-task-link><span data-lucide="folder-plus" aria-hidden="true"></span>{{t .Locale "files.new_directory"}}</a>
       <a class="button button--primary" href="/resources/files/upload?path={{urlquery .CurrentPath}}" data-task-link><span data-lucide="upload" aria-hidden="true"></span>{{t .Locale "files.upload"}}</a>
     </div>{{end}}
@@ -19,10 +19,10 @@
 
   <nav class="breadcrumb" aria-label="{{t .Locale "files.breadcrumb"}}">
     <a href="{{.RootURL}}"><span data-lucide="hard-drive" aria-hidden="true"></span>{{t .Locale "files.root"}}</a>
-    {{if .CurrentPath}}<span data-lucide="chevron-right" aria-hidden="true"></span><code>{{.CurrentPath}}</code>{{end}}
+    {{range .Breadcrumbs}}<span data-lucide="chevron-right" aria-hidden="true"></span>{{if .URL}}<a href="{{.URL}}">{{.Label}}</a>{{else}}<code>{{.Label}}</code>{{end}}{{end}}
   </nav>
 
-  {{if .CanWrite}}
+  {{if .CanMutateCurrent}}
   <form id="file-drop-upload-form" class="file-upload-form" method="post" action="/resources/files/upload" enctype="multipart/form-data" hidden
     data-file-drop-form data-file-upload-form data-file-drop-surface="file-drop-surface"
     data-active-title="{{t .Locale "files.drop_active"}}"
@@ -40,13 +40,13 @@
   </form>
   {{end}}
 
-  <section id="file-drop-surface" class="file-browser"{{if .CanWrite}} data-file-drop-zone{{end}}>
-    {{if .CanWrite}}<div class="file-drop-feedback" role="status" aria-live="polite">
+  <section id="file-drop-surface" class="file-browser"{{if .CanMutateCurrent}} data-file-drop-zone{{end}}>
+    {{if .CanMutateCurrent}}<div class="file-drop-feedback" role="status" aria-live="polite">
       <span data-lucide="upload" aria-hidden="true"></span>
       <span><strong data-file-drop-title></strong><small id="file-drop-status" data-file-drop-status></small></span>
     </div>{{end}}
 
-    <details class="file-quick-access" data-file-quick-access hidden
+    <details class="file-quick-access" data-file-quick-access data-validation-url="/resources/files/validate" hidden
       data-remove-label="{{t .Locale "files.remove_quick_access"}}">
       <summary>
         <span class="file-quick-access__icon" data-lucide="pin" aria-hidden="true"></span>
@@ -64,6 +64,7 @@
 
     <section class="file-search-region" aria-label="{{t .Locale "files.search"}}">
       <form class="file-search-form" method="get" action="{{.SearchURL}}" data-async data-async-push data-file-search data-focus-after-navigation="[data-search-input]">
+		{{if .CurrentPath}}<input type="hidden" name="path" value="{{.CurrentPath}}">{{end}}
         <div class="file-search-primary">
           <label class="file-search-field">
             <span data-lucide="search" aria-hidden="true"></span>
@@ -147,7 +148,7 @@
             <td class="record-actions">
               <div class="record-actions__group">
               {{if .BrowseURL}}<button class="icon-button file-pin-button" type="button" hidden data-file-pin data-file-pin-path="{{.Path}}" data-file-pin-label="{{.Name}}" data-file-pin-href="{{.PinURL}}" data-pin-label="{{t $.Locale "files.pin_directory"}}" data-unpin-label="{{t $.Locale "files.unpin_directory"}}" aria-label="{{t $.Locale "files.pin_directory"}}" aria-pressed="false"><span data-lucide="pin" aria-hidden="true"></span></button><a class="button button--quiet button--compact" href="{{.BrowseURL}}">{{t $.Locale "common.open"}}</a>{{end}}
-              {{if and $.CanExecute .Runnable}}<a class="button button--compact" href="/resources/files/run/{{.Path}}" data-task-link><span data-lucide="play" aria-hidden="true"></span>{{t $.Locale "common.run"}}</a>{{end}}
+              {{if and $.CanExecute .Runnable}}<a class="button button--compact" href="{{.RunURL}}" data-task-link><span data-lucide="play" aria-hidden="true"></span>{{t $.Locale "common.run"}}</a>{{end}}
               {{if ne .Kind "restricted"}}
               <details class="action-menu">
                 <summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary>
@@ -158,7 +159,7 @@
                   {{if and $.CanWrite .EditURL}}<a href="{{.EditURL}}"><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a>{{end}}
                   {{if .DownloadURL}}<a href="{{.DownloadURL}}" data-native><span data-lucide="download" aria-hidden="true"></span>{{t $.Locale "common.download"}}</a>{{end}}
                   {{if and $.CanToggleExecutable (eq .Kind "regular")}}<form method="post" action="/resources/files/toggle-executable" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" name="path" value="{{.Path}}"><span data-lucide="file-cog" aria-hidden="true"></span>{{t $.Locale "files.executable"}}</button></form>{{end}}
-                  {{if $.CanWrite}}<form method="post" action="/resources/files/delete" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-action" type="submit" name="path" value="{{.Path}}"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "files.move_to_trash"}}</button></form>{{end}}
+                  {{if and $.CanWrite .CanMutate}}<a href="{{.MoveURL}}" data-task-link><span data-lucide="folder-input" aria-hidden="true"></span>{{t $.Locale "files.move"}}</a><form method="post" action="/resources/files/delete" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-action" type="submit" name="path" value="{{.Path}}"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "files.move_to_trash"}}</button></form>{{end}}
                 </div>
               </details>
               {{end}}
@@ -166,7 +167,7 @@
             </td>
           </tr>
         {{else}}
-          <tr class="records-table__empty"><td colspan="4"><div class="empty-inline"><span data-lucide="folder-open" aria-hidden="true"></span><span>{{t .Locale "files.empty"}}</span>{{if .CanWrite}}<a href="/resources/files/upload?path={{urlquery .CurrentPath}}" data-task-link>{{t .Locale "files.upload"}}</a>{{end}}</div></td></tr>
+          <tr class="records-table__empty"><td colspan="4"><div class="empty-inline"><span data-lucide="folder-open" aria-hidden="true"></span><span>{{t .Locale "files.empty"}}</span>{{if .CanMutateCurrent}}<a href="/resources/files/upload?path={{urlquery .CurrentPath}}" data-task-link>{{t .Locale "files.upload"}}</a>{{end}}</div></td></tr>
         {{end}}
         </tbody>
       </table>

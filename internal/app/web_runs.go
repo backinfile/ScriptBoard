@@ -1,9 +1,7 @@
 package app
 
 import (
-	pathpkg "path"
-	"path/filepath"
-
+	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/runmanager"
 )
 
@@ -24,9 +22,6 @@ func newRunListItemViews(runs []runmanager.Run) []runListItemView {
 }
 
 func scriptDirectoryURL(scriptPath string) string {
-	directory := pathpkg.Dir(filepath.ToSlash(scriptPath))
-	if directory == "." {
-		directory = ""
-	}
+	directory, _ := hostfiles.Parent(scriptPath)
 	return filesURL(directory)
 }

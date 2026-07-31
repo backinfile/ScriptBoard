@@ -29,7 +29,6 @@ func TestServeCommandStartsHTTPApplication(t *testing.T) {
 	command := exec.Command(
 		binary,
 		"serve",
-		"--managed-root", filepath.Join(root, "managed"),
 		"--state-root", filepath.Join(root, "state"),
 		"--listen", "127.0.0.1:0",
 	)

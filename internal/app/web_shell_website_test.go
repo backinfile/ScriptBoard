@@ -68,8 +68,7 @@ func TestLoadShellStatusIncludesWebsiteFailuresAndVerifications(t *testing.T) {
 
 	root := t.TempDir()
 	application, err := Open(Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 	})
 	if err != nil {
 		t.Fatal(err)

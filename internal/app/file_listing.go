@@ -3,14 +3,12 @@ package app
 import (
 	"cmp"
 	"net/url"
-	pathpkg "path"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"unicode"
 
-	"scriptboard/internal/managedfiles"
+	"scriptboard/internal/hostfiles"
 )
 
 type fileCategory string
@@ -25,7 +23,7 @@ const (
 )
 
 type listedFile struct {
-	managedfiles.Entry
+	hostfiles.Entry
 	Path     string
 	Category fileCategory
 }
@@ -35,16 +33,16 @@ type fileNamePart struct {
 	Match bool
 }
 
-func prepareFileListing(entries []managedfiles.Entry, relative, query, sortField, direction string, showHidden bool) []listedFile {
+func prepareFileListing(entries []hostfiles.Entry, _ string, query, sortField, direction string, showHidden bool) []listedFile {
 	result := make([]listedFile, 0, len(entries))
 	for _, entry := range entries {
-		if !showHidden && strings.HasPrefix(entry.Name, ".") {
+		if !showHidden && entry.Hidden {
 			continue
 		}
 		if query != "" && !fileNameMatches(entry.Name, query) {
 			continue
 		}
-		path := pathpkg.Join(relative, entry.Name)
+		path := entry.Path
 		result = append(result, listedFile{
 			Entry:    entry,
 			Path:     path,
@@ -99,11 +97,11 @@ func compareListedFiles(left, right listedFile, field string) int {
 	return comparison
 }
 
-func classifyFile(entry managedfiles.Entry, path string) fileCategory {
+func classifyFile(entry hostfiles.Entry, path string) fileCategory {
 	switch entry.Kind {
-	case managedfiles.Directory:
+	case hostfiles.Directory:
 		return fileCategoryDirectory
-	case managedfiles.Restricted:
+	case hostfiles.Restricted:
 		return fileCategoryRestricted
 	}
 	if isScriptExtension(path) {
@@ -119,7 +117,7 @@ func classifyFile(entry managedfiles.Entry, path string) fileCategory {
 }
 
 func isImagePreviewExtension(path string) bool {
-	switch strings.ToLower(filepath.Ext(path)) {
+	switch strings.ToLower(hostfiles.Extension(path)) {
 	case ".png", ".jpg", ".jpeg", ".gif", ".webp":
 		return true
 	default:
@@ -180,6 +178,9 @@ func fileSortSummary(locale webLocale, field, direction string) string {
 
 func filesStateURL(relative, query, sortField, direction string, showHidden bool, page int) string {
 	values := url.Values{}
+	if relative != "" {
+		values.Set("path", relative)
+	}
 	if query != "" {
 		values.Set("q", query)
 	}
@@ -193,11 +194,10 @@ func filesStateURL(relative, query, sortField, direction string, showHidden bool
 	if page > 1 {
 		values.Set("page", strconv.Itoa(page))
 	}
-	base := filesURL(relative)
 	if len(values) == 0 {
-		return base
+		return "/resources/files"
 	}
-	return base + "?" + values.Encode()
+	return "/resources/files?" + values.Encode()
 }
 
 func naturalNameCompare(left, right string) int {

@@ -8,13 +8,12 @@ import (
 	"testing"
 )
 
-func TestPrepareRootsProtectsExistingStateDirectory(t *testing.T) {
+func TestPrepareStateRootProtectsExistingDirectory(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows does not expose Unix directory permission bits")
 	}
 
 	root := t.TempDir()
-	managed := filepath.Join(root, "managed")
 	state := filepath.Join(root, "state")
 	if err := os.MkdirAll(state, 0o755); err != nil {
 		t.Fatal(err)
@@ -22,8 +21,8 @@ func TestPrepareRootsProtectsExistingStateDirectory(t *testing.T) {
 	if err := os.Chmod(state, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := prepareRoots(managed, state); err != nil {
-		t.Fatalf("prepare roots: %v", err)
+	if _, err := prepareStateRoot(state); err != nil {
+		t.Fatalf("prepare State Root: %v", err)
 	}
 	info, err := os.Stat(state)
 	if err != nil {
@@ -31,6 +30,16 @@ func TestPrepareRootsProtectsExistingStateDirectory(t *testing.T) {
 	}
 	if got := info.Mode().Perm(); got != 0o700 {
 		t.Fatalf("state directory mode = %#o, want 0700", got)
+	}
+}
+
+func TestPrepareStateRootRejectsFilesystemRoot(t *testing.T) {
+	root := filepath.VolumeName(t.TempDir()) + string(filepath.Separator)
+	if runtime.GOOS != "windows" {
+		root = string(filepath.Separator)
+	}
+	if _, err := prepareStateRoot(root); err == nil {
+		t.Fatal("filesystem root was accepted as State Root")
 	}
 }
 

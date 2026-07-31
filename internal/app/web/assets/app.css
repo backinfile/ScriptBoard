@@ -1474,7 +1474,8 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .breadcrumb { display: flex; align-items: center; gap: 7px; min-height: 38px; margin: -18px 0 20px; color: var(--muted); font-size: .8rem; }
 .breadcrumb a { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); text-decoration: none; }
 .breadcrumb code { color: var(--ink); }
-.files-page .breadcrumb { margin-bottom: 18px; }
+.files-page .breadcrumb { min-width: 0; flex-wrap: wrap; margin-bottom: 18px; }
+.files-page .breadcrumb a, .files-page .breadcrumb code { min-width: 0; overflow-wrap: anywhere; }
 .table-shell { width: 100%; overflow-x: auto; border-top: 1px solid var(--rule-strong); }
 table { width: 100%; border-collapse: collapse; font-size: .86rem; text-align: left; }
 th {
@@ -1855,14 +1856,6 @@ td.record-actions { width: 1%; }
 .settings-block { margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--rule-strong); }
 .settings-block > p { max-width: 68ch; color: var(--muted); }
 .settings-section-heading > form { flex: 0 0 auto; }
-.managed-root-readonly { border-top: 1px solid var(--rule-strong); border-bottom: 1px solid var(--rule); }
-.managed-root-readonly > header { display: grid; grid-template-columns: 34px minmax(0, 1fr) max-content; align-items: center; gap: 12px; padding: 16px 2px 14px; }
-.managed-root-readonly__icon { display: grid; width: 34px; height: 34px; place-items: center; color: var(--accent); }
-.managed-root-readonly h3 { margin: 0 0 3px; font-size: .92rem; }
-.managed-root-readonly header p { margin: 0; color: var(--muted); font-size: .78rem; }
-.managed-root-readonly .status-chip svg { width: 13px; height: 13px; }
-.managed-root-readonly > code { display: block; padding: 16px 2px; overflow-wrap: anywhere; color: var(--ink); border-top: 1px solid var(--rule); font-size: .82rem; user-select: all; }
-.managed-root-readonly > p { margin: 0; padding: 0 2px 16px; color: var(--muted); font-size: .75rem; }
 .account-action-list { display: grid; margin-top: 18px; border-top: 1px solid var(--rule-strong); }
 .account-action-list a {
   display: grid;
@@ -3393,8 +3386,6 @@ body.has-task-panel { overflow: hidden; }
   .settings-nav { margin-bottom: 24px; }
   .settings-summary { grid-template-columns: 1fr; }
   .settings-section-heading { align-items: flex-start; flex-direction: column; }
-  .managed-root-readonly > header { grid-template-columns: 34px minmax(0, 1fr); }
-  .managed-root-readonly .status-chip { grid-column: 2; justify-self: start; }
   .user-edit-summary, .user-edit-form { grid-template-columns: 1fr; }
   .user-edit-form footer { grid-column: auto; }
   .status-display-option { grid-template-columns: 22px minmax(0, 1fr); }

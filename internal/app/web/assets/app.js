@@ -42,8 +42,6 @@
     "folder-code": '<path d="M10 10.5 8 12l2 1.5M14 10.5l2 1.5-2 1.5"/><path d="M2 6h5l2 2h13"/><path d="M2 6v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8"/>',
     "folder-open": '<path d="M6 14l1.5-3h13l-2 7a2 2 0 0 1-2 1H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v1"/>',
     "folder-plus": '<path d="M12 10v6M9 13h6"/><path d="M3 6h5l2 2h11v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
-    "git-branch": '<line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
-    "git-commit-horizontal": '<circle cx="12" cy="12" r="3"/><line x1="3" x2="9" y1="12" y2="12"/><line x1="15" x2="21" y1="12" y2="12"/>',
     "globe-2": '<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 0 20"/><path d="M12 2a15.3 15.3 0 0 0 0 20"/>',
     "hard-drive": '<path d="M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.8 4H7.2a2 2 0 0 0-1.7 1.1z"/><path d="M2 12h20"/><path d="M6 16h.01M10 16h.01"/>',
     "image": '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3-3a2 2 0 0 0-3 0l-9 9"/>',
@@ -315,20 +313,37 @@
     });
   }
 
-  function managedMarkdownURL(reference, baseURL) {
-    try {
-      const resolved = new URL(reference, new URL(baseURL, location.origin));
-      const prefix = "/resources/files/view/";
-      if (resolved.origin !== location.origin || !resolved.pathname.startsWith(prefix)) return null;
-      return resolved;
-    } catch {
-      return null;
+  function hostMarkdownPath(reference, basePath) {
+    if (!reference || reference.startsWith("#") || /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(reference)) return null;
+    const [withoutHash, hash = ""] = reference.split("#", 2);
+    const [rawPath] = withoutHash.split("?", 1);
+    let decoded;
+    try { decoded = decodeURIComponent(rawPath); } catch { return null; }
+    const windows = /^[a-z]:[\\/]/i.test(basePath);
+    const separator = windows ? "\\" : "/";
+    const absolute = windows ? /^[a-z]:[\\/]/i.test(decoded) : decoded.startsWith("/");
+    const base = absolute ? decoded : `${basePath}${basePath.endsWith(separator) ? "" : separator}${decoded}`;
+    const normalized = base.replaceAll(windows ? "/" : "\\", separator);
+    const prefix = windows ? normalized.slice(0, 3) : separator;
+    const components = normalized.slice(prefix.length).split(separator);
+    const result = [];
+    for (const component of components) {
+      if (!component || component === ".") continue;
+      if (component === "..") {
+        if (result.length === 0) return null;
+        result.pop();
+      } else {
+        result.push(component);
+      }
     }
+    return { path: prefix + result.join(separator), hash: hash ? `#${hash}` : "", directory: /[\\/]$/.test(rawPath) };
   }
 
-  function managedRouteURL(url, prefix) {
-    const path = url.pathname.slice("/resources/files/view/".length);
-    return `${prefix}${path}${url.search}${url.hash}`;
+  function hostFileRoute(endpoint, hostPath, hash = "") {
+    const target = new URL(endpoint, location.origin);
+    target.searchParams.set("path", hostPath);
+    target.hash = hash;
+    return `${target.pathname}${target.search}${target.hash}`;
   }
 
   function replaceExternalMarkdownImage(image, reference) {
@@ -358,15 +373,15 @@
     root.querySelectorAll("a[href]").forEach(link => {
       const reference = link.getAttribute("href") || "";
       if (reference.startsWith("#")) return;
-      const managed = managedMarkdownURL(reference, baseURL);
-      if (managed) {
-        const extension = managed.pathname.slice(managed.pathname.lastIndexOf(".")).toLowerCase();
-        if (managed.pathname.endsWith("/")) {
-          link.href = managedRouteURL(managed, "/resources/files/");
+      const hostFile = hostMarkdownPath(reference, baseURL);
+      if (hostFile) {
+        const extension = hostFile.path.slice(hostFile.path.lastIndexOf(".")).toLowerCase();
+        if (hostFile.directory) {
+          link.href = hostFileRoute("/resources/files", hostFile.path, hostFile.hash);
         } else if (extension === ".md") {
-          link.href = managedRouteURL(managed, "/resources/files/view/");
+          link.href = hostFileRoute("/resources/files/view", hostFile.path, hostFile.hash);
         } else {
-          link.href = managedRouteURL(managed, "/resources/files/download/");
+          link.href = hostFileRoute("/resources/files/download", hostFile.path, hostFile.hash);
           link.dataset.native = "";
         }
         return;
@@ -385,9 +400,9 @@
 
     root.querySelectorAll("img").forEach(image => {
       const reference = image.getAttribute("src") || "";
-      const managed = managedMarkdownURL(reference, baseURL);
-      if (managed) {
-        image.src = managedRouteURL(managed, "/resources/files/preview/");
+      const hostFile = hostMarkdownPath(reference, baseURL);
+      if (hostFile) {
+        image.src = hostFileRoute("/resources/files/preview", hostFile.path);
         image.loading = "lazy";
         image.decoding = "async";
         return;
@@ -426,7 +441,7 @@
         FORBID_ATTR: ["style"],
         RETURN_DOM_FRAGMENT: true
       });
-      rewriteMarkdownResources(fragment, preview.dataset.markdownBase || "/resources/files/view/");
+      rewriteMarkdownResources(fragment, preview.dataset.markdownBase || "");
       await highlightMarkdownCode(fragment);
       if (!preview.isConnected || !source.isConnected) return;
       preview.replaceChildren(fragment);
@@ -466,8 +481,8 @@
 
   function navigationOwnsPath(linkPath, path) {
     if (linkPath === "/monitor") return path === "/monitor";
-    if (linkPath === "/resources/files/") {
-      return path.startsWith("/resources/files/") || path === "/resources/trash";
+    if (linkPath === "/resources/files") {
+      return path === "/resources/files" || path === "/resources/trash";
     }
     return path === linkPath || path.startsWith(`${linkPath}/`);
   }
@@ -511,10 +526,7 @@
         path === "/resources/trash") {
       return true;
     }
-    if (!path.startsWith("/resources/files/")) return false;
-    const relative = path.slice("/resources/files/".length);
-    return !["new-directory", "upload", "run/", "quick-run/", "download/", "preview/", "view/", "edit/"]
-      .some(prefix => relative === prefix.replace(/\/$/, "") || relative.startsWith(prefix));
+    return path === "/resources/files";
   }
 
   function createDeferredDataFailure(url, title) {
@@ -707,13 +719,13 @@
       if (!input || !tree || !selection) return;
       let controller = null;
       const nodes = new Map();
-      const normalizePath = value => String(value || "").split("/").filter(Boolean).join("/") || ".";
+      const normalizePath = value => String(value || "");
       let selectedPath = normalizePath(input.value);
 
       const setSelected = (path, focus = false) => {
         selectedPath = normalizePath(path);
         input.value = selectedPath;
-        selection.textContent = selectedPath === "." ? (root.dataset.rootLabel || "Managed root") : selectedPath;
+        selection.textContent = selectedPath || (root.dataset.rootLabel || "This host");
         nodes.forEach(node => node.row.setAttribute("aria-selected", String(node.path === selectedPath)));
         if (focus) nodes.get(selectedPath)?.row.focus({ preventScroll: true });
       };
@@ -741,7 +753,7 @@
         chevron.dataset.lucide = "chevron-right";
         chevron.setAttribute("aria-hidden", "true");
         const folder = document.createElement("span");
-        folder.dataset.lucide = path === "." ? "hard-drive" : "folder";
+        folder.dataset.lucide = path === "" ? "hard-drive" : "folder";
         folder.setAttribute("aria-hidden", "true");
         const name = document.createElement("span");
         name.textContent = label;
@@ -759,7 +771,7 @@
         const node = { path, item, row, group, loaded: false, leaf: false };
         nodes.set(path, node);
         row.addEventListener("click", () => {
-          setSelected(path);
+          if (path) setSelected(path);
           if (!node.loaded) {
             loadNode(node, true);
             return;
@@ -784,15 +796,15 @@
         node.group.replaceChildren(loading);
         try {
           const endpoint = new URL(root.dataset.endpoint, location.href);
-          endpoint.searchParams.set("path", node.path === "." ? "" : node.path);
+          endpoint.searchParams.set("path", node.path);
           const response = await fetch(endpoint, { headers: { Accept: "application/json" }, cache: "no-store", signal: controller.signal });
           if (!response.ok) throw new Error(await response.text());
           const payload = await response.json();
           const directories = Array.isArray(payload.directories) ? payload.directories : [];
           node.group.replaceChildren();
           directories.forEach(directory => {
-            const path = node.path === "." ? directory : `${node.path}/${directory}`;
-            node.group.append(createNode(path, directory).item);
+            if (!directory || typeof directory.path !== "string") return;
+            node.group.append(createNode(directory.path, directory.name || directory.path).item);
           });
           node.loaded = true;
           node.leaf = directories.length === 0;
@@ -820,7 +832,7 @@
       const list = document.createElement("ul");
       list.setAttribute("role", "tree");
       list.setAttribute("aria-label", tree.getAttribute("aria-label") || "");
-      const rootNode = createNode(".", root.dataset.rootLabel || "Managed root");
+      const rootNode = createNode("", root.dataset.rootLabel || "This host");
       list.append(rootNode.item);
       tree.replaceChildren(list);
       renderIcons(tree);
@@ -828,17 +840,20 @@
 
       const revealSelection = async () => {
         let currentNode = rootNode;
-        let currentPath = ".";
         if (!await loadNode(currentNode, true)) return;
-        for (const part of selectedPath === "." ? [] : selectedPath.split("/")) {
-          currentPath = currentPath === "." ? part : `${currentPath}/${part}`;
-          const nextNode = nodes.get(currentPath);
-          if (!nextNode) {
-            setSelected(".");
-            return;
-          }
+        if (!selectedPath) return;
+        const comparable = value => String(value || "").replaceAll("\\", "/").replace(/\/+$/, "").toLocaleLowerCase();
+        while (!nodes.has(selectedPath)) {
+          const selectedKey = comparable(selectedPath);
+          const candidates = [...currentNode.group.querySelectorAll(":scope > li > [data-directory-path]")]
+            .map(row => nodes.get(row.dataset.directoryPath))
+            .filter(Boolean);
+          const nextNode = candidates.find(node => {
+            const key = comparable(node.path);
+            return selectedKey === key || selectedKey.startsWith(`${key}/`) || key === "";
+          });
+          if (!nextNode || nextNode === currentNode || !await loadNode(nextNode, true)) return;
           currentNode = nextNode;
-          if (currentPath !== selectedPath && !await loadNode(currentNode, true)) return;
         }
         setSelected(selectedPath, root.hasAttribute("data-autofocus"));
       };
@@ -2492,15 +2507,17 @@
     const oneLabel = disclosure.querySelector("[data-file-quick-one-label]");
     const manyLabel = disclosure.querySelector("[data-file-quick-many-label]");
     if (!list || !empty || !count || !countLabel || !oneLabel || !manyLabel) return;
+	const validationController = new AbortController();
+	cleanups.push(() => validationController.abort());
 
-    const storageKey = "scriptboard.files.pinnedDirectories.v1";
+    const storageKey = "scriptboard.files.pinnedDirectories.v2";
     const isValidPin = pin => {
       if (!pin || typeof pin.path !== "string" || pin.path.length === 0 ||
         typeof pin.label !== "string" || pin.label.length === 0 ||
         typeof pin.href !== "string" || !pin.href.startsWith("/")) return false;
       try {
         const target = new URL(pin.href, location.origin);
-        return target.origin === location.origin && target.pathname.startsWith("/resources/files/");
+        return target.origin === location.origin && target.pathname === "/resources/files" && target.searchParams.get("path") === pin.path;
       } catch {
         return false;
       }
@@ -2548,7 +2565,7 @@
         item.className = "file-quick-row";
 
         const link = document.createElement("a");
-        link.setAttribute("href", pin.href);
+		link.setAttribute("aria-disabled", "true");
         const icon = document.createElement("span");
         icon.className = "file-quick-row__icon";
         icon.append(makeIcon("folder"));
@@ -2559,6 +2576,16 @@
         path.textContent = pin.path;
         copy.append(label, path);
         link.append(icon, copy);
+		const validationURL = new URL(disclosure.dataset.validationUrl || "/resources/files/validate", location.origin);
+		validationURL.searchParams.set("path", pin.path);
+		fetch(validationURL, { headers: { Accept: "application/json" }, signal: validationController.signal })
+		  .then(response => response.ok ? response.json() : { accessible: false })
+		  .then(result => {
+			if (!result?.accessible || !pins.some(candidate => candidate.path === pin.path)) return;
+			link.setAttribute("href", pin.href);
+			link.removeAttribute("aria-disabled");
+		  })
+		  .catch(error => { if (error?.name !== "AbortError") link.dataset.unavailable = "true"; });
 
         const remove = document.createElement("button");
         remove.className = "icon-button";
@@ -2599,6 +2626,39 @@
 
     disclosure.hidden = false;
     render();
+  }
+
+  function initFileOperation(cleanups) {
+    const root = document.querySelector("[data-file-operation]");
+    if (!root || !root.dataset.eventsUrl) return;
+    const phase = root.querySelector("[data-file-operation-phase]");
+    const state = root.querySelector("[data-file-operation-state]");
+    const error = root.querySelector("[data-file-operation-error]");
+    const progress = root.querySelector("[data-file-operation-progress]");
+    const bytes = root.querySelector("[data-file-operation-bytes]");
+    const formatBytes = value => {
+      let amount = Number(value) || 0;
+      const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+      let unit = 0;
+      while (amount >= 1024 && unit < units.length - 1) { amount /= 1024; unit += 1; }
+      return `${unit === 0 ? Math.round(amount) : amount.toFixed(1)} ${units[unit]}`;
+    };
+    const terminal = new Set(["completed", "rolled_back", "cancelled", "failed"]);
+    const stream = new EventSource(root.dataset.eventsUrl);
+    stream.addEventListener("progress", event => {
+      let operation;
+      try { operation = JSON.parse(event.data); } catch { return; }
+      if (phase) phase.textContent = operation.phase || "";
+      if (state) state.textContent = operation.phase || "";
+      if (error) error.textContent = operation.error || "";
+      if (progress) {
+        progress.max = Math.max(1, Number(operation.bytesTotal) || 0);
+        progress.value = Math.max(0, Number(operation.bytesCompleted) || 0);
+      }
+      if (bytes) bytes.textContent = `${formatBytes(operation.bytesCompleted)} / ${formatBytes(operation.bytesTotal)}`;
+      if (terminal.has(operation.phase)) stream.close();
+    });
+    cleanups.push(() => stream.close());
   }
 
   function initGroupedRecords(cleanups) {
@@ -3808,6 +3868,7 @@
     initFileDropUpload(document, cleanups);
     initFileVisibilityToggle(document, cleanups);
     initFileQuickAccess(document, cleanups);
+	initFileOperation(cleanups);
     initDirectoryPickers(document, cleanups);
     initQuickCreateDefaults(document, cleanups);
     initOverview(cleanups);

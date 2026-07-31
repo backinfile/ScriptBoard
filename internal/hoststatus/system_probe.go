@@ -20,19 +20,19 @@ import (
 )
 
 type SystemProbe struct {
-	managedRoot, stateRoot string
+	stateRoot, installRoot string
 	startedAt              time.Time
 	process                *process.Process
 	logicalCores           int
 }
 
-func NewSystemProbe(managedRoot, stateRoot string) (*SystemProbe, error) {
+func NewSystemProbe(stateRoot, installRoot string) (*SystemProbe, error) {
 	current, _ := process.NewProcess(int32(os.Getpid()))
 	cores, _ := cpu.Counts(true)
 	if cores < 1 {
 		cores = 1
 	}
-	return &SystemProbe{managedRoot: managedRoot, stateRoot: stateRoot, startedAt: time.Now().UTC(), process: current, logicalCores: cores}, nil
+	return &SystemProbe{stateRoot: stateRoot, installRoot: installRoot, startedAt: time.Now().UTC(), process: current, logicalCores: cores}, nil
 }
 
 func (p *SystemProbe) Facts(ctx context.Context) (Facts, error) {
@@ -118,8 +118,8 @@ func (p *SystemProbe) collectFilesystems(ctx context.Context, result *RawSample)
 		value := Filesystem{ID: id, Device: partition.Device, Mountpoint: partition.Mountpoint, Type: partition.Fstype, TotalBytes: usage.Total, UsedBytes: usage.Used, AvailableBytes: usage.Free, UsedPercent: usage.UsedPercent, Online: true}
 		byID[id] = value
 	}
-	assignFilesystemRole(byID, p.managedRoot, "managed")
 	assignFilesystemRole(byID, p.stateRoot, "state")
+	assignFilesystemRole(byID, p.installRoot, "install")
 	for _, value := range byID {
 		result.Filesystems = append(result.Filesystems, value)
 	}
@@ -127,6 +127,9 @@ func (p *SystemProbe) collectFilesystems(ctx context.Context, result *RawSample)
 }
 
 func assignFilesystemRole(filesystems map[string]Filesystem, path, role string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
 	selectedID, selectedLength := "", -1
 	for id, value := range filesystems {
 		if pathWithinMount(value.Mountpoint, path) && len(filepath.Clean(value.Mountpoint)) > selectedLength {
@@ -227,4 +230,4 @@ func errorText(err error, fallback string) string {
 
 var _ Probe = (*SystemProbe)(nil)
 
-func (p *SystemProbe) String() string { return fmt.Sprintf("system probe for %s", p.managedRoot) }
+func (p *SystemProbe) String() string { return fmt.Sprintf("system probe for %s", p.stateRoot) }

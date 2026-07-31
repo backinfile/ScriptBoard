@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -17,10 +18,8 @@ import (
 )
 
 type Config struct {
-	ManagedRoot       string              `yaml:"managed_root"`
 	StateRoot         string              `yaml:"state_root"`
 	Listen            string              `yaml:"listen"`
-	GitExecutable     string              `yaml:"git_executable"`
 	TLSCert           string              `yaml:"tls_cert"`
 	TLSKey            string              `yaml:"tls_key"`
 	ExecutorChains    map[string][]string `yaml:"executor_chains"`
@@ -35,10 +34,8 @@ type Config struct {
 }
 
 type yamlConfig struct {
-	ManagedRoot            string              `yaml:"managed_root"`
 	StateRoot              string              `yaml:"state_root"`
 	Listen                 string              `yaml:"listen"`
-	GitExecutable          string              `yaml:"git_executable"`
 	TLSCert                string              `yaml:"tls_cert"`
 	TLSKey                 string              `yaml:"tls_key"`
 	ExecutorChains         map[string][]string `yaml:"executor_chains"`
@@ -49,11 +46,25 @@ type yamlConfig struct {
 	RunTimeoutGraceSeconds *int                `yaml:"run_timeout_grace_seconds"`
 	UpdateCheck            *bool               `yaml:"update_check"`
 	UpdateIntervalHours    *int                `yaml:"update_check_interval_hours"`
+	RemovedManagedRoot     yaml.Node           `yaml:"managed_root"`
+	RemovedGitExecutable   yaml.Node           `yaml:"git_executable"`
 }
 
 func Load(arguments []string, getenv func(string) string) (Config, error) {
 	if getenv == nil {
 		getenv = os.Getenv
+	}
+	for _, legacy := range []string{"SCRIPTBOARD_MANAGED_ROOT", "SCRIPTBOARD_GIT_EXECUTABLE"} {
+		if strings.TrimSpace(getenv(legacy)) != "" {
+			return Config{}, fmt.Errorf("%s was removed; create a new configuration and State Root for this version", legacy)
+		}
+	}
+	for _, argument := range arguments {
+		for _, legacy := range []string{"--managed-root", "--here", "--git-executable"} {
+			if argument == legacy || strings.HasPrefix(argument, legacy+"=") {
+				return Config{}, fmt.Errorf("%s was removed; create a new configuration and State Root for this version", legacy)
+			}
+		}
 	}
 	result := defaults()
 	configPath, explicit := requestedConfigPath(arguments, result.ConfigPath)
@@ -66,6 +77,12 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 		if err := decoder.Decode(&values); err != nil {
 			return Config{}, fmt.Errorf("解析 YAML 配置: %w", err)
 		}
+		if values.RemovedManagedRoot.Kind != 0 {
+			return Config{}, errors.New("managed_root was removed; create a new configuration and State Root for this version")
+		}
+		if values.RemovedGitExecutable.Kind != 0 {
+			return Config{}, errors.New("git_executable was removed; create a new configuration and State Root for this version")
+		}
 		applyYAML(&result, values)
 	} else if explicit || !os.IsNotExist(err) {
 		return Config{}, fmt.Errorf("读取配置文件 %q: %w", configPath, err)
@@ -74,13 +91,9 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 
 	flags := flag.NewFlagSet("scriptboard", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	here := false
 	flags.StringVar(&result.ConfigPath, "config", result.ConfigPath, "YAML 配置文件")
-	flags.StringVar(&result.ManagedRoot, "managed-root", result.ManagedRoot, "受管根目录")
-	flags.BoolVar(&here, "here", false, "使用当前目录作为受管根目录")
 	flags.StringVar(&result.StateRoot, "state-root", result.StateRoot, "内部状态目录")
 	flags.StringVar(&result.Listen, "listen", result.Listen, "HTTP 监听地址")
-	flags.StringVar(&result.GitExecutable, "git-executable", result.GitExecutable, "Git CLI 绝对路径")
 	flags.StringVar(&result.TLSCert, "tls-cert", result.TLSCert, "TLS 证书路径")
 	flags.StringVar(&result.TLSKey, "tls-key", result.TLSKey, "TLS 私钥路径")
 	flags.DurationVar(&result.RunTimeoutGrace, "run-timeout-grace", result.RunTimeoutGrace, "自动超时强杀宽限")
@@ -100,22 +113,6 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 	})
 	if err := flags.Parse(arguments); err != nil {
 		return Config{}, err
-	}
-	if here {
-		managedRootSet := false
-		flags.Visit(func(selected *flag.Flag) {
-			if selected.Name == "managed-root" {
-				managedRootSet = true
-			}
-		})
-		if managedRootSet {
-			return Config{}, fmt.Errorf("--here 不能与 --managed-root 同时使用")
-		}
-		currentDirectory, err := os.Getwd()
-		if err != nil {
-			return Config{}, fmt.Errorf("读取当前目录: %w", err)
-		}
-		result.ManagedRoot = currentDirectory
 	}
 	if flags.NArg() != 0 {
 		return Config{}, fmt.Errorf("未知位置参数: %v", flags.Args())
@@ -154,14 +151,14 @@ func defaults() Config {
 		}
 		base := filepath.Join(programData, "ScriptBoard")
 		return Config{
-			ManagedRoot: filepath.Join(base, "managed"), StateRoot: filepath.Join(base, "state"),
-			Listen: "127.0.0.1:8787", RunTimeoutGrace: 30 * time.Second,
+			StateRoot: filepath.Join(base, "state"),
+			Listen:    "127.0.0.1:8787", RunTimeoutGrace: 30 * time.Second,
 			UpdateCheck: true, UpdateInterval: 6 * time.Hour, ConfigPath: filepath.Join(base, "config.yaml"),
 		}
 	}
 	return Config{
-		ManagedRoot: "/var/lib/scriptboard/managed", StateRoot: "/var/lib/scriptboard/state",
-		Listen: "127.0.0.1:8787", RunTimeoutGrace: 30 * time.Second,
+		StateRoot: "/var/lib/scriptboard/state",
+		Listen:    "127.0.0.1:8787", RunTimeoutGrace: 30 * time.Second,
 		UpdateCheck: true, UpdateInterval: 6 * time.Hour, ConfigPath: "/etc/scriptboard/config.yaml",
 	}
 }
@@ -180,17 +177,11 @@ func requestedConfigPath(arguments []string, fallback string) (string, bool) {
 }
 
 func applyYAML(result *Config, values yamlConfig) {
-	if values.ManagedRoot != "" {
-		result.ManagedRoot = values.ManagedRoot
-	}
 	if values.StateRoot != "" {
 		result.StateRoot = values.StateRoot
 	}
 	if values.Listen != "" {
 		result.Listen = values.Listen
-	}
-	if values.GitExecutable != "" {
-		result.GitExecutable = values.GitExecutable
 	}
 	if values.TLSCert != "" {
 		result.TLSCert = values.TLSCert
@@ -225,17 +216,11 @@ func applyYAML(result *Config, values yamlConfig) {
 }
 
 func applyEnvironment(result *Config, getenv func(string) string) {
-	if value := getenv("SCRIPTBOARD_MANAGED_ROOT"); value != "" {
-		result.ManagedRoot = value
-	}
 	if value := getenv("SCRIPTBOARD_STATE_ROOT"); value != "" {
 		result.StateRoot = value
 	}
 	if value := getenv("SCRIPTBOARD_LISTEN"); value != "" {
 		result.Listen = value
-	}
-	if value := getenv("SCRIPTBOARD_GIT_EXECUTABLE"); value != "" {
-		result.GitExecutable = value
 	}
 	if value := getenv("SCRIPTBOARD_TLS_CERT"); value != "" {
 		result.TLSCert = value

@@ -1,6 +1,6 @@
 //go:build linux
 
-package managedfiles
+package hostfiles
 
 import "os"
 
