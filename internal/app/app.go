@@ -31,6 +31,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/crypto/argon2"
@@ -43,6 +44,7 @@ import (
 	"scriptboard/internal/hoststatus"
 	"scriptboard/internal/instancelock"
 	"scriptboard/internal/managedfiles"
+	"scriptboard/internal/privatepath"
 	"scriptboard/internal/runmanager"
 	"scriptboard/internal/scheduler"
 	updatepkg "scriptboard/internal/update"
@@ -51,6 +53,27 @@ import (
 
 const initialPasswordFilename = "initial-admin-password"
 const currentSchemaVersion = buildinfo.DatabaseSchemaVersion
+
+const (
+	passwordMemory         uint32 = 64 * 1024
+	passwordIterations     uint32 = 3
+	passwordParallelism    uint8  = 2
+	passwordSaltLength            = 16
+	passwordKeyLength             = 32
+	maxPasswordBytes              = 256
+	maxLoginRequestBytes   int64  = 16 << 10
+	maxLocaleRequestBytes  int64  = 4 << 10
+	maxFormRequestBytes    int64  = 8 << 20
+	loginRateBucketCount          = 1 << 14
+	maxLoginFailureEntries        = 2 * loginRateBucketCount
+)
+
+const dummyPasswordHash = "$argon2id$v=19$m=65536,t=3,p=2$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+var passwordWorkSlots = make(chan struct{}, 2)
+
+const unauthenticatedFormReadTimeout = 15 * time.Second
+const boundedFormReadTimeout = 30 * time.Second
 
 //go:embed web/assets/* web/templates/*
 var webFiles embed.FS
@@ -283,7 +306,10 @@ type App struct {
 	instanceLock       *instancelock.Lock
 	handler            http.Handler
 	loginMu            sync.Mutex
+	loginSlots         chan struct{}
 	loginFailures      map[string]loginFailure
+	loginLastPrune     time.Time
+	loginRateSalt      [32]byte
 	activeRequestsMu   sync.Mutex
 	activeRequests     map[string]map[uint64]context.CancelFunc
 	activeRequestID    uint64
@@ -300,6 +326,7 @@ type App struct {
 type loginFailure struct {
 	count        int
 	blockedUntil time.Time
+	updatedAt    time.Time
 }
 
 func Open(config Config) (*App, error) {
@@ -329,10 +356,16 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	var loginRateSalt [32]byte
+	if _, err := rand.Read(loginRateSalt[:]); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("生成登录限流密钥: %w", err)
+	}
 	application := &App{
 		db: db, stateRoot: stateRoot, managedRoot: managedRoot,
 		managed: managedfiles.Open(managedRoot), instanceLock: instanceLock,
-		loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies,
+		loginSlots: make(chan struct{}, 2), loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies,
+		loginRateSalt:  loginRateSalt,
 		logStreamSlots: make(chan struct{}, 8), logHistorySlots: make(chan struct{}, 4),
 		updateResultsWake: make(chan struct{}, 1),
 	}
@@ -627,6 +660,9 @@ func (a *App) ResetAdminCredentials(username string) (string, error) {
 	if username == "" {
 		username = "admin"
 	}
+	if !validUsername(username) {
+		return "", errors.New("管理员用户名无效")
+	}
 	passwordBytes := make([]byte, 24)
 	if _, err := rand.Read(passwordBytes); err != nil {
 		return "", err
@@ -662,9 +698,20 @@ func (a *App) ResetAdminCredentials(username string) (string, error) {
 
 func (a *App) applyCredentialOverride(username, password, passwordFile string) error {
 	if passwordFile != "" {
-		content, err := os.ReadFile(passwordFile)
+		file, err := os.Open(passwordFile)
 		if err != nil {
 			return fmt.Errorf("读取管理员密码文件: %w", err)
+		}
+		content, readErr := io.ReadAll(io.LimitReader(file, maxPasswordBytes+3))
+		closeErr := file.Close()
+		if readErr != nil {
+			return fmt.Errorf("读取管理员密码文件: %w", readErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("关闭管理员密码文件: %w", closeErr)
+		}
+		if len(content) > maxPasswordBytes+2 {
+			return errors.New("管理员密码文件过大")
 		}
 		password = strings.TrimSuffix(strings.TrimSuffix(string(content), "\n"), "\r")
 	}
@@ -677,8 +724,10 @@ func (a *App) applyCredentialOverride(username, password, passwordFile string) e
 	}
 	if username == "" {
 		username = currentUsername
+	} else {
+		username = strings.TrimSpace(username)
 	}
-	if !utf8.ValidString(username) || utf8.RuneCountInString(username) == 0 || utf8.RuneCountInString(username) > 64 {
+	if !validUsername(username) {
 		return errors.New("管理员用户名覆盖无效")
 	}
 	changed := username != currentUsername
@@ -751,10 +800,11 @@ func prepareRoots(managed, state string) (string, string, error) {
 	if strings.TrimSpace(managed) == "" || strings.TrimSpace(state) == "" {
 		return "", "", errors.New("受管根目录和内部状态目录不能为空")
 	}
-	for _, root := range []string{managed, state} {
-		if err := os.MkdirAll(root, 0o755); err != nil {
-			return "", "", fmt.Errorf("创建目录 %q: %w", root, err)
-		}
+	if err := os.MkdirAll(managed, 0o755); err != nil {
+		return "", "", fmt.Errorf("创建目录 %q: %w", managed, err)
+	}
+	if err := os.MkdirAll(state, 0o700); err != nil {
+		return "", "", fmt.Errorf("创建目录 %q: %w", state, err)
 	}
 	managedReal, err := filepath.EvalSymlinks(managed)
 	if err != nil {
@@ -774,6 +824,9 @@ func prepareRoots(managed, state string) (string, string, error) {
 	}
 	if pathContains(managedReal, stateReal) || pathContains(stateReal, managedReal) {
 		return "", "", errors.New("受管根目录和内部状态目录不能相同或互相包含")
+	}
+	if err := privatepath.ProtectDirectory(stateReal); err != nil {
+		return "", "", fmt.Errorf("保护内部状态目录 %q: %w", stateReal, err)
 	}
 	return managedReal, stateReal, nil
 }
@@ -1350,27 +1403,32 @@ func (a *App) initializeAdmin(stateRoot string) error {
 }
 
 func hashPassword(password string) (string, error) {
-	salt := make([]byte, 16)
+	salt := make([]byte, passwordSaltLength)
 	if _, err := rand.Read(salt); err != nil {
 		return "", fmt.Errorf("生成密码 salt: %w", err)
 	}
-	const memory = 64 * 1024
-	const iterations = 3
-	const parallelism = 2
-	const keyLength = 32
-	key := argon2.IDKey([]byte(password), salt, iterations, memory, parallelism, keyLength)
+	passwordWorkSlots <- struct{}{}
+	key := argon2.IDKey([]byte(password), salt, passwordIterations, passwordMemory, passwordParallelism, passwordKeyLength)
+	<-passwordWorkSlots
 	return fmt.Sprintf(
 		"$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
 		argon2.Version,
-		memory,
-		iterations,
-		parallelism,
+		passwordMemory,
+		passwordIterations,
+		passwordParallelism,
 		base64.RawStdEncoding.EncodeToString(salt),
 		base64.RawStdEncoding.EncodeToString(key),
 	), nil
 }
 
 func verifyPassword(password, encoded string) bool {
+	return verifyPasswordContext(context.Background(), password, encoded)
+}
+
+func verifyPasswordContext(ctx context.Context, password, encoded string) bool {
+	if len(password) > maxPasswordBytes || !utf8.ValidString(password) {
+		return false
+	}
 	parts := strings.Split(encoded, "$")
 	if len(parts) != 6 || parts[1] != "argon2id" {
 		return false
@@ -1383,12 +1441,21 @@ func verifyPassword(password, encoded string) bool {
 	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &iterations, &parallelism); err != nil {
 		return false
 	}
+	if memory != passwordMemory || iterations != passwordIterations || parallelism != passwordParallelism {
+		return false
+	}
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
-	if err != nil {
+	if err != nil || len(salt) != passwordSaltLength {
 		return false
 	}
 	want, err := base64.RawStdEncoding.DecodeString(parts[5])
-	if err != nil || len(want) == 0 {
+	if err != nil || len(want) != passwordKeyLength {
+		return false
+	}
+	select {
+	case passwordWorkSlots <- struct{}{}:
+		defer func() { <-passwordWorkSlots }()
+	case <-ctx.Done():
 		return false
 	}
 	got := argon2.IDKey([]byte(password), salt, iterations, memory, parallelism, uint32(len(want)))
@@ -1593,9 +1660,20 @@ func (a *App) routes(_ string) http.Handler {
 		response.Header().Set("X-Content-Type-Options", "nosniff")
 		response.Header().Set("X-Frame-Options", "DENY")
 		response.Header().Set("Referrer-Policy", "no-referrer")
-		response.Header().Set("Content-Security-Policy", "default-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'")
+		response.Header().Set("Permissions-Policy", "camera=(), geolocation=(), microphone=()")
+		response.Header().Set("Content-Security-Policy", "default-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		if isSecureRequest(request) {
 			response.Header().Set("Strict-Transport-Security", "max-age=31536000")
+		}
+		if request.Body != nil && request.Method != http.MethodGet && request.Method != http.MethodHead &&
+			request.URL.Path != "/resources/files/upload" {
+			if request.ContentLength > maxFormRequestBytes {
+				http.Error(response, "request body is too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			resetReadDeadline := setRequestReadDeadline(response, boundedFormReadTimeout)
+			defer resetReadDeadline()
+			request.Body = http.MaxBytesReader(response, request.Body, maxFormRequestBytes)
 		}
 		if a.validation.Load() && request.Method != http.MethodGet {
 			response.Header().Set("Retry-After", "2")
@@ -2218,9 +2296,39 @@ func (a *App) auditDownload(response http.ResponseWriter, _ *http.Request) {
 		if rows.Scan(&occurred, &action, &target, &result, &source, &actorUserID, &actorUsername, &actorRole) != nil {
 			return
 		}
-		_ = writer.Write([]string{time.Unix(occurred, 0).UTC().Format(time.RFC3339), action, target, result, source, actorUserID, actorUsername, actorRole})
+		record := []string{time.Unix(occurred, 0).UTC().Format(time.RFC3339), action, target, result, source, actorUserID, actorUsername, actorRole}
+		for index := range record {
+			record[index] = spreadsheetSafeCSVCell(record[index])
+		}
+		_ = writer.Write(record)
 	}
 	writer.Flush()
+}
+
+func spreadsheetSafeCSVCell(value string) string {
+	leadingControl := false
+	trimmed := strings.TrimLeftFunc(value, func(character rune) bool {
+		switch character {
+		case '\t', '\r', '\n':
+			leadingControl = true
+		}
+		return unicode.IsSpace(character) || character == '\u200b' || character == '\ufeff'
+	})
+	if trimmed == "" {
+		if leadingControl {
+			return "'" + value
+		}
+		return value
+	}
+	if leadingControl {
+		return "'" + value
+	}
+	switch trimmed[0] {
+	case '=', '+', '-', '@':
+		return "'" + value
+	default:
+		return value
+	}
 }
 
 func (a *App) schedulesPage(response http.ResponseWriter, request *http.Request) {
@@ -4053,7 +4161,7 @@ func (a *App) changeUsername(response http.ResponseWriter, request *http.Request
 		http.Error(response, "无法读取用户账号", http.StatusInternalServerError)
 		return
 	}
-	if !verifyPassword(request.FormValue("current_password"), passwordHash) {
+	if !verifyPasswordContext(request.Context(), request.FormValue("current_password"), passwordHash) {
 		http.Error(response, "当前密码错误", http.StatusUnauthorized)
 		return
 	}
@@ -4092,7 +4200,7 @@ func (a *App) changeUsername(response http.ResponseWriter, request *http.Request
 	}
 	a.cancelAuthenticatedRequests(current.userID)
 	a.recordAuditForRequest(request, "rename_self", username+" -> "+newUsername, "succeeded")
-	http.SetCookie(response, &http.Cookie{Name: sessionCookieName, Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(response, &http.Cookie{Name: sessionCookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(request), SameSite: http.SameSiteLaxMode})
 	http.Redirect(response, request, "/login", http.StatusSeeOther)
 }
 
@@ -4154,11 +4262,25 @@ func (a *App) changePassword(response http.ResponseWriter, request *http.Request
 	}
 	a.cancelAuthenticatedRequests(current.userID)
 	a.recordAuditForRequest(request, "change_password", username, "succeeded")
-	http.SetCookie(response, &http.Cookie{Name: sessionCookieName, Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(response, &http.Cookie{Name: sessionCookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(request), SameSite: http.SameSiteLaxMode})
 	http.Redirect(response, request, "/login", http.StatusSeeOther)
 }
 
 func (a *App) login(response http.ResponseWriter, request *http.Request) {
+	response.Header().Set("Cache-Control", "no-store")
+	resetReadDeadline := setRequestReadDeadline(response, unauthenticatedFormReadTimeout)
+	defer resetReadDeadline()
+	request.Body = http.MaxBytesReader(response, request.Body, maxLoginRequestBytes)
+	defer removeMultipartForm(request)
+	if err := parseRequestForm(request, maxLoginRequestBytes); err != nil {
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			http.Error(response, "登录请求过大", http.StatusRequestEntityTooLarge)
+		} else {
+			http.Error(response, "登录表单无效", http.StatusBadRequest)
+		}
+		return
+	}
 	csrfCookie, err := request.Cookie(loginCSRFCookieName)
 	if err != nil || subtle.ConstantTimeCompare([]byte(csrfCookie.Value), []byte(request.FormValue("csrf_token"))) != 1 {
 		renderLoginFailure(response, request, http.StatusForbidden, request.FormValue("username"), "登录页面已过期，请重试")
@@ -4169,10 +4291,21 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 		remoteHost = request.RemoteAddr
 	}
 	requestedUsername := strings.TrimSpace(request.FormValue("username"))
-	loginKeys := []string{"ip\x00" + remoteHost, "account\x00" + requestedUsername}
+	validLoginIdentity := validUsername(requestedUsername)
+	loginIdentity := requestedUsername
+	if !validLoginIdentity {
+		loginIdentity = "<invalid>"
+	}
+	loginKeys := []string{a.loginRateKey("ip", remoteHost), a.loginRateKey("account", loginIdentity)}
+	select {
+	case a.loginSlots <- struct{}{}:
+		defer func() { <-a.loginSlots }()
+	case <-request.Context().Done():
+		return
+	}
 	if retryAfter := a.loginRetryAfter(loginKeys...); retryAfter > 0 {
 		response.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(retryAfter.Seconds()))))
-		a.recordAuditForRequest(request, "login", requestedUsername, "rate_limited")
+		a.recordAuditForRequest(request, "login", loginIdentity, "rate_limited")
 		renderLoginFailure(response, request, http.StatusTooManyRequests, request.FormValue("username"), "登录尝试过于频繁，请稍后重试")
 		return
 	}
@@ -4181,17 +4314,26 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 	var role userRole
 	var enabled bool
 	var authVersion int64
-	err = a.db.QueryRow("SELECT id, username, password_hash, role, enabled, auth_version FROM users WHERE username = ?", requestedUsername).Scan(
-		&userID,
-		&username,
-		&passwordHash,
-		&role,
-		&enabled,
-		&authVersion,
-	)
-	if err != nil || !enabled || !verifyPassword(request.FormValue("password"), passwordHash) {
+	if validLoginIdentity {
+		err = a.db.QueryRow("SELECT id, username, password_hash, role, enabled, auth_version FROM users WHERE username = ?", requestedUsername).Scan(
+			&userID,
+			&username,
+			&passwordHash,
+			&role,
+			&enabled,
+			&authVersion,
+		)
+	} else {
+		err = sql.ErrNoRows
+	}
+	candidateHash := passwordHash
+	if err != nil || !enabled {
+		candidateHash = dummyPasswordHash
+	}
+	passwordMatches := verifyPasswordContext(request.Context(), request.FormValue("password"), candidateHash)
+	if err != nil || !enabled || !passwordMatches {
 		a.recordLoginFailure(loginKeys...)
-		a.recordAuditForRequest(request, "login", requestedUsername, "failed")
+		a.recordAuditForRequest(request, "login", loginIdentity, "failed")
 		renderLoginFailure(response, request, http.StatusUnauthorized, request.FormValue("username"), "用户名或密码错误")
 		return
 	}
@@ -4224,9 +4366,36 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   7 * 24 * 60 * 60,
 	})
-	http.SetCookie(response, &http.Cookie{Name: loginCSRFCookieName, Path: "/", MaxAge: -1})
+	http.SetCookie(response, &http.Cookie{Name: loginCSRFCookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(request), SameSite: http.SameSiteStrictMode})
 	a.recordAuditWithActor("login", username, "succeeded", request.RemoteAddr, userID, username, role)
 	completeLogin(response, request, "/monitor")
+}
+
+func setRequestReadDeadline(response http.ResponseWriter, timeout time.Duration) func() {
+	controller := http.NewResponseController(response)
+	if err := controller.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return func() {}
+	}
+	return func() {
+		_ = controller.SetReadDeadline(time.Time{})
+	}
+}
+
+func parseRequestForm(request *http.Request, maxMemory int64) error {
+	mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+	if err != nil {
+		return err
+	}
+	if mediaType == "multipart/form-data" {
+		return request.ParseMultipartForm(maxMemory)
+	}
+	return request.ParseForm()
+}
+
+func removeMultipartForm(request *http.Request) {
+	if request.MultipartForm != nil {
+		_ = request.MultipartForm.RemoveAll()
+	}
 }
 
 func (a *App) logout(response http.ResponseWriter, request *http.Request) {
@@ -4238,28 +4407,47 @@ func (a *App) logout(response http.ResponseWriter, request *http.Request) {
 		_, _ = a.db.Exec("DELETE FROM sessions WHERE token_hash = ?", hashToken(cookie.Value))
 	}
 	current := request.Context().Value(sessionContextKey).(session)
+	a.cancelAuthenticatedRequests(current.userID)
 	a.recordAuditForRequest(request, "logout", current.username, "succeeded")
-	http.SetCookie(response, &http.Cookie{Name: sessionCookieName, Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(response, &http.Cookie{Name: sessionCookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(request), SameSite: http.SameSiteLaxMode})
 	http.Redirect(response, request, "/login", http.StatusSeeOther)
 }
 
 func (a *App) loginRetryAfter(keys ...string) time.Duration {
 	a.loginMu.Lock()
 	defer a.loginMu.Unlock()
+	now := time.Now()
+	a.pruneLoginFailuresLocked(now)
 	var longest time.Duration
 	for _, key := range keys {
-		if remaining := time.Until(a.loginFailures[key].blockedUntil); remaining > longest {
+		if remaining := a.loginFailures[key].blockedUntil.Sub(now); remaining > longest {
 			longest = remaining
 		}
 	}
 	return longest
 }
 
+func (a *App) loginRateKey(scope, value string) string {
+	hash := sha256.New()
+	_, _ = hash.Write(a.loginRateSalt[:])
+	_, _ = hash.Write([]byte(scope))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write([]byte(value))
+	digest := hash.Sum(nil)
+	bucket := ((int(digest[0]) << 8) | int(digest[1])) & (loginRateBucketCount - 1)
+	return scope + "\x00" + strconv.Itoa(bucket)
+}
+
 func (a *App) recordLoginFailure(keys ...string) {
 	a.loginMu.Lock()
 	defer a.loginMu.Unlock()
+	now := time.Now()
+	a.pruneLoginFailuresLocked(now)
 	for _, key := range keys {
-		failure := a.loginFailures[key]
+		failure, exists := a.loginFailures[key]
+		if !exists && len(a.loginFailures) >= maxLoginFailureEntries {
+			continue
+		}
 		failure.count++
 		if failure.count >= 5 {
 			exponent := failure.count - 5
@@ -4269,10 +4457,23 @@ func (a *App) recordLoginFailure(keys ...string) {
 			} else {
 				delay *= time.Duration(1 << exponent)
 			}
-			failure.blockedUntil = time.Now().Add(delay)
+			failure.blockedUntil = now.Add(delay)
 		}
+		failure.updatedAt = now
 		a.loginFailures[key] = failure
 	}
+}
+
+func (a *App) pruneLoginFailuresLocked(now time.Time) {
+	if !a.loginLastPrune.IsZero() && now.Sub(a.loginLastPrune) < time.Minute {
+		return
+	}
+	for key, failure := range a.loginFailures {
+		if now.Sub(failure.updatedAt) >= time.Hour && !failure.blockedUntil.After(now) {
+			delete(a.loginFailures, key)
+		}
+	}
+	a.loginLastPrune = now
 }
 
 func (a *App) clearLoginFailures(keys ...string) {

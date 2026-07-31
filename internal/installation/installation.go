@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"scriptboard/internal/buildinfo"
+	"scriptboard/internal/privatepath"
 )
 
 const (
@@ -73,6 +74,9 @@ func Prepare(options PrepareOptions) (Metadata, error) {
 	}
 	if err := os.MkdirAll(stateRootPath, 0o700); err != nil {
 		return Metadata{}, fmt.Errorf("create state root: %w", err)
+	}
+	if err := privatepath.ProtectDirectory(stateRootPath); err != nil {
+		return Metadata{}, fmt.Errorf("protect state root: %w", err)
 	}
 	stateRoot, err := canonicalDirectory(stateRootPath)
 	if err != nil {

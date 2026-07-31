@@ -336,7 +336,10 @@ func serveContext(runContext context.Context, arguments []string) error {
 	server := &http.Server{
 		Handler:           application.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Minute,
 		IdleTimeout:       2 * time.Minute,
+		MaxHeaderBytes:    1 << 20,
+		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 	scheme := "http"
 	if loaded.TLSCert != "" {
@@ -349,7 +352,7 @@ func serveContext(runContext context.Context, arguments []string) error {
 		case <-runContext.Done():
 		case <-updateShutdown:
 		}
-		shutdownContext, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		shutdownContext, cancel := context.WithTimeout(context.WithoutCancel(runContext), 30*time.Second)
 		defer cancel()
 		_ = server.Shutdown(shutdownContext)
 	}()

@@ -4,7 +4,6 @@ package main
 
 import (
 	"bytes"
-	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -20,6 +19,7 @@ import (
 
 	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/config"
+	"scriptboard/internal/localtls"
 	"scriptboard/internal/platformservice"
 )
 
@@ -123,7 +123,12 @@ func readiness() (bool, bool) {
 	running := strings.Contains(output, "RUNNING")
 	client := &http.Client{Timeout: 2 * time.Second}
 	if loaded.TLSCert != "" {
-		client.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}} // local readiness probe only
+		host, _, _ := net.SplitHostPort(loaded.Listen)
+		tlsConfig, err := localtls.PinnedConfig(loaded.TLSCert, host)
+		if err != nil {
+			return running, false
+		}
+		client.Transport = &http.Transport{TLSClientConfig: tlsConfig, Proxy: nil}
 	}
 	response, err := client.Get(serviceURL() + "/login")
 	if err != nil {

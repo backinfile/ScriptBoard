@@ -123,7 +123,7 @@ func (a *App) createScheduleGroup(response http.ResponseWriter, request *http.Re
 	}
 	defer transaction.Rollback()
 	var sortOrder int
-	if err := transaction.QueryRow("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM schedule_groups").Scan(&sortOrder); err == nil {
+	if err = transaction.QueryRow("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM schedule_groups").Scan(&sortOrder); err == nil {
 		now := time.Now().UTC().Unix()
 		_, err = transaction.Exec(`INSERT INTO schedule_groups (id, name, sort_order, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?)`, id, name, sortOrder, now, now)

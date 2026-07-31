@@ -2,11 +2,14 @@
   "name": "scriptboard-browser-gate",
   "private": true,
   "version": "1.0.0",
-  "description": "Test-only Chromium desktop regression gate for ScriptBoard.",
+  "description": "Chromium regression gate and security inventory for ScriptBoard's vendored browser assets.",
   "scripts": {
     "test": "node run.cjs"
   },
   "devDependencies": {
+    "dompurify": "3.4.12",
+    "highlight.js": "11.11.1",
+    "markdown-it": "14.3.0",
     "playwright": "1.61.1"
   }
 }

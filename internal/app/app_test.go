@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -73,6 +74,12 @@ func TestFirstStartCreatesCredentialAndProtectsFiles(t *testing.T) {
 	if cacheControl := response.Header.Get("Cache-Control"); cacheControl != "no-store" {
 		t.Fatalf("login cache control = %q, want no-store", cacheControl)
 	}
+	if policy := response.Header.Get("Content-Security-Policy"); !strings.Contains(policy, "form-action 'self'") {
+		t.Fatalf("login content security policy does not restrict form targets: %q", policy)
+	}
+	if policy := response.Header.Get("Permissions-Policy"); policy == "" {
+		t.Fatal("login response is missing a permissions policy")
+	}
 	if strings.Contains(string(loginBody), "autofocus") {
 		t.Fatalf("login page uses unconditional autofocus: %s", loginBody)
 	}
@@ -93,6 +100,45 @@ func TestFirstStartCreatesCredentialAndProtectsFiles(t *testing.T) {
 	}
 	if location := response.Header.Get("Location"); location != "/login" {
 		t.Fatalf("protected page redirect = %q, want /login", location)
+	}
+}
+
+func TestCredentialOverrideRejectsOversizedPasswordFile(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	passwordPath := filepath.Join(root, "admin-password")
+	if err := os.WriteFile(passwordPath, []byte(strings.Repeat("x", 259)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	application, err := app.Open(app.Config{
+		ManagedRoot:       filepath.Join(root, "managed"),
+		StateRoot:         filepath.Join(root, "state"),
+		AdminPasswordFile: passwordPath,
+	})
+	if application != nil {
+		_ = application.Close()
+	}
+	if err == nil {
+		t.Fatal("oversized administrator password file was accepted")
+	}
+}
+
+func TestResetAdminCredentialsRejectsInvalidUsername(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	application, err := app.Open(app.Config{
+		ManagedRoot: filepath.Join(root, "managed"),
+		StateRoot:   filepath.Join(root, "state"),
+	})
+	if err != nil {
+		t.Fatalf("open application: %v", err)
+	}
+	t.Cleanup(func() { _ = application.Close() })
+
+	if _, err := application.ResetAdminCredentials("unsafe\nusername"); err == nil {
+		t.Fatal("invalid administrator username was accepted")
 	}
 }
 
@@ -125,6 +171,123 @@ func TestRootRedirectsToLoginWhenUnauthenticated(t *testing.T) {
 	}
 	if location := response.Header.Get("Location"); location != "/login" {
 		t.Fatalf("root redirect = %q, want /login", location)
+	}
+}
+
+func TestLoginRejectsOversizedRequests(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	application, err := app.Open(app.Config{
+		ManagedRoot: filepath.Join(root, "managed"),
+		StateRoot:   filepath.Join(root, "state"),
+	})
+	if err != nil {
+		t.Fatalf("open application: %v", err)
+	}
+	t.Cleanup(func() { _ = application.Close() })
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("create cookie jar: %v", err)
+	}
+	server := httptest.NewServer(application.Handler())
+	t.Cleanup(server.Close)
+	client := &http.Client{Jar: jar}
+
+	response, err := client.Get(server.URL + "/login")
+	if err != nil {
+		t.Fatalf("get login: %v", err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read login: %v", err)
+	}
+	response, err = client.PostForm(server.URL+"/login", url.Values{
+		"username":   {"admin"},
+		"password":   {strings.Repeat("x", 20<<10)},
+		"csrf_token": {formToken(t, body)},
+	})
+	if err != nil {
+		t.Fatalf("post oversized login: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusRequestEntityTooLarge {
+		body, _ := io.ReadAll(response.Body)
+		t.Fatalf("oversized login status = %d, want %d: %s", response.StatusCode, http.StatusRequestEntityTooLarge, body)
+	}
+	if got := response.Header.Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("oversized login cache control = %q, want no-store", got)
+	}
+}
+
+func TestLoginAcceptsBrowserMultipartForm(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	application, err := app.Open(app.Config{
+		ManagedRoot:   filepath.Join(root, "managed"),
+		StateRoot:     filepath.Join(root, "state"),
+		AdminUsername: "admin",
+		AdminPassword: "browser-multipart-password",
+	})
+	if err != nil {
+		t.Fatalf("open application: %v", err)
+	}
+	t.Cleanup(func() { _ = application.Close() })
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("create cookie jar: %v", err)
+	}
+	server := httptest.NewServer(application.Handler())
+	t.Cleanup(server.Close)
+	client := &http.Client{Jar: jar}
+
+	response, err := client.Get(server.URL + "/login")
+	if err != nil {
+		t.Fatalf("get login: %v", err)
+	}
+	loginBody, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read login: %v", err)
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	for name, value := range map[string]string{
+		"username": "admin", "password": "browser-multipart-password", "csrf_token": formToken(t, loginBody),
+	} {
+		if err := writer.WriteField(name, value); err != nil {
+			t.Fatalf("write multipart field: %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart form: %v", err)
+	}
+	request, err := http.NewRequest(http.MethodPost, server.URL+"/login", &body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.Header.Set("Accept", "application/json")
+	response, err = client.Do(request)
+	if err != nil {
+		t.Fatalf("post multipart login: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		responseBody, _ := io.ReadAll(response.Body)
+		t.Fatalf("multipart login status = %d: %s", response.StatusCode, responseBody)
+	}
+	var payload map[string]string
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode multipart login response: %v", err)
+	}
+	if payload["redirect"] != "/monitor" {
+		t.Fatalf("multipart login redirect = %q", payload["redirect"])
 	}
 }
 

@@ -399,6 +399,19 @@ func TestLocalePreferenceCookieOverridesBrowserLanguage(t *testing.T) {
 
 	response, err = client.PostForm(server.URL+"/settings/locale", url.Values{
 		"locale":     {"en-US"},
+		"return_to":  {"/login?" + strings.Repeat("x", 8<<10)},
+		"csrf_token": {formToken(t, body)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized locale status=%d, want %d", response.StatusCode, http.StatusRequestEntityTooLarge)
+	}
+
+	response, err = client.PostForm(server.URL+"/settings/locale", url.Values{
+		"locale":     {"en-US"},
 		"return_to":  {"/login"},
 		"csrf_token": {formToken(t, body)},
 	})

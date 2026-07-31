@@ -152,7 +152,7 @@ func (a *App) createQuickRunGroup(response http.ResponseWriter, request *http.Re
 	}
 	defer transaction.Rollback()
 	var sortOrder int
-	if err := transaction.QueryRow("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM quick_run_groups").Scan(&sortOrder); err == nil {
+	if err = transaction.QueryRow("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM quick_run_groups").Scan(&sortOrder); err == nil {
 		now := time.Now().UTC().Unix()
 		_, err = transaction.Exec(`INSERT INTO quick_run_groups (id, name, sort_order, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?)`, id, name, sortOrder, now, now)
@@ -366,7 +366,7 @@ func (a *App) moveQuickRunToGroup(response http.ResponseWriter, request *http.Re
 		return
 	}
 	var sortOrder int
-	if err := transaction.QueryRow("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM quick_runs WHERE group_id IS ?", groupID).Scan(&sortOrder); err == nil {
+	if err = transaction.QueryRow("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM quick_runs WHERE group_id IS ?", groupID).Scan(&sortOrder); err == nil {
 		_, err = transaction.Exec(`UPDATE quick_runs SET group_id = ?, sort_order = ?, updated_at = ? WHERE id = ?`,
 			groupID, sortOrder, time.Now().UTC().Unix(), id)
 	}

@@ -2,6 +2,7 @@ package app
 
 import (
 	"crypto/subtle"
+	"errors"
 	"net/http"
 	"net/url"
 	"sort"
@@ -1119,6 +1120,19 @@ func webMessageKeys() []string {
 }
 
 func (a *App) setWebLocale(response http.ResponseWriter, request *http.Request) {
+	resetReadDeadline := setRequestReadDeadline(response, unauthenticatedFormReadTimeout)
+	defer resetReadDeadline()
+	request.Body = http.MaxBytesReader(response, request.Body, maxLocaleRequestBytes)
+	defer removeMultipartForm(request)
+	if err := parseRequestForm(request, maxLocaleRequestBytes); err != nil {
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			http.Error(response, "Locale request is too large", http.StatusRequestEntityTooLarge)
+		} else {
+			http.Error(response, "Locale form is invalid", http.StatusBadRequest)
+		}
+		return
+	}
 	if !a.validWebLocaleCSRF(request) {
 		http.Error(response, "CSRF token is invalid", http.StatusForbidden)
 		return

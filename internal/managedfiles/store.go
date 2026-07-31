@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"scriptboard/internal/pathsecurity"
 )
 
 var ErrConflict = errors.New("文件已被外部修改")
@@ -620,15 +622,20 @@ func (s *Store) resolveDirectory(relative string) (string, error) {
 	}
 	current := s.root
 	for _, part := range strings.Split(clean, string(filepath.Separator)) {
-		if part == "" || part == "." || reservedName(part) {
+		if part == "" || part == "." || reservedName(part) || pathsecurity.UnsafeWindowsComponent(part) {
 			return "", fmt.Errorf("路径包含保留条目")
 		}
-		current = filepath.Join(current, part)
+		parent := current
+		current = filepath.Join(parent, part)
 		info, err := os.Lstat(current)
 		if err != nil {
 			return "", err
 		}
-		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		reservedAlias, err := aliasesReservedEntry(parent, info)
+		if err != nil {
+			return "", err
+		}
+		if reservedAlias || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			return "", fmt.Errorf("路径不是可进入的普通目录")
 		}
 		if !sameFilesystem(s.root, current) {
@@ -649,13 +656,21 @@ func (s *Store) resolveEntry(relative string) (string, os.FileInfo, error) {
 	current := s.root
 	parts := strings.Split(clean, string(filepath.Separator))
 	for index, part := range parts {
-		if part == "" || part == "." || reservedName(part) {
+		if part == "" || part == "." || reservedName(part) || pathsecurity.UnsafeWindowsComponent(part) {
 			return "", nil, fmt.Errorf("路径包含保留条目")
 		}
-		current = filepath.Join(current, part)
+		parent := current
+		current = filepath.Join(parent, part)
 		info, err := os.Lstat(current)
 		if err != nil {
 			return "", nil, err
+		}
+		reservedAlias, err := aliasesReservedEntry(parent, info)
+		if err != nil {
+			return "", nil, err
+		}
+		if reservedAlias {
+			return "", nil, fmt.Errorf("路径包含保留条目")
 		}
 		if info.Mode()&os.ModeSymlink != 0 && index < len(parts)-1 {
 			return "", nil, fmt.Errorf("受限链接不可读取")
@@ -674,11 +689,48 @@ func (s *Store) resolveEntry(relative string) (string, os.FileInfo, error) {
 }
 
 func reservedName(name string) bool {
-	return name == ".git" || name == ".scriptboard-trash" || strings.HasPrefix(name, ".scriptboard-upload-")
+	lower := strings.ToLower(name)
+	return lower == ".git" || lower == ".scriptboard-trash" || strings.HasPrefix(lower, ".scriptboard-upload-")
+}
+
+func aliasesReservedEntry(parent string, target os.FileInfo) (bool, error) {
+	if reservedName(target.Name()) {
+		return true, nil
+	}
+	for _, name := range []string{".git", ".scriptboard-trash"} {
+		info, err := os.Lstat(filepath.Join(parent, name))
+		if err == nil && os.SameFile(target, info) {
+			return true, nil
+		}
+		if err != nil && !os.IsNotExist(err) {
+			return false, err
+		}
+	}
+	if !strings.Contains(target.Name(), "~") {
+		return false, nil
+	}
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range entries {
+		if !reservedName(entry.Name()) {
+			continue
+		}
+		info, err := os.Lstat(filepath.Join(parent, entry.Name()))
+		if err == nil && os.SameFile(target, info) {
+			return true, nil
+		}
+		if err != nil && !os.IsNotExist(err) {
+			return false, err
+		}
+	}
+	return false, nil
 }
 
 func validateName(name string) error {
-	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) || strings.ContainsRune(name, 0) {
+	if name == "" || name == "." || name == ".." || len(name) > 255 ||
+		strings.ContainsAny(name, `/\`) || pathsecurity.UnsafeWindowsComponent(name) {
 		return fmt.Errorf("名称包含非法路径字符")
 	}
 	if reservedName(name) {

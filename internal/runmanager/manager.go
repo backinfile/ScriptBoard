@@ -118,6 +118,7 @@ type persistedEvent struct {
 type executorCandidate struct {
 	path   string
 	prefix []string
+	batch  bool
 }
 
 type activeRun struct {
@@ -424,9 +425,11 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 		return id, nil
 	}
 	for _, executor := range prepared.executors {
-		commandArguments := append(append([]string{}, executor.prefix...), prepared.script.Path)
-		commandArguments = append(commandArguments, prepared.arguments...)
-		candidate := exec.Command(executor.path, commandArguments...)
+		candidate, commandErr := newExecutorCommand(executor, prepared.script.Path, prepared.arguments)
+		if commandErr != nil {
+			startErrors = append(startErrors, executor.path+": "+commandErr.Error())
+			continue
+		}
 		candidate.Dir = prepared.workingDirectory.Path
 		candidate.Env = append(os.Environ(), "SCRIPTBOARD_RUN_ID="+id, "SCRIPTBOARD_SCRIPT_PATH="+prepared.displayPath)
 		configureProcess(candidate)
@@ -1218,7 +1221,7 @@ func resolveExecutors(extension string, overrides map[string][]string) ([]execut
 	if len(candidates) == 0 && runtime.GOOS == "windows" {
 		switch extension {
 		case ".cmd", ".bat":
-			candidates = []configuredCandidate{{name: "cmd.exe", prefix: []string{"/D", "/S", "/C"}}}
+			candidates = []configuredCandidate{{name: "cmd.exe", prefix: []string{"/D", "/S", "/V:OFF", "/C"}}}
 		case ".ps1":
 			candidates = []configuredCandidate{{name: "pwsh.exe", prefix: []string{"-File"}}, {name: "powershell.exe", prefix: []string{"-NoProfile", "-File"}}}
 		case ".py":
@@ -1246,7 +1249,10 @@ func resolveExecutors(extension string, overrides map[string][]string) ([]execut
 			}
 			path = lookedUp
 		}
-		resolved = append(resolved, executorCandidate{path: path, prefix: candidate.prefix})
+		resolved = append(resolved, executorCandidate{
+			path: path, prefix: candidate.prefix,
+			batch: extension == ".cmd" || extension == ".bat",
+		})
 	}
 	if len(resolved) == 0 {
 		return nil, fmt.Errorf("宿主机没有可用于 %s 的执行器", extension)
@@ -1258,7 +1264,7 @@ func executorPrefix(extension string) []string {
 	if runtime.GOOS == "windows" {
 		switch extension {
 		case ".cmd", ".bat":
-			return []string{"/D", "/S", "/C"}
+			return []string{"/D", "/S", "/V:OFF", "/C"}
 		case ".ps1":
 			return []string{"-NoProfile", "-File"}
 		case ".py":

@@ -11,6 +11,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	"scriptboard/internal/pathsecurity"
 )
 
 func ExtractArchive(archivePath, destination string, expectedSize int64) error {
@@ -273,13 +275,6 @@ func safeArchivePath(name string) (string, error) {
 	if name == "" || strings.ContainsRune(name, 0) || strings.HasPrefix(name, "/") || strings.HasPrefix(name, "//") {
 		return "", fmt.Errorf("unsafe archive path %q", name)
 	}
-	first := name
-	if separator := strings.IndexByte(first, '/'); separator >= 0 {
-		first = first[:separator]
-	}
-	if strings.Contains(first, ":") {
-		return "", fmt.Errorf("unsafe archive path %q", name)
-	}
 	cleaned := path.Clean(name)
 	if cleaned == "." {
 		return "", nil
@@ -287,7 +282,16 @@ func safeArchivePath(name string) (string, error) {
 	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
 		return "", fmt.Errorf("unsafe archive path %q", name)
 	}
+	for _, component := range strings.Split(cleaned, "/") {
+		if unsafeWindowsArchiveComponent(component) {
+			return "", fmt.Errorf("unsafe archive path %q", name)
+		}
+	}
 	return cleaned, nil
+}
+
+func unsafeWindowsArchiveComponent(component string) bool {
+	return pathsecurity.UnsafeWindowsComponent(component)
 }
 
 func writeArchiveFile(target string, source io.Reader, mode os.FileMode, remaining int64) (int64, error) {

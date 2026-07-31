@@ -1,6 +1,6 @@
 module scriptboard
 
-go 1.26
+go 1.26.5
 
 require (
 	github.com/getlantern/systray v1.2.2
@@ -9,9 +9,9 @@ require (
 	github.com/moby/moby/client v0.5.1
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/shirou/gopsutil/v4 v4.26.6
-	go.yaml.in/yaml/v3 v3.0.4
-	golang.org/x/crypto v0.40.0
-	golang.org/x/sys v0.41.0
+	go.yaml.in/yaml/v3 v3.0.5
+	golang.org/x/crypto v0.54.0
+	golang.org/x/sys v0.47.0
 	modernc.org/sqlite v1.38.2
 )
 
