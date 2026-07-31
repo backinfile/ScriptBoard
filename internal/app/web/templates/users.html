@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="{{.Locale}}">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "users.title"}} · ScriptBoard</title></head>
+<body>
+<main class="workspace settings-workspace">
+  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "users.eyebrow"}}</p><h1>{{t .Locale "users.title"}}</h1><p>{{t .Locale "users.description"}}</p></div></header>
+  <div class="settings-layout">
+  <nav class="settings-nav" aria-label="{{t .Locale "settings.sections"}}"><a href="/settings/account"><span data-lucide="user-round" aria-hidden="true"></span>{{t .Locale "settings.account"}}</a><a href="/settings/users" aria-current="page"><span data-lucide="users" aria-hidden="true"></span>{{t .Locale "users.title"}}</a><a href="/settings/display"><span data-lucide="eye" aria-hidden="true"></span>{{t .Locale "display.title"}}</a><a href="/settings/version-protection"><span data-lucide="git-branch" aria-hidden="true"></span>{{t .Locale "protection.title"}}</a><a href="/settings/updates"><span data-lucide="refresh-cw" aria-hidden="true"></span>{{t .Locale "updates.title"}}</a></nav>
+  <div class="settings-content">
+  {{if .GeneratedPassword}}<aside class="inline-notice"><span data-lucide="key-round" aria-hidden="true"></span><div><strong>{{t .Locale "users.password_once"}}</strong><p>{{.GeneratedUsername}}</p><code data-generated-password>{{.GeneratedPassword}}</code></div></aside>{{end}}
+  <section class="settings-block">
+    <h2>{{t .Locale "users.create"}}</h2>
+    <form class="account-form" method="post" action="/settings/users">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <label>{{t .Locale "login.username"}} <input name="username" autocomplete="off" spellcheck="false" required></label>
+      <label>{{t .Locale "users.role"}}
+        <select name="role" required>
+          <option value="maintainer">{{t .Locale "users.role.maintainer"}}</option>
+          <option value="operator">{{t .Locale "users.role.operator"}}</option>
+          <option value="viewer">{{t .Locale "users.role.viewer"}}</option>
+        </select>
+      </label>
+      <button class="button button--primary" type="submit"><span data-lucide="user-plus" aria-hidden="true"></span>{{t .Locale "users.create"}}</button>
+    </form>
+  </section>
+  <section class="settings-block">
+    <h2>{{t .Locale "users.accounts"}}</h2>
+    <div class="table-shell"><table class="records-table">
+      <thead><tr><th>{{t .Locale "login.username"}}</th><th>{{t .Locale "users.role"}}</th><th>{{t .Locale "common.status"}}</th><th>{{t .Locale "users.actions"}}</th></tr></thead>
+      <tbody>{{range .Users}}<tr data-user-id="{{.ID}}" data-username="{{.Username}}">
+        <td class="record-primary"><div class="record-primary__content"><span class="record-icon" data-lucide="circle-user-round" aria-hidden="true"></span><div>{{if eq .Role "administrator"}}<strong>{{.Username}}</strong>{{else}}<input form="update-user-{{.ID}}" name="username" value="{{.Username}}" autocomplete="off" required>{{end}}</div></div></td>
+        <td>{{if eq .Role "administrator"}}{{t $.Locale "users.role.administrator"}}{{else}}<select form="update-user-{{.ID}}" name="role"><option value="maintainer" {{if eq .Role "maintainer"}}selected{{end}}>{{t $.Locale "users.role.maintainer"}}</option><option value="operator" {{if eq .Role "operator"}}selected{{end}}>{{t $.Locale "users.role.operator"}}</option><option value="viewer" {{if eq .Role "viewer"}}selected{{end}}>{{t $.Locale "users.role.viewer"}}</option></select>{{end}}</td>
+        <td><span class="status-chip" data-state="{{if .Enabled}}succeeded{{else}}cancelled{{end}}"><span class="status-dot" aria-hidden="true"></span>{{if .Enabled}}{{t $.Locale "users.enabled"}}{{else}}{{t $.Locale "users.disabled"}}{{end}}</span></td>
+        <td>{{if ne .Role "administrator"}}<div class="button-row">
+          <form id="update-user-{{.ID}}" method="post" action="/settings/users/{{.ID}}/update"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="button button--quiet" type="submit"><span data-lucide="save" aria-hidden="true"></span>{{t $.Locale "users.save"}}</button></form>
+          <form method="post" action="/settings/users/{{.ID}}/reset-password"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="button button--quiet" type="submit"><span data-lucide="key-round" aria-hidden="true"></span>{{t $.Locale "users.reset_password"}}</button></form>
+          <form method="post" action="/settings/users/{{.ID}}/{{if .Enabled}}disable{{else}}enable{{end}}"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="button button--quiet" type="submit"><span data-lucide="{{if .Enabled}}user-x{{else}}user-check{{end}}" aria-hidden="true"></span>{{if .Enabled}}{{t $.Locale "users.disable"}}{{else}}{{t $.Locale "users.enable"}}{{end}}</button></form>
+        </div>{{end}}</td>
+      </tr>{{end}}</tbody>
+    </table></div>
+  </section>
+  </div></div>
+</main>
+</body>
+</html>

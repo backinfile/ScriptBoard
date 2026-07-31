@@ -7,6 +7,7 @@
 - [ADR-0002](./0002-trust-admin-provided-scripts.md) → [ADR-0023](./0023-default-to-highest-host-privileges.md)：低权限默认改为服务身份直接继承，默认服务使用最高权限。
 - [ADR-0012](./0012-reject-instead-of-queueing-executions.md) → [ADR-0027](./0027-allow-unbounded-concurrent-runs-without-a-queue.md)：单活动执行改为无上限并发、无队列。
 - [ADR-0015](./0015-save-quick-runs-explicitly.md) → [ADR-0111](./0111-create-quick-runs-from-files-or-run-history.md)：快捷执行项从仅支持历史 Run 保存扩展为也可直接从受管脚本文件配置。
+- [ADR-0018](./0018-authenticate-all-protected-web-routes.md)、[ADR-0021](./0021-bootstrap-and-reset-the-admin-credential.md)、[ADR-0042](./0042-use-persistent-server-side-admin-sessions.md)、[ADR-0043](./0043-rate-limit-admin-login-without-permanent-lockout.md) → [ADR-0121](./0121-use-fixed-instance-wide-user-roles.md)：唯一 admin 会话扩展为固定四角色用户系统，并明确新 Schema 不迁移旧状态数据库。
 - [ADR-0024](./0024-manage-only-owned-entries-in-runtime-users-crontab.md) → [ADR-0030](./0030-use-an-internal-scheduler-instead-of-crontab.md)：系统 crontab 改为内置调度器。
 - [ADR-0025](./0025-skip-busy-cron-triggers-without-queueing.md) → [ADR-0027](./0027-allow-unbounded-concurrent-runs-without-a-queue.md)：全局繁忙跳过改为并发执行；计划仍可按项禁止同脚本重叠。
 - [ADR-0026](./0026-trigger-cron-runs-through-a-local-control-socket.md) → [ADR-0030](./0030-use-an-internal-scheduler-instead-of-crontab.md)：移除 crontab 与本机触发 Socket。

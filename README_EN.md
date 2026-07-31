@@ -6,7 +6,7 @@
 
 ScriptBoard is a self-hosted script console for a single Windows or Linux machine. Put your existing scripts in a managed directory, then use the browser to manage files, enter arguments, follow live output, save recurring operations, create schedules, and trace changes and runs.
 
-It is designed for personal servers, home labs, small workstations, and script hosts maintained by one administrator. Scripts do not need to be registered individually, and there is no agent cluster, message queue, or production Node.js runtime to operate.
+It is designed for personal servers, home labs, small workstations, and script hosts maintained by a small set of trusted users. Scripts do not need to be registered individually, and there is no agent cluster, message queue, or production Node.js runtime to operate.
 
 [Download the latest release](https://github.com/backinfile/ScriptBoard/releases/latest) · [5-minute quick start](#quick-start) · [Install as a system service](#install-as-a-system-service) · [Troubleshooting](#troubleshooting)
 
@@ -37,9 +37,9 @@ ScriptBoard is a good fit when:
 - you maintain a collection of trusted scripts on one fixed machine;
 - you want to use a browser instead of repeatedly opening a remote desktop or entering commands;
 - you need live logs, run history, schedules, and basic file recovery;
-- one trusted administrator is responsible for the machine.
+- a small set of trusted users is responsible for the machine, and the fixed Administrator, Maintainer, Operator, and Viewer roles are sufficient.
 
-ScriptBoard is not intended for multiple users, per-script permissions, untrusted-code isolation, multi-host orchestration, job queues, public APIs, notifications, interactive terminals, or high-availability deployments. It also does not provide an official Docker deployment.
+ScriptBoard is not intended for projects, custom roles, per-script or group-based authorization, untrusted-code isolation, multi-host orchestration, job queues, public APIs, notifications, interactive terminals, or high-availability deployments. It also does not provide an official Docker deployment.
 
 ## Supported platforms
 

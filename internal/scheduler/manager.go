@@ -255,6 +255,10 @@ func (m *Manager) List() ([]Schedule, error) {
 }
 
 func (m *Manager) RunNow(id string) (string, error) {
+	return m.RunNowAs(id, "", "")
+}
+
+func (m *Manager) RunNowAs(id, userID, username string) (string, error) {
 	m.pauseMu.Lock()
 	paused := m.paused
 	m.pauseMu.Unlock()
@@ -278,6 +282,7 @@ func (m *Manager) RunNow(id string) (string, error) {
 	runID, err := m.runs.Start(runmanager.StartRequest{
 		ScriptPath: schedule.ScriptPath, ArgumentsTemplate: schedule.ArgumentsTemplate, TimeoutSeconds: schedule.TimeoutSeconds,
 		SourceType: "admin/schedule-now", SourceName: schedule.Name, SourceID: schedule.ID, Variables: variables,
+		InitiatorUserID: userID, InitiatorUsername: username,
 	})
 	triggerID, _ := randomID()
 	result, errorText := "created", ""

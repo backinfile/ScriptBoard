@@ -289,7 +289,7 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 		http.Error(response, "Unable to create Quick Run", http.StatusInternalServerError)
 		return
 	}
-	a.recordAudit("create_quick_run_from_source", id, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "create_quick_run_from_source", id, "succeeded")
 	_ = a.checkpointWebMutation("create-quick-run-source", targetPath)
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }
@@ -366,6 +366,7 @@ func (a *App) startOneTimeRun(response http.ResponseWriter, request *http.Reques
 		http.Error(response, "Arguments are invalid: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	current := request.Context().Value(sessionContextKey).(session)
 	id, err := a.runs.StartOneTime(runmanager.OneTimeStartRequest{
 		WorkingDirectory:  workingDirectory,
 		Extension:         language.Extension,
@@ -374,6 +375,9 @@ func (a *App) startOneTimeRun(response http.ResponseWriter, request *http.Reques
 		TimeoutSeconds:    timeoutSeconds,
 		Variables:         variables,
 		AuditSource:       request.RemoteAddr,
+		InitiatorUserID:   current.userID,
+		InitiatorUsername: current.username,
+		InitiatorRole:     string(current.role),
 	})
 	if err != nil {
 		http.Error(response, "Unable to start one-time Run: "+err.Error(), http.StatusBadRequest)

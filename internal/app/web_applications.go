@@ -15,6 +15,7 @@ type applicationsPageView struct {
 	Locale    webLocale
 	CSRFToken string
 	Query     appstatus.Query
+	CanManage bool
 }
 
 func applicationSortURL(query appstatus.Query, field string) string {
@@ -96,6 +97,7 @@ func (a *App) applicationsPage(response http.ResponseWriter, request *http.Reque
 	current := request.Context().Value(sessionContextKey).(session)
 	page := applicationsPageView{
 		View: view, Locale: resolveWebLocale(request), CSRFToken: current.csrfToken, Query: query,
+		CanManage: roleAllows(current.role, permissionManageOperations),
 	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = applicationsTemplate.Execute(response, page)
@@ -127,7 +129,7 @@ func (a *App) pinApplication(response http.ResponseWriter, request *http.Request
 		http.Error(response, "Unable to Pin application", http.StatusBadRequest)
 		return
 	}
-	a.recordAudit("pin_application", id, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "pin_application", id, "succeeded")
 	http.Redirect(response, request, "/monitor/applications", http.StatusSeeOther)
 }
 
@@ -141,7 +143,7 @@ func (a *App) unpinApplication(response http.ResponseWriter, request *http.Reque
 		http.Error(response, "Unable to unpin application", http.StatusBadRequest)
 		return
 	}
-	a.recordAudit("unpin_application", id, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "unpin_application", id, "succeeded")
 	http.Redirect(response, request, "/monitor/applications", http.StatusSeeOther)
 }
 
@@ -191,7 +193,7 @@ func (a *App) movePinnedApplication(response http.ResponseWriter, request *http.
 		http.Error(response, "Unable to move pinned application", http.StatusBadRequest)
 		return
 	}
-	a.recordAudit("move_pinned_application", id, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "move_pinned_application", id, "succeeded")
 	if acceptsJSON(request) {
 		response.Header().Set("Cache-Control", "no-store")
 		response.Header().Set("Content-Type", "application/json; charset=utf-8")

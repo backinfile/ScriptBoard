@@ -50,35 +50,35 @@ Pin 是展示状态，不赋予应用控制能力。当前快照存在时由实�
 
 ## 2. 实体
 
-### Admin
+### User
 
 | 字段 | 约束 |
 |---|---|
-| id | 唯一固定管理员 ID |
-| username | 唯一；默认 `admin` |
+| id | 稳定、不可预测 ID |
+| username | 实例内唯一；系统管理员初始默认 `admin` |
 | password_hash | 版本化 Argon2id 编码 |
-| must_change_password | 首次登录为 true |
-| credential_version | 凭据变更时递增，用于撤销 Session |
+| role | `administrator`、`maintainer`、`operator`、`viewer` 之一 |
+| enabled | 系统管理员始终为 true |
+| auth_version | 密码、用户名、角色或状态变更时递增，用于撤销 Session |
 | created_at / updated_at | UTC |
+
+数据库约束最多一个 `administrator`。普通用户不能提升为系统管理员；账号不永久删除。
 
 ### Session
 
 | 字段 | 约束 |
 |---|---|
-| id | 内部 ID |
-| admin_id | 固定关联 Admin |
 | token_hash | 唯一；不保存浏览器原 Token |
-| csrf_secret | 服务端 CSRF 派生材料 |
-| credential_version | 必须等于 Admin 当前版本 |
+| user_id | 关联 User |
+| csrf_token | 随机 CSRF Token |
+| auth_version | 必须等于 User 当前版本 |
 | created_at / last_seen_at / expires_at | 12 小时空闲、7 天绝对期限 |
-| source_ip / user_agent | 审计辅助；按最小必要保存 |
-| revoked_at | 可空 |
 
 ### LoginThrottle
 
 | 字段 | 约束 |
 |---|---|
-| key_type / key_value_hash | IP 或 admin 维度；避免保存不必要原值 |
+| key_type / key_value | 来源 IP 或目标用户名维度 |
 | failure_count | 成功登录后清零 |
 | blocked_until | 最长 5 分钟 |
 | updated_at | UTC |
@@ -189,6 +189,7 @@ Pin 是展示状态，不赋予应用控制能力。当前快照存在时由实�
 | resolved_arguments | 启动时实际参数数组 |
 | source_type | `manual`、`quick_run`、`schedule` |
 | source_id / source_name_snapshot | 可空；历史解释 |
+| initiator_user_id / initiator_username_snapshot | 系统计划触发时为空 |
 | runtime_identity_name / runtime_identity_id | 用户名/UID 或账号/SID |
 | executor | 实际可执行文件与固定前缀参数 |
 | executor_fallback_failures | 更早候选无法启动原因 |
@@ -241,7 +242,7 @@ Run 不允许删除。
 | entry_type | file 或 directory |
 | size | 删除时估算 |
 | deleted_at | UTC |
-| deleted_by | 固定 admin |
+| deleted_by | 操作者 User ID 与用户名快照 |
 | affected_quick_run_ids / schedule_ids | 可存快照或通过审计关联 |
 
 ### AuditEvent
@@ -250,14 +251,15 @@ Run 不允许删除。
 |---|---|
 | id | UUID/有序 ID |
 | occurred_at | UTC |
-| actor_type | `admin`、`scheduler`、`system`、`startup_config` |
+| actor_user_id | Web 用户稳定 ID；系统操作为空 |
+| actor_username / actor_role | 操作者当时的用户名和角色快照 |
 | action | 稳定英文标识 |
 | target_type / target_id / target_snapshot | 最小必要信息 |
 | outcome | success / failure |
 | source_ip | Web 操作时保存 |
 | details | 结构化、已脱敏 |
 
-不保存密码、Session、CSRF、变量值、文件内容或请求正文。默认保留一年，不允许逐条修改。
+不保存密码、Cookie、Session、CSRF、变量值、文件内容或请求正文。默认保留一年，不允许逐条修改。
 
 ### GitProtection
 

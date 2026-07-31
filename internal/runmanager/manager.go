@@ -36,6 +36,8 @@ type StartRequest struct {
 	SourceID          string
 	TimeoutSeconds    int
 	Variables         map[string]string
+	InitiatorUserID   string
+	InitiatorUsername string
 }
 
 type OneTimeStartRequest struct {
@@ -46,6 +48,9 @@ type OneTimeStartRequest struct {
 	TimeoutSeconds    int
 	Variables         map[string]string
 	AuditSource       string
+	InitiatorUserID   string
+	InitiatorUsername string
+	InitiatorRole     string
 }
 
 type Run struct {
@@ -77,6 +82,8 @@ type Run struct {
 	SourceFilename     string
 	SourceExpired      bool
 	SourceAuditEventID int64
+	InitiatorUserID    string
+	InitiatorUsername  string
 }
 
 type Filter struct {
@@ -228,6 +235,7 @@ func (m *Manager) Start(request StartRequest) (string, error) {
 		scriptKind: "managed", executors: executors, templateArguments: templateArguments, arguments: arguments,
 		argumentsTemplate: request.ArgumentsTemplate, sourceType: request.SourceType, sourceName: request.SourceName,
 		sourceID: request.SourceID, timeoutSeconds: request.TimeoutSeconds,
+		initiatorUserID: request.InitiatorUserID, initiatorUsername: request.InitiatorUsername,
 	})
 }
 
@@ -247,6 +255,9 @@ type preparedStart struct {
 	sourceID          string
 	timeoutSeconds    int
 	auditSource       string
+	initiatorUserID   string
+	initiatorUsername string
+	initiatorRole     string
 }
 
 func (m *Manager) StartOneTime(request OneTimeStartRequest) (string, error) {
@@ -324,6 +335,7 @@ func (m *Manager) StartOneTime(request OneTimeStartRequest) (string, error) {
 		executors: executors, templateArguments: templateArguments, arguments: arguments,
 		argumentsTemplate: request.ArgumentsTemplate, sourceType: "one_time", sourceName: "one-time",
 		timeoutSeconds: request.TimeoutSeconds, auditSource: request.AuditSource,
+		initiatorUserID: request.InitiatorUserID, initiatorUsername: request.InitiatorUsername, initiatorRole: request.InitiatorRole,
 	})
 	if err != nil {
 		_ = os.RemoveAll(runRoot)
@@ -370,8 +382,9 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 	var auditID any
 	if prepared.auditSource != "" {
 		result, auditErr := transaction.Exec(`INSERT INTO audit_events
-			(occurred_at, action, target, result, source_address) VALUES (?, 'start_one_time_run', ?, 'accepted', ?)`,
-			now.Unix(), id, prepared.auditSource)
+			(occurred_at, action, target, result, source_address, actor_user_id, actor_username, actor_role)
+			VALUES (?, 'start_one_time_run', ?, 'accepted', ?, ?, ?, ?)`,
+			now.Unix(), id, prepared.auditSource, prepared.initiatorUserID, prepared.initiatorUsername, prepared.initiatorRole)
 		if auditErr != nil {
 			_ = logFile.Close()
 			return "", fmt.Errorf("record one-time Run audit: %w", auditErr)
@@ -386,11 +399,12 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 	if _, err := transaction.Exec(`INSERT INTO runs
 		(id, script_path, script_sha256, arguments_template, template_arguments_json, arguments_json, executor,
 		source_type, source_name, source_id, runtime_identity, status, created_at, timeout_seconds, log_path,
-		script_kind, working_directory, source_filename, source_audit_event_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?, ?, ?, ?, ?)`,
+		script_kind, working_directory, source_filename, source_audit_event_id, initiated_by_user_id, initiated_by_username)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, prepared.displayPath, prepared.script.Digest, prepared.argumentsTemplate, string(templateArgumentJSON), string(argumentJSON), prepared.executors[0].path,
 		prepared.sourceType, prepared.sourceName, prepared.sourceID, runtimeIdentity, now.UnixNano(), prepared.timeoutSeconds, logPath,
 		prepared.scriptKind, prepared.workingDirectory.RelativePath, prepared.sourceFilename, auditID,
+		prepared.initiatorUserID, prepared.initiatorUsername,
 	); err != nil {
 		_ = logFile.Close()
 		return "", fmt.Errorf("create Run: %w", err)
@@ -776,7 +790,7 @@ func (m *Manager) Stop(id string) error {
 
 const runMetadataColumns = `id, script_path, script_sha256, arguments_template, template_arguments_json, arguments_json, executor, source_type, source_name, source_id, runtime_identity,
 	status, created_at, started_at, finished_at, exit_code, error, timeout_seconds, log_path, log_expired, log_incomplete, log_truncated, dropped_bytes,
-	script_kind, working_directory, source_filename, source_expired, source_audit_event_id`
+	script_kind, working_directory, source_filename, source_expired, source_audit_event_id, initiated_by_user_id, initiated_by_username`
 
 type runScanner interface {
 	Scan(...any) error
@@ -792,6 +806,7 @@ func scanRunMetadata(scanner runScanner) (Run, string, error) {
 		&result.ID, &result.ScriptPath, &result.ScriptDigest, &result.ArgumentsTemplate, &templateArgumentJSON, &argumentJSON, &result.Executor, &result.SourceType, &result.SourceName, &result.SourceID, &result.RuntimeIdentity,
 		&result.Status, &createdAt, &startedAt, &finishedAt, &exitCode, &result.Error, &result.TimeoutSeconds, &logPath, &result.LogExpired, &result.LogIncomplete, &result.LogTruncated, &result.DroppedBytes,
 		&result.ScriptKind, &result.WorkingDirectory, &result.SourceFilename, &result.SourceExpired, &sourceAuditEventID,
+		&result.InitiatorUserID, &result.InitiatorUsername,
 	)
 	if err != nil {
 		return Run{}, "", err

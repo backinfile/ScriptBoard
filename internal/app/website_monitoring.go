@@ -70,6 +70,7 @@ type websiteMonitorListView struct {
 	HasFilters bool
 	HasAny     bool
 	Reorder    bool
+	CanManage  bool
 	DataURL    string
 }
 
@@ -153,6 +154,7 @@ type websiteMonitorDetailView struct {
 	Incidents           []websitemonitor.Incident
 	Locale              webLocale
 	CSRFToken           string
+	CanManage           bool
 }
 
 type websiteMonitorAPIError struct {
@@ -189,9 +191,10 @@ func (a *App) websiteMonitorList(response http.ResponseWriter, request *http.Req
 	view := websiteMonitorListView{
 		Locale: locale, State: state, Scope: scope, CSRFToken: current.csrfToken,
 		Total: len(monitors), HasFilters: state != "" || scope != "",
-		HasAny: len(all) > 0, Reorder: request.URL.Query().Get("reorder") == "1",
+		HasAny: len(all) > 0, CanManage: roleAllows(current.role, permissionManageOperations),
 		DataURL: "/monitor/websites/data",
 	}
+	view.Reorder = view.CanManage && request.URL.Query().Get("reorder") == "1"
 	query := request.URL.Query()
 	query.Del("reorder")
 	if encoded := query.Encode(); encoded != "" {
@@ -393,7 +396,7 @@ func (a *App) importWebsiteMonitorNginx(response http.ResponseWriter, request *h
 		})
 		return
 	}
-	a.recordAudit("import_nginx_website_monitors", fmt.Sprintf("%d monitors", len(imported)), "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "import_nginx_website_monitors", fmt.Sprintf("%d monitors", len(imported)), "succeeded")
 	if websiteMonitorWantsJSON(request) {
 		response.Header().Set("Cache-Control", "no-store")
 		response.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -433,7 +436,7 @@ func (a *App) createWebsiteMonitor(response http.ResponseWriter, request *http.R
 			newWebsiteMonitorFormView(config, map[string]string{"form": err.Error()}, resolveWebLocale(request), current.csrfToken, "", false))
 		return
 	}
-	a.recordAudit("create_website_monitor", monitor.Config.Name, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "create_website_monitor", monitor.Config.Name, "succeeded")
 	http.Redirect(response, request, "/monitor/websites/"+monitor.ID, http.StatusSeeOther)
 }
 
@@ -457,7 +460,7 @@ func (a *App) updateWebsiteMonitor(response http.ResponseWriter, request *http.R
 			newWebsiteMonitorFormView(config, map[string]string{"form": err.Error()}, resolveWebLocale(request), current.csrfToken, id, true))
 		return
 	}
-	a.recordAudit("update_website_monitor", monitor.Config.Name, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "update_website_monitor", monitor.Config.Name, "succeeded")
 	http.Redirect(response, request, "/monitor/websites/"+monitor.ID, http.StatusSeeOther)
 }
 
@@ -492,6 +495,7 @@ func (a *App) websiteMonitorDetail(response http.ResponseWriter, request *http.R
 		FailedChecks: details.FailedChecks, IncidentCount: details.IncidentCount,
 		RecentChecks: details.RecentChecks, CurrentIncident: details.CurrentIncident,
 		Incidents: details.Incidents, Locale: locale, CSRFToken: current.csrfToken,
+		CanManage: roleAllows(current.role, permissionManageOperations),
 	})
 }
 
@@ -642,7 +646,7 @@ func (a *App) pauseWebsiteMonitor(response http.ResponseWriter, request *http.Re
 		http.Error(response, webText(locale, "website.error.pause")+": "+err.Error(), http.StatusConflict)
 		return
 	}
-	a.recordAudit("pause_website_monitor", request.PathValue("id"), "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "pause_website_monitor", request.PathValue("id"), "succeeded")
 	if websiteMonitorWantsJSON(request) {
 		response.Header().Set("Cache-Control", "no-store")
 		response.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -680,7 +684,7 @@ func (a *App) resumeWebsiteMonitor(response http.ResponseWriter, request *http.R
 		http.Error(response, webText(locale, "website.error.resume")+": "+err.Error(), http.StatusConflict)
 		return
 	}
-	a.recordAudit("resume_website_monitor", request.PathValue("id"), "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "resume_website_monitor", request.PathValue("id"), "succeeded")
 	if websiteMonitorWantsJSON(request) {
 		response.Header().Set("Cache-Control", "no-store")
 		response.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -710,7 +714,7 @@ func (a *App) moveWebsiteMonitor(response http.ResponseWriter, request *http.Req
 		http.Error(response, webText(locale, "website.error.move")+": "+err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	a.recordAudit("reorder_website_monitors", request.PathValue("id"), "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "reorder_website_monitors", request.PathValue("id"), "succeeded")
 	http.Redirect(response, request, "/monitor/websites?reorder=1", http.StatusSeeOther)
 }
 
@@ -728,7 +732,7 @@ func (a *App) reorderWebsiteMonitors(response http.ResponseWriter, request *http
 		http.Error(response, webText(locale, "website.error.save_order")+": "+err.Error(), http.StatusConflict)
 		return
 	}
-	a.recordAudit("reorder_website_monitors", fmt.Sprintf("%d monitors", len(request.Form["id"])), "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "reorder_website_monitors", fmt.Sprintf("%d monitors", len(request.Form["id"])), "succeeded")
 	response.WriteHeader(http.StatusNoContent)
 }
 
@@ -742,7 +746,7 @@ func (a *App) deleteWebsiteMonitor(response http.ResponseWriter, request *http.R
 		http.Error(response, webText(locale, "website.error.delete")+": "+err.Error(), http.StatusConflict)
 		return
 	}
-	a.recordAudit("delete_website_monitor", request.PathValue("id"), "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "delete_website_monitor", request.PathValue("id"), "succeeded")
 	http.Redirect(response, request, "/monitor/websites", http.StatusSeeOther)
 }
 

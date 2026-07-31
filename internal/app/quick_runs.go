@@ -168,7 +168,7 @@ func (a *App) createQuickRunGroup(response http.ResponseWriter, request *http.Re
 		http.Error(response, "无法创建快捷执行分组", http.StatusInternalServerError)
 		return
 	}
-	a.recordAudit("create_quick_run_group", id, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "create_quick_run_group", id, "succeeded")
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }
 
@@ -201,7 +201,7 @@ func (a *App) updateQuickRunGroup(response http.ResponseWriter, request *http.Re
 		http.Error(response, "快捷执行分组不存在", http.StatusNotFound)
 		return
 	}
-	a.recordAudit("update_quick_run_group", id, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "update_quick_run_group", id, "succeeded")
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }
 
@@ -249,7 +249,7 @@ func (a *App) moveQuickRunGroup(response http.ResponseWriter, request *http.Requ
 		http.Error(response, "无法调整快捷执行分组顺序", http.StatusInternalServerError)
 		return
 	}
-	a.recordAudit("move_quick_run_group", id, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "move_quick_run_group", id, "succeeded")
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }
 
@@ -306,7 +306,7 @@ func (a *App) deleteQuickRunGroup(response http.ResponseWriter, request *http.Re
 		http.Error(response, "无法删除快捷执行分组", http.StatusInternalServerError)
 		return
 	}
-	a.recordAudit("delete_quick_run_group", id, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "delete_quick_run_group", id, "succeeded")
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }
 
@@ -377,7 +377,7 @@ func (a *App) moveQuickRunToGroup(response http.ResponseWriter, request *http.Re
 		http.Error(response, "无法移动快捷执行", http.StatusInternalServerError)
 		return
 	}
-	a.recordAudit("move_quick_run_group_membership", id, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "move_quick_run_group_membership", id, "succeeded")
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }
 
@@ -435,7 +435,7 @@ func (a *App) updateQuickRun(response http.ResponseWriter, request *http.Request
 		http.Error(response, "快捷执行不存在", http.StatusNotFound)
 		return
 	}
-	a.recordAudit("update_quick_run", id, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "update_quick_run", id, "succeeded")
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }
 
@@ -548,7 +548,7 @@ func (a *App) copyQuickRun(response http.ResponseWriter, request *http.Request) 
 		http.Error(response, "无法复制快捷执行", http.StatusInternalServerError)
 		return
 	}
-	a.recordAudit("copy_quick_run", id, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "copy_quick_run", id, "succeeded")
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }
 
@@ -582,6 +582,6 @@ func (a *App) setQuickRunLocked(response http.ResponseWriter, request *http.Requ
 	if locked {
 		action = "lock_quick_run"
 	}
-	a.recordAudit(action, id, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, action, id, "succeeded")
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }

@@ -73,7 +73,7 @@ func (a *App) checkUpdate(response http.ResponseWriter, request *http.Request) {
 	}
 	snapshot, err := a.updates.Check(request.Context(), true)
 	if err != nil {
-		a.recordAudit("update_check_requested", "stable", "failed", request.RemoteAddr)
+		a.recordAuditForRequest(request, "update_check_requested", "stable", "failed")
 		http.Error(response, webText(locale, "updates.check_failed")+": "+err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -81,7 +81,7 @@ func (a *App) checkUpdate(response http.ResponseWriter, request *http.Request) {
 	if snapshot.UpdateAvailable && snapshot.Latest != nil {
 		result = snapshot.Latest.Version
 	}
-	a.recordAudit("update_check_requested", result, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "update_check_requested", result, "succeeded")
 	http.Redirect(response, request, "/settings/updates", http.StatusSeeOther)
 }
 
@@ -93,11 +93,11 @@ func (a *App) prepareUpdate(response http.ResponseWriter, request *http.Request)
 	}
 	operation, err := a.updates.Prepare(request.Context())
 	if err != nil {
-		a.recordAudit("update_prepare_failed", "stable", "failed", request.RemoteAddr)
+		a.recordAuditForRequest(request, "update_prepare_failed", "stable", "failed")
 		http.Error(response, webText(locale, "updates.prepare_failed")+": "+err.Error(), http.StatusConflict)
 		return
 	}
-	a.recordAudit("update_prepare_started", operation.TargetVersion, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "update_prepare_started", operation.TargetVersion, "succeeded")
 	http.Redirect(response, request, "/settings/updates", http.StatusSeeOther)
 }
 
@@ -116,12 +116,12 @@ func (a *App) applyUpdate(response http.ResponseWriter, request *http.Request) {
 	operation, err := a.updates.Handoff(operationID)
 	if err != nil {
 		a.endUpdateMaintenance()
-		a.recordAudit("update_apply_requested", operationID, "failed", request.RemoteAddr)
+		a.recordAuditForRequest(request, "update_apply_requested", operationID, "failed")
 		http.Error(response, webText(locale, "updates.handoff_failed")+": "+err.Error(), http.StatusConflict)
 		return
 	}
 	a.signalUpdateResults()
-	a.recordAudit("update_apply_requested", operation.TargetVersion, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "update_apply_requested", operation.TargetVersion, "succeeded")
 	response.Header().Set("Connection", "close")
 	response.Header().Set("Content-Type", "application/json; charset=utf-8")
 	response.WriteHeader(http.StatusAccepted)

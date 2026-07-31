@@ -163,7 +163,9 @@ func openRunMetadataTestDB(t *testing.T, root string) *sql.DB {
 		source_filename TEXT NOT NULL,
 		source_expired INTEGER NOT NULL,
 		source_audit_event_id INTEGER,
-		log_bytes INTEGER NOT NULL DEFAULT -1
+		log_bytes INTEGER NOT NULL DEFAULT -1,
+		initiated_by_user_id TEXT NOT NULL DEFAULT '',
+		initiated_by_username TEXT NOT NULL DEFAULT ''
 	)`); err != nil {
 		db.Close()
 		t.Fatal(err)

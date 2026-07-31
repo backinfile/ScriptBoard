@@ -704,6 +704,41 @@ async function assertStatusDisplaySettings(page, baseURL) {
   });
 }
 
+async function assertUserManagement(page, baseURL) {
+  await page.goto(`${baseURL}/settings/users`);
+  assert.equal((await page.locator("main h1").textContent()).trim(), "Users");
+  assert.deepEqual(
+    await page.locator('form[action="/settings/users"] select[name="role"] option').evaluateAll(options =>
+      options.map(option => ({ value: option.value, label: option.textContent.trim() }))),
+    [
+      { value: "maintainer", label: "Maintainer" },
+      { value: "operator", label: "Operator" },
+      { value: "viewer", label: "Viewer" },
+    ],
+  );
+  const createForm = page.locator('form[action="/settings/users"]');
+  await createForm.locator('input[name="username"]').fill("browser-viewer");
+  await createForm.locator('select[name="role"]').selectOption("viewer");
+  await Promise.all([
+    page.waitForNavigation(),
+    createForm.locator('button[type="submit"]').click(),
+  ]);
+  const password = (await page.locator("[data-generated-password]").textContent()).trim();
+  assert.ok(password.length >= 20, "generated user password was not shown once");
+  const viewerRow = page.locator('[data-username="browser-viewer"]');
+  await viewerRow.waitFor();
+  assert.equal(await viewerRow.locator('select[name="role"]').inputValue(), "viewer");
+  assert.equal(await viewerRow.locator('form[action$="/reset-password"]').count(), 1);
+  await page.goto(`${baseURL}/settings/users`);
+  assert.equal(await page.locator("[data-generated-password]").count(), 0);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await assertNoHorizontalOverflow(page, "Users mobile");
+  assert.equal(await page.locator('[data-username="browser-viewer"]').count(), 1);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+}
+
 (async () => {
   const fixture = await startFixture();
   let browser;
@@ -756,6 +791,7 @@ async function assertStatusDisplaySettings(page, baseURL) {
     await assertLiveLogViewer(page, fixture.baseURL);
     await assertWebsiteMonitoring(page, fixture.baseURL);
     await assertStatusDisplaySettings(page, fixture.baseURL);
+    await assertUserManagement(page, fixture.baseURL);
 
     const status = await page.evaluate(async () => {
       const response = await fetch("/monitor/status", { cache: "no-store" });
@@ -1625,6 +1661,14 @@ async function assertStatusDisplaySettings(page, baseURL) {
       chinesePage.waitForURL("**/monitor"),
       chinesePage.locator('[data-login-form] button[type="submit"]').click(),
     ]);
+    await chinesePage.goto(`${fixture.baseURL}/settings/users`);
+    assert.equal((await chinesePage.locator("main h1").textContent()).trim(), "用户");
+    assert.equal((await chinesePage.locator('form[action="/settings/users"] button[type="submit"]').textContent()).trim(), "创建用户");
+    await chinesePage.setViewportSize({ width: 390, height: 844 });
+    await chinesePage.reload();
+    await assertNoHorizontalOverflow(chinesePage, "用户管理移动端");
+    await chinesePage.setViewportSize({ width: 1440, height: 1000 });
+    await chinesePage.goto(`${fixture.baseURL}/monitor`);
     await Promise.all([
       chinesePage.waitForNavigation(),
       chinesePage.locator('form[action="/settings/locale"] button[name="locale"][value="en-US"]').click(),

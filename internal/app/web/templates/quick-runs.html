@@ -3,7 +3,7 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "quick_runs.title"}} · ScriptBoard</title></head>
 <body>
 <main class="workspace" data-quick-runs-page data-grouped-records="quick-run-groups">
-  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "quick_runs.eyebrow"}}</p><h1>{{t .Locale "quick_runs.title"}}</h1><p>{{t .Locale "quick_runs.description"}}</p></div><div class="heading-actions"><a class="button" href="/config/quick-runs/one-time/new" data-task-link><span data-lucide="play" aria-hidden="true"></span>{{t .Locale "quick_runs.run_once"}}</a><a class="button button--primary" href="/config/quick-runs/from-source/new" data-task-link><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "common.create"}}</a><a class="button" href="/config/quick-runs/groups/new" data-task-link><span data-lucide="folder-plus" aria-hidden="true"></span>{{t .Locale "quick_runs.create_group"}}</a></div></header>
+  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "quick_runs.eyebrow"}}</p><h1>{{t .Locale "quick_runs.title"}}</h1><p>{{t .Locale "quick_runs.description"}}</p></div>{{if .CanManage}}<div class="heading-actions"><a class="button" href="/config/quick-runs/one-time/new" data-task-link><span data-lucide="play" aria-hidden="true"></span>{{t .Locale "quick_runs.run_once"}}</a><a class="button button--primary" href="/config/quick-runs/from-source/new" data-task-link><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "common.create"}}</a><a class="button" href="/config/quick-runs/groups/new" data-task-link><span data-lucide="folder-plus" aria-hidden="true"></span>{{t .Locale "quick_runs.create_group"}}</a></div>{{end}}</header>
   <div data-deferred-region>
   {{if .DeferredData}}
   {{template "deferred-loading" .}}
@@ -18,7 +18,7 @@
         </button></h2>
         <small>{{.QuickRunCount}} {{t $.Locale "quick_runs.items"}}</small>
       </div>
-      {{if not .Ungrouped}}
+      {{if and $.CanManage (not .Ungrouped)}}
       <details class="action-menu quick-run-group__menu"><summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
         <a href="/config/quick-runs/groups/{{.ID}}/edit" data-task-link><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a>
         <form method="post" action="/config/quick-runs/groups/{{.ID}}/move" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" name="direction" value="up"><span data-lucide="arrow-up" aria-hidden="true"></span>{{t $.Locale "quick_runs.move_up"}}</button><button type="submit" name="direction" value="down"><span data-lucide="arrow-down" aria-hidden="true"></span>{{t $.Locale "quick_runs.move_down"}}</button></form>
@@ -33,15 +33,15 @@
         <div class="ordered-record__identity"><span data-lucide="zap" aria-hidden="true"></span><div><h3>{{.Name}}</h3><code>{{.ScriptPath}}</code>{{if .Locked}}<span class="status-chip" data-state="locked"><span data-lucide="lock" aria-hidden="true"></span>{{t $.Locale "quick_runs.locked"}}</span>{{end}}</div></div>
         <dl class="ordered-record__facts"><div><dt>{{t $.Locale "common.arguments"}}</dt><dd>{{if .ArgumentsTemplate}}<code>{{.ArgumentsTemplate}}</code>{{else}}—{{end}}</dd></div><div><dt>{{t $.Locale "common.timeout"}}</dt><dd>{{.TimeoutSeconds}}s</dd></div></dl>
         <div class="record-actions record-actions__group">
-          <form method="post" action="/config/quick-runs/{{.ID}}/start"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button class="button button--compact" type="submit" {{if not .Valid}}disabled aria-disabled="true"{{end}} title="{{if not .Valid}}{{t $.Locale "quick_runs.invalid_path"}}{{end}}"><span data-lucide="play" aria-hidden="true"></span>{{if .Valid}}{{t $.Locale "common.run"}}{{else}}{{t $.Locale "quick_runs.invalid"}}{{end}}</button></form>
-          <details class="action-menu"><summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
+          {{if $.CanExecute}}<form method="post" action="/config/quick-runs/{{.ID}}/start"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button class="button button--compact" type="submit" {{if not .Valid}}disabled aria-disabled="true"{{end}} title="{{if not .Valid}}{{t $.Locale "quick_runs.invalid_path"}}{{end}}"><span data-lucide="play" aria-hidden="true"></span>{{if .Valid}}{{t $.Locale "common.run"}}{{else}}{{t $.Locale "quick_runs.invalid"}}{{end}}</button></form>{{end}}
+          {{if $.CanManage}}<details class="action-menu"><summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
             {{if .Locked}}<span class="action-menu__disabled" data-locked-action="edit" aria-disabled="true"><span data-lucide="lock" aria-hidden="true"></span>{{t $.Locale "common.edit"}}<small>{{t $.Locale "quick_runs.unlock_to_edit"}}</small></span>{{else}}<a href="/config/quick-runs/{{.ID}}/edit" data-task-link data-locked-action="edit"><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a>{{end}}
             <a href="/config/quick-runs/{{.ID}}/copy" data-task-link><span data-lucide="copy" aria-hidden="true"></span>{{t $.Locale "quick_runs.copy"}}</a>
             <a href="/config/quick-runs/{{.ID}}/move-group" data-task-link><span data-lucide="folder-open" aria-hidden="true"></span>{{t $.Locale "quick_runs.move_group"}}</a>
             <form method="post" action="/config/quick-runs/{{.ID}}/lock" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" name="locked" value="{{if .Locked}}0{{else}}1{{end}}"><span data-lucide="{{if .Locked}}unlock{{else}}lock{{end}}" aria-hidden="true"></span>{{if .Locked}}{{t $.Locale "quick_runs.unlock"}}{{else}}{{t $.Locale "quick_runs.lock"}}{{end}}</button></form>
             <form method="post" action="/config/quick-runs/{{.ID}}/move" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" name="direction" value="up"><span data-lucide="arrow-up" aria-hidden="true"></span>{{t $.Locale "quick_runs.move_up"}}</button><button type="submit" name="direction" value="down"><span data-lucide="arrow-down" aria-hidden="true"></span>{{t $.Locale "quick_runs.move_down"}}</button></form>
             {{if .Locked}}<span class="action-menu__disabled action-menu__disabled--danger" data-locked-action="delete" aria-disabled="true"><span data-lucide="lock" aria-hidden="true"></span>{{t $.Locale "common.delete"}}<small>{{t $.Locale "quick_runs.unlock_to_delete"}}</small></span>{{else}}<form method="post" action="/config/quick-runs/{{.ID}}/delete" data-confirm="{{t $.Locale "quick_runs.delete_confirm"}}" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-action" type="submit" name="confirm" value="yes"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "common.delete"}}</button></form>{{end}}
-          </div></details>
+          </div></details>{{end}}
         </div>
       </li>{{end}}
     </ol>{{else}}<p class="empty-copy">{{t $.Locale "quick_runs.group_empty"}}</p>{{end}}
@@ -49,7 +49,7 @@
   </section>
   {{end}}
   {{if and (not .QuickRuns) (not .Groups)}}
-  <section class="empty-state"><span data-lucide="zap" aria-hidden="true"></span><p>{{t .Locale "quick_runs.empty"}}</p><a class="button" href="/resources/files/">{{t .Locale "quick_runs.browse_scripts"}}</a></section>
+  <section class="empty-state"><span data-lucide="zap" aria-hidden="true"></span><p>{{t .Locale "quick_runs.empty"}}</p>{{if .CanReadFiles}}<a class="button" href="/resources/files/">{{t .Locale "quick_runs.browse_scripts"}}</a>{{end}}</section>
   {{end}}
   {{end}}
   </div>

@@ -191,7 +191,7 @@ func webTemplateFunctions() template.FuncMap {
 			return result
 		},
 		"roleText": func(locale webLocale, role string) string {
-			if label := webText(locale, "storage.role."+role); label != "storage.role."+role {
+			if label := webText(locale, "users.role."+role); label != "users.role."+role {
 				return label
 			}
 			return role
@@ -281,6 +281,9 @@ type App struct {
 	handler            http.Handler
 	loginMu            sync.Mutex
 	loginFailures      map[string]loginFailure
+	activeRequestsMu   sync.Mutex
+	activeRequests     map[string]map[uint64]context.CancelFunc
+	activeRequestID    uint64
 	credentialOverride bool
 	trustedProxies     []*net.IPNet
 	updates            *updatepkg.Manager
@@ -635,7 +638,7 @@ func (a *App) ResetAdminCredentials(username string) (string, error) {
 		return "", err
 	}
 	defer transaction.Rollback()
-	if _, err := transaction.Exec("UPDATE admin SET username = ?, password_hash = ?, must_change_password = 0 WHERE id = 1", username, hash); err != nil {
+	if _, err := transaction.Exec("UPDATE users SET username = ?, password_hash = ?, auth_version = auth_version + 1, updated_at = ? WHERE role = 'administrator'", username, hash, time.Now().UTC().Unix()); err != nil {
 		return "", err
 	}
 	if _, err := transaction.Exec("DELETE FROM sessions"); err != nil {
@@ -649,6 +652,7 @@ func (a *App) ResetAdminCredentials(username string) (string, error) {
 		_ = os.Remove(passwordPath)
 		return "", err
 	}
+	a.cancelAllAuthenticatedRequests()
 	a.recordAudit("admin_reset", username, "succeeded", "local-cli")
 	return password, nil
 }
@@ -665,7 +669,7 @@ func (a *App) applyCredentialOverride(username, password, passwordFile string) e
 		return nil
 	}
 	var currentUsername, currentHash string
-	if err := a.db.QueryRow("SELECT username, password_hash FROM admin WHERE id = 1").Scan(&currentUsername, &currentHash); err != nil {
+	if err := a.db.QueryRow("SELECT username, password_hash FROM users WHERE role = 'administrator'").Scan(&currentUsername, &currentHash); err != nil {
 		return err
 	}
 	if username == "" {
@@ -698,7 +702,7 @@ func (a *App) applyCredentialOverride(username, password, passwordFile string) e
 		return err
 	}
 	defer transaction.Rollback()
-	if _, err := transaction.Exec("UPDATE admin SET username = ?, password_hash = ?, must_change_password = 0 WHERE id = 1", username, newHash); err != nil {
+	if _, err := transaction.Exec("UPDATE users SET username = ?, password_hash = ?, auth_version = auth_version + 1, updated_at = ? WHERE role = 'administrator'", username, newHash, time.Now().UTC().Unix()); err != nil {
 		return err
 	}
 	if _, err := transaction.Exec("DELETE FROM sessions"); err != nil {
@@ -707,6 +711,7 @@ func (a *App) applyCredentialOverride(username, password, passwordFile string) e
 	if err := transaction.Commit(); err != nil {
 		return err
 	}
+	a.cancelAllAuthenticatedRequests()
 	a.recordAudit("startup_credential_override", username, "succeeded", "system")
 	return nil
 }
@@ -807,13 +812,8 @@ func openDatabase(path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("database schema version %d is newer than supported version %d", schemaVersion, currentSchemaVersion)
 	}
 	if existingDatabase && schemaVersion < currentSchemaVersion {
-		snapshot := path + fmt.Sprintf(".pre-migration-v%d", schemaVersion)
-		_ = os.Remove(snapshot)
-		quoted := strings.ReplaceAll(filepath.ToSlash(snapshot), "'", "''")
-		if _, err := db.Exec("VACUUM INTO '" + quoted + "'"); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("create pre-migration database snapshot: %w", err)
-		}
+		_ = db.Close()
+		return nil, fmt.Errorf("database schema version %d is not compatible with the multi-user schema; start with a new State Root", schemaVersion)
 	}
 	migration, err := db.Begin()
 	if err != nil {
@@ -822,14 +822,20 @@ func openDatabase(path string) (*sql.DB, error) {
 	}
 	defer func() { _ = migration.Rollback() }()
 	for _, statement := range []string{
-		`CREATE TABLE IF NOT EXISTS admin (
-			id INTEGER PRIMARY KEY CHECK (id = 1),
+		`CREATE TABLE IF NOT EXISTS users (
+			id TEXT PRIMARY KEY,
 			username TEXT NOT NULL UNIQUE,
 			password_hash TEXT NOT NULL,
-			must_change_password INTEGER NOT NULL
+			role TEXT NOT NULL CHECK (role IN ('administrator', 'maintainer', 'operator', 'viewer')),
+			enabled INTEGER NOT NULL DEFAULT 1,
+			auth_version INTEGER NOT NULL DEFAULT 1,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS sessions (
 			token_hash TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			auth_version INTEGER NOT NULL,
 			csrf_token TEXT NOT NULL,
 			created_at INTEGER NOT NULL,
 			last_seen_at INTEGER NOT NULL,
@@ -841,7 +847,10 @@ func openDatabase(path string) (*sql.DB, error) {
 			action TEXT NOT NULL,
 			target TEXT NOT NULL,
 			result TEXT NOT NULL,
-			source_address TEXT NOT NULL
+			source_address TEXT NOT NULL,
+			actor_user_id TEXT NOT NULL DEFAULT '',
+			actor_username TEXT NOT NULL DEFAULT '',
+			actor_role TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE TABLE IF NOT EXISTS trash_entries (
 			id TEXT PRIMARY KEY,
@@ -881,6 +890,8 @@ func openDatabase(path string) (*sql.DB, error) {
 			, source_expired INTEGER NOT NULL DEFAULT 0
 			, source_audit_event_id INTEGER REFERENCES audit_events(id)
 			, log_bytes INTEGER NOT NULL DEFAULT -1
+			, initiated_by_user_id TEXT NOT NULL DEFAULT ''
+			, initiated_by_username TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE TABLE IF NOT EXISTS variables (
 			name TEXT PRIMARY KEY,
@@ -1231,6 +1242,8 @@ func openDatabase(path string) (*sql.DB, error) {
 		}
 	}
 	for _, statement := range []string{
+		"CREATE UNIQUE INDEX IF NOT EXISTS users_single_administrator_idx ON users(role) WHERE role = 'administrator'",
+		"CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id)",
 		"CREATE INDEX IF NOT EXISTS quick_run_groups_order_idx ON quick_run_groups(sort_order, created_at)",
 		"CREATE INDEX IF NOT EXISTS quick_runs_group_order_idx ON quick_runs(group_id, sort_order, created_at)",
 		"CREATE INDEX IF NOT EXISTS schedules_group_idx ON schedules(group_name, created_at)",
@@ -1294,7 +1307,7 @@ func (a *App) initializeAdmin(stateRoot string) error {
 	defer func() { _ = transaction.Rollback() }()
 
 	var exists int
-	if err := transaction.QueryRow("SELECT EXISTS(SELECT 1 FROM admin WHERE id = 1)").Scan(&exists); err != nil {
+	if err := transaction.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE role = 'administrator')").Scan(&exists); err != nil {
 		return fmt.Errorf("检查 admin: %w", err)
 	}
 	if exists != 0 {
@@ -1310,9 +1323,10 @@ func (a *App) initializeAdmin(stateRoot string) error {
 	if err != nil {
 		return err
 	}
+	now := time.Now().UTC().Unix()
 	if _, err := transaction.Exec(
-		"INSERT INTO admin (id, username, password_hash, must_change_password) VALUES (1, 'admin', ?, 0)",
-		hash,
+		"INSERT INTO users (id, username, password_hash, role, enabled, auth_version, created_at, updated_at) VALUES ('administrator', 'admin', ?, 'administrator', 1, 1, ?, ?)",
+		hash, now, now,
 	); err != nil {
 		return fmt.Errorf("创建 admin: %w", err)
 	}
@@ -1448,19 +1462,30 @@ func (a *App) routes(_ string) http.Handler {
 	mux.Handle("POST /monitor/websites/{id}/delete", a.requireSession(http.HandlerFunc(a.deleteWebsiteMonitor)))
 	mux.Handle("GET /settings/account", a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		current := request.Context().Value(sessionContextKey).(session)
-		var username string
-		if err := a.db.QueryRow("SELECT username FROM admin WHERE id = 1").Scan(&username); err != nil {
-			http.Error(response, "无法读取管理员账户", http.StatusInternalServerError)
-			return
-		}
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = accountTemplate.Execute(response, struct {
 			Username, CSRFToken string
 			CredentialOverride  bool
+			CanRename           bool
+			CanManageSystem     bool
+			CanManageUsers      bool
 			Locale              webLocale
-		}{Username: username, CSRFToken: current.csrfToken, CredentialOverride: a.credentialOverride, Locale: resolveWebLocale(request)})
+		}{
+			Username: current.username, CSRFToken: current.csrfToken,
+			CredentialOverride: a.credentialOverride && current.role == roleAdministrator,
+			CanRename:          current.role == roleAdministrator,
+			CanManageSystem:    roleAllows(current.role, permissionManageSystem),
+			CanManageUsers:     roleAllows(current.role, permissionManageUsers),
+			Locale:             resolveWebLocale(request),
+		})
 	})))
 	mux.Handle("POST /settings/account", a.requireSession(http.HandlerFunc(a.changePassword)))
+	mux.Handle("GET /settings/users", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.usersPage)))
+	mux.Handle("POST /settings/users", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.createUser)))
+	mux.Handle("POST /settings/users/{id}/disable", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.disableUser)))
+	mux.Handle("POST /settings/users/{id}/enable", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.enableUser)))
+	mux.Handle("POST /settings/users/{id}/update", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.updateUser)))
+	mux.Handle("POST /settings/users/{id}/reset-password", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.resetUserPassword)))
 	mux.Handle("GET /settings/display", a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = displaySettingsTemplate.Execute(response, struct {
@@ -1898,7 +1923,7 @@ func (a *App) checkpointVersionProtection(response http.ResponseWriter, request 
 		http.Error(response, "无法创建检查点："+err.Error(), http.StatusBadRequest)
 		return
 	}
-	a.recordAudit("git_checkpoint", "git", "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "git_checkpoint", "git", "succeeded")
 	http.Redirect(response, request, "/settings/version-protection", http.StatusSeeOther)
 }
 
@@ -1915,7 +1940,7 @@ func (a *App) restoreVersionedFile(response http.ResponseWriter, request *http.R
 		http.Error(response, "无法恢复版本文件："+err.Error(), http.StatusBadRequest)
 		return
 	}
-	a.recordAudit("restore_versioned_file", request.FormValue("path"), "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "restore_versioned_file", request.FormValue("path"), "succeeded")
 	parent := pathpkg.Dir(request.FormValue("path"))
 	if parent == "." {
 		parent = ""
@@ -1967,7 +1992,7 @@ func (a *App) disableVersionProtection(response http.ResponseWriter, request *ht
 		http.Error(response, "无法停用版本保护："+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	a.recordAudit("disable_version_protection", "git", "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "disable_version_protection", "git", "succeeded")
 	http.Redirect(response, request, "/settings/version-protection", http.StatusSeeOther)
 }
 
@@ -1985,11 +2010,11 @@ func (a *App) enableVersionProtection(response http.ResponseWriter, request *htt
 		return
 	}
 	if err := a.gitProtection.Enable(); err != nil {
-		a.recordAudit("enable_version_protection", "git", "failed", request.RemoteAddr)
+		a.recordAuditForRequest(request, "enable_version_protection", "git", "failed")
 		http.Error(response, "无法启用版本保护："+err.Error(), http.StatusBadRequest)
 		return
 	}
-	a.recordAudit("enable_version_protection", "git", "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "enable_version_protection", "git", "succeeded")
 	http.Redirect(response, request, "/settings/version-protection", http.StatusSeeOther)
 }
 
@@ -2003,11 +2028,11 @@ func (a *App) adoptVersionProtection(response http.ResponseWriter, request *http
 		return
 	}
 	if err := a.gitProtection.Adopt(); err != nil {
-		a.recordAudit("adopt_version_protection", "git", "failed", request.RemoteAddr)
+		a.recordAuditForRequest(request, "adopt_version_protection", "git", "failed")
 		http.Error(response, "无法接管 Git 仓库："+err.Error(), http.StatusBadRequest)
 		return
 	}
-	a.recordAudit("adopt_version_protection", "git", "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "adopt_version_protection", "git", "succeeded")
 	http.Redirect(response, request, "/settings/version-protection", http.StatusSeeOther)
 }
 
@@ -2017,6 +2042,8 @@ type auditView struct {
 	Target     string
 	Result     string
 	Source     string
+	Actor      string
+	ActorRole  string
 }
 
 var (
@@ -2117,22 +2144,22 @@ func (a *App) auditPage(response http.ResponseWriter, request *http.Request) {
 	like := "%" + filters.Query + "%"
 	var total int
 	if err := a.db.QueryRow(`SELECT COUNT(*) FROM audit_events
-		WHERE (? = '' OR action LIKE ? OR target LIKE ? OR result LIKE ? OR source_address LIKE ?)
+		WHERE (? = '' OR action LIKE ? OR target LIKE ? OR result LIKE ? OR source_address LIKE ? OR actor_username LIKE ? OR actor_role LIKE ?)
 		AND (? = 0 OR occurred_at >= ?)
 		AND (? = 0 OR occurred_at < ?)`,
-		filters.Query, like, like, like, like,
+		filters.Query, like, like, like, like, like, like,
 		filters.HasFromDate, filters.FromUnix,
 		filters.HasToDate, filters.ToExclusiveUnix).Scan(&total); err != nil {
 		http.Error(response, "无法读取审计事件", http.StatusInternalServerError)
 		return
 	}
 	pagination := newPagination(request, total)
-	rows, err := a.db.Query(`SELECT occurred_at, action, target, result, source_address FROM audit_events
-		WHERE (? = '' OR action LIKE ? OR target LIKE ? OR result LIKE ? OR source_address LIKE ?)
+	rows, err := a.db.Query(`SELECT occurred_at, action, target, result, source_address, actor_username, actor_role FROM audit_events
+		WHERE (? = '' OR action LIKE ? OR target LIKE ? OR result LIKE ? OR source_address LIKE ? OR actor_username LIKE ? OR actor_role LIKE ?)
 		AND (? = 0 OR occurred_at >= ?)
 		AND (? = 0 OR occurred_at < ?)
 		ORDER BY occurred_at DESC LIMIT ? OFFSET ?`,
-		filters.Query, like, like, like, like,
+		filters.Query, like, like, like, like, like, like,
 		filters.HasFromDate, filters.FromUnix,
 		filters.HasToDate, filters.ToExclusiveUnix,
 		listPageSize, pagination.Start)
@@ -2145,7 +2172,7 @@ func (a *App) auditPage(response http.ResponseWriter, request *http.Request) {
 	for rows.Next() {
 		var event auditView
 		var occurredAt int64
-		if err := rows.Scan(&occurredAt, &event.Action, &event.Target, &event.Result, &event.Source); err != nil {
+		if err := rows.Scan(&occurredAt, &event.Action, &event.Target, &event.Result, &event.Source, &event.Actor, &event.ActorRole); err != nil {
 			http.Error(response, "无法读取审计事件", http.StatusInternalServerError)
 			return
 		}
@@ -2163,7 +2190,7 @@ func (a *App) auditPage(response http.ResponseWriter, request *http.Request) {
 }
 
 func (a *App) auditDownload(response http.ResponseWriter, _ *http.Request) {
-	rows, err := a.db.Query("SELECT occurred_at, action, target, result, source_address FROM audit_events ORDER BY occurred_at")
+	rows, err := a.db.Query("SELECT occurred_at, action, target, result, source_address, actor_user_id, actor_username, actor_role FROM audit_events ORDER BY occurred_at")
 	if err != nil {
 		http.Error(response, "无法导出审计事件", http.StatusInternalServerError)
 		return
@@ -2172,14 +2199,14 @@ func (a *App) auditDownload(response http.ResponseWriter, _ *http.Request) {
 	response.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	response.Header().Set("Content-Disposition", `attachment; filename="scriptboard-audit.csv"`)
 	writer := csv.NewWriter(response)
-	_ = writer.Write([]string{"occurred_at", "action", "target", "result", "source_address"})
+	_ = writer.Write([]string{"occurred_at", "action", "target", "result", "source_address", "actor_user_id", "actor_username", "actor_role"})
 	for rows.Next() {
 		var occurred int64
-		var action, target, result, source string
-		if rows.Scan(&occurred, &action, &target, &result, &source) != nil {
+		var action, target, result, source, actorUserID, actorUsername, actorRole string
+		if rows.Scan(&occurred, &action, &target, &result, &source, &actorUserID, &actorUsername, &actorRole) != nil {
 			return
 		}
-		_ = writer.Write([]string{time.Unix(occurred, 0).UTC().Format(time.RFC3339), action, target, result, source})
+		_ = writer.Write([]string{time.Unix(occurred, 0).UTC().Format(time.RFC3339), action, target, result, source, actorUserID, actorUsername, actorRole})
 	}
 	writer.Flush()
 }
@@ -2195,7 +2222,14 @@ func (a *App) schedulesPage(response http.ResponseWriter, request *http.Request)
 			CSRFToken    string
 			Locale       webLocale
 			DeferredData bool
-		}{CSRFToken: current.csrfToken, Locale: locale, DeferredData: true})
+			CanExecute   bool
+			CanManage    bool
+			CanReadFiles bool
+		}{
+			CSRFToken: current.csrfToken, Locale: locale, DeferredData: true,
+			CanExecute: roleAllows(current.role, permissionExecute), CanManage: roleAllows(current.role, permissionManageExecution),
+			CanReadFiles: roleAllows(current.role, permissionReadFiles),
+		})
 		return
 	}
 	groups, err := a.loadScheduleGroups()
@@ -2215,9 +2249,10 @@ func (a *App) schedulesPage(response http.ResponseWriter, request *http.Request)
 		CSRFToken    string
 		Locale       webLocale
 		DeferredData bool
+		CanManage    bool
 	}{
 		Schedules: schedules, Groups: organizeScheduleGroups(groups, schedules, locale),
-		CSRFToken: current.csrfToken, Locale: locale,
+		CSRFToken: current.csrfToken, Locale: locale, CanManage: roleAllows(current.role, permissionManageExecution),
 	})
 }
 
@@ -2240,7 +2275,7 @@ func (a *App) createSchedule(response http.ResponseWriter, request *http.Request
 		http.Error(response, "无法创建计划："+err.Error(), http.StatusBadRequest)
 		return
 	}
-	a.recordAudit("create_schedule", id, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "create_schedule", id, "succeeded")
 	http.Redirect(response, request, "/config/schedules", http.StatusSeeOther)
 }
 
@@ -2286,7 +2321,7 @@ func (a *App) updateSchedule(response http.ResponseWriter, request *http.Request
 		http.Error(response, "无法更新计划："+err.Error(), http.StatusBadRequest)
 		return
 	}
-	a.recordAudit("update_schedule", request.PathValue("id"), "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "update_schedule", request.PathValue("id"), "succeeded")
 	http.Redirect(response, request, "/config/schedules", http.StatusSeeOther)
 }
 
@@ -2300,7 +2335,7 @@ func (a *App) toggleSchedule(response http.ResponseWriter, request *http.Request
 		http.Error(response, "无法更改计划状态", http.StatusNotFound)
 		return
 	}
-	a.recordAudit("toggle_schedule", request.PathValue("id"), "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "toggle_schedule", request.PathValue("id"), "succeeded")
 	http.Redirect(response, request, "/config/schedules", http.StatusSeeOther)
 }
 
@@ -2309,12 +2344,13 @@ func (a *App) runScheduleNow(response http.ResponseWriter, request *http.Request
 		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
 		return
 	}
-	id, err := a.scheduler.RunNow(request.PathValue("id"))
+	current := request.Context().Value(sessionContextKey).(session)
+	id, err := a.scheduler.RunNowAs(request.PathValue("id"), current.userID, current.username)
 	if err != nil {
 		http.Error(response, "无法立即执行计划："+err.Error(), http.StatusConflict)
 		return
 	}
-	a.recordAudit("run_schedule_now", request.PathValue("id"), "accepted", request.RemoteAddr)
+	a.recordAuditForRequest(request, "run_schedule_now", request.PathValue("id"), "accepted")
 	http.Redirect(response, request, "/history/runs/"+url.PathEscape(id), http.StatusSeeOther)
 }
 
@@ -2327,7 +2363,7 @@ func (a *App) deleteSchedule(response http.ResponseWriter, request *http.Request
 		http.Error(response, "无法删除计划", http.StatusNotFound)
 		return
 	}
-	a.recordAudit("delete_schedule", request.PathValue("id"), "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "delete_schedule", request.PathValue("id"), "succeeded")
 	http.Redirect(response, request, "/config/schedules", http.StatusSeeOther)
 }
 
@@ -2417,7 +2453,7 @@ func (a *App) saveQuickRun(response http.ResponseWriter, request *http.Request) 
 		http.Error(response, "无法保存快捷执行", http.StatusInternalServerError)
 		return
 	}
-	a.recordAudit("create_quick_run", id, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "create_quick_run", id, "succeeded")
 	destination := "/config/quick-runs"
 	if request.Header.Get("X-ScriptBoard-Navigation") == "pjax" {
 		destination = "/history/runs/" + url.PathEscape(source.ID)
@@ -2473,7 +2509,7 @@ func (a *App) createQuickRunFromFile(response http.ResponseWriter, request *http
 		http.Error(response, "无法保存快捷执行", http.StatusInternalServerError)
 		return
 	}
-	a.recordAudit("create_quick_run", id, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "create_quick_run", id, "succeeded")
 	destination := "/config/quick-runs"
 	if request.Header.Get("X-ScriptBoard-Navigation") == "pjax" {
 		if returnTo := safeFilesReturnTo(request.FormValue("return_to")); returnTo != "" {
@@ -2494,7 +2530,14 @@ func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request)
 			CSRFToken    string
 			Locale       webLocale
 			DeferredData bool
-		}{CSRFToken: current.csrfToken, Locale: locale, DeferredData: true})
+			CanExecute   bool
+			CanManage    bool
+			CanReadFiles bool
+		}{
+			CSRFToken: current.csrfToken, Locale: locale, DeferredData: true,
+			CanExecute: roleAllows(current.role, permissionExecute), CanManage: roleAllows(current.role, permissionManageExecution),
+			CanReadFiles: roleAllows(current.role, permissionReadFiles),
+		})
 		return
 	}
 	groups, err := a.loadQuickRunGroups()
@@ -2553,7 +2596,14 @@ func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request)
 		CSRFToken    string
 		Locale       webLocale
 		DeferredData bool
-	}{QuickRuns: quickRuns, Groups: groups, CSRFToken: current.csrfToken, Locale: locale}); err != nil {
+		CanExecute   bool
+		CanManage    bool
+		CanReadFiles bool
+	}{
+		QuickRuns: quickRuns, Groups: groups, CSRFToken: current.csrfToken, Locale: locale,
+		CanExecute: roleAllows(current.role, permissionExecute), CanManage: roleAllows(current.role, permissionManageExecution),
+		CanReadFiles: roleAllows(current.role, permissionReadFiles),
+	}); err != nil {
 		http.Error(response, "Unable to render Quick Runs: "+err.Error(), http.StatusInternalServerError)
 	}
 }
@@ -2581,15 +2631,17 @@ func (a *App) startQuickRun(response http.ResponseWriter, request *http.Request)
 		http.Error(response, "无法读取变量", http.StatusInternalServerError)
 		return
 	}
+	current := request.Context().Value(sessionContextKey).(session)
 	id, err := a.runs.Start(runmanager.StartRequest{
 		ScriptPath: quick.ScriptPath, ArgumentsTemplate: quick.ArgumentsTemplate, TimeoutSeconds: quick.TimeoutSeconds,
 		SourceType: "admin/quick-run", SourceName: quick.Name, SourceID: quick.ID, Variables: variables,
+		InitiatorUserID: current.userID, InitiatorUsername: current.username,
 	})
 	if err != nil {
 		http.Error(response, "无法启动快捷执行："+err.Error(), http.StatusBadRequest)
 		return
 	}
-	a.recordAudit("start_quick_run", quick.ID, "accepted", request.RemoteAddr)
+	a.recordAuditForRequest(request, "start_quick_run", quick.ID, "accepted")
 	http.Redirect(response, request, "/history/runs/"+url.PathEscape(id), http.StatusSeeOther)
 }
 
@@ -2637,7 +2689,7 @@ func (a *App) moveQuickRun(response http.ResponseWriter, request *http.Request) 
 		http.Error(response, "无法调整快捷执行顺序", http.StatusInternalServerError)
 		return
 	}
-	a.recordAudit("move_quick_run", request.PathValue("id"), "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "move_quick_run", request.PathValue("id"), "succeeded")
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }
 
@@ -2664,7 +2716,7 @@ func (a *App) deleteQuickRun(response http.ResponseWriter, request *http.Request
 		http.Error(response, "快捷执行不存在", http.StatusNotFound)
 		return
 	}
-	a.recordAudit("delete_quick_run", id, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "delete_quick_run", id, "succeeded")
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }
 
@@ -2784,7 +2836,7 @@ func (a *App) createVariable(response http.ResponseWriter, request *http.Request
 		http.Error(response, "变量已存在或无法保存", http.StatusConflict)
 		return
 	}
-	a.recordAudit("create_variable", name, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "create_variable", name, "succeeded")
 	http.Redirect(response, request, "/resources/variables", http.StatusSeeOther)
 }
 
@@ -2823,7 +2875,7 @@ func (a *App) updateVariable(response http.ResponseWriter, request *http.Request
 		http.Error(response, "变量不存在、名称冲突或无法更新", http.StatusConflict)
 		return
 	}
-	a.recordAudit("update_variable", original, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "update_variable", original, "succeeded")
 	http.Redirect(response, request, "/resources/variables", http.StatusSeeOther)
 }
 
@@ -2852,7 +2904,7 @@ func (a *App) deleteVariable(response http.ResponseWriter, request *http.Request
 		http.Error(response, "变量不存在", http.StatusNotFound)
 		return
 	}
-	a.recordAudit("delete_variable", name, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "delete_variable", name, "succeeded")
 	http.Redirect(response, request, "/resources/variables", http.StatusSeeOther)
 }
 
@@ -2862,11 +2914,23 @@ func (a *App) stopRun(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	id := request.PathValue("id")
+	current := request.Context().Value(sessionContextKey).(session)
+	if current.role == roleOperator {
+		run, err := a.runs.GetMetadata(id)
+		if err != nil {
+			http.Error(response, "无法读取运行："+err.Error(), http.StatusNotFound)
+			return
+		}
+		if run.InitiatorUserID == "" || run.InitiatorUserID != current.userID {
+			http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
+			return
+		}
+	}
 	if err := a.runs.Stop(id); err != nil {
 		http.Error(response, "无法停止运行："+err.Error(), http.StatusConflict)
 		return
 	}
-	a.recordAudit("stop_run", id, "accepted", request.RemoteAddr)
+	a.recordAuditForRequest(request, "stop_run", id, "accepted")
 	http.Redirect(response, request, "/history/runs/"+url.PathEscape(id), http.StatusSeeOther)
 }
 
@@ -2897,6 +2961,7 @@ func (a *App) startRun(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "无法读取变量", http.StatusInternalServerError)
 		return
 	}
+	current := request.Context().Value(sessionContextKey).(session)
 	id, err := a.runs.Start(runmanager.StartRequest{
 		ScriptPath:        request.FormValue("script"),
 		ArgumentsTemplate: request.FormValue("arguments"),
@@ -2904,13 +2969,15 @@ func (a *App) startRun(response http.ResponseWriter, request *http.Request) {
 		SourceName:        "manual",
 		TimeoutSeconds:    timeoutSeconds,
 		Variables:         variables,
+		InitiatorUserID:   current.userID,
+		InitiatorUsername: current.username,
 	})
 	if err != nil {
-		a.recordAudit("start_run", request.FormValue("script"), "rejected", request.RemoteAddr)
+		a.recordAuditForRequest(request, "start_run", request.FormValue("script"), "rejected")
 		http.Error(response, "无法启动脚本："+err.Error(), http.StatusBadRequest)
 		return
 	}
-	a.recordAudit("start_run", id, "accepted", request.RemoteAddr)
+	a.recordAuditForRequest(request, "start_run", id, "accepted")
 	http.Redirect(response, request, "/history/runs/"+url.PathEscape(id), http.StatusSeeOther)
 }
 
@@ -2949,12 +3016,19 @@ func (a *App) runDetails(response http.ResponseWriter, request *http.Request) {
 		run.Events = run.Events[len(run.Events)-1000:]
 	}
 	current := request.Context().Value(sessionContextKey).(session)
+	canManageExecution := roleAllows(current.role, permissionManageExecution)
+	canStop := current.role == roleAdministrator || current.role == roleMaintainer ||
+		current.role == roleOperator && run.InitiatorUserID == current.userID
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = runTemplate.Execute(response, struct {
-		Run       runmanager.Run
-		CSRFToken string
-		Locale    webLocale
-	}{Run: run, CSRFToken: current.csrfToken, Locale: resolveWebLocale(request)})
+		Run                         runmanager.Run
+		CSRFToken                   string
+		Locale                      webLocale
+		CanStop, CanManageExecution bool
+	}{
+		Run: run, CSRFToken: current.csrfToken, Locale: resolveWebLocale(request),
+		CanStop: canStop, CanManageExecution: canManageExecution,
+	})
 }
 
 type runFilters struct {
@@ -3183,7 +3257,7 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "条目已移动，但版本保护检查点失败："+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	a.recordAudit("move_entry", source+" -> "+destination, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "move_entry", source+" -> "+destination, "succeeded")
 	http.Redirect(response, request, filesURL(destinationParent), http.StatusSeeOther)
 }
 
@@ -3209,7 +3283,7 @@ func (a *App) toggleExecutable(response http.ResponseWriter, request *http.Reque
 		http.Error(response, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	a.recordAudit("toggle_owner_execute", path, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "toggle_owner_execute", path, "succeeded")
 	parent := pathpkg.Dir(path)
 	if parent == "." {
 		parent = ""
@@ -3319,7 +3393,7 @@ func (a *App) saveText(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "文件已保存，但版本保护检查点失败："+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	a.recordAudit("edit_text", relative, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "edit_text", relative, "succeeded")
 	parent := pathpkg.Dir(filepath.ToSlash(relative))
 	if parent == "." {
 		parent = ""
@@ -3419,7 +3493,7 @@ func (a *App) deleteFile(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "条目已移入回收站，但版本保护检查点失败："+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	a.recordAudit("trash_entry", trashed.OriginalPath, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "trash_entry", trashed.OriginalPath, "succeeded")
 	http.Redirect(response, request, "/resources/trash", http.StatusSeeOther)
 }
 
@@ -3547,7 +3621,7 @@ func (a *App) restoreTrash(response http.ResponseWriter, request *http.Request) 
 		http.Error(response, "条目已恢复，但版本保护检查点失败："+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	a.recordAudit("restore_trash", destination, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "restore_trash", destination, "succeeded")
 	http.Redirect(response, request, filesURL(parent), http.StatusSeeOther)
 }
 
@@ -3570,7 +3644,7 @@ func (a *App) purgeTrash(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "回收条目已清理，但无法更新记录", http.StatusInternalServerError)
 		return
 	}
-	a.recordAudit("purge_trash", original, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "purge_trash", original, "succeeded")
 	http.Redirect(response, request, "/resources/trash", http.StatusSeeOther)
 }
 
@@ -3658,7 +3732,7 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 			case "", conflictActionSkip:
 				_ = part.Close()
 				results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.skipped"), Detail: webText(locale, "upload_results.kept_current")})
-				a.recordAudit("upload_file", filename, "skipped", request.RemoteAddr)
+				a.recordAuditForRequest(request, "upload_file", filename, "skipped")
 				continue
 			case conflictActionRename:
 				uploadName, err = a.managed.AvailableName(relative, filename)
@@ -3673,7 +3747,7 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 		if replace && (!targetInfo.Mode().IsRegular() || a.runs.ConflictsPath(targetPath)) {
 			_ = part.Close()
 			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: webText(locale, "upload_results.cannot_overwrite")})
-			a.recordAudit("upload_file", filename, "rejected", request.RemoteAddr)
+			a.recordAuditForRequest(request, "upload_file", filename, "rejected")
 			continue
 		}
 		storedID, idErr := randomToken(18)
@@ -3686,7 +3760,7 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 		if uploadErr != nil {
 			_ = part.Close()
 			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: uploadErr.Error()})
-			a.recordAudit("upload_file", filename, "rejected", request.RemoteAddr)
+			a.recordAuditForRequest(request, "upload_file", filename, "rejected")
 			continue
 		}
 		_ = part.Close()
@@ -3695,11 +3769,11 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 			if err != nil {
 				_ = a.managed.RollbackTextSave(targetPath, storedID)
 				results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: "替换已回滚：无法记录旧文件"})
-				a.recordAudit("upload_file", filename, "failed", request.RemoteAddr)
+				a.recordAuditForRequest(request, "upload_file", filename, "failed")
 				continue
 			}
 		}
-		a.recordAudit("upload_file", uploadName, "succeeded", request.RemoteAddr)
+		a.recordAuditForRequest(request, "upload_file", uploadName, "succeeded")
 		detail := webText(locale, "upload_results.saved")
 		if uploadName != filename {
 			detail = fmt.Sprintf(webText(locale, "upload_results.renamed"), uploadName)
@@ -3742,11 +3816,14 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 			SortSummary, RootURL, SearchURL                                  string
 			Locale                                                           webLocale
 			DeferredData                                                     bool
+			CanWrite, CanExecute, CanManageExecution                         bool
 		}{
 			CSRFToken: current.csrfToken, ManagedRoot: a.managedRoot, CurrentPath: relative,
 			Query: query, SortField: sortField, Direction: direction, SortSummary: fileSortSummary(locale, sortField, direction),
 			RootURL: filesStateURL("", "", sortField, direction, 0), SearchURL: filesURL(relative),
 			Locale: locale, DeferredData: true,
+			CanWrite: roleAllows(current.role, permissionWriteFiles), CanExecute: roleAllows(current.role, permissionExecute),
+			CanManageExecution: roleAllows(current.role, permissionManageExecution),
 		})
 		return
 	}
@@ -3834,6 +3911,9 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		SearchURL           string
 		Pagination          paginationView
 		CanToggleExecutable bool
+		CanWrite            bool
+		CanExecute          bool
+		CanManageExecution  bool
 		ParentURL           string
 		VersionProtection   bool
 		Locale              webLocale
@@ -3843,8 +3923,10 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		Query: query, SortField: sortField, Direction: direction, SortSummary: fileSortSummary(locale, sortField, direction),
 		RootURL: filesStateURL("", "", sortField, direction, 0), ClearURL: filesStateURL(relative, "", sortField, direction, 0),
 		SearchURL:  filesURL(relative),
-		Pagination: pagination, CanToggleExecutable: runtime.GOOS == "linux", ParentURL: parentURL,
-		VersionProtection: protectionState.Enabled, Locale: locale,
+		Pagination: pagination, CanToggleExecutable: runtime.GOOS == "linux" && roleAllows(current.role, permissionWriteFiles), ParentURL: parentURL,
+		CanWrite: roleAllows(current.role, permissionWriteFiles), CanExecute: roleAllows(current.role, permissionExecute),
+		CanManageExecution: roleAllows(current.role, permissionManageExecution),
+		VersionProtection:  protectionState.Enabled, Locale: locale,
 	})
 }
 
@@ -3913,7 +3995,7 @@ func (a *App) createDirectory(response http.ResponseWriter, request *http.Reques
 		http.Error(response, "目录已创建，但版本保护检查点失败："+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	a.recordAudit("create_directory", request.FormValue("name"), "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "create_directory", request.FormValue("name"), "succeeded")
 	http.Redirect(response, request, filesURL(request.FormValue("path")), http.StatusSeeOther)
 }
 
@@ -3925,17 +4007,20 @@ func (a *App) changePassword(response http.ResponseWriter, request *http.Request
 	}
 
 	var username, passwordHash string
-	if err := a.db.QueryRow("SELECT username, password_hash FROM admin WHERE id = 1").Scan(&username, &passwordHash); err != nil {
-		http.Error(response, "无法读取管理员账号", http.StatusInternalServerError)
+	if err := a.db.QueryRow("SELECT username, password_hash FROM users WHERE id = ?", current.userID).Scan(&username, &passwordHash); err != nil {
+		http.Error(response, "无法读取用户账号", http.StatusInternalServerError)
 		return
 	}
 	if !verifyPassword(request.FormValue("current_password"), passwordHash) {
 		http.Error(response, "当前密码错误", http.StatusUnauthorized)
 		return
 	}
-	newUsername := strings.TrimSpace(request.FormValue("username"))
-	if newUsername == "" {
-		newUsername = username
+	newUsername := username
+	if current.role == roleAdministrator {
+		newUsername = strings.TrimSpace(request.FormValue("username"))
+		if newUsername == "" {
+			newUsername = username
+		}
 	}
 	if !utf8.ValidString(newUsername) || utf8.RuneCountInString(newUsername) > 64 || strings.ContainsAny(newUsername, "\r\n\x00") {
 		http.Error(response, "用户名必须为 1 至 64 个有效 Unicode 字符", http.StatusBadRequest)
@@ -3962,24 +4047,27 @@ func (a *App) changePassword(response http.ResponseWriter, request *http.Request
 		return
 	}
 	defer func() { _ = transaction.Rollback() }()
-	if _, err := transaction.Exec("UPDATE admin SET username = ?, password_hash = ?, must_change_password = 0 WHERE id = 1", newUsername, newHash); err != nil {
+	if _, err := transaction.Exec("UPDATE users SET username = ?, password_hash = ?, auth_version = auth_version + 1, updated_at = ? WHERE id = ?", newUsername, newHash, time.Now().UTC().Unix(), current.userID); err != nil {
 		http.Error(response, "无法保存新密码", http.StatusInternalServerError)
 		return
 	}
-	if _, err := transaction.Exec("DELETE FROM sessions"); err != nil {
+	if _, err := transaction.Exec("DELETE FROM sessions WHERE user_id = ?", current.userID); err != nil {
 		http.Error(response, "无法撤销会话", http.StatusInternalServerError)
 		return
 	}
-	passwordPath := filepath.Join(a.stateRoot, "secrets", initialPasswordFilename)
-	if err := os.Remove(passwordPath); err != nil && !os.IsNotExist(err) {
-		http.Error(response, "无法删除一次性密码文件", http.StatusInternalServerError)
-		return
+	if current.role == roleAdministrator {
+		passwordPath := filepath.Join(a.stateRoot, "secrets", initialPasswordFilename)
+		if err := os.Remove(passwordPath); err != nil && !os.IsNotExist(err) {
+			http.Error(response, "无法删除一次性密码文件", http.StatusInternalServerError)
+			return
+		}
 	}
 	if err := transaction.Commit(); err != nil {
 		http.Error(response, "无法保存新密码", http.StatusInternalServerError)
 		return
 	}
-	a.recordAudit("change_credentials", newUsername, "succeeded", request.RemoteAddr)
+	a.cancelAuthenticatedRequests(current.userID)
+	a.recordAuditForRequest(request, "change_credentials", newUsername, "succeeded")
 	http.SetCookie(response, &http.Cookie{Name: sessionCookieName, Path: "/", MaxAge: -1, HttpOnly: true})
 	http.Redirect(response, request, "/login", http.StatusSeeOther)
 }
@@ -3994,26 +4082,30 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 	if splitErr != nil {
 		remoteHost = request.RemoteAddr
 	}
-	loginKeys := []string{"ip\x00" + remoteHost, "account\x00admin"}
+	requestedUsername := strings.TrimSpace(request.FormValue("username"))
+	loginKeys := []string{"ip\x00" + remoteHost, "account\x00" + requestedUsername}
 	if retryAfter := a.loginRetryAfter(loginKeys...); retryAfter > 0 {
 		response.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(retryAfter.Seconds()))))
-		a.recordAudit("login", "admin", "rate_limited", request.RemoteAddr)
+		a.recordAuditForRequest(request, "login", requestedUsername, "rate_limited")
 		renderLoginFailure(response, request, http.StatusTooManyRequests, request.FormValue("username"), "登录尝试过于频繁，请稍后重试")
 		return
 	}
 
-	var username, passwordHash string
-	err = a.db.QueryRow("SELECT username, password_hash FROM admin WHERE id = 1").Scan(
+	var userID, username, passwordHash string
+	var role userRole
+	var enabled bool
+	var authVersion int64
+	err = a.db.QueryRow("SELECT id, username, password_hash, role, enabled, auth_version FROM users WHERE username = ?", requestedUsername).Scan(
+		&userID,
 		&username,
 		&passwordHash,
+		&role,
+		&enabled,
+		&authVersion,
 	)
-	if err != nil {
-		renderLoginFailure(response, request, http.StatusInternalServerError, request.FormValue("username"), "暂时无法登录，请稍后重试")
-		return
-	}
-	if request.FormValue("username") != username || !verifyPassword(request.FormValue("password"), passwordHash) {
+	if err != nil || !enabled || !verifyPassword(request.FormValue("password"), passwordHash) {
 		a.recordLoginFailure(loginKeys...)
-		a.recordAudit("login", "admin", "failed", request.RemoteAddr)
+		a.recordAuditForRequest(request, "login", requestedUsername, "failed")
 		renderLoginFailure(response, request, http.StatusUnauthorized, request.FormValue("username"), "用户名或密码错误")
 		return
 	}
@@ -4031,8 +4123,8 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 	}
 	now := time.Now().UTC()
 	if _, err := a.db.Exec(
-		"INSERT INTO sessions (token_hash, csrf_token, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?)",
-		hashToken(token), sessionCSRF, now.Unix(), now.Unix(), now.Add(7*24*time.Hour).Unix(),
+		"INSERT INTO sessions (token_hash, user_id, auth_version, csrf_token, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		hashToken(token), userID, authVersion, sessionCSRF, now.Unix(), now.Unix(), now.Add(7*24*time.Hour).Unix(),
 	); err != nil {
 		renderLoginFailure(response, request, http.StatusInternalServerError, request.FormValue("username"), "暂时无法登录，请稍后重试")
 		return
@@ -4047,7 +4139,7 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 		MaxAge:   7 * 24 * 60 * 60,
 	})
 	http.SetCookie(response, &http.Cookie{Name: loginCSRFCookieName, Path: "/", MaxAge: -1})
-	a.recordAudit("login", "admin", "succeeded", request.RemoteAddr)
+	a.recordAuditWithActor("login", username, "succeeded", request.RemoteAddr, userID, username, role)
 	completeLogin(response, request, "/monitor")
 }
 
@@ -4059,7 +4151,8 @@ func (a *App) logout(response http.ResponseWriter, request *http.Request) {
 	if cookie, err := request.Cookie(sessionCookieName); err == nil {
 		_, _ = a.db.Exec("DELETE FROM sessions WHERE token_hash = ?", hashToken(cookie.Value))
 	}
-	a.recordAudit("logout", "admin", "succeeded", request.RemoteAddr)
+	current := request.Context().Value(sessionContextKey).(session)
+	a.recordAuditForRequest(request, "logout", current.username, "succeeded")
 	http.SetCookie(response, &http.Cookie{Name: sessionCookieName, Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 	http.Redirect(response, request, "/login", http.StatusSeeOther)
 }
@@ -4105,7 +4198,12 @@ func (a *App) clearLoginFailures(keys ...string) {
 }
 
 type session struct {
-	csrfToken string
+	userID      string
+	username    string
+	role        userRole
+	authVersion int64
+	tokenHash   string
+	csrfToken   string
 }
 
 func (a *App) loadSession(request *http.Request) (session, string, bool) {
@@ -4114,13 +4212,14 @@ func (a *App) loadSession(request *http.Request) (session, string, bool) {
 		return session{}, "", false
 	}
 	var current session
-	var username string
 	var lastSeen, expiresAt int64
+	current.tokenHash = hashToken(cookie.Value)
 	err = a.db.QueryRow(`
-		SELECT sessions.csrf_token, sessions.last_seen_at, sessions.expires_at, admin.username
-		FROM sessions CROSS JOIN admin
-		WHERE sessions.token_hash = ? AND admin.id = 1`, hashToken(cookie.Value),
-	).Scan(&current.csrfToken, &lastSeen, &expiresAt, &username)
+		SELECT sessions.csrf_token, sessions.last_seen_at, sessions.expires_at,
+			users.id, users.username, users.role, users.auth_version
+		FROM sessions JOIN users ON users.id = sessions.user_id
+		WHERE sessions.token_hash = ? AND sessions.auth_version = users.auth_version AND users.enabled = 1`, current.tokenHash,
+	).Scan(&current.csrfToken, &lastSeen, &expiresAt, &current.userID, &current.username, &current.role, &current.authVersion)
 	now := time.Now().UTC()
 	if err != nil || now.Unix() >= expiresAt || now.Sub(time.Unix(lastSeen, 0)) >= 12*time.Hour {
 		if err == nil {
@@ -4128,7 +4227,7 @@ func (a *App) loadSession(request *http.Request) (session, string, bool) {
 		}
 		return session{}, "", false
 	}
-	return current, username, true
+	return current, current.username, true
 }
 
 func validSessionCSRF(request *http.Request) bool {
@@ -4143,13 +4242,68 @@ func (a *App) requireSession(next http.Handler) http.Handler {
 			http.Redirect(response, request, "/login", http.StatusSeeOther)
 			return
 		}
+		if !roleAllows(current.role, permissionForRequest(request)) {
+			http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
+			return
+		}
 		cookie, _ := request.Cookie(sessionCookieName)
 		now := time.Now().UTC()
 		if !a.validation.Load() {
 			_, _ = a.db.Exec("UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?", now.Unix(), hashToken(cookie.Value))
 		}
-		next.ServeHTTP(response, request.WithContext(context.WithValue(request.Context(), sessionContextKey, current)))
+		authenticatedContext := context.WithValue(request.Context(), sessionContextKey, current)
+		authenticatedContext, cancel := context.WithCancel(authenticatedContext)
+		requestID := a.registerAuthenticatedRequest(current.userID, cancel)
+		defer a.unregisterAuthenticatedRequest(current.userID, requestID)
+		defer cancel()
+		next.ServeHTTP(response, request.WithContext(authenticatedContext))
 	})
+}
+
+func (a *App) registerAuthenticatedRequest(userID string, cancel context.CancelFunc) uint64 {
+	a.activeRequestsMu.Lock()
+	defer a.activeRequestsMu.Unlock()
+	if a.activeRequests == nil {
+		a.activeRequests = make(map[string]map[uint64]context.CancelFunc)
+	}
+	a.activeRequestID++
+	if a.activeRequests[userID] == nil {
+		a.activeRequests[userID] = make(map[uint64]context.CancelFunc)
+	}
+	a.activeRequests[userID][a.activeRequestID] = cancel
+	return a.activeRequestID
+}
+
+func (a *App) unregisterAuthenticatedRequest(userID string, requestID uint64) {
+	a.activeRequestsMu.Lock()
+	defer a.activeRequestsMu.Unlock()
+	requests := a.activeRequests[userID]
+	delete(requests, requestID)
+	if len(requests) == 0 {
+		delete(a.activeRequests, userID)
+	}
+}
+
+func (a *App) cancelAuthenticatedRequests(userID string) {
+	a.activeRequestsMu.Lock()
+	requests := a.activeRequests[userID]
+	delete(a.activeRequests, userID)
+	a.activeRequestsMu.Unlock()
+	for _, cancel := range requests {
+		cancel()
+	}
+}
+
+func (a *App) cancelAllAuthenticatedRequests() {
+	a.activeRequestsMu.Lock()
+	active := a.activeRequests
+	a.activeRequests = make(map[string]map[uint64]context.CancelFunc)
+	a.activeRequestsMu.Unlock()
+	for _, requests := range active {
+		for _, cancel := range requests {
+			cancel()
+		}
+	}
 }
 
 func randomToken(size int) (string, error) {
@@ -4166,9 +4320,20 @@ func hashToken(token string) string {
 }
 
 func (a *App) recordAudit(action, target, result, source string) {
+	a.recordAuditWithActor(action, target, result, source, "", "", "")
+}
+
+func (a *App) recordAuditForRequest(request *http.Request, action, target, result string) {
+	current, _ := request.Context().Value(sessionContextKey).(session)
+	a.recordAuditWithActor(action, target, result, request.RemoteAddr, current.userID, current.username, current.role)
+}
+
+func (a *App) recordAuditWithActor(action, target, result, source, actorUserID, actorUsername string, actorRole userRole) {
 	_, _ = a.db.Exec(
-		"INSERT INTO audit_events (occurred_at, action, target, result, source_address) VALUES (?, ?, ?, ?, ?)",
-		time.Now().UTC().Unix(), action, target, result, source,
+		`INSERT INTO audit_events
+			(occurred_at, action, target, result, source_address, actor_user_id, actor_username, actor_role)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		time.Now().UTC().Unix(), action, target, result, source, actorUserID, actorUsername, actorRole,
 	)
 }
 

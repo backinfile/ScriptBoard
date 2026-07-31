@@ -179,6 +179,7 @@ type shellNavigationGroup struct {
 type applicationShellData struct {
 	Locale                                webLocale
 	Username, CSRFToken, ReturnTo         string
+	Role                                  string
 	Environment, Status, StatusState      string
 	ActiveRuns                            int
 	WebsiteState                          string
@@ -187,6 +188,7 @@ type applicationShellData struct {
 	ApplicationIssueCount                 int
 	Navigation                            []shellNavigationGroup
 	SettingsCurrent, ChineseLocaleCurrent bool
+	CanManageUsers                        bool
 }
 
 func (a *App) addApplicationShell(request *http.Request, body []byte) []byte {
@@ -209,15 +211,16 @@ func (a *App) addApplicationShell(request *http.Request, body []byte) []byte {
 	}
 	statusState := shellStatus.State
 	status := webText(locale, "status."+statusState)
-	navigation := shellNavigation(locale, request.URL.Path)
+	navigation := shellNavigation(locale, request.URL.Path, current.role)
 	var shell bytes.Buffer
 	_ = applicationShellTemplate.Execute(&shell, applicationShellData{
-		Locale: locale, Username: username, CSRFToken: current.csrfToken, ReturnTo: request.URL.RequestURI(),
+		Locale: locale, Username: username, Role: string(current.role), CSRFToken: current.csrfToken, ReturnTo: request.URL.RequestURI(),
 		Environment: environment, Status: status, StatusState: statusState, ActiveRuns: shellStatus.ActiveRuns,
 		WebsiteState: shellStatus.WebsiteState, WebsiteDown: shellStatus.WebsiteDown, WebsiteVerifying: shellStatus.WebsiteVerifying,
 		StoppedPinnedApplications: shellStatus.StoppedPinnedApplications, ApplicationIssueCount: shellStatus.ApplicationIssueCount,
 		Navigation: navigation, SettingsCurrent: strings.HasPrefix(request.URL.Path, "/settings/"),
 		ChineseLocaleCurrent: locale == localeSimplifiedChinese,
+		CanManageUsers:       roleAllows(current.role, permissionManageUsers),
 	})
 
 	bodyText := prepareApplicationDocument(body, locale)
@@ -251,29 +254,35 @@ func prepareApplicationDocument(body []byte, locale webLocale) string {
 	return bodyText
 }
 
-func shellNavigation(locale webLocale, path string) []shellNavigationGroup {
+func shellNavigation(locale webLocale, path string, role userRole) []shellNavigationGroup {
 	type itemSpec struct {
 		href, key, icon string
+		permission      permission
 	}
 	specs := []struct {
 		key   string
 		items []itemSpec
 	}{
-		{key: "nav.monitor", items: []itemSpec{{"/monitor", "nav.overview", "activity"}, {"/monitor/applications", "nav.applications", "app-window"}, {"/monitor/websites", "nav.websites", "network"}}},
-		{key: "nav.resources", items: []itemSpec{{"/resources/files/", "nav.files", "folder-code"}, {"/resources/variables", "nav.variables", "braces"}}},
-		{key: "nav.configuration", items: []itemSpec{{"/config/quick-runs", "nav.quick_runs", "zap"}, {"/config/schedules", "nav.schedules", "calendar-clock"}}},
-		{key: "nav.history", items: []itemSpec{{"/history/runs", "nav.runs", "square-terminal"}, {"/history/audit", "nav.audit", "scroll-text"}}},
+		{key: "nav.monitor", items: []itemSpec{{"/monitor", "nav.overview", "activity", permissionObserve}, {"/monitor/applications", "nav.applications", "app-window", permissionObserve}, {"/monitor/websites", "nav.websites", "network", permissionObserve}}},
+		{key: "nav.resources", items: []itemSpec{{"/resources/files/", "nav.files", "folder-code", permissionReadFiles}, {"/resources/variables", "nav.variables", "braces", permissionManageExecution}}},
+		{key: "nav.configuration", items: []itemSpec{{"/config/quick-runs", "nav.quick_runs", "zap", permissionObserve}, {"/config/schedules", "nav.schedules", "calendar-clock", permissionObserve}}},
+		{key: "nav.history", items: []itemSpec{{"/history/runs", "nav.runs", "square-terminal", permissionObserve}, {"/history/audit", "nav.audit", "scroll-text", permissionReadAudit}}},
 	}
 	groups := make([]shellNavigationGroup, 0, len(specs))
 	for _, group := range specs {
 		items := make([]shellNavigationItem, 0, len(group.items))
 		for _, item := range group.items {
+			if !roleAllows(role, item.permission) {
+				continue
+			}
 			current := path == item.href || item.href == "/monitor" && path == "/monitor" ||
 				item.href == "/resources/files/" && (strings.HasPrefix(path, "/resources/files/") || path == "/resources/trash") ||
 				item.href != "/monitor" && item.href != "/resources/files/" && strings.HasPrefix(path, item.href)
 			items = append(items, shellNavigationItem{Href: item.href, Label: webText(locale, item.key), Icon: item.icon, Current: current})
 		}
-		groups = append(groups, shellNavigationGroup{Label: webText(locale, group.key), Items: items})
+		if len(items) > 0 {
+			groups = append(groups, shellNavigationGroup{Label: webText(locale, group.key), Items: items})
+		}
 	}
 	return groups
 }

@@ -55,7 +55,7 @@ FORM: Flat measurement rails and a responsive record ledger; no control-plane ac
           <div class="pinned-application__actions">
             {{if eq .Kind "docker"}}<a class="icon-button application-log-link" href="/monitor/applications/{{.ID}}/logs" aria-label="{{t $.Locale "logs.follow"}} {{.Name}}" title="{{t $.Locale "logs.follow"}}"><span data-lucide="scroll-text" aria-hidden="true"></span></a>{{end}}
             <span class="application-record__cue" data-lucide="chevron-right" aria-hidden="true"></span>
-            <details class="action-menu pinned-application__menu">
+            {{if $.CanManage}}<details class="action-menu pinned-application__menu">
               <summary aria-label="{{t $.Locale "applications.more_actions"}} {{.Name}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary>
               <div>
                 <form method="post" action="/monitor/applications/{{.ID}}/move"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="direction" value="top"><button type="submit" {{if not .CanMoveUp}}disabled{{end}}><span data-lucide="arrow-up-to-line" aria-hidden="true"></span>{{t $.Locale "applications.move_top"}}</button></form>
@@ -63,7 +63,7 @@ FORM: Flat measurement rails and a responsive record ledger; no control-plane ac
                 <form method="post" action="/monitor/applications/{{.ID}}/move"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="direction" value="down"><button type="submit" {{if not .CanMoveDown}}disabled{{end}}><span data-lucide="arrow-down" aria-hidden="true"></span>{{t $.Locale "applications.move_down"}}</button></form>
                 <form method="post" action="/monitor/applications/{{.ID}}/unpin"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="action-menu__danger" type="submit"><span data-lucide="pin-off" aria-hidden="true"></span>{{t $.Locale "applications.unpin"}}</button></form>
               </div>
-            </details>
+            </details>{{end}}
           </div>
         </div>
       </article>
@@ -131,7 +131,7 @@ FORM: Flat measurement rails and a responsive record ledger; no control-plane ac
           {{range .Applications}}
           <tr class="application-running-row" tabindex="0" aria-haspopup="dialog" aria-label="{{t $.Locale "applications.open_details"}} {{.Name}}" data-application-row data-application-mode="runtime" data-application-running="true" data-kind="{{.Kind}}" data-application-id="{{.ID}}" data-application-name="{{.Name}}" data-application-kind="{{.Kind}}" data-application-kind-label="{{if eq .Kind "docker"}}Docker {{t $.Locale "applications.container"}}{{else}}{{t $.Locale "applications.host_application"}}{{end}}" data-application-technical="{{.Technical}}" data-application-status="{{t $.Locale "applications.running"}}" data-application-cpu="{{if .RateAvailable}}{{percent .CPUPercent}}{{else}}–{{end}}" data-application-memory="{{humanBytes .MemoryBytes}}" data-application-io="{{if .RateAvailable}}{{humanRate .ReadBytesPerSecond}} / {{humanRate .WriteBytesPerSecond}}{{else}}–{{end}}" {{if eq .Kind "docker"}}data-application-log-url="/monitor/applications/{{.ID}}/logs"{{end}} data-application-detail-url="/monitor/applications/{{.ID}}/details">
             <td class="application-running-pin" data-label="{{t $.Locale "applications.pin"}}">
-              {{if .Pinnable}}<form method="post" action="/monitor/applications/{{.ID}}/{{if .Pinned}}unpin{{else}}pin{{end}}"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="icon-button{{if .Pinned}} is-selected{{end}}" type="submit" aria-label="{{if .Pinned}}{{t $.Locale "applications.unpin"}}{{else}}{{t $.Locale "applications.pin"}}{{end}} {{.Name}}"><span data-lucide="pin" aria-hidden="true"></span></button></form>{{else}}<span class="application-restricted" title="{{t $.Locale "applications.identity_restricted"}}"><span data-lucide="shield-alert" aria-hidden="true"></span></span>{{end}}
+              {{if $.CanManage}}{{if .Pinnable}}<form method="post" action="/monitor/applications/{{.ID}}/{{if .Pinned}}unpin{{else}}pin{{end}}"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="icon-button{{if .Pinned}} is-selected{{end}}" type="submit" aria-label="{{if .Pinned}}{{t $.Locale "applications.unpin"}}{{else}}{{t $.Locale "applications.pin"}}{{end}} {{.Name}}"><span data-lucide="pin" aria-hidden="true"></span></button></form>{{else}}<span class="application-restricted" title="{{t $.Locale "applications.identity_restricted"}}"><span data-lucide="shield-alert" aria-hidden="true"></span></span>{{end}}{{end}}
             </td>
             <td class="application-table-identity" data-label="{{t $.Locale "applications.application"}}">
               <div class="application-table-identity__content">

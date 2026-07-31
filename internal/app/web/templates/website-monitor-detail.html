@@ -24,16 +24,20 @@
 </div>
 </div>
 <div class="website-detail-actions">
+{{if .CanManage}}
 <form method="post" action="/monitor/websites/{{.Monitor.ID}}/check" data-website-check-form data-check-timeout-ms="{{.Raw.Config.Timeout.Milliseconds}}" data-checking-label="{{t .Locale "website.detail.checking"}}" data-complete-label="{{t .Locale "website.detail.check_complete"}}">
 <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
 <button class="button button--primary" type="submit" data-website-focus-key="check"><span data-lucide="refresh-cw" aria-hidden="true"></span>{{t .Locale "website.detail.check_now"}}</button>
 </form>
+{{end}}
 {{if eq .Raw.Config.Kind "http"}}<a class="button website-open-external" href="{{.Monitor.URL}}" target="_blank" rel="noopener noreferrer" data-native data-website-focus-key="open-site"><span data-lucide="external-link" aria-hidden="true"></span>{{t .Locale "website.open_site"}}</a>{{end}}
+{{if .CanManage}}
 <a class="button" href="/monitor/websites/{{.Monitor.ID}}/edit" data-task-link data-website-focus-key="edit"><span data-lucide="square-pen" aria-hidden="true"></span>{{t .Locale "website.detail.edit"}}</a>
 <form method="post" action="/monitor/websites/{{.Monitor.ID}}/{{if eq .Monitor.State "paused"}}resume{{else}}pause{{end}}" data-async>
 <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
 <button class="button" type="submit" data-website-focus-key="pause"><span data-lucide="{{if eq .Monitor.State "paused"}}play{{else}}pause{{end}}" aria-hidden="true"></span>{{if eq .Monitor.State "paused"}}{{t .Locale "website.detail.resume"}}{{else}}{{t .Locale "website.detail.pause"}}{{end}}</button>
 </form>
+{{end}}
 </div>
 </header>
 
@@ -169,13 +173,13 @@
 </details>
 </section>
 
-<section class="website-detail-section website-danger-zone" data-website-detail-section="danger">
+{{if .CanManage}}<section class="website-detail-section website-danger-zone" data-website-detail-section="danger">
 <header><div><h2>{{t .Locale "website.detail.delete_title"}}</h2><p>{{t .Locale "website.detail.delete_description"}}</p></div></header>
 <form method="post" action="/monitor/websites/{{.Monitor.ID}}/delete" data-async data-confirm="{{t .Locale "website.detail.delete_confirm"}} “{{.Monitor.Name}}”">
 <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
 <button class="button button--danger" name="confirm" value="yes" type="submit" data-website-focus-key="delete">{{t .Locale "website.detail.delete_title"}}</button>
 </form>
-</section>
+</section>{{end}}
 </div>
 </main>
 </body>

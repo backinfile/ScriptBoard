@@ -139,7 +139,7 @@ func (a *App) createScheduleGroup(response http.ResponseWriter, request *http.Re
 		http.Error(response, "无法创建计划分组", http.StatusInternalServerError)
 		return
 	}
-	a.recordAudit("create_schedule_group", id, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "create_schedule_group", id, "succeeded")
 	http.Redirect(response, request, "/config/schedules", http.StatusSeeOther)
 }
 
@@ -184,7 +184,7 @@ func (a *App) updateScheduleGroup(response http.ResponseWriter, request *http.Re
 		http.Error(response, "计划分组不存在", http.StatusNotFound)
 		return
 	}
-	a.recordAudit("update_schedule_group", id, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "update_schedule_group", id, "succeeded")
 	http.Redirect(response, request, "/config/schedules", http.StatusSeeOther)
 }
 
@@ -232,7 +232,7 @@ func (a *App) moveScheduleGroup(response http.ResponseWriter, request *http.Requ
 		http.Error(response, "无法调整计划分组顺序", http.StatusInternalServerError)
 		return
 	}
-	a.recordAudit("move_schedule_group", id, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "move_schedule_group", id, "succeeded")
 	http.Redirect(response, request, "/config/schedules", http.StatusSeeOther)
 }
 
@@ -264,6 +264,6 @@ func (a *App) deleteScheduleGroup(response http.ResponseWriter, request *http.Re
 		http.Error(response, "无法删除计划分组", http.StatusInternalServerError)
 		return
 	}
-	a.recordAudit("delete_schedule_group", id, "succeeded", request.RemoteAddr)
+	a.recordAuditForRequest(request, "delete_schedule_group", id, "succeeded")
 	http.Redirect(response, request, "/config/schedules", http.StatusSeeOther)
 }

@@ -28,6 +28,7 @@ var (
 	variablesTemplate            = mustWebTemplate("variables")
 	versionProtectionTemplate    = mustWebTemplate("version-protection")
 	updatesTemplate              = mustWebTemplate("updates")
+	usersTemplate                = mustWebTemplate("users")
 	websiteMonitorDetailTemplate = mustWebTemplate("website-monitor-detail")
 	websiteMonitorFormTemplate   = mustWebTemplate("website-monitor-form")
 	websiteMonitorListTemplate   = mustWebTemplate("website-monitor-list")
