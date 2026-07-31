@@ -4,76 +4,86 @@
 
 > 在浏览器里管理、运行和计划一台主机上的可信脚本。
 
-ScriptBoard 是一个面向单台 Windows 或 Linux 主机的自托管脚本操作台。把现有脚本放进受管目录后，即可通过浏览器管理文件、填写参数、查看实时日志、保存常用操作、设置定时计划，并追踪每一次变更和执行。
+ScriptBoard 是面向单台 Windows 或 Linux 主机的自托管脚本操作台。把现有脚本放进受管目录后，即可通过浏览器管理文件、填写参数、查看实时日志、复用常用操作、设置定时计划，并追踪每一次变更和执行。
 
-它适合个人服务器、家庭实验室、小型工作站，以及由少量可信用户共同维护的脚本主机。无需逐个注册脚本，也不需要代理集群、消息队列或生产环境 Node.js。
-
-[下载最新版本](https://github.com/backinfile/ScriptBoard/releases/latest) · [5 分钟快速开始](#快速开始) · [安装为系统服务](#安装为系统服务) · [常见问题](#常见问题)
+[下载最新版本](https://github.com/backinfile/ScriptBoard/releases/latest) · [快速开始](#快速开始) · [部署为系统服务](#部署为系统服务) · [排查问题](#排查问题)
 
 > [!WARNING]
-> ScriptBoard 不是安全沙箱。脚本会继承 ScriptBoard 进程的操作系统身份、权限和环境变量。请只运行你完全信任的脚本，不要把它交给不受信任的用户使用。
+> ScriptBoard 不是安全沙箱。脚本会继承 ScriptBoard 服务进程的操作系统身份、权限和环境变量。请只运行你完全信任的脚本，并且只向可信用户开放。
 
-![ScriptBoard 快捷执行](./integration/browser/snapshots/readme-quick-runs-zh.png)
+![ScriptBoard 快捷执行页面](./integration/browser/snapshots/readme-quick-runs-zh.png)
 
-## 你可以用它做什么
+## 导航
+
+- [产品概览](#产品概览)：能力、适用边界和支持平台
+- [快速开始](#快速开始)：用便携模式完成第一次运行
+- [核心工作流](#核心工作流)：文件、执行、计划、监控和恢复
+- [部署与运维](#部署与运维)：系统服务、更新和备份
+- [配置与安全](#配置与安全)：配置优先级、网络和用户角色
+- [排查问题](#排查问题)：诊断、密码重置和常见故障
+- [开发](#开发)：构建、测试、发布和项目文档
+
+## 产品概览
 
 | 使用场景 | ScriptBoard 提供的能力 |
 | --- | --- |
-| 集中管理脚本 | 浏览、搜索、上传、下载、移动、重命名、在线预览和编辑受管文件 |
-| 手动执行脚本 | 运行 PowerShell、Python、Shell、Batch 和 CMD 脚本，实时查看 stdout 与 stderr |
-| 复用常用操作 | 把脚本、参数和超时设置保存为快捷执行项，并进行分组和排序 |
+| 集中管理脚本 | 浏览、搜索、上传、下载、移动、重命名、预览和在线编辑受管文件 |
+| 手动执行 | 运行 PowerShell、Python、Shell、Batch 和 CMD 脚本，实时查看 stdout 与 stderr |
+| 复用常用操作 | 把脚本、参数模板和超时保存为快捷执行项，并进行分组、排序、复制和软锁 |
 | 定时运行 | 使用五字段 Cron 创建计划，预览触发时间，并设置超时和重叠策略 |
-| 排查问题 | 查看执行历史与审计记录，并实时跟随 Docker 容器或受管文本文件日志 |
+| 观察与排障 | 查看执行历史、审计记录、宿主资源、本机应用、Docker 容器和网站端点 |
 | 防止误改 | 使用应用回收站恢复误删文件；可选启用本地 Git 版本保护 |
-| 观察主机与应用 | 查看宿主资源，以及本机应用和 Docker 容器的 CPU、内存与磁盘 I/O；可 Pin 重点应用 |
-| 保持应用更新 | 自动检查官方稳定版，由管理员确认后完成下载、校验、重启和失败回滚 |
+| 安全更新 | 检查官方稳定版，由管理员确认后完成下载、签名校验、重启和失败回滚 |
 
-Web 界面支持简体中文和美式英语，会根据浏览器语言自动选择，也可以在界面中随时切换。桌面和移动浏览器均可使用。
+Web 界面支持简体中文和美式英语，会根据浏览器语言自动选择，也可以随时切换。桌面和移动浏览器均可使用。
 
-## 是否适合你
+### 适用边界
 
-ScriptBoard 适合以下情况：
+ScriptBoard 适合个人服务器、家庭实验室、小型工作站，以及由少量可信用户共同维护的脚本主机，尤其适合以下情况：
 
-- 你在一台固定主机上维护一批可信脚本；
-- 你希望用浏览器代替远程桌面或反复输入命令；
-- 你需要实时日志、执行历史、定时运行和基础文件恢复；
-- 这台主机由少量可信用户负责，并且固定的管理员、维护员、执行员、观察员四角色足以表达权限边界。
+- 脚本都位于一台固定主机，并且无需逐个注册；
+- 希望用浏览器代替远程桌面或反复输入命令；
+- 需要实时日志、执行历史、定时运行和基础文件恢复；
+- 管理员、维护员、执行员、观察员四种固定角色足以表达权限边界。
 
-如果你需要项目、自定义角色、逐脚本或分组授权、不可信代码隔离、多主机编排、任务队列、公共 API、通知、交互式终端或高可用部署，ScriptBoard 当前并不适合。它也不提供正式的 Docker 部署方案。
+如果你需要自定义角色、逐脚本授权、不可信代码隔离、多主机编排、任务队列、公共 API、外部通知、交互式终端或高可用部署，ScriptBoard 当前并不适合。项目也不提供正式的 Docker 部署方案。
 
-## 支持的平台
+### 支持平台
 
 | 操作系统 | 架构 | 发布包 |
 | --- | --- | --- |
 | Windows 10/11、Windows Server 2019+ | amd64、arm64 | ZIP，包含服务、托盘、托盘启动器和更新程序 |
 | 使用 systemd 的 Linux | amd64、arm64 | tar.gz，包含服务和更新程序 |
 
-请从 [GitHub Releases](https://github.com/backinfile/ScriptBoard/releases/latest) 下载与系统匹配的完整压缩包，不要只复制其中一个可执行文件。发布页中的 `SHA256SUMS` 可用于手工校验；应用更新还会强制验证签名发布清单和归档 SHA-256。
-
-运行某种脚本前，宿主机上还需要安装对应的解释器，例如 PowerShell、Python 或 Bash。ScriptBoard 会自动选择实际存在的解释器。
+运行脚本前，宿主机还需要安装对应的解释器，例如 PowerShell、Python 或 Bash。ScriptBoard 会从平台默认的候选解释器中选择实际存在的程序。
 
 ## 快速开始
 
-下面使用当前目录下的 `managed` 和 `state` 文件夹进行试用，不会安装系统服务。`managed` 存放你要管理的文件，`state` 存放 ScriptBoard 的数据库、日志和登录凭据。
+下面使用发布包解压目录中的 `managed` 和 `state` 文件夹进行试用，不会安装系统服务：
 
-### Windows
+- `managed`：浏览器可以管理和执行的文件；
+- `state`：数据库、日志、会话和登录凭据。
 
-解压 Windows 发布包，在 PowerShell 中进入解压目录并运行：
+### 1. 下载完整发布包
+
+从 [GitHub Releases](https://github.com/backinfile/ScriptBoard/releases/latest) 下载与系统匹配的压缩包并完整解压，不要只复制其中一个可执行文件。发布页中的 `SHA256SUMS` 可用于手工校验。
+
+### 2. 启动便携实例
+
+Windows PowerShell：
 
 ```powershell
 New-Item -ItemType Directory -Force .\managed, .\state
 .\scriptboard.exe serve --managed-root "$PWD\managed" --state-root "$PWD\state"
 ```
 
-保持当前窗口运行，再打开一个 PowerShell 窗口进入同一解压目录，读取初始密码：
+另开一个 PowerShell 窗口，在同一目录读取初始密码：
 
 ```powershell
 Get-Content .\state\secrets\initial-admin-password
 ```
 
-### Linux
-
-解压 Linux 发布包，在终端中进入解压目录并运行：
+Linux：
 
 ```bash
 chmod +x ./scriptboard
@@ -83,38 +93,36 @@ mkdir -p ./managed ./state
   --state-root "$PWD/state"
 ```
 
-保持当前终端运行，再打开一个终端进入同一解压目录，读取初始密码：
+另开一个终端，在同一目录读取初始密码：
 
 ```bash
 cat ./state/secrets/initial-admin-password
 ```
 
-### 登录并运行第一个脚本
+### 3. 运行第一个脚本
 
 1. 打开 <http://127.0.0.1:8787>。
-2. 使用用户名 `admin` 和上一步读取的初始密码登录。
-3. 登录后前往“账户”，将初始密码更换为你自己的密码。
-4. 在“文件”页面上传脚本，或者直接把现有脚本复制到 `managed` 文件夹。
+2. 使用用户名 `admin` 和刚才读取的初始密码登录。
+3. 前往“账户”更换初始密码。
+4. 在“文件”页面上传脚本，或直接把脚本复制到 `managed`。
 5. 打开脚本，选择“运行”，填写参数和超时时间后启动。
-6. 在运行详情页查看实时输出、停止运行，或把本次配置保存为快捷执行项。
+6. 在运行详情页查看实时输出、停止运行，或把配置保存为快捷执行项。
 
 参数框使用简化的 shellwords 语法：空格分隔参数，包含空格的参数可以使用单引号或双引号。ScriptBoard 不会展开管道、重定向、通配符或命令替换。
 
-## 日常使用
+## 核心工作流
 
-### 管理文件
+### 管理和运行文件
 
-- 在“文件”页面上传单个或多个文件、新建目录、搜索和排序；
+- 上传单个或多个文件、新建目录、搜索和排序；
 - 预览文本、Markdown、代码和常见光栅图片；
 - 在线编辑不超过 1 MiB 的 UTF-8 文本；
-- 删除的文件会先进入应用回收站，可恢复或永久清理；
-- ScriptBoard 不会跟随符号链接、Windows Junction 或跨卷挂载边界。
+- 直接在脚本所在目录执行，主机上的外部修改会反映到 Web 界面；
+- 不跟随符号链接、Windows Junction 或跨卷挂载边界。
 
-脚本默认直接在原位置执行，工作目录就是脚本所在目录。你在主机上对受管目录所做的修改，也会直接反映到 Web 界面。
+### 复用参数与操作
 
-### 保存快捷执行
-
-对于经常重复的操作，可以从文件或某次历史执行中保存快捷执行项。快捷执行项会记录脚本路径、参数模板和超时设置，可分组、排序、复制和软锁。
+快捷执行项保存脚本路径、参数模板和超时，可分组、排序、复制和软锁。它们可以从受管脚本或历史运行中创建。
 
 变量可以在参数模板中复用，但变量值以明文保存在 SQLite 中。“密码类型”只会在界面上默认隐藏内容，不代表加密存储，也不能替代密码保险库。
 
@@ -126,33 +134,45 @@ cat ./state/secrets/initial-admin-password
 分钟 小时 日 月 星期
 ```
 
-例如，`0 2 * * *` 表示每天 02:00 运行。创建或编辑计划时，界面会显示规则摘要和未来五次触发时间。
+例如，`0 2 * * *` 表示每天 02:00 运行。界面会显示规则摘要和未来五次触发时间。每个计划可单独设置超时，以及同一脚本正在运行时是否跳过本次触发。
 
-每个计划都可以单独设置超时，以及脚本已经在运行时是否跳过本次触发。服务停机期间错过的计划不会补跑，ScriptBoard 也不会读取或修改系统 crontab。
+服务停机期间错过的计划不会补跑。ScriptBoard 使用内置调度器，不会读取或修改系统 crontab。
 
-### 恢复文件
+### 监控与追踪
 
-回收站用于恢复从 Web 界面删除或替换的文件。需要更完整的修改历史时，可以在“设置 → 版本保护”中启用本地 Git 版本保护：
+- “宿主状态”展示 CPU、内存、存储、磁盘 I/O、网络和 ScriptBoard 服务状态；
+- “应用”只读聚合本机进程和 Docker 容器的资源事实，并允许 Pin 重点应用；
+- “网站监控”从当前主机检查 HTTP、HTTPS、WebSocket 和 WSS 端点；
+- “运行历史”和“审计”保留执行结果与高影响操作的追踪线索；
+- Docker 容器和受管文本文件支持按需实时日志。
+
+网站监控支持短期可用性、TLS 证书事实和 Nginx 候选项预览。Nginx 配置只有在管理员主动操作时才会读取，ScriptBoard 不会修改或重载 Nginx，也不会发送邮件、短信或 Webhook 通知。
+
+### 恢复误删和误改
+
+从 Web 界面删除或替换的文件会先进入应用回收站。需要更完整的修改历史时，可以在“设置 → 版本保护”中启用本地 Git 版本保护：
 
 - 自动为受管文件建立变更检查点；
 - 查看单个文件的历史版本；
-- 通过一个新的本地提交恢复指定版本；
-- 不会执行 `push`、`pull`、`fetch` 或其他远程操作。
+- 通过新的本地提交恢复指定版本；
+- 不执行 `push`、`pull`、`fetch` 或其他远程操作。
 
-版本保护用于恢复误改，不是异机备份。重要数据仍应由你自己的备份方案保护。
+版本保护用于恢复误改，不是异机备份。
 
-## 安装为系统服务
+## 部署与运维
 
-确认试用正常后，可以把 ScriptBoard 安装为开机自动运行的系统服务。请在完整发布包的解压目录中执行安装命令；ScriptBoard 会自行复制到版本化安装目录：
+### 部署为系统服务
+
+请在完整发布包的解压目录中执行安装命令。ScriptBoard 会复制到版本化安装目录：
 
 - Windows：`C:\Program Files\ScriptBoard`
 - Linux：`/opt/scriptboard`
 
-这是新的全新安装基线，不兼容早期“服务直接指向单个可执行文件”的安装方式。如果主机上已经存在旧式 `ScriptBoard` 服务，请先自行停止并卸载旧服务，再按本节全新安装。安装程序不会猜测、迁移或删除旧目录。
+旧式“服务直接指向单个可执行文件”的安装不兼容当前基线。如果主机上已有旧式 `ScriptBoard` 服务，请先停止并卸载旧服务，再进行全新安装。安装程序不会猜测、迁移或删除旧目录。
 
-### Windows 服务
+#### Windows
 
-将下面的配置保存为 `C:\ProgramData\ScriptBoard\config.yaml`：
+将配置保存为 `C:\ProgramData\ScriptBoard\config.yaml`：
 
 ```yaml
 managed_root: C:\ProgramData\ScriptBoard\managed
@@ -170,19 +190,11 @@ run_timeout_grace_seconds: 30
 .\scriptboard.exe service status
 ```
 
-Windows 服务默认以 `LocalSystem` 身份运行。脚本也会继承该身份的权限和环境。
+Windows 服务默认以 `LocalSystem` 身份运行。安装命令还会为当前 Windows 用户配置托盘自启动；退出托盘不会停止服务。
 
-安装命令会为当前 Windows 用户配置托盘自启动。托盘可以显示服务与 HTTP 就绪状态、启停服务、打开管理页面、应用更新页和数据目录。也可以从发布包中手动运行：
+#### Linux
 
-```powershell
-.\scriptboard-tray.exe --config C:\ProgramData\ScriptBoard\config.yaml
-```
-
-退出托盘程序不会停止 ScriptBoard 服务。
-
-### Linux systemd 服务
-
-将下面的配置保存为 `/etc/scriptboard/config.yaml`：
+将配置保存为 `/etc/scriptboard/config.yaml`：
 
 ```yaml
 managed_root: /var/lib/scriptboard/managed
@@ -200,41 +212,50 @@ sudo /opt/scriptboard/current/scriptboard service start
 sudo /opt/scriptboard/current/scriptboard service status
 ```
 
-安装命令会同时创建主服务和独立的更新 helper unit。systemd 服务默认以 `root` 身份运行。卸载服务不会删除配置、受管文件、数据库、日志、本地 Git 历史或已安装版本目录。
+安装命令会同时创建主服务和独立的更新 helper unit。systemd 服务默认以 `root` 身份运行。卸载服务不会删除配置、受管文件、状态数据、本地 Git 历史或已安装版本目录。
 
-## 应用更新
+### 应用更新
 
-正式 Release 默认每 6 小时检查一次官方稳定版。打开“设置 → 应用更新”可以查看当前版本、最新版本、发布说明、签名验证状态和最近一次更新操作。
+正式 Release 默认每 6 小时检查一次官方稳定版，但不会在后台自行安装。管理员需要先选择“下载并验证”，再选择“安装并重启”。更新流程会验证签名发布清单、归档 SHA-256、平台和归档安全性；存在活动 Run 时不会切换版本。
 
-更新不会在后台自行安装。管理员点击“下载并验证”后，ScriptBoard 会先完成签名、SHA-256、平台和归档安全检查；再次点击“安装并重启”才会进入短暂停机：
+更新失败时，系统会恢复旧版本和更新前数据库。便携运行只能检查和下载新版本；源码 `development` 构建不会联网检查。
 
-1. 暂停计划触发并关闭新的 Run 入口；
-2. 如果仍有活动 Run，拒绝更新且不会停止这些 Run；
-3. 正常退出服务并保存一致的 SQLite 快照；
-4. 切换到新版本，以只读验证模式启动；
-5. 连续验活成功后恢复正常运行；启动、迁移或验活失败则自动恢复旧版本和更新前数据库。
+<details>
+<summary>恢复未完成的更新事务</summary>
 
-浏览器会在重启期间自动重连。便携运行可以检查新版本，但不能从任意目录自动替换自身；源码 `development` 构建不会联网检查。
-
-如果更新页显示 `needs_recovery`，不要删除 `state_root/updates` 或手工覆盖版本目录。先停止 ScriptBoard 服务，保存 Install Root 与 State Root 的现场副本，再使用页面显示的 Operation ID 执行；如果页面无法打开，可从 `state_root/updates/active.json` 读取同一个 ID：
+如果更新页显示 `needs_recovery`，不要删除 `state_root/updates` 或手工覆盖版本目录。先停止 ScriptBoard 服务，保存 Install Root 与 State Root 的现场副本，再使用页面显示的 Operation ID 执行：
 
 ```text
 scriptboard update recover --operation <ID> --confirm-operation <ID>
 ```
 
-该命令只恢复尚未提交的更新事务，不是通用降级或备份恢复工具。命令仍失败时，应保持服务停止，并从你自己的异机备份恢复。
+如果页面无法打开，可从 `state_root/updates/active.json` 读取同一个 ID。该命令只恢复尚未提交的更新事务，不是通用降级或备份恢复工具。
 
-自动检查只访问 `backinfile/ScriptBoard` 的 GitHub Releases，不上传脚本、配置或主机信息。若不希望定期联网，可在配置中设置：
+</details>
+
+不希望定期联网时，可设置：
 
 ```yaml
 update_check: false
 ```
 
-关闭后仍可在更新页或使用 `scriptboard update check` 手工检查。由于本功能不兼容旧式服务安装，第一个包含更新程序的版本必须全新安装；自动更新从它的下一个正式版本开始生效。
+自动检查只访问 `backinfile/ScriptBoard` 的 GitHub Releases，不上传脚本、配置或主机信息。
 
-## 配置
+### 数据与备份
 
-配置优先级从低到高为：
+请将以下位置一起纳入长期、异机备份：
+
+| 数据 | 位置 |
+| --- | --- |
+| 受管文件 | `managed_root` |
+| SQLite、执行日志、会话、审计和内部状态 | `state_root` |
+| 服务配置 | Windows：`C:\ProgramData\ScriptBoard\config.yaml`<br>Linux：`/etc/scriptboard/config.yaml` |
+
+应用更新所用的数据库快照和失败回滚不能替代备份。ScriptBoard 启动时会执行只向前兼容的 SQLite 迁移；不要使用旧版本打开已经由新版本升级过的 `state_root`。
+
+## 配置与安全
+
+### 配置优先级
 
 ```text
 内置默认值 → YAML 配置 → SCRIPTBOARD_* 环境变量 → 命令行参数
@@ -244,20 +265,20 @@ update_check: false
 
 | 配置项 | 默认值 | 说明 |
 | --- | --- | --- |
-| `managed_root` | Windows：`C:\ProgramData\ScriptBoard\managed`<br>Linux：`/var/lib/scriptboard/managed` | 浏览器可以管理的唯一文件目录 |
-| `state_root` | Windows：`C:\ProgramData\ScriptBoard\state`<br>Linux：`/var/lib/scriptboard/state` | 数据库、日志、会话和内部状态目录 |
+| `managed_root` | 平台数据目录下的 `managed` | 浏览器可以管理的唯一文件目录 |
+| `state_root` | 平台数据目录下的 `state` | 数据库、日志、会话和内部状态目录 |
 | `listen` | `127.0.0.1:8787` | HTTP 或 HTTPS 监听地址 |
 | `tls_cert`、`tls_key` | 空 | TLS 证书和私钥；非回环监听时必须配置 |
 | `trusted_proxies` | 空 | 允许提供转发头的可信代理 IP 或 CIDR |
 | `git_executable` | 自动查找 | 系统 Git CLI 的绝对路径 |
-| `run_timeout_grace_seconds` | `30` | 自动超时后，强制结束进程树前的宽限秒数 |
+| `run_timeout_grace_seconds` | `30` | 自动超时后强制结束进程树前的宽限秒数 |
 | `update_check` | `true` | 是否定期检查官方稳定版；不会自动安装 |
 | `update_check_interval_hours` | `6` | 自动检查间隔，允许 1–168 小时 |
-| `admin_username` | 空 | 启动时覆盖管理员用户名 |
-| `admin_password_file` | 空 | 从权限受限文件读取启动密码 |
+| `admin_username` | 空 | 启动时覆盖系统管理员用户名 |
+| `admin_password_file` | 空 | 从权限受限文件读取系统管理员启动密码 |
 | `executor_chains` | 平台默认 | 按脚本扩展名覆盖解释器链 |
 
-YAML 使用严格字段校验，未知配置项会导致验证或启动失败。修改配置后建议先运行：
+YAML 使用严格字段校验，未知配置项会导致验证或启动失败。修改后先运行：
 
 ```text
 scriptboard config validate --config CONFIG_PATH
@@ -265,30 +286,7 @@ scriptboard doctor --config CONFIG_PATH
 ```
 
 <details>
-<summary>查看完整配置示例</summary>
-
-```yaml
-managed_root: C:\ProgramData\ScriptBoard\managed
-state_root: C:\ProgramData\ScriptBoard\state
-listen: 127.0.0.1:8787
-
-tls_cert: C:\ProgramData\ScriptBoard\tls\server.crt
-tls_key: C:\ProgramData\ScriptBoard\tls\server.key
-trusted_proxies:
-  - 127.0.0.1/32
-
-git_executable: C:\Program Files\Git\cmd\git.exe
-run_timeout_grace_seconds: 30
-update_check: true
-update_check_interval_hours: 6
-
-admin_username: admin
-admin_password_file: C:\ProgramData\ScriptBoard\secrets\admin-password
-
-executor_chains:
-  .py:
-    - C:\Python313\python.exe
-```
+<summary>环境变量与默认解释器</summary>
 
 支持的环境变量：
 
@@ -308,9 +306,7 @@ SCRIPTBOARD_ADMIN_PASSWORD
 SCRIPTBOARD_ADMIN_PASSWORD_FILE
 ```
 
-</details>
-
-### 默认脚本解释器
+默认解释器：
 
 | 平台 | 扩展名 | 候选解释器 |
 | --- | --- | --- |
@@ -322,50 +318,35 @@ SCRIPTBOARD_ADMIN_PASSWORD_FILE
 | Linux | `.py` | `python3` → `python` |
 | Linux | `.ps1` | `pwsh` |
 
-候选解释器只会在脚本启动前回退。某个解释器成功启动脚本后，即使脚本执行失败，也不会换用下一个解释器重试。
+候选解释器只在脚本启动前回退。某个解释器成功启动脚本后，即使脚本执行失败，也不会换用下一个解释器重试。
 
-## 网络与安全
+</details>
 
-- 默认只监听 `127.0.0.1:8787`，不会直接暴露到局域网或互联网；
-- 明文 HTTP 只允许监听回环地址；监听其他地址时必须同时配置 `tls_cert` 和 `tls_key`；
-- 使用同机 HTTPS 反向代理时，应通过 `trusted_proxies` 明确配置可信代理；
-- ScriptBoard 只有一个管理员账户，不提供多用户、RBAC 或逐脚本权限；
-- 所有脚本都继承服务进程的运行身份，应用不会切换身份或提供容器隔离；
-- 管理员密码使用 Argon2id 保存，但参数变量是明文数据；
+### 网络边界
+
+- 默认只监听 `127.0.0.1:8787`；
+- 明文 HTTP 只允许监听回环地址；
+- 监听其他地址时必须配置 `tls_cert` 和 `tls_key`；
+- 使用同机 HTTPS 反向代理时，应明确配置 `trusted_proxies`；
+- 所有脚本都继承服务身份，应用不会切换身份或提供容器隔离；
 - 同一个 `state_root` 同时只允许一个 ScriptBoard 实例运行。
 
-不要直接把 ScriptBoard 暴露到互联网。需要远程访问时，请使用你信任的 VPN、零信任网络或正确配置的 HTTPS 反向代理，并限制可访问的来源。
+不要直接把 ScriptBoard 暴露到互联网。远程访问应通过可信 VPN、零信任网络或正确配置的 HTTPS 反向代理，并限制可访问来源。
 
-## 常见问题
+### 用户角色
 
-### 忘记管理员密码
+系统管理员是唯一且始终启用的账户，可以创建其他固定角色用户：
 
-先停止 ScriptBoard 服务，再使用原来的配置重置管理员：
+| 角色 | 权限范围 |
+| --- | --- |
+| 管理员 | 全部能力，包括用户管理和系统设置 |
+| 维护员 | 除用户管理外的运维、文件、执行、审计和系统设置 |
+| 执行员 | 查看页面和文件、启动执行；只能停止自己启动的 Run |
+| 观察员 | 只读查看监控、配置摘要和历史 |
 
-```powershell
-.\scriptboard.exe admin reset --config C:\ProgramData\ScriptBoard\config.yaml
-```
+角色是实例级固定权限，不支持自定义角色或逐脚本授权。密码使用 Argon2id 哈希保存；参数变量仍是明文数据。
 
-Linux 使用：
-
-```bash
-sudo scriptboard admin reset --config /etc/scriptboard/config.yaml
-```
-
-新的初始密码会写入 `state_root` 下的 `secrets/initial-admin-password`。
-
-## 网站监控
-
-登录后打开“网站监控”，可以从当前主机检查 HTTP/HTTPS 和 WebSocket/WSS
-端点。支持手动创建与编辑、立即检查、暂停/恢复、固定顺序、短期可用性和
-TLS 证书事实。Nginx 入口只会在管理员主动操作时读取配置并预览候选项，
-确认所选项后才导入；它不会修改或重载 Nginx。
-
-WebSocket 应用层文本/二进制消息与 RFC 6455 Ping/Pong 控制帧是两套独立
-成功条件。Ping/Pong 检查仅在收到载荷逐字节一致的 Pong 控制帧时成功。
-ScriptBoard 当前不发送邮件、短信或 Webhook 通知。
-
-### 脚本无法启动
+## 排查问题
 
 先运行只读诊断：
 
@@ -373,36 +354,31 @@ ScriptBoard 当前不发送邮件、短信或 Webhook 通知。
 scriptboard doctor --config CONFIG_PATH
 ```
 
-重点检查对应解释器是否已安装、服务账户是否有权读取脚本和工作目录，以及脚本扩展名是否在支持列表中。自定义解释器时，`executor_chains` 中必须使用绝对路径。
+| 现象 | 优先检查 |
+| --- | --- |
+| 脚本无法启动 | 对应解释器是否安装；服务身份是否能读取脚本和工作目录；`executor_chains` 是否使用绝对路径 |
+| 页面无法打开 | 服务状态、`listen` 地址、端口占用，以及非本机访问的 TLS 或反向代理 |
+| 文件写入或 Run 被拒绝 | 磁盘可用空间是否低于 100 MiB；目标是否被活动 Run 的执行租约保护 |
+| 定时计划未补跑 | 服务停机期间错过的计划按设计不会补跑 |
+| 变量看似已加密 | “密码类型”只隐藏界面显示，变量仍以明文保存 |
 
-### 页面无法打开
+### 重置系统管理员密码
 
-- 确认进程仍在运行，并检查 `scriptboard service status`；
-- 确认浏览器访问的地址与 `listen` 一致；
-- 检查 `8787` 端口是否被其他程序占用；
-- 非本机访问不能使用明文 HTTP，必须配置 TLS 或 HTTPS 反向代理。
+先停止服务，再使用原配置执行：
 
-### 文件或运行被拒绝
+```powershell
+.\scriptboard.exe admin reset --config C:\ProgramData\ScriptBoard\config.yaml
+```
 
-当受管目录或状态目录所在磁盘可用空间低于 100 MiB 时，ScriptBoard 会拒绝新的写入或执行。活动运行持有的脚本及其上级目录也会暂时禁止移动、修改和删除。
+Linux：
 
-## 数据与升级
+```bash
+sudo scriptboard admin reset --config /etc/scriptboard/config.yaml
+```
 
-请将 `managed_root` 和 `state_root` 一起纳入备份：
+新的一次性密码会写入 `state_root/secrets/initial-admin-password`。
 
-| 数据 | 位置 | 用途 |
-| --- | --- | --- |
-| 受管文件 | `managed_root` | 脚本和其他用户文件 |
-| 内部状态 | `state_root` | SQLite 数据库、执行日志、会话、审计和内部状态 |
-| 配置 | Windows：`C:\ProgramData\ScriptBoard\config.yaml`<br>Linux：`/etc/scriptboard/config.yaml` | 服务启动配置 |
-
-对于新版 managed service，优先使用“设置 → 应用更新”。系统会在更新验证窗口内维护自己的数据库快照和失败回滚，但这不能替代你的长期、异机备份。
-
-便携运行仍需手工下载完整发布包、停止旧进程并从新目录启动。不要在服务运行时覆盖版本目录中的文件，也不要把某个新 EXE 单独复制进现有 managed 安装。
-
-ScriptBoard 启动时会自动执行只向前兼容的 SQLite 迁移，并在迁移旧数据库前创建内部快照。不要使用旧版本打开已经由新版本升级过的 `state_root`。
-
-## 命令速查
+### 命令速查
 
 ```text
 scriptboard serve
@@ -415,21 +391,25 @@ scriptboard doctor
 scriptboard version [--json]
 ```
 
-运行 `scriptboard help` 可以查看常用命令行参数。
+运行 `scriptboard help` 查看完整参数。
 
-## 开发者入口
+## 开发
 
 从源码构建需要 Go 1.26：
 
 ```powershell
 go test ./... -count=1
 go build ./cmd/scriptboard
+go build ./cmd/scriptboard-tray
 ```
 
-构建 Windows 托盘程序：
+浏览器回归门禁使用测试专用的 Node.js 依赖，不会引入生产运行时依赖：
 
 ```powershell
-go build ./cmd/scriptboard-tray
+cd integration/browser
+pnpm install
+pnpm exec playwright install chromium
+pnpm test
 ```
 
 构建 Windows/Linux、amd64/arm64 的便携发布包：
@@ -438,15 +418,17 @@ go build ./cmd/scriptboard-tray
 ./scripts/build-release.ps1 -Version development
 ```
 
-正式 Tag 构建还需要发布签名密钥。密钥生成、GitHub Environment 配置和发布步骤见 [发布指南](./docs/RELEASING.md)。
+正式 Tag 构建还需要发布签名密钥，详见[发布指南](./docs/RELEASING.md)。
 
-项目设计与开发资料：
+### 项目文档
 
-- [产品需求](./docs/PRD.md)
-- [验收标准](./docs/ACCEPTANCE.md)
-- [数据模型与状态机](./docs/DATA-MODEL.md)
-- [领域词汇](./CONTEXT.md)
-- [产品与界面原则](./PRODUCT.md)
-- [设计系统](./DESIGN.md)
-- [架构决策](./docs/adr/README.md)
-- [Chromium 浏览器门禁](./integration/browser/README.md)
+| 文档 | 用途 |
+| --- | --- |
+| [产品需求](./docs/PRD.md) | 产品范围与需求 |
+| [验收标准](./docs/ACCEPTANCE.md) | 可验证的完成条件 |
+| [数据模型与状态机](./docs/DATA-MODEL.md) | 持久化结构和状态转换 |
+| [领域词汇](./CONTEXT.md) | 统一领域语言 |
+| [产品与界面原则](./PRODUCT.md) | 产品定位和体验约束 |
+| [设计系统](./DESIGN.md) | 视觉和交互规范 |
+| [架构决策](./docs/adr/README.md) | ADR 约定、主题索引和取代关系 |
+| [Chromium 浏览器门禁](./integration/browser/README.md) | 端到端回归测试说明 |

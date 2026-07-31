@@ -2,78 +2,88 @@
 
 [简体中文](./README.md) | English
 
-> Manage, run, and schedule trusted scripts on one machine from your browser.
+> Manage, run, and schedule trusted scripts on one host from a browser.
 
-ScriptBoard is a self-hosted script console for a single Windows or Linux machine. Put your existing scripts in a managed directory, then use the browser to manage files, enter arguments, follow live output, save recurring operations, create schedules, and trace changes and runs.
+ScriptBoard is a self-hosted script operations console for a single Windows or Linux host. Put existing scripts in a managed directory, then use the browser to manage files, enter arguments, follow live logs, reuse common operations, create schedules, and trace every change and run.
 
-It is designed for personal servers, home labs, small workstations, and script hosts maintained by a small set of trusted users. Scripts do not need to be registered individually, and there is no agent cluster, message queue, or production Node.js runtime to operate.
-
-[Download the latest release](https://github.com/backinfile/ScriptBoard/releases/latest) · [5-minute quick start](#quick-start) · [Install as a system service](#install-as-a-system-service) · [Troubleshooting](#troubleshooting)
+[Download the latest release](https://github.com/backinfile/ScriptBoard/releases/latest) · [Quick start](#quick-start) · [Deploy as a system service](#deploy-as-a-system-service) · [Troubleshooting](#troubleshooting)
 
 > [!WARNING]
-> ScriptBoard is not a security sandbox. Scripts inherit the operating-system identity, permissions, and environment of the ScriptBoard process. Only run scripts you fully trust, and do not give untrusted users access to ScriptBoard.
+> ScriptBoard is not a security sandbox. Scripts inherit the operating-system identity, permissions, and environment of the ScriptBoard service process. Run only scripts you fully trust, and grant access only to trusted users.
 
-![ScriptBoard Quick Runs](./integration/browser/snapshots/readme-quick-runs-en.png)
+![ScriptBoard Quick Runs page](./integration/browser/snapshots/readme-quick-runs-en.png)
 
-## What you can do
+## Navigation
+
+- [Product overview](#product-overview): capabilities, fit, and supported platforms
+- [Quick start](#quick-start): complete a first run in portable mode
+- [Core workflows](#core-workflows): files, runs, schedules, monitoring, and recovery
+- [Deployment and operations](#deployment-and-operations): system services, updates, and backups
+- [Configuration and security](#configuration-and-security): precedence, networking, and user roles
+- [Troubleshooting](#troubleshooting): diagnostics, password reset, and common failures
+- [Development](#development): builds, tests, releases, and project documentation
+
+## Product overview
 
 | Use case | What ScriptBoard provides |
 | --- | --- |
 | Manage scripts centrally | Browse, search, upload, download, move, rename, preview, and edit managed files |
-| Run scripts manually | Run PowerShell, Python, shell, batch, and CMD scripts with live stdout and stderr |
-| Reuse common operations | Save scripts, argument templates, and timeouts as Quick Runs, then group and order them |
-| Run on a schedule | Create five-field Cron schedules, preview trigger times, and configure timeout and overlap behavior |
-| Investigate problems | Review run results, audit records, and run history that cannot be deleted from the Web interface |
-| Recover from mistakes | Restore files from the application trash or enable optional local Git version protection |
-| Observe the host and applications | View host resources plus CPU, memory, and disk I/O for local applications and Docker containers; pin applications that need attention |
-| Keep the application current | Check official stable releases automatically, then download, verify, restart, and roll back after administrator approval |
+| Run scripts manually | Run PowerShell, Python, Shell, Batch, and CMD scripts while streaming stdout and stderr |
+| Reuse common operations | Save scripts, argument templates, and timeouts as Quick Runs; group, sort, copy, and soft-lock them |
+| Run on a schedule | Create five-field Cron schedules, preview trigger times, and configure timeouts and overlap policy |
+| Observe and troubleshoot | Inspect run history, audit records, host resources, local applications, Docker containers, and website endpoints |
+| Recover from mistakes | Restore deleted files from the application Trash; optionally enable local Git version protection |
+| Update safely | Check official stable releases, then let an administrator approve download, verification, restart, and rollback |
 
-The Web interface supports Simplified Chinese and American English. It follows the browser language by default and can be switched at any time. Both desktop and mobile browsers are supported.
+The web interface supports Simplified Chinese and US English. It chooses a language from the browser by default and can be switched at any time. Both desktop and mobile browsers are supported.
 
-## Is ScriptBoard right for you?
+### Where it fits
 
-ScriptBoard is a good fit when:
+ScriptBoard is designed for personal servers, home labs, small workstations, and script hosts maintained by a few trusted users. It fits especially well when:
 
-- you maintain a collection of trusted scripts on one fixed machine;
-- you want to use a browser instead of repeatedly opening a remote desktop or entering commands;
-- you need live logs, run history, schedules, and basic file recovery;
-- a small set of trusted users is responsible for the machine, and the fixed Administrator, Maintainer, Operator, and Viewer roles are sufficient.
+- scripts live on one fixed host and should not need individual registration;
+- a browser should replace remote desktop sessions or repetitive command entry;
+- live logs, run history, schedules, and basic file recovery are required;
+- the fixed Administrator, Maintainer, Operator, and Viewer roles are enough to express the access boundary.
 
-ScriptBoard is not intended for projects, custom roles, per-script or group-based authorization, untrusted-code isolation, multi-host orchestration, job queues, public APIs, notifications, interactive terminals, or high-availability deployments. It also does not provide an official Docker deployment.
+ScriptBoard is not currently a fit when you need custom roles, per-script authorization, untrusted-code isolation, multi-host orchestration, a task queue, a public API, external notifications, an interactive terminal, or a highly available deployment. The project also does not provide an official Docker deployment.
 
-## Supported platforms
+### Supported platforms
 
-| Operating system | Architecture | Release package |
+| Operating system | Architectures | Release archive |
 | --- | --- | --- |
-| Windows 10/11 and Windows Server 2019+ | amd64, arm64 | ZIP containing the service, tray, tray launcher, and updater |
-| Linux with systemd | amd64, arm64 | tar.gz containing the service and updater |
+| Windows 10/11, Windows Server 2019+ | amd64, arm64 | ZIP with service, tray controller, tray launcher, and updater |
+| Linux with systemd | amd64, arm64 | tar.gz with service and updater |
 
-Download the complete archive for your system from [GitHub Releases](https://github.com/backinfile/ScriptBoard/releases/latest); do not copy only one executable. `SHA256SUMS` supports manual verification. Application updates additionally require a signed release manifest and the archive's SHA-256 digest.
-
-The host must also have an interpreter for each script type you want to run, such as PowerShell, Python, or Bash. ScriptBoard automatically selects an interpreter that is actually available.
+The matching interpreter must also be installed on the host before a script can run, such as PowerShell, Python, or Bash. ScriptBoard selects the first available program from the platform's default interpreter candidates.
 
 ## Quick start
 
-The following steps use `managed` and `state` directories beside the executable. This trial setup does not install a system service. `managed` contains the files you want to manage, while `state` contains the ScriptBoard database, logs, and credentials.
+This walkthrough uses `managed` and `state` directories inside the extracted release directory without installing a system service:
 
-### Windows
+- `managed`: files the browser can manage and execute;
+- `state`: the database, logs, sessions, and sign-in credentials.
 
-Extract the Windows release, open PowerShell in the extracted directory, and run:
+### 1. Download the complete release
+
+Download and fully extract the archive for your platform from [GitHub Releases](https://github.com/backinfile/ScriptBoard/releases/latest). Do not copy only one executable out of the archive. The release page provides `SHA256SUMS` for manual verification.
+
+### 2. Start a portable instance
+
+Windows PowerShell:
 
 ```powershell
 New-Item -ItemType Directory -Force .\managed, .\state
 .\scriptboard.exe serve --managed-root "$PWD\managed" --state-root "$PWD\state"
 ```
 
-Keep that window running. Open another PowerShell window in the same directory and read the initial password:
+Open another PowerShell window in the same directory and read the initial password:
 
 ```powershell
 Get-Content .\state\secrets\initial-admin-password
 ```
 
-### Linux
-
-Extract the Linux release, open a terminal in the extracted directory, and run:
+Linux:
 
 ```bash
 chmod +x ./scriptboard
@@ -83,76 +93,86 @@ mkdir -p ./managed ./state
   --state-root "$PWD/state"
 ```
 
-Keep that terminal running. Open another terminal in the same directory and read the initial password:
+Open another terminal in the same directory and read the initial password:
 
 ```bash
 cat ./state/secrets/initial-admin-password
 ```
 
-### Sign in and run your first script
+### 3. Run the first script
 
 1. Open <http://127.0.0.1:8787>.
-2. Sign in with the username `admin` and the initial password from the previous step.
-3. Open Account after signing in and replace the initial password with your own.
-4. Upload a script from the Files page, or copy an existing script directly into the `managed` directory.
-5. Open the script, select Run, enter its arguments and timeout, and start it.
-6. Follow the live output, stop the run when necessary, or save the configuration as a Quick Run.
+2. Sign in as `admin` with the initial password you just read.
+3. Open Account and replace the initial password.
+4. Upload a script from Files, or copy an existing script into `managed`.
+5. Open the script, choose Run, enter arguments and a timeout, then start it.
+6. Follow live output, stop the run, or save its configuration as a Quick Run from the run detail page.
 
-The argument field uses simplified shellwords syntax: whitespace separates arguments, and single or double quotes preserve spaces inside an argument. ScriptBoard does not expand pipelines, redirects, wildcards, or command substitutions.
+The argument field uses simplified shellwords syntax: whitespace separates arguments, and single or double quotes preserve spaces. ScriptBoard does not expand pipelines, redirections, wildcards, or command substitutions.
 
-## Everyday use
+## Core workflows
 
-### Manage files
+### Manage and run files
 
-- Upload one or more files, create directories, search, and sort from the Files page.
-- Preview text, Markdown, source code, and common raster images.
-- Edit UTF-8 text files up to 1 MiB in the browser.
-- Deleted files first enter the application trash, where they can be restored or permanently removed.
-- ScriptBoard does not follow symbolic links, Windows junctions, or cross-volume mount boundaries.
+- Upload one or more files, create directories, search, and sort;
+- preview text, Markdown, code, and common raster images;
+- edit UTF-8 text files up to 1 MiB in the browser;
+- execute a script in its own directory and see external host changes reflected in the web interface;
+- refuse to follow symbolic links, Windows junctions, or cross-volume mount boundaries.
 
-Scripts run in place, with the script's directory as the working directory. Changes made directly on the host are reflected in the Web interface.
+### Reuse arguments and operations
 
-### Save Quick Runs
+A Quick Run saves a script path, argument template, and timeout. Quick Runs can be grouped, sorted, copied, and soft-locked, and can be created from either a managed script or run history.
 
-Save recurring operations as Quick Runs from a file or a previous run. A Quick Run stores the script path, argument template, and timeout, and can be grouped, ordered, copied, or soft-locked.
-
-Variables can be reused in argument templates, but their values are stored as plaintext in SQLite. Marking a variable as a password only hides it by default in the interface. It does not encrypt the value or turn ScriptBoard into a secret vault.
+Variables can be reused in argument templates, but their values are stored as plaintext in SQLite. The password type only hides a value by default in the interface; it is not encrypted storage and is not a replacement for a secrets vault.
 
 ### Create schedules
 
-Schedules use standard five-field Cron expressions:
+Schedules use standard five-field Cron:
 
 ```text
-minute hour day-of-month month day-of-week
+minute hour day month weekday
 ```
 
-For example, `0 2 * * *` runs every day at 02:00. When you create or edit a schedule, the interface shows a readable summary and the next five trigger times.
+For example, `0 2 * * *` runs every day at 02:00. The interface shows a rule summary and the next five trigger times. Each schedule can set its own timeout and decide whether to skip a trigger while the same script is already running.
 
-Each schedule can define its own timeout and whether to skip a trigger when the same script is already running. Triggers missed while the service is stopped are not replayed. ScriptBoard does not read or modify the system crontab.
+Triggers missed while the service is stopped are not caught up. ScriptBoard uses its own scheduler and never reads or modifies the system crontab.
 
-### Recover files
+### Monitor and trace
 
-Use the application trash to recover files deleted or replaced through the Web interface. For a more complete change history, enable local Git version protection under Settings → Version Protection:
+- Host Status presents CPU, memory, storage, disk I/O, networking, and the ScriptBoard service;
+- Applications provides read-only resource facts for local processes and Docker containers, with pins for important applications;
+- Website Monitor checks HTTP, HTTPS, WebSocket, and WSS endpoints from the current host;
+- Run History and Audit retain execution outcomes and trace evidence for high-impact operations;
+- Docker containers and managed text files provide on-demand live logs.
 
-- automatically create checkpoints for managed files;
-- inspect the history of an individual file;
-- restore a selected version through a new local commit;
-- never run `push`, `pull`, `fetch`, or other remote operations.
+Website Monitor includes short-term availability, TLS certificate facts, and a preview of Nginx candidates. Nginx configuration is read only after an administrator explicitly asks for it. ScriptBoard never modifies or reloads Nginx, and it does not send email, SMS, or webhook notifications.
 
-Version protection helps recover accidental changes; it is not an off-machine backup. Important data should still be protected by your own backup system.
+### Recover deleted or changed files
 
-## Install as a system service
+Files deleted or replaced through the web interface first move to the application Trash. For a more complete edit history, enable local Git version protection under Settings:
 
-After confirming the trial setup works, install ScriptBoard as a system service so it starts automatically. Run the install command from the complete extracted release. ScriptBoard copies the release into a versioned installation root:
+- create automatic checkpoints for managed files;
+- inspect the history of one file;
+- restore an earlier version through a new local commit;
+- never run `push`, `pull`, `fetch`, or another remote operation.
+
+Version protection helps recover accidental edits. It is not an off-host backup.
+
+## Deployment and operations
+
+### Deploy as a system service
+
+Run installation commands from a fully extracted release archive. ScriptBoard copies itself into a versioned installation root:
 
 - Windows: `C:\Program Files\ScriptBoard`
 - Linux: `/opt/scriptboard`
 
-This is a new clean-install baseline. It does not support the earlier layout where a service pointed directly to one executable. If a legacy `ScriptBoard` service already exists, stop and uninstall it yourself before following this section. The installer will not guess, migrate, or delete legacy directories.
+The current baseline is incompatible with the old service layout that directly targeted a single executable. If an old-style `ScriptBoard` service already exists, stop and uninstall it before performing a fresh installation. The installer does not guess, migrate, or delete old directories.
 
-### Windows service
+#### Windows
 
-Save the following configuration as `C:\ProgramData\ScriptBoard\config.yaml`:
+Save this configuration as `C:\ProgramData\ScriptBoard\config.yaml`:
 
 ```yaml
 managed_root: C:\ProgramData\ScriptBoard\managed
@@ -161,7 +181,7 @@ listen: 127.0.0.1:8787
 run_timeout_grace_seconds: 30
 ```
 
-Run these commands from an elevated PowerShell window:
+Run in an elevated PowerShell:
 
 ```powershell
 .\scriptboard.exe config validate --config C:\ProgramData\ScriptBoard\config.yaml
@@ -170,19 +190,11 @@ Run these commands from an elevated PowerShell window:
 .\scriptboard.exe service status
 ```
 
-The Windows service runs as `LocalSystem` by default. Scripts inherit that identity's permissions and environment.
+The Windows service runs as `LocalSystem` by default. Installation also configures tray autostart for the current Windows user; exiting the tray does not stop the service.
 
-The install command configures tray autostart for the current Windows user. The tray shows service and HTTP readiness, starts and stops the service, and opens the management page, application updates, or data directories. You can also launch it manually from the release:
+#### Linux
 
-```powershell
-.\scriptboard-tray.exe --config C:\ProgramData\ScriptBoard\config.yaml
-```
-
-Closing the tray application does not stop the ScriptBoard service.
-
-### Linux systemd service
-
-Save the following configuration as `/etc/scriptboard/config.yaml`:
+Save this configuration as `/etc/scriptboard/config.yaml`:
 
 ```yaml
 managed_root: /var/lib/scriptboard/managed
@@ -200,64 +212,73 @@ sudo /opt/scriptboard/current/scriptboard service start
 sudo /opt/scriptboard/current/scriptboard service status
 ```
 
-The install command creates both the main service and an independent updater helper unit. The systemd service runs as `root` by default. Uninstalling it does not remove configuration, managed files, the database, logs, local Git history, or installed release directories.
+Installation creates both the main service and a separate updater helper unit. The systemd service runs as `root` by default. Uninstalling the service does not delete configuration, managed files, private state, local Git history, or installed version directories.
 
-## Application updates
+### Application updates
 
-Formal releases check for a new official stable release every six hours by default. Open **Settings → Application updates** to view the installed build, latest release, release notes, verification status, and the most recent update operation.
+Official releases check for a stable update every six hours by default, but never install one in the background. An administrator must first choose Download and verify, then Install and restart. The update verifies the signed release manifest, archive SHA-256, target platform, and archive safety. It will not switch versions while a Run is active.
 
-Updates are never installed silently. After an administrator selects **Download and verify**, ScriptBoard verifies the signature, SHA-256 digest, platform, and archive structure. Selecting **Install and restart** then starts a short maintenance window:
+If an update fails, the system restores the previous version and pre-update database. Portable instances can only check for and download a new release; source `development` builds do not check the network.
 
-1. Schedule triggering pauses and new Runs are blocked.
-2. If any Runs are still active, the update is rejected without stopping them.
-3. The service exits normally and a consistent SQLite snapshot is created.
-4. The new release starts in read-only validation mode.
-5. After continuous health checks pass, normal operation resumes. Startup, migration, or health-check failures restore the previous release and pre-update database automatically.
+<details>
+<summary>Recover an incomplete update operation</summary>
 
-The browser reconnects automatically during the restart. Portable releases can check for updates but cannot replace themselves from an arbitrary directory. Source `development` builds never make update-check requests.
-
-If the update page shows `needs_recovery`, do not delete `state_root/updates` or overwrite a version directory manually. Stop the ScriptBoard service, preserve copies of the Install Root and State Root, and run the following command with the Operation ID shown on the page. If the page is unavailable, read the same ID from `state_root/updates/active.json`:
+If the update page reports `needs_recovery`, do not delete `state_root/updates` or manually overwrite a version directory. Stop the ScriptBoard service, save a forensic copy of the Install Root and State Root, then run this with the Operation ID shown by the page:
 
 ```text
 scriptboard update recover --operation <ID> --confirm-operation <ID>
 ```
 
-This command only recovers an update transaction that has not committed. It is not a general downgrade or backup-restore tool. If it still fails, keep the service stopped and restore from your own off-machine backup.
+If the page cannot open, read the same ID from `state_root/updates/active.json`. This command only recovers an update transaction that has not committed. It is not a general downgrade or backup recovery command.
 
-Automatic checks only contact GitHub Releases for `backinfile/ScriptBoard`; scripts, configuration, and host information are not uploaded. To disable periodic network checks:
+</details>
+
+To disable periodic network checks:
 
 ```yaml
 update_check: false
 ```
 
-You can still check explicitly from the page or with `scriptboard update check`. Because legacy service layouts are unsupported, the first release containing the updater must be installed cleanly. Automatic installation starts with the following formal release.
+Automatic checks contact only GitHub Releases for `backinfile/ScriptBoard`; they do not upload scripts, configuration, or host information.
 
-## Configuration
+### Data and backups
 
-Configuration precedence, from lowest to highest, is:
+Include all of these locations in a long-term, off-host backup:
+
+| Data | Location |
+| --- | --- |
+| Managed files | `managed_root` |
+| SQLite, run logs, sessions, audit, and internal state | `state_root` |
+| Service configuration | Windows: `C:\ProgramData\ScriptBoard\config.yaml`<br>Linux: `/etc/scriptboard/config.yaml` |
+
+The database snapshot and rollback used by application updates are not a backup. ScriptBoard runs forward-only SQLite migrations at startup; do not open an upgraded `state_root` with an older release.
+
+## Configuration and security
+
+### Configuration precedence
 
 ```text
-built-in defaults → YAML configuration → SCRIPTBOARD_* environment variables → command-line flags
+built-in defaults → YAML configuration → SCRIPTBOARD_* environment → command-line flags
 ```
 
 Common settings:
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
-| `managed_root` | Windows: `C:\ProgramData\ScriptBoard\managed`<br>Linux: `/var/lib/scriptboard/managed` | The only directory that can be managed from the browser |
-| `state_root` | Windows: `C:\ProgramData\ScriptBoard\state`<br>Linux: `/var/lib/scriptboard/state` | Database, logs, sessions, and private application state |
+| `managed_root` | `managed` under the platform data directory | The only directory the browser can manage |
+| `state_root` | `state` under the platform data directory | Database, logs, sessions, and private internal state |
 | `listen` | `127.0.0.1:8787` | HTTP or HTTPS listen address |
-| `tls_cert`, `tls_key` | Empty | TLS certificate and key; required for non-loopback listeners |
-| `trusted_proxies` | Empty | Trusted proxy IP addresses or CIDR ranges allowed to provide forwarding headers |
-| `git_executable` | Auto-detected | Absolute path to the system Git CLI |
-| `run_timeout_grace_seconds` | `30` | Grace period before a timed-out process tree is forcibly terminated |
-| `update_check` | `true` | Periodically check the official stable release; never installs silently |
-| `update_check_interval_hours` | `6` | Check interval from 1 to 168 hours |
-| `admin_username` | Empty | Administrator username override applied at startup |
-| `admin_password_file` | Empty | Read the startup password from a permission-restricted file |
-| `executor_chains` | Platform defaults | Override interpreters by script extension |
+| `tls_cert`, `tls_key` | empty | TLS certificate and key; required for non-loopback listening |
+| `trusted_proxies` | empty | Trusted proxy IP addresses or CIDRs allowed to provide forwarding headers |
+| `git_executable` | auto-detected | Absolute path to the system Git CLI |
+| `run_timeout_grace_seconds` | `30` | Grace period before force-killing a process tree after automatic timeout |
+| `update_check` | `true` | Periodically check the official stable release; never installs automatically |
+| `update_check_interval_hours` | `6` | Automatic check interval, from 1 to 168 hours |
+| `admin_username` | empty | Override the system administrator username at startup |
+| `admin_password_file` | empty | Read the system administrator startup password from a permission-restricted file |
+| `executor_chains` | platform defaults | Override interpreter chains by script extension |
 
-YAML fields are validated strictly. An unknown setting causes validation or startup to fail. After changing the configuration, run:
+YAML fields are validated strictly; an unknown setting causes validation or startup to fail. After editing configuration, run:
 
 ```text
 scriptboard config validate --config CONFIG_PATH
@@ -265,30 +286,7 @@ scriptboard doctor --config CONFIG_PATH
 ```
 
 <details>
-<summary>View a complete configuration example</summary>
-
-```yaml
-managed_root: C:\ProgramData\ScriptBoard\managed
-state_root: C:\ProgramData\ScriptBoard\state
-listen: 127.0.0.1:8787
-
-tls_cert: C:\ProgramData\ScriptBoard\tls\server.crt
-tls_key: C:\ProgramData\ScriptBoard\tls\server.key
-trusted_proxies:
-  - 127.0.0.1/32
-
-git_executable: C:\Program Files\Git\cmd\git.exe
-run_timeout_grace_seconds: 30
-update_check: true
-update_check_interval_hours: 6
-
-admin_username: admin
-admin_password_file: C:\ProgramData\ScriptBoard\secrets\admin-password
-
-executor_chains:
-  .py:
-    - C:\Python313\python.exe
-```
+<summary>Environment variables and default interpreters</summary>
 
 Supported environment variables:
 
@@ -308,11 +306,9 @@ SCRIPTBOARD_ADMIN_PASSWORD
 SCRIPTBOARD_ADMIN_PASSWORD_FILE
 ```
 
-</details>
+Default interpreters:
 
-### Default script interpreters
-
-| Platform | Extension | Interpreter candidates |
+| Platform | Extension | Candidate interpreters |
 | --- | --- | --- |
 | Windows | `.ps1` | `pwsh.exe` → `powershell.exe` |
 | Windows | `.py` | `py.exe -3` → `python.exe` |
@@ -322,90 +318,67 @@ SCRIPTBOARD_ADMIN_PASSWORD_FILE
 | Linux | `.py` | `python3` → `python` |
 | Linux | `.ps1` | `pwsh` |
 
-Interpreter fallback only occurs before the script starts. Once an interpreter successfully launches the script, ScriptBoard does not retry the run with another interpreter if the script later fails.
+Fallback happens only before a script starts. Once an interpreter successfully starts a script, ScriptBoard does not retry that script with another interpreter if execution fails.
 
-## Networking and security
+</details>
 
-- ScriptBoard listens on `127.0.0.1:8787` by default and is not directly exposed to the LAN or internet.
-- Plain HTTP can only listen on a loopback address. A non-loopback listener requires both `tls_cert` and `tls_key`.
-- When using a same-host HTTPS reverse proxy, explicitly configure it through `trusted_proxies`.
-- ScriptBoard has one administrator account and does not provide multiple users, RBAC, or per-script permissions.
-- Every script inherits the service process identity. ScriptBoard does not switch identities or provide container isolation.
-- Administrator passwords are stored using Argon2id, but argument variables are plaintext data.
-- Only one ScriptBoard instance can use a particular `state_root` at a time.
+### Network boundary
 
-Do not expose ScriptBoard directly to the internet. For remote access, use a trusted VPN, zero-trust network, or correctly configured HTTPS reverse proxy, and restrict which sources can connect.
+- The default listener is `127.0.0.1:8787` only;
+- plaintext HTTP may bind only to a loopback address;
+- a non-loopback listener requires both `tls_cert` and `tls_key`;
+- a same-host HTTPS reverse proxy should be declared explicitly through `trusted_proxies`;
+- every script inherits the service identity; the application does not switch identity or provide container isolation;
+- only one ScriptBoard instance may use a given `state_root` at a time.
+
+Do not expose ScriptBoard directly to the public internet. Remote access should use a trusted VPN, zero-trust network, or correctly configured HTTPS reverse proxy with restricted sources.
+
+### User roles
+
+The system Administrator is the single always-enabled account. It can create users with the other fixed roles:
+
+| Role | Permission scope |
+| --- | --- |
+| Administrator | All capabilities, including user management and system settings |
+| Maintainer | Operations, files, execution, audit, and system settings, but not user management |
+| Operator | View pages and files and start runs; may stop only Runs they started |
+| Viewer | Read-only access to monitoring, configuration summaries, and history |
+
+Roles are fixed instance-wide permissions. Custom roles and per-script authorization are not supported. Passwords are stored with Argon2id hashes; parameter variables remain plaintext data.
 
 ## Troubleshooting
 
-### Lost administrator password
-
-Stop the ScriptBoard service, then reset the administrator using the original configuration:
-
-```powershell
-.\scriptboard.exe admin reset --config C:\ProgramData\ScriptBoard\config.yaml
-```
-
-On Linux:
-
-```bash
-sudo scriptboard admin reset --config /etc/scriptboard/config.yaml
-```
-
-The new initial password is written to `secrets/initial-admin-password` under `state_root`.
-
-## Website monitoring
-
-After signing in, open **Website Monitoring** to check HTTP/HTTPS and
-WebSocket/WSS endpoints from the ScriptBoard host. Monitors can be created,
-edited, checked immediately, paused, resumed, and kept in an administrator
-defined order. The page shows bounded availability history and TLS certificate
-facts. Nginx discovery is an explicit read-only preview followed by a separate
-selected import; it never modifies or reloads Nginx.
-
-WebSocket application text/binary messages and RFC 6455 Ping/Pong control
-frames are separate success rules. A Ping/Pong check succeeds only for an
-actual Pong control frame with a byte-for-byte matching payload. ScriptBoard
-does not send email, SMS, or webhook notifications.
-
-### A script does not start
-
-Run the read-only diagnostics:
+Start with the read-only diagnostic:
 
 ```text
 scriptboard doctor --config CONFIG_PATH
 ```
 
-Check that the required interpreter is installed, that the service account can read the script and its working directory, and that the script extension is supported. Custom entries in `executor_chains` must use absolute paths.
+| Symptom | Check first |
+| --- | --- |
+| A script does not start | Matching interpreter installation, service-account access to the script and work directory, and absolute paths in `executor_chains` |
+| The page does not open | Service status, the `listen` address, port conflicts, and TLS or reverse-proxy setup for remote access |
+| A file write or Run is rejected | Whether free disk space is below 100 MiB or an active Run lease protects the target |
+| A schedule was not caught up | Triggers missed while the service is stopped are deliberately not replayed |
+| A variable appears encrypted | The password type hides the UI value only; variables remain plaintext |
 
-### The page does not open
+### Reset the system administrator password
 
-- Confirm that the process is still running and check `scriptboard service status`.
-- Confirm that the browser address matches `listen`.
-- Check whether another program is already using port `8787`.
-- Remote connections cannot use plain HTTP; configure TLS or an HTTPS reverse proxy.
+Stop the service, then use the original configuration:
 
-### A file operation or run is rejected
+```powershell
+.\scriptboard.exe admin reset --config C:\ProgramData\ScriptBoard\config.yaml
+```
 
-ScriptBoard rejects new writes or runs when the managed or state volume has less than 100 MiB available. While a script is running, its file and parent directories also cannot be moved, modified, or deleted through the Web interface.
+Linux:
 
-## Data and upgrades
+```bash
+sudo scriptboard admin reset --config /etc/scriptboard/config.yaml
+```
 
-Include both `managed_root` and `state_root` in your backup:
+The new one-time password is written to `state_root/secrets/initial-admin-password`.
 
-| Data | Location | Purpose |
-| --- | --- | --- |
-| Managed files | `managed_root` | Scripts and other user files |
-| Application state | `state_root` | SQLite database, run logs, sessions, audit records, and internal state |
-| Configuration | Windows: `C:\ProgramData\ScriptBoard\config.yaml`<br>Linux: `/etc/scriptboard/config.yaml` | Service startup configuration |
-
-For a new managed service installation, prefer **Settings → Application updates**. ScriptBoard maintains an internal database snapshot and automatic rollback during the update validation window, but that is not a replacement for a long-term off-machine backup.
-
-Portable runs still require downloading the complete release, stopping the old process, and starting the new directory manually. Do not overwrite files inside a managed version directory while the service is running, and do not copy a single new executable into an existing managed installation.
-
-ScriptBoard applies forward-only SQLite migrations at startup and creates an internal snapshot before migrating an older database. Do not open an upgraded `state_root` with an older ScriptBoard version.
-
-## Command reference
+### Command reference
 
 ```text
 scriptboard serve
@@ -418,38 +391,44 @@ scriptboard doctor
 scriptboard version [--json]
 ```
 
-Run `scriptboard help` to see the common command-line flags.
+Run `scriptboard help` for all flags.
 
-## For developers
+## Development
 
 Building from source requires Go 1.26:
 
 ```powershell
 go test ./... -count=1
 go build ./cmd/scriptboard
-```
-
-Build the Windows tray application:
-
-```powershell
 go build ./cmd/scriptboard-tray
 ```
 
-Build portable Windows/Linux packages for amd64 and arm64:
+The browser regression gate uses test-only Node.js dependencies and does not add a production runtime dependency:
+
+```powershell
+cd integration/browser
+pnpm install
+pnpm exec playwright install chromium
+pnpm test
+```
+
+Build portable archives for Windows/Linux and amd64/arm64:
 
 ```powershell
 ./scripts/build-release.ps1 -Version development
 ```
 
-Formal tag builds also require release signing keys. See the [release guide](./docs/RELEASING.md) for key generation, GitHub Environment setup, and the release procedure.
+An official tag build also requires the release signing key. See the [release guide](./docs/RELEASING.md).
 
-Project design and development documentation:
+### Project documentation
 
-- [Product requirements (Chinese)](./docs/PRD.md)
-- [Acceptance criteria (Chinese)](./docs/ACCEPTANCE.md)
-- [Data model and state machines (Chinese)](./docs/DATA-MODEL.md)
-- [Domain language](./CONTEXT.md)
-- [Product and interface principles (Chinese)](./PRODUCT.md)
-- [Design system (Chinese)](./DESIGN.md)
-- [Architecture decisions](./docs/adr/README.md)
-- [Chromium browser gate](./integration/browser/README.md)
+| Document | Purpose |
+| --- | --- |
+| [Product requirements](./docs/PRD.md) | Product scope and requirements |
+| [Acceptance criteria](./docs/ACCEPTANCE.md) | Verifiable completion conditions |
+| [Data model and state machines](./docs/DATA-MODEL.md) | Persistence and state transitions |
+| [Domain language](./CONTEXT.md) | Canonical project vocabulary |
+| [Product and interface principles](./PRODUCT.md) | Product positioning and experience constraints |
+| [Design system](./DESIGN.md) | Visual and interaction rules |
+| [Architecture decisions](./docs/adr/README.md) | ADR conventions, topic index, and supersession relationships |
+| [Chromium browser gate](./integration/browser/README.md) | End-to-end regression test instructions |
