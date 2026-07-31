@@ -918,6 +918,10 @@ async function assertUserManagement(page, baseURL) {
     await page.goto(`${fixture.baseURL}/history/runs`);
     await page.locator(".runs-table").waitFor();
     await assertTableRowsAligned(page, ".runs-table", "runs desktop");
+    assert.equal((await page.locator(".runs-table thead th").filter({ hasText: "Actor" }).textContent()).trim(), "Actor");
+    const runActors = page.locator(".runs-table [data-run-initiator]");
+    assert.ok(await runActors.count() >= 1);
+    assert.equal((await runActors.first().textContent()).trim(), "admin");
     const runSearch = page.locator(".history-filter-form");
     const runDate = new Date();
     const runDateValue = [

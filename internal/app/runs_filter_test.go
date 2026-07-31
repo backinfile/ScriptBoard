@@ -99,6 +99,67 @@ func TestRunsPageFiltersBySearchAndInclusiveLocalDateRange(t *testing.T) {
 	}
 }
 
+func TestRunsPageShowsAndSearchesInitiator(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	stateRoot := filepath.Join(root, "state")
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), stateRoot)
+	db, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	insertRun := func(id, initiatorUserID, initiatorUsername string, createdAt time.Time) {
+		t.Helper()
+		if _, err := db.Exec(`INSERT INTO runs
+			(id, script_path, script_sha256, arguments_template, template_arguments_json, arguments_json,
+			 executor, source_type, source_name, source_id, runtime_identity, status, created_at, timeout_seconds,
+			 log_path, initiated_by_user_id, initiated_by_username)
+			VALUES (?, 'automation/nightly.ps1', 'digest', '', '[]', '[]',
+			 'pwsh', 'scheduler', 'Nightly backup', 'schedule-id-1', 'test', 'succeeded', ?, 0,
+			 '', ?, ?)`,
+			id, createdAt.UnixNano(), initiatorUserID, initiatorUsername); err != nil {
+			t.Fatalf("insert %s: %v", id, err)
+		}
+	}
+	insertRun("actor_run", "user-maintainer-jade", "maintainer-jade", time.Now().UTC())
+	insertRun("system_run", "", "", time.Now().UTC().Add(-time.Minute))
+
+	response, err := client.Get(serverURL + "/history/runs?q=maintainer-jade")
+	if err != nil {
+		t.Fatalf("search runs by initiator: %v", err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read initiator search: %v", err)
+	}
+	page := string(body)
+	for _, expected := range []string{`<th>Actor</th>`, `data-label="Actor"`, `class="runs-actor"`, "Script, source, status, actor, executor, or Run ID", "actor_run", "maintainer-jade"} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("initiator search is missing %q: %s", expected, page)
+		}
+	}
+	if strings.Contains(page, "system_run") {
+		t.Fatalf("initiator search contains unrelated scheduled Run: %s", page)
+	}
+
+	response, err = client.Get(serverURL + "/history/runs")
+	if err != nil {
+		t.Fatalf("get all runs: %v", err)
+	}
+	body, err = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read all runs: %v", err)
+	}
+	if !strings.Contains(string(body), "System schedule") {
+		t.Fatalf("scheduled Run does not identify its system initiator: %s", body)
+	}
+}
+
 func TestRunsPageRejectsInvalidDateRanges(t *testing.T) {
 	t.Parallel()
 

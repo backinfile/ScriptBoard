@@ -606,7 +606,7 @@ var webMessages = map[string]localizedMessage{
 	"runs.description":                              {"从每次执行结果定位问题，继续处理失败的 Run。", "Use each result to diagnose problems and follow up on failed Runs."},
 	"runs.executor":                                 {"执行器", "Executor"},
 	"runs.search":                                   {"搜索运行记录", "Search run history"},
-	"runs.search_placeholder":                       {"脚本、来源、状态、执行器或 Run ID…", "Script, source, status, executor, or Run ID…"},
+	"runs.search_placeholder":                       {"脚本、来源、状态、操作者、执行器或 Run ID…", "Script, source, status, actor, executor, or Run ID…"},
 	"runs.empty":                                    {"还没有运行记录。", "There are no Runs yet."},
 	"runs.no_matches":                               {"没有符合条件的运行记录。", "No runs match these filters."},
 	"runs.pagination":                               {"运行记录分页", "Run pagination"},

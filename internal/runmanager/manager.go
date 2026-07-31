@@ -974,11 +974,11 @@ func (m *Manager) CountFiltered(filter Filter) (int, error) {
 	like := "%" + filter.Query + "%"
 	err := m.db.QueryRow(`SELECT COUNT(*) FROM runs
 		WHERE (? = '' OR (source_id = ? AND source_type IN ('scheduler', 'admin/schedule-now')))
-		AND (? = '' OR id LIKE ? OR script_path LIKE ? OR source_type LIKE ? OR source_name LIKE ? OR status LIKE ? OR executor LIKE ?)
+		AND (? = '' OR id LIKE ? OR script_path LIKE ? OR source_type LIKE ? OR source_name LIKE ? OR status LIKE ? OR executor LIKE ? OR initiated_by_username LIKE ?)
 		AND (? = 0 OR created_at >= ?)
 		AND (? = 0 OR created_at < ?)`,
 		filter.ScheduleID, filter.ScheduleID,
-		filter.Query, like, like, like, like, like, like,
+		filter.Query, like, like, like, like, like, like, like,
 		filter.HasCreatedFromBoundary, filter.CreatedFromUnixNano,
 		filter.HasCreatedBeforeBoundary, filter.CreatedBeforeUnixNano).Scan(&count)
 	return count, err
@@ -998,12 +998,12 @@ func (m *Manager) ListPageFiltered(filter Filter, limit, offset int) ([]Run, err
 	like := "%" + filter.Query + "%"
 	rows, err := m.db.Query(`SELECT `+runMetadataColumns+` FROM runs
 		WHERE (? = '' OR (source_id = ? AND source_type IN ('scheduler', 'admin/schedule-now')))
-		AND (? = '' OR id LIKE ? OR script_path LIKE ? OR source_type LIKE ? OR source_name LIKE ? OR status LIKE ? OR executor LIKE ?)
+		AND (? = '' OR id LIKE ? OR script_path LIKE ? OR source_type LIKE ? OR source_name LIKE ? OR status LIKE ? OR executor LIKE ? OR initiated_by_username LIKE ?)
 		AND (? = 0 OR created_at >= ?)
 		AND (? = 0 OR created_at < ?)
 		ORDER BY created_at DESC LIMIT ? OFFSET ?`,
 		filter.ScheduleID, filter.ScheduleID,
-		filter.Query, like, like, like, like, like, like,
+		filter.Query, like, like, like, like, like, like, like,
 		filter.HasCreatedFromBoundary, filter.CreatedFromUnixNano,
 		filter.HasCreatedBeforeBoundary, filter.CreatedBeforeUnixNano,
 		limit, offset)
