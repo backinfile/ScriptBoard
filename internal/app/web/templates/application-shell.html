@@ -6,7 +6,10 @@
 <aside class="app-sidebar" id="app-sidebar" data-pjax-nav aria-label="{{t .Locale "shell.navigation"}}">
   <div class="sidebar-head">
     <a class="brand-wordmark" href="/monitor" aria-label="ScriptBoard">{{"ScriptBoard"}}</a>
-    <button class="sidebar-close" type="button" data-sidebar-close><span data-lucide="x" aria-hidden="true"></span><span class="sr-only">{{t .Locale "shell.close_navigation"}}</span></button>
+    <div class="sidebar-head__actions">
+      <button class="sidebar-collapse" type="button" data-sidebar-collapse aria-expanded="true" data-expanded-label="{{t .Locale "shell.collapse_navigation"}}" data-collapsed-label="{{t .Locale "shell.expand_navigation"}}" aria-label="{{t .Locale "shell.collapse_navigation"}}" title="{{t .Locale "shell.collapse_navigation"}}"><span data-sidebar-collapse-icon data-lucide="panel-left-close" aria-hidden="true"></span></button>
+      <button class="sidebar-close" type="button" data-sidebar-close><span data-lucide="x" aria-hidden="true"></span><span class="sr-only">{{t .Locale "shell.close_navigation"}}</span></button>
+    </div>
   </div>
   <nav class="sidebar-nav">
     {{range .Navigation}}
@@ -55,7 +58,7 @@
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <input type="hidden" name="return_to" value="{{.ReturnTo}}">
         <button type="submit" name="locale" value="{{if .ChineseLocaleCurrent}}en-US{{else}}zh-CN{{end}}" aria-label="{{t .Locale "shell.change_language"}}">
-          <span data-lucide="languages" aria-hidden="true"></span>{{if .ChineseLocaleCurrent}}EN{{else}}中文{{end}}
+          <span data-lucide="languages" aria-hidden="true"></span><span>{{if .ChineseLocaleCurrent}}EN{{else}}中文{{end}}</span>
         </button>
       </form>
       <a href="/settings/account" {{if .SettingsCurrent}}aria-current="page"{{end}}><span data-lucide="settings" aria-hidden="true"></span><span>{{t .Locale "shell.settings"}}</span></a>

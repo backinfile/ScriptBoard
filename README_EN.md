@@ -32,6 +32,7 @@ ScriptBoard is a self-hosted script operations console for a single Windows or L
 | Reuse common operations | Save scripts, argument templates, and timeouts as Quick Runs; group, sort, copy, and soft-lock them |
 | Run on a schedule | Create five-field Cron schedules, preview trigger times, and configure timeouts and overlap policy |
 | Observe and troubleshoot | Inspect run history, audit records, host resources, local applications, Docker containers, and website endpoints |
+| AI-assisted analysis | Select an LLM, reference resources visible to the current user, and stream answers from an isolated private Pi Runtime |
 | Recover deleted files | Restore content from ScriptBoard's private trash area on the file's own filesystem |
 | Update safely | Check official stable releases, then let an administrator approve download, verification, restart, and rollback |
 
@@ -60,7 +61,7 @@ The matching interpreter must also be installed on the host before a script can 
 ## Quick start
 
 > [!IMPORTANT]
-> This version is incompatible with old configurations and state databases. Remove old fields and choose a new `state_root`. When an older schema is detected, ScriptBoard only refuses startup; it does not migrate, overwrite, or delete old data.
+> This version is incompatible with the legacy configuration shape. The database uses schema 21. Schema 20 is forward-migrated in one transaction by adding only Assistant tables; schemas older than 20 or newer than the running build are rejected before any write and are not guessed, overwritten, or deleted.
 
 This walkthrough uses a `state` directory inside the extracted release directory for the database, logs, sessions, and sign-in credentials, without installing a system service. Files no longer have a configured root: the Files page browses Windows volumes or Linux `/` directly.
 
@@ -147,6 +148,37 @@ Triggers missed while the service is stopped are not caught up. ScriptBoard uses
 - Docker containers and regular host text files provide on-demand live logs.
 
 Website Monitor includes short-term availability, TLS certificate facts, and a preview of Nginx candidates. Nginx configuration is read only after an administrator explicitly asks for it. ScriptBoard never modifies or reloads Nginx, and it does not send email, SMS, or webhook notifications.
+
+### AI-assisted analysis
+
+AI is optional and disabled by default. An Administrator or Maintainer first adds one or more LLM
+configurations under System Settings → AI and selects a default. API keys live only in a private
+State Root credential file and are never reflected while editing. Every new conversation must select
+a model, and its model can be changed beside the conversation title. Auto approval has both a new-
+conversation default and a direct per-conversation toggle.
+
+The resource button or `@` can reference directories, files, applications, websites, Runs, Quick Runs,
+and schedules. Each reference is revalidated against the current user's permissions when submitted,
+and external content is always untrusted data. A signed Runtime loads only ScriptBoard's fixed Extension.
+It can perform bounded reads of hosts, applications, websites, Runs, logs, Quick Runs, schedules, and
+explicitly referenced text. Starting a Quick Run, running a schedule, stopping a Run, or checking a
+website reauthorizes the user and creates a parameter-bound one-time approval. Pi's default shell,
+arbitrary filesystem access, and user extensions remain disabled.
+
+System Settings → AI also manages Pi Runtime. A formal build checks only the matching, signed companion
+assets for the current ScriptBoard Release and verifies platform, size, SHA-256, archive safety, license,
+and RPC before activation. Installation, update, and rollback are explicit administrator actions;
+ScriptBoard never invokes `pi update`. The Test connection action runs a minimal private Pi turn without
+retaining its prompt or response.
+
+ScriptBoard launches Pi only by an absolute path inside the State Root's private version directory and
+isolates home, session, and workspace by user and conversation. It never reads PATH or user-level Pi
+configuration, so it can run beside Pi started manually in a terminal. LLM requests may incur provider
+charges and send entered text plus bounded live snapshots of referenced resources to the selected
+endpoint. Directory references include logical names and entry metadata only; they do not automatically
+read file bodies. An explicitly referenced regular text file may include up to 16 KiB of UTF-8 content;
+script-path fields in automation snapshots are reduced to basenames. Deployers remain responsible for
+cost, privacy, and data-residency requirements.
 
 ### Recover deleted files
 
@@ -241,10 +273,10 @@ Include all of these locations in a long-term, off-host backup:
 | Data | Location |
 | --- | --- |
 | Host files that require long-term retention | Include their actual volumes and directories in system backups |
-| SQLite, run logs, sessions, audit, and internal state | `state_root` |
+| SQLite, run logs, sessions, audit, AI conversations/credentials/private Runtime, and internal state | `state_root` |
 | Service configuration | Windows: `C:\ProgramData\ScriptBoard\config.yaml`<br>Linux: `/etc/scriptboard/config.yaml` |
 
-The database snapshot and rollback used by application updates are not a backup. This version requires a new configuration and a new `state_root` with database schema 20. Any older state database is rejected before it is modified; no old data is migrated or deleted.
+The database snapshot and rollback used by application updates are not a backup. This version requires the new configuration shape and database schema 21. Schema 20 upgrades in place; schemas older than 20 or newer than the running build are rejected before modification and are not deleted.
 
 ## Configuration and security
 
@@ -321,6 +353,11 @@ Fallback happens only before a script starts. Once an interpreter successfully s
 - only one ScriptBoard instance may use a given `state_root` at a time.
 
 Files hides and rejects `state_root`, the installation directory, the active configuration, administrator password file, TLS private key, and each filesystem's ScriptBoard trash area. Ancestors containing those paths cannot be edited, moved, deleted, overwritten, or executed. Everything else is governed by the service identity, so a default root or LocalSystem deployment has a broad host access scope.
+
+AI conversations are not a security boundary. The provider can see prompts sent to it, and AI
+tools remain bounded by the current ScriptBoard service identity and the user's fixed role. Auto approval
+removes per-call clicking without bypassing reauthorization or domain checks, but it increases the cost
+of mistakes and should be enabled only for trusted users and deliberate scenarios.
 
 Do not expose ScriptBoard directly to the public internet. Remote access should use a trusted VPN, zero-trust network, or correctly configured HTTPS reverse proxy with restricted sources.
 

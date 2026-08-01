@@ -787,7 +787,7 @@ async function assertAccountSettings(page, baseURL) {
   assert.equal(await page.locator(".app-sidebar .sidebar-account").count(), 0);
   assert.equal(await page.locator('.app-sidebar a[href="/settings/users"]').count(), 0);
   assert.equal(await page.locator('.settings-nav a[href="/settings/users"]').count(), 1);
-  assert.equal(await page.locator(".settings-nav a").count(), 4);
+  assert.equal(await page.locator(".settings-nav a").count(), 5);
   assert.equal(await page.locator(".settings-layout").count(), 0);
   const settingsLayout = await page.locator(".settings-nav, .settings-content").evaluateAll(elements =>
     elements.map(element => ({
@@ -827,6 +827,96 @@ async function assertAccountSettings(page, baseURL) {
   await assertNoHorizontalOverflow(page, "Account settings mobile");
   assert.equal(await page.locator('.settings-nav a[href="/settings/users"]').isVisible(), true);
   assert.equal(await page.locator(".settings-nav").evaluate(element => getComputedStyle(element).overflowX), "auto");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+}
+
+async function assertAssistantSettingsAndWorkspace(page, baseURL) {
+  await page.goto(`${baseURL}/settings/ai`);
+  await page.locator("[data-assistant-settings]").waitFor();
+  await assertNoHorizontalOverflow(page, "AI settings");
+  assert.equal(await page.locator(".settings-nav a").count(), 5);
+
+  await page.locator("[data-add-llm]").click();
+  const drawer = page.locator('[data-llm-drawer][data-open="true"]');
+  await drawer.waitFor();
+  await drawer.locator('input[name="name"]').fill("Fixture · DeepSeek");
+  await drawer.locator('select[name="provider"]').selectOption("openai-compatible");
+  await drawer.locator('input[name="model"]').fill("fixture-model");
+  await drawer.locator('input[name="endpoint"]').fill("http://127.0.0.1:11434/v1");
+  await drawer.locator('input[name="api_key"]').fill("browser-fixture-key");
+  await drawer.locator('input[name="make_default"]').check();
+  await saveSnapshot(page, "ai-settings-drawer");
+  await Promise.all([
+    page.waitForURL("**/settings/ai"),
+    drawer.locator('button[type="submit"]').click(),
+  ]);
+
+  const configuredRow = page.locator('[data-llm-id][data-name="Fixture · DeepSeek"]');
+  await configuredRow.waitFor();
+  assert.equal(await configuredRow.locator("input").count(), 0);
+  assert.match(await configuredRow.textContent(), /Credential configured/);
+  await configuredRow.locator("[data-edit-llm]").click();
+  await drawer.waitFor();
+  assert.equal(await drawer.locator('input[name="api_key"]').inputValue(), "");
+  await drawer.locator("[data-close-llm]").last().click();
+  await drawer.waitFor({ state: "hidden" });
+
+  const policy = page.locator('form[action="/settings/ai/defaults"]');
+  const enabledInput = policy.locator('input[name="enabled"]');
+  if (!await enabledInput.isChecked()) await policy.locator('label:has(input[name="enabled"])').click();
+  const defaultApprovalInput = policy.locator('input[name="default_auto_approval"]');
+  if (await defaultApprovalInput.isChecked()) await policy.locator('label:has(input[name="default_auto_approval"])').click();
+  await policy.locator('select[name="max_active_conversations"]').selectOption("2");
+  await policy.locator('button[type="submit"]').click();
+  await page.waitForTimeout(300);
+  assert.equal(await page.locator('form[action="/settings/ai/defaults"] [data-async-submit-error]').count(), 0);
+  assert.equal(await page.locator('form[action="/settings/ai/defaults"] input[name="enabled"]').isChecked(), true);
+  await saveSnapshot(page, "ai-settings");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await assertNoHorizontalOverflow(page, "AI settings mobile");
+  await saveSnapshot(page, "ai-settings-mobile");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+
+  await page.goto(`${baseURL}/ai`);
+  await page.locator("[data-assistant-workspace]").waitFor();
+  await assertNoHorizontalOverflow(page, "AI workspace");
+  assert.equal((await page.locator("[data-model-picker-label]").textContent()).trim(), "Fixture · DeepSeek");
+
+  const modelToggle = page.locator("[data-model-picker-toggle]");
+  await modelToggle.click();
+  const modelPicker = page.locator('.assistant-model-picker[data-open="true"]');
+  await modelPicker.waitFor();
+  assert.equal(await modelPicker.locator('[role="option"][aria-selected="true"]').count(), 1);
+  await saveSnapshot(page, "ai-chat-model-picker");
+  await modelToggle.click();
+
+  const approvalToggle = page.locator("[data-auto-approval-toggle]");
+  assert.equal(await approvalToggle.getAttribute("aria-pressed"), "false");
+  await approvalToggle.click();
+  assert.equal(await approvalToggle.getAttribute("aria-pressed"), "true");
+  assert.equal(await page.locator('[role="dialog"]').count(), 0);
+
+  await page.locator("[data-resource-picker-toggle]").click();
+  const resourcePicker = page.locator('[data-resource-picker][data-open="true"]');
+  await resourcePicker.waitFor();
+  const hostResource = resourcePicker.locator('[data-resource-kind="directory"][data-resource-id="host"]');
+  assert.equal(await hostResource.count(), 1);
+  await hostResource.click();
+  const directoryResource = resourcePicker.locator('[data-resource-kind="directory"][data-resource-label="automation"]');
+  assert.equal(await directoryResource.count(), 1);
+  await directoryResource.click();
+  const fileResource = resourcePicker.locator('[data-resource-kind="file"][data-resource-label="README.md"]');
+  assert.equal(await fileResource.count(), 1);
+  await fileResource.click();
+  assert.equal((await page.locator("[data-assistant-context-count]").textContent()).trim(), "3");
+  await saveSnapshot(page, "ai-chat");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await assertNoHorizontalOverflow(page, "AI workspace mobile");
+  await saveSnapshot(page, "ai-chat-mobile");
   await page.setViewportSize({ width: 1440, height: 1000 });
 }
 
@@ -891,6 +981,7 @@ async function assertAccountSettings(page, baseURL) {
     await assertStatusDisplaySettings(page, fixture.baseURL);
     await assertAccountSettings(page, fixture.baseURL);
     await assertUserManagement(page, fixture.baseURL);
+    await assertAssistantSettingsAndWorkspace(page, fixture.baseURL);
 
     const status = await page.evaluate(async () => {
       const response = await fetch("/monitor/status", { cache: "no-store" });

@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="{{.Locale}}">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "assistant.settings_title"}} · ScriptBoard</title></head>
+<body>
+<main class="workspace settings-workspace assistant-settings" data-assistant-settings>
+  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "settings.eyebrow"}}</p><h1>{{t .Locale "settings.title"}}</h1><p>{{t .Locale "settings.description"}}</p></div></header>
+  {{template "settings-navigation" .SettingsNavigation}}
+  <div class="settings-content">
+    <header class="settings-section-heading"><div><h2>{{t .Locale "assistant.settings_title"}}</h2><p>{{t .Locale "assistant.settings_description"}}</p></div><span class="assistant-runtime-status" data-state="{{if .RuntimeAvailable}}enabled{{else}}stale{{end}}"><span class="status-dot" aria-hidden="true"></span>{{if .RuntimeAvailable}}Pi v{{.RuntimeVersion}}{{else}}{{t .Locale "assistant.runtime_not_installed"}}{{end}}</span></header>
+    {{if .ProviderTestPassed}}<aside class="inline-notice"><span data-lucide="circle-check" aria-hidden="true"></span><p>{{t .Locale "assistant.provider_test_passed"}}</p></aside>{{end}}
+    <dl class="assistant-settings-summary">
+      <div><dt>{{t .Locale "assistant.default_llm"}}</dt><dd>{{if .DefaultModel}}{{.DefaultModel.Name}}{{else}}{{t .Locale "assistant.not_configured"}}{{end}}</dd></div>
+      <div><dt>{{t .Locale "assistant.configurations"}}</dt><dd>{{len .Models}}</dd></div>
+      <div><dt>Agent Runtime</dt><dd>{{if .RuntimeAvailable}}Pi v{{.RuntimeVersion}}{{else}}Pi · {{t .Locale "assistant.release_managed"}}{{end}}</dd></div>
+    </dl>
+
+    <section class="assistant-settings-section">
+      <header class="assistant-settings-section__head"><div><p class="section-index">01 / LLM</p><h3>{{t .Locale "assistant.llm_configurations"}}</h3><p>{{t .Locale "assistant.llm_description"}}</p></div><button class="button button--primary" type="button" data-add-llm><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "assistant.add_llm"}}</button></header>
+      <div class="assistant-llm-list">
+        <div class="assistant-llm-list__head"><span>{{t .Locale "assistant.configuration"}}</span><span>{{t .Locale "assistant.model_id"}}</span><span>Endpoint</span><span>{{t .Locale "common.actions"}}</span></div>
+        {{range .Models}}<article class="assistant-llm-row" data-llm-id="{{.ID}}" data-name="{{.Name}}" data-provider="{{.Provider}}" data-model="{{.Model}}" data-endpoint="{{.Endpoint}}" data-default="{{.Default}}" data-credential="{{.CredentialConfigured}}">
+          <div class="assistant-llm-identity"><span data-lucide="sparkles" aria-hidden="true"></span><span><strong>{{.Name}}</strong><small>{{.ProviderLabel}}{{if .Default}} · DEFAULT{{end}}</small></span></div>
+          <div class="assistant-llm-model"><strong>{{.Model}}</strong><small>{{if .CredentialConfigured}}{{t $.Locale "assistant.credential_configured"}}{{else}}{{t $.Locale "assistant.credential_missing"}}{{end}}</small></div>
+          <code title="{{.Endpoint}}">{{.EndpointDisplay}}</code>
+          <div class="assistant-llm-actions">{{if not .Default}}<form method="post" action="/settings/ai/llms/{{.ID}}/default"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="button button--compact" type="submit">{{t $.Locale "assistant.set_default"}}</button></form>{{end}}<form method="post" action="/settings/ai/llms/{{.ID}}/test"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="icon-button icon-button--quiet" type="submit" aria-label="{{t $.Locale "assistant.test_provider"}} {{.Name}}" title="{{t $.Locale "assistant.test_provider"}}"><span data-lucide="plug-zap" aria-hidden="true"></span></button></form><button class="icon-button icon-button--quiet" type="button" data-edit-llm aria-label="{{t $.Locale "common.edit"}} {{.Name}}"><span data-lucide="pencil" aria-hidden="true"></span></button>{{if not .Default}}<form method="post" action="/settings/ai/llms/{{.ID}}/delete" data-confirm="{{t $.Locale "assistant.delete_llm_confirm"}}"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="icon-button icon-button--quiet" type="submit" aria-label="{{t $.Locale "common.delete"}} {{.Name}}"><span data-lucide="x" aria-hidden="true"></span></button></form>{{end}}</div>
+        </article>{{else}}<div class="assistant-llm-empty"><span data-lucide="sparkles" aria-hidden="true"></span><div><strong>{{t .Locale "assistant.no_models"}}</strong><p>{{t .Locale "assistant.no_models_description"}}</p></div></div>{{end}}
+      </div>
+    </section>
+
+    <section class="assistant-settings-section">
+      <header class="assistant-settings-section__head"><div><p class="section-index">02 / RUNTIME</p><h3>{{t .Locale "assistant.runtime_manager"}}</h3><p>{{t .Locale "assistant.runtime_manager_description"}}</p></div><div class="assistant-runtime-actions"><form method="post" action="/settings/ai/runtime/check"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--compact" type="submit"><span data-lucide="refresh-cw" aria-hidden="true"></span>{{t .Locale "assistant.check_runtime"}}</button></form>{{if .Runtime.OnlineVersion}}<form method="post" action="/settings/ai/runtime/install"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--primary button--compact" type="submit"><span data-lucide="download" aria-hidden="true"></span>{{t .Locale "assistant.install_runtime"}} v{{.Runtime.OnlineVersion}}</button></form>{{end}}{{if .Runtime.RollbackVersion}}<form method="post" action="/settings/ai/runtime/rollback" data-confirm="{{t .Locale "assistant.rollback_confirm"}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--compact" type="submit"><span data-lucide="history" aria-hidden="true"></span>{{t .Locale "assistant.rollback_runtime"}} v{{.Runtime.RollbackVersion}}</button></form>{{end}}</div></header>
+      <div class="assistant-runtime-panel">
+        <div class="assistant-runtime-panel__state"><span class="assistant-runtime-mark" data-state="{{if .RuntimeAvailable}}enabled{{else}}stale{{end}}"><span data-lucide="box" aria-hidden="true"></span></span><div><strong>{{if .RuntimeAvailable}}Pi v{{.RuntimeVersion}}{{else}}{{t .Locale "assistant.runtime_not_installed"}}{{end}}</strong><p>{{if .RuntimeAvailable}}{{t .Locale "assistant.runtime_ready"}}{{else}}{{t .Locale "assistant.runtime_required_short"}}{{end}}</p></div></div>
+        <dl class="assistant-runtime-diagnostics"><div><dt>{{t .Locale "assistant.runtime_active_processes"}}</dt><dd>{{.ActiveProcesses}}</dd></div><div><dt>{{t .Locale "assistant.runtime_rollback"}}</dt><dd>{{if .Runtime.RollbackVersion}}v{{.Runtime.RollbackVersion}}{{else}}—{{end}}</dd></div><div><dt>{{t .Locale "assistant.runtime_last_check"}}</dt><dd>{{if .Runtime.CheckedAt.IsZero}}—{{else}}{{localTime .Locale .Runtime.CheckedAt}}{{end}}</dd></div><div><dt>{{t .Locale "assistant.runtime_last_error"}}</dt><dd>{{if .Runtime.LastErrorCode}}{{.Runtime.LastErrorCode}}{{else}}—{{end}}</dd></div></dl>
+        <details class="assistant-runtime-offline"><summary><span data-lucide="package-open" aria-hidden="true"></span>{{t .Locale "assistant.offline_install"}}</summary><form method="post" action="/settings/ai/runtime/upload" enctype="multipart/form-data"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label><span>{{t .Locale "assistant.runtime_manifest"}}</span><input type="file" name="manifest" accept="application/json,.json" required></label><label><span>{{t .Locale "assistant.runtime_signature"}}</span><input type="file" name="signature" accept="application/json,.sig" required></label><label><span>{{t .Locale "assistant.runtime_archive"}}</span><input type="file" name="runtime" accept=".zip,.gz,application/zip,application/gzip" required></label><button class="button button--primary button--compact" type="submit"><span data-lucide="shield-check" aria-hidden="true"></span>{{t .Locale "assistant.verify_install"}}</button></form><p>{{t .Locale "assistant.offline_install_description"}}</p></details>
+      </div>
+    </section>
+
+    <section class="assistant-settings-section">
+      <header class="assistant-settings-section__head"><div><p class="section-index">03 / GUARDRAILS</p><h3>{{t .Locale "assistant.guardrails"}}</h3><p>{{t .Locale "assistant.pi_description"}}</p></div></header>
+      <form class="assistant-policy" method="post" action="/settings/ai/defaults" data-async>
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <label class="assistant-policy-row"><span><strong>{{t .Locale "assistant.enabled"}}</strong><p>{{t .Locale "assistant.enabled_description"}}</p></span><span class="assistant-toggle"><input type="checkbox" name="enabled" value="true" {{if .Settings.Enabled}}checked{{end}}><span aria-hidden="true"></span></span></label>
+        <label class="assistant-policy-row"><span><strong>{{t .Locale "assistant.max_conversations"}}</strong><p>{{t .Locale "assistant.max_conversations_description"}}</p></span><select name="max_active_conversations" aria-label="{{t .Locale "assistant.max_conversations"}}"><option value="1" {{if eq .Settings.MaxActiveConversations 1}}selected{{end}}>1</option><option value="2" {{if eq .Settings.MaxActiveConversations 2}}selected{{end}}>2</option><option value="4" {{if eq .Settings.MaxActiveConversations 4}}selected{{end}}>4</option><option value="8" {{if eq .Settings.MaxActiveConversations 8}}selected{{end}}>8</option></select></label>
+        <label class="assistant-policy-row"><span><strong>{{t .Locale "assistant.new_auto_approval"}}</strong><p>{{t .Locale "assistant.new_auto_approval_description"}}</p></span><span class="assistant-toggle"><input type="checkbox" name="default_auto_approval" value="true" {{if .Settings.DefaultAutoApproval}}checked{{end}}><span aria-hidden="true"></span></span></label>
+        <div class="assistant-policy-actions"><button class="button button--primary" type="submit"><span data-lucide="check" aria-hidden="true"></span>{{t .Locale "common.save"}}</button></div>
+      </form>
+    </section>
+  </div>
+
+  <div class="assistant-drawer-layer" data-llm-drawer data-open="false" aria-hidden="true">
+    <button class="assistant-drawer-scrim" type="button" data-close-llm aria-label="{{t .Locale "common.close"}}"></button>
+    <section class="assistant-llm-drawer" role="dialog" aria-modal="true" aria-labelledby="llm-drawer-title">
+      <header><div><p class="page-eyebrow">AI / LLM CONFIGURATION</p><h2 id="llm-drawer-title" data-llm-drawer-title>{{t .Locale "assistant.add_llm"}}</h2><code>{{t .Locale "assistant.llm_drawer_description"}}</code></div><button class="icon-button icon-button--quiet" type="button" data-close-llm aria-label="{{t .Locale "common.close"}}"><span data-lucide="x" aria-hidden="true"></span></button></header>
+      <form method="post" action="/settings/ai/llms" data-llm-form>
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="id" value="">
+        <div class="assistant-llm-drawer__body">
+          <div class="assistant-llm-form-grid">
+            <label class="assistant-field assistant-field--wide"><span>{{t .Locale "assistant.configuration_name"}}</span><input name="name" required maxlength="48" autocomplete="off" placeholder="OpenAI · Production"></label>
+            <label class="assistant-field"><span>{{t .Locale "assistant.provider"}}</span><select name="provider" required><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="openai-compatible">OpenAI Compatible</option></select></label>
+            <label class="assistant-field"><span>{{t .Locale "assistant.model_id"}}</span><input name="model" required maxlength="160" autocomplete="off" placeholder="gpt-5.2"></label>
+            <label class="assistant-field assistant-field--wide"><span>API Endpoint</span><input name="endpoint" type="url" required value="https://api.openai.com/v1" autocomplete="off"></label>
+            <label class="assistant-field assistant-field--wide"><span>API Key</span><input name="api_key" type="password" maxlength="8192" autocomplete="new-password" placeholder="{{t .Locale "assistant.credential_placeholder"}}"><small data-credential-help>{{t .Locale "assistant.credential_description"}}</small></label>
+          </div>
+          <label class="assistant-default-choice"><input type="checkbox" name="make_default" value="true"><span><strong>{{t .Locale "assistant.make_default"}}</strong><small>{{t .Locale "assistant.make_default_description"}}</small></span></label>
+        </div>
+        <footer><button class="button" type="button" data-close-llm>{{t .Locale "common.cancel"}}</button><button class="button button--primary" type="submit"><span data-lucide="check" aria-hidden="true"></span>{{t .Locale "assistant.save_configuration"}}</button></footer>
+      </form>
+    </section>
+  </div>
+</main>
+</body>
+</html>

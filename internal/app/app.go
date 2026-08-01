@@ -38,6 +38,9 @@ import (
 	_ "modernc.org/sqlite"
 
 	"scriptboard/internal/appstatus"
+	"scriptboard/internal/assistant"
+	"scriptboard/internal/assistant/runtimeinstall"
+	"scriptboard/internal/assistant/toolbroker"
 	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/hoststatus"
@@ -274,30 +277,36 @@ const (
 )
 
 type Config struct {
-	StateRoot             string
-	ConfigPath            string
-	InstallRoot           string
-	TLSKey                string
-	FileTopology          hostfiles.Topology
-	RunTimeoutGrace       time.Duration
-	SchedulerNow          func() time.Time
-	SchedulerTick         time.Duration
-	ExecutorChains        map[string][]string
-	AdminUsername         string
-	AdminPassword         string
-	AdminPasswordFile     string
-	TrustedProxies        []string
-	WebsiteMonitorOptions websitemonitor.Options
-	UpdateCheck           bool
-	UpdateInterval        time.Duration
-	UpdateSource          updatepkg.ReleaseSource
-	RequestShutdown       func()
-	ApplicationProbe      appstatus.Probe
+	StateRoot              string
+	ConfigPath             string
+	InstallRoot            string
+	TLSKey                 string
+	FileTopology           hostfiles.Topology
+	RunTimeoutGrace        time.Duration
+	SchedulerNow           func() time.Time
+	SchedulerTick          time.Duration
+	ExecutorChains         map[string][]string
+	AdminUsername          string
+	AdminPassword          string
+	AdminPasswordFile      string
+	TrustedProxies         []string
+	WebsiteMonitorOptions  websitemonitor.Options
+	UpdateCheck            bool
+	UpdateInterval         time.Duration
+	UpdateSource           updatepkg.ReleaseSource
+	RequestShutdown        func()
+	ApplicationProbe       appstatus.Probe
+	AssistantRuntimeSource runtimeinstall.Source
 }
 
 type App struct {
 	db                 *sql.DB
 	stateRoot          string
+	assistant          *assistant.Service
+	assistantRuntime   *assistantRuntimeCoordinator
+	assistantRuntimes  *runtimeinstall.Manager
+	assistantTools     *assistantToolExecutor
+	assistantBroker    *toolbroker.Broker
 	files              *hostfiles.Manager
 	fileOperations     *sqliteFileOperationStore
 	fileMoves          *hostfiles.MoveEngine
@@ -394,6 +403,41 @@ func Open(config Config) (*App, error) {
 		logStreamSlots: make(chan struct{}, 8), logHistorySlots: make(chan struct{}, 4),
 		updateResultsWake: make(chan struct{}, 1),
 	}
+	application.assistant, err = assistant.New(db, assistant.Options{StateRoot: stateRoot})
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("initialize assistant module: %w", err)
+	}
+	if !validating {
+		if _, err := application.assistant.RecoverInterruptedTurns(context.Background()); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("recover assistant turns: %w", err)
+		}
+	}
+	assistantSettings, err := application.assistant.Settings(context.Background())
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("load assistant settings: %w", err)
+	}
+	application.assistantRuntime = newAssistantRuntimeCoordinator(stateRoot, application.assistant, assistantSettings.MaxActiveConversations)
+	application.assistantRuntime.SetApprovalAudit(func(actor assistant.Actor, conversationID, approvalID, result string) {
+		var role userRole
+		_ = application.db.QueryRow("SELECT role FROM users WHERE id = ?", actor.UserID).Scan(&role)
+		action := "assistant_tool_approval"
+		application.recordAuditWithActor(action, fmt.Sprintf("conversation=%s approval=%s", conversationID, approvalID), result, "assistant", actor.UserID, actor.Username, role)
+	})
+	runtimeSource := config.AssistantRuntimeSource
+	if runtimeSource == nil {
+		runtimeSource = runtimeinstall.NewGitHubSource()
+	}
+	currentBuild := buildinfo.Current()
+	application.assistantRuntimes = runtimeinstall.NewManager(runtimeinstall.Config{
+		StateRoot:     stateRoot,
+		Compatibility: runtimeinstall.Compatibility{ScriptBoardVersion: currentBuild.Version, ScriptBoardTag: currentBuild.Tag},
+		Source:        runtimeSource,
+		SwitchGuard:   application.assistantRuntime.CanSwitchRuntime,
+		Protected:     application.assistant.ReferencedRuntimeVersions,
+	})
 	application.fileOperations = newSQLiteFileOperationStore(db)
 	application.fileMoves = hostfiles.NewMoveEngine(files, application.fileOperations)
 	application.fileOperationCtx, application.fileOperationStop = context.WithCancel(context.Background())
@@ -468,6 +512,19 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	application.assistantTools = newAssistantToolExecutor(application)
+	application.assistantRuntime.SetTurnSettled(application.assistantTools.releaseTurn)
+	application.assistantBroker, err = toolbroker.New(stateRoot, application.assistantTools)
+	if err != nil {
+		application.websiteMonitor.Close()
+		application.applicationStatus.Close()
+		application.hostStatus.Close()
+		application.scheduler.Close()
+		application.runs.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("initialize Assistant Tool Broker: %w", err)
+	}
+	application.assistantRuntime.SetBroker(application.assistantBroker)
 	if !validating {
 		application.hostStatus.Start(context.Background())
 		application.applicationStatus.Start(context.Background())
@@ -796,6 +853,14 @@ func (a *App) applyCredentialOverride(username, password, passwordFile string) e
 }
 
 func (a *App) Close() error {
+	if a.assistantRuntime != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = a.assistantRuntime.Close(ctx)
+		cancel()
+	}
+	if a.assistantBroker != nil {
+		_ = a.assistantBroker.Close()
+	}
 	if a.fileOperationStop != nil {
 		a.fileOperationStop()
 		a.fileOperationWG.Wait()
@@ -864,7 +929,7 @@ func rejectIncompatibleExistingStateRoot(state string) error {
 	if err != nil {
 		return fmt.Errorf("inspect existing SQLite schema without modifying it: %w", err)
 	}
-	if schemaVersion != currentSchemaVersion {
+	if !compatibleDatabaseSchema(schemaVersion) {
 		return fmt.Errorf("database schema version %d is incompatible with schema %d; use a new State Root", schemaVersion, currentSchemaVersion)
 	}
 	return nil
@@ -916,7 +981,7 @@ func openDatabase(path string) (*sql.DB, error) {
 		if err != nil {
 			return nil, fmt.Errorf("inspect existing SQLite schema without modifying it: %w", err)
 		}
-		if schemaVersion != currentSchemaVersion {
+		if !compatibleDatabaseSchema(schemaVersion) {
 			return nil, fmt.Errorf("database schema version %d is incompatible with schema %d; use a new State Root", schemaVersion, currentSchemaVersion)
 		}
 	}
@@ -1151,6 +1216,12 @@ func openDatabase(path string) (*sql.DB, error) {
 			return nil, fmt.Errorf("initialize Website Monitor SQLite schema: %w", err)
 		}
 	}
+	for _, statement := range assistant.SchemaStatements {
+		if _, err := migration.Exec(statement); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("initialize Assistant SQLite schema: %w", err)
+		}
+	}
 	for _, statement := range []string{
 		"CREATE UNIQUE INDEX IF NOT EXISTS users_single_administrator_idx ON users(role) WHERE role = 'administrator'",
 		"CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id)",
@@ -1200,6 +1271,14 @@ func openDatabase(path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("checkpoint initialized SQLite schema: %w", err)
 	}
 	return db, nil
+}
+
+func compatibleDatabaseSchema(version int) bool {
+	// Schema 20 is the clean host-filesystem baseline. Schema 21 adds only
+	// assistant-owned tables and indexes, so it has one explicit, transactional
+	// forward migration. Older legacy layouts remain incompatible and are still
+	// rejected before the database is opened for writing.
+	return version == currentSchemaVersion || currentSchemaVersion == 21 && version == 20
 }
 
 func readSQLiteHeaderUserVersion(path string) (int, error) {
@@ -1365,6 +1444,17 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("POST /settings/locale", a.setWebLocale)
 	mux.Handle("POST /logout", a.requireSession(http.HandlerFunc(a.logout)))
 	mux.Handle("GET /monitor", a.requireSession(http.HandlerFunc(a.overviewPage)))
+	mux.Handle("GET /ai", a.requireSession(http.HandlerFunc(a.assistantPage)))
+	mux.Handle("POST /ai/conversations", a.requireSession(http.HandlerFunc(a.createAssistantConversation)))
+	mux.Handle("GET /ai/conversations/{id}", a.requireSession(http.HandlerFunc(a.assistantConversationPage)))
+	mux.Handle("POST /ai/conversations/{id}/messages", a.requireSession(http.HandlerFunc(a.postAssistantMessage)))
+	mux.Handle("POST /ai/conversations/{id}/abort", a.requireSession(http.HandlerFunc(a.abortAssistantTurn)))
+	mux.Handle("GET /ai/conversations/{id}/events", a.requireSession(http.HandlerFunc(a.assistantConversationEvents)))
+	mux.Handle("POST /ai/conversations/{id}/model", a.requireSession(http.HandlerFunc(a.setAssistantConversationModel)))
+	mux.Handle("POST /ai/conversations/{id}/approval-mode", a.requireSession(http.HandlerFunc(a.setAssistantApprovalMode)))
+	mux.Handle("POST /ai/conversations/{id}/approvals/{approval_id}", a.requireSession(http.HandlerFunc(a.resolveAssistantApproval)))
+	mux.Handle("POST /ai/conversations/{id}/archive", a.requireSession(http.HandlerFunc(a.archiveAssistantConversation)))
+	mux.Handle("POST /ai/conversations/{id}/restore", a.requireSession(http.HandlerFunc(a.restoreAssistantConversation)))
 	mux.Handle("GET /monitor/data", a.requireSession(http.HandlerFunc(a.overviewData)))
 	mux.Handle("GET /monitor/status", a.requireSession(http.HandlerFunc(a.shellStatus)))
 	mux.Handle("GET /monitor/applications", a.requireSession(http.HandlerFunc(a.applicationsPage)))
@@ -1430,6 +1520,16 @@ func (a *App) routes() http.Handler {
 			SettingsNavigation settingsNavigationData
 		}{Locale: locale, SettingsNavigation: newSettingsNavigation(current, locale, "display")})
 	})))
+	mux.Handle("GET /settings/ai", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.assistantSettingsPage)))
+	mux.Handle("POST /settings/ai/llms", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.saveAssistantModel)))
+	mux.Handle("POST /settings/ai/llms/{id}/test", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.testAssistantModel)))
+	mux.Handle("POST /settings/ai/llms/{id}/default", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.setDefaultAssistantModel)))
+	mux.Handle("POST /settings/ai/llms/{id}/delete", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.deleteAssistantModel)))
+	mux.Handle("POST /settings/ai/defaults", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.saveAssistantDefaults)))
+	mux.Handle("POST /settings/ai/runtime/check", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.checkAssistantRuntime)))
+	mux.Handle("POST /settings/ai/runtime/install", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.installAssistantRuntime)))
+	mux.Handle("POST /settings/ai/runtime/upload", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.uploadAssistantRuntime)))
+	mux.Handle("POST /settings/ai/runtime/rollback", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.rollbackAssistantRuntime)))
 	mux.Handle("GET /settings/updates", a.requireSession(http.HandlerFunc(a.updatesPage)))
 	mux.Handle("GET /settings/updates/status", a.requireSession(http.HandlerFunc(a.updateStatus)))
 	mux.Handle("POST /settings/updates/check", a.requireSession(http.HandlerFunc(a.checkUpdate)))

@@ -364,6 +364,8 @@ stateDiagram-v2
 - AuditEvent(occurred_at DESC), AuditEvent(action, occurred_at)
 - TrashEntry(original_path_key), TrashEntry(deleted_at)
 - FileOperation(phase, updated_at), FileOperation(source_path_key), FileOperation(destination_path_key)
+- AssistantModel(is_default), AssistantConversation(owner_user_id, archived_at, updated_at), AssistantMessage(conversation_id, sequence)
+- AssistantToolCall(conversation_id, started_at), AssistantApproval(conversation_id, status, expires_at)
 
 ## 7. 文件布局
 
@@ -465,3 +467,60 @@ stateDiagram-v2
 源码不是 Host Entry 或 Trash Entry。审计清理先删除源码，再在同一数据库事务中
 设置 `source_expired=1`、清空审计引用并删除审计条目。文件删除失败时三个数据库
 变更均不得发生。RunLogManifest 的 90 天/容量清理不处理源码文件。
+
+## 10. AI Assistant
+
+schema 21 在 schema 20 主机文件基线上增加以下 Assistant 自有表。迁移只执行幂等建表、
+建索引和 `user_version` 更新，并与应用其余 schema 变更在同一事务提交。
+
+| 实体 | 关键字段与语义 |
+| --- | --- |
+| AssistantSettings | 单例；功能启用、最大活动对话数、新对话自动审批默认值、更新者和时间 |
+| AssistantModel | 名称、Provider、模型 ID、HTTPS/回环 Endpoint、凭据已配置事实、唯一默认项；不保存 API Key |
+| AssistantConversation | 所有者、标题、必选模型、审批模式、Pi session 相对标识、Runtime 版本、状态、revision、归档时间 |
+| AssistantMessage | 对话内稳定 sequence、user/assistant、正文、streaming/complete/interrupted/error 与完成时间 |
+| AssistantContextRef | 对话、资源种类、稳定 ID、安全标签和展示顺序；不复制文件或日志正文 |
+| AssistantToolCall | 工具名、目标/参数摘要、状态、稳定错误码、结果摘要和时间；不保存敏感完整结果 |
+| AssistantApproval | 工具调用、参数摘要、pending/approved/rejected/expired/cancelled、过期时间和决定者 |
+
+AssistantConversation 只能由 `owner_user_id` 对应用户列出、读取、订阅和修改。每个对话
+同一时间最多存在一个 streaming assistant message；服务启动时，仍为 running 或
+waiting_approval 的对话及消息原位转为 interrupted，不创建重放任务。归档只设置时间，
+不会级联删除消息、资源引用或 Pi session。
+
+提交消息时，用户消息、streaming assistant message、conversation running 状态和该次
+完整资源引用集合在一个事务内写入；遗漏的旧引用会被移除。每个 Agent Turn 随后重新校验
+引用权限并生成有界快照。目录只包含逻辑名称与最多 48 个直接子项元数据；明确引用的普通
+UTF-8 文本文件最多附带 16 KiB 正文并记录 SHA-256，不把宿主绝对路径送入 Prompt。
+
+Provider API Key 按 AssistantModel ID 保存到
+`state-root/secrets/assistant-provider.json`，使用私有权限与同目录原子替换；它不进入
+SQLite、HTML、审计、SSE 或普通日志。删除仍被对话引用的模型受外键和领域检查共同拒绝。
+
+```text
+state-root/
+  secrets/
+    assistant-provider.json
+  assistant/
+    runtime/
+      active.json
+      versions/<version>/
+        pi[.exe]
+        scriptboard-extension.ts     # 正式签名 Runtime 的唯一固定 Extension
+        runtime.json                 # Pi/RPC/Broker 合同和上游 commit
+        LICENSE
+    pi-home/<user-id>/<conversation-id>/
+      models.json                    # 只引用子进程环境变量，不含实际 API Key
+    sessions/<user-id>/<conversation-id>/
+    workspaces/<user-id>/<conversation-id>/
+```
+
+所有 Assistant 目录都属于 State Root 受保护范围，不显示为 Host Entry。活动 Runtime
+解析只接受 `active.json` 指向自身版本目录内的普通文件，绝不查询 PATH 或用户 Pi 目录。
+私有 session 目录已有非空 JSONL 时，下一次受管进程使用 `--continue` 恢复；每个 Turn
+开始前仍通过 RPC `set_model` 重选该对话当前模型，避免保温进程沿用过期模型。
+
+Tool Broker 使用每个受管 Pi 进程独有的 Named Pipe/Unix Socket 与 256-bit capability。
+capability 不持久化；AssistantToolCall 只记录规范参数、目标和有界结果摘要，
+AssistantApproval 绑定用户、角色、授权版本、对话、Tool Call、参数和目标当前状态。
+服务重启把尚未完成的工具标记为 interrupted，并取消 pending/approved 的状态修改。

@@ -3,6 +3,7 @@
 
   const iconPaths = {
     "activity": '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+    "archive": '<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>',
     "app-window": '<rect width="20" height="16" x="2" y="4" rx="2"/><path d="M2 8h20"/><path d="M6 6h.01"/><path d="M10 6h.01"/>',
     "arrow-down": '<path d="m6 9 6 6 6-6"/><path d="M12 3v12"/>',
     "arrow-down-to-line": '<path d="M12 17V3"/><path d="m6 11 6 6 6-6"/><path d="M19 21H5"/>',
@@ -11,6 +12,7 @@
     "arrow-up": '<path d="m18 15-6-6-6 6"/><path d="M12 21V9"/>',
     "arrow-up-down": '<path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/>',
     "arrow-up-to-line": '<path d="M5 3h14"/><path d="m18 13-6-6-6 6"/><path d="M12 7v14"/>',
+    "at-sign": '<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/>',
     "bookmark-plus": '<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h5"/><path d="M19 3v6"/><path d="M16 6h6"/>',
     "box": '<path d="m21 8-9-5-9 5 9 5 9-5Z"/><path d="m3 8 9 5 9-5"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/>',
     "braces": '<path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"/><path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/>',
@@ -52,9 +54,12 @@
     "lock": '<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
     "log-out": '<path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>',
     "memory-stick": '<path d="M6 19v-3M10 19v-3M14 19v-3M18 19v-3M8 11V9M16 11V9"/><rect x="2" y="5" width="20" height="11" rx="2"/>',
+    "message-square": '<path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/>',
     "network": '<rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-3h14v3M12 12V8"/>',
     "panel-left-open": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/>',
+    "panel-left-close": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m17 9-3 3 3 3"/>',
     "pause": '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>',
+    "pencil": '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4z"/>',
     "pin": '<path d="M12 17v5"/><path d="M5 17h14"/><path d="M15 3.5c0 2 1 3.5 2 4.5H7c1-1 2-2.5 2-4.5"/><path d="M9 3h6"/>',
     "pin-off": '<path d="M12 17v5"/><path d="M5 17h12"/><path d="M4 4 20 20"/><path d="M9 3h6"/><path d="M15 3.5c0 2 1 3.5 2 4.5h-4"/><path d="M7 8c.7-.7 1.4-1.8 1.8-3"/>',
     "play": '<path d="m6 3 14 9-14 9z"/>',
@@ -66,9 +71,11 @@
     "search": '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
     "scan-search": '<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/><path d="m16 16-1.9-1.9"/>',
     "search-x": '<path d="m13.5 8.5-5 5"/><path d="m8.5 8.5 5 5"/><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+    "send": '<path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/>',
     "settings": '<path d="M12.2 2h-.4a2 2 0 0 0-2 2v.2a2 2 0 0 1-1 1.7l-.4.2a2 2 0 0 1-2 0l-.1-.1a2 2 0 0 0-2.7.7l-.2.4a2 2 0 0 0 .7 2.7l.1.1a2 2 0 0 1 1 1.7v.5a2 2 0 0 1-1 1.7l-.1.1a2 2 0 0 0-.7 2.7l.2.4a2 2 0 0 0 2.7.7l.1-.1a2 2 0 0 1 2 0l.4.2a2 2 0 0 1 1 1.7v.2a2 2 0 0 0 2 2h.4a2 2 0 0 0 2-2v-.2a2 2 0 0 1 1-1.7l.4-.2a2 2 0 0 1 2 0l.1.1a2 2 0 0 0 2.7-.7l.2-.4a2 2 0 0 0-.7-2.7l-.1-.1a2 2 0 0 1-1-1.7v-.5a2 2 0 0 1 1-1.7l.1-.1a2 2 0 0 0 .7-2.7l-.2-.4a2 2 0 0 0-2.7-.7l-.1.1a2 2 0 0 1-2 0l-.4-.2a2 2 0 0 1-1-1.7V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
     "shield-check": '<path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3z"/><path d="m9 12 2 2 4-4"/>',
     "shield-alert": '<path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3z"/><path d="M12 8v4"/><path d="M12 16h.01"/>',
+    "sparkles": '<path d="m12 3-1.5 4.5L6 9l4.5 1.5L12 15l1.5-4.5L18 9l-4.5-1.5z"/><path d="M5 3v4M3 5h4M19 16v5M16.5 18.5h5"/>',
     "square": '<rect x="3" y="3" width="18" height="18" rx="2"/>',
     "square-pen": '<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.4 2.6a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z"/>',
     "square-terminal": '<path d="m7 7 3 3-3 3M13 13h4"/><rect x="3" y="3" width="18" height="18" rx="2"/>',
@@ -88,6 +95,7 @@
     ? `${path}?v=${encodeURIComponent(appAssetVersion)}`
     : path;
   const websiteFaultColorKey = "scriptboard.websiteFaultColor";
+  const sidebarCollapsedKey = "scriptboard.sidebarCollapsed";
   const readWebsiteFaultColor = () => {
     try {
       const value = localStorage.getItem(websiteFaultColorKey);
@@ -458,6 +466,34 @@
     document.querySelector("[data-sidebar-toggle]")?.setAttribute("aria-expanded", String(open));
     const scrim = document.querySelector(".sidebar-scrim");
     if (scrim) scrim.hidden = !open;
+  }
+
+  function replaceIconHost(host, name) {
+    if (!host) return;
+    host.querySelector("svg")?.remove();
+    host.dataset.lucide = name;
+    delete host.dataset.iconReady;
+    renderIcons(host.parentElement || document);
+  }
+
+  function readSidebarCollapsed() {
+    try { return localStorage.getItem(sidebarCollapsedKey) === "true"; }
+    catch { return false; }
+  }
+
+  function applySidebarCollapsed(collapsed, persist = false) {
+    document.body.classList.toggle("sidebar-collapsed", collapsed);
+    const control = document.querySelector("[data-sidebar-collapse]");
+    if (control) {
+      const label = collapsed ? control.dataset.collapsedLabel : control.dataset.expandedLabel;
+      control.setAttribute("aria-expanded", String(!collapsed));
+      control.setAttribute("aria-label", label || "");
+      control.title = label || "";
+      replaceIconHost(control.querySelector("[data-sidebar-collapse-icon]"), collapsed ? "panel-left-open" : "panel-left-close");
+    }
+    if (persist) {
+      try { localStorage.setItem(sidebarCollapsedKey, String(collapsed)); } catch { /* preference remains in memory */ }
+    }
   }
 
   function isNativeLink(link, destination) {
@@ -3856,10 +3892,719 @@
     });
   }
 
+  function initAssistantWorkspace(cleanups) {
+    const root = document.querySelector("[data-assistant-workspace]");
+    if (!root) return;
+
+    const csrfToken = root.dataset.csrfToken || "";
+    const input = root.querySelector("[data-assistant-input]");
+    const composer = root.querySelector("[data-assistant-composer]");
+	const sendButton = composer?.querySelector(".assistant-send");
+	const messageList = root.querySelector("[data-assistant-message-list]");
+	const toolLedger = root.querySelector("[data-assistant-tool-ledger]");
+	const toolList = root.querySelector("[data-assistant-tool-list]");
+	const toolCount = root.querySelector("[data-assistant-tool-count]");
+	const approvalPanel = root.querySelector("[data-assistant-approval-panel]");
+	const approvalForm = root.querySelector("[data-assistant-approval-form]");
+	const helper = root.querySelector("[data-assistant-error]");
+	const helperDefault = helper?.textContent || "";
+	const eventsURL = root.dataset.eventsUrl || "";
+	let assistantEvents = null;
+    const modelControl = root.querySelector("[data-model-picker]");
+    const modelToggle = modelControl?.querySelector("[data-model-picker-toggle]");
+    const modelPicker = modelControl?.querySelector(".assistant-model-picker");
+    const modelInput = root.querySelector("[data-assistant-model-input]");
+    const modelLabel = root.querySelector("[data-model-picker-label]");
+    const modelChoices = modelPicker ? [...modelPicker.querySelectorAll("[data-model-choice]")] : [];
+    const approvalToggle = root.querySelector("[data-auto-approval-toggle]");
+	const approvalInput = root.querySelector("[data-assistant-approval-input]");
+	const inspectorModelName = root.querySelector("[data-assistant-inspector-model-name]");
+	const inspectorModelID = root.querySelector("[data-assistant-inspector-model-id]");
+	const inspectorApproval = root.querySelector("[data-assistant-inspector-approval]");
+    const inspectorToggle = root.querySelector("[data-assistant-inspector-toggle]");
+    const inspectorClose = root.querySelector("[data-assistant-inspector-close]");
+    const assistantBody = root.querySelector(".assistant-body");
+    const resourcePicker = root.querySelector("[data-resource-picker]");
+    const resourceToggle = root.querySelector("[data-resource-picker-toggle]");
+    const resourceSearch = root.querySelector("[data-resource-search]");
+    const resourceOptions = resourcePicker ? [...resourcePicker.querySelectorAll(".assistant-resource-option")] : [];
+    const contextHost = root.querySelector("[data-assistant-context-chips]");
+    const contextCount = root.querySelector("[data-assistant-context-count]");
+    let modelIndex = Math.max(0, modelChoices.findIndex(choice => choice.getAttribute("aria-selected") === "true"));
+    let resourceIndex = 0;
+    let resourceFilter = "all";
+    const selectedResources = new Map();
+	contextHost?.querySelectorAll("[data-context-key]").forEach(chip => {
+		const key = chip.dataset.contextKey || "";
+		if (!key) return;
+		selectedResources.set(key, {
+			key,
+			kind: chip.dataset.contextKind || "",
+			id: chip.dataset.contextId || "",
+			label: chip.dataset.contextLabel || "",
+		});
+	});
+	if (assistantBody && window.matchMedia("(max-width: 1180px)").matches) {
+		assistantBody.dataset.inspectorOpen = "false";
+		inspectorToggle?.setAttribute("aria-expanded", "false");
+	}
+
+	const messageValue = (message, camel, exported) => message?.[camel] ?? message?.[exported] ?? "";
+	const renderAssistantMarkdown = async (body, source) => {
+		if (!body) return;
+		body.dataset.markdownSource = source;
+		body.classList.remove("markdown-preview");
+		body.textContent = source;
+		if (!source.trim()) return;
+		try {
+			await loadMarkdownLibraries();
+			if (!body.isConnected || body.dataset.markdownSource !== source) return;
+			const renderer = window.markdownit({ html: false, linkify: true, breaks: true });
+			const fragment = window.DOMPurify.sanitize(renderer.render(source), {
+				USE_PROFILES: { html: true }, SANITIZE_NAMED_PROPS: true, ALLOW_DATA_ATTR: false,
+				FORBID_TAGS: ["style", "form", "input", "button", "textarea", "select", "option"],
+				FORBID_ATTR: ["style"], RETURN_DOM_FRAGMENT: true,
+			});
+			rewriteMarkdownResources(fragment, "");
+			await highlightMarkdownCode(fragment);
+			if (!body.isConnected || body.dataset.markdownSource !== source) return;
+			body.replaceChildren(fragment);
+			body.classList.add("markdown-preview");
+		} catch {
+			body.classList.remove("markdown-preview");
+			body.textContent = source;
+		}
+	};
+	const scrollTranscript = () => {
+		const transcript = root.querySelector(".assistant-transcript");
+		if (transcript) transcript.scrollTop = transcript.scrollHeight;
+	};
+	const renderAssistantMessage = message => {
+		if (!messageList || !message) return null;
+		const id = messageValue(message, "id", "ID");
+		if (!id) return null;
+		let article = messageList.querySelector(`[data-message-id="${CSS.escape(id)}"]`);
+		const role = messageValue(message, "role", "Role") || "assistant";
+		const status = messageValue(message, "status", "Status") || "complete";
+		if (!article) {
+			article = document.createElement("article");
+			article.className = `assistant-message assistant-message--${role === "user" ? "user" : "assistant"}`;
+			article.dataset.messageId = id;
+			const header = document.createElement("header");
+			const author = document.createElement("strong");
+			author.textContent = role === "user" ? "YOU" : "PI";
+			const timestamp = document.createElement("time");
+			const createdAt = messageValue(message, "createdAt", "CreatedAt");
+			if (createdAt) {
+				timestamp.dateTime = createdAt;
+				const date = new Date(createdAt);
+				timestamp.textContent = Number.isNaN(date.getTime()) ? "" : new Intl.DateTimeFormat(locale() === "zh-CN" ? "zh-CN" : "en", { hour: "2-digit", minute: "2-digit" }).format(date);
+			}
+			header.append(author, timestamp);
+			const body = document.createElement("div");
+			body.dataset.messageBody = "";
+			article.append(header, body);
+			messageList.append(article);
+		}
+		article.dataset.messageStatus = status;
+		const body = article.querySelector("[data-message-body]");
+		const source = messageValue(message, "body", "Body");
+		if (body && role === "assistant" && status !== "streaming") void renderAssistantMarkdown(body, source);
+		else if (body) {
+			body.dataset.markdownSource = source;
+			body.classList.remove("markdown-preview");
+			body.textContent = source;
+		}
+		scrollTranscript();
+		return article;
+	};
+	const toolStatusLabel = status => {
+		const labels = locale() === "zh-CN"
+			? { running: "执行中", waiting_approval: "等待审批", complete: "已完成", error: "失败", rejected: "已拒绝", cancelled: "已取消", interrupted: "已中断" }
+			: { running: "Running", waiting_approval: "Waiting for approval", complete: "Complete", error: "Failed", rejected: "Rejected", cancelled: "Cancelled", interrupted: "Interrupted" };
+		return labels[status] || status;
+	};
+	const toolStatusIcon = status => status === "complete" ? "check" : status === "waiting_approval" ? "shield-alert" : status === "running" ? "loader-circle" : "triangle-alert";
+	const renderToolCall = call => {
+		if (!toolList || !call) return null;
+		const id = messageValue(call, "id", "ID");
+		if (!id) return null;
+		let row = toolList.querySelector(`[data-tool-call-id="${CSS.escape(id)}"]`);
+		if (!row) {
+			row = document.createElement("details");
+			row.className = "assistant-tool-row";
+			row.dataset.toolCallId = id;
+			const summary = document.createElement("summary");
+			const iconHost = document.createElement("span");
+			iconHost.className = "assistant-tool-row__icon";
+			const icon = document.createElement("span");
+			icon.dataset.toolStatusIcon = "";
+			iconHost.append(icon);
+			const identity = document.createElement("span");
+			identity.append(document.createElement("strong"), document.createElement("small"));
+			const status = document.createElement("span");
+			status.className = "assistant-tool-status";
+			status.dataset.toolStatusLabel = "";
+			const chevron = document.createElement("span");
+			chevron.dataset.lucide = "chevron-down";
+			summary.append(iconHost, identity, status, chevron);
+			const details = document.createElement("div");
+			details.className = "assistant-tool-row__details";
+			const list = document.createElement("dl");
+			details.append(list);
+			row.append(summary, details);
+			toolList.append(row);
+		}
+		const status = messageValue(call, "status", "Status") || "running";
+		row.dataset.toolStatus = status;
+		const name = messageValue(call, "name", "Name") || "tool";
+		const target = messageValue(call, "targetSummary", "TargetSummary");
+		row.querySelector("summary strong").textContent = name;
+		row.querySelector("summary small").textContent = target;
+		row.querySelector("[data-tool-status-label]").textContent = toolStatusLabel(status);
+		replaceIconHost(row.querySelector("[data-tool-status-icon]"), toolStatusIcon(status));
+		const details = row.querySelector("dl");
+		details.replaceChildren();
+		const detailRow = (label, value, code = false) => {
+			if (!value) return;
+			const host = document.createElement("div");
+			const term = document.createElement("dt");
+			term.textContent = label;
+			const description = document.createElement("dd");
+			const body = code ? document.createElement("code") : document.createTextNode(value);
+			if (code) body.textContent = value;
+			description.append(body);
+			host.append(term, description);
+			details.append(host);
+		};
+		detailRow(locale() === "zh-CN" ? "规范参数" : "Normalized parameters", messageValue(call, "parameterSummary", "ParameterSummary"));
+		detailRow(locale() === "zh-CN" ? "结果摘要" : "Result summary", messageValue(call, "resultSummary", "ResultSummary"));
+		detailRow(locale() === "zh-CN" ? "错误码" : "Error code", messageValue(call, "errorCode", "ErrorCode"), true);
+		toolLedger.hidden = false;
+		if (toolCount) toolCount.textContent = String(toolList.children.length);
+		renderIcons(row);
+		return row;
+	};
+	const renderApproval = (approval, call) => {
+		if (!approvalPanel || !approvalForm) return;
+		const id = messageValue(approval, "id", "ID");
+		const status = messageValue(approval, "status", "Status");
+		if (!id || status !== "pending") {
+			approvalPanel.hidden = true;
+			approvalPanel.removeAttribute("data-approval-id");
+			return;
+		}
+		const previousID = approvalPanel.dataset.approvalId || "";
+		approvalPanel.hidden = false;
+		approvalPanel.dataset.approvalId = id;
+		const expires = messageValue(approval, "expiresAt", "ExpiresAt");
+		if (expires) approvalPanel.dataset.approvalExpires = expires;
+		if (previousID !== id) {
+			approvalForm.querySelectorAll("button").forEach(button => { button.disabled = false; });
+		}
+		const name = messageValue(call, "name", "Name") || (locale() === "zh-CN" ? "状态修改" : "State change");
+		const target = messageValue(call, "targetSummary", "TargetSummary");
+		const parameters = messageValue(call, "parameterSummary", "ParameterSummary");
+		const title = approvalPanel.querySelector("[data-approval-tool]");
+		const description = approvalPanel.querySelector("[data-approval-target]");
+		if (title) title.textContent = name;
+		if (description) description.textContent = [target, parameters].filter(Boolean).join(" · ");
+		const conversationID = root.dataset.conversationId || "";
+		approvalForm.action = `/ai/conversations/${encodeURIComponent(conversationID)}/approvals/${encodeURIComponent(id)}`;
+		renderIcons(approvalPanel);
+		scrollTranscript();
+	};
+	const updateApprovalExpiry = () => {
+		if (!approvalPanel || approvalPanel.hidden) return;
+		const expiry = new Date(approvalPanel.dataset.approvalExpires || "").getTime();
+		if (!Number.isFinite(expiry)) return;
+		const seconds = Math.max(0, Math.ceil((expiry - Date.now()) / 1000));
+		const label = approvalPanel.querySelector("[data-approval-expiry]");
+		if (label) label.textContent = seconds > 0
+			? (locale() === "zh-CN" ? `${seconds} 秒后过期` : `Expires in ${seconds}s`)
+			: (locale() === "zh-CN" ? "审批已过期" : "Approval expired");
+		if (seconds === 0) approvalForm?.querySelectorAll("button").forEach(button => { button.disabled = true; });
+	};
+	const approvalClock = window.setInterval(updateApprovalExpiry, 1000);
+	updateApprovalExpiry();
+	const setTurnRunning = running => {
+		if (sendButton) sendButton.disabled = running || root.dataset.runtimeAvailable !== "true";
+		if (helper) helper.textContent = running ? (locale() === "zh-CN" ? "Pi 正在生成…" : "Pi is responding…") : helperDefault;
+	};
+	const handleAssistantEvent = event => {
+		let payload;
+		try { payload = JSON.parse(event.data); } catch { return; }
+		if (event.type === "snapshot") {
+			if (messageList) messageList.replaceChildren();
+			(payload.messages || []).forEach(renderAssistantMessage);
+			if (toolList) toolList.replaceChildren();
+			(payload.toolCalls || []).forEach(renderToolCall);
+			if (toolLedger) toolLedger.hidden = !(payload.toolCalls || []).length;
+			renderApproval(payload.approval, (payload.toolCalls || []).find(call => messageValue(call, "id", "ID") === messageValue(payload.approval, "toolCallId", "ToolCallID")));
+			const running = (payload.messages || []).some(message => messageValue(message, "status", "Status") === "streaming");
+			setTurnRunning(running);
+			return;
+		}
+		if (event.type === "message") {
+			renderAssistantMessage(payload.message || payload.Message);
+			if (messageValue(payload.message || payload.Message, "status", "Status") === "streaming") setTurnRunning(true);
+			return;
+		}
+		if (["tool_started", "tool_updated", "tool_finished", "approval_requested", "approval_resolved"].includes(event.type)) {
+			const call = payload.toolCall || payload.ToolCall;
+			renderToolCall(call);
+			if (event.type === "approval_requested") renderApproval(payload.approval || payload.Approval, call);
+			if (event.type === "approval_resolved") renderApproval(null, call);
+			return;
+		}
+		if (event.type === "retrying" || event.type === "compacting") {
+			if (helper) {
+				const running = (payload.status || payload.Status) === "running";
+				if (running && event.type === "retrying") {
+					const attempt = payload.attempt || payload.Attempt || 0;
+					helper.textContent = locale() === "zh-CN" ? `Provider 正在重试${attempt ? `（第 ${attempt} 次）` : ""}…` : `Provider retrying${attempt ? ` (attempt ${attempt})` : ""}…`;
+				} else if (running) helper.textContent = locale() === "zh-CN" ? "Pi 正在压缩对话上下文…" : "Pi is compacting conversation context…";
+				else helper.textContent = helperDefault;
+			}
+			return;
+		}
+		const messageId = payload.messageId || payload.MessageID || "";
+		const article = messageId && messageList?.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
+		if (event.type === "delta") {
+			const body = article?.querySelector("[data-message-body]");
+			if (body) {
+				body.classList.remove("markdown-preview");
+				const cumulative = payload.body ?? payload.Body;
+				if (typeof cumulative === "string") body.textContent = cumulative;
+				else body.textContent += payload.delta || payload.Delta || "";
+				body.dataset.markdownSource = body.textContent;
+			}
+			if (article) article.dataset.messageStatus = "streaming";
+			setTurnRunning(true);
+			scrollTranscript();
+			return;
+		}
+		if (event.type === "settled") {
+			if (article) article.dataset.messageStatus = payload.status || payload.Status || "complete";
+			const body = article?.querySelector("[data-message-body]");
+			if (body) void renderAssistantMarkdown(body, body.textContent);
+			setTurnRunning(false);
+		}
+	};
+	if (eventsURL && window.EventSource) {
+		assistantEvents = new EventSource(eventsURL);
+		["snapshot", "message", "delta", "settled", "tool_started", "tool_updated", "tool_finished", "approval_requested", "approval_resolved", "retrying", "compacting"].forEach(type => assistantEvents.addEventListener(type, handleAssistantEvent));
+		assistantEvents.addEventListener("error", () => {
+			if (helper && assistantEvents?.readyState === EventSource.CLOSED) helper.textContent = locale() === "zh-CN" ? "实时连接已断开，刷新页面可恢复。" : "Live connection closed. Refresh to reconnect.";
+		});
+	}
+
+    const setModelPicker = open => {
+      if (!modelPicker || !modelToggle) return;
+      modelPicker.dataset.open = String(open);
+      modelPicker.setAttribute("aria-hidden", String(!open));
+      modelToggle.setAttribute("aria-expanded", String(open));
+      if (open) {
+        modelChoices.forEach((choice, index) => { choice.dataset.active = String(index === modelIndex); });
+        modelChoices[modelIndex]?.focus();
+      }
+    };
+    const markSelectedModel = (id, name, model) => {
+      if (modelInput) modelInput.value = id;
+      if (modelLabel) modelLabel.textContent = name;
+      if (inspectorModelName) inspectorModelName.textContent = name || "—";
+      if (inspectorModelID && model) inspectorModelID.textContent = model;
+      modelControl.dataset.invalid = String(!id);
+      modelChoices.forEach(choice => {
+        const selected = choice.dataset.modelChoice === id;
+        choice.setAttribute("aria-selected", String(selected));
+        choice.querySelector("svg.lucide-check")?.remove();
+        if (selected) {
+          const icon = document.createElement("span");
+          icon.dataset.lucide = "check";
+          choice.append(icon);
+          renderIcons(choice);
+        }
+      });
+    };
+    const selectModel = async choice => {
+      const id = choice?.dataset.modelChoice || "";
+      const name = choice?.dataset.modelName || "";
+      const model = choice?.dataset.modelValue || "";
+      if (!id) return;
+      const endpoint = modelControl.dataset.modelEndpoint;
+      if (endpoint) {
+        modelControl.setAttribute("aria-busy", "true");
+        try {
+          const response = await fetch(endpoint, {
+            method: "POST", credentials: "same-origin",
+            headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "Accept": "application/json" },
+            body: new URLSearchParams({ csrf_token: csrfToken, model_id: id }),
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        } catch {
+          modelControl.dataset.invalid = "true";
+          modelToggle?.focus();
+          return;
+        } finally {
+          modelControl.removeAttribute("aria-busy");
+        }
+      }
+      markSelectedModel(id, name, model);
+      setModelPicker(false);
+      modelToggle?.focus();
+    };
+
+    const setApproval = enabled => {
+      if (!approvalToggle) return;
+      approvalToggle.setAttribute("aria-pressed", String(enabled));
+      if (approvalInput) approvalInput.value = String(enabled);
+      if (inspectorApproval) inspectorApproval.textContent = enabled ? inspectorApproval.dataset.autoLabel : inspectorApproval.dataset.manualLabel;
+      replaceIconHost(approvalToggle.querySelector("[data-approval-icon]"), enabled ? "zap" : "shield-check");
+    };
+    const toggleApproval = async () => {
+      if (!approvalToggle || approvalToggle.disabled) return;
+      const next = approvalToggle.getAttribute("aria-pressed") !== "true";
+      const endpoint = approvalToggle.dataset.endpoint;
+      if (!endpoint) {
+        setApproval(next);
+        return;
+      }
+      approvalToggle.disabled = true;
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST", credentials: "same-origin",
+          headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "Accept": "application/json" },
+          body: new URLSearchParams({ csrf_token: csrfToken, auto_approval: String(next) }),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        setApproval(next);
+      } finally {
+        approvalToggle.disabled = false;
+      }
+    };
+
+    const visibleResourceOptions = () => resourceOptions.filter(option => !option.hidden);
+    const filterResources = () => {
+      const query = (resourceSearch?.value || "").trim().toLocaleLowerCase();
+      resourceOptions.forEach(option => {
+        const categoryMatches = resourceFilter === "all" || option.dataset.resourceCategory === resourceFilter;
+        const queryMatches = !query || (option.dataset.resourceSearchText || "").toLocaleLowerCase().includes(query);
+        option.hidden = !categoryMatches || !queryMatches;
+      });
+      resourceIndex = 0;
+      visibleResourceOptions().forEach((option, index) => { option.dataset.active = String(index === resourceIndex); });
+    };
+    const setResourcePicker = (open, focus = false) => {
+      if (!resourcePicker || !resourceToggle) return;
+      resourcePicker.dataset.open = String(open);
+      resourcePicker.setAttribute("aria-hidden", String(!open));
+      resourceToggle.setAttribute("aria-expanded", String(open));
+      if (open) {
+        filterResources();
+        if (focus) requestAnimationFrame(() => resourceSearch?.focus());
+      }
+    };
+    const renderContextResources = () => {
+      if (!contextHost || !contextCount) return;
+      contextHost.replaceChildren();
+      selectedResources.forEach(resource => {
+        const chip = document.createElement("span");
+        chip.className = "assistant-context-chip";
+		chip.dataset.contextKey = resource.key;
+		chip.dataset.contextKind = resource.kind;
+		chip.dataset.contextId = resource.id;
+		chip.dataset.contextLabel = resource.label;
+        const label = document.createElement("span");
+        label.textContent = resource.label;
+		const kindInput = document.createElement("input");
+		kindInput.type = "hidden";
+		kindInput.name = "context_kind";
+		kindInput.value = resource.kind;
+		const idInput = document.createElement("input");
+		idInput.type = "hidden";
+		idInput.name = "context_id";
+		idInput.value = resource.id;
+        const remove = document.createElement("button");
+        remove.type = "button";
+		remove.setAttribute("aria-label", `${root.dataset.removeReferenceLabel || "Remove reference"} ${resource.label}`);
+        remove.dataset.removeResource = resource.key;
+        const icon = document.createElement("span");
+        icon.dataset.lucide = "x";
+        remove.append(icon);
+		chip.append(label, kindInput, idInput, remove);
+        contextHost.append(chip);
+      });
+      contextCount.textContent = String(selectedResources.size);
+      renderIcons(contextHost);
+    };
+    const chooseResource = option => {
+      if (!option) return;
+      const key = `${option.dataset.resourceKind}:${option.dataset.resourceId}`;
+      if (selectedResources.has(key)) selectedResources.delete(key);
+	  else selectedResources.set(key, {
+		key,
+		kind: option.dataset.resourceKind || "",
+		id: option.dataset.resourceId || "",
+		label: option.dataset.resourceLabel || option.dataset.resourceId,
+	  });
+      option.setAttribute("aria-selected", String(selectedResources.has(key)));
+      renderContextResources();
+    };
+
+    const onClick = event => {
+      if (event.target.closest("[data-model-picker-toggle]")) {
+        event.preventDefault();
+        setModelPicker(modelPicker?.dataset.open !== "true");
+        return;
+      }
+      const modelChoice = event.target.closest("[data-model-choice]");
+      if (modelChoice && root.contains(modelChoice)) {
+        event.preventDefault();
+        void selectModel(modelChoice);
+        return;
+      }
+      if (event.target.closest("[data-auto-approval-toggle]")) {
+        event.preventDefault();
+        void toggleApproval();
+        return;
+      }
+      if (event.target.closest("[data-assistant-inspector-toggle]")) {
+        const open = assistantBody?.dataset.inspectorOpen !== "true";
+        if (assistantBody) assistantBody.dataset.inspectorOpen = String(open);
+        inspectorToggle?.setAttribute("aria-expanded", String(open));
+        return;
+      }
+      if (event.target.closest("[data-assistant-inspector-close]")) {
+        if (assistantBody) assistantBody.dataset.inspectorOpen = "false";
+        inspectorToggle?.setAttribute("aria-expanded", "false");
+        inspectorToggle?.focus();
+        return;
+      }
+      if (event.target.closest("[data-assistant-rail-open]")) {
+        document.body.classList.add("assistant-rail-open");
+        return;
+      }
+      if (event.target.closest("[data-assistant-rail-close]")) {
+        document.body.classList.remove("assistant-rail-open");
+        return;
+      }
+      if (event.target.closest("[data-resource-picker-toggle]")) {
+        event.preventDefault();
+        setResourcePicker(resourcePicker?.dataset.open !== "true", true);
+        return;
+      }
+      const filter = event.target.closest("[data-resource-filter]");
+      if (filter && root.contains(filter)) {
+        resourceFilter = filter.dataset.resourceFilter || "all";
+        root.querySelectorAll("[data-resource-filter]").forEach(button => button.setAttribute("aria-pressed", String(button === filter)));
+        filterResources();
+        return;
+      }
+      const option = event.target.closest(".assistant-resource-option");
+      if (option && root.contains(option)) {
+        chooseResource(option);
+        return;
+      }
+      const remove = event.target.closest("[data-remove-resource]");
+      if (remove && root.contains(remove)) {
+        selectedResources.delete(remove.dataset.removeResource);
+        resourceOptions.forEach(item => {
+          const key = `${item.dataset.resourceKind}:${item.dataset.resourceId}`;
+          if (key === remove.dataset.removeResource) item.setAttribute("aria-selected", "false");
+        });
+        renderContextResources();
+        return;
+      }
+      const prompt = event.target.closest("[data-assistant-prompt]");
+      if (prompt && input) {
+        input.value = prompt.dataset.assistantPrompt || "";
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.focus();
+      }
+    };
+    const onDocumentClick = event => {
+      if (modelPicker?.dataset.open === "true" && !event.target.closest("[data-model-picker]")) setModelPicker(false);
+      if (resourcePicker?.dataset.open === "true" && !event.target.closest("[data-resource-picker], [data-resource-picker-toggle]")) setResourcePicker(false);
+    };
+    const onInput = () => {
+      if (!input) return;
+      input.style.height = "auto";
+      input.style.height = `${Math.min(input.scrollHeight, 150)}px`;
+      if (input.value.endsWith("@") && resourcePicker?.dataset.open !== "true") setResourcePicker(true, true);
+    };
+    const onKeydown = event => {
+      if (event.key === "Escape") {
+        if (modelPicker?.dataset.open === "true") { event.preventDefault(); setModelPicker(false); modelToggle?.focus(); return; }
+        if (resourcePicker?.dataset.open === "true") { event.preventDefault(); setResourcePicker(false); input?.focus(); return; }
+      }
+      if (modelPicker?.contains(event.target) && ["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+        event.preventDefault();
+        if (event.key === "Home") modelIndex = 0;
+        else if (event.key === "End") modelIndex = modelChoices.length - 1;
+        else modelIndex = (modelIndex + (event.key === "ArrowDown" ? 1 : -1) + modelChoices.length) % modelChoices.length;
+        modelChoices.forEach((choice, index) => { choice.dataset.active = String(index === modelIndex); });
+        modelChoices[modelIndex]?.focus();
+        return;
+      }
+      if (event.target === resourceSearch && ["ArrowDown", "ArrowUp", "Enter"].includes(event.key)) {
+        const visible = visibleResourceOptions();
+        if (!visible.length) return;
+        event.preventDefault();
+        if (event.key === "Enter") chooseResource(visible[resourceIndex]);
+        else resourceIndex = (resourceIndex + (event.key === "ArrowDown" ? 1 : -1) + visible.length) % visible.length;
+        visible.forEach((option, index) => { option.dataset.active = String(index === resourceIndex); });
+        visible[resourceIndex]?.scrollIntoView({ block: "nearest" });
+        return;
+      }
+      if (event.target === input && event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+        if (composer?.querySelector("button[type='submit']")?.disabled) return;
+        event.preventDefault();
+        composer?.requestSubmit();
+      }
+    };
+    const onSubmit = event => {
+      if (event.target !== composer) return;
+      if (!modelInput?.value) {
+        event.preventDefault();
+        modelControl.dataset.invalid = "true";
+        setModelPicker(true);
+        return;
+      }
+      if (!root.dataset.conversationId) {
+        const title = composer.elements.title;
+        if (title && input?.value.trim()) title.value = input.value.trim().slice(0, 80);
+		return;
+      }
+	  event.preventDefault();
+	  if (!input?.value.trim() || sendButton?.disabled) return;
+	  if (helper) helper.textContent = locale() === "zh-CN" ? "正在提交…" : "Submitting…";
+	  if (sendButton) sendButton.disabled = true;
+	  void fetch(composer.action, {
+		method: "POST", credentials: "same-origin", headers: { "Accept": "application/json" }, body: new FormData(composer),
+	  }).then(async response => {
+		if (!response.ok) throw new Error((await response.text()).trim() || `HTTP ${response.status}`);
+		input.value = "";
+		onInput();
+		setTurnRunning(true);
+	  }).catch(error => {
+		if (helper) helper.textContent = error.message;
+		if (sendButton) sendButton.disabled = root.dataset.runtimeAvailable !== "true";
+	  });
+    };
+	const onApprovalSubmit = event => {
+		if (event.target !== approvalForm) return;
+		event.preventDefault();
+		const decision = event.submitter?.value || "";
+		if (!approvalForm.action || !["approve", "reject"].includes(decision)) return;
+		const buttons = [...approvalForm.querySelectorAll("button")];
+		buttons.forEach(button => { button.disabled = true; });
+		void fetch(approvalForm.action, {
+			method: "POST", credentials: "same-origin",
+			headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "Accept": "application/json" },
+			body: new URLSearchParams({ csrf_token: csrfToken, decision }),
+		}).then(async response => {
+			if (!response.ok) throw new Error((await response.text()).trim() || `HTTP ${response.status}`);
+			renderApproval(null, null);
+			if (helper) helper.textContent = decision === "approve"
+				? (locale() === "zh-CN" ? "已批准，执行前正在重新授权。" : "Approved; reauthorizing before execution.")
+				: (locale() === "zh-CN" ? "已拒绝此次操作。" : "Action rejected.");
+		}).catch(error => {
+			if (helper) helper.textContent = error.message;
+			buttons.forEach(button => { button.disabled = false; });
+		});
+	};
+
+    root.addEventListener("click", onClick);
+    document.addEventListener("click", onDocumentClick);
+    root.addEventListener("keydown", onKeydown);
+    input?.addEventListener("input", onInput);
+    resourceSearch?.addEventListener("input", filterResources);
+    composer?.addEventListener("submit", onSubmit);
+	approvalForm?.addEventListener("submit", onApprovalSubmit);
+    cleanups.push(() => {
+      root.removeEventListener("click", onClick);
+      document.removeEventListener("click", onDocumentClick);
+      root.removeEventListener("keydown", onKeydown);
+      input?.removeEventListener("input", onInput);
+      resourceSearch?.removeEventListener("input", filterResources);
+      composer?.removeEventListener("submit", onSubmit);
+	  approvalForm?.removeEventListener("submit", onApprovalSubmit);
+	  window.clearInterval(approvalClock);
+	  assistantEvents?.close();
+      document.body.classList.remove("assistant-rail-open");
+    });
+  }
+
+  function initAssistantSettings(cleanups) {
+    const root = document.querySelector("[data-assistant-settings]");
+    if (!root) return;
+    const layer = root.querySelector("[data-llm-drawer]");
+    const drawer = layer?.querySelector(".assistant-llm-drawer");
+    const form = layer?.querySelector("[data-llm-form]");
+    const title = layer?.querySelector("[data-llm-drawer-title]");
+    const credentialHelp = layer?.querySelector("[data-credential-help]");
+    let returnFocus = null;
+
+    const close = () => {
+      if (!layer) return;
+      layer.dataset.open = "false";
+      layer.setAttribute("aria-hidden", "true");
+      document.body.style.overflow = "";
+      returnFocus?.focus?.();
+      returnFocus = null;
+    };
+    const open = row => {
+      if (!layer || !form) return;
+      returnFocus = document.activeElement;
+      form.reset();
+      form.elements.id.value = row?.dataset.llmId || "";
+      form.elements.name.value = row?.dataset.name || "";
+      form.elements.provider.value = row?.dataset.provider || "openai";
+      form.elements.model.value = row?.dataset.model || "";
+      form.elements.endpoint.value = row?.dataset.endpoint || "https://api.openai.com/v1";
+      form.elements.api_key.value = "";
+	  form.elements.api_key.required = !row;
+      form.elements.make_default.checked = row?.dataset.default === "true";
+      if (title) title.textContent = row ? (locale() === "zh-CN" ? "编辑 LLM 配置" : "Edit LLM configuration") : (locale() === "zh-CN" ? "新增 LLM 配置" : "Add LLM configuration");
+      if (credentialHelp) credentialHelp.dataset.editing = String(Boolean(row));
+      layer.dataset.open = "true";
+      layer.setAttribute("aria-hidden", "false");
+      document.body.style.overflow = "hidden";
+      requestAnimationFrame(() => form.elements.name.focus());
+    };
+    const onClick = event => {
+      if (event.target.closest("[data-add-llm]")) { open(null); return; }
+      const edit = event.target.closest("[data-edit-llm]");
+      if (edit) { open(edit.closest("[data-llm-id]")); return; }
+      if (event.target.closest("[data-close-llm]")) { event.preventDefault(); close(); }
+    };
+    const onKeydown = event => {
+      if (layer?.dataset.open !== "true") return;
+      if (event.key === "Escape") { event.preventDefault(); close(); return; }
+      if (event.key !== "Tab" || !drawer) return;
+      const focusable = [...drawer.querySelectorAll("button:not([disabled]),input:not([disabled]):not([type='hidden']),select:not([disabled]),textarea:not([disabled]),a[href]")]
+        .filter(element => element.getClientRects().length > 0);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && event.target === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && event.target === last) { event.preventDefault(); first.focus(); }
+    };
+    root.addEventListener("click", onClick);
+    document.addEventListener("keydown", onKeydown);
+    cleanups.push(() => {
+      root.removeEventListener("click", onClick);
+      document.removeEventListener("keydown", onKeydown);
+      document.body.style.overflow = "";
+    });
+  }
+
   function initPage() {
     const cleanups = [];
     cleanupPage = () => cleanups.splice(0).forEach(cleanup => cleanup());
     renderIcons();
+    applySidebarCollapsed(readSidebarCollapsed());
     localizeTimes();
     initMarkdownPreview();
     initScriptPreview();
@@ -3878,6 +4623,8 @@
     initGroupedRecords(cleanups);
     initScheduleCron(cleanups);
     initDisplaySettings(cleanups);
+    initAssistantWorkspace(cleanups);
+    initAssistantSettings(cleanups);
     const websiteForm = document.querySelector("[data-website-monitor-form]");
     if (websiteForm) cleanups.push(initWebsiteMonitorForm(websiteForm));
     const websiteMonitoring = document.querySelector("[data-website-monitoring],[data-website-detail]");
@@ -3887,6 +4634,11 @@
   }
 
   document.addEventListener("click", event => {
+    const sidebarCollapse = event.target.closest("[data-sidebar-collapse]");
+    if (sidebarCollapse) {
+      applySidebarCollapsed(!document.body.classList.contains("sidebar-collapsed"), true);
+      return;
+    }
     const sidebarControl = event.target.closest("[data-sidebar-toggle]");
     if (sidebarControl) {
       setSidebar(!document.body.classList.contains("sidebar-open"));

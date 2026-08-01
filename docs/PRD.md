@@ -15,6 +15,14 @@
 > 启动，不迁移、不修改也不删除。下文冲突表述均由本修订与
 > [ADR-0122](./adr/0122-browse-the-host-filesystem-with-protected-paths.md) 取代。
 
+> **2026-08-01 修订**：增加可选 AI 对话工作区，以 ScriptBoard 私有 Pi RPC Runtime
+> 运行 Agent Turn；LLM、对话、资源引用、固定 Tool Broker 和一次性审批由 ScriptBoard 管理。
+> schema 20 状态库可在单事务内前向迁移到 schema 21，早于 20 的旧库仍在写入前拒绝。
+> 工具代理、状态修改审批与 Runtime 分发必须分别满足
+> [ADR-0123](./adr/0123-use-pi-rpc-as-a-private-assistant-runtime.md)、
+> [ADR-0124](./adr/0124-broker-assistant-tools-and-bind-state-changes-to-approvals.md) 和
+> [ADR-0125](./adr/0125-pin-pi-runtime-to-signed-scriptboard-releases.md)。
+
 ## 1. 产品定义
 
 ScriptBoard 是一个自托管、单机、少量可信用户使用的主机文件与脚本操作台，为服务身份可访问的普通文件提供浏览和管理，并为其中的可信脚本提供本地执行、实时日志、历史追踪、快捷执行和内置计划。
@@ -50,6 +58,8 @@ MVP 优先保持单服务进程、SQLite、单机文件系统与平台原生服�
 监控
   宿主概览
   应用
+AI
+  AI 助手
 资源
   文件 | 变量 | 回收站
 配置
@@ -57,7 +67,7 @@ MVP 优先保持单服务进程、SQLite、单机文件系统与平台原生服�
 历史
   运行记录 | 审计
 设置
-  账户 | 用户 | 显示 | 应用更新
+  账户 | 用户 | 显示 | AI | 应用更新
 ```
 
 侧栏底部显示服务状态、当前运行数、语言选择和账户入口。新增、上传、运行、编辑与保存等聚焦任务使用可分享的语义化 GET 地址；桌面端支持 JavaScript 时在当前工作区右侧任务面板打开且不替换地址栏中的工作区 URL，不支持 JavaScript、移动端或直接访问任务地址时显示完整服务端页面。
@@ -70,6 +80,8 @@ MVP 优先保持单服务进程、SQLite、单机文件系统与平台原生服�
 - `/monitor/status`
 - `/monitor/applications`
 - `/monitor/applications/data`
+- `/ai`
+- `/ai/conversations/{id}`
 - `/history/runs`
 - `/history/runs/{id}`
 - `/resources/files`（绝对路径通过 `path` 查询参数或表单字段传递）
@@ -79,6 +91,7 @@ MVP 优先保持单服务进程、SQLite、单机文件系统与平台原生服�
 - `/config/schedules`
 - `/history/audit`
 - `/settings/account`
+- `/settings/ai`
 - `/settings/updates`
 
 根路径与已登录访问 `/login` 均重定向到 `/monitor`。本次信息架构是破坏性升级，不为旧 Web 路由提供重定向或兼容别名。
@@ -186,7 +199,7 @@ MVP 优先保持单服务进程、SQLite、单机文件系统与平台原生服�
 
 - 内置 Git 版本保护整体移除：没有设置页、检查点、恢复路由、数据库状态或 Git CLI 配置。
 - 磁盘上的既有 `.git` 和历史不迁移、不修改、不删除，之后作为普通主机文件处理。
-- 本版本数据库 schema 为 20，只接受全新数据库；任何旧 schema 都在写入前明确拒绝。
+- 主机文件系统重构以 schema 20 为兼容基线；本版本新建 schema 21，并只允许 schema 20 在单事务内前向迁移。早于 20 或高于当前版本的 schema 都在写入前明确拒绝。
 - `managed_root`、`git_executable`、对应环境变量、`--managed-root`、`--here` 等旧配置接口明确拒绝。
 - 管理员必须使用新配置和新的 State Root；旧回收区、快捷执行、计划和浏览器固定项不迁移。
 
@@ -413,7 +426,7 @@ scriptboard version
 - 使用纯 Go SQLite 驱动。
 - 启用 WAL、`synchronous=FULL`、foreign keys 和 busy timeout。
 - 高频 Run 输出不逐事件写数据库。
-- 数据库 schema 固定为 20 且只接受全新库；检测到旧 schema 时在任何写入前拒绝启动，不迁移或删除旧状态。
+- 数据库 schema 固定为 21；全新库直接创建 21，schema 20 只增加 Assistant 自有表和索引并在同一事务提交。早于 20 或高于当前版本的 schema 在任何写入前拒绝启动，不猜测迁移或删除旧状态。
 - 检测到数据库完整性异常时拒绝提供执行能力，只允许本机诊断和人工恢复流程。
 
 ### 17.3 磁盘与日志
@@ -498,3 +511,28 @@ scriptboard version
 - 从源码创建快捷项遇到同名文件时必须显式改名、覆盖或取消；覆盖先把旧文件移入
   回收站，并展示现有快捷执行与计划引用影响。
 - 详见 [一次性执行与快捷创建实施计划](./ONE-TIME-AND-QUICK-EXECUTION-PLAN.md)。
+
+## 23. AI 助手与 Pi Runtime
+
+- `/ai` 是所有已登录固定角色可访问的原生对话工作区；左侧对话 Rail、中部消息与
+  Composer、右侧上下文 Inspector 共同组成桌面布局，移动端以分层布局保留核心操作。
+- 每个对话由当前用户独占并必须选择一个已配置、带服务端 API Key 的 LLM；设置页可
+  新增、修改、删除未引用配置并选择唯一默认模型。API Key 只写入 State Root 私有凭据
+  文件，页面、SQLite、审计和普通日志均不回显。
+- 新对话继承系统设置中的自动审批默认值；每个对话可在模型选择旁直接切换审批模式。
+  该开关不改变固定角色权限；状态修改执行前仍重新授权并建立一次性审批记录。
+- Composer 可引用经过当前角色实时校验的目录、文件、应用、网站、Run、快捷执行和
+  计划。持久记录只保存稳定标识与安全标签；引用内容始终视为不可信数据。
+- 每个对话同一时间只有一个 Agent Turn；消息先写数据库，再通过有界 SSE 流式更新。
+  用户可以停止当前 Turn，断线可通过 Last-Event-ID 续传；服务重启把未完成内容标记为
+  中断且不自动重放。
+- Pi 只从 State Root 私有 Runtime 的绝对路径启动，并使用隔离的 home、session 和
+  workspace。它不读取 PATH、全局 Pi、用户 Extensions/Skills/Prompts/Themes 或项目
+  上下文，因此可与本机手工启动的 Pi 并存。
+- 没有受信 Runtime 时保留历史和设置，但拒绝新 Prompt。正式 Runtime 固定携带
+  ScriptBoard Extension，并通过进程绑定 Tool Broker 提供 12 个有界只读工具和 4 个
+  状态修改工具；不得以开放 Shell 或任意文件工具作为降级路径。
+- 系统设置支持检查、在线/离线安装、原子激活和回退签名 Runtime，并可使用 Pi 对单条
+  LLM 配置执行不持久化正文的连接测试。
+- AI 能力默认关闭，由系统设置显式启用。Provider 调用由部署者自行承担费用和数据
+  合规责任；即使工具受限，Prompt 中引用的主机信息仍可能发送给所选外部 Provider。
