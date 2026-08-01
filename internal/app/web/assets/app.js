@@ -4037,7 +4037,7 @@
         search.focus();
       }
     }
-    if (event.key.toLowerCase() === "p" && !editing) {
+    if (typeof event.key === "string" && event.key.toLowerCase() === "p" && !editing) {
       const run = document.querySelector("[data-run-events-url]");
       if (run?._toggleLogPause) {
         event.preventDefault();
