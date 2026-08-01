@@ -18,6 +18,7 @@ type LaunchInput struct {
 	StateRoot, Executable, Extension                string
 	UserID, ConversationID                          string
 	Provider, Model, Endpoint, APIKey, SystemPrompt string
+	BrokerEndpoint, BrokerCapability                string
 	ParentEnvironment                               []string
 }
 
@@ -112,6 +113,11 @@ func PrepareLaunch(input LaunchInput) (LaunchSpec, error) {
 	if systemPrompt := strings.TrimSpace(input.SystemPrompt); systemPrompt != "" {
 		args = append(args, "--system-prompt", systemPrompt)
 	}
+	parentEnvironment := input.ParentEnvironment
+	if parentEnvironment == nil {
+		parentEnvironment = os.Environ()
+	}
+	environment := filteredEnvironment(parentEnvironment)
 	if extension := strings.TrimSpace(input.Extension); extension != "" {
 		extension = filepath.Clean(extension)
 		if !filepath.IsAbs(extension) || !pathWithin(filepath.Dir(executable), extension) {
@@ -120,16 +126,23 @@ func PrepareLaunch(input LaunchInput) (LaunchSpec, error) {
 		if extensionInfo, statErr := os.Stat(extension); statErr != nil || !extensionInfo.Mode().IsRegular() {
 			return LaunchSpec{}, fmt.Errorf("inspect Pi extension: %w", statErr)
 		}
+		brokerEndpoint := strings.TrimSpace(input.BrokerEndpoint)
+		brokerCapability := strings.TrimSpace(input.BrokerCapability)
+		if brokerEndpoint == "" || len(brokerEndpoint) > 512 || strings.ContainsAny(brokerEndpoint, "\r\n\x00") || len(brokerCapability) < 16 || len(brokerCapability) > 256 || strings.ContainsAny(brokerCapability, "\r\n\x00=") {
+			return LaunchSpec{}, fmt.Errorf("process-bound Tool Broker capability is required")
+		}
 		args = append(args, "--no-builtin-tools", "-e", extension)
+		environment = append(environment,
+			"SCRIPTBOARD_BROKER_ENDPOINT="+brokerEndpoint,
+			"SCRIPTBOARD_BROKER_CAPABILITY="+brokerCapability,
+		)
 	} else {
+		if strings.TrimSpace(input.BrokerEndpoint) != "" || strings.TrimSpace(input.BrokerCapability) != "" {
+			return LaunchSpec{}, fmt.Errorf("Tool Broker cannot be enabled without the fixed extension")
+		}
 		args = append(args, "--no-tools")
 	}
 
-	parentEnvironment := input.ParentEnvironment
-	if parentEnvironment == nil {
-		parentEnvironment = os.Environ()
-	}
-	environment := filteredEnvironment(parentEnvironment)
 	environment = append(environment,
 		"PI_CODING_AGENT_DIR="+piHome,
 		"PI_OFFLINE=1",

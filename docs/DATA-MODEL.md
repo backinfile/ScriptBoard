@@ -506,7 +506,9 @@ state-root/
       active.json
       versions/<version>/
         pi[.exe]
-        scriptboard-extension.*      # 可选；缺少时只能无工具启动
+        scriptboard-extension.ts     # 正式签名 Runtime 的唯一固定 Extension
+        runtime.json                 # Pi/RPC/Broker 合同和上游 commit
+        LICENSE
     pi-home/<user-id>/<conversation-id>/
       models.json                    # 只引用子进程环境变量，不含实际 API Key
     sessions/<user-id>/<conversation-id>/
@@ -517,3 +519,8 @@ state-root/
 解析只接受 `active.json` 指向自身版本目录内的普通文件，绝不查询 PATH 或用户 Pi 目录。
 私有 session 目录已有非空 JSONL 时，下一次受管进程使用 `--continue` 恢复；每个 Turn
 开始前仍通过 RPC `set_model` 重选该对话当前模型，避免保温进程沿用过期模型。
+
+Tool Broker 使用每个受管 Pi 进程独有的 Named Pipe/Unix Socket 与 256-bit capability。
+capability 不持久化；AssistantToolCall 只记录规范参数、目标和有界结果摘要，
+AssistantApproval 绑定用户、角色、授权版本、对话、Tool Call、参数和目标当前状态。
+服务重启把尚未完成的工具标记为 interrupted，并取消 pending/approved 的状态修改。

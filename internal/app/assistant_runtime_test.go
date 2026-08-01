@@ -287,6 +287,55 @@ func TestAssistantRuntimeUsesIndependentBoundedBrowserStreamSlots(t *testing.T) 
 	}
 }
 
+func TestAssistantRuntimeTestsProviderWithoutPersistingConversation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the deterministic fake Pi executable")
+	}
+	stateRoot := t.TempDir()
+	db, err := openDatabase(filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	store, err := assistant.New(db, assistant.Options{StateRoot: stateRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	actor := assistant.Actor{UserID: "provider-owner", Username: "administrator"}
+	model, err := store.SaveModel(context.Background(), actor, "", assistant.ModelInput{
+		Name: "Fixture", Provider: assistant.ProviderOpenAICompatible, Model: "fixture-model",
+		Endpoint: "http://127.0.0.1:11434/v1", APIKey: "fixture-key", MakeDefault: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	installFakeAssistantRuntime(t, stateRoot)
+	coordinator := newAssistantRuntimeCoordinator(stateRoot, store, 1)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = coordinator.Close(ctx)
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	if err := coordinator.TestModel(ctx, actor, model.ID); err != nil {
+		t.Fatalf("test model: %v", err)
+	}
+	if coordinator.ActiveProcesses() != 0 {
+		t.Fatalf("provider test left %d Pi processes", coordinator.ActiveProcesses())
+	}
+	var conversations int
+	if err := db.QueryRow("SELECT COUNT(*) FROM assistant_conversations").Scan(&conversations); err != nil || conversations != 0 {
+		t.Fatalf("provider test conversations=%d err=%v", conversations, err)
+	}
+	for _, parent := range []string{"pi-home", "sessions", "workspaces"} {
+		matches, err := filepath.Glob(filepath.Join(stateRoot, "assistant", parent, actor.UserID, "provider-test-*"))
+		if err != nil || len(matches) != 0 {
+			t.Fatalf("provider test retained private %s data: %v (err=%v)", parent, matches, err)
+		}
+	}
+}
+
 func TestAssistantEventReplayRequestsSnapshotForUnknownCursor(t *testing.T) {
 	hub := &assistantEventHub{subscribers: make(map[chan assistantBrowserEvent]struct{})}
 	subscription := hub.subscribe(7)

@@ -2,17 +2,22 @@ package app
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"scriptboard/internal/appstatus"
 	"scriptboard/internal/assistant"
+	"scriptboard/internal/assistant/runtimeinstall"
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/websitemonitor"
 )
@@ -42,6 +47,9 @@ type assistantPageData struct {
 	Resources           []assistantResourceView
 	ContextReferences   []assistant.ContextRef
 	Messages            []assistant.Message
+	ToolCalls           []assistant.ToolCall
+	PendingApproval     *assistant.Approval
+	PendingApprovalCall *assistant.ToolCall
 	AssistantEnabled    bool
 }
 
@@ -54,6 +62,9 @@ type assistantSettingsPageData struct {
 	DefaultModel       *assistantModelView
 	RuntimeAvailable   bool
 	RuntimeVersion     string
+	Runtime            runtimeinstall.Snapshot
+	ActiveProcesses    int
+	ProviderTestPassed bool
 }
 
 func assistantActor(request *http.Request) assistant.Actor {
@@ -91,6 +102,9 @@ func (a *App) renderAssistantPage(response http.ResponseWriter, request *http.Re
 	var current *assistant.Conversation
 	var contextReferences []assistant.ContextRef
 	var messages []assistant.Message
+	var toolCalls []assistant.ToolCall
+	var pendingApproval *assistant.Approval
+	var pendingApprovalCall *assistant.ToolCall
 	selectedModelID := ""
 	if conversationID != "" {
 		conversation, err := a.assistant.Conversation(request.Context(), actor, conversationID)
@@ -111,6 +125,20 @@ func (a *App) renderAssistantPage(response http.ResponseWriter, request *http.Re
 		}
 		messages, err = a.assistant.Messages(request.Context(), actor, conversationID)
 		if err != nil {
+			http.Error(response, webText(resolveWebLocale(request), "assistant.load_failed"), http.StatusInternalServerError)
+			return
+		}
+		toolCalls, err = a.assistant.ToolCalls(request.Context(), actor, conversationID)
+		if err != nil {
+			http.Error(response, webText(resolveWebLocale(request), "assistant.load_failed"), http.StatusInternalServerError)
+			return
+		}
+		if approval, approvalErr := a.assistant.PendingApproval(request.Context(), actor, conversationID); approvalErr == nil && approval.Status == "pending" {
+			pendingApproval = &approval
+			if call, callErr := a.assistant.ToolCallByID(request.Context(), actor, conversationID, approval.ToolCallID); callErr == nil {
+				pendingApprovalCall = &call
+			}
+		} else if !errors.Is(approvalErr, assistant.ErrNotFound) {
 			http.Error(response, webText(resolveWebLocale(request), "assistant.load_failed"), http.StatusInternalServerError)
 			return
 		}
@@ -138,7 +166,8 @@ func (a *App) renderAssistantPage(response http.ResponseWriter, request *http.Re
 		Conversations: conversations, Archived: archived, Current: current, SelectedModelID: selectedModelID,
 		DefaultAutoApproval: settings.DefaultAutoApproval, RuntimeAvailable: runtimeAvailable, RuntimeVersion: managedRuntime.Version,
 		CanManageAI: roleAllows(currentSession.role, permissionManageSystem),
-		Resources:   resources, ContextReferences: contextReferences, Messages: messages, AssistantEnabled: settings.Enabled,
+		Resources:   resources, ContextReferences: contextReferences, Messages: messages, ToolCalls: toolCalls,
+		PendingApproval: pendingApproval, PendingApprovalCall: pendingApprovalCall, AssistantEnabled: settings.Enabled,
 	})
 }
 
@@ -310,6 +339,11 @@ func (a *App) assistantConversationEvents(response http.ResponseWriter, request 
 	after, _ := strconv.ParseUint(strings.TrimSpace(request.Header.Get("Last-Event-ID")), 10, 64)
 	subscription := a.assistantRuntime.Subscribe(id, after)
 	defer subscription.unsubscribe()
+	defer func() {
+		cancelContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = a.assistantRuntime.CancelApprovals(cancelContext, actor, id, "stream_disconnected")
+		cancel()
+	}()
 	flusher, ok := response.(http.Flusher)
 	if !ok {
 		http.Error(response, "streaming unsupported", http.StatusInternalServerError)
@@ -324,7 +358,15 @@ func (a *App) assistantConversationEvents(response http.ResponseWriter, request 
 		if err != nil {
 			return
 		}
-		if !writeAssistantSSE(response, subscription.watermark, "snapshot", map[string]any{"messages": messages}) {
+		toolCalls, err := a.assistant.ToolCalls(request.Context(), actor, id)
+		if err != nil {
+			return
+		}
+		var pendingApproval *assistant.Approval
+		if approval, approvalErr := a.assistant.PendingApproval(request.Context(), actor, id); approvalErr == nil && approval.Status == "pending" {
+			pendingApproval = &approval
+		}
+		if !writeAssistantSSE(response, subscription.watermark, "snapshot", map[string]any{"messages": messages, "toolCalls": toolCalls, "approval": pendingApproval}) {
 			return
 		}
 	}
@@ -405,6 +447,42 @@ func (a *App) setAssistantApprovalMode(response http.ResponseWriter, request *ht
 		return
 	}
 	http.Redirect(response, request, "/ai/conversations/"+url.PathEscape(id), http.StatusSeeOther)
+}
+
+func (a *App) resolveAssistantApproval(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, webText(resolveWebLocale(request), "assistant.csrf_error"), http.StatusForbidden)
+		return
+	}
+	conversationID := strings.TrimSpace(request.PathValue("id"))
+	approvalID := strings.TrimSpace(request.PathValue("approval_id"))
+	decision := strings.TrimSpace(request.FormValue("decision"))
+	if approvalID == "" || (decision != "approve" && decision != "reject") {
+		http.Error(response, webText(resolveWebLocale(request), "assistant.invalid_input"), http.StatusUnprocessableEntity)
+		return
+	}
+	actor := assistantActor(request)
+	if _, err := a.assistant.Conversation(request.Context(), actor, conversationID); err != nil {
+		a.writeAssistantMutationError(response, request, err)
+		return
+	}
+	approval, err := a.assistantRuntime.ResolveApproval(request.Context(), actor, conversationID, approvalID, decision == "approve")
+	if err != nil {
+		status := http.StatusConflict
+		if errors.Is(err, assistant.ErrNotFound) {
+			status = http.StatusNotFound
+		} else if errors.Is(err, assistant.ErrApprovalExpired) {
+			status = http.StatusGone
+		}
+		http.Error(response, webText(resolveWebLocale(request), "assistant.approval_invalid"), status)
+		return
+	}
+	if strings.Contains(request.Header.Get("Accept"), "application/json") {
+		response.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(response).Encode(map[string]any{"approvalId": approval.ID, "status": approval.Status})
+		return
+	}
+	http.Redirect(response, request, "/ai/conversations/"+url.PathEscape(conversationID), http.StatusSeeOther)
 }
 
 func (a *App) archiveAssistantConversation(response http.ResponseWriter, request *http.Request) {
@@ -500,12 +578,208 @@ func (a *App) assistantSettingsPage(response http.ResponseWriter, request *http.
 	}
 	locale := resolveWebLocale(request)
 	managedRuntime, runtimeErr := a.assistantRuntime.Runtime()
+	runtimeSnapshot := a.assistantRuntimes.Snapshot()
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = assistantSettingsTemplate.Execute(response, assistantSettingsPageData{
 		Locale: locale, CSRFToken: current.csrfToken, SettingsNavigation: newSettingsNavigation(current, locale, "ai"),
 		Settings: settings, Models: views, DefaultModel: defaultModel,
 		RuntimeAvailable: runtimeErr == nil, RuntimeVersion: managedRuntime.Version,
+		Runtime: runtimeSnapshot, ActiveProcesses: a.assistantRuntime.ActiveProcesses(),
+		ProviderTestPassed: request.URL.Query().Get("provider_test") == "passed",
 	})
+}
+
+func (a *App) testAssistantModel(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, webText(resolveWebLocale(request), "assistant.csrf_error"), http.StatusForbidden)
+		return
+	}
+	modelID := strings.TrimSpace(request.PathValue("id"))
+	ctx, cancel := context.WithTimeout(request.Context(), 90*time.Second)
+	defer cancel()
+	if err := a.assistantRuntime.TestModel(ctx, assistantActor(request), modelID); err != nil {
+		a.recordAuditForRequest(request, "assistant_provider_test", modelID, "failed")
+		status, _ := assistantRuntimeWebError(err)
+		if status == http.StatusInternalServerError {
+			status = http.StatusBadGateway
+		}
+		http.Error(response, webText(resolveWebLocale(request), "assistant.provider_test_failed"), status)
+		return
+	}
+	a.recordAuditForRequest(request, "assistant_provider_test", modelID, "succeeded")
+	http.Redirect(response, request, "/settings/ai?provider_test=passed", http.StatusSeeOther)
+}
+
+func (a *App) checkAssistantRuntime(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, webText(resolveWebLocale(request), "assistant.csrf_error"), http.StatusForbidden)
+		return
+	}
+	ctx, cancel := context.WithTimeout(request.Context(), time.Minute)
+	defer cancel()
+	if _, err := a.assistantRuntimes.CheckOnline(ctx); err != nil {
+		a.recordAuditForRequest(request, "assistant_runtime_check", "runtime", "failed")
+		http.Error(response, webText(resolveWebLocale(request), "assistant.runtime_check_failed"), http.StatusBadGateway)
+		return
+	}
+	a.recordAuditForRequest(request, "assistant_runtime_check", "runtime", "succeeded")
+	http.Redirect(response, request, "/settings/ai", http.StatusSeeOther)
+}
+
+func (a *App) installAssistantRuntime(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, webText(resolveWebLocale(request), "assistant.csrf_error"), http.StatusForbidden)
+		return
+	}
+	ctx, cancel := context.WithTimeout(request.Context(), 15*time.Minute)
+	defer cancel()
+	if err := a.assistantRuntimes.InstallOnline(ctx); err != nil {
+		a.recordAuditForRequest(request, "assistant_runtime_install", "online", "failed")
+		http.Error(response, webText(resolveWebLocale(request), "assistant.runtime_install_failed"), assistantRuntimeMutationStatus(err))
+		return
+	}
+	a.recordAuditForRequest(request, "assistant_runtime_install", a.assistantRuntimes.Snapshot().ActiveVersion, "succeeded")
+	http.Redirect(response, request, "/settings/ai", http.StatusSeeOther)
+}
+
+func (a *App) rollbackAssistantRuntime(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, webText(resolveWebLocale(request), "assistant.csrf_error"), http.StatusForbidden)
+		return
+	}
+	ctx, cancel := context.WithTimeout(request.Context(), time.Minute)
+	defer cancel()
+	if err := a.assistantRuntimes.Rollback(ctx); err != nil {
+		a.recordAuditForRequest(request, "assistant_runtime_rollback", "runtime", "failed")
+		http.Error(response, webText(resolveWebLocale(request), "assistant.runtime_rollback_failed"), assistantRuntimeMutationStatus(err))
+		return
+	}
+	a.recordAuditForRequest(request, "assistant_runtime_rollback", a.assistantRuntimes.Snapshot().ActiveVersion, "succeeded")
+	http.Redirect(response, request, "/settings/ai", http.StatusSeeOther)
+}
+
+func (a *App) uploadAssistantRuntime(response http.ResponseWriter, request *http.Request) {
+	manifestRaw, signatureRaw, archivePath, token, cleanup, err := a.readAssistantRuntimeUpload(response, request)
+	defer cleanup()
+	current := request.Context().Value(sessionContextKey).(session)
+	if subtle.ConstantTimeCompare([]byte(current.csrfToken), []byte(token)) != 1 {
+		http.Error(response, webText(resolveWebLocale(request), "assistant.csrf_error"), http.StatusForbidden)
+		return
+	}
+	if err != nil {
+		http.Error(response, webText(resolveWebLocale(request), "assistant.runtime_upload_invalid"), http.StatusUnprocessableEntity)
+		return
+	}
+	archive, err := os.Open(archivePath)
+	if err != nil {
+		http.Error(response, webText(resolveWebLocale(request), "assistant.runtime_install_failed"), http.StatusInternalServerError)
+		return
+	}
+	defer archive.Close()
+	ctx, cancel := context.WithTimeout(request.Context(), 15*time.Minute)
+	defer cancel()
+	if err := a.assistantRuntimes.InstallOffline(ctx, manifestRaw, signatureRaw, archive); err != nil {
+		a.recordAuditForRequest(request, "assistant_runtime_install", "offline", "failed")
+		http.Error(response, webText(resolveWebLocale(request), "assistant.runtime_install_failed"), assistantRuntimeMutationStatus(err))
+		return
+	}
+	a.recordAuditForRequest(request, "assistant_runtime_install", a.assistantRuntimes.Snapshot().ActiveVersion, "succeeded")
+	http.Redirect(response, request, "/settings/ai", http.StatusSeeOther)
+}
+
+func (a *App) readAssistantRuntimeUpload(response http.ResponseWriter, request *http.Request) ([]byte, []byte, string, string, func(), error) {
+	cleanup := func() {}
+	request.Body = http.MaxBytesReader(response, request.Body, runtimeinstall.MaxArchiveBytes+runtimeinstall.MaxManifestBytes+runtimeinstall.MaxSignatureBytes+(2<<20))
+	reader, err := request.MultipartReader()
+	if err != nil {
+		return nil, nil, "", "", cleanup, err
+	}
+	uploadRoot := filepath.Join(a.stateRoot, "assistant", "downloads")
+	if err := os.MkdirAll(uploadRoot, 0o700); err != nil {
+		return nil, nil, "", "", cleanup, err
+	}
+	temporary, err := os.MkdirTemp(uploadRoot, ".upload-")
+	if err != nil {
+		return nil, nil, "", "", cleanup, err
+	}
+	cleanup = func() { _ = os.RemoveAll(temporary) }
+	archivePath := filepath.Join(temporary, "runtime.archive")
+	var manifestRaw, signatureRaw []byte
+	var token string
+	seen := make(map[string]bool)
+	for {
+		part, nextErr := reader.NextPart()
+		if errors.Is(nextErr, io.EOF) {
+			break
+		}
+		if nextErr != nil {
+			return nil, nil, archivePath, token, cleanup, nextErr
+		}
+		name := part.FormName()
+		if seen[name] || (name != "csrf_token" && name != "manifest" && name != "signature" && name != "runtime") {
+			_ = part.Close()
+			return nil, nil, archivePath, token, cleanup, errors.New("unexpected or duplicate runtime upload part")
+		}
+		seen[name] = true
+		switch name {
+		case "csrf_token":
+			value, readErr := io.ReadAll(io.LimitReader(part, 8193))
+			if readErr != nil || len(value) > 8192 {
+				_ = part.Close()
+				return nil, nil, archivePath, token, cleanup, errors.New("invalid CSRF upload field")
+			}
+			token = string(value)
+		case "manifest":
+			manifestRaw, err = readBoundedAssistantUploadPart(part, runtimeinstall.MaxManifestBytes)
+		case "signature":
+			signatureRaw, err = readBoundedAssistantUploadPart(part, runtimeinstall.MaxSignatureBytes)
+		case "runtime":
+			file, createErr := os.OpenFile(archivePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+			if createErr != nil {
+				err = createErr
+				break
+			}
+			written, copyErr := io.Copy(file, io.LimitReader(part, runtimeinstall.MaxArchiveBytes+1))
+			syncErr := file.Sync()
+			closeErr := file.Close()
+			if copyErr != nil || written <= 0 || written > runtimeinstall.MaxArchiveBytes {
+				err = errors.New("runtime archive exceeds its upload bound")
+			} else if syncErr != nil {
+				err = syncErr
+			} else if closeErr != nil {
+				err = closeErr
+			}
+		}
+		_ = part.Close()
+		if err != nil {
+			return nil, nil, archivePath, token, cleanup, err
+		}
+	}
+	if !seen["csrf_token"] || !seen["manifest"] || !seen["signature"] || !seen["runtime"] || len(manifestRaw) == 0 || len(signatureRaw) == 0 {
+		return nil, nil, archivePath, token, cleanup, errors.New("runtime upload is incomplete")
+	}
+	return manifestRaw, signatureRaw, archivePath, token, cleanup, nil
+}
+
+func readBoundedAssistantUploadPart(reader io.Reader, maximum int64) ([]byte, error) {
+	value, err := io.ReadAll(io.LimitReader(reader, maximum+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(value) == 0 || int64(len(value)) > maximum {
+		return nil, errors.New("runtime upload metadata exceeds its bound")
+	}
+	return value, nil
+}
+
+func assistantRuntimeMutationStatus(err error) int {
+	if errors.Is(err, runtimeinstall.ErrRuntimeBusy) || errors.Is(err, runtimeinstall.ErrOperationActive) {
+		return http.StatusConflict
+	}
+	if errors.Is(err, runtimeinstall.ErrArchiveUntrusted) {
+		return http.StatusUnprocessableEntity
+	}
+	return http.StatusBadRequest
 }
 
 func (a *App) saveAssistantModel(response http.ResponseWriter, request *http.Request) {

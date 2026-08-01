@@ -60,6 +60,8 @@ func TestAIWorkspaceAndSettingsUsePersistedLLMAndConversationState(t *testing.T)
 	for _, expected := range []string{
 		`href="/settings/ai" aria-current="page"`, `data-assistant-settings`, `data-llm-drawer`,
 		`name="default_auto_approval"`, `name="max_active_conversations"`,
+		`action="/settings/ai/runtime/check"`, `action="/settings/ai/runtime/upload"`,
+		`name="manifest"`, `name="signature"`, `name="runtime"`,
 	} {
 		if !strings.Contains(string(settings), expected) {
 			t.Fatalf("AI settings are missing %q: %s", expected, settings)
@@ -227,6 +229,17 @@ func TestAIStateChangingRoutesRequireCSRF(t *testing.T) {
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusForbidden {
 		t.Fatalf("LLM create without CSRF status=%d body=%s", response.StatusCode, body)
+	}
+	for _, path := range []string{"/settings/ai/runtime/check", "/settings/ai/runtime/install", "/settings/ai/runtime/rollback", "/settings/ai/runtime/upload"} {
+		response, err = client.PostForm(serverURL+path, url.Values{})
+		if err != nil {
+			t.Fatalf("post %s without CSRF: %v", path, err)
+		}
+		body, _ = io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusForbidden {
+			t.Fatalf("%s without CSRF status=%d body=%s", path, response.StatusCode, body)
+		}
 	}
 }
 

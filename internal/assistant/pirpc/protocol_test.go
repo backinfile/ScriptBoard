@@ -177,3 +177,38 @@ func TestEncoderSerializesWrites(t *testing.T) {
 		t.Fatalf("model command output = %q", got)
 	}
 }
+
+func TestClientMapsAndAnswersExtensionConfirmation(t *testing.T) {
+	var output bytes.Buffer
+	client := NewClient(strings.NewReader(""), &output, ClientOptions{})
+	request := Envelope{Type: "extension_ui_request", ID: "ui-1", Method: "confirm", Title: "Approve action", MessageText: "Bound parameters", Timeout: 120000}
+	confirmation, ok := request.ExtensionConfirmation()
+	if !ok || confirmation.ID != "ui-1" || confirmation.Timeout != 120000 {
+		t.Fatalf("confirmation = %#v, %v", confirmation, ok)
+	}
+	if err := client.RespondExtensionConfirmation("ui-1", true, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := output.String(); got != "{\"id\":\"ui-1\",\"type\":\"extension_ui_response\",\"confirmed\":true}\n" {
+		t.Fatalf("extension response = %q", got)
+	}
+}
+
+func TestEnvelopeMapsRetryAndCompactionWithoutExposingProviderErrors(t *testing.T) {
+	success := false
+	tests := []struct {
+		event        Envelope
+		kind, status string
+	}{
+		{Envelope{Type: "auto_retry_start", Attempt: 2, DelayMilliseconds: 1500}, "retrying", "running"},
+		{Envelope{Type: "auto_retry_end", Success: &success, Attempt: 3}, "retrying", "error"},
+		{Envelope{Type: "compaction_start", Reason: "overflow"}, "compacting", "running"},
+		{Envelope{Type: "compaction_end", Aborted: true}, "compacting", "cancelled"},
+	}
+	for _, test := range tests {
+		kind, status, _, _, ok := test.event.Progress()
+		if !ok || kind != test.kind || status != test.status {
+			t.Fatalf("Progress(%q) = %q %q %t", test.event.Type, kind, status, ok)
+		}
+	}
+}

@@ -19,15 +19,16 @@ var (
 const supportedRPCContract = 1
 
 type ActiveRuntime struct {
-	Version, Executable, Extension string
-	RPCContract                    int
+	Version, RollbackVersion, Executable, Extension string
+	RPCContract                                     int
 }
 
-type activeRuntimeDocument struct {
-	Version     string `json:"version"`
-	RPCContract int    `json:"rpcContract"`
-	Executable  string `json:"executable"`
-	Extension   string `json:"extension,omitempty"`
+type ActivePointer struct {
+	Version         string `json:"version"`
+	RollbackVersion string `json:"rollbackVersion,omitempty"`
+	RPCContract     int    `json:"rpcContract"`
+	Executable      string `json:"executable"`
+	Extension       string `json:"extension,omitempty"`
 }
 
 // ResolveActiveRuntime never consults PATH. The active pointer may select only
@@ -55,7 +56,7 @@ func ResolveActiveRuntime(stateRoot string) (ActiveRuntime, error) {
 	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
-	var document activeRuntimeDocument
+	var document ActivePointer
 	if err := decoder.Decode(&document); err != nil {
 		return ActiveRuntime{}, fmt.Errorf("%w: decode active pointer: %v", ErrRuntimeInvalid, err)
 	}
@@ -86,7 +87,85 @@ func ResolveActiveRuntime(stateRoot string) (ActiveRuntime, error) {
 			return ActiveRuntime{}, err
 		}
 	}
-	return ActiveRuntime{Version: version, Executable: executable, Extension: extension, RPCContract: document.RPCContract}, nil
+	rollbackVersion := ""
+	if document.RollbackVersion != "" {
+		rollbackVersion, err = safeRuntimeVersion(document.RollbackVersion)
+		if err != nil || rollbackVersion == version {
+			return ActiveRuntime{}, fmt.Errorf("%w: invalid rollback version", ErrRuntimeInvalid)
+		}
+		rollbackExecutable := filepath.Join(runtimeRoot, "versions", rollbackVersion, runtimeExecutableName())
+		if err := validateRuntimeFile(filepath.Dir(rollbackExecutable), rollbackExecutable); err != nil {
+			return ActiveRuntime{}, fmt.Errorf("%w: rollback runtime is invalid", ErrRuntimeInvalid)
+		}
+	}
+	return ActiveRuntime{Version: version, RollbackVersion: rollbackVersion, Executable: executable, Extension: extension, RPCContract: document.RPCContract}, nil
+}
+
+// WriteActiveRuntime replaces the single active/rollback pointer on the same
+// volume. It validates both targets before publishing either version.
+func WriteActiveRuntime(stateRoot string, pointer ActivePointer) error {
+	absoluteStateRoot, err := filepath.Abs(strings.TrimSpace(stateRoot))
+	if err != nil || strings.TrimSpace(stateRoot) == "" {
+		return fmt.Errorf("%w: State Root is unavailable", ErrRuntimeInvalid)
+	}
+	version, err := safeRuntimeVersion(pointer.Version)
+	if err != nil || pointer.RPCContract != supportedRPCContract || pointer.Executable != runtimeExecutableName() {
+		return fmt.Errorf("%w: active runtime pointer is incompatible", ErrRuntimeInvalid)
+	}
+	runtimeRoot := filepath.Join(absoluteStateRoot, "assistant", "runtime")
+	versionRoot := filepath.Join(runtimeRoot, "versions", version)
+	if err := validateRuntimeFile(versionRoot, filepath.Join(versionRoot, pointer.Executable)); err != nil {
+		return err
+	}
+	if pointer.Extension != "" {
+		if filepath.Base(pointer.Extension) != pointer.Extension {
+			return fmt.Errorf("%w: unexpected extension name", ErrRuntimeInvalid)
+		}
+		if err := validateRuntimeFile(versionRoot, filepath.Join(versionRoot, pointer.Extension)); err != nil {
+			return err
+		}
+	}
+	if pointer.RollbackVersion != "" {
+		rollback, rollbackErr := safeRuntimeVersion(pointer.RollbackVersion)
+		if rollbackErr != nil || rollback == version {
+			return fmt.Errorf("%w: invalid rollback version", ErrRuntimeInvalid)
+		}
+		rollbackRoot := filepath.Join(runtimeRoot, "versions", rollback)
+		if err := validateRuntimeFile(rollbackRoot, filepath.Join(rollbackRoot, runtimeExecutableName())); err != nil {
+			return err
+		}
+	}
+	pointer.Version = version
+	payload, err := json.Marshal(pointer)
+	if err != nil {
+		return err
+	}
+	payload = append(payload, '\n')
+	if err := os.MkdirAll(runtimeRoot, 0o700); err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(runtimeRoot, ".active-*.tmp")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(payload); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return replaceRuntimePointer(temporaryPath, filepath.Join(runtimeRoot, "active.json"))
 }
 
 func safeRuntimeVersion(value string) (string, error) {

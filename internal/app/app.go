@@ -39,6 +39,8 @@ import (
 
 	"scriptboard/internal/appstatus"
 	"scriptboard/internal/assistant"
+	"scriptboard/internal/assistant/runtimeinstall"
+	"scriptboard/internal/assistant/toolbroker"
 	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/hoststatus"
@@ -275,25 +277,26 @@ const (
 )
 
 type Config struct {
-	StateRoot             string
-	ConfigPath            string
-	InstallRoot           string
-	TLSKey                string
-	FileTopology          hostfiles.Topology
-	RunTimeoutGrace       time.Duration
-	SchedulerNow          func() time.Time
-	SchedulerTick         time.Duration
-	ExecutorChains        map[string][]string
-	AdminUsername         string
-	AdminPassword         string
-	AdminPasswordFile     string
-	TrustedProxies        []string
-	WebsiteMonitorOptions websitemonitor.Options
-	UpdateCheck           bool
-	UpdateInterval        time.Duration
-	UpdateSource          updatepkg.ReleaseSource
-	RequestShutdown       func()
-	ApplicationProbe      appstatus.Probe
+	StateRoot              string
+	ConfigPath             string
+	InstallRoot            string
+	TLSKey                 string
+	FileTopology           hostfiles.Topology
+	RunTimeoutGrace        time.Duration
+	SchedulerNow           func() time.Time
+	SchedulerTick          time.Duration
+	ExecutorChains         map[string][]string
+	AdminUsername          string
+	AdminPassword          string
+	AdminPasswordFile      string
+	TrustedProxies         []string
+	WebsiteMonitorOptions  websitemonitor.Options
+	UpdateCheck            bool
+	UpdateInterval         time.Duration
+	UpdateSource           updatepkg.ReleaseSource
+	RequestShutdown        func()
+	ApplicationProbe       appstatus.Probe
+	AssistantRuntimeSource runtimeinstall.Source
 }
 
 type App struct {
@@ -301,6 +304,9 @@ type App struct {
 	stateRoot          string
 	assistant          *assistant.Service
 	assistantRuntime   *assistantRuntimeCoordinator
+	assistantRuntimes  *runtimeinstall.Manager
+	assistantTools     *assistantToolExecutor
+	assistantBroker    *toolbroker.Broker
 	files              *hostfiles.Manager
 	fileOperations     *sqliteFileOperationStore
 	fileMoves          *hostfiles.MoveEngine
@@ -414,6 +420,24 @@ func Open(config Config) (*App, error) {
 		return nil, fmt.Errorf("load assistant settings: %w", err)
 	}
 	application.assistantRuntime = newAssistantRuntimeCoordinator(stateRoot, application.assistant, assistantSettings.MaxActiveConversations)
+	application.assistantRuntime.SetApprovalAudit(func(actor assistant.Actor, conversationID, approvalID, result string) {
+		var role userRole
+		_ = application.db.QueryRow("SELECT role FROM users WHERE id = ?", actor.UserID).Scan(&role)
+		action := "assistant_tool_approval"
+		application.recordAuditWithActor(action, fmt.Sprintf("conversation=%s approval=%s", conversationID, approvalID), result, "assistant", actor.UserID, actor.Username, role)
+	})
+	runtimeSource := config.AssistantRuntimeSource
+	if runtimeSource == nil {
+		runtimeSource = runtimeinstall.NewGitHubSource()
+	}
+	currentBuild := buildinfo.Current()
+	application.assistantRuntimes = runtimeinstall.NewManager(runtimeinstall.Config{
+		StateRoot:     stateRoot,
+		Compatibility: runtimeinstall.Compatibility{ScriptBoardVersion: currentBuild.Version, ScriptBoardTag: currentBuild.Tag},
+		Source:        runtimeSource,
+		SwitchGuard:   application.assistantRuntime.CanSwitchRuntime,
+		Protected:     application.assistant.ReferencedRuntimeVersions,
+	})
 	application.fileOperations = newSQLiteFileOperationStore(db)
 	application.fileMoves = hostfiles.NewMoveEngine(files, application.fileOperations)
 	application.fileOperationCtx, application.fileOperationStop = context.WithCancel(context.Background())
@@ -488,6 +512,19 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	application.assistantTools = newAssistantToolExecutor(application)
+	application.assistantRuntime.SetTurnSettled(application.assistantTools.releaseTurn)
+	application.assistantBroker, err = toolbroker.New(stateRoot, application.assistantTools)
+	if err != nil {
+		application.websiteMonitor.Close()
+		application.applicationStatus.Close()
+		application.hostStatus.Close()
+		application.scheduler.Close()
+		application.runs.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("initialize Assistant Tool Broker: %w", err)
+	}
+	application.assistantRuntime.SetBroker(application.assistantBroker)
 	if !validating {
 		application.hostStatus.Start(context.Background())
 		application.applicationStatus.Start(context.Background())
@@ -820,6 +857,9 @@ func (a *App) Close() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = a.assistantRuntime.Close(ctx)
 		cancel()
+	}
+	if a.assistantBroker != nil {
+		_ = a.assistantBroker.Close()
 	}
 	if a.fileOperationStop != nil {
 		a.fileOperationStop()
@@ -1412,6 +1452,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /ai/conversations/{id}/events", a.requireSession(http.HandlerFunc(a.assistantConversationEvents)))
 	mux.Handle("POST /ai/conversations/{id}/model", a.requireSession(http.HandlerFunc(a.setAssistantConversationModel)))
 	mux.Handle("POST /ai/conversations/{id}/approval-mode", a.requireSession(http.HandlerFunc(a.setAssistantApprovalMode)))
+	mux.Handle("POST /ai/conversations/{id}/approvals/{approval_id}", a.requireSession(http.HandlerFunc(a.resolveAssistantApproval)))
 	mux.Handle("POST /ai/conversations/{id}/archive", a.requireSession(http.HandlerFunc(a.archiveAssistantConversation)))
 	mux.Handle("POST /ai/conversations/{id}/restore", a.requireSession(http.HandlerFunc(a.restoreAssistantConversation)))
 	mux.Handle("GET /monitor/data", a.requireSession(http.HandlerFunc(a.overviewData)))
@@ -1481,9 +1522,14 @@ func (a *App) routes() http.Handler {
 	})))
 	mux.Handle("GET /settings/ai", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.assistantSettingsPage)))
 	mux.Handle("POST /settings/ai/llms", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.saveAssistantModel)))
+	mux.Handle("POST /settings/ai/llms/{id}/test", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.testAssistantModel)))
 	mux.Handle("POST /settings/ai/llms/{id}/default", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.setDefaultAssistantModel)))
 	mux.Handle("POST /settings/ai/llms/{id}/delete", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.deleteAssistantModel)))
 	mux.Handle("POST /settings/ai/defaults", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.saveAssistantDefaults)))
+	mux.Handle("POST /settings/ai/runtime/check", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.checkAssistantRuntime)))
+	mux.Handle("POST /settings/ai/runtime/install", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.installAssistantRuntime)))
+	mux.Handle("POST /settings/ai/runtime/upload", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.uploadAssistantRuntime)))
+	mux.Handle("POST /settings/ai/runtime/rollback", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.rollbackAssistantRuntime)))
 	mux.Handle("GET /settings/updates", a.requireSession(http.HandlerFunc(a.updatesPage)))
 	mux.Handle("GET /settings/updates/status", a.requireSession(http.HandlerFunc(a.updateStatus)))
 	mux.Handle("POST /settings/updates/check", a.requireSession(http.HandlerFunc(a.checkUpdate)))

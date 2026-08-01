@@ -146,6 +146,11 @@ try {
         tar -czf (Join-Path $outputRoot "$name.tar.gz") -C $stage .
         if ($LASTEXITCODE -ne 0) { throw "Packaging Linux $arch archive failed" }
     }
+    if ($formalRelease) {
+        & (Join-Path $PSScriptRoot "build-assistant-runtime.ps1") -ScriptBoardVersion $Version -Output $Output
+        if ($LASTEXITCODE -ne 0) { throw "Building signed assistant Runtime assets failed" }
+    }
+
     Get-ChildItem -LiteralPath $outputRoot -File | Sort-Object Name | ForEach-Object {
         $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
         "$hash  $($_.Name)"

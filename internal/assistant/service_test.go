@@ -476,6 +476,17 @@ func TestRecoverInterruptedTurnsDoesNotReplayUnfinishedWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	call, err := service.StartToolCall(ctx, actor, conversation.ID, turn.Assistant.ID, "recovery-call", ToolCallInput{Name: "check_website_now", TargetSummary: "site-1 website", ParameterSummary: "check now"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	approval, err := service.RequestApproval(ctx, actor, conversation.ID, "recovery-call", strings.Repeat("c", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.DecideApproval(ctx, actor, conversation.ID, approval.ID, true); err != nil {
+		t.Fatal(err)
+	}
 	if recovered, err := service.RecoverInterruptedTurns(ctx); err != nil || recovered != 1 {
 		t.Fatalf("recovered = %d, error = %v", recovered, err)
 	}
@@ -493,7 +504,77 @@ func TestRecoverInterruptedTurnsDoesNotReplayUnfinishedWork(t *testing.T) {
 	if recoveredConversation.Status != "interrupted" {
 		t.Fatalf("conversation = %+v", recoveredConversation)
 	}
+	recoveredApproval, err := service.Approval(ctx, actor, conversation.ID, approval.ID)
+	if err != nil || recoveredApproval.Status != "cancelled" {
+		t.Fatalf("approval = %#v error = %v", recoveredApproval, err)
+	}
+	recoveredCall, err := service.ToolCallByID(ctx, actor, conversation.ID, call.ID)
+	if err != nil || recoveredCall.Status != "interrupted" || recoveredCall.ErrorCode != "service_restarted" {
+		t.Fatalf("tool call = %#v error = %v", recoveredCall, err)
+	}
 }
+
+func TestToolApprovalIsConversationScopedParameterBoundAndSingleUse(t *testing.T) {
+	t.Parallel()
+	service, _, _ := newTestService(t)
+	ctx := context.Background()
+	owner := Actor{UserID: "owner"}
+	other := Actor{UserID: "other"}
+	model, err := service.SaveModel(ctx, owner, "", ModelInput{Name: "Local", Provider: ProviderOpenAICompatible, Model: "local", Endpoint: "http://localhost:11434/v1", APIKey: "key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.UpdateSettings(ctx, owner, SettingsInput{Enabled: true, MaxActiveConversations: 2}); err != nil {
+		t.Fatal(err)
+	}
+	conversation, err := service.CreateConversation(ctx, owner, ConversationInput{ModelID: model.ID, AutoApproval: boolPointer(false)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn, err := service.BeginTurn(ctx, owner, conversation.ID, "start the quick run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	call, err := service.StartToolCall(ctx, owner, conversation.ID, turn.Assistant.ID, "pi-call-1", ToolCallInput{
+		Name: "start_quick_run", TargetSummary: "Nightly cleanup", ParameterSummary: "quick_run=quick-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	digestA := strings.Repeat("a", 64)
+	digestB := strings.Repeat("b", 64)
+	approval, err := service.RequestApproval(ctx, owner, conversation.ID, "pi-call-1", digestA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approval.ToolCallID != call.ID || approval.Status != "pending" {
+		t.Fatalf("approval = %#v call = %#v", approval, call)
+	}
+	if _, err := service.DecideApproval(ctx, other, conversation.ID, approval.ID, true); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-owner approval error = %v", err)
+	}
+	if _, err := service.DecideApproval(ctx, owner, conversation.ID, approval.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ConsumeApproval(ctx, owner, conversation.ID, "pi-call-1", approval.ID, digestB); !errors.Is(err, ErrApprovalInvalid) {
+		t.Fatalf("changed digest consume error = %v", err)
+	}
+	if err := service.ConsumeApproval(ctx, owner, conversation.ID, "pi-call-1", approval.ID, digestA); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ConsumeApproval(ctx, owner, conversation.ID, "pi-call-1", approval.ID, digestA); !errors.Is(err, ErrApprovalInvalid) {
+		t.Fatalf("replayed approval error = %v", err)
+	}
+	if err := service.FinishToolCall(ctx, owner, conversation.ID, "pi-call-1", "complete", "", "Run accepted"); err != nil {
+		t.Fatal(err)
+	}
+	calls, err := service.ToolCalls(ctx, owner, conversation.ID)
+	if err != nil || len(calls) != 1 || calls[0].Status != "complete" || calls[0].ResultSummary != "Run accepted" {
+		t.Fatalf("tool calls = %#v, error = %v", calls, err)
+	}
+}
+
+func boolPointer(value bool) *bool { return &value }
 
 func newTestService(t *testing.T) (*Service, *sql.DB, string) {
 	t.Helper()

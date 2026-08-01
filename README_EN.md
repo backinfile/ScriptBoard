@@ -159,9 +159,17 @@ conversation default and a direct per-conversation toggle.
 
 The resource button or `@` can reference directories, files, applications, websites, Runs, Quick Runs,
 and schedules. Each reference is revalidated against the current user's permissions when submitted,
-and external content is always untrusted data. The safe baseline launches Pi without tools; operational
-tools may come only from a fixed Tool Broker/Extension shipped with a trusted Runtime, never from Pi's
-default shell or arbitrary filesystem tools.
+and external content is always untrusted data. A signed Runtime loads only ScriptBoard's fixed Extension.
+It can perform bounded reads of hosts, applications, websites, Runs, logs, Quick Runs, schedules, and
+explicitly referenced text. Starting a Quick Run, running a schedule, stopping a Run, or checking a
+website reauthorizes the user and creates a parameter-bound one-time approval. Pi's default shell,
+arbitrary filesystem access, and user extensions remain disabled.
+
+System Settings → AI also manages Pi Runtime. A formal build checks only the matching, signed companion
+assets for the current ScriptBoard Release and verifies platform, size, SHA-256, archive safety, license,
+and RPC before activation. Installation, update, and rollback are explicit administrator actions;
+ScriptBoard never invokes `pi update`. The Test connection action runs a minimal private Pi turn without
+retaining its prompt or response.
 
 ScriptBoard launches Pi only by an absolute path inside the State Root's private version directory and
 isolates home, session, and workspace by user and conversation. It never reads PATH or user-level Pi
@@ -346,7 +354,7 @@ Fallback happens only before a script starts. Once an interpreter successfully s
 
 Files hides and rejects `state_root`, the installation directory, the active configuration, administrator password file, TLS private key, and each filesystem's ScriptBoard trash area. Ancestors containing those paths cannot be edited, moved, deleted, overwritten, or executed. Everything else is governed by the service identity, so a default root or LocalSystem deployment has a broad host access scope.
 
-AI conversations are not a security boundary. The provider can see prompts sent to it, and any future
+AI conversations are not a security boundary. The provider can see prompts sent to it, and AI
 tools remain bounded by the current ScriptBoard service identity and the user's fixed role. Auto approval
 removes per-call clicking without bypassing reauthorization or domain checks, but it increases the cost
 of mistakes and should be enabled only for trusted users and deliberate scenarios.

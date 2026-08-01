@@ -3,6 +3,7 @@ module scriptboard
 go 1.26.5
 
 require (
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/getlantern/systray v1.2.2
 	github.com/gorilla/websocket v1.5.3
 	github.com/moby/moby/api v1.55.0
@@ -16,7 +17,6 @@ require (
 )
 
 require (
-	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/containerd/errdefs v1.0.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
 	github.com/distribution/reference v0.6.0 // indirect

@@ -44,10 +44,59 @@ type Envelope struct {
 	Success               *bool                 `json:"success,omitempty"`
 	Error                 json.RawMessage       `json:"error,omitempty"`
 	Data                  json.RawMessage       `json:"data,omitempty"`
-	Message               AgentMessage          `json:"message,omitempty"`
+	Message               AgentMessage          `json:"-"`
+	MessageRaw            json.RawMessage       `json:"message,omitempty"`
 	Messages              []AgentMessage        `json:"messages,omitempty"`
 	WillRetry             bool                  `json:"willRetry,omitempty"`
 	AssistantMessageEvent AssistantMessageEvent `json:"assistantMessageEvent,omitempty"`
+	ToolCallID            string                `json:"toolCallId,omitempty"`
+	ToolName              string                `json:"toolName,omitempty"`
+	Args                  json.RawMessage       `json:"args,omitempty"`
+	IsError               bool                  `json:"isError,omitempty"`
+	Method                string                `json:"method,omitempty"`
+	Title                 string                `json:"title,omitempty"`
+	MessageText           string                `json:"-"`
+	Timeout               int64                 `json:"timeout,omitempty"`
+	Attempt               int                   `json:"attempt,omitempty"`
+	MaxAttempts           int                   `json:"maxAttempts,omitempty"`
+	DelayMilliseconds     int64                 `json:"delayMs,omitempty"`
+	Reason                string                `json:"reason,omitempty"`
+	Aborted               bool                  `json:"aborted,omitempty"`
+}
+
+func (event Envelope) Progress() (kind, status string, attempt int, delayMilliseconds int64, ok bool) {
+	switch event.Type {
+	case "auto_retry_start", "summarization_retry_scheduled", "summarization_retry_attempt_start":
+		return "retrying", "running", event.Attempt, event.DelayMilliseconds, true
+	case "auto_retry_end", "summarization_retry_finished":
+		status = "complete"
+		if event.Success != nil && !*event.Success {
+			status = "error"
+		}
+		return "retrying", status, event.Attempt, 0, true
+	case "compaction_start":
+		return "compacting", "running", 0, 0, true
+	case "compaction_end":
+		status = "complete"
+		if event.Aborted {
+			status = "cancelled"
+		}
+		return "compacting", status, 0, 0, true
+	default:
+		return "", "", 0, 0, false
+	}
+}
+
+type ExtensionConfirmation struct {
+	ID, Title, Message string
+	Timeout            int64
+}
+
+func (event Envelope) ExtensionConfirmation() (ExtensionConfirmation, bool) {
+	if event.Type != "extension_ui_request" || event.Method != "confirm" || strings.TrimSpace(event.ID) == "" {
+		return ExtensionConfirmation{}, false
+	}
+	return ExtensionConfirmation{ID: event.ID, Title: event.Title, Message: event.MessageText, Timeout: event.Timeout}, true
 }
 
 func (event Envelope) TextDelta() (string, bool) {
@@ -131,6 +180,15 @@ func (decoder *Decoder) Decode() (Envelope, error) {
 	if len(record) == 0 || json.Unmarshal(record, &envelope) != nil || envelope.Type == "" {
 		return Envelope{}, ErrMalformedRecord
 	}
+	if len(envelope.MessageRaw) > 0 {
+		if envelope.MessageRaw[0] == '"' {
+			if json.Unmarshal(envelope.MessageRaw, &envelope.MessageText) != nil {
+				return Envelope{}, ErrMalformedRecord
+			}
+		} else if json.Unmarshal(envelope.MessageRaw, &envelope.Message) != nil {
+			return Envelope{}, ErrMalformedRecord
+		}
+	}
 	return envelope, nil
 }
 
@@ -183,6 +241,8 @@ type Command struct {
 	Provider          string `json:"provider,omitempty"`
 	ModelID           string `json:"modelId,omitempty"`
 	StreamingBehavior string `json:"streamingBehavior,omitempty"`
+	Confirmed         *bool  `json:"confirmed,omitempty"`
+	Cancelled         bool   `json:"cancelled,omitempty"`
 }
 
 type Encoder struct {
@@ -278,6 +338,17 @@ func (client *Client) SetManagedModel(ctx context.Context, requestID, modelID st
 		return Envelope{}, fmt.Errorf("Pi RPC model ID is required")
 	}
 	return client.request(ctx, Command{ID: requestID, Type: "set_model", Provider: privateProviderName, ModelID: modelID})
+}
+
+func (client *Client) RespondExtensionConfirmation(requestID string, confirmed, cancelled bool) error {
+	if strings.TrimSpace(requestID) == "" {
+		return fmt.Errorf("Pi extension UI request ID is required")
+	}
+	command := Command{ID: requestID, Type: "extension_ui_response", Cancelled: cancelled}
+	if !cancelled {
+		command.Confirmed = &confirmed
+	}
+	return client.encoder.Write(command)
 }
 
 func (client *Client) request(ctx context.Context, command Command) (Envelope, error) {

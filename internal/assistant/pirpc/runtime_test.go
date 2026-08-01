@@ -46,3 +46,29 @@ func TestResolveActiveRuntimeRejectsMissingAndTraversalPointers(t *testing.T) {
 		t.Fatalf("traversal error = %v", err)
 	}
 }
+
+func TestWriteActiveRuntimeAtomicallyCarriesRollbackPointer(t *testing.T) {
+	stateRoot := t.TempDir()
+	for _, version := range []string{"0.82.0", "0.83.0"} {
+		root := filepath.Join(stateRoot, "assistant", "runtime", "versions", version)
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, runtimeExecutableName()), []byte(version), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := WriteActiveRuntime(stateRoot, ActivePointer{Version: "0.82.0", RPCContract: 1, Executable: runtimeExecutableName()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteActiveRuntime(stateRoot, ActivePointer{Version: "0.83.0", RollbackVersion: "0.82.0", RPCContract: 1, Executable: runtimeExecutableName()}); err != nil {
+		t.Fatal(err)
+	}
+	active, err := ResolveActiveRuntime(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active.Version != "0.83.0" || active.RollbackVersion != "0.82.0" {
+		t.Fatalf("active runtime = %#v", active)
+	}
+}

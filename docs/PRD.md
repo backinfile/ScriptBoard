@@ -16,7 +16,7 @@
 > [ADR-0122](./adr/0122-browse-the-host-filesystem-with-protected-paths.md) 取代。
 
 > **2026-08-01 修订**：增加可选 AI 对话工作区，以 ScriptBoard 私有 Pi RPC Runtime
-> 运行无工具 Agent Turn；LLM、对话、资源引用和自动审批默认值由 ScriptBoard 管理。
+> 运行 Agent Turn；LLM、对话、资源引用、固定 Tool Broker 和一次性审批由 ScriptBoard 管理。
 > schema 20 状态库可在单事务内前向迁移到 schema 21，早于 20 的旧库仍在写入前拒绝。
 > 工具代理、状态修改审批与 Runtime 分发必须分别满足
 > [ADR-0123](./adr/0123-use-pi-rpc-as-a-private-assistant-runtime.md)、
@@ -520,7 +520,7 @@ scriptboard version
   新增、修改、删除未引用配置并选择唯一默认模型。API Key 只写入 State Root 私有凭据
   文件，页面、SQLite、审计和普通日志均不回显。
 - 新对话继承系统设置中的自动审批默认值；每个对话可在模型选择旁直接切换审批模式。
-  该开关不改变固定角色权限，也不授权尚未发布的工具。
+  该开关不改变固定角色权限；状态修改执行前仍重新授权并建立一次性审批记录。
 - Composer 可引用经过当前角色实时校验的目录、文件、应用、网站、Run、快捷执行和
   计划。持久记录只保存稳定标识与安全标签；引用内容始终视为不可信数据。
 - 每个对话同一时间只有一个 Agent Turn；消息先写数据库，再通过有界 SSE 流式更新。
@@ -529,7 +529,10 @@ scriptboard version
 - Pi 只从 State Root 私有 Runtime 的绝对路径启动，并使用隔离的 home、session 和
   workspace。它不读取 PATH、全局 Pi、用户 Extensions/Skills/Prompts/Themes 或项目
   上下文，因此可与本机手工启动的 Pi 并存。
-- 没有受信 Runtime 时保留历史和设置，但拒绝新 Prompt。固定 Tool Broker/Extension
-  发布前 Pi 始终使用无工具模式；不得以开放 Shell 或文件工具作为降级路径。
+- 没有受信 Runtime 时保留历史和设置，但拒绝新 Prompt。正式 Runtime 固定携带
+  ScriptBoard Extension，并通过进程绑定 Tool Broker 提供 12 个有界只读工具和 4 个
+  状态修改工具；不得以开放 Shell 或任意文件工具作为降级路径。
+- 系统设置支持检查、在线/离线安装、原子激活和回退签名 Runtime，并可使用 Pi 对单条
+  LLM 配置执行不持久化正文的连接测试。
 - AI 能力默认关闭，由系统设置显式启用。Provider 调用由部署者自行承担费用和数据
   合规责任；即使工具受限，Prompt 中引用的主机信息仍可能发送给所选外部 Provider。

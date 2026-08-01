@@ -1131,6 +1131,15 @@ func (s *Service) RecoverInterruptedTurns(ctx context.Context) (int64, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 	now := s.now().UTC().UnixNano()
+	nowSeconds := s.now().UTC().Unix()
+	if _, err := tx.ExecContext(ctx, `UPDATE assistant_approvals SET status = 'cancelled', decided_at = ?
+		WHERE status IN ('pending', 'approved')`, nowSeconds); err != nil {
+		return 0, fmt.Errorf("cancel unfinished assistant approvals: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE assistant_tool_calls SET status = 'interrupted',
+		error_code = 'service_restarted', finished_at = ? WHERE status IN ('running', 'waiting_approval')`, nowSeconds); err != nil {
+		return 0, fmt.Errorf("interrupt unfinished assistant tool calls: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE assistant_messages SET status = 'interrupted', finished_at = ?
 		WHERE status = 'streaming' AND conversation_id IN
 		(SELECT id FROM assistant_conversations WHERE status IN ('running', 'waiting_approval'))`, now); err != nil {
@@ -1146,6 +1155,31 @@ func (s *Service) RecoverInterruptedTurns(ctx context.Context) (int64, error) {
 		return 0, fmt.Errorf("commit assistant turn recovery: %w", err)
 	}
 	return recovered, nil
+}
+
+func (s *Service) PendingApprovalCount(ctx context.Context) (int, error) {
+	var count int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM assistant_approvals WHERE status = 'pending' AND expires_at > ?`, s.now().UTC().Unix()).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count pending assistant approvals: %w", err)
+	}
+	return count, nil
+}
+
+func (s *Service) ReferencedRuntimeVersions(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT runtime_version FROM assistant_conversations WHERE archived_at IS NULL AND runtime_version <> '' ORDER BY runtime_version`)
+	if err != nil {
+		return nil, fmt.Errorf("list referenced assistant runtimes: %w", err)
+	}
+	defer rows.Close()
+	var versions []string
+	for rows.Next() {
+		var version string
+		if err := rows.Scan(&version); err != nil {
+			return nil, err
+		}
+		versions = append(versions, version)
+	}
+	return versions, rows.Err()
 }
 
 func (s *Service) loadCredentials() (map[string]string, error) {

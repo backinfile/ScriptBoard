@@ -1,9 +1,13 @@
 # AI 助手与 Pi Runtime 实施计划
 
-状态：实施中（无工具端到端基线已完成；Runtime Manager、签名安装/更新/回退、
-Tool Broker 与动作审批尚未实现）
+状态：已完成（原生工作区、签名 Runtime Manager、固定 Extension/Tool Broker、
+一次性动作审批、Provider 连接测试与发布门禁均已落地）
 
 最后更新：2026-08-01
+
+验证记录（2026-08-01）：`go test ./... -count=1`、`go vet ./...`、JavaScript
+语法检查、真实受管 Pi 0.83.0 Provider 连接、只读工具、一次性批准/拒绝，以及桌面和
+390px 外部 Chrome 验收均通过。测试凭据只保存在隔离 State Root 私有凭据文件中。
 
 ## 1. 目标
 
@@ -774,7 +778,7 @@ AI 对话或 Prompt。
 
 ## 22. 实施任务与依赖
 
-### 任务 1：领域与架构决策
+### 任务 1（完成）：领域与架构决策
 
 - 更新 `CONTEXT.md`，加入第 4 节术语。
 - 新增 ADR：使用 Pi RPC 作为私有 Agent Runtime。
@@ -785,7 +789,7 @@ AI 对话或 Prompt。
 
 依赖：无。
 
-### 任务 2：Runtime Release 资产与独立签名清单
+### 任务 2（完成）：Runtime Release 资产与独立签名清单
 
 - 扩展 Release 工具，生成独立、版本化、带产品域分离的 Runtime 清单和签名。
 - 保持现有 ScriptBoard 主更新清单 Schema 不变。
@@ -796,7 +800,7 @@ AI 对话或 Prompt。
 
 依赖：任务 1。
 
-### 任务 3：Runtime Manager
+### 任务 3（完成）：Runtime Manager
 
 - 实现下载/上传、摘要、归档、磁盘空间和路径检查。
 - 实现版本验活、原子激活、保留和回退。
@@ -805,7 +809,7 @@ AI 对话或 Prompt。
 
 依赖：任务 2。
 
-### 任务 4：Conversation Store 与 Assistant Module
+### 任务 4（完成）：Conversation Store 与 Assistant Module
 
 - 增加 `assistant_*` Schema 和向前迁移。
 - 实现归属、消息、工具、审批和 revision。
@@ -814,7 +818,7 @@ AI 对话或 Prompt。
 
 依赖：任务 1。
 
-### 任务 5：Pi RPC Adapter 与 Runtime Supervisor
+### 任务 5（完成）：Pi RPC Adapter 与 Runtime Supervisor
 
 - 实现严格 JSONL、request correlation 和规范事件映射。
 - 实现 session 创建/恢复、Prompt、abort、state 和进程验活。
@@ -824,7 +828,7 @@ AI 对话或 Prompt。
 
 依赖：任务 3、任务 4。
 
-### 任务 6：无工具端到端 tracer bullet
+### 任务 6（完成）：无工具端到端 tracer bullet
 
 - 增加 `/ai`、新建对话、Prompt、SSE、停止和恢复。
 - Pi 使用 `--no-tools` 或等价严格模式。
@@ -833,7 +837,7 @@ AI 对话或 Prompt。
 
 依赖：任务 4、任务 5。
 
-### 任务 7：Tool Broker 与固定 Pi Extension
+### 任务 7（完成）：Tool Broker 与固定 Pi Extension
 
 - 定义版本化 IPC 协议和 capability 生命周期。
 - 实现固定扩展注册的只读工具。
@@ -842,7 +846,7 @@ AI 对话或 Prompt。
 
 依赖：任务 5、任务 6。
 
-### 任务 8：状态修改工具与审批
+### 任务 8（完成）：状态修改工具与审批
 
 - 实现审批模型、RPC Extension UI 映射和内联 Web 面板。
 - 接入快捷执行、计划、Run 停止和网站立即检查。
@@ -851,7 +855,7 @@ AI 对话或 Prompt。
 
 依赖：任务 7。
 
-### 任务 9：最终 AI 工作区与设置页
+### 任务 9（完成）：最终 AI 工作区与设置页
 
 - 实现 AI 对话 Rail、Transcript、Composer、Tool Ledger 和 Inspector。
 - 完成 Runtime/Provider/Guardrail/Diagnostics 设置。
@@ -861,7 +865,7 @@ AI 对话或 Prompt。
 
 依赖：任务 3、任务 6、任务 7、任务 8。
 
-### 任务 10：硬化、兼容与发布门禁
+### 任务 10（完成）：硬化、兼容与发布门禁
 
 - 完成第 23 节测试和第 24 节验收。
 - 使用固定 Pi Runtime 执行真实 RPC 合同测试。

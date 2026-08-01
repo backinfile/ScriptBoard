@@ -3901,6 +3901,11 @@
     const composer = root.querySelector("[data-assistant-composer]");
 	const sendButton = composer?.querySelector(".assistant-send");
 	const messageList = root.querySelector("[data-assistant-message-list]");
+	const toolLedger = root.querySelector("[data-assistant-tool-ledger]");
+	const toolList = root.querySelector("[data-assistant-tool-list]");
+	const toolCount = root.querySelector("[data-assistant-tool-count]");
+	const approvalPanel = root.querySelector("[data-assistant-approval-panel]");
+	const approvalForm = root.querySelector("[data-assistant-approval-form]");
 	const helper = root.querySelector("[data-assistant-error]");
 	const helperDefault = helper?.textContent || "";
 	const eventsURL = root.dataset.eventsUrl || "";
@@ -4013,6 +4018,115 @@
 		scrollTranscript();
 		return article;
 	};
+	const toolStatusLabel = status => {
+		const labels = locale() === "zh-CN"
+			? { running: "执行中", waiting_approval: "等待审批", complete: "已完成", error: "失败", rejected: "已拒绝", cancelled: "已取消", interrupted: "已中断" }
+			: { running: "Running", waiting_approval: "Waiting for approval", complete: "Complete", error: "Failed", rejected: "Rejected", cancelled: "Cancelled", interrupted: "Interrupted" };
+		return labels[status] || status;
+	};
+	const toolStatusIcon = status => status === "complete" ? "check" : status === "waiting_approval" ? "shield-alert" : status === "running" ? "loader-circle" : "triangle-alert";
+	const renderToolCall = call => {
+		if (!toolList || !call) return null;
+		const id = messageValue(call, "id", "ID");
+		if (!id) return null;
+		let row = toolList.querySelector(`[data-tool-call-id="${CSS.escape(id)}"]`);
+		if (!row) {
+			row = document.createElement("details");
+			row.className = "assistant-tool-row";
+			row.dataset.toolCallId = id;
+			const summary = document.createElement("summary");
+			const iconHost = document.createElement("span");
+			iconHost.className = "assistant-tool-row__icon";
+			const icon = document.createElement("span");
+			icon.dataset.toolStatusIcon = "";
+			iconHost.append(icon);
+			const identity = document.createElement("span");
+			identity.append(document.createElement("strong"), document.createElement("small"));
+			const status = document.createElement("span");
+			status.className = "assistant-tool-status";
+			status.dataset.toolStatusLabel = "";
+			const chevron = document.createElement("span");
+			chevron.dataset.lucide = "chevron-down";
+			summary.append(iconHost, identity, status, chevron);
+			const details = document.createElement("div");
+			details.className = "assistant-tool-row__details";
+			const list = document.createElement("dl");
+			details.append(list);
+			row.append(summary, details);
+			toolList.append(row);
+		}
+		const status = messageValue(call, "status", "Status") || "running";
+		row.dataset.toolStatus = status;
+		const name = messageValue(call, "name", "Name") || "tool";
+		const target = messageValue(call, "targetSummary", "TargetSummary");
+		row.querySelector("summary strong").textContent = name;
+		row.querySelector("summary small").textContent = target;
+		row.querySelector("[data-tool-status-label]").textContent = toolStatusLabel(status);
+		replaceIconHost(row.querySelector("[data-tool-status-icon]"), toolStatusIcon(status));
+		const details = row.querySelector("dl");
+		details.replaceChildren();
+		const detailRow = (label, value, code = false) => {
+			if (!value) return;
+			const host = document.createElement("div");
+			const term = document.createElement("dt");
+			term.textContent = label;
+			const description = document.createElement("dd");
+			const body = code ? document.createElement("code") : document.createTextNode(value);
+			if (code) body.textContent = value;
+			description.append(body);
+			host.append(term, description);
+			details.append(host);
+		};
+		detailRow(locale() === "zh-CN" ? "规范参数" : "Normalized parameters", messageValue(call, "parameterSummary", "ParameterSummary"));
+		detailRow(locale() === "zh-CN" ? "结果摘要" : "Result summary", messageValue(call, "resultSummary", "ResultSummary"));
+		detailRow(locale() === "zh-CN" ? "错误码" : "Error code", messageValue(call, "errorCode", "ErrorCode"), true);
+		toolLedger.hidden = false;
+		if (toolCount) toolCount.textContent = String(toolList.children.length);
+		renderIcons(row);
+		return row;
+	};
+	const renderApproval = (approval, call) => {
+		if (!approvalPanel || !approvalForm) return;
+		const id = messageValue(approval, "id", "ID");
+		const status = messageValue(approval, "status", "Status");
+		if (!id || status !== "pending") {
+			approvalPanel.hidden = true;
+			approvalPanel.removeAttribute("data-approval-id");
+			return;
+		}
+		const previousID = approvalPanel.dataset.approvalId || "";
+		approvalPanel.hidden = false;
+		approvalPanel.dataset.approvalId = id;
+		const expires = messageValue(approval, "expiresAt", "ExpiresAt");
+		if (expires) approvalPanel.dataset.approvalExpires = expires;
+		if (previousID !== id) {
+			approvalForm.querySelectorAll("button").forEach(button => { button.disabled = false; });
+		}
+		const name = messageValue(call, "name", "Name") || (locale() === "zh-CN" ? "状态修改" : "State change");
+		const target = messageValue(call, "targetSummary", "TargetSummary");
+		const parameters = messageValue(call, "parameterSummary", "ParameterSummary");
+		const title = approvalPanel.querySelector("[data-approval-tool]");
+		const description = approvalPanel.querySelector("[data-approval-target]");
+		if (title) title.textContent = name;
+		if (description) description.textContent = [target, parameters].filter(Boolean).join(" · ");
+		const conversationID = root.dataset.conversationId || "";
+		approvalForm.action = `/ai/conversations/${encodeURIComponent(conversationID)}/approvals/${encodeURIComponent(id)}`;
+		renderIcons(approvalPanel);
+		scrollTranscript();
+	};
+	const updateApprovalExpiry = () => {
+		if (!approvalPanel || approvalPanel.hidden) return;
+		const expiry = new Date(approvalPanel.dataset.approvalExpires || "").getTime();
+		if (!Number.isFinite(expiry)) return;
+		const seconds = Math.max(0, Math.ceil((expiry - Date.now()) / 1000));
+		const label = approvalPanel.querySelector("[data-approval-expiry]");
+		if (label) label.textContent = seconds > 0
+			? (locale() === "zh-CN" ? `${seconds} 秒后过期` : `Expires in ${seconds}s`)
+			: (locale() === "zh-CN" ? "审批已过期" : "Approval expired");
+		if (seconds === 0) approvalForm?.querySelectorAll("button").forEach(button => { button.disabled = true; });
+	};
+	const approvalClock = window.setInterval(updateApprovalExpiry, 1000);
+	updateApprovalExpiry();
 	const setTurnRunning = running => {
 		if (sendButton) sendButton.disabled = running || root.dataset.runtimeAvailable !== "true";
 		if (helper) helper.textContent = running ? (locale() === "zh-CN" ? "Pi 正在生成…" : "Pi is responding…") : helperDefault;
@@ -4023,6 +4137,10 @@
 		if (event.type === "snapshot") {
 			if (messageList) messageList.replaceChildren();
 			(payload.messages || []).forEach(renderAssistantMessage);
+			if (toolList) toolList.replaceChildren();
+			(payload.toolCalls || []).forEach(renderToolCall);
+			if (toolLedger) toolLedger.hidden = !(payload.toolCalls || []).length;
+			renderApproval(payload.approval, (payload.toolCalls || []).find(call => messageValue(call, "id", "ID") === messageValue(payload.approval, "toolCallId", "ToolCallID")));
 			const running = (payload.messages || []).some(message => messageValue(message, "status", "Status") === "streaming");
 			setTurnRunning(running);
 			return;
@@ -4030,6 +4148,24 @@
 		if (event.type === "message") {
 			renderAssistantMessage(payload.message || payload.Message);
 			if (messageValue(payload.message || payload.Message, "status", "Status") === "streaming") setTurnRunning(true);
+			return;
+		}
+		if (["tool_started", "tool_updated", "tool_finished", "approval_requested", "approval_resolved"].includes(event.type)) {
+			const call = payload.toolCall || payload.ToolCall;
+			renderToolCall(call);
+			if (event.type === "approval_requested") renderApproval(payload.approval || payload.Approval, call);
+			if (event.type === "approval_resolved") renderApproval(null, call);
+			return;
+		}
+		if (event.type === "retrying" || event.type === "compacting") {
+			if (helper) {
+				const running = (payload.status || payload.Status) === "running";
+				if (running && event.type === "retrying") {
+					const attempt = payload.attempt || payload.Attempt || 0;
+					helper.textContent = locale() === "zh-CN" ? `Provider 正在重试${attempt ? `（第 ${attempt} 次）` : ""}…` : `Provider retrying${attempt ? ` (attempt ${attempt})` : ""}…`;
+				} else if (running) helper.textContent = locale() === "zh-CN" ? "Pi 正在压缩对话上下文…" : "Pi is compacting conversation context…";
+				else helper.textContent = helperDefault;
+			}
 			return;
 		}
 		const messageId = payload.messageId || payload.MessageID || "";
@@ -4057,7 +4193,7 @@
 	};
 	if (eventsURL && window.EventSource) {
 		assistantEvents = new EventSource(eventsURL);
-		["snapshot", "message", "delta", "settled"].forEach(type => assistantEvents.addEventListener(type, handleAssistantEvent));
+		["snapshot", "message", "delta", "settled", "tool_started", "tool_updated", "tool_finished", "approval_requested", "approval_resolved", "retrying", "compacting"].forEach(type => assistantEvents.addEventListener(type, handleAssistantEvent));
 		assistantEvents.addEventListener("error", () => {
 			if (helper && assistantEvents?.readyState === EventSource.CLOSED) helper.textContent = locale() === "zh-CN" ? "实时连接已断开，刷新页面可恢复。" : "Live connection closed. Refresh to reconnect.";
 		});
@@ -4356,6 +4492,28 @@
 		if (sendButton) sendButton.disabled = root.dataset.runtimeAvailable !== "true";
 	  });
     };
+	const onApprovalSubmit = event => {
+		if (event.target !== approvalForm) return;
+		event.preventDefault();
+		const decision = event.submitter?.value || "";
+		if (!approvalForm.action || !["approve", "reject"].includes(decision)) return;
+		const buttons = [...approvalForm.querySelectorAll("button")];
+		buttons.forEach(button => { button.disabled = true; });
+		void fetch(approvalForm.action, {
+			method: "POST", credentials: "same-origin",
+			headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "Accept": "application/json" },
+			body: new URLSearchParams({ csrf_token: csrfToken, decision }),
+		}).then(async response => {
+			if (!response.ok) throw new Error((await response.text()).trim() || `HTTP ${response.status}`);
+			renderApproval(null, null);
+			if (helper) helper.textContent = decision === "approve"
+				? (locale() === "zh-CN" ? "已批准，执行前正在重新授权。" : "Approved; reauthorizing before execution.")
+				: (locale() === "zh-CN" ? "已拒绝此次操作。" : "Action rejected.");
+		}).catch(error => {
+			if (helper) helper.textContent = error.message;
+			buttons.forEach(button => { button.disabled = false; });
+		});
+	};
 
     root.addEventListener("click", onClick);
     document.addEventListener("click", onDocumentClick);
@@ -4363,6 +4521,7 @@
     input?.addEventListener("input", onInput);
     resourceSearch?.addEventListener("input", filterResources);
     composer?.addEventListener("submit", onSubmit);
+	approvalForm?.addEventListener("submit", onApprovalSubmit);
     cleanups.push(() => {
       root.removeEventListener("click", onClick);
       document.removeEventListener("click", onDocumentClick);
@@ -4370,6 +4529,8 @@
       input?.removeEventListener("input", onInput);
       resourceSearch?.removeEventListener("input", filterResources);
       composer?.removeEventListener("submit", onSubmit);
+	  approvalForm?.removeEventListener("submit", onApprovalSubmit);
+	  window.clearInterval(approvalClock);
 	  assistantEvents?.close();
       document.body.classList.remove("assistant-rail-open");
     });

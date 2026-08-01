@@ -133,11 +133,21 @@ func TestPrepareLaunchLoadsOnlyExplicitBrokerExtension(t *testing.T) {
 	if err := os.WriteFile(extension, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	spec, err := PrepareLaunch(LaunchInput{StateRoot: stateRoot, Executable: executable, Extension: extension, UserID: "user", ConversationID: "conversation", Provider: "openai", Model: "gpt", Endpoint: "https://api.openai.com/v1", APIKey: "key"})
+	spec, err := PrepareLaunch(LaunchInput{
+		StateRoot: stateRoot, Executable: executable, Extension: extension, UserID: "user", ConversationID: "conversation",
+		Provider: "openai", Model: "gpt", Endpoint: "https://api.openai.com/v1", APIKey: "key",
+		BrokerEndpoint: `\\.\pipe\scriptboard-fixture`, BrokerCapability: "capability-fixture",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if slices.Contains(spec.Args, "--no-tools") || !slices.Contains(spec.Args, "--no-builtin-tools") || !slices.Contains(spec.Args, extension) {
 		t.Fatalf("arguments = %#v", spec.Args)
+	}
+	if !slices.Contains(spec.Env, `SCRIPTBOARD_BROKER_ENDPOINT=\\.\pipe\scriptboard-fixture`) || !slices.Contains(spec.Env, "SCRIPTBOARD_BROKER_CAPABILITY=capability-fixture") {
+		t.Fatalf("broker environment = %#v", spec.Env)
+	}
+	if _, err := PrepareLaunch(LaunchInput{StateRoot: stateRoot, Executable: executable, Extension: extension, UserID: "user", ConversationID: "conversation", Provider: "openai", Model: "gpt", Endpoint: "https://api.openai.com/v1", APIKey: "key"}); err == nil {
+		t.Fatal("extension launch without a process-bound broker capability was accepted")
 	}
 }

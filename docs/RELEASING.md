@@ -56,7 +56,7 @@ Tag Release 缺少任何必需 Secret、私钥与公钥不匹配、归档数量�
 ## Pi Runtime 配套资产
 
 启用 AI 的正式 Release 必须固定一个经过兼容测试的 Pi 版本，并为每个平台另外发布
-Runtime 资产、`assistant-runtime-manifest.json` 及其 Ed25519 detached signature。Runtime
+Runtime 资产、`ASSISTANT-RUNTIME.json` 及 `ASSISTANT-RUNTIME.json.sig`。Runtime
 清单与主应用 `release-manifest.json` 使用同一信任根但不同的产品域和 Schema，不能把
 Runtime 条目塞入既有应用更新清单。
 
@@ -87,6 +87,12 @@ Runtime 安装、切换和回退必须由管理员明确发起。存在活动 Ag
 
 开发构建可以使用显式放入私有版本目录的 deterministic fake Pi 做 tracer bullet，但
 `active.json` 必须标记 development/fixture，且该目录不得进入正式归档。
+
+正式 Tag 构建由 `scripts/build-release.ps1` 自动调用
+`scripts/build-assistant-runtime.ps1`。后者只接受 `runtime/pi-runtime-lock.json` 中固定的
+Pi 版本、四个平台资产大小与 SHA-256，加入 `runtime/scriptboard-extension.ts`、LICENSE、
+上游 commit 和合同元数据，再生成独立域签名的 Runtime 清单。修改 lock 或升级 Pi 后必须
+重新完成四个平台打包、真实 RPC/Extension 合同测试、在线/离线安装及回退验收。
 
 ## 本地开发构建
 
