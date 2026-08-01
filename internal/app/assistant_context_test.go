@@ -25,6 +25,16 @@ func (topology assistantContextTestTopology) FilesystemRoot(string) (string, err
 
 func (assistantContextTestTopology) Restricted(string) bool { return false }
 
+func TestAssistantPromptAlwaysCarriesABoundedHostOverviewContext(t *testing.T) {
+	application := &App{}
+	prompt := application.assistantPromptWithReferences(context.Background(), roleViewer, "Introduce this host.", nil)
+	for _, expected := range []string{"Introduce this host.", `"kind":"host_overview"`, `"status":"unavailable"`} {
+		if !strings.Contains(prompt, expected) {
+			t.Fatalf("host context is missing %q: %s", expected, prompt)
+		}
+	}
+}
+
 func TestAssistantPromptHydratesBoundedDirectorySnapshotWithoutPrivatePaths(t *testing.T) {
 	root := t.TempDir()
 	for index := 0; index < 60; index++ {

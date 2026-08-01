@@ -116,6 +116,10 @@ function register(pi: ExtensionAPI, definition: {
 
 const optionalLimit = Type.Optional(Type.Number({ minimum: 1, maximum: 50 }));
 const id = Type.String({ minLength: 1, maxLength: 128 });
+const actionValue = Type.Union([
+  Type.String({ maxLength: 32768 }), Type.Number(), Type.Boolean(),
+  Type.Array(Type.String({ maxLength: 32768 }), { maxItems: 64 }),
+]);
 
 export default function scriptBoardExtension(pi: ExtensionAPI) {
   register(pi, { name: "get_host_status", label: "Host status", description: "Read the latest bounded ScriptBoard host status snapshot.", parameters: Type.Object({}) });
@@ -134,4 +138,6 @@ export default function scriptBoardExtension(pi: ExtensionAPI) {
   register(pi, { name: "run_schedule_now", label: "Run schedule now", description: "Trigger one schedule immediately after ScriptBoard approval.", parameters: Type.Object({ id }), changesState: true });
   register(pi, { name: "stop_run", label: "Stop Run", description: "Stop one authorized active Run after ScriptBoard approval.", parameters: Type.Object({ id }), changesState: true });
   register(pi, { name: "check_website_now", label: "Check website now", description: "Run an immediate website check after ScriptBoard approval.", parameters: Type.Object({ id }), changesState: true });
+  register(pi, { name: "list_ui_actions", label: "ScriptBoard actions", description: "List every role-allowed web action contract, including explicit browser-only boundaries. Use this before perform_ui_action.", parameters: Type.Object({ domain: Type.Optional(Type.String({ maxLength: 48 })) }) });
+  register(pi, { name: "perform_ui_action", label: "Run ScriptBoard action", description: "Perform one action returned as available by list_ui_actions through the same validation, authorization, approval, and audit path as the web interface.", parameters: Type.Object({ action: Type.String({ minLength: 1, maxLength: 128 }), pathParameters: Type.Optional(Type.Record(Type.String({ maxLength: 48 }), Type.String({ maxLength: 128 }))), form: Type.Optional(Type.Record(Type.String({ maxLength: 64 }), actionValue)) }), changesState: true });
 }

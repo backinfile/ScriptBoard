@@ -2,15 +2,11 @@ package app
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -32,6 +28,12 @@ type assistantResourceView struct {
 	Selected                                bool
 }
 
+type assistantMessageView struct {
+	assistant.Message
+	ToolCalls      []assistant.ToolCall
+	LatestToolCall *assistant.ToolCall
+}
+
 type assistantPageData struct {
 	Locale              webLocale
 	CSRFToken           string
@@ -47,6 +49,7 @@ type assistantPageData struct {
 	Resources           []assistantResourceView
 	ContextReferences   []assistant.ContextRef
 	Messages            []assistant.Message
+	Timeline            []assistantMessageView
 	ToolCalls           []assistant.ToolCall
 	PendingApproval     *assistant.Approval
 	PendingApprovalCall *assistant.ToolCall
@@ -166,9 +169,28 @@ func (a *App) renderAssistantPage(response http.ResponseWriter, request *http.Re
 		Conversations: conversations, Archived: archived, Current: current, SelectedModelID: selectedModelID,
 		DefaultAutoApproval: settings.DefaultAutoApproval, RuntimeAvailable: runtimeAvailable, RuntimeVersion: managedRuntime.Version,
 		CanManageAI: roleAllows(currentSession.role, permissionManageSystem),
-		Resources:   resources, ContextReferences: contextReferences, Messages: messages, ToolCalls: toolCalls,
+		Resources:   resources, ContextReferences: contextReferences, Messages: messages,
+		Timeline: assistantMessageTimeline(messages, toolCalls), ToolCalls: toolCalls,
 		PendingApproval: pendingApproval, PendingApprovalCall: pendingApprovalCall, AssistantEnabled: settings.Enabled,
 	})
+}
+
+func assistantMessageTimeline(messages []assistant.Message, calls []assistant.ToolCall) []assistantMessageView {
+	byMessage := make(map[string][]assistant.ToolCall, len(messages))
+	for _, call := range calls {
+		byMessage[call.MessageID] = append(byMessage[call.MessageID], call)
+	}
+	timeline := make([]assistantMessageView, 0, len(messages))
+	for _, message := range messages {
+		messageCalls := byMessage[message.ID]
+		view := assistantMessageView{Message: message, ToolCalls: messageCalls}
+		if len(messageCalls) > 0 {
+			latest := messageCalls[len(messageCalls)-1]
+			view.LatestToolCall = &latest
+		}
+		timeline = append(timeline, view)
+	}
+	return timeline
 }
 
 func (a *App) createAssistantConversation(response http.ResponseWriter, request *http.Request) {
@@ -656,120 +678,6 @@ func (a *App) rollbackAssistantRuntime(response http.ResponseWriter, request *ht
 	}
 	a.recordAuditForRequest(request, "assistant_runtime_rollback", a.assistantRuntimes.Snapshot().ActiveVersion, "succeeded")
 	http.Redirect(response, request, "/settings/ai", http.StatusSeeOther)
-}
-
-func (a *App) uploadAssistantRuntime(response http.ResponseWriter, request *http.Request) {
-	manifestRaw, signatureRaw, archivePath, token, cleanup, err := a.readAssistantRuntimeUpload(response, request)
-	defer cleanup()
-	current := request.Context().Value(sessionContextKey).(session)
-	if subtle.ConstantTimeCompare([]byte(current.csrfToken), []byte(token)) != 1 {
-		http.Error(response, webText(resolveWebLocale(request), "assistant.csrf_error"), http.StatusForbidden)
-		return
-	}
-	if err != nil {
-		http.Error(response, webText(resolveWebLocale(request), "assistant.runtime_upload_invalid"), http.StatusUnprocessableEntity)
-		return
-	}
-	archive, err := os.Open(archivePath)
-	if err != nil {
-		http.Error(response, webText(resolveWebLocale(request), "assistant.runtime_install_failed"), http.StatusInternalServerError)
-		return
-	}
-	defer archive.Close()
-	ctx, cancel := context.WithTimeout(request.Context(), 15*time.Minute)
-	defer cancel()
-	if err := a.assistantRuntimes.InstallOffline(ctx, manifestRaw, signatureRaw, archive); err != nil {
-		a.recordAuditForRequest(request, "assistant_runtime_install", "offline", "failed")
-		http.Error(response, webText(resolveWebLocale(request), "assistant.runtime_install_failed"), assistantRuntimeMutationStatus(err))
-		return
-	}
-	a.recordAuditForRequest(request, "assistant_runtime_install", a.assistantRuntimes.Snapshot().ActiveVersion, "succeeded")
-	http.Redirect(response, request, "/settings/ai", http.StatusSeeOther)
-}
-
-func (a *App) readAssistantRuntimeUpload(response http.ResponseWriter, request *http.Request) ([]byte, []byte, string, string, func(), error) {
-	cleanup := func() {}
-	request.Body = http.MaxBytesReader(response, request.Body, runtimeinstall.MaxArchiveBytes+runtimeinstall.MaxManifestBytes+runtimeinstall.MaxSignatureBytes+(2<<20))
-	reader, err := request.MultipartReader()
-	if err != nil {
-		return nil, nil, "", "", cleanup, err
-	}
-	uploadRoot := filepath.Join(a.stateRoot, "assistant", "downloads")
-	if err := os.MkdirAll(uploadRoot, 0o700); err != nil {
-		return nil, nil, "", "", cleanup, err
-	}
-	temporary, err := os.MkdirTemp(uploadRoot, ".upload-")
-	if err != nil {
-		return nil, nil, "", "", cleanup, err
-	}
-	cleanup = func() { _ = os.RemoveAll(temporary) }
-	archivePath := filepath.Join(temporary, "runtime.archive")
-	var manifestRaw, signatureRaw []byte
-	var token string
-	seen := make(map[string]bool)
-	for {
-		part, nextErr := reader.NextPart()
-		if errors.Is(nextErr, io.EOF) {
-			break
-		}
-		if nextErr != nil {
-			return nil, nil, archivePath, token, cleanup, nextErr
-		}
-		name := part.FormName()
-		if seen[name] || (name != "csrf_token" && name != "manifest" && name != "signature" && name != "runtime") {
-			_ = part.Close()
-			return nil, nil, archivePath, token, cleanup, errors.New("unexpected or duplicate runtime upload part")
-		}
-		seen[name] = true
-		switch name {
-		case "csrf_token":
-			value, readErr := io.ReadAll(io.LimitReader(part, 8193))
-			if readErr != nil || len(value) > 8192 {
-				_ = part.Close()
-				return nil, nil, archivePath, token, cleanup, errors.New("invalid CSRF upload field")
-			}
-			token = string(value)
-		case "manifest":
-			manifestRaw, err = readBoundedAssistantUploadPart(part, runtimeinstall.MaxManifestBytes)
-		case "signature":
-			signatureRaw, err = readBoundedAssistantUploadPart(part, runtimeinstall.MaxSignatureBytes)
-		case "runtime":
-			file, createErr := os.OpenFile(archivePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-			if createErr != nil {
-				err = createErr
-				break
-			}
-			written, copyErr := io.Copy(file, io.LimitReader(part, runtimeinstall.MaxArchiveBytes+1))
-			syncErr := file.Sync()
-			closeErr := file.Close()
-			if copyErr != nil || written <= 0 || written > runtimeinstall.MaxArchiveBytes {
-				err = errors.New("runtime archive exceeds its upload bound")
-			} else if syncErr != nil {
-				err = syncErr
-			} else if closeErr != nil {
-				err = closeErr
-			}
-		}
-		_ = part.Close()
-		if err != nil {
-			return nil, nil, archivePath, token, cleanup, err
-		}
-	}
-	if !seen["csrf_token"] || !seen["manifest"] || !seen["signature"] || !seen["runtime"] || len(manifestRaw) == 0 || len(signatureRaw) == 0 {
-		return nil, nil, archivePath, token, cleanup, errors.New("runtime upload is incomplete")
-	}
-	return manifestRaw, signatureRaw, archivePath, token, cleanup, nil
-}
-
-func readBoundedAssistantUploadPart(reader io.Reader, maximum int64) ([]byte, error) {
-	value, err := io.ReadAll(io.LimitReader(reader, maximum+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(value) == 0 || int64(len(value)) > maximum {
-		return nil, errors.New("runtime upload metadata exceeds its bound")
-	}
-	return value, nil
 }
 
 func assistantRuntimeMutationStatus(err error) int {

@@ -530,9 +530,9 @@ scriptboard version
   workspace。它不读取 PATH、全局 Pi、用户 Extensions/Skills/Prompts/Themes 或项目
   上下文，因此可与本机手工启动的 Pi 并存。
 - 没有受信 Runtime 时保留历史和设置，但拒绝新 Prompt。正式 Runtime 固定携带
-  ScriptBoard Extension，并通过进程绑定 Tool Broker 提供 12 个有界只读工具和 4 个
-  状态修改工具；不得以开放 Shell 或任意文件工具作为降级路径。
-- 系统设置支持检查、在线/离线安装、原子激活和回退签名 Runtime，并可使用 Pi 对单条
+  ScriptBoard Extension，并通过进程绑定 Tool Broker 提供有界领域工具和覆盖网页动作的
+  统一工具目录；不得以开放 Shell 或任意文件工具作为降级路径。
+- 系统设置支持检查、在线安装、原子激活和回退签名 Runtime，并可使用 Pi 对单条
   LLM 配置执行不持久化正文的连接测试。
 - AI 能力默认关闭，由系统设置显式启用。Provider 调用由部署者自行承担费用和数据
   合规责任；即使工具受限，Prompt 中引用的主机信息仍可能发送给所选外部 Provider。

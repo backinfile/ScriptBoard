@@ -211,6 +211,8 @@ func assistantToolPermission(name string) (permission, bool) {
 		return permissionManageExecution, true
 	case "check_website_now":
 		return permissionManageOperations, true
+	case "perform_ui_action":
+		return permissionObserve, true
 	default:
 		return permissionObserve, false
 	}
@@ -722,6 +724,10 @@ func (executor *assistantToolExecutor) plan(ctx context.Context, authorization a
 		return executor.planStopRun(authorization, invocation)
 	case "check_website_now":
 		return executor.planCheckWebsite(ctx, invocation)
+	case "list_ui_actions":
+		return executor.planListUIActions(authorization, invocation)
+	case "perform_ui_action":
+		return executor.planPerformUIAction(ctx, authorization, invocation)
 	default:
 		return assistantToolPlan{}, errAssistantToolParameters
 	}

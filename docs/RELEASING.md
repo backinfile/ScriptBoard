@@ -92,7 +92,7 @@ Runtime 安装、切换和回退必须由管理员明确发起。存在活动 Ag
 `scripts/build-assistant-runtime.ps1`。后者只接受 `runtime/pi-runtime-lock.json` 中固定的
 Pi 版本、四个平台资产大小与 SHA-256，加入 `runtime/scriptboard-extension.ts`、LICENSE、
 上游 commit 和合同元数据，再生成独立域签名的 Runtime 清单。修改 lock 或升级 Pi 后必须
-重新完成四个平台打包、真实 RPC/Extension 合同测试、在线/离线安装及回退验收。
+重新完成四个平台打包、真实 RPC/Extension 合同测试、在线安装及回退验收。
 
 ## 本地开发构建
 

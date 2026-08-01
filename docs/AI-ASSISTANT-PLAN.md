@@ -220,14 +220,6 @@ State Root/
 Linux 可执行文件权限固定为运行身份可读可执行、其他身份不可写；Windows 继承并
 收紧 State Root ACL。Runtime 目录不出现在受管文件页面中。
 
-### 6.3 离线安装
-
-设置页允许上传当前签名 Runtime 清单声明的资产。上传仍执行相同的平台、大小、摘要、
-归档和 RPC 验活检查，不能通过上传任意 `pi.exe` 绕过信任链。
-
-便携安装和受管服务安装都可以安装私有 Runtime，因为 Runtime 位于 State Root；
-便携安装不能自动切换 ScriptBoard 自身版本的限制保持不变。
-
 ## 7. Pi Runtime 更新与回退
 
 - Runtime 版本由 ScriptBoard Release 清单决定，不直接查询 Pi 的 `latest`。
@@ -426,6 +418,8 @@ Adapter 复用现有内部 Module，不通过回环 HTTP 请求自己的公开�
 | `run_schedule_now` | 立即触发计划项 | Manage Execution | 是 |
 | `stop_run` | 停止当前角色有权停止的 Run | Execute + 领域约束 | 是 |
 | `check_website_now` | 立即检查网站 | Manage Operations | 是 |
+| `list_ui_actions` | 枚举当前角色可用的网页动作合同及仅网页边界 | Observe | 否 |
+| `perform_ui_action` | 通过网页同源校验、权限和审计执行动作目录中的操作 | 动作对应权限 | 是 |
 
 角色名称和权限判定必须复用现有固定角色模型。Viewer 不能因为自然语言请求获得文件
 读取或执行能力；Operator 停止 Run 时仍只能停止自己启动的 Run。
@@ -591,7 +585,6 @@ POST /settings/ai/credentials
 POST /settings/ai/credentials/delete
 POST /settings/ai/provider/test
 POST /settings/ai/runtime/install
-POST /settings/ai/runtime/upload
 POST /settings/ai/runtime/activate
 POST /settings/ai/runtime/rollback
 ```
@@ -795,14 +788,14 @@ AI 对话或 Prompt。
 - 保持现有 ScriptBoard 主更新清单 Schema 不变。
 - 拉取、校验和重打包固定 Pi 平台资产。
 - 加入许可证、来源、版本和 Runtime 协议元数据。
-- 生成在线和离线安装所需资产。
+- 生成在线安装所需资产。
 - 增加发布失败门禁和供应链测试。
 
 依赖：任务 1。
 
 ### 任务 3（完成）：Runtime Manager
 
-- 实现下载/上传、摘要、归档、磁盘空间和路径检查。
+- 实现下载、摘要、归档、磁盘空间和路径检查。
 - 实现版本验活、原子激活、保留和回退。
 - 实现 Pi 绝对路径解析，不访问 PATH。
 - 增加平台权限和安全解压测试。
@@ -879,7 +872,7 @@ AI 对话或 Prompt。
 
 ### 23.1 Runtime 安装与更新
 
-- 正确平台资产可以在线和离线安装。
+- 正确平台资产可以在线安装。
 - 错误仓库、版本、平台、架构、大小或 SHA-256 被拒绝。
 - 绝对路径、`..`、链接、重复条目、大小膨胀和不安全归档被拒绝。
 - 磁盘不足时不留下可激活的部分 Runtime。

@@ -39,6 +39,7 @@ var (
 		"list_website_monitors": {}, "get_website_incident": {}, "list_runs": {}, "get_run": {},
 		"read_run_log": {}, "list_quick_runs": {}, "list_schedules": {}, "read_managed_text": {},
 		"start_quick_run": {}, "run_schedule_now": {}, "stop_run": {}, "check_website_now": {},
+		"list_ui_actions": {}, "perform_ui_action": {},
 	}
 )
 

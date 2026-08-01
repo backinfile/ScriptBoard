@@ -3901,15 +3901,13 @@
     const composer = root.querySelector("[data-assistant-composer]");
 	const sendButton = composer?.querySelector(".assistant-send");
 	const messageList = root.querySelector("[data-assistant-message-list]");
-	const toolLedger = root.querySelector("[data-assistant-tool-ledger]");
-	const toolList = root.querySelector("[data-assistant-tool-list]");
-	const toolCount = root.querySelector("[data-assistant-tool-count]");
 	const approvalPanel = root.querySelector("[data-assistant-approval-panel]");
 	const approvalForm = root.querySelector("[data-assistant-approval-form]");
 	const helper = root.querySelector("[data-assistant-error]");
 	const helperDefault = helper?.textContent || "";
 	const eventsURL = root.dataset.eventsUrl || "";
 	let assistantEvents = null;
+	const pendingToolCalls = new Map();
     const modelControl = root.querySelector("[data-model-picker]");
     const modelToggle = modelControl?.querySelector("[data-model-picker-toggle]");
     const modelPicker = modelControl?.querySelector(".assistant-model-picker");
@@ -4015,6 +4013,11 @@
 			body.classList.remove("markdown-preview");
 			body.textContent = source;
 		}
+		const waiting = pendingToolCalls.get(id);
+		if (waiting) {
+			pendingToolCalls.delete(id);
+			waiting.forEach(renderToolCall);
+		}
 		scrollTranscript();
 		return article;
 	};
@@ -4025,10 +4028,61 @@
 		return labels[status] || status;
 	};
 	const toolStatusIcon = status => status === "complete" ? "check" : status === "waiting_approval" ? "shield-alert" : status === "running" ? "loader-circle" : "triangle-alert";
-	const renderToolCall = call => {
-		if (!toolList || !call) return null;
+	function ensureToolCluster(messageID) {
+		if (!messageList || !messageID) return null;
+		const article = messageList.querySelector(`[data-message-id="${CSS.escape(messageID)}"]`);
+		if (!article) return null;
+		let cluster = article.querySelector(":scope > [data-assistant-tool-cluster]");
+		if (cluster) return cluster;
+		cluster = document.createElement("details");
+		cluster.className = "assistant-tool-cluster";
+		cluster.dataset.assistantToolCluster = "";
+		cluster.dataset.toolMessageId = messageID;
+		const summary = document.createElement("summary");
+		const iconHost = document.createElement("span");
+		iconHost.className = "assistant-tool-row__icon";
+		const icon = document.createElement("span");
+		icon.dataset.toolStatusIcon = "";
+		iconHost.append(icon);
+		const identity = document.createElement("span");
+		const name = document.createElement("strong");
+		name.dataset.toolClusterName = "";
+		const target = document.createElement("small");
+		target.dataset.toolClusterTarget = "";
+		identity.append(name, target);
+		const status = document.createElement("span");
+		status.className = "assistant-tool-status";
+		status.dataset.toolClusterStatus = "";
+		const count = document.createElement("span");
+		count.className = "assistant-tool-cluster__count";
+		count.dataset.toolClusterCount = "";
+		const chevron = document.createElement("span");
+		chevron.dataset.lucide = "chevron-down";
+		summary.append(iconHost, identity, status, count, chevron);
+		const list = document.createElement("div");
+		list.className = "assistant-tool-list";
+		list.dataset.assistantToolList = "";
+		cluster.append(summary, list);
+		article.append(cluster);
+		return cluster;
+	}
+	function renderToolCall(call) {
+		if (!call) return null;
 		const id = messageValue(call, "id", "ID");
 		if (!id) return null;
+		const messageID = messageValue(call, "messageId", "MessageID");
+		const cluster = ensureToolCluster(messageID);
+		if (!cluster) {
+			if (messageID) {
+				const waiting = pendingToolCalls.get(messageID) || [];
+				const previous = waiting.findIndex(item => messageValue(item, "id", "ID") === id);
+				if (previous >= 0) waiting[previous] = call;
+				else waiting.push(call);
+				pendingToolCalls.set(messageID, waiting);
+			}
+			return null;
+		}
+		const toolList = cluster.querySelector("[data-assistant-tool-list]");
 		let row = toolList.querySelector(`[data-tool-call-id="${CSS.escape(id)}"]`);
 		if (!row) {
 			row = document.createElement("details");
@@ -4080,11 +4134,15 @@
 		detailRow(locale() === "zh-CN" ? "规范参数" : "Normalized parameters", messageValue(call, "parameterSummary", "ParameterSummary"));
 		detailRow(locale() === "zh-CN" ? "结果摘要" : "Result summary", messageValue(call, "resultSummary", "ResultSummary"));
 		detailRow(locale() === "zh-CN" ? "错误码" : "Error code", messageValue(call, "errorCode", "ErrorCode"), true);
-		toolLedger.hidden = false;
-		if (toolCount) toolCount.textContent = String(toolList.children.length);
+		cluster.querySelector("[data-tool-cluster-name]").textContent = name;
+		cluster.querySelector("[data-tool-cluster-target]").textContent = target;
+		cluster.querySelector("[data-tool-cluster-status]").textContent = toolStatusLabel(status);
+		cluster.querySelector("[data-tool-cluster-count]").textContent = String(toolList.children.length);
+		replaceIconHost(cluster.querySelector("[data-tool-status-icon]"), toolStatusIcon(status));
 		renderIcons(row);
+		renderIcons(cluster);
 		return row;
-	};
+	}
 	const renderApproval = (approval, call) => {
 		if (!approvalPanel || !approvalForm) return;
 		const id = messageValue(approval, "id", "ID");
@@ -4136,10 +4194,9 @@
 		try { payload = JSON.parse(event.data); } catch { return; }
 		if (event.type === "snapshot") {
 			if (messageList) messageList.replaceChildren();
+			pendingToolCalls.clear();
 			(payload.messages || []).forEach(renderAssistantMessage);
-			if (toolList) toolList.replaceChildren();
 			(payload.toolCalls || []).forEach(renderToolCall);
-			if (toolLedger) toolLedger.hidden = !(payload.toolCalls || []).length;
 			renderApproval(payload.approval, (payload.toolCalls || []).find(call => messageValue(call, "id", "ID") === messageValue(payload.approval, "toolCallId", "ToolCallID")));
 			const running = (payload.messages || []).some(message => messageValue(message, "status", "Status") === "streaming");
 			setTurnRunning(running);
