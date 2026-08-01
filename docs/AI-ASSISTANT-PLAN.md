@@ -1,6 +1,7 @@
 # AI 助手与 Pi Runtime 实施计划
 
-状态：Draft
+状态：实施中（无工具端到端基线已完成；Runtime Manager、签名安装/更新/回退、
+Tool Broker 与动作审批尚未实现）
 
 最后更新：2026-08-01
 
@@ -187,7 +188,8 @@ scriptboard-pi-runtime-{pi-version}-linux-arm64.tar.gz
 5. 校验清单声明的字节数和 SHA-256。
 6. 安全解压到同卷 staging 目录，拒绝绝对路径、`..`、重复条目、链接、设备文件、
    路径碰撞、大小膨胀和非预期可执行文件。
-7. 验证 `runtime.json`、LICENSE 和唯一 Pi 可执行程序。
+7. 验证 `runtime.json`、LICENSE、唯一 Pi 可执行程序及清单声明的全部伴随资源；不得只从上游
+   独立包中复制 `pi` / `pi.exe`，Pi 启动时仍会读取同目录中的主题和原生模块等文件。
 8. 执行 `pi --version`，版本必须与签名清单完全一致。
 9. 使用临时目录启动 `pi --mode rpc`，完成 `get_state` 和退出验活，不调用模型。
 10. 原子移动到版本目录并写入活动 Runtime 指针。
@@ -203,6 +205,8 @@ State Root/
         {pi-version}/
           pi.exe        # Windows
           pi            # Linux
+          theme/        # Pi 随版本发布的伴随资源（示例）
+          native/       # 平台原生模块（如上游资产包含）
           LICENSE
           runtime.json
       active.json

@@ -152,11 +152,24 @@ func (source *fixtureLogSource) Follow(
 }
 
 func main() {
-	root, err := os.MkdirTemp("", "scriptboard-browser-host-files-location-with-a-long-path-")
-	if err != nil {
-		panic(err)
+	root := strings.TrimSpace(os.Getenv("SCRIPTBOARD_FIXTURE_ROOT"))
+	if root == "" {
+		var err error
+		root, err = os.MkdirTemp("", "scriptboard-browser-host-files-location-with-a-long-path-")
+		if err != nil {
+			panic(err)
+		}
+		defer os.RemoveAll(root)
+	} else {
+		var err error
+		root, err = filepath.Abs(root)
+		if err != nil {
+			panic(err)
+		}
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			panic(err)
+		}
 	}
-	defer os.RemoveAll(root)
 
 	hostRoot := filepath.Join(root, "host")
 	stateRoot := filepath.Join(root, "state")

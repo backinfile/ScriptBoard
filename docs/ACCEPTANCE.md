@@ -139,7 +139,7 @@
 
 - [ ] SQLite 运行时 WAL、FULL synchronous、foreign keys 与 busy timeout 生效。
 - [ ] Run 输出不逐事件写入 SQLite。
-- [ ] 全新 State Root 创建 schema 20；任何旧数据库都在写入前明确拒绝，不迁移、不修改或删除。
+- [ ] 全新 State Root 创建 schema 21；schema 20 在单事务内只增加 Assistant 表并升级到 21，原用户与业务数据保持不变；早于 20 或高于当前版本的数据库在写入前明确拒绝。
 - [ ] 带 `managed_root`、`git_executable` 的旧 YAML、环境变量和命令行参数明确拒绝；旧浏览器固定项不迁移。
 - [ ] 状态卷低于 100 MiB 拒绝新执行；任一实际目标文件系统低于 100 MiB 时拒绝对应写操作。
 - [ ] `doctor` 只读检查配置、受保护路径、SQLite、日志、执行器、端口、TLS、服务和关键磁盘，不泄漏敏感值。
@@ -229,3 +229,40 @@ MVP 不验收自定义 RBAC、沙箱、公共 API、DAG、多服务器、Docker 
   放入回收站；数据库失败时恢复原文件并移除新文件。
 - [ ] 一次性源码随关联审计条目删除：源码删除失败保留审计等待重试；成功后源码
   入口返回 410，而 Run 元数据、结果及独立日志生命周期不变。
+
+## 19. AI 助手与 Pi Runtime
+
+- [ ] `/ai` 及对话、消息、停止、归档、恢复、模型、审批模式和 SSE 路由均要求有效
+  Session；所有 POST 验证 CSRF，跨用户猜测对话 ID 返回不可见结果。
+- [ ] 每个新对话必须选择一个已配置凭据的 LLM；设置页可新增、修改、删除未引用模型并
+  选择唯一默认项，API Key 不回显且不出现在 SQLite、HTML、审计或普通日志中。
+- [ ] 新对话继承系统自动审批默认值，每个对话可在模型旁直接切换；模型选择器支持鼠标、
+  键盘和 Escape，审批按钮直接切换而不弹窗。
+- [ ] Composer 可通过按钮或 `@` 选择当前角色有权看见的目录、文件、应用、网站、Run、
+  快捷执行和计划；每次提交都以同一事务保存完整引用集合并重新校验稳定 ID，伪造的新
+  引用被拒绝，已保存但降权或消失的引用分别进入 forbidden 或 unavailable 状态。
+- [ ] 每个 Agent Turn 都重新鉴权并生成有界资源快照；目录快照不含宿主绝对路径、不自动
+  读取文件正文；明确引用的普通 UTF-8 文本文件最多读取 16 KiB，脚本路径字段只发送
+  basename，降权、资源消失和超出上限分别返回 forbidden、unavailable 和 truncated。
+- [ ] 同一对话只允许一个活动 Agent Turn；消息先持久化再流式发送，`agent_settled`
+  后仍按最后一个 assistant message 的 `stopReason` 区分 complete 与 error。停止、Pi
+  崩溃、服务重启和数据库写入失败都产生确定状态且不隐式重放。
+- [ ] SSE 具有 snapshot、Last-Event-ID 续传、心跳、有界 replay 和慢消费者断开；一个
+  慢浏览器不能阻塞 Pi stdout 或消耗现有 Source Log SSE 槽位；delta 同时携带累计正文，
+  snapshot 与实时事件竞态不会重复拼接文本。
+- [ ] Pi 只从 State Root 内活动版本的绝对路径启动；每用户/对话使用隔离 home、session
+  与 workspace，环境最小化且 API Key 不出现在参数或 `models.json` 实值中。
+- [ ] 保温进程关闭或服务重启后，已有私有 session 通过 `--continue` 恢复；每个 Turn 在
+  Prompt 前通过 RPC `set_model` 重选对话模型，模型切换不会沿用旧进程状态。
+- [ ] Windows Job Object 与 Linux 进程组只终止目标受管 Pi 树；全局 Pi、其他 AI 对话、
+  Run 和用户 Pi 的配置、session、Extensions、Skills 与更新均不受影响。
+- [ ] 缺少受信 Runtime 时历史与设置可读而 Prompt 返回 503；Runtime 未包含固定
+  Extension 时以 `--no-tools` 启动，不开放 Shell、读取或写入工具作为降级。
+- [ ] 固定 Extension/Tool Broker 上线后，每次调用重新校验 capability、用户状态、角色、
+  授权版本、参数和目标；结果有界、脱敏并标记来源和不可信内容。
+- [ ] 每个状态修改工具都建立参数绑定、有期限、一次性的审批；自动审批仍创建同样记录并
+  重新授权。参数、目标或授权变化会失效，未知结果在重启后不得重放。
+- [ ] Runtime 在线/离线安装验证独立签名清单、仓库、版本、平台、架构、大小、SHA-256、
+  安全归档、许可证和 RPC 验活；活动 Turn/审批时拒绝切换，失败不改变活动指针。
+- [ ] 桌面 Chromium 和目标移动视口覆盖对话 Rail、Transcript、Composer、资源选择、
+  Inspector、LLM 抽屉、侧栏折叠与中英文；无横向溢出、导航滚动条或未对齐图标。

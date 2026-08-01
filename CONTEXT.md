@@ -64,6 +64,30 @@ _Avoid_: 受管根目录、文件库、应用沙箱
 仅供 ScriptBoard 保存数据库、密钥、执行日志、文件操作日志和暂存数据的私有目录。它是受保护路径，不属于用户可通过文件页面查看或管理的内容。
 _Avoid_: 主机文件系统、共享目录、文件库
 
+**AI 对话（Assistant Conversation）**：
+由一个 ScriptBoard 用户拥有、绑定一个必选 LLM 配置并保存消息、资源引用、审批模式和 Pi session 身份的持久对话。用户只能查看、订阅和修改自己的 AI 对话；归档不删除历史或 session。
+_Avoid_: 全局聊天室、Pi 终端会话、共享提示词
+
+**Agent Turn**：
+从一条用户消息被持久接受，到对应助手消息完成、中断或失败的一次处理。一个 AI 对话同一时间最多有一个活动 Agent Turn，服务重启不会自动重放未完成 Turn。
+_Avoid_: Run、消息、后台队列
+
+**Pi Runtime**：
+由 ScriptBoard 明确解析和启动、位于 State Root 私有版本目录的 Pi Agent 可执行程序及固定扩展。它不使用 PATH 中的全局 Pi，也不共享用户级 Pi 配置、会话、扩展、Skill 或工作目录。
+_Avoid_: Installed Release、系统 Node.js、用户安装的 Pi
+
+**工具调用（Tool Invocation）**：
+Pi 在一个 Agent Turn 内请求 ScriptBoard 执行某个版本化工具及固定参数的记录。它不是 Run，也不能直接访问数据库、任意主机文件、Shell 或内部 Go 对象。
+_Avoid_: 脚本执行、RPC 消息、审批
+
+**操作审批（Action Approval）**：
+将单次状态修改工具调用绑定到参数摘要、目标状态、对话所有者和授权快照的有时限一次性决定。自动审批只自动产生同样受约束的批准，不放宽角色权限或领域校验。
+_Avoid_: 永久授权、角色权限、确认弹窗状态
+
+**工具代理（Tool Broker）**：
+ScriptBoard 在 Pi 与现有领域模块之间提供的版本化本地能力边界。它负责 capability、实时授权、参数限制、结果脱敏、审批和审计；没有已发布 Broker/Extension 时 Pi 必须以无工具模式运行。
+_Avoid_: 插件系统、公共 API、Pi 内置工具
+
 **主机条目（Host Entry）**：
 主机文件系统中可由文件页展示的普通文件、目录或受限条目。普通文件不必先注册为脚本，也能在角色与保护策略允许时被上传、下载、移动、编辑或删除。
 _Avoid_: 附件、资源、数据库文件记录

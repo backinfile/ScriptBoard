@@ -146,8 +146,8 @@ func TestOpenDatabaseCreatesFixedRoleUserSchema(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 20 {
-		t.Fatalf("schema version=%d, want 20", version)
+	if version != 21 {
+		t.Fatalf("schema version=%d, want 21", version)
 	}
 	var usersTable int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'users'`).Scan(&usersTable); err != nil {
@@ -163,10 +163,10 @@ func TestOpenDatabaseCreatesFixedRoleUserSchema(t *testing.T) {
 	if adminTable != 0 {
 		t.Fatal("legacy admin table should not exist")
 	}
-	for _, table := range []string{"file_operations", "trash_entries"} {
+	for _, table := range []string{"file_operations", "trash_entries", "assistant_settings", "assistant_models", "assistant_conversations", "assistant_messages"} {
 		var count int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil || count != 1 {
-			t.Fatalf("required schema 20 table %q is missing: count=%d error=%v", table, count, err)
+			t.Fatalf("required schema 21 table %q is missing: count=%d error=%v", table, count, err)
 		}
 	}
 	var gitState int
@@ -188,6 +188,50 @@ func TestOpenDatabaseCreatesFixedRoleUserSchema(t *testing.T) {
 		(id, username, password_hash, role, enabled, auth_version, created_at, updated_at)
 		VALUES ('custom-role', 'custom', 'hash', 'custom', 1, 1, 1, 1)`); err == nil {
 		t.Fatal("custom role was accepted")
+	}
+}
+
+func TestOpenDatabaseMigratesSchema20ToAssistantSchema21(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	db, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO users
+		(id, username, password_hash, role, enabled, auth_version, created_at, updated_at)
+		VALUES ('preserved-admin', 'preserved', 'hash', 'administrator', 1, 1, 1, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"assistant_approvals", "assistant_tool_calls", "assistant_context_refs", "assistant_messages", "assistant_conversations", "assistant_models", "assistant_settings"} {
+		if _, err := db.Exec("DROP TABLE " + table); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec("PRAGMA user_version=20; PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := openDatabase(path)
+	if err != nil {
+		t.Fatalf("migrate schema 20: %v", err)
+	}
+	defer migrated.Close()
+	var version int
+	if err := migrated.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 21 {
+		t.Fatalf("version = %d, error = %v", version, err)
+	}
+	var username string
+	if err := migrated.QueryRow("SELECT username FROM users WHERE id = 'preserved-admin'").Scan(&username); err != nil || username != "preserved" {
+		t.Fatalf("preserved user = %q, error = %v", username, err)
+	}
+	for _, table := range []string{"assistant_settings", "assistant_models", "assistant_conversations", "assistant_messages"} {
+		var count int
+		if err := migrated.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", table).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("migrated table %q count=%d error=%v", table, count, err)
+		}
 	}
 }
 
@@ -270,7 +314,7 @@ func TestOpenDatabaseRejectsNewerSchema(t *testing.T) {
 	_ = db.Close()
 
 	_, err = openDatabase(path)
-	if err == nil || !strings.Contains(err.Error(), "incompatible with schema 20") || !strings.Contains(err.Error(), "new State Root") {
+	if err == nil || !strings.Contains(err.Error(), "incompatible with schema 21") || !strings.Contains(err.Error(), "new State Root") {
 		t.Fatalf("expected newer-schema rejection, got %v", err)
 	}
 }

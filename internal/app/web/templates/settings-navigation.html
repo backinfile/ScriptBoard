@@ -5,6 +5,7 @@
   {{if .CanManageSystem}}
   <a href="/settings/display" {{if eq .Current "display"}}aria-current="page"{{end}}><span data-lucide="eye" aria-hidden="true"></span>{{t .Locale "display.title"}}</a>
   <a href="/settings/updates" {{if eq .Current "updates"}}aria-current="page"{{end}}><span data-lucide="refresh-cw" aria-hidden="true"></span>{{t .Locale "updates.title"}}</a>
+  <a href="/settings/ai" {{if eq .Current "ai"}}aria-current="page"{{end}}><span data-lucide="sparkles" aria-hidden="true"></span>{{t .Locale "assistant.settings_title"}}</a>
   {{end}}
 </nav>
 {{end}}

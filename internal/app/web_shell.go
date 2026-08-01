@@ -267,6 +267,7 @@ func shellNavigation(locale webLocale, path string, role userRole) []shellNaviga
 		{key: "nav.resources", items: []itemSpec{{"/resources/files", "nav.files", "folder-code", permissionReadFiles}, {"/resources/variables", "nav.variables", "braces", permissionManageExecution}}},
 		{key: "nav.configuration", items: []itemSpec{{"/config/quick-runs", "nav.quick_runs", "zap", permissionObserve}, {"/config/schedules", "nav.schedules", "calendar-clock", permissionObserve}}},
 		{key: "nav.history", items: []itemSpec{{"/history/runs", "nav.runs", "square-terminal", permissionObserve}, {"/history/audit", "nav.audit", "scroll-text", permissionReadAudit}}},
+		{key: "nav.assistant", items: []itemSpec{{"/ai", "nav.ai", "sparkles", permissionObserve}}},
 	}
 	groups := make([]shellNavigationGroup, 0, len(specs))
 	for _, group := range specs {
