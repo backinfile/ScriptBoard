@@ -437,6 +437,7 @@ func (a *App) createWebsiteMonitor(response http.ResponseWriter, request *http.R
 		return
 	}
 	a.recordAuditForRequest(request, "create_website_monitor", monitor.Config.Name, "succeeded")
+	response.Header().Set(assistantResourceIDHeader, monitor.ID)
 	http.Redirect(response, request, "/monitor/websites/"+monitor.ID, http.StatusSeeOther)
 }
 

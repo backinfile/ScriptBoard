@@ -110,6 +110,52 @@ func TestAdministratorCreatesMaintainerWhoCanSignIn(t *testing.T) {
 	}
 }
 
+func TestUsersPageOffersOneCreateUserDrawerTask(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	admin, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
+
+	response, err := admin.Get(serverURL + "/settings/users")
+	if err != nil {
+		t.Fatalf("get users: %v", err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count := strings.Count(string(page), `href="/settings/users/create"`); count != 1 {
+		t.Fatalf("create-user drawer task links=%d, want 1: %s", count, page)
+	}
+	if strings.Contains(string(page), `form class="account-form" method="post" action="/settings/users"`) {
+		t.Fatalf("users page still exposes the inline create form: %s", page)
+	}
+
+	response, err = admin.Get(serverURL + "/settings/users/create")
+	if err != nil {
+		t.Fatalf("get create-user task: %v", err)
+	}
+	taskPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("create-user task status=%d, body=%s", response.StatusCode, taskPage)
+	}
+	for _, expected := range []string{
+		`data-task-kind="user-create"`,
+		`form method="post" action="/settings/users"`,
+		`name="username"`,
+		`name="role"`,
+	} {
+		if !strings.Contains(string(taskPage), expected) {
+			t.Fatalf("create-user task is missing %q: %s", expected, taskPage)
+		}
+	}
+}
+
 func TestSystemAdministratorCannotBeDisabledOrDemoted(t *testing.T) {
 	t.Parallel()
 

@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "Chromium regression gate and security inventory for ScriptBoard's vendored browser assets.",
   "scripts": {
-    "test": "node run.cjs"
+    "test": "node assistant-ui-contract.cjs && node run.cjs"
   },
   "devDependencies": {
     "dompurify": "3.4.12",

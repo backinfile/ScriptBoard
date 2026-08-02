@@ -37,7 +37,9 @@ var (
 	fixedTools        = map[string]struct{}{
 		"get_host_status": {}, "list_applications": {}, "get_application": {}, "read_source_log": {},
 		"list_website_monitors": {}, "get_website_incident": {}, "list_runs": {}, "get_run": {},
-		"read_run_log": {}, "list_quick_runs": {}, "list_schedules": {}, "read_managed_text": {},
+		"read_run_log": {}, "search_run_log": {}, "read_run_log_window": {}, "compare_runs": {},
+		"search_source_log": {}, "get_schedule_history": {}, "list_audit_events": {},
+		"list_quick_runs": {}, "list_schedules": {}, "read_managed_text": {},
 		"start_quick_run": {}, "run_schedule_now": {}, "stop_run": {}, "check_website_now": {},
 		"list_ui_actions": {}, "perform_ui_action": {},
 	}

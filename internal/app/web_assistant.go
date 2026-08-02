@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -26,12 +28,26 @@ type assistantModelView struct {
 type assistantResourceView struct {
 	Kind, ID, Label, Detail, Icon, Category string
 	Selected                                bool
+	ImageHint                               bool
 }
 
 type assistantMessageView struct {
 	assistant.Message
 	ToolCalls      []assistant.ToolCall
 	LatestToolCall *assistant.ToolCall
+	Parts          []assistantMessagePartView
+}
+
+type assistantMessagePartView struct {
+	Locale          webLocale
+	Kind            string
+	Body            string
+	BodyOffset      int
+	ToolCalls       []assistant.ToolCall
+	LatestToolCall  *assistant.ToolCall
+	Title           string
+	AggregateStatus string
+	ResultSummary   string
 }
 
 type assistantPageData struct {
@@ -42,6 +58,7 @@ type assistantPageData struct {
 	Archived            []assistant.Conversation
 	Current             *assistant.Conversation
 	SelectedModelID     string
+	SelectedProfile     string
 	DefaultAutoApproval bool
 	RuntimeAvailable    bool
 	RuntimeVersion      string
@@ -109,6 +126,7 @@ func (a *App) renderAssistantPage(response http.ResponseWriter, request *http.Re
 	var pendingApproval *assistant.Approval
 	var pendingApprovalCall *assistant.ToolCall
 	selectedModelID := ""
+	selectedProfile := assistant.ProfileGeneral
 	if conversationID != "" {
 		conversation, err := a.assistant.Conversation(request.Context(), actor, conversationID)
 		if errors.Is(err, assistant.ErrNotFound) {
@@ -121,6 +139,7 @@ func (a *App) renderAssistantPage(response http.ResponseWriter, request *http.Re
 		}
 		current = &conversation
 		selectedModelID = conversation.ModelID
+		selectedProfile = conversation.CapabilityProfile
 		contextReferences, err = a.assistant.ContextReferences(request.Context(), actor, conversationID)
 		if err != nil {
 			http.Error(response, webText(resolveWebLocale(request), "assistant.load_failed"), http.StatusInternalServerError)
@@ -159,6 +178,12 @@ func (a *App) renderAssistantPage(response http.ResponseWriter, request *http.Re
 			}
 		}
 	}
+	if conversationID == "" {
+		switch requested := strings.TrimSpace(request.URL.Query().Get("profile")); requested {
+		case assistant.ProfileDiagnoseFailedRun, assistant.ProfileInvestigateWebsiteIncident, assistant.ProfileTriageHostPressure, assistant.ProfileReviewScriptSafety, assistant.ProfileDesignSchedule:
+			selectedProfile = requested
+		}
+	}
 	locale := resolveWebLocale(request)
 	resources := markAssistantResourcesSelected(a.assistantResourceCatalog(request, currentSession.role), contextReferences)
 	managedRuntime, runtimeErr := a.assistantRuntime.Runtime()
@@ -166,16 +191,16 @@ func (a *App) renderAssistantPage(response http.ResponseWriter, request *http.Re
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = assistantTemplate.Execute(response, assistantPageData{
 		Locale: locale, CSRFToken: currentSession.csrfToken, Models: assistantModelViews(models),
-		Conversations: conversations, Archived: archived, Current: current, SelectedModelID: selectedModelID,
+		Conversations: conversations, Archived: archived, Current: current, SelectedModelID: selectedModelID, SelectedProfile: selectedProfile,
 		DefaultAutoApproval: settings.DefaultAutoApproval, RuntimeAvailable: runtimeAvailable, RuntimeVersion: managedRuntime.Version,
 		CanManageAI: roleAllows(currentSession.role, permissionManageSystem),
 		Resources:   resources, ContextReferences: contextReferences, Messages: messages,
-		Timeline: assistantMessageTimeline(messages, toolCalls), ToolCalls: toolCalls,
+		Timeline: assistantMessageTimeline(messages, toolCalls, locale), ToolCalls: toolCalls,
 		PendingApproval: pendingApproval, PendingApprovalCall: pendingApprovalCall, AssistantEnabled: settings.Enabled,
 	})
 }
 
-func assistantMessageTimeline(messages []assistant.Message, calls []assistant.ToolCall) []assistantMessageView {
+func assistantMessageTimeline(messages []assistant.Message, calls []assistant.ToolCall, locale webLocale) []assistantMessageView {
 	byMessage := make(map[string][]assistant.ToolCall, len(messages))
 	for _, call := range calls {
 		byMessage[call.MessageID] = append(byMessage[call.MessageID], call)
@@ -183,7 +208,7 @@ func assistantMessageTimeline(messages []assistant.Message, calls []assistant.To
 	timeline := make([]assistantMessageView, 0, len(messages))
 	for _, message := range messages {
 		messageCalls := byMessage[message.ID]
-		view := assistantMessageView{Message: message, ToolCalls: messageCalls}
+		view := assistantMessageView{Message: message, ToolCalls: messageCalls, Parts: assistantMessageParts(message, messageCalls, locale)}
 		if len(messageCalls) > 0 {
 			latest := messageCalls[len(messageCalls)-1]
 			view.LatestToolCall = &latest
@@ -191,6 +216,100 @@ func assistantMessageTimeline(messages []assistant.Message, calls []assistant.To
 		timeline = append(timeline, view)
 	}
 	return timeline
+}
+
+func assistantMessageParts(message assistant.Message, calls []assistant.ToolCall, locale webLocale) []assistantMessagePartView {
+	if message.Role != "assistant" || len(calls) == 0 {
+		return []assistantMessagePartView{{Locale: locale, Kind: "text", Body: message.Body}}
+	}
+	body := []rune(message.Body)
+	ordered := append([]assistant.ToolCall(nil), calls...)
+	sort.SliceStable(ordered, func(left, right int) bool {
+		return ordered[left].BodyOffset < ordered[right].BodyOffset
+	})
+	parts := make([]assistantMessagePartView, 0, len(ordered)*2+1)
+	cursor := 0
+	for index := 0; index < len(ordered); {
+		offset := ordered[index].BodyOffset
+		if offset < cursor {
+			offset = cursor
+		}
+		if offset > len(body) {
+			offset = len(body)
+		}
+		if offset > cursor {
+			parts = append(parts, assistantMessagePartView{Locale: locale, Kind: "text", Body: string(body[cursor:offset])})
+		}
+		end := index + 1
+		for end < len(ordered) {
+			nextOffset := ordered[end].BodyOffset
+			if nextOffset < cursor {
+				nextOffset = cursor
+			}
+			if nextOffset > len(body) {
+				nextOffset = len(body)
+			}
+			if nextOffset != offset {
+				break
+			}
+			end++
+		}
+		group := append([]assistant.ToolCall(nil), ordered[index:end]...)
+		latest := group[len(group)-1]
+		aggregateStatus, resultSummary := assistantToolGroupPresentation(group, locale)
+		parts = append(parts, assistantMessagePartView{
+			Locale: locale, Kind: "tool", BodyOffset: offset, ToolCalls: group, LatestToolCall: &latest,
+			Title: assistantToolGroupTitle(locale, len(group)), AggregateStatus: aggregateStatus, ResultSummary: resultSummary,
+		})
+		cursor = offset
+		index = end
+	}
+	if cursor < len(body) || len(parts) == 0 || parts[len(parts)-1].Kind == "tool" {
+		parts = append(parts, assistantMessagePartView{Locale: locale, Kind: "text", Body: string(body[cursor:])})
+	}
+	return parts
+}
+
+func assistantToolGroupPresentation(calls []assistant.ToolCall, locale webLocale) (string, string) {
+	succeeded, failed, active := 0, 0, 0
+	hasRunning, hasWaiting := false, false
+	failureStatus := ""
+	for _, call := range calls {
+		switch call.Status {
+		case "complete":
+			succeeded++
+		case "running":
+			active++
+			hasRunning = true
+		case "waiting_approval":
+			active++
+			hasWaiting = true
+		default:
+			failed++
+			if failureStatus == "" {
+				failureStatus = call.Status
+			}
+		}
+	}
+	aggregateStatus := "complete"
+	if hasRunning {
+		aggregateStatus = "running"
+	} else if hasWaiting {
+		aggregateStatus = "waiting_approval"
+	} else if failureStatus != "" {
+		aggregateStatus = failureStatus
+	}
+	if active > 0 {
+		return aggregateStatus, fmt.Sprintf(webText(locale, "assistant.tools_summary_active"), succeeded, failed, active)
+	}
+	return aggregateStatus, fmt.Sprintf(webText(locale, "assistant.tools_summary"), succeeded, failed)
+}
+
+func assistantToolGroupTitle(locale webLocale, count int) string {
+	if count == 1 {
+		return webText(locale, "assistant.tools_called_one")
+	}
+	return fmt.Sprintf(webText(locale, "assistant.tools_called_many"), count)
 }
 
 func (a *App) createAssistantConversation(response http.ResponseWriter, request *http.Request) {
@@ -213,6 +332,11 @@ func (a *App) createAssistantConversation(response http.ResponseWriter, request 
 		http.Error(response, assistantWebError(resolveWebLocale(request), err), http.StatusUnprocessableEntity)
 		return
 	}
+	preparedPrompt, err := a.assistantPreparedPromptWithReferences(request.Context(), currentSession.role, message, contextReferences)
+	if err != nil {
+		http.Error(response, webText(resolveWebLocale(request), "assistant.image_invalid"), http.StatusUnprocessableEntity)
+		return
+	}
 	var autoApproval *bool
 	if value, exists := request.PostForm["auto_approval"]; exists {
 		if len(value) == 0 {
@@ -228,7 +352,7 @@ func (a *App) createAssistantConversation(response http.ResponseWriter, request 
 	}
 	conversation, err := a.assistant.CreateConversation(request.Context(), assistantActor(request), assistant.ConversationInput{
 		Title: request.PostFormValue("title"), ModelID: request.PostFormValue("model_id"), InitialMessage: message,
-		Context: contextReferences, AutoApproval: autoApproval,
+		Context: contextReferences, AutoApproval: autoApproval, CapabilityProfile: request.PostFormValue("profile"),
 	})
 	if err != nil {
 		status := http.StatusUnprocessableEntity
@@ -243,8 +367,9 @@ func (a *App) createAssistantConversation(response http.ResponseWriter, request 
 	if managedRuntime, runtimeErr := a.assistantRuntime.Runtime(); runtimeErr == nil {
 		reply, replyErr := a.assistant.BeginAssistantReply(request.Context(), assistantActor(request), conversation.ID)
 		if replyErr == nil {
-			prompt := a.assistantPromptWithReferences(request.Context(), currentSession.role, message, contextReferences)
-			if executeErr := a.assistantRuntime.Execute(request.Context(), assistantActor(request), conversation, prompt, reply); executeErr != nil {
+			if executeErr := a.assistantRuntime.ExecuteWithImages(request.Context(), assistantActor(request), conversation, preparedPrompt.Text, preparedPrompt.Images, reply); executeErr != nil {
+				_, key := assistantRuntimeWebError(executeErr)
+				_ = a.assistant.AppendAssistantText(request.Context(), assistantActor(request), conversation.ID, reply.ID, webText(resolveWebLocale(request), key))
 				_ = a.assistant.FinishTurn(request.Context(), assistantActor(request), conversation.ID, reply.ID, "error", managedRuntime.Version)
 			}
 		}
@@ -290,6 +415,11 @@ func (a *App) postAssistantMessage(response http.ResponseWriter, request *http.R
 		http.Error(response, assistantWebError(resolveWebLocale(request), err), http.StatusUnprocessableEntity)
 		return
 	}
+	preparedPrompt, err := a.assistantPreparedPromptWithReferences(request.Context(), currentSession.role, message, references)
+	if err != nil {
+		http.Error(response, webText(resolveWebLocale(request), "assistant.image_invalid"), http.StatusUnprocessableEntity)
+		return
+	}
 	turn, err := a.assistant.BeginTurnWithContext(request.Context(), actor, id, message, references)
 	if err != nil {
 		status, key := assistantRuntimeWebError(err)
@@ -302,9 +432,10 @@ func (a *App) postAssistantMessage(response http.ResponseWriter, request *http.R
 		a.writeAssistantMutationError(response, request, err)
 		return
 	}
-	if err := a.assistantRuntime.Execute(request.Context(), actor, conversation, a.assistantPromptWithReferences(request.Context(), currentSession.role, message, references), turn.User, turn.Assistant); err != nil {
-		_ = a.assistant.FinishTurn(request.Context(), actor, id, turn.Assistant.ID, "error", managedRuntime.Version)
+	if err := a.assistantRuntime.ExecuteWithImages(request.Context(), actor, conversation, preparedPrompt.Text, preparedPrompt.Images, turn.User, turn.Assistant); err != nil {
 		status, key := assistantRuntimeWebError(err)
+		_ = a.assistant.AppendAssistantText(request.Context(), actor, id, turn.Assistant.ID, webText(resolveWebLocale(request), key))
+		_ = a.assistant.FinishTurn(request.Context(), actor, id, turn.Assistant.ID, "error", managedRuntime.Version)
 		http.Error(response, webText(resolveWebLocale(request), key), status)
 		return
 	}
@@ -466,6 +597,61 @@ func (a *App) setAssistantApprovalMode(response http.ResponseWriter, request *ht
 	if strings.Contains(request.Header.Get("Accept"), "application/json") {
 		response.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_, _ = fmt.Fprintf(response, `{"auto_approval":%t}`, enabled)
+		return
+	}
+	http.Redirect(response, request, "/ai/conversations/"+url.PathEscape(id), http.StatusSeeOther)
+}
+
+func (a *App) setAssistantCapabilityProfile(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, webText(resolveWebLocale(request), "assistant.csrf_error"), http.StatusForbidden)
+		return
+	}
+	id := strings.TrimSpace(request.PathValue("id"))
+	profile := strings.TrimSpace(request.FormValue("profile"))
+	if err := a.assistant.SetCapabilityProfile(request.Context(), assistantActor(request), id, profile); err != nil {
+		a.writeAssistantMutationError(response, request, err)
+		return
+	}
+	stopContext, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	_ = a.assistantRuntime.Abort(stopContext, id)
+	cancel()
+	http.Redirect(response, request, "/ai/conversations/"+url.PathEscape(id), http.StatusSeeOther)
+}
+
+func (a *App) setAssistantThinkingLevel(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, webText(resolveWebLocale(request), "assistant.csrf_error"), http.StatusForbidden)
+		return
+	}
+	id := strings.TrimSpace(request.PathValue("id"))
+	if err := a.assistant.SetThinkingLevel(request.Context(), assistantActor(request), id, request.FormValue("thinking_level")); err != nil {
+		a.writeAssistantMutationError(response, request, err)
+		return
+	}
+	stopContext, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	_ = a.assistantRuntime.Abort(stopContext, id)
+	cancel()
+	http.Redirect(response, request, "/ai/conversations/"+url.PathEscape(id), http.StatusSeeOther)
+}
+
+func (a *App) compactAssistantConversation(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, webText(resolveWebLocale(request), "assistant.csrf_error"), http.StatusForbidden)
+		return
+	}
+	id := strings.TrimSpace(request.PathValue("id"))
+	actor := assistantActor(request)
+	if _, err := a.assistant.Conversation(request.Context(), actor, id); err != nil {
+		a.writeAssistantMutationError(response, request, err)
+		return
+	}
+	if _, err := a.assistantRuntime.Compact(request.Context(), actor, id); err != nil {
+		status := http.StatusConflict
+		if !errors.Is(err, assistant.ErrConversationBusy) && !errors.Is(err, errAssistantSessionUnavailable) {
+			status = http.StatusBadGateway
+		}
+		http.Error(response, webText(resolveWebLocale(request), "assistant.compact_unavailable"), status)
 		return
 	}
 	http.Redirect(response, request, "/ai/conversations/"+url.PathEscape(id), http.StatusSeeOther)
@@ -699,7 +885,7 @@ func (a *App) saveAssistantModel(response http.ResponseWriter, request *http.Req
 	model, err := a.assistant.SaveModel(request.Context(), assistantActor(request), id, assistant.ModelInput{
 		Name: request.FormValue("name"), Provider: request.FormValue("provider"), Model: request.FormValue("model"),
 		Endpoint: request.FormValue("endpoint"), APIKey: request.FormValue("api_key"),
-		MakeDefault: request.FormValue("make_default") != "",
+		MakeDefault: request.FormValue("make_default") != "", SupportsImages: request.FormValue("supports_images") != "",
 	})
 	if err != nil {
 		status := http.StatusUnprocessableEntity
@@ -816,9 +1002,14 @@ func (a *App) assistantResourceCatalog(request *http.Request, role userRole) []a
 						}
 					case hostfiles.Regular:
 						if fileCount < 8 {
+							imageHint := assistantRasterFilename(entry.Name)
+							icon := "file-text"
+							if imageHint {
+								icon = "image"
+							}
 							resources = append(resources, assistantResourceView{
 								Kind: "file", ID: assistantFileStableID(root.Name, entry.Name), Label: entry.Name,
-								Detail: root.Name, Icon: "file-text", Category: "files",
+								Detail: root.Name, Icon: icon, Category: "files", ImageHint: imageHint,
 							})
 							fileCount++
 						}
@@ -893,6 +1084,15 @@ func (a *App) assistantResourceCatalog(request *http.Request, role userRole) []a
 		}
 	}
 	return deduplicateAssistantResources(resources)
+}
+
+func assistantRasterFilename(name string) bool {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".png", ".jpg", ".jpeg", ".webp":
+		return true
+	default:
+		return false
+	}
 }
 
 func deduplicateAssistantResources(resources []assistantResourceView) []assistantResourceView {

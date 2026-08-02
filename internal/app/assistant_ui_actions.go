@@ -2,15 +2,18 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 
 	"scriptboard/internal/assistant/toolbroker"
+	"scriptboard/internal/buildinfo"
 )
 
 const assistantUIActionRevisionQuery = `SELECT COALESCE(MAX(id), 0) FROM audit_events WHERE action NOT LIKE 'assistant_tool_%'`
@@ -28,15 +31,54 @@ type assistantUIActionListParameters struct {
 type assistantUIActionSpec struct {
 	Key, Label, Domain, Path, DeepLink  string
 	PathFields, QueryFields, FormFields []string
+	FormValueModes                      map[string]assistantUIActionValueMode
 	Permission                          permission
 	Handler                             http.HandlerFunc
 	BrowserOnly                         string
+	UnavailableReason                   string
 }
+
+type assistantUIActionValueMode string
+
+const (
+	assistantUIActionBinary       assistantUIActionValueMode = "boolean-1-or-0"
+	assistantUIActionPresence     assistantUIActionValueMode = "checkbox-presence"
+	assistantUIActionConfirmation assistantUIActionValueMode = "confirmation-yes-or-no"
+	assistantResourceIDHeader                                = "X-ScriptBoard-Resource-ID"
+)
 
 func (a *App) assistantUIActions() []assistantUIActionSpec {
 	action := func(key, label, domain, path, deepLink string, pathFields, formFields []string, handler http.HandlerFunc) assistantUIActionSpec {
 		request := httptest.NewRequest(http.MethodPost, strings.ReplaceAll(strings.ReplaceAll(path, "{id}", "id"), "{name}", "name"), nil)
-		return assistantUIActionSpec{Key: key, Label: label, Domain: domain, Path: path, DeepLink: deepLink, PathFields: pathFields, FormFields: formFields, Permission: permissionForRequest(request), Handler: handler}
+		spec := assistantUIActionSpec{Key: key, Label: label, Domain: domain, Path: path, DeepLink: deepLink, PathFields: pathFields, FormFields: formFields, Permission: permissionForRequest(request), Handler: handler}
+		switch key {
+		case "websites.create", "websites.update":
+			spec.FormValueModes = map[string]assistantUIActionValueMode{"verify_tls": assistantUIActionBinary, "follow_redirects": assistantUIActionBinary}
+		case "ai.save_defaults":
+			spec.FormValueModes = map[string]assistantUIActionValueMode{"enabled": assistantUIActionPresence, "default_auto_approval": assistantUIActionPresence}
+		case "quick_runs.lock", "schedules.toggle":
+			spec.FormValueModes = map[string]assistantUIActionValueMode{"locked": assistantUIActionBinary, "enabled": assistantUIActionBinary}
+		case "schedules.create", "schedules.update":
+			spec.FormValueModes = map[string]assistantUIActionValueMode{"disallow_overlap": assistantUIActionPresence}
+		case "files.delete":
+			spec.FormValueModes = map[string]assistantUIActionValueMode{"confirm_references": assistantUIActionConfirmation}
+		case "runs.start_file":
+			spec.FormValueModes = map[string]assistantUIActionValueMode{"confirm_overlap": assistantUIActionConfirmation}
+		case "websites.delete", "updates.apply", "files.purge_trash", "variables.delete", "quick_run_groups.delete", "schedule_groups.delete", "quick_runs.delete", "schedules.delete":
+			spec.FormValueModes = map[string]assistantUIActionValueMode{"confirm": assistantUIActionConfirmation}
+		}
+		if key == "files.toggle_executable" && runtime.GOOS != "linux" {
+			spec.UnavailableReason = "Owner execute mode is only supported on Linux hosts."
+		}
+		if !buildinfo.Current().ValidRelease() {
+			switch key {
+			case "ai.runtime_check", "ai.runtime_install":
+				spec.UnavailableReason = "Online Runtime release operations are unavailable in development builds."
+			case "updates.check", "updates.prepare", "updates.apply":
+				spec.UnavailableReason = "Application update operations are unavailable in development builds."
+			}
+		}
+		return spec
 	}
 	queryAction := func(key, label, domain, path, deepLink string, pathFields, queryFields, formFields []string, handler http.HandlerFunc) assistantUIActionSpec {
 		spec := action(key, label, domain, path, deepLink, pathFields, formFields, handler)
@@ -103,7 +145,7 @@ func (a *App) assistantUIActions() []assistantUIActionSpec {
 
 		action("quick_runs.save_from_run", "Save Run as Quick Run", "quick_runs", "/history/runs/{id}/quick-run", "/config/quick-runs", []string{"id"}, []string{"name", "group_id"}, a.saveQuickRun),
 		action("quick_runs.create_from_file", "Create Quick Run from file", "quick_runs", "/config/quick-runs", "/config/quick-runs", nil, []string{"script", "name", "arguments", "timeout_seconds", "group_id", "return_to"}, a.createQuickRunFromFile),
-		action("quick_runs.one_time", "Start one-time Run", "quick_runs", "/config/quick-runs/one-time", "/config/quick-runs", nil, []string{"script", "arguments", "timeout_seconds", "confirm_overlap"}, a.startOneTimeRun),
+		action("quick_runs.one_time", "Start one-time source Run", "quick_runs", "/config/quick-runs/one-time", "/config/quick-runs", nil, []string{"language", "source", "working_directory", "arguments", "timeout_seconds"}, a.startOneTimeRun),
 		action("quick_runs.create_from_source", "Create Quick Run from source", "quick_runs", "/config/quick-runs/from-source", "/config/quick-runs", nil, []string{"language", "source", "working_directory", "file_name", "name", "timeout_seconds", "arguments", "group_id", "conflict_action", "rename_file_name"}, a.createQuickRunFromSource),
 		action("quick_run_groups.create", "Create Quick Run group", "quick_runs", "/config/quick-runs/groups", "/config/quick-runs", nil, []string{"name"}, a.createQuickRunGroup),
 		action("quick_run_groups.update", "Update Quick Run group", "quick_runs", "/config/quick-runs/groups/{id}/update", "/config/quick-runs", []string{"id"}, []string{"name"}, a.updateQuickRunGroup),
@@ -156,11 +198,18 @@ func (executor *assistantToolExecutor) planListUIActions(authorization assistant
 		}
 		item := map[string]any{
 			"action": spec.Key, "label": spec.Label, "domain": spec.Domain, "pathTemplate": spec.Path,
-			"pathParameters": spec.PathFields, "queryParameters": spec.QueryFields, "formFields": spec.FormFields, "requiresApproval": spec.Handler != nil,
-			"available": spec.Handler != nil && spec.BrowserOnly == "", "deepLink": spec.DeepLink,
+			"pathParameters": spec.PathFields, "queryParameters": spec.QueryFields, "formFields": spec.FormFields,
+			"requiresApproval": spec.Handler != nil && spec.BrowserOnly == "" && spec.UnavailableReason == "",
+			"available":        spec.Handler != nil && spec.BrowserOnly == "" && spec.UnavailableReason == "", "deepLink": spec.DeepLink,
+		}
+		if len(spec.FormValueModes) > 0 {
+			item["formValueModes"] = spec.FormValueModes
 		}
 		if spec.BrowserOnly != "" {
 			item["browserOnlyReason"] = spec.BrowserOnly
+		}
+		if spec.UnavailableReason != "" {
+			item["unavailableReason"] = spec.UnavailableReason
 		}
 		items = append(items, item)
 	}
@@ -193,6 +242,9 @@ func (executor *assistantToolExecutor) planPerformUIAction(ctx context.Context, 
 	if !roleAllows(authorization.Role, selected.Permission) || selected.BrowserOnly != "" || selected.Handler == nil {
 		return assistantToolPlan{}, errAssistantToolForbidden
 	}
+	if selected.UnavailableReason != "" {
+		return assistantToolPlan{}, fmt.Errorf("%w: %s", errAssistantToolUnavailable, selected.UnavailableReason)
+	}
 	path, form, err := normalizeAssistantUIAction(*selected, parameters)
 	if err != nil {
 		return assistantToolPlan{}, err
@@ -202,9 +254,28 @@ func (executor *assistantToolExecutor) planPerformUIAction(ctx context.Context, 
 		return assistantToolPlan{}, err
 	}
 	parameters.PathParameters = normalizedStringMap(parameters.PathParameters)
+	targetState := map[string]any{"auditRevision": revision}
+	if selected.Key == "files.save_text" {
+		relative, fileErr := executor.app.files.CanonicalExisting(parameters.PathParameters["path"])
+		if fileErr != nil {
+			return assistantToolPlan{}, errAssistantToolNotFound
+		}
+		document, fileErr := executor.app.files.ReadText(relative, 1<<20)
+		if fileErr != nil {
+			return assistantToolPlan{}, fileErr
+		}
+		if strings.TrimSpace(form.Get("digest")) == "" {
+			form.Set("digest", document.Digest)
+			if parameters.Form == nil {
+				parameters.Form = make(map[string]any)
+			}
+			parameters.Form["digest"] = document.Digest
+		}
+		targetState["fileDigest"] = document.Digest
+	}
 	return assistantToolPlan{
 		targetSummary: selected.Key + " ui-action", parameterSummary: assistantUIActionParameterSummary(parameters),
-		normalized: parameters, targetState: map[string]any{"auditRevision": revision}, deepLink: selected.DeepLink,
+		normalized: parameters, targetState: targetState, deepLink: selected.DeepLink,
 		approvalTitle: "Run ScriptBoard action", approvalMessage: fmt.Sprintf("Run %q through the same validation and audit path as the web interface?", selected.Label),
 		execute: func(ctx context.Context) (any, string, bool, error) {
 			return executor.executeAssistantUIAction(ctx, authorization, *selected, path, form)
@@ -249,6 +320,19 @@ func normalizeAssistantUIAction(spec assistantUIActionSpec, parameters assistant
 		if err != nil {
 			return "", nil, err
 		}
+		if mode := spec.FormValueModes[key]; mode != "" {
+			if len(values) != 1 {
+				return "", nil, errAssistantToolParameters
+			}
+			value, include, normalizeErr := normalizeAssistantUIActionValue(mode, values[0])
+			if normalizeErr != nil {
+				return "", nil, normalizeErr
+			}
+			if include {
+				form.Set(key, value)
+			}
+			continue
+		}
 		for _, value := range values {
 			if len(value) > 32768 {
 				return "", nil, errAssistantToolParameters
@@ -257,6 +341,31 @@ func normalizeAssistantUIAction(spec assistantUIActionSpec, parameters assistant
 		}
 	}
 	return path, form, nil
+}
+
+func normalizeAssistantUIActionValue(mode assistantUIActionValueMode, raw string) (string, bool, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	truthy := value == "1" || value == "true" || value == "yes" || value == "on"
+	falsy := value == "0" || value == "false" || value == "no" || value == "off" || value == ""
+	if !truthy && !falsy {
+		return "", false, errAssistantToolParameters
+	}
+	switch mode {
+	case assistantUIActionBinary:
+		if truthy {
+			return "1", true, nil
+		}
+		return "0", true, nil
+	case assistantUIActionPresence:
+		return "1", truthy, nil
+	case assistantUIActionConfirmation:
+		if truthy {
+			return "yes", true, nil
+		}
+		return "no", true, nil
+	default:
+		return "", false, errAssistantToolParameters
+	}
 }
 
 func assistantUIActionValues(raw any) ([]string, error) {
@@ -301,6 +410,7 @@ func (executor *assistantToolExecutor) executeAssistantUIAction(ctx context.Cont
 		authVersion: authorization.AuthVersion, csrfToken: "assistant-ui-action",
 	}))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Accept", "application/json")
 	request.RemoteAddr = "assistant"
 	for field, value := range extractAssistantPathParameters(spec, path) {
 		request.SetPathValue(field, value)
@@ -309,9 +419,66 @@ func (executor *assistantToolExecutor) executeAssistantUIAction(ctx context.Cont
 	spec.Handler.ServeHTTP(recorder, request)
 	status := recorder.Code
 	if status < 200 || status >= 400 {
-		return nil, "", false, fmt.Errorf("UI action %s returned HTTP %d", spec.Key, status)
+		return nil, "", false, assistantUIActionHTTPError{Action: spec.Key, Status: status, Detail: assistantUIActionResponseDetail(recorder)}
 	}
-	return map[string]any{"accepted": true, "action": spec.Key, "statusCode": status, "location": recorder.Header().Get("Location")}, fmt.Sprintf("Completed %s.", spec.Label), false, nil
+	result := map[string]any{"accepted": true, "action": spec.Key, "statusCode": status, "location": recorder.Header().Get("Location")}
+	if resourceID := strings.TrimSpace(recorder.Header().Get(assistantResourceIDHeader)); resourceID != "" {
+		result["resourceId"] = resourceID
+	}
+	var payload map[string]any
+	if recorder.Body.Len() > 0 && json.Unmarshal(recorder.Body.Bytes(), &payload) == nil {
+		for key, value := range payload {
+			if _, reserved := result[key]; !reserved {
+				result[key] = value
+			}
+		}
+	}
+	return result, fmt.Sprintf("Completed %s.", spec.Label), false, nil
+}
+
+type assistantUIActionHTTPError struct {
+	Action string
+	Status int
+	Detail string
+}
+
+func (err assistantUIActionHTTPError) Error() string {
+	return fmt.Sprintf("UI action %s returned HTTP %d: %s", err.Action, err.Status, err.Detail)
+}
+
+func (err assistantUIActionHTTPError) toolResponse() (string, string) {
+	code := "ui_action_failed"
+	switch err.Status {
+	case http.StatusBadRequest, http.StatusUnprocessableEntity:
+		code = "ui_action_invalid"
+	case http.StatusUnauthorized, http.StatusForbidden:
+		code = "ui_action_forbidden"
+	case http.StatusNotFound:
+		code = "ui_action_not_found"
+	case http.StatusConflict:
+		code = "ui_action_conflict"
+	case http.StatusTooManyRequests:
+		code = "ui_action_rate_limited"
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		code = "ui_action_unavailable"
+	}
+	summary := fmt.Sprintf("Action %s failed with HTTP %d.", err.Action, err.Status)
+	if err.Detail != "" {
+		summary = fmt.Sprintf("Action %s failed with HTTP %d: %s", err.Action, err.Status, err.Detail)
+	}
+	return code, summary
+}
+
+func assistantUIActionResponseDetail(recorder *httptest.ResponseRecorder) string {
+	detail := strings.Join(strings.Fields(recorder.Body.String()), " ")
+	if detail == "" {
+		return ""
+	}
+	runes := []rune(detail)
+	if len(runes) > 512 {
+		detail = string(runes[:512]) + "..."
+	}
+	return detail
 }
 
 func extractAssistantPathParameters(spec assistantUIActionSpec, path string) map[string]string {

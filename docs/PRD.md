@@ -23,6 +23,12 @@
 > [ADR-0124](./adr/0124-broker-assistant-tools-and-bind-state-changes-to-approvals.md) 和
 > [ADR-0125](./adr/0125-pin-pi-runtime-to-signed-scriptboard-releases.md)。
 
+> **2026-08-02 修订**：AI 对话增加显式 Conversation Profile、Pi Session Telemetry、
+> 有界 Evidence Query 与安全光栅图片上下文。能力由签名 Runtime 中摘要固定的
+> Capability Bundle 提供，不开放用户/第三方 Skill 或任意网络；安全边界见
+> [ADR-0126](./adr/0126-version-assistant-playbooks-with-the-signed-runtime.md)。数据库当前为
+> schema 24，schema 20–23 可在单事务内前向迁移。
+
 ## 1. 产品定义
 
 ScriptBoard 是一个自托管、单机、少量可信用户使用的主机文件与脚本操作台，为服务身份可访问的普通文件提供浏览和管理，并为其中的可信脚本提供本地执行、实时日志、历史追踪、快捷执行和内置计划。
@@ -199,7 +205,7 @@ AI
 
 - 内置 Git 版本保护整体移除：没有设置页、检查点、恢复路由、数据库状态或 Git CLI 配置。
 - 磁盘上的既有 `.git` 和历史不迁移、不修改、不删除，之后作为普通主机文件处理。
-- 主机文件系统重构以 schema 20 为兼容基线；本版本新建 schema 21，并只允许 schema 20 在单事务内前向迁移。早于 20 或高于当前版本的 schema 都在写入前明确拒绝。
+- 主机文件系统重构以 schema 20 为兼容基线；当前版本新建 schema 24，并允许 schema 20–23 在单事务内前向迁移。早于 20 或高于当前版本的 schema 都在写入前明确拒绝。
 - `managed_root`、`git_executable`、对应环境变量、`--managed-root`、`--here` 等旧配置接口明确拒绝。
 - 管理员必须使用新配置和新的 State Root；旧回收区、快捷执行、计划和浏览器固定项不迁移。
 
@@ -426,7 +432,7 @@ scriptboard version
 - 使用纯 Go SQLite 驱动。
 - 启用 WAL、`synchronous=FULL`、foreign keys 和 busy timeout。
 - 高频 Run 输出不逐事件写数据库。
-- 数据库 schema 固定为 21；全新库直接创建 21，schema 20 只增加 Assistant 自有表和索引并在同一事务提交。早于 20 或高于当前版本的 schema 在任何写入前拒绝启动，不猜测迁移或删除旧状态。
+- 数据库 schema 固定为 24；全新库直接创建 24，schema 20–23 只执行显式 Assistant 兼容迁移并在同一事务提交。早于 20 或高于当前版本的 schema 在任何写入前拒绝启动，不猜测迁移或删除旧状态。
 - 检测到数据库完整性异常时拒绝提供执行能力，只允许本机诊断和人工恢复流程。
 
 ### 17.3 磁盘与日志

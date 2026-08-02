@@ -18,7 +18,7 @@
       <header class="assistant-settings-section__head"><div><p class="section-index">01 / LLM</p><h3>{{t .Locale "assistant.llm_configurations"}}</h3><p>{{t .Locale "assistant.llm_description"}}</p></div><button class="button button--primary" type="button" data-add-llm><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "assistant.add_llm"}}</button></header>
       <div class="assistant-llm-list">
         <div class="assistant-llm-list__head"><span>{{t .Locale "assistant.configuration"}}</span><span>{{t .Locale "assistant.model_id"}}</span><span>Endpoint</span><span>{{t .Locale "common.actions"}}</span></div>
-        {{range .Models}}<article class="assistant-llm-row" data-llm-id="{{.ID}}" data-name="{{.Name}}" data-provider="{{.Provider}}" data-model="{{.Model}}" data-endpoint="{{.Endpoint}}" data-default="{{.Default}}" data-credential="{{.CredentialConfigured}}">
+        {{range .Models}}<article class="assistant-llm-row" data-llm-id="{{.ID}}" data-name="{{.Name}}" data-provider="{{.Provider}}" data-model="{{.Model}}" data-endpoint="{{.Endpoint}}" data-default="{{.Default}}" data-credential="{{.CredentialConfigured}}" data-supports-images="{{.SupportsImages}}">
           <div class="assistant-llm-identity"><span data-lucide="sparkles" aria-hidden="true"></span><span><strong>{{.Name}}</strong><small>{{.ProviderLabel}}{{if .Default}} · DEFAULT{{end}}</small></span></div>
           <div class="assistant-llm-model"><strong>{{.Model}}</strong><small>{{if .CredentialConfigured}}{{t $.Locale "assistant.credential_configured"}}{{else}}{{t $.Locale "assistant.credential_missing"}}{{end}}</small></div>
           <code title="{{.Endpoint}}">{{.EndpointDisplay}}</code>
@@ -62,6 +62,7 @@
             <label class="assistant-field assistant-field--wide"><span>API Key</span><input name="api_key" type="password" maxlength="8192" autocomplete="new-password" placeholder="{{t .Locale "assistant.credential_placeholder"}}"><small data-credential-help>{{t .Locale "assistant.credential_description"}}</small></label>
           </div>
           <label class="assistant-default-choice"><input type="checkbox" name="make_default" value="true"><span><strong>{{t .Locale "assistant.make_default"}}</strong><small>{{t .Locale "assistant.make_default_description"}}</small></span></label>
+          <label class="assistant-default-choice"><input type="checkbox" name="supports_images" value="true"><span><strong>{{t .Locale "assistant.supports_images"}}</strong><small>{{t .Locale "assistant.supports_images_description"}}</small></span></label>
         </div>
         <footer><button class="button" type="button" data-close-llm>{{t .Locale "common.cancel"}}</button><button class="button button--primary" type="submit"><span data-lucide="check" aria-hidden="true"></span>{{t .Locale "assistant.save_configuration"}}</button></footer>
       </form>

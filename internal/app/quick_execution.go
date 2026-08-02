@@ -368,6 +368,7 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 		return
 	}
 	a.recordAuditForRequest(request, "create_quick_run_from_source", id, "succeeded")
+	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }
 
@@ -462,6 +463,7 @@ func (a *App) startOneTimeRun(response http.ResponseWriter, request *http.Reques
 		http.Error(response, "Unable to start one-time Run: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/history/runs/"+url.PathEscape(id), http.StatusSeeOther)
 }
 

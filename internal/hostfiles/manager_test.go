@@ -188,7 +188,7 @@ func TestManagerTrashIsRecoverableAndPrivateToTheFilesystem(t *testing.T) {
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("original path still exists: %v", err)
 	}
-	if filepath.Dir(trashed.StoredPath) != filepath.Join(filesystem, ".scriptboard-trash") {
+	if filepath.Dir(filepath.Dir(trashed.StoredPath)) != filepath.Join(filesystem, ".scriptboard-trash") {
 		t.Fatalf("trash path = %q", trashed.StoredPath)
 	}
 	entries, err := manager.List(filesystem)
@@ -209,7 +209,7 @@ func TestManagerTrashIsRecoverableAndPrivateToTheFilesystem(t *testing.T) {
 	}
 }
 
-func TestManagerRefusesTrashOwnedByAnotherInstance(t *testing.T) {
+func TestManagerIsolatesTrashOwnedByAnotherInstance(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -229,11 +229,19 @@ func TestManagerRefusesTrashOwnedByAnotherInstance(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := manager.MoveToTrash(path, "entry-id"); err == nil {
-		t.Fatal("delete adopted a trash directory owned by another instance")
+	trashed, err := manager.MoveToTrash(path, "entry-id")
+	if err != nil {
+		t.Fatalf("move to isolated instance trash: %v", err)
 	}
-	if content, err := os.ReadFile(path); err != nil || string(content) != "keep" {
-		t.Fatalf("source changed after trash ownership rejection: content=%q error=%v", content, err)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("source still exists after move: %v", err)
+	}
+	if filepath.Dir(filepath.Dir(trashed.StoredPath)) != trashRoot {
+		t.Fatalf("instance trash escaped shared container: %q", trashed.StoredPath)
+	}
+	marker, err := os.ReadFile(filepath.Join(trashRoot, ".scriptboard-owner"))
+	if err != nil || string(marker) != "scriptboard-trash-v1\nother-instance\n" {
+		t.Fatalf("legacy owner marker changed: %q, %v", marker, err)
 	}
 }
 

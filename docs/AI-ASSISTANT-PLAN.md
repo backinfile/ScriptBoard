@@ -9,6 +9,10 @@
 语法检查、真实受管 Pi 0.83.0 Provider 连接、只读工具、一次性批准/拒绝，以及桌面和
 390px 外部 Chrome 验收均通过。测试凭据只保存在隔离 State Root 私有凭据文件中。
 
+后续能力增强（Profile、Session Telemetry、Evidence Query 与安全图片上下文）见
+[Pi Agent 能力增强实施计划](./PI-AGENT-CAPABILITY-PLAN.md)；其发布门禁独立于本基线的
+完成状态。
+
 ## 1. 目标
 
 为 ScriptBoard 增加原生 `/ai` 对话工作区，并通过 Pi 的 RPC 模式提供流式 Agent
@@ -545,7 +549,10 @@ SQLite 写入；完成时保存最终规范消息。
 ### 15.4 `assistant_tool_calls`
 
 保存 Tool Call ID、消息、工具名、目标摘要、脱敏参数摘要、状态、错误码、开始/结束
-时间和结果摘要。不保存完整日志、文件正文或未经脱敏的任意工具 JSON。
+时间、结果摘要，以及用于对话内检查的有界调用 JSON 和返回 JSON。调用 JSON 只包含
+Tool Call ID、工具名和请求参数，不包含 Tool Broker capability、Provider 凭据或其他
+进程秘密；返回 JSON 保存实际的有界 Broker Response。完整日志、越过工具结果上限的
+文件正文和未经脱敏的敏感数据仍不持久化。
 
 ### 15.5 `assistant_approvals`
 

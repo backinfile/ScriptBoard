@@ -9,7 +9,7 @@ import (
 
 const (
 	Repository             = "backinfile/ScriptBoard"
-	DatabaseSchemaVersion  = 21
+	DatabaseSchemaVersion  = 24
 	UpdaterProtocolVersion = 1
 	ReleaseInfoFilename    = "RELEASE.json"
 )

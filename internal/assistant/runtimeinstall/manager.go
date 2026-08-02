@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"scriptboard/internal/assistant/capability"
 	"scriptboard/internal/assistant/pirpc"
 	"scriptboard/internal/diskspace"
 	updatepkg "scriptboard/internal/update"
@@ -38,12 +39,13 @@ type RuntimeMetadata struct {
 	BrokerContract int    `json:"brokerContract"`
 	Executable     string `json:"executable"`
 	Extension      string `json:"extension"`
+	Capabilities   string `json:"capabilities,omitempty"`
 	Upstream       string `json:"upstream"`
 	UpstreamCommit string `json:"upstreamCommit"`
 }
 
 type Candidate struct {
-	StateRoot, Root, Version, Executable, Extension string
+	StateRoot, Root, Version, Executable, Extension, Capabilities string
 }
 
 type Version struct {
@@ -430,7 +432,8 @@ func validateRuntimeDirectory(stateRoot, root, expectedVersion string) (Candidat
 		metadata.RPCContract != RPCContract || metadata.BrokerContract != BrokerContract ||
 		metadata.Executable != runtimeExecutableName() || metadata.Extension != "scriptboard-extension.ts" ||
 		metadata.Upstream != "https://github.com/earendil-works/pi/releases/tag/v"+expectedVersion ||
-		len(metadata.UpstreamCommit) != 40 || !validLowerHex(metadata.UpstreamCommit) {
+		len(metadata.UpstreamCommit) != 40 || !validLowerHex(metadata.UpstreamCommit) ||
+		metadata.Capabilities != "" && metadata.Capabilities != "capabilities.json" {
 		return Candidate{}, errors.New("assistant runtime metadata is incompatible")
 	}
 	rootInfo, err := os.Lstat(root)
@@ -438,6 +441,9 @@ func validateRuntimeDirectory(stateRoot, root, expectedVersion string) (Candidat
 		return Candidate{}, errors.New("assistant runtime root is unsafe")
 	}
 	required := []string{metadata.Executable, metadata.Extension, "LICENSE", "runtime.json"}
+	if metadata.Capabilities != "" {
+		required = append(required, metadata.Capabilities)
+	}
 	for _, name := range required {
 		info, err := os.Lstat(filepath.Join(root, name))
 		if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() <= 0 {
@@ -467,9 +473,16 @@ func validateRuntimeDirectory(stateRoot, root, expectedVersion string) (Candidat
 	if err != nil {
 		return Candidate{}, err
 	}
+	capabilities := ""
+	if metadata.Capabilities != "" {
+		if _, err := capability.Load(root); err != nil {
+			return Candidate{}, fmt.Errorf("assistant runtime capability bundle is invalid: %w", err)
+		}
+		capabilities = filepath.Join(root, metadata.Capabilities)
+	}
 	return Candidate{
 		StateRoot: stateRoot, Root: root, Version: metadata.PiVersion,
-		Executable: filepath.Join(root, metadata.Executable), Extension: filepath.Join(root, metadata.Extension),
+		Executable: filepath.Join(root, metadata.Executable), Extension: filepath.Join(root, metadata.Extension), Capabilities: capabilities,
 	}, nil
 }
 

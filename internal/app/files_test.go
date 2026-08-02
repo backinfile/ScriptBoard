@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"io/fs"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -1346,12 +1347,25 @@ func TestAdminCanPermanentlyPurgeTrashEntry(t *testing.T) {
 	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/resources/trash" {
 		t.Fatalf("purge response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
-	entries, err := os.ReadDir(filepath.Join(hostRoot, ".scriptboard-trash"))
-	if err != nil {
+	trashRoot := filepath.Join(hostRoot, ".scriptboard-trash")
+	markerCount := 0
+	if err := filepath.WalkDir(trashRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if entry.Name() != ".scriptboard-owner" {
+			t.Fatalf("purged content remains in filesystem trash: %s", path)
+		}
+		markerCount++
+		return nil
+	}); err != nil {
 		t.Fatalf("read trash directory: %v", err)
 	}
-	if len(entries) != 1 || entries[0].Name() != ".scriptboard-owner" {
-		t.Fatalf("purged content remains or ownership marker is missing: %v", entries)
+	if markerCount != 2 {
+		t.Fatalf("filesystem and instance ownership markers are missing: %d", markerCount)
 	}
 }
 

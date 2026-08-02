@@ -39,6 +39,7 @@ import (
 
 	"scriptboard/internal/appstatus"
 	"scriptboard/internal/assistant"
+	"scriptboard/internal/assistant/raster"
 	"scriptboard/internal/assistant/runtimeinstall"
 	"scriptboard/internal/assistant/toolbroker"
 	"scriptboard/internal/buildinfo"
@@ -306,6 +307,7 @@ type App struct {
 	assistantRuntime   *assistantRuntimeCoordinator
 	assistantRuntimes  *runtimeinstall.Manager
 	assistantTools     *assistantToolExecutor
+	assistantRaster    *raster.Processor
 	assistantBroker    *toolbroker.Broker
 	files              *hostfiles.Manager
 	fileOperations     *sqliteFileOperationStore
@@ -408,6 +410,7 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("initialize assistant module: %w", err)
 	}
+	application.assistantRaster = raster.New(2)
 	if !validating {
 		if _, err := application.assistant.RecoverInterruptedTurns(context.Background()); err != nil {
 			_ = db.Close()
@@ -1222,6 +1225,74 @@ func openDatabase(path string) (*sql.DB, error) {
 			return nil, fmt.Errorf("initialize Assistant SQLite schema: %w", err)
 		}
 	}
+	if schemaVersion == 21 {
+		if _, err := migration.Exec(`ALTER TABLE assistant_tool_calls ADD COLUMN body_offset INTEGER NOT NULL DEFAULT 0`); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("migrate Assistant tool-call positions: %w", err)
+		}
+		if _, err := migration.Exec(`UPDATE assistant_tool_calls SET body_offset = COALESCE(
+			(SELECT LENGTH(body) FROM assistant_messages WHERE id = assistant_tool_calls.message_id), 0)`); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("backfill Assistant tool-call positions: %w", err)
+		}
+	}
+	if schemaVersion == 21 || schemaVersion == 22 {
+		for _, statement := range []string{
+			`ALTER TABLE assistant_tool_calls ADD COLUMN request_json TEXT NOT NULL DEFAULT '{}'`,
+			`ALTER TABLE assistant_tool_calls ADD COLUMN response_json TEXT NOT NULL DEFAULT 'null'`,
+		} {
+			if _, err := migration.Exec(statement); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("migrate Assistant tool-call JSON payloads: %w", err)
+			}
+		}
+	}
+	if schemaVersion >= 21 && schemaVersion <= 23 {
+		exists, err := sqliteColumnExists(migration, "assistant_models", "supports_images")
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("inspect Assistant model capability migration: %w", err)
+		}
+		if !exists {
+			if _, err := migration.Exec(`ALTER TABLE assistant_models ADD COLUMN supports_images INTEGER NOT NULL DEFAULT 0`); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("migrate Assistant model image capability: %w", err)
+			}
+		}
+		for _, column := range []struct{ name, definition string }{
+			{"capability_profile", `capability_profile TEXT NOT NULL DEFAULT 'general' CHECK (capability_profile IN ('general', 'diagnose-failed-run', 'investigate-website-incident', 'triage-host-pressure', 'review-script-safety', 'design-schedule'))`},
+			{"profile_version", `profile_version TEXT NOT NULL DEFAULT ''`},
+			{"thinking_level", `thinking_level TEXT NOT NULL DEFAULT 'medium' CHECK (thinking_level IN ('off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'))`},
+			{"stats_user_messages", `stats_user_messages INTEGER NOT NULL DEFAULT 0`},
+			{"stats_assistant_messages", `stats_assistant_messages INTEGER NOT NULL DEFAULT 0`},
+			{"stats_tool_calls", `stats_tool_calls INTEGER NOT NULL DEFAULT 0`},
+			{"stats_tool_results", `stats_tool_results INTEGER NOT NULL DEFAULT 0`},
+			{"stats_total_messages", `stats_total_messages INTEGER NOT NULL DEFAULT 0`},
+			{"stats_input_tokens", `stats_input_tokens INTEGER NOT NULL DEFAULT 0`},
+			{"stats_output_tokens", `stats_output_tokens INTEGER NOT NULL DEFAULT 0`},
+			{"stats_cache_read_tokens", `stats_cache_read_tokens INTEGER NOT NULL DEFAULT 0`},
+			{"stats_cache_write_tokens", `stats_cache_write_tokens INTEGER NOT NULL DEFAULT 0`},
+			{"stats_total_tokens", `stats_total_tokens INTEGER NOT NULL DEFAULT 0`},
+			{"stats_cost", `stats_cost REAL NOT NULL DEFAULT 0`},
+			{"stats_context_tokens", `stats_context_tokens INTEGER NOT NULL DEFAULT 0`},
+			{"stats_context_window", `stats_context_window INTEGER NOT NULL DEFAULT 0`},
+			{"stats_context_percent", `stats_context_percent REAL`},
+			{"stats_updated_at", `stats_updated_at INTEGER NOT NULL DEFAULT 0`},
+		} {
+			exists, err := sqliteColumnExists(migration, "assistant_conversations", column.name)
+			if err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("inspect Assistant capability migration: %w", err)
+			}
+			if exists {
+				continue
+			}
+			if _, err := migration.Exec(`ALTER TABLE assistant_conversations ADD COLUMN ` + column.definition); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("migrate Assistant capability profiles and telemetry: %w", err)
+			}
+		}
+	}
 	for _, statement := range []string{
 		"CREATE UNIQUE INDEX IF NOT EXISTS users_single_administrator_idx ON users(role) WHERE role = 'administrator'",
 		"CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id)",
@@ -1274,11 +1345,32 @@ func openDatabase(path string) (*sql.DB, error) {
 }
 
 func compatibleDatabaseSchema(version int) bool {
-	// Schema 20 is the clean host-filesystem baseline. Schema 21 adds only
-	// assistant-owned tables and indexes, so it has one explicit, transactional
-	// forward migration. Older legacy layouts remain incompatible and are still
-	// rejected before the database is opened for writing.
-	return version == currentSchemaVersion || currentSchemaVersion == 21 && version == 20
+	// Schema 20 is the clean host-filesystem baseline. Schema 21 adds the
+	// assistant-owned tables, schema 22 adds persisted tool-call text positions,
+	// schema 23 adds bounded request/response JSON, and schema 24 adds
+	// capability profiles plus bounded Pi session telemetry. Each supported
+	// predecessor has an explicit transactional forward path.
+	return version == currentSchemaVersion || currentSchemaVersion == 24 && version >= 20 && version <= 23
+}
+
+func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {
+	rows, err := transaction.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var position, notNull, primaryKey int
+		var name, dataType string
+		var defaultValue any
+		if err := rows.Scan(&position, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 func readSQLiteHeaderUserVersion(path string) (int, error) {
@@ -1452,6 +1544,9 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /ai/conversations/{id}/events", a.requireSession(http.HandlerFunc(a.assistantConversationEvents)))
 	mux.Handle("POST /ai/conversations/{id}/model", a.requireSession(http.HandlerFunc(a.setAssistantConversationModel)))
 	mux.Handle("POST /ai/conversations/{id}/approval-mode", a.requireSession(http.HandlerFunc(a.setAssistantApprovalMode)))
+	mux.Handle("POST /ai/conversations/{id}/profile", a.requireSession(http.HandlerFunc(a.setAssistantCapabilityProfile)))
+	mux.Handle("POST /ai/conversations/{id}/thinking", a.requireSession(http.HandlerFunc(a.setAssistantThinkingLevel)))
+	mux.Handle("POST /ai/conversations/{id}/compact", a.requireSession(http.HandlerFunc(a.compactAssistantConversation)))
 	mux.Handle("POST /ai/conversations/{id}/approvals/{approval_id}", a.requireSession(http.HandlerFunc(a.resolveAssistantApproval)))
 	mux.Handle("POST /ai/conversations/{id}/archive", a.requireSession(http.HandlerFunc(a.archiveAssistantConversation)))
 	mux.Handle("POST /ai/conversations/{id}/restore", a.requireSession(http.HandlerFunc(a.restoreAssistantConversation)))
@@ -1505,6 +1600,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /settings/account/password", a.requireSession(http.HandlerFunc(a.accountPasswordTask)))
 	mux.Handle("POST /settings/account/password", a.requireSession(http.HandlerFunc(a.changePassword)))
 	mux.Handle("GET /settings/users", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.usersPage)))
+	mux.Handle("GET /settings/users/create", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.createUserTask)))
 	mux.Handle("POST /settings/users", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.createUser)))
 	mux.Handle("GET /settings/users/{id}/edit", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.editUserTask)))
 	mux.Handle("POST /settings/users/{id}/disable", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.disableUser)))
@@ -2226,6 +2322,7 @@ func (a *App) createSchedule(response http.ResponseWriter, request *http.Request
 		return
 	}
 	a.recordAuditForRequest(request, "create_schedule", id, "succeeded")
+	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/config/schedules", http.StatusSeeOther)
 }
 
@@ -2309,6 +2406,7 @@ func (a *App) runScheduleNow(response http.ResponseWriter, request *http.Request
 		return
 	}
 	a.recordAuditForRequest(request, "run_schedule_now", request.PathValue("id"), "accepted")
+	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/history/runs/"+url.PathEscape(id), http.StatusSeeOther)
 }
 
@@ -2412,6 +2510,7 @@ func (a *App) saveQuickRun(response http.ResponseWriter, request *http.Request) 
 		return
 	}
 	a.recordAuditForRequest(request, "create_quick_run", id, "succeeded")
+	response.Header().Set(assistantResourceIDHeader, id)
 	destination := "/config/quick-runs"
 	if request.Header.Get("X-ScriptBoard-Navigation") == "pjax" {
 		destination = "/history/runs/" + url.PathEscape(source.ID)
@@ -2472,6 +2571,7 @@ func (a *App) createQuickRunFromFile(response http.ResponseWriter, request *http
 		return
 	}
 	a.recordAuditForRequest(request, "create_quick_run", id, "succeeded")
+	response.Header().Set(assistantResourceIDHeader, id)
 	destination := "/config/quick-runs"
 	if request.Header.Get("X-ScriptBoard-Navigation") == "pjax" {
 		if returnTo := safeFilesReturnTo(request.FormValue("return_to")); returnTo != "" {
@@ -2604,6 +2704,7 @@ func (a *App) startQuickRun(response http.ResponseWriter, request *http.Request)
 		return
 	}
 	a.recordAuditForRequest(request, "start_quick_run", quick.ID, "accepted")
+	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/history/runs/"+url.PathEscape(id), http.StatusSeeOther)
 }
 
@@ -2940,6 +3041,7 @@ func (a *App) startRun(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	a.recordAuditForRequest(request, "start_run", id, "accepted")
+	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/history/runs/"+url.PathEscape(id), http.StatusSeeOther)
 }
 
@@ -3452,6 +3554,7 @@ func (a *App) saveText(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	a.recordAuditForRequest(request, "edit_text", relative, "succeeded")
+	response.Header().Set(assistantResourceIDHeader, id)
 	parent, _ := hostPathParent(relative)
 	http.Redirect(response, request, filesURL(parent), http.StatusSeeOther)
 }
@@ -3570,6 +3673,7 @@ func (a *App) deleteFile(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	a.recordAuditForRequest(request, "trash_entry", trashed.OriginalPath, "succeeded")
+	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/resources/trash", http.StatusSeeOther)
 }
 

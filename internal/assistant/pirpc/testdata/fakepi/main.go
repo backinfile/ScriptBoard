@@ -10,7 +10,8 @@ import (
 )
 
 type command struct {
-	ID, Type, Message, Provider, ModelID string
+	ID, Type, Message, Provider, ModelID, Level string
+	Enabled                                     *bool
 }
 
 func main() {
@@ -75,6 +76,14 @@ func main() {
 			return
 		case "get_state":
 			fmt.Printf("{\"id\":%q,\"type\":\"response\",\"command\":\"get_state\",\"success\":true,\"data\":{\"isStreaming\":false}}\n", request.ID)
+		case "set_thinking_level", "set_auto_compaction", "set_auto_retry":
+			fmt.Printf("{\"id\":%q,\"type\":\"response\",\"command\":%q,\"success\":true}\n", request.ID, request.Type)
+		case "get_available_thinking_levels":
+			fmt.Printf("{\"id\":%q,\"type\":\"response\",\"command\":\"get_available_thinking_levels\",\"success\":true,\"data\":{\"levels\":[\"off\",\"low\",\"medium\",\"high\"]}}\n", request.ID)
+		case "get_session_stats":
+			fmt.Printf("{\"id\":%q,\"type\":\"response\",\"command\":\"get_session_stats\",\"success\":true,\"data\":{\"userMessages\":1,\"assistantMessages\":1,\"toolCalls\":0,\"toolResults\":0,\"totalMessages\":2,\"tokens\":{\"input\":1800,\"output\":500,\"cacheRead\":0,\"cacheWrite\":0,\"total\":2300},\"cost\":0.08,\"contextUsage\":{\"tokens\":4000,\"contextWindow\":16000,\"percent\":25}}}\n", request.ID)
+		case "compact":
+			fmt.Printf("{\"id\":%q,\"type\":\"response\",\"command\":\"compact\",\"success\":true,\"data\":{\"tokensBefore\":2300,\"estimatedTokensAfter\":900,\"firstKeptEntryId\":\"entry-2\"}}\n", request.ID)
 		default:
 			fmt.Printf("{\"id\":%q,\"type\":\"response\",\"command\":%q,\"success\":false}\n", request.ID, request.Type)
 		}

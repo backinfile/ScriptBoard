@@ -139,7 +139,7 @@
 
 - [ ] SQLite 运行时 WAL、FULL synchronous、foreign keys 与 busy timeout 生效。
 - [ ] Run 输出不逐事件写入 SQLite。
-- [ ] 全新 State Root 创建 schema 21；schema 20 在单事务内只增加 Assistant 表并升级到 21，原用户与业务数据保持不变；早于 20 或高于当前版本的数据库在写入前明确拒绝。
+- [x] 全新 State Root 创建 schema 24；schema 20–23 在单事务内执行显式兼容迁移，原用户与业务数据保持不变；早于 20 或高于当前版本的数据库在写入前明确拒绝。
 - [ ] 带 `managed_root`、`git_executable` 的旧 YAML、环境变量和命令行参数明确拒绝；旧浏览器固定项不迁移。
 - [ ] 状态卷低于 100 MiB 拒绝新执行；任一实际目标文件系统低于 100 MiB 时拒绝对应写操作。
 - [ ] `doctor` 只读检查配置、受保护路径、SQLite、日志、执行器、端口、TLS、服务和关键磁盘，不泄漏敏感值。
@@ -266,3 +266,20 @@ MVP 不验收自定义 RBAC、沙箱、公共 API、DAG、多服务器、Docker 
   安全归档、许可证和 RPC 验活；活动 Turn/审批时拒绝切换，失败不改变活动指针。
 - [x] 桌面 Chromium 和目标移动视口覆盖对话 Rail、Transcript、Composer、资源选择、
   Inspector、LLM 抽屉、侧栏折叠与中英文；无横向溢出、导航滚动条或未对齐图标。
+
+### 19.1 Pi Agent 能力增强
+
+- [x] schema 24 保存 Conversation Profile、Profile 版本、thinking level、Pi session
+  telemetry 和模型 `supports_images` 事实；schema 21–23 单事务迁移，旧值采用安全默认。
+- [x] 活动 Runtime 可选携带摘要固定的 Capability Bundle；非通用 Profile 只解析完全
+  匹配的 Playbook，缺失或校验失败时拒绝 Turn，且不改变角色、工具权限和审批策略。
+- [x] Inspector 展示最后采集的 Token、上下文、工具调用和估算费用；thinking 与手动压缩
+  只在空闲状态修改，Pi 自动压缩和自动重试在新进程上明确启用。
+- [x] Run/Source Log 搜索、Run 窗口、Run 对比、计划历史与审计列表经 Tool Broker 返回
+  有界证据；分页游标签名、短期过期并绑定用户、对话、工具、目标和查询。
+- [x] 明确引用的 PNG/JPEG/WebP 重新授权后由服务端限量、缩放、重新编码和移除元数据；
+  每次最多四张，只在模型配置和 Pi session 都确认图片输入时发送，base64 不持久化。
+- [ ] 五个候选 Playbook 尚需在正式发布模型集合上完成相对基线、held-out 与 pass^5 门禁；
+  未通过者不得在正式 Release 中宣称为稳定能力。
+- [ ] 正式签名 Runtime 安装/回退和桌面/移动 Chromium 视觉门禁须在发布候选资产上执行。
+- [x] 外部知识 Adapter 未启用；默认运行不会因此增加 DNS、HTTP、第三方 OAuth 或遥测。

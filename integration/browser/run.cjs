@@ -742,8 +742,14 @@ async function assertStatusDisplaySettings(page, baseURL) {
 async function assertUserManagement(page, baseURL) {
   await page.goto(`${baseURL}/settings/users`);
   assert.equal((await page.locator("main h1").textContent()).trim(), "Users");
+  const createLink = page.locator('a[href="/settings/users/create"][data-task-link]');
+  assert.equal(await createLink.count(), 1);
+  assert.equal(await page.locator('form[action="/settings/users"]').count(), 0);
+  await createLink.click();
+  const createPanel = page.locator('.task-panel [data-task-kind="user-create"]');
+  await createPanel.waitFor();
   assert.deepEqual(
-    await page.locator('form[action="/settings/users"] select[name="role"] option').evaluateAll(options =>
+    await createPanel.locator('select[name="role"] option').evaluateAll(options =>
       options.map(option => ({ value: option.value, label: option.textContent.trim() }))),
     [
       { value: "maintainer", label: "Maintainer" },
@@ -751,7 +757,7 @@ async function assertUserManagement(page, baseURL) {
       { value: "viewer", label: "Viewer" },
     ],
   );
-  const createForm = page.locator('form[action="/settings/users"]');
+  const createForm = createPanel.locator('form[action="/settings/users"]');
   await createForm.locator('input[name="username"]').fill("browser-viewer");
   await createForm.locator('select[name="role"]').selectOption("viewer");
   await Promise.all([
@@ -853,7 +859,7 @@ async function assertAssistantSettingsAndWorkspace(page, baseURL) {
 
   const configuredRow = page.locator('[data-llm-id][data-name="Fixture · DeepSeek"]');
   await configuredRow.waitFor();
-  assert.equal(await configuredRow.locator("input").count(), 0);
+  assert.equal(await configuredRow.locator('input:not([type="hidden"])').count(), 0);
   assert.match(await configuredRow.textContent(), /Credential configured/);
   await configuredRow.locator("[data-edit-llm]").click();
   await drawer.waitFor();
@@ -1963,7 +1969,13 @@ async function assertAssistantSettingsAndWorkspace(page, baseURL) {
     ]);
     await chinesePage.goto(`${fixture.baseURL}/settings/users`);
     assert.equal((await chinesePage.locator("main h1").textContent()).trim(), "用户");
-    assert.equal((await chinesePage.locator('form[action="/settings/users"] button[type="submit"]').textContent()).trim(), "创建用户");
+    const createUserTask = chinesePage.locator('a[href="/settings/users/create"][data-task-link]');
+    assert.equal(await createUserTask.count(), 1);
+    await createUserTask.click();
+    const createUserDrawer = chinesePage.locator(".task-panel--user-create");
+    await createUserDrawer.waitFor({ state: "visible" });
+    assert.equal((await createUserDrawer.locator('form[action="/settings/users"] button[type="submit"]').textContent()).trim(), "创建用户");
+    await createUserDrawer.locator("[data-task-panel-close]").click();
     await chinesePage.setViewportSize({ width: 390, height: 844 });
     await chinesePage.reload();
     await assertNoHorizontalOverflow(chinesePage, "用户管理移动端");

@@ -6,6 +6,7 @@ package pirpc
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,6 +34,81 @@ type AssistantMessageEvent struct {
 type AgentMessage struct {
 	Role       string `json:"role,omitempty"`
 	StopReason string `json:"stopReason,omitempty"`
+}
+
+type SessionTokens struct {
+	Input, Output, CacheRead, CacheWrite, Total int64
+}
+
+func (tokens *SessionTokens) UnmarshalJSON(data []byte) error {
+	var payload struct {
+		Input, Output, CacheRead, CacheWrite, Total int64
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return err
+	}
+	*tokens = SessionTokens(payload)
+	return nil
+}
+
+type SessionContextUsage struct {
+	Tokens        *int64   `json:"tokens"`
+	ContextWindow int64    `json:"contextWindow"`
+	Percent       *float64 `json:"percent"`
+}
+
+type SessionStats struct {
+	UserMessages, AssistantMessages, ToolCalls, ToolResults, TotalMessages int64
+	Tokens                                                                 SessionTokens
+	Cost                                                                   float64
+	ContextUsage                                                           *SessionContextUsage
+}
+
+type CompactionResult struct {
+	TokensBefore         int64  `json:"tokensBefore"`
+	EstimatedTokensAfter int64  `json:"estimatedTokensAfter"`
+	FirstKeptEntryID     string `json:"firstKeptEntryId"`
+}
+
+type PromptImage struct {
+	Type     string `json:"type"`
+	Data     string `json:"data"`
+	MIMEType string `json:"mimeType"`
+}
+
+type SessionModel struct {
+	ID    string   `json:"id"`
+	Input []string `json:"input"`
+}
+
+func (model SessionModel) SupportsImages() bool {
+	for _, input := range model.Input {
+		if input == "image" {
+			return true
+		}
+	}
+	return false
+}
+
+type SessionState struct {
+	Model         *SessionModel `json:"model"`
+	ThinkingLevel string        `json:"thinkingLevel"`
+	IsStreaming   bool          `json:"isStreaming"`
+	IsCompacting  bool          `json:"isCompacting"`
+}
+
+func (stats *SessionStats) UnmarshalJSON(data []byte) error {
+	var payload struct {
+		UserMessages, AssistantMessages, ToolCalls, ToolResults, TotalMessages int64
+		Tokens                                                                 SessionTokens
+		Cost                                                                   float64
+		ContextUsage                                                           *SessionContextUsage
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return err
+	}
+	*stats = SessionStats(payload)
+	return nil
 }
 
 // Envelope contains the common fields needed to correlate responses and map
@@ -235,14 +311,17 @@ func (decoder *Decoder) readRecord() ([]byte, error) {
 }
 
 type Command struct {
-	ID                string `json:"id,omitempty"`
-	Type              string `json:"type"`
-	Message           string `json:"message,omitempty"`
-	Provider          string `json:"provider,omitempty"`
-	ModelID           string `json:"modelId,omitempty"`
-	StreamingBehavior string `json:"streamingBehavior,omitempty"`
-	Confirmed         *bool  `json:"confirmed,omitempty"`
-	Cancelled         bool   `json:"cancelled,omitempty"`
+	ID                string        `json:"id,omitempty"`
+	Type              string        `json:"type"`
+	Message           string        `json:"message,omitempty"`
+	Images            []PromptImage `json:"images,omitempty"`
+	Provider          string        `json:"provider,omitempty"`
+	ModelID           string        `json:"modelId,omitempty"`
+	Level             string        `json:"level,omitempty"`
+	Enabled           *bool         `json:"enabled,omitempty"`
+	StreamingBehavior string        `json:"streamingBehavior,omitempty"`
+	Confirmed         *bool         `json:"confirmed,omitempty"`
+	Cancelled         bool          `json:"cancelled,omitempty"`
 }
 
 type Encoder struct {
@@ -319,10 +398,26 @@ func (client *Client) Events() <-chan Envelope { return client.events }
 func (client *Client) Errors() <-chan error    { return client.errors }
 
 func (client *Client) Prompt(ctx context.Context, requestID, message string) (Envelope, error) {
+	return client.PromptWithImages(ctx, requestID, message, nil)
+}
+
+func (client *Client) PromptWithImages(ctx context.Context, requestID, message string, images []PromptImage) (Envelope, error) {
 	if message == "" {
 		return Envelope{}, fmt.Errorf("pi RPC prompt message is required")
 	}
-	return client.request(ctx, Command{ID: requestID, Type: "prompt", Message: message})
+	if len(images) > 4 {
+		return Envelope{}, fmt.Errorf("pi RPC prompt has too many images")
+	}
+	for _, image := range images {
+		decodedBytes := base64.StdEncoding.DecodedLen(len(image.Data))
+		if image.Type != "image" || image.MIMEType != "image/jpeg" || image.Data == "" || decodedBytes <= 0 || decodedBytes > 4<<20 {
+			return Envelope{}, fmt.Errorf("pi RPC prompt image is invalid")
+		}
+		if _, err := base64.StdEncoding.DecodeString(image.Data); err != nil {
+			return Envelope{}, fmt.Errorf("pi RPC prompt image is invalid")
+		}
+	}
+	return client.request(ctx, Command{ID: requestID, Type: "prompt", Message: message, Images: append([]PromptImage(nil), images...)})
 }
 
 func (client *Client) Abort(ctx context.Context, requestID string) (Envelope, error) {
@@ -331,6 +426,124 @@ func (client *Client) Abort(ctx context.Context, requestID string) (Envelope, er
 
 func (client *Client) GetState(ctx context.Context, requestID string) (Envelope, error) {
 	return client.request(ctx, Command{ID: requestID, Type: "get_state"})
+}
+
+func (client *Client) GetSessionState(ctx context.Context, requestID string) (SessionState, error) {
+	response, err := client.GetState(ctx, requestID)
+	if err != nil {
+		return SessionState{}, err
+	}
+	var state SessionState
+	if len(response.Data) == 0 || json.Unmarshal(response.Data, &state) != nil || state.Model != nil && !validSessionModel(*state.Model) {
+		return SessionState{}, ErrMalformedRecord
+	}
+	if state.ThinkingLevel != "" && !validThinkingLevel(state.ThinkingLevel) {
+		return SessionState{}, ErrMalformedRecord
+	}
+	return state, nil
+}
+
+func validSessionModel(model SessionModel) bool {
+	if strings.TrimSpace(model.ID) == "" || len(model.Input) == 0 || len(model.Input) > 4 {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, input := range model.Input {
+		if input != "text" && input != "image" || seen[input] {
+			return false
+		}
+		seen[input] = true
+	}
+	return seen["text"]
+}
+
+func (client *Client) GetSessionStats(ctx context.Context, requestID string) (SessionStats, error) {
+	response, err := client.request(ctx, Command{ID: requestID, Type: "get_session_stats"})
+	if err != nil {
+		return SessionStats{}, err
+	}
+	var stats SessionStats
+	if len(response.Data) == 0 || json.Unmarshal(response.Data, &stats) != nil || !validSessionStats(stats) {
+		return SessionStats{}, ErrMalformedRecord
+	}
+	return stats, nil
+}
+
+func (client *Client) GetAvailableThinkingLevels(ctx context.Context, requestID string) ([]string, error) {
+	response, err := client.request(ctx, Command{ID: requestID, Type: "get_available_thinking_levels"})
+	if err != nil {
+		return nil, err
+	}
+	var payload struct {
+		Levels []string `json:"levels"`
+	}
+	if len(response.Data) == 0 || json.Unmarshal(response.Data, &payload) != nil || len(payload.Levels) == 0 || len(payload.Levels) > 7 {
+		return nil, ErrMalformedRecord
+	}
+	seen := make(map[string]struct{}, len(payload.Levels))
+	for _, level := range payload.Levels {
+		if !validThinkingLevel(level) {
+			return nil, ErrMalformedRecord
+		}
+		if _, exists := seen[level]; exists {
+			return nil, ErrMalformedRecord
+		}
+		seen[level] = struct{}{}
+	}
+	return append([]string(nil), payload.Levels...), nil
+}
+
+func (client *Client) SetThinkingLevel(ctx context.Context, requestID, level string) (Envelope, error) {
+	if !validThinkingLevel(level) {
+		return Envelope{}, fmt.Errorf("Pi RPC thinking level is invalid")
+	}
+	return client.request(ctx, Command{ID: requestID, Type: "set_thinking_level", Level: level})
+}
+
+func (client *Client) Compact(ctx context.Context, requestID string) (CompactionResult, error) {
+	response, err := client.request(ctx, Command{ID: requestID, Type: "compact"})
+	if err != nil {
+		return CompactionResult{}, err
+	}
+	var result CompactionResult
+	if len(response.Data) == 0 || json.Unmarshal(response.Data, &result) != nil ||
+		result.TokensBefore < 0 || result.EstimatedTokensAfter < 0 {
+		return CompactionResult{}, ErrMalformedRecord
+	}
+	return result, nil
+}
+
+func (client *Client) SetAutoCompaction(ctx context.Context, requestID string, enabled bool) (Envelope, error) {
+	return client.request(ctx, Command{ID: requestID, Type: "set_auto_compaction", Enabled: &enabled})
+}
+
+func (client *Client) SetAutoRetry(ctx context.Context, requestID string, enabled bool) (Envelope, error) {
+	return client.request(ctx, Command{ID: requestID, Type: "set_auto_retry", Enabled: &enabled})
+}
+
+func validThinkingLevel(level string) bool {
+	switch level {
+	case "off", "minimal", "low", "medium", "high", "xhigh", "max":
+		return true
+	default:
+		return false
+	}
+}
+
+func validSessionStats(stats SessionStats) bool {
+	if stats.UserMessages < 0 || stats.AssistantMessages < 0 || stats.ToolCalls < 0 || stats.ToolResults < 0 || stats.TotalMessages < 0 ||
+		stats.Tokens.Input < 0 || stats.Tokens.Output < 0 || stats.Tokens.CacheRead < 0 || stats.Tokens.CacheWrite < 0 || stats.Tokens.Total < 0 ||
+		stats.Cost < 0 {
+		return false
+	}
+	if stats.ContextUsage == nil {
+		return true
+	}
+	if stats.ContextUsage.ContextWindow < 0 || stats.ContextUsage.Tokens != nil && *stats.ContextUsage.Tokens < 0 ||
+		stats.ContextUsage.Percent != nil && (*stats.ContextUsage.Percent < 0 || *stats.ContextUsage.Percent > 100) {
+		return false
+	}
+	return true
 }
 
 func (client *Client) SetManagedModel(ctx context.Context, requestID, modelID string) (Envelope, error) {

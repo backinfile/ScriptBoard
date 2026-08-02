@@ -140,6 +140,7 @@ func (a *App) createScheduleGroup(response http.ResponseWriter, request *http.Re
 		return
 	}
 	a.recordAuditForRequest(request, "create_schedule_group", id, "succeeded")
+	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/config/schedules", http.StatusSeeOther)
 }
 

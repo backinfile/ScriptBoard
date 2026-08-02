@@ -170,6 +170,7 @@ func (a *App) createQuickRunGroup(response http.ResponseWriter, request *http.Re
 		return
 	}
 	a.recordAuditForRequest(request, "create_quick_run_group", id, "succeeded")
+	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }
 
@@ -550,6 +551,7 @@ func (a *App) copyQuickRun(response http.ResponseWriter, request *http.Request) 
 		return
 	}
 	a.recordAuditForRequest(request, "copy_quick_run", id, "succeeded")
+	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }
 

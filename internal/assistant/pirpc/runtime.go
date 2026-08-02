@@ -19,8 +19,8 @@ var (
 const supportedRPCContract = 1
 
 type ActiveRuntime struct {
-	Version, RollbackVersion, Executable, Extension string
-	RPCContract                                     int
+	Version, RollbackVersion, Executable, Extension, Capabilities string
+	RPCContract                                                   int
 }
 
 type ActivePointer struct {
@@ -98,7 +98,15 @@ func ResolveActiveRuntime(stateRoot string) (ActiveRuntime, error) {
 			return ActiveRuntime{}, fmt.Errorf("%w: rollback runtime is invalid", ErrRuntimeInvalid)
 		}
 	}
-	return ActiveRuntime{Version: version, RollbackVersion: rollbackVersion, Executable: executable, Extension: extension, RPCContract: document.RPCContract}, nil
+	capabilities := filepath.Join(versionRoot, "capabilities.json")
+	if _, err := os.Lstat(capabilities); errors.Is(err, os.ErrNotExist) {
+		capabilities = ""
+	} else if err != nil {
+		return ActiveRuntime{}, fmt.Errorf("%w: inspect capability bundle: %v", ErrRuntimeInvalid, err)
+	} else if err := validateRuntimeFile(versionRoot, capabilities); err != nil {
+		return ActiveRuntime{}, err
+	}
+	return ActiveRuntime{Version: version, RollbackVersion: rollbackVersion, Executable: executable, Extension: extension, Capabilities: capabilities, RPCContract: document.RPCContract}, nil
 }
 
 // WriteActiveRuntime replaces the single active/rollback pointer on the same

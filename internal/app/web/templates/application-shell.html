@@ -21,7 +21,6 @@
   </nav>
   <footer class="sidebar-footer">
     <section class="sidebar-attention" data-shell-attention aria-label="{{t .Locale "shell.current_status"}}" data-environment="{{.Environment}}" data-active-runs-label="{{t .Locale "shell.active_runs"}}" data-stopped-pinned-label="{{t .Locale "shell.stopped_pinned"}}" data-application-attention-label="{{t .Locale "shell.application_attention"}}" data-application-issues-label="{{t .Locale "shell.application_issues"}}" data-review-applications-label="{{t .Locale "shell.review_applications"}}">
-      <header class="sidebar-attention__head"><strong>{{t .Locale "shell.current_status"}}</strong></header>
       <a class="sidebar-attention__empty" href="/monitor" data-shell-attention-empty {{if or (ne .StatusState "current") (gt .ActiveRuns 0) (gt .WebsiteDown 0) (gt .WebsiteVerifying 0) (gt .StoppedPinnedApplications 0) (gt .ApplicationIssueCount 0)}}hidden{{end}}>
         <span data-lucide="circle-check" aria-hidden="true"></span>
         <strong>{{t .Locale "shell.no_attention"}}</strong>

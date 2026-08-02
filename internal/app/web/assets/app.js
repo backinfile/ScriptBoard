@@ -3900,7 +3900,11 @@
     const input = root.querySelector("[data-assistant-input]");
     const composer = root.querySelector("[data-assistant-composer]");
 	const sendButton = composer?.querySelector(".assistant-send");
+	const abortForm = root.querySelector("[data-assistant-abort]");
+	const conversationStatus = root.querySelector("[data-assistant-conversation-status]");
+	const turnLockedControls = root.querySelectorAll(".assistant-agent-controls select, .assistant-agent-controls button, .assistant-compact-button");
 	const messageList = root.querySelector("[data-assistant-message-list]");
+	const transcript = root.querySelector(".assistant-transcript");
 	const approvalPanel = root.querySelector("[data-assistant-approval-panel]");
 	const approvalForm = root.querySelector("[data-assistant-approval-form]");
 	const helper = root.querySelector("[data-assistant-error]");
@@ -3908,6 +3912,8 @@
 	const eventsURL = root.dataset.eventsUrl || "";
 	let assistantEvents = null;
 	const pendingToolCalls = new Map();
+	let followTranscript = true;
+	let transcriptScrollFrame = 0;
     const modelControl = root.querySelector("[data-model-picker]");
     const modelToggle = modelControl?.querySelector("[data-model-picker-toggle]");
     const modelPicker = modelControl?.querySelector(".assistant-model-picker");
@@ -3915,10 +3921,16 @@
     const modelLabel = root.querySelector("[data-model-picker-label]");
     const modelChoices = modelPicker ? [...modelPicker.querySelectorAll("[data-model-choice]")] : [];
     const approvalToggle = root.querySelector("[data-auto-approval-toggle]");
+    const approvalLabel = approvalToggle?.querySelector("[data-assistant-approval-label]");
 	const approvalInput = root.querySelector("[data-assistant-approval-input]");
+	const profileInput = root.querySelector("[data-assistant-profile-input]");
 	const inspectorModelName = root.querySelector("[data-assistant-inspector-model-name]");
 	const inspectorModelID = root.querySelector("[data-assistant-inspector-model-id]");
 	const inspectorApproval = root.querySelector("[data-assistant-inspector-approval]");
+	const telemetryContext = root.querySelector("[data-assistant-telemetry-context]");
+	const telemetryTokens = root.querySelector("[data-assistant-telemetry-tokens]");
+	const telemetryTools = root.querySelector("[data-assistant-telemetry-tools]");
+	const telemetryCost = root.querySelector("[data-assistant-telemetry-cost]");
     const inspectorToggle = root.querySelector("[data-assistant-inspector-toggle]");
     const inspectorClose = root.querySelector("[data-assistant-inspector-close]");
     const assistantBody = root.querySelector(".assistant-body");
@@ -3935,11 +3947,12 @@
 	contextHost?.querySelectorAll("[data-context-key]").forEach(chip => {
 		const key = chip.dataset.contextKey || "";
 		if (!key) return;
-		selectedResources.set(key, {
+	selectedResources.set(key, {
 			key,
 			kind: chip.dataset.contextKind || "",
 			id: chip.dataset.contextId || "",
 			label: chip.dataset.contextLabel || "",
+			image: resourceOptions.some(option => `${option.dataset.resourceKind}:${option.dataset.resourceId}` === key && option.dataset.resourceImage === "true"),
 		});
 	});
 	if (assistantBody && window.matchMedia("(max-width: 1180px)").matches) {
@@ -3948,15 +3961,41 @@
 	}
 
 	const messageValue = (message, camel, exported) => message?.[camel] ?? message?.[exported] ?? "";
-	const renderAssistantMarkdown = async (body, source) => {
-		if (!body) return;
-		body.dataset.markdownSource = source;
-		body.classList.remove("markdown-preview");
-		body.textContent = source;
+	const renderTelemetry = telemetry => {
+		if (!telemetry) return;
+		const contextTokens = Number(messageValue(telemetry, "contextTokens", "ContextTokens") || 0);
+		const contextWindow = Number(messageValue(telemetry, "contextWindow", "ContextWindow") || 0);
+		const totalTokens = Number(messageValue(telemetry, "totalTokens", "TotalTokens") || 0);
+		const toolCalls = Number(messageValue(telemetry, "toolCalls", "ToolCalls") || 0);
+		const cost = Number(messageValue(telemetry, "cost", "Cost") || 0);
+		if (telemetryContext) telemetryContext.textContent = `${contextTokens} / ${contextWindow}`;
+		if (telemetryTokens) telemetryTokens.textContent = String(totalTokens);
+		if (telemetryTools) telemetryTools.textContent = String(toolCalls);
+		if (telemetryCost) telemetryCost.textContent = `$${cost.toFixed(4)}`;
+	};
+	const transcriptNearBottom = () => !transcript || transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight <= 72;
+	const scrollTranscript = (force = false) => {
+		if (!transcript) return;
+		if (force) followTranscript = true;
+		if (!followTranscript) return;
+		if (transcriptScrollFrame) cancelAnimationFrame(transcriptScrollFrame);
+		transcriptScrollFrame = requestAnimationFrame(() => {
+			transcriptScrollFrame = 0;
+			if (followTranscript) transcript.scrollTop = transcript.scrollHeight;
+		});
+	};
+	const onTranscriptScroll = () => {
+		followTranscript = transcriptNearBottom();
+	};
+	const renderAssistantMarkdown = async (segment, source) => {
+		if (!segment) return;
+		segment.dataset.markdownSource = source;
+		segment.classList.remove("markdown-preview");
+		segment.textContent = source;
 		if (!source.trim()) return;
 		try {
 			await loadMarkdownLibraries();
-			if (!body.isConnected || body.dataset.markdownSource !== source) return;
+			if (!segment.isConnected || segment.dataset.markdownSource !== source) return;
 			const renderer = window.markdownit({ html: false, linkify: true, breaks: true });
 			const fragment = window.DOMPurify.sanitize(renderer.render(source), {
 				USE_PROFILES: { html: true }, SANITIZE_NAMED_PROPS: true, ALLOW_DATA_ATTR: false,
@@ -3965,17 +4004,44 @@
 			});
 			rewriteMarkdownResources(fragment, "");
 			await highlightMarkdownCode(fragment);
-			if (!body.isConnected || body.dataset.markdownSource !== source) return;
-			body.replaceChildren(fragment);
-			body.classList.add("markdown-preview");
+			if (!segment.isConnected || segment.dataset.markdownSource !== source) return;
+			segment.replaceChildren(fragment);
+			segment.classList.add("markdown-preview");
+			scrollTranscript();
 		} catch {
-			body.classList.remove("markdown-preview");
-			body.textContent = source;
+			segment.classList.remove("markdown-preview");
+			segment.textContent = source;
 		}
 	};
-	const scrollTranscript = () => {
-		const transcript = root.querySelector(".assistant-transcript");
-		if (transcript) transcript.scrollTop = transcript.scrollHeight;
+	const messageSegments = article => [...article.querySelectorAll(":scope > [data-message-segment]")];
+	const renderMessageMarkdown = article => {
+		if (!article?.classList.contains("assistant-message--assistant") || article.dataset.messageStatus === "streaming") return;
+		messageSegments(article).forEach(segment => void renderAssistantMarkdown(segment, segment.dataset.segmentSource || segment.textContent || ""));
+	};
+	const reflowAssistantMessage = article => {
+		if (!article) return;
+		const source = article.dataset.messageSource || "";
+		const characters = Array.from(source);
+		const clusters = [...article.querySelectorAll(":scope > [data-assistant-tool-cluster]")]
+			.sort((left, right) => Number(left.dataset.toolOffset || 0) - Number(right.dataset.toolOffset || 0));
+		messageSegments(article).forEach(segment => segment.remove());
+		let cursor = 0;
+		const appendSegment = value => {
+			const segment = document.createElement("div");
+			segment.dataset.messageBody = "";
+			segment.dataset.messageSegment = "";
+			segment.dataset.segmentSource = value;
+			segment.textContent = value;
+			article.append(segment);
+		};
+		clusters.forEach(cluster => {
+			const offset = Math.max(cursor, Math.min(characters.length, Number(cluster.dataset.toolOffset || 0)));
+			if (offset > cursor) appendSegment(characters.slice(cursor, offset).join(""));
+			article.append(cluster);
+			cursor = offset;
+		});
+		appendSegment(characters.slice(cursor).join(""));
+		renderMessageMarkdown(article);
 	};
 	const renderAssistantMessage = message => {
 		if (!messageList || !message) return null;
@@ -3999,20 +4065,12 @@
 				timestamp.textContent = Number.isNaN(date.getTime()) ? "" : new Intl.DateTimeFormat(locale() === "zh-CN" ? "zh-CN" : "en", { hour: "2-digit", minute: "2-digit" }).format(date);
 			}
 			header.append(author, timestamp);
-			const body = document.createElement("div");
-			body.dataset.messageBody = "";
-			article.append(header, body);
+			article.append(header);
 			messageList.append(article);
 		}
 		article.dataset.messageStatus = status;
-		const body = article.querySelector("[data-message-body]");
-		const source = messageValue(message, "body", "Body");
-		if (body && role === "assistant" && status !== "streaming") void renderAssistantMarkdown(body, source);
-		else if (body) {
-			body.dataset.markdownSource = source;
-			body.classList.remove("markdown-preview");
-			body.textContent = source;
-		}
+		article.dataset.messageSource = messageValue(message, "body", "Body");
+		reflowAssistantMessage(article);
 		const waiting = pendingToolCalls.get(id);
 		if (waiting) {
 			pendingToolCalls.delete(id);
@@ -4028,16 +4086,38 @@
 		return labels[status] || status;
 	};
 	const toolStatusIcon = status => status === "complete" ? "check" : status === "waiting_approval" ? "shield-alert" : status === "running" ? "loader-circle" : "triangle-alert";
-	function ensureToolCluster(messageID) {
+	const formatToolCountSummary = (template, values) => {
+		let index = 0;
+		return template.replace(/%d/g, () => String(values[index++] ?? 0));
+	};
+	const toolGroupTitle = count => count === 1
+		? (root.dataset.toolsCalledOne || (locale() === "zh-CN" ? "调用了 1 个工具" : "Called 1 tool"))
+		: formatToolCountSummary(root.dataset.toolsCalledMany || (locale() === "zh-CN" ? "调用了 %d 个工具" : "Called %d tools"), [count]);
+	const toolGroupPresentation = statuses => {
+		const succeeded = statuses.filter(status => status === "complete").length;
+		const active = statuses.filter(status => status === "running" || status === "waiting_approval").length;
+		const failed = statuses.length - succeeded - active;
+		const aggregateStatus = statuses.includes("running") ? "running"
+			: statuses.includes("waiting_approval") ? "waiting_approval"
+				: statuses.find(status => status !== "complete") || "complete";
+		const template = active > 0
+			? (root.dataset.toolsSummaryActive || (locale() === "zh-CN" ? "成功 %d · 失败 %d · 进行中 %d" : "%d succeeded · %d failed · %d in progress"))
+			: (root.dataset.toolsSummary || (locale() === "zh-CN" ? "成功 %d · 失败 %d" : "%d succeeded · %d failed"));
+		return { aggregateStatus, summary: formatToolCountSummary(template, active > 0 ? [succeeded, failed, active] : [succeeded, failed]) };
+	};
+	function ensureToolCluster(messageID, bodyOffset) {
 		if (!messageList || !messageID) return null;
 		const article = messageList.querySelector(`[data-message-id="${CSS.escape(messageID)}"]`);
 		if (!article) return null;
-		let cluster = article.querySelector(":scope > [data-assistant-tool-cluster]");
+		const offset = Math.max(0, Number(bodyOffset) || 0);
+		let cluster = [...article.querySelectorAll(":scope > [data-assistant-tool-cluster]")]
+			.find(candidate => Number(candidate.dataset.toolOffset || 0) === offset);
 		if (cluster) return cluster;
 		cluster = document.createElement("details");
 		cluster.className = "assistant-tool-cluster";
 		cluster.dataset.assistantToolCluster = "";
 		cluster.dataset.toolMessageId = messageID;
+		cluster.dataset.toolOffset = String(offset);
 		const summary = document.createElement("summary");
 		const iconHost = document.createElement("span");
 		iconHost.className = "assistant-tool-row__icon";
@@ -4053,17 +4133,15 @@
 		const status = document.createElement("span");
 		status.className = "assistant-tool-status";
 		status.dataset.toolClusterStatus = "";
-		const count = document.createElement("span");
-		count.className = "assistant-tool-cluster__count";
-		count.dataset.toolClusterCount = "";
 		const chevron = document.createElement("span");
 		chevron.dataset.lucide = "chevron-down";
-		summary.append(iconHost, identity, status, count, chevron);
+		summary.append(iconHost, identity, status, chevron);
 		const list = document.createElement("div");
 		list.className = "assistant-tool-list";
 		list.dataset.assistantToolList = "";
 		cluster.append(summary, list);
 		article.append(cluster);
+		reflowAssistantMessage(article);
 		return cluster;
 	}
 	function renderToolCall(call) {
@@ -4071,7 +4149,8 @@
 		const id = messageValue(call, "id", "ID");
 		if (!id) return null;
 		const messageID = messageValue(call, "messageId", "MessageID");
-		const cluster = ensureToolCluster(messageID);
+		const bodyOffset = messageValue(call, "bodyOffset", "BodyOffset");
+		const cluster = ensureToolCluster(messageID, bodyOffset);
 		if (!cluster) {
 			if (messageID) {
 				const waiting = pendingToolCalls.get(messageID) || [];
@@ -4104,8 +4183,24 @@
 			summary.append(iconHost, identity, status, chevron);
 			const details = document.createElement("div");
 			details.className = "assistant-tool-row__details";
-			const list = document.createElement("dl");
-			details.append(list);
+			const jsonGrid = document.createElement("div");
+			jsonGrid.className = "assistant-tool-json-grid";
+			const jsonBlock = (label, dataAttribute) => {
+				const section = document.createElement("section");
+				const heading = document.createElement("h4");
+				heading.textContent = label;
+				const pre = document.createElement("pre");
+				const code = document.createElement("code");
+				code.dataset[dataAttribute] = "";
+				pre.append(code);
+				section.append(heading, pre);
+				return section;
+			};
+			jsonGrid.append(
+				jsonBlock(root.dataset.toolCallJsonLabel || (locale() === "zh-CN" ? "调用 JSON" : "Call JSON"), "toolRequestJson"),
+				jsonBlock(root.dataset.toolResponseJsonLabel || (locale() === "zh-CN" ? "返回 JSON" : "Response JSON"), "toolResponseJson"),
+			);
+			details.append(jsonGrid);
 			row.append(summary, details);
 			toolList.append(row);
 		}
@@ -4117,30 +4212,20 @@
 		row.querySelector("summary small").textContent = target;
 		row.querySelector("[data-tool-status-label]").textContent = toolStatusLabel(status);
 		replaceIconHost(row.querySelector("[data-tool-status-icon]"), toolStatusIcon(status));
-		const details = row.querySelector("dl");
-		details.replaceChildren();
-		const detailRow = (label, value, code = false) => {
-			if (!value) return;
-			const host = document.createElement("div");
-			const term = document.createElement("dt");
-			term.textContent = label;
-			const description = document.createElement("dd");
-			const body = code ? document.createElement("code") : document.createTextNode(value);
-			if (code) body.textContent = value;
-			description.append(body);
-			host.append(term, description);
-			details.append(host);
-		};
-		detailRow(locale() === "zh-CN" ? "规范参数" : "Normalized parameters", messageValue(call, "parameterSummary", "ParameterSummary"));
-		detailRow(locale() === "zh-CN" ? "结果摘要" : "Result summary", messageValue(call, "resultSummary", "ResultSummary"));
-		detailRow(locale() === "zh-CN" ? "错误码" : "Error code", messageValue(call, "errorCode", "ErrorCode"), true);
-		cluster.querySelector("[data-tool-cluster-name]").textContent = name;
-		cluster.querySelector("[data-tool-cluster-target]").textContent = target;
-		cluster.querySelector("[data-tool-cluster-status]").textContent = toolStatusLabel(status);
-		cluster.querySelector("[data-tool-cluster-count]").textContent = String(toolList.children.length);
-		replaceIconHost(cluster.querySelector("[data-tool-status-icon]"), toolStatusIcon(status));
+		row.querySelector("[data-tool-request-json]").textContent = messageValue(call, "requestJSON", "RequestJSON") || "{}";
+		row.querySelector("[data-tool-response-json]").textContent = messageValue(call, "responseJSON", "ResponseJSON") || "null";
+		const rows = [...toolList.querySelectorAll(":scope > [data-tool-call-id]")];
+		const statuses = rows.map(item => item.dataset.toolStatus || "running");
+		const { aggregateStatus, summary } = toolGroupPresentation(statuses);
+		cluster.querySelector("[data-tool-cluster-name]").textContent = toolGroupTitle(rows.length);
+		cluster.querySelector("[data-tool-cluster-target]").textContent = summary;
+		cluster.querySelector("[data-tool-cluster-status]").textContent = toolStatusLabel(aggregateStatus);
+		replaceIconHost(cluster.querySelector("[data-tool-status-icon]"), toolStatusIcon(aggregateStatus));
+		const article = cluster.closest("[data-message-id]");
+		reflowAssistantMessage(article);
 		renderIcons(row);
 		renderIcons(cluster);
+		scrollTranscript();
 		return row;
 	}
 	const renderApproval = (approval, call) => {
@@ -4185,8 +4270,17 @@
 	};
 	const approvalClock = window.setInterval(updateApprovalExpiry, 1000);
 	updateApprovalExpiry();
-	const setTurnRunning = running => {
+	const setConversationStatus = status => {
+		if (!conversationStatus || !status) return;
+		const normalized = status === "complete" ? "idle" : status === "error" ? "failed" : status;
+		const label = conversationStatus.getAttribute(`data-label-${normalized}`);
+		if (label) conversationStatus.textContent = label;
+	};
+	const setTurnRunning = (running, status = running ? "running" : "idle") => {
 		if (sendButton) sendButton.disabled = running || root.dataset.runtimeAvailable !== "true";
+		if (abortForm) abortForm.hidden = !running;
+		turnLockedControls.forEach(control => { control.disabled = running; });
+		setConversationStatus(status);
 		if (helper) helper.textContent = running ? (locale() === "zh-CN" ? "Pi 正在生成…" : "Pi is responding…") : helperDefault;
 	};
 	const handleAssistantEvent = event => {
@@ -4198,8 +4292,11 @@
 			(payload.messages || []).forEach(renderAssistantMessage);
 			(payload.toolCalls || []).forEach(renderToolCall);
 			renderApproval(payload.approval, (payload.toolCalls || []).find(call => messageValue(call, "id", "ID") === messageValue(payload.approval, "toolCallId", "ToolCallID")));
-			const running = (payload.messages || []).some(message => messageValue(message, "status", "Status") === "streaming");
-			setTurnRunning(running);
+			const messages = payload.messages || [];
+			const running = messages.some(message => messageValue(message, "status", "Status") === "streaming");
+			const latestAssistant = [...messages].reverse().find(message => messageValue(message, "role", "Role") === "assistant");
+			const settledStatus = latestAssistant ? messageValue(latestAssistant, "status", "Status") : "idle";
+			setTurnRunning(running, payload.approval ? "waiting_approval" : running ? "running" : settledStatus);
 			return;
 		}
 		if (event.type === "message") {
@@ -4210,8 +4307,14 @@
 		if (["tool_started", "tool_updated", "tool_finished", "approval_requested", "approval_resolved"].includes(event.type)) {
 			const call = payload.toolCall || payload.ToolCall;
 			renderToolCall(call);
-			if (event.type === "approval_requested") renderApproval(payload.approval || payload.Approval, call);
-			if (event.type === "approval_resolved") renderApproval(null, call);
+			if (event.type === "approval_requested") {
+				renderApproval(payload.approval || payload.Approval, call);
+				setTurnRunning(true, "waiting_approval");
+			}
+			if (event.type === "approval_resolved") {
+				renderApproval(null, call);
+				setTurnRunning(true, "running");
+			}
 			return;
 		}
 		if (event.type === "retrying" || event.type === "compacting") {
@@ -4228,24 +4331,24 @@
 		const messageId = payload.messageId || payload.MessageID || "";
 		const article = messageId && messageList?.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
 		if (event.type === "delta") {
-			const body = article?.querySelector("[data-message-body]");
-			if (body) {
-				body.classList.remove("markdown-preview");
+			if (article) {
 				const cumulative = payload.body ?? payload.Body;
-				if (typeof cumulative === "string") body.textContent = cumulative;
-				else body.textContent += payload.delta || payload.Delta || "";
-				body.dataset.markdownSource = body.textContent;
+				article.dataset.messageSource = typeof cumulative === "string"
+					? cumulative
+					: (article.dataset.messageSource || "") + (payload.delta || payload.Delta || "");
+				article.dataset.messageStatus = "streaming";
+				reflowAssistantMessage(article);
 			}
-			if (article) article.dataset.messageStatus = "streaming";
 			setTurnRunning(true);
 			scrollTranscript();
 			return;
 		}
 		if (event.type === "settled") {
 			if (article) article.dataset.messageStatus = payload.status || payload.Status || "complete";
-			const body = article?.querySelector("[data-message-body]");
-			if (body) void renderAssistantMarkdown(body, body.textContent);
-			setTurnRunning(false);
+			renderTelemetry(payload.telemetry || payload.Telemetry);
+			renderMessageMarkdown(article);
+			setTurnRunning(false, payload.status || payload.Status || "complete");
+			scrollTranscript();
 		}
 	};
 	if (eventsURL && window.EventSource) {
@@ -4316,6 +4419,7 @@
       if (!approvalToggle) return;
       approvalToggle.setAttribute("aria-pressed", String(enabled));
       if (approvalInput) approvalInput.value = String(enabled);
+      if (approvalLabel) approvalLabel.textContent = enabled ? approvalLabel.dataset.autoLabel : approvalLabel.dataset.manualLabel;
       if (inspectorApproval) inspectorApproval.textContent = enabled ? inspectorApproval.dataset.autoLabel : inspectorApproval.dataset.manualLabel;
       replaceIconHost(approvalToggle.querySelector("[data-approval-icon]"), enabled ? "zap" : "shield-check");
     };
@@ -4374,6 +4478,9 @@
 		chip.dataset.contextLabel = resource.label;
         const label = document.createElement("span");
         label.textContent = resource.label;
+		const imageIcon = document.createElement("span");
+		imageIcon.dataset.lucide = resource.image ? "image" : "paperclip";
+		imageIcon.setAttribute("aria-hidden", "true");
 		const kindInput = document.createElement("input");
 		kindInput.type = "hidden";
 		kindInput.name = "context_kind";
@@ -4389,10 +4496,14 @@
         const icon = document.createElement("span");
         icon.dataset.lucide = "x";
         remove.append(icon);
-		chip.append(label, kindInput, idInput, remove);
+		chip.append(imageIcon, label, kindInput, idInput, remove);
         contextHost.append(chip);
       });
       contextCount.textContent = String(selectedResources.size);
+      contextCount.hidden = selectedResources.size === 0;
+      contextHost.hidden = selectedResources.size === 0;
+		const imageCount = [...selectedResources.values()].filter(resource => resource.image).length;
+		if (helper) helper.textContent = imageCount > 0 ? `${imageCount} image${imageCount === 1 ? "" : "s"} will be safety-processed before sending.` : helperDefault;
       renderIcons(contextHost);
     };
     const chooseResource = option => {
@@ -4404,6 +4515,7 @@
 		kind: option.dataset.resourceKind || "",
 		id: option.dataset.resourceId || "",
 		label: option.dataset.resourceLabel || option.dataset.resourceId,
+		image: option.dataset.resourceImage === "true",
 	  });
       option.setAttribute("aria-selected", String(selectedResources.has(key)));
       renderContextResources();
@@ -4476,6 +4588,7 @@
       const prompt = event.target.closest("[data-assistant-prompt]");
       if (prompt && input) {
         input.value = prompt.dataset.assistantPrompt || "";
+		if (profileInput && prompt.dataset.assistantProfile) profileInput.value = prompt.dataset.assistantProfile;
         input.dispatchEvent(new Event("input", { bubbles: true }));
         input.focus();
       }
@@ -4487,7 +4600,7 @@
     const onInput = () => {
       if (!input) return;
       input.style.height = "auto";
-      input.style.height = `${Math.min(input.scrollHeight, 150)}px`;
+      input.style.height = `${Math.min(input.scrollHeight, 180)}px`;
       if (input.value.endsWith("@") && resourcePicker?.dataset.open !== "true") setResourcePicker(true, true);
     };
     const onKeydown = event => {
@@ -4535,6 +4648,7 @@
       }
 	  event.preventDefault();
 	  if (!input?.value.trim() || sendButton?.disabled) return;
+	  scrollTranscript(true);
 	  if (helper) helper.textContent = locale() === "zh-CN" ? "正在提交…" : "Submitting…";
 	  if (sendButton) sendButton.disabled = true;
 	  void fetch(composer.action, {
@@ -4577,8 +4691,10 @@
     root.addEventListener("keydown", onKeydown);
     input?.addEventListener("input", onInput);
     resourceSearch?.addEventListener("input", filterResources);
-    composer?.addEventListener("submit", onSubmit);
+	composer?.addEventListener("submit", onSubmit);
 	approvalForm?.addEventListener("submit", onApprovalSubmit);
+	transcript?.addEventListener("scroll", onTranscriptScroll, { passive: true });
+	scrollTranscript(true);
     cleanups.push(() => {
       root.removeEventListener("click", onClick);
       document.removeEventListener("click", onDocumentClick);
@@ -4587,6 +4703,8 @@
       resourceSearch?.removeEventListener("input", filterResources);
       composer?.removeEventListener("submit", onSubmit);
 	  approvalForm?.removeEventListener("submit", onApprovalSubmit);
+	  transcript?.removeEventListener("scroll", onTranscriptScroll);
+	  if (transcriptScrollFrame) cancelAnimationFrame(transcriptScrollFrame);
 	  window.clearInterval(approvalClock);
 	  assistantEvents?.close();
       document.body.classList.remove("assistant-rail-open");
@@ -4623,6 +4741,7 @@
       form.elements.api_key.value = "";
 	  form.elements.api_key.required = !row;
       form.elements.make_default.checked = row?.dataset.default === "true";
+		form.elements.supports_images.checked = row?.dataset.supportsImages === "true";
       if (title) title.textContent = row ? (locale() === "zh-CN" ? "编辑 LLM 配置" : "Edit LLM configuration") : (locale() === "zh-CN" ? "新增 LLM 配置" : "Add LLM configuration");
       if (credentialHelp) credentialHelp.dataset.editing = String(Boolean(row));
       layer.dataset.open = "true";

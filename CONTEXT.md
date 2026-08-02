@@ -76,6 +76,30 @@ _Avoid_: Run、消息、后台队列
 由 ScriptBoard 明确解析和启动、位于 State Root 私有版本目录的 Pi Agent 可执行程序及固定扩展。它不使用 PATH 中的全局 Pi，也不共享用户级 Pi 配置、会话、扩展、Skill 或工作目录。
 _Avoid_: Installed Release、系统 Node.js、用户安装的 Pi
 
+**Assistant Capability Bundle**：
+随受信 Pi Runtime 一起发布并由摘要清单固定的能力集合，包含 ScriptBoard Extension 和 Operational Playbook。它不从用户目录或项目目录发现资源，也不是可动态安装的第三方 Pi Package。
+_Avoid_: 插件市场、用户 Skill、动态提示词目录
+
+**Operational Playbook**：
+面向一种明确运维意图的版本化受信指导，例如失败 Run 诊断或网站事故调查。Playbook 只约束证据收集和结论表达，不授予权限、不改变审批，也不是可执行脚本。
+_Avoid_: 自动化脚本、永久系统提示、权限模板
+
+**Conversation Profile**：
+AI 对话显式选择的工作模式；通用模式不加载 Playbook，其余模式只引用当前 Runtime Capability Bundle 中版本匹配的一个 Operational Playbook。
+_Avoid_: 角色、模型、工具权限
+
+**Session Telemetry**：
+Pi 为持久 session 报告的累计输入/输出/缓存 Token、估算费用、上下文占用、消息数和工具调用数。它不包含原始 thinking、提示正文或凭据。
+_Avoid_: 账单、思维链、审计事件
+
+**Evidence Query**：
+通过 Tool Broker 执行的有界只读查询，用于搜索或分段读取日志、比较 Run、读取计划触发历史或审计事实。结果携带来源、截断状态和绑定当前用户、对话、工具及查询的不透明短期游标。
+_Avoid_: 任意 SQL、完整日志导出、永久书签
+
+**Safe Raster Processor**：
+对用户明确引用的 PNG、JPEG 或 WebP 进行类型探测、尺寸限制、缩放、重新编码和元数据移除的进程内边界。只有已配置且由 Pi 确认支持图片输入的模型才能接收处理后的图片。
+_Avoid_: 任意附件解析、原文件直传、OCR 存储
+
 **工具调用（Tool Invocation）**：
 Pi 在一个 Agent Turn 内请求 ScriptBoard 执行某个版本化工具及固定参数的记录。它不是 Run，也不能直接访问数据库、任意主机文件、Shell 或内部 Go 对象。
 _Avoid_: 脚本执行、RPC 消息、审批

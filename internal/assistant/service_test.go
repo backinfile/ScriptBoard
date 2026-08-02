@@ -223,6 +223,59 @@ func TestConversationRequiresAnAvailableModelAndScopesEveryLookupToItsOwner(t *t
 	}
 }
 
+func TestConversationPersistsCapabilityProfileThinkingAndBoundedTelemetry(t *testing.T) {
+	t.Parallel()
+	service, _, _ := newTestService(t)
+	ctx := context.Background()
+	actor := Actor{UserID: "owner", Username: "operator"}
+	model, err := service.SaveModel(ctx, actor, "", ModelInput{
+		Name: "Operations", Provider: ProviderOpenAICompatible, Model: "local",
+		Endpoint: "http://localhost:11434/v1", APIKey: "key", MakeDefault: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.UpdateSettings(ctx, actor, SettingsInput{Enabled: true, MaxActiveConversations: 2}); err != nil {
+		t.Fatal(err)
+	}
+	conversation, err := service.CreateConversation(ctx, actor, ConversationInput{ModelID: model.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if conversation.CapabilityProfile != ProfileGeneral || conversation.ThinkingLevel != "medium" {
+		t.Fatalf("conversation defaults = %#v", conversation)
+	}
+	if err := service.SetCapabilityProfile(ctx, actor, conversation.ID, ProfileDiagnoseFailedRun); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetThinkingLevel(ctx, actor, conversation.ID, "high"); err != nil {
+		t.Fatal(err)
+	}
+	percent := 62.5
+	telemetry := SessionTelemetry{
+		UserMessages: 4, AssistantMessages: 4, ToolCalls: 3, ToolResults: 3, TotalMessages: 14,
+		InputTokens: 4800, OutputTokens: 700, CacheReadTokens: 2100, CacheWriteTokens: 80, TotalTokens: 7680,
+		Cost: 0.42, ContextTokens: 10000, ContextWindow: 16000, ContextPercent: &percent,
+	}
+	if err := service.UpdateSessionTelemetry(ctx, actor, conversation.ID, telemetry); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := service.Conversation(ctx, actor, conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.CapabilityProfile != ProfileDiagnoseFailedRun || updated.ThinkingLevel != "high" ||
+		updated.Telemetry.TotalTokens != 7680 || updated.Telemetry.ContextPercent == nil || *updated.Telemetry.ContextPercent != percent {
+		t.Fatalf("updated conversation = %#v", updated)
+	}
+	if err := service.UpdateSessionTelemetry(ctx, actor, conversation.ID, SessionTelemetry{TotalTokens: -1}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("negative telemetry error = %v", err)
+	}
+	if err := service.SetCapabilityProfile(ctx, actor, conversation.ID, "arbitrary"); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("unknown profile error = %v", err)
+	}
+}
+
 func TestConversationPersistsInitialMessageAndValidatedContextReferences(t *testing.T) {
 	t.Parallel()
 
@@ -535,11 +588,18 @@ func TestToolApprovalIsConversationScopedParameterBoundAndSingleUse(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := service.AppendAssistantText(ctx, owner, conversation.ID, turn.Assistant.ID, "Before "); err != nil {
+		t.Fatal(err)
+	}
 	call, err := service.StartToolCall(ctx, owner, conversation.ID, turn.Assistant.ID, "pi-call-1", ToolCallInput{
 		Name: "start_quick_run", TargetSummary: "Nightly cleanup", ParameterSummary: "quick_run=quick-1",
+		RequestJSON: "{\n  \"tool\": \"start_quick_run\",\n  \"parameters\": {\n    \"id\": \"quick-1\"\n  }\n}",
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if call.BodyOffset != 7 {
+		t.Fatalf("tool-call body offset = %d, want 7", call.BodyOffset)
 	}
 	digestA := strings.Repeat("a", 64)
 	digestB := strings.Repeat("b", 64)
@@ -568,8 +628,12 @@ func TestToolApprovalIsConversationScopedParameterBoundAndSingleUse(t *testing.T
 	if err := service.FinishToolCall(ctx, owner, conversation.ID, "pi-call-1", "complete", "", "Run accepted"); err != nil {
 		t.Fatal(err)
 	}
+	responseJSON := "{\n  \"status\": \"success\",\n  \"content\": {\n    \"accepted\": true\n  }\n}"
+	if _, err := service.RecordToolCallResponse(ctx, owner, conversation.ID, "pi-call-1", responseJSON); err != nil {
+		t.Fatal(err)
+	}
 	calls, err := service.ToolCalls(ctx, owner, conversation.ID)
-	if err != nil || len(calls) != 1 || calls[0].Status != "complete" || calls[0].ResultSummary != "Run accepted" {
+	if err != nil || len(calls) != 1 || calls[0].Status != "complete" || calls[0].ResultSummary != "Run accepted" || calls[0].RequestJSON != call.RequestJSON || calls[0].ResponseJSON != responseJSON {
 		t.Fatalf("tool calls = %#v, error = %v", calls, err)
 	}
 }

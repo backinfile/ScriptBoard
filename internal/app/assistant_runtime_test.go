@@ -71,12 +71,66 @@ func TestAssistantRuntimeReleasesWarmProcessAfterCompletedTurn(t *testing.T) {
 			if len(messages) != 2 || messages[1].Status != "complete" || messages[1].Body != "fixture response" {
 				t.Fatalf("messages = %+v", messages)
 			}
+			if current.Telemetry.TotalTokens != 2300 || current.Telemetry.ContextPercent == nil || *current.Telemetry.ContextPercent != 25 {
+				t.Fatalf("session telemetry = %#v", current.Telemetry)
+			}
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	current, _ := store.Conversation(context.Background(), actor, conversation.ID)
 	t.Fatalf("turn did not settle and release its warm process: status=%q active=%d", current.Status, coordinator.supervisor.Active())
+}
+
+func TestAssistantRuntimeWarmSessionsNeverConsumeAllConversationCapacity(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the deterministic fake Pi executable")
+	}
+	stateRoot := t.TempDir()
+	db, err := openDatabase(filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	store, err := assistant.New(db, assistant.Options{StateRoot: stateRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	actor := assistant.Actor{UserID: "capacity-owner", Username: "operator"}
+	model, err := store.SaveModel(context.Background(), actor, "", assistant.ModelInput{
+		Name: "Fixture", Provider: assistant.ProviderOpenAICompatible, Model: "fixture-model",
+		Endpoint: "http://127.0.0.1:11434/v1", APIKey: "fixture-key", MakeDefault: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateSettings(context.Background(), actor, assistant.SettingsInput{Enabled: true, MaxActiveConversations: 2}); err != nil {
+		t.Fatal(err)
+	}
+	installFakeAssistantRuntime(t, stateRoot)
+	coordinator := newAssistantRuntimeCoordinator(stateRoot, store, 2)
+	coordinator.warmDuration = time.Hour
+	coordinator.maxTurnDuration = 2 * time.Second
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = coordinator.Close(ctx)
+	})
+
+	for index := 0; index < 3; index++ {
+		conversation, createErr := store.CreateConversation(context.Background(), actor, assistant.ConversationInput{ModelID: model.ID, InitialMessage: "hello"})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		reply, replyErr := store.BeginAssistantReply(context.Background(), actor, conversation.ID)
+		if replyErr != nil {
+			t.Fatal(replyErr)
+		}
+		if executeErr := coordinator.Execute(context.Background(), actor, conversation, "hello", reply); executeErr != nil {
+			t.Fatalf("conversation %d rejected by stale warm capacity: %v", index+1, executeErr)
+		}
+		waitForAssistantRuntimeState(t, coordinator, store, actor, conversation.ID, "idle", 1)
+	}
 }
 
 func TestAssistantRuntimeResumesTheConversationSessionAfterWarmStop(t *testing.T) {
@@ -342,6 +396,23 @@ func TestAssistantEventReplayRequestsSnapshotForUnknownCursor(t *testing.T) {
 	defer subscription.unsubscribe()
 	if !subscription.reset {
 		t.Fatal("cursor ahead of a fresh event hub did not request a snapshot reset")
+	}
+}
+
+func TestResolveAssistantThinkingLevelFallsBackWithoutBlockingTheTurn(t *testing.T) {
+	tests := []struct {
+		requested string
+		available []string
+		want      string
+	}{
+		{requested: "medium", available: []string{"off", "low", "medium"}, want: "medium"},
+		{requested: "medium", available: []string{"off"}, want: "off"},
+		{requested: "high", available: []string{"minimal", "low"}, want: "minimal"},
+	}
+	for _, test := range tests {
+		if got := resolveAssistantThinkingLevel(test.requested, test.available); got != test.want {
+			t.Fatalf("resolveAssistantThinkingLevel(%q, %v) = %q, want %q", test.requested, test.available, got, test.want)
+		}
 	}
 }
 

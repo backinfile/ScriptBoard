@@ -65,6 +65,8 @@ Runtime 条目塞入既有应用更新清单。
 - 与目标平台/架构匹配的唯一 `pi` 或 `pi.exe` 入口；
 - Pi 启动时读取的全部同版本伴随资源（例如内置主题和原生模块）；不得只从上游归档中复制可执行文件；
 - 固定的 ScriptBoard Extension（若本版本启用工具）；
+- `capabilities.json` 及其显式列出的 Operational Playbook；每个资源记录稳定 ID、版本、
+  相对路径、字节数和 SHA-256，且只能位于 Runtime 自身目录；
 - Pi LICENSE、上游来源、精确版本、构建方式和 SHA-256 元数据；
 - ScriptBoard 兼容版本范围和 RPC contract 版本；
 - Runtime 自身的 `runtime.json`，其内容必须与签名清单一致。
@@ -72,7 +74,8 @@ Runtime 条目塞入既有应用更新清单。
 发布流水线必须从固定上游引用获取源或资产，先验证仓库、版本和维护者记录的摘要，再在
 隔离构建环境重打包；禁止追随 `latest`、执行 npm 全局安装或把维护者机器 PATH 中的 Pi
 复制进 Release。正式构建需要通过真实 Pi RPC 合同测试、无工具启动测试和固定 Extension
-测试，并验证用户 Pi 配置、Extensions、Skills 和 session 不影响受管 Runtime。
+测试，并验证 Capability Bundle 摘要/路径/重复资源校验、Profile 指导注入、旧 Runtime
+确定降级，以及用户 Pi 配置、Extensions、Skills 和 session 不影响受管 Runtime。
 
 Runtime 安装器必须对在线下载和管理员上传的离线资产执行相同检查：签名、产品域、仓库、
 兼容版本、平台、架构、文件与解压大小、SHA-256、路径穿越、绝对路径、链接、特殊文件、
@@ -116,6 +119,8 @@ Pi 版本、四个平台资产大小与 SHA-256，加入 `runtime/scriptboard-ex
 - 有活动 Run 时安装返回冲突且 Run 继续执行；
 - 新版本启动失败、迁移失败和 HTTP 验活超时都会恢复旧版本与更新前数据库；
 - 更新成功或回滚后，Web 显示终态且审计只导入一次。
+- 激活和回退后的 Runtime 各自解析自己的 Capability Bundle；不能从另一版本、用户目录
+  或项目目录读取同名 Playbook，缺失资源时非通用 Profile 必须拒绝 Turn。
 
 ## 密钥轮换
 

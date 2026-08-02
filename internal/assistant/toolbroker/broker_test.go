@@ -48,6 +48,17 @@ func TestDecodeRequestRejectsDuplicateKeysAtEveryDepth(t *testing.T) {
 	}
 }
 
+func TestFixedToolCatalogIncludesAllRuntimeEvidenceTools(t *testing.T) {
+	for _, name := range []string{
+		"search_run_log", "read_run_log_window", "compare_runs", "search_source_log",
+		"get_schedule_history", "list_audit_events",
+	} {
+		if _, ok := fixedTools[name]; !ok {
+			t.Fatalf("fixed tool catalog is missing Runtime tool %q", name)
+		}
+	}
+}
+
 type fixtureExecutor struct{ calls chan Invocation }
 
 func (executor *fixtureExecutor) Invoke(_ context.Context, invocation Invocation) Response {

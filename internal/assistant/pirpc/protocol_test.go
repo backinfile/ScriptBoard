@@ -122,6 +122,202 @@ func TestClientCorrelatesPromptAndStreamsEvents(t *testing.T) {
 	}
 }
 
+func TestClientSendsBoundedImagePrompt(t *testing.T) {
+	stdoutReader, stdoutWriter := io.Pipe()
+	stdinReader, stdinWriter := io.Pipe()
+	client := NewClient(stdoutReader, stdinWriter, ClientOptions{EventBuffer: 2})
+	t.Cleanup(func() { _ = client.Close() })
+	serverDone := make(chan error, 1)
+	go func() {
+		line, err := bufio.NewReader(stdinReader).ReadString('\n')
+		if err == nil && line != "{\"id\":\"image-1\",\"type\":\"prompt\",\"message\":\"inspect\",\"images\":[{\"type\":\"image\",\"data\":\"YWJj\",\"mimeType\":\"image/jpeg\"}]}\n" {
+			err = errors.New("unexpected image prompt: " + line)
+		}
+		if err == nil {
+			_, err = io.WriteString(stdoutWriter, `{"id":"image-1","type":"response","command":"prompt","success":true}`+"\n")
+		}
+		serverDone <- err
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := client.PromptWithImages(ctx, "image-1", "inspect", []PromptImage{{Type: "image", Data: "YWJj", MIMEType: "image/jpeg"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClientReadsBoundedSessionStats(t *testing.T) {
+	stdoutReader, stdoutWriter := io.Pipe()
+	stdinReader, stdinWriter := io.Pipe()
+	client := NewClient(stdoutReader, stdinWriter, ClientOptions{EventBuffer: 8})
+	t.Cleanup(func() { _ = client.Close() })
+
+	serverDone := make(chan error, 1)
+	go func() {
+		line, err := bufio.NewReader(stdinReader).ReadString('\n')
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		if line != "{\"id\":\"stats-1\",\"type\":\"get_session_stats\"}\n" {
+			serverDone <- errors.New("unexpected command: " + line)
+			return
+		}
+		_, err = io.WriteString(stdoutWriter, `{"id":"stats-1","type":"response","command":"get_session_stats","success":true,"data":{"userMessages":3,"assistantMessages":2,"toolCalls":4,"toolResults":4,"totalMessages":13,"tokens":{"input":1200,"output":300,"cacheRead":800,"cacheWrite":20,"total":2320},"cost":0.125,"contextUsage":{"tokens":750,"contextWindow":4096,"percent":18.31}}}`+"\n")
+		serverDone <- err
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	stats, err := client.GetSessionStats(ctx, "stats-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.UserMessages != 3 || stats.AssistantMessages != 2 || stats.ToolCalls != 4 || stats.TotalMessages != 13 {
+		t.Fatalf("message stats = %#v", stats)
+	}
+	if stats.Tokens.Input != 1200 || stats.Tokens.Output != 300 || stats.Tokens.Total != 2320 || stats.Cost != 0.125 {
+		t.Fatalf("usage stats = %#v", stats)
+	}
+	if stats.ContextUsage == nil || stats.ContextUsage.Tokens == nil || *stats.ContextUsage.Tokens != 750 || stats.ContextUsage.ContextWindow != 4096 || stats.ContextUsage.Percent == nil || *stats.ContextUsage.Percent != 18.31 {
+		t.Fatalf("context stats = %#v", stats.ContextUsage)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClientReadsModelInputCapabilities(t *testing.T) {
+	stdoutReader, stdoutWriter := io.Pipe()
+	stdinReader, stdinWriter := io.Pipe()
+	client := NewClient(stdoutReader, stdinWriter, ClientOptions{EventBuffer: 2})
+	t.Cleanup(func() { _ = client.Close() })
+	go func() {
+		_, _ = bufio.NewReader(stdinReader).ReadString('\n')
+		_, _ = io.WriteString(stdoutWriter, `{"id":"state-1","type":"response","command":"get_state","success":true,"data":{"model":{"id":"vision","input":["text","image"]},"thinkingLevel":"medium","isStreaming":false}}`+"\n")
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	state, err := client.GetSessionState(ctx, "state-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Model == nil || !state.Model.SupportsImages() || state.ThinkingLevel != "medium" {
+		t.Fatalf("state = %#v", state)
+	}
+}
+
+func TestClientDiscoversAndSetsSupportedThinkingLevel(t *testing.T) {
+	stdoutReader, stdoutWriter := io.Pipe()
+	stdinReader, stdinWriter := io.Pipe()
+	client := NewClient(stdoutReader, stdinWriter, ClientOptions{EventBuffer: 8})
+	t.Cleanup(func() { _ = client.Close() })
+
+	serverDone := make(chan error, 1)
+	go func() {
+		reader := bufio.NewReader(stdinReader)
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		if line != "{\"id\":\"levels-1\",\"type\":\"get_available_thinking_levels\"}\n" {
+			serverDone <- errors.New("unexpected levels command: " + line)
+			return
+		}
+		if _, err = io.WriteString(stdoutWriter, `{"id":"levels-1","type":"response","command":"get_available_thinking_levels","success":true,"data":{"levels":["off","low","medium","high"]}}`+"\n"); err != nil {
+			serverDone <- err
+			return
+		}
+		line, err = reader.ReadString('\n')
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		if line != "{\"id\":\"thinking-1\",\"type\":\"set_thinking_level\",\"level\":\"high\"}\n" {
+			serverDone <- errors.New("unexpected thinking command: " + line)
+			return
+		}
+		_, err = io.WriteString(stdoutWriter, `{"id":"thinking-1","type":"response","command":"set_thinking_level","success":true}`+"\n")
+		serverDone <- err
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	levels, err := client.GetAvailableThinkingLevels(ctx, "levels-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(levels, ",") != "off,low,medium,high" {
+		t.Fatalf("levels = %#v", levels)
+	}
+	if _, err := client.SetThinkingLevel(ctx, "thinking-1", "high"); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClientCompactsAndControlsRecoveryPolicies(t *testing.T) {
+	stdoutReader, stdoutWriter := io.Pipe()
+	stdinReader, stdinWriter := io.Pipe()
+	client := NewClient(stdoutReader, stdinWriter, ClientOptions{EventBuffer: 8})
+	t.Cleanup(func() { _ = client.Close() })
+
+	serverDone := make(chan error, 1)
+	go func() {
+		reader := bufio.NewReader(stdinReader)
+		commands := []string{
+			"{\"id\":\"compact-1\",\"type\":\"compact\"}\n",
+			"{\"id\":\"auto-compact-1\",\"type\":\"set_auto_compaction\",\"enabled\":true}\n",
+			"{\"id\":\"auto-retry-1\",\"type\":\"set_auto_retry\",\"enabled\":true}\n",
+		}
+		responses := []string{
+			`{"id":"compact-1","type":"response","command":"compact","success":true,"data":{"tokensBefore":3900,"estimatedTokensAfter":950,"firstKeptEntryId":"entry-7"}}` + "\n",
+			`{"id":"auto-compact-1","type":"response","command":"set_auto_compaction","success":true}` + "\n",
+			`{"id":"auto-retry-1","type":"response","command":"set_auto_retry","success":true}` + "\n",
+		}
+		for index := range commands {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				serverDone <- err
+				return
+			}
+			if line != commands[index] {
+				serverDone <- errors.New("unexpected recovery command: " + line)
+				return
+			}
+			if _, err = io.WriteString(stdoutWriter, responses[index]); err != nil {
+				serverDone <- err
+				return
+			}
+		}
+		serverDone <- nil
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	result, err := client.Compact(ctx, "compact-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.TokensBefore != 3900 || result.EstimatedTokensAfter != 950 || result.FirstKeptEntryID != "entry-7" {
+		t.Fatalf("compaction result = %#v", result)
+	}
+	if _, err := client.SetAutoCompaction(ctx, "auto-compact-1", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.SetAutoRetry(ctx, "auto-retry-1", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestClientRejectsUnknownResponseIDWithoutBlockingReader(t *testing.T) {
 	stdoutReader, stdoutWriter := io.Pipe()
 	client := NewClient(stdoutReader, io.Discard, ClientOptions{EventBuffer: 1})

@@ -19,6 +19,8 @@ import (
 const trashDirectoryName = ".scriptboard-trash"
 const trashMarkerName = ".scriptboard-owner"
 
+var trashRootMarker = []byte("scriptboard-trash-root-v2\n")
+
 type Trashed struct {
 	OriginalPath string
 	StoredPath   string
@@ -503,63 +505,90 @@ func (m *Manager) ensureTrashRoot(path string) (string, error) {
 	if err := diskspace.Require(root, diskspace.MinimumWritableBytes); err != nil {
 		return "", err
 	}
-	trashRoot := filepath.Join(root, trashDirectoryName)
-	created := false
-	if err := os.Mkdir(trashRoot, 0o700); err == nil {
-		created = true
+	trashBase := filepath.Join(root, trashDirectoryName)
+	createdBase := false
+	if err := os.Mkdir(trashBase, 0o700); err == nil {
+		createdBase = true
 	} else if !os.IsExist(err) {
 		return "", fmt.Errorf("create filesystem trash: %w", err)
 	}
-	info, err := os.Lstat(trashRoot)
-	if err != nil || !info.IsDir() || restrictedEntry(trashRoot, info) {
+	info, err := os.Lstat(trashBase)
+	if err != nil || !info.IsDir() || restrictedEntry(trashBase, info) {
 		return "", fmt.Errorf("filesystem trash is not a private directory")
 	}
-	marker := filepath.Join(trashRoot, trashMarkerName)
-	expected := []byte("scriptboard-trash-v1\n" + m.instanceID + "\n")
-	if !created {
-		if err := verifyTrashMarker(marker, expected); err != nil {
-			return "", fmt.Errorf("refuse unowned filesystem trash: %w", err)
+	cleanupEmptyBase := func() { _ = os.Remove(trashBase) }
+	if err := privatepath.ProtectDirectory(trashBase); err != nil {
+		if createdBase {
+			cleanupEmptyBase()
 		}
-		if err := privatepath.ProtectDirectory(trashRoot); err != nil {
-			return "", fmt.Errorf("protect filesystem trash: %w", err)
-		}
-		return trashRoot, nil
-	}
-	cleanupEmptyRoot := func() { _ = os.Remove(trashRoot) }
-	if err := privatepath.ProtectDirectory(trashRoot); err != nil {
-		cleanupEmptyRoot()
 		return "", fmt.Errorf("protect filesystem trash: %w", err)
 	}
-	markerFile, err := os.OpenFile(marker, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		cleanupEmptyRoot()
-		return "", fmt.Errorf("mark filesystem trash ownership: %w", err)
+	baseMarker := filepath.Join(trashBase, trashMarkerName)
+	legacyExpected := []byte("scriptboard-trash-v1\n" + m.instanceID + "\n")
+	if !createdBase {
+		if err := verifyTrashMarker(baseMarker, legacyExpected); err == nil {
+			return trashBase, nil
+		}
+		marker, markerErr := readTrashMarker(baseMarker)
+		if markerErr != nil {
+			return "", fmt.Errorf("refuse unowned filesystem trash: %w", markerErr)
+		}
+		if !bytes.Equal(marker, trashRootMarker) && !bytes.HasPrefix(marker, []byte("scriptboard-trash-v1\n")) {
+			return "", fmt.Errorf("refuse unowned filesystem trash: filesystem trash marker is unknown")
+		}
+	} else if err := writeTrashMarker(baseMarker, trashRootMarker); err != nil {
+		_ = os.Remove(baseMarker)
+		cleanupEmptyBase()
+		return "", fmt.Errorf("mark filesystem trash root: %w", err)
 	}
-	cleanupCreatedRoot := func() {
-		_ = os.Remove(marker)
-		_ = os.Remove(trashRoot)
+
+	instanceHash := sha256.Sum256([]byte(m.instanceID))
+	trashRoot := filepath.Join(trashBase, hex.EncodeToString(instanceHash[:16]))
+	createdRoot := false
+	if err := os.Mkdir(trashRoot, 0o700); err == nil {
+		createdRoot = true
+	} else if !os.IsExist(err) {
+		return "", fmt.Errorf("create instance filesystem trash: %w", err)
 	}
-	writeErr := error(nil)
-	if _, writeErr = markerFile.Write(expected); writeErr == nil {
-		writeErr = markerFile.Sync()
+	rootInfo, err := os.Lstat(trashRoot)
+	if err != nil || !rootInfo.IsDir() || restrictedEntry(trashRoot, rootInfo) {
+		return "", fmt.Errorf("instance filesystem trash is not a private directory")
 	}
-	if closeErr := markerFile.Close(); writeErr == nil {
-		writeErr = closeErr
+	if err := privatepath.ProtectDirectory(trashRoot); err != nil {
+		if createdRoot {
+			_ = os.Remove(trashRoot)
+		}
+		return "", fmt.Errorf("protect instance filesystem trash: %w", err)
 	}
-	if writeErr != nil {
-		cleanupCreatedRoot()
-		return "", fmt.Errorf("mark filesystem trash ownership: %w", writeErr)
+	marker := filepath.Join(trashRoot, trashMarkerName)
+	expected := []byte("scriptboard-trash-v2\n" + m.instanceID + "\n")
+	if createdRoot {
+		if err := writeTrashMarker(marker, expected); err != nil {
+			_ = os.Remove(marker)
+			_ = os.Remove(trashRoot)
+			return "", fmt.Errorf("mark instance filesystem trash ownership: %w", err)
+		}
+	} else if err := verifyTrashMarker(marker, expected); err != nil {
+		return "", fmt.Errorf("refuse unowned instance filesystem trash: %w", err)
 	}
 	return trashRoot, nil
 }
 
 func (m *Manager) resolveTrashEntry(storedPath string) (string, error) {
-	if !filepath.IsAbs(storedPath) || filepath.Base(filepath.Dir(storedPath)) != trashDirectoryName {
+	if !filepath.IsAbs(storedPath) {
 		return "", fmt.Errorf("invalid trash entry path")
 	}
 	trashRoot := filepath.Dir(filepath.Clean(storedPath))
 	marker := filepath.Join(trashRoot, trashMarkerName)
-	expected := []byte("scriptboard-trash-v1\n" + m.instanceID + "\n")
+	expected := []byte("scriptboard-trash-v2\n" + m.instanceID + "\n")
+	if filepath.Base(trashRoot) == trashDirectoryName {
+		expected = []byte("scriptboard-trash-v1\n" + m.instanceID + "\n")
+	} else {
+		instanceHash := sha256.Sum256([]byte(m.instanceID))
+		if filepath.Base(filepath.Dir(trashRoot)) != trashDirectoryName || filepath.Base(trashRoot) != hex.EncodeToString(instanceHash[:16]) {
+			return "", fmt.Errorf("invalid trash entry path")
+		}
+	}
 	if err := verifyTrashMarker(marker, expected); err != nil {
 		return "", err
 	}
@@ -573,21 +602,44 @@ func (m *Manager) resolveTrashEntry(storedPath string) (string, error) {
 }
 
 func verifyTrashMarker(marker string, expected []byte) error {
-	info, err := os.Lstat(marker)
+	content, err := readTrashMarker(marker)
 	if err != nil {
 		return err
-	}
-	if !info.Mode().IsRegular() || restrictedEntry(marker, info) {
-		return fmt.Errorf("filesystem trash ownership marker is restricted")
-	}
-	content, err := os.ReadFile(marker)
-	if err != nil {
-		return fmt.Errorf("read filesystem trash ownership: %w", err)
 	}
 	if !bytes.Equal(content, expected) {
 		return fmt.Errorf("filesystem trash belongs to another ScriptBoard instance")
 	}
 	return nil
+}
+
+func readTrashMarker(marker string) ([]byte, error) {
+	info, err := os.Lstat(marker)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || restrictedEntry(marker, info) {
+		return nil, fmt.Errorf("filesystem trash ownership marker is restricted")
+	}
+	content, err := os.ReadFile(marker)
+	if err != nil {
+		return nil, fmt.Errorf("read filesystem trash ownership: %w", err)
+	}
+	return content, nil
+}
+
+func writeTrashMarker(marker string, content []byte) error {
+	markerFile, err := os.OpenFile(marker, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	writeErr := error(nil)
+	if _, writeErr = markerFile.Write(content); writeErr == nil {
+		writeErr = markerFile.Sync()
+	}
+	if closeErr := markerFile.Close(); writeErr == nil {
+		writeErr = closeErr
+	}
+	return writeErr
 }
 
 func preserveLineEndingStyle(original, submitted string) string {

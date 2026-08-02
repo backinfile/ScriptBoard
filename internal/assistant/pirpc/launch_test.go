@@ -23,7 +23,7 @@ func TestPrepareLaunchUsesPrivateRuntimeAndConversationDirectories(t *testing.T)
 	spec, err := PrepareLaunch(LaunchInput{
 		StateRoot: stateRoot, Executable: executable, UserID: "user_1", ConversationID: "conversation_1",
 		Provider: "openai-compatible", Model: "gpt-local", Endpoint: "http://127.0.0.1:11434/v1", APIKey: "secret-value",
-		SystemPrompt: "bounded assistant",
+		SystemPrompt: "bounded assistant", SupportsImages: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -64,6 +64,9 @@ func TestPrepareLaunchUsesPrivateRuntimeAndConversationDirectories(t *testing.T)
 	}
 	if strings.Contains(string(data), "secret-value") {
 		t.Fatal("credential leaked into models.json")
+	}
+	if !strings.Contains(string(data), `"input": [`) || !strings.Contains(string(data), `"image"`) {
+		t.Fatalf("image-capable model input was not recorded: %s", data)
 	}
 	var document map[string]any
 	if err := json.Unmarshal(data, &document); err != nil {

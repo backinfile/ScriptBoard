@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
@@ -12,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -40,6 +42,7 @@ type assistantToolExecutor struct {
 	// Only byte counts are retained. Tool bodies remain process-local and are
 	// discarded as soon as the next message in a conversation starts.
 	resultBytes map[string]int
+	cursorKey   [32]byte
 }
 
 type assistantToolAuthorization struct {
@@ -80,8 +83,37 @@ type assistantToolTextParameters struct {
 	MaxLines  int    `json:"maxLines,omitempty"`
 }
 
+type assistantToolEvidenceSearchParameters struct {
+	ID, Query, Cursor string
+	Limit             int
+}
+
+type assistantToolEvidenceWindowParameters struct {
+	ID, Cursor string
+	Sequence   int64
+	Limit      int
+}
+
+type assistantToolCompareRunsParameters struct {
+	IDs []string `json:"ids"`
+}
+
+type assistantToolScheduleHistoryParameters struct {
+	ID, Cursor string
+	Limit      int
+}
+
+type assistantToolAuditParameters struct {
+	Query, Cursor string
+	Limit         int
+}
+
 func newAssistantToolExecutor(application *App) *assistantToolExecutor {
-	return &assistantToolExecutor{app: application, resultBytes: make(map[string]int)}
+	executor := &assistantToolExecutor{app: application, resultBytes: make(map[string]int)}
+	if _, err := rand.Read(executor.cursorKey[:]); err != nil {
+		panic("initialize Assistant evidence cursor key: " + err.Error())
+	}
+	return executor
 }
 
 func (executor *assistantToolExecutor) releaseTurn(conversationID, messageID string) {
@@ -90,13 +122,26 @@ func (executor *assistantToolExecutor) releaseTurn(conversationID, messageID str
 	executor.mu.Unlock()
 }
 
-func (executor *assistantToolExecutor) Invoke(ctx context.Context, invocation toolbroker.Invocation) toolbroker.Response {
+func (executor *assistantToolExecutor) Invoke(ctx context.Context, invocation toolbroker.Invocation) (response toolbroker.Response) {
+	var responseActor assistant.Actor
+	persistResponse := false
+	defer func() {
+		if !persistResponse || responseActor.UserID == "" || invocation.Binding.ConversationID == "" || invocation.Request.ToolCallID == "" {
+			return
+		}
+		recordContext := context.WithoutCancel(ctx)
+		if call, err := executor.app.assistant.RecordToolCallResponse(recordContext, responseActor, invocation.Binding.ConversationID, invocation.Request.ToolCallID, assistantToolResponseJSON(response)); err == nil {
+			executor.publishCall(recordContext, responseActor, invocation.Binding.ConversationID, call.ID, "tool_updated", nil)
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		return assistantToolError("tool_cancelled", "Tool call was cancelled.")
 	}
 	authorization, ok := executor.authorize(ctx, invocation.Binding)
+	responseActor = authorization.Actor
 	if !ok {
 		if authorization.Actor.UserID != "" && invocation.Request.ApprovalID != "" {
+			persistResponse = true
 			_ = executor.app.assistant.InvalidateApproval(ctx, authorization.Actor, invocation.Binding.ConversationID, invocation.Request.ApprovalID, "tool_forbidden")
 		}
 		executor.auditDenied(invocation, "authorization_changed")
@@ -105,9 +150,10 @@ func (executor *assistantToolExecutor) Invoke(ctx context.Context, invocation to
 	required, stateful := assistantToolPermission(invocation.Request.Tool)
 	if !roleAllows(authorization.Role, required) {
 		if invocation.Request.ApprovalID != "" {
+			persistResponse = true
 			_ = executor.app.assistant.InvalidateApproval(ctx, authorization.Actor, invocation.Binding.ConversationID, invocation.Request.ApprovalID, "tool_forbidden")
 		}
-		executor.recordDeniedCall(ctx, authorization, invocation, "tool_forbidden")
+		persistResponse = executor.recordDeniedCall(ctx, authorization, invocation, "tool_forbidden") || persistResponse
 		return toolbroker.Response{Status: toolbroker.StatusForbidden, ErrorCode: "tool_forbidden", Summary: "Current ScriptBoard role does not allow this tool."}
 	}
 	hasApprovalResponse := invocation.Request.ApprovalID != "" || invocation.Request.Decision != ""
@@ -115,6 +161,7 @@ func (executor *assistantToolExecutor) Invoke(ctx context.Context, invocation to
 		if !stateful || invocation.Request.ApprovalID == "" || (invocation.Request.Decision != "approve" && invocation.Request.Decision != "reject") {
 			return assistantToolError("approval_invalid", "The approval response is invalid.")
 		}
+		persistResponse = true
 		if invocation.Request.Decision == "reject" {
 			return executor.rejectApprovedCall(ctx, authorization, invocation)
 		}
@@ -135,11 +182,15 @@ func (executor *assistantToolExecutor) Invoke(ctx context.Context, invocation to
 	if hasApprovalResponse {
 		return executor.resumeApprovedCall(ctx, authorization, invocation, plan, messageID)
 	}
+	if executor.turnRecoveryBlocked(ctx, invocation.Binding.ConversationID, messageID) {
+		return assistantToolError("tool_recovery_blocked", "The user required this turn to stop Tool Calls after the first failure; no retry or substitute action was performed.")
+	}
 	if executor.toolCallCount(ctx, invocation.Binding.ConversationID, messageID) >= assistantToolCallsPerTurn {
 		return assistantToolError("tool_limit_reached", "This Agent Turn reached its Tool Call limit.")
 	}
 	call, err := executor.app.assistant.StartToolCall(ctx, authorization.Actor, invocation.Binding.ConversationID, messageID, invocation.Request.ToolCallID, assistant.ToolCallInput{
 		Name: invocation.Request.Tool, TargetSummary: plan.targetSummary, ParameterSummary: plan.parameterSummary,
+		RequestJSON: assistantToolRequestJSON(invocation.Request),
 	})
 	if err != nil {
 		if errors.Is(err, assistant.ErrToolReplay) {
@@ -147,6 +198,7 @@ func (executor *assistantToolExecutor) Invoke(ctx context.Context, invocation to
 		}
 		return assistantToolError("tool_failed", "ScriptBoard could not record the Tool Call.")
 	}
+	persistResponse = true
 	executor.publishCall(ctx, authorization.Actor, invocation.Binding.ConversationID, call.ID, "tool_started", nil)
 	if !stateful {
 		return executor.executeCall(ctx, authorization, invocation, plan, call, "")
@@ -205,6 +257,8 @@ func assistantToolPermission(name string) (permission, bool) {
 	switch name {
 	case "read_managed_text":
 		return permissionReadFiles, false
+	case "list_audit_events":
+		return permissionReadAudit, false
 	case "start_quick_run", "stop_run":
 		return permissionExecute, true
 	case "run_schedule_now":
@@ -228,6 +282,35 @@ func (executor *assistantToolExecutor) toolCallCount(ctx context.Context, conver
 	var count int
 	_ = executor.app.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM assistant_tool_calls WHERE conversation_id = ? AND message_id = ?`, conversationID, messageID).Scan(&count)
 	return count
+}
+
+func (executor *assistantToolExecutor) turnRecoveryBlocked(ctx context.Context, conversationID, messageID string) bool {
+	var prompt string
+	if err := executor.app.db.QueryRowContext(ctx, `SELECT body FROM assistant_messages
+		WHERE conversation_id = ? AND role = 'user'
+		AND sequence < (SELECT sequence FROM assistant_messages WHERE id = ? AND conversation_id = ?)
+		ORDER BY sequence DESC LIMIT 1`, conversationID, messageID, conversationID).Scan(&prompt); err != nil || !assistantPromptForbidsToolRecovery(prompt) {
+		return false
+	}
+	var failed int
+	_ = executor.app.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM assistant_tool_calls
+		WHERE conversation_id = ? AND message_id = ? AND status IN ('error', 'rejected'))`, conversationID, messageID).Scan(&failed)
+	return failed == 1
+}
+
+func assistantPromptForbidsToolRecovery(prompt string) bool {
+	normalized := strings.ToLower(strings.Join(strings.Fields(prompt), " "))
+	markers := []string{
+		"失败不重试", "失败后不重试", "失败后不要重试", "不要重试", "不可重试",
+		"不替代", "不要替代", "不可替代", "no retry", "do not retry", "don't retry",
+		"no substitute", "do not substitute", "don't substitute",
+	}
+	for _, marker := range markers {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func (executor *assistantToolExecutor) resumeApprovedCall(ctx context.Context, authorization assistantToolAuthorization, invocation toolbroker.Invocation, plan assistantToolPlan, messageID string) toolbroker.Response {
@@ -290,7 +373,13 @@ func (executor *assistantToolExecutor) rejectApprovedCall(ctx context.Context, a
 func (executor *assistantToolExecutor) executeCall(ctx context.Context, authorization assistantToolAuthorization, invocation toolbroker.Invocation, plan assistantToolPlan, call assistant.ToolCall, approvalID string) toolbroker.Response {
 	content, summary, truncated, err := plan.execute(ctx)
 	if err != nil {
-		return executor.failRecordedCall(ctx, authorization, invocation, call, "tool_failed", "ScriptBoard could not complete the Tool Call.", approvalID)
+		var actionErr assistantUIActionHTTPError
+		if errors.As(err, &actionErr) {
+			code, message := actionErr.toolResponse()
+			return executor.failRecordedCall(ctx, authorization, invocation, call, code, message, approvalID)
+		}
+		code, message := assistantToolExecutionError(err)
+		return executor.failRecordedCall(ctx, authorization, invocation, call, code, message, approvalID)
 	}
 	if truncated {
 		summary = strings.TrimSpace(summary + " Result truncated at the ScriptBoard bound.")
@@ -363,18 +452,50 @@ func (executor *assistantToolExecutor) publishCall(ctx context.Context, actor as
 	executor.app.assistantRuntime.publish(conversationID, assistantBrowserEvent{Type: eventType, ToolCall: &call, Approval: approval})
 }
 
-func (executor *assistantToolExecutor) recordDeniedCall(ctx context.Context, authorization assistantToolAuthorization, invocation toolbroker.Invocation, code string) {
+func (executor *assistantToolExecutor) recordDeniedCall(ctx context.Context, authorization assistantToolAuthorization, invocation toolbroker.Invocation, code string) bool {
 	messageID, err := executor.currentMessageID(ctx, invocation.Binding.ConversationID)
 	if err == nil {
 		call, startErr := executor.app.assistant.StartToolCall(ctx, authorization.Actor, invocation.Binding.ConversationID, messageID, invocation.Request.ToolCallID, assistant.ToolCallInput{
 			Name: invocation.Request.Tool, TargetSummary: "restricted", ParameterSummary: "permission denied",
+			RequestJSON: assistantToolRequestJSON(invocation.Request),
 		})
 		if startErr == nil {
 			_ = executor.app.assistant.FinishToolCall(ctx, authorization.Actor, invocation.Binding.ConversationID, invocation.Request.ToolCallID, "error", code, "Current role does not allow this tool.")
 			executor.publishCall(ctx, authorization.Actor, invocation.Binding.ConversationID, call.ID, "tool_finished", nil)
+			executor.auditDenied(invocation, code)
+			return true
 		}
 	}
 	executor.auditDenied(invocation, code)
+	return false
+}
+
+func assistantToolRequestJSON(request toolbroker.Request) string {
+	parameters := request.Parameters
+	if !json.Valid(parameters) {
+		parameters = json.RawMessage("null")
+	}
+	payload := struct {
+		ToolCallID string          `json:"toolCallId"`
+		Tool       string          `json:"tool"`
+		Parameters json.RawMessage `json:"parameters"`
+	}{ToolCallID: request.ToolCallID, Tool: request.Tool, Parameters: parameters}
+	encoded, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return "{}"
+	}
+	return string(encoded)
+}
+
+func assistantToolResponseJSON(response toolbroker.Response) string {
+	encoded, err := json.MarshalIndent(response, "", "  ")
+	if err != nil {
+		return `{
+  "status": "error",
+  "errorCode": "response_json_unavailable"
+}`
+	}
+	return string(encoded)
 }
 
 func (executor *assistantToolExecutor) auditDenied(invocation toolbroker.Invocation, result string) {
@@ -422,9 +543,10 @@ func assistantToolError(code, summary string) toolbroker.Response {
 }
 
 var (
-	errAssistantToolParameters = errors.New("assistant tool parameters are invalid")
-	errAssistantToolNotFound   = errors.New("assistant tool target was not found")
-	errAssistantToolForbidden  = errors.New("assistant tool target is forbidden")
+	errAssistantToolParameters  = errors.New("assistant tool parameters are invalid")
+	errAssistantToolNotFound    = errors.New("assistant tool target was not found")
+	errAssistantToolForbidden   = errors.New("assistant tool target is forbidden")
+	errAssistantToolUnavailable = errors.New("assistant tool is unavailable")
 )
 
 func assistantToolPlanError(err error) toolbroker.Response {
@@ -433,8 +555,23 @@ func assistantToolPlanError(err error) toolbroker.Response {
 		return assistantToolError("tool_parameters_invalid", "Tool parameters are invalid.")
 	case errors.Is(err, errAssistantToolNotFound), errors.Is(err, sql.ErrNoRows):
 		return assistantToolError("tool_target_not_found", "The selected ScriptBoard target no longer exists.")
+	case errors.Is(err, errAssistantToolUnavailable):
+		return assistantToolError("tool_unavailable", strings.TrimSpace(strings.TrimPrefix(err.Error(), errAssistantToolUnavailable.Error()+":")))
 	default:
 		return assistantToolError("tool_failed", "ScriptBoard could not prepare this Tool Call.")
+	}
+}
+
+func assistantToolExecutionError(err error) (string, string) {
+	switch {
+	case errors.Is(err, errAssistantToolNotFound), errors.Is(err, sql.ErrNoRows), errors.Is(err, os.ErrNotExist), errors.Is(err, appstatus.ErrApplicationNotFound):
+		return "tool_target_not_found", "The selected ScriptBoard target no longer exists."
+	case errors.Is(err, errAssistantToolUnavailable), errors.Is(err, appstatus.ErrApplicationLogsUnsupported), errors.Is(err, appstatus.ErrApplicationLogProbeMissing):
+		return "tool_unavailable", "The requested capability is unavailable for this ScriptBoard target."
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return "tool_cancelled", "The Tool Call was cancelled before it completed."
+	default:
+		return "tool_failed", "ScriptBoard could not complete the Tool Call."
 	}
 }
 
@@ -464,6 +601,33 @@ func normalizeAssistantToolLimit(value, fallback int) (int, error) {
 		return 0, errAssistantToolParameters
 	}
 	return value, nil
+}
+
+func normalizeAssistantEvidenceQuery(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 256 || !utf8.ValidString(value) || strings.ContainsAny(value, "\x00\r\n") {
+		return "", errAssistantToolParameters
+	}
+	return value, nil
+}
+
+func (executor *assistantToolExecutor) evidenceCursor(invocation toolbroker.Invocation, tool, target, query, encoded string) (assistantEvidenceCursor, error) {
+	expected := assistantEvidenceCursor{
+		UserID: invocation.Binding.UserID, ConversationID: invocation.Binding.ConversationID,
+		Tool: tool, Target: target, QueryDigest: assistantEvidenceQueryDigest(query),
+	}
+	if strings.TrimSpace(encoded) == "" {
+		return expected, nil
+	}
+	return decodeAssistantEvidenceCursor(executor.cursorKey, encoded, expected, time.Now().UTC())
+}
+
+func (executor *assistantToolExecutor) nextEvidenceCursor(cursor assistantEvidenceCursor, page string, offset int) string {
+	cursor.Page = page
+	cursor.Offset = offset
+	cursor.ExpiresAt = time.Now().UTC().Add(5 * time.Minute).Unix()
+	encoded, _ := encodeAssistantEvidenceCursor(executor.cursorKey, cursor)
+	return encoded
 }
 
 func normalizeAssistantToolLines(value int) (int, error) {
@@ -710,6 +874,18 @@ func (executor *assistantToolExecutor) plan(ctx context.Context, authorization a
 			entries, truncated := compactAssistantRunEvents(run.Events, lines)
 			return map[string]any{"source": "ScriptBoard Run log", "untrustedData": true, "runId": run.ID, "status": run.Status, "entries": entries}, fmt.Sprintf("Read %d Run log entries.", len(entries)), truncated || run.LogTruncated || run.LogIncomplete, nil
 		}}, nil
+	case "search_run_log":
+		return executor.planSearchRunLog(invocation)
+	case "read_run_log_window":
+		return executor.planReadRunLogWindow(invocation)
+	case "compare_runs":
+		return executor.planCompareRuns(invocation)
+	case "search_source_log":
+		return executor.planSearchSourceLog(invocation)
+	case "get_schedule_history":
+		return executor.planScheduleHistory(invocation)
+	case "list_audit_events":
+		return executor.planAuditEvents(authorization, invocation)
 	case "list_quick_runs":
 		return executor.planListQuickRuns(invocation)
 	case "list_schedules":

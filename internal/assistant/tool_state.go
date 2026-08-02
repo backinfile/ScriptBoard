@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -24,16 +25,23 @@ var (
 	toolCallPattern     = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,160}$`)
 )
 
-const approvalLifetime = 2 * time.Minute
+const (
+	approvalLifetime         = 2 * time.Minute
+	maxToolRequestJSONBytes  = 256 << 10
+	maxToolResponseJSONBytes = 1 << 20
+)
 
 type ToolCallInput struct {
 	Name, TargetSummary, ParameterSummary string
+	RequestJSON                           string
 }
 
 type ToolCall struct {
 	ID, ConversationID, MessageID, Name string
 	TargetSummary, ParameterSummary     string
 	Status, ErrorCode, ResultSummary    string
+	RequestJSON, ResponseJSON           string
+	BodyOffset                          int
 	StartedAt                           time.Time
 	FinishedAt                          *time.Time
 }
@@ -46,8 +54,9 @@ type Approval struct {
 }
 
 func (s *Service) StartToolCall(ctx context.Context, actor Actor, conversationID, messageID, externalID string, input ToolCallInput) (ToolCall, error) {
+	requestJSON, validRequestJSON := normalizedToolJSON(input.RequestJSON, "{}", maxToolRequestJSONBytes)
 	if strings.TrimSpace(actor.UserID) == "" || !toolCallPattern.MatchString(externalID) || !toolNamePattern.MatchString(input.Name) ||
-		!validToolSummary(input.TargetSummary) || !validToolSummary(input.ParameterSummary) {
+		!validToolSummary(input.TargetSummary) || !validToolSummary(input.ParameterSummary) || !validRequestJSON {
 		return ToolCall{}, fmt.Errorf("%w: invalid tool call", ErrInvalidInput)
 	}
 	if err := s.ensureConversationOwner(ctx, actor, conversationID); err != nil {
@@ -55,10 +64,28 @@ func (s *Service) StartToolCall(ctx context.Context, actor Actor, conversationID
 	}
 	id := toolCallRecordID(conversationID, externalID)
 	now := s.now().UTC()
-	result, err := s.db.ExecContext(ctx, `INSERT INTO assistant_tool_calls
-		(id, conversation_id, message_id, tool_name, target_summary, parameter_summary, status, started_at)
-		VALUES (?, ?, ?, ?, ?, ?, 'running', ?)`, id, conversationID, nullableString(messageID), input.Name,
-		strings.TrimSpace(input.TargetSummary), strings.TrimSpace(input.ParameterSummary), now.Unix())
+	transaction, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ToolCall{}, fmt.Errorf("begin assistant tool call: %w", err)
+	}
+	defer transaction.Rollback()
+	bodyOffset := 0
+	if messageID != "" {
+		err = transaction.QueryRowContext(ctx, `SELECT LENGTH(m.body) FROM assistant_messages m
+			JOIN assistant_conversations c ON c.id = m.conversation_id
+			WHERE m.id = ? AND m.conversation_id = ? AND m.role = 'assistant' AND c.owner_user_id = ?`,
+			messageID, conversationID, actor.UserID).Scan(&bodyOffset)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ToolCall{}, ErrNotFound
+		}
+		if err != nil {
+			return ToolCall{}, fmt.Errorf("read assistant tool call position: %w", err)
+		}
+	}
+	result, err := transaction.ExecContext(ctx, `INSERT INTO assistant_tool_calls
+		(id, conversation_id, message_id, body_offset, tool_name, target_summary, parameter_summary, request_json, status, started_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', ?)`, id, conversationID, nullableString(messageID), bodyOffset, input.Name,
+		strings.TrimSpace(input.TargetSummary), strings.TrimSpace(input.ParameterSummary), requestJSON, now.Unix())
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unique") || strings.Contains(strings.ToLower(err.Error()), "constraint") {
 			return ToolCall{}, ErrToolReplay
@@ -68,10 +95,13 @@ func (s *Service) StartToolCall(ctx context.Context, actor Actor, conversationID
 	if affected, _ := result.RowsAffected(); affected != 1 {
 		return ToolCall{}, ErrToolReplay
 	}
+	if err := transaction.Commit(); err != nil {
+		return ToolCall{}, fmt.Errorf("commit assistant tool call: %w", err)
+	}
 	return ToolCall{
 		ID: id, ConversationID: conversationID, MessageID: messageID, Name: input.Name,
 		TargetSummary: strings.TrimSpace(input.TargetSummary), ParameterSummary: strings.TrimSpace(input.ParameterSummary),
-		Status: "running", StartedAt: now,
+		Status: "running", RequestJSON: requestJSON, ResponseJSON: "null", BodyOffset: bodyOffset, StartedAt: now,
 	}, nil
 }
 
@@ -247,11 +277,31 @@ func (s *Service) FinishToolCall(ctx context.Context, actor Actor, conversationI
 	return transaction.Commit()
 }
 
+func (s *Service) RecordToolCallResponse(ctx context.Context, actor Actor, conversationID, externalToolCallID, response string) (ToolCall, error) {
+	responseJSON, validResponseJSON := normalizedToolJSON(response, "null", maxToolResponseJSONBytes)
+	if strings.TrimSpace(actor.UserID) == "" || !toolCallPattern.MatchString(externalToolCallID) || !validResponseJSON {
+		return ToolCall{}, fmt.Errorf("%w: invalid tool response", ErrInvalidInput)
+	}
+	if err := s.ensureConversationOwner(ctx, actor, conversationID); err != nil {
+		return ToolCall{}, err
+	}
+	toolCallID := toolCallRecordID(conversationID, externalToolCallID)
+	result, err := s.db.ExecContext(ctx, `UPDATE assistant_tool_calls SET response_json = ? WHERE id = ? AND conversation_id = ?`,
+		responseJSON, toolCallID, conversationID)
+	if err != nil {
+		return ToolCall{}, fmt.Errorf("record assistant tool response: %w", err)
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return ToolCall{}, ErrNotFound
+	}
+	return s.ToolCallByID(ctx, actor, conversationID, toolCallID)
+}
+
 func (s *Service) ToolCalls(ctx context.Context, actor Actor, conversationID string) ([]ToolCall, error) {
 	if err := s.ensureConversationOwner(ctx, actor, conversationID); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, conversation_id, COALESCE(message_id, ''), tool_name, target_summary, parameter_summary,
+	rows, err := s.db.QueryContext(ctx, `SELECT id, conversation_id, COALESCE(message_id, ''), body_offset, tool_name, target_summary, parameter_summary, request_json, response_json,
 		status, error_code, result_summary, started_at, finished_at FROM assistant_tool_calls WHERE conversation_id = ? ORDER BY started_at, id`, conversationID)
 	if err != nil {
 		return nil, err
@@ -291,7 +341,7 @@ func (s *Service) ToolCallByID(ctx context.Context, actor Actor, conversationID,
 	if err := s.ensureConversationOwner(ctx, actor, conversationID); err != nil {
 		return ToolCall{}, err
 	}
-	return scanToolCall(s.db.QueryRowContext(ctx, `SELECT id, conversation_id, COALESCE(message_id, ''), tool_name, target_summary, parameter_summary,
+	return scanToolCall(s.db.QueryRowContext(ctx, `SELECT id, conversation_id, COALESCE(message_id, ''), body_offset, tool_name, target_summary, parameter_summary, request_json, response_json,
 		status, error_code, result_summary, started_at, finished_at FROM assistant_tool_calls WHERE id = ? AND conversation_id = ?`, id, conversationID))
 }
 
@@ -394,7 +444,7 @@ func scanToolCall(row rowScanner) (ToolCall, error) {
 	var call ToolCall
 	var started int64
 	var finished sql.NullInt64
-	if err := row.Scan(&call.ID, &call.ConversationID, &call.MessageID, &call.Name, &call.TargetSummary, &call.ParameterSummary, &call.Status, &call.ErrorCode, &call.ResultSummary, &started, &finished); err != nil {
+	if err := row.Scan(&call.ID, &call.ConversationID, &call.MessageID, &call.BodyOffset, &call.Name, &call.TargetSummary, &call.ParameterSummary, &call.RequestJSON, &call.ResponseJSON, &call.Status, &call.ErrorCode, &call.ResultSummary, &started, &finished); err != nil {
 		return ToolCall{}, err
 	}
 	call.StartedAt = time.Unix(started, 0).UTC()
@@ -412,6 +462,14 @@ func toolCallRecordID(conversationID, externalID string) string {
 
 func validToolSummary(value string) bool {
 	return utf8.ValidString(value) && !strings.ContainsRune(value, 0) && utf8.RuneCountInString(value) <= 512
+}
+
+func normalizedToolJSON(value, fallback string, maximumBytes int) (string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		value = fallback
+	}
+	return value, utf8.ValidString(value) && !strings.ContainsRune(value, 0) && len(value) <= maximumBytes && json.Valid([]byte(value))
 }
 
 func validDigest(value string) bool {

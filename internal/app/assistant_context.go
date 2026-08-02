@@ -3,14 +3,19 @@ package app
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"scriptboard/internal/appstatus"
 	"scriptboard/internal/assistant"
+	"scriptboard/internal/assistant/pirpc"
+	"scriptboard/internal/assistant/raster"
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/websitemonitor"
 )
@@ -34,6 +39,11 @@ type assistantDirectoryEntrySnapshot struct {
 	Kind       string `json:"kind"`
 	Size       int64  `json:"size,omitempty"`
 	ModifiedAt string `json:"modifiedAt,omitempty"`
+}
+
+type assistantPreparedPrompt struct {
+	Text   string
+	Images []pirpc.PromptImage
 }
 
 func assistantFileStableID(rootName, entryName string) string {
@@ -78,6 +88,60 @@ func (a *App) assistantPromptWithReferences(ctx context.Context, role userRole, 
 	builder.Write(document)
 	builder.WriteString("\n</untrusted_scriptboard_context>")
 	return builder.String()
+}
+
+func (a *App) assistantPreparedPromptWithReferences(ctx context.Context, role userRole, message string, references []assistant.ContextRef) (assistantPreparedPrompt, error) {
+	prepared := assistantPreparedPrompt{Text: a.assistantPromptWithReferences(ctx, role, message, references)}
+	if !roleAllows(role, permissionReadFiles) || a.files == nil || a.assistantRaster == nil {
+		return prepared, nil
+	}
+	for _, reference := range references {
+		if reference.Kind != "file" {
+			continue
+		}
+		path, found := a.assistantManagedFilePath(reference.StableID)
+		if !found {
+			continue
+		}
+		file, _, err := a.files.OpenRegular(path)
+		if err != nil {
+			return assistantPreparedPrompt{}, fmt.Errorf("open referenced raster image: %w", err)
+		}
+		result, processErr := a.assistantRaster.Process(ctx, file)
+		_ = file.Close()
+		if errors.Is(processErr, raster.ErrUnsupportedImage) {
+			continue
+		}
+		if processErr != nil {
+			return assistantPreparedPrompt{}, processErr
+		}
+		if len(prepared.Images) >= 4 {
+			return assistantPreparedPrompt{}, fmt.Errorf("%w: at most four raster images may be referenced", assistant.ErrInvalidInput)
+		}
+		prepared.Images = append(prepared.Images, pirpc.PromptImage{
+			Type: "image", Data: base64.StdEncoding.EncodeToString(result.Data), MIMEType: result.MIMEType,
+		})
+	}
+	return prepared, nil
+}
+
+func (a *App) assistantManagedFilePath(stableID string) (string, bool) {
+	roots, err := a.files.Roots()
+	if err != nil {
+		return "", false
+	}
+	for _, root := range roots {
+		entries, err := a.files.List(root.Path)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if !entry.Hidden && entry.Kind == hostfiles.Regular && assistantFileStableID(root.Name, entry.Name) == stableID {
+				return entry.Path, true
+			}
+		}
+	}
+	return "", false
 }
 
 func (a *App) assistantHostPromptSnapshot(ctx context.Context, role userRole) assistantPromptReference {

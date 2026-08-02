@@ -20,6 +20,7 @@ type LaunchInput struct {
 	Provider, Model, Endpoint, APIKey, SystemPrompt string
 	BrokerEndpoint, BrokerCapability                string
 	ParentEnvironment                               []string
+	SupportsImages                                  bool
 }
 
 type LaunchSpec struct {
@@ -88,7 +89,7 @@ func PrepareLaunch(input LaunchInput) (LaunchSpec, error) {
 	}
 
 	modelConfigPath := filepath.Join(piHome, "models.json")
-	if err := writeModelConfig(modelConfigPath, endpoint, api, model); err != nil {
+	if err := writeModelConfig(modelConfigPath, endpoint, api, model, input.SupportsImages); err != nil {
 		return LaunchSpec{}, err
 	}
 
@@ -254,14 +255,15 @@ func filteredEnvironment(parent []string) []string {
 	return result
 }
 
-func writeModelConfig(path, endpoint, api, model string) error {
+func writeModelConfig(path, endpoint, api, model string, supportsImages bool) error {
 	document := struct {
 		Providers map[string]struct {
 			BaseURL string `json:"baseUrl"`
 			API     string `json:"api"`
 			APIKey  string `json:"apiKey"`
 			Models  []struct {
-				ID string `json:"id"`
+				ID    string   `json:"id"`
+				Input []string `json:"input"`
 			} `json:"models"`
 		} `json:"providers"`
 	}{Providers: make(map[string]struct {
@@ -269,7 +271,8 @@ func writeModelConfig(path, endpoint, api, model string) error {
 		API     string `json:"api"`
 		APIKey  string `json:"apiKey"`
 		Models  []struct {
-			ID string `json:"id"`
+			ID    string   `json:"id"`
+			Input []string `json:"input"`
 		} `json:"models"`
 	})}
 	provider := struct {
@@ -277,12 +280,19 @@ func writeModelConfig(path, endpoint, api, model string) error {
 		API     string `json:"api"`
 		APIKey  string `json:"apiKey"`
 		Models  []struct {
-			ID string `json:"id"`
+			ID    string   `json:"id"`
+			Input []string `json:"input"`
 		} `json:"models"`
 	}{BaseURL: endpoint, API: api, APIKey: "$SCRIPTBOARD_PI_API_KEY"}
 	provider.Models = append(provider.Models, struct {
-		ID string `json:"id"`
-	}{ID: model})
+		ID    string   `json:"id"`
+		Input []string `json:"input"`
+	}{ID: model, Input: func() []string {
+		if supportsImages {
+			return []string{"text", "image"}
+		}
+		return []string{"text"}
+	}()})
 	document.Providers[privateProviderName] = provider
 	payload, err := json.MarshalIndent(document, "", "  ")
 	if err != nil {

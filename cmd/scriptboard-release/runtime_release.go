@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strings"
 
+	"scriptboard/internal/assistant/capability"
 	"scriptboard/internal/assistant/runtimeinstall"
 	"scriptboard/internal/buildinfo"
 	updatepkg "scriptboard/internal/update"
@@ -55,6 +56,7 @@ func generateRuntimePackage(arguments []string) error {
 	upstreamPath := flags.String("upstream", "", "downloaded upstream Pi archive")
 	licensePath := flags.String("license", "", "downloaded Pi LICENSE")
 	extensionPath := flags.String("extension", "runtime/scriptboard-extension.ts", "fixed ScriptBoard extension")
+	capabilitiesPath := flags.String("capabilities", "runtime/capabilities.json", "fixed ScriptBoard capability manifest")
 	goos := flags.String("os", "", "target operating system")
 	goarch := flags.String("arch", "", "target architecture")
 	output := flags.String("output", "", "output ScriptBoard runtime archive")
@@ -80,6 +82,11 @@ func generateRuntimePackage(arguments []string) error {
 	}
 	if err := requireRegularFile(*extensionPath, 1<<20); err != nil {
 		return fmt.Errorf("verify fixed ScriptBoard extension: %w", err)
+	}
+	capabilityRoot := filepath.Dir(*capabilitiesPath)
+	catalog, err := capability.Load(capabilityRoot)
+	if err != nil || filepath.Base(*capabilitiesPath) != "capabilities.json" {
+		return fmt.Errorf("verify fixed ScriptBoard capability bundle: %w", err)
 	}
 	outputName := runtimeAssetName(lock.Version, *goos, *goarch)
 	if filepath.Base(*output) != outputName {
@@ -129,10 +136,29 @@ func generateRuntimePackage(arguments []string) error {
 	if err := os.WriteFile(filepath.Join(payload, "scriptboard-extension.ts"), extensionRaw, 0o600); err != nil {
 		return err
 	}
+	capabilitiesRaw, err := os.ReadFile(*capabilitiesPath)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(payload, "capabilities.json"), capabilitiesRaw, 0o600); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Join(payload, "playbooks"), 0o700); err != nil {
+		return err
+	}
+	for _, item := range catalog.List() {
+		body, err := os.ReadFile(filepath.Join(capabilityRoot, "playbooks", item.ID+".md"))
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(payload, "playbooks", item.ID+".md"), body, 0o600); err != nil {
+			return err
+		}
+	}
 	metadata := runtimeinstall.RuntimeMetadata{
 		Schema: 1, Product: runtimeinstall.Product, PiVersion: lock.Version,
 		RPCContract: runtimeinstall.RPCContract, BrokerContract: runtimeinstall.BrokerContract,
-		Executable: executable, Extension: "scriptboard-extension.ts",
+		Executable: executable, Extension: "scriptboard-extension.ts", Capabilities: "capabilities.json",
 		Upstream:       "https://github.com/" + lock.Repository + "/releases/tag/" + lock.Tag,
 		UpstreamCommit: lock.Commit,
 	}

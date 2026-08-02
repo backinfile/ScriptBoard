@@ -470,17 +470,19 @@ stateDiagram-v2
 
 ## 10. AI Assistant
 
-schema 21 在 schema 20 主机文件基线上增加以下 Assistant 自有表。迁移只执行幂等建表、
-建索引和 `user_version` 更新，并与应用其余 schema 变更在同一事务提交。
+schema 21 在 schema 20 主机文件基线上增加 Assistant 自有表；schema 24 在兼容的
+schema 21–23 上增加 Conversation Profile、Session Telemetry 与模型图片输入事实。
+迁移在同一事务内补列、建索引并更新 `user_version`；早于 20 或高于当前版本的状态库
+仍在任何写入前拒绝。
 
 | 实体 | 关键字段与语义 |
 | --- | --- |
 | AssistantSettings | 单例；功能启用、最大活动对话数、新对话自动审批默认值、更新者和时间 |
-| AssistantModel | 名称、Provider、模型 ID、HTTPS/回环 Endpoint、凭据已配置事实、唯一默认项；不保存 API Key |
-| AssistantConversation | 所有者、标题、必选模型、审批模式、Pi session 相对标识、Runtime 版本、状态、revision、归档时间 |
+| AssistantModel | 名称、Provider、模型 ID、HTTPS/回环 Endpoint、凭据已配置事实、`supports_images` 管理员声明、唯一默认项；不保存 API Key |
+| AssistantConversation | 所有者、标题、必选模型、审批模式、Pi session 相对标识、Runtime 版本、Conversation Profile 与版本、思考级别、Session Telemetry、状态、revision、归档时间 |
 | AssistantMessage | 对话内稳定 sequence、user/assistant、正文、streaming/complete/interrupted/error 与完成时间 |
 | AssistantContextRef | 对话、资源种类、稳定 ID、安全标签和展示顺序；不复制文件或日志正文 |
-| AssistantToolCall | 工具名、目标/参数摘要、状态、稳定错误码、结果摘要和时间；不保存敏感完整结果 |
+| AssistantToolCall | 工具名、目标/参数摘要、状态、稳定错误码、结果摘要、时间，以及对话内可检查的有界调用/返回 JSON；调用 JSON 不含 capability 或 Provider 凭据 |
 | AssistantApproval | 工具调用、参数摘要、pending/approved/rejected/expired/cancelled、过期时间和决定者 |
 
 AssistantConversation 只能由 `owner_user_id` 对应用户列出、读取、订阅和修改。每个对话
@@ -492,6 +494,9 @@ waiting_approval 的对话及消息原位转为 interrupted，不创建重放任
 完整资源引用集合在一个事务内写入；遗漏的旧引用会被移除。每个 Agent Turn 随后重新校验
 引用权限并生成有界快照。目录只包含逻辑名称与最多 48 个直接子项元数据；明确引用的普通
 UTF-8 文本文件最多附带 16 KiB 正文并记录 SHA-256，不把宿主绝对路径送入 Prompt。
+明确引用的 PNG、JPEG 或 WebP 在当前角色重新授权后进入 Safe Raster Processor；输入
+最多 10 MiB/40 MP，输出最长边 2048、单图最多 4 MiB、每次最多四图，只在内存中保存
+重新编码后的 base64。原图、EXIF、GPS 和处理后图片均不持久化到 Assistant 表、审计或日志。
 
 Provider API Key 按 AssistantModel ID 保存到
 `state-root/secrets/assistant-provider.json`，使用私有权限与同目录原子替换；它不进入
@@ -507,6 +512,8 @@ state-root/
       versions/<version>/
         pi[.exe]
         scriptboard-extension.ts     # 正式签名 Runtime 的唯一固定 Extension
+        capabilities.json            # 版本、大小和 SHA-256 固定的能力清单
+        playbooks/*.md                # 由清单显式列出的 Operational Playbook
         runtime.json                 # Pi/RPC/Broker 合同和上游 commit
         LICENSE
     pi-home/<user-id>/<conversation-id>/
@@ -519,8 +526,17 @@ state-root/
 解析只接受 `active.json` 指向自身版本目录内的普通文件，绝不查询 PATH 或用户 Pi 目录。
 私有 session 目录已有非空 JSONL 时，下一次受管进程使用 `--continue` 恢复；每个 Turn
 开始前仍通过 RPC `set_model` 重选该对话当前模型，避免保温进程沿用过期模型。
+非通用 Conversation Profile 必须能在活动 Runtime 的 Capability Bundle 中解析出完全匹配
+的版本；缺失、摘要不符或路径越界时拒绝本次 Turn，不回退到用户级 Skill。每个 Turn 还会
+重设思考级别和自动压缩/重试策略；settled 后把 Pi session stats 写回 Conversation，手动
+压缩只允许空闲的活动 session。
 
 Tool Broker 使用每个受管 Pi 进程独有的 Named Pipe/Unix Socket 与 256-bit capability。
-capability 不持久化；AssistantToolCall 只记录规范参数、目标和有界结果摘要，
+capability 不持久化；AssistantToolCall 记录规范参数、目标、有界结果摘要，以及不含
+capability 和 Provider 凭据的有界调用/返回 JSON，
 AssistantApproval 绑定用户、角色、授权版本、对话、Tool Call、参数和目标当前状态。
 服务重启把尚未完成的工具标记为 interrupted，并取消 pending/approved 的状态修改。
+
+Evidence Query 仍走相同 Tool Broker 和实时角色授权。日志搜索、日志窗口、Run 对比、计划
+历史和审计列表都有结果条数与文本字节上限；继续读取使用带 HMAC、五分钟过期并绑定用户、
+对话、工具、目标和查询的不透明游标，不能跨查询或跨对话复用。

@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"os"
@@ -22,9 +23,16 @@ import (
 )
 
 const (
-	ProviderOpenAI           = "openai"
-	ProviderAnthropic        = "anthropic"
-	ProviderOpenAICompatible = "openai-compatible"
+	ProviderOpenAI                    = "openai"
+	ProviderAnthropic                 = "anthropic"
+	ProviderOpenAICompatible          = "openai-compatible"
+	ProfileGeneral                    = "general"
+	ProfileDiagnoseFailedRun          = "diagnose-failed-run"
+	ProfileInvestigateWebsiteIncident = "investigate-website-incident"
+	ProfileTriageHostPressure         = "triage-host-pressure"
+	ProfileReviewScriptSafety         = "review-script-safety"
+	ProfileDesignSchedule             = "design-schedule"
+	CapabilityBundleVersion           = "1.0.0"
 )
 
 var (
@@ -57,6 +65,7 @@ var SchemaStatements = []string{
 		model TEXT NOT NULL,
 		endpoint TEXT NOT NULL,
 		credential_configured INTEGER NOT NULL DEFAULT 0,
+		supports_images INTEGER NOT NULL DEFAULT 0,
 		is_default INTEGER NOT NULL DEFAULT 0,
 		created_at INTEGER NOT NULL,
 		updated_at INTEGER NOT NULL,
@@ -72,6 +81,24 @@ var SchemaStatements = []string{
 		auto_approval INTEGER NOT NULL DEFAULT 0,
 		pi_session_file TEXT NOT NULL DEFAULT '',
 		runtime_version TEXT NOT NULL DEFAULT '',
+		capability_profile TEXT NOT NULL DEFAULT 'general' CHECK (capability_profile IN ('general', 'diagnose-failed-run', 'investigate-website-incident', 'triage-host-pressure', 'review-script-safety', 'design-schedule')),
+		profile_version TEXT NOT NULL DEFAULT '',
+		thinking_level TEXT NOT NULL DEFAULT 'medium' CHECK (thinking_level IN ('off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')),
+		stats_user_messages INTEGER NOT NULL DEFAULT 0,
+		stats_assistant_messages INTEGER NOT NULL DEFAULT 0,
+		stats_tool_calls INTEGER NOT NULL DEFAULT 0,
+		stats_tool_results INTEGER NOT NULL DEFAULT 0,
+		stats_total_messages INTEGER NOT NULL DEFAULT 0,
+		stats_input_tokens INTEGER NOT NULL DEFAULT 0,
+		stats_output_tokens INTEGER NOT NULL DEFAULT 0,
+		stats_cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+		stats_cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+		stats_total_tokens INTEGER NOT NULL DEFAULT 0,
+		stats_cost REAL NOT NULL DEFAULT 0,
+		stats_context_tokens INTEGER NOT NULL DEFAULT 0,
+		stats_context_window INTEGER NOT NULL DEFAULT 0,
+		stats_context_percent REAL,
+		stats_updated_at INTEGER NOT NULL DEFAULT 0,
 		status TEXT NOT NULL DEFAULT 'idle' CHECK (status IN ('idle', 'running', 'waiting_approval', 'interrupted', 'failed')),
 		revision INTEGER NOT NULL DEFAULT 1,
 		created_at INTEGER NOT NULL,
@@ -104,9 +131,12 @@ var SchemaStatements = []string{
 		id TEXT PRIMARY KEY,
 		conversation_id TEXT NOT NULL REFERENCES assistant_conversations(id) ON DELETE CASCADE,
 		message_id TEXT REFERENCES assistant_messages(id) ON DELETE SET NULL,
+		body_offset INTEGER NOT NULL DEFAULT 0,
 		tool_name TEXT NOT NULL,
 		target_summary TEXT NOT NULL DEFAULT '',
 		parameter_summary TEXT NOT NULL DEFAULT '',
+		request_json TEXT NOT NULL DEFAULT '{}',
+		response_json TEXT NOT NULL DEFAULT 'null',
 		status TEXT NOT NULL,
 		error_code TEXT NOT NULL DEFAULT '',
 		result_summary TEXT NOT NULL DEFAULT '',
@@ -140,13 +170,13 @@ type Actor struct {
 
 type ModelInput struct {
 	Name, Provider, Model, Endpoint, APIKey string
-	MakeDefault                             bool
+	MakeDefault, SupportsImages             bool
 }
 
 type ModelConfig struct {
-	ID, Name, Provider, Model, Endpoint string
-	CredentialConfigured, Default       bool
-	CreatedAt, UpdatedAt                time.Time
+	ID, Name, Provider, Model, Endpoint           string
+	CredentialConfigured, Default, SupportsImages bool
+	CreatedAt, UpdatedAt                          time.Time
 }
 
 type SettingsInput struct {
@@ -162,9 +192,9 @@ type Settings struct {
 }
 
 type ConversationInput struct {
-	Title, ModelID, InitialMessage string
-	Context                        []ContextRef
-	AutoApproval                   *bool
+	Title, ModelID, InitialMessage, CapabilityProfile string
+	Context                                           []ContextRef
+	AutoApproval                                      *bool
 }
 
 type ContextRef struct {
@@ -194,11 +224,22 @@ type ConversationFilter struct {
 
 type Conversation struct {
 	ID, OwnerUserID, Title, ModelID, ModelName, Provider, Model string
+	CapabilityProfile, ProfileVersion, ThinkingLevel            string
 	AutoApproval                                                bool
 	Status                                                      string
 	Revision                                                    uint64
+	Telemetry                                                   SessionTelemetry
 	CreatedAt, UpdatedAt                                        time.Time
 	ArchivedAt                                                  *time.Time
+}
+
+type SessionTelemetry struct {
+	UserMessages, AssistantMessages, ToolCalls, ToolResults, TotalMessages    int64
+	InputTokens, OutputTokens, CacheReadTokens, CacheWriteTokens, TotalTokens int64
+	Cost                                                                      float64
+	ContextTokens, ContextWindow                                              int64
+	ContextPercent                                                            *float64
+	UpdatedAt                                                                 time.Time
 }
 
 type Service struct {
@@ -294,10 +335,10 @@ func (s *Service) SaveModel(ctx context.Context, actor Actor, id string, input M
 	}
 	if creating {
 		_, err = tx.ExecContext(ctx, `INSERT INTO assistant_models
-			(id, name, provider, model, endpoint, credential_configured, is_default, created_at, updated_at, updated_by_user_id)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(id, name, provider, model, endpoint, credential_configured, supports_images, is_default, created_at, updated_at, updated_by_user_id)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			id, normalized.Name, normalized.Provider, normalized.Model, normalized.Endpoint,
-			boolInt(credentialConfigured), defaultValue, now.UnixNano(), now.UnixNano(), actor.UserID)
+			boolInt(credentialConfigured), boolInt(normalized.SupportsImages), defaultValue, now.UnixNano(), now.UnixNano(), actor.UserID)
 	} else {
 		if !normalized.MakeDefault {
 			if err := tx.QueryRowContext(ctx, "SELECT is_default FROM assistant_models WHERE id = ?", id).Scan(&defaultValue); err != nil {
@@ -308,9 +349,9 @@ func (s *Service) SaveModel(ctx context.Context, actor Actor, id string, input M
 			}
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE assistant_models SET name = ?, provider = ?, model = ?, endpoint = ?,
-			credential_configured = ?, is_default = ?, updated_at = ?, updated_by_user_id = ? WHERE id = ?`,
+			credential_configured = ?, supports_images = ?, is_default = ?, updated_at = ?, updated_by_user_id = ? WHERE id = ?`,
 			normalized.Name, normalized.Provider, normalized.Model, normalized.Endpoint,
-			boolInt(credentialConfigured), defaultValue, now.UnixNano(), actor.UserID, id)
+			boolInt(credentialConfigured), boolInt(normalized.SupportsImages), defaultValue, now.UnixNano(), actor.UserID, id)
 	}
 	if err != nil {
 		return ModelConfig{}, fmt.Errorf("save LLM configuration: %w", err)
@@ -376,12 +417,12 @@ func boundedText(value string, minimum, maximum int) bool {
 
 func (s *Service) model(ctx context.Context, id string) (ModelConfig, error) {
 	var model ModelConfig
-	var credentialConfigured, defaultValue int
+	var credentialConfigured, defaultValue, supportsImages int
 	var createdAt, updatedAt int64
-	err := s.db.QueryRowContext(ctx, `SELECT id, name, provider, model, endpoint, credential_configured,
+	err := s.db.QueryRowContext(ctx, `SELECT id, name, provider, model, endpoint, credential_configured, supports_images,
 		is_default, created_at, updated_at FROM assistant_models WHERE id = ?`, id).Scan(
 		&model.ID, &model.Name, &model.Provider, &model.Model, &model.Endpoint, &credentialConfigured,
-		&defaultValue, &createdAt, &updatedAt,
+		&supportsImages, &defaultValue, &createdAt, &updatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ModelConfig{}, ErrNotFound
@@ -390,6 +431,7 @@ func (s *Service) model(ctx context.Context, id string) (ModelConfig, error) {
 		return ModelConfig{}, fmt.Errorf("read LLM configuration: %w", err)
 	}
 	model.CredentialConfigured = credentialConfigured == 1
+	model.SupportsImages = supportsImages == 1
 	model.Default = defaultValue == 1
 	model.CreatedAt = time.Unix(0, createdAt).UTC()
 	model.UpdatedAt = time.Unix(0, updatedAt).UTC()
@@ -397,7 +439,7 @@ func (s *Service) model(ctx context.Context, id string) (ModelConfig, error) {
 }
 
 func (s *Service) ListModels(ctx context.Context) ([]ModelConfig, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, provider, model, endpoint, credential_configured,
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, provider, model, endpoint, credential_configured, supports_images,
 		is_default, created_at, updated_at FROM assistant_models ORDER BY is_default DESC, created_at, name`)
 	if err != nil {
 		return nil, fmt.Errorf("list LLM configurations: %w", err)
@@ -406,13 +448,14 @@ func (s *Service) ListModels(ctx context.Context) ([]ModelConfig, error) {
 	models := make([]ModelConfig, 0)
 	for rows.Next() {
 		var model ModelConfig
-		var credentialConfigured, defaultValue int
+		var credentialConfigured, defaultValue, supportsImages int
 		var createdAt, updatedAt int64
 		if err := rows.Scan(&model.ID, &model.Name, &model.Provider, &model.Model, &model.Endpoint,
-			&credentialConfigured, &defaultValue, &createdAt, &updatedAt); err != nil {
+			&credentialConfigured, &supportsImages, &defaultValue, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scan LLM configuration: %w", err)
 		}
 		model.CredentialConfigured = credentialConfigured == 1
+		model.SupportsImages = supportsImages == 1
 		model.Default = defaultValue == 1
 		model.CreatedAt = time.Unix(0, createdAt).UTC()
 		model.UpdatedAt = time.Unix(0, updatedAt).UTC()
@@ -580,6 +623,13 @@ func (s *Service) CreateConversation(ctx context.Context, actor Actor, input Con
 	if input.InitialMessage != "" && !boundedText(input.InitialMessage, 1, maxMessageRunes) {
 		return Conversation{}, fmt.Errorf("%w: invalid initial message", ErrInvalidInput)
 	}
+	input.CapabilityProfile = strings.TrimSpace(input.CapabilityProfile)
+	if input.CapabilityProfile == "" {
+		input.CapabilityProfile = ProfileGeneral
+	}
+	if !validCapabilityProfile(input.CapabilityProfile) {
+		return Conversation{}, fmt.Errorf("%w: unknown capability profile", ErrInvalidInput)
+	}
 	contextReferences, err := normalizeContextReferences(input.Context)
 	if err != nil {
 		return Conversation{}, err
@@ -613,9 +663,9 @@ func (s *Service) CreateConversation(ctx context.Context, actor Actor, input Con
 	}
 	defer func() { _ = tx.Rollback() }()
 	_, err = tx.ExecContext(ctx, `INSERT INTO assistant_conversations
-		(id, owner_user_id, title, model_id, auto_approval, status, revision, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, 'idle', 1, ?, ?)`,
-		id, actor.UserID, input.Title, input.ModelID, boolInt(autoApproval), now, now)
+		(id, owner_user_id, title, model_id, auto_approval, capability_profile, profile_version, status, revision, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 'idle', 1, ?, ?)`,
+		id, actor.UserID, input.Title, input.ModelID, boolInt(autoApproval), input.CapabilityProfile, profileVersion(input.CapabilityProfile), now, now)
 	if err != nil {
 		return Conversation{}, fmt.Errorf("create assistant conversation: %w", err)
 	}
@@ -989,14 +1039,22 @@ func (s *Service) ensureConversationOwner(ctx context.Context, actor Actor, conv
 func (s *Service) Conversation(ctx context.Context, actor Actor, id string) (Conversation, error) {
 	var conversation Conversation
 	var autoApproval int
-	var createdAt, updatedAt int64
+	var createdAt, updatedAt, telemetryUpdatedAt int64
 	var archivedAt sql.NullInt64
+	var contextPercent sql.NullFloat64
 	err := s.db.QueryRowContext(ctx, `SELECT c.id, c.owner_user_id, c.title, c.model_id, m.name, m.provider, m.model,
-		c.auto_approval, c.status, c.revision, c.created_at, c.updated_at, c.archived_at
+		c.auto_approval, c.capability_profile, c.profile_version, c.thinking_level,
+		c.stats_user_messages, c.stats_assistant_messages, c.stats_tool_calls, c.stats_tool_results, c.stats_total_messages,
+		c.stats_input_tokens, c.stats_output_tokens, c.stats_cache_read_tokens, c.stats_cache_write_tokens, c.stats_total_tokens,
+		c.stats_cost, c.stats_context_tokens, c.stats_context_window, c.stats_context_percent, c.stats_updated_at,
+		c.status, c.revision, c.created_at, c.updated_at, c.archived_at
 		FROM assistant_conversations c JOIN assistant_models m ON m.id = c.model_id
 		WHERE c.id = ? AND c.owner_user_id = ?`, id, actor.UserID).Scan(
 		&conversation.ID, &conversation.OwnerUserID, &conversation.Title, &conversation.ModelID,
-		&conversation.ModelName, &conversation.Provider, &conversation.Model, &autoApproval,
+		&conversation.ModelName, &conversation.Provider, &conversation.Model, &autoApproval, &conversation.CapabilityProfile, &conversation.ProfileVersion, &conversation.ThinkingLevel,
+		&conversation.Telemetry.UserMessages, &conversation.Telemetry.AssistantMessages, &conversation.Telemetry.ToolCalls, &conversation.Telemetry.ToolResults, &conversation.Telemetry.TotalMessages,
+		&conversation.Telemetry.InputTokens, &conversation.Telemetry.OutputTokens, &conversation.Telemetry.CacheReadTokens, &conversation.Telemetry.CacheWriteTokens, &conversation.Telemetry.TotalTokens,
+		&conversation.Telemetry.Cost, &conversation.Telemetry.ContextTokens, &conversation.Telemetry.ContextWindow, &contextPercent, &telemetryUpdatedAt,
 		&conversation.Status, &conversation.Revision, &createdAt, &updatedAt, &archivedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1008,6 +1066,12 @@ func (s *Service) Conversation(ctx context.Context, actor Actor, id string) (Con
 	conversation.AutoApproval = autoApproval == 1
 	conversation.CreatedAt = time.Unix(0, createdAt).UTC()
 	conversation.UpdatedAt = time.Unix(0, updatedAt).UTC()
+	if contextPercent.Valid {
+		conversation.Telemetry.ContextPercent = &contextPercent.Float64
+	}
+	if telemetryUpdatedAt > 0 {
+		conversation.Telemetry.UpdatedAt = time.Unix(0, telemetryUpdatedAt).UTC()
+	}
 	if archivedAt.Valid {
 		value := time.Unix(0, archivedAt.Int64).UTC()
 		conversation.ArchivedAt = &value
@@ -1027,7 +1091,11 @@ func (s *Service) ListConversations(ctx context.Context, actor Actor, filter Con
 		arguments = append(arguments, "%"+escapeLike(value)+"%")
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT c.id, c.owner_user_id, c.title, c.model_id, m.name, m.provider, m.model,
-		c.auto_approval, c.status, c.revision, c.created_at, c.updated_at, c.archived_at
+		c.auto_approval, c.capability_profile, c.profile_version, c.thinking_level,
+		c.stats_user_messages, c.stats_assistant_messages, c.stats_tool_calls, c.stats_tool_results, c.stats_total_messages,
+		c.stats_input_tokens, c.stats_output_tokens, c.stats_cache_read_tokens, c.stats_cache_write_tokens, c.stats_total_tokens,
+		c.stats_cost, c.stats_context_tokens, c.stats_context_window, c.stats_context_percent, c.stats_updated_at,
+		c.status, c.revision, c.created_at, c.updated_at, c.archived_at
 		FROM assistant_conversations c JOIN assistant_models m ON m.id = c.model_id
 		WHERE c.owner_user_id = ? AND `+archivedPredicate+queryPredicate+` ORDER BY c.updated_at DESC LIMIT 100`, arguments...)
 	if err != nil {
@@ -1038,16 +1106,26 @@ func (s *Service) ListConversations(ctx context.Context, actor Actor, filter Con
 	for rows.Next() {
 		var conversation Conversation
 		var autoApproval int
-		var createdAt, updatedAt int64
+		var createdAt, updatedAt, telemetryUpdatedAt int64
 		var archivedAt sql.NullInt64
+		var contextPercent sql.NullFloat64
 		if err := rows.Scan(&conversation.ID, &conversation.OwnerUserID, &conversation.Title, &conversation.ModelID,
-			&conversation.ModelName, &conversation.Provider, &conversation.Model, &autoApproval, &conversation.Status,
+			&conversation.ModelName, &conversation.Provider, &conversation.Model, &autoApproval, &conversation.CapabilityProfile, &conversation.ProfileVersion, &conversation.ThinkingLevel,
+			&conversation.Telemetry.UserMessages, &conversation.Telemetry.AssistantMessages, &conversation.Telemetry.ToolCalls, &conversation.Telemetry.ToolResults, &conversation.Telemetry.TotalMessages,
+			&conversation.Telemetry.InputTokens, &conversation.Telemetry.OutputTokens, &conversation.Telemetry.CacheReadTokens, &conversation.Telemetry.CacheWriteTokens, &conversation.Telemetry.TotalTokens,
+			&conversation.Telemetry.Cost, &conversation.Telemetry.ContextTokens, &conversation.Telemetry.ContextWindow, &contextPercent, &telemetryUpdatedAt, &conversation.Status,
 			&conversation.Revision, &createdAt, &updatedAt, &archivedAt); err != nil {
 			return nil, fmt.Errorf("scan assistant conversation: %w", err)
 		}
 		conversation.AutoApproval = autoApproval == 1
 		conversation.CreatedAt = time.Unix(0, createdAt).UTC()
 		conversation.UpdatedAt = time.Unix(0, updatedAt).UTC()
+		if contextPercent.Valid {
+			conversation.Telemetry.ContextPercent = &contextPercent.Float64
+		}
+		if telemetryUpdatedAt > 0 {
+			conversation.Telemetry.UpdatedAt = time.Unix(0, telemetryUpdatedAt).UTC()
+		}
 		if archivedAt.Valid {
 			value := time.Unix(0, archivedAt.Int64).UTC()
 			conversation.ArchivedAt = &value
@@ -1093,6 +1171,115 @@ func (s *Service) SetAutoApproval(ctx context.Context, actor Actor, id string, e
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (s *Service) SetCapabilityProfile(ctx context.Context, actor Actor, id, profile string) error {
+	profile = strings.TrimSpace(profile)
+	if !validCapabilityProfile(profile) {
+		return fmt.Errorf("%w: unknown capability profile", ErrInvalidInput)
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE assistant_conversations SET capability_profile = ?, profile_version = ?, revision = revision + 1,
+		updated_at = ? WHERE id = ? AND owner_user_id = ? AND status NOT IN ('running', 'waiting_approval')`,
+		profile, profileVersion(profile), s.now().UTC().UnixNano(), id, actor.UserID)
+	if err != nil {
+		return fmt.Errorf("update conversation capability profile: %w", err)
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return s.conversationMutationError(ctx, actor, id)
+	}
+	return nil
+}
+
+func (s *Service) SetThinkingLevel(ctx context.Context, actor Actor, id, level string) error {
+	level = strings.TrimSpace(level)
+	if !validThinkingLevel(level) {
+		return fmt.Errorf("%w: unknown thinking level", ErrInvalidInput)
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE assistant_conversations SET thinking_level = ?, revision = revision + 1,
+		updated_at = ? WHERE id = ? AND owner_user_id = ? AND status NOT IN ('running', 'waiting_approval')`,
+		level, s.now().UTC().UnixNano(), id, actor.UserID)
+	if err != nil {
+		return fmt.Errorf("update conversation thinking level: %w", err)
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return s.conversationMutationError(ctx, actor, id)
+	}
+	return nil
+}
+
+func (s *Service) UpdateSessionTelemetry(ctx context.Context, actor Actor, id string, telemetry SessionTelemetry) error {
+	if !validSessionTelemetry(telemetry) {
+		return fmt.Errorf("%w: invalid session telemetry", ErrInvalidInput)
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE assistant_conversations SET
+		stats_user_messages = ?, stats_assistant_messages = ?, stats_tool_calls = ?, stats_tool_results = ?, stats_total_messages = ?,
+		stats_input_tokens = ?, stats_output_tokens = ?, stats_cache_read_tokens = ?, stats_cache_write_tokens = ?, stats_total_tokens = ?,
+		stats_cost = ?, stats_context_tokens = ?, stats_context_window = ?, stats_context_percent = ?, stats_updated_at = ?
+		WHERE id = ? AND owner_user_id = ?`,
+		telemetry.UserMessages, telemetry.AssistantMessages, telemetry.ToolCalls, telemetry.ToolResults, telemetry.TotalMessages,
+		telemetry.InputTokens, telemetry.OutputTokens, telemetry.CacheReadTokens, telemetry.CacheWriteTokens, telemetry.TotalTokens,
+		telemetry.Cost, telemetry.ContextTokens, telemetry.ContextWindow, telemetry.ContextPercent, s.now().UTC().UnixNano(), id, actor.UserID)
+	if err != nil {
+		return fmt.Errorf("update conversation session telemetry: %w", err)
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Service) conversationMutationError(ctx context.Context, actor Actor, id string) error {
+	var status string
+	err := s.db.QueryRowContext(ctx, `SELECT status FROM assistant_conversations WHERE id = ? AND owner_user_id = ?`, id, actor.UserID).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("read conversation mutation state: %w", err)
+	}
+	return ErrConversationBusy
+}
+
+func validCapabilityProfile(profile string) bool {
+	switch profile {
+	case ProfileGeneral, ProfileDiagnoseFailedRun, ProfileInvestigateWebsiteIncident, ProfileTriageHostPressure, ProfileReviewScriptSafety, ProfileDesignSchedule:
+		return true
+	default:
+		return false
+	}
+}
+
+func profileVersion(profile string) string {
+	if profile == ProfileGeneral {
+		return ""
+	}
+	return CapabilityBundleVersion
+}
+
+func validThinkingLevel(level string) bool {
+	switch level {
+	case "off", "minimal", "low", "medium", "high", "xhigh", "max":
+		return true
+	default:
+		return false
+	}
+}
+
+func validSessionTelemetry(telemetry SessionTelemetry) bool {
+	values := []int64{
+		telemetry.UserMessages, telemetry.AssistantMessages, telemetry.ToolCalls, telemetry.ToolResults, telemetry.TotalMessages,
+		telemetry.InputTokens, telemetry.OutputTokens, telemetry.CacheReadTokens, telemetry.CacheWriteTokens, telemetry.TotalTokens,
+		telemetry.ContextTokens, telemetry.ContextWindow,
+	}
+	for _, value := range values {
+		if value < 0 {
+			return false
+		}
+	}
+	if telemetry.Cost < 0 || math.IsNaN(telemetry.Cost) || math.IsInf(telemetry.Cost, 0) {
+		return false
+	}
+	return telemetry.ContextPercent == nil || !math.IsNaN(*telemetry.ContextPercent) && !math.IsInf(*telemetry.ContextPercent, 0) && *telemetry.ContextPercent >= 0 && *telemetry.ContextPercent <= 100
 }
 
 func (s *Service) ArchiveConversation(ctx context.Context, actor Actor, id string) error {

@@ -41,10 +41,17 @@ func TestAIWorkspaceAndSettingsUsePersistedLLMAndConversationState(t *testing.T)
 	for _, expected := range []string{
 		`data-assistant-workspace`, `href="/ai" aria-current="page"`, `data-conversation-rail`,
 		`data-model-picker`, `aria-required="true"`, `data-auto-approval-toggle`, `data-resource-picker`,
+		`class="assistant-composer__toolbar"`, `class="assistant-reference-button"`,
+		`data-assistant-approval-label`, `data-manual-label="Manual approval"`,
 		`data-resource-kind="file"`, `data-resource-label="service.conf"`,
 	} {
 		if !strings.Contains(string(workspace), expected) {
 			t.Fatalf("AI workspace is missing %q: %s", expected, workspace)
+		}
+	}
+	for _, obsolete := range []string{`class="assistant-context-bar"`, `class="assistant-switch"`} {
+		if strings.Contains(string(workspace), obsolete) {
+			t.Fatalf("AI workspace still contains obsolete composer markup %q: %s", obsolete, workspace)
 		}
 	}
 
@@ -150,7 +157,7 @@ func TestAIWorkspaceAndSettingsUsePersistedLLMAndConversationState(t *testing.T)
 	if err != nil {
 		t.Fatalf("read AI conversation: %v", err)
 	}
-	for _, expected := range []string{"分析当前主机资源", "OpenAI · Production", "Summarize the current host pressure.", `data-context-key="directory:host"`, `data-auto-approval-toggle aria-pressed="false"`} {
+	for _, expected := range []string{"分析当前主机资源", "OpenAI · Production", "Summarize the current host pressure.", `data-context-key="directory:host"`, `data-auto-approval-toggle aria-pressed="false"`, `data-assistant-abort hidden`, `data-assistant-conversation-status`} {
 		if !strings.Contains(string(conversation), expected) {
 			t.Fatalf("conversation is missing %q: %s", expected, conversation)
 		}
