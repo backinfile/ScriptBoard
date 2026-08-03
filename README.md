@@ -193,12 +193,10 @@ ScriptBoard 不再提供内置 Git 版本保护。磁盘上已有 `.git` 目录�
 
 #### Windows
 
-将配置保存为 `C:\ProgramData\ScriptBoard\config.yaml`：
+标准本机安装使用内置默认值即可。将以下最小配置保存为 `C:\ProgramData\ScriptBoard\config.yaml`；只有需要覆盖默认值时才添加字段：
 
 ```yaml
-state_root: C:\ProgramData\ScriptBoard\state
-listen: 127.0.0.1:8787
-run_timeout_grace_seconds: 30
+{}
 ```
 
 在管理员 PowerShell 中运行：
@@ -214,12 +212,10 @@ Windows 服务默认以 `LocalSystem` 身份运行。安装命令还会为当前
 
 #### Linux
 
-将配置保存为 `/etc/scriptboard/config.yaml`：
+标准本机安装使用内置默认值即可。将以下最小配置保存为 `/etc/scriptboard/config.yaml`；只有需要覆盖默认值时才添加字段：
 
 ```yaml
-state_root: /var/lib/scriptboard/state
-listen: 127.0.0.1:8787
-run_timeout_grace_seconds: 30
+{}
 ```
 
 安装并启动 systemd 服务：
@@ -287,7 +283,7 @@ update_check: false
 | `state_root` | 平台数据目录下的 `state` | 数据库、日志、会话和内部状态目录 |
 | `listen` | `127.0.0.1:8787` | HTTP 或 HTTPS 监听地址 |
 | `tls_cert`、`tls_key` | 空 | TLS 证书和私钥；非回环监听时必须配置 |
-| `trusted_proxies` | 空 | 允许提供转发头的可信代理 IP 或 CIDR |
+| `trusted_proxies` | `127.0.0.1/32` | 允许提供转发头的可信代理 IP 或 CIDR；可用 `[]` 显式清空 |
 | `run_timeout_grace_seconds` | `30` | 自动超时后强制结束进程树前的宽限秒数 |
 | `update_check` | `true` | 是否定期检查官方稳定版；不会自动安装 |
 | `update_check_interval_hours` | `6` | 自动检查间隔，允许 1–168 小时 |
@@ -342,7 +338,7 @@ SCRIPTBOARD_ADMIN_PASSWORD_FILE
 - 默认只监听 `127.0.0.1:8787`；
 - 明文 HTTP 只允许监听回环地址；
 - 监听其他地址时必须配置 `tls_cert` 和 `tls_key`；
-- 使用同机 HTTPS 反向代理时，应明确配置 `trusted_proxies`；
+- 默认信任来自 `127.0.0.1` 的同机 IPv4 反向代理；其他代理来源必须明确配置 `trusted_proxies`；
 - 所有脚本都继承服务身份，应用不会切换身份或提供容器隔离；
 - 同一个 `state_root` 同时只允许一个 ScriptBoard 实例运行。
 
