@@ -1293,6 +1293,35 @@ func openDatabase(path string) (*sql.DB, error) {
 			}
 		}
 	}
+	if schemaVersion >= 20 && schemaVersion <= 24 {
+		for _, column := range []struct{ name, definition string }{
+			{"owner_user_id", `owner_user_id TEXT NOT NULL DEFAULT ''`},
+			{"is_shared", `is_shared INTEGER NOT NULL DEFAULT 0`},
+		} {
+			exists, err := sqliteColumnExists(migration, "assistant_models", column.name)
+			if err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("inspect Assistant model visibility migration: %w", err)
+			}
+			if !exists {
+				if _, err := migration.Exec(`ALTER TABLE assistant_models ADD COLUMN ` + column.definition); err != nil {
+					_ = db.Close()
+					return nil, fmt.Errorf("migrate Assistant model visibility: %w", err)
+				}
+			}
+		}
+		if _, err := migration.Exec(`UPDATE assistant_models SET owner_user_id = COALESCE(
+			NULLIF(owner_user_id, ''), NULLIF(updated_by_user_id, ''),
+			(SELECT id FROM users WHERE role = 'administrator' LIMIT 1), 'legacy-owner')
+			WHERE owner_user_id = ''`); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("backfill Assistant model owners: %w", err)
+		}
+		if _, err := migration.Exec(`DROP INDEX IF EXISTS assistant_models_default_idx`); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("replace Assistant model default index: %w", err)
+		}
+	}
 	for _, statement := range []string{
 		"CREATE UNIQUE INDEX IF NOT EXISTS users_single_administrator_idx ON users(role) WHERE role = 'administrator'",
 		"CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id)",
@@ -1317,6 +1346,8 @@ func openDatabase(path string) (*sql.DB, error) {
 		"CREATE INDEX IF NOT EXISTS schedule_triggers_unlinked_time_idx ON schedule_triggers(scheduled_for) WHERE run_id = ''",
 		"CREATE INDEX IF NOT EXISTS application_pins_order_idx ON application_pins(sort_order, created_at)",
 		"CREATE INDEX IF NOT EXISTS application_metric_minutes_bucket_idx ON application_metric_minutes(bucket_at)",
+		"CREATE UNIQUE INDEX IF NOT EXISTS assistant_models_owner_default_idx ON assistant_models(owner_user_id) WHERE is_default = 1",
+		"CREATE INDEX IF NOT EXISTS assistant_models_visibility_idx ON assistant_models(owner_user_id, is_shared, is_default DESC, created_at, name)",
 	} {
 		if _, err := migration.Exec(statement); err != nil {
 			_ = db.Close()
@@ -1347,10 +1378,11 @@ func openDatabase(path string) (*sql.DB, error) {
 func compatibleDatabaseSchema(version int) bool {
 	// Schema 20 is the clean host-filesystem baseline. Schema 21 adds the
 	// assistant-owned tables, schema 22 adds persisted tool-call text positions,
-	// schema 23 adds bounded request/response JSON, and schema 24 adds
-	// capability profiles plus bounded Pi session telemetry. Each supported
+	// schema 23 adds bounded request/response JSON, schema 24 adds capability
+	// profiles plus bounded Pi session telemetry, and schema 25 scopes LLM
+	// configurations to owners with explicit sharing. Each supported
 	// predecessor has an explicit transactional forward path.
-	return version == currentSchemaVersion || currentSchemaVersion == 24 && version >= 20 && version <= 23
+	return version == currentSchemaVersion || currentSchemaVersion == 25 && version >= 20 && version <= 24
 }
 
 func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {
@@ -1537,6 +1569,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /logout", a.requireSession(http.HandlerFunc(a.logout)))
 	mux.Handle("GET /monitor", a.requireSession(http.HandlerFunc(a.overviewPage)))
 	mux.Handle("GET /ai", a.requireSession(http.HandlerFunc(a.assistantPage)))
+	mux.Handle("GET /ai/resources", a.requireSession(http.HandlerFunc(a.assistantResourceSearch)))
 	mux.Handle("POST /ai/conversations", a.requireSession(http.HandlerFunc(a.createAssistantConversation)))
 	mux.Handle("GET /ai/conversations/{id}", a.requireSession(http.HandlerFunc(a.assistantConversationPage)))
 	mux.Handle("POST /ai/conversations/{id}/messages", a.requireSession(http.HandlerFunc(a.postAssistantMessage)))

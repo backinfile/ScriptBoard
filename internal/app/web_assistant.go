@@ -27,9 +27,14 @@ type assistantModelView struct {
 }
 
 type assistantResourceView struct {
-	Kind, ID, Label, Detail, Icon, Category string
-	Selected                                bool
-	ImageHint                               bool
+	Kind      string `json:"kind"`
+	ID        string `json:"id"`
+	Label     string `json:"label"`
+	Detail    string `json:"detail"`
+	Icon      string `json:"icon"`
+	Category  string `json:"category"`
+	Selected  bool   `json:"selected"`
+	ImageHint bool   `json:"imageHint"`
 }
 
 type assistantMessageView struct {
@@ -122,7 +127,7 @@ func (a *App) assistantConversationPage(response http.ResponseWriter, request *h
 func (a *App) renderAssistantPage(response http.ResponseWriter, request *http.Request, conversationID string) {
 	currentSession := request.Context().Value(sessionContextKey).(session)
 	actor := assistantActor(request)
-	models, err := a.assistant.ListModels(request.Context())
+	models, err := a.assistant.ListModels(request.Context(), actor)
 	if err != nil {
 		http.Error(response, webText(resolveWebLocale(request), "assistant.load_failed"), http.StatusInternalServerError)
 		return
@@ -192,6 +197,14 @@ func (a *App) renderAssistantPage(response http.ResponseWriter, request *http.Re
 	if selectedModelID == "" {
 		for _, model := range models {
 			if model.Default && model.CredentialConfigured {
+				selectedModelID = model.ID
+				break
+			}
+		}
+	}
+	if selectedModelID == "" {
+		for _, model := range models {
+			if model.CredentialConfigured {
 				selectedModelID = model.ID
 				break
 			}
@@ -909,7 +922,7 @@ func assistantWebError(locale webLocale, err error) string {
 
 func (a *App) assistantSettingsPage(response http.ResponseWriter, request *http.Request) {
 	current := request.Context().Value(sessionContextKey).(session)
-	models, err := a.assistant.ListModels(request.Context())
+	models, err := a.assistant.ListModels(request.Context(), assistantActor(request))
 	if err != nil {
 		http.Error(response, webText(resolveWebLocale(request), "assistant.load_failed"), http.StatusInternalServerError)
 		return
@@ -1029,6 +1042,7 @@ func (a *App) saveAssistantModel(response http.ResponseWriter, request *http.Req
 		Name: request.FormValue("name"), Provider: request.FormValue("provider"), Model: request.FormValue("model"),
 		Endpoint: request.FormValue("endpoint"), APIKey: request.FormValue("api_key"),
 		MakeDefault: request.FormValue("make_default") != "", SupportsImages: request.FormValue("supports_images") != "",
+		Shared: request.FormValue("shared") != "",
 	})
 	if err != nil {
 		status := http.StatusUnprocessableEntity
@@ -1113,6 +1127,99 @@ func assistantModelViews(models []assistant.ModelConfig) []assistantModelView {
 		})
 	}
 	return views
+}
+
+func (a *App) assistantResourceSearch(response http.ResponseWriter, request *http.Request) {
+	currentSession := request.Context().Value(sessionContextKey).(session)
+	if !roleAllows(currentSession.role, permissionReadFiles) || a.files == nil {
+		http.Error(response, "File references are not available for this role", http.StatusForbidden)
+		return
+	}
+	query := strings.TrimSpace(request.URL.Query().Get("query"))
+	if query == "" || len(query) > 4096 || !filepath.IsAbs(query) {
+		response.Header().Set("Cache-Control", "no-store")
+		response.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(response).Encode(map[string]any{"resources": []assistantResourceView{}})
+		return
+	}
+	resources, err := a.assistantHostPathResources(query)
+	if err != nil {
+		http.Error(response, "Unable to search host path", http.StatusBadRequest)
+		return
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(response).Encode(map[string]any{"resources": resources})
+}
+
+func (a *App) assistantHostPathResources(query string) ([]assistantResourceView, error) {
+	query = filepath.Clean(query)
+	if roots, err := a.files.Roots(); err == nil {
+		for _, root := range roots {
+			if hostfiles.ComparisonKey(root.Path) == hostfiles.ComparisonKey(query) {
+				return []assistantResourceView{{Kind: "directory", ID: root.Name, Label: root.Name, Detail: query, Icon: "folder", Category: "files"}}, nil
+			}
+		}
+	}
+	parent, nameQuery := filepath.Dir(query), strings.ToLower(filepath.Base(query))
+	entries, err := a.files.List(parent)
+	if err != nil {
+		return nil, err
+	}
+	resources := make([]assistantResourceView, 0, 24)
+	for _, entry := range entries {
+		if entry.Hidden || entry.Kind != hostfiles.Directory && entry.Kind != hostfiles.Regular {
+			continue
+		}
+		if nameQuery != "." && nameQuery != "" && !strings.Contains(strings.ToLower(entry.Name), nameQuery) {
+			continue
+		}
+		resource, found := a.assistantHostEntryResource(entry)
+		if !found {
+			continue
+		}
+		resources = append(resources, resource)
+		if hostfiles.ComparisonKey(entry.Path) == hostfiles.ComparisonKey(query) || len(resources) >= 24 {
+			break
+		}
+	}
+	return resources, nil
+}
+
+func (a *App) assistantHostEntryResource(entry hostfiles.Entry) (assistantResourceView, bool) {
+	roots, err := a.files.Roots()
+	if err != nil {
+		return assistantResourceView{}, false
+	}
+	for _, root := range roots {
+		if !hostfiles.Contains(root.Path, entry.Path) {
+			continue
+		}
+		relativePath, relativeErr := filepath.Rel(root.Path, entry.Path)
+		if relativeErr != nil || relativePath == "." || filepath.IsAbs(relativePath) {
+			return assistantResourceView{}, false
+		}
+		kind, icon := "directory", "folder"
+		if entry.Kind == hostfiles.Regular {
+			kind, icon = "file", "file-text"
+			if assistantRasterFilename(entry.Name) {
+				icon = "image"
+			}
+		}
+		stableID := assistantPathStableID(kind, root.Name, relativePath)
+		if filepath.Dir(relativePath) == "." {
+			if kind == "file" {
+				stableID = assistantFileStableID(root.Name, entry.Name)
+			} else {
+				stableID = assistantDirectoryStableID(root.Name, entry.Name)
+			}
+		}
+		return assistantResourceView{
+			Kind: kind, ID: stableID, Label: entry.Name, Detail: filepath.Dir(entry.Path), Icon: icon,
+			Category: "files", ImageHint: kind == "file" && assistantRasterFilename(entry.Name),
+		}, true
+	}
+	return assistantResourceView{}, false
 }
 
 func (a *App) assistantResourceCatalog(request *http.Request, role userRole) []assistantResourceView {
@@ -1288,10 +1395,20 @@ func (a *App) assistantContextReferencesFromForm(request *http.Request, role use
 		resource, exists := byKey[key]
 		if !exists {
 			persisted, persistedExists := existingByKey[key]
-			if !persistedExists {
+			if persistedExists {
+				resource = assistantResourceView{Kind: persisted.Kind, ID: persisted.StableID, Label: persisted.Label}
+			} else if kinds[index] == "file" || kinds[index] == "directory" {
+				entry, found := a.assistantHostEntryByStableID(kinds[index], strings.TrimSpace(ids[index]))
+				if !found {
+					return nil, fmt.Errorf("%w: unknown context reference", assistant.ErrInvalidInput)
+				}
+				resource, found = a.assistantHostEntryResource(entry)
+				if !found {
+					return nil, fmt.Errorf("%w: unknown context reference", assistant.ErrInvalidInput)
+				}
+			} else {
 				return nil, fmt.Errorf("%w: unknown context reference", assistant.ErrInvalidInput)
 			}
-			resource = assistantResourceView{Kind: persisted.Kind, ID: persisted.StableID, Label: persisted.Label}
 		}
 		seen[key] = struct{}{}
 		references = append(references, assistant.ContextRef{Kind: resource.Kind, StableID: resource.ID, Label: resource.Label})

@@ -3,6 +3,7 @@ package app_test
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/url"
@@ -12,6 +13,43 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestAssistantResourceSearchFindsDeepHostFiles(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "host")
+	deepDirectory := filepath.Join(hostRoot, "tmp", "scriptboard-ai-files-20260803")
+	if err := os.MkdirAll(deepDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	deepFile := filepath.Join(deepDirectory, "keep-renamed.sh")
+	if err := os.WriteFile(deepFile, []byte("printf 'deep reference ok\\n'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
+
+	response, err := client.Get(serverURL + "/ai/resources?query=" + url.QueryEscape(deepFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(response.Body)
+		t.Fatalf("deep resource search status=%d body=%s", response.StatusCode, body)
+	}
+	var payload struct {
+		Resources []struct {
+			Kind, ID, Label string
+		}
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Resources) != 1 || payload.Resources[0].Kind != "file" || payload.Resources[0].Label != "keep-renamed.sh" || payload.Resources[0].ID == "" {
+		t.Fatalf("deep resource search = %#v", payload.Resources)
+	}
+}
 
 func TestAIWorkspaceAndSettingsUsePersistedLLMAndConversationState(t *testing.T) {
 	t.Parallel()
@@ -68,6 +106,7 @@ func TestAIWorkspaceAndSettingsUsePersistedLLMAndConversationState(t *testing.T)
 	for _, expected := range []string{
 		`href="/settings/ai" aria-current="page"`, `data-assistant-settings`, `data-llm-drawer`,
 		`name="default_auto_approval"`, `name="max_active_conversations"`,
+		`name="shared"`,
 		`action="/settings/ai/runtime/check"`,
 	} {
 		if !strings.Contains(string(settings), expected) {
@@ -78,7 +117,7 @@ func TestAIWorkspaceAndSettingsUsePersistedLLMAndConversationState(t *testing.T)
 	response, err = client.PostForm(serverURL+"/settings/ai/llms", url.Values{
 		"name": {"OpenAI · Production"}, "provider": {"openai"}, "model": {"gpt-5.2"},
 		"endpoint": {"https://api.openai.com/v1"}, "api_key": {"sk-never-render-this"},
-		"make_default": {"true"}, "csrf_token": {formToken(t, settings)},
+		"make_default": {"true"}, "shared": {"true"}, "csrf_token": {formToken(t, settings)},
 	})
 	if err != nil {
 		t.Fatalf("create LLM configuration: %v", err)
@@ -99,6 +138,9 @@ func TestAIWorkspaceAndSettingsUsePersistedLLMAndConversationState(t *testing.T)
 	}
 	if !strings.Contains(string(settings), "OpenAI · Production") || !strings.Contains(string(settings), `data-edit-llm`) {
 		t.Fatalf("configured LLM is not editable: %s", settings)
+	}
+	if !strings.Contains(string(settings), `data-shared="true"`) || !strings.Contains(string(settings), `data-owned="true"`) {
+		t.Fatalf("configured LLM does not preserve owned/shared state: %s", settings)
 	}
 	if strings.Contains(string(settings), "sk-never-render-this") {
 		t.Fatal("provider credential was reflected into settings HTML")

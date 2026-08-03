@@ -46,6 +46,34 @@ type assistantPreparedPrompt struct {
 	Images []pirpc.PromptImage
 }
 
+func assistantDirectoryPromptSnapshot(snapshot assistantPromptReference, entries []hostfiles.Entry) assistantPromptReference {
+	visible := 0
+	items := make([]assistantDirectoryEntrySnapshot, 0, min(len(entries), assistantDirectorySnapshotLimit))
+	for _, entry := range entries {
+		if entry.Hidden {
+			continue
+		}
+		visible++
+		if len(items) >= assistantDirectorySnapshotLimit {
+			continue
+		}
+		modifiedAt := ""
+		if !entry.ModifiedAt.IsZero() {
+			modifiedAt = entry.ModifiedAt.UTC().Format(time.RFC3339)
+		}
+		items = append(items, assistantDirectoryEntrySnapshot{
+			Name: entry.Name, Kind: string(entry.Kind), Size: entry.Size, ModifiedAt: modifiedAt,
+		})
+	}
+	snapshot.Status = "available"
+	snapshot.Truncated = visible > len(items)
+	snapshot.Snapshot = struct {
+		Entries      []assistantDirectoryEntrySnapshot `json:"entries"`
+		VisibleCount int                               `json:"visibleCount"`
+	}{Entries: items, VisibleCount: visible}
+	return snapshot
+}
+
 func assistantFileStableID(rootName, entryName string) string {
 	return assistantEntryStableID("file", rootName, entryName)
 }
@@ -54,9 +82,83 @@ func assistantDirectoryStableID(rootName, entryName string) string {
 	return assistantEntryStableID("directory", rootName, entryName)
 }
 
+func assistantPathStableID(kind, rootName, relativePath string) string {
+	payload := rootName + "\x00" + filepath.ToSlash(filepath.Clean(relativePath))
+	return kind + "-path-" + base64.RawURLEncoding.EncodeToString([]byte(payload))
+}
+
+func decodeAssistantPathStableID(kind, stableID string) (string, string, bool) {
+	prefix := kind + "-path-"
+	if !strings.HasPrefix(stableID, prefix) {
+		return "", "", false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(stableID, prefix))
+	if err != nil {
+		return "", "", false
+	}
+	parts := strings.SplitN(string(payload), "\x00", 2)
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" {
+		return "", "", false
+	}
+	relativePath := filepath.Clean(filepath.FromSlash(parts[1]))
+	if relativePath == "." || filepath.IsAbs(relativePath) || relativePath == ".." || strings.HasPrefix(relativePath, ".."+string(filepath.Separator)) {
+		return "", "", false
+	}
+	return parts[0], relativePath, true
+}
+
 func assistantEntryStableID(kind, rootName, entryName string) string {
 	digest := sha256.Sum256([]byte(rootName + "\x00" + entryName))
 	return kind + "-" + hex.EncodeToString(digest[:16])
+}
+
+func (a *App) assistantHostEntryByStableID(kind, stableID string) (hostfiles.Entry, bool) {
+	roots, err := a.files.Roots()
+	if err != nil {
+		return hostfiles.Entry{}, false
+	}
+	if rootName, relativePath, encoded := decodeAssistantPathStableID(kind, stableID); encoded {
+		for _, root := range roots {
+			if root.Name != rootName {
+				continue
+			}
+			target := filepath.Join(root.Path, relativePath)
+			if !hostfiles.Contains(root.Path, target) {
+				return hostfiles.Entry{}, false
+			}
+			entries, listErr := a.files.List(filepath.Dir(target))
+			if listErr != nil {
+				return hostfiles.Entry{}, false
+			}
+			for _, entry := range entries {
+				if hostfiles.ComparisonKey(entry.Path) != hostfiles.ComparisonKey(target) || entry.Hidden {
+					continue
+				}
+				if kind == "file" && entry.Kind == hostfiles.Regular || kind == "directory" && entry.Kind == hostfiles.Directory {
+					return entry, true
+				}
+				return hostfiles.Entry{}, false
+			}
+			return hostfiles.Entry{}, false
+		}
+		return hostfiles.Entry{}, false
+	}
+	for _, root := range roots {
+		entries, listErr := a.files.List(root.Path)
+		if listErr != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.Hidden {
+				continue
+			}
+			if kind == "file" && entry.Kind == hostfiles.Regular && assistantFileStableID(root.Name, entry.Name) == stableID ||
+				kind == "directory" && entry.Kind == hostfiles.Directory && assistantDirectoryStableID(root.Name, entry.Name) == stableID {
+				return entry, true
+			}
+		}
+	}
+	return hostfiles.Entry{}, false
 }
 
 // assistantPromptWithReferences supplies a fresh host overview and reauthorizes
@@ -126,20 +228,9 @@ func (a *App) assistantPreparedPromptWithReferences(ctx context.Context, role us
 }
 
 func (a *App) assistantManagedFilePath(stableID string) (string, bool) {
-	roots, err := a.files.Roots()
-	if err != nil {
-		return "", false
-	}
-	for _, root := range roots {
-		entries, err := a.files.List(root.Path)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if !entry.Hidden && entry.Kind == hostfiles.Regular && assistantFileStableID(root.Name, entry.Name) == stableID {
-				return entry.Path, true
-			}
-		}
+	entry, found := a.assistantHostEntryByStableID("file", stableID)
+	if found {
+		return entry.Path, true
 	}
 	return "", false
 }
@@ -195,17 +286,6 @@ func (a *App) assistantReferenceSnapshot(ctx context.Context, role userRole, ref
 			targetPath := ""
 			if root.Name == reference.StableID {
 				targetPath = root.Path
-			} else {
-				rootEntries, listErr := a.files.List(root.Path)
-				if listErr != nil {
-					continue
-				}
-				for _, entry := range rootEntries {
-					if !entry.Hidden && entry.Kind == hostfiles.Directory && assistantDirectoryStableID(root.Name, entry.Name) == reference.StableID {
-						targetPath = entry.Path
-						break
-					}
-				}
 			}
 			if targetPath == "" {
 				continue
@@ -214,31 +294,14 @@ func (a *App) assistantReferenceSnapshot(ctx context.Context, role userRole, ref
 			if listErr != nil {
 				return snapshot
 			}
-			visible := 0
-			items := make([]assistantDirectoryEntrySnapshot, 0, min(len(entries), assistantDirectorySnapshotLimit))
-			for _, entry := range entries {
-				if entry.Hidden {
-					continue
-				}
-				visible++
-				if len(items) >= assistantDirectorySnapshotLimit {
-					continue
-				}
-				modifiedAt := ""
-				if !entry.ModifiedAt.IsZero() {
-					modifiedAt = entry.ModifiedAt.UTC().Format(time.RFC3339)
-				}
-				items = append(items, assistantDirectoryEntrySnapshot{
-					Name: entry.Name, Kind: string(entry.Kind), Size: entry.Size, ModifiedAt: modifiedAt,
-				})
+			return assistantDirectoryPromptSnapshot(snapshot, entries)
+		}
+		if entry, found := a.assistantHostEntryByStableID("directory", reference.StableID); found {
+			entries, listErr := a.files.List(entry.Path)
+			if listErr != nil {
+				return snapshot
 			}
-			snapshot.Status = "available"
-			snapshot.Truncated = visible > len(items)
-			snapshot.Snapshot = struct {
-				Entries      []assistantDirectoryEntrySnapshot `json:"entries"`
-				VisibleCount int                               `json:"visibleCount"`
-			}{Entries: items, VisibleCount: visible}
-			return snapshot
+			return assistantDirectoryPromptSnapshot(snapshot, entries)
 		}
 	case "file":
 		if !roleAllows(role, permissionReadFiles) {
@@ -248,38 +311,25 @@ func (a *App) assistantReferenceSnapshot(ctx context.Context, role userRole, ref
 		if a.files == nil {
 			return snapshot
 		}
-		roots, err := a.files.Roots()
-		if err != nil {
+		if entry, found := a.assistantHostEntryByStableID("file", reference.StableID); found {
+			contentStatus := "available"
+			document, readErr := a.files.ReadText(entry.Path, assistantFileContentLimit)
+			if readErr != nil {
+				contentStatus = "unavailable"
+			}
+			modifiedAt := ""
+			if !entry.ModifiedAt.IsZero() {
+				modifiedAt = entry.ModifiedAt.UTC().Format(time.RFC3339)
+			}
+			snapshot.Status = "available"
+			snapshot.Snapshot = struct {
+				Name, Kind, ModifiedAt, ContentStatus, Content, SHA256 string
+				Size                                                   int64
+			}{
+				Name: entry.Name, Kind: string(entry.Kind), ModifiedAt: modifiedAt,
+				ContentStatus: contentStatus, Content: document.Content, SHA256: document.Digest, Size: entry.Size,
+			}
 			return snapshot
-		}
-		for _, root := range roots {
-			entries, listErr := a.files.List(root.Path)
-			if listErr != nil {
-				continue
-			}
-			for _, entry := range entries {
-				if entry.Hidden || entry.Kind != hostfiles.Regular || assistantFileStableID(root.Name, entry.Name) != reference.StableID {
-					continue
-				}
-				contentStatus := "available"
-				document, readErr := a.files.ReadText(entry.Path, assistantFileContentLimit)
-				if readErr != nil {
-					contentStatus = "unavailable"
-				}
-				modifiedAt := ""
-				if !entry.ModifiedAt.IsZero() {
-					modifiedAt = entry.ModifiedAt.UTC().Format(time.RFC3339)
-				}
-				snapshot.Status = "available"
-				snapshot.Snapshot = struct {
-					Name, Kind, ModifiedAt, ContentStatus, Content, SHA256 string
-					Size                                                   int64
-				}{
-					Name: entry.Name, Kind: string(entry.Kind), ModifiedAt: modifiedAt,
-					ContentStatus: contentStatus, Content: document.Content, SHA256: document.Digest, Size: entry.Size,
-				}
-				return snapshot
-			}
 		}
 	case "application":
 		if !roleAllows(role, permissionObserve) {

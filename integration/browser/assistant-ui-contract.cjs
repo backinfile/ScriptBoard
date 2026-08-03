@@ -27,6 +27,17 @@ async function createHarness(browser) {
         data-operation-stop-run="Stop run" data-operation-check-website-now="Check website now"
         data-operation-perform-ui-action="Perform UI action"
         data-events-url="/assistant-events">
+        <header class="assistant-header">
+          <div class="assistant-header__title">
+            <button class="icon-button assistant-rail__open" type="button" aria-label="Open conversations"></button>
+            <div><h2>Investigate a very long production incident title without breaking the workspace</h2><p>CONVERSATION / responsive-contract</p></div>
+          </div>
+          <div class="assistant-header__actions">
+            <button class="icon-button" type="button" aria-label="Archive"></button>
+            <button class="icon-button" type="button" aria-label="Inspector"></button>
+            <button class="icon-button" type="button" aria-label="More"></button>
+          </div>
+        </header>
         <section class="assistant-chat">
           <div class="assistant-transcript">
             <div class="assistant-message-list" data-assistant-message-list></div>
@@ -213,6 +224,66 @@ async function visibleMessageFlow(page, messageID) {
       assert.equal(alignment.assistantPadding, "0px", JSON.stringify(alignment));
       assert.equal(alignment.quoteBorder, "0px", JSON.stringify(alignment));
       assert.equal(alignment.quotePadding, "0px", JSON.stringify(alignment));
+    }
+
+    if (contract === "all" || contract === "overflow") {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.addStyleTag({ content: `
+        .assistant-header, .assistant-transcript { width: 340px; max-width: 340px; }
+        .assistant-transcript { padding: 18px; }
+        .assistant-message { width: 100%; max-width: 680px; }
+        .assistant-message--user { width: fit-content; max-width: min(82%, 620px); }
+      ` });
+      const longToken = "scriptboard-responsive-contract-".repeat(18);
+      await page.evaluate(({ longToken }) => window.__assistantEmit("snapshot", {
+        messages: [
+          { id: "overflow-user", role: "user", body: longToken, status: "complete", createdAt: "2026-08-01T12:00:00Z" },
+          {
+            id: "overflow-assistant",
+            role: "assistant",
+            body: `Result\n\n\`\`\`text\n${longToken}\n\`\`\`\n\n| Key | Value |\n| --- | --- |\n| ${longToken} | ${longToken} |`,
+            status: "complete",
+            createdAt: "2026-08-01T12:00:00Z",
+          },
+        ],
+        toolCalls: [{
+          id: "overflow-tool",
+          messageId: "overflow-assistant",
+          name: "inspect_host",
+          status: "complete",
+          bodyOffset: 0,
+          requestJSON: JSON.stringify({ path: `/${longToken}` }, null, 2),
+          responseJSON: JSON.stringify({ output: longToken }, null, 2),
+        }],
+      }), { longToken });
+      await page.locator('[data-message-id="overflow-assistant"] [data-assistant-tool-cluster] > summary').click();
+      await page.locator('[data-tool-call-id="overflow-tool"] > summary').click();
+      await page.locator('[data-message-id="overflow-assistant"] [data-message-segment]').last().evaluate((body, token) => {
+        const table = document.createElement("table");
+        const row = table.insertRow();
+        row.insertCell().textContent = token;
+        row.insertCell().textContent = token;
+        body.append(table);
+      }, longToken);
+      assert.ok(await page.locator('[data-message-id="overflow-assistant"] pre').count() >= 1, "overflow fixture did not render code content");
+      assert.equal(await page.locator('[data-message-id="overflow-assistant"] table').count(), 1, "overflow fixture did not render table content");
+      const overflow = await page.evaluate(() => {
+        const measure = selector => [...document.querySelectorAll(selector)].map(element => ({
+          selector,
+          client: element.clientWidth,
+          scroll: element.scrollWidth,
+        }));
+        return [
+          ...measure(".assistant-header"),
+          ...measure(".assistant-transcript"),
+          ...measure(".assistant-message-list"),
+          ...measure(".assistant-message"),
+          ...measure(".assistant-message pre"),
+          ...measure(".assistant-message table"),
+          ...measure(".assistant-tool-json-grid"),
+        ].filter(item => item.scroll > item.client + 1);
+      });
+      assert.deepEqual(overflow, [], `assistant content overflows horizontally: ${JSON.stringify(overflow)}`);
     }
 
     if (contract === "all" || contract === "inspector") {

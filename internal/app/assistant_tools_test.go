@@ -225,9 +225,36 @@ func TestAssistantUIActionCatalogAndExecutorReuseWebValidation(t *testing.T) {
 		t.Fatalf("list UI actions = %#v", listed)
 	}
 	payload, _ := json.Marshal(listed.Content)
-	for _, expected := range []string{"quick_run_groups.create", "quick_runs.start", "requiresApproval"} {
+	for _, expected := range []string{"quick_run_groups.create", "quick_runs.start", "requiresApproval", "formDefaults", "working_directory"} {
 		if !strings.Contains(string(payload), expected) {
 			t.Fatalf("action catalog is missing %q: %s", expected, payload)
+		}
+	}
+	websiteActions := application.assistantTools.Invoke(context.Background(), toolbroker.Invocation{Binding: binding, Request: toolbroker.Request{Version: 1, ToolCallID: "ui-list-websites", Tool: "list_ui_actions", Parameters: json.RawMessage(`{"domain":"websites"}`)}})
+	if websiteActions.Status != toolbroker.StatusSuccess {
+		t.Fatalf("list website UI actions = %#v", websiteActions)
+	}
+	websitePayload, _ := json.Marshal(websiteActions.Content)
+	for _, expected := range []string{`"formAllowedValues"`, `"frequency_seconds":["30","60","300","900"]`, `"timeout_seconds":["3","5","10","30"]`} {
+		if !strings.Contains(string(websitePayload), expected) {
+			t.Fatalf("website action catalog is missing %q: %s", expected, websitePayload)
+		}
+	}
+	invalidWebsite := application.assistantTools.Invoke(context.Background(), toolbroker.Invocation{Binding: binding, Request: toolbroker.Request{Version: 1, ToolCallID: "ui-invalid-website", Tool: "perform_ui_action", Parameters: json.RawMessage(`{"action":"websites.create","form":{"name":"Invalid contract probe","scope":"remote","kind":"http","url":"https://example.com","verify_tls":true,"http_method":"GET","http_success_mode":"status","follow_redirects":true,"frequency_seconds":120,"timeout_seconds":15,"expected_statuses":"200"}}`)}})
+	if invalidWebsite.Status != toolbroker.StatusError || invalidWebsite.ErrorCode != "ui_action_invalid" || !strings.Contains(invalidWebsite.Summary, "frequency_seconds") {
+		t.Fatalf("invalid website action did not return a field-specific error: %#v", invalidWebsite)
+	}
+	for index, domain := range []string{"scriptboard", "all", "scriptboard/all"} {
+		parameters, _ := json.Marshal(map[string]string{"domain": domain})
+		listedAll := application.assistantTools.Invoke(context.Background(), toolbroker.Invocation{Binding: binding, Request: toolbroker.Request{Version: 1, ToolCallID: "ui-list-all-" + strconv.Itoa(index), Tool: "list_ui_actions", Parameters: parameters}})
+		if listedAll.Status != toolbroker.StatusSuccess {
+			t.Fatalf("list %q UI actions = %#v", domain, listedAll)
+		}
+		allPayload, _ := json.Marshal(listedAll.Content)
+		for _, expected := range []string{"files.save_text", "quick_runs.one_time", "runs.start_file"} {
+			if !strings.Contains(string(allPayload), expected) {
+				t.Fatalf("%q action catalog is missing %q: %s", domain, expected, allPayload)
+			}
 		}
 	}
 	performed := application.assistantTools.Invoke(context.Background(), toolbroker.Invocation{Binding: binding, Request: toolbroker.Request{Version: 1, ToolCallID: "ui-perform", Tool: "perform_ui_action", Parameters: json.RawMessage(`{"action":"quick_run_groups.create","form":{"name":"Created by Pi"}}`)}})
@@ -357,6 +384,15 @@ func TestAssistantUIActionResultsAreComposableAndFailuresAreActionable(t *testin
 	oneTimePayload, _ := json.Marshal(oneTime.Content)
 	if !strings.Contains(string(oneTimePayload), `"resourceId"`) {
 		t.Fatalf("one-time source result = %s", oneTimePayload)
+	}
+	defaultDirectoryOneTime := invokeAction("ui-one-time-source-default-directory", map[string]any{
+		"action": "quick_runs.one_time",
+		"form": map[string]any{
+			"language": language.ID, "source": source, "timeout_seconds": 30,
+		},
+	})
+	if defaultDirectoryOneTime.Status != toolbroker.StatusSuccess {
+		t.Fatalf("one-time source action with default working directory = %#v", defaultDirectoryOneTime)
 	}
 
 	var quickID string

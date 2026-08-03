@@ -32,6 +32,8 @@ type assistantUIActionSpec struct {
 	Key, Label, Domain, Path, DeepLink  string
 	PathFields, QueryFields, FormFields []string
 	FormValueModes                      map[string]assistantUIActionValueMode
+	FormAllowedValues                   map[string][]string
+	FormFieldGuidance                   map[string]string
 	Permission                          permission
 	Handler                             http.HandlerFunc
 	BrowserOnly                         string
@@ -54,6 +56,14 @@ func (a *App) assistantUIActions() []assistantUIActionSpec {
 		switch key {
 		case "websites.create", "websites.update":
 			spec.FormValueModes = map[string]assistantUIActionValueMode{"verify_tls": assistantUIActionBinary, "follow_redirects": assistantUIActionBinary}
+			spec.FormAllowedValues = map[string][]string{
+				"frequency_seconds": {"30", "60", "300", "900"},
+				"timeout_seconds":   {"3", "5", "10", "30"},
+			}
+			spec.FormFieldGuidance = map[string]string{
+				"frequency_seconds": "Required check interval; use one of the published allowed values.",
+				"timeout_seconds":   "Required request timeout; use one of the published allowed values.",
+			}
 		case "ai.save_defaults":
 			spec.FormValueModes = map[string]assistantUIActionValueMode{"enabled": assistantUIActionPresence, "default_auto_approval": assistantUIActionPresence}
 		case "quick_runs.lock", "schedules.toggle":
@@ -191,6 +201,9 @@ func (executor *assistantToolExecutor) planListUIActions(authorization assistant
 		return assistantToolPlan{}, errAssistantToolParameters
 	}
 	parameters.Domain = strings.TrimSpace(parameters.Domain)
+	if strings.EqualFold(parameters.Domain, "scriptboard") || strings.EqualFold(parameters.Domain, "all") || strings.EqualFold(parameters.Domain, "scriptboard/all") {
+		parameters.Domain = ""
+	}
 	items := make([]map[string]any, 0)
 	for _, spec := range executor.app.assistantUIActions() {
 		if parameters.Domain != "" && spec.Domain != parameters.Domain || !roleAllows(authorization.Role, spec.Permission) {
@@ -204,6 +217,22 @@ func (executor *assistantToolExecutor) planListUIActions(authorization assistant
 		}
 		if len(spec.FormValueModes) > 0 {
 			item["formValueModes"] = spec.FormValueModes
+		}
+		if len(spec.FormAllowedValues) > 0 {
+			item["formAllowedValues"] = spec.FormAllowedValues
+		}
+		if len(spec.FormFieldGuidance) > 0 {
+			item["formFieldGuidance"] = spec.FormFieldGuidance
+		}
+		if spec.Key == "quick_runs.one_time" || spec.Key == "quick_runs.create_from_source" {
+			item["formDefaults"] = map[string]string{"working_directory": executor.app.defaultHostDirectory()}
+			guidance := map[string]string{
+				"working_directory": "Optional absolute, writable, unprotected host directory. The same server-selected default as the web form is used when omitted.",
+			}
+			for key, value := range spec.FormFieldGuidance {
+				guidance[key] = value
+			}
+			item["formFieldGuidance"] = guidance
 		}
 		if spec.BrowserOnly != "" {
 			item["browserOnlyReason"] = spec.BrowserOnly
@@ -244,6 +273,15 @@ func (executor *assistantToolExecutor) planPerformUIAction(ctx context.Context, 
 	}
 	if selected.UnavailableReason != "" {
 		return assistantToolPlan{}, fmt.Errorf("%w: %s", errAssistantToolUnavailable, selected.UnavailableReason)
+	}
+	if selected.Key == "quick_runs.one_time" || selected.Key == "quick_runs.create_from_source" {
+		if parameters.Form == nil {
+			parameters.Form = make(map[string]any)
+		}
+		workingDirectory, present := parameters.Form["working_directory"]
+		if !present || strings.TrimSpace(fmt.Sprint(workingDirectory)) == "" {
+			parameters.Form["working_directory"] = executor.app.defaultHostDirectory()
+		}
 	}
 	path, form, err := normalizeAssistantUIAction(*selected, parameters)
 	if err != nil {

@@ -244,8 +244,12 @@ func TestOpenDatabaseMigratesSchema21ToolCallsToTextPositions(t *testing.T) {
 		t.Fatal(err)
 	}
 	statements := []string{
-		`INSERT INTO assistant_models (id, name, provider, model, endpoint, credential_configured, is_default, created_at, updated_at) VALUES ('model', 'Model', 'openai-compatible', 'model', 'http://localhost', 1, 1, 1, 1)`,
+		`INSERT INTO assistant_models (id, owner_user_id, name, provider, model, endpoint, credential_configured, is_default, created_at, updated_at, updated_by_user_id) VALUES ('model', 'owner', 'Model', 'openai-compatible', 'model', 'http://localhost', 1, 1, 1, 1, 'owner')`,
 		`INSERT INTO assistant_conversations (id, owner_user_id, title, model_id, status, created_at, updated_at) VALUES ('conversation', 'owner', 'Conversation', 'model', 'idle', 1, 1)`,
+		`DROP INDEX assistant_models_owner_default_idx`,
+		`DROP INDEX assistant_models_visibility_idx`,
+		`ALTER TABLE assistant_models DROP COLUMN is_shared`,
+		`ALTER TABLE assistant_models DROP COLUMN owner_user_id`,
 		`ALTER TABLE assistant_models DROP COLUMN supports_images`,
 		`INSERT INTO assistant_messages (id, conversation_id, sequence, role, body, status, created_at, finished_at) VALUES ('message', 'conversation', 1, 'assistant', 'Before after', 'complete', 1, 2)`,
 		`INSERT INTO assistant_tool_calls (id, conversation_id, message_id, tool_name, status, started_at) VALUES ('tool', 'conversation', 'message', 'inspect_host', 'complete', 1)`,
@@ -289,8 +293,12 @@ func TestOpenDatabaseMigratesSchema22ToolCallsToJSONPayloads(t *testing.T) {
 		t.Fatal(err)
 	}
 	statements := []string{
-		`INSERT INTO assistant_models (id, name, provider, model, endpoint, credential_configured, is_default, created_at, updated_at) VALUES ('model', 'Model', 'openai-compatible', 'model', 'http://localhost', 1, 1, 1, 1)`,
+		`INSERT INTO assistant_models (id, owner_user_id, name, provider, model, endpoint, credential_configured, is_default, created_at, updated_at, updated_by_user_id) VALUES ('model', 'owner', 'Model', 'openai-compatible', 'model', 'http://localhost', 1, 1, 1, 1, 'owner')`,
 		`INSERT INTO assistant_conversations (id, owner_user_id, title, model_id, status, created_at, updated_at) VALUES ('conversation', 'owner', 'Conversation', 'model', 'idle', 1, 1)`,
+		`DROP INDEX assistant_models_owner_default_idx`,
+		`DROP INDEX assistant_models_visibility_idx`,
+		`ALTER TABLE assistant_models DROP COLUMN is_shared`,
+		`ALTER TABLE assistant_models DROP COLUMN owner_user_id`,
 		`INSERT INTO assistant_messages (id, conversation_id, sequence, role, body, status, created_at, finished_at) VALUES ('message', 'conversation', 1, 'assistant', 'Done', 'complete', 1, 2)`,
 		`INSERT INTO assistant_tool_calls (id, conversation_id, message_id, body_offset, tool_name, status, started_at) VALUES ('tool', 'conversation', 'message', 0, 'inspect_host', 'complete', 1)`,
 		`ALTER TABLE assistant_tool_calls DROP COLUMN request_json`,
@@ -329,8 +337,12 @@ func TestOpenDatabaseMigratesSchema23ConversationCapabilitiesAndTelemetry(t *tes
 		t.Fatal(err)
 	}
 	statements := []string{
-		`INSERT INTO assistant_models (id, name, provider, model, endpoint, credential_configured, is_default, created_at, updated_at) VALUES ('model', 'Model', 'openai-compatible', 'model', 'http://localhost', 1, 1, 1, 1)`,
+		`INSERT INTO assistant_models (id, owner_user_id, name, provider, model, endpoint, credential_configured, is_default, created_at, updated_at, updated_by_user_id) VALUES ('model', 'owner', 'Model', 'openai-compatible', 'model', 'http://localhost', 1, 1, 1, 1, 'owner')`,
 		`INSERT INTO assistant_conversations (id, owner_user_id, title, model_id, status, created_at, updated_at) VALUES ('conversation', 'owner', 'Conversation', 'model', 'idle', 1, 1)`,
+		`DROP INDEX assistant_models_owner_default_idx`,
+		`DROP INDEX assistant_models_visibility_idx`,
+		`ALTER TABLE assistant_models DROP COLUMN is_shared`,
+		`ALTER TABLE assistant_models DROP COLUMN owner_user_id`,
 		`ALTER TABLE assistant_models DROP COLUMN supports_images`,
 	}
 	for _, column := range []string{
@@ -370,6 +382,47 @@ func TestOpenDatabaseMigratesSchema23ConversationCapabilitiesAndTelemetry(t *tes
 	}
 	if err := migrated.QueryRow(`SELECT supports_images FROM assistant_models WHERE id = 'model'`).Scan(&supportsImages); err != nil || supportsImages != 0 {
 		t.Fatalf("migrated image capability = %d, error = %v", supportsImages, err)
+	}
+}
+
+func TestOpenDatabaseMigratesSchema24ModelVisibility(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	db, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`INSERT INTO assistant_models (id, owner_user_id, name, provider, model, endpoint, credential_configured, is_default, created_at, updated_at, updated_by_user_id) VALUES ('model', 'owner', 'Model', 'openai-compatible', 'model', 'http://localhost', 1, 1, 1, 1, 'owner')`,
+		`DROP INDEX assistant_models_owner_default_idx`,
+		`DROP INDEX assistant_models_visibility_idx`,
+		`ALTER TABLE assistant_models DROP COLUMN is_shared`,
+		`ALTER TABLE assistant_models DROP COLUMN owner_user_id`,
+		`PRAGMA user_version=24`,
+		`PRAGMA wal_checkpoint(TRUNCATE)`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatalf("prepare schema 24 with %q: %v", statement, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := openDatabase(path)
+	if err != nil {
+		t.Fatalf("migrate schema 24: %v", err)
+	}
+	defer migrated.Close()
+	var version, shared int
+	var owner string
+	if err := migrated.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != currentSchemaVersion {
+		t.Fatalf("version = %d, error = %v", version, err)
+	}
+	if err := migrated.QueryRow(`SELECT owner_user_id, is_shared FROM assistant_models WHERE id = 'model'`).Scan(&owner, &shared); err != nil {
+		t.Fatal(err)
+	}
+	if owner != "owner" || shared != 0 {
+		t.Fatalf("migrated model visibility = owner %q shared %d", owner, shared)
 	}
 }
 

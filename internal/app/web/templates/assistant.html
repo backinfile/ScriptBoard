@@ -91,7 +91,7 @@
         </div>
 
         <div class="assistant-composer-zone">
-          <div class="assistant-resource-picker" data-resource-picker data-open="false" aria-hidden="true">
+          <div class="assistant-resource-picker" data-resource-picker data-resource-endpoint="/ai/resources" data-open="false" aria-hidden="true">
             <header><div><strong><span data-lucide="at-sign" aria-hidden="true"></span>{{t .Locale "assistant.reference_resource"}}</strong><kbd>@</kbd></div><label><span data-lucide="search" aria-hidden="true"></span><input type="search" data-resource-search placeholder="{{t .Locale "assistant.resource_search"}}"></label>
               <div class="assistant-resource-filters"><button type="button" data-resource-filter="all" aria-pressed="true">{{t .Locale "assistant.resource_all"}}</button><button type="button" data-resource-filter="files" aria-pressed="false">{{t .Locale "assistant.resource_files"}}</button><button type="button" data-resource-filter="applications" aria-pressed="false">{{t .Locale "assistant.resource_apps"}}</button><button type="button" data-resource-filter="monitors" aria-pressed="false">{{t .Locale "assistant.resource_monitors"}}</button><button type="button" data-resource-filter="automation" aria-pressed="false">{{t .Locale "assistant.resource_automation"}}</button></div>
             </header>

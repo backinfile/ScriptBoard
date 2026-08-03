@@ -424,6 +424,11 @@ func (a *App) createWebsiteMonitor(response http.ResponseWriter, request *http.R
 	}
 	config, fieldErrors := websiteMonitorConfigFromRequest(request)
 	if len(fieldErrors) > 0 {
+		if acceptsJSON(request) {
+			field, message := firstWebsiteMonitorFieldError(fieldErrors)
+			writeWebsiteMonitorJSONError(response, http.StatusUnprocessableEntity, string(websitemonitor.ErrorInvalidInput), message, field)
+			return
+		}
 		current := request.Context().Value(sessionContextKey).(session)
 		renderWebsiteMonitorForm(response, http.StatusUnprocessableEntity,
 			newWebsiteMonitorFormView(config, fieldErrors, resolveWebLocale(request), current.csrfToken, "", false))
@@ -431,6 +436,10 @@ func (a *App) createWebsiteMonitor(response http.ResponseWriter, request *http.R
 	}
 	monitor, err := a.websiteMonitor.Create(request.Context(), config)
 	if err != nil {
+		if acceptsJSON(request) {
+			writeWebsiteMonitorJSONError(response, http.StatusUnprocessableEntity, string(websitemonitor.ErrorInvalidInput), err.Error(), "form")
+			return
+		}
 		current := request.Context().Value(sessionContextKey).(session)
 		renderWebsiteMonitorForm(response, http.StatusUnprocessableEntity,
 			newWebsiteMonitorFormView(config, map[string]string{"form": err.Error()}, resolveWebLocale(request), current.csrfToken, "", false))
@@ -449,6 +458,11 @@ func (a *App) updateWebsiteMonitor(response http.ResponseWriter, request *http.R
 	id := request.PathValue("id")
 	config, fieldErrors := websiteMonitorConfigFromRequest(request)
 	if len(fieldErrors) > 0 {
+		if acceptsJSON(request) {
+			field, message := firstWebsiteMonitorFieldError(fieldErrors)
+			writeWebsiteMonitorJSONError(response, http.StatusUnprocessableEntity, string(websitemonitor.ErrorInvalidInput), message, field)
+			return
+		}
 		current := request.Context().Value(sessionContextKey).(session)
 		renderWebsiteMonitorForm(response, http.StatusUnprocessableEntity,
 			newWebsiteMonitorFormView(config, fieldErrors, resolveWebLocale(request), current.csrfToken, id, true))
@@ -456,6 +470,11 @@ func (a *App) updateWebsiteMonitor(response http.ResponseWriter, request *http.R
 	}
 	monitor, err := a.websiteMonitor.Update(request.Context(), id, config)
 	if err != nil {
+		if acceptsJSON(request) {
+			code, field := websiteMonitorOperationError(err, websitemonitor.ErrorInvalidInput)
+			writeWebsiteMonitorJSONError(response, http.StatusUnprocessableEntity, code, err.Error(), field)
+			return
+		}
 		current := request.Context().Value(sessionContextKey).(session)
 		renderWebsiteMonitorForm(response, http.StatusUnprocessableEntity,
 			newWebsiteMonitorFormView(config, map[string]string{"form": err.Error()}, resolveWebLocale(request), current.csrfToken, id, true))
@@ -463,6 +482,18 @@ func (a *App) updateWebsiteMonitor(response http.ResponseWriter, request *http.R
 	}
 	a.recordAuditForRequest(request, "update_website_monitor", monitor.Config.Name, "succeeded")
 	http.Redirect(response, request, "/monitor/websites/"+monitor.ID, http.StatusSeeOther)
+}
+
+func firstWebsiteMonitorFieldError(fieldErrors map[string]string) (string, string) {
+	for _, field := range []string{"frequency_seconds", "timeout_seconds", "name", "url", "dial_host", "expected_statuses", "form"} {
+		if message := strings.TrimSpace(fieldErrors[field]); message != "" {
+			return field, message
+		}
+	}
+	for field, message := range fieldErrors {
+		return field, message
+	}
+	return "form", "Website monitor configuration is invalid"
 }
 
 func (a *App) websiteMonitorDetail(response http.ResponseWriter, request *http.Request) {

@@ -295,6 +295,49 @@ func TestCreateQuickRunFromSourceWritesScriptWithoutRunningIt(t *testing.T) {
 	}
 }
 
+func TestCreateQuickRunFromSourceDoesNotDuplicateLanguageExtension(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
+	response, err := client.Get(serverURL + "/config/quick-runs/from-source/new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+
+	language, extension, source := "shell", ".sh", "#!/bin/sh\nprintf extension-ok\\n"
+	if runtime.GOOS == "windows" {
+		language, extension, source = "batch", ".cmd", "@echo off\r\necho extension-ok\r\n"
+	}
+	fileName := "extension-test" + extension
+	response, err = client.PostForm(serverURL+"/config/quick-runs/from-source", url.Values{
+		"csrf_token": {formToken(t, taskPage)}, "language": {language}, "source": {source},
+		"working_directory": {hostRoot}, "file_name": {fileName}, "name": {"Extension test"},
+		"timeout_seconds": {"30"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("quick create status=%d body=%s", response.StatusCode, body)
+	}
+	if _, err := os.Stat(filepath.Join(hostRoot, fileName)); err != nil {
+		t.Fatalf("single-extension script was not created: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(hostRoot, fileName+extension)); !os.IsNotExist(err) {
+		t.Fatalf("duplicated-extension script exists: %v", err)
+	}
+}
+
 func TestCreateQuickRunFromSourceRequiresExplicitCollisionChoice(t *testing.T) {
 	t.Parallel()
 

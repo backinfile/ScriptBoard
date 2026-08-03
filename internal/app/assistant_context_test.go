@@ -166,3 +166,36 @@ func TestAssistantPromptHydratesExplicitFileAndAutomationReferencesWithoutAbsolu
 		t.Fatalf("resource prompt contains a host absolute path: %s", prompt)
 	}
 }
+
+func TestAssistantPromptHydratesDeepPathReferences(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	deepDirectory := filepath.Join(root, "tmp", "scriptboard-ai-files")
+	if err := os.MkdirAll(deepDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	deepFile := filepath.Join(deepDirectory, "keep-renamed.sh")
+	if err := os.WriteFile(deepFile, []byte("printf 'deep-reference-ok\\n'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := hostfiles.Open(hostfiles.Options{Topology: assistantContextTestTopology{root: root}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	application := &App{files: manager}
+	references := []assistant.ContextRef{
+		{Kind: "directory", StableID: assistantPathStableID("directory", "host", filepath.Join("tmp", "scriptboard-ai-files")), Label: "scriptboard-ai-files"},
+		{Kind: "file", StableID: assistantPathStableID("file", "host", filepath.Join("tmp", "scriptboard-ai-files", "keep-renamed.sh")), Label: "keep-renamed.sh"},
+	}
+
+	prompt := application.assistantPromptWithReferences(context.Background(), roleOperator, "Inspect deep references.", references)
+	for _, expected := range []string{"keep-renamed.sh", "deep-reference-ok", `"status":"available"`} {
+		if !strings.Contains(prompt, expected) {
+			t.Fatalf("deep resource prompt is missing %q: %s", expected, prompt)
+		}
+	}
+	if strings.Contains(prompt, root) {
+		t.Fatalf("deep resource prompt contains the host absolute path: %s", prompt)
+	}
+}

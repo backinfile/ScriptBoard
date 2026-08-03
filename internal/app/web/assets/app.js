@@ -3937,7 +3937,10 @@
     const resourcePicker = root.querySelector("[data-resource-picker]");
     const resourceToggle = root.querySelector("[data-resource-picker-toggle]");
     const resourceSearch = root.querySelector("[data-resource-search]");
-    const resourceOptions = resourcePicker ? [...resourcePicker.querySelectorAll(".assistant-resource-option")] : [];
+    const resourceList = resourcePicker?.querySelector(".assistant-resource-list");
+    let resourceOptions = resourcePicker ? [...resourcePicker.querySelectorAll(".assistant-resource-option")] : [];
+    let resourceSearchTimer = 0;
+    let resourceSearchAbort = null;
     const contextHost = root.querySelector("[data-assistant-context-chips]");
     const contextCount = root.querySelector("[data-assistant-context-count]");
     let modelIndex = Math.max(0, modelChoices.findIndex(choice => choice.getAttribute("aria-selected") === "true"));
@@ -4500,6 +4503,63 @@
     };
 
     const visibleResourceOptions = () => resourceOptions.filter(option => !option.hidden);
+	const renderDynamicResource = (resource, query) => {
+		if (!resourceList || !resource?.id || !resource?.kind) return;
+		const key = `${resource.kind}:${resource.id}`;
+		if (resourceOptions.some(option => `${option.dataset.resourceKind}:${option.dataset.resourceId}` === key)) return;
+		const option = document.createElement("button");
+		option.type = "button";
+		option.setAttribute("role", "option");
+		option.setAttribute("aria-selected", String(selectedResources.has(key)));
+		option.className = "assistant-resource-option";
+		option.dataset.resourceDynamic = "true";
+		option.dataset.resourceId = resource.id;
+		option.dataset.resourceKind = resource.kind;
+		option.dataset.resourceCategory = resource.category || "files";
+		option.dataset.resourceLabel = resource.label || resource.id;
+		option.dataset.resourceImage = String(Boolean(resource.imageHint));
+		option.dataset.resourceSearchText = `${resource.label || ""} ${resource.detail || ""} ${query}`;
+		const icon = document.createElement("span");
+		icon.className = "assistant-resource-option__icon";
+		icon.dataset.lucide = resource.icon || (resource.kind === "directory" ? "folder" : "file-text");
+		icon.setAttribute("aria-hidden", "true");
+		const copy = document.createElement("span");
+		const title = document.createElement("strong");
+		title.textContent = resource.label || resource.id;
+		const detail = document.createElement("small");
+		detail.textContent = `${resource.kind} · ${resource.detail || ""}`;
+		copy.append(title, detail);
+		const plus = document.createElement("span");
+		plus.dataset.lucide = "plus";
+		plus.setAttribute("aria-hidden", "true");
+		option.append(icon, copy, plus);
+		resourceList.append(option);
+		resourceOptions.push(option);
+		renderIcons(option);
+	};
+	const searchHostPathResources = () => {
+		const query = (resourceSearch?.value || "").trim();
+		const absolute = query.startsWith("/") || query.startsWith("\\\\") || /^[a-z]:[\\/]/i.test(query);
+		if (!absolute || !resourcePicker?.dataset.resourceEndpoint) return;
+		window.clearTimeout(resourceSearchTimer);
+		resourceSearchTimer = window.setTimeout(async () => {
+			resourceSearchAbort?.abort();
+			resourceSearchAbort = new AbortController();
+			try {
+				const endpoint = new URL(resourcePicker.dataset.resourceEndpoint, window.location.origin);
+				endpoint.searchParams.set("query", query);
+				const response = await fetch(endpoint, { credentials: "same-origin", headers: { Accept: "application/json" }, signal: resourceSearchAbort.signal });
+				if (!response.ok) return;
+				resourceOptions.filter(option => option.dataset.resourceDynamic === "true").forEach(option => option.remove());
+				resourceOptions = resourceOptions.filter(option => option.dataset.resourceDynamic !== "true");
+				const payload = await response.json();
+				(payload.resources || []).forEach(resource => renderDynamicResource(resource, query));
+				filterResources();
+			} catch (error) {
+				if (error?.name !== "AbortError") resourceSearchAbort = null;
+			}
+		}, 180);
+	};
     const filterResources = () => {
       const query = (resourceSearch?.value || "").trim().toLocaleLowerCase();
       resourceOptions.forEach(option => {
@@ -4745,6 +4805,7 @@
     root.addEventListener("keydown", onKeydown);
     input?.addEventListener("input", onInput);
     resourceSearch?.addEventListener("input", filterResources);
+    resourceSearch?.addEventListener("input", searchHostPathResources);
 	composer?.addEventListener("submit", onSubmit);
 	approvalForm?.addEventListener("submit", onApprovalSubmit);
 	transcript?.addEventListener("scroll", onTranscriptScroll, { passive: true });
@@ -4755,6 +4816,9 @@
       root.removeEventListener("keydown", onKeydown);
       input?.removeEventListener("input", onInput);
       resourceSearch?.removeEventListener("input", filterResources);
+      resourceSearch?.removeEventListener("input", searchHostPathResources);
+	  window.clearTimeout(resourceSearchTimer);
+	  resourceSearchAbort?.abort();
       composer?.removeEventListener("submit", onSubmit);
 	  approvalForm?.removeEventListener("submit", onApprovalSubmit);
 	  transcript?.removeEventListener("scroll", onTranscriptScroll);
@@ -4796,6 +4860,7 @@
 	  form.elements.api_key.required = !row;
       form.elements.make_default.checked = row?.dataset.default === "true";
 		form.elements.supports_images.checked = row?.dataset.supportsImages === "true";
+		form.elements.shared.checked = row?.dataset.shared === "true";
       if (title) title.textContent = row ? (locale() === "zh-CN" ? "编辑 LLM 配置" : "Edit LLM configuration") : (locale() === "zh-CN" ? "新增 LLM 配置" : "Add LLM configuration");
       if (credentialHelp) credentialHelp.dataset.editing = String(Boolean(row));
       layer.dataset.open = "true";

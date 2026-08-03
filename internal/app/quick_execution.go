@@ -63,6 +63,20 @@ func validateQuickExecutionSource(source string) error {
 	return nil
 }
 
+func quickExecutionFileName(name, extension string) string {
+	if strings.HasSuffix(strings.ToLower(name), strings.ToLower(extension)) {
+		return name
+	}
+	return name + extension
+}
+
+func quickExecutionFileStem(name, extension string) string {
+	if strings.HasSuffix(strings.ToLower(name), strings.ToLower(extension)) {
+		return name[:len(name)-len(extension)]
+	}
+	return name
+}
+
 func parseQuickExecutionTimeout(value string) (int, error) {
 	if value == "" {
 		return 0, nil
@@ -208,7 +222,7 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 		http.Error(response, "file name is invalid: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	fileName += language.Extension
+	fileName = quickExecutionFileName(fileName, language.Extension)
 	name := strings.TrimSpace(request.FormValue("name"))
 	if name == "" {
 		name = strings.TrimSpace(request.FormValue("file_name"))
@@ -261,9 +275,9 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 			return
 		}
 		a.renderQuickCreateConflict(response, request, quickCreateValues{
-			WorkingDirectory: workingDirectory, Language: language.ID, FileName: strings.TrimSuffix(fileName, language.Extension),
+			WorkingDirectory: workingDirectory, Language: language.ID, FileName: quickExecutionFileStem(fileName, language.Extension),
 			Source: source, Name: name, Arguments: argumentsTemplate, TimeoutSeconds: timeoutSeconds, GroupID: request.FormValue("group_id"),
-		}, targetPath, strings.TrimSuffix(suggested, language.Extension), targetInfo.Mode().IsRegular() && !a.runs.ConflictsPath(targetPath))
+		}, targetPath, quickExecutionFileStem(suggested, language.Extension), targetInfo.Mode().IsRegular() && !a.runs.ConflictsPath(targetPath))
 		return
 	}
 	if targetExists && action == conflictActionOverwrite && (!targetInfo.Mode().IsRegular() || a.runs.ConflictsPath(targetPath)) {

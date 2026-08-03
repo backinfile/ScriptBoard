@@ -60,19 +60,19 @@ var SchemaStatements = []string{
 	`INSERT OR IGNORE INTO assistant_settings (id) VALUES (1)`,
 	`CREATE TABLE IF NOT EXISTS assistant_models (
 		id TEXT PRIMARY KEY,
+		owner_user_id TEXT NOT NULL,
 		name TEXT NOT NULL COLLATE NOCASE UNIQUE,
 		provider TEXT NOT NULL CHECK (provider IN ('openai', 'anthropic', 'openai-compatible')),
 		model TEXT NOT NULL,
 		endpoint TEXT NOT NULL,
 		credential_configured INTEGER NOT NULL DEFAULT 0,
 		supports_images INTEGER NOT NULL DEFAULT 0,
+		is_shared INTEGER NOT NULL DEFAULT 0,
 		is_default INTEGER NOT NULL DEFAULT 0,
 		created_at INTEGER NOT NULL,
 		updated_at INTEGER NOT NULL,
 		updated_by_user_id TEXT NOT NULL DEFAULT ''
 	)`,
-	`CREATE UNIQUE INDEX IF NOT EXISTS assistant_models_default_idx ON assistant_models(is_default) WHERE is_default = 1`,
-	`CREATE INDEX IF NOT EXISTS assistant_models_order_idx ON assistant_models(is_default DESC, created_at, name)`,
 	`CREATE TABLE IF NOT EXISTS assistant_conversations (
 		id TEXT PRIMARY KEY,
 		owner_user_id TEXT NOT NULL,
@@ -170,13 +170,14 @@ type Actor struct {
 
 type ModelInput struct {
 	Name, Provider, Model, Endpoint, APIKey string
-	MakeDefault, SupportsImages             bool
+	MakeDefault, SupportsImages, Shared     bool
 }
 
 type ModelConfig struct {
-	ID, Name, Provider, Model, Endpoint           string
-	CredentialConfigured, Default, SupportsImages bool
-	CreatedAt, UpdatedAt                          time.Time
+	ID, OwnerUserID, Name, Provider, Model, Endpoint      string
+	CredentialConfigured, Default, SupportsImages, Shared bool
+	Owned                                                 bool
+	CreatedAt, UpdatedAt                                  time.Time
 }
 
 type SettingsInput struct {
@@ -288,6 +289,17 @@ func (s *Service) SaveModel(ctx context.Context, actor Actor, id string, input M
 		if err != nil {
 			return ModelConfig{}, fmt.Errorf("generate LLM configuration ID: %w", err)
 		}
+	} else {
+		var ownerUserID string
+		if err := s.db.QueryRowContext(ctx, "SELECT owner_user_id FROM assistant_models WHERE id = ?", id).Scan(&ownerUserID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ModelConfig{}, ErrNotFound
+			}
+			return ModelConfig{}, fmt.Errorf("read LLM configuration owner: %w", err)
+		}
+		if ownerUserID != actor.UserID {
+			return ModelConfig{}, ErrNotFound
+		}
 	}
 
 	s.credentialMu.Lock()
@@ -317,7 +329,7 @@ func (s *Service) SaveModel(ctx context.Context, actor Actor, id string, input M
 	}
 	now := s.now().UTC()
 	if normalized.MakeDefault {
-		if _, err := tx.ExecContext(ctx, "UPDATE assistant_models SET is_default = 0"); err != nil {
+		if _, err := tx.ExecContext(ctx, "UPDATE assistant_models SET is_default = 0 WHERE owner_user_id = ?", actor.UserID); err != nil {
 			return ModelConfig{}, fmt.Errorf("clear default LLM configuration: %w", err)
 		}
 	}
@@ -326,7 +338,7 @@ func (s *Service) SaveModel(ctx context.Context, actor Actor, id string, input M
 		defaultValue = 1
 	} else if creating {
 		var count int
-		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM assistant_models").Scan(&count); err != nil {
+		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM assistant_models WHERE owner_user_id = ?", actor.UserID).Scan(&count); err != nil {
 			return ModelConfig{}, fmt.Errorf("count LLM configurations: %w", err)
 		}
 		if count == 0 {
@@ -335,13 +347,13 @@ func (s *Service) SaveModel(ctx context.Context, actor Actor, id string, input M
 	}
 	if creating {
 		_, err = tx.ExecContext(ctx, `INSERT INTO assistant_models
-			(id, name, provider, model, endpoint, credential_configured, supports_images, is_default, created_at, updated_at, updated_by_user_id)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			id, normalized.Name, normalized.Provider, normalized.Model, normalized.Endpoint,
-			boolInt(credentialConfigured), boolInt(normalized.SupportsImages), defaultValue, now.UnixNano(), now.UnixNano(), actor.UserID)
+			(id, owner_user_id, name, provider, model, endpoint, credential_configured, supports_images, is_shared, is_default, created_at, updated_at, updated_by_user_id)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			id, actor.UserID, normalized.Name, normalized.Provider, normalized.Model, normalized.Endpoint,
+			boolInt(credentialConfigured), boolInt(normalized.SupportsImages), boolInt(normalized.Shared), defaultValue, now.UnixNano(), now.UnixNano(), actor.UserID)
 	} else {
 		if !normalized.MakeDefault {
-			if err := tx.QueryRowContext(ctx, "SELECT is_default FROM assistant_models WHERE id = ?", id).Scan(&defaultValue); err != nil {
+			if err := tx.QueryRowContext(ctx, "SELECT is_default FROM assistant_models WHERE id = ? AND owner_user_id = ?", id, actor.UserID).Scan(&defaultValue); err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
 					return ModelConfig{}, ErrNotFound
 				}
@@ -349,9 +361,9 @@ func (s *Service) SaveModel(ctx context.Context, actor Actor, id string, input M
 			}
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE assistant_models SET name = ?, provider = ?, model = ?, endpoint = ?,
-			credential_configured = ?, supports_images = ?, is_default = ?, updated_at = ?, updated_by_user_id = ? WHERE id = ?`,
+			credential_configured = ?, supports_images = ?, is_shared = ?, is_default = ?, updated_at = ?, updated_by_user_id = ? WHERE id = ? AND owner_user_id = ?`,
 			normalized.Name, normalized.Provider, normalized.Model, normalized.Endpoint,
-			boolInt(credentialConfigured), boolInt(normalized.SupportsImages), defaultValue, now.UnixNano(), actor.UserID, id)
+			boolInt(credentialConfigured), boolInt(normalized.SupportsImages), boolInt(normalized.Shared), defaultValue, now.UnixNano(), actor.UserID, id, actor.UserID)
 	}
 	if err != nil {
 		return ModelConfig{}, fmt.Errorf("save LLM configuration: %w", err)
@@ -367,7 +379,9 @@ func (s *Service) SaveModel(ctx context.Context, actor Actor, id string, input M
 		}
 		return ModelConfig{}, fmt.Errorf("commit LLM configuration: %w", err)
 	}
-	return s.model(ctx, id)
+	model, err := s.model(ctx, id)
+	model.Owned = err == nil && model.OwnerUserID == actor.UserID
+	return model, err
 }
 
 func normalizeModelInput(input ModelInput) (ModelInput, error) {
@@ -417,12 +431,12 @@ func boundedText(value string, minimum, maximum int) bool {
 
 func (s *Service) model(ctx context.Context, id string) (ModelConfig, error) {
 	var model ModelConfig
-	var credentialConfigured, defaultValue, supportsImages int
+	var credentialConfigured, defaultValue, supportsImages, shared int
 	var createdAt, updatedAt int64
-	err := s.db.QueryRowContext(ctx, `SELECT id, name, provider, model, endpoint, credential_configured, supports_images,
-		is_default, created_at, updated_at FROM assistant_models WHERE id = ?`, id).Scan(
-		&model.ID, &model.Name, &model.Provider, &model.Model, &model.Endpoint, &credentialConfigured,
-		&supportsImages, &defaultValue, &createdAt, &updatedAt,
+	err := s.db.QueryRowContext(ctx, `SELECT id, owner_user_id, name, provider, model, endpoint, credential_configured, supports_images,
+		is_shared, is_default, created_at, updated_at FROM assistant_models WHERE id = ?`, id).Scan(
+		&model.ID, &model.OwnerUserID, &model.Name, &model.Provider, &model.Model, &model.Endpoint, &credentialConfigured,
+		&supportsImages, &shared, &defaultValue, &createdAt, &updatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ModelConfig{}, ErrNotFound
@@ -432,15 +446,20 @@ func (s *Service) model(ctx context.Context, id string) (ModelConfig, error) {
 	}
 	model.CredentialConfigured = credentialConfigured == 1
 	model.SupportsImages = supportsImages == 1
+	model.Shared = shared == 1
 	model.Default = defaultValue == 1
 	model.CreatedAt = time.Unix(0, createdAt).UTC()
 	model.UpdatedAt = time.Unix(0, updatedAt).UTC()
 	return model, nil
 }
 
-func (s *Service) ListModels(ctx context.Context) ([]ModelConfig, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, provider, model, endpoint, credential_configured, supports_images,
-		is_default, created_at, updated_at FROM assistant_models ORDER BY is_default DESC, created_at, name`)
+func (s *Service) ListModels(ctx context.Context, actor Actor) ([]ModelConfig, error) {
+	if strings.TrimSpace(actor.UserID) == "" {
+		return nil, fmt.Errorf("%w: actor is required", ErrInvalidInput)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, owner_user_id, name, provider, model, endpoint, credential_configured, supports_images,
+		is_shared, is_default, created_at, updated_at FROM assistant_models WHERE owner_user_id = ? OR is_shared = 1
+		ORDER BY CASE WHEN owner_user_id = ? THEN 0 ELSE 1 END, is_default DESC, created_at, name`, actor.UserID, actor.UserID)
 	if err != nil {
 		return nil, fmt.Errorf("list LLM configurations: %w", err)
 	}
@@ -448,15 +467,17 @@ func (s *Service) ListModels(ctx context.Context) ([]ModelConfig, error) {
 	models := make([]ModelConfig, 0)
 	for rows.Next() {
 		var model ModelConfig
-		var credentialConfigured, defaultValue, supportsImages int
+		var credentialConfigured, defaultValue, supportsImages, shared int
 		var createdAt, updatedAt int64
-		if err := rows.Scan(&model.ID, &model.Name, &model.Provider, &model.Model, &model.Endpoint,
-			&credentialConfigured, &supportsImages, &defaultValue, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&model.ID, &model.OwnerUserID, &model.Name, &model.Provider, &model.Model, &model.Endpoint,
+			&credentialConfigured, &supportsImages, &shared, &defaultValue, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scan LLM configuration: %w", err)
 		}
 		model.CredentialConfigured = credentialConfigured == 1
 		model.SupportsImages = supportsImages == 1
-		model.Default = defaultValue == 1
+		model.Shared = shared == 1
+		model.Owned = model.OwnerUserID == actor.UserID
+		model.Default = model.Owned && defaultValue == 1
 		model.CreatedAt = time.Unix(0, createdAt).UTC()
 		model.UpdatedAt = time.Unix(0, updatedAt).UTC()
 		models = append(models, model)
@@ -465,6 +486,22 @@ func (s *Service) ListModels(ctx context.Context) ([]ModelConfig, error) {
 		return nil, fmt.Errorf("iterate LLM configurations: %w", err)
 	}
 	return models, nil
+}
+
+func (s *Service) ModelForActor(ctx context.Context, actor Actor, id string) (ModelConfig, error) {
+	if strings.TrimSpace(actor.UserID) == "" {
+		return ModelConfig{}, fmt.Errorf("%w: actor is required", ErrInvalidInput)
+	}
+	model, err := s.model(ctx, strings.TrimSpace(id))
+	if err != nil {
+		return ModelConfig{}, err
+	}
+	if model.OwnerUserID != actor.UserID && !model.Shared {
+		return ModelConfig{}, ErrNotFound
+	}
+	model.Owned = model.OwnerUserID == actor.UserID
+	model.Default = model.Owned && model.Default
+	return model, nil
 }
 
 func (s *Service) ModelCredential(ctx context.Context, id string) (string, error) {
@@ -498,7 +535,7 @@ func (s *Service) SetDefaultModel(ctx context.Context, actor Actor, id string) e
 	}
 	defer func() { _ = tx.Rollback() }()
 	var configured int
-	if err := tx.QueryRowContext(ctx, "SELECT credential_configured FROM assistant_models WHERE id = ?", id).Scan(&configured); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT credential_configured FROM assistant_models WHERE id = ? AND owner_user_id = ?", id, actor.UserID).Scan(&configured); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -507,10 +544,10 @@ func (s *Service) SetDefaultModel(ctx context.Context, actor Actor, id string) e
 	if configured != 1 {
 		return ErrModelUnavailable
 	}
-	if _, err := tx.ExecContext(ctx, "UPDATE assistant_models SET is_default = 0"); err != nil {
+	if _, err := tx.ExecContext(ctx, "UPDATE assistant_models SET is_default = 0 WHERE owner_user_id = ?", actor.UserID); err != nil {
 		return fmt.Errorf("clear default LLM: %w", err)
 	}
-	result, err := tx.ExecContext(ctx, "UPDATE assistant_models SET is_default = 1, updated_at = ?, updated_by_user_id = ? WHERE id = ?", s.now().UTC().UnixNano(), actor.UserID, id)
+	result, err := tx.ExecContext(ctx, "UPDATE assistant_models SET is_default = 1, updated_at = ?, updated_by_user_id = ? WHERE id = ? AND owner_user_id = ?", s.now().UTC().UnixNano(), actor.UserID, id, actor.UserID)
 	if err != nil {
 		return fmt.Errorf("set default LLM: %w", err)
 	}
@@ -540,7 +577,7 @@ func (s *Service) DeleteModel(ctx context.Context, actor Actor, id string) error
 	var isDefault, references int
 	if err := tx.QueryRowContext(ctx, `SELECT is_default,
 		EXISTS(SELECT 1 FROM assistant_conversations WHERE model_id = assistant_models.id)
-		FROM assistant_models WHERE id = ?`, id).Scan(&isDefault, &references); err != nil {
+		FROM assistant_models WHERE id = ? AND owner_user_id = ?`, id, actor.UserID).Scan(&isDefault, &references); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -552,7 +589,7 @@ func (s *Service) DeleteModel(ctx context.Context, actor Actor, id string) error
 	if references == 1 {
 		return fmt.Errorf("%w: LLM configuration is referenced by a conversation", ErrInvalidInput)
 	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM assistant_models WHERE id = ?", id); err != nil {
+	if _, err := tx.ExecContext(ctx, "DELETE FROM assistant_models WHERE id = ? AND owner_user_id = ?", id, actor.UserID); err != nil {
 		return fmt.Errorf("delete LLM configuration: %w", err)
 	}
 	if err := s.writeCredentials(credentials); err != nil {
@@ -605,7 +642,7 @@ func (s *Service) CreateConversation(ctx context.Context, actor Actor, input Con
 	if input.ModelID == "" {
 		return Conversation{}, ErrModelRequired
 	}
-	model, err := s.model(ctx, input.ModelID)
+	model, err := s.ModelForActor(ctx, actor, input.ModelID)
 	if errors.Is(err, ErrNotFound) || err == nil && !model.CredentialConfigured {
 		return Conversation{}, ErrModelUnavailable
 	}
@@ -1136,7 +1173,7 @@ func (s *Service) ListConversations(ctx context.Context, actor Actor, filter Con
 }
 
 func (s *Service) SetConversationModel(ctx context.Context, actor Actor, id, modelID string) error {
-	model, err := s.model(ctx, strings.TrimSpace(modelID))
+	model, err := s.ModelForActor(ctx, actor, strings.TrimSpace(modelID))
 	if errors.Is(err, ErrNotFound) || err == nil && !model.CredentialConfigured {
 		return ErrModelUnavailable
 	}

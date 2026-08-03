@@ -1099,20 +1099,8 @@ func (executor *assistantToolExecutor) planReadManagedText(ctx context.Context, 
 }
 
 func (executor *assistantToolExecutor) resolveManagedFile(reference string) (hostfiles.Entry, error) {
-	roots, err := executor.app.files.Roots()
-	if err != nil {
-		return hostfiles.Entry{}, err
-	}
-	for _, root := range roots {
-		entries, err := executor.app.files.List(root.Path)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if !entry.Hidden && entry.Kind == hostfiles.Regular && assistantFileStableID(root.Name, entry.Name) == reference {
-				return entry, nil
-			}
-		}
+	if entry, found := executor.app.assistantHostEntryByStableID("file", reference); found {
+		return entry, nil
 	}
 	return hostfiles.Entry{}, errAssistantToolNotFound
 }

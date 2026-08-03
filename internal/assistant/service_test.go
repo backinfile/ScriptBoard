@@ -35,7 +35,7 @@ func TestModelConfigurationsKeepCredentialsOutsideSQLiteAndMaintainOneDefault(t 
 		t.Fatalf("save secondary model: %v", err)
 	}
 
-	models, err := service.ListModels(ctx)
+	models, err := service.ListModels(ctx, actor)
 	if err != nil {
 		t.Fatalf("list models: %v", err)
 	}
@@ -639,6 +639,58 @@ func TestToolApprovalIsConversationScopedParameterBoundAndSingleUse(t *testing.T
 }
 
 func boolPointer(value bool) *bool { return &value }
+
+func TestModelConfigurationsArePrivateUnlessExplicitlyShared(t *testing.T) {
+	t.Parallel()
+
+	service, _, _ := newTestService(t)
+	ctx := context.Background()
+	owner := Actor{UserID: "owner", Username: "owner"}
+	other := Actor{UserID: "other", Username: "other"}
+	if err := service.UpdateSettings(ctx, owner, SettingsInput{Enabled: true, MaxActiveConversations: 2}); err != nil {
+		t.Fatal(err)
+	}
+	privateModel, err := service.SaveModel(ctx, owner, "", ModelInput{
+		Name: "Owner private", Provider: ProviderOpenAICompatible, Model: "private",
+		Endpoint: "https://example.com/v1", APIKey: "private-key", MakeDefault: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sharedModel, err := service.SaveModel(ctx, owner, "", ModelInput{
+		Name: "Owner shared", Provider: ProviderOpenAICompatible, Model: "shared",
+		Endpoint: "https://example.com/v1", APIKey: "shared-key", Shared: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ownerModels, err := service.ListModels(ctx, owner)
+	if err != nil || len(ownerModels) != 2 || !ownerModels[0].Owned {
+		t.Fatalf("owner models = %#v, error = %v", ownerModels, err)
+	}
+	otherModels, err := service.ListModels(ctx, other)
+	if err != nil || len(otherModels) != 1 || otherModels[0].ID != sharedModel.ID || otherModels[0].Owned || !otherModels[0].Shared {
+		t.Fatalf("other models = %#v, error = %v", otherModels, err)
+	}
+	if _, err := service.CreateConversation(ctx, other, ConversationInput{ModelID: privateModel.ID}); !errors.Is(err, ErrModelUnavailable) {
+		t.Fatalf("create conversation with another user's private model error = %v", err)
+	}
+	if _, err := service.CreateConversation(ctx, other, ConversationInput{ModelID: sharedModel.ID}); err != nil {
+		t.Fatalf("create conversation with shared model: %v", err)
+	}
+	if _, err := service.SaveModel(ctx, other, privateModel.ID, ModelInput{
+		Name: "Stolen", Provider: ProviderOpenAICompatible, Model: "private", Endpoint: "https://example.com/v1",
+	}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-owner update error = %v", err)
+	}
+	if err := service.SetDefaultModel(ctx, other, sharedModel.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-owner default error = %v", err)
+	}
+	if err := service.DeleteModel(ctx, other, sharedModel.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-owner delete error = %v", err)
+	}
+}
 
 func newTestService(t *testing.T) (*Service, *sql.DB, string) {
 	t.Helper()

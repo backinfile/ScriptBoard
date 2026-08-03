@@ -186,6 +186,26 @@ func TestApplicationsPageListsDeterministicProbeDataAndPersistsPin(t *testing.T)
 		t.Fatalf("applications data = %#v", payload)
 	}
 
+	response, err = client.PostForm(serverURL+"/monitor/applications/"+url.PathEscape(payload.Pinned[0].ID)+"/unpin", url.Values{"csrf_token": {formToken(t, pinnedPage)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("unpin status=%d", response.StatusCode)
+	}
+	response, err = client.PostForm(serverURL+"/monitor/applications/"+url.PathEscape(payload.Pinned[0].ID)+"/move", url.Values{
+		"csrf_token": {formToken(t, pinnedPage)}, "direction": {"down"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	moveBody, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest || !bytes.Contains(moveBody, []byte("application is not pinned")) {
+		t.Fatalf("move unpinned status=%d body=%s", response.StatusCode, moveBody)
+	}
+
 	response, err = client.Get(serverURL + "/history/audit?q=pin_application")
 	if err != nil {
 		t.Fatal(err)
