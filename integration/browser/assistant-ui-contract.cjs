@@ -23,6 +23,9 @@ async function createHarness(browser) {
         data-tools-called-one="Called 1 tool" data-tools-called-many="Called %d tools"
         data-tools-summary="%d succeeded · %d failed"
         data-tools-summary-active="%d succeeded · %d failed · %d in progress"
+        data-operation-start-quick-run="Start Quick Run" data-operation-run-schedule-now="Run schedule now"
+        data-operation-stop-run="Stop run" data-operation-check-website-now="Check website now"
+        data-operation-perform-ui-action="Perform UI action"
         data-events-url="/assistant-events">
         <section class="assistant-chat">
           <div class="assistant-transcript">
@@ -35,6 +38,13 @@ async function createHarness(browser) {
           <form data-assistant-composer><textarea data-assistant-input></textarea><button class="assistant-send" type="submit">Send</button></form>
           <p data-assistant-error>Ready</p>
         </section>
+        <aside class="assistant-inspector">
+          <strong data-assistant-telemetry-percent>—</strong>
+          <progress data-assistant-telemetry-progress max="100" value="0"></progress>
+          <p data-assistant-telemetry-context>—</p>
+          <span data-assistant-telemetry-input>—</span><span data-assistant-telemetry-output>—</span>
+          <span data-assistant-operation-count>0</span><div data-assistant-operation-list></div>
+        </aside>
       </main>
     </body></html>`);
   await page.addStyleTag({ path: appStyles });
@@ -203,6 +213,30 @@ async function visibleMessageFlow(page, messageID) {
       assert.equal(alignment.assistantPadding, "0px", JSON.stringify(alignment));
       assert.equal(alignment.quoteBorder, "0px", JSON.stringify(alignment));
       assert.equal(alignment.quotePadding, "0px", JSON.stringify(alignment));
+    }
+
+    if (contract === "all" || contract === "inspector") {
+      await page.evaluate(() => window.__assistantEmit("snapshot", {
+        messages: [{ id: "operation-reply", role: "assistant", body: "Done", status: "complete", createdAt: "2026-08-01T12:00:00Z" }],
+        toolCalls: [
+          { id: "query", messageId: "operation-reply", name: "inspect_host", status: "complete", bodyOffset: 0, startedAt: "2026-08-01T12:10:00Z" },
+          { id: "waiting", messageId: "operation-reply", name: "stop_run", status: "waiting_approval", bodyOffset: 0, startedAt: "2026-08-01T12:11:00Z" },
+          { id: "changed", messageId: "operation-reply", name: "stop_run", status: "complete", targetSummary: "Run 1842", bodyOffset: 0, startedAt: "2026-08-01T12:12:00Z" },
+        ],
+      }));
+      assert.equal(await page.locator("[data-assistant-operation-count]").textContent(), "1");
+      assert.equal(await page.locator("[data-operation-id]").getAttribute("data-operation-id"), "changed");
+      assert.match(await page.locator("[data-operation-id] > span:nth-child(3)").textContent(), /Stop run.*Run 1842/);
+
+      await page.evaluate(() => window.__assistantEmit("settled", {
+        messageId: "operation-reply", status: "complete",
+        telemetry: { contextTokens: 81920, contextWindow: 128000, contextPercent: 64, inputTokens: 126420, outputTokens: 18630 },
+      }));
+      assert.equal(await page.locator("[data-assistant-telemetry-percent]").textContent(), "64%");
+      assert.equal(await page.locator("[data-assistant-telemetry-progress]").getAttribute("value"), "64");
+      assert.match(await page.locator("[data-assistant-telemetry-context]").textContent(), /81,920.*128,000/);
+      assert.equal(await page.locator("[data-assistant-telemetry-input]").textContent(), "126,420");
+      assert.equal(await page.locator("[data-assistant-telemetry-output]").textContent(), "18,630");
     }
 
     process.stdout.write("Assistant UI contract passed.\n");

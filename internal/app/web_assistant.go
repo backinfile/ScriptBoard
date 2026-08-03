@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -50,6 +51,21 @@ type assistantMessagePartView struct {
 	ResultSummary   string
 }
 
+type assistantUsageView struct {
+	Available, ContextAvailable                             bool
+	ContextPercent                                          float64
+	ContextTokens, ContextWindow, InputTokens, OutputTokens string
+}
+
+type assistantInspectorReferenceView struct {
+	Kind, StableID, Label, Icon, Meta string
+}
+
+type assistantOperationView struct {
+	ID, Name, Label, Status, State, Icon, TimeLabel string
+	StartedAt                                       time.Time
+}
+
 type assistantPageData struct {
 	Locale              webLocale
 	CSRFToken           string
@@ -65,9 +81,12 @@ type assistantPageData struct {
 	CanManageAI         bool
 	Resources           []assistantResourceView
 	ContextReferences   []assistant.ContextRef
+	InspectorReferences []assistantInspectorReferenceView
+	Usage               assistantUsageView
 	Messages            []assistant.Message
 	Timeline            []assistantMessageView
 	ToolCalls           []assistant.ToolCall
+	Operations          []assistantOperationView
 	PendingApproval     *assistant.Approval
 	PendingApprovalCall *assistant.ToolCall
 	AssistantEnabled    bool
@@ -186,6 +205,12 @@ func (a *App) renderAssistantPage(response http.ResponseWriter, request *http.Re
 	}
 	locale := resolveWebLocale(request)
 	resources := markAssistantResourcesSelected(a.assistantResourceCatalog(request, currentSession.role), contextReferences)
+	usage := assistantUsageView{}
+	var inspectorReferences []assistantInspectorReferenceView
+	if current != nil {
+		usage = assistantConversationUsage(*current)
+		inspectorReferences = assistantInspectorReferences(resources, contextReferences, locale)
+	}
 	managedRuntime, runtimeErr := a.assistantRuntime.Runtime()
 	runtimeAvailable := runtimeErr == nil
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -194,10 +219,128 @@ func (a *App) renderAssistantPage(response http.ResponseWriter, request *http.Re
 		Conversations: conversations, Archived: archived, Current: current, SelectedModelID: selectedModelID, SelectedProfile: selectedProfile,
 		DefaultAutoApproval: settings.DefaultAutoApproval, RuntimeAvailable: runtimeAvailable, RuntimeVersion: managedRuntime.Version,
 		CanManageAI: roleAllows(currentSession.role, permissionManageSystem),
-		Resources:   resources, ContextReferences: contextReferences, Messages: messages,
-		Timeline: assistantMessageTimeline(messages, toolCalls, locale), ToolCalls: toolCalls,
+		Resources:   resources, ContextReferences: contextReferences,
+		InspectorReferences: inspectorReferences, Usage: usage,
+		Messages: messages, Timeline: assistantMessageTimeline(messages, toolCalls, locale), ToolCalls: toolCalls,
+		Operations:      assistantOperationViews(toolCalls, locale),
 		PendingApproval: pendingApproval, PendingApprovalCall: pendingApprovalCall, AssistantEnabled: settings.Enabled,
 	})
+}
+
+func assistantConversationUsage(conversation assistant.Conversation) assistantUsageView {
+	telemetry := conversation.Telemetry
+	view := assistantUsageView{
+		Available:     !telemetry.UpdatedAt.IsZero(),
+		ContextTokens: assistantTokenCount(telemetry.ContextTokens),
+		ContextWindow: assistantTokenCount(telemetry.ContextWindow),
+		InputTokens:   assistantTokenCount(telemetry.InputTokens),
+		OutputTokens:  assistantTokenCount(telemetry.OutputTokens),
+	}
+	if telemetry.ContextPercent != nil && telemetry.ContextWindow > 0 {
+		view.ContextAvailable = true
+		view.ContextPercent = math.Max(0, math.Min(100, *telemetry.ContextPercent))
+	}
+	return view
+}
+
+func assistantTokenCount(value int64) string {
+	digits := strconv.FormatInt(value, 10)
+	for index := len(digits) - 3; index > 0; index -= 3 {
+		digits = digits[:index] + "," + digits[index:]
+	}
+	return digits
+}
+
+func assistantInspectorReferences(resources []assistantResourceView, references []assistant.ContextRef, locale webLocale) []assistantInspectorReferenceView {
+	views := make([]assistantInspectorReferenceView, 0, len(references)+1)
+	views = append(views, assistantInspectorReferenceView{
+		Kind: "host_overview", StableID: "current", Icon: "activity",
+		Label: webText(locale, "assistant.host_overview"), Meta: webText(locale, "assistant.automatic_reference"),
+	})
+	byKey := make(map[string]assistantResourceView, len(resources))
+	for _, resource := range resources {
+		byKey[resource.Kind+"\x00"+resource.ID] = resource
+	}
+	for _, reference := range references {
+		resource, exists := byKey[reference.Kind+"\x00"+reference.StableID]
+		icon, meta := assistantReferencePresentation(reference.Kind, locale)
+		if exists {
+			icon = resource.Icon
+		}
+		views = append(views, assistantInspectorReferenceView{
+			Kind: reference.Kind, StableID: reference.StableID, Label: reference.Label, Icon: icon, Meta: meta,
+		})
+	}
+	return views
+}
+
+func assistantReferencePresentation(kind string, locale webLocale) (string, string) {
+	switch kind {
+	case "directory":
+		return "folder", webText(locale, "assistant.reference_kind.directory")
+	case "file":
+		return "file", webText(locale, "assistant.reference_kind.file")
+	case "application":
+		return "app-window", webText(locale, "assistant.reference_kind.application")
+	case "website":
+		return "network", webText(locale, "assistant.reference_kind.website")
+	case "run":
+		return "square-terminal", webText(locale, "assistant.reference_kind.run")
+	case "quick_run":
+		return "play", webText(locale, "assistant.reference_kind.quick_run")
+	case "schedule":
+		return "calendar-clock", webText(locale, "assistant.reference_kind.schedule")
+	default:
+		return "file", kind
+	}
+}
+
+func assistantOperationViews(calls []assistant.ToolCall, locale webLocale) []assistantOperationView {
+	views := make([]assistantOperationView, 0, len(calls))
+	for index := len(calls) - 1; index >= 0; index-- {
+		call := calls[index]
+		if !assistantExecutedStatefulCall(call) {
+			continue
+		}
+		state, icon := "failed", "triangle-alert"
+		if call.Status == "complete" {
+			state, icon = "success", "check"
+		} else if call.Status == "running" {
+			state, icon = "running", "loader-circle"
+		}
+		label := webText(locale, "assistant.operation."+call.Name)
+		if label == "assistant.operation."+call.Name {
+			label = call.Name
+		}
+		target := strings.TrimSpace(call.TargetSummary)
+		if target == "" {
+			target = strings.TrimSpace(call.ParameterSummary)
+		}
+		if target != "" {
+			label += " · " + target
+		}
+		views = append(views, assistantOperationView{
+			ID: call.ID, Name: call.Name, Label: label, Status: webText(locale, "assistant.tool_status."+call.Status),
+			State: state, Icon: icon, StartedAt: call.StartedAt, TimeLabel: call.StartedAt.Local().Format("15:04"),
+		})
+	}
+	return views
+}
+
+func assistantExecutedStatefulCall(call assistant.ToolCall) bool {
+	if !planStatefulTool(call.Name) || call.Status == "waiting_approval" || call.Status == "rejected" {
+		return false
+	}
+	if call.Status == "cancelled" && call.ErrorCode == "approval_cancelled" {
+		return false
+	}
+	if call.Status == "error" {
+		switch call.ErrorCode {
+		case "approval_invalid", "approval_expired", "approval_rejected", "approval_cancelled", "tool_target_changed", "tool_forbidden":
+			return false
+		}
+	}
+	return call.Status == "running" || call.Status == "complete" || call.Status == "error" || call.Status == "cancelled" || call.Status == "interrupted"
 }
 
 func assistantMessageTimeline(messages []assistant.Message, calls []assistant.ToolCall, locale webLocale) []assistantMessageView {

@@ -44,12 +44,13 @@ func TestAIWorkspaceAndSettingsUsePersistedLLMAndConversationState(t *testing.T)
 		`class="assistant-composer__toolbar"`, `class="assistant-reference-button"`,
 		`data-assistant-approval-label`, `data-manual-label="Manual approval"`,
 		`data-resource-kind="file"`, `data-resource-label="service.conf"`,
+		`class="assistant-body" data-inspector-open="false"`, `data-assistant-inspector-toggle title="Conversation information" aria-label="Conversation information" aria-expanded="false"`,
 	} {
 		if !strings.Contains(string(workspace), expected) {
 			t.Fatalf("AI workspace is missing %q: %s", expected, workspace)
 		}
 	}
-	for _, obsolete := range []string{`class="assistant-context-bar"`, `class="assistant-switch"`} {
+	for _, obsolete := range []string{`class="assistant-context-bar"`, `class="assistant-switch"`, `>Context details<`, `>Provider reported<`} {
 		if strings.Contains(string(workspace), obsolete) {
 			t.Fatalf("AI workspace still contains obsolete composer markup %q: %s", obsolete, workspace)
 		}
@@ -157,10 +158,22 @@ func TestAIWorkspaceAndSettingsUsePersistedLLMAndConversationState(t *testing.T)
 	if err != nil {
 		t.Fatalf("read AI conversation: %v", err)
 	}
-	for _, expected := range []string{"分析当前主机资源", "OpenAI · Production", "Summarize the current host pressure.", `data-context-key="directory:host"`, `data-auto-approval-toggle aria-pressed="false"`, `data-assistant-abort hidden`, `data-assistant-conversation-status`} {
+	for _, expected := range []string{"分析当前主机资源", "OpenAI · Production", "Summarize the current host pressure.", `data-context-key="directory:host"`, `data-auto-approval-toggle aria-pressed="false"`, `data-assistant-abort hidden`, `data-assistant-conversation-status`, `class="assistant-body" data-inspector-open="true"`, `data-reference-kind="host_overview"`, `data-reference-kind="directory"`, `>Referenced content<`, `>Modification operations<`} {
 		if !strings.Contains(string(conversation), expected) {
 			t.Fatalf("conversation is missing %q: %s", expected, conversation)
 		}
+	}
+	inspectorStart := strings.Index(string(conversation), `<aside class="assistant-inspector"`)
+	if inspectorStart < 0 {
+		t.Fatalf("conversation inspector is missing: %s", conversation)
+	}
+	inspectorEnd := strings.Index(string(conversation)[inspectorStart:], `</aside>`)
+	if inspectorEnd < 0 {
+		t.Fatalf("conversation inspector is not closed: %s", conversation)
+	}
+	inspectorMarkup := string(conversation)[inspectorStart : inspectorStart+inspectorEnd]
+	if strings.Contains(inspectorMarkup, `data-remove-resource`) || strings.Contains(inspectorMarkup, `action="`) {
+		t.Fatalf("referenced-content preview exposes an action: %s", inspectorMarkup)
 	}
 
 	response, err = client.PostForm(serverURL+conversationPath+"/messages", url.Values{

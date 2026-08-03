@@ -594,3 +594,37 @@ func TestAssistantMessageTimelineKeepsToolCallsWithTheirReply(t *testing.T) {
 		t.Fatalf("single tool title=%q summary=%q", single.Title, single.ResultSummary)
 	}
 }
+
+func TestAssistantOperationViewsKeepOnlyExecutedStateChanges(t *testing.T) {
+	started := time.Date(2026, time.August, 3, 14, 36, 0, 0, time.Local)
+	calls := []assistant.ToolCall{
+		{ID: "read", Name: "inspect_host", Status: "complete", TargetSummary: "Host", StartedAt: started.Add(-5 * time.Minute)},
+		{ID: "waiting", Name: "stop_run", Status: "waiting_approval", TargetSummary: "Run 1", StartedAt: started.Add(-4 * time.Minute)},
+		{ID: "rejected", Name: "run_schedule_now", Status: "rejected", ErrorCode: "approval_rejected", TargetSummary: "Nightly", StartedAt: started.Add(-3 * time.Minute)},
+		{ID: "expired", Name: "check_website_now", Status: "error", ErrorCode: "approval_expired", TargetSummary: "Home", StartedAt: started.Add(-2 * time.Minute)},
+		{ID: "complete", Name: "stop_run", Status: "complete", TargetSummary: "Run 1842", StartedAt: started.Add(-time.Minute)},
+		{ID: "failed", Name: "perform_ui_action", Status: "error", ErrorCode: "action_failed", TargetSummary: "Save defaults", StartedAt: started},
+	}
+
+	views := assistantOperationViews(calls, localeSimplifiedChinese)
+	if len(views) != 2 {
+		t.Fatalf("operation views = %#v, want two executed state changes", views)
+	}
+	if views[0].ID != "failed" || views[0].State != "failed" || !strings.Contains(views[0].Label, "执行界面操作") {
+		t.Fatalf("newest failed operation = %#v", views[0])
+	}
+	if views[1].ID != "complete" || views[1].State != "success" || views[1].TimeLabel != "14:35" {
+		t.Fatalf("completed operation = %#v", views[1])
+	}
+}
+
+func TestAssistantConversationUsageFormatsProviderTelemetry(t *testing.T) {
+	percent := 64.2
+	view := assistantConversationUsage(assistant.Conversation{Telemetry: assistant.SessionTelemetry{
+		InputTokens: 126420, OutputTokens: 18630, ContextTokens: 81920, ContextWindow: 128000,
+		ContextPercent: &percent, UpdatedAt: time.Now(),
+	}})
+	if !view.Available || !view.ContextAvailable || view.ContextPercent != percent || view.ContextTokens != "81,920" || view.ContextWindow != "128,000" || view.InputTokens != "126,420" || view.OutputTokens != "18,630" {
+		t.Fatalf("usage view = %#v", view)
+	}
+}

@@ -3924,13 +3924,13 @@
     const approvalLabel = approvalToggle?.querySelector("[data-assistant-approval-label]");
 	const approvalInput = root.querySelector("[data-assistant-approval-input]");
 	const profileInput = root.querySelector("[data-assistant-profile-input]");
-	const inspectorModelName = root.querySelector("[data-assistant-inspector-model-name]");
-	const inspectorModelID = root.querySelector("[data-assistant-inspector-model-id]");
-	const inspectorApproval = root.querySelector("[data-assistant-inspector-approval]");
 	const telemetryContext = root.querySelector("[data-assistant-telemetry-context]");
-	const telemetryTokens = root.querySelector("[data-assistant-telemetry-tokens]");
-	const telemetryTools = root.querySelector("[data-assistant-telemetry-tools]");
-	const telemetryCost = root.querySelector("[data-assistant-telemetry-cost]");
+	const telemetryPercent = root.querySelector("[data-assistant-telemetry-percent]");
+	const telemetryProgress = root.querySelector("[data-assistant-telemetry-progress]");
+	const telemetryInput = root.querySelector("[data-assistant-telemetry-input]");
+	const telemetryOutput = root.querySelector("[data-assistant-telemetry-output]");
+	const operationList = root.querySelector("[data-assistant-operation-list]");
+	const operationCount = root.querySelector("[data-assistant-operation-count]");
     const inspectorToggle = root.querySelector("[data-assistant-inspector-toggle]");
     const inspectorClose = root.querySelector("[data-assistant-inspector-close]");
     const assistantBody = root.querySelector(".assistant-body");
@@ -3961,17 +3961,19 @@
 	}
 
 	const messageValue = (message, camel, exported) => message?.[camel] ?? message?.[exported] ?? "";
+	const tokenFormatter = new Intl.NumberFormat(locale());
 	const renderTelemetry = telemetry => {
 		if (!telemetry) return;
 		const contextTokens = Number(messageValue(telemetry, "contextTokens", "ContextTokens") || 0);
 		const contextWindow = Number(messageValue(telemetry, "contextWindow", "ContextWindow") || 0);
-		const totalTokens = Number(messageValue(telemetry, "totalTokens", "TotalTokens") || 0);
-		const toolCalls = Number(messageValue(telemetry, "toolCalls", "ToolCalls") || 0);
-		const cost = Number(messageValue(telemetry, "cost", "Cost") || 0);
-		if (telemetryContext) telemetryContext.textContent = `${contextTokens} / ${contextWindow}`;
-		if (telemetryTokens) telemetryTokens.textContent = String(totalTokens);
-		if (telemetryTools) telemetryTools.textContent = String(toolCalls);
-		if (telemetryCost) telemetryCost.textContent = `$${cost.toFixed(4)}`;
+		const contextPercent = Math.max(0, Math.min(100, Number(messageValue(telemetry, "contextPercent", "ContextPercent") || 0)));
+		const inputTokens = Number(messageValue(telemetry, "inputTokens", "InputTokens") || 0);
+		const outputTokens = Number(messageValue(telemetry, "outputTokens", "OutputTokens") || 0);
+		if (telemetryContext) telemetryContext.textContent = contextWindow > 0 ? `${tokenFormatter.format(contextTokens)} / ${tokenFormatter.format(contextWindow)} tokens` : "—";
+		if (telemetryPercent) telemetryPercent.textContent = contextWindow > 0 ? `${Math.round(contextPercent)}%` : "—";
+		if (telemetryProgress) telemetryProgress.value = contextWindow > 0 ? contextPercent : 0;
+		if (telemetryInput) telemetryInput.textContent = tokenFormatter.format(inputTokens);
+		if (telemetryOutput) telemetryOutput.textContent = tokenFormatter.format(outputTokens);
 	};
 	const transcriptNearBottom = () => !transcript || transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight <= 72;
 	const scrollTranscript = (force = false) => {
@@ -4086,6 +4088,59 @@
 		return labels[status] || status;
 	};
 	const toolStatusIcon = status => status === "complete" ? "check" : status === "waiting_approval" ? "shield-alert" : status === "running" ? "loader-circle" : "triangle-alert";
+	const statefulToolNames = new Set(["start_quick_run", "run_schedule_now", "stop_run", "check_website_now", "perform_ui_action"]);
+	const unexecutedToolErrors = new Set(["approval_invalid", "approval_expired", "approval_rejected", "approval_cancelled", "tool_target_changed", "tool_forbidden"]);
+	const operationLabel = name => ({
+		start_quick_run: root.dataset.operationStartQuickRun,
+		run_schedule_now: root.dataset.operationRunScheduleNow,
+		stop_run: root.dataset.operationStopRun,
+		check_website_now: root.dataset.operationCheckWebsiteNow,
+		perform_ui_action: root.dataset.operationPerformUiAction,
+	}[name] || name);
+	const executedStatefulCall = call => {
+		const name = messageValue(call, "name", "Name");
+		const status = messageValue(call, "status", "Status");
+		const errorCode = messageValue(call, "errorCode", "ErrorCode");
+		if (!statefulToolNames.has(name) || status === "waiting_approval" || status === "rejected") return false;
+		if (status === "cancelled" && errorCode === "approval_cancelled") return false;
+		if (status === "error" && unexecutedToolErrors.has(errorCode)) return false;
+		return ["running", "complete", "error", "cancelled", "interrupted"].includes(status);
+	};
+	const renderOperation = call => {
+		if (!operationList || !call) return;
+		const id = messageValue(call, "id", "ID");
+		if (!id) return;
+		let row = operationList.querySelector(`[data-operation-id="${CSS.escape(id)}"]`);
+		if (!executedStatefulCall(call)) {
+			row?.remove();
+			if (operationCount) operationCount.textContent = String(operationList.childElementCount);
+			return;
+		}
+		if (!row) {
+			row = document.createElement("div");
+			row.className = "assistant-operation-row";
+			row.dataset.operationId = id;
+			const time = document.createElement("time");
+			const iconHost = document.createElement("span");
+			iconHost.className = "assistant-operation-row__icon";
+			iconHost.append(document.createElement("span"));
+			row.append(time, iconHost, document.createElement("span"), document.createElement("small"));
+			operationList.prepend(row);
+		}
+		const name = messageValue(call, "name", "Name");
+		const status = messageValue(call, "status", "Status") || "running";
+		const target = messageValue(call, "targetSummary", "TargetSummary") || messageValue(call, "parameterSummary", "ParameterSummary");
+		const startedAt = messageValue(call, "startedAt", "StartedAt");
+		const started = startedAt ? new Date(startedAt) : new Date();
+		row.dataset.operationName = name;
+		row.dataset.operationState = status === "complete" ? "success" : status === "running" ? "running" : "failed";
+		row.querySelector("time").dateTime = Number.isNaN(started.valueOf()) ? "" : started.toISOString();
+		row.querySelector("time").textContent = Number.isNaN(started.valueOf()) ? "—" : started.toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit", hour12: false });
+		row.children[2].textContent = target ? `${operationLabel(name)} · ${target}` : operationLabel(name);
+		row.querySelector("small").textContent = toolStatusLabel(status);
+		replaceIconHost(row.querySelector(".assistant-operation-row__icon > span"), status === "complete" ? "check" : status === "running" ? "loader-circle" : "triangle-alert");
+		if (operationCount) operationCount.textContent = String(operationList.childElementCount);
+	};
 	const formatToolCountSummary = (template, values) => {
 		let index = 0;
 		return template.replace(/%d/g, () => String(values[index++] ?? 0));
@@ -4148,6 +4203,7 @@
 		if (!call) return null;
 		const id = messageValue(call, "id", "ID");
 		if (!id) return null;
+		renderOperation(call);
 		const messageID = messageValue(call, "messageId", "MessageID");
 		const bodyOffset = messageValue(call, "bodyOffset", "BodyOffset");
 		const cluster = ensureToolCluster(messageID, bodyOffset);
@@ -4288,6 +4344,8 @@
 		try { payload = JSON.parse(event.data); } catch { return; }
 		if (event.type === "snapshot") {
 			if (messageList) messageList.replaceChildren();
+			if (operationList) operationList.replaceChildren();
+			if (operationCount) operationCount.textContent = "0";
 			pendingToolCalls.clear();
 			(payload.messages || []).forEach(renderAssistantMessage);
 			(payload.toolCalls || []).forEach(renderToolCall);
@@ -4369,11 +4427,9 @@
         modelChoices[modelIndex]?.focus();
       }
     };
-    const markSelectedModel = (id, name, model) => {
+    const markSelectedModel = (id, name) => {
       if (modelInput) modelInput.value = id;
       if (modelLabel) modelLabel.textContent = name;
-      if (inspectorModelName) inspectorModelName.textContent = name || "—";
-      if (inspectorModelID && model) inspectorModelID.textContent = model;
       modelControl.dataset.invalid = String(!id);
       modelChoices.forEach(choice => {
         const selected = choice.dataset.modelChoice === id;
@@ -4390,7 +4446,6 @@
     const selectModel = async choice => {
       const id = choice?.dataset.modelChoice || "";
       const name = choice?.dataset.modelName || "";
-      const model = choice?.dataset.modelValue || "";
       if (!id) return;
       const endpoint = modelControl.dataset.modelEndpoint;
       if (endpoint) {
@@ -4410,7 +4465,7 @@
           modelControl.removeAttribute("aria-busy");
         }
       }
-      markSelectedModel(id, name, model);
+      markSelectedModel(id, name);
       setModelPicker(false);
       modelToggle?.focus();
     };
@@ -4420,7 +4475,6 @@
       approvalToggle.setAttribute("aria-pressed", String(enabled));
       if (approvalInput) approvalInput.value = String(enabled);
       if (approvalLabel) approvalLabel.textContent = enabled ? approvalLabel.dataset.autoLabel : approvalLabel.dataset.manualLabel;
-      if (inspectorApproval) inspectorApproval.textContent = enabled ? inspectorApproval.dataset.autoLabel : inspectorApproval.dataset.manualLabel;
       replaceIconHost(approvalToggle.querySelector("[data-approval-icon]"), enabled ? "zap" : "shield-check");
     };
     const toggleApproval = async () => {
