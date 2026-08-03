@@ -354,7 +354,11 @@ func Rebase(source, destination, path string) (string, error) {
 	if !pathContains(source, path) {
 		return "", fmt.Errorf("host path is outside the source tree")
 	}
-	relative, err := filepath.Rel(filepath.Clean(source), filepath.Clean(path))
+	// Use the same canonical spellings as the containment check. On Windows an
+	// existing ancestor may arrive once as an 8.3 alias and once as its long
+	// name; a lexical Rel between those spellings would incorrectly escape the
+	// source even after the security boundary accepted it.
+	relative, err := filepath.Rel(canonicalComparisonPath(source), canonicalComparisonPath(path))
 	if err != nil {
 		return "", err
 	}
