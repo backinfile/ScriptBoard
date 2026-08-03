@@ -199,12 +199,10 @@ The current baseline is incompatible with the old service layout that directly t
 
 #### Windows
 
-Save this configuration as `C:\ProgramData\ScriptBoard\config.yaml`:
+The built-in defaults are sufficient for a standard local installation. Save this minimal configuration as `C:\ProgramData\ScriptBoard\config.yaml`, adding fields only when overriding a default:
 
 ```yaml
-state_root: C:\ProgramData\ScriptBoard\state
-listen: 127.0.0.1:8787
-run_timeout_grace_seconds: 30
+{}
 ```
 
 Run in an elevated PowerShell:
@@ -220,12 +218,10 @@ The Windows service runs as `LocalSystem` by default. Installation also configur
 
 #### Linux
 
-Save this configuration as `/etc/scriptboard/config.yaml`:
+The built-in defaults are sufficient for a standard local installation. Save this minimal configuration as `/etc/scriptboard/config.yaml`, adding fields only when overriding a default:
 
 ```yaml
-state_root: /var/lib/scriptboard/state
-listen: 127.0.0.1:8787
-run_timeout_grace_seconds: 30
+{}
 ```
 
 Install and start the systemd service:
@@ -293,7 +289,7 @@ Common settings:
 | `state_root` | `state` under the platform data directory | Database, logs, sessions, and private internal state |
 | `listen` | `127.0.0.1:8787` | HTTP or HTTPS listen address |
 | `tls_cert`, `tls_key` | empty | TLS certificate and key; required for non-loopback listening |
-| `trusted_proxies` | empty | Trusted proxy IP addresses or CIDRs allowed to provide forwarding headers |
+| `trusted_proxies` | `127.0.0.1/32` | Trusted proxy IP addresses or CIDRs allowed to provide forwarding headers; use `[]` to clear explicitly |
 | `run_timeout_grace_seconds` | `30` | Grace period before force-killing a process tree after automatic timeout |
 | `update_check` | `true` | Periodically check the official stable release; never installs automatically |
 | `update_check_interval_hours` | `6` | Automatic check interval, from 1 to 168 hours |
@@ -348,7 +344,7 @@ Fallback happens only before a script starts. Once an interpreter successfully s
 - The default listener is `127.0.0.1:8787` only;
 - plaintext HTTP may bind only to a loopback address;
 - a non-loopback listener requires both `tls_cert` and `tls_key`;
-- a same-host HTTPS reverse proxy should be declared explicitly through `trusted_proxies`;
+- a same-host IPv4 reverse proxy at `127.0.0.1` is trusted by default; all other proxy sources must be declared explicitly through `trusted_proxies`;
 - every script inherits the service identity; the application does not switch identity or provide container isolation;
 - only one ScriptBoard instance may use a given `state_root` at a time.
 

@@ -3,11 +3,46 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"scriptboard/internal/config"
 )
+
+func TestLoadUsesMinimalInstallationDefaults(t *testing.T) {
+	t.Parallel()
+
+	loaded, err := config.Load([]string{"--config", writeEmptyConfig(t)}, func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.StateRoot == "" {
+		t.Fatal("default state root is empty")
+	}
+	if loaded.Listen != "127.0.0.1:8787" {
+		t.Fatalf("default listen = %q", loaded.Listen)
+	}
+	if want := []string{"127.0.0.1/32"}; !reflect.DeepEqual(loaded.TrustedProxies, want) {
+		t.Fatalf("default trusted proxies = %#v, want %#v", loaded.TrustedProxies, want)
+	}
+}
+
+func TestLoadAllowsExplicitlyClearingDefaultTrustedProxies(t *testing.T) {
+	t.Parallel()
+
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("trusted_proxies: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := config.Load([]string{"--config", configPath}, func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.TrustedProxies) != 0 {
+		t.Fatalf("explicitly cleared trusted proxies = %#v", loaded.TrustedProxies)
+	}
+}
 
 func TestLoadLayersYAMLThenEnvironmentThenCLI(t *testing.T) {
 	t.Parallel()

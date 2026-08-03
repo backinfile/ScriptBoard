@@ -457,8 +457,8 @@ func (m *Manager) ensureMutationAllowed(path string) error {
 }
 
 func pathContains(parent, child string) bool {
-	parent = filepath.Clean(parent)
-	child = filepath.Clean(child)
+	parent = canonicalComparisonPath(parent)
+	child = canonicalComparisonPath(child)
 	if runtime.GOOS == "windows" {
 		parent = strings.ToLower(parent)
 		child = strings.ToLower(child)

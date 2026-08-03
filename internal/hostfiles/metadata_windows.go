@@ -3,9 +3,11 @@
 package hostfiles
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -91,10 +93,95 @@ func verifyCopiedMetadata(source, destination string, expected moveManifestEntry
 	if err != nil {
 		return err
 	}
-	if sourceDescriptor.String() != destinationDescriptor.String() {
+	equal, err := equivalentWindowsSecurityMetadata(sourceDescriptor, destinationDescriptor)
+	if err != nil {
+		return err
+	}
+	if !equal {
 		return errorsNewMetadata("Windows security descriptor")
 	}
 	return nil
+}
+
+func equivalentWindowsSecurityMetadata(source, destination *windows.SECURITY_DESCRIPTOR) (bool, error) {
+	sourceOwner, _, err := source.Owner()
+	if err != nil {
+		return false, fmt.Errorf("read source owner: %w", err)
+	}
+	destinationOwner, _, err := destination.Owner()
+	if err != nil {
+		return false, fmt.Errorf("read destination owner: %w", err)
+	}
+	if !sourceOwner.Equals(destinationOwner) {
+		return false, nil
+	}
+	sourceGroup, _, err := source.Group()
+	if err != nil {
+		return false, fmt.Errorf("read source group: %w", err)
+	}
+	destinationGroup, _, err := destination.Group()
+	if err != nil {
+		return false, fmt.Errorf("read destination group: %w", err)
+	}
+	if !sourceGroup.Equals(destinationGroup) {
+		return false, nil
+	}
+	sourceControl, _, err := source.Control()
+	if err != nil {
+		return false, fmt.Errorf("read source security descriptor control: %w", err)
+	}
+	destinationControl, _, err := destination.Control()
+	if err != nil {
+		return false, fmt.Errorf("read destination security descriptor control: %w", err)
+	}
+	const comparedControl = windows.SE_DACL_PRESENT | windows.SE_DACL_PROTECTED
+	if sourceControl&comparedControl != destinationControl&comparedControl {
+		return false, nil
+	}
+	sourceDACL, _, err := source.DACL()
+	if err != nil {
+		return false, fmt.Errorf("read source DACL: %w", err)
+	}
+	destinationDACL, _, err := destination.DACL()
+	if err != nil {
+		return false, fmt.Errorf("read destination DACL: %w", err)
+	}
+	sourceEntries, err := explicitWindowsACEs(sourceDACL)
+	if err != nil {
+		return false, fmt.Errorf("read source DACL entries: %w", err)
+	}
+	destinationEntries, err := explicitWindowsACEs(destinationDACL)
+	if err != nil {
+		return false, fmt.Errorf("read destination DACL entries: %w", err)
+	}
+	if len(sourceEntries) != len(destinationEntries) {
+		return false, nil
+	}
+	for index := range sourceEntries {
+		if !bytes.Equal(sourceEntries[index], destinationEntries[index]) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func explicitWindowsACEs(dacl *windows.ACL) ([][]byte, error) {
+	if dacl == nil {
+		return nil, nil
+	}
+	entries := make([][]byte, 0, dacl.AceCount)
+	for index := uint32(0); index < uint32(dacl.AceCount); index++ {
+		var entry *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, index, &entry); err != nil {
+			return nil, err
+		}
+		if entry.Header.AceFlags&windows.INHERITED_ACE != 0 {
+			continue
+		}
+		entryBytes := unsafe.Slice((*byte)(unsafe.Pointer(entry)), int(entry.Header.AceSize))
+		entries = append(entries, append([]byte(nil), entryBytes...))
+	}
+	return entries, nil
 }
 
 func fileAttributes(path string) (uint32, error) {
