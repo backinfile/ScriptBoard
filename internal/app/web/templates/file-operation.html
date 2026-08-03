@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="{{.Locale}}">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "file_operation.title"}} · ScriptBoard</title></head>
+<body><main class="workspace operation-page" data-file-operation data-events-url="/resources/files/operations/{{.Operation.ID}}/events">
+  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "files.eyebrow"}}</p><h1>{{t .Locale "file_operation.title"}}</h1><p><code>{{.Operation.SourcePath}}</code> → <code>{{.Operation.DestinationPath}}</code></p></div></header>
+  <section class="settings-block">
+    <div class="section-heading"><div><h2 data-file-operation-phase>{{.Operation.Phase}}</h2><p data-file-operation-error>{{.Operation.Error}}</p></div><span class="status-chip" data-file-operation-state>{{.Operation.Phase}}</span></div>
+    <progress max="{{if gt .Operation.BytesTotal 0}}{{.Operation.BytesTotal}}{{else}}1{{end}}" value="{{.Operation.BytesCompleted}}" data-file-operation-progress></progress>
+    <p><span data-file-operation-bytes>{{humanBytes .Operation.BytesCompleted}} / {{humanBytes .Operation.BytesTotal}}</span></p>
+    <div class="settings-actions">
+      <a class="button" href="{{.DestinationURL}}" data-file-operation-destination>{{t .Locale "file_operation.open_destination"}}</a>
+      {{if .CanCancel}}<form method="post" action="/resources/files/operations/{{.Operation.ID}}/cancel" data-async><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--danger" type="submit">{{t .Locale "file_operation.cancel"}}</button></form>{{end}}
+    </div>
+  </section>
+</main></body></html>

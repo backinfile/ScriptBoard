@@ -3,6 +3,7 @@
 
   const iconPaths = {
     "activity": '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+    "archive": '<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>',
     "app-window": '<rect width="20" height="16" x="2" y="4" rx="2"/><path d="M2 8h20"/><path d="M6 6h.01"/><path d="M10 6h.01"/>',
     "arrow-down": '<path d="m6 9 6 6 6-6"/><path d="M12 3v12"/>',
     "arrow-down-to-line": '<path d="M12 17V3"/><path d="m6 11 6 6 6-6"/><path d="M19 21H5"/>',
@@ -11,6 +12,7 @@
     "arrow-up": '<path d="m18 15-6-6-6 6"/><path d="M12 21V9"/>',
     "arrow-up-down": '<path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/>',
     "arrow-up-to-line": '<path d="M5 3h14"/><path d="m18 13-6-6-6 6"/><path d="M12 7v14"/>',
+    "at-sign": '<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/>',
     "bookmark-plus": '<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h5"/><path d="M19 3v6"/><path d="M16 6h6"/>',
     "box": '<path d="m21 8-9-5-9 5 9 5 9-5Z"/><path d="m3 8 9 5 9-5"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/>',
     "braces": '<path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"/><path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/>',
@@ -18,6 +20,7 @@
     "calendar-plus": '<path d="M16 2v4"/><path d="M3 10h18"/><path d="M8 2v4"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M12 14v4"/><path d="M10 16h4"/>',
     "check": '<path d="m20 6-11 11-5-5"/>',
     "circle-check": '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+    "chevron-down": '<path d="m6 9 6 6 6-6"/>',
     "chevrons-up-down": '<path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/>',
     "chevron-right": '<path d="m9 18 6-6-6-6"/>',
     "circle-user-round": '<path d="M18 20a6 6 0 0 0-12 0"/><circle cx="12" cy="10" r="4"/><circle cx="12" cy="12" r="10"/>',
@@ -36,12 +39,11 @@
     "file-cog": '<path d="M14 2H6a2 2 0 0 0-2 2v8"/><path d="M14 2v6h6"/><circle cx="13" cy="18" r="3"/><path d="m15.6 16.5.9-.5M10.4 19.5l-.9.5M15.6 19.5l.9.5M10.4 16.5l-.9-.5"/>',
     "file-lock-2": '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h7"/><path d="M14 2v6h6"/><rect x="14" y="15" width="8" height="6" rx="1"/><path d="M16 15v-2a2 2 0 0 1 4 0v2"/>',
     "file-terminal": '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="m8 13 2 2-2 2"/><path d="M12 17h4"/>',
+    "files": '<path d="M20 7h-3a2 2 0 0 1-2-2V2"/><path d="M9 18a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h7l4 4v10a2 2 0 0 1-2 2Z"/><path d="M3 7v13a2 2 0 0 0 2 2h9"/>',
     "folder": '<path d="M3 6h5l2 2h11v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
     "folder-code": '<path d="M10 10.5 8 12l2 1.5M14 10.5l2 1.5-2 1.5"/><path d="M2 6h5l2 2h13"/><path d="M2 6v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8"/>',
     "folder-open": '<path d="M6 14l1.5-3h13l-2 7a2 2 0 0 1-2 1H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v1"/>',
     "folder-plus": '<path d="M12 10v6M9 13h6"/><path d="M3 6h5l2 2h11v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
-    "git-branch": '<line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
-    "git-commit-horizontal": '<circle cx="12" cy="12" r="3"/><line x1="3" x2="9" y1="12" y2="12"/><line x1="15" x2="21" y1="12" y2="12"/>',
     "globe-2": '<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 0 20"/><path d="M12 2a15.3 15.3 0 0 0 0 20"/>',
     "hard-drive": '<path d="M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.8 4H7.2a2 2 0 0 0-1.7 1.1z"/><path d="M2 12h20"/><path d="M6 16h.01M10 16h.01"/>',
     "image": '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3-3a2 2 0 0 0-3 0l-9 9"/>',
@@ -52,9 +54,12 @@
     "lock": '<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
     "log-out": '<path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>',
     "memory-stick": '<path d="M6 19v-3M10 19v-3M14 19v-3M18 19v-3M8 11V9M16 11V9"/><rect x="2" y="5" width="20" height="11" rx="2"/>',
+    "message-square": '<path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/>',
     "network": '<rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-3h14v3M12 12V8"/>',
     "panel-left-open": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/>',
+    "panel-left-close": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m17 9-3 3 3 3"/>',
     "pause": '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>',
+    "pencil": '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4z"/>',
     "pin": '<path d="M12 17v5"/><path d="M5 17h14"/><path d="M15 3.5c0 2 1 3.5 2 4.5H7c1-1 2-2.5 2-4.5"/><path d="M9 3h6"/>',
     "pin-off": '<path d="M12 17v5"/><path d="M5 17h12"/><path d="M4 4 20 20"/><path d="M9 3h6"/><path d="M15 3.5c0 2 1 3.5 2 4.5h-4"/><path d="M7 8c.7-.7 1.4-1.8 1.8-3"/>',
     "play": '<path d="m6 3 14 9-14 9z"/>',
@@ -64,10 +69,13 @@
     "rotate-ccw": '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
     "scroll-text": '<path d="M15 12h-5M15 8h-5"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1H11v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2h4"/>',
     "search": '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+    "scan-search": '<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/><path d="m16 16-1.9-1.9"/>',
     "search-x": '<path d="m13.5 8.5-5 5"/><path d="m8.5 8.5 5 5"/><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+    "send": '<path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/>',
     "settings": '<path d="M12.2 2h-.4a2 2 0 0 0-2 2v.2a2 2 0 0 1-1 1.7l-.4.2a2 2 0 0 1-2 0l-.1-.1a2 2 0 0 0-2.7.7l-.2.4a2 2 0 0 0 .7 2.7l.1.1a2 2 0 0 1 1 1.7v.5a2 2 0 0 1-1 1.7l-.1.1a2 2 0 0 0-.7 2.7l.2.4a2 2 0 0 0 2.7.7l.1-.1a2 2 0 0 1 2 0l.4.2a2 2 0 0 1 1 1.7v.2a2 2 0 0 0 2 2h.4a2 2 0 0 0 2-2v-.2a2 2 0 0 1 1-1.7l.4-.2a2 2 0 0 1 2 0l.1.1a2 2 0 0 0 2.7-.7l.2-.4a2 2 0 0 0-.7-2.7l-.1-.1a2 2 0 0 1-1-1.7v-.5a2 2 0 0 1 1-1.7l.1-.1a2 2 0 0 0 .7-2.7l-.2-.4a2 2 0 0 0-2.7-.7l-.1.1a2 2 0 0 1-2 0l-.4-.2a2 2 0 0 1-1-1.7V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
     "shield-check": '<path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3z"/><path d="m9 12 2 2 4-4"/>',
     "shield-alert": '<path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3z"/><path d="M12 8v4"/><path d="M12 16h.01"/>',
+    "sparkles": '<path d="m12 3-1.5 4.5L6 9l4.5 1.5L12 15l1.5-4.5L18 9l-4.5-1.5z"/><path d="M5 3v4M3 5h4M19 16v5M16.5 18.5h5"/>',
     "square": '<rect x="3" y="3" width="18" height="18" rx="2"/>',
     "square-pen": '<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.4 2.6a2.1 2.1 0 0 1 3 3L12 15l-4 1 1-4z"/>',
     "square-terminal": '<path d="m7 7 3 3-3 3M13 13h4"/><rect x="3" y="3" width="18" height="18" rx="2"/>',
@@ -76,6 +84,7 @@
     "unlock": '<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>',
     "upload": '<path d="M12 3v12M17 8l-5-5-5 5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>',
     "user-round": '<circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/>',
+    "users": '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
     "x": '<path d="M18 6 6 18M6 6l12 12"/>',
     "zap": '<path d="M4 14a1 1 0 0 1-.8-1.6l9-11a.5.5 0 0 1 .9.4L12 8.5A1 1 0 0 0 13 10h7a1 1 0 0 1 .8 1.6l-9 11a.5.5 0 0 1-.9-.4L12 15.5A1 1 0 0 0 11 14z"/>'
   };
@@ -86,6 +95,7 @@
     ? `${path}?v=${encodeURIComponent(appAssetVersion)}`
     : path;
   const websiteFaultColorKey = "scriptboard.websiteFaultColor";
+  const sidebarCollapsedKey = "scriptboard.sidebarCollapsed";
   const readWebsiteFaultColor = () => {
     try {
       const value = localStorage.getItem(websiteFaultColorKey);
@@ -311,20 +321,37 @@
     });
   }
 
-  function managedMarkdownURL(reference, baseURL) {
-    try {
-      const resolved = new URL(reference, new URL(baseURL, location.origin));
-      const prefix = "/resources/files/view/";
-      if (resolved.origin !== location.origin || !resolved.pathname.startsWith(prefix)) return null;
-      return resolved;
-    } catch {
-      return null;
+  function hostMarkdownPath(reference, basePath) {
+    if (!reference || reference.startsWith("#") || /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(reference)) return null;
+    const [withoutHash, hash = ""] = reference.split("#", 2);
+    const [rawPath] = withoutHash.split("?", 1);
+    let decoded;
+    try { decoded = decodeURIComponent(rawPath); } catch { return null; }
+    const windows = /^[a-z]:[\\/]/i.test(basePath);
+    const separator = windows ? "\\" : "/";
+    const absolute = windows ? /^[a-z]:[\\/]/i.test(decoded) : decoded.startsWith("/");
+    const base = absolute ? decoded : `${basePath}${basePath.endsWith(separator) ? "" : separator}${decoded}`;
+    const normalized = base.replaceAll(windows ? "/" : "\\", separator);
+    const prefix = windows ? normalized.slice(0, 3) : separator;
+    const components = normalized.slice(prefix.length).split(separator);
+    const result = [];
+    for (const component of components) {
+      if (!component || component === ".") continue;
+      if (component === "..") {
+        if (result.length === 0) return null;
+        result.pop();
+      } else {
+        result.push(component);
+      }
     }
+    return { path: prefix + result.join(separator), hash: hash ? `#${hash}` : "", directory: /[\\/]$/.test(rawPath) };
   }
 
-  function managedRouteURL(url, prefix) {
-    const path = url.pathname.slice("/resources/files/view/".length);
-    return `${prefix}${path}${url.search}${url.hash}`;
+  function hostFileRoute(endpoint, hostPath, hash = "") {
+    const target = new URL(endpoint, location.origin);
+    target.searchParams.set("path", hostPath);
+    target.hash = hash;
+    return `${target.pathname}${target.search}${target.hash}`;
   }
 
   function replaceExternalMarkdownImage(image, reference) {
@@ -354,15 +381,15 @@
     root.querySelectorAll("a[href]").forEach(link => {
       const reference = link.getAttribute("href") || "";
       if (reference.startsWith("#")) return;
-      const managed = managedMarkdownURL(reference, baseURL);
-      if (managed) {
-        const extension = managed.pathname.slice(managed.pathname.lastIndexOf(".")).toLowerCase();
-        if (managed.pathname.endsWith("/")) {
-          link.href = managedRouteURL(managed, "/resources/files/");
+      const hostFile = hostMarkdownPath(reference, baseURL);
+      if (hostFile) {
+        const extension = hostFile.path.slice(hostFile.path.lastIndexOf(".")).toLowerCase();
+        if (hostFile.directory) {
+          link.href = hostFileRoute("/resources/files", hostFile.path, hostFile.hash);
         } else if (extension === ".md") {
-          link.href = managedRouteURL(managed, "/resources/files/view/");
+          link.href = hostFileRoute("/resources/files/view", hostFile.path, hostFile.hash);
         } else {
-          link.href = managedRouteURL(managed, "/resources/files/download/");
+          link.href = hostFileRoute("/resources/files/download", hostFile.path, hostFile.hash);
           link.dataset.native = "";
         }
         return;
@@ -381,9 +408,9 @@
 
     root.querySelectorAll("img").forEach(image => {
       const reference = image.getAttribute("src") || "";
-      const managed = managedMarkdownURL(reference, baseURL);
-      if (managed) {
-        image.src = managedRouteURL(managed, "/resources/files/preview/");
+      const hostFile = hostMarkdownPath(reference, baseURL);
+      if (hostFile) {
+        image.src = hostFileRoute("/resources/files/preview", hostFile.path);
         image.loading = "lazy";
         image.decoding = "async";
         return;
@@ -422,7 +449,7 @@
         FORBID_ATTR: ["style"],
         RETURN_DOM_FRAGMENT: true
       });
-      rewriteMarkdownResources(fragment, preview.dataset.markdownBase || "/resources/files/view/");
+      rewriteMarkdownResources(fragment, preview.dataset.markdownBase || "");
       await highlightMarkdownCode(fragment);
       if (!preview.isConnected || !source.isConnected) return;
       preview.replaceChildren(fragment);
@@ -439,6 +466,34 @@
     document.querySelector("[data-sidebar-toggle]")?.setAttribute("aria-expanded", String(open));
     const scrim = document.querySelector(".sidebar-scrim");
     if (scrim) scrim.hidden = !open;
+  }
+
+  function replaceIconHost(host, name) {
+    if (!host) return;
+    host.querySelector("svg")?.remove();
+    host.dataset.lucide = name;
+    delete host.dataset.iconReady;
+    renderIcons(host.parentElement || document);
+  }
+
+  function readSidebarCollapsed() {
+    try { return localStorage.getItem(sidebarCollapsedKey) === "true"; }
+    catch { return false; }
+  }
+
+  function applySidebarCollapsed(collapsed, persist = false) {
+    document.body.classList.toggle("sidebar-collapsed", collapsed);
+    const control = document.querySelector("[data-sidebar-collapse]");
+    if (control) {
+      const label = collapsed ? control.dataset.collapsedLabel : control.dataset.expandedLabel;
+      control.setAttribute("aria-expanded", String(!collapsed));
+      control.setAttribute("aria-label", label || "");
+      control.title = label || "";
+      replaceIconHost(control.querySelector("[data-sidebar-collapse-icon]"), collapsed ? "panel-left-open" : "panel-left-close");
+    }
+    if (persist) {
+      try { localStorage.setItem(sidebarCollapsedKey, String(collapsed)); } catch { /* preference remains in memory */ }
+    }
   }
 
   function isNativeLink(link, destination) {
@@ -462,8 +517,8 @@
 
   function navigationOwnsPath(linkPath, path) {
     if (linkPath === "/monitor") return path === "/monitor";
-    if (linkPath === "/resources/files/") {
-      return path.startsWith("/resources/files/") || path === "/resources/trash";
+    if (linkPath === "/resources/files") {
+      return path === "/resources/files" || path === "/resources/trash";
     }
     return path === linkPath || path.startsWith(`${linkPath}/`);
   }
@@ -507,10 +562,7 @@
         path === "/resources/trash") {
       return true;
     }
-    if (!path.startsWith("/resources/files/")) return false;
-    const relative = path.slice("/resources/files/".length);
-    return !["new-directory", "upload", "run/", "quick-run/", "download/", "preview/", "view/", "edit/"]
-      .some(prefix => relative === prefix.replace(/\/$/, "") || relative.startsWith(prefix));
+    return path === "/resources/files";
   }
 
   function createDeferredDataFailure(url, title) {
@@ -660,7 +712,7 @@
       if (options.focusSelector) {
         const focusTarget = document.querySelector(options.focusSelector);
         focusTarget?.focus();
-        if (focusTarget instanceof HTMLInputElement) {
+        if (focusTarget instanceof HTMLInputElement && ["text", "search", "tel", "url", "password"].includes(focusTarget.type)) {
           const end = focusTarget.value.length;
           focusTarget.setSelectionRange(end, end);
         }
@@ -703,13 +755,13 @@
       if (!input || !tree || !selection) return;
       let controller = null;
       const nodes = new Map();
-      const normalizePath = value => String(value || "").split("/").filter(Boolean).join("/") || ".";
+      const normalizePath = value => String(value || "");
       let selectedPath = normalizePath(input.value);
 
       const setSelected = (path, focus = false) => {
         selectedPath = normalizePath(path);
         input.value = selectedPath;
-        selection.textContent = selectedPath === "." ? (root.dataset.rootLabel || "Managed root") : selectedPath;
+        selection.textContent = selectedPath || (root.dataset.rootLabel || "This host");
         nodes.forEach(node => node.row.setAttribute("aria-selected", String(node.path === selectedPath)));
         if (focus) nodes.get(selectedPath)?.row.focus({ preventScroll: true });
       };
@@ -737,7 +789,7 @@
         chevron.dataset.lucide = "chevron-right";
         chevron.setAttribute("aria-hidden", "true");
         const folder = document.createElement("span");
-        folder.dataset.lucide = path === "." ? "hard-drive" : "folder";
+        folder.dataset.lucide = path === "" ? "hard-drive" : "folder";
         folder.setAttribute("aria-hidden", "true");
         const name = document.createElement("span");
         name.textContent = label;
@@ -755,7 +807,7 @@
         const node = { path, item, row, group, loaded: false, leaf: false };
         nodes.set(path, node);
         row.addEventListener("click", () => {
-          setSelected(path);
+          if (path) setSelected(path);
           if (!node.loaded) {
             loadNode(node, true);
             return;
@@ -780,15 +832,15 @@
         node.group.replaceChildren(loading);
         try {
           const endpoint = new URL(root.dataset.endpoint, location.href);
-          endpoint.searchParams.set("path", node.path === "." ? "" : node.path);
+          endpoint.searchParams.set("path", node.path);
           const response = await fetch(endpoint, { headers: { Accept: "application/json" }, cache: "no-store", signal: controller.signal });
           if (!response.ok) throw new Error(await response.text());
           const payload = await response.json();
           const directories = Array.isArray(payload.directories) ? payload.directories : [];
           node.group.replaceChildren();
           directories.forEach(directory => {
-            const path = node.path === "." ? directory : `${node.path}/${directory}`;
-            node.group.append(createNode(path, directory).item);
+            if (!directory || typeof directory.path !== "string") return;
+            node.group.append(createNode(directory.path, directory.name || directory.path).item);
           });
           node.loaded = true;
           node.leaf = directories.length === 0;
@@ -816,7 +868,7 @@
       const list = document.createElement("ul");
       list.setAttribute("role", "tree");
       list.setAttribute("aria-label", tree.getAttribute("aria-label") || "");
-      const rootNode = createNode(".", root.dataset.rootLabel || "Managed root");
+      const rootNode = createNode("", root.dataset.rootLabel || "This host");
       list.append(rootNode.item);
       tree.replaceChildren(list);
       renderIcons(tree);
@@ -824,17 +876,20 @@
 
       const revealSelection = async () => {
         let currentNode = rootNode;
-        let currentPath = ".";
         if (!await loadNode(currentNode, true)) return;
-        for (const part of selectedPath === "." ? [] : selectedPath.split("/")) {
-          currentPath = currentPath === "." ? part : `${currentPath}/${part}`;
-          const nextNode = nodes.get(currentPath);
-          if (!nextNode) {
-            setSelected(".");
-            return;
-          }
+        if (!selectedPath) return;
+        const comparable = value => String(value || "").replaceAll("\\", "/").replace(/\/+$/, "").toLocaleLowerCase();
+        while (!nodes.has(selectedPath)) {
+          const selectedKey = comparable(selectedPath);
+          const candidates = [...currentNode.group.querySelectorAll(":scope > li > [data-directory-path]")]
+            .map(row => nodes.get(row.dataset.directoryPath))
+            .filter(Boolean);
+          const nextNode = candidates.find(node => {
+            const key = comparable(node.path);
+            return selectedKey === key || selectedKey.startsWith(`${key}/`) || key === "";
+          });
+          if (!nextNode || nextNode === currentNode || !await loadNode(nextNode, true)) return;
           currentNode = nextNode;
-          if (currentPath !== selectedPath && !await loadNode(currentNode, true)) return;
         }
         setSelected(selectedPath, root.hasAttribute("data-autofocus"));
       };
@@ -2363,10 +2418,10 @@
 
   function initFileDropUpload(root = document, cleanups = []) {
     root.querySelectorAll("[data-file-drop-form]").forEach(form => {
-      const zone = form.querySelector("[data-file-drop-zone]");
+      const zone = document.getElementById(form.dataset.fileDropSurface || "");
       const input = form.querySelector(".file-drop-input");
-      const title = form.querySelector("[data-file-drop-title]");
-      const status = form.querySelector("[data-file-drop-status]");
+      const title = zone?.querySelector("[data-file-drop-title]");
+      const status = zone?.querySelector("[data-file-drop-status]");
       if (!zone || !input || !title || !status) return;
 
       let dragDepth = 0;
@@ -2377,8 +2432,8 @@
         title.textContent = nextTitle;
         status.textContent = nextDescription;
       };
-      const resetState = () => setState("", form.dataset.defaultTitle, form.dataset.defaultDescription);
-      const showError = message => setState("error", form.dataset.defaultTitle, message);
+      const resetState = () => setState("", "", "");
+      const showError = message => setState("error", form.dataset.errorTitle, message);
       const containsDirectory = dataTransfer => Array.from(dataTransfer?.items || []).some(item => {
         if (item.kind !== "file" || typeof item.webkitGetAsEntry !== "function") return false;
         return item.webkitGetAsEntry()?.isDirectory === true;
@@ -2462,6 +2517,184 @@
         document.removeEventListener("drop", preventFileNavigation);
       });
     });
+  }
+
+  function initFileVisibilityToggle(root = document, cleanups = []) {
+    root.querySelectorAll("[data-file-hidden-toggle]").forEach(toggle => {
+      const form = toggle.closest("form");
+      if (!form) return;
+      const onChange = () => {
+        if (form.getAttribute("aria-busy") === "true") return;
+        form.dataset.focusAfterNavigation = "[data-file-hidden-toggle]";
+        form.requestSubmit(form.querySelector("[data-search-submit]"));
+      };
+      toggle.addEventListener("change", onChange);
+      cleanups.push(() => toggle.removeEventListener("change", onChange));
+    });
+  }
+
+  function initFileQuickAccess(root = document, cleanups = []) {
+    const disclosure = root.querySelector("[data-file-quick-access]");
+    if (!disclosure) return;
+    const list = disclosure.querySelector("[data-file-quick-list]");
+    const empty = disclosure.querySelector("[data-file-quick-empty]");
+    const count = disclosure.querySelector("[data-file-quick-count]");
+    const countLabel = disclosure.querySelector("[data-file-quick-count-label]");
+    const oneLabel = disclosure.querySelector("[data-file-quick-one-label]");
+    const manyLabel = disclosure.querySelector("[data-file-quick-many-label]");
+    if (!list || !empty || !count || !countLabel || !oneLabel || !manyLabel) return;
+	const validationController = new AbortController();
+	cleanups.push(() => validationController.abort());
+
+    const storageKey = "scriptboard.files.pinnedDirectories.v2";
+    const isValidPin = pin => {
+      if (!pin || typeof pin.path !== "string" || pin.path.length === 0 ||
+        typeof pin.label !== "string" || pin.label.length === 0 ||
+        typeof pin.href !== "string" || !pin.href.startsWith("/")) return false;
+      try {
+        const target = new URL(pin.href, location.origin);
+        return target.origin === location.origin && target.pathname === "/resources/files" && target.searchParams.get("path") === pin.path;
+      } catch {
+        return false;
+      }
+    };
+    let pins = [];
+    try {
+      const stored = JSON.parse(localStorage.getItem(storageKey) || "[]");
+      if (Array.isArray(stored)) {
+        const paths = new Set();
+        pins = stored.filter(isValidPin).filter(pin => {
+          if (paths.has(pin.path)) return false;
+          paths.add(pin.path);
+          return true;
+        }).slice(0, 30);
+      }
+    } catch {
+      pins = [];
+    }
+
+    const persist = () => {
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(pins));
+      } catch {
+        // Storage may be unavailable in hardened or private browser sessions.
+      }
+    };
+    const pinControls = Array.from(root.querySelectorAll("[data-file-pin]"));
+    const renderControl = control => {
+      const pinned = pins.some(pin => pin.path === control.dataset.filePinPath);
+      const label = pinned ? control.dataset.unpinLabel : control.dataset.pinLabel;
+      control.hidden = false;
+      control.setAttribute("aria-pressed", String(pinned));
+      control.setAttribute("aria-label", label);
+      control.dataset.tooltip = label;
+      setControlIcon(control.querySelector("span"), pinned ? "pin-off" : "pin");
+    };
+    const render = () => {
+      count.textContent = String(pins.length);
+      countLabel.textContent = pins.length === 1 ? oneLabel.textContent : manyLabel.textContent;
+      empty.hidden = pins.length > 0;
+      list.hidden = pins.length === 0;
+      list.replaceChildren();
+      pins.forEach(pin => {
+        const item = document.createElement("li");
+        item.className = "file-quick-row";
+
+        const link = document.createElement("a");
+		link.setAttribute("aria-disabled", "true");
+        const icon = document.createElement("span");
+        icon.className = "file-quick-row__icon";
+        icon.append(makeIcon("folder"));
+        const copy = document.createElement("span");
+        const label = document.createElement("strong");
+        label.textContent = pin.label;
+        const path = document.createElement("small");
+        path.textContent = pin.path;
+        copy.append(label, path);
+        link.append(icon, copy);
+		const validationURL = new URL(disclosure.dataset.validationUrl || "/resources/files/validate", location.origin);
+		validationURL.searchParams.set("path", pin.path);
+		fetch(validationURL, { headers: { Accept: "application/json" }, signal: validationController.signal })
+		  .then(response => response.ok ? response.json() : { accessible: false })
+		  .then(result => {
+			if (!result?.accessible || !pins.some(candidate => candidate.path === pin.path)) return;
+			link.setAttribute("href", pin.href);
+			link.removeAttribute("aria-disabled");
+		  })
+		  .catch(error => { if (error?.name !== "AbortError") link.dataset.unavailable = "true"; });
+
+        const remove = document.createElement("button");
+        remove.className = "icon-button";
+        remove.type = "button";
+        remove.setAttribute("aria-label", `${disclosure.dataset.removeLabel}: ${pin.label}`);
+        remove.dataset.tooltip = disclosure.dataset.removeLabel;
+        remove.append(makeIcon("pin-off"));
+        remove.addEventListener("click", () => {
+          pins = pins.filter(candidate => candidate.path !== pin.path);
+          persist();
+          render();
+        });
+        item.append(link, remove);
+        list.append(item);
+      });
+      pinControls.forEach(renderControl);
+    };
+
+    pinControls.forEach(control => {
+      const onToggle = () => {
+        const path = control.dataset.filePinPath;
+        if (pins.some(pin => pin.path === path)) {
+          pins = pins.filter(pin => pin.path !== path);
+        } else {
+          const pin = {
+            path,
+            label: control.dataset.filePinLabel,
+            href: control.dataset.filePinHref,
+          };
+          if (isValidPin(pin)) pins = [...pins, pin].slice(-30);
+        }
+        persist();
+        render();
+      };
+      control.addEventListener("click", onToggle);
+      cleanups.push(() => control.removeEventListener("click", onToggle));
+    });
+
+    disclosure.hidden = false;
+    render();
+  }
+
+  function initFileOperation(cleanups) {
+    const root = document.querySelector("[data-file-operation]");
+    if (!root || !root.dataset.eventsUrl) return;
+    const phase = root.querySelector("[data-file-operation-phase]");
+    const state = root.querySelector("[data-file-operation-state]");
+    const error = root.querySelector("[data-file-operation-error]");
+    const progress = root.querySelector("[data-file-operation-progress]");
+    const bytes = root.querySelector("[data-file-operation-bytes]");
+    const formatBytes = value => {
+      let amount = Number(value) || 0;
+      const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+      let unit = 0;
+      while (amount >= 1024 && unit < units.length - 1) { amount /= 1024; unit += 1; }
+      return `${unit === 0 ? Math.round(amount) : amount.toFixed(1)} ${units[unit]}`;
+    };
+    const terminal = new Set(["completed", "rolled_back", "cancelled", "failed"]);
+    const stream = new EventSource(root.dataset.eventsUrl);
+    stream.addEventListener("progress", event => {
+      let operation;
+      try { operation = JSON.parse(event.data); } catch { return; }
+      if (phase) phase.textContent = operation.phase || "";
+      if (state) state.textContent = operation.phase || "";
+      if (error) error.textContent = operation.error || "";
+      if (progress) {
+        progress.max = Math.max(1, Number(operation.bytesTotal) || 0);
+        progress.value = Math.max(0, Number(operation.bytesCompleted) || 0);
+      }
+      if (bytes) bytes.textContent = `${formatBytes(operation.bytesCompleted)} / ${formatBytes(operation.bytesTotal)}`;
+      if (terminal.has(operation.phase)) stream.close();
+    });
+    cleanups.push(() => stream.close());
   }
 
   function initGroupedRecords(cleanups) {
@@ -3659,16 +3892,1023 @@
     });
   }
 
+  function initAssistantWorkspace(cleanups) {
+    const root = document.querySelector("[data-assistant-workspace]");
+    if (!root) return;
+
+    const csrfToken = root.dataset.csrfToken || "";
+    const input = root.querySelector("[data-assistant-input]");
+    const composer = root.querySelector("[data-assistant-composer]");
+	const sendButton = composer?.querySelector(".assistant-send");
+	const abortForm = root.querySelector("[data-assistant-abort]");
+	const conversationStatus = root.querySelector("[data-assistant-conversation-status]");
+	const turnLockedControls = root.querySelectorAll(".assistant-agent-controls select, .assistant-agent-controls button, .assistant-compact-button");
+	const messageList = root.querySelector("[data-assistant-message-list]");
+	const transcript = root.querySelector(".assistant-transcript");
+	const approvalPanel = root.querySelector("[data-assistant-approval-panel]");
+	const approvalForm = root.querySelector("[data-assistant-approval-form]");
+	const helper = root.querySelector("[data-assistant-error]");
+	const helperDefault = helper?.textContent || "";
+	const eventsURL = root.dataset.eventsUrl || "";
+	let assistantEvents = null;
+	const pendingToolCalls = new Map();
+	let followTranscript = true;
+	let transcriptScrollFrame = 0;
+    const modelControl = root.querySelector("[data-model-picker]");
+    const modelToggle = modelControl?.querySelector("[data-model-picker-toggle]");
+    const modelPicker = modelControl?.querySelector(".assistant-model-picker");
+    const modelInput = root.querySelector("[data-assistant-model-input]");
+    const modelLabel = root.querySelector("[data-model-picker-label]");
+    const modelChoices = modelPicker ? [...modelPicker.querySelectorAll("[data-model-choice]")] : [];
+    const approvalToggle = root.querySelector("[data-auto-approval-toggle]");
+    const approvalLabel = approvalToggle?.querySelector("[data-assistant-approval-label]");
+	const approvalInput = root.querySelector("[data-assistant-approval-input]");
+	const profileInput = root.querySelector("[data-assistant-profile-input]");
+	const telemetryContext = root.querySelector("[data-assistant-telemetry-context]");
+	const telemetryPercent = root.querySelector("[data-assistant-telemetry-percent]");
+	const telemetryProgress = root.querySelector("[data-assistant-telemetry-progress]");
+	const telemetryInput = root.querySelector("[data-assistant-telemetry-input]");
+	const telemetryOutput = root.querySelector("[data-assistant-telemetry-output]");
+	const operationList = root.querySelector("[data-assistant-operation-list]");
+	const operationCount = root.querySelector("[data-assistant-operation-count]");
+    const inspectorToggle = root.querySelector("[data-assistant-inspector-toggle]");
+    const inspectorClose = root.querySelector("[data-assistant-inspector-close]");
+    const assistantBody = root.querySelector(".assistant-body");
+    const resourcePicker = root.querySelector("[data-resource-picker]");
+    const resourceToggle = root.querySelector("[data-resource-picker-toggle]");
+    const resourceSearch = root.querySelector("[data-resource-search]");
+    const resourceList = resourcePicker?.querySelector(".assistant-resource-list");
+    let resourceOptions = resourcePicker ? [...resourcePicker.querySelectorAll(".assistant-resource-option")] : [];
+    let resourceSearchTimer = 0;
+    let resourceSearchAbort = null;
+    const contextHost = root.querySelector("[data-assistant-context-chips]");
+    const contextCount = root.querySelector("[data-assistant-context-count]");
+    let modelIndex = Math.max(0, modelChoices.findIndex(choice => choice.getAttribute("aria-selected") === "true"));
+    let resourceIndex = 0;
+    let resourceFilter = "all";
+    const selectedResources = new Map();
+	contextHost?.querySelectorAll("[data-context-key]").forEach(chip => {
+		const key = chip.dataset.contextKey || "";
+		if (!key) return;
+	selectedResources.set(key, {
+			key,
+			kind: chip.dataset.contextKind || "",
+			id: chip.dataset.contextId || "",
+			label: chip.dataset.contextLabel || "",
+			image: resourceOptions.some(option => `${option.dataset.resourceKind}:${option.dataset.resourceId}` === key && option.dataset.resourceImage === "true"),
+		});
+	});
+	if (assistantBody && window.matchMedia("(max-width: 1180px)").matches) {
+		assistantBody.dataset.inspectorOpen = "false";
+		inspectorToggle?.setAttribute("aria-expanded", "false");
+	}
+
+	const messageValue = (message, camel, exported) => message?.[camel] ?? message?.[exported] ?? "";
+	const tokenFormatter = new Intl.NumberFormat(locale());
+	const renderTelemetry = telemetry => {
+		if (!telemetry) return;
+		const contextTokens = Number(messageValue(telemetry, "contextTokens", "ContextTokens") || 0);
+		const contextWindow = Number(messageValue(telemetry, "contextWindow", "ContextWindow") || 0);
+		const contextPercent = Math.max(0, Math.min(100, Number(messageValue(telemetry, "contextPercent", "ContextPercent") || 0)));
+		const inputTokens = Number(messageValue(telemetry, "inputTokens", "InputTokens") || 0);
+		const outputTokens = Number(messageValue(telemetry, "outputTokens", "OutputTokens") || 0);
+		if (telemetryContext) telemetryContext.textContent = contextWindow > 0 ? `${tokenFormatter.format(contextTokens)} / ${tokenFormatter.format(contextWindow)} tokens` : "—";
+		if (telemetryPercent) telemetryPercent.textContent = contextWindow > 0 ? `${Math.round(contextPercent)}%` : "—";
+		if (telemetryProgress) telemetryProgress.value = contextWindow > 0 ? contextPercent : 0;
+		if (telemetryInput) telemetryInput.textContent = tokenFormatter.format(inputTokens);
+		if (telemetryOutput) telemetryOutput.textContent = tokenFormatter.format(outputTokens);
+	};
+	const transcriptNearBottom = () => !transcript || transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight <= 72;
+	const scrollTranscript = (force = false) => {
+		if (!transcript) return;
+		if (force) followTranscript = true;
+		if (!followTranscript) return;
+		if (transcriptScrollFrame) cancelAnimationFrame(transcriptScrollFrame);
+		transcriptScrollFrame = requestAnimationFrame(() => {
+			transcriptScrollFrame = 0;
+			if (followTranscript) transcript.scrollTop = transcript.scrollHeight;
+		});
+	};
+	const onTranscriptScroll = () => {
+		followTranscript = transcriptNearBottom();
+	};
+	const renderAssistantMarkdown = async (segment, source) => {
+		if (!segment) return;
+		segment.dataset.markdownSource = source;
+		segment.classList.remove("markdown-preview");
+		segment.textContent = source;
+		if (!source.trim()) return;
+		try {
+			await loadMarkdownLibraries();
+			if (!segment.isConnected || segment.dataset.markdownSource !== source) return;
+			const renderer = window.markdownit({ html: false, linkify: true, breaks: true });
+			const fragment = window.DOMPurify.sanitize(renderer.render(source), {
+				USE_PROFILES: { html: true }, SANITIZE_NAMED_PROPS: true, ALLOW_DATA_ATTR: false,
+				FORBID_TAGS: ["style", "form", "input", "button", "textarea", "select", "option"],
+				FORBID_ATTR: ["style"], RETURN_DOM_FRAGMENT: true,
+			});
+			rewriteMarkdownResources(fragment, "");
+			await highlightMarkdownCode(fragment);
+			if (!segment.isConnected || segment.dataset.markdownSource !== source) return;
+			segment.replaceChildren(fragment);
+			segment.classList.add("markdown-preview");
+			scrollTranscript();
+		} catch {
+			segment.classList.remove("markdown-preview");
+			segment.textContent = source;
+		}
+	};
+	const messageSegments = article => [...article.querySelectorAll(":scope > [data-message-segment]")];
+	const renderMessageMarkdown = article => {
+		if (!article?.classList.contains("assistant-message--assistant") || article.dataset.messageStatus === "streaming") return;
+		messageSegments(article).forEach(segment => void renderAssistantMarkdown(segment, segment.dataset.segmentSource || segment.textContent || ""));
+	};
+	const reflowAssistantMessage = article => {
+		if (!article) return;
+		const source = article.dataset.messageSource || "";
+		const characters = Array.from(source);
+		const clusters = [...article.querySelectorAll(":scope > [data-assistant-tool-cluster]")]
+			.sort((left, right) => Number(left.dataset.toolOffset || 0) - Number(right.dataset.toolOffset || 0));
+		messageSegments(article).forEach(segment => segment.remove());
+		let cursor = 0;
+		const appendSegment = value => {
+			const segment = document.createElement("div");
+			segment.dataset.messageBody = "";
+			segment.dataset.messageSegment = "";
+			segment.dataset.segmentSource = value;
+			segment.textContent = value;
+			article.append(segment);
+		};
+		clusters.forEach(cluster => {
+			const offset = Math.max(cursor, Math.min(characters.length, Number(cluster.dataset.toolOffset || 0)));
+			if (offset > cursor) appendSegment(characters.slice(cursor, offset).join(""));
+			article.append(cluster);
+			cursor = offset;
+		});
+		appendSegment(characters.slice(cursor).join(""));
+		renderMessageMarkdown(article);
+	};
+	const renderAssistantMessage = message => {
+		if (!messageList || !message) return null;
+		const id = messageValue(message, "id", "ID");
+		if (!id) return null;
+		let article = messageList.querySelector(`[data-message-id="${CSS.escape(id)}"]`);
+		const role = messageValue(message, "role", "Role") || "assistant";
+		const status = messageValue(message, "status", "Status") || "complete";
+		if (!article) {
+			article = document.createElement("article");
+			article.className = `assistant-message assistant-message--${role === "user" ? "user" : "assistant"}`;
+			article.dataset.messageId = id;
+			const header = document.createElement("header");
+			const author = document.createElement("strong");
+			author.textContent = role === "user" ? "YOU" : "PI";
+			const timestamp = document.createElement("time");
+			const createdAt = messageValue(message, "createdAt", "CreatedAt");
+			if (createdAt) {
+				timestamp.dateTime = createdAt;
+				const date = new Date(createdAt);
+				timestamp.textContent = Number.isNaN(date.getTime()) ? "" : new Intl.DateTimeFormat(locale() === "zh-CN" ? "zh-CN" : "en", { hour: "2-digit", minute: "2-digit" }).format(date);
+			}
+			header.append(author, timestamp);
+			article.append(header);
+			messageList.append(article);
+		}
+		article.dataset.messageStatus = status;
+		article.dataset.messageSource = messageValue(message, "body", "Body");
+		reflowAssistantMessage(article);
+		const waiting = pendingToolCalls.get(id);
+		if (waiting) {
+			pendingToolCalls.delete(id);
+			waiting.forEach(renderToolCall);
+		}
+		scrollTranscript();
+		return article;
+	};
+	const toolStatusLabel = status => {
+		const labels = locale() === "zh-CN"
+			? { running: "执行中", waiting_approval: "等待审批", complete: "已完成", error: "失败", rejected: "已拒绝", cancelled: "已取消", interrupted: "已中断" }
+			: { running: "Running", waiting_approval: "Waiting for approval", complete: "Complete", error: "Failed", rejected: "Rejected", cancelled: "Cancelled", interrupted: "Interrupted" };
+		return labels[status] || status;
+	};
+	const toolStatusIcon = status => status === "complete" ? "check" : status === "waiting_approval" ? "shield-alert" : status === "running" ? "loader-circle" : "triangle-alert";
+	const statefulToolNames = new Set(["start_quick_run", "run_schedule_now", "stop_run", "check_website_now", "perform_ui_action"]);
+	const unexecutedToolErrors = new Set(["approval_invalid", "approval_expired", "approval_rejected", "approval_cancelled", "tool_target_changed", "tool_forbidden"]);
+	const operationLabel = name => ({
+		start_quick_run: root.dataset.operationStartQuickRun,
+		run_schedule_now: root.dataset.operationRunScheduleNow,
+		stop_run: root.dataset.operationStopRun,
+		check_website_now: root.dataset.operationCheckWebsiteNow,
+		perform_ui_action: root.dataset.operationPerformUiAction,
+	}[name] || name);
+	const executedStatefulCall = call => {
+		const name = messageValue(call, "name", "Name");
+		const status = messageValue(call, "status", "Status");
+		const errorCode = messageValue(call, "errorCode", "ErrorCode");
+		if (!statefulToolNames.has(name) || status === "waiting_approval" || status === "rejected") return false;
+		if (status === "cancelled" && errorCode === "approval_cancelled") return false;
+		if (status === "error" && unexecutedToolErrors.has(errorCode)) return false;
+		return ["running", "complete", "error", "cancelled", "interrupted"].includes(status);
+	};
+	const renderOperation = call => {
+		if (!operationList || !call) return;
+		const id = messageValue(call, "id", "ID");
+		if (!id) return;
+		let row = operationList.querySelector(`[data-operation-id="${CSS.escape(id)}"]`);
+		if (!executedStatefulCall(call)) {
+			row?.remove();
+			if (operationCount) operationCount.textContent = String(operationList.childElementCount);
+			return;
+		}
+		if (!row) {
+			row = document.createElement("div");
+			row.className = "assistant-operation-row";
+			row.dataset.operationId = id;
+			const time = document.createElement("time");
+			const iconHost = document.createElement("span");
+			iconHost.className = "assistant-operation-row__icon";
+			iconHost.append(document.createElement("span"));
+			row.append(time, iconHost, document.createElement("span"), document.createElement("small"));
+			operationList.prepend(row);
+		}
+		const name = messageValue(call, "name", "Name");
+		const status = messageValue(call, "status", "Status") || "running";
+		const target = messageValue(call, "targetSummary", "TargetSummary") || messageValue(call, "parameterSummary", "ParameterSummary");
+		const startedAt = messageValue(call, "startedAt", "StartedAt");
+		const started = startedAt ? new Date(startedAt) : new Date();
+		row.dataset.operationName = name;
+		row.dataset.operationState = status === "complete" ? "success" : status === "running" ? "running" : "failed";
+		row.querySelector("time").dateTime = Number.isNaN(started.valueOf()) ? "" : started.toISOString();
+		row.querySelector("time").textContent = Number.isNaN(started.valueOf()) ? "—" : started.toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit", hour12: false });
+		row.children[2].textContent = target ? `${operationLabel(name)} · ${target}` : operationLabel(name);
+		row.querySelector("small").textContent = toolStatusLabel(status);
+		replaceIconHost(row.querySelector(".assistant-operation-row__icon > span"), status === "complete" ? "check" : status === "running" ? "loader-circle" : "triangle-alert");
+		if (operationCount) operationCount.textContent = String(operationList.childElementCount);
+	};
+	const formatToolCountSummary = (template, values) => {
+		let index = 0;
+		return template.replace(/%d/g, () => String(values[index++] ?? 0));
+	};
+	const toolGroupTitle = count => count === 1
+		? (root.dataset.toolsCalledOne || (locale() === "zh-CN" ? "调用了 1 个工具" : "Called 1 tool"))
+		: formatToolCountSummary(root.dataset.toolsCalledMany || (locale() === "zh-CN" ? "调用了 %d 个工具" : "Called %d tools"), [count]);
+	const toolGroupPresentation = statuses => {
+		const succeeded = statuses.filter(status => status === "complete").length;
+		const active = statuses.filter(status => status === "running" || status === "waiting_approval").length;
+		const failed = statuses.length - succeeded - active;
+		const aggregateStatus = statuses.includes("running") ? "running"
+			: statuses.includes("waiting_approval") ? "waiting_approval"
+				: statuses.find(status => status !== "complete") || "complete";
+		const template = active > 0
+			? (root.dataset.toolsSummaryActive || (locale() === "zh-CN" ? "成功 %d · 失败 %d · 进行中 %d" : "%d succeeded · %d failed · %d in progress"))
+			: (root.dataset.toolsSummary || (locale() === "zh-CN" ? "成功 %d · 失败 %d" : "%d succeeded · %d failed"));
+		return { aggregateStatus, summary: formatToolCountSummary(template, active > 0 ? [succeeded, failed, active] : [succeeded, failed]) };
+	};
+	function ensureToolCluster(messageID, bodyOffset) {
+		if (!messageList || !messageID) return null;
+		const article = messageList.querySelector(`[data-message-id="${CSS.escape(messageID)}"]`);
+		if (!article) return null;
+		const offset = Math.max(0, Number(bodyOffset) || 0);
+		let cluster = [...article.querySelectorAll(":scope > [data-assistant-tool-cluster]")]
+			.find(candidate => Number(candidate.dataset.toolOffset || 0) === offset);
+		if (cluster) return cluster;
+		cluster = document.createElement("details");
+		cluster.className = "assistant-tool-cluster";
+		cluster.dataset.assistantToolCluster = "";
+		cluster.dataset.toolMessageId = messageID;
+		cluster.dataset.toolOffset = String(offset);
+		const summary = document.createElement("summary");
+		const iconHost = document.createElement("span");
+		iconHost.className = "assistant-tool-row__icon";
+		const icon = document.createElement("span");
+		icon.dataset.toolStatusIcon = "";
+		iconHost.append(icon);
+		const identity = document.createElement("span");
+		const name = document.createElement("strong");
+		name.dataset.toolClusterName = "";
+		const target = document.createElement("small");
+		target.dataset.toolClusterTarget = "";
+		identity.append(name, target);
+		const status = document.createElement("span");
+		status.className = "assistant-tool-status";
+		status.dataset.toolClusterStatus = "";
+		const chevron = document.createElement("span");
+		chevron.dataset.lucide = "chevron-down";
+		summary.append(iconHost, identity, status, chevron);
+		const list = document.createElement("div");
+		list.className = "assistant-tool-list";
+		list.dataset.assistantToolList = "";
+		cluster.append(summary, list);
+		article.append(cluster);
+		reflowAssistantMessage(article);
+		return cluster;
+	}
+	function renderToolCall(call) {
+		if (!call) return null;
+		const id = messageValue(call, "id", "ID");
+		if (!id) return null;
+		renderOperation(call);
+		const messageID = messageValue(call, "messageId", "MessageID");
+		const bodyOffset = messageValue(call, "bodyOffset", "BodyOffset");
+		const cluster = ensureToolCluster(messageID, bodyOffset);
+		if (!cluster) {
+			if (messageID) {
+				const waiting = pendingToolCalls.get(messageID) || [];
+				const previous = waiting.findIndex(item => messageValue(item, "id", "ID") === id);
+				if (previous >= 0) waiting[previous] = call;
+				else waiting.push(call);
+				pendingToolCalls.set(messageID, waiting);
+			}
+			return null;
+		}
+		const toolList = cluster.querySelector("[data-assistant-tool-list]");
+		let row = toolList.querySelector(`[data-tool-call-id="${CSS.escape(id)}"]`);
+		if (!row) {
+			row = document.createElement("details");
+			row.className = "assistant-tool-row";
+			row.dataset.toolCallId = id;
+			const summary = document.createElement("summary");
+			const iconHost = document.createElement("span");
+			iconHost.className = "assistant-tool-row__icon";
+			const icon = document.createElement("span");
+			icon.dataset.toolStatusIcon = "";
+			iconHost.append(icon);
+			const identity = document.createElement("span");
+			identity.append(document.createElement("strong"), document.createElement("small"));
+			const status = document.createElement("span");
+			status.className = "assistant-tool-status";
+			status.dataset.toolStatusLabel = "";
+			const chevron = document.createElement("span");
+			chevron.dataset.lucide = "chevron-down";
+			summary.append(iconHost, identity, status, chevron);
+			const details = document.createElement("div");
+			details.className = "assistant-tool-row__details";
+			const jsonGrid = document.createElement("div");
+			jsonGrid.className = "assistant-tool-json-grid";
+			const jsonBlock = (label, dataAttribute) => {
+				const section = document.createElement("section");
+				const heading = document.createElement("h4");
+				heading.textContent = label;
+				const pre = document.createElement("pre");
+				const code = document.createElement("code");
+				code.dataset[dataAttribute] = "";
+				pre.append(code);
+				section.append(heading, pre);
+				return section;
+			};
+			jsonGrid.append(
+				jsonBlock(root.dataset.toolCallJsonLabel || (locale() === "zh-CN" ? "调用 JSON" : "Call JSON"), "toolRequestJson"),
+				jsonBlock(root.dataset.toolResponseJsonLabel || (locale() === "zh-CN" ? "返回 JSON" : "Response JSON"), "toolResponseJson"),
+			);
+			details.append(jsonGrid);
+			row.append(summary, details);
+			toolList.append(row);
+		}
+		const status = messageValue(call, "status", "Status") || "running";
+		row.dataset.toolStatus = status;
+		const name = messageValue(call, "name", "Name") || "tool";
+		const target = messageValue(call, "targetSummary", "TargetSummary");
+		row.querySelector("summary strong").textContent = name;
+		row.querySelector("summary small").textContent = target;
+		row.querySelector("[data-tool-status-label]").textContent = toolStatusLabel(status);
+		replaceIconHost(row.querySelector("[data-tool-status-icon]"), toolStatusIcon(status));
+		row.querySelector("[data-tool-request-json]").textContent = messageValue(call, "requestJSON", "RequestJSON") || "{}";
+		row.querySelector("[data-tool-response-json]").textContent = messageValue(call, "responseJSON", "ResponseJSON") || "null";
+		const rows = [...toolList.querySelectorAll(":scope > [data-tool-call-id]")];
+		const statuses = rows.map(item => item.dataset.toolStatus || "running");
+		const { aggregateStatus, summary } = toolGroupPresentation(statuses);
+		cluster.querySelector("[data-tool-cluster-name]").textContent = toolGroupTitle(rows.length);
+		cluster.querySelector("[data-tool-cluster-target]").textContent = summary;
+		cluster.querySelector("[data-tool-cluster-status]").textContent = toolStatusLabel(aggregateStatus);
+		replaceIconHost(cluster.querySelector("[data-tool-status-icon]"), toolStatusIcon(aggregateStatus));
+		const article = cluster.closest("[data-message-id]");
+		reflowAssistantMessage(article);
+		renderIcons(row);
+		renderIcons(cluster);
+		scrollTranscript();
+		return row;
+	}
+	const renderApproval = (approval, call) => {
+		if (!approvalPanel || !approvalForm) return;
+		const id = messageValue(approval, "id", "ID");
+		const status = messageValue(approval, "status", "Status");
+		if (!id || status !== "pending") {
+			approvalPanel.hidden = true;
+			approvalPanel.removeAttribute("data-approval-id");
+			return;
+		}
+		const previousID = approvalPanel.dataset.approvalId || "";
+		approvalPanel.hidden = false;
+		approvalPanel.dataset.approvalId = id;
+		const expires = messageValue(approval, "expiresAt", "ExpiresAt");
+		if (expires) approvalPanel.dataset.approvalExpires = expires;
+		if (previousID !== id) {
+			approvalForm.querySelectorAll("button").forEach(button => { button.disabled = false; });
+		}
+		const name = messageValue(call, "name", "Name") || (locale() === "zh-CN" ? "状态修改" : "State change");
+		const target = messageValue(call, "targetSummary", "TargetSummary");
+		const parameters = messageValue(call, "parameterSummary", "ParameterSummary");
+		const title = approvalPanel.querySelector("[data-approval-tool]");
+		const description = approvalPanel.querySelector("[data-approval-target]");
+		if (title) title.textContent = name;
+		if (description) description.textContent = [target, parameters].filter(Boolean).join(" · ");
+		const conversationID = root.dataset.conversationId || "";
+		approvalForm.action = `/ai/conversations/${encodeURIComponent(conversationID)}/approvals/${encodeURIComponent(id)}`;
+		renderIcons(approvalPanel);
+		scrollTranscript();
+	};
+	const updateApprovalExpiry = () => {
+		if (!approvalPanel || approvalPanel.hidden) return;
+		const expiry = new Date(approvalPanel.dataset.approvalExpires || "").getTime();
+		if (!Number.isFinite(expiry)) return;
+		const seconds = Math.max(0, Math.ceil((expiry - Date.now()) / 1000));
+		const label = approvalPanel.querySelector("[data-approval-expiry]");
+		if (label) label.textContent = seconds > 0
+			? (locale() === "zh-CN" ? `${seconds} 秒后过期` : `Expires in ${seconds}s`)
+			: (locale() === "zh-CN" ? "审批已过期" : "Approval expired");
+		if (seconds === 0) approvalForm?.querySelectorAll("button").forEach(button => { button.disabled = true; });
+	};
+	const approvalClock = window.setInterval(updateApprovalExpiry, 1000);
+	updateApprovalExpiry();
+	const setConversationStatus = status => {
+		if (!conversationStatus || !status) return;
+		const normalized = status === "complete" ? "idle" : status === "error" ? "failed" : status;
+		const label = conversationStatus.getAttribute(`data-label-${normalized}`);
+		if (label) conversationStatus.textContent = label;
+	};
+	const setTurnRunning = (running, status = running ? "running" : "idle") => {
+		if (sendButton) sendButton.disabled = running || root.dataset.runtimeAvailable !== "true";
+		if (abortForm) abortForm.hidden = !running;
+		turnLockedControls.forEach(control => { control.disabled = running; });
+		setConversationStatus(status);
+		if (helper) helper.textContent = running ? (locale() === "zh-CN" ? "Pi 正在生成…" : "Pi is responding…") : helperDefault;
+	};
+	const handleAssistantEvent = event => {
+		let payload;
+		try { payload = JSON.parse(event.data); } catch { return; }
+		if (event.type === "snapshot") {
+			if (messageList) messageList.replaceChildren();
+			if (operationList) operationList.replaceChildren();
+			if (operationCount) operationCount.textContent = "0";
+			pendingToolCalls.clear();
+			(payload.messages || []).forEach(renderAssistantMessage);
+			(payload.toolCalls || []).forEach(renderToolCall);
+			renderApproval(payload.approval, (payload.toolCalls || []).find(call => messageValue(call, "id", "ID") === messageValue(payload.approval, "toolCallId", "ToolCallID")));
+			const messages = payload.messages || [];
+			const running = messages.some(message => messageValue(message, "status", "Status") === "streaming");
+			const latestAssistant = [...messages].reverse().find(message => messageValue(message, "role", "Role") === "assistant");
+			const settledStatus = latestAssistant ? messageValue(latestAssistant, "status", "Status") : "idle";
+			setTurnRunning(running, payload.approval ? "waiting_approval" : running ? "running" : settledStatus);
+			return;
+		}
+		if (event.type === "message") {
+			renderAssistantMessage(payload.message || payload.Message);
+			if (messageValue(payload.message || payload.Message, "status", "Status") === "streaming") setTurnRunning(true);
+			return;
+		}
+		if (["tool_started", "tool_updated", "tool_finished", "approval_requested", "approval_resolved"].includes(event.type)) {
+			const call = payload.toolCall || payload.ToolCall;
+			renderToolCall(call);
+			if (event.type === "approval_requested") {
+				renderApproval(payload.approval || payload.Approval, call);
+				setTurnRunning(true, "waiting_approval");
+			}
+			if (event.type === "approval_resolved") {
+				renderApproval(null, call);
+				setTurnRunning(true, "running");
+			}
+			return;
+		}
+		if (event.type === "retrying" || event.type === "compacting") {
+			if (helper) {
+				const running = (payload.status || payload.Status) === "running";
+				if (running && event.type === "retrying") {
+					const attempt = payload.attempt || payload.Attempt || 0;
+					helper.textContent = locale() === "zh-CN" ? `Provider 正在重试${attempt ? `（第 ${attempt} 次）` : ""}…` : `Provider retrying${attempt ? ` (attempt ${attempt})` : ""}…`;
+				} else if (running) helper.textContent = locale() === "zh-CN" ? "Pi 正在压缩对话上下文…" : "Pi is compacting conversation context…";
+				else helper.textContent = helperDefault;
+			}
+			return;
+		}
+		const messageId = payload.messageId || payload.MessageID || "";
+		const article = messageId && messageList?.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
+		if (event.type === "delta") {
+			if (article) {
+				const cumulative = payload.body ?? payload.Body;
+				article.dataset.messageSource = typeof cumulative === "string"
+					? cumulative
+					: (article.dataset.messageSource || "") + (payload.delta || payload.Delta || "");
+				article.dataset.messageStatus = "streaming";
+				reflowAssistantMessage(article);
+			}
+			setTurnRunning(true);
+			scrollTranscript();
+			return;
+		}
+		if (event.type === "settled") {
+			if (article) article.dataset.messageStatus = payload.status || payload.Status || "complete";
+			renderTelemetry(payload.telemetry || payload.Telemetry);
+			renderMessageMarkdown(article);
+			setTurnRunning(false, payload.status || payload.Status || "complete");
+			scrollTranscript();
+		}
+	};
+	if (eventsURL && window.EventSource) {
+		assistantEvents = new EventSource(eventsURL);
+		["snapshot", "message", "delta", "settled", "tool_started", "tool_updated", "tool_finished", "approval_requested", "approval_resolved", "retrying", "compacting"].forEach(type => assistantEvents.addEventListener(type, handleAssistantEvent));
+		assistantEvents.addEventListener("error", () => {
+			if (helper && assistantEvents?.readyState === EventSource.CLOSED) helper.textContent = locale() === "zh-CN" ? "实时连接已断开，刷新页面可恢复。" : "Live connection closed. Refresh to reconnect.";
+		});
+	}
+
+    const setModelPicker = open => {
+      if (!modelPicker || !modelToggle) return;
+      modelPicker.dataset.open = String(open);
+      modelPicker.setAttribute("aria-hidden", String(!open));
+      modelToggle.setAttribute("aria-expanded", String(open));
+      if (open) {
+        modelChoices.forEach((choice, index) => { choice.dataset.active = String(index === modelIndex); });
+        modelChoices[modelIndex]?.focus();
+      }
+    };
+    const markSelectedModel = (id, name) => {
+      if (modelInput) modelInput.value = id;
+      if (modelLabel) modelLabel.textContent = name;
+      modelControl.dataset.invalid = String(!id);
+      modelChoices.forEach(choice => {
+        const selected = choice.dataset.modelChoice === id;
+        choice.setAttribute("aria-selected", String(selected));
+        choice.querySelector("svg.lucide-check")?.remove();
+        if (selected) {
+          const icon = document.createElement("span");
+          icon.dataset.lucide = "check";
+          choice.append(icon);
+          renderIcons(choice);
+        }
+      });
+    };
+    const selectModel = async choice => {
+      const id = choice?.dataset.modelChoice || "";
+      const name = choice?.dataset.modelName || "";
+      if (!id) return;
+      const endpoint = modelControl.dataset.modelEndpoint;
+      if (endpoint) {
+        modelControl.setAttribute("aria-busy", "true");
+        try {
+          const response = await fetch(endpoint, {
+            method: "POST", credentials: "same-origin",
+            headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "Accept": "application/json" },
+            body: new URLSearchParams({ csrf_token: csrfToken, model_id: id }),
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        } catch {
+          modelControl.dataset.invalid = "true";
+          modelToggle?.focus();
+          return;
+        } finally {
+          modelControl.removeAttribute("aria-busy");
+        }
+      }
+      markSelectedModel(id, name);
+      setModelPicker(false);
+      modelToggle?.focus();
+    };
+
+    const setApproval = enabled => {
+      if (!approvalToggle) return;
+      approvalToggle.setAttribute("aria-pressed", String(enabled));
+      if (approvalInput) approvalInput.value = String(enabled);
+      if (approvalLabel) approvalLabel.textContent = enabled ? approvalLabel.dataset.autoLabel : approvalLabel.dataset.manualLabel;
+      replaceIconHost(approvalToggle.querySelector("[data-approval-icon]"), enabled ? "zap" : "shield-check");
+    };
+    const toggleApproval = async () => {
+      if (!approvalToggle || approvalToggle.disabled) return;
+      const next = approvalToggle.getAttribute("aria-pressed") !== "true";
+      const endpoint = approvalToggle.dataset.endpoint;
+      if (!endpoint) {
+        setApproval(next);
+        return;
+      }
+      approvalToggle.disabled = true;
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST", credentials: "same-origin",
+          headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "Accept": "application/json" },
+          body: new URLSearchParams({ csrf_token: csrfToken, auto_approval: String(next) }),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        setApproval(next);
+      } finally {
+        approvalToggle.disabled = false;
+      }
+    };
+
+    const visibleResourceOptions = () => resourceOptions.filter(option => !option.hidden);
+	const renderDynamicResource = (resource, query) => {
+		if (!resourceList || !resource?.id || !resource?.kind) return;
+		const key = `${resource.kind}:${resource.id}`;
+		if (resourceOptions.some(option => `${option.dataset.resourceKind}:${option.dataset.resourceId}` === key)) return;
+		const option = document.createElement("button");
+		option.type = "button";
+		option.setAttribute("role", "option");
+		option.setAttribute("aria-selected", String(selectedResources.has(key)));
+		option.className = "assistant-resource-option";
+		option.dataset.resourceDynamic = "true";
+		option.dataset.resourceId = resource.id;
+		option.dataset.resourceKind = resource.kind;
+		option.dataset.resourceCategory = resource.category || "files";
+		option.dataset.resourceLabel = resource.label || resource.id;
+		option.dataset.resourceImage = String(Boolean(resource.imageHint));
+		option.dataset.resourceSearchText = `${resource.label || ""} ${resource.detail || ""} ${query}`;
+		const icon = document.createElement("span");
+		icon.className = "assistant-resource-option__icon";
+		icon.dataset.lucide = resource.icon || (resource.kind === "directory" ? "folder" : "file-text");
+		icon.setAttribute("aria-hidden", "true");
+		const copy = document.createElement("span");
+		const title = document.createElement("strong");
+		title.textContent = resource.label || resource.id;
+		const detail = document.createElement("small");
+		detail.textContent = `${resource.kind} · ${resource.detail || ""}`;
+		copy.append(title, detail);
+		const plus = document.createElement("span");
+		plus.dataset.lucide = "plus";
+		plus.setAttribute("aria-hidden", "true");
+		option.append(icon, copy, plus);
+		resourceList.append(option);
+		resourceOptions.push(option);
+		renderIcons(option);
+	};
+	const searchHostPathResources = () => {
+		const query = (resourceSearch?.value || "").trim();
+		const absolute = query.startsWith("/") || query.startsWith("\\\\") || /^[a-z]:[\\/]/i.test(query);
+		if (!absolute || !resourcePicker?.dataset.resourceEndpoint) return;
+		window.clearTimeout(resourceSearchTimer);
+		resourceSearchTimer = window.setTimeout(async () => {
+			resourceSearchAbort?.abort();
+			resourceSearchAbort = new AbortController();
+			try {
+				const endpoint = new URL(resourcePicker.dataset.resourceEndpoint, window.location.origin);
+				endpoint.searchParams.set("query", query);
+				const response = await fetch(endpoint, { credentials: "same-origin", headers: { Accept: "application/json" }, signal: resourceSearchAbort.signal });
+				if (!response.ok) return;
+				resourceOptions.filter(option => option.dataset.resourceDynamic === "true").forEach(option => option.remove());
+				resourceOptions = resourceOptions.filter(option => option.dataset.resourceDynamic !== "true");
+				const payload = await response.json();
+				(payload.resources || []).forEach(resource => renderDynamicResource(resource, query));
+				filterResources();
+			} catch (error) {
+				if (error?.name !== "AbortError") resourceSearchAbort = null;
+			}
+		}, 180);
+	};
+    const filterResources = () => {
+      const query = (resourceSearch?.value || "").trim().toLocaleLowerCase();
+      resourceOptions.forEach(option => {
+        const categoryMatches = resourceFilter === "all" || option.dataset.resourceCategory === resourceFilter;
+        const queryMatches = !query || (option.dataset.resourceSearchText || "").toLocaleLowerCase().includes(query);
+        option.hidden = !categoryMatches || !queryMatches;
+      });
+      resourceIndex = 0;
+      visibleResourceOptions().forEach((option, index) => { option.dataset.active = String(index === resourceIndex); });
+    };
+    const setResourcePicker = (open, focus = false) => {
+      if (!resourcePicker || !resourceToggle) return;
+      resourcePicker.dataset.open = String(open);
+      resourcePicker.setAttribute("aria-hidden", String(!open));
+      resourceToggle.setAttribute("aria-expanded", String(open));
+      if (open) {
+        filterResources();
+        if (focus) requestAnimationFrame(() => resourceSearch?.focus());
+      }
+    };
+    const renderContextResources = () => {
+      if (!contextHost || !contextCount) return;
+      contextHost.replaceChildren();
+      selectedResources.forEach(resource => {
+        const chip = document.createElement("span");
+        chip.className = "assistant-context-chip";
+		chip.dataset.contextKey = resource.key;
+		chip.dataset.contextKind = resource.kind;
+		chip.dataset.contextId = resource.id;
+		chip.dataset.contextLabel = resource.label;
+        const label = document.createElement("span");
+        label.textContent = resource.label;
+		const imageIcon = document.createElement("span");
+		imageIcon.dataset.lucide = resource.image ? "image" : "paperclip";
+		imageIcon.setAttribute("aria-hidden", "true");
+		const kindInput = document.createElement("input");
+		kindInput.type = "hidden";
+		kindInput.name = "context_kind";
+		kindInput.value = resource.kind;
+		const idInput = document.createElement("input");
+		idInput.type = "hidden";
+		idInput.name = "context_id";
+		idInput.value = resource.id;
+        const remove = document.createElement("button");
+        remove.type = "button";
+		remove.setAttribute("aria-label", `${root.dataset.removeReferenceLabel || "Remove reference"} ${resource.label}`);
+        remove.dataset.removeResource = resource.key;
+        const icon = document.createElement("span");
+        icon.dataset.lucide = "x";
+        remove.append(icon);
+		chip.append(imageIcon, label, kindInput, idInput, remove);
+        contextHost.append(chip);
+      });
+      contextCount.textContent = String(selectedResources.size);
+      contextCount.hidden = selectedResources.size === 0;
+      contextHost.hidden = selectedResources.size === 0;
+		const imageCount = [...selectedResources.values()].filter(resource => resource.image).length;
+		if (helper) helper.textContent = imageCount > 0 ? `${imageCount} image${imageCount === 1 ? "" : "s"} will be safety-processed before sending.` : helperDefault;
+      renderIcons(contextHost);
+    };
+    const chooseResource = option => {
+      if (!option) return;
+      const key = `${option.dataset.resourceKind}:${option.dataset.resourceId}`;
+      if (selectedResources.has(key)) selectedResources.delete(key);
+	  else selectedResources.set(key, {
+		key,
+		kind: option.dataset.resourceKind || "",
+		id: option.dataset.resourceId || "",
+		label: option.dataset.resourceLabel || option.dataset.resourceId,
+		image: option.dataset.resourceImage === "true",
+	  });
+      option.setAttribute("aria-selected", String(selectedResources.has(key)));
+      renderContextResources();
+    };
+
+    const onClick = event => {
+      if (event.target.closest("[data-model-picker-toggle]")) {
+        event.preventDefault();
+        setModelPicker(modelPicker?.dataset.open !== "true");
+        return;
+      }
+      const modelChoice = event.target.closest("[data-model-choice]");
+      if (modelChoice && root.contains(modelChoice)) {
+        event.preventDefault();
+        void selectModel(modelChoice);
+        return;
+      }
+      if (event.target.closest("[data-auto-approval-toggle]")) {
+        event.preventDefault();
+        void toggleApproval();
+        return;
+      }
+      if (event.target.closest("[data-assistant-inspector-toggle]")) {
+        const open = assistantBody?.dataset.inspectorOpen !== "true";
+        if (assistantBody) assistantBody.dataset.inspectorOpen = String(open);
+        inspectorToggle?.setAttribute("aria-expanded", String(open));
+        return;
+      }
+      if (event.target.closest("[data-assistant-inspector-close]")) {
+        if (assistantBody) assistantBody.dataset.inspectorOpen = "false";
+        inspectorToggle?.setAttribute("aria-expanded", "false");
+        inspectorToggle?.focus();
+        return;
+      }
+      if (event.target.closest("[data-assistant-rail-open]")) {
+        document.body.classList.add("assistant-rail-open");
+        return;
+      }
+      if (event.target.closest("[data-assistant-rail-close]")) {
+        document.body.classList.remove("assistant-rail-open");
+        return;
+      }
+      if (event.target.closest("[data-resource-picker-toggle]")) {
+        event.preventDefault();
+        setResourcePicker(resourcePicker?.dataset.open !== "true", true);
+        return;
+      }
+      const filter = event.target.closest("[data-resource-filter]");
+      if (filter && root.contains(filter)) {
+        resourceFilter = filter.dataset.resourceFilter || "all";
+        root.querySelectorAll("[data-resource-filter]").forEach(button => button.setAttribute("aria-pressed", String(button === filter)));
+        filterResources();
+        return;
+      }
+      const option = event.target.closest(".assistant-resource-option");
+      if (option && root.contains(option)) {
+        chooseResource(option);
+        return;
+      }
+      const remove = event.target.closest("[data-remove-resource]");
+      if (remove && root.contains(remove)) {
+        selectedResources.delete(remove.dataset.removeResource);
+        resourceOptions.forEach(item => {
+          const key = `${item.dataset.resourceKind}:${item.dataset.resourceId}`;
+          if (key === remove.dataset.removeResource) item.setAttribute("aria-selected", "false");
+        });
+        renderContextResources();
+        return;
+      }
+      const prompt = event.target.closest("[data-assistant-prompt]");
+      if (prompt && input) {
+        input.value = prompt.dataset.assistantPrompt || "";
+		if (profileInput && prompt.dataset.assistantProfile) profileInput.value = prompt.dataset.assistantProfile;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.focus();
+      }
+    };
+    const onDocumentClick = event => {
+      if (modelPicker?.dataset.open === "true" && !event.target.closest("[data-model-picker]")) setModelPicker(false);
+      if (resourcePicker?.dataset.open === "true" && !event.target.closest("[data-resource-picker], [data-resource-picker-toggle]")) setResourcePicker(false);
+    };
+    const onInput = () => {
+      if (!input) return;
+      input.style.height = "auto";
+      input.style.height = `${Math.min(input.scrollHeight, 180)}px`;
+      if (input.value.endsWith("@") && resourcePicker?.dataset.open !== "true") setResourcePicker(true, true);
+    };
+    const onKeydown = event => {
+      if (event.key === "Escape") {
+        if (modelPicker?.dataset.open === "true") { event.preventDefault(); setModelPicker(false); modelToggle?.focus(); return; }
+        if (resourcePicker?.dataset.open === "true") { event.preventDefault(); setResourcePicker(false); input?.focus(); return; }
+      }
+      if (modelPicker?.contains(event.target) && ["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+        event.preventDefault();
+        if (event.key === "Home") modelIndex = 0;
+        else if (event.key === "End") modelIndex = modelChoices.length - 1;
+        else modelIndex = (modelIndex + (event.key === "ArrowDown" ? 1 : -1) + modelChoices.length) % modelChoices.length;
+        modelChoices.forEach((choice, index) => { choice.dataset.active = String(index === modelIndex); });
+        modelChoices[modelIndex]?.focus();
+        return;
+      }
+      if (event.target === resourceSearch && ["ArrowDown", "ArrowUp", "Enter"].includes(event.key)) {
+        const visible = visibleResourceOptions();
+        if (!visible.length) return;
+        event.preventDefault();
+        if (event.key === "Enter") chooseResource(visible[resourceIndex]);
+        else resourceIndex = (resourceIndex + (event.key === "ArrowDown" ? 1 : -1) + visible.length) % visible.length;
+        visible.forEach((option, index) => { option.dataset.active = String(index === resourceIndex); });
+        visible[resourceIndex]?.scrollIntoView({ block: "nearest" });
+        return;
+      }
+      if (event.target === input && event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+        if (composer?.querySelector("button[type='submit']")?.disabled) return;
+        event.preventDefault();
+        composer?.requestSubmit();
+      }
+    };
+    const onSubmit = event => {
+      if (event.target !== composer) return;
+      if (!modelInput?.value) {
+        event.preventDefault();
+        modelControl.dataset.invalid = "true";
+        setModelPicker(true);
+        return;
+      }
+      if (!root.dataset.conversationId) {
+        const title = composer.elements.title;
+        if (title && input?.value.trim()) title.value = input.value.trim().slice(0, 80);
+		return;
+      }
+	  event.preventDefault();
+	  if (!input?.value.trim() || sendButton?.disabled) return;
+	  scrollTranscript(true);
+	  if (helper) helper.textContent = locale() === "zh-CN" ? "正在提交…" : "Submitting…";
+	  if (sendButton) sendButton.disabled = true;
+	  void fetch(composer.action, {
+		method: "POST", credentials: "same-origin", headers: { "Accept": "application/json" }, body: new FormData(composer),
+	  }).then(async response => {
+		if (!response.ok) throw new Error((await response.text()).trim() || `HTTP ${response.status}`);
+		input.value = "";
+		onInput();
+		setTurnRunning(true);
+	  }).catch(error => {
+		if (helper) helper.textContent = error.message;
+		if (sendButton) sendButton.disabled = root.dataset.runtimeAvailable !== "true";
+	  });
+    };
+	const onApprovalSubmit = event => {
+		if (event.target !== approvalForm) return;
+		event.preventDefault();
+		const decision = event.submitter?.value || "";
+		if (!approvalForm.action || !["approve", "reject"].includes(decision)) return;
+		const buttons = [...approvalForm.querySelectorAll("button")];
+		buttons.forEach(button => { button.disabled = true; });
+		void fetch(approvalForm.action, {
+			method: "POST", credentials: "same-origin",
+			headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "Accept": "application/json" },
+			body: new URLSearchParams({ csrf_token: csrfToken, decision }),
+		}).then(async response => {
+			if (!response.ok) throw new Error((await response.text()).trim() || `HTTP ${response.status}`);
+			renderApproval(null, null);
+			if (helper) helper.textContent = decision === "approve"
+				? (locale() === "zh-CN" ? "已批准，执行前正在重新授权。" : "Approved; reauthorizing before execution.")
+				: (locale() === "zh-CN" ? "已拒绝此次操作。" : "Action rejected.");
+		}).catch(error => {
+			if (helper) helper.textContent = error.message;
+			buttons.forEach(button => { button.disabled = false; });
+		});
+	};
+
+    root.addEventListener("click", onClick);
+    document.addEventListener("click", onDocumentClick);
+    root.addEventListener("keydown", onKeydown);
+    input?.addEventListener("input", onInput);
+    resourceSearch?.addEventListener("input", filterResources);
+    resourceSearch?.addEventListener("input", searchHostPathResources);
+	composer?.addEventListener("submit", onSubmit);
+	approvalForm?.addEventListener("submit", onApprovalSubmit);
+	transcript?.addEventListener("scroll", onTranscriptScroll, { passive: true });
+	scrollTranscript(true);
+    cleanups.push(() => {
+      root.removeEventListener("click", onClick);
+      document.removeEventListener("click", onDocumentClick);
+      root.removeEventListener("keydown", onKeydown);
+      input?.removeEventListener("input", onInput);
+      resourceSearch?.removeEventListener("input", filterResources);
+      resourceSearch?.removeEventListener("input", searchHostPathResources);
+	  window.clearTimeout(resourceSearchTimer);
+	  resourceSearchAbort?.abort();
+      composer?.removeEventListener("submit", onSubmit);
+	  approvalForm?.removeEventListener("submit", onApprovalSubmit);
+	  transcript?.removeEventListener("scroll", onTranscriptScroll);
+	  if (transcriptScrollFrame) cancelAnimationFrame(transcriptScrollFrame);
+	  window.clearInterval(approvalClock);
+	  assistantEvents?.close();
+      document.body.classList.remove("assistant-rail-open");
+    });
+  }
+
+  function initAssistantSettings(cleanups) {
+    const root = document.querySelector("[data-assistant-settings]");
+    if (!root) return;
+    const layer = root.querySelector("[data-llm-drawer]");
+    const drawer = layer?.querySelector(".assistant-llm-drawer");
+    const form = layer?.querySelector("[data-llm-form]");
+    const title = layer?.querySelector("[data-llm-drawer-title]");
+    const credentialHelp = layer?.querySelector("[data-credential-help]");
+    let returnFocus = null;
+
+    const close = () => {
+      if (!layer) return;
+      layer.dataset.open = "false";
+      layer.setAttribute("aria-hidden", "true");
+      document.body.style.overflow = "";
+      returnFocus?.focus?.();
+      returnFocus = null;
+    };
+    const open = row => {
+      if (!layer || !form) return;
+      returnFocus = document.activeElement;
+      form.reset();
+      form.elements.id.value = row?.dataset.llmId || "";
+      form.elements.name.value = row?.dataset.name || "";
+      form.elements.provider.value = row?.dataset.provider || "openai";
+      form.elements.model.value = row?.dataset.model || "";
+      form.elements.endpoint.value = row?.dataset.endpoint || "https://api.openai.com/v1";
+      form.elements.api_key.value = "";
+	  form.elements.api_key.required = !row;
+      form.elements.make_default.checked = row?.dataset.default === "true";
+		form.elements.supports_images.checked = row?.dataset.supportsImages === "true";
+		form.elements.shared.checked = row?.dataset.shared === "true";
+      if (title) title.textContent = row ? (locale() === "zh-CN" ? "编辑 LLM 配置" : "Edit LLM configuration") : (locale() === "zh-CN" ? "新增 LLM 配置" : "Add LLM configuration");
+      if (credentialHelp) credentialHelp.dataset.editing = String(Boolean(row));
+      layer.dataset.open = "true";
+      layer.setAttribute("aria-hidden", "false");
+      document.body.style.overflow = "hidden";
+      requestAnimationFrame(() => form.elements.name.focus());
+    };
+    const onClick = event => {
+      if (event.target.closest("[data-add-llm]")) { open(null); return; }
+      const edit = event.target.closest("[data-edit-llm]");
+      if (edit) { open(edit.closest("[data-llm-id]")); return; }
+      if (event.target.closest("[data-close-llm]")) { event.preventDefault(); close(); }
+    };
+    const onKeydown = event => {
+      if (layer?.dataset.open !== "true") return;
+      if (event.key === "Escape") { event.preventDefault(); close(); return; }
+      if (event.key !== "Tab" || !drawer) return;
+      const focusable = [...drawer.querySelectorAll("button:not([disabled]),input:not([disabled]):not([type='hidden']),select:not([disabled]),textarea:not([disabled]),a[href]")]
+        .filter(element => element.getClientRects().length > 0);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && event.target === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && event.target === last) { event.preventDefault(); first.focus(); }
+    };
+    root.addEventListener("click", onClick);
+    document.addEventListener("keydown", onKeydown);
+    cleanups.push(() => {
+      root.removeEventListener("click", onClick);
+      document.removeEventListener("keydown", onKeydown);
+      document.body.style.overflow = "";
+    });
+  }
+
   function initPage() {
     const cleanups = [];
     cleanupPage = () => cleanups.splice(0).forEach(cleanup => cleanup());
     renderIcons();
+    applySidebarCollapsed(readSidebarCollapsed());
     localizeTimes();
     initMarkdownPreview();
     initScriptPreview();
     initPasswordControls(document, cleanups);
     initCopyControls(document, cleanups);
     initFileDropUpload(document, cleanups);
+    initFileVisibilityToggle(document, cleanups);
+    initFileQuickAccess(document, cleanups);
+	initFileOperation(cleanups);
     initDirectoryPickers(document, cleanups);
     initQuickCreateDefaults(document, cleanups);
     initOverview(cleanups);
@@ -3678,6 +4918,8 @@
     initGroupedRecords(cleanups);
     initScheduleCron(cleanups);
     initDisplaySettings(cleanups);
+    initAssistantWorkspace(cleanups);
+    initAssistantSettings(cleanups);
     const websiteForm = document.querySelector("[data-website-monitor-form]");
     if (websiteForm) cleanups.push(initWebsiteMonitorForm(websiteForm));
     const websiteMonitoring = document.querySelector("[data-website-monitoring],[data-website-detail]");
@@ -3687,6 +4929,11 @@
   }
 
   document.addEventListener("click", event => {
+    const sidebarCollapse = event.target.closest("[data-sidebar-collapse]");
+    if (sidebarCollapse) {
+      applySidebarCollapsed(!document.body.classList.contains("sidebar-collapsed"), true);
+      return;
+    }
     const sidebarControl = event.target.closest("[data-sidebar-toggle]");
     if (sidebarControl) {
       setSidebar(!document.body.classList.contains("sidebar-open"));
@@ -3837,7 +5084,7 @@
         search.focus();
       }
     }
-    if (event.key.toLowerCase() === "p" && !editing) {
+    if (typeof event.key === "string" && event.key.toLowerCase() === "p" && !editing) {
       const run = document.querySelector("[data-run-events-url]");
       if (run?._toggleLogPause) {
         event.preventDefault();

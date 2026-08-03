@@ -7,13 +7,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	pathpkg "path"
 	"strings"
 	"time"
 
 	"scriptboard/internal/appstatus"
+	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/logstream"
-	"scriptboard/internal/managedfiles"
 )
 
 type liveLogPageView struct {
@@ -30,18 +29,15 @@ func (a *App) fileLogPage(response http.ResponseWriter, request *http.Request) {
 		writeLogSourceError(response, err)
 		return
 	}
-	relative := strings.TrimSpace(request.URL.Query().Get("path"))
-	parent := pathpkg.Dir(relative)
-	if parent == "." {
-		parent = ""
-	}
+	relative := source.Metadata().Name
+	parent, _ := hostfiles.Parent(relative)
 	values := url.Values{"path": {relative}}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = liveLogTemplate.Execute(response, liveLogPageView{
 		Metadata: source.Metadata(), BackURL: filesURL(parent),
 		HistoryURL:  "/resources/files/log/history?" + values.Encode(),
 		EventsURL:   "/resources/files/log/events?" + values.Encode(),
-		DownloadURL: routeFileURL("/resources/files/download/", relative),
+		DownloadURL: routeFileURL("/resources/files/download", relative),
 		Locale:      resolveWebLocale(request),
 	})
 }
@@ -221,7 +217,7 @@ func (a *App) openFileLogSource(request *http.Request) (logstream.Source, error)
 	if relative == "" || !isTextPreviewExtension(relative) {
 		return nil, errUnsupportedLogSource
 	}
-	return a.managed.OpenLogSource(relative)
+	return a.files.OpenLogSource(relative)
 }
 
 var errUnsupportedLogSource = errors.New("unsupported log source")
@@ -229,9 +225,11 @@ var errUnsupportedLogSource = errors.New("unsupported log source")
 func writeLogSourceError(response http.ResponseWriter, err error) {
 	status := http.StatusBadRequest
 	switch {
+	case errors.Is(err, hostfiles.ErrProtected), os.IsPermission(err):
+		status = http.StatusForbidden
 	case errors.Is(err, os.ErrNotExist):
 		status = http.StatusNotFound
-	case errors.Is(err, managedfiles.ErrLogSourceChanged):
+	case errors.Is(err, hostfiles.ErrLogSourceChanged):
 		status = http.StatusGone
 	case errors.Is(err, logstream.ErrInvalidCursor):
 		status = http.StatusBadRequest
@@ -278,9 +276,11 @@ func writeFileLogJSONError(response http.ResponseWriter, err error) {
 	code := "log_source_unavailable"
 	message := "The file log source is unavailable"
 	switch {
+	case errors.Is(err, hostfiles.ErrProtected), os.IsPermission(err):
+		status, code, message = http.StatusForbidden, "log_source_forbidden", "The log file is protected or inaccessible"
 	case errors.Is(err, os.ErrNotExist):
 		status, code, message = http.StatusNotFound, "log_source_not_found", "The log file does not exist"
-	case errors.Is(err, managedfiles.ErrLogSourceChanged):
+	case errors.Is(err, hostfiles.ErrLogSourceChanged):
 		status, code, message = http.StatusGone, "log_source_changed", "The old log file is no longer available"
 	case errors.Is(err, logstream.ErrInvalidCursor):
 		status, code, message = http.StatusBadRequest, "invalid_log_cursor", "The log cursor is invalid"

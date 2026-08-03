@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"scriptboard/internal/hostfiles"
 )
 
 func TestRunsPageFiltersBySearchAndInclusiveLocalDateRange(t *testing.T) {
@@ -16,7 +18,9 @@ func TestRunsPageFiltersBySearchAndInclusiveLocalDateRange(t *testing.T) {
 
 	root := t.TempDir()
 	stateRoot := filepath.Join(root, "state")
-	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), stateRoot)
+	hostRoot := filepath.Join(root, "host")
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
+	scriptPath := filepath.Join(hostRoot, "automation", "nightly.ps1")
 	db, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -26,11 +30,11 @@ func TestRunsPageFiltersBySearchAndInclusiveLocalDateRange(t *testing.T) {
 	insertSource := func(id, sourceType, sourceName, sourceID string, createdAt time.Time) {
 		t.Helper()
 		if _, err := db.Exec(`INSERT INTO runs
-			(id, script_path, script_sha256, arguments_template, template_arguments_json, arguments_json,
+			(id, script_path, script_path_key, script_sha256, arguments_template, template_arguments_json, arguments_json,
 			 executor, source_type, source_name, source_id, runtime_identity, status, created_at, timeout_seconds, log_path)
-			VALUES (?, 'automation/nightly.ps1', 'digest', '', '[]', '[]',
+			VALUES (?, ?, ?, 'digest', '', '[]', '[]',
 			 'pwsh', ?, ?, ?, 'test', 'succeeded', ?, 0, '')`,
-			id, sourceType, sourceName, sourceID, createdAt.UnixNano()); err != nil {
+			id, scriptPath, hostfiles.ComparisonKey(scriptPath), sourceType, sourceName, sourceID, createdAt.UnixNano()); err != nil {
 			t.Fatalf("insert %s: %v", id, err)
 		}
 	}
@@ -104,7 +108,9 @@ func TestRunsPageShowsAndSearchesInitiator(t *testing.T) {
 
 	root := t.TempDir()
 	stateRoot := filepath.Join(root, "state")
-	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), stateRoot)
+	hostRoot := filepath.Join(root, "host")
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
+	scriptPath := filepath.Join(hostRoot, "automation", "nightly.ps1")
 	db, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -114,13 +120,13 @@ func TestRunsPageShowsAndSearchesInitiator(t *testing.T) {
 	insertRun := func(id, initiatorUserID, initiatorUsername string, createdAt time.Time) {
 		t.Helper()
 		if _, err := db.Exec(`INSERT INTO runs
-			(id, script_path, script_sha256, arguments_template, template_arguments_json, arguments_json,
+			(id, script_path, script_path_key, script_sha256, arguments_template, template_arguments_json, arguments_json,
 			 executor, source_type, source_name, source_id, runtime_identity, status, created_at, timeout_seconds,
 			 log_path, initiated_by_user_id, initiated_by_username)
-			VALUES (?, 'automation/nightly.ps1', 'digest', '', '[]', '[]',
+			VALUES (?, ?, ?, 'digest', '', '[]', '[]',
 			 'pwsh', 'scheduler', 'Nightly backup', 'schedule-id-1', 'test', 'succeeded', ?, 0,
 			 '', ?, ?)`,
-			id, createdAt.UnixNano(), initiatorUserID, initiatorUsername); err != nil {
+			id, scriptPath, hostfiles.ComparisonKey(scriptPath), createdAt.UnixNano(), initiatorUserID, initiatorUsername); err != nil {
 			t.Fatalf("insert %s: %v", id, err)
 		}
 	}

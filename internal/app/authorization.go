@@ -74,11 +74,12 @@ func permissionForRequest(request *http.Request) permission {
 		return permissionReadFiles
 	}
 	if path == "/resources/files" || strings.HasPrefix(path, "/resources/files/") {
-		if strings.HasPrefix(path, "/resources/files/run/") {
+		if path == "/resources/files/run" {
 			return permissionExecute
 		}
-		if strings.HasPrefix(path, "/resources/files/quick-run/") ||
-			strings.HasPrefix(path, "/resources/files/edit/") ||
+		if path == "/resources/files/quick-run" ||
+			path == "/resources/files/edit" ||
+			path == "/resources/files/move" ||
 			path == "/resources/files/new-directory" ||
 			path == "/resources/files/upload" ||
 			request.Method != http.MethodGet {

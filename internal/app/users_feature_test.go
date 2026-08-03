@@ -110,6 +110,52 @@ func TestAdministratorCreatesMaintainerWhoCanSignIn(t *testing.T) {
 	}
 }
 
+func TestUsersPageOffersOneCreateUserDrawerTask(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	admin, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
+
+	response, err := admin.Get(serverURL + "/settings/users")
+	if err != nil {
+		t.Fatalf("get users: %v", err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count := strings.Count(string(page), `href="/settings/users/create"`); count != 1 {
+		t.Fatalf("create-user drawer task links=%d, want 1: %s", count, page)
+	}
+	if strings.Contains(string(page), `form class="account-form" method="post" action="/settings/users"`) {
+		t.Fatalf("users page still exposes the inline create form: %s", page)
+	}
+
+	response, err = admin.Get(serverURL + "/settings/users/create")
+	if err != nil {
+		t.Fatalf("get create-user task: %v", err)
+	}
+	taskPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("create-user task status=%d, body=%s", response.StatusCode, taskPage)
+	}
+	for _, expected := range []string{
+		`data-task-kind="user-create"`,
+		`form method="post" action="/settings/users"`,
+		`name="username"`,
+		`name="role"`,
+	} {
+		if !strings.Contains(string(taskPage), expected) {
+			t.Fatalf("create-user task is missing %q: %s", expected, taskPage)
+		}
+	}
+}
+
 func TestSystemAdministratorCannotBeDisabledOrDemoted(t *testing.T) {
 	t.Parallel()
 
@@ -162,7 +208,7 @@ func TestViewerCanObserveOperationsButCannotOpenRestrictedAreas(t *testing.T) {
 			t.Fatalf("allowed %s status = %d, want 200", path, response.StatusCode)
 		}
 	}
-	for _, path := range []string{"/resources/files/", "/resources/files/download/missing.txt", "/resources/variables", "/history/audit", "/settings/updates", "/settings/users"} {
+	for _, path := range []string{"/resources/files", hostFileHref("/resources/files/download", filepath.Join(root, "missing.txt")), "/resources/variables", "/history/audit", "/settings/updates", "/settings/users"} {
 		response, err := viewer.Get(serverURL + path)
 		if err != nil {
 			t.Fatalf("get forbidden %s: %v", path, err)
@@ -178,8 +224,8 @@ func TestOperatorReadsAndExecutesFilesButCannotModifyThem(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
-	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+	hostRoot := filepath.Join(root, "managed")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	scriptName := "operator.sh"
@@ -188,13 +234,13 @@ func TestOperatorReadsAndExecutesFilesButCannotModifyThem(t *testing.T) {
 		scriptName = "operator.cmd"
 		scriptBody = "@echo off\r\necho operator-run\r\n"
 	}
-	if err := os.WriteFile(filepath.Join(managedRoot, scriptName), []byte(scriptBody), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(hostRoot, scriptName), []byte(scriptBody), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	admin, serverURL := authenticatedClient(t, managedRoot, filepath.Join(root, "state"))
+	admin, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
 	operator := createRoleUserClient(t, admin, serverURL, "operator-one", "operator")
 
-	response, err := operator.Get(serverURL + "/resources/files/")
+	response, err := operator.Get(hostFilesRequestURL(serverURL, hostRoot))
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
@@ -208,7 +254,7 @@ func TestOperatorReadsAndExecutesFilesButCannotModifyThem(t *testing.T) {
 	}
 
 	response, err = operator.PostForm(serverURL+"/resources/files/mkdir", url.Values{
-		"path": {""}, "name": {"forbidden"}, "csrf_token": {formToken(t, filesPage)},
+		"path": {hostRoot}, "name": {"forbidden"}, "csrf_token": {formToken(t, filesPage)},
 	})
 	if err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -230,7 +276,8 @@ func TestOperatorReadsAndExecutesFilesButCannotModifyThem(t *testing.T) {
 		}
 	}
 
-	response, err = operator.Get(serverURL + "/resources/files/download/" + scriptName)
+	scriptPath := filepath.Join(hostRoot, scriptName)
+	response, err = operator.Get(hostFileRequestURL(serverURL, "/resources/files/download", scriptPath))
 	if err != nil {
 		t.Fatalf("download script: %v", err)
 	}
@@ -241,7 +288,7 @@ func TestOperatorReadsAndExecutesFilesButCannotModifyThem(t *testing.T) {
 	}
 
 	response, err = operator.PostForm(serverURL+"/history/runs/start", url.Values{
-		"script": {scriptName}, "csrf_token": {formToken(t, filesPage)},
+		"script": {scriptPath}, "csrf_token": {formToken(t, filesPage)},
 	})
 	if err != nil {
 		t.Fatalf("start run: %v", err)
@@ -256,8 +303,8 @@ func TestOperatorCannotStopAnotherUsersRun(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
-	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+	hostRoot := filepath.Join(root, "managed")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	scriptName := "owned.sh"
@@ -266,20 +313,20 @@ func TestOperatorCannotStopAnotherUsersRun(t *testing.T) {
 		scriptName = "owned.cmd"
 		scriptBody = "@echo off\r\nping 127.0.0.1 -n 6 >nul\r\n"
 	}
-	if err := os.WriteFile(filepath.Join(managedRoot, scriptName), []byte(scriptBody), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(hostRoot, scriptName), []byte(scriptBody), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	admin, serverURL := authenticatedClient(t, managedRoot, filepath.Join(root, "state"))
+	admin, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
 	operator := createRoleUserClient(t, admin, serverURL, "operator-stop", "operator")
 
-	response, err := admin.Get(serverURL + "/resources/files/")
+	response, err := admin.Get(hostFilesRequestURL(serverURL, hostRoot))
 	if err != nil {
 		t.Fatal(err)
 	}
 	filesPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	response, err = admin.PostForm(serverURL+"/history/runs/start", url.Values{
-		"script": {scriptName}, "csrf_token": {formToken(t, filesPage)},
+		"script": {filepath.Join(hostRoot, scriptName)}, "csrf_token": {formToken(t, filesPage)},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -346,14 +393,14 @@ func TestOperatorCannotStopAnotherUsersRun(t *testing.T) {
 		time.Sleep(25 * time.Millisecond)
 	}
 
-	response, err = operator.Get(serverURL + "/resources/files/")
+	response, err = operator.Get(hostFilesRequestURL(serverURL, hostRoot))
 	if err != nil {
 		t.Fatal(err)
 	}
 	operatorFiles, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	response, err = operator.PostForm(serverURL+"/history/runs/start", url.Values{
-		"script": {scriptName}, "csrf_token": {formToken(t, operatorFiles)},
+		"script": {filepath.Join(hostRoot, scriptName)}, "csrf_token": {formToken(t, operatorFiles)},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -482,7 +529,7 @@ func TestAdministratorRenamesUserAndChangesRole(t *testing.T) {
 	jar, _ := cookiejar.New(nil)
 	relogin := &http.Client{Jar: jar, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	loginAs(t, relogin, serverURL, "renamed-operator", password, http.StatusSeeOther)
-	response, err = relogin.Get(serverURL + "/resources/files/")
+	response, err = relogin.Get(serverURL + "/resources/files")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -551,33 +598,33 @@ func TestRestrictedRolePagesHideUnavailableActions(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
-	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+	hostRoot := filepath.Join(root, "managed")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	scriptName := "visible.cmd"
 	if runtime.GOOS != "windows" {
 		scriptName = "visible.sh"
 	}
-	if err := os.WriteFile(filepath.Join(managedRoot, scriptName), []byte("echo visible\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(hostRoot, scriptName), []byte("echo visible\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	admin, serverURL := authenticatedClient(t, managedRoot, filepath.Join(root, "state"))
+	admin, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
 	operator := createRoleUserClient(t, admin, serverURL, "operator-ui", "operator")
 	viewer := createRoleUserClient(t, admin, serverURL, "viewer-ui", "viewer")
 
-	response, err := operator.Get(serverURL + "/resources/files/")
+	response, err := operator.Get(hostFilesRequestURL(serverURL, hostRoot))
 	if err != nil {
 		t.Fatal(err)
 	}
 	operatorFiles, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, forbidden := range []string{"/resources/files/upload", "/resources/files/delete", "/resources/files/edit/", "/resources/files/quick-run/"} {
+	for _, forbidden := range []string{"/resources/files/upload", "/resources/files/delete", "/resources/files/edit", "/resources/files/move", "/resources/files/quick-run"} {
 		if strings.Contains(string(operatorFiles), forbidden) {
 			t.Errorf("operator file page exposed %q", forbidden)
 		}
 	}
-	if !strings.Contains(string(operatorFiles), "/resources/files/run/") {
+	if !strings.Contains(string(operatorFiles), "/resources/files/run?") {
 		t.Fatal("operator file page did not expose script execution")
 	}
 
@@ -587,7 +634,7 @@ func TestRestrictedRolePagesHideUnavailableActions(t *testing.T) {
 	}
 	viewerQuickRuns, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, forbidden := range []string{"/config/quick-runs/one-time/new", "/config/quick-runs/from-source/new", "/resources/files/", "/history/audit", "/resources/variables"} {
+	for _, forbidden := range []string{"/config/quick-runs/one-time/new", "/config/quick-runs/from-source/new", "/resources/files", "/history/audit", "/resources/variables"} {
 		if strings.Contains(string(viewerQuickRuns), forbidden) {
 			t.Errorf("viewer page exposed %q", forbidden)
 		}

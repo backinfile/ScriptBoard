@@ -8,15 +8,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	pathpkg "path"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
-	"scriptboard/internal/managedfiles"
+	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/runmanager"
 )
 
@@ -65,6 +63,20 @@ func validateQuickExecutionSource(source string) error {
 	return nil
 }
 
+func quickExecutionFileName(name, extension string) string {
+	if strings.HasSuffix(strings.ToLower(name), strings.ToLower(extension)) {
+		return name
+	}
+	return name + extension
+}
+
+func quickExecutionFileStem(name, extension string) string {
+	if strings.HasSuffix(strings.ToLower(name), strings.ToLower(extension)) {
+		return name[:len(name)-len(extension)]
+	}
+	return name
+}
+
 func parseQuickExecutionTimeout(value string) (int, error) {
 	if value == "" {
 		return 0, nil
@@ -76,25 +88,77 @@ func parseQuickExecutionTimeout(value string) (int, error) {
 	return seconds, nil
 }
 
-func (a *App) managedDirectories(response http.ResponseWriter, request *http.Request) {
-	relative := strings.Trim(request.URL.Query().Get("path"), "/")
-	entries, err := a.managed.List(relative)
+func (a *App) hostDirectories(response http.ResponseWriter, request *http.Request) {
+	relative := request.URL.Query().Get("path")
+	entries, err := a.files.List(relative)
 	if err != nil {
 		http.Error(response, "working directory is invalid: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	directories := make([]string, 0)
+	type directoryView struct {
+		Name string `json:"name"`
+		Path string `json:"path"`
+	}
+	directories := make([]directoryView, 0)
 	for _, entry := range entries {
-		if entry.Kind == managedfiles.Directory {
-			directories = append(directories, entry.Name)
+		if entry.Kind == hostfiles.Directory {
+			directories = append(directories, directoryView{Name: entry.Name, Path: entry.Path})
 		}
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(response).Encode(struct {
-		Path        string   `json:"path"`
-		Directories []string `json:"directories"`
-	}{Path: filepath.ToSlash(relative), Directories: directories})
+		Path        string          `json:"path"`
+		Directories []directoryView `json:"directories"`
+	}{Path: relative, Directories: directories})
+}
+
+func (a *App) defaultHostDirectory() string {
+	roots, err := a.files.Roots()
+	if err != nil || len(roots) == 0 {
+		return ""
+	}
+	candidates := make([]string, 0, 3)
+	if home, homeErr := os.UserHomeDir(); homeErr == nil {
+		candidates = append(candidates, home)
+	}
+	if working, workingErr := os.Getwd(); workingErr == nil {
+		candidates = append(candidates, working)
+	}
+	candidates = append(candidates, os.TempDir())
+	for _, candidate := range candidates {
+		insideRoot := false
+		for _, root := range roots {
+			if hostfiles.Contains(root.Path, candidate) {
+				insideRoot = true
+				break
+			}
+		}
+		if !insideRoot {
+			continue
+		}
+		if prepared, prepareErr := a.files.PrepareDirectory(candidate); prepareErr == nil {
+			return prepared.Path
+		}
+	}
+	for _, root := range roots {
+		if prepared, prepareErr := a.files.PrepareDirectory(root.Path); prepareErr == nil {
+			return prepared.Path
+		}
+		entries, listErr := a.files.List(root.Path)
+		if listErr != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.Kind != hostfiles.Directory {
+				continue
+			}
+			if prepared, prepareErr := a.files.PrepareDirectory(entry.Path); prepareErr == nil {
+				return prepared.Path
+			}
+		}
+	}
+	return ""
 }
 
 func (a *App) oneTimeRunTask(response http.ResponseWriter, request *http.Request) {
@@ -105,7 +169,7 @@ func (a *App) oneTimeRunTask(response http.ResponseWriter, request *http.Request
 		BackURL:          "/config/quick-runs",
 		Action:           "/config/quick-runs/one-time",
 		Languages:        platformScriptLanguages(),
-		WorkingDirectory: ".",
+		WorkingDirectory: a.defaultHostDirectory(),
 	})
 }
 
@@ -123,7 +187,7 @@ func (a *App) quickCreateTask(response http.ResponseWriter, request *http.Reques
 		Action:           "/config/quick-runs/from-source",
 		Languages:        platformScriptLanguages(),
 		Groups:           groups,
-		WorkingDirectory: ".",
+		WorkingDirectory: a.defaultHostDirectory(),
 	})
 }
 
@@ -146,17 +210,19 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
 	}
-	workingDirectory := strings.Trim(request.FormValue("working_directory"), "/")
-	if _, err := a.managed.List(workingDirectory); err != nil {
+	workingDirectory := request.FormValue("working_directory")
+	preparedDirectory, err := a.files.PrepareDirectory(workingDirectory)
+	if err != nil {
 		http.Error(response, "working directory is invalid: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	workingDirectory = preparedDirectory.Path
 	fileName := strings.TrimSpace(request.FormValue("file_name"))
-	if err := managedfiles.ValidateName(fileName); err != nil {
+	if err := hostfiles.ValidateName(fileName); err != nil {
 		http.Error(response, "file name is invalid: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	fileName += language.Extension
+	fileName = quickExecutionFileName(fileName, language.Extension)
 	name := strings.TrimSpace(request.FormValue("name"))
 	if name == "" {
 		name = strings.TrimSpace(request.FormValue("file_name"))
@@ -191,23 +257,27 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 		http.Error(response, "conflict action is invalid", http.StatusBadRequest)
 		return
 	}
-	targetPath := pathpkg.Join(workingDirectory, fileName)
-	targetInfo, targetErr := a.managed.Info(targetPath)
+	targetPath, err := a.files.Destination(workingDirectory, fileName)
+	if err != nil {
+		http.Error(response, "script destination is invalid: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	targetInfo, targetErr := a.files.Info(targetPath)
 	targetExists := targetErr == nil
 	if targetErr != nil && !os.IsNotExist(targetErr) {
 		http.Error(response, "Unable to inspect target: "+targetErr.Error(), http.StatusBadRequest)
 		return
 	}
 	if targetExists && action == "" {
-		suggested, suggestErr := a.managed.AvailableName(workingDirectory, fileName)
+		suggested, suggestErr := a.files.AvailableName(workingDirectory, fileName)
 		if suggestErr != nil {
 			http.Error(response, "Unable to suggest a file name", http.StatusInternalServerError)
 			return
 		}
 		a.renderQuickCreateConflict(response, request, quickCreateValues{
-			WorkingDirectory: workingDirectory, Language: language.ID, FileName: strings.TrimSuffix(fileName, language.Extension),
+			WorkingDirectory: workingDirectory, Language: language.ID, FileName: quickExecutionFileStem(fileName, language.Extension),
 			Source: source, Name: name, Arguments: argumentsTemplate, TimeoutSeconds: timeoutSeconds, GroupID: request.FormValue("group_id"),
-		}, targetPath, strings.TrimSuffix(suggested, language.Extension), targetInfo.Mode().IsRegular() && !a.runs.ConflictsPath(targetPath))
+		}, targetPath, quickExecutionFileStem(suggested, language.Extension), targetInfo.Mode().IsRegular() && !a.runs.ConflictsPath(targetPath))
 		return
 	}
 	if targetExists && action == conflictActionOverwrite && (!targetInfo.Mode().IsRegular() || a.runs.ConflictsPath(targetPath)) {
@@ -216,13 +286,17 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 	}
 	if targetExists && action == conflictActionRename {
 		renamedStem := strings.TrimSpace(request.FormValue("rename_file_name"))
-		if err := managedfiles.ValidateName(renamedStem); err != nil {
+		if err := hostfiles.ValidateName(renamedStem); err != nil {
 			http.Error(response, "renamed file name is invalid: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 		fileName = renamedStem + language.Extension
-		targetPath = pathpkg.Join(workingDirectory, fileName)
-		if _, err := a.managed.Info(targetPath); err == nil {
+		targetPath, err = a.files.Destination(workingDirectory, fileName)
+		if err != nil {
+			http.Error(response, "renamed script destination is invalid: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if _, err := a.files.Info(targetPath); err == nil {
 			http.Error(response, "renamed target already exists", http.StatusConflict)
 			return
 		} else if !os.IsNotExist(err) {
@@ -231,6 +305,12 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 		}
 		targetExists = false
 	}
+	release, err := a.acquireFileMutationLease(targetPath)
+	if err != nil {
+		http.Error(response, "script path is in use: "+err.Error(), http.StatusConflict)
+		return
+	}
+	defer release()
 
 	var trashID string
 	if targetExists {
@@ -240,15 +320,24 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 			return
 		}
 	}
-	trashed, err := a.managed.Upload(workingDirectory, fileName, bytes.NewBufferString(source), maxQuickExecutionSourceBytes, targetExists, trashID)
+	trashed, err := a.files.Upload(workingDirectory, fileName, bytes.NewBufferString(source), maxQuickExecutionSourceBytes, targetExists, trashID)
 	if err != nil {
 		http.Error(response, "Unable to create script: "+err.Error(), http.StatusConflict)
 		return
 	}
-	rollbackFile := func() {
-		_ = a.managed.RemoveRegular(targetPath)
+	targetPath, err = a.files.CanonicalExisting(targetPath)
+	if err != nil {
+		_ = a.files.RemoveRegular(targetPath)
 		if trashed != nil {
-			_ = a.managed.RestoreFromTrash(trashed.StoredName, trashed.OriginalPath)
+			_ = a.files.RestoreFromTrash(trashed.StoredPath, trashed.OriginalPath)
+		}
+		http.Error(response, "Unable to resolve created script: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rollbackFile := func() {
+		_ = a.files.RemoveRegular(targetPath)
+		if trashed != nil {
+			_ = a.files.RestoreFromTrash(trashed.StoredPath, trashed.OriginalPath)
 		}
 	}
 
@@ -261,8 +350,11 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 	defer transaction.Rollback()
 	if trashed != nil {
 		if _, err = transaction.Exec(
-			"INSERT INTO trash_entries (id, original_path, stored_name, deleted_at, size, is_directory) VALUES (?, ?, ?, ?, ?, ?)",
-			trashID, trashed.OriginalPath, trashed.StoredName, time.Now().UTC().Unix(), trashed.Size, trashed.Directory,
+			`INSERT INTO trash_entries
+				(id, original_path, original_path_key, stored_path, stored_path_key, deleted_at, size, is_directory)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			trashID, trashed.OriginalPath, hostfiles.ComparisonKey(trashed.OriginalPath), trashed.StoredPath,
+			hostfiles.ComparisonKey(trashed.StoredPath), time.Now().UTC().Unix(), trashed.Size, trashed.Directory,
 		); err != nil {
 			rollbackFile()
 			http.Error(response, "Unable to record overwritten script", http.StatusInternalServerError)
@@ -277,9 +369,9 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 	now := time.Now().UTC().Unix()
 	if err == nil {
 		_, err = transaction.Exec(`INSERT INTO quick_runs
-			(id, name, script_path, arguments_template, timeout_seconds, source_run_id, sort_order, created_at, group_id, updated_at)
-			VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
-			id, name, filepath.ToSlash(targetPath), argumentsTemplate, timeoutSeconds, sortOrder, now, groupID, now)
+			(id, name, script_path, script_path_key, arguments_template, timeout_seconds, source_run_id, sort_order, created_at, group_id, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
+			id, name, targetPath, hostfiles.ComparisonKey(targetPath), argumentsTemplate, timeoutSeconds, sortOrder, now, groupID, now)
 	}
 	if err == nil {
 		err = transaction.Commit()
@@ -290,7 +382,7 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 		return
 	}
 	a.recordAuditForRequest(request, "create_quick_run_from_source", id, "succeeded")
-	_ = a.checkpointWebMutation("create-quick-run-source", targetPath)
+	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }
 
@@ -346,11 +438,13 @@ func (a *App) startOneTimeRun(response http.ResponseWriter, request *http.Reques
 		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
 	}
-	workingDirectory := strings.Trim(request.FormValue("working_directory"), "/")
-	if _, err := a.managed.List(workingDirectory); err != nil {
+	workingDirectory := request.FormValue("working_directory")
+	preparedDirectory, err := a.files.PrepareDirectory(workingDirectory)
+	if err != nil {
 		http.Error(response, "working directory is invalid: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	workingDirectory = preparedDirectory.Path
 	timeoutSeconds, err := parseQuickExecutionTimeout(request.FormValue("timeout_seconds"))
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusBadRequest)
@@ -383,6 +477,7 @@ func (a *App) startOneTimeRun(response http.ResponseWriter, request *http.Reques
 		http.Error(response, "Unable to start one-time Run: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/history/runs/"+url.PathEscape(id), http.StatusSeeOther)
 }
 

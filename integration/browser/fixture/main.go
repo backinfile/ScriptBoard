@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 
 	"scriptboard/internal/app"
 	"scriptboard/internal/appstatus"
+	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/logstream"
 )
 
@@ -25,6 +27,22 @@ const (
 type applicationProbe struct {
 	mu    sync.Mutex
 	index int
+}
+
+type fixtureTopology struct {
+	root string
+}
+
+func (topology fixtureTopology) Roots() ([]hostfiles.Entry, error) {
+	return []hostfiles.Entry{{Name: filepath.Base(topology.root), Path: topology.root, Kind: hostfiles.Directory}}, nil
+}
+
+func (topology fixtureTopology) FilesystemRoot(string) (string, error) {
+	return topology.root, nil
+}
+
+func (fixtureTopology) Restricted(string) bool {
+	return false
 }
 
 func (p *applicationProbe) Snapshot(context.Context) appstatus.RawSnapshot {
@@ -134,21 +152,34 @@ func (source *fixtureLogSource) Follow(
 }
 
 func main() {
-	root, err := os.MkdirTemp("", "scriptboard-browser-managed-root-location-with-a-long-path-")
-	if err != nil {
-		panic(err)
+	root := strings.TrimSpace(os.Getenv("SCRIPTBOARD_FIXTURE_ROOT"))
+	if root == "" {
+		var err error
+		root, err = os.MkdirTemp("", "scriptboard-browser-host-files-location-with-a-long-path-")
+		if err != nil {
+			panic(err)
+		}
+		defer os.RemoveAll(root)
+	} else {
+		var err error
+		root, err = filepath.Abs(root)
+		if err != nil {
+			panic(err)
+		}
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			panic(err)
+		}
 	}
-	defer os.RemoveAll(root)
 
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "host")
 	stateRoot := filepath.Join(root, "state")
-	if err := seedManagedRoot(managedRoot); err != nil {
+	if err := seedHostFiles(hostRoot); err != nil {
 		panic(err)
 	}
 
 	application, err := app.Open(app.Config{
-		ManagedRoot:      managedRoot,
 		StateRoot:        stateRoot,
+		FileTopology:     fixtureTopology{root: hostRoot},
 		AdminUsername:    fixtureUsername,
 		AdminPassword:    fixturePassword,
 		ApplicationProbe: &applicationProbe{},
@@ -166,7 +197,7 @@ func main() {
 		Handler:           application.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	fmt.Printf("READY http://%s\n", listener.Addr())
+	fmt.Printf("READY http://%s HOST_ROOT %s\n", listener.Addr(), base64.RawURLEncoding.EncodeToString([]byte(hostRoot)))
 
 	runContext, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -181,8 +212,9 @@ func main() {
 	}
 }
 
-func seedManagedRoot(root string) error {
+func seedHostFiles(root string) error {
 	directories := []string{
+		".config",
 		"automation",
 		"automation/maintenance",
 		"data/exports",
@@ -194,6 +226,7 @@ func seedManagedRoot(root string) error {
 		}
 	}
 	files := map[string]string{
+		".env":      "SCRIPTBOARD_FIXTURE=hidden\n",
 		"README.md": "# ScriptBoard fixture\n\nDeterministic files for the Chromium desktop gate.\n",
 		"automation/weekly-system-check.ps1": `param([string]$Environment = "production")
 $ErrorActionPreference = "Stop"
@@ -202,7 +235,7 @@ Write-Output "environment=$Environment"
 Write-Output "filesystem: healthy"
 Write-Output "database: healthy"
 Write-Output "scheduler: healthy"
-Write-Output "version-protection: ready"
+Write-Output "host-filesystem: ready"
 Write-Output "result=passed"
 `,
 		"automation/maintenance/archive-old-logs.cmd":    "@echo off\r\necho archived=42\r\necho result=passed\r\n",

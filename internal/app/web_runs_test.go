@@ -1,6 +1,7 @@
 package app
 
 import (
+	"path/filepath"
 	"testing"
 
 	"scriptboard/internal/runmanager"
@@ -8,15 +9,16 @@ import (
 
 func TestRunListItemViewBuildsScriptDirectoryURL(t *testing.T) {
 	t.Parallel()
+	root := t.TempDir()
 
 	tests := []struct {
 		name       string
 		scriptPath string
 		want       string
 	}{
-		{name: "managed root", scriptPath: "inspect.sh", want: "/resources/files/"},
-		{name: "nested directory", scriptPath: "ops/inspect.sh", want: "/resources/files/ops/"},
-		{name: "reserved path characters", scriptPath: "ops #1/inspect.sh", want: "/resources/files/ops%20%231/"},
+		{name: "host root", scriptPath: filepath.Join(root, "inspect.sh"), want: filesURL(root)},
+		{name: "nested directory", scriptPath: filepath.Join(root, "ops", "inspect.sh"), want: filesURL(filepath.Join(root, "ops"))},
+		{name: "reserved path characters", scriptPath: filepath.Join(root, "ops #1", "inspect.sh"), want: filesURL(filepath.Join(root, "ops #1"))},
 	}
 
 	for _, test := range tests {

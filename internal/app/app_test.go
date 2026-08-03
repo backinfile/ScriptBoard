@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -18,18 +19,17 @@ import (
 	"testing"
 
 	"scriptboard/internal/app"
+	"scriptboard/internal/hostfiles"
 )
 
 func TestFirstStartCreatesCredentialAndProtectsFiles(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
 
 	application, err := app.Open(app.Config{
-		ManagedRoot: managedRoot,
-		StateRoot:   stateRoot,
+		StateRoot: stateRoot,
 	})
 	if err != nil {
 		t.Fatalf("open application: %v", err)
@@ -73,6 +73,12 @@ func TestFirstStartCreatesCredentialAndProtectsFiles(t *testing.T) {
 	if cacheControl := response.Header.Get("Cache-Control"); cacheControl != "no-store" {
 		t.Fatalf("login cache control = %q, want no-store", cacheControl)
 	}
+	if policy := response.Header.Get("Content-Security-Policy"); !strings.Contains(policy, "form-action 'self'") {
+		t.Fatalf("login content security policy does not restrict form targets: %q", policy)
+	}
+	if policy := response.Header.Get("Permissions-Policy"); policy == "" {
+		t.Fatal("login response is missing a permissions policy")
+	}
 	if strings.Contains(string(loginBody), "autofocus") {
 		t.Fatalf("login page uses unconditional autofocus: %s", loginBody)
 	}
@@ -83,7 +89,7 @@ func TestFirstStartCreatesCredentialAndProtectsFiles(t *testing.T) {
 		t.Fatalf("login page styling depends on JavaScript: %s", loginBody)
 	}
 
-	response, err = client.Get(server.URL + "/resources/files/")
+	response, err = client.Get(server.URL + "/resources/files")
 	if err != nil {
 		t.Fatalf("get protected files page: %v", err)
 	}
@@ -96,13 +102,49 @@ func TestFirstStartCreatesCredentialAndProtectsFiles(t *testing.T) {
 	}
 }
 
+func TestCredentialOverrideRejectsOversizedPasswordFile(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	passwordPath := filepath.Join(root, "admin-password")
+	if err := os.WriteFile(passwordPath, []byte(strings.Repeat("x", 259)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	application, err := app.Open(app.Config{
+		StateRoot:         filepath.Join(root, "state"),
+		AdminPasswordFile: passwordPath,
+	})
+	if application != nil {
+		_ = application.Close()
+	}
+	if err == nil {
+		t.Fatal("oversized administrator password file was accepted")
+	}
+}
+
+func TestResetAdminCredentialsRejectsInvalidUsername(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	application, err := app.Open(app.Config{
+		StateRoot: filepath.Join(root, "state"),
+	})
+	if err != nil {
+		t.Fatalf("open application: %v", err)
+	}
+	t.Cleanup(func() { _ = application.Close() })
+
+	if _, err := application.ResetAdminCredentials("unsafe\nusername"); err == nil {
+		t.Fatal("invalid administrator username was accepted")
+	}
+}
+
 func TestRootRedirectsToLoginWhenUnauthenticated(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
 	application, err := app.Open(app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 	})
 	if err != nil {
 		t.Fatalf("open application: %v", err)
@@ -125,6 +167,121 @@ func TestRootRedirectsToLoginWhenUnauthenticated(t *testing.T) {
 	}
 	if location := response.Header.Get("Location"); location != "/login" {
 		t.Fatalf("root redirect = %q, want /login", location)
+	}
+}
+
+func TestLoginRejectsOversizedRequests(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	application, err := app.Open(app.Config{
+		StateRoot: filepath.Join(root, "state"),
+	})
+	if err != nil {
+		t.Fatalf("open application: %v", err)
+	}
+	t.Cleanup(func() { _ = application.Close() })
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("create cookie jar: %v", err)
+	}
+	server := httptest.NewServer(application.Handler())
+	t.Cleanup(server.Close)
+	client := &http.Client{Jar: jar}
+
+	response, err := client.Get(server.URL + "/login")
+	if err != nil {
+		t.Fatalf("get login: %v", err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read login: %v", err)
+	}
+	response, err = client.PostForm(server.URL+"/login", url.Values{
+		"username":   {"admin"},
+		"password":   {strings.Repeat("x", 20<<10)},
+		"csrf_token": {formToken(t, body)},
+	})
+	if err != nil {
+		t.Fatalf("post oversized login: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusRequestEntityTooLarge {
+		body, _ := io.ReadAll(response.Body)
+		t.Fatalf("oversized login status = %d, want %d: %s", response.StatusCode, http.StatusRequestEntityTooLarge, body)
+	}
+	if got := response.Header.Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("oversized login cache control = %q, want no-store", got)
+	}
+}
+
+func TestLoginAcceptsBrowserMultipartForm(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	application, err := app.Open(app.Config{
+		StateRoot:     filepath.Join(root, "state"),
+		AdminUsername: "admin",
+		AdminPassword: "browser-multipart-password",
+	})
+	if err != nil {
+		t.Fatalf("open application: %v", err)
+	}
+	t.Cleanup(func() { _ = application.Close() })
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("create cookie jar: %v", err)
+	}
+	server := httptest.NewServer(application.Handler())
+	t.Cleanup(server.Close)
+	client := &http.Client{Jar: jar}
+
+	response, err := client.Get(server.URL + "/login")
+	if err != nil {
+		t.Fatalf("get login: %v", err)
+	}
+	loginBody, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read login: %v", err)
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	for name, value := range map[string]string{
+		"username": "admin", "password": "browser-multipart-password", "csrf_token": formToken(t, loginBody),
+	} {
+		if err := writer.WriteField(name, value); err != nil {
+			t.Fatalf("write multipart field: %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart form: %v", err)
+	}
+	request, err := http.NewRequest(http.MethodPost, server.URL+"/login", &body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.Header.Set("Accept", "application/json")
+	response, err = client.Do(request)
+	if err != nil {
+		t.Fatalf("post multipart login: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		responseBody, _ := io.ReadAll(response.Body)
+		t.Fatalf("multipart login status = %d: %s", response.StatusCode, responseBody)
+	}
+	var payload map[string]string
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode multipart login response: %v", err)
+	}
+	if payload["redirect"] != "/monitor" {
+		t.Fatalf("multipart login redirect = %q", payload["redirect"])
 	}
 }
 
@@ -186,8 +343,7 @@ func TestLoginPageExposesAJAXEnhancementHooks(t *testing.T) {
 
 	root := t.TempDir()
 	application, err := app.Open(app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 	})
 	if err != nil {
 		t.Fatalf("open application: %v", err)
@@ -221,16 +377,16 @@ func TestPrimaryNavigationAvoidsFullPageReloads(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
-	if err := os.MkdirAll(managedRoot, 0o700); err != nil {
-		t.Fatalf("create managed root: %v", err)
+	hostRoot := filepath.Join(root, "managed")
+	if err := os.MkdirAll(hostRoot, 0o700); err != nil {
+		t.Fatalf("create host root: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(managedRoot, "preview.png"), []byte("preview"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(hostRoot, "preview.png"), []byte("preview"), 0o600); err != nil {
 		t.Fatalf("create preview fixture: %v", err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, filepath.Join(root, "state"))
+	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
 
-	response, err := client.Get(serverURL + "/resources/files/?q=preview")
+	response, err := client.Get(hostFilesRequestURLWithQuery(serverURL, hostRoot, url.Values{"q": {"preview"}}))
 	if err != nil {
 		t.Fatalf("get files page: %v", err)
 	}
@@ -388,16 +544,16 @@ func TestFileWorkspaceExposesNavigationPreviewAndRunConfiguration(t *testing.T) 
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
-	if err := os.MkdirAll(filepath.Join(managedRoot, "scripts"), 0o700); err != nil {
+	hostRoot := filepath.Join(root, "managed")
+	if err := os.MkdirAll(filepath.Join(hostRoot, "scripts"), 0o700); err != nil {
 		t.Fatalf("create scripts directory: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(managedRoot, "scripts", "demo.ps1"), []byte("Write-Output 'preview me'\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(hostRoot, "scripts", "demo.ps1"), []byte("Write-Output 'preview me'\n"), 0o600); err != nil {
 		t.Fatalf("write preview fixture: %v", err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, filepath.Join(root, "state"))
+	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
 
-	response, err := client.Get(serverURL + "/resources/files/")
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
 	if err != nil {
 		t.Fatalf("get root files page: %v", err)
 	}
@@ -420,7 +576,9 @@ func TestFileWorkspaceExposesNavigationPreviewAndRunConfiguration(t *testing.T) 
 		}
 	}
 
-	response, err = client.Get(serverURL + "/resources/files/scripts/")
+	scriptsDirectory := filepath.Join(hostRoot, "scripts")
+	scriptPath := filepath.Join(scriptsDirectory, "demo.ps1")
+	response, err = client.Get(hostFilesRequestURL(serverURL, scriptsDirectory))
 	if err != nil {
 		t.Fatalf("get nested files page: %v", err)
 	}
@@ -431,15 +589,15 @@ func TestFileWorkspaceExposesNavigationPreviewAndRunConfiguration(t *testing.T) 
 	}
 	nestedHTML := string(nestedPage)
 	for _, expected := range []string{
-		`href="/resources/files/"`, `href="/resources/files/view/scripts/demo.ps1"`,
-		`href="/resources/files/run/scripts/demo.ps1"`, `data-lucide="file-terminal"`,
+		`href="` + hostFilesHrefWithQuery(hostRoot, nil) + `"`, `href="` + hostFileHref("/resources/files/view", scriptPath) + `"`,
+		`href="` + hostFileHref("/resources/files/run", scriptPath) + `"`, `data-lucide="file-terminal"`,
 	} {
 		if !strings.Contains(nestedHTML, expected) {
 			t.Fatalf("nested files page does not contain %q: %s", expected, nestedHTML)
 		}
 	}
 
-	response, err = client.Get(serverURL + "/resources/files/view/scripts/demo.ps1")
+	response, err = client.Get(hostFileRequestURL(serverURL, "/resources/files/view", scriptPath))
 	if err != nil {
 		t.Fatalf("get text preview: %v", err)
 	}
@@ -451,7 +609,7 @@ func TestFileWorkspaceExposesNavigationPreviewAndRunConfiguration(t *testing.T) 
 	for _, expected := range []string{
 		"Script preview",
 		"Write-Output &#39;preview me&#39;",
-		`href="/resources/files/scripts/"`,
+		`href="` + hostFilesHrefWithQuery(scriptsDirectory, nil) + `"`,
 		`data-script-preview`,
 		`data-highlight-language="powershell"`,
 	} {
@@ -465,7 +623,7 @@ func TestScriptPreviewUsesDeterministicHighlightLanguages(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	tests := map[string]string{
 		"health.ps1": "powershell",
 		"health.cmd": "dos",
@@ -474,18 +632,18 @@ func TestScriptPreviewUsesDeterministicHighlightLanguages(t *testing.T) {
 		"health.py":  "python",
 		"health.txt": "",
 	}
-	if err := os.MkdirAll(managedRoot, 0o700); err != nil {
-		t.Fatalf("create managed root: %v", err)
+	if err := os.MkdirAll(hostRoot, 0o700); err != nil {
+		t.Fatalf("create host root: %v", err)
 	}
 	for name := range tests {
-		if err := os.WriteFile(filepath.Join(managedRoot, name), []byte("if ready\n"), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(hostRoot, name), []byte("if ready\n"), 0o600); err != nil {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, filepath.Join(root, "state"))
+	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
 
 	for name, expected := range tests {
-		response, err := client.Get(serverURL + "/resources/files/view/" + name)
+		response, err := client.Get(hostFileRequestURL(serverURL, "/resources/files/view", filepath.Join(hostRoot, name)))
 		if err != nil {
 			t.Fatalf("get %s preview: %v", name, err)
 		}
@@ -513,17 +671,17 @@ func TestMarkdownPreviewProgressivelyEnhancesEscapedSource(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
-	if err := os.MkdirAll(filepath.Join(managedRoot, "docs"), 0o700); err != nil {
+	hostRoot := filepath.Join(root, "managed")
+	if err := os.MkdirAll(filepath.Join(hostRoot, "docs"), 0o700); err != nil {
 		t.Fatalf("create docs directory: %v", err)
 	}
 	content := "# Runbook\n\n[Sibling](other.md)\n\n![Diagram](diagram.png)\n\n```powershell\nif ($Ready) { Write-Output 'ready' }\n```\n\n</pre><script>alert('xss')</script>\n"
-	if err := os.WriteFile(filepath.Join(managedRoot, "docs", "runbook.md"), []byte(content), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(hostRoot, "docs", "runbook.md"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write markdown fixture: %v", err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, filepath.Join(root, "state"))
+	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
 
-	response, err := client.Get(serverURL + "/resources/files/view/docs/runbook.md")
+	response, err := client.Get(hostFileRequestURL(serverURL, "/resources/files/view", filepath.Join(hostRoot, "docs", "runbook.md")))
 	if err != nil {
 		t.Fatalf("get markdown preview: %v", err)
 	}
@@ -536,7 +694,7 @@ func TestMarkdownPreviewProgressivelyEnhancesEscapedSource(t *testing.T) {
 	for _, expected := range []string{
 		`data-markdown-preview`,
 		`data-markdown-source`,
-		`data-markdown-base="/resources/files/view/docs/"`,
+		`data-markdown-base="` + filepath.Join(hostRoot, "docs") + `"`,
 		`&lt;/pre&gt;&lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;`,
 		"```powershell",
 		`# Runbook`,
@@ -649,8 +807,7 @@ func TestInvalidLoginRendersInlineErrorPage(t *testing.T) {
 
 	root := t.TempDir()
 	application, err := app.Open(app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 	})
 	if err != nil {
 		t.Fatalf("open application: %v", err)
@@ -708,8 +865,7 @@ func TestInvalidAJAXLoginReturnsStructuredErrorAndFreshCSRFToken(t *testing.T) {
 
 	root := t.TempDir()
 	application, err := app.Open(app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 	})
 	if err != nil {
 		t.Fatalf("open application: %v", err)
@@ -778,8 +934,7 @@ func TestAJAXLoginReturnsServerSelectedRedirect(t *testing.T) {
 	root := t.TempDir()
 	stateRoot := filepath.Join(root, "state")
 	application, err := app.Open(app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   stateRoot,
+		StateRoot: stateRoot,
 	})
 	if err != nil {
 		t.Fatalf("open application: %v", err)
@@ -854,8 +1009,7 @@ func TestLoginFormRemainsValidWhenLoginPageIsLoadedAgain(t *testing.T) {
 	root := t.TempDir()
 	stateRoot := filepath.Join(root, "state")
 	application, err := app.Open(app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   stateRoot,
+		StateRoot: stateRoot,
 	})
 	if err != nil {
 		t.Fatalf("open application: %v", err)
@@ -921,8 +1075,7 @@ func TestLoginRateLimitCannotBeBypassedByChangingUsername(t *testing.T) {
 
 	root := t.TempDir()
 	application, err := app.Open(app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 	})
 	if err != nil {
 		t.Fatalf("open application: %v", err)
@@ -958,7 +1111,6 @@ func TestLoginRateLimitCannotBeBypassedByChangingSourceAddress(t *testing.T) {
 
 	root := t.TempDir()
 	application, err := app.Open(app.Config{
-		ManagedRoot:    filepath.Join(root, "managed"),
 		StateRoot:      filepath.Join(root, "state"),
 		TrustedProxies: []string{"127.0.0.1"},
 	})
@@ -1077,11 +1229,10 @@ func TestApplicationShellMarksTrustedProxyRequestsAsRemote(t *testing.T) {
 
 	root := t.TempDir()
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{
-		ManagedRoot:    filepath.Join(root, "managed"),
 		StateRoot:      filepath.Join(root, "state"),
 		TrustedProxies: []string{"127.0.0.1"},
 	})
-	request, err := http.NewRequest(http.MethodGet, serverURL+"/resources/files/", nil)
+	request, err := http.NewRequest(http.MethodGet, serverURL+"/resources/files", nil)
 	if err != nil {
 		t.Fatalf("create files request: %v", err)
 	}
@@ -1104,7 +1255,7 @@ func TestSecondInstanceUsingSameStateRootIsRejected(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	config := app.Config{ManagedRoot: filepath.Join(root, "managed"), StateRoot: filepath.Join(root, "state")}
+	config := app.Config{StateRoot: filepath.Join(root, "state")}
 	first, err := app.Open(config)
 	if err != nil {
 		t.Fatalf("open first instance: %v", err)
@@ -1126,8 +1277,7 @@ func TestInitialPasswordLoginCanAccessApplication(t *testing.T) {
 	root := t.TempDir()
 	stateRoot := filepath.Join(root, "state")
 	application, err := app.Open(app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   stateRoot,
+		StateRoot: stateRoot,
 	})
 	if err != nil {
 		t.Fatalf("open application: %v", err)
@@ -1188,7 +1338,7 @@ func TestInitialPasswordLoginCanAccessApplication(t *testing.T) {
 		t.Fatalf("authenticated login page response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
 
-	response, err = client.Get(server.URL + "/resources/files/")
+	response, err = client.Get(server.URL + "/resources/files")
 	if err != nil {
 		t.Fatalf("get files: %v", err)
 	}
@@ -1204,8 +1354,7 @@ func TestFirstPasswordChangeRevokesSessionAndRemovesCredentialFile(t *testing.T)
 	root := t.TempDir()
 	stateRoot := filepath.Join(root, "state")
 	application, err := app.Open(app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   stateRoot,
+		StateRoot: stateRoot,
 	})
 	if err != nil {
 		t.Fatalf("open application: %v", err)
@@ -1263,7 +1412,7 @@ func TestFirstPasswordChangeRevokesSessionAndRemovesCredentialFile(t *testing.T)
 		t.Fatalf("initial password file still exists: %v", err)
 	}
 
-	response, err = client.Get(server.URL + "/resources/files/")
+	response, err = client.Get(server.URL + "/resources/files")
 	if err != nil {
 		t.Fatalf("get files with revoked session: %v", err)
 	}
@@ -1305,9 +1454,59 @@ func login(t *testing.T, client *http.Client, serverURL, password string, wantSt
 	return response
 }
 
-func authenticatedClient(t *testing.T, managedRoot, stateRoot string) (*http.Client, string) {
+func authenticatedClient(t *testing.T, hostRoot, stateRoot string) (*http.Client, string) {
 	t.Helper()
-	return authenticatedClientWithConfig(t, app.Config{ManagedRoot: managedRoot, StateRoot: stateRoot})
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatalf("create test host root: %v", err)
+	}
+	return authenticatedClientWithConfig(t, app.Config{StateRoot: stateRoot, FileTopology: testHostTopology{root: hostRoot}})
+}
+
+type testHostTopology struct{ root string }
+
+func (topology testHostTopology) Roots() ([]hostfiles.Entry, error) {
+	return []hostfiles.Entry{{Name: filepath.Base(topology.root), Path: topology.root, Kind: hostfiles.Directory}}, nil
+}
+
+func (topology testHostTopology) FilesystemRoot(string) (string, error) { return topology.root, nil }
+
+func (testHostTopology) Restricted(string) bool { return false }
+
+func hostFileRequestURL(serverURL, endpoint, path string) string {
+	values := url.Values{}
+	if path != "" {
+		values.Set("path", path)
+	}
+	if len(values) == 0 {
+		return serverURL + endpoint
+	}
+	return serverURL + endpoint + "?" + values.Encode()
+}
+
+func hostFilesRequestURL(serverURL, path string) string {
+	return hostFileRequestURL(serverURL, "/resources/files", path)
+}
+
+func hostFilesRequestURLWithQuery(serverURL, path string, values url.Values) string {
+	copy := url.Values{}
+	for key, items := range values {
+		copy[key] = append([]string(nil), items...)
+	}
+	if path != "" {
+		copy.Set("path", path)
+	}
+	if len(copy) == 0 {
+		return serverURL + "/resources/files"
+	}
+	return serverURL + "/resources/files?" + copy.Encode()
+}
+
+func hostFileHref(endpoint, path string) string {
+	return hostFileRequestURL("", endpoint, path)
+}
+
+func hostFilesHrefWithQuery(path string, values url.Values) string {
+	return strings.TrimPrefix(hostFilesRequestURLWithQuery("", path, values), "")
 }
 
 func authenticatedClientWithConfig(t *testing.T, config app.Config) (*http.Client, string) {

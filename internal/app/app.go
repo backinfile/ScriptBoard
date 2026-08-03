@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"embed"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
@@ -22,7 +23,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -31,18 +31,22 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/crypto/argon2"
 	_ "modernc.org/sqlite"
 
 	"scriptboard/internal/appstatus"
+	"scriptboard/internal/assistant"
+	"scriptboard/internal/assistant/raster"
+	"scriptboard/internal/assistant/runtimeinstall"
+	"scriptboard/internal/assistant/toolbroker"
 	"scriptboard/internal/buildinfo"
-	"scriptboard/internal/diskspace"
-	"scriptboard/internal/gitprotect"
+	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/hoststatus"
 	"scriptboard/internal/instancelock"
-	"scriptboard/internal/managedfiles"
+	"scriptboard/internal/privatepath"
 	"scriptboard/internal/runmanager"
 	"scriptboard/internal/scheduler"
 	updatepkg "scriptboard/internal/update"
@@ -51,6 +55,27 @@ import (
 
 const initialPasswordFilename = "initial-admin-password"
 const currentSchemaVersion = buildinfo.DatabaseSchemaVersion
+
+const (
+	passwordMemory         uint32 = 64 * 1024
+	passwordIterations     uint32 = 3
+	passwordParallelism    uint8  = 2
+	passwordSaltLength            = 16
+	passwordKeyLength             = 32
+	maxPasswordBytes              = 256
+	maxLoginRequestBytes   int64  = 16 << 10
+	maxLocaleRequestBytes  int64  = 4 << 10
+	maxFormRequestBytes    int64  = 8 << 20
+	loginRateBucketCount          = 1 << 14
+	maxLoginFailureEntries        = 2 * loginRateBucketCount
+)
+
+const dummyPasswordHash = "$argon2id$v=19$m=65536,t=3,p=2$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+var passwordWorkSlots = make(chan struct{}, 2)
+
+const unauthenticatedFormReadTimeout = 15 * time.Second
+const boundedFormReadTimeout = 30 * time.Second
 
 //go:embed web/assets/* web/templates/*
 var webFiles embed.FS
@@ -199,6 +224,12 @@ func webTemplateFunctions() template.FuncMap {
 			}
 			return roleName
 		},
+		"filesystemRoleText": func(locale webLocale, role string) string {
+			if label := webText(locale, "overview.storage_role."+role); label != "overview.storage_role."+role {
+				return label
+			}
+			return role
+		},
 	}
 }
 
@@ -247,33 +278,45 @@ const (
 )
 
 type Config struct {
-	ManagedRoot           string
-	StateRoot             string
-	RunTimeoutGrace       time.Duration
-	SchedulerNow          func() time.Time
-	SchedulerTick         time.Duration
-	GitExecutable         string
-	ExecutorChains        map[string][]string
-	AdminUsername         string
-	AdminPassword         string
-	AdminPasswordFile     string
-	TrustedProxies        []string
-	WebsiteMonitorOptions websitemonitor.Options
-	UpdateCheck           bool
-	UpdateInterval        time.Duration
-	UpdateSource          updatepkg.ReleaseSource
-	RequestShutdown       func()
-	ApplicationProbe      appstatus.Probe
+	StateRoot              string
+	ConfigPath             string
+	InstallRoot            string
+	TLSKey                 string
+	FileTopology           hostfiles.Topology
+	RunTimeoutGrace        time.Duration
+	SchedulerNow           func() time.Time
+	SchedulerTick          time.Duration
+	ExecutorChains         map[string][]string
+	AdminUsername          string
+	AdminPassword          string
+	AdminPasswordFile      string
+	TrustedProxies         []string
+	WebsiteMonitorOptions  websitemonitor.Options
+	UpdateCheck            bool
+	UpdateInterval         time.Duration
+	UpdateSource           updatepkg.ReleaseSource
+	RequestShutdown        func()
+	ApplicationProbe       appstatus.Probe
+	AssistantRuntimeSource runtimeinstall.Source
 }
 
 type App struct {
 	db                 *sql.DB
 	stateRoot          string
-	managedRoot        string
-	managed            *managedfiles.Store
+	assistant          *assistant.Service
+	assistantRuntime   *assistantRuntimeCoordinator
+	assistantRuntimes  *runtimeinstall.Manager
+	assistantTools     *assistantToolExecutor
+	assistantRaster    *raster.Processor
+	assistantBroker    *toolbroker.Broker
+	files              *hostfiles.Manager
+	fileOperations     *sqliteFileOperationStore
+	fileMoves          *hostfiles.MoveEngine
+	fileOperationCtx   context.Context
+	fileOperationStop  context.CancelFunc
+	fileOperationWG    sync.WaitGroup
 	runs               *runmanager.Manager
 	scheduler          *scheduler.Manager
-	gitProtection      *gitprotect.Manager
 	hostStatus         *hoststatus.Monitor
 	applicationStatus  *appstatus.Monitor
 	logStreamSlots     chan struct{}
@@ -283,7 +326,10 @@ type App struct {
 	instanceLock       *instancelock.Lock
 	handler            http.Handler
 	loginMu            sync.Mutex
+	loginSlots         chan struct{}
 	loginFailures      map[string]loginFailure
+	loginLastPrune     time.Time
+	loginRateSalt      [32]byte
 	activeRequestsMu   sync.Mutex
 	activeRequests     map[string]map[uint64]context.CancelFunc
 	activeRequestID    uint64
@@ -300,12 +346,30 @@ type App struct {
 type loginFailure struct {
 	count        int
 	blockedUntil time.Time
+	updatedAt    time.Time
 }
 
 func Open(config Config) (*App, error) {
-	managedRoot, stateRoot, err := prepareRoots(config.ManagedRoot, config.StateRoot)
+	if err := rejectIncompatibleExistingStateRoot(config.StateRoot); err != nil {
+		return nil, err
+	}
+	stateRoot, err := prepareStateRoot(config.StateRoot)
 	if err != nil {
 		return nil, err
+	}
+	installRoot := strings.TrimSpace(config.InstallRoot)
+	if installRoot == "" {
+		if executable, executableErr := os.Executable(); executableErr == nil {
+			installRoot = filepath.Dir(executable)
+		}
+	}
+	instanceDigest := sha256.Sum256([]byte(stateRoot))
+	files, err := hostfiles.Open(hostfiles.Options{
+		ProtectedPaths: []string{stateRoot, installRoot, config.ConfigPath, config.AdminPasswordFile, config.TLSKey},
+		InstanceID:     hex.EncodeToString(instanceDigest[:]), Topology: config.FileTopology,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("configure host filesystem access: %w", err)
 	}
 	instanceLock, err := instancelock.Acquire(stateRoot)
 	if err != nil {
@@ -329,13 +393,57 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	var loginRateSalt [32]byte
+	if _, err := rand.Read(loginRateSalt[:]); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("生成登录限流密钥: %w", err)
+	}
 	application := &App{
-		db: db, stateRoot: stateRoot, managedRoot: managedRoot,
-		managed: managedfiles.Open(managedRoot), instanceLock: instanceLock,
-		loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies,
+		db: db, stateRoot: stateRoot, files: files, instanceLock: instanceLock,
+		loginSlots: make(chan struct{}, 2), loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies,
+		loginRateSalt:  loginRateSalt,
 		logStreamSlots: make(chan struct{}, 8), logHistorySlots: make(chan struct{}, 4),
 		updateResultsWake: make(chan struct{}, 1),
 	}
+	application.assistant, err = assistant.New(db, assistant.Options{StateRoot: stateRoot})
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("initialize assistant module: %w", err)
+	}
+	application.assistantRaster = raster.New(2)
+	if !validating {
+		if _, err := application.assistant.RecoverInterruptedTurns(context.Background()); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("recover assistant turns: %w", err)
+		}
+	}
+	assistantSettings, err := application.assistant.Settings(context.Background())
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("load assistant settings: %w", err)
+	}
+	application.assistantRuntime = newAssistantRuntimeCoordinator(stateRoot, application.assistant, assistantSettings.MaxActiveConversations)
+	application.assistantRuntime.SetApprovalAudit(func(actor assistant.Actor, conversationID, approvalID, result string) {
+		var role userRole
+		_ = application.db.QueryRow("SELECT role FROM users WHERE id = ?", actor.UserID).Scan(&role)
+		action := "assistant_tool_approval"
+		application.recordAuditWithActor(action, fmt.Sprintf("conversation=%s approval=%s", conversationID, approvalID), result, "assistant", actor.UserID, actor.Username, role)
+	})
+	runtimeSource := config.AssistantRuntimeSource
+	if runtimeSource == nil {
+		runtimeSource = runtimeinstall.NewGitHubSource()
+	}
+	currentBuild := buildinfo.Current()
+	application.assistantRuntimes = runtimeinstall.NewManager(runtimeinstall.Config{
+		StateRoot:     stateRoot,
+		Compatibility: runtimeinstall.Compatibility{ScriptBoardVersion: currentBuild.Version, ScriptBoardTag: currentBuild.Tag},
+		Source:        runtimeSource,
+		SwitchGuard:   application.assistantRuntime.CanSwitchRuntime,
+		Protected:     application.assistant.ReferencedRuntimeVersions,
+	})
+	application.fileOperations = newSQLiteFileOperationStore(db)
+	application.fileMoves = hostfiles.NewMoveEngine(files, application.fileOperations)
+	application.fileOperationCtx, application.fileOperationStop = context.WithCancel(context.Background())
 	if !validating {
 		if err := application.initializeAdmin(stateRoot); err != nil {
 			_ = db.Close()
@@ -351,7 +459,12 @@ func Open(config Config) (*App, error) {
 	if timeoutGrace <= 0 {
 		timeoutGrace = 30 * time.Second
 	}
-	application.runs = runmanager.New(db, application.managed, stateRoot, timeoutGrace, config.ExecutorChains)
+	application.runs = runmanager.New(db, application.files, stateRoot, timeoutGrace, config.ExecutorChains)
+	if err := application.fileMoves.Recover(context.Background()); err != nil {
+		application.runs.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("recover filesystem operations: %w", err)
+	}
 	if validating {
 		if _, entered := application.runs.EnterMaintenance(); !entered {
 			_ = db.Close()
@@ -368,18 +481,12 @@ func Open(config Config) (*App, error) {
 			application.recordAudit("cleanup_run_logs", fmt.Sprintf("%d logs", cleaned), "succeeded", "system")
 		}
 	}
-	application.gitProtection, err = gitprotect.New(db, managedRoot, config.GitExecutable, stateRoot)
-	if err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-	application.runs.SetLifecycle(application.gitProtection)
 	if validating {
 		application.scheduler = scheduler.NewPaused(db, application.runs, application.loadVariables, config.SchedulerNow, config.SchedulerTick)
 	} else {
 		application.scheduler = scheduler.New(db, application.runs, application.loadVariables, config.SchedulerNow, config.SchedulerTick)
 	}
-	probe, _ := hoststatus.NewSystemProbe(managedRoot, stateRoot)
+	probe, _ := hoststatus.NewSystemProbe(stateRoot, installRoot)
 	application.hostStatus, err = hoststatus.New(db, probe, hoststatus.Options{SkipInitialCleanup: validating})
 	if err != nil {
 		application.scheduler.Close()
@@ -408,6 +515,19 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	application.assistantTools = newAssistantToolExecutor(application)
+	application.assistantRuntime.SetTurnSettled(application.assistantTools.releaseTurn)
+	application.assistantBroker, err = toolbroker.New(stateRoot, application.assistantTools)
+	if err != nil {
+		application.websiteMonitor.Close()
+		application.applicationStatus.Close()
+		application.hostStatus.Close()
+		application.scheduler.Close()
+		application.runs.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("initialize Assistant Tool Broker: %w", err)
+	}
+	application.assistantRuntime.SetBroker(application.assistantBroker)
 	if !validating {
 		application.hostStatus.Start(context.Background())
 		application.applicationStatus.Start(context.Background())
@@ -424,7 +544,7 @@ func Open(config Config) (*App, error) {
 	}
 	go application.monitorUpdateResults()
 	application.shellStatusCache = newShellStatusCache(5*time.Second, time.Now, application.loadShellStatus)
-	application.handler = application.routes(managedRoot)
+	application.handler = application.routes()
 	opened = true
 	return application, nil
 }
@@ -627,6 +747,9 @@ func (a *App) ResetAdminCredentials(username string) (string, error) {
 	if username == "" {
 		username = "admin"
 	}
+	if !validUsername(username) {
+		return "", errors.New("管理员用户名无效")
+	}
 	passwordBytes := make([]byte, 24)
 	if _, err := rand.Read(passwordBytes); err != nil {
 		return "", err
@@ -662,9 +785,20 @@ func (a *App) ResetAdminCredentials(username string) (string, error) {
 
 func (a *App) applyCredentialOverride(username, password, passwordFile string) error {
 	if passwordFile != "" {
-		content, err := os.ReadFile(passwordFile)
+		file, err := os.Open(passwordFile)
 		if err != nil {
 			return fmt.Errorf("读取管理员密码文件: %w", err)
+		}
+		content, readErr := io.ReadAll(io.LimitReader(file, maxPasswordBytes+3))
+		closeErr := file.Close()
+		if readErr != nil {
+			return fmt.Errorf("读取管理员密码文件: %w", readErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("关闭管理员密码文件: %w", closeErr)
+		}
+		if len(content) > maxPasswordBytes+2 {
+			return errors.New("管理员密码文件过大")
 		}
 		password = strings.TrimSuffix(strings.TrimSuffix(string(content), "\n"), "\r")
 	}
@@ -677,8 +811,10 @@ func (a *App) applyCredentialOverride(username, password, passwordFile string) e
 	}
 	if username == "" {
 		username = currentUsername
+	} else {
+		username = strings.TrimSpace(username)
 	}
-	if !utf8.ValidString(username) || utf8.RuneCountInString(username) == 0 || utf8.RuneCountInString(username) > 64 {
+	if !validUsername(username) {
 		return errors.New("管理员用户名覆盖无效")
 	}
 	changed := username != currentUsername
@@ -720,6 +856,18 @@ func (a *App) applyCredentialOverride(username, password, passwordFile string) e
 }
 
 func (a *App) Close() error {
+	if a.assistantRuntime != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = a.assistantRuntime.Close(ctx)
+		cancel()
+	}
+	if a.assistantBroker != nil {
+		_ = a.assistantBroker.Close()
+	}
+	if a.fileOperationStop != nil {
+		a.fileOperationStop()
+		a.fileOperationWG.Wait()
+	}
 	if a.updateCancel != nil {
 		a.updateCancel()
 	}
@@ -747,48 +895,99 @@ func (a *App) Close() error {
 	return lockErr
 }
 
-func prepareRoots(managed, state string) (string, string, error) {
-	if strings.TrimSpace(managed) == "" || strings.TrimSpace(state) == "" {
-		return "", "", errors.New("受管根目录和内部状态目录不能为空")
+func rejectIncompatibleExistingStateRoot(state string) error {
+	if strings.TrimSpace(state) == "" {
+		return nil
 	}
-	for _, root := range []string{managed, state} {
-		if err := os.MkdirAll(root, 0o755); err != nil {
-			return "", "", fmt.Errorf("创建目录 %q: %w", root, err)
-		}
-	}
-	managedReal, err := filepath.EvalSymlinks(managed)
+	absolute, err := filepath.Abs(state)
 	if err != nil {
-		return "", "", fmt.Errorf("解析受管根目录: %w", err)
+		return fmt.Errorf("resolve existing State Root: %w", err)
 	}
-	stateReal, err := filepath.EvalSymlinks(state)
-	if err != nil {
-		return "", "", fmt.Errorf("解析内部状态目录: %w", err)
+	info, err := os.Stat(absolute)
+	if os.IsNotExist(err) {
+		return nil
 	}
-	managedReal, err = filepath.Abs(managedReal)
 	if err != nil {
-		return "", "", fmt.Errorf("解析受管根目录绝对路径: %w", err)
+		return fmt.Errorf("inspect existing State Root: %w", err)
+	}
+	if !info.IsDir() {
+		return nil
+	}
+	real, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return fmt.Errorf("resolve existing State Root: %w", err)
+	}
+	databasePath := filepath.Join(real, "app.db")
+	databaseInfo, err := os.Stat(databasePath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect existing SQLite database: %w", err)
+	}
+	if databaseInfo.Size() == 0 {
+		return nil
+	}
+	schemaVersion, err := readSQLiteHeaderUserVersion(databasePath)
+	if err != nil {
+		return fmt.Errorf("inspect existing SQLite schema without modifying it: %w", err)
+	}
+	if !compatibleDatabaseSchema(schemaVersion) {
+		return fmt.Errorf("database schema version %d is incompatible with schema %d; use a new State Root", schemaVersion, currentSchemaVersion)
+	}
+	return nil
+}
+
+func prepareStateRoot(state string) (string, error) {
+	if strings.TrimSpace(state) == "" {
+		return "", errors.New("State Root cannot be empty")
+	}
+	stateAbsolute, err := filepath.Abs(state)
+	if err != nil {
+		return "", fmt.Errorf("resolve absolute State Root: %w", err)
+	}
+	if filepath.Dir(filepath.Clean(stateAbsolute)) == filepath.Clean(stateAbsolute) {
+		return "", errors.New("State Root cannot be a filesystem or volume root")
+	}
+	if err := os.MkdirAll(stateAbsolute, 0o700); err != nil {
+		return "", fmt.Errorf("create State Root %q: %w", state, err)
+	}
+	stateReal, err := filepath.EvalSymlinks(stateAbsolute)
+	if err != nil {
+		return "", fmt.Errorf("resolve State Root: %w", err)
 	}
 	stateReal, err = filepath.Abs(stateReal)
 	if err != nil {
-		return "", "", fmt.Errorf("解析内部状态目录绝对路径: %w", err)
+		return "", fmt.Errorf("resolve absolute State Root: %w", err)
 	}
-	if pathContains(managedReal, stateReal) || pathContains(stateReal, managedReal) {
-		return "", "", errors.New("受管根目录和内部状态目录不能相同或互相包含")
-	}
-	return managedReal, stateReal, nil
-}
-
-func pathContains(parent, child string) bool {
-	relative, err := filepath.Rel(parent, child)
+	filesystemRoot, err := hostfiles.IsFilesystemRoot(stateReal)
 	if err != nil {
-		return false
+		return "", fmt.Errorf("resolve State Root filesystem: %w", err)
 	}
-	return relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)))
+	if filesystemRoot {
+		return "", errors.New("State Root cannot resolve to a filesystem or volume root")
+	}
+	if err := privatepath.ProtectDirectory(stateReal); err != nil {
+		return "", fmt.Errorf("protect State Root %q: %w", stateReal, err)
+	}
+	return stateReal, nil
 }
 
 func openDatabase(path string) (*sql.DB, error) {
 	info, statErr := os.Stat(path)
+	if statErr != nil && !os.IsNotExist(statErr) {
+		return nil, fmt.Errorf("inspect SQLite database: %w", statErr)
+	}
 	existingDatabase := statErr == nil && info.Size() > 0
+	if existingDatabase {
+		schemaVersion, err := readSQLiteHeaderUserVersion(path)
+		if err != nil {
+			return nil, fmt.Errorf("inspect existing SQLite schema without modifying it: %w", err)
+		}
+		if !compatibleDatabaseSchema(schemaVersion) {
+			return nil, fmt.Errorf("database schema version %d is incompatible with schema %d; use a new State Root", schemaVersion, currentSchemaVersion)
+		}
+	}
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("打开 SQLite: %w", err)
@@ -809,14 +1008,6 @@ func openDatabase(path string) (*sql.DB, error) {
 	if err := db.QueryRow("PRAGMA user_version").Scan(&schemaVersion); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("read SQLite schema version: %w", err)
-	}
-	if schemaVersion > currentSchemaVersion {
-		_ = db.Close()
-		return nil, fmt.Errorf("database schema version %d is newer than supported version %d", schemaVersion, currentSchemaVersion)
-	}
-	if existingDatabase && schemaVersion < currentSchemaVersion {
-		_ = db.Close()
-		return nil, fmt.Errorf("database schema version %d is not compatible with the multi-user schema; start with a new State Root", schemaVersion)
 	}
 	migration, err := db.Begin()
 	if err != nil {
@@ -858,7 +1049,9 @@ func openDatabase(path string) (*sql.DB, error) {
 		`CREATE TABLE IF NOT EXISTS trash_entries (
 			id TEXT PRIMARY KEY,
 			original_path TEXT NOT NULL,
-			stored_name TEXT NOT NULL UNIQUE,
+			original_path_key TEXT NOT NULL,
+			stored_path TEXT NOT NULL UNIQUE,
+			stored_path_key TEXT NOT NULL UNIQUE,
 			deleted_at INTEGER NOT NULL,
 			size INTEGER NOT NULL,
 			is_directory INTEGER NOT NULL
@@ -866,6 +1059,7 @@ func openDatabase(path string) (*sql.DB, error) {
 		`CREATE TABLE IF NOT EXISTS runs (
 			id TEXT PRIMARY KEY,
 			script_path TEXT NOT NULL,
+			script_path_key TEXT NOT NULL,
 			script_sha256 TEXT NOT NULL,
 			arguments_template TEXT NOT NULL,
 			template_arguments_json TEXT NOT NULL DEFAULT '[]',
@@ -887,8 +1081,9 @@ func openDatabase(path string) (*sql.DB, error) {
 			, log_incomplete INTEGER NOT NULL DEFAULT 0
 			, log_truncated INTEGER NOT NULL DEFAULT 0
 			, dropped_bytes INTEGER NOT NULL DEFAULT 0
-			, script_kind TEXT NOT NULL DEFAULT 'managed'
+			, script_kind TEXT NOT NULL DEFAULT 'host_file'
 			, working_directory TEXT NOT NULL DEFAULT ''
+			, working_directory_key TEXT NOT NULL DEFAULT ''
 			, source_filename TEXT NOT NULL DEFAULT ''
 			, source_expired INTEGER NOT NULL DEFAULT 0
 			, source_audit_event_id INTEGER REFERENCES audit_events(id)
@@ -914,6 +1109,7 @@ func openDatabase(path string) (*sql.DB, error) {
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
 			script_path TEXT NOT NULL,
+			script_path_key TEXT NOT NULL,
 			arguments_template TEXT NOT NULL,
 			timeout_seconds INTEGER NOT NULL,
 			source_run_id TEXT REFERENCES runs(id),
@@ -936,6 +1132,7 @@ func openDatabase(path string) (*sql.DB, error) {
 			group_name TEXT NOT NULL DEFAULT '',
 			group_id TEXT REFERENCES schedule_groups(id) ON DELETE SET NULL,
 			script_path TEXT NOT NULL,
+			script_path_key TEXT NOT NULL,
 			arguments_template TEXT NOT NULL,
 			expression TEXT NOT NULL,
 			timeout_seconds INTEGER NOT NULL,
@@ -961,16 +1158,22 @@ func openDatabase(path string) (*sql.DB, error) {
 			trigger_count INTEGER NOT NULL,
 			PRIMARY KEY (schedule_id, period, result)
 		)`,
-		`CREATE TABLE IF NOT EXISTS git_state (
-			id INTEGER PRIMARY KEY CHECK (id = 1),
-			status TEXT NOT NULL,
-			enabled INTEGER NOT NULL,
-			branch TEXT NOT NULL,
-			git_executable TEXT NOT NULL,
-			max_tracked_file_bytes INTEGER NOT NULL,
-			max_repository_bytes INTEGER NOT NULL,
-			last_commit TEXT NOT NULL,
-			abnormal_reason TEXT NOT NULL,
+		`CREATE TABLE IF NOT EXISTS file_operations (
+			id TEXT PRIMARY KEY,
+			kind TEXT NOT NULL CHECK (kind IN ('cross_filesystem_move')),
+			source_path TEXT NOT NULL,
+			source_path_key TEXT NOT NULL,
+			destination_path TEXT NOT NULL,
+			destination_path_key TEXT NOT NULL,
+			temporary_path TEXT NOT NULL DEFAULT '',
+			trash_path TEXT NOT NULL DEFAULT '',
+			phase TEXT NOT NULL,
+			bytes_total INTEGER NOT NULL DEFAULT 0,
+			bytes_completed INTEGER NOT NULL DEFAULT 0,
+			verification_digest TEXT NOT NULL DEFAULT '',
+			error TEXT NOT NULL DEFAULT '',
+			cancel_requested INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS host_metric_minutes (
@@ -1016,232 +1219,107 @@ func openDatabase(path string) (*sql.DB, error) {
 			return nil, fmt.Errorf("initialize Website Monitor SQLite schema: %w", err)
 		}
 	}
-	if schemaVersion == 1 {
-		if _, err := migration.Exec("ALTER TABLE schedules ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0"); err != nil {
+	for _, statement := range assistant.SchemaStatements {
+		if _, err := migration.Exec(statement); err != nil {
 			_ = db.Close()
-			return nil, fmt.Errorf("migrate schedules to schema 2: %w", err)
+			return nil, fmt.Errorf("initialize Assistant SQLite schema: %w", err)
 		}
 	}
-	if schemaVersion > 0 && schemaVersion < 3 {
-		if _, err := migration.Exec("ALTER TABLE runs ADD COLUMN source_name TEXT NOT NULL DEFAULT ''"); err != nil {
+	if schemaVersion == 21 {
+		if _, err := migration.Exec(`ALTER TABLE assistant_tool_calls ADD COLUMN body_offset INTEGER NOT NULL DEFAULT 0`); err != nil {
 			_ = db.Close()
-			return nil, fmt.Errorf("migrate runs source snapshot: %w", err)
+			return nil, fmt.Errorf("migrate Assistant tool-call positions: %w", err)
 		}
-		if _, err := migration.Exec("ALTER TABLE runs ADD COLUMN runtime_identity TEXT NOT NULL DEFAULT ''"); err != nil {
+		if _, err := migration.Exec(`UPDATE assistant_tool_calls SET body_offset = COALESCE(
+			(SELECT LENGTH(body) FROM assistant_messages WHERE id = assistant_tool_calls.message_id), 0)`); err != nil {
 			_ = db.Close()
-			return nil, fmt.Errorf("migrate runs runtime identity: %w", err)
+			return nil, fmt.Errorf("backfill Assistant tool-call positions: %w", err)
 		}
 	}
-	if schemaVersion > 0 && schemaVersion < 4 {
+	if schemaVersion == 21 || schemaVersion == 22 {
 		for _, statement := range []string{
-			"ALTER TABLE runs ADD COLUMN log_expired INTEGER NOT NULL DEFAULT 0",
-			"ALTER TABLE runs ADD COLUMN log_incomplete INTEGER NOT NULL DEFAULT 0",
-			"ALTER TABLE runs ADD COLUMN log_truncated INTEGER NOT NULL DEFAULT 0",
-			"ALTER TABLE runs ADD COLUMN dropped_bytes INTEGER NOT NULL DEFAULT 0",
+			`ALTER TABLE assistant_tool_calls ADD COLUMN request_json TEXT NOT NULL DEFAULT '{}'`,
+			`ALTER TABLE assistant_tool_calls ADD COLUMN response_json TEXT NOT NULL DEFAULT 'null'`,
 		} {
 			if _, err := migration.Exec(statement); err != nil {
 				_ = db.Close()
-				return nil, fmt.Errorf("migrate Run log metadata: %w", err)
+				return nil, fmt.Errorf("migrate Assistant tool-call JSON payloads: %w", err)
 			}
 		}
 	}
-	if schemaVersion > 0 && schemaVersion < 7 {
-		if _, err := migration.Exec("ALTER TABLE variables ADD COLUMN is_password INTEGER NOT NULL DEFAULT 0"); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("migrate variable display types: %w", err)
-		}
-	}
-	if schemaVersion > 0 && schemaVersion < 10 {
-		for _, statement := range []string{
-			`CREATE TABLE quick_runs_v10 (
-				id TEXT PRIMARY KEY,
-				name TEXT NOT NULL,
-				script_path TEXT NOT NULL,
-				arguments_template TEXT NOT NULL,
-				timeout_seconds INTEGER NOT NULL,
-				source_run_id TEXT REFERENCES runs(id),
-				sort_order INTEGER NOT NULL,
-				created_at INTEGER NOT NULL
-			)`,
-			`INSERT INTO quick_runs_v10
-				(id, name, script_path, arguments_template, timeout_seconds, source_run_id, sort_order, created_at)
-				SELECT id, name, script_path, arguments_template, timeout_seconds, source_run_id, sort_order, created_at FROM quick_runs`,
-			"DROP TABLE quick_runs",
-			"ALTER TABLE quick_runs_v10 RENAME TO quick_runs",
-		} {
-			if _, err := migration.Exec(statement); err != nil {
-				_ = db.Close()
-				return nil, fmt.Errorf("migrate file-created Quick Runs: %w", err)
-			}
-		}
-	}
-	if schemaVersion > 0 && schemaVersion < 11 {
-		for _, statement := range []string{
-			`CREATE TABLE IF NOT EXISTS quick_run_groups (
-				id TEXT PRIMARY KEY,
-				name TEXT NOT NULL COLLATE NOCASE UNIQUE,
-				sort_order INTEGER NOT NULL,
-				created_at INTEGER NOT NULL,
-				updated_at INTEGER NOT NULL
-			)`,
-			"ALTER TABLE quick_runs ADD COLUMN group_id TEXT REFERENCES quick_run_groups(id) ON DELETE SET NULL",
-			"ALTER TABLE quick_runs ADD COLUMN locked INTEGER NOT NULL DEFAULT 0",
-			"ALTER TABLE quick_runs ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0",
-			"UPDATE quick_runs SET updated_at = created_at",
-		} {
-			if _, err := migration.Exec(statement); err != nil {
-				_ = db.Close()
-				return nil, fmt.Errorf("migrate Quick Run organization: %w", err)
-			}
-		}
-	}
-	if schemaVersion < 12 {
-		var groupColumnExists int
-		if err := migration.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('schedules') WHERE name = 'group_name'`).Scan(&groupColumnExists); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("inspect Schedule groups migration: %w", err)
-		}
-		if groupColumnExists == 0 {
-			if _, err := migration.Exec("ALTER TABLE schedules ADD COLUMN group_name TEXT NOT NULL DEFAULT ''"); err != nil {
-				_ = db.Close()
-				return nil, fmt.Errorf("migrate Schedule groups: %w", err)
-			}
-		}
-	}
-	if schemaVersion < 13 {
-		var sourceIDColumnExists int
-		if err := migration.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('runs') WHERE name = 'source_id'`).Scan(&sourceIDColumnExists); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("inspect Run source ID migration: %w", err)
-		}
-		if sourceIDColumnExists == 0 {
-			if _, err := migration.Exec("ALTER TABLE runs ADD COLUMN source_id TEXT NOT NULL DEFAULT ''"); err != nil {
-				_ = db.Close()
-				return nil, fmt.Errorf("migrate Run source IDs: %w", err)
-			}
-		}
-		if _, err := migration.Exec(`UPDATE runs
-			SET source_id = COALESCE((
-				SELECT schedule_id FROM schedule_triggers
-				WHERE schedule_triggers.run_id = runs.id
-				ORDER BY scheduled_for DESC
-				LIMIT 1
-			), '')
-			WHERE source_id = '' AND source_type IN ('scheduler', 'admin/schedule-now')`); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("backfill Run schedule IDs: %w", err)
-		}
-	}
-	if schemaVersion < 14 {
-		if _, err := migration.Exec(`CREATE TABLE IF NOT EXISTS schedule_groups (
-			id TEXT PRIMARY KEY,
-			name TEXT NOT NULL COLLATE NOCASE UNIQUE,
-			sort_order INTEGER NOT NULL,
-			created_at INTEGER NOT NULL,
-			updated_at INTEGER NOT NULL
-		)`); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("create Schedule groups: %w", err)
-		}
-		var groupIDColumnExists int
-		if err := migration.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('schedules') WHERE name = 'group_id'`).Scan(&groupIDColumnExists); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("inspect Schedule group IDs migration: %w", err)
-		}
-		if groupIDColumnExists == 0 {
-			if _, err := migration.Exec("ALTER TABLE schedules ADD COLUMN group_id TEXT REFERENCES schedule_groups(id) ON DELETE SET NULL"); err != nil {
-				_ = db.Close()
-				return nil, fmt.Errorf("migrate Schedule group IDs: %w", err)
-			}
-		}
-		rows, err := migration.Query(`SELECT MIN(TRIM(group_name))
-			FROM schedules
-			WHERE deleted = 0 AND TRIM(group_name) <> ''
-			GROUP BY LOWER(TRIM(group_name))
-			ORDER BY MIN(created_at)`)
+	if schemaVersion >= 21 && schemaVersion <= 23 {
+		exists, err := sqliteColumnExists(migration, "assistant_models", "supports_images")
 		if err != nil {
 			_ = db.Close()
-			return nil, fmt.Errorf("read legacy Schedule groups: %w", err)
+			return nil, fmt.Errorf("inspect Assistant model capability migration: %w", err)
 		}
-		var names []string
-		for rows.Next() {
-			var name string
-			if err := rows.Scan(&name); err != nil {
-				_ = rows.Close()
+		if !exists {
+			if _, err := migration.Exec(`ALTER TABLE assistant_models ADD COLUMN supports_images INTEGER NOT NULL DEFAULT 0`); err != nil {
 				_ = db.Close()
-				return nil, fmt.Errorf("scan legacy Schedule group: %w", err)
+				return nil, fmt.Errorf("migrate Assistant model image capability: %w", err)
 			}
-			names = append(names, name)
 		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			_ = db.Close()
-			return nil, fmt.Errorf("read legacy Schedule groups: %w", err)
-		}
-		_ = rows.Close()
-		var sortOrder int
-		if err := migration.QueryRow("SELECT COALESCE(MAX(sort_order), 0) FROM schedule_groups").Scan(&sortOrder); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("read Schedule group order: %w", err)
-		}
-		now := time.Now().UTC().Unix()
-		for _, name := range names {
-			var groupID string
-			err := migration.QueryRow("SELECT id FROM schedule_groups WHERE name = ? COLLATE NOCASE", name).Scan(&groupID)
-			if errors.Is(err, sql.ErrNoRows) {
-				groupID, err = randomToken(18)
-				if err == nil {
-					sortOrder++
-					_, err = migration.Exec(`INSERT INTO schedule_groups (id, name, sort_order, created_at, updated_at)
-						VALUES (?, ?, ?, ?, ?)`, groupID, name, sortOrder, now, now)
-				}
-			}
+		for _, column := range []struct{ name, definition string }{
+			{"capability_profile", `capability_profile TEXT NOT NULL DEFAULT 'general' CHECK (capability_profile IN ('general', 'diagnose-failed-run', 'investigate-website-incident', 'triage-host-pressure', 'review-script-safety', 'design-schedule'))`},
+			{"profile_version", `profile_version TEXT NOT NULL DEFAULT ''`},
+			{"thinking_level", `thinking_level TEXT NOT NULL DEFAULT 'medium' CHECK (thinking_level IN ('off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'))`},
+			{"stats_user_messages", `stats_user_messages INTEGER NOT NULL DEFAULT 0`},
+			{"stats_assistant_messages", `stats_assistant_messages INTEGER NOT NULL DEFAULT 0`},
+			{"stats_tool_calls", `stats_tool_calls INTEGER NOT NULL DEFAULT 0`},
+			{"stats_tool_results", `stats_tool_results INTEGER NOT NULL DEFAULT 0`},
+			{"stats_total_messages", `stats_total_messages INTEGER NOT NULL DEFAULT 0`},
+			{"stats_input_tokens", `stats_input_tokens INTEGER NOT NULL DEFAULT 0`},
+			{"stats_output_tokens", `stats_output_tokens INTEGER NOT NULL DEFAULT 0`},
+			{"stats_cache_read_tokens", `stats_cache_read_tokens INTEGER NOT NULL DEFAULT 0`},
+			{"stats_cache_write_tokens", `stats_cache_write_tokens INTEGER NOT NULL DEFAULT 0`},
+			{"stats_total_tokens", `stats_total_tokens INTEGER NOT NULL DEFAULT 0`},
+			{"stats_cost", `stats_cost REAL NOT NULL DEFAULT 0`},
+			{"stats_context_tokens", `stats_context_tokens INTEGER NOT NULL DEFAULT 0`},
+			{"stats_context_window", `stats_context_window INTEGER NOT NULL DEFAULT 0`},
+			{"stats_context_percent", `stats_context_percent REAL`},
+			{"stats_updated_at", `stats_updated_at INTEGER NOT NULL DEFAULT 0`},
+		} {
+			exists, err := sqliteColumnExists(migration, "assistant_conversations", column.name)
 			if err != nil {
 				_ = db.Close()
-				return nil, fmt.Errorf("migrate Schedule group %q: %w", name, err)
+				return nil, fmt.Errorf("inspect Assistant capability migration: %w", err)
 			}
-			if _, err := migration.Exec(`UPDATE schedules SET group_id = ?
-				WHERE group_id IS NULL AND deleted = 0 AND TRIM(group_name) = ? COLLATE NOCASE`,
-				groupID, name); err != nil {
+			if exists {
+				continue
+			}
+			if _, err := migration.Exec(`ALTER TABLE assistant_conversations ADD COLUMN ` + column.definition); err != nil {
 				_ = db.Close()
-				return nil, fmt.Errorf("assign migrated Schedule group %q: %w", name, err)
+				return nil, fmt.Errorf("migrate Assistant capability profiles and telemetry: %w", err)
 			}
 		}
 	}
-	if schemaVersion < 17 {
-		for _, column := range []struct {
-			name, definition string
-		}{
-			{"script_kind", "TEXT NOT NULL DEFAULT 'managed'"},
-			{"working_directory", "TEXT NOT NULL DEFAULT ''"},
-			{"source_filename", "TEXT NOT NULL DEFAULT ''"},
-			{"source_expired", "INTEGER NOT NULL DEFAULT 0"},
-			{"source_audit_event_id", "INTEGER REFERENCES audit_events(id)"},
+	if schemaVersion >= 20 && schemaVersion <= 24 {
+		for _, column := range []struct{ name, definition string }{
+			{"owner_user_id", `owner_user_id TEXT NOT NULL DEFAULT ''`},
+			{"is_shared", `is_shared INTEGER NOT NULL DEFAULT 0`},
 		} {
-			var exists int
-			if err := migration.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('runs') WHERE name = ?`, column.name).Scan(&exists); err != nil {
+			exists, err := sqliteColumnExists(migration, "assistant_models", column.name)
+			if err != nil {
 				_ = db.Close()
-				return nil, fmt.Errorf("inspect one-time Run migration: %w", err)
+				return nil, fmt.Errorf("inspect Assistant model visibility migration: %w", err)
 			}
-			if exists == 0 {
-				if _, err := migration.Exec("ALTER TABLE runs ADD COLUMN " + column.name + " " + column.definition); err != nil {
+			if !exists {
+				if _, err := migration.Exec(`ALTER TABLE assistant_models ADD COLUMN ` + column.definition); err != nil {
 					_ = db.Close()
-					return nil, fmt.Errorf("migrate one-time Runs: %w", err)
+					return nil, fmt.Errorf("migrate Assistant model visibility: %w", err)
 				}
 			}
 		}
-	}
-	if schemaVersion < 18 {
-		var logBytesColumnExists int
-		if err := migration.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('runs') WHERE name = 'log_bytes'`).Scan(&logBytesColumnExists); err != nil {
+		if _, err := migration.Exec(`UPDATE assistant_models SET owner_user_id = COALESCE(
+			NULLIF(owner_user_id, ''), NULLIF(updated_by_user_id, ''),
+			(SELECT id FROM users WHERE role = 'administrator' LIMIT 1), 'legacy-owner')
+			WHERE owner_user_id = ''`); err != nil {
 			_ = db.Close()
-			return nil, fmt.Errorf("inspect Run Log byte-count migration: %w", err)
+			return nil, fmt.Errorf("backfill Assistant model owners: %w", err)
 		}
-		if logBytesColumnExists == 0 {
-			if _, err := migration.Exec("ALTER TABLE runs ADD COLUMN log_bytes INTEGER NOT NULL DEFAULT -1"); err != nil {
-				_ = db.Close()
-				return nil, fmt.Errorf("migrate Run Log byte counts: %w", err)
-			}
+		if _, err := migration.Exec(`DROP INDEX IF EXISTS assistant_models_default_idx`); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("replace Assistant model default index: %w", err)
 		}
 	}
 	for _, statement := range []string{
@@ -1249,42 +1327,31 @@ func openDatabase(path string) (*sql.DB, error) {
 		"CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id)",
 		"CREATE INDEX IF NOT EXISTS quick_run_groups_order_idx ON quick_run_groups(sort_order, created_at)",
 		"CREATE INDEX IF NOT EXISTS quick_runs_group_order_idx ON quick_runs(group_id, sort_order, created_at)",
+		"CREATE INDEX IF NOT EXISTS quick_runs_script_path_idx ON quick_runs(script_path_key)",
 		"CREATE INDEX IF NOT EXISTS schedules_group_idx ON schedules(group_name, created_at)",
 		"CREATE INDEX IF NOT EXISTS schedule_groups_order_idx ON schedule_groups(sort_order, created_at)",
 		"CREATE INDEX IF NOT EXISTS schedules_group_order_idx ON schedules(group_id, created_at)",
+		"CREATE INDEX IF NOT EXISTS schedules_script_path_idx ON schedules(script_path_key)",
 		"CREATE INDEX IF NOT EXISTS runs_source_idx ON runs(source_type, source_id, created_at DESC)",
 		"CREATE INDEX IF NOT EXISTS runs_source_audit_idx ON runs(source_audit_event_id)",
 		"CREATE INDEX IF NOT EXISTS runs_created_idx ON runs(created_at DESC)",
+		"CREATE INDEX IF NOT EXISTS runs_script_path_idx ON runs(script_path_key)",
 		"CREATE INDEX IF NOT EXISTS runs_log_cleanup_idx ON runs(log_expired, created_at)",
 		"CREATE INDEX IF NOT EXISTS audit_events_occurred_idx ON audit_events(occurred_at DESC)",
 		"CREATE INDEX IF NOT EXISTS trash_entries_deleted_idx ON trash_entries(deleted_at DESC)",
+		"CREATE INDEX IF NOT EXISTS trash_entries_original_path_idx ON trash_entries(original_path_key)",
+		"CREATE INDEX IF NOT EXISTS file_operations_phase_idx ON file_operations(phase, created_at)",
 		"CREATE INDEX IF NOT EXISTS schedules_due_idx ON schedules(next_fire_at) WHERE enabled = 1 AND deleted = 0",
 		"CREATE INDEX IF NOT EXISTS schedule_triggers_schedule_time_idx ON schedule_triggers(schedule_id, scheduled_for DESC)",
 		"CREATE INDEX IF NOT EXISTS schedule_triggers_unlinked_time_idx ON schedule_triggers(scheduled_for) WHERE run_id = ''",
 		"CREATE INDEX IF NOT EXISTS application_pins_order_idx ON application_pins(sort_order, created_at)",
 		"CREATE INDEX IF NOT EXISTS application_metric_minutes_bucket_idx ON application_metric_minutes(bucket_at)",
+		"CREATE UNIQUE INDEX IF NOT EXISTS assistant_models_owner_default_idx ON assistant_models(owner_user_id) WHERE is_default = 1",
+		"CREATE INDEX IF NOT EXISTS assistant_models_visibility_idx ON assistant_models(owner_user_id, is_shared, is_default DESC, created_at, name)",
 	} {
 		if _, err := migration.Exec(statement); err != nil {
 			_ = db.Close()
 			return nil, fmt.Errorf("initialize SQLite indexes: %w", err)
-		}
-	}
-	for _, statement := range []string{
-		"DROP TABLE IF EXISTS ai_events",
-		"DROP TABLE IF EXISTS ai_skill_usage",
-		"DROP TABLE IF EXISTS ai_attachments",
-		"DROP TABLE IF EXISTS ai_batch_actions",
-		"DROP TABLE IF EXISTS ai_batches",
-		"DROP TABLE IF EXISTS ai_turns",
-		"DROP TABLE IF EXISTS ai_messages",
-		"DROP TABLE IF EXISTS ai_history_summaries",
-		"DROP TABLE IF EXISTS ai_conversations",
-		"DROP TABLE IF EXISTS ai_profiles",
-		"DROP TABLE IF EXISTS ai_settings",
-	} {
-		if _, err := migration.Exec(statement); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("remove legacy AI storage: %w", err)
 		}
 	}
 	if _, err := migration.Exec(fmt.Sprintf("PRAGMA user_version=%d", currentSchemaVersion)); err != nil {
@@ -1299,7 +1366,59 @@ func openDatabase(path string) (*sql.DB, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("commit SQLite migration: %w", err)
 	}
+	// Persist page one before returning so future startup can reject an old
+	// database by reading its header without opening it in writable mode.
+	if _, err := db.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("checkpoint initialized SQLite schema: %w", err)
+	}
 	return db, nil
+}
+
+func compatibleDatabaseSchema(version int) bool {
+	// Schema 20 is the clean host-filesystem baseline. Schema 21 adds the
+	// assistant-owned tables, schema 22 adds persisted tool-call text positions,
+	// schema 23 adds bounded request/response JSON, schema 24 adds capability
+	// profiles plus bounded Pi session telemetry, and schema 25 scopes LLM
+	// configurations to owners with explicit sharing. Each supported
+	// predecessor has an explicit transactional forward path.
+	return version == currentSchemaVersion || currentSchemaVersion == 25 && version >= 20 && version <= 24
+}
+
+func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {
+	rows, err := transaction.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var position, notNull, primaryKey int
+		var name, dataType string
+		var defaultValue any
+		if err := rows.Scan(&position, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
+func readSQLiteHeaderUserVersion(path string) (int, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+	header := make([]byte, 100)
+	if _, err := io.ReadFull(file, header); err != nil {
+		return 0, fmt.Errorf("read SQLite header: %w", err)
+	}
+	if !bytes.Equal(header[:16], []byte("SQLite format 3\x00")) {
+		return 0, errors.New("file does not contain a SQLite 3 header")
+	}
+	return int(binary.BigEndian.Uint32(header[60:64])), nil
 }
 
 func (a *App) initializeAdmin(stateRoot string) error {
@@ -1350,27 +1469,32 @@ func (a *App) initializeAdmin(stateRoot string) error {
 }
 
 func hashPassword(password string) (string, error) {
-	salt := make([]byte, 16)
+	salt := make([]byte, passwordSaltLength)
 	if _, err := rand.Read(salt); err != nil {
 		return "", fmt.Errorf("生成密码 salt: %w", err)
 	}
-	const memory = 64 * 1024
-	const iterations = 3
-	const parallelism = 2
-	const keyLength = 32
-	key := argon2.IDKey([]byte(password), salt, iterations, memory, parallelism, keyLength)
+	passwordWorkSlots <- struct{}{}
+	key := argon2.IDKey([]byte(password), salt, passwordIterations, passwordMemory, passwordParallelism, passwordKeyLength)
+	<-passwordWorkSlots
 	return fmt.Sprintf(
 		"$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
 		argon2.Version,
-		memory,
-		iterations,
-		parallelism,
+		passwordMemory,
+		passwordIterations,
+		passwordParallelism,
 		base64.RawStdEncoding.EncodeToString(salt),
 		base64.RawStdEncoding.EncodeToString(key),
 	), nil
 }
 
 func verifyPassword(password, encoded string) bool {
+	return verifyPasswordContext(context.Background(), password, encoded)
+}
+
+func verifyPasswordContext(ctx context.Context, password, encoded string) bool {
+	if len(password) > maxPasswordBytes || !utf8.ValidString(password) {
+		return false
+	}
 	parts := strings.Split(encoded, "$")
 	if len(parts) != 6 || parts[1] != "argon2id" {
 		return false
@@ -1383,19 +1507,28 @@ func verifyPassword(password, encoded string) bool {
 	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &iterations, &parallelism); err != nil {
 		return false
 	}
+	if memory != passwordMemory || iterations != passwordIterations || parallelism != passwordParallelism {
+		return false
+	}
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
-	if err != nil {
+	if err != nil || len(salt) != passwordSaltLength {
 		return false
 	}
 	want, err := base64.RawStdEncoding.DecodeString(parts[5])
-	if err != nil || len(want) == 0 {
+	if err != nil || len(want) != passwordKeyLength {
+		return false
+	}
+	select {
+	case passwordWorkSlots <- struct{}{}:
+		defer func() { <-passwordWorkSlots }()
+	case <-ctx.Done():
 		return false
 	}
 	got := argon2.IDKey([]byte(password), salt, iterations, memory, parallelism, uint32(len(want)))
 	return subtle.ConstantTimeCompare(got, want) == 1
 }
 
-func (a *App) routes(_ string) http.Handler {
+func (a *App) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /assets/app-v2.css", func(response http.ResponseWriter, request *http.Request) {
 		serveWebAsset(response, request, "text/css; charset=utf-8", appCSS)
@@ -1435,6 +1568,21 @@ func (a *App) routes(_ string) http.Handler {
 	mux.HandleFunc("POST /settings/locale", a.setWebLocale)
 	mux.Handle("POST /logout", a.requireSession(http.HandlerFunc(a.logout)))
 	mux.Handle("GET /monitor", a.requireSession(http.HandlerFunc(a.overviewPage)))
+	mux.Handle("GET /ai", a.requireSession(http.HandlerFunc(a.assistantPage)))
+	mux.Handle("GET /ai/resources", a.requireSession(http.HandlerFunc(a.assistantResourceSearch)))
+	mux.Handle("POST /ai/conversations", a.requireSession(http.HandlerFunc(a.createAssistantConversation)))
+	mux.Handle("GET /ai/conversations/{id}", a.requireSession(http.HandlerFunc(a.assistantConversationPage)))
+	mux.Handle("POST /ai/conversations/{id}/messages", a.requireSession(http.HandlerFunc(a.postAssistantMessage)))
+	mux.Handle("POST /ai/conversations/{id}/abort", a.requireSession(http.HandlerFunc(a.abortAssistantTurn)))
+	mux.Handle("GET /ai/conversations/{id}/events", a.requireSession(http.HandlerFunc(a.assistantConversationEvents)))
+	mux.Handle("POST /ai/conversations/{id}/model", a.requireSession(http.HandlerFunc(a.setAssistantConversationModel)))
+	mux.Handle("POST /ai/conversations/{id}/approval-mode", a.requireSession(http.HandlerFunc(a.setAssistantApprovalMode)))
+	mux.Handle("POST /ai/conversations/{id}/profile", a.requireSession(http.HandlerFunc(a.setAssistantCapabilityProfile)))
+	mux.Handle("POST /ai/conversations/{id}/thinking", a.requireSession(http.HandlerFunc(a.setAssistantThinkingLevel)))
+	mux.Handle("POST /ai/conversations/{id}/compact", a.requireSession(http.HandlerFunc(a.compactAssistantConversation)))
+	mux.Handle("POST /ai/conversations/{id}/approvals/{approval_id}", a.requireSession(http.HandlerFunc(a.resolveAssistantApproval)))
+	mux.Handle("POST /ai/conversations/{id}/archive", a.requireSession(http.HandlerFunc(a.archiveAssistantConversation)))
+	mux.Handle("POST /ai/conversations/{id}/restore", a.requireSession(http.HandlerFunc(a.restoreAssistantConversation)))
 	mux.Handle("GET /monitor/data", a.requireSession(http.HandlerFunc(a.overviewData)))
 	mux.Handle("GET /monitor/status", a.requireSession(http.HandlerFunc(a.shellStatus)))
 	mux.Handle("GET /monitor/applications", a.requireSession(http.HandlerFunc(a.applicationsPage)))
@@ -1485,6 +1633,7 @@ func (a *App) routes(_ string) http.Handler {
 	mux.Handle("GET /settings/account/password", a.requireSession(http.HandlerFunc(a.accountPasswordTask)))
 	mux.Handle("POST /settings/account/password", a.requireSession(http.HandlerFunc(a.changePassword)))
 	mux.Handle("GET /settings/users", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.usersPage)))
+	mux.Handle("GET /settings/users/create", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.createUserTask)))
 	mux.Handle("POST /settings/users", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.createUser)))
 	mux.Handle("GET /settings/users/{id}/edit", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.editUserTask)))
 	mux.Handle("POST /settings/users/{id}/disable", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.disableUser)))
@@ -1500,6 +1649,15 @@ func (a *App) routes(_ string) http.Handler {
 			SettingsNavigation settingsNavigationData
 		}{Locale: locale, SettingsNavigation: newSettingsNavigation(current, locale, "display")})
 	})))
+	mux.Handle("GET /settings/ai", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.assistantSettingsPage)))
+	mux.Handle("POST /settings/ai/llms", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.saveAssistantModel)))
+	mux.Handle("POST /settings/ai/llms/{id}/test", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.testAssistantModel)))
+	mux.Handle("POST /settings/ai/llms/{id}/default", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.setDefaultAssistantModel)))
+	mux.Handle("POST /settings/ai/llms/{id}/delete", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.deleteAssistantModel)))
+	mux.Handle("POST /settings/ai/defaults", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.saveAssistantDefaults)))
+	mux.Handle("POST /settings/ai/runtime/check", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.checkAssistantRuntime)))
+	mux.Handle("POST /settings/ai/runtime/install", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.installAssistantRuntime)))
+	mux.Handle("POST /settings/ai/runtime/rollback", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.rollbackAssistantRuntime)))
 	mux.Handle("GET /settings/updates", a.requireSession(http.HandlerFunc(a.updatesPage)))
 	mux.Handle("GET /settings/updates/status", a.requireSession(http.HandlerFunc(a.updateStatus)))
 	mux.Handle("POST /settings/updates/check", a.requireSession(http.HandlerFunc(a.checkUpdate)))
@@ -1507,27 +1665,33 @@ func (a *App) routes(_ string) http.Handler {
 	mux.Handle("POST /settings/updates/apply", a.requireSession(http.HandlerFunc(a.applyUpdate)))
 	mux.Handle("GET /resources/files/new-directory", a.requireSession(http.HandlerFunc(a.newDirectoryTask)))
 	mux.Handle("GET /resources/files/upload", a.requireSession(http.HandlerFunc(a.uploadTask)))
-	mux.Handle("GET /resources/directories", a.requireSession(http.HandlerFunc(a.managedDirectories)))
+	mux.Handle("GET /resources/files/move", a.requireSession(http.HandlerFunc(a.moveFileTask)))
+	mux.Handle("GET /resources/directories", a.requireSession(http.HandlerFunc(a.hostDirectories)))
 	mux.Handle("GET /resources/files/log", a.requireSession(http.HandlerFunc(a.fileLogPage)))
 	mux.Handle("GET /resources/files/log/history", a.requireSession(http.HandlerFunc(a.fileLogHistory)))
 	mux.Handle("GET /resources/files/log/events", a.requireSession(http.HandlerFunc(a.fileLogEvents)))
-	mux.Handle("GET /resources/files/run/{path...}", a.requireSession(http.HandlerFunc(a.runFileTask)))
-	mux.Handle("GET /resources/files/quick-run/{path...}", a.requireSession(http.HandlerFunc(a.quickRunFromFileTask)))
-	mux.Handle("GET /resources/files/{path...}", a.requireSession(http.HandlerFunc(a.filesPage)))
+	mux.Handle("GET /resources/files/run", a.requireSession(http.HandlerFunc(a.runFileTask)))
+	mux.Handle("GET /resources/files/quick-run", a.requireSession(http.HandlerFunc(a.quickRunFromFileTask)))
+	mux.Handle("GET /resources/files", a.requireSession(http.HandlerFunc(a.filesPage)))
+	mux.Handle("GET /resources/files/validate", a.requireSession(http.HandlerFunc(a.validateFileQuickAccess)))
 	mux.Handle("POST /resources/files/mkdir", a.requireSession(http.HandlerFunc(a.createDirectory)))
 	mux.Handle("POST /resources/files/conflicts", a.requireSession(http.HandlerFunc(a.uploadConflicts)))
 	mux.Handle("POST /resources/files/upload", a.requireSession(http.HandlerFunc(a.uploadFiles)))
-	mux.Handle("GET /resources/files/download/{path...}", a.requireSession(http.HandlerFunc(a.downloadFile)))
-	mux.Handle("GET /resources/files/preview/{path...}", a.requireSession(http.HandlerFunc(a.previewImage)))
-	mux.Handle("GET /resources/files/view/{path...}", a.requireSession(http.HandlerFunc(a.previewTextPage)))
+	mux.Handle("GET /resources/files/download", a.requireSession(http.HandlerFunc(a.downloadFile)))
+	mux.Handle("GET /resources/files/preview", a.requireSession(http.HandlerFunc(a.previewImage)))
+	mux.Handle("GET /resources/files/view", a.requireSession(http.HandlerFunc(a.previewTextPage)))
 	mux.Handle("POST /resources/files/delete", a.requireSession(http.HandlerFunc(a.deleteFile)))
 	mux.Handle("POST /resources/files/move", a.requireSession(http.HandlerFunc(a.moveFile)))
 	mux.Handle("POST /resources/files/toggle-executable", a.requireSession(http.HandlerFunc(a.toggleExecutable)))
+	mux.Handle("GET /resources/files/operations/{id}", a.requireSession(http.HandlerFunc(a.fileOperationPage)))
+	mux.Handle("GET /resources/files/operations/{id}/status", a.requireSession(http.HandlerFunc(a.fileOperationStatus)))
+	mux.Handle("GET /resources/files/operations/{id}/events", a.requireSession(http.HandlerFunc(a.fileOperationEvents)))
+	mux.Handle("POST /resources/files/operations/{id}/cancel", a.requireSession(http.HandlerFunc(a.cancelFileOperation)))
 	mux.Handle("GET /resources/trash", a.requireSession(http.HandlerFunc(a.trashPage)))
 	mux.Handle("POST /resources/trash/restore", a.requireSession(http.HandlerFunc(a.restoreTrash)))
 	mux.Handle("POST /resources/trash/purge", a.requireSession(http.HandlerFunc(a.purgeTrash)))
-	mux.Handle("GET /resources/files/edit/{path...}", a.requireSession(http.HandlerFunc(a.editTextPage)))
-	mux.Handle("POST /resources/files/edit/{path...}", a.requireSession(http.HandlerFunc(a.saveText)))
+	mux.Handle("GET /resources/files/edit", a.requireSession(http.HandlerFunc(a.editTextPage)))
+	mux.Handle("POST /resources/files/edit", a.requireSession(http.HandlerFunc(a.saveText)))
 	mux.Handle("POST /history/runs/start", a.requireSession(http.HandlerFunc(a.startRun)))
 	mux.Handle("GET /history/runs", a.requireSession(http.HandlerFunc(a.runsPage)))
 	mux.Handle("GET /history/runs/{id}/save-quick-run", a.requireSession(http.HandlerFunc(a.saveQuickRunTask)))
@@ -1582,20 +1746,25 @@ func (a *App) routes(_ string) http.Handler {
 	mux.Handle("POST /config/schedules/{id}/delete", a.requireSession(http.HandlerFunc(a.deleteSchedule)))
 	mux.Handle("GET /history/audit", a.requireSession(http.HandlerFunc(a.auditPage)))
 	mux.Handle("GET /history/audit.csv", a.requireSession(http.HandlerFunc(a.auditDownload)))
-	mux.Handle("GET /settings/version-protection", a.requireSession(http.HandlerFunc(a.versionProtectionPage)))
-	mux.Handle("POST /settings/version-protection/enable", a.requireSession(http.HandlerFunc(a.enableVersionProtection)))
-	mux.Handle("POST /settings/version-protection/adopt", a.requireSession(http.HandlerFunc(a.adoptVersionProtection)))
-	mux.Handle("POST /settings/version-protection/disable", a.requireSession(http.HandlerFunc(a.disableVersionProtection)))
-	mux.Handle("POST /settings/version-protection/checkpoint", a.requireSession(http.HandlerFunc(a.checkpointVersionProtection)))
-	mux.Handle("POST /settings/version-protection/restore", a.requireSession(http.HandlerFunc(a.restoreVersionedFile)))
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		request = a.applyTrustedProxy(request)
 		response.Header().Set("X-Content-Type-Options", "nosniff")
 		response.Header().Set("X-Frame-Options", "DENY")
 		response.Header().Set("Referrer-Policy", "no-referrer")
-		response.Header().Set("Content-Security-Policy", "default-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'")
+		response.Header().Set("Permissions-Policy", "camera=(), geolocation=(), microphone=()")
+		response.Header().Set("Content-Security-Policy", "default-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		if isSecureRequest(request) {
 			response.Header().Set("Strict-Transport-Security", "max-age=31536000")
+		}
+		if request.Body != nil && request.Method != http.MethodGet && request.Method != http.MethodHead &&
+			request.URL.Path != "/resources/files/upload" {
+			if request.ContentLength > maxFormRequestBytes {
+				http.Error(response, "request body is too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			resetReadDeadline := setRequestReadDeadline(response, boundedFormReadTimeout)
+			defer resetReadDeadline()
+			request.Body = http.MaxBytesReader(response, request.Body, maxFormRequestBytes)
 		}
 		if a.validation.Load() && request.Method != http.MethodGet {
 			response.Header().Set("Retry-After", "2")
@@ -1846,7 +2015,7 @@ func newPagination(request *http.Request, total int) paginationView {
 }
 
 func renderApplicationError(request *http.Request, status int, message string) []byte {
-	destination, label := "/resources/files/", "返回文件"
+	destination, label := "/resources/files", "返回文件"
 	switch {
 	case strings.HasPrefix(request.URL.Path, "/monitor/websites"):
 		destination, label = "/monitor/websites", "返回网站监控"
@@ -1856,8 +2025,6 @@ func renderApplicationError(request *http.Request, status int, message string) [
 		destination, label = "/settings/account", "返回账户设置"
 	case strings.HasPrefix(request.URL.Path, "/settings/display"):
 		destination, label = "/settings/display", "返回状态显示设置"
-	case strings.HasPrefix(request.URL.Path, "/settings/version-protection"):
-		destination, label = "/settings/version-protection", "返回版本保护"
 	case strings.HasPrefix(request.URL.Path, "/config/quick-runs"):
 		destination, label = "/config/quick-runs", "返回快捷执行"
 	case strings.HasPrefix(request.URL.Path, "/config/schedules"):
@@ -1917,136 +2084,6 @@ var webAssetVersion = func() string {
 	}, "\x00")))
 	return hex.EncodeToString(digest[:6])
 }()
-
-func (a *App) checkpointVersionProtection(response http.ResponseWriter, request *http.Request) {
-	if !validSessionCSRF(request) {
-		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
-		return
-	}
-	if a.runs.HasActive() {
-		http.Error(response, "存在活动运行，不能创建 Git 检查点", http.StatusConflict)
-		return
-	}
-	if err := a.gitProtection.Checkpoint("ScriptBoard manual checkpoint\n\nScriptBoard-Operation: manual-checkpoint"); err != nil {
-		http.Error(response, "无法创建检查点："+err.Error(), http.StatusBadRequest)
-		return
-	}
-	a.recordAuditForRequest(request, "git_checkpoint", "git", "succeeded")
-	http.Redirect(response, request, "/settings/version-protection", http.StatusSeeOther)
-}
-
-func (a *App) restoreVersionedFile(response http.ResponseWriter, request *http.Request) {
-	if !validSessionCSRF(request) {
-		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
-		return
-	}
-	if a.runs.HasActive() {
-		http.Error(response, "存在活动运行，不能恢复版本文件", http.StatusConflict)
-		return
-	}
-	if err := a.gitProtection.RestoreFile(request.FormValue("path"), request.FormValue("commit")); err != nil {
-		http.Error(response, "无法恢复版本文件："+err.Error(), http.StatusBadRequest)
-		return
-	}
-	a.recordAuditForRequest(request, "restore_versioned_file", request.FormValue("path"), "succeeded")
-	parent := pathpkg.Dir(request.FormValue("path"))
-	if parent == "." {
-		parent = ""
-	}
-	http.Redirect(response, request, filesURL(parent), http.StatusSeeOther)
-}
-
-func (a *App) versionProtectionPage(response http.ResponseWriter, request *http.Request) {
-	state, err := a.gitProtection.State()
-	if err != nil {
-		http.Error(response, "无法读取版本保护状态", http.StatusInternalServerError)
-		return
-	}
-	current := request.Context().Value(sessionContextKey).(session)
-	historyPath := request.URL.Query().Get("path")
-	var history []gitprotect.Commit
-	if historyPath != "" && state.Enabled {
-		history, err = a.gitProtection.History(historyPath)
-		if err != nil {
-			http.Error(response, "无法读取文件历史："+err.Error(), http.StatusBadRequest)
-			return
-		}
-	}
-	pagination := newPagination(request, len(history))
-	if len(history) > 0 {
-		history = history[pagination.Start:pagination.End]
-	}
-	response.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = versionProtectionTemplate.Execute(response, struct {
-		State              gitprotect.State
-		CSRFToken          string
-		HistoryPath        string
-		History            []gitprotect.Commit
-		Pagination         paginationView
-		Locale             webLocale
-		SettingsNavigation settingsNavigationData
-	}{
-		State: state, CSRFToken: current.csrfToken, HistoryPath: historyPath, History: history, Pagination: pagination,
-		Locale: resolveWebLocale(request), SettingsNavigation: newSettingsNavigation(current, resolveWebLocale(request), "version-protection"),
-	})
-}
-
-func (a *App) disableVersionProtection(response http.ResponseWriter, request *http.Request) {
-	if !validSessionCSRF(request) || request.FormValue("confirm") != "yes" {
-		http.Error(response, "停用版本保护需要明确确认", http.StatusForbidden)
-		return
-	}
-	if a.runs.HasActive() {
-		http.Error(response, "存在活动运行，不能停用版本保护", http.StatusConflict)
-		return
-	}
-	if err := a.gitProtection.Disable(); err != nil {
-		http.Error(response, "无法停用版本保护："+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	a.recordAuditForRequest(request, "disable_version_protection", "git", "succeeded")
-	http.Redirect(response, request, "/settings/version-protection", http.StatusSeeOther)
-}
-
-func (a *App) enableVersionProtection(response http.ResponseWriter, request *http.Request) {
-	if !validSessionCSRF(request) {
-		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
-		return
-	}
-	if request.FormValue("confirm") != "yes" {
-		http.Error(response, "启用版本保护需要明确确认", http.StatusBadRequest)
-		return
-	}
-	if a.runs.HasActive() {
-		http.Error(response, "存在活动运行，不能启用版本保护", http.StatusConflict)
-		return
-	}
-	if err := a.gitProtection.Enable(); err != nil {
-		a.recordAuditForRequest(request, "enable_version_protection", "git", "failed")
-		http.Error(response, "无法启用版本保护："+err.Error(), http.StatusBadRequest)
-		return
-	}
-	a.recordAuditForRequest(request, "enable_version_protection", "git", "succeeded")
-	http.Redirect(response, request, "/settings/version-protection", http.StatusSeeOther)
-}
-
-func (a *App) adoptVersionProtection(response http.ResponseWriter, request *http.Request) {
-	if !validSessionCSRF(request) || request.FormValue("confirm") != "adopt-clean-repository" {
-		http.Error(response, "接管已有仓库需要明确确认", http.StatusForbidden)
-		return
-	}
-	if a.runs.HasActive() {
-		http.Error(response, "存在活动运行，不能接管 Git 仓库", http.StatusConflict)
-		return
-	}
-	if err := a.gitProtection.Adopt(); err != nil {
-		a.recordAuditForRequest(request, "adopt_version_protection", "git", "failed")
-		http.Error(response, "无法接管 Git 仓库："+err.Error(), http.StatusBadRequest)
-		return
-	}
-	a.recordAuditForRequest(request, "adopt_version_protection", "git", "succeeded")
-	http.Redirect(response, request, "/settings/version-protection", http.StatusSeeOther)
-}
 
 type auditView struct {
 	OccurredAt time.Time
@@ -2218,9 +2255,39 @@ func (a *App) auditDownload(response http.ResponseWriter, _ *http.Request) {
 		if rows.Scan(&occurred, &action, &target, &result, &source, &actorUserID, &actorUsername, &actorRole) != nil {
 			return
 		}
-		_ = writer.Write([]string{time.Unix(occurred, 0).UTC().Format(time.RFC3339), action, target, result, source, actorUserID, actorUsername, actorRole})
+		record := []string{time.Unix(occurred, 0).UTC().Format(time.RFC3339), action, target, result, source, actorUserID, actorUsername, actorRole}
+		for index := range record {
+			record[index] = spreadsheetSafeCSVCell(record[index])
+		}
+		_ = writer.Write(record)
 	}
 	writer.Flush()
+}
+
+func spreadsheetSafeCSVCell(value string) string {
+	leadingControl := false
+	trimmed := strings.TrimLeftFunc(value, func(character rune) bool {
+		switch character {
+		case '\t', '\r', '\n':
+			leadingControl = true
+		}
+		return unicode.IsSpace(character) || character == '\u200b' || character == '\ufeff'
+	})
+	if trimmed == "" {
+		if leadingControl {
+			return "'" + value
+		}
+		return value
+	}
+	if leadingControl {
+		return "'" + value
+	}
+	switch trimmed[0] {
+	case '=', '+', '-', '@':
+		return "'" + value
+	default:
+		return value
+	}
 }
 
 func (a *App) schedulesPage(response http.ResponseWriter, request *http.Request) {
@@ -2288,6 +2355,7 @@ func (a *App) createSchedule(response http.ResponseWriter, request *http.Request
 		return
 	}
 	a.recordAuditForRequest(request, "create_schedule", id, "succeeded")
+	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/config/schedules", http.StatusSeeOther)
 }
 
@@ -2308,9 +2376,17 @@ func (a *App) scheduleRequest(request *http.Request) (scheduler.CreateRequest, e
 		}
 		timeoutSeconds = parsed
 	}
+	scriptPath, err := a.files.CanonicalExisting(request.FormValue("script"))
+	if err != nil {
+		return scheduler.CreateRequest{}, fmt.Errorf("计划脚本无效: %w", err)
+	}
+	info, err := a.files.Info(scriptPath)
+	if err != nil || !info.Mode().IsRegular() {
+		return scheduler.CreateRequest{}, errors.New("计划脚本必须是普通主机文件")
+	}
 	return scheduler.CreateRequest{
 		Name: name, GroupID: groupID, GroupName: groupName,
-		ScriptPath: request.FormValue("script"), ArgumentsTemplate: request.FormValue("arguments"),
+		ScriptPath: scriptPath, ArgumentsTemplate: request.FormValue("arguments"),
 		Expression: request.FormValue("expression"), TimeoutSeconds: timeoutSeconds,
 		AllowOverlap: request.FormValue("disallow_overlap") == "",
 	}, nil
@@ -2363,6 +2439,7 @@ func (a *App) runScheduleNow(response http.ResponseWriter, request *http.Request
 		return
 	}
 	a.recordAuditForRequest(request, "run_schedule_now", request.PathValue("id"), "accepted")
+	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/history/runs/"+url.PathEscape(id), http.StatusSeeOther)
 }
 
@@ -2420,9 +2497,9 @@ func (a *App) createQuickRun(values quickRunCreateRequest) (string, error) {
 	}
 	now := time.Now().UTC().Unix()
 	if _, err := transaction.Exec(`INSERT INTO quick_runs
-		(id, name, script_path, arguments_template, timeout_seconds, source_run_id, sort_order, created_at, group_id, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, values.Name, values.ScriptPath, values.ArgumentsTemplate, values.TimeoutSeconds,
+		(id, name, script_path, script_path_key, arguments_template, timeout_seconds, source_run_id, sort_order, created_at, group_id, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, values.Name, values.ScriptPath, hostfiles.ComparisonKey(values.ScriptPath), values.ArgumentsTemplate, values.TimeoutSeconds,
 		values.SourceRunID, sortOrder, now, values.GroupID, now,
 	); err != nil {
 		return "", err
@@ -2466,6 +2543,7 @@ func (a *App) saveQuickRun(response http.ResponseWriter, request *http.Request) 
 		return
 	}
 	a.recordAuditForRequest(request, "create_quick_run", id, "succeeded")
+	response.Header().Set(assistantResourceIDHeader, id)
 	destination := "/config/quick-runs"
 	if request.Header.Get("X-ScriptBoard-Navigation") == "pjax" {
 		destination = "/history/runs/" + url.PathEscape(source.ID)
@@ -2483,8 +2561,12 @@ func (a *App) createQuickRunFromFile(response http.ResponseWriter, request *http
 		http.Error(response, "快捷执行名称无效", http.StatusBadRequest)
 		return
 	}
-	scriptPath := filepath.ToSlash(strings.Trim(request.FormValue("script"), "/"))
-	info, err := a.managed.Info(scriptPath)
+	scriptPath, err := a.files.CanonicalExisting(request.FormValue("script"))
+	if err != nil {
+		writeHostFileError(response, "脚本不存在或不可运行", err)
+		return
+	}
+	info, err := a.files.Info(scriptPath)
 	if err != nil || !info.Mode().IsRegular() || !isScriptExtension(scriptPath) {
 		http.Error(response, "脚本不存在或不可运行", http.StatusBadRequest)
 		return
@@ -2522,6 +2604,7 @@ func (a *App) createQuickRunFromFile(response http.ResponseWriter, request *http
 		return
 	}
 	a.recordAuditForRequest(request, "create_quick_run", id, "succeeded")
+	response.Header().Set(assistantResourceIDHeader, id)
 	destination := "/config/quick-runs"
 	if request.Header.Get("X-ScriptBoard-Navigation") == "pjax" {
 		if returnTo := safeFilesReturnTo(request.FormValue("return_to")); returnTo != "" {
@@ -2572,7 +2655,7 @@ func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request)
 			http.Error(response, "无法读取快捷执行", http.StatusInternalServerError)
 			return
 		}
-		if info, infoErr := a.managed.Info(quick.ScriptPath); infoErr == nil && info.Mode().IsRegular() {
+		if info, infoErr := a.files.Info(quick.ScriptPath); infoErr == nil && info.Mode().IsRegular() {
 			quick.Valid = true
 		}
 		if groupID.Valid {
@@ -2654,6 +2737,7 @@ func (a *App) startQuickRun(response http.ResponseWriter, request *http.Request)
 		return
 	}
 	a.recordAuditForRequest(request, "start_quick_run", quick.ID, "accepted")
+	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/history/runs/"+url.PathEscape(id), http.StatusSeeOther)
 }
 
@@ -2990,6 +3074,7 @@ func (a *App) startRun(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	a.recordAuditForRequest(request, "start_run", id, "accepted")
+	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/history/runs/"+url.PathEscape(id), http.StatusSeeOther)
 }
 
@@ -3155,13 +3240,31 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 	}
 	source := request.FormValue("source")
 	destination := request.FormValue("destination")
+	var err error
+	if destination == "" {
+		destination, err = a.files.Destination(request.FormValue("working_directory"), request.FormValue("name"))
+		if err != nil {
+			writeHostFileError(response, "移动目标无效", err)
+			return
+		}
+	}
+	source, err = a.files.CanonicalExisting(source)
+	if err != nil {
+		writeHostFileError(response, "移动源无效", err)
+		return
+	}
+	destination, err = a.files.CanonicalDestination(destination)
+	if err != nil {
+		writeHostFileError(response, "移动目标无效", err)
+		return
+	}
 	sourceParent, _ := parentAndName(source)
 	action := request.FormValue("conflict_action")
 	if !validConflictAction(action) {
 		http.Error(response, "同名文件处理方式无效", http.StatusBadRequest)
 		return
 	}
-	if action == conflictActionSkip || pathpkg.Clean(source) == pathpkg.Clean(destination) {
+	if action == conflictActionSkip || hostfiles.ComparisonKey(source) == hostfiles.ComparisonKey(destination) {
 		http.Redirect(response, request, filesURL(sourceParent), http.StatusSeeOther)
 		return
 	}
@@ -3176,26 +3279,30 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 			http.Error(response, "请输入新的文件名", http.StatusBadRequest)
 			return
 		}
-		if err := managedfiles.ValidateName(newName); err != nil {
+		if err := hostfiles.ValidateName(newName); err != nil {
 			http.Error(response, "新文件名无效："+err.Error(), http.StatusBadRequest)
 			return
 		}
-		destination = childPath(destinationParent, newName)
+		destination, err = a.files.Destination(destinationParent, newName)
+		if err != nil {
+			writeHostFileError(response, "移动目标无效", err)
+			return
+		}
 		destinationName = newName
 	}
-	_, targetErr := a.managed.Info(destination)
+	_, targetErr := a.files.Info(destination)
 	targetExists := targetErr == nil
 	if targetErr != nil && !os.IsNotExist(targetErr) {
 		http.Error(response, "无法检查移动目标："+targetErr.Error(), http.StatusBadRequest)
 		return
 	}
 	if targetExists && action != conflictActionOverwrite {
-		suggested, err := a.managed.AvailableName(destinationParent, destinationName)
+		suggested, err := a.files.AvailableName(destinationParent, destinationName)
 		if err != nil {
 			http.Error(response, "无法生成可用名称："+err.Error(), http.StatusBadRequest)
 			return
 		}
-		relatedPath := strings.HasPrefix(source+"/", destination+"/") || strings.HasPrefix(destination+"/", source+"/")
+		relatedPath := hostfiles.Contains(source, destination) || hostfiles.Contains(destination, source)
 		a.renderFileConflict(response, request, fileConflictView{
 			Action: "/resources/files/move", BackURL: filesURL(sourceParent),
 			Source: source, Destination: destination, ItemPath: destination, SuggestedName: suggested,
@@ -3207,48 +3314,124 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "活动运行正在使用同名目标，不能覆盖", http.StatusConflict)
 		return
 	}
+	sameFilesystem, err := a.files.SameFilesystem(source, destination)
+	if err != nil {
+		writeHostFileError(response, "无法确定移动边界", err)
+		return
+	}
+	operationID := ""
+	leaseID := ""
+	if sameFilesystem {
+		token, tokenErr := randomToken(18)
+		if tokenErr != nil {
+			http.Error(response, "无法创建移动租约", http.StatusInternalServerError)
+			return
+		}
+		leaseID = "file-mutation:" + token
+	} else {
+		operationID, err = randomToken(18)
+		if err != nil {
+			http.Error(response, "无法创建跨文件系统操作", http.StatusInternalServerError)
+			return
+		}
+		leaseID = "file-operation:" + operationID
+	}
+	if err := a.files.AcquireLease(leaseID, source, destination); err != nil {
+		http.Error(response, "移动路径正在使用中："+err.Error(), http.StatusConflict)
+		return
+	}
+	leaseOwned := true
+	defer func() {
+		if leaseOwned {
+			a.files.ReleaseLease(leaseID)
+		}
+	}()
+	_, latestTargetErr := a.files.Info(destination)
+	latestTargetExists := latestTargetErr == nil
+	if latestTargetErr != nil && !os.IsNotExist(latestTargetErr) {
+		writeHostFileError(response, "无法重新检查移动目标", latestTargetErr)
+		return
+	}
+	if latestTargetExists != targetExists {
+		http.Error(response, "移动目标在确认期间发生变化，请重试", http.StatusConflict)
+		return
+	}
 	var displacedID string
-	var displaced *managedfiles.Trashed
+	var displaced *hostfiles.Trashed
 	if targetExists && action == conflictActionOverwrite {
-		var err error
 		displacedID, err = randomToken(18)
 		if err != nil {
 			http.Error(response, "无法创建覆盖事务", http.StatusInternalServerError)
 			return
 		}
-		moved, err := a.managed.MoveToTrash(destination, displacedID)
+		moved, err := a.files.MoveToTrash(destination, displacedID)
 		if err != nil {
 			http.Error(response, "无法暂存同名目标："+err.Error(), http.StatusConflict)
 			return
 		}
 		displaced = &moved
 		if _, err := a.db.Exec(
-			"INSERT INTO trash_entries (id, original_path, stored_name, deleted_at, size, is_directory) VALUES (?, ?, ?, ?, ?, ?)",
-			displacedID, moved.OriginalPath, moved.StoredName, time.Now().UTC().Unix(), moved.Size, moved.Directory,
+			`INSERT INTO trash_entries
+				(id, original_path, original_path_key, stored_path, stored_path_key, deleted_at, size, is_directory)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			displacedID, moved.OriginalPath, hostfiles.ComparisonKey(moved.OriginalPath), moved.StoredPath,
+			hostfiles.ComparisonKey(moved.StoredPath), time.Now().UTC().Unix(), moved.Size, moved.Directory,
 		); err != nil {
-			_ = a.managed.RestoreFromTrash(moved.StoredName, moved.OriginalPath)
+			_ = a.files.RestoreFromTrash(moved.StoredPath, moved.OriginalPath)
 			http.Error(response, "无法记录被覆盖的条目", http.StatusInternalServerError)
 			return
 		}
 	}
-	if err := a.managed.Move(source, destination); err != nil {
+	if !sameFilesystem {
+		started := make(chan struct{})
+		finished := make(chan error, 1)
+		current := request.Context().Value(sessionContextKey).(session)
+		sourceAddress := request.RemoteAddr
+		a.fileOperationWG.Add(1)
+		leaseOwned = false
+		go func() {
+			defer a.fileOperationWG.Done()
+			_, moveErr := a.fileMoves.ExecuteWithStart(a.fileOperationCtx, operationID, source, destination, func(hostfiles.FileOperation) { close(started) })
+			if moveErr != nil && displaced != nil {
+				// A post-commit failure remains recoverable and still owns the
+				// destination. Restore an overwritten entry only when the move
+				// engine actually rolled the destination back.
+				if _, destinationErr := a.files.Info(destination); os.IsNotExist(destinationErr) {
+					_ = a.restoreTrackedTrash(displacedID, *displaced)
+				}
+			}
+			result := "succeeded"
+			if moveErr != nil {
+				result = "failed"
+			}
+			a.recordAuditWithActor("cross_filesystem_move", source+" -> "+destination, result, sourceAddress, current.userID, current.username, current.role)
+			finished <- moveErr
+		}()
+		select {
+		case <-started:
+			http.Redirect(response, request, "/resources/files/operations/"+url.PathEscape(operationID), http.StatusSeeOther)
+		case moveErr := <-finished:
+			if moveErr == nil {
+				http.Redirect(response, request, "/resources/files/operations/"+url.PathEscape(operationID), http.StatusSeeOther)
+			} else {
+				http.Error(response, "无法启动跨文件系统移动："+moveErr.Error(), http.StatusBadRequest)
+			}
+		}
+		return
+	}
+	if err := a.files.Move(source, destination); err != nil {
 		if displaced != nil {
-			_, _ = a.db.Exec("DELETE FROM trash_entries WHERE id = ?", displacedID)
-			_ = a.managed.RestoreFromTrash(displaced.StoredName, displaced.OriginalPath)
+			if restoreErr := a.restoreTrackedTrash(displacedID, *displaced); restoreErr != nil {
+				http.Error(response, "无法移动条目："+err.Error()+"；恢复被覆盖条目失败："+restoreErr.Error(), http.StatusInternalServerError)
+				return
+			}
 		}
 		http.Error(response, "无法移动条目："+err.Error(), http.StatusBadRequest)
 		return
 	}
 	transaction, err := a.db.Begin()
 	if err == nil {
-		prefix := source + "/%"
-		for _, table := range []string{"quick_runs", "schedules"} {
-			query := "UPDATE " + table + " SET script_path = CASE WHEN script_path = ? THEN ? ELSE ? || substr(script_path, ?) END WHERE script_path = ? OR script_path LIKE ?"
-			_, err = transaction.Exec(query, source, destination, destination, len(source)+1, source, prefix)
-			if err != nil {
-				break
-			}
-		}
+		err = updateMovedScriptReferences(transaction, source, destination)
 	}
 	if err == nil {
 		err = transaction.Commit()
@@ -3257,16 +3440,15 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 		if transaction != nil {
 			_ = transaction.Rollback()
 		}
-		_ = a.managed.Move(destination, source)
-		if displaced != nil {
-			_, _ = a.db.Exec("DELETE FROM trash_entries WHERE id = ?", displacedID)
-			_ = a.managed.RestoreFromTrash(displaced.StoredName, displaced.OriginalPath)
+		rollbackErr := a.files.Move(destination, source)
+		if rollbackErr == nil && displaced != nil {
+			rollbackErr = a.restoreTrackedTrash(displacedID, *displaced)
+		}
+		if rollbackErr != nil {
+			http.Error(response, "无法同步更新引用："+err.Error()+"；文件回滚失败："+rollbackErr.Error(), http.StatusInternalServerError)
+			return
 		}
 		http.Error(response, "无法同步更新引用："+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if err := a.checkpointWebMutation("move-entry", source+" -> "+destination); err != nil {
-		http.Error(response, "条目已移动，但版本保护检查点失败："+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	a.recordAuditForRequest(request, "move_entry", source+" -> "+destination, "succeeded")
@@ -3282,62 +3464,63 @@ func (a *App) toggleExecutable(response http.ResponseWriter, request *http.Reque
 		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
 		return
 	}
-	path := request.FormValue("path")
-	if a.runs.ConflictsPath(path) {
-		http.Error(response, "活动运行持有该脚本的运行租约", http.StatusConflict)
+	path, err := a.files.CanonicalExisting(request.FormValue("path"))
+	if err != nil {
+		writeHostFileError(response, "执行权限目标无效", err)
 		return
 	}
-	if _, err := a.managed.ToggleOwnerExecute(path); err != nil {
-		http.Error(response, "无法切换所有者执行权限："+err.Error(), http.StatusBadRequest)
+	release, err := a.acquireFileMutationLease(path)
+	if err != nil {
+		http.Error(response, "条目正在使用中："+err.Error(), http.StatusConflict)
 		return
 	}
-	if err := a.checkpointWebMutation("toggle-owner-execute", path); err != nil {
-		http.Error(response, err.Error(), http.StatusInternalServerError)
+	defer release()
+	if _, err := a.files.ToggleOwnerExecute(path); err != nil {
+		writeHostFileError(response, "无法切换所有者执行权限", err)
 		return
 	}
 	a.recordAuditForRequest(request, "toggle_owner_execute", path, "succeeded")
-	parent := pathpkg.Dir(path)
-	if parent == "." {
-		parent = ""
-	}
+	parent, _ := hostPathParent(path)
 	http.Redirect(response, request, filesURL(parent), http.StatusSeeOther)
 }
 
 func (a *App) editTextPage(response http.ResponseWriter, request *http.Request) {
-	relative := request.PathValue("path")
-	document, err := a.managed.ReadText(relative, 1<<20)
+	relative, err := a.files.CanonicalExisting(request.URL.Query().Get("path"))
 	if err != nil {
-		http.Error(response, "无法编辑文件："+err.Error(), http.StatusBadRequest)
+		writeHostFileError(response, "无法编辑文件", err)
+		return
+	}
+	document, err := a.files.ReadText(relative, 1<<20)
+	if err != nil {
+		writeHostFileError(response, "无法编辑文件", err)
 		return
 	}
 	current := request.Context().Value(sessionContextKey).(session)
-	parent := pathpkg.Dir(relative)
-	if parent == "." {
-		parent = ""
-	}
+	parent, _ := hostPathParent(relative)
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = textEditorTemplate.Execute(response, struct {
 		Path, Content, Digest, CSRFToken, BackURL, ViewURL, DownloadURL, Action string
 		Locale                                                                  webLocale
 	}{
 		Path: relative, Content: document.Content, Digest: document.Digest, CSRFToken: current.csrfToken,
-		BackURL: filesURL(parent), ViewURL: routeFileURL("/resources/files/view/", relative), DownloadURL: routeFileURL("/resources/files/download/", relative), Action: routeFileURL("/resources/files/edit/", relative),
+		BackURL: filesURL(parent), ViewURL: routeFileURL("/resources/files/view", relative), DownloadURL: routeFileURL("/resources/files/download", relative), Action: routeFileURL("/resources/files/edit", relative),
 		Locale: resolveWebLocale(request),
 	})
 }
 
 func (a *App) previewTextPage(response http.ResponseWriter, request *http.Request) {
-	relative := request.PathValue("path")
-	document, err := a.managed.ReadText(relative, 1<<20)
+	relative, err := a.files.CanonicalExisting(request.URL.Query().Get("path"))
 	if err != nil {
-		http.Error(response, "无法预览文件："+err.Error(), http.StatusBadRequest)
+		writeHostFileError(response, "无法预览文件", err)
 		return
 	}
-	parent := pathpkg.Dir(relative)
-	if parent == "." {
-		parent = ""
+	document, err := a.files.ReadText(relative, 1<<20)
+	if err != nil {
+		writeHostFileError(response, "无法预览文件", err)
+		return
 	}
-	markdown := strings.EqualFold(filepath.Ext(relative), ".md")
+	parent, _ := hostPathParent(relative)
+	markdown := strings.EqualFold(hostfiles.Extension(relative), ".md")
 	highlightLanguage := highlightLanguageForPath(relative)
 	title := webText(resolveWebLocale(request), "editor.preview_title")
 	if markdown {
@@ -3345,10 +3528,7 @@ func (a *App) previewTextPage(response http.ResponseWriter, request *http.Reques
 	} else if highlightLanguage != "" {
 		title = webText(resolveWebLocale(request), "editor.script_preview_title")
 	}
-	markdownBaseURL := "/resources/files/view/"
-	if parent != "" {
-		markdownBaseURL = routeFileURL("/resources/files/view/", parent) + "/"
-	}
+	markdownBaseURL := parent
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = textPreviewTemplate.Execute(response, struct {
 		Path, Content, BackURL, EditURL, DownloadURL string
@@ -3358,7 +3538,7 @@ func (a *App) previewTextPage(response http.ResponseWriter, request *http.Reques
 		Locale                                       webLocale
 	}{
 		Path: relative, Content: document.Content, BackURL: filesURL(parent),
-		EditURL: routeFileURL("/resources/files/edit/", relative), DownloadURL: routeFileURL("/resources/files/download/", relative),
+		EditURL: routeFileURL("/resources/files/edit", relative), DownloadURL: routeFileURL("/resources/files/download", relative),
 		LogURL: "/resources/files/log?" + url.Values{"path": {relative}}.Encode(),
 		Title:  title, Markdown: markdown, MarkdownBaseURL: markdownBaseURL, HighlightLanguage: highlightLanguage, Locale: resolveWebLocale(request),
 	})
@@ -3369,55 +3549,54 @@ func (a *App) saveText(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
 		return
 	}
-	if err := diskspace.Require(a.managedRoot, diskspace.MinimumWritableBytes); err != nil {
-		http.Error(response, err.Error(), http.StatusInsufficientStorage)
+	relative, err := a.files.CanonicalExisting(request.URL.Query().Get("path"))
+	if err != nil {
+		writeHostFileError(response, "无法保存文件", err)
 		return
 	}
+	release, err := a.acquireFileMutationLease(relative)
+	if err != nil {
+		http.Error(response, "文件正在使用中："+err.Error(), http.StatusConflict)
+		return
+	}
+	defer release()
 	id, err := randomToken(18)
 	if err != nil {
 		http.Error(response, "无法创建回收条目", http.StatusInternalServerError)
 		return
 	}
-	relative := request.PathValue("path")
-	if a.runs.ConflictsPath(relative) {
-		http.Error(response, "活动运行持有该脚本的运行租约", http.StatusConflict)
-		return
-	}
-	trashed, err := a.managed.SaveText(relative, request.FormValue("digest"), request.FormValue("content"), id, 1<<20)
-	if errors.Is(err, managedfiles.ErrConflict) {
+	trashed, err := a.files.SaveText(relative, request.FormValue("digest"), request.FormValue("content"), id, 1<<20)
+	if errors.Is(err, hostfiles.ErrConflict) {
 		http.Error(response, "文件已被外部修改，请重新打开后再保存", http.StatusConflict)
 		return
 	}
 	if err != nil {
-		http.Error(response, "无法保存文件："+err.Error(), http.StatusBadRequest)
+		writeHostFileError(response, "无法保存文件", err)
 		return
 	}
 	_, err = a.db.Exec(
-		"INSERT INTO trash_entries (id, original_path, stored_name, deleted_at, size, is_directory) VALUES (?, ?, ?, ?, ?, 0)",
-		id, trashed.OriginalPath, trashed.StoredName, time.Now().UTC().Unix(), trashed.Size,
+		`INSERT INTO trash_entries
+			(id, original_path, original_path_key, stored_path, stored_path_key, deleted_at, size, is_directory)
+			VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
+		id, trashed.OriginalPath, hostfiles.ComparisonKey(trashed.OriginalPath), trashed.StoredPath,
+		hostfiles.ComparisonKey(trashed.StoredPath), time.Now().UTC().Unix(), trashed.Size,
 	)
 	if err != nil {
-		_ = a.managed.RollbackTextSave(relative, trashed.StoredName)
+		_ = a.files.RollbackTextSave(relative, trashed.StoredPath)
 		http.Error(response, "无法记录文件旧版本", http.StatusInternalServerError)
 		return
 	}
-	if err := a.checkpointWebMutation("edit-text", relative); err != nil {
-		http.Error(response, "文件已保存，但版本保护检查点失败："+err.Error(), http.StatusInternalServerError)
-		return
-	}
 	a.recordAuditForRequest(request, "edit_text", relative, "succeeded")
-	parent := pathpkg.Dir(filepath.ToSlash(relative))
-	if parent == "." {
-		parent = ""
-	}
+	response.Header().Set(assistantResourceIDHeader, id)
+	parent, _ := hostPathParent(relative)
 	http.Redirect(response, request, filesURL(parent), http.StatusSeeOther)
 }
 
 func (a *App) downloadFile(response http.ResponseWriter, request *http.Request) {
-	relative := request.PathValue("path")
-	file, info, err := a.managed.OpenRegular(relative)
+	relative := request.URL.Query().Get("path")
+	file, info, err := a.files.OpenRegular(relative)
 	if err != nil {
-		http.Error(response, "无法下载文件："+err.Error(), http.StatusBadRequest)
+		writeHostFileError(response, "无法下载文件", err)
 		return
 	}
 	defer file.Close()
@@ -3428,17 +3607,17 @@ func (a *App) downloadFile(response http.ResponseWriter, request *http.Request) 
 }
 
 func (a *App) previewImage(response http.ResponseWriter, request *http.Request) {
-	relative := request.PathValue("path")
-	extension := strings.ToLower(filepath.Ext(relative))
+	relative := request.URL.Query().Get("path")
+	extension := strings.ToLower(hostfiles.Extension(relative))
 	contentTypes := map[string]string{".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp"}
 	contentType, allowed := contentTypes[extension]
 	if !allowed {
 		http.Error(response, "该格式只能下载，不能内嵌预览", http.StatusUnsupportedMediaType)
 		return
 	}
-	file, info, err := a.managed.OpenRegular(relative)
+	file, info, err := a.files.OpenRegular(relative)
 	if err != nil {
-		http.Error(response, "无法预览图片："+err.Error(), http.StatusBadRequest)
+		writeHostFileError(response, "无法预览图片", err)
 		return
 	}
 	defer file.Close()
@@ -3453,15 +3632,20 @@ func (a *App) deleteFile(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
 		return
 	}
-	if a.runs.ConflictsPath(request.FormValue("path")) {
+	path, err := a.files.CanonicalExisting(request.FormValue("path"))
+	if err != nil {
+		writeHostFileError(response, "无法删除条目", err)
+		return
+	}
+	if a.runs.ConflictsPath(path) {
 		http.Error(response, "活动运行持有该脚本或其后代的运行租约", http.StatusConflict)
 		return
 	}
-	path := filepath.ToSlash(strings.Trim(request.FormValue("path"), "/"))
-	like := path + "/%"
-	var quickCount, scheduleCount int
-	_ = a.db.QueryRow("SELECT COUNT(*) FROM quick_runs WHERE script_path = ? OR script_path LIKE ?", path, like).Scan(&quickCount)
-	_ = a.db.QueryRow("SELECT COUNT(*) FROM schedules WHERE deleted = 0 AND (script_path = ? OR script_path LIKE ?)", path, like).Scan(&scheduleCount)
+	quickCount, scheduleCount, err := a.countScriptReferences(path)
+	if err != nil {
+		http.Error(response, "无法检查条目引用", http.StatusInternalServerError)
+		return
+	}
 	if (quickCount > 0 || scheduleCount > 0) && request.FormValue("confirm_references") != "yes" {
 		current := request.Context().Value(sessionContextKey).(session)
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -3474,38 +3658,55 @@ func (a *App) deleteFile(response http.ResponseWriter, request *http.Request) {
 		}{Path: path, QuickRuns: quickCount, Schedules: scheduleCount, CSRFToken: current.csrfToken, Locale: resolveWebLocale(request)})
 		return
 	}
+	release, err := a.acquireFileMutationLease(path)
+	if err != nil {
+		http.Error(response, "条目正在使用中："+err.Error(), http.StatusConflict)
+		return
+	}
+	defer release()
 	id, err := randomToken(18)
 	if err != nil {
 		http.Error(response, "无法创建回收条目", http.StatusInternalServerError)
 		return
 	}
-	trashed, err := a.managed.MoveToTrash(request.FormValue("path"), id)
+	trashed, err := a.files.MoveToTrash(path, id)
 	if err != nil {
 		http.Error(response, "无法删除条目："+err.Error(), http.StatusBadRequest)
 		return
 	}
 	_, err = a.db.Exec(
-		"INSERT INTO trash_entries (id, original_path, stored_name, deleted_at, size, is_directory) VALUES (?, ?, ?, ?, ?, ?)",
-		id, trashed.OriginalPath, trashed.StoredName, time.Now().UTC().Unix(), trashed.Size, trashed.Directory,
+		`INSERT INTO trash_entries
+			(id, original_path, original_path_key, stored_path, stored_path_key, deleted_at, size, is_directory)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, trashed.OriginalPath, hostfiles.ComparisonKey(trashed.OriginalPath), trashed.StoredPath,
+		hostfiles.ComparisonKey(trashed.StoredPath), time.Now().UTC().Unix(), trashed.Size, trashed.Directory,
 	)
 	if err != nil {
-		_ = a.managed.RestoreFromTrash(trashed.StoredName, trashed.OriginalPath)
+		_ = a.files.RestoreFromTrash(trashed.StoredPath, trashed.OriginalPath)
 		http.Error(response, "无法记录回收条目", http.StatusInternalServerError)
 		return
 	}
-	path = filepath.ToSlash(strings.TrimSuffix(trashed.OriginalPath, "/"))
-	like = path + "/%"
-	if _, err := a.db.Exec("UPDATE schedules SET enabled = 0, updated_at = ? WHERE deleted = 0 AND (script_path = ? OR script_path LIKE ?)", time.Now().UTC().UnixNano(), path, like); err != nil {
-		_ = a.managed.RestoreFromTrash(trashed.StoredName, trashed.OriginalPath)
-		_, _ = a.db.Exec("DELETE FROM trash_entries WHERE id = ?", id)
+	path = trashed.OriginalPath
+	transaction, err := a.db.Begin()
+	if err == nil {
+		err = disableScheduleReferences(transaction, path, time.Now().UTC().UnixNano())
+	}
+	if err == nil {
+		err = transaction.Commit()
+	}
+	if err != nil {
+		if transaction != nil {
+			_ = transaction.Rollback()
+		}
+		if restoreErr := a.restoreTrackedTrash(id, trashed); restoreErr != nil {
+			http.Error(response, "无法停用引用该条目的计划："+err.Error()+"；文件回滚失败："+restoreErr.Error(), http.StatusInternalServerError)
+			return
+		}
 		http.Error(response, "无法停用引用该条目的计划", http.StatusInternalServerError)
 		return
 	}
-	if err := a.checkpointWebMutation("trash-entry", path); err != nil {
-		http.Error(response, "条目已移入回收站，但版本保护检查点失败："+err.Error(), http.StatusInternalServerError)
-		return
-	}
 	a.recordAuditForRequest(request, "trash_entry", trashed.OriginalPath, "succeeded")
+	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/resources/trash", http.StatusSeeOther)
 }
 
@@ -3580,7 +3781,7 @@ func (a *App) restoreTrash(response http.ResponseWriter, request *http.Request) 
 	}
 	id := request.FormValue("id")
 	var original, stored string
-	if err := a.db.QueryRow("SELECT original_path, stored_name FROM trash_entries WHERE id = ?", id).Scan(&original, &stored); err != nil {
+	if err := a.db.QueryRow("SELECT original_path, stored_path FROM trash_entries WHERE id = ?", id).Scan(&original, &stored); err != nil {
 		http.Error(response, "回收条目不存在", http.StatusNotFound)
 		return
 	}
@@ -3592,23 +3793,28 @@ func (a *App) restoreTrash(response http.ResponseWriter, request *http.Request) 
 			http.Error(response, "请输入新的文件名", http.StatusBadRequest)
 			return
 		}
-		if err := managedfiles.ValidateName(newName); err != nil {
+		if err := hostfiles.ValidateName(newName); err != nil {
 			http.Error(response, "新文件名无效："+err.Error(), http.StatusBadRequest)
 			return
 		}
-		destination = childPath(parent, newName)
+		renamedDestination, err := a.files.Destination(parent, newName)
+		if err != nil {
+			writeHostFileError(response, "恢复目标无效", err)
+			return
+		}
+		destination = renamedDestination
 	}
-	_, targetErr := a.managed.Info(destination)
+	_, targetErr := a.files.Info(destination)
 	targetExists := targetErr == nil
 	if targetErr != nil && !os.IsNotExist(targetErr) {
 		http.Error(response, "无法检查恢复目标："+targetErr.Error(), http.StatusConflict)
 		return
 	}
 	if targetExists && action != conflictActionOverwrite {
-		suggested, err := a.managed.AvailableName(parent, originalName)
+		suggested, err := a.files.AvailableName(parent, originalName)
 		if action == conflictActionRename {
 			_, requestedName := parentAndName(destination)
-			suggested, err = a.managed.AvailableName(parent, requestedName)
+			suggested, err = a.files.AvailableName(parent, requestedName)
 		}
 		if err != nil {
 			http.Error(response, "无法生成可用名称："+err.Error(), http.StatusConflict)
@@ -3625,12 +3831,14 @@ func (a *App) restoreTrash(response http.ResponseWriter, request *http.Request) 
 		http.Error(response, "活动运行正在使用同名目标，不能覆盖", http.StatusConflict)
 		return
 	}
-	if err := a.commitTrashRestore(id, stored, destination, action == conflictActionOverwrite && targetExists); err != nil {
-		http.Error(response, "无法恢复条目："+err.Error(), http.StatusConflict)
+	release, err := a.acquireFileMutationLease(destination)
+	if err != nil {
+		http.Error(response, "恢复目标正在使用中："+err.Error(), http.StatusConflict)
 		return
 	}
-	if err := a.checkpointWebMutation("restore-trash", destination); err != nil {
-		http.Error(response, "条目已恢复，但版本保护检查点失败："+err.Error(), http.StatusInternalServerError)
+	defer release()
+	if err := a.commitTrashRestore(id, stored, destination, action == conflictActionOverwrite && targetExists); err != nil {
+		http.Error(response, "无法恢复条目："+err.Error(), http.StatusConflict)
 		return
 	}
 	a.recordAuditForRequest(request, "restore_trash", destination, "succeeded")
@@ -3644,11 +3852,11 @@ func (a *App) purgeTrash(response http.ResponseWriter, request *http.Request) {
 	}
 	id := request.FormValue("id")
 	var original, stored string
-	if err := a.db.QueryRow("SELECT original_path, stored_name FROM trash_entries WHERE id = ?", id).Scan(&original, &stored); err != nil {
+	if err := a.db.QueryRow("SELECT original_path, stored_path FROM trash_entries WHERE id = ?", id).Scan(&original, &stored); err != nil {
 		http.Error(response, "回收条目不存在", http.StatusNotFound)
 		return
 	}
-	if err := a.managed.PurgeTrash(stored); err != nil {
+	if err := a.files.PurgeTrash(stored); err != nil {
 		http.Error(response, "无法永久清理条目："+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -3661,10 +3869,6 @@ func (a *App) purgeTrash(response http.ResponseWriter, request *http.Request) {
 }
 
 func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
-	if err := diskspace.Require(a.managedRoot, diskspace.MinimumWritableBytes); err != nil {
-		http.Error(response, err.Error(), http.StatusInsufficientStorage)
-		return
-	}
 	locale := resolveWebLocale(request)
 	request.Body = http.MaxBytesReader(response, request.Body, 2<<30)
 	reader, err := request.MultipartReader()
@@ -3681,6 +3885,7 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 	}
 	var results []uploadResult
 	succeeded := 0
+	directoryChecked := false
 	for {
 		part, nextErr := reader.NextPart()
 		if errors.Is(nextErr, io.EOF) {
@@ -3724,13 +3929,36 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 			return
 		}
 		filename := part.FileName()
-		targetPath := pathpkg.Join(filepath.ToSlash(relative), filename)
+		if !directoryChecked {
+			if relative == "" {
+				_ = part.Close()
+				http.Error(response, "上传目录不能为空", http.StatusBadRequest)
+				return
+			}
+			if _, listErr := a.files.List(relative); listErr != nil {
+				_ = part.Close()
+				writeHostFileError(response, "上传目录无效", listErr)
+				return
+			}
+			directoryChecked = true
+		}
+		if nameErr := hostfiles.ValidateName(filename); nameErr != nil {
+			_ = part.Close()
+			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: nameErr.Error()})
+			continue
+		}
+		targetPath, destinationErr := a.files.Destination(relative, filename)
+		if destinationErr != nil {
+			_ = part.Close()
+			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: destinationErr.Error()})
+			continue
+		}
 		if !validConflictAction(conflictAction) {
 			_ = part.Close()
 			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: webText(locale, "upload_results.invalid_conflict_action")})
 			continue
 		}
-		targetInfo, targetErr := a.managed.Info(targetPath)
+		targetInfo, targetErr := a.files.Info(targetPath)
 		targetExists := targetErr == nil
 		if targetErr != nil && !os.IsNotExist(targetErr) {
 			_ = part.Close()
@@ -3747,13 +3975,18 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 				a.recordAuditForRequest(request, "upload_file", filename, "skipped")
 				continue
 			case conflictActionRename:
-				uploadName, err = a.managed.AvailableName(relative, filename)
+				uploadName, err = a.files.AvailableName(relative, filename)
 				if err != nil {
 					_ = part.Close()
 					results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: "无法生成可用名称：" + err.Error()})
 					continue
 				}
-				targetPath = pathpkg.Join(filepath.ToSlash(relative), uploadName)
+				targetPath, err = a.files.Destination(relative, uploadName)
+				if err != nil {
+					_ = part.Close()
+					results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: err.Error()})
+					continue
+				}
 			}
 		}
 		if replace && (!targetInfo.Mode().IsRegular() || a.runs.ConflictsPath(targetPath)) {
@@ -3762,14 +3995,23 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 			a.recordAuditForRequest(request, "upload_file", filename, "rejected")
 			continue
 		}
+		release, leaseErr := a.acquireFileMutationLease(targetPath)
+		if leaseErr != nil {
+			_ = part.Close()
+			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: leaseErr.Error()})
+			a.recordAuditForRequest(request, "upload_file", filename, "rejected")
+			continue
+		}
 		storedID, idErr := randomToken(18)
 		if idErr != nil {
+			release()
 			_ = part.Close()
 			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: "无法创建上传事务"})
 			continue
 		}
-		trashed, uploadErr := a.managed.Upload(relative, uploadName, part, 1<<30, replace, storedID)
+		trashed, uploadErr := a.files.Upload(relative, uploadName, part, 1<<30, replace, storedID)
 		if uploadErr != nil {
+			release()
 			_ = part.Close()
 			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: uploadErr.Error()})
 			a.recordAuditForRequest(request, "upload_file", filename, "rejected")
@@ -3777,14 +4019,19 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 		}
 		_ = part.Close()
 		if trashed != nil {
-			_, err = a.db.Exec("INSERT INTO trash_entries (id, original_path, stored_name, deleted_at, size, is_directory) VALUES (?, ?, ?, ?, ?, 0)", storedID, trashed.OriginalPath, trashed.StoredName, time.Now().UTC().Unix(), trashed.Size)
+			_, err = a.db.Exec(`INSERT INTO trash_entries
+				(id, original_path, original_path_key, stored_path, stored_path_key, deleted_at, size, is_directory)
+				VALUES (?, ?, ?, ?, ?, ?, ?, 0)`, storedID, trashed.OriginalPath, hostfiles.ComparisonKey(trashed.OriginalPath),
+				trashed.StoredPath, hostfiles.ComparisonKey(trashed.StoredPath), time.Now().UTC().Unix(), trashed.Size)
 			if err != nil {
-				_ = a.managed.RollbackTextSave(targetPath, storedID)
+				_ = a.files.RollbackTextSave(targetPath, trashed.StoredPath)
+				release()
 				results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: "替换已回滚：无法记录旧文件"})
 				a.recordAuditForRequest(request, "upload_file", filename, "failed")
 				continue
 			}
 		}
+		release()
 		a.recordAuditForRequest(request, "upload_file", uploadName, "succeeded")
 		detail := webText(locale, "upload_results.saved")
 		if uploadName != filename {
@@ -3797,11 +4044,6 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "未选择上传文件", http.StatusBadRequest)
 		return
 	}
-	if succeeded > 0 {
-		if err := a.checkpointWebMutation("upload", relative); err != nil {
-			results = append(results, uploadResult{Name: "Version Protection", Result: webText(locale, "upload_results.failed"), Detail: "文件已上传，但 checkpoint 失败：" + err.Error()})
-		}
-	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if succeeded < fileCount || len(results) > fileCount {
 		response.WriteHeader(http.StatusMultiStatus)
@@ -3811,90 +4053,108 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 		Results []uploadResult
 		Locale  webLocale
 	}{Link: filesURL(relative), Results: results, Locale: locale}); err != nil {
-		http.Error(response, "文件已上传，但版本保护检查点失败："+err.Error(), http.StatusInternalServerError)
+		http.Error(response, "文件已上传，但无法呈现结果："+err.Error(), http.StatusInternalServerError)
 	}
 }
 
 func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
-	relative := strings.Trim(request.PathValue("path"), "/")
+	relative := request.URL.Query().Get("path")
+	if strings.TrimSpace(relative) == "" {
+		relative = a.files.InitialBrowsePath()
+	}
+	if relative != "" {
+		var err error
+		relative, err = a.files.CanonicalDirectory(relative)
+		if err != nil {
+			writeHostFileError(response, "无法读取主机目录", err)
+			return
+		}
+	}
 	query := strings.TrimSpace(request.URL.Query().Get("q"))
+	showHidden := request.URL.Query().Get("show_hidden") == "1"
 	sortField, direction := normalizeFileSort(request.URL.Query().Get("sort"), request.URL.Query().Get("direction"))
 	current := request.Context().Value(sessionContextKey).(session)
 	locale := resolveWebLocale(request)
 	if isDeferredDataShell(request) {
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = filesTemplate.Execute(response, struct {
-			CSRFToken, ManagedRoot, CurrentPath, Query, SortField, Direction string
-			SortSummary, RootURL, SearchURL                                  string
-			Locale                                                           webLocale
-			DeferredData                                                     bool
-			CanWrite, CanExecute, CanManageExecution                         bool
+			CSRFToken, CurrentPath, Query, SortField, Direction        string
+			SortSummary, RootURL, SearchURL                            string
+			Locale                                                     webLocale
+			Breadcrumbs                                                []fileBreadcrumbView
+			DeferredData, ShowHidden                                   bool
+			CanWrite, CanMutateCurrent, CanExecute, CanManageExecution bool
 		}{
-			CSRFToken: current.csrfToken, ManagedRoot: a.managedRoot, CurrentPath: relative,
+			CSRFToken: current.csrfToken, CurrentPath: relative,
 			Query: query, SortField: sortField, Direction: direction, SortSummary: fileSortSummary(locale, sortField, direction),
-			RootURL: filesStateURL("", "", sortField, direction, 0), SearchURL: filesURL(relative),
-			Locale: locale, DeferredData: true,
-			CanWrite: roleAllows(current.role, permissionWriteFiles), CanExecute: roleAllows(current.role, permissionExecute),
+			RootURL: filesStateURL("", "", sortField, direction, showHidden, 0), SearchURL: "/resources/files",
+			Locale: locale, Breadcrumbs: buildHostBreadcrumbs(relative, sortField, direction, showHidden), DeferredData: true, ShowHidden: showHidden,
+			CanWrite: roleAllows(current.role, permissionWriteFiles), CanMutateCurrent: roleAllows(current.role, permissionWriteFiles) && relative != "", CanExecute: roleAllows(current.role, permissionExecute),
 			CanManageExecution: roleAllows(current.role, permissionManageExecution),
 		})
 		return
 	}
-	entries, err := a.managed.List(relative)
+	entries, err := a.files.List(relative)
 	if err != nil {
-		http.Error(response, "无法读取受管根目录："+err.Error(), http.StatusInternalServerError)
+		writeHostFileError(response, "无法读取主机目录", err)
 		return
 	}
-	listing := prepareFileListing(entries, relative, query, sortField, direction)
+	listing := prepareFileListing(entries, relative, query, sortField, direction, showHidden)
 	pagination := newPagination(request, len(listing))
 	if pagination.HasPrevious {
-		pagination.PreviousURL = filesStateURL(relative, query, sortField, direction, pagination.Page-1)
+		pagination.PreviousURL = filesStateURL(relative, query, sortField, direction, showHidden, pagination.Page-1)
 	}
 	if pagination.HasNext {
-		pagination.NextURL = filesStateURL(relative, query, sortField, direction, pagination.Page+1)
+		pagination.NextURL = filesStateURL(relative, query, sortField, direction, showHidden, pagination.Page+1)
 	}
 	type fileView struct {
-		managedfiles.Entry
-		Path, BrowseURL, DownloadURL, EditURL, PreviewURL, ViewURL, QuickRunURL string
-		LogURL                                                                  string
-		Protection, IconClass                                                   string
-		Runnable                                                                bool
-		NameParts                                                               []fileNamePart
-		CategoryLabel                                                           string
+		hostfiles.Entry
+		Path, BrowseURL, PinURL, DownloadURL, EditURL, PreviewURL, ViewURL, RunURL, QuickRunURL, MoveURL string
+		LogURL                                                                                           string
+		Protection, IconClass                                                                            string
+		Runnable, IsHidden, CanMutate                                                                    bool
+		NameParts                                                                                        []fileNamePart
+		CategoryLabel                                                                                    string
 	}
 	pageEntries := listing[pagination.Start:pagination.End]
-	protectionFiles := make([]gitprotect.File, 0, len(pageEntries))
-	for _, listed := range pageEntries {
-		if listed.Entry.Kind != managedfiles.Regular {
-			continue
-		}
-		protectionFiles = append(protectionFiles, gitprotect.File{Path: listed.Path, Size: listed.Entry.Size})
-	}
-	protectionDescription, _ := a.gitProtection.DescribeEntries(protectionFiles)
-	protectionState := protectionDescription.State
 	views := make([]fileView, 0, pagination.End-pagination.Start)
 	for _, listed := range pageEntries {
 		entry, path := listed.Entry, listed.Path
 		view := fileView{
 			Entry: entry, Path: path, IconClass: fileCategoryIcon(listed.Category),
 			NameParts: splitFileNameMatches(entry.Name, query), CategoryLabel: fileCategoryLabel(locale, listed.Category),
+			IsHidden: entry.Hidden, CanMutate: a.files.CanMutate(path),
 		}
-		if entry.Kind == managedfiles.Directory {
-			view.BrowseURL = filesStateURL(path, "", sortField, direction, 0)
-		} else if entry.Kind == managedfiles.Regular {
-			if protectionState.Enabled {
-				view.Protection = protectionDescription.Reasons[path]
+		if view.CanMutate {
+			view.MoveURL = routeFileURL("/resources/files/move", path)
+		}
+		if entry.VolumeType != "" {
+			view.CategoryLabel = webText(locale, "files.volume."+entry.VolumeType)
+			switch entry.VolumeType {
+			case "removable":
+				view.IconClass = "usb"
+			case "network":
+				view.IconClass = "network"
+			default:
+				view.IconClass = "hard-drive"
 			}
-			view.DownloadURL = routeFileURL("/resources/files/download/", path)
+		}
+		if entry.Kind == hostfiles.Directory {
+			view.BrowseURL = filesStateURL(path, "", sortField, direction, showHidden, 0)
+			view.PinURL = filesURL(path)
+		} else if entry.Kind == hostfiles.Regular {
+			view.DownloadURL = routeFileURL("/resources/files/download", path)
 			switch listed.Category {
 			case fileCategoryImage:
-				view.PreviewURL = routeFileURL("/resources/files/preview/", path)
+				view.PreviewURL = routeFileURL("/resources/files/preview", path)
 			case fileCategoryText, fileCategoryScript:
-				view.ViewURL = routeFileURL("/resources/files/view/", path)
-				view.EditURL = routeFileURL("/resources/files/edit/", path)
+				view.ViewURL = routeFileURL("/resources/files/view", path)
+				view.EditURL = routeFileURL("/resources/files/edit", path)
 				view.LogURL = "/resources/files/log?" + url.Values{"path": {path}}.Encode()
 				if listed.Category == fileCategoryScript {
 					view.Runnable = true
-					view.QuickRunURL = routeFileURL("/resources/files/quick-run/", path) + "?return_to=" + url.QueryEscape(request.URL.RequestURI())
+					view.RunURL = routeFileURL("/resources/files/run", path)
+					view.QuickRunURL = routeFileURL("/resources/files/quick-run", path) + "&return_to=" + url.QueryEscape(request.URL.RequestURI())
 				}
 			}
 		}
@@ -3902,17 +4162,14 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 	}
 	parentURL := ""
 	if relative != "" {
-		parent := pathpkg.Dir(relative)
-		if parent == "." {
-			parent = ""
-		}
-		parentURL = filesStateURL(parent, "", sortField, direction, 0)
+		parent, _ := hostPathParent(relative)
+		parentURL = filesStateURL(parent, "", sortField, direction, showHidden, 0)
 	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	breadcrumbs := buildHostBreadcrumbs(relative, sortField, direction, showHidden)
 	_ = filesTemplate.Execute(response, struct {
 		Entries             []fileView
 		CSRFToken           string
-		ManagedRoot         string
 		CurrentPath         string
 		Query               string
 		SortField           string
@@ -3924,26 +4181,57 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		Pagination          paginationView
 		CanToggleExecutable bool
 		CanWrite            bool
+		CanMutateCurrent    bool
 		CanExecute          bool
 		CanManageExecution  bool
 		ParentURL           string
-		VersionProtection   bool
+		Breadcrumbs         []fileBreadcrumbView
 		Locale              webLocale
 		DeferredData        bool
+		ShowHidden          bool
 	}{
-		Entries: views, CSRFToken: current.csrfToken, ManagedRoot: a.managedRoot, CurrentPath: relative,
+		Entries: views, CSRFToken: current.csrfToken, CurrentPath: relative,
 		Query: query, SortField: sortField, Direction: direction, SortSummary: fileSortSummary(locale, sortField, direction),
-		RootURL: filesStateURL("", "", sortField, direction, 0), ClearURL: filesStateURL(relative, "", sortField, direction, 0),
-		SearchURL:  filesURL(relative),
+		RootURL: filesStateURL("", "", sortField, direction, showHidden, 0), ClearURL: filesStateURL(relative, "", sortField, direction, showHidden, 0),
+		SearchURL:  "/resources/files",
 		Pagination: pagination, CanToggleExecutable: runtime.GOOS == "linux" && roleAllows(current.role, permissionWriteFiles), ParentURL: parentURL,
-		CanWrite: roleAllows(current.role, permissionWriteFiles), CanExecute: roleAllows(current.role, permissionExecute),
+		CanWrite: roleAllows(current.role, permissionWriteFiles), CanMutateCurrent: roleAllows(current.role, permissionWriteFiles) && relative != "", CanExecute: roleAllows(current.role, permissionExecute),
 		CanManageExecution: roleAllows(current.role, permissionManageExecution),
-		VersionProtection:  protectionState.Enabled, Locale: locale,
+		Breadcrumbs:        breadcrumbs, Locale: locale, ShowHidden: showHidden,
 	})
 }
 
+type fileBreadcrumbView struct {
+	Label string
+	URL   string
+}
+
+func buildHostBreadcrumbs(path, sortField, direction string, showHidden bool) []fileBreadcrumbView {
+	crumbs := hostfiles.Breadcrumbs(path)
+	items := make([]fileBreadcrumbView, 0, len(crumbs))
+	for _, crumb := range crumbs {
+		items = append(items, fileBreadcrumbView{Label: crumb.Label, URL: filesStateURL(crumb.Path, "", sortField, direction, showHidden, 0)})
+	}
+	if len(items) > 0 {
+		items[len(items)-1].URL = ""
+	}
+	return items
+}
+
+func (a *App) validateFileQuickAccess(response http.ResponseWriter, request *http.Request) {
+	accessible := false
+	if path := request.URL.Query().Get("path"); path != "" {
+		if info, err := a.files.Info(path); err == nil && info.IsDir() {
+			accessible = true
+		}
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(response).Encode(map[string]bool{"accessible": accessible})
+}
+
 func isTextPreviewExtension(path string) bool {
-	switch strings.ToLower(filepath.Ext(path)) {
+	switch strings.ToLower(hostfiles.Extension(path)) {
 	case ".txt", ".md", ".json", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg", ".log", ".csv", ".tsv", ".xml", ".html", ".css", ".js", ".ts", ".go", ".py", ".ps1", ".cmd", ".bat", ".sh", ".sql":
 		return true
 	default:
@@ -3952,7 +4240,7 @@ func isTextPreviewExtension(path string) bool {
 }
 
 func isScriptExtension(path string) bool {
-	switch strings.ToLower(filepath.Ext(path)) {
+	switch strings.ToLower(hostfiles.Extension(path)) {
 	case ".ps1", ".cmd", ".bat", ".sh", ".py":
 		return true
 	default:
@@ -3961,7 +4249,7 @@ func isScriptExtension(path string) bool {
 }
 
 func highlightLanguageForPath(path string) string {
-	switch strings.ToLower(filepath.Ext(path)) {
+	switch strings.ToLower(hostfiles.Extension(path)) {
 	case ".ps1":
 		return "powershell"
 	case ".cmd", ".bat":
@@ -3975,23 +4263,46 @@ func highlightLanguageForPath(path string) string {
 	}
 }
 
-func routeFileURL(prefix, relative string) string {
-	parts := strings.Split(pathpkg.Clean(filepath.ToSlash(relative)), "/")
-	for index := range parts {
-		parts[index] = url.PathEscape(parts[index])
+func routeFileURL(endpoint, path string) string {
+	values := url.Values{}
+	if path != "" {
+		values.Set("path", path)
 	}
-	return prefix + strings.Join(parts, "/")
+	if len(values) == 0 {
+		return endpoint
+	}
+	return endpoint + "?" + values.Encode()
 }
 
-func filesURL(relative string) string {
-	if relative == "" {
-		return "/resources/files/"
+func filesURL(path string) string {
+	return routeFileURL("/resources/files", path)
+}
+
+func hostPathParent(path string) (string, bool) {
+	return hostfiles.Parent(path)
+}
+
+func writeHostFileError(response http.ResponseWriter, action string, err error) {
+	status := http.StatusBadRequest
+	switch {
+	case errors.Is(err, hostfiles.ErrProtected), os.IsPermission(err):
+		status = http.StatusForbidden
+	case os.IsNotExist(err):
+		status = http.StatusNotFound
 	}
-	parts := strings.Split(pathpkg.Clean(filepath.ToSlash(relative)), "/")
-	for index := range parts {
-		parts[index] = url.PathEscape(parts[index])
+	http.Error(response, action+"："+err.Error(), status)
+}
+
+func (a *App) acquireFileMutationLease(paths ...string) (func(), error) {
+	token, err := randomToken(18)
+	if err != nil {
+		return nil, err
 	}
-	return "/resources/files/" + strings.Join(parts, "/") + "/"
+	id := "file-mutation:" + token
+	if err := a.files.AcquireLease(id, paths...); err != nil {
+		return nil, err
+	}
+	return func() { a.files.ReleaseLease(id) }, nil
 }
 
 func (a *App) createDirectory(response http.ResponseWriter, request *http.Request) {
@@ -3999,16 +4310,24 @@ func (a *App) createDirectory(response http.ResponseWriter, request *http.Reques
 		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
 		return
 	}
-	if err := a.managed.CreateDirectory(request.FormValue("path"), request.FormValue("name")); err != nil {
-		http.Error(response, "无法创建目录："+err.Error(), http.StatusBadRequest)
+	directory := request.FormValue("path")
+	target, err := a.files.Destination(directory, request.FormValue("name"))
+	if err != nil {
+		writeHostFileError(response, "无法创建目录", err)
 		return
 	}
-	if err := a.checkpointWebMutation("create-directory", request.FormValue("name")); err != nil {
-		http.Error(response, "目录已创建，但版本保护检查点失败："+err.Error(), http.StatusInternalServerError)
+	release, err := a.acquireFileMutationLease(target)
+	if err != nil {
+		http.Error(response, "目录位置正在使用中："+err.Error(), http.StatusConflict)
 		return
 	}
-	a.recordAuditForRequest(request, "create_directory", request.FormValue("name"), "succeeded")
-	http.Redirect(response, request, filesURL(request.FormValue("path")), http.StatusSeeOther)
+	defer release()
+	if err := a.files.CreateDirectory(directory, hostfiles.Base(target)); err != nil {
+		writeHostFileError(response, "无法创建目录", err)
+		return
+	}
+	a.recordAuditForRequest(request, "create_directory", target, "succeeded")
+	http.Redirect(response, request, filesURL(directory), http.StatusSeeOther)
 }
 
 func (a *App) accountUsernameTask(response http.ResponseWriter, request *http.Request) {
@@ -4053,7 +4372,7 @@ func (a *App) changeUsername(response http.ResponseWriter, request *http.Request
 		http.Error(response, "无法读取用户账号", http.StatusInternalServerError)
 		return
 	}
-	if !verifyPassword(request.FormValue("current_password"), passwordHash) {
+	if !verifyPasswordContext(request.Context(), request.FormValue("current_password"), passwordHash) {
 		http.Error(response, "当前密码错误", http.StatusUnauthorized)
 		return
 	}
@@ -4092,7 +4411,7 @@ func (a *App) changeUsername(response http.ResponseWriter, request *http.Request
 	}
 	a.cancelAuthenticatedRequests(current.userID)
 	a.recordAuditForRequest(request, "rename_self", username+" -> "+newUsername, "succeeded")
-	http.SetCookie(response, &http.Cookie{Name: sessionCookieName, Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(response, &http.Cookie{Name: sessionCookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(request), SameSite: http.SameSiteLaxMode})
 	http.Redirect(response, request, "/login", http.StatusSeeOther)
 }
 
@@ -4154,11 +4473,25 @@ func (a *App) changePassword(response http.ResponseWriter, request *http.Request
 	}
 	a.cancelAuthenticatedRequests(current.userID)
 	a.recordAuditForRequest(request, "change_password", username, "succeeded")
-	http.SetCookie(response, &http.Cookie{Name: sessionCookieName, Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(response, &http.Cookie{Name: sessionCookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(request), SameSite: http.SameSiteLaxMode})
 	http.Redirect(response, request, "/login", http.StatusSeeOther)
 }
 
 func (a *App) login(response http.ResponseWriter, request *http.Request) {
+	response.Header().Set("Cache-Control", "no-store")
+	resetReadDeadline := setRequestReadDeadline(response, unauthenticatedFormReadTimeout)
+	defer resetReadDeadline()
+	request.Body = http.MaxBytesReader(response, request.Body, maxLoginRequestBytes)
+	defer removeMultipartForm(request)
+	if err := parseRequestForm(request, maxLoginRequestBytes); err != nil {
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			http.Error(response, "登录请求过大", http.StatusRequestEntityTooLarge)
+		} else {
+			http.Error(response, "登录表单无效", http.StatusBadRequest)
+		}
+		return
+	}
 	csrfCookie, err := request.Cookie(loginCSRFCookieName)
 	if err != nil || subtle.ConstantTimeCompare([]byte(csrfCookie.Value), []byte(request.FormValue("csrf_token"))) != 1 {
 		renderLoginFailure(response, request, http.StatusForbidden, request.FormValue("username"), "登录页面已过期，请重试")
@@ -4169,10 +4502,21 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 		remoteHost = request.RemoteAddr
 	}
 	requestedUsername := strings.TrimSpace(request.FormValue("username"))
-	loginKeys := []string{"ip\x00" + remoteHost, "account\x00" + requestedUsername}
+	validLoginIdentity := validUsername(requestedUsername)
+	loginIdentity := requestedUsername
+	if !validLoginIdentity {
+		loginIdentity = "<invalid>"
+	}
+	loginKeys := []string{a.loginRateKey("ip", remoteHost), a.loginRateKey("account", loginIdentity)}
+	select {
+	case a.loginSlots <- struct{}{}:
+		defer func() { <-a.loginSlots }()
+	case <-request.Context().Done():
+		return
+	}
 	if retryAfter := a.loginRetryAfter(loginKeys...); retryAfter > 0 {
 		response.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(retryAfter.Seconds()))))
-		a.recordAuditForRequest(request, "login", requestedUsername, "rate_limited")
+		a.recordAuditForRequest(request, "login", loginIdentity, "rate_limited")
 		renderLoginFailure(response, request, http.StatusTooManyRequests, request.FormValue("username"), "登录尝试过于频繁，请稍后重试")
 		return
 	}
@@ -4181,17 +4525,26 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 	var role userRole
 	var enabled bool
 	var authVersion int64
-	err = a.db.QueryRow("SELECT id, username, password_hash, role, enabled, auth_version FROM users WHERE username = ?", requestedUsername).Scan(
-		&userID,
-		&username,
-		&passwordHash,
-		&role,
-		&enabled,
-		&authVersion,
-	)
-	if err != nil || !enabled || !verifyPassword(request.FormValue("password"), passwordHash) {
+	if validLoginIdentity {
+		err = a.db.QueryRow("SELECT id, username, password_hash, role, enabled, auth_version FROM users WHERE username = ?", requestedUsername).Scan(
+			&userID,
+			&username,
+			&passwordHash,
+			&role,
+			&enabled,
+			&authVersion,
+		)
+	} else {
+		err = sql.ErrNoRows
+	}
+	candidateHash := passwordHash
+	if err != nil || !enabled {
+		candidateHash = dummyPasswordHash
+	}
+	passwordMatches := verifyPasswordContext(request.Context(), request.FormValue("password"), candidateHash)
+	if err != nil || !enabled || !passwordMatches {
 		a.recordLoginFailure(loginKeys...)
-		a.recordAuditForRequest(request, "login", requestedUsername, "failed")
+		a.recordAuditForRequest(request, "login", loginIdentity, "failed")
 		renderLoginFailure(response, request, http.StatusUnauthorized, request.FormValue("username"), "用户名或密码错误")
 		return
 	}
@@ -4224,9 +4577,36 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   7 * 24 * 60 * 60,
 	})
-	http.SetCookie(response, &http.Cookie{Name: loginCSRFCookieName, Path: "/", MaxAge: -1})
+	http.SetCookie(response, &http.Cookie{Name: loginCSRFCookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(request), SameSite: http.SameSiteStrictMode})
 	a.recordAuditWithActor("login", username, "succeeded", request.RemoteAddr, userID, username, role)
 	completeLogin(response, request, "/monitor")
+}
+
+func setRequestReadDeadline(response http.ResponseWriter, timeout time.Duration) func() {
+	controller := http.NewResponseController(response)
+	if err := controller.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return func() {}
+	}
+	return func() {
+		_ = controller.SetReadDeadline(time.Time{})
+	}
+}
+
+func parseRequestForm(request *http.Request, maxMemory int64) error {
+	mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+	if err != nil {
+		return err
+	}
+	if mediaType == "multipart/form-data" {
+		return request.ParseMultipartForm(maxMemory)
+	}
+	return request.ParseForm()
+}
+
+func removeMultipartForm(request *http.Request) {
+	if request.MultipartForm != nil {
+		_ = request.MultipartForm.RemoveAll()
+	}
 }
 
 func (a *App) logout(response http.ResponseWriter, request *http.Request) {
@@ -4238,28 +4618,47 @@ func (a *App) logout(response http.ResponseWriter, request *http.Request) {
 		_, _ = a.db.Exec("DELETE FROM sessions WHERE token_hash = ?", hashToken(cookie.Value))
 	}
 	current := request.Context().Value(sessionContextKey).(session)
+	a.cancelAuthenticatedRequests(current.userID)
 	a.recordAuditForRequest(request, "logout", current.username, "succeeded")
-	http.SetCookie(response, &http.Cookie{Name: sessionCookieName, Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(response, &http.Cookie{Name: sessionCookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(request), SameSite: http.SameSiteLaxMode})
 	http.Redirect(response, request, "/login", http.StatusSeeOther)
 }
 
 func (a *App) loginRetryAfter(keys ...string) time.Duration {
 	a.loginMu.Lock()
 	defer a.loginMu.Unlock()
+	now := time.Now()
+	a.pruneLoginFailuresLocked(now)
 	var longest time.Duration
 	for _, key := range keys {
-		if remaining := time.Until(a.loginFailures[key].blockedUntil); remaining > longest {
+		if remaining := a.loginFailures[key].blockedUntil.Sub(now); remaining > longest {
 			longest = remaining
 		}
 	}
 	return longest
 }
 
+func (a *App) loginRateKey(scope, value string) string {
+	hash := sha256.New()
+	_, _ = hash.Write(a.loginRateSalt[:])
+	_, _ = hash.Write([]byte(scope))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write([]byte(value))
+	digest := hash.Sum(nil)
+	bucket := ((int(digest[0]) << 8) | int(digest[1])) & (loginRateBucketCount - 1)
+	return scope + "\x00" + strconv.Itoa(bucket)
+}
+
 func (a *App) recordLoginFailure(keys ...string) {
 	a.loginMu.Lock()
 	defer a.loginMu.Unlock()
+	now := time.Now()
+	a.pruneLoginFailuresLocked(now)
 	for _, key := range keys {
-		failure := a.loginFailures[key]
+		failure, exists := a.loginFailures[key]
+		if !exists && len(a.loginFailures) >= maxLoginFailureEntries {
+			continue
+		}
 		failure.count++
 		if failure.count >= 5 {
 			exponent := failure.count - 5
@@ -4269,10 +4668,23 @@ func (a *App) recordLoginFailure(keys ...string) {
 			} else {
 				delay *= time.Duration(1 << exponent)
 			}
-			failure.blockedUntil = time.Now().Add(delay)
+			failure.blockedUntil = now.Add(delay)
 		}
+		failure.updatedAt = now
 		a.loginFailures[key] = failure
 	}
+}
+
+func (a *App) pruneLoginFailuresLocked(now time.Time) {
+	if !a.loginLastPrune.IsZero() && now.Sub(a.loginLastPrune) < time.Minute {
+		return
+	}
+	for key, failure := range a.loginFailures {
+		if now.Sub(failure.updatedAt) >= time.Hour && !failure.blockedUntil.After(now) {
+			delete(a.loginFailures, key)
+		}
+	}
+	a.loginLastPrune = now
 }
 
 func (a *App) clearLoginFailures(keys ...string) {
@@ -4421,14 +4833,6 @@ func (a *App) recordAuditWithActor(action, target, result, source, actorUserID, 
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		time.Now().UTC().Unix(), action, target, result, source, actorUserID, actorUsername, actorRole,
 	)
-}
-
-func (a *App) checkpointWebMutation(action, target string) error {
-	state, err := a.gitProtection.State()
-	if err != nil || !state.Enabled || a.runs.HasActive() {
-		return err
-	}
-	return a.gitProtection.Checkpoint("ScriptBoard web checkpoint\n\nScriptBoard-Operation: " + action + "\nScriptBoard-Target: " + target)
 }
 
 type loginPageData struct {

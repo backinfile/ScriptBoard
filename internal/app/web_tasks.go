@@ -4,9 +4,9 @@ import (
 	"database/sql"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"strings"
 
+	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/scheduler"
 )
 
@@ -64,7 +64,15 @@ func (a *App) renderTaskPageStatus(response http.ResponseWriter, request *http.R
 }
 
 func (a *App) newDirectoryTask(response http.ResponseWriter, request *http.Request) {
-	relative := strings.Trim(request.URL.Query().Get("path"), "/")
+	relative := request.URL.Query().Get("path")
+	if relative == "" {
+		http.Error(response, "请先进入一个主机目录", http.StatusBadRequest)
+		return
+	}
+	if _, err := a.files.List(relative); err != nil {
+		writeHostFileError(response, "无法打开新建目录任务", err)
+		return
+	}
 	a.renderTaskPage(response, request, taskPageData{
 		Kind: "new-directory", Title: webText(resolveWebLocale(request), "task.new_directory.title"),
 		Description: webText(resolveWebLocale(request), "task.new_directory.description"),
@@ -73,7 +81,15 @@ func (a *App) newDirectoryTask(response http.ResponseWriter, request *http.Reque
 }
 
 func (a *App) uploadTask(response http.ResponseWriter, request *http.Request) {
-	relative := strings.Trim(request.URL.Query().Get("path"), "/")
+	relative := request.URL.Query().Get("path")
+	if relative == "" {
+		http.Error(response, "请先进入一个主机目录", http.StatusBadRequest)
+		return
+	}
+	if _, err := a.files.List(relative); err != nil {
+		writeHostFileError(response, "无法打开上传任务", err)
+		return
+	}
 	a.renderTaskPage(response, request, taskPageData{
 		Kind: "upload", Title: webText(resolveWebLocale(request), "task.upload.title"),
 		Description: webText(resolveWebLocale(request), "task.upload.description"),
@@ -81,17 +97,37 @@ func (a *App) uploadTask(response http.ResponseWriter, request *http.Request) {
 	})
 }
 
+func (a *App) moveFileTask(response http.ResponseWriter, request *http.Request) {
+	path, err := a.files.CanonicalExisting(request.URL.Query().Get("path"))
+	if err != nil {
+		writeHostFileError(response, "无法打开移动任务", err)
+		return
+	}
+	if !a.files.CanMutate(path) {
+		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
+		return
+	}
+	parent, ok := hostPathParent(path)
+	if !ok {
+		http.Error(response, "filesystem roots cannot be moved", http.StatusBadRequest)
+		return
+	}
+	a.renderTaskPage(response, request, taskPageData{
+		Kind: "move-file", Title: webText(resolveWebLocale(request), "task.move_file.title"),
+		Description: webText(resolveWebLocale(request), "task.move_file.description"),
+		BackURL:     filesURL(parent), Action: "/resources/files/move", Path: path,
+		Name: hostfiles.Base(path), WorkingDirectory: parent,
+	})
+}
+
 func (a *App) runFileTask(response http.ResponseWriter, request *http.Request) {
-	relative := filepath.ToSlash(strings.Trim(request.PathValue("path"), "/"))
-	info, err := a.managed.Info(relative)
+	relative := request.URL.Query().Get("path")
+	info, err := a.files.Info(relative)
 	if err != nil || !info.Mode().IsRegular() {
 		http.Error(response, "Script not found", http.StatusNotFound)
 		return
 	}
-	parent := filepath.ToSlash(filepath.Dir(relative))
-	if parent == "." {
-		parent = ""
-	}
+	parent, _ := hostPathParent(relative)
 	a.renderTaskPage(response, request, taskPageData{
 		Kind: "run", Title: webText(resolveWebLocale(request), "task.run.title"),
 		Description: webText(resolveWebLocale(request), "task.run.description"),
@@ -100,21 +136,18 @@ func (a *App) runFileTask(response http.ResponseWriter, request *http.Request) {
 }
 
 func (a *App) quickRunFromFileTask(response http.ResponseWriter, request *http.Request) {
-	relative := filepath.ToSlash(strings.Trim(request.PathValue("path"), "/"))
-	info, err := a.managed.Info(relative)
+	relative := request.URL.Query().Get("path")
+	info, err := a.files.Info(relative)
 	if err != nil || !info.Mode().IsRegular() || !isScriptExtension(relative) {
 		http.Error(response, "Script not found", http.StatusNotFound)
 		return
 	}
-	parent := filepath.ToSlash(filepath.Dir(relative))
-	if parent == "." {
-		parent = ""
-	}
+	parent, _ := hostPathParent(relative)
 	backURL := safeFilesReturnTo(request.URL.Query().Get("return_to"))
 	if backURL == "" {
 		backURL = filesURL(parent)
 	}
-	name := strings.TrimSuffix(filepath.Base(relative), filepath.Ext(relative))
+	name := strings.TrimSuffix(hostfiles.Base(relative), hostfiles.Extension(relative))
 	groups, err := a.loadQuickRunGroups()
 	if err != nil {
 		http.Error(response, "Unable to read Quick Run groups", http.StatusInternalServerError)
@@ -132,7 +165,7 @@ func safeFilesReturnTo(value string) string {
 	if err != nil || candidate.IsAbs() || candidate.Host != "" || candidate.Path == "" {
 		return ""
 	}
-	if candidate.Path != "/resources/files/" && !strings.HasPrefix(candidate.Path, "/resources/files/") {
+	if candidate.Path != "/resources/files" {
 		return ""
 	}
 	return candidate.RequestURI()

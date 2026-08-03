@@ -76,6 +76,16 @@ func (a *App) usersPage(response http.ResponseWriter, request *http.Request) {
 	a.renderUsersPage(response, request, http.StatusOK, "", "")
 }
 
+func (a *App) createUserTask(response http.ResponseWriter, request *http.Request) {
+	a.renderTaskPage(response, request, taskPageData{
+		Kind:        "user-create",
+		Title:       webText(resolveWebLocale(request), "users.create"),
+		Description: webText(resolveWebLocale(request), "users.create_description"),
+		BackURL:     "/settings/users",
+		Action:      "/settings/users",
+	})
+}
+
 func (a *App) editUserTask(response http.ResponseWriter, request *http.Request) {
 	user, err := a.userByID(request.PathValue("id"))
 	if userNotFound(err) {

@@ -10,7 +10,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"scriptboard/internal/managedfiles"
+	"scriptboard/internal/hostfiles"
 )
 
 func TestGetMetadataDoesNotReadRunLog(t *testing.T) {
@@ -23,7 +23,7 @@ func TestGetMetadataDoesNotReadRunLog(t *testing.T) {
 		t.Fatal(err)
 	}
 	insertRunMetadataTestRow(t, db, "run-1", logPath, time.Now().UTC())
-	manager := New(db, managedfiles.Open(filepath.Join(root, "managed")), root, 0, nil)
+	manager := New(db, testHostFiles(t), root, 0, nil)
 
 	metadata, err := manager.GetMetadata("run-1")
 	if err != nil {
@@ -55,7 +55,7 @@ func TestFollowEventsResumesAfterSequenceAndReturnsFinalStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	insertRunMetadataTestRow(t, db, "run-1", logPath, time.Now().UTC())
-	manager := New(db, managedfiles.Open(filepath.Join(root, "managed")), root, 0, nil)
+	manager := New(db, testHostFiles(t), root, 0, nil)
 
 	var events []Event
 	status, err := manager.FollowEvents(context.Background(), "run-1", 1, func(event Event) error {
@@ -86,7 +86,7 @@ func TestFollowEventsWakesWhenAnActiveRunAppendsOutput(t *testing.T) {
 	if _, err := db.Exec("UPDATE runs SET status = 'running' WHERE id = 'run-1'"); err != nil {
 		t.Fatal(err)
 	}
-	manager := New(db, managedfiles.Open(filepath.Join(root, "managed")), root, 0, nil)
+	manager := New(db, testHostFiles(t), root, 0, nil)
 	active := &activeRun{changed: make(chan struct{}, 1)}
 	manager.active["run-1"] = active
 
@@ -184,7 +184,7 @@ func TestCleanupLogsBackfillsUnknownLogSizes(t *testing.T) {
 		t.Fatal(err)
 	}
 	insertRunMetadataTestRow(t, db, "run-1", logPath, time.Now().UTC())
-	manager := New(db, managedfiles.Open(filepath.Join(root, "managed")), root, 0, nil)
+	manager := New(db, testHostFiles(t), root, 0, nil)
 
 	if cleaned, err := manager.CleanupLogs(24*time.Hour, 1<<30); err != nil || cleaned != 0 {
 		t.Fatalf("CleanupLogs = %d, %v", cleaned, err)
@@ -206,8 +206,17 @@ func insertRunMetadataTestRow(t *testing.T, db *sql.DB, id, logPath string, crea
 		error, timeout_seconds, log_path, log_expired, log_incomplete, log_truncated, dropped_bytes,
 		script_kind, working_directory, source_filename, source_expired
 	) VALUES (?, 'hello.cmd', 'digest', '', '[]', '[]', 'cmd.exe', 'admin/manual', '', '', 'tester',
-		'succeeded', ?, '', 30, ?, 0, 0, 0, 0, 'managed', '', '', 0)`,
+		'succeeded', ?, '', 30, ?, 0, 0, 0, 0, 'host_file', '', '', 0)`,
 		id, createdAt.UnixNano(), logPath); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func testHostFiles(t *testing.T) *hostfiles.Manager {
+	t.Helper()
+	manager, err := hostfiles.Open(hostfiles.Options{})
+	if err != nil {
+		t.Fatalf("open host files: %v", err)
+	}
+	return manager
 }

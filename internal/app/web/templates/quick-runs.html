@@ -49,7 +49,7 @@
   </section>
   {{end}}
   {{if and (not .QuickRuns) (not .Groups)}}
-  <section class="empty-state"><span data-lucide="zap" aria-hidden="true"></span><p>{{t .Locale "quick_runs.empty"}}</p>{{if .CanReadFiles}}<a class="button" href="/resources/files/">{{t .Locale "quick_runs.browse_scripts"}}</a>{{end}}</section>
+  <section class="empty-state"><span data-lucide="zap" aria-hidden="true"></span><p>{{t .Locale "quick_runs.empty"}}</p>{{if .CanReadFiles}}<a class="button" href="/resources/files">{{t .Locale "quick_runs.browse_scripts"}}</a>{{end}}</section>
   {{end}}
   {{end}}
   </div>

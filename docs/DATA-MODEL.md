@@ -42,9 +42,9 @@ Pin 是展示状态，不赋予应用控制能力。当前快照存在时由实�
 
 ## 1. 核心原则
 
-- 文件系统是受管条目的事实来源，不建立通用 File 表。
-- 数据库只保存应用身份、引用、执行、计划、审计与 Git 管理状态。
-- 文件引用保存相对受管根目录的规范路径，并在使用时重新验证真实路径、设备/卷与文件类型。
+- 主机文件系统是文件与目录的事实来源，不建立通用 File 表。
+- 数据库只保存应用身份、绝对路径引用、执行、计划、审计、回收条目与持久化文件操作。
+- 文件引用同时保存规范绝对路径与平台比较键，并在每次使用时由主机文件模块重新验证保护策略、权限、文件系统和条目类型。
 - Run 是不可删除的执行事实；日志是有保留期的外部文件。
 - 参数同时保存模板与实际展开值，因为变量全部是普通明文数据。
 
@@ -111,7 +111,7 @@ Pin 是展示状态，不赋予应用控制能力。当前快照存在时由实�
 |---|---|
 | id | UUID |
 | name | 管理员定义 |
-| script_path | 规范相对路径 |
+| script_path / script_path_key | 规范绝对路径及平台比较键 |
 | argument_text | 原始模板文本 |
 | argument_template | 解析后的模板数组 |
 | timeout_seconds | 可空代表无超时 |
@@ -143,7 +143,7 @@ Pin 是展示状态，不赋予应用控制能力。当前快照存在时由实�
 | id | UUID |
 | name | 管理员定义 |
 | group_id | 可空；引用 ScheduleGroup，删除分组时置空 |
-| script_path | 规范相对路径 |
+| script_path / script_path_key | 规范绝对路径及平台比较键 |
 | argument_text / argument_template | 变量引用模板 |
 | cron_expression | 标准五段 cron |
 | timeout_seconds | 可空代表无超时 |
@@ -180,10 +180,9 @@ Pin 是展示状态，不赋予应用控制能力。当前快照存在时由实�
 | 字段 | 约束 |
 |---|---|
 | id | UUID |
-| script_path_snapshot | 启动时规范相对路径 |
-| script_file_id_snapshot | 平台文件身份，用于诊断 |
+| script_path / script_path_key | 启动时规范绝对路径及平台比较键 |
 | script_sha256 | 启动瞬间摘要 |
-| script_versioned | 启动时 Git 保护状态 |
+| script_kind | `host_file` 或 `one_time` |
 | argument_text | 原始参数模板 |
 | argument_template | 模板参数数组 |
 | resolved_arguments | 启动时实际参数数组 |
@@ -193,7 +192,7 @@ Pin 是展示状态，不赋予应用控制能力。当前快照存在时由实�
 | runtime_identity_name / runtime_identity_id | 用户名/UID 或账号/SID |
 | executor | 实际可执行文件与固定前缀参数 |
 | executor_fallback_failures | 更早候选无法启动原因 |
-| working_directory_snapshot | 启动时绝对路径或安全相对表达 |
+| working_directory / working_directory_key | 启动时规范绝对路径及平台比较键 |
 | status | 见状态机 |
 | pid / process_group_or_job_id | 活动期信息 |
 | exit_code | 可空 |
@@ -237,13 +236,12 @@ Run 不允许删除。
 | 字段 | 约束 |
 |---|---|
 | id | UUID |
-| original_path | 删除前相对路径 |
-| trash_path | 回收站内部随机路径 |
+| original_path / original_path_key | 删除前规范绝对路径及平台比较键 |
+| stored_path / stored_path_key | 源文件系统私有回收区中的规范绝对路径及比较键 |
 | entry_type | file 或 directory |
 | size | 删除时估算 |
 | deleted_at | UTC |
-| deleted_by | 操作者 User ID 与用户名快照 |
-| affected_quick_run_ids / schedule_ids | 可存快照或通过审计关联 |
+| affected_quick_run_ids / schedule_ids | 通过确认页和审计关联 |
 
 ### AuditEvent
 
@@ -261,25 +259,26 @@ Run 不允许删除。
 
 不保存密码、Cookie、Session、CSRF、变量值、文件内容或请求正文。默认保留一年，不允许逐条修改。
 
-### GitProtection
+### FileOperation
 
-单实例单记录：
+跨文件系统移动的持久化恢复记录：
 
 | 字段 | 约束 |
 |---|---|
-| enabled | 管理员开关 |
-| state | `disabled`、`healthy`、`abnormal` |
-| repository_id | ScriptBoard 仓库标记 |
-| branch | 固定 `scriptboard-managed` |
-| git_executable | 最终解析路径 |
-| max_tracked_file_bytes | 默认 10 MiB |
-| max_repository_bytes | 默认 5 GiB |
-| last_commit | 可空 |
-| pending_batch_run_ids | 活动批次摘要 |
-| abnormal_reason | 可空 |
-| updated_at | UTC |
+| id | UUID |
+| kind | 当前固定为 `cross_filesystem_move` |
+| source_path / source_path_key | 源规范绝对路径及平台比较键 |
+| destination_path / destination_path_key | 目标规范绝对路径及平台比较键 |
+| temporary_path | 目标同目录临时项；尚未建立时为空 |
+| trash_path | 源文件系统回收项；尚未提交源时为空 |
+| phase | 预扫描、复制、校验、提交目标、回收源、更新引用、完成或失败 |
+| bytes_total / bytes_completed | 扫描后总量与已复制进度 |
+| verification_digest | 内容校验摘要 |
+| cancel_requested | 持久化取消请求 |
+| error | 终态或待恢复错误，不含文件内容与秘密 |
+| created_at / updated_at | UTC |
 
-Git 是文件系统中的版本事实来源，数据库保存管理状态与审计关联。
+记录必须足以在进程崩溃后判断源、临时项、已提交目标和源回收项的状态，并幂等继续或回滚。
 
 ## 3. Run 状态机
 
@@ -306,35 +305,49 @@ stateDiagram-v2
 
 ### 状态不变量
 
-- 启动前路径、参数、变量、执行器和 Git 安全门校验失败时不创建 Run，只写审计。
+- 启动前路径、保护策略、权限、参数、变量或执行器校验失败时不创建 Run，只写审计。
 - Run 创建后初始为 starting；进程创建失败才产生 starting → failed。
 - stopping 的最终结果固定为 cancelled；timing_out 的最终结果固定为 timed_out。
 - disconnected 是 ScriptBoard 失去监督后的终态，不重新接管 PID。
 - 终态 Run 不可删除或回到活动状态。
 
-## 4. Git 保护状态机
+## 4. 跨文件系统移动状态机
 
 ```mermaid
 stateDiagram-v2
-    [*] --> disabled
-    disabled --> healthy: enable + baseline/adoption checkpoint
-    healthy --> disabled: final checkpoint + confirmed disable
-    healthy --> abnormal: checkpoint/config/HEAD/integrity failure
-    abnormal --> healthy: diagnose + successful retry
-    abnormal --> disabled: confirmed disable
+    [*] --> scanning
+    scanning --> copying: preflight and space check succeed
+    scanning --> failed: restricted entry, conflict, or insufficient space
+    scanning --> cancelled: cancellation succeeds before copying
+    copying --> ready_to_commit: bytes and metadata verify
+    copying --> failed: copy or verification fails
+    copying --> cancelled: cancellation cleans the temporary item
+    copying --> cleanup_pending: temporary cleanup must resume after restart
+    ready_to_commit --> target_committed: target atomically renamed into place
+    target_committed --> source_trashed: verified source enters its filesystem trash
+    source_trashed --> completed: trash registration and reference transaction commit
+    scanning --> rolled_back: startup recovery
+    copying --> rolled_back: startup recovery
+    ready_to_commit --> rolled_back: startup recovery before target commit
+    cleanup_pending --> rolled_back: startup cleanup succeeds
+    completed --> [*]
+    rolled_back --> [*]
+    cancelled --> [*]
+    failed --> [*]
 ```
 
-### Git 状态不变量
+### 文件操作状态不变量
 
-- healthy 才允许新的脚本执行和受保护文件修改。
-- 未跟踪文件资格不使仓库 abnormal。
-- 任意 Run 活动期间不执行 Git add/commit/restore/gc 或启停。
-- abnormal 不自动清理、reset 或切换分支。
+- 目标提交前失败或取消必须清理临时项并保持源不变。
+- 目标只通过同目录原子重命名变为可见；源只移动到带实例所有权标记的同文件系统回收区。
+- 目标提交后不得把操作伪装成未发生；重启恢复必须依据磁盘事实继续源回收和引用事务，或报告可解释失败。
+- 目录预扫描发现链接、特殊文件或无法无损保留的平台元数据时，在复制前拒绝。
+- 源和目标路径租约覆盖祖先与后代，阻止 Run 和其他文件事务竞争。
 
 ## 5. 文件引用不变量
 
-- QuickRun 与 Schedule 引用规范相对路径，不引用任意绝对路径。
-- 网页移动在文件系统变更和引用更新间提供补偿回滚。
+- QuickRun 与 Schedule 引用规范绝对路径和平台比较键，路径解释只能经过主机文件模块。
+- 同文件系统移动以原子重命名与数据库事务更新引用；跨文件系统移动由 FileOperation 恢复协议保证可解释状态。
 - 外部移动使引用失效，不按名称、摘要或 inode 猜测新路径。
 - Run 保存路径快照，不随当前文件移动。
 - 变量重命名更新 QuickRun 与 Schedule；Run 历史不改写。
@@ -343,21 +356,23 @@ stateDiagram-v2
 
 - Session(token_hash), Session(expires_at)
 - Variable(name)
-- QuickRun(sort_order), QuickRun(script_path)
-- Schedule(enabled, next_fire_at), Schedule(script_path)
+- QuickRun(sort_order), QuickRun(script_path_key)
+- Schedule(enabled, next_fire_at), Schedule(script_path_key)
 - ScheduleTrigger(schedule_id, scheduled_for), ScheduleTrigger(run_id)
-- Run(created_at DESC), Run(status, started_at), Run(script_path_snapshot, status)
+- Run(created_at DESC), Run(status, started_at), Run(script_path_key, status)
 - Run(source_type, source_id)
 - AuditEvent(occurred_at DESC), AuditEvent(action, occurred_at)
-- TrashEntry(original_path), TrashEntry(deleted_at)
+- TrashEntry(original_path_key), TrashEntry(deleted_at)
+- FileOperation(phase, updated_at), FileOperation(source_path_key), FileOperation(destination_path_key)
+- AssistantModel(is_default), AssistantConversation(owner_user_id, archived_at, updated_at), AssistantMessage(conversation_id, sequence)
+- AssistantToolCall(conversation_id, started_at), AssistantApproval(conversation_id, status, expires_at)
 
 ## 7. 文件布局
 
 ```text
-managed-root/
-  .git/                       # 可选、受保护且不经网页暴露
-  .scriptboard-trash/         # 保留回收站
-  ...                         # 管理员文件与脚本
+host-filesystems/
+  <ordinary host files>       # 文件系统本身是事实来源，不由 ScriptBoard 建表镜像
+  .scriptboard-trash/         # 每个发生删除的文件系统各自建立，带实例所有权标记并受保护
 
 state-root/
   app.db
@@ -371,8 +386,6 @@ state-root/
   logs/
     scriptboard.log
     scriptboard.log.1 ...
-  migrations/
-    pre-upgrade.db            # 最近一次升级前内部快照
   runtime.json                # 当前进程写入的精确构建运行标记
   updates/
     cache.json                # 最近一次有效检查、ETag 与错误摘要
@@ -390,9 +403,9 @@ state-root/
   tmp/
 ```
 
-受管根目录与状态目录可覆盖，但必须互不包含；`.git/` 与回收站不得成为状态数据库或秘密存储位置。
+State Root、Install Root、活动配置、管理员密码文件、TLS 私钥和各文件系统回收区均为受保护路径。文件页面不显示这些路径；其祖先不能执行会影响后代的写入、移动、删除、覆盖或执行。磁盘上已有 `.git/` 不属于应用状态，ScriptBoard 不修改或删除它。
 
-正式受管服务另有独立的程序布局，不属于 State Root：
+正式系统服务另有独立程序布局，不属于 State Root：
 
 ```text
 install-root/
@@ -441,16 +454,89 @@ stateDiagram-v2
 
 ## 9. 一次性 Run 源码
 
-`Run.script_kind` 区分 `managed` 与 `one_time`。一次性 Run 额外保存：
+`Run.script_kind` 区分 `host_file` 与 `one_time`。一次性 Run 额外保存：
 
 | 字段 | 语义 |
 | --- | --- |
-| working_directory | 相对 Managed Root 的执行 workdir；空值表示根目录 |
+| working_directory / working_directory_key | 允许的普通主机目录规范绝对路径及平台比较键 |
 | source_filename | 私有 Run 目录内固定的 `source.{ext}` |
 | source_expired | 源码已回收，源码入口返回 410 |
 | source_audit_event_id | 回收前关联的 `start_one_time_run` 审计主键 |
 | script_sha256 | 实际执行源码的内容摘要，源码回收后仍保留 |
 
-源码不是 Managed Entry 或 Trash Entry。审计清理先删除源码，再在同一数据库事务中
+源码不是 Host Entry 或 Trash Entry。审计清理先删除源码，再在同一数据库事务中
 设置 `source_expired=1`、清空审计引用并删除审计条目。文件删除失败时三个数据库
 变更均不得发生。RunLogManifest 的 90 天/容量清理不处理源码文件。
+
+## 10. AI Assistant
+
+schema 21 在 schema 20 主机文件基线上增加 Assistant 自有表；schema 24 在兼容的
+schema 21–23 上增加 Conversation Profile、Session Telemetry 与模型图片输入事实。
+迁移在同一事务内补列、建索引并更新 `user_version`；早于 20 或高于当前版本的状态库
+仍在任何写入前拒绝。
+
+| 实体 | 关键字段与语义 |
+| --- | --- |
+| AssistantSettings | 单例；功能启用、最大活动对话数、新对话自动审批默认值、更新者和时间 |
+| AssistantModel | 名称、Provider、模型 ID、HTTPS/回环 Endpoint、凭据已配置事实、`supports_images` 管理员声明、唯一默认项；不保存 API Key |
+| AssistantConversation | 所有者、标题、必选模型、审批模式、Pi session 相对标识、Runtime 版本、Conversation Profile 与版本、思考级别、Session Telemetry、状态、revision、归档时间 |
+| AssistantMessage | 对话内稳定 sequence、user/assistant、正文、streaming/complete/interrupted/error 与完成时间 |
+| AssistantContextRef | 对话、资源种类、稳定 ID、安全标签和展示顺序；不复制文件或日志正文 |
+| AssistantToolCall | 工具名、目标/参数摘要、状态、稳定错误码、结果摘要、时间，以及对话内可检查的有界调用/返回 JSON；调用 JSON 不含 capability 或 Provider 凭据 |
+| AssistantApproval | 工具调用、参数摘要、pending/approved/rejected/expired/cancelled、过期时间和决定者 |
+
+AssistantConversation 只能由 `owner_user_id` 对应用户列出、读取、订阅和修改。每个对话
+同一时间最多存在一个 streaming assistant message；服务启动时，仍为 running 或
+waiting_approval 的对话及消息原位转为 interrupted，不创建重放任务。归档只设置时间，
+不会级联删除消息、资源引用或 Pi session。
+
+提交消息时，用户消息、streaming assistant message、conversation running 状态和该次
+完整资源引用集合在一个事务内写入；遗漏的旧引用会被移除。每个 Agent Turn 随后重新校验
+引用权限并生成有界快照。目录只包含逻辑名称与最多 48 个直接子项元数据；明确引用的普通
+UTF-8 文本文件最多附带 16 KiB 正文并记录 SHA-256，不把宿主绝对路径送入 Prompt。
+明确引用的 PNG、JPEG 或 WebP 在当前角色重新授权后进入 Safe Raster Processor；输入
+最多 10 MiB/40 MP，输出最长边 2048、单图最多 4 MiB、每次最多四图，只在内存中保存
+重新编码后的 base64。原图、EXIF、GPS 和处理后图片均不持久化到 Assistant 表、审计或日志。
+
+Provider API Key 按 AssistantModel ID 保存到
+`state-root/secrets/assistant-provider.json`，使用私有权限与同目录原子替换；它不进入
+SQLite、HTML、审计、SSE 或普通日志。删除仍被对话引用的模型受外键和领域检查共同拒绝。
+
+```text
+state-root/
+  secrets/
+    assistant-provider.json
+  assistant/
+    runtime/
+      active.json
+      versions/<version>/
+        pi[.exe]
+        scriptboard-extension.ts     # 正式签名 Runtime 的唯一固定 Extension
+        capabilities.json            # 版本、大小和 SHA-256 固定的能力清单
+        playbooks/*.md                # 由清单显式列出的 Operational Playbook
+        runtime.json                 # Pi/RPC/Broker 合同和上游 commit
+        LICENSE
+    pi-home/<user-id>/<conversation-id>/
+      models.json                    # 只引用子进程环境变量，不含实际 API Key
+    sessions/<user-id>/<conversation-id>/
+    workspaces/<user-id>/<conversation-id>/
+```
+
+所有 Assistant 目录都属于 State Root 受保护范围，不显示为 Host Entry。活动 Runtime
+解析只接受 `active.json` 指向自身版本目录内的普通文件，绝不查询 PATH 或用户 Pi 目录。
+私有 session 目录已有非空 JSONL 时，下一次受管进程使用 `--continue` 恢复；每个 Turn
+开始前仍通过 RPC `set_model` 重选该对话当前模型，避免保温进程沿用过期模型。
+非通用 Conversation Profile 必须能在活动 Runtime 的 Capability Bundle 中解析出完全匹配
+的版本；缺失、摘要不符或路径越界时拒绝本次 Turn，不回退到用户级 Skill。每个 Turn 还会
+重设思考级别和自动压缩/重试策略；settled 后把 Pi session stats 写回 Conversation，手动
+压缩只允许空闲的活动 session。
+
+Tool Broker 使用每个受管 Pi 进程独有的 Named Pipe/Unix Socket 与 256-bit capability。
+capability 不持久化；AssistantToolCall 记录规范参数、目标、有界结果摘要，以及不含
+capability 和 Provider 凭据的有界调用/返回 JSON，
+AssistantApproval 绑定用户、角色、授权版本、对话、Tool Call、参数和目标当前状态。
+服务重启把尚未完成的工具标记为 interrupted，并取消 pending/approved 的状态修改。
+
+Evidence Query 仍走相同 Tool Broker 和实时角色授权。日志搜索、日志窗口、Run 对比、计划
+历史和审计列表都有结果条数与文本字节上限；继续读取使用带 HMAC、五分钟过期并绑定用户、
+对话、工具、目标和查询的不透明游标，不能跨查询或跨对话复用。

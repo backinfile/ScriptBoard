@@ -8,6 +8,12 @@ import (
 	"syscall"
 )
 
+func newExecutorCommand(executor executorCandidate, script string, arguments []string) (*exec.Cmd, error) {
+	commandArguments := append(append([]string{}, executor.prefix...), script)
+	commandArguments = append(commandArguments, arguments...)
+	return exec.Command(executor.path, commandArguments...), nil
+}
+
 func configureProcess(command *exec.Cmd) {
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
 }

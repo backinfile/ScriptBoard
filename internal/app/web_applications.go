@@ -190,7 +190,7 @@ func (a *App) movePinnedApplication(response http.ResponseWriter, request *http.
 	id := request.PathValue("id")
 	direction := request.FormValue("direction")
 	if err := a.applicationStatus.MovePin(request.Context(), id, direction); err != nil {
-		http.Error(response, "Unable to move pinned application", http.StatusBadRequest)
+		http.Error(response, "Unable to move pinned application: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	a.recordAuditForRequest(request, "move_pinned_application", id, "succeeded")

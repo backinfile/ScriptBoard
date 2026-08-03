@@ -25,7 +25,6 @@ func TestApplicationShellCondensesAQuietHostToOneAttentionSummary(t *testing.T) 
 	page := rendered.String()
 	for _, expected := range []string{
 		`aria-label="Current status"`,
-		`<strong>Current status</strong>`,
 		`data-shell-attention`,
 		`data-shell-attention-empty`,
 		`data-shell-attention-item="host" hidden`,
@@ -36,6 +35,9 @@ func TestApplicationShellCondensesAQuietHostToOneAttentionSummary(t *testing.T) 
 		if !bytes.Contains(rendered.Bytes(), []byte(expected)) {
 			t.Fatalf("quiet attention summary is missing %q: %s", expected, page)
 		}
+	}
+	if bytes.Contains(rendered.Bytes(), []byte(`sidebar-attention__head`)) || bytes.Contains(rendered.Bytes(), []byte(`<strong>Current status</strong>`)) {
+		t.Fatalf("quiet attention summary still renders the redundant current-status row: %s", page)
 	}
 }
 

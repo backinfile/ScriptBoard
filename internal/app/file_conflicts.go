@@ -5,12 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	pathpkg "path"
-	"path/filepath"
-	"strings"
 	"time"
 
-	"scriptboard/internal/managedfiles"
+	"scriptboard/internal/hostfiles"
 )
 
 const (
@@ -36,20 +33,31 @@ func (a *App) renderFileConflict(response http.ResponseWriter, request *http.Req
 	_ = fileConflictTemplate.Execute(response, view)
 }
 
-func parentAndName(relative string) (string, string) {
-	clean := pathpkg.Clean(filepath.ToSlash(relative))
-	parent := pathpkg.Dir(clean)
-	if parent == "." {
-		parent = ""
+// restoreTrackedTrash compensates a temporary overwrite or delete. The
+// database row is deliberately removed only after the filesystem entry is
+// back at its original path. If removing the row fails, the entry is moved
+// back to the same owned trash path so the database and filesystem still
+// describe a recoverable state.
+func (a *App) restoreTrackedTrash(id string, trashed hostfiles.Trashed) error {
+	if err := a.files.RestoreFromTrash(trashed.StoredPath, trashed.OriginalPath); err != nil {
+		return err
 	}
-	return parent, pathpkg.Base(clean)
+	if _, err := a.db.Exec("DELETE FROM trash_entries WHERE id = ?", id); err != nil {
+		rolledBack, rollbackErr := a.files.MoveToTrash(trashed.OriginalPath, id)
+		if rollbackErr != nil {
+			return fmt.Errorf("remove restored trash record: %w; move restored entry back to trash: %v", err, rollbackErr)
+		}
+		if hostfiles.ComparisonKey(rolledBack.StoredPath) != hostfiles.ComparisonKey(trashed.StoredPath) {
+			return fmt.Errorf("remove restored trash record: %w; entry returned to unexpected trash path %s", err, rolledBack.StoredPath)
+		}
+		return fmt.Errorf("remove restored trash record: %w", err)
+	}
+	return nil
 }
 
-func childPath(parent, name string) string {
-	if parent == "" {
-		return name
-	}
-	return pathpkg.Join(parent, name)
+func parentAndName(path string) (string, string) {
+	parent, _ := hostfiles.Parent(path)
+	return parent, hostfiles.Base(path)
 }
 
 func validConflictAction(value string) bool {
@@ -76,8 +84,8 @@ func (a *App) uploadConflicts(response http.ResponseWriter, request *http.Reques
 		http.Error(response, "无法读取冲突检查请求", http.StatusBadRequest)
 		return
 	}
-	relative := strings.Trim(request.FormValue("path"), "/")
-	if _, err := a.managed.List(relative); err != nil {
+	relative := request.FormValue("path")
+	if _, err := a.files.List(relative); err != nil {
 		http.Error(response, "上传目录无效："+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -88,12 +96,16 @@ func (a *App) uploadConflicts(response http.ResponseWriter, request *http.Reques
 	}
 	conflicts := make([]uploadConflictItem, 0)
 	for _, name := range names {
-		if err := managedfiles.ValidateName(name); err != nil {
+		if err := hostfiles.ValidateName(name); err != nil {
 			http.Error(response, "文件名无效："+err.Error(), http.StatusBadRequest)
 			return
 		}
-		target := childPath(relative, name)
-		info, err := a.managed.Info(target)
+		target, err := a.files.Destination(relative, name)
+		if err != nil {
+			http.Error(response, "上传目标无效："+err.Error(), http.StatusBadRequest)
+			return
+		}
+		info, err := a.files.Info(target)
 		if os.IsNotExist(err) {
 			continue
 		}
@@ -101,7 +113,7 @@ func (a *App) uploadConflicts(response http.ResponseWriter, request *http.Reques
 			http.Error(response, "无法检查同名文件："+err.Error(), http.StatusBadRequest)
 			return
 		}
-		suggested, err := a.managed.AvailableName(relative, name)
+		suggested, err := a.files.AvailableName(relative, name)
 		if err != nil {
 			http.Error(response, "无法生成可用名称："+err.Error(), http.StatusBadRequest)
 			return
@@ -123,16 +135,22 @@ func (a *App) commitTrashRestore(id, stored, destination string, overwrite bool)
 	if err != nil {
 		return err
 	}
-	var displaced *managedfiles.Trashed
+	var displaced *hostfiles.Trashed
 	restored := false
-	rollback := func() {
+	rollback := func() error {
+		var rollbackErr error
 		if restored {
-			_, _ = a.managed.MoveToTrash(destination, stored)
+			if _, err := a.files.MoveToTrash(destination, id); err != nil {
+				rollbackErr = fmt.Errorf("return restored entry to trash: %w", err)
+			}
 		}
-		if displaced != nil {
-			_ = a.managed.RestoreFromTrash(displaced.StoredName, displaced.OriginalPath)
+		if displaced != nil && rollbackErr == nil {
+			if err := a.files.RestoreFromTrash(displaced.StoredPath, displaced.OriginalPath); err != nil {
+				rollbackErr = fmt.Errorf("restore overwritten entry: %w", err)
+			}
 		}
 		_ = transaction.Rollback()
+		return rollbackErr
 	}
 	if overwrite {
 		displacedID, tokenErr := randomToken(18)
@@ -140,31 +158,38 @@ func (a *App) commitTrashRestore(id, stored, destination string, overwrite bool)
 			_ = transaction.Rollback()
 			return fmt.Errorf("无法创建覆盖事务: %w", tokenErr)
 		}
-		moved, moveErr := a.managed.MoveToTrash(destination, displacedID)
+		moved, moveErr := a.files.MoveToTrash(destination, displacedID)
 		if moveErr != nil {
 			_ = transaction.Rollback()
 			return moveErr
 		}
 		displaced = &moved
 		if _, err = transaction.Exec(
-			"INSERT INTO trash_entries (id, original_path, stored_name, deleted_at, size, is_directory) VALUES (?, ?, ?, ?, ?, ?)",
-			displacedID, moved.OriginalPath, moved.StoredName, time.Now().UTC().Unix(), moved.Size, moved.Directory,
+			`INSERT INTO trash_entries
+				(id, original_path, original_path_key, stored_path, stored_path_key, deleted_at, size, is_directory)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			displacedID, moved.OriginalPath, hostfiles.ComparisonKey(moved.OriginalPath), moved.StoredPath,
+			hostfiles.ComparisonKey(moved.StoredPath), time.Now().UTC().Unix(), moved.Size, moved.Directory,
 		); err != nil {
-			rollback()
+			_ = rollback()
 			return fmt.Errorf("无法记录被覆盖的条目: %w", err)
 		}
 	}
-	if err := a.managed.RestoreFromTrash(stored, destination); err != nil {
-		rollback()
+	if err := a.files.RestoreFromTrash(stored, destination); err != nil {
+		_ = rollback()
 		return err
 	}
 	restored = true
 	if _, err := transaction.Exec("DELETE FROM trash_entries WHERE id = ?", id); err != nil {
-		rollback()
+		if rollbackErr := rollback(); rollbackErr != nil {
+			return fmt.Errorf("无法更新回收站记录: %w; 回滚失败: %v", err, rollbackErr)
+		}
 		return fmt.Errorf("无法更新回收站记录: %w", err)
 	}
 	if err := transaction.Commit(); err != nil {
-		rollback()
+		if rollbackErr := rollback(); rollbackErr != nil {
+			return fmt.Errorf("无法提交回收站恢复: %w; 回滚失败: %v", err, rollbackErr)
+		}
 		return fmt.Errorf("无法提交回收站恢复: %w", err)
 	}
 	return nil

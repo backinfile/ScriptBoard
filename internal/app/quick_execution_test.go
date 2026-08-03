@@ -18,12 +18,12 @@ func TestQuickRunPageOffersOneTimeAndCreateActions(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(filepath.Join(managedRoot, "ops"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(hostRoot, "ops"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 
 	response, err := client.Get(serverURL + "/config/quick-runs")
 	if err != nil {
@@ -65,30 +65,35 @@ func TestQuickRunPageOffersOneTimeAndCreateActions(t *testing.T) {
 		if bytes.Contains(body, []byte(`data-directory-browse`)) || bytes.Contains(body, []byte(`name="working_directory" autocomplete=`)) {
 			t.Fatalf("%s still exposes a manually editable working directory: %s", task.path, body)
 		}
+		if !bytes.Contains(body, []byte(`name="working_directory" value="`+hostRoot+`"`)) {
+			t.Fatalf("%s does not default to an executable host directory: %s", task.path, body)
+		}
 	}
 }
 
-func TestManagedDirectoryPickerOnlyListsValidatedDirectories(t *testing.T) {
+func TestHostDirectoryPickerOnlyListsValidatedDirectories(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(filepath.Join(managedRoot, "ops", "nightly"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(hostRoot, "ops", "nightly"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(managedRoot, "ops", "notes.txt"), []byte("not a directory"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(hostRoot, "ops", "notes.txt"), []byte("not a directory"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 
-	response, err := client.Get(serverURL + "/resources/directories?path=ops")
+	selectedDirectory := filepath.Join(hostRoot, "ops")
+	response, err := client.Get(hostFileRequestURL(serverURL, "/resources/directories", selectedDirectory))
 	if err != nil {
 		t.Fatal(err)
 	}
 	body, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusOK || !bytes.Contains(body, []byte(`"directories":["nightly"]`)) || bytes.Contains(body, []byte("notes.txt")) {
+	if response.StatusCode != http.StatusOK || !bytes.Contains(body, []byte(`"name":"nightly"`)) ||
+		!bytes.Contains(body, []byte(`"path":`)) || bytes.Contains(body, []byte("notes.txt")) {
 		t.Fatalf("directory response status=%d body=%s", response.StatusCode, body)
 	}
 
@@ -106,13 +111,13 @@ func TestOneTimeRunKeepsImmutableSourceSnapshotAndUsesSelectedWorkdir(t *testing
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	workdir := filepath.Join(managedRoot, "ops")
+	workdir := filepath.Join(hostRoot, "ops")
 	if err := os.MkdirAll(workdir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 	response, err := client.Get(serverURL + "/config/quick-runs/one-time/new")
 	if err != nil {
 		t.Fatal(err)
@@ -126,7 +131,7 @@ func TestOneTimeRunKeepsImmutableSourceSnapshotAndUsesSelectedWorkdir(t *testing
 	}
 	response, err = client.PostForm(serverURL+"/config/quick-runs/one-time", url.Values{
 		"csrf_token":        {formToken(t, taskPage)},
-		"working_directory": {"ops"},
+		"working_directory": {workdir},
 		"language":          {language},
 		"source":            {source},
 		"timeout_seconds":   {"30"},
@@ -181,7 +186,7 @@ func TestOneTimeRunKeepsImmutableSourceSnapshotAndUsesSelectedWorkdir(t *testing
 		WHERE runs.id = ?`, runID).Scan(&scriptKind, &recordedWorkdir, &sourceFilename, &auditAction, &auditTarget); err != nil {
 		t.Fatalf("read one-time Run metadata: %v", err)
 	}
-	if scriptKind != "one_time" || recordedWorkdir != "ops" || sourceFilename != "source"+extension ||
+	if scriptKind != "one_time" || recordedWorkdir != workdir || sourceFilename != "source"+extension ||
 		auditAction != "start_one_time_run" || auditTarget != runID {
 		t.Fatalf("metadata kind=%q workdir=%q source=%q audit=%q target=%q", scriptKind, recordedWorkdir, sourceFilename, auditAction, auditTarget)
 	}
@@ -204,7 +209,7 @@ func TestOneTimeRunKeepsImmutableSourceSnapshotAndUsesSelectedWorkdir(t *testing
 	}
 	runPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, expected := range []string{location + "/source", "<code>ops</code>", "View source"} {
+	for _, expected := range []string{location + "/source", "<code>" + workdir + "</code>", "View source"} {
 		if !bytes.Contains(runPage, []byte(expected)) {
 			t.Fatalf("Run detail is missing %q: %s", expected, runPage)
 		}
@@ -228,12 +233,12 @@ func TestCreateQuickRunFromSourceWritesScriptWithoutRunningIt(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(filepath.Join(managedRoot, "ops"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(hostRoot, "ops"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 
 	response, err := client.Get(serverURL + "/config/quick-runs/from-source/new")
 	if err != nil {
@@ -248,7 +253,7 @@ func TestCreateQuickRunFromSourceWritesScriptWithoutRunningIt(t *testing.T) {
 	}
 	response, err = client.PostForm(serverURL+"/config/quick-runs/from-source", url.Values{
 		"csrf_token":        {formToken(t, taskPage)},
-		"working_directory": {"ops"},
+		"working_directory": {filepath.Join(hostRoot, "ops")},
 		"language":          {language},
 		"file_name":         {"inventory"},
 		"source":            {source},
@@ -265,7 +270,7 @@ func TestCreateQuickRunFromSourceWritesScriptWithoutRunningIt(t *testing.T) {
 		t.Fatalf("create status=%d body=%s", response.StatusCode, body)
 	}
 
-	scriptPath := filepath.Join(managedRoot, "ops", "inventory"+extension)
+	scriptPath := filepath.Join(hostRoot, "ops", "inventory"+extension)
 	created, err := os.ReadFile(scriptPath)
 	if err != nil {
 		t.Fatalf("read created script: %v", err)
@@ -273,7 +278,7 @@ func TestCreateQuickRunFromSourceWritesScriptWithoutRunningIt(t *testing.T) {
 	if string(created) != source {
 		t.Fatalf("created source = %q, want %q", created, source)
 	}
-	if _, err := os.Stat(filepath.Join(managedRoot, "ops", "marker.txt")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(hostRoot, "ops", "marker.txt")); !os.IsNotExist(err) {
 		t.Fatalf("script ran during creation: %v", err)
 	}
 
@@ -283,10 +288,53 @@ func TestCreateQuickRunFromSourceWritesScriptWithoutRunningIt(t *testing.T) {
 	}
 	page, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, expected := range []string{"Inventory snapshot", filepath.ToSlash(filepath.Join("ops", "inventory"+extension))} {
+	for _, expected := range []string{"Inventory snapshot", scriptPath} {
 		if !strings.Contains(string(page), expected) {
 			t.Fatalf("Quick Run page is missing %q: %s", expected, page)
 		}
+	}
+}
+
+func TestCreateQuickRunFromSourceDoesNotDuplicateLanguageExtension(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
+	response, err := client.Get(serverURL + "/config/quick-runs/from-source/new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+
+	language, extension, source := "shell", ".sh", "#!/bin/sh\nprintf extension-ok\\n"
+	if runtime.GOOS == "windows" {
+		language, extension, source = "batch", ".cmd", "@echo off\r\necho extension-ok\r\n"
+	}
+	fileName := "extension-test" + extension
+	response, err = client.PostForm(serverURL+"/config/quick-runs/from-source", url.Values{
+		"csrf_token": {formToken(t, taskPage)}, "language": {language}, "source": {source},
+		"working_directory": {hostRoot}, "file_name": {fileName}, "name": {"Extension test"},
+		"timeout_seconds": {"30"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("quick create status=%d body=%s", response.StatusCode, body)
+	}
+	if _, err := os.Stat(filepath.Join(hostRoot, fileName)); err != nil {
+		t.Fatalf("single-extension script was not created: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(hostRoot, fileName+extension)); !os.IsNotExist(err) {
+		t.Fatalf("duplicated-extension script exists: %v", err)
 	}
 }
 
@@ -294,20 +342,20 @@ func TestCreateQuickRunFromSourceRequiresExplicitCollisionChoice(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
+	hostRoot := filepath.Join(root, "managed")
 	stateRoot := filepath.Join(root, "state")
-	if err := os.MkdirAll(filepath.Join(managedRoot, "ops"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(hostRoot, "ops"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	language, extension, replacement := "shell", ".sh", "#!/bin/sh\nprintf replacement\n"
 	if runtime.GOOS == "windows" {
 		language, extension, replacement = "batch", ".cmd", "@echo replacement\r\n"
 	}
-	target := filepath.Join(managedRoot, "ops", "inventory"+extension)
+	target := filepath.Join(hostRoot, "ops", "inventory"+extension)
 	if err := os.WriteFile(target, []byte("original source\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, stateRoot)
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 	response, err := client.Get(serverURL + "/config/quick-runs/from-source/new")
 	if err != nil {
 		t.Fatal(err)
@@ -316,7 +364,7 @@ func TestCreateQuickRunFromSourceRequiresExplicitCollisionChoice(t *testing.T) {
 	_ = response.Body.Close()
 	values := url.Values{
 		"csrf_token":        {formToken(t, taskPage)},
-		"working_directory": {"ops"},
+		"working_directory": {filepath.Join(hostRoot, "ops")},
 		"language":          {language},
 		"file_name":         {"inventory"},
 		"source":            {replacement},
@@ -362,7 +410,7 @@ func TestCreateQuickRunFromSourceRequiresExplicitCollisionChoice(t *testing.T) {
 	}
 	trashPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if !bytes.Contains(trashPage, []byte(filepath.ToSlash(filepath.Join("ops", "inventory"+extension)))) {
+	if !bytes.Contains(trashPage, []byte(target)) {
 		t.Fatalf("overwritten source is not recorded in Trash: %s", trashPage)
 	}
 }

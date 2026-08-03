@@ -25,7 +25,7 @@ import (
 	"unicode/utf8"
 
 	"scriptboard/internal/diskspace"
-	"scriptboard/internal/managedfiles"
+	"scriptboard/internal/hostfiles"
 )
 
 type StartRequest struct {
@@ -103,11 +103,6 @@ type Event struct {
 	EncodingError bool
 }
 
-type Lifecycle interface {
-	BeginRun(id string) error
-	EndRun(id string)
-}
-
 type persistedEvent struct {
 	Sequence int64  `json:"sequence"`
 	Time     int64  `json:"time"`
@@ -118,6 +113,7 @@ type persistedEvent struct {
 type executorCandidate struct {
 	path   string
 	prefix []string
+	batch  bool
 }
 
 type activeRun struct {
@@ -131,6 +127,7 @@ type activeRun struct {
 	workingDirectory     string
 	workingDirectoryInfo os.FileInfo
 	oneTime              bool
+	leaseID              string
 }
 
 func (r *activeRun) signalChanged() {
@@ -145,29 +142,24 @@ func (r *activeRun) signalChanged() {
 
 type Manager struct {
 	db             *sql.DB
-	managed        *managedfiles.Store
+	files          *hostfiles.Manager
 	stateRoot      string
 	mu             sync.Mutex
 	active         map[string]*activeRun
 	wg             sync.WaitGroup
 	timeoutGrace   time.Duration
-	lifecycle      Lifecycle
 	executorChains map[string][]string
 	startMu        sync.Mutex
 	accepting      bool
 }
 
-func New(db *sql.DB, managed *managedfiles.Store, stateRoot string, timeoutGrace time.Duration, executorChains map[string][]string) *Manager {
-	return &Manager{db: db, managed: managed, stateRoot: stateRoot, active: make(map[string]*activeRun), timeoutGrace: timeoutGrace, executorChains: executorChains, accepting: true}
+func New(db *sql.DB, files *hostfiles.Manager, stateRoot string, timeoutGrace time.Duration, executorChains map[string][]string) *Manager {
+	return &Manager{db: db, files: files, stateRoot: stateRoot, active: make(map[string]*activeRun), timeoutGrace: timeoutGrace, executorChains: executorChains, accepting: true}
 }
 
 var ErrMaintenance = errors.New("ScriptBoard is entering update maintenance mode")
 var ErrSourceExpired = errors.New("one-time source has expired")
 var ErrSourceUnavailable = errors.New("one-time source is unavailable")
-
-func (m *Manager) SetLifecycle(lifecycle Lifecycle) {
-	m.lifecycle = lifecycle
-}
 
 func prepareArguments(argumentsTemplate string, variables map[string]string) ([]string, []string, error) {
 	if len([]byte(argumentsTemplate)) > 16<<10 {
@@ -210,19 +202,15 @@ func (m *Manager) Start(request StartRequest) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	script, err := m.managed.PrepareScript(request.ScriptPath)
+	script, err := m.files.PrepareScript(request.ScriptPath)
 	if err != nil {
 		return "", fmt.Errorf("脚本不可执行: %w", err)
 	}
-	executors, err := resolveExecutors(filepath.Ext(script.Path), m.executorChains)
+	executors, err := resolveExecutors(hostfiles.Extension(script.Path), m.executorChains)
 	if err != nil {
 		return "", err
 	}
-	parent := filepath.ToSlash(filepath.Dir(filepath.FromSlash(request.ScriptPath)))
-	if parent == "." {
-		parent = ""
-	}
-	workingDirectory, err := m.managed.PrepareDirectory(parent)
+	workingDirectory, err := m.files.PrepareDirectory(script.Directory)
 	if err != nil {
 		return "", fmt.Errorf("脚本工作目录不可用: %w", err)
 	}
@@ -231,8 +219,8 @@ func (m *Manager) Start(request StartRequest) (string, error) {
 		return "", err
 	}
 	return m.startPrepared(preparedStart{
-		id: id, displayPath: request.ScriptPath, script: script, workingDirectory: workingDirectory,
-		scriptKind: "managed", executors: executors, templateArguments: templateArguments, arguments: arguments,
+		id: id, displayPath: script.Path, script: script, workingDirectory: workingDirectory,
+		scriptKind: "host_file", executors: executors, templateArguments: templateArguments, arguments: arguments,
 		argumentsTemplate: request.ArgumentsTemplate, sourceType: request.SourceType, sourceName: request.SourceName,
 		sourceID: request.SourceID, timeoutSeconds: request.TimeoutSeconds,
 		initiatorUserID: request.InitiatorUserID, initiatorUsername: request.InitiatorUsername,
@@ -242,8 +230,8 @@ func (m *Manager) Start(request StartRequest) (string, error) {
 type preparedStart struct {
 	id                string
 	displayPath       string
-	script            managedfiles.Script
-	workingDirectory  managedfiles.PreparedDirectory
+	script            hostfiles.Script
+	workingDirectory  hostfiles.PreparedDirectory
 	scriptKind        string
 	sourceFilename    string
 	executors         []executorCandidate
@@ -286,7 +274,7 @@ func (m *Manager) StartOneTime(request OneTimeStartRequest) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	workingDirectory, err := m.managed.PrepareDirectory(request.WorkingDirectory)
+	workingDirectory, err := m.files.PrepareDirectory(request.WorkingDirectory)
 	if err != nil {
 		return "", fmt.Errorf("working directory is invalid: %w", err)
 	}
@@ -330,7 +318,7 @@ func (m *Manager) StartOneTime(request OneTimeStartRequest) (string, error) {
 	digest := sha256.Sum256([]byte(request.Source))
 	runID, err := m.startPrepared(preparedStart{
 		id: id, displayPath: sourceFilename,
-		script:           managedfiles.Script{Path: sourcePath, Digest: fmt.Sprintf("%x", digest[:]), Info: sourceInfo},
+		script:           hostfiles.Script{Path: sourcePath, Digest: fmt.Sprintf("%x", digest[:]), Info: sourceInfo},
 		workingDirectory: workingDirectory, scriptKind: "one_time", sourceFilename: sourceFilename,
 		executors: executors, templateArguments: templateArguments, arguments: arguments,
 		argumentsTemplate: request.ArgumentsTemplate, sourceType: "one_time", sourceName: "one-time",
@@ -345,18 +333,26 @@ func (m *Manager) StartOneTime(request OneTimeStartRequest) (string, error) {
 
 func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 	id := prepared.id
-	lifecycleBegun := false
-	if m.lifecycle != nil {
-		if err := m.lifecycle.BeginRun(id); err != nil {
-			return "", err
-		}
-		lifecycleBegun = true
+	leaseID := "run:" + id
+	leasePaths := []string{prepared.script.Path}
+	if prepared.scriptKind == "one_time" {
+		leasePaths = []string{prepared.workingDirectory.Path}
 	}
+	if err := m.files.AcquireLease(leaseID, leasePaths...); err != nil {
+		return "", fmt.Errorf("acquire Run path lease: %w", err)
+	}
+	leaseOwned := true
 	defer func() {
-		if lifecycleBegun && m.lifecycle != nil {
-			m.lifecycle.EndRun(id)
+		if leaseOwned {
+			m.files.ReleaseLease(leaseID)
 		}
 	}()
+	if prepared.scriptKind == "host_file" {
+		current, err := m.files.PrepareScript(prepared.script.Path)
+		if err != nil || current.Digest != prepared.script.Digest || !os.SameFile(current.Info, prepared.script.Info) {
+			return "", errors.New("script changed before its Run lease was acquired")
+		}
+	}
 	logRoot := filepath.Join(m.stateRoot, "runs", id)
 	if err := os.MkdirAll(logRoot, 0o700); err != nil {
 		return "", fmt.Errorf("创建 Run 日志目录: %w", err)
@@ -397,13 +393,13 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 		auditID = value
 	}
 	if _, err := transaction.Exec(`INSERT INTO runs
-		(id, script_path, script_sha256, arguments_template, template_arguments_json, arguments_json, executor,
+		(id, script_path, script_path_key, script_sha256, arguments_template, template_arguments_json, arguments_json, executor,
 		source_type, source_name, source_id, runtime_identity, status, created_at, timeout_seconds, log_path,
-		script_kind, working_directory, source_filename, source_audit_event_id, initiated_by_user_id, initiated_by_username)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, prepared.displayPath, prepared.script.Digest, prepared.argumentsTemplate, string(templateArgumentJSON), string(argumentJSON), prepared.executors[0].path,
+		script_kind, working_directory, working_directory_key, source_filename, source_audit_event_id, initiated_by_user_id, initiated_by_username)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'starting', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, prepared.displayPath, hostfiles.ComparisonKey(prepared.displayPath), prepared.script.Digest, prepared.argumentsTemplate, string(templateArgumentJSON), string(argumentJSON), prepared.executors[0].path,
 		prepared.sourceType, prepared.sourceName, prepared.sourceID, runtimeIdentity, now.UnixNano(), prepared.timeoutSeconds, logPath,
-		prepared.scriptKind, prepared.workingDirectory.RelativePath, prepared.sourceFilename, auditID,
+		prepared.scriptKind, prepared.workingDirectory.Path, hostfiles.ComparisonKey(prepared.workingDirectory.Path), prepared.sourceFilename, auditID,
 		prepared.initiatorUserID, prepared.initiatorUsername,
 	); err != nil {
 		_ = logFile.Close()
@@ -424,9 +420,11 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 		return id, nil
 	}
 	for _, executor := range prepared.executors {
-		commandArguments := append(append([]string{}, executor.prefix...), prepared.script.Path)
-		commandArguments = append(commandArguments, prepared.arguments...)
-		candidate := exec.Command(executor.path, commandArguments...)
+		candidate, commandErr := newExecutorCommand(executor, prepared.script.Path, prepared.arguments)
+		if commandErr != nil {
+			startErrors = append(startErrors, executor.path+": "+commandErr.Error())
+			continue
+		}
 		candidate.Dir = prepared.workingDirectory.Path
 		candidate.Env = append(os.Environ(), "SCRIPTBOARD_RUN_ID="+id, "SCRIPTBOARD_SCRIPT_PATH="+prepared.displayPath)
 		configureProcess(candidate)
@@ -469,19 +467,20 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 	m.mu.Lock()
 	active := &activeRun{
 		command: command, cleanup: cleanup, fileInfo: prepared.script.Info, changed: make(chan struct{}, 1),
-		scriptPath:           normalizeManagedPath(prepared.displayPath),
-		workingDirectory:     normalizeManagedPath(prepared.workingDirectory.RelativePath),
+		scriptPath:           normalizeHostPath(prepared.displayPath),
+		workingDirectory:     normalizeHostPath(prepared.workingDirectory.Path),
 		workingDirectoryInfo: prepared.workingDirectory.Info,
 		oneTime:              prepared.scriptKind == "one_time",
+		leaseID:              leaseID,
 	}
 	m.active[id] = active
 	if prepared.timeoutSeconds > 0 {
 		active.timeoutTimer = time.AfterFunc(time.Duration(prepared.timeoutSeconds)*time.Second, func() { m.timeout(id) })
 	}
 	m.mu.Unlock()
+	leaseOwned = false
 	m.wg.Add(1)
 	go m.supervise(id, command, stdout, stderr, logFile, active)
-	lifecycleBegun = false
 	return id, nil
 }
 
@@ -510,25 +509,28 @@ func (m *Manager) Accepting() bool {
 	return m.accepting
 }
 
-func (m *Manager) ConflictsPath(relative string) bool {
-	candidate := normalizeManagedPath(relative)
-	candidateInfo, _ := m.managed.Info(relative)
+func (m *Manager) ConflictsPath(path string) bool {
+	if m.files.LeaseConflicts(path) {
+		return true
+	}
+	candidate := normalizeHostPath(path)
+	candidateInfo, _ := m.files.Info(path)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, active := range m.active {
-		if active.oneTime && (active.workingDirectory == "" || candidate == active.workingDirectory || strings.HasPrefix(candidate, active.workingDirectory+"/")) {
+		if active.oneTime && (active.workingDirectory == "" || hostfiles.Contains(active.workingDirectory, candidate)) {
 			return true
 		}
-		if active.scriptPath == candidate || strings.HasPrefix(active.scriptPath, candidate+"/") || (candidateInfo != nil && active.fileInfo != nil && os.SameFile(candidateInfo, active.fileInfo)) {
+		if active.scriptPath == candidate || hostfiles.Contains(candidate, active.scriptPath) || (candidateInfo != nil && active.fileInfo != nil && os.SameFile(candidateInfo, active.fileInfo)) {
 			return true
 		}
 	}
 	return false
 }
 
-func (m *Manager) IsActiveScript(relative string) bool {
-	candidate := normalizeManagedPath(relative)
-	candidateInfo, _ := m.managed.Info(relative)
+func (m *Manager) IsActiveScript(path string) bool {
+	candidate := normalizeHostPath(path)
+	candidateInfo, _ := m.files.Info(path)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, active := range m.active {
@@ -551,15 +553,8 @@ func (m *Manager) ActiveCount() int {
 	return len(m.active)
 }
 
-func normalizeManagedPath(relative string) string {
-	value := strings.Trim(filepath.ToSlash(filepath.Clean(filepath.FromSlash(relative))), "/")
-	if value == "." {
-		value = ""
-	}
-	if runtime.GOOS == "windows" {
-		value = strings.ToLower(value)
-	}
-	return value
+func normalizeHostPath(path string) string {
+	return hostfiles.ComparisonKey(path)
 }
 
 func (m *Manager) failStart(id string, startErr error) {
@@ -576,9 +571,6 @@ func (m *Manager) failStart(id string, startErr error) {
 
 func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.ReadCloser, logFile *os.File, activeRun *activeRun) {
 	defer m.wg.Done()
-	if m.lifecycle != nil {
-		defer m.lifecycle.EndRun(id)
-	}
 	var eventMu sync.Mutex
 	var sequence int64
 	var written, tailBytes, droppedBytes int64
@@ -735,6 +727,7 @@ func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.Read
 	m.mu.Lock()
 	delete(m.active, id)
 	m.mu.Unlock()
+	m.files.ReleaseLease(activeRun.leaseID)
 }
 
 func (m *Manager) timeout(id string) {
@@ -1218,7 +1211,7 @@ func resolveExecutors(extension string, overrides map[string][]string) ([]execut
 	if len(candidates) == 0 && runtime.GOOS == "windows" {
 		switch extension {
 		case ".cmd", ".bat":
-			candidates = []configuredCandidate{{name: "cmd.exe", prefix: []string{"/D", "/S", "/C"}}}
+			candidates = []configuredCandidate{{name: "cmd.exe", prefix: []string{"/D", "/S", "/V:OFF", "/C"}}}
 		case ".ps1":
 			candidates = []configuredCandidate{{name: "pwsh.exe", prefix: []string{"-File"}}, {name: "powershell.exe", prefix: []string{"-NoProfile", "-File"}}}
 		case ".py":
@@ -1246,7 +1239,10 @@ func resolveExecutors(extension string, overrides map[string][]string) ([]execut
 			}
 			path = lookedUp
 		}
-		resolved = append(resolved, executorCandidate{path: path, prefix: candidate.prefix})
+		resolved = append(resolved, executorCandidate{
+			path: path, prefix: candidate.prefix,
+			batch: extension == ".cmd" || extension == ".bat",
+		})
 	}
 	if len(resolved) == 0 {
 		return nil, fmt.Errorf("宿主机没有可用于 %s 的执行器", extension)
@@ -1258,7 +1254,7 @@ func executorPrefix(extension string) []string {
 	if runtime.GOOS == "windows" {
 		switch extension {
 		case ".cmd", ".bat":
-			return []string{"/D", "/S", "/C"}
+			return []string{"/D", "/S", "/V:OFF", "/C"}
 		case ".ps1":
 			return []string{"-NoProfile", "-File"}
 		case ".py":

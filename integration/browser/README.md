@@ -38,12 +38,12 @@ The command exits non-zero on an assertion, browser console error, page error, o
 The gate checks:
 
 - sign-in, localization, grouped navigation, direct routes, and enhanced task panels;
-- managed-file browsing, search, upload, conflict handling, previews, editing, and Trash;
+- host-filesystem browsing, search, upload, conflict handling, previews, editing, and Trash;
 - real script execution, live output, run history, filtering, and actor presentation;
 - Quick Run creation, grouping, editing, copying, ordering, and soft locks;
 - schedules and variable-value controls;
 - Host Status, application observation, website monitoring, and status JSON;
-- Docker and managed-file live logs, including paging, pause/resume, copy, clear, and severity;
+- Docker and host-file live logs, including paging, pause/resume, copy, clear, and severity;
 - keyboard dismissal, console cleanliness, table alignment, and horizontal overflow;
 - desktop `1440 × 1000` and targeted mobile `390 × 844` layouts;
 - selected workflows without JavaScript.

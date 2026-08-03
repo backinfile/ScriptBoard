@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/runmanager"
 )
 
@@ -147,8 +148,8 @@ func (m *Manager) Update(id string, request CreateRequest) error {
 		return err
 	}
 	groupID := sql.NullString{String: request.GroupID, Valid: request.GroupID != ""}
-	result, err := m.db.Exec(`UPDATE schedules SET name = ?, group_id = ?, group_name = ?, script_path = ?, arguments_template = ?, expression = ?, timeout_seconds = ?, allow_overlap = ?, next_fire_at = ?, updated_at = ? WHERE id = ? AND deleted = 0`,
-		request.Name, groupID, request.GroupName, request.ScriptPath, request.ArgumentsTemplate, preview.Expression, request.TimeoutSeconds, request.AllowOverlap,
+	result, err := m.db.Exec(`UPDATE schedules SET name = ?, group_id = ?, group_name = ?, script_path = ?, script_path_key = ?, arguments_template = ?, expression = ?, timeout_seconds = ?, allow_overlap = ?, next_fire_at = ?, updated_at = ? WHERE id = ? AND deleted = 0`,
+		request.Name, groupID, request.GroupName, request.ScriptPath, hostfiles.ComparisonKey(request.ScriptPath), request.ArgumentsTemplate, preview.Expression, request.TimeoutSeconds, request.AllowOverlap,
 		preview.NextFive[0].UnixNano(), now.UnixNano(), id)
 	if err != nil {
 		return err
@@ -238,9 +239,9 @@ func (m *Manager) Create(request CreateRequest) (string, error) {
 	}
 	groupID := sql.NullString{String: request.GroupID, Valid: request.GroupID != ""}
 	_, err = m.db.Exec(`INSERT INTO schedules
-		(id, name, group_id, group_name, script_path, arguments_template, expression, timeout_seconds, enabled, allow_overlap, next_fire_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
-		id, request.Name, groupID, request.GroupName, request.ScriptPath, request.ArgumentsTemplate, preview.Expression, request.TimeoutSeconds,
+		(id, name, group_id, group_name, script_path, script_path_key, arguments_template, expression, timeout_seconds, enabled, allow_overlap, next_fire_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+		id, request.Name, groupID, request.GroupName, request.ScriptPath, hostfiles.ComparisonKey(request.ScriptPath), request.ArgumentsTemplate, preview.Expression, request.TimeoutSeconds,
 		request.AllowOverlap, preview.NextFive[0].UnixNano(), now.UnixNano(), now.UnixNano(),
 	)
 	if err != nil {

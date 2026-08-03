@@ -23,13 +23,11 @@ import (
 )
 
 type Config struct {
-	ManagedRoot   string
-	StateRoot     string
-	GitExecutable string
-	ConfigPath    string
-	Listen        string
-	TLSCert       string
-	TLSKey        string
+	StateRoot  string
+	ConfigPath string
+	Listen     string
+	TLSCert    string
+	TLSKey     string
 }
 
 type Check struct {
@@ -68,13 +66,10 @@ func Run(config Config) Report {
 		}
 		required(name, info.IsDir(), path)
 	}
-	checkDirectory("managed-root", config.ManagedRoot)
 	checkDirectory("state-root", config.StateRoot)
 	checkConfig(&report, config.ConfigPath)
-	checkDisk(&report, "managed-disk", config.ManagedRoot)
 	checkDisk(&report, "state-disk", config.StateRoot)
 	checkSQLite(&report, filepath.Join(config.StateRoot, "app.db"))
-	checkGit(&report, config.GitExecutable)
 	checkExecutors(&report)
 	checkNetwork(&report, config.Listen, config.TLSCert, config.TLSKey)
 	checkService(&report)
@@ -310,19 +305,6 @@ func checkDisk(report *Report, name, path string) {
 	if !healthy {
 		report.Healthy = false
 	}
-}
-
-func checkGit(report *Report, configured string) {
-	executable := configured
-	if executable == "" {
-		executable, _ = exec.LookPath("git")
-	}
-	if executable == "" {
-		report.Checks = append(report.Checks, Check{Name: "git", Healthy: true, Detail: "未安装；Version Protection 保持关闭时允许"})
-		return
-	}
-	output, err := exec.Command(executable, "--version").CombinedOutput()
-	report.Checks = append(report.Checks, Check{Name: "git", Healthy: err == nil, Detail: strings.TrimSpace(string(output))})
 }
 
 func checkExecutors(report *Report) {

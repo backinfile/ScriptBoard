@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -13,17 +14,18 @@ import (
 	"time"
 
 	"scriptboard/internal/app"
+	"scriptboard/internal/hostfiles"
 )
 
 func TestScheduleCronPreviewReturnsLocalizedJSONWithoutCreatingSchedule(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
+	scriptPath := scheduleTestScript(t, root, "reports/morning.ps1")
 	location := time.FixedZone("CST", 8*60*60)
 	now := time.Date(2026, 7, 26, 8, 30, 0, 0, location)
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 		SchedulerNow: func() time.Time {
 			return now
 		},
@@ -41,7 +43,7 @@ func TestScheduleCronPreviewReturnsLocalizedJSONWithoutCreatingSchedule(t *testi
 	values := url.Values{
 		"csrf_token": {formToken(t, taskBody)},
 		"name":       {"Morning report"},
-		"script":     {"reports/morning.ps1"},
+		"script":     {scriptPath},
 		"expression": {" 0 9 * * mon "},
 	}
 	request, err := http.NewRequest(http.MethodPost, serverURL+"/config/schedules/preview", strings.NewReader(values.Encode()))
@@ -107,8 +109,7 @@ func TestScheduleCronPreviewReturnsLocalizedFieldErrors(t *testing.T) {
 	location := time.FixedZone("CST", 8*60*60)
 	now := time.Date(2026, 7, 26, 8, 30, 0, 0, location)
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 		SchedulerNow: func() time.Time {
 			return now
 		},
@@ -161,11 +162,11 @@ func TestScheduleCronPreviewRendersNoScriptTaskWithoutLosingFormValues(t *testin
 	t.Parallel()
 
 	root := t.TempDir()
+	scriptPath := scheduleTestScript(t, root, "reports/morning.ps1")
 	location := time.FixedZone("CST", 8*60*60)
 	now := time.Date(2026, 7, 26, 8, 30, 0, 0, location)
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 		SchedulerNow: func() time.Time {
 			return now
 		},
@@ -188,7 +189,7 @@ func TestScheduleCronPreviewRendersNoScriptTaskWithoutLosingFormValues(t *testin
 		"csrf_token":       {formToken(t, taskBody)},
 		"name":             {"晨间 <报告>"},
 		"group_id":         {maintenanceGroupID},
-		"script":           {"reports/morning.ps1"},
+		"script":           {scriptPath},
 		"arguments":        {"--format detailed"},
 		"expression":       {"0 9 * * MON"},
 		"timeout_seconds":  {"90"},
@@ -211,7 +212,7 @@ func TestScheduleCronPreviewRendersNoScriptTaskWithoutLosingFormValues(t *testin
 		`value="晨间 &lt;报告&gt;"`,
 		`value="` + maintenanceGroupID + `" selected`,
 		`>日常维护</option>`,
-		`value="reports/morning.ps1"`,
+		`value="` + scriptPath + `"`,
 		`value="--format detailed"`,
 		`value="0 9 * * MON"`,
 		`value="90"`,
@@ -233,10 +234,10 @@ func TestScheduleGroupsPersistAcrossCreateAndEdit(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
+	securityScript := scheduleTestScript(t, root, "checks/security.ps1")
 	location := time.FixedZone("CST", 8*60*60)
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 		SchedulerNow: func() time.Time {
 			return time.Date(2026, 7, 26, 8, 30, 0, 0, location)
 		},
@@ -270,7 +271,7 @@ func TestScheduleGroupsPersistAcrossCreateAndEdit(t *testing.T) {
 		"csrf_token":       {formToken(t, taskBody)},
 		"name":             {"Daily security check"},
 		"group_id":         {securityGroupID},
-		"script":           {"checks/security.ps1"},
+		"script":           {securityScript},
 		"arguments":        {`--report "{{REPORT_PATH}}"`},
 		"expression":       {"0 2 * * *"},
 		"timeout_seconds":  {"90"},
@@ -325,7 +326,7 @@ func TestScheduleGroupsPersistAcrossCreateAndEdit(t *testing.T) {
 		"csrf_token":       {formToken(t, editBody)},
 		"name":             {"Daily security check"},
 		"group_id":         {infrastructureGroupID},
-		"script":           {"checks/security.ps1"},
+		"script":           {securityScript},
 		"arguments":        {`--report "{{REPORT_PATH}}"`},
 		"expression":       {"0 2 * * *"},
 		"timeout_seconds":  {"90"},
@@ -351,10 +352,10 @@ func TestScheduleSubmissionRendersCronErrorsWithoutWriting(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
+	dailyScript := scheduleTestScript(t, root, "reports/daily.ps1")
 	location := time.FixedZone("CST", 8*60*60)
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 		SchedulerNow: func() time.Time {
 			return time.Date(2026, 7, 26, 8, 30, 0, 0, location)
 		},
@@ -369,7 +370,7 @@ func TestScheduleSubmissionRendersCronErrorsWithoutWriting(t *testing.T) {
 	invalidValues := url.Values{
 		"csrf_token":       {formToken(t, taskBody)},
 		"name":             {"Invalid schedule draft"},
-		"script":           {"reports/daily.ps1"},
+		"script":           {dailyScript},
 		"arguments":        {"--format detailed"},
 		"expression":       {"60 9 * * *"},
 		"timeout_seconds":  {"75"},
@@ -388,7 +389,7 @@ func TestScheduleSubmissionRendersCronErrorsWithoutWriting(t *testing.T) {
 	for _, expected := range []string{
 		"The minute field must be within 0–59.",
 		`value="Invalid schedule draft"`,
-		`value="reports/daily.ps1"`,
+		`value="` + dailyScript + `"`,
 		`value="--format detailed"`,
 		`value="60 9 * * *"`,
 		`value="75"`,
@@ -418,7 +419,7 @@ func TestScheduleSubmissionRendersCronErrorsWithoutWriting(t *testing.T) {
 	response, err = client.PostForm(serverURL+"/config/schedules", url.Values{
 		"csrf_token": {formToken(t, taskBody)},
 		"name":       {"Stable schedule"},
-		"script":     {"reports/daily.ps1"},
+		"script":     {dailyScript},
 		"expression": {"  0  9  *  *  mon  "},
 	})
 	if err != nil {
@@ -450,7 +451,7 @@ func TestScheduleSubmissionRendersCronErrorsWithoutWriting(t *testing.T) {
 	response, err = client.PostForm(serverURL+"/config/schedules/"+id+"/update", url.Values{
 		"csrf_token": {formToken(t, editBody)},
 		"name":       {"Edited draft"},
-		"script":     {"reports/daily.ps1"},
+		"script":     {dailyScript},
 		"expression": {"0 9 ? * *"},
 	})
 	if err != nil {
@@ -479,8 +480,7 @@ func TestSchedulerDisablesInvalidStoredExpressionsAtStartup(t *testing.T) {
 	root := t.TempDir()
 	stateRoot := filepath.Join(root, "state")
 	config := app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   stateRoot,
+		StateRoot: stateRoot,
 		SchedulerNow: func() time.Time {
 			return time.Date(2026, 7, 26, 8, 30, 0, 0, time.UTC)
 		},
@@ -499,10 +499,11 @@ func TestSchedulerDisablesInvalidStoredExpressionsAtStartup(t *testing.T) {
 	}
 	defer db.Close()
 	now := config.SchedulerNow().UnixNano()
+	scriptPath := filepath.Join(root, "reports", "daily.ps1")
 	if _, err := db.Exec(`INSERT INTO schedules
-		(id, name, script_path, arguments_template, expression, timeout_seconds, enabled, allow_overlap, next_fire_at, created_at, updated_at)
-		VALUES ('invalid-cron', 'Invalid Cron', 'reports/daily.ps1', '', '0 9 ? * *', 0, 1, 1, ?, ?, ?)`,
-		now, now, now); err != nil {
+		(id, name, script_path, script_path_key, arguments_template, expression, timeout_seconds, enabled, allow_overlap, next_fire_at, created_at, updated_at)
+		VALUES ('invalid-cron', 'Invalid Cron', ?, ?, '', '0 9 ? * *', 0, 1, 1, ?, ?, ?)`,
+		scriptPath, hostfiles.ComparisonKey(scriptPath), now, now, now); err != nil {
 		t.Fatalf("insert invalid schedule: %v", err)
 	}
 
@@ -527,4 +528,16 @@ func TestSchedulerDisablesInvalidStoredExpressionsAtStartup(t *testing.T) {
 	if auditCount != 1 {
 		t.Fatalf("invalid schedule audit count = %d, want 1", auditCount)
 	}
+}
+
+func scheduleTestScript(t *testing.T, root, relative string) string {
+	t.Helper()
+	path := filepath.Join(root, "host", filepath.FromSlash(relative))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("create schedule script directory: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("test script\n"), 0o755); err != nil {
+		t.Fatalf("write schedule script: %v", err)
+	}
+	return path
 }

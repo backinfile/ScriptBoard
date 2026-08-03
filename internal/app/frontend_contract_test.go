@@ -8,11 +8,13 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"scriptboard/internal/app"
+	"scriptboard/internal/hostfiles"
 )
 
 func TestShellStatusEndpointReturnsAuthenticatedNoStoreVerdict(t *testing.T) {
@@ -190,7 +192,7 @@ func TestPJAXDataShellIsLimitedToLargeListRoutes(t *testing.T) {
 		path     string
 		deferred bool
 	}{
-		{path: "/resources/files/", deferred: true},
+		{path: "/resources/files", deferred: true},
 		{path: "/resources/variables", deferred: true},
 		{path: "/config/quick-runs", deferred: true},
 		{path: "/config/schedules", deferred: true},
@@ -249,9 +251,11 @@ func TestApplicationShellAndStatusEndpointShareFiveSecondSnapshot(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer db.Close()
+	scriptPath := filepath.Join(root, "host", "job.cmd")
 	if _, err := db.Exec(`INSERT INTO runs
-		(id, script_path, script_sha256, arguments_template, arguments_json, executor, source_type, status, created_at, error, log_path)
-		VALUES ('cached-shell-status', 'job.cmd', 'digest', '', '[]', 'cmd.exe', 'manual', 'running', 1, '', '')`); err != nil {
+		(id, script_path, script_path_key, script_sha256, arguments_template, arguments_json, executor, source_type, status, created_at, error, log_path)
+		VALUES ('cached-shell-status', ?, ?, 'digest', '', '[]', 'cmd.exe', 'manual', 'running', 1, '', '')`,
+		scriptPath, hostfiles.ComparisonKey(scriptPath)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -323,8 +327,7 @@ func TestLoginNegotiatesSupportedWebLocale(t *testing.T) {
 
 	root := t.TempDir()
 	application, err := app.Open(app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -365,8 +368,7 @@ func TestLocalePreferenceCookieOverridesBrowserLanguage(t *testing.T) {
 
 	root := t.TempDir()
 	application, err := app.Open(app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -396,6 +398,19 @@ func TestLocalePreferenceCookieOverridesBrowserLanguage(t *testing.T) {
 	}
 	body, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
+
+	response, err = client.PostForm(server.URL+"/settings/locale", url.Values{
+		"locale":     {"en-US"},
+		"return_to":  {"/login?" + strings.Repeat("x", 8<<10)},
+		"csrf_token": {formToken(t, body)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized locale status=%d, want %d", response.StatusCode, http.StatusRequestEntityTooLarge)
+	}
 
 	response, err = client.PostForm(server.URL+"/settings/locale", url.Values{
 		"locale":     {"en-US"},
@@ -434,7 +449,7 @@ func TestGroupedWebRoutesReplaceLegacyModulePaths(t *testing.T) {
 
 	for _, path := range []string{
 		"/history/runs",
-		"/resources/files/",
+		"/resources/files",
 		"/resources/variables",
 		"/resources/trash",
 		"/config/quick-runs",
@@ -442,7 +457,6 @@ func TestGroupedWebRoutesReplaceLegacyModulePaths(t *testing.T) {
 		"/history/audit",
 		"/settings/account",
 		"/settings/display",
-		"/settings/version-protection",
 		"/settings/updates",
 	} {
 		response, err := client.Get(serverURL + path)
@@ -466,6 +480,8 @@ func TestGroupedWebRoutesReplaceLegacyModulePaths(t *testing.T) {
 		"/quick-runs",
 		"/schedules",
 		"/audit",
+		"/settings/files",
+		"/settings/version-protection",
 	} {
 		response, err := client.Get(serverURL + path)
 		if err != nil {
@@ -487,7 +503,6 @@ func TestAdministratorAlwaysSeesUsersTabAcrossSettingsPages(t *testing.T) {
 		"/settings/account",
 		"/settings/users",
 		"/settings/display",
-		"/settings/version-protection",
 		"/settings/updates",
 	} {
 		response, err := client.Get(serverURL + path)
@@ -520,10 +535,19 @@ func TestCreateAndEditTasksHaveSemanticGETRoutes(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
+	hostRoot := filepath.Join(root, "host")
+	moveSource := filepath.Join(hostRoot, "move.txt")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(moveSource, []byte("move"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
 	for _, path := range []string{
-		"/resources/files/new-directory",
-		"/resources/files/upload",
+		hostFileHref("/resources/files/new-directory", hostRoot),
+		hostFileHref("/resources/files/upload", hostRoot),
+		hostFileHref("/resources/files/move", moveSource),
 		"/resources/variables/new",
 		"/config/schedules/new",
 	} {
@@ -563,7 +587,7 @@ func TestAuthenticatedPagesExposeLocalizedGroupedApplicationShell(t *testing.T) 
 		`>Configuration<`,
 		`>History<`,
 		`href="/history/runs"`,
-		`href="/resources/files/"`,
+		`href="/resources/files"`,
 		`href="/resources/variables"`,
 		`href="/config/quick-runs"`,
 		`href="/config/schedules"`,
@@ -646,7 +670,7 @@ func TestPrimaryWorkspacesRenderCompleteLocalizedDocuments(t *testing.T) {
 	for _, path := range []string{
 		"/monitor",
 		"/history/runs",
-		"/resources/files/",
+		"/resources/files",
 		"/resources/variables",
 		"/resources/trash",
 		"/config/quick-runs",
@@ -654,7 +678,6 @@ func TestPrimaryWorkspacesRenderCompleteLocalizedDocuments(t *testing.T) {
 		"/history/audit",
 		"/settings/account",
 		"/settings/display",
-		"/settings/version-protection",
 		"/settings/updates",
 	} {
 		response, err := client.Get(serverURL + path)
@@ -677,13 +700,14 @@ func TestEachWorkspaceAndTaskExposeAtMostOnePrimaryAction(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
+	hostRoot := filepath.Join(root, "host")
+	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
 	for _, path := range []string{
 		"/monitor",
 		"/history/runs",
-		"/resources/files/",
-		"/resources/files/new-directory",
-		"/resources/files/upload",
+		"/resources/files",
+		hostFileHref("/resources/files/new-directory", hostRoot),
+		hostFileHref("/resources/files/upload", hostRoot),
 		"/resources/variables",
 		"/resources/variables/new",
 		"/resources/trash",
@@ -695,7 +719,6 @@ func TestEachWorkspaceAndTaskExposeAtMostOnePrimaryAction(t *testing.T) {
 		"/history/audit",
 		"/settings/account",
 		"/settings/display",
-		"/settings/version-protection",
 		"/settings/updates",
 	} {
 		response, err := client.Get(serverURL + path)

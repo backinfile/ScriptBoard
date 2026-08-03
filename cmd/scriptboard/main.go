@@ -103,8 +103,6 @@ func printUsage() {
 
 常用配置选项：
   --config PATH              YAML 配置文件
-  --managed-root PATH        受管根目录
-  --here                     使用当前目录作为受管根目录
   --state-root PATH          内部状态目录
   --listen ADDRESS           HTTP 监听地址
   --tls-cert PATH            TLS 证书
@@ -257,7 +255,10 @@ func resetAdmin(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	application, err := app.Open(app.Config{ManagedRoot: loaded.ManagedRoot, StateRoot: loaded.StateRoot, RunTimeoutGrace: loaded.RunTimeoutGrace, GitExecutable: loaded.GitExecutable, ExecutorChains: loaded.ExecutorChains})
+	application, err := app.Open(app.Config{
+		StateRoot: loaded.StateRoot, InstallRoot: applicationInstallRoot(loaded.StateRoot), ConfigPath: loaded.ConfigPath, TLSKey: loaded.TLSKey,
+		AdminPasswordFile: loaded.AdminPasswordFile, RunTimeoutGrace: loaded.RunTimeoutGrace, ExecutorChains: loaded.ExecutorChains,
+	})
 	if err != nil {
 		return err
 	}
@@ -275,8 +276,8 @@ func runDoctor(arguments []string) error {
 		return err
 	}
 	report := doctor.Run(doctor.Config{
-		ManagedRoot: loaded.ManagedRoot, StateRoot: loaded.StateRoot, GitExecutable: loaded.GitExecutable,
-		ConfigPath: loaded.ConfigPath, Listen: loaded.Listen, TLSCert: loaded.TLSCert, TLSKey: loaded.TLSKey,
+		StateRoot: loaded.StateRoot, ConfigPath: loaded.ConfigPath,
+		Listen: loaded.Listen, TLSCert: loaded.TLSCert, TLSKey: loaded.TLSKey,
 	})
 	for _, check := range report.Checks {
 		status := "OK"
@@ -308,8 +309,8 @@ func serveContext(runContext context.Context, arguments []string) error {
 	updateShutdown := make(chan struct{}, 1)
 
 	application, err := app.Open(app.Config{
-		ManagedRoot: loaded.ManagedRoot, StateRoot: loaded.StateRoot,
-		RunTimeoutGrace: loaded.RunTimeoutGrace, GitExecutable: loaded.GitExecutable, ExecutorChains: loaded.ExecutorChains, AdminUsername: loaded.AdminUsername, AdminPassword: loaded.AdminPassword, AdminPasswordFile: loaded.AdminPasswordFile, TrustedProxies: loaded.TrustedProxies,
+		StateRoot: loaded.StateRoot, InstallRoot: applicationInstallRoot(loaded.StateRoot), ConfigPath: loaded.ConfigPath, TLSKey: loaded.TLSKey,
+		RunTimeoutGrace: loaded.RunTimeoutGrace, ExecutorChains: loaded.ExecutorChains, AdminUsername: loaded.AdminUsername, AdminPassword: loaded.AdminPassword, AdminPasswordFile: loaded.AdminPasswordFile, TrustedProxies: loaded.TrustedProxies,
 		UpdateCheck: loaded.UpdateCheck, UpdateInterval: loaded.UpdateInterval,
 		RequestShutdown: func() {
 			select {
@@ -336,7 +337,10 @@ func serveContext(runContext context.Context, arguments []string) error {
 	server := &http.Server{
 		Handler:           application.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Minute,
 		IdleTimeout:       2 * time.Minute,
+		MaxHeaderBytes:    1 << 20,
+		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 	scheme := "http"
 	if loaded.TLSCert != "" {
@@ -349,7 +353,7 @@ func serveContext(runContext context.Context, arguments []string) error {
 		case <-runContext.Done():
 		case <-updateShutdown:
 		}
-		shutdownContext, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		shutdownContext, cancel := context.WithTimeout(context.WithoutCancel(runContext), 30*time.Second)
 		defer cancel()
 		_ = server.Shutdown(shutdownContext)
 	}()
@@ -365,18 +369,26 @@ func serveContext(runContext context.Context, arguments []string) error {
 	return nil
 }
 
+func applicationInstallRoot(stateRoot string) string {
+	metadata, err := installation.Detect(stateRoot)
+	if err != nil {
+		return ""
+	}
+	return metadata.InstallRoot
+}
+
 func validateConfig(arguments []string) error {
 	loaded, err := config.Load(arguments, os.Getenv)
 	if err != nil {
 		return err
 	}
-	if loaded.ManagedRoot == "" || loaded.StateRoot == "" {
-		return errors.New("Managed Root 和 State Root 不能为空")
+	if loaded.StateRoot == "" {
+		return errors.New("State Root 不能为空")
 	}
 	if err := requireSafeNetwork(loaded.Listen, loaded.TLSCert, loaded.TLSKey, loaded.TrustedProxies); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stdout, "配置有效\nManaged Root: %s\nState Root: %s\nListen: %s\n", loaded.ManagedRoot, loaded.StateRoot, loaded.Listen)
+	fmt.Fprintf(os.Stdout, "配置有效\nState Root: %s\nListen: %s\n", loaded.StateRoot, loaded.Listen)
 	return nil
 }
 

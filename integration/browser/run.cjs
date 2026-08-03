@@ -37,10 +37,10 @@ function startFixture() {
     const timeout = setTimeout(() => reject(new Error(`Fixture did not start:\n${output}`)), 30000);
     const inspect = chunk => {
       output += chunk.toString();
-      const match = output.match(/READY (http:\/\/127\.0\.0\.1:\d+)/);
+      const match = output.match(/READY (http:\/\/127\.0\.0\.1:\d+) HOST_ROOT ([A-Za-z0-9_-]+)/);
       if (match) {
         clearTimeout(timeout);
-        resolve({ child, baseURL: match[1] });
+        resolve({ child, baseURL: match[1], hostRoot: Buffer.from(match[2], "base64url").toString("utf8") });
       }
     };
     child.stdout.on("data", inspect);
@@ -50,6 +50,20 @@ function startFixture() {
       reject(new Error(`Fixture exited with code ${code}:\n${output}`));
     });
   });
+}
+
+function hostFileURL(baseURL, endpoint, hostPath, parameters = {}) {
+  const target = new URL(endpoint, baseURL);
+  target.searchParams.set("path", hostPath);
+  for (const [name, value] of Object.entries(parameters)) {
+    if (value !== undefined && value !== null && value !== "") target.searchParams.set(name, String(value));
+  }
+  return target.toString();
+}
+
+function hostFileHref(endpoint, hostPath, parameters = {}) {
+  const target = new URL(hostFileURL("http://scriptboard.invalid", endpoint, hostPath, parameters));
+  return `${target.pathname}${target.search}`;
 }
 
 async function assertNoHorizontalOverflow(page, label) {
@@ -505,8 +519,9 @@ async function assertApplicationMonitoring(page, baseURL) {
   await page.setViewportSize({ width: 1440, height: 1000 });
 }
 
-async function assertLiveLogViewer(page, baseURL) {
-  await page.goto(`${baseURL}/resources/files/log?path=data%2Fexports%2Fservice.log`);
+async function assertLiveLogViewer(page, fixture) {
+  const { baseURL } = fixture;
+  await page.goto(hostFileURL(fixture.baseURL, "/resources/files/log", path.join(fixture.hostRoot, "data", "exports", "service.log")));
   const viewer = page.locator("[data-live-log-viewer]");
   const output = viewer.locator("[data-log-output]");
   await viewer.waitFor();
@@ -727,8 +742,14 @@ async function assertStatusDisplaySettings(page, baseURL) {
 async function assertUserManagement(page, baseURL) {
   await page.goto(`${baseURL}/settings/users`);
   assert.equal((await page.locator("main h1").textContent()).trim(), "Users");
+  const createLink = page.locator('a[href="/settings/users/create"][data-task-link]');
+  assert.equal(await createLink.count(), 1);
+  assert.equal(await page.locator('form[action="/settings/users"]').count(), 0);
+  await createLink.click();
+  const createPanel = page.locator('.task-panel [data-task-kind="user-create"]');
+  await createPanel.waitFor();
   assert.deepEqual(
-    await page.locator('form[action="/settings/users"] select[name="role"] option').evaluateAll(options =>
+    await createPanel.locator('select[name="role"] option').evaluateAll(options =>
       options.map(option => ({ value: option.value, label: option.textContent.trim() }))),
     [
       { value: "maintainer", label: "Maintainer" },
@@ -736,7 +757,7 @@ async function assertUserManagement(page, baseURL) {
       { value: "viewer", label: "Viewer" },
     ],
   );
-  const createForm = page.locator('form[action="/settings/users"]');
+  const createForm = createPanel.locator('form[action="/settings/users"]');
   await createForm.locator('input[name="username"]').fill("browser-viewer");
   await createForm.locator('select[name="role"]').selectOption("viewer");
   await Promise.all([
@@ -815,8 +836,105 @@ async function assertAccountSettings(page, baseURL) {
   await page.setViewportSize({ width: 1440, height: 1000 });
 }
 
+async function assertAssistantSettingsAndWorkspace(page, baseURL) {
+  await page.goto(`${baseURL}/settings/ai`);
+  await page.locator("[data-assistant-settings]").waitFor();
+  await assertNoHorizontalOverflow(page, "AI settings");
+  assert.equal(await page.locator(".settings-nav a").count(), 5);
+
+  await page.locator("[data-add-llm]").click();
+  const drawer = page.locator('[data-llm-drawer][data-open="true"]');
+  await drawer.waitFor();
+  await drawer.locator('input[name="name"]').fill("Fixture · DeepSeek");
+  await drawer.locator('select[name="provider"]').selectOption("openai-compatible");
+  await drawer.locator('input[name="model"]').fill("fixture-model");
+  await drawer.locator('input[name="endpoint"]').fill("http://127.0.0.1:11434/v1");
+  await drawer.locator('input[name="api_key"]').fill("browser-fixture-key");
+  await drawer.locator('input[name="make_default"]').check();
+  await saveSnapshot(page, "ai-settings-drawer");
+  await Promise.all([
+    page.waitForURL("**/settings/ai"),
+    drawer.locator('button[type="submit"]').click(),
+  ]);
+
+  const configuredRow = page.locator('[data-llm-id][data-name="Fixture · DeepSeek"]');
+  await configuredRow.waitFor();
+  assert.equal(await configuredRow.locator('input:not([type="hidden"])').count(), 0);
+  assert.match(await configuredRow.textContent(), /Credential configured/);
+  await configuredRow.locator("[data-edit-llm]").click();
+  await drawer.waitFor();
+  assert.equal(await drawer.locator('input[name="api_key"]').inputValue(), "");
+  await drawer.locator("[data-close-llm]").last().click();
+  await drawer.waitFor({ state: "hidden" });
+
+  const policy = page.locator('form[action="/settings/ai/defaults"]');
+  const enabledInput = policy.locator('input[name="enabled"]');
+  if (!await enabledInput.isChecked()) await policy.locator('label:has(input[name="enabled"])').click();
+  const defaultApprovalInput = policy.locator('input[name="default_auto_approval"]');
+  if (await defaultApprovalInput.isChecked()) await policy.locator('label:has(input[name="default_auto_approval"])').click();
+  await policy.locator('select[name="max_active_conversations"]').selectOption("2");
+  await policy.locator('button[type="submit"]').click();
+  await page.waitForTimeout(300);
+  assert.equal(await page.locator('form[action="/settings/ai/defaults"] [data-async-submit-error]').count(), 0);
+  assert.equal(await page.locator('form[action="/settings/ai/defaults"] input[name="enabled"]').isChecked(), true);
+  await saveSnapshot(page, "ai-settings");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await assertNoHorizontalOverflow(page, "AI settings mobile");
+  await saveSnapshot(page, "ai-settings-mobile");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+
+  await page.goto(`${baseURL}/ai`);
+  await page.locator("[data-assistant-workspace]").waitFor();
+  await assertNoHorizontalOverflow(page, "AI workspace");
+  assert.equal((await page.locator("[data-model-picker-label]").textContent()).trim(), "Fixture · DeepSeek");
+
+  const modelToggle = page.locator("[data-model-picker-toggle]");
+  await modelToggle.click();
+  const modelPicker = page.locator('.assistant-model-picker[data-open="true"]');
+  await modelPicker.waitFor();
+  assert.equal(await modelPicker.locator('[role="option"][aria-selected="true"]').count(), 1);
+  await saveSnapshot(page, "ai-chat-model-picker");
+  await modelToggle.click();
+
+  const approvalToggle = page.locator("[data-auto-approval-toggle]");
+  assert.equal(await approvalToggle.getAttribute("aria-pressed"), "false");
+  await approvalToggle.click();
+  assert.equal(await approvalToggle.getAttribute("aria-pressed"), "true");
+  assert.equal(await page.locator('[role="dialog"]').count(), 0);
+
+  await page.locator("[data-resource-picker-toggle]").click();
+  const resourcePicker = page.locator('[data-resource-picker][data-open="true"]');
+  await resourcePicker.waitFor();
+  const hostResource = resourcePicker.locator('[data-resource-kind="directory"][data-resource-id="host"]');
+  assert.equal(await hostResource.count(), 1);
+  await hostResource.click();
+  const directoryResource = resourcePicker.locator('[data-resource-kind="directory"][data-resource-label="automation"]');
+  assert.equal(await directoryResource.count(), 1);
+  await directoryResource.click();
+  const fileResource = resourcePicker.locator('[data-resource-kind="file"][data-resource-label="README.md"]');
+  assert.equal(await fileResource.count(), 1);
+  await fileResource.click();
+  assert.equal((await page.locator("[data-assistant-context-count]").textContent()).trim(), "3");
+  await saveSnapshot(page, "ai-chat");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await assertNoHorizontalOverflow(page, "AI workspace mobile");
+  await saveSnapshot(page, "ai-chat-mobile");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+}
+
 (async () => {
   const fixture = await startFixture();
+  const fixtureHostPath = (...components) => path.join(fixture.hostRoot, ...components);
+  const fixtureFilesURL = (relative = "", parameters = {}) =>
+    hostFileURL(fixture.baseURL, "/resources/files", relative ? fixtureHostPath(...relative.split("/")) : fixture.hostRoot, parameters);
+  const fixtureFileURL = (endpoint, relative, parameters = {}) =>
+    hostFileURL(fixture.baseURL, endpoint, fixtureHostPath(...relative.split("/")), parameters);
+  const fixtureFileHref = (endpoint, relative, parameters = {}) =>
+    hostFileHref(endpoint, fixtureHostPath(...relative.split("/")), parameters);
   let browser;
   const consoleErrors = [];
   try {
@@ -864,11 +982,12 @@ async function assertAccountSettings(page, baseURL) {
     }
 
     await assertApplicationMonitoring(page, fixture.baseURL);
-    await assertLiveLogViewer(page, fixture.baseURL);
+    await assertLiveLogViewer(page, fixture);
     await assertWebsiteMonitoring(page, fixture.baseURL);
     await assertStatusDisplaySettings(page, fixture.baseURL);
     await assertAccountSettings(page, fixture.baseURL);
     await assertUserManagement(page, fixture.baseURL);
+    await assertAssistantSettingsAndWorkspace(page, fixture.baseURL);
 
     const status = await page.evaluate(async () => {
       const response = await fetch("/monitor/status", { cache: "no-store" });
@@ -889,7 +1008,7 @@ async function assertAccountSettings(page, baseURL) {
       }
     };
     page.on("request", recordMarkdownRequest);
-    await page.goto(`${fixture.baseURL}/resources/files/view/documentation/recovery-checklist.md`);
+    await page.goto(fixtureFileURL("/resources/files/view", "documentation/recovery-checklist.md"));
     const markdownPreview = page.locator("[data-markdown-preview]");
     await markdownPreview.waitFor({ state: "visible" });
     assert.equal((await markdownPreview.locator("h1").textContent()).trim(), "Recovery checklist");
@@ -902,7 +1021,7 @@ async function assertAccountSettings(page, baseURL) {
     assert.match(await markdownCode.locator(".hljs-keyword").allTextContents().then(parts => parts.join(" ")), /param|if/);
     assert.equal(
       await markdownPreview.getByRole("link", { name: "Return to the fixture guide" }).getAttribute("href"),
-      "/resources/files/view/README.md",
+      fixtureFileHref("/resources/files/view", "README.md"),
     );
     assert.equal(await markdownPreview.locator("img").count(), 0);
     assert.equal(
@@ -919,16 +1038,20 @@ async function assertAccountSettings(page, baseURL) {
     await saveSnapshot(page, "markdown-preview");
 
     await Promise.all([
-      page.waitForURL("**/resources/files/"),
-      page.locator('.app-sidebar a[href="/resources/files/"]').click(),
+      page.waitForURL(url => url.pathname === "/resources/files" && !url.searchParams.has("path")),
+      page.locator('.app-sidebar a[href="/resources/files"]').click(),
     ]);
     await Promise.all([
-      page.waitForURL("**/resources/files/automation/"),
-      page.locator('a[href="/resources/files/automation/"]').first().click(),
+      page.waitForURL(fixtureFilesURL()),
+      page.getByRole("link", { name: path.basename(fixture.hostRoot), exact: true }).first().click(),
     ]);
     await Promise.all([
-      page.waitForURL("**/resources/files/view/automation/weekly-system-check.ps1"),
-      page.locator('a[href="/resources/files/view/automation/weekly-system-check.ps1"]').first().click(),
+      page.waitForURL(fixtureFilesURL("automation")),
+      page.getByRole("link", { name: "automation", exact: true }).first().click(),
+    ]);
+    await Promise.all([
+      page.waitForURL(fixtureFileURL("/resources/files/view", "automation/weekly-system-check.ps1")),
+      page.getByRole("link", { name: "weekly-system-check.ps1", exact: true }).first().click(),
     ]);
     const scriptPreview = page.locator("[data-script-preview]");
     await scriptPreview.locator(".hljs-keyword").first().waitFor();
@@ -942,12 +1065,13 @@ async function assertAccountSettings(page, baseURL) {
     await saveSnapshot(page, "script-preview");
 
     await Promise.all([
-      page.waitForURL("**/resources/files/automation/"),
-      page.locator('.task-back[href="/resources/files/automation/"]').click(),
+      page.waitForURL(fixtureFilesURL("automation")),
+      page.locator(".task-back").click(),
     ]);
-    await page.waitForFunction(() => document.querySelector('a[href="/resources/files/run/automation/weekly-system-check.ps1"] svg'));
+    const executableScriptRow = page.locator(".file-table tbody tr").filter({ hasText: "weekly-system-check.ps1" });
+    await executableScriptRow.getByRole("link", { name: "Run", exact: true }).waitFor();
     const filesWorkspaceURL = page.url();
-    await page.locator('a[href="/resources/files/run/automation/weekly-system-check.ps1"]').click();
+    await executableScriptRow.getByRole("link", { name: "Run", exact: true }).click();
     try {
       await page.locator("[data-task-panel]").waitFor();
     } catch (error) {
@@ -1053,7 +1177,7 @@ async function assertAccountSettings(page, baseURL) {
     await scheduleTask.waitFor();
     await scheduleTask.locator('input[name="name"]').fill("Nightly safety check");
     await scheduleTask.locator('select[name="group_id"]').selectOption({ label: "Operations" });
-    await scheduleTask.locator('input[name="script"]').fill("automation/weekly-system-check.ps1");
+    await scheduleTask.locator('input[name="script"]').fill(fixtureHostPath("automation", "weekly-system-check.ps1"));
     await scheduleTask.locator('input[name="arguments"]').fill("-Environment production");
     const rawCronEditor = scheduleTask.locator(".cron-raw-editor");
     assert.equal(await rawCronEditor.getAttribute("open"), null);
@@ -1117,11 +1241,9 @@ async function assertAccountSettings(page, baseURL) {
     assert.equal(await page.locator("#run-search").evaluate(input => document.activeElement === input), true);
     await page.getByText("Nightly safety check", { exact: true }).waitFor();
 
-    await page.goto(`${fixture.baseURL}/resources/files/automation?q=weekly&sort=name&direction=desc`);
+    await page.goto(fixtureFilesURL("automation", { q: "weekly", sort: "name", direction: "desc" }));
     const quickRunWorkspaceURL = page.url();
-    const scriptRow = page.locator(".file-table tbody tr").filter({
-      has: page.locator('a[href="/resources/files/run/automation/weekly-system-check.ps1"]'),
-    });
+    const scriptRow = page.locator(".file-table tbody tr").filter({ hasText: "weekly-system-check.ps1" });
     await scriptRow.locator(".action-menu summary").click();
     await scriptRow.getByRole("link", { name: "Add to Quick Runs" }).click();
     await page.locator('[data-task-panel] [data-task-kind="quick-new"]').waitFor();
@@ -1160,13 +1282,17 @@ async function assertAccountSettings(page, baseURL) {
       assert.equal(await task.locator('input[name="working_directory"]:not([type="hidden"])').count(), 0);
       const tree = task.locator('[role="tree"]');
       await tree.waitFor();
-      const rootDirectory = tree.getByRole("treeitem", { name: "Managed root", exact: true });
+		const rootDirectory = tree.getByRole("treeitem", { name: "This host", exact: true });
       await rootDirectory.waitFor();
-      assert.equal(await rootDirectory.getAttribute("aria-selected"), "true");
+		assert.equal(await rootDirectory.getAttribute("aria-selected"), "false");
+		const hostDirectory = tree.getByRole("treeitem", { name: path.basename(fixture.hostRoot), exact: true });
+		await hostDirectory.waitFor();
+		assert.equal(await hostDirectory.getAttribute("aria-selected"), "true");
+		await hostDirectory.click();
       const automationDirectory = tree.getByRole("treeitem", { name: "automation", exact: true });
       await automationDirectory.waitFor();
       await automationDirectory.click();
-      assert.equal(await workingDirectory.inputValue(), "automation");
+		assert.equal(await workingDirectory.inputValue(), fixtureHostPath("automation"));
       assert.equal(await automationDirectory.getAttribute("aria-selected"), "true");
       await page.locator("[data-task-panel-close]").click();
       await page.locator("[data-task-panel]").waitFor({ state: "detached" });
@@ -1209,7 +1335,7 @@ async function assertAccountSettings(page, baseURL) {
     await quickRunRow.locator(".action-menu summary").click();
     await quickRunRow.getByRole("link", { name: "Edit", exact: true }).click();
     await page.locator('[data-task-panel] [data-task-kind="quick-edit"]').waitFor();
-    assert.equal(await page.locator('[data-task-panel] .field-readonly code').textContent(), "automation/weekly-system-check.ps1");
+    assert.equal(await page.locator('[data-task-panel] .field-readonly code').textContent(), fixtureHostPath("automation", "weekly-system-check.ps1"));
     await page.locator('[data-task-panel] input[name="name"]').fill("Weekly production check");
     await page.locator('[data-task-panel] button[type="submit"]').click();
     await page.locator("[data-task-panel]").waitFor({ state: "detached" });
@@ -1262,11 +1388,12 @@ async function assertAccountSettings(page, baseURL) {
 
     await page.goto(`${fixture.baseURL}/monitor`);
     await page.locator("[data-host-overview]").waitFor();
-    assert.equal(await page.locator('.overview-page > .page-heading a[href="/resources/files/"]').count(), 0);
+    assert.equal(await page.locator('.overview-page > .page-heading a[href="/resources/files"]').count(), 0);
     await page.waitForTimeout(250);
     await saveSnapshot(page, "monitor");
 
-    await page.goto(`${fixture.baseURL}/resources/files/`);
+    const hostFilesWorkspaceURL = fixtureFilesURL();
+    await page.goto(hostFilesWorkspaceURL);
     const uploadTaskRequests = [];
     const recordUploadTaskRequest = request => {
       const requestURL = new URL(request.url());
@@ -1284,7 +1411,7 @@ async function assertAccountSettings(page, baseURL) {
     await page.waitForTimeout(250);
     page.off("request", recordUploadTaskRequest);
     assert.equal(uploadTaskRequests.length, 1, `Upload task fetched ${uploadTaskRequests.length} times`);
-    assert.equal(page.url(), `${fixture.baseURL}/resources/files/`, "opening the Upload task changed the workspace URL");
+    assert.equal(page.url(), hostFilesWorkspaceURL, "opening the Upload task changed the workspace URL");
     const taskScrim = page.locator(".task-panel-scrim");
     const taskScrimBackground = await taskScrim.evaluate(element => getComputedStyle(element).backgroundColor);
     await taskScrim.hover();
@@ -1297,22 +1424,73 @@ async function assertAccountSettings(page, baseURL) {
     await page.locator("[data-task-panel]").waitFor({ state: "detached" });
     await page.locator('a[href^="/resources/files/new-directory"]').click();
     await page.locator("[data-task-panel]").waitFor();
-    assert.equal(page.url(), `${fixture.baseURL}/resources/files/`, "opening the New directory task changed the workspace URL");
+    assert.equal(page.url(), hostFilesWorkspaceURL, "opening the New directory task changed the workspace URL");
     await page.goBack();
     await page.locator("[data-task-panel]").waitFor({ state: "detached" });
-    assert.equal(page.url(), `${fixture.baseURL}/resources/files/`, "closing a task with Back changed the workspace URL");
+    assert.equal(page.url(), hostFilesWorkspaceURL, "closing a task with Back changed the workspace URL");
     await page.goForward();
     await page.locator("[data-task-panel]").waitFor();
-    assert.equal(page.url(), `${fixture.baseURL}/resources/files/`, "restoring a task with Forward changed the workspace URL");
+    assert.equal(page.url(), hostFilesWorkspaceURL, "restoring a task with Forward changed the workspace URL");
     await page.keyboard.press("Escape");
     await page.locator("[data-task-panel]").waitFor({ state: "detached" });
-    const managedRootLocation = page.locator(".managed-root-location");
-    assert.equal((await managedRootLocation.locator("dt").textContent()).trim(), "Managed root location");
-    const managedRootPath = (await managedRootLocation.locator("code").textContent()).trim();
-    assert.equal(path.isAbsolute(managedRootPath), true);
+    await page.evaluate(() => localStorage.removeItem("scriptboard.files.pinnedDirectories.v2"));
+    await page.reload();
+
+    const quickAccess = page.locator("[data-file-quick-access]");
+    await quickAccess.waitFor({ state: "visible" });
+    assert.equal(await quickAccess.getAttribute("open"), null, "Quick access was not collapsed by default");
+    assert.equal((await quickAccess.locator("[data-file-quick-count]").textContent()).trim(), "0");
+    const automationRow = page.locator(".file-table tbody tr").filter({
+      has: page.getByRole("link", { name: "automation", exact: true }),
+    });
+    const automationPin = automationRow.getByRole("button", { name: "Pin directory" });
+    await automationPin.waitFor({ state: "visible" });
+    await automationPin.click();
+    assert.equal(await automationPin.getAttribute("aria-pressed"), "true");
+    assert.equal((await quickAccess.locator("[data-file-quick-count]").textContent()).trim(), "1");
+    await quickAccess.locator("summary").click();
+    await quickAccess.getByRole("link", { name: /automation/ }).waitFor();
+    await saveSnapshot(page, "files-quick-access");
+    await Promise.all([
+      page.waitForURL(fixtureFilesURL("automation")),
+      quickAccess.getByRole("link", { name: /automation/ }).click(),
+    ]);
+    await page.goto(hostFilesWorkspaceURL);
+    const restoredQuickAccess = page.locator("[data-file-quick-access]");
+    await restoredQuickAccess.locator("summary").click();
+    assert.equal(await restoredQuickAccess.getByRole("link", { name: /automation/ }).count(), 1);
+    const restoredAutomationRow = page.locator(".file-table tbody tr").filter({
+      has: page.getByRole("link", { name: "automation", exact: true }),
+    });
+    const restoredAutomationPin = restoredAutomationRow.getByRole("button", { name: "Unpin directory" });
+    await restoredAutomationPin.click();
+    assert.equal((await restoredQuickAccess.locator("[data-file-quick-count]").textContent()).trim(), "0");
+    await restoredQuickAccess.locator("summary").click();
+
+    const hiddenToggle = page.locator("[data-file-hidden-toggle]");
+    assert.equal(await hiddenToggle.isChecked(), false);
+    assert.equal(await page.getByText(".env", { exact: true }).count(), 0);
+    await Promise.all([
+      page.waitForURL(url => url.pathname === "/resources/files" && url.searchParams.get("path") === fixture.hostRoot && url.searchParams.get("show_hidden") === "1"),
+      page.locator(".file-hidden-toggle").click(),
+    ]);
+    assert.equal(await page.locator("[data-file-hidden-toggle]").isChecked(), true);
+    assert.equal(await page.locator("[data-file-hidden-toggle]").evaluate(input => document.activeElement === input), true);
+    const hiddenFileName = page.getByText(".env", { exact: true }).first();
+    await hiddenFileName.waitFor();
+    assert.ok(await page.locator(".file-hidden-badge").count() >= 2);
+    await saveSnapshot(page, "files-hidden");
+    await Promise.all([
+      page.waitForURL(url => url.pathname === "/resources/files" && url.searchParams.get("path") === fixture.hostRoot && !url.searchParams.has("show_hidden")),
+      page.locator(".file-hidden-toggle").click(),
+    ]);
+    await hiddenFileName.waitFor({ state: "detached" });
+    assert.equal(await page.getByText(".env", { exact: true }).count(), 0);
+
     const fileDropZone = page.locator("[data-file-drop-zone]");
-    assert.equal((await fileDropZone.locator("[data-file-drop-title]").textContent()).trim(), "Drop files here to upload");
-    assert.equal(await page.locator('[data-file-drop-form] input[name="path"]').inputValue(), "");
+    assert.equal(await fileDropZone.locator(".file-drop-feedback").isHidden(), true);
+    assert.equal((await fileDropZone.locator("[data-file-drop-title]").textContent()).trim(), "");
+    assert.equal(await page.locator('[data-file-drop-form] input[name="path"]').inputValue(), fixture.hostRoot);
     const dropData = await page.evaluateHandle(() => {
       const transfer = new DataTransfer();
       transfer.items.add(new File(["uploaded by drag and drop"], "drag-upload.txt", { type: "text/plain" }));
@@ -1320,6 +1498,7 @@ async function assertAccountSettings(page, baseURL) {
     });
     await fileDropZone.dispatchEvent("dragenter", { dataTransfer: dropData });
     assert.equal(await fileDropZone.getAttribute("data-state"), "active");
+    assert.equal(await fileDropZone.locator(".file-drop-feedback").isVisible(), true);
     assert.equal((await fileDropZone.locator("[data-file-drop-title]").textContent()).trim(), "Release to upload");
     await saveSnapshot(page, "files-drop-active");
     await Promise.all([
@@ -1329,7 +1508,7 @@ async function assertAccountSettings(page, baseURL) {
     assert.equal((await page.locator("main h1").textContent()).trim(), "Upload results");
     await page.getByText("drag-upload.txt", { exact: true }).waitFor();
     await Promise.all([
-      page.waitForURL("**/resources/files/"),
+      page.waitForURL(hostFilesWorkspaceURL),
       page.getByRole("link", { name: "Back to files" }).click(),
     ]);
     await page.getByRole("link", { name: "drag-upload.txt", exact: true }).waitFor();
@@ -1356,7 +1535,7 @@ async function assertAccountSettings(page, baseURL) {
     ]);
     await page.getByText("drag-upload (2).txt", { exact: true }).waitFor();
     await Promise.all([
-      page.waitForURL("**/resources/files/"),
+      page.waitForURL(hostFilesWorkspaceURL),
       page.getByRole("link", { name: "Back to files" }).click(),
     ]);
     await page.getByRole("link", { name: "drag-upload (2).txt", exact: true }).waitFor();
@@ -1417,7 +1596,8 @@ async function assertAccountSettings(page, baseURL) {
     const delayedSearchRequest = new Promise(resolve => {
       releaseSearchRequest = resolve;
     });
-    await page.route("**/resources/files/?q=auto", async route => {
+    await page.route(url => url.pathname === "/resources/files" &&
+      url.searchParams.get("path") === fixture.hostRoot && url.searchParams.get("q") === "auto", async route => {
       await delayedSearchRequest;
       await route.continue();
     }, { times: 1 });
@@ -1430,7 +1610,7 @@ async function assertAccountSettings(page, baseURL) {
     assert.equal(Math.round(await fileSearchButton.evaluate(button => button.getBoundingClientRect().width)), searchButtonWidth);
     assert.equal((await fileSearchButton.textContent()).trim(), "Searching…");
     const searchedFilesURL = page.waitForURL(url =>
-      url.pathname === "/resources/files/" && url.searchParams.get("q") === "auto");
+      url.pathname === "/resources/files" && url.searchParams.get("path") === fixture.hostRoot && url.searchParams.get("q") === "auto");
     releaseSearchRequest();
     await searchedFilesURL;
     assert.equal(await page.locator("[data-search-input]").evaluate(input => document.activeElement === input), true);
@@ -1454,7 +1634,8 @@ async function assertAccountSettings(page, baseURL) {
     await fileSort.locator('[name="direction"]').selectOption("desc");
     await Promise.all([
       page.waitForURL(url =>
-        url.pathname === "/resources/files/" &&
+        url.pathname === "/resources/files" &&
+        url.searchParams.get("path") === fixture.hostRoot &&
         url.searchParams.get("q") === "auto" &&
         url.searchParams.get("sort") === "type" &&
         url.searchParams.get("direction") === "desc"),
@@ -1465,7 +1646,8 @@ async function assertAccountSettings(page, baseURL) {
 
     await Promise.all([
       page.waitForURL(url =>
-        url.pathname === "/resources/files/" &&
+        url.pathname === "/resources/files" &&
+        url.searchParams.get("path") === fixture.hostRoot &&
         !url.searchParams.has("q") &&
         url.searchParams.get("sort") === "type" &&
         url.searchParams.get("direction") === "desc"),
@@ -1495,27 +1677,30 @@ async function assertAccountSettings(page, baseURL) {
     assert.equal(await page.locator(".pagination").count(), 0);
     await saveSnapshot(page, "files-search-empty");
 
-    await page.goto(`${fixture.baseURL}/resources/files/`);
+    await page.setViewportSize({ width: 820, height: 900 });
+    await page.goto(hostFilesWorkspaceURL);
+    await assertNoHorizontalOverflow(page, "files tablet");
+
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.reload();
+    await page.goto(hostFilesWorkspaceURL);
     await assertNoHorizontalOverflow(page, "files mobile");
-    const managedRootMobileMetrics = await page.locator(".managed-root-location code").evaluate(element => {
-      const bounds = element.getBoundingClientRect();
-      return {
-        wraps: bounds.height > Number.parseFloat(getComputedStyle(element).lineHeight) * 1.5,
-        fitsWidth: element.scrollWidth <= element.clientWidth,
-      };
-    });
-    assert.deepEqual(managedRootMobileMetrics, { wraps: true, fitsWidth: true });
     const fileDropMobileMetrics = await page.locator("[data-file-drop-zone]").evaluate(element => {
       const bounds = element.getBoundingClientRect();
-      const actionBounds = element.querySelector(".file-drop-action").getBoundingClientRect();
       return {
         fitsWidth: bounds.right <= window.innerWidth,
-        actionHeight: Math.round(actionBounds.height),
+        feedbackHidden: getComputedStyle(element.querySelector(".file-drop-feedback")).display === "none",
       };
     });
-    assert.deepEqual(fileDropMobileMetrics, { fitsWidth: true, actionHeight: 44 });
+    assert.deepEqual(fileDropMobileMetrics, { fitsWidth: true, feedbackHidden: true });
+    const fileHeadingActionSizes = await page.locator(".files-heading-actions .button").evaluateAll(elements =>
+      elements.map(element => ({
+        width: Math.round(element.getBoundingClientRect().width),
+        height: Math.round(element.getBoundingClientRect().height),
+      })),
+    );
+    assert.equal(fileHeadingActionSizes.length, 2);
+    assert.equal(fileHeadingActionSizes[0].width, fileHeadingActionSizes[1].width);
+    assert.ok(fileHeadingActionSizes.every(size => size.height >= 44));
     const mobileSearchMetrics = await page.locator(".file-search-primary").evaluate(primary => {
       const bounds = primary.getBoundingClientRect();
       const inputBounds = primary.querySelector("input").getBoundingClientRect();
@@ -1540,7 +1725,7 @@ async function assertAccountSettings(page, baseURL) {
     await saveSnapshot(page, "files-mobile");
     await page.setViewportSize({ width: 1440, height: 1000 });
 
-    await page.goto(`${fixture.baseURL}/resources/files/`);
+    await page.goto(hostFilesWorkspaceURL);
     const readmeRow = page.locator(".file-table tbody tr").filter({
       has: page.getByRole("link", { name: "README.md", exact: true }),
     });
@@ -1548,9 +1733,9 @@ async function assertAccountSettings(page, baseURL) {
     await readmeRow.getByRole("button", { name: "Move to trash" }).click();
     await readmeRow.waitFor({ state: "detached" });
     await page.goto(`${fixture.baseURL}/resources/trash`);
-    await page.getByText("README.md", { exact: true }).waitFor();
     await assertTableRowsAligned(page, ".records-table", "trash desktop");
     const trashRow = page.locator(".records-table tbody tr").filter({ hasText: "README.md" });
+    await trashRow.waitFor();
     const restoreButton = trashRow.getByRole("button", { name: "Restore", exact: true });
     assert.equal(await restoreButton.evaluate(element => element.classList.contains("button--primary")), false);
     assert.equal(Math.round(await restoreButton.evaluate(element => element.getBoundingClientRect().height)), 34);
@@ -1784,7 +1969,13 @@ async function assertAccountSettings(page, baseURL) {
     ]);
     await chinesePage.goto(`${fixture.baseURL}/settings/users`);
     assert.equal((await chinesePage.locator("main h1").textContent()).trim(), "用户");
-    assert.equal((await chinesePage.locator('form[action="/settings/users"] button[type="submit"]').textContent()).trim(), "创建用户");
+    const createUserTask = chinesePage.locator('a[href="/settings/users/create"][data-task-link]');
+    assert.equal(await createUserTask.count(), 1);
+    await createUserTask.click();
+    const createUserDrawer = chinesePage.locator(".task-panel--user-create");
+    await createUserDrawer.waitFor({ state: "visible" });
+    assert.equal((await createUserDrawer.locator('form[action="/settings/users"] button[type="submit"]').textContent()).trim(), "创建用户");
+    await createUserDrawer.locator("[data-task-panel-close]").click();
     await chinesePage.setViewportSize({ width: 390, height: 844 });
     await chinesePage.reload();
     await assertNoHorizontalOverflow(chinesePage, "用户管理移动端");
@@ -1827,15 +2018,17 @@ async function assertAccountSettings(page, baseURL) {
       const probe = document.elementFromPoint(panelBounds.left + 12, panelBounds.bottom - 12);
       return panelBounds.bottom < triggerBounds.top && (probe === menu || menu.contains(probe));
     }), true);
-    await noScriptPage.goto(`${fixture.baseURL}/resources/files/`);
+    await noScriptPage.goto(hostFilesWorkspaceURL);
     assert.equal(await noScriptPage.locator("[data-file-drop-form]").count(), 1);
     assert.equal(await noScriptPage.locator('[data-file-drop-form] input[type="file"][multiple]').count(), 1);
-    assert.equal((await noScriptPage.locator("[data-file-drop-form] button[type='submit']").textContent()).trim(), "Start upload");
-    await noScriptPage.goto(`${fixture.baseURL}/resources/files/view/documentation/recovery-checklist.md`);
+    assert.equal(await noScriptPage.locator("[data-file-drop-form]").isHidden(), true);
+    assert.equal(await noScriptPage.locator(".file-drop-feedback").isVisible(), false);
+    assert.equal(await noScriptPage.locator('a[href^="/resources/files/upload"][data-task-link]').count(), 1);
+    await noScriptPage.goto(fixtureFileURL("/resources/files/view", "documentation/recovery-checklist.md"));
     assert.equal(await noScriptPage.locator("[data-markdown-preview]").isHidden(), true);
     assert.equal(await noScriptPage.locator("[data-markdown-source]").isVisible(), true);
     assert.match(await noScriptPage.locator("[data-markdown-source]").textContent(), /# Recovery checklist/);
-    await noScriptPage.goto(`${fixture.baseURL}/resources/files/view/automation/weekly-system-check.ps1`);
+    await noScriptPage.goto(fixtureFileURL("/resources/files/view", "automation/weekly-system-check.ps1"));
     assert.equal(await noScriptPage.locator("[data-script-preview]").isVisible(), true);
     assert.equal(await noScriptPage.locator("[data-script-preview]").getAttribute("class"), null);
     assert.match(await noScriptPage.locator("[data-script-preview]").textContent(), /param\(\[string\]\$Environment/);

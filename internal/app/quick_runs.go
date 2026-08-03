@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/runmanager"
 )
 
@@ -152,7 +153,7 @@ func (a *App) createQuickRunGroup(response http.ResponseWriter, request *http.Re
 	}
 	defer transaction.Rollback()
 	var sortOrder int
-	if err := transaction.QueryRow("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM quick_run_groups").Scan(&sortOrder); err == nil {
+	if err = transaction.QueryRow("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM quick_run_groups").Scan(&sortOrder); err == nil {
 		now := time.Now().UTC().Unix()
 		_, err = transaction.Exec(`INSERT INTO quick_run_groups (id, name, sort_order, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?)`, id, name, sortOrder, now, now)
@@ -169,6 +170,7 @@ func (a *App) createQuickRunGroup(response http.ResponseWriter, request *http.Re
 		return
 	}
 	a.recordAuditForRequest(request, "create_quick_run_group", id, "succeeded")
+	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }
 
@@ -366,7 +368,7 @@ func (a *App) moveQuickRunToGroup(response http.ResponseWriter, request *http.Re
 		return
 	}
 	var sortOrder int
-	if err := transaction.QueryRow("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM quick_runs WHERE group_id IS ?", groupID).Scan(&sortOrder); err == nil {
+	if err = transaction.QueryRow("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM quick_runs WHERE group_id IS ?", groupID).Scan(&sortOrder); err == nil {
 		_, err = transaction.Exec(`UPDATE quick_runs SET group_id = ?, sort_order = ?, updated_at = ? WHERE id = ?`,
 			groupID, sortOrder, time.Now().UTC().Unix(), id)
 	}
@@ -510,10 +512,10 @@ func (a *App) createQuickRunCopy(source quickRunRecord, name, arguments string, 
 	}
 	now := time.Now().UTC().Unix()
 	if _, err = transaction.Exec(`INSERT INTO quick_runs
-		(id, name, script_path, arguments_template, timeout_seconds, source_run_id,
+		(id, name, script_path, script_path_key, arguments_template, timeout_seconds, source_run_id,
 		sort_order, created_at, group_id, locked, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
-		id, name, source.ScriptPath, arguments, timeoutSeconds, source.SourceRunID,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+		id, name, source.ScriptPath, hostfiles.ComparisonKey(source.ScriptPath), arguments, timeoutSeconds, source.SourceRunID,
 		sortOrder, now, targetGroup, now); err != nil {
 		return "", err
 	}
@@ -549,6 +551,7 @@ func (a *App) copyQuickRun(response http.ResponseWriter, request *http.Request) 
 		return
 	}
 	a.recordAuditForRequest(request, "copy_quick_run", id, "succeeded")
+	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }
 

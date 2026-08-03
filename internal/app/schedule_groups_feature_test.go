@@ -50,7 +50,8 @@ func TestAdminCanCreateRenameAndReorderScheduleGroups(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
+	hostRoot := filepath.Join(root, "host")
+	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
 	firstID, _ := createScheduleGroupForTest(t, client, serverURL, "First")
 	secondID, token := createScheduleGroupForTest(t, client, serverURL, "Second")
 
@@ -116,7 +117,9 @@ func TestDeletingScheduleGroupMovesItsSchedulesToUngrouped(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
+	hostRoot := filepath.Join(root, "host")
+	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
+	scriptPath := scheduleTestScript(t, root, "checks/preserved.ps1")
 	groupID, _ := createScheduleGroupForTest(t, client, serverURL, "Temporary")
 
 	response, err := client.Get(serverURL + "/config/schedules/new")
@@ -127,7 +130,7 @@ func TestDeletingScheduleGroupMovesItsSchedulesToUngrouped(t *testing.T) {
 	_ = response.Body.Close()
 	for _, expected := range []string{`name="group_id"`, `value="` + groupID + `"`, `Temporary`} {
 		if !strings.Contains(string(taskPage), expected) {
-			t.Fatalf("Schedule form missing managed group option %q: %s", expected, taskPage)
+			t.Fatalf("Schedule form missing configured group option %q: %s", expected, taskPage)
 		}
 	}
 	if strings.Contains(string(taskPage), `name="group_name"`) {
@@ -137,7 +140,7 @@ func TestDeletingScheduleGroupMovesItsSchedulesToUngrouped(t *testing.T) {
 		"csrf_token":      {formToken(t, taskPage)},
 		"name":            {"Preserved schedule"},
 		"group_id":        {groupID},
-		"script":          {"checks/preserved.ps1"},
+		"script":          {scriptPath},
 		"expression":      {"0 2 * * *"},
 		"timeout_seconds": {"90"},
 	})
@@ -183,11 +186,13 @@ func TestDeletingScheduleGroupMovesItsSchedulesToUngrouped(t *testing.T) {
 	}
 }
 
-func TestScheduleRejectsUnknownManagedGroup(t *testing.T) {
+func TestScheduleRejectsUnknownGroup(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
+	hostRoot := filepath.Join(root, "host")
+	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
+	scriptPath := scheduleTestScript(t, root, "checks/invalid.ps1")
 	response, err := client.Get(serverURL + "/config/schedules/new")
 	if err != nil {
 		t.Fatal(err)
@@ -198,7 +203,7 @@ func TestScheduleRejectsUnknownManagedGroup(t *testing.T) {
 		"csrf_token": {formToken(t, taskPage)},
 		"name":       {"Invalid group"},
 		"group_id":   {"missing-group"},
-		"script":     {"checks/invalid.ps1"},
+		"script":     {scriptPath},
 		"expression": {"0 2 * * *"},
 	})
 	if err != nil {

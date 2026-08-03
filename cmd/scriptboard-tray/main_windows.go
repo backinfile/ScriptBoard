@@ -4,7 +4,6 @@ package main
 
 import (
 	"bytes"
-	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -20,6 +19,7 @@ import (
 
 	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/config"
+	"scriptboard/internal/localtls"
 	"scriptboard/internal/platformservice"
 )
 
@@ -53,7 +53,6 @@ func onReady() {
 	restart := systray.AddMenuItem("重启服务", "重启 Windows 服务")
 	lifecycleItems := []*systray.MenuItem{start, stop, restart}
 	systray.AddSeparator()
-	openManaged := systray.AddMenuItem("打开 Managed Root", loaded.ManagedRoot)
 	openState := systray.AddMenuItem("打开 State Root", loaded.StateRoot)
 	openLogs := systray.AddMenuItem("打开服务日志目录", filepath.Join(loaded.StateRoot, "logs"))
 	systray.AddSeparator()
@@ -95,7 +94,6 @@ func onReady() {
 	go queueAction(start.ClickedCh, actions, trayAction{label: "正在启动 ScriptBoard 服务…", run: platformservice.Start})
 	go queueAction(stop.ClickedCh, actions, trayAction{label: "正在停止 ScriptBoard 服务及活动 Run…", run: platformservice.Stop})
 	go queueAction(restart.ClickedCh, actions, trayAction{label: "正在重启 ScriptBoard 服务…", run: platformservice.Restart})
-	go menuAction(openManaged.ClickedCh, func() { openFolder(loaded.ManagedRoot) })
 	go menuAction(openState.ClickedCh, func() { openFolder(loaded.StateRoot) })
 	go menuAction(openLogs.ClickedCh, func() { openFolder(filepath.Join(loaded.StateRoot, "logs")) })
 	go func() { <-quit.ClickedCh; systray.Quit() }()
@@ -123,7 +121,12 @@ func readiness() (bool, bool) {
 	running := strings.Contains(output, "RUNNING")
 	client := &http.Client{Timeout: 2 * time.Second}
 	if loaded.TLSCert != "" {
-		client.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}} // local readiness probe only
+		host, _, _ := net.SplitHostPort(loaded.Listen)
+		tlsConfig, err := localtls.PinnedConfig(loaded.TLSCert, host)
+		if err != nil {
+			return running, false
+		}
+		client.Transport = &http.Transport{TLSClientConfig: tlsConfig, Proxy: nil}
 	}
 	response, err := client.Get(serviceURL() + "/login")
 	if err != nil {

@@ -3,7 +3,6 @@ package update
 import (
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -19,6 +18,7 @@ import (
 	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/config"
 	"scriptboard/internal/installation"
+	"scriptboard/internal/localtls"
 	"scriptboard/internal/platformservice"
 )
 
@@ -403,7 +403,11 @@ func localServiceClient(loaded config.Config) (string, *http.Client, error) {
 	transport.Proxy = nil
 	if loaded.TLSCert != "" {
 		scheme = "https"
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // local readiness only
+		tlsConfig, err := localtls.PinnedConfig(loaded.TLSCert, host)
+		if err != nil {
+			return "", nil, err
+		}
+		transport.TLSClientConfig = tlsConfig
 	}
 	return fmt.Sprintf("%s://%s", scheme, net.JoinHostPort(host, port)), &http.Client{Timeout: 2 * time.Second, Transport: transport}, nil
 }

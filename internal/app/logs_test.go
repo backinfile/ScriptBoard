@@ -19,22 +19,23 @@ import (
 	"scriptboard/internal/logstream"
 )
 
-func TestFileLogHistoryReturnsTheLatestManagedTextLines(t *testing.T) {
+func TestFileLogHistoryReturnsTheLatestHostTextLines(t *testing.T) {
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
-	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+	hostRoot := filepath.Join(root, "managed")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(
-		filepath.Join(managedRoot, "service.log"),
+		filepath.Join(hostRoot, "service.log"),
 		[]byte("ready\nworker WARNING\nrequest ERROR\n"),
 		0o644,
 	); err != nil {
 		t.Fatal(err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, filepath.Join(root, "state"))
+	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
 
-	response, err := client.Get(serverURL + "/resources/files/log/history?path=service.log")
+	logPath := filepath.Join(hostRoot, "service.log")
+	response, err := client.Get(hostFileRequestURL(serverURL, "/resources/files/log/history", logPath))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +53,7 @@ func TestFileLogHistoryReturnsTheLatestManagedTextLines(t *testing.T) {
 		t.Fatalf("page = %#v", page)
 	}
 
-	response, err = client.Get(serverURL + "/resources/files/log/history?path=service.log&before=invalid")
+	response, err = client.Get(hostFileRequestURL(serverURL, "/resources/files/log/history", logPath) + "&before=invalid")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,16 +76,17 @@ func TestFileLogHistoryReturnsTheLatestManagedTextLines(t *testing.T) {
 
 func TestFileLogPageRendersTheSharedLiveViewerShell(t *testing.T) {
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
-	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+	hostRoot := filepath.Join(root, "managed")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(managedRoot, "service.log"), []byte("ready\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(hostRoot, "service.log"), []byte("ready\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, filepath.Join(root, "state"))
+	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
 
-	response, err := client.Get(serverURL + "/resources/files/log?path=service.log")
+	logPath := filepath.Join(hostRoot, "service.log")
+	response, err := client.Get(hostFileRequestURL(serverURL, "/resources/files/log", logPath))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,8 +98,8 @@ func TestFileLogPageRendersTheSharedLiveViewerShell(t *testing.T) {
 	}
 	for _, fragment := range []string{
 		`data-live-log-viewer`,
-		`data-log-history-url="/resources/files/log/history?path=service.log"`,
-		`data-log-events-url="/resources/files/log/events?path=service.log"`,
+		`data-log-history-url="` + hostFileHref("/resources/files/log/history", logPath) + `"`,
+		`data-log-events-url="` + hostFileHref("/resources/files/log/events", logPath) + `"`,
 		`data-log-output`,
 		`service.log`,
 	} {
@@ -106,24 +108,24 @@ func TestFileLogPageRendersTheSharedLiveViewerShell(t *testing.T) {
 		}
 	}
 
-	response, err = client.Get(serverURL + "/resources/files/")
+	response, err = client.Get(hostFilesRequestURL(serverURL, hostRoot))
 	if err != nil {
 		t.Fatal(err)
 	}
 	listing, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if !bytes.Contains(listing, []byte(`/resources/files/log?path=service.log`)) ||
+	if !bytes.Contains(listing, []byte(hostFileHref("/resources/files/log", logPath))) ||
 		!bytes.Contains(listing, []byte(`data-lucide="scroll-text"`)) {
 		t.Fatalf("file listing is missing the live log entry: %s", listing)
 	}
 
-	response, err = client.Get(serverURL + "/resources/files/view/service.log")
+	response, err = client.Get(hostFileRequestURL(serverURL, "/resources/files/view", logPath))
 	if err != nil {
 		t.Fatal(err)
 	}
 	preview, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if !bytes.Contains(preview, []byte(`/resources/files/log?path=service.log`)) {
+	if !bytes.Contains(preview, []byte(hostFileHref("/resources/files/log", logPath))) {
 		t.Fatalf("text preview is missing the live log entry: %s", preview)
 	}
 
@@ -165,17 +167,17 @@ func TestFileLogPageRendersTheSharedLiveViewerShell(t *testing.T) {
 
 func TestFileLogEventsStreamAppendedEntriesWithCursorIDs(t *testing.T) {
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
-	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+	hostRoot := filepath.Join(root, "managed")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	logPath := filepath.Join(managedRoot, "service.log")
+	logPath := filepath.Join(hostRoot, "service.log")
 	if err := os.WriteFile(logPath, []byte("ready\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, filepath.Join(root, "state"))
+	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
 
-	response, err := client.Get(serverURL + "/resources/files/log/events?path=service.log")
+	response, err := client.Get(hostFileRequestURL(serverURL, "/resources/files/log/events", logPath))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +244,6 @@ func TestDockerLogRoutesUseTheSharedViewerAndRejectHostApplications(t *testing.T
 		source: source,
 	}
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{
-		ManagedRoot:      filepath.Join(root, "managed"),
 		StateRoot:        filepath.Join(root, "state"),
 		ApplicationProbe: probe,
 	})
@@ -330,8 +331,7 @@ func TestDockerLogRoutesUseTheSharedViewerAndRejectHostApplications(t *testing.T
 func TestLogRoutesRequireAnAuthenticatedSession(t *testing.T) {
 	root := t.TempDir()
 	application, err := app.Open(app.Config{
-		ManagedRoot: filepath.Join(root, "managed"),
-		StateRoot:   filepath.Join(root, "state"),
+		StateRoot: filepath.Join(root, "state"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -364,18 +364,18 @@ func TestLogRoutesRequireAnAuthenticatedSession(t *testing.T) {
 
 func TestLiveLogStreamLimitRejectsTheNinthConnection(t *testing.T) {
 	root := t.TempDir()
-	managedRoot := filepath.Join(root, "managed")
-	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+	hostRoot := filepath.Join(root, "managed")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(managedRoot, "service.log"), []byte("ready\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(hostRoot, "service.log"), []byte("ready\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	client, serverURL := authenticatedClient(t, managedRoot, filepath.Join(root, "state"))
+	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
 
 	responses := make([]*http.Response, 0, 8)
 	for index := 0; index < 8; index++ {
-		response, err := client.Get(serverURL + "/resources/files/log/events?path=service.log")
+		response, err := client.Get(hostFileRequestURL(serverURL, "/resources/files/log/events", filepath.Join(hostRoot, "service.log")))
 		if err != nil {
 			t.Fatalf("open stream %d: %v", index+1, err)
 		}
@@ -391,7 +391,7 @@ func TestLiveLogStreamLimitRejectsTheNinthConnection(t *testing.T) {
 		}
 	}()
 
-	response, err := client.Get(serverURL + "/resources/files/log/events?path=service.log")
+	response, err := client.Get(hostFileRequestURL(serverURL, "/resources/files/log/events", filepath.Join(hostRoot, "service.log")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -421,7 +421,6 @@ func TestLogHistoryLimitRejectsTheFifthConcurrentRead(t *testing.T) {
 		source: source,
 	}
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{
-		ManagedRoot:      filepath.Join(root, "managed"),
 		StateRoot:        filepath.Join(root, "state"),
 		ApplicationProbe: probe,
 	})

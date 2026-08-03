@@ -157,7 +157,7 @@ func TestMonitorKeepsPartialDataAndSelectsMostConstrainedRelevantVolume(t *testi
 	probe := &sequenceProbe{samples: []RawSample{{At: base,
 		Memory: &Memory{TotalBytes: 1000, AvailableBytes: 400, UsedBytes: 600, UsedPercent: 60},
 		Filesystems: []Filesystem{
-			{ID: "managed", Mountpoint: "/managed", UsedPercent: 70, AvailableBytes: 300, Roles: []string{"managed"}, Online: true},
+			{ID: "install", Mountpoint: "/opt/scriptboard", UsedPercent: 70, AvailableBytes: 300, Roles: []string{"install"}, Online: true},
 			{ID: "state", Mountpoint: "/state", UsedPercent: 92, AvailableBytes: 80, Roles: []string{"state"}, Online: true},
 		}, Errors: map[string]string{"cpu": "permission denied"},
 	}}}

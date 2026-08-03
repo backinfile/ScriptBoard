@@ -5,8 +5,15 @@
 <main class="workspace task-page" data-task-page data-task-kind="{{.Kind}}" data-task-close-label="{{t .Locale "common.close"}}">
   <a class="task-back" href="{{.BackURL}}"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "common.back"}}</a>
   <section class="task-sheet">
-    <header><div><p class="page-eyebrow">{{if eq .Kind "user-edit"}}{{t .Locale "users.accounts"}}{{else if or (eq .Kind "account-username") (eq .Kind "account-password")}}{{t .Locale "settings.account"}}{{else}}{{t .Locale "common.create"}}{{end}}</p><h1>{{.Title}}</h1><p>{{.Description}}</p></div><a class="icon-button" href="{{.BackURL}}" aria-label="{{t .Locale "common.close"}}"><span data-lucide="x" aria-hidden="true"></span></a></header>
-    {{if eq .Kind "user-edit"}}
+    <header><div><p class="page-eyebrow">{{if or (eq .Kind "user-edit") (eq .Kind "user-create")}}{{t .Locale "users.accounts"}}{{else if or (eq .Kind "account-username") (eq .Kind "account-password")}}{{t .Locale "settings.account"}}{{else if eq .Kind "move-file"}}{{t .Locale "files.move"}}{{else}}{{t .Locale "common.create"}}{{end}}</p><h1>{{.Title}}</h1><p>{{.Description}}</p></div><a class="icon-button" href="{{.BackURL}}" aria-label="{{t .Locale "common.close"}}"><span data-lucide="x" aria-hidden="true"></span></a></header>
+    {{if eq .Kind "user-create"}}
+    <form method="post" action="{{.Action}}">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <label>{{t .Locale "login.username"}} <input name="username" autocomplete="username" spellcheck="false" maxlength="64" required autofocus></label>
+      <label>{{t .Locale "users.role"}} <select name="role" required><option value="maintainer">{{t .Locale "users.role.maintainer"}}</option><option value="operator">{{t .Locale "users.role.operator"}}</option><option value="viewer">{{t .Locale "users.role.viewer"}}</option></select></label>
+      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="user-plus" aria-hidden="true"></span>{{t .Locale "users.create"}}</button></footer>
+    </form>
+    {{else if eq .Kind "user-edit"}}
     <div class="user-edit-content">
       <dl class="user-edit-summary">
         <div><dt>{{t .Locale "login.username"}}</dt><dd>{{.User.Username}}</dd></div>
@@ -58,6 +65,18 @@
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value="{{.Path}}"><input type="hidden" name="conflict_action" value="">
       <label class="file-picker">{{t .Locale "task.select_files"}} <input name="files" type="file" multiple required autofocus></label>
       <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "task.start_upload"}}</button></footer>
+    </form>
+    {{else if eq .Kind "move-file"}}
+    <form method="post" action="{{.Action}}" data-async>
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="source" value="{{.Path}}"><input type="hidden" name="conflict_action" value="">
+      <div class="field-readonly"><span>{{t .Locale "common.path"}}</span><code>{{.Path}}</code></div>
+      <div class="directory-tree-picker" data-directory-picker data-endpoint="/resources/directories" data-root-label="{{t .Locale "task.directory_picker.root"}}" data-loading-label="{{t .Locale "task.directory_picker.loading"}}" data-empty-label="{{t .Locale "task.directory_picker.empty"}}" data-autofocus>
+        <input type="hidden" name="working_directory" value="{{.WorkingDirectory}}" required>
+        <div class="directory-tree-picker__heading"><span>{{t .Locale "task.move_file.destination"}}</span><code data-directory-selection>{{.WorkingDirectory}}</code></div>
+        <div class="directory-tree-picker__tree" data-directory-tree data-directory-options aria-label="{{t .Locale "task.move_file.destination"}}"></div>
+      </div>
+      <label>{{t .Locale "task.move_file.name"}} <input name="name" value="{{.Name}}" autocomplete="off" spellcheck="false" required></label>
+      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="folder-input" aria-hidden="true"></span>{{t .Locale "files.move"}}</button></footer>
     </form>
     {{else if eq .Kind "one-time-run"}}
     <form method="post" action="{{.Action}}">

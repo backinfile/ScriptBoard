@@ -264,9 +264,10 @@ func shellNavigation(locale webLocale, path string, role userRole) []shellNaviga
 		items []itemSpec
 	}{
 		{key: "nav.monitor", items: []itemSpec{{"/monitor", "nav.overview", "activity", permissionObserve}, {"/monitor/applications", "nav.applications", "app-window", permissionObserve}, {"/monitor/websites", "nav.websites", "network", permissionObserve}}},
-		{key: "nav.resources", items: []itemSpec{{"/resources/files/", "nav.files", "folder-code", permissionReadFiles}, {"/resources/variables", "nav.variables", "braces", permissionManageExecution}}},
+		{key: "nav.resources", items: []itemSpec{{"/resources/files", "nav.files", "folder-code", permissionReadFiles}, {"/resources/variables", "nav.variables", "braces", permissionManageExecution}}},
 		{key: "nav.configuration", items: []itemSpec{{"/config/quick-runs", "nav.quick_runs", "zap", permissionObserve}, {"/config/schedules", "nav.schedules", "calendar-clock", permissionObserve}}},
 		{key: "nav.history", items: []itemSpec{{"/history/runs", "nav.runs", "square-terminal", permissionObserve}, {"/history/audit", "nav.audit", "scroll-text", permissionReadAudit}}},
+		{key: "nav.assistant", items: []itemSpec{{"/ai", "nav.ai", "sparkles", permissionObserve}}},
 	}
 	groups := make([]shellNavigationGroup, 0, len(specs))
 	for _, group := range specs {
@@ -276,8 +277,8 @@ func shellNavigation(locale webLocale, path string, role userRole) []shellNaviga
 				continue
 			}
 			current := path == item.href || item.href == "/monitor" && path == "/monitor" ||
-				item.href == "/resources/files/" && (strings.HasPrefix(path, "/resources/files/") || path == "/resources/trash") ||
-				item.href != "/monitor" && item.href != "/resources/files/" && strings.HasPrefix(path, item.href)
+				item.href == "/resources/files" && (path == "/resources/files" || path == "/resources/trash") ||
+				item.href != "/monitor" && item.href != "/resources/files" && strings.HasPrefix(path, item.href)
 			items = append(items, shellNavigationItem{Href: item.href, Label: webText(locale, item.key), Icon: item.icon, Current: current})
 		}
 		if len(items) > 0 {
