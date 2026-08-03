@@ -27,6 +27,24 @@ func TestManagerProtectsWindowsShortPathAliases(t *testing.T) {
 	}
 }
 
+func TestWindowsShortPathAliasesContainNonexistentChildren(t *testing.T) {
+	t.Parallel()
+
+	longPath, shortPath := windowsAliasPair(t)
+	child := filepath.Join(shortPath, "尚未创建.ps1")
+	if !hostfiles.Contains(longPath, child) {
+		t.Fatalf("long path %q does not contain nonexistent child through short alias %q", longPath, child)
+	}
+	destination := filepath.Join(longPath, "归档")
+	rebased, err := hostfiles.Rebase(longPath, destination, child)
+	if err != nil {
+		t.Fatalf("rebase nonexistent short-alias child: %v", err)
+	}
+	if want := filepath.Join(destination, "尚未创建.ps1"); rebased != want {
+		t.Fatalf("rebased path = %q, want %q", rebased, want)
+	}
+}
+
 func windowsAliasPair(t *testing.T) (string, string) {
 	t.Helper()
 
