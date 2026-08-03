@@ -1,0 +1,6 @@
+# Runtime resources are size- and digest-bound in capabilities.json and signed
+# release manifests. Keep their bytes deterministic across host platforms.
+/runtime/capabilities.json text eol=lf
+/runtime/pi-runtime-lock.json text eol=lf
+/runtime/scriptboard-extension.ts text eol=lf
+/runtime/playbooks/*.md text eol=lf
