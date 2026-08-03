@@ -147,6 +147,11 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Packaging Linux $arch archive failed" }
     }
     if ($formalRelease) {
+        # The archive loops leave GOOS/GOARCH on the final Linux target. This
+        # child script uses `go run` for host-side packaging tools, so restore
+        # the caller's host target before PowerShell tries to execute them.
+        $env:GOOS = $originalGOOS
+        $env:GOARCH = $originalGOARCH
         & (Join-Path $PSScriptRoot "build-assistant-runtime.ps1") -ScriptBoardVersion $Version -Output $Output
         if ($LASTEXITCODE -ne 0) { throw "Building signed assistant Runtime assets failed" }
     }

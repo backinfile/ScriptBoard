@@ -105,10 +105,17 @@ func generateRuntimePackage(arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("validate upstream Pi archive: %w", err)
 	}
-	if err := updatepkg.ExtractArchive(*upstreamPath, filepath.Join(stage, "payload"), unpacked); err != nil {
+	extractedRoot := filepath.Join(stage, "payload")
+	if err := updatepkg.ExtractArchive(*upstreamPath, extractedRoot, unpacked); err != nil {
 		return fmt.Errorf("extract upstream Pi archive: %w", err)
 	}
-	payload := filepath.Join(stage, "payload")
+	// Upstream deliberately wraps Unix tarballs in one pi/ directory for mise
+	// compatibility, while Windows ZIPs remain flat. Validate that exact layout
+	// here so packaging never ignores unexpected files beside the wrapper.
+	payload, err := runtimePayloadRoot(extractedRoot, *goos)
+	if err != nil {
+		return err
+	}
 	executable := "pi"
 	if *goos == "windows" {
 		executable = "pi.exe"
@@ -324,6 +331,20 @@ func normalizeRuntimePermissions(root, executable string) error {
 		}
 		return os.Chmod(path, mode)
 	})
+}
+
+func runtimePayloadRoot(extractedRoot, goos string) (string, error) {
+	if goos != "linux" {
+		return extractedRoot, nil
+	}
+	entries, err := os.ReadDir(extractedRoot)
+	if err != nil {
+		return "", err
+	}
+	if len(entries) != 1 || entries[0].Name() != "pi" || !entries[0].IsDir() {
+		return "", errors.New("upstream Linux Pi archive must contain only the pi directory")
+	}
+	return filepath.Join(extractedRoot, "pi"), nil
 }
 
 func (lock runtimeLock) assetFor(goos, goarch string) (runtimeLockAsset, bool) {
