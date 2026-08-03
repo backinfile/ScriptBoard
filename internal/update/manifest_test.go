@@ -222,6 +222,39 @@ func TestExtractZIPChecksDeclaredSize(t *testing.T) {
 	}
 }
 
+func TestMeasureArchiveAcceptsPinnedRuntimeEntryBudget(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "runtime.zip")
+	file, err := os.Create(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := zip.NewWriter(file)
+	const runtimeEntries = 260
+	for index := 0; index < runtimeEntries; index++ {
+		entry, err := writer.Create(fmt.Sprintf("runtime-entry-%03d", index))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := entry.Write([]byte{'x'}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	total, entries, err := MeasureArchive(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != runtimeEntries || entries != runtimeEntries {
+		t.Fatalf("archive measurement = %d bytes across %d entries", total, entries)
+	}
+}
+
 func TestMeasureArchiveCountsDirectoryEntries(t *testing.T) {
 	archive := filepath.Join(t.TempDir(), "many-directories.zip")
 	file, err := os.Create(archive)
