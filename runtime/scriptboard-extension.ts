@@ -6,6 +6,7 @@ const protocolVersion = 1;
 const maximumResponseBytes = 1 << 20;
 const endpoint = process.env.SCRIPTBOARD_BROKER_ENDPOINT ?? "";
 const capability = process.env.SCRIPTBOARD_BROKER_CAPABILITY ?? "";
+const stateChangeQueues = new WeakMap<ExtensionAPI, Promise<void>>();
 
 type BrokerResponse = {
   status: "success" | "approval_required" | "rejected" | "forbidden" | "error";
@@ -84,6 +85,13 @@ function render(response: BrokerResponse) {
   };
 }
 
+function serializeStateChange<T>(pi: ExtensionAPI, operation: () => Promise<T>): Promise<T> {
+  const previous = stateChangeQueues.get(pi) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(operation);
+  stateChangeQueues.set(pi, current.then(() => undefined, () => undefined));
+  return current;
+}
+
 function register(pi: ExtensionAPI, definition: {
   name: string;
   label: string;
@@ -97,19 +105,25 @@ function register(pi: ExtensionAPI, definition: {
     description: definition.description,
     parameters: definition.parameters,
     async execute(toolCallId, parameters, signal, _onUpdate, ctx) {
-      let response = await brokerRequest(toolCallId, definition.name, parameters, signal);
-      if (definition.changesState && response.status === "approval_required" && response.approval) {
-        const approved = await ctx.ui.confirm(response.approval.title, response.approval.message);
-        response = await brokerRequest(
-          toolCallId,
-          definition.name,
-          parameters,
-          signal,
-          response.approval.id,
-          approved ? "approve" : "reject",
-        );
-      }
-      return render(response);
+      const execute = async () => {
+        if (signal?.aborted) {
+          return render({ status: "error", errorCode: "tool_cancelled", summary: "Tool call cancelled." });
+        }
+        let response = await brokerRequest(toolCallId, definition.name, parameters, signal);
+        if (definition.changesState && response.status === "approval_required" && response.approval) {
+          const approved = await ctx.ui.confirm(response.approval.title, response.approval.message);
+          response = await brokerRequest(
+            toolCallId,
+            definition.name,
+            parameters,
+            signal,
+            response.approval.id,
+            approved ? "approve" : "reject",
+          );
+        }
+        return render(response);
+      };
+      return definition.changesState ? serializeStateChange(pi, execute) : execute();
     },
   });
 }
