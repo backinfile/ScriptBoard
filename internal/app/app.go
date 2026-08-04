@@ -91,22 +91,12 @@ func mustWebAsset(path string) string {
 
 func mustWebTemplate(name string) *template.Template {
 	path := "web/templates/" + name + ".html"
-	document := mustWebAsset(path)
-	if strings.Contains(document, "<!doctype html>") {
-		const headOpen = "<head>"
-		if !strings.Contains(document, headOpen) {
-			panic(fmt.Sprintf("web template %q is a document without a head", path))
-		}
-		document = strings.Replace(document, headOpen, headOpen+webIconLinks, 1)
-	}
 	return template.Must(template.New(name).Funcs(webTemplateFunctions()).Parse(
 		mustWebAsset("web/templates/deferred-region.html") +
 			mustWebAsset("web/templates/settings-navigation.html") +
-			document,
+			mustWebAsset(path),
 	))
 }
-
-const webIconLinks = `<link rel="icon" type="image/png" sizes="512x512" href="/assets/scriptboard-icon-512.png?v={{assetVersion}}"><link rel="icon" type="image/svg+xml" sizes="any" href="/assets/scriptboard-icon.svg?v={{assetVersion}}">`
 
 func webTemplateFunctions() template.FuncMap {
 	return template.FuncMap{
@@ -1579,14 +1569,8 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /assets/highlight-dos.min.js", func(response http.ResponseWriter, request *http.Request) {
 		serveWebAsset(response, request, "text/javascript; charset=utf-8", highlightDOSJS)
 	})
-	mux.HandleFunc("GET /assets/scriptboard-icon.svg", func(response http.ResponseWriter, request *http.Request) {
-		serveWebAsset(response, request, "image/svg+xml", scriptboardIconSVG)
-	})
-	mux.HandleFunc("GET /assets/scriptboard-icon-512.png", func(response http.ResponseWriter, request *http.Request) {
-		serveWebAsset(response, request, "image/png", scriptboardIconPNG)
-	})
 	mux.HandleFunc("GET /favicon.ico", func(response http.ResponseWriter, request *http.Request) {
-		serveWebAsset(response, request, "image/png", scriptboardIconPNG)
+		serveWebAsset(response, request, "image/x-icon", scriptboardFaviconICO)
 	})
 	mux.Handle("GET /{$}", a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		http.Redirect(response, request, "/monitor", http.StatusSeeOther)
@@ -2107,9 +2091,7 @@ var highlightPowerShellJS = mustWebAsset("web/assets/highlight-powershell.min.js
 
 var highlightDOSJS = mustWebAsset("web/assets/highlight-dos.min.js")
 
-var scriptboardIconSVG = mustWebAsset("web/assets/scriptboard-icon.svg")
-
-var scriptboardIconPNG = mustWebAsset("web/assets/scriptboard-icon-512.png")
+var scriptboardFaviconICO = mustWebAsset("web/assets/favicon.ico")
 
 var webAssetVersion = func() string {
 	digest := sha256.Sum256([]byte(strings.Join([]string{
@@ -2120,8 +2102,6 @@ var webAssetVersion = func() string {
 		highlightJS,
 		highlightPowerShellJS,
 		highlightDOSJS,
-		scriptboardIconSVG,
-		scriptboardIconPNG,
 	}, "\x00")))
 	return hex.EncodeToString(digest[:6])
 }()
