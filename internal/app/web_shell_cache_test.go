@@ -122,6 +122,9 @@ func TestCollapsedApplicationShellKeepsNavigationTopAlignedAndShowsIssueCount(t 
 	if !strings.Contains(css, `.sidebar-attention__compact strong[hidden] { display: none; }`) {
 		t.Fatal("collapsed navigation does not honor the hidden state of a zero-error badge")
 	}
+	if !strings.Contains(css, `.sidebar-attention__empty { border-top: 0;`) {
+		t.Fatal("the empty attention action still has a redundant top divider")
+	}
 
 	script, err := webFiles.ReadFile("web/assets/app.js")
 	if err != nil {
