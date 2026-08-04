@@ -289,6 +289,15 @@ func (manager *Manager) installVerifiedArchive(ctx context.Context, manifest Man
 	if err != nil {
 		return err
 	}
+	// The signed asset digest authenticates runtime.json and its executable
+	// path. Restore the Linux entry point only after that path has passed the
+	// regular-file and link checks above; Windows release hosts cannot preserve
+	// this Unix mode bit while staging the archive.
+	if manager.goos == "linux" {
+		if err := os.Chmod(candidate.Executable, 0o700); err != nil {
+			return fmt.Errorf("restore Pi executable permission: %w", err)
+		}
+	}
 	if err := manager.healthCheck(ctx, candidate); err != nil {
 		return fmt.Errorf("assistant runtime health check failed: %w", err)
 	}
