@@ -21,11 +21,7 @@ func TestRunsPageFiltersBySearchAndInclusiveLocalDateRange(t *testing.T) {
 	hostRoot := filepath.Join(root, "host")
 	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 	scriptPath := filepath.Join(hostRoot, "automation", "nightly.ps1")
-	db, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	db := openRunsFilterTestDatabase(t, filepath.Join(stateRoot, "app.db"))
 
 	insertSource := func(id, sourceType, sourceName, sourceID string, createdAt time.Time) {
 		t.Helper()
@@ -111,11 +107,7 @@ func TestRunsPageShowsAndSearchesInitiator(t *testing.T) {
 	hostRoot := filepath.Join(root, "host")
 	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 	scriptPath := filepath.Join(hostRoot, "automation", "nightly.ps1")
-	db, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	db := openRunsFilterTestDatabase(t, filepath.Join(stateRoot, "app.db"))
 
 	insertRun := func(id, initiatorUserID, initiatorUsername string, createdAt time.Time) {
 		t.Helper()
@@ -192,4 +184,19 @@ func TestRunsPageRejectsInvalidDateRanges(t *testing.T) {
 			t.Fatalf("query %q status=%d body=%s", test.query, response.StatusCode, body)
 		}
 	}
+}
+
+func openRunsFilterTestDatabase(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open test SQLite database: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		_ = db.Close()
+		t.Fatalf("configure test SQLite database: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
 }
