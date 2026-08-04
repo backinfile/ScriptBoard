@@ -77,6 +77,7 @@ var webMessages = map[string]localizedMessage{
 	"shell.remote":                                  {"远程", "Remote"},
 	"shell.active_runs":                             {"个活动 Run", "active Runs"},
 	"shell.current_status":                          {"当前状态", "Current status"},
+	"shell.current_errors":                          {"当前错误", "Current errors"},
 	"shell.no_attention":                            {"当前无待处理项", "Nothing needs attention"},
 	"shell.review_runs":                             {"查看当前运行与输出", "Review current Runs and output"},
 	"shell.stopped_pinned":                          {"已停止的关注应用", "Stopped pinned applications"},

@@ -2263,6 +2263,9 @@
     const runs = attention.querySelector('[data-shell-attention-item="runs"]');
     const websites = attention.querySelector('[data-shell-attention-item="websites"]');
     const applications = attention.querySelector('[data-shell-attention-item="applications"]');
+    const issueSummary = attention.querySelector("[data-shell-issue-summary]");
+    const issueCount = issueSummary?.querySelector("[data-shell-issue-count]");
+    const issueIcon = issueSummary?.querySelector("[data-shell-issue-icon]");
     const setVisible = (item, visible) => {
       if (item) item.hidden = !visible;
       return visible;
@@ -2290,6 +2293,18 @@
         const response = await fetch("/monitor/status", { credentials: "same-origin", cache: "no-store" });
         if (!response.ok) return;
         const data = await response.json();
+        const currentIssueCount = Math.max(0, Number(data.issueCount) || 0);
+        if (issueSummary) {
+          const state = currentIssueCount > 0 ? "attention" : "current";
+          const label = `${attention.dataset.currentErrorsLabel || "Current errors"}: ${currentIssueCount}`;
+          issueSummary.dataset.state = state;
+          issueSummary.setAttribute("aria-label", label);
+          issueSummary.title = label;
+          if (issueCount) issueCount.textContent = String(currentIssueCount);
+          if (issueIcon?.dataset.lucide !== (currentIssueCount > 0 ? "triangle-alert" : "circle-check")) {
+            replaceIconHost(issueIcon, currentIssueCount > 0 ? "triangle-alert" : "circle-check");
+          }
+        }
         let visibleCount = 0;
         if (host) {
           const hostVisible = data.state !== "current";

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -78,6 +79,60 @@ func TestApplicationShellShowsOnlyCurrentAttentionItems(t *testing.T) {
 	for _, item := range []string{"host", "runs", "websites", "applications"} {
 		if bytes.Contains(rendered.Bytes(), []byte(`data-shell-attention-item="`+item+`" hidden`)) {
 			t.Fatalf("attention item %q is unexpectedly hidden: %s", item, page)
+		}
+	}
+}
+
+func TestCollapsedApplicationShellKeepsNavigationTopAlignedAndShowsIssueCount(t *testing.T) {
+	var rendered bytes.Buffer
+	err := applicationShellTemplate.Execute(&rendered, applicationShellData{
+		Locale:       localeEnglishUS,
+		Status:       "Attention needed",
+		StatusState:  "attention",
+		IssueCount:   3,
+		WebsiteState: "up",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	page := rendered.String()
+	for _, expected := range []string{
+		`data-shell-issue-summary`,
+		`data-state="attention"`,
+		`data-shell-issue-count>3<`,
+		`aria-label="Current errors: 3"`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("collapsed issue summary is missing %q: %s", expected, page)
+		}
+	}
+
+	stylesheet, err := webFiles.ReadFile("web/assets/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := string(stylesheet)
+	if !strings.Contains(css, `body.sidebar-collapsed .sidebar-nav { display: flex; flex-direction: column; justify-content: flex-start;`) {
+		t.Fatalf("collapsed navigation does not retain the expanded top alignment")
+	}
+	if strings.Contains(css, `body.sidebar-collapsed .sidebar-attention,`) {
+		t.Fatalf("collapsed navigation hides the complete attention region, including its issue count")
+	}
+
+	script, err := webFiles.ReadFile("web/assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(script)
+	for _, expected := range []string{
+		`attention.querySelector("[data-shell-issue-summary]")`,
+		`Number(data.issueCount)`,
+		`issueCount.textContent = String(currentIssueCount)`,
+		`issueSummary.setAttribute("aria-label", label)`,
+	} {
+		if !strings.Contains(js, expected) {
+			t.Fatalf("live issue summary update is missing %q", expected)
 		}
 	}
 }

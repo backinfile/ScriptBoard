@@ -181,6 +181,7 @@ type applicationShellData struct {
 	Username, CSRFToken, ReturnTo         string
 	Role                                  string
 	Environment, Status, StatusState      string
+	IssueCount                            int
 	ActiveRuns                            int
 	WebsiteState                          string
 	WebsiteDown, WebsiteVerifying         int
@@ -215,7 +216,7 @@ func (a *App) addApplicationShell(request *http.Request, body []byte) []byte {
 	var shell bytes.Buffer
 	_ = applicationShellTemplate.Execute(&shell, applicationShellData{
 		Locale: locale, Username: username, Role: string(current.role), CSRFToken: current.csrfToken, ReturnTo: request.URL.RequestURI(),
-		Environment: environment, Status: status, StatusState: statusState, ActiveRuns: shellStatus.ActiveRuns,
+		Environment: environment, Status: status, StatusState: statusState, IssueCount: shellStatus.IssueCount, ActiveRuns: shellStatus.ActiveRuns,
 		WebsiteState: shellStatus.WebsiteState, WebsiteDown: shellStatus.WebsiteDown, WebsiteVerifying: shellStatus.WebsiteVerifying,
 		StoppedPinnedApplications: shellStatus.StoppedPinnedApplications, ApplicationIssueCount: shellStatus.ApplicationIssueCount,
 		Navigation: navigation, SettingsCurrent: strings.HasPrefix(request.URL.Path, "/settings/"),
