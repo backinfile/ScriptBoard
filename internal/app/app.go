@@ -1569,6 +1569,9 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /assets/highlight-dos.min.js", func(response http.ResponseWriter, request *http.Request) {
 		serveWebAsset(response, request, "text/javascript; charset=utf-8", highlightDOSJS)
 	})
+	mux.HandleFunc("GET /favicon.ico", func(response http.ResponseWriter, request *http.Request) {
+		serveWebAsset(response, request, "image/x-icon", scriptboardFaviconICO)
+	})
 	mux.Handle("GET /{$}", a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		http.Redirect(response, request, "/monitor", http.StatusSeeOther)
 	})))
@@ -2087,6 +2090,8 @@ var highlightJS = mustWebAsset("web/assets/highlight.min.js")
 var highlightPowerShellJS = mustWebAsset("web/assets/highlight-powershell.min.js")
 
 var highlightDOSJS = mustWebAsset("web/assets/highlight-dos.min.js")
+
+var scriptboardFaviconICO = mustWebAsset("web/assets/favicon.ico")
 
 var webAssetVersion = func() string {
 	digest := sha256.Sum256([]byte(strings.Join([]string{

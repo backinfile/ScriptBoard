@@ -86,11 +86,11 @@ func TestApplicationShellShowsOnlyCurrentAttentionItems(t *testing.T) {
 func TestCollapsedApplicationShellKeepsNavigationTopAlignedAndShowsIssueCount(t *testing.T) {
 	var rendered bytes.Buffer
 	err := applicationShellTemplate.Execute(&rendered, applicationShellData{
-		Locale:       localeEnglishUS,
-		Status:       "Attention needed",
-		StatusState:  "attention",
-		IssueCount:   3,
-		WebsiteState: "up",
+		Locale:            localeEnglishUS,
+		Status:            "Attention needed",
+		StatusState:       "attention",
+		CurrentErrorCount: 3,
+		WebsiteState:      "up",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -119,6 +119,12 @@ func TestCollapsedApplicationShellKeepsNavigationTopAlignedAndShowsIssueCount(t 
 	if strings.Contains(css, `body.sidebar-collapsed .sidebar-attention,`) {
 		t.Fatalf("collapsed navigation hides the complete attention region, including its issue count")
 	}
+	if !strings.Contains(css, `.sidebar-attention__compact strong[hidden] { display: none; }`) {
+		t.Fatal("collapsed navigation does not honor the hidden state of a zero-error badge")
+	}
+	if !strings.Contains(css, `.sidebar-attention__empty { border-top: 0;`) {
+		t.Fatal("the empty attention action still has a redundant top divider")
+	}
 
 	script, err := webFiles.ReadFile("web/assets/app.js")
 	if err != nil {
@@ -128,12 +134,47 @@ func TestCollapsedApplicationShellKeepsNavigationTopAlignedAndShowsIssueCount(t 
 	for _, expected := range []string{
 		`attention.querySelector("[data-shell-issue-summary]")`,
 		`Number(data.issueCount)`,
+		`Number(data.websiteDown)`,
+		`Number(data.stoppedPinnedApplications)`,
+		`Number(data.applicationIssueCount)`,
 		`issueCount.textContent = String(currentIssueCount)`,
+		`issueCount.hidden = currentIssueCount === 0`,
 		`issueSummary.setAttribute("aria-label", label)`,
 	} {
 		if !strings.Contains(js, expected) {
 			t.Fatalf("live issue summary update is missing %q", expected)
 		}
+	}
+}
+
+func TestCollapsedApplicationShellHidesZeroErrorBadge(t *testing.T) {
+	var rendered bytes.Buffer
+	if err := applicationShellTemplate.Execute(&rendered, applicationShellData{
+		Locale:            localeEnglishUS,
+		Status:            "Data current",
+		StatusState:       "current",
+		CurrentErrorCount: 0,
+		WebsiteState:      "up",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(rendered.String(), `<strong data-shell-issue-count hidden>0</strong>`) {
+		t.Fatalf("zero-error collapsed summary still renders a visible badge: %s", rendered.String())
+	}
+}
+
+func TestCurrentShellErrorCountIncludesConfirmedHostWebsiteAndApplicationErrors(t *testing.T) {
+	status := shellStatusResponse{
+		IssueCount:                2,
+		WebsiteDown:               1,
+		WebsiteVerifying:          7,
+		StoppedPinnedApplications: 3,
+		ApplicationIssueCount:     4,
+	}
+
+	if got := currentShellErrorCount(status); got != 10 {
+		t.Fatalf("current error count=%d, want 10 confirmed errors", got)
 	}
 }
 

@@ -503,6 +503,22 @@ func TestPrimaryNavigationAvoidsFullPageReloads(t *testing.T) {
 			t.Errorf("%s asset version = %q, want content fingerprint %q", name, version, expectedVersion)
 		}
 	}
+
+	response, err = client.Get(serverURL + "/favicon.ico")
+	if err != nil {
+		t.Fatalf("get favicon.ico: %v", err)
+	}
+	favicon, readErr := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if readErr != nil {
+		t.Fatalf("read favicon.ico: %v", readErr)
+	}
+	if contentType := response.Header.Get("Content-Type"); contentType != "image/x-icon" {
+		t.Errorf("favicon.ico content type = %q, want image/x-icon", contentType)
+	}
+	if len(favicon) < 4 || !bytes.Equal(favicon[:4], []byte("\x00\x00\x01\x00")) {
+		t.Error("favicon.ico does not contain an ICO signature")
+	}
 }
 
 func TestEmptyCollectionPagesProvideNextStepWithoutPagination(t *testing.T) {

@@ -23,7 +23,7 @@ FORM: Responsive signal ledger with a right-side detail task on capable clients 
 <p>{{t .Locale "website.description"}}</p>
 </div>
 <div class="heading-actions website-heading-actions">
-<a class="button" href="{{.RefreshURL}}" data-native>
+<a class="button" href="{{.RefreshURL}}" data-website-refresh>
 <svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7L20 8"/><path d="M20 4v4h-4"/></svg>
 {{t .Locale "website.refresh"}}
 </a>
@@ -40,6 +40,7 @@ FORM: Responsive signal ledger with a right-side detail task on capable clients 
 </div>
 </header>
 
+<div data-website-data>
 {{if .HasAny}}
 <section class="website-verdict website-verdict--{{if gt .Counts.Down 0}}down{{else if gt .Counts.Verifying 0}}verifying{{else}}up{{end}}" aria-labelledby="website-verdict-title">
 <div class="website-verdict__main">
@@ -160,6 +161,7 @@ FORM: Responsive signal ledger with a right-side detail task on capable clients 
 <p>{{t .Locale "website.empty_description"}}</p>
 </section>
 {{end}}
+</div>
 </main>
 </body>
 </html>
