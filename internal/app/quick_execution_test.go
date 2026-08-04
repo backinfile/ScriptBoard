@@ -127,7 +127,7 @@ func TestOneTimeRunKeepsImmutableSourceSnapshotAndUsesSelectedWorkdir(t *testing
 
 	language, extension, source := "shell", ".sh", "#!/bin/sh\nprintf one-time-ok > marker.txt\n"
 	if runtime.GOOS == "windows" {
-		language, extension, source = "batch", ".cmd", "@echo off\r\necho one-time-ok>marker.txt\r\n"
+		language, extension, source = "batch", ".cmd", "@echo off\r\ntype nul > marker.txt\r\nping -n 2 127.0.0.1 >nul\r\necho one-time-ok>marker.txt\r\n"
 	}
 	response, err = client.PostForm(serverURL+"/config/quick-runs/one-time", url.Values{
 		"csrf_token":        {formToken(t, taskPage)},
@@ -152,16 +152,21 @@ func TestOneTimeRunKeepsImmutableSourceSnapshotAndUsesSelectedWorkdir(t *testing
 	runID := strings.TrimPrefix(location, runPrefix)
 
 	deadline := time.Now().Add(10 * time.Second)
+	var marker []byte
+	var readErr error
 	for {
-		marker, readErr := os.ReadFile(filepath.Join(workdir, "marker.txt"))
-		if readErr == nil {
-			if !strings.Contains(string(marker), "one-time-ok") {
-				t.Fatalf("marker=%q", marker)
-			}
+		marker, readErr = os.ReadFile(filepath.Join(workdir, "marker.txt"))
+		if readErr == nil && strings.Contains(string(marker), "one-time-ok") {
 			break
 		}
+		if readErr != nil && !os.IsNotExist(readErr) {
+			t.Fatalf("read one-time marker: %v", readErr)
+		}
 		if time.Now().After(deadline) {
-			t.Fatalf("one-time script did not run in selected workdir: %v", readErr)
+			if readErr != nil {
+				t.Fatalf("one-time script did not run in selected workdir: %v", readErr)
+			}
+			t.Fatalf("marker=%q", marker)
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
