@@ -72,6 +72,7 @@ type websiteMonitorListView struct {
 	Reorder    bool
 	CanManage  bool
 	DataURL    string
+	RefreshURL string
 }
 
 type websiteMonitorFormView struct {
@@ -137,6 +138,7 @@ type websiteMonitorAvailabilityBucketView struct {
 type websiteMonitorDetailView struct {
 	Monitor             websiteMonitorPageView
 	Raw                 websitemonitor.Monitor
+	StatusRuleLabel     string
 	Snapshot            websitemonitor.DetailSnapshot
 	DetailAvailability  []websiteMonitorAvailabilityBucketView
 	AvailabilityPercent float64
@@ -192,7 +194,7 @@ func (a *App) websiteMonitorList(response http.ResponseWriter, request *http.Req
 		Locale: locale, State: state, Scope: scope, CSRFToken: current.csrfToken,
 		Total: len(monitors), HasFilters: state != "" || scope != "",
 		HasAny: len(all) > 0, CanManage: roleAllows(current.role, permissionManageOperations),
-		DataURL: "/monitor/websites/data",
+		DataURL: "/monitor/websites/data", RefreshURL: request.URL.RequestURI(),
 	}
 	view.Reorder = view.CanManage && request.URL.Query().Get("reorder") == "1"
 	query := request.URL.Query()
@@ -518,6 +520,7 @@ func (a *App) websiteMonitorDetail(response http.ResponseWriter, request *http.R
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = websiteMonitorDetailTemplate.Execute(response, websiteMonitorDetailView{
 		Monitor: details.websiteMonitorPageView, Raw: snapshot.Monitor, Snapshot: snapshot,
+		StatusRuleLabel:     websiteHTTPStatusRuleLabel(locale, snapshot.Monitor.Config),
 		DetailAvailability:  details.DetailAvailability,
 		AvailabilityPercent: details.AvailabilityPercent,
 		AvailabilityLabel:   details.AvailabilityLabel,
@@ -529,6 +532,17 @@ func (a *App) websiteMonitorDetail(response http.ResponseWriter, request *http.R
 		Incidents: details.Incidents, Locale: locale, CSRFToken: current.csrfToken,
 		CanManage: roleAllows(current.role, permissionManageOperations),
 	})
+}
+
+func websiteHTTPStatusRuleLabel(locale webLocale, config websitemonitor.Config) string {
+	switch config.HTTPSuccessMode {
+	case websitemonitor.HTTPSuccessExact:
+		return websitemonitor.FormatHTTPStatusRanges(websitemonitor.ExpectedHTTPStatusRanges(config))
+	case websitemonitor.HTTPSuccessAnyResponse:
+		return webText(locale, "website.form.any_http_response")
+	default:
+		return "200–399"
+	}
 }
 
 func (a *App) websiteMonitorDetailData(response http.ResponseWriter, request *http.Request) {
@@ -790,10 +804,6 @@ func renderWebsiteMonitorForm(response http.ResponseWriter, status int, view web
 }
 
 func newWebsiteMonitorFormView(config websitemonitor.Config, fieldErrors map[string]string, locale webLocale, csrfToken, id string, editing bool) websiteMonitorFormView {
-	statuses := make([]string, 0, len(config.ExpectedStatuses))
-	for _, status := range config.ExpectedStatuses {
-		statuses = append(statuses, strconv.Itoa(status))
-	}
 	return websiteMonitorFormView{
 		Config:               config,
 		Errors:               fieldErrors,
@@ -803,7 +813,7 @@ func newWebsiteMonitorFormView(config websitemonitor.Config, fieldErrors map[str
 		ID:                   id,
 		FrequencySeconds:     int64(config.Frequency / time.Second),
 		TimeoutSeconds:       int64(config.Timeout / time.Second),
-		ExpectedStatusesText: strings.Join(statuses, ", "),
+		ExpectedStatusesText: websitemonitor.FormatHTTPStatusRanges(websitemonitor.ExpectedHTTPStatusRanges(config)),
 	}
 }
 
@@ -893,18 +903,13 @@ func websiteMonitorConfigFromRequest(request *http.Request) (websitemonitor.Conf
 		errors["timeout_seconds"] = webText(locale, "website.error.timeout_invalid")
 	}
 	if config.Kind == websitemonitor.KindHTTP && config.HTTPSuccessMode == websitemonitor.HTTPSuccessExact {
-		for _, raw := range strings.FieldsFunc(request.FormValue("expected_statuses"), func(value rune) bool {
-			return value == ',' || value == '，' || value == ' '
-		}) {
-			value, err := strconv.Atoi(raw)
-			if err != nil || value < 100 || value > 599 {
-				errors["expected_statuses"] = webText(locale, "website.error.status_range")
-				break
-			}
-			config.ExpectedStatuses = append(config.ExpectedStatuses, value)
-		}
-		if len(config.ExpectedStatuses) == 0 && errors["expected_statuses"] == "" {
+		statusInput := strings.TrimSpace(request.FormValue("expected_statuses"))
+		if statusInput == "" {
 			errors["expected_statuses"] = webText(locale, "website.error.status_required")
+		} else if ranges, err := websitemonitor.ParseHTTPStatusRanges(statusInput); err != nil {
+			errors["expected_statuses"] = webText(locale, "website.error.status_range")
+		} else {
+			config.ExpectedStatusRanges = ranges
 		}
 	}
 	if config.Kind == websitemonitor.KindWebSocket &&

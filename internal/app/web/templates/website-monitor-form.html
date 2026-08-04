@@ -35,7 +35,7 @@
 <span class="field-hint" data-monitor-url-hint>{{t .Locale "website.form.http_url_hint"}}</span>
 {{with index .Errors "url"}}<span class="field-error">{{.}}</span>{{end}}
 </label>
-<div class="website-form-pair">
+<div class="website-form-pair website-form-pair--aligned">
 <label>{{t .Locale "website.filter.scope"}}
 <select name="scope"><option value="external" {{if eq .Config.Scope "external"}}selected{{end}}>{{t .Locale "website.scope.external"}}</option><option value="local" {{if eq .Config.Scope "local"}}selected{{end}}>{{t .Locale "website.scope.local"}}</option></select>
 <span class="field-hint">{{t .Locale "website.form.scope_hint"}}</span>
@@ -79,12 +79,12 @@
 <label data-http-body-field>{{t .Locale "website.form.request_body"}}
 <textarea name="http_body" spellcheck="false">{{.Config.HTTPBody}}</textarea>
 </label>
-<div class="website-form-pair">
+<div class="website-form-pair website-form-pair--aligned">
 <label>{{t .Locale "website.form.status_rule"}}
-<select name="http_success_mode" data-http-success-mode><option value="range" {{if eq .Config.HTTPSuccessMode "range"}}selected{{end}}>200–399</option><option value="exact" {{if eq .Config.HTTPSuccessMode "exact"}}selected{{end}}>{{t .Locale "website.form.exact_statuses"}}</option></select>
+<select name="http_success_mode" data-http-success-mode><option value="range" {{if eq .Config.HTTPSuccessMode "range"}}selected{{end}}>200–399</option><option value="exact" {{if eq .Config.HTTPSuccessMode "exact"}}selected{{end}}>{{t .Locale "website.form.exact_statuses"}}</option><option value="response" {{if eq .Config.HTTPSuccessMode "response"}}selected{{end}}>{{t .Locale "website.form.any_http_response"}}</option></select>
 </label>
 <label data-exact-statuses-field>{{t .Locale "website.form.exact_statuses"}}
-<input name="expected_statuses" value="{{.ExpectedStatusesText}}" inputmode="numeric" autocomplete="off" placeholder="{{t .Locale "website.form.statuses_placeholder"}}">
+<input name="expected_statuses" value="{{.ExpectedStatusesText}}" inputmode="text" autocomplete="off" spellcheck="false" placeholder="{{t .Locale "website.form.statuses_placeholder"}}">
 {{with index .Errors "expected_statuses"}}<span class="field-error">{{.}}</span>{{end}}
 </label>
 </div>

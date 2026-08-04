@@ -22,7 +22,12 @@ FORM: Responsive signal ledger with a right-side detail task on capable clients 
 <h1>{{t .Locale "website.title"}}</h1>
 <p>{{t .Locale "website.description"}}</p>
 </div>
-{{if .CanManage}}<div class="heading-actions website-heading-actions">
+<div class="heading-actions website-heading-actions">
+<a class="button" href="{{.RefreshURL}}" data-native>
+<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7L20 8"/><path d="M20 4v4h-4"/></svg>
+{{t .Locale "website.refresh"}}
+</a>
+{{if .CanManage}}
 <a class="button" href="/monitor/websites/nginx" data-task-link>
 <svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/><path d="m14.5 14.5 3 3"/></svg>
 {{t .Locale "website.scan_nginx"}}
@@ -31,7 +36,8 @@ FORM: Responsive signal ledger with a right-side detail task on capable clients 
 <svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
 {{t .Locale "website.add"}}
 </a>
-</div>{{end}}
+{{end}}
+</div>
 </header>
 
 {{if .HasAny}}
@@ -56,7 +62,7 @@ FORM: Responsive signal ledger with a right-side detail task on capable clients 
 
 {{range .Alerts}}
 <section class="website-alert website-alert--{{.State}}">
-<div><span class="website-status website-status--{{.State}}">{{.StateLabel}}</span><h3><a href="/monitor/websites/{{.ID}}" data-task-link>{{.Name}}</a></h3><small>{{.ScopeLabel}} · {{.MethodLabel}}</small></div>
+<div><span class="website-status website-status--{{.State}}">{{.StateLabel}}</span><h3><a href="/monitor/websites/{{.ID}}" data-task-link>{{.Name}}</a></h3><code class="website-alert__url">{{.URL}}</code><small>{{.ScopeLabel}} · {{.MethodLabel}}</small></div>
 <p>{{.LatestSummary}}{{if not .LatestSummary}}{{t $.Locale "website.result_needs_review"}}{{end}}</p>
 <dl class="website-alert__facts">
 <div><dt>{{t $.Locale "website.failure_count"}}</dt><dd>{{.FailureCount}}</dd></div>

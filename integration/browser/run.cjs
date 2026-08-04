@@ -585,6 +585,20 @@ async function assertWebsiteMonitoring(page, baseURL) {
   const targetURL = `${baseURL}/missing-scriptboard-monitor-target`;
   await page.goto(`${baseURL}/monitor/websites/new`);
   const form = page.locator("[data-website-monitor-form]");
+  const successMode = form.locator('select[name="http_success_mode"]');
+  assert.deepEqual(await successMode.locator("option").allTextContents(), ["200–399", "Status codes or ranges", "Any HTTP response"]);
+  await successMode.selectOption("exact");
+  const alignedStatusFields = await form.evaluate(element => {
+    const expected = element.querySelector('input[name="expected_statuses"]').getBoundingClientRect();
+    const dialHost = element.querySelector('input[name="dial_host"]').getBoundingClientRect();
+    return {
+      leftDifference: Math.abs(expected.left - dialHost.left),
+      widthDifference: Math.abs(expected.width - dialHost.width),
+    };
+  });
+  assert.ok(alignedStatusFields.leftDifference <= 1, JSON.stringify(alignedStatusFields));
+  assert.ok(alignedStatusFields.widthDifference <= 1, JSON.stringify(alignedStatusFields));
+  await form.locator('input[name="expected_statuses"]').fill("200;401-403;503");
   await form.locator('input[name="name"]').fill(monitorName);
   await form.locator('select[name="kind"]').selectOption("http");
   await form.locator('input[name="url"]').fill(targetURL);
@@ -604,8 +618,14 @@ async function assertWebsiteMonitoring(page, baseURL) {
 
   await page.setViewportSize({ width: 1440, height: 600 });
   await page.goto(`${baseURL}/monitor/websites`);
+  const refreshLink = page.locator('.website-heading-actions a').filter({ hasText: "Refresh" });
+  assert.equal(await refreshLink.getAttribute("href"), "/monitor/websites");
+  assert.equal(await refreshLink.getAttribute("data-native"), "");
   const row = page.locator("[data-monitor-id]").filter({ hasText: monitorName });
   await row.waitFor();
+  const attentionURL = page.locator(".website-alert").filter({ hasText: monitorName }).locator(".website-alert__url");
+  await attentionURL.waitFor();
+  assert.equal((await attentionURL.textContent()).trim(), targetURL);
   await page.evaluate(() => {
     const maximum = document.documentElement.scrollHeight - innerHeight;
     scrollTo(0, Math.min(320, maximum));

@@ -293,11 +293,14 @@ func localDialContext(config Config) func(context.Context, string, string) (net.
 }
 
 func acceptedHTTPStatus(config Config, status int) bool {
+	if config.HTTPSuccessMode == HTTPSuccessAnyResponse {
+		return true
+	}
 	if config.HTTPSuccessMode != HTTPSuccessExact {
 		return status >= 200 && status <= 399
 	}
-	for _, expected := range config.ExpectedStatuses {
-		if status == expected {
+	for _, expected := range ExpectedHTTPStatusRanges(config) {
+		if status >= expected.Start && status <= expected.End {
 			return true
 		}
 	}
