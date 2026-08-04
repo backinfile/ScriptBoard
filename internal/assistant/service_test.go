@@ -109,6 +109,47 @@ func TestNewModelConfigurationRequiresCredential(t *testing.T) {
 	}
 }
 
+func TestModelConnectionStatusIsInformationalAndResetsAfterEditing(t *testing.T) {
+	t.Parallel()
+
+	service, _, _ := newTestService(t)
+	ctx := context.Background()
+	actor := Actor{UserID: "admin-one", Username: "admin"}
+	if err := service.UpdateSettings(ctx, actor, SettingsInput{Enabled: true, MaxActiveConversations: 2}); err != nil {
+		t.Fatal(err)
+	}
+	model, err := service.SaveModel(ctx, actor, "", ModelInput{
+		Name: "Connection status", Provider: ProviderOpenAICompatible, Model: "model-v1",
+		Endpoint: "https://example.com/v1", APIKey: "secret", MakeDefault: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model.ConnectionOK {
+		t.Fatalf("new model connection status = true, want false: %+v", model)
+	}
+	if _, err := service.CreateConversation(ctx, actor, ConversationInput{ModelID: model.ID}); err != nil {
+		t.Fatalf("model with an unverified connection cannot be selected: %v", err)
+	}
+	if err := service.SetModelConnectionOK(ctx, model.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	model, err = service.Model(ctx, model.ID)
+	if err != nil || !model.ConnectionOK {
+		t.Fatalf("tested model = %+v, error = %v", model, err)
+	}
+	model, err = service.SaveModel(ctx, actor, model.ID, ModelInput{
+		Name: "Connection status", Provider: ProviderOpenAICompatible, Model: "model-v2",
+		Endpoint: "https://example.com/v1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model.ConnectionOK {
+		t.Fatalf("edited model retained a stale successful status: %+v", model)
+	}
+}
+
 func TestModelConfigurationNamesAreUniqueAndReferencedModelsCannotBeDeleted(t *testing.T) {
 	t.Parallel()
 

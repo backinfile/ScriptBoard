@@ -3171,7 +3171,7 @@
       setSection(httpFields,!isWebSocket);
       setSection(websocketFields,isWebSocket);
       if(url)url.placeholder=isWebSocket?(form.dataset.websocketPlaceholder||'wss://example.com/socket'):(form.dataset.httpPlaceholder||'https://example.com/health');
-      if(urlHint)urlHint.textContent=isWebSocket?(form.dataset.websocketUrlHint||'Use ws:// or wss://'):(form.dataset.httpUrlHint||'Use http:// or https://');
+      if(urlHint)urlHint.textContent=isWebSocket?(form.dataset.websocketAddressHint||'Use ws:// or wss://'):(form.dataset.httpAddressHint||'Use http:// or https://');
       if(!isWebSocket){
         const isPost=httpMethod?.value==='POST';
         setSection(httpPostField,isPost);

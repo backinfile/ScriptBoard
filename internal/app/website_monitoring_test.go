@@ -263,10 +263,13 @@ func TestAdminCreatesWebsiteMonitorAndReadsItsResult(t *testing.T) {
 	}
 	editPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, expected := range []string{"编辑网站", `action="` + location + `"`, "http://127.0.0.1:8080/health"} {
+	for _, expected := range []string{"编辑网站", `action="` + location + `"`, "http://127.0.0.1:8080/health", "使用 http:// 或 https:// 地址。"} {
 		if !bytes.Contains(editPage, []byte(expected)) {
 			t.Fatalf("edit page does not contain %q: %s", expected, editPage)
 		}
+	}
+	if bytes.Contains(editPage, []byte("#ZgotmplZ")) {
+		t.Fatalf("edit page contains an escaped URL-context placeholder: %s", editPage)
 	}
 	response, err = client.PostForm(serverURL+location, url.Values{
 		"csrf_token":        {formToken(t, editPage)},
@@ -517,6 +520,7 @@ func TestWebsiteMonitoringLocalizesEnglishAndShowsCheckedZeroLatency(t *testing.
 	}
 	for _, expected := range []string{
 		`<html lang="en-US">`, "Add Website", "Application message check",
+		"Status codes or ranges", "Any HTTP response", "For example: 200;401-499;503",
 		"Save and check",
 	} {
 		if !bytes.Contains(newPage, []byte(expected)) {
@@ -550,7 +554,7 @@ func TestWebsiteMonitoringLocalizesEnglishAndShowsCheckedZeroLatency(t *testing.
 	for _, expected := range []string{
 		"Check frequency must be 30 seconds, 1 minute, 5 minutes, or 15 minutes",
 		"Maximum wait must be 3, 5, 10, or 30 seconds",
-		"Status codes must be numbers from 100 through 599",
+		"Status codes and range endpoints must be from 100 through 599",
 	} {
 		if !bytes.Contains(invalidPage, []byte(expected)) {
 			t.Fatalf("English validation page does not contain %q: %s", expected, invalidPage)
@@ -623,7 +627,7 @@ func TestWebsiteMonitoringLocalizesEnglishAndShowsCheckedZeroLatency(t *testing.
 		t.Fatal(err)
 	}
 	for _, expected := range []string{
-		"Website Monitoring", "Scan Nginx", "Add Website",
+		"Website Monitoring", "Refresh", "Scan Nginx", "Add Website",
 		`aria-label="Website status list"`, "1 website", "0 ms",
 	} {
 		if !bytes.Contains(listPage, []byte(expected)) {
@@ -746,6 +750,19 @@ func TestWebsiteMonitoringDataReturnsCompletePollingAndDetailSnapshots(t *testin
 		listSnapshot.Alerts[0].NextCheckAt.IsZero() ||
 		listSnapshot.Alerts[0].IncidentStartedAt.IsZero() {
 		t.Fatalf("alert evidence = %#v", listSnapshot.Alerts[0])
+	}
+
+	response, err = client.Get(serverURL + "/monitor/websites")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(listPage, []byte(`<code class="website-alert__url">http://127.0.0.1:1/</code>`)) {
+		t.Fatalf("attention row does not show the monitored URL: %s", listPage)
 	}
 
 	response, err = client.Get(serverURL + location + "/data")

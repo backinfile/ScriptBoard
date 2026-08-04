@@ -35,9 +35,15 @@ const (
 type HTTPSuccessMode string
 
 const (
-	HTTPSuccessRange HTTPSuccessMode = "range"
-	HTTPSuccessExact HTTPSuccessMode = "exact"
+	HTTPSuccessRange       HTTPSuccessMode = "range"
+	HTTPSuccessExact       HTTPSuccessMode = "exact"
+	HTTPSuccessAnyResponse HTTPSuccessMode = "response"
 )
+
+type HTTPStatusRange struct {
+	Start int `json:"start"`
+	End   int `json:"end"`
+}
 
 type WebSocketSuccess string
 
@@ -66,29 +72,30 @@ const (
 )
 
 type Config struct {
-	Name                string
-	Scope               Scope
-	Kind                Kind
-	URL                 string
-	DialHost            string
-	Frequency           time.Duration
-	Timeout             time.Duration
-	HTTPMethod          string
-	HTTPContentType     string
-	HTTPBody            string
-	HTTPSuccessMode     HTTPSuccessMode
-	ExpectedStatuses    []int
-	ResponseKeyword     string
-	DisableRedirects    bool
-	SkipTLSVerification bool
-	WebSocketSuccess    WebSocketSuccess
-	SendType            MessageType
-	SendPayload         string
-	ReceiveType         MessageType
-	ExpectedMessage     string
-	PingPayloadFormat   PayloadFormat
-	PingPayload         string
-	Source              string
+	Name                 string
+	Scope                Scope
+	Kind                 Kind
+	URL                  string
+	DialHost             string
+	Frequency            time.Duration
+	Timeout              time.Duration
+	HTTPMethod           string
+	HTTPContentType      string
+	HTTPBody             string
+	HTTPSuccessMode      HTTPSuccessMode
+	ExpectedStatuses     []int
+	ExpectedStatusRanges []HTTPStatusRange
+	ResponseKeyword      string
+	DisableRedirects     bool
+	SkipTLSVerification  bool
+	WebSocketSuccess     WebSocketSuccess
+	SendType             MessageType
+	SendPayload          string
+	ReceiveType          MessageType
+	ExpectedMessage      string
+	PingPayloadFormat    PayloadFormat
+	PingPayload          string
+	Source               string
 }
 
 type Certificate struct {

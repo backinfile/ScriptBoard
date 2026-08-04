@@ -57,17 +57,18 @@ const initialPasswordFilename = "initial-admin-password"
 const currentSchemaVersion = buildinfo.DatabaseSchemaVersion
 
 const (
-	passwordMemory         uint32 = 64 * 1024
-	passwordIterations     uint32 = 3
-	passwordParallelism    uint8  = 2
-	passwordSaltLength            = 16
-	passwordKeyLength             = 32
-	maxPasswordBytes              = 256
-	maxLoginRequestBytes   int64  = 16 << 10
-	maxLocaleRequestBytes  int64  = 4 << 10
-	maxFormRequestBytes    int64  = 8 << 20
-	loginRateBucketCount          = 1 << 14
-	maxLoginFailureEntries        = 2 * loginRateBucketCount
+	passwordMemory                         uint32 = 64 * 1024
+	passwordIterations                     uint32 = 3
+	passwordParallelism                    uint8  = 2
+	passwordSaltLength                            = 16
+	passwordKeyLength                             = 32
+	maxPasswordBytes                              = 256
+	maxLoginRequestBytes                   int64  = 16 << 10
+	maxLocaleRequestBytes                  int64  = 4 << 10
+	maxFormRequestBytes                    int64  = 8 << 20
+	maxAssistantRuntimeOfflineRequestBytes int64  = runtimeinstall.MaxArchiveBytes + runtimeinstall.MaxManifestBytes + runtimeinstall.MaxSignatureBytes + (1 << 20)
+	loginRateBucketCount                          = 1 << 14
+	maxLoginFailureEntries                        = 2 * loginRateBucketCount
 )
 
 const dummyPasswordHash = "$argon2id$v=19$m=65536,t=3,p=2$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -1322,6 +1323,19 @@ func openDatabase(path string) (*sql.DB, error) {
 			return nil, fmt.Errorf("replace Assistant model default index: %w", err)
 		}
 	}
+	if schemaVersion >= 20 && schemaVersion <= 25 {
+		exists, err := sqliteColumnExists(migration, "assistant_models", "connection_ok")
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("inspect Assistant model connection migration: %w", err)
+		}
+		if !exists {
+			if _, err := migration.Exec(`ALTER TABLE assistant_models ADD COLUMN connection_ok INTEGER NOT NULL DEFAULT 0`); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("migrate Assistant model connection status: %w", err)
+			}
+		}
+	}
 	for _, statement := range []string{
 		"CREATE UNIQUE INDEX IF NOT EXISTS users_single_administrator_idx ON users(role) WHERE role = 'administrator'",
 		"CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id)",
@@ -1379,10 +1393,11 @@ func compatibleDatabaseSchema(version int) bool {
 	// Schema 20 is the clean host-filesystem baseline. Schema 21 adds the
 	// assistant-owned tables, schema 22 adds persisted tool-call text positions,
 	// schema 23 adds bounded request/response JSON, schema 24 adds capability
-	// profiles plus bounded Pi session telemetry, and schema 25 scopes LLM
-	// configurations to owners with explicit sharing. Each supported
+	// profiles plus bounded Pi session telemetry, schema 25 scopes LLM
+	// configurations to owners with explicit sharing, and schema 26 records the
+	// latest observed LLM connection result. Each supported
 	// predecessor has an explicit transactional forward path.
-	return version == currentSchemaVersion || currentSchemaVersion == 25 && version >= 20 && version <= 24
+	return version == currentSchemaVersion || currentSchemaVersion == 26 && version >= 20 && version <= 25
 }
 
 func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {
@@ -1657,6 +1672,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /settings/ai/defaults", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.saveAssistantDefaults)))
 	mux.Handle("POST /settings/ai/runtime/check", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.checkAssistantRuntime)))
 	mux.Handle("POST /settings/ai/runtime/install", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.installAssistantRuntime)))
+	mux.Handle("POST /settings/ai/runtime/offline", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.installAssistantRuntimeOffline)))
 	mux.Handle("POST /settings/ai/runtime/rollback", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.rollbackAssistantRuntime)))
 	mux.Handle("GET /settings/updates", a.requireSession(http.HandlerFunc(a.updatesPage)))
 	mux.Handle("GET /settings/updates/status", a.requireSession(http.HandlerFunc(a.updateStatus)))
@@ -1757,7 +1773,7 @@ func (a *App) routes() http.Handler {
 			response.Header().Set("Strict-Transport-Security", "max-age=31536000")
 		}
 		if request.Body != nil && request.Method != http.MethodGet && request.Method != http.MethodHead &&
-			request.URL.Path != "/resources/files/upload" {
+			request.URL.Path != "/resources/files/upload" && request.URL.Path != "/settings/ai/runtime/offline" {
 			if request.ContentLength > maxFormRequestBytes {
 				http.Error(response, "request body is too large", http.StatusRequestEntityTooLarge)
 				return
@@ -4729,8 +4745,12 @@ func (a *App) loadSession(request *http.Request) (session, string, bool) {
 }
 
 func validSessionCSRF(request *http.Request) bool {
+	return validSessionCSRFValue(request, request.FormValue("csrf_token"))
+}
+
+func validSessionCSRFValue(request *http.Request, value string) bool {
 	current, ok := request.Context().Value(sessionContextKey).(session)
-	return ok && subtle.ConstantTimeCompare([]byte(current.csrfToken), []byte(request.FormValue("csrf_token"))) == 1
+	return ok && subtle.ConstantTimeCompare([]byte(current.csrfToken), []byte(value)) == 1
 }
 
 func (a *App) requireSession(next http.Handler) http.Handler {

@@ -426,6 +426,40 @@ func TestOpenDatabaseMigratesSchema24ModelVisibility(t *testing.T) {
 	}
 }
 
+func TestOpenDatabaseMigratesSchema25ModelConnectionStatus(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	db, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`INSERT INTO assistant_models (id, owner_user_id, name, provider, model, endpoint, credential_configured, is_default, created_at, updated_at, updated_by_user_id) VALUES ('model', 'owner', 'Model', 'openai-compatible', 'model', 'http://localhost', 1, 1, 1, 1, 'owner')`,
+		`ALTER TABLE assistant_models DROP COLUMN connection_ok`,
+		`PRAGMA user_version=25`,
+		`PRAGMA wal_checkpoint(TRUNCATE)`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatalf("prepare schema 25 with %q: %v", statement, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := openDatabase(path)
+	if err != nil {
+		t.Fatalf("migrate schema 25: %v", err)
+	}
+	defer migrated.Close()
+	var version, connectionOK int
+	if err := migrated.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != currentSchemaVersion {
+		t.Fatalf("version = %d, error = %v", version, err)
+	}
+	if err := migrated.QueryRow(`SELECT connection_ok FROM assistant_models WHERE id = 'model'`).Scan(&connectionOK); err != nil || connectionOK != 0 {
+		t.Fatalf("migrated connection status = %d, error = %v", connectionOK, err)
+	}
+}
+
 func TestFileOperationCommitRegistersRecoverableSourceTrash(t *testing.T) {
 	db, err := openDatabase(filepath.Join(t.TempDir(), "app.db"))
 	if err != nil {

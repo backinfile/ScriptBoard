@@ -14,6 +14,7 @@ colors:
   accent-soft: "#EDF1FF"
   success: "#18794E"
   success-soft: "#EAF6F0"
+  success-border: "#A8D5BF"
   website-success: "#007F5F"
   website-success-signal: "#00B884"
   website-success-soft: "#E2F8F0"

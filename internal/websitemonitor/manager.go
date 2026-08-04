@@ -240,18 +240,26 @@ func normalizeConfig(config Config) (Config, error) {
 		if config.HTTPSuccessMode == "" {
 			config.HTTPSuccessMode = HTTPSuccessRange
 		}
-		if config.HTTPSuccessMode != HTTPSuccessRange && config.HTTPSuccessMode != HTTPSuccessExact {
+		if config.HTTPSuccessMode != HTTPSuccessRange && config.HTTPSuccessMode != HTTPSuccessExact &&
+			config.HTTPSuccessMode != HTTPSuccessAnyResponse {
 			return Config{}, errors.New("HTTP 成功条件无效")
 		}
 		if config.HTTPSuccessMode == HTTPSuccessExact {
-			if len(config.ExpectedStatuses) == 0 {
+			ranges := ExpectedHTTPStatusRanges(config)
+			if len(ranges) == 0 {
 				return Config{}, errors.New("指定状态码模式至少需要一个状态码")
 			}
-			for _, status := range config.ExpectedStatuses {
-				if status < 100 || status > 599 {
+			for _, statusRange := range ranges {
+				if statusRange.Start < 100 || statusRange.End > 599 || statusRange.End < statusRange.Start {
 					return Config{}, errors.New("HTTP 状态码必须介于 100 和 599")
 				}
 			}
+			if len(config.ExpectedStatusRanges) > 0 {
+				config.ExpectedStatuses = nil
+			}
+		} else {
+			config.ExpectedStatuses = nil
+			config.ExpectedStatusRanges = nil
 		}
 		if len(config.HTTPBody) > 1024*1024 {
 			return Config{}, errors.New("HTTP 请求内容不能超过 1 MiB")

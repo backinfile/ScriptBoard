@@ -158,7 +158,7 @@
 <div><dt>{{t .Locale "website.form.dial_host"}}</dt><dd>{{if .Raw.Config.DialHost}}{{.Raw.Config.DialHost}}{{else}}—{{end}}</dd></div>
 {{if eq .Raw.Config.Kind "http"}}
 <div><dt>{{t .Locale "website.form.content_type"}}</dt><dd>{{if eq .Raw.Config.HTTPMethod "POST"}}{{.Raw.Config.HTTPContentType}}{{else}}—{{end}}</dd></div>
-<div><dt>{{t .Locale "website.form.status_rule"}}</dt><dd>{{if eq .Raw.Config.HTTPSuccessMode "exact"}}{{range .Raw.Config.ExpectedStatuses}}{{.}} {{end}}{{else}}200–399{{end}}</dd></div>
+<div><dt>{{t .Locale "website.form.status_rule"}}</dt><dd>{{.StatusRuleLabel}}</dd></div>
 <div><dt>{{t .Locale "website.form.keyword"}}</dt><dd>{{if .Raw.Config.ResponseKeyword}}{{.Raw.Config.ResponseKeyword}}{{else}}—{{end}}</dd></div>
 <div><dt>{{t .Locale "website.form.follow_redirects"}}</dt><dd>{{if .Raw.Config.DisableRedirects}}{{t .Locale "common.no"}}{{else}}{{t .Locale "common.yes"}}{{end}}</dd></div>
 <div><dt>{{t .Locale "website.form.verify_tls"}}</dt><dd>{{if .Raw.Config.SkipTLSVerification}}{{t .Locale "common.no"}}{{else}}{{t .Locale "common.yes"}}{{end}}</dd></div>

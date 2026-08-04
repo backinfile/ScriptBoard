@@ -91,6 +91,7 @@ type assistantRuntimeApproval struct {
 type assistantRuntimeTurn struct {
 	actor          assistant.Actor
 	conversationID string
+	modelID        string
 	messageID      string
 	runtimeVersion string
 	session        *pirpc.Session
@@ -512,7 +513,7 @@ func (runtime *assistantRuntimeCoordinator) ExecuteWithImages(ctx context.Contex
 	}
 
 	turn := &assistantRuntimeTurn{
-		actor: actor, conversationID: conversation.ID, messageID: reply.ID,
+		actor: actor, conversationID: conversation.ID, modelID: conversation.ModelID, messageID: reply.ID,
 		runtimeVersion: managedRuntime.Version, session: session, done: make(chan struct{}),
 	}
 	runtime.mu.Lock()
@@ -744,6 +745,11 @@ func (runtime *assistantRuntimeCoordinator) settleTurn(turn *assistantRuntimeTur
 		finishContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = runtime.store.FinishTurn(finishContext, turn.actor, turn.conversationID, turn.messageID, status, turn.runtimeVersion)
 		cancel()
+		if status == "error" {
+			connectionContext, connectionCancel := context.WithTimeout(context.Background(), 3*time.Second)
+			_ = runtime.store.SetModelConnectionOK(connectionContext, turn.modelID, false)
+			connectionCancel()
+		}
 		runtime.publish(turn.conversationID, assistantBrowserEvent{Type: "settled", MessageID: turn.messageID, Status: status, Telemetry: turn.telemetry})
 		runtime.mu.Lock()
 		if runtime.turns[turn.conversationID] == turn {

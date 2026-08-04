@@ -66,6 +66,7 @@ var SchemaStatements = []string{
 		model TEXT NOT NULL,
 		endpoint TEXT NOT NULL,
 		credential_configured INTEGER NOT NULL DEFAULT 0,
+		connection_ok INTEGER NOT NULL DEFAULT 0,
 		supports_images INTEGER NOT NULL DEFAULT 0,
 		is_shared INTEGER NOT NULL DEFAULT 0,
 		is_default INTEGER NOT NULL DEFAULT 0,
@@ -174,10 +175,11 @@ type ModelInput struct {
 }
 
 type ModelConfig struct {
-	ID, OwnerUserID, Name, Provider, Model, Endpoint      string
-	CredentialConfigured, Default, SupportsImages, Shared bool
-	Owned                                                 bool
-	CreatedAt, UpdatedAt                                  time.Time
+	ID, OwnerUserID, Name, Provider, Model, Endpoint string
+	CredentialConfigured, ConnectionOK               bool
+	Default, SupportsImages, Shared                  bool
+	Owned                                            bool
+	CreatedAt, UpdatedAt                             time.Time
 }
 
 type SettingsInput struct {
@@ -347,8 +349,8 @@ func (s *Service) SaveModel(ctx context.Context, actor Actor, id string, input M
 	}
 	if creating {
 		_, err = tx.ExecContext(ctx, `INSERT INTO assistant_models
-			(id, owner_user_id, name, provider, model, endpoint, credential_configured, supports_images, is_shared, is_default, created_at, updated_at, updated_by_user_id)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(id, owner_user_id, name, provider, model, endpoint, credential_configured, connection_ok, supports_images, is_shared, is_default, created_at, updated_at, updated_by_user_id)
+			VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
 			id, actor.UserID, normalized.Name, normalized.Provider, normalized.Model, normalized.Endpoint,
 			boolInt(credentialConfigured), boolInt(normalized.SupportsImages), boolInt(normalized.Shared), defaultValue, now.UnixNano(), now.UnixNano(), actor.UserID)
 	} else {
@@ -361,7 +363,7 @@ func (s *Service) SaveModel(ctx context.Context, actor Actor, id string, input M
 			}
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE assistant_models SET name = ?, provider = ?, model = ?, endpoint = ?,
-			credential_configured = ?, supports_images = ?, is_shared = ?, is_default = ?, updated_at = ?, updated_by_user_id = ? WHERE id = ? AND owner_user_id = ?`,
+			credential_configured = ?, connection_ok = 0, supports_images = ?, is_shared = ?, is_default = ?, updated_at = ?, updated_by_user_id = ? WHERE id = ? AND owner_user_id = ?`,
 			normalized.Name, normalized.Provider, normalized.Model, normalized.Endpoint,
 			boolInt(credentialConfigured), boolInt(normalized.SupportsImages), boolInt(normalized.Shared), defaultValue, now.UnixNano(), actor.UserID, id, actor.UserID)
 	}
@@ -431,12 +433,12 @@ func boundedText(value string, minimum, maximum int) bool {
 
 func (s *Service) model(ctx context.Context, id string) (ModelConfig, error) {
 	var model ModelConfig
-	var credentialConfigured, defaultValue, supportsImages, shared int
+	var credentialConfigured, connectionOK, defaultValue, supportsImages, shared int
 	var createdAt, updatedAt int64
-	err := s.db.QueryRowContext(ctx, `SELECT id, owner_user_id, name, provider, model, endpoint, credential_configured, supports_images,
+	err := s.db.QueryRowContext(ctx, `SELECT id, owner_user_id, name, provider, model, endpoint, credential_configured, connection_ok, supports_images,
 		is_shared, is_default, created_at, updated_at FROM assistant_models WHERE id = ?`, id).Scan(
 		&model.ID, &model.OwnerUserID, &model.Name, &model.Provider, &model.Model, &model.Endpoint, &credentialConfigured,
-		&supportsImages, &shared, &defaultValue, &createdAt, &updatedAt,
+		&connectionOK, &supportsImages, &shared, &defaultValue, &createdAt, &updatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ModelConfig{}, ErrNotFound
@@ -445,6 +447,7 @@ func (s *Service) model(ctx context.Context, id string) (ModelConfig, error) {
 		return ModelConfig{}, fmt.Errorf("read LLM configuration: %w", err)
 	}
 	model.CredentialConfigured = credentialConfigured == 1
+	model.ConnectionOK = connectionOK == 1
 	model.SupportsImages = supportsImages == 1
 	model.Shared = shared == 1
 	model.Default = defaultValue == 1
@@ -457,7 +460,7 @@ func (s *Service) ListModels(ctx context.Context, actor Actor) ([]ModelConfig, e
 	if strings.TrimSpace(actor.UserID) == "" {
 		return nil, fmt.Errorf("%w: actor is required", ErrInvalidInput)
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, owner_user_id, name, provider, model, endpoint, credential_configured, supports_images,
+	rows, err := s.db.QueryContext(ctx, `SELECT id, owner_user_id, name, provider, model, endpoint, credential_configured, connection_ok, supports_images,
 		is_shared, is_default, created_at, updated_at FROM assistant_models WHERE owner_user_id = ? OR is_shared = 1
 		ORDER BY CASE WHEN owner_user_id = ? THEN 0 ELSE 1 END, is_default DESC, created_at, name`, actor.UserID, actor.UserID)
 	if err != nil {
@@ -467,13 +470,14 @@ func (s *Service) ListModels(ctx context.Context, actor Actor) ([]ModelConfig, e
 	models := make([]ModelConfig, 0)
 	for rows.Next() {
 		var model ModelConfig
-		var credentialConfigured, defaultValue, supportsImages, shared int
+		var credentialConfigured, connectionOK, defaultValue, supportsImages, shared int
 		var createdAt, updatedAt int64
 		if err := rows.Scan(&model.ID, &model.OwnerUserID, &model.Name, &model.Provider, &model.Model, &model.Endpoint,
-			&credentialConfigured, &supportsImages, &shared, &defaultValue, &createdAt, &updatedAt); err != nil {
+			&credentialConfigured, &connectionOK, &supportsImages, &shared, &defaultValue, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scan LLM configuration: %w", err)
 		}
 		model.CredentialConfigured = credentialConfigured == 1
+		model.ConnectionOK = connectionOK == 1
 		model.SupportsImages = supportsImages == 1
 		model.Shared = shared == 1
 		model.Owned = model.OwnerUserID == actor.UserID
@@ -523,6 +527,19 @@ func (s *Service) ModelCredential(ctx context.Context, id string) (string, error
 
 func (s *Service) Model(ctx context.Context, id string) (ModelConfig, error) {
 	return s.model(ctx, id)
+}
+
+// SetModelConnectionOK records the latest observed provider connection result.
+// It is informational only and never changes whether the model can be selected.
+func (s *Service) SetModelConnectionOK(ctx context.Context, id string, ok bool) error {
+	result, err := s.db.ExecContext(ctx, "UPDATE assistant_models SET connection_ok = ? WHERE id = ?", boolInt(ok), strings.TrimSpace(id))
+	if err != nil {
+		return fmt.Errorf("update LLM connection status: %w", err)
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *Service) SetDefaultModel(ctx context.Context, actor Actor, id string) error {

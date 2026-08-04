@@ -2,9 +2,11 @@ package app_test
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
@@ -108,6 +110,8 @@ func TestAIWorkspaceAndSettingsUsePersistedLLMAndConversationState(t *testing.T)
 		`name="default_auto_approval"`, `name="max_active_conversations"`,
 		`name="shared"`,
 		`action="/settings/ai/runtime/check"`,
+		`action="/settings/ai/runtime/offline"`, `enctype="multipart/form-data"`,
+		`name="runtime_manifest"`, `name="runtime_signature"`, `name="runtime_archive"`,
 	} {
 		if !strings.Contains(string(settings), expected) {
 			t.Fatalf("AI settings are missing %q: %s", expected, settings)
@@ -141,6 +145,11 @@ func TestAIWorkspaceAndSettingsUsePersistedLLMAndConversationState(t *testing.T)
 	}
 	if !strings.Contains(string(settings), `data-shared="true"`) || !strings.Contains(string(settings), `data-owned="true"`) {
 		t.Fatalf("configured LLM does not preserve owned/shared state: %s", settings)
+	}
+	for _, expected := range []string{`data-connection-ok="false"`, `data-state="not-ok"`, `class="button button--compact assistant-llm-test"`, `>Test not passed<`, `>Test connection<`} {
+		if !strings.Contains(string(settings), expected) {
+			t.Fatalf("configured LLM is missing connection status or the labeled test action %q: %s", expected, settings)
+		}
 	}
 	if strings.Contains(string(settings), "sk-never-render-this") {
 		t.Fatal("provider credential was reflected into settings HTML")
@@ -291,7 +300,7 @@ func TestAIStateChangingRoutesRequireCSRF(t *testing.T) {
 	if response.StatusCode != http.StatusForbidden {
 		t.Fatalf("LLM create without CSRF status=%d body=%s", response.StatusCode, body)
 	}
-	for _, path := range []string{"/settings/ai/runtime/check", "/settings/ai/runtime/install", "/settings/ai/runtime/rollback"} {
+	for _, path := range []string{"/settings/ai/runtime/check", "/settings/ai/runtime/install", "/settings/ai/runtime/offline", "/settings/ai/runtime/rollback"} {
 		response, err = client.PostForm(serverURL+path, url.Values{})
 		if err != nil {
 			t.Fatalf("post %s without CSRF: %v", path, err)
@@ -301,6 +310,67 @@ func TestAIStateChangingRoutesRequireCSRF(t *testing.T) {
 		if response.StatusCode != http.StatusForbidden {
 			t.Fatalf("%s without CSRF status=%d body=%s", path, response.StatusCode, body)
 		}
+	}
+}
+
+func TestAssistantRuntimeOfflineUploadRejectsUntrustedPackage(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "host"), filepath.Join(root, "state"))
+	response, err := client.Get(serverURL + "/settings/ai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("csrf_token", formToken(t, settings)); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range []struct {
+		field string
+		name  string
+		body  []byte
+	}{
+		{field: "runtime_manifest", name: "ASSISTANT-RUNTIME.json", body: []byte(`{"invalid":true}`)},
+		{field: "runtime_signature", name: "ASSISTANT-RUNTIME.json.sig", body: []byte(`{"invalid":true}`)},
+		{field: "runtime_archive", name: "scriptboard-pi-runtime.zip", body: []byte("not a trusted runtime")},
+	} {
+		part, createErr := writer.CreateFormFile(file.field, file.name)
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		if _, writeErr := part.Write(file.body); writeErr != nil {
+			t.Fatal(writeErr)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	request, err := http.NewRequest(http.MethodPost, serverURL+"/settings/ai/runtime/offline", &body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	response, err = client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	responseBody, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusUnprocessableEntity ||
+		!strings.Contains(string(responseBody), "Runtime failed signature or archive validation") {
+		t.Fatalf("offline upload status=%d body=%s", response.StatusCode, responseBody)
 	}
 }
 
