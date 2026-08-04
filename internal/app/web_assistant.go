@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"net/url"
@@ -98,17 +99,18 @@ type assistantPageData struct {
 }
 
 type assistantSettingsPageData struct {
-	Locale             webLocale
-	CSRFToken          string
-	SettingsNavigation settingsNavigationData
-	Settings           assistant.Settings
-	Models             []assistantModelView
-	DefaultModel       *assistantModelView
-	RuntimeAvailable   bool
-	RuntimeVersion     string
-	Runtime            runtimeinstall.Snapshot
-	ActiveProcesses    int
-	ProviderTestPassed bool
+	Locale                  webLocale
+	CSRFToken               string
+	SettingsNavigation      settingsNavigationData
+	Settings                assistant.Settings
+	Models                  []assistantModelView
+	DefaultModel            *assistantModelView
+	RuntimeAvailable        bool
+	RuntimeVersion          string
+	Runtime                 runtimeinstall.Snapshot
+	ActiveProcesses         int
+	ProviderTestPassed      bool
+	RuntimeOfflineInstalled bool
 }
 
 func assistantActor(request *http.Request) assistant.Actor {
@@ -949,7 +951,8 @@ func (a *App) assistantSettingsPage(response http.ResponseWriter, request *http.
 		Settings: settings, Models: views, DefaultModel: defaultModel,
 		RuntimeAvailable: runtimeErr == nil, RuntimeVersion: managedRuntime.Version,
 		Runtime: runtimeSnapshot, ActiveProcesses: a.assistantRuntime.ActiveProcesses(),
-		ProviderTestPassed: request.URL.Query().Get("provider_test") == "passed",
+		ProviderTestPassed:      request.URL.Query().Get("provider_test") == "passed",
+		RuntimeOfflineInstalled: request.URL.Query().Get("runtime_install") == "offline",
 	})
 }
 
@@ -1014,6 +1017,137 @@ func (a *App) installAssistantRuntime(response http.ResponseWriter, request *htt
 	}
 	a.recordAuditForRequest(request, "assistant_runtime_install", a.assistantRuntimes.Snapshot().ActiveVersion, "succeeded")
 	http.Redirect(response, request, "/settings/ai", http.StatusSeeOther)
+}
+
+var errAssistantRuntimeUploadTooLarge = errors.New("assistant runtime upload part is too large")
+
+func readAssistantRuntimeUploadPart(reader io.Reader, maximum int64) ([]byte, error) {
+	value, err := io.ReadAll(io.LimitReader(reader, maximum+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(value)) > maximum {
+		return nil, errAssistantRuntimeUploadTooLarge
+	}
+	return value, nil
+}
+
+func (a *App) installAssistantRuntimeOffline(response http.ResponseWriter, request *http.Request) {
+	locale := resolveWebLocale(request)
+	if request.ContentLength > maxAssistantRuntimeOfflineRequestBytes {
+		http.Error(response, webText(locale, "assistant.runtime_offline_too_large"), http.StatusRequestEntityTooLarge)
+		return
+	}
+	resetReadDeadline := setRequestReadDeadline(response, 15*time.Minute)
+	defer resetReadDeadline()
+	request.Body = http.MaxBytesReader(response, request.Body, maxAssistantRuntimeOfflineRequestBytes)
+
+	reader, err := request.MultipartReader()
+	if err != nil {
+		if !validSessionCSRF(request) {
+			http.Error(response, webText(locale, "assistant.csrf_error"), http.StatusForbidden)
+			return
+		}
+		http.Error(response, webText(locale, "assistant.runtime_offline_invalid_request"), http.StatusBadRequest)
+		return
+	}
+
+	var csrfToken string
+	var manifestRaw, signatureRaw []byte
+	seen := make(map[string]bool)
+	for {
+		part, nextErr := reader.NextPart()
+		if errors.Is(nextErr, io.EOF) {
+			if !validSessionCSRFValue(request, csrfToken) {
+				http.Error(response, webText(locale, "assistant.csrf_error"), http.StatusForbidden)
+				return
+			}
+			http.Error(response, webText(locale, "assistant.runtime_offline_missing"), http.StatusBadRequest)
+			return
+		}
+		if nextErr != nil {
+			var maximumError *http.MaxBytesError
+			if errors.As(nextErr, &maximumError) {
+				http.Error(response, webText(locale, "assistant.runtime_offline_too_large"), http.StatusRequestEntityTooLarge)
+				return
+			}
+			http.Error(response, webText(locale, "assistant.runtime_offline_invalid_request"), http.StatusBadRequest)
+			return
+		}
+
+		field := part.FormName()
+		if seen[field] || field == "" {
+			_ = part.Close()
+			http.Error(response, webText(locale, "assistant.runtime_offline_invalid_request"), http.StatusBadRequest)
+			return
+		}
+		seen[field] = true
+		switch field {
+		case "csrf_token":
+			value, readErr := readAssistantRuntimeUploadPart(part, 64<<10)
+			_ = part.Close()
+			if readErr != nil {
+				http.Error(response, webText(locale, "assistant.csrf_error"), http.StatusForbidden)
+				return
+			}
+			csrfToken = string(value)
+		case "runtime_manifest":
+			if !validSessionCSRFValue(request, csrfToken) {
+				_ = part.Close()
+				http.Error(response, webText(locale, "assistant.csrf_error"), http.StatusForbidden)
+				return
+			}
+			manifestRaw, err = readAssistantRuntimeUploadPart(part, runtimeinstall.MaxManifestBytes)
+			_ = part.Close()
+			if err != nil {
+				http.Error(response, webText(locale, "assistant.runtime_offline_too_large"), http.StatusRequestEntityTooLarge)
+				return
+			}
+		case "runtime_signature":
+			if !validSessionCSRFValue(request, csrfToken) {
+				_ = part.Close()
+				http.Error(response, webText(locale, "assistant.csrf_error"), http.StatusForbidden)
+				return
+			}
+			signatureRaw, err = readAssistantRuntimeUploadPart(part, runtimeinstall.MaxSignatureBytes)
+			_ = part.Close()
+			if err != nil {
+				http.Error(response, webText(locale, "assistant.runtime_offline_too_large"), http.StatusRequestEntityTooLarge)
+				return
+			}
+		case "runtime_archive":
+			if !validSessionCSRFValue(request, csrfToken) {
+				_ = part.Close()
+				http.Error(response, webText(locale, "assistant.csrf_error"), http.StatusForbidden)
+				return
+			}
+			if len(manifestRaw) == 0 || len(signatureRaw) == 0 || part.FileName() == "" {
+				_ = part.Close()
+				http.Error(response, webText(locale, "assistant.runtime_offline_missing"), http.StatusBadRequest)
+				return
+			}
+			ctx, cancel := context.WithTimeout(request.Context(), 15*time.Minute)
+			installErr := a.assistantRuntimes.InstallOffline(ctx, manifestRaw, signatureRaw, part)
+			cancel()
+			_ = part.Close()
+			if installErr != nil {
+				a.recordAuditForRequest(request, "assistant_runtime_install", "offline", "failed")
+				status := assistantRuntimeMutationStatus(installErr)
+				if status == http.StatusBadRequest {
+					status = http.StatusUnprocessableEntity
+				}
+				http.Error(response, webText(locale, "assistant.runtime_offline_invalid"), status)
+				return
+			}
+			a.recordAuditForRequest(request, "assistant_runtime_install", a.assistantRuntimes.Snapshot().ActiveVersion, "succeeded")
+			http.Redirect(response, request, "/settings/ai?runtime_install=offline", http.StatusSeeOther)
+			return
+		default:
+			_ = part.Close()
+			http.Error(response, webText(locale, "assistant.runtime_offline_invalid_request"), http.StatusBadRequest)
+			return
+		}
+	}
 }
 
 func (a *App) rollbackAssistantRuntime(response http.ResponseWriter, request *http.Request) {

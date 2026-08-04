@@ -8,6 +8,7 @@
   <div class="settings-content">
     <header class="settings-section-heading"><div><h2>{{t .Locale "assistant.settings_title"}}</h2><p>{{t .Locale "assistant.settings_description"}}</p></div><span class="assistant-runtime-status" data-state="{{if .RuntimeAvailable}}enabled{{else}}stale{{end}}"><span class="status-dot" aria-hidden="true"></span>{{if .RuntimeAvailable}}Pi v{{.RuntimeVersion}}{{else}}{{t .Locale "assistant.runtime_not_installed"}}{{end}}</span></header>
     {{if .ProviderTestPassed}}<aside class="inline-notice"><span data-lucide="circle-check" aria-hidden="true"></span><p>{{t .Locale "assistant.provider_test_passed"}}</p></aside>{{end}}
+    {{if .RuntimeOfflineInstalled}}<aside class="inline-notice"><span data-lucide="circle-check" aria-hidden="true"></span><p>{{t .Locale "assistant.runtime_offline_installed"}}</p></aside>{{end}}
     <dl class="assistant-settings-summary">
       <div><dt>{{t .Locale "assistant.default_llm"}}</dt><dd>{{if .DefaultModel}}{{.DefaultModel.Name}}{{else}}{{t .Locale "assistant.not_configured"}}{{end}}</dd></div>
       <div><dt>{{t .Locale "assistant.configurations"}}</dt><dd>{{len .Models}}</dd></div>
@@ -32,6 +33,18 @@
       <div class="assistant-runtime-panel">
         <div class="assistant-runtime-panel__state"><span class="assistant-runtime-mark" data-state="{{if .RuntimeAvailable}}enabled{{else}}stale{{end}}"><span data-lucide="box" aria-hidden="true"></span></span><div><strong>{{if .RuntimeAvailable}}Pi v{{.RuntimeVersion}}{{else}}{{t .Locale "assistant.runtime_not_installed"}}{{end}}</strong><p>{{if .RuntimeAvailable}}{{t .Locale "assistant.runtime_ready"}}{{else}}{{t .Locale "assistant.runtime_required_short"}}{{end}}</p></div></div>
         <dl class="assistant-runtime-diagnostics"><div><dt>{{t .Locale "assistant.runtime_active_processes"}}</dt><dd>{{.ActiveProcesses}}</dd></div><div><dt>{{t .Locale "assistant.runtime_rollback"}}</dt><dd>{{if .Runtime.RollbackVersion}}v{{.Runtime.RollbackVersion}}{{else}}—{{end}}</dd></div><div><dt>{{t .Locale "assistant.runtime_last_check"}}</dt><dd>{{if .Runtime.CheckedAt.IsZero}}—{{else}}{{localTime .Locale .Runtime.CheckedAt}}{{end}}</dd></div><div><dt>{{t .Locale "assistant.runtime_last_error"}}</dt><dd>{{if .Runtime.LastErrorCode}}{{.Runtime.LastErrorCode}}{{else}}—{{end}}</dd></div></dl>
+        <details class="assistant-runtime-offline">
+          <summary><span class="assistant-runtime-offline__icon"><span data-lucide="package-open" aria-hidden="true"></span></span><span><strong>{{t .Locale "assistant.runtime_offline_title"}}</strong><small>{{t .Locale "assistant.runtime_offline_description"}}</small></span><span class="assistant-runtime-offline__chevron" data-lucide="chevron-down" aria-hidden="true"></span></summary>
+          <form method="post" action="/settings/ai/runtime/offline" enctype="multipart/form-data" data-native>
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <div class="assistant-runtime-offline__files">
+              <label><span>{{t .Locale "assistant.runtime_manifest_file"}}</span><input type="file" name="runtime_manifest" required accept=".json,application/json"><small>ASSISTANT-RUNTIME.json</small></label>
+              <label><span>{{t .Locale "assistant.runtime_signature_file"}}</span><input type="file" name="runtime_signature" required accept=".sig,.json,application/json"><small>ASSISTANT-RUNTIME.json.sig</small></label>
+              <label><span>{{t .Locale "assistant.runtime_archive_file"}}</span><input type="file" name="runtime_archive" required accept=".zip,.gz,.tgz,.tar.gz,application/zip,application/gzip"><small>scriptboard-pi-runtime-*</small></label>
+            </div>
+            <div class="assistant-runtime-offline__footer"><p><span data-lucide="shield-check" aria-hidden="true"></span>{{t .Locale "assistant.runtime_offline_requirements"}}</p><button class="button button--primary button--compact" type="submit"><span data-lucide="upload" aria-hidden="true"></span>{{t .Locale "assistant.runtime_offline_submit"}}</button></div>
+          </form>
+        </details>
       </div>
     </section>
 

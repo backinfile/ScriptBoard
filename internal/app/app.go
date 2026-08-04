@@ -57,17 +57,18 @@ const initialPasswordFilename = "initial-admin-password"
 const currentSchemaVersion = buildinfo.DatabaseSchemaVersion
 
 const (
-	passwordMemory         uint32 = 64 * 1024
-	passwordIterations     uint32 = 3
-	passwordParallelism    uint8  = 2
-	passwordSaltLength            = 16
-	passwordKeyLength             = 32
-	maxPasswordBytes              = 256
-	maxLoginRequestBytes   int64  = 16 << 10
-	maxLocaleRequestBytes  int64  = 4 << 10
-	maxFormRequestBytes    int64  = 8 << 20
-	loginRateBucketCount          = 1 << 14
-	maxLoginFailureEntries        = 2 * loginRateBucketCount
+	passwordMemory                         uint32 = 64 * 1024
+	passwordIterations                     uint32 = 3
+	passwordParallelism                    uint8  = 2
+	passwordSaltLength                            = 16
+	passwordKeyLength                             = 32
+	maxPasswordBytes                              = 256
+	maxLoginRequestBytes                   int64  = 16 << 10
+	maxLocaleRequestBytes                  int64  = 4 << 10
+	maxFormRequestBytes                    int64  = 8 << 20
+	maxAssistantRuntimeOfflineRequestBytes int64  = runtimeinstall.MaxArchiveBytes + runtimeinstall.MaxManifestBytes + runtimeinstall.MaxSignatureBytes + (1 << 20)
+	loginRateBucketCount                          = 1 << 14
+	maxLoginFailureEntries                        = 2 * loginRateBucketCount
 )
 
 const dummyPasswordHash = "$argon2id$v=19$m=65536,t=3,p=2$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -1671,6 +1672,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /settings/ai/defaults", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.saveAssistantDefaults)))
 	mux.Handle("POST /settings/ai/runtime/check", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.checkAssistantRuntime)))
 	mux.Handle("POST /settings/ai/runtime/install", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.installAssistantRuntime)))
+	mux.Handle("POST /settings/ai/runtime/offline", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.installAssistantRuntimeOffline)))
 	mux.Handle("POST /settings/ai/runtime/rollback", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.rollbackAssistantRuntime)))
 	mux.Handle("GET /settings/updates", a.requireSession(http.HandlerFunc(a.updatesPage)))
 	mux.Handle("GET /settings/updates/status", a.requireSession(http.HandlerFunc(a.updateStatus)))
@@ -1771,7 +1773,7 @@ func (a *App) routes() http.Handler {
 			response.Header().Set("Strict-Transport-Security", "max-age=31536000")
 		}
 		if request.Body != nil && request.Method != http.MethodGet && request.Method != http.MethodHead &&
-			request.URL.Path != "/resources/files/upload" {
+			request.URL.Path != "/resources/files/upload" && request.URL.Path != "/settings/ai/runtime/offline" {
 			if request.ContentLength > maxFormRequestBytes {
 				http.Error(response, "request body is too large", http.StatusRequestEntityTooLarge)
 				return
@@ -4743,8 +4745,12 @@ func (a *App) loadSession(request *http.Request) (session, string, bool) {
 }
 
 func validSessionCSRF(request *http.Request) bool {
+	return validSessionCSRFValue(request, request.FormValue("csrf_token"))
+}
+
+func validSessionCSRFValue(request *http.Request, value string) bool {
 	current, ok := request.Context().Value(sessionContextKey).(session)
-	return ok && subtle.ConstantTimeCompare([]byte(current.csrfToken), []byte(request.FormValue("csrf_token"))) == 1
+	return ok && subtle.ConstantTimeCompare([]byte(current.csrfToken), []byte(value)) == 1
 }
 
 func (a *App) requireSession(next http.Handler) http.Handler {

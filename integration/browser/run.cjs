@@ -897,10 +897,24 @@ async function assertAssistantSettingsAndWorkspace(page, baseURL) {
   await page.waitForTimeout(300);
   assert.equal(await page.locator('form[action="/settings/ai/defaults"] [data-async-submit-error]').count(), 0);
   assert.equal(await page.locator('form[action="/settings/ai/defaults"] input[name="enabled"]').isChecked(), true);
+
+  const offlineRuntime = page.locator(".assistant-runtime-offline");
+  const offlineForm = offlineRuntime.locator('form[action="/settings/ai/runtime/offline"]');
+  assert.equal(await offlineForm.getAttribute("enctype"), "multipart/form-data");
+  assert.equal(await offlineForm.getAttribute("data-native"), "");
+  for (const field of ["runtime_manifest", "runtime_signature", "runtime_archive"]) {
+    const input = offlineForm.locator(`input[type="file"][name="${field}"]`);
+    assert.equal(await input.count(), 1);
+    assert.equal(await input.getAttribute("required"), "");
+  }
+  await offlineRuntime.locator("summary").click();
+  assert.equal(await offlineForm.isVisible(), true);
+  await assertNoHorizontalOverflow(page, "AI settings offline Runtime expanded");
   await saveSnapshot(page, "ai-settings");
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
+  await page.locator(".assistant-runtime-offline summary").click();
   await assertNoHorizontalOverflow(page, "AI settings mobile");
   await saveSnapshot(page, "ai-settings-mobile");
   await page.setViewportSize({ width: 1440, height: 1000 });
