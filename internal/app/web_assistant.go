@@ -962,12 +962,22 @@ func (a *App) testAssistantModel(response http.ResponseWriter, request *http.Req
 	ctx, cancel := context.WithTimeout(request.Context(), 90*time.Second)
 	defer cancel()
 	if err := a.assistantRuntime.TestModel(ctx, assistantActor(request), modelID); err != nil {
+		statusContext, statusCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_ = a.assistant.SetModelConnectionOK(statusContext, modelID, false)
+		statusCancel()
 		a.recordAuditForRequest(request, "assistant_provider_test", modelID, "failed")
 		status, _ := assistantRuntimeWebError(err)
 		if status == http.StatusInternalServerError {
 			status = http.StatusBadGateway
 		}
 		http.Error(response, webText(resolveWebLocale(request), "assistant.provider_test_failed"), status)
+		return
+	}
+	statusContext, statusCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer statusCancel()
+	if err := a.assistant.SetModelConnectionOK(statusContext, modelID, true); err != nil {
+		a.recordAuditForRequest(request, "assistant_provider_test", modelID, "failed")
+		http.Error(response, webText(resolveWebLocale(request), "assistant.provider_test_failed"), http.StatusInternalServerError)
 		return
 	}
 	a.recordAuditForRequest(request, "assistant_provider_test", modelID, "succeeded")

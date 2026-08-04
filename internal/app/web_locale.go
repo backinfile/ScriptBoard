@@ -258,6 +258,8 @@ var webMessages = map[string]localizedMessage{
 	"assistant.make_default_description":            {"已有对话不会被修改。", "Existing conversations are unchanged."},
 	"assistant.save_configuration":                  {"保存配置", "Save configuration"},
 	"assistant.test_provider":                       {"测试连接", "Test connection"},
+	"assistant.connection_ok":                       {"测试正常", "Test passed"},
+	"assistant.connection_not_ok":                   {"测试未通过", "Test not passed"},
 	"assistant.provider_test_passed":                {"LLM 连接测试成功，Pi 已通过当前 Runtime、Endpoint、凭据和模型完成一次私有测试。", "LLM connection passed. Pi completed a private test through the current Runtime, endpoint, credential, and model."},
 	"assistant.provider_test_failed":                {"LLM 连接测试失败。请检查 Runtime、Endpoint、凭据和模型后重试。", "LLM connection test failed. Check the Runtime, endpoint, credential, and model, then try again."},
 	"assistant.csrf_error":                          {"AI 请求的 CSRF Token 无效", "The AI request has an invalid CSRF token"},

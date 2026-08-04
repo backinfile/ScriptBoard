@@ -1322,6 +1322,19 @@ func openDatabase(path string) (*sql.DB, error) {
 			return nil, fmt.Errorf("replace Assistant model default index: %w", err)
 		}
 	}
+	if schemaVersion >= 20 && schemaVersion <= 25 {
+		exists, err := sqliteColumnExists(migration, "assistant_models", "connection_ok")
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("inspect Assistant model connection migration: %w", err)
+		}
+		if !exists {
+			if _, err := migration.Exec(`ALTER TABLE assistant_models ADD COLUMN connection_ok INTEGER NOT NULL DEFAULT 0`); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("migrate Assistant model connection status: %w", err)
+			}
+		}
+	}
 	for _, statement := range []string{
 		"CREATE UNIQUE INDEX IF NOT EXISTS users_single_administrator_idx ON users(role) WHERE role = 'administrator'",
 		"CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id)",
@@ -1379,10 +1392,11 @@ func compatibleDatabaseSchema(version int) bool {
 	// Schema 20 is the clean host-filesystem baseline. Schema 21 adds the
 	// assistant-owned tables, schema 22 adds persisted tool-call text positions,
 	// schema 23 adds bounded request/response JSON, schema 24 adds capability
-	// profiles plus bounded Pi session telemetry, and schema 25 scopes LLM
-	// configurations to owners with explicit sharing. Each supported
+	// profiles plus bounded Pi session telemetry, schema 25 scopes LLM
+	// configurations to owners with explicit sharing, and schema 26 records the
+	// latest observed LLM connection result. Each supported
 	// predecessor has an explicit transactional forward path.
-	return version == currentSchemaVersion || currentSchemaVersion == 25 && version >= 20 && version <= 24
+	return version == currentSchemaVersion || currentSchemaVersion == 26 && version >= 20 && version <= 25
 }
 
 func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {
