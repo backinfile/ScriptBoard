@@ -263,10 +263,13 @@ func TestAdminCreatesWebsiteMonitorAndReadsItsResult(t *testing.T) {
 	}
 	editPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, expected := range []string{"编辑网站", `action="` + location + `"`, "http://127.0.0.1:8080/health"} {
+	for _, expected := range []string{"编辑网站", `action="` + location + `"`, "http://127.0.0.1:8080/health", "使用 http:// 或 https:// 地址。"} {
 		if !bytes.Contains(editPage, []byte(expected)) {
 			t.Fatalf("edit page does not contain %q: %s", expected, editPage)
 		}
+	}
+	if bytes.Contains(editPage, []byte("#ZgotmplZ")) {
+		t.Fatalf("edit page contains an escaped URL-context placeholder: %s", editPage)
 	}
 	response, err = client.PostForm(serverURL+location, url.Values{
 		"csrf_token":        {formToken(t, editPage)},
