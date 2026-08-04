@@ -86,7 +86,7 @@
         <div class="directory-tree-picker__heading"><span>{{t .Locale "task.working_directory"}}</span><code data-directory-selection>{{.WorkingDirectory}}</code></div>
         <div class="directory-tree-picker__tree" data-directory-tree data-directory-options aria-label="{{t .Locale "task.working_directory"}}"></div>
       </div>
-      <label>{{t .Locale "task.language"}} <select name="language" required>{{range .Languages}}<option value="{{.ID}}" {{if eq .ID $.Language}}selected{{end}}>{{.Label}} ({{.Extension}})</option>{{end}}</select></label>
+      <label>{{t .Locale "task.language"}} <span class="task-select"><select name="language" required>{{range .Languages}}<option value="{{.ID}}" {{if eq .ID $.Language}}selected{{end}}>{{.Label}} ({{.Extension}})</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
       <label>{{t .Locale "task.source"}} <textarea name="source" autocomplete="off" spellcheck="false" maxlength="1048576" required>{{.Source}}</textarea></label>
       <label>{{t .Locale "task.arguments"}} <input name="arguments" autocomplete="off" spellcheck="false" value="{{.Arguments}}"></label>
       <label>{{t .Locale "task.timeout_seconds"}} <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}"></label>
@@ -100,13 +100,13 @@
         <div class="directory-tree-picker__heading"><span>{{t .Locale "task.working_directory"}}</span><code data-directory-selection>{{.WorkingDirectory}}</code></div>
         <div class="directory-tree-picker__tree" data-directory-tree data-directory-options aria-label="{{t .Locale "task.working_directory"}}"></div>
       </div>
-      <label>{{t .Locale "task.language"}} <select name="language" required>{{range .Languages}}<option value="{{.ID}}" {{if eq .ID $.Language}}selected{{end}}>{{.Label}} ({{.Extension}})</option>{{end}}</select></label>
+      <label>{{t .Locale "task.language"}} <span class="task-select"><select name="language" required>{{range .Languages}}<option value="{{.ID}}" {{if eq .ID $.Language}}selected{{end}}>{{.Label}} ({{.Extension}})</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
       <label>{{t .Locale "task.file_name"}} <input name="file_name" autocomplete="off" spellcheck="false" value="{{.FileName}}" required></label>
       <label>{{t .Locale "task.source"}} <textarea name="source" autocomplete="off" spellcheck="false" maxlength="1048576" required>{{.Source}}</textarea></label>
       <label>{{t .Locale "run_detail.quick_name"}} <input name="name" autocomplete="off" value="{{.Name}}" required data-quick-name></label>
       <label>{{t .Locale "task.arguments"}} <input name="arguments" autocomplete="off" spellcheck="false" value="{{.Arguments}}"></label>
       <label>{{t .Locale "task.timeout_seconds"}} <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}"></label>
-      <label>{{t .Locale "quick_runs.group"}} <select name="group_id"><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}" {{if eq .ID $.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}</select></label>
+      <label>{{t .Locale "quick_runs.group"}} <span class="task-select task-select--group"><span class="task-select__icon" data-lucide="folder-open" aria-hidden="true"></span><select name="group_id"><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}" {{if eq .ID $.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
       {{if .Conflict}}
       <section class="page-error" role="alert">
         <strong>{{t .Locale "task.source_conflict.title"}}</strong>
@@ -133,7 +133,7 @@
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <div class="field-readonly"><span>{{t .Locale "common.script"}}</span><code>{{.Path}}</code></div>
       <label>{{t .Locale "run_detail.quick_name"}} <input name="name" autocomplete="off" required autofocus></label>
-      <label>{{t .Locale "quick_runs.group"}} <select name="group_id"><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select></label>
+      <label>{{t .Locale "quick_runs.group"}} <span class="task-select task-select--group"><span class="task-select__icon" data-lucide="folder-open" aria-hidden="true"></span><select name="group_id"><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
       <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "run_detail.save_quick"}}</button></footer>
     </form>
     {{else if eq .Kind "quick-new"}}
@@ -143,7 +143,7 @@
       <label>{{t .Locale "run_detail.quick_name"}} <input name="name" autocomplete="off" value="{{.Name}}" required autofocus></label>
       <label>{{t .Locale "task.arguments"}} <input name="arguments" autocomplete="off" spellcheck="false" value="{{.Arguments}}"></label>
       <label>{{t .Locale "task.timeout_seconds"}} <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}"></label>
-      <label>{{t .Locale "quick_runs.group"}} <select name="group_id"><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}" {{if eq .ID $.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}</select></label>
+      <label>{{t .Locale "quick_runs.group"}} <span class="task-select task-select--group"><span class="task-select__icon" data-lucide="folder-open" aria-hidden="true"></span><select name="group_id"><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}" {{if eq .ID $.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
       <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="bookmark-plus" aria-hidden="true"></span>{{t .Locale "run_detail.save_quick"}}</button></footer>
     </form>
     {{else if or (or (eq .Kind "quick-group-new") (eq .Kind "quick-group-edit")) (or (eq .Kind "schedule-group-new") (eq .Kind "schedule-group-edit"))}}
@@ -156,7 +156,7 @@
     <form method="post" action="{{.Action}}" data-async>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <div class="field-readonly"><span>{{t .Locale "run_detail.quick_name"}}</span><strong>{{.Name}}</strong></div>
-      <label>{{t .Locale "quick_runs.group"}} <select name="group_id" autofocus><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}" {{if eq .ID $.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}</select></label>
+      <label>{{t .Locale "quick_runs.group"}} <span class="task-select task-select--group"><span class="task-select__icon" data-lucide="folder-open" aria-hidden="true"></span><select name="group_id" autofocus><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}" {{if eq .ID $.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
       <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "quick_runs.move_group"}}</button></footer>
     </form>
     {{else if eq .Kind "quick-edit"}}
@@ -175,7 +175,7 @@
       <label>{{t .Locale "run_detail.quick_name"}} <input name="name" autocomplete="off" value="{{.Name}}" required autofocus></label>
       <label>{{t .Locale "task.arguments"}} <input name="arguments" autocomplete="off" spellcheck="false" value="{{.Arguments}}"></label>
       <label>{{t .Locale "task.timeout_seconds"}} <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}"></label>
-      <label>{{t .Locale "quick_runs.group"}} <select name="group_id"><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}" {{if eq .ID $.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}</select></label>
+      <label>{{t .Locale "quick_runs.group"}} <span class="task-select task-select--group"><span class="task-select__icon" data-lucide="folder-open" aria-hidden="true"></span><select name="group_id"><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}" {{if eq .ID $.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
       <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="copy" aria-hidden="true"></span>{{t .Locale "quick_runs.copy"}}</button></footer>
     </form>
     {{else if or (eq .Kind "variable-new") (eq .Kind "variable-edit")}}

@@ -487,7 +487,7 @@ func (a *App) updateWebsiteMonitor(response http.ResponseWriter, request *http.R
 }
 
 func firstWebsiteMonitorFieldError(fieldErrors map[string]string) (string, string) {
-	for _, field := range []string{"frequency_seconds", "timeout_seconds", "name", "url", "dial_host", "expected_statuses", "form"} {
+	for _, field := range []string{"frequency_seconds", "timeout_seconds", "name", "url", "expected_statuses", "form"} {
 		if message := strings.TrimSpace(fieldErrors[field]); message != "" {
 			return field, message
 		}
@@ -861,7 +861,6 @@ func websiteMonitorConfigFromRequest(request *http.Request) (websitemonitor.Conf
 		Scope:               websitemonitor.Scope(request.FormValue("scope")),
 		Kind:                websitemonitor.Kind(request.FormValue("kind")),
 		URL:                 strings.TrimSpace(request.FormValue("url")),
-		DialHost:            strings.TrimSpace(request.FormValue("dial_host")),
 		SkipTLSVerification: request.FormValue("verify_tls") != "1",
 		Source:              "manual",
 	}

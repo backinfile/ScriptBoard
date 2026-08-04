@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -329,44 +328,6 @@ func TestPauseIgnoresALateInFlightResultAndResumeChecksAgain(t *testing.T) {
 	})
 	if resumed.Latest.Summary != "恢复后的检查成功" {
 		t.Fatalf("resume result = %#v", resumed.Latest)
-	}
-}
-
-func TestLocalDialOverridePreservesHostAcrossSameHostRedirect(t *testing.T) {
-	var wantHost string
-	target := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.Host != wantHost {
-			t.Errorf("Host = %q, want %q", request.Host, wantHost)
-		}
-		if request.URL.Path == "/" {
-			http.Redirect(response, request, "/ready", http.StatusFound)
-			return
-		}
-		response.WriteHeader(http.StatusNoContent)
-	}))
-	t.Cleanup(target.Close)
-	parsed, err := url.Parse(target.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantHost = "service.internal:" + parsed.Port()
-
-	manager := newTestManager(t, Options{})
-	created, err := manager.Create(context.Background(), Config{
-		Name:     "本机虚拟主机",
-		Scope:    ScopeLocal,
-		Kind:     KindHTTP,
-		URL:      "http://" + wantHost + "/",
-		DialHost: "127.0.0.1",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	monitor := waitForMonitor(t, manager, created.ID, func(value Monitor) bool {
-		return value.State == StateUp
-	})
-	if monitor.Latest.StatusCode != http.StatusNoContent {
-		t.Fatalf("local redirect result = %#v", monitor.Latest)
 	}
 }
 

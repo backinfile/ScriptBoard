@@ -11,7 +11,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -46,10 +45,6 @@ func (NetworkProbe) Check(ctx context.Context, config Config) Evidence {
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: config.SkipTLSVerification} //nolint:gosec -- explicit per-monitor administrator setting
-	if config.DialHost != "" {
-		transport.Proxy = nil
-		transport.DialContext = localDialContext(config)
-	}
 	client := &http.Client{
 		Transport: transport,
 		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
@@ -113,10 +108,6 @@ func checkWebSocket(ctx context.Context, config Config) Evidence {
 	dialer := websocket.Dialer{
 		Proxy:           http.ProxyFromEnvironment,
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: config.SkipTLSVerification}, //nolint:gosec -- explicit per-monitor administrator setting
-	}
-	if config.DialHost != "" {
-		dialer.Proxy = nil
-		dialer.NetDialContext = localDialContext(config)
 	}
 	connection, response, err := dialer.DialContext(ctx, config.URL, http.Header{"User-Agent": []string{UserAgent}})
 	result.Latency = time.Since(started)
@@ -276,19 +267,6 @@ func decodePayload(format PayloadFormat, value string) ([]byte, error) {
 		return base64.StdEncoding.DecodeString(strings.TrimSpace(value))
 	default:
 		return nil, fmt.Errorf("unsupported payload format %q", format)
-	}
-}
-
-func localDialContext(config Config) func(context.Context, string, string) (net.Conn, error) {
-	target, _ := url.Parse(config.URL)
-	targetHost := target.Hostname()
-	dialer := &net.Dialer{}
-	return func(ctx context.Context, network, address string) (net.Conn, error) {
-		host, port, err := net.SplitHostPort(address)
-		if err == nil && strings.EqualFold(host, targetHost) {
-			address = net.JoinHostPort(strings.Trim(config.DialHost, "[]"), port)
-		}
-		return dialer.DialContext(ctx, network, address)
 	}
 }
 

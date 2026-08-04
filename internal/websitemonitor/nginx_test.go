@@ -52,7 +52,7 @@ func TestScanNginxReturnsCandidatesWithoutImporting(t *testing.T) {
 		sourceInfo, sourceErr := os.Stat(candidate.Source)
 		childInfo, childErr := os.Stat(childConfig)
 		sameSource := sourceErr == nil && childErr == nil && os.SameFile(sourceInfo, childInfo)
-		if candidate.DialHost != "127.0.0.1" || candidate.Digest == "" || !sameSource {
+		if candidate.Digest == "" || !sameSource {
 			t.Errorf("candidate = %#v", candidate)
 		}
 		if candidate.Duplicate {
@@ -111,7 +111,6 @@ func TestImportNginxAddsOnlySelectedFreshCandidatesAndMarksDuplicates(t *testing
 		t.Fatalf("import selected candidate: %v", err)
 	}
 	if len(imported) != 1 || imported[0].Config.URL != selected.URL ||
-		imported[0].Config.DialHost != selected.DialHost ||
 		imported[0].Config.Source != "nginx:"+selected.Source {
 		t.Fatalf("imported = %#v", imported)
 	}
