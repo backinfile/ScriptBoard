@@ -2293,7 +2293,10 @@
         const response = await fetch("/monitor/status", { credentials: "same-origin", cache: "no-store" });
         if (!response.ok) return;
         const data = await response.json();
-        const currentIssueCount = Math.max(0, Number(data.issueCount) || 0);
+        const currentIssueCount = Math.max(0, Number(data.issueCount) || 0)
+          + Math.max(0, Number(data.websiteDown) || 0)
+          + Math.max(0, Number(data.stoppedPinnedApplications) || 0)
+          + Math.max(0, Number(data.applicationIssueCount) || 0);
         if (issueSummary) {
           const state = currentIssueCount > 0 ? "attention" : "current";
           const label = `${attention.dataset.currentErrorsLabel || "Current errors"}: ${currentIssueCount}`;

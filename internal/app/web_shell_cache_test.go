@@ -86,11 +86,11 @@ func TestApplicationShellShowsOnlyCurrentAttentionItems(t *testing.T) {
 func TestCollapsedApplicationShellKeepsNavigationTopAlignedAndShowsIssueCount(t *testing.T) {
 	var rendered bytes.Buffer
 	err := applicationShellTemplate.Execute(&rendered, applicationShellData{
-		Locale:       localeEnglishUS,
-		Status:       "Attention needed",
-		StatusState:  "attention",
-		IssueCount:   3,
-		WebsiteState: "up",
+		Locale:            localeEnglishUS,
+		Status:            "Attention needed",
+		StatusState:       "attention",
+		CurrentErrorCount: 3,
+		WebsiteState:      "up",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -128,12 +128,29 @@ func TestCollapsedApplicationShellKeepsNavigationTopAlignedAndShowsIssueCount(t 
 	for _, expected := range []string{
 		`attention.querySelector("[data-shell-issue-summary]")`,
 		`Number(data.issueCount)`,
+		`Number(data.websiteDown)`,
+		`Number(data.stoppedPinnedApplications)`,
+		`Number(data.applicationIssueCount)`,
 		`issueCount.textContent = String(currentIssueCount)`,
 		`issueSummary.setAttribute("aria-label", label)`,
 	} {
 		if !strings.Contains(js, expected) {
 			t.Fatalf("live issue summary update is missing %q", expected)
 		}
+	}
+}
+
+func TestCurrentShellErrorCountIncludesConfirmedHostWebsiteAndApplicationErrors(t *testing.T) {
+	status := shellStatusResponse{
+		IssueCount:                2,
+		WebsiteDown:               1,
+		WebsiteVerifying:          7,
+		StoppedPinnedApplications: 3,
+		ApplicationIssueCount:     4,
+	}
+
+	if got := currentShellErrorCount(status); got != 10 {
+		t.Fatalf("current error count=%d, want 10 confirmed errors", got)
 	}
 }
 
