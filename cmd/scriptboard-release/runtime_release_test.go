@@ -1,6 +1,9 @@
 package main
 
 import (
+	"archive/tar"
+	"compress/gzip"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -77,5 +80,58 @@ func TestRuntimePayloadRootKeepsWindowsRoot(t *testing.T) {
 	}
 	if payload != extracted {
 		t.Fatalf("payload = %q, want %q", payload, extracted)
+	}
+}
+
+func TestPackRuntimeTarGZDeclaresPortableRuntimePermissions(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "payload")
+	if err := os.MkdirAll(filepath.Join(root, "assets"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string][]byte{
+		"pi":               []byte("fixture executable"),
+		"runtime.json":     []byte("{}\n"),
+		"assets/theme.txt": []byte("fixture asset"),
+	} {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(name)), body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	archivePath := filepath.Join(t.TempDir(), "runtime.tar.gz")
+	if err := packRuntimeTarGZ(root, archivePath); err != nil {
+		t.Fatal(err)
+	}
+
+	file, err := os.Open(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	compressed, err := gzip.NewReader(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer compressed.Close()
+	reader := tar.NewReader(compressed)
+	want := map[string]int64{"assets/": 0o700, "assets/theme.txt": 0o600, "pi": 0o700, "runtime.json": 0o600}
+	for {
+		header, err := reader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		expected, ok := want[header.Name]
+		if !ok {
+			t.Fatalf("unexpected archive entry %q", header.Name)
+		}
+		if got := header.Mode & 0o777; got != expected {
+			t.Fatalf("archive entry %q mode = %04o, want %04o", header.Name, got, expected)
+		}
+		delete(want, header.Name)
+	}
+	if len(want) != 0 {
+		t.Fatalf("archive is missing entries: %v", want)
 	}
 }

@@ -513,8 +513,15 @@ func packRuntimeTarGZ(root, output string) error {
 				break
 			}
 			header.Name = filepath.ToSlash(relative)
+			// Declare portable modes instead of inheriting FileInfo permissions
+			// from the Windows release host.
 			if info.IsDir() {
 				header.Name += "/"
+				header.Mode = 0o700
+			} else if header.Name == "pi" {
+				header.Mode = 0o700
+			} else {
+				header.Mode = 0o600
 			}
 			if writeErr := writer.WriteHeader(header); writeErr != nil {
 				err = writeErr
