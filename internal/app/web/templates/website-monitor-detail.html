@@ -155,7 +155,6 @@
 <h3>{{t .Locale "website.detail.connection_rules"}}</h3>
 <dl class="website-settings-list">
 <div><dt>{{t .Locale "website.filter.scope"}}</dt><dd>{{.Monitor.ScopeLabel}}</dd></div>
-<div><dt>{{t .Locale "website.form.dial_host"}}</dt><dd>{{if .Raw.Config.DialHost}}{{.Raw.Config.DialHost}}{{else}}—{{end}}</dd></div>
 {{if eq .Raw.Config.Kind "http"}}
 <div><dt>{{t .Locale "website.form.content_type"}}</dt><dd>{{if eq .Raw.Config.HTTPMethod "POST"}}{{.Raw.Config.HTTPContentType}}{{else}}—{{end}}</dd></div>
 <div><dt>{{t .Locale "website.form.status_rule"}}</dt><dd>{{.StatusRuleLabel}}</dd></div>

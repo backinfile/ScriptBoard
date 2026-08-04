@@ -76,7 +76,6 @@ type Config struct {
 	Scope                Scope
 	Kind                 Kind
 	URL                  string
-	DialHost             string
 	Frequency            time.Duration
 	Timeout              time.Duration
 	HTTPMethod           string

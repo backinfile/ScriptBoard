@@ -426,7 +426,7 @@ Update Operation 是文件系统持久化事务，不写入 SQLite 作为事实�
 
 | 实体 | 关键字段与保留 |
 | --- | --- |
-| WebsiteMonitor | 配置 JSON、范围、协议、管理员顺序、状态、失败计数、配置代次、下一检查时间；删除后保留一年 |
+| WebsiteMonitor | 配置 JSON、服务位置、协议、管理员顺序、状态、失败计数、配置代次、下一检查时间；删除后保留一年 |
 | WebsiteCheckResult | 成功、状态码、耗时、错误类别、技术证据、证书快照；保留 24 小时 |
 | WebsiteHourlyAggregate | 每小时检查数、成功/失败数、平均/最大耗时与错误类别计数；保留 30 天 |
 | WebsiteIncident | 确认故障的开始、结束、首个错误事实与关闭原因；完成后保留一年 |

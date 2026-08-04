@@ -34,7 +34,6 @@ type NginxCandidate struct {
 	Digest    string
 	Name      string
 	URL       string
-	DialHost  string
 	Source    string
 	Duplicate bool
 	Warnings  []string
@@ -109,9 +108,7 @@ func (m *Manager) ScanNginx(ctx context.Context, request NginxScanRequest) (Ngin
 				preview.Warnings = append(preview.Warnings, warnings...)
 				for _, candidate := range candidates {
 					for _, monitor := range existing {
-						if monitor.Config.URL == candidate.URL &&
-							monitor.Config.DialHost == candidate.DialHost &&
-							monitor.Config.Kind == KindHTTP {
+						if monitor.Config.URL == candidate.URL && monitor.Config.Kind == KindHTTP {
 							candidate.Duplicate = true
 							break
 						}
@@ -126,7 +123,7 @@ func (m *Manager) ScanNginx(ctx context.Context, request NginxScanRequest) (Ngin
 	}
 	walk(directives, false)
 	slices.SortFunc(preview.Candidates, func(left, right NginxCandidate) int {
-		return strings.Compare(left.URL+"\x00"+left.DialHost, right.URL+"\x00"+right.DialHost)
+		return strings.Compare(left.URL, right.URL)
 	})
 	for _, candidate := range preview.Candidates {
 		if candidate.Duplicate {
@@ -280,7 +277,7 @@ func (m *Manager) ImportNginx(ctx context.Context, request NginxImportRequest) (
 		}
 		configs = append(configs, Config{
 			Name: name, Scope: ScopeLocal, Kind: KindHTTP,
-			URL: candidate.URL, DialHost: candidate.DialHost,
+			URL:        candidate.URL,
 			HTTPMethod: http.MethodGet, Frequency: time.Minute, Timeout: 10 * time.Second,
 			HTTPSuccessMode: HTTPSuccessRange, Source: "nginx:" + candidate.Source,
 		})
@@ -508,7 +505,7 @@ func nginxServerCandidates(server nginxDirective) ([]NginxCandidate, []string) {
 		}
 	}
 	if len(listens) == 0 {
-		listens = []nginxListen{{port: 80, dialHost: "127.0.0.1"}}
+		listens = []nginxListen{{port: 80}}
 	}
 	var candidates []NginxCandidate
 	for _, name := range names {
@@ -528,10 +525,9 @@ func nginxServerCandidates(server nginxDirective) ([]NginxCandidate, []string) {
 				host = net.JoinHostPort(strings.Trim(host, "[]"), strconv.Itoa(listen.port))
 			}
 			candidate := NginxCandidate{
-				Name: name, URL: scheme + "://" + host + "/",
-				DialHost: listen.dialHost, Source: server.source,
+				Name: name, URL: scheme + "://" + host + "/", Source: server.source,
 			}
-			sum := sha256.Sum256([]byte(candidate.URL + "\x00" + candidate.DialHost))
+			sum := sha256.Sum256([]byte(candidate.URL))
 			candidate.Digest = hex.EncodeToString(sum[:])
 			candidates = append(candidates, candidate)
 		}
@@ -540,9 +536,8 @@ func nginxServerCandidates(server nginxDirective) ([]NginxCandidate, []string) {
 }
 
 type nginxListen struct {
-	port     int
-	dialHost string
-	ssl      bool
+	port int
+	ssl  bool
 }
 
 func parseNginxListen(args []string) (nginxListen, string) {
@@ -553,13 +548,13 @@ func parseNginxListen(args []string) (nginxListen, string) {
 	if strings.HasPrefix(value, "unix:") {
 		return nginxListen{}, "Unix Socket listen 不支持网站监控"
 	}
-	result := nginxListen{dialHost: "127.0.0.1"}
+	result := nginxListen{}
 	result.ssl = slices.Contains(args[1:], "ssl")
 	if port, err := strconv.Atoi(value); err == nil {
 		result.port = port
 		return result, ""
 	}
-	host, portText, err := net.SplitHostPort(value)
+	_, portText, err := net.SplitHostPort(value)
 	if err != nil {
 		return nginxListen{}, fmt.Sprintf("listen %q 无法解析", value)
 	}
@@ -568,14 +563,6 @@ func parseNginxListen(args []string) (nginxListen, string) {
 		return nginxListen{}, fmt.Sprintf("listen %q 端口无效", value)
 	}
 	result.port = port
-	switch strings.Trim(host, "[]") {
-	case "", "*", "0.0.0.0":
-		result.dialHost = "127.0.0.1"
-	case "::":
-		result.dialHost = "::1"
-	default:
-		result.dialHost = strings.Trim(host, "[]")
-	}
 	return result, ""
 }
 

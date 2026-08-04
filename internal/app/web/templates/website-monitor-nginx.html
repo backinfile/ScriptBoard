@@ -45,7 +45,7 @@
 {{range .Preview.Candidates}}
 <label class="nginx-candidate {{if .Duplicate}}nginx-candidate--duplicate{{end}}">
 <input type="checkbox" name="digest" value="{{.Digest}}" data-nginx-candidate {{if .Duplicate}}disabled{{end}}>
-<span><strong>{{.Name}}</strong><code>{{.URL}}</code><small>{{.Source}} · {{t $.Locale "website.nginx.direct"}} {{.DialHost}}</small></span>
+<span><strong>{{.Name}}</strong><code>{{.URL}}</code><small>{{.Source}}</small></span>
 <b>{{if .Duplicate}}{{t $.Locale "website.nginx.already_monitored"}}{{else}}{{t $.Locale "website.nginx.can_add"}}{{end}}</b>
 </label>
 {{else}}

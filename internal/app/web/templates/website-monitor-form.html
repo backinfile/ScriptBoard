@@ -35,16 +35,10 @@
 <span class="field-hint" data-monitor-url-hint>{{t .Locale "website.form.http_url_hint"}}</span>
 {{with index .Errors "url"}}<span class="field-error">{{.}}</span>{{end}}
 </label>
-<div class="website-form-pair website-form-pair--aligned">
 <label>{{t .Locale "website.filter.scope"}}
 <select name="scope"><option value="external" {{if eq .Config.Scope "external"}}selected{{end}}>{{t .Locale "website.scope.external"}}</option><option value="local" {{if eq .Config.Scope "local"}}selected{{end}}>{{t .Locale "website.scope.local"}}</option></select>
 <span class="field-hint">{{t .Locale "website.form.scope_hint"}}</span>
 </label>
-<label>{{t .Locale "website.form.dial_host"}}
-<input name="dial_host" value="{{.Config.DialHost}}" autocomplete="off" spellcheck="false" placeholder="127.0.0.1">
-<span class="field-hint">{{t .Locale "website.form.dial_host_hint"}}</span>
-</label>
-</div>
 </fieldset>
 
 <fieldset>

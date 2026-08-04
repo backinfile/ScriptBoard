@@ -218,7 +218,7 @@ func normalizeConfig(config Config) (Config, error) {
 		config.Scope = ScopeExternal
 	}
 	if config.Scope != ScopeLocal && config.Scope != ScopeExternal {
-		return Config{}, errors.New("网站范围无效")
+		return Config{}, errors.New("服务位置无效")
 	}
 	if config.Kind == "" {
 		config.Kind = KindHTTP
