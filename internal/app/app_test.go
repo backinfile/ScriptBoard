@@ -404,10 +404,10 @@ func TestPrimaryNavigationAvoidsFullPageReloads(t *testing.T) {
 		}
 	}
 
-	assetPattern := regexp.MustCompile(`/assets/(app\.css|app-v2\.js)\?v=([a-f0-9]{12})`)
+	assetPattern := regexp.MustCompile(`/assets/(app\.css|app-v2\.js|scriptboard-icon\.svg|scriptboard-icon-512\.png)\?v=([a-f0-9]{12})`)
 	assetMatches := assetPattern.FindAllSubmatch(page, -1)
-	if len(assetMatches) != 2 {
-		t.Fatalf("files page asset URLs = %q, want one CSS and one JS fingerprint", assetMatches)
+	if len(assetMatches) != 4 {
+		t.Fatalf("files page asset URLs = %q, want CSS, JS, SVG icon, and PNG icon fingerprints", assetMatches)
 	}
 	assetBodies := make(map[string][]byte, len(assetMatches))
 	assetVersions := make(map[string]string, len(assetMatches))
@@ -446,6 +446,22 @@ func TestPrimaryNavigationAvoidsFullPageReloads(t *testing.T) {
 				if bytes.Contains(body, []byte(forbidden)) {
 					t.Errorf("stylesheet retains fragile selector %q", forbidden)
 				}
+			}
+		}
+		if name == "scriptboard-icon.svg" {
+			if contentType := response.Header.Get("Content-Type"); contentType != "image/svg+xml" {
+				t.Errorf("%s content type = %q, want image/svg+xml", asset, contentType)
+			}
+			if !bytes.Contains(body, []byte(`<title id="title">ScriptBoard</title>`)) {
+				t.Errorf("%s does not contain the ScriptBoard title", asset)
+			}
+		}
+		if name == "scriptboard-icon-512.png" {
+			if contentType := response.Header.Get("Content-Type"); contentType != "image/png" {
+				t.Errorf("%s content type = %q, want image/png", asset, contentType)
+			}
+			if len(body) < 8 || !bytes.Equal(body[:8], []byte("\x89PNG\r\n\x1a\n")) {
+				t.Errorf("%s does not contain a PNG signature", asset)
 			}
 		}
 	}
@@ -488,6 +504,8 @@ func TestPrimaryNavigationAvoidsFullPageReloads(t *testing.T) {
 		"highlight.min.js",
 		"highlight-powershell.min.js",
 		"highlight-dos.min.js",
+		"scriptboard-icon.svg",
+		"scriptboard-icon-512.png",
 	}
 	combined := make([]byte, 0)
 	for index, name := range orderedAssets {
@@ -502,6 +520,22 @@ func TestPrimaryNavigationAvoidsFullPageReloads(t *testing.T) {
 		if version != expectedVersion {
 			t.Errorf("%s asset version = %q, want content fingerprint %q", name, version, expectedVersion)
 		}
+	}
+
+	response, err = client.Get(serverURL + "/favicon.ico")
+	if err != nil {
+		t.Fatalf("get favicon.ico: %v", err)
+	}
+	favicon, readErr := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if readErr != nil {
+		t.Fatalf("read favicon.ico: %v", readErr)
+	}
+	if contentType := response.Header.Get("Content-Type"); contentType != "image/png" {
+		t.Errorf("favicon.ico content type = %q, want image/png", contentType)
+	}
+	if !bytes.Equal(favicon, assetBodies["scriptboard-icon-512.png"]) {
+		t.Error("favicon.ico does not serve the ScriptBoard PNG icon")
 	}
 }
 
