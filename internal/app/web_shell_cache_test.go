@@ -119,6 +119,9 @@ func TestCollapsedApplicationShellKeepsNavigationTopAlignedAndShowsIssueCount(t 
 	if strings.Contains(css, `body.sidebar-collapsed .sidebar-attention,`) {
 		t.Fatalf("collapsed navigation hides the complete attention region, including its issue count")
 	}
+	if !strings.Contains(css, `.sidebar-attention__compact strong[hidden] { display: none; }`) {
+		t.Fatal("collapsed navigation does not honor the hidden state of a zero-error badge")
+	}
 
 	script, err := webFiles.ReadFile("web/assets/app.js")
 	if err != nil {
@@ -132,11 +135,29 @@ func TestCollapsedApplicationShellKeepsNavigationTopAlignedAndShowsIssueCount(t 
 		`Number(data.stoppedPinnedApplications)`,
 		`Number(data.applicationIssueCount)`,
 		`issueCount.textContent = String(currentIssueCount)`,
+		`issueCount.hidden = currentIssueCount === 0`,
 		`issueSummary.setAttribute("aria-label", label)`,
 	} {
 		if !strings.Contains(js, expected) {
 			t.Fatalf("live issue summary update is missing %q", expected)
 		}
+	}
+}
+
+func TestCollapsedApplicationShellHidesZeroErrorBadge(t *testing.T) {
+	var rendered bytes.Buffer
+	if err := applicationShellTemplate.Execute(&rendered, applicationShellData{
+		Locale:            localeEnglishUS,
+		Status:            "Data current",
+		StatusState:       "current",
+		CurrentErrorCount: 0,
+		WebsiteState:      "up",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(rendered.String(), `<strong data-shell-issue-count hidden>0</strong>`) {
+		t.Fatalf("zero-error collapsed summary still renders a visible badge: %s", rendered.String())
 	}
 }
 

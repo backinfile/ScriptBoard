@@ -23,7 +23,7 @@
     <section class="sidebar-attention" data-shell-attention aria-label="{{t .Locale "shell.current_status"}}" data-environment="{{.Environment}}" data-current-errors-label="{{t .Locale "shell.current_errors"}}" data-active-runs-label="{{t .Locale "shell.active_runs"}}" data-stopped-pinned-label="{{t .Locale "shell.stopped_pinned"}}" data-application-attention-label="{{t .Locale "shell.application_attention"}}" data-application-issues-label="{{t .Locale "shell.application_issues"}}" data-review-applications-label="{{t .Locale "shell.review_applications"}}">
       <a class="sidebar-attention__compact" href="/monitor" data-shell-issue-summary data-state="{{if gt .CurrentErrorCount 0}}attention{{else}}current{{end}}" aria-label="{{t .Locale "shell.current_errors"}}: {{.CurrentErrorCount}}" title="{{t .Locale "shell.current_errors"}}: {{.CurrentErrorCount}}">
         <span data-shell-issue-icon data-lucide="{{if gt .CurrentErrorCount 0}}triangle-alert{{else}}circle-check{{end}}" aria-hidden="true"></span>
-        <strong data-shell-issue-count>{{.CurrentErrorCount}}</strong>
+        <strong data-shell-issue-count{{if eq .CurrentErrorCount 0}} hidden{{end}}>{{.CurrentErrorCount}}</strong>
       </a>
       <a class="sidebar-attention__empty" href="/monitor" data-shell-attention-empty {{if or (ne .StatusState "current") (gt .ActiveRuns 0) (gt .WebsiteDown 0) (gt .WebsiteVerifying 0) (gt .StoppedPinnedApplications 0) (gt .ApplicationIssueCount 0)}}hidden{{end}}>
         <span data-lucide="circle-check" aria-hidden="true"></span>

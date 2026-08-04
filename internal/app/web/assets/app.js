@@ -2303,7 +2303,10 @@
           issueSummary.dataset.state = state;
           issueSummary.setAttribute("aria-label", label);
           issueSummary.title = label;
-          if (issueCount) issueCount.textContent = String(currentIssueCount);
+          if (issueCount) {
+            issueCount.textContent = String(currentIssueCount);
+            issueCount.hidden = currentIssueCount === 0;
+          }
           if (issueIcon?.dataset.lucide !== (currentIssueCount > 0 ? "triangle-alert" : "circle-check")) {
             replaceIconHost(issueIcon, currentIssueCount > 0 ? "triangle-alert" : "circle-check");
           }

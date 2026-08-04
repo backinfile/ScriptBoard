@@ -345,6 +345,7 @@ body[data-app-shell] { padding-left: var(--sidebar-width); }
     border-radius: 999px;
     font: 700 .58rem/1 var(--font-ui);
   }
+  body.sidebar-collapsed .sidebar-attention__compact strong[hidden] { display: none; }
   body.sidebar-collapsed .sidebar-attention__compact[data-state="current"] strong { background: var(--success); }
   body.sidebar-collapsed .sidebar-utilities a,
   body.sidebar-collapsed .sidebar-utilities button { width: 44px; min-height: 42px; justify-content: center; gap: 0; margin: 0 auto; padding: 9px; }
