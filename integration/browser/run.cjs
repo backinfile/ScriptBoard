@@ -620,7 +620,25 @@ async function assertWebsiteMonitoring(page, baseURL) {
   await page.goto(`${baseURL}/monitor/websites`);
   const refreshLink = page.locator('.website-heading-actions a').filter({ hasText: "Refresh" });
   assert.equal(await refreshLink.getAttribute("href"), "/monitor/websites");
-  assert.equal(await refreshLink.getAttribute("data-native"), "");
+  assert.equal(await refreshLink.getAttribute("data-native"), null);
+  assert.equal(await refreshLink.getAttribute("data-website-refresh"), "");
+  await page.evaluate(() => {
+    const root = document.querySelector("[data-website-monitoring]");
+    root.dataset.manualRefreshMarker = "preserved";
+    root.dataset.countsToken = "stale";
+  });
+  const refreshResponse = page.waitForResponse(response =>
+    new URL(response.url()).pathname === "/monitor/websites/data",
+  );
+  await refreshLink.click();
+  assert.equal((await refreshResponse).status(), 200);
+  await page.waitForFunction(() =>
+    document.querySelector("[data-website-monitoring]")?.dataset.countsToken !== "stale",
+  );
+  assert.equal(
+    await page.locator('[data-website-monitoring][data-manual-refresh-marker="preserved"]').count(),
+    1,
+  );
   const row = page.locator("[data-monitor-id]").filter({ hasText: monitorName });
   await row.waitFor();
   const attentionURL = page.locator(".website-alert").filter({ hasText: monitorName }).locator(".website-alert__url");

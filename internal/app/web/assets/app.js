@@ -3365,7 +3365,8 @@
     let dragged;
     let checkController;
     const status=root.querySelector('[data-reorder-status]');
-    const refreshStatus=root.querySelector('[data-website-refresh-status]');
+    let refreshStatus=root.querySelector('[data-website-refresh-status]');
+    const refreshControl=root.querySelector('[data-website-refresh]');
     const ledger=root.querySelector('[data-website-ledger]');
     const initialOrder=[...root.querySelectorAll('[data-monitor-id]')].map(row=>row.dataset.monitorId);
     const rows=()=>[...root.querySelectorAll('[data-monitor-id]')];
@@ -3468,7 +3469,16 @@
         }
         return;
       }
-      await navigate(location.href,false);
+      const result=await fetchDocument(location.href,{cache:'no-store'});
+      const nextRoot=result.document?.querySelector('[data-website-monitoring]');
+      const nextData=nextRoot?.querySelector('[data-website-data]');
+      const currentData=root.querySelector('[data-website-data]');
+      if(!result.response.ok||!nextRoot||!nextData||!currentData)throw new Error(root.dataset.refreshFailed||'');
+      currentData.replaceWith(document.importNode(nextData,true));
+      root.dataset.countsToken=nextRoot.dataset.countsToken||'';
+      refreshStatus=root.querySelector('[data-website-refresh-status]');
+      renderIcons(root);
+      localizeTimes(root);
     };
     const openRowDetail=target=>{
       const row=target.closest('[data-detail-href]');
@@ -3533,9 +3543,13 @@
       }
     };
     checkForm?.addEventListener('submit',onCheck);
-    const refresh=async()=>{
+    const refresh=async(manual=false)=>{
       if(stopped||busy||document.hidden||backgroundSurfaceBlocked())return;
       busy=true;
+      if(manual){
+        refreshControl?.setAttribute('aria-busy','true');
+        refreshControl?.setAttribute('aria-disabled','true');
+      }
       try{
         const response=await fetch(root.dataset.statusUrl,{headers:{Accept:'application/json'},cache:'no-store'});
         if(!response.ok)throw new Error('status refresh failed');
@@ -3546,7 +3560,16 @@
         if(refreshStatus)refreshStatus.textContent=root.dataset.refreshFailed||'';
       }
       busy=false;
+      if(manual){
+        refreshControl?.removeAttribute('aria-busy');
+        refreshControl?.removeAttribute('aria-disabled');
+      }
     };
+    const onManualRefresh=event=>{
+      event.preventDefault();
+      refresh(true);
+    };
+    refreshControl?.addEventListener('click',onManualRefresh);
     const timer=setInterval(refresh,10000);
     const visibility=()=>{if(!document.hidden)refresh()};
     document.addEventListener('visibilitychange',visibility);
@@ -3555,6 +3578,7 @@
       checkController?.abort();
       clearInterval(timer);
       document.removeEventListener('visibilitychange',visibility);
+      refreshControl?.removeEventListener('click',onManualRefresh);
       root.removeEventListener('click',onLedgerClick);
       root.removeEventListener('keydown',onLedgerKey);
       checkForm?.removeEventListener('submit',onCheck);
