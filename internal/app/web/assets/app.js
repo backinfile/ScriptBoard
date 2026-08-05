@@ -1006,6 +1006,7 @@
     let initialFocus = outerClose;
     const innerClose = panelMain.querySelector(".task-sheet > header > .icon-button");
     if (innerClose) {
+      innerClose.dataset.taskPanelClose = "";
       outerClose.remove();
       initialFocus = innerClose;
     }
@@ -4577,13 +4578,6 @@
       modelChoices.forEach(choice => {
         const selected = choice.dataset.modelChoice === id;
         choice.setAttribute("aria-selected", String(selected));
-        choice.querySelector("svg.lucide-check")?.remove();
-        if (selected) {
-          const icon = document.createElement("span");
-          icon.dataset.lucide = "check";
-          choice.append(icon);
-          renderIcons(choice);
-        }
       });
     };
     const selectModel = async choice => {
@@ -4669,10 +4663,12 @@
 		const detail = document.createElement("small");
 		detail.textContent = `${resource.kind} · ${resource.detail || ""}`;
 		copy.append(title, detail);
-		const plus = document.createElement("span");
-		plus.dataset.lucide = "plus";
-		plus.setAttribute("aria-hidden", "true");
-		option.append(icon, copy, plus);
+		const indicator = document.createElement("span");
+		indicator.className = "assistant-resource-option__indicator";
+		indicator.dataset.resourceOptionIndicator = "";
+		indicator.dataset.lucide = selectedResources.has(key) ? "check" : "plus";
+		indicator.setAttribute("aria-hidden", "true");
+		option.append(icon, copy, indicator);
 		resourceList.append(option);
 		resourceOptions.push(option);
 		renderIcons(option);
@@ -4772,6 +4768,7 @@
 		image: option.dataset.resourceImage === "true",
 	  });
       option.setAttribute("aria-selected", String(selectedResources.has(key)));
+      replaceIconHost(option.querySelector("[data-resource-option-indicator]"), selectedResources.has(key) ? "check" : "plus");
       renderContextResources();
     };
 
@@ -4834,7 +4831,10 @@
         selectedResources.delete(remove.dataset.removeResource);
         resourceOptions.forEach(item => {
           const key = `${item.dataset.resourceKind}:${item.dataset.resourceId}`;
-          if (key === remove.dataset.removeResource) item.setAttribute("aria-selected", "false");
+          if (key === remove.dataset.removeResource) {
+            item.setAttribute("aria-selected", "false");
+            replaceIconHost(item.querySelector("[data-resource-option-indicator]"), "plus");
+          }
         });
         renderContextResources();
         return;
