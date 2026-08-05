@@ -48,6 +48,10 @@
 
 有些新 ADR 是扩展而不是取代。例如 [ADR-0121](./0121-use-fixed-instance-wide-user-roles.md) 在既有会话与密码决策上增加固定角色用户系统；[ADR-0118](./0118-observe-host-applications-and-local-docker-containers.md) 在 [ADR-0107](./0107-provide-bounded-local-host-status.md) 之外增加独立的应用观测页面。未冲突的旧决定仍然有效。
 
+## 最新决策
+
+- [ADR-0127 仅开放有界的外部触发动作](./0127-expose-only-bounded-external-trigger-actions.md)，取代 ADR-0063 的全面不开放公开接口结论。
+
 ## 基线文档
 
 ADR 解释“为什么这样决定”，以下文档说明“产品要做什么”和“如何验收”：

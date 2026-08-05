@@ -111,6 +111,9 @@ func permissionForRequest(request *http.Request) permission {
 		}
 		return permissionManageExecution
 	}
+	if strings.HasPrefix(path, "/config/external-interfaces") {
+		return permissionManageExecution
+	}
 	if strings.HasPrefix(path, "/history/runs") {
 		if strings.HasSuffix(path, "/source") || strings.HasSuffix(path, "/save-quick-run") ||
 			strings.HasSuffix(path, "/quick-run") {

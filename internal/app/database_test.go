@@ -165,7 +165,7 @@ func TestOpenDatabaseCreatesFixedRoleUserSchema(t *testing.T) {
 	if adminTable != 0 {
 		t.Fatal("legacy admin table should not exist")
 	}
-	for _, table := range []string{"file_operations", "trash_entries", "assistant_settings", "assistant_models", "assistant_conversations", "assistant_messages"} {
+	for _, table := range []string{"file_operations", "trash_entries", "assistant_settings", "assistant_models", "assistant_conversations", "assistant_messages", "external_trigger_keys", "external_trigger_entries", "external_trigger_requests"} {
 		var count int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil || count != 1 {
 			t.Fatalf("required schema table %q is missing: count=%d error=%v", table, count, err)
@@ -457,6 +457,44 @@ func TestOpenDatabaseMigratesSchema25ModelConnectionStatus(t *testing.T) {
 	}
 	if err := migrated.QueryRow(`SELECT connection_ok FROM assistant_models WHERE id = 'model'`).Scan(&connectionOK); err != nil || connectionOK != 0 {
 		t.Fatalf("migrated connection status = %d, error = %v", connectionOK, err)
+	}
+}
+
+func TestOpenDatabaseMigratesSchema26ExternalInterfaceTables(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	db, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`DROP TABLE external_trigger_requests`,
+		`DROP TABLE external_trigger_entries`,
+		`DROP TABLE external_trigger_keys`,
+		`PRAGMA user_version=26`,
+		`PRAGMA wal_checkpoint(TRUNCATE)`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatalf("prepare schema 26 with %q: %v", statement, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := openDatabase(path)
+	if err != nil {
+		t.Fatalf("migrate schema 26: %v", err)
+	}
+	defer migrated.Close()
+	var version int
+	if err := migrated.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != currentSchemaVersion {
+		t.Fatalf("version = %d, error = %v", version, err)
+	}
+	for _, table := range []string{"external_trigger_keys", "external_trigger_entries", "external_trigger_requests"} {
+		var count int
+		if err := migrated.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", table).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("table %s count = %d, error = %v", table, count, err)
+		}
 	}
 }
 

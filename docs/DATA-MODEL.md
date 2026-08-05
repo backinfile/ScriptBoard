@@ -540,3 +540,9 @@ AssistantApproval 绑定用户、角色、授权版本、对话、Tool Call、�
 Evidence Query 仍走相同 Tool Broker 和实时角色授权。日志搜索、日志窗口、Run 对比、计划
 历史和审计列表都有结果条数与文本字节上限；继续读取使用带 HMAC、五分钟过期并绑定用户、
 对话、工具、目标和查询的不透明游标，不能跨查询或跨对话复用。
+
+## 11. External Interfaces
+
+schema 27 增加 `external_trigger_keys`、`external_trigger_entries` 和 `external_trigger_requests`。Key 保存标签、Token 摘要与提示、启用状态、到期时间和最近成功使用时间；完整 Token 不持久化。Entry 通过 `(key_id, name)` 唯一，保存动作类型、固定目标与经过类型校验的 JSON 约束。Request 保存不可变的调用结果摘要，不通过外键级联删除，以便 Key 删除后仍保留审计上下文。
+
+变量与快捷执行条目使用 `target` 建立领域引用：目标被引用时禁止删除；变量被引用时也禁止改名或转为密码变量。上传目录在配置和调用时均通过 Host Filesystem 边界重新验证。到期 Key 不需要后台任务修改数据库；鉴权时根据当前时间派生为不可用状态。

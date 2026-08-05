@@ -735,6 +735,7 @@
     initDirectoryPickers(main, cleanups);
     initQuickCreateDefaults(main, cleanups);
     initScheduleCron(cleanups, main);
+    initExternalEntryForm(main, cleanups);
     const websiteForm = main.querySelector("[data-website-monitor-form]");
     if (websiteForm) cleanups.push(initWebsiteMonitorForm(websiteForm));
     const websiteMonitoring = main.matches("[data-website-monitoring],[data-website-detail]")
@@ -745,6 +746,31 @@
       ? main
       : main.querySelector("[data-website-nginx]");
     if (websiteNginx) cleanups.push(initWebsiteNginx(websiteNginx));
+  }
+
+  function initExternalEntryForm(root = document, cleanups = []) {
+    const form = root.querySelector("[data-external-entry-form]");
+    if (!form || form.dataset.externalReady) return;
+    form.dataset.externalReady = "true";
+    const action = form.querySelector("[data-external-action-type]");
+    const variableType = form.querySelector("[data-external-variable-type]");
+    const refresh = () => {
+      form.querySelectorAll("[data-external-action-fields]").forEach(section => {
+        const active = section.dataset.externalActionFields === action?.value;
+        section.hidden = !active;
+        section.querySelectorAll("input,select,textarea").forEach(field => field.disabled = !active);
+      });
+      form.querySelectorAll("[data-external-variable-fields]").forEach(section => {
+        const active = action?.value === "variable" && section.dataset.externalVariableFields === variableType?.value;
+        section.hidden = !active;
+        section.querySelectorAll("input,select,textarea").forEach(field => field.disabled = !active);
+      });
+    };
+    action?.addEventListener("change", refresh);
+    variableType?.addEventListener("change", refresh);
+    cleanups.push(() => action?.removeEventListener("change", refresh));
+    cleanups.push(() => variableType?.removeEventListener("change", refresh));
+    refresh();
   }
 
   function initDirectoryPickers(scope, cleanups) {
@@ -4962,6 +4988,7 @@
     initRun(cleanups);
     initGroupedRecords(cleanups);
     initScheduleCron(cleanups);
+    initExternalEntryForm(document, cleanups);
     initDisplaySettings(cleanups);
     initAssistantWorkspace(cleanups);
     initAssistantSettings(cleanups);

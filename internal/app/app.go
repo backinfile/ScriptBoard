@@ -43,6 +43,7 @@ import (
 	"scriptboard/internal/assistant/runtimeinstall"
 	"scriptboard/internal/assistant/toolbroker"
 	"scriptboard/internal/buildinfo"
+	"scriptboard/internal/externaltrigger"
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/hoststatus"
 	"scriptboard/internal/instancelock"
@@ -101,6 +102,7 @@ func mustWebTemplate(name string) *template.Template {
 func webTemplateFunctions() template.FuncMap {
 	return template.FuncMap{
 		"assetVersion": func() string { return webAssetVersion },
+		"join":         strings.Join,
 		"displayTime": func(input any) string {
 			value, ok := input.(time.Time)
 			if pointer, pointerOK := input.(*time.Time); pointerOK && pointer != nil {
@@ -324,6 +326,8 @@ type App struct {
 	logHistorySlots    chan struct{}
 	shellStatusCache   *shellStatusCache
 	websiteMonitor     *websitemonitor.Manager
+	externalTriggers   *externaltrigger.Manager
+	externalLimit      *externaltrigger.Limiter
 	instanceLock       *instancelock.Lock
 	handler            http.Handler
 	loginMu            sync.Mutex
@@ -406,6 +410,8 @@ func Open(config Config) (*App, error) {
 		logStreamSlots: make(chan struct{}, 8), logHistorySlots: make(chan struct{}, 4),
 		updateResultsWake: make(chan struct{}, 1),
 	}
+	application.externalTriggers = externaltrigger.New(db, externaltrigger.Options{})
+	application.externalLimit = externaltrigger.NewLimiter(externaltrigger.LimiterOptions{RequestsPerMinute: 60, Concurrent: 4})
 	application.assistant, err = assistant.New(db, assistant.Options{StateRoot: stateRoot})
 	if err != nil {
 		_ = db.Close()
@@ -1226,6 +1232,12 @@ func openDatabase(path string) (*sql.DB, error) {
 			return nil, fmt.Errorf("initialize Assistant SQLite schema: %w", err)
 		}
 	}
+	for _, statement := range externaltrigger.SchemaStatements {
+		if _, err := migration.Exec(statement); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("initialize External Interface SQLite schema: %w", err)
+		}
+	}
 	if schemaVersion == 21 {
 		if _, err := migration.Exec(`ALTER TABLE assistant_tool_calls ADD COLUMN body_offset INTEGER NOT NULL DEFAULT 0`); err != nil {
 			_ = db.Close()
@@ -1394,10 +1406,11 @@ func compatibleDatabaseSchema(version int) bool {
 	// assistant-owned tables, schema 22 adds persisted tool-call text positions,
 	// schema 23 adds bounded request/response JSON, schema 24 adds capability
 	// profiles plus bounded Pi session telemetry, schema 25 scopes LLM
-	// configurations to owners with explicit sharing, and schema 26 records the
-	// latest observed LLM connection result. Each supported
+	// configurations to owners with explicit sharing, schema 26 records the
+	// latest observed LLM connection result, and schema 27 adds bounded External
+	// Interface keys, entries, and invocation records. Each supported
 	// predecessor has an explicit transactional forward path.
-	return version == currentSchemaVersion || currentSchemaVersion == 26 && version >= 20 && version <= 25
+	return version == currentSchemaVersion || currentSchemaVersion == 27 && version >= 20 && version <= 26
 }
 
 func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {
@@ -1584,6 +1597,7 @@ func (a *App) routes() http.Handler {
 	})
 	mux.HandleFunc("POST /login", a.login)
 	mux.HandleFunc("POST /settings/locale", a.setWebLocale)
+	mux.HandleFunc("/trigger", a.externalTrigger)
 	mux.Handle("POST /logout", a.requireSession(http.HandlerFunc(a.logout)))
 	mux.Handle("GET /monitor", a.requireSession(http.HandlerFunc(a.overviewPage)))
 	mux.Handle("GET /ai", a.requireSession(http.HandlerFunc(a.assistantPage)))
@@ -1763,6 +1777,20 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /config/schedules/{id}/toggle", a.requireSession(http.HandlerFunc(a.toggleSchedule)))
 	mux.Handle("POST /config/schedules/{id}/run", a.requireSession(http.HandlerFunc(a.runScheduleNow)))
 	mux.Handle("POST /config/schedules/{id}/delete", a.requireSession(http.HandlerFunc(a.deleteSchedule)))
+	mux.Handle("GET /config/external-interfaces", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.externalInterfacesPage)))
+	mux.Handle("GET /config/external-interfaces/keys/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.newExternalKeyTask)))
+	mux.Handle("POST /config/external-interfaces/keys", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.createExternalKey)))
+	mux.Handle("GET /config/external-interfaces/keys/{id}/edit", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.editExternalKeyTask)))
+	mux.Handle("POST /config/external-interfaces/keys/{id}", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.updateExternalKey)))
+	mux.Handle("POST /config/external-interfaces/keys/{id}/toggle", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.toggleExternalKey)))
+	mux.Handle("POST /config/external-interfaces/keys/{id}/rotate", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.rotateExternalKey)))
+	mux.Handle("POST /config/external-interfaces/keys/{id}/delete", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.deleteExternalKey)))
+	mux.Handle("GET /config/external-interfaces/keys/{id}/entries/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.newExternalEntryTask)))
+	mux.Handle("POST /config/external-interfaces/keys/{id}/entries", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.createExternalEntry)))
+	mux.Handle("GET /config/external-interfaces/entries/{id}/edit", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.editExternalEntryTask)))
+	mux.Handle("POST /config/external-interfaces/entries/{id}", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.updateExternalEntry)))
+	mux.Handle("POST /config/external-interfaces/entries/{id}/toggle", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.toggleExternalEntry)))
+	mux.Handle("POST /config/external-interfaces/entries/{id}/delete", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.deleteExternalEntry)))
 	mux.Handle("GET /history/audit", a.requireSession(http.HandlerFunc(a.auditPage)))
 	mux.Handle("GET /history/audit.csv", a.requireSession(http.HandlerFunc(a.auditDownload)))
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -1776,7 +1804,7 @@ func (a *App) routes() http.Handler {
 			response.Header().Set("Strict-Transport-Security", "max-age=31536000")
 		}
 		if request.Body != nil && request.Method != http.MethodGet && request.Method != http.MethodHead &&
-			request.URL.Path != "/resources/files/upload" && request.URL.Path != "/settings/ai/runtime/offline" {
+			request.URL.Path != "/resources/files/upload" && request.URL.Path != "/settings/ai/runtime/offline" && request.URL.Path != "/trigger" {
 			if request.ContentLength > maxFormRequestBytes {
 				http.Error(response, "request body is too large", http.StatusRequestEntityTooLarge)
 				return
@@ -1785,9 +1813,14 @@ func (a *App) routes() http.Handler {
 			defer resetReadDeadline()
 			request.Body = http.MaxBytesReader(response, request.Body, maxFormRequestBytes)
 		}
-		if a.validation.Load() && request.Method != http.MethodGet {
+		if a.validation.Load() && (request.Method != http.MethodGet || request.URL.Path == "/trigger") {
 			response.Header().Set("Retry-After", "2")
-			http.Error(response, webText(resolveWebLocale(request), "updates.validation_write_blocked"), http.StatusServiceUnavailable)
+			if request.URL.Path == "/trigger" {
+				response.Header().Set("Content-Type", "application/json; charset=utf-8")
+				writeExternalTriggerError(response, http.StatusServiceUnavailable, "service_unavailable")
+			} else {
+				http.Error(response, webText(resolveWebLocale(request), "updates.validation_write_blocked"), http.StatusServiceUnavailable)
+			}
 			return
 		}
 		pageResponse := &pageResponseWriter{ResponseWriter: response}
@@ -2816,6 +2849,15 @@ func (a *App) deleteQuickRun(response http.ResponseWriter, request *http.Request
 		return
 	}
 	id := request.PathValue("id")
+	var externalReferences int
+	if err := a.db.QueryRow("SELECT COUNT(*) FROM external_trigger_entries WHERE action_type = 'quick_run' AND target = ?", id).Scan(&externalReferences); err != nil {
+		http.Error(response, "Unable to check External Interface references", http.StatusInternalServerError)
+		return
+	}
+	if externalReferences != 0 {
+		http.Error(response, "Quick Run is still referenced by an External Interface", http.StatusConflict)
+		return
+	}
 	result, err := a.db.Exec("DELETE FROM quick_runs WHERE id = ? AND locked = 0", id)
 	count := int64(0)
 	if err == nil {
@@ -2969,6 +3011,17 @@ func (a *App) updateVariable(response http.ResponseWriter, request *http.Request
 		http.Error(response, "变量名称或值无效", http.StatusBadRequest)
 		return
 	}
+	if name != original || isPassword {
+		var externalReferences int
+		if err := a.db.QueryRow("SELECT COUNT(*) FROM external_trigger_entries WHERE action_type = 'variable' AND target = ?", original).Scan(&externalReferences); err != nil {
+			http.Error(response, "Unable to check External Interface references", http.StatusInternalServerError)
+			return
+		}
+		if externalReferences != 0 {
+			http.Error(response, "Variable is still referenced by an External Interface", http.StatusConflict)
+			return
+		}
+	}
 	transaction, err := a.db.Begin()
 	if err != nil {
 		http.Error(response, "无法更新变量", http.StatusInternalServerError)
@@ -3004,7 +3057,7 @@ func (a *App) deleteVariable(response http.ResponseWriter, request *http.Request
 	name := request.PathValue("name")
 	reference := "%{{" + name + "}}%"
 	var references int
-	if err := a.db.QueryRow("SELECT (SELECT COUNT(*) FROM quick_runs WHERE arguments_template LIKE ?) + (SELECT COUNT(*) FROM schedules WHERE deleted = 0 AND arguments_template LIKE ?)", reference, reference).Scan(&references); err != nil {
+	if err := a.db.QueryRow("SELECT (SELECT COUNT(*) FROM quick_runs WHERE arguments_template LIKE ?) + (SELECT COUNT(*) FROM schedules WHERE deleted = 0 AND arguments_template LIKE ?) + (SELECT COUNT(*) FROM external_trigger_entries WHERE action_type = 'variable' AND target = ?)", reference, reference, name).Scan(&references); err != nil {
 		http.Error(response, "无法检查变量引用", http.StatusInternalServerError)
 		return
 	}
@@ -3660,6 +3713,15 @@ func (a *App) deleteFile(response http.ResponseWriter, request *http.Request) {
 	}
 	if a.runs.ConflictsPath(path) {
 		http.Error(response, "活动运行持有该脚本或其后代的运行租约", http.StatusConflict)
+		return
+	}
+	externalUploadReferences, err := a.countExternalUploadReferences(path)
+	if err != nil {
+		http.Error(response, "Unable to check External Interface upload references", http.StatusInternalServerError)
+		return
+	}
+	if externalUploadReferences != 0 {
+		http.Error(response, "Directory is still referenced by an External Interface upload action", http.StatusConflict)
 		return
 	}
 	quickCount, scheduleCount, err := a.countScriptReferences(path)

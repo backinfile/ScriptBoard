@@ -968,6 +968,49 @@ async function assertAssistantSettingsAndWorkspace(page, baseURL) {
   await page.setViewportSize({ width: 1440, height: 1000 });
 }
 
+async function assertExternalInterfaces(page, fixture) {
+  await page.goto(`${fixture.baseURL}/config/external-interfaces`);
+  await page.locator("[data-external-interfaces-page]").waitFor();
+  assert.match(await page.locator("h1").textContent(), /External Interfaces/);
+  await assertNoHorizontalOverflow(page, "External Interfaces empty state");
+
+  await page.goto(`${fixture.baseURL}/config/external-interfaces/keys/new`);
+  const keyForm = page.locator(".external-task-sheet form");
+  await keyForm.locator('input[name="label"]').fill("Browser fixture");
+  await keyForm.locator('select[name="duration"]').selectOption("1d");
+  await keyForm.locator('button[type="submit"]').click();
+  const secret = (await page.locator(".external-secret code").textContent()).trim();
+  assert.match(secret, /^sbk_[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{43}$/);
+  const keyID = secret.slice(4).split(".")[0];
+
+  await page.goto(`${fixture.baseURL}/config/external-interfaces/keys/${keyID}/entries/new`);
+  const form = page.locator("[data-external-entry-form]");
+  await form.locator('select[name="action_type"]').selectOption("upload");
+  assert.equal(await form.locator('[data-external-action-fields="upload"]').isVisible(), true);
+  assert.equal(await form.locator('[data-external-action-fields="log"]').isVisible(), false);
+  await form.locator('input[name="label"]').fill("Artifact upload");
+  await form.locator('input[name="name"]').fill("artifact");
+  await form.locator('input[name="upload_directory"]').fill(path.join(fixture.hostRoot, "data", "exports"));
+  await form.locator('input[name="upload_max_bytes"]').fill("1024");
+  await form.locator('input[name="upload_extensions"]').fill(".txt");
+  await form.locator('select[name="upload_conflict"]').selectOption("rename");
+  await form.locator('button[type="submit"]').click();
+  await page.locator("[data-external-interfaces-page]").waitFor();
+  assert.equal(await page.getByText("Artifact upload", { exact: true }).count(), 1);
+
+  const trigger = await page.request.post(`${fixture.baseURL}/trigger?name=artifact`, {
+    headers: { Authorization: `Bearer ${secret}` },
+    multipart: { file: { name: "external-result.txt", mimeType: "text/plain", buffer: Buffer.from("fixture complete") } },
+  });
+  assert.equal(trigger.status(), 201);
+  assert.equal((await trigger.json()).action, "upload");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await assertNoHorizontalOverflow(page, "External Interfaces mobile");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+}
+
 (async () => {
   const fixture = await startFixture();
   const fixtureHostPath = (...components) => path.join(fixture.hostRoot, ...components);
@@ -1030,6 +1073,7 @@ async function assertAssistantSettingsAndWorkspace(page, baseURL) {
     await assertAccountSettings(page, fixture.baseURL);
     await assertUserManagement(page, fixture.baseURL);
     await assertAssistantSettingsAndWorkspace(page, fixture.baseURL);
+    await assertExternalInterfaces(page, fixture);
 
     const status = await page.evaluate(async () => {
       const response = await fetch("/monitor/status", { cache: "no-store" });
