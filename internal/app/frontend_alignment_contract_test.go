@@ -129,6 +129,7 @@ func TestApplicationsPageExposesLiveFactsAndExpandableObservationDetails(t *test
 		`data-task-panel-close`,
 		`const innerClose = panelMain.querySelector(".task-sheet > header > .icon-button")`,
 		`innerClose?.remove();`,
+		`panelMain.querySelector(".website-detail-back")?.remove();`,
 		`main[data-task-refresh-on-close]`,
 		`taskPanelRefreshAfterCloseURL`,
 		`ScriptBoard will not resubmit it automatically.`,

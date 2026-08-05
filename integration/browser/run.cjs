@@ -652,6 +652,7 @@ async function assertWebsiteMonitoring(page, baseURL) {
   const panel = page.locator("[data-task-panel]");
   const detail = panel.locator("[data-website-detail]");
   await detail.waitFor();
+  assert.equal(await detail.locator(".website-detail-back").count(), 0);
   assert.equal(Math.round(await panel.evaluate(element => element.getBoundingClientRect().width)), 760);
   assert.equal(await detail.locator(".website-open-external").getAttribute("target"), "_blank");
   const originalToken = await detail.getAttribute("data-monitor-checked");

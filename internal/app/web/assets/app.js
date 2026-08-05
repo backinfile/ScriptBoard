@@ -1005,6 +1005,7 @@
     const panelMain = document.importNode(main, true);
     const innerClose = panelMain.querySelector(".task-sheet > header > .icon-button");
     innerClose?.remove();
+    if (panelMain.dataset.taskKind === "website-detail") panelMain.querySelector(".website-detail-back")?.remove();
     const heading = panelMain.querySelector("h1");
     if (heading) {
       heading.id ||= `task-panel-heading-${Date.now()}`;
@@ -1058,6 +1059,7 @@
 
     state.cleanups.splice(0).forEach(cleanup => cleanup());
     const imported = document.importNode(nextMain, true);
+    if (imported.dataset.taskKind === "website-detail") imported.querySelector(".website-detail-back")?.remove();
     const heading = imported.querySelector("h1");
     if (heading) {
       heading.id ||= `task-panel-heading-${Date.now()}`;
