@@ -989,6 +989,11 @@
     });
   }
 
+  function removeWebsiteTaskPanelBackLink(taskMain) {
+    if (!taskMain.dataset.taskKind?.startsWith("website-")) return;
+    taskMain.querySelector(':scope > .website-task-heading > a[href="/monitor/websites"], .website-detail-back')?.remove();
+  }
+
   function buildTaskPanel(main, url, push) {
     const returnFocus = taskPanelState?.returnFocus || document.activeElement;
     closeTaskPanel(false, false);
@@ -1005,7 +1010,7 @@
     const panelMain = document.importNode(main, true);
     const innerClose = panelMain.querySelector(".task-sheet > header > .icon-button");
     innerClose?.remove();
-    if (panelMain.dataset.taskKind === "website-detail") panelMain.querySelector(".website-detail-back")?.remove();
+    removeWebsiteTaskPanelBackLink(panelMain);
     const heading = panelMain.querySelector("h1");
     if (heading) {
       heading.id ||= `task-panel-heading-${Date.now()}`;
@@ -1059,7 +1064,7 @@
 
     state.cleanups.splice(0).forEach(cleanup => cleanup());
     const imported = document.importNode(nextMain, true);
-    if (imported.dataset.taskKind === "website-detail") imported.querySelector(".website-detail-back")?.remove();
+    removeWebsiteTaskPanelBackLink(imported);
     const heading = imported.querySelector("h1");
     if (heading) {
       heading.id ||= `task-panel-heading-${Date.now()}`;

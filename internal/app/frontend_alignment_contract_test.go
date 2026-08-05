@@ -127,9 +127,12 @@ func TestApplicationsPageExposesLiveFactsAndExpandableObservationDetails(t *test
 	}
 	requireAlignmentFragments(t, script,
 		`data-task-panel-close`,
+		`function removeWebsiteTaskPanelBackLink(taskMain)`,
+		`taskMain.dataset.taskKind?.startsWith("website-")`,
+		`:scope > .website-task-heading > a[href="/monitor/websites"], .website-detail-back`,
 		`const innerClose = panelMain.querySelector(".task-sheet > header > .icon-button")`,
 		`innerClose?.remove();`,
-		`panelMain.querySelector(".website-detail-back")?.remove();`,
+		`removeWebsiteTaskPanelBackLink(panelMain);`,
 		`main[data-task-refresh-on-close]`,
 		`taskPanelRefreshAfterCloseURL`,
 		`ScriptBoard will not resubmit it automatically.`,

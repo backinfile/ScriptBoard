@@ -608,6 +608,16 @@ async function assertWebsiteMonitoring(page, baseURL) {
 
   await page.setViewportSize({ width: 1440, height: 600 });
   await page.goto(`${baseURL}/monitor/websites`);
+  for (const taskPath of ["/monitor/websites/new", "/monitor/websites/nginx"]) {
+    const taskLink = page.locator(`.website-heading-actions a[href="${taskPath}"][data-task-link]`);
+    assert.equal(await taskLink.count(), 1);
+    await taskLink.click();
+    const websiteTaskPanel = page.locator('[data-task-panel] main[data-task-kind^="website-"]');
+    await websiteTaskPanel.waitFor();
+    assert.equal(await websiteTaskPanel.locator(':scope > .website-task-heading > a[href="/monitor/websites"]').count(), 0);
+    await page.locator("[data-task-panel-close]").click();
+    await page.locator("[data-task-panel]").waitFor({ state: "detached" });
+  }
   const refreshLink = page.locator('.website-heading-actions a').filter({ hasText: "Refresh" });
   assert.equal(await refreshLink.getAttribute("href"), "/monitor/websites");
   assert.equal(await refreshLink.getAttribute("data-native"), null);
