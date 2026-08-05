@@ -1183,6 +1183,13 @@ func openDatabase(path string) (*sql.DB, error) {
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS file_quick_access_pins (
+			path TEXT NOT NULL,
+			path_key TEXT PRIMARY KEY,
+			label TEXT NOT NULL,
+			sort_order INTEGER NOT NULL,
+			created_at INTEGER NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS host_metric_minutes (
 			bucket_at INTEGER PRIMARY KEY,
 			sample_count INTEGER NOT NULL,
@@ -1348,6 +1355,27 @@ func openDatabase(path string) (*sql.DB, error) {
 			}
 		}
 	}
+	if schemaVersion == 28 {
+		for _, statement := range []string{
+			`ALTER TABLE file_quick_access_pins RENAME TO file_quick_access_pins_user_scoped`,
+			`CREATE TABLE file_quick_access_pins (
+				path TEXT NOT NULL,
+				path_key TEXT PRIMARY KEY,
+				label TEXT NOT NULL,
+				sort_order INTEGER NOT NULL,
+				created_at INTEGER NOT NULL
+			)`,
+			`INSERT INTO file_quick_access_pins (path, path_key, label, sort_order, created_at)
+				SELECT path, path_key, label, MIN(sort_order), MIN(created_at)
+				FROM file_quick_access_pins_user_scoped GROUP BY path_key`,
+			`DROP TABLE file_quick_access_pins_user_scoped`,
+		} {
+			if _, err := migration.Exec(statement); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("migrate file Quick Access pins to instance scope: %w", err)
+			}
+		}
+	}
 	for _, statement := range []string{
 		"CREATE UNIQUE INDEX IF NOT EXISTS users_single_administrator_idx ON users(role) WHERE role = 'administrator'",
 		"CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id)",
@@ -1367,6 +1395,7 @@ func openDatabase(path string) (*sql.DB, error) {
 		"CREATE INDEX IF NOT EXISTS trash_entries_deleted_idx ON trash_entries(deleted_at DESC)",
 		"CREATE INDEX IF NOT EXISTS trash_entries_original_path_idx ON trash_entries(original_path_key)",
 		"CREATE INDEX IF NOT EXISTS file_operations_phase_idx ON file_operations(phase, created_at)",
+		"CREATE INDEX IF NOT EXISTS file_quick_access_pins_order_idx ON file_quick_access_pins(sort_order, created_at)",
 		"CREATE INDEX IF NOT EXISTS schedules_due_idx ON schedules(next_fire_at) WHERE enabled = 1 AND deleted = 0",
 		"CREATE INDEX IF NOT EXISTS schedule_triggers_schedule_time_idx ON schedule_triggers(schedule_id, scheduled_for DESC)",
 		"CREATE INDEX IF NOT EXISTS schedule_triggers_unlinked_time_idx ON schedule_triggers(scheduled_for) WHERE run_id = ''",
@@ -1407,10 +1436,12 @@ func compatibleDatabaseSchema(version int) bool {
 	// schema 23 adds bounded request/response JSON, schema 24 adds capability
 	// profiles plus bounded Pi session telemetry, schema 25 scopes LLM
 	// configurations to owners with explicit sharing, schema 26 records the
-	// latest observed LLM connection result, and schema 27 adds bounded External
-	// Interface keys, entries, and invocation records. Each supported
+	// latest observed LLM connection result, schema 27 adds bounded External
+	// Interface keys, entries, and invocation records, schema 28 persists
+	// per-user file Quick Access pins, and schema 29 merges those pins into one
+	// instance-wide Quick Access list. Each supported
 	// predecessor has an explicit transactional forward path.
-	return version == currentSchemaVersion || currentSchemaVersion == 27 && version >= 20 && version <= 26
+	return version == currentSchemaVersion || currentSchemaVersion == 29 && version >= 20 && version <= 28
 }
 
 func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {
@@ -1707,6 +1738,8 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /resources/files/quick-run", a.requireSession(http.HandlerFunc(a.quickRunFromFileTask)))
 	mux.Handle("GET /resources/files", a.requireSession(http.HandlerFunc(a.filesPage)))
 	mux.Handle("GET /resources/files/validate", a.requireSession(http.HandlerFunc(a.validateFileQuickAccess)))
+	mux.Handle("GET /resources/files/quick-access", a.requireSession(http.HandlerFunc(a.fileQuickAccessPins)))
+	mux.Handle("POST /resources/files/quick-access", a.requireSession(http.HandlerFunc(a.updateFileQuickAccessPin)))
 	mux.Handle("POST /resources/files/mkdir", a.requireSession(http.HandlerFunc(a.createDirectory)))
 	mux.Handle("POST /resources/files/conflicts", a.requireSession(http.HandlerFunc(a.uploadConflicts)))
 	mux.Handle("POST /resources/files/upload", a.requireSession(http.HandlerFunc(a.uploadFiles)))

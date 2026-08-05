@@ -1363,6 +1363,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .file-quick-access[open] > summary > svg:last-child { transform: rotate(180deg); }
 .file-quick-access__body { padding: 0 2px 8px 41px; }
 .file-quick-access__body > p { margin: 0; padding: 10px 0 12px; color: var(--muted); font-size: .78rem; border-top: 1px solid var(--rule); }
+.file-quick-access__body > .file-quick-access__status { color: var(--danger); }
 .file-quick-access__body ul { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--rule); }
 .file-quick-row { display: grid; grid-template-columns: minmax(0, 1fr) 34px; align-items: center; border-bottom: 1px solid var(--rule); }
 .file-quick-row:last-child { border-bottom: 0; }

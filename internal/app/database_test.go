@@ -165,7 +165,7 @@ func TestOpenDatabaseCreatesFixedRoleUserSchema(t *testing.T) {
 	if adminTable != 0 {
 		t.Fatal("legacy admin table should not exist")
 	}
-	for _, table := range []string{"file_operations", "trash_entries", "assistant_settings", "assistant_models", "assistant_conversations", "assistant_messages", "external_trigger_keys", "external_trigger_entries", "external_trigger_requests"} {
+	for _, table := range []string{"file_operations", "file_quick_access_pins", "trash_entries", "assistant_settings", "assistant_models", "assistant_conversations", "assistant_messages", "external_trigger_keys", "external_trigger_entries", "external_trigger_requests"} {
 		var count int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil || count != 1 {
 			t.Fatalf("required schema table %q is missing: count=%d error=%v", table, count, err)
@@ -190,6 +190,66 @@ func TestOpenDatabaseCreatesFixedRoleUserSchema(t *testing.T) {
 		(id, username, password_hash, role, enabled, auth_version, created_at, updated_at)
 		VALUES ('custom-role', 'custom', 'hash', 'custom', 1, 1, 1, 1)`); err == nil {
 		t.Fatal("custom role was accepted")
+	}
+}
+
+func TestOpenDatabaseMigratesSchema28QuickAccessPinsToGlobalScope(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	db, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		DROP TABLE file_quick_access_pins;
+		CREATE TABLE file_quick_access_pins (
+			user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			path TEXT NOT NULL,
+			path_key TEXT NOT NULL,
+			label TEXT NOT NULL,
+			sort_order INTEGER NOT NULL,
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (user_id, path_key)
+		);
+		INSERT INTO users (id, username, password_hash, role, enabled, auth_version, created_at, updated_at) VALUES
+			('admin', 'admin', 'hash', 'administrator', 1, 1, 1, 1),
+			('operator', 'operator', 'hash', 'operator', 1, 1, 1, 1);
+		INSERT INTO file_quick_access_pins (user_id, path, path_key, label, sort_order, created_at) VALUES
+			('admin', '/shared', '/shared', 'shared', 2, 2),
+			('operator', '/shared', '/shared', 'shared', 1, 1),
+			('operator', '/operator', '/operator', 'operator', 3, 3);
+		PRAGMA user_version=28;
+		PRAGMA wal_checkpoint(TRUNCATE);
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err = openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var version, count int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != currentSchemaVersion {
+		t.Fatalf("schema version=%d, want %d", version, currentSchemaVersion)
+	}
+	if err := db.QueryRow("SELECT COUNT(*) FROM file_quick_access_pins").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("global Quick access pin count=%d, want 2", count)
+	}
+	var userIDColumn int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('file_quick_access_pins') WHERE name = 'user_id'`).Scan(&userIDColumn); err != nil {
+		t.Fatal(err)
+	}
+	if userIDColumn != 0 {
+		t.Fatal("global Quick access table still contains user_id")
 	}
 }
 

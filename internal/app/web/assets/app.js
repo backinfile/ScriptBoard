@@ -2426,6 +2426,47 @@
   function initCopyControls(root = document, cleanups = []) {
     const feedbackTimers = new Map();
 
+    root.querySelectorAll("[data-copy-value]").forEach(copyButton => {
+      const copyIcon = copyButton.querySelector("[data-copy-icon]");
+      const label = copyButton.querySelector("[data-copy-value-label]");
+      if (!copyIcon || !label) return;
+
+      copyButton.hidden = false;
+      const reset = () => {
+        copyButton.removeAttribute("data-state");
+        label.textContent = copyButton.dataset.copyLabel;
+        setControlIcon(copyIcon, "copy");
+        feedbackTimers.delete(copyButton);
+      };
+      const onCopyValue = async () => {
+        if (copyButton.dataset.copying === "true") return;
+        const existingTimer = feedbackTimers.get(copyButton);
+        if (existingTimer) window.clearTimeout(existingTimer);
+        copyButton.dataset.copying = "true";
+        copyButton.setAttribute("aria-busy", "true");
+
+        try {
+          if (!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable");
+          await navigator.clipboard.writeText(copyButton.dataset.copyValue || "");
+          copyButton.dataset.state = "success";
+          label.textContent = copyButton.dataset.copiedLabel;
+          setControlIcon(copyIcon, "check");
+        } catch {
+          copyButton.dataset.state = "error";
+          label.textContent = copyButton.dataset.copyFailedLabel;
+          setControlIcon(copyIcon, "triangle-alert");
+        } finally {
+          copyButton.removeAttribute("aria-busy");
+          delete copyButton.dataset.copying;
+        }
+
+        const timer = window.setTimeout(reset, 1600);
+        feedbackTimers.set(copyButton, timer);
+      };
+      copyButton.addEventListener("click", onCopyValue);
+      cleanups.push(() => copyButton.removeEventListener("click", onCopyValue));
+    });
+
     root.querySelectorAll("[data-copy-key]").forEach(copyButton => {
       const copyIcon = copyButton.querySelector("[data-copy-icon]");
       const label = copyButton.querySelector("[data-copy-key-label]");
@@ -2661,7 +2702,8 @@
     const countLabel = disclosure.querySelector("[data-file-quick-count-label]");
     const oneLabel = disclosure.querySelector("[data-file-quick-one-label]");
     const manyLabel = disclosure.querySelector("[data-file-quick-many-label]");
-    if (!list || !empty || !count || !countLabel || !oneLabel || !manyLabel) return;
+	const status = disclosure.querySelector("[data-file-quick-status]");
+    if (!list || !empty || !count || !countLabel || !oneLabel || !manyLabel || !status) return;
 	const validationController = new AbortController();
 	cleanups.push(() => validationController.abort());
 
@@ -2677,27 +2719,38 @@
         return false;
       }
     };
-    let pins = [];
-    try {
-      const stored = JSON.parse(localStorage.getItem(storageKey) || "[]");
-      if (Array.isArray(stored)) {
-        const paths = new Set();
-        pins = stored.filter(isValidPin).filter(pin => {
-          if (paths.has(pin.path)) return false;
-          paths.add(pin.path);
-          return true;
-        }).slice(0, 30);
-      }
-    } catch {
-      pins = [];
-    }
-
-    const persist = () => {
-      try {
-        localStorage.setItem(storageKey, JSON.stringify(pins));
-      } catch {
-        // Storage may be unavailable in hardened or private browser sessions.
-      }
+	const normalizePins = value => {
+	  if (!Array.isArray(value)) return [];
+	  const paths = new Set();
+	  return value.filter(isValidPin).filter(pin => {
+		if (paths.has(pin.path)) return false;
+		paths.add(pin.path);
+		return true;
+	  }).slice(0, 30);
+	};
+	let legacyPins = [];
+	try { legacyPins = normalizePins(JSON.parse(localStorage.getItem(storageKey) || "[]")); } catch { /* ignore invalid legacy storage */ }
+	let pins = [];
+	const showSaveError = () => {
+	  status.textContent = disclosure.dataset.saveFailed;
+	  status.hidden = false;
+	};
+	const clearSaveError = () => {
+	  status.textContent = "";
+	  status.hidden = true;
+	};
+	const savePin = async (pin, pinned) => {
+	  const response = await fetch(disclosure.dataset.pinsUrl, {
+		method: "POST",
+		credentials: "same-origin",
+		headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+		body: new URLSearchParams({ csrf_token: disclosure.dataset.csrfToken, path: pin.path, pinned: String(pinned) }),
+		signal: validationController.signal,
+	  });
+	  if (!response.ok) throw new Error(`Unable to save Quick access (${response.status})`);
+	  const payload = await response.json();
+	  pins = normalizePins(payload?.pins);
+	  clearSaveError();
     };
     const pinControls = Array.from(root.querySelectorAll("[data-file-pin]"));
     const renderControl = control => {
@@ -2748,10 +2801,16 @@
         remove.setAttribute("aria-label", `${disclosure.dataset.removeLabel}: ${pin.label}`);
         remove.dataset.tooltip = disclosure.dataset.removeLabel;
         remove.append(makeIcon("pin-off"));
-        remove.addEventListener("click", () => {
-          pins = pins.filter(candidate => candidate.path !== pin.path);
-          persist();
-          render();
+		remove.addEventListener("click", async () => {
+		  remove.disabled = true;
+		  try {
+			await savePin(pin, false);
+			render();
+		  } catch (error) {
+			if (error?.name !== "AbortError") showSaveError();
+		  } finally {
+			remove.disabled = false;
+		  }
         });
         item.append(link, remove);
         list.append(item);
@@ -2760,27 +2819,53 @@
     };
 
     pinControls.forEach(control => {
-      const onToggle = () => {
+	  const onToggle = async () => {
         const path = control.dataset.filePinPath;
-        if (pins.some(pin => pin.path === path)) {
-          pins = pins.filter(pin => pin.path !== path);
-        } else {
-          const pin = {
-            path,
-            label: control.dataset.filePinLabel,
-            href: control.dataset.filePinHref,
-          };
-          if (isValidPin(pin)) pins = [...pins, pin].slice(-30);
-        }
-        persist();
-        render();
+		const pin = { path, label: control.dataset.filePinLabel, href: control.dataset.filePinHref };
+		if (!isValidPin(pin)) return;
+		control.disabled = true;
+		try {
+		  await savePin(pin, !pins.some(candidate => candidate.path === path));
+		  render();
+		} catch (error) {
+		  if (error?.name !== "AbortError") showSaveError();
+		} finally {
+		  control.disabled = false;
+		}
       };
       control.addEventListener("click", onToggle);
       cleanups.push(() => control.removeEventListener("click", onToggle));
     });
 
-    disclosure.hidden = false;
-    render();
+	const loadPins = async () => {
+	  try {
+		const response = await fetch(disclosure.dataset.pinsUrl, {
+		  credentials: "same-origin", headers: { Accept: "application/json" }, signal: validationController.signal,
+		});
+		if (!response.ok) throw new Error(`Unable to read Quick access (${response.status})`);
+		pins = normalizePins((await response.json())?.pins);
+		let migrated = true;
+		for (const pin of legacyPins) {
+		  if (pins.some(candidate => candidate.path === pin.path)) continue;
+		  try { await savePin(pin, true); } catch (error) {
+			if (error?.name === "AbortError") return;
+			migrated = false;
+		  }
+		}
+		if (migrated) {
+		  try { localStorage.removeItem(storageKey); } catch { /* migration is already durable on the server */ }
+		} else {
+		  showSaveError();
+		}
+	  } catch (error) {
+		if (error?.name === "AbortError") return;
+		pins = legacyPins;
+		showSaveError();
+	  }
+	  disclosure.hidden = false;
+	  render();
+	};
+	loadPins();
   }
 
   function initFileOperation(cleanups) {
