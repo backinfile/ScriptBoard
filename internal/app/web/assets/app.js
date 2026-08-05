@@ -1003,13 +1003,8 @@
     const panel = host.querySelector(".task-panel");
     if (main.dataset.taskKind) panel.classList.add(`task-panel--${main.dataset.taskKind}`);
     const panelMain = document.importNode(main, true);
-    let initialFocus = outerClose;
     const innerClose = panelMain.querySelector(".task-sheet > header > .icon-button");
-    if (innerClose) {
-      innerClose.dataset.taskPanelClose = "";
-      outerClose.remove();
-      initialFocus = innerClose;
-    }
+    innerClose?.remove();
     const heading = panelMain.querySelector("h1");
     if (heading) {
       heading.id ||= `task-panel-heading-${Date.now()}`;
@@ -1034,12 +1029,12 @@
       );
     }
     requestAnimationFrame(() => host.classList.add("is-open"));
-    initialFocus?.focus();
+    outerClose.focus();
     background.forEach(({ child }) => {
       child.inert = true;
       child.setAttribute("aria-hidden", "true");
     });
-    renderIcons(initialFocus);
+    renderIcons(outerClose);
     initTaskPanelMain(panelMain, cleanups);
   }
 

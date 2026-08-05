@@ -128,6 +128,7 @@ func TestApplicationsPageExposesLiveFactsAndExpandableObservationDetails(t *test
 	requireAlignmentFragments(t, script,
 		`data-task-panel-close`,
 		`const innerClose = panelMain.querySelector(".task-sheet > header > .icon-button")`,
+		`innerClose?.remove();`,
 		`main[data-task-refresh-on-close]`,
 		`taskPanelRefreshAfterCloseURL`,
 		`ScriptBoard will not resubmit it automatically.`,
@@ -161,6 +162,8 @@ func TestApplicationsPageExposesLiveFactsAndExpandableObservationDetails(t *test
 		`grid-template-columns: minmax(280px, 1.15fr) minmax(420px, 1fr) 104px;`,
 		`overflow-wrap: anywhere;`,
 		`.application-drawer-host {`,
+		`.task-panel > main[data-task-page] {`,
+		`.task-panel .task-panel-close {`,
 		`@media (max-width: 1400px) {`,
 	)
 }

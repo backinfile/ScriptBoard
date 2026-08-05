@@ -844,6 +844,19 @@ async function assertAccountSettings(page, baseURL) {
   await usernamePanel.waitFor();
   assert.equal(await usernamePanel.locator('input[name="username"]').inputValue(), "admin");
   assert.equal(await usernamePanel.locator('input[name="current_password"]').count(), 1);
+  await page.setViewportSize({ width: 390, height: 420 });
+  const pinnedClose = await page.locator("[data-task-panel]").evaluate(panel => {
+    const close = panel.querySelector("[data-task-panel-close]");
+    const scroller = panel.querySelector("main[data-task-page]");
+    const before = close.getBoundingClientRect();
+    scroller.scrollTop = scroller.scrollHeight;
+    const after = close.getBoundingClientRect();
+    return { beforeTop: before.top, beforeRight: before.right, afterTop: after.top, afterRight: after.right, scrollTop: scroller.scrollTop };
+  });
+  assert.ok(pinnedClose.scrollTop > 0, JSON.stringify(pinnedClose));
+  assert.equal(Math.round(pinnedClose.afterTop), Math.round(pinnedClose.beforeTop));
+  assert.equal(Math.round(pinnedClose.afterRight), Math.round(pinnedClose.beforeRight));
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.locator("[data-task-panel-close]").click();
   await page.locator("[data-task-panel]").waitFor({ state: "detached" });
 

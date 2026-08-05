@@ -4723,9 +4723,27 @@ body.has-task-panel { overflow: hidden; }
   background: var(--canvas);
   border-color: var(--rule-strong);
 }
-.task-panel { overflow-y: auto; }
+.task-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.task-panel > main[data-task-page] {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.task-panel .task-panel-close {
+  position: absolute;
+  top: var(--overlay-header-y);
+  right: var(--overlay-header-x);
+  margin: 0;
+}
 .task-panel .workspace { background: var(--surface); }
 .task-panel .task-sheet { max-width: none; margin: 0; background: var(--surface); }
+.task-panel .task-sheet > header { padding-right: calc(var(--overlay-header-x) + var(--control-height-field) + 18px); }
 .task-panel .task-sheet > form > footer {
   position: sticky;
   z-index: 4;
