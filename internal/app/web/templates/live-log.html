@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}">
   <script defer src="/assets/app-v2.js?v={{assetVersion}}"></script>
-  <title>{{.Metadata.Name}} · {{t .Locale "logs.title"}} · ScriptBoard</title>
+  <title>{{.Title}} · {{t .Locale "logs.title"}} · ScriptBoard</title>
 </head>
 <body class="live-log-body">
 <main
@@ -37,8 +37,8 @@
       <a class="task-back" href="{{.BackURL}}">
         <span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "common.back"}}
       </a>
-      <p class="page-eyebrow">{{if eq .Metadata.Kind "docker"}}Docker{{else}}{{t .Locale "logs.file_source"}}{{end}} / {{t .Locale "logs.live_view"}}</p>
-      <h1>{{.Metadata.Name}}</h1>
+      <p class="page-eyebrow">{{if eq .Metadata.Kind "docker"}}Docker / {{t .Locale "logs.live_view"}}{{else}}{{t .Locale "logs.file_source"}}{{end}}</p>
+      <h1>{{.Title}}</h1>
       {{if .Metadata.Technical}}<code>{{.Metadata.Technical}}</code>{{end}}
     </div>
     <div class="live-log-heading__status">

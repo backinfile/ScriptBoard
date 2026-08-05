@@ -127,6 +127,9 @@ func TestApplicationsPageExposesLiveFactsAndExpandableObservationDetails(t *test
 	}
 	requireAlignmentFragments(t, script,
 		`data-task-panel-close`,
+		`const innerClose = panelMain.querySelector(".task-sheet > header > .icon-button")`,
+		`main[data-task-refresh-on-close]`,
+		`taskPanelRefreshAfterCloseURL`,
 		`ScriptBoard will not resubmit it automatically.`,
 		`taskPanelState !== submittingTaskState`,
 		`signal:controller.signal`,

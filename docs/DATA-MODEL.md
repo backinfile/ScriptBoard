@@ -543,6 +543,6 @@ Evidence Query 仍走相同 Tool Broker 和实时角色授权。日志搜索、�
 
 ## 11. External Interfaces
 
-schema 27 增加 `external_trigger_keys`、`external_trigger_entries` 和 `external_trigger_requests`。Key 保存标签、Token 摘要与提示、启用状态、到期时间和最近成功使用时间；完整 Token 不持久化。Entry 通过 `(key_id, name)` 唯一，保存动作类型、固定目标与经过类型校验的 JSON 约束。Request 保存不可变的调用结果摘要，不通过外键级联删除，以便 Key 删除后仍保留审计上下文。
+schema 27 增加 `external_trigger_keys`、`external_trigger_entries` 和 `external_trigger_requests`。Key 在 SQLite 中保存标签、Token 摘要与提示、启用状态、到期时间和最近成功使用时间；完整 Token 使用独立主密钥加密后保存在 State Root 的私有密钥文件中，不写入数据库。Entry 通过 `(key_id, name)` 唯一，保存动作类型、固定目标与经过类型校验的 JSON 约束。Request 保存不可变的调用结果摘要，不通过外键级联删除，以便 Key 删除后仍保留审计上下文。
 
-变量与快捷执行条目使用 `target` 建立领域引用：目标被引用时禁止删除；变量被引用时也禁止改名或转为密码变量。上传目录在配置和调用时均通过 Host Filesystem 边界重新验证。到期 Key 不需要后台任务修改数据库；鉴权时根据当前时间派生为不可用状态。
+变量与快捷执行条目使用 `target` 建立领域引用：目标被引用时禁止删除；变量被引用时也禁止改名或转为密码变量。日志文件与上传目录都在配置和调用时通过 Host Filesystem 边界重新验证；日志动作将规范化后的文件绝对路径保存在 `target` 与 `config_json.file` 中。到期 Key 不需要后台任务修改数据库；鉴权时根据当前时间派生为不可用状态。

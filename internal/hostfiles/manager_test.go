@@ -15,6 +15,43 @@ type fixedTopology struct {
 	root string
 }
 
+func TestAppendTextCreatesAndExtendsRegularFile(t *testing.T) {
+	root := t.TempDir()
+	manager, err := hostfiles.Open(hostfiles.Options{InstanceID: "append-test", Topology: fixedTopology{root: root}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "webhook.log")
+	if prepared, err := manager.PrepareAppendFile(path); err != nil || prepared != path {
+		t.Fatalf("prepare append file=%q err=%v", prepared, err)
+	}
+	if err := manager.AppendText(path, "first\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.AppendText(path, "second\n"); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil || string(content) != "first\nsecond\n" {
+		t.Fatalf("appended content=%q err=%v", content, err)
+	}
+}
+
+func TestPrepareAppendFileRejectsProtectedTarget(t *testing.T) {
+	root := t.TempDir()
+	protected := filepath.Join(root, "private")
+	if err := os.Mkdir(protected, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := hostfiles.Open(hostfiles.Options{InstanceID: "append-protected-test", Topology: fixedTopology{root: root}, ProtectedPaths: []string{protected}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.PrepareAppendFile(filepath.Join(protected, "webhook.log")); !errors.Is(err, hostfiles.ErrProtected) {
+		t.Fatalf("protected append target error=%v", err)
+	}
+}
+
 func (topology fixedTopology) Roots() ([]hostfiles.Entry, error) {
 	return []hostfiles.Entry{{Name: topology.root, Path: topology.root, Kind: hostfiles.Directory}}, nil
 }

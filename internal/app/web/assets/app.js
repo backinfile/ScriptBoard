@@ -118,6 +118,7 @@
   let taskPanelState = null;
   let taskPanelRequest = null;
   let taskPanelHistoryClosePending = false;
+  let taskPanelRefreshAfterCloseURL = "";
   let activeFileConflictDialog = null;
 
   const locale = () => document.documentElement.lang === "zh-CN" ? "zh-CN" : "en-US";
@@ -736,6 +737,7 @@
     initQuickCreateDefaults(main, cleanups);
     initScheduleCron(cleanups, main);
     initExternalEntryForm(main, cleanups);
+	initCopyControls(main, cleanups);
     const websiteForm = main.querySelector("[data-website-monitor-form]");
     if (websiteForm) cleanups.push(initWebsiteMonitorForm(websiteForm));
     const websiteMonitoring = main.matches("[data-website-monitoring],[data-website-detail]")
@@ -996,10 +998,17 @@
     host.innerHTML = '<button class="task-panel-scrim" type="button"></button><section class="task-panel" role="dialog" aria-modal="true" tabindex="-1" data-task-panel><button class="task-panel-close" type="button" data-task-panel-close><span data-lucide="x" aria-hidden="true"></span></button></section>';
     const closeLabel = main.dataset.taskCloseLabel || words().loadFailed;
     host.querySelector(".task-panel-scrim").setAttribute("aria-label", closeLabel);
-    host.querySelector(".task-panel-close").setAttribute("aria-label", closeLabel);
+    const outerClose = host.querySelector(".task-panel-close");
+    outerClose.setAttribute("aria-label", closeLabel);
     const panel = host.querySelector(".task-panel");
     if (main.dataset.taskKind) panel.classList.add(`task-panel--${main.dataset.taskKind}`);
     const panelMain = document.importNode(main, true);
+    let initialFocus = outerClose;
+    const innerClose = panelMain.querySelector(".task-sheet > header > .icon-button");
+    if (innerClose) {
+      outerClose.remove();
+      initialFocus = innerClose;
+    }
     const heading = panelMain.querySelector("h1");
     if (heading) {
       heading.id ||= `task-panel-heading-${Date.now()}`;
@@ -1024,12 +1033,12 @@
       );
     }
     requestAnimationFrame(() => host.classList.add("is-open"));
-    host.querySelector("[data-task-panel-close]")?.focus();
+    initialFocus?.focus();
     background.forEach(({ child }) => {
       child.inert = true;
       child.setAttribute("aria-hidden", "true");
     });
-    renderIcons(host.querySelector("[data-task-panel-close]"));
+    renderIcons(initialFocus);
     initTaskPanelMain(panelMain, cleanups);
   }
 
@@ -1109,7 +1118,8 @@
 
   function closeTaskPanel(useHistory = true, restoreFocus = true) {
     if (!taskPanelState) return;
-    const { host, cleanups = [], background = [], returnFocus } = taskPanelState;
+    const { host, cleanups = [], background = [], returnFocus, returnURL } = taskPanelState;
+    const refreshAfterClose = useHistory && host.querySelector("main[data-task-refresh-on-close]");
     taskPanelState = null;
     cleanups.splice(0).forEach(cleanup => cleanup());
     background.forEach(({ child, inert, ariaHidden }) => {
@@ -1122,8 +1132,11 @@
     window.setTimeout(() => host.remove(), 210);
     if (restoreFocus && returnFocus instanceof HTMLElement && returnFocus.isConnected) returnFocus.focus();
     if (useHistory && history.state?.task) {
+      if (refreshAfterClose) taskPanelRefreshAfterCloseURL = returnURL;
       taskPanelHistoryClosePending = true;
       history.back();
+    } else if (refreshAfterClose) {
+      navigate(returnURL, false);
     }
   }
 
@@ -2410,6 +2423,62 @@
   function initCopyControls(root = document, cleanups = []) {
     const feedbackTimers = new Map();
 
+    root.querySelectorAll("[data-copy-key]").forEach(copyButton => {
+      const copyIcon = copyButton.querySelector("[data-copy-icon]");
+      const label = copyButton.querySelector("[data-copy-key-label]");
+      const status = copyButton.parentElement?.querySelector("[data-copy-key-status]");
+      if (!copyIcon || !label || !copyButton.dataset.copyKeyUrl) return;
+
+      const reset = () => {
+        copyButton.removeAttribute("data-state");
+        label.textContent = copyButton.dataset.copyLabel;
+        setControlIcon(copyIcon, "copy");
+        if (status) status.textContent = "";
+        feedbackTimers.delete(copyButton);
+      };
+      const onCopyKey = async () => {
+        if (copyButton.dataset.copying === "true") return;
+        const existingTimer = feedbackTimers.get(copyButton);
+        if (existingTimer) window.clearTimeout(existingTimer);
+        copyButton.dataset.copying = "true";
+        copyButton.setAttribute("aria-busy", "true");
+        copyButton.disabled = true;
+        label.textContent = copyButton.closest("[data-copying-key-label]")?.dataset.copyingKeyLabel || copyButton.dataset.copyLabel;
+        setControlIcon(copyIcon, "loader-circle");
+
+        try {
+          if (!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable");
+          const response = await fetch(copyButton.dataset.copyKeyUrl, {
+            credentials: "same-origin",
+            headers: { Accept: "application/json" },
+            cache: "no-store"
+          });
+          if (!response.ok) throw new Error(`Unable to copy key (${response.status})`);
+          const payload = await response.json();
+          if (typeof payload.key !== "string" || !payload.key) throw new Error("Key unavailable");
+          await navigator.clipboard.writeText(payload.key);
+          copyButton.dataset.state = "success";
+          label.textContent = copyButton.dataset.copiedLabel;
+          setControlIcon(copyIcon, "check");
+          if (status) status.textContent = copyButton.dataset.copiedLabel;
+        } catch {
+          copyButton.dataset.state = "error";
+          label.textContent = copyButton.dataset.copyFailedLabel;
+          setControlIcon(copyIcon, "triangle-alert");
+          if (status) status.textContent = copyButton.dataset.copyFailedLabel;
+        } finally {
+          copyButton.disabled = false;
+          copyButton.removeAttribute("aria-busy");
+          delete copyButton.dataset.copying;
+        }
+
+        const timer = window.setTimeout(reset, 1600);
+        feedbackTimers.set(copyButton, timer);
+      };
+      copyButton.addEventListener("click", onCopyKey);
+      cleanups.push(() => copyButton.removeEventListener("click", onCopyKey));
+    });
+
     root.querySelectorAll("[data-copy-text]").forEach(copyButton => {
       const content = document.getElementById(copyButton.dataset.copyTarget);
       const copyIcon = copyButton.querySelector("[data-copy-icon]");
@@ -2453,7 +2522,7 @@
           setControlIcon(copyIcon, "copy");
           if (status) status.textContent = "";
           feedbackTimers.delete(copyButton);
-        }, 1600);
+        }, 2400);
         feedbackTimers.set(copyButton, timer);
       };
       copyButton.addEventListener("click", onCopy);
@@ -5019,7 +5088,10 @@
       closeTaskPanel(true);
       return;
     }
-    const link = event.target.closest("a[href]");
+    let link = event.target.closest("a[href]");
+    if (!link && !event.target.closest("button,input,select,textarea,form,label,[role='button']")) {
+      link = event.target.closest("[data-external-entry-row]")?.querySelector("a[data-task-link]") || null;
+    }
     if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     const destination = new URL(link.href, location.href);
     if (isNativeLink(link, destination)) return;
@@ -5168,6 +5240,11 @@
   window.addEventListener("popstate", event => {
     if (taskPanelHistoryClosePending) {
       taskPanelHistoryClosePending = false;
+      if (taskPanelRefreshAfterCloseURL) {
+        const refreshURL = taskPanelRefreshAfterCloseURL;
+        taskPanelRefreshAfterCloseURL = "";
+        navigate(refreshURL, false);
+      }
       return;
     }
     if (taskPanelState) {

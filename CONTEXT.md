@@ -283,7 +283,7 @@ _Avoid_: Run 日志、主机脚本、审计正文
 _Avoid_: 一次性执行、保存历史 Run、上传文件
 
 **外部接口 Key（External Interface Key）**：
-由管理员或维护员创建、供可信外部系统调用固定入站功能的凭据边界。Key 有独立启停状态与可选到期时间，完整值只在创建或轮换后显示一次；它不是用户 Session，也不是通用 API Token。
+由管理员或维护员创建、供可信外部系统调用固定入站功能的凭据边界。Key 有独立启停状态与可选到期时间，完整值经加密保存且仅允许管理员或维护员复制；它不是用户 Session，也不是通用 API Token。
 _Avoid_: 用户密钥、脚本令牌、公开 API Key
 
 **外部功能条目（External Function Entry）**：

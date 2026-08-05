@@ -410,7 +410,7 @@ func Open(config Config) (*App, error) {
 		logStreamSlots: make(chan struct{}, 8), logHistorySlots: make(chan struct{}, 4),
 		updateResultsWake: make(chan struct{}, 1),
 	}
-	application.externalTriggers = externaltrigger.New(db, externaltrigger.Options{})
+	application.externalTriggers = externaltrigger.New(db, externaltrigger.Options{SecretsDirectory: filepath.Join(stateRoot, "secrets")})
 	application.externalLimit = externaltrigger.NewLimiter(externaltrigger.LimiterOptions{RequestsPerMinute: 60, Concurrent: 4})
 	application.assistant, err = assistant.New(db, assistant.Options{StateRoot: stateRoot})
 	if err != nil {
@@ -1781,12 +1781,15 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /config/external-interfaces/keys/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.newExternalKeyTask)))
 	mux.Handle("POST /config/external-interfaces/keys", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.createExternalKey)))
 	mux.Handle("GET /config/external-interfaces/keys/{id}/edit", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.editExternalKeyTask)))
+	mux.Handle("GET /config/external-interfaces/keys/{id}/copy", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.copyExternalKeyTask)))
+	mux.Handle("GET /config/external-interfaces/keys/{id}/rotate", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.rotateExternalKeyTask)))
 	mux.Handle("POST /config/external-interfaces/keys/{id}", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.updateExternalKey)))
 	mux.Handle("POST /config/external-interfaces/keys/{id}/toggle", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.toggleExternalKey)))
 	mux.Handle("POST /config/external-interfaces/keys/{id}/rotate", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.rotateExternalKey)))
 	mux.Handle("POST /config/external-interfaces/keys/{id}/delete", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.deleteExternalKey)))
 	mux.Handle("GET /config/external-interfaces/keys/{id}/entries/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.newExternalEntryTask)))
 	mux.Handle("POST /config/external-interfaces/keys/{id}/entries", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.createExternalEntry)))
+	mux.Handle("GET /config/external-interfaces/entries/{id}", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.externalEntryDetail)))
 	mux.Handle("GET /config/external-interfaces/entries/{id}/edit", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.editExternalEntryTask)))
 	mux.Handle("POST /config/external-interfaces/entries/{id}", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.updateExternalEntry)))
 	mux.Handle("POST /config/external-interfaces/entries/{id}/toggle", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.toggleExternalEntry)))

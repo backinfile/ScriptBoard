@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -33,11 +34,12 @@ const (
 )
 
 var (
-	ErrInvalidKey    = errors.New("external trigger key is invalid")
-	ErrEntryNotFound = errors.New("external trigger entry does not exist")
-	ErrEntryDisabled = errors.New("external trigger entry is disabled")
-	ErrInvalidInput  = errors.New("external trigger input is invalid")
-	entryNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
+	ErrInvalidKey     = errors.New("external trigger key is invalid")
+	ErrEntryNotFound  = errors.New("external trigger entry does not exist")
+	ErrEntryDisabled  = errors.New("external trigger entry is disabled")
+	ErrInvalidInput   = errors.New("external trigger input is invalid")
+	ErrKeyLabelExists = errors.New("external trigger key name already exists")
+	entryNamePattern  = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 )
 
 var SchemaStatements = []string{
@@ -122,6 +124,7 @@ func (entry Entry) DecodeConfig(destination any) error {
 }
 
 type LogConfig struct {
+	File            string `json:"file"`
 	Category        string `json:"category"`
 	MaxMessageBytes int    `json:"max_message_bytes"`
 }
@@ -183,13 +186,54 @@ type Invocation struct {
 	RunID, Message, Source string
 }
 
+type InvocationFilter struct {
+	Query                     string
+	FromUnix, ToExclusiveUnix int64
+	HasFromDate, HasToDate    bool
+}
+
 func (manager *Manager) ListInvocations(ctx context.Context, limit int) ([]Invocation, error) {
 	if limit < 1 || limit > 200 {
 		limit = 50
 	}
+	return manager.FindInvocations(ctx, InvocationFilter{}, limit, 0)
+}
+
+func (manager *Manager) CountInvocations(ctx context.Context, filter InvocationFilter) (int, error) {
+	like := "%" + strings.TrimSpace(filter.Query) + "%"
+	var total int
+	err := manager.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM external_trigger_requests
+		WHERE (? = '' OR key_label LIKE ? OR entry_name LIKE ? OR action_type LIKE ? OR result LIKE ?
+			OR CAST(http_status AS TEXT) LIKE ? OR run_id LIKE ? OR message LIKE ? OR source_address LIKE ?)
+		AND (? = 0 OR occurred_at >= ?)
+		AND (? = 0 OR occurred_at < ?)`,
+		strings.TrimSpace(filter.Query), like, like, like, like, like, like, like, like,
+		filter.HasFromDate, filter.FromUnix,
+		filter.HasToDate, filter.ToExclusiveUnix).Scan(&total)
+	return total, err
+}
+
+func (manager *Manager) FindInvocations(ctx context.Context, filter InvocationFilter, limit, offset int) ([]Invocation, error) {
+	if limit < 1 || limit > 200 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	query := strings.TrimSpace(filter.Query)
+	like := "%" + query + "%"
 	rows, err := manager.db.QueryContext(ctx, `SELECT id, occurred_at, key_id, key_label, entry_id, entry_name, action_type,
 		result, http_status, duration_ms, bytes_received, run_id, message, source_address
-		FROM external_trigger_requests ORDER BY occurred_at DESC, id DESC LIMIT ?`, limit)
+		FROM external_trigger_requests
+		WHERE (? = '' OR key_label LIKE ? OR entry_name LIKE ? OR action_type LIKE ? OR result LIKE ?
+			OR CAST(http_status AS TEXT) LIKE ? OR run_id LIKE ? OR message LIKE ? OR source_address LIKE ?)
+		AND (? = 0 OR occurred_at >= ?)
+		AND (? = 0 OR occurred_at < ?)
+		ORDER BY occurred_at DESC, id DESC LIMIT ? OFFSET ?`,
+		query, like, like, like, like, like, like, like, like,
+		filter.HasFromDate, filter.FromUnix,
+		filter.HasToDate, filter.ToExclusiveUnix,
+		limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -211,14 +255,17 @@ func (manager *Manager) ListInvocations(ctx context.Context, limit int) ([]Invoc
 }
 
 type Options struct {
-	Now    func() time.Time
-	Random func([]byte) (int, error)
+	Now              func() time.Time
+	Random           func([]byte) (int, error)
+	SecretsDirectory string
 }
 
 type Manager struct {
-	db     *sql.DB
-	now    func() time.Time
-	random func([]byte) (int, error)
+	db               *sql.DB
+	now              func() time.Time
+	random           func([]byte) (int, error)
+	secretsDirectory string
+	secretStore      *encryptedSecretStore
 }
 
 func New(db *sql.DB, options Options) *Manager {
@@ -230,7 +277,11 @@ func New(db *sql.DB, options Options) *Manager {
 	if random == nil {
 		random = rand.Read
 	}
-	return &Manager{db: db, now: now, random: random}
+	return &Manager{db: db, now: now, random: random, secretsDirectory: options.SecretsDirectory, secretStore: &encryptedSecretStore{directory: options.SecretsDirectory}}
+}
+
+func (manager *Manager) KeySecret(id string) (string, error) {
+	return manager.secretStore.get(id)
 }
 
 func (manager *Manager) CreateKey(ctx context.Context, input CreateKeyInput) (Key, string, error) {
@@ -256,11 +307,21 @@ func (manager *Manager) CreateKey(ctx context.Context, input CreateKeyInput) (Ke
 	if input.ExpiresAt != nil {
 		expiresAt = input.ExpiresAt.UTC().Unix()
 	}
-	_, err = manager.db.ExecContext(ctx, `INSERT INTO external_trigger_keys
+	result, err := manager.db.ExecContext(ctx, `INSERT INTO external_trigger_keys
 		(id, label, token_hash, token_hint, enabled, expires_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, id, label, hashToken(secret), hint, input.Enabled, expiresAt, now.Unix(), now.Unix())
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?
+		WHERE NOT EXISTS (
+			SELECT 1 FROM external_trigger_keys WHERE label = ? COLLATE NOCASE
+		)`, id, label, hashToken(secret), hint, input.Enabled, expiresAt, now.Unix(), now.Unix(), label)
 	if err != nil {
 		return Key{}, "", fmt.Errorf("create external trigger key: %w", err)
+	}
+	if changed, _ := result.RowsAffected(); changed == 0 {
+		return Key{}, "", ErrKeyLabelExists
+	}
+	if err := manager.secretStore.set(id, secret); err != nil {
+		_, _ = manager.db.ExecContext(ctx, "DELETE FROM external_trigger_keys WHERE id = ?", id)
+		return Key{}, "", fmt.Errorf("store external trigger key: %w", err)
 	}
 	key := Key{ID: id, Label: label, TokenHint: hint, Enabled: input.Enabled, CreatedAt: now, UpdatedAt: now}
 	if input.ExpiresAt != nil {
@@ -282,7 +343,16 @@ func (manager *Manager) RotateKey(ctx context.Context, id string) (Key, string, 
 	secret := "sbk_" + id + "." + secretPart
 	hint := "sbk_" + id + ".••••" + secretPart[len(secretPart)-4:]
 	now := manager.now().UTC()
+	previous, previousErr := manager.secretStore.get(id)
+	if err := manager.secretStore.set(id, secret); err != nil {
+		return Key{}, "", fmt.Errorf("store rotated external trigger key: %w", err)
+	}
 	if _, err := manager.db.ExecContext(ctx, `UPDATE external_trigger_keys SET token_hash = ?, token_hint = ?, updated_at = ? WHERE id = ?`, hashToken(secret), hint, now.Unix(), id); err != nil {
+		if previousErr == nil {
+			_ = manager.secretStore.set(id, previous)
+		} else {
+			_ = manager.secretStore.delete(id)
+		}
 		return Key{}, "", fmt.Errorf("rotate external trigger key: %w", err)
 	}
 	key.TokenHint, key.UpdatedAt = hint, now
@@ -336,13 +406,17 @@ func validateEntry(name, label string, actionType ActionType, target string, con
 	switch actionType {
 	case ActionLog:
 		value, ok := config.(LogConfig)
-		if !ok || len([]byte(value.Category)) > 64 || !utf8.ValidString(value.Category) || value.MaxMessageBytes < 0 || value.MaxMessageBytes > 4<<10 {
+		value.File = strings.TrimSpace(value.File)
+		value.Category = strings.TrimSpace(value.Category)
+		if !ok || value.File == "" || len([]byte(value.File)) > 4096 || !utf8.ValidString(value.File) ||
+			len([]byte(value.Category)) > 64 || !utf8.ValidString(value.Category) || strings.IndexFunc(value.Category, unicode.IsControl) >= 0 ||
+			value.MaxMessageBytes < 0 || value.MaxMessageBytes > 4<<10 {
 			return "", "", fmt.Errorf("%w: log config", ErrInvalidInput)
 		}
 		if value.MaxMessageBytes == 0 {
 			value.MaxMessageBytes = 1024
 		}
-		normalized, target = value, strings.TrimSpace(value.Category)
+		normalized, target = value, value.File
 	case ActionUpload:
 		value, ok := config.(UploadConfig)
 		if !ok || strings.TrimSpace(value.Directory) == "" || value.MaxBytes <= 0 || value.MaxBytes > 1<<30 || (value.ConflictPolicy != "reject" && value.ConflictPolicy != "rename") || len(value.Extensions) > 32 {
@@ -583,12 +657,20 @@ func (manager *Manager) UpdateKey(ctx context.Context, id, label string, expires
 	if expiresAt != nil {
 		expires = expiresAt.UTC().Unix()
 	}
-	result, err := manager.db.ExecContext(ctx, `UPDATE external_trigger_keys SET label = ?, expires_at = ?, updated_at = ? WHERE id = ?`, label, expires, manager.now().UTC().Unix(), id)
+	result, err := manager.db.ExecContext(ctx, `UPDATE external_trigger_keys
+		SET label = ?, expires_at = ?, updated_at = ?
+		WHERE id = ? AND NOT EXISTS (
+			SELECT 1 FROM external_trigger_keys AS duplicate
+			WHERE duplicate.id <> ? AND duplicate.label = ? COLLATE NOCASE
+		)`, label, expires, manager.now().UTC().Unix(), id, id, label)
 	if err != nil {
 		return err
 	}
 	if changed, _ := result.RowsAffected(); changed == 0 {
-		return sql.ErrNoRows
+		if _, keyErr := manager.Key(ctx, id); keyErr != nil {
+			return keyErr
+		}
+		return ErrKeyLabelExists
 	}
 	return nil
 }
@@ -600,6 +682,9 @@ func (manager *Manager) DeleteKey(ctx context.Context, id string) error {
 	}
 	if changed, _ := result.RowsAffected(); changed == 0 {
 		return sql.ErrNoRows
+	}
+	if err := manager.secretStore.delete(id); err != nil && !errors.Is(err, ErrSecretUnavailable) {
+		return fmt.Errorf("delete external trigger key secret: %w", err)
 	}
 	return nil
 }

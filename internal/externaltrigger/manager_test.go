@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -24,7 +26,7 @@ func testManager(t *testing.T, now time.Time) (*Manager, *sql.DB) {
 			t.Fatalf("initialize schema: %v", err)
 		}
 	}
-	return New(db, Options{Now: func() time.Time { return now }}), db
+	return New(db, Options{Now: func() time.Time { return now }, SecretsDirectory: filepath.Join(t.TempDir(), "secrets")}), db
 }
 
 func TestCreateKeyAndResolveEnabledLogEntry(t *testing.T) {
@@ -47,10 +49,26 @@ func TestCreateKeyAndResolveEnabledLogEntry(t *testing.T) {
 	if storedHash == secret || strings.Contains(storedHash, secret) {
 		t.Fatal("plaintext key was persisted")
 	}
+	revealed, err := manager.KeySecret(key.ID)
+	if err != nil || revealed != secret {
+		t.Fatalf("revealed secret=%q error=%v", revealed, err)
+	}
+	if err := filepath.Walk(manager.secretsDirectory, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil || info.IsDir() {
+			return walkErr
+		}
+		content, readErr := os.ReadFile(path)
+		if readErr == nil && strings.Contains(string(content), secret) {
+			t.Fatalf("plaintext key was persisted in %s", path)
+		}
+		return readErr
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	entry, err := manager.CreateEntry(context.Background(), CreateEntryInput{
 		KeyID: key.ID, Name: "deployment-log", Label: "Deployment callback", Type: ActionLog,
-		Enabled: true, Config: LogConfig{Category: "deploy", MaxMessageBytes: 1024},
+		Enabled: true, Config: LogConfig{File: "/logs/deploy.log", Category: "deploy", MaxMessageBytes: 1024},
 	})
 	if err != nil {
 		t.Fatalf("create entry: %v", err)
@@ -67,6 +85,51 @@ func TestCreateKeyAndResolveEnabledLogEntry(t *testing.T) {
 	}
 }
 
+func TestKeyNamesAreUniqueIgnoringCaseAndSurroundingWhitespace(t *testing.T) {
+	manager, _ := testManager(t, time.Date(2026, 8, 5, 9, 0, 0, 0, time.UTC))
+	first, _, err := manager.CreateKey(context.Background(), CreateKeyInput{Label: "Webhook", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := manager.CreateKey(context.Background(), CreateKeyInput{Label: " webhook ", Enabled: true}); !errors.Is(err, ErrKeyLabelExists) {
+		t.Fatalf("duplicate create error = %v", err)
+	}
+	second, _, err := manager.CreateKey(context.Background(), CreateKeyInput{Label: "Deploy", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.UpdateKey(context.Background(), second.ID, "WEBHOOK", nil); !errors.Is(err, ErrKeyLabelExists) {
+		t.Fatalf("duplicate update error = %v", err)
+	}
+	if err := manager.UpdateKey(context.Background(), first.ID, "WEBHOOK", nil); err != nil {
+		t.Fatalf("updating a key's own name: %v", err)
+	}
+}
+
+func TestRotateAndDeleteKeyUpdateRecoverableSecret(t *testing.T) {
+	manager, _ := testManager(t, time.Date(2026, 8, 5, 9, 0, 0, 0, time.UTC))
+	key, original, err := manager.CreateKey(context.Background(), CreateKeyInput{Label: "Agent", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, rotated, err := manager.RotateKey(context.Background(), key.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rotated == original {
+		t.Fatal("rotation did not replace the key")
+	}
+	if revealed, revealErr := manager.KeySecret(key.ID); revealErr != nil || revealed != rotated {
+		t.Fatalf("revealed rotated secret=%q error=%v", revealed, revealErr)
+	}
+	if err := manager.DeleteKey(context.Background(), key.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.KeySecret(key.ID); !errors.Is(err, ErrSecretUnavailable) {
+		t.Fatalf("deleted key secret error=%v", err)
+	}
+}
+
 func TestResolveRejectsExpiredKeyAndDisabledEntry(t *testing.T) {
 	now := time.Date(2026, 8, 5, 9, 0, 0, 0, time.UTC)
 	manager, _ := testManager(t, now)
@@ -75,7 +138,7 @@ func TestResolveRejectsExpiredKeyAndDisabledEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry, err := manager.CreateEntry(context.Background(), CreateEntryInput{KeyID: key.ID, Name: "notice", Label: "Notice", Type: ActionLog, Enabled: false, Config: LogConfig{MaxMessageBytes: 100}})
+	entry, err := manager.CreateEntry(context.Background(), CreateEntryInput{KeyID: key.ID, Name: "notice", Label: "Notice", Type: ActionLog, Enabled: false, Config: LogConfig{File: "/logs/notice.log", MaxMessageBytes: 100}})
 	if err != nil {
 		t.Fatal(err)
 	}
