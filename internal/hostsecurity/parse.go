@@ -10,12 +10,24 @@ import (
 )
 
 var (
-	linuxLoginPattern       = regexp.MustCompile(`^(\S+)\s+.*?sshd?\[(\d+)\]:\s+(Accepted|Failed)\s+(password|publickey|keyboard-interactive)(?:\s+for\s+invalid\s+user|\s+for)\s+(\S+)\s+from\s+([0-9a-fA-F:.]+)\s+port\s+\d+`)
-	linuxInvalidUserPattern = regexp.MustCompile(`^(\S+)\s+.*?sshd?\[(\d+)\]:\s+Invalid user\s+(\S+)\s+from\s+([0-9a-fA-F:.]+)\s+port\s+\d+`)
-	linuxPreAuthPattern     = regexp.MustCompile(`^(\S+)\s+.*?sshd?\[(\d+)\]:\s+(?:Connection (?:closed|reset) by|Disconnected from) (?:invalid|authenticating) user\s+(\S+)\s+([0-9a-fA-F:.]+)\s+port\s+\d+\s+\[preauth\]`)
-	ufwRulePattern          = regexp.MustCompile(`^\[\s*(\d+)\]\s+(\S+)\s+(ALLOW|DENY)(?:\s+(IN|OUT))?\s+(.+?)\s*$`)
-	fail2BanEventPattern    = regexp.MustCompile(`^(\S+)\s+.*?fail2ban\.actions\s+\[.*?\]:\s+NOTICE\s+\[(\S+)\]\s+Ban\s+([0-9a-fA-F:.]+)\s*$`)
+	linuxLoginPattern          = regexp.MustCompile(`^(\S+)\s+.*?sshd?\[(\d+)\]:\s+(Accepted|Failed)\s+(\S+)(?:\s+for\s+invalid\s+user|\s+for)\s+(\S+)\s+from\s+([0-9a-fA-F:.]+)\s+port\s+(\d+)`)
+	linuxInvalidUserPattern    = regexp.MustCompile(`^(\S+)\s+.*?sshd?\[(\d+)\]:\s+Invalid user\s+(\S+)\s+from\s+([0-9a-fA-F:.]+)\s+port\s+(\d+)`)
+	linuxDisallowedUserPattern = regexp.MustCompile(`^(\S+)\s+.*?sshd?\[(\d+)\]:\s+User\s+(\S+)\s+from\s+([0-9a-fA-F:.]+)\s+not allowed\b`)
+	linuxMaxAuthPattern        = regexp.MustCompile(`^(\S+)\s+.*?sshd?\[(\d+)\]:\s+(?:error:\s*)?maximum authentication attempts exceeded for(?: invalid user)?\s+(\S+)\s+from\s+([0-9a-fA-F:.]+)\s+port\s+(\d+)`)
+	linuxPAMFailurePattern     = regexp.MustCompile(`^(\S+)\s+.*?sshd?\[(\d+)\]:\s+pam_unix\(sshd:auth\): authentication failure;.*\brhost=([0-9a-fA-F:.]+)\s+user=(\S+)`)
+	linuxPreAuthPattern        = regexp.MustCompile(`^(\S+)\s+.*?sshd?\[(\d+)\]:\s+(?:Connection (?:closed|reset) by|Disconnected from) (?:invalid|authenticating) user\s+(\S+)\s+([0-9a-fA-F:.]+)\s+port\s+(\d+)\s+\[preauth\]`)
+	ufwRulePattern             = regexp.MustCompile(`^\[\s*(\d+)\]\s+(\S+)\s+(ALLOW|DENY)(?:\s+(IN|OUT))?\s+(.+?)\s*$`)
+	fail2BanEventPattern       = regexp.MustCompile(`^(\S+)\s+.*?fail2ban\.actions\s+\[.*?\]:\s+NOTICE\s+\[(\S+)\]\s+Ban\s+([0-9a-fA-F:.]+)\s*$`)
 )
+
+const linuxLoginSessionWindow = 10 * time.Minute
+
+type linuxLoginEvent struct {
+	record    LoginRecord
+	processID string
+	port      string
+	priority  int
+}
 
 func parseLinuxLogins(output string) []LoginRecord {
 	lines := strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n")
@@ -23,66 +35,89 @@ func parseLinuxLogins(output string) []LoginRecord {
 	type sessionRecord struct {
 		index    int
 		priority int
+		port     string
+		time     time.Time
+		sourceIP string
 	}
 	sessions := make(map[string]sessionRecord)
-	appendRecord := func(record LoginRecord, processID string, priority int) {
-		sessionKey := processID + "|" + record.SourceIP
-		if previous, ok := sessions[sessionKey]; ok {
-			if priority > previous.priority {
-				records[previous.index] = record
-				sessions[sessionKey] = sessionRecord{index: previous.index, priority: priority}
+	appendRecord := func(event linuxLoginEvent) {
+		previous, found := sessions[event.processID]
+		sameSession := found && previous.sourceIP == event.record.SourceIP && absDuration(previous.time.Sub(event.record.Time)) <= linuxLoginSessionWindow
+		if sameSession && previous.port != "" && event.port != "" && previous.port != event.port {
+			sameSession = false
+		}
+		if sameSession {
+			if event.priority > previous.priority {
+				port := event.port
+				if port == "" {
+					port = previous.port
+				}
+				records[previous.index] = event.record
+				sessions[event.processID] = sessionRecord{index: previous.index, priority: event.priority, port: port, time: event.record.Time, sourceIP: event.record.SourceIP}
 				return
 			}
-			if priority < 3 {
+			if event.priority < 3 {
+				if previous.port == "" && event.port != "" {
+					previous.port = event.port
+					sessions[event.processID] = previous
+				}
 				return
 			}
 		}
-		records = append(records, record)
-		sessions[sessionKey] = sessionRecord{index: len(records) - 1, priority: priority}
+		records = append(records, event.record)
+		sessions[event.processID] = sessionRecord{index: len(records) - 1, priority: event.priority, port: event.port, time: event.record.Time, sourceIP: event.record.SourceIP}
 	}
 	for _, line := range lines {
 		detail := strings.TrimSpace(line)
-		match := linuxLoginPattern.FindStringSubmatch(detail)
-		if len(match) != 0 {
-			stamp, err := parseLinuxJournalTimestamp(match[1])
-			if err != nil {
-				continue
-			}
-			result := ResultFailure
-			if match[3] == "Accepted" {
-				result = ResultSuccess
-			}
-			appendRecord(LoginRecord{
-				Time: stamp.UTC(), Result: result, User: match[5], SourceIP: match[6], Type: "ssh",
-				Authentication: match[4], Detail: detail,
-			}, match[2], 3)
-			continue
-		}
-
-		invalidUser := linuxInvalidUserPattern.FindStringSubmatch(detail)
-		if len(invalidUser) != 0 {
-			stamp, err := parseLinuxJournalTimestamp(invalidUser[1])
-			if err == nil {
-				appendRecord(LoginRecord{
-					Time: stamp.UTC(), Result: ResultFailure, User: invalidUser[3], SourceIP: invalidUser[4], Type: "ssh",
-					Authentication: "preauth", Detail: detail,
-				}, invalidUser[2], 2)
-			}
-			continue
-		}
-
-		preAuth := linuxPreAuthPattern.FindStringSubmatch(detail)
-		if len(preAuth) != 0 {
-			stamp, err := parseLinuxJournalTimestamp(preAuth[1])
-			if err == nil {
-				appendRecord(LoginRecord{
-					Time: stamp.UTC(), Result: ResultFailure, User: preAuth[3], SourceIP: preAuth[4], Type: "ssh",
-					Authentication: "preauth", Detail: detail,
-				}, preAuth[2], 1)
-			}
+		if event, ok := parseLinuxLoginEvent(detail); ok {
+			appendRecord(event)
 		}
 	}
 	return records
+}
+
+func parseLinuxLoginEvent(detail string) (linuxLoginEvent, bool) {
+	if match := linuxLoginPattern.FindStringSubmatch(detail); len(match) != 0 {
+		result := ResultFailure
+		if match[3] == "Accepted" {
+			result = ResultSuccess
+		}
+		return newLinuxLoginEvent(match[1], match[2], match[7], match[5], match[6], match[4], detail, result, 3)
+	}
+	if match := linuxInvalidUserPattern.FindStringSubmatch(detail); len(match) != 0 {
+		return newLinuxLoginEvent(match[1], match[2], match[5], match[3], match[4], "preauth", detail, ResultFailure, 2)
+	}
+	if match := linuxDisallowedUserPattern.FindStringSubmatch(detail); len(match) != 0 {
+		return newLinuxLoginEvent(match[1], match[2], "", match[3], match[4], "preauth", detail, ResultFailure, 2)
+	}
+	if match := linuxMaxAuthPattern.FindStringSubmatch(detail); len(match) != 0 {
+		return newLinuxLoginEvent(match[1], match[2], match[5], match[3], match[4], "preauth", detail, ResultFailure, 2)
+	}
+	if match := linuxPAMFailurePattern.FindStringSubmatch(detail); len(match) != 0 {
+		return newLinuxLoginEvent(match[1], match[2], "", match[4], match[3], "pam", detail, ResultFailure, 2)
+	}
+	if match := linuxPreAuthPattern.FindStringSubmatch(detail); len(match) != 0 {
+		return newLinuxLoginEvent(match[1], match[2], match[5], match[3], match[4], "preauth", detail, ResultFailure, 1)
+	}
+	return linuxLoginEvent{}, false
+}
+
+func newLinuxLoginEvent(timestamp, processID, port, user, sourceIP, authentication, detail string, result LoginResult, priority int) (linuxLoginEvent, bool) {
+	stamp, err := parseLinuxJournalTimestamp(timestamp)
+	if err != nil {
+		return linuxLoginEvent{}, false
+	}
+	return linuxLoginEvent{
+		record:    LoginRecord{Time: stamp.UTC(), Result: result, User: user, SourceIP: sourceIP, Type: "ssh", Authentication: authentication, Detail: detail},
+		processID: processID, port: port, priority: priority,
+	}, true
+}
+
+func absDuration(value time.Duration) time.Duration {
+	if value < 0 {
+		return -value
+	}
+	return value
 }
 
 func parseLinuxJournalTimestamp(value string) (time.Time, error) {

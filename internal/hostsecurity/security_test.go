@@ -171,6 +171,40 @@ noise that must be ignored`
 	}
 }
 
+func TestParseLinuxLoginsSupportsCommonOpenSSHFailures(t *testing.T) {
+	input := `2026-08-05T14:00:00+08:00 host sshd[20]: Failed keyboard-interactive/pam for root from 203.0.113.20 port 4001 ssh2
+2026-08-05T14:01:00+08:00 host sshd[21]: User deploy from 203.0.113.21 not allowed because not listed in AllowUsers
+2026-08-05T14:01:01+08:00 host sshd[21]: Connection closed by invalid user deploy 203.0.113.21 port 4002 [preauth]
+2026-08-05T14:02:00+08:00 host sshd[22]: error: maximum authentication attempts exceeded for root from 203.0.113.22 port 4003 ssh2 [preauth]
+2026-08-05T14:02:01+08:00 host sshd[22]: Connection closed by authenticating user root 203.0.113.22 port 4003 [preauth]
+2026-08-05T14:03:00+08:00 host sshd[23]: pam_unix(sshd:auth): authentication failure; logname= uid=0 euid=0 tty=ssh ruser= rhost=203.0.113.23 user=ops`
+	records := parseLinuxLogins(input)
+	if len(records) != 4 {
+		t.Fatalf("records = %d, want 4 common OpenSSH failures: %#v", len(records), records)
+	}
+	if records[0].Authentication != "keyboard-interactive/pam" || records[0].User != "root" {
+		t.Fatalf("keyboard-interactive failure = %#v", records[0])
+	}
+	if records[1].User != "deploy" || records[1].SourceIP != "203.0.113.21" || !strings.Contains(records[1].Detail, "not allowed") {
+		t.Fatalf("disallowed-user failure = %#v", records[1])
+	}
+	if records[2].User != "root" || records[2].SourceIP != "203.0.113.22" || !strings.Contains(records[2].Detail, "maximum authentication attempts") {
+		t.Fatalf("maximum-attempts failure = %#v", records[2])
+	}
+	if records[3].User != "ops" || records[3].SourceIP != "203.0.113.23" || records[3].Authentication != "pam" {
+		t.Fatalf("PAM failure = %#v", records[3])
+	}
+}
+
+func TestParseLinuxLoginsDoesNotMergeReusedProcessIDs(t *testing.T) {
+	input := `2026-08-05T14:00:00+08:00 host sshd[30]: Invalid user first from 203.0.113.30 port 5001
+2026-08-05T15:00:00+08:00 host sshd[30]: Invalid user second from 203.0.113.30 port 5002`
+	records := parseLinuxLogins(input)
+	if len(records) != 2 {
+		t.Fatalf("records = %d, want 2 after sshd PID reuse: %#v", len(records), records)
+	}
+}
+
 func TestParseUFWStatusKeepsDirection(t *testing.T) {
 	input := `Status: active
 
