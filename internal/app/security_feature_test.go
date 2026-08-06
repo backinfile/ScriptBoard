@@ -44,9 +44,11 @@ func TestHostSecurityPageAndUFWDraftFlow(t *testing.T) {
 	}
 	for _, expected := range [][]byte{
 		[]byte(`data-security-login-surface`), []byte("Remote sign-in monitoring"),
+		[]byte(`data-security-login-verdict`), []byte("Monitoring status"), []byte("Recent activity"),
 		[]byte("SSH remote entry"), []byte("Public key authentication"), []byte("Password authentication"),
 		[]byte("Root remote sign-in"), []byte("Brute-force protection"),
-		[]byte("0.0.0.0:22"), []byte("prohibit-password"),
+		[]byte("0.0.0.0:22"), []byte("prohibit-password"), []byte(`class="security-login-check__source"`),
+		[]byte("Password authentication is enabled"),
 	} {
 		if !bytes.Contains(overview, expected) {
 			t.Fatalf("security overview missing remote sign-in monitoring %q: %s", expected, overview)

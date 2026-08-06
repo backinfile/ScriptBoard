@@ -35,20 +35,17 @@
   <div class="security-detection"><span class="status-dot" data-state="{{if or .Capabilities.Firewall.Error .Capabilities.Fail2Ban.Error}}attention{{else}}current{{end}}"></span><span class="security-detection__host">{{if .Capabilities.Hostname}}{{.Capabilities.Hostname}} · {{end}}{{if .Windows}}Windows{{else if .Linux}}Linux{{else}}{{.Capabilities.OS}}{{end}} · {{t .Locale "security.detected_at"}} <time datetime="{{machineTime .Capabilities.CollectedAt}}" data-local-time>{{localTime .Locale .Capabilities.CollectedAt}}</time></span><span class="security-detection__privilege"><span>{{t .Locale "security.runtime_privilege"}}</span><span class="status-chip" data-state="{{if not .Capabilities.AdministratorKnown}}stale{{else if .Capabilities.Administrator}}current{{else}}attention{{end}}"><span class="status-dot" aria-hidden="true"></span>{{if not .Capabilities.AdministratorKnown}}{{t .Locale "security.privilege_unknown"}}{{else if .Capabilities.Administrator}}{{if .Windows}}{{t .Locale "security.administrator_privilege"}}{{else}}{{t .Locale "security.root_privilege"}}{{end}}{{else}}{{if .Windows}}{{t .Locale "security.standard_privilege"}}{{else}}{{t .Locale "security.non_root_privilege"}}{{end}}{{end}}</span></span><a class="button button--compact button--quiet security-detection__refresh" href="{{.RefreshURL}}"><span data-lucide="refresh-cw" aria-hidden="true"></span>{{t .Locale "security.refresh_data"}}</a></div>
 
   {{if eq .Tab "overview"}}
-    <section aria-labelledby="security-summary-title">
-      <header class="section-heading"><div><p class="section-index">01</p><h2 id="security-summary-title">{{t .Locale "security.summary"}}</h2><p>{{t .Locale "security.summary_description"}}</p></div></header>
-      {{if .LoginError}}<div class="security-warning"><span data-lucide="triangle-alert" aria-hidden="true"></span><span>{{t .Locale "security.login_unavailable"}}<small>{{.LoginError}}</small></span></div>{{end}}
-      <dl class="security-facts">
-        <div><dt>{{t .Locale "security.failed_logins"}}</dt><dd>{{.LoginPage.Stats.Failure}}</dd><small>{{t .Locale "security.last_24h"}}</small></div>
-        <div><dt>{{t .Locale "security.successful_logins"}}</dt><dd>{{.LoginPage.Stats.Success}}</dd><small>{{t .Locale "security.last_24h"}}</small></div>
-        <div><dt>{{if .Windows}}{{t .Locale "security.locked_accounts"}}{{else}}{{t .Locale "security.banned_ips"}}{{end}}</dt><dd>{{if .Windows}}{{.LoginPage.Stats.Locked}}{{else if .Capabilities.Fail2Ban.Installed}}{{.BanPage.Total}}{{else}}—{{end}}</dd><small>{{if and .Linux (not .Capabilities.Fail2Ban.Installed)}}{{t .Locale "security.fail2ban_not_installed"}}{{else}}{{t .Locale "security.current"}}{{end}}</small></div>
-        <div><dt>{{t .Locale "security.firewall"}}</dt><dd>{{if .Linux}}{{if not .Capabilities.UFW.Installed}}{{t .Locale "security.not_installed"}}{{else if .Capabilities.UFWEnabled}}{{t .Locale "security.enabled"}}{{else}}{{t .Locale "security.disabled"}}{{end}}{{else if .Capabilities.Firewall.Running}}{{t .Locale "security.enabled"}}{{else}}{{t .Locale "security.attention"}}{{end}}</dd><small>{{if .Linux}}UFW{{else}}Windows Defender Firewall{{end}}</small></div>
-      </dl>
-    </section>
-
     {{if .RemoteLoginRows}}
     <section class="security-login-surface" data-security-login-surface aria-labelledby="security-login-surface-title">
-      <header class="section-heading"><div><p class="section-index">02</p><h2 id="security-login-surface-title">{{t .Locale "security.remote_login_monitoring"}}</h2><p>{{t .Locale "security.remote_login_monitoring_description"}}</p></div></header>
+      <header class="section-heading"><div><p class="section-index">01 / {{t .Locale "security.login_security"}}</p><h2 id="security-login-surface-title">{{t .Locale "security.remote_login_monitoring"}}</h2><p>{{t .Locale "security.remote_login_monitoring_description"}}</p></div></header>
+      {{if .LoginError}}<div class="security-warning"><span data-lucide="triangle-alert" aria-hidden="true"></span><span>{{t .Locale "security.login_unavailable"}}<small>{{.LoginError}}</small></span></div>{{end}}
+      <dl class="security-facts security-facts--verdict" data-security-login-verdict>
+        <div class="security-fact-verdict" data-state="{{.RemoteLogin.StatusTone}}"><dt>{{t .Locale "security.monitoring_status"}}</dt><dd>{{.RemoteLogin.Status}}</dd><small>{{.RemoteLogin.StatusDetail}}</small></div>
+        <div><dt>{{t .Locale "security.remote_entry"}}</dt><dd>{{.RemoteLogin.EntryCount}}</dd><small>{{.RemoteLogin.EntryDetail}}</small></div>
+        <div><dt>{{t .Locale "security.failed_logins"}}</dt><dd>{{.LoginPage.Stats.Failure}}</dd><small>{{t .Locale "security.last_24h"}}</small></div>
+        <div><dt>{{t .Locale "security.current_bans"}}</dt><dd>{{if .Capabilities.Fail2Ban.Installed}}{{.BanPage.Total}}{{else}}—{{end}}</dd><small>{{if .Capabilities.Fail2Ban.Installed}}Fail2Ban · sshd{{else}}{{t .Locale "security.fail2ban_not_installed"}}{{end}}</small></div>
+      </dl>
+      <div class="security-login-checks-heading"><h3>{{t .Locale "security.detection_items"}}</h3><span>{{t .Locale "security.show_evidence"}}</span></div>
       <div class="security-login-checks" aria-label="{{t .Locale "security.detection_items"}}">
         {{range .RemoteLoginRows}}
         <details class="security-login-check">
@@ -56,6 +53,7 @@
             <span class="security-login-check__icon"><span data-lucide="{{.Icon}}" aria-hidden="true"></span></span>
             <span class="security-login-check__identity"><strong>{{.Title}}</strong><small>{{.Subtitle}}</small></span>
             <code>{{.Value}}</code>
+            <span class="security-login-check__source">{{.Evidence}}</span>
             <span class="status-chip" data-state="{{.Tone}}"><span class="status-dot" aria-hidden="true"></span>{{.Status}}</span>
             <span class="security-login-check__chevron" data-lucide="chevron-down" aria-hidden="true"></span>
           </summary>
@@ -65,35 +63,28 @@
         </details>
         {{end}}
       </div>
-      <p class="security-login-checks__hint"><span data-lucide="info" aria-hidden="true"></span>{{t .Locale "security.show_evidence"}}</p>
+    </section>
+    {{else}}
+    <section aria-labelledby="security-summary-title">
+      <header class="section-heading"><div><p class="section-index">01</p><h2 id="security-summary-title">{{t .Locale "security.summary"}}</h2><p>{{t .Locale "security.summary_description"}}</p></div></header>
+      {{if .LoginError}}<div class="security-warning"><span data-lucide="triangle-alert" aria-hidden="true"></span><span>{{t .Locale "security.login_unavailable"}}<small>{{.LoginError}}</small></span></div>{{end}}
+      <dl class="security-facts">
+        <div><dt>{{t .Locale "security.failed_logins"}}</dt><dd>{{.LoginPage.Stats.Failure}}</dd><small>{{t .Locale "security.last_24h"}}</small></div>
+        <div><dt>{{t .Locale "security.successful_logins"}}</dt><dd>{{.LoginPage.Stats.Success}}</dd><small>{{t .Locale "security.last_24h"}}</small></div>
+        <div><dt>{{t .Locale "security.locked_accounts"}}</dt><dd>{{.LoginPage.Stats.Locked}}</dd><small>{{t .Locale "security.current"}}</small></div>
+        <div><dt>{{t .Locale "security.firewall"}}</dt><dd>{{if .Capabilities.Firewall.Running}}{{t .Locale "security.enabled"}}{{else}}{{t .Locale "security.attention"}}{{end}}</dd><small>Windows Defender Firewall</small></div>
+      </dl>
     </section>
     {{end}}
 
-    <div class="security-overview-grid">
-      <section aria-labelledby="security-risk-title">
-        <header class="section-heading"><div><p class="section-index">03</p><h2 id="security-risk-title">{{t .Locale "security.risk_events"}}</h2><p>{{t .Locale "security.risk_description"}}</p></div></header>
-        <div class="security-ledger">
-          {{if gt .LoginPage.Stats.HighRisk 0}}<article><span class="security-ledger__icon" data-state="attention"><span data-lucide="shield-alert" aria-hidden="true"></span></span><div><h3>{{t .Locale "security.high_risk_sources"}}</h3><p>{{.LoginPage.Stats.HighRisk}} {{t .Locale "security.sources_threshold"}}</p></div><span class="status-chip" data-state="attention"><span class="status-dot" aria-hidden="true"></span>{{t .Locale "security.high_risk"}}</span></article>{{end}}
-          {{if gt .LoginPage.Stats.Failure 0}}<article><span class="security-ledger__icon"><span data-lucide="key-round" aria-hidden="true"></span></span><div><h3>{{t .Locale "security.login_failures_detected"}}</h3><p>{{.LoginPage.Stats.Failure}} {{t .Locale "security.failure_events"}}</p></div><span class="status-chip"><span class="status-dot" aria-hidden="true"></span>{{t .Locale "security.observed"}}</span></article>{{end}}
-          {{if and (eq .LoginPage.Stats.Failure 0) (eq .LoginPage.Stats.HighRisk 0)}}<div class="empty-inline"><span data-lucide="circle-check" aria-hidden="true"></span>{{t .Locale "security.no_risk_events"}}</div>{{end}}
-        </div>
-      </section>
-      <aside aria-labelledby="security-capabilities-title">
-        <header class="section-heading"><div><p class="section-index">04</p><h2 id="security-capabilities-title">{{t .Locale "security.capabilities"}}</h2></div></header>
-        <div class="security-capability-list">
-          {{if .Linux}}
-          <div><span><strong>Fail2Ban</strong><small>{{t .Locale "security.bruteforce_protection"}}</small></span><span class="status-chip" data-state="{{if .Capabilities.Fail2Ban.Running}}current{{else}}stale{{end}}"><span class="status-dot" aria-hidden="true"></span>{{if .Capabilities.Fail2Ban.Running}}{{t .Locale "security.running"}}{{else if .Capabilities.Fail2Ban.Installed}}{{t .Locale "security.stopped"}}{{else}}{{t .Locale "security.not_installed"}}{{end}}</span></div>
-          <div><span><strong>UFW</strong><small>{{t .Locale "security.host_firewall"}}</small></span><span class="status-chip" data-state="{{if .Capabilities.UFWEnabled}}current{{else}}stale{{end}}"><span class="status-dot" aria-hidden="true"></span>{{if .Capabilities.UFWEnabled}}{{t .Locale "security.enabled"}}{{else if .Capabilities.UFW.Installed}}{{t .Locale "security.disabled"}}{{else}}{{t .Locale "security.not_installed"}}{{end}}</span></div>
-          {{else}}
-          <div><span><strong>Security Event Log</strong><small>4624 / 4625 / 4740</small></span><span class="status-chip" data-state="current"><span class="status-dot" aria-hidden="true"></span>{{t .Locale "security.native"}}</span></div>
-          <div><span><strong>Windows Defender Firewall</strong><small>{{t .Locale "security.host_firewall"}}</small></span><span class="status-chip" data-state="{{if .Capabilities.Firewall.Running}}current{{else}}attention{{end}}"><span class="status-dot" aria-hidden="true"></span>{{if .Capabilities.Firewall.Running}}{{t .Locale "security.enabled"}}{{else}}{{t .Locale "security.attention"}}{{end}}</span></div>
-          {{end}}
-        </div>
-      </aside>
-    </div>
-
-    <section aria-labelledby="security-recent-title">
-      <header class="section-heading section-heading--with-control"><div><p class="section-index">05</p><h2 id="security-recent-title">{{t .Locale "security.recent_logins"}}</h2></div><a class="button button--compact" href="/monitor/security?tab=logins&amp;range=24h">{{t .Locale "security.view_all"}}<span data-lucide="arrow-right" aria-hidden="true"></span></a></header>
+    <section class="security-activity-section" aria-labelledby="security-recent-title">
+      <header class="section-heading section-heading--with-control"><div><p class="section-index">02 / {{t .Locale "security.recent_activity"}}</p><h2 id="security-recent-title">{{t .Locale "security.recent_logins"}}</h2><p>{{t .Locale "security.recent_activity_description"}}</p></div><a class="button button--compact" href="/monitor/security?tab=logins&amp;range=24h">{{t .Locale "security.view_all"}}<span data-lucide="arrow-right" aria-hidden="true"></span></a></header>
+      <dl class="security-facts security-facts--activity">
+        <div><dt>{{t .Locale "security.failed_logins"}}</dt><dd>{{.LoginPage.Stats.Failure}}</dd><small>{{t .Locale "security.last_24h"}}</small></div>
+        <div><dt>{{t .Locale "security.successful_logins"}}</dt><dd>{{.LoginPage.Stats.Success}}</dd><small>{{t .Locale "security.last_24h"}}</small></div>
+        <div><dt>{{if .Windows}}RDP{{else}}{{t .Locale "security.high_risk_sources"}}{{end}}</dt><dd>{{if .Windows}}{{.LoginPage.Stats.RDP}}{{else}}{{.LoginPage.Stats.HighRisk}}{{end}}</dd><small>{{if .Windows}}Logon Type 10{{else}}{{t .Locale "security.needs_attention"}}{{end}}</small></div>
+        <div><dt>{{if .Windows}}{{t .Locale "security.locked_accounts"}}{{else}}{{t .Locale "security.current_bans"}}{{end}}</dt><dd>{{if .Windows}}{{.LoginPage.Stats.Locked}}{{else if .Capabilities.Fail2Ban.Installed}}{{.BanPage.Total}}{{else}}—{{end}}</dd><small>{{if .Windows}}4740{{else if .Capabilities.Fail2Ban.Installed}}Fail2Ban · sshd{{else}}{{t .Locale "security.fail2ban_not_installed"}}{{end}}</small></div>
+      </dl>
       {{template "security-login-table" .}}
     </section>
   {{end}}

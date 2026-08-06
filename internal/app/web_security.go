@@ -76,7 +76,16 @@ type securityPageView struct {
 	HasDraft         bool
 	HasSSHAllowRule  bool
 	RemoteLoginRows  []securityRemoteLoginRow
+	RemoteLogin      securityRemoteLoginSummary
 	DeferredData     bool
+}
+
+type securityRemoteLoginSummary struct {
+	Status       string
+	StatusTone   string
+	StatusDetail string
+	EntryCount   int
+	EntryDetail  string
 }
 
 type securityRemoteLoginRow struct {
@@ -217,10 +226,64 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 	view.HasSSHAllowRule = securityHasSSHAllowRule(view.Rules, capabilities.SSHPort)
 	if view.Linux && tab == "overview" {
 		view.RemoteLoginRows = securityRemoteLoginRows(locale, capabilities, view.BanPage.Total)
+		view.RemoteLogin = securityRemoteLoginSummaryFor(locale, capabilities)
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = securityTemplate.Execute(response, view)
+}
+
+func securityRemoteLoginSummaryFor(locale webLocale, capabilities hostsecurity.Capabilities) securityRemoteLoginSummary {
+	port := capabilities.SSHLogin.Port
+	if port == "" {
+		port = capabilities.SSHPort
+	}
+	if port == "" {
+		port = "22"
+	}
+	summary := securityRemoteLoginSummary{
+		Status: webText(locale, "security.normal"), StatusTone: "current",
+		StatusDetail: webText(locale, "security.configuration_healthy"),
+		EntryDetail:  "SSH · " + port + "/tcp",
+	}
+	if capabilities.SSH.Running {
+		summary.EntryCount = 1
+	}
+	switch {
+	case !capabilities.SSH.Installed:
+		summary.Status = webText(locale, "security.attention")
+		summary.StatusTone = "attention"
+		summary.StatusDetail = webText(locale, "security.not_installed")
+	case capabilities.SSH.Error != "":
+		summary.Status = webText(locale, "security.attention")
+		summary.StatusTone = "attention"
+		summary.StatusDetail = capabilities.SSH.Error
+	case !capabilities.SSH.Running:
+		summary.Status = webText(locale, "security.attention")
+		summary.StatusTone = "attention"
+		summary.StatusDetail = webText(locale, "security.stopped")
+	case strings.EqualFold(capabilities.SSHLogin.PasswordAuthentication, "yes"):
+		summary.Status = webText(locale, "security.attention")
+		summary.StatusTone = "attention"
+		summary.StatusDetail = webText(locale, "security.password_authentication_enabled")
+	case strings.EqualFold(capabilities.SSHLogin.PublicKeyAuthentication, "no"):
+		summary.Status = webText(locale, "security.attention")
+		summary.StatusTone = "attention"
+		summary.StatusDetail = webText(locale, "security.public_key_authentication_disabled")
+	case strings.EqualFold(capabilities.SSHLogin.RootLogin, "yes"):
+		summary.Status = webText(locale, "security.attention")
+		summary.StatusTone = "attention"
+		summary.StatusDetail = webText(locale, "security.root_remote_login_enabled")
+	case !capabilities.Fail2Ban.Installed:
+		summary.Status = webText(locale, "security.attention")
+		summary.StatusTone = "attention"
+		summary.StatusDetail = webText(locale, "security.fail2ban_not_installed")
+	case !capabilities.Fail2Ban.Running:
+		summary.Status = webText(locale, "security.attention")
+		summary.StatusTone = "attention"
+		summary.StatusDetail = "Fail2Ban · " + webText(locale, "security.stopped")
+	}
+	return summary
 }
 
 func securityRemoteLoginRows(locale webLocale, capabilities hostsecurity.Capabilities, currentBans int) []securityRemoteLoginRow {
