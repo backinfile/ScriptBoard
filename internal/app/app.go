@@ -1651,6 +1651,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /monitor/security/firewall/draft/discard", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.discardSecurityFirewallDraft)))
 	mux.Handle("POST /monitor/security/firewall/draft/apply", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.applySecurityFirewallDraft)))
 	mux.Handle("POST /monitor/security/firewall/enable", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.enableSecurityFirewall)))
+	mux.Handle("GET /monitor/security/windows-firewall/rules/new", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.newWindowsFirewallRuleTask)))
 	mux.Handle("POST /monitor/security/windows-firewall/rules", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.addWindowsFirewallRule)))
 	mux.Handle("POST /monitor/security/windows-firewall/toggle", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.toggleWindowsFirewallRule)))
 	mux.Handle("POST /monitor/security/windows-firewall/delete", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.deleteWindowsFirewallRule)))

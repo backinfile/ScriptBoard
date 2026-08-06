@@ -554,6 +554,7 @@
 
   function isDeferredDataURL(url) {
     const path = new URL(url, location.href).pathname;
+    if (path === "/monitor/security") return true;
     if (path === "/resources/variables" ||
         path === "/config/quick-runs" ||
         path === "/config/schedules" ||
@@ -609,6 +610,13 @@
     }
   }
 
+  function setNavigationProgress(busy) {
+    const progress = document.querySelector("[data-navigation-progress]");
+    if (!progress) return;
+    progress.hidden = !busy;
+    progress.toggleAttribute("aria-busy", busy);
+  }
+
   function cancelTaskPanelRequest() {
     const request = taskPanelRequest;
     if (!request) return;
@@ -628,6 +636,7 @@
     navigationRequest = request;
     navigationBusy = true;
     document.documentElement.setAttribute("aria-busy", "true");
+    setNavigationProgress(true);
     const deferredData = options.deferredData ?? isDeferredDataURL(url);
     const immediate = deferredData && options.immediate === true;
     const title = options.title || navigationTitle(mainNavigationLink(url));
@@ -726,6 +735,7 @@
         navigationRequest = null;
         navigationBusy = false;
         document.documentElement.removeAttribute("aria-busy");
+        setNavigationProgress(false);
       }
     }
   }
@@ -5220,9 +5230,15 @@
       openTask(destination.href, true, link);
     } else {
       const mainNavigation = link.matches(".sidebar-nav a");
+      const securityTab = link.matches("[data-security-tabs] a");
+      if (securityTab) {
+        link.closest("[data-security-tabs]")?.querySelectorAll("a[aria-current]").forEach(tab => tab.removeAttribute("aria-current"));
+        link.setAttribute("aria-current", "page");
+        link.setAttribute("aria-busy", "true");
+      }
       navigate(destination.href, true, {
         deferredData: isDeferredDataURL(destination.href),
-        immediate: mainNavigation,
+        immediate: mainNavigation || securityTab,
         title: mainNavigation ? navigationTitle(link) : undefined,
         focusSelector: link.dataset.focusAfterNavigation,
       });

@@ -3,9 +3,135 @@ package hostsecurity
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestWindowsLoginScriptTreatsNoMatchingEventsAsEmptyJSON(t *testing.T) {
+	for _, expected := range []string{
+		`Get-WinEvent -ErrorAction SilentlyContinue`,
+		`ConvertTo-Json -InputObject $events -Compress`,
+	} {
+		if !strings.Contains(windowsLoginScript, expected) {
+			t.Fatalf("Windows login script is missing %q", expected)
+		}
+	}
+}
+
+func TestCapabilitiesCacheAvoidsRepeatedWindowsFirewallProbes(t *testing.T) {
+	now := time.Date(2026, time.August, 6, 2, 0, 0, 0, time.UTC)
+	runner := &fakeRunner{}
+	manager := NewManager(Options{GOOS: "windows", Runner: runner, Now: func() time.Time { return now }})
+
+	manager.Capabilities(context.Background())
+	now = now.Add(10 * time.Second)
+	manager.Capabilities(context.Background())
+
+	probes := 0
+	for _, call := range runner.calls {
+		if strings.Contains(call, windowsFirewallScript) {
+			probes++
+		}
+	}
+	if probes != 1 {
+		t.Fatalf("Windows firewall probes=%d, want 1 within the cache lifetime; calls=%#v", probes, runner.calls)
+	}
+}
+
+func TestWindowsLoginCacheAvoidsRepeatedEventLogProbes(t *testing.T) {
+	now := time.Date(2026, time.August, 6, 2, 0, 0, 0, time.UTC)
+	runner := &fakeRunner{}
+	manager := NewManager(Options{GOOS: "windows", Runner: runner, Now: func() time.Time { return now }})
+	query := LoginQuery{Range: "24h", Page: 1, PageSize: 20}
+
+	if _, err := manager.Logins(context.Background(), query); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Logins(context.Background(), query); err != nil {
+		t.Fatal(err)
+	}
+
+	probes := 0
+	for _, call := range runner.calls {
+		if strings.Contains(call, "Get-WinEvent") {
+			probes++
+		}
+	}
+	if probes != 1 {
+		t.Fatalf("Windows Event Log probes=%d, want 1 within the cache lifetime; calls=%#v", probes, runner.calls)
+	}
+}
+
+func TestWindowsLoginRefreshBypassesEventLogCache(t *testing.T) {
+	now := time.Date(2026, time.August, 6, 2, 0, 0, 0, time.UTC)
+	runner := &fakeRunner{}
+	manager := NewManager(Options{GOOS: "windows", Runner: runner, Now: func() time.Time { return now }})
+	query := LoginQuery{Range: "24h", Page: 1, PageSize: 20}
+
+	if _, err := manager.Logins(context.Background(), query); err != nil {
+		t.Fatal(err)
+	}
+	query.Refresh = true
+	if _, err := manager.Logins(context.Background(), query); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(runner.calls) != 2 {
+		t.Fatalf("Windows Event Log calls=%d, want 2 after forced refresh; calls=%#v", len(runner.calls), runner.calls)
+	}
+}
+
+func TestSummarizeLoginsCountsOnlyValidFailedSourcesAsHighRisk(t *testing.T) {
+	records := []LoginRecord{
+		{Result: ResultSuccess, SourceIP: "203.0.113.10"},
+		{Result: ResultSuccess, SourceIP: "203.0.113.10"},
+		{Result: ResultSuccess, SourceIP: "203.0.113.10"},
+		{Result: ResultSuccess, SourceIP: "203.0.113.10"},
+		{Result: ResultSuccess, SourceIP: "203.0.113.10"},
+	}
+	for range 4 {
+		records = append(records, LoginRecord{Result: ResultFailure, SourceIP: "198.51.100.4"})
+	}
+	for range 5 {
+		records = append(records, LoginRecord{Result: ResultFailure, SourceIP: "198.51.100.5"})
+	}
+	for _, source := range []string{"", "-", "local", "localhost", "127.0.0.1", "::1"} {
+		for range 5 {
+			records = append(records, LoginRecord{Result: ResultFailure, SourceIP: source})
+		}
+	}
+
+	stats := summarizeLogins(records)
+	if stats.HighRisk != 1 {
+		t.Fatalf("HighRisk=%d, want only the source with 5 failures; stats=%#v", stats.HighRisk, stats)
+	}
+}
+
+func TestWindowsFirewallMutationInvalidatesCapabilitiesCache(t *testing.T) {
+	now := time.Date(2026, time.August, 6, 2, 0, 0, 0, time.UTC)
+	runner := &fakeRunner{}
+	manager := NewManager(Options{GOOS: "windows", Runner: runner, Now: func() time.Time { return now }})
+
+	manager.Capabilities(context.Background())
+	if err := manager.AddWindowsFirewallRule(context.Background(), FirewallRule{
+		Direction: DirectionInbound, Action: ActionAllow, Protocol: "tcp", Port: "443",
+		Address: "any", Name: "HTTPS", Profile: "any", Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	manager.Capabilities(context.Background())
+
+	probes := 0
+	for _, call := range runner.calls {
+		if strings.Contains(call, windowsFirewallScript) {
+			probes++
+		}
+	}
+	if probes != 2 {
+		t.Fatalf("Windows firewall probes=%d, want 2 after a mutation; calls=%#v", probes, runner.calls)
+	}
+}
 
 func TestParseLinuxLogins(t *testing.T) {
 	input := `2026-08-05T14:32:01+08:00 host sshd[10]: Failed password for invalid user root from 45.148.10.72 port 5512 ssh2
@@ -139,14 +265,60 @@ func TestWindowsFirewallUsesStructuredNetshArguments(t *testing.T) {
 		t.Fatalf("calls = %#v", runner.callArgs)
 	}
 	wantName := "name=DNS & echo not-a-command"
-	found := false
+	foundName := false
 	for _, argument := range runner.callArgs[0][1:] {
 		if argument == wantName {
-			found = true
+			foundName = true
 		}
 	}
-	if !found {
+	if !foundName {
 		t.Fatalf("structured name argument missing from %#v", runner.callArgs[0])
+	}
+}
+
+func TestWindowsFirewallTogglePassesGpoBooleanString(t *testing.T) {
+	if !strings.Contains(windowsToggleFirewallScript, `-Enabled $enabled`) {
+		t.Fatalf("Windows firewall toggle must pass the validated GpoBoolean string directly: %s", windowsToggleFirewallScript)
+	}
+	if strings.Contains(windowsToggleFirewallScript, `[bool]::Parse`) {
+		t.Fatalf("Windows firewall toggle must not convert the value to System.Boolean: %s", windowsToggleFirewallScript)
+	}
+}
+
+func TestWindowsFirewallProbeBulkLoadsFilters(t *testing.T) {
+	for _, expected := range []string{
+		`Security.Principal.WindowsPrincipal`,
+		`Administrator=$administrator`,
+		`[pscustomobject]@{Name=$_.Name;Enabled=($_.Enabled -eq 'True')}`,
+		`if ([string]::IsNullOrWhiteSpace($_.Group)) {0} else {1}`,
+		`$ports = @($rules | Get-NetFirewallPortFilter)`,
+		`$addresses = @($rules | Get-NetFirewallAddressFilter)`,
+		`$portMap[$port.InstanceID] = $port`,
+		`$addressMap[$address.InstanceID] = $address`,
+	} {
+		if !strings.Contains(windowsFirewallScript, expected) {
+			t.Fatalf("Windows firewall probe is missing bulk lookup %q", expected)
+		}
+	}
+	for _, perRuleQuery := range []string{`$_ | Get-NetFirewallPortFilter`, `$_ | Get-NetFirewallAddressFilter`} {
+		if strings.Contains(windowsFirewallScript, perRuleQuery) {
+			t.Fatalf("Windows firewall probe contains slow per-rule query %q", perRuleQuery)
+		}
+	}
+}
+
+func TestParseWindowsFirewallIncludesAdministratorState(t *testing.T) {
+	profiles, rules, administrator, known := parseWindowsFirewall(`{"Administrator":true,"Profiles":[{"Name":"Public","Enabled":true}],"Rules":[]}`)
+	if !known || !administrator {
+		t.Fatalf("administrator state = known %v administrator %v, want true true", known, administrator)
+	}
+	if len(profiles) != 1 || !profiles[0].Enabled || len(rules) != 0 {
+		t.Fatalf("parsed firewall data = profiles %#v rules %#v", profiles, rules)
+	}
+
+	_, _, administrator, known = parseWindowsFirewall(`{"Administrator":false,"Profiles":[],"Rules":[]}`)
+	if !known || administrator {
+		t.Fatalf("standard-user state = known %v administrator %v, want true false", known, administrator)
 	}
 }
 

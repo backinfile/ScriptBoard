@@ -48,6 +48,21 @@ type securityPageView struct {
 	DisplayedLogins  []hostsecurity.LoginRecord
 	BanPage          hostsecurity.BanPage
 	Rules            []hostsecurity.FirewallRule
+	RuleProtocol     string
+	RulePort         string
+	RuleAddress      string
+	RuleDirection    string
+	RuleStatus       string
+	RulePageSize     int
+	RulePage         int
+	RulePages        int
+	RuleTotal        int
+	RulePreviousURL  string
+	RuleNextURL      string
+	HasRulePrevious  bool
+	HasRuleNext      bool
+	RuleFiltering    bool
+	RefreshURL       string
 	DraftChanges     []securityFirewallChange
 	DraftUpdatedAt   time.Time
 	CanManage        bool
@@ -60,6 +75,7 @@ type securityPageView struct {
 	Windows          bool
 	HasDraft         bool
 	HasSSHAllowRule  bool
+	DeferredData     bool
 }
 
 func (a *App) securityPage(response http.ResponseWriter, request *http.Request) {
@@ -85,13 +101,37 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 	if pageSize != 50 && pageSize != 100 {
 		pageSize = 20
 	}
+	ruleProtocol := allowedSecurityFilter(request.URL.Query().Get("rule_protocol"), "tcp", "udp", "any")
+	ruleDirection := allowedSecurityFilter(request.URL.Query().Get("rule_direction"), "in", "out")
+	ruleStatus := allowedSecurityFilter(request.URL.Query().Get("rule_status"), "enabled", "disabled")
+	rulePort := boundedSecurityFilter(request.URL.Query().Get("rule_port"), 64)
+	ruleAddress := boundedSecurityFilter(request.URL.Query().Get("rule_address"), 128)
+	rulePage := positiveInt(request.URL.Query().Get("rule_page"), 1)
+	rulePageSize := positiveInt(request.URL.Query().Get("rule_page_size"), 20)
+	if rulePageSize != 50 && rulePageSize != 100 {
+		rulePageSize = 20
+	}
 	query := hostsecurity.LoginQuery{
 		Range: rangeValue, Start: dateRange.From, End: dateRange.ToExclusive,
 		Result: hostsecurity.LoginResult(request.URL.Query().Get("result")),
 		Type:   request.URL.Query().Get("type"), Page: page, PageSize: pageSize,
+		Refresh: request.URL.Query().Get("refresh") == "1",
 	}
 	if query.Result != hostsecurity.ResultSuccess && query.Result != hostsecurity.ResultFailure {
 		query.Result = ""
+	}
+	if isDeferredDataShell(request) {
+		response.Header().Set("Cache-Control", "no-store")
+		response.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = securityTemplate.Execute(response, securityPageView{
+			Locale: locale, CSRFToken: current.csrfToken, Tab: tab, Range: rangeValue,
+			Result: string(query.Result), LoginType: query.Type, FromDate: dateRange.FromDate, ToDate: dateRange.ToDate,
+			PageSize: pageSize, CanManage: roleAllows(current.role, permissionManageSystem), DeferredData: true,
+			RuleProtocol: ruleProtocol, RulePort: rulePort, RuleAddress: ruleAddress, RuleDirection: ruleDirection,
+			RuleStatus: ruleStatus, RulePage: rulePage, RulePageSize: rulePageSize,
+			RefreshURL: securityRefreshURL(request.URL.Query()),
+		})
+		return
 	}
 
 	capabilityContext, cancelCapabilities := context.WithTimeout(request.Context(), 12*time.Second)
@@ -103,6 +143,9 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 		PageSize: pageSize, Capabilities: capabilities, CanManage: roleAllows(current.role, permissionManageSystem),
 		ShowBans: request.URL.Query().Get("bans") == "1", ShowReview: request.URL.Query().Get("review") == "1",
 		Notice: securityNotice(locale, request.URL.Query().Get("notice")), Linux: capabilities.OS == "linux", Windows: capabilities.OS == "windows",
+		RuleProtocol: ruleProtocol, RulePort: rulePort, RuleAddress: ruleAddress, RuleDirection: ruleDirection,
+		RuleStatus: ruleStatus, RulePage: rulePage, RulePageSize: rulePageSize,
+		RefreshURL: securityRefreshURL(request.URL.Query()),
 	}
 
 	if tab == "overview" || tab == "logins" || tab == "defense" && capabilities.OS == "windows" {
@@ -146,10 +189,99 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 		view.DraftUpdatedAt = draft.UpdatedAt
 		view.HasDraft = len(draft.Changes) > 0
 	}
+	if view.Windows {
+		view.Rules = filterWindowsFirewallRules(view.Rules, ruleProtocol, rulePort, ruleAddress, ruleDirection, ruleStatus)
+		view.RuleFiltering = ruleProtocol != "" || rulePort != "" || ruleAddress != "" || ruleDirection != "" || ruleStatus != ""
+		view.RuleTotal = len(view.Rules)
+		view.RulePages = max(1, (view.RuleTotal+rulePageSize-1)/rulePageSize)
+		view.RulePage = min(rulePage, view.RulePages)
+		start := (view.RulePage - 1) * rulePageSize
+		end := min(start+rulePageSize, view.RuleTotal)
+		view.Rules = view.Rules[start:end]
+		view.HasRulePrevious = view.RulePage > 1
+		view.HasRuleNext = view.RulePage < view.RulePages
+		view.RulePreviousURL = windowsFirewallRulesURL(request.URL.Query(), view.RulePage-1, rulePageSize)
+		view.RuleNextURL = windowsFirewallRulesURL(request.URL.Query(), view.RulePage+1, rulePageSize)
+	}
 	view.HasSSHAllowRule = securityHasSSHAllowRule(view.Rules, capabilities.SSHPort)
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = securityTemplate.Execute(response, view)
+}
+
+func securityRefreshURL(query url.Values) string {
+	values := url.Values{}
+	for key, items := range query {
+		for _, item := range items {
+			values.Add(key, item)
+		}
+	}
+	values.Set("refresh", "1")
+	return "/monitor/security?" + values.Encode()
+}
+
+func allowedSecurityFilter(value string, allowed ...string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	for _, candidate := range allowed {
+		if value == candidate {
+			return value
+		}
+	}
+	return ""
+}
+
+func boundedSecurityFilter(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if len(value) > limit {
+		return value[:limit]
+	}
+	return value
+}
+
+func filterWindowsFirewallRules(rules []hostsecurity.FirewallRule, protocol, port, address, direction, status string) []hostsecurity.FirewallRule {
+	filtered := make([]hostsecurity.FirewallRule, 0, len(rules))
+	for _, rule := range rules {
+		if protocol != "" && !strings.EqualFold(rule.Protocol, protocol) {
+			continue
+		}
+		if port != "" && !strings.Contains(strings.ToLower(rule.Port), strings.ToLower(port)) {
+			continue
+		}
+		if address != "" && !strings.Contains(strings.ToLower(rule.Address), strings.ToLower(address)) {
+			continue
+		}
+		if direction != "" && !strings.EqualFold(string(rule.Direction), direction) {
+			continue
+		}
+		if status == "enabled" && !rule.Enabled || status == "disabled" && rule.Enabled {
+			continue
+		}
+		filtered = append(filtered, rule)
+	}
+	return filtered
+}
+
+func windowsFirewallRulesURL(query url.Values, page, pageSize int) string {
+	values := url.Values{}
+	values.Set("tab", "defense")
+	for _, key := range []string{"rule_protocol", "rule_port", "rule_address", "rule_direction", "rule_status"} {
+		if value := query.Get(key); value != "" {
+			values.Set(key, value)
+		}
+	}
+	values.Set("rule_page_size", strconv.Itoa(pageSize))
+	values.Set("rule_page", strconv.Itoa(max(1, page)))
+	return "/monitor/security?" + values.Encode()
+}
+
+func (a *App) newWindowsFirewallRuleTask(response http.ResponseWriter, request *http.Request) {
+	a.renderTaskPage(response, request, taskPageData{
+		Kind:        "windows-firewall-rule",
+		Title:       webText(resolveWebLocale(request), "security.add_rule"),
+		Description: webText(resolveWebLocale(request), "security.windows_rule_task_description"),
+		BackURL:     "/monitor/security?tab=defense",
+		Action:      "/monitor/security/windows-firewall/rules",
+	})
 }
 
 func positiveInt(value string, fallback int) int {

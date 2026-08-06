@@ -179,7 +179,8 @@ func normalizeWindowsIP(value string) string {
 }
 
 type windowsFirewallJSON struct {
-	Profiles []struct {
+	Administrator *bool
+	Profiles      []struct {
 		Name    string
 		Enabled bool
 	}
@@ -192,10 +193,10 @@ type windowsFirewallJSON struct {
 	}
 }
 
-func parseWindowsFirewall(output string) ([]FirewallProfile, []FirewallRule) {
+func parseWindowsFirewall(output string) ([]FirewallProfile, []FirewallRule, bool, bool) {
 	var value windowsFirewallJSON
 	if err := json.Unmarshal([]byte(strings.TrimSpace(output)), &value); err != nil {
-		return nil, nil
+		return nil, nil, false, false
 	}
 	profiles := make([]FirewallProfile, 0, len(value.Profiles))
 	for _, item := range value.Profiles {
@@ -218,7 +219,11 @@ func parseWindowsFirewall(output string) ([]FirewallProfile, []FirewallRule) {
 			Name: item.Name, Profile: item.Profile, Enabled: item.Enabled,
 		})
 	}
-	return profiles, rules
+	administrator, administratorKnown := false, value.Administrator != nil
+	if administratorKnown {
+		administrator = *value.Administrator
+	}
+	return profiles, rules, administrator, administratorKnown
 }
 
 func stringifyJSONValue(value any) string {

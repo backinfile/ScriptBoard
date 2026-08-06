@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/user"
 	"runtime"
 	"sort"
 	"strconv"
@@ -44,16 +45,18 @@ type Component struct {
 }
 
 type Capabilities struct {
-	OS          string
-	Hostname    string
-	CollectedAt time.Time
-	Fail2Ban    Component
-	UFW         Component
-	Firewall    Component
-	UFWEnabled  bool
-	SSHPort     string
-	Rules       []FirewallRule
-	Profiles    []FirewallProfile
+	OS                 string
+	Hostname           string
+	CollectedAt        time.Time
+	Administrator      bool
+	AdministratorKnown bool
+	Fail2Ban           Component
+	UFW                Component
+	Firewall           Component
+	UFWEnabled         bool
+	SSHPort            string
+	Rules              []FirewallRule
+	Profiles           []FirewallProfile
 }
 
 type LoginRecord struct {
@@ -75,14 +78,17 @@ type LoginQuery struct {
 	Type     string
 	Page     int
 	PageSize int
+	Refresh  bool
 }
 
 type LoginPage struct {
-	Records []LoginRecord
-	Total   int
-	Page    int
-	Pages   int
-	Stats   LoginStats
+	Records     []LoginRecord
+	Total       int
+	Page        int
+	Pages       int
+	Stats       LoginStats
+	CollectedAt time.Time
+	Cached      bool
 }
 
 type LoginStats struct {
@@ -143,9 +149,16 @@ type Runner interface {
 }
 
 type Options struct {
-	GOOS   string
-	Runner Runner
-	Now    func() time.Time
+	GOOS               string
+	Runner             Runner
+	Now                func() time.Time
+	CapabilityCacheTTL time.Duration
+	LoginCacheTTL      time.Duration
+}
+
+type loginCacheEntry struct {
+	records     []LoginRecord
+	collectedAt time.Time
 }
 
 type Service interface {
@@ -162,10 +175,16 @@ type Service interface {
 }
 
 type Manager struct {
-	goos   string
-	runner Runner
-	now    func() time.Time
-	mu     sync.Mutex
+	goos                 string
+	runner               Runner
+	now                  func() time.Time
+	capabilityCacheTTL   time.Duration
+	capabilityCache      Capabilities
+	capabilityCacheValid bool
+	loginCacheTTL        time.Duration
+	loginCache           map[string]loginCacheEntry
+	mu                   sync.Mutex
+	loginMu              sync.Mutex
 }
 
 func NewManager(options Options) *Manager {
@@ -181,13 +200,36 @@ func NewManager(options Options) *Manager {
 	if now == nil {
 		now = time.Now
 	}
-	return &Manager{goos: goos, runner: runner, now: now}
+	cacheTTL := options.CapabilityCacheTTL
+	if cacheTTL == 0 {
+		cacheTTL = 30 * time.Second
+	}
+	loginCacheTTL := options.LoginCacheTTL
+	if loginCacheTTL == 0 {
+		loginCacheTTL = 30 * time.Second
+	}
+	return &Manager{
+		goos: goos, runner: runner, now: now, capabilityCacheTTL: cacheTTL,
+		loginCacheTTL: loginCacheTTL, loginCache: make(map[string]loginCacheEntry),
+	}
 }
 
 func (m *Manager) Capabilities(ctx context.Context) Capabilities {
-	view := Capabilities{OS: m.goos, CollectedAt: m.now().UTC()}
-	hostnameExecutable, hostnameArguments := hostnameCommand(m.goos)
-	if name, err := m.runner.Run(ctx, hostnameExecutable, hostnameArguments...); err == nil {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := m.now().UTC()
+	if m.capabilityCacheValid && m.capabilityCacheTTL > 0 && now.Sub(m.capabilityCache.CollectedAt) >= 0 && now.Sub(m.capabilityCache.CollectedAt) < m.capabilityCacheTTL {
+		return cloneCapabilities(m.capabilityCache)
+	}
+	view := m.collectCapabilities(ctx, now)
+	m.capabilityCache = cloneCapabilities(view)
+	m.capabilityCacheValid = true
+	return cloneCapabilities(view)
+}
+
+func (m *Manager) collectCapabilities(ctx context.Context, now time.Time) Capabilities {
+	view := Capabilities{OS: m.goos, CollectedAt: now}
+	if name, err := os.Hostname(); err == nil {
 		view.Hostname = strings.TrimSpace(name)
 	}
 	if m.goos == "windows" {
@@ -197,7 +239,7 @@ func (m *Manager) Capabilities(ctx context.Context) Capabilities {
 			view.Firewall.Error = conciseError(err)
 			return view
 		}
-		view.Profiles, view.Rules = parseWindowsFirewall(output)
+		view.Profiles, view.Rules, view.Administrator, view.AdministratorKnown = parseWindowsFirewall(output)
 		for _, profile := range view.Profiles {
 			view.Firewall.Running = view.Firewall.Running || profile.Enabled
 		}
@@ -205,6 +247,10 @@ func (m *Manager) Capabilities(ctx context.Context) Capabilities {
 	}
 	if m.goos != "linux" {
 		return view
+	}
+	if current, err := user.Current(); err == nil {
+		view.AdministratorKnown = true
+		view.Administrator = current.Uid == "0"
 	}
 	view.SSHPort = m.sshPort(ctx)
 	view.Fail2Ban.Installed = m.runner.LookPath("fail2ban-client")
@@ -228,11 +274,14 @@ func (m *Manager) Capabilities(ctx context.Context) Capabilities {
 	return view
 }
 
-func hostnameCommand(goos string) (string, []string) {
-	if goos == "windows" {
-		return "hostname.exe", nil
-	}
-	return "hostname", nil
+func cloneCapabilities(value Capabilities) Capabilities {
+	value.Rules = append([]FirewallRule(nil), value.Rules...)
+	value.Profiles = append([]FirewallProfile(nil), value.Profiles...)
+	return value
+}
+
+func (m *Manager) invalidateCapabilitiesLocked() {
+	m.capabilityCacheValid = false
 }
 
 func (m *Manager) Logins(ctx context.Context, query LoginQuery) (LoginPage, error) {
@@ -243,9 +292,11 @@ func (m *Manager) Logins(ctx context.Context, query LoginQuery) (LoginPage, erro
 		loadQuery.Start = rangeStart
 	}
 	var records []LoginRecord
+	collectedAt := m.now().UTC()
+	cached := false
 	var err error
 	if m.goos == "windows" {
-		records, err = m.windowsLogins(ctx, loadQuery)
+		records, collectedAt, cached, err = m.cachedWindowsLogins(ctx, query, loadQuery)
 	} else if m.goos == "linux" {
 		records, err = m.linuxLogins(ctx, loadQuery)
 	} else {
@@ -260,7 +311,37 @@ func (m *Manager) Logins(ctx context.Context, query LoginQuery) (LoginPage, erro
 	query.Page = min(max(1, query.Page), pages)
 	start := min((query.Page-1)*query.PageSize, len(filtered))
 	end := min(start+query.PageSize, len(filtered))
-	return LoginPage{Records: filtered[start:end], Total: len(filtered), Page: query.Page, Pages: pages, Stats: stats}, nil
+	return LoginPage{
+		Records: filtered[start:end], Total: len(filtered), Page: query.Page, Pages: pages, Stats: stats,
+		CollectedAt: collectedAt, Cached: cached,
+	}, nil
+}
+
+func (m *Manager) cachedWindowsLogins(ctx context.Context, query, loadQuery LoginQuery) ([]LoginRecord, time.Time, bool, error) {
+	key := windowsLoginCacheKey(query)
+	m.loginMu.Lock()
+	defer m.loginMu.Unlock()
+	now := m.now().UTC()
+	if entry, ok := m.loginCache[key]; ok && !query.Refresh && m.loginCacheTTL > 0 && now.Sub(entry.collectedAt) >= 0 && now.Sub(entry.collectedAt) < m.loginCacheTTL {
+		return append([]LoginRecord(nil), entry.records...), entry.collectedAt, true, nil
+	}
+	records, err := m.windowsLogins(ctx, loadQuery)
+	if err != nil {
+		return nil, time.Time{}, false, err
+	}
+	collectedAt := m.now().UTC()
+	if m.loginCacheTTL > 0 {
+		m.loginCache[key] = loginCacheEntry{records: append([]LoginRecord(nil), records...), collectedAt: collectedAt}
+	}
+	return records, collectedAt, false, nil
+}
+
+func windowsLoginCacheKey(query LoginQuery) string {
+	return strings.Join([]string{
+		query.Range,
+		query.Start.UTC().Format(time.RFC3339Nano),
+		query.End.UTC().Format(time.RFC3339Nano),
+	}, "|")
 }
 
 func (m *Manager) linuxLogins(ctx context.Context, query LoginQuery) ([]LoginRecord, error) {
@@ -332,9 +413,15 @@ func filterLogins(records []LoginRecord, query LoginQuery) []LoginRecord {
 
 func summarizeLogins(records []LoginRecord) LoginStats {
 	stats := LoginStats{}
-	sources := make(map[string]int)
+	uniqueSources := make(map[string]struct{})
+	failedSources := make(map[string]int)
 	for _, record := range records {
-		sources[record.SourceIP]++
+		if source, ok := validLoginSource(record.SourceIP); ok {
+			uniqueSources[source] = struct{}{}
+			if record.Result == ResultFailure {
+				failedSources[source]++
+			}
+		}
 		switch record.Result {
 		case ResultSuccess:
 			stats.Success++
@@ -348,13 +435,23 @@ func summarizeLogins(records []LoginRecord) LoginStats {
 			stats.Locked++
 		}
 	}
-	stats.UniqueSources = len(sources)
-	for _, count := range sources {
+	stats.UniqueSources = len(uniqueSources)
+	for _, count := range failedSources {
 		if count >= 5 {
 			stats.HighRisk++
 		}
 	}
 	return stats
+}
+
+func validLoginSource(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	switch strings.ToLower(value) {
+	case "", "-", "local", "localhost", "0.0.0.0", "::", "127.0.0.1", "::1":
+		return "", false
+	default:
+		return value, true
+	}
 }
 
 func (m *Manager) Bans(ctx context.Context, page, pageSize int) (BanPage, error) {
@@ -418,6 +515,7 @@ func (m *Manager) Install(ctx context.Context, component string) error {
 			return fmt.Errorf("start fail2ban: %w", err)
 		}
 	}
+	m.invalidateCapabilitiesLocked()
 	return nil
 }
 
@@ -448,6 +546,7 @@ func (m *Manager) EnableUFW(ctx context.Context, rules []FirewallRule) error {
 	if _, err := m.runner.Run(ctx, "ufw", "--force", "enable"); err != nil {
 		return fmt.Errorf("enable UFW: %w", err)
 	}
+	m.invalidateCapabilitiesLocked()
 	return nil
 }
 
@@ -509,6 +608,7 @@ func (m *Manager) ApplyUFW(ctx context.Context, baseline, desired []FirewallRule
 			return fmt.Errorf("add UFW rule %s: %w", rule.Name, err)
 		}
 	}
+	m.invalidateCapabilitiesLocked()
 	return nil
 }
 
@@ -550,6 +650,7 @@ func (m *Manager) AddWindowsFirewallRule(ctx context.Context, rule FirewallRule)
 	if _, err := m.runner.Run(ctx, "netsh.exe", args...); err != nil {
 		return fmt.Errorf("add Windows firewall rule: %w", err)
 	}
+	m.invalidateCapabilitiesLocked()
 	return nil
 }
 
@@ -570,6 +671,7 @@ func (m *Manager) SetWindowsFirewallRuleEnabled(ctx context.Context, id string, 
 	if _, err := m.runner.Run(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", windowsToggleFirewallScript, encodedID, value); err != nil {
 		return fmt.Errorf("update Windows firewall rule: %w", err)
 	}
+	m.invalidateCapabilitiesLocked()
 	return nil
 }
 
@@ -586,6 +688,7 @@ func (m *Manager) DeleteWindowsFirewallRule(ctx context.Context, id string) erro
 	if _, err := m.runner.Run(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", windowsDeleteFirewallScript, encodedID); err != nil {
 		return fmt.Errorf("delete Windows firewall rule: %w", err)
 	}
+	m.invalidateCapabilitiesLocked()
 	return nil
 }
 
@@ -766,21 +869,29 @@ func (commandRunner) LookPath(name string) bool {
 	return err == nil
 }
 
-const windowsFirewallScript = `$profiles = @(Get-NetFirewallProfile | Select-Object Name,Enabled)
-$rules = @(Get-NetFirewallRule -PolicyStore ActiveStore | Select-Object -First 200 | ForEach-Object {
-  $port = $_ | Get-NetFirewallPortFilter
-  $address = $_ | Get-NetFirewallAddressFilter
+const windowsFirewallScript = `$administrator = (New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+$profiles = @(Get-NetFirewallProfile | ForEach-Object {[pscustomobject]@{Name=$_.Name;Enabled=($_.Enabled -eq 'True')}})
+$rules = @(Get-NetFirewallRule -PolicyStore ActiveStore | Sort-Object @{Expression={if ([string]::IsNullOrWhiteSpace($_.Group)) {0} else {1}}},DisplayName | Select-Object -First 200)
+$ports = @($rules | Get-NetFirewallPortFilter)
+$addresses = @($rules | Get-NetFirewallAddressFilter)
+$portMap = @{}
+foreach ($port in $ports) {$portMap[$port.InstanceID] = $port}
+$addressMap = @{}
+foreach ($address in $addresses) {$addressMap[$address.InstanceID] = $address}
+$rules = @($rules | ForEach-Object {
+  $port = $portMap[$_.InstanceID]
+  $address = $addressMap[$_.InstanceID]
   [pscustomobject]@{ID=$_.Name;Name=$_.DisplayName;Direction=$_.Direction.ToString();Action=$_.Action.ToString();Profile=$_.Profile.ToString();Protocol=$port.Protocol;Port=$port.LocalPort;Address=$address.RemoteAddress;Enabled=($_.Enabled -eq 'True')}
 })
-[pscustomobject]@{Profiles=$profiles;Rules=$rules} | ConvertTo-Json -Depth 5 -Compress`
+[pscustomobject]@{Administrator=$administrator;Profiles=$profiles;Rules=$rules} | ConvertTo-Json -Depth 5 -Compress`
 
-const windowsToggleFirewallScript = `& { param($encodedId,$enabled) $id=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encodedId)); Set-NetFirewallRule -Name $id -Enabled ([bool]::Parse($enabled)) | Out-Null }`
+const windowsToggleFirewallScript = `& { param($encodedId,$enabled) $id=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encodedId)); Set-NetFirewallRule -Name $id -Enabled $enabled | Out-Null }`
 
 const windowsDeleteFirewallScript = `& { param($encodedId) $id=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encodedId)); Remove-NetFirewallRule -Name $id }`
 
 const windowsLoginScript = `$since = [DateTime]::Parse('__SINCE__').ToUniversalTime()
-$events = Get-WinEvent -FilterHashtable @{LogName='Security';Id=4624,4625,4740;StartTime=$since} -MaxEvents 5000 | ForEach-Object {
+$events = @(Get-WinEvent -ErrorAction SilentlyContinue -FilterHashtable @{LogName='Security';Id=4624,4625,4740;StartTime=$since} -MaxEvents 5000 | ForEach-Object {
   [xml]$xml = $_.ToXml(); $data = @{}; foreach ($item in $xml.Event.EventData.Data) {$data[$item.Name] = [string]$item.'#text'}
   [pscustomobject]@{Time=$_.TimeCreated.ToUniversalTime().ToString('o');EventID=[string]$_.Id;User=$data.TargetUserName;IP=$data.IpAddress;LogonType=$data.LogonType;Status=$data.Status;SubStatus=$data.SubStatus}
-}
-$events | ConvertTo-Json -Compress`
+})
+ConvertTo-Json -InputObject $events -Compress`

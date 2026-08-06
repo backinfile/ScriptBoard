@@ -6,7 +6,19 @@
   <a class="task-back" href="{{.BackURL}}"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "common.back"}}</a>
   <section class="task-sheet">
     <header><div><p class="page-eyebrow">{{if or (eq .Kind "user-edit") (eq .Kind "user-create")}}{{t .Locale "users.accounts"}}{{else if or (eq .Kind "account-username") (eq .Kind "account-password")}}{{t .Locale "settings.account"}}{{else if eq .Kind "move-file"}}{{t .Locale "files.move"}}{{else}}{{t .Locale "common.create"}}{{end}}</p><h1>{{.Title}}</h1><p>{{.Description}}</p></div><a class="icon-button" href="{{.BackURL}}" aria-label="{{t .Locale "common.close"}}"><span data-lucide="x" aria-hidden="true"></span></a></header>
-    {{if eq .Kind "user-create"}}
+    {{if eq .Kind "windows-firewall-rule"}}
+    <form method="post" action="{{.Action}}">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <label>{{t .Locale "security.direction"}} <select name="direction" required autofocus><option value="in">{{t .Locale "security.inbound"}}</option><option value="out">{{t .Locale "security.outbound"}}</option></select></label>
+      <label>{{t .Locale "security.action"}} <select name="action" required><option value="allow">{{t .Locale "security.allow"}}</option><option value="deny">{{t .Locale "security.deny"}}</option></select></label>
+      <label>{{t .Locale "security.protocol"}} <select name="protocol" required><option value="tcp">TCP</option><option value="udp">UDP</option></select></label>
+      <label>{{t .Locale "security.port"}} <input name="port" inputmode="numeric" autocomplete="off" required placeholder="3389"></label>
+      <label>{{t .Locale "security.address"}} <input name="address" autocomplete="off" required value="any"></label>
+      <label>{{t .Locale "security.firewall_profile"}} <select name="profile"><option value="any">{{t .Locale "security.all_profiles"}}</option><option value="domain">Domain</option><option value="private">Private</option><option value="public">Public</option></select></label>
+      <label>{{t .Locale "common.name"}} <input name="name" autocomplete="off" maxlength="120" required placeholder="Remote Desktop"></label>
+      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="shield-plus" aria-hidden="true"></span>{{t .Locale "security.add_rule"}}</button></footer>
+    </form>
+    {{else if eq .Kind "user-create"}}
     <form method="post" action="{{.Action}}">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <label>{{t .Locale "login.username"}} <input name="username" autocomplete="username" spellcheck="false" maxlength="64" required autofocus></label>
