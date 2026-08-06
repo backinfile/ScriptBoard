@@ -19,6 +19,7 @@ type liveLogPageView struct {
 	Metadata               logstream.Metadata
 	BackURL, HistoryURL    string
 	EventsURL, DownloadURL string
+	Title                  string
 	Locale                 webLocale
 }
 
@@ -29,16 +30,18 @@ func (a *App) fileLogPage(response http.ResponseWriter, request *http.Request) {
 		writeLogSourceError(response, err)
 		return
 	}
-	relative := source.Metadata().Name
+	metadata := source.Metadata()
+	relative := metadata.Name
 	parent, _ := hostfiles.Parent(relative)
 	values := url.Values{"path": {relative}}
+	locale := resolveWebLocale(request)
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = liveLogTemplate.Execute(response, liveLogPageView{
-		Metadata: source.Metadata(), BackURL: filesURL(parent),
+		Metadata: metadata, Title: webText(locale, "logs.live_view"), BackURL: filesURL(parent),
 		HistoryURL:  "/resources/files/log/history?" + values.Encode(),
 		EventsURL:   "/resources/files/log/events?" + values.Encode(),
 		DownloadURL: routeFileURL("/resources/files/download", relative),
-		Locale:      resolveWebLocale(request),
+		Locale:      locale,
 	})
 }
 
@@ -50,9 +53,10 @@ func (a *App) applicationLogPage(response http.ResponseWriter, request *http.Req
 		return
 	}
 	baseURL := "/monitor/applications/" + url.PathEscape(request.PathValue("id")) + "/logs"
+	metadata := source.Metadata()
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = liveLogTemplate.Execute(response, liveLogPageView{
-		Metadata: source.Metadata(), BackURL: "/monitor/applications",
+		Metadata: metadata, Title: metadata.Name, BackURL: "/monitor/applications",
 		HistoryURL: baseURL + "/history", EventsURL: baseURL + "/events",
 		Locale: resolveWebLocale(request),
 	})

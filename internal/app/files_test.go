@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"html"
 	"io"
@@ -149,6 +150,60 @@ func TestFilesPageOffersAnAbsolutePathMoveTask(t *testing.T) {
 	}
 }
 
+func TestFilesPageOffersCopyPathsForDirectoriesAndFiles(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "host & scripts")
+	directoryPath := filepath.Join(hostRoot, "reports")
+	filePath := filepath.Join(hostRoot, "daily report.txt")
+	if err := os.MkdirAll(directoryPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filePath, []byte("report"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
+
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	listing, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(listing)
+	for _, expected := range []string{
+		`data-copy-value="` + html.EscapeString(directoryPath) + `" data-copy-label="Copy path"`,
+		`data-copy-value="` + html.EscapeString(hostRoot) + `" data-copy-label="Copy path"`,
+		`data-copy-value="` + html.EscapeString(filePath) + `" data-copy-label="Copy full path"`,
+		`data-copy-value-label>Copy full path</span>`,
+		`data-copied-label="Path copied"`,
+		`data-copy-failed-label="Copy failed. Try again."`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("files page does not contain %q: %s", expected, page)
+		}
+	}
+
+	response, err = client.Get(serverURL + "/assets/app-v2.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{`[data-copy-value]`, `navigator.clipboard.writeText(copyButton.dataset.copyValue || "")`} {
+		if !bytes.Contains(script, []byte(expected)) {
+			t.Fatalf("interaction script does not contain %q", expected)
+		}
+	}
+}
+
 func TestFilesPageOffersDropUploadForCurrentDirectory(t *testing.T) {
 	t.Parallel()
 
@@ -260,7 +315,7 @@ func TestFilesPageHidesDotEntriesByDefaultAndPreservesTheVisibilityChoice(t *tes
 	}
 }
 
-func TestFilesPageOffersCollapsedBrowserLocalQuickAccess(t *testing.T) {
+func TestFilesPageOffersCollapsedInstanceQuickAccess(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -289,6 +344,9 @@ func TestFilesPageOffersCollapsedBrowserLocalQuickAccess(t *testing.T) {
 		`data-file-pin-label="automation"`,
 		`data-file-pin-href="` + html.EscapeString(hostFileHref("/resources/files", filepath.Join(hostRoot, "automation"))) + `"`,
 		`data-validation-url="/resources/files/validate"`,
+		`data-pins-url="/resources/files/quick-access"`,
+		`data-csrf-token="`,
+		`data-file-quick-status`,
 		`data-file-quick-one-label>folder</span>`,
 		`data-file-quick-many-label>folders</span>`,
 		"Quick access",
@@ -301,6 +359,109 @@ func TestFilesPageOffersCollapsedBrowserLocalQuickAccess(t *testing.T) {
 	if strings.Contains(page, `data-file-quick-access hidden open`) {
 		t.Fatalf("quick access should be collapsed by default: %s", page)
 	}
+	if strings.Contains(page, "Pinned folders are saved") {
+		t.Fatalf("Quick access still renders explanatory copy: %s", page)
+	}
+
+	response, err = client.Get(serverURL + "/assets/app-v2.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		`fetch(disclosure.dataset.pinsUrl`,
+		`method: "POST"`,
+		`localStorage.removeItem(storageKey)`,
+	} {
+		if !bytes.Contains(script, []byte(expected)) {
+			t.Fatalf("Quick access interaction script does not contain %q", expected)
+		}
+	}
+}
+
+func TestFileQuickAccessPinsPersistGlobally(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "managed")
+	pinnedPath := filepath.Join(hostRoot, "automation")
+	if err := os.MkdirAll(pinnedPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	admin, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
+
+	response, err := admin.Get(hostFilesRequestURL(serverURL, hostRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err = admin.PostForm(serverURL+"/resources/files/quick-access", url.Values{
+		"csrf_token": {formToken(t, page)},
+		"path":       {pinnedPath},
+		"pinned":     {"true"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(response.Body)
+		t.Fatalf("pin directory status=%d body=%s", response.StatusCode, body)
+	}
+	var pinned struct {
+		Pins []struct {
+			Path, Label, Href string
+		} `json:"pins"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&pinned); err != nil {
+		t.Fatal(err)
+	}
+	if len(pinned.Pins) != 1 || pinned.Pins[0].Path != pinnedPath || pinned.Pins[0].Label != "automation" || pinned.Pins[0].Href != hostFileHref("/resources/files", pinnedPath) {
+		t.Fatalf("persisted Quick access pins = %#v", pinned.Pins)
+	}
+
+	response, err = admin.Get(serverURL + "/resources/files/quick-access")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned.Pins = nil
+	if err := json.NewDecoder(response.Body).Decode(&pinned); err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if len(pinned.Pins) != 1 || pinned.Pins[0].Path != pinnedPath {
+		t.Fatalf("reloaded Quick access pins = %#v", pinned.Pins)
+	}
+
+	operator := createRoleUserClient(t, admin, serverURL, "quick-access-operator", "operator")
+	response, err = operator.Get(serverURL + "/resources/files/quick-access")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var operatorPins struct {
+		Pins []fileQuickAccessPinTestView `json:"pins"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&operatorPins); err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if len(operatorPins.Pins) != 1 || operatorPins.Pins[0].Path != pinnedPath {
+		t.Fatalf("operator did not receive the global Quick access pins: %#v", operatorPins.Pins)
+	}
+}
+
+type fileQuickAccessPinTestView struct {
+	Path  string `json:"path"`
+	Label string `json:"label"`
+	Href  string `json:"href"`
 }
 
 func TestOperatorGetsReadOnlyFilesWithoutAnUploadDropTarget(t *testing.T) {

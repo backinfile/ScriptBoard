@@ -19,6 +19,8 @@ ScriptBoard is a self-hosted script console for a single Windows or Linux host. 
 - run PowerShell, Python, Shell, Batch, and CMD scripts with live output;
 - save frequently used scripts as Quick Runs with reusable parameters and variables;
 - create schedules with five-field Cron expressions;
+- expose bounded inbound triggers for logs, uploads, Quick Runs, and constrained variable updates;
+- review remote-login activity and manage Windows Defender Firewall or Linux UFW and Fail2Ban;
 - view host resources, local applications, Docker containers, websites, run history, and audit records;
 - use the optional AI assistant with resources you choose to reference;
 - restore files deleted through the web interface from ScriptBoard Trash;
@@ -116,6 +118,18 @@ Separate script arguments with spaces and quote arguments that contain spaces. T
 ### Quick Runs and schedules
 
 After running a script, save its path, argument template, and timeout as a Quick Run. Schedules use standard five-field Cron expressions; for example, `0 2 * * *` runs every day at 02:00. Missed triggers are not replayed after the service restarts.
+
+### External Interfaces
+
+Administrators and Maintainers can create time-limited keys under Configuration → External Interfaces. Each key may contain multiple named function entries for recording a log, uploading one file to a fixed directory, starting one existing Quick Run, or updating one non-password variable under Boolean, integer, enum, or short-text constraints.
+
+Call an entry with `POST /trigger?name=ENTRY_NAME` and `Authorization: Bearer KEY`. Administrators and Maintainers can copy the complete key from the key-management area; Operators and Viewers cannot view it. Keep it in a secret store, use HTTPS outside loopback, and disable or rotate it when the calling system no longer needs access.
+
+### Host security
+
+Monitoring → Host Security brings together Windows login events or Linux SSH login records, remote-login configuration, and firewall status. On Windows, it can manage Windows Defender Firewall rules. On Linux, it can install Fail2Ban and UFW, inspect or remove SSH bans, and synchronize UFW rules and default policies after a change review.
+
+Every role can inspect the detected state; only Administrators and Maintainers can change host defenses. Firewall, remote-login, and ban operations can interrupt access to the host. Confirm that the service runs with Administrator or root privileges, preserve an allow rule for the active management port, and keep an out-of-band recovery path.
 
 ### AI assistant
 

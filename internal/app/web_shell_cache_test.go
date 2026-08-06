@@ -42,6 +42,52 @@ func TestApplicationShellCondensesAQuietHostToOneAttentionSummary(t *testing.T) 
 	}
 }
 
+func TestApplicationShellProvidesVisiblePJAXNavigationProgress(t *testing.T) {
+	var rendered bytes.Buffer
+	if err := applicationShellTemplate.Execute(&rendered, applicationShellData{Locale: localeEnglishUS}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rendered.String(), `data-navigation-progress`) || !strings.Contains(rendered.String(), `role="status"`) {
+		t.Fatalf("application shell has no navigation progress status: %s", rendered.String())
+	}
+
+	script, err := webFiles.ReadFile("web/assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{`setNavigationProgress(true)`, `setNavigationProgress(false)`} {
+		if !strings.Contains(string(script), expected) {
+			t.Fatalf("PJAX navigation does not toggle visible progress with %q", expected)
+		}
+	}
+
+	stylesheet, err := webFiles.ReadFile("web/assets/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(stylesheet), `.navigation-progress`) {
+		t.Fatal("navigation progress has no visual styling")
+	}
+}
+
+func TestSecurityTabsCommitImmediateLoadingState(t *testing.T) {
+	script, err := webFiles.ReadFile("web/assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(script)
+	for _, expected := range []string{
+		`link.matches("[data-security-tabs] a")`,
+		`link.setAttribute("aria-current", "page")`,
+		`link.setAttribute("aria-busy", "true")`,
+		`immediate: mainNavigation || securityTab`,
+	} {
+		if !strings.Contains(js, expected) {
+			t.Fatalf("security tab navigation does not commit immediate feedback with %q", expected)
+		}
+	}
+}
+
 func TestApplicationShellShowsOnlyCurrentAttentionItems(t *testing.T) {
 	var rendered bytes.Buffer
 	err := applicationShellTemplate.Execute(&rendered, applicationShellData{

@@ -199,6 +199,7 @@ func TestPJAXDataShellIsLimitedToLargeListRoutes(t *testing.T) {
 		{path: runsPath, deferred: true},
 		{path: "/history/audit", deferred: true},
 		{path: "/resources/trash", deferred: true},
+		{path: "/monitor/security", deferred: true},
 		{path: "/monitor", deferred: false},
 		{path: "/settings/account", deferred: false},
 		{path: "/settings/display", deferred: false},

@@ -118,6 +118,7 @@
   let taskPanelState = null;
   let taskPanelRequest = null;
   let taskPanelHistoryClosePending = false;
+  let taskPanelRefreshAfterCloseURL = "";
   let activeFileConflictDialog = null;
 
   const locale = () => document.documentElement.lang === "zh-CN" ? "zh-CN" : "en-US";
@@ -553,6 +554,7 @@
 
   function isDeferredDataURL(url) {
     const path = new URL(url, location.href).pathname;
+    if (path === "/monitor/security") return true;
     if (path === "/resources/variables" ||
         path === "/config/quick-runs" ||
         path === "/config/schedules" ||
@@ -608,6 +610,13 @@
     }
   }
 
+  function setNavigationProgress(busy) {
+    const progress = document.querySelector("[data-navigation-progress]");
+    if (!progress) return;
+    progress.hidden = !busy;
+    progress.toggleAttribute("aria-busy", busy);
+  }
+
   function cancelTaskPanelRequest() {
     const request = taskPanelRequest;
     if (!request) return;
@@ -627,6 +636,7 @@
     navigationRequest = request;
     navigationBusy = true;
     document.documentElement.setAttribute("aria-busy", "true");
+    setNavigationProgress(true);
     const deferredData = options.deferredData ?? isDeferredDataURL(url);
     const immediate = deferredData && options.immediate === true;
     const title = options.title || navigationTitle(mainNavigationLink(url));
@@ -725,6 +735,7 @@
         navigationRequest = null;
         navigationBusy = false;
         document.documentElement.removeAttribute("aria-busy");
+        setNavigationProgress(false);
       }
     }
   }
@@ -735,6 +746,8 @@
     initDirectoryPickers(main, cleanups);
     initQuickCreateDefaults(main, cleanups);
     initScheduleCron(cleanups, main);
+    initExternalEntryForm(main, cleanups);
+	initCopyControls(main, cleanups);
     const websiteForm = main.querySelector("[data-website-monitor-form]");
     if (websiteForm) cleanups.push(initWebsiteMonitorForm(websiteForm));
     const websiteMonitoring = main.matches("[data-website-monitoring],[data-website-detail]")
@@ -745,6 +758,31 @@
       ? main
       : main.querySelector("[data-website-nginx]");
     if (websiteNginx) cleanups.push(initWebsiteNginx(websiteNginx));
+  }
+
+  function initExternalEntryForm(root = document, cleanups = []) {
+    const form = root.querySelector("[data-external-entry-form]");
+    if (!form || form.dataset.externalReady) return;
+    form.dataset.externalReady = "true";
+    const action = form.querySelector("[data-external-action-type]");
+    const variableType = form.querySelector("[data-external-variable-type]");
+    const refresh = () => {
+      form.querySelectorAll("[data-external-action-fields]").forEach(section => {
+        const active = section.dataset.externalActionFields === action?.value;
+        section.hidden = !active;
+        section.querySelectorAll("input,select,textarea").forEach(field => field.disabled = !active);
+      });
+      form.querySelectorAll("[data-external-variable-fields]").forEach(section => {
+        const active = action?.value === "variable" && section.dataset.externalVariableFields === variableType?.value;
+        section.hidden = !active;
+        section.querySelectorAll("input,select,textarea").forEach(field => field.disabled = !active);
+      });
+    };
+    action?.addEventListener("change", refresh);
+    variableType?.addEventListener("change", refresh);
+    cleanups.push(() => action?.removeEventListener("change", refresh));
+    cleanups.push(() => variableType?.removeEventListener("change", refresh));
+    refresh();
   }
 
   function initDirectoryPickers(scope, cleanups) {
@@ -961,6 +999,11 @@
     });
   }
 
+  function removeWebsiteTaskPanelBackLink(taskMain) {
+    if (!taskMain.dataset.taskKind?.startsWith("website-")) return;
+    taskMain.querySelector(':scope > .website-task-heading > a[href="/monitor/websites"], .website-detail-back')?.remove();
+  }
+
   function buildTaskPanel(main, url, push) {
     const returnFocus = taskPanelState?.returnFocus || document.activeElement;
     closeTaskPanel(false, false);
@@ -970,10 +1013,14 @@
     host.innerHTML = '<button class="task-panel-scrim" type="button"></button><section class="task-panel" role="dialog" aria-modal="true" tabindex="-1" data-task-panel><button class="task-panel-close" type="button" data-task-panel-close><span data-lucide="x" aria-hidden="true"></span></button></section>';
     const closeLabel = main.dataset.taskCloseLabel || words().loadFailed;
     host.querySelector(".task-panel-scrim").setAttribute("aria-label", closeLabel);
-    host.querySelector(".task-panel-close").setAttribute("aria-label", closeLabel);
+    const outerClose = host.querySelector(".task-panel-close");
+    outerClose.setAttribute("aria-label", closeLabel);
     const panel = host.querySelector(".task-panel");
     if (main.dataset.taskKind) panel.classList.add(`task-panel--${main.dataset.taskKind}`);
     const panelMain = document.importNode(main, true);
+    const innerClose = panelMain.querySelector(".task-sheet > header > .icon-button");
+    innerClose?.remove();
+    removeWebsiteTaskPanelBackLink(panelMain);
     const heading = panelMain.querySelector("h1");
     if (heading) {
       heading.id ||= `task-panel-heading-${Date.now()}`;
@@ -998,12 +1045,12 @@
       );
     }
     requestAnimationFrame(() => host.classList.add("is-open"));
-    host.querySelector("[data-task-panel-close]")?.focus();
+    outerClose.focus();
     background.forEach(({ child }) => {
       child.inert = true;
       child.setAttribute("aria-hidden", "true");
     });
-    renderIcons(host.querySelector("[data-task-panel-close]"));
+    renderIcons(outerClose);
     initTaskPanelMain(panelMain, cleanups);
   }
 
@@ -1027,6 +1074,7 @@
 
     state.cleanups.splice(0).forEach(cleanup => cleanup());
     const imported = document.importNode(nextMain, true);
+    removeWebsiteTaskPanelBackLink(imported);
     const heading = imported.querySelector("h1");
     if (heading) {
       heading.id ||= `task-panel-heading-${Date.now()}`;
@@ -1083,7 +1131,8 @@
 
   function closeTaskPanel(useHistory = true, restoreFocus = true) {
     if (!taskPanelState) return;
-    const { host, cleanups = [], background = [], returnFocus } = taskPanelState;
+    const { host, cleanups = [], background = [], returnFocus, returnURL } = taskPanelState;
+    const refreshAfterClose = useHistory && host.querySelector("main[data-task-refresh-on-close]");
     taskPanelState = null;
     cleanups.splice(0).forEach(cleanup => cleanup());
     background.forEach(({ child, inert, ariaHidden }) => {
@@ -1096,8 +1145,11 @@
     window.setTimeout(() => host.remove(), 210);
     if (restoreFocus && returnFocus instanceof HTMLElement && returnFocus.isConnected) returnFocus.focus();
     if (useHistory && history.state?.task) {
+      if (refreshAfterClose) taskPanelRefreshAfterCloseURL = returnURL;
       taskPanelHistoryClosePending = true;
       history.back();
+    } else if (refreshAfterClose) {
+      navigate(returnURL, false);
     }
   }
 
@@ -2384,6 +2436,103 @@
   function initCopyControls(root = document, cleanups = []) {
     const feedbackTimers = new Map();
 
+    root.querySelectorAll("[data-copy-value]").forEach(copyButton => {
+      const copyIcon = copyButton.querySelector("[data-copy-icon]");
+      const label = copyButton.querySelector("[data-copy-value-label]");
+      if (!copyIcon || !label) return;
+
+      copyButton.hidden = false;
+      const reset = () => {
+        copyButton.removeAttribute("data-state");
+        label.textContent = copyButton.dataset.copyLabel;
+        setControlIcon(copyIcon, "copy");
+        feedbackTimers.delete(copyButton);
+      };
+      const onCopyValue = async () => {
+        if (copyButton.dataset.copying === "true") return;
+        const existingTimer = feedbackTimers.get(copyButton);
+        if (existingTimer) window.clearTimeout(existingTimer);
+        copyButton.dataset.copying = "true";
+        copyButton.setAttribute("aria-busy", "true");
+
+        try {
+          if (!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable");
+          await navigator.clipboard.writeText(copyButton.dataset.copyValue || "");
+          copyButton.dataset.state = "success";
+          label.textContent = copyButton.dataset.copiedLabel;
+          setControlIcon(copyIcon, "check");
+        } catch {
+          copyButton.dataset.state = "error";
+          label.textContent = copyButton.dataset.copyFailedLabel;
+          setControlIcon(copyIcon, "triangle-alert");
+        } finally {
+          copyButton.removeAttribute("aria-busy");
+          delete copyButton.dataset.copying;
+        }
+
+        const timer = window.setTimeout(reset, 1600);
+        feedbackTimers.set(copyButton, timer);
+      };
+      copyButton.addEventListener("click", onCopyValue);
+      cleanups.push(() => copyButton.removeEventListener("click", onCopyValue));
+    });
+
+    root.querySelectorAll("[data-copy-key]").forEach(copyButton => {
+      const copyIcon = copyButton.querySelector("[data-copy-icon]");
+      const label = copyButton.querySelector("[data-copy-key-label]");
+      const status = copyButton.parentElement?.querySelector("[data-copy-key-status]");
+      if (!copyIcon || !label || !copyButton.dataset.copyKeyUrl) return;
+
+      const reset = () => {
+        copyButton.removeAttribute("data-state");
+        label.textContent = copyButton.dataset.copyLabel;
+        setControlIcon(copyIcon, "copy");
+        if (status) status.textContent = "";
+        feedbackTimers.delete(copyButton);
+      };
+      const onCopyKey = async () => {
+        if (copyButton.dataset.copying === "true") return;
+        const existingTimer = feedbackTimers.get(copyButton);
+        if (existingTimer) window.clearTimeout(existingTimer);
+        copyButton.dataset.copying = "true";
+        copyButton.setAttribute("aria-busy", "true");
+        copyButton.disabled = true;
+        label.textContent = copyButton.closest("[data-copying-key-label]")?.dataset.copyingKeyLabel || copyButton.dataset.copyLabel;
+        setControlIcon(copyIcon, "loader-circle");
+
+        try {
+          if (!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable");
+          const response = await fetch(copyButton.dataset.copyKeyUrl, {
+            credentials: "same-origin",
+            headers: { Accept: "application/json" },
+            cache: "no-store"
+          });
+          if (!response.ok) throw new Error(`Unable to copy key (${response.status})`);
+          const payload = await response.json();
+          if (typeof payload.key !== "string" || !payload.key) throw new Error("Key unavailable");
+          await navigator.clipboard.writeText(payload.key);
+          copyButton.dataset.state = "success";
+          label.textContent = copyButton.dataset.copiedLabel;
+          setControlIcon(copyIcon, "check");
+          if (status) status.textContent = copyButton.dataset.copiedLabel;
+        } catch {
+          copyButton.dataset.state = "error";
+          label.textContent = copyButton.dataset.copyFailedLabel;
+          setControlIcon(copyIcon, "triangle-alert");
+          if (status) status.textContent = copyButton.dataset.copyFailedLabel;
+        } finally {
+          copyButton.disabled = false;
+          copyButton.removeAttribute("aria-busy");
+          delete copyButton.dataset.copying;
+        }
+
+        const timer = window.setTimeout(reset, 1600);
+        feedbackTimers.set(copyButton, timer);
+      };
+      copyButton.addEventListener("click", onCopyKey);
+      cleanups.push(() => copyButton.removeEventListener("click", onCopyKey));
+    });
+
     root.querySelectorAll("[data-copy-text]").forEach(copyButton => {
       const content = document.getElementById(copyButton.dataset.copyTarget);
       const copyIcon = copyButton.querySelector("[data-copy-icon]");
@@ -2427,7 +2576,7 @@
           setControlIcon(copyIcon, "copy");
           if (status) status.textContent = "";
           feedbackTimers.delete(copyButton);
-        }, 1600);
+        }, 2400);
         feedbackTimers.set(copyButton, timer);
       };
       copyButton.addEventListener("click", onCopy);
@@ -2563,7 +2712,8 @@
     const countLabel = disclosure.querySelector("[data-file-quick-count-label]");
     const oneLabel = disclosure.querySelector("[data-file-quick-one-label]");
     const manyLabel = disclosure.querySelector("[data-file-quick-many-label]");
-    if (!list || !empty || !count || !countLabel || !oneLabel || !manyLabel) return;
+	const status = disclosure.querySelector("[data-file-quick-status]");
+    if (!list || !empty || !count || !countLabel || !oneLabel || !manyLabel || !status) return;
 	const validationController = new AbortController();
 	cleanups.push(() => validationController.abort());
 
@@ -2579,27 +2729,38 @@
         return false;
       }
     };
-    let pins = [];
-    try {
-      const stored = JSON.parse(localStorage.getItem(storageKey) || "[]");
-      if (Array.isArray(stored)) {
-        const paths = new Set();
-        pins = stored.filter(isValidPin).filter(pin => {
-          if (paths.has(pin.path)) return false;
-          paths.add(pin.path);
-          return true;
-        }).slice(0, 30);
-      }
-    } catch {
-      pins = [];
-    }
-
-    const persist = () => {
-      try {
-        localStorage.setItem(storageKey, JSON.stringify(pins));
-      } catch {
-        // Storage may be unavailable in hardened or private browser sessions.
-      }
+	const normalizePins = value => {
+	  if (!Array.isArray(value)) return [];
+	  const paths = new Set();
+	  return value.filter(isValidPin).filter(pin => {
+		if (paths.has(pin.path)) return false;
+		paths.add(pin.path);
+		return true;
+	  }).slice(0, 30);
+	};
+	let legacyPins = [];
+	try { legacyPins = normalizePins(JSON.parse(localStorage.getItem(storageKey) || "[]")); } catch { /* ignore invalid legacy storage */ }
+	let pins = [];
+	const showSaveError = () => {
+	  status.textContent = disclosure.dataset.saveFailed;
+	  status.hidden = false;
+	};
+	const clearSaveError = () => {
+	  status.textContent = "";
+	  status.hidden = true;
+	};
+	const savePin = async (pin, pinned) => {
+	  const response = await fetch(disclosure.dataset.pinsUrl, {
+		method: "POST",
+		credentials: "same-origin",
+		headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+		body: new URLSearchParams({ csrf_token: disclosure.dataset.csrfToken, path: pin.path, pinned: String(pinned) }),
+		signal: validationController.signal,
+	  });
+	  if (!response.ok) throw new Error(`Unable to save Quick access (${response.status})`);
+	  const payload = await response.json();
+	  pins = normalizePins(payload?.pins);
+	  clearSaveError();
     };
     const pinControls = Array.from(root.querySelectorAll("[data-file-pin]"));
     const renderControl = control => {
@@ -2650,10 +2811,16 @@
         remove.setAttribute("aria-label", `${disclosure.dataset.removeLabel}: ${pin.label}`);
         remove.dataset.tooltip = disclosure.dataset.removeLabel;
         remove.append(makeIcon("pin-off"));
-        remove.addEventListener("click", () => {
-          pins = pins.filter(candidate => candidate.path !== pin.path);
-          persist();
-          render();
+		remove.addEventListener("click", async () => {
+		  remove.disabled = true;
+		  try {
+			await savePin(pin, false);
+			render();
+		  } catch (error) {
+			if (error?.name !== "AbortError") showSaveError();
+		  } finally {
+			remove.disabled = false;
+		  }
         });
         item.append(link, remove);
         list.append(item);
@@ -2662,27 +2829,53 @@
     };
 
     pinControls.forEach(control => {
-      const onToggle = () => {
+	  const onToggle = async () => {
         const path = control.dataset.filePinPath;
-        if (pins.some(pin => pin.path === path)) {
-          pins = pins.filter(pin => pin.path !== path);
-        } else {
-          const pin = {
-            path,
-            label: control.dataset.filePinLabel,
-            href: control.dataset.filePinHref,
-          };
-          if (isValidPin(pin)) pins = [...pins, pin].slice(-30);
-        }
-        persist();
-        render();
+		const pin = { path, label: control.dataset.filePinLabel, href: control.dataset.filePinHref };
+		if (!isValidPin(pin)) return;
+		control.disabled = true;
+		try {
+		  await savePin(pin, !pins.some(candidate => candidate.path === path));
+		  render();
+		} catch (error) {
+		  if (error?.name !== "AbortError") showSaveError();
+		} finally {
+		  control.disabled = false;
+		}
       };
       control.addEventListener("click", onToggle);
       cleanups.push(() => control.removeEventListener("click", onToggle));
     });
 
-    disclosure.hidden = false;
-    render();
+	const loadPins = async () => {
+	  try {
+		const response = await fetch(disclosure.dataset.pinsUrl, {
+		  credentials: "same-origin", headers: { Accept: "application/json" }, signal: validationController.signal,
+		});
+		if (!response.ok) throw new Error(`Unable to read Quick access (${response.status})`);
+		pins = normalizePins((await response.json())?.pins);
+		let migrated = true;
+		for (const pin of legacyPins) {
+		  if (pins.some(candidate => candidate.path === pin.path)) continue;
+		  try { await savePin(pin, true); } catch (error) {
+			if (error?.name === "AbortError") return;
+			migrated = false;
+		  }
+		}
+		if (migrated) {
+		  try { localStorage.removeItem(storageKey); } catch { /* migration is already durable on the server */ }
+		} else {
+		  showSaveError();
+		}
+	  } catch (error) {
+		if (error?.name === "AbortError") return;
+		pins = legacyPins;
+		showSaveError();
+	  }
+	  disclosure.hidden = false;
+	  render();
+	};
+	loadPins();
   }
 
   function initFileOperation(cleanups) {
@@ -4482,13 +4675,6 @@
       modelChoices.forEach(choice => {
         const selected = choice.dataset.modelChoice === id;
         choice.setAttribute("aria-selected", String(selected));
-        choice.querySelector("svg.lucide-check")?.remove();
-        if (selected) {
-          const icon = document.createElement("span");
-          icon.dataset.lucide = "check";
-          choice.append(icon);
-          renderIcons(choice);
-        }
       });
     };
     const selectModel = async choice => {
@@ -4574,10 +4760,12 @@
 		const detail = document.createElement("small");
 		detail.textContent = `${resource.kind} · ${resource.detail || ""}`;
 		copy.append(title, detail);
-		const plus = document.createElement("span");
-		plus.dataset.lucide = "plus";
-		plus.setAttribute("aria-hidden", "true");
-		option.append(icon, copy, plus);
+		const indicator = document.createElement("span");
+		indicator.className = "assistant-resource-option__indicator";
+		indicator.dataset.resourceOptionIndicator = "";
+		indicator.dataset.lucide = selectedResources.has(key) ? "check" : "plus";
+		indicator.setAttribute("aria-hidden", "true");
+		option.append(icon, copy, indicator);
 		resourceList.append(option);
 		resourceOptions.push(option);
 		renderIcons(option);
@@ -4677,6 +4865,7 @@
 		image: option.dataset.resourceImage === "true",
 	  });
       option.setAttribute("aria-selected", String(selectedResources.has(key)));
+      replaceIconHost(option.querySelector("[data-resource-option-indicator]"), selectedResources.has(key) ? "check" : "plus");
       renderContextResources();
     };
 
@@ -4739,7 +4928,10 @@
         selectedResources.delete(remove.dataset.removeResource);
         resourceOptions.forEach(item => {
           const key = `${item.dataset.resourceKind}:${item.dataset.resourceId}`;
-          if (key === remove.dataset.removeResource) item.setAttribute("aria-selected", "false");
+          if (key === remove.dataset.removeResource) {
+            item.setAttribute("aria-selected", "false");
+            replaceIconHost(item.querySelector("[data-resource-option-indicator]"), "plus");
+          }
         });
         renderContextResources();
         return;
@@ -4940,6 +5132,176 @@
     });
   }
 
+  function initSecurityDialogs(cleanups) {
+    document.querySelectorAll("dialog.security-dialog[open]").forEach(dialog => {
+      dialog.removeAttribute("open");
+      if (typeof dialog.showModal === "function") dialog.showModal();
+      else dialog.setAttribute("open", "");
+      const onCancel = event => {
+        event.preventDefault();
+        const close = dialog.querySelector('a[href^="/monitor/security"]');
+        if (close) close.click();
+      };
+      dialog.addEventListener("cancel", onCancel);
+      cleanups.push(() => {
+        dialog.removeEventListener("cancel", onCancel);
+        if (dialog.open) dialog.close();
+      });
+    });
+  }
+
+  function initSecurityBanDrawer(cleanups) {
+    const root = document.querySelector("[data-security-page]");
+    const host = document.querySelector("[data-security-ban-drawer]");
+    const drawer = host?.querySelector(".security-ban-drawer");
+    const closeLink = drawer?.querySelector("[data-security-ban-drawer-close]");
+    const content = drawer?.querySelector("[data-security-ban-drawer-content]");
+    const pagination = drawer?.querySelector("[data-security-ban-pagination]");
+    const loadingTemplate = drawer?.querySelector("[data-security-ban-loading-template]");
+    const errorTemplate = drawer?.querySelector("[data-security-ban-error-template]");
+    if (!root || !host || !drawer || !closeLink || !content || !pagination || !loadingTemplate || !errorTemplate) return;
+    let closing = false;
+    let closeTimer = null;
+    let focusTimer = null;
+    let opener = null;
+    let requestController = null;
+    let requestID = 0;
+    let lastURL = "";
+
+    const replaceWithTemplate = template => {
+      content.replaceChildren(document.importNode(template.content, true));
+      renderIcons(content);
+    };
+    const showLoading = () => {
+      drawer.setAttribute("aria-busy", "true");
+      pagination.hidden = true;
+      replaceWithTemplate(loadingTemplate);
+    };
+    const showError = error => {
+      drawer.removeAttribute("aria-busy");
+      pagination.hidden = true;
+      replaceWithTemplate(errorTemplate);
+      const detail = content.querySelector("[data-security-ban-error-detail]");
+      if (detail) detail.textContent = error?.message || "";
+    };
+    const load = async url => {
+      requestController?.abort();
+      requestController = new AbortController();
+      const controller = requestController;
+      const currentRequest = ++requestID;
+      lastURL = url;
+      showLoading();
+      try {
+        const result = await fetchDocument(url, { cache: "no-store", signal: controller.signal });
+        if (!result.response.ok) throw new Error(`HTTP ${result.response.status}`);
+        const sourceDrawer = result.document?.querySelector("[data-security-ban-drawer]");
+        const sourceContent = sourceDrawer?.querySelector("[data-security-ban-drawer-content]");
+        const sourcePagination = sourceDrawer?.querySelector("[data-security-ban-pagination]");
+        if (!sourceContent || !sourcePagination) throw new Error("Ban details were not present in the response.");
+        if (currentRequest !== requestID || controller.signal.aborted) return;
+        content.replaceChildren(...Array.from(sourceContent.childNodes, node => document.importNode(node, true)));
+        pagination.replaceChildren(...Array.from(sourcePagination.childNodes, node => document.importNode(node, true)));
+        pagination.className = sourcePagination.className;
+        pagination.hidden = sourcePagination.hidden;
+        drawer.removeAttribute("aria-busy");
+        renderIcons(host);
+        localizeTimes(host);
+      } catch (error) {
+        if (error?.name !== "AbortError" && currentRequest === requestID) showError(error);
+      } finally {
+        if (requestController === controller) requestController = null;
+      }
+    };
+    const focusClose = () => {
+      if (focusTimer) window.clearTimeout(focusTimer);
+      focusTimer = window.setTimeout(() => closeLink.focus(), 180);
+    };
+    const open = trigger => {
+      opener = trigger;
+      closing = false;
+      host.classList.add("is-open");
+      host.setAttribute("aria-hidden", "false");
+      document.body.style.overflow = "hidden";
+      focusClose();
+      load(trigger.href);
+    };
+
+    const close = event => {
+      event?.preventDefault();
+      if (closing || !host.classList.contains("is-open")) return;
+      closing = true;
+      requestController?.abort();
+      requestController = null;
+      requestID++;
+      const destination = new URL(closeLink.href, location.href);
+      host.classList.remove("is-open");
+      host.setAttribute("aria-hidden", "true");
+      document.body.style.overflow = "";
+      const delay = matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 180;
+      closeTimer = window.setTimeout(() => {
+        if (new URL(location.href).searchParams.has("bans")) {
+          history.replaceState({ pjax: true }, "", destination.href);
+          updateShellLocation(destination.href);
+        }
+        showLoading();
+        opener?.focus();
+        opener = null;
+        closing = false;
+      }, delay);
+    };
+    const onClick = event => {
+      const trigger = event.target.closest("[data-security-ban-drawer-trigger]");
+      if (trigger && root.contains(trigger)) {
+        event.preventDefault();
+        if (host.classList.contains("is-open")) load(trigger.href);
+        else open(trigger);
+        return;
+      }
+      if (event.target.closest("[data-security-ban-drawer-close]")) {
+        close(event);
+        return;
+      }
+      if (event.target.closest("[data-security-ban-retry]") && lastURL) load(lastURL);
+    };
+    const onKeydown = event => {
+      if (event.key === "Escape") {
+        close(event);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(drawer.querySelectorAll("button:not([disabled]),a[href],[tabindex]:not([tabindex='-1'])"))
+        .filter(element => !element.hidden && element.getClientRects().length > 0);
+      if (!focusable.length) {
+        event.preventDefault();
+        drawer.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && (event.target === first || !drawer.contains(event.target))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && event.target === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    if (host.classList.contains("is-open")) {
+      document.body.style.overflow = "hidden";
+      focusClose();
+    }
+    root.addEventListener("click", onClick);
+    document.addEventListener("keydown", onKeydown);
+    cleanups.push(() => {
+      root.removeEventListener("click", onClick);
+      document.removeEventListener("keydown", onKeydown);
+      requestController?.abort();
+      if (closeTimer) window.clearTimeout(closeTimer);
+      if (focusTimer) window.clearTimeout(focusTimer);
+      document.body.style.overflow = "";
+    });
+  }
+
   function initPage() {
     const cleanups = [];
     cleanupPage = () => cleanups.splice(0).forEach(cleanup => cleanup());
@@ -4962,7 +5324,10 @@
     initRun(cleanups);
     initGroupedRecords(cleanups);
     initScheduleCron(cleanups);
+    initExternalEntryForm(document, cleanups);
     initDisplaySettings(cleanups);
+	initSecurityDialogs(cleanups);
+    initSecurityBanDrawer(cleanups);
     initAssistantWorkspace(cleanups);
     initAssistantSettings(cleanups);
     const websiteForm = document.querySelector("[data-website-monitor-form]");
@@ -4992,7 +5357,10 @@
       closeTaskPanel(true);
       return;
     }
-    const link = event.target.closest("a[href]");
+    let link = event.target.closest("a[href]");
+    if (!link && !event.target.closest("button,input,select,textarea,form,label,[role='button']")) {
+      link = event.target.closest("[data-external-entry-row]")?.querySelector("a[data-task-link]") || null;
+    }
     if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     const destination = new URL(link.href, location.href);
     if (isNativeLink(link, destination)) return;
@@ -5015,9 +5383,15 @@
       openTask(destination.href, true, link);
     } else {
       const mainNavigation = link.matches(".sidebar-nav a");
+      const securityTab = link.matches("[data-security-tabs] a");
+      if (securityTab) {
+        link.closest("[data-security-tabs]")?.querySelectorAll("a[aria-current]").forEach(tab => tab.removeAttribute("aria-current"));
+        link.setAttribute("aria-current", "page");
+        link.setAttribute("aria-busy", "true");
+      }
       navigate(destination.href, true, {
         deferredData: isDeferredDataURL(destination.href),
-        immediate: mainNavigation,
+        immediate: mainNavigation || securityTab,
         title: mainNavigation ? navigationTitle(link) : undefined,
         focusSelector: link.dataset.focusAfterNavigation,
       });
@@ -5141,6 +5515,11 @@
   window.addEventListener("popstate", event => {
     if (taskPanelHistoryClosePending) {
       taskPanelHistoryClosePending = false;
+      if (taskPanelRefreshAfterCloseURL) {
+        const refreshURL = taskPanelRefreshAfterCloseURL;
+        taskPanelRefreshAfterCloseURL = "";
+        navigate(refreshURL, false);
+      }
       return;
     }
     if (taskPanelState) {

@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="{{.Locale}}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}">
+  <script defer src="/assets/app-v2.js?v={{assetVersion}}"></script>
+  <title>{{t .Locale "security.title"}} · ScriptBoard</title>
+</head>
+<body>
+<main class="workspace security-page" data-security-page>
+  <header class="page-heading security-page-heading">
+    <div>
+      <p class="page-eyebrow">{{t .Locale "security.eyebrow"}}</p>
+      <h1>{{t .Locale "security.title"}}</h1>
+      <p>{{t .Locale "security.description"}}</p>
+    </div>
+  </header>
+
+  <nav class="security-tabs" aria-label="{{t .Locale "security.tabs"}}" data-security-tabs>
+    <a href="/monitor/security?tab=overview" {{if eq .Tab "overview"}}aria-current="page"{{end}}><span data-lucide="activity" aria-hidden="true"></span>{{t .Locale "security.overview"}}</a>
+    <a href="/monitor/security?tab=logins&amp;range={{.Range}}" {{if eq .Tab "logins"}}aria-current="page"{{end}}><span data-lucide="key-round" aria-hidden="true"></span>{{t .Locale "security.logins"}}</a>
+    <a href="/monitor/security?tab=defense" {{if eq .Tab "defense"}}aria-current="page"{{end}}><span data-lucide="shield-check" aria-hidden="true"></span>{{t .Locale "security.defense"}}</a>
+  </nav>
+
+  {{if .Notice}}<div class="security-notice" role="status"><span data-lucide="circle-check" aria-hidden="true"></span><span>{{.Notice}}</span></div>{{end}}
+
+  <div data-deferred-region>
+  {{if .DeferredData}}
+    <div class="data-load-state security-data-load-state" data-deferred-state="loading" role="status" aria-live="polite" aria-busy="true">
+      <span class="data-load-state__icon" data-lucide="loader-circle" aria-hidden="true"></span>
+      <p><strong>{{t .Locale "security.loading_title"}}</strong><small>{{t .Locale "security.loading_description"}}</small></p>
+    </div>
+  {{else}}
+  <div class="security-detection"><span class="status-dot" data-state="{{if or .Capabilities.Firewall.Error .Capabilities.Fail2Ban.Error}}attention{{else}}current{{end}}"></span><span class="security-detection__host">{{if .Capabilities.Hostname}}{{.Capabilities.Hostname}} · {{end}}{{if .Windows}}Windows{{else if .Linux}}Linux{{else}}{{.Capabilities.OS}}{{end}} · {{t .Locale "security.detected_at"}} <time datetime="{{machineTime .Capabilities.CollectedAt}}" data-local-time>{{localTime .Locale .Capabilities.CollectedAt}}</time></span><span class="security-detection__privilege"><span>{{t .Locale "security.runtime_privilege"}}</span><span class="status-chip" data-state="{{if not .Capabilities.AdministratorKnown}}stale{{else if .Capabilities.Administrator}}current{{else}}attention{{end}}"><span class="status-dot" aria-hidden="true"></span>{{if not .Capabilities.AdministratorKnown}}{{t .Locale "security.privilege_unknown"}}{{else if .Capabilities.Administrator}}{{if .Windows}}{{t .Locale "security.administrator_privilege"}}{{else}}{{t .Locale "security.root_privilege"}}{{end}}{{else}}{{if .Windows}}{{t .Locale "security.standard_privilege"}}{{else}}{{t .Locale "security.non_root_privilege"}}{{end}}{{end}}</span></span><a class="button button--compact button--quiet security-detection__refresh" href="{{.RefreshURL}}"><span data-lucide="refresh-cw" aria-hidden="true"></span>{{t .Locale "security.refresh_data"}}</a></div>
+
+  {{if eq .Tab "overview"}}
+    {{if .RemoteLoginRows}}
+    <section class="security-login-surface" data-security-login-surface aria-labelledby="security-login-surface-title">
+      <header class="section-heading"><div><p class="section-index">01 / {{t .Locale "security.login_security"}}</p><h2 id="security-login-surface-title">{{t .Locale "security.remote_login_monitoring"}}</h2><p>{{t .Locale "security.remote_login_monitoring_description"}}</p></div></header>
+      {{if .LoginError}}<div class="security-warning"><span data-lucide="triangle-alert" aria-hidden="true"></span><span>{{t .Locale "security.login_unavailable"}}<small>{{.LoginError}}</small></span></div>{{end}}
+      <dl class="security-facts security-facts--verdict" data-security-login-verdict>
+        <div class="security-fact-verdict" data-state="{{.RemoteLogin.StatusTone}}"><dt>{{t .Locale "security.monitoring_status"}}</dt><dd>{{.RemoteLogin.Status}}</dd><small>{{.RemoteLogin.StatusDetail}}</small></div>
+        <div><dt>{{t .Locale "security.remote_entry"}}</dt><dd>{{.RemoteLogin.EntryCount}}</dd><small>{{.RemoteLogin.EntryDetail}}</small></div>
+        <div><dt>{{t .Locale "security.failed_logins"}}</dt><dd>{{.LoginPage.Stats.Failure}}</dd><small>{{t .Locale "security.last_24h"}}</small></div>
+        <div><dt>{{t .Locale "security.current_bans"}}</dt><dd>{{if .Capabilities.Fail2Ban.Installed}}{{.BanPage.Total}}{{else}}—{{end}}</dd><small>{{if .Capabilities.Fail2Ban.Installed}}Fail2Ban · sshd{{else}}{{t .Locale "security.fail2ban_not_installed"}}{{end}}</small></div>
+      </dl>
+      <div class="security-login-checks-heading"><h3>{{t .Locale "security.detection_items"}}</h3><span>{{t .Locale "security.show_evidence"}}</span></div>
+      <div class="security-login-checks" aria-label="{{t .Locale "security.detection_items"}}">
+        {{range .RemoteLoginRows}}
+        <details class="security-login-check">
+          <summary>
+            <span class="security-login-check__icon"><span data-lucide="{{.Icon}}" aria-hidden="true"></span></span>
+            <span class="security-login-check__identity"><strong>{{.Title}}</strong><small>{{.Subtitle}}</small></span>
+            <code>{{.Value}}</code>
+            <span class="security-login-check__source">{{.Evidence}}</span>
+            <span class="status-chip" data-state="{{.Tone}}"><span class="status-dot" aria-hidden="true"></span>{{.Status}}</span>
+            <span class="security-login-check__chevron" data-lucide="chevron-down" aria-hidden="true"></span>
+          </summary>
+          <div class="security-login-check__evidence">
+            <dl><div><dt>{{t $.Locale "security.effective_value"}}</dt><dd><code>{{.Value}}</code></dd></div><div><dt>{{t $.Locale "security.evidence"}}</dt><dd>{{.Evidence}}</dd></div></dl>
+          </div>
+        </details>
+        {{end}}
+      </div>
+    </section>
+    {{else}}
+    <section aria-labelledby="security-summary-title">
+      <header class="section-heading"><div><p class="section-index">01</p><h2 id="security-summary-title">{{t .Locale "security.summary"}}</h2><p>{{t .Locale "security.summary_description"}}</p></div></header>
+      {{if .LoginError}}<div class="security-warning"><span data-lucide="triangle-alert" aria-hidden="true"></span><span>{{t .Locale "security.login_unavailable"}}<small>{{.LoginError}}</small></span></div>{{end}}
+      <dl class="security-facts">
+        <div><dt>{{t .Locale "security.failed_logins"}}</dt><dd>{{.LoginPage.Stats.Failure}}</dd><small>{{t .Locale "security.last_24h"}}</small></div>
+        <div><dt>{{t .Locale "security.successful_logins"}}</dt><dd>{{.LoginPage.Stats.Success}}</dd><small>{{t .Locale "security.last_24h"}}</small></div>
+        <div><dt>{{t .Locale "security.locked_accounts"}}</dt><dd>{{.LoginPage.Stats.Locked}}</dd><small>{{t .Locale "security.current"}}</small></div>
+        <div><dt>{{t .Locale "security.firewall"}}</dt><dd>{{if .Capabilities.Firewall.Running}}{{t .Locale "security.enabled"}}{{else}}{{t .Locale "security.attention"}}{{end}}</dd><small>Windows Defender Firewall</small></div>
+      </dl>
+    </section>
+    {{end}}
+
+  {{end}}
+
+  {{if eq .Tab "logins"}}
+    <section aria-labelledby="security-logins-title">
+      <header class="section-heading"><div><p class="section-index">01</p><h2 id="security-logins-title">{{if .Windows}}Windows{{else}}SSH{{end}} {{t .Locale "security.login_audit"}}</h2><p>{{if .Windows}}Windows Security Event Log{{else}}systemd journal / auth log{{end}}</p></div></header>
+      <div class="security-period"><span>{{t .Locale "security.statistics_range"}}</span><nav class="segmented-control" aria-label="{{t .Locale "security.statistics_range"}}"><a href="/monitor/security?tab=logins&amp;range=24h" {{if eq .Range "24h"}}aria-current="page"{{end}}>{{t .Locale "security.range_24h"}}</a><a href="/monitor/security?tab=logins&amp;range=7d" {{if eq .Range "7d"}}aria-current="page"{{end}}>{{t .Locale "security.range_7d"}}</a><a href="/monitor/security?tab=logins&amp;range=30d" {{if eq .Range "30d"}}aria-current="page"{{end}}>{{t .Locale "security.range_30d"}}</a></nav></div>
+      <dl class="security-facts">
+        <div><dt>{{t .Locale "security.failed_logins"}}</dt><dd>{{.LoginPage.Stats.Failure}}</dd><small>{{.Range}}</small></div>
+        <div><dt>{{t .Locale "security.successful_logins"}}</dt><dd>{{.LoginPage.Stats.Success}}</dd><small>{{.Range}}</small></div>
+        <div><dt>{{if .Windows}}RDP{{else}}{{t .Locale "security.unique_sources"}}{{end}}</dt><dd>{{if .Windows}}{{.LoginPage.Stats.RDP}}{{else}}{{.LoginPage.Stats.UniqueSources}}{{end}}</dd><small>{{t .Locale "security.current_selection"}}</small></div>
+        <div><dt>{{if .Windows}}{{t .Locale "security.locked_accounts"}}{{else}}{{t .Locale "security.high_risk_sources"}}{{end}}</dt><dd>{{if .Windows}}{{.LoginPage.Stats.Locked}}{{else}}{{.LoginPage.Stats.HighRisk}}{{end}}</dd><small>{{t .Locale "security.needs_attention"}}</small></div>
+      </dl>
+      <form class="security-filters" method="get" action="/monitor/security">
+        <input type="hidden" name="tab" value="logins"><input type="hidden" name="range" value="{{.Range}}">
+        <label><span>{{t .Locale "security.start_date"}}</span><input type="date" name="from" value="{{.FromDate}}"></label>
+        <label><span>{{t .Locale "security.end_date"}}</span><input type="date" name="to" value="{{.ToDate}}"></label>
+        <label><span>{{t .Locale "common.result"}}</span><select name="result"><option value="">{{t .Locale "security.all_results"}}</option><option value="success" {{if eq .Result "success"}}selected{{end}}>{{t .Locale "security.success"}}</option><option value="failure" {{if eq .Result "failure"}}selected{{end}}>{{t .Locale "security.failure"}}</option></select></label>
+        <label><span>{{t .Locale "security.login_type"}}</span><select name="type"><option value="">{{t .Locale "security.all_types"}}</option>{{if .Windows}}<option value="rdp" {{if eq .LoginType "rdp"}}selected{{end}}>RDP</option><option value="network" {{if eq .LoginType "network"}}selected{{end}}>{{t .Locale "security.network_login"}}</option>{{else}}<option value="password" {{if eq .LoginType "password"}}selected{{end}}>SSH {{t .Locale "security.password"}}</option><option value="publickey" {{if eq .LoginType "publickey"}}selected{{end}}>SSH {{t .Locale "security.public_key"}}</option>{{end}}</select></label>
+        <label><span>{{t .Locale "security.page_size"}}</span><select name="page_size"><option value="5" {{if eq .PageSize 5}}selected{{end}}>5</option><option value="20" {{if eq .PageSize 20}}selected{{end}}>20</option><option value="50" {{if eq .PageSize 50}}selected{{end}}>50</option><option value="100" {{if eq .PageSize 100}}selected{{end}}>100</option></select></label>
+        <div><button class="button button--primary" type="submit"><span data-lucide="search" aria-hidden="true"></span>{{t .Locale "security.filter"}}</button><a class="button button--quiet" href="/monitor/security?tab=logins&amp;range={{.Range}}">{{t .Locale "security.reset"}}</a></div>
+      </form>
+      {{if .LoginError}}<div class="security-warning"><span data-lucide="triangle-alert" aria-hidden="true"></span><span>{{t .Locale "security.login_unavailable"}}<small>{{.LoginError}}</small></span></div>{{else}}{{template "security-login-table" .}}{{end}}
+      <nav class="security-pagination" aria-label="{{t .Locale "security.pagination"}}"><span>{{.LoginPage.Total}} {{t .Locale "security.records"}} · {{.LoginPage.Page}} / {{.LoginPage.Pages}}</span><div>{{if .HasLoginPrevious}}<a class="button button--compact" href="/monitor/security?tab=logins&amp;range={{.Range}}&amp;from={{.FromDate}}&amp;to={{.ToDate}}&amp;result={{.Result}}&amp;type={{.LoginType}}&amp;page_size={{.PageSize}}&amp;page={{.LoginPrevious}}">{{t .Locale "common.previous"}}</a>{{end}}{{if .HasLoginNext}}<a class="button button--compact" href="/monitor/security?tab=logins&amp;range={{.Range}}&amp;from={{.FromDate}}&amp;to={{.ToDate}}&amp;result={{.Result}}&amp;type={{.LoginType}}&amp;page_size={{.PageSize}}&amp;page={{.LoginNext}}">{{t .Locale "common.next"}}</a>{{end}}</div></nav>
+    </section>
+  {{end}}
+
+  {{if eq .Tab "defense"}}
+    {{if .Linux}}
+      <section aria-labelledby="security-components-title">
+        <header class="section-heading"><div><p class="section-index">01</p><h2 id="security-components-title">{{t .Locale "security.linux_components"}}</h2><p>{{t .Locale "security.linux_components_description"}}</p></div></header>
+        <div class="security-components">
+          <article><span class="security-component-icon"><span data-lucide="scan-search" aria-hidden="true"></span></span><div><h3>Fail2Ban</h3><p>{{t .Locale "security.bruteforce_protection"}}</p></div><div><span class="status-chip" data-state="{{if .Capabilities.Fail2Ban.Running}}current{{else}}stale{{end}}"><span class="status-dot" aria-hidden="true"></span>{{if .Capabilities.Fail2Ban.Running}}{{t .Locale "security.running"}}{{else if .Capabilities.Fail2Ban.Installed}}{{t .Locale "security.stopped"}}{{else}}{{t .Locale "security.not_installed"}}{{end}}</span>{{if and .CanManage (not .Capabilities.Fail2Ban.Installed)}}<form method="post" action="/monitor/security/components/fail2ban/install" data-confirm="{{t .Locale "security.install_fail2ban_confirm"}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--primary button--compact" type="submit"><span data-lucide="download" aria-hidden="true"></span>{{t .Locale "security.install"}}</button></form>{{end}}</div></article>
+          <article><span class="security-component-icon"><span data-lucide="shield-check" aria-hidden="true"></span></span><div><h3>UFW</h3><p>{{t .Locale "security.host_firewall"}}</p></div><div><span class="status-chip" data-state="{{if .Capabilities.UFWEnabled}}current{{else}}stale{{end}}"><span class="status-dot" aria-hidden="true"></span>{{if .Capabilities.UFWEnabled}}{{t .Locale "security.enabled"}}{{else if .Capabilities.UFW.Installed}}{{t .Locale "security.disabled"}}{{else}}{{t .Locale "security.not_installed"}}{{end}}</span>{{if and .CanManage (not .Capabilities.UFW.Installed)}}<form method="post" action="/monitor/security/components/ufw/install" data-confirm="{{t .Locale "security.install_ufw_confirm"}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--primary button--compact" type="submit"><span data-lucide="download" aria-hidden="true"></span>{{t .Locale "security.install"}}</button></form>{{end}}</div></article>
+        </div>
+      </section>
+
+      {{if .Capabilities.Fail2Ban.Installed}}
+      <section class="security-defense-section" aria-labelledby="security-fail2ban-title">
+        <header class="section-heading section-heading--with-control"><div><p class="section-index">02</p><h2 id="security-fail2ban-title">Fail2Ban</h2><p>{{t .Locale "security.fail2ban_description"}}</p></div>{{if .Capabilities.Fail2Ban.Running}}<a class="button button--compact" href="/monitor/security?tab=defense&amp;bans=1" aria-haspopup="dialog" data-security-ban-drawer-trigger><span data-lucide="panel-right-open" aria-hidden="true"></span>{{t .Locale "security.ban_details"}}</a>{{end}}</header>
+        <dl class="security-facts security-facts--three"><div><dt>{{t .Locale "security.service_status"}}</dt><dd>{{if .Capabilities.Fail2Ban.Running}}{{t .Locale "security.running"}}{{else}}{{t .Locale "security.stopped"}}{{end}}</dd><small>fail2ban.service</small></div><div><dt>{{t .Locale "security.current_bans"}}</dt><dd>{{.BanPage.Total}}</dd><small>sshd</small></div><div><dt>{{t .Locale "security.active_jail"}}</dt><dd>{{if .Capabilities.Fail2Ban.Running}}1{{else}}0{{end}}</dd><small>sshd</small></div></dl>
+      </section>
+      {{end}}
+
+      {{if .Capabilities.UFW.Installed}}
+      <section class="security-defense-section" aria-labelledby="security-ufw-title">
+        <header class="section-heading section-heading--with-control"><div><p class="section-index">03</p><h2 id="security-ufw-title">UFW {{t .Locale "security.firewall"}}</h2><p>{{t .Locale "security.ufw_draft_description"}}</p></div><div class="heading-actions">{{if .HasDraft}}<a class="button button--primary button--compact" href="/monitor/security?tab=defense&amp;review=1">{{t .Locale "security.review_sync"}} <span class="security-count">{{len .DraftChanges}}</span></a>{{end}}{{if and .CanManage (not .Capabilities.UFWEnabled)}}<form method="post" action="/monitor/security/firewall/enable" data-confirm="{{t .Locale "security.enable_ufw_confirm"}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--primary button--compact" type="submit" {{if or .HasDraft (not .HasSSHAllowRule)}}disabled{{end}}><span data-lucide="power" aria-hidden="true"></span>{{t .Locale "security.enable_ufw"}}</button></form>{{end}}</div></header>
+        {{if .HasDraft}}<div class="security-pending"><span data-lucide="clock-alert" aria-hidden="true"></span><span><strong>{{len .DraftChanges}} {{t .Locale "security.pending_changes"}}</strong><small>{{t .Locale "security.pending_changes_description"}}</small></span><a href="/monitor/security?tab=defense&amp;review=1">{{t .Locale "security.review"}}</a></div>{{else if not .HasSSHAllowRule}}<div class="security-warning"><span data-lucide="shield-alert" aria-hidden="true"></span><span>{{t .Locale "security.ssh_rule_required"}} <code>{{if .Capabilities.SSHPort}}{{.Capabilities.SSHPort}}{{else}}22{{end}}/tcp</code></span></div>{{end}}
+
+        <div class="security-default-policies">
+          <div><h3>{{t .Locale "security.default_policy"}}</h3><p>{{t .Locale "security.default_policy_description"}}</p></div>
+          {{if .CanManage}}
+          <form method="post" action="/monitor/security/firewall/draft/defaults">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <label><span>{{t .Locale "security.default_incoming"}}</span><select name="incoming"><option value="deny" {{if eq .UFWDefaults.Incoming "deny"}}selected{{end}}>{{t .Locale "security.default_block"}}</option><option value="allow" {{if eq .UFWDefaults.Incoming "allow"}}selected{{end}}>{{t .Locale "security.default_allow"}}</option></select></label>
+            <label><span>{{t .Locale "security.default_outgoing"}}</span><select name="outgoing"><option value="deny" {{if eq .UFWDefaults.Outgoing "deny"}}selected{{end}}>{{t .Locale "security.default_block"}}</option><option value="allow" {{if eq .UFWDefaults.Outgoing "allow"}}selected{{end}}>{{t .Locale "security.default_allow"}}</option></select></label>
+            <button class="button button--compact" type="submit"><span data-lucide="list-plus" aria-hidden="true"></span>{{t .Locale "security.add_to_draft"}}</button>
+          </form>
+          {{else}}
+          <dl><div><dt>{{t .Locale "security.default_incoming"}}</dt><dd>{{if eq .UFWDefaults.Incoming "deny"}}{{t .Locale "security.default_block"}}{{else}}{{t .Locale "security.default_allow"}}{{end}}</dd></div><div><dt>{{t .Locale "security.default_outgoing"}}</dt><dd>{{if eq .UFWDefaults.Outgoing "deny"}}{{t .Locale "security.default_block"}}{{else}}{{t .Locale "security.default_allow"}}{{end}}</dd></div></dl>
+          {{end}}
+        </div>
+
+        {{if .CanManage}}<details class="security-rule-editor"><summary><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "security.add_rule"}}</summary><form method="post" action="/monitor/security/firewall/draft/rules"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label><span>{{t .Locale "security.direction"}}</span><select name="direction"><option value="in">{{t .Locale "security.inbound"}}</option><option value="out">{{t .Locale "security.outbound"}}</option></select></label><label><span>{{t .Locale "security.action"}}</span><select name="action"><option value="allow">{{t .Locale "security.allow"}}</option><option value="deny">{{t .Locale "security.deny"}}</option></select></label><label><span>{{t .Locale "security.protocol"}}</span><select name="protocol"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="any">{{t .Locale "security.any"}}</option></select></label><label><span>{{t .Locale "security.port"}}</span><input name="port" inputmode="numeric" required placeholder="443"></label><label><span>{{t .Locale "security.address"}}</span><input name="address" required value="Anywhere"></label><label><span>{{t .Locale "common.name"}}</span><input name="name" maxlength="120" required placeholder="HTTPS"></label><button class="button button--primary" type="submit">{{t .Locale "security.add_to_draft"}}</button></form></details>{{end}}
+        {{template "security-firewall-table" .}}
+      </section>
+      {{end}}
+    {{else}}
+      <div class="security-native-notice"><span data-lucide="circle-check" aria-hidden="true"></span><span><strong>{{t .Locale "security.windows_native"}}</strong><small>{{t .Locale "security.windows_native_description"}}</small></span></div>
+      <section aria-labelledby="security-windows-login-title"><header class="section-heading"><div><p class="section-index">01</p><h2 id="security-windows-login-title">{{t .Locale "security.login_protection"}}</h2><p>Security Event Log · 4624 / 4625 / 4740</p></div></header><dl class="security-facts"><div><dt>{{t .Locale "security.failed_logins"}}</dt><dd>{{.LoginPage.Stats.Failure}}</dd><small>4625</small></div><div><dt>{{t .Locale "security.successful_logins"}}</dt><dd>{{.LoginPage.Stats.Success}}</dd><small>4624</small></div><div><dt>RDP</dt><dd>{{.LoginPage.Stats.RDP}}</dd><small>Logon Type 10</small></div><div><dt>{{t .Locale "security.locked_accounts"}}</dt><dd>{{.LoginPage.Stats.Locked}}</dd><small>4740</small></div></dl></section>
+      <section class="security-defense-section" aria-labelledby="security-windows-firewall-title">
+        <header class="section-heading section-heading--with-control"><div><p class="section-index">02</p><h2 id="security-windows-firewall-title">Windows Defender Firewall</h2><p>{{t .Locale "security.windows_firewall_description"}}</p></div>{{if .CanManage}}<a class="button button--primary" href="/monitor/security/windows-firewall/rules/new" data-task-link><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "security.add_rule"}}</a>{{end}}</header>
+        <div class="security-profiles">{{range .Capabilities.Profiles}}<div><span><strong>{{.Name}}</strong><small>{{t $.Locale "security.firewall_profile"}}</small></span><span class="status-chip" data-state="{{if .Enabled}}current{{else}}stale{{end}}"><span class="status-dot" aria-hidden="true"></span>{{if .Enabled}}{{t $.Locale "security.enabled"}}{{else}}{{t $.Locale "security.disabled"}}{{end}}</span></div>{{else}}<div><span><strong>{{t .Locale "security.profile_unavailable"}}</strong><small>Get-NetFirewallProfile</small></span></div>{{end}}</div>
+        <form class="security-rule-filters" method="get" action="/monitor/security">
+          <input type="hidden" name="tab" value="defense">
+          <label><span>{{t .Locale "security.protocol"}}</span><select name="rule_protocol"><option value="">{{t .Locale "security.all_protocols"}}</option><option value="tcp" {{if eq .RuleProtocol "tcp"}}selected{{end}}>TCP</option><option value="udp" {{if eq .RuleProtocol "udp"}}selected{{end}}>UDP</option><option value="any" {{if eq .RuleProtocol "any"}}selected{{end}}>{{t .Locale "security.any"}}</option></select></label>
+          <label><span>{{t .Locale "security.port"}}</span><input name="rule_port" value="{{.RulePort}}" autocomplete="off" placeholder="3389"></label>
+          <label><span>{{t .Locale "security.address"}}</span><input name="rule_address" value="{{.RuleAddress}}" autocomplete="off" placeholder="10.0.0.0/24"></label>
+          <label><span>{{t .Locale "security.direction"}}</span><select name="rule_direction"><option value="">{{t .Locale "security.all_directions"}}</option><option value="in" {{if eq .RuleDirection "in"}}selected{{end}}>{{t .Locale "security.inbound"}}</option><option value="out" {{if eq .RuleDirection "out"}}selected{{end}}>{{t .Locale "security.outbound"}}</option></select></label>
+          <label><span>{{t .Locale "common.status"}}</span><select name="rule_status"><option value="">{{t .Locale "security.all_states"}}</option><option value="enabled" {{if eq .RuleStatus "enabled"}}selected{{end}}>{{t .Locale "security.enabled"}}</option><option value="disabled" {{if eq .RuleStatus "disabled"}}selected{{end}}>{{t .Locale "security.disabled"}}</option></select></label>
+          <label><span>{{t .Locale "security.page_size"}}</span><select name="rule_page_size"><option value="20" {{if eq .RulePageSize 20}}selected{{end}}>20</option><option value="50" {{if eq .RulePageSize 50}}selected{{end}}>50</option><option value="100" {{if eq .RulePageSize 100}}selected{{end}}>100</option></select></label>
+          <div><a class="button button--quiet" href="/monitor/security?tab=defense">{{t .Locale "security.reset"}}</a><button class="button" type="submit"><span data-lucide="list-filter" aria-hidden="true"></span>{{t .Locale "security.filter"}}</button></div>
+        </form>
+        {{template "security-firewall-table" .}}
+        <nav class="security-pagination" aria-label="{{t .Locale "security.firewall_rules_pagination"}}"><span>{{.RuleTotal}} {{t .Locale "security.records"}} · {{.RulePage}} / {{.RulePages}}</span><div>{{if .HasRulePrevious}}<a class="button button--compact" href="{{.RulePreviousURL}}">{{t .Locale "common.previous"}}</a>{{end}}{{if .HasRuleNext}}<a class="button button--compact" href="{{.RuleNextURL}}">{{t .Locale "common.next"}}</a>{{end}}</div></nav>
+      </section>
+    {{end}}
+  {{end}}
+
+  {{if and (eq .Tab "defense") .Capabilities.Fail2Ban.Running}}
+  <div class="security-ban-drawer-host{{if .ShowBans}} is-open{{end}}" data-security-ban-drawer aria-hidden="{{if .ShowBans}}false{{else}}true{{end}}">
+    <a class="security-ban-drawer__scrim" href="/monitor/security?tab=defense" tabindex="-1" aria-label="{{t .Locale "common.close"}}" data-security-ban-drawer-close></a>
+    <aside class="security-ban-drawer" role="dialog" aria-modal="true" aria-labelledby="security-ban-drawer-title" tabindex="-1">
+      <header class="security-ban-drawer__head"><div><p>FAIL2BAN / SSHD</p><h2 id="security-ban-drawer-title">{{t .Locale "security.banned_ips"}}</h2><small>{{t .Locale "security.ban_dialog_description"}}</small></div><a class="icon-button icon-button--quiet" href="/monitor/security?tab=defense" aria-label="{{t .Locale "common.close"}}" data-security-ban-drawer-close><span data-lucide="x" aria-hidden="true"></span></a></header>
+      <template data-security-ban-loading-template><div class="data-load-state security-ban-drawer__state" data-security-ban-loading data-deferred-state="loading" role="status" aria-live="polite" aria-busy="true"><span class="data-load-state__icon" data-lucide="loader-circle" aria-hidden="true"></span><p><strong>{{t .Locale "security.ban_loading_title"}}</strong><small>{{t .Locale "security.ban_loading_description"}}</small></p></div></template>
+      <template data-security-ban-error-template><div class="data-load-state data-load-state--error security-ban-drawer__state" data-security-ban-error role="alert"><span class="data-load-state__icon" data-lucide="triangle-alert" aria-hidden="true"></span><div><strong>{{t .Locale "common.load_failed"}}</strong><p data-security-ban-error-detail></p><button class="button button--compact" type="button" data-security-ban-retry><span data-lucide="refresh-cw" aria-hidden="true"></span>{{t .Locale "common.retry"}}</button></div></div></template>
+      <div class="security-ban-drawer__body" data-security-ban-drawer-content>
+        {{if .ShowBans}}
+        {{if .BanError}}<div class="security-warning">{{.BanError}}</div>{{else}}<div class="table-shell"><table class="records-table security-ban-table"><thead><tr><th>IP</th><th>Jail</th><th>{{t .Locale "security.banned_at"}}</th><th>{{t .Locale "security.ban_duration"}}</th><th>{{t .Locale "security.remaining"}}</th><th><span class="sr-only">{{t .Locale "common.actions"}}</span></th></tr></thead><tbody>{{range .BanPage.Bans}}<tr><td><code>{{.IP}}</code></td><td>{{.Jail}}</td><td>{{if .BannedAt.IsZero}}—{{else}}<time datetime="{{machineTime .BannedAt}}" data-local-time>{{localTime $.Locale .BannedAt}}</time>{{end}}</td><td>{{if eq .Duration 0}}—{{else}}{{duration .Duration}}{{end}}</td><td>{{if eq .Remaining 0}}—{{else}}{{duration .Remaining}}{{end}}</td><td class="record-actions">{{if $.CanManage}}<form method="post" action="/monitor/security/fail2ban/unban" data-confirm="{{t $.Locale "security.unban_confirm"}} {{.IP}}"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="jail" value="{{.Jail}}"><button class="button button--compact" type="submit" name="ip" value="{{.IP}}"><span data-lucide="unlock" aria-hidden="true"></span>{{t $.Locale "security.unban"}}</button></form>{{end}}</td></tr>{{else}}<tr class="records-table__empty"><td colspan="6">{{t $.Locale "security.no_bans"}}</td></tr>{{end}}</tbody></table></div>{{end}}
+        {{else}}
+        <div class="data-load-state security-ban-drawer__state" data-security-ban-loading data-deferred-state="loading" role="status" aria-live="polite" aria-busy="true"><span class="data-load-state__icon" data-lucide="loader-circle" aria-hidden="true"></span><p><strong>{{t .Locale "security.ban_loading_title"}}</strong><small>{{t .Locale "security.ban_loading_description"}}</small></p></div>
+        {{end}}
+      </div>
+      <nav class="security-pagination{{if not .ShowBans}} is-loading{{end}}" aria-label="{{t .Locale "security.ban_details"}}" data-security-ban-pagination><span>{{.BanPage.Total}} {{t .Locale "security.records"}} · {{.BanPage.Page}} / {{.BanPage.Pages}}</span><div>{{if .HasBanPrevious}}<a class="button button--compact" href="/monitor/security?tab=defense&amp;bans=1&amp;ban_page={{.BanPrevious}}" data-security-ban-drawer-trigger>{{t .Locale "common.previous"}}</a>{{end}}{{if .HasBanNext}}<a class="button button--compact" href="/monitor/security?tab=defense&amp;bans=1&amp;ban_page={{.BanNext}}" data-security-ban-drawer-trigger>{{t .Locale "common.next"}}</a>{{end}}</div></nav>
+    </aside>
+  </div>
+  {{end}}
+
+  {{if and .ShowReview .HasDraft}}
+  <dialog class="security-dialog security-dialog--review" open aria-labelledby="security-review-title">
+    <div class="security-dialog__head"><div><h2 id="security-review-title">{{t .Locale "security.review_changes"}}</h2><p>{{t .Locale "security.review_changes_description"}}</p></div><a class="icon-button icon-button--quiet" href="/monitor/security?tab=defense" aria-label="{{t .Locale "common.close"}}"><span data-lucide="x" aria-hidden="true"></span></a></div>
+    <div class="security-change-list">{{range .DraftChanges}}<article><span data-kind="{{.Kind}}">{{if eq .Kind "add"}}{{t $.Locale "security.change_add"}}{{else if eq .Kind "delete"}}{{t $.Locale "security.change_delete"}}{{else}}{{t $.Locale "security.change_update"}}{{end}}</span><div><strong>{{.Title}}</strong><small>{{.Detail}}</small></div></article>{{end}}</div>
+    {{if not .CanApplyDraft}}<div class="security-warning"><span data-lucide="shield-alert" aria-hidden="true"></span><span>{{t .Locale "security.default_policy_ssh_required"}}</span></div>{{end}}
+    <footer><form method="post" action="/monitor/security/firewall/draft/discard" data-confirm="{{t .Locale "security.discard_confirm"}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--quiet button--danger" type="submit">{{t .Locale "security.discard_all"}}</button></form><a class="button" href="/monitor/security?tab=defense">{{t .Locale "security.continue_editing"}}</a><form method="post" action="/monitor/security/firewall/draft/apply" data-confirm="{{t .Locale "security.sync_confirm"}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--primary" type="submit" {{if not .CanApplyDraft}}disabled{{end}}>{{t .Locale "security.confirm_sync"}}</button></form></footer>
+  </dialog>
+  {{end}}
+  {{end}}
+  </div>
+</main>
+
+{{define "security-login-table"}}<div class="table-shell"><table class="records-table security-login-table"><thead><tr><th>{{t .Locale "security.time"}}</th><th>{{t .Locale "common.result"}}</th><th>{{t .Locale "security.account"}}</th><th>{{t .Locale "security.source_ip"}}</th><th>{{t .Locale "security.login_type"}}</th><th>{{if .Windows}}{{t .Locale "security.event_id"}}{{else}}{{t .Locale "security.authentication"}}{{end}}</th></tr></thead><tbody>{{range .DisplayedLogins}}<tr><td><time datetime="{{machineTime .Time}}" data-local-time>{{localTime $.Locale .Time}}</time></td><td><span class="status-chip" data-state="{{if eq .Result "success"}}current{{else}}attention{{end}}"><span class="status-dot" aria-hidden="true"></span>{{if eq .Result "success"}}{{t $.Locale "security.success"}}{{else}}{{t $.Locale "security.failure"}}{{end}}</span></td><td><code>{{.User}}</code></td><td><code>{{.SourceIP}}</code></td><td>{{.Type}}</td><td>{{if $.Windows}}{{.EventID}}{{else}}{{.Authentication}}{{end}}</td></tr>{{else}}<tr class="records-table__empty"><td colspan="6">{{t $.Locale "security.no_login_records"}}</td></tr>{{end}}</tbody></table></div>{{end}}
+
+{{define "security-firewall-table"}}<div class="table-shell"><table class="records-table security-firewall-table"><thead><tr><th>{{t .Locale "common.status"}}</th><th>{{t .Locale "security.direction"}}</th><th>{{t .Locale "security.action"}}</th><th>{{t .Locale "security.protocol"}}</th><th>{{t .Locale "security.port"}}</th><th>{{t .Locale "security.address"}}</th><th>{{t .Locale "common.name"}}</th>{{if .CanManage}}<th><span class="sr-only">{{t .Locale "common.actions"}}</span></th>{{end}}</tr></thead><tbody>{{range $index, $rule := .Rules}}<tr data-enabled="{{$rule.Enabled}}"><td><span class="status-chip" data-state="{{if $rule.Enabled}}current{{else}}stale{{end}}"><span class="status-dot" aria-hidden="true"></span>{{if $rule.Enabled}}{{t $.Locale "security.enabled"}}{{else}}{{t $.Locale "security.disabled"}}{{end}}</span></td><td><span class="security-direction" data-direction="{{$rule.Direction}}"><span data-lucide="{{if eq $rule.Direction "in"}}arrow-down-to-line{{else}}arrow-up-to-line{{end}}" aria-hidden="true"></span>{{if eq $rule.Direction "in"}}{{t $.Locale "security.inbound"}}{{else}}{{t $.Locale "security.outbound"}}{{end}}</span></td><td>{{if eq $rule.Action "allow"}}{{t $.Locale "security.allow"}}{{else}}{{t $.Locale "security.deny"}}{{end}}</td><td><code>{{$rule.Protocol}}</code></td><td><code>{{$rule.Port}}</code></td><td><code>{{$rule.Address}}</code></td><td><strong>{{$rule.Name}}</strong>{{if $rule.Profile}}<small>{{$rule.Profile}}</small>{{end}}</td>{{if $.CanManage}}<td class="record-actions"><div class="record-actions__group">{{if $.Linux}}<form method="post" action="/monitor/security/firewall/draft/toggle"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="index" value="{{$index}}"><button class="icon-button icon-button--quiet" type="submit" aria-label="{{if $rule.Enabled}}{{t $.Locale "security.disable_rule"}}{{else}}{{t $.Locale "security.enable_rule"}}{{end}}"><span data-lucide="power" aria-hidden="true"></span></button></form><form method="post" action="/monitor/security/firewall/draft/delete" data-confirm="{{t $.Locale "security.delete_rule_confirm"}}"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="index" value="{{$index}}"><button class="icon-button icon-button--quiet" type="submit" aria-label="{{t $.Locale "common.delete"}}"><span data-lucide="trash-2" aria-hidden="true"></span></button></form>{{else}}<form method="post" action="/monitor/security/windows-firewall/toggle"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{$rule.ID}}"><input type="hidden" name="name" value="{{$rule.Name}}"><button class="icon-button icon-button--quiet" type="submit" name="enabled" value="{{if $rule.Enabled}}false{{else}}true{{end}}" aria-label="{{if $rule.Enabled}}{{t $.Locale "security.disable_rule"}}{{else}}{{t $.Locale "security.enable_rule"}}{{end}}"><span data-lucide="power" aria-hidden="true"></span></button></form><form method="post" action="/monitor/security/windows-firewall/delete" data-confirm="{{t $.Locale "security.windows_delete_rule_confirm"}}"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{$rule.ID}}"><button class="icon-button icon-button--quiet" type="submit" name="name" value="{{$rule.Name}}" aria-label="{{t $.Locale "common.delete"}}"><span data-lucide="trash-2" aria-hidden="true"></span></button></form>{{end}}</div></td>{{end}}</tr>{{else}}<tr class="records-table__empty"><td colspan="8">{{if $.RuleFiltering}}{{t $.Locale "security.no_matching_firewall_rules"}}{{else}}{{t $.Locale "security.no_firewall_rules"}}{{end}}</td></tr>{{end}}</tbody></table></div>{{end}}
+</body>
+</html>

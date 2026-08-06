@@ -2,8 +2,10 @@ package app
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 
+	"scriptboard/internal/externaltrigger"
 	"scriptboard/internal/hostfiles"
 )
 
@@ -48,6 +50,25 @@ func (a *App) countScriptReferences(root string) (int, int, error) {
 	return len(quick), len(schedules), err
 }
 
+func (a *App) countExternalFileReferences(root string) (int, error) {
+	rows, err := a.db.Query("SELECT target FROM external_trigger_entries WHERE action_type IN ('log', 'upload')")
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		var target string
+		if err := rows.Scan(&target); err != nil {
+			return 0, err
+		}
+		if hostfiles.Contains(root, target) {
+			count++
+		}
+	}
+	return count, rows.Err()
+}
+
 func updateMovedScriptReferences(transaction *sql.Tx, source, destination string) error {
 	for _, table := range []string{"quick_runs", "schedules"} {
 		references, err := scriptReferences(transaction, table, source, table == "schedules")
@@ -63,6 +84,57 @@ func updateMovedScriptReferences(transaction *sql.Tx, source, destination string
 				movedPath, hostfiles.ComparisonKey(movedPath), reference.id); err != nil {
 				return fmt.Errorf("update %s file reference: %w", table, err)
 			}
+		}
+	}
+	rows, err := transaction.Query("SELECT id, action_type, target, config_json FROM external_trigger_entries WHERE action_type IN ('log', 'upload')")
+	if err != nil {
+		return err
+	}
+	type externalFileReference struct{ id, actionType, target, configJSON string }
+	var references []externalFileReference
+	for rows.Next() {
+		var reference externalFileReference
+		if err := rows.Scan(&reference.id, &reference.actionType, &reference.target, &reference.configJSON); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if hostfiles.Contains(source, reference.target) {
+			references = append(references, reference)
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, reference := range references {
+		movedPath, err := hostfiles.Rebase(source, destination, reference.target)
+		if err != nil {
+			return err
+		}
+		var normalized any
+		switch reference.actionType {
+		case string(externaltrigger.ActionUpload):
+			var config externaltrigger.UploadConfig
+			if err := json.Unmarshal([]byte(reference.configJSON), &config); err != nil {
+				return err
+			}
+			config.Directory = movedPath
+			normalized = config
+		case string(externaltrigger.ActionLog):
+			var config externaltrigger.LogConfig
+			if err := json.Unmarshal([]byte(reference.configJSON), &config); err != nil {
+				return err
+			}
+			config.File = movedPath
+			normalized = config
+		default:
+			continue
+		}
+		encoded, err := json.Marshal(normalized)
+		if err != nil {
+			return err
+		}
+		if _, err := transaction.Exec("UPDATE external_trigger_entries SET target = ?, config_json = ?, updated_at = unixepoch() WHERE id = ?", movedPath, string(encoded), reference.id); err != nil {
+			return fmt.Errorf("update external file reference: %w", err)
 		}
 	}
 	return nil

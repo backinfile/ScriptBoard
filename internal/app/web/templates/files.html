@@ -46,15 +46,18 @@
       <span><strong data-file-drop-title></strong><small id="file-drop-status" data-file-drop-status></small></span>
     </div>{{end}}
 
-    <details class="file-quick-access" data-file-quick-access data-validation-url="/resources/files/validate" hidden
+    <details class="file-quick-access" data-file-quick-access data-validation-url="/resources/files/validate"
+      data-pins-url="/resources/files/quick-access" data-csrf-token="{{.CSRFToken}}"
+      data-save-failed="{{t .Locale "files.quick_access_save_failed"}}" hidden
       data-remove-label="{{t .Locale "files.remove_quick_access"}}">
       <summary>
         <span class="file-quick-access__icon" data-lucide="pin" aria-hidden="true"></span>
-        <span><strong>{{t .Locale "files.quick_access"}}</strong><small>{{t .Locale "files.quick_access_description"}}</small></span>
+        <span><strong>{{t .Locale "files.quick_access"}}</strong></span>
         <span class="file-quick-access__count"><span data-file-quick-count>0</span> <span data-file-quick-count-label>{{t .Locale "files.quick_access_folders"}}</span></span>
         <span data-lucide="chevron-down" aria-hidden="true"></span>
       </summary>
       <div class="file-quick-access__body">
+        <p class="file-quick-access__status" role="alert" data-file-quick-status hidden></p>
         <p data-file-quick-empty>{{t .Locale "files.quick_access_empty"}}</p>
         <ul data-file-quick-list></ul>
       </div>
@@ -153,6 +156,7 @@
               <details class="action-menu">
                 <summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary>
                 <div>
+                  {{if .BrowseURL}}<button type="button" hidden data-copy-value="{{.Path}}" data-copy-label="{{t $.Locale "files.copy_path"}}" data-copied-label="{{t $.Locale "files.path_copied"}}" data-copy-failed-label="{{t $.Locale "files.path_copy_failed"}}"><span data-lucide="copy" data-copy-icon aria-hidden="true"></span><span data-copy-value-label>{{t $.Locale "files.copy_path"}}</span></button>{{else if eq .Kind "regular"}}<button type="button" hidden data-copy-value="{{$.CurrentPath}}" data-copy-label="{{t $.Locale "files.copy_path"}}" data-copied-label="{{t $.Locale "files.path_copied"}}" data-copy-failed-label="{{t $.Locale "files.path_copy_failed"}}"><span data-lucide="copy" data-copy-icon aria-hidden="true"></span><span data-copy-value-label>{{t $.Locale "files.copy_path"}}</span></button><button type="button" hidden data-copy-value="{{.Path}}" data-copy-label="{{t $.Locale "files.copy_full_path"}}" data-copied-label="{{t $.Locale "files.path_copied"}}" data-copy-failed-label="{{t $.Locale "files.path_copy_failed"}}"><span data-lucide="copy" data-copy-icon aria-hidden="true"></span><span data-copy-value-label>{{t $.Locale "files.copy_full_path"}}</span></button>{{end}}
                   {{if and $.CanManageExecution .Runnable}}<a href="{{.QuickRunURL}}" data-task-link><span data-lucide="bookmark-plus" aria-hidden="true"></span>{{t $.Locale "files.add_to_quick_runs"}}</a>{{end}}
                   {{if .ViewURL}}<a href="{{.ViewURL}}"><span data-lucide="eye" aria-hidden="true"></span>{{t $.Locale "common.preview"}}</a>{{end}}
                   {{if .LogURL}}<a href="{{.LogURL}}"><span data-lucide="scroll-text" aria-hidden="true"></span>{{t $.Locale "logs.follow"}}</a>{{end}}

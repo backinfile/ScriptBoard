@@ -107,6 +107,9 @@ func TestFileLogPageRendersTheSharedLiveViewerShell(t *testing.T) {
 			t.Fatalf("log viewer is missing %q: %s", fragment, body.String())
 		}
 	}
+	if !bytes.Contains(body.Bytes(), []byte(`<h1>Live view</h1>`)) || bytes.Contains(body.Bytes(), []byte(`<h1>`+logPath+`</h1>`)) {
+		t.Fatalf("file log viewer should use a page title instead of repeating the file path: %s", body.String())
+	}
 
 	response, err = client.Get(hostFilesRequestURL(serverURL, hostRoot))
 	if err != nil {

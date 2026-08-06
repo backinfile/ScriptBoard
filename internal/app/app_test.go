@@ -430,7 +430,7 @@ func TestPrimaryNavigationAvoidsFullPageReloads(t *testing.T) {
 		assetBodies[name] = body
 		assetVersions[name] = version
 		if name == "app-v2.js" {
-			for _, expected := range []string{"preventDefault()", "DOMParser", "history.pushState", "popstate", "replaceWith", "Intl.DateTimeFormat", "task-panel", "EventSource", "data-markdown-preview", "data-script-preview", "DOMPurify", "markdownit", "hljs.highlight"} {
+			for _, expected := range []string{"preventDefault()", "DOMParser", "history.pushState", "popstate", "replaceWith", "Intl.DateTimeFormat", "task-panel", "initCopyControls(main, cleanups)", "EventSource", "data-markdown-preview", "data-script-preview", "DOMPurify", "markdownit", "hljs.highlight"} {
 				if !bytes.Contains(body, []byte(expected)) {
 					t.Errorf("interaction script does not contain %q", expected)
 				}

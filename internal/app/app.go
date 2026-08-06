@@ -43,7 +43,9 @@ import (
 	"scriptboard/internal/assistant/runtimeinstall"
 	"scriptboard/internal/assistant/toolbroker"
 	"scriptboard/internal/buildinfo"
+	"scriptboard/internal/externaltrigger"
 	"scriptboard/internal/hostfiles"
+	"scriptboard/internal/hostsecurity"
 	"scriptboard/internal/hoststatus"
 	"scriptboard/internal/instancelock"
 	"scriptboard/internal/privatepath"
@@ -101,6 +103,7 @@ func mustWebTemplate(name string) *template.Template {
 func webTemplateFunctions() template.FuncMap {
 	return template.FuncMap{
 		"assetVersion": func() string { return webAssetVersion },
+		"join":         strings.Join,
 		"displayTime": func(input any) string {
 			value, ok := input.(time.Time)
 			if pointer, pointerOK := input.(*time.Time); pointerOK && pointer != nil {
@@ -299,6 +302,7 @@ type Config struct {
 	RequestShutdown        func()
 	ApplicationProbe       appstatus.Probe
 	AssistantRuntimeSource runtimeinstall.Source
+	HostSecurity           hostsecurity.Service
 }
 
 type App struct {
@@ -319,11 +323,16 @@ type App struct {
 	runs               *runmanager.Manager
 	scheduler          *scheduler.Manager
 	hostStatus         *hoststatus.Monitor
+	hostSecurity       hostsecurity.Service
+	securityDraftMu    sync.Mutex
+	securityDrafts     map[string]securityFirewallDraft
 	applicationStatus  *appstatus.Monitor
 	logStreamSlots     chan struct{}
 	logHistorySlots    chan struct{}
 	shellStatusCache   *shellStatusCache
 	websiteMonitor     *websitemonitor.Manager
+	externalTriggers   *externaltrigger.Manager
+	externalLimit      *externaltrigger.Limiter
 	instanceLock       *instancelock.Lock
 	handler            http.Handler
 	loginMu            sync.Mutex
@@ -399,13 +408,21 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("生成登录限流密钥: %w", err)
 	}
+	hostSecurityService := config.HostSecurity
+	if hostSecurityService == nil {
+		hostSecurityService = hostsecurity.NewManager(hostsecurity.Options{})
+	}
 	application := &App{
 		db: db, stateRoot: stateRoot, files: files, instanceLock: instanceLock,
 		loginSlots: make(chan struct{}, 2), loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies,
 		loginRateSalt:  loginRateSalt,
 		logStreamSlots: make(chan struct{}, 8), logHistorySlots: make(chan struct{}, 4),
 		updateResultsWake: make(chan struct{}, 1),
+		hostSecurity:      hostSecurityService,
+		securityDrafts:    make(map[string]securityFirewallDraft),
 	}
+	application.externalTriggers = externaltrigger.New(db, externaltrigger.Options{SecretsDirectory: filepath.Join(stateRoot, "secrets")})
+	application.externalLimit = externaltrigger.NewLimiter(externaltrigger.LimiterOptions{RequestsPerMinute: 60, Concurrent: 4})
 	application.assistant, err = assistant.New(db, assistant.Options{StateRoot: stateRoot})
 	if err != nil {
 		_ = db.Close()
@@ -1177,6 +1194,13 @@ func openDatabase(path string) (*sql.DB, error) {
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS file_quick_access_pins (
+			path TEXT NOT NULL,
+			path_key TEXT PRIMARY KEY,
+			label TEXT NOT NULL,
+			sort_order INTEGER NOT NULL,
+			created_at INTEGER NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS host_metric_minutes (
 			bucket_at INTEGER PRIMARY KEY,
 			sample_count INTEGER NOT NULL,
@@ -1224,6 +1248,12 @@ func openDatabase(path string) (*sql.DB, error) {
 		if _, err := migration.Exec(statement); err != nil {
 			_ = db.Close()
 			return nil, fmt.Errorf("initialize Assistant SQLite schema: %w", err)
+		}
+	}
+	for _, statement := range externaltrigger.SchemaStatements {
+		if _, err := migration.Exec(statement); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("initialize External Interface SQLite schema: %w", err)
 		}
 	}
 	if schemaVersion == 21 {
@@ -1336,6 +1366,27 @@ func openDatabase(path string) (*sql.DB, error) {
 			}
 		}
 	}
+	if schemaVersion == 28 {
+		for _, statement := range []string{
+			`ALTER TABLE file_quick_access_pins RENAME TO file_quick_access_pins_user_scoped`,
+			`CREATE TABLE file_quick_access_pins (
+				path TEXT NOT NULL,
+				path_key TEXT PRIMARY KEY,
+				label TEXT NOT NULL,
+				sort_order INTEGER NOT NULL,
+				created_at INTEGER NOT NULL
+			)`,
+			`INSERT INTO file_quick_access_pins (path, path_key, label, sort_order, created_at)
+				SELECT path, path_key, label, MIN(sort_order), MIN(created_at)
+				FROM file_quick_access_pins_user_scoped GROUP BY path_key`,
+			`DROP TABLE file_quick_access_pins_user_scoped`,
+		} {
+			if _, err := migration.Exec(statement); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("migrate file Quick Access pins to instance scope: %w", err)
+			}
+		}
+	}
 	for _, statement := range []string{
 		"CREATE UNIQUE INDEX IF NOT EXISTS users_single_administrator_idx ON users(role) WHERE role = 'administrator'",
 		"CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id)",
@@ -1355,6 +1406,7 @@ func openDatabase(path string) (*sql.DB, error) {
 		"CREATE INDEX IF NOT EXISTS trash_entries_deleted_idx ON trash_entries(deleted_at DESC)",
 		"CREATE INDEX IF NOT EXISTS trash_entries_original_path_idx ON trash_entries(original_path_key)",
 		"CREATE INDEX IF NOT EXISTS file_operations_phase_idx ON file_operations(phase, created_at)",
+		"CREATE INDEX IF NOT EXISTS file_quick_access_pins_order_idx ON file_quick_access_pins(sort_order, created_at)",
 		"CREATE INDEX IF NOT EXISTS schedules_due_idx ON schedules(next_fire_at) WHERE enabled = 1 AND deleted = 0",
 		"CREATE INDEX IF NOT EXISTS schedule_triggers_schedule_time_idx ON schedule_triggers(schedule_id, scheduled_for DESC)",
 		"CREATE INDEX IF NOT EXISTS schedule_triggers_unlinked_time_idx ON schedule_triggers(scheduled_for) WHERE run_id = ''",
@@ -1394,10 +1446,13 @@ func compatibleDatabaseSchema(version int) bool {
 	// assistant-owned tables, schema 22 adds persisted tool-call text positions,
 	// schema 23 adds bounded request/response JSON, schema 24 adds capability
 	// profiles plus bounded Pi session telemetry, schema 25 scopes LLM
-	// configurations to owners with explicit sharing, and schema 26 records the
-	// latest observed LLM connection result. Each supported
+	// configurations to owners with explicit sharing, schema 26 records the
+	// latest observed LLM connection result, schema 27 adds bounded External
+	// Interface keys, entries, and invocation records, schema 28 persists
+	// per-user file Quick Access pins, and schema 29 merges those pins into one
+	// instance-wide Quick Access list. Each supported
 	// predecessor has an explicit transactional forward path.
-	return version == currentSchemaVersion || currentSchemaVersion == 26 && version >= 20 && version <= 25
+	return version == currentSchemaVersion || currentSchemaVersion == 29 && version >= 20 && version <= 28
 }
 
 func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {
@@ -1584,8 +1639,23 @@ func (a *App) routes() http.Handler {
 	})
 	mux.HandleFunc("POST /login", a.login)
 	mux.HandleFunc("POST /settings/locale", a.setWebLocale)
+	mux.HandleFunc("/trigger", a.externalTrigger)
 	mux.Handle("POST /logout", a.requireSession(http.HandlerFunc(a.logout)))
 	mux.Handle("GET /monitor", a.requireSession(http.HandlerFunc(a.overviewPage)))
+	mux.Handle("GET /monitor/security", a.requireSession(http.HandlerFunc(a.securityPage)))
+	mux.Handle("POST /monitor/security/components/{component}/install", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.installSecurityComponent)))
+	mux.Handle("POST /monitor/security/fail2ban/unban", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.unbanSecurityIP)))
+	mux.Handle("POST /monitor/security/firewall/draft/rules", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.addSecurityFirewallDraftRule)))
+	mux.Handle("POST /monitor/security/firewall/draft/defaults", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.updateSecurityFirewallDraftDefaults)))
+	mux.Handle("POST /monitor/security/firewall/draft/toggle", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.toggleSecurityFirewallDraftRule)))
+	mux.Handle("POST /monitor/security/firewall/draft/delete", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.deleteSecurityFirewallDraftRule)))
+	mux.Handle("POST /monitor/security/firewall/draft/discard", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.discardSecurityFirewallDraft)))
+	mux.Handle("POST /monitor/security/firewall/draft/apply", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.applySecurityFirewallDraft)))
+	mux.Handle("POST /monitor/security/firewall/enable", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.enableSecurityFirewall)))
+	mux.Handle("GET /monitor/security/windows-firewall/rules/new", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.newWindowsFirewallRuleTask)))
+	mux.Handle("POST /monitor/security/windows-firewall/rules", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.addWindowsFirewallRule)))
+	mux.Handle("POST /monitor/security/windows-firewall/toggle", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.toggleWindowsFirewallRule)))
+	mux.Handle("POST /monitor/security/windows-firewall/delete", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.deleteWindowsFirewallRule)))
 	mux.Handle("GET /ai", a.requireSession(http.HandlerFunc(a.assistantPage)))
 	mux.Handle("GET /ai/resources", a.requireSession(http.HandlerFunc(a.assistantResourceSearch)))
 	mux.Handle("POST /ai/conversations", a.requireSession(http.HandlerFunc(a.createAssistantConversation)))
@@ -1693,6 +1763,8 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /resources/files/quick-run", a.requireSession(http.HandlerFunc(a.quickRunFromFileTask)))
 	mux.Handle("GET /resources/files", a.requireSession(http.HandlerFunc(a.filesPage)))
 	mux.Handle("GET /resources/files/validate", a.requireSession(http.HandlerFunc(a.validateFileQuickAccess)))
+	mux.Handle("GET /resources/files/quick-access", a.requireSession(http.HandlerFunc(a.fileQuickAccessPins)))
+	mux.Handle("POST /resources/files/quick-access", a.requireSession(http.HandlerFunc(a.updateFileQuickAccessPin)))
 	mux.Handle("POST /resources/files/mkdir", a.requireSession(http.HandlerFunc(a.createDirectory)))
 	mux.Handle("POST /resources/files/conflicts", a.requireSession(http.HandlerFunc(a.uploadConflicts)))
 	mux.Handle("POST /resources/files/upload", a.requireSession(http.HandlerFunc(a.uploadFiles)))
@@ -1763,6 +1835,23 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /config/schedules/{id}/toggle", a.requireSession(http.HandlerFunc(a.toggleSchedule)))
 	mux.Handle("POST /config/schedules/{id}/run", a.requireSession(http.HandlerFunc(a.runScheduleNow)))
 	mux.Handle("POST /config/schedules/{id}/delete", a.requireSession(http.HandlerFunc(a.deleteSchedule)))
+	mux.Handle("GET /config/external-interfaces", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.externalInterfacesPage)))
+	mux.Handle("GET /config/external-interfaces/keys/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.newExternalKeyTask)))
+	mux.Handle("POST /config/external-interfaces/keys", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.createExternalKey)))
+	mux.Handle("GET /config/external-interfaces/keys/{id}/edit", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.editExternalKeyTask)))
+	mux.Handle("GET /config/external-interfaces/keys/{id}/copy", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.copyExternalKeyTask)))
+	mux.Handle("GET /config/external-interfaces/keys/{id}/rotate", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.rotateExternalKeyTask)))
+	mux.Handle("POST /config/external-interfaces/keys/{id}", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.updateExternalKey)))
+	mux.Handle("POST /config/external-interfaces/keys/{id}/toggle", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.toggleExternalKey)))
+	mux.Handle("POST /config/external-interfaces/keys/{id}/rotate", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.rotateExternalKey)))
+	mux.Handle("POST /config/external-interfaces/keys/{id}/delete", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.deleteExternalKey)))
+	mux.Handle("GET /config/external-interfaces/keys/{id}/entries/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.newExternalEntryTask)))
+	mux.Handle("POST /config/external-interfaces/keys/{id}/entries", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.createExternalEntry)))
+	mux.Handle("GET /config/external-interfaces/entries/{id}", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.externalEntryDetail)))
+	mux.Handle("GET /config/external-interfaces/entries/{id}/edit", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.editExternalEntryTask)))
+	mux.Handle("POST /config/external-interfaces/entries/{id}", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.updateExternalEntry)))
+	mux.Handle("POST /config/external-interfaces/entries/{id}/toggle", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.toggleExternalEntry)))
+	mux.Handle("POST /config/external-interfaces/entries/{id}/delete", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.deleteExternalEntry)))
 	mux.Handle("GET /history/audit", a.requireSession(http.HandlerFunc(a.auditPage)))
 	mux.Handle("GET /history/audit.csv", a.requireSession(http.HandlerFunc(a.auditDownload)))
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -1776,7 +1865,7 @@ func (a *App) routes() http.Handler {
 			response.Header().Set("Strict-Transport-Security", "max-age=31536000")
 		}
 		if request.Body != nil && request.Method != http.MethodGet && request.Method != http.MethodHead &&
-			request.URL.Path != "/resources/files/upload" && request.URL.Path != "/settings/ai/runtime/offline" {
+			request.URL.Path != "/resources/files/upload" && request.URL.Path != "/settings/ai/runtime/offline" && request.URL.Path != "/trigger" {
 			if request.ContentLength > maxFormRequestBytes {
 				http.Error(response, "request body is too large", http.StatusRequestEntityTooLarge)
 				return
@@ -1785,9 +1874,14 @@ func (a *App) routes() http.Handler {
 			defer resetReadDeadline()
 			request.Body = http.MaxBytesReader(response, request.Body, maxFormRequestBytes)
 		}
-		if a.validation.Load() && request.Method != http.MethodGet {
+		if a.validation.Load() && (request.Method != http.MethodGet || request.URL.Path == "/trigger") {
 			response.Header().Set("Retry-After", "2")
-			http.Error(response, webText(resolveWebLocale(request), "updates.validation_write_blocked"), http.StatusServiceUnavailable)
+			if request.URL.Path == "/trigger" {
+				response.Header().Set("Content-Type", "application/json; charset=utf-8")
+				writeExternalTriggerError(response, http.StatusServiceUnavailable, "service_unavailable")
+			} else {
+				http.Error(response, webText(resolveWebLocale(request), "updates.validation_write_blocked"), http.StatusServiceUnavailable)
+			}
 			return
 		}
 		pageResponse := &pageResponseWriter{ResponseWriter: response}
@@ -2816,6 +2910,15 @@ func (a *App) deleteQuickRun(response http.ResponseWriter, request *http.Request
 		return
 	}
 	id := request.PathValue("id")
+	var externalReferences int
+	if err := a.db.QueryRow("SELECT COUNT(*) FROM external_trigger_entries WHERE action_type = 'quick_run' AND target = ?", id).Scan(&externalReferences); err != nil {
+		http.Error(response, "Unable to check External Interface references", http.StatusInternalServerError)
+		return
+	}
+	if externalReferences != 0 {
+		http.Error(response, "Quick Run is still referenced by an External Interface", http.StatusConflict)
+		return
+	}
 	result, err := a.db.Exec("DELETE FROM quick_runs WHERE id = ? AND locked = 0", id)
 	count := int64(0)
 	if err == nil {
@@ -2969,6 +3072,17 @@ func (a *App) updateVariable(response http.ResponseWriter, request *http.Request
 		http.Error(response, "变量名称或值无效", http.StatusBadRequest)
 		return
 	}
+	if name != original || isPassword {
+		var externalReferences int
+		if err := a.db.QueryRow("SELECT COUNT(*) FROM external_trigger_entries WHERE action_type = 'variable' AND target = ?", original).Scan(&externalReferences); err != nil {
+			http.Error(response, "Unable to check External Interface references", http.StatusInternalServerError)
+			return
+		}
+		if externalReferences != 0 {
+			http.Error(response, "Variable is still referenced by an External Interface", http.StatusConflict)
+			return
+		}
+	}
 	transaction, err := a.db.Begin()
 	if err != nil {
 		http.Error(response, "无法更新变量", http.StatusInternalServerError)
@@ -3004,7 +3118,7 @@ func (a *App) deleteVariable(response http.ResponseWriter, request *http.Request
 	name := request.PathValue("name")
 	reference := "%{{" + name + "}}%"
 	var references int
-	if err := a.db.QueryRow("SELECT (SELECT COUNT(*) FROM quick_runs WHERE arguments_template LIKE ?) + (SELECT COUNT(*) FROM schedules WHERE deleted = 0 AND arguments_template LIKE ?)", reference, reference).Scan(&references); err != nil {
+	if err := a.db.QueryRow("SELECT (SELECT COUNT(*) FROM quick_runs WHERE arguments_template LIKE ?) + (SELECT COUNT(*) FROM schedules WHERE deleted = 0 AND arguments_template LIKE ?) + (SELECT COUNT(*) FROM external_trigger_entries WHERE action_type = 'variable' AND target = ?)", reference, reference, name).Scan(&references); err != nil {
 		http.Error(response, "无法检查变量引用", http.StatusInternalServerError)
 		return
 	}
@@ -3660,6 +3774,15 @@ func (a *App) deleteFile(response http.ResponseWriter, request *http.Request) {
 	}
 	if a.runs.ConflictsPath(path) {
 		http.Error(response, "活动运行持有该脚本或其后代的运行租约", http.StatusConflict)
+		return
+	}
+	externalFileReferences, err := a.countExternalFileReferences(path)
+	if err != nil {
+		http.Error(response, "Unable to check External Interface file references", http.StatusInternalServerError)
+		return
+	}
+	if externalFileReferences != 0 {
+		http.Error(response, "Path is still referenced by an External Interface file action", http.StatusConflict)
 		return
 	}
 	quickCount, scheduleCount, err := a.countScriptReferences(path)

@@ -608,6 +608,16 @@ async function assertWebsiteMonitoring(page, baseURL) {
 
   await page.setViewportSize({ width: 1440, height: 600 });
   await page.goto(`${baseURL}/monitor/websites`);
+  for (const taskPath of ["/monitor/websites/new", "/monitor/websites/nginx"]) {
+    const taskLink = page.locator(`.website-heading-actions a[href="${taskPath}"][data-task-link]`);
+    assert.equal(await taskLink.count(), 1);
+    await taskLink.click();
+    const websiteTaskPanel = page.locator('[data-task-panel] main[data-task-kind^="website-"]');
+    await websiteTaskPanel.waitFor();
+    assert.equal(await websiteTaskPanel.locator(':scope > .website-task-heading > a[href="/monitor/websites"]').count(), 0);
+    await page.locator("[data-task-panel-close]").click();
+    await page.locator("[data-task-panel]").waitFor({ state: "detached" });
+  }
   const refreshLink = page.locator('.website-heading-actions a').filter({ hasText: "Refresh" });
   assert.equal(await refreshLink.getAttribute("href"), "/monitor/websites");
   assert.equal(await refreshLink.getAttribute("data-native"), null);
@@ -652,6 +662,7 @@ async function assertWebsiteMonitoring(page, baseURL) {
   const panel = page.locator("[data-task-panel]");
   const detail = panel.locator("[data-website-detail]");
   await detail.waitFor();
+  assert.equal(await detail.locator(".website-detail-back").count(), 0);
   assert.equal(Math.round(await panel.evaluate(element => element.getBoundingClientRect().width)), 760);
   assert.equal(await detail.locator(".website-open-external").getAttribute("target"), "_blank");
   const originalToken = await detail.getAttribute("data-monitor-checked");
@@ -844,6 +855,19 @@ async function assertAccountSettings(page, baseURL) {
   await usernamePanel.waitFor();
   assert.equal(await usernamePanel.locator('input[name="username"]').inputValue(), "admin");
   assert.equal(await usernamePanel.locator('input[name="current_password"]').count(), 1);
+  await page.setViewportSize({ width: 390, height: 420 });
+  const pinnedClose = await page.locator("[data-task-panel]").evaluate(panel => {
+    const close = panel.querySelector("[data-task-panel-close]");
+    const scroller = panel.querySelector("main[data-task-page]");
+    const before = close.getBoundingClientRect();
+    scroller.scrollTop = scroller.scrollHeight;
+    const after = close.getBoundingClientRect();
+    return { beforeTop: before.top, beforeRight: before.right, afterTop: after.top, afterRight: after.right, scrollTop: scroller.scrollTop };
+  });
+  assert.ok(pinnedClose.scrollTop > 0, JSON.stringify(pinnedClose));
+  assert.equal(Math.round(pinnedClose.afterTop), Math.round(pinnedClose.beforeTop));
+  assert.equal(Math.round(pinnedClose.afterRight), Math.round(pinnedClose.beforeRight));
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.locator("[data-task-panel-close]").click();
   await page.locator("[data-task-panel]").waitFor({ state: "detached" });
 
@@ -968,6 +992,54 @@ async function assertAssistantSettingsAndWorkspace(page, baseURL) {
   await page.setViewportSize({ width: 1440, height: 1000 });
 }
 
+async function assertExternalInterfaces(page, fixture) {
+  await page.goto(`${fixture.baseURL}/config/external-interfaces`);
+  await page.locator("[data-external-interfaces-page]").waitFor();
+  assert.match(await page.locator("h1").textContent(), /External Interfaces/);
+  await assertNoHorizontalOverflow(page, "External Interfaces empty state");
+
+  await page.goto(`${fixture.baseURL}/config/external-interfaces/keys/new`);
+  const keyForm = page.locator(".external-task-sheet form");
+  await keyForm.locator('input[name="label"]').fill("Browser fixture");
+  await keyForm.locator('select[name="duration"]').selectOption("1d");
+  await keyForm.locator('button[type="submit"]').click();
+  const maskedSecret = (await page.locator(".external-secret code").textContent()).trim();
+  assert.match(maskedSecret, /^sbk_[A-Za-z0-9_-]{16}\.••••[A-Za-z0-9_-]{4}$/);
+  const copyKey = page.locator("[data-copy-key]");
+  await copyKey.click();
+  await copyKey.locator('[data-copy-key-label]').getByText("Copied").waitFor();
+  const secret = await page.evaluate(() => navigator.clipboard.readText());
+  assert.match(secret, /^sbk_[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{43}$/);
+  const keyID = secret.slice(4).split(".")[0];
+
+  await page.goto(`${fixture.baseURL}/config/external-interfaces/keys/${keyID}/entries/new`);
+  const form = page.locator("[data-external-entry-form]");
+  await form.locator('select[name="action_type"]').selectOption("upload");
+  assert.equal(await form.locator('[data-external-action-fields="upload"]').isVisible(), true);
+  assert.equal(await form.locator('[data-external-action-fields="log"]').isVisible(), false);
+  await form.locator('input[name="label"]').fill("Artifact upload");
+  await form.locator('input[name="name"]').fill("artifact");
+  await form.locator('input[name="upload_directory"]').fill(path.join(fixture.hostRoot, "data", "exports"));
+  await form.locator('input[name="upload_max_bytes"]').fill("1024");
+  await form.locator('input[name="upload_extensions"]').fill(".txt");
+  await form.locator('select[name="upload_conflict"]').selectOption("rename");
+  await form.locator('button[type="submit"]').click();
+  await page.locator("[data-external-interfaces-page]").waitFor();
+  assert.equal(await page.getByText("Artifact upload", { exact: true }).count(), 1);
+
+  const trigger = await page.request.post(`${fixture.baseURL}/trigger?name=artifact`, {
+    headers: { Authorization: `Bearer ${secret}` },
+    multipart: { file: { name: "external-result.txt", mimeType: "text/plain", buffer: Buffer.from("fixture complete") } },
+  });
+  assert.equal(trigger.status(), 201);
+  assert.equal((await trigger.json()).action, "upload");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await assertNoHorizontalOverflow(page, "External Interfaces mobile");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+}
+
 (async () => {
   const fixture = await startFixture();
   const fixtureHostPath = (...components) => path.join(fixture.hostRoot, ...components);
@@ -1030,6 +1102,7 @@ async function assertAssistantSettingsAndWorkspace(page, baseURL) {
     await assertAccountSettings(page, fixture.baseURL);
     await assertUserManagement(page, fixture.baseURL);
     await assertAssistantSettingsAndWorkspace(page, fixture.baseURL);
+    await assertExternalInterfaces(page, fixture);
 
     const status = await page.evaluate(async () => {
       const response = await fetch("/monitor/status", { cache: "no-store" });
@@ -1488,6 +1561,8 @@ async function assertAssistantSettingsAndWorkspace(page, baseURL) {
     const automationPin = automationRow.getByRole("button", { name: "Pin directory" });
     await automationPin.waitFor({ state: "visible" });
     await automationPin.click();
+    await page.waitForFunction(() => Array.from(document.querySelectorAll("[data-file-pin]"))
+      .some(element => element.dataset.filePinLabel === "automation" && element.getAttribute("aria-pressed") === "true"));
     assert.equal(await automationPin.getAttribute("aria-pressed"), "true");
     assert.equal((await quickAccess.locator("[data-file-quick-count]").textContent()).trim(), "1");
     await quickAccess.locator("summary").click();
@@ -1506,6 +1581,7 @@ async function assertAssistantSettingsAndWorkspace(page, baseURL) {
     });
     const restoredAutomationPin = restoredAutomationRow.getByRole("button", { name: "Unpin directory" });
     await restoredAutomationPin.click();
+    await page.waitForFunction(() => document.querySelector("[data-file-quick-count]")?.textContent.trim() === "0");
     assert.equal((await restoredQuickAccess.locator("[data-file-quick-count]").textContent()).trim(), "0");
     await restoredQuickAccess.locator("summary").click();
 

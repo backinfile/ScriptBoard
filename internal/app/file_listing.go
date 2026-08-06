@@ -2,14 +2,124 @@ package app
 
 import (
 	"cmp"
+	"encoding/json"
+	"net/http"
 	"net/url"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"scriptboard/internal/hostfiles"
 )
+
+const maxFileQuickAccessPins = 30
+
+type fileQuickAccessPin struct {
+	Path  string `json:"path"`
+	Label string `json:"label"`
+	Href  string `json:"href"`
+}
+
+func (a *App) quickAccessPins() ([]fileQuickAccessPin, error) {
+	rows, err := a.db.Query(`SELECT path, label FROM file_quick_access_pins ORDER BY sort_order, created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	pins := make([]fileQuickAccessPin, 0, maxFileQuickAccessPins)
+	for rows.Next() {
+		var pin fileQuickAccessPin
+		if err := rows.Scan(&pin.Path, &pin.Label); err != nil {
+			return nil, err
+		}
+		pin.Href = filesURL(pin.Path)
+		pins = append(pins, pin)
+	}
+	return pins, rows.Err()
+}
+
+func (a *App) fileQuickAccessPins(response http.ResponseWriter, request *http.Request) {
+	pins, err := a.quickAccessPins()
+	if err != nil {
+		http.Error(response, "Unable to read Quick access", http.StatusInternalServerError)
+		return
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(response).Encode(map[string]any{"pins": pins})
+}
+
+func (a *App) updateFileQuickAccessPin(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "Invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	path := strings.TrimSpace(request.FormValue("path"))
+	pinned := request.FormValue("pinned") == "true"
+	if path == "" {
+		http.Error(response, "Path is required", http.StatusBadRequest)
+		return
+	}
+
+	pathKey := hostfiles.ComparisonKey(path)
+	if pinned {
+		canonical, err := a.files.CanonicalDirectory(path)
+		if err != nil {
+			writeHostFileError(response, "Unable to pin directory", err)
+			return
+		}
+		path = canonical
+		pathKey = hostfiles.ComparisonKey(canonical)
+	}
+
+	transaction, err := a.db.Begin()
+	if err != nil {
+		http.Error(response, "Unable to save Quick access", http.StatusInternalServerError)
+		return
+	}
+	defer func() { _ = transaction.Rollback() }()
+	if pinned {
+		label := filepath.Base(path)
+		if volume := filepath.VolumeName(path); volume != "" && filepath.Clean(path) == filepath.Clean(volume+string(filepath.Separator)) {
+			label = path
+		}
+		if label == "." || label == string(filepath.Separator) || label == "" {
+			label = path
+		}
+		_, err = transaction.Exec(`INSERT INTO file_quick_access_pins
+			(path, path_key, label, sort_order, created_at)
+			VALUES (?, ?, ?, COALESCE((SELECT MAX(sort_order) + 1 FROM file_quick_access_pins), 1), ?)
+			ON CONFLICT(path_key) DO UPDATE SET path = excluded.path, label = excluded.label`,
+			path, pathKey, label, time.Now().UTC().UnixNano())
+		if err == nil {
+			_, err = transaction.Exec(`DELETE FROM file_quick_access_pins WHERE path_key IN (
+				SELECT path_key FROM file_quick_access_pins ORDER BY sort_order DESC, created_at DESC LIMIT -1 OFFSET ?
+			)`, maxFileQuickAccessPins)
+		}
+	} else {
+		_, err = transaction.Exec("DELETE FROM file_quick_access_pins WHERE path_key = ?", pathKey)
+	}
+	if err != nil {
+		http.Error(response, "Unable to save Quick access", http.StatusInternalServerError)
+		return
+	}
+	if err := transaction.Commit(); err != nil {
+		http.Error(response, "Unable to save Quick access", http.StatusInternalServerError)
+		return
+	}
+
+	pins, err := a.quickAccessPins()
+	if err != nil {
+		http.Error(response, "Unable to read Quick access", http.StatusInternalServerError)
+		return
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(response).Encode(map[string]any{"pins": pins})
+}
 
 type fileCategory string
 

@@ -41,6 +41,74 @@ type PreparedDirectory struct {
 	Info os.FileInfo
 }
 
+// PrepareAppendFile canonicalizes a regular text file, or a new file below an
+// accessible directory, using the same protected-path boundary as other host
+// mutations.
+func (m *Manager) PrepareAppendFile(path string) (string, error) {
+	if strings.TrimSpace(path) == "" || !filepath.IsAbs(path) {
+		return "", fmt.Errorf("host path must be absolute")
+	}
+	target := filepath.Clean(path)
+	_, err := os.Lstat(target)
+	if err == nil {
+		canonical, resolvedInfo, resolveErr := m.resolveEntry(target)
+		if resolveErr != nil {
+			return "", resolveErr
+		}
+		if !resolvedInfo.Mode().IsRegular() || restrictedEntry(canonical, resolvedInfo) {
+			return "", fmt.Errorf("append target is not a regular file")
+		}
+		if err := m.ensureMutationAllowed(canonical); err != nil {
+			return "", err
+		}
+		return canonical, nil
+	}
+	if !os.IsNotExist(err) {
+		return "", fmt.Errorf("inspect append target: %w", err)
+	}
+	return m.CanonicalDestination(target)
+}
+
+// AppendText appends one already-bounded UTF-8 record to a host file. Existing
+// links and non-regular files are rejected, and new files are created without
+// replacing a path that appeared after validation.
+func (m *Manager) AppendText(path, record string) error {
+	if !utf8.ValidString(record) || strings.IndexByte(record, 0) >= 0 {
+		return fmt.Errorf("append record is not safe UTF-8 text")
+	}
+	target, err := m.PrepareAppendFile(path)
+	if err != nil {
+		return err
+	}
+	if err := diskspace.Require(filepath.Dir(target), diskspace.MinimumWritableBytes); err != nil {
+		return err
+	}
+
+	existing, existingErr := os.Lstat(target)
+	flags := os.O_WRONLY | os.O_APPEND
+	if os.IsNotExist(existingErr) {
+		flags |= os.O_CREATE | os.O_EXCL
+	} else if existingErr != nil {
+		return fmt.Errorf("inspect append target: %w", existingErr)
+	}
+	file, err := os.OpenFile(target, flags, 0o644)
+	if err != nil {
+		return fmt.Errorf("open append target: %w", err)
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !opened.Mode().IsRegular() || (existingErr == nil && !os.SameFile(existing, opened)) {
+		return fmt.Errorf("append target changed while it was being opened")
+	}
+	if _, err := io.WriteString(file, record); err != nil {
+		return fmt.Errorf("append text: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("sync appended text: %w", err)
+	}
+	return nil
+}
+
 func (m *Manager) PrepareDirectory(path string) (PreparedDirectory, error) {
 	target, err := m.resolveDirectory(path)
 	if err != nil {

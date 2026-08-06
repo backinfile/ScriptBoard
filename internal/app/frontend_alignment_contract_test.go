@@ -127,6 +127,14 @@ func TestApplicationsPageExposesLiveFactsAndExpandableObservationDetails(t *test
 	}
 	requireAlignmentFragments(t, script,
 		`data-task-panel-close`,
+		`function removeWebsiteTaskPanelBackLink(taskMain)`,
+		`taskMain.dataset.taskKind?.startsWith("website-")`,
+		`:scope > .website-task-heading > a[href="/monitor/websites"], .website-detail-back`,
+		`const innerClose = panelMain.querySelector(".task-sheet > header > .icon-button")`,
+		`innerClose?.remove();`,
+		`removeWebsiteTaskPanelBackLink(panelMain);`,
+		`main[data-task-refresh-on-close]`,
+		`taskPanelRefreshAfterCloseURL`,
 		`ScriptBoard will not resubmit it automatically.`,
 		`taskPanelState !== submittingTaskState`,
 		`signal:controller.signal`,
@@ -158,6 +166,8 @@ func TestApplicationsPageExposesLiveFactsAndExpandableObservationDetails(t *test
 		`grid-template-columns: minmax(280px, 1.15fr) minmax(420px, 1fr) 104px;`,
 		`overflow-wrap: anywhere;`,
 		`.application-drawer-host {`,
+		`.task-panel > main[data-task-page] {`,
+		`.task-panel .task-panel-close {`,
 		`@media (max-width: 1400px) {`,
 	)
 }
