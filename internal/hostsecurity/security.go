@@ -376,8 +376,8 @@ func normalizeLoginQuery(query LoginQuery) LoginQuery {
 	if query.Page < 1 {
 		query.Page = 1
 	}
-	if query.PageSize != 50 && query.PageSize != 100 {
-		query.PageSize = 20
+	if query.PageSize != 20 && query.PageSize != 50 && query.PageSize != 100 {
+		query.PageSize = 5
 	}
 	return query
 }

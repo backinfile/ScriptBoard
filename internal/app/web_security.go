@@ -97,9 +97,9 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 		dateRange = localDateRange{}
 	}
 	page := positiveInt(request.URL.Query().Get("page"), 1)
-	pageSize := positiveInt(request.URL.Query().Get("page_size"), 20)
-	if pageSize != 50 && pageSize != 100 {
-		pageSize = 20
+	pageSize := positiveInt(request.URL.Query().Get("page_size"), 5)
+	if pageSize != 20 && pageSize != 50 && pageSize != 100 {
+		pageSize = 5
 	}
 	ruleProtocol := allowedSecurityFilter(request.URL.Query().Get("rule_protocol"), "tcp", "udp", "any")
 	ruleDirection := allowedSecurityFilter(request.URL.Query().Get("rule_direction"), "in", "out")

@@ -19,6 +19,19 @@ func TestWindowsLoginScriptTreatsNoMatchingEventsAsEmptyJSON(t *testing.T) {
 	}
 }
 
+func TestNormalizeLoginQueryDefaultsToFiveRecords(t *testing.T) {
+	query := normalizeLoginQuery(LoginQuery{})
+	if query.PageSize != 5 {
+		t.Fatalf("page size = %d, want 5", query.PageSize)
+	}
+	for _, pageSize := range []int{5, 20, 50, 100} {
+		query = normalizeLoginQuery(LoginQuery{PageSize: pageSize})
+		if query.PageSize != pageSize {
+			t.Fatalf("page size = %d, want allowed value %d", query.PageSize, pageSize)
+		}
+	}
+}
+
 func TestCapabilitiesCacheAvoidsRepeatedWindowsFirewallProbes(t *testing.T) {
 	now := time.Date(2026, time.August, 6, 2, 0, 0, 0, time.UTC)
 	runner := &fakeRunner{}

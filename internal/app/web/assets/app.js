@@ -646,7 +646,7 @@
       document.title = title;
       updateShellLocation(url);
       setSidebar(false);
-      window.scrollTo({ top: 0, behavior: "auto" });
+      if (!options.preserveScroll) window.scrollTo({ top: 0, behavior: "auto" });
     }
     try {
       const result = await fetchDocument(url, {
@@ -683,7 +683,7 @@
       }
       updateShellLocation(result.response.url);
       setSidebar(false);
-      window.scrollTo({ top: 0, behavior: "auto" });
+      if (!options.preserveScroll) window.scrollTo({ top: 0, behavior: "auto" });
       initPage();
 
       if (deferredData) {
@@ -5150,6 +5150,68 @@
     });
   }
 
+  function initSecurityBanDrawer(cleanups) {
+    const host = document.querySelector("[data-security-ban-drawer]");
+    const drawer = host?.querySelector(".security-ban-drawer");
+    const closeLink = drawer?.querySelector("[data-security-ban-drawer-close]");
+    if (!host || !drawer || !closeLink) return;
+    let closing = false;
+    let closeTimer = null;
+    let focusTimer = null;
+    document.body.style.overflow = "hidden";
+    focusTimer = window.setTimeout(() => closeLink.focus(), 180);
+
+    const close = event => {
+      event?.preventDefault();
+      if (closing) return;
+      closing = true;
+      const destination = new URL(closeLink.href, location.href);
+      host.classList.remove("is-open");
+      host.setAttribute("aria-hidden", "true");
+      document.body.style.overflow = "";
+      const delay = matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 180;
+      closeTimer = window.setTimeout(() => {
+        history.replaceState({ pjax: true }, "", destination.href);
+        navigate(destination.href, false, { deferredData: true, preserveScroll: true });
+      }, delay);
+    };
+    const onClick = event => {
+      if (event.target.closest("[data-security-ban-drawer-close]")) close(event);
+    };
+    const onKeydown = event => {
+      if (event.key === "Escape") {
+        close(event);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(drawer.querySelectorAll("button:not([disabled]),a[href],[tabindex]:not([tabindex='-1'])"))
+        .filter(element => !element.hidden && element.getClientRects().length > 0);
+      if (!focusable.length) {
+        event.preventDefault();
+        drawer.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && (event.target === first || !drawer.contains(event.target))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && event.target === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    host.addEventListener("click", onClick);
+    document.addEventListener("keydown", onKeydown);
+    cleanups.push(() => {
+      host.removeEventListener("click", onClick);
+      document.removeEventListener("keydown", onKeydown);
+      if (closeTimer) window.clearTimeout(closeTimer);
+      if (focusTimer) window.clearTimeout(focusTimer);
+      document.body.style.overflow = "";
+    });
+  }
+
   function initPage() {
     const cleanups = [];
     cleanupPage = () => cleanups.splice(0).forEach(cleanup => cleanup());
@@ -5175,6 +5237,7 @@
     initExternalEntryForm(document, cleanups);
     initDisplaySettings(cleanups);
 	initSecurityDialogs(cleanups);
+    initSecurityBanDrawer(cleanups);
     initAssistantWorkspace(cleanups);
     initAssistantSettings(cleanups);
     const websiteForm = document.querySelector("[data-website-monitor-form]");
@@ -5239,6 +5302,7 @@
       navigate(destination.href, true, {
         deferredData: isDeferredDataURL(destination.href),
         immediate: mainNavigation || securityTab,
+        preserveScroll: link.matches("[data-security-ban-drawer-trigger]"),
         title: mainNavigation ? navigationTitle(link) : undefined,
         focusSelector: link.dataset.focusAfterNavigation,
       });

@@ -37,10 +37,17 @@ func TestHostSecurityPageAndUFWDraftFlow(t *testing.T) {
 	if !bytes.Contains(overview, []byte("203.0.113.8")) || !bytes.Contains(overview, []byte("Failed sign-ins")) {
 		t.Fatalf("security overview did not render login data: %s", overview)
 	}
+	service.mu.Lock()
+	defaultPageSize := service.lastQuery.PageSize
+	service.mu.Unlock()
+	if defaultPageSize != 5 {
+		t.Fatalf("default login page size = %d, want 5", defaultPageSize)
+	}
 	page := getSecurityPage(t, client, serverURL+"/monitor/security?tab=defense")
 	for _, expected := range [][]byte{
 		[]byte(`href="/monitor/security" aria-current="page"`),
 		[]byte("Host Security"), []byte("Fail2Ban"), []byte("UFW Firewall"), []byte("root privileges"),
+		[]byte(`data-security-ban-drawer-trigger`), []byte(`aria-haspopup="dialog"`),
 	} {
 		if !bytes.Contains(page, expected) {
 			t.Fatalf("security page missing %q: %s", expected, page)
@@ -50,6 +57,19 @@ func TestHostSecurityPageAndUFWDraftFlow(t *testing.T) {
 		if bytes.Contains(page, forbidden) {
 			t.Fatalf("security page exposes removed UFW close action %q", forbidden)
 		}
+	}
+
+	bans := getSecurityPage(t, client, serverURL+"/monitor/security?tab=defense&bans=1")
+	for _, expected := range [][]byte{
+		[]byte(`data-security-ban-drawer`), []byte(`class="security-ban-drawer-host is-open"`),
+		[]byte(`role="dialog"`), []byte(`aria-modal="true"`), []byte("203.0.113.8"),
+	} {
+		if !bytes.Contains(bans, expected) {
+			t.Fatalf("security ban drawer missing %q: %s", expected, bans)
+		}
+	}
+	if bytes.Contains(bans, []byte(`<dialog class="security-dialog" open aria-labelledby="security-ban-dialog-title">`)) {
+		t.Fatalf("ban details still render as a modal dialog: %s", bans)
 	}
 
 	response, err := client.PostForm(serverURL+"/monitor/security/firewall/draft/rules", url.Values{
