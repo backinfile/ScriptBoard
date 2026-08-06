@@ -199,6 +199,8 @@ var webMessages = map[string]localizedMessage{
 	"security.install_ufw_confirm":                  {"将使用固定系统命令安装 UFW，安装后不会自动启用。确认继续？", "Install UFW with the fixed system action? It will remain disabled."},
 	"security.fail2ban_description":                 {"聚合 SSH 失败并自动封禁高频来源。", "Aggregate SSH failures and ban frequent sources."},
 	"security.ban_details":                          {"查看封禁详情", "View ban details"},
+	"security.ban_loading_title":                    {"正在读取封禁详情", "Loading ban details"},
+	"security.ban_loading_description":              {"正在查询 Fail2Ban sshd Jail。", "Querying the Fail2Ban sshd jail."},
 	"security.service_status":                       {"服务状态", "Service status"},
 	"security.current_bans":                         {"当前封禁", "Current bans"},
 	"security.active_jail":                          {"活跃 Jail", "Active jail"},

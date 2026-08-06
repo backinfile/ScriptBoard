@@ -646,7 +646,7 @@
       document.title = title;
       updateShellLocation(url);
       setSidebar(false);
-      if (!options.preserveScroll) window.scrollTo({ top: 0, behavior: "auto" });
+      window.scrollTo({ top: 0, behavior: "auto" });
     }
     try {
       const result = await fetchDocument(url, {
@@ -683,7 +683,7 @@
       }
       updateShellLocation(result.response.url);
       setSidebar(false);
-      if (!options.preserveScroll) window.scrollTo({ top: 0, behavior: "auto" });
+      window.scrollTo({ top: 0, behavior: "auto" });
       initPage();
 
       if (deferredData) {
@@ -5151,32 +5151,117 @@
   }
 
   function initSecurityBanDrawer(cleanups) {
+    const root = document.querySelector("[data-security-page]");
     const host = document.querySelector("[data-security-ban-drawer]");
     const drawer = host?.querySelector(".security-ban-drawer");
     const closeLink = drawer?.querySelector("[data-security-ban-drawer-close]");
-    if (!host || !drawer || !closeLink) return;
+    const content = drawer?.querySelector("[data-security-ban-drawer-content]");
+    const pagination = drawer?.querySelector("[data-security-ban-pagination]");
+    const loadingTemplate = drawer?.querySelector("[data-security-ban-loading-template]");
+    const errorTemplate = drawer?.querySelector("[data-security-ban-error-template]");
+    if (!root || !host || !drawer || !closeLink || !content || !pagination || !loadingTemplate || !errorTemplate) return;
     let closing = false;
     let closeTimer = null;
     let focusTimer = null;
-    document.body.style.overflow = "hidden";
-    focusTimer = window.setTimeout(() => closeLink.focus(), 180);
+    let opener = null;
+    let requestController = null;
+    let requestID = 0;
+    let lastURL = "";
+
+    const replaceWithTemplate = template => {
+      content.replaceChildren(document.importNode(template.content, true));
+      renderIcons(content);
+    };
+    const showLoading = () => {
+      drawer.setAttribute("aria-busy", "true");
+      pagination.hidden = true;
+      replaceWithTemplate(loadingTemplate);
+    };
+    const showError = error => {
+      drawer.removeAttribute("aria-busy");
+      pagination.hidden = true;
+      replaceWithTemplate(errorTemplate);
+      const detail = content.querySelector("[data-security-ban-error-detail]");
+      if (detail) detail.textContent = error?.message || "";
+    };
+    const load = async url => {
+      requestController?.abort();
+      requestController = new AbortController();
+      const controller = requestController;
+      const currentRequest = ++requestID;
+      lastURL = url;
+      showLoading();
+      try {
+        const result = await fetchDocument(url, { cache: "no-store", signal: controller.signal });
+        if (!result.response.ok) throw new Error(`HTTP ${result.response.status}`);
+        const sourceDrawer = result.document?.querySelector("[data-security-ban-drawer]");
+        const sourceContent = sourceDrawer?.querySelector("[data-security-ban-drawer-content]");
+        const sourcePagination = sourceDrawer?.querySelector("[data-security-ban-pagination]");
+        if (!sourceContent || !sourcePagination) throw new Error("Ban details were not present in the response.");
+        if (currentRequest !== requestID || controller.signal.aborted) return;
+        content.replaceChildren(...Array.from(sourceContent.childNodes, node => document.importNode(node, true)));
+        pagination.replaceChildren(...Array.from(sourcePagination.childNodes, node => document.importNode(node, true)));
+        pagination.className = sourcePagination.className;
+        pagination.hidden = sourcePagination.hidden;
+        drawer.removeAttribute("aria-busy");
+        renderIcons(host);
+        localizeTimes(host);
+      } catch (error) {
+        if (error?.name !== "AbortError" && currentRequest === requestID) showError(error);
+      } finally {
+        if (requestController === controller) requestController = null;
+      }
+    };
+    const focusClose = () => {
+      if (focusTimer) window.clearTimeout(focusTimer);
+      focusTimer = window.setTimeout(() => closeLink.focus(), 180);
+    };
+    const open = trigger => {
+      opener = trigger;
+      closing = false;
+      host.classList.add("is-open");
+      host.setAttribute("aria-hidden", "false");
+      document.body.style.overflow = "hidden";
+      focusClose();
+      load(trigger.href);
+    };
 
     const close = event => {
       event?.preventDefault();
-      if (closing) return;
+      if (closing || !host.classList.contains("is-open")) return;
       closing = true;
+      requestController?.abort();
+      requestController = null;
+      requestID++;
       const destination = new URL(closeLink.href, location.href);
       host.classList.remove("is-open");
       host.setAttribute("aria-hidden", "true");
       document.body.style.overflow = "";
       const delay = matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 180;
       closeTimer = window.setTimeout(() => {
-        history.replaceState({ pjax: true }, "", destination.href);
-        navigate(destination.href, false, { deferredData: true, preserveScroll: true });
+        if (new URL(location.href).searchParams.has("bans")) {
+          history.replaceState({ pjax: true }, "", destination.href);
+          updateShellLocation(destination.href);
+        }
+        showLoading();
+        opener?.focus();
+        opener = null;
+        closing = false;
       }, delay);
     };
     const onClick = event => {
-      if (event.target.closest("[data-security-ban-drawer-close]")) close(event);
+      const trigger = event.target.closest("[data-security-ban-drawer-trigger]");
+      if (trigger && root.contains(trigger)) {
+        event.preventDefault();
+        if (host.classList.contains("is-open")) load(trigger.href);
+        else open(trigger);
+        return;
+      }
+      if (event.target.closest("[data-security-ban-drawer-close]")) {
+        close(event);
+        return;
+      }
+      if (event.target.closest("[data-security-ban-retry]") && lastURL) load(lastURL);
     };
     const onKeydown = event => {
       if (event.key === "Escape") {
@@ -5201,11 +5286,16 @@
         first.focus();
       }
     };
-    host.addEventListener("click", onClick);
+    if (host.classList.contains("is-open")) {
+      document.body.style.overflow = "hidden";
+      focusClose();
+    }
+    root.addEventListener("click", onClick);
     document.addEventListener("keydown", onKeydown);
     cleanups.push(() => {
-      host.removeEventListener("click", onClick);
+      root.removeEventListener("click", onClick);
       document.removeEventListener("keydown", onKeydown);
+      requestController?.abort();
       if (closeTimer) window.clearTimeout(closeTimer);
       if (focusTimer) window.clearTimeout(focusTimer);
       document.body.style.overflow = "";
@@ -5302,7 +5392,6 @@
       navigate(destination.href, true, {
         deferredData: isDeferredDataURL(destination.href),
         immediate: mainNavigation || securityTab,
-        preserveScroll: link.matches("[data-security-ban-drawer-trigger]"),
         title: mainNavigation ? navigationTitle(link) : undefined,
         focusSelector: link.dataset.focusAfterNavigation,
       });

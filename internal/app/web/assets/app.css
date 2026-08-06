@@ -4978,7 +4978,13 @@ body.has-task-panel { overflow: hidden; }
 .security-ban-drawer__head small { display: block; max-width: 60ch; margin-top: 7px; color: var(--muted); font-size: .75rem; overflow-wrap: anywhere; }
 .security-ban-drawer__body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 22px 30px; }
 .security-ban-drawer__body > .security-warning { margin: 0; }
+.security-ban-drawer__state { min-height: 100%; border: 0; background: transparent; }
+.security-ban-drawer__state p { display: grid; gap: 5px; }
+.security-ban-drawer__state strong, .security-ban-drawer__state small { display: block; }
+.security-ban-drawer__state small { max-width: 42ch; color: var(--muted); font-weight: 500; }
+.security-ban-drawer__state .button { margin-top: 14px; }
 .security-ban-drawer .security-pagination { flex: 0 0 auto; margin: 0; padding: 14px 30px 18px; background: var(--canvas); border-top: 1px solid var(--rule); }
+.security-ban-drawer .security-pagination.is-loading { display: none; }
 .security-ban-table { min-width: 680px; }
 @starting-style {
   .security-ban-drawer-host.is-open .security-ban-drawer__scrim { opacity: 0; }

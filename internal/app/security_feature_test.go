@@ -48,6 +48,7 @@ func TestHostSecurityPageAndUFWDraftFlow(t *testing.T) {
 		[]byte(`href="/monitor/security" aria-current="page"`),
 		[]byte("Host Security"), []byte("Fail2Ban"), []byte("UFW Firewall"), []byte("root privileges"),
 		[]byte(`data-security-ban-drawer-trigger`), []byte(`aria-haspopup="dialog"`),
+		[]byte(`class="security-ban-drawer-host"`), []byte(`data-security-ban-loading`), []byte(`aria-hidden="true"`),
 	} {
 		if !bytes.Contains(page, expected) {
 			t.Fatalf("security page missing %q: %s", expected, page)
