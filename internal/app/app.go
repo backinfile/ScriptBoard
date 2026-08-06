@@ -3776,13 +3776,13 @@ func (a *App) deleteFile(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "活动运行持有该脚本或其后代的运行租约", http.StatusConflict)
 		return
 	}
-	externalUploadReferences, err := a.countExternalUploadReferences(path)
+	externalFileReferences, err := a.countExternalFileReferences(path)
 	if err != nil {
-		http.Error(response, "Unable to check External Interface upload references", http.StatusInternalServerError)
+		http.Error(response, "Unable to check External Interface file references", http.StatusInternalServerError)
 		return
 	}
-	if externalUploadReferences != 0 {
-		http.Error(response, "Directory is still referenced by an External Interface upload action", http.StatusConflict)
+	if externalFileReferences != 0 {
+		http.Error(response, "Path is still referenced by an External Interface file action", http.StatusConflict)
 		return
 	}
 	quickCount, scheduleCount, err := a.countScriptReferences(path)

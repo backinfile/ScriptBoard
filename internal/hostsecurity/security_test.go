@@ -269,6 +269,30 @@ To                         Action      From
 	}
 }
 
+func TestParseUFWStatusIncludesIPv6Rules(t *testing.T) {
+	input := `Status: active
+[ 1] 22/tcp                    ALLOW IN    Anywhere
+[ 2] 22/tcp (v6)               ALLOW IN    Anywhere (v6)`
+	active, rules := parseUFWStatus(input)
+	if !active || len(rules) != 2 {
+		t.Fatalf("active=%v rules=%#v, want both IPv4 and IPv6 rules", active, rules)
+	}
+	if !rules[1].IPv6 || rules[1].Port != "22" || rules[1].Protocol != "tcp" || rules[1].Address != "Anywhere" {
+		t.Fatalf("IPv6 rule = %#v", rules[1])
+	}
+}
+
+func TestDiffRulesDistinguishesIPv4AndIPv6(t *testing.T) {
+	baseline := []FirewallRule{
+		{Number: 1, Direction: DirectionInbound, Action: ActionAllow, Protocol: "tcp", Port: "22", Address: "Anywhere", Enabled: true},
+		{Number: 2, Direction: DirectionInbound, Action: ActionAllow, Protocol: "tcp", Port: "22", Address: "Anywhere", Enabled: true, IPv6: true},
+	}
+	deletes, additions := diffRules(baseline, baseline[1:])
+	if !reflect.DeepEqual(deletes, []int{1}) || len(additions) != 0 {
+		t.Fatalf("deletes=%v additions=%#v, want only IPv4 rule 1 deleted", deletes, additions)
+	}
+}
+
 func TestParseUFWDefaults(t *testing.T) {
 	defaults := parseUFWDefaults("Status: active\nLogging: on (low)\nDefault: deny (incoming), allow (outgoing), deny (routed)\n")
 	if defaults.Incoming != PolicyDeny || defaults.Outgoing != PolicyAllow {
@@ -311,7 +335,7 @@ func TestApplyUFWRejectsConcurrentBaselineChange(t *testing.T) {
 	}
 }
 
-func TestApplyUFWDeletesDescendingThenAdds(t *testing.T) {
+func TestApplyUFWAddsBeforeDeleting(t *testing.T) {
 	runner := &fakeRunner{responses: map[string]fakeResponse{
 		"ufw status numbered": {stdout: "Status: active\n[ 1] 22/tcp ALLOW IN 10.0.0.1\n[ 2] 80/tcp ALLOW IN Anywhere\n"},
 		"ufw status verbose":  {stdout: "Status: active\nDefault: deny (incoming), allow (outgoing), deny (routed)\n"},
@@ -335,8 +359,8 @@ func TestApplyUFWDeletesDescendingThenAdds(t *testing.T) {
 		"ufw status numbered",
 		"ufw status verbose",
 		"sshd -T",
-		"ufw --force delete 2",
 		"ufw allow out proto udp to any port 53",
+		"ufw --force delete 2",
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
@@ -383,6 +407,17 @@ func TestEnableUFWRequiresSSHAllowRule(t *testing.T) {
 	}
 	if len(runner.calls) != 0 {
 		t.Fatalf("unexpected calls: %#v", runner.calls)
+	}
+}
+
+func TestEnableUFWDoesNotTreatIPv6OnlyRuleAsIPv4Protection(t *testing.T) {
+	runner := &fakeRunner{}
+	manager := NewManager(Options{GOOS: "linux", Runner: runner, Now: time.Now})
+	err := manager.EnableUFW(context.Background(), []FirewallRule{{
+		Direction: DirectionInbound, Action: ActionAllow, Protocol: "tcp", Port: "22", Address: "Anywhere", Enabled: true, IPv6: true,
+	}})
+	if err != ErrSSHRuleRequired {
+		t.Fatalf("error = %v, want IPv4 SSH rule requirement", err)
 	}
 }
 
@@ -434,6 +469,12 @@ func TestWindowsFirewallTogglePassesGpoBooleanString(t *testing.T) {
 	}
 	if strings.Contains(windowsToggleFirewallScript, `[bool]::Parse`) {
 		t.Fatalf("Windows firewall toggle must not convert the value to System.Boolean: %s", windowsToggleFirewallScript)
+	}
+}
+
+func TestWindowsFirewallProbeUsesRemotePortForOutboundRules(t *testing.T) {
+	if !strings.Contains(windowsFirewallScript, `if ($_.Direction -eq 'Outbound') {$port.RemotePort} else {$port.LocalPort}`) {
+		t.Fatalf("Windows firewall probe does not select RemotePort for outbound rules: %s", windowsFirewallScript)
 	}
 }
 

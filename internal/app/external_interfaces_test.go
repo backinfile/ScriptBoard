@@ -49,6 +49,21 @@ func copyExternalTestKey(t *testing.T, client *http.Client, serverURL, keyID str
 	return payload["key"]
 }
 
+func invokeExternalForm(t *testing.T, client *http.Client, serverURL, secret, name string, values url.Values) *http.Response {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodPost, serverURL+"/trigger?name="+url.QueryEscape(name), strings.NewReader(values.Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+secret)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response
+}
+
 func TestViewerCannotCopyExternalInterfaceKey(t *testing.T) {
 	root := t.TempDir()
 	admin, serverURL := authenticatedClient(t, filepath.Join(root, "host"), filepath.Join(root, "state"))
@@ -312,10 +327,18 @@ func TestAdministratorCreatesKeyAndExternalLogTrigger(t *testing.T) {
 		t.Fatalf("create entry status=%d", response.StatusCode)
 	}
 
-	response, err = client.PostForm(serverURL+"/trigger?key="+url.QueryEscape(secret)+"&name=deployment-log", url.Values{"message": {"deployment finished"}})
+	queryRequest, _ := http.NewRequest(http.MethodPost, serverURL+"/trigger?key="+url.QueryEscape(secret)+"&name=deployment-log", strings.NewReader(url.Values{"message": {"must not be logged"}}.Encode()))
+	queryRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	queryResponse, err := client.Do(queryRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
+	_ = queryResponse.Body.Close()
+	if queryResponse.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("query-string key status=%d, want 401", queryResponse.StatusCode)
+	}
+
+	response = invokeExternalForm(t, client, serverURL, secret, "deployment-log", url.Values{"message": {"deployment finished"}})
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(response.Body)
@@ -333,7 +356,7 @@ func TestAdministratorCreatesKeyAndExternalLogTrigger(t *testing.T) {
 		t.Fatalf("trigger response = %#v", payload)
 	}
 	logged, err := os.ReadFile(logFile)
-	if err != nil || !strings.Contains(string(logged), "[deploy]\tdeployment finished") {
+	if err != nil || !strings.Contains(string(logged), "[deploy]\tdeployment finished") || strings.Contains(string(logged), "must not be logged") {
 		t.Fatalf("log file content=%q err=%v", logged, err)
 	}
 	response, err = client.Get(serverURL + "/config/external-interfaces")
@@ -582,7 +605,8 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 	}
 	_, _ = part.Write([]byte("complete"))
 	_ = writer.Close()
-	request, _ := http.NewRequest(http.MethodPost, serverURL+"/trigger?key="+url.QueryEscape(secret)+"&name=artifact", &upload)
+	request, _ := http.NewRequest(http.MethodPost, serverURL+"/trigger?name=artifact", &upload)
+	request.Header.Set("Authorization", "Bearer "+secret)
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 	response, err = client.Do(request)
 	if err != nil {
@@ -601,10 +625,7 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 		"name": {"environment"}, "label": {"Deployment environment"}, "action_type": {"variable"}, "enabled": {"1"},
 		"variable_name": {"environment"}, "variable_type": {"enum"}, "variable_options": {"staging\nproduction"},
 	})
-	response, err = client.PostForm(serverURL+"/trigger?key="+url.QueryEscape(secret)+"&name=environment", url.Values{"value": {"production"}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	response = invokeExternalForm(t, client, serverURL, secret, "environment", url.Values{"value": {"production"}})
 	body, _ = io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusOK {
@@ -614,10 +635,7 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 	if err := database.QueryRow("SELECT value FROM variables WHERE name = 'environment'").Scan(&value); err != nil || value != "production" {
 		t.Fatalf("variable value=%q err=%v", value, err)
 	}
-	response, err = client.PostForm(serverURL+"/trigger?key="+url.QueryEscape(secret)+"&name=environment", url.Values{"value": {"root"}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	response = invokeExternalForm(t, client, serverURL, secret, "environment", url.Values{"value": {"root"}})
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusBadRequest {
 		t.Fatalf("invalid enum status=%d", response.StatusCode)
@@ -626,7 +644,8 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 	createExternalTestEntry(t, client, serverURL, keyID, url.Values{
 		"name": {"quick"}, "label": {"External quick run"}, "action_type": {"quick_run"}, "enabled": {"1"}, "quick_run_id": {"external-quick"},
 	})
-	request, _ = http.NewRequest(http.MethodPost, serverURL+"/trigger?key="+url.QueryEscape(secret)+"&name=quick", nil)
+	request, _ = http.NewRequest(http.MethodPost, serverURL+"/trigger?name=quick", nil)
+	request.Header.Set("Authorization", "Bearer "+secret)
 	response, err = client.Do(request)
 	if err != nil {
 		t.Fatal(err)

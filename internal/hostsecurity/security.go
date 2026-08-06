@@ -152,6 +152,7 @@ type FirewallRule struct {
 	Name      string
 	Profile   string
 	Enabled   bool
+	IPv6      bool
 }
 
 type FirewallProfile struct {
@@ -611,7 +612,7 @@ func (m *Manager) EnableUFW(ctx context.Context, rules []FirewallRule) error {
 
 func hasSSHAllowRule(rules []FirewallRule, port string) bool {
 	for _, rule := range rules {
-		if rule.Enabled && rule.Direction == DirectionInbound && rule.Action == ActionAllow && (rule.Protocol == "tcp" || rule.Protocol == "any") && rule.Port == port {
+		if !rule.IPv6 && rule.Enabled && rule.Direction == DirectionInbound && rule.Action == ActionAllow && (rule.Protocol == "tcp" || rule.Protocol == "any") && rule.Port == port {
 			return true
 		}
 	}
@@ -671,14 +672,14 @@ func (m *Manager) ApplyUFW(ctx context.Context, baseline, desired []FirewallRule
 	}
 	deletes, additions := diffRules(baseline, desired)
 	sort.Sort(sort.Reverse(sort.IntSlice(deletes)))
-	for _, number := range deletes {
-		if _, err := m.runner.Run(ctx, "ufw", "--force", "delete", strconv.Itoa(number)); err != nil {
-			return fmt.Errorf("delete UFW rule %d: %w", number, err)
-		}
-	}
 	for _, rule := range additions {
 		if _, err := m.runner.Run(ctx, "ufw", ufwAddArguments(rule)...); err != nil {
 			return fmt.Errorf("add UFW rule %s: %w", rule.Name, err)
+		}
+	}
+	for _, number := range deletes {
+		if _, err := m.runner.Run(ctx, "ufw", "--force", "delete", strconv.Itoa(number)); err != nil {
+			return fmt.Errorf("delete UFW rule %d: %w", number, err)
 		}
 	}
 	if desiredDefaults.Incoming != baselineDefaults.Incoming {
@@ -923,7 +924,11 @@ func ruleKey(rule FirewallRule) string {
 	if address == "" || address == "any" {
 		address = "anywhere"
 	}
-	return strings.Join([]string{string(rule.Direction), string(rule.Action), strings.ToLower(rule.Protocol), rule.Port, address}, "|")
+	family := "ipv4"
+	if rule.IPv6 {
+		family = "ipv6"
+	}
+	return strings.Join([]string{family, string(rule.Direction), string(rule.Action), strings.ToLower(rule.Protocol), rule.Port, address}, "|")
 }
 
 func ufwAddArguments(rule FirewallRule) []string {
@@ -991,7 +996,8 @@ foreach ($address in $addresses) {$addressMap[$address.InstanceID] = $address}
 $rules = @($rules | ForEach-Object {
   $port = $portMap[$_.InstanceID]
   $address = $addressMap[$_.InstanceID]
-  [pscustomobject]@{ID=$_.Name;Name=$_.DisplayName;Direction=$_.Direction.ToString();Action=$_.Action.ToString();Profile=$_.Profile.ToString();Protocol=$port.Protocol;Port=$port.LocalPort;Address=$address.RemoteAddress;Enabled=($_.Enabled -eq 'True')}
+  $rulePort = if ($_.Direction -eq 'Outbound') {$port.RemotePort} else {$port.LocalPort}
+  [pscustomobject]@{ID=$_.Name;Name=$_.DisplayName;Direction=$_.Direction.ToString();Action=$_.Action.ToString();Profile=$_.Profile.ToString();Protocol=$port.Protocol;Port=$rulePort;Address=$address.RemoteAddress;Enabled=($_.Enabled -eq 'True')}
 })
 [pscustomobject]@{Administrator=$administrator;Profiles=$profiles;Rules=$rules} | ConvertTo-Json -Depth 5 -Compress`
 

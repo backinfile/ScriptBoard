@@ -698,7 +698,7 @@ func renderExternalInterfaceForm(response http.ResponseWriter, data externalInte
 func (a *App) externalTrigger(response http.ResponseWriter, request *http.Request) {
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "application/json; charset=utf-8")
-	token := strings.TrimSpace(request.URL.Query().Get("key"))
+	token := ""
 	if authorization := strings.TrimSpace(request.Header.Get("Authorization")); strings.HasPrefix(authorization, "Bearer ") {
 		token = strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer "))
 	}
@@ -726,15 +726,24 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 	}
 	defer release()
 	started := time.Now()
-	result := a.executeExternalAction(response, request, entry)
-	if err := a.externalTriggers.RecordInvocation(request.Context(), externaltrigger.Invocation{
+	invocation := externaltrigger.Invocation{
 		ID: requestID, OccurredAt: started.UTC(), KeyID: key.ID, KeyLabel: key.Label, EntryID: entry.ID, EntryName: entry.Name,
-		ActionType: entry.Type, Result: result.result, HTTPStatus: result.status, Duration: time.Since(started), BytesReceived: result.bytesReceived,
-		RunID: result.runID, Message: result.message, Source: request.RemoteAddr,
-	}); err != nil {
+		ActionType: entry.Type, Result: "processing", Source: request.RemoteAddr,
+	}
+	execution := runRecordedExternalAction(
+		func() error { return a.externalTriggers.RecordInvocation(request.Context(), invocation) },
+		func() externalActionResult { return a.executeExternalAction(response, request, entry) },
+		func(result externalActionResult) error {
+			invocation.Result, invocation.HTTPStatus, invocation.Duration = result.result, result.status, time.Since(started)
+			invocation.BytesReceived, invocation.RunID, invocation.Message = result.bytesReceived, result.runID, result.message
+			return a.externalTriggers.CompleteInvocation(request.Context(), invocation)
+		},
+	)
+	if !execution.Started {
 		writeExternalTriggerError(response, http.StatusInternalServerError, "action_failed")
 		return
 	}
+	result := execution.Result
 	a.recordAuditWithActor("external_trigger_"+string(entry.Type), "key="+key.ID+" entry="+entry.Name+" request="+requestID, result.result, request.RemoteAddr, "", key.Label, userRole("external"))
 	if result.status >= 400 {
 		writeExternalTriggerError(response, result.status, result.code)
@@ -759,6 +768,20 @@ type externalActionResult struct {
 	runID         string
 	filename      string
 	bytesReceived int64
+}
+
+type recordedExternalActionExecution struct {
+	Result      externalActionResult
+	Started     bool
+	RecordError error
+}
+
+func runRecordedExternalAction(begin func() error, execute func() externalActionResult, complete func(externalActionResult) error) recordedExternalActionExecution {
+	if err := begin(); err != nil {
+		return recordedExternalActionExecution{RecordError: err}
+	}
+	result := execute()
+	return recordedExternalActionExecution{Result: result, Started: true, RecordError: complete(result)}
 }
 
 func (a *App) executeExternalAction(response http.ResponseWriter, request *http.Request, entry externaltrigger.Entry) externalActionResult {

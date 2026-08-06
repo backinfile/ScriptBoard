@@ -168,3 +168,32 @@ func TestValidateVariableValueUsesConfiguredTypeBounds(t *testing.T) {
 		t.Fatalf("enum error = %v", err)
 	}
 }
+
+func TestCompleteInvocationUpdatesPendingRecord(t *testing.T) {
+	now := time.Date(2026, 8, 5, 9, 0, 0, 0, time.UTC)
+	manager, db := testManager(t, now)
+	key, _, err := manager.CreateKey(context.Background(), CreateKeyInput{Label: "Agent", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := Invocation{ID: "request-1", OccurredAt: now, KeyID: key.ID, KeyLabel: key.Label, EntryID: "entry", EntryName: "quick", ActionType: ActionQuickRun, Result: "processing"}
+	if err := manager.RecordInvocation(context.Background(), pending); err != nil {
+		t.Fatal(err)
+	}
+	completed := pending
+	completed.Result = "accepted"
+	completed.HTTPStatus = 202
+	completed.Duration = 250 * time.Millisecond
+	completed.RunID = "run-1"
+	if err := manager.CompleteInvocation(context.Background(), completed); err != nil {
+		t.Fatal(err)
+	}
+	var result, runID string
+	var status int
+	if err := db.QueryRow("SELECT result, http_status, run_id FROM external_trigger_requests WHERE id = ?", pending.ID).Scan(&result, &status, &runID); err != nil {
+		t.Fatal(err)
+	}
+	if result != "accepted" || status != 202 || runID != "run-1" {
+		t.Fatalf("completed invocation result=%q status=%d run=%q", result, status, runID)
+	}
+}

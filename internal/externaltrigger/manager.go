@@ -739,6 +739,40 @@ func (manager *Manager) RecordInvocation(ctx context.Context, invocation Invocat
 	return transaction.Commit()
 }
 
+func (manager *Manager) CompleteInvocation(ctx context.Context, invocation Invocation) error {
+	if invocation.ID == "" {
+		return fmt.Errorf("%w: invocation id", ErrInvalidInput)
+	}
+	if len([]byte(invocation.Message)) > 4<<10 {
+		invocation.Message = ""
+	}
+	transaction, err := manager.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer transaction.Rollback()
+	result, err := transaction.ExecContext(ctx, `UPDATE external_trigger_requests SET
+		result = ?, http_status = ?, duration_ms = ?, bytes_received = ?, run_id = ?, message = ?, source_address = ?
+		WHERE id = ?`, invocation.Result, invocation.HTTPStatus, invocation.Duration.Milliseconds(), invocation.BytesReceived,
+		invocation.RunID, invocation.Message, invocation.Source, invocation.ID)
+	if err != nil {
+		return err
+	}
+	if changed, _ := result.RowsAffected(); changed == 0 {
+		return sql.ErrNoRows
+	}
+	if invocation.Result == "succeeded" || invocation.Result == "accepted" {
+		usedAt := invocation.OccurredAt
+		if usedAt.IsZero() {
+			usedAt = manager.now().UTC()
+		}
+		if _, err := transaction.ExecContext(ctx, "UPDATE external_trigger_keys SET last_used_at = ? WHERE id = ?", usedAt.Unix(), invocation.KeyID); err != nil {
+			return err
+		}
+	}
+	return transaction.Commit()
+}
+
 func ValidateVariableValue(config VariableConfig, raw any) (string, error) {
 	if err := validateVariableConfig(config); err != nil {
 		return "", err

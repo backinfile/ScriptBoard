@@ -815,7 +815,7 @@ func securityHasSSHAllowRule(rules []hostsecurity.FirewallRule, port string) boo
 		port = "22"
 	}
 	for _, rule := range rules {
-		if rule.Enabled && rule.Direction == hostsecurity.DirectionInbound && rule.Action == hostsecurity.ActionAllow && rule.Port == port && (rule.Protocol == "tcp" || rule.Protocol == "any") {
+		if !rule.IPv6 && rule.Enabled && rule.Direction == hostsecurity.DirectionInbound && rule.Action == hostsecurity.ActionAllow && rule.Port == port && (rule.Protocol == "tcp" || rule.Protocol == "any") {
 			return true
 		}
 	}
