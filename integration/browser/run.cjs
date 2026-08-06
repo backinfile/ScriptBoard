@@ -1003,7 +1003,12 @@ async function assertExternalInterfaces(page, fixture) {
   await keyForm.locator('input[name="label"]').fill("Browser fixture");
   await keyForm.locator('select[name="duration"]').selectOption("1d");
   await keyForm.locator('button[type="submit"]').click();
-  const secret = (await page.locator(".external-secret code").textContent()).trim();
+  const maskedSecret = (await page.locator(".external-secret code").textContent()).trim();
+  assert.match(maskedSecret, /^sbk_[A-Za-z0-9_-]{16}\.••••[A-Za-z0-9_-]{4}$/);
+  const copyKey = page.locator("[data-copy-key]");
+  await copyKey.click();
+  await copyKey.locator('[data-copy-key-label]').getByText("Copied").waitFor();
+  const secret = await page.evaluate(() => navigator.clipboard.readText());
   assert.match(secret, /^sbk_[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{43}$/);
   const keyID = secret.slice(4).split(".")[0];
 
@@ -1556,6 +1561,8 @@ async function assertExternalInterfaces(page, fixture) {
     const automationPin = automationRow.getByRole("button", { name: "Pin directory" });
     await automationPin.waitFor({ state: "visible" });
     await automationPin.click();
+    await page.waitForFunction(() => Array.from(document.querySelectorAll("[data-file-pin]"))
+      .some(element => element.dataset.filePinLabel === "automation" && element.getAttribute("aria-pressed") === "true"));
     assert.equal(await automationPin.getAttribute("aria-pressed"), "true");
     assert.equal((await quickAccess.locator("[data-file-quick-count]").textContent()).trim(), "1");
     await quickAccess.locator("summary").click();
@@ -1574,6 +1581,7 @@ async function assertExternalInterfaces(page, fixture) {
     });
     const restoredAutomationPin = restoredAutomationRow.getByRole("button", { name: "Unpin directory" });
     await restoredAutomationPin.click();
+    await page.waitForFunction(() => document.querySelector("[data-file-quick-count]")?.textContent.trim() === "0");
     assert.equal((await restoredQuickAccess.locator("[data-file-quick-count]").textContent()).trim(), "0");
     await restoredQuickAccess.locator("summary").click();
 
