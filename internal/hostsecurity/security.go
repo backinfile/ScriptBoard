@@ -44,12 +44,25 @@ type Component struct {
 	Error     string
 }
 
+type SSHLoginSurface struct {
+	Port                              string
+	ListenAddresses                   []string
+	PublicKeyAuthentication           string
+	PasswordAuthentication            string
+	KeyboardInteractiveAuthentication string
+	RootLogin                         string
+	EmptyPasswords                    string
+	MaxAuthTries                      int
+}
+
 type Capabilities struct {
 	OS                 string
 	Hostname           string
 	CollectedAt        time.Time
 	Administrator      bool
 	AdministratorKnown bool
+	SSH                Component
+	SSHLogin           SSHLoginSurface
 	Fail2Ban           Component
 	UFW                Component
 	Firewall           Component
@@ -252,7 +265,26 @@ func (m *Manager) collectCapabilities(ctx context.Context, now time.Time) Capabi
 		view.AdministratorKnown = true
 		view.Administrator = current.Uid == "0"
 	}
-	view.SSHPort = m.sshPort(ctx)
+	view.SSHPort = "22"
+	if m.runner.LookPath("sshd") {
+		view.SSH.Installed = true
+		output, err := m.runner.Run(ctx, "sshd", "-T")
+		if err != nil {
+			view.SSH.Error = conciseError(err)
+		} else {
+			view.SSHLogin = parseSSHLoginSurface(output)
+			if view.SSHLogin.Port != "" {
+				view.SSHPort = view.SSHLogin.Port
+			}
+		}
+		if m.runner.LookPath("systemctl") {
+			_, err = m.runner.Run(ctx, "systemctl", "is-active", "--quiet", "ssh")
+			if err != nil {
+				_, err = m.runner.Run(ctx, "systemctl", "is-active", "--quiet", "sshd")
+			}
+			view.SSH.Running = err == nil
+		}
+	}
 	view.Fail2Ban.Installed = m.runner.LookPath("fail2ban-client")
 	view.UFW.Installed = m.runner.LookPath("ufw")
 	view.Firewall = view.UFW
@@ -275,6 +307,7 @@ func (m *Manager) collectCapabilities(ctx context.Context, now time.Time) Capabi
 }
 
 func cloneCapabilities(value Capabilities) Capabilities {
+	value.SSHLogin.ListenAddresses = append([]string(nil), value.SSHLogin.ListenAddresses...)
 	value.Rules = append([]FirewallRule(nil), value.Rules...)
 	value.Profiles = append([]FirewallProfile(nil), value.Profiles...)
 	return value

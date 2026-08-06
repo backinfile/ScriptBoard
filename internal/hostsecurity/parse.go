@@ -29,6 +29,45 @@ type linuxLoginEvent struct {
 	priority  int
 }
 
+func parseSSHLoginSurface(output string) SSHLoginSurface {
+	surface := SSHLoginSurface{}
+	for _, line := range strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		key := strings.ToLower(fields[0])
+		value := strings.Join(fields[1:], " ")
+		switch key {
+		case "port":
+			if validPort(value) {
+				surface.Port = value
+			}
+		case "listenaddress":
+			if value != "" {
+				surface.ListenAddresses = append(surface.ListenAddresses, value)
+			}
+		case "pubkeyauthentication":
+			surface.PublicKeyAuthentication = value
+		case "passwordauthentication":
+			surface.PasswordAuthentication = value
+		case "kbdinteractiveauthentication", "challengeresponseauthentication":
+			if surface.KeyboardInteractiveAuthentication == "" || key == "kbdinteractiveauthentication" {
+				surface.KeyboardInteractiveAuthentication = value
+			}
+		case "permitrootlogin":
+			surface.RootLogin = value
+		case "permitemptypasswords":
+			surface.EmptyPasswords = value
+		case "maxauthtries":
+			if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 {
+				surface.MaxAuthTries = parsed
+			}
+		}
+	}
+	return surface
+}
+
 func parseLinuxLogins(output string) []LoginRecord {
 	lines := strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n")
 	records := make([]LoginRecord, 0, len(lines))

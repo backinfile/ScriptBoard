@@ -75,7 +75,18 @@ type securityPageView struct {
 	Windows          bool
 	HasDraft         bool
 	HasSSHAllowRule  bool
+	RemoteLoginRows  []securityRemoteLoginRow
 	DeferredData     bool
+}
+
+type securityRemoteLoginRow struct {
+	Icon     string
+	Title    string
+	Subtitle string
+	Value    string
+	Status   string
+	Tone     string
+	Evidence string
 }
 
 func (a *App) securityPage(response http.ResponseWriter, request *http.Request) {
@@ -204,9 +215,101 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 		view.RuleNextURL = windowsFirewallRulesURL(request.URL.Query(), view.RulePage+1, rulePageSize)
 	}
 	view.HasSSHAllowRule = securityHasSSHAllowRule(view.Rules, capabilities.SSHPort)
+	if view.Linux && tab == "overview" {
+		view.RemoteLoginRows = securityRemoteLoginRows(locale, capabilities, view.BanPage.Total)
+	}
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = securityTemplate.Execute(response, view)
+}
+
+func securityRemoteLoginRows(locale webLocale, capabilities hostsecurity.Capabilities, currentBans int) []securityRemoteLoginRow {
+	port := capabilities.SSHLogin.Port
+	if port == "" {
+		port = capabilities.SSHPort
+	}
+	if port == "" {
+		port = "22"
+	}
+	entry := securityRemoteLoginRow{
+		Icon: "radio-tower", Title: webText(locale, "security.ssh_remote_entry"),
+		Subtitle: "sshd.service · " + port + "/tcp", Value: port + "/tcp", Tone: "stale",
+		Status: webText(locale, "security.stopped"), Evidence: webText(locale, "security.not_detected"),
+	}
+	if !capabilities.SSH.Installed {
+		entry.Status = webText(locale, "security.not_installed")
+	} else if capabilities.SSH.Error != "" {
+		entry.Status = webText(locale, "security.attention")
+		entry.Tone = "attention"
+		entry.Evidence = capabilities.SSH.Error
+	} else if capabilities.SSH.Running {
+		entry.Status = webText(locale, "security.running")
+		entry.Tone = "current"
+		if len(capabilities.SSHLogin.ListenAddresses) > 0 {
+			entry.Evidence = strings.Join(capabilities.SSHLogin.ListenAddresses, " · ")
+		}
+	}
+
+	publicKey := securityAuthenticationRow(locale, "key-round", "security.public_key_authentication", "PubkeyAuthentication", capabilities.SSHLogin.PublicKeyAuthentication, false)
+	password := securityAuthenticationRow(locale, "rectangle-ellipsis", "security.password_authentication", "PasswordAuthentication", capabilities.SSHLogin.PasswordAuthentication, true)
+	root := securityRemoteLoginRow{
+		Icon: "user-round-cog", Title: webText(locale, "security.root_remote_login"), Subtitle: "PermitRootLogin",
+		Value:  fallbackSecurityValue(capabilities.SSHLogin.RootLogin, webText(locale, "security.unavailable")),
+		Status: webText(locale, "security.unavailable"), Tone: "stale", Evidence: "sshd -T · PermitRootLogin",
+	}
+	switch strings.ToLower(capabilities.SSHLogin.RootLogin) {
+	case "no":
+		root.Status, root.Tone = webText(locale, "security.disabled"), "current"
+	case "prohibit-password", "without-password":
+		root.Status, root.Tone = webText(locale, "security.key_only"), "current"
+	case "yes":
+		root.Status, root.Tone = webText(locale, "security.enabled"), "attention"
+	case "forced-commands-only":
+		root.Status, root.Tone = webText(locale, "security.restricted"), "current"
+	}
+
+	fail2Ban := securityRemoteLoginRow{
+		Icon: "shield-check", Title: webText(locale, "security.bruteforce_protection_status"), Subtitle: "fail2ban.service · sshd",
+		Value: strconv.Itoa(currentBans), Status: webText(locale, "security.not_installed"), Tone: "stale",
+		Evidence: webText(locale, "security.current_bans") + ": " + strconv.Itoa(currentBans),
+	}
+	if capabilities.Fail2Ban.Installed {
+		fail2Ban.Status = webText(locale, "security.stopped")
+		if capabilities.Fail2Ban.Running {
+			fail2Ban.Status, fail2Ban.Tone = webText(locale, "security.running"), "current"
+		}
+	}
+	return []securityRemoteLoginRow{entry, publicKey, password, root, fail2Ban}
+}
+
+func securityAuthenticationRow(locale webLocale, icon, titleKey, directive, value string, riskyWhenEnabled bool) securityRemoteLoginRow {
+	row := securityRemoteLoginRow{
+		Icon: icon, Title: webText(locale, titleKey), Subtitle: directive,
+		Value:  fallbackSecurityValue(value, webText(locale, "security.unavailable")),
+		Status: webText(locale, "security.unavailable"), Tone: "stale", Evidence: "sshd -T · " + directive,
+	}
+	switch strings.ToLower(value) {
+	case "yes":
+		row.Status = webText(locale, "security.enabled")
+		row.Tone = "current"
+		if riskyWhenEnabled {
+			row.Tone = "attention"
+		}
+	case "no":
+		row.Status = webText(locale, "security.disabled")
+		row.Tone = "current"
+		if !riskyWhenEnabled {
+			row.Tone = "attention"
+		}
+	}
+	return row
+}
+
+func fallbackSecurityValue(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
 }
 
 func securityRefreshURL(query url.Values) string {

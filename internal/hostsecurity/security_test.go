@@ -52,6 +52,28 @@ func TestCapabilitiesCacheAvoidsRepeatedWindowsFirewallProbes(t *testing.T) {
 	}
 }
 
+func TestLinuxCapabilitiesCollectEffectiveSSHLoginSurface(t *testing.T) {
+	runner := &fakeRunner{responses: map[string]fakeResponse{
+		"lookpath sshd":                   {},
+		"lookpath systemctl":              {},
+		"sshd -T":                         {stdout: "port 2222\nlistenaddress 0.0.0.0:2222\npubkeyauthentication yes\npasswordauthentication no\npermitrootlogin no\n"},
+		"systemctl is-active --quiet ssh": {},
+	}}
+	manager := NewManager(Options{GOOS: "linux", Runner: runner, Now: time.Now})
+
+	capabilities := manager.Capabilities(context.Background())
+	if !capabilities.SSH.Installed || !capabilities.SSH.Running {
+		t.Fatalf("SSH component = %#v", capabilities.SSH)
+	}
+	if capabilities.SSHPort != "2222" || capabilities.SSHLogin.PasswordAuthentication != "no" || capabilities.SSHLogin.RootLogin != "no" {
+		t.Fatalf("SSH login surface = %#v port=%q", capabilities.SSHLogin, capabilities.SSHPort)
+	}
+	capabilities.SSHLogin.ListenAddresses[0] = "mutated"
+	if cached := manager.Capabilities(context.Background()); cached.SSHLogin.ListenAddresses[0] != "0.0.0.0:2222" {
+		t.Fatalf("cached SSH addresses were aliased: %#v", cached.SSHLogin.ListenAddresses)
+	}
+}
+
 func TestWindowsLoginCacheAvoidsRepeatedEventLogProbes(t *testing.T) {
 	now := time.Date(2026, time.August, 6, 2, 0, 0, 0, time.UTC)
 	runner := &fakeRunner{}
@@ -168,6 +190,29 @@ noise that must be ignored`
 	}
 	if records[3].Result != ResultFailure || records[3].User != "scriptboard-login-test" || records[3].SourceIP != "39.71.25.221" || records[3].Authentication != "preauth" || !strings.Contains(records[3].Detail, "Invalid user") {
 		t.Fatalf("deduplicated invalid-user record = %#v", records[3])
+	}
+}
+
+func TestParseSSHLoginSurfaceUsesEffectiveConfiguration(t *testing.T) {
+	input := `port 2222
+listenaddress 0.0.0.0:2222
+listenaddress [::]:2222
+pubkeyauthentication yes
+passwordauthentication yes
+kbdinteractiveauthentication no
+permitrootlogin prohibit-password
+permitemptypasswords no
+maxauthtries 4`
+
+	surface := parseSSHLoginSurface(input)
+	if surface.Port != "2222" || !reflect.DeepEqual(surface.ListenAddresses, []string{"0.0.0.0:2222", "[::]:2222"}) {
+		t.Fatalf("SSH entry = port %q addresses %#v", surface.Port, surface.ListenAddresses)
+	}
+	if surface.PublicKeyAuthentication != "yes" || surface.PasswordAuthentication != "yes" || surface.KeyboardInteractiveAuthentication != "no" {
+		t.Fatalf("SSH authentication = %#v", surface)
+	}
+	if surface.RootLogin != "prohibit-password" || surface.EmptyPasswords != "no" || surface.MaxAuthTries != 4 {
+		t.Fatalf("SSH restrictions = %#v", surface)
 	}
 }
 

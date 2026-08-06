@@ -21,6 +21,11 @@ func TestHostSecurityPageAndUFWDraftFlow(t *testing.T) {
 	service := &securityFixtureService{capabilities: hostsecurity.Capabilities{
 		OS: "linux", Hostname: "prod-web-01", CollectedAt: time.Now().UTC(),
 		Administrator: true, AdministratorKnown: true,
+		SSH: hostsecurity.Component{Installed: true, Running: true},
+		SSHLogin: hostsecurity.SSHLoginSurface{
+			Port: "22", ListenAddresses: []string{"0.0.0.0:22", "[::]:22"},
+			PublicKeyAuthentication: "yes", PasswordAuthentication: "yes", RootLogin: "prohibit-password",
+		},
 		Fail2Ban: hostsecurity.Component{Installed: true, Running: true},
 		UFW:      hostsecurity.Component{Installed: true, Running: true}, UFWEnabled: true,
 		Rules: []hostsecurity.FirewallRule{{
@@ -36,6 +41,16 @@ func TestHostSecurityPageAndUFWDraftFlow(t *testing.T) {
 	overview := getSecurityPage(t, client, serverURL+"/monitor/security")
 	if !bytes.Contains(overview, []byte("203.0.113.8")) || !bytes.Contains(overview, []byte("Failed sign-ins")) {
 		t.Fatalf("security overview did not render login data: %s", overview)
+	}
+	for _, expected := range [][]byte{
+		[]byte(`data-security-login-surface`), []byte("Remote sign-in monitoring"),
+		[]byte("SSH remote entry"), []byte("Public key authentication"), []byte("Password authentication"),
+		[]byte("Root remote sign-in"), []byte("Brute-force protection"),
+		[]byte("0.0.0.0:22"), []byte("prohibit-password"),
+	} {
+		if !bytes.Contains(overview, expected) {
+			t.Fatalf("security overview missing remote sign-in monitoring %q: %s", expected, overview)
+		}
 	}
 	service.mu.Lock()
 	defaultPageSize := service.lastQuery.PageSize
