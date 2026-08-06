@@ -40,6 +40,7 @@ var (
 	runTemplate                   = mustWebTemplate("run")
 	runsTemplate                  = mustWebTemplate("runs")
 	schedulesTemplate             = mustWebTemplate("schedules")
+	securityTemplate              = mustWebTemplate("security")
 	taskPageTemplate              = mustWebTemplate("task-page")
 	textEditorTemplate            = mustWebTemplate("text-editor")
 	textPreviewTemplate           = mustWebTemplate("text-preview")

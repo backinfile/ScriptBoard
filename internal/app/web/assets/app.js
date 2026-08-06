@@ -5122,6 +5122,24 @@
     });
   }
 
+  function initSecurityDialogs(cleanups) {
+    document.querySelectorAll("dialog.security-dialog[open]").forEach(dialog => {
+      dialog.removeAttribute("open");
+      if (typeof dialog.showModal === "function") dialog.showModal();
+      else dialog.setAttribute("open", "");
+      const onCancel = event => {
+        event.preventDefault();
+        const close = dialog.querySelector('a[href^="/monitor/security"]');
+        if (close) close.click();
+      };
+      dialog.addEventListener("cancel", onCancel);
+      cleanups.push(() => {
+        dialog.removeEventListener("cancel", onCancel);
+        if (dialog.open) dialog.close();
+      });
+    });
+  }
+
   function initPage() {
     const cleanups = [];
     cleanupPage = () => cleanups.splice(0).forEach(cleanup => cleanup());
@@ -5146,6 +5164,7 @@
     initScheduleCron(cleanups);
     initExternalEntryForm(document, cleanups);
     initDisplaySettings(cleanups);
+	initSecurityDialogs(cleanups);
     initAssistantWorkspace(cleanups);
     initAssistantSettings(cleanups);
     const websiteForm = document.querySelector("[data-website-monitor-form]");

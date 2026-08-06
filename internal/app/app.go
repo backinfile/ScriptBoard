@@ -45,6 +45,7 @@ import (
 	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/externaltrigger"
 	"scriptboard/internal/hostfiles"
+	"scriptboard/internal/hostsecurity"
 	"scriptboard/internal/hoststatus"
 	"scriptboard/internal/instancelock"
 	"scriptboard/internal/privatepath"
@@ -301,6 +302,7 @@ type Config struct {
 	RequestShutdown        func()
 	ApplicationProbe       appstatus.Probe
 	AssistantRuntimeSource runtimeinstall.Source
+	HostSecurity           hostsecurity.Service
 }
 
 type App struct {
@@ -321,6 +323,9 @@ type App struct {
 	runs               *runmanager.Manager
 	scheduler          *scheduler.Manager
 	hostStatus         *hoststatus.Monitor
+	hostSecurity       hostsecurity.Service
+	securityDraftMu    sync.Mutex
+	securityDrafts     map[string]securityFirewallDraft
 	applicationStatus  *appstatus.Monitor
 	logStreamSlots     chan struct{}
 	logHistorySlots    chan struct{}
@@ -403,12 +408,18 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("生成登录限流密钥: %w", err)
 	}
+	hostSecurityService := config.HostSecurity
+	if hostSecurityService == nil {
+		hostSecurityService = hostsecurity.NewManager(hostsecurity.Options{})
+	}
 	application := &App{
 		db: db, stateRoot: stateRoot, files: files, instanceLock: instanceLock,
 		loginSlots: make(chan struct{}, 2), loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies,
 		loginRateSalt:  loginRateSalt,
 		logStreamSlots: make(chan struct{}, 8), logHistorySlots: make(chan struct{}, 4),
 		updateResultsWake: make(chan struct{}, 1),
+		hostSecurity:      hostSecurityService,
+		securityDrafts:    make(map[string]securityFirewallDraft),
 	}
 	application.externalTriggers = externaltrigger.New(db, externaltrigger.Options{SecretsDirectory: filepath.Join(stateRoot, "secrets")})
 	application.externalLimit = externaltrigger.NewLimiter(externaltrigger.LimiterOptions{RequestsPerMinute: 60, Concurrent: 4})
@@ -1631,6 +1642,18 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("/trigger", a.externalTrigger)
 	mux.Handle("POST /logout", a.requireSession(http.HandlerFunc(a.logout)))
 	mux.Handle("GET /monitor", a.requireSession(http.HandlerFunc(a.overviewPage)))
+	mux.Handle("GET /monitor/security", a.requireSession(http.HandlerFunc(a.securityPage)))
+	mux.Handle("POST /monitor/security/components/{component}/install", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.installSecurityComponent)))
+	mux.Handle("POST /monitor/security/fail2ban/unban", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.unbanSecurityIP)))
+	mux.Handle("POST /monitor/security/firewall/draft/rules", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.addSecurityFirewallDraftRule)))
+	mux.Handle("POST /monitor/security/firewall/draft/toggle", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.toggleSecurityFirewallDraftRule)))
+	mux.Handle("POST /monitor/security/firewall/draft/delete", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.deleteSecurityFirewallDraftRule)))
+	mux.Handle("POST /monitor/security/firewall/draft/discard", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.discardSecurityFirewallDraft)))
+	mux.Handle("POST /monitor/security/firewall/draft/apply", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.applySecurityFirewallDraft)))
+	mux.Handle("POST /monitor/security/firewall/enable", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.enableSecurityFirewall)))
+	mux.Handle("POST /monitor/security/windows-firewall/rules", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.addWindowsFirewallRule)))
+	mux.Handle("POST /monitor/security/windows-firewall/toggle", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.toggleWindowsFirewallRule)))
+	mux.Handle("POST /monitor/security/windows-firewall/delete", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.deleteWindowsFirewallRule)))
 	mux.Handle("GET /ai", a.requireSession(http.HandlerFunc(a.assistantPage)))
 	mux.Handle("GET /ai/resources", a.requireSession(http.HandlerFunc(a.assistantResourceSearch)))
 	mux.Handle("POST /ai/conversations", a.requireSession(http.HandlerFunc(a.createAssistantConversation)))
