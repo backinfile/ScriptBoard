@@ -10,36 +10,87 @@ import (
 )
 
 var (
-	linuxLoginPattern    = regexp.MustCompile(`^(\S+)\s+.*?sshd?\[\d+\]:\s+(Accepted|Failed)\s+(password|publickey|keyboard-interactive)(?:\s+for\s+invalid\s+user|\s+for)\s+(\S+)\s+from\s+([0-9a-fA-F:.]+)\s+port\s+\d+`)
-	ufwRulePattern       = regexp.MustCompile(`^\[\s*(\d+)\]\s+(\S+)\s+(ALLOW|DENY)(?:\s+(IN|OUT))?\s+(.+?)\s*$`)
-	fail2BanEventPattern = regexp.MustCompile(`^(\S+)\s+.*?fail2ban\.actions\s+\[.*?\]:\s+NOTICE\s+\[(\S+)\]\s+Ban\s+([0-9a-fA-F:.]+)\s*$`)
+	linuxLoginPattern       = regexp.MustCompile(`^(\S+)\s+.*?sshd?\[(\d+)\]:\s+(Accepted|Failed)\s+(password|publickey|keyboard-interactive)(?:\s+for\s+invalid\s+user|\s+for)\s+(\S+)\s+from\s+([0-9a-fA-F:.]+)\s+port\s+\d+`)
+	linuxInvalidUserPattern = regexp.MustCompile(`^(\S+)\s+.*?sshd?\[(\d+)\]:\s+Invalid user\s+(\S+)\s+from\s+([0-9a-fA-F:.]+)\s+port\s+\d+`)
+	linuxPreAuthPattern     = regexp.MustCompile(`^(\S+)\s+.*?sshd?\[(\d+)\]:\s+(?:Connection (?:closed|reset) by|Disconnected from) (?:invalid|authenticating) user\s+(\S+)\s+([0-9a-fA-F:.]+)\s+port\s+\d+\s+\[preauth\]`)
+	ufwRulePattern          = regexp.MustCompile(`^\[\s*(\d+)\]\s+(\S+)\s+(ALLOW|DENY)(?:\s+(IN|OUT))?\s+(.+?)\s*$`)
+	fail2BanEventPattern    = regexp.MustCompile(`^(\S+)\s+.*?fail2ban\.actions\s+\[.*?\]:\s+NOTICE\s+\[(\S+)\]\s+Ban\s+([0-9a-fA-F:.]+)\s*$`)
 )
 
 func parseLinuxLogins(output string) []LoginRecord {
 	lines := strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n")
 	records := make([]LoginRecord, 0, len(lines))
+	type sessionRecord struct {
+		index    int
+		priority int
+	}
+	sessions := make(map[string]sessionRecord)
+	appendRecord := func(record LoginRecord, processID string, priority int) {
+		sessionKey := processID + "|" + record.SourceIP
+		if previous, ok := sessions[sessionKey]; ok {
+			if priority > previous.priority {
+				records[previous.index] = record
+				sessions[sessionKey] = sessionRecord{index: previous.index, priority: priority}
+				return
+			}
+			if priority < 3 {
+				return
+			}
+		}
+		records = append(records, record)
+		sessions[sessionKey] = sessionRecord{index: len(records) - 1, priority: priority}
+	}
 	for _, line := range lines {
-		match := linuxLoginPattern.FindStringSubmatch(strings.TrimSpace(line))
-		if len(match) == 0 {
+		detail := strings.TrimSpace(line)
+		match := linuxLoginPattern.FindStringSubmatch(detail)
+		if len(match) != 0 {
+			stamp, err := parseLinuxJournalTimestamp(match[1])
+			if err != nil {
+				continue
+			}
+			result := ResultFailure
+			if match[3] == "Accepted" {
+				result = ResultSuccess
+			}
+			appendRecord(LoginRecord{
+				Time: stamp.UTC(), Result: result, User: match[5], SourceIP: match[6], Type: "ssh",
+				Authentication: match[4], Detail: detail,
+			}, match[2], 3)
 			continue
 		}
-		stamp, err := time.Parse(time.RFC3339, match[1])
-		if err != nil {
-			stamp, err = time.Parse("2006-01-02T15:04:05-0700", match[1])
-		}
-		if err != nil {
+
+		invalidUser := linuxInvalidUserPattern.FindStringSubmatch(detail)
+		if len(invalidUser) != 0 {
+			stamp, err := parseLinuxJournalTimestamp(invalidUser[1])
+			if err == nil {
+				appendRecord(LoginRecord{
+					Time: stamp.UTC(), Result: ResultFailure, User: invalidUser[3], SourceIP: invalidUser[4], Type: "ssh",
+					Authentication: "preauth", Detail: detail,
+				}, invalidUser[2], 2)
+			}
 			continue
 		}
-		result := ResultFailure
-		if match[2] == "Accepted" {
-			result = ResultSuccess
+
+		preAuth := linuxPreAuthPattern.FindStringSubmatch(detail)
+		if len(preAuth) != 0 {
+			stamp, err := parseLinuxJournalTimestamp(preAuth[1])
+			if err == nil {
+				appendRecord(LoginRecord{
+					Time: stamp.UTC(), Result: ResultFailure, User: preAuth[3], SourceIP: preAuth[4], Type: "ssh",
+					Authentication: "preauth", Detail: detail,
+				}, preAuth[2], 1)
+			}
 		}
-		records = append(records, LoginRecord{
-			Time: stamp.UTC(), Result: result, User: match[4], SourceIP: match[5], Type: "ssh",
-			Authentication: match[3], Detail: strings.TrimSpace(line),
-		})
 	}
 	return records
+}
+
+func parseLinuxJournalTimestamp(value string) (time.Time, error) {
+	stamp, err := time.Parse(time.RFC3339, value)
+	if err == nil {
+		return stamp, nil
+	}
+	return time.Parse("2006-01-02T15:04:05-0700", value)
 }
 
 func parseUFWStatus(output string) (bool, []FirewallRule) {

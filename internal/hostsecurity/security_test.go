@@ -149,16 +149,25 @@ func TestWindowsFirewallMutationInvalidatesCapabilitiesCache(t *testing.T) {
 func TestParseLinuxLogins(t *testing.T) {
 	input := `2026-08-05T14:32:01+08:00 host sshd[10]: Failed password for invalid user root from 45.148.10.72 port 5512 ssh2
 2026-08-05T14:18:02+08:00 host sshd[11]: Accepted publickey for deploy from 10.20.1.16 port 4422 ssh2: ED25519 SHA256:test
+2026-08-05T14:13:04+08:00 host sshd[13]: Connection closed by authenticating user root 198.51.100.9 port 23093 [preauth]
+2026-08-05T14:12:03+08:00 host sshd[12]: Connection closed by invalid user scriptboard-login-test 39.71.25.221 port 23089 [preauth]
+2026-08-05T14:12:03+08:00 host sshd[12]: Invalid user scriptboard-login-test from 39.71.25.221 port 23089
 noise that must be ignored`
 	records := parseLinuxLogins(input)
-	if len(records) != 2 {
-		t.Fatalf("records = %d, want 2: %#v", len(records), records)
+	if len(records) != 4 {
+		t.Fatalf("records = %d, want 4: %#v", len(records), records)
 	}
 	if records[0].Result != ResultFailure || records[0].User != "root" || records[0].SourceIP != "45.148.10.72" || records[0].Authentication != "password" {
 		t.Fatalf("failure record = %#v", records[0])
 	}
 	if records[1].Result != ResultSuccess || records[1].User != "deploy" || records[1].Authentication != "publickey" {
 		t.Fatalf("success record = %#v", records[1])
+	}
+	if records[2].Result != ResultFailure || records[2].User != "root" || records[2].SourceIP != "198.51.100.9" || records[2].Authentication != "preauth" {
+		t.Fatalf("isolated-preauth record = %#v", records[2])
+	}
+	if records[3].Result != ResultFailure || records[3].User != "scriptboard-login-test" || records[3].SourceIP != "39.71.25.221" || records[3].Authentication != "preauth" || !strings.Contains(records[3].Detail, "Invalid user") {
+		t.Fatalf("deduplicated invalid-user record = %#v", records[3])
 	}
 }
 
