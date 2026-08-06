@@ -1646,6 +1646,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /monitor/security/components/{component}/install", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.installSecurityComponent)))
 	mux.Handle("POST /monitor/security/fail2ban/unban", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.unbanSecurityIP)))
 	mux.Handle("POST /monitor/security/firewall/draft/rules", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.addSecurityFirewallDraftRule)))
+	mux.Handle("POST /monitor/security/firewall/draft/defaults", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.updateSecurityFirewallDraftDefaults)))
 	mux.Handle("POST /monitor/security/firewall/draft/toggle", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.toggleSecurityFirewallDraftRule)))
 	mux.Handle("POST /monitor/security/firewall/draft/delete", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.deleteSecurityFirewallDraftRule)))
 	mux.Handle("POST /monitor/security/firewall/draft/discard", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.discardSecurityFirewallDraft)))

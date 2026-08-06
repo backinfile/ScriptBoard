@@ -269,6 +269,20 @@ To                         Action      From
 	}
 }
 
+func TestParseUFWDefaults(t *testing.T) {
+	defaults := parseUFWDefaults("Status: active\nLogging: on (low)\nDefault: deny (incoming), allow (outgoing), deny (routed)\n")
+	if defaults.Incoming != PolicyDeny || defaults.Outgoing != PolicyAllow {
+		t.Fatalf("defaults = %#v, want deny incoming and allow outgoing", defaults)
+	}
+}
+
+func TestParseUFWConfigDefaults(t *testing.T) {
+	defaults := parseUFWConfigDefaults("DEFAULT_INPUT_POLICY=\"DROP\"\nDEFAULT_OUTPUT_POLICY=\"ACCEPT\"\n")
+	if defaults.Incoming != PolicyDeny || defaults.Outgoing != PolicyAllow {
+		t.Fatalf("config defaults = %#v, want deny incoming and allow outgoing", defaults)
+	}
+}
+
 func TestParseFail2BanEventsKeepsLatestBanTime(t *testing.T) {
 	events := parseFail2BanEvents(`2026-08-05T10:00:00+08:00 host fail2ban.actions [10]: NOTICE [sshd] Ban 203.0.113.8
 2026-08-05T12:30:00+08:00 host fail2ban.actions [10]: NOTICE [sshd] Ban 203.0.113.8
@@ -282,15 +296,17 @@ func TestParseFail2BanEventsKeepsLatestBanTime(t *testing.T) {
 func TestApplyUFWRejectsConcurrentBaselineChange(t *testing.T) {
 	runner := &fakeRunner{responses: map[string]fakeResponse{
 		"ufw status numbered": {stdout: "Status: active\n[ 1] 443/tcp ALLOW IN Anywhere\n"},
+		"ufw status verbose":  {stdout: "Status: active\nDefault: deny (incoming), allow (outgoing), deny (routed)\n"},
 	}}
 	manager := NewManager(Options{GOOS: "linux", Runner: runner, Now: time.Now})
 	baseline := []FirewallRule{{Direction: DirectionInbound, Action: ActionAllow, Protocol: "tcp", Port: "22", Address: "Anywhere", Enabled: true}}
 	desired := append([]FirewallRule(nil), baseline...)
 	desired = append(desired, FirewallRule{Direction: DirectionInbound, Action: ActionAllow, Protocol: "tcp", Port: "443", Address: "Anywhere", Enabled: true})
-	if err := manager.ApplyUFW(context.Background(), baseline, desired); err != ErrFirewallConflict {
+	defaults := UFWDefaults{Incoming: PolicyDeny, Outgoing: PolicyAllow}
+	if err := manager.ApplyUFW(context.Background(), baseline, desired, defaults, defaults); err != ErrFirewallConflict {
 		t.Fatalf("ApplyUFW error = %v, want %v", err, ErrFirewallConflict)
 	}
-	if len(runner.calls) != 1 {
+	if len(runner.calls) != 2 {
 		t.Fatalf("calls = %#v, expected read only", runner.calls)
 	}
 }
@@ -298,6 +314,9 @@ func TestApplyUFWRejectsConcurrentBaselineChange(t *testing.T) {
 func TestApplyUFWDeletesDescendingThenAdds(t *testing.T) {
 	runner := &fakeRunner{responses: map[string]fakeResponse{
 		"ufw status numbered": {stdout: "Status: active\n[ 1] 22/tcp ALLOW IN 10.0.0.1\n[ 2] 80/tcp ALLOW IN Anywhere\n"},
+		"ufw status verbose":  {stdout: "Status: active\nDefault: deny (incoming), allow (outgoing), deny (routed)\n"},
+		"lookpath sshd":       {},
+		"sshd -T":             {stdout: "port 22\n"},
 	}}
 	manager := NewManager(Options{GOOS: "linux", Runner: runner, Now: time.Now})
 	baseline := []FirewallRule{
@@ -308,16 +327,48 @@ func TestApplyUFWDeletesDescendingThenAdds(t *testing.T) {
 		baseline[0],
 		{Direction: DirectionOutbound, Action: ActionAllow, Protocol: "udp", Port: "53", Address: "Anywhere", Enabled: true},
 	}
-	if err := manager.ApplyUFW(context.Background(), baseline, desired); err != nil {
+	defaults := UFWDefaults{Incoming: PolicyDeny, Outgoing: PolicyAllow}
+	if err := manager.ApplyUFW(context.Background(), baseline, desired, defaults, defaults); err != nil {
 		t.Fatalf("ApplyUFW: %v", err)
 	}
 	want := []string{
 		"ufw status numbered",
+		"ufw status verbose",
+		"sshd -T",
 		"ufw --force delete 2",
 		"ufw allow out proto udp to any port 53",
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
+	}
+}
+
+func TestApplyUFWUpdatesDefaultPolicies(t *testing.T) {
+	runner := &fakeRunner{responses: map[string]fakeResponse{
+		"ufw status numbered": {stdout: "Status: inactive\n"},
+		"ufw status verbose":  {stdout: "Status: inactive\nDefault: deny (incoming), allow (outgoing), deny (routed)\n"},
+	}}
+	manager := NewManager(Options{GOOS: "linux", Runner: runner, Now: time.Now})
+	baseline := UFWDefaults{Incoming: PolicyDeny, Outgoing: PolicyAllow}
+	desired := UFWDefaults{Incoming: PolicyAllow, Outgoing: PolicyDeny}
+	if err := manager.ApplyUFW(context.Background(), nil, nil, baseline, desired); err != nil {
+		t.Fatalf("ApplyUFW defaults: %v", err)
+	}
+	want := []string{"ufw status numbered", "ufw status verbose", "ufw default allow incoming", "ufw default deny outgoing"}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
+	}
+}
+
+func TestApplyUFWRequiresSSHRuleWhenActiveIncomingDefaultsToDeny(t *testing.T) {
+	runner := &fakeRunner{responses: map[string]fakeResponse{
+		"ufw status numbered": {stdout: "Status: active\n"},
+		"ufw status verbose":  {stdout: "Status: active\nDefault: deny (incoming), allow (outgoing), deny (routed)\n"},
+	}}
+	manager := NewManager(Options{GOOS: "linux", Runner: runner, Now: time.Now})
+	defaults := UFWDefaults{Incoming: PolicyDeny, Outgoing: PolicyAllow}
+	if err := manager.ApplyUFW(context.Background(), nil, nil, defaults, defaults); err != ErrSSHRuleRequired {
+		t.Fatalf("ApplyUFW error = %v, want %v", err, ErrSSHRuleRequired)
 	}
 }
 

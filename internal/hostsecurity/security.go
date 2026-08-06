@@ -38,6 +38,18 @@ const (
 	ActionDeny  FirewallAction = "deny"
 )
 
+type FirewallPolicy string
+
+const (
+	PolicyAllow FirewallPolicy = "allow"
+	PolicyDeny  FirewallPolicy = "deny"
+)
+
+type UFWDefaults struct {
+	Incoming FirewallPolicy
+	Outgoing FirewallPolicy
+}
+
 type Component struct {
 	Installed bool
 	Running   bool
@@ -67,6 +79,7 @@ type Capabilities struct {
 	UFW                Component
 	Firewall           Component
 	UFWEnabled         bool
+	UFWDefaults        UFWDefaults
 	SSHPort            string
 	Rules              []FirewallRule
 	Profiles           []FirewallProfile
@@ -150,6 +163,7 @@ var (
 	ErrUnsupported      = errors.New("host security operation is not supported on this platform")
 	ErrInvalidComponent = errors.New("invalid security component")
 	ErrInvalidRule      = errors.New("invalid firewall rule")
+	ErrInvalidPolicy    = errors.New("invalid firewall default policy")
 	ErrFirewallConflict = errors.New("firewall rules changed since the draft was created")
 	ErrSSHRuleRequired  = errors.New("an enabled inbound SSH allow rule is required")
 	ErrInvalidIPAddress = errors.New("invalid IP address")
@@ -181,7 +195,7 @@ type Service interface {
 	Install(context.Context, string) error
 	Unban(context.Context, string, string) error
 	EnableUFW(context.Context, []FirewallRule) error
-	ApplyUFW(context.Context, []FirewallRule, []FirewallRule) error
+	ApplyUFW(context.Context, []FirewallRule, []FirewallRule, UFWDefaults, UFWDefaults) error
 	AddWindowsFirewallRule(context.Context, FirewallRule) error
 	SetWindowsFirewallRuleEnabled(context.Context, string, bool) error
 	DeleteWindowsFirewallRule(context.Context, string) error
@@ -300,6 +314,18 @@ func (m *Manager) collectCapabilities(ctx context.Context, now time.Time) Capabi
 			return view
 		}
 		view.UFWEnabled, view.Rules = parseUFWStatus(output)
+		verboseOutput, verboseErr := m.runner.Run(ctx, "ufw", "status", "verbose")
+		if verboseErr != nil {
+			view.UFW.Error = conciseError(verboseErr)
+			view.Firewall = view.UFW
+			return view
+		}
+		view.UFWDefaults, err = m.readUFWDefaults(ctx, verboseOutput)
+		if err != nil {
+			view.UFW.Error = conciseError(err)
+			view.Firewall = view.UFW
+			return view
+		}
 		view.UFW.Running = view.UFWEnabled
 		view.Firewall = view.UFW
 	}
@@ -610,9 +636,12 @@ func (m *Manager) sshPort(ctx context.Context) string {
 	return fallback
 }
 
-func (m *Manager) ApplyUFW(ctx context.Context, baseline, desired []FirewallRule) error {
+func (m *Manager) ApplyUFW(ctx context.Context, baseline, desired []FirewallRule, baselineDefaults, desiredDefaults UFWDefaults) error {
 	if m.goos != "linux" {
 		return ErrUnsupported
+	}
+	if !validUFWDefaults(baselineDefaults) || !validUFWDefaults(desiredDefaults) {
+		return ErrInvalidPolicy
 	}
 	for _, rule := range desired {
 		if err := validateRule(rule); err != nil {
@@ -625,9 +654,20 @@ func (m *Manager) ApplyUFW(ctx context.Context, baseline, desired []FirewallRule
 	if err != nil {
 		return fmt.Errorf("read UFW rules: %w", err)
 	}
-	_, current := parseUFWStatus(output)
-	if !sameRuleSet(current, baseline) {
+	active, current := parseUFWStatus(output)
+	verboseOutput, err := m.runner.Run(ctx, "ufw", "status", "verbose")
+	if err != nil {
+		return fmt.Errorf("read UFW default policies: %w", err)
+	}
+	currentDefaults, err := m.readUFWDefaults(ctx, verboseOutput)
+	if err != nil {
+		return fmt.Errorf("read UFW default policies: %w", err)
+	}
+	if !sameRuleSet(current, baseline) || currentDefaults != baselineDefaults {
 		return ErrFirewallConflict
+	}
+	if active && desiredDefaults.Incoming == PolicyDeny && !hasSSHAllowRule(desired, m.sshPort(ctx)) {
+		return ErrSSHRuleRequired
 	}
 	deletes, additions := diffRules(baseline, desired)
 	sort.Sort(sort.Reverse(sort.IntSlice(deletes)))
@@ -641,7 +681,44 @@ func (m *Manager) ApplyUFW(ctx context.Context, baseline, desired []FirewallRule
 			return fmt.Errorf("add UFW rule %s: %w", rule.Name, err)
 		}
 	}
+	if desiredDefaults.Incoming != baselineDefaults.Incoming {
+		if _, err := m.runner.Run(ctx, "ufw", "default", string(desiredDefaults.Incoming), "incoming"); err != nil {
+			return fmt.Errorf("set UFW default incoming policy: %w", err)
+		}
+	}
+	if desiredDefaults.Outgoing != baselineDefaults.Outgoing {
+		if _, err := m.runner.Run(ctx, "ufw", "default", string(desiredDefaults.Outgoing), "outgoing"); err != nil {
+			return fmt.Errorf("set UFW default outgoing policy: %w", err)
+		}
+	}
 	m.invalidateCapabilitiesLocked()
+	return nil
+}
+
+func validUFWDefaults(defaults UFWDefaults) bool {
+	return (defaults.Incoming == PolicyAllow || defaults.Incoming == PolicyDeny) &&
+		(defaults.Outgoing == PolicyAllow || defaults.Outgoing == PolicyDeny)
+}
+
+func (m *Manager) readUFWDefaults(ctx context.Context, verboseOutput string) (UFWDefaults, error) {
+	if defaults := parseUFWDefaults(verboseOutput); validUFWDefaults(defaults) {
+		return defaults, nil
+	}
+	output, err := m.runner.Run(ctx, "grep", "-E", "^DEFAULT_(INPUT|OUTPUT)_POLICY=", "/etc/default/ufw")
+	if err != nil {
+		return UFWDefaults{}, err
+	}
+	defaults := parseUFWConfigDefaults(output)
+	if !validUFWDefaults(defaults) {
+		return UFWDefaults{}, ErrInvalidPolicy
+	}
+	return defaults, nil
+}
+
+func ValidateUFWDefaults(defaults UFWDefaults) error {
+	if !validUFWDefaults(defaults) {
+		return ErrInvalidPolicy
+	}
 	return nil
 }
 

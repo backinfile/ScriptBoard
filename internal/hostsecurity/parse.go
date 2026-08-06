@@ -17,6 +17,7 @@ var (
 	linuxPAMFailurePattern     = regexp.MustCompile(`^(\S+)\s+.*?sshd?\[(\d+)\]:\s+pam_unix\(sshd:auth\): authentication failure;.*\brhost=([0-9a-fA-F:.]+)\s+user=(\S+)`)
 	linuxPreAuthPattern        = regexp.MustCompile(`^(\S+)\s+.*?sshd?\[(\d+)\]:\s+(?:Connection (?:closed|reset) by|Disconnected from) (?:invalid|authenticating) user\s+(\S+)\s+([0-9a-fA-F:.]+)\s+port\s+(\d+)\s+\[preauth\]`)
 	ufwRulePattern             = regexp.MustCompile(`^\[\s*(\d+)\]\s+(\S+)\s+(ALLOW|DENY)(?:\s+(IN|OUT))?\s+(.+?)\s*$`)
+	ufwDefaultsPattern         = regexp.MustCompile(`(?i)^Default:\s*(allow|deny)\s*\(incoming\),\s*(allow|deny)\s*\(outgoing\)`)
 	fail2BanEventPattern       = regexp.MustCompile(`^(\S+)\s+.*?fail2ban\.actions\s+\[.*?\]:\s+NOTICE\s+\[(\S+)\]\s+Ban\s+([0-9a-fA-F:.]+)\s*$`)
 )
 
@@ -201,6 +202,42 @@ func parseUFWStatus(output string) (bool, []FirewallRule) {
 		})
 	}
 	return active, rules
+}
+
+func parseUFWDefaults(output string) UFWDefaults {
+	for _, line := range strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n") {
+		match := ufwDefaultsPattern.FindStringSubmatch(strings.TrimSpace(line))
+		if len(match) != 3 {
+			continue
+		}
+		return UFWDefaults{Incoming: FirewallPolicy(strings.ToLower(match[1])), Outgoing: FirewallPolicy(strings.ToLower(match[2]))}
+	}
+	return UFWDefaults{}
+}
+
+func parseUFWConfigDefaults(output string) UFWDefaults {
+	defaults := UFWDefaults{}
+	for _, line := range strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n") {
+		parts := strings.SplitN(strings.TrimSpace(line), "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		value := strings.ToUpper(strings.Trim(strings.TrimSpace(parts[1]), `"'`))
+		policy := FirewallPolicy("")
+		switch value {
+		case "ACCEPT":
+			policy = PolicyAllow
+		case "DROP", "REJECT":
+			policy = PolicyDeny
+		}
+		switch parts[0] {
+		case "DEFAULT_INPUT_POLICY":
+			defaults.Incoming = policy
+		case "DEFAULT_OUTPUT_POLICY":
+			defaults.Outgoing = policy
+		}
+	}
+	return defaults
 }
 
 func splitUFWTarget(value string) (string, string) {

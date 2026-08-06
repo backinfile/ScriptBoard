@@ -77,16 +77,6 @@
     </section>
     {{end}}
 
-    <section class="security-activity-section" aria-labelledby="security-recent-title">
-      <header class="section-heading section-heading--with-control"><div><p class="section-index">02 / {{t .Locale "security.recent_activity"}}</p><h2 id="security-recent-title">{{t .Locale "security.recent_logins"}}</h2><p>{{t .Locale "security.recent_activity_description"}}</p></div><a class="button button--compact" href="/monitor/security?tab=logins&amp;range=24h">{{t .Locale "security.view_all"}}<span data-lucide="arrow-right" aria-hidden="true"></span></a></header>
-      <dl class="security-facts security-facts--activity">
-        <div><dt>{{t .Locale "security.failed_logins"}}</dt><dd>{{.LoginPage.Stats.Failure}}</dd><small>{{t .Locale "security.last_24h"}}</small></div>
-        <div><dt>{{t .Locale "security.successful_logins"}}</dt><dd>{{.LoginPage.Stats.Success}}</dd><small>{{t .Locale "security.last_24h"}}</small></div>
-        <div><dt>{{if .Windows}}RDP{{else}}{{t .Locale "security.high_risk_sources"}}{{end}}</dt><dd>{{if .Windows}}{{.LoginPage.Stats.RDP}}{{else}}{{.LoginPage.Stats.HighRisk}}{{end}}</dd><small>{{if .Windows}}Logon Type 10{{else}}{{t .Locale "security.needs_attention"}}{{end}}</small></div>
-        <div><dt>{{if .Windows}}{{t .Locale "security.locked_accounts"}}{{else}}{{t .Locale "security.current_bans"}}{{end}}</dt><dd>{{if .Windows}}{{.LoginPage.Stats.Locked}}{{else if .Capabilities.Fail2Ban.Installed}}{{.BanPage.Total}}{{else}}—{{end}}</dd><small>{{if .Windows}}4740{{else if .Capabilities.Fail2Ban.Installed}}Fail2Ban · sshd{{else}}{{t .Locale "security.fail2ban_not_installed"}}{{end}}</small></div>
-      </dl>
-      {{template "security-login-table" .}}
-    </section>
   {{end}}
 
   {{if eq .Tab "logins"}}
@@ -134,6 +124,20 @@
       <section class="security-defense-section" aria-labelledby="security-ufw-title">
         <header class="section-heading section-heading--with-control"><div><p class="section-index">03</p><h2 id="security-ufw-title">UFW {{t .Locale "security.firewall"}}</h2><p>{{t .Locale "security.ufw_draft_description"}}</p></div><div class="heading-actions">{{if .HasDraft}}<a class="button button--primary button--compact" href="/monitor/security?tab=defense&amp;review=1">{{t .Locale "security.review_sync"}} <span class="security-count">{{len .DraftChanges}}</span></a>{{end}}{{if and .CanManage (not .Capabilities.UFWEnabled)}}<form method="post" action="/monitor/security/firewall/enable" data-confirm="{{t .Locale "security.enable_ufw_confirm"}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--primary button--compact" type="submit" {{if or .HasDraft (not .HasSSHAllowRule)}}disabled{{end}}><span data-lucide="power" aria-hidden="true"></span>{{t .Locale "security.enable_ufw"}}</button></form>{{end}}</div></header>
         {{if .HasDraft}}<div class="security-pending"><span data-lucide="clock-alert" aria-hidden="true"></span><span><strong>{{len .DraftChanges}} {{t .Locale "security.pending_changes"}}</strong><small>{{t .Locale "security.pending_changes_description"}}</small></span><a href="/monitor/security?tab=defense&amp;review=1">{{t .Locale "security.review"}}</a></div>{{else if not .HasSSHAllowRule}}<div class="security-warning"><span data-lucide="shield-alert" aria-hidden="true"></span><span>{{t .Locale "security.ssh_rule_required"}} <code>{{if .Capabilities.SSHPort}}{{.Capabilities.SSHPort}}{{else}}22{{end}}/tcp</code></span></div>{{end}}
+
+        <div class="security-default-policies">
+          <div><h3>{{t .Locale "security.default_policy"}}</h3><p>{{t .Locale "security.default_policy_description"}}</p></div>
+          {{if .CanManage}}
+          <form method="post" action="/monitor/security/firewall/draft/defaults">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <label><span>{{t .Locale "security.default_incoming"}}</span><select name="incoming"><option value="deny" {{if eq .UFWDefaults.Incoming "deny"}}selected{{end}}>{{t .Locale "security.default_block"}}</option><option value="allow" {{if eq .UFWDefaults.Incoming "allow"}}selected{{end}}>{{t .Locale "security.default_allow"}}</option></select></label>
+            <label><span>{{t .Locale "security.default_outgoing"}}</span><select name="outgoing"><option value="deny" {{if eq .UFWDefaults.Outgoing "deny"}}selected{{end}}>{{t .Locale "security.default_block"}}</option><option value="allow" {{if eq .UFWDefaults.Outgoing "allow"}}selected{{end}}>{{t .Locale "security.default_allow"}}</option></select></label>
+            <button class="button button--compact" type="submit"><span data-lucide="list-plus" aria-hidden="true"></span>{{t .Locale "security.add_to_draft"}}</button>
+          </form>
+          {{else}}
+          <dl><div><dt>{{t .Locale "security.default_incoming"}}</dt><dd>{{if eq .UFWDefaults.Incoming "deny"}}{{t .Locale "security.default_block"}}{{else}}{{t .Locale "security.default_allow"}}{{end}}</dd></div><div><dt>{{t .Locale "security.default_outgoing"}}</dt><dd>{{if eq .UFWDefaults.Outgoing "deny"}}{{t .Locale "security.default_block"}}{{else}}{{t .Locale "security.default_allow"}}{{end}}</dd></div></dl>
+          {{end}}
+        </div>
 
         {{if .CanManage}}<details class="security-rule-editor"><summary><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "security.add_rule"}}</summary><form method="post" action="/monitor/security/firewall/draft/rules"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><label><span>{{t .Locale "security.direction"}}</span><select name="direction"><option value="in">{{t .Locale "security.inbound"}}</option><option value="out">{{t .Locale "security.outbound"}}</option></select></label><label><span>{{t .Locale "security.action"}}</span><select name="action"><option value="allow">{{t .Locale "security.allow"}}</option><option value="deny">{{t .Locale "security.deny"}}</option></select></label><label><span>{{t .Locale "security.protocol"}}</span><select name="protocol"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="any">{{t .Locale "security.any"}}</option></select></label><label><span>{{t .Locale "security.port"}}</span><input name="port" inputmode="numeric" required placeholder="443"></label><label><span>{{t .Locale "security.address"}}</span><input name="address" required value="Anywhere"></label><label><span>{{t .Locale "common.name"}}</span><input name="name" maxlength="120" required placeholder="HTTPS"></label><button class="button button--primary" type="submit">{{t .Locale "security.add_to_draft"}}</button></form></details>{{end}}
         {{template "security-firewall-table" .}}
@@ -184,7 +188,8 @@
   <dialog class="security-dialog security-dialog--review" open aria-labelledby="security-review-title">
     <div class="security-dialog__head"><div><h2 id="security-review-title">{{t .Locale "security.review_changes"}}</h2><p>{{t .Locale "security.review_changes_description"}}</p></div><a class="icon-button icon-button--quiet" href="/monitor/security?tab=defense" aria-label="{{t .Locale "common.close"}}"><span data-lucide="x" aria-hidden="true"></span></a></div>
     <div class="security-change-list">{{range .DraftChanges}}<article><span data-kind="{{.Kind}}">{{if eq .Kind "add"}}{{t $.Locale "security.change_add"}}{{else if eq .Kind "delete"}}{{t $.Locale "security.change_delete"}}{{else}}{{t $.Locale "security.change_update"}}{{end}}</span><div><strong>{{.Title}}</strong><small>{{.Detail}}</small></div></article>{{end}}</div>
-    <footer><form method="post" action="/monitor/security/firewall/draft/discard" data-confirm="{{t .Locale "security.discard_confirm"}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--quiet button--danger" type="submit">{{t .Locale "security.discard_all"}}</button></form><a class="button" href="/monitor/security?tab=defense">{{t .Locale "security.continue_editing"}}</a><form method="post" action="/monitor/security/firewall/draft/apply" data-confirm="{{t .Locale "security.sync_confirm"}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--primary" type="submit">{{t .Locale "security.confirm_sync"}}</button></form></footer>
+    {{if not .CanApplyDraft}}<div class="security-warning"><span data-lucide="shield-alert" aria-hidden="true"></span><span>{{t .Locale "security.default_policy_ssh_required"}}</span></div>{{end}}
+    <footer><form method="post" action="/monitor/security/firewall/draft/discard" data-confirm="{{t .Locale "security.discard_confirm"}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--quiet button--danger" type="submit">{{t .Locale "security.discard_all"}}</button></form><a class="button" href="/monitor/security?tab=defense">{{t .Locale "security.continue_editing"}}</a><form method="post" action="/monitor/security/firewall/draft/apply" data-confirm="{{t .Locale "security.sync_confirm"}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--primary" type="submit" {{if not .CanApplyDraft}}disabled{{end}}>{{t .Locale "security.confirm_sync"}}</button></form></footer>
   </dialog>
   {{end}}
   {{end}}

@@ -14,10 +14,12 @@ import (
 )
 
 type securityFirewallDraft struct {
-	Baseline  []hostsecurity.FirewallRule
-	Desired   []hostsecurity.FirewallRule
-	Changes   []securityFirewallChange
-	UpdatedAt time.Time
+	Baseline         []hostsecurity.FirewallRule
+	Desired          []hostsecurity.FirewallRule
+	BaselineDefaults hostsecurity.UFWDefaults
+	DesiredDefaults  hostsecurity.UFWDefaults
+	Changes          []securityFirewallChange
+	UpdatedAt        time.Time
 }
 
 type securityFirewallChange struct {
@@ -44,7 +46,6 @@ type securityPageView struct {
 	HasBanNext       bool
 	Capabilities     hostsecurity.Capabilities
 	LoginPage        hostsecurity.LoginPage
-	RecentLogins     []hostsecurity.LoginRecord
 	DisplayedLogins  []hostsecurity.LoginRecord
 	BanPage          hostsecurity.BanPage
 	Rules            []hostsecurity.FirewallRule
@@ -75,6 +76,8 @@ type securityPageView struct {
 	Windows          bool
 	HasDraft         bool
 	HasSSHAllowRule  bool
+	UFWDefaults      hostsecurity.UFWDefaults
+	CanApplyDraft    bool
 	RemoteLoginRows  []securityRemoteLoginRow
 	RemoteLogin      securityRemoteLoginSummary
 	DeferredData     bool
@@ -180,11 +183,8 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 			view.HasLoginNext = loginPage.Page < loginPage.Pages
 			view.LoginPrevious = max(1, loginPage.Page-1)
 			view.LoginNext = min(loginPage.Pages, loginPage.Page+1)
-			limit := min(4, len(loginPage.Records))
-			view.RecentLogins = loginPage.Records[:limit]
-			view.DisplayedLogins = loginPage.Records
-			if tab == "overview" {
-				view.DisplayedLogins = view.RecentLogins
+			if tab == "logins" {
+				view.DisplayedLogins = loginPage.Records
 			}
 		}
 	}
@@ -203,8 +203,10 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 		}
 	}
 	view.Rules = append([]hostsecurity.FirewallRule(nil), capabilities.Rules...)
+	view.UFWDefaults = capabilities.UFWDefaults
 	if draft, ok := a.securityDraft(current.userID); ok {
 		view.Rules = draft.Desired
+		view.UFWDefaults = draft.DesiredDefaults
 		view.DraftChanges = draft.Changes
 		view.DraftUpdatedAt = draft.UpdatedAt
 		view.HasDraft = len(draft.Changes) > 0
@@ -224,6 +226,7 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 		view.RuleNextURL = windowsFirewallRulesURL(request.URL.Query(), view.RulePage+1, rulePageSize)
 	}
 	view.HasSSHAllowRule = securityHasSSHAllowRule(view.Rules, capabilities.SSHPort)
+	view.CanApplyDraft = !view.Linux || !capabilities.UFWEnabled || view.UFWDefaults.Incoming != hostsecurity.PolicyDeny || view.HasSSHAllowRule
 	if view.Linux && tab == "overview" {
 		view.RemoteLoginRows = securityRemoteLoginRows(locale, capabilities, view.BanPage.Total)
 		view.RemoteLogin = securityRemoteLoginSummaryFor(locale, capabilities)
@@ -535,8 +538,7 @@ func (a *App) addSecurityFirewallDraftRule(response http.ResponseWriter, request
 	a.securityDraftMu.Lock()
 	draft, exists := a.securityDrafts[current.userID]
 	if !exists {
-		draft.Baseline = cloneSecurityRules(capabilities.Rules)
-		draft.Desired = cloneSecurityRules(capabilities.Rules)
+		draft = newSecurityFirewallDraft(capabilities)
 	}
 	draft.Desired = append(draft.Desired, rule)
 	draft.Changes = append(draft.Changes, securityFirewallChange{Kind: "add", Title: rule.Name, Detail: securityRuleDescription(rule)})
@@ -560,8 +562,7 @@ func (a *App) toggleSecurityFirewallDraftRule(response http.ResponseWriter, requ
 	a.securityDraftMu.Lock()
 	draft, exists := a.securityDrafts[current.userID]
 	if !exists {
-		draft.Baseline = cloneSecurityRules(capabilities.Rules)
-		draft.Desired = cloneSecurityRules(capabilities.Rules)
+		draft = newSecurityFirewallDraft(capabilities)
 	}
 	if index < 0 || index >= len(draft.Desired) {
 		a.securityDraftMu.Unlock()
@@ -591,8 +592,7 @@ func (a *App) deleteSecurityFirewallDraftRule(response http.ResponseWriter, requ
 	a.securityDraftMu.Lock()
 	draft, exists := a.securityDrafts[current.userID]
 	if !exists {
-		draft.Baseline = cloneSecurityRules(capabilities.Rules)
-		draft.Desired = cloneSecurityRules(capabilities.Rules)
+		draft = newSecurityFirewallDraft(capabilities)
 	}
 	if index < 0 || index >= len(draft.Desired) {
 		a.securityDraftMu.Unlock()
@@ -620,6 +620,44 @@ func (a *App) discardSecurityFirewallDraft(response http.ResponseWriter, request
 	securityRedirect(response, request, "defense", "discarded", nil)
 }
 
+func (a *App) updateSecurityFirewallDraftDefaults(response http.ResponseWriter, request *http.Request) {
+	if !a.validSecurityWrite(response, request) {
+		return
+	}
+	defaults := hostsecurity.UFWDefaults{
+		Incoming: hostsecurity.FirewallPolicy(strings.ToLower(strings.TrimSpace(request.FormValue("incoming")))),
+		Outgoing: hostsecurity.FirewallPolicy(strings.ToLower(strings.TrimSpace(request.FormValue("outgoing")))),
+	}
+	if err := hostsecurity.ValidateUFWDefaults(defaults); err != nil {
+		writeSecurityError(response, request, err)
+		return
+	}
+	current := request.Context().Value(sessionContextKey).(session)
+	capabilities := a.hostSecurity.Capabilities(request.Context())
+	if !capabilities.UFW.Installed {
+		writeSecurityError(response, request, hostsecurity.ErrComponentMissing)
+		return
+	}
+	a.securityDraftMu.Lock()
+	draft, exists := a.securityDrafts[current.userID]
+	if !exists {
+		draft = newSecurityFirewallDraft(capabilities)
+	}
+	if draft.DesiredDefaults.Incoming != defaults.Incoming {
+		draft.Changes = append(draft.Changes, securityFirewallChange{Kind: "update", Title: webText(resolveWebLocale(request), "security.default_incoming"), Detail: string(defaults.Incoming)})
+	}
+	if draft.DesiredDefaults.Outgoing != defaults.Outgoing {
+		draft.Changes = append(draft.Changes, securityFirewallChange{Kind: "update", Title: webText(resolveWebLocale(request), "security.default_outgoing"), Detail: string(defaults.Outgoing)})
+	}
+	draft.DesiredDefaults = defaults
+	draft.UpdatedAt = time.Now().UTC()
+	if len(draft.Changes) > 0 {
+		a.securityDrafts[current.userID] = draft
+	}
+	a.securityDraftMu.Unlock()
+	securityRedirect(response, request, "defense", "drafted", nil)
+}
+
 func (a *App) applySecurityFirewallDraft(response http.ResponseWriter, request *http.Request) {
 	if !a.validSecurityWrite(response, request) {
 		return
@@ -633,7 +671,7 @@ func (a *App) applySecurityFirewallDraft(response http.ResponseWriter, request *
 		return
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), 45*time.Second)
-	err := a.hostSecurity.ApplyUFW(ctx, cloneSecurityRules(draft.Baseline), cloneSecurityRules(draft.Desired))
+	err := a.hostSecurity.ApplyUFW(ctx, cloneSecurityRules(draft.Baseline), cloneSecurityRules(draft.Desired), draft.BaselineDefaults, draft.DesiredDefaults)
 	cancel()
 	if err == nil {
 		delete(a.securityDrafts, current.userID)
@@ -751,6 +789,13 @@ func (a *App) securityDraft(userID string) (securityFirewallDraft, bool) {
 	draft.Desired = cloneSecurityRules(draft.Desired)
 	draft.Changes = append([]securityFirewallChange(nil), draft.Changes...)
 	return draft, true
+}
+
+func newSecurityFirewallDraft(capabilities hostsecurity.Capabilities) securityFirewallDraft {
+	return securityFirewallDraft{
+		Baseline: cloneSecurityRules(capabilities.Rules), Desired: cloneSecurityRules(capabilities.Rules),
+		BaselineDefaults: capabilities.UFWDefaults, DesiredDefaults: capabilities.UFWDefaults,
+	}
 }
 
 func cloneSecurityRules(rules []hostsecurity.FirewallRule) []hostsecurity.FirewallRule {

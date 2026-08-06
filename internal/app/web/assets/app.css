@@ -4943,8 +4943,17 @@ body.has-task-panel { overflow: hidden; }
 .security-login-check__evidence dl > div + div { padding-left: 18px; border-left: 1px solid var(--rule); }
 .security-login-check__evidence dt { color: var(--faint); font-size: .62rem; }
 .security-login-check__evidence dd { margin: 4px 0 0; color: var(--muted); font-size: .68rem; overflow-wrap: anywhere; }
-.security-activity-section { margin-top: 42px; padding-top: 34px; border-top: 1px solid var(--rule-strong); }
-.security-facts--activity { margin-bottom: 18px; }
+.security-default-policies { display: grid; grid-template-columns: minmax(220px, .7fr) minmax(420px, 1.3fr); gap: 28px; align-items: end; margin: 24px 0 16px; padding: 18px 0; border-block: 1px solid var(--rule); }
+.security-default-policies h3, .security-default-policies p { margin: 0; }
+.security-default-policies h3 { font-size: .86rem; }
+.security-default-policies p { margin-top: 4px; color: var(--muted); font-size: .72rem; line-height: 1.45; }
+.security-default-policies form { display: grid; grid-template-columns: repeat(2, minmax(130px, 1fr)) auto; gap: 10px; align-items: end; }
+.security-default-policies label > span { display: block; margin-bottom: 5px; color: var(--faint); font-size: .7rem; }
+.security-default-policies select { width: 100%; }
+.security-default-policies dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; }
+.security-default-policies dl > div + div { padding-left: 18px; border-left: 1px solid var(--rule); }
+.security-default-policies dt { color: var(--faint); font-size: .7rem; }
+.security-default-policies dd { margin: 4px 0 0; font-size: .85rem; font-weight: 650; }
 .security-component-icon { display: grid; width: 32px; height: 32px; place-items: center; color: var(--accent); background: var(--accent-soft); border-radius: 6px; }
 .security-component-icon svg { width: 16px; height: 16px; }
 .security-profiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 18px; border-top: 1px solid var(--rule-strong); border-bottom: 1px solid var(--rule); }
@@ -5031,20 +5040,25 @@ body.has-task-panel { overflow: hidden; }
 @media (max-width: 1000px) {
   .security-login-check > summary { grid-template-columns: 34px minmax(160px, 1fr) minmax(90px, .5fr) minmax(140px, .8fr) auto 16px; gap: 12px; }
   .security-filters, .security-rule-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .security-default-policies { grid-template-columns: 1fr; align-items: stretch; }
+  .security-default-policies form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .security-default-policies form .button { grid-column: 1 / -1; justify-self: start; }
 }
 
 @media (max-width: 720px) {
   .security-facts, .security-facts--three, .security-components, .security-profiles { grid-template-columns: 1fr; }
-  .security-facts--verdict, .security-facts--activity { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .security-facts--verdict > div:nth-child(3), .security-facts--activity > div:nth-child(3) { padding-left: 0; border-top: 1px solid var(--rule); border-left: 0; }
-  .security-facts--verdict > div:nth-child(4), .security-facts--activity > div:nth-child(4) { border-top: 1px solid var(--rule); }
+	.security-facts--verdict { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	.security-facts--verdict > div:nth-child(3) { padding-left: 0; border-top: 1px solid var(--rule); border-left: 0; }
+	.security-facts--verdict > div:nth-child(4) { border-top: 1px solid var(--rule); }
   .security-login-check > summary { grid-template-columns: 34px minmax(0, 1fr) auto 16px; }
   .security-login-check > summary > code, .security-login-check__source { display: none; }
   .security-login-check__evidence { padding-left: 0; }
   .security-login-check__evidence dl { grid-template-columns: 1fr; }
   .security-login-check__evidence dl > div + div { margin-top: 10px; padding: 10px 0 0; border-top: 1px solid var(--rule); border-left: 0; }
-  .security-facts:not(.security-facts--verdict):not(.security-facts--activity) > div + div, .security-components article + article, .security-profiles > div + div { padding-left: 0; border-left: 0; border-top: 1px solid var(--rule); }
+	.security-facts:not(.security-facts--verdict) > div + div, .security-components article + article, .security-profiles > div + div { padding-left: 0; border-left: 0; border-top: 1px solid var(--rule); }
   .security-login-table, .security-firewall-table, .security-ban-table { min-width: 0; }
+	.security-default-policies form { grid-template-columns: 1fr; }
+	.security-default-policies form .button { grid-column: auto; width: 100%; }
   .security-period, .security-pagination { align-items: stretch; flex-direction: column; }
   .security-components article { padding-right: 0; }
   .security-rule-editor form, .security-rule-filters { grid-template-columns: 1fr; }

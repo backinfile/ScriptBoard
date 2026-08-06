@@ -28,6 +28,7 @@ func TestHostSecurityPageAndUFWDraftFlow(t *testing.T) {
 		},
 		Fail2Ban: hostsecurity.Component{Installed: true, Running: true},
 		UFW:      hostsecurity.Component{Installed: true, Running: true}, UFWEnabled: true,
+		UFWDefaults: hostsecurity.UFWDefaults{Incoming: hostsecurity.PolicyDeny, Outgoing: hostsecurity.PolicyAllow},
 		Rules: []hostsecurity.FirewallRule{{
 			Number: 1, Direction: hostsecurity.DirectionInbound, Action: hostsecurity.ActionAllow,
 			Protocol: "tcp", Port: "22", Address: "10.0.0.1", Name: "SSH", Enabled: true,
@@ -39,12 +40,12 @@ func TestHostSecurityPageAndUFWDraftFlow(t *testing.T) {
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: filepath.Join(t.TempDir(), "state"), HostSecurity: service})
 
 	overview := getSecurityPage(t, client, serverURL+"/monitor/security")
-	if !bytes.Contains(overview, []byte("203.0.113.8")) || !bytes.Contains(overview, []byte("Failed sign-ins")) {
+	if !bytes.Contains(overview, []byte("Failed sign-ins")) {
 		t.Fatalf("security overview did not render login data: %s", overview)
 	}
 	for _, expected := range [][]byte{
 		[]byte(`data-security-login-surface`), []byte("Remote sign-in monitoring"),
-		[]byte(`data-security-login-verdict`), []byte("Monitoring status"), []byte("Recent activity"),
+		[]byte(`data-security-login-verdict`), []byte("Monitoring status"),
 		[]byte("SSH remote entry"), []byte("Public key authentication"), []byte("Password authentication"),
 		[]byte("Root remote sign-in"), []byte("Brute-force protection"),
 		[]byte("0.0.0.0:22"), []byte("prohibit-password"), []byte(`class="security-login-check__source"`),
@@ -52,6 +53,11 @@ func TestHostSecurityPageAndUFWDraftFlow(t *testing.T) {
 	} {
 		if !bytes.Contains(overview, expected) {
 			t.Fatalf("security overview missing remote sign-in monitoring %q: %s", expected, overview)
+		}
+	}
+	for _, forbidden := range [][]byte{[]byte(`security-activity-section`), []byte("Recent sign-ins"), []byte("203.0.113.8")} {
+		if bytes.Contains(overview, forbidden) {
+			t.Fatalf("security overview still renders recent sign-ins %q: %s", forbidden, overview)
 		}
 	}
 	service.mu.Lock()
@@ -66,6 +72,7 @@ func TestHostSecurityPageAndUFWDraftFlow(t *testing.T) {
 		[]byte("Host Security"), []byte("Fail2Ban"), []byte("UFW Firewall"), []byte("root privileges"),
 		[]byte(`data-security-ban-drawer-trigger`), []byte(`aria-haspopup="dialog"`),
 		[]byte(`class="security-ban-drawer-host"`), []byte(`data-security-ban-loading`), []byte(`aria-hidden="true"`),
+		[]byte(`action="/monitor/security/firewall/draft/defaults"`), []byte("Default traffic policy"),
 	} {
 		if !bytes.Contains(page, expected) {
 			t.Fatalf("security page missing %q: %s", expected, page)
@@ -107,9 +114,19 @@ func TestHostSecurityPageAndUFWDraftFlow(t *testing.T) {
 	if applyCalls != 0 {
 		t.Fatal("UFW rule was applied before confirmation")
 	}
+	response, err = client.PostForm(serverURL+"/monitor/security/firewall/draft/defaults", url.Values{
+		"csrf_token": {formToken(t, page)}, "incoming": {"deny"}, "outgoing": {"deny"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("update default policies status = %d", response.StatusCode)
+	}
 
 	review := getSecurityPage(t, client, serverURL+"/monitor/security?tab=defense&review=1")
-	if !bytes.Contains(review, []byte("Review UFW changes")) || !bytes.Contains(review, []byte("DNS")) {
+	if !bytes.Contains(review, []byte("Review UFW changes")) || !bytes.Contains(review, []byte("DNS")) || !bytes.Contains(review, []byte("Default outgoing")) {
 		t.Fatalf("review dialog missing draft: %s", review)
 	}
 	response, err = client.PostForm(serverURL+"/monitor/security/firewall/draft/apply", url.Values{"csrf_token": {formToken(t, review)}})
@@ -122,8 +139,8 @@ func TestHostSecurityPageAndUFWDraftFlow(t *testing.T) {
 	}
 	service.mu.Lock()
 	defer service.mu.Unlock()
-	if service.applyCalls != 1 || len(service.appliedDesired) != 2 || service.appliedDesired[1].Name != "DNS" {
-		t.Fatalf("applied draft = calls %d rules %#v", service.applyCalls, service.appliedDesired)
+	if service.applyCalls != 1 || len(service.appliedDesired) != 2 || service.appliedDesired[1].Name != "DNS" || service.appliedDefaults.Outgoing != hostsecurity.PolicyDeny {
+		t.Fatalf("applied draft = calls %d rules %#v defaults %#v", service.applyCalls, service.appliedDesired, service.appliedDefaults)
 	}
 }
 
@@ -303,6 +320,7 @@ type securityFixtureService struct {
 	loginCalls      int
 	applyCalls      int
 	appliedDesired  []hostsecurity.FirewallRule
+	appliedDefaults hostsecurity.UFWDefaults
 }
 
 func (s *securityFixtureService) Capabilities(context.Context) hostsecurity.Capabilities {
@@ -332,11 +350,12 @@ func (s *securityFixtureService) EnableUFW(context.Context, []hostsecurity.Firew
 	return nil
 }
 
-func (s *securityFixtureService) ApplyUFW(_ context.Context, _ []hostsecurity.FirewallRule, desired []hostsecurity.FirewallRule) error {
+func (s *securityFixtureService) ApplyUFW(_ context.Context, _ []hostsecurity.FirewallRule, desired []hostsecurity.FirewallRule, _ hostsecurity.UFWDefaults, desiredDefaults hostsecurity.UFWDefaults) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.applyCalls++
 	s.appliedDesired = append([]hostsecurity.FirewallRule(nil), desired...)
+	s.appliedDefaults = desiredDefaults
 	return nil
 }
 
