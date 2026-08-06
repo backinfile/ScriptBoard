@@ -183,7 +183,7 @@ var webMessages = map[string]localizedMessage{
 	"security.login_unavailable":                    {"登录记录暂时不可用", "Sign-in records are temporarily unavailable"},
 	"security.pagination":                           {"分页", "Pagination"},
 	"security.loading_title":                        {"正在读取主机安全数据", "Loading host security data"},
-	"security.loading_description":                  {"Windows Security Event Log 采集可能需要几秒。", "Collecting the Windows Security Event Log may take a few seconds."},
+	"security.loading_description":                  {"主机安全数据采集可能需要几秒。", "Host security data collection may take a few seconds."},
 	"security.refresh_data":                         {"刷新数据", "Refresh data"},
 	"security.records":                              {"条记录", "records"},
 	"security.time":                                 {"时间", "Time"},

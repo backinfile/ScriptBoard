@@ -190,11 +190,51 @@ func TestHostSecurityDeferredShellSkipsSystemCollection(t *testing.T) {
 	if !bytes.Contains(body, []byte(`data-deferred-state="loading"`)) {
 		t.Fatalf("security shell has no loading state: %s", body)
 	}
-	if !bytes.Contains(body, []byte("Windows Security Event Log")) {
-		t.Fatalf("security shell does not explain the slow Windows collection: %s", body)
+	if !bytes.Contains(body, []byte("Host security data")) || bytes.Contains(body, []byte("Windows Security Event Log")) {
+		t.Fatalf("security shell loading copy is not platform-neutral: %s", body)
 	}
 	if service.capabilityCalls != 0 || service.loginCalls != 0 {
 		t.Fatalf("deferred shell performed system collection: capabilities=%d logins=%d", service.capabilityCalls, service.loginCalls)
+	}
+}
+
+func TestHostSecurityCanToggleFirstAddedDraftRule(t *testing.T) {
+	t.Parallel()
+	service := &securityFixtureService{capabilities: hostsecurity.Capabilities{
+		OS: "linux", Administrator: true, AdministratorKnown: true,
+		UFW: hostsecurity.Component{Installed: true, Running: true},
+	}}
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: filepath.Join(t.TempDir(), "state"), HostSecurity: service})
+
+	page := getSecurityPage(t, client, serverURL+"/monitor/security?tab=defense")
+	response, err := client.PostForm(serverURL+"/monitor/security/firewall/draft/rules", url.Values{
+		"csrf_token": {formToken(t, page)}, "direction": {"in"}, "action": {"allow"},
+		"protocol": {"tcp"}, "port": {"22"}, "address": {"Anywhere"}, "name": {"SSH"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("add first draft status = %d", response.StatusCode)
+	}
+
+	draftPage := getSecurityPage(t, client, serverURL+"/monitor/security?tab=defense")
+	response, err = client.PostForm(serverURL+"/monitor/security/firewall/draft/toggle", url.Values{
+		"csrf_token": {formToken(t, draftPage)}, "index": {"0"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	toggleBody, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("toggle first draft status = %d body=%s", response.StatusCode, toggleBody)
+	}
+
+	toggledPage := getSecurityPage(t, client, serverURL+"/monitor/security?tab=defense")
+	if !bytes.Contains(toggledPage, []byte(`data-enabled="false"`)) || !bytes.Contains(toggledPage, []byte("Enable rule")) {
+		t.Fatalf("first added draft rule was not disabled: %s", toggledPage)
 	}
 }
 

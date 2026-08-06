@@ -367,8 +367,8 @@ func (a *App) addSecurityFirewallDraftRule(response http.ResponseWriter, request
 		return
 	}
 	a.securityDraftMu.Lock()
-	draft := a.securityDrafts[current.userID]
-	if draft.Baseline == nil {
+	draft, exists := a.securityDrafts[current.userID]
+	if !exists {
 		draft.Baseline = cloneSecurityRules(capabilities.Rules)
 		draft.Desired = cloneSecurityRules(capabilities.Rules)
 	}
@@ -392,8 +392,8 @@ func (a *App) toggleSecurityFirewallDraftRule(response http.ResponseWriter, requ
 	current := request.Context().Value(sessionContextKey).(session)
 	capabilities := a.hostSecurity.Capabilities(request.Context())
 	a.securityDraftMu.Lock()
-	draft := a.securityDrafts[current.userID]
-	if draft.Baseline == nil {
+	draft, exists := a.securityDrafts[current.userID]
+	if !exists {
 		draft.Baseline = cloneSecurityRules(capabilities.Rules)
 		draft.Desired = cloneSecurityRules(capabilities.Rules)
 	}
@@ -423,8 +423,8 @@ func (a *App) deleteSecurityFirewallDraftRule(response http.ResponseWriter, requ
 	current := request.Context().Value(sessionContextKey).(session)
 	capabilities := a.hostSecurity.Capabilities(request.Context())
 	a.securityDraftMu.Lock()
-	draft := a.securityDrafts[current.userID]
-	if draft.Baseline == nil {
+	draft, exists := a.securityDrafts[current.userID]
+	if !exists {
 		draft.Baseline = cloneSecurityRules(capabilities.Rules)
 		draft.Desired = cloneSecurityRules(capabilities.Rules)
 	}
