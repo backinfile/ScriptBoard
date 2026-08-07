@@ -2706,6 +2706,18 @@
   function initFileQuickAccess(root = document, cleanups = []) {
     const disclosure = root.querySelector("[data-file-quick-access]");
     if (!disclosure) return;
+    const disclosureStorageKey = "scriptboard.files.quickAccessOpen";
+    try {
+      const storedDisclosureState = localStorage.getItem(disclosureStorageKey);
+      disclosure.open = storedDisclosureState === null || storedDisclosureState === "true";
+    } catch {
+      disclosure.open = true;
+    }
+    const onDisclosureToggle = () => {
+      try { localStorage.setItem(disclosureStorageKey, String(disclosure.open)); } catch { /* preference remains in memory */ }
+    };
+    disclosure.addEventListener("toggle", onDisclosureToggle);
+    cleanups.push(() => disclosure.removeEventListener("toggle", onDisclosureToggle));
     const list = disclosure.querySelector("[data-file-quick-list]");
     const empty = disclosure.querySelector("[data-file-quick-empty]");
     const count = disclosure.querySelector("[data-file-quick-count]");

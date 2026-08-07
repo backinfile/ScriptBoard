@@ -1548,12 +1548,15 @@ async function assertExternalInterfaces(page, fixture) {
     assert.equal(page.url(), hostFilesWorkspaceURL, "restoring a task with Forward changed the workspace URL");
     await page.keyboard.press("Escape");
     await page.locator("[data-task-panel]").waitFor({ state: "detached" });
-    await page.evaluate(() => localStorage.removeItem("scriptboard.files.pinnedDirectories.v2"));
+    await page.evaluate(() => {
+      localStorage.removeItem("scriptboard.files.pinnedDirectories.v2");
+      localStorage.removeItem("scriptboard.files.quickAccessOpen");
+    });
     await page.reload();
 
     const quickAccess = page.locator("[data-file-quick-access]");
     await quickAccess.waitFor({ state: "visible" });
-    assert.equal(await quickAccess.getAttribute("open"), null, "Quick access was not collapsed by default");
+    assert.notEqual(await quickAccess.getAttribute("open"), null, "Quick access was not open by default");
     assert.equal((await quickAccess.locator("[data-file-quick-count]").textContent()).trim(), "0");
     const automationRow = page.locator(".file-table tbody tr").filter({
       has: page.getByRole("link", { name: "automation", exact: true }),
@@ -1565,16 +1568,23 @@ async function assertExternalInterfaces(page, fixture) {
       .some(element => element.dataset.filePinLabel === "automation" && element.getAttribute("aria-pressed") === "true"));
     assert.equal(await automationPin.getAttribute("aria-pressed"), "true");
     assert.equal((await quickAccess.locator("[data-file-quick-count]").textContent()).trim(), "1");
-    await quickAccess.locator("summary").click();
     await quickAccess.getByRole("link", { name: /automation/ }).waitFor();
     await saveSnapshot(page, "files-quick-access");
+    await quickAccess.locator("summary").click();
+    await page.waitForFunction(() => localStorage.getItem("scriptboard.files.quickAccessOpen") === "false");
+    await page.reload();
+    const collapsedQuickAccess = page.locator("[data-file-quick-access]");
+    await collapsedQuickAccess.waitFor({ state: "visible" });
+    assert.equal(await collapsedQuickAccess.getAttribute("open"), null, "Quick access did not restore its collapsed state");
+    await collapsedQuickAccess.locator("summary").click();
+    await page.waitForFunction(() => localStorage.getItem("scriptboard.files.quickAccessOpen") === "true");
     await Promise.all([
       page.waitForURL(fixtureFilesURL("automation")),
-      quickAccess.getByRole("link", { name: /automation/ }).click(),
+      collapsedQuickAccess.getByRole("link", { name: /automation/ }).click(),
     ]);
     await page.goto(hostFilesWorkspaceURL);
     const restoredQuickAccess = page.locator("[data-file-quick-access]");
-    await restoredQuickAccess.locator("summary").click();
+    assert.notEqual(await restoredQuickAccess.getAttribute("open"), null, "Quick access did not restore its open state");
     assert.equal(await restoredQuickAccess.getByRole("link", { name: /automation/ }).count(), 1);
     const restoredAutomationRow = page.locator(".file-table tbody tr").filter({
       has: page.getByRole("link", { name: "automation", exact: true }),
@@ -1583,7 +1593,6 @@ async function assertExternalInterfaces(page, fixture) {
     await restoredAutomationPin.click();
     await page.waitForFunction(() => document.querySelector("[data-file-quick-count]")?.textContent.trim() === "0");
     assert.equal((await restoredQuickAccess.locator("[data-file-quick-count]").textContent()).trim(), "0");
-    await restoredQuickAccess.locator("summary").click();
 
     const hiddenToggle = page.locator("[data-file-hidden-toggle]");
     assert.equal(await hiddenToggle.isChecked(), false);
