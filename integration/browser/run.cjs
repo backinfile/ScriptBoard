@@ -1553,8 +1553,9 @@ async function assertExternalInterfaces(page, fixture) {
 
     const quickAccess = page.locator("[data-file-quick-access]");
     await quickAccess.waitFor({ state: "visible" });
-    assert.notEqual(await quickAccess.getAttribute("open"), null, "Quick access was not open by default");
+    assert.equal(await quickAccess.getAttribute("open"), null, "Quick access was not collapsed on reload");
     assert.equal((await quickAccess.locator("[data-file-quick-count]").textContent()).trim(), "0");
+    await quickAccess.locator("summary").click();
     const automationRow = page.locator(".file-table tbody tr").filter({
       has: page.getByRole("link", { name: "automation", exact: true }),
     });
@@ -1570,13 +1571,14 @@ async function assertExternalInterfaces(page, fixture) {
     await saveSnapshot(page, "files-quick-access");
     await quickAccess.locator("summary").click();
     await page.reload();
-    const reopenedQuickAccess = page.locator("[data-file-quick-access]");
-    await reopenedQuickAccess.waitFor({ state: "visible" });
-    assert.notEqual(await reopenedQuickAccess.getAttribute("open"), null, "Quick access did not reopen on the Files page");
-    const reopenedQuickLink = reopenedQuickAccess.getByRole("link", { name: /automation/ });
+    const reloadedQuickAccess = page.locator("[data-file-quick-access]");
+    await reloadedQuickAccess.waitFor({ state: "visible" });
+    assert.equal(await reloadedQuickAccess.getAttribute("open"), null, "Quick access was not collapsed after reload");
+    await reloadedQuickAccess.locator("summary").click();
+    const reopenedQuickLink = reloadedQuickAccess.getByRole("link", { name: /automation/ });
     await reopenedQuickLink.evaluate(link => link.addEventListener("click", event => event.preventDefault(), { once: true }));
     await reopenedQuickLink.click();
-    assert.equal(await reopenedQuickAccess.getAttribute("open"), null, "Quick access did not collapse after its shortcut was clicked");
+    assert.equal(await reloadedQuickAccess.getAttribute("open"), null, "Quick access did not collapse after its shortcut was clicked");
     const filesTab = page.locator('.sidebar-nav a[href="/resources/files"]');
     await filesTab.click();
     const resetQuickAccess = page.locator("[data-file-quick-access]");
@@ -1586,10 +1588,14 @@ async function assertExternalInterfaces(page, fixture) {
       page.waitForURL(fixtureFilesURL("automation")),
       resetQuickAccess.getByRole("link", { name: /automation/ }).click(),
     ]);
+    const shortcutDestinationQuickAccess = page.locator("[data-file-quick-access]");
+    await shortcutDestinationQuickAccess.waitFor({ state: "visible" });
+    assert.equal(await shortcutDestinationQuickAccess.getAttribute("open"), null, "Quick access was not collapsed after shortcut navigation");
     await page.goto(hostFilesWorkspaceURL);
     const restoredQuickAccess = page.locator("[data-file-quick-access]");
-    assert.notEqual(await restoredQuickAccess.getAttribute("open"), null, "Quick access did not restore its open state");
-    assert.equal(await restoredQuickAccess.getByRole("link", { name: /automation/ }).count(), 1);
+    await restoredQuickAccess.waitFor({ state: "visible" });
+    assert.equal(await restoredQuickAccess.getAttribute("open"), null, "Quick access was not collapsed after direct navigation");
+    assert.equal((await restoredQuickAccess.locator("[data-file-quick-count]").textContent()).trim(), "1");
     const restoredAutomationRow = page.locator(".file-table tbody tr").filter({
       has: page.getByRole("link", { name: "automation", exact: true }),
     });

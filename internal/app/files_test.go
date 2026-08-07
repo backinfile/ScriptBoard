@@ -315,7 +315,7 @@ func TestFilesPageHidesDotEntriesByDefaultAndPreservesTheVisibilityChoice(t *tes
 	}
 }
 
-func TestFilesPageOffersOpenInstanceQuickAccess(t *testing.T) {
+func TestFilesPageOffersCollapsedInstanceQuickAccess(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -356,8 +356,8 @@ func TestFilesPageOffersOpenInstanceQuickAccess(t *testing.T) {
 			t.Fatalf("files page does not contain %q: %s", expected, page)
 		}
 	}
-	if !strings.Contains(page, `data-file-quick-access data-validation-url="/resources/files/validate" open`) {
-		t.Fatalf("quick access should be open by default: %s", page)
+	if strings.Contains(page, `data-file-quick-access data-validation-url="/resources/files/validate" open`) {
+		t.Fatalf("quick access should be collapsed outside a Files tab navigation: %s", page)
 	}
 	if strings.Contains(page, "Pinned folders are saved") {
 		t.Fatalf("Quick access still renders explanatory copy: %s", page)
@@ -377,6 +377,8 @@ func TestFilesPageOffersOpenInstanceQuickAccess(t *testing.T) {
 		`method: "POST"`,
 		`localStorage.removeItem(storageKey)`,
 		`if (link.hasAttribute("href")) disclosure.open = false`,
+		`openFileQuickAccess: mainNavigation && destination.pathname === "/resources/files"`,
+		`initFileQuickAccess(document, cleanups, options.openFileQuickAccess === true)`,
 	} {
 		if !bytes.Contains(script, []byte(expected)) {
 			t.Fatalf("Quick access interaction script does not contain %q", expected)

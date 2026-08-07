@@ -684,7 +684,7 @@
       updateShellLocation(result.response.url);
       setSidebar(false);
       window.scrollTo({ top: 0, behavior: "auto" });
-      initPage();
+      initPage({ openFileQuickAccess: options.openFileQuickAccess === true });
 
       if (deferredData) {
         await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -716,7 +716,7 @@
           history.replaceState({ pjax: true }, "", dataResult.response.url);
         }
         updateShellLocation(dataResult.response.url);
-        initPage();
+        initPage({ openFileQuickAccess: options.openFileQuickAccess === true });
       }
 
       if (options.focusSelector) {
@@ -2703,9 +2703,10 @@
     });
   }
 
-  function initFileQuickAccess(root = document, cleanups = []) {
+  function initFileQuickAccess(root = document, cleanups = [], initiallyOpen = false) {
     const disclosure = root.querySelector("[data-file-quick-access]");
     if (!disclosure) return;
+    disclosure.open = initiallyOpen;
     const list = disclosure.querySelector("[data-file-quick-list]");
     const empty = disclosure.querySelector("[data-file-quick-empty]");
     const count = disclosure.querySelector("[data-file-quick-count]");
@@ -5305,7 +5306,7 @@
     });
   }
 
-  function initPage() {
+  function initPage(options = {}) {
     const cleanups = [];
     cleanupPage = () => cleanups.splice(0).forEach(cleanup => cleanup());
     renderIcons();
@@ -5317,7 +5318,7 @@
     initCopyControls(document, cleanups);
     initFileDropUpload(document, cleanups);
     initFileVisibilityToggle(document, cleanups);
-    initFileQuickAccess(document, cleanups);
+    initFileQuickAccess(document, cleanups, options.openFileQuickAccess === true);
 	initFileOperation(cleanups);
     initDirectoryPickers(document, cleanups);
     initQuickCreateDefaults(document, cleanups);
@@ -5397,6 +5398,7 @@
         immediate: mainNavigation || securityTab,
         title: mainNavigation ? navigationTitle(link) : undefined,
         focusSelector: link.dataset.focusAfterNavigation,
+        openFileQuickAccess: mainNavigation && destination.pathname === "/resources/files",
       });
     }
   });
