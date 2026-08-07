@@ -1581,6 +1581,7 @@ async function assertExternalInterfaces(page, fixture) {
     assert.equal(await reloadedQuickAccess.getAttribute("open"), null, "Quick access did not collapse after its shortcut was clicked");
     const filesTab = page.locator('.sidebar-nav a[href="/resources/files"]');
     await filesTab.click();
+    await page.waitForFunction(() => document.querySelector("[data-file-quick-access]")?.hasAttribute("open"));
     const resetQuickAccess = page.locator("[data-file-quick-access]");
     await resetQuickAccess.waitFor({ state: "visible" });
     assert.notEqual(await resetQuickAccess.getAttribute("open"), null, "Quick access did not open after the Files tab was clicked");
