@@ -376,12 +376,14 @@ func TestFilesPageOffersOpenInstanceQuickAccess(t *testing.T) {
 		`fetch(disclosure.dataset.pinsUrl`,
 		`method: "POST"`,
 		`localStorage.removeItem(storageKey)`,
-		`scriptboard.files.quickAccessOpen`,
-		`localStorage.setItem(disclosureStorageKey, String(disclosure.open))`,
+		`if (link.hasAttribute("href")) disclosure.open = false`,
 	} {
 		if !bytes.Contains(script, []byte(expected)) {
 			t.Fatalf("Quick access interaction script does not contain %q", expected)
 		}
+	}
+	if bytes.Contains(script, []byte(`scriptboard.files.quickAccessOpen`)) {
+		t.Fatal("Quick access disclosure state should not use browser storage")
 	}
 }
 

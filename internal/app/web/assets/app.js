@@ -2706,18 +2706,6 @@
   function initFileQuickAccess(root = document, cleanups = []) {
     const disclosure = root.querySelector("[data-file-quick-access]");
     if (!disclosure) return;
-    const disclosureStorageKey = "scriptboard.files.quickAccessOpen";
-    try {
-      const storedDisclosureState = localStorage.getItem(disclosureStorageKey);
-      disclosure.open = storedDisclosureState === null || storedDisclosureState === "true";
-    } catch {
-      disclosure.open = true;
-    }
-    const onDisclosureToggle = () => {
-      try { localStorage.setItem(disclosureStorageKey, String(disclosure.open)); } catch { /* preference remains in memory */ }
-    };
-    disclosure.addEventListener("toggle", onDisclosureToggle);
-    cleanups.push(() => disclosure.removeEventListener("toggle", onDisclosureToggle));
     const list = disclosure.querySelector("[data-file-quick-list]");
     const empty = disclosure.querySelector("[data-file-quick-empty]");
     const count = disclosure.querySelector("[data-file-quick-count]");
@@ -2806,6 +2794,9 @@
         path.textContent = pin.path;
         copy.append(label, path);
         link.append(icon, copy);
+		link.addEventListener("click", () => {
+		  if (link.hasAttribute("href")) disclosure.open = false;
+		});
 		const validationURL = new URL(disclosure.dataset.validationUrl || "/resources/files/validate", location.origin);
 		validationURL.searchParams.set("path", pin.path);
 		fetch(validationURL, { headers: { Accept: "application/json" }, signal: validationController.signal })
