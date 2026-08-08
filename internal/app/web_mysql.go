@@ -14,18 +14,50 @@ import (
 )
 
 type mysqlDatabasesPageData struct {
-	Locale     webLocale
-	CSRFToken  string
-	BackupRoot string
-	Instances  []mysqlmanager.Instance
-	Selected   *mysqlmanager.Instance
-	Status     *mysqlmanager.Status
-	Databases  []mysqlmanager.Database
-	Backups    []mysqlmanager.Backup
-	Plans      []mysqlmanager.Plan
-	Operations []mysqlmanager.Operation
-	Tools      mysqlmanager.ToolSettings
-	LoadError  string
+	Locale                                                webLocale
+	CSRFToken                                             string
+	BackupRoot                                            string
+	Instances                                             []mysqlmanager.Instance
+	Selected                                              *mysqlmanager.Instance
+	Status                                                *mysqlmanager.Status
+	Databases                                             []mysqlmanager.Database
+	DatabaseRows                                          []mysqlmanager.Database
+	Backups                                               []mysqlmanager.Backup
+	Plans                                                 []mysqlmanager.Plan
+	Operations                                            []mysqlmanager.Operation
+	Tools                                                 mysqlmanager.ToolSettings
+	LoadError                                             string
+	ActiveTab                                             string
+	DatabaseCount, BackupCount, PlanCount, OperationCount int
+	Pagination                                            mysqlPagination
+}
+
+type mysqlPagination struct {
+	Page, Pages, Total, Previous, Next int
+	HasPrevious, HasNext               bool
+}
+
+const mysqlPageSize = 12
+
+func newMySQLPagination(page, total int) mysqlPagination {
+	pages := max(1, (total+mysqlPageSize-1)/mysqlPageSize)
+	page = min(max(page, 1), pages)
+	return mysqlPagination{Page: page, Pages: pages, Total: total, Previous: max(1, page-1), Next: min(pages, page+1), HasPrevious: page > 1, HasNext: page < pages}
+}
+
+func mysqlRequestedPage(request *http.Request) int {
+	page, err := strconv.Atoi(request.URL.Query().Get("page"))
+	if err != nil || page < 1 {
+		return 1
+	}
+	return page
+}
+
+func mysqlSlicePage[T any](items []T, page int) ([]T, mysqlPagination) {
+	pagination := newMySQLPagination(page, len(items))
+	start := (pagination.Page - 1) * mysqlPageSize
+	end := min(start+mysqlPageSize, len(items))
+	return items[start:end], pagination
 }
 
 func (a *App) mysqlDatabasesPage(response http.ResponseWriter, request *http.Request) {
@@ -38,7 +70,11 @@ func (a *App) mysqlDatabasesPage(response http.ResponseWriter, request *http.Req
 	data := mysqlDatabasesPageData{
 		Locale: resolveWebLocale(request), CSRFToken: current.csrfToken,
 		BackupRoot: a.mysql.BackupRoot(), Instances: instances,
-		Tools: a.mysql.Tools(),
+		Tools:     a.mysql.Tools(),
+		ActiveTab: "databases",
+	}
+	if tab := strings.TrimSpace(request.URL.Query().Get("tab")); tab == "backups" || tab == "plans" || tab == "operations" {
+		data.ActiveTab = tab
 	}
 	selectedID := strings.TrimSpace(request.URL.Query().Get("instance"))
 	if selectedID != "" {
@@ -53,14 +89,13 @@ func (a *App) mysqlDatabasesPage(response http.ResponseWriter, request *http.Req
 			http.Error(response, "MySQL instance not found", http.StatusNotFound)
 			return
 		}
-		data.Backups, _ = a.mysql.Backups(request.Context(), selectedID, "")
-		data.Operations, _ = a.mysql.Operations(request.Context(), selectedID)
 		allPlans, _ := a.mysql.Plans(request.Context())
 		for _, plan := range allPlans {
 			if plan.InstanceID == selectedID {
 				data.Plans = append(data.Plans, plan)
 			}
 		}
+		data.PlanCount = len(data.Plans)
 		probeContext, cancel := context.WithTimeout(request.Context(), 5*time.Second)
 		status, statusErr := a.mysql.Status(probeContext, selectedID)
 		if statusErr == nil {
@@ -70,6 +105,36 @@ func (a *App) mysqlDatabasesPage(response http.ResponseWriter, request *http.Req
 		cancel()
 		if statusErr != nil {
 			data.LoadError = statusErr.Error()
+		}
+		data.DatabaseCount = len(data.Databases)
+		page := mysqlRequestedPage(request)
+		if data.ActiveTab == "databases" {
+			data.DatabaseRows, data.Pagination = mysqlSlicePage(data.Databases, page)
+		} else {
+			data.DatabaseRows, _ = mysqlSlicePage(data.Databases, 1)
+		}
+		backupPage := 1
+		if data.ActiveTab == "backups" {
+			backupPage = page
+		}
+		data.Backups, data.BackupCount, _ = a.mysql.BackupsPage(request.Context(), selectedID, "", mysqlPageSize, (backupPage-1)*mysqlPageSize)
+		operationPage := 1
+		if data.ActiveTab == "operations" {
+			operationPage = page
+		}
+		data.Operations, data.OperationCount, _ = a.mysql.OperationsPage(request.Context(), selectedID, mysqlPageSize, (operationPage-1)*mysqlPageSize)
+		if data.ActiveTab == "plans" {
+			data.Plans, data.Pagination = mysqlSlicePage(data.Plans, page)
+		} else if data.ActiveTab == "backups" {
+			data.Pagination = newMySQLPagination(backupPage, data.BackupCount)
+			if data.Pagination.Page != backupPage {
+				data.Backups, _, _ = a.mysql.BackupsPage(request.Context(), selectedID, "", mysqlPageSize, (data.Pagination.Page-1)*mysqlPageSize)
+			}
+		} else if data.ActiveTab == "operations" {
+			data.Pagination = newMySQLPagination(operationPage, data.OperationCount)
+			if data.Pagination.Page != operationPage {
+				data.Operations, _, _ = a.mysql.OperationsPage(request.Context(), selectedID, mysqlPageSize, (data.Pagination.Page-1)*mysqlPageSize)
+			}
 		}
 	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")

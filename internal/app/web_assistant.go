@@ -957,8 +957,9 @@ func (a *App) assistantSettingsPage(response http.ResponseWriter, request *http.
 }
 
 func (a *App) testAssistantModel(response http.ResponseWriter, request *http.Request) {
+	locale := resolveWebLocale(request)
 	if !validSessionCSRF(request) {
-		http.Error(response, webText(resolveWebLocale(request), "assistant.csrf_error"), http.StatusForbidden)
+		http.Error(response, webText(locale, "assistant.csrf_error"), http.StatusForbidden)
 		return
 	}
 	modelID := strings.TrimSpace(request.PathValue("id"))
@@ -973,7 +974,14 @@ func (a *App) testAssistantModel(response http.ResponseWriter, request *http.Req
 		if status == http.StatusInternalServerError {
 			status = http.StatusBadGateway
 		}
-		http.Error(response, webText(resolveWebLocale(request), "assistant.provider_test_failed"), status)
+		message := webText(locale, "assistant.provider_test_failed")
+		if acceptsJSON(request) {
+			response.Header().Set("Content-Type", "application/json; charset=utf-8")
+			response.WriteHeader(status)
+			_ = json.NewEncoder(response).Encode(map[string]any{"ok": false, "message": message})
+			return
+		}
+		http.Error(response, message, status)
 		return
 	}
 	statusContext, statusCancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -984,6 +992,11 @@ func (a *App) testAssistantModel(response http.ResponseWriter, request *http.Req
 		return
 	}
 	a.recordAuditForRequest(request, "assistant_provider_test", modelID, "succeeded")
+	if acceptsJSON(request) {
+		response.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_ = json.NewEncoder(response).Encode(map[string]any{"ok": true, "message": webText(locale, "assistant.provider_test_passed")})
+		return
+	}
 	http.Redirect(response, request, "/settings/ai?provider_test=passed", http.StatusSeeOther)
 }
 

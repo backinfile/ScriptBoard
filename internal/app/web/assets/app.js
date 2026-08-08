@@ -5154,9 +5154,64 @@
     });
   }
 
+  function showConnectionTestError(form, message) {
+    const dialog = document.createElement("dialog");
+    dialog.className = "connection-test-dialog";
+    dialog.innerHTML = '<header><div><p></p><h2></h2></div><button class="icon-button icon-button--quiet" type="button" data-dialog-close><span data-lucide="x" aria-hidden="true"></span></button></header><p class="connection-test-dialog__message"></p><footer><button class="button" type="button" data-dialog-close></button></footer>';
+    const title = form.dataset.connectionTitle || "Connection test";
+    dialog.querySelector("header p").textContent = form.dataset.connectionFailure || "Connection failed";
+    dialog.querySelector("h2").textContent = title;
+    dialog.querySelector(".connection-test-dialog__message").textContent = message;
+    dialog.querySelector("footer button").textContent = form.dataset.closeLabel || "Close";
+    dialog.querySelector("header button").setAttribute("aria-label", form.dataset.closeLabel || "Close");
+    const close = () => dialog.close();
+    dialog.querySelectorAll("[data-dialog-close]").forEach(button => button.addEventListener("click", close));
+    dialog.addEventListener("close", () => dialog.remove(), { once: true });
+    document.body.append(dialog);
+    renderIcons(dialog);
+    dialog.showModal();
+    dialog.querySelector("footer button")?.focus();
+  }
+
+  async function submitConnectionTest(form, submitter) {
+    const result = form.querySelector("[data-connection-test-result]");
+    const data = new FormData(form);
+    if (submitter?.name) data.set(submitter.name, submitter.value);
+    try {
+      const response = await fetch(form.action, {
+        method: "POST",
+        body: data,
+        credentials: "same-origin",
+        headers: { "Accept": "application/json" },
+      });
+      const contentType = response.headers.get("content-type") || "";
+      const payload = contentType.includes("application/json") ? await response.json() : { message: (await response.text()).trim() };
+      const ok = response.ok && (payload.ok === true || payload.OK === true);
+      const detail = payload.message || payload.Error || payload.error || "";
+      if (!ok) throw new Error(detail || `HTTP ${response.status}`);
+      const version = payload.Version ? ` · ${payload.Version}` : "";
+      if (result) {
+        result.classList.remove("sr-only");
+        result.dataset.state = "success";
+        result.textContent = `${form.dataset.connectionSuccess || detail || "Connected"}${version}`;
+      }
+    } catch (error) {
+      const message = error?.message || form.dataset.connectionFailure || words().submitFailed;
+      if (result) {
+        result.classList.remove("sr-only");
+        result.dataset.state = "error";
+        result.textContent = form.dataset.connectionFailure || words().submitFailed;
+      }
+      showConnectionTestError(form, message);
+    } finally {
+      resetSubmit(form);
+    }
+  }
+
   function initMySQLDrawers(cleanups) {
     const root = document.querySelector("[data-mysql-workspace]");
     if (!root) return;
+    root.querySelectorAll('form[method="post"]:not([data-connection-test])').forEach(form => form.dataset.async = "");
     const drawers = [...root.querySelectorAll("details.mysql-drawer")];
     let active = null;
 
@@ -5516,6 +5571,9 @@
     if (form.matches("[data-login-form]")) {
       event.preventDefault();
       submitLogin(form, submitter);
+    } else if (form.hasAttribute("data-connection-test")) {
+      event.preventDefault();
+      submitConnectionTest(form, submitter);
     } else if (form.hasAttribute("data-file-upload-form")) {
       event.preventDefault();
       submitFileUpload(form);

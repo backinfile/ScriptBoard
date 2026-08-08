@@ -326,17 +326,32 @@ func mysqlOperationTerminal(phase string) bool {
 }
 
 func (m *Manager) Backups(ctx context.Context, instanceID, database string) ([]Backup, error) {
+	items, _, err := m.BackupsPage(ctx, instanceID, database, 0, 0)
+	return items, err
+}
+
+func (m *Manager) BackupsPage(ctx context.Context, instanceID, database string, limit, offset int) ([]Backup, int, error) {
 	query := `SELECT id, instance_id, database_name, plan_id, kind, path, size_bytes, sha256, warning, created_at, created_by_user_id, created_by_username
 		FROM mysql_backups WHERE instance_id=?`
+	countQuery := `SELECT COUNT(*) FROM mysql_backups WHERE instance_id=?`
 	arguments := []any{instanceID}
 	if database != "" {
 		query += " AND database_name=?"
+		countQuery += " AND database_name=?"
 		arguments = append(arguments, database)
 	}
+	var total int
+	if err := m.db.QueryRowContext(ctx, countQuery, arguments...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
 	query += " ORDER BY created_at DESC"
+	if limit > 0 {
+		query += " LIMIT ? OFFSET ?"
+		arguments = append(arguments, limit, max(offset, 0))
+	}
 	rows, err := m.db.QueryContext(ctx, query, arguments...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	var result []Backup
@@ -345,12 +360,12 @@ func (m *Manager) Backups(ctx context.Context, instanceID, database string) ([]B
 		var createdAt int64
 		if err := rows.Scan(&item.ID, &item.InstanceID, &item.Database, &item.PlanID, &item.Kind, &item.Path, &item.SizeBytes,
 			&item.SHA256, &item.Warning, &createdAt, &item.CreatedByUserID, &item.CreatedByUsername); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		item.CreatedAt = time.Unix(0, createdAt).UTC()
 		result = append(result, item)
 	}
-	return result, rows.Err()
+	return result, total, rows.Err()
 }
 
 func (m *Manager) BackupByID(ctx context.Context, id string) (Backup, error) {
@@ -376,16 +391,31 @@ func (m *Manager) Operation(ctx context.Context, id string) (Operation, error) {
 }
 
 func (m *Manager) Operations(ctx context.Context, instanceID string) ([]Operation, error) {
-	rows, err := m.db.QueryContext(ctx, "SELECT id FROM mysql_operations WHERE instance_id=? ORDER BY created_at DESC LIMIT 50", instanceID)
+	items, _, err := m.OperationsPage(ctx, instanceID, 0, 0)
+	return items, err
+}
+
+func (m *Manager) OperationsPage(ctx context.Context, instanceID string, limit, offset int) ([]Operation, int, error) {
+	var total int
+	if err := m.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM mysql_operations WHERE instance_id=?", instanceID).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	query := "SELECT id FROM mysql_operations WHERE instance_id=? ORDER BY created_at DESC"
+	arguments := []any{instanceID}
+	if limit > 0 {
+		query += " LIMIT ? OFFSET ?"
+		arguments = append(arguments, limit, max(offset, 0))
+	}
+	rows, err := m.db.QueryContext(ctx, query, arguments...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	var ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		ids = append(ids, id)
 	}
@@ -393,11 +423,11 @@ func (m *Manager) Operations(ctx context.Context, instanceID string) ([]Operatio
 	for _, id := range ids {
 		item, err := m.Operation(ctx, id)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		result = append(result, item)
 	}
-	return result, nil
+	return result, total, nil
 }
 
 func IsSystemDatabase(name string) bool {

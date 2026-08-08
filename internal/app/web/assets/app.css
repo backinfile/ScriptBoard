@@ -2175,7 +2175,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .mysql-drawer-sheet > header small { display: block; max-width: 60ch; margin-top: 7px; color: var(--muted); line-height: 1.5; }
 .mysql-drawer-sheet > header .icon-button { flex: 0 0 auto; width: var(--control-height-field); min-width: var(--control-height-field); height: var(--control-height-field); min-height: var(--control-height-field); padding: 0; }
 .mysql-drawer-form { display: flex; min-height: 0; flex: 1; flex-direction: column; }
-.mysql-drawer-body { display: grid; min-height: 0; flex: 1; gap: 16px; padding: 24px var(--overlay-header-x); overflow-y: auto; overscroll-behavior: contain; }
+.mysql-drawer-body { display: grid; min-height: 0; flex: 1; align-content: start; gap: 16px; padding: 24px var(--overlay-header-x); overflow-y: auto; overscroll-behavior: contain; }
 .mysql-drawer-body label, .mysql-drawer-body fieldset, .mysql-settings-stack label { display: grid; gap: 7px; color: var(--muted); font-size: .84rem; }
 .mysql-drawer-body .field-grid { display: grid; grid-template-columns: minmax(0, 1fr) 112px; gap: 12px; }
 .mysql-drawer-form > footer { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 8px; padding: 16px var(--overlay-footer-x) 20px; background: #fbfbfc; border-top: 1px solid var(--rule); }
@@ -2208,11 +2208,30 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .mysql-detail__head { display: flex; justify-content: space-between; gap: 20px; align-items: end; margin-bottom: 28px; }
 .mysql-detail__head h2 { margin: 3px 0 5px; font-size: clamp(2rem, 5vw, 4.5rem); letter-spacing: -.055em; }
 .mysql-detail__head p { margin: 0; color: var(--muted); }
+.mysql-instance-actions > form { display: flex; align-items: center; gap: 8px; }
+.connection-test-result { color: var(--muted); font-size: .78rem; }
+.connection-test-result[data-state="success"] { color: var(--success); }
+.connection-test-result[data-state="error"] { color: var(--danger); }
+.connection-test-dialog { width: min(460px, calc(100vw - 32px)); padding: 0; color: var(--ink); background: var(--surface); border: 1px solid var(--rule-strong); border-radius: 9px; box-shadow: var(--overlay-shadow); }
+.connection-test-dialog::backdrop { background: var(--overlay-scrim); }
+.connection-test-dialog > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 20px 22px 16px; border-bottom: 1px solid var(--rule); }
+.connection-test-dialog > header div { display: grid; gap: 5px; }
+.connection-test-dialog > header p, .connection-test-dialog > header h2 { margin: 0; }
+.connection-test-dialog > header p { color: var(--danger); font-size: .72rem; font-weight: 650; letter-spacing: .035em; text-transform: uppercase; }
+.connection-test-dialog > header h2 { font-size: 1.1rem; }
+.connection-test-dialog__message { margin: 0; padding: 22px; color: var(--muted); line-height: 1.6; overflow-wrap: anywhere; }
+.connection-test-dialog > footer { display: flex; justify-content: flex-end; padding: 14px 22px 18px; background: var(--canvas); border-top: 1px solid var(--rule); }
 .mysql-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-block: 1px solid var(--rule-strong); margin-bottom: 44px; }
 .mysql-metrics > div { display: grid; gap: 5px; padding: 18px; border-right: 1px solid var(--rule); }
 .mysql-metrics > div:nth-child(4n) { border-right: 0; }
 .mysql-metrics small { color: var(--muted); }
 .mysql-metrics strong { font-size: 1.08rem; overflow-wrap: anywhere; }
+.mysql-tabs { display: flex; gap: 24px; margin: 0 0 36px; overflow-x: auto; border-bottom: 1px solid var(--rule-strong); scrollbar-width: thin; }
+.mysql-tabs a { position: relative; display: inline-flex; flex: 0 0 auto; align-items: center; gap: 8px; min-height: 48px; color: var(--muted); font-size: .84rem; font-weight: 620; text-decoration: none; }
+.mysql-tabs a small { min-width: 22px; padding: 2px 6px; color: var(--faint); background: var(--canvas); border: 1px solid var(--rule); border-radius: 999px; font: 600 .68rem/1.2 var(--font-mono); text-align: center; }
+.mysql-tabs a[aria-current="page"] { color: var(--ink); }
+.mysql-tabs a[aria-current="page"]::after { position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: var(--accent); content: ""; }
+.mysql-tabs a[aria-current="page"] small { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 42%, var(--rule)); }
 .mysql-detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 340px); gap: clamp(28px, 5vw, 64px); align-items: start; margin: 44px 0; }
 .mysql-actions-panel { padding-left: 24px; border-left: 1px solid var(--rule); }
 .mysql-actions-panel h3 { margin: 0 0 18px; }
@@ -2230,6 +2249,8 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .mysql-operation-list small { color: var(--muted); }
 .mysql-operation-row { display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--rule); }
 .mysql-operation-row > a { flex: 1; border-bottom: 0; }
+.mysql-pagination { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 28px; padding-top: 18px; color: var(--muted); font-size: .78rem; border-top: 1px solid var(--rule); }
+.mysql-pagination > div { display: flex; gap: 8px; }
 .mysql-danger-zone { margin-top: 64px; border-top: 1px solid var(--danger); padding-top: 18px; }
 .mysql-danger-zone form { display: flex; gap: 12px; align-items: end; margin-top: 18px; }
 .mysql-danger-zone label { display: grid; gap: 6px; min-width: min(100%, 320px); }
@@ -2243,6 +2264,9 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
   .mysql-detail__head, .mysql-danger-zone form { align-items: stretch; flex-direction: column; }
   .mysql-page-heading, .mysql-detail__head { align-items: stretch; flex-direction: column; }
   .mysql-heading-actions, .mysql-instance-actions, .mysql-section-actions { justify-content: flex-start; }
+  .mysql-instance-actions > form { flex-wrap: wrap; }
+  .mysql-tabs { margin-right: -18px; }
+  .mysql-pagination { align-items: stretch; flex-direction: column; }
   .mysql-drawer-sheet { width: 100vw; min-width: 0; }
   .mysql-drawer-sheet > header { padding: 20px 18px 18px; }
   .mysql-drawer-body { padding: 20px 18px; }
