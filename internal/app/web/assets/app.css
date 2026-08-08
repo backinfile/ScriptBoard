@@ -2152,6 +2152,55 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .files-page .breadcrumb { min-width: 0; flex-wrap: wrap; margin-bottom: 18px; }
 .files-page .breadcrumb a, .files-page .breadcrumb code { min-width: 0; overflow-wrap: anywhere; }
 .table-shell { width: 100%; overflow-x: auto; border-top: 1px solid var(--rule-strong); }
+.mysql-overview-strip { display: flex; align-items: center; gap: 14px; margin: 0 0 32px; padding: 16px 0; border-block: 1px solid var(--rule); }
+.mysql-overview-strip > span { width: 20px; color: var(--accent); }
+.mysql-overview-strip div { display: grid; gap: 4px; min-width: 0; }
+.mysql-overview-strip code { overflow-wrap: anywhere; }
+.mysql-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); gap: clamp(28px, 5vw, 72px); align-items: start; }
+.mysql-instance-form { position: sticky; top: 28px; padding-left: 28px; border-left: 1px solid var(--rule-strong); }
+.mysql-instance-form h2 { margin: 4px 0 22px; }
+.mysql-instance-form form { display: grid; gap: 16px; }
+.mysql-instance-form label { display: grid; gap: 7px; font-size: .84rem; color: var(--muted); }
+.mysql-instance-form .field-grid { display: grid; grid-template-columns: minmax(0, 1fr) 96px; gap: 12px; }
+.mysql-instance-form .button { justify-self: start; }
+.mysql-detail { margin-top: clamp(44px, 8vw, 96px); padding-top: 28px; border-top: 1px solid var(--rule-strong); }
+.mysql-detail__head { display: flex; justify-content: space-between; gap: 20px; align-items: end; margin-bottom: 28px; }
+.mysql-detail__head h2 { margin: 3px 0 5px; font-size: clamp(2rem, 5vw, 4.5rem); letter-spacing: -.055em; }
+.mysql-detail__head p { margin: 0; color: var(--muted); }
+.mysql-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-block: 1px solid var(--rule-strong); margin-bottom: 44px; }
+.mysql-metrics > div { display: grid; gap: 5px; padding: 18px; border-right: 1px solid var(--rule); }
+.mysql-metrics > div:nth-child(4n) { border-right: 0; }
+.mysql-metrics small { color: var(--muted); }
+.mysql-metrics strong { font-size: 1.08rem; overflow-wrap: anywhere; }
+.mysql-detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 340px); gap: clamp(28px, 5vw, 64px); align-items: start; margin: 44px 0; }
+.mysql-actions-panel { padding-left: 24px; border-left: 1px solid var(--rule); }
+.mysql-actions-panel h3 { margin: 0 0 18px; }
+.mysql-actions-panel h3:not(:first-child) { margin-top: 34px; }
+.mysql-actions-panel form { display: grid; gap: 13px; }
+.mysql-actions-panel label, .mysql-actions-panel fieldset { display: grid; gap: 6px; color: var(--muted); font-size: .84rem; }
+.mysql-actions-panel fieldset label { grid-template-columns: auto 1fr; align-items: center; color: var(--text); }
+.mysql-record-section { margin-top: 48px; }
+.mysql-plan-row { display: flex; justify-content: space-between; gap: 20px; padding: 16px 0; border-top: 1px solid var(--rule); }
+.mysql-plan-row div { display: grid; gap: 5px; }
+.mysql-plan-row small { color: var(--muted); }
+.mysql-operation-list { border-top: 1px solid var(--rule-strong); }
+.mysql-operation-list a { display: grid; grid-template-columns: 22px 1fr; gap: 13px; align-items: center; padding: 14px 0; border-bottom: 1px solid var(--rule); color: inherit; text-decoration: none; }
+.mysql-operation-list a span:last-child { display: grid; gap: 3px; }
+.mysql-operation-list small { color: var(--muted); }
+.mysql-operation-row { display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--rule); }
+.mysql-operation-row > a { flex: 1; border-bottom: 0; }
+.mysql-danger-zone { margin-top: 64px; border-top: 1px solid var(--danger); padding-top: 18px; }
+.mysql-danger-zone form { display: flex; gap: 12px; align-items: end; margin-top: 18px; }
+.mysql-danger-zone label { display: grid; gap: 6px; min-width: min(100%, 320px); }
+
+@media (max-width: 760px) {
+  .mysql-layout, .mysql-detail-grid { grid-template-columns: 1fr; }
+  .mysql-instance-form { position: static; padding: 28px 0 0; border-left: 0; border-top: 1px solid var(--rule-strong); }
+  .mysql-actions-panel { padding: 24px 0 0; border-left: 0; border-top: 1px solid var(--rule); }
+  .mysql-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mysql-metrics > div:nth-child(2n) { border-right: 0; }
+  .mysql-detail__head, .mysql-danger-zone form { align-items: stretch; flex-direction: column; }
+}
 table { width: 100%; border-collapse: collapse; font-size: .86rem; text-align: left; }
 th {
   padding: 10px 12px;

@@ -22,6 +22,7 @@ ScriptBoard is a self-hosted script console for a single Windows or Linux host. 
 - expose bounded inbound triggers for logs, uploads, Quick Runs, and constrained variable updates;
 - review remote-login activity and manage Windows Defender Firewall or Linux UFW and Fail2Ban;
 - view host resources, local applications, Docker containers, websites, run history, and audit records;
+- manage local or remote MySQL/MariaDB instances with checksummed logical backups and safety rollback;
 - use the optional AI assistant with resources you choose to reference;
 - restore files deleted through the web interface from ScriptBoard Trash;
 - check, download, and install signed stable updates from the web interface.
@@ -130,6 +131,12 @@ Call an entry with `POST /trigger?name=ENTRY_NAME` and `Authorization: Bearer KE
 Monitoring → Host Security brings together Windows login events or Linux SSH login records, remote-login configuration, and firewall status. On Windows, it can manage Windows Defender Firewall rules. On Linux, it can install Fail2Ban and UFW, inspect or remove SSH bans, and synchronize UFW rules and default policies after a change review.
 
 Every role can inspect the detected state; only Administrators and Maintainers can change host defenses. Firewall, remote-login, and ban operations can interrupt access to the host. Confirm that the service runs with Administrator or root privileges, preserve an allow rule for the active management port, and keep an out-of-band recovery path.
+
+### MySQL backup and restore
+
+Administrators and Maintainers can register local or remote MySQL/MariaDB instances under Resources → Databases, inspect databases and core status, run manual or five-field Cron logical backups, and restore `.sql` or `.sql.gz` files. ScriptBoard does not bundle database clients; install `mysqldump` and `mysql` on the host PATH or configure their absolute paths in the page.
+
+Each database is stored in a separate `.sql.gz` file with a SHA-256 digest. Replacing or deleting a database requires a successful safety backup and full-name confirmation; a failed replacement automatically attempts rollback. Artifacts default to `state_root/database-backups/mysql`, and a custom directory is also protected from host-file operations. Keep an independent off-host copy for disaster recovery.
 
 ### AI assistant
 

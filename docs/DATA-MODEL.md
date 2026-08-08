@@ -559,3 +559,19 @@ Evidence Query 仍走相同 Tool Broker 和实时角色授权。日志搜索、�
 schema 27 增加 `external_trigger_keys`、`external_trigger_entries` 和 `external_trigger_requests`。Key 在 SQLite 中保存标签、Token 摘要与提示、启用状态、到期时间和最近成功使用时间；完整 Token 使用独立主密钥加密后保存在 State Root 的私有密钥文件中，不写入数据库。Entry 通过 `(key_id, name)` 唯一，保存动作类型、固定目标与经过类型校验的 JSON 约束。Request 保存不可变的调用结果摘要，不通过外键级联删除，以便 Key 删除后仍保留审计上下文。
 
 变量与快捷执行条目使用 `target` 建立领域引用：目标被引用时禁止删除；变量被引用时也禁止改名或转为密码变量。日志文件与上传目录都在配置和调用时通过 Host Filesystem 边界重新验证；日志动作将规范化后的文件绝对路径保存在 `target` 与 `config_json.file` 中。到期 Key 不需要后台任务修改数据库；鉴权时根据当前时间派生为不可用状态。
+
+## 13. MySQL 备份恢复管理
+
+schema 30 增加独立的 `mysqlmanager` 领域表；Web 层只调用领域服务，不直接执行管理 SQL 或拼装客户端参数。
+
+| 实体 | 关键字段与语义 |
+| --- | --- |
+| MySQLInstance | 名称、TCP 地址、用户名、TLS 模式、CA 路径和凭据已配置事实；SQLite 不保存密码 |
+| MySQLBackupPlan | 实例、数据库集合、五字段 Cron、保留数量、启用状态和下次触发时间 |
+| MySQLBackup | 单库产物路径、SHA-256、字节数、来源类别、计划引用和成功时间 |
+| MySQLOperation | 操作类型、目标库、阶段、进度、安全备份引用、错误摘要、取消请求和起止时间 |
+| MySQLSetting | 备份根目录以及宿主 `mysqldump`/`mysql` 客户端路径 |
+
+实例密码由 State Root 下的私有主密钥使用 AES-GCM 加密后保存到独立凭据文件。CLI 每次只读取临时、权限受限的 option file，完成后立即删除；参数、错误、审计和 HTML 均不得包含密码。默认备份根目录是 `state-root/database-backups/mysql`，自定义绝对目录同样进入 Host Filesystem Protected Path。
+
+每个成功备份对应一个原子提交的 `.sql.gz` 和 SHA-256。现有库恢复在替换前强制创建 `safety` 备份；导入失败自动从该产物回滚，回滚失败进入 `needs_attention`。服务启动会删除未提交的 `.partial`，并根据持久化阶段恢复破坏性操作。计划只轮换自身成功产物，手动、导入和安全备份不参与轮换。

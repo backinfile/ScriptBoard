@@ -1,0 +1,438 @@
+package mysqlmanager
+
+import (
+	"bytes"
+	"compress/gzip"
+	"context"
+	"database/sql"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	_ "modernc.org/sqlite"
+)
+
+func TestSaveInstanceKeepsPasswordOutOfSQLite(t *testing.T) {
+	stateRoot := t.TempDir()
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	applyTestSchema(t, database)
+
+	manager, err := New(Options{DB: database, StateRoot: stateRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := manager.SaveInstance(context.Background(), InstanceInput{
+		Name: "Production", Host: "db.internal", Port: 3306, Username: "scriptboard",
+		Password: "never-store-this-in-sqlite", TLSMode: TLSPreferred,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !instance.CredentialConfigured || instance.Password != "" {
+		t.Fatalf("instance leaked or lost credential state: %+v", instance)
+	}
+
+	databaseBytes, err := os.ReadFile(filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(databaseBytes), "never-store-this-in-sqlite") {
+		t.Fatal("database contains plaintext MySQL password")
+	}
+	password, err := manager.instancePassword(instance.ID)
+	if err != nil || password != "never-store-this-in-sqlite" {
+		t.Fatalf("password round trip = %q, %v", password, err)
+	}
+	secretBytes, err := os.ReadFile(filepath.Join(stateRoot, "secrets", "mysql-credentials.enc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(secretBytes), "never-store-this-in-sqlite") {
+		t.Fatal("credential file contains plaintext MySQL password")
+	}
+}
+
+type recordingRunner struct {
+	executable string
+	args       []string
+	output     string
+	err        error
+}
+
+func (runner *recordingRunner) Run(_ context.Context, executable string, args []string, _ io.Reader, stdout, _ io.Writer) error {
+	runner.executable = executable
+	runner.args = append([]string(nil), args...)
+	if runner.err == nil {
+		_, _ = io.Copy(stdout, bytes.NewBufferString(runner.output))
+	}
+	return runner.err
+}
+
+type restoreRunner struct {
+	dumpOutput   string
+	imports      []string
+	failImportAt int
+}
+
+func (runner *restoreRunner) Run(_ context.Context, executable string, _ []string, stdin io.Reader, stdout, _ io.Writer) error {
+	if executable == "mysqldump" {
+		_, _ = io.WriteString(stdout, runner.dumpOutput)
+		return nil
+	}
+	body, _ := io.ReadAll(stdin)
+	runner.imports = append(runner.imports, string(body))
+	if len(runner.imports) == runner.failImportAt {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+
+type fakeServer struct {
+	exists       bool
+	replacements int
+	drops        int
+}
+
+func (server *fakeServer) Test(context.Context, Instance, string) (ConnectionTest, error) {
+	return ConnectionTest{OK: true}, nil
+}
+func (server *fakeServer) Databases(context.Context, Instance, string) ([]Database, error) {
+	return nil, nil
+}
+func (server *fakeServer) Status(context.Context, Instance, string) (Status, error) {
+	return Status{}, nil
+}
+func (server *fakeServer) DatabaseExists(context.Context, Instance, string, string) (bool, error) {
+	return server.exists, nil
+}
+func (server *fakeServer) CreateDatabase(context.Context, Instance, string, CreateDatabaseInput) error {
+	return nil
+}
+func (server *fakeServer) ReplaceDatabase(context.Context, Instance, string, string) error {
+	server.replacements++
+	return nil
+}
+func (server *fakeServer) DropDatabase(context.Context, Instance, string, string) error {
+	server.drops++
+	return nil
+}
+func (server *fakeServer) NonTransactionalTables(context.Context, Instance, string, string) ([]string, error) {
+	return nil, nil
+}
+
+func TestRestoreFailureAutomaticallyRollsBackSafetyBackup(t *testing.T) {
+	stateRoot := t.TempDir()
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	applyTestSchema(t, database)
+	manager, err := New(Options{DB: database, StateRoot: stateRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &fakeServer{exists: true}
+	manager.server = server
+	initialRunner := &recordingRunner{output: "CREATE TABLE wanted (id INT);\n"}
+	manager.runner = initialRunner
+	instance, err := manager.SaveInstance(context.Background(), InstanceInput{
+		Name: "Production", Host: "db.internal", Port: 3306, Username: "scriptboard", Password: "secret", TLSMode: TLSPreferred,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired, err := manager.Backup(context.Background(), BackupRequest{InstanceID: instance.ID, Database: "inventory", Kind: BackupManual})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &restoreRunner{dumpOutput: "CREATE TABLE original (id INT);\n", failImportAt: 1}
+	manager.runner = runner
+	operation, err := manager.Restore(context.Background(), RestoreRequest{
+		InstanceID: instance.ID, BackupID: desired.ID, TargetDatabase: "inventory", Actor: Actor{UserID: "admin-1", Username: "admin"},
+	})
+	if err == nil {
+		t.Fatal("restore unexpectedly succeeded")
+	}
+	if operation.Phase != "rolled_back" || operation.SafetyBackupID == "" || operation.RollbackError != "" {
+		t.Fatalf("restore operation = %+v", operation)
+	}
+	if server.replacements != 2 {
+		t.Fatalf("database replacements = %d, want restore and rollback", server.replacements)
+	}
+	if len(runner.imports) != 2 || !strings.Contains(runner.imports[0], "wanted") || !strings.Contains(runner.imports[1], "original") {
+		t.Fatalf("restore imports = %#v", runner.imports)
+	}
+}
+
+func TestRestoreRejectsCorruptedBackupBeforeReplacingDatabase(t *testing.T) {
+	stateRoot := t.TempDir()
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	applyTestSchema(t, database)
+	manager, err := New(Options{DB: database, StateRoot: stateRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &fakeServer{exists: true}
+	manager.server = server
+	manager.runner = &recordingRunner{output: "CREATE TABLE wanted (id INT);\n"}
+	instance, err := manager.SaveInstance(context.Background(), InstanceInput{Name: "Production", Host: "localhost", Port: 3306, Username: "admin", Password: "secret", TLSMode: TLSPreferred})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backup, err := manager.Backup(context.Background(), BackupRequest{InstanceID: instance.ID, Database: "inventory", Kind: BackupManual})
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(backup.Path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = file.WriteString("corruption")
+	_ = file.Close()
+	operation, err := manager.Restore(context.Background(), RestoreRequest{InstanceID: instance.ID, BackupID: backup.ID, TargetDatabase: "inventory"})
+	if err == nil || operation.Phase != "failed" {
+		t.Fatalf("corrupt restore operation=%+v error=%v", operation, err)
+	}
+	if server.replacements != 0 {
+		t.Fatalf("database was replaced before verification: %d", server.replacements)
+	}
+}
+
+func TestImportRejectsCorruptGzipAndRedactsCommandErrors(t *testing.T) {
+	stateRoot := t.TempDir()
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	applyTestSchema(t, database)
+	manager, err := New(Options{DB: database, StateRoot: stateRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := manager.SaveInstance(context.Background(), InstanceInput{Name: "Import", Host: "localhost", Port: 3306, Username: "admin", Password: "highly-sensitive", TLSMode: TLSPreferred})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.ImportBackup(context.Background(), ImportRequest{InstanceID: instance.ID, Database: "inventory", Filename: "broken.sql.gz", Reader: strings.NewReader("not-gzip")}); err == nil {
+		t.Fatal("corrupt gzip import unexpectedly succeeded")
+	}
+	redacted := sanitizedCommandError("access denied password=highly-sensitive", "highly-sensitive")
+	if strings.Contains(redacted, "highly-sensitive") || !strings.Contains(redacted, "[REDACTED]") {
+		t.Fatalf("command error was not redacted: %q", redacted)
+	}
+}
+
+func TestMySQLValidationBoundaries(t *testing.T) {
+	for _, name := range []string{"mysql", " INFORMATION_SCHEMA ", "Performance_Schema", "sys"} {
+		if !IsSystemDatabase(name) {
+			t.Fatalf("system database accepted: %q", name)
+		}
+	}
+	if got := quoteIdentifier("inventory`archive"); got != "`inventory``archive`" {
+		t.Fatalf("quoted identifier = %q", got)
+	}
+	for _, mode := range []TLSMode{TLSDisabled, TLSPreferred, TLSRequired, TLSVerifyIdentity} {
+		if !validTLSMode(mode) {
+			t.Fatalf("valid TLS mode rejected: %q", mode)
+		}
+	}
+	if validTLSMode("opportunistic") {
+		t.Fatal("unknown TLS mode accepted")
+	}
+	root := filepath.Join(t.TempDir(), "backups")
+	if !pathWithin(root, filepath.Join(root, "instance", "backup.sql.gz")) || pathWithin(root, filepath.Join(root, "..", "escape.sql.gz")) {
+		t.Fatal("backup root boundary is incorrect")
+	}
+	if _, err := planParser.Parse("0 2 * * *"); err != nil {
+		t.Fatalf("five-field Cron rejected: %v", err)
+	}
+	if _, err := planParser.Parse("0 0 2 * * *"); err == nil {
+		t.Fatal("six-field Cron unexpectedly accepted")
+	}
+}
+
+func TestImportAndPlanRetentionNeverDeleteManualBackups(t *testing.T) {
+	stateRoot := t.TempDir()
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	applyTestSchema(t, database)
+	manager, err := New(Options{DB: database, StateRoot: stateRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.server = &fakeServer{}
+	manager.runner = &recordingRunner{output: "CREATE TABLE retained (id INT);\n"}
+	instance, err := manager.SaveInstance(context.Background(), InstanceInput{Name: "Retention", Host: "localhost", Port: 3306, Username: "admin", Password: "secret", TLSMode: TLSPreferred})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manual, err := manager.ImportBackup(context.Background(), ImportRequest{InstanceID: instance.ID, Database: "inventory", Filename: "manual.sql", Reader: strings.NewReader("CREATE TABLE manual_copy (id INT);\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := manager.SavePlan(context.Background(), PlanInput{Name: "Nightly", InstanceID: instance.ID, Databases: []string{"inventory"}, Expression: "0 2 * * *", RetentionCount: 1, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := manager.Backup(context.Background(), BackupRequest{InstanceID: instance.ID, Database: "inventory", PlanID: plan.ID, Kind: BackupScheduled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := manager.Backup(context.Background(), BackupRequest{InstanceID: instance.ID, Database: "inventory", PlanID: plan.ID, Kind: BackupScheduled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.applyRetention(context.Background(), plan.ID, "inventory", 1); err != nil {
+		t.Fatal(err)
+	}
+	backups, err := manager.Backups(context.Background(), instance.ID, "inventory")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != 2 {
+		t.Fatalf("retained backups = %+v", backups)
+	}
+	if _, err := os.Stat(manual.Path); err != nil {
+		t.Fatalf("manual import was removed: %v", err)
+	}
+	if _, err := os.Stat(second.Path); err != nil {
+		t.Fatalf("latest scheduled backup was removed: %v", err)
+	}
+	if _, err := os.Stat(first.Path); !os.IsNotExist(err) {
+		t.Fatalf("old scheduled backup still exists: %v", err)
+	}
+}
+
+func TestDropDatabaseRequiresAndKeepsSafetyBackup(t *testing.T) {
+	stateRoot := t.TempDir()
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	applyTestSchema(t, database)
+	manager, err := New(Options{DB: database, StateRoot: stateRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &fakeServer{exists: true}
+	manager.server = server
+	manager.runner = &recordingRunner{output: "CREATE TABLE before_drop (id INT);\n"}
+	instance, err := manager.SaveInstance(context.Background(), InstanceInput{Name: "Drop", Host: "localhost", Port: 3306, Username: "admin", Password: "secret", TLSMode: TLSPreferred})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.DropDatabase(context.Background(), DropDatabaseRequest{InstanceID: instance.ID, Database: "inventory", Confirmation: "wrong"}); err == nil {
+		t.Fatal("drop accepted an incorrect confirmation")
+	}
+	operation, err := manager.DropDatabase(context.Background(), DropDatabaseRequest{InstanceID: instance.ID, Database: "inventory", Confirmation: "inventory"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if operation.Phase != "completed" || operation.SafetyBackupID == "" || server.drops != 1 {
+		t.Fatalf("drop operation=%+v drops=%d", operation, server.drops)
+	}
+	safety, err := manager.BackupByID(context.Background(), operation.SafetyBackupID)
+	if err != nil || safety.Kind != BackupSafety {
+		t.Fatalf("safety backup=%+v error=%v", safety, err)
+	}
+}
+
+func TestBackupCreatesVerifiedCompressedArtifactWithoutPasswordArguments(t *testing.T) {
+	stateRoot := t.TempDir()
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	applyTestSchema(t, database)
+	runner := &recordingRunner{output: "CREATE TABLE widgets (id INT);\nINSERT INTO widgets VALUES (1);\n"}
+	manager, err := New(Options{DB: database, StateRoot: stateRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.server = &fakeServer{}
+	manager.runner = runner
+	instance, err := manager.SaveInstance(context.Background(), InstanceInput{
+		Name: "Production", Host: "db.internal", Port: 3306, Username: "scriptboard",
+		Password: "cli-password-must-stay-private", TLSMode: TLSPreferred,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backup, err := manager.Backup(context.Background(), BackupRequest{
+		InstanceID: instance.ID, Database: "inventory", Kind: BackupManual,
+		ActorUserID: "admin-1", ActorUsername: "admin",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if backup.SizeBytes == 0 || len(backup.SHA256) != 64 || !strings.HasSuffix(backup.Path, ".sql.gz") {
+		t.Fatalf("backup metadata = %+v", backup)
+	}
+	if runner.executable != "mysqldump" || !containsArgument(runner.args, "--single-transaction") ||
+		!containsArgument(runner.args, "--routines") || !containsArgument(runner.args, "inventory") {
+		t.Fatalf("mysqldump invocation = %q %q", runner.executable, runner.args)
+	}
+	if strings.Contains(strings.Join(runner.args, " "), "cli-password-must-stay-private") {
+		t.Fatal("password leaked into process arguments")
+	}
+	plain, err := readGzipFile(backup.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(plain) != runner.output {
+		t.Fatalf("backup content = %q", plain)
+	}
+	var count int
+	if err := database.QueryRow("SELECT COUNT(*) FROM mysql_backups WHERE id=?", backup.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("backup row count=%d error=%v", count, err)
+	}
+}
+
+func applyTestSchema(t *testing.T, database *sql.DB) {
+	t.Helper()
+	for _, statement := range SchemaStatements {
+		if _, err := database.Exec(statement); err != nil {
+			t.Fatalf("apply schema: %v\n%s", err, statement)
+		}
+	}
+}
+
+func containsArgument(arguments []string, expected string) bool {
+	for _, argument := range arguments {
+		if argument == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func readGzipFile(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	reader, err := gzip.NewReader(file)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+	return io.ReadAll(reader)
+}

@@ -825,6 +825,36 @@ async function assertUserManagement(page, baseURL) {
   await assertNoHorizontalOverflow(page, "Users mobile");
   assert.equal(await page.locator('[data-username="browser-viewer"]').count(), 1);
   await page.setViewportSize({ width: 1440, height: 1000 });
+	return password;
+}
+
+async function assertMySQLManagement(page, baseURL) {
+  await page.goto(`${baseURL}/resources/databases`);
+  const workspace = page.locator("[data-mysql-workspace]");
+  await workspace.waitFor();
+  assert.equal((await workspace.locator("h1").textContent()).trim(), "Database backups");
+  assert.equal(await workspace.locator('form[action="/resources/databases/instances"]').count(), 1);
+  assert.equal(await workspace.locator('input[name="password"][type="password"]').count(), 1);
+  assert.equal(await workspace.locator('form[action="/resources/databases/settings/tools"]').count(), 1);
+  assert.match(await workspace.textContent(), /No database instances are configured/);
+  await assertNoHorizontalOverflow(page, "MySQL database management");
+  await saveSnapshot(page, "mysql-databases");
+}
+
+async function assertViewerCannotManageMySQL(browser, baseURL, password) {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, locale: "en-US" });
+  const page = await context.newPage();
+  await page.goto(`${baseURL}/login`);
+  await page.locator('input[name="username"]').fill("browser-viewer");
+  await page.locator('input[name="password"]').fill(password);
+  await Promise.all([
+    page.waitForURL("**/monitor"),
+    page.locator('[data-login-form] button[type="submit"]').click(),
+  ]);
+  assert.equal(await page.locator('.app-sidebar a[href="/resources/databases"]').count(), 0);
+  const response = await page.goto(`${baseURL}/resources/databases`);
+  assert.equal(response.status(), 403);
+  await context.close();
 }
 
 async function assertAccountSettings(page, baseURL) {
@@ -1100,7 +1130,9 @@ async function assertExternalInterfaces(page, fixture) {
     await assertWebsiteMonitoring(page, fixture.baseURL);
     await assertStatusDisplaySettings(page, fixture.baseURL);
     await assertAccountSettings(page, fixture.baseURL);
-    await assertUserManagement(page, fixture.baseURL);
+	const viewerPassword = await assertUserManagement(page, fixture.baseURL);
+	await assertMySQLManagement(page, fixture.baseURL);
+	await assertViewerCannotManageMySQL(browser, fixture.baseURL, viewerPassword);
     await assertAssistantSettingsAndWorkspace(page, fixture.baseURL);
     await assertExternalInterfaces(page, fixture);
 
@@ -2118,6 +2150,8 @@ async function assertExternalInterfaces(page, fixture) {
     await chinesePage.reload();
     await assertNoHorizontalOverflow(chinesePage, "用户管理移动端");
     await chinesePage.setViewportSize({ width: 1440, height: 1000 });
+	await chinesePage.goto(`${fixture.baseURL}/resources/databases`);
+	assert.equal((await chinesePage.locator("main h1").textContent()).trim(), "数据库备份");
     await chinesePage.goto(`${fixture.baseURL}/monitor`);
     await Promise.all([
       chinesePage.waitForNavigation(),
@@ -2156,6 +2190,9 @@ async function assertExternalInterfaces(page, fixture) {
       const probe = document.elementFromPoint(panelBounds.left + 12, panelBounds.bottom - 12);
       return panelBounds.bottom < triggerBounds.top && (probe === menu || menu.contains(probe));
     }), true);
+    await noScriptPage.goto(`${fixture.baseURL}/resources/databases`);
+    assert.equal(await noScriptPage.locator('[data-mysql-workspace] form[action="/resources/databases/instances"]').count(), 1);
+    assert.equal(await noScriptPage.locator('[data-mysql-workspace] input[name="password"][type="password"]').count(), 1);
     await noScriptPage.goto(hostFilesWorkspaceURL);
     assert.equal(await noScriptPage.locator("[data-file-drop-form]").count(), 1);
     assert.equal(await noScriptPage.locator('[data-file-drop-form] input[type="file"][multiple]').count(), 1);
