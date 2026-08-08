@@ -231,6 +231,15 @@ func TestConversationRequiresAnAvailableModelAndScopesEveryLookupToItsOwner(t *t
 	if conversation.ModelID != model.ID || !conversation.AutoApproval || conversation.OwnerUserID != admin.UserID {
 		t.Fatalf("conversation defaults = %+v", conversation)
 	}
+	if err := service.UpdateSettings(ctx, admin, SettingsInput{Enabled: false, MaxActiveConversations: 2, DefaultAutoApproval: true}); err != nil {
+		t.Fatalf("disable assistant conversations: %v", err)
+	}
+	if _, err := service.BeginTurn(ctx, admin, conversation.ID, "This message must be rejected."); !errors.Is(err, ErrDisabled) {
+		t.Fatalf("send to existing conversation while disabled error = %v, want %v", err, ErrDisabled)
+	}
+	if err := service.UpdateSettings(ctx, admin, SettingsInput{Enabled: true, MaxActiveConversations: 2, DefaultAutoApproval: true}); err != nil {
+		t.Fatalf("re-enable assistant conversations: %v", err)
+	}
 
 	if _, err := service.Conversation(ctx, other, conversation.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("cross-owner lookup error = %v, want opaque not found", err)

@@ -507,7 +507,7 @@ Schema、权限检查、目录限制和审批。
 
 | 字段 | 说明 |
 |---|---|
-| `enabled` | 是否允许创建新 AI 工作 |
+| `enabled` | 是否允许创建和继续 AI 对话 |
 | `provider` | 稳定 Provider ID |
 | `model` | 固定默认 Model ID |
 | `thinking_level` | 允许值中的思考级别 |

@@ -108,6 +108,7 @@ func TestAIWorkspaceAndSettingsUsePersistedLLMAndConversationState(t *testing.T)
 	for _, expected := range []string{
 		`href="/settings/ai" aria-current="page"`, `data-assistant-settings`, `data-llm-drawer`,
 		`name="default_auto_approval"`, `name="max_active_conversations"`,
+		`>Enable AI conversations<`, `new conversations cannot be created and messages cannot be sent in existing conversations`,
 		`name="shared"`,
 		`action="/settings/ai/runtime/check"`,
 		`action="/settings/ai/runtime/offline"`, `enctype="multipart/form-data"`,
@@ -225,6 +226,61 @@ func TestAIWorkspaceAndSettingsUsePersistedLLMAndConversationState(t *testing.T)
 	inspectorMarkup := string(conversation)[inspectorStart : inspectorStart+inspectorEnd]
 	if strings.Contains(inspectorMarkup, `data-remove-resource`) || strings.Contains(inspectorMarkup, `action="`) {
 		t.Fatalf("referenced-content preview exposes an action: %s", inspectorMarkup)
+	}
+
+	response, err = client.PostForm(serverURL+"/settings/ai/defaults", url.Values{
+		"default_auto_approval": {"true"}, "max_active_conversations": {"2"},
+		"csrf_token": {formToken(t, conversation)},
+	})
+	if err != nil {
+		t.Fatalf("disable AI conversations: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("disable AI conversations status = %d", response.StatusCode)
+	}
+
+	response, err = client.Get(serverURL + conversationPath)
+	if err != nil {
+		t.Fatalf("reload disabled AI conversation: %v", err)
+	}
+	disabledConversation, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read disabled AI conversation: %v", err)
+	}
+	for _, expected := range []string{
+		`class="assistant-new-chat" aria-disabled="true"`,
+		`data-assistant-input disabled`,
+		`AI conversations are disabled. New conversations and messages are unavailable.`,
+	} {
+		if !strings.Contains(string(disabledConversation), expected) {
+			t.Fatalf("disabled AI conversation is missing %q: %s", expected, disabledConversation)
+		}
+	}
+
+	response, err = client.PostForm(serverURL+conversationPath+"/messages", url.Values{
+		"message": {"This must not be sent."}, "csrf_token": {formToken(t, disabledConversation)},
+	})
+	if err != nil {
+		t.Fatalf("post message while AI conversations are disabled: %v", err)
+	}
+	disabledMessageBody, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusConflict || !strings.Contains(string(disabledMessageBody), "AI assistant is currently disabled") {
+		t.Fatalf("disabled existing conversation status=%d body=%s", response.StatusCode, disabledMessageBody)
+	}
+
+	response, err = client.PostForm(serverURL+"/settings/ai/defaults", url.Values{
+		"enabled": {"true"}, "default_auto_approval": {"true"}, "max_active_conversations": {"2"},
+		"csrf_token": {formToken(t, disabledConversation)},
+	})
+	if err != nil {
+		t.Fatalf("re-enable AI conversations: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("re-enable AI conversations status = %d", response.StatusCode)
 	}
 
 	response, err = client.PostForm(serverURL+conversationPath+"/messages", url.Values{

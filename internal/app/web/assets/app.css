@@ -543,6 +543,7 @@ body[data-app-shell] { padding-left: var(--sidebar-width); }
   text-decoration: none;
 }
 .assistant-new-chat:hover { color: #fff; background: #292e36; }
+.assistant-new-chat[aria-disabled="true"] { color: var(--muted); background: var(--rule); cursor: not-allowed; }
 .assistant-search { display: flex; min-height: 38px; align-items: center; gap: 8px; padding: 7px 10px; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; }
 .assistant-search:focus-within { border-color: var(--accent); box-shadow: var(--focus); }
 .assistant-search > svg { width: 15px; color: var(--faint); }
@@ -584,6 +585,7 @@ body[data-app-shell] { padding-left: var(--sidebar-width); }
 .assistant-header__actions .assistant-header-menu > summary svg { width: 16px; height: 16px; }
 .assistant-header-menu > summary { color: var(--faint); background: var(--canvas); border-color: var(--rule); }
 .assistant-header-menu > div { top: calc(100% + 6px); right: 0; left: auto; min-width: 168px; }
+.assistant-header-menu .assistant-menu-disabled { display: flex; min-height: 40px; align-items: center; gap: 9px; padding: 7px 9px; color: var(--faint); border-radius: 5px; cursor: not-allowed; }
 .assistant-runtime-badge, .assistant-runtime-status { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font: .62rem/1.3 var(--font-mono); white-space: nowrap; }
 .assistant-runtime-badge .status-dot, .assistant-runtime-status .status-dot { margin: 0; }
 .assistant-body { position: relative; display: grid; min-width: 0; min-height: 0; grid-template-columns: minmax(0, 1fr) 284px; }
@@ -714,6 +716,7 @@ body[data-app-shell] { padding-left: var(--sidebar-width); }
 .assistant-send:hover:not(:disabled) { background: var(--accent); transform: translateY(-1px); }
 .assistant-send:active:not(:disabled) { transform: scale(.95); }
 .assistant-send:disabled { color: var(--faint); background: var(--rule); cursor: not-allowed; }
+.assistant-composer textarea:disabled { color: var(--faint); cursor: not-allowed; }
 .assistant-composer-meta { min-height: 20px; padding: 6px 10px 0; color: var(--faint); font-size: .56rem; }
 .assistant-model-control { position: relative; max-width: 210px; }
 .assistant-model-control > button, .assistant-approval-toggle { display: flex; min-height: 34px; align-items: center; gap: 6px; padding: 4px 8px; color: var(--muted); background: transparent; border: 0; border-radius: 8px; font-size: .64rem; white-space: nowrap; }

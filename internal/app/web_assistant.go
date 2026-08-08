@@ -556,6 +556,16 @@ func (a *App) postAssistantMessage(response http.ResponseWriter, request *http.R
 		http.Error(response, webText(resolveWebLocale(request), "assistant.load_failed"), http.StatusInternalServerError)
 		return
 	}
+	settings, err := a.assistant.Settings(request.Context())
+	if err != nil {
+		http.Error(response, webText(resolveWebLocale(request), "assistant.load_failed"), http.StatusInternalServerError)
+		return
+	}
+	if !settings.Enabled {
+		status, key := assistantRuntimeWebError(assistant.ErrDisabled)
+		http.Error(response, webText(resolveWebLocale(request), key), status)
+		return
+	}
 	managedRuntime, err := a.assistantRuntime.Runtime()
 	if err != nil {
 		status, key := assistantRuntimeWebError(err)

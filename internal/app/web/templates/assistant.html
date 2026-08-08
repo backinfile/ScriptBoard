@@ -25,7 +25,7 @@
       <button class="icon-button assistant-rail__close" type="button" data-assistant-rail-close aria-label="{{t .Locale "assistant.close_conversations"}}"><span data-lucide="x" aria-hidden="true"></span></button>
     </header>
     <div class="assistant-rail__actions">
-      <a class="assistant-new-chat" href="/ai"><span data-lucide="plus" aria-hidden="true"></span><span>{{t .Locale "assistant.new_conversation"}}</span></a>
+      {{if .AssistantEnabled}}<a class="assistant-new-chat" href="/ai"><span data-lucide="plus" aria-hidden="true"></span><span>{{t .Locale "assistant.new_conversation"}}</span></a>{{else}}<span class="assistant-new-chat" aria-disabled="true" title="{{t .Locale "assistant.conversations_disabled"}}"><span data-lucide="plus" aria-hidden="true"></span><span>{{t .Locale "assistant.new_conversation"}}</span></span>{{end}}
       <form class="assistant-search" method="get" action="/ai" data-async data-async-push>
         <span data-lucide="search" aria-hidden="true"></span><input type="search" name="q" value="" placeholder="{{t .Locale "assistant.search"}}" aria-label="{{t .Locale "assistant.search"}}">
       </form>
@@ -57,7 +57,7 @@
         {{if .Current}}<form method="post" action="/ai/conversations/{{.Current.ID}}/abort" data-assistant-abort{{if ne .Current.Status "running"}} hidden{{end}}><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="icon-button icon-button--quiet" type="submit" title="{{t .Locale "assistant.stop"}}" aria-label="{{t .Locale "assistant.stop"}}"><span data-lucide="square" aria-hidden="true"></span></button></form>{{end}}
         {{if .Current}}<form method="post" action="/ai/conversations/{{.Current.ID}}/archive"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="icon-button icon-button--quiet" type="submit" title="{{t .Locale "assistant.archive"}}" aria-label="{{t .Locale "assistant.archive"}}"><span data-lucide="archive" aria-hidden="true"></span></button></form>{{end}}
         <button class="icon-button" type="button" data-assistant-inspector-toggle title="{{t .Locale "assistant.inspector"}}" aria-label="{{t .Locale "assistant.inspector"}}" aria-expanded="{{if .Current}}true{{else}}false{{end}}"><span data-lucide="info" aria-hidden="true"></span></button>
-        <details class="action-menu assistant-header-menu"><summary title="{{t .Locale "common.more_actions"}}" aria-label="{{t .Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div><a href="/ai"><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "assistant.new_conversation"}}</a>{{if .CanManageAI}}<a href="/settings/ai"><span data-lucide="settings" aria-hidden="true"></span>{{t .Locale "assistant.configure_ai"}}</a>{{end}}</div></details>
+        <details class="action-menu assistant-header-menu"><summary title="{{t .Locale "common.more_actions"}}" aria-label="{{t .Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>{{if .AssistantEnabled}}<a href="/ai"><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "assistant.new_conversation"}}</a>{{else}}<span class="assistant-menu-disabled" aria-disabled="true" title="{{t .Locale "assistant.conversations_disabled"}}"><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "assistant.new_conversation"}}</span>{{end}}{{if .CanManageAI}}<a href="/settings/ai"><span data-lucide="settings" aria-hidden="true"></span>{{t .Locale "assistant.configure_ai"}}</a>{{end}}</div></details>
       </div>
     </header>
 
@@ -80,11 +80,11 @@
           {{else}}
           <div class="assistant-empty-state"><span class="assistant-empty-state__mark" data-lucide="sparkles" aria-hidden="true"></span><p class="page-eyebrow">SCRIPTBOARD / PI AGENT</p><h3>{{t .Locale "assistant.what_to_inspect"}}</h3><p>{{t .Locale "assistant.empty_description"}}</p>
             <div class="assistant-prompts">
-              <button type="button" data-assistant-prompt="{{t .Locale "assistant.prompt_runs"}}" data-assistant-profile="diagnose-failed-run"><span data-lucide="square-terminal" aria-hidden="true"></span>{{t .Locale "assistant.profile.diagnose-failed-run"}}</button>
-              <button type="button" data-assistant-prompt="{{t .Locale "assistant.prompt_websites"}}" data-assistant-profile="investigate-website-incident"><span data-lucide="network" aria-hidden="true"></span>{{t .Locale "assistant.profile.website-incident"}}</button>
-              <button type="button" data-assistant-prompt="{{t .Locale "assistant.prompt_host"}}" data-assistant-profile="triage-host-pressure"><span data-lucide="activity" aria-hidden="true"></span>{{t .Locale "assistant.profile.triage-host-pressure"}}</button>
-              <button type="button" data-assistant-prompt="Review the safety of the referenced script." data-assistant-profile="review-script-safety"><span data-lucide="file-check-2" aria-hidden="true"></span>{{t .Locale "assistant.profile.review-script-safety"}}</button>
-              <button type="button" data-assistant-prompt="Help me design a safe schedule." data-assistant-profile="design-schedule"><span data-lucide="calendar-clock" aria-hidden="true"></span>{{t .Locale "assistant.profile.design-schedule"}}</button>
+              <button type="button" data-assistant-prompt="{{t .Locale "assistant.prompt_runs"}}" data-assistant-profile="diagnose-failed-run" {{if not .AssistantEnabled}}disabled{{end}}><span data-lucide="square-terminal" aria-hidden="true"></span>{{t .Locale "assistant.profile.diagnose-failed-run"}}</button>
+              <button type="button" data-assistant-prompt="{{t .Locale "assistant.prompt_websites"}}" data-assistant-profile="investigate-website-incident" {{if not .AssistantEnabled}}disabled{{end}}><span data-lucide="network" aria-hidden="true"></span>{{t .Locale "assistant.profile.website-incident"}}</button>
+              <button type="button" data-assistant-prompt="{{t .Locale "assistant.prompt_host"}}" data-assistant-profile="triage-host-pressure" {{if not .AssistantEnabled}}disabled{{end}}><span data-lucide="activity" aria-hidden="true"></span>{{t .Locale "assistant.profile.triage-host-pressure"}}</button>
+              <button type="button" data-assistant-prompt="Review the safety of the referenced script." data-assistant-profile="review-script-safety" {{if not .AssistantEnabled}}disabled{{end}}><span data-lucide="file-check-2" aria-hidden="true"></span>{{t .Locale "assistant.profile.review-script-safety"}}</button>
+              <button type="button" data-assistant-prompt="Help me design a safe schedule." data-assistant-profile="design-schedule" {{if not .AssistantEnabled}}disabled{{end}}><span data-lucide="calendar-clock" aria-hidden="true"></span>{{t .Locale "assistant.profile.design-schedule"}}</button>
             </div>
           </div>
           {{end}}
@@ -101,7 +101,7 @@
           <form class="assistant-composer" {{if .Current}}action="/ai/conversations/{{.Current.ID}}/messages"{{else}}action="/ai/conversations"{{end}} method="post" data-assistant-composer>
             <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="title" value="{{t .Locale "assistant.new_conversation"}}"><input type="hidden" name="model_id" value="{{.SelectedModelID}}" data-assistant-model-input>{{if not .Current}}<input type="hidden" name="profile" value="{{.SelectedProfile}}" data-assistant-profile-input><input type="hidden" name="auto_approval" value="{{if .DefaultAutoApproval}}true{{else}}false{{end}}" data-assistant-approval-input>{{end}}
             <div class="assistant-composer__context" data-assistant-context-chips {{if not .ContextReferences}}hidden{{end}}>{{range .ContextReferences}}<span class="assistant-context-chip" data-context-key="{{.Kind}}:{{.StableID}}" data-context-kind="{{.Kind}}" data-context-id="{{.StableID}}" data-context-label="{{.Label}}"><span>{{.Label}}</span><input type="hidden" name="context_kind" value="{{.Kind}}"><input type="hidden" name="context_id" value="{{.StableID}}"><button type="button" data-remove-resource="{{.Kind}}:{{.StableID}}" aria-label="{{t $.Locale "assistant.remove_reference"}} {{.Label}}"><span data-lucide="x" aria-hidden="true"></span></button></span>{{end}}</div>
-            <div class="assistant-composer__input"><textarea name="message" rows="1" maxlength="32768" placeholder="{{t .Locale "assistant.composer_placeholder"}}" aria-label="{{t .Locale "assistant.send_message"}}" data-assistant-input></textarea></div>
+            <div class="assistant-composer__input"><textarea name="message" rows="1" maxlength="32768" placeholder="{{if .AssistantEnabled}}{{t .Locale "assistant.composer_placeholder"}}{{else}}{{t .Locale "assistant.conversations_disabled"}}{{end}}" aria-label="{{t .Locale "assistant.send_message"}}" aria-describedby="assistant-composer-status" data-assistant-input {{if not .AssistantEnabled}}disabled{{end}}></textarea></div>
             <div class="assistant-composer__toolbar">
               <div class="assistant-composer__tools">
                 <button type="button" class="assistant-reference-button" data-resource-picker-toggle aria-expanded="false" aria-label="{{t .Locale "assistant.reference"}}" title="{{t .Locale "assistant.reference"}}"><span data-lucide="plus" aria-hidden="true"></span><span class="assistant-reference-count" data-assistant-context-count {{if not .ContextReferences}}hidden{{end}}>{{len .ContextReferences}}</span></button>
@@ -116,7 +116,7 @@
               </div>
             </div>
           </form>
-          <div class="assistant-composer-meta"><span data-assistant-error role="status" aria-live="polite">{{t .Locale "assistant.enter_hint"}}</span></div>
+          <div class="assistant-composer-meta"><span id="assistant-composer-status" data-assistant-error role="status" aria-live="polite">{{if .AssistantEnabled}}{{t .Locale "assistant.enter_hint"}}{{else}}{{t .Locale "assistant.conversations_disabled"}}{{end}}</span></div>
         </div>
       </section>
 
