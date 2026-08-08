@@ -679,6 +679,67 @@ func TestToolApprovalIsConversationScopedParameterBoundAndSingleUse(t *testing.T
 	}
 }
 
+func TestApprovalDecisionRollsBackWhenToolCallTransitionFails(t *testing.T) {
+	t.Parallel()
+
+	service, db, _ := newTestService(t)
+	ctx := context.Background()
+	owner := Actor{UserID: "owner"}
+	model, err := service.SaveModel(ctx, owner, "", ModelInput{
+		Name: "Local", Provider: ProviderOpenAICompatible, Model: "local",
+		Endpoint: "http://localhost:11434/v1", APIKey: "key",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.UpdateSettings(ctx, owner, SettingsInput{Enabled: true, MaxActiveConversations: 2}); err != nil {
+		t.Fatal(err)
+	}
+	conversation, err := service.CreateConversation(ctx, owner, ConversationInput{ModelID: model.ID, AutoApproval: boolPointer(false)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn, err := service.BeginTurn(ctx, owner, conversation.ID, "start the quick run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	call, err := service.StartToolCall(ctx, owner, conversation.ID, turn.Assistant.ID, "pi-call-rollback", ToolCallInput{
+		Name: "start_quick_run", TargetSummary: "Nightly cleanup", ParameterSummary: "quick_run=quick-1",
+		RequestJSON: `{"tool":"start_quick_run","parameters":{"id":"quick-1"}}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	approval, err := service.RequestApproval(ctx, owner, conversation.ID, "pi-call-rollback", strings.Repeat("d", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER reject_tool_call_rejection
+		BEFORE UPDATE OF status ON assistant_tool_calls
+		WHEN NEW.status = 'rejected'
+		BEGIN SELECT RAISE(FAIL, 'tool call store unavailable'); END`); err != nil {
+		t.Fatalf("create failure trigger: %v", err)
+	}
+
+	if _, err := service.DecideApproval(ctx, owner, conversation.ID, approval.ID, false); err == nil {
+		t.Fatal("approval rejection succeeded after tool-call transition failed")
+	}
+	reloadedApproval, err := service.Approval(ctx, owner, conversation.ID, approval.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloadedApproval.Status != "pending" {
+		t.Fatalf("approval status = %q, want pending after rollback", reloadedApproval.Status)
+	}
+	reloadedCall, err := service.ToolCallByID(ctx, owner, conversation.ID, call.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloadedCall.Status != "waiting_approval" {
+		t.Fatalf("tool call status = %q, want waiting_approval after rollback", reloadedCall.Status)
+	}
+}
+
 func boolPointer(value bool) *bool { return &value }
 
 func TestModelConfigurationsArePrivateUnlessExplicitlyShared(t *testing.T) {

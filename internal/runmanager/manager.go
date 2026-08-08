@@ -141,20 +141,25 @@ func (r *activeRun) signalChanged() {
 }
 
 type Manager struct {
-	db             *sql.DB
-	files          *hostfiles.Manager
-	stateRoot      string
-	mu             sync.Mutex
-	active         map[string]*activeRun
-	wg             sync.WaitGroup
-	timeoutGrace   time.Duration
-	executorChains map[string][]string
-	startMu        sync.Mutex
-	accepting      bool
+	db                  *sql.DB
+	files               *hostfiles.Manager
+	stateRoot           string
+	mu                  sync.Mutex
+	active              map[string]*activeRun
+	wg                  sync.WaitGroup
+	timeoutGrace        time.Duration
+	executorChains      map[string][]string
+	startMu             sync.Mutex
+	accepting           bool
+	persistenceStop     chan struct{}
+	persistenceStopOnce sync.Once
 }
 
 func New(db *sql.DB, files *hostfiles.Manager, stateRoot string, timeoutGrace time.Duration, executorChains map[string][]string) *Manager {
-	return &Manager{db: db, files: files, stateRoot: stateRoot, active: make(map[string]*activeRun), timeoutGrace: timeoutGrace, executorChains: executorChains, accepting: true}
+	return &Manager{
+		db: db, files: files, stateRoot: stateRoot, active: make(map[string]*activeRun), timeoutGrace: timeoutGrace,
+		executorChains: executorChains, accepting: true, persistenceStop: make(chan struct{}),
+	}
 }
 
 var ErrMaintenance = errors.New("ScriptBoard is entering update maintenance mode")
@@ -412,6 +417,7 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 
 	var command *exec.Cmd
 	var stdout, stderr io.ReadCloser
+	var executorPath string
 	var startErrors []string
 	currentDirectoryInfo, directoryErr := os.Lstat(prepared.workingDirectory.Path)
 	if directoryErr != nil || !currentDirectoryInfo.IsDir() || currentDirectoryInfo.Mode()&os.ModeSymlink != 0 || !os.SameFile(currentDirectoryInfo, prepared.workingDirectory.Info) {
@@ -445,8 +451,7 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 			startErrors = append(startErrors, executor.path+": "+startErr.Error())
 			continue
 		}
-		command, stdout, stderr = candidate, candidateStdout, candidateStderr
-		_, _ = m.db.Exec("UPDATE runs SET executor = ? WHERE id = ?", executor.path, id)
+		command, stdout, stderr, executorPath = candidate, candidateStdout, candidateStderr, executor.path
 		break
 	}
 	if command == nil {
@@ -463,7 +468,22 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 		return id, nil
 	}
 	started := time.Now().UTC()
-	_, _ = m.db.Exec("UPDATE runs SET status = 'running', started_at = ? WHERE id = ?", started.UnixNano(), id)
+	runningUpdate, err := m.db.Exec("UPDATE runs SET executor = ?, status = 'running', started_at = ? WHERE id = ? AND status = 'starting'", executorPath, started.UnixNano(), id)
+	if err == nil {
+		var affected int64
+		affected, err = runningUpdate.RowsAffected()
+		if err == nil && affected != 1 {
+			err = errors.New("run no longer has starting state")
+		}
+	}
+	if err != nil {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		cleanup()
+		_ = logFile.Close()
+		m.failStart(id, fmt.Errorf("persist running state: %w", err))
+		return id, nil
+	}
 	m.mu.Lock()
 	active := &activeRun{
 		command: command, cleanup: cleanup, fileInfo: prepared.script.Info, changed: make(chan struct{}, 1),
@@ -566,7 +586,28 @@ func (m *Manager) failStart(id string, startErr error) {
 			logBytes = info.Size()
 		}
 	}
-	_, _ = m.db.Exec("UPDATE runs SET status = 'failed', finished_at = ?, error = ?, log_bytes = ? WHERE id = ?", now, startErr.Error(), logBytes, id)
+	write := func() error {
+		result, err := m.db.Exec("UPDATE runs SET status = 'failed', finished_at = ?, error = ?, log_bytes = ? WHERE id = ?", now, startErr.Error(), logBytes, id)
+		if err != nil {
+			return err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected != 1 {
+			return errors.New("failed run state target is missing")
+		}
+		return nil
+	}
+	if err := write(); err == nil {
+		return
+	}
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		retryRunStateWrite(m.persistenceStop, write)
+	}()
 }
 
 func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.ReadCloser, logFile *os.File, activeRun *activeRun) {
@@ -722,7 +763,20 @@ func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.Read
 			exitCode = -1
 		}
 	}
-	_, _ = m.db.Exec("UPDATE runs SET status = ?, finished_at = ?, exit_code = ?, error = ?, log_incomplete = ?, log_truncated = ?, dropped_bytes = ?, log_bytes = ? WHERE id = ?", status, finished.UnixNano(), exitCode, errorText, logIncomplete, droppedBytes > 0, droppedBytes, logBytes, id)
+	retryRunStateWrite(m.persistenceStop, func() error {
+		result, err := m.db.Exec("UPDATE runs SET status = ?, finished_at = ?, exit_code = ?, error = ?, log_incomplete = ?, log_truncated = ?, dropped_bytes = ?, log_bytes = ? WHERE id = ?", status, finished.UnixNano(), exitCode, errorText, logIncomplete, droppedBytes > 0, droppedBytes, logBytes, id)
+		if err != nil {
+			return err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected != 1 {
+			return errors.New("run terminal state target is missing")
+		}
+		return nil
+	})
 	activeRun.signalChanged()
 	m.mu.Lock()
 	delete(m.active, id)
@@ -1168,6 +1222,7 @@ func (m *Manager) Close() {
 			_ = terminateProcess(process, true)
 		}
 	}
+	m.persistenceStopOnce.Do(func() { close(m.persistenceStop) })
 	done := make(chan struct{})
 	go func() {
 		m.wg.Wait()
@@ -1182,6 +1237,28 @@ func (m *Manager) Close() {
 		_ = terminateProcess(process, true)
 	}
 	<-done
+}
+
+const runStateRetryDelay = 100 * time.Millisecond
+
+func retryRunStateWrite(stop <-chan struct{}, write func() error) bool {
+	for {
+		if err := write(); err == nil {
+			return true
+		}
+		timer := time.NewTimer(runStateRetryDelay)
+		select {
+		case <-timer.C:
+		case <-stop:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return false
+		}
+	}
 }
 
 func randomID() (string, error) {

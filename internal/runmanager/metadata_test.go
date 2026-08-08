@@ -3,6 +3,7 @@ package runmanager
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,6 +13,25 @@ import (
 
 	"scriptboard/internal/hostfiles"
 )
+
+func TestRunStateWriteRetriesUntilPersistenceSucceeds(t *testing.T) {
+	t.Parallel()
+
+	attempts := 0
+	stop := make(chan struct{})
+	if !retryRunStateWrite(stop, func() error {
+		attempts++
+		if attempts == 1 {
+			return errors.New("database is temporarily unavailable")
+		}
+		return nil
+	}) {
+		t.Fatal("state write stopped before succeeding")
+	}
+	if attempts != 2 {
+		t.Fatalf("state write attempts = %d, want 2", attempts)
+	}
+}
 
 func TestGetMetadataDoesNotReadRunLog(t *testing.T) {
 	root := t.TempDir()

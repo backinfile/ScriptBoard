@@ -175,9 +175,15 @@ func (s *Service) DecideApproval(ctx context.Context, actor Actor, conversationI
 		return Approval{}, ErrApprovalInvalid
 	}
 	if !now.Before(approval.ExpiresAt) {
-		_, _ = transaction.ExecContext(ctx, `UPDATE assistant_approvals SET status = 'expired', decided_at = ? WHERE id = ? AND status = 'pending'`, now.Unix(), approvalID)
-		_, _ = transaction.ExecContext(ctx, `UPDATE assistant_tool_calls SET status = 'rejected', error_code = 'approval_expired', finished_at = ? WHERE id = ? AND status = 'waiting_approval'`, now.Unix(), approval.ToolCallID)
-		_, _ = transaction.ExecContext(ctx, `UPDATE assistant_conversations SET status = 'running', revision = revision + 1, updated_at = ? WHERE id = ?`, now.Unix(), conversationID)
+		if _, err := transaction.ExecContext(ctx, `UPDATE assistant_approvals SET status = 'expired', decided_at = ? WHERE id = ? AND status = 'pending'`, now.Unix(), approvalID); err != nil {
+			return Approval{}, err
+		}
+		if _, err := transaction.ExecContext(ctx, `UPDATE assistant_tool_calls SET status = 'rejected', error_code = 'approval_expired', finished_at = ? WHERE id = ? AND status = 'waiting_approval'`, now.Unix(), approval.ToolCallID); err != nil {
+			return Approval{}, err
+		}
+		if _, err := transaction.ExecContext(ctx, `UPDATE assistant_conversations SET status = 'running', revision = revision + 1, updated_at = ? WHERE id = ?`, now.Unix(), conversationID); err != nil {
+			return Approval{}, err
+		}
 		if err := transaction.Commit(); err != nil {
 			return Approval{}, err
 		}
@@ -195,8 +201,12 @@ func (s *Service) DecideApproval(ctx context.Context, actor Actor, conversationI
 		return Approval{}, ErrApprovalInvalid
 	}
 	if !approve {
-		_, _ = transaction.ExecContext(ctx, `UPDATE assistant_tool_calls SET status = 'rejected', error_code = 'approval_rejected', finished_at = ? WHERE id = ? AND status = 'waiting_approval'`, now.Unix(), approval.ToolCallID)
-		_, _ = transaction.ExecContext(ctx, `UPDATE assistant_conversations SET status = 'running', revision = revision + 1, updated_at = ? WHERE id = ?`, now.Unix(), conversationID)
+		if _, err := transaction.ExecContext(ctx, `UPDATE assistant_tool_calls SET status = 'rejected', error_code = 'approval_rejected', finished_at = ? WHERE id = ? AND status = 'waiting_approval'`, now.Unix(), approval.ToolCallID); err != nil {
+			return Approval{}, err
+		}
+		if _, err := transaction.ExecContext(ctx, `UPDATE assistant_conversations SET status = 'running', revision = revision + 1, updated_at = ? WHERE id = ?`, now.Unix(), conversationID); err != nil {
+			return Approval{}, err
+		}
 	}
 	if err := transaction.Commit(); err != nil {
 		return Approval{}, err
@@ -232,9 +242,15 @@ func (s *Service) ConsumeApproval(ctx context.Context, actor Actor, conversation
 	}
 	now := s.now().UTC()
 	if !now.Before(approval.ExpiresAt) {
-		_, _ = transaction.ExecContext(ctx, `UPDATE assistant_approvals SET status = 'expired', decided_at = ? WHERE id = ? AND status = 'approved'`, now.Unix(), approvalID)
-		_, _ = transaction.ExecContext(ctx, `UPDATE assistant_tool_calls SET status = 'rejected', error_code = 'approval_expired', finished_at = ? WHERE id = ? AND status = 'waiting_approval'`, now.Unix(), approval.ToolCallID)
-		_, _ = transaction.ExecContext(ctx, `UPDATE assistant_conversations SET status = 'running', revision = revision + 1, updated_at = ? WHERE id = ?`, now.Unix(), conversationID)
+		if _, err := transaction.ExecContext(ctx, `UPDATE assistant_approvals SET status = 'expired', decided_at = ? WHERE id = ? AND status = 'approved'`, now.Unix(), approvalID); err != nil {
+			return err
+		}
+		if _, err := transaction.ExecContext(ctx, `UPDATE assistant_tool_calls SET status = 'rejected', error_code = 'approval_expired', finished_at = ? WHERE id = ? AND status = 'waiting_approval'`, now.Unix(), approval.ToolCallID); err != nil {
+			return err
+		}
+		if _, err := transaction.ExecContext(ctx, `UPDATE assistant_conversations SET status = 'running', revision = revision + 1, updated_at = ? WHERE id = ?`, now.Unix(), conversationID); err != nil {
+			return err
+		}
 		if err := transaction.Commit(); err != nil {
 			return err
 		}
@@ -247,7 +263,9 @@ func (s *Service) ConsumeApproval(ctx context.Context, actor Actor, conversation
 	if affected, _ := result.RowsAffected(); affected != 1 {
 		return ErrApprovalInvalid
 	}
-	_, _ = transaction.ExecContext(ctx, `UPDATE assistant_conversations SET status = 'running', revision = revision + 1, updated_at = ? WHERE id = ?`, s.now().UTC().Unix(), conversationID)
+	if _, err := transaction.ExecContext(ctx, `UPDATE assistant_conversations SET status = 'running', revision = revision + 1, updated_at = ? WHERE id = ?`, s.now().UTC().Unix(), conversationID); err != nil {
+		return err
+	}
 	return transaction.Commit()
 }
 
@@ -365,7 +383,9 @@ func (s *Service) CancelPendingApprovals(ctx context.Context, actor Actor, conve
 		(SELECT id FROM assistant_tool_calls WHERE conversation_id = ? AND status = 'cancelled' AND error_code = 'approval_cancelled')`, now, conversationID, conversationID); err != nil {
 		return err
 	}
-	_, _ = transaction.ExecContext(ctx, `UPDATE assistant_conversations SET status = 'running', revision = revision + 1, updated_at = ? WHERE id = ? AND status = 'waiting_approval'`, now, conversationID)
+	if _, err := transaction.ExecContext(ctx, `UPDATE assistant_conversations SET status = 'running', revision = revision + 1, updated_at = ? WHERE id = ? AND status = 'waiting_approval'`, now, conversationID); err != nil {
+		return err
+	}
 	return transaction.Commit()
 }
 

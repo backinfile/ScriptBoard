@@ -71,13 +71,27 @@ func SwitchExecutable(_, _ string) error {
 }
 
 func Uninstall() error {
-	_ = systemctl("disable", "--now", "scriptboard.service")
-	for _, path := range []string{unitPath, updaterUnitPath} {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
+	exists, err := Exists()
+	if err != nil {
+		return err
 	}
-	return systemctl("daemon-reload")
+	return uninstallService(
+		func() error {
+			if !exists {
+				return nil
+			}
+			return systemctl("disable", "--now", "scriptboard.service")
+		},
+		func() error {
+			for _, path := range []string{unitPath, updaterUnitPath} {
+				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+					return err
+				}
+			}
+			return nil
+		},
+		func() error { return systemctl("daemon-reload") },
+	)
 }
 
 func Start() error   { return systemctl("start", "scriptboard.service") }

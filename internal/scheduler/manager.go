@@ -220,8 +220,18 @@ func (m *Manager) reconcileMissed() {
 			cursor = candidate
 		}
 		next := spec.Next(now)
-		triggerID, _ := randomID()
-		_, _ = m.db.Exec("UPDATE schedules SET next_fire_at = ?, updated_at = ? WHERE id = ?", next.UnixNano(), now.UnixNano(), item.id)
+		triggerID, err := randomID()
+		if err != nil {
+			continue
+		}
+		advance, err := m.db.Exec(`UPDATE schedules SET next_fire_at = ?, updated_at = ?
+			WHERE id = ? AND enabled = 1 AND deleted = 0 AND next_fire_at = ?`, next.UnixNano(), now.UnixNano(), item.id, item.scheduledFor)
+		if err != nil {
+			continue
+		}
+		if affected, affectedErr := advance.RowsAffected(); affectedErr != nil || affected != 1 {
+			continue
+		}
 		_, _ = m.db.Exec("INSERT INTO schedule_triggers (id, schedule_id, scheduled_for, result, run_id, error) VALUES (?, ?, ?, 'missed', '', ?)", triggerID, item.id, item.scheduledFor, fmt.Sprintf("服务停机期间错过 %d 次触发", missedCount))
 		m.recordAudit("schedule_trigger", item.id, "missed")
 	}
@@ -464,8 +474,18 @@ func (m *Manager) fireDue() {
 			continue
 		}
 		next := spec.Next(now)
-		_, _ = m.db.Exec("UPDATE schedules SET next_fire_at = ?, updated_at = ? WHERE id = ?", next.UnixNano(), now.UnixNano(), item.id)
-		triggerID, _ := randomID()
+		triggerID, err := randomID()
+		if err != nil {
+			continue
+		}
+		advance, err := m.db.Exec(`UPDATE schedules SET next_fire_at = ?, updated_at = ?
+			WHERE id = ? AND enabled = 1 AND deleted = 0 AND next_fire_at = ?`, next.UnixNano(), now.UnixNano(), item.id, item.scheduledFor)
+		if err != nil {
+			continue
+		}
+		if affected, affectedErr := advance.RowsAffected(); affectedErr != nil || affected != 1 {
+			continue
+		}
 		if !item.allowOverlap && m.runs.IsActiveScript(item.scriptPath) {
 			_, _ = m.db.Exec("INSERT INTO schedule_triggers (id, schedule_id, scheduled_for, result, run_id, error) VALUES (?, ?, ?, 'skipped', '', '')", triggerID, item.id, item.scheduledFor)
 			m.recordAudit("schedule_trigger", item.name, "skipped")
