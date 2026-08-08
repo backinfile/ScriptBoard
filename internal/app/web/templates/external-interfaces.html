@@ -3,7 +3,12 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "external.title"}} · ScriptBoard</title></head>
 <body>
 <main class="workspace external-interfaces-page" data-external-interfaces-page data-copying-key-label="{{t .Locale "external.copying_key"}}">
-  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "external.eyebrow"}}</p><h1>{{t .Locale "external.title"}}</h1><p>{{t .Locale "external.description"}}</p></div><a class="button button--primary" href="/config/external-interfaces/keys/new" data-task-link><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "external.create_key"}}</a></header>
+  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "external.eyebrow"}}</p><h1>{{t .Locale "external.title"}}</h1><p>{{t .Locale "external.description"}}</p></div>{{if eq .ActiveTab "interfaces"}}<a class="button button--primary" href="/config/external-interfaces/keys/new" data-task-link><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "external.create_key"}}</a>{{end}}</header>
+  <nav class="external-interface-tabs" aria-label="{{t .Locale "external.sections"}}">
+    <a href="/config/external-interfaces" {{if eq .ActiveTab "interfaces"}}aria-current="page"{{end}}><span data-lucide="network" aria-hidden="true"></span>{{t .Locale "external.interface_list"}}</a>
+    <a href="/config/external-interfaces?tab=activity" {{if eq .ActiveTab "activity"}}aria-current="page"{{end}}><span data-lucide="scroll-text" aria-hidden="true"></span>{{t .Locale "external.activity"}}</a>
+  </nav>
+  {{if eq .ActiveTab "interfaces"}}
   <aside class="inline-notice"><span data-lucide="shield-check" aria-hidden="true"></span><p>{{t .Locale "external.security_notice"}}</p></aside>
   {{if .Keys}}
   <div class="external-key-list">
@@ -28,15 +33,18 @@
   {{end}}
   </div>
   {{else}}<section class="empty-state"><span data-lucide="plug" aria-hidden="true"></span><p>{{t .Locale "external.empty"}}</p><a class="button" href="/config/external-interfaces/keys/new" data-task-link>{{t .Locale "external.create_key"}}</a></section>{{end}}
-  <section class="external-activity"><header><div><p class="page-eyebrow">{{t .Locale "external.activity_eyebrow"}}</p><h2>{{t .Locale "external.activity"}}</h2></div><span>{{.Pagination.Total}} {{t .Locale "external.request_records"}}</span></header>
+  {{else}}
+  <section class="external-activity"><header><div><h2>{{t .Locale "external.activity"}}</h2><p>{{t .Locale "external.activity_description"}}</p></div><span>{{.Pagination.Total}} {{t .Locale "external.request_records"}}</span></header>
     <div class="section-tools section-tools--history"><form class="history-filter-form" method="get">
+      <input type="hidden" name="tab" value="activity">
       <label class="search-field history-filter-search"><span data-lucide="search" aria-hidden="true"></span><span class="sr-only">{{t .Locale "external.search"}}</span><input type="search" name="q" value="{{.Filters.Query}}" autocomplete="off" placeholder="{{t .Locale "external.search_placeholder"}}"></label>
       <fieldset class="history-date-range"><legend class="sr-only">{{t .Locale "common.date_range"}}</legend><label><span class="sr-only">{{t .Locale "common.start_date"}}</span><input type="date" name="from" value="{{.Filters.FromDate}}" aria-label="{{t .Locale "common.start_date"}}"></label><span class="history-date-separator" data-lucide="arrow-right" aria-hidden="true"></span><label><span class="sr-only">{{t .Locale "common.end_date"}}</span><input type="date" name="to" value="{{.Filters.ToDate}}" aria-label="{{t .Locale "common.end_date"}}"></label></fieldset>
-      <div class="history-filter-actions"><button class="button button--primary" type="submit"><span data-lucide="search" aria-hidden="true"></span>{{t .Locale "common.search"}}</button>{{if .Filters.HasActiveSelection}}<a class="button button--quiet" href="/config/external-interfaces"><span data-lucide="x" aria-hidden="true"></span>{{t .Locale "common.clear"}}</a>{{end}}</div>
+      <div class="history-filter-actions"><button class="button button--primary" type="submit"><span data-lucide="search" aria-hidden="true"></span>{{t .Locale "common.search"}}</button>{{if .Filters.HasActiveSelection}}<a class="button button--quiet" href="/config/external-interfaces?tab=activity"><span data-lucide="x" aria-hidden="true"></span>{{t .Locale "common.clear"}}</a>{{end}}</div>
     </form></div>
     {{if .Requests}}<div class="table-shell"><table class="records-table"><thead><tr><th>{{t .Locale "external.when"}}</th><th>{{t .Locale "external.functions"}}</th><th>{{t .Locale "external.type"}}</th><th>{{t .Locale "external.result"}}</th><th>{{t .Locale "external.detail"}}</th></tr></thead><tbody>{{range .Requests}}<tr><td data-label="{{t $.Locale "external.when"}}"><time datetime="{{machineTime .OccurredAt}}" data-local-time>{{localTime $.Locale .OccurredAt}}</time></td><td data-label="{{t $.Locale "external.functions"}}"><strong>{{.KeyLabel}}</strong><small>{{.EntryName}}</small></td><td data-label="{{t $.Locale "external.type"}}">{{.ActionText}}</td><td data-label="{{t $.Locale "external.result"}}"><span class="status-chip" data-state="{{.Result}}"><span class="status-dot" aria-hidden="true"></span>{{.ResultText}} · {{.HTTPStatus}}</span></td><td data-label="{{t $.Locale "external.detail"}}">{{if .RunID}}<a href="/history/runs/{{.RunID}}"><code>{{.RunID}}</code></a>{{else if .Message}}<span class="external-request-message">{{.Message}}</span>{{else}}—{{end}}</td></tr>{{end}}</tbody></table></div>{{else}}<p class="empty-copy external-activity__empty">{{if .Filters.HasActiveSelection}}{{t .Locale "external.no_matching_requests"}}{{else}}{{t .Locale "external.no_requests"}}{{end}}</p>{{end}}
     <nav class="pagination" aria-label="{{t .Locale "external.pagination"}}"><span>{{.Pagination.Total}} {{t .Locale "common.records"}} · {{.Pagination.Page}} / {{.Pagination.PageCount}}</span><div>{{if .Pagination.HasPrevious}}<a href="{{.Pagination.PreviousURL}}">{{t .Locale "common.previous"}}</a>{{else}}<span aria-disabled="true">{{t .Locale "common.previous"}}</span>{{end}}{{if .Pagination.HasNext}}<a href="{{.Pagination.NextURL}}">{{t .Locale "common.next"}}</a>{{else}}<span aria-disabled="true">{{t .Locale "common.next"}}</span>{{end}}</div></nav>
   </section>
+  {{end}}
 </main>
 </body>
 </html>

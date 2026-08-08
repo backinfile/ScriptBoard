@@ -37,6 +37,7 @@ type externalInvocationView struct {
 }
 
 type externalInterfacesPageData struct {
+	ActiveTab  string
 	Keys       []externalKeyView
 	Entries    map[string][]externalEntryView
 	Requests   []externalInvocationView
@@ -77,6 +78,10 @@ func (a *App) externalInterfacesPage(response http.ResponseWriter, request *http
 	current := request.Context().Value(sessionContextKey).(session)
 	locale := resolveWebLocale(request)
 	now := time.Now().UTC()
+	activeTab := "interfaces"
+	if request.URL.Query().Get("tab") == "activity" {
+		activeTab = "activity"
+	}
 	filters, err := parseAuditFilters(request.URL.Query())
 	if err != nil {
 		key := "common.invalid_date_range"
@@ -145,7 +150,7 @@ func (a *App) externalInterfacesPage(response http.ResponseWriter, request *http
 	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := externalInterfacesTemplate.Execute(response, externalInterfacesPageData{
-		Keys: views, Entries: entries, Requests: requests, Filters: filters, Pagination: pagination,
+		ActiveTab: activeTab, Keys: views, Entries: entries, Requests: requests, Filters: filters, Pagination: pagination,
 		CSRFToken: current.csrfToken, Locale: locale, Now: now,
 	}); err != nil {
 		http.Error(response, "Unable to render External Interfaces", http.StatusInternalServerError)

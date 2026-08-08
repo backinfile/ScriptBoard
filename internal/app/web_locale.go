@@ -24,6 +24,10 @@ type localizedMessage struct {
 }
 
 var webMessages = map[string]localizedMessage{
+	"mysql.connection_failed_label":                 {"连接失败", "Connection failed"},
+	"external.sections":                             {"外部接口分区", "External interface sections"},
+	"external.interface_list":                       {"接口列表", "Interfaces"},
+	"external.activity_description":                 {"查看外部调用的时间、结果及关联运行。", "Review external calls, results, and linked runs."},
 	"assistant.agent_profile":                       {"Agent 工作模式", "Agent profile"},
 	"assistant.profile.general":                     {"通用助手", "General assistant"},
 	"assistant.profile.diagnose-failed-run":         {"诊断失败 Run", "Diagnose failed Run"},

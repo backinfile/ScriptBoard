@@ -28,6 +28,7 @@ type mysqlDatabasesPageData struct {
 	Operations                                            []mysqlmanager.Operation
 	Tools                                                 mysqlmanager.ToolSettings
 	LoadError                                             string
+	ConnectionFailed                                      bool
 	ActiveTab                                             string
 	DatabaseCount, BackupCount, PlanCount, OperationCount int
 	Pagination                                            mysqlPagination
@@ -122,7 +123,9 @@ func (a *App) mysqlDatabasesPage(response http.ResponseWriter, request *http.Req
 		data.PlanCount = len(data.Plans)
 		probeContext, cancel := context.WithTimeout(request.Context(), 5*time.Second)
 		status, statusErr := a.mysql.Status(probeContext, selectedID)
-		if statusErr == nil {
+		if statusErr != nil {
+			data.ConnectionFailed = true
+		} else {
 			data.Status = &status
 			data.Databases, statusErr = a.mysql.Databases(probeContext, selectedID)
 		}
