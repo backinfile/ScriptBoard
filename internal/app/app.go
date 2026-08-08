@@ -239,16 +239,33 @@ func webTemplateFunctions() template.FuncMap {
 	}
 }
 
-func humanBytes(value uint64) string {
+func humanBytes(value any) string {
+	var bytes uint64
+	switch number := value.(type) {
+	case uint64:
+		bytes = number
+	case uint:
+		bytes = uint64(number)
+	case int64:
+		if number > 0 {
+			bytes = uint64(number)
+		}
+	case int:
+		if number > 0 {
+			bytes = uint64(number)
+		}
+	default:
+		return "0 B"
+	}
 	units := []string{"B", "KiB", "MiB", "GiB", "TiB"}
-	amount := float64(value)
+	amount := float64(bytes)
 	unit := 0
 	for amount >= 1024 && unit < len(units)-1 {
 		amount /= 1024
 		unit++
 	}
 	if unit == 0 {
-		return fmt.Sprintf("%d %s", value, units[unit])
+		return fmt.Sprintf("%d %s", bytes, units[unit])
 	}
 	return fmt.Sprintf("%.1f %s", amount, units[unit])
 }

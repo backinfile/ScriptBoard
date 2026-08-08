@@ -2156,6 +2156,47 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .mysql-overview-strip > span { width: 20px; color: var(--accent); }
 .mysql-overview-strip div { display: grid; gap: 4px; min-width: 0; }
 .mysql-overview-strip code { overflow-wrap: anywhere; }
+.mysql-page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 28px; }
+.mysql-page-heading > div:first-child { min-width: 0; }
+.mysql-heading-actions, .mysql-instance-actions, .mysql-section-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.mysql-drawer { display: inline-block; }
+.mysql-drawer > summary { list-style: none; cursor: pointer; }
+.mysql-drawer > summary::-webkit-details-marker { display: none; }
+.mysql-drawer-layer { position: fixed; z-index: 120; inset: 0; overflow: hidden; visibility: hidden; pointer-events: none; }
+.mysql-drawer[open] > .mysql-drawer-layer { visibility: visible; pointer-events: auto; }
+.mysql-drawer-scrim { position: absolute; inset: 0; background: var(--overlay-scrim); opacity: 0; transition: opacity 180ms ease-out; }
+.mysql-drawer[open] .mysql-drawer-scrim { opacity: 1; }
+.mysql-drawer-sheet { position: absolute; inset: 0 0 0 auto; display: flex; width: min(620px, calc(100vw - 280px)); min-width: 520px; flex-direction: column; overflow: hidden; color: var(--ink); background: var(--surface); border-left: 1px solid var(--rule-strong); box-shadow: var(--overlay-shadow); outline: 0; transform: translateX(100%); transition: transform var(--overlay-transition); }
+.mysql-drawer[open] .mysql-drawer-sheet { transform: translateX(0); }
+.mysql-drawer-sheet > header { display: flex; flex: 0 0 auto; align-items: flex-start; justify-content: space-between; gap: 24px; padding: var(--overlay-header-y) var(--overlay-header-x) 21px; border-bottom: 1px solid var(--rule-strong); }
+.mysql-drawer-sheet > header > div { min-width: 0; }
+.mysql-drawer-sheet > header p { margin: 0 0 7px; color: var(--accent); font-size: .7rem; font-weight: 650; letter-spacing: .035em; }
+.mysql-drawer-sheet > header h2 { margin: 0; font-size: 1.35rem; line-height: 1.2; letter-spacing: -.025em; }
+.mysql-drawer-sheet > header small { display: block; max-width: 60ch; margin-top: 7px; color: var(--muted); line-height: 1.5; }
+.mysql-drawer-sheet > header .icon-button { flex: 0 0 auto; width: var(--control-height-field); min-width: var(--control-height-field); height: var(--control-height-field); min-height: var(--control-height-field); padding: 0; }
+.mysql-drawer-form { display: flex; min-height: 0; flex: 1; flex-direction: column; }
+.mysql-drawer-body { display: grid; min-height: 0; flex: 1; gap: 16px; padding: 24px var(--overlay-header-x); overflow-y: auto; overscroll-behavior: contain; }
+.mysql-drawer-body label, .mysql-drawer-body fieldset, .mysql-settings-stack label { display: grid; gap: 7px; color: var(--muted); font-size: .84rem; }
+.mysql-drawer-body .field-grid { display: grid; grid-template-columns: minmax(0, 1fr) 112px; gap: 12px; }
+.mysql-drawer-form > footer { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 8px; padding: 16px var(--overlay-footer-x) 20px; background: #fbfbfc; border-top: 1px solid var(--rule); }
+.mysql-settings-stack, .mysql-import-stack { align-content: start; }
+.mysql-settings-stack > form, .mysql-import-stack > form { display: grid; gap: 14px; padding: 0 0 26px; border-bottom: 1px solid var(--rule); }
+.mysql-settings-stack > form + form, .mysql-import-stack > form + form { padding-top: 8px; }
+.mysql-settings-stack h3, .mysql-import-stack h3 { margin: 0; font-size: 1rem; }
+.mysql-settings-stack p, .mysql-import-stack p { margin: 4px 0 0; color: var(--muted); font-size: .78rem; }
+.mysql-settings-stack .button, .mysql-import-stack .button { justify-self: start; }
+.mysql-database-choices { padding: 0; border: 0; }
+.mysql-database-choices legend { margin-bottom: 10px; color: var(--ink); font-weight: 650; }
+.mysql-database-choices label { grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 11px; padding: 12px 0; border-top: 1px solid var(--rule); color: var(--ink); cursor: pointer; }
+.mysql-database-choices label input { margin-top: 3px; }
+.mysql-database-choices label span { display: grid; gap: 2px; }
+.mysql-database-choices label small { color: var(--muted); }
+.mysql-danger-drawer { margin-top: 64px; }
+.mysql-danger-drawer > summary { color: var(--danger); }
+@starting-style {
+  .mysql-drawer[open] .mysql-drawer-scrim { opacity: 0; }
+  .mysql-drawer[open] .mysql-drawer-sheet { transform: translateX(100%); }
+}
 .mysql-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); gap: clamp(28px, 5vw, 72px); align-items: start; }
 .mysql-instance-form { position: sticky; top: 28px; padding-left: 28px; border-left: 1px solid var(--rule-strong); }
 .mysql-instance-form h2 { margin: 4px 0 22px; }
@@ -2200,6 +2241,14 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
   .mysql-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .mysql-metrics > div:nth-child(2n) { border-right: 0; }
   .mysql-detail__head, .mysql-danger-zone form { align-items: stretch; flex-direction: column; }
+  .mysql-page-heading, .mysql-detail__head { align-items: stretch; flex-direction: column; }
+  .mysql-heading-actions, .mysql-instance-actions, .mysql-section-actions { justify-content: flex-start; }
+  .mysql-drawer-sheet { width: 100vw; min-width: 0; }
+  .mysql-drawer-sheet > header { padding: 20px 18px 18px; }
+  .mysql-drawer-body { padding: 20px 18px; }
+  .mysql-drawer-form > footer { padding: 14px 18px max(18px, env(safe-area-inset-bottom)); }
+  .mysql-drawer-body .field-grid { grid-template-columns: 1fr; }
+  .mysql-heading-actions > .mysql-drawer, .mysql-heading-actions > .mysql-drawer > summary { width: 100%; }
 }
 table { width: 100%; border-collapse: collapse; font-size: .86rem; text-align: left; }
 th {

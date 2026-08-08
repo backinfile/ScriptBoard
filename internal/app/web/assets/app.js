@@ -5154,6 +5154,76 @@
     });
   }
 
+  function initMySQLDrawers(cleanups) {
+    const root = document.querySelector("[data-mysql-workspace]");
+    if (!root) return;
+    const drawers = [...root.querySelectorAll("details.mysql-drawer")];
+    let active = null;
+
+    const close = (drawer, restoreFocus = true) => {
+      if (!drawer?.open) return;
+      drawer.open = false;
+      drawer.querySelector(":scope > summary")?.setAttribute("aria-expanded", "false");
+      if (active === drawer) active = null;
+      document.body.style.overflow = "";
+      if (restoreFocus) drawer.querySelector(":scope > summary")?.focus();
+    };
+    const onToggle = event => {
+      const drawer = event.currentTarget;
+      const summary = drawer.querySelector(":scope > summary");
+      summary?.setAttribute("aria-expanded", String(drawer.open));
+      if (!drawer.open) {
+        if (active === drawer) {
+          active = null;
+          document.body.style.overflow = "";
+        }
+        return;
+      }
+      drawers.forEach(candidate => { if (candidate !== drawer && candidate.open) close(candidate, false); });
+      active = drawer;
+      document.body.style.overflow = "hidden";
+      window.setTimeout(() => drawer.querySelector(".mysql-drawer-sheet")?.focus(), 180);
+    };
+    const onClick = event => {
+      const control = event.target.closest("[data-mysql-drawer-close]");
+      if (!control) return;
+      const drawer = control.closest("details.mysql-drawer");
+      if (!drawer) return;
+      event.preventDefault();
+      close(drawer);
+    };
+    const onKeydown = event => {
+      if (!active?.open) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close(active);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const sheet = active.querySelector(".mysql-drawer-sheet");
+      const focusable = [...sheet.querySelectorAll("a[href],button:not([disabled]),input:not([disabled]):not([type='hidden']),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex='-1'])")]
+        .filter(element => element.getClientRects().length > 0);
+      if (!focusable.length) { event.preventDefault(); sheet.focus(); return; }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && (event.target === first || !sheet.contains(event.target))) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && event.target === last) { event.preventDefault(); first.focus(); }
+    };
+
+    drawers.forEach(drawer => {
+      drawer.querySelector(":scope > summary")?.setAttribute("aria-expanded", String(drawer.open));
+      drawer.addEventListener("toggle", onToggle);
+    });
+    root.addEventListener("click", onClick);
+    document.addEventListener("keydown", onKeydown);
+    cleanups.push(() => {
+      drawers.forEach(drawer => drawer.removeEventListener("toggle", onToggle));
+      root.removeEventListener("click", onClick);
+      document.removeEventListener("keydown", onKeydown);
+      document.body.style.overflow = "";
+    });
+  }
+
   function initSecurityBanDrawer(cleanups) {
     const root = document.querySelector("[data-security-page]");
     const host = document.querySelector("[data-security-ban-drawer]");
@@ -5331,6 +5401,7 @@
     initExternalEntryForm(document, cleanups);
     initDisplaySettings(cleanups);
 	initSecurityDialogs(cleanups);
+	initMySQLDrawers(cleanups);
     initSecurityBanDrawer(cleanups);
     initAssistantWorkspace(cleanups);
     initAssistantSettings(cleanups);

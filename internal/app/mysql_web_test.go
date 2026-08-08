@@ -21,7 +21,10 @@ func TestAdministratorCanRegisterMySQLInstanceFromDatabaseWorkspace(t *testing.T
 	body, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusOK || !strings.Contains(string(body), `data-mysql-workspace`) ||
-		!strings.Contains(string(body), `/resources/databases/instances`) {
+		!strings.Contains(string(body), `/resources/databases/instances`) ||
+		!strings.Contains(string(body), `class="mysql-drawer"`) ||
+		!strings.Contains(string(body), `class="mysql-drawer-sheet"`) ||
+		!strings.Contains(string(body), `action="/resources/databases/settings/backup-root"`) {
 		t.Fatalf("database workspace status=%d body=%s", response.StatusCode, body)
 	}
 	response, err = client.PostForm(serverURL+"/resources/databases/instances", url.Values{
