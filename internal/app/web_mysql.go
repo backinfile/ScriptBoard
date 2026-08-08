@@ -18,6 +18,7 @@ type mysqlDatabasesPageData struct {
 	CSRFToken                                             string
 	BackupRoot                                            string
 	Instances                                             []mysqlmanager.Instance
+	InstanceRows                                          []mysqlmanager.Instance
 	Selected                                              *mysqlmanager.Instance
 	Status                                                *mysqlmanager.Status
 	Databases                                             []mysqlmanager.Database
@@ -30,33 +31,55 @@ type mysqlDatabasesPageData struct {
 	ActiveTab                                             string
 	DatabaseCount, BackupCount, PlanCount, OperationCount int
 	Pagination                                            mysqlPagination
+	InstancePagination                                    mysqlPagination
 }
 
 type mysqlPagination struct {
 	Page, Pages, Total, Previous, Next int
 	HasPrevious, HasNext               bool
+	PageNumbers                        []int
 }
 
 const mysqlPageSize = 12
+const mysqlInstancePageSize = 8
 
-func newMySQLPagination(page, total int) mysqlPagination {
-	pages := max(1, (total+mysqlPageSize-1)/mysqlPageSize)
+func newMySQLPaginationWithSize(page, total, pageSize int) mysqlPagination {
+	pages := max(1, (total+pageSize-1)/pageSize)
 	page = min(max(page, 1), pages)
-	return mysqlPagination{Page: page, Pages: pages, Total: total, Previous: max(1, page-1), Next: min(pages, page+1), HasPrevious: page > 1, HasNext: page < pages}
+	pagination := mysqlPagination{Page: page, Pages: pages, Total: total, Previous: max(1, page-1), Next: min(pages, page+1), HasPrevious: page > 1, HasNext: page < pages}
+	start, end := max(1, page-2), min(pages, page+2)
+	if end-start < 4 {
+		start = max(1, end-4)
+		end = min(pages, start+4)
+	}
+	for number := start; number <= end; number++ {
+		pagination.PageNumbers = append(pagination.PageNumbers, number)
+	}
+	return pagination
 }
 
-func mysqlRequestedPage(request *http.Request) int {
-	page, err := strconv.Atoi(request.URL.Query().Get("page"))
+func newMySQLPagination(page, total int) mysqlPagination {
+	return newMySQLPaginationWithSize(page, total, mysqlPageSize)
+}
+
+func mysqlRequestedNamedPage(request *http.Request, name string) int {
+	page, err := strconv.Atoi(request.URL.Query().Get(name))
 	if err != nil || page < 1 {
 		return 1
 	}
 	return page
 }
 
+func mysqlRequestedPage(request *http.Request) int { return mysqlRequestedNamedPage(request, "page") }
+
 func mysqlSlicePage[T any](items []T, page int) ([]T, mysqlPagination) {
-	pagination := newMySQLPagination(page, len(items))
-	start := (pagination.Page - 1) * mysqlPageSize
-	end := min(start+mysqlPageSize, len(items))
+	return mysqlSlicePageWithSize(items, page, mysqlPageSize)
+}
+
+func mysqlSlicePageWithSize[T any](items []T, page, pageSize int) ([]T, mysqlPagination) {
+	pagination := newMySQLPaginationWithSize(page, len(items), pageSize)
+	start := (pagination.Page - 1) * pageSize
+	end := min(start+pageSize, len(items))
 	return items[start:end], pagination
 }
 
@@ -71,11 +94,12 @@ func (a *App) mysqlDatabasesPage(response http.ResponseWriter, request *http.Req
 		Locale: resolveWebLocale(request), CSRFToken: current.csrfToken,
 		BackupRoot: a.mysql.BackupRoot(), Instances: instances,
 		Tools:     a.mysql.Tools(),
-		ActiveTab: "databases",
+		ActiveTab: "overview",
 	}
-	if tab := strings.TrimSpace(request.URL.Query().Get("tab")); tab == "backups" || tab == "plans" || tab == "operations" {
+	if tab := strings.TrimSpace(request.URL.Query().Get("tab")); tab == "databases" || tab == "backups" || tab == "plans" || tab == "operations" {
 		data.ActiveTab = tab
 	}
+	data.InstanceRows, data.InstancePagination = mysqlSlicePageWithSize(instances, mysqlRequestedNamedPage(request, "instance_page"), mysqlInstancePageSize)
 	selectedID := strings.TrimSpace(request.URL.Query().Get("instance"))
 	if selectedID != "" {
 		for index := range instances {

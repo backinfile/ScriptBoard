@@ -786,12 +786,12 @@ body[data-app-shell] { padding-left: var(--sidebar-width); }
 
 /* AI settings: existing horizontal settings navigation, compact ledger rows,
    and the same right-side task drawer geometry used elsewhere in ScriptBoard. */
-.assistant-settings-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0 0 36px; border-top: 1px solid var(--rule-strong); }
-.assistant-settings-summary > div { min-width: 0; padding: 14px 14px 14px 0; border-bottom: 1px solid var(--rule); }
+.assistant-settings-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0 0 24px; border-top: 1px solid var(--rule-strong); }
+.assistant-settings-summary > div { min-width: 0; padding: 11px 14px 11px 0; border-bottom: 1px solid var(--rule); }
 .assistant-settings-summary dt { color: var(--faint); font-size: .68rem; }
 .assistant-settings-summary dd { margin: 3px 0 0; overflow: hidden; font-size: .82rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.assistant-settings-section { margin-top: 38px; padding-top: 28px; border-top: 1px solid var(--rule-strong); }
-.assistant-settings-section__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 18px; }
+.assistant-settings-section { margin-top: 26px; padding-top: 20px; border-top: 1px solid var(--rule-strong); }
+.assistant-settings-section__head { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 14px; }
 .assistant-settings-section__head h3 { margin: 0 0 5px; font-size: 1.05rem; }
 .assistant-settings-section__head p:not(.section-index) { max-width: 62ch; margin: 0; color: var(--muted); font-size: .8rem; }
 .assistant-llm-list { border-top: 1px solid var(--rule-strong); }
@@ -833,6 +833,13 @@ label.assistant-policy-row { cursor: pointer; }
 .assistant-toggle input:checked + span::after { transform: translateX(16px); }
 .assistant-toggle input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
 .assistant-policy-actions { display: flex; justify-content: flex-end; padding: 16px 0; }
+.assistant-guardrail-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; border: 1px solid var(--rule); border-radius: 8px; background: color-mix(in srgb, var(--surface) 88%, transparent); }
+.assistant-guardrail-summary > div { min-width: 0; padding: 13px 16px; border-right: 1px solid var(--rule); }
+.assistant-guardrail-summary > div:last-child { border-right: 0; }
+.assistant-guardrail-summary dt { color: var(--faint); font-size: .66rem; }
+.assistant-guardrail-summary dd { margin: 5px 0 0; font-size: .78rem; font-weight: 650; }
+.assistant-guardrail-drawer .assistant-policy { border-top: 0; }
+.assistant-guardrail-drawer .assistant-policy-row:first-child { border-top: 1px solid var(--rule-strong); }
 .assistant-runtime-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .assistant-runtime-actions form { margin: 0; }
 .assistant-runtime-panel { overflow: hidden; border: 1px solid var(--rule-strong); border-radius: 8px; background: color-mix(in srgb, var(--surface) 88%, transparent); }
@@ -937,6 +944,9 @@ label.assistant-policy-row { cursor: pointer; }
   .assistant-settings-section__head { flex-direction: column; }
   .assistant-settings-section__head .button { width: 100%; justify-content: center; }
   .assistant-policy-row { gap: 16px; padding-inline: 4px; }
+  .assistant-guardrail-summary { grid-template-columns: 1fr; }
+  .assistant-guardrail-summary > div { border-right: 0; border-bottom: 1px solid var(--rule); }
+  .assistant-guardrail-summary > div:last-child { border-bottom: 0; }
   .assistant-runtime-actions { width: 100%; justify-content: flex-start; }
   .assistant-runtime-diagnostics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .assistant-runtime-diagnostics > div:nth-child(2) { border-right: 0; }
@@ -2156,8 +2166,13 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .mysql-overview-strip > span { width: 20px; color: var(--accent); }
 .mysql-overview-strip div { display: grid; gap: 4px; min-width: 0; }
 .mysql-overview-strip code { overflow-wrap: anywhere; }
-.mysql-instance-tabs { display: flex; gap: 8px; margin-bottom: 8px; padding: 3px 2px 10px; overflow-x: auto; scrollbar-width: thin; scroll-snap-type: x proximity; }
-.mysql-instance-tabs a { display: grid; min-width: min(280px, 78vw); max-width: 360px; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 3px 10px; padding: 11px 13px; color: var(--ink); background: transparent; border-radius: 6px; scroll-snap-align: start; text-decoration: none; }
+.mysql-instance-workspace { display: grid; min-height: max(600px, calc(100vh - 260px)); grid-template-columns: minmax(220px, 260px) minmax(0, 1fr); align-items: stretch; margin-top: 36px; border-top: 1px solid var(--rule-strong); }
+.mysql-instance-rail { min-width: 0; padding: 28px 22px 72px 0; border-right: 1px solid var(--rule-strong); }
+.mysql-instance-rail__head { margin-bottom: 18px; }
+.mysql-instance-rail__head p { margin: 0 0 5px; }
+.mysql-instance-rail__head h2 { margin: 0; font-size: 1rem; letter-spacing: -.02em; }
+.mysql-instance-tabs { display: grid; gap: 2px; }
+.mysql-instance-tabs a { display: grid; min-width: 0; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 3px 10px; padding: 11px 12px; color: var(--ink); background: transparent; border-radius: 6px; text-decoration: none; }
 .mysql-instance-tabs a:hover { color: var(--ink); background: var(--surface); }
 .mysql-instance-tabs a[aria-current="page"] { background: var(--accent-soft); box-shadow: inset 2px 0 var(--accent); }
 .mysql-instance-tabs__icon { width: 17px; color: var(--faint); }
@@ -2166,6 +2181,12 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .mysql-instance-tabs__copy strong { font-size: .8rem; }
 .mysql-instance-tabs__copy small { color: var(--muted); font: .64rem/1.35 var(--font-mono); }
 .mysql-instance-tabs__tls { align-self: start; color: var(--faint); font: .6rem/1.35 var(--font-mono); }
+.mysql-instance-rail__empty { padding: 40px 12px; }
+.mysql-instance-pagination { display: flex; align-items: center; justify-content: center; gap: 3px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--rule); }
+.mysql-instance-pagination a { display: grid; min-width: 30px; min-height: 30px; place-items: center; padding: 5px; color: var(--muted); border-radius: 5px; font: 650 .68rem/1 var(--font-mono); text-decoration: none; }
+.mysql-instance-pagination a:hover { color: var(--ink); background: var(--surface); }
+.mysql-instance-pagination a[aria-current="page"] { color: var(--accent); background: var(--accent-soft); }
+.mysql-instance-pagination svg { width: 14px; height: 14px; }
 .mysql-page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 28px; }
 .mysql-page-heading > div:first-child { min-width: 0; }
 .mysql-heading-actions, .mysql-instance-actions, .mysql-section-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
@@ -2195,6 +2216,13 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .mysql-settings-stack h3, .mysql-import-stack h3 { margin: 0; font-size: 1rem; }
 .mysql-settings-stack p, .mysql-import-stack p { margin: 4px 0 0; color: var(--muted); font-size: .78rem; }
 .mysql-settings-stack .button, .mysql-import-stack .button { justify-self: start; }
+.mysql-plan-cron { display: grid; gap: 14px; padding-block: 4px; }
+.mysql-plan-cron > header { display: grid; gap: 4px; }
+.mysql-plan-cron > header h3, .mysql-plan-cron > header p { margin: 0; }
+.mysql-plan-cron > header h3 { color: var(--ink); font-size: .94rem; }
+.mysql-plan-cron > header p { color: var(--muted); font-size: .74rem; line-height: 1.45; }
+.mysql-plan-cron .cron-preview-pane { padding: 14px 0 0; border-left: 0; border-top: 1px solid var(--rule); }
+.mysql-plan-cron .cron-preview-pane .cron-feedback { min-height: 96px; }
 .mysql-database-choices { padding: 0; border: 0; }
 .mysql-database-choices legend { margin-bottom: 10px; color: var(--ink); font-weight: 650; }
 .mysql-database-choices label { grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 11px; padding: 12px 0; border-top: 1px solid var(--rule); color: var(--ink); cursor: pointer; }
@@ -2203,6 +2231,11 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .mysql-database-choices label small { color: var(--muted); }
 .mysql-danger-drawer { margin-top: 64px; }
 .mysql-danger-drawer > summary { color: var(--danger); }
+.mysql-drop-drawer { display: block; margin: 0; }
+.mysql-drop-drawer > summary.sr-only { position: absolute; }
+.mysql-confirm-target { display: grid; gap: 7px; padding: 14px 16px; background: var(--canvas); border: 1px solid var(--rule); border-radius: 6px; }
+.mysql-confirm-target small { color: var(--muted); font-size: .72rem; }
+.mysql-confirm-target code { color: var(--danger); overflow-wrap: anywhere; font-size: .9rem; }
 @starting-style {
   .mysql-drawer[open] .mysql-drawer-scrim { opacity: 0; }
   .mysql-drawer[open] .mysql-drawer-sheet { transform: translateX(100%); }
@@ -2214,7 +2247,12 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .mysql-instance-form label { display: grid; gap: 7px; font-size: .84rem; color: var(--muted); }
 .mysql-instance-form .field-grid { display: grid; grid-template-columns: minmax(0, 1fr) 96px; gap: 12px; }
 .mysql-instance-form .button { justify-self: start; }
-.mysql-detail { margin-top: clamp(44px, 8vw, 96px); padding-top: 28px; border-top: 1px solid var(--rule-strong); }
+.mysql-detail { min-width: 0; margin: 0; padding: 28px 0 72px clamp(24px, 4vw, 56px); }
+.mysql-detail--empty { display: grid; min-height: 520px; align-content: center; justify-items: center; gap: 9px; color: var(--muted); text-align: center; }
+.mysql-detail--empty > svg { width: 28px; height: 28px; color: var(--faint); }
+.mysql-detail--empty h2, .mysql-detail--empty p { margin: 0; }
+.mysql-detail--empty h2 { color: var(--ink); font-size: 1.15rem; }
+.mysql-detail--empty p { max-width: 42ch; font-size: .82rem; line-height: 1.55; }
 .mysql-detail__head { display: flex; justify-content: space-between; gap: 20px; align-items: end; margin-bottom: 28px; }
 .mysql-detail__head h2 { margin: 3px 0 5px; font-size: clamp(2rem, 5vw, 4.5rem); letter-spacing: -.055em; }
 .mysql-detail__head p { margin: 0; color: var(--muted); }
@@ -2236,7 +2274,9 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .mysql-metrics > div:nth-child(4n) { border-right: 0; }
 .mysql-metrics small { color: var(--muted); }
 .mysql-metrics strong { font-size: 1.08rem; overflow-wrap: anywhere; }
-.mysql-tabs { display: flex; gap: 24px; margin: 0 0 36px; overflow-x: auto; border-bottom: 1px solid var(--rule-strong); scrollbar-width: thin; }
+.mysql-overview-panel { margin-top: 48px; }
+.mysql-tabs { display: flex; gap: 24px; margin: 0 0 36px; overflow-x: auto; border-bottom: 1px solid var(--rule-strong); scrollbar-width: none; }
+.mysql-tabs::-webkit-scrollbar, .mysql-instance-tabs::-webkit-scrollbar { display: none; }
 .mysql-tabs a { position: relative; display: inline-flex; flex: 0 0 auto; align-items: center; gap: 8px; min-height: 48px; color: var(--muted); font-size: .84rem; font-weight: 620; text-decoration: none; }
 .mysql-tabs a small { min-width: 22px; padding: 2px 6px; color: var(--faint); background: var(--canvas); border: 1px solid var(--rule); border-radius: 999px; font: 600 .68rem/1.2 var(--font-mono); text-align: center; }
 .mysql-tabs a[aria-current="page"] { color: var(--ink); }
@@ -2261,9 +2301,18 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .mysql-operation-row > a { flex: 1; border-bottom: 0; }
 .mysql-pagination { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 28px; padding-top: 18px; color: var(--muted); font-size: .78rem; border-top: 1px solid var(--rule); }
 .mysql-pagination > div { display: flex; gap: 8px; }
+.mysql-pagination a[aria-current="page"] { color: var(--accent); border-color: var(--accent); }
 .mysql-danger-zone { margin-top: 64px; border-top: 1px solid var(--danger); padding-top: 18px; }
 .mysql-danger-zone form { display: flex; gap: 12px; align-items: end; margin-top: 18px; }
 .mysql-danger-zone label { display: grid; gap: 6px; min-width: min(100%, 320px); }
+
+@media (max-width: 1000px) {
+  .mysql-instance-workspace { min-height: 0; grid-template-columns: 1fr; }
+  .mysql-instance-rail { padding: 24px 0 18px; border-right: 0; border-bottom: 1px solid var(--rule-strong); }
+  .mysql-instance-tabs { display: flex; gap: 8px; margin-right: -18px; padding-right: 18px; overflow-x: auto; scrollbar-width: thin; scroll-snap-type: x proximity; }
+  .mysql-instance-tabs a { min-width: min(280px, 78vw); max-width: 360px; scroll-snap-align: start; }
+  .mysql-detail { padding: 28px 0 64px; }
+}
 
 @media (max-width: 760px) {
   .mysql-layout, .mysql-detail-grid { grid-template-columns: 1fr; }
@@ -2276,7 +2325,6 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
   .mysql-heading-actions, .mysql-instance-actions, .mysql-section-actions { justify-content: flex-start; }
   .mysql-instance-actions > form { flex-wrap: wrap; }
   .mysql-tabs { margin-right: -18px; }
-  .mysql-instance-tabs { margin-right: -18px; }
   .mysql-pagination { align-items: stretch; flex-direction: column; }
   .mysql-drawer-sheet { width: 100vw; min-width: 0; }
   .mysql-drawer-sheet > header { padding: 20px 18px 18px; }
@@ -2720,6 +2768,9 @@ td.record-actions { width: 1%; }
 }
 .user-access-actions h2 { margin-bottom: 5px; font-size: 1rem; }
 .user-access-actions p { max-width: 62ch; margin: 0; color: var(--muted); font-size: .8rem; }
+.user-access-actions__buttons { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; }
+.user-access-actions__buttons form { display: flex; margin: 0; }
+.user-access-action { min-width: 128px; height: 100%; justify-content: center; }
 .status-display-settings > header h3 { margin-bottom: 5px; }
 .status-display-settings > header p { max-width: 68ch; margin: 0; color: var(--muted); }
 .status-display-options { display: grid; margin: 22px 0 0; padding: 0; border: 0; border-top: 1px solid var(--rule-strong); }

@@ -28,7 +28,7 @@ func TestAdministratorCanRegisterMySQLInstanceFromDatabaseWorkspace(t *testing.T
 		!strings.Contains(string(body), `action="/resources/databases/settings/backup-root"`) {
 		t.Fatalf("database workspace status=%d body=%s", response.StatusCode, body)
 	}
-	for _, expected := range []string{`data-mysql-overview`, `data-mysql-instances-region`} {
+	for _, expected := range []string{`data-mysql-instances-region`} {
 		if !strings.Contains(string(body), expected) {
 			t.Fatalf("database workspace is missing partial-refresh region %q: %s", expected, body)
 		}
@@ -65,7 +65,7 @@ func TestAdministratorCanRegisterMySQLInstanceFromDatabaseWorkspace(t *testing.T
 	}
 	selectedBody, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, expected := range []string{`class="mysql-instance-tabs"`, `class="mysql-tabs"`, `tab=backups`, `data-connection-test`, `data-preserve-scroll`, `aria-current="page"`} {
+	for _, expected := range []string{`class="mysql-instance-workspace"`, `class="mysql-instance-rail"`, `class="mysql-instance-tabs"`, `class="mysql-tabs"`, `tab=overview`, `tab=backups`, `data-connection-test`, `data-preserve-scroll`, `aria-current="page"`, `data-mysql-drop-drawer`, `Refresh status`} {
 		if !strings.Contains(string(selectedBody), expected) {
 			t.Fatalf("selected database workspace missing %q: %s", expected, selectedBody)
 		}

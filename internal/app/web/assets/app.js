@@ -5079,7 +5079,11 @@
     const form = layer?.querySelector("[data-llm-form]");
     const title = layer?.querySelector("[data-llm-drawer-title]");
     const credentialHelp = layer?.querySelector("[data-credential-help]");
+    const guardrailLayer = root.querySelector("[data-guardrail-drawer]");
+    const guardrailDrawer = guardrailLayer?.querySelector(".assistant-guardrail-drawer");
+    const guardrailForm = guardrailLayer?.querySelector("form");
     let returnFocus = null;
+    let guardrailReturnFocus = null;
 
     const close = () => {
       if (!layer) return;
@@ -5103,30 +5107,58 @@
       form.elements.make_default.checked = row?.dataset.default === "true";
 		form.elements.supports_images.checked = row?.dataset.supportsImages === "true";
 		form.elements.shared.checked = row?.dataset.shared === "true";
-      if (title) title.textContent = row ? (locale() === "zh-CN" ? "编辑 LLM 配置" : "Edit LLM configuration") : (locale() === "zh-CN" ? "新增 LLM 配置" : "Add LLM configuration");
+      if (title) title.textContent = row ? layer.dataset.editTitle : layer.dataset.addTitle;
       if (credentialHelp) credentialHelp.dataset.editing = String(Boolean(row));
       layer.dataset.open = "true";
       layer.setAttribute("aria-hidden", "false");
       document.body.style.overflow = "hidden";
       requestAnimationFrame(() => form.elements.name.focus());
     };
+    const closeGuardrails = () => {
+      if (!guardrailLayer) return;
+      guardrailLayer.dataset.open = "false";
+      guardrailLayer.setAttribute("aria-hidden", "true");
+      if (layer?.dataset.open !== "true") document.body.style.overflow = "";
+      guardrailReturnFocus?.focus?.();
+      guardrailReturnFocus = null;
+    };
+    const openGuardrails = trigger => {
+      if (!guardrailLayer) return;
+      guardrailReturnFocus = trigger || document.activeElement;
+      guardrailLayer.dataset.open = "true";
+      guardrailLayer.setAttribute("aria-hidden", "false");
+      document.body.style.overflow = "hidden";
+      requestAnimationFrame(() => guardrailForm?.querySelector("input:not([type='hidden']),select,button")?.focus());
+    };
     const onClick = event => {
       if (event.target.closest("[data-add-llm]")) { open(null); return; }
       const edit = event.target.closest("[data-edit-llm]");
       if (edit) { open(edit.closest("[data-llm-id]")); return; }
-      if (event.target.closest("[data-close-llm]")) { event.preventDefault(); close(); }
+      if (event.target.closest("[data-close-llm]")) { event.preventDefault(); close(); return; }
+      const guardrailTrigger = event.target.closest("[data-open-guardrails]");
+      if (guardrailTrigger) { openGuardrails(guardrailTrigger); return; }
+      if (event.target.closest("[data-close-guardrails]")) { event.preventDefault(); closeGuardrails(); }
     };
-    const onKeydown = event => {
-      if (layer?.dataset.open !== "true") return;
-      if (event.key === "Escape") { event.preventDefault(); close(); return; }
-      if (event.key !== "Tab" || !drawer) return;
-      const focusable = [...drawer.querySelectorAll("button:not([disabled]),input:not([disabled]):not([type='hidden']),select:not([disabled]),textarea:not([disabled]),a[href]")]
+    const trapFocus = (event, activeDrawer) => {
+      if (event.key !== "Tab" || !activeDrawer) return;
+      const focusable = [...activeDrawer.querySelectorAll("button:not([disabled]),input:not([disabled]):not([type='hidden']),select:not([disabled]),textarea:not([disabled]),a[href]")]
         .filter(element => element.getClientRects().length > 0);
       if (!focusable.length) return;
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
       if (event.shiftKey && event.target === first) { event.preventDefault(); last.focus(); }
       else if (!event.shiftKey && event.target === last) { event.preventDefault(); first.focus(); }
+    };
+    const onKeydown = event => {
+      if (guardrailLayer?.dataset.open === "true") {
+        if (event.key === "Escape") { event.preventDefault(); closeGuardrails(); return; }
+        trapFocus(event, guardrailDrawer);
+        return;
+      }
+      if (layer?.dataset.open === "true") {
+        if (event.key === "Escape") { event.preventDefault(); close(); return; }
+        trapFocus(event, drawer);
+      }
     };
     root.addEventListener("click", onClick);
     document.addEventListener("keydown", onKeydown);
@@ -5214,15 +5246,19 @@
     if (!root) return;
     root.querySelectorAll('form[method="post"]:not([data-connection-test])').forEach(form => form.dataset.async = "");
     const drawers = [...root.querySelectorAll("details.mysql-drawer")];
+    const dropDrawer = root.querySelector("[data-mysql-drop-drawer]");
     let active = null;
+    let dropReturnFocus = null;
 
     const close = (drawer, restoreFocus = true) => {
       if (!drawer?.open) return;
       drawer.open = false;
       drawer.querySelector(":scope > summary")?.setAttribute("aria-expanded", "false");
       if (active === drawer) active = null;
-      document.body.style.overflow = "";
-      if (restoreFocus) drawer.querySelector(":scope > summary")?.focus();
+      if (guardrailLayer?.dataset.open !== "true") document.body.style.overflow = "";
+      if (restoreFocus && drawer === dropDrawer && dropReturnFocus) dropReturnFocus.focus();
+      else if (restoreFocus) drawer.querySelector(":scope > summary")?.focus();
+      if (drawer === dropDrawer) dropReturnFocus = null;
     };
     const onToggle = event => {
       const drawer = event.currentTarget;
@@ -5241,6 +5277,22 @@
       window.setTimeout(() => drawer.querySelector(".mysql-drawer-sheet")?.focus(), 180);
     };
     const onClick = event => {
+      const dropTrigger = event.target.closest("[data-mysql-drop-trigger]");
+      if (dropTrigger && dropDrawer) {
+        event.preventDefault();
+        dropTrigger.closest("details.action-menu")?.removeAttribute("open");
+        dropReturnFocus = dropTrigger;
+        const database = dropTrigger.dataset.database || "";
+        const databaseInput = dropDrawer.querySelector("[data-mysql-drop-database]");
+        const databaseName = dropDrawer.querySelector("[data-mysql-drop-name]");
+        const confirmation = dropDrawer.querySelector("[data-mysql-drop-confirmation]");
+        if (databaseInput) databaseInput.value = database;
+        if (databaseName) databaseName.textContent = database;
+        if (confirmation) confirmation.value = "";
+        dropDrawer.open = true;
+        window.setTimeout(() => confirmation?.focus(), 190);
+        return;
+      }
       const control = event.target.closest("[data-mysql-drawer-close]");
       if (!control) return;
       const drawer = control.closest("details.mysql-drawer");

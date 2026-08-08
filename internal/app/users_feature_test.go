@@ -78,6 +78,8 @@ func TestAdministratorCreatesMaintainerWhoCanSignIn(t *testing.T) {
 		`data-task-kind="user-edit"`,
 		`name="username" value="maintainer-one"`,
 		`<option value="maintainer" selected>`,
+		`class="button-row user-access-actions__buttons"`,
+		`class="button user-access-action"`,
 		`action="/settings/users/` + string(userMatch[1]) + `/reset-password"`,
 		`action="/settings/users/` + string(userMatch[1]) + `/disable"`,
 	} {

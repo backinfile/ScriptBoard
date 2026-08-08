@@ -107,6 +107,7 @@ func TestAIWorkspaceAndSettingsUsePersistedLLMAndConversationState(t *testing.T)
 	}
 	for _, expected := range []string{
 		`href="/settings/ai" aria-current="page"`, `data-assistant-settings`, `data-llm-drawer`,
+		`data-open-guardrails`, `data-guardrail-drawer`, `class="assistant-guardrail-summary"`,
 		`name="default_auto_approval"`, `name="max_active_conversations"`,
 		`name="shared"`,
 		`action="/settings/ai/runtime/check"`,
@@ -115,6 +116,11 @@ func TestAIWorkspaceAndSettingsUsePersistedLLMAndConversationState(t *testing.T)
 	} {
 		if !strings.Contains(string(settings), expected) {
 			t.Fatalf("AI settings are missing %q: %s", expected, settings)
+		}
+	}
+	for _, obsolete := range []string{`01 / LLM`, `02 / RUNTIME`, `03 / GUARDRAILS`} {
+		if strings.Contains(string(settings), obsolete) {
+			t.Fatalf("AI settings still contain obsolete section index %q: %s", obsolete, settings)
 		}
 	}
 
