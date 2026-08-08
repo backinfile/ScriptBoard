@@ -65,7 +65,7 @@ func TestAdministratorCanRegisterMySQLInstanceFromDatabaseWorkspace(t *testing.T
 	}
 	selectedBody, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, expected := range []string{`class="mysql-tabs"`, `tab=backups`, `data-connection-test`} {
+	for _, expected := range []string{`class="mysql-instance-tabs"`, `class="mysql-tabs"`, `tab=backups`, `data-connection-test`, `data-preserve-scroll`, `aria-current="page"`} {
 		if !strings.Contains(string(selectedBody), expected) {
 			t.Fatalf("selected database workspace missing %q: %s", expected, selectedBody)
 		}

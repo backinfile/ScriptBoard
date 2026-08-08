@@ -2156,6 +2156,16 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .mysql-overview-strip > span { width: 20px; color: var(--accent); }
 .mysql-overview-strip div { display: grid; gap: 4px; min-width: 0; }
 .mysql-overview-strip code { overflow-wrap: anywhere; }
+.mysql-instance-tabs { display: flex; gap: 8px; margin-bottom: 8px; padding: 3px 2px 10px; overflow-x: auto; scrollbar-width: thin; scroll-snap-type: x proximity; }
+.mysql-instance-tabs a { display: grid; min-width: min(280px, 78vw); max-width: 360px; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 3px 10px; padding: 11px 13px; color: var(--ink); background: transparent; border-radius: 6px; scroll-snap-align: start; text-decoration: none; }
+.mysql-instance-tabs a:hover { color: var(--ink); background: var(--surface); }
+.mysql-instance-tabs a[aria-current="page"] { background: var(--accent-soft); box-shadow: inset 2px 0 var(--accent); }
+.mysql-instance-tabs__icon { width: 17px; color: var(--faint); }
+.mysql-instance-tabs__copy { display: grid; min-width: 0; gap: 3px; }
+.mysql-instance-tabs__copy strong, .mysql-instance-tabs__copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mysql-instance-tabs__copy strong { font-size: .8rem; }
+.mysql-instance-tabs__copy small { color: var(--muted); font: .64rem/1.35 var(--font-mono); }
+.mysql-instance-tabs__tls { align-self: start; color: var(--faint); font: .6rem/1.35 var(--font-mono); }
 .mysql-page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 28px; }
 .mysql-page-heading > div:first-child { min-width: 0; }
 .mysql-heading-actions, .mysql-instance-actions, .mysql-section-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
@@ -2266,6 +2276,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
   .mysql-heading-actions, .mysql-instance-actions, .mysql-section-actions { justify-content: flex-start; }
   .mysql-instance-actions > form { flex-wrap: wrap; }
   .mysql-tabs { margin-right: -18px; }
+  .mysql-instance-tabs { margin-right: -18px; }
   .mysql-pagination { align-items: stretch; flex-direction: column; }
   .mysql-drawer-sheet { width: 100vw; min-width: 0; }
   .mysql-drawer-sheet > header { padding: 20px 18px 18px; }

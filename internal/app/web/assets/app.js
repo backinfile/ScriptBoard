@@ -640,13 +640,14 @@
     const deferredData = options.deferredData ?? isDeferredDataURL(url);
     const immediate = deferredData && options.immediate === true;
     const title = options.title || navigationTitle(mainNavigationLink(url));
+    const previousScrollY = window.scrollY;
     let shellCommitted = false;
     if (immediate) {
       if (push) history.pushState({ pjax: true }, "", url);
       document.title = title;
       updateShellLocation(url);
       setSidebar(false);
-      window.scrollTo({ top: 0, behavior: "auto" });
+      window.scrollTo({ top: options.preserveScroll ? previousScrollY : 0, behavior: "auto" });
     }
     try {
       const result = await fetchDocument(url, {
@@ -683,7 +684,7 @@
       }
       updateShellLocation(result.response.url);
       setSidebar(false);
-      window.scrollTo({ top: 0, behavior: "auto" });
+      window.scrollTo({ top: options.preserveScroll ? previousScrollY : 0, behavior: "auto" });
       initPage({ openFileQuickAccess: options.openFileQuickAccess === true });
 
       if (deferredData) {
@@ -5524,6 +5525,7 @@
         immediate: mainNavigation || securityTab,
         title: mainNavigation ? navigationTitle(link) : undefined,
         focusSelector: link.dataset.focusAfterNavigation,
+        preserveScroll: link.hasAttribute("data-preserve-scroll"),
         openFileQuickAccess: mainNavigation && destination.pathname === "/resources/files",
       });
     }
