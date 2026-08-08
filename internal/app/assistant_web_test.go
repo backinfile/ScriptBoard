@@ -90,7 +90,7 @@ func TestAIWorkspaceAndSettingsUsePersistedLLMAndConversationState(t *testing.T)
 			t.Fatalf("AI workspace is missing %q: %s", expected, workspace)
 		}
 	}
-	for _, obsolete := range []string{`class="assistant-context-bar"`, `class="assistant-switch"`, `>Context details<`, `>Provider reported<`} {
+	for _, obsolete := range []string{`class="assistant-context-bar"`, `class="assistant-switch"`, `>Context details<`, `>Provider reported<`, `data-assistant-rail-close`} {
 		if strings.Contains(string(workspace), obsolete) {
 			t.Fatalf("AI workspace still contains obsolete composer markup %q: %s", obsolete, workspace)
 		}

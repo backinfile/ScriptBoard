@@ -4907,10 +4907,6 @@
         document.body.classList.add("assistant-rail-open");
         return;
       }
-      if (event.target.closest("[data-assistant-rail-close]")) {
-        document.body.classList.remove("assistant-rail-open");
-        return;
-      }
       if (event.target.closest("[data-resource-picker-toggle]")) {
         event.preventDefault();
         setResourcePicker(resourcePicker?.dataset.open !== "true", true);
