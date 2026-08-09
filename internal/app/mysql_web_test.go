@@ -50,7 +50,7 @@ func TestAdministratorCanRegisterMySQLInstanceFromDatabaseWorkspace(t *testing.T
 	}
 	body, _ = io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, expected := range []string{"Production", "db.internal", "preferred", "Database backups"} {
+	for _, expected := range []string{"Production", "db.internal", "preferred", "Database backups", `class="mysql-instance-tabs__state" data-state="untried"`, "Not connected yet"} {
 		if !strings.Contains(string(body), expected) {
 			t.Fatalf("database workspace missing %q: %s", expected, body)
 		}
@@ -65,7 +65,7 @@ func TestAdministratorCanRegisterMySQLInstanceFromDatabaseWorkspace(t *testing.T
 	}
 	selectedBody, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, expected := range []string{`class="mysql-instance-workspace"`, `class="mysql-instance-rail"`, `class="mysql-instance-tabs"`, `class="mysql-instance-tabs__failure"`, `Connection failed`, `class="mysql-tabs"`, `tab=overview`, `tab=backups`, `data-connection-test`, `data-preserve-scroll`, `aria-current="page"`, `data-mysql-drop-drawer`, `class="mysql-overview-facts"`, `TLS mode`, `Preferred`, `Refresh status`} {
+	for _, expected := range []string{`class="mysql-instance-workspace"`, `class="mysql-instance-rail"`, `class="mysql-instance-tabs"`, `class="mysql-instance-tabs__state" data-state="failed"`, `Connection failed`, `class="mysql-tabs"`, `tab=overview`, `tab=backups`, `data-connection-test`, `data-preserve-scroll`, `aria-current="page"`, `data-mysql-drop-drawer`, `class="mysql-overview-facts"`, `TLS mode`, `Preferred`, `Refresh status`} {
 		if !strings.Contains(string(selectedBody), expected) {
 			t.Fatalf("selected database workspace missing %q: %s", expected, selectedBody)
 		}

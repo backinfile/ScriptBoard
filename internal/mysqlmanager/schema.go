@@ -12,6 +12,7 @@ var SchemaStatements = []string{
 		tls_mode TEXT NOT NULL CHECK (tls_mode IN ('disabled', 'preferred', 'required', 'verify_identity')),
 		ca_path TEXT NOT NULL DEFAULT '',
 		credential_configured INTEGER NOT NULL DEFAULT 0,
+		connection_state TEXT NOT NULL DEFAULT 'untried' CHECK (connection_state IN ('untried', 'connected', 'failed')),
 		created_at INTEGER NOT NULL,
 		updated_at INTEGER NOT NULL
 	)`,

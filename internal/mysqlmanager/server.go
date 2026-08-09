@@ -67,7 +67,15 @@ func (m *Manager) TestInstance(ctx context.Context, id string) (ConnectionTest, 
 	if err != nil {
 		return ConnectionTest{}, err
 	}
-	return m.server.Test(ctx, instance, password)
+	result, testErr := m.server.Test(ctx, instance, password)
+	state := ConnectionConnected
+	if testErr != nil || !result.OK {
+		state = ConnectionFailed
+	}
+	if stateErr := m.recordConnectionState(id, state); stateErr != nil {
+		return result, errors.Join(testErr, stateErr)
+	}
+	return result, testErr
 }
 
 func (m *Manager) Databases(ctx context.Context, id string) ([]Database, error) {
@@ -83,7 +91,22 @@ func (m *Manager) Status(ctx context.Context, id string) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	return m.server.Status(ctx, instance, password)
+	status, statusErr := m.server.Status(ctx, instance, password)
+	state := ConnectionConnected
+	if statusErr != nil {
+		state = ConnectionFailed
+	}
+	if stateErr := m.recordConnectionState(id, state); stateErr != nil {
+		return status, errors.Join(statusErr, stateErr)
+	}
+	return status, statusErr
+}
+
+func (m *Manager) recordConnectionState(id string, state ConnectionState) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, err := m.db.ExecContext(ctx, `UPDATE mysql_instances SET connection_state=? WHERE id=?`, state, id)
+	return err
 }
 
 func (m *Manager) CreateDatabase(ctx context.Context, id string, input CreateDatabaseInput) error {

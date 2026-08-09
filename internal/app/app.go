@@ -1451,6 +1451,19 @@ func openDatabase(path string) (*sql.DB, error) {
 			}
 		}
 	}
+	if schemaVersion >= 20 && schemaVersion <= 30 {
+		exists, err := sqliteColumnExists(migration, "mysql_instances", "connection_state")
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("inspect MySQL connection state migration: %w", err)
+		}
+		if !exists {
+			if _, err := migration.Exec(`ALTER TABLE mysql_instances ADD COLUMN connection_state TEXT NOT NULL DEFAULT 'untried' CHECK (connection_state IN ('untried', 'connected', 'failed'))`); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("migrate MySQL connection state: %w", err)
+			}
+		}
+	}
 	for _, statement := range []string{
 		"CREATE UNIQUE INDEX IF NOT EXISTS users_single_administrator_idx ON users(role) WHERE role = 'administrator'",
 		"CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id)",
@@ -1514,10 +1527,11 @@ func compatibleDatabaseSchema(version int) bool {
 	// latest observed LLM connection result, schema 27 adds bounded External
 	// Interface keys, entries, and invocation records, schema 28 persists
 	// per-user file Quick Access pins, and schema 29 merges those pins into one
-	// instance-wide Quick Access list, and schema 30 adds MySQL instances,
-	// logical backups, plans, and recoverable operations. Each supported
-	// predecessor has an explicit transactional forward path.
-	return version == currentSchemaVersion || currentSchemaVersion == 30 && version >= 20 && version <= 29
+	// instance-wide Quick Access list, schema 30 adds MySQL instances,
+	// logical backups, plans, and recoverable operations, and schema 31 persists
+	// MySQL connection state. Each supported predecessor has an explicit
+	// transactional forward path.
+	return version == currentSchemaVersion || currentSchemaVersion == 31 && version >= 20 && version <= 30
 }
 
 func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {

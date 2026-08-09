@@ -18,11 +18,17 @@ import (
 
 type TLSMode string
 
+type ConnectionState string
+
 const (
 	TLSDisabled       TLSMode = "disabled"
 	TLSPreferred      TLSMode = "preferred"
 	TLSRequired       TLSMode = "required"
 	TLSVerifyIdentity TLSMode = "verify_identity"
+
+	ConnectionUntried   ConnectionState = "untried"
+	ConnectionConnected ConnectionState = "connected"
+	ConnectionFailed    ConnectionState = "failed"
 )
 
 type Instance struct {
@@ -30,6 +36,7 @@ type Instance struct {
 	Port                             int
 	TLSMode                          TLSMode
 	CredentialConfigured             bool
+	ConnectionState                  ConnectionState
 	CreatedAt, UpdatedAt             time.Time
 	Password                         string `json:"-"`
 }
@@ -200,12 +207,20 @@ func (m *Manager) SaveInstance(ctx context.Context, input InstanceInput) (Instan
 		id = randomID()
 	}
 	credentialConfigured := input.Password != ""
+	connectionState := ConnectionUntried
 	if !creating && !credentialConfigured {
 		var configured bool
-		if err := m.db.QueryRowContext(ctx, "SELECT credential_configured FROM mysql_instances WHERE id = ?", id).Scan(&configured); err != nil {
+		var host, username, caPath string
+		var port int
+		var tlsMode TLSMode
+		if err := m.db.QueryRowContext(ctx, `SELECT credential_configured, host, port, username, tls_mode, ca_path, connection_state
+			FROM mysql_instances WHERE id = ?`, id).Scan(&configured, &host, &port, &username, &tlsMode, &caPath, &connectionState); err != nil {
 			return Instance{}, err
 		}
 		credentialConfigured = configured
+		if host != input.Host || port != input.Port || username != input.Username || tlsMode != input.TLSMode || caPath != input.CAPath {
+			connectionState = ConnectionUntried
+		}
 	}
 	transaction, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -214,13 +229,13 @@ func (m *Manager) SaveInstance(ctx context.Context, input InstanceInput) (Instan
 	defer transaction.Rollback()
 	if creating {
 		_, err = transaction.ExecContext(ctx, `INSERT INTO mysql_instances
-			(id, name, host, port, username, tls_mode, ca_path, credential_configured, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, input.Name, input.Host, input.Port, input.Username,
-			input.TLSMode, input.CAPath, credentialConfigured, now.UnixNano(), now.UnixNano())
+			(id, name, host, port, username, tls_mode, ca_path, credential_configured, connection_state, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, input.Name, input.Host, input.Port, input.Username,
+			input.TLSMode, input.CAPath, credentialConfigured, ConnectionUntried, now.UnixNano(), now.UnixNano())
 	} else {
 		_, err = transaction.ExecContext(ctx, `UPDATE mysql_instances SET name=?, host=?, port=?, username=?, tls_mode=?, ca_path=?,
-			credential_configured=?, updated_at=? WHERE id=?`, input.Name, input.Host, input.Port, input.Username,
-			input.TLSMode, input.CAPath, credentialConfigured, now.UnixNano(), id)
+			credential_configured=?, connection_state=?, updated_at=? WHERE id=?`, input.Name, input.Host, input.Port, input.Username,
+			input.TLSMode, input.CAPath, credentialConfigured, connectionState, now.UnixNano(), id)
 	}
 	if err != nil {
 		return Instance{}, err
@@ -243,9 +258,9 @@ func (m *Manager) Instance(ctx context.Context, id string) (Instance, error) {
 	var instance Instance
 	var configured bool
 	var createdAt, updatedAt int64
-	err := m.db.QueryRowContext(ctx, `SELECT id, name, host, port, username, tls_mode, ca_path, credential_configured, created_at, updated_at
+	err := m.db.QueryRowContext(ctx, `SELECT id, name, host, port, username, tls_mode, ca_path, credential_configured, connection_state, created_at, updated_at
 		FROM mysql_instances WHERE id=?`, id).Scan(&instance.ID, &instance.Name, &instance.Host, &instance.Port,
-		&instance.Username, &instance.TLSMode, &instance.CAPath, &configured, &createdAt, &updatedAt)
+		&instance.Username, &instance.TLSMode, &instance.CAPath, &configured, &instance.ConnectionState, &createdAt, &updatedAt)
 	if err != nil {
 		return Instance{}, err
 	}
@@ -256,7 +271,7 @@ func (m *Manager) Instance(ctx context.Context, id string) (Instance, error) {
 }
 
 func (m *Manager) Instances(ctx context.Context) ([]Instance, error) {
-	rows, err := m.db.QueryContext(ctx, `SELECT id, name, host, port, username, tls_mode, ca_path, credential_configured, created_at, updated_at
+	rows, err := m.db.QueryContext(ctx, `SELECT id, name, host, port, username, tls_mode, ca_path, credential_configured, connection_state, created_at, updated_at
 		FROM mysql_instances ORDER BY name COLLATE NOCASE`)
 	if err != nil {
 		return nil, err
@@ -268,7 +283,7 @@ func (m *Manager) Instances(ctx context.Context) ([]Instance, error) {
 		var configured bool
 		var createdAt, updatedAt int64
 		if err := rows.Scan(&item.ID, &item.Name, &item.Host, &item.Port, &item.Username, &item.TLSMode, &item.CAPath,
-			&configured, &createdAt, &updatedAt); err != nil {
+			&configured, &item.ConnectionState, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 		item.CredentialConfigured = configured

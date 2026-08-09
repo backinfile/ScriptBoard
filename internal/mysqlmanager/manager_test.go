@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"database/sql"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -97,16 +98,22 @@ type fakeServer struct {
 	exists       bool
 	replacements int
 	drops        int
+	testResult   ConnectionTest
+	testErr      error
+	statusErr    error
 }
 
 func (server *fakeServer) Test(context.Context, Instance, string) (ConnectionTest, error) {
-	return ConnectionTest{OK: true}, nil
+	if server.testResult == (ConnectionTest{}) && server.testErr == nil {
+		return ConnectionTest{OK: true}, nil
+	}
+	return server.testResult, server.testErr
 }
 func (server *fakeServer) Databases(context.Context, Instance, string) ([]Database, error) {
 	return nil, nil
 }
 func (server *fakeServer) Status(context.Context, Instance, string) (Status, error) {
-	return Status{}, nil
+	return Status{}, server.statusErr
 }
 func (server *fakeServer) DatabaseExists(context.Context, Instance, string, string) (bool, error) {
 	return server.exists, nil
@@ -124,6 +131,63 @@ func (server *fakeServer) DropDatabase(context.Context, Instance, string, string
 }
 func (server *fakeServer) NonTransactionalTables(context.Context, Instance, string, string) ([]string, error) {
 	return nil, nil
+}
+
+func TestInstanceConnectionStatePersistsAndResetsAfterEditing(t *testing.T) {
+	stateRoot := t.TempDir()
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	applyTestSchema(t, database)
+	manager, err := New(Options{DB: database, StateRoot: stateRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := manager.SaveInstance(context.Background(), InstanceInput{
+		Name: "Production", Host: "db.internal", Port: 3306, Username: "scriptboard", Password: "secret", TLSMode: TLSPreferred,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if instance.ConnectionState != ConnectionUntried {
+		t.Fatalf("new connection state = %q, want %q", instance.ConnectionState, ConnectionUntried)
+	}
+
+	manager.server = &fakeServer{}
+	if _, err := manager.TestInstance(context.Background(), instance.ID); err != nil {
+		t.Fatal(err)
+	}
+	connected, err := manager.Instance(context.Background(), instance.ID)
+	if err != nil || connected.ConnectionState != ConnectionConnected {
+		t.Fatalf("connected state = %q, error = %v", connected.ConnectionState, err)
+	}
+	renamed, err := manager.SaveInstance(context.Background(), InstanceInput{
+		ID: instance.ID, Name: "Renamed production", Host: instance.Host, Port: instance.Port, Username: instance.Username, TLSMode: instance.TLSMode,
+	})
+	if err != nil || renamed.ConnectionState != ConnectionConnected {
+		t.Fatalf("state after display-name edit = %q, error = %v", renamed.ConnectionState, err)
+	}
+
+	manager.server = &fakeServer{statusErr: errors.New("connection refused")}
+	if _, err := manager.Status(context.Background(), instance.ID); err == nil {
+		t.Fatal("failed status probe unexpectedly succeeded")
+	}
+	reloaded, err := manager.Instance(context.Background(), instance.ID)
+	if err != nil || reloaded.ConnectionState != ConnectionFailed {
+		t.Fatalf("persisted failed state = %q, error = %v", reloaded.ConnectionState, err)
+	}
+
+	edited, err := manager.SaveInstance(context.Background(), InstanceInput{
+		ID: instance.ID, Name: instance.Name, Host: "new-db.internal", Port: instance.Port, Username: instance.Username, TLSMode: instance.TLSMode,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if edited.ConnectionState != ConnectionUntried {
+		t.Fatalf("edited connection state = %q, want %q", edited.ConnectionState, ConnectionUntried)
+	}
 }
 
 func TestRestoreFailureAutomaticallyRollsBackSafetyBackup(t *testing.T) {

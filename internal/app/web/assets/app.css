@@ -2187,8 +2187,10 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .mysql-instance-tabs__copy strong, .mysql-instance-tabs__copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mysql-instance-tabs__copy strong { font-size: .8rem; }
 .mysql-instance-tabs__copy small { color: var(--muted); font: .64rem/1.35 var(--font-mono); }
-.mysql-instance-tabs__failure { display: inline-flex; align-items: center; gap: 4px; color: var(--danger); font-size: .62rem; font-weight: 650; white-space: nowrap; }
-.mysql-instance-tabs__failure svg { width: 12px; height: 12px; }
+.mysql-instance-tabs__state { display: inline-flex; align-items: center; gap: 4px; font-size: .62rem; font-weight: 650; white-space: nowrap; }
+.mysql-instance-tabs__state[data-state="failed"] { color: var(--danger); }
+.mysql-instance-tabs__state[data-state="untried"] { color: var(--text-muted); }
+.mysql-instance-tabs__state svg { width: 12px; height: 12px; }
 .mysql-instance-rail__empty { padding: 40px 12px; }
 .mysql-instance-pagination { display: flex; align-items: center; justify-content: center; gap: 3px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--rule); }
 .mysql-instance-pagination a { display: grid; min-width: 30px; min-height: 30px; place-items: center; padding: 5px; color: var(--muted); border-radius: 5px; font: 650 .68rem/1 var(--font-mono); text-decoration: none; }
