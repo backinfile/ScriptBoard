@@ -5386,6 +5386,11 @@
 
   async function submitConnectionTest(form, submitter) {
     const result = form.querySelector("[data-connection-test-result]");
+    if (result) {
+      result.classList.add("sr-only");
+      result.removeAttribute("data-state");
+      result.textContent = "";
+    }
     const data = new FormData(form);
     if (submitter?.name) data.set(submitter.name, submitter.value);
     try {
@@ -5408,11 +5413,6 @@
       }
     } catch (error) {
       const message = error?.message || form.dataset.connectionFailure || words().submitFailed;
-      if (result) {
-        result.classList.remove("sr-only");
-        result.dataset.state = "error";
-        result.textContent = form.dataset.connectionFailure || words().submitFailed;
-      }
       showConnectionTestError(form, message);
     } finally {
       resetSubmit(form);

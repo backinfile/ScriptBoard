@@ -1071,6 +1071,28 @@ async function assertAssistantSettingsAndWorkspace(page, baseURL) {
   await configuredRow.waitFor();
   assert.equal(await configuredRow.locator('input:not([type="hidden"])').count(), 0);
   assert.match(await configuredRow.textContent(), /Credential configured/);
+
+  const connectionForm = configuredRow.locator("form[data-connection-test]");
+  const connectionRoute = route => route.fulfill({
+    status: 200,
+    contentType: "application/json; charset=utf-8",
+    body: JSON.stringify({ ok: false, message: "Upstream refused connection" }),
+  });
+  await page.route("**/settings/ai/llms/*/test", connectionRoute);
+  try {
+    await connectionForm.locator('button[type="submit"]').click();
+    const failureDialog = page.locator(".connection-test-dialog");
+    await failureDialog.waitFor();
+    assert.match(await failureDialog.textContent(), /Upstream refused connection/);
+    const inlineResult = connectionForm.locator("[data-connection-test-result]");
+    assert.equal(await inlineResult.textContent(), "", "connection failure was repeated beside the test button");
+    assert.equal(await inlineResult.evaluate(element => element.classList.contains("sr-only")), true, "empty connection failure status remained visible");
+    await failureDialog.locator("[data-dialog-close]").last().click();
+  } finally {
+    await page.unroute("**/settings/ai/llms/*/test", connectionRoute);
+  }
+  if (process.env.SCRIPTBOARD_BROWSER_SCOPE === "connection-test") return;
+
   await configuredRow.locator("[data-edit-llm]").click();
   await drawer.waitFor();
   assert.equal(await drawer.locator('input[name="api_key"]').inputValue(), "");
@@ -1254,6 +1276,11 @@ async function assertExternalInterfaces(page, fixture) {
     await assertExpiredSessionUsesFullNavigation(page, context);
     if (process.env.SCRIPTBOARD_BROWSER_SCOPE === "navigation") {
       process.stdout.write("Chromium deferred-navigation regressions passed.\n");
+      return;
+    }
+    if (process.env.SCRIPTBOARD_BROWSER_SCOPE === "connection-test") {
+      await assertAssistantSettingsAndWorkspace(page, fixture.baseURL);
+      process.stdout.write("Chromium connection-test error regressions passed.\n");
       return;
     }
 

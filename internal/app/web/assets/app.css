@@ -2269,7 +2269,6 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .mysql-instance-actions > form { display: flex; align-items: center; gap: 8px; }
 .connection-test-result { color: var(--muted); font-size: .78rem; }
 .connection-test-result[data-state="success"] { color: var(--success); }
-.connection-test-result[data-state="error"] { color: var(--danger); }
 .connection-test-dialog { width: min(460px, calc(100vw - 32px)); padding: 0; color: var(--ink); background: var(--surface); border: 1px solid var(--rule-strong); border-radius: 9px; box-shadow: var(--overlay-shadow); }
 .connection-test-dialog::backdrop { background: var(--overlay-scrim); }
 .connection-test-dialog > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 20px 22px 16px; border-bottom: 1px solid var(--rule); }
