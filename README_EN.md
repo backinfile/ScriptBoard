@@ -72,22 +72,17 @@ Change the password under Account, then open Files to select an existing script 
 
 ## Install as a system service
 
-Create a YAML configuration file before installation. For a local installation with default settings, it can contain only:
-
-```yaml
-{}
-```
+No YAML configuration file is needed when using the built-in defaults. ScriptBoard listens only on `127.0.0.1:8787` by default.
 
 > [!IMPORTANT]
 > Run installation from a complete stable release package. If the host still has a legacy ScriptBoard service, stop and uninstall it before performing a clean installation.
 
 ### Windows
 
-Save the configuration as `C:\ProgramData\ScriptBoard\config.yaml`, then run in an elevated PowerShell window:
+Run the following in an elevated PowerShell window:
 
 ```powershell
-.\scriptboard.exe config validate --config C:\ProgramData\ScriptBoard\config.yaml
-.\scriptboard.exe service install --config C:\ProgramData\ScriptBoard\config.yaml
+.\scriptboard.exe service install
 .\scriptboard.exe service start
 .\scriptboard.exe service status
 ```
@@ -96,16 +91,17 @@ The service is installed under `C:\Program Files\ScriptBoard`, and state is stor
 
 ### Linux
 
-Save the configuration as `/etc/scriptboard/config.yaml`, then run:
+Run:
 
 ```bash
-sudo ./scriptboard config validate --config /etc/scriptboard/config.yaml
-sudo ./scriptboard service install --config /etc/scriptboard/config.yaml
+sudo ./scriptboard service install
 sudo /opt/scriptboard/current/scriptboard service start
 sudo /opt/scriptboard/current/scriptboard service status
 ```
 
 The service is installed under `/opt/scriptboard`, and state is stored under `/var/lib/scriptboard/state`.
+
+Create a YAML configuration file only when you need to change settings such as the listen address, TLS, or the state directory, then pass it during installation with `--config CONFIG_PATH`. Without that flag, ScriptBoard uses the platform's default configuration path (`C:\ProgramData\ScriptBoard\config.yaml` on Windows or `/etc/scriptboard/config.yaml` on Linux); if the file does not exist, the built-in defaults are used.
 
 ## Using ScriptBoard
 
@@ -178,7 +174,7 @@ Back up these locations regularly:
 
 - host files that must be retained;
 - `state_root`, which contains the database, run logs, sessions, audit records, and AI data;
-- the service `config.yaml` file.
+- the service `config.yaml` file, if you created a custom configuration.
 
 Back up before upgrading from an older version. The current release can upgrade a schema 20 database automatically; older databases and legacy configuration files are not migrated automatically.
 

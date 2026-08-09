@@ -72,22 +72,17 @@ state/secrets/initial-admin-password
 
 ## 安装为系统服务
 
-安装前，请准备一个 YAML 配置文件。仅使用本机默认设置时，内容可以是：
-
-```yaml
-{}
-```
+使用内置默认设置时，无需创建或传入 YAML 配置文件。ScriptBoard 默认只监听本机的 `127.0.0.1:8787`。
 
 > [!IMPORTANT]
 > 请从完整的正式发布包执行安装。若主机上仍有旧式 ScriptBoard 服务，请先停止并卸载，再进行全新安装。
 
 ### Windows
 
-将配置保存为 `C:\ProgramData\ScriptBoard\config.yaml`，在管理员 PowerShell 中运行：
+在管理员 PowerShell 中运行：
 
 ```powershell
-.\scriptboard.exe config validate --config C:\ProgramData\ScriptBoard\config.yaml
-.\scriptboard.exe service install --config C:\ProgramData\ScriptBoard\config.yaml
+.\scriptboard.exe service install
 .\scriptboard.exe service start
 .\scriptboard.exe service status
 ```
@@ -96,16 +91,17 @@ state/secrets/initial-admin-password
 
 ### Linux
 
-将配置保存为 `/etc/scriptboard/config.yaml`，运行：
+运行：
 
 ```bash
-sudo ./scriptboard config validate --config /etc/scriptboard/config.yaml
-sudo ./scriptboard service install --config /etc/scriptboard/config.yaml
+sudo ./scriptboard service install
 sudo /opt/scriptboard/current/scriptboard service start
 sudo /opt/scriptboard/current/scriptboard service status
 ```
 
 服务默认安装到 `/opt/scriptboard`，状态数据保存在 `/var/lib/scriptboard/state`。
+
+只有需要修改监听地址、TLS、状态目录等设置时，才需要创建 YAML 配置文件，并在安装时通过 `--config CONFIG_PATH` 指定。未指定时，ScriptBoard 会使用平台默认配置路径（Windows 为 `C:\ProgramData\ScriptBoard\config.yaml`，Linux 为 `/etc/scriptboard/config.yaml`）；该文件不存在时直接使用内置默认值。
 
 ## 使用提示
 
@@ -178,7 +174,7 @@ scriptboard doctor --config CONFIG_PATH
 
 - 需要保留的主机文件；
 - `state_root`，其中包含数据库、运行日志、会话、审计和 AI 数据；
-- 服务使用的 `config.yaml`。
+- 服务使用的 `config.yaml`（如果创建了自定义配置）。
 
 从旧版本升级前请先备份。当前版本可自动升级 schema 20 数据库；更早版本的数据库和旧式配置不会自动迁移。
 
