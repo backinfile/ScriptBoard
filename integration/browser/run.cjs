@@ -322,6 +322,135 @@ async function assertNavigationFailureCanRetry(page) {
   }
 }
 
+async function assertServerErrorNavigationPreservesWorkspace(page) {
+  await page.goto(new URL("/monitor", page.url()).toString());
+  const workspaceURL = page.url();
+  const accountLink = page.locator('.app-sidebar a[href="/settings/account"]');
+  const routeHandler = async route => {
+    if (route.request().headers()["x-scriptboard-navigation"] !== "pjax") {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      status: 500,
+      contentType: "text/html; charset=utf-8",
+      body: `<!doctype html><html lang="en-US"><head><title>Operation not completed · ScriptBoard</title></head><body>
+        <main class="workspace error-page">
+          <p class="error-code">HTTP 500</p>
+          <h1>Operation not completed</h1>
+          <div class="page-error" role="alert">ScriptBoard could not complete this operation.</div>
+          <details class="ledger-disclosure"><summary><span>Technical details</span></summary><div class="disclosure-body"><code>Unable to read account settings</code></div></details>
+        </main>
+      </body></html>`,
+    });
+  };
+  await page.route("**/settings/account", routeHandler);
+  try {
+    await accountLink.click();
+    const dialog = page.getByRole("dialog", { name: "Operation not completed" });
+    await dialog.waitFor();
+    assert.equal(page.url(), workspaceURL, "server error navigation changed the workspace URL");
+    assert.equal(await page.getByRole("heading", { name: "Host overview", exact: true }).count(), 1);
+    assert.match(await dialog.textContent(), /HTTP\s*500/);
+    assert.match(await dialog.textContent(), /ScriptBoard could not complete this operation/);
+    await dialog.getByText("Technical details", { exact: true }).click();
+    assert.match(await dialog.textContent(), /Unable to read account settings/);
+    await dialog.getByRole("button", { name: "Close", exact: true }).last().click();
+    await dialog.waitFor({ state: "detached" });
+    assert.equal(await accountLink.evaluate(element => element === document.activeElement), true, "closing the error dialog did not restore focus");
+  } finally {
+    await page.unroute("**/settings/account", routeHandler);
+  }
+}
+
+async function assertServerErrorTaskPanelPreservesWorkspace(page) {
+  await page.goto(new URL("/resources/variables", page.url()).toString());
+  const workspaceURL = page.url();
+  const taskLink = page.locator('a[href="/resources/variables/new"][data-task-link]').first();
+  const routeHandler = route => route.fulfill({
+    status: 500,
+    contentType: "text/html; charset=utf-8",
+    body: `<!doctype html><html lang="en-US"><body><main class="workspace error-page">
+      <p class="error-code">HTTP 500</p><h1>Operation not completed</h1>
+      <div class="page-error" role="alert">ScriptBoard could not complete this operation.</div>
+      <details class="ledger-disclosure"><summary>Technical details</summary><div class="disclosure-body"><code>Unable to prepare the variable task</code></div></details>
+    </main></body></html>`,
+  });
+  await page.route("**/resources/variables/new", routeHandler);
+  try {
+    await taskLink.click();
+    const dialog = page.getByRole("dialog", { name: "Operation not completed" });
+    await dialog.waitFor();
+    assert.equal(page.url(), workspaceURL, "task server error changed the workspace URL");
+    assert.equal(await page.getByRole("heading", { name: "Variables", exact: true }).count(), 1);
+    assert.equal(await page.locator("[data-task-panel]").count(), 0, "failed task left an empty task panel behind");
+    assert.equal(await dialog.getByRole("button", { name: "Reopen", exact: true }).count(), 1, "task failure did not offer a safe GET retry");
+    await dialog.getByRole("button", { name: "Close", exact: true }).last().click();
+    assert.equal(await taskLink.evaluate(element => element === document.activeElement), true, "task error did not restore focus");
+  } finally {
+    await page.unroute("**/resources/variables/new", routeHandler);
+  }
+}
+
+async function assertNativePostServerErrorPreservesWorkspace(page) {
+  await page.goto(new URL("/monitor/applications", page.url()).toString());
+  const workspaceURL = page.url();
+  const pinButton = page.getByRole("button", { name: "Pin api-prod", exact: true });
+  const routeHandler = route => route.fulfill({
+    status: 500,
+    contentType: "text/html; charset=utf-8",
+    body: `<!doctype html><html lang="en-US"><body><main class="workspace error-page">
+      <p class="error-code">HTTP 500</p><h1>Operation not completed</h1>
+      <div class="page-error" role="alert">ScriptBoard could not complete this operation.</div>
+      <details class="ledger-disclosure"><summary>Technical details</summary><div class="disclosure-body"><code>Unable to pin application</code></div></details>
+    </main></body></html>`,
+  });
+  await page.route("**/monitor/applications/*/pin", routeHandler);
+  try {
+    await pinButton.click();
+    const dialog = page.getByRole("dialog", { name: "Operation not completed" });
+    await dialog.waitFor();
+    assert.equal(page.url(), workspaceURL, "native POST server error replaced the workspace URL");
+    assert.equal(await page.locator("[data-applications-page]").count(), 1, "native POST server error replaced the applications page");
+    assert.match(await dialog.textContent(), /Not retried automatically/);
+    assert.equal(await dialog.getByRole("button", { name: "Submit again", exact: true }).count(), 0, "write failure offered an unsafe automatic resubmission");
+    assert.equal(await dialog.getByRole("button", { name: "Refresh current page", exact: true }).count(), 1, "write failure did not offer a safe state refresh");
+    await dialog.getByRole("button", { name: "Close", exact: true }).last().click();
+    assert.equal(await pinButton.evaluate(element => element === document.activeElement), true, "native POST error did not restore focus");
+  } finally {
+    await page.unroute("**/monitor/applications/*/pin", routeHandler);
+  }
+}
+
+async function assertAsyncPostServerErrorPreservesWorkspace(page) {
+  await page.goto(new URL("/settings/updates", page.url()).toString());
+  const workspaceURL = page.url();
+  const checkForm = page.locator('form[action="/settings/updates/check"][data-async]');
+  const checkButton = checkForm.getByRole("button");
+  const routeHandler = route => route.fulfill({
+    status: 500,
+    contentType: "text/html; charset=utf-8",
+    body: `<!doctype html><html lang="en-US"><body><main class="workspace error-page">
+      <p class="error-code">HTTP 500</p><h1>Operation not completed</h1>
+      <div class="page-error" role="alert">ScriptBoard could not complete this operation.</div>
+      <details class="ledger-disclosure"><summary>Technical details</summary><div class="disclosure-body"><code>Unable to check for updates</code></div></details>
+    </main></body></html>`,
+  });
+  await page.route("**/settings/updates/check", routeHandler);
+  try {
+    await checkButton.click();
+    const dialog = page.getByRole("dialog", { name: "Operation not completed" });
+    await dialog.waitFor();
+    assert.equal(page.url(), workspaceURL, "async POST server error changed the workspace URL");
+    assert.equal(await page.locator("[data-updates-page]").count(), 1, "async POST server error replaced the updates page");
+    assert.match(await dialog.textContent(), /Unable to check for updates/);
+    await dialog.getByRole("button", { name: "Close", exact: true }).last().click();
+    assert.equal(await checkButton.evaluate(element => element === document.activeElement), true, "async POST error did not restore focus");
+  } finally {
+    await page.unroute("**/settings/updates/check", routeHandler);
+  }
+}
+
 async function assertHistoryNavigationUsesLoadingState(page) {
   await page.locator('.sidebar-nav a[href="/config/quick-runs"]').click();
   await page.getByRole("heading", { name: "Quick Runs", exact: true }).waitFor();
@@ -799,11 +928,10 @@ async function assertUserManagement(page, baseURL) {
   const createForm = createPanel.locator('form[action="/settings/users"]');
   await createForm.locator('input[name="username"]').fill("browser-viewer");
   await createForm.locator('select[name="role"]').selectOption("viewer");
-  await Promise.all([
-    page.waitForNavigation(),
-    createForm.locator('button[type="submit"]').click(),
-  ]);
-  const password = (await page.locator("[data-generated-password]").textContent()).trim();
+  await createForm.locator('button[type="submit"]').click();
+  const generatedPassword = page.locator("[data-generated-password]");
+  await generatedPassword.waitFor();
+  const password = (await generatedPassword.textContent()).trim();
   assert.ok(password.length >= 20, "generated user password was not shown once");
   const viewerRow = page.locator('[data-username="browser-viewer"]');
   await viewerRow.waitFor();
@@ -1119,6 +1247,10 @@ async function assertExternalInterfaces(page, fixture) {
     await assertRapidMainNavigationIgnoresLateResponses(page);
     await assertNavigationFailureCanRetry(page);
     await assertHistoryNavigationUsesLoadingState(page);
+    await assertServerErrorNavigationPreservesWorkspace(page);
+    await assertServerErrorTaskPanelPreservesWorkspace(page);
+    await assertNativePostServerErrorPreservesWorkspace(page);
+    await assertAsyncPostServerErrorPreservesWorkspace(page);
     await assertExpiredSessionUsesFullNavigation(page, context);
     if (process.env.SCRIPTBOARD_BROWSER_SCOPE === "navigation") {
       process.stdout.write("Chromium deferred-navigation regressions passed.\n");
@@ -2227,7 +2359,11 @@ async function assertExternalInterfaces(page, fixture) {
     assert.equal(await noScriptRunning.locator('form[method="post"] input[name="csrf_token"]').count(), 1);
     await noScriptContext.close();
 
-    assert.deepEqual(consoleErrors, [], `Browser console errors:\n${consoleErrors.join("\n")}`);
+    const expectedServerErrorConsole = "Failed to load resource: the server responded with a status of 500 (Internal Server Error)";
+    const injectedServerErrors = consoleErrors.filter(message => message === expectedServerErrorConsole);
+    const unexpectedConsoleErrors = consoleErrors.filter(message => message !== expectedServerErrorConsole);
+    assert.equal(injectedServerErrors.length, 4, "the four injected 5XX responses were not all observed by Chromium");
+    assert.deepEqual(unexpectedConsoleErrors, [], `Browser console errors:\n${unexpectedConsoleErrors.join("\n")}`);
     process.stdout.write(`Chromium desktop gate passed. Snapshots: ${snapshotRoot}\n`);
   } finally {
     if (browser) await browser.close();
