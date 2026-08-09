@@ -3004,6 +3004,103 @@ td.record-actions { width: 1%; }
 @keyframes cron-pulse { from { opacity: .45; } to { opacity: 1; } }
 .field-readonly { display: grid; gap: 6px; padding: 11px; background: var(--canvas); border: 1px solid var(--rule); }
 .field-readonly span { color: var(--muted); font-size: .72rem; font-weight: 620; }
+.server-error-dialog {
+  width: min(650px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 32px));
+  padding: 0;
+  overflow: auto;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+  box-shadow: 0 24px 72px rgba(23, 26, 31, .28);
+}
+.server-error-dialog::backdrop { background: rgba(23, 26, 31, .46); }
+.server-error-sheet { overflow: hidden; background: var(--surface); border-radius: 10px; }
+.server-error-sheet > header {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 38px;
+  align-items: start;
+  gap: 15px;
+  padding: 25px 26px 21px;
+  border-bottom: 1px solid var(--rule);
+}
+.server-error-mark {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  color: var(--danger);
+  background: var(--danger-soft);
+  border: 1px solid var(--danger-border);
+  border-radius: 6px;
+}
+.server-error-mark svg { width: 20px; height: 20px; }
+.server-error-sheet h2 { margin: 1px 0 7px; font-size: 1.125rem; letter-spacing: -.018em; }
+.server-error-sheet header p { max-width: 54ch; margin: 0; color: var(--muted); font-size: .75rem; line-height: 1.55; }
+.server-error-sheet > dl { margin: 0; padding: 7px 26px; }
+.server-error-sheet > dl > div {
+  min-height: 45px;
+  display: grid;
+  grid-template-columns: 126px minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  border-bottom: 1px solid var(--rule);
+}
+.server-error-sheet > dl > div:last-child { border-bottom: 0; }
+.server-error-sheet dt { color: var(--faint); font-size: .7rem; font-weight: 650; }
+.server-error-sheet dd { min-width: 0; margin: 0; font-size: .75rem; overflow-wrap: anywhere; }
+.server-error-sheet dd code { font-size: .72rem; }
+.server-error-sheet > details { border-top: 1px solid var(--rule); }
+.server-error-sheet > details > summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 26px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: .72rem;
+  font-weight: 650;
+  list-style: none;
+}
+.server-error-sheet > details > summary::-webkit-details-marker { display: none; }
+.server-error-sheet > details > summary svg { transition: transform 160ms ease; }
+.server-error-sheet > details[open] > summary svg { transform: rotate(90deg); }
+.server-error-sheet > details > pre {
+  margin: 0 26px 18px;
+  padding: 12px 14px;
+  color: var(--terminal-ink);
+  background: var(--terminal);
+  border-radius: 6px;
+  font: 450 .72rem/1.55 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.server-error-sheet > footer {
+  min-height: 67px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 26px;
+  background: var(--canvas);
+  border-top: 1px solid var(--rule);
+}
+.server-error-note { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: .7rem; }
+.server-error-sheet > footer > div { display: flex; gap: 8px; }
+@media (max-width: 760px) {
+  .server-error-dialog { width: calc(100vw - 20px); max-height: calc(100vh - 20px); margin-bottom: 0; }
+  .server-error-sheet > header { padding: 20px 18px 17px; }
+  .server-error-sheet > dl { padding: 5px 18px; }
+  .server-error-sheet > dl > div { grid-template-columns: 96px minmax(0, 1fr); }
+  .server-error-sheet > details > summary { padding: 0 18px; }
+  .server-error-sheet > details > pre { margin-right: 18px; margin-left: 18px; }
+  .server-error-sheet > footer { align-items: stretch; flex-direction: column; padding: 13px 18px 18px; }
+  .server-error-note { align-items: flex-start; }
+  .server-error-sheet > footer > div { width: 100%; }
+  .server-error-sheet > footer .button { flex: 1; }
+}
 .file-conflict-page {
   display: grid;
   min-height: 100vh;

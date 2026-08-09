@@ -147,7 +147,7 @@ func TestAIWorkspaceAndSettingsUsePersistedLLMAndConversationState(t *testing.T)
 	if !strings.Contains(string(settings), `data-shared="true"`) || !strings.Contains(string(settings), `data-owned="true"`) {
 		t.Fatalf("configured LLM does not preserve owned/shared state: %s", settings)
 	}
-	for _, expected := range []string{`data-connection-ok="false"`, `data-state="not-ok"`, `class="button button--compact assistant-llm-test"`, `>Test not passed<`, `>Test connection<`} {
+	for _, expected := range []string{`data-connection-ok="false"`, `data-state="not-ok"`, `data-server-error-retry`, `class="button button--compact assistant-llm-test"`, `>Test not passed<`, `>Test connection<`} {
 		if !strings.Contains(string(settings), expected) {
 			t.Fatalf("configured LLM is missing connection status or the labeled test action %q: %s", expected, settings)
 		}

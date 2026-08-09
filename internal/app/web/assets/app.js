@@ -120,6 +120,7 @@
   let taskPanelHistoryClosePending = false;
   let taskPanelRefreshAfterCloseURL = "";
   let activeFileConflictDialog = null;
+  let activeServerErrorDialog = null;
 
   const locale = () => document.documentElement.lang === "zh-CN" ? "zh-CN" : "en-US";
   const copy = {
@@ -129,6 +130,9 @@
       connected: "实时输出已连接", disconnected: "实时输出连接中断",
       loading: "加载中…", loadFailed: "页面加载失败", retry: "重试",
       submitFailed: "操作未完成，请检查网络后重试。为避免重复操作，ScriptBoard 不会自动再次提交。",
+      serverErrorClose: "关闭", serverErrorRetry: "重新载入", serverErrorRetryTask: "重新打开", serverErrorRetryAction: "重新提交",
+      serverErrorRefresh: "刷新当前页面", serverErrorDetails: "技术详情", serverErrorRequest: "请求",
+      serverErrorPreserved: "当前工作区已保留", serverErrorNoResubmit: "未自动重试，避免重复执行写操作",
       websiteNormal: "网站监控正常", websiteNoOpenIssues: "没有故障或待复核项",
       websiteDownOne: "个网站故障", websiteDownMany: "个网站故障",
       websiteVerifyingOne: "个正在复核", websiteVerifyingMany: "个正在复核",
@@ -150,6 +154,9 @@
       connected: "Live output connected", disconnected: "Live output disconnected",
       loading: "Loading…", loadFailed: "Unable to load this page", retry: "Retry",
       submitFailed: "The action did not complete. Check your connection and retry. ScriptBoard will not resubmit it automatically.",
+      serverErrorClose: "Close", serverErrorRetry: "Reload", serverErrorRetryTask: "Reopen", serverErrorRetryAction: "Submit again",
+      serverErrorRefresh: "Refresh current page", serverErrorDetails: "Technical details", serverErrorRequest: "Request",
+      serverErrorPreserved: "The current workspace is preserved", serverErrorNoResubmit: "Not retried automatically to avoid repeating a write",
       websiteNormal: "Website monitoring normal", websiteNoOpenIssues: "No failures or pending verifications",
       websiteDownOne: "website down", websiteDownMany: "websites down",
       websiteVerifyingOne: "website under verification", websiteVerifyingMany: "websites under verification",
@@ -516,6 +523,128 @@
     return { response, document: new DOMParser().parseFromString(text, "text/html") };
   }
 
+  function closeServerErrorDialog(restoreFocus = true) {
+    const state = activeServerErrorDialog;
+    if (!state) return;
+    activeServerErrorDialog = null;
+    if (state.dialog.open) state.dialog.close();
+    state.dialog.remove();
+    if (restoreFocus && state.returnFocus instanceof HTMLElement && state.returnFocus.isConnected) {
+      state.returnFocus.focus();
+    }
+  }
+
+  function showServerError(result, options = {}) {
+    const status = Number(result?.response?.status || 0);
+    if (status < 500 || status > 599) return false;
+    closeServerErrorDialog(false);
+
+    const source = result.document;
+    const title = source?.querySelector(".error-page h1")?.textContent.trim() ||
+      (locale() === "zh-CN" ? "操作未完成" : "Operation not completed");
+    const summary = source?.querySelector(".error-page .page-error")?.textContent.trim() ||
+      (options.method === "POST" ? words().submitFailed : words().loadFailed);
+    const technical = source?.querySelector(".error-page .ledger-disclosure .disclosure-body")?.textContent.trim() || "";
+    const destination = new URL(options.url || result.response.url || location.href, location.href);
+    const method = String(options.method || "GET").toUpperCase();
+    const returnFocus = options.returnFocus || document.activeElement;
+
+    const dialog = document.createElement("dialog");
+    dialog.className = "server-error-dialog";
+    dialog.setAttribute("aria-labelledby", "server-error-dialog-title");
+    dialog.setAttribute("aria-describedby", "server-error-dialog-summary");
+
+    const sheet = document.createElement("section");
+    sheet.className = "server-error-sheet";
+    const header = document.createElement("header");
+    const mark = document.createElement("span");
+    mark.className = "server-error-mark";
+    mark.append(makeIcon("triangle-alert"));
+    const heading = document.createElement("div");
+    const titleElement = document.createElement("h2");
+    titleElement.id = "server-error-dialog-title";
+    titleElement.textContent = title;
+    const summaryElement = document.createElement("p");
+    summaryElement.id = "server-error-dialog-summary";
+    summaryElement.textContent = summary;
+    heading.append(titleElement, summaryElement);
+    const close = document.createElement("button");
+    close.className = "icon-button icon-button--quiet";
+    close.type = "button";
+    close.setAttribute("aria-label", words().serverErrorClose);
+    close.append(makeIcon("x"));
+    header.append(mark, heading, close);
+
+    const facts = document.createElement("dl");
+    const statusFact = document.createElement("div");
+    const statusLabel = document.createElement("dt");
+    statusLabel.textContent = "HTTP";
+    const statusValue = document.createElement("dd");
+    statusValue.textContent = String(status);
+    statusFact.append(statusLabel, statusValue);
+    const requestFact = document.createElement("div");
+    const requestLabel = document.createElement("dt");
+    requestLabel.textContent = words().serverErrorRequest;
+    const requestValue = document.createElement("dd");
+    const requestCode = document.createElement("code");
+    requestCode.textContent = `${method} ${destination.pathname}`;
+    requestValue.append(requestCode);
+    requestFact.append(requestLabel, requestValue);
+    facts.append(statusFact, requestFact);
+
+    if (technical) {
+      const details = document.createElement("details");
+      const detailsSummary = document.createElement("summary");
+      detailsSummary.append(makeIcon("chevron-right"), document.createTextNode(words().serverErrorDetails));
+      const detailBody = document.createElement("pre");
+      detailBody.textContent = technical;
+      details.append(detailsSummary, detailBody);
+      sheet.append(header, facts, details);
+    } else {
+      sheet.append(header, facts);
+    }
+
+    const footer = document.createElement("footer");
+    const note = document.createElement("span");
+    note.className = "server-error-note";
+    note.append(makeIcon(method === "GET" ? "map-pin" : "shield-check"), document.createTextNode(
+      method === "GET" ? words().serverErrorPreserved : words().serverErrorNoResubmit,
+    ));
+    const actions = document.createElement("div");
+    const closeAction = document.createElement("button");
+    closeAction.className = "button";
+    closeAction.type = "button";
+    closeAction.textContent = words().serverErrorClose;
+    actions.append(closeAction);
+    if (typeof options.retry === "function") {
+      const retry = document.createElement("button");
+      retry.className = "button button--primary";
+      retry.type = "button";
+      retry.append(makeIcon(options.retryIcon || "rotate-ccw"), document.createTextNode(options.retryLabel || words().serverErrorRetry));
+      retry.addEventListener("click", () => {
+        closeServerErrorDialog(false);
+        options.retry();
+      });
+      actions.append(retry);
+    }
+    footer.append(note, actions);
+    sheet.append(footer);
+    dialog.append(sheet);
+    document.body.append(dialog);
+
+    const dismiss = () => closeServerErrorDialog(true);
+    close.addEventListener("click", dismiss);
+    closeAction.addEventListener("click", dismiss);
+    dialog.addEventListener("cancel", event => {
+      event.preventDefault();
+      dismiss();
+    });
+    activeServerErrorDialog = { dialog, returnFocus };
+    dialog.showModal();
+    close.focus();
+    return true;
+  }
+
   function navigationOwnsPath(linkPath, path) {
     if (linkPath === "/monitor") return path === "/monitor";
     if (linkPath === "/resources/files") {
@@ -640,6 +769,7 @@
     const deferredData = options.deferredData ?? isDeferredDataURL(url);
     const immediate = deferredData && options.immediate === true;
     const title = options.title || navigationTitle(mainNavigationLink(url));
+    const returnFocus = options.returnFocus || document.activeElement;
     let shellCommitted = false;
     if (immediate) {
       if (push) history.pushState({ pjax: true }, "", url);
@@ -655,11 +785,19 @@
       });
       if (navigationRequest !== request || request.sequence !== navigationSequence) return;
       const responseURL = new URL(result.response.url || url, location.href);
-      if (!result.document || responseURL.pathname === "/login") {
+      if (responseURL.pathname === "/login") {
         location.assign(result.response.url || url);
         return;
       }
       if (!result.response.ok) {
+        if (showServerError(result, {
+          url, method: "GET", returnFocus,
+          retry: () => navigate(url, push, { ...options, returnFocus }),
+        })) return;
+        location.assign(result.response.url || url);
+        return;
+      }
+      if (!result.document) {
         location.assign(result.response.url || url);
         return;
       }
@@ -692,12 +830,23 @@
         const dataResult = await fetchDocument(result.response.url || url, { signal: request.controller.signal });
         if (navigationRequest !== request || request.sequence !== navigationSequence) return;
         const dataResponseURL = new URL(dataResult.response.url || url, location.href);
-        if (!dataResult.document || dataResponseURL.pathname === "/login") {
+        if (dataResponseURL.pathname === "/login") {
           location.assign(dataResult.response.url || url);
           return;
         }
         if (!dataResult.response.ok) {
+          if (showServerError(dataResult, {
+            url, method: "GET", returnFocus,
+            retry: () => navigate(url, false, { ...options, deferredData: true, returnFocus }),
+          })) {
+            showDeferredDataFailure(url, title);
+            return;
+          }
           showDeferredDataFailure(url, title);
+          return;
+        }
+        if (!dataResult.document) {
+          location.assign(dataResult.response.url || url);
           return;
         }
         const nextRegion = dataResult.document.querySelector("[data-deferred-region]");
@@ -1112,6 +1261,13 @@
         if (taskPanelRequest !== request) return;
         const main = result.document?.querySelector("main[data-task-page]");
         if (!main || !result.response.ok) {
+          if (showServerError(result, {
+            url: destination,
+            method: "GET",
+            returnFocus: trigger,
+            retryLabel: words().serverErrorRetryTask,
+            retry: () => openTask(destination, push, trigger),
+          })) return;
           await navigate(destination, push);
           return;
         }
@@ -1337,7 +1493,7 @@
     HTMLFormElement.prototype.submit.call(form);
   }
 
-  async function submitAsync(form, submitter) {
+  async function submitAsync(form, submitter, options = {}) {
     form.querySelector("[data-async-submit-error]")?.remove();
     const submittingTaskState = taskPanelState?.host.contains(form) ? taskPanelState : null;
     const data = new FormData(form);
@@ -1371,8 +1527,26 @@
       if (!submittingTaskState && !form.isConnected) return;
       const fileConflict = result.document?.querySelector("main[data-file-conflict]");
       if (fileConflict && openDocumentFileConflict(fileConflict)) return;
+      if (!result.response.ok && result.response.status >= 500 && result.response.status <= 599) {
+        const retryable = form.hasAttribute("data-server-error-retry");
+        showServerError(result, {
+          url: action,
+          method: form.method,
+          returnFocus: submitter || form,
+          retryLabel: retryable ? words().serverErrorRetryAction : words().serverErrorRefresh,
+          retryIcon: retryable ? "rotate-ccw" : "refresh-cw",
+          retry: retryable
+            ? () => submitAsync(form, submitter, options)
+            : () => navigate(location.href, false),
+        });
+        return;
+      }
       if (result.response.redirected && result.response.ok) {
         const destination = result.response.url;
+        if (options.fullNavigationOnSuccess) {
+          location.assign(destination);
+          return;
+        }
         if (submittingTaskState) {
           const returnURL = submittingTaskState.returnURL;
           const nextTask = result.document?.querySelector("main[data-task-page]");
@@ -1401,6 +1575,14 @@
       }
       const nextMain = result.document?.querySelector("main");
       if (nextMain) {
+        if (options.fullNavigationOnSuccess && submittingTaskState && !nextMain.matches("[data-task-page]")) {
+          closeTaskPanel(false);
+          document.querySelector("main")?.replaceWith(document.importNode(nextMain, true));
+          document.title = result.document.title;
+          history.replaceState({ pjax: true }, "", result.response.url || submittingTaskState.returnURL);
+          initPage();
+          return;
+        }
         if (submittingTaskState && nextMain.matches("[data-task-page]")) {
           const returnURL = submittingTaskState.returnURL;
           buildTaskPanel(nextMain, result.response.url, false);
@@ -5454,6 +5636,13 @@
     } else if (form.hasAttribute("data-async")) {
       event.preventDefault();
       submitAsync(form, submitter);
+    } else if (form.method.toLowerCase() === "post" &&
+        document.querySelector("[data-app-shell]") &&
+        !form.hasAttribute("data-native") &&
+        new URL(form.action || location.href, location.href).origin === location.origin &&
+        new URL(form.action || location.href, location.href).pathname !== "/logout") {
+      event.preventDefault();
+      submitAsync(form, submitter, { fullNavigationOnSuccess: true });
     }
   });
 
