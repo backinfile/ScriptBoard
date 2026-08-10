@@ -271,7 +271,7 @@ func shellNavigation(locale webLocale, path string, role userRole) []shellNaviga
 		key   string
 		items []itemSpec
 	}{
-		{key: "nav.monitor", items: []itemSpec{{"/monitor", "nav.overview", "activity", permissionObserve}, {"/monitor/applications", "nav.applications", "app-window", permissionObserve}, {"/monitor/websites", "nav.websites", "network", permissionObserve}, {"/monitor/security", "nav.security", "shield-check", permissionObserve}}},
+		{key: "nav.monitor", items: []itemSpec{{"/monitor", "nav.overview", "activity", permissionObserve}, {"/monitor/dashboards", "nav.dashboards", "layout-dashboard", permissionObserve}, {"/monitor/applications", "nav.applications", "app-window", permissionObserve}, {"/monitor/websites", "nav.websites", "network", permissionObserve}, {"/monitor/security", "nav.security", "shield-check", permissionObserve}}},
 		{key: "nav.resources", items: []itemSpec{{"/resources/files", "nav.files", "folder-code", permissionReadFiles}, {"/resources/variables", "nav.variables", "braces", permissionManageExecution}, {"/resources/databases", "nav.databases", "database", permissionManageDatabases}}},
 		{key: "nav.configuration", items: []itemSpec{{"/config/quick-runs", "nav.quick_runs", "zap", permissionObserve}, {"/config/schedules", "nav.schedules", "calendar-clock", permissionObserve}, {"/config/external-interfaces", "nav.external_interfaces", "plug", permissionManageExecution}}},
 		{key: "nav.history", items: []itemSpec{{"/history/runs", "nav.runs", "square-terminal", permissionObserve}, {"/history/audit", "nav.audit", "scroll-text", permissionReadAudit}}},

@@ -1,0 +1,309 @@
+package app
+
+import (
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"sort"
+	"strconv"
+	"strings"
+
+	"scriptboard/internal/customdashboard"
+	"scriptboard/internal/websitemonitor"
+)
+
+type customDashboardPageView struct {
+	Locale                webLocale
+	CSRFToken             string
+	Dashboards            []customdashboard.Dashboard
+	Dashboard             customdashboard.Dashboard
+	Cards                 []customDashboardCardView
+	WebsiteMonitors       []websitemonitor.Monitor
+	CanManage, PublicView bool
+}
+
+type customDashboardCardView struct {
+	customdashboard.Card
+	ValueLabel, SecondaryLabel, StatusLabel, UpdatedLabel, HeadersText string
+	Websites                                                           []customDashboardWebsiteView
+	SelectedMonitorIDs                                                 map[string]bool
+	InsecureSource                                                     bool
+}
+
+type customDashboardWebsiteView struct {
+	Name, State, StateLabel, AvailabilityLabel, LatencyLabel, SSLLabel, SSLTone, CheckedLabel string
+}
+
+func (a *App) customDashboardPage(response http.ResponseWriter, request *http.Request) {
+	current := request.Context().Value(sessionContextKey).(session)
+	dashboards, err := a.customDashboards.ListDashboards(request.Context())
+	if err != nil {
+		http.Error(response, "无法读取自定义面板", http.StatusInternalServerError)
+		return
+	}
+	for index := range dashboards {
+		if complete, completeErr := a.customDashboards.GetDashboard(request.Context(), dashboards[index].ID); completeErr == nil {
+			dashboards[index] = complete
+		}
+	}
+	var dashboard customdashboard.Dashboard
+	if id := strings.TrimSpace(request.URL.Query().Get("dashboard")); id != "" {
+		dashboard, err = a.customDashboards.GetDashboard(request.Context(), id)
+	} else if len(dashboards) > 0 {
+		dashboard, err = a.customDashboards.GetDashboard(request.Context(), dashboards[0].ID)
+	}
+	if err != nil && err != sql.ErrNoRows {
+		http.Error(response, "无法读取自定义面板", http.StatusInternalServerError)
+		return
+	}
+	view := a.newCustomDashboardPageView(request, dashboard, false)
+	view.Dashboards = dashboards
+	view.CSRFToken = current.csrfToken
+	view.CanManage = roleAllows(current.role, permissionManageOperations)
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = customDashboardTemplate.Execute(response, view)
+}
+
+func (a *App) publicCustomDashboard(response http.ResponseWriter, request *http.Request) {
+	dashboard, err := a.customDashboards.GetPublicDashboard(request.Context(), request.PathValue("slug"))
+	if err != nil {
+		http.NotFound(response, request)
+		return
+	}
+	view := a.newCustomDashboardPageView(request, dashboard, true)
+	view.PublicView = true
+	response.Header().Set("Cache-Control", "public, max-age=15")
+	response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = customDashboardTemplate.Execute(response, view)
+}
+
+func (a *App) newCustomDashboardPageView(request *http.Request, dashboard customdashboard.Dashboard, public bool) customDashboardPageView {
+	view := customDashboardPageView{Locale: resolveWebLocale(request), Dashboard: dashboard, PublicView: public}
+	if monitors, err := a.websiteMonitor.List(request.Context(), websitemonitor.Filter{}); err == nil {
+		view.WebsiteMonitors = monitors
+	}
+	for _, card := range dashboard.Cards {
+		item := customDashboardCardView{Card: card, StatusLabel: "等待首次刷新", UpdatedLabel: "尚未更新", SelectedMonitorIDs: map[string]bool{}}
+		headerNames := make([]string, 0, len(card.Headers))
+		for name := range card.Headers {
+			headerNames = append(headerNames, name)
+		}
+		sort.Strings(headerNames)
+		var headerLines []string
+		for _, name := range headerNames {
+			headerLines = append(headerLines, name+": "+card.Headers[name])
+		}
+		item.HeadersText = strings.Join(headerLines, "\n")
+		item.InsecureSource = strings.HasPrefix(strings.ToLower(card.SourceURL), "http://")
+		if card.LastError != "" {
+			item.StatusLabel = "数据已过期"
+		}
+		if !card.LastSuccessAt.IsZero() {
+			item.UpdatedLabel = card.LastSuccessAt.Local().Format("01-02 15:04")
+			if card.LastError == "" {
+				item.StatusLabel = "数据正常"
+			}
+		}
+		item.ValueLabel = formatDashboardValue(card.Snapshot.Value)
+		item.SecondaryLabel = formatDashboardValue(card.Snapshot.Secondary)
+		if card.Type == customdashboard.CardWebsite {
+			var config struct {
+				MonitorIDs []string `json:"monitorIds"`
+			}
+			_ = json.Unmarshal(card.Config, &config)
+			for _, id := range config.MonitorIDs {
+				item.SelectedMonitorIDs[id] = true
+			}
+			item.Websites = a.customDashboardWebsiteCards(request, card)
+		}
+		view.Cards = append(view.Cards, item)
+	}
+	return view
+}
+
+func (a *App) customDashboardWebsiteCards(request *http.Request, card customdashboard.Card) []customDashboardWebsiteView {
+	var config struct {
+		MonitorIDs []string `json:"monitorIds"`
+	}
+	_ = json.Unmarshal(card.Config, &config)
+	result := make([]customDashboardWebsiteView, 0, len(config.MonitorIDs))
+	for _, id := range config.MonitorIDs {
+		monitor, err := a.websiteMonitor.Get(request.Context(), id)
+		if err != nil || monitor.DeletedAt != nil {
+			continue
+		}
+		item := customDashboardWebsiteView{Name: monitor.Config.Name, State: string(monitor.State), StateLabel: websiteStateLabel(resolveWebLocale(request), monitor.State), LatencyLabel: "—", AvailabilityLabel: "—", SSLLabel: "无 TLS 证书", SSLTone: "neutral", CheckedLabel: "尚未检查"}
+		if !monitor.Latest.CheckedAt.IsZero() {
+			item.LatencyLabel = fmt.Sprintf("%d ms", monitor.Latest.Latency.Milliseconds())
+			item.CheckedLabel = monitor.Latest.CheckedAt.Local().Format("01-02 15:04")
+		}
+		if snapshot, detailErr := a.websiteMonitor.DetailSnapshot(request.Context(), id); detailErr == nil {
+			item.AvailabilityLabel = fmt.Sprintf("%.2f%%", snapshot.AvailabilityPercent)
+		}
+		if !monitor.Latest.Certificate.NotAfter.IsZero() {
+			days := monitor.Latest.Certificate.DaysRemaining
+			item.SSLLabel = fmt.Sprintf("SSL %d 天", days)
+			item.SSLTone = "success"
+			if days <= 14 {
+				item.SSLTone = "warning"
+			}
+			if days <= 0 {
+				item.SSLTone = "danger"
+			}
+		}
+		result = append(result, item)
+	}
+	return result
+}
+
+func (a *App) createCustomDashboard(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "页面已过期，请重试", http.StatusForbidden)
+		return
+	}
+	dashboard, err := a.customDashboards.CreateDashboard(request.Context(), customdashboard.DashboardInput{Name: request.FormValue("name"), Slug: request.FormValue("slug"), Public: request.FormValue("public") == "1"})
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	a.recordAuditForRequest(request, "create_custom_dashboard", dashboard.ID, "succeeded")
+	http.Redirect(response, request, "/monitor/dashboards?dashboard="+dashboard.ID, http.StatusSeeOther)
+}
+func (a *App) updateCustomDashboard(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "页面已过期，请重试", http.StatusForbidden)
+		return
+	}
+	id := request.PathValue("id")
+	_, err := a.customDashboards.UpdateDashboard(request.Context(), id, customdashboard.DashboardInput{Name: request.FormValue("name"), Slug: request.FormValue("slug"), Public: request.FormValue("public") == "1"})
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	a.recordAuditForRequest(request, "update_custom_dashboard", id, "succeeded")
+	http.Redirect(response, request, "/monitor/dashboards?dashboard="+id, http.StatusSeeOther)
+}
+func (a *App) deleteCustomDashboard(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) || request.FormValue("confirm") != "yes" {
+		http.Error(response, "请确认删除面板", http.StatusForbidden)
+		return
+	}
+	id := request.PathValue("id")
+	if err := a.customDashboards.DeleteDashboard(request.Context(), id); err != nil {
+		http.Error(response, err.Error(), http.StatusConflict)
+		return
+	}
+	a.recordAuditForRequest(request, "delete_custom_dashboard", id, "succeeded")
+	http.Redirect(response, request, "/monitor/dashboards", http.StatusSeeOther)
+}
+
+func (a *App) createCustomDashboardCard(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "页面已过期，请重试", http.StatusForbidden)
+		return
+	}
+	id := request.PathValue("id")
+	input, err := customDashboardCardInput(request)
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	card, err := a.customDashboards.CreateCard(request.Context(), id, input)
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	if card.Type != customdashboard.CardWebsite {
+		_, _ = a.customDashboards.RefreshCard(request.Context(), card.ID)
+	}
+	a.recordAuditForRequest(request, "create_custom_dashboard_card", card.ID, "succeeded")
+	http.Redirect(response, request, "/monitor/dashboards?dashboard="+id, http.StatusSeeOther)
+}
+func (a *App) deleteCustomDashboardCard(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) || request.FormValue("confirm") != "yes" {
+		http.Error(response, "请确认删除卡片", http.StatusForbidden)
+		return
+	}
+	id := request.PathValue("id")
+	dashboardID := request.FormValue("dashboard_id")
+	if err := a.customDashboards.DeleteCard(request.Context(), id); err != nil {
+		http.Error(response, err.Error(), http.StatusConflict)
+		return
+	}
+	a.recordAuditForRequest(request, "delete_custom_dashboard_card", id, "succeeded")
+	http.Redirect(response, request, "/monitor/dashboards?dashboard="+dashboardID, http.StatusSeeOther)
+}
+func (a *App) refreshCustomDashboardCard(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "页面已过期，请重试", http.StatusForbidden)
+		return
+	}
+	id := request.PathValue("id")
+	dashboardID := request.FormValue("dashboard_id")
+	if _, err := a.customDashboards.RefreshCard(request.Context(), id); err != nil {
+		a.recordAuditForRequest(request, "refresh_custom_dashboard_card", id, "failed")
+	}
+	http.Redirect(response, request, "/monitor/dashboards?dashboard="+dashboardID, http.StatusSeeOther)
+}
+
+func (a *App) updateCustomDashboardCard(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "页面已过期，请重试", http.StatusForbidden)
+		return
+	}
+	id := request.PathValue("id")
+	input, err := customDashboardCardInput(request)
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	card, err := a.customDashboards.UpdateCard(request.Context(), id, input)
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	if card.Type != customdashboard.CardWebsite {
+		_, _ = a.customDashboards.RefreshCard(request.Context(), card.ID)
+	}
+	a.recordAuditForRequest(request, "update_custom_dashboard_card", id, "succeeded")
+	http.Redirect(response, request, "/monitor/dashboards?dashboard="+card.DashboardID, http.StatusSeeOther)
+}
+
+func customDashboardCardInput(request *http.Request) (customdashboard.CardInput, error) {
+	_ = request.ParseForm()
+	refresh, _ := strconv.Atoi(request.FormValue("refresh_seconds"))
+	headers := map[string]string{}
+	for _, line := range strings.Split(request.FormValue("headers"), "\n") {
+		name, value, ok := strings.Cut(line, ":")
+		if ok && strings.TrimSpace(name) != "" {
+			headers[strings.TrimSpace(name)] = strings.TrimSpace(value)
+		}
+	}
+	cardType := customdashboard.CardType(request.FormValue("type"))
+	config := json.RawMessage(`{}`)
+	if cardType == customdashboard.CardWebsite {
+		encoded, err := json.Marshal(map[string]any{"monitorIds": request.Form["monitor_id"]})
+		if err != nil {
+			return customdashboard.CardInput{}, err
+		}
+		config = encoded
+	}
+	return customdashboard.CardInput{Name: request.FormValue("name"), Type: cardType, SourceURL: request.FormValue("source_url"), Headers: headers, ValuePath: request.FormValue("value_path"), SecondaryPath: request.FormValue("secondary_path"), Formula: request.FormValue("formula"), Config: config, RefreshSeconds: refresh}, nil
+}
+
+func formatDashboardValue(value any) string {
+	if value == nil {
+		return "—"
+	}
+	switch v := value.(type) {
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case string:
+		return v
+	default:
+		encoded, _ := json.Marshal(v)
+		return string(encoded)
+	}
+}

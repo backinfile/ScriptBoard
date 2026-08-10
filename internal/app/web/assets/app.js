@@ -6136,3 +6136,27 @@
   initPage();
   initStatus();
 })();
+
+document.addEventListener("change", function (event) {
+  const select = event.target.closest("[data-dashboard-card-type]");
+  if (!select) return;
+  const form = select.closest("form");
+  if (!form) return;
+  const website = select.value === "website";
+  form.querySelectorAll("[data-dashboard-http-field]").forEach((field) => { field.hidden = website; });
+  const websiteField = form.querySelector("[data-dashboard-website-field]");
+  if (websiteField) websiteField.hidden = !website;
+});
+
+document.addEventListener("click", async function (event) {
+  const button = event.target.closest("[data-copy-dashboard-url]");
+  if (!button) return;
+  const label = button.querySelector("[data-copy-dashboard-label]");
+  try {
+    await navigator.clipboard.writeText(new URL(button.dataset.copyDashboardUrl, window.location.origin).href);
+    if (label) label.textContent = "已复制";
+  } catch (_) {
+    if (label) label.textContent = "复制失败";
+  }
+  window.setTimeout(() => { if (label) label.textContent = "复制公开地址"; }, 1800);
+});
