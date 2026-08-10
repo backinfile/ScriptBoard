@@ -77,6 +77,13 @@ func (m *Manager) Create(ctx context.Context, config Config) (Monitor, error) {
 	return created[0], nil
 }
 
+// CreateMany validates and creates a group of monitor configurations in one
+// transaction. It is used by bounded import flows so a failed item never
+// leaves a partially imported group behind.
+func (m *Manager) CreateMany(ctx context.Context, configs []Config) ([]Monitor, error) {
+	return m.createMany(ctx, configs)
+}
+
 // Update replaces a monitor configuration as one atomic generation change.
 // Results already in flight for an older generation are intentionally ignored.
 func (m *Manager) Update(ctx context.Context, id string, config Config) (Monitor, error) {
@@ -330,6 +337,12 @@ func normalizeConfig(config Config) (Config, error) {
 		config.Timeout = 10 * time.Second
 	}
 	return config, nil
+}
+
+// ValidateConfig applies the same defaults and validation used when a monitor
+// is created, without writing anything to storage.
+func ValidateConfig(config Config) (Config, error) {
+	return normalizeConfig(config)
 }
 
 func (m *Manager) Get(ctx context.Context, id string) (Monitor, error) {

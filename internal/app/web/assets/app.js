@@ -910,6 +910,10 @@
       ? main
       : main.querySelector("[data-website-nginx]");
     if (websiteNginx) cleanups.push(initWebsiteNginx(websiteNginx));
+    const websiteConfigTransfer = main.matches("[data-website-config-transfer]")
+      ? main
+      : main.querySelector("[data-website-config-transfer]");
+    if (websiteConfigTransfer) cleanups.push(initWebsiteConfigTransfer(websiteConfigTransfer));
   }
 
   function initExternalEntryForm(root = document, cleanups = []) {
@@ -3773,6 +3777,41 @@
     };
   }
 
+  function initWebsiteConfigTransfer(root){
+    const form=root.querySelector('[data-website-selection-form]');
+    if(!form)return ()=>{};
+    const selectAll=form.querySelector('[data-website-select-all]');
+    const candidates=[...form.querySelectorAll('[data-website-selection]:not(:disabled)')];
+    const count=form.querySelector('[data-website-selected-count]');
+    const button=form.querySelector('[data-website-selection-submit]');
+    const buttonCount=form.querySelector('[data-website-submit-count]');
+    const sync=()=>{
+      const selected=candidates.filter(candidate=>candidate.checked).length;
+      if(count)count.textContent=String(selected);
+      if(buttonCount)buttonCount.textContent=`(${selected})`;
+      if(button)button.disabled=selected===0;
+      if(selectAll){
+        selectAll.checked=candidates.length>0&&selected===candidates.length;
+        selectAll.indeterminate=selected>0&&selected<candidates.length;
+        selectAll.disabled=candidates.length===0;
+      }
+    };
+    const onSelectAll=()=>{
+      candidates.forEach(candidate=>{candidate.checked=selectAll.checked});
+      sync();
+    };
+    const onChange=event=>{
+      if(event.target.matches('[data-website-selection]'))sync();
+    };
+    selectAll?.addEventListener('change',onSelectAll);
+    form.addEventListener('change',onChange);
+    sync();
+    return ()=>{
+      selectAll?.removeEventListener('change',onSelectAll);
+      form.removeEventListener('change',onChange);
+    };
+  }
+
   function websiteSnapshotChanged(root,payload){
     if(root.matches('[data-website-detail]')){
       return root.dataset.monitorState!==payload.State||
@@ -5876,6 +5915,8 @@
     if (websiteMonitoring) cleanups.push(initWebsiteMonitoring(websiteMonitoring));
     const websiteNginx = document.querySelector("[data-website-nginx]");
     if (websiteNginx) cleanups.push(initWebsiteNginx(websiteNginx));
+    const websiteConfigTransfer = document.querySelector("[data-website-config-transfer]");
+    if (websiteConfigTransfer) cleanups.push(initWebsiteConfigTransfer(websiteConfigTransfer));
   }
 
   document.addEventListener("click", event => {

@@ -54,4 +54,5 @@ var (
 	websiteMonitorFormTemplate    = mustWebTemplate("website-monitor-form")
 	websiteMonitorListTemplate    = mustWebTemplate("website-monitor-list")
 	websiteMonitorNginxTemplate   = mustWebTemplate("website-monitor-nginx")
+	websiteTransferTemplate       = mustWebTemplate("website-monitor-transfer")
 )
