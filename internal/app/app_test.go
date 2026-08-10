@@ -815,6 +815,103 @@ func TestUpdateSourcesRenderInRightmostSettingsDrawer(t *testing.T) {
 	}
 }
 
+func TestManagedServiceCanBeRestartedFromUpdatesPage(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	restarted := make(chan struct{}, 1)
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{
+		StateRoot: filepath.Join(root, "state"),
+		RequestRestart: func() error {
+			restarted <- struct{}{}
+			return nil
+		},
+	})
+	response, err := client.Get(serverURL + "/settings/updates")
+	if err != nil {
+		t.Fatalf("get updates page: %v", err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read updates page: %v", err)
+	}
+	html := string(page)
+	for _, expected := range []string{`action="/settings/updates/restart"`, `data-service-restart`, `data-lucide="rotate-cw"`} {
+		if !strings.Contains(html, expected) {
+			t.Fatalf("updates page does not contain restart control %q: %s", expected, html)
+		}
+	}
+
+	values := url.Values{"csrf_token": {formToken(t, page)}, "confirm": {"yes"}}
+	request, err := http.NewRequest(http.MethodPost, serverURL+"/settings/updates/restart", strings.NewReader(values.Encode()))
+	if err != nil {
+		t.Fatalf("create restart request: %v", err)
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Accept", "application/json")
+	response, err = client.Do(request)
+	if err != nil {
+		t.Fatalf("request service restart: %v", err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read restart response: %v", err)
+	}
+	if response.StatusCode != http.StatusAccepted {
+		t.Fatalf("restart status=%d body=%s, want 202", response.StatusCode, body)
+	}
+	var payload map[string]string
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("decode restart response: %v", err)
+	}
+	if payload["instance_id"] == "" || payload["status_url"] != "/settings/updates/status" {
+		t.Fatalf("restart payload=%v", payload)
+	}
+	select {
+	case <-restarted:
+	default:
+		t.Fatal("restart callback was not called")
+	}
+
+	request, err = http.NewRequest(http.MethodPost, serverURL+"/settings/updates/restart", strings.NewReader(values.Encode()))
+	if err != nil {
+		t.Fatalf("create duplicate restart request: %v", err)
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Accept", "application/json")
+	response, err = client.Do(request)
+	if err != nil {
+		t.Fatalf("request duplicate service restart: %v", err)
+	}
+	duplicateBody, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read duplicate restart response: %v", err)
+	}
+	if response.StatusCode != http.StatusConflict || !strings.Contains(string(duplicateBody), "already pending") {
+		t.Fatalf("duplicate restart status=%d body=%s, want 409 pending", response.StatusCode, duplicateBody)
+	}
+}
+
+func TestUpdatesPageHidesRestartWhenServiceControlIsUnavailable(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: filepath.Join(root, "state")})
+	response, err := client.Get(serverURL + "/settings/updates")
+	if err != nil {
+		t.Fatalf("get updates page: %v", err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read updates page: %v", err)
+	}
+	if strings.Contains(string(page), `action="/settings/updates/restart"`) {
+		t.Fatalf("updates page exposed restart without service control: %s", page)
+	}
+}
+
 func TestAdministratorRenamesAccountFromFocusedTask(t *testing.T) {
 	t.Parallel()
 

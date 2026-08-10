@@ -425,6 +425,17 @@ async function assertNativePostServerErrorPreservesWorkspace(page) {
 async function assertAsyncPostServerErrorPreservesWorkspace(page) {
   await page.goto(new URL("/settings/updates", page.url()).toString());
   const workspaceURL = page.url();
+  const restartButton = page.getByRole("button", { name: "Restart service", exact: true });
+  assert.equal(await restartButton.count(), 1, "managed-service fixture did not expose the restart control");
+  await saveSnapshot(page, "updates-service-control");
+  const desktopViewport = page.viewportSize();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(workspaceURL);
+  assert.equal(await page.getByRole("button", { name: "Restart service", exact: true }).count(), 1, "mobile updates page hid the restart control");
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "restart control caused mobile horizontal overflow");
+  await saveSnapshot(page, "updates-service-control-mobile");
+  await page.setViewportSize(desktopViewport);
+  await page.goto(workspaceURL);
   await page.locator("[data-update-source-open]").click();
   await saveSnapshot(page, "update-source-drawer");
   const checkForm = page.locator('form[action="/settings/updates/check"][data-async]');

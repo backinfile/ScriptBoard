@@ -66,6 +66,7 @@
     "plus": '<path d="M5 12h14M12 5v14"/>',
     "power": '<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/>',
     "refresh-cw": '<path d="M21 12a9 9 0 0 0-15.2-6.5L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 15.2 6.5L21 16"/><path d="M16 16h5v5"/>',
+    "rotate-cw": '<path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/>',
     "rotate-ccw": '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
     "scroll-text": '<path d="M15 12h-5M15 8h-5"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1H11v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2h4"/>',
     "search": '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
@@ -1616,6 +1617,20 @@
     }
   }
 
+  function showUpdateReconnect(main, title, description) {
+    if (!main) return;
+    main.querySelector(".update-reconnect")?.remove();
+    const notice = document.createElement("aside");
+    notice.className = "update-reconnect";
+    notice.setAttribute("role", "status");
+    notice.setAttribute("aria-live", "polite");
+    notice.innerHTML = '<span data-lucide="loader-circle" aria-hidden="true"></span><div><strong></strong><p></p></div>';
+    notice.querySelector("strong").textContent = title;
+    notice.querySelector("p").textContent = description;
+    main.prepend(notice);
+    renderIcons(notice);
+  }
+
   async function submitUpdateApply(form, submitter) {
     const data = new FormData(form);
     if (submitter?.name) data.set(submitter.name, submitter.value);
@@ -1631,17 +1646,7 @@
       }
       const payload = await response.json();
       const main = document.querySelector("[data-updates-page]");
-      if (main) {
-        const notice = document.createElement("aside");
-        notice.className = "update-reconnect";
-        notice.setAttribute("role", "status");
-        notice.setAttribute("aria-live", "polite");
-        notice.innerHTML = '<span data-lucide="loader-circle" aria-hidden="true"></span><div><strong></strong><p></p></div>';
-        notice.querySelector("strong").textContent = main.dataset.updateInstallingTitle;
-        notice.querySelector("p").textContent = main.dataset.updateInstallingDescription;
-        main.prepend(notice);
-        renderIcons(notice);
-      }
+      showUpdateReconnect(main, main?.dataset.updateInstallingTitle, main?.dataset.updateInstallingDescription);
       let delay = 1000;
       let sawOffline = false;
       const deadline = Date.now() + 180000;
@@ -1671,6 +1676,51 @@
     } catch (error) {
       const main = document.querySelector("[data-updates-page]");
       const title = main?.dataset.updateStartError || "Unable to start the update.";
+      window.alert(error?.message ? `${title}\n\n${error.message}` : title);
+      resetSubmit(form);
+    }
+  }
+
+  async function submitServiceRestart(form, submitter) {
+    const data = new FormData(form);
+    if (submitter?.name) data.set(submitter.name, submitter.value);
+    const main = document.querySelector("[data-updates-page]");
+    try {
+      const response = await fetch(form.action, {
+        method: "POST",
+        body: data,
+        credentials: "same-origin",
+        headers: { "Accept": "application/json" },
+      });
+      if (!response.ok) {
+        throw new Error((await response.text()).trim() || `HTTP ${response.status}`);
+      }
+      const payload = await response.json();
+      showUpdateReconnect(main, main?.dataset.restartTitle, main?.dataset.restartDescription);
+      let delay = 750;
+      const deadline = Date.now() + 180000;
+      while (Date.now() < deadline) {
+        await new Promise(resolve => window.setTimeout(resolve, delay));
+        try {
+          const status = await fetch(payload.status_url || "/settings/updates/status", {
+            credentials: "same-origin",
+            cache: "no-store",
+          });
+          if (status.ok) {
+            const snapshot = await status.json();
+            if (snapshot.instance_id && snapshot.instance_id !== payload.instance_id) {
+              location.assign("/settings/updates");
+              return;
+            }
+          }
+        } catch {
+          // The expected disconnect is resolved by the next poll.
+        }
+        delay = Math.min(5000, delay + 750);
+      }
+      location.assign("/settings/updates");
+    } catch (error) {
+      const title = main?.dataset.restartError || "Unable to restart the service.";
       window.alert(error?.message ? `${title}\n\n${error.message}` : title);
       resetSubmit(form);
     }
@@ -5902,6 +5952,9 @@
     } else if (form.hasAttribute("data-update-apply")) {
       event.preventDefault();
       submitUpdateApply(form, submitter);
+    } else if (form.hasAttribute("data-service-restart")) {
+      event.preventDefault();
+      submitServiceRestart(form, submitter);
     } else if (form.hasAttribute("data-async")) {
       event.preventDefault();
       submitAsync(form, submitter);

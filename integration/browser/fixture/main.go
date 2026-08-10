@@ -183,6 +183,7 @@ func main() {
 		AdminUsername:    fixtureUsername,
 		AdminPassword:    fixturePassword,
 		ApplicationProbe: &applicationProbe{},
+		RequestRestart:   func() error { return nil },
 	})
 	if err != nil {
 		panic(err)

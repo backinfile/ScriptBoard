@@ -240,6 +240,17 @@ func runService(action string, arguments []string) error {
 	case "stop":
 		return platformservice.Stop()
 	case "restart":
+		delayValue, remaining := takeStringArgument(arguments, "--delay")
+		if len(remaining) > 0 {
+			return fmt.Errorf("未知 service restart 参数: %v", remaining)
+		}
+		if delayValue != "" {
+			delay, err := time.ParseDuration(delayValue)
+			if err != nil || delay < 0 || delay > 30*time.Second {
+				return errors.New("service restart --delay 必须在 0s 到 30s 之间")
+			}
+			time.Sleep(delay)
+		}
 		return platformservice.Restart()
 	case "status":
 		status, err := platformservice.Status()
@@ -307,6 +318,10 @@ func serveContext(runContext context.Context, arguments []string) error {
 		return err
 	}
 	updateShutdown := make(chan struct{}, 1)
+	var requestRestart func() error
+	if canRestartManagedService(loaded.StateRoot, loaded.ConfigPath) {
+		requestRestart = func() error { return platformservice.RequestRestart(time.Second) }
+	}
 
 	application, err := app.Open(app.Config{
 		StateRoot: loaded.StateRoot, InstallRoot: applicationInstallRoot(loaded.StateRoot), ConfigPath: loaded.ConfigPath, TLSKey: loaded.TLSKey,
@@ -318,6 +333,7 @@ func serveContext(runContext context.Context, arguments []string) error {
 			default:
 			}
 		},
+		RequestRestart: requestRestart,
 	})
 	if err != nil {
 		return err
@@ -375,6 +391,27 @@ func applicationInstallRoot(stateRoot string) string {
 		return ""
 	}
 	return metadata.InstallRoot
+}
+
+func canRestartManagedService(stateRoot, configPath string) bool {
+	metadata, err := installation.Detect(stateRoot)
+	if err != nil {
+		return false
+	}
+	matches, err := platformservice.MatchesExecutable(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath)
+	if err != nil || !matches {
+		return false
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	currentExecutable, currentErr := os.Stat(executable)
+	serviceExecutable, serviceErr := os.Stat(installation.ServiceEntryExecutable(metadata))
+	currentConfig, currentConfigErr := os.Stat(configPath)
+	serviceConfig, serviceConfigErr := os.Stat(metadata.ConfigPath)
+	return currentErr == nil && serviceErr == nil && os.SameFile(currentExecutable, serviceExecutable) &&
+		currentConfigErr == nil && serviceConfigErr == nil && os.SameFile(currentConfig, serviceConfig)
 }
 
 func validateConfig(arguments []string) error {

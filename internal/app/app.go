@@ -319,6 +319,7 @@ type Config struct {
 	UpdateInterval         time.Duration
 	UpdateSource           updatepkg.ReleaseSource
 	RequestShutdown        func()
+	RequestRestart         func() error
 	ApplicationProbe       appstatus.Probe
 	AssistantRuntimeSource runtimeinstall.Source
 	HostSecurity           hostsecurity.Service
@@ -369,6 +370,9 @@ type App struct {
 	credentialOverride bool
 	trustedProxies     []*net.IPNet
 	updates            *updatepkg.Manager
+	requestRestart     func() error
+	instanceID         string
+	restartRequested   atomic.Bool
 	updateCancel       context.CancelFunc
 	updateContext      context.Context
 	updateResultsWake  chan struct{}
@@ -443,6 +447,8 @@ func Open(config Config) (*App, error) {
 		updateResultsWake: make(chan struct{}, 1),
 		hostSecurity:      hostSecurityService,
 		securityDrafts:    make(map[string]securityFirewallDraft),
+		requestRestart:    config.RequestRestart,
+		instanceID:        fmt.Sprintf("%d-%x", os.Getpid(), time.Now().UnixNano()),
 	}
 	application.externalTriggers = externaltrigger.New(db, externaltrigger.Options{SecretsDirectory: filepath.Join(stateRoot, "secrets")})
 	application.externalLimit = externaltrigger.NewLimiter(externaltrigger.LimiterOptions{RequestsPerMinute: 60, Concurrent: 4})
@@ -1831,6 +1837,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /settings/updates/check", a.requireSession(http.HandlerFunc(a.checkUpdate)))
 	mux.Handle("POST /settings/updates/prepare", a.requireSession(http.HandlerFunc(a.prepareUpdate)))
 	mux.Handle("POST /settings/updates/apply", a.requireSession(http.HandlerFunc(a.applyUpdate)))
+	mux.Handle("POST /settings/updates/restart", a.requireSession(http.HandlerFunc(a.restartService)))
 	mux.Handle("GET /resources/databases", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.mysqlDatabasesPage)))
 	mux.Handle("POST /resources/databases/instances", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.saveMySQLInstance)))
 	mux.Handle("POST /resources/databases/settings/backup-root", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.setMySQLBackupRoot)))

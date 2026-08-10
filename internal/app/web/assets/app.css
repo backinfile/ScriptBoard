@@ -2745,7 +2745,9 @@ td.record-actions { width: 1%; }
 .settings-section-heading { display: flex; justify-content: space-between; gap: 24px; margin-bottom: 22px; padding-bottom: 18px; border-bottom: 1px solid var(--rule-strong); }
 .settings-section-heading h2 { margin-bottom: 5px; font-size: 1.35rem; }
 .settings-section-heading p { max-width: 68ch; margin: 0; color: var(--muted); }
-.settings-section-heading__actions { display: flex; flex: 0 0 auto; align-items: center; gap: 10px; }
+.settings-section-heading__actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; }
+.settings-section-heading__buttons { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.settings-section-heading__buttons form { margin: 0; }
 .settings-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0 0 28px; border-top: 1px solid var(--rule); }
 .settings-summary div { padding: 14px 14px 14px 0; border-bottom: 1px solid var(--rule); }
 .settings-summary dt { margin-bottom: 4px; color: var(--muted); font-size: .72rem; }
@@ -4564,7 +4566,9 @@ body.has-task-panel { overflow: hidden; }
   .settings-nav { margin-bottom: 24px; }
   .settings-summary { grid-template-columns: 1fr; }
   .settings-section-heading { align-items: flex-start; flex-direction: column; }
-  .settings-section-heading__actions { width: 100%; justify-content: space-between; }
+  .settings-section-heading__actions { width: 100%; justify-content: flex-start; }
+  .settings-section-heading__buttons { width: 100%; justify-content: flex-start; }
+  .settings-section-heading__buttons .button { flex: 1 1 140px; justify-content: center; }
   .update-source-drawer { width: 100vw; }
   .update-source-drawer__head { padding: 20px 18px 18px; }
   .update-source-list { padding: 18px 18px 0; }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"runtime"
+	"strings"
 	"time"
 
 	updatepkg "scriptboard/internal/update"
@@ -26,6 +27,8 @@ type updatesPageData struct {
 	SourceName         string
 	Sources            []updateSourceData
 	ShowSourceDrawer   bool
+	CanRestartService  bool
+	RestartRequested   bool
 	SettingsNavigation settingsNavigationData
 }
 
@@ -48,6 +51,8 @@ func (a *App) updatesPage(response http.ResponseWriter, request *http.Request) {
 		Locale: locale, ActiveRuns: a.runs.ActiveCount(),
 		SettingsNavigation: newSettingsNavigation(current, locale, "updates"),
 		ShowSourceDrawer:   request.URL.Query().Get("sources") == "1",
+		CanRestartService:  a.requestRestart != nil,
+		RestartRequested:   request.URL.Query().Get("restarting") == "1",
 	}
 	data.Sources, data.SourceName = updateSourcesForWeb(locale, a.updates.Sources(), snapshot.SourceID)
 	switch snapshot.InstallMode {
@@ -113,8 +118,42 @@ func (a *App) updateStatus(response http.ResponseWriter, _ *http.Request) {
 	response.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(response).Encode(struct {
 		updatepkg.Snapshot
-		Validation bool `json:"validation"`
-	}{Snapshot: a.updates.Snapshot(), Validation: a.validation.Load()})
+		Validation bool   `json:"validation"`
+		InstanceID string `json:"instance_id"`
+	}{Snapshot: a.updates.Snapshot(), Validation: a.validation.Load(), InstanceID: a.instanceID})
+}
+
+func (a *App) restartService(response http.ResponseWriter, request *http.Request) {
+	locale := resolveWebLocale(request)
+	if !validSessionCSRF(request) || request.FormValue("confirm") != "yes" {
+		http.Error(response, webText(locale, "updates.restart_confirm_error"), http.StatusForbidden)
+		return
+	}
+	if a.requestRestart == nil {
+		http.Error(response, webText(locale, "updates.restart_unavailable"), http.StatusConflict)
+		return
+	}
+	if !a.restartRequested.CompareAndSwap(false, true) {
+		http.Error(response, webText(locale, "updates.restart_pending"), http.StatusConflict)
+		return
+	}
+	if err := a.requestRestart(); err != nil {
+		a.restartRequested.Store(false)
+		a.recordAuditForRequest(request, "service_restart_requested", "ScriptBoard", "failed")
+		http.Error(response, webText(locale, "updates.restart_failed")+": "+err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	a.recordAuditForRequest(request, "service_restart_requested", "ScriptBoard", "accepted")
+	if strings.Contains(request.Header.Get("Accept"), "application/json") {
+		response.Header().Set("Content-Type", "application/json; charset=utf-8")
+		response.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(response).Encode(map[string]string{
+			"instance_id": a.instanceID,
+			"status_url":  "/settings/updates/status",
+		})
+		return
+	}
+	http.Redirect(response, request, "/settings/updates?restarting=1", http.StatusSeeOther)
 }
 
 func (a *App) checkUpdate(response http.ResponseWriter, request *http.Request) {
