@@ -308,7 +308,7 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	if !strings.Contains(rendered, `stroke-dasharray="63.24 100"`) || strings.Contains(rendered, "数据正常") {
 		t.Fatal("percentage progress or normal-state presentation is incorrect")
 	}
-	if !strings.Contains(rendered, `class="custom-dashboard-card__quota-meter"`) || !strings.Contains(rendered, `aria-valuenow="36.76"`) || !strings.Contains(rendered, "36.76%") {
+	if !strings.Contains(rendered, `class="custom-dashboard-card__quota-chart"`) || !strings.Contains(rendered, `role="progressbar"`) || !strings.Contains(rendered, `aria-valuenow="36.76"`) || !strings.Contains(rendered, "36.76") {
 		t.Fatal("quota card percentage visualization is incorrect")
 	}
 	if !strings.Contains(rendered, `custom-dashboard-card__percentage-unit`) || strings.Contains(rendered, `custom-dashboard-card__secondary`) || strings.Contains(rendered, `custom-dashboard-card__type`) {
