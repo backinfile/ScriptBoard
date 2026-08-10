@@ -45,6 +45,9 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	if !strings.Contains(string(page), `aria-labelledby="custom-dashboard-edit-title"`) {
 		t.Fatal("edit dashboard drawer missing")
 	}
+	if rendered := string(page); !strings.Contains(rendered, `href="/monitor/dashboard/`+dashboardID+`"`) {
+		t.Fatal("created dashboard was not appended to monitor navigation")
+	}
 	if rendered := string(page); strings.Contains(rendered, "更多面板操作") || !strings.Contains(rendered, `form="custom-dashboard-delete-form"`) || !strings.Contains(rendered, `data-dashboard-slug-preview`) {
 		t.Fatal("dashboard settings controls do not match the drawer contract")
 	}
@@ -72,12 +75,34 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 		t.Fatal("public page exposed source configuration")
 	}
 
+	monitorResponse, err := client.Get(serverURL + "/monitor/dashboard/" + dashboardID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	monitorPage, _ := io.ReadAll(monitorResponse.Body)
+	monitorResponse.Body.Close()
+	monitorRendered := string(monitorPage)
+	if monitorResponse.StatusCode != http.StatusOK || !strings.Contains(monitorRendered, `custom-dashboard-monitor`) || !strings.Contains(monitorRendered, "63.2") {
+		t.Fatalf("authenticated monitor view missing dashboard data: status=%d body=%s", monitorResponse.StatusCode, monitorRendered)
+	}
+	if strings.Contains(monitorRendered, "添加卡片") || strings.Contains(monitorRendered, `aria-labelledby="custom-dashboard-edit-title"`) {
+		t.Fatal("authenticated monitor view exposed configuration controls")
+	}
+
 	response, err = client.Get(dashboardURL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	page, _ = io.ReadAll(response.Body)
 	response.Body.Close()
+	configRendered := string(page)
+	if !strings.Contains(configRendered, api.URL) || !strings.Contains(configRendered, "60 秒刷新") {
+		t.Fatal("dashboard configuration page missing card source settings")
+	}
+	if strings.Contains(configRendered, `custom-dashboard-sites`) || strings.Contains(configRendered, `custom-dashboard-card__value`) {
+		t.Fatal("dashboard configuration page rendered the live dashboard layout")
+	}
+
 	response, err = client.PostForm(serverURL+"/monitor/dashboards/"+dashboardID+"/delete", url.Values{"csrf_token": {formToken(t, page)}, "confirm": {"yes"}})
 	if err != nil {
 		t.Fatal(err)

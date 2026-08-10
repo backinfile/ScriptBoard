@@ -213,6 +213,22 @@ func (a *App) addApplicationShell(request *http.Request, body []byte) []byte {
 	statusState := shellStatus.State
 	status := webText(locale, "status."+statusState)
 	navigation := shellNavigation(locale, request.URL.Path, current.role)
+	if roleAllows(current.role, permissionObserve) {
+		if dashboards, dashboardErr := a.customDashboards.ListDashboards(request.Context()); dashboardErr == nil {
+			for index := range navigation {
+				if navigation[index].Label != webText(locale, "nav.monitor") {
+					continue
+				}
+				for _, dashboard := range dashboards {
+					href := "/monitor/dashboard/" + dashboard.ID
+					navigation[index].Items = append(navigation[index].Items, shellNavigationItem{
+						Href: href, Label: dashboard.Name, Icon: "panel-top", Current: request.URL.Path == href,
+					})
+				}
+				break
+			}
+		}
+	}
 	var shell bytes.Buffer
 	_ = applicationShellTemplate.Execute(&shell, applicationShellData{
 		Locale: locale, Username: username, Role: string(current.role), CSRFToken: current.csrfToken, ReturnTo: request.URL.RequestURI(),
@@ -271,9 +287,9 @@ func shellNavigation(locale webLocale, path string, role userRole) []shellNaviga
 		key   string
 		items []itemSpec
 	}{
-		{key: "nav.monitor", items: []itemSpec{{"/monitor", "nav.overview", "activity", permissionObserve}, {"/monitor/dashboards", "nav.dashboards", "layout-dashboard", permissionObserve}, {"/monitor/applications", "nav.applications", "app-window", permissionObserve}, {"/monitor/websites", "nav.websites", "network", permissionObserve}, {"/monitor/security", "nav.security", "shield-check", permissionObserve}}},
+		{key: "nav.monitor", items: []itemSpec{{"/monitor", "nav.overview", "activity", permissionObserve}, {"/monitor/applications", "nav.applications", "app-window", permissionObserve}, {"/monitor/websites", "nav.websites", "network", permissionObserve}, {"/monitor/security", "nav.security", "shield-check", permissionObserve}}},
 		{key: "nav.resources", items: []itemSpec{{"/resources/files", "nav.files", "folder-code", permissionReadFiles}, {"/resources/variables", "nav.variables", "braces", permissionManageExecution}, {"/resources/databases", "nav.databases", "database", permissionManageDatabases}}},
-		{key: "nav.configuration", items: []itemSpec{{"/config/quick-runs", "nav.quick_runs", "zap", permissionObserve}, {"/config/schedules", "nav.schedules", "calendar-clock", permissionObserve}, {"/config/external-interfaces", "nav.external_interfaces", "plug", permissionManageExecution}}},
+		{key: "nav.configuration", items: []itemSpec{{"/config/quick-runs", "nav.quick_runs", "zap", permissionObserve}, {"/config/schedules", "nav.schedules", "calendar-clock", permissionObserve}, {"/config/external-interfaces", "nav.external_interfaces", "plug", permissionManageExecution}, {"/monitor/dashboards", "nav.dashboards", "layout-dashboard", permissionObserve}}},
 		{key: "nav.history", items: []itemSpec{{"/history/runs", "nav.runs", "square-terminal", permissionObserve}, {"/history/audit", "nav.audit", "scroll-text", permissionReadAudit}}},
 		{key: "nav.assistant", items: []itemSpec{{"/ai", "nav.ai", "sparkles", permissionObserve}}},
 	}

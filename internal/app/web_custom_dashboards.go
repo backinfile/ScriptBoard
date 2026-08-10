@@ -14,14 +14,14 @@ import (
 )
 
 type customDashboardPageView struct {
-	Locale                webLocale
-	CSRFToken             string
-	DashboardUpdatedLabel string
-	Dashboards            []customdashboard.Dashboard
-	Dashboard             customdashboard.Dashboard
-	Cards                 []customDashboardCardView
-	WebsiteMonitors       []websitemonitor.Monitor
-	CanManage, PublicView bool
+	Locale                             webLocale
+	CSRFToken                          string
+	DashboardUpdatedLabel              string
+	Dashboards                         []customdashboard.Dashboard
+	Dashboard                          customdashboard.Dashboard
+	Cards                              []customDashboardCardView
+	WebsiteMonitors                    []websitemonitor.Monitor
+	CanManage, PublicView, MonitorView bool
 }
 
 type customDashboardCardView struct {
@@ -76,6 +76,23 @@ func (a *App) publicCustomDashboard(response http.ResponseWriter, request *http.
 	view := a.newCustomDashboardPageView(request, dashboard, true)
 	view.PublicView = true
 	response.Header().Set("Cache-Control", "public, max-age=15")
+	response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = customDashboardTemplate.Execute(response, view)
+}
+
+func (a *App) customDashboardMonitorPage(response http.ResponseWriter, request *http.Request) {
+	dashboard, err := a.customDashboards.GetDashboard(request.Context(), request.PathValue("id"))
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.NotFound(response, request)
+			return
+		}
+		http.Error(response, "无法读取自定义面板", http.StatusInternalServerError)
+		return
+	}
+	view := a.newCustomDashboardPageView(request, dashboard, false)
+	view.MonitorView = true
+	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = customDashboardTemplate.Execute(response, view)
 }

@@ -1823,6 +1823,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /monitor/applications/{id}/move", a.requireSession(http.HandlerFunc(a.movePinnedApplication)))
 	mux.Handle("GET /monitor/websites", a.requireSession(http.HandlerFunc(a.websiteMonitorList)))
 	mux.Handle("GET /monitor/dashboards", a.requireSession(http.HandlerFunc(a.customDashboardPage)))
+	mux.Handle("GET /monitor/dashboard/{id}", a.requireSession(http.HandlerFunc(a.customDashboardMonitorPage)))
 	mux.Handle("POST /monitor/dashboards", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.createCustomDashboard)))
 	mux.Handle("POST /monitor/dashboards/{id}", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.updateCustomDashboard)))
 	mux.Handle("POST /monitor/dashboards/{id}/delete", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.deleteCustomDashboard)))
