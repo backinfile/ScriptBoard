@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -17,6 +18,7 @@ type customDashboardPageView struct {
 	Locale                                      webLocale
 	CSRFToken                                   string
 	DashboardUpdatedLabel                       string
+	ImportError                                 string
 	Dashboards                                  []customdashboard.Dashboard
 	Dashboard                                   customdashboard.Dashboard
 	Cards                                       []customDashboardCardView
@@ -27,6 +29,7 @@ type customDashboardPageView struct {
 type customDashboardCardView struct {
 	customdashboard.Card
 	ValueLabel, SecondaryLabel, HeadersText, Unit string
+	QuotaProgressLabel                            string
 	QuotaProgress                                 float64
 	DisplayIndex                                  int
 	CanMoveUp, CanMoveDown                        bool
@@ -75,6 +78,7 @@ func (a *App) customDashboardPage(response http.ResponseWriter, request *http.Re
 	view.CSRFToken = current.csrfToken
 	view.CanManage = roleAllows(current.role, permissionManageOperations)
 	view.Reorder = view.CanManage && request.URL.Query().Get("reorder") == "1"
+	view.ImportError = customDashboardImportError(request.URL.Query().Get("import_error"))
 	for index := range view.Cards {
 		view.Cards[index].DisplayIndex = index + 1
 		view.Cards[index].CanMoveUp = index > 0
@@ -148,12 +152,22 @@ func (a *App) newCustomDashboardPageView(request *http.Request, dashboard custom
 			item.SecondaryLabel = ""
 		}
 		item.QuotaProgress = card.Snapshot.Number
+		if card.Type == customdashboard.CardQuota {
+			used, usedOK := dashboardNumericValue(card.Snapshot.Value)
+			remaining, remainingOK := dashboardNumericValue(card.Snapshot.Secondary)
+			if usedOK && remainingOK && used+remaining > 0 {
+				item.QuotaProgress = used / (used + remaining) * 100
+			} else {
+				item.QuotaProgress = 0
+			}
+		}
 		if item.QuotaProgress < 0 {
 			item.QuotaProgress = 0
 		}
 		if item.QuotaProgress > 100 {
 			item.QuotaProgress = 100
 		}
+		item.QuotaProgressLabel = formatDashboardValue(item.QuotaProgress)
 		if card.LastError != "" {
 			item.ValueLabel = "0"
 			if card.Type == customdashboard.CardQuota {
@@ -162,6 +176,7 @@ func (a *App) newCustomDashboardPageView(request *http.Request, dashboard custom
 				item.SecondaryLabel = ""
 			}
 			item.QuotaProgress = 0
+			item.QuotaProgressLabel = "0"
 		}
 		if card.Type == customdashboard.CardWebsite {
 			for _, id := range cardConfig.MonitorIDs {
@@ -397,11 +412,36 @@ func formatDashboardValue(value any) string {
 	}
 	switch v := value.(type) {
 	case float64:
-		return strconv.FormatFloat(v, 'f', -1, 64)
+		rounded := math.Round(v*100) / 100
+		if rounded == 0 {
+			return "0"
+		}
+		return strconv.FormatFloat(rounded, 'f', -1, 64)
 	case string:
 		return v
 	default:
 		encoded, _ := json.Marshal(v)
 		return string(encoded)
+	}
+}
+
+func dashboardNumericValue(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case json.Number:
+		number, err := typed.Float64()
+		return number, err == nil
+	case string:
+		number, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		return number, err == nil
+	default:
+		return 0, false
 	}
 }

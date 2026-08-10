@@ -6308,3 +6308,12 @@ document.addEventListener("click", async function (event) {
   }
   window.setTimeout(() => { if (label) label.textContent = "复制公开地址"; }, 1800);
 });
+
+syncDashboardDrawerState();
+
+document.addEventListener("change", function (event) {
+  const input = event.target.closest('[data-dashboard-import-file] input[type="file"]');
+  if (!input) return;
+  const label = input.closest("[data-dashboard-import-file]")?.querySelector("[data-dashboard-import-filename]");
+  if (label) label.textContent = input.files?.[0]?.name || "选择面板文件";
+});

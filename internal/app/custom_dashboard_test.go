@@ -1,7 +1,10 @@
 package app_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -11,6 +14,159 @@ import (
 	"sync/atomic"
 	"testing"
 )
+
+func TestCustomDashboardCanBeExportedAndImported(t *testing.T) {
+	root := t.TempDir()
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "host"), filepath.Join(root, "state"))
+	response, err := client.Get(serverURL + "/config/dashboards")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	response, err = client.PostForm(serverURL+"/config/dashboards", url.Values{
+		"csrf_token": {formToken(t, page)}, "name": {"迁移测试"}, "slug": {"transfer-test"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	dashboardLocation := response.Header.Get("Location")
+	dashboardURL, _ := url.Parse(dashboardLocation)
+	dashboardID := dashboardURL.Query().Get("dashboard")
+	if dashboardID == "" {
+		t.Fatal("created dashboard id missing")
+	}
+	response, err = client.Get(serverURL + dashboardLocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ = io.ReadAll(response.Body)
+	response.Body.Close()
+	response, err = client.PostForm(serverURL+"/config/dashboards/"+dashboardID+"/cards", url.Values{
+		"csrf_token": {formToken(t, page)}, "name": {"服务额度"}, "type": {"quota"},
+		"source_url": {"https://api.example.test/usage"}, "value_path": {"usage.used"},
+		"secondary_path": {"usage.remaining"}, "unit": {"GB"}, "refresh_seconds": {"300"},
+		"headers": {"Authorization: Bearer test-secret"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	response, err = client.Get(serverURL + "/config/dashboards/" + dashboardID + "/export")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exported, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK || !strings.Contains(response.Header.Get("Content-Disposition"), "attachment") {
+		t.Fatalf("export status=%d disposition=%q", response.StatusCode, response.Header.Get("Content-Disposition"))
+	}
+	if strings.Contains(string(exported), "snapshot") || strings.Contains(string(exported), "last_error") {
+		t.Fatal("export included runtime card state")
+	}
+	var bundle struct {
+		Format    string `json:"format"`
+		Dashboard struct {
+			Name  string `json:"name"`
+			Slug  string `json:"slug"`
+			Cards []struct {
+				Name           string            `json:"name"`
+				Headers        map[string]string `json:"headers"`
+				RefreshSeconds int               `json:"refresh_seconds"`
+				Config         map[string]any    `json:"config"`
+			} `json:"cards"`
+		} `json:"dashboard"`
+	}
+	if err := json.Unmarshal(exported, &bundle); err != nil {
+		t.Fatal(err)
+	}
+	if bundle.Format != "scriptboard.custom-dashboard" || bundle.Dashboard.Name != "迁移测试" || len(bundle.Dashboard.Cards) != 1 {
+		t.Fatalf("unexpected export bundle: %#v", bundle)
+	}
+	if card := bundle.Dashboard.Cards[0]; card.Name != "服务额度" || card.Headers["Authorization"] != "Bearer test-secret" || card.RefreshSeconds != 300 || card.Config["unit"] != "GB" {
+		t.Fatalf("exported card configuration mismatch: %#v", card)
+	}
+
+	response, err = client.Get(serverURL + dashboardLocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ = io.ReadAll(response.Body)
+	response.Body.Close()
+	postImport := func(filename string, contents []byte) *http.Response {
+		t.Helper()
+		var body bytes.Buffer
+		writer := multipart.NewWriter(&body)
+		_ = writer.WriteField("csrf_token", formToken(t, page))
+		_ = writer.WriteField("dashboard_id", dashboardID)
+		part, createErr := writer.CreateFormFile("dashboard_file", filename)
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		_, _ = part.Write(contents)
+		if closeErr := writer.Close(); closeErr != nil {
+			t.Fatal(closeErr)
+		}
+		request, requestErr := http.NewRequest(http.MethodPost, serverURL+"/config/dashboards/import", &body)
+		if requestErr != nil {
+			t.Fatal(requestErr)
+		}
+		request.Header.Set("Content-Type", writer.FormDataContentType())
+		result, requestErr := client.Do(request)
+		if requestErr != nil {
+			t.Fatal(requestErr)
+		}
+		return result
+	}
+	response = postImport("dashboard.json", exported)
+	response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("import status=%d", response.StatusCode)
+	}
+	importLocation := response.Header.Get("Location")
+	importURL, _ := url.Parse(importLocation)
+	importedID := importURL.Query().Get("dashboard")
+	if importedID == "" || importedID == dashboardID {
+		t.Fatalf("imported dashboard id=%q", importedID)
+	}
+	response, err = client.Get(serverURL + importLocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	importedPage, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	importedRendered := string(importedPage)
+	for _, expected := range []string{"迁移测试", "私有 · 1 张卡片", "服务额度", "https://api.example.test/usage", "Bearer test-secret", `value="GB"`} {
+		if !strings.Contains(importedRendered, expected) {
+			t.Fatalf("imported dashboard missing %q", expected)
+		}
+	}
+	response, err = client.Get(serverURL + "/config/dashboards/" + importedID + "/export")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reexported, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	if !strings.Contains(string(reexported), `"slug":"transfer-test-2"`) {
+		t.Fatalf("conflicting slug was not renamed: %s", reexported)
+	}
+
+	response = postImport("invalid.json", []byte(`{"not":"a dashboard"}`))
+	response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || !strings.Contains(response.Header.Get("Location"), "import_error=invalid") {
+		t.Fatalf("invalid import response=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+	response, err = client.Get(serverURL + response.Header.Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	errorPage, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	if !strings.Contains(string(errorPage), "无法识别这个面板文件") || !strings.Contains(string(errorPage), `data-dashboard-drawer-name="import" open`) {
+		t.Fatal("invalid import did not reopen the drawer with a useful error")
+	}
+}
 
 func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	root := t.TempDir()
@@ -56,6 +212,9 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	if rendered := string(page); strings.Contains(rendered, "更多面板操作") || !strings.Contains(rendered, `data-dashboard-delete-drawer`) || !strings.Contains(rendered, `data-dashboard-delete-open`) || !strings.Contains(rendered, `data-dashboard-slug-preview`) {
 		t.Fatal("dashboard settings controls do not match the drawer contract")
 	}
+	if rendered := string(page); strings.Count(rendered, `data-dashboard-public-action disabled`) != 2 {
+		t.Fatal("private dashboard public actions should remain visible and disabled")
+	}
 	if rendered := string(page); strings.Contains(rendered, "键值数据") || !strings.Contains(rendered, `value="percentage"`) || !strings.Contains(rendered, `data-dashboard-card-preview="percentage"`) {
 		t.Fatal("dashboard card types or mini previews are incorrect")
 	}
@@ -78,7 +237,7 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 			http.Error(w, "upstream unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		_, _ = io.WriteString(w, `{"remaining":63.2}`)
+		_, _ = io.WriteString(w, `{"remaining":63.2387,"used":36.7613}`)
 	}))
 	defer api.Close()
 	response, err = client.PostForm(serverURL+"/config/dashboards/"+dashboardID+"/cards", url.Values{"csrf_token": {formToken(t, page)}, "name": {"使用率"}, "type": {"percentage"}, "source_url": {api.URL}, "value_path": {"remaining"}, "refresh_seconds": {"60"}})
@@ -91,6 +250,15 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 		t.Fatalf("card status=%d body=%s", response.StatusCode, body)
 	}
 	response.Body.Close()
+	response, err = client.PostForm(serverURL+"/config/dashboards/"+dashboardID+"/cards", url.Values{
+		"csrf_token": {formToken(t, page)}, "name": {"账户额度"}, "type": {"quota"},
+		"source_url": {api.URL}, "value_path": {"used"}, "secondary_path": {"remaining"},
+		"unit": {"GB"}, "refresh_seconds": {"60"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
 	publicResponse, err := http.Get(serverURL + "/public/dashboard/api-credits")
 	if err != nil {
 		t.Fatal(err)
@@ -98,14 +266,17 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	publicPage, _ := io.ReadAll(publicResponse.Body)
 	publicResponse.Body.Close()
 	rendered := string(publicPage)
-	if publicResponse.StatusCode != http.StatusOK || !strings.Contains(rendered, "使用率") || !strings.Contains(rendered, "63.2") {
+	if publicResponse.StatusCode != http.StatusOK || !strings.Contains(rendered, "使用率") || !strings.Contains(rendered, "63.24") {
 		t.Fatalf("public page missing card: status=%d body=%s", publicResponse.StatusCode, rendered)
 	}
 	if strings.Contains(rendered, api.URL) || strings.Contains(rendered, "value_path") {
 		t.Fatal("public page exposed source configuration")
 	}
-	if !strings.Contains(rendered, `stroke-dasharray="63.20 100"`) || strings.Contains(rendered, "数据正常") {
+	if !strings.Contains(rendered, `stroke-dasharray="63.24 100"`) || strings.Contains(rendered, "数据正常") {
 		t.Fatal("percentage progress or normal-state presentation is incorrect")
+	}
+	if !strings.Contains(rendered, `class="custom-dashboard-card__quota-meter"`) || !strings.Contains(rendered, `aria-valuenow="36.76"`) || !strings.Contains(rendered, "36.76%") {
+		t.Fatal("quota card percentage visualization is incorrect")
 	}
 	if !strings.Contains(rendered, `custom-dashboard-card__percentage-unit`) || strings.Contains(rendered, `custom-dashboard-card__secondary`) || strings.Contains(rendered, `custom-dashboard-card__type`) {
 		t.Fatal("percentage unit, empty secondary row, or public card type presentation is incorrect")
@@ -118,7 +289,7 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	monitorPage, _ := io.ReadAll(monitorResponse.Body)
 	monitorResponse.Body.Close()
 	monitorRendered := string(monitorPage)
-	if monitorResponse.StatusCode != http.StatusOK || !strings.Contains(monitorRendered, `custom-dashboard-monitor`) || !strings.Contains(monitorRendered, "63.2") {
+	if monitorResponse.StatusCode != http.StatusOK || !strings.Contains(monitorRendered, `custom-dashboard-monitor`) || !strings.Contains(monitorRendered, "63.24") {
 		t.Fatalf("authenticated monitor view missing dashboard data: status=%d body=%s", monitorResponse.StatusCode, monitorRendered)
 	}
 	if strings.Contains(monitorRendered, "添加卡片") || strings.Contains(monitorRendered, `aria-labelledby="custom-dashboard-edit-title"`) {
@@ -176,7 +347,7 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	failedPage, _ := io.ReadAll(failedResponse.Body)
 	failedResponse.Body.Close()
 	failedRendered := string(failedPage)
-	if !strings.Contains(failedRendered, "数据异常") || !strings.Contains(failedRendered, `stroke-dasharray="0.00 100"`) || strings.Contains(failedRendered, ">63.2<") {
+	if !strings.Contains(failedRendered, "数据异常") || !strings.Contains(failedRendered, `stroke-dasharray="0.00 100"`) || strings.Contains(failedRendered, `custom-dashboard-card__quota-value">63.24`) {
 		t.Fatalf("failed quota did not reset and expose its title badge: %s", failedRendered)
 	}
 
