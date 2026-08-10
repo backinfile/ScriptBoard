@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -73,7 +74,22 @@ func (a *App) exportCustomDashboard(response http.ResponseWriter, request *http.
 		Format: customDashboardConfigFormat, Version: customDashboardConfigVersion, ExportedAt: time.Now().UTC(),
 		Dashboard: customDashboardConfigRecord{Name: dashboard.Name, Slug: dashboard.Slug},
 	}
+	selectedValues := request.URL.Query()["selection"]
+	selected := make(map[string]struct{}, len(selectedValues))
+	for _, id := range selectedValues {
+		if id = strings.TrimSpace(id); id != "" {
+			selected[id] = struct{}{}
+		}
+	}
+	if len(selected) == 0 {
+		http.Error(response, "请至少选择一张卡片", http.StatusUnprocessableEntity)
+		return
+	}
 	for _, card := range dashboard.Cards {
+		if _, included := selected[card.ID]; !included {
+			continue
+		}
+		delete(selected, card.ID)
 		record := customDashboardCardConfigRecord{
 			Name: card.Name, Type: card.Type, SourceURL: card.SourceURL, Headers: card.Headers,
 			ValuePath: card.ValuePath, SecondaryPath: card.SecondaryPath, Formula: card.Formula,
@@ -87,6 +103,10 @@ func (a *App) exportCustomDashboard(response http.ResponseWriter, request *http.
 			}
 		}
 		bundle.Dashboard.Cards = append(bundle.Dashboard.Cards, record)
+	}
+	if len(selected) != 0 || len(bundle.Dashboard.Cards) == 0 {
+		http.Error(response, "卡片选择无效，请刷新页面后重试", http.StatusUnprocessableEntity)
+		return
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -128,6 +148,12 @@ func (a *App) importCustomDashboard(response http.ResponseWriter, request *http.
 		a.redirectCustomDashboardImportError(response, request, "invalid")
 		return
 	}
+	selectedCards, err := selectedCustomDashboardCards(bundle.Dashboard.Cards, request.Form)
+	if err != nil {
+		a.redirectCustomDashboardImportError(response, request, "selection_required")
+		return
+	}
+	bundle.Dashboard.Cards = selectedCards
 	dashboards, err := a.customDashboards.ListDashboards(request.Context())
 	if err != nil {
 		a.redirectCustomDashboardImportError(response, request, "failed")
@@ -193,6 +219,30 @@ func decodeCustomDashboardConfigFile(raw []byte) (customDashboardConfigFile, err
 		}
 	}
 	return bundle, nil
+}
+
+func selectedCustomDashboardCards(cards []customDashboardCardConfigRecord, form url.Values) ([]customDashboardCardConfigRecord, error) {
+	if form.Get("selection_present") != "1" {
+		return cards, nil
+	}
+	requested := make(map[int]struct{}, len(form["selection"]))
+	for _, rawIndex := range form["selection"] {
+		index, err := strconv.Atoi(rawIndex)
+		if err != nil || index < 0 || index >= len(cards) {
+			return nil, errors.New("卡片选择无效")
+		}
+		requested[index] = struct{}{}
+	}
+	if len(requested) == 0 {
+		return nil, errors.New("至少选择一张卡片")
+	}
+	selected := make([]customDashboardCardConfigRecord, 0, len(requested))
+	for index, card := range cards {
+		if _, included := requested[index]; included {
+			selected = append(selected, card)
+		}
+	}
+	return selected, nil
 }
 
 func availableCustomDashboardSlug(dashboards []customdashboard.Dashboard, desired string) string {
@@ -277,6 +327,8 @@ func customDashboardImportError(code string) string {
 		return "无法识别这个面板文件，请选择由 ScriptBoard 导出的 JSON。"
 	case "failed":
 		return "导入失败，文件中的卡片配置可能无效。"
+	case "selection_required":
+		return "请在文件中至少选择一张要导入的卡片。"
 	default:
 		return ""
 	}

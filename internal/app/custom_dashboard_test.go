@@ -53,12 +53,44 @@ func TestCustomDashboardCanBeExportedAndImported(t *testing.T) {
 		t.Fatal(err)
 	}
 	response.Body.Close()
-	response, err = client.Get(serverURL + "/config/dashboards/" + dashboardID + "/export")
+	response, err = client.PostForm(serverURL+"/config/dashboards/"+dashboardID+"/cards", url.Values{
+		"csrf_token": {formToken(t, page)}, "name": {"请求次数"}, "type": {"number"},
+		"source_url": {"https://api.example.test/requests"}, "value_path": {"metrics.count"},
+		"unit": {"次"}, "refresh_seconds": {"60"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	exported, _ := io.ReadAll(response.Body)
 	response.Body.Close()
+	response, err = client.Get(serverURL + dashboardLocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ = io.ReadAll(response.Body)
+	response.Body.Close()
+	cardMatches := regexp.MustCompile(`action="/config/dashboard-cards/([^/"]+)"`).FindAllStringSubmatch(string(page), -1)
+	if len(cardMatches) != 2 {
+		t.Fatalf("expected two selectable cards, got %d", len(cardMatches))
+	}
+	if rendered := string(page); !strings.Contains(rendered, `data-dashboard-drawer-name="export"`) || !strings.Contains(rendered, `data-dashboard-import-selection`) || strings.Count(rendered, `name="selection"`) != 2 {
+		t.Fatal("dashboard transfer selection UI is incomplete")
+	}
+	postExport := func(selections ...string) (*http.Response, []byte) {
+		t.Helper()
+		values := url.Values{"selection": selections}
+		result, exportErr := client.Get(serverURL + "/config/dashboards/" + dashboardID + "/export?" + values.Encode())
+		if exportErr != nil {
+			t.Fatal(exportErr)
+		}
+		body, _ := io.ReadAll(result.Body)
+		result.Body.Close()
+		return result, body
+	}
+	noSelectionResponse, _ := postExport()
+	if noSelectionResponse.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("empty export selection status=%d", noSelectionResponse.StatusCode)
+	}
+	response, exported := postExport(cardMatches[0][1])
 	if response.StatusCode != http.StatusOK || !strings.Contains(response.Header.Get("Content-Disposition"), "attachment") {
 		t.Fatalf("export status=%d disposition=%q", response.StatusCode, response.Header.Get("Content-Disposition"))
 	}
@@ -87,6 +119,7 @@ func TestCustomDashboardCanBeExportedAndImported(t *testing.T) {
 	if card := bundle.Dashboard.Cards[0]; card.Name != "服务额度" || card.Headers["Authorization"] != "Bearer test-secret" || card.RefreshSeconds != 300 || card.Config["unit"] != "GB" {
 		t.Fatalf("exported card configuration mismatch: %#v", card)
 	}
+	_, exportedAll := postExport(cardMatches[0][1], cardMatches[1][1])
 
 	response, err = client.Get(serverURL + dashboardLocation)
 	if err != nil {
@@ -94,12 +127,18 @@ func TestCustomDashboardCanBeExportedAndImported(t *testing.T) {
 	}
 	page, _ = io.ReadAll(response.Body)
 	response.Body.Close()
-	postImport := func(filename string, contents []byte) *http.Response {
+	postImport := func(filename string, contents []byte, selections ...string) *http.Response {
 		t.Helper()
 		var body bytes.Buffer
 		writer := multipart.NewWriter(&body)
 		_ = writer.WriteField("csrf_token", formToken(t, page))
 		_ = writer.WriteField("dashboard_id", dashboardID)
+		if len(selections) > 0 {
+			_ = writer.WriteField("selection_present", "1")
+			for _, selection := range selections {
+				_ = writer.WriteField("selection", selection)
+			}
+		}
 		part, createErr := writer.CreateFormFile("dashboard_file", filename)
 		if createErr != nil {
 			t.Fatal(createErr)
@@ -119,7 +158,7 @@ func TestCustomDashboardCanBeExportedAndImported(t *testing.T) {
 		}
 		return result
 	}
-	response = postImport("dashboard.json", exported)
+	response = postImport("dashboard.json", exportedAll, "1")
 	response.Body.Close()
 	if response.StatusCode != http.StatusSeeOther {
 		t.Fatalf("import status=%d", response.StatusCode)
@@ -137,19 +176,13 @@ func TestCustomDashboardCanBeExportedAndImported(t *testing.T) {
 	importedPage, _ := io.ReadAll(response.Body)
 	response.Body.Close()
 	importedRendered := string(importedPage)
-	for _, expected := range []string{"迁移测试", "私有 · 1 张卡片", "服务额度", "https://api.example.test/usage", "Bearer test-secret", `value="GB"`} {
+	for _, expected := range []string{"迁移测试", "私有 · 1 张卡片", "请求次数", "https://api.example.test/requests", `value="次"`, `name="slug" value="transfer-test-2"`} {
 		if !strings.Contains(importedRendered, expected) {
 			t.Fatalf("imported dashboard missing %q", expected)
 		}
 	}
-	response, err = client.Get(serverURL + "/config/dashboards/" + importedID + "/export")
-	if err != nil {
-		t.Fatal(err)
-	}
-	reexported, _ := io.ReadAll(response.Body)
-	response.Body.Close()
-	if !strings.Contains(string(reexported), `"slug":"transfer-test-2"`) {
-		t.Fatalf("conflicting slug was not renamed: %s", reexported)
+	if strings.Contains(importedRendered, "服务额度") {
+		t.Fatal("unselected card was imported")
 	}
 
 	response = postImport("invalid.json", []byte(`{"not":"a dashboard"}`))

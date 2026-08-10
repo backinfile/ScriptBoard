@@ -41,23 +41,51 @@
   <div class="custom-dashboard-actions">
     <a class="button" href="/monitor/dashboard/{{.Dashboard.ID}}"><span data-lucide="panel-top" aria-hidden="true"></span>打开监控页</a>
     <a class="button" href="/config/dashboards?dashboard={{.Dashboard.ID}}{{if not .Reorder}}&amp;reorder=1{{end}}"><span data-lucide="arrow-up-down" aria-hidden="true"></span>{{if .Reorder}}完成排序{{else}}调整顺序{{end}}</a>
-		<a class="button" href="/config/dashboards/{{.Dashboard.ID}}/export" download><span data-lucide="download" aria-hidden="true"></span>导出</a>
+		<button class="button" type="button" data-dashboard-open-drawer="export"><span data-lucide="download" aria-hidden="true"></span>导出</button>
 		<button class="button" type="button" data-dashboard-open-drawer="import"><span data-lucide="upload" aria-hidden="true"></span>导入</button>
+		<details class="custom-dashboard-drawer-host" data-dashboard-drawer data-dashboard-drawer-name="export">
+			<summary class="sr-only">导出面板</summary>
+			<div class="custom-dashboard-drawer-layer">
+				<a class="custom-dashboard-drawer-scrim" href="/config/dashboards?dashboard={{.Dashboard.ID}}" aria-label="关闭导出面板" data-dashboard-drawer-close></a>
+				<section class="custom-dashboard-drawer" role="dialog" aria-modal="true" aria-labelledby="custom-dashboard-export-title">
+					<header class="custom-dashboard-drawer__head"><div><p class="page-eyebrow">面板迁移</p><h2 id="custom-dashboard-export-title">导出面板</h2></div><a class="icon-button" href="/config/dashboards?dashboard={{.Dashboard.ID}}" aria-label="关闭导出面板" data-dashboard-drawer-close><span data-lucide="x" aria-hidden="true"></span></a></header>
+					<form class="custom-dashboard-drawer__form" method="get" action="/config/dashboards/{{.Dashboard.ID}}/export" data-dashboard-card-selection>
+						<div class="custom-dashboard-drawer__body custom-dashboard-transfer-body">
+							<p>选择要写入导出文件的卡片。卡片将按当前顺序保存。</p>
+							<div class="custom-dashboard-transfer-selection">
+								<div class="custom-dashboard-transfer-selection__head"><strong>选择卡片</strong><span><button type="button" data-dashboard-selection-all>全选</button><button type="button" data-dashboard-selection-none>清空</button></span></div>
+								<div class="custom-dashboard-transfer-list">{{range .Cards}}<label><input type="checkbox" name="selection" value="{{.ID}}" checked><span><strong>{{.Name}}</strong><small>{{if eq .Type "quota"}}额度{{else if eq .Type "percentage"}}百分比{{else if eq .Type "number"}}数值{{else if eq .Type "website"}}网站状态{{else}}数据{{end}}</small></span></label>{{else}}<p>这个面板还没有可导出的卡片。</p>{{end}}</div>
+								<small data-dashboard-selection-count>{{len .Cards}} 张卡片已选择</small>
+							</div>
+							<div class="custom-dashboard-import-warning"><span data-lucide="shield-alert" aria-hidden="true"></span><p><strong>文件可能包含敏感请求头</strong><small>API Key 或 Authorization 请求头会随所选卡片导出，请妥善保管文件。</small></p></div>
+						</div>
+						<footer class="custom-dashboard-drawer__footer"><a class="button button--quiet" href="/config/dashboards?dashboard={{.Dashboard.ID}}" data-dashboard-drawer-close>取消</a><button class="button button--primary" type="submit" data-dashboard-selection-submit {{if not .Cards}}disabled{{end}}><span data-lucide="download" aria-hidden="true"></span>导出所选卡片</button></footer>
+					</form>
+				</section>
+			</div>
+		</details>
 		<details class="custom-dashboard-drawer-host" data-dashboard-drawer data-dashboard-drawer-name="import" {{if .ImportError}}open{{end}}>
 			<summary class="sr-only">导入面板</summary>
 			<div class="custom-dashboard-drawer-layer">
 				<a class="custom-dashboard-drawer-scrim" href="/config/dashboards?dashboard={{.Dashboard.ID}}" aria-label="关闭导入面板" data-dashboard-drawer-close></a>
 				<section class="custom-dashboard-drawer" role="dialog" aria-modal="true" aria-labelledby="custom-dashboard-import-title">
 					<header class="custom-dashboard-drawer__head"><div><p class="page-eyebrow">面板迁移</p><h2 id="custom-dashboard-import-title">导入面板</h2></div><a class="icon-button" href="/config/dashboards?dashboard={{.Dashboard.ID}}" aria-label="关闭导入面板" data-dashboard-drawer-close><span data-lucide="x" aria-hidden="true"></span></a></header>
-					<form class="custom-dashboard-drawer__form" method="post" action="/config/dashboards/import" enctype="multipart/form-data">
+					<form class="custom-dashboard-drawer__form" method="post" action="/config/dashboards/import" enctype="multipart/form-data" data-dashboard-import-form data-dashboard-card-selection>
 						<input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="dashboard_id" value="{{.Dashboard.ID}}">
-						<div class="custom-dashboard-drawer__body custom-dashboard-import-body">
-							<p>选择由 ScriptBoard 导出的面板 JSON。导入后会创建一个新的私有面板，并保留全部卡片与排列顺序。</p>
+						<div class="custom-dashboard-drawer__body custom-dashboard-import-body custom-dashboard-transfer-body">
+							<p>选择由 ScriptBoard 导出的面板 JSON，再决定要导入其中哪些卡片。导入后会创建一个新的私有面板。</p>
 							{{if .ImportError}}<div class="custom-dashboard-import-error" role="alert"><span data-lucide="triangle-alert" aria-hidden="true"></span><span>{{.ImportError}}</span></div>{{end}}
 							<label class="custom-dashboard-import-file" data-dashboard-import-file><span data-lucide="file-json-2" aria-hidden="true"></span><span><strong data-dashboard-import-filename>选择面板文件</strong><small>JSON，最大 2 MB</small></span><input type="file" name="dashboard_file" accept="application/json,.json" required></label>
+							<div class="custom-dashboard-import-error" role="alert" data-dashboard-import-file-error hidden><span data-lucide="triangle-alert" aria-hidden="true"></span><span></span></div>
+							<div class="custom-dashboard-transfer-selection" data-dashboard-import-selection hidden>
+								<input type="hidden" name="selection_present" value="1" disabled data-dashboard-import-selection-present>
+								<div class="custom-dashboard-transfer-selection__head"><strong>选择卡片</strong><span><button type="button" data-dashboard-selection-all>全选</button><button type="button" data-dashboard-selection-none>清空</button></span></div>
+								<div class="custom-dashboard-transfer-list" data-dashboard-import-card-list></div>
+								<small data-dashboard-selection-count>0 张卡片已选择</small>
+							</div>
 							<div class="custom-dashboard-import-warning"><span data-lucide="shield-alert" aria-hidden="true"></span><p><strong>文件可能包含敏感请求头</strong><small>导出文件会包含卡片使用的 API Key 或 Authorization 请求头，请仅在可信环境中保存和传输。</small></p></div>
 						</div>
-						<footer class="custom-dashboard-drawer__footer"><a class="button button--quiet" href="/config/dashboards?dashboard={{.Dashboard.ID}}" data-dashboard-drawer-close>取消</a><button class="button button--primary" type="submit"><span data-lucide="upload" aria-hidden="true"></span>导入面板</button></footer>
+						<footer class="custom-dashboard-drawer__footer"><a class="button button--quiet" href="/config/dashboards?dashboard={{.Dashboard.ID}}" data-dashboard-drawer-close>取消</a><button class="button button--primary" type="submit" data-dashboard-selection-submit><span data-lucide="upload" aria-hidden="true"></span>导入所选卡片</button></footer>
 					</form>
 				</section>
 			</div>

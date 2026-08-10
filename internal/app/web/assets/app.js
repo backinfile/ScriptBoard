@@ -6311,9 +6311,88 @@ document.addEventListener("click", async function (event) {
 
 syncDashboardDrawerState();
 
+function syncDashboardCardSelection(root) {
+  if (!root) return;
+  const checkboxes = Array.from(root.querySelectorAll('input[name="selection"]'));
+  const selected = checkboxes.filter((checkbox) => checkbox.checked).length;
+  const count = root.querySelector("[data-dashboard-selection-count]");
+  const submit = root.querySelector("[data-dashboard-selection-submit]");
+  if (count) count.textContent = `${selected} 张卡片已选择`;
+  if (submit) submit.disabled = selected === 0;
+}
+
+function dashboardTransferTypeLabel(type) {
+  return ({ number: "数值", percentage: "百分比", quota: "额度", website: "网站状态", key_value: "数据" })[type] || "未知类型";
+}
+
+async function renderDashboardImportSelection(input) {
+  const form = input.closest("[data-dashboard-import-form]");
+  const filename = form?.querySelector("[data-dashboard-import-filename]");
+  const selection = form?.querySelector("[data-dashboard-import-selection]");
+  const selectionPresent = form?.querySelector("[data-dashboard-import-selection-present]");
+  const list = form?.querySelector("[data-dashboard-import-card-list]");
+  const error = form?.querySelector("[data-dashboard-import-file-error]");
+  const file = input.files?.[0];
+  if (filename) filename.textContent = file?.name || "选择面板文件";
+  if (selection) selection.hidden = true;
+  if (selectionPresent) selectionPresent.disabled = true;
+  if (list) list.replaceChildren();
+  if (error) error.hidden = true;
+  input.setCustomValidity("");
+  if (!file || !form || !selection || !selectionPresent || !list) {
+    syncDashboardCardSelection(form);
+    return;
+  }
+  try {
+    const bundle = JSON.parse(await file.text());
+    const cards = bundle?.dashboard?.cards;
+    if (!Array.isArray(cards) || cards.length === 0 || cards.length > 100) throw new Error("invalid cards");
+    cards.forEach((card, index) => {
+      const item = document.createElement("label");
+      const checkbox = document.createElement("input");
+      const text = document.createElement("span");
+      const name = document.createElement("strong");
+      const type = document.createElement("small");
+      checkbox.type = "checkbox";
+      checkbox.name = "selection";
+      checkbox.value = String(index);
+      checkbox.checked = true;
+      name.textContent = String(card?.name || `卡片 ${index + 1}`);
+      type.textContent = dashboardTransferTypeLabel(card?.type);
+      text.append(name, type);
+      item.append(checkbox, text);
+      list.append(item);
+    });
+    selection.hidden = false;
+    selectionPresent.disabled = false;
+  } catch (_) {
+    input.setCustomValidity("无法读取卡片清单，请选择由 ScriptBoard 导出的 JSON 文件。");
+    if (error) {
+      error.hidden = false;
+      const message = error.querySelector("span:last-child");
+      if (message) message.textContent = input.validationMessage;
+    }
+  }
+  syncDashboardCardSelection(form);
+}
+
 document.addEventListener("change", function (event) {
-  const input = event.target.closest('[data-dashboard-import-file] input[type="file"]');
-  if (!input) return;
-  const label = input.closest("[data-dashboard-import-file]")?.querySelector("[data-dashboard-import-filename]");
-  if (label) label.textContent = input.files?.[0]?.name || "选择面板文件";
+  const importInput = event.target.closest('[data-dashboard-import-file] input[type="file"]');
+  if (importInput) {
+    renderDashboardImportSelection(importInput);
+    return;
+  }
+  const selection = event.target.closest('[data-dashboard-card-selection] input[name="selection"]');
+  if (selection) syncDashboardCardSelection(selection.closest("[data-dashboard-card-selection]"));
 });
+
+document.addEventListener("click", function (event) {
+  const control = event.target.closest("[data-dashboard-selection-all],[data-dashboard-selection-none]");
+  if (!control) return;
+  const root = control.closest("[data-dashboard-card-selection]");
+  const checked = control.hasAttribute("data-dashboard-selection-all");
+  root?.querySelectorAll('input[name="selection"]').forEach((checkbox) => { checkbox.checked = checked; });
+  syncDashboardCardSelection(root);
+});
+
+document.querySelectorAll("[data-dashboard-card-selection]").forEach(syncDashboardCardSelection);
