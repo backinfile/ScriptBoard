@@ -2322,6 +2322,12 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .mysql-actions-panel label, .mysql-actions-panel fieldset { display: grid; gap: 6px; color: var(--muted); font-size: .84rem; }
 .mysql-actions-panel fieldset label { grid-template-columns: auto 1fr; align-items: center; color: var(--text); }
 .mysql-record-section { margin-top: 48px; }
+.mysql-backup-filter { display: flex; flex-wrap: wrap; align-items: end; justify-content: flex-end; gap: 8px; }
+.mysql-backup-filter label { display: grid; min-width: min(260px, 34vw); gap: 5px; color: var(--muted); font-size: .72rem; font-weight: 650; }
+.mysql-backup-filter select { width: 100%; min-height: var(--control-height-compact); padding: 6px 34px 6px 10px; overflow: hidden; color: var(--ink); background-color: var(--surface); border: 1px solid var(--rule-strong); border-radius: 5px; text-overflow: ellipsis; }
+.mysql-filter-empty { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.mysql-filter-empty .form-hint { margin: 0; }
+.mysql-filter-empty a { color: var(--accent); font-size: .78rem; font-weight: 650; }
 .mysql-plan-row { display: flex; justify-content: space-between; gap: 20px; padding: 16px 0; border-top: 1px solid var(--rule); }
 .mysql-plan-row div { display: grid; gap: 5px; }
 .mysql-plan-row small { color: var(--muted); }
@@ -2359,6 +2365,9 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
   .mysql-detail__head, .mysql-danger-zone form { align-items: stretch; flex-direction: column; }
   .mysql-page-heading, .mysql-detail__head { align-items: stretch; flex-direction: column; }
   .mysql-heading-actions, .mysql-instance-actions, .mysql-section-actions { justify-content: flex-start; }
+  .mysql-backup-filter { width: 100%; justify-content: flex-start; }
+  .mysql-backup-filter label { width: 100%; min-width: 0; }
+  .mysql-backup-filter .button { flex: 1 1 132px; justify-content: center; }
   .mysql-instance-actions > form { flex-wrap: wrap; }
   .mysql-tabs { margin-right: -18px; }
   .mysql-pagination { align-items: stretch; flex-direction: column; }

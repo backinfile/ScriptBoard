@@ -298,6 +298,55 @@ func TestImportRejectsCorruptGzipAndRedactsCommandErrors(t *testing.T) {
 	}
 }
 
+func TestBackupRecordsCanBeFilteredByDatabase(t *testing.T) {
+	stateRoot := t.TempDir()
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	applyTestSchema(t, database)
+	manager, err := New(Options{DB: database, StateRoot: stateRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := manager.SaveInstance(context.Background(), InstanceInput{Name: "Filter", Host: "localhost", Port: 3306, Username: "admin", Password: "secret", TLSMode: TLSPreferred})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, databaseName := range []string{"inventory", "reporting", "inventory"} {
+		_, err := manager.ImportBackup(context.Background(), ImportRequest{
+			InstanceID: instance.ID,
+			Database:   databaseName,
+			Filename:   databaseName + ".sql",
+			Reader:     strings.NewReader("CREATE TABLE filtered_" + databaseName + "_" + string(rune('a'+index)) + " (id INT);\n"),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	databases, err := manager.BackupDatabases(context.Background(), instance.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(databases, ",") != "inventory,reporting" {
+		t.Fatalf("backup databases = %v", databases)
+	}
+	backups, total, err := manager.BackupsPage(context.Background(), instance.ID, "inventory", 20, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 2 || len(backups) != 2 {
+		t.Fatalf("filtered backups total=%d rows=%+v", total, backups)
+	}
+	for _, backup := range backups {
+		if backup.Database != "inventory" {
+			t.Fatalf("filter returned database %q", backup.Database)
+		}
+	}
+}
+
 func TestMySQLValidationBoundaries(t *testing.T) {
 	for _, name := range []string{"mysql", " INFORMATION_SCHEMA ", "Performance_Schema", "sys"} {
 		if !IsSystemDatabase(name) {

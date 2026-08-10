@@ -67,6 +67,7 @@
     "power": '<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/>',
     "refresh-cw": '<path d="M21 12a9 9 0 0 0-15.2-6.5L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 15.2 6.5L21 16"/><path d="M16 16h5v5"/>',
     "rotate-cw": '<path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/>',
+    "list-filter": '<path d="M3 6h18"/><path d="M7 12h10"/><path d="M10 18h4"/>',
     "rotate-ccw": '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
     "scroll-text": '<path d="M15 12h-5M15 8h-5"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1H11v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2h4"/>',
     "search": '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
@@ -5491,8 +5492,10 @@
     root.querySelectorAll('form[method="post"]:not([data-connection-test])').forEach(form => form.dataset.async = "");
     const drawers = [...root.querySelectorAll("details.mysql-drawer")];
     const dropDrawer = root.querySelector("[data-mysql-drop-drawer]");
+    const backupRestoreDrawer = root.querySelector("[data-mysql-backup-restore-drawer]");
+    const backupDeleteDrawer = root.querySelector("[data-mysql-backup-delete-drawer]");
     let active = null;
-    let dropReturnFocus = null;
+    const returnFocus = new WeakMap();
 
     const close = (drawer, restoreFocus = true) => {
       if (!drawer?.open) return;
@@ -5500,9 +5503,10 @@
       drawer.querySelector(":scope > summary")?.setAttribute("aria-expanded", "false");
       if (active === drawer) active = null;
       if (guardrailLayer?.dataset.open !== "true") document.body.style.overflow = "";
-      if (restoreFocus && drawer === dropDrawer && dropReturnFocus) dropReturnFocus.focus();
+      const trigger = returnFocus.get(drawer);
+      if (restoreFocus && trigger) trigger.focus();
       else if (restoreFocus) drawer.querySelector(":scope > summary")?.focus();
-      if (drawer === dropDrawer) dropReturnFocus = null;
+      returnFocus.delete(drawer);
     };
     const onToggle = event => {
       const drawer = event.currentTarget;
@@ -5521,11 +5525,46 @@
       window.setTimeout(() => drawer.querySelector(".mysql-drawer-sheet")?.focus(), 180);
     };
     const onClick = event => {
+      const restoreTrigger = event.target.closest("[data-mysql-backup-restore-trigger]");
+      if (restoreTrigger && backupRestoreDrawer) {
+        event.preventDefault();
+        restoreTrigger.closest("details.action-menu")?.removeAttribute("open");
+        returnFocus.set(backupRestoreDrawer, restoreTrigger);
+        const backupID = restoreTrigger.dataset.backupId || "";
+        const database = restoreTrigger.dataset.database || "";
+        const form = backupRestoreDrawer.querySelector("[data-mysql-backup-restore-form]");
+        const backupName = backupRestoreDrawer.querySelector("[data-mysql-backup-restore-id]");
+        const databaseInput = backupRestoreDrawer.querySelector("[data-mysql-backup-restore-database]");
+        const confirmation = backupRestoreDrawer.querySelector("[data-mysql-backup-restore-confirmation]");
+        if (form) form.action = `/resources/databases/backups/${encodeURIComponent(backupID)}/restore`;
+        if (backupName) backupName.textContent = backupID;
+        if (databaseInput) databaseInput.value = database;
+        if (confirmation) confirmation.value = "";
+        backupRestoreDrawer.open = true;
+        window.setTimeout(() => databaseInput?.focus(), 190);
+        return;
+      }
+      const deleteTrigger = event.target.closest("[data-mysql-backup-delete-trigger]");
+      if (deleteTrigger && backupDeleteDrawer) {
+        event.preventDefault();
+        deleteTrigger.closest("details.action-menu")?.removeAttribute("open");
+        returnFocus.set(backupDeleteDrawer, deleteTrigger);
+        const backupID = deleteTrigger.dataset.backupId || "";
+        const form = backupDeleteDrawer.querySelector("[data-mysql-backup-delete-form]");
+        const backupName = backupDeleteDrawer.querySelector("[data-mysql-backup-delete-id]");
+        const confirmation = backupDeleteDrawer.querySelector("[data-mysql-backup-delete-confirmation]");
+        if (form) form.action = `/resources/databases/backups/${encodeURIComponent(backupID)}/delete`;
+        if (backupName) backupName.textContent = backupID;
+        if (confirmation) confirmation.value = "";
+        backupDeleteDrawer.open = true;
+        window.setTimeout(() => confirmation?.focus(), 190);
+        return;
+      }
       const dropTrigger = event.target.closest("[data-mysql-drop-trigger]");
       if (dropTrigger && dropDrawer) {
         event.preventDefault();
         dropTrigger.closest("details.action-menu")?.removeAttribute("open");
-        dropReturnFocus = dropTrigger;
+        returnFocus.set(dropDrawer, dropTrigger);
         const database = dropTrigger.dataset.database || "";
         const databaseInput = dropDrawer.querySelector("[data-mysql-drop-database]");
         const databaseName = dropDrawer.querySelector("[data-mysql-drop-name]");

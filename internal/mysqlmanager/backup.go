@@ -330,6 +330,24 @@ func (m *Manager) Backups(ctx context.Context, instanceID, database string) ([]B
 	return items, err
 }
 
+func (m *Manager) BackupDatabases(ctx context.Context, instanceID string) ([]string, error) {
+	rows, err := m.db.QueryContext(ctx, `SELECT DISTINCT database_name FROM mysql_backups
+		WHERE instance_id=? ORDER BY database_name COLLATE NOCASE, database_name`, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []string
+	for rows.Next() {
+		var database string
+		if err := rows.Scan(&database); err != nil {
+			return nil, err
+		}
+		result = append(result, database)
+	}
+	return result, rows.Err()
+}
+
 func (m *Manager) BackupsPage(ctx context.Context, instanceID, database string, limit, offset int) ([]Backup, int, error) {
 	query := `SELECT id, instance_id, database_name, plan_id, kind, path, size_bytes, sha256, warning, created_at, created_by_user_id, created_by_username
 		FROM mysql_backups WHERE instance_id=?`

@@ -14,24 +14,27 @@ import (
 )
 
 type mysqlDatabasesPageData struct {
-	Locale                                                webLocale
-	CSRFToken                                             string
-	BackupRoot                                            string
-	Instances                                             []mysqlmanager.Instance
-	InstanceRows                                          []mysqlmanager.Instance
-	Selected                                              *mysqlmanager.Instance
-	Status                                                *mysqlmanager.Status
-	Databases                                             []mysqlmanager.Database
-	DatabaseRows                                          []mysqlmanager.Database
-	Backups                                               []mysqlmanager.Backup
-	Plans                                                 []mysqlmanager.Plan
-	Operations                                            []mysqlmanager.Operation
-	Tools                                                 mysqlmanager.ToolSettings
-	LoadError                                             string
-	ActiveTab                                             string
-	DatabaseCount, BackupCount, PlanCount, OperationCount int
-	Pagination                                            mysqlPagination
-	InstancePagination                                    mysqlPagination
+	Locale                                        webLocale
+	CSRFToken                                     string
+	BackupRoot                                    string
+	Instances                                     []mysqlmanager.Instance
+	InstanceRows                                  []mysqlmanager.Instance
+	Selected                                      *mysqlmanager.Instance
+	Status                                        *mysqlmanager.Status
+	Databases                                     []mysqlmanager.Database
+	DatabaseRows                                  []mysqlmanager.Database
+	Backups                                       []mysqlmanager.Backup
+	BackupDatabases                               []string
+	BackupDatabase                                string
+	Plans                                         []mysqlmanager.Plan
+	Operations                                    []mysqlmanager.Operation
+	Tools                                         mysqlmanager.ToolSettings
+	LoadError                                     string
+	ActiveTab                                     string
+	DatabaseCount, BackupCount, BackupResultCount int
+	PlanCount, OperationCount                     int
+	Pagination                                    mysqlPagination
+	InstancePagination                            mysqlPagination
 }
 
 type mysqlPagination struct {
@@ -150,7 +153,40 @@ func (a *App) mysqlDatabasesPage(response http.ResponseWriter, request *http.Req
 		if data.ActiveTab == "backups" {
 			backupPage = page
 		}
-		data.Backups, data.BackupCount, _ = a.mysql.BackupsPage(request.Context(), selectedID, "", mysqlPageSize, (backupPage-1)*mysqlPageSize)
+		data.BackupDatabases, err = a.mysql.BackupDatabases(request.Context(), selectedID)
+		if err != nil {
+			http.Error(response, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if data.ActiveTab == "backups" {
+			data.BackupDatabase = strings.TrimSpace(request.URL.Query().Get("database"))
+			if data.BackupDatabase != "" {
+				valid := false
+				for _, database := range data.BackupDatabases {
+					if database == data.BackupDatabase {
+						valid = true
+						break
+					}
+				}
+				if !valid {
+					http.Error(response, webText(data.Locale, "mysql.invalid_backup_database_filter"), http.StatusBadRequest)
+					return
+				}
+			}
+		}
+		data.Backups, data.BackupCount, err = a.mysql.BackupsPage(request.Context(), selectedID, "", mysqlPageSize, (backupPage-1)*mysqlPageSize)
+		if err != nil {
+			http.Error(response, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		data.BackupResultCount = data.BackupCount
+		if data.BackupDatabase != "" {
+			data.Backups, data.BackupResultCount, err = a.mysql.BackupsPage(request.Context(), selectedID, data.BackupDatabase, mysqlPageSize, (backupPage-1)*mysqlPageSize)
+			if err != nil {
+				http.Error(response, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
 		operationPage := 1
 		if data.ActiveTab == "operations" {
 			operationPage = page
@@ -159,9 +195,9 @@ func (a *App) mysqlDatabasesPage(response http.ResponseWriter, request *http.Req
 		if data.ActiveTab == "plans" {
 			data.Plans, data.Pagination = mysqlSlicePage(data.Plans, page)
 		} else if data.ActiveTab == "backups" {
-			data.Pagination = newMySQLPagination(backupPage, data.BackupCount)
+			data.Pagination = newMySQLPagination(backupPage, data.BackupResultCount)
 			if data.Pagination.Page != backupPage {
-				data.Backups, _, _ = a.mysql.BackupsPage(request.Context(), selectedID, "", mysqlPageSize, (data.Pagination.Page-1)*mysqlPageSize)
+				data.Backups, _, _ = a.mysql.BackupsPage(request.Context(), selectedID, data.BackupDatabase, mysqlPageSize, (data.Pagination.Page-1)*mysqlPageSize)
 			}
 		} else if data.ActiveTab == "operations" {
 			data.Pagination = newMySQLPagination(operationPage, data.OperationCount)

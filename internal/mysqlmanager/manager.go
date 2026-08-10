@@ -78,6 +78,7 @@ type BackupService interface {
 	BackupBatch(context.Context, BatchBackupRequest) ([]Backup, error)
 	ImportBackup(context.Context, ImportRequest) (Backup, error)
 	Backups(context.Context, string, string) ([]Backup, error)
+	BackupDatabases(context.Context, string) ([]string, error)
 	BackupByID(context.Context, string) (Backup, error)
 	DeleteBackup(context.Context, string) error
 }

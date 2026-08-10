@@ -1,6 +1,8 @@
 package app_test
 
 import (
+	"database/sql"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -8,8 +10,11 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"scriptboard/internal/app"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestAdministratorCanRegisterMySQLInstanceFromDatabaseWorkspace(t *testing.T) {
@@ -75,5 +80,87 @@ func TestAdministratorCanRegisterMySQLInstanceFromDatabaseWorkspace(t *testing.T
 	}
 	if tlsIndex, indexSizeIndex := strings.Index(string(selectedBody), `TLS mode`), strings.Index(string(selectedBody), `Index size`); indexSizeIndex >= 0 && tlsIndex < indexSizeIndex {
 		t.Fatalf("TLS mode should be the final overview fact: %s", selectedBody)
+	}
+}
+
+func TestBackupRecordsFilterAndOpenConfirmationDrawers(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: stateRoot})
+	response, err := client.Get(serverURL + "/resources/databases")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/resources/databases/instances", url.Values{
+		"csrf_token": {formToken(t, body)}, "name": {"Filter fixture"}, "host": {"127.0.0.1"}, "port": {"1"},
+		"username": {"scriptboard"}, "password": {"database-password"}, "tls_mode": {"preferred"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	response, err = client.Get(serverURL + "/resources/databases")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	instanceMatch := regexp.MustCompile(`/resources/databases\?instance=([a-f0-9]+)`).FindSubmatch(body)
+	if len(instanceMatch) != 2 {
+		t.Fatalf("database instance link missing: %s", body)
+	}
+	instanceID := string(instanceMatch[1])
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	for index := 0; index < 14; index++ {
+		databaseName := "inventory"
+		if index == 13 {
+			databaseName = "reporting"
+		}
+		backupID := fmt.Sprintf("backup-%s-%02d", databaseName, index)
+		_, err = database.Exec(`INSERT INTO mysql_backups
+			(id, instance_id, database_name, plan_id, kind, path, size_bytes, sha256, warning, created_at, created_by_user_id, created_by_username)
+			VALUES (?, ?, ?, '', 'manual', ?, 128, 'fixture-sha', '', ?, '', 'fixture')`,
+			backupID, instanceID, databaseName, filepath.Join(stateRoot, backupID+".sql"), time.Now().Add(time.Duration(index)*time.Second).UnixNano())
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	response, err = client.Get(serverURL + "/resources/databases?instance=" + instanceID + "&tab=backups&database=inventory")
+	if err != nil {
+		t.Fatal(err)
+	}
+	filteredBody, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	page := string(filteredBody)
+	for _, expected := range []string{
+		`name="database"`, `<option value="inventory" selected>inventory</option>`, `backup-inventory-12`,
+		`database=inventory`, `data-mysql-backup-restore-trigger`, `data-mysql-backup-delete-trigger`,
+		`data-mysql-backup-restore-drawer`, `data-mysql-backup-delete-drawer`, `data-mysql-backup-restore-form`, `data-mysql-backup-delete-form`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("filtered backup page missing %q: %s", expected, page)
+		}
+	}
+	if strings.Contains(page, "backup-reporting-13") {
+		t.Fatalf("database filter returned another database: %s", page)
+	}
+	actionMenu := regexp.MustCompile(`(?s)<details class="action-menu">.*?</details>`).FindString(page)
+	if strings.Contains(actionMenu, "<input") || strings.Contains(actionMenu, "<form") {
+		t.Fatalf("backup action menu still contains inline form controls: %s", actionMenu)
+	}
+
+	response, err = client.Get(serverURL + "/resources/databases?instance=" + instanceID + "&tab=backups&database=missing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid backup filter status=%d", response.StatusCode)
 	}
 }
