@@ -154,6 +154,180 @@ func TestWebsiteAvailabilityRendersFreshCurrentBucketAsProvisional(t *testing.T)
 	}
 }
 
+func TestWebsiteMonitorConfigurationsExportSelectedAndImportSelected(t *testing.T) {
+	root := t.TempDir()
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{
+		StateRoot: filepath.Join(root, "state"),
+		WebsiteMonitorOptions: websitemonitor.Options{
+			Probe: websiteProbeFunc(func(_ context.Context, _ websitemonitor.Config) websitemonitor.Evidence {
+				return websitemonitor.Evidence{Success: true, StatusCode: http.StatusOK, Summary: "ok"}
+			}),
+		},
+	})
+	setWebsiteTestLocale(t, client, serverURL, "zh-CN")
+
+	response, err := client.Get(serverURL + "/monitor/websites/new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	csrfToken := formToken(t, newPage)
+	create := func(name, target string) {
+		t.Helper()
+		response, postErr := client.PostForm(serverURL+"/monitor/websites", url.Values{
+			"csrf_token": {csrfToken}, "name": {name}, "scope": {"external"}, "kind": {"http"},
+			"url": {target}, "frequency_seconds": {"60"}, "timeout_seconds": {"10"},
+			"http_method": {"POST"}, "http_content_type": {"application/json"},
+			"http_body": {`{"probe":"ready"}`}, "http_success_mode": {"exact"},
+			"expected_statuses": {"200;204"}, "response_keyword": {"ready"},
+			"follow_redirects": {"1"}, "verify_tls": {"1"},
+		})
+		if postErr != nil {
+			t.Fatal(postErr)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusSeeOther {
+			t.Fatalf("create %q status=%d", name, response.StatusCode)
+		}
+	}
+	create("导出目标", "https://export-one.example/health")
+	create("不导出目标", "https://export-two.example/health")
+
+	response, err = client.Get(serverURL + "/monitor/websites")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range [][]byte{[]byte(`href="/monitor/websites/export"`), []byte(`href="/monitor/websites/import"`)} {
+		if !bytes.Contains(listPage, expected) {
+			t.Fatalf("website list missing transfer action %q: %s", expected, listPage)
+		}
+	}
+
+	response, err = client.Get(serverURL + "/monitor/websites/export")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exportPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	selectionPattern := regexp.MustCompile(`name="selection" value="([^"]+)"`)
+	selections := selectionPattern.FindAllSubmatch(exportPage, -1)
+	if len(selections) != 2 || !bytes.Contains(exportPage, []byte("全选")) {
+		t.Fatalf("export selection page does not list both monitors with select-all: %s", exportPage)
+	}
+
+	response, err = client.PostForm(serverURL+"/monitor/websites/export", url.Values{
+		"csrf_token": {formToken(t, exportPage)}, "selection": {string(selections[0][1])},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exported, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || !strings.Contains(response.Header.Get("Content-Disposition"), "attachment;") {
+		t.Fatalf("export response status=%d disposition=%q body=%s", response.StatusCode, response.Header.Get("Content-Disposition"), exported)
+	}
+	var bundle map[string]any
+	if err := json.Unmarshal(exported, &bundle); err != nil {
+		t.Fatal(err)
+	}
+	monitors, ok := bundle["monitors"].([]any)
+	if !ok || len(monitors) != 1 {
+		t.Fatalf("exported monitors=%#v, want one selected monitor", bundle["monitors"])
+	}
+	record := monitors[0].(map[string]any)
+	if record["name"] != "导出目标" || record["http_body"] != `{"probe":"ready"}` {
+		t.Fatalf("exported configuration lost selected settings: %#v", record)
+	}
+	record["name"] = "导入副本"
+	record["url"] = "https://imported-copy.example/health"
+	exported, err = json.Marshal(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	response, err = client.Get(serverURL + "/monitor/websites/import")
+	if err != nil {
+		t.Fatal(err)
+	}
+	importPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("csrf_token", formToken(t, importPage)); err != nil {
+		t.Fatal(err)
+	}
+	file, err := writer.CreateFormFile("config_file", "monitors.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write(exported); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequest(http.MethodPost, serverURL+"/monitor/websites/import/preview", &body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	response, err = client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previewPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	previewTokenPattern := regexp.MustCompile(`name="preview_token" value="([a-f0-9]{64})"`)
+	previewToken := previewTokenPattern.FindSubmatch(previewPage)
+	if response.StatusCode != http.StatusOK || len(previewToken) != 2 || !bytes.Contains(previewPage, []byte("导入副本")) || !bytes.Contains(previewPage, []byte("全选可导入项")) {
+		t.Fatalf("import preview status=%d token=%q body=%s", response.StatusCode, previewToken, previewPage)
+	}
+
+	response, err = client.PostForm(serverURL+"/monitor/websites/import", url.Values{
+		"csrf_token": {formToken(t, previewPage)}, "preview_token": {string(previewToken[1])}, "selection": {"0"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/monitor/websites/import?imported=1" {
+		t.Fatalf("import status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+	response, err = client.Get(serverURL + "/monitor/websites")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listPage, err = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(listPage, []byte("导入副本")) {
+		t.Fatalf("imported monitor missing from list: %s", listPage)
+	}
+}
+
 func TestAdminCreatesWebsiteMonitorAndReadsItsResult(t *testing.T) {
 	root := t.TempDir()
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{

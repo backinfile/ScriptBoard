@@ -103,6 +103,8 @@ func permissionForRequest(request *http.Request) permission {
 	if strings.HasPrefix(path, "/monitor/") {
 		if request.Method != http.MethodGet ||
 			path == "/monitor/websites/new" ||
+			path == "/monitor/websites/export" ||
+			path == "/monitor/websites/import" ||
 			path == "/monitor/websites/nginx" ||
 			strings.HasSuffix(path, "/edit") {
 			return permissionManageOperations

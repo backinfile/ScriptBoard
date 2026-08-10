@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="{{.Locale}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}">
+<script defer src="/assets/app-v2.js?v={{assetVersion}}"></script>
+<title>{{if eq .Mode "export"}}{{t .Locale "website.transfer.export_title"}}{{else}}{{t .Locale "website.transfer.import_title"}}{{end}} · {{t .Locale "website.title"}} · ScriptBoard</title>
+</head>
+<body>
+<main class="workspace website-task-page website-transfer-page" data-task-page data-task-kind="website-config-{{.Mode}}" data-task-close-label="{{t .Locale "common.close"}}" data-website-config-transfer>
+<header class="website-task-heading">
+<a href="/monitor/websites">{{t .Locale "website.back"}}</a>
+<p class="website-kicker">{{if eq .Mode "export"}}{{t .Locale "website.transfer.export_eyebrow"}}{{else}}{{t .Locale "website.transfer.import_eyebrow"}}{{end}}</p>
+<h1>{{if eq .Mode "export"}}{{t .Locale "website.transfer.export_title"}}{{else}}{{t .Locale "website.transfer.import_title"}}{{end}}</h1>
+<p>{{if eq .Mode "export"}}{{t .Locale "website.transfer.export_description"}}{{else}}{{t .Locale "website.transfer.import_description"}}{{end}}</p>
+</header>
+
+{{if .Error}}<p class="page-error" role="alert">{{.Error}}</p>{{end}}
+
+{{if gt .ImportedCount 0}}
+<section class="nginx-import-success" role="status">
+<span data-lucide="check" aria-hidden="true"></span>
+<div><h2>{{t .Locale "website.transfer.import_success_title"}}</h2><p>{{.ImportedCount}} {{t .Locale "website.transfer.import_success_description"}}</p></div>
+<a class="button button--primary" href="/monitor/websites">{{t .Locale "website.nginx.view_ledger"}}</a>
+</section>
+{{else if eq .Mode "export"}}
+<form class="website-transfer-form" method="post" action="/monitor/websites/export" data-website-selection-form>
+<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+<section class="nginx-preview-heading">
+<div><h2>{{t .Locale "website.transfer.choose_export"}}</h2><p>{{t .Locale "website.transfer.export_selection_hint"}}</p></div>
+<strong>{{len .Candidates}} {{if eq (len .Candidates) 1}}{{t .Locale "website.total_one"}}{{else}}{{t .Locale "website.total_suffix"}}{{end}}</strong>
+</section>
+<div class="nginx-selection-toolbar">
+<label><input type="checkbox" data-website-select-all>{{t .Locale "website.transfer.select_all"}}</label>
+<span><strong data-website-selected-count>0</strong> {{t .Locale "website.nginx.selected"}}</span>
+</div>
+<div class="nginx-candidate-list website-transfer-list">
+{{range .Candidates}}
+<label class="nginx-candidate">
+<input type="checkbox" name="selection" value="{{.Selection}}" data-website-selection>
+<span><strong>{{.Name}}</strong><code>{{.URL}}</code><small>{{.ScopeLabel}} · {{.KindLabel}}</small></span>
+</label>
+{{else}}
+<div class="website-empty website-empty--compact"><h2>{{t .Locale "website.transfer.no_export_title"}}</h2><p>{{t .Locale "website.transfer.no_export_description"}}</p></div>
+{{end}}
+</div>
+<aside class="website-transfer-note"><span data-lucide="shield-alert" aria-hidden="true"></span><p>{{t .Locale "website.transfer.sensitive_note"}}</p></aside>
+<footer class="website-form-actions"><a href="/monitor/websites">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit" data-website-selection-submit {{if not .HasSelectable}}disabled{{end}}><span data-website-submit-label>{{t .Locale "website.transfer.download"}}</span> <span data-website-submit-count>(0)</span></button></footer>
+</form>
+{{else if .Preview}}
+<form class="website-transfer-form" method="post" action="/monitor/websites/import" data-website-selection-form>
+<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+<input type="hidden" name="preview_token" value="{{.PreviewToken}}">
+<section class="nginx-preview-heading">
+<div><h2>{{t .Locale "website.transfer.choose_import"}}</h2><p>{{t .Locale "website.transfer.import_selection_hint"}}</p></div>
+<strong>{{len .Candidates}} {{if eq (len .Candidates) 1}}{{t .Locale "website.nginx.candidate_one"}}{{else}}{{t .Locale "website.nginx.candidates"}}{{end}}</strong>
+</section>
+<div class="nginx-selection-toolbar">
+<label><input type="checkbox" data-website-select-all>{{t .Locale "website.transfer.select_available"}}</label>
+<span><strong data-website-selected-count>0</strong> {{t .Locale "website.nginx.selected"}}</span>
+</div>
+<div class="nginx-candidate-list website-transfer-list">
+{{range .Candidates}}
+<label class="nginx-candidate {{if .Duplicate}}nginx-candidate--duplicate{{end}}">
+<input type="checkbox" name="selection" value="{{.Selection}}" data-website-selection {{if .Duplicate}}disabled{{end}}>
+<span><strong>{{.Name}}</strong><code>{{.URL}}</code><small>{{.ScopeLabel}} · {{.KindLabel}}</small></span>
+<b>{{if .Duplicate}}{{t $.Locale "website.transfer.same_name"}}{{else}}{{t $.Locale "website.nginx.can_add"}}{{end}}</b>
+</label>
+{{end}}
+</div>
+<footer class="website-form-actions"><a href="/monitor/websites/import" data-task-link>{{t .Locale "website.transfer.choose_another_file"}}</a><button class="button button--primary" type="submit" data-website-selection-submit {{if not .HasSelectable}}disabled{{end}}><span data-website-submit-label>{{t .Locale "website.transfer.import_selected"}}</span> <span data-website-submit-count>(0)</span></button></footer>
+</form>
+{{else}}
+<form class="website-monitor-form website-transfer-upload" method="post" action="/monitor/websites/import/preview" enctype="multipart/form-data">
+<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+<fieldset>
+<legend>{{t .Locale "website.transfer.source_file"}}</legend>
+<label>{{t .Locale "website.transfer.config_file"}}
+<input type="file" name="config_file" accept="application/json,.json" required>
+<span class="field-hint">{{t .Locale "website.transfer.file_hint"}}</span>
+</label>
+<aside class="website-transfer-note"><span data-lucide="shield-alert" aria-hidden="true"></span><p>{{t .Locale "website.transfer.sensitive_note"}}</p></aside>
+</fieldset>
+<footer class="website-form-actions"><a href="/monitor/websites">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit" data-pending-label="{{t .Locale "website.transfer.reading"}}">{{t .Locale "website.transfer.preview"}}</button></footer>
+</form>
+{{end}}
+</main>
+</body>
+</html>

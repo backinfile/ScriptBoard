@@ -1974,6 +1974,41 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .nginx-import-success h2 { margin: 0 0 3px; font-size: 1rem; }
 .nginx-import-success p { margin: 0; }
 .website-nginx-page > form { display: block; margin: 0; padding: 0; border: 0; }
+.website-transfer-form { display: block; margin: 0; padding: 0; border: 0; }
+.website-transfer-list .nginx-candidate > span { min-width: 0; }
+.website-transfer-list .nginx-candidate code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.website-transfer-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 18px;
+  padding: 13px 0;
+  color: var(--warning);
+  background: var(--warning-soft);
+  border-top: 1px solid var(--warning);
+  border-bottom: 1px solid var(--warning);
+}
+.website-transfer-note > svg { width: 17px; height: 17px; flex: 0 0 auto; margin: 2px 0 0 12px; }
+.website-transfer-note p { max-width: 70ch; margin: 0 12px 0 0; font-size: .72rem; }
+.website-transfer-upload input[type="file"] {
+  min-height: var(--field-height);
+  padding: 7px;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-radius: 6px;
+}
+.website-transfer-upload input[type="file"]::file-selector-button {
+  min-height: 32px;
+  margin-right: 10px;
+  padding: 5px 10px;
+  color: var(--ink);
+  background: var(--canvas);
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.website-transfer-upload input[type="file"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 @media (max-width: 1400px) {
   .website-alert { grid-template-columns: minmax(210px, .8fr) minmax(200px, 1fr) minmax(0, 1.2fr); }
@@ -1991,6 +2026,9 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 @media (max-width: 760px) {
   .website-heading-actions,
   .website-detail-actions { width: 100%; justify-content: flex-start; }
+  .website-heading-actions .button { flex: 1 1 auto; }
+  .website-transfer-list .nginx-candidate { grid-template-columns: auto minmax(0, 1fr); }
+  .website-transfer-list .nginx-candidate > b { grid-column: 2; }
   .website-counts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .website-counts > div:nth-child(odd) { border-left: 0; }
   .website-counts > div:nth-child(n + 3) { border-top: 1px solid var(--rule); }
