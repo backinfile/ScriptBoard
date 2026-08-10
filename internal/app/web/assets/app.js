@@ -6148,6 +6148,61 @@ document.addEventListener("change", function (event) {
   if (websiteField) websiteField.hidden = !website;
 });
 
+function closeDashboardDrawer(drawer, returnFocus = true) {
+  if (!drawer?.open) return;
+  drawer.open = false;
+  if (returnFocus) drawer.querySelector("summary")?.focus();
+}
+
+function syncDashboardDrawerState() {
+  document.body.classList.toggle("has-custom-dashboard-drawer", Boolean(document.querySelector("[data-dashboard-drawer][open]")));
+}
+
+document.addEventListener("toggle", function (event) {
+  const drawer = event.target.closest?.("[data-dashboard-drawer]");
+  if (!drawer) return;
+  if (drawer.open) {
+    document.querySelectorAll("[data-dashboard-drawer][open]").forEach((other) => {
+      if (other !== drawer) closeDashboardDrawer(other, false);
+    });
+    window.requestAnimationFrame(() => drawer.querySelector(".custom-dashboard-drawer input:not([type=hidden])")?.focus());
+  }
+  syncDashboardDrawerState();
+}, true);
+
+document.addEventListener("click", function (event) {
+  const close = event.target.closest("[data-dashboard-drawer-close]");
+  if (!close) return;
+  const drawer = close.closest("[data-dashboard-drawer]");
+  if (!drawer) return;
+  event.preventDefault();
+  closeDashboardDrawer(drawer);
+  syncDashboardDrawerState();
+});
+
+document.addEventListener("keydown", function (event) {
+  const drawer = document.querySelector("[data-dashboard-drawer][open]");
+  if (!drawer) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeDashboardDrawer(drawer);
+    syncDashboardDrawerState();
+    return;
+  }
+  if (event.key !== "Tab") return;
+  const focusable = Array.from(drawer.querySelectorAll(".custom-dashboard-drawer a[href], .custom-dashboard-drawer button:not([disabled]), .custom-dashboard-drawer input:not([disabled]), .custom-dashboard-drawer textarea:not([disabled]), .custom-dashboard-drawer select:not([disabled])")).filter((element) => element.offsetParent !== null);
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+});
+
 document.addEventListener("click", async function (event) {
   const button = event.target.closest("[data-copy-dashboard-url]");
   if (!button) return;

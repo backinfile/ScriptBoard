@@ -19,6 +19,9 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	}
 	page, _ := io.ReadAll(response.Body)
 	response.Body.Close()
+	if rendered := string(page); !strings.Contains(rendered, `data-dashboard-drawer`) || !strings.Contains(rendered, `aria-labelledby="custom-dashboard-create-title"`) {
+		t.Fatal("create dashboard drawer missing")
+	}
 	response, err = client.PostForm(serverURL+"/monitor/dashboards", url.Values{"csrf_token": {formToken(t, page)}, "name": {"API 与额度"}, "slug": {"api-credits"}, "public": {"1"}})
 	if err != nil {
 		t.Fatal(err)
@@ -39,6 +42,9 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	}
 	page, _ = io.ReadAll(response.Body)
 	response.Body.Close()
+	if !strings.Contains(string(page), `aria-labelledby="custom-dashboard-edit-title"`) {
+		t.Fatal("edit dashboard drawer missing")
+	}
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, `{"remaining":63.2}`) }))
 	defer api.Close()
 	response, err = client.PostForm(serverURL+"/monitor/dashboards/"+dashboardID+"/cards", url.Values{"csrf_token": {formToken(t, page)}, "name": {"剩余额度"}, "type": {"quota"}, "source_url": {api.URL}, "value_path": {"remaining"}, "refresh_seconds": {"60"}})
