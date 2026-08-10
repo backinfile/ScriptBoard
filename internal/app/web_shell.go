@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"scriptboard/internal/appstatus"
+	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/hoststatus"
 	"scriptboard/internal/websitemonitor"
 )
@@ -179,6 +180,7 @@ type shellNavigationGroup struct {
 type applicationShellData struct {
 	Locale                                webLocale
 	Username, CSRFToken, ReturnTo         string
+	BuildVersion                          string
 	Role                                  string
 	Environment, Status, StatusState      string
 	CurrentErrorCount                     int
@@ -216,7 +218,8 @@ func (a *App) addApplicationShell(request *http.Request, body []byte) []byte {
 	var shell bytes.Buffer
 	_ = applicationShellTemplate.Execute(&shell, applicationShellData{
 		Locale: locale, Username: username, Role: string(current.role), CSRFToken: current.csrfToken, ReturnTo: request.URL.RequestURI(),
-		Environment: environment, Status: status, StatusState: statusState, CurrentErrorCount: currentShellErrorCount(shellStatus), ActiveRuns: shellStatus.ActiveRuns,
+		BuildVersion: shellBuildVersion(buildinfo.Current().Version),
+		Environment:  environment, Status: status, StatusState: statusState, CurrentErrorCount: currentShellErrorCount(shellStatus), ActiveRuns: shellStatus.ActiveRuns,
 		WebsiteState: shellStatus.WebsiteState, WebsiteDown: shellStatus.WebsiteDown, WebsiteVerifying: shellStatus.WebsiteVerifying,
 		StoppedPinnedApplications: shellStatus.StoppedPinnedApplications, ApplicationIssueCount: shellStatus.ApplicationIssueCount,
 		Navigation: navigation, SettingsCurrent: strings.HasPrefix(request.URL.Path, "/settings/"),
@@ -238,6 +241,17 @@ func (a *App) addApplicationShell(request *http.Request, body []byte) []byte {
 	bodyEnd = strings.Index(bodyText[bodyStart:], ">")
 	insertAt := bodyStart + bodyEnd + 1
 	return []byte(bodyText[:insertAt] + shell.String() + bodyText[insertAt:])
+}
+
+func shellBuildVersion(version string) string {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return "development"
+	}
+	if version == "development" || strings.HasPrefix(strings.ToLower(version), "v") {
+		return version
+	}
+	return "v" + version
 }
 
 func currentShellErrorCount(status shellStatusResponse) int {

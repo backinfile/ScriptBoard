@@ -74,6 +74,9 @@ func TestPJAXPageReturnsBusinessDocumentWithoutApplicationShell(t *testing.T) {
 	if !strings.Contains(string(fullBody), `class="app-sidebar"`) || !strings.Contains(string(fullBody), `data-app-shell`) {
 		t.Fatalf("ordinary GET does not contain the application shell: %s", fullBody)
 	}
+	if !strings.Contains(string(fullBody), `class="sidebar-version"`) || !strings.Contains(string(fullBody), `data-build-version=`) {
+		t.Fatalf("ordinary GET does not expose the current build version in the application shell: %s", fullBody)
+	}
 
 	request, err := http.NewRequest(http.MethodGet, serverURL+"/resources/variables", nil)
 	if err != nil {

@@ -1898,6 +1898,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /history/runs", a.requireSession(http.HandlerFunc(a.runsPage)))
 	mux.Handle("GET /history/runs/{id}/save-quick-run", a.requireSession(http.HandlerFunc(a.saveQuickRunTask)))
 	mux.Handle("GET /history/runs/{id}/source", a.requireSession(http.HandlerFunc(a.runSource)))
+	mux.Handle("GET /history/runs/{id}/download", a.requireSession(http.HandlerFunc(a.downloadRun)))
 	mux.Handle("GET /history/runs/{id}", a.requireSession(http.HandlerFunc(a.runDetails)))
 	mux.Handle("POST /history/runs/{id}/stop", a.requireSession(http.HandlerFunc(a.stopRun)))
 	mux.Handle("GET /history/runs/{id}/events", a.requireSession(http.HandlerFunc(a.runEvents)))
@@ -3372,6 +3373,84 @@ func (a *App) runDetails(response http.ResponseWriter, request *http.Request) {
 		Run: run, CSRFToken: current.csrfToken, Locale: resolveWebLocale(request),
 		CanStop: canStop, CanManageExecution: canManageExecution,
 	})
+}
+
+func (a *App) downloadRun(response http.ResponseWriter, request *http.Request) {
+	run, err := a.runs.Get(request.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(response, "Run not found", http.StatusNotFound)
+			return
+		}
+		http.Error(response, "Unable to read Run: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="scriptboard-run-%s.txt"`, sanitizeDownloadName(run.ID)))
+	response.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	response.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = response.Write(formatRunDownload(run))
+}
+
+func formatRunDownload(run runmanager.Run) []byte {
+	var result bytes.Buffer
+	result.WriteString("ScriptBoard Run Record\n")
+	result.WriteString("======================\n")
+	fmt.Fprintf(&result, "Run ID: %s\n", run.ID)
+	fmt.Fprintf(&result, "Script: %s\n", run.ScriptPath)
+	fmt.Fprintf(&result, "Status: %s\n", run.Status)
+	fmt.Fprintf(&result, "Created: %s\n", run.CreatedAt.UTC().Format(time.RFC3339Nano))
+	writeRunDownloadTime(&result, "Started", run.StartedAt)
+	writeRunDownloadTime(&result, "Finished", run.FinishedAt)
+	fmt.Fprintf(&result, "Source: %s", run.SourceType)
+	if run.SourceName != "" && run.SourceName != "manual" {
+		fmt.Fprintf(&result, " / %s", run.SourceName)
+	}
+	result.WriteByte('\n')
+	if run.InitiatorUsername != "" {
+		fmt.Fprintf(&result, "Initiated by: %s\n", run.InitiatorUsername)
+	}
+	fmt.Fprintf(&result, "Runtime identity: %s\n", run.RuntimeIdentity)
+	fmt.Fprintf(&result, "Executor: %s\n", run.Executor)
+	fmt.Fprintf(&result, "Timeout: %ds\n", run.TimeoutSeconds)
+	if run.ExitCode != nil {
+		fmt.Fprintf(&result, "Exit code: %d\n", *run.ExitCode)
+	}
+	if run.ArgumentsTemplate != "" {
+		fmt.Fprintf(&result, "Argument template: %s\n", run.ArgumentsTemplate)
+	}
+	if run.WorkingDirectory != "" {
+		fmt.Fprintf(&result, "Working directory: %s\n", run.WorkingDirectory)
+	}
+	if run.Error != "" {
+		fmt.Fprintf(&result, "Error: %s\n", run.Error)
+	}
+	fmt.Fprintf(&result, "SHA-256: %s\n", run.ScriptDigest)
+	fmt.Fprintf(&result, "Log expired: %t\n", run.LogExpired)
+	fmt.Fprintf(&result, "Log incomplete: %t\n", run.LogIncomplete)
+	fmt.Fprintf(&result, "Log truncated: %t\n", run.LogTruncated)
+	if run.LogTruncated {
+		fmt.Fprintf(&result, "Dropped bytes: %d\n", run.DroppedBytes)
+	}
+	result.WriteString("\nOutput\n======\n")
+	if len(run.Events) == 0 {
+		result.WriteString("(no output)\n")
+		return result.Bytes()
+	}
+	for _, event := range run.Events {
+		result.WriteString(event.Data)
+	}
+	if last := run.Events[len(run.Events)-1].Data; !strings.HasSuffix(last, "\n") {
+		result.WriteByte('\n')
+	}
+	return result.Bytes()
+}
+
+func writeRunDownloadTime(result *bytes.Buffer, label string, value *time.Time) {
+	if value != nil {
+		fmt.Fprintf(result, "%s: %s\n", label, value.UTC().Format(time.RFC3339Nano))
+	}
 }
 
 type runFilters struct {

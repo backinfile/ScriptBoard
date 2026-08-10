@@ -70,6 +70,19 @@ func TestApplicationShellProvidesVisiblePJAXNavigationProgress(t *testing.T) {
 	}
 }
 
+func TestShellBuildVersionUsesAReleasePrefixAndPreservesDevelopmentLabel(t *testing.T) {
+	for input, want := range map[string]string{
+		"2.0.20":      "v2.0.20",
+		"v2.0.20":     "v2.0.20",
+		"development": "development",
+		"":            "development",
+	} {
+		if got := shellBuildVersion(input); got != want {
+			t.Errorf("shellBuildVersion(%q)=%q, want %q", input, got, want)
+		}
+	}
+}
+
 func TestSecurityTabsCommitImmediateLoadingState(t *testing.T) {
 	script, err := webFiles.ReadFile("web/assets/app.js")
 	if err != nil {

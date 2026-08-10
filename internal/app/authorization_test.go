@@ -46,6 +46,7 @@ func TestFixedRolesCoverEveryProtectedRouteClass(t *testing.T) {
 		{"operations json", http.MethodGet, "/monitor/data", []userRole{roleAdministrator, roleMaintainer, roleOperator, roleViewer}},
 		{"application log sse", http.MethodGet, "/monitor/applications/docker:one/logs/events", []userRole{roleAdministrator, roleMaintainer, roleOperator, roleViewer}},
 		{"run log sse", http.MethodGet, "/history/runs/run-one/events", []userRole{roleAdministrator, roleMaintainer, roleOperator, roleViewer}},
+		{"run text download", http.MethodGet, "/history/runs/run-one/download", []userRole{roleAdministrator, roleMaintainer, roleOperator, roleViewer}},
 		{"manage monitor", http.MethodPost, "/monitor/websites/site-one/check", []userRole{roleAdministrator, roleMaintainer}},
 		{"export monitor configurations", http.MethodGet, "/monitor/websites/export", []userRole{roleAdministrator, roleMaintainer}},
 		{"import monitor configurations", http.MethodGet, "/monitor/websites/import", []userRole{roleAdministrator, roleMaintainer}},

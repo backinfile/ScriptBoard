@@ -58,6 +58,7 @@
       </a>
     </section>
     <div class="sidebar-utilities">
+      {{if .BuildVersion}}<p class="sidebar-version" data-build-version="{{.BuildVersion}}"><span>{{t .Locale "shell.version"}}</span><code>{{.BuildVersion}}</code></p>{{end}}
       <form method="post" action="/settings/locale" data-native>
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
         <input type="hidden" name="return_to" value="{{.ReturnTo}}">
