@@ -43,6 +43,7 @@ import (
 	"scriptboard/internal/assistant/runtimeinstall"
 	"scriptboard/internal/assistant/toolbroker"
 	"scriptboard/internal/buildinfo"
+	"scriptboard/internal/customdashboard"
 	"scriptboard/internal/externaltrigger"
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/hostsecurity"
@@ -351,6 +352,7 @@ type App struct {
 	logHistorySlots    chan struct{}
 	shellStatusCache   *shellStatusCache
 	websiteMonitor     *websitemonitor.Manager
+	customDashboards   *customdashboard.Manager
 	externalTriggers   *externaltrigger.Manager
 	externalLimit      *externaltrigger.Limiter
 	mysql              *mysqlmanager.Manager
@@ -574,10 +576,21 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	application.customDashboards, err = customdashboard.New(customdashboard.Options{DB: db, Paused: validating})
+	if err != nil {
+		application.websiteMonitor.Close()
+		application.applicationStatus.Close()
+		application.hostStatus.Close()
+		application.scheduler.Close()
+		application.runs.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("initialize custom dashboards: %w", err)
+	}
 	application.assistantTools = newAssistantToolExecutor(application)
 	application.assistantRuntime.SetTurnSettled(application.assistantTools.releaseTurn)
 	application.assistantBroker, err = toolbroker.New(stateRoot, application.assistantTools)
 	if err != nil {
+		application.customDashboards.Close()
 		application.websiteMonitor.Close()
 		application.applicationStatus.Close()
 		application.hostStatus.Close()
@@ -669,6 +682,7 @@ func (a *App) monitorUpdateValidation(operationID string) {
 				a.scheduler.Resume()
 				a.hostStatus.Start(context.Background())
 				a.applicationStatus.Start(context.Background())
+				a.customDashboards.Start()
 				a.updates.Start(a.updateContext)
 				a.signalUpdateResults()
 				return
@@ -961,6 +975,9 @@ func (a *App) Close() error {
 	}
 	if a.websiteMonitor != nil {
 		a.websiteMonitor.Close()
+	}
+	if a.customDashboards != nil {
+		a.customDashboards.Close()
 	}
 	if a.scheduler != nil {
 		a.scheduler.Close()
@@ -1326,6 +1343,12 @@ func openDatabase(path string) (*sql.DB, error) {
 			return nil, fmt.Errorf("initialize MySQL management SQLite schema: %w", err)
 		}
 	}
+	for _, statement := range customdashboard.SchemaStatements {
+		if _, err := migration.Exec(statement); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("initialize custom dashboard SQLite schema: %w", err)
+		}
+	}
 	if schemaVersion == 21 {
 		if _, err := migration.Exec(`ALTER TABLE assistant_tool_calls ADD COLUMN body_offset INTEGER NOT NULL DEFAULT 0`); err != nil {
 			_ = db.Close()
@@ -1565,9 +1588,10 @@ func compatibleDatabaseSchema(version int) bool {
 	// instance-wide Quick Access list, schema 30 adds MySQL instances,
 	// logical backups, plans, and recoverable operations, and schema 31 persists
 	// MySQL connection state, and schema 32 adds read-only cross-instance website
-	// monitoring interfaces and encrypted remote source metadata. Each supported predecessor has an explicit
+	// monitoring interfaces and encrypted remote source metadata, and schema 33 adds
+	// custom dashboards with independently public card collections. Each supported predecessor has an explicit
 	// transactional forward path.
-	return version == currentSchemaVersion || currentSchemaVersion == 32 && version >= 20 && version <= 31
+	return version == currentSchemaVersion || currentSchemaVersion == 33 && version >= 20 && version <= 32
 }
 
 func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {
@@ -1798,6 +1822,15 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /monitor/applications/{id}/unpin", a.requireSession(http.HandlerFunc(a.unpinApplication)))
 	mux.Handle("POST /monitor/applications/{id}/move", a.requireSession(http.HandlerFunc(a.movePinnedApplication)))
 	mux.Handle("GET /monitor/websites", a.requireSession(http.HandlerFunc(a.websiteMonitorList)))
+	mux.Handle("GET /monitor/dashboards", a.requireSession(http.HandlerFunc(a.customDashboardPage)))
+	mux.Handle("POST /monitor/dashboards", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.createCustomDashboard)))
+	mux.Handle("POST /monitor/dashboards/{id}", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.updateCustomDashboard)))
+	mux.Handle("POST /monitor/dashboards/{id}/delete", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.deleteCustomDashboard)))
+	mux.Handle("POST /monitor/dashboards/{id}/cards", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.createCustomDashboardCard)))
+	mux.Handle("POST /monitor/dashboard-cards/{id}/refresh", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.refreshCustomDashboardCard)))
+	mux.Handle("POST /monitor/dashboard-cards/{id}", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.updateCustomDashboardCard)))
+	mux.Handle("POST /monitor/dashboard-cards/{id}/delete", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.deleteCustomDashboardCard)))
+	mux.HandleFunc("GET /public/dashboard/{slug}", a.publicCustomDashboard)
 	mux.Handle("GET /monitor/websites/data", a.requireSession(http.HandlerFunc(a.websiteMonitorData)))
 	mux.Handle("POST /monitor/websites/remotes", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.createWebsiteMonitorRemoteSource)))
 	mux.Handle("POST /monitor/websites/remotes/{id}/delete", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.deleteWebsiteMonitorRemoteSource)))
@@ -2105,7 +2138,8 @@ func (w *pageResponseWriter) finish(a *App, request *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	}
 	locale := resolveWebLocale(request)
-	if request.URL.Path != "/login" {
+	publicPage := strings.HasPrefix(request.URL.Path, "/public/")
+	if request.URL.Path != "/login" && !publicPage {
 		if request.Header.Get("X-ScriptBoard-Navigation") == "pjax" {
 			body = []byte(prepareApplicationDocument(body, locale))
 		} else {
@@ -2113,7 +2147,9 @@ func (w *pageResponseWriter) finish(a *App, request *http.Request) {
 		}
 	}
 	w.Header().Set("Content-Language", string(locale))
-	w.Header().Set("Cache-Control", "no-store")
+	if !publicPage {
+		w.Header().Set("Cache-Control", "no-store")
+	}
 	w.Header().Del("Content-Length")
 	w.ResponseWriter.WriteHeader(w.status)
 	_, _ = w.ResponseWriter.Write(body)

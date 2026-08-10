@@ -106,6 +106,7 @@ var webMessages = map[string]localizedMessage{
 	"nav.overview":                                  {"概览", "Overview"},
 	"nav.applications":                              {"应用", "Applications"},
 	"nav.websites":                                  {"网站监控", "Website Monitoring"},
+	"nav.dashboards":                                {"自定义面板", "Custom Dashboards"},
 	"nav.security":                                  {"主机安全", "Host Security"},
 	"nav.runs":                                      {"运行记录", "Runs"},
 	"nav.resources":                                 {"资源", "Resources"},
