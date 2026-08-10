@@ -2469,7 +2469,20 @@
 
   function initRun(cleanups) {
     const root = document.querySelector("[data-run-events-url]");
-    if (!root || !window.EventSource) return;
+    if (!root) return;
+    const jumpToBottom = root.querySelector("[data-run-jump-bottom]");
+    const bottom = root.querySelector("#run-details-bottom");
+    const handleJumpToBottom = event => {
+      event.preventDefault();
+      if (!bottom) return;
+      const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+      bottom.scrollIntoView({ block: "end", behavior });
+      bottom.focus({ preventScroll: true });
+      history.replaceState(history.state, "", "#run-details-bottom");
+    };
+    jumpToBottom?.addEventListener("click", handleJumpToBottom);
+    cleanups.push(() => jumpToBottom?.removeEventListener("click", handleJumpToBottom));
+    if (!window.EventSource) return;
     const log = root.querySelector("[data-run-log]");
     const state = root.querySelector("[data-run-live-state]");
     const pause = root.querySelector("[data-run-pause]");

@@ -85,6 +85,7 @@ func TestAdminCanRunScriptAndReadCompletedOutput(t *testing.T) {
 	}
 	if !strings.Contains(completedPage, `href="#run-details-bottom"`) ||
 		!strings.Contains(completedPage, `id="run-details-bottom"`) ||
+		!strings.Contains(completedPage, `data-run-jump-bottom`) ||
 		!strings.Contains(completedPage, `data-lucide="arrow-down-to-line"`) {
 		t.Fatalf("completed Run detail does not offer a jump to its bottom: %s", completedPage)
 	}
