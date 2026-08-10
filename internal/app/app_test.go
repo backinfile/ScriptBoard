@@ -635,6 +635,68 @@ func TestFileWorkspaceExposesNavigationPreviewAndRunConfiguration(t *testing.T) 
 	}
 }
 
+func TestFileWorkspaceOffersPreviewForUnknownTextButNotUnknownBinary(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "managed")
+	if err := os.MkdirAll(hostRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	textPath := filepath.Join(hostRoot, "notes.payload")
+	binaryPath := filepath.Join(hostRoot, "archive.payload")
+	misleadingTextPath := filepath.Join(hostRoot, "renamed.txt")
+	if err := os.WriteFile(textPath, []byte("unknown extension, readable content\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(binaryPath, []byte("%PDF-1.7\nvalid ASCII but binary"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(misleadingTextPath, []byte("%PDF-1.7\nvalid ASCII but binary"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
+
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(page)
+	textPreview := `href="` + hostFileHref("/resources/files/view", textPath) + `"`
+	binaryPreview := `href="` + hostFileHref("/resources/files/view", binaryPath) + `"`
+	misleadingTextPreview := `href="` + hostFileHref("/resources/files/view", misleadingTextPath) + `"`
+	if !strings.Contains(html, textPreview) {
+		t.Fatalf("unknown text is missing preview link %q: %s", textPreview, html)
+	}
+	if strings.Contains(html, binaryPreview) {
+		t.Fatalf("unknown binary unexpectedly has preview link %q: %s", binaryPreview, html)
+	}
+	if strings.Contains(html, misleadingTextPreview) {
+		t.Fatalf("binary content with a text extension unexpectedly has preview link %q: %s", misleadingTextPreview, html)
+	}
+	if strings.Contains(html, `href="`+hostFileHref("/resources/files/edit", textPath)+`"`) {
+		t.Fatalf("content-detected text unexpectedly has an edit link: %s", html)
+	}
+
+	response, err = client.Get(hostFileRequestURL(serverURL, "/resources/files/view", textPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || !bytes.Contains(preview, []byte("unknown extension, readable content")) {
+		t.Fatalf("unknown text preview status=%d body=%s", response.StatusCode, preview)
+	}
+}
+
 func TestScriptPreviewUsesDeterministicHighlightLanguages(t *testing.T) {
 	t.Parallel()
 

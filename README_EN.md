@@ -110,7 +110,7 @@ After installing ScriptBoard as a system service, Administrators and Maintainers
 
 ### Files and scripts
 
-On Windows, Files starts from the available volumes. On Linux, it starts from `/`. File operations affect the host filesystem directly. Files deleted or replaced through the web interface first go to ScriptBoard Trash.
+On Windows, Files starts from the available volumes. On Linux, it starts from `/`. File operations affect the host filesystem directly. Files deleted or replaced through the web interface first go to ScriptBoard Trash. Files with unknown extensions also receive a read-only preview when bounded content detection recognizes safe UTF-8 text; files that do not pass detection remain download-only.
 
 Separate script arguments with spaces and quote arguments that contain spaces. The argument field does not expand pipes, redirections, wildcards, or command substitutions.
 

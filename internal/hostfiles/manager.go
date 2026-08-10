@@ -14,11 +14,23 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
 var ErrProtected = errors.New("path is protected by ScriptBoard")
 var ErrConflict = errors.New("file was modified outside ScriptBoard")
+
+var knownBinaryMagic = [][]byte{
+	{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a},
+	{0xff, 0xd8, 0xff},
+	[]byte("GIF87a"), []byte("GIF89a"), []byte("%PDF-"),
+	{'P', 'K', 0x03, 0x04}, {'P', 'K', 0x05, 0x06}, {'P', 'K', 0x07, 0x08},
+	{0x1f, 0x8b}, {0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c},
+	[]byte("Rar!\x1a\x07"), {0x7f, 'E', 'L', 'F'},
+	{0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1},
+	[]byte("SQLite format 3\x00"), {0x00, 'a', 's', 'm'},
+}
 
 type Kind string
 
@@ -209,11 +221,62 @@ func (m *Manager) ReadText(path string, maxBytes int64) (TextDocument, error) {
 	if int64(len(content)) > maxBytes {
 		return TextDocument{}, fmt.Errorf("file exceeds %d byte text limit", maxBytes)
 	}
-	if !utf8.Valid(content) || bytes.IndexByte(content, 0) >= 0 {
+	if !likelyTextContent(content) {
 		return TextDocument{}, fmt.Errorf("file is not safe UTF-8 text")
 	}
 	digest := sha256.Sum256(content)
 	return TextDocument{Content: string(content), Digest: hex.EncodeToString(digest[:])}, nil
+}
+
+// IsLikelyText samples a regular file and reports whether the sampled bytes are
+// well-formed UTF-8 whose contents are predominantly printable text. It is a
+// bounded hint for offering previews; ReadText remains the final validation.
+func (m *Manager) IsLikelyText(path string, sampleBytes int64) (bool, error) {
+	if sampleBytes <= 0 {
+		return false, fmt.Errorf("text sample limit must be positive")
+	}
+	file, info, err := m.OpenRegular(path)
+	if err != nil {
+		return false, err
+	}
+	defer file.Close()
+	content, err := io.ReadAll(io.LimitReader(file, sampleBytes))
+	if err != nil {
+		return false, fmt.Errorf("sample text file: %w", err)
+	}
+	if info.Size() > sampleBytes && !utf8.Valid(content) {
+		for trim := 1; trim < utf8.UTFMax && trim < len(content); trim++ {
+			candidate := content[:len(content)-trim]
+			if utf8.Valid(candidate) {
+				return likelyTextContent(candidate), nil
+			}
+		}
+	}
+	return likelyTextContent(content), nil
+}
+
+func likelyTextContent(content []byte) bool {
+	if hasKnownBinaryMagic(content) || !utf8.Valid(content) || bytes.IndexByte(content, 0) >= 0 {
+		return false
+	}
+	controlCount := 0
+	runeCount := 0
+	for _, value := range string(content) {
+		runeCount++
+		if unicode.IsControl(value) && value != '\t' && value != '\n' && value != '\r' && value != '\f' {
+			controlCount++
+		}
+	}
+	return runeCount == 0 || controlCount*100 <= runeCount
+}
+
+func hasKnownBinaryMagic(content []byte) bool {
+	for _, signature := range knownBinaryMagic {
+		if bytes.HasPrefix(content, signature) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) OpenRegular(path string) (*os.File, os.FileInfo, error) {

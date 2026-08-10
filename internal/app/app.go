@@ -4375,9 +4375,15 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 	views := make([]fileView, 0, pagination.End-pagination.Start)
 	for _, listed := range pageEntries {
 		entry, path := listed.Entry, listed.Path
+		category := listed.Category
+		previewableText := false
+		if entry.Kind == hostfiles.Regular && (category == fileCategoryOther || category == fileCategoryText || category == fileCategoryScript) {
+			likelyText, detectErr := a.files.IsLikelyText(path, 64<<10)
+			previewableText = detectErr == nil && likelyText
+		}
 		view := fileView{
-			Entry: entry, Path: path, IconClass: fileCategoryIcon(listed.Category),
-			NameParts: splitFileNameMatches(entry.Name, query), CategoryLabel: fileCategoryLabel(locale, listed.Category),
+			Entry: entry, Path: path, IconClass: fileCategoryIcon(category),
+			NameParts: splitFileNameMatches(entry.Name, query), CategoryLabel: fileCategoryLabel(locale, category),
 			IsHidden: entry.Hidden, CanMutate: a.files.CanMutate(path),
 		}
 		if view.CanMutate {
@@ -4399,14 +4405,20 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 			view.PinURL = filesURL(path)
 		} else if entry.Kind == hostfiles.Regular {
 			view.DownloadURL = routeFileURL("/resources/files/download", path)
-			switch listed.Category {
+			switch category {
 			case fileCategoryImage:
 				view.PreviewURL = routeFileURL("/resources/files/preview", path)
+			case fileCategoryOther:
+				if previewableText {
+					view.ViewURL = routeFileURL("/resources/files/view", path)
+				}
 			case fileCategoryText, fileCategoryScript:
-				view.ViewURL = routeFileURL("/resources/files/view", path)
-				view.EditURL = routeFileURL("/resources/files/edit", path)
-				view.LogURL = "/resources/files/log?" + url.Values{"path": {path}}.Encode()
-				if listed.Category == fileCategoryScript {
+				if previewableText {
+					view.ViewURL = routeFileURL("/resources/files/view", path)
+					view.EditURL = routeFileURL("/resources/files/edit", path)
+					view.LogURL = "/resources/files/log?" + url.Values{"path": {path}}.Encode()
+				}
+				if category == fileCategoryScript {
 					view.Runnable = true
 					view.RunURL = routeFileURL("/resources/files/run", path)
 					view.QuickRunURL = routeFileURL("/resources/files/quick-run", path) + "&return_to=" + url.QueryEscape(request.URL.RequestURI())

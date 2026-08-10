@@ -95,6 +95,79 @@ func TestManagerListsAbsoluteDirectoryAndHidesProtectedPaths(t *testing.T) {
 	}
 }
 
+func TestManagerRecognizesLikelyUTF8TextWithoutTrustingItsExtension(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	textPath := filepath.Join(root, "notes.unknown")
+	binaryPath := filepath.Join(root, "payload.unknown")
+	if err := os.WriteFile(textPath, []byte("第一行\nsecond line\tvalue\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(binaryPath, []byte{'P', 'N', 'G', 0, 1, 2, 3}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	manager, err := hostfiles.Open(hostfiles.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text, err := manager.IsLikelyText(textPath, 64<<10); err != nil || !text {
+		t.Fatalf("UTF-8 text detection = %v, %v; want true", text, err)
+	}
+	if text, err := manager.IsLikelyText(binaryPath, 64<<10); err != nil || text {
+		t.Fatalf("binary detection = %v, %v; want false", text, err)
+	}
+}
+
+func TestManagerRejectsKnownBinaryMagicThatIsValidUTF8(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "renamed.data")
+	if err := os.WriteFile(path, []byte("%PDF-1.7\notherwise valid ASCII"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := hostfiles.Open(hostfiles.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text, err := manager.IsLikelyText(path, 64<<10); err != nil || text {
+		t.Fatalf("PDF detection = %v, %v; want false", text, err)
+	}
+}
+
+func TestReadTextAppliesFullContentDetectionAfterSampling(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "renamed.data")
+	if err := os.WriteFile(path, []byte("%PDF-1.7\notherwise valid ASCII"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := hostfiles.Open(hostfiles.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.ReadText(path, 1<<20); err == nil {
+		t.Fatal("ReadText accepted known binary content")
+	}
+}
+
+func TestManagerTextSampleDoesNotRejectASplitUTF8Rune(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "notes.data")
+	if err := os.WriteFile(path, []byte("abc中文"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := hostfiles.Open(hostfiles.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text, err := manager.IsLikelyText(path, 4); err != nil || !text {
+		t.Fatalf("split UTF-8 sample detection = %v, %v; want true", text, err)
+	}
+}
+
 func TestManagerNeverFollowsFilesystemLinks(t *testing.T) {
 	t.Parallel()
 
