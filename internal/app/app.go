@@ -4386,9 +4386,15 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 			likelyText, detectErr := a.files.IsLikelyText(path, 64<<10)
 			previewableText = detectErr == nil && likelyText
 		}
+		displayCategory := category
+		if category == fileCategoryOther && previewableText {
+			displayCategory = fileCategoryText
+		} else if category == fileCategoryText && !previewableText {
+			displayCategory = fileCategoryOther
+		}
 		view := fileView{
-			Entry: entry, Path: path, IconClass: fileCategoryIcon(category),
-			NameParts: splitFileNameMatches(entry.Name, query), CategoryLabel: fileCategoryLabel(locale, category),
+			Entry: entry, Path: path, IconClass: fileCategoryIcon(displayCategory),
+			NameParts: splitFileNameMatches(entry.Name, query), CategoryLabel: fileCategoryLabel(locale, displayCategory),
 			IsHidden: entry.Hidden, CanMutate: a.files.CanMutate(path),
 		}
 		if view.CanMutate {

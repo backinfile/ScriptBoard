@@ -604,13 +604,13 @@ func TestFilesPageSortsByVisibleTypeAndPreservesSortAcrossDirectories(t *testing
 	if err := os.MkdirAll(filepath.Join(hostRoot, "workspace"), 0o755); err != nil {
 		t.Fatalf("create workspace directory: %v", err)
 	}
-	for name := range map[string]struct{}{
-		"automation.ps1": {},
-		"diagram.png":    {},
-		"notes.txt":      {},
-		"archive.bin":    {},
+	for name, content := range map[string][]byte{
+		"automation.ps1": []byte("automation.ps1"),
+		"diagram.png":    []byte("diagram.png"),
+		"notes.txt":      []byte("notes.txt"),
+		"archive.bin":    {0x00, 0x01, 0x02, 0x03},
 	} {
-		if err := os.WriteFile(filepath.Join(hostRoot, name), []byte(name), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(hostRoot, name), content, 0o644); err != nil {
 			t.Fatalf("create %s: %v", name, err)
 		}
 	}

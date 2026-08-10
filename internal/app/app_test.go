@@ -682,6 +682,15 @@ func TestFileWorkspaceOffersPreviewForUnknownTextButNotUnknownBinary(t *testing.
 	if strings.Contains(html, `href="`+hostFileHref("/resources/files/edit", textPath)+`"`) {
 		t.Fatalf("content-detected text unexpectedly has an edit link: %s", html)
 	}
+	for _, expected := range []string{
+		`>notes.payload</a><small><span>Previewable text</span>`,
+		`>archive.payload</span><small><span>Other file</span>`,
+		`>renamed.txt</span><small><span>Other file</span>`,
+	} {
+		if !strings.Contains(html, expected) {
+			t.Errorf("content-based preview state is missing %q: %s", expected, html)
+		}
+	}
 
 	response, err = client.Get(hostFileRequestURL(serverURL, "/resources/files/view", textPath))
 	if err != nil {
