@@ -3737,8 +3737,9 @@ func (a *App) downloadFile(response http.ResponseWriter, request *http.Request) 
 	defer file.Close()
 	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": info.Name()})
 	response.Header().Set("Content-Disposition", disposition)
+	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("X-Content-Type-Options", "nosniff")
-	http.ServeContent(response, request, info.Name(), info.ModTime(), file)
+	http.ServeContent(response, request, info.Name(), time.Time{}, file)
 }
 
 func (a *App) previewImage(response http.ResponseWriter, request *http.Request) {

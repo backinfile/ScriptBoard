@@ -1290,6 +1290,68 @@ func TestAdminCanDownloadARegularFileWithRange(t *testing.T) {
 	}
 }
 
+func TestFileDownloadDoesNotReuseAStaleCachedResponseAfterReplacement(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatalf("create host root: %v", err)
+	}
+	target := filepath.Join(hostRoot, "report.txt")
+	lastModified := "Mon, 02 Jan 2006 15:04:05 GMT"
+	modTime, err := http.ParseTime(lastModified)
+	if err != nil {
+		t.Fatalf("parse fixed modification time: %v", err)
+	}
+	if err := os.WriteFile(target, []byte("old-content"), 0o644); err != nil {
+		t.Fatalf("write original file: %v", err)
+	}
+	if err := os.Chtimes(target, modTime, modTime); err != nil {
+		t.Fatalf("set original file timestamp: %v", err)
+	}
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
+	downloadURL := hostFileRequestURL(serverURL, "/resources/files/download", target)
+
+	response, err := client.Get(downloadURL)
+	if err != nil {
+		t.Fatalf("download original file: %v", err)
+	}
+	originalBody, readErr := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if readErr != nil || response.StatusCode != http.StatusOK || string(originalBody) != "old-content" {
+		t.Fatalf("original download: status=%d body=%q err=%v", response.StatusCode, originalBody, readErr)
+	}
+	if err := os.WriteFile(target, []byte("new-content"), 0o644); err != nil {
+		t.Fatalf("replace file contents: %v", err)
+	}
+	if err := os.Chtimes(target, modTime, modTime); err != nil {
+		t.Fatalf("preserve file timestamp: %v", err)
+	}
+
+	request, err := http.NewRequest(http.MethodGet, downloadURL, nil)
+	if err != nil {
+		t.Fatalf("create conditional download: %v", err)
+	}
+	request.Header.Set("If-Modified-Since", lastModified)
+	response, err = client.Do(request)
+	if err != nil {
+		t.Fatalf("download replacement file: %v", err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read replacement download: %v", err)
+	}
+	if response.StatusCode != http.StatusOK || string(body) != "new-content" {
+		t.Fatalf("replacement download: status=%d body=%q", response.StatusCode, body)
+	}
+	if got := response.Header.Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("cache control = %q", got)
+	}
+}
+
 func TestAdminCanMoveFileToTrashAndRestoreIt(t *testing.T) {
 	t.Parallel()
 
