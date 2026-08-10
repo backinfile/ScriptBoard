@@ -14,19 +14,13 @@ Use the canonical labels `needs-triage`, `needs-info`, `ready-for-agent`, `ready
 
 This is a single-context repo using root `CONTEXT.md` and `docs/adr/`. See `docs/agents/domain.md`.
 
-## 开发与 Release 发布流程
+## 分支与发布
 
-### 日常开发
-
-+ 一般小功能直接在 `dev` 分支修改并提交。
-+ 大功能必须基于 `dev` 新建独立的功能分支，在功能分支中完成修改和提交；测试通过后，再合并回 `dev` 分支。
-
-### Release 发布
-
-+ 发起 Release 前，必须先在 `dev` 分支完成测试与必要修改，确认基础功能正常且不存在重大 Bug。
-+ 发布前必须检查并按需更新 `README` 文档；`README` 应面向用户编写，重点说明产品用途、安装方式、使用方法及用户需要了解的发布信息，避免写成仅供开发者阅读的内部文档。
-+ 上述检查完成后，从 `dev` 分支创建一个 `release/版本号` 分支，并从该分支执行发布流程。
-+ 如果发布过程中发现错误，不得直接在 release 分支修改。必须先回到 `dev` 分支完成修复、测试和提交，再执行 release 发布流程。
++ `dev` 是唯一主干和默认分支；`main` 已废弃，禁止继续提交、合并或发布。
++ 小改动可直接提交到 `dev`；大功能从 `dev` 创建功能分支，CI 通过后合并并删除。
++ 发布前在 `dev` 完成测试，并按需更新面向用户的 `README`。
++ 从 `dev` 创建 `release/X.Y.Z`，在同一提交打 `vX.Y.Z` Tag，由项目 workflow 发布。
++ release 分支和正式 Tag 不可修改；发现问题须回到 `dev` 修复、测试，再发布新版本。
 
 ## 前端设计原则
 
