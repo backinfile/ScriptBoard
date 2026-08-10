@@ -61,6 +61,24 @@ SEED: 94d9bb9f.
   --line-strong: var(--rule-strong);
 }
 
+.website-remote-connect { position: relative; }
+.website-remote-connect > summary { list-style: none; cursor: pointer; }
+.website-remote-connect > summary::-webkit-details-marker { display: none; }
+.website-remote-connect > form {
+  position: absolute; z-index: 20; inset-block-start: calc(100% + .65rem); inset-inline-end: 0;
+  display: grid; gap: .8rem; width: min(28rem, calc(100vw - 2rem)); padding: 1rem;
+  border: 1px solid var(--line, #d8dde4); background: var(--surface, #fff); box-shadow: 0 1.25rem 3rem rgba(20, 28, 40, .16);
+}
+.website-remote-connect label { display: grid; gap: .35rem; }
+.website-remote-source { margin-block-start: 2rem; padding-block-start: 1.25rem; border-block-start: 1px solid var(--line, #d8dde4); }
+.website-remote-source > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-block-end: 1rem; }
+.website-remote-source > header h2 { margin-block: .15rem .35rem; }
+.website-remote-source > header p { margin: 0; }
+@media (max-width: 720px) {
+  .website-remote-connect > form { position: fixed; inset: auto 1rem 1rem; }
+  .website-remote-source > header { flex-direction: column; }
+}
+
 /* External Interfaces */
 .external-interface-tabs { display: flex; gap: 24px; margin: 0 0 28px; border-bottom: 1px solid var(--rule-strong); }
 .external-interface-tabs a { position: relative; display: inline-flex; align-items: center; gap: 7px; min-height: 46px; color: var(--muted); font-size: .84rem; font-weight: 620; text-decoration: none; }

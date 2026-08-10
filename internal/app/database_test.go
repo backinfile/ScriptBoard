@@ -165,7 +165,7 @@ func TestOpenDatabaseCreatesFixedRoleUserSchema(t *testing.T) {
 	if adminTable != 0 {
 		t.Fatal("legacy admin table should not exist")
 	}
-	for _, table := range []string{"file_operations", "file_quick_access_pins", "trash_entries", "assistant_settings", "assistant_models", "assistant_conversations", "assistant_messages", "external_trigger_keys", "external_trigger_entries", "external_trigger_requests"} {
+	for _, table := range []string{"file_operations", "file_quick_access_pins", "trash_entries", "assistant_settings", "assistant_models", "assistant_conversations", "assistant_messages", "external_trigger_keys", "external_trigger_entries", "external_trigger_requests", "website_monitor_remote_sources"} {
 		var count int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil || count != 1 {
 			t.Fatalf("required schema table %q is missing: count=%d error=%v", table, count, err)
@@ -594,6 +594,52 @@ func TestOpenDatabaseMigratesSchema30MySQLConnectionState(t *testing.T) {
 	}
 	if err := migrated.QueryRow(`SELECT connection_state FROM mysql_instances WHERE id='instance'`).Scan(&connectionState); err != nil || connectionState != "untried" {
 		t.Fatalf("connection state = %q, error = %v", connectionState, err)
+	}
+}
+
+func TestOpenDatabaseMigratesSchema31WebsiteMonitorExternalInterfaces(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	db, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP TABLE external_trigger_entries;
+		CREATE TABLE external_trigger_entries (
+			id TEXT PRIMARY KEY,
+			key_id TEXT NOT NULL REFERENCES external_trigger_keys(id) ON DELETE CASCADE,
+			name TEXT NOT NULL, label TEXT NOT NULL,
+			action_type TEXT NOT NULL CHECK (action_type IN ('log', 'upload', 'quick_run', 'variable')),
+			target TEXT NOT NULL DEFAULT '', config_json TEXT NOT NULL DEFAULT '{}',
+			enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)), created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+			UNIQUE (key_id, name)
+		);
+		PRAGMA user_version=31; PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := openDatabase(path)
+	if err != nil {
+		t.Fatalf("migrate schema 31: %v", err)
+	}
+	defer migrated.Close()
+	if _, err := migrated.Exec(`INSERT INTO external_trigger_keys
+		(id, label, token_hash, token_hint, enabled, created_at, updated_at)
+		VALUES ('key', 'Key', 'hash', 'hint', 1, 1, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := migrated.Exec(`INSERT INTO external_trigger_entries
+		(id, key_id, name, label, action_type, target, config_json, enabled, created_at, updated_at)
+		VALUES ('entry', 'key', 'websites', 'Websites', 'website_monitor', '', '{}', 1, 1, 1)`); err != nil {
+		t.Fatalf("new action type rejected after migration: %v", err)
+	}
+	for _, table := range []string{"external_trigger_entries", "website_monitor_remote_sources"} {
+		var count int
+		if err := migrated.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("table %s count=%d error=%v", table, count, err)
+		}
 	}
 }
 

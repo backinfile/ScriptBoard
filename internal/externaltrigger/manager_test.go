@@ -85,6 +85,30 @@ func TestCreateKeyAndResolveEnabledLogEntry(t *testing.T) {
 	}
 }
 
+func TestCreateAndResolveWebsiteMonitorEntry(t *testing.T) {
+	manager, _ := testManager(t, time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC))
+	key, secret, err := manager.CreateKey(context.Background(), CreateKeyInput{
+		Label: "Remote dashboard", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, err := manager.CreateEntry(context.Background(), CreateEntryInput{
+		KeyID: key.ID, Name: "website-status", Label: "Website monitoring",
+		Type: ActionWebsiteMonitor, Enabled: true, Config: WebsiteMonitorConfig{},
+	})
+	if err != nil {
+		t.Fatalf("create website monitor entry: %v", err)
+	}
+	_, resolved, err := manager.Resolve(context.Background(), secret, entry.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Type != ActionWebsiteMonitor || resolved.Target != "" || resolved.ConfigJSON != "{}" {
+		t.Fatalf("website monitor entry = %#v", resolved)
+	}
+}
+
 func TestKeyNamesAreUniqueIgnoringCaseAndSurroundingWhitespace(t *testing.T) {
 	manager, _ := testManager(t, time.Date(2026, 8, 5, 9, 0, 0, 0, time.UTC))
 	first, _, err := manager.CreateKey(context.Background(), CreateKeyInput{Label: "Webhook", Enabled: true})
