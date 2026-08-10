@@ -45,6 +45,9 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	if !strings.Contains(string(page), `aria-labelledby="custom-dashboard-edit-title"`) {
 		t.Fatal("edit dashboard drawer missing")
 	}
+	if rendered := string(page); strings.Contains(rendered, "更多面板操作") || !strings.Contains(rendered, `form="custom-dashboard-delete-form"`) || !strings.Contains(rendered, `data-dashboard-slug-preview`) {
+		t.Fatal("dashboard settings controls do not match the drawer contract")
+	}
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, `{"remaining":63.2}`) }))
 	defer api.Close()
 	response, err = client.PostForm(serverURL+"/monitor/dashboards/"+dashboardID+"/cards", url.Values{"csrf_token": {formToken(t, page)}, "name": {"剩余额度"}, "type": {"quota"}, "source_url": {api.URL}, "value_path": {"remaining"}, "refresh_seconds": {"60"}})

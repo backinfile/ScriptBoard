@@ -6148,6 +6148,14 @@ document.addEventListener("change", function (event) {
   if (websiteField) websiteField.hidden = !website;
 });
 
+document.addEventListener("input", function (event) {
+  const input = event.target.closest("[data-dashboard-slug-input]");
+  if (!input) return;
+  const preview = input.closest("label")?.querySelector("[data-dashboard-slug-preview]");
+  if (!preview) return;
+  preview.textContent = `/public/dashboard/${input.value.trim() || "service-status"}`;
+});
+
 function closeDashboardDrawer(drawer, returnFocus = true) {
   if (!drawer?.open) return;
   drawer.open = false;
