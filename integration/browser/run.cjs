@@ -425,6 +425,8 @@ async function assertNativePostServerErrorPreservesWorkspace(page) {
 async function assertAsyncPostServerErrorPreservesWorkspace(page) {
   await page.goto(new URL("/settings/updates", page.url()).toString());
   const workspaceURL = page.url();
+  await page.locator("[data-update-source-open]").click();
+  await saveSnapshot(page, "update-source-drawer");
   const checkForm = page.locator('form[action="/settings/updates/check"][data-async]');
   const checkButton = checkForm.getByRole("button");
   const routeHandler = route => route.fulfill({
@@ -446,6 +448,7 @@ async function assertAsyncPostServerErrorPreservesWorkspace(page) {
     assert.match(await dialog.textContent(), /Unable to check for updates/);
     await dialog.getByRole("button", { name: "Close", exact: true }).last().click();
     assert.equal(await checkButton.evaluate(element => element === document.activeElement), true, "async POST error did not restore focus");
+    await page.locator("[data-update-source-close]").last().click();
   } finally {
     await page.unroute("**/settings/updates/check", routeHandler);
   }
@@ -1641,6 +1644,19 @@ async function assertExternalInterfaces(page, fixture) {
 
     const hostFilesWorkspaceURL = fixtureFilesURL();
     await page.goto(hostFilesWorkspaceURL);
+    const copyCurrentPath = page.getByRole("button", { name: "Copy current path" });
+    await copyCurrentPath.waitFor({ state: "visible" });
+    assert.equal((await copyCurrentPath.textContent()).trim(), "", "copy-current-path control should be icon-only");
+    await copyCurrentPath.click();
+    await page.waitForFunction(() => document.querySelector("[data-copy-current-path]")?.getAttribute("aria-label") === "Path copied");
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), fixture.hostRoot);
+    await page.goto(fixtureFilesURL("automation"));
+    const parentDirectory = page.getByRole("link", { name: "Back to parent folder" });
+    assert.equal((await parentDirectory.textContent()).trim(), "", "parent-directory control should be icon-only");
+    await Promise.all([
+      page.waitForURL(hostFilesWorkspaceURL),
+      parentDirectory.click(),
+    ]);
     const uploadTaskRequests = [];
     const recordUploadTaskRequest = request => {
       const requestURL = new URL(request.url());
@@ -1971,6 +1987,14 @@ async function assertExternalInterfaces(page, fixture) {
     assert.equal(fileHeadingActionSizes.length, 2);
     assert.equal(fileHeadingActionSizes[0].width, fileHeadingActionSizes[1].width);
     assert.ok(fileHeadingActionSizes.every(size => size.height >= 44));
+    const fileLocationActionSizes = await page.locator(".file-location-actions .icon-button").evaluateAll(elements =>
+      elements.map(element => ({
+        width: Math.round(element.getBoundingClientRect().width),
+        height: Math.round(element.getBoundingClientRect().height),
+      })),
+    );
+    assert.equal(fileLocationActionSizes.length, 2);
+    assert.ok(fileLocationActionSizes.every(size => size.width >= 44 && size.height >= 44));
     const mobileSearchMetrics = await page.locator(".file-search-primary").evaluate(primary => {
       const bounds = primary.getBoundingClientRect();
       const inputBounds = primary.querySelector("input").getBoundingClientRect();

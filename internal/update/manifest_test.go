@@ -127,13 +127,13 @@ func TestManagerChecksAndPersistsSignedRelease(t *testing.T) {
 	manager := NewManager(ManagerConfig{
 		StateRoot: t.TempDir(), Build: &current, CheckEnabled: true,
 		Now: func() time.Time { return time.Date(2026, 7, 29, 0, 0, 0, 0, time.UTC) },
-		Source: fakeReleaseSource{release: RemoteRelease{
+		Sources: map[string]ReleaseSource{SourceGHProxy: fakeReleaseSource{release: RemoteRelease{
 			ETag: "test", ReleaseURL: "https://github.com/backinfile/ScriptBoard/releases/tag/v1.2.3",
 			ManifestRaw: raw, SignatureRaw: signature, Manifest: manifest,
 			AssetURLs: releaseAssetURLs(manifest),
-		}},
+		}}},
 	})
-	snapshot, err := manager.Check(context.Background(), true)
+	snapshot, err := manager.CheckFrom(context.Background(), true, SourceGHProxy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,12 +144,71 @@ func TestManagerChecksAndPersistsSignedRelease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if cache.SourceID != SourceGHProxy || snapshot.SourceID != SourceGHProxy {
+		t.Fatalf("selected source snapshot=%q cache=%q", snapshot.SourceID, cache.SourceID)
+	}
 	cache.ReleaseURL = "javascript:alert(1)"
 	if err := saveCache(manager.stateRoot, cache); err == nil {
 		t.Fatal("cache with an untrusted release URL was accepted")
 	}
 	if _, err := manager.Check(context.Background(), true); err == nil || !strings.Contains(err.Error(), "before checking again") {
 		t.Fatalf("second forced check error = %v", err)
+	}
+}
+
+func TestGitHubProxySourceRoutesAPIAndAssetsByCapability(t *testing.T) {
+	apiURL := "https://api.github.com/repos/backinfile/ScriptBoard/releases/latest"
+	assetURL := "https://github.com/backinfile/ScriptBoard/releases/download/v1.2.3/example.zip"
+	fullProxy := newGitHubProxySource("https://gh-proxy.com/", true)
+	if got := fullProxy.requestURL(apiURL, true); got != "https://gh-proxy.com/"+apiURL {
+		t.Fatalf("full proxy API URL = %q", got)
+	}
+	if got := fullProxy.requestURL(assetURL, false); got != "https://gh-proxy.com/"+assetURL {
+		t.Fatalf("full proxy asset URL = %q", got)
+	}
+	downloadProxy := newGitHubProxySource("https://ghproxy.net/", false)
+	if got := downloadProxy.requestURL(apiURL, true); got != apiURL {
+		t.Fatalf("download-only proxy API URL = %q", got)
+	}
+	if got := downloadProxy.requestURL(assetURL, false); got != "https://ghproxy.net/"+assetURL {
+		t.Fatalf("download-only proxy asset URL = %q", got)
+	}
+}
+
+type countingReleaseSource struct {
+	checks int
+	err    error
+}
+
+func (source *countingReleaseSource) Check(context.Context, string) (RemoteRelease, error) {
+	source.checks++
+	return RemoteRelease{}, source.err
+}
+
+func (*countingReleaseSource) Download(context.Context, string, string, Asset) error { return nil }
+
+func TestManagerAllowsImmediateRetryWithAnotherSource(t *testing.T) {
+	current := buildinfo.Info{
+		Version: "1.0.0", Tag: "v1.0.0", Commit: strings.Repeat("a", 40), BuiltAt: "2026-07-28T00:00:00Z",
+		ReleaseBuild: true, DatabaseSchemaVersion: buildinfo.DatabaseSchemaVersion,
+		UpdaterProtocolVersion: buildinfo.UpdaterProtocolVersion, Repository: buildinfo.Repository,
+	}
+	official := &countingReleaseSource{err: errors.New("official offline")}
+	proxy := &countingReleaseSource{err: errors.New("proxy offline")}
+	manager := NewManager(ManagerConfig{
+		StateRoot: t.TempDir(), Build: &current,
+		Sources: map[string]ReleaseSource{SourceGitHub: official, SourceGHProxy: proxy},
+		Now:     func() time.Time { return time.Date(2026, 8, 10, 0, 0, 0, 0, time.UTC) },
+	})
+	_, _ = manager.CheckFrom(context.Background(), true, SourceGitHub)
+	if _, err := manager.CheckFrom(context.Background(), true, SourceGHProxy); err == nil || !strings.Contains(err.Error(), "proxy offline") {
+		t.Fatalf("retry with alternate source error = %v", err)
+	}
+	if official.checks != 1 || proxy.checks != 1 {
+		t.Fatalf("source checks official=%d proxy=%d", official.checks, proxy.checks)
+	}
+	if _, err := manager.CheckFrom(context.Background(), true, SourceGHProxy); err == nil || !strings.Contains(err.Error(), "before checking again") {
+		t.Fatalf("same-source cooldown error = %v", err)
 	}
 }
 

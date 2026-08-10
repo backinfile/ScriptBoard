@@ -62,6 +62,7 @@ type Operation struct {
 
 type Cache struct {
 	Schema       int               `json:"schema"`
+	SourceID     string            `json:"source_id,omitempty"`
 	ETag         string            `json:"etag"`
 	CheckedAt    string            `json:"checked_at"`
 	ReleaseURL   string            `json:"release_url"`
@@ -204,6 +205,12 @@ func loadCache(stateRoot string) (Cache, error) {
 }
 
 func validateCache(cache Cache) (Cache, error) {
+	if cache.SourceID == "" {
+		cache.SourceID = SourceGitHub
+	}
+	if !validSourceID(cache.SourceID) {
+		return Cache{}, errors.New("update cache contains an unknown source")
+	}
 	verified, err := VerifyTrustedManifest(cache.ManifestRaw, cache.SignatureRaw)
 	if err != nil {
 		return Cache{}, err

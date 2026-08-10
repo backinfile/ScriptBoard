@@ -4218,13 +4218,17 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 	query := strings.TrimSpace(request.URL.Query().Get("q"))
 	showHidden := request.URL.Query().Get("show_hidden") == "1"
 	sortField, direction := normalizeFileSort(request.URL.Query().Get("sort"), request.URL.Query().Get("direction"))
+	parentURL := ""
+	if parent, ok := hostPathParent(relative); ok {
+		parentURL = filesStateURL(parent, "", sortField, direction, showHidden, 0)
+	}
 	current := request.Context().Value(sessionContextKey).(session)
 	locale := resolveWebLocale(request)
 	if isDeferredDataShell(request) {
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = filesTemplate.Execute(response, struct {
 			CSRFToken, CurrentPath, Query, SortField, Direction        string
-			SortSummary, RootURL, SearchURL                            string
+			SortSummary, RootURL, SearchURL, ParentURL                 string
 			Locale                                                     webLocale
 			Breadcrumbs                                                []fileBreadcrumbView
 			DeferredData, ShowHidden                                   bool
@@ -4232,7 +4236,7 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		}{
 			CSRFToken: current.csrfToken, CurrentPath: relative,
 			Query: query, SortField: sortField, Direction: direction, SortSummary: fileSortSummary(locale, sortField, direction),
-			RootURL: filesStateURL("", "", sortField, direction, showHidden, 0), SearchURL: "/resources/files",
+			RootURL: filesStateURL("", "", sortField, direction, showHidden, 0), SearchURL: "/resources/files", ParentURL: parentURL,
 			Locale: locale, Breadcrumbs: buildHostBreadcrumbs(relative, sortField, direction, showHidden), DeferredData: true, ShowHidden: showHidden,
 			CanWrite: roleAllows(current.role, permissionWriteFiles), CanMutateCurrent: roleAllows(current.role, permissionWriteFiles) && relative != "", CanExecute: roleAllows(current.role, permissionExecute),
 			CanManageExecution: roleAllows(current.role, permissionManageExecution),
@@ -4304,11 +4308,6 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 			}
 		}
 		views = append(views, view)
-	}
-	parentURL := ""
-	if relative != "" {
-		parent, _ := hostPathParent(relative)
-		parentURL = filesStateURL(parent, "", sortField, direction, showHidden, 0)
 	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	breadcrumbs := buildHostBreadcrumbs(relative, sortField, direction, showHidden)

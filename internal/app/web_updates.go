@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"runtime"
@@ -22,7 +23,20 @@ type updatesPageData struct {
 	PreparedID         string
 	Prepared           bool
 	Capability         string
+	SourceName         string
+	Sources            []updateSourceData
+	ShowSourceDrawer   bool
 	SettingsNavigation settingsNavigationData
+}
+
+type updateSourceData struct {
+	ID          string
+	Name        string
+	Description string
+	Host        string
+	Badge       string
+	Icon        string
+	Selected    bool
 }
 
 func (a *App) updatesPage(response http.ResponseWriter, request *http.Request) {
@@ -33,7 +47,9 @@ func (a *App) updatesPage(response http.ResponseWriter, request *http.Request) {
 		Snapshot: snapshot, CSRFToken: current.csrfToken,
 		Locale: locale, ActiveRuns: a.runs.ActiveCount(),
 		SettingsNavigation: newSettingsNavigation(current, locale, "updates"),
+		ShowSourceDrawer:   request.URL.Query().Get("sources") == "1",
 	}
+	data.Sources, data.SourceName = updateSourcesForWeb(locale, a.updates.Sources(), snapshot.SourceID)
 	switch snapshot.InstallMode {
 	case "development":
 		data.Capability = webText(locale, "updates.development_capability")
@@ -58,6 +74,40 @@ func (a *App) updatesPage(response http.ResponseWriter, request *http.Request) {
 	}
 }
 
+func updateSourcesForWeb(locale webLocale, descriptors []updatepkg.SourceDescriptor, selected string) ([]updateSourceData, string) {
+	result := make([]updateSourceData, 0, len(descriptors))
+	selectedName := ""
+	for _, descriptor := range descriptors {
+		option := updateSourceData{ID: descriptor.ID, Host: descriptor.Host, Selected: descriptor.ID == selected}
+		switch descriptor.ID {
+		case updatepkg.SourceGHProxy:
+			option.Name = webText(locale, "updates.source_gh_proxy")
+			option.Description = webText(locale, "updates.source_gh_proxy_description")
+			option.Badge = webText(locale, "updates.source_public_proxy")
+			option.Icon = "network"
+		case updatepkg.SourceGHProxyNet:
+			option.Name = webText(locale, "updates.source_ghproxy_net")
+			option.Description = webText(locale, "updates.source_ghproxy_net_description")
+			option.Badge = webText(locale, "updates.source_public_proxy")
+			option.Icon = "zap"
+		default:
+			option.Name = webText(locale, "updates.source_github")
+			option.Description = webText(locale, "updates.source_github_description")
+			option.Badge = webText(locale, "updates.source_official")
+			option.Icon = "globe-2"
+		}
+		if option.Selected {
+			selectedName = option.Name
+		}
+		result = append(result, option)
+	}
+	if selectedName == "" && len(result) > 0 {
+		result[0].Selected = true
+		selectedName = result[0].Name
+	}
+	return result, selectedName
+}
+
 func (a *App) updateStatus(response http.ResponseWriter, _ *http.Request) {
 	response.Header().Set("Content-Type", "application/json; charset=utf-8")
 	response.Header().Set("Cache-Control", "no-store")
@@ -73,10 +123,14 @@ func (a *App) checkUpdate(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, webText(locale, "updates.csrf_error"), http.StatusForbidden)
 		return
 	}
-	snapshot, err := a.updates.Check(request.Context(), true)
+	snapshot, err := a.updates.CheckFrom(request.Context(), true, request.FormValue("source_id"))
 	if err != nil {
 		a.recordAuditForRequest(request, "update_check_requested", "stable", "failed")
-		http.Error(response, webText(locale, "updates.check_failed")+": "+err.Error(), http.StatusBadGateway)
+		status := http.StatusBadGateway
+		if errors.Is(err, updatepkg.ErrUnknownSource) {
+			status = http.StatusBadRequest
+		}
+		http.Error(response, webText(locale, "updates.check_failed")+": "+err.Error(), status)
 		return
 	}
 	result := "current"

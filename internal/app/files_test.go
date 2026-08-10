@@ -175,7 +175,12 @@ func TestFilesPageOffersCopyPathsForDirectoriesAndFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := string(listing)
+	parentPath := filepath.Dir(hostRoot)
 	for _, expected := range []string{
+		`data-file-parent`,
+		`href="` + hostFilesHrefWithQuery(parentPath, nil) + `" aria-label="Back to parent folder"`,
+		`data-copy-current-path data-copy-value="` + html.EscapeString(hostRoot) + `"`,
+		`aria-label="Copy current path"`,
 		`data-copy-value="` + html.EscapeString(directoryPath) + `" data-copy-label="Copy path"`,
 		`data-copy-value="` + html.EscapeString(hostRoot) + `" data-copy-label="Copy path"`,
 		`data-copy-value="` + html.EscapeString(filePath) + `" data-copy-label="Copy full path"`,

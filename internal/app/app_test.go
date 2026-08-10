@@ -785,6 +785,36 @@ func TestAccountCredentialsStayReadOnlyUntilTheirTaskPanelsOpen(t *testing.T) {
 	}
 }
 
+func TestUpdateSourcesRenderInRightmostSettingsDrawer(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: filepath.Join(root, "state")})
+	response, err := client.Get(serverURL + "/settings/updates?sources=1")
+	if err != nil {
+		t.Fatalf("get update sources: %v", err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read update sources: %v", err)
+	}
+	html := string(page)
+	for _, expected := range []string{
+		`data-update-source-open`, `data-update-source-drawer`, `update-source-drawer-host is-open`,
+		`name="source_id" value="github"`, `name="source_id" value="gh-proxy"`,
+		`name="source_id" value="ghproxy-net"`, `gh-proxy.com`, `ghproxy.net`,
+	} {
+		if !strings.Contains(html, expected) {
+			t.Fatalf("update source drawer does not contain %q: %s", expected, html)
+		}
+	}
+	aiIndex := strings.Index(html, `href="/settings/ai"`)
+	updateIndex := strings.Index(html, `href="/settings/updates"`)
+	if aiIndex < 0 || updateIndex < aiIndex {
+		t.Fatalf("updates tab is not after AI settings: ai=%d updates=%d", aiIndex, updateIndex)
+	}
+}
+
 func TestAdministratorRenamesAccountFromFocusedTask(t *testing.T) {
 	t.Parallel()
 

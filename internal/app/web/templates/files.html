@@ -17,10 +17,17 @@
     </div>{{end}}
   </header>
 
-  <nav class="breadcrumb" aria-label="{{t .Locale "files.breadcrumb"}}">
-    <a href="{{.RootURL}}"><span data-lucide="hard-drive" aria-hidden="true"></span>{{t .Locale "files.root"}}</a>
-    {{range .Breadcrumbs}}<span data-lucide="chevron-right" aria-hidden="true"></span>{{if .URL}}<a href="{{.URL}}">{{.Label}}</a>{{else}}<code>{{.Label}}</code>{{end}}{{end}}
-  </nav>
+  <div class="file-location-bar">
+    <nav class="breadcrumb" aria-label="{{t .Locale "files.breadcrumb"}}">
+      <a href="{{.RootURL}}"><span data-lucide="hard-drive" aria-hidden="true"></span>{{t .Locale "files.root"}}</a>
+      {{range .Breadcrumbs}}<span data-lucide="chevron-right" aria-hidden="true"></span>{{if .URL}}<a href="{{.URL}}">{{.Label}}</a>{{else}}<code>{{.Label}}</code>{{end}}{{end}}
+    </nav>
+    <div class="file-location-actions">
+      {{if .ParentURL}}<a class="icon-button icon-tooltip" href="{{.ParentURL}}" aria-label="{{t .Locale "files.parent_directory"}}" data-tooltip="{{t .Locale "files.parent_directory"}}" data-file-parent><span data-lucide="arrow-up" aria-hidden="true"></span></a>{{else}}<button class="icon-button icon-tooltip" type="button" aria-label="{{t .Locale "files.parent_unavailable"}}" data-tooltip="{{t .Locale "files.parent_unavailable"}}" disabled data-file-parent><span data-lucide="arrow-up" aria-hidden="true"></span></button>{{end}}
+      {{if .CurrentPath}}<button class="icon-button icon-tooltip" type="button" aria-label="{{t .Locale "files.copy_current_path"}}" data-tooltip="{{t .Locale "files.copy_current_path"}}" data-copy-tooltip="{{t .Locale "files.copy_current_path"}}" data-copy-current-path data-copy-value="{{.CurrentPath}}" data-copy-label="{{t .Locale "files.copy_current_path"}}" data-copied-label="{{t .Locale "files.path_copied"}}" data-copy-failed-label="{{t .Locale "files.path_copy_failed"}}" hidden><span data-lucide="copy" data-copy-icon aria-hidden="true"></span></button>{{else}}<button class="icon-button icon-tooltip" type="button" aria-label="{{t .Locale "files.current_path_unavailable"}}" data-tooltip="{{t .Locale "files.current_path_unavailable"}}" disabled data-copy-current-path><span data-lucide="copy" aria-hidden="true"></span></button>{{end}}
+      <span class="sr-only" role="status" aria-live="polite" data-copy-value-status></span>
+    </div>
+  </div>
 
   {{if .CanMutateCurrent}}
   <form id="file-drop-upload-form" class="file-upload-form" method="post" action="/resources/files/upload" enctype="multipart/form-data" hidden

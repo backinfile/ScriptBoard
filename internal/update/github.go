@@ -37,8 +37,10 @@ type ReleaseSource interface {
 }
 
 type GitHubSource struct {
-	Client *http.Client
-	APIURL string
+	Client       *http.Client
+	APIURL       string
+	proxyBaseURL string
+	proxyAPI     bool
 }
 
 type githubRelease struct {
@@ -55,6 +57,16 @@ type githubRelease struct {
 }
 
 func NewGitHubSource() *GitHubSource {
+	return newGitHubProxySource("", false)
+}
+
+func newGitHubProxySource(proxyBaseURL string, proxyAPI bool) *GitHubSource {
+	proxyHost := ""
+	if proxyBaseURL != "" {
+		if parsed, err := url.Parse(proxyBaseURL); err == nil {
+			proxyHost = parsed.Hostname()
+		}
+	}
 	client := &http.Client{Timeout: 30 * time.Second}
 	client.CheckRedirect = func(request *http.Request, via []*http.Request) error {
 		if len(via) >= 5 {
@@ -62,13 +74,13 @@ func NewGitHubSource() *GitHubSource {
 		}
 		if request.URL.Scheme != "https" || request.URL.User != nil ||
 			(request.URL.Port() != "" && request.URL.Port() != "443") ||
-			!allowedDownloadHost(request.URL.Hostname()) {
+			!allowedSourceHost(request.URL.Hostname(), proxyHost) {
 			return fmt.Errorf("release redirect host %q is not allowed", request.URL.Hostname())
 		}
 		request.Header.Del("Authorization")
 		return nil
 	}
-	return &GitHubSource{Client: client, APIURL: githubLatestReleaseURL}
+	return &GitHubSource{Client: client, APIURL: githubLatestReleaseURL, proxyBaseURL: proxyBaseURL, proxyAPI: proxyAPI}
 }
 
 func (source *GitHubSource) Check(ctx context.Context, etag string) (RemoteRelease, error) {
@@ -76,7 +88,7 @@ func (source *GitHubSource) Check(ctx context.Context, etag string) (RemoteRelea
 	if apiURL == "" {
 		apiURL = githubLatestReleaseURL
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, source.requestURL(apiURL, true), nil)
 	if err != nil {
 		return RemoteRelease{}, err
 	}
@@ -162,7 +174,7 @@ func (source *GitHubSource) Download(ctx context.Context, downloadURL, destinati
 	if err := validateReleaseAssetURL(downloadURL, "v"+assetNameVersion(asset.Name), asset.Name); err != nil {
 		return err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, source.requestURL(downloadURL, false), nil)
 	if err != nil {
 		return err
 	}
@@ -206,7 +218,7 @@ func (source *GitHubSource) Download(ctx context.Context, downloadURL, destinati
 }
 
 func (source *GitHubSource) downloadSmall(ctx context.Context, downloadURL string, maximum int64) ([]byte, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, source.requestURL(downloadURL, false), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -234,6 +246,13 @@ func (source *GitHubSource) client() *http.Client {
 		return source.Client
 	}
 	return NewGitHubSource().Client
+}
+
+func (source *GitHubSource) requestURL(rawURL string, api bool) string {
+	if source.proxyBaseURL == "" || (api && !source.proxyAPI) {
+		return rawURL
+	}
+	return strings.TrimRight(source.proxyBaseURL, "/") + "/" + rawURL
 }
 
 func validateReleaseAssetURL(rawURL, tag, name string) error {
@@ -267,6 +286,10 @@ func allowedDownloadHost(host string) bool {
 	default:
 		return false
 	}
+}
+
+func allowedSourceHost(host, proxyHost string) bool {
+	return allowedDownloadHost(host) || (proxyHost != "" && strings.EqualFold(host, proxyHost))
 }
 
 func assetNameVersion(name string) string {

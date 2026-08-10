@@ -23,6 +23,7 @@ type ManagerConfig struct {
 	CheckEnabled    bool
 	CheckInterval   time.Duration
 	Source          ReleaseSource
+	Sources         map[string]ReleaseSource
 	Now             func() time.Time
 	RequestShutdown func()
 	Build           *buildinfo.Info
@@ -31,6 +32,7 @@ type ManagerConfig struct {
 type Snapshot struct {
 	Build            buildinfo.Info `json:"build"`
 	InstallMode      string         `json:"install_mode"`
+	SourceID         string         `json:"source_id"`
 	CanApply         bool           `json:"can_apply"`
 	Capability       string         `json:"capability"`
 	CheckEnabled     bool           `json:"check_enabled"`
@@ -47,24 +49,35 @@ type Snapshot struct {
 }
 
 type Manager struct {
-	stateRoot       string
-	build           buildinfo.Info
-	checkEnabled    bool
-	checkInterval   time.Duration
-	source          ReleaseSource
-	now             func() time.Time
-	requestShutdown func()
-	mu              sync.Mutex
-	lastError       string
-	lastForcedCheck time.Time
+	stateRoot        string
+	build            buildinfo.Info
+	checkEnabled     bool
+	checkInterval    time.Duration
+	source           ReleaseSource
+	sources          map[string]ReleaseSource
+	selectedSource   string
+	now              func() time.Time
+	requestShutdown  func()
+	mu               sync.Mutex
+	lastError        string
+	lastForcedCheck  time.Time
+	lastForcedSource string
 }
 
 func NewManager(config ManagerConfig) *Manager {
 	if config.CheckInterval <= 0 {
 		config.CheckInterval = DefaultCheckInterval
 	}
+	sources := config.Sources
+	if len(sources) == 0 {
+		if config.Source != nil {
+			sources = map[string]ReleaseSource{SourceGitHub: config.Source}
+		} else {
+			sources = defaultSources()
+		}
+	}
 	if config.Source == nil {
-		config.Source = NewGitHubSource()
+		config.Source = sources[SourceGitHub]
 	}
 	if config.Now == nil {
 		config.Now = time.Now
@@ -73,11 +86,18 @@ func NewManager(config ManagerConfig) *Manager {
 	if config.Build != nil {
 		build = *config.Build
 	}
-	return &Manager{
+	manager := &Manager{
 		stateRoot: config.StateRoot, build: build,
 		checkEnabled: config.CheckEnabled, checkInterval: config.CheckInterval,
-		source: config.Source, now: config.Now, requestShutdown: config.RequestShutdown,
+		source: config.Source, sources: sources, selectedSource: SourceGitHub,
+		now: config.Now, requestShutdown: config.RequestShutdown,
 	}
+	if cache, err := loadCache(config.StateRoot); err == nil {
+		if _, ok := sources[cache.SourceID]; ok {
+			manager.selectedSource = cache.SourceID
+		}
+	}
+	return manager
 }
 
 func (manager *Manager) Start(ctx context.Context) {
@@ -114,13 +134,34 @@ func (manager *Manager) Snapshot() Snapshot {
 }
 
 func (manager *Manager) Check(ctx context.Context, force bool) (Snapshot, error) {
+	return manager.CheckFrom(ctx, force, "")
+}
+
+func (manager *Manager) CheckFrom(ctx context.Context, force bool, requestedSource string) (Snapshot, error) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 	if !manager.build.ValidRelease() {
 		return manager.snapshotLocked(), errors.New("development builds do not check for updates")
 	}
+	sourceID := manager.selectedSource
+	if requestedSource != "" {
+		var err error
+		sourceID, err = normalizeSourceID(requestedSource)
+		if err != nil {
+			return manager.snapshotLocked(), err
+		}
+		if _, ok := manager.sources[sourceID]; !ok {
+			return manager.snapshotLocked(), errors.New("update source is unavailable")
+		}
+	}
+	source := manager.sources[sourceID]
+	if source == nil {
+		sourceID = SourceGitHub
+		source = manager.source
+		manager.selectedSource = sourceID
+	}
 	attemptedAt := manager.now()
-	if force && !manager.lastForcedCheck.IsZero() {
+	if force && sourceID == manager.lastForcedSource && !manager.lastForcedCheck.IsZero() {
 		elapsed := attemptedAt.Sub(manager.lastForcedCheck)
 		if elapsed >= 0 && elapsed < time.Minute {
 			return manager.snapshotLocked(), fmt.Errorf("wait %s before checking again", (time.Minute - elapsed).Round(time.Second))
@@ -128,24 +169,25 @@ func (manager *Manager) Check(ctx context.Context, force bool) (Snapshot, error)
 	}
 	if force {
 		manager.lastForcedCheck = attemptedAt
+		manager.lastForcedSource = sourceID
 	}
 	cache, cacheErr := loadCache(manager.stateRoot)
-	if cacheErr == nil && !force {
+	if cacheErr == nil && cache.SourceID == sourceID && !force {
 		checked, _ := time.Parse(time.RFC3339Nano, cache.CheckedAt)
 		if attemptedAt.Sub(checked) < manager.checkInterval {
 			return manager.snapshotLocked(), nil
 		}
 	}
 	etag := ""
-	if cacheErr == nil {
+	if cacheErr == nil && cache.SourceID == sourceID {
 		etag = cache.ETag
 	}
-	remote, err := manager.source.Check(ctx, etag)
+	remote, err := source.Check(ctx, etag)
 	now := attemptedAt.UTC().Format(time.RFC3339Nano)
 	if err != nil {
 		manager.lastError = err.Error()
 		_ = saveCheckState(manager.stateRoot, now, err.Error())
-		if cacheErr == nil {
+		if cacheErr == nil && cache.SourceID == sourceID {
 			cache.CheckedAt = now
 			cache.LastError = err.Error()
 			_ = saveCache(manager.stateRoot, cache)
@@ -168,11 +210,12 @@ func (manager *Manager) Check(ctx context.Context, force bool) (Snapshot, error)
 			return manager.snapshotLocked(), err
 		}
 		manager.lastError = ""
+		manager.selectedSource = sourceID
 		_ = saveCheckState(manager.stateRoot, now, "")
 		return manager.snapshotLocked(), nil
 	}
 	cache = Cache{
-		Schema: ManifestSchema, ETag: remote.ETag, CheckedAt: now,
+		Schema: ManifestSchema, SourceID: sourceID, ETag: remote.ETag, CheckedAt: now,
 		ReleaseURL: remote.ReleaseURL, ReleaseNotes: remote.ReleaseNotes,
 		ManifestRaw: remote.ManifestRaw, SignatureRaw: remote.SignatureRaw,
 		Manifest: remote.Manifest, AssetURLs: remote.AssetURLs,
@@ -181,6 +224,7 @@ func (manager *Manager) Check(ctx context.Context, force bool) (Snapshot, error)
 		return manager.snapshotLocked(), err
 	}
 	manager.lastError = ""
+	manager.selectedSource = sourceID
 	_ = saveCheckState(manager.stateRoot, now, "")
 	return manager.snapshotLocked(), nil
 }
@@ -245,7 +289,11 @@ func (manager *Manager) Prepare(ctx context.Context) (Operation, error) {
 		return Operation{}, err
 	}
 	archivePath := filepath.Join(root, asset.Name)
-	if err := manager.source.Download(ctx, downloadURL, archivePath, asset); err != nil {
+	source := manager.sources[cache.SourceID]
+	if source == nil {
+		return Operation{}, errors.New("the selected update source is unavailable")
+	}
+	if err := source.Download(ctx, downloadURL, archivePath, asset); err != nil {
 		return Operation{}, err
 	}
 	extractedPath := filepath.Join(root, "extracted")
@@ -377,7 +425,7 @@ func copyExecutableAtomic(source, target string) error {
 }
 
 func (manager *Manager) snapshotLocked() Snapshot {
-	snapshot := Snapshot{Build: manager.build, CheckEnabled: manager.checkEnabled, InstallMode: "portable"}
+	snapshot := Snapshot{Build: manager.build, CheckEnabled: manager.checkEnabled, InstallMode: "portable", SourceID: manager.selectedSource}
 	snapshot.LastError = manager.lastError
 	if !manager.build.ValidRelease() {
 		snapshot.InstallMode = "development"
@@ -416,6 +464,18 @@ func (manager *Manager) snapshotLocked() Snapshot {
 		}
 	}
 	return snapshot
+}
+
+func (manager *Manager) Sources() []SourceDescriptor {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	result := make([]SourceDescriptor, 0, len(sourceDescriptors))
+	for _, descriptor := range sourceDescriptors {
+		if manager.sources[descriptor.ID] != nil {
+			result = append(result, descriptor)
+		}
+	}
+	return result
 }
 
 func (manager *Manager) managedInstallation() (installation.Metadata, error) {

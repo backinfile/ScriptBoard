@@ -2618,16 +2618,22 @@
   function initCopyControls(root = document, cleanups = []) {
     const feedbackTimers = new Map();
 
-    root.querySelectorAll("[data-copy-value]").forEach(copyButton => {
+    root.querySelectorAll("[data-copy-value]:not([data-copy-text])").forEach(copyButton => {
       const copyIcon = copyButton.querySelector("[data-copy-icon]");
       const label = copyButton.querySelector("[data-copy-value-label]");
-      if (!copyIcon || !label) return;
+      const status = copyButton.parentElement?.querySelector("[data-copy-value-status]");
+      if (!copyIcon) return;
 
       copyButton.hidden = false;
       const reset = () => {
         copyButton.removeAttribute("data-state");
-        label.textContent = copyButton.dataset.copyLabel;
+        if (label) label.textContent = copyButton.dataset.copyLabel;
+        else {
+          copyButton.setAttribute("aria-label", copyButton.dataset.copyLabel);
+          copyButton.dataset.tooltip = copyButton.dataset.copyTooltip || copyButton.dataset.copyLabel;
+        }
         setControlIcon(copyIcon, "copy");
+        if (status) status.textContent = "";
         feedbackTimers.delete(copyButton);
       };
       const onCopyValue = async () => {
@@ -2641,12 +2647,22 @@
           if (!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable");
           await navigator.clipboard.writeText(copyButton.dataset.copyValue || "");
           copyButton.dataset.state = "success";
-          label.textContent = copyButton.dataset.copiedLabel;
+          if (label) label.textContent = copyButton.dataset.copiedLabel;
+          else {
+            copyButton.setAttribute("aria-label", copyButton.dataset.copiedLabel);
+            copyButton.dataset.tooltip = copyButton.dataset.copiedLabel;
+          }
           setControlIcon(copyIcon, "check");
+          if (status) status.textContent = copyButton.dataset.copiedLabel;
         } catch {
           copyButton.dataset.state = "error";
-          label.textContent = copyButton.dataset.copyFailedLabel;
+          if (label) label.textContent = copyButton.dataset.copyFailedLabel;
+          else {
+            copyButton.setAttribute("aria-label", copyButton.dataset.copyFailedLabel);
+            copyButton.dataset.tooltip = copyButton.dataset.copyFailedLabel;
+          }
           setControlIcon(copyIcon, "triangle-alert");
+          if (status) status.textContent = copyButton.dataset.copyFailedLabel;
         } finally {
           copyButton.removeAttribute("aria-busy");
           delete copyButton.dataset.copying;
@@ -5488,6 +5504,79 @@
     });
   }
 
+  function initUpdateSourceDrawer(cleanups) {
+    const root = document.querySelector("[data-updates-page]");
+    const host = root?.querySelector("[data-update-source-drawer]");
+    const drawer = host?.querySelector(".update-source-drawer");
+    if (!root || !host || !drawer) return;
+    let opener = null;
+    let focusTimer = 0;
+    const focusTarget = () => drawer.querySelector("input[name='source_id']:checked") || drawer;
+    const open = event => {
+      event?.preventDefault();
+      opener = event?.target?.closest("[data-update-source-open]") || document.activeElement;
+      host.classList.add("is-open");
+      host.setAttribute("aria-hidden", "false");
+      document.body.classList.add("has-update-source-drawer");
+      focusTimer = window.setTimeout(() => focusTarget()?.focus(), 180);
+    };
+    const close = event => {
+      event?.preventDefault();
+      if (!host.classList.contains("is-open")) return;
+      host.classList.remove("is-open");
+      host.setAttribute("aria-hidden", "true");
+      document.body.classList.remove("has-update-source-drawer");
+      if (new URL(location.href).searchParams.get("sources") === "1") {
+        history.replaceState(history.state, "", "/settings/updates");
+      }
+      const restore = opener;
+      focusTimer = window.setTimeout(() => restore?.focus(), 200);
+    };
+    const onClick = event => {
+      if (event.target.closest("[data-update-source-open]")) {
+        open(event);
+      } else if (event.target.closest("[data-update-source-close]")) {
+        close(event);
+      }
+    };
+    const onKeydown = event => {
+      if (!host.classList.contains("is-open")) return;
+      if (event.key === "Escape") {
+        close(event);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = [...drawer.querySelectorAll("a[href],button:not([disabled]),input:not([disabled]),[tabindex]:not([tabindex='-1'])")]
+        .filter(element => !element.hidden && element.getClientRects().length > 0);
+      if (!focusable.length) {
+        event.preventDefault();
+        drawer.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && (event.target === first || !drawer.contains(event.target))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && event.target === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    if (host.classList.contains("is-open")) {
+      document.body.classList.add("has-update-source-drawer");
+      focusTimer = window.setTimeout(() => focusTarget()?.focus(), 0);
+    }
+    root.addEventListener("click", onClick);
+    document.addEventListener("keydown", onKeydown);
+    cleanups.push(() => {
+      root.removeEventListener("click", onClick);
+      document.removeEventListener("keydown", onKeydown);
+      document.body.classList.remove("has-update-source-drawer");
+      if (focusTimer) window.clearTimeout(focusTimer);
+    });
+  }
+
   function initPage(options = {}) {
     const cleanups = [];
     cleanupPage = () => cleanups.splice(0).forEach(cleanup => cleanup());
@@ -5514,6 +5603,7 @@
     initDisplaySettings(cleanups);
 	initSecurityDialogs(cleanups);
     initSecurityBanDrawer(cleanups);
+    initUpdateSourceDrawer(cleanups);
     initAssistantWorkspace(cleanups);
     initAssistantSettings(cleanups);
     const websiteForm = document.querySelector("[data-website-monitor-form]");

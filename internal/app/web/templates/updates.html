@@ -7,12 +7,16 @@
   {{template "settings-navigation" .SettingsNavigation}}
   <section class="settings-content">
       <header class="settings-section-heading"><div><h2>{{t .Locale "updates.title"}}</h2><p>{{t .Locale "updates.description"}}</p></div>
-        <span class="status-chip" data-state="{{if .Snapshot.UpdateAvailable}}attention{{else}}enabled{{end}}"><span class="status-dot" aria-hidden="true"></span>{{if .Snapshot.UpdateAvailable}}{{t .Locale "updates.available"}}{{else if .Snapshot.LocalNewer}}{{t .Locale "updates.local_newer"}}{{else}}{{t .Locale "updates.current"}}{{end}}</span>
+        <div class="settings-section-heading__actions">
+          <span class="status-chip" data-state="{{if .Snapshot.UpdateAvailable}}attention{{else}}enabled{{end}}"><span class="status-dot" aria-hidden="true"></span>{{if .Snapshot.UpdateAvailable}}{{t .Locale "updates.available"}}{{else if .Snapshot.LocalNewer}}{{t .Locale "updates.local_newer"}}{{else}}{{t .Locale "updates.current"}}{{end}}</span>
+          <a class="button" href="/settings/updates?sources=1" aria-haspopup="dialog" data-update-source-open><span data-lucide="refresh-cw" aria-hidden="true"></span>{{t .Locale "updates.open_update"}}</a>
+        </div>
       </header>
       <dl class="settings-summary">
         <div><dt>{{t .Locale "updates.installed"}}</dt><dd><code>{{.Snapshot.Build.Version}}</code><small>{{.Snapshot.Build.Commit}}</small></dd></div>
         <div><dt>{{t .Locale "updates.built_at"}}</dt><dd>{{if .BuiltAt.IsZero}}—{{else}}<time datetime="{{machineTime .BuiltAt}}" data-local-time>{{displayTime .BuiltAt}}</time>{{end}}</dd></div>
         <div><dt>{{t .Locale "updates.install_mode"}}</dt><dd><code>{{.Snapshot.InstallMode}}</code></dd></div>
+        <div><dt>{{t .Locale "updates.source"}}</dt><dd>{{.SourceName}}</dd></div>
         <div><dt>{{t .Locale "updates.automatic_check"}}</dt><dd>{{if .Snapshot.CheckEnabled}}{{t .Locale "common.enabled"}}{{else}}{{t .Locale "common.disabled"}}{{end}}</dd></div>
         <div><dt>{{t .Locale "updates.verification"}}</dt><dd>{{if .Snapshot.ManifestVerified}}{{t .Locale "updates.verified"}}{{else}}—{{end}}</dd></div>
         <div><dt>{{t .Locale "updates.last_checked"}}</dt><dd>{{if .Snapshot.CheckedAt.IsZero}}—{{else}}<time datetime="{{machineTime .Snapshot.CheckedAt}}" data-local-time>{{displayTime .Snapshot.CheckedAt}}</time>{{end}}</dd></div>
@@ -21,9 +25,6 @@
       </dl>
       {{if .Capability}}<aside class="inline-notice"><span data-lucide="info" aria-hidden="true"></span><p>{{.Capability}}</p></aside>{{end}}
       {{if .Snapshot.LastError}}<aside class="inline-notice inline-notice--danger"><span data-lucide="triangle-alert" aria-hidden="true"></span><p>{{.Snapshot.LastError}}</p></aside>{{end}}
-      <div class="settings-actions">
-        <form method="post" action="/settings/updates/check" data-async><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button" type="submit"><span data-lucide="search" aria-hidden="true"></span>{{t .Locale "updates.check_now"}}</button></form>
-      </div>
       {{if .Snapshot.Latest}}
       <section class="settings-block">
         <header class="section-heading"><div><h3>{{t .Locale "updates.latest"}} <code>{{.Snapshot.Latest.Version}}</code></h3><p>{{if .LatestPublished.IsZero}}{{.Snapshot.Latest.PublishedAt}}{{else}}{{displayTime .LatestPublished}}{{end}}</p></div>{{if .Snapshot.ReleaseURL}}<a class="button button--compact" href="{{.Snapshot.ReleaseURL}}" target="_blank" rel="noreferrer">{{t .Locale "updates.release_page"}}</a>{{end}}</header>
@@ -43,6 +44,33 @@
       {{end}}
       {{if .Snapshot.Operation}}<section class="settings-block"><h3>{{t .Locale "updates.operation"}}</h3><dl class="settings-summary"><div><dt>ID</dt><dd><code>{{.Snapshot.Operation.ID}}</code></dd></div><div><dt>{{t .Locale "common.status"}}</dt><dd><code>{{.Snapshot.Operation.Phase}}</code></dd></div><div><dt>{{t .Locale "updates.target"}}</dt><dd><code>{{.Snapshot.Operation.TargetVersion}}</code></dd></div><div><dt>{{t .Locale "updates.operation_started"}}</dt><dd><time datetime="{{.Snapshot.Operation.CreatedAt}}" data-local-time>{{.Snapshot.Operation.CreatedAt}}</time></dd></div></dl>{{if .Snapshot.Operation.Error}}<p class="field-error">{{.Snapshot.Operation.Error}}</p>{{end}}</section>{{end}}
   </section>
+
+  <div class="update-source-drawer-host{{if .ShowSourceDrawer}} is-open{{end}}" data-update-source-drawer aria-hidden="{{if .ShowSourceDrawer}}false{{else}}true{{end}}">
+    <a class="update-source-drawer__scrim" href="/settings/updates" tabindex="-1" aria-label="{{t .Locale "common.close"}}" data-update-source-close></a>
+    <aside class="update-source-drawer" role="dialog" aria-modal="true" aria-labelledby="update-source-title" aria-describedby="update-source-description" tabindex="-1">
+      <header class="update-source-drawer__head">
+        <div><p>{{t .Locale "updates.source_kicker"}}</p><h2 id="update-source-title">{{t .Locale "updates.source_title"}}</h2><small id="update-source-description">{{t .Locale "updates.source_description"}}</small></div>
+        <a class="icon-button icon-button--quiet" href="/settings/updates" aria-label="{{t .Locale "common.close"}}" data-update-source-close><span data-lucide="x" aria-hidden="true"></span></a>
+      </header>
+      <form method="post" action="/settings/updates/check" data-async>
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <div class="update-source-drawer__body">
+        <fieldset class="update-source-list">
+          <legend>{{t .Locale "updates.source_choose"}}</legend>
+          {{range .Sources}}
+          <label class="update-source-option">
+            <input type="radio" name="source_id" value="{{.ID}}" {{if .Selected}}checked{{end}} required>
+            <span class="update-source-option__icon"><span data-lucide="{{.Icon}}" aria-hidden="true"></span></span>
+            <span class="update-source-option__copy"><span><strong>{{.Name}}</strong><small>{{.Badge}}</small></span><span>{{.Description}}</span><code>{{.Host}}</code></span>
+          </label>
+          {{end}}
+        </fieldset>
+        <aside class="update-source-trust"><span data-lucide="shield-check" aria-hidden="true"></span><p><strong>{{t .Locale "updates.source_trust_title"}}</strong><span>{{t .Locale "updates.source_trust_description"}}</span></p></aside>
+        </div>
+        <footer><a class="button button--quiet" href="/settings/updates" data-update-source-close>{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit" data-pending-label="{{t .Locale "updates.source_checking"}}"><span data-lucide="search" aria-hidden="true"></span>{{t .Locale "updates.source_check"}}</button></footer>
+      </form>
+    </aside>
+  </div>
 </main>
 </body>
 </html>
