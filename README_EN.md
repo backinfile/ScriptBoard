@@ -104,6 +104,8 @@ The service is installed under `/opt/scriptboard`, and state is stored under `/v
 
 Create a YAML configuration file only when you need to change settings such as the listen address, TLS, or the state directory, then pass it during installation with `--config CONFIG_PATH`. Without that flag, ScriptBoard uses the platform's default configuration path (`C:\ProgramData\ScriptBoard\config.yaml` on Windows or `/etc/scriptboard/config.yaml` on Linux); if the file does not exist, the built-in defaults are used.
 
+After installing ScriptBoard as a system service, Administrators and Maintainers can restart it from System Settings → Updates. A restart briefly disconnects the page and stops every active Run; the page reconnects when the service is ready. This control is not available to portable instances.
+
 ## Using ScriptBoard
 
 ### Files and scripts
@@ -183,7 +185,7 @@ Back up these locations regularly:
 - `state_root`, which contains the database, run logs, sessions, audit records, and AI data;
 - the service `config.yaml` file, if you created a custom configuration.
 
-Back up before upgrading from an older version. The current release can upgrade a schema 20 database automatically; older databases and legacy configuration files are not migrated automatically.
+Back up before upgrading from an older version. The current release uses database schema 31 and can migrate schemas 20–30 automatically; older databases and legacy configuration files are not migrated automatically.
 
 ## Troubleshooting
 
