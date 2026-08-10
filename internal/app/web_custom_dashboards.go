@@ -26,13 +26,13 @@ type customDashboardPageView struct {
 
 type customDashboardCardView struct {
 	customdashboard.Card
-	ValueLabel, SecondaryLabel, HeadersText string
-	QuotaProgress                           float64
-	DisplayIndex                            int
-	CanMoveUp, CanMoveDown                  bool
-	Websites                                []customDashboardWebsiteView
-	SelectedMonitorIDs                      map[string]bool
-	InsecureSource                          bool
+	ValueLabel, SecondaryLabel, HeadersText, Unit string
+	QuotaProgress                                 float64
+	DisplayIndex                                  int
+	CanMoveUp, CanMoveDown                        bool
+	Websites                                      []customDashboardWebsiteView
+	SelectedMonitorIDs                            map[string]bool
+	InsecureSource                                bool
 }
 
 type customDashboardWebsiteView struct {
@@ -125,6 +125,12 @@ func (a *App) newCustomDashboardPageView(request *http.Request, dashboard custom
 	}
 	for _, card := range dashboard.Cards {
 		item := customDashboardCardView{Card: card, SelectedMonitorIDs: map[string]bool{}}
+		var cardConfig struct {
+			MonitorIDs []string `json:"monitorIds"`
+			Unit       string   `json:"unit"`
+		}
+		_ = json.Unmarshal(card.Config, &cardConfig)
+		item.Unit = strings.TrimSpace(cardConfig.Unit)
 		headerNames := make([]string, 0, len(card.Headers))
 		for name := range card.Headers {
 			headerNames = append(headerNames, name)
@@ -138,6 +144,9 @@ func (a *App) newCustomDashboardPageView(request *http.Request, dashboard custom
 		item.InsecureSource = strings.HasPrefix(strings.ToLower(card.SourceURL), "http://")
 		item.ValueLabel = formatDashboardValue(card.Snapshot.Value)
 		item.SecondaryLabel = formatDashboardValue(card.Snapshot.Secondary)
+		if card.Type == customdashboard.CardPercentage {
+			item.SecondaryLabel = ""
+		}
 		item.QuotaProgress = card.Snapshot.Number
 		if item.QuotaProgress < 0 {
 			item.QuotaProgress = 0
@@ -155,11 +164,7 @@ func (a *App) newCustomDashboardPageView(request *http.Request, dashboard custom
 			item.QuotaProgress = 0
 		}
 		if card.Type == customdashboard.CardWebsite {
-			var config struct {
-				MonitorIDs []string `json:"monitorIds"`
-			}
-			_ = json.Unmarshal(card.Config, &config)
-			for _, id := range config.MonitorIDs {
+			for _, id := range cardConfig.MonitorIDs {
 				item.SelectedMonitorIDs[id] = true
 			}
 			item.Websites = a.customDashboardWebsiteCards(request, card)
@@ -368,6 +373,16 @@ func customDashboardCardInput(request *http.Request) (customdashboard.CardInput,
 	config := json.RawMessage(`{}`)
 	if cardType == customdashboard.CardWebsite {
 		encoded, err := json.Marshal(map[string]any{"monitorIds": request.Form["monitor_id"]})
+		if err != nil {
+			return customdashboard.CardInput{}, err
+		}
+		config = encoded
+	} else if cardType == customdashboard.CardNumber || cardType == customdashboard.CardQuota {
+		unitRunes := []rune(strings.TrimSpace(request.FormValue("unit")))
+		if len(unitRunes) > 16 {
+			unitRunes = unitRunes[:16]
+		}
+		encoded, err := json.Marshal(map[string]string{"unit": string(unitRunes)})
 		if err != nil {
 			return customdashboard.CardInput{}, err
 		}

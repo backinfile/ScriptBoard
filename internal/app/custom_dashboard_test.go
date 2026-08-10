@@ -107,6 +107,9 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	if !strings.Contains(rendered, `stroke-dasharray="63.20 100"`) || strings.Contains(rendered, "数据正常") {
 		t.Fatal("percentage progress or normal-state presentation is incorrect")
 	}
+	if !strings.Contains(rendered, `custom-dashboard-card__percentage-unit`) || strings.Contains(rendered, `custom-dashboard-card__secondary`) || strings.Contains(rendered, `custom-dashboard-card__type`) {
+		t.Fatal("percentage unit, empty secondary row, or public card type presentation is incorrect")
+	}
 
 	monitorResponse, err := client.Get(serverURL + "/monitor/dashboard/" + dashboardID)
 	if err != nil {
@@ -132,6 +135,9 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	if !strings.Contains(configRendered, api.URL) || !strings.Contains(configRendered, `name="refresh_seconds"`) {
 		t.Fatal("dashboard configuration page missing card source settings")
 	}
+	if !strings.Contains(configRendered, `name="unit"`) {
+		t.Fatal("number and quota unit setting is missing")
+	}
 	if strings.Contains(configRendered, "数值路径：") || strings.Contains(configRendered, "60 秒刷新") {
 		t.Fatal("dashboard configuration row exposes drawer-only details")
 	}
@@ -150,9 +156,12 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	if reorderRendered := string(reorderPage); !strings.Contains(reorderRendered, "完成排序") || !strings.Contains(reorderRendered, `/config/dashboard-cards/`) || !strings.Contains(reorderRendered, `/move`) {
 		t.Fatal("dashboard card reorder mode is missing")
 	}
-	refreshMatch := regexp.MustCompile(`/config/dashboard-cards/([^/"]+)/refresh`).FindStringSubmatch(configRendered)
+	if strings.Contains(configRendered, `/refresh"`) {
+		t.Fatal("dashboard configuration row still exposes a refresh action")
+	}
+	refreshMatch := regexp.MustCompile(`action="/config/dashboard-cards/([^/"]+)"`).FindStringSubmatch(configRendered)
 	if len(refreshMatch) != 2 {
-		t.Fatal("dashboard configuration page missing refresh action")
+		t.Fatal("dashboard configuration page missing card identifier")
 	}
 	apiFailed.Store(true)
 	response, err = client.PostForm(serverURL+"/config/dashboard-cards/"+refreshMatch[1]+"/refresh", url.Values{"csrf_token": {formToken(t, page)}, "dashboard_id": {dashboardID}})

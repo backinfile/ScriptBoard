@@ -6177,10 +6177,31 @@ document.addEventListener("input", function (event) {
   preview.textContent = `/public/dashboard/${input.value.trim() || "service-status"}`;
 });
 
+function openDashboardDrawer(drawer) {
+	if (!drawer) return;
+	if (drawer._dashboardCloseTimer) window.clearTimeout(drawer._dashboardCloseTimer);
+	drawer._dashboardCloseTimer = null;
+	drawer.classList.remove("is-closing");
+	drawer.classList.add("is-opening");
+	drawer.open = true;
+	// Commit the off-canvas start state before transitioning the sheet into view.
+	drawer.querySelector(".custom-dashboard-drawer")?.getBoundingClientRect();
+	window.requestAnimationFrame(() => drawer.classList.remove("is-opening"));
+}
+
 function closeDashboardDrawer(drawer, returnFocus = true) {
-  if (!drawer?.open) return;
-  drawer.open = false;
-  if (returnFocus) drawer.querySelector("summary")?.focus();
+	if (!drawer?.open || drawer.classList.contains("is-closing")) return;
+	const trigger = drawer.querySelector(":scope > summary");
+	drawer.classList.remove("is-opening");
+	drawer.classList.add("is-closing");
+	const delay = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 220;
+	drawer._dashboardCloseTimer = window.setTimeout(() => {
+		drawer.open = false;
+		drawer.classList.remove("is-closing");
+		drawer._dashboardCloseTimer = null;
+		syncDashboardDrawerState();
+		if (returnFocus) trigger?.focus();
+	}, delay);
 }
 
 function syncDashboardDrawerState() {
@@ -6194,19 +6215,27 @@ function openDashboardCardRow(row) {
 }
 
 document.addEventListener("click", function (event) {
-  const drawerButton = event.target.closest("[data-dashboard-open-drawer]");
-  if (drawerButton) {
-    const name = drawerButton.dataset.dashboardOpenDrawer;
-    const drawer = document.querySelector(`[data-dashboard-drawer-name="${CSS.escape(name)}"]`);
-    if (drawer) drawer.open = true;
-    return;
-  }
+	const summary = event.target.closest("summary");
+	const summaryDrawer = summary?.parentElement;
+	if (summaryDrawer?.matches("[data-dashboard-drawer]")) {
+		event.preventDefault();
+		if (summaryDrawer.open) closeDashboardDrawer(summaryDrawer);
+		else openDashboardDrawer(summaryDrawer);
+		return;
+	}
+	const drawerButton = event.target.closest("[data-dashboard-open-drawer]");
+	if (drawerButton) {
+		const name = drawerButton.dataset.dashboardOpenDrawer;
+		const drawer = document.querySelector(`[data-dashboard-drawer-name="${CSS.escape(name)}"]`);
+		openDashboardDrawer(drawer);
+		return;
+	}
   const deleteButton = event.target.closest("[data-dashboard-delete-open]");
-  if (deleteButton) {
-    const drawer = document.querySelector("[data-dashboard-delete-drawer]");
-    if (drawer) drawer.open = true;
-    return;
-  }
+	if (deleteButton) {
+		const drawer = document.querySelector("[data-dashboard-delete-drawer]");
+		openDashboardDrawer(drawer);
+		return;
+	}
   const row = event.target.closest("[data-dashboard-card-row]");
   if (!row || event.target.closest("a,button,input,select,textarea,summary,details,form,label")) return;
   openDashboardCardRow(row);
@@ -6222,7 +6251,7 @@ document.addEventListener("keydown", function (event) {
 document.addEventListener("toggle", function (event) {
   const drawer = event.target.closest?.("[data-dashboard-drawer]");
   if (!drawer) return;
-  if (drawer.open) {
+	if (drawer.open && !drawer.classList.contains("is-closing")) {
     document.querySelectorAll("[data-dashboard-drawer][open]").forEach((other) => {
       if (other !== drawer) closeDashboardDrawer(other, false);
     });
