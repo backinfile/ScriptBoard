@@ -756,6 +756,11 @@
     setTaskLinkBusy(request.trigger, false);
   }
 
+  function syncPageTheme(nextDocument) {
+    const pageThemes = ["custom-dashboard-admin", "custom-dashboard-public", "custom-dashboard-monitor"];
+    pageThemes.forEach(className => document.body.classList.toggle(className, nextDocument.body.classList.contains(className)));
+  }
+
   async function navigate(url, push = true, options = {}) {
     closeFileConflictDialog();
     cancelTaskPanelRequest();
@@ -811,6 +816,7 @@
         return;
       }
       cleanupPage();
+      syncPageTheme(result.document);
       currentMain.replaceWith(document.importNode(nextMain, true));
       document.title = result.document.title;
       document.documentElement.lang = result.document.documentElement.lang || document.documentElement.lang;
