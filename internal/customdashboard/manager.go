@@ -461,17 +461,12 @@ func (m *Manager) RefreshCard(ctx context.Context, id string) (Card, error) {
 		return m.recordFailure(ctx, card, errors.New("返回内容不是有效 JSON"))
 	}
 	snapshot := Snapshot{}
-	if strings.TrimSpace(card.Formula) != "" {
-		snapshot.Number, err = Evaluate(card.Formula, document)
-		snapshot.Value = snapshot.Number
-	} else {
-		snapshot.Value, err = Extract(document, card.ValuePath)
-		if number, ok := asNumber(snapshot.Value); ok {
-			snapshot.Number = number
-		}
-	}
+	snapshot.Number, err = Evaluate(card.ValuePath, document)
+	snapshot.Value = snapshot.Number
 	if err == nil && card.SecondaryPath != "" {
-		snapshot.Secondary, err = Extract(document, card.SecondaryPath)
+		var secondary float64
+		secondary, err = Evaluate(card.SecondaryPath, document)
+		snapshot.Secondary = secondary
 	}
 	if err != nil {
 		return m.recordFailure(ctx, card, err)
@@ -513,8 +508,11 @@ func validateCard(input *CardInput) error {
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 			return errors.New("数据地址必须使用 HTTP 或 HTTPS")
 		}
-		if input.Formula == "" && input.ValuePath == "" {
-			return errors.New("请填写数值路径或公式")
+		if input.ValuePath == "" {
+			return errors.New("请填写取值表达式")
+		}
+		if input.Type == CardQuota && input.SecondaryPath == "" {
+			return errors.New("请填写剩余额度表达式")
 		}
 	case CardWebsite:
 		if len(input.Config) == 0 {
@@ -611,6 +609,7 @@ func Extract(value any, path string) (any, error) {
 }
 
 func Evaluate(expression string, document any) (float64, error) {
+	expression = strings.NewReplacer("×", "*", "÷", "/", "−", "-").Replace(expression)
 	parser := exprParser{input: expression, document: document}
 	value, err := parser.expression()
 	if err != nil {

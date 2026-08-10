@@ -403,7 +403,7 @@ func customDashboardCardInput(request *http.Request) (customdashboard.CardInput,
 		}
 		config = encoded
 	}
-	return customdashboard.CardInput{Name: request.FormValue("name"), Type: cardType, SourceURL: request.FormValue("source_url"), Headers: headers, ValuePath: request.FormValue("value_path"), SecondaryPath: request.FormValue("secondary_path"), Formula: request.FormValue("formula"), Config: config, RefreshSeconds: refresh}, nil
+	return customdashboard.CardInput{Name: request.FormValue("name"), Type: cardType, SourceURL: request.FormValue("source_url"), Headers: headers, ValuePath: request.FormValue("value_path"), SecondaryPath: request.FormValue("secondary_path"), Config: config, RefreshSeconds: refresh}, nil
 }
 
 func formatDashboardValue(value any) string {

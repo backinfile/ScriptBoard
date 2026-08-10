@@ -72,7 +72,7 @@ func TestDashboardLifecycleKeepsCardsInsideTheirDashboard(t *testing.T) {
 	}
 }
 
-func TestRefreshCardExtractsFormulaAndKeepsLastSuccessOnFailure(t *testing.T) {
+func TestRefreshCardEvaluatesBothValueExpressionsAndKeepsLastSuccessOnFailure(t *testing.T) {
 	failing := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if failing {
@@ -86,7 +86,7 @@ func TestRefreshCardExtractsFormulaAndKeepsLastSuccessOnFailure(t *testing.T) {
 	manager := testManager(t)
 	ctx := context.Background()
 	dashboard, _ := manager.CreateDashboard(ctx, DashboardInput{Name: "API", Slug: "api"})
-	card, err := manager.CreateCard(ctx, dashboard.ID, CardInput{Name: "剩余额度", Type: CardQuota, SourceURL: server.URL, Formula: "(subscription.limit - subscription.used) / subscription.limit * 100"})
+	card, err := manager.CreateCard(ctx, dashboard.ID, CardInput{Name: "剩余额度", Type: CardQuota, SourceURL: server.URL, ValuePath: "(subscription.limit - subscription.used) / subscription.limit * 100", SecondaryPath: "subscription.limit - subscription.used"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,6 +96,9 @@ func TestRefreshCardExtractsFormulaAndKeepsLastSuccessOnFailure(t *testing.T) {
 	}
 	if got := refreshed.Snapshot.Number; got != 63.2 {
 		t.Fatalf("number=%v", got)
+	}
+	if got := refreshed.Snapshot.Secondary; got != float64(632) {
+		t.Fatalf("secondary=%v", got)
 	}
 	failing = true
 	stale, err := manager.RefreshCard(ctx, card.ID)

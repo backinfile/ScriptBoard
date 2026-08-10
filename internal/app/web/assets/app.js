@@ -6153,20 +6153,27 @@ document.addEventListener("change", function (event) {
   form.querySelectorAll("[data-dashboard-http-field]").forEach((field) => { field.hidden = website; });
   form.querySelectorAll("[data-dashboard-card-types]").forEach((field) => {
     field.hidden = !field.dataset.dashboardCardTypes.split(",").includes(type);
+    field.querySelectorAll("[data-dashboard-expression-required]").forEach((input) => {
+      input.required = !field.hidden;
+    });
   });
   const websiteField = form.querySelector("[data-dashboard-website-field]");
   if (websiteField) websiteField.hidden = !website;
-  const valueLabel = form.querySelector("[data-dashboard-value-path-label]");
-  const valueInput = form.querySelector("[data-dashboard-value-path-input]");
-  const labels = { number: "数值路径", percentage: "百分比路径", quota: "已用额度路径" };
-  const placeholders = { number: "data.value", percentage: "data.percentage", quota: "data.used" };
-  if (valueLabel) valueLabel.textContent = labels[type] || "数值路径";
+  const valueLabel = form.querySelector("[data-dashboard-value-expression-label]");
+  const valueInput = form.querySelector("[data-dashboard-value-expression-input]");
+  const labels = { number: "数值表达式", percentage: "百分比表达式", quota: "已用额度表达式" };
+  const placeholders = { number: "data.value", percentage: "data.used / data.total * 100", quota: "data.used" };
+  if (valueLabel) valueLabel.textContent = labels[type] || "数值表达式";
   if (valueInput) valueInput.placeholder = placeholders[type] || "data.value";
   form.querySelectorAll("[data-dashboard-card-preview]").forEach((preview) => {
     preview.hidden = preview.dataset.dashboardCardPreview !== type;
   });
   const previewLabel = form.querySelector("[data-dashboard-preview-label]");
   if (previewLabel) previewLabel.textContent = ({ number: "数值", percentage: "百分比", quota: "额度", website: "网站状态" })[type] || "数值";
+});
+
+document.querySelectorAll("[data-dashboard-card-type]:checked").forEach((input) => {
+  input.dispatchEvent(new Event("change", { bubbles: true }));
 });
 
 document.addEventListener("input", function (event) {

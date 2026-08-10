@@ -273,7 +273,7 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 		_, _ = io.WriteString(w, `{"remaining":63.2387,"used":36.7613}`)
 	}))
 	defer api.Close()
-	response, err = client.PostForm(serverURL+"/config/dashboards/"+dashboardID+"/cards", url.Values{"csrf_token": {formToken(t, page)}, "name": {"使用率"}, "type": {"percentage"}, "source_url": {api.URL}, "value_path": {"remaining"}, "refresh_seconds": {"60"}})
+	response, err = client.PostForm(serverURL+"/config/dashboards/"+dashboardID+"/cards", url.Values{"csrf_token": {formToken(t, page)}, "name": {"使用率"}, "type": {"percentage"}, "source_url": {api.URL}, "value_path": {"remaining / 1"}, "refresh_seconds": {"60"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +285,7 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	response.Body.Close()
 	response, err = client.PostForm(serverURL+"/config/dashboards/"+dashboardID+"/cards", url.Values{
 		"csrf_token": {formToken(t, page)}, "name": {"账户额度"}, "type": {"quota"},
-		"source_url": {api.URL}, "value_path": {"used"}, "secondary_path": {"remaining"},
+		"source_url": {api.URL}, "value_path": {"used"}, "secondary_path": {"100 - used"},
 		"unit": {"GB"}, "refresh_seconds": {"60"},
 	})
 	if err != nil {
