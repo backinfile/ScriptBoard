@@ -117,3 +117,59 @@ func TestExtractSupportsArrayAndObjectPaths(t *testing.T) {
 		t.Fatalf("got %#v", got)
 	}
 }
+
+func TestMoveCardChangesOnlyItsDashboardOrder(t *testing.T) {
+	manager := testManager(t)
+	ctx := context.Background()
+	dashboard, err := manager.CreateDashboard(ctx, DashboardInput{Name: "排序面板", Slug: "ordered"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := manager.CreateDashboard(ctx, DashboardInput{Name: "其他面板", Slug: "other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := manager.CreateCard(ctx, dashboard.ID, CardInput{Name: "第一项", Type: CardNumber, SourceURL: "https://example.test/first", ValuePath: "value"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := manager.CreateCard(ctx, dashboard.ID, CardInput{Name: "第二项", Type: CardNumber, SourceURL: "https://example.test/second", ValuePath: "value"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	third, err := manager.CreateCard(ctx, dashboard.ID, CardInput{Name: "第三项", Type: CardNumber, SourceURL: "https://example.test/third", ValuePath: "value"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.CreateCard(ctx, other.ID, CardInput{Name: "不参与排序", Type: CardNumber, SourceURL: "https://example.test/other", ValuePath: "value"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if dashboardID, err := manager.MoveCard(ctx, third.ID, -1); err != nil || dashboardID != dashboard.ID {
+		t.Fatalf("move third up: dashboard=%q err=%v", dashboardID, err)
+	}
+	view, err := manager.GetDashboard(ctx, dashboard.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := []string{view.Cards[0].ID, view.Cards[1].ID, view.Cards[2].ID}; got[0] != first.ID || got[1] != third.ID || got[2] != second.ID {
+		t.Fatalf("unexpected order after moving up: %v", got)
+	}
+	if _, err := manager.MoveCard(ctx, first.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	view, err = manager.GetDashboard(ctx, dashboard.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := []string{view.Cards[0].ID, view.Cards[1].ID, view.Cards[2].ID}; got[0] != third.ID || got[1] != first.ID || got[2] != second.ID {
+		t.Fatalf("unexpected order after moving down: %v", got)
+	}
+	otherView, err := manager.GetDashboard(ctx, other.ID)
+	if err != nil || len(otherView.Cards) != 1 || otherView.Cards[0].Name != "不参与排序" {
+		t.Fatalf("other dashboard changed: %#v err=%v", otherView.Cards, err)
+	}
+	if _, err := manager.MoveCard(ctx, first.ID, 0); err == nil {
+		t.Fatal("invalid direction was accepted")
+	}
+}

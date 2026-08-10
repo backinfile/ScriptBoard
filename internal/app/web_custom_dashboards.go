@@ -14,26 +14,38 @@ import (
 )
 
 type customDashboardPageView struct {
-	Locale                             webLocale
-	CSRFToken                          string
-	DashboardUpdatedLabel              string
-	Dashboards                         []customdashboard.Dashboard
-	Dashboard                          customdashboard.Dashboard
-	Cards                              []customDashboardCardView
-	WebsiteMonitors                    []websitemonitor.Monitor
-	CanManage, PublicView, MonitorView bool
+	Locale                                      webLocale
+	CSRFToken                                   string
+	DashboardUpdatedLabel                       string
+	Dashboards                                  []customdashboard.Dashboard
+	Dashboard                                   customdashboard.Dashboard
+	Cards                                       []customDashboardCardView
+	WebsiteMonitors                             []websitemonitor.Monitor
+	CanManage, PublicView, MonitorView, Reorder bool
 }
 
 type customDashboardCardView struct {
 	customdashboard.Card
-	ValueLabel, SecondaryLabel, StatusLabel, UpdatedLabel, HeadersText string
-	Websites                                                           []customDashboardWebsiteView
-	SelectedMonitorIDs                                                 map[string]bool
-	InsecureSource                                                     bool
+	ValueLabel, SecondaryLabel, HeadersText string
+	QuotaProgress                           float64
+	DisplayIndex                            int
+	CanMoveUp, CanMoveDown                  bool
+	Websites                                []customDashboardWebsiteView
+	SelectedMonitorIDs                      map[string]bool
+	InsecureSource                          bool
 }
 
 type customDashboardWebsiteView struct {
 	Name, State, StateLabel, AvailabilityLabel, LatencyLabel, SSLLabel, SSLTone, CheckedLabel string
+	Availability                                                                              []websiteMonitorAvailabilityBucketView
+}
+
+func (a *App) legacyCustomDashboardPage(response http.ResponseWriter, request *http.Request) {
+	target := "/config/dashboards"
+	if request.URL.RawQuery != "" {
+		target += "?" + request.URL.RawQuery
+	}
+	http.Redirect(response, request, target, http.StatusSeeOther)
 }
 
 func (a *App) customDashboardPage(response http.ResponseWriter, request *http.Request) {
@@ -62,6 +74,12 @@ func (a *App) customDashboardPage(response http.ResponseWriter, request *http.Re
 	view.Dashboards = dashboards
 	view.CSRFToken = current.csrfToken
 	view.CanManage = roleAllows(current.role, permissionManageOperations)
+	view.Reorder = view.CanManage && request.URL.Query().Get("reorder") == "1"
+	for index := range view.Cards {
+		view.Cards[index].DisplayIndex = index + 1
+		view.Cards[index].CanMoveUp = index > 0
+		view.Cards[index].CanMoveDown = index < len(view.Cards)-1
+	}
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = customDashboardTemplate.Execute(response, view)
@@ -106,7 +124,7 @@ func (a *App) newCustomDashboardPageView(request *http.Request, dashboard custom
 		view.WebsiteMonitors = monitors
 	}
 	for _, card := range dashboard.Cards {
-		item := customDashboardCardView{Card: card, StatusLabel: "等待首次刷新", UpdatedLabel: "尚未更新", SelectedMonitorIDs: map[string]bool{}}
+		item := customDashboardCardView{Card: card, SelectedMonitorIDs: map[string]bool{}}
 		headerNames := make([]string, 0, len(card.Headers))
 		for name := range card.Headers {
 			headerNames = append(headerNames, name)
@@ -118,17 +136,24 @@ func (a *App) newCustomDashboardPageView(request *http.Request, dashboard custom
 		}
 		item.HeadersText = strings.Join(headerLines, "\n")
 		item.InsecureSource = strings.HasPrefix(strings.ToLower(card.SourceURL), "http://")
-		if card.LastError != "" {
-			item.StatusLabel = "数据已过期"
-		}
-		if !card.LastSuccessAt.IsZero() {
-			item.UpdatedLabel = card.LastSuccessAt.Local().Format("01-02 15:04")
-			if card.LastError == "" {
-				item.StatusLabel = "数据正常"
-			}
-		}
 		item.ValueLabel = formatDashboardValue(card.Snapshot.Value)
 		item.SecondaryLabel = formatDashboardValue(card.Snapshot.Secondary)
+		item.QuotaProgress = card.Snapshot.Number
+		if item.QuotaProgress < 0 {
+			item.QuotaProgress = 0
+		}
+		if item.QuotaProgress > 100 {
+			item.QuotaProgress = 100
+		}
+		if card.LastError != "" {
+			item.ValueLabel = "0"
+			if card.Type == customdashboard.CardQuota {
+				item.SecondaryLabel = "0"
+			} else {
+				item.SecondaryLabel = ""
+			}
+			item.QuotaProgress = 0
+		}
 		if card.Type == customdashboard.CardWebsite {
 			var config struct {
 				MonitorIDs []string `json:"monitorIds"`
@@ -150,12 +175,14 @@ func (a *App) customDashboardWebsiteCards(request *http.Request, card customdash
 	}
 	_ = json.Unmarshal(card.Config, &config)
 	result := make([]customDashboardWebsiteView, 0, len(config.MonitorIDs))
+	locale := resolveWebLocale(request)
 	for _, id := range config.MonitorIDs {
 		monitor, err := a.websiteMonitor.Get(request.Context(), id)
 		if err != nil || monitor.DeletedAt != nil {
 			continue
 		}
-		item := customDashboardWebsiteView{Name: monitor.Config.Name, State: string(monitor.State), StateLabel: websiteStateLabel(resolveWebLocale(request), monitor.State), LatencyLabel: "—", AvailabilityLabel: "—", SSLLabel: "无 TLS 证书", SSLTone: "neutral", CheckedLabel: "尚未检查"}
+		monitorView := a.newWebsiteMonitorPageView(request.Context(), monitor, locale)
+		item := customDashboardWebsiteView{Name: monitor.Config.Name, State: string(monitor.State), StateLabel: monitorView.StateLabel, LatencyLabel: monitorView.LatencyLabel, AvailabilityLabel: "—", SSLLabel: "无 TLS 证书", SSLTone: "neutral", CheckedLabel: "尚未检查", Availability: monitorView.Availability}
 		if !monitor.Latest.CheckedAt.IsZero() {
 			item.LatencyLabel = fmt.Sprintf("%d ms", monitor.Latest.Latency.Milliseconds())
 			item.CheckedLabel = monitor.Latest.CheckedAt.Local().Format("01-02 15:04")
@@ -184,13 +211,13 @@ func (a *App) createCustomDashboard(response http.ResponseWriter, request *http.
 		http.Error(response, "页面已过期，请重试", http.StatusForbidden)
 		return
 	}
-	dashboard, err := a.customDashboards.CreateDashboard(request.Context(), customdashboard.DashboardInput{Name: request.FormValue("name"), Slug: request.FormValue("slug"), Public: request.FormValue("public") == "1"})
+	dashboard, err := a.customDashboards.CreateDashboard(request.Context(), customdashboard.DashboardInput{Name: request.FormValue("name"), Slug: request.FormValue("slug"), Public: false})
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
 	a.recordAuditForRequest(request, "create_custom_dashboard", dashboard.ID, "succeeded")
-	http.Redirect(response, request, "/monitor/dashboards?dashboard="+dashboard.ID, http.StatusSeeOther)
+	http.Redirect(response, request, "/config/dashboards?dashboard="+dashboard.ID, http.StatusSeeOther)
 }
 func (a *App) updateCustomDashboard(response http.ResponseWriter, request *http.Request) {
 	if !validSessionCSRF(request) {
@@ -198,13 +225,23 @@ func (a *App) updateCustomDashboard(response http.ResponseWriter, request *http.
 		return
 	}
 	id := request.PathValue("id")
-	_, err := a.customDashboards.UpdateDashboard(request.Context(), id, customdashboard.DashboardInput{Name: request.FormValue("name"), Slug: request.FormValue("slug"), Public: request.FormValue("public") == "1"})
+	current, err := a.customDashboards.GetDashboard(request.Context(), id)
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	_ = request.ParseForm()
+	public := current.Public
+	if _, provided := request.Form["public"]; provided {
+		public = request.FormValue("public") == "1"
+	}
+	_, err = a.customDashboards.UpdateDashboard(request.Context(), id, customdashboard.DashboardInput{Name: request.FormValue("name"), Slug: request.FormValue("slug"), Public: public})
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
 	a.recordAuditForRequest(request, "update_custom_dashboard", id, "succeeded")
-	http.Redirect(response, request, "/monitor/dashboards?dashboard="+id, http.StatusSeeOther)
+	http.Redirect(response, request, "/config/dashboards?dashboard="+id, http.StatusSeeOther)
 }
 func (a *App) deleteCustomDashboard(response http.ResponseWriter, request *http.Request) {
 	if !validSessionCSRF(request) || request.FormValue("confirm") != "yes" {
@@ -217,7 +254,7 @@ func (a *App) deleteCustomDashboard(response http.ResponseWriter, request *http.
 		return
 	}
 	a.recordAuditForRequest(request, "delete_custom_dashboard", id, "succeeded")
-	http.Redirect(response, request, "/monitor/dashboards", http.StatusSeeOther)
+	http.Redirect(response, request, "/config/dashboards", http.StatusSeeOther)
 }
 
 func (a *App) createCustomDashboardCard(response http.ResponseWriter, request *http.Request) {
@@ -231,6 +268,10 @@ func (a *App) createCustomDashboardCard(response http.ResponseWriter, request *h
 		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
+	if input.Type == customdashboard.CardKeyValue {
+		http.Error(response, "不支持的卡片类型", http.StatusUnprocessableEntity)
+		return
+	}
 	card, err := a.customDashboards.CreateCard(request.Context(), id, input)
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
@@ -240,7 +281,7 @@ func (a *App) createCustomDashboardCard(response http.ResponseWriter, request *h
 		_, _ = a.customDashboards.RefreshCard(request.Context(), card.ID)
 	}
 	a.recordAuditForRequest(request, "create_custom_dashboard_card", card.ID, "succeeded")
-	http.Redirect(response, request, "/monitor/dashboards?dashboard="+id, http.StatusSeeOther)
+	http.Redirect(response, request, "/config/dashboards?dashboard="+id, http.StatusSeeOther)
 }
 func (a *App) deleteCustomDashboardCard(response http.ResponseWriter, request *http.Request) {
 	if !validSessionCSRF(request) || request.FormValue("confirm") != "yes" {
@@ -254,7 +295,7 @@ func (a *App) deleteCustomDashboardCard(response http.ResponseWriter, request *h
 		return
 	}
 	a.recordAuditForRequest(request, "delete_custom_dashboard_card", id, "succeeded")
-	http.Redirect(response, request, "/monitor/dashboards?dashboard="+dashboardID, http.StatusSeeOther)
+	http.Redirect(response, request, "/config/dashboards?dashboard="+dashboardID, http.StatusSeeOther)
 }
 func (a *App) refreshCustomDashboardCard(response http.ResponseWriter, request *http.Request) {
 	if !validSessionCSRF(request) {
@@ -266,7 +307,28 @@ func (a *App) refreshCustomDashboardCard(response http.ResponseWriter, request *
 	if _, err := a.customDashboards.RefreshCard(request.Context(), id); err != nil {
 		a.recordAuditForRequest(request, "refresh_custom_dashboard_card", id, "failed")
 	}
-	http.Redirect(response, request, "/monitor/dashboards?dashboard="+dashboardID, http.StatusSeeOther)
+	http.Redirect(response, request, "/config/dashboards?dashboard="+dashboardID, http.StatusSeeOther)
+}
+
+func (a *App) moveCustomDashboardCard(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "页面已过期，请重试", http.StatusForbidden)
+		return
+	}
+	direction := 0
+	switch request.FormValue("direction") {
+	case "up":
+		direction = -1
+	case "down":
+		direction = 1
+	}
+	dashboardID, err := a.customDashboards.MoveCard(request.Context(), request.PathValue("id"), direction)
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	a.recordAuditForRequest(request, "move_custom_dashboard_card", request.PathValue("id"), "succeeded")
+	http.Redirect(response, request, "/config/dashboards?dashboard="+dashboardID+"&reorder=1", http.StatusSeeOther)
 }
 
 func (a *App) updateCustomDashboardCard(response http.ResponseWriter, request *http.Request) {
@@ -289,7 +351,7 @@ func (a *App) updateCustomDashboardCard(response http.ResponseWriter, request *h
 		_, _ = a.customDashboards.RefreshCard(request.Context(), card.ID)
 	}
 	a.recordAuditForRequest(request, "update_custom_dashboard_card", id, "succeeded")
-	http.Redirect(response, request, "/monitor/dashboards?dashboard="+card.DashboardID, http.StatusSeeOther)
+	http.Redirect(response, request, "/config/dashboards?dashboard="+card.DashboardID, http.StatusSeeOther)
 }
 
 func customDashboardCardInput(request *http.Request) (customdashboard.CardInput, error) {

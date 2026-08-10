@@ -6148,10 +6148,25 @@ document.addEventListener("change", function (event) {
   if (!select) return;
   const form = select.closest("form");
   if (!form) return;
-  const website = select.value === "website";
+  const type = select.value;
+  const website = type === "website";
   form.querySelectorAll("[data-dashboard-http-field]").forEach((field) => { field.hidden = website; });
+  form.querySelectorAll("[data-dashboard-card-types]").forEach((field) => {
+    field.hidden = !field.dataset.dashboardCardTypes.split(",").includes(type);
+  });
   const websiteField = form.querySelector("[data-dashboard-website-field]");
   if (websiteField) websiteField.hidden = !website;
+  const valueLabel = form.querySelector("[data-dashboard-value-path-label]");
+  const valueInput = form.querySelector("[data-dashboard-value-path-input]");
+  const labels = { number: "数值路径", percentage: "百分比路径", quota: "已用额度路径" };
+  const placeholders = { number: "data.value", percentage: "data.percentage", quota: "data.used" };
+  if (valueLabel) valueLabel.textContent = labels[type] || "数值路径";
+  if (valueInput) valueInput.placeholder = placeholders[type] || "data.value";
+  form.querySelectorAll("[data-dashboard-card-preview]").forEach((preview) => {
+    preview.hidden = preview.dataset.dashboardCardPreview !== type;
+  });
+  const previewLabel = form.querySelector("[data-dashboard-preview-label]");
+  if (previewLabel) previewLabel.textContent = ({ number: "数值", percentage: "百分比", quota: "额度", website: "网站状态" })[type] || "数值";
 });
 
 document.addEventListener("input", function (event) {
@@ -6172,6 +6187,38 @@ function syncDashboardDrawerState() {
   document.body.classList.toggle("has-custom-dashboard-drawer", Boolean(document.querySelector("[data-dashboard-drawer][open]")));
 }
 
+function openDashboardCardRow(row) {
+  const trigger = row?.querySelector("[data-dashboard-card-edit]");
+  if (!trigger) return;
+  trigger.click();
+}
+
+document.addEventListener("click", function (event) {
+  const drawerButton = event.target.closest("[data-dashboard-open-drawer]");
+  if (drawerButton) {
+    const name = drawerButton.dataset.dashboardOpenDrawer;
+    const drawer = document.querySelector(`[data-dashboard-drawer-name="${CSS.escape(name)}"]`);
+    if (drawer) drawer.open = true;
+    return;
+  }
+  const deleteButton = event.target.closest("[data-dashboard-delete-open]");
+  if (deleteButton) {
+    const drawer = document.querySelector("[data-dashboard-delete-drawer]");
+    if (drawer) drawer.open = true;
+    return;
+  }
+  const row = event.target.closest("[data-dashboard-card-row]");
+  if (!row || event.target.closest("a,button,input,select,textarea,summary,details,form,label")) return;
+  openDashboardCardRow(row);
+});
+
+document.addEventListener("keydown", function (event) {
+  const row = event.target.closest?.("[data-dashboard-card-row]");
+  if (!row || event.target !== row || (event.key !== "Enter" && event.key !== " ")) return;
+  event.preventDefault();
+  openDashboardCardRow(row);
+});
+
 document.addEventListener("toggle", function (event) {
   const drawer = event.target.closest?.("[data-dashboard-drawer]");
   if (!drawer) return;
@@ -6179,7 +6226,10 @@ document.addEventListener("toggle", function (event) {
     document.querySelectorAll("[data-dashboard-drawer][open]").forEach((other) => {
       if (other !== drawer) closeDashboardDrawer(other, false);
     });
-    window.requestAnimationFrame(() => drawer.querySelector(".custom-dashboard-drawer input:not([type=hidden])")?.focus());
+    window.requestAnimationFrame(() => {
+      const focusTarget = drawer.querySelector(".custom-dashboard-drawer input:not([type=hidden]), .custom-dashboard-drawer button:not([disabled]), .custom-dashboard-drawer a[href]");
+      focusTarget?.focus();
+    });
   }
   syncDashboardDrawerState();
 }, true);

@@ -1522,6 +1522,32 @@ func openDatabase(path string) (*sql.DB, error) {
 			}
 		}
 	}
+	if schemaVersion >= 20 && schemaVersion <= 33 {
+		for _, statement := range []string{
+			`ALTER TABLE custom_dashboard_cards RENAME TO custom_dashboard_cards_schema33`,
+			`CREATE TABLE custom_dashboard_cards (
+				id TEXT PRIMARY KEY, dashboard_id TEXT NOT NULL REFERENCES custom_dashboards(id) ON DELETE CASCADE,
+				name TEXT NOT NULL, type TEXT NOT NULL CHECK(type IN ('number','percentage','quota','key_value','website')),
+				source_url TEXT NOT NULL DEFAULT '', headers_json TEXT NOT NULL DEFAULT '{}',
+				value_path TEXT NOT NULL DEFAULT '', secondary_path TEXT NOT NULL DEFAULT '', formula TEXT NOT NULL DEFAULT '',
+				config_json TEXT NOT NULL DEFAULT '{}', refresh_seconds INTEGER NOT NULL DEFAULT 60,
+				sort_order INTEGER NOT NULL, snapshot_json TEXT NOT NULL DEFAULT '{}', last_error TEXT NOT NULL DEFAULT '',
+				last_success_at INTEGER NOT NULL DEFAULT 0, last_attempt_at INTEGER NOT NULL DEFAULT 0,
+				created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+			)`,
+			`INSERT INTO custom_dashboard_cards
+				(id,dashboard_id,name,type,source_url,headers_json,value_path,secondary_path,formula,config_json,refresh_seconds,sort_order,snapshot_json,last_error,last_success_at,last_attempt_at,created_at,updated_at)
+				SELECT id,dashboard_id,name,type,source_url,headers_json,value_path,secondary_path,formula,config_json,refresh_seconds,sort_order,snapshot_json,last_error,last_success_at,last_attempt_at,created_at,updated_at
+				FROM custom_dashboard_cards_schema33`,
+			`DROP TABLE custom_dashboard_cards_schema33`,
+			`CREATE INDEX custom_dashboard_cards_order_idx ON custom_dashboard_cards(dashboard_id, sort_order, created_at)`,
+		} {
+			if _, err := migration.Exec(statement); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("migrate custom dashboard percentage cards: %w", err)
+			}
+		}
+	}
 	for _, statement := range []string{
 		"CREATE UNIQUE INDEX IF NOT EXISTS users_single_administrator_idx ON users(role) WHERE role = 'administrator'",
 		"CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id)",
@@ -1589,9 +1615,10 @@ func compatibleDatabaseSchema(version int) bool {
 	// logical backups, plans, and recoverable operations, and schema 31 persists
 	// MySQL connection state, and schema 32 adds read-only cross-instance website
 	// monitoring interfaces and encrypted remote source metadata, and schema 33 adds
-	// custom dashboards with independently public card collections. Each supported predecessor has an explicit
+	// custom dashboards with independently public card collections, and schema 34
+	// adds dedicated percentage cards. Each supported predecessor has an explicit
 	// transactional forward path.
-	return version == currentSchemaVersion || currentSchemaVersion == 33 && version >= 20 && version <= 32
+	return version == currentSchemaVersion || currentSchemaVersion == 34 && version >= 20 && version <= 33
 }
 
 func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {
@@ -1822,7 +1849,16 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /monitor/applications/{id}/unpin", a.requireSession(http.HandlerFunc(a.unpinApplication)))
 	mux.Handle("POST /monitor/applications/{id}/move", a.requireSession(http.HandlerFunc(a.movePinnedApplication)))
 	mux.Handle("GET /monitor/websites", a.requireSession(http.HandlerFunc(a.websiteMonitorList)))
-	mux.Handle("GET /monitor/dashboards", a.requireSession(http.HandlerFunc(a.customDashboardPage)))
+	mux.Handle("GET /config/dashboards", a.requireSession(http.HandlerFunc(a.customDashboardPage)))
+	mux.Handle("POST /config/dashboards", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.createCustomDashboard)))
+	mux.Handle("POST /config/dashboards/{id}", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.updateCustomDashboard)))
+	mux.Handle("POST /config/dashboards/{id}/delete", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.deleteCustomDashboard)))
+	mux.Handle("POST /config/dashboards/{id}/cards", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.createCustomDashboardCard)))
+	mux.Handle("POST /config/dashboard-cards/{id}/refresh", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.refreshCustomDashboardCard)))
+	mux.Handle("POST /config/dashboard-cards/{id}/move", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.moveCustomDashboardCard)))
+	mux.Handle("POST /config/dashboard-cards/{id}", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.updateCustomDashboardCard)))
+	mux.Handle("POST /config/dashboard-cards/{id}/delete", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.deleteCustomDashboardCard)))
+	mux.Handle("GET /monitor/dashboards", a.requireSession(http.HandlerFunc(a.legacyCustomDashboardPage)))
 	mux.Handle("GET /monitor/dashboard/{id}", a.requireSession(http.HandlerFunc(a.customDashboardMonitorPage)))
 	mux.Handle("POST /monitor/dashboards", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.createCustomDashboard)))
 	mux.Handle("POST /monitor/dashboards/{id}", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.updateCustomDashboard)))

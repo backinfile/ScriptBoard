@@ -28,7 +28,7 @@ var SchemaStatements = []string{
 	)`,
 	`CREATE TABLE IF NOT EXISTS custom_dashboard_cards (
 		id TEXT PRIMARY KEY, dashboard_id TEXT NOT NULL REFERENCES custom_dashboards(id) ON DELETE CASCADE,
-		name TEXT NOT NULL, type TEXT NOT NULL CHECK(type IN ('number','quota','key_value','website')),
+		name TEXT NOT NULL, type TEXT NOT NULL CHECK(type IN ('number','percentage','quota','key_value','website')),
 		source_url TEXT NOT NULL DEFAULT '', headers_json TEXT NOT NULL DEFAULT '{}',
 		value_path TEXT NOT NULL DEFAULT '', secondary_path TEXT NOT NULL DEFAULT '', formula TEXT NOT NULL DEFAULT '',
 		config_json TEXT NOT NULL DEFAULT '{}', refresh_seconds INTEGER NOT NULL DEFAULT 60,
@@ -43,10 +43,11 @@ var SchemaStatements = []string{
 type CardType string
 
 const (
-	CardNumber   CardType = "number"
-	CardQuota    CardType = "quota"
-	CardKeyValue CardType = "key_value"
-	CardWebsite  CardType = "website"
+	CardNumber     CardType = "number"
+	CardPercentage CardType = "percentage"
+	CardQuota      CardType = "quota"
+	CardKeyValue   CardType = "key_value"
+	CardWebsite    CardType = "website"
 )
 
 type DashboardInput struct {
@@ -322,6 +323,67 @@ func (m *Manager) DeleteCard(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
+func (m *Manager) MoveCard(ctx context.Context, id string, direction int) (string, error) {
+	if direction != -1 && direction != 1 {
+		return "", errors.New("卡片顺序移动方向无效")
+	}
+	transaction, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer transaction.Rollback()
+	var dashboardID string
+	if err := transaction.QueryRowContext(ctx, `SELECT dashboard_id FROM custom_dashboard_cards WHERE id=?`, id).Scan(&dashboardID); err != nil {
+		return "", err
+	}
+	rows, err := transaction.QueryContext(ctx, `SELECT id,sort_order FROM custom_dashboard_cards WHERE dashboard_id=? ORDER BY sort_order,created_at`, dashboardID)
+	if err != nil {
+		return "", err
+	}
+	type orderedCard struct {
+		id    string
+		order int
+	}
+	var cards []orderedCard
+	for rows.Next() {
+		var card orderedCard
+		if err := rows.Scan(&card.id, &card.order); err != nil {
+			_ = rows.Close()
+			return "", err
+		}
+		cards = append(cards, card)
+	}
+	if err := rows.Close(); err != nil {
+		return "", err
+	}
+	index := -1
+	for candidate := range cards {
+		if cards[candidate].id == id {
+			index = candidate
+			break
+		}
+	}
+	destination := index + direction
+	if index < 0 {
+		return "", sql.ErrNoRows
+	}
+	if destination < 0 || destination >= len(cards) {
+		return dashboardID, nil
+	}
+	now := m.now().UTC().UnixNano()
+	if _, err := transaction.ExecContext(ctx, `UPDATE custom_dashboard_cards SET sort_order=?,updated_at=? WHERE id=?`, cards[destination].order, now, cards[index].id); err != nil {
+		return "", err
+	}
+	if _, err := transaction.ExecContext(ctx, `UPDATE custom_dashboard_cards SET sort_order=?,updated_at=? WHERE id=?`, cards[index].order, now, cards[destination].id); err != nil {
+		return "", err
+	}
+	if err := transaction.Commit(); err != nil {
+		return "", err
+	}
+	return dashboardID, nil
+}
+
 func (m *Manager) listCards(ctx context.Context, dashboardID string) ([]Card, error) {
 	rows, err := m.db.QueryContext(ctx, cardSelect+` WHERE dashboard_id=? ORDER BY sort_order,created_at`, dashboardID)
 	if err != nil {
@@ -443,7 +505,7 @@ func validateCard(input *CardInput) error {
 		return errors.New("卡片名称不能为空")
 	}
 	switch input.Type {
-	case CardNumber, CardQuota, CardKeyValue:
+	case CardNumber, CardPercentage, CardQuota, CardKeyValue:
 		if input.SourceURL == "" {
 			return errors.New("数据地址不能为空")
 		}
