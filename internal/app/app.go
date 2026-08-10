@@ -1470,6 +1470,35 @@ func openDatabase(path string) (*sql.DB, error) {
 			}
 		}
 	}
+	if schemaVersion >= 27 && schemaVersion <= 31 {
+		for _, statement := range []string{
+			`CREATE TABLE external_trigger_entries_schema32 (
+				id TEXT PRIMARY KEY,
+				key_id TEXT NOT NULL REFERENCES external_trigger_keys(id) ON DELETE CASCADE,
+				name TEXT NOT NULL,
+				label TEXT NOT NULL,
+				action_type TEXT NOT NULL CHECK (action_type IN ('log', 'upload', 'quick_run', 'variable', 'website_monitor')),
+				target TEXT NOT NULL DEFAULT '',
+				config_json TEXT NOT NULL DEFAULT '{}',
+				enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL,
+				UNIQUE (key_id, name)
+			)`,
+			`INSERT INTO external_trigger_entries_schema32
+				(id, key_id, name, label, action_type, target, config_json, enabled, created_at, updated_at)
+				SELECT id, key_id, name, label, action_type, target, config_json, enabled, created_at, updated_at
+				FROM external_trigger_entries`,
+			`DROP TABLE external_trigger_entries`,
+			`ALTER TABLE external_trigger_entries_schema32 RENAME TO external_trigger_entries`,
+			`CREATE INDEX external_trigger_entries_key_idx ON external_trigger_entries(key_id, created_at)`,
+		} {
+			if _, err := migration.Exec(statement); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("migrate External Interface website monitoring action: %w", err)
+			}
+		}
+	}
 	for _, statement := range []string{
 		"CREATE UNIQUE INDEX IF NOT EXISTS users_single_administrator_idx ON users(role) WHERE role = 'administrator'",
 		"CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id)",
@@ -1535,9 +1564,10 @@ func compatibleDatabaseSchema(version int) bool {
 	// per-user file Quick Access pins, and schema 29 merges those pins into one
 	// instance-wide Quick Access list, schema 30 adds MySQL instances,
 	// logical backups, plans, and recoverable operations, and schema 31 persists
-	// MySQL connection state. Each supported predecessor has an explicit
+	// MySQL connection state, and schema 32 adds read-only cross-instance website
+	// monitoring interfaces and encrypted remote source metadata. Each supported predecessor has an explicit
 	// transactional forward path.
-	return version == currentSchemaVersion || currentSchemaVersion == 31 && version >= 20 && version <= 30
+	return version == currentSchemaVersion || currentSchemaVersion == 32 && version >= 20 && version <= 31
 }
 
 func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {
@@ -1769,6 +1799,8 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /monitor/applications/{id}/move", a.requireSession(http.HandlerFunc(a.movePinnedApplication)))
 	mux.Handle("GET /monitor/websites", a.requireSession(http.HandlerFunc(a.websiteMonitorList)))
 	mux.Handle("GET /monitor/websites/data", a.requireSession(http.HandlerFunc(a.websiteMonitorData)))
+	mux.Handle("POST /monitor/websites/remotes", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.createWebsiteMonitorRemoteSource)))
+	mux.Handle("POST /monitor/websites/remotes/{id}/delete", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.deleteWebsiteMonitorRemoteSource)))
 	mux.Handle("GET /monitor/websites/new", a.requireSession(http.HandlerFunc(a.websiteMonitorCreateTask)))
 	mux.Handle("POST /monitor/websites", a.requireSession(http.HandlerFunc(a.createWebsiteMonitor)))
 	mux.Handle("POST /monitor/websites/reorder", a.requireSession(http.HandlerFunc(a.reorderWebsiteMonitors)))

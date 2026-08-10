@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -809,6 +810,67 @@ func TestWebsiteMonitoringDataReturnsCompletePollingAndDetailSnapshots(t *testin
 	if response.StatusCode != http.StatusNotFound ||
 		missingPayload.Error.Code != string(websitemonitor.ErrorNotFound) {
 		t.Fatalf("missing detail status=%d payload=%#v", response.StatusCode, missingPayload)
+	}
+}
+
+func TestWebsiteMonitoringAddsRemoteScriptBoardAsReadOnlySource(t *testing.T) {
+	const key = "sbk_0123456789abcdef.0123456789abcdef0123456789abcdef01234567890"
+	var authorization string
+	remote := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		authorization = request.Header.Get("Authorization")
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(response, `{"ok":true,"action":"website_monitor","schema_version":1,"data":{"monitors":[{"ID":"remote-one","Name":"Remote checkout","URL":"https://checkout.example/","State":"up","StateLabel":"Up","LatestLabel":"HTTP 200","LatencyLabel":"23 ms","Availability":[]}],"alerts":[],"counts":{"up":1,"verifying":0,"down":0,"paused":0},"total":1,"needsCare":0}}`)
+	}))
+	defer remote.Close()
+
+	root := t.TempDir()
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "host"), filepath.Join(root, "state"))
+	pageResponse, err := client.Get(serverURL + "/monitor/websites")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(pageResponse.Body)
+	_ = pageResponse.Body.Close()
+	created, err := client.PostForm(serverURL+"/monitor/websites/remotes", url.Values{
+		"csrf_token": {formToken(t, page)}, "label": {"Branch office"},
+		"endpoint": {remote.URL + "/trigger?name=website-status"}, "key": {key},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = created.Body.Close()
+	if created.StatusCode != http.StatusSeeOther {
+		t.Fatalf("create remote source status=%d", created.StatusCode)
+	}
+
+	response, err := client.Get(serverURL + "/monitor/websites")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if authorization != "Bearer "+key || !bytes.Contains(body, []byte("Branch office")) ||
+		!bytes.Contains(body, []byte("Remote checkout")) || !bytes.Contains(body, []byte("Read-only")) ||
+		bytes.Contains(body, []byte(`href="/monitor/websites/remote-one"`)) {
+		t.Fatalf("authorization=%q body=%s", authorization, body)
+	}
+	if bytes.Contains(body, []byte(key)) {
+		t.Fatal("remote key was rendered in the website monitoring page")
+	}
+	if err := filepath.Walk(filepath.Join(root, "state"), func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil || info.IsDir() {
+			return walkErr
+		}
+		content, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return nil
+		}
+		if readErr == nil && bytes.Contains(content, []byte(key)) {
+			t.Fatalf("remote key was stored in plaintext in %s", path)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 
