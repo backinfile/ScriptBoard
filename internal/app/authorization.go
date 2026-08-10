@@ -84,6 +84,9 @@ func permissionForRequest(request *http.Request) permission {
 		return permissionReadFiles
 	}
 	if path == "/resources/files" || strings.HasPrefix(path, "/resources/files/") {
+		if path == "/resources/files/quick-access" {
+			return permissionReadFiles
+		}
 		if path == "/resources/files/run" {
 			return permissionExecute
 		}

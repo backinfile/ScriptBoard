@@ -1222,7 +1222,6 @@ func (m *Manager) Close() {
 			_ = terminateProcess(process, true)
 		}
 	}
-	m.persistenceStopOnce.Do(func() { close(m.persistenceStop) })
 	done := make(chan struct{})
 	go func() {
 		m.wg.Wait()
@@ -1230,13 +1229,20 @@ func (m *Manager) Close() {
 	}()
 	select {
 	case <-done:
+		m.persistenceStopOnce.Do(func() { close(m.persistenceStop) })
 		return
 	case <-time.After(30 * time.Second):
 	}
 	for _, process := range processes {
 		_ = terminateProcess(process, true)
 	}
-	<-done
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		m.persistenceStopOnce.Do(func() { close(m.persistenceStop) })
+		<-done
+	}
+	m.persistenceStopOnce.Do(func() { close(m.persistenceStop) })
 }
 
 const runStateRetryDelay = 100 * time.Millisecond

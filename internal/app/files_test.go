@@ -467,6 +467,29 @@ func TestFileQuickAccessPinsPersistGlobally(t *testing.T) {
 	if len(operatorPins.Pins) != 1 || operatorPins.Pins[0].Path != pinnedPath {
 		t.Fatalf("operator did not receive the global Quick access pins: %#v", operatorPins.Pins)
 	}
+
+	response, err = operator.Get(hostFilesRequestURL(serverURL, hostRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	operatorPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err = operator.PostForm(serverURL+"/resources/files/quick-access", url.Values{
+		"csrf_token": {formToken(t, operatorPage)},
+		"path":       {pinnedPath},
+		"pinned":     {"false"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(response.Body)
+		t.Fatalf("operator unpin status=%d body=%s", response.StatusCode, body)
+	}
 }
 
 type fileQuickAccessPinTestView struct {

@@ -33,6 +33,41 @@ func TestRunStateWriteRetriesUntilPersistenceSucceeds(t *testing.T) {
 	}
 }
 
+func TestCloseKeepsPersistenceRetriesAliveUntilWorkersFinish(t *testing.T) {
+	manager := &Manager{
+		active:          make(map[string]*activeRun),
+		persistenceStop: make(chan struct{}),
+	}
+	manager.wg.Add(1)
+	releaseWorker := make(chan struct{})
+	go func() {
+		defer manager.wg.Done()
+		<-releaseWorker
+	}()
+	closeDone := make(chan struct{})
+	go func() {
+		manager.Close()
+		close(closeDone)
+	}()
+
+	select {
+	case <-manager.persistenceStop:
+		t.Fatal("Close stopped persistence retries before workers finished")
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(releaseWorker)
+	select {
+	case <-closeDone:
+	case <-time.After(time.Second):
+		t.Fatal("Close did not finish after workers completed")
+	}
+	select {
+	case <-manager.persistenceStop:
+	default:
+		t.Fatal("Close did not stop persistence retries after workers finished")
+	}
+}
+
 func TestGetMetadataDoesNotReadRunLog(t *testing.T) {
 	root := t.TempDir()
 	db := openRunMetadataTestDB(t, root)

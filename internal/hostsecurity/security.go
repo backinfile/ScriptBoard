@@ -34,9 +34,13 @@ const (
 type FirewallAction string
 
 const (
-	ActionAllow FirewallAction = "allow"
-	ActionDeny  FirewallAction = "deny"
+	ActionAllow  FirewallAction = "allow"
+	ActionDeny   FirewallAction = "deny"
+	ActionLimit  FirewallAction = "limit"
+	ActionReject FirewallAction = "reject"
 )
+
+const linuxLoginJournalLimit = 5000
 
 type FirewallPolicy string
 
@@ -409,7 +413,7 @@ func (m *Manager) linuxLogins(ctx context.Context, query LoginQuery) ([]LoginRec
 	if since.IsZero() {
 		since = m.now().Add(-rangeDuration(query.Range))
 	}
-	output, err := m.runner.Run(ctx, "journalctl", "-u", "ssh", "-u", "sshd", "--since", since.Format(time.RFC3339), "--no-pager", "-o", "short-iso", "--reverse")
+	output, err := m.runner.Run(ctx, "journalctl", "-u", "ssh", "-u", "sshd", "--since", since.Format(time.RFC3339), "--lines", strconv.Itoa(linuxLoginJournalLimit), "--no-pager", "-o", "short-iso", "--reverse")
 	if err != nil {
 		return nil, fmt.Errorf("read SSH journal: %w", err)
 	}
@@ -612,7 +616,9 @@ func (m *Manager) EnableUFW(ctx context.Context, rules []FirewallRule) error {
 
 func hasSSHAllowRule(rules []FirewallRule, port string) bool {
 	for _, rule := range rules {
-		if !rule.IPv6 && rule.Enabled && rule.Direction == DirectionInbound && rule.Action == ActionAllow && (rule.Protocol == "tcp" || rule.Protocol == "any") && rule.Port == port {
+		allowsSSH := rule.Action == ActionAllow || rule.Action == ActionLimit
+		targetsSSH := rule.Port == port || strings.EqualFold(rule.Port, "OpenSSH")
+		if !rule.IPv6 && rule.Enabled && rule.Direction == DirectionInbound && allowsSSH && targetsSSH && (rule.Protocol == "tcp" || rule.Protocol == "any") {
 			return true
 		}
 	}
@@ -644,11 +650,6 @@ func (m *Manager) ApplyUFW(ctx context.Context, baseline, desired []FirewallRule
 	if !validUFWDefaults(baselineDefaults) || !validUFWDefaults(desiredDefaults) {
 		return ErrInvalidPolicy
 	}
-	for _, rule := range desired {
-		if err := validateRule(rule); err != nil {
-			return err
-		}
-	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	output, err := m.runner.Run(ctx, "ufw", "status", "numbered")
@@ -671,6 +672,11 @@ func (m *Manager) ApplyUFW(ctx context.Context, baseline, desired []FirewallRule
 		return ErrSSHRuleRequired
 	}
 	deletes, additions := diffRules(baseline, desired)
+	for _, rule := range additions {
+		if err := validateRule(rule); err != nil {
+			return err
+		}
+	}
 	sort.Sort(sort.Reverse(sort.IntSlice(deletes)))
 	for _, rule := range additions {
 		if _, err := m.runner.Run(ctx, "ufw", ufwAddArguments(rule)...); err != nil {

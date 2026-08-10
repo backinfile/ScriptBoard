@@ -32,6 +32,20 @@ func TestNormalizeLoginQueryDefaultsToFiveRecords(t *testing.T) {
 	}
 }
 
+func TestLinuxLoginJournalReadIsBounded(t *testing.T) {
+	runner := &fakeRunner{}
+	manager := NewManager(Options{GOOS: "linux", Runner: runner, Now: func() time.Time {
+		return time.Date(2026, time.August, 10, 12, 0, 0, 0, time.UTC)
+	}})
+
+	if _, err := manager.Logins(context.Background(), LoginQuery{Range: "30d", Page: 1, PageSize: 20}); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.calls) != 1 || !strings.Contains(runner.calls[0], "--lines 5000") {
+		t.Fatalf("Linux journal call is not bounded: %#v", runner.calls)
+	}
+}
+
 func TestCapabilitiesCacheAvoidsRepeatedWindowsFirewallProbes(t *testing.T) {
 	now := time.Date(2026, time.August, 6, 2, 0, 0, 0, time.UTC)
 	runner := &fakeRunner{}
@@ -361,6 +375,38 @@ func TestApplyUFWAddsBeforeDeleting(t *testing.T) {
 		"sshd -T",
 		"ufw allow out proto udp to any port 53",
 		"ufw --force delete 2",
+	}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
+	}
+}
+
+func TestApplyUFWPreservesApplicationProfileAndLimitRules(t *testing.T) {
+	status := "Status: active\n[ 1] OpenSSH LIMIT IN Anywhere\n[ 2] 443/tcp REJECT IN Anywhere\n"
+	runner := &fakeRunner{responses: map[string]fakeResponse{
+		"ufw status numbered": {stdout: status},
+		"ufw status verbose":  {stdout: "Status: active\nDefault: deny (incoming), allow (outgoing), deny (routed)\n"},
+		"lookpath sshd":       {},
+		"sshd -T":             {stdout: "port 22\n"},
+	}}
+	manager := NewManager(Options{GOOS: "linux", Runner: runner, Now: time.Now})
+	_, baseline := parseUFWStatus(status)
+	desired := append(append([]FirewallRule(nil), baseline...), FirewallRule{
+		Direction: DirectionOutbound, Action: ActionAllow, Protocol: "udp", Port: "53", Address: "Anywhere", Enabled: true,
+	})
+	defaults := UFWDefaults{Incoming: PolicyDeny, Outgoing: PolicyAllow}
+
+	if err := manager.ApplyUFW(context.Background(), baseline, desired, defaults, defaults); err != nil {
+		t.Fatalf("ApplyUFW with preserved application rules: %v", err)
+	}
+	if len(baseline) != 2 || baseline[0].Port != "OpenSSH" || baseline[0].Action != ActionLimit || baseline[1].Action != ActionReject {
+		t.Fatalf("parsed application rules = %#v", baseline)
+	}
+	want := []string{
+		"ufw status numbered",
+		"ufw status verbose",
+		"sshd -T",
+		"ufw allow out proto udp to any port 53",
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
