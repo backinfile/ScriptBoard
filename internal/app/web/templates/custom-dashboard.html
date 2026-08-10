@@ -5,7 +5,7 @@
 <link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script>
 <title>{{if .Dashboard.Name}}{{.Dashboard.Name}}{{else}}自定义面板{{end}} · ScriptBoard</title>
 </head>
-<body class="{{if .PublicView}}custom-dashboard-public{{end}}">
+<body class="{{if .PublicView}}custom-dashboard-public{{else}}custom-dashboard-admin{{end}}">
 <main class="workspace custom-dashboard-workspace">
 {{if .PublicView}}
 <header class="custom-dashboard-public-head"><a class="brand-wordmark" href="/">ScriptBoard</a><span>状态面板</span></header>
