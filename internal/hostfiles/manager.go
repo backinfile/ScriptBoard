@@ -55,11 +55,12 @@ type Options struct {
 }
 
 type Manager struct {
-	protected  []string
-	instanceID string
-	topology   Topology
-	leaseMu    sync.Mutex
-	leases     map[string][]string
+	protected   []string
+	protectedMu sync.RWMutex
+	instanceID  string
+	topology    Topology
+	leaseMu     sync.Mutex
+	leases      map[string][]string
 }
 
 type Topology interface {
@@ -107,6 +108,12 @@ func Open(options Options) (*Manager, error) {
 }
 
 func (m *Manager) addProtectedPath(path string) {
+	m.protectedMu.Lock()
+	defer m.protectedMu.Unlock()
+	m.addProtectedPathLocked(path)
+}
+
+func (m *Manager) addProtectedPathLocked(path string) {
 	path = filepath.Clean(path)
 	key := ComparisonKey(path)
 	for _, existing := range m.protected {
@@ -115,6 +122,22 @@ func (m *Manager) addProtectedPath(path string) {
 		}
 	}
 	m.protected = append(m.protected, path)
+}
+
+// Protect adds a runtime-managed private path to the host-filesystem seam.
+// Both its lexical and resolved forms are protected from reads and mutation.
+func (m *Manager) Protect(path string) error {
+	if strings.TrimSpace(path) == "" || !filepath.IsAbs(path) {
+		return fmt.Errorf("protected host path must be absolute")
+	}
+	absolute := filepath.Clean(path)
+	m.addProtectedPath(absolute)
+	if resolved, err := filepath.EvalSymlinks(absolute); err == nil {
+		m.addProtectedPath(resolved)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("resolve protected path %q: %w", path, err)
+	}
+	return nil
 }
 
 func (m *Manager) List(path string) ([]Entry, error) {
@@ -440,6 +463,8 @@ func IsFilesystemRoot(path string) (bool, error) {
 }
 
 func (m *Manager) isInsideProtected(path string) bool {
+	m.protectedMu.RLock()
+	defer m.protectedMu.RUnlock()
 	for _, protected := range m.protected {
 		if pathContains(protected, path) {
 			return true
@@ -452,6 +477,8 @@ func (m *Manager) ensureMutationAllowed(path string) error {
 	if reservedPath(path) {
 		return ErrProtected
 	}
+	m.protectedMu.RLock()
+	defer m.protectedMu.RUnlock()
 	for _, protected := range m.protected {
 		if pathContains(protected, path) || pathContains(path, protected) {
 			return ErrProtected

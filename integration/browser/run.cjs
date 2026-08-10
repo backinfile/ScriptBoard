@@ -956,6 +956,36 @@ async function assertUserManagement(page, baseURL) {
   await assertNoHorizontalOverflow(page, "Users mobile");
   assert.equal(await page.locator('[data-username="browser-viewer"]').count(), 1);
   await page.setViewportSize({ width: 1440, height: 1000 });
+	return password;
+}
+
+async function assertMySQLManagement(page, baseURL) {
+  await page.goto(`${baseURL}/resources/databases`);
+  const workspace = page.locator("[data-mysql-workspace]");
+  await workspace.waitFor();
+  assert.equal((await workspace.locator("h1").textContent()).trim(), "Database backups");
+  assert.equal(await workspace.locator('form[action="/resources/databases/instances"]').count(), 1);
+  assert.equal(await workspace.locator('input[name="password"][type="password"]').count(), 1);
+  assert.equal(await workspace.locator('form[action="/resources/databases/settings/tools"]').count(), 1);
+  assert.match(await workspace.textContent(), /No database instances are configured/);
+  await assertNoHorizontalOverflow(page, "MySQL database management");
+  await saveSnapshot(page, "mysql-databases");
+}
+
+async function assertViewerCannotManageMySQL(browser, baseURL, password) {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, locale: "en-US" });
+  const page = await context.newPage();
+  await page.goto(`${baseURL}/login`);
+  await page.locator('input[name="username"]').fill("browser-viewer");
+  await page.locator('input[name="password"]').fill(password);
+  await Promise.all([
+    page.waitForURL("**/monitor"),
+    page.locator('[data-login-form] button[type="submit"]').click(),
+  ]);
+  assert.equal(await page.locator('.app-sidebar a[href="/resources/databases"]').count(), 0);
+  const response = await page.goto(`${baseURL}/resources/databases`);
+  assert.equal(response.status(), 403);
+  await context.close();
 }
 
 async function assertAccountSettings(page, baseURL) {
@@ -1044,12 +1074,36 @@ async function assertAssistantSettingsAndWorkspace(page, baseURL) {
   await configuredRow.waitFor();
   assert.equal(await configuredRow.locator('input:not([type="hidden"])').count(), 0);
   assert.match(await configuredRow.textContent(), /Credential configured/);
+
+  const connectionForm = configuredRow.locator("form[data-connection-test]");
+  const connectionRoute = route => route.fulfill({
+    status: 200,
+    contentType: "application/json; charset=utf-8",
+    body: JSON.stringify({ ok: false, message: "Upstream refused connection" }),
+  });
+  await page.route("**/settings/ai/llms/*/test", connectionRoute);
+  try {
+    await connectionForm.locator('button[type="submit"]').click();
+    const failureDialog = page.locator(".connection-test-dialog");
+    await failureDialog.waitFor();
+    assert.match(await failureDialog.textContent(), /Upstream refused connection/);
+    const inlineResult = connectionForm.locator("[data-connection-test-result]");
+    assert.equal(await inlineResult.textContent(), "", "connection failure was repeated beside the test button");
+    assert.equal(await inlineResult.evaluate(element => element.classList.contains("sr-only")), true, "empty connection failure status remained visible");
+    await failureDialog.locator("[data-dialog-close]").last().click();
+  } finally {
+    await page.unroute("**/settings/ai/llms/*/test", connectionRoute);
+  }
+  if (process.env.SCRIPTBOARD_BROWSER_SCOPE === "connection-test") return;
+
   await configuredRow.locator("[data-edit-llm]").click();
   await drawer.waitFor();
   assert.equal(await drawer.locator('input[name="api_key"]').inputValue(), "");
   await drawer.locator("[data-close-llm]").last().click();
   await drawer.waitFor({ state: "hidden" });
 
+  await page.locator("[data-open-guardrails]").click();
+  await page.locator('[data-guardrail-drawer][data-open="true"]').waitFor();
   const policy = page.locator('form[action="/settings/ai/defaults"]');
   const enabledInput = policy.locator('input[name="enabled"]');
   if (!await enabledInput.isChecked()) await policy.locator('label:has(input[name="enabled"])').click();
@@ -1229,13 +1283,20 @@ async function assertExternalInterfaces(page, fixture) {
       process.stdout.write("Chromium deferred-navigation regressions passed.\n");
       return;
     }
+    if (process.env.SCRIPTBOARD_BROWSER_SCOPE === "connection-test") {
+      await assertAssistantSettingsAndWorkspace(page, fixture.baseURL);
+      process.stdout.write("Chromium connection-test error regressions passed.\n");
+      return;
+    }
 
     await assertApplicationMonitoring(page, fixture.baseURL);
     await assertLiveLogViewer(page, fixture);
     await assertWebsiteMonitoring(page, fixture.baseURL);
     await assertStatusDisplaySettings(page, fixture.baseURL);
     await assertAccountSettings(page, fixture.baseURL);
-    await assertUserManagement(page, fixture.baseURL);
+	const viewerPassword = await assertUserManagement(page, fixture.baseURL);
+	await assertMySQLManagement(page, fixture.baseURL);
+	await assertViewerCannotManageMySQL(browser, fixture.baseURL, viewerPassword);
     await assertAssistantSettingsAndWorkspace(page, fixture.baseURL);
     await assertExternalInterfaces(page, fixture);
 
@@ -2274,6 +2335,8 @@ async function assertExternalInterfaces(page, fixture) {
     await chinesePage.reload();
     await assertNoHorizontalOverflow(chinesePage, "用户管理移动端");
     await chinesePage.setViewportSize({ width: 1440, height: 1000 });
+	await chinesePage.goto(`${fixture.baseURL}/resources/databases`);
+	assert.equal((await chinesePage.locator("main h1").textContent()).trim(), "数据库备份");
     await chinesePage.goto(`${fixture.baseURL}/monitor`);
     await Promise.all([
       chinesePage.waitForNavigation(),
@@ -2312,6 +2375,9 @@ async function assertExternalInterfaces(page, fixture) {
       const probe = document.elementFromPoint(panelBounds.left + 12, panelBounds.bottom - 12);
       return panelBounds.bottom < triggerBounds.top && (probe === menu || menu.contains(probe));
     }), true);
+    await noScriptPage.goto(`${fixture.baseURL}/resources/databases`);
+    assert.equal(await noScriptPage.locator('[data-mysql-workspace] form[action="/resources/databases/instances"]').count(), 1);
+    assert.equal(await noScriptPage.locator('[data-mysql-workspace] input[name="password"][type="password"]').count(), 1);
     await noScriptPage.goto(hostFilesWorkspaceURL);
     assert.equal(await noScriptPage.locator("[data-file-drop-form]").count(), 1);
     assert.equal(await noScriptPage.locator('[data-file-drop-form] input[type="file"][multiple]').count(), 1);

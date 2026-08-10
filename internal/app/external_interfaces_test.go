@@ -192,6 +192,14 @@ func TestAdministratorCreatesKeyAndExternalLogTrigger(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !strings.Contains(string(page), "External Interfaces") {
 		t.Fatalf("external interfaces page status=%d body=%s", response.StatusCode, page)
 	}
+	for _, expected := range []string{`class="external-interface-tabs"`, `href="/config/external-interfaces" aria-current="page"`, `href="/config/external-interfaces?tab=activity"`, `>Interfaces<`} {
+		if !strings.Contains(string(page), expected) {
+			t.Fatalf("external interfaces page is missing tab contract %q: %s", expected, page)
+		}
+	}
+	if strings.Contains(string(page), `class="external-activity"`) {
+		t.Fatalf("interface list tab still renders call history: %s", page)
+	}
 	response, err = client.Get(serverURL + "/config/external-interfaces/keys/new")
 	if err != nil {
 		t.Fatal(err)
@@ -359,7 +367,7 @@ func TestAdministratorCreatesKeyAndExternalLogTrigger(t *testing.T) {
 	if err != nil || !strings.Contains(string(logged), "[deploy]\tdeployment finished") || strings.Contains(string(logged), "must not be logged") {
 		t.Fatalf("log file content=%q err=%v", logged, err)
 	}
-	response, err = client.Get(serverURL + "/config/external-interfaces")
+	response, err = client.Get(serverURL + "/config/external-interfaces?tab=activity")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -369,18 +377,24 @@ func TestAdministratorCreatesKeyAndExternalLogTrigger(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !strings.Contains(string(activity), "deployment finished") || !strings.Contains(string(activity), "deployment-log") {
 		t.Fatalf("activity status=%d body=%s", response.StatusCode, activity)
 	}
-	detailPattern := regexp.MustCompile(`/config/external-interfaces/entries/([A-Za-z0-9_-]+)" data-task-link`)
-	detailMatch := detailPattern.FindSubmatch(activity)
-	if len(detailMatch) != 2 {
-		t.Fatalf("entry detail link missing: %s", activity)
+	response, err = client.Get(serverURL + "/config/external-interfaces")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(string(activity), `data-external-entry-row`) {
-		t.Fatalf("clickable entry row missing: %s", activity)
+	interfaces, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	detailPattern := regexp.MustCompile(`/config/external-interfaces/entries/([A-Za-z0-9_-]+)" data-task-link`)
+	detailMatch := detailPattern.FindSubmatch(interfaces)
+	if len(detailMatch) != 2 {
+		t.Fatalf("entry detail link missing: %s", interfaces)
+	}
+	if !strings.Contains(string(interfaces), `data-external-entry-row`) {
+		t.Fatalf("clickable entry row missing: %s", interfaces)
 	}
 	entryID := string(detailMatch[1])
 	for _, action := range []string{`href="` + previewURL + `"`, `/config/external-interfaces/entries/` + entryID + `/edit`, `/config/external-interfaces/entries/` + entryID + `/toggle`, `/config/external-interfaces/entries/` + entryID + `/delete`} {
-		if strings.Contains(string(activity), action) {
-			t.Fatalf("entry action %q should only appear in the drawer: %s", action, activity)
+		if strings.Contains(string(interfaces), action) {
+			t.Fatalf("entry action %q should only appear in the drawer: %s", action, interfaces)
 		}
 	}
 	response, err = client.Get(serverURL + strings.TrimSuffix(string(detailMatch[0]), `" data-task-link`))
@@ -487,20 +501,21 @@ func TestExternalInvocationHistorySupportsSearchDateFiltersAndPagination(t *test
 		}
 		return string(body)
 	}
-	first := readPage("/config/external-interfaces")
-	if !strings.Contains(first, "22 records") || !strings.Contains(first, "1 / 2") || !strings.Contains(first, `name="q"`) {
+	first := readPage("/config/external-interfaces?tab=activity")
+	if !strings.Contains(first, "22 records") || !strings.Contains(first, "1 / 2") || !strings.Contains(first, `name="q"`) ||
+		!strings.Contains(first, `name="tab" value="activity"`) || !strings.Contains(first, `?page=2&amp;tab=activity`) {
 		t.Fatalf("first page missing history controls or pagination: %s", first)
 	}
-	second := readPage("/config/external-interfaces?page=2")
+	second := readPage("/config/external-interfaces?tab=activity&page=2")
 	if !strings.Contains(second, "22 records") || !strings.Contains(second, "2 / 2") {
 		t.Fatalf("second page missing pagination: %s", second)
 	}
-	searched := readPage("/config/external-interfaces?q=message-07")
+	searched := readPage("/config/external-interfaces?tab=activity&q=message-07")
 	if !strings.Contains(searched, "message-07") || strings.Contains(searched, "message-08") || !strings.Contains(searched, "1 records") {
 		t.Fatalf("search result is incorrect: %s", searched)
 	}
 	today := now.Format(time.DateOnly)
-	filtered := readPage("/config/external-interfaces?from=" + today + "&to=" + today)
+	filtered := readPage("/config/external-interfaces?tab=activity&from=" + today + "&to=" + today)
 	if !strings.Contains(filtered, "21 records") || strings.Contains(filtered, "old-message") {
 		t.Fatalf("date filter result is incorrect: %s", filtered)
 	}

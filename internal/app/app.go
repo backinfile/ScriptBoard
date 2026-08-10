@@ -48,6 +48,7 @@ import (
 	"scriptboard/internal/hostsecurity"
 	"scriptboard/internal/hoststatus"
 	"scriptboard/internal/instancelock"
+	"scriptboard/internal/mysqlmanager"
 	"scriptboard/internal/privatepath"
 	"scriptboard/internal/runmanager"
 	"scriptboard/internal/scheduler"
@@ -123,11 +124,12 @@ func webTemplateFunctions() template.FuncMap {
 			}
 			return value.UTC().Format(time.RFC3339)
 		},
-		"humanBytes":         humanBytes,
-		"humanRate":          func(value float64) string { return humanBytes(uint64(math.Max(0, value))) + "/s" },
-		"percent":            func(value float64) string { return fmt.Sprintf("%.1f%%", value) },
-		"applicationSortURL": applicationSortURL,
-		"duration":           humanDuration,
+		"mysqlOperationCancelable": func(phase string) bool { return !mysqlOperationTerminal(phase) },
+		"humanBytes":               humanBytes,
+		"humanRate":                func(value float64) string { return humanBytes(uint64(math.Max(0, value))) + "/s" },
+		"percent":                  func(value float64) string { return fmt.Sprintf("%.1f%%", value) },
+		"applicationSortURL":       applicationSortURL,
+		"duration":                 humanDuration,
 		"localDuration": func(locale webLocale, value time.Duration) string {
 			if locale == localeSimplifiedChinese {
 				return humanDuration(value)
@@ -237,16 +239,33 @@ func webTemplateFunctions() template.FuncMap {
 	}
 }
 
-func humanBytes(value uint64) string {
+func humanBytes(value any) string {
+	var bytes uint64
+	switch number := value.(type) {
+	case uint64:
+		bytes = number
+	case uint:
+		bytes = uint64(number)
+	case int64:
+		if number > 0 {
+			bytes = uint64(number)
+		}
+	case int:
+		if number > 0 {
+			bytes = uint64(number)
+		}
+	default:
+		return "0 B"
+	}
 	units := []string{"B", "KiB", "MiB", "GiB", "TiB"}
-	amount := float64(value)
+	amount := float64(bytes)
 	unit := 0
 	for amount >= 1024 && unit < len(units)-1 {
 		amount /= 1024
 		unit++
 	}
 	if unit == 0 {
-		return fmt.Sprintf("%d %s", value, units[unit])
+		return fmt.Sprintf("%d %s", bytes, units[unit])
 	}
 	return fmt.Sprintf("%.1f %s", amount, units[unit])
 }
@@ -333,6 +352,10 @@ type App struct {
 	websiteMonitor     *websitemonitor.Manager
 	externalTriggers   *externaltrigger.Manager
 	externalLimit      *externaltrigger.Limiter
+	mysql              *mysqlmanager.Manager
+	mysqlContext       context.Context
+	mysqlCancel        context.CancelFunc
+	mysqlWG            sync.WaitGroup
 	instanceLock       *instancelock.Lock
 	handler            http.Handler
 	loginMu            sync.Mutex
@@ -423,6 +446,18 @@ func Open(config Config) (*App, error) {
 	}
 	application.externalTriggers = externaltrigger.New(db, externaltrigger.Options{SecretsDirectory: filepath.Join(stateRoot, "secrets")})
 	application.externalLimit = externaltrigger.NewLimiter(externaltrigger.LimiterOptions{RequestsPerMinute: 60, Concurrent: 4})
+	application.mysql, err = mysqlmanager.New(mysqlmanager.Options{DB: db, StateRoot: stateRoot, Audit: func(event mysqlmanager.AuditEvent) {
+		application.recordAuditWithActor(event.Action, event.Target, event.Result, "mysqlmanager", event.Actor.UserID, event.Actor.Username, "")
+	}})
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("initialize MySQL management module: %w", err)
+	}
+	if err := application.files.Protect(application.mysql.BackupRoot()); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("protect MySQL backup root: %w", err)
+	}
+	application.mysqlContext, application.mysqlCancel = context.WithCancel(context.Background())
 	application.assistant, err = assistant.New(db, assistant.Options{StateRoot: stateRoot})
 	if err != nil {
 		_ = db.Close()
@@ -549,6 +584,25 @@ func Open(config Config) (*App, error) {
 	if !validating {
 		application.hostStatus.Start(context.Background())
 		application.applicationStatus.Start(context.Background())
+		_ = application.mysql.ReconcilePlans(context.Background())
+		application.mysqlWG.Add(2)
+		go func() {
+			defer application.mysqlWG.Done()
+			_ = application.mysql.RecoverInterrupted(application.mysqlContext)
+		}()
+		go func() {
+			defer application.mysqlWG.Done()
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-application.mysqlContext.Done():
+					return
+				case <-ticker.C:
+					_ = application.mysql.RunDuePlans(application.mysqlContext)
+				}
+			}
+		}()
 	}
 	application.updateContext, application.updateCancel = context.WithCancel(context.Background())
 	application.updates = updatepkg.NewManager(updatepkg.ManagerConfig{
@@ -874,6 +928,10 @@ func (a *App) applyCredentialOverride(username, password, passwordFile string) e
 }
 
 func (a *App) Close() error {
+	if a.mysqlCancel != nil {
+		a.mysqlCancel()
+		a.mysqlWG.Wait()
+	}
 	if a.assistantRuntime != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = a.assistantRuntime.Close(ctx)
@@ -1256,6 +1314,12 @@ func openDatabase(path string) (*sql.DB, error) {
 			return nil, fmt.Errorf("initialize External Interface SQLite schema: %w", err)
 		}
 	}
+	for _, statement := range mysqlmanager.SchemaStatements {
+		if _, err := migration.Exec(statement); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("initialize MySQL management SQLite schema: %w", err)
+		}
+	}
 	if schemaVersion == 21 {
 		if _, err := migration.Exec(`ALTER TABLE assistant_tool_calls ADD COLUMN body_offset INTEGER NOT NULL DEFAULT 0`); err != nil {
 			_ = db.Close()
@@ -1387,6 +1451,19 @@ func openDatabase(path string) (*sql.DB, error) {
 			}
 		}
 	}
+	if schemaVersion >= 20 && schemaVersion <= 30 {
+		exists, err := sqliteColumnExists(migration, "mysql_instances", "connection_state")
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("inspect MySQL connection state migration: %w", err)
+		}
+		if !exists {
+			if _, err := migration.Exec(`ALTER TABLE mysql_instances ADD COLUMN connection_state TEXT NOT NULL DEFAULT 'untried' CHECK (connection_state IN ('untried', 'connected', 'failed'))`); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("migrate MySQL connection state: %w", err)
+			}
+		}
+	}
 	for _, statement := range []string{
 		"CREATE UNIQUE INDEX IF NOT EXISTS users_single_administrator_idx ON users(role) WHERE role = 'administrator'",
 		"CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id)",
@@ -1450,9 +1527,11 @@ func compatibleDatabaseSchema(version int) bool {
 	// latest observed LLM connection result, schema 27 adds bounded External
 	// Interface keys, entries, and invocation records, schema 28 persists
 	// per-user file Quick Access pins, and schema 29 merges those pins into one
-	// instance-wide Quick Access list. Each supported
-	// predecessor has an explicit transactional forward path.
-	return version == currentSchemaVersion || currentSchemaVersion == 29 && version >= 20 && version <= 28
+	// instance-wide Quick Access list, schema 30 adds MySQL instances,
+	// logical backups, plans, and recoverable operations, and schema 31 persists
+	// MySQL connection state. Each supported predecessor has an explicit
+	// transactional forward path.
+	return version == currentSchemaVersion || currentSchemaVersion == 31 && version >= 20 && version <= 30
 }
 
 func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {
@@ -1752,6 +1831,26 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /settings/updates/check", a.requireSession(http.HandlerFunc(a.checkUpdate)))
 	mux.Handle("POST /settings/updates/prepare", a.requireSession(http.HandlerFunc(a.prepareUpdate)))
 	mux.Handle("POST /settings/updates/apply", a.requireSession(http.HandlerFunc(a.applyUpdate)))
+	mux.Handle("GET /resources/databases", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.mysqlDatabasesPage)))
+	mux.Handle("POST /resources/databases/instances", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.saveMySQLInstance)))
+	mux.Handle("POST /resources/databases/settings/backup-root", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.setMySQLBackupRoot)))
+	mux.Handle("POST /resources/databases/settings/tools", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.setMySQLTools)))
+	mux.Handle("POST /resources/databases/instances/{id}/test", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.testMySQLInstance)))
+	mux.Handle("POST /resources/databases/instances/{id}/delete", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.deleteMySQLInstance)))
+	mux.Handle("POST /resources/databases/instances/{id}/databases", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.createMySQLDatabase)))
+	mux.Handle("POST /resources/databases/instances/{id}/backup", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.startMySQLBackup)))
+	mux.Handle("POST /resources/databases/instances/{id}/backup/batch", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.startMySQLBatchBackup)))
+	mux.Handle("POST /resources/databases/instances/{id}/drop", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.startDropMySQLDatabase)))
+	mux.Handle("POST /resources/databases/instances/{id}/imports", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.importMySQLBackup)))
+	mux.Handle("POST /resources/databases/instances/{id}/imports/server", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.importMySQLServerBackup)))
+	mux.Handle("POST /resources/databases/instances/{id}/plans", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.saveMySQLPlan)))
+	mux.Handle("POST /resources/databases/plans/{plan_id}/delete", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.deleteMySQLPlan)))
+	mux.Handle("GET /resources/databases/backups/{backup_id}/download", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.downloadMySQLBackup)))
+	mux.Handle("POST /resources/databases/backups/{backup_id}/restore", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.startMySQLRestore)))
+	mux.Handle("POST /resources/databases/backups/{backup_id}/delete", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.deleteMySQLBackup)))
+	mux.Handle("GET /resources/databases/operations/{operation_id}/status", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.mysqlOperationStatus)))
+	mux.Handle("GET /resources/databases/operations/{operation_id}/events", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.mysqlOperationEvents)))
+	mux.Handle("POST /resources/databases/operations/{operation_id}/cancel", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.cancelMySQLOperation)))
 	mux.Handle("GET /resources/files/new-directory", a.requireSession(http.HandlerFunc(a.newDirectoryTask)))
 	mux.Handle("GET /resources/files/upload", a.requireSession(http.HandlerFunc(a.uploadTask)))
 	mux.Handle("GET /resources/files/move", a.requireSession(http.HandlerFunc(a.moveFileTask)))

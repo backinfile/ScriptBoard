@@ -558,6 +558,45 @@ func TestOpenDatabaseMigratesSchema26ExternalInterfaceTables(t *testing.T) {
 	}
 }
 
+func TestOpenDatabaseMigratesSchema30MySQLConnectionState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	db, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`ALTER TABLE mysql_instances DROP COLUMN connection_state`,
+		`PRAGMA user_version=30`,
+		`PRAGMA wal_checkpoint(TRUNCATE)`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatalf("prepare schema 30 with %q: %v", statement, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := openDatabase(path)
+	if err != nil {
+		t.Fatalf("migrate schema 30: %v", err)
+	}
+	defer migrated.Close()
+	var version int
+	if err := migrated.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != currentSchemaVersion {
+		t.Fatalf("version = %d, error = %v", version, err)
+	}
+	var connectionState string
+	if _, err := migrated.Exec(`INSERT INTO mysql_instances
+		(id, name, host, port, username, tls_mode, ca_path, credential_configured, created_at, updated_at)
+		VALUES ('instance', 'Instance', 'localhost', 3306, 'root', 'preferred', '', 1, 1, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrated.QueryRow(`SELECT connection_state FROM mysql_instances WHERE id='instance'`).Scan(&connectionState); err != nil || connectionState != "untried" {
+		t.Fatalf("connection state = %q, error = %v", connectionState, err)
+	}
+}
+
 func TestFileOperationCommitRegistersRecoverableSourceTrash(t *testing.T) {
 	db, err := openDatabase(filepath.Join(t.TempDir(), "app.db"))
 	if err != nil {

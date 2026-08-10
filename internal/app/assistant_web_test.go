@@ -90,7 +90,7 @@ func TestAIWorkspaceAndSettingsUsePersistedLLMAndConversationState(t *testing.T)
 			t.Fatalf("AI workspace is missing %q: %s", expected, workspace)
 		}
 	}
-	for _, obsolete := range []string{`class="assistant-context-bar"`, `class="assistant-switch"`, `>Context details<`, `>Provider reported<`} {
+	for _, obsolete := range []string{`class="assistant-context-bar"`, `class="assistant-switch"`, `>Context details<`, `>Provider reported<`, `data-assistant-rail-close`} {
 		if strings.Contains(string(workspace), obsolete) {
 			t.Fatalf("AI workspace still contains obsolete composer markup %q: %s", obsolete, workspace)
 		}
@@ -107,6 +107,7 @@ func TestAIWorkspaceAndSettingsUsePersistedLLMAndConversationState(t *testing.T)
 	}
 	for _, expected := range []string{
 		`href="/settings/ai" aria-current="page"`, `data-assistant-settings`, `data-llm-drawer`,
+		`data-open-guardrails`, `data-guardrail-drawer`, `class="assistant-guardrail-summary"`,
 		`name="default_auto_approval"`, `name="max_active_conversations"`,
 		`>Enable AI conversations<`, `new conversations cannot be created and messages cannot be sent in existing conversations`,
 		`name="shared"`,
@@ -116,6 +117,11 @@ func TestAIWorkspaceAndSettingsUsePersistedLLMAndConversationState(t *testing.T)
 	} {
 		if !strings.Contains(string(settings), expected) {
 			t.Fatalf("AI settings are missing %q: %s", expected, settings)
+		}
+	}
+	for _, obsolete := range []string{`01 / LLM`, `02 / RUNTIME`, `03 / GUARDRAILS`} {
+		if strings.Contains(string(settings), obsolete) {
+			t.Fatalf("AI settings still contain obsolete section index %q: %s", obsolete, settings)
 		}
 	}
 
@@ -147,7 +153,7 @@ func TestAIWorkspaceAndSettingsUsePersistedLLMAndConversationState(t *testing.T)
 	if !strings.Contains(string(settings), `data-shared="true"`) || !strings.Contains(string(settings), `data-owned="true"`) {
 		t.Fatalf("configured LLM does not preserve owned/shared state: %s", settings)
 	}
-	for _, expected := range []string{`data-connection-ok="false"`, `data-state="not-ok"`, `data-server-error-retry`, `class="button button--compact assistant-llm-test"`, `>Test not passed<`, `>Test connection<`} {
+	for _, expected := range []string{`data-connection-ok="false"`, `data-state="not-ok"`, `data-server-error-retry`, `class="button button--compact assistant-llm-test"`, `data-connection-test`, `data-test-kind="llm"`, `>Test not passed<`, `>Test connection<`} {
 		if !strings.Contains(string(settings), expected) {
 			t.Fatalf("configured LLM is missing connection status or the labeled test action %q: %s", expected, settings)
 		}

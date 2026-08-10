@@ -22,7 +22,6 @@
   <aside class="assistant-rail" data-conversation-rail aria-label="{{t .Locale "assistant.conversations"}}">
     <header class="assistant-rail__head">
       <div><p>{{t .Locale "assistant.workspace_eyebrow"}}</p><h1>{{t .Locale "assistant.title"}}</h1></div>
-      <button class="icon-button assistant-rail__close" type="button" data-assistant-rail-close aria-label="{{t .Locale "assistant.close_conversations"}}"><span data-lucide="x" aria-hidden="true"></span></button>
     </header>
     <div class="assistant-rail__actions">
       {{if .AssistantEnabled}}<a class="assistant-new-chat" href="/ai"><span data-lucide="plus" aria-hidden="true"></span><span>{{t .Locale "assistant.new_conversation"}}</span></a>{{else}}<span class="assistant-new-chat" aria-disabled="true" title="{{t .Locale "assistant.conversations_disabled"}}"><span data-lucide="plus" aria-hidden="true"></span><span>{{t .Locale "assistant.new_conversation"}}</span></span>{{end}}

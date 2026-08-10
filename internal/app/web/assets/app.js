@@ -769,6 +769,7 @@
     const deferredData = options.deferredData ?? isDeferredDataURL(url);
     const immediate = deferredData && options.immediate === true;
     const title = options.title || navigationTitle(mainNavigationLink(url));
+    const previousScrollY = window.scrollY;
     const returnFocus = options.returnFocus || document.activeElement;
     let shellCommitted = false;
     if (immediate) {
@@ -776,7 +777,7 @@
       document.title = title;
       updateShellLocation(url);
       setSidebar(false);
-      window.scrollTo({ top: 0, behavior: "auto" });
+      window.scrollTo({ top: options.preserveScroll ? previousScrollY : 0, behavior: "auto" });
     }
     try {
       const result = await fetchDocument(url, {
@@ -821,7 +822,7 @@
       }
       updateShellLocation(result.response.url);
       setSidebar(false);
-      window.scrollTo({ top: 0, behavior: "auto" });
+      window.scrollTo({ top: options.preserveScroll ? previousScrollY : 0, behavior: "auto" });
       initPage({ openFileQuickAccess: options.openFileQuickAccess === true });
 
       if (deferredData) {
@@ -5104,10 +5105,6 @@
         document.body.classList.add("assistant-rail-open");
         return;
       }
-      if (event.target.closest("[data-assistant-rail-close]")) {
-        document.body.classList.remove("assistant-rail-open");
-        return;
-      }
       if (event.target.closest("[data-resource-picker-toggle]")) {
         event.preventDefault();
         setResourcePicker(resourcePicker?.dataset.open !== "true", true);
@@ -5276,7 +5273,11 @@
     const form = layer?.querySelector("[data-llm-form]");
     const title = layer?.querySelector("[data-llm-drawer-title]");
     const credentialHelp = layer?.querySelector("[data-credential-help]");
+    const guardrailLayer = root.querySelector("[data-guardrail-drawer]");
+    const guardrailDrawer = guardrailLayer?.querySelector(".assistant-guardrail-drawer");
+    const guardrailForm = guardrailLayer?.querySelector("form");
     let returnFocus = null;
+    let guardrailReturnFocus = null;
 
     const close = () => {
       if (!layer) return;
@@ -5300,30 +5301,58 @@
       form.elements.make_default.checked = row?.dataset.default === "true";
 		form.elements.supports_images.checked = row?.dataset.supportsImages === "true";
 		form.elements.shared.checked = row?.dataset.shared === "true";
-      if (title) title.textContent = row ? (locale() === "zh-CN" ? "编辑 LLM 配置" : "Edit LLM configuration") : (locale() === "zh-CN" ? "新增 LLM 配置" : "Add LLM configuration");
+      if (title) title.textContent = row ? layer.dataset.editTitle : layer.dataset.addTitle;
       if (credentialHelp) credentialHelp.dataset.editing = String(Boolean(row));
       layer.dataset.open = "true";
       layer.setAttribute("aria-hidden", "false");
       document.body.style.overflow = "hidden";
       requestAnimationFrame(() => form.elements.name.focus());
     };
+    const closeGuardrails = () => {
+      if (!guardrailLayer) return;
+      guardrailLayer.dataset.open = "false";
+      guardrailLayer.setAttribute("aria-hidden", "true");
+      if (layer?.dataset.open !== "true") document.body.style.overflow = "";
+      guardrailReturnFocus?.focus?.();
+      guardrailReturnFocus = null;
+    };
+    const openGuardrails = trigger => {
+      if (!guardrailLayer) return;
+      guardrailReturnFocus = trigger || document.activeElement;
+      guardrailLayer.dataset.open = "true";
+      guardrailLayer.setAttribute("aria-hidden", "false");
+      document.body.style.overflow = "hidden";
+      requestAnimationFrame(() => guardrailForm?.querySelector("input:not([type='hidden']),select,button")?.focus());
+    };
     const onClick = event => {
       if (event.target.closest("[data-add-llm]")) { open(null); return; }
       const edit = event.target.closest("[data-edit-llm]");
       if (edit) { open(edit.closest("[data-llm-id]")); return; }
-      if (event.target.closest("[data-close-llm]")) { event.preventDefault(); close(); }
+      if (event.target.closest("[data-close-llm]")) { event.preventDefault(); close(); return; }
+      const guardrailTrigger = event.target.closest("[data-open-guardrails]");
+      if (guardrailTrigger) { openGuardrails(guardrailTrigger); return; }
+      if (event.target.closest("[data-close-guardrails]")) { event.preventDefault(); closeGuardrails(); }
     };
-    const onKeydown = event => {
-      if (layer?.dataset.open !== "true") return;
-      if (event.key === "Escape") { event.preventDefault(); close(); return; }
-      if (event.key !== "Tab" || !drawer) return;
-      const focusable = [...drawer.querySelectorAll("button:not([disabled]),input:not([disabled]):not([type='hidden']),select:not([disabled]),textarea:not([disabled]),a[href]")]
+    const trapFocus = (event, activeDrawer) => {
+      if (event.key !== "Tab" || !activeDrawer) return;
+      const focusable = [...activeDrawer.querySelectorAll("button:not([disabled]),input:not([disabled]):not([type='hidden']),select:not([disabled]),textarea:not([disabled]),a[href]")]
         .filter(element => element.getClientRects().length > 0);
       if (!focusable.length) return;
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
       if (event.shiftKey && event.target === first) { event.preventDefault(); last.focus(); }
       else if (!event.shiftKey && event.target === last) { event.preventDefault(); first.focus(); }
+    };
+    const onKeydown = event => {
+      if (guardrailLayer?.dataset.open === "true") {
+        if (event.key === "Escape") { event.preventDefault(); closeGuardrails(); return; }
+        trapFocus(event, guardrailDrawer);
+        return;
+      }
+      if (layer?.dataset.open === "true") {
+        if (event.key === "Escape") { event.preventDefault(); close(); return; }
+        trapFocus(event, drawer);
+      }
     };
     root.addEventListener("click", onClick);
     document.addEventListener("keydown", onKeydown);
@@ -5349,6 +5378,151 @@
         dialog.removeEventListener("cancel", onCancel);
         if (dialog.open) dialog.close();
       });
+    });
+  }
+
+  function showConnectionTestError(form, message) {
+    const dialog = document.createElement("dialog");
+    dialog.className = "connection-test-dialog";
+    dialog.innerHTML = '<header><div><p></p><h2></h2></div><button class="icon-button icon-button--quiet" type="button" data-dialog-close><span data-lucide="x" aria-hidden="true"></span></button></header><p class="connection-test-dialog__message"></p><footer><button class="button" type="button" data-dialog-close></button></footer>';
+    const title = form.dataset.connectionTitle || "Connection test";
+    dialog.querySelector("header p").textContent = form.dataset.connectionFailure || "Connection failed";
+    dialog.querySelector("h2").textContent = title;
+    dialog.querySelector(".connection-test-dialog__message").textContent = message;
+    dialog.querySelector("footer button").textContent = form.dataset.closeLabel || "Close";
+    dialog.querySelector("header button").setAttribute("aria-label", form.dataset.closeLabel || "Close");
+    const close = () => dialog.close();
+    dialog.querySelectorAll("[data-dialog-close]").forEach(button => button.addEventListener("click", close));
+    dialog.addEventListener("close", () => dialog.remove(), { once: true });
+    document.body.append(dialog);
+    renderIcons(dialog);
+    dialog.showModal();
+    dialog.querySelector("footer button")?.focus();
+  }
+
+  async function submitConnectionTest(form, submitter) {
+    const result = form.querySelector("[data-connection-test-result]");
+    if (result) {
+      result.classList.add("sr-only");
+      result.removeAttribute("data-state");
+      result.textContent = "";
+    }
+    const data = new FormData(form);
+    if (submitter?.name) data.set(submitter.name, submitter.value);
+    try {
+      const response = await fetch(form.action, {
+        method: "POST",
+        body: data,
+        credentials: "same-origin",
+        headers: { "Accept": "application/json" },
+      });
+      const contentType = response.headers.get("content-type") || "";
+      const payload = contentType.includes("application/json") ? await response.json() : { message: (await response.text()).trim() };
+      const ok = response.ok && (payload.ok === true || payload.OK === true);
+      const detail = payload.message || payload.Error || payload.error || "";
+      if (!ok) throw new Error(detail || `HTTP ${response.status}`);
+      const version = payload.Version ? ` · ${payload.Version}` : "";
+      if (result) {
+        result.classList.remove("sr-only");
+        result.dataset.state = "success";
+        result.textContent = `${form.dataset.connectionSuccess || detail || "Connected"}${version}`;
+      }
+    } catch (error) {
+      const message = error?.message || form.dataset.connectionFailure || words().submitFailed;
+      showConnectionTestError(form, message);
+    } finally {
+      resetSubmit(form);
+    }
+  }
+
+  function initMySQLDrawers(cleanups) {
+    const root = document.querySelector("[data-mysql-workspace]");
+    if (!root) return;
+    root.querySelectorAll('form[method="post"]:not([data-connection-test])').forEach(form => form.dataset.async = "");
+    const drawers = [...root.querySelectorAll("details.mysql-drawer")];
+    const dropDrawer = root.querySelector("[data-mysql-drop-drawer]");
+    let active = null;
+    let dropReturnFocus = null;
+
+    const close = (drawer, restoreFocus = true) => {
+      if (!drawer?.open) return;
+      drawer.open = false;
+      drawer.querySelector(":scope > summary")?.setAttribute("aria-expanded", "false");
+      if (active === drawer) active = null;
+      if (guardrailLayer?.dataset.open !== "true") document.body.style.overflow = "";
+      if (restoreFocus && drawer === dropDrawer && dropReturnFocus) dropReturnFocus.focus();
+      else if (restoreFocus) drawer.querySelector(":scope > summary")?.focus();
+      if (drawer === dropDrawer) dropReturnFocus = null;
+    };
+    const onToggle = event => {
+      const drawer = event.currentTarget;
+      const summary = drawer.querySelector(":scope > summary");
+      summary?.setAttribute("aria-expanded", String(drawer.open));
+      if (!drawer.open) {
+        if (active === drawer) {
+          active = null;
+          document.body.style.overflow = "";
+        }
+        return;
+      }
+      drawers.forEach(candidate => { if (candidate !== drawer && candidate.open) close(candidate, false); });
+      active = drawer;
+      document.body.style.overflow = "hidden";
+      window.setTimeout(() => drawer.querySelector(".mysql-drawer-sheet")?.focus(), 180);
+    };
+    const onClick = event => {
+      const dropTrigger = event.target.closest("[data-mysql-drop-trigger]");
+      if (dropTrigger && dropDrawer) {
+        event.preventDefault();
+        dropTrigger.closest("details.action-menu")?.removeAttribute("open");
+        dropReturnFocus = dropTrigger;
+        const database = dropTrigger.dataset.database || "";
+        const databaseInput = dropDrawer.querySelector("[data-mysql-drop-database]");
+        const databaseName = dropDrawer.querySelector("[data-mysql-drop-name]");
+        const confirmation = dropDrawer.querySelector("[data-mysql-drop-confirmation]");
+        if (databaseInput) databaseInput.value = database;
+        if (databaseName) databaseName.textContent = database;
+        if (confirmation) confirmation.value = "";
+        dropDrawer.open = true;
+        window.setTimeout(() => confirmation?.focus(), 190);
+        return;
+      }
+      const control = event.target.closest("[data-mysql-drawer-close]");
+      if (!control) return;
+      const drawer = control.closest("details.mysql-drawer");
+      if (!drawer) return;
+      event.preventDefault();
+      close(drawer);
+    };
+    const onKeydown = event => {
+      if (!active?.open) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close(active);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const sheet = active.querySelector(".mysql-drawer-sheet");
+      const focusable = [...sheet.querySelectorAll("a[href],button:not([disabled]),input:not([disabled]):not([type='hidden']),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex='-1'])")]
+        .filter(element => element.getClientRects().length > 0);
+      if (!focusable.length) { event.preventDefault(); sheet.focus(); return; }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && (event.target === first || !sheet.contains(event.target))) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && event.target === last) { event.preventDefault(); first.focus(); }
+    };
+
+    drawers.forEach(drawer => {
+      drawer.querySelector(":scope > summary")?.setAttribute("aria-expanded", String(drawer.open));
+      drawer.addEventListener("toggle", onToggle);
+    });
+    root.addEventListener("click", onClick);
+    document.addEventListener("keydown", onKeydown);
+    cleanups.push(() => {
+      drawers.forEach(drawer => drawer.removeEventListener("toggle", onToggle));
+      root.removeEventListener("click", onClick);
+      document.removeEventListener("keydown", onKeydown);
+      document.body.style.overflow = "";
     });
   }
 
@@ -5602,6 +5776,7 @@
     initExternalEntryForm(document, cleanups);
     initDisplaySettings(cleanups);
 	initSecurityDialogs(cleanups);
+	initMySQLDrawers(cleanups);
     initSecurityBanDrawer(cleanups);
     initUpdateSourceDrawer(cleanups);
     initAssistantWorkspace(cleanups);
@@ -5670,6 +5845,7 @@
         immediate: mainNavigation || securityTab,
         title: mainNavigation ? navigationTitle(link) : undefined,
         focusSelector: link.dataset.focusAfterNavigation,
+        preserveScroll: link.hasAttribute("data-preserve-scroll"),
         openFileQuickAccess: mainNavigation && destination.pathname === "/resources/files",
       });
     }
@@ -5717,6 +5893,9 @@
     if (form.matches("[data-login-form]")) {
       event.preventDefault();
       submitLogin(form, submitter);
+    } else if (form.hasAttribute("data-connection-test")) {
+      event.preventDefault();
+      submitConnectionTest(form, submitter);
     } else if (form.hasAttribute("data-file-upload-form")) {
       event.preventDefault();
       submitFileUpload(form);

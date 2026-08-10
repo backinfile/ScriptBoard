@@ -293,3 +293,19 @@ _Avoid_: 用户密钥、脚本令牌、公开 API Key
 **外部功能条目（External Function Entry）**：
 隶属于一个外部接口 Key、以稳定 `name` 区分的预配置动作。条目只允许记录日志、受限上传、启动已有快捷执行或约束变量修改，调用方不能选择任意路径、脚本、参数或变量。
 _Avoid_: Webhook 脚本、远程命令、动态动作
+
+**MySQL 实例（MySQL Instance）**：
+由管理员或维护员登记的一个 MySQL 或 MariaDB TCP 服务连接边界，包含地址、TLS 策略与加密保存的凭据引用。它不是 SQLite 状态库，也不代表 SSH 隧道、Socket 或复制拓扑。
+_Avoid_: 数据源、连接字符串、数据库服务器文件
+
+**MySQL 备份（MySQL Backup）**：
+针对一个普通数据库生成或导入的独立逻辑备份产物，拥有来源、保留类别、SHA-256 与稳定 ID。计划轮换只处理该计划自己的成功产物；手动、导入和安全备份不自动轮换。
+_Avoid_: 物理快照、增量备份、PITR、状态库快照
+
+**MySQL 操作（MySQL Operation）**：
+一次持久化的备份、导入、恢复、回滚或安全删除流程，记录可恢复阶段、脱敏结果与取消请求。破坏性恢复在服务重启后必须继续安全回滚，或明确进入 `needs_attention`。
+_Avoid_: Run、SQL 查询、后台作业日志
+
+**MySQL 备份计划（MySQL Backup Plan）**：
+绑定单个 MySQL 实例、数据库集合和五字段 Cron 的逻辑备份规则。同一实例串行执行；重叠触发被记录为跳过且不补跑。
+_Avoid_: ScriptBoard 脚本计划、系统 crontab、复制计划

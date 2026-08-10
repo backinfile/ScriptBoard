@@ -26,6 +26,7 @@ const (
 	permissionReadAudit
 	permissionManageSystem
 	permissionManageUsers
+	permissionManageDatabases
 )
 
 func validAssignableRole(role userRole) bool {
@@ -72,6 +73,9 @@ func permissionForRequest(request *http.Request) permission {
 	}
 	if strings.HasPrefix(path, "/resources/variables") {
 		return permissionManageExecution
+	}
+	if strings.HasPrefix(path, "/resources/databases") {
+		return permissionManageDatabases
 	}
 	if strings.HasPrefix(path, "/resources/trash") {
 		return permissionWriteFiles

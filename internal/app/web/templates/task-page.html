@@ -44,9 +44,9 @@
       </form>
       <section class="user-access-actions" aria-labelledby="user-access-actions-title">
         <div><h2 id="user-access-actions-title">{{t .Locale "users.access_actions"}}</h2><p>{{t .Locale "users.access_actions_description"}}</p></div>
-        <div class="button-row">
-          <form method="post" action="/settings/users/{{.User.ID}}/reset-password"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--quiet" type="submit"><span data-lucide="key-round" aria-hidden="true"></span>{{t .Locale "users.reset_password"}}</button></form>
-          <form method="post" action="/settings/users/{{.User.ID}}/{{if .User.Enabled}}disable{{else}}enable{{end}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button {{if .User.Enabled}}button--danger{{else}}button--quiet{{end}}" type="submit"><span data-lucide="{{if .User.Enabled}}user-x{{else}}user-check{{end}}" aria-hidden="true"></span>{{if .User.Enabled}}{{t .Locale "users.disable"}}{{else}}{{t .Locale "users.enable"}}{{end}}</button></form>
+        <div class="button-row user-access-actions__buttons">
+          <form method="post" action="/settings/users/{{.User.ID}}/reset-password"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button user-access-action" type="submit"><span data-lucide="key-round" aria-hidden="true"></span>{{t .Locale "users.reset_password"}}</button></form>
+          <form method="post" action="/settings/users/{{.User.ID}}/{{if .User.Enabled}}disable{{else}}enable{{end}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button user-access-action {{if .User.Enabled}}button--danger{{else}}button--quiet{{end}}" type="submit"><span data-lucide="{{if .User.Enabled}}user-x{{else}}user-check{{end}}" aria-hidden="true"></span>{{if .User.Enabled}}{{t .Locale "users.disable"}}{{else}}{{t .Locale "users.enable"}}{{end}}</button></form>
         </div>
       </section>
       {{end}}
