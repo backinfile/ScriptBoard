@@ -1,0 +1,57 @@
+package secretstore
+
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestStateRootCopyCannotDecryptSealedSecretWithoutExternalKey(t *testing.T) {
+	firstRoot := filepath.Join(t.TempDir(), "state")
+	first, err := New(firstRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := first.Seal("assistant-provider", []byte("provider-secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(sealed, []byte("provider-secret")) {
+		t.Fatal("sealed value contains plaintext")
+	}
+	plain, err := first.Unseal("assistant-provider", sealed)
+	if err != nil || string(plain) != "provider-secret" {
+		t.Fatalf("unseal=%q err=%v", plain, err)
+	}
+	if relative, err := filepath.Rel(firstRoot, first.KeyPath()); err != nil || (!strings.HasPrefix(relative, ".."+string(filepath.Separator)) && relative != "..") {
+		t.Fatalf("master key is not outside State Root: state=%s key=%s relative=%s err=%v", firstRoot, first.KeyPath(), relative, err)
+	}
+
+	secondRoot := filepath.Join(t.TempDir(), "state")
+	second, err := New(secondRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.Unseal("assistant-provider", sealed); err == nil {
+		t.Fatal("a copied State Root decrypted without the original external key")
+	}
+}
+
+func TestPurposeIsAuthenticated(t *testing.T) {
+	store, err := New(filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := store.Seal("mysql-credential", []byte("secret"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Unseal("assistant-provider", sealed); err == nil {
+		t.Fatal("sealed secret was accepted for another purpose")
+	}
+	if _, err := os.Stat(store.KeyPath()); err != nil {
+		t.Fatalf("external key missing: %v", err)
+	}
+}

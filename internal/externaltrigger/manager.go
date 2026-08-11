@@ -15,6 +15,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"scriptboard/internal/secretstore"
 	"unicode"
 	"unicode/utf8"
 )
@@ -290,6 +292,7 @@ type Options struct {
 	Now              func() time.Time
 	Random           func([]byte) (int, error)
 	SecretsDirectory string
+	SecretStore      *secretstore.Store
 }
 
 type Manager struct {
@@ -308,7 +311,7 @@ func New(db *sql.DB, options Options) *Manager {
 	if random == nil {
 		random = rand.Read
 	}
-	return &Manager{db: db, now: now, random: random, secretStore: &encryptedSecretStore{directory: options.SecretsDirectory}}
+	return &Manager{db: db, now: now, random: random, secretStore: &encryptedSecretStore{directory: options.SecretsDirectory, vault: options.SecretStore}}
 }
 
 // GlobalEnabled returns the persistent emergency control for every External
@@ -348,6 +351,12 @@ func (manager *Manager) SetGlobalEnabled(ctx context.Context, enabled bool) erro
 
 func (manager *Manager) StoreSecret(id, secret string) error {
 	return manager.secretStore.set(id, secret)
+}
+
+func (manager *Manager) MigrateSecrets() error {
+	manager.secretStore.mu.Lock()
+	defer manager.secretStore.mu.Unlock()
+	return manager.secretStore.ensureMigrated()
 }
 
 func (manager *Manager) Secret(id string) (string, error) {

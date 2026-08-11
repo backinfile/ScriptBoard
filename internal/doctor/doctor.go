@@ -20,6 +20,7 @@ import (
 	"scriptboard/internal/installation"
 	"scriptboard/internal/platformservice"
 	"scriptboard/internal/secretredaction"
+	"scriptboard/internal/secretstore"
 	updatepkg "scriptboard/internal/update"
 )
 
@@ -68,6 +69,14 @@ func Run(config Config) Report {
 		required(name, info.IsDir(), path)
 	}
 	checkDirectory("state-root", config.StateRoot)
+	credentialKeyPath, credentialKeyErr := secretstore.KeyPathForStateRoot(config.StateRoot)
+	if credentialKeyErr != nil {
+		required("credential-master-key", false, credentialKeyErr.Error())
+	} else if info, statErr := os.Stat(credentialKeyPath); statErr != nil {
+		required("credential-master-key", false, statErr.Error())
+	} else {
+		required("credential-master-key", info.Mode().IsRegular(), credentialKeyPath)
+	}
 	checkConfig(&report, config.ConfigPath)
 	checkDisk(&report, "state-disk", config.StateRoot)
 	checkSQLite(&report, filepath.Join(config.StateRoot, "app.db"))

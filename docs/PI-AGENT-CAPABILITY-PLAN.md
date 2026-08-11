@@ -351,7 +351,7 @@ type ExternalKnowledge interface {
 安全要求：
 
 - 实例级开关默认关闭；只允许 Administrator 配置 Provider、凭据和域名策略。
-- 凭据保存到 State Root 私有凭据文件，不回显、不进入数据库和 Pi 环境。
+- 凭据由 State Root 外部主密钥密封后保存到 State Root 私有凭据文件，不回显、不进入数据库和 Pi 环境。
 - 搜索请求只发送用户确认的查询词；默认不自动附加日志、文件正文、主机名或 URL。
 - Fetch 仅接受 Search 返回的短期不透明文档 ID，不接受模型构造的 URL。
 - Adapter 重新解析 DNS，阻止 loopback、私网、链路本地、云元数据地址和不安全重定向。

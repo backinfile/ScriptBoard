@@ -52,6 +52,7 @@
 
 ## 最新决策
 
+- [ADR-0143 可恢复凭据使用 State Root 外部、操作系统保护的主密钥](./0143-seal-recoverable-secrets-with-an-external-host-key.md)，让 Provider、MySQL 与远程网站 Key 的密文和解密材料不再同库存放。
 - [ADR-0142 Host Files 可执行上传先进入私有收件箱再发布](./0142-stage-executable-host-uploads-before-publication.md)，把接收字节与使脚本进入可执行主机路径拆成两个有审计的动作。
 - [ADR-0141 TLS 验证例外一小时到期且远程汇聚只接受 HTTPS](./0141-expire-monitor-tls-exceptions-and-require-https-aggregation.md)，移除网站探测的永久弱校验状态，并收紧跨实例只读汇聚传输。
 - [ADR-0140 Custom Dashboard 数据源使用共享出站策略且不跟随重定向](./0140-route-custom-dashboard-sources-through-outbound-policy.md)，阻止数据卡片访问本机、私网或元数据服务，并避免保存的凭据跨重定向转发。

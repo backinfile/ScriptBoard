@@ -4,7 +4,11 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -50,12 +54,64 @@ func TestSaveInstanceKeepsPasswordOutOfSQLite(t *testing.T) {
 	if err != nil || password != "never-store-this-in-sqlite" {
 		t.Fatalf("password round trip = %q, %v", password, err)
 	}
-	secretBytes, err := os.ReadFile(filepath.Join(stateRoot, "secrets", "mysql-credentials.enc"))
+	secretBytes, err := os.ReadFile(filepath.Join(stateRoot, "secrets", "mysql-credentials.v2.enc"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(secretBytes), "never-store-this-in-sqlite") {
 		t.Fatal("credential file contains plaintext MySQL password")
+	}
+}
+
+func TestManagerMigratesStateRootMySQLKeyToExternalSealedStore(t *testing.T) {
+	stateRoot := t.TempDir()
+	secretsDirectory := filepath.Join(stateRoot, "secrets")
+	if err := os.MkdirAll(secretsDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatal(err)
+	}
+	block, _ := aes.NewCipher(key)
+	gcm, _ := cipher.NewGCM(block)
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		t.Fatal(err)
+	}
+	legacy, _ := json.Marshal(map[string][]byte{
+		"instance-one": gcm.Seal(nonce, nonce, []byte("legacy-mysql-secret"), []byte("instance-one")),
+	})
+	legacyKeyPath := filepath.Join(secretsDirectory, "mysql-credentials.key")
+	legacyDataPath := filepath.Join(secretsDirectory, "mysql-credentials.enc")
+	if err := os.WriteFile(legacyKeyPath, key, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyDataPath, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	applyTestSchema(t, database)
+	manager, err := New(Options{DB: database, StateRoot: stateRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	password, err := manager.instancePassword("instance-one")
+	if err != nil || password != "legacy-mysql-secret" {
+		t.Fatalf("migrated password=%q err=%v", password, err)
+	}
+	for _, path := range []string{legacyKeyPath, legacyDataPath} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("legacy credential material remained at %s: %v", path, err)
+		}
+	}
+	sealed, err := os.ReadFile(filepath.Join(secretsDirectory, "mysql-credentials.v2.enc"))
+	if err != nil || bytes.Contains(sealed, []byte("legacy-mysql-secret")) {
+		t.Fatalf("sealed migration output invalid: err=%v body=%s", err, sealed)
 	}
 }
 

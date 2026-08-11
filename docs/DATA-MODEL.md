@@ -403,7 +403,7 @@ state-root/
   tmp/
 ```
 
-State Root、Install Root、活动配置、管理员密码文件、TLS 私钥和各文件系统回收区均为受保护路径。文件页面不显示这些路径；其祖先不能执行会影响后代的写入、移动、删除、覆盖或执行。磁盘上已有 `.git/` 不属于应用状态，ScriptBoard 不修改或删除它。
+State Root、State Root 同级的外部凭据主密钥目录、Install Root、活动配置、管理员密码文件、TLS 私钥和各文件系统回收区均为受保护路径。文件页面不显示这些路径；其祖先不能执行会影响后代的写入、移动、删除、覆盖或执行。磁盘上已有 `.git/` 不属于应用状态，ScriptBoard 不修改或删除它。
 
 正式系统服务另有独立程序布局，不属于 State Root：
 
@@ -552,6 +552,10 @@ capability 和 Provider 凭据的有界调用/返回 JSON，
 AssistantApproval 绑定用户、角色、授权版本、对话、Tool Call、参数和目标当前状态。
 服务重启把尚未完成的工具标记为 interrupted，并取消 pending/approved 的状态修改。
 
+Provider 凭据 JSON 先由统一 credential store 以用途绑定的 AES-GCM 密封，再写入 State
+Root；其主密钥在 State Root 同级受保护目录，Windows key blob 使用机器级 DPAPI，Unix
+key 文件仅允许服务身份/root。旧明文 `assistant-provider.json` 在启动时原子迁移并删除。
+
 每个受管 Pi 进程同时获得独立的环回 Provider 代理和 256-bit capability。代理在 Web
 进程内持有实际 Provider Endpoint 与 API Key，只接受绑定模型对应的固定推理 POST 路径，
 禁止重定向并复用共享出站策略；Pi 的参数、环境和 `models.json` 不再包含上游 Endpoint
@@ -586,6 +590,10 @@ schema 27 增加 `external_trigger_keys`、`external_trigger_entries` 和 `exter
 
 schema 38 增加持久化单例 `external_trigger_control`，用于全局紧急暂停所有有效外部调用。schema 39 在 Entry 上增加 `require_signature`，并用 `external_trigger_nonces` 原子消费短期 nonce；nonce 按 Key 唯一并带过期时间。迁移的旧 Entry 默认保持 Bearer 兼容，新 Entry 默认要求 5 分钟时间戳、唯一 nonce 和 HMAC-SHA256 签名。schema 40 在 `sessions` 增加 `authentication_assurance` 和 `reauthenticated_at`；高风险声明式路由要求 10 分钟内的浏览器会话密码认证，Assistant UI 动作不会为这些路由提供替代入口。schema 41 在 `audit_events` 增加 `request_id` 与 `authentication_assurance`；新事件把两者纳入 v2 哈希，历史空字段事件继续按 v1 验证。
 
+只读远程网站来源等仍需恢复的 External Interface 相关秘密使用统一 credential store 密封；
+旧 `external-interface.master-key` 与逐项密文启动时解密、重封并先删除旧原始 key。一次显示
+Trigger Key 本身只保留不可逆 verifier，不进入这套可恢复秘密存储。
+
 变量与快捷执行条目使用 `target` 建立领域引用：目标被引用时禁止删除；变量被引用时也禁止改名或转为密码变量。日志文件与上传目录都在配置和调用时通过 Host Filesystem 边界重新验证；日志动作将规范化后的文件绝对路径保存在 `target` 与 `config_json.file` 中。到期 Key 不需要后台任务修改数据库；鉴权时根据当前时间派生为不可用状态。
 
 私有上传收件箱同时接收 External Interface 文件与 Host Files 页面提交的可执行扩展。两类
@@ -606,7 +614,7 @@ schema 30 增加独立的 `mysqlmanager` 领域表；Web 层只调用领域服�
 | MySQLOperation | 操作类型、目标库、阶段、进度、安全备份引用、错误摘要、取消请求和起止时间 |
 | MySQLSetting | 备份根目录以及宿主 `mysqldump`/`mysql` 客户端路径 |
 
-实例密码由 State Root 下的私有主密钥使用 AES-GCM 加密后保存到独立凭据文件。CLI 每次只读取临时、权限受限的 option file，完成后立即删除；参数、错误、审计和 HTML 均不得包含密码。默认备份根目录是 `state-root/database-backups/mysql`，自定义绝对目录同样进入 Host Filesystem Protected Path。
+实例密码由 State Root 外的统一主密钥使用用途绑定 AES-GCM 密封后保存到独立凭据文件；Windows 主密钥 blob 再受机器级 DPAPI 保护，Unix 使用 root-only 外部 key。旧 State Root 内 MySQL 原始 key 在启动迁移时先删除。CLI 每次只读取临时、权限受限的 option file，完成后立即删除；参数、错误、审计和 HTML 均不得包含密码。默认备份根目录是 `state-root/database-backups/mysql`，自定义绝对目录同样进入 Host Filesystem Protected Path。
 
 每个成功备份对应一个原子提交的 `.sql.gz` 和 SHA-256。现有库恢复在替换前强制创建 `safety` 备份；导入失败自动从该产物回滚，回滚失败进入 `needs_attention`。服务启动会删除未提交的 `.partial`，并根据持久化阶段恢复破坏性操作。计划只轮换自身成功产物，手动、导入和安全备份不参与轮换。
 

@@ -129,7 +129,7 @@ Windows 从各个可用卷开始浏览，Linux 从 `/` 开始浏览。文件页�
 
 调用格式为 `POST /trigger?name=ENTRY_NAME`，并通过 `Authorization: Bearer KEY` 传递 Key。完整 Key 仅在创建或轮换成功页显示一次，服务端只保存不可逆校验值，离开页面后无法再次查看。新建功能默认要求 `X-ScriptBoard-Timestamp`、唯一 `X-ScriptBoard-Nonce` 和 `X-ScriptBoard-Signature`；签名为以完整 Key 为密钥，对换行分隔的 `v1`、Unix 时间戳、nonce、大写 HTTP 方法、原始请求路径（含查询字符串）计算的 HMAC-SHA256，时间误差不得超过 5 分钟且 nonce 不可复用。外部调用同时受每 Key、规范化来源地址、动作类型和全局四层请求/并发配额约束，超过配额统一返回低信息量的 `429`。请立即将 Key 保存到受管秘密系统，只提供给可信调用方；非本机调用必须使用 HTTPS，不再使用时应停用或轮换。
 
-“网站监控”条目使用 `GET`。如需在另一个 ScriptBoard 中查看本实例，请复制完整调用 URL 与 Key，在接收端打开“监控 → 网站”，选择“连接其他 ScriptBoard”。远端监控会显示在独立的只读列表中，接收端不能检查、暂停、编辑、排序或删除远端项目；远端 Key 会加密保存在接收端 State Root。
+“网站监控”条目使用 `GET`。如需在另一个 ScriptBoard 中查看本实例，请复制完整调用 URL 与 Key，在接收端打开“监控 → 网站”，选择“连接其他 ScriptBoard”。远端监控会显示在独立的只读列表中，接收端不能检查、暂停、编辑、排序或删除远端项目；远端 Key 会以外部主密钥密封后保存在接收端 State Root。
 
 ### 主机安全
 
@@ -204,6 +204,12 @@ scriptboard audit verify --config CONFIG_PATH
 - 需要保留的主机文件；
 - `state_root`，其中包含数据库、运行日志、会话、审计和 AI 数据；
 - 服务使用的 `config.yaml`（如果创建了自定义配置）。
+
+可恢复的 Provider、MySQL 与远程网站凭据只以密文存在 State Root；解密主密钥位于 State
+Root 同级的 `secrets/credential-master-<实例摘要>.key`，文件页把该目录视为受保护路径。
+Linux/Unix 迁移或灾难恢复必须把这个 root-only key 作为独立秘密备份；Windows key 文件
+还由机器级 DPAPI 保护，只能在原主机解封，跨主机恢复需重新录入这些凭据。只复制 State
+Root 不包含解密材料，这是预期安全属性。`scriptboard doctor` 会检查外部 key 是否存在。
 
 从旧版本升级前请先备份。当前版本使用数据库 schema 41，可自动迁移 schema 20–40；更早版本的数据库和旧式配置不会自动迁移。schema 40 会记录会话认证保证级别和最近再次认证时间；新登录视为最近认证，高风险操作在 10 分钟后要求于受保护的浏览器会话中重新输入当前密码。schema 41 为审计事件增加服务端 Request ID 与认证保证字段，并把新字段纳入兼容旧事件的 v2 哈希。旧快捷执行项会以未发布状态迁移，在管理员重新保存前不能启动或绑定外部入口。旧版本中共享一个 Key 的多个外部功能会拆成独立 Key：保留最早功能的原 Key，其余功能迁移到默认停用、必须轮换并显式启用 Key 与功能后才能使用的新 Key。为保持兼容，迁移后的外部功能不会自动要求 HMAC；管理员可在编辑页启用，新建功能默认启用。外部接口页面提供持久化全局紧急开关；暂停后所有有效外部调用以低信息 503 响应拒绝且不会执行操作。审计记录形成带保留锚点与链尾的 SHA-256 哈希链；服务启动时会验证，亦可在面板不可用时运行 `scriptboard audit verify --config CONFIG_PATH` 离线检查中间记录修改、删除或截断。
 

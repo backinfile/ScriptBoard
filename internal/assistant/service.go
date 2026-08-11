@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"net"
 	"net/url"
@@ -20,6 +21,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"scriptboard/internal/secretstore"
 )
 
 const (
@@ -160,8 +163,9 @@ var SchemaStatements = []string{
 }
 
 type Options struct {
-	StateRoot string
-	Now       func() time.Time
+	StateRoot   string
+	Now         func() time.Time
+	SecretStore *secretstore.Store
 }
 
 type Actor struct {
@@ -246,10 +250,12 @@ type SessionTelemetry struct {
 }
 
 type Service struct {
-	db             *sql.DB
-	now            func() time.Time
-	credentialPath string
-	credentialMu   sync.Mutex
+	db                   *sql.DB
+	now                  func() time.Time
+	credentialPath       string
+	legacyCredentialPath string
+	secretStore          *secretstore.Store
+	credentialMu         sync.Mutex
 }
 
 func New(db *sql.DB, options Options) (*Service, error) {
@@ -271,7 +277,23 @@ func New(db *sql.DB, options Options) (*Service, error) {
 	if now == nil {
 		now = time.Now
 	}
-	return &Service{db: db, now: now, credentialPath: filepath.Join(secretsDirectory, "assistant-provider.json")}, nil
+	vault := options.SecretStore
+	if vault == nil {
+		var err error
+		vault, err = secretstore.New(stateRoot)
+		if err != nil {
+			return nil, fmt.Errorf("initialize assistant credential store: %w", err)
+		}
+	}
+	service := &Service{
+		db: db, now: now, secretStore: vault,
+		credentialPath:       filepath.Join(secretsDirectory, "assistant-provider.enc"),
+		legacyCredentialPath: filepath.Join(secretsDirectory, "assistant-provider.json"),
+	}
+	if err := service.migrateLegacyCredentials(); err != nil {
+		return nil, err
+	}
+	return service, nil
 }
 
 func (s *Service) SaveModel(ctx context.Context, actor Actor, id string, input ModelInput) (ModelConfig, error) {
@@ -1434,14 +1456,26 @@ func (s *Service) loadCredentials() (map[string]string, error) {
 	if len(body) > 1<<20 {
 		return nil, fmt.Errorf("assistant provider credential file is too large")
 	}
+	plain, err := s.secretStore.Unseal("assistant-provider-credentials-v1", body)
+	if err != nil {
+		return nil, fmt.Errorf("unseal assistant provider credentials: %w", err)
+	}
 	credentials := make(map[string]string)
-	if err := json.Unmarshal(body, &credentials); err != nil {
+	if err := json.Unmarshal(plain, &credentials); err != nil {
 		return nil, fmt.Errorf("decode assistant provider credentials: %w", err)
 	}
 	return credentials, nil
 }
 
 func (s *Service) writeCredentials(credentials map[string]string) error {
+	plain, err := json.Marshal(credentials)
+	if err != nil {
+		return fmt.Errorf("encode assistant provider credentials: %w", err)
+	}
+	body, err := s.secretStore.Seal("assistant-provider-credentials-v1", plain)
+	if err != nil {
+		return fmt.Errorf("seal assistant provider credentials: %w", err)
+	}
 	directory := filepath.Dir(s.credentialPath)
 	temporary, err := os.CreateTemp(directory, ".assistant-provider-*.tmp")
 	if err != nil {
@@ -1458,10 +1492,8 @@ func (s *Service) writeCredentials(credentials map[string]string) error {
 	if err := temporary.Chmod(0o600); err != nil {
 		return fmt.Errorf("protect assistant credential staging file: %w", err)
 	}
-	encoder := json.NewEncoder(temporary)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(credentials); err != nil {
-		return fmt.Errorf("encode assistant provider credentials: %w", err)
+	if _, err := temporary.Write(body); err != nil {
+		return fmt.Errorf("write assistant provider credentials: %w", err)
 	}
 	if err := temporary.Sync(); err != nil {
 		return fmt.Errorf("sync assistant provider credentials: %w", err)
@@ -1473,6 +1505,46 @@ func (s *Service) writeCredentials(credentials map[string]string) error {
 		return fmt.Errorf("commit assistant provider credentials: %w", err)
 	}
 	committed = true
+	return nil
+}
+
+func (s *Service) migrateLegacyCredentials() error {
+	body, err := os.ReadFile(s.legacyCredentialPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read legacy assistant provider credentials: %w", err)
+	}
+	if len(body) > 1<<20 {
+		return errors.New("legacy assistant provider credential file is too large")
+	}
+	legacy := make(map[string]string)
+	if err := json.Unmarshal(body, &legacy); err != nil {
+		return fmt.Errorf("decode legacy assistant provider credentials: %w", err)
+	}
+	createdSealed := false
+	if _, statErr := os.Stat(s.credentialPath); statErr == nil {
+		existing, loadErr := s.loadCredentials()
+		if loadErr != nil {
+			return loadErr
+		}
+		if !maps.Equal(existing, legacy) {
+			return errors.New("sealed and legacy assistant provider credentials disagree")
+		}
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return fmt.Errorf("inspect sealed assistant provider credentials: %w", statErr)
+	} else if writeErr := s.writeCredentials(legacy); writeErr != nil {
+		return writeErr
+	} else {
+		createdSealed = true
+	}
+	if err := os.Remove(s.legacyCredentialPath); err != nil {
+		if createdSealed {
+			_ = os.Remove(s.credentialPath)
+		}
+		return fmt.Errorf("remove plaintext assistant provider credentials: %w", err)
+	}
 	return nil
 }
 

@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"scriptboard/internal/secretstore"
 )
 
 type TLSMode string
@@ -55,6 +57,7 @@ type Options struct {
 	ClientExecutable string
 	Now              func() time.Time
 	Audit            func(AuditEvent)
+	SecretStore      *secretstore.Store
 }
 
 type AuditEvent struct {
@@ -159,9 +162,20 @@ func New(options Options) (*Manager, error) {
 	if now == nil {
 		now = time.Now
 	}
+	vault := options.SecretStore
+	if vault == nil {
+		vault, err = secretstore.New(stateRoot)
+		if err != nil {
+			return nil, fmt.Errorf("initialize MySQL credential store: %w", err)
+		}
+	}
+	secrets := credentialStore{directory: filepath.Join(stateRoot, "secrets"), vault: vault}
+	if err := secrets.ensureMigrated(); err != nil {
+		return nil, fmt.Errorf("migrate MySQL credentials: %w", err)
+	}
 	return &Manager{
 		db: options.DB, stateRoot: stateRoot, backupRoot: backupRoot, now: now,
-		secrets: credentialStore{directory: filepath.Join(stateRoot, "secrets")}, runner: osCommandRunner{},
+		secrets: secrets, runner: osCommandRunner{},
 		dumpTool: dumpTool, clientTool: clientTool, active: make(map[string]string), cancels: make(map[string]context.CancelFunc), server: &mysqlDatabaseServer{}, audit: options.Audit,
 	}, nil
 }

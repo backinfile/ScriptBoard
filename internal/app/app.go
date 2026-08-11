@@ -55,6 +55,7 @@ import (
 	"scriptboard/internal/runmanager"
 	"scriptboard/internal/scheduler"
 	"scriptboard/internal/secretredaction"
+	"scriptboard/internal/secretstore"
 	updatepkg "scriptboard/internal/update"
 	"scriptboard/internal/uploadinbox"
 	"scriptboard/internal/websitemonitor"
@@ -414,6 +415,10 @@ func Open(config Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	credentialStore, err := secretstore.New(stateRoot)
+	if err != nil {
+		return nil, err
+	}
 	installRoot := strings.TrimSpace(config.InstallRoot)
 	if installRoot == "" {
 		if executable, executableErr := os.Executable(); executableErr == nil {
@@ -422,7 +427,7 @@ func Open(config Config) (*App, error) {
 	}
 	instanceDigest := sha256.Sum256([]byte(stateRoot))
 	files, err := hostfiles.Open(hostfiles.Options{
-		ProtectedPaths: []string{stateRoot, installRoot, config.ConfigPath, config.AdminPasswordFile, config.TLSKey},
+		ProtectedPaths: []string{stateRoot, filepath.Dir(credentialStore.KeyPath()), installRoot, config.ConfigPath, config.AdminPasswordFile, config.TLSKey},
 		InstanceID:     hex.EncodeToString(instanceDigest[:]), Topology: config.FileTopology,
 	})
 	if err != nil {
@@ -487,13 +492,17 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("verify audit hash chain: %w", err)
 	}
-	application.externalTriggers = externaltrigger.New(db, externaltrigger.Options{SecretsDirectory: filepath.Join(stateRoot, "secrets")})
+	application.externalTriggers = externaltrigger.New(db, externaltrigger.Options{SecretsDirectory: filepath.Join(stateRoot, "secrets"), SecretStore: credentialStore})
+	if err := application.externalTriggers.MigrateSecrets(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate External Interface secrets: %w", err)
+	}
 	if err := application.externalTriggers.PurgeLegacyKeySecrets(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("purge recoverable External Interface keys: %w", err)
 	}
 	application.externalLimit = externaltrigger.NewLimiter(externaltrigger.LimiterOptions{RequestsPerMinute: 60, Concurrent: 4})
-	application.mysql, err = mysqlmanager.New(mysqlmanager.Options{DB: db, StateRoot: stateRoot, Audit: func(event mysqlmanager.AuditEvent) {
+	application.mysql, err = mysqlmanager.New(mysqlmanager.Options{DB: db, StateRoot: stateRoot, SecretStore: credentialStore, Audit: func(event mysqlmanager.AuditEvent) {
 		application.recordAuditWithActor(event.Action, event.Target, event.Result, "mysqlmanager", event.Actor.UserID, event.Actor.Username, "")
 	}})
 	if err != nil {
@@ -505,7 +514,7 @@ func Open(config Config) (*App, error) {
 		return nil, fmt.Errorf("protect MySQL backup root: %w", err)
 	}
 	application.mysqlContext, application.mysqlCancel = context.WithCancel(context.Background())
-	application.assistant, err = assistant.New(db, assistant.Options{StateRoot: stateRoot})
+	application.assistant, err = assistant.New(db, assistant.Options{StateRoot: stateRoot, SecretStore: credentialStore})
 	if err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("initialize assistant module: %w", err)
