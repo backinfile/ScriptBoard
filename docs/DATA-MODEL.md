@@ -421,6 +421,12 @@ install-root/
   scriptboard-tray-launcher.exe    # 仅 Windows；稳定托盘入口
 ```
 
+受管 Linux Web 服务以无登录 `scriptboard-web` 运行，Windows Web 服务以 `LocalService` 加独立
+`NT SERVICE\ScriptBoard` SID 运行；它们只获 Install Root 读/执行、配置读取以及 State Root 和
+实例外部密钥目录修改权限。特权 Broker 分别保留 root/LocalSystem，并只通过受保护本机 IPC
+接受该 Web 服务身份。Run、Assistant 与凭据解封尚未完成独立身份迁移，不能把当前 ACL 视为
+最终最小权限模型。
+
 Update Operation 是文件系统持久化事务，不写入 SQLite 作为事实来源，以便数据库本身被恢复时仍能继续判断更新阶段。终态结果由应用在正常启动后幂等导入审计一次。
 
 主机安全写操作使用独立 Broker 的内存 capability，不新增 SQLite capability 表。Broker 收到

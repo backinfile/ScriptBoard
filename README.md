@@ -95,7 +95,7 @@ state/secrets/initial-admin-password
 .\scriptboard.exe service status
 ```
 
-服务默认安装到 `C:\Program Files\ScriptBoard`，状态数据保存在 `C:\ProgramData\ScriptBoard\state`。安装会初始化状态并注册 Web 与 `ScriptBoardBroker` 两个服务；防火墙和主机安全写操作只经保护的本机 Named Pipe 进入 Broker。安装时还会为当前 Windows 用户配置托盘自启动。
+服务默认安装到 `C:\Program Files\ScriptBoard`，状态数据保存在 `C:\ProgramData\ScriptBoard\state`。安装会初始化状态并注册 Web 与 `ScriptBoardBroker` 两个服务；Web 使用低权限 `LocalService` 与独立服务 SID，Broker 保留 LocalSystem，防火墙和主机安全写操作只经保护的本机 Named Pipe 进入 Broker。安装时还会为当前 Windows 用户配置托盘自启动。
 
 ### Linux
 
@@ -107,7 +107,7 @@ sudo /opt/scriptboard/current/scriptboard service start
 sudo /opt/scriptboard/current/scriptboard service status
 ```
 
-服务默认安装到 `/opt/scriptboard`，状态数据保存在 `/var/lib/scriptboard/state`。安装会初始化状态并注册 `scriptboard.service` 与 `scriptboard-broker.service`；防火墙和主机安全写操作只经校验 peer UID 的本机 Unix Socket 进入 Broker。
+服务默认安装到 `/opt/scriptboard`，状态数据保存在 `/var/lib/scriptboard/state`。安装会初始化状态、创建无登录 `scriptboard-web` 系统用户，并注册 `scriptboard.service` 与 `scriptboard-broker.service`；Web 不以 root 运行，防火墙和主机安全写操作只经校验 peer UID 的本机 Unix Socket 进入 root Broker。
 
 只有需要修改监听地址、TLS、状态目录等设置时，才需要创建 YAML 配置文件，并在安装时通过 `--config CONFIG_PATH` 指定。未指定时，ScriptBoard 会使用平台默认配置路径（Windows 为 `C:\ProgramData\ScriptBoard\config.yaml`，Linux 为 `/etc/scriptboard/config.yaml`）；该文件不存在时直接使用内置默认值。
 

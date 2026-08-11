@@ -19,8 +19,8 @@ Broker 在执行前独立写入 `attempted` 审计；意图审计或外部签名
 ADR-0145 的外部 checkpoint。checkpoint 写入使用跨进程锁，只采纳同一受保护签名 key 签出的、
 仍属于当前完整链且事件 ID 单调前移的其他进程 checkpoint。
 
-这是 P0-02 的协议、进程和首批调用迁移切片，不是身份拆分完成声明。当前过渡服务配置中 Linux
-Web 与 Broker 仍以 root、Windows 服务仍以 LocalSystem 运行，因此获得 Web 进程代码执行仍可
-绕过 Broker 直接使用其 OS 权限。后续必须先把凭据解封、Host Files 和 Run 各自移出 Web，再把
-Web 改为 `scriptboard-web`/受限 Windows 服务账户，并为 Runner 与 AI Runtime 建立独立身份和
-目录 ACL；完成这些验收前 P0-02 保持“部分完成”。
+这是 P0-02 的协议、进程和首批调用迁移切片，不是身份拆分完成声明。ADR-0147 已进一步把受管
+Web 改为 Linux `scriptboard-web` 和 Windows `LocalService` + 独立服务 SID，Broker 继续使用
+root/LocalSystem；获得 Web 进程代码执行已不再直接获得 Broker 的主机权限。后续仍必须把凭据
+解封、Host Files 和 Run 各自移出 Web，并为 Runner 与 AI Runtime 建立独立身份和目录 ACL；
+完成这些验收前 P0-02 保持“部分完成”。

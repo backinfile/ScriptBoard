@@ -5,7 +5,9 @@ package platformservice
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -17,6 +19,8 @@ import (
 const (
 	serviceName       = "ScriptBoard"
 	brokerServiceName = "ScriptBoardBroker"
+	webServiceAccount = `NT AUTHORITY\LocalService`
+	webServiceSID     = `NT SERVICE\ScriptBoard`
 )
 
 func Exists() (bool, error) {
@@ -45,7 +49,7 @@ func Install(executable, configPath, _ string, stateRoot string) error {
 	brokerExecutable := filepath.Join(filepath.Dir(executable), "scriptboard-broker.exe")
 	brokerConfiguration := mgr.Config{
 		StartType: mgr.StartAutomatic, DisplayName: "ScriptBoard Privileged Broker",
-		Description: "ScriptBoard fixed privileged operation broker",
+		Description: "ScriptBoard fixed privileged operation broker", SidType: windows.SERVICE_SID_TYPE_UNRESTRICTED,
 	}
 	broker, err := manager.CreateService(brokerServiceName, brokerExecutable, brokerConfiguration, "--state-root", stateRoot)
 	if errors.Is(err, windows.ERROR_SERVICE_EXISTS) {
@@ -62,6 +66,7 @@ func Install(executable, configPath, _ string, stateRoot string) error {
 		current.StartType = mgr.StartAutomatic
 		current.DisplayName = brokerConfiguration.DisplayName
 		current.Description = brokerConfiguration.Description
+		current.SidType = brokerConfiguration.SidType
 		if err = broker.UpdateConfig(current); err != nil {
 			broker.Close()
 			return err
@@ -76,6 +81,7 @@ func Install(executable, configPath, _ string, stateRoot string) error {
 	configuration := mgr.Config{
 		StartType: mgr.StartAutomatic, DisplayName: "ScriptBoard",
 		Description: "ScriptBoard trusted-script management service", Dependencies: []string{brokerServiceName},
+		ServiceStartName: webServiceAccount, SidType: windows.SERVICE_SID_TYPE_UNRESTRICTED,
 	}
 	service, err := manager.CreateService(serviceName, executable, configuration, "serve", "--config", configPath)
 	if errors.Is(err, windows.ERROR_SERVICE_EXISTS) {
@@ -93,6 +99,9 @@ func Install(executable, configPath, _ string, stateRoot string) error {
 		current.DisplayName = "ScriptBoard"
 		current.Description = configuration.Description
 		current.Dependencies = configuration.Dependencies
+		current.ServiceStartName = configuration.ServiceStartName
+		current.Password = ""
+		current.SidType = configuration.SidType
 		if err = service.UpdateConfig(current); err != nil {
 			service.Close()
 			return err
@@ -101,7 +110,77 @@ func Install(executable, configPath, _ string, stateRoot string) error {
 	if err != nil {
 		return fmt.Errorf("install Windows service: %w", err)
 	}
-	return service.Close()
+	if err := service.Close(); err != nil {
+		return err
+	}
+	versionRoot := filepath.Dir(executable)
+	versionsRoot := filepath.Dir(versionRoot)
+	if !strings.EqualFold(filepath.Base(versionsRoot), "versions") {
+		return errors.New("Windows Web service executable is outside the managed versions directory")
+	}
+	return grantWindowsWebServiceAccess(filepath.Dir(versionsRoot), configPath, stateRoot)
+}
+
+func grantWindowsWebServiceAccess(installRoot, configPath, stateRoot string) error {
+	if !filepath.IsAbs(installRoot) || !filepath.IsAbs(configPath) || !filepath.IsAbs(stateRoot) {
+		return errors.New("Windows service ACL paths must be absolute")
+	}
+	sid, _, _, err := windows.LookupSID("", webServiceSID)
+	if err != nil {
+		return fmt.Errorf("resolve Windows Web service SID: %w", err)
+	}
+	const fileDeleteChild windows.ACCESS_MASK = 0x00000040
+	modify := windows.ACCESS_MASK(windows.FILE_GENERIC_READ | windows.FILE_GENERIC_WRITE | windows.FILE_GENERIC_EXECUTE | windows.DELETE | fileDeleteChild)
+	for _, grant := range []struct {
+		path        string
+		permissions windows.ACCESS_MASK
+		recursive   bool
+	}{
+		{installRoot, windows.ACCESS_MASK(windows.FILE_GENERIC_READ | windows.FILE_GENERIC_EXECUTE), true},
+		{configPath, windows.ACCESS_MASK(windows.FILE_GENERIC_READ), false},
+		{stateRoot, modify, true},
+		{filepath.Join(filepath.Dir(stateRoot), "secrets"), modify, true},
+	} {
+		if _, statErr := os.Stat(grant.path); errors.Is(statErr, os.ErrNotExist) {
+			continue
+		} else if statErr != nil {
+			return statErr
+		}
+		if err := grantWindowsPathAccess(grant.path, sid, grant.permissions, grant.recursive); err != nil {
+			return fmt.Errorf("grant Web service access to %s: %w", grant.path, err)
+		}
+	}
+	return nil
+}
+
+func grantWindowsPathAccess(path string, sid *windows.SID, permissions windows.ACCESS_MASK, recursive bool) error {
+	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return err
+	}
+	currentACL, _, err := descriptor.DACL()
+	if err != nil {
+		return err
+	}
+	inheritance := uint32(0)
+	if recursive {
+		inheritance = windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT
+	}
+	var pinner runtime.Pinner
+	pinner.Pin(sid)
+	defer pinner.Unpin()
+	acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{{
+		AccessPermissions: permissions,
+		AccessMode:        windows.GRANT_ACCESS,
+		Inheritance:       inheritance,
+		Trustee: windows.TRUSTEE{
+			TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeValue: windows.TrusteeValueFromSID(sid),
+		},
+	}}, currentACL)
+	if err != nil {
+		return err
+	}
+	return windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION, nil, nil, acl, nil)
 }
 
 func SwitchExecutable(executable, configPath string) error {
@@ -281,6 +360,9 @@ func MatchesExecutable(executable, configPath string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if !strings.EqualFold(configuration.ServiceStartName, webServiceAccount) || configuration.SidType == windows.SERVICE_SID_TYPE_NONE {
+		return false, nil
+	}
 	arguments, err := windows.DecomposeCommandLine(configuration.BinaryPathName)
 	if err != nil {
 		return false, err
@@ -297,6 +379,9 @@ func MatchesExecutable(executable, configPath string) (bool, error) {
 	brokerConfiguration, err := broker.Config()
 	if err != nil {
 		return false, err
+	}
+	if brokerConfiguration.SidType == windows.SERVICE_SID_TYPE_NONE {
+		return false, nil
 	}
 	brokerArguments, err := windows.DecomposeCommandLine(brokerConfiguration.BinaryPathName)
 	return err == nil && len(brokerArguments) == 3 &&

@@ -90,7 +90,7 @@ Run the following in an elevated PowerShell window:
 .\scriptboard.exe service status
 ```
 
-The service is installed under `C:\Program Files\ScriptBoard`, and state is stored under `C:\ProgramData\ScriptBoard\state`. Installation initializes state and registers both the Web service and `ScriptBoardBroker`; firewall and host-security mutations enter the Broker only through its protected local named pipe. Installation also enables the tray app for the current Windows user.
+The service is installed under `C:\Program Files\ScriptBoard`, and state is stored under `C:\ProgramData\ScriptBoard\state`. Installation initializes state and registers both the Web service and `ScriptBoardBroker`; Web runs as low-privilege `LocalService` with a per-service SID, while the Broker retains LocalSystem, and firewall or host-security mutations enter it only through the protected local named pipe. Installation also enables the tray app for the current Windows user.
 
 ### Linux
 
@@ -102,7 +102,7 @@ sudo /opt/scriptboard/current/scriptboard service start
 sudo /opt/scriptboard/current/scriptboard service status
 ```
 
-The service is installed under `/opt/scriptboard`, and state is stored under `/var/lib/scriptboard/state`. Installation initializes state and registers both `scriptboard.service` and `scriptboard-broker.service`; firewall and host-security mutations enter the Broker only through a local Unix socket with peer-UID verification.
+The service is installed under `/opt/scriptboard`, and state is stored under `/var/lib/scriptboard/state`. Installation initializes state, creates the non-login `scriptboard-web` system user, and registers both `scriptboard.service` and `scriptboard-broker.service`; Web does not run as root, and firewall or host-security mutations enter the root Broker only through a local Unix socket with peer-UID verification.
 
 Create a YAML configuration file only when you need to change settings such as the listen address, TLS, or the state directory, then pass it during installation with `--config CONFIG_PATH`. Without that flag, ScriptBoard uses the platform's default configuration path (`C:\ProgramData\ScriptBoard\config.yaml` on Windows or `/etc/scriptboard/config.yaml` on Linux); if the file does not exist, the built-in defaults are used.
 
