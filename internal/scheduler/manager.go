@@ -11,6 +11,7 @@ import (
 
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/runmanager"
+	"scriptboard/internal/secretredaction"
 )
 
 type VariableLoader func() (map[string]string, error)
@@ -304,7 +305,7 @@ func (m *Manager) RunNowAs(id, userID, username string) (string, error) {
 	triggerID, _ := randomID()
 	result, errorText := "created", ""
 	if err != nil {
-		result, errorText = "rejected", err.Error()
+		result, errorText = "rejected", secretredaction.String(err.Error())
 	}
 	_, _ = m.db.Exec("INSERT INTO schedule_triggers (id, schedule_id, scheduled_for, result, run_id, error) VALUES (?, ?, ?, ?, ?, ?)", triggerID, schedule.ID, m.now().UnixNano(), result, runID, errorText)
 	m.recordAudit("schedule_run_now", schedule.Name, result)
@@ -499,7 +500,7 @@ func (m *Manager) fireDue() {
 		}
 		variables, loadErr := m.loadVariables()
 		if loadErr != nil {
-			_, _ = m.db.Exec("INSERT INTO schedule_triggers (id, schedule_id, scheduled_for, result, run_id, error) VALUES (?, ?, ?, 'rejected', '', ?)", triggerID, item.id, item.scheduledFor, loadErr.Error())
+			_, _ = m.db.Exec("INSERT INTO schedule_triggers (id, schedule_id, scheduled_for, result, run_id, error) VALUES (?, ?, ?, 'rejected', '', ?)", triggerID, item.id, item.scheduledFor, secretredaction.String(loadErr.Error()))
 			m.recordAudit("schedule_trigger", item.name, "rejected")
 			continue
 		}
@@ -508,7 +509,7 @@ func (m *Manager) fireDue() {
 			SourceType: "scheduler", SourceName: item.name, SourceID: item.id, Variables: variables,
 		})
 		if startErr != nil {
-			_, _ = m.db.Exec("INSERT INTO schedule_triggers (id, schedule_id, scheduled_for, result, run_id, error) VALUES (?, ?, ?, 'rejected', '', ?)", triggerID, item.id, item.scheduledFor, startErr.Error())
+			_, _ = m.db.Exec("INSERT INTO schedule_triggers (id, schedule_id, scheduled_for, result, run_id, error) VALUES (?, ?, ?, 'rejected', '', ?)", triggerID, item.id, item.scheduledFor, secretredaction.String(startErr.Error()))
 			m.recordAudit("schedule_trigger", item.name, "rejected")
 			continue
 		}

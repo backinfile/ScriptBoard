@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"scriptboard/internal/secretredaction"
 )
 
 const maxResponseBytes = 2 << 20
@@ -480,7 +482,7 @@ func (m *Manager) RefreshCard(ctx context.Context, id string) (Card, error) {
 	return m.getCard(ctx, id)
 }
 func (m *Manager) recordFailure(ctx context.Context, card Card, refreshErr error) (Card, error) {
-	message := strings.TrimSpace(refreshErr.Error())
+	message := strings.TrimSpace(secretredaction.String(refreshErr.Error()))
 	if len(message) > 240 {
 		message = message[:240]
 	}

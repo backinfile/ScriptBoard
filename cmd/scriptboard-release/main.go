@@ -20,12 +20,13 @@ import (
 	"time"
 
 	"scriptboard/internal/buildinfo"
+	"scriptboard/internal/secretredaction"
 	updatepkg "scriptboard/internal/update"
 )
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "error: "+err.Error())
+		fmt.Fprintln(os.Stderr, secretredaction.String("error: "+err.Error()))
 		os.Exit(1)
 	}
 }

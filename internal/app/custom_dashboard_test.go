@@ -116,8 +116,11 @@ func TestCustomDashboardCanBeExportedAndImported(t *testing.T) {
 	if bundle.Format != "scriptboard.custom-dashboard" || bundle.Dashboard.Name != "迁移测试" || len(bundle.Dashboard.Cards) != 1 {
 		t.Fatalf("unexpected export bundle: %#v", bundle)
 	}
-	if card := bundle.Dashboard.Cards[0]; card.Name != "服务额度" || card.Headers["Authorization"] != "Bearer test-secret" || card.RefreshSeconds != 300 || card.Config["unit"] != "GB" {
+	if card := bundle.Dashboard.Cards[0]; card.Name != "服务额度" || card.Headers["Authorization"] != "[REDACTED]" || card.RefreshSeconds != 300 || card.Config["unit"] != "GB" {
 		t.Fatalf("exported card configuration mismatch: %#v", card)
+	}
+	if strings.Contains(string(exported), "test-secret") {
+		t.Fatalf("export leaked authorization secret: %s", exported)
 	}
 	_, exportedAll := postExport(cardMatches[0][1], cardMatches[1][1])
 

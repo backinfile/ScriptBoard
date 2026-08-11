@@ -16,6 +16,8 @@ import (
 	"time"
 
 	mysql "github.com/go-sql-driver/mysql"
+
+	"scriptboard/internal/secretredaction"
 )
 
 type ConnectionTest struct {
@@ -132,11 +134,11 @@ func (m *Manager) instanceAndPassword(ctx context.Context, id string) (Instance,
 func (server *mysqlDatabaseServer) Test(ctx context.Context, instance Instance, password string) (ConnectionTest, error) {
 	database, err := server.open(instance, password)
 	if err != nil {
-		return ConnectionTest{Error: err.Error()}, err
+		return ConnectionTest{Error: secretredaction.String(err.Error())}, err
 	}
 	defer database.Close()
 	if err := database.PingContext(ctx); err != nil {
-		return ConnectionTest{Error: err.Error()}, err
+		return ConnectionTest{Error: secretredaction.String(err.Error())}, err
 	}
 	result := ConnectionTest{OK: true, CanReadDatabases: true}
 	_ = database.QueryRowContext(ctx, `SELECT @@version, @@version_comment,

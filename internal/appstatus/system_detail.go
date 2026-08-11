@@ -11,6 +11,8 @@ import (
 
 	gnet "github.com/shirou/gopsutil/v4/net"
 	"github.com/shirou/gopsutil/v4/process"
+
+	"scriptboard/internal/secretredaction"
 )
 
 const maxProcessConnections = 256
@@ -23,7 +25,7 @@ func (p *SystemProbe) RuntimeDetail(ctx context.Context, request DetailRequest) 
 		if p.dockerError != nil || p.docker == nil {
 			message := "Docker Engine is unavailable."
 			if p.dockerError != nil {
-				message = p.dockerError.Error()
+				message = secretredaction.String(p.dockerError.Error())
 			}
 			return RuntimeDetail{
 				State: RuntimeUnavailable, Kind: KindDocker,

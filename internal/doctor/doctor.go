@@ -19,6 +19,7 @@ import (
 	"scriptboard/internal/diskspace"
 	"scriptboard/internal/installation"
 	"scriptboard/internal/platformservice"
+	"scriptboard/internal/secretredaction"
 	updatepkg "scriptboard/internal/update"
 )
 
@@ -74,6 +75,9 @@ func Run(config Config) Report {
 	checkNetwork(&report, config.Listen, config.TLSCert, config.TLSKey)
 	checkService(&report)
 	checkUpdateInstallation(&report, config.StateRoot)
+	for index := range report.Checks {
+		report.Checks[index].Detail = secretredaction.String(report.Checks[index].Detail)
+	}
 	return report
 }
 

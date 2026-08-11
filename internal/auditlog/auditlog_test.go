@@ -110,3 +110,25 @@ func TestVerifyAcceptsRetentionAnchorAndDetectsTailDeletion(t *testing.T) {
 		t.Fatal("deleted audit tail was not detected")
 	}
 }
+
+func TestAppendRedactsSecretsBeforeHashingAndPersistence(t *testing.T) {
+	store, db := testStore(t)
+	ctx := context.Background()
+	const secret = "audit-password-value"
+	if _, err := store.Append(ctx, Event{
+		OccurredAt: "1786410000", Action: "configure", Target: "password=" + secret,
+		Result: "Authorization: Bearer synthetic-audit-token-value", SourceAddress: "local",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var target, result string
+	if err := db.QueryRow("SELECT target, result FROM audit_events").Scan(&target, &result); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(target, secret) || strings.Contains(result, "synthetic-audit-token-value") {
+		t.Fatalf("audit event retained secret: target=%q result=%q", target, result)
+	}
+	if verification, err := store.Verify(ctx); err != nil || verification.Count != 1 {
+		t.Fatalf("verification=%#v err=%v", verification, err)
+	}
+}

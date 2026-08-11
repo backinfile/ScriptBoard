@@ -16,6 +16,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"scriptboard/internal/outboundpolicy"
+	"scriptboard/internal/secretredaction"
 )
 
 const maxResponseBodyBytes = 1 << 20
@@ -37,7 +38,7 @@ func (NetworkProbe) Check(ctx context.Context, config Config) Evidence {
 	if err != nil {
 		result.ErrorCategory = "internal"
 		result.Summary = "无法创建网站请求"
-		result.TechnicalError = err.Error()
+		result.TechnicalError = secretredaction.String(err.Error())
 		return result
 	}
 	applyHTTPRequestHeaders(request, config.RequestHeaders)
@@ -74,7 +75,7 @@ func (NetworkProbe) Check(ctx context.Context, config Config) Evidence {
 	if err != nil {
 		result.ErrorCategory = categorizeNetworkError(err)
 		result.Summary = "网站请求未完成"
-		result.TechnicalError = err.Error()
+		result.TechnicalError = secretredaction.String(err.Error())
 		return result
 	}
 	defer response.Body.Close()
@@ -90,7 +91,7 @@ func (NetworkProbe) Check(ctx context.Context, config Config) Evidence {
 		if readErr != nil {
 			result.ErrorCategory = "connect"
 			result.Summary = "读取网站响应时连接中断"
-			result.TechnicalError = readErr.Error()
+			result.TechnicalError = secretredaction.String(readErr.Error())
 			return result
 		}
 		if len(body) > maxResponseBodyBytes {
@@ -128,7 +129,7 @@ func checkWebSocket(ctx context.Context, config Config) Evidence {
 	if err != nil {
 		result.ErrorCategory = categorizeNetworkError(err)
 		result.Summary = "WebSocket 连接未建立"
-		result.TechnicalError = err.Error()
+		result.TechnicalError = secretredaction.String(err.Error())
 		if response != nil {
 			result.StatusCode = response.StatusCode
 			_ = response.Body.Close()
@@ -154,7 +155,7 @@ func checkWebSocket(ctx context.Context, config Config) Evidence {
 	if err := writeApplicationMessage(connection, config); err != nil {
 		result.ErrorCategory = "connect"
 		result.Summary = "WebSocket 应用消息未发送"
-		result.TechnicalError = err.Error()
+		result.TechnicalError = secretredaction.String(err.Error())
 		return result
 	}
 	for {
@@ -162,7 +163,7 @@ func checkWebSocket(ctx context.Context, config Config) Evidence {
 		if err != nil {
 			result.ErrorCategory = categorizeNetworkError(err)
 			result.Summary = "等待 WebSocket 应用消息时未收到有效响应"
-			result.TechnicalError = err.Error()
+			result.TechnicalError = secretredaction.String(err.Error())
 			return result
 		}
 		if messageType != websocket.TextMessage && messageType != websocket.BinaryMessage {
@@ -208,7 +209,7 @@ func checkWebSocketPingPong(ctx context.Context, connection *websocket.Conn, con
 		result.ErrorCategory = "internal"
 		result.Summary = "Ping 载荷无效"
 		if err != nil {
-			result.TechnicalError = err.Error()
+			result.TechnicalError = secretredaction.String(err.Error())
 		}
 		return result
 	}
@@ -238,7 +239,7 @@ func checkWebSocketPingPong(ctx context.Context, connection *websocket.Conn, con
 	if err := connection.WriteControl(websocket.PingMessage, payload, deadline); err != nil {
 		result.ErrorCategory = categorizeNetworkError(err)
 		result.Summary = "Ping 控制帧未发送"
-		result.TechnicalError = err.Error()
+		result.TechnicalError = secretredaction.String(err.Error())
 		return result
 	}
 	select {
@@ -249,7 +250,7 @@ func checkWebSocketPingPong(ctx context.Context, connection *websocket.Conn, con
 	case err := <-readError:
 		result.ErrorCategory = categorizeNetworkError(err)
 		result.Summary = "等待匹配的 Pong 时连接已结束"
-		result.TechnicalError = err.Error()
+		result.TechnicalError = secretredaction.String(err.Error())
 		return result
 	case <-ctx.Done():
 		result.ErrorCategory = "timeout"

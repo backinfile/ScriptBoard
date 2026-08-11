@@ -21,19 +21,20 @@ import (
 	"scriptboard/internal/doctor"
 	"scriptboard/internal/installation"
 	"scriptboard/internal/platformservice"
+	"scriptboard/internal/secretredaction"
 	updatepkg "scriptboard/internal/update"
 )
 
 func main() {
 	if handled, err := runAsWindowsService(os.Args[1:]); handled {
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "Windows 服务错误："+err.Error())
+			fmt.Fprintln(os.Stderr, secretredaction.String("Windows 服务错误："+err.Error()))
 			os.Exit(1)
 		}
 		return
 	}
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "错误："+err.Error())
+		fmt.Fprintln(os.Stderr, secretredaction.String("错误："+err.Error()))
 		os.Exit(1)
 	}
 }

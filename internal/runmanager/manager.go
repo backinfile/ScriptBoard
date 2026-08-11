@@ -28,6 +28,7 @@ import (
 	"scriptboard/internal/auditlog"
 	"scriptboard/internal/diskspace"
 	"scriptboard/internal/hostfiles"
+	"scriptboard/internal/secretredaction"
 )
 
 type StartRequest struct {
@@ -630,7 +631,7 @@ func (m *Manager) failStart(id string, startErr error) {
 		}
 	}
 	write := func() error {
-		result, err := m.db.Exec("UPDATE runs SET status = 'failed', finished_at = ?, error = ?, log_bytes = ? WHERE id = ?", now, startErr.Error(), logBytes, id)
+		result, err := m.db.Exec("UPDATE runs SET status = 'failed', finished_at = ?, error = ?, log_bytes = ? WHERE id = ?", now, secretredaction.String(startErr.Error()), logBytes, id)
 		if err != nil {
 			return err
 		}
@@ -682,7 +683,7 @@ func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.Read
 			if count > 0 {
 				eventMu.Lock()
 				sequence++
-				encoded, _ := json.Marshal(persistedEvent{Sequence: sequence, Time: time.Now().UTC().UnixNano(), Source: source, Data: append([]byte(nil), buffer[:count]...)})
+				encoded, _ := json.Marshal(persistedEvent{Sequence: sequence, Time: time.Now().UTC().UnixNano(), Source: source, Data: secretredaction.Bytes(buffer[:count])})
 				line := append(encoded, '\n')
 				if !logIncomplete && written+int64(len(line)) <= headLogBytes {
 					countWritten, writeErr := logFile.Write(line)
@@ -794,11 +795,11 @@ func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.Read
 	if active != nil && active.terminal != "" {
 		status = active.terminal
 		if waitErr != nil {
-			errorText = waitErr.Error()
+			errorText = secretredaction.String(waitErr.Error())
 		}
 	} else if waitErr != nil {
 		status = "failed"
-		errorText = waitErr.Error()
+		errorText = secretredaction.String(waitErr.Error())
 		var exitError *exec.ExitError
 		if errors.As(waitErr, &exitError) {
 			exitCode = exitError.ExitCode()

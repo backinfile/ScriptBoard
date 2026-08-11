@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"scriptboard/internal/hostsecurity"
+	"scriptboard/internal/secretredaction"
 )
 
 type securityFirewallDraft struct {
@@ -176,7 +177,7 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 		loginPage, err := a.hostSecurity.Logins(loginContext, query)
 		cancelLogins()
 		if err != nil {
-			view.LoginError = err.Error()
+			view.LoginError = secretredaction.String(err.Error())
 		} else {
 			view.LoginPage = loginPage
 			view.HasLoginPrevious = loginPage.Page > 1
@@ -193,7 +194,7 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 		banPage, err := a.hostSecurity.Bans(banContext, positiveInt(request.URL.Query().Get("ban_page"), 1), 20)
 		cancelBans()
 		if err != nil {
-			view.BanError = err.Error()
+			view.BanError = secretredaction.String(err.Error())
 		} else {
 			view.BanPage = banPage
 			view.HasBanPrevious = banPage.Page > 1

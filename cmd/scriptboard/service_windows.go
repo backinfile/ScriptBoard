@@ -12,6 +12,7 @@ import (
 	"golang.org/x/sys/windows/svc"
 
 	"scriptboard/internal/config"
+	"scriptboard/internal/secretredaction"
 )
 
 func runAsWindowsService(arguments []string) (bool, error) {
@@ -65,7 +66,7 @@ func (handler serviceHandler) Execute(_ []string, requests <-chan svc.ChangeRequ
 		select {
 		case err := <-done:
 			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
+				fmt.Fprintln(os.Stderr, secretredaction.String(err.Error()))
 				return true, 1
 			}
 			return false, 0

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"scriptboard/internal/secretredaction"
 	"scriptboard/internal/websitemonitor"
 )
 
@@ -176,7 +177,11 @@ func (a *App) exportWebsiteMonitors(response http.ResponseWriter, request *http.
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "application/json; charset=utf-8")
 	response.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="scriptboard-website-monitors-%s.json"`, time.Now().Format("20060102-150405")))
-	if err := json.NewEncoder(response).Encode(bundle); err != nil {
+	encoded, err := secretredaction.MarshalJSON(bundle)
+	if err != nil {
+		return
+	}
+	if _, err := response.Write(append(encoded, '\n')); err != nil {
 		return
 	}
 	a.recordAuditForRequest(request, "export_website_monitors", fmt.Sprintf("%d monitors", len(bundle.Monitors)), "succeeded")

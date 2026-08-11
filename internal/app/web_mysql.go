@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"scriptboard/internal/mysqlmanager"
+	"scriptboard/internal/secretredaction"
 )
 
 type mysqlDatabasesPageData struct {
@@ -140,7 +141,7 @@ func (a *App) mysqlDatabasesPage(response http.ResponseWriter, request *http.Req
 		}
 		cancel()
 		if statusErr != nil {
-			data.LoadError = statusErr.Error()
+			data.LoadError = secretredaction.String(statusErr.Error())
 		}
 		data.DatabaseCount = len(data.Databases)
 		page := mysqlRequestedPage(request)

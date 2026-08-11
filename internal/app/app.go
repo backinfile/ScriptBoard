@@ -54,6 +54,7 @@ import (
 	"scriptboard/internal/privatepath"
 	"scriptboard/internal/runmanager"
 	"scriptboard/internal/scheduler"
+	"scriptboard/internal/secretredaction"
 	updatepkg "scriptboard/internal/update"
 	"scriptboard/internal/uploadinbox"
 	"scriptboard/internal/websitemonitor"
@@ -2341,8 +2342,7 @@ func (w *pageResponseWriter) WriteHeader(status int) {
 	w.committed = true
 	w.status = status
 	contentType := w.Header().Get("Content-Type")
-	w.buffering = (strings.HasPrefix(contentType, "text/html") && (status < 300 || status >= 400)) ||
-		(status >= 400 && strings.HasPrefix(contentType, "text/plain"))
+	w.buffering = status >= 400 || (strings.HasPrefix(contentType, "text/html") && status < 300)
 	if !w.buffering {
 		w.ResponseWriter.WriteHeader(status)
 	}
@@ -2365,7 +2365,11 @@ func (w *pageResponseWriter) Flush() {
 	if w.buffering {
 		w.Header().Del("Content-Length")
 		w.ResponseWriter.WriteHeader(w.status)
-		_, _ = w.ResponseWriter.Write(w.body.Bytes())
+		body := w.body.Bytes()
+		if w.status >= 400 {
+			body = secretredaction.Bytes(body)
+		}
+		_, _ = w.ResponseWriter.Write(body)
 		w.body.Reset()
 		w.buffering = false
 	}
@@ -2383,6 +2387,9 @@ func (w *pageResponseWriter) finish(a *App, request *http.Request) {
 		return
 	}
 	body := w.body.Bytes()
+	if w.status >= 400 {
+		body = secretredaction.Bytes(body)
+	}
 	if w.status >= 400 && strings.HasPrefix(w.Header().Get("Content-Type"), "text/plain") {
 		body = renderApplicationError(request, w.status, strings.TrimSpace(string(body)))
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -2769,6 +2776,12 @@ func (a *App) auditPage(response http.ResponseWriter, request *http.Request) {
 			http.Error(response, "无法读取审计事件", http.StatusInternalServerError)
 			return
 		}
+		event.Action = secretredaction.String(event.Action)
+		event.Target = secretredaction.String(event.Target)
+		event.Result = secretredaction.String(event.Result)
+		event.Source = secretredaction.String(event.Source)
+		event.Actor = secretredaction.String(event.Actor)
+		event.ActorRole = secretredaction.String(event.ActorRole)
 		event.OccurredAt = time.Unix(occurredAt, 0).UTC()
 		events = append(events, event)
 	}
@@ -2806,7 +2819,7 @@ func (a *App) auditDownload(response http.ResponseWriter, _ *http.Request) {
 		}
 		record := []string{strconv.FormatInt(id, 10), time.Unix(occurred, 0).UTC().Format(time.RFC3339), action, target, result, source, actorUserID, actorUsername, actorRole, previousHash, eventHash, anchor, tail}
 		for index := range record {
-			record[index] = spreadsheetSafeCSVCell(record[index])
+			record[index] = spreadsheetSafeCSVCell(secretredaction.String(record[index]))
 		}
 		_ = writer.Write(record)
 	}
@@ -4535,13 +4548,13 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 		}
 		if nameErr := hostfiles.ValidateName(filename); nameErr != nil {
 			_ = part.Close()
-			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: nameErr.Error()})
+			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: secretredaction.String(nameErr.Error())})
 			continue
 		}
 		targetPath, destinationErr := a.files.Destination(relative, filename)
 		if destinationErr != nil {
 			_ = part.Close()
-			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: destinationErr.Error()})
+			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: secretredaction.String(destinationErr.Error())})
 			continue
 		}
 		if !validConflictAction(conflictAction) {
@@ -4553,7 +4566,7 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 		targetExists := targetErr == nil
 		if targetErr != nil && !os.IsNotExist(targetErr) {
 			_ = part.Close()
-			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: "无法检查同名文件：" + targetErr.Error()})
+			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: secretredaction.String("无法检查同名文件：" + targetErr.Error())})
 			continue
 		}
 		uploadName := filename
@@ -4589,7 +4602,7 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 		release, leaseErr := a.acquireFileMutationLease(targetPath)
 		if leaseErr != nil {
 			_ = part.Close()
-			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: leaseErr.Error()})
+			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: secretredaction.String(leaseErr.Error())})
 			a.recordAuditForRequest(request, "upload_file", filename, "rejected")
 			continue
 		}
@@ -4604,7 +4617,7 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 		if uploadErr != nil {
 			release()
 			_ = part.Close()
-			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: uploadErr.Error()})
+			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: secretredaction.String(uploadErr.Error())})
 			a.recordAuditForRequest(request, "upload_file", filename, "rejected")
 			continue
 		}

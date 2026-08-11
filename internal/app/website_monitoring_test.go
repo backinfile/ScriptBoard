@@ -278,6 +278,9 @@ func TestWebsiteMonitorConfigurationsExportSelectedAndImportSelected(t *testing.
 	if record["name"] != "导出目标" || record["http_body"] != `{"probe":"ready"}` {
 		t.Fatalf("exported configuration lost selected settings: %#v", record)
 	}
+	if strings.Contains(string(exported), "Bearer secret") || !strings.Contains(string(exported), "[REDACTED]") {
+		t.Fatalf("website monitor export did not redact authorization: %s", exported)
+	}
 	record["name"] = "导入副本"
 	record["url"] = "https://imported-copy.example/health"
 	exported, err = json.Marshal(bundle)

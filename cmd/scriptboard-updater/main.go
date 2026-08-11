@@ -7,12 +7,13 @@ import (
 	"fmt"
 	"os"
 
+	"scriptboard/internal/secretredaction"
 	updatepkg "scriptboard/internal/update"
 )
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "ScriptBoard updater error: "+err.Error())
+		fmt.Fprintln(os.Stderr, secretredaction.String("ScriptBoard updater error: "+err.Error()))
 		os.Exit(1)
 	}
 }

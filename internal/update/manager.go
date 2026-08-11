@@ -16,6 +16,7 @@ import (
 	"scriptboard/internal/diskspace"
 	"scriptboard/internal/installation"
 	"scriptboard/internal/platformservice"
+	"scriptboard/internal/secretredaction"
 )
 
 type ManagerConfig struct {
@@ -185,11 +186,11 @@ func (manager *Manager) CheckFrom(ctx context.Context, force bool, requestedSour
 	remote, err := source.Check(ctx, etag)
 	now := attemptedAt.UTC().Format(time.RFC3339Nano)
 	if err != nil {
-		manager.lastError = err.Error()
+		manager.lastError = secretredaction.String(err.Error())
 		_ = saveCheckState(manager.stateRoot, now, err.Error())
 		if cacheErr == nil && cache.SourceID == sourceID {
 			cache.CheckedAt = now
-			cache.LastError = err.Error()
+			cache.LastError = secretredaction.String(err.Error())
 			_ = saveCache(manager.stateRoot, cache)
 		}
 		return manager.snapshotLocked(), err
@@ -197,7 +198,7 @@ func (manager *Manager) CheckFrom(ctx context.Context, force bool, requestedSour
 	if remote.NotModified {
 		if cacheErr != nil {
 			err := errors.New("GitHub returned not modified without a valid local cache")
-			manager.lastError = err.Error()
+			manager.lastError = secretredaction.String(err.Error())
 			_ = saveCheckState(manager.stateRoot, now, err.Error())
 			return manager.snapshotLocked(), err
 		}
@@ -360,7 +361,7 @@ func (manager *Manager) Handoff(operationID string) (Operation, error) {
 	}
 	if err := platformservice.StartUpdater(updaterExecutable, manager.stateRoot, operation.ID); err != nil {
 		operation.Phase = PhaseFailedSafe
-		operation.Error = err.Error()
+		operation.Error = secretredaction.String(err.Error())
 		_ = SaveOperation(operation)
 		return Operation{}, err
 	}

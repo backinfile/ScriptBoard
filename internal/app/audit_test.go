@@ -50,6 +50,38 @@ func TestAuditRecordsActionWithoutVariableValue(t *testing.T) {
 	}
 }
 
+func TestAuditPageAndCSVDefensivelyRedactLegacySecrets(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	stateRoot := filepath.Join(root, "state")
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), stateRoot)
+	db, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	const secret = "legacy-audit-password"
+	if _, err := db.Exec(`INSERT INTO audit_events (occurred_at, action, target, result, source_address)
+		VALUES (?, 'legacy_secret_test', ?, 'succeeded', 'local')`, time.Now().Unix(), "password="+secret); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/history/audit", "/history/audit.csv"} {
+		response, err := client.Get(serverURL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, readErr := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if response.StatusCode != http.StatusOK || strings.Contains(string(body), secret) || !strings.Contains(string(body), "[REDACTED]") {
+			t.Fatalf("audit output %s was not redacted: status=%d body=%s", path, response.StatusCode, body)
+		}
+	}
+}
+
 func TestAuditPageFiltersByInclusiveLocalDateRange(t *testing.T) {
 	t.Parallel()
 

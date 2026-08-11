@@ -10,6 +10,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"scriptboard/internal/secretredaction"
 )
 
 var ErrInvalidCursor = errors.New("invalid log cursor")
@@ -116,7 +118,7 @@ func ClassifySeverity(line string) Severity {
 
 func NewEntry(source EntrySource, raw []byte, continuation bool) Entry {
 	encodingError := !utf8.Valid(raw)
-	decoded := strings.ToValidUTF8(string(raw), "\uFFFD")
+	decoded := secretredaction.String(strings.ToValidUTF8(string(raw), "\uFFFD"))
 	return Entry{
 		Source: source, Severity: ClassifySeverity(decoded),
 		Text: sanitizeControls(decoded), Continuation: continuation,

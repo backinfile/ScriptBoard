@@ -2,6 +2,7 @@ package doctor_test
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"scriptboard/internal/app"
@@ -26,5 +27,20 @@ func TestDoctorReportsHealthyDirectoriesAndSQLite(t *testing.T) {
 	}
 	if !report.HasHealthy("state-root") || !report.HasHealthy("sqlite-integrity") {
 		t.Fatalf("required checks missing: %+v", report.Checks)
+	}
+}
+
+func TestDoctorRedactsSecretsFromCheckDetails(t *testing.T) {
+	t.Parallel()
+
+	const secret = "doctor-password-value"
+	report := doctor.Run(doctor.Config{
+		StateRoot:  filepath.Join(t.TempDir(), "missing-password="+secret),
+		ConfigPath: filepath.Join(t.TempDir(), "token="+secret),
+	})
+	for _, check := range report.Checks {
+		if strings.Contains(check.Detail, secret) {
+			t.Fatalf("check %q leaked secret in %q", check.Name, check.Detail)
+		}
 	}
 }

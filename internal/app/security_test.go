@@ -1,10 +1,13 @@
 package app
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -78,5 +81,21 @@ func TestSpreadsheetSafeCSVCell(t *testing.T) {
 		if got := spreadsheetSafeCSVCell(input); got != want {
 			t.Errorf("spreadsheetSafeCSVCell(%q) = %q, want %q", input, got, want)
 		}
+	}
+}
+
+func TestPageResponseWriterRedactsEveryErrorContentType(t *testing.T) {
+	for _, contentType := range []string{"text/plain; charset=utf-8", "text/html; charset=utf-8", "application/json; charset=utf-8"} {
+		t.Run(contentType, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			writer := &pageResponseWriter{ResponseWriter: recorder}
+			writer.Header().Set("Content-Type", contentType)
+			writer.WriteHeader(http.StatusBadRequest)
+			_, _ = writer.Write([]byte(`{"error":"password=web-error-secret"}`))
+			writer.finish(&App{}, httptest.NewRequest(http.MethodGet, "/public/test", nil))
+			if body := recorder.Body.String(); strings.Contains(body, "web-error-secret") || !strings.Contains(body, "[REDACTED]") {
+				t.Fatalf("error response was not redacted: %q", body)
+			}
+		})
 	}
 }

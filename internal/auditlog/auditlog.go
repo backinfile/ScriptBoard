@@ -11,6 +11,8 @@ import (
 	"hash"
 	"strconv"
 	"sync"
+
+	"scriptboard/internal/secretredaction"
 )
 
 const chainVersion = "scriptboard-audit-chain-v1"
@@ -70,6 +72,7 @@ func (transaction *Transaction) Append(ctx context.Context, event Event) (int64,
 	if transaction == nil || transaction.finished {
 		return 0, errors.New("audit transaction is closed")
 	}
+	event = redactEvent(event)
 	previous, err := currentTail(ctx, transaction.tx)
 	if err != nil {
 		return 0, err
@@ -87,6 +90,17 @@ func (transaction *Transaction) Append(ctx context.Context, event Event) (int64,
 		return 0, err
 	}
 	return result.LastInsertId()
+}
+
+func redactEvent(event Event) Event {
+	event.Action = secretredaction.String(event.Action)
+	event.Target = secretredaction.String(event.Target)
+	event.Result = secretredaction.String(event.Result)
+	event.SourceAddress = secretredaction.String(event.SourceAddress)
+	event.ActorUserID = secretredaction.String(event.ActorUserID)
+	event.ActorUsername = secretredaction.String(event.ActorUsername)
+	event.ActorRole = secretredaction.String(event.ActorRole)
+	return event
 }
 
 func (transaction *Transaction) Commit() error {

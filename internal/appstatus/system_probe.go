@@ -11,6 +11,8 @@ import (
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/mem"
 	"github.com/shirou/gopsutil/v4/process"
+
+	"scriptboard/internal/secretredaction"
 )
 
 type SystemProbe struct {
@@ -40,11 +42,11 @@ func (p *SystemProbe) Snapshot(ctx context.Context) RawSnapshot {
 	if memory, err := mem.VirtualMemoryWithContext(ctx); err == nil {
 		result.TotalMemoryBytes = memory.Total
 	} else {
-		result.Errors["memory"] = err.Error()
+		result.Errors["memory"] = secretredaction.String(err.Error())
 	}
 	processes, err := process.ProcessesWithContext(ctx)
 	if err != nil {
-		result.Errors["host"] = err.Error()
+		result.Errors["host"] = secretredaction.String(err.Error())
 	} else {
 		threadCounts, _ := snapshotThreadCounts(ctx)
 		result.Processes = make([]RawProcess, 0, len(processes))
@@ -56,13 +58,13 @@ func (p *SystemProbe) Snapshot(ctx context.Context) RawSnapshot {
 		}
 	}
 	if p.dockerError != nil {
-		result.Errors["docker"] = p.dockerError.Error()
+		result.Errors["docker"] = secretredaction.String(p.dockerError.Error())
 	} else if p.docker != nil {
 		containers, containerIDs, available, dockerError := p.docker.Snapshot(ctx, p.logicalCores, result.CollectedAt)
 		result.Containers = containers
 		result.DockerAvailable = available
 		if dockerError != nil {
-			result.Errors["docker"] = dockerError.Error()
+			result.Errors["docker"] = secretredaction.String(dockerError.Error())
 		}
 		if runtime.GOOS == "linux" && len(containerIDs) > 0 {
 			result.Processes = excludeContainerProcesses(result.Processes, containerIDs)

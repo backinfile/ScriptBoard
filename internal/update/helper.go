@@ -20,6 +20,7 @@ import (
 	"scriptboard/internal/installation"
 	"scriptboard/internal/localtls"
 	"scriptboard/internal/platformservice"
+	"scriptboard/internal/secretredaction"
 )
 
 type Result struct {
@@ -487,7 +488,7 @@ func writeResult(operation Operation, resultError string) error {
 	result := Result{
 		Schema: OperationSchema, OperationID: operation.ID, Outcome: operation.Phase,
 		PreviousVersion: operation.PreviousVersion, TargetVersion: operation.TargetVersion,
-		CompletedAt: time.Now().UTC().Format(time.RFC3339Nano), Error: resultError,
+		CompletedAt: time.Now().UTC().Format(time.RFC3339Nano), Error: secretredaction.String(resultError),
 	}
 	return writeAtomicJSON(filepath.Join(root, "result.json"), result, 0o600)
 }

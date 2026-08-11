@@ -87,3 +87,12 @@ func TestNewEntryDecodesAndEscapesUntrustedLogBytes(t *testing.T) {
 		t.Fatalf("tab was not preserved: %q", entry.Text)
 	}
 }
+
+func TestNewEntryRedactsSecrets(t *testing.T) {
+	t.Parallel()
+
+	entry := logstream.NewEntry(logstream.SourceStderr, []byte("Authorization: Bearer synthetic-log-token-value"), false)
+	if strings.Contains(entry.Text, "synthetic-log-token-value") || !strings.Contains(entry.Text, "[REDACTED]") {
+		t.Fatalf("log entry was not redacted: %q", entry.Text)
+	}
+}

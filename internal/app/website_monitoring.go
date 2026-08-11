@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"scriptboard/internal/secretredaction"
 	"scriptboard/internal/websitemonitor"
 )
 
@@ -361,7 +362,7 @@ func (a *App) scanWebsiteMonitorNginx(response http.ResponseWriter, request *htt
 			return
 		}
 		renderWebsiteMonitorNginx(response, http.StatusUnprocessableEntity, websiteMonitorNginxView{
-			ConfigPath: configPath, Error: err.Error(), Locale: locale, CSRFToken: current.csrfToken,
+			ConfigPath: configPath, Error: secretredaction.String(err.Error()), Locale: locale, CSRFToken: current.csrfToken,
 		})
 		return
 	}
@@ -401,7 +402,7 @@ func (a *App) importWebsiteMonitorNginx(response http.ResponseWriter, request *h
 		current := request.Context().Value(sessionContextKey).(session)
 		preview, _ := a.websiteMonitor.ScanNginx(request.Context(), websitemonitor.NginxScanRequest{ConfigPath: configPath})
 		renderWebsiteMonitorNginx(response, http.StatusUnprocessableEntity, websiteMonitorNginxView{
-			ConfigPath: configPath, Preview: &preview, Error: err.Error(),
+			ConfigPath: configPath, Preview: &preview, Error: secretredaction.String(err.Error()),
 			Locale: resolveWebLocale(request), CSRFToken: current.csrfToken,
 		})
 		return

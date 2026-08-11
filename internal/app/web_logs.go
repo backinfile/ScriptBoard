@@ -13,6 +13,7 @@ import (
 	"scriptboard/internal/appstatus"
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/logstream"
+	"scriptboard/internal/secretredaction"
 )
 
 type liveLogPageView struct {
@@ -184,7 +185,7 @@ func streamLogEvents(response http.ResponseWriter, request *http.Request, source
 		case err := <-followed:
 			if err != nil && request.Context().Err() == nil {
 				_ = writeLogSSE(response, logstream.Event{
-					Kind: logstream.EventState, State: "error", Message: err.Error(),
+					Kind: logstream.EventState, State: "error", Message: secretredaction.String(err.Error()),
 				})
 				flusher.Flush()
 			}
@@ -240,7 +241,7 @@ func writeLogSourceError(response http.ResponseWriter, err error) {
 	case errors.Is(err, errUnsupportedLogSource):
 		status = http.StatusUnsupportedMediaType
 	}
-	http.Error(response, err.Error(), status)
+	http.Error(response, secretredaction.String(err.Error()), status)
 }
 
 func applicationLogError(err error) (int, string, string) {

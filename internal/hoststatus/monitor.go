@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"scriptboard/internal/diskspace"
+	"scriptboard/internal/secretredaction"
 )
 
 const (
@@ -214,11 +215,11 @@ func New(db *sql.DB, probe Probe, options Options) (*Monitor, error) {
 	facts, err := probe.Facts(context.Background())
 	monitor := &Monitor{db: db, probe: probe, options: options, facts: facts, done: make(chan struct{})}
 	if err != nil {
-		monitor.factErr = err.Error()
+		monitor.factErr = secretredaction.String(err.Error())
 	}
 	if !options.SkipInitialCleanup {
 		if cleanupErr := monitor.cleanup(context.Background()); cleanupErr != nil {
-			monitor.historyErr = cleanupErr.Error()
+			monitor.historyErr = secretredaction.String(cleanupErr.Error())
 		}
 	}
 	return monitor, nil
@@ -286,13 +287,13 @@ func (m *Monitor) Collect(ctx context.Context) {
 		m.bucket = newMinuteAccumulator(bucketAt)
 	} else if !m.bucket.at.Equal(bucketAt) {
 		if err := m.persist(m.bucket); err != nil {
-			m.historyErr = err.Error()
+			m.historyErr = secretredaction.String(err.Error())
 		} else {
 			m.historyErr = ""
 		}
 		m.bucket = newMinuteAccumulator(bucketAt)
 		if err := m.cleanup(ctx); err != nil {
-			m.historyErr = err.Error()
+			m.historyErr = secretredaction.String(err.Error())
 		}
 	}
 	m.bucket.add(sampleMetrics(sample))
