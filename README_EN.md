@@ -217,6 +217,8 @@ Every successful update retains that operation's pre-update database snapshot. T
 scriptboard update recover --operation OPERATION_ID --confirm-operation OPERATION_ID --config CONFIG_PATH
 ```
 
+Formal releases follow the [update signing key runbook](./docs/UPDATE-SIGNING-KEY-RUNBOOK.md) for rotation, dual signing, revocation, and compromise response. The revocation list is embedded in client binaries; an older client that has not received it needs an independently authenticated manual upgrade and cannot trust revocation information asserted by the compromised key itself.
+
 ## Troubleshooting
 
 Start with the read-only diagnostic:

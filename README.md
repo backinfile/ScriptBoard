@@ -224,6 +224,8 @@ scriptboard update repair-current --confirm REPAIR-CURRENT --config CONFIG_PATH
 scriptboard update recover --operation OPERATION_ID --confirm-operation OPERATION_ID --config CONFIG_PATH
 ```
 
+正式发布的签名密钥轮换、双签、撤销和泄露处置遵循 [更新签名密钥 Runbook](./docs/UPDATE-SIGNING-KEY-RUNBOOK.md)。撤销列表嵌入客户端二进制，尚未取得包含撤销列表版本的旧客户端必须通过独立可信渠道手工升级，不能信任已泄露 Key 自己声明的撤销信息。
+
 ## 常见问题
 
 先运行只读诊断：

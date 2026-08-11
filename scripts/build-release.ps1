@@ -55,11 +55,26 @@ if ($formalRelease) {
         try { $nextPublicKeyBytes = [Convert]::FromBase64String($env:SCRIPTBOARD_UPDATE_NEXT_PUBLIC_KEY) } catch { throw "SCRIPTBOARD_UPDATE_NEXT_PUBLIC_KEY is not valid base64" }
         if ($nextPublicKeyBytes.Length -ne 32) { throw "SCRIPTBOARD_UPDATE_NEXT_PUBLIC_KEY must be a 32-byte Ed25519 public key" }
     }
+    $hasNextSigningKey = -not [string]::IsNullOrWhiteSpace($env:SCRIPTBOARD_UPDATE_NEXT_SIGNING_KEY)
+    if ($hasNextSigningKey -and -not $hasNextKeyID) {
+        throw "SCRIPTBOARD_UPDATE_NEXT_SIGNING_KEY requires the next key ID and public key"
+    }
+    $revokedIDs = @()
+    if (-not [string]::IsNullOrWhiteSpace($env:SCRIPTBOARD_UPDATE_REVOKED_KEY_IDS)) {
+        $revokedIDs = @($env:SCRIPTBOARD_UPDATE_REVOKED_KEY_IDS.Split(',') | ForEach-Object { $_.Trim() })
+        if ($revokedIDs.Count -ne (@($revokedIDs | Sort-Object -Unique)).Count -or @($revokedIDs | Where-Object { $_ -notmatch '^[A-Za-z0-9._-]{1,64}$' }).Count -ne 0) {
+            throw "SCRIPTBOARD_UPDATE_REVOKED_KEY_IDS must be a unique comma-separated key ID list"
+        }
+        if ($revokedIDs -contains $env:SCRIPTBOARD_UPDATE_KEY_ID -or ($hasNextKeyID -and $revokedIDs -contains $env:SCRIPTBOARD_UPDATE_NEXT_KEY_ID)) {
+            throw "An embedded trusted update key cannot also be revoked"
+        }
+    }
 }
 $publicKeyID = if ($formalRelease) { $env:SCRIPTBOARD_UPDATE_KEY_ID } else { "" }
 $publicKey = if ($formalRelease) { $env:SCRIPTBOARD_UPDATE_PUBLIC_KEY } else { "" }
 $nextKeyID = if ($formalRelease) { $env:SCRIPTBOARD_UPDATE_NEXT_KEY_ID } else { "" }
 $nextPublicKey = if ($formalRelease) { $env:SCRIPTBOARD_UPDATE_NEXT_PUBLIC_KEY } else { "" }
+$revokedKeyIDs = if ($formalRelease) { $revokedIDs -join "," } else { "" }
 $commonLDFlags = @(
     "-s", "-w",
     "-X", "scriptboard/internal/buildinfo.Version=$normalizedVersion",
@@ -70,7 +85,8 @@ $commonLDFlags = @(
     "-X", "scriptboard/internal/buildinfo.UpdatePublicKeyID=$publicKeyID",
     "-X", "scriptboard/internal/buildinfo.UpdatePublicKeyBase64=$publicKey",
     "-X", "scriptboard/internal/buildinfo.UpdateNextKeyID=$nextKeyID",
-    "-X", "scriptboard/internal/buildinfo.UpdateNextKeyBase64=$nextPublicKey"
+    "-X", "scriptboard/internal/buildinfo.UpdateNextKeyBase64=$nextPublicKey",
+    "-X", "scriptboard/internal/buildinfo.UpdateRevokedKeyIDs=$revokedKeyIDs"
 ) -join " "
 
 if (Test-Path -LiteralPath $outputRoot) { Remove-Item -LiteralPath $outputRoot -Recurse -Force }

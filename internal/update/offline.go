@@ -44,11 +44,7 @@ func VerifyOfflinePackage(archivePath, manifestPath, signaturePath string) (Veri
 	if err != nil {
 		return VerifiedOfflinePackage{}, fmt.Errorf("read release signature: %w", err)
 	}
-	signature, _, err := decodeSignatureDocument(signatureRaw)
-	if err != nil {
-		return VerifiedOfflinePackage{}, err
-	}
-	manifest, err := VerifyTrustedManifest(manifestRaw, signatureRaw)
+	manifest, signerKeyID, err := verifyTrustedManifest(manifestRaw, signatureRaw)
 	if err != nil {
 		return VerifiedOfflinePackage{}, err
 	}
@@ -103,7 +99,7 @@ func VerifyOfflinePackage(archivePath, manifestPath, signaturePath string) (Veri
 		return VerifiedOfflinePackage{}, fmt.Errorf("validate release contents: %w", err)
 	}
 	return VerifiedOfflinePackage{
-		Version: manifest.Version, Tag: manifest.Tag, Commit: manifest.Commit, KeyID: signature.KeyID,
+		Version: manifest.Version, Tag: manifest.Tag, Commit: manifest.Commit, KeyID: signerKeyID,
 		OS: asset.OS, Arch: asset.Arch, Archive: asset.Name, ArchiveSHA256: archiveSHA256,
 		ArchiveBytes: asset.Size, UnpackedBytes: asset.UnpackedSize, DatabaseSchema: manifest.DatabaseSchema,
 		UpdaterProtocol: manifest.UpdaterProtocol,

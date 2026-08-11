@@ -30,3 +30,20 @@ func TestBuildReleaseRestoresHostTargetBeforeAssistantRuntime(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildReleaseEmbedsUpdateKeyRevocations(t *testing.T) {
+	script, err := os.ReadFile("build-release.ps1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(script)
+	for _, expected := range []string{
+		"SCRIPTBOARD_UPDATE_REVOKED_KEY_IDS",
+		"scriptboard/internal/buildinfo.UpdateRevokedKeyIDs=$revokedKeyIDs",
+		"SCRIPTBOARD_UPDATE_NEXT_SIGNING_KEY",
+	} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("release script does not contain %q", expected)
+		}
+	}
+}

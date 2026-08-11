@@ -26,6 +26,7 @@ var (
 	UpdatePublicKeyBase64 = ""
 	UpdateNextKeyID       = ""
 	UpdateNextKeyBase64   = ""
+	UpdateRevokedKeyIDs   = ""
 )
 
 type Info struct {

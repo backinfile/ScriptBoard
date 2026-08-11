@@ -37,6 +37,8 @@ jobs:
           SCRIPTBOARD_UPDATE_SIGNING_KEY: ${{ secrets.SCRIPTBOARD_UPDATE_SIGNING_KEY }}
           SCRIPTBOARD_UPDATE_NEXT_KEY_ID: ${{ secrets.SCRIPTBOARD_UPDATE_NEXT_KEY_ID }}
           SCRIPTBOARD_UPDATE_NEXT_PUBLIC_KEY: ${{ secrets.SCRIPTBOARD_UPDATE_NEXT_PUBLIC_KEY }}
+          SCRIPTBOARD_UPDATE_NEXT_SIGNING_KEY: ${{ secrets.SCRIPTBOARD_UPDATE_NEXT_SIGNING_KEY }}
+          SCRIPTBOARD_UPDATE_REVOKED_KEY_IDS: ${{ secrets.SCRIPTBOARD_UPDATE_REVOKED_KEY_IDS }}
         run: ./scripts/build-release.ps1 -Version "${{ github.ref_name }}"
       - name: Generate release SBOM
         uses: anchore/sbom-action@v0

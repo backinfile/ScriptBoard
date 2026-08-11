@@ -149,12 +149,45 @@ func generateManifest(arguments []string) error {
 		!bytes.Equal(ed25519.PrivateKey(privateKeyRaw).Public().(ed25519.PublicKey), publicKeyRaw) {
 		return errors.New("release signing private key does not match the embedded public key")
 	}
-	signature, err := updatepkg.SignManifest(raw, keyID, ed25519.PrivateKey(privateKeyRaw))
+	signingKeys := []updatepkg.ManifestSigningKey{{KeyID: keyID, PrivateKey: ed25519.PrivateKey(privateKeyRaw)}}
+	verificationKeys := []struct {
+		id  string
+		key ed25519.PublicKey
+	}{{id: keyID, key: ed25519.PublicKey(publicKeyRaw)}}
+	nextPrivateEncoded := strings.TrimSpace(os.Getenv("SCRIPTBOARD_UPDATE_NEXT_SIGNING_KEY"))
+	if nextPrivateEncoded != "" {
+		nextKeyID := strings.TrimSpace(os.Getenv("SCRIPTBOARD_UPDATE_NEXT_KEY_ID"))
+		nextPublicRaw, publicErr := base64.StdEncoding.DecodeString(strings.TrimSpace(os.Getenv("SCRIPTBOARD_UPDATE_NEXT_PUBLIC_KEY")))
+		nextPrivateRaw, privateErr := base64.StdEncoding.DecodeString(nextPrivateEncoded)
+		if privateErr != nil {
+			return errors.New("SCRIPTBOARD_UPDATE_NEXT_SIGNING_KEY is not valid base64")
+		}
+		if len(nextPrivateRaw) == ed25519.SeedSize {
+			nextPrivateRaw = ed25519.NewKeyFromSeed(nextPrivateRaw)
+		}
+		if nextKeyID == "" || publicErr != nil || len(nextPublicRaw) != ed25519.PublicKeySize || len(nextPrivateRaw) != ed25519.PrivateKeySize ||
+			!bytes.Equal(ed25519.PrivateKey(nextPrivateRaw).Public().(ed25519.PublicKey), nextPublicRaw) {
+			return errors.New("next release signing private key does not match the configured next public key")
+		}
+		signingKeys = append(signingKeys, updatepkg.ManifestSigningKey{KeyID: nextKeyID, PrivateKey: ed25519.PrivateKey(nextPrivateRaw)})
+		verificationKeys = append(verificationKeys, struct {
+			id  string
+			key ed25519.PublicKey
+		}{id: nextKeyID, key: ed25519.PublicKey(nextPublicRaw)})
+	}
+	var signature []byte
+	if len(signingKeys) == 1 {
+		signature, err = updatepkg.SignManifest(raw, signingKeys[0].KeyID, signingKeys[0].PrivateKey)
+	} else {
+		signature, err = updatepkg.SignManifestWithKeys(raw, signingKeys)
+	}
 	if err != nil {
 		return err
 	}
-	if err := updatepkg.VerifyManifestSignature(raw, signature, keyID, ed25519.PublicKey(publicKeyRaw)); err != nil {
-		return fmt.Errorf("verify generated release signature: %w", err)
+	for _, verificationKey := range verificationKeys {
+		if err := updatepkg.VerifyManifestSignature(raw, signature, verificationKey.id, verificationKey.key); err != nil {
+			return fmt.Errorf("verify generated release signature %s: %w", verificationKey.id, err)
+		}
 	}
 	return os.WriteFile(filepath.Join(filepath.Dir(outputPath), updatepkg.SignatureFilename), append(signature, '\n'), 0o644)
 }

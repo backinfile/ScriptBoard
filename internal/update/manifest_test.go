@@ -103,6 +103,62 @@ func TestTrustedManifestAcceptsNextRotationKey(t *testing.T) {
 	}
 }
 
+func TestTrustedManifestRejectsEmbeddedRevokedKey(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(validManifest())
+	signature, err := SignManifest(raw, "compromised-key", privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalID, originalKey := buildinfo.UpdatePublicKeyID, buildinfo.UpdatePublicKeyBase64
+	originalRevoked := buildinfo.UpdateRevokedKeyIDs
+	buildinfo.UpdatePublicKeyID = "compromised-key"
+	buildinfo.UpdatePublicKeyBase64 = base64.StdEncoding.EncodeToString(publicKey)
+	buildinfo.UpdateRevokedKeyIDs = "compromised-key"
+	t.Cleanup(func() {
+		buildinfo.UpdatePublicKeyID, buildinfo.UpdatePublicKeyBase64 = originalID, originalKey
+		buildinfo.UpdateRevokedKeyIDs = originalRevoked
+	})
+	if _, err := VerifyTrustedManifest(raw, signature); err == nil || !strings.Contains(err.Error(), "revoked") {
+		t.Fatalf("revoked signature error = %v", err)
+	}
+}
+
+func TestTrustedManifestAcceptsDualSignatureDuringRotation(t *testing.T) {
+	currentPublic, currentPrivate, _ := ed25519.GenerateKey(nil)
+	nextPublic, nextPrivate, _ := ed25519.GenerateKey(nil)
+	raw, _ := json.Marshal(validManifest())
+	signature, err := SignManifestWithKeys(raw, []ManifestSigningKey{
+		{KeyID: "current-key", PrivateKey: currentPrivate},
+		{KeyID: "next-key", PrivateKey: nextPrivate},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalID, originalKey := buildinfo.UpdatePublicKeyID, buildinfo.UpdatePublicKeyBase64
+	originalNextID, originalNextKey := buildinfo.UpdateNextKeyID, buildinfo.UpdateNextKeyBase64
+	buildinfo.UpdatePublicKeyID = "current-key"
+	buildinfo.UpdatePublicKeyBase64 = base64.StdEncoding.EncodeToString(currentPublic)
+	buildinfo.UpdateNextKeyID = "next-key"
+	buildinfo.UpdateNextKeyBase64 = base64.StdEncoding.EncodeToString(nextPublic)
+	t.Cleanup(func() {
+		buildinfo.UpdatePublicKeyID, buildinfo.UpdatePublicKeyBase64 = originalID, originalKey
+		buildinfo.UpdateNextKeyID, buildinfo.UpdateNextKeyBase64 = originalNextID, originalNextKey
+	})
+	if _, err := VerifyTrustedManifest(raw, signature); err != nil {
+		t.Fatalf("verify dual-signed manifest: %v", err)
+	}
+	if err := VerifyManifestSignature(raw, signature, "current-key", currentPublic); err != nil {
+		t.Fatalf("verify current signature in document: %v", err)
+	}
+	if err := VerifyManifestSignature(raw, signature, "next-key", nextPublic); err != nil {
+		t.Fatalf("verify next signature in document: %v", err)
+	}
+}
+
 func TestManagerChecksAndPersistsSignedRelease(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(nil)
 	if err != nil {
