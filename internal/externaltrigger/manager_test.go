@@ -95,6 +95,30 @@ func TestCreateAndResolveWebsiteMonitorEntry(t *testing.T) {
 	}
 }
 
+func TestQuickRunEntryRequiresPublishedRevisionAndDigest(t *testing.T) {
+	validDigest := strings.Repeat("a", 64)
+	for _, test := range []struct {
+		name   string
+		config QuickRunConfig
+		valid  bool
+	}{
+		{name: "published", config: QuickRunConfig{QuickRunID: "quick-1", Revision: 3, ScriptSHA256: validDigest}, valid: true},
+		{name: "missing revision", config: QuickRunConfig{QuickRunID: "quick-1", ScriptSHA256: validDigest}},
+		{name: "missing digest", config: QuickRunConfig{QuickRunID: "quick-1", Revision: 3}},
+		{name: "invalid digest", config: QuickRunConfig{QuickRunID: "quick-1", Revision: 3, ScriptSHA256: "not-a-digest"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, _, err := validateEntry("quick", "Quick run", ActionQuickRun, "", test.config)
+			if test.valid && err != nil {
+				t.Fatalf("valid published Quick Run rejected: %v", err)
+			}
+			if !test.valid && !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("invalid published Quick Run error = %v", err)
+			}
+		})
+	}
+}
+
 func TestKeyNamesAreUniqueIgnoringCaseAndSurroundingWhitespace(t *testing.T) {
 	manager, _ := testManager(t, time.Date(2026, 8, 5, 9, 0, 0, 0, time.UTC))
 	first, _, err := manager.CreateKey(context.Background(), CreateKeyInput{Label: "Webhook", Enabled: true})

@@ -33,10 +33,10 @@ func (a *App) loadQuickRun(id string) (quickRunRecord, error) {
 	var quick quickRunRecord
 	var groupID sql.NullString
 	err := a.db.QueryRow(`SELECT id, name, script_path, arguments_template, timeout_seconds,
-		source_run_id, sort_order, group_id, locked
+		source_run_id, sort_order, group_id, locked, script_sha256, revision
 		FROM quick_runs WHERE id = ?`, id).Scan(
 		&quick.ID, &quick.Name, &quick.ScriptPath, &quick.ArgumentsTemplate, &quick.TimeoutSeconds,
-		&quick.SourceRunID, &quick.SortOrder, &groupID, &quick.Locked,
+		&quick.SourceRunID, &quick.SortOrder, &groupID, &quick.Locked, &quick.ScriptSHA256, &quick.Revision,
 	)
 	if groupID.Valid {
 		quick.GroupID = groupID.String
@@ -417,10 +417,24 @@ func (a *App) updateQuickRun(response http.ResponseWriter, request *http.Request
 		return
 	}
 	id := request.PathValue("id")
+	quick, err := a.loadQuickRun(id)
+	if err != nil {
+		http.Error(response, "快捷执行不存在", http.StatusNotFound)
+		return
+	}
+	if quick.Locked {
+		http.Error(response, "快捷执行已锁定，请先解锁", http.StatusConflict)
+		return
+	}
+	prepared, err := a.files.PrepareScript(quick.ScriptPath)
+	if err != nil {
+		http.Error(response, "快捷执行脚本不可用", http.StatusConflict)
+		return
+	}
 	result, err := a.db.Exec(`UPDATE quick_runs
-		SET name = ?, arguments_template = ?, timeout_seconds = ?, updated_at = ?
+		SET name = ?, arguments_template = ?, timeout_seconds = ?, script_sha256 = ?, revision = revision + 1, updated_at = ?
 		WHERE id = ? AND locked = 0`,
-		name, arguments, timeoutSeconds, time.Now().UTC().Unix(), id)
+		name, arguments, timeoutSeconds, prepared.Digest, time.Now().UTC().Unix(), id)
 	count := int64(0)
 	if err == nil {
 		count, _ = result.RowsAffected()
@@ -482,6 +496,10 @@ func (a *App) copyQuickRunTask(response http.ResponseWriter, request *http.Reque
 }
 
 func (a *App) createQuickRunCopy(source quickRunRecord, name, arguments string, timeoutSeconds int, groupID *string) (string, error) {
+	prepared, err := a.files.PrepareScript(source.ScriptPath)
+	if err != nil {
+		return "", err
+	}
 	id, err := randomToken(18)
 	if err != nil {
 		return "", err
@@ -513,10 +531,10 @@ func (a *App) createQuickRunCopy(source quickRunRecord, name, arguments string, 
 	now := time.Now().UTC().Unix()
 	if _, err = transaction.Exec(`INSERT INTO quick_runs
 		(id, name, script_path, script_path_key, arguments_template, timeout_seconds, source_run_id,
-		sort_order, created_at, group_id, locked, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+		sort_order, created_at, group_id, locked, script_sha256, revision, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 1, ?)`,
 		id, name, source.ScriptPath, hostfiles.ComparisonKey(source.ScriptPath), arguments, timeoutSeconds, source.SourceRunID,
-		sortOrder, now, targetGroup, now); err != nil {
+		sortOrder, now, targetGroup, prepared.Digest, now); err != nil {
 		return "", err
 	}
 	if err := transaction.Commit(); err != nil {
@@ -567,7 +585,7 @@ func (a *App) setQuickRunLocked(response http.ResponseWriter, request *http.Requ
 	}
 	locked := value == "1"
 	id := request.PathValue("id")
-	result, err := a.db.Exec(`UPDATE quick_runs SET locked = ?, updated_at = ? WHERE id = ?`,
+	result, err := a.db.Exec(`UPDATE quick_runs SET locked = ?, revision = revision + 1, updated_at = ? WHERE id = ?`,
 		locked, time.Now().UTC().Unix(), id)
 	count := int64(0)
 	if err == nil {

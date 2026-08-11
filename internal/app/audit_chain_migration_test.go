@@ -38,7 +38,7 @@ func TestSchema34AuditEventsAreBackfilledIntoHashChain(t *testing.T) {
 		t.Fatalf("verification=%#v err=%v", verification, err)
 	}
 	var version int
-	if err := database.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 35 {
+	if err := database.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != currentSchemaVersion {
 		t.Fatalf("schema version=%d err=%v", version, err)
 	}
 }

@@ -47,10 +47,14 @@ func TestAssistantStateToolApprovalFreezesTargetAndNeverReplaysChangedAction(t *
 	if err := os.WriteFile(scriptPath, []byte("Write-Output 'fixture'\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	prepared, err := application.files.PrepareScript(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now().UTC().UnixNano()
 	if _, err := application.db.Exec(`INSERT INTO quick_runs
-		(id, name, script_path, script_path_key, arguments_template, timeout_seconds, source_run_id, sort_order, created_at, group_id, locked, updated_at)
-		VALUES ('quick-fixture', 'Fixture quick run', ?, ?, '', 30, NULL, 1, ?, NULL, 0, ?)`, scriptPath, scriptPath, now, now); err != nil {
+		(id, name, script_path, script_path_key, arguments_template, timeout_seconds, source_run_id, sort_order, created_at, group_id, locked, script_sha256, revision, updated_at)
+		VALUES ('quick-fixture', 'Fixture quick run', ?, ?, '', 30, NULL, 1, ?, NULL, 0, ?, 1, ?)`, prepared.Path, prepared.Path, now, prepared.Digest, now); err != nil {
 		t.Fatal(err)
 	}
 

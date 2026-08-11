@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -607,8 +608,9 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.Exec(`INSERT INTO quick_runs(id, name, script_path, script_path_key, arguments_template, timeout_seconds, sort_order, created_at, updated_at)
-		VALUES ('external-quick', 'External quick run', ?, ?, '', 30, 1, 1, 1)`, scriptPath, hostfiles.ComparisonKey(scriptPath)); err != nil {
+	scriptDigest := fmt.Sprintf("%x", sha256.Sum256([]byte(scriptContent)))
+	if _, err := database.Exec(`INSERT INTO quick_runs(id, name, script_path, script_path_key, arguments_template, timeout_seconds, sort_order, created_at, locked, script_sha256, revision, updated_at)
+		VALUES ('external-quick', 'External quick run', ?, ?, '', 30, 1, 1, 1, ?, 1, 1)`, scriptPath, hostfiles.ComparisonKey(scriptPath), scriptDigest); err != nil {
 		t.Fatal(err)
 	}
 
@@ -756,6 +758,36 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusAccepted || !bytes.Contains(body, []byte(`"run_id"`)) {
 		t.Fatalf("quick run trigger status=%d body=%s", response.StatusCode, body)
+	}
+	var acceptedRuns int
+	if err := database.QueryRow("SELECT count(*) FROM runs WHERE source_type = 'external/quick-run'").Scan(&acceptedRuns); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec("UPDATE quick_runs SET revision = revision + 1 WHERE id = 'external-quick'"); err != nil {
+		t.Fatal(err)
+	}
+	response = invokeExternalForm(t, client, serverURL, secret, "quick", nil)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusConflict {
+		t.Fatalf("stale Quick Run revision status=%d", response.StatusCode)
+	}
+	if _, err := database.Exec("UPDATE quick_runs SET revision = 1 WHERE id = 'external-quick'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(scriptPath, []byte(scriptContent+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	response = invokeExternalForm(t, client, serverURL, secret, "quick", nil)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusConflict {
+		t.Fatalf("changed Quick Run script status=%d", response.StatusCode)
+	}
+	var finalRuns int
+	if err := database.QueryRow("SELECT count(*) FROM runs WHERE source_type = 'external/quick-run'").Scan(&finalRuns); err != nil {
+		t.Fatal(err)
+	}
+	if finalRuns != acceptedRuns {
+		t.Fatalf("rejected stale Quick Runs started work: before=%d after=%d", acceptedRuns, finalRuns)
 	}
 }
 

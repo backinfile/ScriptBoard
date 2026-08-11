@@ -340,6 +340,12 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 			_ = a.files.RestoreFromTrash(trashed.StoredPath, trashed.OriginalPath)
 		}
 	}
+	prepared, err := a.files.PrepareScript(targetPath)
+	if err != nil {
+		rollbackFile()
+		http.Error(response, "Unable to publish created script: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	transaction, err := a.db.Begin()
 	if err != nil {
@@ -369,9 +375,9 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 	now := time.Now().UTC().Unix()
 	if err == nil {
 		_, err = transaction.Exec(`INSERT INTO quick_runs
-			(id, name, script_path, script_path_key, arguments_template, timeout_seconds, source_run_id, sort_order, created_at, group_id, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
-			id, name, targetPath, hostfiles.ComparisonKey(targetPath), argumentsTemplate, timeoutSeconds, sortOrder, now, groupID, now)
+			(id, name, script_path, script_path_key, arguments_template, timeout_seconds, source_run_id, sort_order, created_at, group_id, script_sha256, revision, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 1, ?)`,
+			id, name, prepared.Path, hostfiles.ComparisonKey(prepared.Path), argumentsTemplate, timeoutSeconds, sortOrder, now, groupID, prepared.Digest, now)
 	}
 	if err == nil {
 		err = transaction.Commit()

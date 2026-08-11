@@ -146,7 +146,9 @@ type UploadConfig struct {
 }
 
 type QuickRunConfig struct {
-	QuickRunID string `json:"quick_run_id"`
+	QuickRunID   string `json:"quick_run_id"`
+	Revision     int64  `json:"revision"`
+	ScriptSHA256 string `json:"script_sha256"`
 }
 
 type WebsiteMonitorConfig struct{}
@@ -468,7 +470,8 @@ func validateEntry(name, label string, actionType ActionType, target string, con
 		normalized, target = value, value.Directory
 	case ActionQuickRun:
 		value, ok := config.(QuickRunConfig)
-		if !ok || strings.TrimSpace(value.QuickRunID) == "" {
+		digest, digestErr := hex.DecodeString(value.ScriptSHA256)
+		if !ok || strings.TrimSpace(value.QuickRunID) == "" || value.Revision <= 0 || len(digest) != sha256.Size || digestErr != nil {
 			return "", "", fmt.Errorf("%w: quick run config", ErrInvalidInput)
 		}
 		value.QuickRunID = strings.TrimSpace(value.QuickRunID)

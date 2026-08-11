@@ -708,6 +708,10 @@ func TestFileOperationCommitRegistersRecoverableSourceTrash(t *testing.T) {
 			t.Fatalf("%s reference = %q (%q), want %q (%q)", reference.table, path, key, operation.DestinationPath, operation.DestinationPathKey)
 		}
 	}
+	var quickRevision int64
+	if err := db.QueryRow("SELECT revision FROM quick_runs WHERE id = 'quick-moved'").Scan(&quickRevision); err != nil || quickRevision != 2 {
+		t.Fatalf("moved Quick Run revision = %d, error = %v", quickRevision, err)
+	}
 }
 
 func TestOpenDatabaseRejectsNewerSchema(t *testing.T) {

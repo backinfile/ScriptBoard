@@ -1,6 +1,7 @@
 package app
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -464,16 +465,21 @@ func (a *App) editExternalEntryTask(response http.ResponseWriter, request *http.
 }
 
 func (a *App) externalTargetOptions() ([]externalTargetOption, []externalTargetOption, error) {
-	quickRows, err := a.db.Query("SELECT id, name FROM quick_runs ORDER BY name, id")
+	quickRows, err := a.db.Query("SELECT id, name, script_path, script_sha256 FROM quick_runs WHERE locked = 1 AND script_sha256 != '' ORDER BY name, id")
 	if err != nil {
 		return nil, nil, err
 	}
 	var quickRuns []externalTargetOption
 	for quickRows.Next() {
 		var option externalTargetOption
-		if err := quickRows.Scan(&option.Value, &option.Label); err != nil {
+		var scriptPath, scriptSHA256 string
+		if err := quickRows.Scan(&option.Value, &option.Label, &scriptPath, &scriptSHA256); err != nil {
 			_ = quickRows.Close()
 			return nil, nil, err
+		}
+		prepared, err := a.files.PrepareScript(scriptPath)
+		if err != nil || subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(scriptSHA256)) != 1 {
+			continue
 		}
 		quickRuns = append(quickRuns, option)
 	}
@@ -638,10 +644,15 @@ func (a *App) externalEntryConfig(request *http.Request, actionType externaltrig
 		return externaltrigger.UploadConfig{Directory: directory, MaxBytes: maximum, Extensions: extensions, ConflictPolicy: request.FormValue("upload_conflict")}, directory, nil
 	case externaltrigger.ActionQuickRun:
 		id := strings.TrimSpace(request.FormValue("quick_run_id"))
-		if _, err := a.loadQuickRun(id); err != nil {
+		quick, err := a.loadQuickRun(id)
+		if err != nil {
 			return nil, "", errors.New("quick run does not exist")
 		}
-		return externaltrigger.QuickRunConfig{QuickRunID: id}, id, nil
+		prepared, err := a.files.PrepareScript(quick.ScriptPath)
+		if err != nil || !quick.Locked || quick.ScriptSHA256 == "" || subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(quick.ScriptSHA256)) != 1 {
+			return nil, "", errors.New("quick run must be locked and republished with its current script digest")
+		}
+		return externaltrigger.QuickRunConfig{QuickRunID: id, Revision: quick.Revision, ScriptSHA256: quick.ScriptSHA256}, id, nil
 	case externaltrigger.ActionVariable:
 		name := strings.TrimSpace(request.FormValue("variable_name"))
 		var isPassword bool
@@ -945,11 +956,18 @@ func (a *App) executeExternalQuickRun(response http.ResponseWriter, request *htt
 	if err != nil {
 		return externalFailure(http.StatusConflict, "target_unavailable")
 	}
+	if !quick.Locked || quick.Revision != config.Revision || subtle.ConstantTimeCompare([]byte(quick.ScriptSHA256), []byte(config.ScriptSHA256)) != 1 {
+		return externalFailure(http.StatusConflict, "target_unavailable")
+	}
+	prepared, err := a.files.PrepareScript(quick.ScriptPath)
+	if err != nil || subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(config.ScriptSHA256)) != 1 {
+		return externalFailure(http.StatusConflict, "target_unavailable")
+	}
 	variables, err := a.loadVariables()
 	if err != nil {
 		return externalFailure(http.StatusInternalServerError, "action_failed")
 	}
-	runID, err := a.runs.Start(runmanager.StartRequest{ScriptPath: quick.ScriptPath, ArgumentsTemplate: quick.ArgumentsTemplate, TimeoutSeconds: quick.TimeoutSeconds, SourceType: "external/quick-run", SourceName: entry.Label, SourceID: entry.ID, Variables: variables})
+	runID, err := a.runs.Start(runmanager.StartRequest{ScriptPath: quick.ScriptPath, ExpectedDigest: config.ScriptSHA256, DisallowOverlap: true, ArgumentsTemplate: quick.ArgumentsTemplate, TimeoutSeconds: quick.TimeoutSeconds, SourceType: "external/quick-run", SourceName: entry.Label, SourceID: entry.ID, Variables: variables})
 	if err != nil {
 		return externalFailure(http.StatusConflict, "target_unavailable")
 	}

@@ -1272,6 +1272,8 @@ func openDatabase(path string) (*sql.DB, error) {
 			created_at INTEGER NOT NULL,
 			group_id TEXT REFERENCES quick_run_groups(id) ON DELETE SET NULL,
 			locked INTEGER NOT NULL DEFAULT 0,
+			script_sha256 TEXT NOT NULL DEFAULT '',
+			revision INTEGER NOT NULL DEFAULT 1,
 			updated_at INTEGER NOT NULL DEFAULT 0
 		)`,
 		`CREATE TABLE IF NOT EXISTS schedule_groups (
@@ -1626,6 +1628,24 @@ func openDatabase(path string) (*sql.DB, error) {
 			return nil, fmt.Errorf("backfill audit hash chain: %w", err)
 		}
 	}
+	if schemaVersion >= 20 && schemaVersion <= 35 {
+		for _, column := range []struct{ name, definition string }{
+			{"script_sha256", "script_sha256 TEXT NOT NULL DEFAULT ''"},
+			{"revision", "revision INTEGER NOT NULL DEFAULT 1"},
+		} {
+			exists, err := sqliteColumnExists(migration, "quick_runs", column.name)
+			if err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("inspect Quick Run publication migration: %w", err)
+			}
+			if !exists {
+				if _, err := migration.Exec("ALTER TABLE quick_runs ADD COLUMN " + column.definition); err != nil {
+					_ = db.Close()
+					return nil, fmt.Errorf("add Quick Run publication column: %w", err)
+				}
+			}
+		}
+	}
 	for _, statement := range []string{
 		"CREATE UNIQUE INDEX IF NOT EXISTS users_single_administrator_idx ON users(role) WHERE role = 'administrator'",
 		"CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id)",
@@ -1694,10 +1714,11 @@ func compatibleDatabaseSchema(version int) bool {
 	// MySQL connection state, and schema 32 adds read-only cross-instance website
 	// monitoring interfaces and encrypted remote source metadata, and schema 33 adds
 	// custom dashboards with independently public card collections, schema 34
-	// adds dedicated percentage cards, and schema 35 adds a tamper-evident audit
-	// hash chain. Each supported predecessor has an explicit
+	// adds dedicated percentage cards, schema 35 adds a tamper-evident audit
+	// hash chain, and schema 36 locks Quick Runs to a script digest and revision.
+	// Each supported predecessor has an explicit
 	// transactional forward path.
-	return version == currentSchemaVersion || currentSchemaVersion == 35 && version >= 20 && version <= 34
+	return version == currentSchemaVersion || currentSchemaVersion == 36 && version >= 20 && version <= 35
 }
 
 func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {
@@ -2884,6 +2905,8 @@ type quickRunView struct {
 	GroupID           string
 	Valid             bool
 	Locked            bool
+	ScriptSHA256      string
+	Revision          int64
 }
 
 type overlapView struct {
@@ -2901,6 +2924,10 @@ type quickRunCreateRequest struct {
 }
 
 func (a *App) createQuickRun(values quickRunCreateRequest) (string, error) {
+	prepared, err := a.files.PrepareScript(values.ScriptPath)
+	if err != nil {
+		return "", err
+	}
 	id, err := randomToken(18)
 	if err != nil {
 		return "", err
@@ -2916,10 +2943,10 @@ func (a *App) createQuickRun(values quickRunCreateRequest) (string, error) {
 	}
 	now := time.Now().UTC().Unix()
 	if _, err := transaction.Exec(`INSERT INTO quick_runs
-		(id, name, script_path, script_path_key, arguments_template, timeout_seconds, source_run_id, sort_order, created_at, group_id, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, values.Name, values.ScriptPath, hostfiles.ComparisonKey(values.ScriptPath), values.ArgumentsTemplate, values.TimeoutSeconds,
-		values.SourceRunID, sortOrder, now, values.GroupID, now,
+		(id, name, script_path, script_path_key, arguments_template, timeout_seconds, source_run_id, sort_order, created_at, group_id, script_sha256, revision, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+		id, values.Name, prepared.Path, hostfiles.ComparisonKey(prepared.Path), values.ArgumentsTemplate, values.TimeoutSeconds,
+		values.SourceRunID, sortOrder, now, values.GroupID, prepared.Digest, now,
 	); err != nil {
 		return "", err
 	}
@@ -3059,7 +3086,7 @@ func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request)
 		http.Error(response, "无法读取快捷执行分组", http.StatusInternalServerError)
 		return
 	}
-	rows, err := a.db.Query(`SELECT id, name, script_path, arguments_template, timeout_seconds, group_id, locked
+	rows, err := a.db.Query(`SELECT id, name, script_path, arguments_template, timeout_seconds, group_id, locked, script_sha256, revision
 		FROM quick_runs ORDER BY sort_order, created_at`)
 	if err != nil {
 		http.Error(response, "无法读取快捷执行", http.StatusInternalServerError)
@@ -3069,12 +3096,12 @@ func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request)
 	for rows.Next() {
 		var quick quickRunView
 		var groupID sql.NullString
-		if err := rows.Scan(&quick.ID, &quick.Name, &quick.ScriptPath, &quick.ArgumentsTemplate, &quick.TimeoutSeconds, &groupID, &quick.Locked); err != nil {
+		if err := rows.Scan(&quick.ID, &quick.Name, &quick.ScriptPath, &quick.ArgumentsTemplate, &quick.TimeoutSeconds, &groupID, &quick.Locked, &quick.ScriptSHA256, &quick.Revision); err != nil {
 			_ = rows.Close()
 			http.Error(response, "无法读取快捷执行", http.StatusInternalServerError)
 			return
 		}
-		if info, infoErr := a.files.Info(quick.ScriptPath); infoErr == nil && info.Mode().IsRegular() {
+		if prepared, prepareErr := a.files.PrepareScript(quick.ScriptPath); prepareErr == nil && quick.ScriptSHA256 != "" && subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(quick.ScriptSHA256)) == 1 {
 			quick.Valid = true
 		}
 		if groupID.Valid {
@@ -3127,11 +3154,14 @@ func (a *App) startQuickRun(response http.ResponseWriter, request *http.Request)
 		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
 		return
 	}
-	var quick quickRunView
-	if err := a.db.QueryRow("SELECT id, name, script_path, arguments_template, timeout_seconds FROM quick_runs WHERE id = ?", request.PathValue("id")).Scan(
-		&quick.ID, &quick.Name, &quick.ScriptPath, &quick.ArgumentsTemplate, &quick.TimeoutSeconds,
-	); err != nil {
+	quick, err := a.loadQuickRun(request.PathValue("id"))
+	if err != nil {
 		http.Error(response, "快捷执行不存在", http.StatusNotFound)
+		return
+	}
+	prepared, err := a.files.PrepareScript(quick.ScriptPath)
+	if err != nil || quick.ScriptSHA256 == "" || subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(quick.ScriptSHA256)) != 1 {
+		http.Error(response, "快捷执行脚本已变化，请由管理员重新发布", http.StatusConflict)
 		return
 	}
 	if a.runs.IsActiveScript(quick.ScriptPath) && request.FormValue("confirm_overlap") != "yes" {
@@ -3147,7 +3177,7 @@ func (a *App) startQuickRun(response http.ResponseWriter, request *http.Request)
 	}
 	current := request.Context().Value(sessionContextKey).(session)
 	id, err := a.runs.Start(runmanager.StartRequest{
-		ScriptPath: quick.ScriptPath, ArgumentsTemplate: quick.ArgumentsTemplate, TimeoutSeconds: quick.TimeoutSeconds,
+		ScriptPath: quick.ScriptPath, ExpectedDigest: quick.ScriptSHA256, ArgumentsTemplate: quick.ArgumentsTemplate, TimeoutSeconds: quick.TimeoutSeconds,
 		SourceType: "admin/quick-run", SourceName: quick.Name, SourceID: quick.ID, Variables: variables,
 		InitiatorUserID: current.userID, InitiatorUsername: current.username,
 	})
@@ -3396,7 +3426,7 @@ func (a *App) updateVariable(response http.ResponseWriter, request *http.Request
 	result, err := transaction.Exec("UPDATE variables SET name = ?, value = ?, is_password = ?, updated_at = ? WHERE name = ?", name, value, isPassword, time.Now().UTC().Unix(), original)
 	if err == nil && name != original {
 		oldReference, newReference := "{{"+original+"}}", "{{"+name+"}}"
-		_, err = transaction.Exec("UPDATE quick_runs SET arguments_template = replace(arguments_template, ?, ?)", oldReference, newReference)
+		_, err = transaction.Exec("UPDATE quick_runs SET arguments_template = replace(arguments_template, ?, ?), revision = revision + 1 WHERE arguments_template LIKE ?", oldReference, newReference, "%"+oldReference+"%")
 		if err == nil {
 			_, err = transaction.Exec("UPDATE schedules SET arguments_template = replace(arguments_template, ?, ?)", oldReference, newReference)
 		}

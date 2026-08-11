@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -31,6 +32,8 @@ import (
 
 type StartRequest struct {
 	ScriptPath        string
+	ExpectedDigest    string
+	DisallowOverlap   bool
 	ArgumentsTemplate string
 	SourceType        string
 	SourceName        string
@@ -171,6 +174,7 @@ func New(db *sql.DB, files *hostfiles.Manager, stateRoot string, timeoutGrace ti
 var ErrMaintenance = errors.New("ScriptBoard is entering update maintenance mode")
 var ErrSourceExpired = errors.New("one-time source has expired")
 var ErrSourceUnavailable = errors.New("one-time source is unavailable")
+var ErrRunOverlap = errors.New("the published Run already has an active execution")
 
 func prepareArguments(argumentsTemplate string, variables map[string]string) ([]string, []string, error) {
 	if len([]byte(argumentsTemplate)) > 16<<10 {
@@ -216,6 +220,12 @@ func (m *Manager) Start(request StartRequest) (string, error) {
 	script, err := m.files.PrepareScript(request.ScriptPath)
 	if err != nil {
 		return "", fmt.Errorf("脚本不可执行: %w", err)
+	}
+	if request.ExpectedDigest != "" && subtle.ConstantTimeCompare([]byte(script.Digest), []byte(request.ExpectedDigest)) != 1 {
+		return "", errors.New("script digest no longer matches the published Run configuration")
+	}
+	if request.DisallowOverlap && m.IsActiveScript(script.Path) {
+		return "", ErrRunOverlap
 	}
 	executors, err := resolveExecutors(hostfiles.Extension(script.Path), m.executorChains)
 	if err != nil {
