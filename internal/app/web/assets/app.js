@@ -533,7 +533,13 @@
     if (state.dialog.open) state.dialog.close();
     state.dialog.remove();
     if (restoreFocus && state.returnFocus instanceof HTMLElement && state.returnFocus.isConnected) {
-      state.returnFocus.focus();
+      const returnFocus = state.returnFocus;
+      // Chromium can finish its native <dialog> focus restoration after
+      // close() returns and overwrite a synchronous focus() call. Restore on
+      // the next frame so the initiating control reliably wins that race.
+      requestAnimationFrame(() => {
+        if (returnFocus.isConnected) returnFocus.focus({ preventScroll: true });
+      });
     }
   }
 
