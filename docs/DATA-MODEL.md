@@ -458,6 +458,11 @@ stateDiagram-v2
 网站监控最多 100 项/128 MiB 与 Dashboard 最多 100 卡片/2 MiB 的未知字段拒绝、版本和
 领域字段校验；外层策略不能替代领域解码。
 
+Custom Dashboard 的 HTTP 数据源继续允许保存 `Authorization`、`Cookie` 等业务凭据头，
+但 URL 不得内嵌凭据或片段，请求头不得覆盖 Host、代理认证、连接或传输语义。运行时使用
+共享出站策略固定经校验的公网目标，不读取环境代理、不跟随重定向，并限制请求头、响应
+大小和超时；默认不能访问回环、私网、链路本地或云元数据服务。
+
 ## 9. 一次性 Run 源码
 
 `Run.script_kind` 区分 `host_file` 与 `one_time`。一次性 Run 额外保存：

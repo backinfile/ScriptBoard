@@ -17,10 +17,15 @@ import (
 	"sync"
 	"time"
 
+	"scriptboard/internal/outboundpolicy"
 	"scriptboard/internal/secretredaction"
 )
 
-const maxResponseBytes = 2 << 20
+const (
+	maxResponseBytes     = 2 << 20
+	maxSourceHeaders     = 32
+	maxSourceHeaderBytes = 16 << 10
+)
 
 var SchemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS custom_dashboards (
@@ -114,13 +119,23 @@ func New(options Options) (*Manager, error) {
 		return nil, errors.New("custom dashboard database is required")
 	}
 	if options.Client == nil {
-		options.Client = &http.Client{Timeout: 15 * time.Second}
+		options.Client = &http.Client{
+			Timeout:   15 * time.Second,
+			Transport: outboundpolicy.Policy{}.Transport(),
+		}
+	}
+	client := *options.Client
+	if client.Timeout <= 0 {
+		client.Timeout = 15 * time.Second
+	}
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return errors.New("dashboard source redirects are not allowed")
 	}
 	if options.Now == nil {
 		options.Now = time.Now
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	m := &Manager{db: options.DB, client: options.Client, now: options.Now, ctx: ctx, cancel: cancel}
+	m := &Manager{db: options.DB, client: &client, now: options.Now, ctx: ctx, cancel: cancel}
 	if options.Tick <= 0 {
 		options.Tick = time.Minute
 	}
@@ -506,8 +521,8 @@ func validateCard(input *CardInput) error {
 		if input.SourceURL == "" {
 			return errors.New("数据地址不能为空")
 		}
-		parsed, err := url.ParseRequestURI(input.SourceURL)
-		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		parsed, err := url.Parse(input.SourceURL)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
 			return errors.New("数据地址必须使用 HTTP 或 HTTPS")
 		}
 		if input.ValuePath == "" {
@@ -535,7 +550,52 @@ func validateCard(input *CardInput) error {
 	if input.Headers == nil {
 		input.Headers = map[string]string{}
 	}
+	return validateSourceHeaders(input.Headers)
+}
+
+var reservedSourceHeaders = map[string]struct{}{
+	"connection": {}, "content-length": {}, "host": {}, "keep-alive": {},
+	"proxy-authenticate": {}, "proxy-authorization": {}, "proxy-connection": {},
+	"te": {}, "trailer": {}, "transfer-encoding": {}, "upgrade": {},
+}
+
+func validateSourceHeaders(headers map[string]string) error {
+	if len(headers) > maxSourceHeaders {
+		return errors.New("数据源请求头数量过多")
+	}
+	total := 0
+	for name, value := range headers {
+		total += len(name) + len(value)
+		if total > maxSourceHeaderBytes {
+			return errors.New("数据源请求头过大")
+		}
+		if !validHeaderName(name) {
+			return errors.New("数据源请求头名称无效")
+		}
+		if _, reserved := reservedSourceHeaders[strings.ToLower(name)]; reserved {
+			return errors.New("数据源请求头包含保留字段")
+		}
+		for _, char := range value {
+			if (char < 0x20 && char != '\t') || char == 0x7f {
+				return errors.New("数据源请求头值无效")
+			}
+		}
+	}
 	return nil
+}
+
+func validHeaderName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, char := range name {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || strings.ContainsRune("!#$%&'*+-.^_`|~", char) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 var slugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
