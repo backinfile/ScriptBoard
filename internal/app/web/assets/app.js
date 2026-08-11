@@ -5369,11 +5369,21 @@
     const form = layer?.querySelector("[data-llm-form]");
     const title = layer?.querySelector("[data-llm-drawer-title]");
     const credentialHelp = layer?.querySelector("[data-credential-help]");
+    const reasoningCapability = form?.elements.supports_reasoning;
+    const thinkingDetail = layer?.querySelector("[data-thinking-detail]");
+    const thinkingLevel = form?.elements.default_thinking_level;
     const guardrailLayer = root.querySelector("[data-guardrail-drawer]");
     const guardrailDrawer = guardrailLayer?.querySelector(".assistant-guardrail-drawer");
     const guardrailForm = guardrailLayer?.querySelector("form");
     let returnFocus = null;
     let guardrailReturnFocus = null;
+
+    const syncThinkingCapability = () => {
+      const enabled = Boolean(reasoningCapability?.checked);
+      thinkingDetail?.classList.toggle("is-visible", enabled);
+      thinkingDetail?.setAttribute("aria-hidden", String(!enabled));
+      if (thinkingLevel) thinkingLevel.disabled = !enabled;
+    };
 
     const close = () => {
       if (!layer) return;
@@ -5396,7 +5406,10 @@
 	  form.elements.api_key.required = !row;
       form.elements.make_default.checked = row?.dataset.default === "true";
 		form.elements.supports_images.checked = row?.dataset.supportsImages === "true";
+		form.elements.supports_reasoning.checked = row?.dataset.supportsReasoning === "true";
+		form.elements.default_thinking_level.value = row?.dataset.defaultThinkingLevel || "medium";
 		form.elements.shared.checked = row?.dataset.shared === "true";
+      syncThinkingCapability();
       if (title) title.textContent = row ? layer.dataset.editTitle : layer.dataset.addTitle;
       if (credentialHelp) credentialHelp.dataset.editing = String(Boolean(row));
       layer.dataset.open = "true";
@@ -5429,6 +5442,9 @@
       if (guardrailTrigger) { openGuardrails(guardrailTrigger); return; }
       if (event.target.closest("[data-close-guardrails]")) { event.preventDefault(); closeGuardrails(); }
     };
+    const onChange = event => {
+      if (event.target === reasoningCapability) syncThinkingCapability();
+    };
     const trapFocus = (event, activeDrawer) => {
       if (event.key !== "Tab" || !activeDrawer) return;
       const focusable = [...activeDrawer.querySelectorAll("button:not([disabled]),input:not([disabled]):not([type='hidden']),select:not([disabled]),textarea:not([disabled]),a[href]")]
@@ -5451,9 +5467,11 @@
       }
     };
     root.addEventListener("click", onClick);
+    form?.addEventListener("change", onChange);
     document.addEventListener("keydown", onKeydown);
     cleanups.push(() => {
       root.removeEventListener("click", onClick);
+      form?.removeEventListener("change", onChange);
       document.removeEventListener("keydown", onKeydown);
       document.body.style.overflow = "";
     });

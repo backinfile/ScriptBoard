@@ -1205,10 +1205,16 @@ func (a *App) saveAssistantModel(response http.ResponseWriter, request *http.Req
 		return
 	}
 	id := strings.TrimSpace(request.FormValue("id"))
+	supportsReasoning := request.FormValue("supports_reasoning") != ""
+	defaultThinkingLevel := request.FormValue("default_thinking_level")
+	if !supportsReasoning {
+		defaultThinkingLevel = "off"
+	}
 	model, err := a.assistant.SaveModel(request.Context(), assistantActor(request), id, assistant.ModelInput{
 		Name: request.FormValue("name"), Provider: request.FormValue("provider"), Model: request.FormValue("model"),
 		Endpoint: request.FormValue("endpoint"), APIKey: request.FormValue("api_key"),
 		MakeDefault: request.FormValue("make_default") != "", SupportsImages: request.FormValue("supports_images") != "",
+		SupportsReasoning: supportsReasoning, DefaultThinkingLevel: defaultThinkingLevel,
 		Shared: request.FormValue("shared") != "",
 	})
 	if err != nil {
