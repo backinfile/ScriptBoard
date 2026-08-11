@@ -82,6 +82,15 @@ async function assertFocusReturns(page, locator, message) {
 }
 
 async function assertNoHorizontalOverflow(page, label) {
+  // Mobile sidebars and drawers transition off-canvas after reload. Loaded
+  // Windows runners can sample their temporary width before layout settles,
+  // so wait briefly before treating scrollWidth as a persistent UI defect.
+  try {
+    await page.waitForFunction(() => document.documentElement.scrollWidth <= window.innerWidth + 1, null, { timeout: 2000 });
+    return;
+  } catch {
+    // Capture the persistent geometry below for the assertion message.
+  }
   const dimensions = await page.evaluate(() => ({
     viewport: window.innerWidth,
     document: document.documentElement.scrollWidth,
@@ -90,6 +99,7 @@ async function assertNoHorizontalOverflow(page, label) {
         const bounds = element.getBoundingClientRect();
         return bounds.right > window.innerWidth + 1 || bounds.left < -1;
       })
+      .sort((left, right) => Number(right.getBoundingClientRect().right > window.innerWidth + 1) - Number(left.getBoundingClientRect().right > window.innerWidth + 1))
       .slice(0, 8)
       .map(element => {
         const bounds = element.getBoundingClientRect();
