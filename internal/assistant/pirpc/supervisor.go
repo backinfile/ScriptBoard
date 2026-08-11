@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"scriptboard/internal/processlaunch"
 )
 
 var (
@@ -84,9 +86,13 @@ func (supervisor *Supervisor) Start(key string, spec LaunchSpec) (*Session, erro
 		supervisor.mu.Unlock()
 	}()
 
-	command := exec.Command(spec.Executable, spec.Args...)
-	command.Dir = spec.Workspace
-	command.Env = append([]string(nil), spec.Env...)
+	command, err := processlaunch.Prepare(processlaunch.Spec{
+		Context: context.Background(), Executable: spec.Executable, Arguments: spec.Args,
+		Environment: processlaunch.EnvironmentExact, Env: spec.Env, Directory: spec.Workspace,
+	})
+	if err != nil {
+		return nil, err
+	}
 	configureAssistantProcess(command)
 	stdin, err := command.StdinPipe()
 	if err != nil {

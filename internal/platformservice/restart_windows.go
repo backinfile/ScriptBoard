@@ -3,11 +3,13 @@
 package platformservice
 
 import (
+	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"syscall"
 	"time"
+
+	"scriptboard/internal/processlaunch"
 )
 
 // RequestRestart starts an independent helper so the service never waits for
@@ -20,7 +22,13 @@ func RequestRestart(delay time.Duration) error {
 	if err != nil {
 		return err
 	}
-	command := exec.Command(executable, "service", "restart", "--delay", delay.String())
+	command, err := processlaunch.Prepare(processlaunch.Spec{
+		Context: context.Background(), Executable: executable,
+		Arguments: []string{"service", "restart", "--delay", delay.String()}, Environment: processlaunch.EnvironmentInherit,
+	})
+	if err != nil {
+		return err
+	}
 	command.SysProcAttr = &syscall.SysProcAttr{
 		CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP | 0x00000008, // DETACHED_PROCESS
 		HideWindow:    true,

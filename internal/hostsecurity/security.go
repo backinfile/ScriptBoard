@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"scriptboard/internal/processlaunch"
 )
 
 type LoginResult string
@@ -970,8 +972,13 @@ func conciseError(err error) string {
 type commandRunner struct{}
 
 func (commandRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
-	command := exec.CommandContext(ctx, name, args...)
-	command.Env = append(os.Environ(), "LC_ALL=C", "LANG=C")
+	command, err := processlaunch.Prepare(processlaunch.Spec{
+		Context: ctx, Executable: name, Arguments: args, Environment: processlaunch.EnvironmentExact,
+		Env: append(os.Environ(), "LC_ALL=C", "LANG=C"),
+	})
+	if err != nil {
+		return "", err
+	}
 	output, err := command.CombinedOutput()
 	if err != nil {
 		message := strings.TrimSpace(string(output))

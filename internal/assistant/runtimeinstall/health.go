@@ -5,19 +5,24 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"scriptboard/internal/assistant/pirpc"
+	"scriptboard/internal/processlaunch"
 )
 
 func healthCheckCandidate(ctx context.Context, candidate Candidate) error {
 	versionContext, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	command := exec.CommandContext(versionContext, candidate.Executable, "--version")
-	command.Env = runtimeHealthEnvironment(candidate.StateRoot)
+	command, err := processlaunch.Prepare(processlaunch.Spec{
+		Context: versionContext, Executable: candidate.Executable, Arguments: []string{"--version"},
+		Environment: processlaunch.EnvironmentExact, Env: runtimeHealthEnvironment(candidate.StateRoot),
+	})
+	if err != nil {
+		return err
+	}
 	output, err := command.Output()
 	if err != nil {
 		return fmt.Errorf("run pi --version: %w", err)

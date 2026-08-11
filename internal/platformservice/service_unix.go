@@ -3,11 +3,13 @@
 package platformservice
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
+
+	"scriptboard/internal/processlaunch"
 )
 
 const (
@@ -99,7 +101,14 @@ func Stop() error    { return systemctl("stop", "scriptboard.service") }
 func Restart() error { return systemctl("restart", "scriptboard.service") }
 
 func Status() (string, error) {
-	output, err := exec.Command("systemctl", "is-active", "scriptboard.service").CombinedOutput()
+	command, commandErr := processlaunch.Prepare(processlaunch.Spec{
+		Context: context.Background(), Executable: "systemctl", Arguments: []string{"is-active", "scriptboard.service"},
+		Environment: processlaunch.EnvironmentInherit,
+	})
+	if commandErr != nil {
+		return "", commandErr
+	}
+	output, err := command.CombinedOutput()
 	state := strings.TrimSpace(string(output))
 	if err != nil && state != "inactive" && state != "failed" {
 		return string(output), err
@@ -137,7 +146,14 @@ func StartUpdater(_, _, operationID string) error {
 }
 
 func systemctl(arguments ...string) error {
-	output, err := exec.Command("systemctl", arguments...).CombinedOutput()
+	command, err := processlaunch.Prepare(processlaunch.Spec{
+		Context: context.Background(), Executable: "systemctl", Arguments: arguments,
+		Environment: processlaunch.EnvironmentInherit,
+	})
+	if err != nil {
+		return err
+	}
+	output, err := command.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("systemctl %s: %w: %s", strings.Join(arguments, " "), err, strings.TrimSpace(string(output)))
 	}

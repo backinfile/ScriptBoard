@@ -3,15 +3,21 @@
 package runmanager
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"syscall"
+
+	"scriptboard/internal/processlaunch"
 )
 
 func newExecutorCommand(executor executorCandidate, script string, arguments []string) (*exec.Cmd, error) {
 	commandArguments := append(append([]string{}, executor.prefix...), script)
 	commandArguments = append(commandArguments, arguments...)
-	return exec.Command(executor.path, commandArguments...), nil
+	return processlaunch.Prepare(processlaunch.Spec{
+		Context: context.Background(), Executable: executor.path, Arguments: commandArguments,
+		Environment: processlaunch.EnvironmentExact,
+	})
 }
 
 func configureProcess(command *exec.Cmd) {

@@ -10,11 +10,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
+
+	"scriptboard/internal/processlaunch"
 )
 
 type BackupKind string
@@ -61,7 +62,12 @@ type Operation struct {
 type osCommandRunner struct{}
 
 func (osCommandRunner) Run(ctx context.Context, executable string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	command := exec.CommandContext(ctx, executable, args...)
+	command, err := processlaunch.Prepare(processlaunch.Spec{
+		Context: ctx, Executable: executable, Arguments: args, Environment: processlaunch.EnvironmentInherit,
+	})
+	if err != nil {
+		return err
+	}
 	command.Stdin, command.Stdout, command.Stderr = stdin, stdout, stderr
 	return command.Run()
 }

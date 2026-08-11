@@ -3,6 +3,7 @@
 package runmanager
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -12,13 +13,21 @@ import (
 	"syscall"
 	"unsafe"
 
+	"scriptboard/internal/processlaunch"
+
 	"golang.org/x/sys/windows"
 )
 
 func newExecutorCommand(executor executorCandidate, script string, arguments []string) (*exec.Cmd, error) {
 	commandArguments := append(append([]string{}, executor.prefix...), script)
 	commandArguments = append(commandArguments, arguments...)
-	command := exec.Command(executor.path, commandArguments...)
+	command, err := processlaunch.Prepare(processlaunch.Spec{
+		Context: context.Background(), Executable: executor.path, Arguments: commandArguments,
+		Environment: processlaunch.EnvironmentExact,
+	})
+	if err != nil {
+		return nil, err
+	}
 	if !executor.batch {
 		return command, nil
 	}
@@ -105,7 +114,14 @@ func terminateProcess(process *os.Process, force bool) error {
 	}
 	arguments := []string{"/PID", strconv.Itoa(process.Pid), "/T"}
 	arguments = append(arguments, "/F")
-	if output, err := exec.Command("taskkill.exe", arguments...).CombinedOutput(); err != nil {
+	command, err := processlaunch.Prepare(processlaunch.Spec{
+		Context: context.Background(), Executable: "taskkill.exe", Arguments: arguments,
+		Environment: processlaunch.EnvironmentInherit,
+	})
+	if err != nil {
+		return err
+	}
+	if output, err := command.CombinedOutput(); err != nil {
 		return fmt.Errorf("taskkill: %w: %s", err, output)
 	}
 	return nil
