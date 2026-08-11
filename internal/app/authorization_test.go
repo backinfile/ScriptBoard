@@ -69,7 +69,6 @@ func TestFixedRolesCoverEveryProtectedRouteClass(t *testing.T) {
 		{"mysql databases", http.MethodGet, "/resources/databases", []userRole{roleAdministrator, roleMaintainer}},
 		{"mysql backup mutation", http.MethodPost, "/resources/databases/instances/instance-one/backup", []userRole{roleAdministrator, roleMaintainer}},
 		{"external interfaces", http.MethodGet, "/config/external-interfaces", []userRole{roleAdministrator, roleMaintainer}},
-		{"copy external interface key", http.MethodGet, "/config/external-interfaces/keys/key-one/copy", []userRole{roleAdministrator, roleMaintainer}},
 		{"external interface mutation", http.MethodPost, "/config/external-interfaces/keys/key-one/toggle", []userRole{roleAdministrator, roleMaintainer}},
 		{"audit html", http.MethodGet, "/history/audit", []userRole{roleAdministrator, roleMaintainer}},
 		{"audit download", http.MethodGet, "/history/audit.csv", []userRole{roleAdministrator, roleMaintainer}},

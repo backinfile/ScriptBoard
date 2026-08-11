@@ -1199,12 +1199,12 @@ async function assertExternalInterfaces(page, fixture) {
   await keyForm.locator('input[name="label"]').fill("Browser fixture");
   await keyForm.locator('select[name="duration"]').selectOption("1d");
   await keyForm.locator('button[type="submit"]').click();
-  const maskedSecret = (await page.locator(".external-secret code").textContent()).trim();
-  assert.match(maskedSecret, /^sbk_[A-Za-z0-9_-]{16}\.••••[A-Za-z0-9_-]{4}$/);
-  const copyKey = page.locator("[data-copy-key]");
+  const renderedSecret = (await page.locator(".external-secret code").textContent()).trim();
+  assert.match(renderedSecret, /^sbk_[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{43}$/);
+  const copyKey = page.locator('[data-copy-text][data-copy-target="external-key-secret"]');
   await copyKey.click();
-  await copyKey.locator('[data-copy-key-label]').getByText("Copied").waitFor();
   const secret = await page.evaluate(() => navigator.clipboard.readText());
+  assert.equal(secret, renderedSecret);
   assert.match(secret, /^sbk_[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{43}$/);
   const keyID = secret.slice(4).split(".")[0];
 

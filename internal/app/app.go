@@ -477,6 +477,10 @@ func Open(config Config) (*App, error) {
 		instanceID:        fmt.Sprintf("%d-%x", os.Getpid(), time.Now().UnixNano()),
 	}
 	application.externalTriggers = externaltrigger.New(db, externaltrigger.Options{SecretsDirectory: filepath.Join(stateRoot, "secrets")})
+	if err := application.externalTriggers.PurgeLegacyKeySecrets(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("purge recoverable External Interface keys: %w", err)
+	}
 	application.externalLimit = externaltrigger.NewLimiter(externaltrigger.LimiterOptions{RequestsPerMinute: 60, Concurrent: 4})
 	application.mysql, err = mysqlmanager.New(mysqlmanager.Options{DB: db, StateRoot: stateRoot, Audit: func(event mysqlmanager.AuditEvent) {
 		application.recordAuditWithActor(event.Action, event.Target, event.Result, "mysqlmanager", event.Actor.UserID, event.Actor.Username, "")
@@ -2095,7 +2099,6 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /config/external-interfaces/keys/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.newExternalKeyTask)))
 	mux.Handle("POST /config/external-interfaces/keys", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.createExternalKey)))
 	mux.Handle("GET /config/external-interfaces/keys/{id}/edit", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.editExternalKeyTask)))
-	mux.Handle("GET /config/external-interfaces/keys/{id}/copy", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.copyExternalKeyTask)))
 	mux.Handle("GET /config/external-interfaces/keys/{id}/rotate", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.rotateExternalKeyTask)))
 	mux.Handle("POST /config/external-interfaces/keys/{id}", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.updateExternalKey)))
 	mux.Handle("POST /config/external-interfaces/keys/{id}/toggle", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.toggleExternalKey)))

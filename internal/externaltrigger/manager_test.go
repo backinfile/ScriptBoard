@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -49,21 +48,8 @@ func TestCreateKeyAndResolveEnabledLogEntry(t *testing.T) {
 	if storedHash == secret || strings.Contains(storedHash, secret) {
 		t.Fatal("plaintext key was persisted")
 	}
-	revealed, err := manager.KeySecret(key.ID)
-	if err != nil || revealed != secret {
-		t.Fatalf("revealed secret=%q error=%v", revealed, err)
-	}
-	if err := filepath.Walk(manager.secretsDirectory, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil || info.IsDir() {
-			return walkErr
-		}
-		content, readErr := os.ReadFile(path)
-		if readErr == nil && strings.Contains(string(content), secret) {
-			t.Fatalf("plaintext key was persisted in %s", path)
-		}
-		return readErr
-	}); err != nil {
-		t.Fatal(err)
+	if _, err := manager.secretStore.get(key.ID); !errors.Is(err, ErrSecretUnavailable) {
+		t.Fatalf("external key remained recoverable after creation: %v", err)
 	}
 
 	entry, err := manager.CreateEntry(context.Background(), CreateEntryInput{
@@ -130,7 +116,7 @@ func TestKeyNamesAreUniqueIgnoringCaseAndSurroundingWhitespace(t *testing.T) {
 	}
 }
 
-func TestRotateAndDeleteKeyUpdateRecoverableSecret(t *testing.T) {
+func TestRotateAndDeleteKeyNeverPersistRecoverableSecret(t *testing.T) {
 	manager, _ := testManager(t, time.Date(2026, 8, 5, 9, 0, 0, 0, time.UTC))
 	key, original, err := manager.CreateKey(context.Background(), CreateKeyInput{Label: "Agent", Enabled: true})
 	if err != nil {
@@ -143,14 +129,37 @@ func TestRotateAndDeleteKeyUpdateRecoverableSecret(t *testing.T) {
 	if rotated == original {
 		t.Fatal("rotation did not replace the key")
 	}
-	if revealed, revealErr := manager.KeySecret(key.ID); revealErr != nil || revealed != rotated {
-		t.Fatalf("revealed rotated secret=%q error=%v", revealed, revealErr)
+	if _, revealErr := manager.secretStore.get(key.ID); !errors.Is(revealErr, ErrSecretUnavailable) {
+		t.Fatalf("rotated key remained recoverable: %v", revealErr)
 	}
 	if err := manager.DeleteKey(context.Background(), key.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manager.KeySecret(key.ID); !errors.Is(err, ErrSecretUnavailable) {
+	if _, err := manager.secretStore.get(key.ID); !errors.Is(err, ErrSecretUnavailable) {
 		t.Fatalf("deleted key secret error=%v", err)
+	}
+}
+
+func TestPurgeLegacyKeySecretsKeepsUnrelatedSecrets(t *testing.T) {
+	manager, _ := testManager(t, time.Date(2026, 8, 5, 9, 0, 0, 0, time.UTC))
+	key, _, err := manager.CreateKey(context.Background(), CreateKeyInput{Label: "Legacy", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.secretStore.set(key.ID, "legacy-complete-key"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.StoreSecret("remote-website:one", "remote-secret"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.PurgeLegacyKeySecrets(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.secretStore.get(key.ID); !errors.Is(err, ErrSecretUnavailable) {
+		t.Fatalf("legacy external key was not purged: %v", err)
+	}
+	if secret, err := manager.Secret("remote-website:one"); err != nil || secret != "remote-secret" {
+		t.Fatalf("unrelated secret changed: secret=%q err=%v", secret, err)
 	}
 }
 

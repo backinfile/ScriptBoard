@@ -21,32 +21,24 @@ import (
 )
 
 var externalKeyPattern = regexp.MustCompile(`sbk_[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{43}`)
-var externalCopyURLPattern = regexp.MustCompile(`/config/external-interfaces/keys/([A-Za-z0-9_-]{16})/copy`)
+
+func createdExternalTestKey(t *testing.T, body []byte) (string, string) {
+	t.Helper()
+	secret := string(externalKeyPattern.Find(body))
+	if secret == "" {
+		t.Fatalf("created key response is missing the one-time secret: %s", body)
+	}
+	identifier, _, ok := strings.Cut(strings.TrimPrefix(secret, "sbk_"), ".")
+	if !ok || len(identifier) != 16 {
+		t.Fatalf("invalid external key secret: %q", secret)
+	}
+	return secret, identifier
+}
 
 func createdExternalKeyID(t *testing.T, body []byte) string {
 	t.Helper()
-	match := externalCopyURLPattern.FindSubmatch(body)
-	if len(match) != 2 {
-		t.Fatalf("created key response is missing its copy action: %s", body)
-	}
-	return string(match[1])
-}
-
-func copyExternalTestKey(t *testing.T, client *http.Client, serverURL, keyID string) string {
-	t.Helper()
-	response, err := client.Get(serverURL + "/config/external-interfaces/keys/" + keyID + "/copy")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer response.Body.Close()
-	var payload map[string]string
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		t.Fatal(err)
-	}
-	if response.StatusCode != http.StatusOK || !externalKeyPattern.MatchString(payload["key"]) {
-		t.Fatalf("copy key status=%d key=%q", response.StatusCode, payload["key"])
-	}
-	return payload["key"]
+	_, identifier := createdExternalTestKey(t, body)
+	return identifier
 }
 
 func invokeExternalForm(t *testing.T, client *http.Client, serverURL, secret, name string, values url.Values) *http.Response {
@@ -64,7 +56,7 @@ func invokeExternalForm(t *testing.T, client *http.Client, serverURL, secret, na
 	return response
 }
 
-func TestViewerCannotCopyExternalInterfaceKey(t *testing.T) {
+func TestExternalInterfaceKeyCannotBeRetrievedAfterCreation(t *testing.T) {
 	root := t.TempDir()
 	admin, serverURL := authenticatedClient(t, filepath.Join(root, "host"), filepath.Join(root, "state"))
 	pageResponse, err := admin.Get(serverURL + "/config/external-interfaces")
@@ -81,16 +73,18 @@ func TestViewerCannotCopyExternalInterfaceKey(t *testing.T) {
 	}
 	createdBody, _ := io.ReadAll(created.Body)
 	_ = created.Body.Close()
-	keyID := createdExternalKeyID(t, createdBody)
+	secret, keyID := createdExternalTestKey(t, createdBody)
 	viewer := createRoleUserClient(t, admin, serverURL, "external-key-viewer", "viewer")
-	response, err := viewer.Get(serverURL + "/config/external-interfaces/keys/" + keyID + "/copy")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusForbidden {
+	for name, client := range map[string]*http.Client{"administrator": admin, "viewer": viewer} {
+		response, err := client.Get(serverURL + "/config/external-interfaces/keys/" + keyID + "/copy")
+		if err != nil {
+			t.Fatal(err)
+		}
 		body, _ := io.ReadAll(response.Body)
-		t.Fatalf("viewer copy status=%d body=%s", response.StatusCode, body)
+		_ = response.Body.Close()
+		if response.StatusCode == http.StatusOK || bytes.Contains(body, []byte(secret)) {
+			t.Fatalf("%s retrieved a one-time external key: status=%d body=%s", name, response.StatusCode, body)
+		}
 	}
 }
 
@@ -129,8 +123,7 @@ func TestExternalWebsiteMonitorEntryReturnsReadOnlySnapshot(t *testing.T) {
 	}
 	createdKeyPage, _ := io.ReadAll(createdKey.Body)
 	_ = createdKey.Body.Close()
-	keyID := createdExternalKeyID(t, createdKeyPage)
-	secret := copyExternalTestKey(t, client, serverURL, keyID)
+	secret, keyID := createdExternalTestKey(t, createdKeyPage)
 
 	entryTask, err := client.Get(serverURL + "/config/external-interfaces/keys/" + keyID + "/entries/new")
 	if err != nil {
@@ -301,31 +294,13 @@ func TestAdministratorCreatesKeyAndExternalLogTrigger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	keyID := createdExternalKeyID(t, createdBody)
+	secret, keyID := createdExternalTestKey(t, createdBody)
 	if response.StatusCode != http.StatusCreated || !strings.Contains(string(createdBody), `data-task-kind="external-key-created"`) ||
 		!strings.Contains(string(createdBody), `data-task-refresh-on-close`) ||
-		!strings.Contains(string(createdBody), `data-copy-key-url="/config/external-interfaces/keys/`+keyID+`/copy"`) ||
-		externalKeyPattern.Match(createdBody) || strings.Contains(string(createdBody), `class="task-back"`) {
-		t.Fatalf("create key should render a masked in-drawer result: status=%d body=%s", response.StatusCode, createdBody)
-	}
-	secret := copyExternalTestKey(t, client, serverURL, keyID)
-	expectedCreatedHint := "sbk_" + keyID + ".••••" + secret[len(secret)-4:]
-	if !strings.Contains(string(createdBody), expectedCreatedHint) {
-		t.Fatalf("created key response missing masked key %q: %s", expectedCreatedHint, createdBody)
-	}
-
-	response, err = client.Get(serverURL + "/config/external-interfaces/keys/" + keyID + "/copy")
-	if err != nil {
-		t.Fatal(err)
-	}
-	copyBody, _ := io.ReadAll(response.Body)
-	_ = response.Body.Close()
-	var copiedKey map[string]string
-	if err := json.Unmarshal(copyBody, &copiedKey); err != nil {
-		t.Fatalf("decode copied key: %v body=%s", err, copyBody)
-	}
-	if response.StatusCode != http.StatusOK || copiedKey["key"] != secret || response.Header.Get("Cache-Control") != "no-store" {
-		t.Fatalf("copy key status=%d body=%s", response.StatusCode, copyBody)
+		!strings.Contains(string(createdBody), `data-copy-text data-copy-target="external-key-secret"`) ||
+		!strings.Contains(string(createdBody), secret) || response.Header.Get("Cache-Control") != "no-store" ||
+		strings.Contains(string(createdBody), `class="task-back"`) {
+		t.Fatalf("create key should render a one-time in-drawer result: status=%d body=%s", response.StatusCode, createdBody)
 	}
 
 	response, err = client.Get(serverURL + "/config/external-interfaces")
@@ -335,8 +310,8 @@ func TestAdministratorCreatesKeyAndExternalLogTrigger(t *testing.T) {
 	keyList, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	copyURL := "/config/external-interfaces/keys/" + keyID + "/copy"
-	if !strings.Contains(string(keyList), `data-copy-key-url="`+copyURL+`"`) || strings.Contains(string(keyList), `href="`+copyURL+`"`) {
-		t.Fatalf("copy key should be an inline copy button: %s", keyList)
+	if strings.Contains(string(keyList), copyURL) || strings.Contains(string(keyList), secret) || strings.Contains(string(keyList), `data-copy-key`) {
+		t.Fatalf("key list retained a complete-key retrieval surface: %s", keyList)
 	}
 	rotateTaskURL := "/config/external-interfaces/keys/" + keyID + "/rotate"
 	if strings.Contains(string(keyList), `href="`+rotateTaskURL+`"`) {
@@ -497,7 +472,7 @@ func TestAdministratorCreatesKeyAndExternalLogTrigger(t *testing.T) {
 	}
 }
 
-func TestRotatedExternalKeyIsCopiedWithoutRenderingTheSecret(t *testing.T) {
+func TestRotatedExternalKeyIsRenderedOnceAndNotRecoverable(t *testing.T) {
 	root := t.TempDir()
 	client, serverURL := authenticatedClient(t, filepath.Join(root, "host"), filepath.Join(root, "state"))
 	original, keyID := createExternalTestKey(t, client, serverURL, "Rotation display")
@@ -515,26 +490,21 @@ func TestRotatedExternalKeyIsCopiedWithoutRenderingTheSecret(t *testing.T) {
 	}
 	rotatedPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
+	rotated, rotatedID := createdExternalTestKey(t, rotatedPage)
 	if response.StatusCode != http.StatusCreated || !strings.Contains(string(rotatedPage), `data-task-kind="external-key-rotated"`) ||
 		!strings.Contains(string(rotatedPage), `data-task-refresh-on-close`) ||
-		!strings.Contains(string(rotatedPage), `data-copy-key-url="/config/external-interfaces/keys/`+keyID+`/copy"`) || externalKeyPattern.Match(rotatedPage) {
-		t.Fatalf("rotated key response exposes the secret or lacks the copy action: status=%d body=%s", response.StatusCode, rotatedPage)
+		!strings.Contains(string(rotatedPage), `data-copy-text data-copy-target="external-key-secret"`) ||
+		response.Header.Get("Cache-Control") != "no-store" || rotatedID != keyID || rotated == original {
+		t.Fatalf("rotated key response is missing its one-time secret: status=%d body=%s", response.StatusCode, rotatedPage)
 	}
 	response, err = client.Get(serverURL + "/config/external-interfaces/keys/" + keyID + "/copy")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var payload map[string]string
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		t.Fatal(err)
-	}
+	copyBody, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if payload["key"] == "" || payload["key"] == original {
-		t.Fatalf("rotated key was not replaced: %q", payload["key"])
-	}
-	expectedRotatedHint := "sbk_" + keyID + ".••••" + payload["key"][len(payload["key"])-4:]
-	if !strings.Contains(string(rotatedPage), expectedRotatedHint) {
-		t.Fatalf("rotated key response missing masked key %q: %s", expectedRotatedHint, rotatedPage)
+	if response.StatusCode == http.StatusOK || bytes.Contains(copyBody, []byte(rotated)) {
+		t.Fatalf("rotated key remained recoverable: status=%d body=%s", response.StatusCode, copyBody)
 	}
 }
 
@@ -803,11 +773,10 @@ func createExternalTestKey(t *testing.T, client *http.Client, serverURL, label s
 	}
 	created, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusCreated || externalKeyPattern.Match(created) {
+	if response.StatusCode != http.StatusCreated || !externalKeyPattern.Match(created) || response.Header.Get("Cache-Control") != "no-store" {
 		t.Fatalf("create key status=%d body=%s", response.StatusCode, created)
 	}
-	keyID := createdExternalKeyID(t, created)
-	return copyExternalTestKey(t, client, serverURL, keyID), keyID
+	return createdExternalTestKey(t, created)
 }
 
 func createExternalTestEntry(t *testing.T, client *http.Client, serverURL, keyID string, values url.Values) {

@@ -272,11 +272,10 @@ type Options struct {
 }
 
 type Manager struct {
-	db               *sql.DB
-	now              func() time.Time
-	random           func([]byte) (int, error)
-	secretsDirectory string
-	secretStore      *encryptedSecretStore
+	db          *sql.DB
+	now         func() time.Time
+	random      func([]byte) (int, error)
+	secretStore *encryptedSecretStore
 }
 
 func New(db *sql.DB, options Options) *Manager {
@@ -288,11 +287,7 @@ func New(db *sql.DB, options Options) *Manager {
 	if random == nil {
 		random = rand.Read
 	}
-	return &Manager{db: db, now: now, random: random, secretsDirectory: options.SecretsDirectory, secretStore: &encryptedSecretStore{directory: options.SecretsDirectory}}
-}
-
-func (manager *Manager) KeySecret(id string) (string, error) {
-	return manager.secretStore.get(id)
+	return &Manager{db: db, now: now, random: random, secretStore: &encryptedSecretStore{directory: options.SecretsDirectory}}
 }
 
 func (manager *Manager) StoreSecret(id, secret string) error {
@@ -305,6 +300,34 @@ func (manager *Manager) Secret(id string) (string, error) {
 
 func (manager *Manager) DeleteSecret(id string) error {
 	return manager.secretStore.delete(id)
+}
+
+// PurgeLegacyKeySecrets removes complete External Interface keys persisted by
+// earlier releases. Trigger authentication needs only the verifier in SQLite;
+// unrelated recoverable secrets continue to use the encrypted secret store.
+func (manager *Manager) PurgeLegacyKeySecrets(ctx context.Context) error {
+	rows, err := manager.db.QueryContext(ctx, "SELECT id FROM external_trigger_keys")
+	if err != nil {
+		return fmt.Errorf("list legacy external trigger key secrets: %w", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := manager.secretStore.delete(id); err != nil && !errors.Is(err, ErrSecretUnavailable) {
+			return fmt.Errorf("purge legacy external trigger key secret %q: %w", id, err)
+		}
+	}
+	return nil
 }
 
 func (manager *Manager) CreateKey(ctx context.Context, input CreateKeyInput) (Key, string, error) {
@@ -342,10 +365,6 @@ func (manager *Manager) CreateKey(ctx context.Context, input CreateKeyInput) (Ke
 	if changed, _ := result.RowsAffected(); changed == 0 {
 		return Key{}, "", ErrKeyLabelExists
 	}
-	if err := manager.secretStore.set(id, secret); err != nil {
-		_, _ = manager.db.ExecContext(ctx, "DELETE FROM external_trigger_keys WHERE id = ?", id)
-		return Key{}, "", fmt.Errorf("store external trigger key: %w", err)
-	}
 	key := Key{ID: id, Label: label, TokenHint: hint, Enabled: input.Enabled, CreatedAt: now, UpdatedAt: now}
 	if input.ExpiresAt != nil {
 		expires := input.ExpiresAt.UTC()
@@ -366,16 +385,7 @@ func (manager *Manager) RotateKey(ctx context.Context, id string) (Key, string, 
 	secret := "sbk_" + id + "." + secretPart
 	hint := "sbk_" + id + ".••••" + secretPart[len(secretPart)-4:]
 	now := manager.now().UTC()
-	previous, previousErr := manager.secretStore.get(id)
-	if err := manager.secretStore.set(id, secret); err != nil {
-		return Key{}, "", fmt.Errorf("store rotated external trigger key: %w", err)
-	}
 	if _, err := manager.db.ExecContext(ctx, `UPDATE external_trigger_keys SET token_hash = ?, token_hint = ?, updated_at = ? WHERE id = ?`, hashToken(secret), hint, now.Unix(), id); err != nil {
-		if previousErr == nil {
-			_ = manager.secretStore.set(id, previous)
-		} else {
-			_ = manager.secretStore.delete(id)
-		}
 		return Key{}, "", fmt.Errorf("rotate external trigger key: %w", err)
 	}
 	key.TokenHint, key.UpdatedAt = hint, now

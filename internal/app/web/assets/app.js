@@ -2737,60 +2737,10 @@
       cleanups.push(() => copyButton.removeEventListener("click", onCopyValue));
     });
 
-    root.querySelectorAll("[data-copy-key]").forEach(copyButton => {
-      const copyIcon = copyButton.querySelector("[data-copy-icon]");
-      const label = copyButton.querySelector("[data-copy-key-label]");
-      const status = copyButton.parentElement?.querySelector("[data-copy-key-status]");
-      if (!copyIcon || !label || !copyButton.dataset.copyKeyUrl) return;
-
-      const reset = () => {
-        copyButton.removeAttribute("data-state");
-        label.textContent = copyButton.dataset.copyLabel;
-        setControlIcon(copyIcon, "copy");
-        if (status) status.textContent = "";
-        feedbackTimers.delete(copyButton);
-      };
-      const onCopyKey = async () => {
-        if (copyButton.dataset.copying === "true") return;
-        const existingTimer = feedbackTimers.get(copyButton);
-        if (existingTimer) window.clearTimeout(existingTimer);
-        copyButton.dataset.copying = "true";
-        copyButton.setAttribute("aria-busy", "true");
-        copyButton.disabled = true;
-        label.textContent = copyButton.closest("[data-copying-key-label]")?.dataset.copyingKeyLabel || copyButton.dataset.copyLabel;
-        setControlIcon(copyIcon, "loader-circle");
-
-        try {
-          if (!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable");
-          const response = await fetch(copyButton.dataset.copyKeyUrl, {
-            credentials: "same-origin",
-            headers: { Accept: "application/json" },
-            cache: "no-store"
-          });
-          if (!response.ok) throw new Error(`Unable to copy key (${response.status})`);
-          const payload = await response.json();
-          if (typeof payload.key !== "string" || !payload.key) throw new Error("Key unavailable");
-          await navigator.clipboard.writeText(payload.key);
-          copyButton.dataset.state = "success";
-          label.textContent = copyButton.dataset.copiedLabel;
-          setControlIcon(copyIcon, "check");
-          if (status) status.textContent = copyButton.dataset.copiedLabel;
-        } catch {
-          copyButton.dataset.state = "error";
-          label.textContent = copyButton.dataset.copyFailedLabel;
-          setControlIcon(copyIcon, "triangle-alert");
-          if (status) status.textContent = copyButton.dataset.copyFailedLabel;
-        } finally {
-          copyButton.disabled = false;
-          copyButton.removeAttribute("aria-busy");
-          delete copyButton.dataset.copying;
-        }
-
-        const timer = window.setTimeout(reset, 1600);
-        feedbackTimers.set(copyButton, timer);
-      };
-      copyButton.addEventListener("click", onCopyKey);
-      cleanups.push(() => copyButton.removeEventListener("click", onCopyKey));
+    root.querySelectorAll("[data-one-time-secret]").forEach(secret => {
+      const scrub = () => secret.replaceChildren();
+      window.addEventListener("pagehide", scrub, { once: true });
+      cleanups.push(() => window.removeEventListener("pagehide", scrub));
     });
 
     root.querySelectorAll("[data-copy-text]").forEach(copyButton => {

@@ -25,7 +25,6 @@ type externalKeyView struct {
 	externaltrigger.Key
 	Status, StatusText string
 	EnabledEntries     int
-	CanCopy            bool
 }
 
 type externalEntryView struct {
@@ -125,9 +124,6 @@ func (a *App) externalInterfacesPage(response http.ResponseWriter, request *http
 	entries := make(map[string][]externalEntryView, len(keys))
 	for _, key := range keys {
 		view := externalKeyView{Key: key, Status: "disabled", StatusText: webText(locale, "external.disabled")}
-		if _, secretErr := a.externalTriggers.KeySecret(key.ID); secretErr == nil {
-			view.CanCopy = true
-		}
 		if key.Expired(now) {
 			view.Status, view.StatusText = "expired", webText(locale, "external.expired")
 		} else if key.Enabled {
@@ -157,20 +153,6 @@ func (a *App) externalInterfacesPage(response http.ResponseWriter, request *http
 	}); err != nil {
 		http.Error(response, "Unable to render External Interfaces", http.StatusInternalServerError)
 	}
-}
-
-func (a *App) copyExternalKeyTask(response http.ResponseWriter, request *http.Request) {
-	id := request.PathValue("id")
-	secret, err := a.externalTriggers.KeySecret(id)
-	if err != nil {
-		http.Error(response, webText(resolveWebLocale(request), "external.key_copy_unavailable"), http.StatusConflict)
-		return
-	}
-	response.Header().Set("Cache-Control", "no-store")
-	response.Header().Set("Content-Type", "application/json; charset=utf-8")
-	response.Header().Set("X-Content-Type-Options", "nosniff")
-	a.recordAuditForRequest(request, "copy_external_interface_key", id, "succeeded")
-	_ = json.NewEncoder(response).Encode(map[string]string{"key": secret})
 }
 
 func externalActionText(locale webLocale, action externaltrigger.ActionType) string {
@@ -209,7 +191,7 @@ func (a *App) createExternalKey(response http.ResponseWriter, request *http.Requ
 		a.renderExternalKeySubmissionError(response, request, "key-new", externaltrigger.Key{}, webText(resolveWebLocale(request), "external.key_save_error"))
 		return
 	}
-	key, _, err := a.externalTriggers.CreateKey(request.Context(), externaltrigger.CreateKeyInput{
+	key, secret, err := a.externalTriggers.CreateKey(request.Context(), externaltrigger.CreateKeyInput{
 		Label: request.FormValue("label"), Enabled: request.FormValue("enabled") == "1", ExpiresAt: expiresAt,
 	})
 	if err != nil {
@@ -222,11 +204,12 @@ func (a *App) createExternalKey(response http.ResponseWriter, request *http.Requ
 	}
 	a.recordAuditForRequest(request, "create_external_interface_key", key.ID, "succeeded")
 	locale := resolveWebLocale(request)
+	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	response.WriteHeader(http.StatusCreated)
 	renderExternalInterfaceForm(response, externalInterfaceFormData{
 		Kind: "key-created", Title: webText(locale, "external.key_created"), Description: webText(locale, "external.key_created_description"),
-		BackURL: "/config/external-interfaces", Locale: locale, Key: key,
+		BackURL: "/config/external-interfaces", Locale: locale, Key: key, Secret: secret,
 	})
 }
 
@@ -336,16 +319,17 @@ func (a *App) rotateExternalKey(response http.ResponseWriter, request *http.Requ
 		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
 		return
 	}
-	key, _, err := a.externalTriggers.RotateKey(request.Context(), request.PathValue("id"))
+	key, secret, err := a.externalTriggers.RotateKey(request.Context(), request.PathValue("id"))
 	if err != nil {
 		http.Error(response, "External Interface key not found", http.StatusNotFound)
 		return
 	}
 	a.recordAuditForRequest(request, "rotate_external_interface_key", key.ID, "succeeded")
 	locale := resolveWebLocale(request)
+	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	response.WriteHeader(http.StatusCreated)
-	renderExternalInterfaceForm(response, externalInterfaceFormData{Kind: "key-rotated", Title: webText(locale, "external.key_rotated"), Description: webText(locale, "external.key_rotated_description"), BackURL: "/config/external-interfaces", Locale: locale, Key: key})
+	renderExternalInterfaceForm(response, externalInterfaceFormData{Kind: "key-rotated", Title: webText(locale, "external.key_rotated"), Description: webText(locale, "external.key_rotated_description"), BackURL: "/config/external-interfaces", Locale: locale, Key: key, Secret: secret})
 }
 
 func (a *App) deleteExternalKey(response http.ResponseWriter, request *http.Request) {
