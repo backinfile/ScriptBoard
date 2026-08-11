@@ -26,6 +26,18 @@ func TestWindowsWebServiceIdentityIsNotHighlyPrivileged(t *testing.T) {
 	}
 }
 
+func TestWindowsManagedWebRuntimeRequiresLowIdentityAndServiceSID(t *testing.T) {
+	if err := validateWindowsWebRuntimeIdentity(false, true); err == nil {
+		t.Fatal("non-LocalService token was accepted")
+	}
+	if err := validateWindowsWebRuntimeIdentity(true, false); err == nil {
+		t.Fatal("token without service SID was accepted")
+	}
+	if err := validateWindowsWebRuntimeIdentity(true, true); err != nil {
+		t.Fatalf("expected managed token rejected: %v", err)
+	}
+}
+
 func TestWindowsServiceDirectoryGrantPropagatesToExistingChildren(t *testing.T) {
 	root := t.TempDir()
 	child := filepath.Join(root, "existing.txt")

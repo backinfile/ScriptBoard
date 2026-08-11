@@ -40,6 +40,41 @@ func Exists() (bool, error) {
 	return true, nil
 }
 
+func ValidateWebRuntimeIdentity() error {
+	token := windows.GetCurrentProcessToken()
+	tokenUser, err := token.GetTokenUser()
+	if err != nil {
+		return fmt.Errorf("read managed Web token user: %w", err)
+	}
+	localService, err := windows.StringToSid("S-1-5-19")
+	if err != nil {
+		return err
+	}
+	serviceSID, _, _, err := windows.LookupSID("", webServiceSID)
+	if err != nil {
+		return fmt.Errorf("resolve managed Web service SID: %w", err)
+	}
+	groups, err := token.GetTokenGroups()
+	if err != nil {
+		return fmt.Errorf("read managed Web token groups: %w", err)
+	}
+	serviceSIDEnabled := false
+	for _, group := range groups.AllGroups() {
+		if group.Sid != nil && group.Sid.Equals(serviceSID) && group.Attributes&windows.SE_GROUP_ENABLED != 0 {
+			serviceSIDEnabled = true
+			break
+		}
+	}
+	return validateWindowsWebRuntimeIdentity(tokenUser.User.Sid.Equals(localService), serviceSIDEnabled)
+}
+
+func validateWindowsWebRuntimeIdentity(localService, serviceSIDEnabled bool) error {
+	if !localService || !serviceSIDEnabled {
+		return errors.New("process token is not LocalService with the enabled ScriptBoard service SID")
+	}
+	return nil
+}
+
 func Install(executable, configPath, _ string, stateRoot string) error {
 	manager, err := mgr.Connect()
 	if err != nil {

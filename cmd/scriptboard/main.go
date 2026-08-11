@@ -426,6 +426,12 @@ func serveContext(runContext context.Context, arguments []string) error {
 	if err := requireSafeNetwork(loaded.Listen, loaded.TLSCert, loaded.TLSKey, loaded.TrustedProxies); err != nil {
 		return err
 	}
+	installRoot := applicationInstallRoot(loaded.StateRoot)
+	if installRoot != "" {
+		if err := platformservice.ValidateWebRuntimeIdentity(); err != nil {
+			return fmt.Errorf("refuse to start managed Web service with unsafe OS identity: %w", err)
+		}
+	}
 	updateShutdown := make(chan struct{}, 1)
 	var requestRestart func() error
 	if canRestartManagedService(loaded.StateRoot, loaded.ConfigPath) {
@@ -433,7 +439,7 @@ func serveContext(runContext context.Context, arguments []string) error {
 	}
 
 	application, err := app.Open(app.Config{
-		StateRoot: loaded.StateRoot, InstallRoot: applicationInstallRoot(loaded.StateRoot), ConfigPath: loaded.ConfigPath, TLSKey: loaded.TLSKey,
+		StateRoot: loaded.StateRoot, InstallRoot: installRoot, ConfigPath: loaded.ConfigPath, TLSKey: loaded.TLSKey,
 		RunTimeoutGrace: loaded.RunTimeoutGrace, ExecutorChains: loaded.ExecutorChains, AdminUsername: loaded.AdminUsername, AdminPasswordFile: loaded.AdminPasswordFile, TrustedProxies: loaded.TrustedProxies,
 		AllowedHosts: loaded.AllowedHosts, CanonicalExternalURL: loaded.CanonicalExternalURL,
 		UpdateCheck: loaded.UpdateCheck, UpdateInterval: loaded.UpdateInterval,

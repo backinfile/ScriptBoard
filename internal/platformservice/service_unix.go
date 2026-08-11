@@ -34,6 +34,25 @@ func Exists() (bool, error) {
 	return false, err
 }
 
+func ValidateWebRuntimeIdentity() error {
+	account, err := user.Lookup(webServiceUser)
+	if err != nil {
+		return fmt.Errorf("resolve managed Web service account: %w", err)
+	}
+	uid, err := strconv.Atoi(account.Uid)
+	if err != nil {
+		return fmt.Errorf("parse managed Web service UID: %w", err)
+	}
+	return validateLinuxWebRuntimeIdentity(os.Geteuid(), uid)
+}
+
+func validateLinuxWebRuntimeIdentity(effectiveUID, expectedUID int) error {
+	if effectiveUID == 0 || effectiveUID != expectedUID {
+		return fmt.Errorf("effective UID %d is not dedicated Web service UID %d", effectiveUID, expectedUID)
+	}
+	return nil
+}
+
 func Install(executable, configPath, updaterExecutable, stateRoot string) error {
 	if err := prepareLinuxWebServiceIdentity(configPath, stateRoot); err != nil {
 		return err

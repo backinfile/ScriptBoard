@@ -10,6 +10,10 @@ Windows Web 改用低权限 `NT AUTHORITY\LocalService`，同时启用 `NT SERVI
 权限；Named Pipe DACL 也只接受该服务 SID 与 SYSTEM。Broker 继续以 LocalSystem 运行。Windows
 外部主密钥仍使用 machine-scope DPAPI，文件 ACL 决定哪些服务能够读取密文材料。
 
+身份不仅由安装器声明：受管版本每次启动都会核对实际进程 token。Linux 必须是已登记的
+`scriptboard-web` UID 且不能是 UID 0；Windows 必须同时是 LocalService，并带有启用状态的
+`NT SERVICE\ScriptBoard` SID。身份不符时 Web 在打开数据库和监听端口前 fail closed。
+
 这使 Web 漏洞不再自动继承防火墙、包管理和其他 Broker 主机权限，但尚未完成全部 P0-02：Run、
 Assistant Runtime、Host Files 与凭据解封仍需要独立进程/身份边界。目前授予 Web 外部密钥目录
 访问是兼容现有凭据消费者的过渡措施，后续迁移完成后必须收回。
