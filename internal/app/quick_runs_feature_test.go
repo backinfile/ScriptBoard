@@ -481,9 +481,20 @@ func TestAdminCanEditQuickRunWithoutChangingItsScript(t *testing.T) {
 	}
 
 	page = getQuickRunsPage(t, client, serverURL)
-	for _, expected := range []string{"Updated name", "--mode safe", "90s", scriptName} {
+	for _, expected := range []string{"Updated name", scriptName} {
 		if !strings.Contains(string(page), expected) {
 			t.Fatalf("updated Quick Run missing %q: %s", expected, page)
+		}
+	}
+	response, err = client.Get(serverURL + "/config/quick-runs/" + quickRunID + "/edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	updatedTaskPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	for _, expected := range []string{`name="arguments"`, `value="--mode safe"`, `name="timeout_seconds"`, `value="90"`} {
+		if !strings.Contains(string(updatedTaskPage), expected) {
+			t.Fatalf("updated Quick Run edit task missing %q: %s", expected, updatedTaskPage)
 		}
 	}
 	if strings.Contains(string(page), "Original name") {
@@ -554,13 +565,20 @@ func TestAdminCanCopyQuickRunNextToItsSource(t *testing.T) {
 	if original < 0 || replica < 0 || replica < original {
 		t.Fatalf("copy is not adjacent after its source: %s", page)
 	}
-	for _, expected := range []string{"--copy", "12s"} {
-		if !strings.Contains(string(page), expected) {
-			t.Fatalf("copy missing %q: %s", expected, page)
-		}
-	}
-	if replicaID := quickRunIDForName(t, page, "Replica"); replicaID == sourceID {
+	replicaID := quickRunIDForName(t, page, "Replica")
+	if replicaID == sourceID {
 		t.Fatalf("copy reused source id %q", sourceID)
+	}
+	response, err = client.Get(serverURL + "/config/quick-runs/" + replicaID + "/edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	replicaTaskPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	for _, expected := range []string{`name="arguments"`, `value="--copy"`, `name="timeout_seconds"`, `value="12"`} {
+		if !strings.Contains(string(replicaTaskPage), expected) {
+			t.Fatalf("copy edit task missing %q: %s", expected, replicaTaskPage)
+		}
 	}
 }
 
@@ -704,6 +722,74 @@ func TestQuickRunSoftLockBlocksEditingAndDeletionUntilUnlocked(t *testing.T) {
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("unlocked edit task status=%d, want 200", response.StatusCode)
+	}
+}
+
+func TestQuickRunShowsFiveRecentResultsDurationAndDirectoryAction(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	scriptName, scriptContent := "weather.sh", "printf 'clear\\n'\n"
+	if runtime.GOOS == "windows" {
+		scriptName, scriptContent = "weather.cmd", "@echo off\r\necho clear\r\n"
+	}
+	scriptPath := filepath.Join(hostRoot, scriptName)
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
+	createQuickRunFromFile(t, client, serverURL, scriptPath, "Weather history", "")
+	page := getQuickRunsPage(t, client, serverURL)
+	quickRunID := quickRunIDForName(t, page, "Weather history")
+	directoryLink := `href="` + hostFileHref("/resources/files", hostRoot) + `"`
+	if !strings.Contains(string(page), directoryLink) || !strings.Contains(string(page), "Open directory") {
+		t.Fatalf("Quick Run directory action missing: %s", page)
+	}
+	if strings.Contains(string(page), "<dt>Arguments</dt>") || strings.Contains(string(page), "<dt>Timeout</dt>") {
+		t.Fatalf("Quick Run still renders arguments or timeout facts: %s", page)
+	}
+
+	for index := 0; index < 6; index++ {
+		response, err := client.PostForm(serverURL+"/config/quick-runs/"+quickRunID+"/start", url.Values{
+			"csrf_token": {formToken(t, page)},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		runPath := response.Header.Get("Location")
+		if response.StatusCode != http.StatusSeeOther || !strings.HasPrefix(runPath, "/history/runs/") {
+			t.Fatalf("start Quick Run status=%d location=%q", response.StatusCode, runPath)
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			response, err = client.Get(serverURL + runPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			runPage, _ := io.ReadAll(response.Body)
+			_ = response.Body.Close()
+			if strings.Contains(string(runPage), `data-run-status data-state="succeeded"`) {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("Quick Run did not finish: %s", runPage)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+
+	page = getQuickRunsPage(t, client, serverURL)
+	if count := strings.Count(string(page), "data-quick-run-history-entry"); count != 5 {
+		t.Fatalf("recent result count=%d, want 5: %s", count, page)
+	}
+	if !strings.Contains(string(page), "Latest duration") || strings.Contains(string(page), `<div class="quick-run-history__duration"><span>Latest duration</span><strong>—</strong>`) {
+		t.Fatalf("latest Quick Run duration missing: %s", page)
 	}
 }
 

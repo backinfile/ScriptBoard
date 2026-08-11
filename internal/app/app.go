@@ -2799,11 +2799,21 @@ type quickRunView struct {
 	ID                string
 	Name              string
 	ScriptPath        string
+	DirectoryURL      string
 	ArgumentsTemplate string
 	TimeoutSeconds    int
 	GroupID           string
 	Valid             bool
 	Locked            bool
+	RecentRuns        []quickRunHistoryView
+	LastDuration      string
+	HasLastDuration   bool
+}
+
+type quickRunHistoryView struct {
+	ID     string
+	Status string
+	Icon   string
 }
 
 type overlapView struct {
@@ -3000,9 +3010,14 @@ func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request)
 		if groupID.Valid {
 			quick.GroupID = groupID.String
 		}
+		quick.DirectoryURL = filesURL(filepath.Dir(quick.ScriptPath))
 		quickRuns = append(quickRuns, quick)
 	}
 	_ = rows.Close()
+	if err := a.loadQuickRunHistory(quickRuns, locale); err != nil {
+		http.Error(response, "Unable to read Quick Run history", http.StatusInternalServerError)
+		return
+	}
 	groupIndexes := make(map[string]int, len(groups))
 	for index := range groups {
 		groupIndexes[groups[index].ID] = index

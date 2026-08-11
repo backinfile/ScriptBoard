@@ -29,6 +29,99 @@ type quickRunRecord struct {
 	SortOrder   int
 }
 
+func (a *App) loadQuickRunHistory(quickRuns []quickRunView, locale webLocale) error {
+	if len(quickRuns) == 0 {
+		return nil
+	}
+	byID := make(map[string]*quickRunView, len(quickRuns))
+	for index := range quickRuns {
+		byID[quickRuns[index].ID] = &quickRuns[index]
+	}
+	rows, err := a.db.Query(`
+		SELECT source_id, id, status, started_at, finished_at
+		FROM (
+			SELECT runs.source_id AS source_id, runs.id AS id, runs.status AS status,
+				runs.started_at AS started_at, runs.finished_at AS finished_at,
+				ROW_NUMBER() OVER (PARTITION BY runs.source_id ORDER BY runs.created_at DESC, runs.id DESC) AS position
+			FROM runs
+			JOIN quick_runs ON quick_runs.id = runs.source_id
+			WHERE source_type IN ('admin/quick-run', 'quick_run')
+		)
+		WHERE position <= 5
+		ORDER BY source_id, position`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var sourceID, runID, status string
+		var startedAt, finishedAt sql.NullInt64
+		if err := rows.Scan(&sourceID, &runID, &status, &startedAt, &finishedAt); err != nil {
+			return err
+		}
+		quick := byID[sourceID]
+		if quick == nil {
+			continue
+		}
+		quick.RecentRuns = append(quick.RecentRuns, quickRunHistoryView{
+			ID: runID, Status: status, Icon: quickRunHistoryIcon(status),
+		})
+		if len(quick.RecentRuns) == 1 && startedAt.Valid && finishedAt.Valid && finishedAt.Int64 >= startedAt.Int64 {
+			quick.LastDuration = quickRunDuration(locale, time.Duration(finishedAt.Int64-startedAt.Int64))
+			quick.HasLastDuration = true
+		}
+	}
+	return rows.Err()
+}
+
+func quickRunHistoryIcon(status string) string {
+	switch status {
+	case "succeeded":
+		return "check"
+	case "starting", "running", "stopping", "timing_out":
+		return "loader-circle"
+	case "cancelled", "stopped":
+		return "circle-stop"
+	default:
+		return "x"
+	}
+}
+
+func quickRunDuration(locale webLocale, duration time.Duration) string {
+	if duration < 0 {
+		duration = 0
+	}
+	if duration < time.Second {
+		milliseconds := duration.Round(time.Millisecond) / time.Millisecond
+		if milliseconds < 1 {
+			milliseconds = 1
+		}
+		return strconv.FormatInt(int64(milliseconds), 10) + " ms"
+	}
+	if duration < time.Minute {
+		seconds := float64(duration.Round(100*time.Millisecond)) / float64(time.Second)
+		unit := "s"
+		if locale == localeSimplifiedChinese {
+			unit = " 秒"
+		}
+		return strconv.FormatFloat(seconds, 'f', -1, 64) + unit
+	}
+	minutes := int(duration / time.Minute)
+	seconds := int(duration/time.Second) % 60
+	if duration < time.Hour {
+		if locale == localeSimplifiedChinese {
+			return fmt.Sprintf("%d 分 %02d 秒", minutes, seconds)
+		}
+		return fmt.Sprintf("%dm %02ds", minutes, seconds)
+	}
+	hours := int(duration / time.Hour)
+	minutes %= 60
+	if locale == localeSimplifiedChinese {
+		return fmt.Sprintf("%d 小时 %02d 分", hours, minutes)
+	}
+	return fmt.Sprintf("%dh %02dm", hours, minutes)
+}
+
 func (a *App) loadQuickRun(id string) (quickRunRecord, error) {
 	var quick quickRunRecord
 	var groupID sql.NullString

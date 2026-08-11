@@ -17,7 +17,7 @@ ScriptBoard is a self-hosted script console for a single Windows or Linux host. 
 
 - Browse, search, upload, download, preview, and edit host files;
 - run PowerShell, Python, Shell, Batch, and CMD scripts with live output;
-- save frequently used scripts as Quick Runs with reusable parameters and variables;
+- save frequently used scripts as Quick Runs with reusable parameters and variables, then review recent results at a glance;
 - create schedules with five-field Cron expressions;
 - expose bounded inbound triggers for logs, uploads, Quick Runs, and constrained variable updates;
 - review remote-login activity and manage Windows Defender Firewall or Linux UFW and Fail2Ban;
@@ -112,11 +112,15 @@ After installing ScriptBoard as a system service, Administrators and Maintainers
 
 On Windows, Files starts from the available volumes. On Linux, it starts from `/`. File operations affect the host filesystem directly. Files deleted or replaced through the web interface first go to ScriptBoard Trash. Files with unknown extensions also receive a read-only preview when bounded content detection recognizes safe UTF-8 text; files that do not pass detection remain download-only.
 
+After a multi-file upload, a dialog reports every successful, skipped, or failed item. Closing it refreshes the current directory without leaving Files.
+
 Separate script arguments with spaces and quote arguments that contain spaces. The argument field does not expand pipes, redirections, wildcards, or command substitutions.
+
+Run details keep output navigation, TXT download, and live pause controls in the log toolbar, so you can move directly to the top or bottom without changing the whole-page scroll position.
 
 ### Quick Runs and schedules
 
-After running a script, save its path, argument template, and timeout as a Quick Run. Schedules use standard five-field Cron expressions; for example, `0 2 * * *` runs every day at 02:00. Missed triggers are not replayed after the service restarts.
+After running a script, save its path, argument template, and timeout as a Quick Run. The Quick Runs list shows the five most recent results and latest duration, with direct links to each Run and the script directory. Schedules use standard five-field Cron expressions; for example, `0 2 * * *` runs every day at 02:00. Missed triggers are not replayed after the service restarts.
 
 ### External Interfaces
 
@@ -157,7 +161,7 @@ Roles are fixed for the whole instance. Custom roles and per-script permissions 
 
 ## Network and configuration
 
-ScriptBoard listens only on `127.0.0.1:8787` by default. For remote access, use a trusted VPN, zero-trust network, or HTTPS reverse proxy. Binding directly to a non-loopback address requires a TLS certificate and key.
+ScriptBoard listens only on `127.0.0.1:8787` by default. You can explicitly select another address through configuration, environment variables, or `--listen`. A non-loopback listener exposes the privileged management interface to the network; in production, configure TLS or restrict access through a trusted VPN, zero-trust network, or HTTPS reverse proxy.
 
 Common settings:
 
