@@ -122,6 +122,21 @@ func TestCredentialOverrideRejectsOversizedPasswordFile(t *testing.T) {
 	}
 }
 
+func TestCredentialOverrideRejectsNonRegularPasswordFile(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	application, err := app.Open(app.Config{
+		StateRoot:         filepath.Join(root, "state"),
+		AdminPasswordFile: root,
+	})
+	if application != nil {
+		_ = application.Close()
+	}
+	if err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("directory credential error=%q", err)
+	}
+}
+
 func TestResetAdminCredentialsRejectsInvalidUsername(t *testing.T) {
 	t.Parallel()
 
@@ -221,10 +236,14 @@ func TestLoginAcceptsBrowserMultipartForm(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
+	passwordPath := filepath.Join(root, "admin-password")
+	if err := os.WriteFile(passwordPath, []byte("browser-multipart-password\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	application, err := app.Open(app.Config{
-		StateRoot:     filepath.Join(root, "state"),
-		AdminUsername: "admin",
-		AdminPassword: "browser-multipart-password",
+		StateRoot:         filepath.Join(root, "state"),
+		AdminUsername:     "admin",
+		AdminPasswordFile: passwordPath,
 	})
 	if err != nil {
 		t.Fatalf("open application: %v", err)

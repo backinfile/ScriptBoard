@@ -320,7 +320,6 @@ type Config struct {
 	SchedulerTick          time.Duration
 	ExecutorChains         map[string][]string
 	AdminUsername          string
-	AdminPassword          string
 	AdminPasswordFile      string
 	TrustedProxies         []string
 	AllowedHosts           []string
@@ -545,7 +544,7 @@ func Open(config Config) (*App, error) {
 			_ = db.Close()
 			return nil, err
 		}
-		if err := application.applyCredentialOverride(config.AdminUsername, config.AdminPassword, config.AdminPasswordFile); err != nil {
+		if err := application.applyCredentialOverride(config.AdminUsername, config.AdminPasswordFile); err != nil {
 			_ = db.Close()
 			return nil, err
 		}
@@ -923,8 +922,19 @@ func (a *App) ResetAdminCredentials(username string) (string, error) {
 	return password, nil
 }
 
-func (a *App) applyCredentialOverride(username, password, passwordFile string) error {
+func (a *App) applyCredentialOverride(username, passwordFile string) error {
+	password := ""
 	if passwordFile != "" {
+		if !filepath.IsAbs(passwordFile) {
+			return errors.New("administrator password file path must be absolute")
+		}
+		info, err := os.Lstat(passwordFile)
+		if err != nil {
+			return fmt.Errorf("inspect administrator password file: %w", err)
+		}
+		if !info.Mode().IsRegular() {
+			return errors.New("administrator password file must be a regular file without links")
+		}
 		file, err := os.Open(passwordFile)
 		if err != nil {
 			return fmt.Errorf("读取管理员密码文件: %w", err)

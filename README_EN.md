@@ -177,6 +177,8 @@ scriptboard doctor --config CONFIG_PATH
 
 Configuration precedence is: built-in defaults → YAML file → `SCRIPTBOARD_*` environment variables → command-line flags.
 
+Administrator startup credentials no longer accept plaintext `admin_password`, `SCRIPTBOARD_ADMIN_PASSWORD`, or `--admin-password`; legacy configuration is rejected with migration guidance. To override credentials at startup, use only an absolute `admin_password_file`, `SCRIPTBOARD_ADMIN_PASSWORD_FILE`, or `--admin-password-file`. First start and `scriptboard admin reset` still create a permission-restricted one-time credential file inside the State Root, which is deleted after the password is changed.
+
 ## Updates and backups
 
 Stable releases periodically check GitHub Releases but never install updates automatically. An Administrator can download, verify, and install an update under System Settings → Updates. ScriptBoard will not switch versions while a script is running.

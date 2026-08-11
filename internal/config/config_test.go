@@ -132,7 +132,7 @@ func TestLoadRejectsRemovedGitExecutableConfiguration(t *testing.T) {
 func TestLoadRejectsRemovedConfigurationKeysEvenWhenNull(t *testing.T) {
 	t.Parallel()
 
-	for _, key := range []string{"managed_root", "git_executable"} {
+	for _, key := range []string{"managed_root", "git_executable", "admin_password"} {
 		key := key
 		t.Run(key, func(t *testing.T) {
 			t.Parallel()
@@ -152,7 +152,7 @@ func TestLoadRejectsRemovedConfigurationKeysEvenWhenNull(t *testing.T) {
 func TestLoadRejectsRemovedEnvironmentVariables(t *testing.T) {
 	t.Parallel()
 
-	for _, name := range []string{"SCRIPTBOARD_MANAGED_ROOT", "SCRIPTBOARD_GIT_EXECUTABLE"} {
+	for _, name := range []string{"SCRIPTBOARD_MANAGED_ROOT", "SCRIPTBOARD_GIT_EXECUTABLE", "SCRIPTBOARD_ADMIN_PASSWORD"} {
 		name := name
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -176,12 +176,56 @@ func TestLoadRejectsRemovedFileFlags(t *testing.T) {
 		{"--config", writeEmptyConfig(t), "--here"},
 		{"--config", writeEmptyConfig(t), "--managed-root", "somewhere"},
 		{"--config", writeEmptyConfig(t), "--git-executable", "git"},
+		{"--config", writeEmptyConfig(t), "--admin-password", "plaintext-secret"},
 	} {
 		if _, err := config.Load(arguments, func(string) string { return "" }); err == nil {
 			t.Fatalf("removed flags were accepted: %v", arguments)
 		} else if !strings.Contains(err.Error(), "was removed") {
 			t.Fatalf("removed flag error = %q for %v", err, arguments)
 		}
+	}
+}
+
+func TestRemovedPlaintextAdminPasswordPointsToPasswordFile(t *testing.T) {
+	t.Parallel()
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("admin_password: plaintext-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := config.Load([]string{"--config", configPath}, func(string) string { return "" })
+	if err == nil || !strings.Contains(err.Error(), "admin_password_file") || !strings.Contains(err.Error(), "was removed") {
+		t.Fatalf("plaintext password migration error = %q", err)
+	}
+}
+
+func TestLoadAcceptsAdminPasswordFile(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	passwordPath := filepath.Join(root, "admin-password")
+	configPath := filepath.Join(root, "config.yaml")
+	if err := os.WriteFile(passwordPath, []byte("a-long-password-phrase\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("admin_password_file: "+passwordPath+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := config.Load([]string{"--config", configPath}, func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.AdminPasswordFile != passwordPath {
+		t.Fatalf("password file=%q", loaded.AdminPasswordFile)
+	}
+}
+
+func TestLoadRejectsRelativeAdminPasswordFile(t *testing.T) {
+	t.Parallel()
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("admin_password_file: relative-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.Load([]string{"--config", configPath}, func(string) string { return "" }); err == nil || !strings.Contains(err.Error(), "absolute path") {
+		t.Fatalf("relative password file error=%q", err)
 	}
 }
 

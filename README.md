@@ -184,6 +184,8 @@ scriptboard audit verify --config CONFIG_PATH
 
 `allowed_hosts` 是 Host Header 白名单；通配或非回环监听必须显式配置。`canonical_external_url` 的主机必须位于该白名单中，生成对外绝对 URL 时只使用这个值。反向代理部署还须显式配置直连代理的 `trusted_proxies`，未受信来源提供的转发头会被忽略。
 
+管理员启动凭据不接受明文 `admin_password`、`SCRIPTBOARD_ADMIN_PASSWORD` 或 `--admin-password`；旧配置会以包含迁移指引的错误拒绝启动。需要启动时覆盖凭据时，只能使用绝对路径的 `admin_password_file`、`SCRIPTBOARD_ADMIN_PASSWORD_FILE` 或 `--admin-password-file`。首次启动与 `scriptboard admin reset` 仍会生成 State Root 内权限受限、修改密码后删除的一次性凭据文件。
+
 ## 更新与备份
 
 正式版本会定期检查 GitHub Releases，但不会自动安装。管理员可在“系统设置 → 更新”中选择 GitHub 官方源或内置的公开代理源，再下载、验证并安装新版本；成功选择的源也会用于后续自动检查。公开代理的可用性不由 ScriptBoard 保证，所有来源仍必须通过签名清单、平台、大小与 SHA-256 校验；有脚本正在运行时不会切换版本。

@@ -358,7 +358,7 @@ func serveContext(runContext context.Context, arguments []string) error {
 
 	application, err := app.Open(app.Config{
 		StateRoot: loaded.StateRoot, InstallRoot: applicationInstallRoot(loaded.StateRoot), ConfigPath: loaded.ConfigPath, TLSKey: loaded.TLSKey,
-		RunTimeoutGrace: loaded.RunTimeoutGrace, ExecutorChains: loaded.ExecutorChains, AdminUsername: loaded.AdminUsername, AdminPassword: loaded.AdminPassword, AdminPasswordFile: loaded.AdminPasswordFile, TrustedProxies: loaded.TrustedProxies,
+		RunTimeoutGrace: loaded.RunTimeoutGrace, ExecutorChains: loaded.ExecutorChains, AdminUsername: loaded.AdminUsername, AdminPasswordFile: loaded.AdminPasswordFile, TrustedProxies: loaded.TrustedProxies,
 		AllowedHosts: loaded.AllowedHosts, CanonicalExternalURL: loaded.CanonicalExternalURL,
 		UpdateCheck: loaded.UpdateCheck, UpdateInterval: loaded.UpdateInterval,
 		RequestShutdown: func() {

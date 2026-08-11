@@ -33,7 +33,7 @@ ScriptBoard 已有一批值得保留的安全基础：Argon2id 密码哈希、�
 | P0-04 | 两个切片完成 | 建立共享出站策略并覆盖网站 HTTP/WebSocket 探测、远程监控聚合、GitHub 更新检查/下载及签名 Assistant Runtime 下载；这些默认客户端不使用环境代理，DNS 解析后的实际 IP 由受控 Dialer 固定并拒绝私网、元数据和非常规端口。Assistant Provider 运行时出站代理仍待 P0-08 的隔离批次。 |
 | P0-05 | 首个切片完成 | 代理默认信任为空，非可信转发头被清理；新增 `allowed_hosts` 与 `canonical_external_url` 安全默认，可信代理 Host 仍须通过白名单，错误 Host/Origin 在业务 Handler 前拒绝。 |
 | P0-06 | 外部上传切片完成 | 外部上传空 allowlist 及活动/双扩展一律拒绝；内容以随机无扩展名和 0600 权限进入 State Root 私有 inbox，管理员核对 SHA-256 与目标后才能经并发领取、原子写入和审计发布。普通上传及各类导入仍按独立策略继续迁移。 |
-| P0-07 | 两个切片完成 | 外部 Trigger Key 创建和轮换后只显示一次，完整 Key 不再可恢复保存或提供复制接口；启动时清理旧版本残留的可恢复 Key。schema 40 记录会话认证保证和最近认证时间，新登录提供 10 分钟保证窗口，高风险声明式路由过期后必须在当前浏览器会话重新验证密码；失败/成功均审计，return URL 防开放重定向，Assistant UI Action 对这些路由 fail closed。WebAuthn/TOTP、恢复码与 OS secret provider 仍待结构性批次。 |
+| P0-07 | 三个切片完成 | 外部 Trigger Key 创建和轮换后只显示一次，完整 Key 不再可恢复保存或提供复制接口；启动时清理旧版本残留的可恢复 Key。schema 40 记录会话认证保证和最近认证时间，新登录提供 10 分钟保证窗口，高风险声明式路由过期后必须在当前浏览器会话重新验证密码；失败/成功均审计，return URL 防开放重定向，Assistant UI Action 对这些路由 fail closed。YAML、环境变量和 CLI 的明文管理员密码入口均已删除并提供迁移错误，只保留绝对路径 password file、首次启动和本机重置的一次性凭据。WebAuthn/TOTP、恢复码与 OS secret provider 仍待结构性批次。 |
 | P0-09 | 五个切片完成 | Quick Run 记录脚本 SHA-256 与单调配置修订；外部入口只能绑定已锁定且摘要有效的发布修订，配置、锁定状态或脚本变化会使旧授权 fail-closed，Runner 在启动点复核摘要并将外部并发限制为每脚本一个 Run。每个 Key 现原子绑定一个不可变 Entry，绑定时轮换临时凭据，删除 Entry 同时删除 Key；旧多 Entry Key 被保留配置地拆分并 fail-closed。限流已覆盖每 Key、规范化来源、动作和全局四层原子请求/并发配额，并限制来源状态基数。外部接口提供持久化人工全局熔断；新功能默认启用 5 分钟时间戳、唯一 nonce 与 HMAC-SHA256 防重放，旧功能兼容迁移并可显式启用；拒绝均记录调用与审计。 |
 | P0-12 | 部分完成 | 增加 vet、race、govulncheck、CodeQL、secret scan、SBOM 与 release provenance 门禁；已加入出站地址、Host 和命令参数 fuzz target，更多黑盒不变量继续补充。 |
 | P0-11 | 首个切片完成 | 新增覆盖 Web、Runner 与 Scheduler 的串行 SHA-256 审计链，保留策略通过锚点/链尾维持可验证性，启动时 fail-closed 校验，并提供不依赖 Web UI 的 `audit verify` 命令；远端 checkpoint/转发和告警仍待后续切片。`SECURITY.md` 已明确私密报告、支持范围与应急控制。 |
@@ -136,7 +136,7 @@ flowchart LR
 | 远程监控汇聚 | 禁止重定向且 Bearer 不会跨跳泄露，但 Endpoint 仍可指向任意 HTTP(S) 地址 | 仍需出站地址策略、DNS 固定和 HTTPS 默认要求 |
 | 外部上传 | 有 Key、大小、单文件、文件名和可选扩展限制；扩展列表为空时允许任意扩展 | 上传内容可能进入可被管理员或快捷执行项运行的位置；需要默认拒绝可执行类型和隔离发布 |
 | 密钥保存 | 外部 Key 和 MySQL 密码使用 AES-GCM，但主密钥与密文位于同一个 State Root | 可防误读，不能抵御 State Root 被完整窃取；应接入 OS 密钥存储或独立密钥文件 |
-| 初始管理员密码 | 配置支持明文 `admin_password` 和环境变量 | 容易被配置备份、进程环境或诊断信息泄露；应优先 password file/首次启动引导 |
+| 初始管理员密码 | 明文 `admin_password`、环境变量和 CLI 参数已移除；旧入口返回迁移错误，仅保留绝对路径 password file 与一次性引导 | 已消除配置备份、进程环境、进程列表和 Shell 历史中的长期明文凭据入口；OS secret provider 仍随秘密迁移批次继续 |
 | 审计 | 已记录用户、动作、目标、结果和来源 | 数据库管理员或主机入侵者可同时修改业务数据和审计；缺少哈希链、外部转发和安全事件告警 |
 
 ### 4.2 已有控制，应保留并补测试

@@ -26,7 +26,6 @@ type Config struct {
 	TLSKey               string              `yaml:"tls_key"`
 	ExecutorChains       map[string][]string `yaml:"executor_chains"`
 	AdminUsername        string              `yaml:"admin_username"`
-	AdminPassword        string              `yaml:"admin_password"`
 	AdminPasswordFile    string              `yaml:"admin_password_file"`
 	TrustedProxies       []string            `yaml:"trusted_proxies"`
 	AllowedHosts         []string            `yaml:"allowed_hosts"`
@@ -44,7 +43,6 @@ type yamlConfig struct {
 	TLSKey                 string              `yaml:"tls_key"`
 	ExecutorChains         map[string][]string `yaml:"executor_chains"`
 	AdminUsername          string              `yaml:"admin_username"`
-	AdminPassword          string              `yaml:"admin_password"`
 	AdminPasswordFile      string              `yaml:"admin_password_file"`
 	TrustedProxies         []string            `yaml:"trusted_proxies"`
 	AllowedHosts           []string            `yaml:"allowed_hosts"`
@@ -54,20 +52,27 @@ type yamlConfig struct {
 	UpdateIntervalHours    *int                `yaml:"update_check_interval_hours"`
 	RemovedManagedRoot     yaml.Node           `yaml:"managed_root"`
 	RemovedGitExecutable   yaml.Node           `yaml:"git_executable"`
+	RemovedAdminPassword   yaml.Node           `yaml:"admin_password"`
 }
 
 func Load(arguments []string, getenv func(string) string) (Config, error) {
 	if getenv == nil {
 		getenv = os.Getenv
 	}
-	for _, legacy := range []string{"SCRIPTBOARD_MANAGED_ROOT", "SCRIPTBOARD_GIT_EXECUTABLE"} {
+	for _, legacy := range []string{"SCRIPTBOARD_MANAGED_ROOT", "SCRIPTBOARD_GIT_EXECUTABLE", "SCRIPTBOARD_ADMIN_PASSWORD"} {
 		if strings.TrimSpace(getenv(legacy)) != "" {
+			if legacy == "SCRIPTBOARD_ADMIN_PASSWORD" {
+				return Config{}, errors.New("SCRIPTBOARD_ADMIN_PASSWORD was removed; use SCRIPTBOARD_ADMIN_PASSWORD_FILE or the first-start credential")
+			}
 			return Config{}, fmt.Errorf("%s was removed; create a new configuration and State Root for this version", legacy)
 		}
 	}
 	for _, argument := range arguments {
-		for _, legacy := range []string{"--managed-root", "--here", "--git-executable"} {
+		for _, legacy := range []string{"--managed-root", "--here", "--git-executable", "--admin-password"} {
 			if argument == legacy || strings.HasPrefix(argument, legacy+"=") {
+				if legacy == "--admin-password" {
+					return Config{}, errors.New("--admin-password was removed; use --admin-password-file or the first-start credential")
+				}
 				return Config{}, fmt.Errorf("%s was removed; create a new configuration and State Root for this version", legacy)
 			}
 		}
@@ -89,6 +94,9 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 		if values.RemovedGitExecutable.Kind != 0 {
 			return Config{}, errors.New("git_executable was removed; create a new configuration and State Root for this version")
 		}
+		if values.RemovedAdminPassword.Kind != 0 {
+			return Config{}, errors.New("admin_password was removed; use admin_password_file or the first-start credential")
+		}
 		applyYAML(&result, values)
 	} else if explicit || !os.IsNotExist(err) {
 		return Config{}, fmt.Errorf("读取配置文件 %q: %w", configPath, err)
@@ -106,7 +114,6 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 	flags.BoolVar(&result.UpdateCheck, "update-check", result.UpdateCheck, "定期检查正式版更新")
 	flags.DurationVar(&result.UpdateInterval, "update-check-interval", result.UpdateInterval, "更新检查间隔")
 	flags.StringVar(&result.AdminUsername, "admin-username", result.AdminUsername, "权威管理员用户名覆盖")
-	flags.StringVar(&result.AdminPassword, "admin-password", result.AdminPassword, "权威管理员密码覆盖")
 	flags.StringVar(&result.AdminPasswordFile, "admin-password-file", result.AdminPasswordFile, "权威管理员密码文件")
 	trustedProxyFlagSeen := false
 	allowedHostFlagSeen := false
@@ -138,6 +145,9 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 	}
 	if result.UpdateInterval < time.Hour || result.UpdateInterval > 168*time.Hour {
 		return Config{}, fmt.Errorf("更新检查间隔必须在 1 到 168 小时之间")
+	}
+	if result.AdminPasswordFile != "" && !filepath.IsAbs(result.AdminPasswordFile) {
+		return Config{}, errors.New("admin_password_file must be an absolute path")
 	}
 	for extension, chain := range result.ExecutorChains {
 		if extension == "" || extension[0] != '.' || len(chain) == 0 {
@@ -222,9 +232,6 @@ func applyYAML(result *Config, values yamlConfig) {
 	if values.AdminUsername != "" {
 		result.AdminUsername = values.AdminUsername
 	}
-	if values.AdminPassword != "" {
-		result.AdminPassword = values.AdminPassword
-	}
 	if values.AdminPasswordFile != "" {
 		result.AdminPasswordFile = values.AdminPasswordFile
 	}
@@ -279,9 +286,6 @@ func applyEnvironment(result *Config, getenv func(string) string) {
 	if value := getenv("SCRIPTBOARD_ADMIN_USERNAME"); value != "" {
 		result.AdminUsername = value
 	}
-	if value := getenv("SCRIPTBOARD_ADMIN_PASSWORD"); value != "" {
-		result.AdminPassword = value
-	}
 	if value := getenv("SCRIPTBOARD_ADMIN_PASSWORD_FILE"); value != "" {
 		result.AdminPasswordFile = value
 	}
@@ -296,9 +300,6 @@ func applyEnvironment(result *Config, getenv func(string) string) {
 	}
 	if value := getenv("SCRIPTBOARD_CANONICAL_EXTERNAL_URL"); value != "" {
 		result.CanonicalExternalURL = strings.TrimSpace(value)
-	}
-	if result.AdminPassword != "" && result.AdminPasswordFile != "" {
-		result.AdminPassword = ""
 	}
 }
 

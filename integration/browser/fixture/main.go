@@ -176,14 +176,18 @@ func main() {
 	if err := seedHostFiles(hostRoot); err != nil {
 		panic(err)
 	}
+	passwordFile := filepath.Join(root, "fixture-admin-password")
+	if err := os.WriteFile(passwordFile, []byte(fixturePassword+"\n"), 0o600); err != nil {
+		panic(err)
+	}
 
 	application, err := app.Open(app.Config{
-		StateRoot:        stateRoot,
-		FileTopology:     fixtureTopology{root: hostRoot},
-		AdminUsername:    fixtureUsername,
-		AdminPassword:    fixturePassword,
-		ApplicationProbe: &applicationProbe{},
-		RequestRestart:   func() error { return nil },
+		StateRoot:         stateRoot,
+		FileTopology:      fixtureTopology{root: hostRoot},
+		AdminUsername:     fixtureUsername,
+		AdminPasswordFile: passwordFile,
+		ApplicationProbe:  &applicationProbe{},
+		RequestRestart:    func() error { return nil },
 	})
 	if err != nil {
 		panic(err)
