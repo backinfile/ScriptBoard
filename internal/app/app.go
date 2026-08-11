@@ -327,6 +327,7 @@ type Config struct {
 	AllowedHosts           []string
 	CanonicalExternalURL   string
 	WebsiteMonitorOptions  websitemonitor.Options
+	CustomDashboardClient  *http.Client
 	UpdateCheck            bool
 	UpdateInterval         time.Duration
 	UpdateSource           updatepkg.ReleaseSource
@@ -617,7 +618,7 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	application.customDashboards, err = customdashboard.New(customdashboard.Options{DB: db, Paused: validating})
+	application.customDashboards, err = customdashboard.New(customdashboard.Options{DB: db, Client: config.CustomDashboardClient, Paused: validating})
 	if err != nil {
 		application.websiteMonitor.Close()
 		application.applicationStatus.Close()

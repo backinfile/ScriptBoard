@@ -8,11 +8,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"scriptboard/internal/app"
 )
 
 func TestCustomDashboardCanBeExportedAndImported(t *testing.T) {
@@ -212,7 +215,16 @@ func TestCustomDashboardCanBeExportedAndImported(t *testing.T) {
 
 func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	root := t.TempDir()
-	client, serverURL := authenticatedClient(t, filepath.Join(root, "host"), filepath.Join(root, "state"))
+	hostRoot := filepath.Join(root, "host")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{
+		StateRoot: root + string(filepath.Separator) + "state", FileTopology: testHostTopology{root: hostRoot},
+		CustomDashboardClient: &http.Client{Transport: transport},
+	})
 	response, err := client.Get(serverURL + "/config/dashboards")
 	if err != nil {
 		t.Fatal(err)
