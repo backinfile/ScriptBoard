@@ -123,6 +123,7 @@
   let taskPanelRefreshAfterCloseURL = "";
   let activeFileConflictDialog = null;
   let activeServerErrorDialog = null;
+  let activeUploadResultsDialog = null;
 
   const locale = () => document.documentElement.lang === "zh-CN" ? "zh-CN" : "en-US";
   const copy = {
@@ -1473,6 +1474,46 @@
     });
   }
 
+  function closeUploadResultsDialog(refresh = true) {
+    const state = activeUploadResultsDialog;
+    if (!state) return;
+    activeUploadResultsDialog = null;
+    if (state.dialog.open) state.dialog.close();
+    state.dialog.remove();
+    if (refresh) navigate(state.refreshURL, false, { preserveScroll: true });
+  }
+
+  function showUploadResults(main) {
+    const source = main?.querySelector(".upload-results-sheet");
+    const refreshURL = main?.dataset.refreshUrl;
+    if (!source || !refreshURL) return false;
+    closeUploadResultsDialog(false);
+    const dialog = document.createElement("dialog");
+    dialog.className = "upload-results-dialog";
+    dialog.setAttribute("aria-labelledby", "upload-results-title");
+    dialog.append(document.importNode(source, true));
+    document.body.append(dialog);
+    activeUploadResultsDialog = { dialog, refreshURL };
+    const close = () => closeUploadResultsDialog(true);
+    dialog.querySelectorAll("[data-upload-results-close]").forEach(control => {
+      control.addEventListener("click", event => {
+        event.preventDefault();
+        close();
+      });
+    });
+    dialog.addEventListener("cancel", event => {
+      event.preventDefault();
+      close();
+    });
+    dialog.addEventListener("close", () => {
+      if (activeUploadResultsDialog?.dialog === dialog) close();
+    }, { once: true });
+    renderIcons(dialog);
+    dialog.showModal();
+    dialog.querySelector("[data-upload-results-close]")?.focus();
+    return true;
+  }
+
   async function submitFileUpload(form) {
     const data = new FormData(form);
     const files = data.getAll("files").filter(value => value instanceof File && value.name);
@@ -1503,7 +1544,42 @@
     } catch { /* the upload remains safe because the server defaults to skip */ }
     const actionInput = form.querySelector('input[name="conflict_action"]');
     if (actionInput) actionInput.value = action;
-    HTMLFormElement.prototype.submit.call(form);
+    data.set("conflict_action", action);
+    try {
+      const result = await fetchDocument(form.action, { method: "POST", body: data });
+      const resultsMain = result.document?.querySelector("main[data-upload-results]");
+      if (resultsMain && result.response.ok) {
+        const submittedFromTask = taskPanelState?.host.contains(form);
+        if (submittedFromTask) closeTaskPanel(false, false);
+        form.querySelectorAll('input[type="file"]').forEach(file => { file.value = ""; });
+        resetSubmit(form);
+        if (showUploadResults(resultsMain)) return;
+      }
+      if (showServerError(result, {
+        url: form.action,
+        method: "POST",
+        returnFocus: form.querySelector('button[type="submit"]') || form,
+        retryLabel: words().serverErrorRetryAction,
+        retryIcon: "rotate-ccw",
+        retry: () => submitFileUpload(form),
+      })) return;
+      throw new Error(`Upload failed (${result.response.status})`);
+    } catch {
+      form.dispatchEvent(new CustomEvent("file-upload-failed", { detail: { message: words().submitFailed } }));
+      if (!form.hasAttribute("data-file-drop-form")) {
+        form.querySelector("[data-async-submit-error]")?.remove();
+        const message = document.createElement("p");
+        message.className = "async-submit-error";
+        message.dataset.asyncSubmitError = "";
+        message.setAttribute("role", "alert");
+        message.tabIndex = -1;
+        message.textContent = words().submitFailed;
+        form.prepend(message);
+        message.focus();
+      }
+    } finally {
+      resetSubmit(form);
+    }
   }
 
   async function submitAsync(form, submitter, options = {}) {
@@ -2476,20 +2552,25 @@
   function initRun(cleanups) {
     const root = document.querySelector("[data-run-events-url]");
     if (!root) return;
-    const jumpToBottom = root.querySelector("[data-run-jump-bottom]");
-    const bottom = root.querySelector("#run-details-bottom");
-    const handleJumpToBottom = event => {
-      event.preventDefault();
-      if (!bottom) return;
-      const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
-      bottom.scrollIntoView({ block: "end", behavior });
-      bottom.focus({ preventScroll: true });
-      history.replaceState(history.state, "", "#run-details-bottom");
-    };
-    jumpToBottom?.addEventListener("click", handleJumpToBottom);
-    cleanups.push(() => jumpToBottom?.removeEventListener("click", handleJumpToBottom));
-    if (!window.EventSource) return;
     const log = root.querySelector("[data-run-log]");
+    const jumpToTop = root.querySelector("[data-run-jump-top]");
+    const jumpToBottom = root.querySelector("[data-run-jump-bottom]");
+    const scrollLog = (event, top) => {
+      event.preventDefault();
+      if (!log) return;
+      const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+      log.scrollTo({ top, behavior });
+      log.focus({ preventScroll: true });
+    };
+    const handleJumpToTop = event => scrollLog(event, 0);
+    const handleJumpToBottom = event => scrollLog(event, log?.scrollHeight || 0);
+    jumpToTop?.addEventListener("click", handleJumpToTop);
+    jumpToBottom?.addEventListener("click", handleJumpToBottom);
+    cleanups.push(() => {
+      jumpToTop?.removeEventListener("click", handleJumpToTop);
+      jumpToBottom?.removeEventListener("click", handleJumpToBottom);
+    });
+    if (!window.EventSource) return;
     const state = root.querySelector("[data-run-live-state]");
     const pause = root.querySelector("[data-run-pause]");
     const pauseLabel = pause?.querySelector("[data-run-pause-label]");
@@ -2936,6 +3017,7 @@
         input.value = "";
         resetState();
       };
+      const onFailed = event => showError(event.detail?.message || form.dataset.inputError);
       const preventFileNavigation = event => {
         if (!isFileDrag(event.dataTransfer) || zone.contains(event.target)) return;
         event.preventDefault();
@@ -2947,6 +3029,7 @@
       zone.addEventListener("drop", onDrop);
       input.addEventListener("change", onChange);
       form.addEventListener("file-upload-cancelled", onCancelled);
+      form.addEventListener("file-upload-failed", onFailed);
       document.addEventListener("dragover", preventFileNavigation);
       document.addEventListener("drop", preventFileNavigation);
       cleanups.push(() => {
@@ -2956,6 +3039,7 @@
         zone.removeEventListener("drop", onDrop);
         input.removeEventListener("change", onChange);
         form.removeEventListener("file-upload-cancelled", onCancelled);
+        form.removeEventListener("file-upload-failed", onFailed);
         document.removeEventListener("dragover", preventFileNavigation);
         document.removeEventListener("drop", preventFileNavigation);
       });

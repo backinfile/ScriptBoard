@@ -1580,8 +1580,11 @@ async function assertExternalInterfaces(page, fixture) {
     await page.waitForURL(quickRunWorkspaceURL);
     assert.equal(page.url(), quickRunWorkspaceURL, "saving the Quick Run did not restore file-list state");
     await page.goto(`${fixture.baseURL}/config/quick-runs`);
-    await page.getByText("Weekly safety check", { exact: true }).waitFor();
-    await page.getByText("-Environment production", { exact: true }).waitFor();
+    const savedQuickRun = page.locator("[data-quick-run-id]").filter({ hasText: "Weekly safety check" });
+    await savedQuickRun.waitFor();
+    await savedQuickRun.getByText("No run history", { exact: true }).waitFor();
+    assert.equal(await savedQuickRun.locator("[data-quick-run-history-entry]").count(), 0);
+    assert.equal((await savedQuickRun.locator(".quick-run-history__duration strong").textContent()).trim(), "—");
     const quickHeadingActions = page.locator(".quick-run-heading-actions > .button");
     assert.equal(await quickHeadingActions.count(), 3);
     const quickHeadingMetrics = await quickHeadingActions.evaluateAll(actions => actions.map(action => {

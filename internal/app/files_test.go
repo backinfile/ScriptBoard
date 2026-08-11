@@ -1166,7 +1166,8 @@ func TestAdminCanStreamUploadAFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read upload response: %v", err)
 	}
-	if response.StatusCode != http.StatusOK || !bytes.Contains(resultPage, []byte("hello.txt")) || !bytes.Contains(resultPage, []byte("Succeeded")) {
+	if response.StatusCode != http.StatusOK || !bytes.Contains(resultPage, []byte("hello.txt")) || !bytes.Contains(resultPage, []byte("Succeeded")) ||
+		!bytes.Contains(resultPage, []byte(`data-upload-results`)) || !bytes.Contains(resultPage, []byte(`data-upload-results-close`)) {
 		t.Fatalf("upload response: status=%d body=%q", response.StatusCode, resultPage)
 	}
 	content, err := os.ReadFile(filepath.Join(hostRoot, "hello.txt"))

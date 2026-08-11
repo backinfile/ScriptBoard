@@ -83,11 +83,13 @@ func TestAdminCanRunScriptAndReadCompletedOutput(t *testing.T) {
 		!strings.Contains(completedPage, `data-native`) || !strings.Contains(completedPage, `data-lucide="download"`) {
 		t.Fatalf("completed Run detail does not offer a native TXT download: %s", completedPage)
 	}
-	if !strings.Contains(completedPage, `href="#run-details-bottom"`) ||
-		!strings.Contains(completedPage, `id="run-details-bottom"`) ||
-		!strings.Contains(completedPage, `data-run-jump-bottom`) ||
-		!strings.Contains(completedPage, `data-lucide="arrow-down-to-line"`) {
-		t.Fatalf("completed Run detail does not offer a jump to its bottom: %s", completedPage)
+	for _, expected := range []string{
+		`data-run-jump-top`, `data-lucide="arrow-up-to-line"`,
+		`data-run-jump-bottom`, `data-lucide="arrow-down-to-line"`,
+	} {
+		if !strings.Contains(completedPage, expected) {
+			t.Fatalf("completed Run output controls missing %q: %s", expected, completedPage)
+		}
 	}
 
 	response, err = client.Get(runURL + "/download")
@@ -388,9 +390,21 @@ func TestAdminCanCreateQuickRunFromHostFileWithoutStartingIt(t *testing.T) {
 	}
 	quickPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, expected := range []string{"Daily check", scriptName, "--mode safe", "45s"} {
+	for _, expected := range []string{"Daily check", scriptName} {
 		if !strings.Contains(string(quickPage), expected) {
 			t.Fatalf("created Quick Run does not contain %q: %s", expected, quickPage)
+		}
+	}
+	quickRunID := hiddenValue(t, quickPage, "id")
+	response, err = client.Get(serverURL + "/config/quick-runs/" + quickRunID + "/edit")
+	if err != nil {
+		t.Fatalf("get created Quick Run edit task: %v", err)
+	}
+	quickEditPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	for _, expected := range []string{`name="arguments"`, `value="--mode safe"`, `name="timeout_seconds"`, `value="45"`} {
+		if !strings.Contains(string(quickEditPage), expected) {
+			t.Fatalf("created Quick Run edit task missing %q: %s", expected, quickEditPage)
 		}
 	}
 
@@ -404,7 +418,7 @@ func TestAdminCanCreateQuickRunFromHostFileWithoutStartingIt(t *testing.T) {
 		t.Fatalf("creating a Quick Run unexpectedly started the script: %s", runsPage)
 	}
 
-	response, err = client.PostForm(serverURL+"/config/quick-runs/"+hiddenValue(t, quickPage, "id")+"/start", url.Values{
+	response, err = client.PostForm(serverURL+"/config/quick-runs/"+quickRunID+"/start", url.Values{
 		"csrf_token": {formToken(t, quickPage)},
 	})
 	if err != nil {
