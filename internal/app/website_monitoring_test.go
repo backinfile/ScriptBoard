@@ -935,11 +935,16 @@ func TestWebsiteMonitoringLocalizesEnglishAndShowsCheckedZeroLatency(t *testing.
 		t.Fatal(err)
 	}
 	for _, expected := range []string{
-		"Website Monitoring", "Refresh", "Scan Nginx", "Add Website",
+		"Website Monitoring", "Refresh", "Scan", "Connect", "Add Website",
 		`aria-label="Website status list"`, "1 website", "0 ms",
 	} {
 		if !bytes.Contains(listPage, []byte(expected)) {
 			t.Fatalf("English list page does not contain %q: %s", expected, listPage)
+		}
+	}
+	for _, oldLabel := range []string{"Scan Nginx", "Connect ScriptBoard"} {
+		if bytes.Contains(listPage, []byte(oldLabel)) {
+			t.Fatalf("English list page still contains old action label %q: %s", oldLabel, listPage)
 		}
 	}
 
