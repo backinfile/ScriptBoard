@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"scriptboard/internal/appstatus"
+	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/hoststatus"
 	"scriptboard/internal/websitemonitor"
 )
@@ -179,6 +180,7 @@ type shellNavigationGroup struct {
 type applicationShellData struct {
 	Locale                                webLocale
 	Username, CSRFToken, ReturnTo         string
+	Version                               string
 	Role                                  string
 	Environment, Status, StatusState      string
 	CurrentErrorCount                     int
@@ -231,7 +233,7 @@ func (a *App) addApplicationShell(request *http.Request, body []byte) []byte {
 	}
 	var shell bytes.Buffer
 	_ = applicationShellTemplate.Execute(&shell, applicationShellData{
-		Locale: locale, Username: username, Role: string(current.role), CSRFToken: current.csrfToken, ReturnTo: request.URL.RequestURI(),
+		Locale: locale, Username: username, Role: string(current.role), CSRFToken: current.csrfToken, ReturnTo: request.URL.RequestURI(), Version: buildinfo.Current().Version,
 		Environment: environment, Status: status, StatusState: statusState, CurrentErrorCount: currentShellErrorCount(shellStatus), ActiveRuns: shellStatus.ActiveRuns,
 		WebsiteState: shellStatus.WebsiteState, WebsiteDown: shellStatus.WebsiteDown, WebsiteVerifying: shellStatus.WebsiteVerifying,
 		StoppedPinnedApplications: shellStatus.StoppedPinnedApplications, ApplicationIssueCount: shellStatus.ApplicationIssueCount,

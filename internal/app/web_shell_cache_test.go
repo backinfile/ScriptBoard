@@ -70,6 +70,26 @@ func TestApplicationShellProvidesVisiblePJAXNavigationProgress(t *testing.T) {
 	}
 }
 
+func TestApplicationShellShowsTheCurrentVersionBesideTheBrand(t *testing.T) {
+	var rendered bytes.Buffer
+	if err := applicationShellTemplate.Execute(&rendered, applicationShellData{
+		Locale:  localeEnglishUS,
+		Version: "2.0.19",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	page := rendered.String()
+	for _, expected := range []string{
+		`class="brand-wordmark" href="/monitor" aria-label="ScriptBoard 2.0.19"`,
+		`<span class="brand-version">2.0.19</span>`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("application shell brand is missing %q: %s", expected, page)
+		}
+	}
+}
+
 func TestSecurityTabsCommitImmediateLoadingState(t *testing.T) {
 	script, err := webFiles.ReadFile("web/assets/app.js")
 	if err != nil {

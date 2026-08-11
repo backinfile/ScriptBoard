@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"scriptboard/internal/app"
+	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/hostfiles"
 )
 
@@ -583,6 +584,7 @@ func TestAuthenticatedPagesExposeLocalizedGroupedApplicationShell(t *testing.T) 
 		`lang="en-US"`,
 		`class="app-sidebar"`,
 		`class="brand-wordmark"`,
+		`class="brand-version">` + buildinfo.Current().Version + `</span>`,
 		`>Monitor<`,
 		`>Resources<`,
 		`>Configuration<`,
