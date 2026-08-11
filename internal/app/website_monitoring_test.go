@@ -353,6 +353,115 @@ func TestWebsiteMonitorConfigurationsExportSelectedAndImportSelected(t *testing.
 	}
 }
 
+func TestWebsiteMonitorExpandsVariablesInRequestHeadersWithoutPersistingSecrets(t *testing.T) {
+	received := make(chan websitemonitor.Config, 1)
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{
+		StateRoot: filepath.Join(t.TempDir(), "state"),
+		WebsiteMonitorOptions: websitemonitor.Options{
+			Probe: websiteProbeFunc(func(_ context.Context, config websitemonitor.Config) websitemonitor.Evidence {
+				received <- config
+				return websitemonitor.Evidence{Success: true, StatusCode: http.StatusNoContent, Summary: "ok"}
+			}),
+		},
+	})
+	setWebsiteTestLocale(t, client, serverURL, "en-US")
+
+	response, err := client.Get(serverURL + "/monitor/websites/new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(newPage, []byte("Values may contain {{VARIABLE_NAME}}")) {
+		t.Fatalf("request header variable guidance is missing: %s", newPage)
+	}
+	csrfToken := formToken(t, newPage)
+	response, err = client.PostForm(serverURL+"/resources/variables", url.Values{
+		"csrf_token": {csrfToken}, "name": {"API_TOKEN"}, "value": {"secret-value"}, "is_password": {"1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("create variable status=%d", response.StatusCode)
+	}
+
+	response, err = client.PostForm(serverURL+"/monitor/websites", url.Values{
+		"csrf_token": {csrfToken}, "name": {"Authenticated API"}, "scope": {"external"}, "kind": {"http"},
+		"url": {"https://api.example.com/health"}, "frequency_seconds": {"60"}, "timeout_seconds": {"10"},
+		"http_method": {"GET"}, "request_headers": {"Authorization: Bearer {{API_TOKEN}}"},
+		"follow_redirects": {"1"}, "verify_tls": {"1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("create monitor status=%d", response.StatusCode)
+	}
+	detailPath := response.Header.Get("Location")
+
+	select {
+	case checked := <-received:
+		if len(checked.RequestHeaders) != 1 || checked.RequestHeaders[0].Value != "Bearer secret-value" {
+			t.Fatalf("checked request headers = %#v", checked.RequestHeaders)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for website check")
+	}
+
+	response, err = client.Get(serverURL + detailPath + "/edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	editPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(editPage, []byte("Bearer {{API_TOKEN}}")) || bytes.Contains(editPage, []byte("secret-value")) {
+		t.Fatalf("edit form did not preserve only the variable template: %s", editPage)
+	}
+
+	response, err = client.PostForm(serverURL+"/resources/variables/API_TOKEN/update", url.Values{
+		"csrf_token": {csrfToken}, "name": {"RENAMED_TOKEN"}, "value": {"secret-value"}, "is_password": {"1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("rename variable status=%d", response.StatusCode)
+	}
+	response, err = client.Get(serverURL + detailPath + "/edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	editPage, err = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(editPage, []byte("Bearer {{RENAMED_TOKEN}}")) || bytes.Contains(editPage, []byte("{{API_TOKEN}}")) {
+		t.Fatalf("variable rename did not update the request header template: %s", editPage)
+	}
+
+	response, err = client.PostForm(serverURL+"/resources/variables/RENAMED_TOKEN/delete", url.Values{
+		"csrf_token": {csrfToken}, "confirm": {"yes"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusConflict {
+		t.Fatalf("delete referenced variable status=%d", response.StatusCode)
+	}
+}
+
 func TestAdminCreatesWebsiteMonitorAndReadsItsResult(t *testing.T) {
 	root := t.TempDir()
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{

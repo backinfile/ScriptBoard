@@ -567,6 +567,11 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if config.WebsiteMonitorOptions.LoadVariables == nil {
+		config.WebsiteMonitorOptions.LoadVariables = func(context.Context) (map[string]string, error) {
+			return application.loadVariables()
+		}
+	}
 	application.websiteMonitor, err = websitemonitor.New(db, config.WebsiteMonitorOptions)
 	if err != nil {
 		application.applicationStatus.Close()
@@ -3314,6 +3319,9 @@ func (a *App) updateVariable(response http.ResponseWriter, request *http.Request
 		if err == nil {
 			_, err = transaction.Exec("UPDATE schedules SET arguments_template = replace(arguments_template, ?, ?)", oldReference, newReference)
 		}
+		if err == nil {
+			_, err = transaction.Exec("UPDATE website_monitors SET config_json = replace(config_json, ?, ?) WHERE deleted_at IS NULL", oldReference, newReference)
+		}
 	}
 	count := int64(0)
 	if err == nil {
@@ -3336,12 +3344,12 @@ func (a *App) deleteVariable(response http.ResponseWriter, request *http.Request
 	name := request.PathValue("name")
 	reference := "%{{" + name + "}}%"
 	var references int
-	if err := a.db.QueryRow("SELECT (SELECT COUNT(*) FROM quick_runs WHERE arguments_template LIKE ?) + (SELECT COUNT(*) FROM schedules WHERE deleted = 0 AND arguments_template LIKE ?) + (SELECT COUNT(*) FROM external_trigger_entries WHERE action_type = 'variable' AND target = ?)", reference, reference, name).Scan(&references); err != nil {
+	if err := a.db.QueryRow("SELECT (SELECT COUNT(*) FROM quick_runs WHERE arguments_template LIKE ?) + (SELECT COUNT(*) FROM schedules WHERE deleted = 0 AND arguments_template LIKE ?) + (SELECT COUNT(*) FROM external_trigger_entries WHERE action_type = 'variable' AND target = ?) + (SELECT COUNT(*) FROM website_monitors WHERE deleted_at IS NULL AND instr(config_json, ?) > 0)", reference, reference, name, "{{"+name+"}}").Scan(&references); err != nil {
 		http.Error(response, "无法检查变量引用", http.StatusInternalServerError)
 		return
 	}
 	if references != 0 {
-		http.Error(response, "变量仍被快捷执行或计划引用", http.StatusConflict)
+		http.Error(response, "变量仍被快捷执行、计划或网站监控引用", http.StatusConflict)
 		return
 	}
 	result, err := a.db.Exec("DELETE FROM variables WHERE name = ?", name)
