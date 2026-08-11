@@ -131,6 +131,23 @@ func TestKeyBindsOneImmutableEntryAndIsDeletedWithIt(t *testing.T) {
 	}
 }
 
+func TestGlobalControlDefaultsEnabledAndPersistsToggle(t *testing.T) {
+	now := time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC)
+	manager, db := testManager(t, now)
+	enabled, updatedAt, err := manager.GlobalEnabled(context.Background())
+	if err != nil || !enabled || !updatedAt.IsZero() {
+		t.Fatalf("default global control enabled=%v updated=%v err=%v", enabled, updatedAt, err)
+	}
+	if err := manager.SetGlobalEnabled(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	reopened := New(db, Options{Now: func() time.Time { return now.Add(time.Minute) }, SecretsDirectory: filepath.Join(t.TempDir(), "secrets")})
+	enabled, updatedAt, err = reopened.GlobalEnabled(context.Background())
+	if err != nil || enabled || !updatedAt.Equal(now) {
+		t.Fatalf("persisted global control enabled=%v updated=%v err=%v", enabled, updatedAt, err)
+	}
+}
+
 func TestQuickRunEntryRequiresPublishedRevisionAndDigest(t *testing.T) {
 	validDigest := strings.Repeat("a", 64)
 	for _, test := range []struct {

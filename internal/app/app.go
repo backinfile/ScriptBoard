@@ -1775,10 +1775,11 @@ func compatibleDatabaseSchema(version int) bool {
 	// custom dashboards with independently public card collections, schema 34
 	// adds dedicated percentage cards, schema 35 adds a tamper-evident audit
 	// hash chain, schema 36 locks Quick Runs to a script digest and revision, and
-	// schema 37 binds each External Interface key to one immutable Entry.
+	// schema 37 binds each External Interface key to one immutable Entry, and
+	// schema 38 adds a persistent global emergency control for external calls.
 	// Each supported predecessor has an explicit
 	// transactional forward path.
-	return version == currentSchemaVersion || currentSchemaVersion == 37 && version >= 20 && version <= 36
+	return version == currentSchemaVersion || currentSchemaVersion == 38 && version >= 20 && version <= 37
 }
 
 func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {
@@ -2215,6 +2216,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /config/schedules/{id}/run", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.runScheduleNow)))
 	mux.Handle("POST /config/schedules/{id}/delete", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.deleteSchedule)))
 	mux.Handle("GET /config/external-interfaces", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.externalInterfacesPage)))
+	mux.Handle("POST /config/external-interfaces/control", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.setExternalGlobalControl)))
 	mux.Handle("GET /config/external-interfaces/keys/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.newExternalKeyTask)))
 	mux.Handle("POST /config/external-interfaces/keys", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.createExternalKey)))
 	mux.Handle("GET /config/external-interfaces/keys/{id}/edit", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.editExternalKeyTask)))

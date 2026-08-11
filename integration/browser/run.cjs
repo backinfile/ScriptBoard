@@ -1228,6 +1228,21 @@ async function assertExternalInterfaces(page, fixture) {
   await page.locator("[data-external-interfaces-page]").waitFor();
   assert.equal(await page.getByText("Artifact upload", { exact: true }).count(), 1);
 
+  const globalControl = page.locator("[data-external-global-control]");
+  assert.equal(await globalControl.getAttribute("data-external-global-control"), "enabled");
+  await globalControl.getByRole("button", { name: "Pause all external calls", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector("[data-external-global-control]")?.dataset.externalGlobalControl === "disabled");
+  assert.equal(await globalControl.getAttribute("data-external-global-control"), "disabled");
+  const blockedTrigger = await page.request.post(`${fixture.baseURL}/trigger?name=artifact`, {
+    headers: { Authorization: `Bearer ${secret}` },
+    multipart: { file: { name: "blocked.txt", mimeType: "text/plain", buffer: Buffer.from("must not publish") } },
+  });
+  assert.equal(blockedTrigger.status(), 503);
+  assert.equal((await blockedTrigger.json()).error, "unavailable");
+  await globalControl.getByRole("button", { name: "Resume all external calls", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector("[data-external-global-control]")?.dataset.externalGlobalControl === "enabled");
+  assert.equal(await globalControl.getAttribute("data-external-global-control"), "enabled");
+
   const trigger = await page.request.post(`${fixture.baseURL}/trigger?name=artifact`, {
     headers: { Authorization: `Bearer ${secret}` },
     multipart: { file: { name: "external-result.txt", mimeType: "text/plain", buffer: Buffer.from("fixture complete") } },

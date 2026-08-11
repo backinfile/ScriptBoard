@@ -46,6 +46,12 @@ var (
 )
 
 var SchemaStatements = []string{
+	`CREATE TABLE IF NOT EXISTS external_trigger_control (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+		updated_at INTEGER NOT NULL DEFAULT 0
+	)`,
+	`INSERT OR IGNORE INTO external_trigger_control (id, enabled, updated_at) VALUES (1, 1, 0)`,
 	`CREATE TABLE IF NOT EXISTS external_trigger_keys (
 		id TEXT PRIMARY KEY,
 		label TEXT NOT NULL,
@@ -292,6 +298,41 @@ func New(db *sql.DB, options Options) *Manager {
 		random = rand.Read
 	}
 	return &Manager{db: db, now: now, random: random, secretStore: &encryptedSecretStore{directory: options.SecretsDirectory}}
+}
+
+// GlobalEnabled returns the persistent emergency control for every External
+// Interface. A missing or unreadable control row is an error so callers can
+// fail closed rather than accidentally accepting external work.
+func (manager *Manager) GlobalEnabled(ctx context.Context) (bool, time.Time, error) {
+	var enabled int
+	var updatedAtUnix int64
+	if err := manager.db.QueryRowContext(ctx, `SELECT enabled, updated_at FROM external_trigger_control WHERE id = 1`).Scan(&enabled, &updatedAtUnix); err != nil {
+		return false, time.Time{}, err
+	}
+	updatedAt := time.Time{}
+	if updatedAtUnix != 0 {
+		updatedAt = time.Unix(updatedAtUnix, 0).UTC()
+	}
+	return enabled == 1, updatedAt, nil
+}
+
+func (manager *Manager) SetGlobalEnabled(ctx context.Context, enabled bool) error {
+	value := 0
+	if enabled {
+		value = 1
+	}
+	result, err := manager.db.ExecContext(ctx, `UPDATE external_trigger_control SET enabled = ?, updated_at = ? WHERE id = 1`, value, manager.now().UTC().Unix())
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (manager *Manager) StoreSecret(id, secret string) error {

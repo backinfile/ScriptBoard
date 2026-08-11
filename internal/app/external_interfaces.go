@@ -40,15 +40,16 @@ type externalInvocationView struct {
 }
 
 type externalInterfacesPageData struct {
-	ActiveTab  string
-	Keys       []externalKeyView
-	Entries    map[string][]externalEntryView
-	Requests   []externalInvocationView
-	Filters    auditFilters
-	Pagination paginationView
-	CSRFToken  string
-	Locale     webLocale
-	Now        time.Time
+	ActiveTab     string
+	Keys          []externalKeyView
+	Entries       map[string][]externalEntryView
+	Requests      []externalInvocationView
+	Filters       auditFilters
+	Pagination    paginationView
+	CSRFToken     string
+	Locale        webLocale
+	Now           time.Time
+	GlobalEnabled bool
 }
 
 type externalInterfaceFormData struct {
@@ -97,6 +98,11 @@ func (a *App) externalInterfacesPage(response http.ResponseWriter, request *http
 	keys, err := a.externalTriggers.List(request.Context())
 	if err != nil {
 		http.Error(response, "Unable to read External Interfaces", http.StatusInternalServerError)
+		return
+	}
+	globalEnabled, _, err := a.externalTriggers.GlobalEnabled(request.Context())
+	if err != nil {
+		http.Error(response, "Unable to read External Interface control", http.StatusInternalServerError)
 		return
 	}
 	invocationFilter := externaltrigger.InvocationFilter{
@@ -151,10 +157,33 @@ func (a *App) externalInterfacesPage(response http.ResponseWriter, request *http
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := externalInterfacesTemplate.Execute(response, externalInterfacesPageData{
 		ActiveTab: activeTab, Keys: views, Entries: entries, Requests: requests, Filters: filters, Pagination: pagination,
-		CSRFToken: current.csrfToken, Locale: locale, Now: now,
+		CSRFToken: current.csrfToken, Locale: locale, Now: now, GlobalEnabled: globalEnabled,
 	}); err != nil {
 		http.Error(response, "Unable to render External Interfaces", http.StatusInternalServerError)
 	}
+}
+
+func (a *App) setExternalGlobalControl(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
+		return
+	}
+	rawEnabled := request.FormValue("enabled")
+	if rawEnabled != "0" && rawEnabled != "1" {
+		http.Error(response, "Invalid External Interface control", http.StatusBadRequest)
+		return
+	}
+	enabled := rawEnabled == "1"
+	if err := a.externalTriggers.SetGlobalEnabled(request.Context(), enabled); err != nil {
+		http.Error(response, "Unable to update External Interface control", http.StatusInternalServerError)
+		return
+	}
+	target := "disabled"
+	if enabled {
+		target = "enabled"
+	}
+	a.recordAuditForRequest(request, "set_external_interface_global_control", target, "succeeded")
+	http.Redirect(response, request, "/config/external-interfaces", http.StatusSeeOther)
 }
 
 func externalActionText(locale webLocale, action externaltrigger.ActionType) string {
@@ -746,6 +775,17 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 	requestID, err := randomToken(18)
 	if err != nil {
 		writeExternalTriggerError(response, http.StatusInternalServerError, "action_failed")
+		return
+	}
+	globalEnabled, _, controlErr := a.externalTriggers.GlobalEnabled(request.Context())
+	if controlErr != nil || !globalEnabled {
+		response.Header().Set("Retry-After", "60")
+		_ = a.externalTriggers.RecordInvocation(request.Context(), externaltrigger.Invocation{
+			ID: requestID, KeyID: key.ID, KeyLabel: key.Label, EntryID: entry.ID, EntryName: entry.Name,
+			ActionType: entry.Type, Result: "rejected", HTTPStatus: http.StatusServiceUnavailable, Source: request.RemoteAddr,
+		})
+		a.recordAuditWithActor("external_trigger_"+string(entry.Type), "key="+key.ID+" entry="+entry.Name+" request="+requestID, "rejected", request.RemoteAddr, "", key.Label, userRole("external"))
+		writeExternalTriggerError(response, http.StatusServiceUnavailable, "unavailable")
 		return
 	}
 	release, allowed := a.externalLimit.Acquire(externaltrigger.LimitSubject{KeyID: key.ID, Source: externalLimitSource(request.RemoteAddr), Action: entry.Type})

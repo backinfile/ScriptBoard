@@ -9,6 +9,11 @@
     <a href="/config/external-interfaces?tab=activity" {{if eq .ActiveTab "activity"}}aria-current="page"{{end}}><span data-lucide="scroll-text" aria-hidden="true"></span>{{t .Locale "external.activity"}}</a>
   </nav>
   {{if eq .ActiveTab "interfaces"}}
+  <aside class="external-global-control" data-external-global-control="{{if .GlobalEnabled}}enabled{{else}}disabled{{end}}">
+    <span class="external-global-control__icon" data-lucide="{{if .GlobalEnabled}}shield-check{{else}}octagon-pause{{end}}" aria-hidden="true"></span>
+    <div><strong>{{if .GlobalEnabled}}{{t .Locale "external.global_control_enabled"}}{{else}}{{t .Locale "external.global_control_disabled"}}{{end}}</strong><p>{{if .GlobalEnabled}}{{t .Locale "external.global_control_enabled_description"}}{{else}}{{t .Locale "external.global_control_disabled_description"}}{{end}}</p></div>
+    <form method="post" action="/config/external-interfaces/control"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="enabled" value="{{if .GlobalEnabled}}0{{else}}1{{end}}"><button class="button {{if .GlobalEnabled}}button--danger{{else}}button--primary{{end}}" type="submit"><span data-lucide="{{if .GlobalEnabled}}circle-stop{{else}}play{{end}}" aria-hidden="true"></span>{{if .GlobalEnabled}}{{t .Locale "external.pause_all"}}{{else}}{{t .Locale "external.resume_all"}}{{end}}</button></form>
+  </aside>
   <aside class="inline-notice"><span data-lucide="shield-check" aria-hidden="true"></span><p>{{t .Locale "external.security_notice"}}</p></aside>
   {{if .Keys}}
   <div class="external-key-list">
