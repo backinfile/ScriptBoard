@@ -60,6 +60,8 @@ type ImportRequest struct {
 	Reader                         io.Reader
 }
 
+const maximumExpandedSQLBytes int64 = 8 << 30
+
 func (m *Manager) ImportBackup(ctx context.Context, request ImportRequest) (Backup, error) {
 	request.Database, request.Filename = strings.TrimSpace(request.Database), strings.TrimSpace(request.Filename)
 	extension := strings.ToLower(filepath.Ext(request.Filename))
@@ -90,7 +92,7 @@ func (m *Manager) ImportBackup(ctx context.Context, request ImportRequest) (Back
 	limited := &io.LimitedReader{R: request.Reader, N: (2 << 30) + 1}
 	if isGzip {
 		if _, err = io.Copy(destination, limited); err == nil {
-			err = validateGzipSQL(temporaryPath, temporary)
+			err = validateGzipSQL(temporary, maximumExpandedSQLBytes)
 		}
 	} else {
 		compressed := gzip.NewWriter(destination)
@@ -133,7 +135,10 @@ func (m *Manager) ImportBackup(ctx context.Context, request ImportRequest) (Back
 	return backup, nil
 }
 
-func validateGzipSQL(path string, openFile *os.File) error {
+func validateGzipSQL(openFile *os.File, maximumExpandedBytes int64) error {
+	if maximumExpandedBytes <= 0 {
+		return errors.New("invalid expanded SQL size limit")
+	}
 	if _, err := openFile.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
@@ -142,9 +147,12 @@ func validateGzipSQL(path string, openFile *os.File) error {
 		return fmt.Errorf("invalid gzip backup: %w", err)
 	}
 	defer reader.Close()
-	written, err := io.Copy(io.Discard, reader)
+	written, err := io.Copy(io.Discard, io.LimitReader(reader, maximumExpandedBytes+1))
 	if err != nil {
 		return fmt.Errorf("invalid gzip backup: %w", err)
+	}
+	if written > maximumExpandedBytes {
+		return fmt.Errorf("expanded size exceeds the %d-byte SQL limit", maximumExpandedBytes)
 	}
 	if err := reader.Close(); err != nil {
 		return fmt.Errorf("invalid gzip backup: %w", err)
@@ -169,18 +177,7 @@ func verifyBackupFile(backup Backup) error {
 		return errors.New("backup SHA-256 verification failed")
 	}
 	if strings.HasSuffix(strings.ToLower(backup.Path), ".gz") {
-		if _, err := file.Seek(0, io.SeekStart); err != nil {
-			return err
-		}
-		reader, err := gzip.NewReader(file)
-		if err != nil {
-			return fmt.Errorf("open compressed backup: %w", err)
-		}
-		if _, err := io.Copy(io.Discard, reader); err != nil {
-			_ = reader.Close()
-			return fmt.Errorf("verify compressed backup: %w", err)
-		}
-		if err := reader.Close(); err != nil {
+		if err := validateGzipSQL(file, maximumExpandedSQLBytes); err != nil {
 			return fmt.Errorf("verify compressed backup: %w", err)
 		}
 	}

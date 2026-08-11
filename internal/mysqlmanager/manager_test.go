@@ -298,6 +298,43 @@ func TestImportRejectsCorruptGzipAndRedactsCommandErrors(t *testing.T) {
 	}
 }
 
+func TestMySQLImportArgumentsDisableLocalClientCommands(t *testing.T) {
+	arguments := mysqlImportArguments("C:/private/client.cnf", "inventory")
+	want := []string{
+		"--defaults-extra-file=C:/private/client.cnf",
+		"--binary-mode", "--batch", "--skip-reconnect", "--default-character-set=utf8mb4", "--", "inventory",
+	}
+	if strings.Join(arguments, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("import arguments = %#v, want %#v", arguments, want)
+	}
+}
+
+func TestValidateGzipSQLRejectsExpansionBeyondLimit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "expansion.sql.gz")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compressed := gzip.NewWriter(file)
+	if _, err := compressed.Write(bytes.Repeat([]byte("A"), 2048)); err != nil {
+		t.Fatal(err)
+	}
+	if err := compressed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	file, err = os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if err := validateGzipSQL(file, 1024); err == nil || !strings.Contains(err.Error(), "expanded size") {
+		t.Fatalf("gzip expansion error = %v", err)
+	}
+}
+
 func TestBackupRecordsCanBeFilteredByDatabase(t *testing.T) {
 	stateRoot := t.TempDir()
 	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))

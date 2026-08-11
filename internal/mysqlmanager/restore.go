@@ -139,9 +139,24 @@ func (m *Manager) importBackup(ctx context.Context, instance Instance, target st
 		input = compressed
 	}
 	stderr := &boundedBuffer{maximum: 64 << 10}
-	if err := m.runner.Run(ctx, m.Tools().ClientExecutable, []string{"--defaults-extra-file=" + optionPath, "--default-character-set=utf8mb4", "--", target}, input, io.Discard, stderr); err != nil {
+	if err := m.runner.Run(ctx, m.Tools().ClientExecutable, mysqlImportArguments(optionPath, target), input, io.Discard, stderr); err != nil {
 		password, _ := m.instancePassword(instance.ID)
 		return fmt.Errorf("mysql import failed: %w%s", err, sanitizedCommandError(stderr.String(), password, optionPath))
 	}
 	return nil
+}
+
+// mysqlImportArguments keeps imported SQL in non-interactive binary mode.
+// Both MySQL and MariaDB document that this disables local client commands
+// such as system, source, pager, and tee while preserving dump delimiters.
+func mysqlImportArguments(optionPath, target string) []string {
+	return []string{
+		"--defaults-extra-file=" + optionPath,
+		"--binary-mode",
+		"--batch",
+		"--skip-reconnect",
+		"--default-character-set=utf8mb4",
+		"--",
+		target,
+	}
 }

@@ -52,6 +52,7 @@
 
 ## 最新决策
 
+- [ADR-0137 MySQL 恢复禁用本地客户端命令并限制 gzip 展开](./0137-disable-local-mysql-commands-during-restore.md)，防止导入 SQL 调用宿主命令并限制压缩展开资源。
 - [ADR-0136 使用 Job Object 限制 Windows Assistant Runtime](./0136-bound-windows-assistant-runtime-with-job-objects.md)，为 Pi 增加单进程、内存、CPU、UI 与强制回收边界。
 - [ADR-0135 按 Runtime 会话代理 Assistant Provider 凭据](./0135-proxy-assistant-provider-credentials-per-runtime-session.md)，从 Pi 环境与配置移除真实上游地址和凭据，并用进程生命周期 capability 收口正常 Provider 流量。
 - [ADR-0134 统一生产子进程启动策略](./0134-centralize-process-launch-policy.md)，让所有生产 Go 子进程显式选择环境策略并用仓库级门禁阻止旁路。
