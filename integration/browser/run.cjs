@@ -1245,6 +1245,11 @@ async function assertExternalInterfaces(page, fixture) {
     hostFileURL(fixture.baseURL, endpoint, fixtureHostPath(...relative.split("/")), parameters);
   const fixtureFileHref = (endpoint, relative, parameters = {}) =>
     hostFileHref(endpoint, fixtureHostPath(...relative.split("/")), parameters);
+  const matchesFixtureURL = expected => current => {
+    const target = new URL(expected);
+    return current.origin === target.origin && current.pathname === target.pathname &&
+      JSON.stringify([...current.searchParams.entries()]) === JSON.stringify([...target.searchParams.entries()]);
+  };
   let browser;
   const consoleErrors = [];
   try {
@@ -1364,15 +1369,15 @@ async function assertExternalInterfaces(page, fixture) {
       page.locator('.app-sidebar a[href="/resources/files"]').click(),
     ]);
     await Promise.all([
-      page.waitForURL(fixtureFilesURL()),
+      page.waitForURL(matchesFixtureURL(fixtureFilesURL())),
       page.getByRole("link", { name: path.basename(fixture.hostRoot), exact: true }).first().click(),
     ]);
     await Promise.all([
-      page.waitForURL(fixtureFilesURL("automation")),
+      page.waitForURL(matchesFixtureURL(fixtureFilesURL("automation"))),
       page.getByRole("link", { name: "automation", exact: true }).first().click(),
     ]);
     await Promise.all([
-      page.waitForURL(fixtureFileURL("/resources/files/view", "automation/weekly-system-check.ps1")),
+      page.waitForURL(matchesFixtureURL(fixtureFileURL("/resources/files/view", "automation/weekly-system-check.ps1"))),
       page.getByRole("link", { name: "weekly-system-check.ps1", exact: true }).first().click(),
     ]);
     const scriptPreview = page.locator("[data-script-preview]");
