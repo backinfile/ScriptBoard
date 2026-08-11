@@ -110,7 +110,7 @@ func TestAIWorkspaceAndSettingsUsePersistedLLMAndConversationState(t *testing.T)
 		`data-open-guardrails`, `data-guardrail-drawer`, `class="assistant-guardrail-summary"`,
 		`name="default_auto_approval"`, `name="max_active_conversations"`,
 		`>Enable AI conversations<`, `new conversations cannot be created and messages cannot be sent in existing conversations`,
-		`name="shared"`,
+		`name="shared"`, `name="supports_reasoning"`, `name="default_thinking_level"`,
 		`action="/settings/ai/runtime/check"`,
 		`action="/settings/ai/runtime/offline"`, `enctype="multipart/form-data"`,
 		`name="runtime_manifest"`, `name="runtime_signature"`, `name="runtime_archive"`,
@@ -128,7 +128,8 @@ func TestAIWorkspaceAndSettingsUsePersistedLLMAndConversationState(t *testing.T)
 	response, err = client.PostForm(serverURL+"/settings/ai/llms", url.Values{
 		"name": {"OpenAI · Production"}, "provider": {"openai"}, "model": {"gpt-5.2"},
 		"endpoint": {"https://api.openai.com/v1"}, "api_key": {"sk-never-render-this"},
-		"make_default": {"true"}, "shared": {"true"}, "csrf_token": {formToken(t, settings)},
+		"make_default": {"true"}, "supports_reasoning": {"true"}, "default_thinking_level": {"high"},
+		"shared": {"true"}, "csrf_token": {formToken(t, settings)},
 	})
 	if err != nil {
 		t.Fatalf("create LLM configuration: %v", err)
@@ -152,6 +153,9 @@ func TestAIWorkspaceAndSettingsUsePersistedLLMAndConversationState(t *testing.T)
 	}
 	if !strings.Contains(string(settings), `data-shared="true"`) || !strings.Contains(string(settings), `data-owned="true"`) {
 		t.Fatalf("configured LLM does not preserve owned/shared state: %s", settings)
+	}
+	if !strings.Contains(string(settings), `data-supports-reasoning="true"`) || !strings.Contains(string(settings), `data-default-thinking-level="high"`) {
+		t.Fatalf("configured LLM does not preserve reasoning defaults: %s", settings)
 	}
 	for _, expected := range []string{`data-connection-ok="false"`, `data-state="not-ok"`, `data-server-error-retry`, `class="button button--compact assistant-llm-test"`, `data-connection-test`, `data-test-kind="llm"`, `>Test not passed<`, `>Test connection<`} {
 		if !strings.Contains(string(settings), expected) {

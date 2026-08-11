@@ -109,6 +109,41 @@ func TestNewModelConfigurationRequiresCredential(t *testing.T) {
 	}
 }
 
+func TestModelReasoningDefaultsArePersistedAndInheritedByNewConversations(t *testing.T) {
+	t.Parallel()
+
+	service, _, _ := newTestService(t)
+	ctx := context.Background()
+	actor := Actor{UserID: "admin-one", Username: "admin"}
+	model, err := service.SaveModel(ctx, actor, "", ModelInput{
+		Name: "Reasoning model", Provider: ProviderOpenAI, Model: "gpt-5.2",
+		Endpoint: "https://api.openai.com/v1", APIKey: "sk-secret",
+		SupportsReasoning: true, DefaultThinkingLevel: "high",
+	})
+	if err != nil {
+		t.Fatalf("save reasoning model: %v", err)
+	}
+	if !model.SupportsReasoning || model.DefaultThinkingLevel != "high" {
+		t.Fatalf("reasoning model = %+v", model)
+	}
+	if err := service.UpdateSettings(ctx, actor, SettingsInput{Enabled: true, MaxActiveConversations: 2}); err != nil {
+		t.Fatalf("enable assistant: %v", err)
+	}
+	conversation, err := service.CreateConversation(ctx, actor, ConversationInput{ModelID: model.ID})
+	if err != nil {
+		t.Fatalf("create conversation: %v", err)
+	}
+	if conversation.ThinkingLevel != "high" {
+		t.Fatalf("conversation thinking level = %q, want high", conversation.ThinkingLevel)
+	}
+	if _, err := service.SaveModel(ctx, actor, model.ID, ModelInput{
+		Name: model.Name, Provider: model.Provider, Model: model.Model, Endpoint: model.Endpoint,
+		SupportsReasoning: true, DefaultThinkingLevel: "unknown",
+	}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("invalid default thinking level error = %v, want %v", err, ErrInvalidInput)
+	}
+}
+
 func TestModelConnectionStatusIsInformationalAndResetsAfterEditing(t *testing.T) {
 	t.Parallel()
 

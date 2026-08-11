@@ -727,6 +727,41 @@ func TestOpenDatabaseRejectsNewerSchema(t *testing.T) {
 	}
 }
 
+func TestOpenDatabaseMigratesModelReasoningDefaultsFromSchema34(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	db, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO assistant_models
+		(id, owner_user_id, name, provider, model, endpoint, credential_configured, is_default, created_at, updated_at, updated_by_user_id)
+		VALUES ('model', 'owner', 'Model', 'openai', 'gpt-5.2', 'https://api.openai.com/v1', 1, 1, 1, 1, 'owner');
+		ALTER TABLE assistant_models DROP COLUMN default_thinking_level;
+		ALTER TABLE assistant_models DROP COLUMN supports_reasoning;
+		PRAGMA user_version=34;
+		PRAGMA wal_checkpoint(TRUNCATE);`); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var supportsReasoning int
+	var defaultThinkingLevel string
+	if err := migrated.QueryRow(`SELECT supports_reasoning, default_thinking_level FROM assistant_models WHERE id = 'model'`).Scan(&supportsReasoning, &defaultThinkingLevel); err != nil {
+		t.Fatal(err)
+	}
+	if supportsReasoning != 0 || defaultThinkingLevel != "medium" {
+		t.Fatalf("migrated reasoning defaults = %d %q, want 0 medium", supportsReasoning, defaultThinkingLevel)
+	}
+}
+
 func TestOpenDatabaseCreatesIndexesForPeriodicAndTimeOrderedQueries(t *testing.T) {
 	db, err := openDatabase(filepath.Join(t.TempDir(), "app.db"))
 	if err != nil {

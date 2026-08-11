@@ -1498,6 +1498,24 @@ func openDatabase(path string) (*sql.DB, error) {
 			}
 		}
 	}
+	if schemaVersion >= 20 && schemaVersion <= 34 {
+		for _, column := range []struct{ name, definition string }{
+			{"supports_reasoning", `supports_reasoning INTEGER NOT NULL DEFAULT 0`},
+			{"default_thinking_level", `default_thinking_level TEXT NOT NULL DEFAULT 'medium' CHECK (default_thinking_level IN ('off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'))`},
+		} {
+			exists, err := sqliteColumnExists(migration, "assistant_models", column.name)
+			if err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("inspect Assistant model reasoning migration: %w", err)
+			}
+			if !exists {
+				if _, err := migration.Exec(`ALTER TABLE assistant_models ADD COLUMN ` + column.definition); err != nil {
+					_ = db.Close()
+					return nil, fmt.Errorf("migrate Assistant model reasoning defaults: %w", err)
+				}
+			}
+		}
+	}
 	if schemaVersion >= 27 && schemaVersion <= 31 {
 		for _, statement := range []string{
 			`CREATE TABLE external_trigger_entries_schema32 (
@@ -1620,10 +1638,11 @@ func compatibleDatabaseSchema(version int) bool {
 	// logical backups, plans, and recoverable operations, and schema 31 persists
 	// MySQL connection state, and schema 32 adds read-only cross-instance website
 	// monitoring interfaces and encrypted remote source metadata, and schema 33 adds
-	// custom dashboards with independently public card collections, and schema 34
-	// adds dedicated percentage cards. Each supported predecessor has an explicit
+	// custom dashboards with independently public card collections, schema 34
+	// adds dedicated percentage cards, and schema 35 adds model-level reasoning
+	// capability and default thinking strength. Each supported predecessor has an explicit
 	// transactional forward path.
-	return version == currentSchemaVersion || currentSchemaVersion == 34 && version >= 20 && version <= 33
+	return version == currentSchemaVersion || currentSchemaVersion == 35 && version >= 20 && version <= 34
 }
 
 func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {
