@@ -81,6 +81,7 @@ type Config struct {
 	HTTPMethod           string
 	HTTPContentType      string
 	HTTPBody             string
+	RequestHeaders       []RequestHeader
 	HTTPSuccessMode      HTTPSuccessMode
 	ExpectedStatuses     []int
 	ExpectedStatusRanges []HTTPStatusRange

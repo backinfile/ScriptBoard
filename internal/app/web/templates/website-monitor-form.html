@@ -60,6 +60,15 @@
 </div>
 </fieldset>
 
+<fieldset>
+<legend>{{t .Locale "website.form.request_headers"}}</legend>
+<label>{{t .Locale "website.form.custom_headers"}}
+<textarea name="request_headers" spellcheck="false" autocomplete="off" autocapitalize="off" maxlength="16384" aria-describedby="request-headers-hint" placeholder="Authorization: Bearer token&#10;X-Tenant: north">{{.RequestHeadersText}}</textarea>
+<span class="field-hint" id="request-headers-hint">{{t .Locale "website.form.request_headers_hint"}}</span>
+{{with index .Errors "request_headers"}}<span class="field-error">{{.}}</span>{{end}}
+</label>
+</fieldset>
+
 <fieldset data-http-monitor-fields>
 <legend>{{t .Locale "website.form.http_request_response"}}</legend>
 <div class="website-form-pair">

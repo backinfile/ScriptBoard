@@ -39,8 +39,11 @@ func (NetworkProbe) Check(ctx context.Context, config Config) Evidence {
 		result.TechnicalError = err.Error()
 		return result
 	}
-	request.Header.Set("User-Agent", UserAgent)
-	if config.HTTPMethod == http.MethodPost && config.HTTPContentType != "" {
+	applyHTTPRequestHeaders(request, config.RequestHeaders)
+	if request.Header.Get("User-Agent") == "" {
+		request.Header.Set("User-Agent", UserAgent)
+	}
+	if config.HTTPMethod == http.MethodPost && config.HTTPContentType != "" && request.Header.Get("Content-Type") == "" {
 		request.Header.Set("Content-Type", config.HTTPContentType)
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
@@ -109,7 +112,12 @@ func checkWebSocket(ctx context.Context, config Config) Evidence {
 		Proxy:           http.ProxyFromEnvironment,
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: config.SkipTLSVerification}, //nolint:gosec -- explicit per-monitor administrator setting
 	}
-	connection, response, err := dialer.DialContext(ctx, config.URL, http.Header{"User-Agent": []string{UserAgent}})
+	headers := http.Header{}
+	applyRequestHeaders(headers, config.RequestHeaders)
+	if headers.Get("User-Agent") == "" {
+		headers.Set("User-Agent", UserAgent)
+	}
+	connection, response, err := dialer.DialContext(ctx, config.URL, headers)
 	result.Latency = time.Since(started)
 	result.CheckedAt = time.Now().UTC()
 	if err != nil {
@@ -165,6 +173,22 @@ func checkWebSocket(ctx context.Context, config Config) Evidence {
 			result.Summary = "已收到匹配的 WebSocket 应用消息"
 			return result
 		}
+	}
+}
+
+func applyRequestHeaders(target http.Header, headers []RequestHeader) {
+	for _, header := range headers {
+		target.Add(header.Name, header.Value)
+	}
+}
+
+func applyHTTPRequestHeaders(request *http.Request, headers []RequestHeader) {
+	for _, header := range headers {
+		if strings.EqualFold(header.Name, "Host") {
+			request.Host = header.Value
+			continue
+		}
+		request.Header.Add(header.Name, header.Value)
 	}
 }
 

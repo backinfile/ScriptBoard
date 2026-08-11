@@ -85,6 +85,7 @@ type websiteMonitorFormView struct {
 	FrequencySeconds     int64
 	TimeoutSeconds       int64
 	ExpectedStatusesText string
+	RequestHeadersText   string
 }
 
 type websiteMonitorNginxView struct {
@@ -814,6 +815,7 @@ func newWebsiteMonitorFormView(config websitemonitor.Config, fieldErrors map[str
 		FrequencySeconds:     int64(config.Frequency / time.Second),
 		TimeoutSeconds:       int64(config.Timeout / time.Second),
 		ExpectedStatusesText: websitemonitor.FormatHTTPStatusRanges(websitemonitor.ExpectedHTTPStatusRanges(config)),
+		RequestHeadersText:   websitemonitor.FormatRequestHeaders(config.RequestHeaders),
 	}
 }
 
@@ -864,6 +866,12 @@ func websiteMonitorConfigFromRequest(request *http.Request) (websitemonitor.Conf
 		SkipTLSVerification: request.FormValue("verify_tls") != "1",
 		Source:              "manual",
 	}
+	errors := map[string]string{}
+	if headers, err := websitemonitor.ParseRequestHeaders(request.FormValue("request_headers")); err != nil {
+		errors["request_headers"] = webText(locale, "website.error.request_headers")
+	} else {
+		config.RequestHeaders = headers
+	}
 	if config.Kind == websitemonitor.KindHTTP {
 		config.HTTPMethod = request.FormValue("http_method")
 		config.HTTPContentType = request.FormValue("http_content_type")
@@ -884,7 +892,6 @@ func websiteMonitorConfigFromRequest(request *http.Request) (websitemonitor.Conf
 			config.ExpectedMessage = request.FormValue("expected_message")
 		}
 	}
-	errors := map[string]string{}
 	if value, err := strconv.Atoi(request.FormValue("frequency_seconds")); err == nil {
 		config.Frequency = time.Duration(value) * time.Second
 		if value != 30 && value != 60 && value != 300 && value != 900 {

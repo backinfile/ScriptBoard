@@ -234,6 +234,10 @@ func normalizeConfig(config Config) (Config, error) {
 	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
 		return Config{}, errors.New("网站 URL 无效")
 	}
+	config.RequestHeaders, err = normalizeRequestHeaders(config.RequestHeaders)
+	if err != nil {
+		return Config{}, err
+	}
 	if config.Kind == KindHTTP {
 		if parsed.Scheme != "http" && parsed.Scheme != "https" {
 			return Config{}, errors.New("HTTP 检查必须使用 http:// 或 https:// URL")

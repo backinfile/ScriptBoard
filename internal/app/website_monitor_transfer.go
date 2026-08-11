@@ -42,6 +42,7 @@ type websiteMonitorConfigRecord struct {
 	HTTPMethod           string                           `json:"http_method,omitempty"`
 	HTTPContentType      string                           `json:"http_content_type,omitempty"`
 	HTTPBody             string                           `json:"http_body,omitempty"`
+	RequestHeaders       []websitemonitor.RequestHeader   `json:"request_headers,omitempty"`
 	HTTPSuccessMode      websitemonitor.HTTPSuccessMode   `json:"http_success_mode,omitempty"`
 	ExpectedStatusRanges []websitemonitor.HTTPStatusRange `json:"expected_status_ranges,omitempty"`
 	ResponseKeyword      string                           `json:"response_keyword,omitempty"`
@@ -89,6 +90,7 @@ func websiteMonitorConfigRecordFromConfig(config websitemonitor.Config) websiteM
 		FrequencySeconds: int64(config.Frequency / time.Second),
 		TimeoutSeconds:   int64(config.Timeout / time.Second),
 		HTTPMethod:       config.HTTPMethod, HTTPContentType: config.HTTPContentType, HTTPBody: config.HTTPBody,
+		RequestHeaders:       config.RequestHeaders,
 		HTTPSuccessMode:      config.HTTPSuccessMode,
 		ExpectedStatusRanges: websitemonitor.ExpectedHTTPStatusRanges(config),
 		ResponseKeyword:      config.ResponseKeyword, FollowRedirects: !config.DisableRedirects,
@@ -105,6 +107,7 @@ func (record websiteMonitorConfigRecord) config() websitemonitor.Config {
 		Frequency:  time.Duration(record.FrequencySeconds) * time.Second,
 		Timeout:    time.Duration(record.TimeoutSeconds) * time.Second,
 		HTTPMethod: record.HTTPMethod, HTTPContentType: record.HTTPContentType, HTTPBody: record.HTTPBody,
+		RequestHeaders:  record.RequestHeaders,
 		HTTPSuccessMode: record.HTTPSuccessMode, ExpectedStatusRanges: record.ExpectedStatusRanges,
 		ResponseKeyword: record.ResponseKeyword, DisableRedirects: !record.FollowRedirects,
 		SkipTLSVerification: !record.VerifyTLS,
