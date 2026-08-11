@@ -164,6 +164,10 @@ AI 功能默认关闭。管理员可在“系统设置 → AI”安装与当前�
 ```yaml
 state_root: C:\ProgramData\ScriptBoard\state
 listen: 127.0.0.1:8787
+allowed_hosts:
+  - 127.0.0.1
+  - localhost
+canonical_external_url: http://127.0.0.1:8787
 update_check: true
 update_check_interval_hours: 6
 ```
@@ -176,6 +180,8 @@ scriptboard doctor --config CONFIG_PATH
 ```
 
 配置优先级为：内置默认值 → YAML 配置 → `SCRIPTBOARD_*` 环境变量 → 命令行参数。
+
+`allowed_hosts` 是 Host Header 白名单；通配或非回环监听必须显式配置。`canonical_external_url` 的主机必须位于该白名单中，生成对外绝对 URL 时只使用这个值。反向代理部署还须显式配置直连代理的 `trusted_proxies`，未受信来源提供的转发头会被忽略。
 
 ## 更新与备份
 

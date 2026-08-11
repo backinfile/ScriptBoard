@@ -35,6 +35,8 @@ func TestCancellingUserAccessEndsOnlyThatUsersActiveConnections(t *testing.T) {
 
 func TestFixedRolesCoverEveryProtectedRouteClass(t *testing.T) {
 	t.Parallel()
+	application := &App{}
+	application.routes()
 
 	tests := []struct {
 		name    string
@@ -82,14 +84,14 @@ func TestFixedRolesCoverEveryProtectedRouteClass(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(test.method, test.path, nil)
-			required, ok := permissionForRequest(request)
-			if !ok {
+			spec, ok := declaredSpecForRequest(application.routeSpecs, request)
+			if !ok || spec.Auth != routeAuthSession {
 				t.Fatalf("%s %s has no permission declaration", test.method, test.path)
 			}
 			for _, role := range roles {
 				want := containsRole(test.allowed, role)
-				if got := roleAllows(role, required); got != want {
-					t.Errorf("%s %s role=%s allowed=%v, want %v (permission=%d)", test.method, test.path, role, got, want, required)
+				if got := roleAllows(role, spec.Permission); got != want {
+					t.Errorf("%s %s role=%s allowed=%v, want %v (permission=%d)", test.method, test.path, role, got, want, spec.Permission)
 				}
 			}
 		})
@@ -98,11 +100,77 @@ func TestFixedRolesCoverEveryProtectedRouteClass(t *testing.T) {
 
 func TestUnknownProtectedRouteHasNoFallbackPermission(t *testing.T) {
 	t.Parallel()
-
+	application := &App{}
+	application.routes()
 	request := httptest.NewRequest(http.MethodGet, "/future/forgotten-route", nil)
-	if required, ok := permissionForRequest(request); ok {
-		t.Fatalf("unknown route resolved to permission %d", required)
+	if spec, ok := declaredSpecForRequest(application.routeSpecs, request); ok {
+		t.Fatalf("unknown route resolved to permission %d", spec.Permission)
 	}
+}
+
+func TestEveryRouteDeclaresMethodAuthenticationAndMutationPolicy(t *testing.T) {
+	t.Parallel()
+	application := &App{}
+	application.routes()
+	if len(application.routeSpecs) < 200 {
+		t.Fatalf("route inventory unexpectedly small: %d", len(application.routeSpecs))
+	}
+	seen := make(map[string]bool, len(application.routeSpecs))
+	for _, spec := range application.routeSpecs {
+		if spec.Method == "" || spec.Path == "" || spec.Auth == "" {
+			t.Errorf("incomplete route declaration: %+v", spec)
+		}
+		if seen[spec.Pattern] {
+			t.Errorf("duplicate route declaration: %s", spec.Pattern)
+		}
+		seen[spec.Pattern] = true
+		if spec.Auth == routeAuthSession {
+			if !roleAllows(roleAdministrator, spec.Permission) {
+				t.Errorf("administrator cannot access declared route %s", spec.Pattern)
+			}
+			mutating := spec.Method != http.MethodGet && spec.Method != http.MethodHead
+			if mutating && spec.CSRF != routeCSRFRequired {
+				t.Errorf("mutating session route has no CSRF policy: %s", spec.Pattern)
+			}
+		}
+	}
+}
+
+func TestRouteMuxRejectsUndeclaredHandlersAndMethodlessPatterns(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		call func()
+	}{
+		{"undeclared handler", func() {
+			newDeclaredRouteMux().Handle("GET /unsafe", http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		}},
+		{"methodless public route", func() { newDeclaredRouteMux().Public("/unsafe", func(http.ResponseWriter, *http.Request) {}) }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatal("route registration did not fail closed")
+				}
+			}()
+			test.call()
+		})
+	}
+}
+
+func declaredSpecForRequest(specs []RouteSpec, request *http.Request) (RouteSpec, bool) {
+	mux := http.NewServeMux()
+	var matched RouteSpec
+	var found bool
+	for _, route := range specs {
+		spec := route
+		mux.HandleFunc(spec.Pattern, func(http.ResponseWriter, *http.Request) {
+			matched, found = spec, true
+		})
+	}
+	mux.ServeHTTP(httptest.NewRecorder(), request)
+	return matched, found
 }
 
 func containsRole(roles []userRole, target userRole) bool {

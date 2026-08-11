@@ -107,7 +107,9 @@ func printUsage() {
   --listen ADDRESS           HTTP 监听地址
   --tls-cert PATH            TLS 证书
   --tls-key PATH             TLS 私钥
-  --trusted-proxy IP_OR_CIDR 可信反向代理（可重复）`)
+  --trusted-proxy IP_OR_CIDR 可信反向代理（可重复）
+  --allowed-host HOST        允许的 HTTP Host（可重复）
+  --canonical-external-url URL 对外访问的规范 URL`)
 }
 
 func runUpdate(action string, arguments []string) error {
@@ -326,6 +328,7 @@ func serveContext(runContext context.Context, arguments []string) error {
 	application, err := app.Open(app.Config{
 		StateRoot: loaded.StateRoot, InstallRoot: applicationInstallRoot(loaded.StateRoot), ConfigPath: loaded.ConfigPath, TLSKey: loaded.TLSKey,
 		RunTimeoutGrace: loaded.RunTimeoutGrace, ExecutorChains: loaded.ExecutorChains, AdminUsername: loaded.AdminUsername, AdminPassword: loaded.AdminPassword, AdminPasswordFile: loaded.AdminPasswordFile, TrustedProxies: loaded.TrustedProxies,
+		AllowedHosts: loaded.AllowedHosts, CanonicalExternalURL: loaded.CanonicalExternalURL,
 		UpdateCheck: loaded.UpdateCheck, UpdateInterval: loaded.UpdateInterval,
 		RequestShutdown: func() {
 			select {

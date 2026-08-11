@@ -315,6 +315,8 @@ type Config struct {
 	AdminPassword          string
 	AdminPasswordFile      string
 	TrustedProxies         []string
+	AllowedHosts           []string
+	CanonicalExternalURL   string
 	WebsiteMonitorOptions  websitemonitor.Options
 	UpdateCheck            bool
 	UpdateInterval         time.Duration
@@ -327,59 +329,62 @@ type Config struct {
 }
 
 type App struct {
-	db                 *sql.DB
-	stateRoot          string
-	assistant          *assistant.Service
-	assistantRuntime   *assistantRuntimeCoordinator
-	assistantRuntimes  *runtimeinstall.Manager
-	assistantTools     *assistantToolExecutor
-	assistantRaster    *raster.Processor
-	assistantBroker    *toolbroker.Broker
-	files              *hostfiles.Manager
-	fileOperations     *sqliteFileOperationStore
-	fileMoves          *hostfiles.MoveEngine
-	fileOperationCtx   context.Context
-	fileOperationStop  context.CancelFunc
-	fileOperationWG    sync.WaitGroup
-	runs               *runmanager.Manager
-	scheduler          *scheduler.Manager
-	hostStatus         *hoststatus.Monitor
-	hostSecurity       hostsecurity.Service
-	securityDraftMu    sync.Mutex
-	securityDrafts     map[string]securityFirewallDraft
-	applicationStatus  *appstatus.Monitor
-	logStreamSlots     chan struct{}
-	logHistorySlots    chan struct{}
-	shellStatusCache   *shellStatusCache
-	websiteMonitor     *websitemonitor.Manager
-	customDashboards   *customdashboard.Manager
-	externalTriggers   *externaltrigger.Manager
-	externalLimit      *externaltrigger.Limiter
-	mysql              *mysqlmanager.Manager
-	mysqlContext       context.Context
-	mysqlCancel        context.CancelFunc
-	mysqlWG            sync.WaitGroup
-	instanceLock       *instancelock.Lock
-	handler            http.Handler
-	loginMu            sync.Mutex
-	loginSlots         chan struct{}
-	loginFailures      map[string]loginFailure
-	loginLastPrune     time.Time
-	loginRateSalt      [32]byte
-	activeRequestsMu   sync.Mutex
-	activeRequests     map[string]map[uint64]context.CancelFunc
-	activeRequestID    uint64
-	credentialOverride bool
-	trustedProxies     []*net.IPNet
-	updates            *updatepkg.Manager
-	requestRestart     func() error
-	instanceID         string
-	restartRequested   atomic.Bool
-	updateCancel       context.CancelFunc
-	updateContext      context.Context
-	updateResultsWake  chan struct{}
-	validation         atomic.Bool
-	validationID       string
+	db                   *sql.DB
+	stateRoot            string
+	assistant            *assistant.Service
+	assistantRuntime     *assistantRuntimeCoordinator
+	assistantRuntimes    *runtimeinstall.Manager
+	assistantTools       *assistantToolExecutor
+	assistantRaster      *raster.Processor
+	assistantBroker      *toolbroker.Broker
+	files                *hostfiles.Manager
+	fileOperations       *sqliteFileOperationStore
+	fileMoves            *hostfiles.MoveEngine
+	fileOperationCtx     context.Context
+	fileOperationStop    context.CancelFunc
+	fileOperationWG      sync.WaitGroup
+	runs                 *runmanager.Manager
+	scheduler            *scheduler.Manager
+	hostStatus           *hoststatus.Monitor
+	hostSecurity         hostsecurity.Service
+	securityDraftMu      sync.Mutex
+	securityDrafts       map[string]securityFirewallDraft
+	applicationStatus    *appstatus.Monitor
+	logStreamSlots       chan struct{}
+	logHistorySlots      chan struct{}
+	shellStatusCache     *shellStatusCache
+	websiteMonitor       *websitemonitor.Manager
+	customDashboards     *customdashboard.Manager
+	externalTriggers     *externaltrigger.Manager
+	externalLimit        *externaltrigger.Limiter
+	mysql                *mysqlmanager.Manager
+	mysqlContext         context.Context
+	mysqlCancel          context.CancelFunc
+	mysqlWG              sync.WaitGroup
+	instanceLock         *instancelock.Lock
+	handler              http.Handler
+	routeSpecs           []RouteSpec
+	loginMu              sync.Mutex
+	loginSlots           chan struct{}
+	loginFailures        map[string]loginFailure
+	loginLastPrune       time.Time
+	loginRateSalt        [32]byte
+	activeRequestsMu     sync.Mutex
+	activeRequests       map[string]map[uint64]context.CancelFunc
+	activeRequestID      uint64
+	credentialOverride   bool
+	trustedProxies       []*net.IPNet
+	allowedHosts         map[string]struct{}
+	canonicalExternalURL string
+	updates              *updatepkg.Manager
+	requestRestart       func() error
+	instanceID           string
+	restartRequested     atomic.Bool
+	updateCancel         context.CancelFunc
+	updateContext        context.Context
+	updateResultsWake    chan struct{}
+	validation           atomic.Bool
+	validationID         string
 }
 
 type loginFailure struct {
@@ -432,6 +437,11 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	allowedHosts, err := parseAllowedHosts(config.AllowedHosts)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	var loginRateSalt [32]byte
 	if _, err := rand.Read(loginRateSalt[:]); err != nil {
 		_ = db.Close()
@@ -444,6 +454,7 @@ func Open(config Config) (*App, error) {
 	application := &App{
 		db: db, stateRoot: stateRoot, files: files, instanceLock: instanceLock,
 		loginSlots: make(chan struct{}, 2), loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies,
+		allowedHosts: allowedHosts, canonicalExternalURL: config.CanonicalExternalURL,
 		loginRateSalt:  loginRateSalt,
 		logStreamSlots: make(chan struct{}, 8), logHistorySlots: make(chan struct{}, 4),
 		updateResultsWake: make(chan struct{}, 1),
@@ -834,6 +845,10 @@ func (a *App) applyTrustedProxy(request *http.Request) *http.Request {
 	forwardedProto := strings.Split(request.Header.Get("X-Forwarded-Proto"), ",")
 	if strings.EqualFold(strings.TrimSpace(forwardedProto[len(forwardedProto)-1]), "https") {
 		request = request.WithContext(context.WithValue(request.Context(), secureContextKey, true))
+	}
+	forwardedHost := strings.Split(request.Header.Get("X-Forwarded-Host"), ",")
+	if candidate := strings.TrimSpace(forwardedHost[len(forwardedHost)-1]); candidate != "" {
+		request.Host = candidate
 	}
 	return request
 }
@@ -1774,50 +1789,51 @@ func verifyPasswordContext(ctx context.Context, password, encoded string) bool {
 }
 
 func (a *App) routes() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /assets/app-v2.css", func(response http.ResponseWriter, request *http.Request) {
+	mux := newDeclaredRouteMux()
+	mux.Public("GET /assets/app-v2.css", func(response http.ResponseWriter, request *http.Request) {
 		serveWebAsset(response, request, "text/css; charset=utf-8", appCSS)
 	})
-	mux.HandleFunc("GET /assets/app.css", func(response http.ResponseWriter, request *http.Request) {
+	mux.Public("GET /assets/app.css", func(response http.ResponseWriter, request *http.Request) {
 		serveWebAsset(response, request, "text/css; charset=utf-8", appCSS)
 	})
-	mux.HandleFunc("GET /assets/app-v2.js", func(response http.ResponseWriter, request *http.Request) {
+	mux.Public("GET /assets/app-v2.js", func(response http.ResponseWriter, request *http.Request) {
 		serveWebAsset(response, request, "text/javascript; charset=utf-8", appJS)
 	})
-	mux.HandleFunc("GET /assets/markdown-it.min.js", func(response http.ResponseWriter, request *http.Request) {
+	mux.Public("GET /assets/markdown-it.min.js", func(response http.ResponseWriter, request *http.Request) {
 		serveWebAsset(response, request, "text/javascript; charset=utf-8", markdownItJS)
 	})
-	mux.HandleFunc("GET /assets/purify.min.js", func(response http.ResponseWriter, request *http.Request) {
+	mux.Public("GET /assets/purify.min.js", func(response http.ResponseWriter, request *http.Request) {
 		serveWebAsset(response, request, "text/javascript; charset=utf-8", domPurifyJS)
 	})
-	mux.HandleFunc("GET /assets/highlight.min.js", func(response http.ResponseWriter, request *http.Request) {
+	mux.Public("GET /assets/highlight.min.js", func(response http.ResponseWriter, request *http.Request) {
 		serveWebAsset(response, request, "text/javascript; charset=utf-8", highlightJS)
 	})
-	mux.HandleFunc("GET /assets/highlight-powershell.min.js", func(response http.ResponseWriter, request *http.Request) {
+	mux.Public("GET /assets/highlight-powershell.min.js", func(response http.ResponseWriter, request *http.Request) {
 		serveWebAsset(response, request, "text/javascript; charset=utf-8", highlightPowerShellJS)
 	})
-	mux.HandleFunc("GET /assets/highlight-dos.min.js", func(response http.ResponseWriter, request *http.Request) {
+	mux.Public("GET /assets/highlight-dos.min.js", func(response http.ResponseWriter, request *http.Request) {
 		serveWebAsset(response, request, "text/javascript; charset=utf-8", highlightDOSJS)
 	})
-	mux.HandleFunc("GET /favicon.ico", func(response http.ResponseWriter, request *http.Request) {
+	mux.Public("GET /favicon.ico", func(response http.ResponseWriter, request *http.Request) {
 		serveWebAsset(response, request, "image/x-icon", scriptboardFaviconICO)
 	})
-	mux.Handle("GET /{$}", a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	mux.Handle("GET /{$}", a.requirePermission(permissionObserve, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		http.Redirect(response, request, "/monitor", http.StatusSeeOther)
 	})))
-	mux.HandleFunc("GET /login", func(response http.ResponseWriter, request *http.Request) {
+	mux.Public("GET /login", func(response http.ResponseWriter, request *http.Request) {
 		if _, _, ok := a.loadSession(request); ok {
 			http.Redirect(response, request, "/monitor", http.StatusSeeOther)
 			return
 		}
 		renderLoginPage(response, request, http.StatusOK, "", "")
 	})
-	mux.HandleFunc("POST /login", a.login)
-	mux.HandleFunc("POST /settings/locale", a.setWebLocale)
-	mux.HandleFunc("/trigger", a.externalTrigger)
-	mux.Handle("POST /logout", a.requireSession(http.HandlerFunc(a.logout)))
-	mux.Handle("GET /monitor", a.requireSession(http.HandlerFunc(a.overviewPage)))
-	mux.Handle("GET /monitor/security", a.requireSession(http.HandlerFunc(a.securityPage)))
+	mux.Public("POST /login", a.login)
+	mux.Public("POST /settings/locale", a.setWebLocale)
+	mux.External("GET /trigger", a.externalTrigger)
+	mux.External("POST /trigger", a.externalTrigger)
+	mux.Handle("POST /logout", a.requirePermission(permissionObserve, http.HandlerFunc(a.logout)))
+	mux.Handle("GET /monitor", a.requirePermission(permissionObserve, http.HandlerFunc(a.overviewPage)))
+	mux.Handle("GET /monitor/security", a.requirePermission(permissionObserve, http.HandlerFunc(a.securityPage)))
 	mux.Handle("POST /monitor/security/components/{component}/install", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.installSecurityComponent)))
 	mux.Handle("POST /monitor/security/fail2ban/unban", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.unbanSecurityIP)))
 	mux.Handle("POST /monitor/security/firewall/draft/rules", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.addSecurityFirewallDraftRule)))
@@ -1831,34 +1847,34 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /monitor/security/windows-firewall/rules", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.addWindowsFirewallRule)))
 	mux.Handle("POST /monitor/security/windows-firewall/toggle", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.toggleWindowsFirewallRule)))
 	mux.Handle("POST /monitor/security/windows-firewall/delete", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.deleteWindowsFirewallRule)))
-	mux.Handle("GET /ai", a.requireSession(http.HandlerFunc(a.assistantPage)))
-	mux.Handle("GET /ai/resources", a.requireSession(http.HandlerFunc(a.assistantResourceSearch)))
-	mux.Handle("POST /ai/conversations", a.requireSession(http.HandlerFunc(a.createAssistantConversation)))
-	mux.Handle("GET /ai/conversations/{id}", a.requireSession(http.HandlerFunc(a.assistantConversationPage)))
-	mux.Handle("POST /ai/conversations/{id}/messages", a.requireSession(http.HandlerFunc(a.postAssistantMessage)))
-	mux.Handle("POST /ai/conversations/{id}/abort", a.requireSession(http.HandlerFunc(a.abortAssistantTurn)))
-	mux.Handle("GET /ai/conversations/{id}/events", a.requireSession(http.HandlerFunc(a.assistantConversationEvents)))
-	mux.Handle("POST /ai/conversations/{id}/model", a.requireSession(http.HandlerFunc(a.setAssistantConversationModel)))
-	mux.Handle("POST /ai/conversations/{id}/approval-mode", a.requireSession(http.HandlerFunc(a.setAssistantApprovalMode)))
-	mux.Handle("POST /ai/conversations/{id}/profile", a.requireSession(http.HandlerFunc(a.setAssistantCapabilityProfile)))
-	mux.Handle("POST /ai/conversations/{id}/thinking", a.requireSession(http.HandlerFunc(a.setAssistantThinkingLevel)))
-	mux.Handle("POST /ai/conversations/{id}/compact", a.requireSession(http.HandlerFunc(a.compactAssistantConversation)))
-	mux.Handle("POST /ai/conversations/{id}/approvals/{approval_id}", a.requireSession(http.HandlerFunc(a.resolveAssistantApproval)))
-	mux.Handle("POST /ai/conversations/{id}/archive", a.requireSession(http.HandlerFunc(a.archiveAssistantConversation)))
-	mux.Handle("POST /ai/conversations/{id}/restore", a.requireSession(http.HandlerFunc(a.restoreAssistantConversation)))
-	mux.Handle("GET /monitor/data", a.requireSession(http.HandlerFunc(a.overviewData)))
-	mux.Handle("GET /monitor/status", a.requireSession(http.HandlerFunc(a.shellStatus)))
-	mux.Handle("GET /monitor/applications", a.requireSession(http.HandlerFunc(a.applicationsPage)))
-	mux.Handle("GET /monitor/applications/data", a.requireSession(http.HandlerFunc(a.applicationsData)))
-	mux.Handle("GET /monitor/applications/{id}/logs", a.requireSession(http.HandlerFunc(a.applicationLogPage)))
-	mux.Handle("GET /monitor/applications/{id}/logs/history", a.requireSession(http.HandlerFunc(a.applicationLogHistory)))
-	mux.Handle("GET /monitor/applications/{id}/logs/events", a.requireSession(http.HandlerFunc(a.applicationLogEvents)))
-	mux.Handle("GET /monitor/applications/{id}/details", a.requireSession(http.HandlerFunc(a.applicationDetails)))
-	mux.Handle("POST /monitor/applications/{id}/pin", a.requireSession(http.HandlerFunc(a.pinApplication)))
-	mux.Handle("POST /monitor/applications/{id}/unpin", a.requireSession(http.HandlerFunc(a.unpinApplication)))
-	mux.Handle("POST /monitor/applications/{id}/move", a.requireSession(http.HandlerFunc(a.movePinnedApplication)))
-	mux.Handle("GET /monitor/websites", a.requireSession(http.HandlerFunc(a.websiteMonitorList)))
-	mux.Handle("GET /config/dashboards", a.requireSession(http.HandlerFunc(a.customDashboardPage)))
+	mux.Handle("GET /ai", a.requirePermission(permissionObserve, http.HandlerFunc(a.assistantPage)))
+	mux.Handle("GET /ai/resources", a.requirePermission(permissionObserve, http.HandlerFunc(a.assistantResourceSearch)))
+	mux.Handle("POST /ai/conversations", a.requirePermission(permissionObserve, http.HandlerFunc(a.createAssistantConversation)))
+	mux.Handle("GET /ai/conversations/{id}", a.requirePermission(permissionObserve, http.HandlerFunc(a.assistantConversationPage)))
+	mux.Handle("POST /ai/conversations/{id}/messages", a.requirePermission(permissionObserve, http.HandlerFunc(a.postAssistantMessage)))
+	mux.Handle("POST /ai/conversations/{id}/abort", a.requirePermission(permissionObserve, http.HandlerFunc(a.abortAssistantTurn)))
+	mux.Handle("GET /ai/conversations/{id}/events", a.requirePermission(permissionObserve, http.HandlerFunc(a.assistantConversationEvents)))
+	mux.Handle("POST /ai/conversations/{id}/model", a.requirePermission(permissionObserve, http.HandlerFunc(a.setAssistantConversationModel)))
+	mux.Handle("POST /ai/conversations/{id}/approval-mode", a.requirePermission(permissionObserve, http.HandlerFunc(a.setAssistantApprovalMode)))
+	mux.Handle("POST /ai/conversations/{id}/profile", a.requirePermission(permissionObserve, http.HandlerFunc(a.setAssistantCapabilityProfile)))
+	mux.Handle("POST /ai/conversations/{id}/thinking", a.requirePermission(permissionObserve, http.HandlerFunc(a.setAssistantThinkingLevel)))
+	mux.Handle("POST /ai/conversations/{id}/compact", a.requirePermission(permissionObserve, http.HandlerFunc(a.compactAssistantConversation)))
+	mux.Handle("POST /ai/conversations/{id}/approvals/{approval_id}", a.requirePermission(permissionObserve, http.HandlerFunc(a.resolveAssistantApproval)))
+	mux.Handle("POST /ai/conversations/{id}/archive", a.requirePermission(permissionObserve, http.HandlerFunc(a.archiveAssistantConversation)))
+	mux.Handle("POST /ai/conversations/{id}/restore", a.requirePermission(permissionObserve, http.HandlerFunc(a.restoreAssistantConversation)))
+	mux.Handle("GET /monitor/data", a.requirePermission(permissionObserve, http.HandlerFunc(a.overviewData)))
+	mux.Handle("GET /monitor/status", a.requirePermission(permissionObserve, http.HandlerFunc(a.shellStatus)))
+	mux.Handle("GET /monitor/applications", a.requirePermission(permissionObserve, http.HandlerFunc(a.applicationsPage)))
+	mux.Handle("GET /monitor/applications/data", a.requirePermission(permissionObserve, http.HandlerFunc(a.applicationsData)))
+	mux.Handle("GET /monitor/applications/{id}/logs", a.requirePermission(permissionObserve, http.HandlerFunc(a.applicationLogPage)))
+	mux.Handle("GET /monitor/applications/{id}/logs/history", a.requirePermission(permissionObserve, http.HandlerFunc(a.applicationLogHistory)))
+	mux.Handle("GET /monitor/applications/{id}/logs/events", a.requirePermission(permissionObserve, http.HandlerFunc(a.applicationLogEvents)))
+	mux.Handle("GET /monitor/applications/{id}/details", a.requirePermission(permissionObserve, http.HandlerFunc(a.applicationDetails)))
+	mux.Handle("POST /monitor/applications/{id}/pin", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.pinApplication)))
+	mux.Handle("POST /monitor/applications/{id}/unpin", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.unpinApplication)))
+	mux.Handle("POST /monitor/applications/{id}/move", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.movePinnedApplication)))
+	mux.Handle("GET /monitor/websites", a.requirePermission(permissionObserve, http.HandlerFunc(a.websiteMonitorList)))
+	mux.Handle("GET /config/dashboards", a.requirePermission(permissionObserve, http.HandlerFunc(a.customDashboardPage)))
 	mux.Handle("POST /config/dashboards", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.createCustomDashboard)))
 	mux.Handle("POST /config/dashboards/import", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.importCustomDashboard)))
 	mux.Handle("POST /config/dashboards/{id}", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.updateCustomDashboard)))
@@ -1869,8 +1885,8 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /config/dashboard-cards/{id}/move", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.moveCustomDashboardCard)))
 	mux.Handle("POST /config/dashboard-cards/{id}", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.updateCustomDashboardCard)))
 	mux.Handle("POST /config/dashboard-cards/{id}/delete", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.deleteCustomDashboardCard)))
-	mux.Handle("GET /monitor/dashboards", a.requireSession(http.HandlerFunc(a.legacyCustomDashboardPage)))
-	mux.Handle("GET /monitor/dashboard/{id}", a.requireSession(http.HandlerFunc(a.customDashboardMonitorPage)))
+	mux.Handle("GET /monitor/dashboards", a.requirePermission(permissionObserve, http.HandlerFunc(a.legacyCustomDashboardPage)))
+	mux.Handle("GET /monitor/dashboard/{id}", a.requirePermission(permissionObserve, http.HandlerFunc(a.customDashboardMonitorPage)))
 	mux.Handle("POST /monitor/dashboards", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.createCustomDashboard)))
 	mux.Handle("POST /monitor/dashboards/{id}", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.updateCustomDashboard)))
 	mux.Handle("POST /monitor/dashboards/{id}/delete", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.deleteCustomDashboard)))
@@ -1878,31 +1894,31 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /monitor/dashboard-cards/{id}/refresh", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.refreshCustomDashboardCard)))
 	mux.Handle("POST /monitor/dashboard-cards/{id}", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.updateCustomDashboardCard)))
 	mux.Handle("POST /monitor/dashboard-cards/{id}/delete", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.deleteCustomDashboardCard)))
-	mux.HandleFunc("GET /public/dashboard/{slug}", a.publicCustomDashboard)
-	mux.Handle("GET /monitor/websites/data", a.requireSession(http.HandlerFunc(a.websiteMonitorData)))
+	mux.Public("GET /public/dashboard/{slug}", a.publicCustomDashboard)
+	mux.Handle("GET /monitor/websites/data", a.requirePermission(permissionObserve, http.HandlerFunc(a.websiteMonitorData)))
 	mux.Handle("POST /monitor/websites/remotes", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.createWebsiteMonitorRemoteSource)))
 	mux.Handle("POST /monitor/websites/remotes/{id}/delete", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.deleteWebsiteMonitorRemoteSource)))
-	mux.Handle("GET /monitor/websites/new", a.requireSession(http.HandlerFunc(a.websiteMonitorCreateTask)))
-	mux.Handle("POST /monitor/websites", a.requireSession(http.HandlerFunc(a.createWebsiteMonitor)))
-	mux.Handle("POST /monitor/websites/reorder", a.requireSession(http.HandlerFunc(a.reorderWebsiteMonitors)))
-	mux.Handle("GET /monitor/websites/export", a.requireSession(http.HandlerFunc(a.websiteMonitorExportTask)))
-	mux.Handle("POST /monitor/websites/export", a.requireSession(http.HandlerFunc(a.exportWebsiteMonitors)))
-	mux.Handle("GET /monitor/websites/import", a.requireSession(http.HandlerFunc(a.websiteMonitorImportTask)))
-	mux.Handle("POST /monitor/websites/import/preview", a.requireSession(http.HandlerFunc(a.previewWebsiteMonitorImport)))
-	mux.Handle("POST /monitor/websites/import", a.requireSession(http.HandlerFunc(a.importWebsiteMonitors)))
-	mux.Handle("GET /monitor/websites/nginx", a.requireSession(http.HandlerFunc(a.websiteMonitorNginxTask)))
-	mux.Handle("POST /monitor/websites/nginx/scan", a.requireSession(http.HandlerFunc(a.scanWebsiteMonitorNginx)))
-	mux.Handle("POST /monitor/websites/nginx/import", a.requireSession(http.HandlerFunc(a.importWebsiteMonitorNginx)))
-	mux.Handle("GET /monitor/websites/{id}/edit", a.requireSession(http.HandlerFunc(a.websiteMonitorEditTask)))
-	mux.Handle("POST /monitor/websites/{id}", a.requireSession(http.HandlerFunc(a.updateWebsiteMonitor)))
-	mux.Handle("GET /monitor/websites/{id}", a.requireSession(http.HandlerFunc(a.websiteMonitorDetail)))
-	mux.Handle("GET /monitor/websites/{id}/data", a.requireSession(http.HandlerFunc(a.websiteMonitorDetailData)))
-	mux.Handle("POST /monitor/websites/{id}/check", a.requireSession(http.HandlerFunc(a.checkWebsiteMonitorNow)))
-	mux.Handle("POST /monitor/websites/{id}/pause", a.requireSession(http.HandlerFunc(a.pauseWebsiteMonitor)))
-	mux.Handle("POST /monitor/websites/{id}/resume", a.requireSession(http.HandlerFunc(a.resumeWebsiteMonitor)))
-	mux.Handle("POST /monitor/websites/{id}/move", a.requireSession(http.HandlerFunc(a.moveWebsiteMonitor)))
-	mux.Handle("POST /monitor/websites/{id}/delete", a.requireSession(http.HandlerFunc(a.deleteWebsiteMonitor)))
-	mux.Handle("GET /settings/account", a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	mux.Handle("GET /monitor/websites/new", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.websiteMonitorCreateTask)))
+	mux.Handle("POST /monitor/websites", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.createWebsiteMonitor)))
+	mux.Handle("POST /monitor/websites/reorder", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.reorderWebsiteMonitors)))
+	mux.Handle("GET /monitor/websites/export", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.websiteMonitorExportTask)))
+	mux.Handle("POST /monitor/websites/export", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.exportWebsiteMonitors)))
+	mux.Handle("GET /monitor/websites/import", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.websiteMonitorImportTask)))
+	mux.Handle("POST /monitor/websites/import/preview", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.previewWebsiteMonitorImport)))
+	mux.Handle("POST /monitor/websites/import", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.importWebsiteMonitors)))
+	mux.Handle("GET /monitor/websites/nginx", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.websiteMonitorNginxTask)))
+	mux.Handle("POST /monitor/websites/nginx/scan", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.scanWebsiteMonitorNginx)))
+	mux.Handle("POST /monitor/websites/nginx/import", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.importWebsiteMonitorNginx)))
+	mux.Handle("GET /monitor/websites/{id}/edit", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.websiteMonitorEditTask)))
+	mux.Handle("POST /monitor/websites/{id}", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.updateWebsiteMonitor)))
+	mux.Handle("GET /monitor/websites/{id}", a.requirePermission(permissionObserve, http.HandlerFunc(a.websiteMonitorDetail)))
+	mux.Handle("GET /monitor/websites/{id}/data", a.requirePermission(permissionObserve, http.HandlerFunc(a.websiteMonitorDetailData)))
+	mux.Handle("POST /monitor/websites/{id}/check", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.checkWebsiteMonitorNow)))
+	mux.Handle("POST /monitor/websites/{id}/pause", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.pauseWebsiteMonitor)))
+	mux.Handle("POST /monitor/websites/{id}/resume", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.resumeWebsiteMonitor)))
+	mux.Handle("POST /monitor/websites/{id}/move", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.moveWebsiteMonitor)))
+	mux.Handle("POST /monitor/websites/{id}/delete", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.deleteWebsiteMonitor)))
+	mux.Handle("GET /settings/account", a.requirePermission(permissionObserve, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		current := request.Context().Value(sessionContextKey).(session)
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = accountTemplate.Execute(response, struct {
@@ -1918,11 +1934,11 @@ func (a *App) routes() http.Handler {
 			SettingsNavigation: newSettingsNavigation(current, resolveWebLocale(request), "account"),
 		})
 	})))
-	mux.Handle("POST /settings/account", a.requireSession(http.HandlerFunc(a.changePassword)))
-	mux.Handle("GET /settings/account/username", a.requireSession(http.HandlerFunc(a.accountUsernameTask)))
-	mux.Handle("POST /settings/account/username", a.requireSession(http.HandlerFunc(a.changeUsername)))
-	mux.Handle("GET /settings/account/password", a.requireSession(http.HandlerFunc(a.accountPasswordTask)))
-	mux.Handle("POST /settings/account/password", a.requireSession(http.HandlerFunc(a.changePassword)))
+	mux.Handle("POST /settings/account", a.requirePermission(permissionObserve, http.HandlerFunc(a.changePassword)))
+	mux.Handle("GET /settings/account/username", a.requirePermission(permissionObserve, http.HandlerFunc(a.accountUsernameTask)))
+	mux.Handle("POST /settings/account/username", a.requirePermission(permissionObserve, http.HandlerFunc(a.changeUsername)))
+	mux.Handle("GET /settings/account/password", a.requirePermission(permissionObserve, http.HandlerFunc(a.accountPasswordTask)))
+	mux.Handle("POST /settings/account/password", a.requirePermission(permissionObserve, http.HandlerFunc(a.changePassword)))
 	mux.Handle("GET /settings/users", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.usersPage)))
 	mux.Handle("GET /settings/users/create", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.createUserTask)))
 	mux.Handle("POST /settings/users", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.createUser)))
@@ -1931,7 +1947,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /settings/users/{id}/enable", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.enableUser)))
 	mux.Handle("POST /settings/users/{id}/update", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.updateUser)))
 	mux.Handle("POST /settings/users/{id}/reset-password", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.resetUserPassword)))
-	mux.Handle("GET /settings/display", a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	mux.Handle("GET /settings/display", a.requirePermission(permissionManageSystem, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		current := request.Context().Value(sessionContextKey).(session)
 		locale := resolveWebLocale(request)
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1950,12 +1966,12 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /settings/ai/runtime/install", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.installAssistantRuntime)))
 	mux.Handle("POST /settings/ai/runtime/offline", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.installAssistantRuntimeOffline)))
 	mux.Handle("POST /settings/ai/runtime/rollback", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.rollbackAssistantRuntime)))
-	mux.Handle("GET /settings/updates", a.requireSession(http.HandlerFunc(a.updatesPage)))
-	mux.Handle("GET /settings/updates/status", a.requireSession(http.HandlerFunc(a.updateStatus)))
-	mux.Handle("POST /settings/updates/check", a.requireSession(http.HandlerFunc(a.checkUpdate)))
-	mux.Handle("POST /settings/updates/prepare", a.requireSession(http.HandlerFunc(a.prepareUpdate)))
-	mux.Handle("POST /settings/updates/apply", a.requireSession(http.HandlerFunc(a.applyUpdate)))
-	mux.Handle("POST /settings/updates/restart", a.requireSession(http.HandlerFunc(a.restartService)))
+	mux.Handle("GET /settings/updates", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.updatesPage)))
+	mux.Handle("GET /settings/updates/status", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.updateStatus)))
+	mux.Handle("POST /settings/updates/check", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.checkUpdate)))
+	mux.Handle("POST /settings/updates/prepare", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.prepareUpdate)))
+	mux.Handle("POST /settings/updates/apply", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.applyUpdate)))
+	mux.Handle("POST /settings/updates/restart", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.restartService)))
 	mux.Handle("GET /resources/databases", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.mysqlDatabasesPage)))
 	mux.Handle("POST /resources/databases/instances", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.saveMySQLInstance)))
 	mux.Handle("POST /resources/databases/settings/backup-root", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.setMySQLBackupRoot)))
@@ -1976,89 +1992,89 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /resources/databases/operations/{operation_id}/status", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.mysqlOperationStatus)))
 	mux.Handle("GET /resources/databases/operations/{operation_id}/events", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.mysqlOperationEvents)))
 	mux.Handle("POST /resources/databases/operations/{operation_id}/cancel", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.cancelMySQLOperation)))
-	mux.Handle("GET /resources/files/new-directory", a.requireSession(http.HandlerFunc(a.newDirectoryTask)))
-	mux.Handle("GET /resources/files/upload", a.requireSession(http.HandlerFunc(a.uploadTask)))
-	mux.Handle("GET /resources/files/move", a.requireSession(http.HandlerFunc(a.moveFileTask)))
-	mux.Handle("GET /resources/directories", a.requireSession(http.HandlerFunc(a.hostDirectories)))
-	mux.Handle("GET /resources/files/log", a.requireSession(http.HandlerFunc(a.fileLogPage)))
-	mux.Handle("GET /resources/files/log/history", a.requireSession(http.HandlerFunc(a.fileLogHistory)))
-	mux.Handle("GET /resources/files/log/events", a.requireSession(http.HandlerFunc(a.fileLogEvents)))
-	mux.Handle("GET /resources/files/run", a.requireSession(http.HandlerFunc(a.runFileTask)))
-	mux.Handle("GET /resources/files/quick-run", a.requireSession(http.HandlerFunc(a.quickRunFromFileTask)))
-	mux.Handle("GET /resources/files", a.requireSession(http.HandlerFunc(a.filesPage)))
-	mux.Handle("GET /resources/files/validate", a.requireSession(http.HandlerFunc(a.validateFileQuickAccess)))
-	mux.Handle("GET /resources/files/quick-access", a.requireSession(http.HandlerFunc(a.fileQuickAccessPins)))
-	mux.Handle("POST /resources/files/quick-access", a.requireSession(http.HandlerFunc(a.updateFileQuickAccessPin)))
-	mux.Handle("POST /resources/files/mkdir", a.requireSession(http.HandlerFunc(a.createDirectory)))
-	mux.Handle("POST /resources/files/conflicts", a.requireSession(http.HandlerFunc(a.uploadConflicts)))
-	mux.Handle("POST /resources/files/upload", a.requireSession(http.HandlerFunc(a.uploadFiles)))
-	mux.Handle("GET /resources/files/download", a.requireSession(http.HandlerFunc(a.downloadFile)))
-	mux.Handle("GET /resources/files/preview", a.requireSession(http.HandlerFunc(a.previewImage)))
-	mux.Handle("GET /resources/files/view", a.requireSession(http.HandlerFunc(a.previewTextPage)))
-	mux.Handle("POST /resources/files/delete", a.requireSession(http.HandlerFunc(a.deleteFile)))
-	mux.Handle("POST /resources/files/move", a.requireSession(http.HandlerFunc(a.moveFile)))
-	mux.Handle("POST /resources/files/toggle-executable", a.requireSession(http.HandlerFunc(a.toggleExecutable)))
-	mux.Handle("GET /resources/files/operations/{id}", a.requireSession(http.HandlerFunc(a.fileOperationPage)))
-	mux.Handle("GET /resources/files/operations/{id}/status", a.requireSession(http.HandlerFunc(a.fileOperationStatus)))
-	mux.Handle("GET /resources/files/operations/{id}/events", a.requireSession(http.HandlerFunc(a.fileOperationEvents)))
-	mux.Handle("POST /resources/files/operations/{id}/cancel", a.requireSession(http.HandlerFunc(a.cancelFileOperation)))
-	mux.Handle("GET /resources/trash", a.requireSession(http.HandlerFunc(a.trashPage)))
-	mux.Handle("POST /resources/trash/restore", a.requireSession(http.HandlerFunc(a.restoreTrash)))
-	mux.Handle("POST /resources/trash/purge", a.requireSession(http.HandlerFunc(a.purgeTrash)))
-	mux.Handle("GET /resources/files/edit", a.requireSession(http.HandlerFunc(a.editTextPage)))
-	mux.Handle("POST /resources/files/edit", a.requireSession(http.HandlerFunc(a.saveText)))
-	mux.Handle("POST /history/runs/start", a.requireSession(http.HandlerFunc(a.startRun)))
-	mux.Handle("GET /history/runs", a.requireSession(http.HandlerFunc(a.runsPage)))
-	mux.Handle("GET /history/runs/{id}/save-quick-run", a.requireSession(http.HandlerFunc(a.saveQuickRunTask)))
-	mux.Handle("GET /history/runs/{id}/source", a.requireSession(http.HandlerFunc(a.runSource)))
-	mux.Handle("GET /history/runs/{id}", a.requireSession(http.HandlerFunc(a.runDetails)))
-	mux.Handle("POST /history/runs/{id}/stop", a.requireSession(http.HandlerFunc(a.stopRun)))
-	mux.Handle("GET /history/runs/{id}/events", a.requireSession(http.HandlerFunc(a.runEvents)))
-	mux.Handle("GET /resources/variables", a.requireSession(http.HandlerFunc(a.variablesPage)))
-	mux.Handle("GET /resources/variables/new", a.requireSession(http.HandlerFunc(a.newVariableTask)))
-	mux.Handle("GET /resources/variables/{name}/edit", a.requireSession(http.HandlerFunc(a.editVariableTask)))
-	mux.Handle("POST /resources/variables", a.requireSession(http.HandlerFunc(a.createVariable)))
-	mux.Handle("POST /resources/variables/{name}/update", a.requireSession(http.HandlerFunc(a.updateVariable)))
-	mux.Handle("POST /resources/variables/{name}/delete", a.requireSession(http.HandlerFunc(a.deleteVariable)))
-	mux.Handle("POST /history/runs/{id}/quick-run", a.requireSession(http.HandlerFunc(a.saveQuickRun)))
-	mux.Handle("GET /config/quick-runs", a.requireSession(http.HandlerFunc(a.quickRunsPage)))
-	mux.Handle("POST /config/quick-runs", a.requireSession(http.HandlerFunc(a.createQuickRunFromFile)))
-	mux.Handle("GET /config/quick-runs/one-time/new", a.requireSession(http.HandlerFunc(a.oneTimeRunTask)))
-	mux.Handle("POST /config/quick-runs/one-time", a.requireSession(http.HandlerFunc(a.startOneTimeRun)))
-	mux.Handle("GET /config/quick-runs/from-source/new", a.requireSession(http.HandlerFunc(a.quickCreateTask)))
-	mux.Handle("POST /config/quick-runs/from-source", a.requireSession(http.HandlerFunc(a.createQuickRunFromSource)))
-	mux.Handle("GET /config/quick-runs/groups/new", a.requireSession(http.HandlerFunc(a.newQuickRunGroupTask)))
-	mux.Handle("POST /config/quick-runs/groups", a.requireSession(http.HandlerFunc(a.createQuickRunGroup)))
-	mux.Handle("GET /config/quick-runs/groups/{id}/edit", a.requireSession(http.HandlerFunc(a.editQuickRunGroupTask)))
-	mux.Handle("POST /config/quick-runs/groups/{id}/update", a.requireSession(http.HandlerFunc(a.updateQuickRunGroup)))
-	mux.Handle("POST /config/quick-runs/groups/{id}/move", a.requireSession(http.HandlerFunc(a.moveQuickRunGroup)))
-	mux.Handle("POST /config/quick-runs/groups/{id}/delete", a.requireSession(http.HandlerFunc(a.deleteQuickRunGroup)))
-	mux.Handle("GET /config/quick-runs/{id}/move-group", a.requireSession(http.HandlerFunc(a.moveQuickRunToGroupTask)))
-	mux.Handle("POST /config/quick-runs/{id}/move-group", a.requireSession(http.HandlerFunc(a.moveQuickRunToGroup)))
-	mux.Handle("GET /config/quick-runs/{id}/edit", a.requireSession(http.HandlerFunc(a.editQuickRunTask)))
-	mux.Handle("POST /config/quick-runs/{id}/update", a.requireSession(http.HandlerFunc(a.updateQuickRun)))
-	mux.Handle("GET /config/quick-runs/{id}/copy", a.requireSession(http.HandlerFunc(a.copyQuickRunTask)))
-	mux.Handle("POST /config/quick-runs/{id}/copy", a.requireSession(http.HandlerFunc(a.copyQuickRun)))
-	mux.Handle("POST /config/quick-runs/{id}/lock", a.requireSession(http.HandlerFunc(a.setQuickRunLocked)))
-	mux.Handle("POST /config/quick-runs/{id}/start", a.requireSession(http.HandlerFunc(a.startQuickRun)))
-	mux.Handle("POST /config/quick-runs/{id}/move", a.requireSession(http.HandlerFunc(a.moveQuickRun)))
-	mux.Handle("POST /config/quick-runs/{id}/delete", a.requireSession(http.HandlerFunc(a.deleteQuickRun)))
-	mux.Handle("GET /config/schedules", a.requireSession(http.HandlerFunc(a.schedulesPage)))
-	mux.Handle("GET /config/schedules/groups/new", a.requireSession(http.HandlerFunc(a.newScheduleGroupTask)))
-	mux.Handle("POST /config/schedules/groups", a.requireSession(http.HandlerFunc(a.createScheduleGroup)))
-	mux.Handle("GET /config/schedules/groups/{id}/edit", a.requireSession(http.HandlerFunc(a.editScheduleGroupTask)))
-	mux.Handle("POST /config/schedules/groups/{id}/update", a.requireSession(http.HandlerFunc(a.updateScheduleGroup)))
-	mux.Handle("POST /config/schedules/groups/{id}/move", a.requireSession(http.HandlerFunc(a.moveScheduleGroup)))
-	mux.Handle("POST /config/schedules/groups/{id}/delete", a.requireSession(http.HandlerFunc(a.deleteScheduleGroup)))
-	mux.Handle("GET /config/schedules/new", a.requireSession(http.HandlerFunc(a.newScheduleTask)))
-	mux.Handle("GET /config/schedules/{id}/edit", a.requireSession(http.HandlerFunc(a.editScheduleTask)))
-	mux.Handle("POST /config/schedules/preview", a.requireSession(http.HandlerFunc(a.previewScheduleCron)))
-	mux.Handle("POST /config/schedules/{id}/preview", a.requireSession(http.HandlerFunc(a.previewScheduleCron)))
-	mux.Handle("POST /config/schedules", a.requireSession(http.HandlerFunc(a.createSchedule)))
-	mux.Handle("POST /config/schedules/{id}/update", a.requireSession(http.HandlerFunc(a.updateSchedule)))
-	mux.Handle("POST /config/schedules/{id}/toggle", a.requireSession(http.HandlerFunc(a.toggleSchedule)))
-	mux.Handle("POST /config/schedules/{id}/run", a.requireSession(http.HandlerFunc(a.runScheduleNow)))
-	mux.Handle("POST /config/schedules/{id}/delete", a.requireSession(http.HandlerFunc(a.deleteSchedule)))
+	mux.Handle("GET /resources/files/new-directory", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.newDirectoryTask)))
+	mux.Handle("GET /resources/files/upload", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.uploadTask)))
+	mux.Handle("GET /resources/files/move", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.moveFileTask)))
+	mux.Handle("GET /resources/directories", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.hostDirectories)))
+	mux.Handle("GET /resources/files/log", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.fileLogPage)))
+	mux.Handle("GET /resources/files/log/history", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.fileLogHistory)))
+	mux.Handle("GET /resources/files/log/events", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.fileLogEvents)))
+	mux.Handle("GET /resources/files/run", a.requirePermission(permissionExecute, http.HandlerFunc(a.runFileTask)))
+	mux.Handle("GET /resources/files/quick-run", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.quickRunFromFileTask)))
+	mux.Handle("GET /resources/files", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.filesPage)))
+	mux.Handle("GET /resources/files/validate", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.validateFileQuickAccess)))
+	mux.Handle("GET /resources/files/quick-access", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.fileQuickAccessPins)))
+	mux.Handle("POST /resources/files/quick-access", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.updateFileQuickAccessPin)))
+	mux.Handle("POST /resources/files/mkdir", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.createDirectory)))
+	mux.Handle("POST /resources/files/conflicts", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.uploadConflicts)))
+	mux.Handle("POST /resources/files/upload", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.uploadFiles)))
+	mux.Handle("GET /resources/files/download", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.downloadFile)))
+	mux.Handle("GET /resources/files/preview", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.previewImage)))
+	mux.Handle("GET /resources/files/view", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.previewTextPage)))
+	mux.Handle("POST /resources/files/delete", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.deleteFile)))
+	mux.Handle("POST /resources/files/move", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.moveFile)))
+	mux.Handle("POST /resources/files/toggle-executable", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.toggleExecutable)))
+	mux.Handle("GET /resources/files/operations/{id}", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.fileOperationPage)))
+	mux.Handle("GET /resources/files/operations/{id}/status", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.fileOperationStatus)))
+	mux.Handle("GET /resources/files/operations/{id}/events", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.fileOperationEvents)))
+	mux.Handle("POST /resources/files/operations/{id}/cancel", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.cancelFileOperation)))
+	mux.Handle("GET /resources/trash", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.trashPage)))
+	mux.Handle("POST /resources/trash/restore", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.restoreTrash)))
+	mux.Handle("POST /resources/trash/purge", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.purgeTrash)))
+	mux.Handle("GET /resources/files/edit", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.editTextPage)))
+	mux.Handle("POST /resources/files/edit", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.saveText)))
+	mux.Handle("POST /history/runs/start", a.requirePermission(permissionExecute, http.HandlerFunc(a.startRun)))
+	mux.Handle("GET /history/runs", a.requirePermission(permissionObserve, http.HandlerFunc(a.runsPage)))
+	mux.Handle("GET /history/runs/{id}/save-quick-run", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.saveQuickRunTask)))
+	mux.Handle("GET /history/runs/{id}/source", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.runSource)))
+	mux.Handle("GET /history/runs/{id}", a.requirePermission(permissionObserve, http.HandlerFunc(a.runDetails)))
+	mux.Handle("POST /history/runs/{id}/stop", a.requirePermission(permissionExecute, http.HandlerFunc(a.stopRun)))
+	mux.Handle("GET /history/runs/{id}/events", a.requirePermission(permissionObserve, http.HandlerFunc(a.runEvents)))
+	mux.Handle("GET /resources/variables", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.variablesPage)))
+	mux.Handle("GET /resources/variables/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.newVariableTask)))
+	mux.Handle("GET /resources/variables/{name}/edit", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.editVariableTask)))
+	mux.Handle("POST /resources/variables", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.createVariable)))
+	mux.Handle("POST /resources/variables/{name}/update", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.updateVariable)))
+	mux.Handle("POST /resources/variables/{name}/delete", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.deleteVariable)))
+	mux.Handle("POST /history/runs/{id}/quick-run", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.saveQuickRun)))
+	mux.Handle("GET /config/quick-runs", a.requirePermission(permissionObserve, http.HandlerFunc(a.quickRunsPage)))
+	mux.Handle("POST /config/quick-runs", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.createQuickRunFromFile)))
+	mux.Handle("GET /config/quick-runs/one-time/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.oneTimeRunTask)))
+	mux.Handle("POST /config/quick-runs/one-time", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.startOneTimeRun)))
+	mux.Handle("GET /config/quick-runs/from-source/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.quickCreateTask)))
+	mux.Handle("POST /config/quick-runs/from-source", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.createQuickRunFromSource)))
+	mux.Handle("GET /config/quick-runs/groups/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.newQuickRunGroupTask)))
+	mux.Handle("POST /config/quick-runs/groups", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.createQuickRunGroup)))
+	mux.Handle("GET /config/quick-runs/groups/{id}/edit", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.editQuickRunGroupTask)))
+	mux.Handle("POST /config/quick-runs/groups/{id}/update", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.updateQuickRunGroup)))
+	mux.Handle("POST /config/quick-runs/groups/{id}/move", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.moveQuickRunGroup)))
+	mux.Handle("POST /config/quick-runs/groups/{id}/delete", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.deleteQuickRunGroup)))
+	mux.Handle("GET /config/quick-runs/{id}/move-group", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.moveQuickRunToGroupTask)))
+	mux.Handle("POST /config/quick-runs/{id}/move-group", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.moveQuickRunToGroup)))
+	mux.Handle("GET /config/quick-runs/{id}/edit", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.editQuickRunTask)))
+	mux.Handle("POST /config/quick-runs/{id}/update", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.updateQuickRun)))
+	mux.Handle("GET /config/quick-runs/{id}/copy", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.copyQuickRunTask)))
+	mux.Handle("POST /config/quick-runs/{id}/copy", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.copyQuickRun)))
+	mux.Handle("POST /config/quick-runs/{id}/lock", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.setQuickRunLocked)))
+	mux.Handle("POST /config/quick-runs/{id}/start", a.requirePermission(permissionExecute, http.HandlerFunc(a.startQuickRun)))
+	mux.Handle("POST /config/quick-runs/{id}/move", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.moveQuickRun)))
+	mux.Handle("POST /config/quick-runs/{id}/delete", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.deleteQuickRun)))
+	mux.Handle("GET /config/schedules", a.requirePermission(permissionObserve, http.HandlerFunc(a.schedulesPage)))
+	mux.Handle("GET /config/schedules/groups/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.newScheduleGroupTask)))
+	mux.Handle("POST /config/schedules/groups", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.createScheduleGroup)))
+	mux.Handle("GET /config/schedules/groups/{id}/edit", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.editScheduleGroupTask)))
+	mux.Handle("POST /config/schedules/groups/{id}/update", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.updateScheduleGroup)))
+	mux.Handle("POST /config/schedules/groups/{id}/move", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.moveScheduleGroup)))
+	mux.Handle("POST /config/schedules/groups/{id}/delete", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.deleteScheduleGroup)))
+	mux.Handle("GET /config/schedules/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.newScheduleTask)))
+	mux.Handle("GET /config/schedules/{id}/edit", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.editScheduleTask)))
+	mux.Handle("POST /config/schedules/preview", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.previewScheduleCron)))
+	mux.Handle("POST /config/schedules/{id}/preview", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.previewScheduleCron)))
+	mux.Handle("POST /config/schedules", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.createSchedule)))
+	mux.Handle("POST /config/schedules/{id}/update", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.updateSchedule)))
+	mux.Handle("POST /config/schedules/{id}/toggle", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.toggleSchedule)))
+	mux.Handle("POST /config/schedules/{id}/run", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.runScheduleNow)))
+	mux.Handle("POST /config/schedules/{id}/delete", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.deleteSchedule)))
 	mux.Handle("GET /config/external-interfaces", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.externalInterfacesPage)))
 	mux.Handle("GET /config/external-interfaces/keys/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.newExternalKeyTask)))
 	mux.Handle("POST /config/external-interfaces/keys", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.createExternalKey)))
@@ -2076,32 +2092,26 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /config/external-interfaces/entries/{id}", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.updateExternalEntry)))
 	mux.Handle("POST /config/external-interfaces/entries/{id}/toggle", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.toggleExternalEntry)))
 	mux.Handle("POST /config/external-interfaces/entries/{id}/delete", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.deleteExternalEntry)))
-	mux.Handle("GET /history/audit", a.requireSession(http.HandlerFunc(a.auditPage)))
-	mux.Handle("GET /history/audit.csv", a.requireSession(http.HandlerFunc(a.auditDownload)))
+	mux.Handle("GET /history/audit", a.requirePermission(permissionReadAudit, http.HandlerFunc(a.auditPage)))
+	mux.Handle("GET /history/audit.csv", a.requirePermission(permissionReadAudit, http.HandlerFunc(a.auditDownload)))
+	a.routeSpecs = mux.Specs()
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		request = a.applyTrustedProxy(request)
+		if !a.validRequestHost(request.Host) {
+			http.Error(response, "request host is not allowed", http.StatusMisdirectedRequest)
+			return
+		}
 		response.Header().Set("X-Content-Type-Options", "nosniff")
 		response.Header().Set("X-Frame-Options", "DENY")
-		response.Header().Set("Referrer-Policy", "no-referrer")
+		// Keep same-origin form submissions bound to a concrete Origin. Chromium
+		// serializes the Origin as "null" for native POST forms under no-referrer,
+		// which makes strict same-origin validation indistinguishable from an
+		// opaque, potentially hostile origin.
+		response.Header().Set("Referrer-Policy", "same-origin")
 		response.Header().Set("Permissions-Policy", "camera=(), geolocation=(), microphone=()")
 		response.Header().Set("Content-Security-Policy", "default-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		if isSecureRequest(request) {
 			response.Header().Set("Strict-Transport-Security", "max-age=31536000")
-		}
-		if request.Body != nil && request.Method != http.MethodGet && request.Method != http.MethodHead &&
-			request.URL.Path != "/resources/files/upload" && request.URL.Path != "/settings/ai/runtime/offline" && request.URL.Path != "/trigger" {
-			if request.ContentLength > maxFormRequestBytes {
-				http.Error(response, "request body is too large", http.StatusRequestEntityTooLarge)
-				return
-			}
-			resetReadDeadline := setRequestReadDeadline(response, boundedFormReadTimeout)
-			defer resetReadDeadline()
-			request.Body = http.MaxBytesReader(response, request.Body, maxFormRequestBytes)
-		}
-		if request.Method != http.MethodGet && request.Method != http.MethodHead && request.Method != http.MethodOptions &&
-			request.URL.Path != "/trigger" && !validRequestOrigin(request) {
-			http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
-			return
 		}
 		if a.validation.Load() && (request.Method != http.MethodGet || request.URL.Path == "/trigger") {
 			response.Header().Set("Retry-After", "2")
@@ -5133,11 +5143,6 @@ func (a *App) requireSession(next http.Handler) http.Handler {
 		current, _, ok := a.loadSession(request)
 		if !ok {
 			http.Redirect(response, request, "/login", http.StatusSeeOther)
-			return
-		}
-		required, declared := permissionForRequest(request)
-		if !declared || !roleAllows(current.role, required) {
-			http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
 			return
 		}
 		cookie, _ := request.Cookie(sessionCookieName)

@@ -7,30 +7,34 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"go.yaml.in/yaml/v3"
 )
 
 type Config struct {
-	StateRoot         string              `yaml:"state_root"`
-	Listen            string              `yaml:"listen"`
-	TLSCert           string              `yaml:"tls_cert"`
-	TLSKey            string              `yaml:"tls_key"`
-	ExecutorChains    map[string][]string `yaml:"executor_chains"`
-	AdminUsername     string              `yaml:"admin_username"`
-	AdminPassword     string              `yaml:"admin_password"`
-	AdminPasswordFile string              `yaml:"admin_password_file"`
-	TrustedProxies    []string            `yaml:"trusted_proxies"`
-	RunTimeoutGrace   time.Duration       `yaml:"-"`
-	UpdateCheck       bool                `yaml:"update_check"`
-	UpdateInterval    time.Duration       `yaml:"-"`
-	ConfigPath        string              `yaml:"-"`
+	StateRoot            string              `yaml:"state_root"`
+	Listen               string              `yaml:"listen"`
+	TLSCert              string              `yaml:"tls_cert"`
+	TLSKey               string              `yaml:"tls_key"`
+	ExecutorChains       map[string][]string `yaml:"executor_chains"`
+	AdminUsername        string              `yaml:"admin_username"`
+	AdminPassword        string              `yaml:"admin_password"`
+	AdminPasswordFile    string              `yaml:"admin_password_file"`
+	TrustedProxies       []string            `yaml:"trusted_proxies"`
+	AllowedHosts         []string            `yaml:"allowed_hosts"`
+	CanonicalExternalURL string              `yaml:"canonical_external_url"`
+	RunTimeoutGrace      time.Duration       `yaml:"-"`
+	UpdateCheck          bool                `yaml:"update_check"`
+	UpdateInterval       time.Duration       `yaml:"-"`
+	ConfigPath           string              `yaml:"-"`
 }
 
 type yamlConfig struct {
@@ -43,6 +47,8 @@ type yamlConfig struct {
 	AdminPassword          string              `yaml:"admin_password"`
 	AdminPasswordFile      string              `yaml:"admin_password_file"`
 	TrustedProxies         []string            `yaml:"trusted_proxies"`
+	AllowedHosts           []string            `yaml:"allowed_hosts"`
+	CanonicalExternalURL   string              `yaml:"canonical_external_url"`
 	RunTimeoutGraceSeconds *int                `yaml:"run_timeout_grace_seconds"`
 	UpdateCheck            *bool               `yaml:"update_check"`
 	UpdateIntervalHours    *int                `yaml:"update_check_interval_hours"`
@@ -103,6 +109,7 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 	flags.StringVar(&result.AdminPassword, "admin-password", result.AdminPassword, "权威管理员密码覆盖")
 	flags.StringVar(&result.AdminPasswordFile, "admin-password-file", result.AdminPasswordFile, "权威管理员密码文件")
 	trustedProxyFlagSeen := false
+	allowedHostFlagSeen := false
 	flags.Func("trusted-proxy", "可信反向代理 IP 或 CIDR（可重复）", func(value string) error {
 		if !trustedProxyFlagSeen {
 			result.TrustedProxies = nil
@@ -111,6 +118,15 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 		result.TrustedProxies = append(result.TrustedProxies, value)
 		return nil
 	})
+	flags.Func("allowed-host", "允许的 HTTP Host（可重复）", func(value string) error {
+		if !allowedHostFlagSeen {
+			result.AllowedHosts = nil
+			allowedHostFlagSeen = true
+		}
+		result.AllowedHosts = append(result.AllowedHosts, value)
+		return nil
+	})
+	flags.StringVar(&result.CanonicalExternalURL, "canonical-external-url", result.CanonicalExternalURL, "对外访问的规范 URL")
 	if err := flags.Parse(arguments); err != nil {
 		return Config{}, err
 	}
@@ -139,6 +155,9 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 				return Config{}, fmt.Errorf("可信代理 %q 无效", trusted)
 			}
 		}
+	}
+	if err := finalizeHostSecurity(&result); err != nil {
+		return Config{}, err
 	}
 	return result, nil
 }
@@ -212,6 +231,12 @@ func applyYAML(result *Config, values yamlConfig) {
 	if values.TrustedProxies != nil {
 		result.TrustedProxies = append([]string(nil), values.TrustedProxies...)
 	}
+	if values.AllowedHosts != nil {
+		result.AllowedHosts = append([]string(nil), values.AllowedHosts...)
+	}
+	if values.CanonicalExternalURL != "" {
+		result.CanonicalExternalURL = values.CanonicalExternalURL
+	}
 	if values.RunTimeoutGraceSeconds != nil {
 		result.RunTimeoutGrace = time.Duration(*values.RunTimeoutGraceSeconds) * time.Second
 	}
@@ -266,7 +291,111 @@ func applyEnvironment(result *Config, getenv func(string) string) {
 			result.TrustedProxies[index] = strings.TrimSpace(result.TrustedProxies[index])
 		}
 	}
+	if value := getenv("SCRIPTBOARD_ALLOWED_HOSTS"); value != "" {
+		result.AllowedHosts = splitCommaList(value)
+	}
+	if value := getenv("SCRIPTBOARD_CANONICAL_EXTERNAL_URL"); value != "" {
+		result.CanonicalExternalURL = strings.TrimSpace(value)
+	}
 	if result.AdminPassword != "" && result.AdminPasswordFile != "" {
 		result.AdminPassword = ""
 	}
+}
+
+func splitCommaList(value string) []string {
+	result := strings.Split(value, ",")
+	for index := range result {
+		result[index] = strings.TrimSpace(result[index])
+	}
+	return result
+}
+
+func finalizeHostSecurity(result *Config) error {
+	listenHost, _, err := net.SplitHostPort(result.Listen)
+	if err != nil {
+		return fmt.Errorf("监听地址 %q 无效: %w", result.Listen, err)
+	}
+	if len(result.AllowedHosts) == 0 {
+		listenIP := net.ParseIP(listenHost)
+		if listenIP != nil && listenIP.IsLoopback() {
+			result.AllowedHosts = []string{listenHost, "localhost"}
+			if listenIP.To4() != nil {
+				result.AllowedHosts = append(result.AllowedHosts, "::1")
+			} else {
+				result.AllowedHosts = append(result.AllowedHosts, "127.0.0.1")
+			}
+		} else if strings.EqualFold(listenHost, "localhost") {
+			result.AllowedHosts = []string{"localhost", "127.0.0.1", "::1"}
+		} else {
+			return errors.New("非回环或通配监听必须显式配置 allowed_hosts")
+		}
+	}
+	seen := make(map[string]bool, len(result.AllowedHosts))
+	for _, allowed := range result.AllowedHosts {
+		normalized, err := normalizeConfiguredHost(allowed)
+		if err != nil {
+			return fmt.Errorf("allowed host %q 无效: %w", allowed, err)
+		}
+		if seen[normalized] {
+			return fmt.Errorf("allowed host %q 重复", allowed)
+		}
+		seen[normalized] = true
+	}
+	if result.CanonicalExternalURL == "" {
+		scheme := "http"
+		if result.TLSCert != "" {
+			scheme = "https"
+		}
+		result.CanonicalExternalURL = scheme + "://" + result.Listen
+	}
+	canonical, err := url.Parse(result.CanonicalExternalURL)
+	if err != nil || (canonical.Scheme != "http" && canonical.Scheme != "https") || canonical.Host == "" || canonical.User != nil || canonical.RawQuery != "" || canonical.Fragment != "" || (canonical.Path != "" && canonical.Path != "/") {
+		return fmt.Errorf("canonical_external_url %q 无效", result.CanonicalExternalURL)
+	}
+	if result.TLSCert != "" && canonical.Scheme != "https" {
+		return fmt.Errorf("canonical_external_url 在启用 TLS 时必须使用 https")
+	}
+	canonicalHost, err := normalizeConfiguredHost(canonical.Host)
+	if err != nil || !seen[canonicalHost] {
+		return fmt.Errorf("canonical_external_url host 必须包含在 allowed_hosts 中")
+	}
+	result.CanonicalExternalURL = strings.TrimSuffix(canonical.String(), "/")
+	return nil
+}
+
+func normalizeConfiguredHost(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if host, rawPort, err := net.SplitHostPort(value); err == nil {
+		port, portErr := strconv.ParseUint(rawPort, 10, 16)
+		if portErr != nil || port == 0 {
+			return "", errors.New("端口格式无效")
+		}
+		value = host
+	} else if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
+		value = strings.TrimSuffix(strings.TrimPrefix(value, "["), "]")
+	} else if strings.Contains(value, ":") && net.ParseIP(value) == nil {
+		return "", errors.New("端口格式无效")
+	}
+	value = strings.TrimSuffix(strings.ToLower(value), ".")
+	if value == "" || strings.ContainsAny(value, "/\\,@ \t\r\n") {
+		return "", errors.New("主机名包含无效字符")
+	}
+	for _, character := range value {
+		if character > unicode.MaxASCII || unicode.IsControl(character) || unicode.IsSpace(character) {
+			return "", errors.New("主机名必须是无控制字符的 ASCII")
+		}
+	}
+	if net.ParseIP(value) == nil {
+		for _, label := range strings.Split(value, ".") {
+			if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+				return "", errors.New("DNS 标签无效")
+			}
+			for _, character := range label {
+				if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '-' {
+					return "", errors.New("DNS 标签包含无效字符")
+				}
+			}
+		}
+	}
+	return value, nil
 }

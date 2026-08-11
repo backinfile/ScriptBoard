@@ -1322,6 +1322,10 @@ func resolveExecutors(extension string, overrides map[string][]string) ([]execut
 			}
 			path = lookedUp
 		}
+		path, err := validateExecutorTrust(path)
+		if err != nil {
+			continue
+		}
 		resolved = append(resolved, executorCandidate{
 			path: path, prefix: candidate.prefix,
 			batch: extension == ".cmd" || extension == ".bat",
@@ -1351,6 +1355,9 @@ func executorPrefix(extension string) []string {
 }
 
 func ParseArguments(input string) ([]string, error) {
+	if err := validateProcessArgument(input); err != nil {
+		return nil, err
+	}
 	var arguments []string
 	var current strings.Builder
 	var quote rune
@@ -1403,6 +1410,9 @@ func ParseArguments(input string) ([]string, error) {
 		flush()
 	}
 	for _, argument := range arguments {
+		if err := validateProcessArgument(argument); err != nil {
+			return nil, err
+		}
 		if len(argument) > 32<<10 {
 			return nil, fmt.Errorf("单个参数过长: %s", strconv.Quote(argument[:min(len(argument), 32)]))
 		}

@@ -1125,7 +1125,7 @@ func TestWebsiteMonitoringDataReturnsCompletePollingAndDetailSnapshots(t *testin
 	}
 }
 
-func TestWebsiteMonitoringAddsRemoteScriptBoardAsReadOnlySource(t *testing.T) {
+func TestWebsiteMonitoringRejectsPrivateRemoteScriptBoardDestination(t *testing.T) {
 	const key = "sbk_0123456789abcdef.0123456789abcdef0123456789abcdef01234567890"
 	var authorization string
 	remote := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -1161,8 +1161,8 @@ func TestWebsiteMonitoringAddsRemoteScriptBoardAsReadOnlySource(t *testing.T) {
 	}
 	body, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if authorization != "Bearer "+key || !bytes.Contains(body, []byte("Branch office")) ||
-		!bytes.Contains(body, []byte("Remote checkout")) || !bytes.Contains(body, []byte("Read-only")) ||
+	if authorization != "" || !bytes.Contains(body, []byte("Branch office")) ||
+		!bytes.Contains(body, []byte("Remote status is unavailable")) || !bytes.Contains(body, []byte("Read-only")) ||
 		bytes.Contains(body, []byte(`href="/monitor/websites/remote-one"`)) {
 		t.Fatalf("authorization=%q body=%s", authorization, body)
 	}

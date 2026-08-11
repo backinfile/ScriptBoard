@@ -43,6 +43,40 @@ func TestLoadAllowsExplicitlyClearingDefaultTrustedProxies(t *testing.T) {
 	}
 }
 
+func TestLoadDerivesLoopbackAllowedHostsAndCanonicalURL(t *testing.T) {
+	t.Parallel()
+	loaded, err := config.Load([]string{"--config", writeEmptyConfig(t)}, func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.CanonicalExternalURL != "http://127.0.0.1:8787" {
+		t.Fatalf("canonical URL = %q", loaded.CanonicalExternalURL)
+	}
+	if len(loaded.AllowedHosts) < 2 {
+		t.Fatalf("allowed hosts = %#v", loaded.AllowedHosts)
+	}
+}
+
+func TestLoadRequiresExplicitHostsForWildcardListenAndBindsCanonicalHost(t *testing.T) {
+	t.Parallel()
+	missingHosts := filepath.Join(t.TempDir(), "missing-hosts.yaml")
+	if err := os.WriteFile(missingHosts, []byte("listen: 0.0.0.0:8787\ntls_cert: cert.pem\ntls_key: key.pem\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.Load([]string{"--config", missingHosts}, func(string) string { return "" }); err == nil {
+		t.Fatal("wildcard listen without allowed_hosts was accepted")
+	}
+
+	wrongCanonical := filepath.Join(t.TempDir(), "wrong-canonical.yaml")
+	data := "listen: 0.0.0.0:8787\ntls_cert: cert.pem\ntls_key: key.pem\nallowed_hosts: [panel.example]\ncanonical_external_url: https://evil.example\n"
+	if err := os.WriteFile(wrongCanonical, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.Load([]string{"--config", wrongCanonical}, func(string) string { return "" }); err == nil {
+		t.Fatal("canonical URL outside allowed_hosts was accepted")
+	}
+}
+
 func TestLoadLayersYAMLThenEnvironmentThenCLI(t *testing.T) {
 	t.Parallel()
 

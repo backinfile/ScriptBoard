@@ -28,12 +28,12 @@ ScriptBoard 已有一批值得保留的安全基础：Argon2id 密码哈希、�
 
 | 计划项 | 本分支状态 | 说明 |
 | --- | --- | --- |
-| P0-01 | 部分完成 | 未知权限分类默认拒绝，已补角色矩阵与未知路径回归；完整 `RouteSpec` 注册器仍待后续切片。 |
-| P0-03 | 部分完成 | Run 改用最小环境，代理、云凭据和动态加载变量不再继承；统一进程启动封装及 executor 文件所有权校验仍待后续切片。 |
+| P0-01 | 完成 | 240 条路由均通过 fail-closed 注册器声明方法、认证方式、权限、CSRF 与请求体策略；运行时前缀权限推断已删除，角色/方法矩阵从 `RouteSpec` 清单自动验证。 |
+| P0-03 | 部分完成 | Run 使用最小环境；执行器必须解析为规范绝对普通文件，Linux 校验 root/服务身份所有权及不可被组/其他用户写入，参数控制字符被拒绝并有 fuzz 覆盖；跨模块统一启动器和 Windows owner SID/ACL 校验随身份拆分继续。 |
 | P0-04 | 首个切片完成 | 建立共享出站策略并覆盖网站 HTTP/WebSocket 探测和远程监控聚合；更新与 AI Provider 的迁移仍待后续切片。 |
-| P0-05 | 部分完成 | 代理默认信任为空、非可信转发头被清理、跨 Origin 状态修改被拒绝；`allowed_hosts` 与 canonical external URL 尚未实现。 |
+| P0-05 | 首个切片完成 | 代理默认信任为空，非可信转发头被清理；新增 `allowed_hosts` 与 `canonical_external_url` 安全默认，可信代理 Host 仍须通过白名单，错误 Host/Origin 在业务 Handler 前拒绝。 |
 | P0-06 | 部分完成 | 外部上传空 allowlist 改为拒绝；独立 inbox 与“发布为脚本”流程仍待结构性实现。 |
-| P0-12 | 部分完成 | 增加 vet、race、govulncheck、CodeQL、secret scan、SBOM 与 release provenance 门禁；更多 fuzz/黑盒不变量继续补充。 |
+| P0-12 | 部分完成 | 增加 vet、race、govulncheck、CodeQL、secret scan、SBOM 与 release provenance 门禁；已加入出站地址、Host 和命令参数 fuzz target，更多黑盒不变量继续补充。 |
 | P0-11 文档项 | 完成 | 新增 `SECURITY.md`，明确私密报告、支持范围与应急控制。 |
 
 P0-02、P0-07 至 P0-11 的其余结构性工作以及 P1/P2 未在本分支宣称完成。

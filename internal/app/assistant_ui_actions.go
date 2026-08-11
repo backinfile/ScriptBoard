@@ -51,8 +51,7 @@ const (
 
 func (a *App) assistantUIActions() []assistantUIActionSpec {
 	action := func(key, label, domain, path, deepLink string, pathFields, formFields []string, handler http.HandlerFunc) assistantUIActionSpec {
-		request := httptest.NewRequest(http.MethodPost, strings.ReplaceAll(strings.ReplaceAll(path, "{id}", "id"), "{name}", "name"), nil)
-		spec := assistantUIActionSpec{Key: key, Label: label, Domain: domain, Path: path, DeepLink: deepLink, PathFields: pathFields, FormFields: formFields, Permission: declaredPermissionForRequest(request), Handler: handler}
+		spec := assistantUIActionSpec{Key: key, Label: label, Domain: domain, Path: path, DeepLink: deepLink, PathFields: pathFields, FormFields: formFields, Permission: a.declaredRoutePermission(http.MethodPost, path), Handler: handler}
 		switch key {
 		case "websites.create", "websites.update":
 			spec.FormValueModes = map[string]assistantUIActionValueMode{"verify_tls": assistantUIActionBinary, "follow_redirects": assistantUIActionBinary}
@@ -96,8 +95,7 @@ func (a *App) assistantUIActions() []assistantUIActionSpec {
 		return spec
 	}
 	browserOnly := func(key, label, domain, path, reason string) assistantUIActionSpec {
-		request := httptest.NewRequest(http.MethodPost, strings.ReplaceAll(strings.ReplaceAll(path, "{id}", "id"), "{name}", "name"), nil)
-		return assistantUIActionSpec{Key: key, Label: label, Domain: domain, Path: path, Permission: declaredPermissionForRequest(request), BrowserOnly: reason}
+		return assistantUIActionSpec{Key: key, Label: label, Domain: domain, Path: path, Permission: a.declaredRoutePermission(http.MethodPost, path), BrowserOnly: reason}
 	}
 	return []assistantUIActionSpec{
 		action("applications.pin", "Pin application", "applications", "/monitor/applications/{id}/pin", "/monitor/applications", []string{"id"}, nil, a.pinApplication),
