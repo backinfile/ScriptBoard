@@ -1318,7 +1318,7 @@ var webMessages = map[string]localizedMessage{
 	"external.rotate_warning":                       {"生成后，请及时更新所有正在使用当前 Key 的外部系统。", "After generating it, update every external system that currently uses this key."},
 	"external.rotate_confirm":                       {"生成后，当前 Key 将立即停止使用。继续吗？", "The current key stops working as soon as a new one is generated. Continue?"},
 	"external.delete_key_confirm":                   {"删除这个 Key 和它的全部调用功能？", "Delete this key and all of its callable functions?"},
-	"external.delete_entry_confirm":                 {"删除这个调用功能？", "Delete this callable function?"},
+	"external.delete_entry_confirm":                 {"删除这个调用功能及其专用 Key？", "Delete this callable function and its dedicated key?"},
 	"external.key_created_description":              {"完整 Key 仅显示这一次，离开后无法恢复。请立即复制并只提供给可信系统。", "This complete key is shown only once and cannot be recovered after you leave. Copy it now and share it only with trusted systems."},
 	"external.only_shown_once":                      {"完整 Key 已生成", "Complete Key generated"},
 	"external.copy_key":                             {"复制 Key", "Copy Key"},

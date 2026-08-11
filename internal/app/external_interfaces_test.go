@@ -139,7 +139,9 @@ func TestExternalWebsiteMonitorEntryReturnsReadOnlySnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	createdEntryPage, _ := io.ReadAll(createdEntry.Body)
 	_ = createdEntry.Body.Close()
+	secret, _ = createdExternalTestKey(t, createdEntryPage)
 
 	request, _ := http.NewRequest(http.MethodGet, serverURL+"/trigger?name=website-status", nil)
 	request.Header.Set("Authorization", "Bearer "+secret)
@@ -382,10 +384,12 @@ func TestAdministratorCreatesKeyAndExternalLogTrigger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	boundKeyPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusSeeOther {
-		t.Fatalf("create entry status=%d", response.StatusCode)
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("create entry status=%d body=%s", response.StatusCode, boundKeyPage)
 	}
+	secret, _ = createdExternalTestKey(t, boundKeyPage)
 
 	queryRequest, _ := http.NewRequest(http.MethodPost, serverURL+"/trigger?key="+url.QueryEscape(secret)+"&name=deployment-log", strings.NewReader(url.Values{"message": {"must not be logged"}}.Encode()))
 	queryRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -458,7 +462,7 @@ func TestAdministratorCreatesKeyAndExternalLogTrigger(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !strings.Contains(string(detail), `data-task-kind="external-entry-detail"`) ||
 		!strings.Contains(string(detail), "POST /trigger?name=deployment-log") ||
 		!strings.Contains(string(detail), "Authorization: Bearer YOUR_KEY") || !strings.Contains(string(detail), "message") ||
-		!strings.Contains(string(detail), `href="`+previewURL+`"`) || !strings.Contains(string(detail), `/entries/`+entryID+`/edit`) ||
+		!strings.Contains(string(detail), `href="`+previewURL+`"`) || strings.Contains(string(detail), `/entries/`+entryID+`/edit`) ||
 		!strings.Contains(string(detail), `/entries/`+entryID+`/toggle`) || !strings.Contains(string(detail), `/entries/`+entryID+`/delete`) {
 		t.Fatalf("entry detail status=%d body=%s", response.StatusCode, detail)
 	}
@@ -576,7 +580,7 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 		t.Fatal(err)
 	}
 	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
-	secret, keyID := createExternalTestKey(t, client, serverURL, "Build agent")
+	_, keyID := createExternalTestKey(t, client, serverURL, "Build agent")
 	response, err := client.Get(serverURL + "/config/external-interfaces/keys/" + keyID + "/edit")
 	if err != nil {
 		t.Fatal(err)
@@ -614,7 +618,7 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	createExternalTestEntry(t, client, serverURL, keyID, url.Values{
+	uploadSecret := createExternalTestEntry(t, client, serverURL, keyID, url.Values{
 		"name": {"artifact"}, "label": {"Artifact upload"}, "action_type": {"upload"}, "enabled": {"1"},
 		"upload_directory": {uploadRoot}, "upload_max_bytes": {"32"}, "upload_extensions": {".txt"}, "upload_conflict": {"reject"},
 	})
@@ -638,27 +642,8 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 	}
 	entryDetail, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	editPattern := regexp.MustCompile(`/config/external-interfaces/entries/([A-Za-z0-9_-]+)/edit`)
-	editMatch := editPattern.FindSubmatch(entryDetail)
-	if len(editMatch) != 2 {
-		t.Fatalf("entry edit action missing from detail drawer: %s", entryDetail)
-	}
-	response, err = client.Get(serverURL + string(editMatch[0]))
-	if err != nil {
-		t.Fatal(err)
-	}
-	entryEdit, _ := io.ReadAll(response.Body)
-	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/config/external-interfaces/entries/"+string(detailMatch[1]), url.Values{
-		"csrf_token": {formToken(t, entryEdit)}, "name": {"artifact"}, "label": {"Artifact receiver"}, "action_type": {"upload"}, "enabled": {"1"},
-		"upload_directory": {uploadRoot}, "upload_max_bytes": {"32"}, "upload_extensions": {".txt"}, "upload_conflict": {"reject"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = response.Body.Close()
-	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusSeeOther {
-		t.Fatalf("update entry status=%d", response.StatusCode)
+	if bytes.Contains(entryDetail, []byte(`/config/external-interfaces/entries/`+string(detailMatch[1])+`/edit`)) {
+		t.Fatalf("immutable capability exposes an edit action: %s", entryDetail)
 	}
 	var upload bytes.Buffer
 	writer := multipart.NewWriter(&upload)
@@ -669,7 +654,7 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 	_, _ = part.Write([]byte("complete"))
 	_ = writer.Close()
 	request, _ := http.NewRequest(http.MethodPost, serverURL+"/trigger?name=artifact", &upload)
-	request.Header.Set("Authorization", "Bearer "+secret)
+	request.Header.Set("Authorization", "Bearer "+uploadSecret)
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 	response, err = client.Do(request)
 	if err != nil {
@@ -725,11 +710,12 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 		t.Fatalf("uploaded content=%q err=%v", content, err)
 	}
 
-	createExternalTestEntry(t, client, serverURL, keyID, url.Values{
+	_, variableKeyID := createExternalTestKey(t, client, serverURL, "Variable agent")
+	variableSecret := createExternalTestEntry(t, client, serverURL, variableKeyID, url.Values{
 		"name": {"environment"}, "label": {"Deployment environment"}, "action_type": {"variable"}, "enabled": {"1"},
 		"variable_name": {"environment"}, "variable_type": {"enum"}, "variable_options": {"staging\nproduction"},
 	})
-	response = invokeExternalForm(t, client, serverURL, secret, "environment", url.Values{"value": {"production"}})
+	response = invokeExternalForm(t, client, serverURL, variableSecret, "environment", url.Values{"value": {"production"}})
 	body, _ = io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusOK {
@@ -739,17 +725,18 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 	if err := database.QueryRow("SELECT value FROM variables WHERE name = 'environment'").Scan(&value); err != nil || value != "production" {
 		t.Fatalf("variable value=%q err=%v", value, err)
 	}
-	response = invokeExternalForm(t, client, serverURL, secret, "environment", url.Values{"value": {"root"}})
+	response = invokeExternalForm(t, client, serverURL, variableSecret, "environment", url.Values{"value": {"root"}})
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusBadRequest {
 		t.Fatalf("invalid enum status=%d", response.StatusCode)
 	}
 
-	createExternalTestEntry(t, client, serverURL, keyID, url.Values{
+	_, quickKeyID := createExternalTestKey(t, client, serverURL, "Quick Run agent")
+	quickSecret := createExternalTestEntry(t, client, serverURL, quickKeyID, url.Values{
 		"name": {"quick"}, "label": {"External quick run"}, "action_type": {"quick_run"}, "enabled": {"1"}, "quick_run_id": {"external-quick"},
 	})
 	request, _ = http.NewRequest(http.MethodPost, serverURL+"/trigger?name=quick", nil)
-	request.Header.Set("Authorization", "Bearer "+secret)
+	request.Header.Set("Authorization", "Bearer "+quickSecret)
 	response, err = client.Do(request)
 	if err != nil {
 		t.Fatal(err)
@@ -766,7 +753,7 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 	if _, err := database.Exec("UPDATE quick_runs SET revision = revision + 1 WHERE id = 'external-quick'"); err != nil {
 		t.Fatal(err)
 	}
-	response = invokeExternalForm(t, client, serverURL, secret, "quick", nil)
+	response = invokeExternalForm(t, client, serverURL, quickSecret, "quick", nil)
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusConflict {
 		t.Fatalf("stale Quick Run revision status=%d", response.StatusCode)
@@ -777,7 +764,7 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 	if err := os.WriteFile(scriptPath, []byte(scriptContent+"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	response = invokeExternalForm(t, client, serverURL, secret, "quick", nil)
+	response = invokeExternalForm(t, client, serverURL, quickSecret, "quick", nil)
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusConflict {
 		t.Fatalf("changed Quick Run script status=%d", response.StatusCode)
@@ -811,7 +798,7 @@ func createExternalTestKey(t *testing.T, client *http.Client, serverURL, label s
 	return createdExternalTestKey(t, created)
 }
 
-func createExternalTestEntry(t *testing.T, client *http.Client, serverURL, keyID string, values url.Values) {
+func createExternalTestEntry(t *testing.T, client *http.Client, serverURL, keyID string, values url.Values) string {
 	t.Helper()
 	response, err := client.Get(serverURL + "/config/external-interfaces/keys/" + keyID + "/entries/new")
 	if err != nil {
@@ -826,7 +813,9 @@ func createExternalTestEntry(t *testing.T, client *http.Client, serverURL, keyID
 	}
 	body, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusSeeOther {
+	if response.StatusCode != http.StatusCreated {
 		t.Fatalf("create entry status=%d body=%s", response.StatusCode, body)
 	}
+	secret, _ := createdExternalTestKey(t, body)
+	return secret
 }

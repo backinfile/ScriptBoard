@@ -373,6 +373,15 @@ func (a *App) newExternalEntryTask(response http.ResponseWriter, request *http.R
 		http.Error(response, "External Interface key not found", http.StatusNotFound)
 		return
 	}
+	entries, err := a.externalTriggers.EntriesForKey(request.Context(), key.ID)
+	if err != nil {
+		http.Error(response, "Unable to inspect External Interface key scope", http.StatusInternalServerError)
+		return
+	}
+	if len(entries) != 0 {
+		http.Error(response, "External Interface key is already bound to a callable function", http.StatusConflict)
+		return
+	}
 	current := request.Context().Value(sessionContextKey).(session)
 	locale := resolveWebLocale(request)
 	quickRuns, variables, err := a.externalTargetOptions()
@@ -520,7 +529,7 @@ func (a *App) createExternalEntry(response http.ResponseWriter, request *http.Re
 		a.renderExternalEntrySubmissionError(response, request, key)
 		return
 	}
-	entry, err := a.externalTriggers.CreateEntry(request.Context(), externaltrigger.CreateEntryInput{
+	entry, secret, err := a.externalTriggers.CreateEntry(request.Context(), externaltrigger.CreateEntryInput{
 		KeyID: keyID, Name: strings.TrimSpace(request.FormValue("name")), Label: request.FormValue("label"), Type: actionType,
 		Target: target, Enabled: request.FormValue("enabled") == "1", Config: config,
 	})
@@ -529,7 +538,16 @@ func (a *App) createExternalEntry(response http.ResponseWriter, request *http.Re
 		return
 	}
 	a.recordAuditForRequest(request, "create_external_interface_entry", entry.ID, "succeeded")
-	http.Redirect(response, request, "/config/external-interfaces", http.StatusSeeOther)
+	key, err = a.externalTriggers.Key(request.Context(), key.ID)
+	if err != nil {
+		http.Error(response, "Unable to read bound External Interface key", http.StatusInternalServerError)
+		return
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Pragma", "no-cache")
+	response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	response.WriteHeader(http.StatusCreated)
+	renderExternalInterfaceForm(response, externalInterfaceFormData{Kind: "key-rotated", Title: webText(resolveWebLocale(request), "external.key_rotated"), Description: webText(resolveWebLocale(request), "external.key_rotated_description"), BackURL: "/config/external-interfaces", Locale: resolveWebLocale(request), Key: key, Secret: secret})
 }
 
 func (a *App) renderExternalEntrySubmissionError(response http.ResponseWriter, request *http.Request, key externaltrigger.Key) {

@@ -38,6 +38,8 @@ var (
 	ErrInvalidKey     = errors.New("external trigger key is invalid")
 	ErrEntryNotFound  = errors.New("external trigger entry does not exist")
 	ErrEntryDisabled  = errors.New("external trigger entry is disabled")
+	ErrKeyScopeBound  = errors.New("external trigger key is already bound to an entry")
+	ErrEntryImmutable = errors.New("external trigger entry scope is immutable")
 	ErrInvalidInput   = errors.New("external trigger input is invalid")
 	ErrKeyLabelExists = errors.New("external trigger key name already exists")
 	entryNamePattern  = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
@@ -66,7 +68,7 @@ var SchemaStatements = []string{
 		enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
 		created_at INTEGER NOT NULL,
 		updated_at INTEGER NOT NULL,
-		UNIQUE (key_id, name)
+		UNIQUE (key_id)
 	)`,
 	`CREATE TABLE IF NOT EXISTS external_trigger_requests (
 		id TEXT PRIMARY KEY,
@@ -394,23 +396,57 @@ func (manager *Manager) RotateKey(ctx context.Context, id string) (Key, string, 
 	return key, secret, nil
 }
 
-func (manager *Manager) CreateEntry(ctx context.Context, input CreateEntryInput) (Entry, error) {
+func (manager *Manager) CreateEntry(ctx context.Context, input CreateEntryInput) (Entry, string, error) {
 	configJSON, target, err := validateEntry(input.Name, input.Label, input.Type, input.Target, input.Config)
 	if err != nil {
-		return Entry{}, err
+		return Entry{}, "", err
 	}
 	id, err := manager.randomToken(18)
 	if err != nil {
-		return Entry{}, err
+		return Entry{}, "", err
 	}
+	secretPart, err := manager.randomToken(32)
+	if err != nil {
+		return Entry{}, "", err
+	}
+	secret := "sbk_" + input.KeyID + "." + secretPart
+	hint := "sbk_" + input.KeyID + ".••••" + secretPart[len(secretPart)-4:]
 	now := manager.now().UTC()
-	_, err = manager.db.ExecContext(ctx, `INSERT INTO external_trigger_entries
+	transaction, err := manager.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Entry{}, "", err
+	}
+	defer transaction.Rollback()
+	var existing int
+	if err := transaction.QueryRowContext(ctx, "SELECT COUNT(*) FROM external_trigger_entries WHERE key_id = ?", input.KeyID).Scan(&existing); err != nil {
+		return Entry{}, "", err
+	}
+	if existing != 0 {
+		return Entry{}, "", ErrKeyScopeBound
+	}
+	result, err := transaction.ExecContext(ctx, `INSERT INTO external_trigger_entries
 		(id, key_id, name, label, action_type, target, config_json, enabled, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, input.KeyID, input.Name, strings.TrimSpace(input.Label), input.Type, target, configJSON, input.Enabled, now.Unix(), now.Unix())
 	if err != nil {
-		return Entry{}, fmt.Errorf("create external trigger entry: %w", err)
+		if strings.Contains(err.Error(), "external_trigger_entries.key_id") {
+			return Entry{}, "", ErrKeyScopeBound
+		}
+		return Entry{}, "", fmt.Errorf("create external trigger entry: %w", err)
 	}
-	return Entry{ID: id, KeyID: input.KeyID, Name: input.Name, Label: strings.TrimSpace(input.Label), Type: input.Type, Target: target, ConfigJSON: configJSON, Enabled: input.Enabled, CreatedAt: now, UpdatedAt: now}, nil
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return Entry{}, "", ErrKeyScopeBound
+	}
+	result, err = transaction.ExecContext(ctx, `UPDATE external_trigger_keys SET token_hash = ?, token_hint = ?, updated_at = ? WHERE id = ?`, hashToken(secret), hint, now.Unix(), input.KeyID)
+	if err != nil {
+		return Entry{}, "", err
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return Entry{}, "", ErrInvalidKey
+	}
+	if err := transaction.Commit(); err != nil {
+		return Entry{}, "", err
+	}
+	return Entry{ID: id, KeyID: input.KeyID, Name: input.Name, Label: strings.TrimSpace(input.Label), Type: input.Type, Target: target, ConfigJSON: configJSON, Enabled: input.Enabled, CreatedAt: now, UpdatedAt: now}, secret, nil
 }
 
 func (manager *Manager) UpdateEntry(ctx context.Context, input UpdateEntryInput) (Entry, error) {
@@ -418,10 +454,17 @@ func (manager *Manager) UpdateEntry(ctx context.Context, input UpdateEntryInput)
 	if err != nil {
 		return Entry{}, err
 	}
+	existing, err := manager.Entry(ctx, input.ID)
+	if err != nil {
+		return Entry{}, ErrEntryNotFound
+	}
+	if existing.Name != input.Name || existing.Type != input.Type || existing.Target != target || existing.ConfigJSON != configJSON {
+		return Entry{}, ErrEntryImmutable
+	}
 	now := manager.now().UTC()
 	result, err := manager.db.ExecContext(ctx, `UPDATE external_trigger_entries SET
-		name = ?, label = ?, action_type = ?, target = ?, config_json = ?, enabled = ?, updated_at = ? WHERE id = ?`,
-		input.Name, strings.TrimSpace(input.Label), input.Type, target, configJSON, input.Enabled, now.Unix(), input.ID)
+		label = ?, enabled = ?, updated_at = ? WHERE id = ?`,
+		strings.TrimSpace(input.Label), input.Enabled, now.Unix(), input.ID)
 	if err != nil {
 		return Entry{}, fmt.Errorf("update external trigger entry: %w", err)
 	}
@@ -670,6 +713,10 @@ func (manager *Manager) entriesForKey(ctx context.Context, keyID string) ([]Entr
 	return entries, rows.Err()
 }
 
+func (manager *Manager) EntriesForKey(ctx context.Context, keyID string) ([]Entry, error) {
+	return manager.entriesForKey(ctx, keyID)
+}
+
 func (manager *Manager) SetKeyEnabled(ctx context.Context, id string, enabled bool) error {
 	return manager.updateBoolean(ctx, "external_trigger_keys", id, enabled)
 }
@@ -731,12 +778,23 @@ func (manager *Manager) DeleteKey(ctx context.Context, id string) error {
 }
 
 func (manager *Manager) DeleteEntry(ctx context.Context, id string) error {
-	result, err := manager.db.ExecContext(ctx, "DELETE FROM external_trigger_entries WHERE id = ?", id)
+	transaction, err := manager.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	if changed, _ := result.RowsAffected(); changed == 0 {
+	defer transaction.Rollback()
+	var keyID string
+	if err := transaction.QueryRowContext(ctx, "SELECT key_id FROM external_trigger_entries WHERE id = ?", id).Scan(&keyID); err != nil {
 		return sql.ErrNoRows
+	}
+	if _, err := transaction.ExecContext(ctx, "DELETE FROM external_trigger_keys WHERE id = ?", keyID); err != nil {
+		return err
+	}
+	if err := transaction.Commit(); err != nil {
+		return err
+	}
+	if err := manager.secretStore.delete(keyID); err != nil && !errors.Is(err, ErrSecretUnavailable) {
+		return fmt.Errorf("delete External Interface key secret: %w", err)
 	}
 	return nil
 }

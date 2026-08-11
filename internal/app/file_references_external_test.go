@@ -22,6 +22,10 @@ func TestMovedDirectoryRebasesExternalUploadReference(t *testing.T) {
 		VALUES ('key', 'Key', 'hash', 'hint', 1, 1, 1)`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.Exec(`INSERT INTO external_trigger_keys(id, label, token_hash, token_hint, enabled, created_at, updated_at)
+		VALUES ('log-key', 'Log key', 'log-hash', 'log-hint', 1, 1, 1)`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(`INSERT INTO external_trigger_entries(id, key_id, name, label, action_type, target, config_json, enabled, created_at, updated_at)
 		VALUES ('entry', 'key', 'upload', 'Upload', 'upload', ?, ?, 1, 1, 1)`, target, string(configJSON)); err != nil {
 		t.Fatal(err)
@@ -29,7 +33,7 @@ func TestMovedDirectoryRebasesExternalUploadReference(t *testing.T) {
 	logTarget := filepath.Join(source, "events.log")
 	logConfigJSON, _ := json.Marshal(externaltrigger.LogConfig{File: logTarget, MaxMessageBytes: 1024})
 	if _, err := db.Exec(`INSERT INTO external_trigger_entries(id, key_id, name, label, action_type, target, config_json, enabled, created_at, updated_at)
-		VALUES ('log-entry', 'key', 'log', 'Log', 'log', ?, ?, 1, 1, 1)`, logTarget, string(logConfigJSON)); err != nil {
+		VALUES ('log-entry', 'log-key', 'log', 'Log', 'log', ?, ?, 1, 1, 1)`, logTarget, string(logConfigJSON)); err != nil {
 		t.Fatal(err)
 	}
 	transaction, err := db.Begin()
@@ -76,16 +80,16 @@ func TestExternalFileReferencesIncludeLogAndUploadTargets(t *testing.T) {
 	}
 	defer db.Close()
 	root := filepath.Join(t.TempDir(), "targets")
-	if _, err := db.Exec(`INSERT INTO external_trigger_keys(id, label, token_hash, token_hint, enabled, created_at, updated_at)
-		VALUES ('key', 'Key', 'hash', 'hint', 1, 1, 1)`); err != nil {
-		t.Fatal(err)
-	}
 	for _, item := range []struct{ id, action, target, config string }{
 		{"upload", "upload", filepath.Join(root, "incoming"), `{"directory":"` + filepath.ToSlash(filepath.Join(root, "incoming")) + `"}`},
 		{"log", "log", filepath.Join(root, "events.log"), `{"file":"` + filepath.ToSlash(filepath.Join(root, "events.log")) + `"}`},
 	} {
+		if _, err := db.Exec(`INSERT INTO external_trigger_keys(id, label, token_hash, token_hint, enabled, created_at, updated_at)
+			VALUES (?, ?, ?, ?, 1, 1, 1)`, item.id+"-key", item.id+" key", item.id+" hash", item.id+" hint"); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := db.Exec(`INSERT INTO external_trigger_entries(id, key_id, name, label, action_type, target, config_json, enabled, created_at, updated_at)
-			VALUES (?, 'key', ?, ?, ?, ?, ?, 1, 1, 1)`, item.id, item.id, item.id, item.action, item.target, item.config); err != nil {
+			VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, 1)`, item.id, item.id+"-key", item.id, item.id, item.action, item.target, item.config); err != nil {
 			t.Fatal(err)
 		}
 	}

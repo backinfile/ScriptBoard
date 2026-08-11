@@ -1646,6 +1646,64 @@ func openDatabase(path string) (*sql.DB, error) {
 			}
 		}
 	}
+	if schemaVersion >= 20 && schemaVersion <= 36 {
+		rows, err := migration.Query(`SELECT entry.id, entry.created_at
+			FROM external_trigger_entries AS entry
+			WHERE EXISTS (
+				SELECT 1 FROM external_trigger_entries AS earlier
+				WHERE earlier.key_id = entry.key_id
+				AND (earlier.created_at < entry.created_at OR (earlier.created_at = entry.created_at AND earlier.id < entry.id))
+			)
+			ORDER BY entry.key_id, entry.created_at, entry.id`)
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("inspect External Interface capability migration: %w", err)
+		}
+		type extraExternalEntry struct {
+			id        string
+			createdAt int64
+		}
+		var extras []extraExternalEntry
+		for rows.Next() {
+			var entry extraExternalEntry
+			if err := rows.Scan(&entry.id, &entry.createdAt); err != nil {
+				_ = rows.Close()
+				_ = db.Close()
+				return nil, fmt.Errorf("read External Interface capability migration: %w", err)
+			}
+			extras = append(extras, entry)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			_ = db.Close()
+			return nil, fmt.Errorf("iterate External Interface capability migration: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("finish External Interface capability migration: %w", err)
+		}
+		now := time.Now().UTC().Unix()
+		for _, entry := range extras {
+			keyID, keyErr := randomToken(12)
+			secretPart, secretErr := randomToken(32)
+			if keyErr != nil || secretErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("generate migrated External Interface capability key: %v %v", keyErr, secretErr)
+			}
+			secret := "sbk_" + keyID + "." + secretPart
+			if _, err := migration.Exec(`INSERT INTO external_trigger_keys
+				(id, label, token_hash, token_hint, enabled, expires_at, created_at, updated_at, last_used_at)
+				VALUES (?, ?, ?, ?, 0, NULL, ?, ?, NULL)`,
+				keyID, "Migrated capability "+entry.id, hashToken(secret), "rotation required", entry.createdAt, now); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("create migrated External Interface capability key: %w", err)
+			}
+			if _, err := migration.Exec(`UPDATE external_trigger_entries SET key_id = ?, enabled = 0, updated_at = ? WHERE id = ?`, keyID, now, entry.id); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("split migrated External Interface capability: %w", err)
+			}
+		}
+	}
 	for _, statement := range []string{
 		"CREATE UNIQUE INDEX IF NOT EXISTS users_single_administrator_idx ON users(role) WHERE role = 'administrator'",
 		"CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id)",
@@ -1666,6 +1724,7 @@ func openDatabase(path string) (*sql.DB, error) {
 		"CREATE INDEX IF NOT EXISTS trash_entries_original_path_idx ON trash_entries(original_path_key)",
 		"CREATE INDEX IF NOT EXISTS file_operations_phase_idx ON file_operations(phase, created_at)",
 		"CREATE INDEX IF NOT EXISTS file_quick_access_pins_order_idx ON file_quick_access_pins(sort_order, created_at)",
+		"CREATE UNIQUE INDEX IF NOT EXISTS external_trigger_entries_key_unique_idx ON external_trigger_entries(key_id)",
 		"CREATE INDEX IF NOT EXISTS schedules_due_idx ON schedules(next_fire_at) WHERE enabled = 1 AND deleted = 0",
 		"CREATE INDEX IF NOT EXISTS schedule_triggers_schedule_time_idx ON schedule_triggers(schedule_id, scheduled_for DESC)",
 		"CREATE INDEX IF NOT EXISTS schedule_triggers_unlinked_time_idx ON schedule_triggers(scheduled_for) WHERE run_id = ''",
@@ -1715,10 +1774,11 @@ func compatibleDatabaseSchema(version int) bool {
 	// monitoring interfaces and encrypted remote source metadata, and schema 33 adds
 	// custom dashboards with independently public card collections, schema 34
 	// adds dedicated percentage cards, schema 35 adds a tamper-evident audit
-	// hash chain, and schema 36 locks Quick Runs to a script digest and revision.
+	// hash chain, schema 36 locks Quick Runs to a script digest and revision, and
+	// schema 37 binds each External Interface key to one immutable Entry.
 	// Each supported predecessor has an explicit
 	// transactional forward path.
-	return version == currentSchemaVersion || currentSchemaVersion == 36 && version >= 20 && version <= 35
+	return version == currentSchemaVersion || currentSchemaVersion == 37 && version >= 20 && version <= 36
 }
 
 func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {

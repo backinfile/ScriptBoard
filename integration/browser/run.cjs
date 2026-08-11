@@ -1203,10 +1203,10 @@ async function assertExternalInterfaces(page, fixture) {
   assert.match(renderedSecret, /^sbk_[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{43}$/);
   const copyKey = page.locator('[data-copy-text][data-copy-target="external-key-secret"]');
   await copyKey.click();
-  const secret = await page.evaluate(() => navigator.clipboard.readText());
-  assert.equal(secret, renderedSecret);
-  assert.match(secret, /^sbk_[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{43}$/);
-  const keyID = secret.slice(4).split(".")[0];
+  const provisionalSecret = await page.evaluate(() => navigator.clipboard.readText());
+  assert.equal(provisionalSecret, renderedSecret);
+  assert.match(provisionalSecret, /^sbk_[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{43}$/);
+  const keyID = provisionalSecret.slice(4).split(".")[0];
 
   await page.goto(`${fixture.baseURL}/config/external-interfaces/keys/${keyID}/entries/new`);
   const form = page.locator("[data-external-entry-form]");
@@ -1220,6 +1220,11 @@ async function assertExternalInterfaces(page, fixture) {
   await form.locator('input[name="upload_extensions"]').fill(".txt");
   await form.locator('select[name="upload_conflict"]').selectOption("rename");
   await form.locator('button[type="submit"]').click();
+  await page.locator("#external-key-secret").waitFor();
+  const secret = (await page.locator("#external-key-secret").textContent()).trim();
+  assert.match(secret, /^sbk_[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{43}$/);
+  assert.notEqual(secret, provisionalSecret);
+  await page.getByRole("link", { name: "Done", exact: true }).click();
   await page.locator("[data-external-interfaces-page]").waitFor();
   assert.equal(await page.getByText("Artifact upload", { exact: true }).count(), 1);
 
