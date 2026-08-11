@@ -7,7 +7,7 @@
 
 ## 1. 结论先行
 
-ScriptBoard 已有一批值得保留的安全基础：Argon2id 密码哈希、服务端会话、CSRF、CSP/HSTS、请求体和超时限制、非回环监听强制 TLS、受保护路径、文件原子替换与回收站、参数化 SQL、更新包 Ed25519 签名与摘要校验、归档路径穿越防护、外部 Key 哈希与限流、AI 工具审批和固定 Tool Broker。
+ScriptBoard 已有一批值得保留的安全基础：Argon2id 密码哈希、服务端会话、CSRF、CSP/HSTS、请求体和超时限制、默认回环监听与可选 TLS、受保护路径、文件原子替换与回收站、参数化 SQL、更新包 Ed25519 签名与摘要校验、归档路径穿越防护、外部 Key 哈希与限流、AI 工具审批和固定 Tool Broker。
 
 当前最重要的问题不是缺少更多运维按钮，而是高权限边界仍然过宽：Web 服务、脚本执行和 AI 子进程最终处在同一个高权限服务身份下。Linux 服务明确使用 `root`，Windows 服务未指定低权限账户；一旦 Web、解析器、依赖或 Agent Runtime 出现可利用漏洞，影响容易直接扩大为整机接管。
 
@@ -126,7 +126,7 @@ flowchart LR
 - 会话 Cookie 为 HttpOnly、SameSite，安全请求下设置 Secure；状态改变请求使用 CSRF。
 - 默认 CSP 禁止外部资源、对象和 frame；模板使用 `html/template`；Markdown 关闭原生 HTML 并经过 DOMPurify。
 - HTTP Server 已配置 Header、读和空闲超时；普通表单、上传和日志均有大小上限。
-- 非回环监听要求 TLS；TLS 最低版本为 1.2。
+- 默认使用回环监听；部署文档明确提示非回环明文监听的风险。启用 TLS 时最低版本为 1.2。
 - 主机文件使用路径约束、租约、原子替换、回收站和受保护路径。
 - 脚本启动使用参数数组，不直接拼接 shell 字符串；工作目录和脚本在启动前重新核验。
 - 更新和 AI Runtime 使用签名 Manifest、摘要、文件数/展开大小限制、重复目标和路径穿越检查，且拒绝符号链接等危险归档项。
