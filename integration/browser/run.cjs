@@ -463,6 +463,8 @@ async function assertAsyncPostServerErrorPreservesWorkspace(page) {
   await page.goto(workspaceURL);
   await page.locator("[data-update-source-open]").click();
   await saveSnapshot(page, "update-source-drawer");
+  await page.locator("[data-update-source-close]").last().click();
+  await page.locator("[data-update-source-open]").click();
   const checkForm = page.locator('form[action="/settings/updates/check"][data-async]');
   const checkButton = checkForm.getByRole("button");
   const routeHandler = route => route.fulfill({

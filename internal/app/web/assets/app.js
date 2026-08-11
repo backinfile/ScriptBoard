@@ -5941,13 +5941,24 @@
     let opener = null;
     let focusTimer = 0;
     const focusTarget = () => drawer.querySelector("input[name='source_id']:checked") || drawer;
+    const clearFocusTimer = () => {
+      if (focusTimer) window.clearTimeout(focusTimer);
+      focusTimer = 0;
+    };
+    const scheduleFocus = (callback, delay) => {
+      clearFocusTimer();
+      focusTimer = window.setTimeout(() => {
+        focusTimer = 0;
+        callback();
+      }, delay);
+    };
     const open = event => {
       event?.preventDefault();
       opener = event?.target?.closest("[data-update-source-open]") || document.activeElement;
       host.classList.add("is-open");
       host.setAttribute("aria-hidden", "false");
       document.body.classList.add("has-update-source-drawer");
-      focusTimer = window.setTimeout(() => focusTarget()?.focus(), 180);
+      scheduleFocus(() => focusTarget()?.focus(), 180);
     };
     const close = event => {
       event?.preventDefault();
@@ -5959,9 +5970,13 @@
         history.replaceState(history.state, "", "/settings/updates");
       }
       const restore = opener;
-      focusTimer = window.setTimeout(() => restore?.focus(), 200);
+      scheduleFocus(() => restore?.focus(), 200);
     };
     const onClick = event => {
+      // A fast submit can happen before the drawer's delayed initial focus.
+      // Cancel that stale task so it cannot steal focus back from a later
+      // server-error dialog or from the control the user actually selected.
+      if (drawer.contains(event.target)) clearFocusTimer();
       if (event.target.closest("[data-update-source-open]")) {
         open(event);
       } else if (event.target.closest("[data-update-source-close]")) {
@@ -5970,6 +5985,7 @@
     };
     const onKeydown = event => {
       if (!host.classList.contains("is-open")) return;
+      clearFocusTimer();
       if (event.key === "Escape") {
         close(event);
         return;
@@ -5994,7 +6010,7 @@
     };
     if (host.classList.contains("is-open")) {
       document.body.classList.add("has-update-source-drawer");
-      focusTimer = window.setTimeout(() => focusTarget()?.focus(), 0);
+      scheduleFocus(() => focusTarget()?.focus(), 0);
     }
     root.addEventListener("click", onClick);
     document.addEventListener("keydown", onKeydown);
@@ -6002,7 +6018,7 @@
       root.removeEventListener("click", onClick);
       document.removeEventListener("keydown", onKeydown);
       document.body.classList.remove("has-update-source-drawer");
-      if (focusTimer) window.clearTimeout(focusTimer);
+      clearFocusTimer();
     });
   }
 
