@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -747,7 +748,7 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 		writeExternalTriggerError(response, http.StatusInternalServerError, "action_failed")
 		return
 	}
-	release, allowed := a.externalLimit.Acquire(key.ID)
+	release, allowed := a.externalLimit.Acquire(externaltrigger.LimitSubject{KeyID: key.ID, Source: externalLimitSource(request.RemoteAddr), Action: entry.Type})
 	if !allowed {
 		response.Header().Set("Retry-After", "60")
 		_ = a.externalTriggers.RecordInvocation(request.Context(), externaltrigger.Invocation{ID: requestID, KeyID: key.ID, KeyLabel: key.Label, EntryID: entry.ID, EntryName: entry.Name, ActionType: entry.Type, Result: "rejected", HTTPStatus: http.StatusTooManyRequests, Source: request.RemoteAddr})
@@ -794,6 +795,14 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 	}
 	response.WriteHeader(result.status)
 	_ = json.NewEncoder(response).Encode(payload)
+}
+
+func externalLimitSource(address string) string {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(address))
+	if err == nil {
+		return strings.ToLower(host)
+	}
+	return strings.ToLower(strings.TrimSpace(address))
 }
 
 type externalActionResult struct {
