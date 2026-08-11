@@ -2478,6 +2478,9 @@ td > small, td > div > small { margin-top: 3px; }
 .record-primary__content { display: flex; min-width: 0; align-items: center; gap: 11px; }
 .record-primary__content > div { min-width: 0; }
 .record-primary__content > div > small { margin-top: 3px; }
+/* Full Windows script paths can exceed a mobile record row; allow the link to
+   break inside the available column instead of widening the page. */
+.record-primary__content a { overflow-wrap: anywhere; }
 .record-primary a, .record-primary strong { color: var(--ink); font-weight: 620; text-decoration: none; }
 .record-icon { width: 18px !important; height: 18px !important; color: var(--faint); }
 .record-actions { white-space: nowrap; text-align: right; }
