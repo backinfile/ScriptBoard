@@ -26,6 +26,7 @@ type RawProcess struct {
 	PID, ParentPID        int32
 	CreatedAt             time.Time
 	Name, ExecutablePath  string
+	KernelThread          bool
 	CPUSeconds            float64
 	ResidentMemoryBytes   uint64
 	Threads               int32
@@ -445,6 +446,9 @@ func deriveApplications(raw RawSnapshot, previous map[processIdentity]RawProcess
 	byIdentity := make(map[string]*aggregate)
 	elapsed := raw.CollectedAt.Sub(previousAt).Seconds()
 	for _, process := range raw.Processes {
+		if process.KernelThread {
+			continue
+		}
 		identity := normalizeExecutablePath(process.ExecutablePath, hostOS)
 		pinnable := identity != ""
 		if !pinnable {

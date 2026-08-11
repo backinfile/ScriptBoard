@@ -124,6 +124,40 @@ func TestViewAggregatesMatchingWindowsExecutablesAndDerivesRates(t *testing.T) {
 	}
 }
 
+func TestViewExcludesKernelThreadsButKeepsRestrictedUserProcesses(t *testing.T) {
+	t.Parallel()
+
+	started := time.Date(2026, 8, 11, 9, 0, 0, 0, time.UTC)
+	probe := &snapshotProbe{snapshots: []appstatus.RawSnapshot{{
+		CollectedAt:      started,
+		LogicalCores:     4,
+		TotalMemoryBytes: 1_000,
+		Processes: []appstatus.RawProcess{
+			{PID: 17, CreatedAt: started.Add(-time.Hour), Name: "kworker/R-crypt", KernelThread: true, Threads: 1},
+			{PID: 18, CreatedAt: started.Add(-time.Hour), Name: "restricted-agent", Threads: 2},
+		},
+	}}}
+	monitor, err := appstatus.New(openStore(t), probe, appstatus.Options{HostOS: "linux", Interval: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := monitor.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	view, err := monitor.View(context.Background(), appstatus.Query{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Applications) != 1 {
+		t.Fatalf("applications = %#v, want only the restricted user process", view.Applications)
+	}
+	application := view.Applications[0]
+	if application.Name != "restricted-agent" || application.Pinnable {
+		t.Fatalf("restricted user process = %#v, want visible and not pinnable", application)
+	}
+}
+
 func TestLogSourceResolvesAVisibleDockerApplicationThroughTheProbe(t *testing.T) {
 	t.Parallel()
 

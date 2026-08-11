@@ -138,6 +138,10 @@ func collectProcess(ctx context.Context, item *process.Process, threadCounts map
 	if value, err := item.ExeWithContext(ctx); err == nil {
 		raw.ExecutablePath = value
 	}
+	if raw.ExecutablePath == "" && processIsKernelThread(ctx, item.Pid) {
+		raw.KernelThread = true
+		return raw, true
+	}
 	if value, err := item.TimesWithContext(ctx); err == nil {
 		raw.CPUSeconds = value.User + value.System + value.Idle + value.Nice +
 			value.Iowait + value.Irq + value.Softirq + value.Steal
