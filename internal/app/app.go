@@ -350,6 +350,7 @@ type App struct {
 	files                *hostfiles.Manager
 	auditLog             *auditlog.Store
 	uploadInbox          *uploadinbox.Store
+	execUploadExts       map[string]struct{}
 	fileOperations       *sqliteFileOperationStore
 	fileMoves            *hostfiles.MoveEngine
 	fileOperationCtx     context.Context
@@ -470,7 +471,8 @@ func Open(config Config) (*App, error) {
 	}
 	application := &App{
 		db: db, stateRoot: stateRoot, files: files, uploadInbox: uploadInboxStore, instanceLock: instanceLock,
-		loginSlots: make(chan struct{}, 2), loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies,
+		execUploadExts: buildExecutableUploadExtensions(config.ExecutorChains),
+		loginSlots:     make(chan struct{}, 2), loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies,
 		allowedHosts: allowedHosts, canonicalExternalURL: config.CanonicalExternalURL,
 		loginRateSalt:  loginRateSalt,
 		logStreamSlots: make(chan struct{}, 8), logHistorySlots: make(chan struct{}, 4),
@@ -680,6 +682,29 @@ func Open(config Config) (*App, error) {
 	application.handler = application.routes()
 	opened = true
 	return application, nil
+}
+
+func buildExecutableUploadExtensions(configured map[string][]string) map[string]struct{} {
+	extensions := make(map[string]struct{})
+	for _, extension := range []string{
+		".appimage", ".bat", ".cmd", ".com", ".cpl", ".desktop", ".dll", ".exe", ".hta",
+		".jar", ".js", ".jse", ".msi", ".ps1", ".py", ".reg", ".scr", ".service", ".sh",
+		".vbe", ".vbs", ".wsf", ".wsh",
+	} {
+		extensions[extension] = struct{}{}
+	}
+	for extension := range configured {
+		extension = strings.ToLower(strings.TrimSpace(extension))
+		if strings.HasPrefix(extension, ".") {
+			extensions[extension] = struct{}{}
+		}
+	}
+	return extensions
+}
+
+func (a *App) executableUploadRequiresPublication(name string) bool {
+	_, active := a.execUploadExts[strings.ToLower(filepath.Ext(name))]
+	return active
 }
 
 func (a *App) Handler() http.Handler {
@@ -2279,7 +2304,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /resources/files/preview", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.previewImage)))
 	mux.Handle("GET /resources/files/view", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.previewTextPage)))
 	mux.Handle("POST /resources/files/delete", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.deleteFile)))
-	mux.Handle("POST /resources/files/move", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.moveFile)))
+	mux.Handle("POST /resources/files/move", a.requireStepUp(permissionWriteFiles, http.HandlerFunc(a.moveFile)))
 	mux.Handle("POST /resources/files/toggle-executable", a.requireStepUp(permissionWriteFiles, http.HandlerFunc(a.toggleExecutable)))
 	mux.Handle("GET /resources/files/operations/{id}", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.fileOperationPage)))
 	mux.Handle("GET /resources/files/operations/{id}/status", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.fileOperationStatus)))
@@ -4696,6 +4721,30 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 			_ = part.Close()
 			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: webText(locale, "upload_results.cannot_overwrite")})
 			a.recordAuditForRequest(request, "upload_file", filename, "rejected")
+			continue
+		}
+		if a.executableUploadRequiresPublication(uploadName) {
+			if replace {
+				_ = part.Close()
+				results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: webText(locale, "upload_results.executable_overwrite")})
+				a.recordAuditForRequest(request, "stage_executable_upload", uploadName, "rejected")
+				continue
+			}
+			pending, stageErr := a.uploadInbox.Receive(uploadinbox.Input{
+				EntryID: "host-files", OriginalName: uploadName, TargetDirectory: relative, ConflictPolicy: "reject",
+			}, part, 1<<30)
+			_ = part.Close()
+			if stageErr != nil {
+				results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: secretredaction.String(stageErr.Error())})
+				a.recordAuditForRequest(request, "stage_executable_upload", uploadName, "rejected")
+				continue
+			}
+			a.recordAuditForRequest(request, "stage_executable_upload", pending.ID+" "+pending.SHA256+" "+relative+"/"+uploadName, "succeeded")
+			results = append(results, uploadResult{
+				Name: uploadName, Result: webText(locale, "upload_results.staged"),
+				Detail: webText(locale, "upload_results.staged_detail"), Succeeded: true,
+			})
+			succeeded++
 			continue
 		}
 		release, leaseErr := a.acquireFileMutationLease(targetPath)

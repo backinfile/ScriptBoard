@@ -588,6 +588,12 @@ schema 38 增加持久化单例 `external_trigger_control`，用于全局紧急�
 
 变量与快捷执行条目使用 `target` 建立领域引用：目标被引用时禁止删除；变量被引用时也禁止改名或转为密码变量。日志文件与上传目录都在配置和调用时通过 Host Filesystem 边界重新验证；日志动作将规范化后的文件绝对路径保存在 `target` 与 `config_json.file` 中。到期 Key 不需要后台任务修改数据库；鉴权时根据当前时间派生为不可用状态。
 
+私有上传收件箱同时接收 External Interface 文件与 Host Files 页面提交的可执行扩展。两类
+payload 都只使用随机目录内固定无扩展名、0600 文件，metadata 保存来源、原始文件名、规范
+目标目录、冲突策略、大小、SHA-256 和创建时间。Host Files 普通文档仍可原子直传；内置或
+自定义执行器扩展必须经 step-up 发布路由重新读取并校验整个 payload 后才进入主机路径，且
+普通上传不得直接覆盖已有可执行文件。
+
 ## 13. MySQL 备份恢复管理
 
 schema 30 增加独立的 `mysqlmanager` 领域表；Web 层只调用领域服务，不直接执行管理 SQL 或拼装客户端参数。

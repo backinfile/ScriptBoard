@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -12,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -1037,6 +1039,61 @@ func postHostUpload(t *testing.T, client *http.Client, serverURL, csrfToken, dir
 		t.Fatalf("read upload response: %v", err)
 	}
 	return response.StatusCode, body
+}
+
+func TestExecutableHostUploadIsStagedUntilExplicitPublication(t *testing.T) {
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	content := "Write-Output 'staged'\n"
+	status, result := postHostUpload(t, client, serverURL, formToken(t, page), hostRoot, "deploy.ps1", content, "")
+	if status != http.StatusOK || !bytes.Contains(result, []byte("Pending review")) {
+		t.Fatalf("executable upload was not staged: status=%d body=%s", status, result)
+	}
+	if _, err := os.Stat(filepath.Join(hostRoot, "deploy.ps1")); !os.IsNotExist(err) {
+		t.Fatalf("executable reached host path before publication: %v", err)
+	}
+
+	response, err = client.Get(serverURL + "/resources/inbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inbox, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	match := regexp.MustCompile(`/resources/inbox/([^/]+)/publish`).FindSubmatch(inbox)
+	if len(match) != 2 || !bytes.Contains(inbox, []byte("deploy.ps1")) {
+		t.Fatalf("staged executable missing from inbox: %s", inbox)
+	}
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(content)))
+	response, err = client.PostForm(serverURL+string(match[0]), url.Values{
+		"csrf_token": {formToken(t, inbox)}, "sha256": {digest}, "confirm": {"yes"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("publish staged executable status=%d", response.StatusCode)
+	}
+	stored, err := os.ReadFile(filepath.Join(hostRoot, "deploy.ps1"))
+	if err != nil || string(stored) != content {
+		t.Fatalf("published executable content=%q err=%v", stored, err)
+	}
+	status, result = postHostUpload(t, client, serverURL, formToken(t, page), hostRoot, "deploy.ps1", "replacement", "overwrite")
+	if status != http.StatusMultiStatus || !bytes.Contains(result, []byte("cannot be overwritten")) {
+		t.Fatalf("direct executable overwrite was not rejected: status=%d body=%s", status, result)
+	}
+	stored, err = os.ReadFile(filepath.Join(hostRoot, "deploy.ps1"))
+	if err != nil || string(stored) != content {
+		t.Fatalf("rejected overwrite changed executable: content=%q err=%v", stored, err)
+	}
 }
 
 func TestUploadNameConflictDefaultsToSkipAndSupportsRename(t *testing.T) {
