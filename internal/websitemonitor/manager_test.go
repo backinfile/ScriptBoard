@@ -48,6 +48,41 @@ func TestCreateImmediatelyChecksHTTPMonitor(t *testing.T) {
 	}
 }
 
+func TestTLSVerificationExceptionIsIssuedForOneHour(t *testing.T) {
+	now := time.Date(2026, time.August, 11, 8, 0, 0, 0, time.UTC)
+	manager := newTestManager(t, Options{
+		Now:  func() time.Time { return now },
+		Tick: time.Hour,
+		Probe: probeFunc(func(context.Context, Config) Evidence {
+			return Evidence{Success: true, StatusCode: http.StatusOK}
+		}),
+	})
+	created, err := manager.Create(context.Background(), Config{
+		Name: "temporary TLS exception", Kind: KindHTTP, URL: "https://example.com/",
+		SkipTLSVerification: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := now.Add(time.Hour); !created.Config.TLSVerificationDisabledUntil.Equal(want) {
+		t.Fatalf("TLS exception expires at %v, want %v", created.Config.TLSVerificationDisabledUntil, want)
+	}
+	if !created.Config.SkipTLSVerificationAt(now.Add(30 * time.Minute)) {
+		t.Fatal("active TLS exception was not honored")
+	}
+	if created.Config.SkipTLSVerificationAt(now.Add(time.Hour)) {
+		t.Fatal("expired TLS exception remained active")
+	}
+	now = now.Add(time.Hour)
+	loaded, err := manager.Get(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Config.SkipTLSVerification || !loaded.Config.TLSVerificationDisabledUntil.IsZero() {
+		t.Fatalf("expired TLS exception was exposed as active: %#v", loaded.Config)
+	}
+}
+
 func TestTwoConsecutiveFailuresConfirmAnIncident(t *testing.T) {
 	probe := &sequenceProbe{results: []Evidence{
 		{ErrorCategory: "connect", Summary: "网站拒绝连接"},

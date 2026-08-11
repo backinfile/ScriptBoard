@@ -348,6 +348,17 @@ func (m *Manager) normalizeConfig(ctx context.Context, config Config) (Config, e
 	if err != nil {
 		return Config{}, err
 	}
+	now := m.options.Now().UTC()
+	if normalized.SkipTLSVerification {
+		if normalized.TLSVerificationDisabledUntil.IsZero() {
+			normalized.TLSVerificationDisabledUntil = now.Add(TLSVerificationExceptionDuration)
+		}
+		if !normalized.TLSVerificationDisabledUntil.After(now) || normalized.TLSVerificationDisabledUntil.After(now.Add(TLSVerificationExceptionDuration)) {
+			return Config{}, errors.New("TLS 验证例外必须在一小时内到期")
+		}
+	} else {
+		normalized.TLSVerificationDisabledUntil = time.Time{}
+	}
 	if _, err := m.resolveRequestHeaders(ctx, normalized.RequestHeaders); err != nil {
 		return Config{}, err
 	}
@@ -394,6 +405,10 @@ func (m *Manager) Get(ctx context.Context, id string) (Monitor, error) {
 	}
 	if err := json.Unmarshal([]byte(configJSON), &value.Config); err != nil {
 		return Monitor{}, fmt.Errorf("decode website monitor config: %w", err)
+	}
+	if value.Config.SkipTLSVerification && !value.Config.SkipTLSVerificationAt(m.options.Now()) {
+		value.Config.SkipTLSVerification = false
+		value.Config.TLSVerificationDisabledUntil = time.Time{}
 	}
 	_ = json.Unmarshal([]byte(certificateJSON), &value.Latest.Certificate)
 	value.Latest.Success = lastSuccess

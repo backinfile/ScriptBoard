@@ -456,7 +456,7 @@ func (a *App) createWebsiteMonitor(response http.ResponseWriter, request *http.R
 			newWebsiteMonitorFormView(config, map[string]string{"form": err.Error()}, resolveWebLocale(request), current.csrfToken, "", false))
 		return
 	}
-	a.recordAuditForRequest(request, "create_website_monitor", monitor.Config.Name, "succeeded")
+	a.recordAuditForRequest(request, "create_website_monitor", websiteMonitorAuditTarget(monitor.Config), "succeeded")
 	response.Header().Set(assistantResourceIDHeader, monitor.ID)
 	http.Redirect(response, request, "/monitor/websites/"+monitor.ID, http.StatusSeeOther)
 }
@@ -491,8 +491,16 @@ func (a *App) updateWebsiteMonitor(response http.ResponseWriter, request *http.R
 			newWebsiteMonitorFormView(config, map[string]string{"form": err.Error()}, resolveWebLocale(request), current.csrfToken, id, true))
 		return
 	}
-	a.recordAuditForRequest(request, "update_website_monitor", monitor.Config.Name, "succeeded")
+	a.recordAuditForRequest(request, "update_website_monitor", websiteMonitorAuditTarget(monitor.Config), "succeeded")
 	http.Redirect(response, request, "/monitor/websites/"+monitor.ID, http.StatusSeeOther)
+}
+
+func websiteMonitorAuditTarget(config websitemonitor.Config) string {
+	target := config.Name
+	if config.SkipTLSVerification {
+		target += " tls_verification_disabled_until=" + config.TLSVerificationDisabledUntil.UTC().Format(time.RFC3339)
+	}
+	return target
 }
 
 func firstWebsiteMonitorFieldError(fieldErrors map[string]string) (string, string) {

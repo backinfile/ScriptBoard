@@ -13,6 +13,7 @@ import (
 func TestRemoteWebsiteMonitorEndpointValidationAndRedirectProtection(t *testing.T) {
 	for _, invalid := range []string{
 		"file:///state/app.db",
+		"http://example.com/trigger?name=websites",
 		"https://user:password@example.com/trigger?name=websites",
 		"https://example.com/trigger",
 		"https://example.com/trigger?name=websites#secret",

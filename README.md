@@ -184,6 +184,10 @@ scriptboard audit verify --config CONFIG_PATH
 
 `allowed_hosts` 是 Host Header 白名单；通配或非回环监听必须显式配置。`canonical_external_url` 的主机必须位于该白名单中，生成对外绝对 URL 时只使用这个值。反向代理部署还须显式配置直连代理的 `trusted_proxies`，未受信来源提供的转发头会被忽略。
 
+网站监控默认验证 HTTPS/WSS 证书。关闭验证只会签发一小时的临时例外，页面持续显示警告，
+创建或更新审计会记录到期时间；到期后自动恢复验证。连接另一台 ScriptBoard 汇聚网站状态
+时必须使用 HTTPS Endpoint，HTTP、重定向、回环、私网和云元数据目标都会被拒绝。
+
 管理员启动凭据不接受明文 `admin_password`、`SCRIPTBOARD_ADMIN_PASSWORD` 或 `--admin-password`；旧配置会以包含迁移指引的错误拒绝启动。需要启动时覆盖凭据时，只能使用绝对路径的 `admin_password_file`、`SCRIPTBOARD_ADMIN_PASSWORD_FILE` 或 `--admin-password-file`。首次启动与 `scriptboard admin reset` 仍会生成 State Root 内权限受限、修改密码后删除的一次性凭据文件。
 
 ## 更新与备份

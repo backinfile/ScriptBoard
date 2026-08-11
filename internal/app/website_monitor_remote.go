@@ -208,7 +208,7 @@ func normalizeRemoteWebsiteEndpoint(raw string) (string, error) {
 		return "", errors.New("invalid endpoint")
 	}
 	parsed, err := url.Parse(value)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
 		return "", errors.New("invalid endpoint")
 	}
 	if parsed.RawQuery == "" || parsed.Query().Get("name") == "" {

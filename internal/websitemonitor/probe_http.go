@@ -29,6 +29,7 @@ func (NetworkProbe) Check(ctx context.Context, config Config) Evidence {
 	}
 	started := time.Now()
 	result := Evidence{CheckedAt: started.UTC()}
+	skipTLSVerification := config.SkipTLSVerificationAt(started)
 	if config.Kind != KindHTTP {
 		result.ErrorCategory = "internal"
 		result.Summary = "暂不支持这种检查方式"
@@ -50,7 +51,7 @@ func (NetworkProbe) Check(ctx context.Context, config Config) Evidence {
 	}
 	policy := outboundPolicy(config)
 	transport := policy.Transport()
-	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: config.SkipTLSVerification} //nolint:gosec -- explicit per-monitor administrator setting
+	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: skipTLSVerification} //nolint:gosec -- bounded per-monitor administrator exception
 	client := &http.Client{
 		Transport: transport,
 		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
@@ -80,7 +81,7 @@ func (NetworkProbe) Check(ctx context.Context, config Config) Evidence {
 	}
 	defer response.Body.Close()
 	result.StatusCode = response.StatusCode
-	result.Certificate = certificateFromHTTP(response, !config.SkipTLSVerification, result.CheckedAt)
+	result.Certificate = certificateFromHTTP(response, !skipTLSVerification, result.CheckedAt)
 	if !acceptedHTTPStatus(config, response.StatusCode) {
 		result.ErrorCategory = "http-status"
 		result.Summary = fmt.Sprintf("网站返回了不符合预期的 HTTP %d", response.StatusCode)
@@ -114,9 +115,10 @@ func (NetworkProbe) Check(ctx context.Context, config Config) Evidence {
 func checkWebSocket(ctx context.Context, config Config) Evidence {
 	started := time.Now()
 	result := Evidence{CheckedAt: started.UTC()}
+	skipTLSVerification := config.SkipTLSVerificationAt(started)
 	dialer := websocket.Dialer{
 		NetDialContext:  outboundPolicy(config).DialContext,
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: config.SkipTLSVerification}, //nolint:gosec -- explicit per-monitor administrator setting
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: skipTLSVerification}, //nolint:gosec -- bounded per-monitor administrator exception
 	}
 	headers := http.Header{}
 	applyRequestHeaders(headers, config.RequestHeaders)
@@ -138,7 +140,7 @@ func checkWebSocket(ctx context.Context, config Config) Evidence {
 	}
 	defer connection.Close()
 	result.StatusCode = http.StatusSwitchingProtocols
-	result.Certificate = certificateFromConnection(connection.UnderlyingConn(), !config.SkipTLSVerification, result.CheckedAt)
+	result.Certificate = certificateFromConnection(connection.UnderlyingConn(), !skipTLSVerification, result.CheckedAt)
 	if config.WebSocketSuccess == "" || config.WebSocketSuccess == WebSocketHandshake {
 		result.Success = true
 		result.Summary = "WebSocket 连接已建立"

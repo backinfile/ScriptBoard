@@ -8,6 +8,8 @@ import (
 
 const UserAgent = "ScriptBoard-Website-Monitor/1.0"
 
+const TLSVerificationExceptionDuration = time.Hour
+
 type Scope string
 
 const (
@@ -72,30 +74,35 @@ const (
 )
 
 type Config struct {
-	Name                 string
-	Scope                Scope
-	Kind                 Kind
-	URL                  string
-	Frequency            time.Duration
-	Timeout              time.Duration
-	HTTPMethod           string
-	HTTPContentType      string
-	HTTPBody             string
-	RequestHeaders       []RequestHeader
-	HTTPSuccessMode      HTTPSuccessMode
-	ExpectedStatuses     []int
-	ExpectedStatusRanges []HTTPStatusRange
-	ResponseKeyword      string
-	DisableRedirects     bool
-	SkipTLSVerification  bool
-	WebSocketSuccess     WebSocketSuccess
-	SendType             MessageType
-	SendPayload          string
-	ReceiveType          MessageType
-	ExpectedMessage      string
-	PingPayloadFormat    PayloadFormat
-	PingPayload          string
-	Source               string
+	Name                         string
+	Scope                        Scope
+	Kind                         Kind
+	URL                          string
+	Frequency                    time.Duration
+	Timeout                      time.Duration
+	HTTPMethod                   string
+	HTTPContentType              string
+	HTTPBody                     string
+	RequestHeaders               []RequestHeader
+	HTTPSuccessMode              HTTPSuccessMode
+	ExpectedStatuses             []int
+	ExpectedStatusRanges         []HTTPStatusRange
+	ResponseKeyword              string
+	DisableRedirects             bool
+	SkipTLSVerification          bool
+	TLSVerificationDisabledUntil time.Time
+	WebSocketSuccess             WebSocketSuccess
+	SendType                     MessageType
+	SendPayload                  string
+	ReceiveType                  MessageType
+	ExpectedMessage              string
+	PingPayloadFormat            PayloadFormat
+	PingPayload                  string
+	Source                       string
+}
+
+func (config Config) SkipTLSVerificationAt(at time.Time) bool {
+	return config.SkipTLSVerification && config.TLSVerificationDisabledUntil.After(at.UTC())
 }
 
 type Certificate struct {
