@@ -829,7 +829,9 @@ func parseTrustedProxies(values []string) ([]*net.IPNet, error) {
 	return result, nil
 }
 
-func (a *App) applyTrustedProxy(request *http.Request) *http.Request {
+const maximumForwardedChainLength = 8
+
+func (a *App) applyTrustedProxy(request *http.Request) (*http.Request, error) {
 	host, _, err := net.SplitHostPort(request.RemoteAddr)
 	if err != nil {
 		host = request.RemoteAddr
@@ -847,14 +849,23 @@ func (a *App) applyTrustedProxy(request *http.Request) *http.Request {
 		request.Header.Del("X-Forwarded-For")
 		request.Header.Del("X-Forwarded-Host")
 		request.Header.Del("X-Forwarded-Proto")
-		return request
+		return request, nil
 	}
-	forwarded := strings.Split(request.Header.Get("X-Forwarded-For"), ",")
+	if len(request.Header.Values("Forwarded")) != 0 {
+		return nil, errors.New("the Forwarded header is not accepted; use the configured X-Forwarded contract")
+	}
+	forwardedFor, err := singleForwardedHeader(request.Header, "X-Forwarded-For")
+	if err != nil {
+		return nil, err
+	}
+	forwarded, err := validatedForwardedValues(forwardedFor, func(value string) bool {
+		return net.ParseIP(value) != nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("invalid X-Forwarded-For: %w", err)
+	}
 	for index := len(forwarded) - 1; index >= 0; index-- {
-		client := net.ParseIP(strings.TrimSpace(forwarded[index]))
-		if client == nil {
-			continue
-		}
+		client := net.ParseIP(forwarded[index])
 		clientTrusted := false
 		for _, network := range a.trustedProxies {
 			if network.Contains(client) {
@@ -867,15 +878,63 @@ func (a *App) applyTrustedProxy(request *http.Request) *http.Request {
 			break
 		}
 	}
-	forwardedProto := strings.Split(request.Header.Get("X-Forwarded-Proto"), ",")
-	if strings.EqualFold(strings.TrimSpace(forwardedProto[len(forwardedProto)-1]), "https") {
+	rawProto, err := singleForwardedHeader(request.Header, "X-Forwarded-Proto")
+	if err != nil {
+		return nil, err
+	}
+	forwardedProto, err := validatedForwardedValues(rawProto, func(value string) bool {
+		return strings.EqualFold(value, "http") || strings.EqualFold(value, "https")
+	})
+	if err != nil {
+		return nil, fmt.Errorf("invalid X-Forwarded-Proto: %w", err)
+	}
+	if len(forwardedProto) > 0 && strings.EqualFold(forwardedProto[len(forwardedProto)-1], "https") {
 		request = request.WithContext(context.WithValue(request.Context(), secureContextKey, true))
 	}
-	forwardedHost := strings.Split(request.Header.Get("X-Forwarded-Host"), ",")
-	if candidate := strings.TrimSpace(forwardedHost[len(forwardedHost)-1]); candidate != "" {
-		request.Host = candidate
+	rawHost, err := singleForwardedHeader(request.Header, "X-Forwarded-Host")
+	if err != nil {
+		return nil, err
 	}
-	return request
+	forwardedHost, err := validatedForwardedValues(rawHost, func(value string) bool {
+		_, normalizeErr := normalizeHTTPHost(value)
+		return normalizeErr == nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("invalid X-Forwarded-Host: %w", err)
+	}
+	if len(forwardedHost) > 0 {
+		request.Host = forwardedHost[len(forwardedHost)-1]
+	}
+	return request, nil
+}
+
+func singleForwardedHeader(header http.Header, name string) (string, error) {
+	values := header.Values(name)
+	if len(values) > 1 {
+		return "", fmt.Errorf("multiple %s header fields are not allowed", name)
+	}
+	if len(values) == 0 {
+		return "", nil
+	}
+	return values[0], nil
+}
+
+func validatedForwardedValues(raw string, valid func(string) bool) ([]string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	parts := strings.Split(raw, ",")
+	if len(parts) > maximumForwardedChainLength {
+		return nil, errors.New("forwarded chain is too long")
+	}
+	values := make([]string, len(parts))
+	for index, part := range parts {
+		values[index] = strings.TrimSpace(part)
+		if values[index] == "" || !valid(values[index]) {
+			return nil, fmt.Errorf("invalid forwarded value at position %d", index+1)
+		}
+	}
+	return values, nil
 }
 
 func isSecureRequest(request *http.Request) bool {
@@ -2313,7 +2372,11 @@ func (a *App) routes() http.Handler {
 		}
 		request = request.WithContext(context.WithValue(request.Context(), requestIDContextKey, requestID))
 		response.Header().Set("X-Request-ID", requestID)
-		request = a.applyTrustedProxy(request)
+		request, err = a.applyTrustedProxy(request)
+		if err != nil {
+			http.Error(response, "invalid trusted proxy headers", http.StatusBadRequest)
+			return
+		}
 		if !a.validRequestHost(request.Host) {
 			http.Error(response, "request host is not allowed", http.StatusMisdirectedRequest)
 			return

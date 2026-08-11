@@ -52,6 +52,7 @@
 
 ## 最新决策
 
+- [ADR-0138 可信代理只接受一套有界 X-Forwarded 合同](./0138-use-one-bounded-trusted-proxy-header-contract.md)，拒绝多规范混用、坏值、重复字段和无界代理链。
 - [ADR-0137 MySQL 恢复禁用本地客户端命令并限制 gzip 展开](./0137-disable-local-mysql-commands-during-restore.md)，防止导入 SQL 调用宿主命令并限制压缩展开资源。
 - [ADR-0136 使用 Job Object 限制 Windows Assistant Runtime](./0136-bound-windows-assistant-runtime-with-job-objects.md)，为 Pi 增加单进程、内存、CPU、UI 与强制回收边界。
 - [ADR-0135 按 Runtime 会话代理 Assistant Provider 凭据](./0135-proxy-assistant-provider-credentials-per-runtime-session.md)，从 Pi 环境与配置移除真实上游地址和凭据，并用进程生命周期 capability 收口正常 Provider 流量。
