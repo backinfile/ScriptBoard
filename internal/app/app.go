@@ -807,6 +807,10 @@ func (a *App) applyTrustedProxy(request *http.Request) *http.Request {
 		}
 	}
 	if !trusted {
+		request.Header.Del("Forwarded")
+		request.Header.Del("X-Forwarded-For")
+		request.Header.Del("X-Forwarded-Host")
+		request.Header.Del("X-Forwarded-Proto")
 		return request
 	}
 	forwarded := strings.Split(request.Header.Get("X-Forwarded-For"), ",")
@@ -2093,6 +2097,11 @@ func (a *App) routes() http.Handler {
 			resetReadDeadline := setRequestReadDeadline(response, boundedFormReadTimeout)
 			defer resetReadDeadline()
 			request.Body = http.MaxBytesReader(response, request.Body, maxFormRequestBytes)
+		}
+		if request.Method != http.MethodGet && request.Method != http.MethodHead && request.Method != http.MethodOptions &&
+			request.URL.Path != "/trigger" && !validRequestOrigin(request) {
+			http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
+			return
 		}
 		if a.validation.Load() && (request.Method != http.MethodGet || request.URL.Path == "/trigger") {
 			response.Header().Set("Retry-After", "2")
@@ -5126,7 +5135,8 @@ func (a *App) requireSession(next http.Handler) http.Handler {
 			http.Redirect(response, request, "/login", http.StatusSeeOther)
 			return
 		}
-		if !roleAllows(current.role, permissionForRequest(request)) {
+		required, declared := permissionForRequest(request)
+		if !declared || !roleAllows(current.role, required) {
 			http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
 			return
 		}

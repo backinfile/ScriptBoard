@@ -153,7 +153,7 @@ func defaults() Config {
 		return Config{
 			StateRoot:       filepath.Join(base, "state"),
 			Listen:          "127.0.0.1:8787",
-			TrustedProxies:  []string{"127.0.0.1/32"},
+			TrustedProxies:  nil,
 			RunTimeoutGrace: 30 * time.Second,
 			UpdateCheck:     true,
 			UpdateInterval:  6 * time.Hour,
@@ -163,7 +163,7 @@ func defaults() Config {
 	return Config{
 		StateRoot:       "/var/lib/scriptboard/state",
 		Listen:          "127.0.0.1:8787",
-		TrustedProxies:  []string{"127.0.0.1/32"},
+		TrustedProxies:  nil,
 		RunTimeoutGrace: 30 * time.Second,
 		UpdateCheck:     true,
 		UpdateInterval:  6 * time.Hour,

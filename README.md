@@ -9,7 +9,7 @@ ScriptBoard 是一款面向单台 Windows 或 Linux 主机的自托管脚本操�
 [下载最新版本](https://github.com/backinfile/ScriptBoard/releases/latest) · [快速开始](#快速开始) · [安装为系统服务](#安装为系统服务) · [常见问题](#常见问题)
 
 > [!WARNING]
-> ScriptBoard 不是安全沙箱。脚本会使用 ScriptBoard 服务的系统身份、权限和环境变量运行。请只运行可信脚本，只向可信用户开放，并且不要将服务直接暴露到公网。
+> ScriptBoard 不是安全沙箱。脚本会使用 ScriptBoard 服务的系统身份和权限运行，但只接收 ScriptBoard 提供的最小环境变量。请只运行可信脚本，只向可信用户开放，并且不要将服务直接暴露到公网。
 
 ![ScriptBoard 快捷执行页面](./integration/browser/snapshots/readme-quick-runs-zh.png)
 

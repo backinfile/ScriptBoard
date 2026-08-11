@@ -3,7 +3,6 @@ package config_test
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -23,8 +22,8 @@ func TestLoadUsesMinimalInstallationDefaults(t *testing.T) {
 	if loaded.Listen != "127.0.0.1:8787" {
 		t.Fatalf("default listen = %q", loaded.Listen)
 	}
-	if want := []string{"127.0.0.1/32"}; !reflect.DeepEqual(loaded.TrustedProxies, want) {
-		t.Fatalf("default trusted proxies = %#v, want %#v", loaded.TrustedProxies, want)
+	if len(loaded.TrustedProxies) != 0 {
+		t.Fatalf("default trusted proxies = %#v, want none", loaded.TrustedProxies)
 	}
 }
 

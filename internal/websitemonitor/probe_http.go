@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"scriptboard/internal/outboundpolicy"
 )
 
 const maxResponseBodyBytes = 1 << 20
@@ -46,12 +47,16 @@ func (NetworkProbe) Check(ctx context.Context, config Config) Evidence {
 	if config.HTTPMethod == http.MethodPost && config.HTTPContentType != "" && request.Header.Get("Content-Type") == "" {
 		request.Header.Set("Content-Type", config.HTTPContentType)
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	policy := outboundPolicy(config)
+	transport := policy.Transport()
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: config.SkipTLSVerification} //nolint:gosec -- explicit per-monitor administrator setting
 	client := &http.Client{
 		Transport: transport,
 		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
 			if config.DisableRedirects {
+				return http.ErrUseLastResponse
+			}
+			if len(via) > 0 && (via[0].Header.Get("Authorization") != "" || via[0].Header.Get("Cookie") != "") {
 				return http.ErrUseLastResponse
 			}
 			if len(via) > 5 {
@@ -109,7 +114,7 @@ func checkWebSocket(ctx context.Context, config Config) Evidence {
 	started := time.Now()
 	result := Evidence{CheckedAt: started.UTC()}
 	dialer := websocket.Dialer{
-		Proxy:           http.ProxyFromEnvironment,
+		NetDialContext:  outboundPolicy(config).DialContext,
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: config.SkipTLSVerification}, //nolint:gosec -- explicit per-monitor administrator setting
 	}
 	headers := http.Header{}
@@ -174,6 +179,11 @@ func checkWebSocket(ctx context.Context, config Config) Evidence {
 			return result
 		}
 	}
+}
+
+func outboundPolicy(config Config) outboundpolicy.Policy {
+	local := config.Scope == ScopeLocal
+	return outboundpolicy.Policy{AllowPrivate: local, AllowAnyPort: local}
 }
 
 func applyRequestHeaders(target http.Header, headers []RequestHeader) {

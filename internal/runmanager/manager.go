@@ -432,7 +432,7 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 			continue
 		}
 		candidate.Dir = prepared.workingDirectory.Path
-		candidate.Env = append(os.Environ(), "SCRIPTBOARD_RUN_ID="+id, "SCRIPTBOARD_SCRIPT_PATH="+prepared.displayPath)
+		candidate.Env = runEnvironment(id, prepared.displayPath)
 		configureProcess(candidate)
 		candidateStdout, pipeErr := candidate.StdoutPipe()
 		if pipeErr != nil {

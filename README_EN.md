@@ -9,7 +9,7 @@ ScriptBoard is a self-hosted script console for a single Windows or Linux host. 
 [Download the latest release](https://github.com/backinfile/ScriptBoard/releases/latest) · [Quick start](#quick-start) · [Install as a system service](#install-as-a-system-service) · [Troubleshooting](#troubleshooting)
 
 > [!WARNING]
-> ScriptBoard is not a security sandbox. Scripts run with the operating-system identity, permissions, and environment of the ScriptBoard service. Run only trusted scripts, grant access only to trusted users, and never expose the service directly to the public internet.
+> ScriptBoard is not a security sandbox. Scripts run with the operating-system identity and permissions of the ScriptBoard service, but receive only a minimal ScriptBoard-provided environment. Run only trusted scripts, grant access only to trusted users, and never expose the service directly to the public internet.
 
 ![ScriptBoard Quick Runs page](./integration/browser/snapshots/readme-quick-runs-en.png)
 

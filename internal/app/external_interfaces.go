@@ -924,7 +924,7 @@ func (a *App) executeExternalUpload(response http.ResponseWriter, request *http.
 
 func externalExtensionAllowed(name string, allowed []string) bool {
 	if len(allowed) == 0 {
-		return true
+		return false
 	}
 	name = strings.ToLower(name)
 	for _, extension := range allowed {

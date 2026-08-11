@@ -16,6 +16,9 @@ jobs:
     environment: release
     permissions:
       contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,6 +38,16 @@ jobs:
           SCRIPTBOARD_UPDATE_NEXT_KEY_ID: ${{ secrets.SCRIPTBOARD_UPDATE_NEXT_KEY_ID }}
           SCRIPTBOARD_UPDATE_NEXT_PUBLIC_KEY: ${{ secrets.SCRIPTBOARD_UPDATE_NEXT_PUBLIC_KEY }}
         run: ./scripts/build-release.ps1 -Version "${{ github.ref_name }}"
+      - name: Generate release SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: dist/scriptboard-${{ github.ref_name }}-source.spdx.json
+      - name: Attest release provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/*
       - name: Verify Windows amd64 binary metadata
         shell: pwsh
         run: |

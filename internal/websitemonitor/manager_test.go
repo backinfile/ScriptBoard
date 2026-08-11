@@ -133,7 +133,7 @@ func TestPingPongRequiresAMatchingPongControlFrame(t *testing.T) {
 		manager := newTestManager(t, Options{})
 		created, err := manager.Create(context.Background(), Config{
 			Name:              "实时通知通道",
-			Scope:             ScopeExternal,
+			Scope:             ScopeLocal,
 			Kind:              KindWebSocket,
 			URL:               websocketURL(server.URL),
 			Timeout:           time.Second,
@@ -161,7 +161,7 @@ func TestPingPongRequiresAMatchingPongControlFrame(t *testing.T) {
 		manager := newTestManager(t, Options{})
 		created, err := manager.Create(context.Background(), Config{
 			Name:              "错误的活性通道",
-			Scope:             ScopeExternal,
+			Scope:             ScopeLocal,
 			Kind:              KindWebSocket,
 			URL:               websocketURL(server.URL),
 			Timeout:           100 * time.Millisecond,

@@ -35,6 +35,7 @@
 
 | 当前决策 | 已取代的历史决策 |
 | --- | --- |
+| [ADR-0130 安全边界默认拒绝并最小化子进程环境](./0130-default-to-closed-security-boundaries.md) | [ADR-0047 脚本继承服务进程环境](./0047-inherit-the-service-process-environment.md) |
 | [ADR-0023 默认使用宿主系统最高权限](./0023-default-to-highest-host-privileges.md) | [ADR-0002 信任管理员脚本](./0002-trust-admin-provided-scripts.md) |
 | [ADR-0027 允许无队列并发](./0027-allow-unbounded-concurrent-runs-without-a-queue.md) | [ADR-0012 拒绝并发](./0012-reject-instead-of-queueing-executions.md)、[ADR-0025 繁忙时跳过](./0025-skip-busy-cron-triggers-without-queueing.md) |
 | [ADR-0030 使用内置调度器](./0030-use-an-internal-scheduler-instead-of-crontab.md) | [ADR-0024 管理 crontab 条目](./0024-manage-only-owned-entries-in-runtime-users-crontab.md)、[ADR-0026 本机控制套接字](./0026-trigger-cron-runs-through-a-local-control-socket.md) |
@@ -50,6 +51,7 @@
 
 ## 最新决策
 
+- [ADR-0130 安全边界默认拒绝并最小化子进程环境](./0130-default-to-closed-security-boundaries.md)，落实安全加固计划的首个可发布切片。
 - [ADR-0127 仅开放有界的外部触发动作](./0127-expose-only-bounded-external-trigger-actions.md)，取代 ADR-0063 的全面不开放公开接口结论。
 - [ADR-0128 在 ScriptBoard 实例之间只读共享网站监控](./0128-share-website-monitoring-read-only-between-instances.md)，扩展 External Interface 的有界只读能力。
 

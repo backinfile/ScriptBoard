@@ -82,7 +82,10 @@ func TestFixedRolesCoverEveryProtectedRouteClass(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(test.method, test.path, nil)
-			required := permissionForRequest(request)
+			required, ok := permissionForRequest(request)
+			if !ok {
+				t.Fatalf("%s %s has no permission declaration", test.method, test.path)
+			}
 			for _, role := range roles {
 				want := containsRole(test.allowed, role)
 				if got := roleAllows(role, required); got != want {
@@ -90,6 +93,15 @@ func TestFixedRolesCoverEveryProtectedRouteClass(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestUnknownProtectedRouteHasNoFallbackPermission(t *testing.T) {
+	t.Parallel()
+
+	request := httptest.NewRequest(http.MethodGet, "/future/forgotten-route", nil)
+	if required, ok := permissionForRequest(request); ok {
+		t.Fatalf("unknown route resolved to permission %d", required)
 	}
 }
 

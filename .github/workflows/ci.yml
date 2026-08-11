@@ -24,8 +24,21 @@ jobs:
           cache: true
       - name: Test
         run: go test ./... -count=1
+      - name: Vet
+        run: go vet ./...
       - name: Build
         run: go build ./cmd/...
+
+  race:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Race-sensitive security packages
+        run: go test -race ./internal/app ./internal/externaltrigger ./internal/outboundpolicy ./internal/runmanager -count=1
 
   browser:
     runs-on: windows-latest

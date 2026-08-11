@@ -51,44 +51,47 @@ func roleAllows(role userRole, required permission) bool {
 // permissionForRequest is the authorization seam for the protected web
 // surface. Route handlers remain responsible for domain-specific constraints
 // such as an Operator stopping only a Run they initiated.
-func permissionForRequest(request *http.Request) permission {
+func permissionForRequest(request *http.Request) (permission, bool) {
 	path := request.URL.Path
+	if path == "/login" || path == "/settings/locale" {
+		return permissionObserve, true
+	}
 	if strings.HasPrefix(path, "/settings/users") {
-		return permissionManageUsers
+		return permissionManageUsers, true
 	}
 	if strings.HasPrefix(path, "/monitor/security") {
 		if request.Method == http.MethodGet {
-			return permissionObserve
+			return permissionObserve, true
 		}
-		return permissionManageSystem
+		return permissionManageSystem, true
 	}
 	if strings.HasPrefix(path, "/settings/account") || path == "/logout" {
-		return permissionObserve
+		return permissionObserve, true
 	}
 	if strings.HasPrefix(path, "/settings/") {
-		return permissionManageSystem
+		return permissionManageSystem, true
 	}
 	if strings.HasPrefix(path, "/history/audit") {
-		return permissionReadAudit
+		return permissionReadAudit, true
 	}
 	if strings.HasPrefix(path, "/resources/variables") {
-		return permissionManageExecution
+		return permissionManageExecution, true
 	}
 	if strings.HasPrefix(path, "/resources/databases") {
-		return permissionManageDatabases
+		return permissionManageDatabases, true
 	}
 	if strings.HasPrefix(path, "/resources/trash") {
-		return permissionWriteFiles
+		return permissionWriteFiles, true
 	}
 	if path == "/resources/directories" {
-		return permissionReadFiles
+		return permissionReadFiles, true
 	}
 	if path == "/resources/files" || strings.HasPrefix(path, "/resources/files/") {
 		if path == "/resources/files/quick-access" {
-			return permissionReadFiles
+			return permissionReadFiles, true
 		}
 		if path == "/resources/files/run" {
-			return permissionExecute
+			return permissionExecute, true
 		}
 		if path == "/resources/files/quick-run" ||
 			path == "/resources/files/edit" ||
@@ -96,50 +99,71 @@ func permissionForRequest(request *http.Request) permission {
 			path == "/resources/files/new-directory" ||
 			path == "/resources/files/upload" ||
 			request.Method != http.MethodGet {
-			return permissionWriteFiles
+			return permissionWriteFiles, true
 		}
-		return permissionReadFiles
+		return permissionReadFiles, true
 	}
-	if strings.HasPrefix(path, "/monitor/") {
+	if path == "/monitor" || strings.HasPrefix(path, "/monitor/") {
 		if request.Method != http.MethodGet ||
 			path == "/monitor/websites/new" ||
 			path == "/monitor/websites/export" ||
 			path == "/monitor/websites/import" ||
 			path == "/monitor/websites/nginx" ||
 			strings.HasSuffix(path, "/edit") {
-			return permissionManageOperations
+			return permissionManageOperations, true
 		}
-		return permissionObserve
+		return permissionObserve, true
+	}
+	if path == "/ai" || strings.HasPrefix(path, "/ai/") {
+		return permissionObserve, true
+	}
+	if path == "/config/dashboards" || strings.HasPrefix(path, "/config/dashboards/") ||
+		strings.HasPrefix(path, "/config/dashboard-cards/") {
+		if request.Method == http.MethodGet && path == "/config/dashboards" {
+			return permissionObserve, true
+		}
+		return permissionManageOperations, true
 	}
 	if strings.HasPrefix(path, "/config/quick-runs") {
 		if request.Method == http.MethodPost && strings.HasSuffix(path, "/start") {
-			return permissionExecute
+			return permissionExecute, true
 		}
 		if request.Method == http.MethodGet && (path == "/config/quick-runs" || path == "/config/quick-runs/") {
-			return permissionObserve
+			return permissionObserve, true
 		}
-		return permissionManageExecution
+		return permissionManageExecution, true
 	}
 	if strings.HasPrefix(path, "/config/schedules") {
 		if request.Method == http.MethodGet && (path == "/config/schedules" || path == "/config/schedules/") {
-			return permissionObserve
+			return permissionObserve, true
 		}
-		return permissionManageExecution
+		return permissionManageExecution, true
 	}
 	if strings.HasPrefix(path, "/config/external-interfaces") {
-		return permissionManageExecution
+		return permissionManageExecution, true
 	}
 	if strings.HasPrefix(path, "/history/runs") {
 		if strings.HasSuffix(path, "/source") || strings.HasSuffix(path, "/save-quick-run") ||
 			strings.HasSuffix(path, "/quick-run") {
-			return permissionManageExecution
+			return permissionManageExecution, true
 		}
 		if request.Method == http.MethodPost {
-			return permissionExecute
+			return permissionExecute, true
 		}
-		return permissionObserve
+		return permissionObserve, true
 	}
-	return permissionObserve
+	if path == "/" {
+		return permissionObserve, true
+	}
+	return 0, false
+}
+
+func declaredPermissionForRequest(request *http.Request) permission {
+	required, ok := permissionForRequest(request)
+	if !ok {
+		panic("protected route has no permission declaration: " + request.Method + " " + request.URL.Path)
+	}
+	return required
 }
 
 func (a *App) requirePermission(required permission, next http.Handler) http.Handler {

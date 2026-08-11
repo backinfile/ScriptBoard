@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"scriptboard/internal/outboundpolicy"
 )
 
 const (
@@ -172,7 +174,8 @@ func fetchRemoteWebsiteMonitors(ctx context.Context, endpoint, key string, local
 	request.Header.Set("Accept-Language", string(locale))
 	request.Header.Set("User-Agent", "ScriptBoard/remote-website-monitor")
 	client := &http.Client{
-		Timeout: 10 * time.Second,
+		Transport: outboundpolicy.Policy{}.Transport(),
+		Timeout:   10 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
