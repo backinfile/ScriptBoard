@@ -583,6 +583,7 @@ func TestAuthenticatedPagesExposeLocalizedGroupedApplicationShell(t *testing.T) 
 		`lang="en-US"`,
 		`class="app-sidebar"`,
 		`class="brand-wordmark"`,
+		`class="brand-version">dev</span>`,
 		`>Monitor<`,
 		`>Resources<`,
 		`>Configuration<`,

@@ -329,12 +329,25 @@ body[data-app-shell] { padding-left: var(--sidebar-width); }
 }
 .sidebar-collapse:hover { color: var(--ink); background: var(--canvas); }
 .brand-wordmark {
+  display: inline-flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 6px;
   color: var(--ink);
   font: 680 1.05rem/1 var(--font-display);
   letter-spacing: -.02em;
   text-decoration: none;
 }
 .brand-wordmark:hover { color: var(--ink); }
+.brand-version {
+  overflow: hidden;
+  color: var(--muted);
+  font: 650 .7rem/1 var(--font-ui);
+  letter-spacing: .01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.brand-wordmark:hover .brand-version { color: var(--ink); }
 .sidebar-close, .sidebar-toggle {
   display: none;
   place-items: center;
