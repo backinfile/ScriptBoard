@@ -38,7 +38,20 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Race-sensitive security packages
-        run: go test -race ./internal/app ./internal/externaltrigger ./internal/outboundpolicy ./internal/runmanager -count=1
+        run: >-
+          go test -race
+          ./internal/app
+          ./internal/assistant/pirpc
+          ./internal/assistant/providerproxy
+          ./internal/auditlog
+          ./internal/customdashboard
+          ./internal/externaltrigger
+          ./internal/mysqlmanager
+          ./internal/outboundpolicy
+          ./internal/processlaunch
+          ./internal/runmanager
+          ./internal/uploadinbox
+          -count=1
 
   browser:
     runs-on: windows-latest
