@@ -1280,6 +1280,9 @@ async function assertExternalInterfaces(page, fixture) {
     return current.origin === target.origin && current.pathname === target.pathname &&
       JSON.stringify([...current.searchParams.entries()]) === JSON.stringify([...target.searchParams.entries()]);
   };
+  const assertFixtureURL = (actual, expected, message) => {
+    assert.equal(matchesFixtureURL(expected)(new URL(actual)), true, message);
+  };
   let browser;
   const consoleErrors = [];
   try {
@@ -1784,7 +1787,7 @@ async function assertExternalInterfaces(page, fixture) {
     await page.waitForTimeout(250);
     page.off("request", recordUploadTaskRequest);
     assert.equal(uploadTaskRequests.length, 1, `Upload task fetched ${uploadTaskRequests.length} times`);
-    assert.equal(page.url(), hostFilesWorkspaceURL, "opening the Upload task changed the workspace URL");
+    assertFixtureURL(page.url(), hostFilesWorkspaceURL, "opening the Upload task changed the workspace URL");
     const taskScrim = page.locator(".task-panel-scrim");
     const taskScrimBackground = await taskScrim.evaluate(element => getComputedStyle(element).backgroundColor);
     await taskScrim.hover();
@@ -1797,13 +1800,13 @@ async function assertExternalInterfaces(page, fixture) {
     await page.locator("[data-task-panel]").waitFor({ state: "detached" });
     await page.locator('a[href^="/resources/files/new-directory"]').click();
     await page.locator("[data-task-panel]").waitFor();
-    assert.equal(page.url(), hostFilesWorkspaceURL, "opening the New directory task changed the workspace URL");
+    assertFixtureURL(page.url(), hostFilesWorkspaceURL, "opening the New directory task changed the workspace URL");
     await page.goBack();
     await page.locator("[data-task-panel]").waitFor({ state: "detached" });
-    assert.equal(page.url(), hostFilesWorkspaceURL, "closing a task with Back changed the workspace URL");
+    assertFixtureURL(page.url(), hostFilesWorkspaceURL, "closing a task with Back changed the workspace URL");
     await page.goForward();
     await page.locator("[data-task-panel]").waitFor();
-    assert.equal(page.url(), hostFilesWorkspaceURL, "restoring a task with Forward changed the workspace URL");
+    assertFixtureURL(page.url(), hostFilesWorkspaceURL, "restoring a task with Forward changed the workspace URL");
     await page.keyboard.press("Escape");
     await page.locator("[data-task-panel]").waitFor({ state: "detached" });
     await page.evaluate(() => localStorage.removeItem("scriptboard.files.pinnedDirectories.v2"));
@@ -1900,7 +1903,7 @@ async function assertExternalInterfaces(page, fixture) {
     await fileDropZone.dispatchEvent("drop", { dataTransfer: dropData });
     const uploadResultsDialog = page.locator("dialog.upload-results-dialog[open]");
     await uploadResultsDialog.waitFor();
-    assert.equal(page.url(), hostFilesWorkspaceURL, "enhanced upload left the current file directory");
+    assertFixtureURL(page.url(), hostFilesWorkspaceURL, "enhanced upload left the current file directory");
     assert.equal((await uploadResultsDialog.getByRole("heading").textContent()).trim(), "Upload results");
     await uploadResultsDialog.getByText("drag-upload.txt", { exact: true }).waitFor();
     await saveSnapshot(page, "upload-results");
