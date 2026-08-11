@@ -1862,16 +1862,15 @@ async function assertExternalInterfaces(page, fixture) {
     assert.equal(await fileDropZone.locator(".file-drop-feedback").isVisible(), true);
     assert.equal((await fileDropZone.locator("[data-file-drop-title]").textContent()).trim(), "Release to upload");
     await saveSnapshot(page, "files-drop-active");
-    await Promise.all([
-      page.waitForURL("**/resources/files/upload"),
-      fileDropZone.dispatchEvent("drop", { dataTransfer: dropData }),
-    ]);
-    assert.equal((await page.locator("main h1").textContent()).trim(), "Upload results");
-    await page.getByText("drag-upload.txt", { exact: true }).waitFor();
-    await Promise.all([
-      page.waitForURL(hostFilesWorkspaceURL),
-      page.getByRole("link", { name: "Back to files" }).click(),
-    ]);
+    await fileDropZone.dispatchEvent("drop", { dataTransfer: dropData });
+    const uploadResultsDialog = page.locator("dialog.upload-results-dialog[open]");
+    await uploadResultsDialog.waitFor();
+    assert.equal(page.url(), hostFilesWorkspaceURL, "enhanced upload left the current file directory");
+    assert.equal((await uploadResultsDialog.getByRole("heading").textContent()).trim(), "Upload results");
+    await uploadResultsDialog.getByText("drag-upload.txt", { exact: true }).waitFor();
+    await saveSnapshot(page, "upload-results");
+    await uploadResultsDialog.getByRole("link", { name: "Close", exact: true }).last().click();
+    await uploadResultsDialog.waitFor({ state: "detached" });
     await page.getByRole("link", { name: "drag-upload.txt", exact: true }).waitFor();
     const duplicateDropData = await page.evaluateHandle(() => {
       const transfer = new DataTransfer();
@@ -1890,15 +1889,12 @@ async function assertExternalInterfaces(page, fixture) {
       true,
     );
     await saveSnapshot(page, "file-conflict");
-    await Promise.all([
-      page.waitForURL("**/resources/files/upload"),
-      conflictDialog.getByRole("button", { name: "Rename", exact: true }).click(),
-    ]);
-    await page.getByText("drag-upload (2).txt", { exact: true }).waitFor();
-    await Promise.all([
-      page.waitForURL(hostFilesWorkspaceURL),
-      page.getByRole("link", { name: "Back to files" }).click(),
-    ]);
+    await conflictDialog.getByRole("button", { name: "Rename", exact: true }).click();
+    const renamedUploadResultsDialog = page.locator("dialog.upload-results-dialog[open]");
+    await renamedUploadResultsDialog.waitFor();
+    await renamedUploadResultsDialog.getByText("drag-upload (2).txt", { exact: true }).waitFor();
+    await renamedUploadResultsDialog.getByRole("link", { name: "Close", exact: true }).last().click();
+    await renamedUploadResultsDialog.waitFor({ state: "detached" });
     await page.getByRole("link", { name: "drag-upload (2).txt", exact: true }).waitFor();
     await assertNoTableHorizontalScrollbar(page, "files desktop");
     await assertTableRowsAligned(page, ".file-table", "files desktop");
