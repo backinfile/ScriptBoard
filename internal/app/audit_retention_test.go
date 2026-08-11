@@ -1,11 +1,15 @@
 package app
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"scriptboard/internal/auditlog"
 )
 
 func TestAuditRetentionRemovesLinkedOneTimeSourceButKeepsRunArtifacts(t *testing.T) {
@@ -86,6 +90,42 @@ func TestAuditRetentionRemovesLinkedOneTimeSourceButKeepsRunArtifacts(t *testing
 	}
 	if expired != 1 || audits != 0 {
 		t.Fatalf("source_expired=%d audits=%d", expired, audits)
+	}
+}
+
+func TestAuditRetentionAdvancesHashChainAnchor(t *testing.T) {
+	t.Parallel()
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "chain-retention.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, statement := range []string{
+		`CREATE TABLE audit_events (id INTEGER PRIMARY KEY AUTOINCREMENT, occurred_at INTEGER NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, result TEXT NOT NULL, source_address TEXT NOT NULL, actor_user_id TEXT NOT NULL DEFAULT '', actor_username TEXT NOT NULL DEFAULT '', actor_role TEXT NOT NULL DEFAULT '', previous_hash TEXT NOT NULL DEFAULT '', event_hash TEXT NOT NULL DEFAULT '')`,
+		`CREATE TABLE audit_chain_state (id INTEGER PRIMARY KEY CHECK(id = 1), anchor_hash TEXT NOT NULL, tail_hash TEXT NOT NULL)`,
+		`INSERT INTO audit_chain_state VALUES (1, '', '')`,
+		`CREATE TABLE runs (id TEXT PRIMARY KEY, script_kind TEXT NOT NULL, source_filename TEXT NOT NULL, source_expired INTEGER NOT NULL, source_audit_event_id INTEGER)`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store := auditlog.New(db)
+	old := time.Now().AddDate(-2, 0, 0).UTC().Unix()
+	recent := time.Now().UTC().Unix()
+	for _, occurred := range []int64{old, recent} {
+		if _, err := store.Append(context.Background(), auditlog.Event{
+			OccurredAt: fmt.Sprint(occurred), Action: "retention", Target: "event", Result: "succeeded", SourceAddress: "test",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deleted, err := cleanupExpiredAuditEvents(db, t.TempDir(), time.Now().AddDate(-1, 0, 0))
+	if err != nil || deleted != 1 {
+		t.Fatalf("deleted=%d err=%v", deleted, err)
+	}
+	if verification, err := store.Verify(context.Background()); err != nil || verification.Count != 1 {
+		t.Fatalf("verification=%#v err=%v", verification, err)
 	}
 }
 

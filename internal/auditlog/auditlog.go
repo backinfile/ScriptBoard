@@ -1,0 +1,221 @@
+package auditlog
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/binary"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"hash"
+	"strconv"
+	"sync"
+)
+
+const chainVersion = "scriptboard-audit-chain-v1"
+
+type Event struct {
+	OccurredAt, Action, Target, Result, SourceAddress string
+	ActorUserID, ActorUsername, ActorRole             string
+}
+
+type Verification struct {
+	Count    int
+	LastHash string
+}
+
+type Store struct {
+	db *sql.DB
+	mu sync.Mutex
+}
+
+type Transaction struct {
+	store    *Store
+	tx       *sql.Tx
+	finished bool
+}
+
+func New(db *sql.DB) *Store { return &Store{db: db} }
+
+func (store *Store) Append(ctx context.Context, event Event) (int64, error) {
+	transaction, err := store.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer transaction.Rollback()
+	id, err := transaction.Append(ctx, event)
+	if err != nil {
+		return 0, err
+	}
+	if err := transaction.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+func (store *Store) Begin(ctx context.Context) (*Transaction, error) {
+	store.mu.Lock()
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		store.mu.Unlock()
+		return nil, err
+	}
+	return &Transaction{store: store, tx: tx}, nil
+}
+
+func (transaction *Transaction) SQL() *sql.Tx { return transaction.tx }
+
+func (transaction *Transaction) Append(ctx context.Context, event Event) (int64, error) {
+	if transaction == nil || transaction.finished {
+		return 0, errors.New("audit transaction is closed")
+	}
+	previous, err := currentTail(ctx, transaction.tx)
+	if err != nil {
+		return 0, err
+	}
+	digest := eventDigest(previous, event)
+	result, err := transaction.tx.ExecContext(ctx, `INSERT INTO audit_events
+		(occurred_at, action, target, result, source_address, actor_user_id, actor_username, actor_role, previous_hash, event_hash)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		event.OccurredAt, event.Action, event.Target, event.Result, event.SourceAddress,
+		event.ActorUserID, event.ActorUsername, event.ActorRole, previous, digest)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := transaction.tx.ExecContext(ctx, "UPDATE audit_chain_state SET tail_hash = ? WHERE id = 1", digest); err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
+func (transaction *Transaction) Commit() error {
+	if transaction == nil || transaction.finished {
+		return errors.New("audit transaction is closed")
+	}
+	transaction.finished = true
+	err := transaction.tx.Commit()
+	transaction.store.mu.Unlock()
+	return err
+}
+
+func (transaction *Transaction) Rollback() error {
+	if transaction == nil || transaction.finished {
+		return nil
+	}
+	transaction.finished = true
+	err := transaction.tx.Rollback()
+	transaction.store.mu.Unlock()
+	return err
+}
+
+func (store *Store) Verify(ctx context.Context) (Verification, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	tx, err := store.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return Verification{}, err
+	}
+	defer tx.Rollback()
+	var anchor, tail string
+	if err := tx.QueryRowContext(ctx, "SELECT anchor_hash, tail_hash FROM audit_chain_state WHERE id = 1").Scan(&anchor, &tail); err != nil {
+		return Verification{}, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id, occurred_at, action, target, result, source_address,
+		actor_user_id, actor_username, actor_role, previous_hash, event_hash FROM audit_events ORDER BY id`)
+	if err != nil {
+		return Verification{}, err
+	}
+	defer rows.Close()
+	previous := anchor
+	verification := Verification{}
+	for rows.Next() {
+		var id int64
+		var occurredAt int64
+		var event Event
+		var recordedPrevious, recordedHash string
+		if err := rows.Scan(&id, &occurredAt, &event.Action, &event.Target, &event.Result, &event.SourceAddress,
+			&event.ActorUserID, &event.ActorUsername, &event.ActorRole, &recordedPrevious, &recordedHash); err != nil {
+			return Verification{}, err
+		}
+		event.OccurredAt = strconv.FormatInt(occurredAt, 10)
+		if recordedPrevious != previous {
+			return Verification{}, fmt.Errorf("audit chain link mismatch at event %d", id)
+		}
+		expected := eventDigest(recordedPrevious, event)
+		if recordedHash == "" || recordedHash != expected {
+			return Verification{}, fmt.Errorf("audit event %d digest mismatch", id)
+		}
+		previous = recordedHash
+		verification.Count++
+	}
+	if err := rows.Err(); err != nil {
+		return Verification{}, err
+	}
+	if previous != tail {
+		return Verification{}, errors.New("audit chain tail mismatch")
+	}
+	verification.LastHash = tail
+	return verification, nil
+}
+
+func BackfillTransaction(ctx context.Context, tx *sql.Tx) error {
+	type row struct {
+		id    int64
+		event Event
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id, occurred_at, action, target, result, source_address,
+		actor_user_id, actor_username, actor_role FROM audit_events ORDER BY id`)
+	if err != nil {
+		return err
+	}
+	var events []row
+	for rows.Next() {
+		var item row
+		var occurredAt int64
+		if err := rows.Scan(&item.id, &occurredAt, &item.event.Action, &item.event.Target, &item.event.Result,
+			&item.event.SourceAddress, &item.event.ActorUserID, &item.event.ActorUsername, &item.event.ActorRole); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		item.event.OccurredAt = strconv.FormatInt(occurredAt, 10)
+		events = append(events, item)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	previous := ""
+	for _, item := range events {
+		digest := eventDigest(previous, item.event)
+		if _, err := tx.ExecContext(ctx, "UPDATE audit_events SET previous_hash = ?, event_hash = ? WHERE id = ?", previous, digest, item.id); err != nil {
+			return err
+		}
+		previous = digest
+	}
+	_, err = tx.ExecContext(ctx, "UPDATE audit_chain_state SET anchor_hash = '', tail_hash = ? WHERE id = 1", previous)
+	return err
+}
+
+func currentTail(ctx context.Context, tx *sql.Tx) (string, error) {
+	var tail string
+	if err := tx.QueryRowContext(ctx, "SELECT tail_hash FROM audit_chain_state WHERE id = 1").Scan(&tail); err != nil {
+		return "", fmt.Errorf("read audit chain tail: %w", err)
+	}
+	return tail, nil
+}
+
+func eventDigest(previous string, event Event) string {
+	digest := sha256.New()
+	for _, value := range []string{chainVersion, previous, event.OccurredAt, event.Action, event.Target, event.Result,
+		event.SourceAddress, event.ActorUserID, event.ActorUsername, event.ActorRole} {
+		writeField(digest, value)
+	}
+	return hex.EncodeToString(digest.Sum(nil))
+}
+
+func writeField(destination hash.Hash, value string) {
+	var size [8]byte
+	binary.BigEndian.PutUint64(size[:], uint64(len(value)))
+	_, _ = destination.Write(size[:])
+	_, _ = destination.Write([]byte(value))
+}

@@ -177,6 +177,7 @@ Linux 请将 `state_root` 改为 `/var/lib/scriptboard/state`。修改配置后�
 ```text
 scriptboard config validate --config CONFIG_PATH
 scriptboard doctor --config CONFIG_PATH
+scriptboard audit verify --config CONFIG_PATH
 ```
 
 配置优先级为：内置默认值 → YAML 配置 → `SCRIPTBOARD_*` 环境变量 → 命令行参数。
@@ -193,7 +194,7 @@ scriptboard doctor --config CONFIG_PATH
 - `state_root`，其中包含数据库、运行日志、会话、审计和 AI 数据；
 - 服务使用的 `config.yaml`（如果创建了自定义配置）。
 
-从旧版本升级前请先备份。当前版本使用数据库 schema 31，可自动迁移 schema 20–30；更早版本的数据库和旧式配置不会自动迁移。
+从旧版本升级前请先备份。当前版本使用数据库 schema 35，可自动迁移 schema 20–34；更早版本的数据库和旧式配置不会自动迁移。审计记录形成带保留锚点与链尾的 SHA-256 哈希链；服务启动时会验证，亦可在面板不可用时运行 `scriptboard audit verify --config CONFIG_PATH` 离线检查中间记录修改、删除或截断。
 
 ## 常见问题
 

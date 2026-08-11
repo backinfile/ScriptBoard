@@ -24,6 +24,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"scriptboard/internal/auditlog"
 	"scriptboard/internal/diskspace"
 	"scriptboard/internal/hostfiles"
 )
@@ -142,6 +143,7 @@ func (r *activeRun) signalChanged() {
 
 type Manager struct {
 	db                  *sql.DB
+	auditLog            *auditlog.Store
 	files               *hostfiles.Manager
 	stateRoot           string
 	mu                  sync.Mutex
@@ -155,11 +157,15 @@ type Manager struct {
 	persistenceStopOnce sync.Once
 }
 
-func New(db *sql.DB, files *hostfiles.Manager, stateRoot string, timeoutGrace time.Duration, executorChains map[string][]string) *Manager {
-	return &Manager{
+func New(db *sql.DB, files *hostfiles.Manager, stateRoot string, timeoutGrace time.Duration, executorChains map[string][]string, auditStores ...*auditlog.Store) *Manager {
+	manager := &Manager{
 		db: db, files: files, stateRoot: stateRoot, active: make(map[string]*activeRun), timeoutGrace: timeoutGrace,
 		executorChains: executorChains, accepting: true, persistenceStop: make(chan struct{}),
 	}
+	if len(auditStores) > 0 {
+		manager.auditLog = auditStores[0]
+	}
+	return manager
 }
 
 var ErrMaintenance = errors.New("ScriptBoard is entering update maintenance mode")
@@ -374,26 +380,48 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 	if currentUser, userErr := user.Current(); userErr == nil {
 		runtimeIdentity = currentUser.Username
 	}
-	transaction, err := m.db.Begin()
+	var transaction *sql.Tx
+	var auditTransaction *auditlog.Transaction
+	if prepared.auditSource != "" && m.auditLog != nil {
+		auditTransaction, err = m.auditLog.Begin(context.Background())
+		if err == nil {
+			transaction = auditTransaction.SQL()
+		}
+	} else {
+		transaction, err = m.db.Begin()
+	}
 	if err != nil {
 		_ = logFile.Close()
 		return "", fmt.Errorf("begin Run record: %w", err)
 	}
-	defer transaction.Rollback()
+	if auditTransaction != nil {
+		defer auditTransaction.Rollback()
+	} else {
+		defer transaction.Rollback()
+	}
 	var auditID any
 	if prepared.auditSource != "" {
-		result, auditErr := transaction.Exec(`INSERT INTO audit_events
-			(occurred_at, action, target, result, source_address, actor_user_id, actor_username, actor_role)
-			VALUES (?, 'start_one_time_run', ?, 'accepted', ?, ?, ?, ?)`,
-			now.Unix(), id, prepared.auditSource, prepared.initiatorUserID, prepared.initiatorUsername, prepared.initiatorRole)
+		var value int64
+		var auditErr error
+		if auditTransaction != nil {
+			value, auditErr = auditTransaction.Append(context.Background(), auditlog.Event{
+				OccurredAt: strconv.FormatInt(now.Unix(), 10), Action: "start_one_time_run", Target: id, Result: "accepted",
+				SourceAddress: prepared.auditSource, ActorUserID: prepared.initiatorUserID,
+				ActorUsername: prepared.initiatorUsername, ActorRole: prepared.initiatorRole,
+			})
+		} else {
+			var result sql.Result
+			result, auditErr = transaction.Exec(`INSERT INTO audit_events
+				(occurred_at, action, target, result, source_address, actor_user_id, actor_username, actor_role)
+				VALUES (?, 'start_one_time_run', ?, 'accepted', ?, ?, ?, ?)`,
+				now.Unix(), id, prepared.auditSource, prepared.initiatorUserID, prepared.initiatorUsername, prepared.initiatorRole)
+			if auditErr == nil {
+				value, auditErr = result.LastInsertId()
+			}
+		}
 		if auditErr != nil {
 			_ = logFile.Close()
 			return "", fmt.Errorf("record one-time Run audit: %w", auditErr)
-		}
-		value, auditErr := result.LastInsertId()
-		if auditErr != nil {
-			_ = logFile.Close()
-			return "", fmt.Errorf("read one-time Run audit ID: %w", auditErr)
 		}
 		auditID = value
 	}
@@ -410,7 +438,12 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 		_ = logFile.Close()
 		return "", fmt.Errorf("create Run: %w", err)
 	}
-	if err := transaction.Commit(); err != nil {
+	if auditTransaction != nil {
+		err = auditTransaction.Commit()
+	} else {
+		err = transaction.Commit()
+	}
+	if err != nil {
 		_ = logFile.Close()
 		return "", fmt.Errorf("commit Run: %w", err)
 	}

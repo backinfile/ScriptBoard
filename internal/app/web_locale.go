@@ -1276,7 +1276,7 @@ var webMessages = map[string]localizedMessage{
 	"external.eyebrow":                              {"配置 / 外部访问", "Configuration / External access"},
 	"external.description":                          {"创建 Key，并指定外部系统调用后要执行的操作。", "Create keys and choose what happens when an external system calls them."},
 	"external.create_key":                           {"创建 Key", "Create Key"},
-	"external.security_notice":                      {"请只把 Key 提供给可信系统。管理员和维护员可复制完整 Key，复制操作会写入审计记录。", "Only share keys with systems you trust. Administrators and maintainers can copy complete keys, and each copy is audited."},
+	"external.security_notice":                      {"请只把 Key 提供给可信系统。完整 Key 仅在创建或轮换后显示一次，离开页面后无法恢复。", "Only share keys with trusted systems. A complete key is shown only once after creation or rotation and cannot be recovered after you leave."},
 	"external.functions":                            {"调用功能", "Callable function"},
 	"external.add_function":                         {"新增", "Add"},
 	"external.endpoint_template":                    {"调用方式", "How to call"},

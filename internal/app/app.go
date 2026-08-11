@@ -42,6 +42,7 @@ import (
 	"scriptboard/internal/assistant/raster"
 	"scriptboard/internal/assistant/runtimeinstall"
 	"scriptboard/internal/assistant/toolbroker"
+	"scriptboard/internal/auditlog"
 	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/customdashboard"
 	"scriptboard/internal/externaltrigger"
@@ -345,6 +346,7 @@ type App struct {
 	assistantRaster      *raster.Processor
 	assistantBroker      *toolbroker.Broker
 	files                *hostfiles.Manager
+	auditLog             *auditlog.Store
 	uploadInbox          *uploadinbox.Store
 	fileOperations       *sqliteFileOperationStore
 	fileMoves            *hostfiles.MoveEngine
@@ -476,6 +478,11 @@ func Open(config Config) (*App, error) {
 		requestRestart:    config.RequestRestart,
 		instanceID:        fmt.Sprintf("%d-%x", os.Getpid(), time.Now().UnixNano()),
 	}
+	application.auditLog = auditlog.New(db)
+	if _, err := application.auditLog.Verify(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("verify audit hash chain: %w", err)
+	}
 	application.externalTriggers = externaltrigger.New(db, externaltrigger.Options{SecretsDirectory: filepath.Join(stateRoot, "secrets")})
 	if err := application.externalTriggers.PurgeLegacyKeySecrets(context.Background()); err != nil {
 		_ = db.Close()
@@ -548,7 +555,7 @@ func Open(config Config) (*App, error) {
 	if timeoutGrace <= 0 {
 		timeoutGrace = 30 * time.Second
 	}
-	application.runs = runmanager.New(db, application.files, stateRoot, timeoutGrace, config.ExecutorChains)
+	application.runs = runmanager.New(db, application.files, stateRoot, timeoutGrace, config.ExecutorChains, application.auditLog)
 	if err := application.fileMoves.Recover(context.Background()); err != nil {
 		application.runs.Close()
 		_ = db.Close()
@@ -571,9 +578,9 @@ func Open(config Config) (*App, error) {
 		}
 	}
 	if validating {
-		application.scheduler = scheduler.NewPaused(db, application.runs, application.loadVariables, config.SchedulerNow, config.SchedulerTick)
+		application.scheduler = scheduler.NewPaused(db, application.runs, application.loadVariables, config.SchedulerNow, config.SchedulerTick, application.recordAudit)
 	} else {
-		application.scheduler = scheduler.New(db, application.runs, application.loadVariables, config.SchedulerNow, config.SchedulerTick)
+		application.scheduler = scheduler.New(db, application.runs, application.loadVariables, config.SchedulerNow, config.SchedulerTick, application.recordAudit)
 	}
 	probe, _ := hoststatus.NewSystemProbe(stateRoot, installRoot)
 	application.hostStatus, err = hoststatus.New(db, probe, hoststatus.Options{SkipInitialCleanup: validating})
@@ -1184,8 +1191,16 @@ func openDatabase(path string) (*sql.DB, error) {
 			source_address TEXT NOT NULL,
 			actor_user_id TEXT NOT NULL DEFAULT '',
 			actor_username TEXT NOT NULL DEFAULT '',
-			actor_role TEXT NOT NULL DEFAULT ''
+			actor_role TEXT NOT NULL DEFAULT '',
+			previous_hash TEXT NOT NULL DEFAULT '',
+			event_hash TEXT NOT NULL DEFAULT ''
 		)`,
+		`CREATE TABLE IF NOT EXISTS audit_chain_state (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			anchor_hash TEXT NOT NULL DEFAULT '',
+			tail_hash TEXT NOT NULL DEFAULT ''
+		)`,
+		`INSERT OR IGNORE INTO audit_chain_state (id, anchor_hash, tail_hash) VALUES (1, '', '')`,
 		`CREATE TABLE IF NOT EXISTS trash_entries (
 			id TEXT PRIMARY KEY,
 			original_path TEXT NOT NULL,
@@ -1589,6 +1604,28 @@ func openDatabase(path string) (*sql.DB, error) {
 			}
 		}
 	}
+	if schemaVersion >= 20 && schemaVersion <= 34 {
+		for _, column := range []struct{ name, definition string }{
+			{"previous_hash", "previous_hash TEXT NOT NULL DEFAULT ''"},
+			{"event_hash", "event_hash TEXT NOT NULL DEFAULT ''"},
+		} {
+			exists, err := sqliteColumnExists(migration, "audit_events", column.name)
+			if err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("inspect audit chain migration: %w", err)
+			}
+			if !exists {
+				if _, err := migration.Exec("ALTER TABLE audit_events ADD COLUMN " + column.definition); err != nil {
+					_ = db.Close()
+					return nil, fmt.Errorf("add audit chain column: %w", err)
+				}
+			}
+		}
+		if err := auditlog.BackfillTransaction(context.Background(), migration); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("backfill audit hash chain: %w", err)
+		}
+	}
 	for _, statement := range []string{
 		"CREATE UNIQUE INDEX IF NOT EXISTS users_single_administrator_idx ON users(role) WHERE role = 'administrator'",
 		"CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id)",
@@ -1656,10 +1693,11 @@ func compatibleDatabaseSchema(version int) bool {
 	// logical backups, plans, and recoverable operations, and schema 31 persists
 	// MySQL connection state, and schema 32 adds read-only cross-instance website
 	// monitoring interfaces and encrypted remote source metadata, and schema 33 adds
-	// custom dashboards with independently public card collections, and schema 34
-	// adds dedicated percentage cards. Each supported predecessor has an explicit
+	// custom dashboards with independently public card collections, schema 34
+	// adds dedicated percentage cards, and schema 35 adds a tamper-evident audit
+	// hash chain. Each supported predecessor has an explicit
 	// transactional forward path.
-	return version == currentSchemaVersion || currentSchemaVersion == 34 && version >= 20 && version <= 33
+	return version == currentSchemaVersion || currentSchemaVersion == 35 && version >= 20 && version <= 34
 }
 
 func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {
@@ -2615,7 +2653,12 @@ func (a *App) auditPage(response http.ResponseWriter, request *http.Request) {
 }
 
 func (a *App) auditDownload(response http.ResponseWriter, _ *http.Request) {
-	rows, err := a.db.Query("SELECT occurred_at, action, target, result, source_address, actor_user_id, actor_username, actor_role FROM audit_events ORDER BY occurred_at")
+	var anchor, tail string
+	if err := a.db.QueryRow("SELECT anchor_hash, tail_hash FROM audit_chain_state WHERE id = 1").Scan(&anchor, &tail); err != nil {
+		http.Error(response, "无法读取审计哈希链", http.StatusInternalServerError)
+		return
+	}
+	rows, err := a.db.Query("SELECT id, occurred_at, action, target, result, source_address, actor_user_id, actor_username, actor_role, previous_hash, event_hash FROM audit_events ORDER BY id")
 	if err != nil {
 		http.Error(response, "无法导出审计事件", http.StatusInternalServerError)
 		return
@@ -2624,14 +2667,14 @@ func (a *App) auditDownload(response http.ResponseWriter, _ *http.Request) {
 	response.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	response.Header().Set("Content-Disposition", `attachment; filename="scriptboard-audit.csv"`)
 	writer := csv.NewWriter(response)
-	_ = writer.Write([]string{"occurred_at", "action", "target", "result", "source_address", "actor_user_id", "actor_username", "actor_role"})
+	_ = writer.Write([]string{"id", "occurred_at", "action", "target", "result", "source_address", "actor_user_id", "actor_username", "actor_role", "previous_hash", "event_hash", "chain_anchor", "chain_tail"})
 	for rows.Next() {
-		var occurred int64
-		var action, target, result, source, actorUserID, actorUsername, actorRole string
-		if rows.Scan(&occurred, &action, &target, &result, &source, &actorUserID, &actorUsername, &actorRole) != nil {
+		var id, occurred int64
+		var action, target, result, source, actorUserID, actorUsername, actorRole, previousHash, eventHash string
+		if rows.Scan(&id, &occurred, &action, &target, &result, &source, &actorUserID, &actorUsername, &actorRole, &previousHash, &eventHash) != nil {
 			return
 		}
-		record := []string{time.Unix(occurred, 0).UTC().Format(time.RFC3339), action, target, result, source, actorUserID, actorUsername, actorRole}
+		record := []string{strconv.FormatInt(id, 10), time.Unix(occurred, 0).UTC().Format(time.RFC3339), action, target, result, source, actorUserID, actorUsername, actorRole, previousHash, eventHash, anchor, tail}
 		for index := range record {
 			record[index] = spreadsheetSafeCSVCell(record[index])
 		}
@@ -5247,12 +5290,11 @@ func (a *App) recordAuditForRequest(request *http.Request, action, target, resul
 }
 
 func (a *App) recordAuditWithActor(action, target, result, source, actorUserID, actorUsername string, actorRole userRole) {
-	_, _ = a.db.Exec(
-		`INSERT INTO audit_events
-			(occurred_at, action, target, result, source_address, actor_user_id, actor_username, actor_role)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		time.Now().UTC().Unix(), action, target, result, source, actorUserID, actorUsername, actorRole,
-	)
+	_, _ = a.auditLog.Append(context.Background(), auditlog.Event{
+		OccurredAt: strconv.FormatInt(time.Now().UTC().Unix(), 10),
+		Action:     action, Target: target, Result: result, SourceAddress: source,
+		ActorUserID: actorUserID, ActorUsername: actorUsername, ActorRole: string(actorRole),
+	})
 }
 
 type loginPageData struct {

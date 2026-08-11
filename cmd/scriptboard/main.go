@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"scriptboard/internal/app"
+	"scriptboard/internal/auditlog"
 	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/config"
 	"scriptboard/internal/doctor"
@@ -69,6 +71,11 @@ func run(arguments []string) error {
 		return validateConfig(arguments[2:])
 	case "doctor":
 		return runDoctor(arguments[1:])
+	case "audit":
+		if len(arguments) < 2 || arguments[1] != "verify" {
+			return errors.New("可用审计命令：audit verify")
+		}
+		return verifyAudit(arguments[2:])
 	case "admin":
 		if len(arguments) < 2 || arguments[1] != "reset" {
 			return errors.New("可用管理员命令：admin reset")
@@ -85,7 +92,7 @@ func run(arguments []string) error {
 		}
 		return runUpdate(arguments[1], arguments[2:])
 	default:
-		return fmt.Errorf("未知命令 %q；可用命令：serve、service、update、admin、config、doctor、version", arguments[0])
+		return fmt.Errorf("未知命令 %q；可用命令：serve、service、update、admin、audit、config、doctor、version", arguments[0])
 	}
 }
 
@@ -97,6 +104,7 @@ func printUsage() {
   scriptboard service install|uninstall|start|stop|restart|status
   scriptboard update status|check|recover
   scriptboard admin reset [配置选项]
+  scriptboard audit verify [配置选项] [--json]
   scriptboard config validate [配置选项]
   scriptboard doctor [配置选项]
   scriptboard version
@@ -110,6 +118,29 @@ func printUsage() {
   --trusted-proxy IP_OR_CIDR 可信反向代理（可重复）
   --allowed-host HOST        允许的 HTTP Host（可重复）
   --canonical-external-url URL 对外访问的规范 URL`)
+}
+
+func verifyAudit(arguments []string) error {
+	jsonOutput, arguments := takeBooleanArgument(arguments, "--json")
+	loaded, err := config.Load(arguments, os.Getenv)
+	if err != nil {
+		return err
+	}
+	databasePath := filepath.ToSlash(filepath.Join(loaded.StateRoot, "app.db"))
+	database, err := sql.Open("sqlite", "file:"+databasePath+"?mode=ro")
+	if err != nil {
+		return err
+	}
+	defer database.Close()
+	verification, err := auditlog.New(database).Verify(context.Background())
+	if err != nil {
+		return fmt.Errorf("审计哈希链验证失败: %w", err)
+	}
+	if jsonOutput {
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{"valid": true, "events": verification.Count, "tail_sha256": verification.LastHash})
+	}
+	fmt.Fprintf(os.Stdout, "审计哈希链有效：%d 条事件，链尾 %s\n", verification.Count, verification.LastHash)
+	return nil
 }
 
 func runUpdate(action string, arguments []string) error {

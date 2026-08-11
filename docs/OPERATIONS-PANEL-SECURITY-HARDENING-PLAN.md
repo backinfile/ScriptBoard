@@ -35,7 +35,7 @@ ScriptBoard 已有一批值得保留的安全基础：Argon2id 密码哈希、�
 | P0-06 | 外部上传切片完成 | 外部上传空 allowlist 及活动/双扩展一律拒绝；内容以随机无扩展名和 0600 权限进入 State Root 私有 inbox，管理员核对 SHA-256 与目标后才能经并发领取、原子写入和审计发布。普通上传及各类导入仍按独立策略继续迁移。 |
 | P0-07 | 首个切片完成 | 外部 Trigger Key 创建和轮换后只显示一次，完整 Key 不再可恢复保存或提供复制接口；启动时清理旧版本残留的可恢复 Key，同时保留其他业务秘密存储。MFA、step-up 与 OS secret provider 仍待结构性批次。 |
 | P0-12 | 部分完成 | 增加 vet、race、govulncheck、CodeQL、secret scan、SBOM 与 release provenance 门禁；已加入出站地址、Host 和命令参数 fuzz target，更多黑盒不变量继续补充。 |
-| P0-11 文档项 | 完成 | 新增 `SECURITY.md`，明确私密报告、支持范围与应急控制。 |
+| P0-11 | 首个切片完成 | 新增覆盖 Web、Runner 与 Scheduler 的串行 SHA-256 审计链，保留策略通过锚点/链尾维持可验证性，启动时 fail-closed 校验，并提供不依赖 Web UI 的 `audit verify` 命令；远端 checkpoint/转发和告警仍待后续切片。`SECURITY.md` 已明确私密报告、支持范围与应急控制。 |
 
 P0-02、P0-07 至 P0-11 的其余结构性工作以及 P1/P2 未在本分支宣称完成。
 

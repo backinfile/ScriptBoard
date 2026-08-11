@@ -14,6 +14,7 @@ import (
 )
 
 type VariableLoader func() (map[string]string, error)
+type AuditRecorder func(action, target, result, source string)
 
 type CreateRequest struct {
 	Name              string
@@ -59,17 +60,18 @@ type Manager struct {
 	pauseMu        sync.Mutex
 	fireMu         sync.Mutex
 	paused         bool
+	audit          AuditRecorder
 }
 
-func New(db *sql.DB, runs *runmanager.Manager, loadVariables VariableLoader, now func() time.Time, tick time.Duration) *Manager {
-	return newManager(db, runs, loadVariables, now, tick, false)
+func New(db *sql.DB, runs *runmanager.Manager, loadVariables VariableLoader, now func() time.Time, tick time.Duration, audits ...AuditRecorder) *Manager {
+	return newManager(db, runs, loadVariables, now, tick, false, audits...)
 }
 
-func NewPaused(db *sql.DB, runs *runmanager.Manager, loadVariables VariableLoader, now func() time.Time, tick time.Duration) *Manager {
-	return newManager(db, runs, loadVariables, now, tick, true)
+func NewPaused(db *sql.DB, runs *runmanager.Manager, loadVariables VariableLoader, now func() time.Time, tick time.Duration, audits ...AuditRecorder) *Manager {
+	return newManager(db, runs, loadVariables, now, tick, true, audits...)
 }
 
-func newManager(db *sql.DB, runs *runmanager.Manager, loadVariables VariableLoader, now func() time.Time, tick time.Duration, paused bool) *Manager {
+func newManager(db *sql.DB, runs *runmanager.Manager, loadVariables VariableLoader, now func() time.Time, tick time.Duration, paused bool, audits ...AuditRecorder) *Manager {
 	pollClock := now != nil
 	if now == nil {
 		now = time.Now
@@ -81,6 +83,9 @@ func newManager(db *sql.DB, runs *runmanager.Manager, loadVariables VariableLoad
 		db: db, runs: runs, loadVariables: loadVariables,
 		now: now, tick: tick, stop: make(chan struct{}), done: make(chan struct{}),
 		wake: make(chan struct{}, 1), pollClock: pollClock, paused: paused,
+	}
+	if len(audits) > 0 {
+		manager.audit = audits[0]
 	}
 	if !paused {
 		manager.initialize()
@@ -137,8 +142,9 @@ func (m *Manager) aggregateOldTriggers() {
 			return
 		}
 	}
-	_, _ = transaction.Exec("INSERT INTO audit_events (occurred_at, action, target, result, source_address) VALUES (?, 'aggregate_schedule_triggers', ?, 'succeeded', 'system')", m.now().UTC().Unix(), fmt.Sprintf("%d triggers", len(ids)))
-	_ = transaction.Commit()
+	if transaction.Commit() == nil {
+		m.recordAuditSource("aggregate_schedule_triggers", fmt.Sprintf("%d triggers", len(ids)), "succeeded", "system")
+	}
 }
 
 func (m *Manager) Update(id string, request CreateRequest) error {
@@ -540,11 +546,19 @@ func (m *Manager) disableInvalidSchedule(id, expression string) {
 	if changed, _ := result.RowsAffected(); changed == 0 {
 		return
 	}
-	_, _ = m.db.Exec("INSERT INTO audit_events (occurred_at, action, target, result, source_address) VALUES (?, 'disable_invalid_schedule', ?, 'failed', 'scheduler')", now.UTC().Unix(), expression)
+	m.recordAudit("disable_invalid_schedule", expression, "failed")
 }
 
 func (m *Manager) recordAudit(action, target, result string) {
-	_, _ = m.db.Exec("INSERT INTO audit_events (occurred_at, action, target, result, source_address) VALUES (?, ?, ?, ?, 'scheduler')", m.now().UTC().Unix(), action, target, result)
+	m.recordAuditSource(action, target, result, "scheduler")
+}
+
+func (m *Manager) recordAuditSource(action, target, result, source string) {
+	if m.audit != nil {
+		m.audit(action, target, result, source)
+		return
+	}
+	_, _ = m.db.Exec("INSERT INTO audit_events (occurred_at, action, target, result, source_address) VALUES (?, ?, ?, ?, ?)", m.now().UTC().Unix(), action, target, result, source)
 }
 
 func (m *Manager) Close() {
