@@ -935,7 +935,7 @@ var webMessages = map[string]localizedMessage{
 	"website.form.max_wait":                         {"最长等待时间", "Maximum wait"},
 	"website.form.request_headers":                  {"请求头", "Request headers"},
 	"website.form.custom_headers":                   {"自定义请求头（可选）", "Custom request headers (optional)"},
-	"website.form.request_headers_hint":             {"每行一项，格式为“名称: 值”；最多 32 项，适用于 HTTP 请求和 WebSocket 握手。", "Enter one “Name: value” header per line, up to 32. Headers apply to HTTP requests and WebSocket handshakes."},
+	"website.form.request_headers_hint":             {"每行一项，格式为“名称: 值”；值中可使用 {{VARIABLE_NAME}}，每次检查时读取最新变量。最多 32 项，适用于 HTTP 请求和 WebSocket 握手。", "Enter one “Name: value” header per line. Values may contain {{VARIABLE_NAME}}, resolved from the latest variable value on every check. Up to 32 headers apply to HTTP requests and WebSocket handshakes."},
 	"website.error.request_headers":                 {"请检查每行均使用“名称: 值”格式、不含控制字符，且未设置由协议管理的保留请求头。", "Use one “Name: value” header per line, remove control characters, and do not set protocol-managed headers."},
 	"website.form.3_seconds":                        {"3 秒", "3 seconds"},
 	"website.form.5_seconds":                        {"5 秒", "5 seconds"},

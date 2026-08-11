@@ -250,6 +250,7 @@ type Probe interface {
 
 type Options struct {
 	Probe          Probe
+	LoadVariables  func(context.Context) (map[string]string, error)
 	Now            func() time.Time
 	Tick           time.Duration
 	RetryDelay     time.Duration

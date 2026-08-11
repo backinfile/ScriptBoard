@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"net/textproto"
+	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -25,6 +27,8 @@ var reservedRequestHeaders = map[string]struct{}{
 	"sec-websocket-accept": {}, "sec-websocket-extensions": {},
 	"sec-websocket-key": {}, "sec-websocket-version": {},
 }
+
+var requestHeaderVariableReference = regexp.MustCompile(`\{\{([A-Z][A-Z0-9_]{0,63})\}\}`)
 
 // ParseRequestHeaders parses the form's one-header-per-line representation.
 func ParseRequestHeaders(input string) ([]RequestHeader, error) {
@@ -51,9 +55,66 @@ func FormatRequestHeaders(headers []RequestHeader) string {
 	return strings.Join(lines, "\n")
 }
 
+// RequestHeaderVariables returns the unique variable names referenced by
+// header values. References use the same {{VARIABLE_NAME}} spelling as Run
+// arguments, but may be embedded in a header value.
+func RequestHeaderVariables(headers []RequestHeader) ([]string, error) {
+	seen := make(map[string]struct{})
+	for _, header := range headers {
+		remaining := requestHeaderVariableReference.ReplaceAllStringFunc(header.Value, func(reference string) string {
+			match := requestHeaderVariableReference.FindStringSubmatch(reference)
+			seen[match[1]] = struct{}{}
+			return ""
+		})
+		if strings.Contains(remaining, "{{") || strings.Contains(remaining, "}}") {
+			return nil, fmt.Errorf("自定义请求头 %q 包含无效的 Variable 引用", header.Name)
+		}
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names, nil
+}
+
+// ResolveRequestHeaders expands variable references without mutating the
+// stored header templates, then reapplies all request-header safety limits.
+func ResolveRequestHeaders(headers []RequestHeader, variables map[string]string) ([]RequestHeader, error) {
+	if _, err := RequestHeaderVariables(headers); err != nil {
+		return nil, err
+	}
+	resolved := make([]RequestHeader, len(headers))
+	for index, header := range headers {
+		var resolveErr error
+		value := requestHeaderVariableReference.ReplaceAllStringFunc(header.Value, func(reference string) string {
+			match := requestHeaderVariableReference.FindStringSubmatch(reference)
+			value, exists := variables[match[1]]
+			if !exists && resolveErr == nil {
+				resolveErr = fmt.Errorf("Variable %s 不存在", match[1])
+			}
+			return value
+		})
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		resolved[index] = RequestHeader{Name: header.Name, Value: value}
+	}
+	return normalizeRequestHeadersWithVariableSyntax(resolved, false)
+}
+
 func normalizeRequestHeaders(headers []RequestHeader) ([]RequestHeader, error) {
+	return normalizeRequestHeadersWithVariableSyntax(headers, true)
+}
+
+func normalizeRequestHeadersWithVariableSyntax(headers []RequestHeader, validateVariableSyntax bool) ([]RequestHeader, error) {
 	if len(headers) > maxRequestHeaders {
 		return nil, fmt.Errorf("自定义请求头不能超过 %d 项", maxRequestHeaders)
+	}
+	if validateVariableSyntax {
+		if _, err := RequestHeaderVariables(headers); err != nil {
+			return nil, err
+		}
 	}
 	normalized := make([]RequestHeader, 0, len(headers))
 	totalBytes := 0

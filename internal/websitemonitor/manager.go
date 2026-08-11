@@ -97,7 +97,7 @@ func (m *Manager) Update(ctx context.Context, id string, config Config) (Monitor
 	if config.Source == "" {
 		config.Source = current.Config.Source
 	}
-	normalized, err := normalizeConfig(config)
+	normalized, err := m.normalizeConfig(ctx, config)
 	if err != nil {
 		return Monitor{}, err
 	}
@@ -157,7 +157,7 @@ func (m *Manager) createMany(ctx context.Context, configs []Config) ([]Monitor, 
 	ids := make([]string, len(configs))
 	configJSON := make([][]byte, len(configs))
 	for index, config := range configs {
-		value, err := normalizeConfig(config)
+		value, err := m.normalizeConfig(ctx, config)
 		if err != nil {
 			return nil, err
 		}
@@ -341,6 +341,32 @@ func normalizeConfig(config Config) (Config, error) {
 		config.Timeout = 10 * time.Second
 	}
 	return config, nil
+}
+
+func (m *Manager) normalizeConfig(ctx context.Context, config Config) (Config, error) {
+	normalized, err := normalizeConfig(config)
+	if err != nil {
+		return Config{}, err
+	}
+	if _, err := m.resolveRequestHeaders(ctx, normalized.RequestHeaders); err != nil {
+		return Config{}, err
+	}
+	return normalized, nil
+}
+
+func (m *Manager) resolveRequestHeaders(ctx context.Context, headers []RequestHeader) ([]RequestHeader, error) {
+	names, err := RequestHeaderVariables(headers)
+	if err != nil || len(names) == 0 {
+		return headers, err
+	}
+	if m.options.LoadVariables == nil {
+		return nil, errors.New("自定义请求头 Variable 解析不可用")
+	}
+	variables, err := m.options.LoadVariables(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("读取自定义请求头 Variable: %w", err)
+	}
+	return ResolveRequestHeaders(headers, variables)
 }
 
 // ValidateConfig applies the same defaults and validation used when a monitor
@@ -668,7 +694,18 @@ func (m *Manager) startCheck(id string, generation int64) {
 		if monitor.Config.Timeout > 0 {
 			ctx, cancel = context.WithTimeout(ctx, monitor.Config.Timeout)
 		}
-		result := m.options.Probe.Check(ctx, monitor.Config)
+		checkConfig := monitor.Config
+		resolvedHeaders, resolveErr := m.resolveRequestHeaders(ctx, checkConfig.RequestHeaders)
+		if resolveErr != nil {
+			cancel()
+			m.recordResult(id, generation, Evidence{
+				CheckedAt: m.options.Now().UTC(), ErrorCategory: "configuration",
+				Summary: "自定义请求头 Variable 无法解析", TechnicalError: resolveErr.Error(),
+			})
+			return
+		}
+		checkConfig.RequestHeaders = resolvedHeaders
+		result := m.options.Probe.Check(ctx, checkConfig)
 		cancel()
 		m.recordResult(id, generation, result)
 	}()
