@@ -1227,8 +1227,17 @@ async function assertExternalInterfaces(page, fixture) {
     headers: { Authorization: `Bearer ${secret}` },
     multipart: { file: { name: "external-result.txt", mimeType: "text/plain", buffer: Buffer.from("fixture complete") } },
   });
-  assert.equal(trigger.status(), 201);
-  assert.equal((await trigger.json()).action, "upload");
+  assert.equal(trigger.status(), 202);
+  const uploadPayload = await trigger.json();
+  assert.equal(uploadPayload.action, "upload");
+  assert.equal(uploadPayload.data.state, "pending_review");
+  await page.goto(`${fixture.baseURL}/resources/inbox`);
+  await page.getByRole("heading", { name: "Upload inbox", exact: true }).waitFor();
+  await page.getByText("external-result.txt", { exact: true }).waitFor();
+  page.once("dialog", dialog => dialog.accept());
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  await page.waitForURL("**/resources/inbox");
+  await page.getByText("No external uploads are awaiting review.", { exact: true }).waitFor();
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();

@@ -48,6 +48,7 @@ var (
 	textPreviewTemplate           = mustWebTemplate("text-preview")
 	trashTemplate                 = mustWebTemplate("trash")
 	uploadResultsTemplate         = mustWebTemplate("upload-results")
+	uploadInboxTemplate           = mustWebTemplate("upload-inbox")
 	variablesTemplate             = mustWebTemplate("variables")
 	updatesTemplate               = mustWebTemplate("updates")
 	usersTemplate                 = mustWebTemplate("users")

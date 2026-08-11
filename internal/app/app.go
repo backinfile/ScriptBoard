@@ -54,6 +54,7 @@ import (
 	"scriptboard/internal/runmanager"
 	"scriptboard/internal/scheduler"
 	updatepkg "scriptboard/internal/update"
+	"scriptboard/internal/uploadinbox"
 	"scriptboard/internal/websitemonitor"
 )
 
@@ -106,6 +107,12 @@ func webTemplateFunctions() template.FuncMap {
 	return template.FuncMap{
 		"assetVersion": func() string { return webAssetVersion },
 		"join":         strings.Join,
+		"shortDigest": func(value string) string {
+			if len(value) <= 12 {
+				return value
+			}
+			return value[:12] + "…"
+		},
 		"displayTime": func(input any) string {
 			value, ok := input.(time.Time)
 			if pointer, pointerOK := input.(*time.Time); pointerOK && pointer != nil {
@@ -338,6 +345,7 @@ type App struct {
 	assistantRaster      *raster.Processor
 	assistantBroker      *toolbroker.Broker
 	files                *hostfiles.Manager
+	uploadInbox          *uploadinbox.Store
 	fileOperations       *sqliteFileOperationStore
 	fileMoves            *hostfiles.MoveEngine
 	fileOperationCtx     context.Context
@@ -437,6 +445,11 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	uploadInboxStore, err := uploadinbox.New(filepath.Join(stateRoot, "inbox", "uploads"))
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	allowedHosts, err := parseAllowedHosts(config.AllowedHosts)
 	if err != nil {
 		_ = db.Close()
@@ -452,7 +465,7 @@ func Open(config Config) (*App, error) {
 		hostSecurityService = hostsecurity.NewManager(hostsecurity.Options{})
 	}
 	application := &App{
-		db: db, stateRoot: stateRoot, files: files, instanceLock: instanceLock,
+		db: db, stateRoot: stateRoot, files: files, uploadInbox: uploadInboxStore, instanceLock: instanceLock,
 		loginSlots: make(chan struct{}, 2), loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies,
 		allowedHosts: allowedHosts, canonicalExternalURL: config.CanonicalExternalURL,
 		loginRateSalt:  loginRateSalt,
@@ -2019,6 +2032,9 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /resources/files/operations/{id}/events", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.fileOperationEvents)))
 	mux.Handle("POST /resources/files/operations/{id}/cancel", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.cancelFileOperation)))
 	mux.Handle("GET /resources/trash", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.trashPage)))
+	mux.Handle("GET /resources/inbox", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.uploadInboxPage)))
+	mux.Handle("POST /resources/inbox/{id}/publish", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.publishInboxUpload)))
+	mux.Handle("POST /resources/inbox/{id}/discard", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.discardInboxUpload)))
 	mux.Handle("POST /resources/trash/restore", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.restoreTrash)))
 	mux.Handle("POST /resources/trash/purge", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.purgeTrash)))
 	mux.Handle("GET /resources/files/edit", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.editTextPage)))

@@ -57,6 +57,8 @@ func TestFixedRolesCoverEveryProtectedRouteClass(t *testing.T) {
 		{"file upload task", http.MethodGet, "/resources/files/upload", []userRole{roleAdministrator, roleMaintainer}},
 		{"file move task", http.MethodGet, "/resources/files/move?path=C%3A%5Cscripts%5Cscript.ps1", []userRole{roleAdministrator, roleMaintainer}},
 		{"file mutation", http.MethodPost, "/resources/files/delete", []userRole{roleAdministrator, roleMaintainer}},
+		{"external upload inbox", http.MethodGet, "/resources/inbox", []userRole{roleAdministrator, roleMaintainer}},
+		{"publish external upload", http.MethodPost, "/resources/inbox/upload-one/publish", []userRole{roleAdministrator, roleMaintainer}},
 		{"file quick access pin", http.MethodPost, "/resources/files/quick-access", []userRole{roleAdministrator, roleMaintainer, roleOperator}},
 		{"file script task", http.MethodGet, "/resources/files/run?path=C%3A%5Cscripts%5Cscript.ps1", []userRole{roleAdministrator, roleMaintainer, roleOperator}},
 		{"quick run start", http.MethodPost, "/config/quick-runs/quick-one/start", []userRole{roleAdministrator, roleMaintainer, roleOperator}},

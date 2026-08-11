@@ -17,6 +17,7 @@ import (
 
 	"scriptboard/internal/externaltrigger"
 	"scriptboard/internal/runmanager"
+	"scriptboard/internal/uploadinbox"
 	"scriptboard/internal/websitemonitor"
 )
 
@@ -910,25 +911,34 @@ func (a *App) executeExternalUpload(response http.ResponseWriter, request *http.
 	if name != header.Filename {
 		return externalFailure(http.StatusBadRequest, "file_not_allowed")
 	}
-	if config.ConflictPolicy == "rename" {
-		name, err = a.files.AvailableName(config.Directory, name)
-	}
-	if err == nil {
-		_, err = a.files.Upload(config.Directory, name, io.LimitReader(file, config.MaxBytes+1), config.MaxBytes, false, "")
-	}
+	pending, err := a.uploadInbox.Receive(uploadinbox.Input{
+		EntryID: entry.ID, OriginalName: name, TargetDirectory: config.Directory, ConflictPolicy: config.ConflictPolicy,
+	}, io.LimitReader(file, config.MaxBytes+1), config.MaxBytes)
 	if err != nil {
 		return externalFailure(http.StatusConflict, "upload_failed")
 	}
-	return externalActionResult{status: http.StatusCreated, result: "succeeded", message: name, filename: name, bytesReceived: header.Size}
+	return externalActionResult{
+		status: http.StatusAccepted, result: "accepted", message: name, filename: name, bytesReceived: header.Size,
+		payload: map[string]any{"inbox_id": pending.ID, "sha256": pending.SHA256, "state": "pending_review"},
+	}
 }
 
 func externalExtensionAllowed(name string, allowed []string) bool {
 	if len(allowed) == 0 {
 		return false
 	}
-	name = strings.ToLower(name)
+	name = strings.ToLower(filepath.Base(name))
+	extension := filepath.Ext(name)
+	stem := strings.TrimSuffix(name, extension)
+	if filepath.Ext(stem) != "" {
+		return false
+	}
+	switch extension {
+	case ".bat", ".cmd", ".com", ".desktop", ".dll", ".exe", ".html", ".htm", ".js", ".lnk", ".msi", ".ps1", ".service", ".sh", ".svg", ".url", ".vbs", ".wsf":
+		return false
+	}
 	for _, extension := range allowed {
-		if strings.HasSuffix(name, extension) {
+		if strings.EqualFold(filepath.Ext(name), extension) {
 			return true
 		}
 	}

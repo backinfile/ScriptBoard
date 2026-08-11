@@ -31,6 +31,7 @@ func TestServeCommandStartsHTTPApplication(t *testing.T) {
 		"serve",
 		"--state-root", filepath.Join(root, "state"),
 		"--listen", "127.0.0.1:0",
+		"--canonical-external-url", "http://127.0.0.1",
 	)
 	stdout, err := command.StdoutPipe()
 	if err != nil {
