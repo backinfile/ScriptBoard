@@ -40,11 +40,6 @@ func TestPrivateRuntimeTracerBullet(t *testing.T) {
 		t.Fatal(err)
 	}
 	supervisor := NewSupervisor(1)
-	// The full repository test suite builds several subprocess fixtures in
-	// parallel on Windows. Keep the protocol assertion bounded without making
-	// host load look like a Pi RPC failure.
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
 	t.Cleanup(func() {
 		closeContext, closeCancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer closeCancel()
@@ -54,6 +49,11 @@ func TestPrivateRuntimeTracerBullet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The full repository test suite starts several subprocess fixtures in
+	// parallel on Windows. Start the protocol budget only after the fake Pi
+	// process exists so host process-launch delays do not consume it.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 	response, err := session.Client().Prompt(ctx, "prompt-1", "hello")
 	if err != nil || response.Success == nil || !*response.Success {
 		t.Fatalf("prompt response = %#v, error = %v, stderr = %s", response, err, session.StderrTail())
