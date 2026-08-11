@@ -1,7 +1,6 @@
 package app_test
 
 import (
-	"database/sql"
 	"fmt"
 	"io"
 	"net/http"
@@ -56,11 +55,7 @@ func TestAuditPageFiltersByInclusiveLocalDateRange(t *testing.T) {
 	root := t.TempDir()
 	stateRoot := filepath.Join(root, "state")
 	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), stateRoot)
-	db, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
+	db := openConcurrentAppTestDatabase(t, filepath.Join(stateRoot, "app.db"))
 
 	insert := func(action string, occurredAt time.Time) {
 		t.Helper()

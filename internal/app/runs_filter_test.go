@@ -21,7 +21,7 @@ func TestRunsPageFiltersBySearchAndInclusiveLocalDateRange(t *testing.T) {
 	hostRoot := filepath.Join(root, "host")
 	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 	scriptPath := filepath.Join(hostRoot, "automation", "nightly.ps1")
-	db := openRunsFilterTestDatabase(t, filepath.Join(stateRoot, "app.db"))
+	db := openConcurrentAppTestDatabase(t, filepath.Join(stateRoot, "app.db"))
 
 	insertSource := func(id, sourceType, sourceName, sourceID string, createdAt time.Time) {
 		t.Helper()
@@ -107,7 +107,7 @@ func TestRunsPageShowsAndSearchesInitiator(t *testing.T) {
 	hostRoot := filepath.Join(root, "host")
 	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 	scriptPath := filepath.Join(hostRoot, "automation", "nightly.ps1")
-	db := openRunsFilterTestDatabase(t, filepath.Join(stateRoot, "app.db"))
+	db := openConcurrentAppTestDatabase(t, filepath.Join(stateRoot, "app.db"))
 
 	insertRun := func(id, initiatorUserID, initiatorUsername string, createdAt time.Time) {
 		t.Helper()
@@ -186,13 +186,15 @@ func TestRunsPageRejectsInvalidDateRanges(t *testing.T) {
 	}
 }
 
-func openRunsFilterTestDatabase(t *testing.T, path string) *sql.DB {
+func openConcurrentAppTestDatabase(t *testing.T, path string) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatalf("open test SQLite database: %v", err)
 	}
 	db.SetMaxOpenConns(1)
+	// The running app and the test connection can write the same WAL at once.
+	// Wait out the app's short transaction instead of failing with SQLITE_BUSY.
 	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
 		_ = db.Close()
 		t.Fatalf("configure test SQLite database: %v", err)
