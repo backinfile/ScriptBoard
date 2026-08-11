@@ -15,12 +15,12 @@ import (
 const privateProviderName = "scriptboard-provider"
 
 type LaunchInput struct {
-	StateRoot, Executable, Extension                string
-	UserID, ConversationID                          string
-	Provider, Model, Endpoint, APIKey, SystemPrompt string
-	BrokerEndpoint, BrokerCapability                string
-	ParentEnvironment                               []string
-	SupportsImages                                  bool
+	StateRoot, Executable, Extension                           string
+	UserID, ConversationID                                     string
+	Provider, Model, ProviderProxyEndpoint, ProviderCapability string
+	SystemPrompt, BrokerEndpoint, BrokerCapability             string
+	ParentEnvironment                                          []string
+	SupportsImages                                             bool
 }
 
 type LaunchSpec struct {
@@ -50,16 +50,16 @@ func PrepareLaunch(input LaunchInput) (LaunchSpec, error) {
 	}
 	provider := strings.TrimSpace(input.Provider)
 	model := strings.TrimSpace(input.Model)
-	endpoint := strings.TrimSpace(input.Endpoint)
-	credential := strings.TrimSpace(input.APIKey)
-	if model == "" || credential == "" {
-		return LaunchSpec{}, fmt.Errorf("model and credential are required")
+	endpoint := strings.TrimSpace(input.ProviderProxyEndpoint)
+	capability := strings.TrimSpace(input.ProviderCapability)
+	if model == "" || len(capability) < 32 || len(capability) > 256 || strings.ContainsAny(capability, "\r\n\x00=") {
+		return LaunchSpec{}, fmt.Errorf("model and process-bound Provider capability are required")
 	}
 	api, err := providerAPI(provider)
 	if err != nil {
 		return LaunchSpec{}, err
 	}
-	if err := validateEndpoint(endpoint); err != nil {
+	if err := validateProviderProxyEndpoint(endpoint); err != nil {
 		return LaunchSpec{}, err
 	}
 
@@ -149,7 +149,7 @@ func PrepareLaunch(input LaunchInput) (LaunchSpec, error) {
 		"PI_OFFLINE=1",
 		"PI_SKIP_VERSION_CHECK=1",
 		"PI_TELEMETRY=0",
-		"SCRIPTBOARD_PI_API_KEY="+credential,
+		"SCRIPTBOARD_PI_API_KEY="+capability,
 	)
 	return LaunchSpec{
 		Executable: executable, PiHome: piHome, SessionDir: sessionDir, Workspace: workspace,
@@ -218,24 +218,18 @@ func providerAPI(provider string) (string, error) {
 	}
 }
 
-func validateEndpoint(raw string) error {
+func validateProviderProxyEndpoint(raw string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return fmt.Errorf("invalid provider endpoint")
-	}
-	if parsed.Scheme == "https" {
-		return nil
+		return fmt.Errorf("invalid Provider proxy endpoint")
 	}
 	if parsed.Scheme != "http" {
-		return fmt.Errorf("provider endpoint must use HTTPS or loopback HTTP")
+		return fmt.Errorf("Provider proxy endpoint must use loopback HTTP")
 	}
 	host := parsed.Hostname()
-	if strings.EqualFold(host, "localhost") {
-		return nil
-	}
 	address := net.ParseIP(host)
 	if address == nil || !address.IsLoopback() {
-		return fmt.Errorf("provider endpoint must use HTTPS or loopback HTTP")
+		return fmt.Errorf("Provider proxy endpoint must use a loopback IP")
 	}
 	return nil
 }

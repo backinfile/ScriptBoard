@@ -22,7 +22,7 @@ func TestPrepareLaunchUsesPrivateRuntimeAndConversationDirectories(t *testing.T)
 
 	spec, err := PrepareLaunch(LaunchInput{
 		StateRoot: stateRoot, Executable: executable, UserID: "user_1", ConversationID: "conversation_1",
-		Provider: "openai-compatible", Model: "gpt-local", Endpoint: "http://127.0.0.1:11434/v1", APIKey: "secret-value",
+		Provider: "openai-compatible", Model: "gpt-local", ProviderProxyEndpoint: "http://127.0.0.1:11434/v1", ProviderCapability: "session-provider-capability-value-0001",
 		SystemPrompt: "bounded assistant", SupportsImages: true,
 	})
 	if err != nil {
@@ -42,10 +42,10 @@ func TestPrepareLaunchUsesPrivateRuntimeAndConversationDirectories(t *testing.T)
 			t.Fatalf("arguments do not contain %q: %#v", required, spec.Args)
 		}
 	}
-	if strings.Contains(strings.Join(spec.Args, " "), "secret-value") {
+	if strings.Contains(strings.Join(spec.Args, " "), "session-provider-capability-value-0001") {
 		t.Fatal("credential leaked into command arguments")
 	}
-	if !slices.Contains(spec.Env, "SCRIPTBOARD_PI_API_KEY=secret-value") || !slices.Contains(spec.Env, "PI_OFFLINE=1") || !slices.Contains(spec.Env, "PI_SKIP_VERSION_CHECK=1") || !slices.Contains(spec.Env, "PI_TELEMETRY=0") {
+	if !slices.Contains(spec.Env, "SCRIPTBOARD_PI_API_KEY=session-provider-capability-value-0001") || !slices.Contains(spec.Env, "PI_OFFLINE=1") || !slices.Contains(spec.Env, "PI_SKIP_VERSION_CHECK=1") || !slices.Contains(spec.Env, "PI_TELEMETRY=0") {
 		t.Fatalf("environment = %#v", spec.Env)
 	}
 	if spec.SessionDir == spec.Workspace || !strings.HasPrefix(spec.SessionDir, filepath.Join(stateRoot, "assistant")) || !strings.HasPrefix(spec.Workspace, filepath.Join(stateRoot, "assistant")) {
@@ -62,7 +62,7 @@ func TestPrepareLaunchUsesPrivateRuntimeAndConversationDirectories(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(data), "secret-value") {
+	if strings.Contains(string(data), "session-provider-capability-value-0001") {
 		t.Fatal("credential leaked into models.json")
 	}
 	if !strings.Contains(string(data), `"input": [`) || !strings.Contains(string(data), `"image"`) {
@@ -77,7 +77,7 @@ func TestPrepareLaunchUsesPrivateRuntimeAndConversationDirectories(t *testing.T)
 	}
 	resumed, err := PrepareLaunch(LaunchInput{
 		StateRoot: stateRoot, Executable: executable, UserID: "user_1", ConversationID: "conversation_1",
-		Provider: "openai-compatible", Model: "gpt-local", Endpoint: "http://127.0.0.1:11434/v1", APIKey: "secret-value",
+		Provider: "openai-compatible", Model: "gpt-local", ProviderProxyEndpoint: "http://127.0.0.1:11434/v1", ProviderCapability: "session-provider-capability-value-0001",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -96,7 +96,7 @@ func TestPrepareLaunchIsolatesTwoConversations(t *testing.T) {
 	if err := os.WriteFile(executable, nil, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	base := LaunchInput{StateRoot: stateRoot, Executable: executable, UserID: "same-user", Provider: "anthropic", Model: "claude-test", Endpoint: "https://api.anthropic.com", APIKey: "key"}
+	base := LaunchInput{StateRoot: stateRoot, Executable: executable, UserID: "same-user", Provider: "anthropic", Model: "claude-test", ProviderProxyEndpoint: "http://127.0.0.1:32123", ProviderCapability: "session-provider-capability-value-0002"}
 	base.ConversationID = "first"
 	first, err := PrepareLaunch(base)
 	if err != nil {
@@ -115,10 +115,28 @@ func TestPrepareLaunchIsolatesTwoConversations(t *testing.T) {
 func TestPrepareLaunchRejectsGlobalAndUntrustedExecutables(t *testing.T) {
 	stateRoot := t.TempDir()
 	for _, executable := range []string{"pi", filepath.Join(stateRoot, "outside", runtimeExecutableName())} {
-		_, err := PrepareLaunch(LaunchInput{StateRoot: stateRoot, Executable: executable, UserID: "user", ConversationID: "conversation", Provider: "openai", Model: "gpt", Endpoint: "https://api.openai.com/v1", APIKey: "key"})
+		_, err := PrepareLaunch(LaunchInput{StateRoot: stateRoot, Executable: executable, UserID: "user", ConversationID: "conversation", Provider: "openai", Model: "gpt", ProviderProxyEndpoint: "http://127.0.0.1:32123/v1", ProviderCapability: "session-provider-capability-value-0003"})
 		if err == nil {
 			t.Fatalf("expected %q to be rejected", executable)
 		}
+	}
+}
+
+func TestPrepareLaunchRejectsDirectProviderEndpoint(t *testing.T) {
+	stateRoot := t.TempDir()
+	executable := filepath.Join(stateRoot, "assistant", "runtime", "versions", "test", runtimeExecutableName())
+	if err := os.MkdirAll(filepath.Dir(executable), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(executable, nil, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, err := PrepareLaunch(LaunchInput{
+		StateRoot: stateRoot, Executable: executable, UserID: "user", ConversationID: "conversation",
+		Provider: "openai", Model: "gpt", ProviderProxyEndpoint: "https://api.openai.com/v1", ProviderCapability: "session-provider-capability-value-0005",
+	})
+	if err == nil {
+		t.Fatal("Pi launch accepted a direct Provider endpoint")
 	}
 }
 
@@ -138,7 +156,7 @@ func TestPrepareLaunchLoadsOnlyExplicitBrokerExtension(t *testing.T) {
 	}
 	spec, err := PrepareLaunch(LaunchInput{
 		StateRoot: stateRoot, Executable: executable, Extension: extension, UserID: "user", ConversationID: "conversation",
-		Provider: "openai", Model: "gpt", Endpoint: "https://api.openai.com/v1", APIKey: "key",
+		Provider: "openai", Model: "gpt", ProviderProxyEndpoint: "http://127.0.0.1:32123/v1", ProviderCapability: "session-provider-capability-value-0004",
 		BrokerEndpoint: `\\.\pipe\scriptboard-fixture`, BrokerCapability: "capability-fixture",
 	})
 	if err != nil {
@@ -150,7 +168,7 @@ func TestPrepareLaunchLoadsOnlyExplicitBrokerExtension(t *testing.T) {
 	if !slices.Contains(spec.Env, `SCRIPTBOARD_BROKER_ENDPOINT=\\.\pipe\scriptboard-fixture`) || !slices.Contains(spec.Env, "SCRIPTBOARD_BROKER_CAPABILITY=capability-fixture") {
 		t.Fatalf("broker environment = %#v", spec.Env)
 	}
-	if _, err := PrepareLaunch(LaunchInput{StateRoot: stateRoot, Executable: executable, Extension: extension, UserID: "user", ConversationID: "conversation", Provider: "openai", Model: "gpt", Endpoint: "https://api.openai.com/v1", APIKey: "key"}); err == nil {
+	if _, err := PrepareLaunch(LaunchInput{StateRoot: stateRoot, Executable: executable, Extension: extension, UserID: "user", ConversationID: "conversation", Provider: "openai", Model: "gpt", ProviderProxyEndpoint: "http://127.0.0.1:32123/v1", ProviderCapability: "session-provider-capability-value-0004"}); err == nil {
 		t.Fatal("extension launch without a process-bound broker capability was accepted")
 	}
 }

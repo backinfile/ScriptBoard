@@ -517,7 +517,7 @@ state-root/
         runtime.json                 # Pi/RPC/Broker 合同和上游 commit
         LICENSE
     pi-home/<user-id>/<conversation-id>/
-      models.json                    # 只引用子进程环境变量，不含实际 API Key
+      models.json                    # 只引用会话 Provider capability，不含上游 Endpoint 或实际 API Key
     sessions/<user-id>/<conversation-id>/
     workspaces/<user-id>/<conversation-id>/
 ```
@@ -536,6 +536,12 @@ capability 不持久化；AssistantToolCall 记录规范参数、目标、有界
 capability 和 Provider 凭据的有界调用/返回 JSON，
 AssistantApproval 绑定用户、角色、授权版本、对话、Tool Call、参数和目标当前状态。
 服务重启把尚未完成的工具标记为 interrupted，并取消 pending/approved 的状态修改。
+
+每个受管 Pi 进程同时获得独立的环回 Provider 代理和 256-bit capability。代理在 Web
+进程内持有实际 Provider Endpoint 与 API Key，只接受绑定模型对应的固定推理 POST 路径，
+禁止重定向并复用共享出站策略；Pi 的参数、环境和 `models.json` 不再包含上游 Endpoint
+或真实 API Key。代理随 Pi 进程退出或会话停止而关闭。该进程内边界不替代 P0-08 要求的
+独立 OS 身份、秘密目录 ACL 和 Runtime 网络默认拒绝。
 
 Evidence Query 仍走相同 Tool Broker 和实时角色授权。日志搜索、日志窗口、Run 对比、计划
 历史和审计列表都有结果条数与文本字节上限；继续读取使用带 HMAC、五分钟过期并绑定用户、

@@ -17,6 +17,7 @@ import (
 	"scriptboard/internal/assistant"
 	"scriptboard/internal/assistant/capability"
 	"scriptboard/internal/assistant/pirpc"
+	"scriptboard/internal/assistant/providerproxy"
 	"scriptboard/internal/assistant/runtimeinstall"
 	"scriptboard/internal/assistant/toolbroker"
 )
@@ -55,23 +56,24 @@ type assistantRuntimeCoordinator struct {
 	supervisor *pirpc.Supervisor
 	broker     *toolbroker.Broker
 
-	mu              sync.Mutex
-	closed          bool
-	turns           map[string]*assistantRuntimeTurn
-	sessionConfigs  map[string]string
-	hubs            map[string]*assistantEventHub
-	lifecycleGates  map[string]*sync.Mutex
-	idleStops       map[string]*time.Timer
-	brokerSessions  map[string]assistantBrokerRuntimeSession
-	approvals       map[string]*assistantRuntimeApproval
-	approvalAudit   func(assistant.Actor, string, string, string)
-	turnSettled     func(string, string)
-	starting        int
-	maximum         int
-	warmDuration    time.Duration
-	maxTurnDuration time.Duration
-	browserStreams  chan struct{}
-	wg              sync.WaitGroup
+	mu               sync.Mutex
+	closed           bool
+	turns            map[string]*assistantRuntimeTurn
+	sessionConfigs   map[string]string
+	hubs             map[string]*assistantEventHub
+	lifecycleGates   map[string]*sync.Mutex
+	idleStops        map[string]*time.Timer
+	brokerSessions   map[string]assistantBrokerRuntimeSession
+	providerSessions map[string]*providerproxy.Session
+	approvals        map[string]*assistantRuntimeApproval
+	approvalAudit    func(assistant.Actor, string, string, string)
+	turnSettled      func(string, string)
+	starting         int
+	maximum          int
+	warmDuration     time.Duration
+	maxTurnDuration  time.Duration
+	browserStreams   chan struct{}
+	wg               sync.WaitGroup
 }
 
 type assistantBrokerRuntimeSession struct {
@@ -137,7 +139,7 @@ func newAssistantRuntimeCoordinator(stateRoot string, store *assistant.Service, 
 		stateRoot: stateRoot, store: store, supervisor: pirpc.NewSupervisor(maximum),
 		turns: make(map[string]*assistantRuntimeTurn), sessionConfigs: make(map[string]string),
 		hubs: make(map[string]*assistantEventHub), lifecycleGates: make(map[string]*sync.Mutex),
-		idleStops: make(map[string]*time.Timer), brokerSessions: make(map[string]assistantBrokerRuntimeSession), approvals: make(map[string]*assistantRuntimeApproval), warmDuration: defaultAssistantWarmDuration,
+		idleStops: make(map[string]*time.Timer), brokerSessions: make(map[string]assistantBrokerRuntimeSession), providerSessions: make(map[string]*providerproxy.Session), approvals: make(map[string]*assistantRuntimeApproval), warmDuration: defaultAssistantWarmDuration,
 		maxTurnDuration: defaultAssistantTurnDuration, maximum: maximum, browserStreams: make(chan struct{}, 16),
 	}
 }
@@ -236,10 +238,21 @@ func (runtime *assistantRuntimeCoordinator) TestModel(ctx context.Context, actor
 		runtime.mu.Unlock()
 	}()
 
+	providerSession, err := providerproxy.Start(providerproxy.Config{
+		Provider: model.Provider, Model: model.Model, Endpoint: model.Endpoint, Credential: credential,
+	})
+	if err != nil {
+		return fmt.Errorf("start Provider proxy: %w", err)
+	}
+	defer func() {
+		closeContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = providerSession.Close(closeContext)
+		cancel()
+	}()
 	spec, err := pirpc.PrepareLaunch(pirpc.LaunchInput{
 		StateRoot: runtime.stateRoot, Executable: managedRuntime.Executable,
 		UserID: actor.UserID, ConversationID: testID,
-		Provider: model.Provider, Model: model.Model, Endpoint: model.Endpoint, APIKey: credential,
+		Provider: model.Provider, Model: model.Model, ProviderProxyEndpoint: providerSession.Endpoint(), ProviderCapability: providerSession.Capability(),
 		SystemPrompt: "You are a provider connectivity check. Reply only with OK.",
 	})
 	if err != nil {
@@ -369,12 +382,14 @@ func (runtime *assistantRuntimeCoordinator) ExecuteWithImages(ctx context.Contex
 	runtime.mu.Lock()
 	previousIdentity := runtime.sessionConfigs[conversation.ID]
 	boundBroker, brokerExists := runtime.brokerSessions[conversation.ID]
+	boundProvider, providerExists := runtime.providerSessions[conversation.ID]
 	broker := runtime.broker
 	runtime.mu.Unlock()
 	minimumCapabilityExpiry := time.Now().Add(runtime.maxTurnDuration + 15*time.Second)
 	brokerMismatch := managedRuntime.Extension != "" && (!brokerExists || boundBroker.session == nil || boundBroker.expiresAt.Before(minimumCapabilityExpiry))
 	brokerMismatch = brokerMismatch || managedRuntime.Extension == "" && brokerExists
-	if exists && (previousIdentity != configurationIdentity || brokerMismatch) {
+	providerMismatch := !providerExists || boundProvider == nil
+	if exists && (previousIdentity != configurationIdentity || brokerMismatch || providerMismatch) {
 		stopContext, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		_ = runtime.stopManagedSession(stopContext, conversation.ID)
 		cancel()
@@ -382,7 +397,7 @@ func (runtime *assistantRuntimeCoordinator) ExecuteWithImages(ctx context.Contex
 		exists = false
 		brokerExists = false
 	}
-	if !exists && brokerExists {
+	if !exists && (brokerExists || providerExists) {
 		stopContext, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 		_ = runtime.stopManagedSession(stopContext, conversation.ID)
 		cancel()
@@ -397,15 +412,27 @@ func (runtime *assistantRuntimeCoordinator) ExecuteWithImages(ctx context.Contex
 			runtime.mu.Unlock()
 		}()
 		var processBroker *toolbroker.Session
+		processProvider, providerErr := providerproxy.Start(providerproxy.Config{
+			Provider: model.Provider, Model: model.Model, Endpoint: model.Endpoint, Credential: credential,
+		})
+		if providerErr != nil {
+			return fmt.Errorf("start Provider proxy: %w", providerErr)
+		}
 		capabilityExpiry := time.Now().Add(runtime.maxTurnDuration + runtime.warmDuration + time.Minute)
 		if managedRuntime.Extension != "" {
 			if broker == nil {
+				closeContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				_ = processProvider.Close(closeContext)
+				cancel()
 				return errors.New("Assistant Tool Broker is unavailable")
 			}
 			processBroker, err = broker.Start(toolbroker.SessionBinding{
 				RuntimeID: managedRuntime.Version, UserID: actor.UserID, ConversationID: conversation.ID, ExpiresAt: capabilityExpiry,
 			})
 			if err != nil {
+				closeContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				_ = processProvider.Close(closeContext)
+				cancel()
 				return fmt.Errorf("start Assistant Tool Broker session: %w", err)
 			}
 		}
@@ -414,10 +441,15 @@ func (runtime *assistantRuntimeCoordinator) ExecuteWithImages(ctx context.Contex
 				_ = processBroker.Close()
 			}
 		}
+		closeProcessProvider := func() {
+			closeContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = processProvider.Close(closeContext)
+			cancel()
+		}
 		spec, prepareErr := pirpc.PrepareLaunch(pirpc.LaunchInput{
 			StateRoot: runtime.stateRoot, Executable: managedRuntime.Executable, Extension: managedRuntime.Extension,
 			UserID: actor.UserID, ConversationID: conversation.ID,
-			Provider: model.Provider, Model: model.Model, Endpoint: model.Endpoint, APIKey: credential,
+			Provider: model.Provider, Model: model.Model, ProviderProxyEndpoint: processProvider.Endpoint(), ProviderCapability: processProvider.Capability(),
 			SupportsImages: model.SupportsImages,
 			SystemPrompt:   systemPrompt,
 			BrokerEndpoint: func() string {
@@ -435,6 +467,7 @@ func (runtime *assistantRuntimeCoordinator) ExecuteWithImages(ctx context.Contex
 		})
 		if prepareErr != nil {
 			closeProcessBroker()
+			closeProcessProvider()
 			return prepareErr
 		}
 		session, err = runtime.supervisor.Start(conversation.ID, spec)
@@ -443,18 +476,18 @@ func (runtime *assistantRuntimeCoordinator) ExecuteWithImages(ctx context.Contex
 		}
 		if err != nil {
 			closeProcessBroker()
+			closeProcessProvider()
 			return err
 		}
 		started = true
 		runtime.mu.Lock()
 		runtime.sessionConfigs[conversation.ID] = configurationIdentity
+		runtime.providerSessions[conversation.ID] = processProvider
 		if processBroker != nil {
 			runtime.brokerSessions[conversation.ID] = assistantBrokerRuntimeSession{session: processBroker, expiresAt: capabilityExpiry}
 		}
 		runtime.mu.Unlock()
-		if processBroker != nil {
-			go runtime.releaseBrokerWhenProcessStops(conversation.ID, session, processBroker)
-		}
+		go runtime.releaseCapabilitiesWhenProcessStops(conversation.ID, session, processProvider, processBroker)
 	}
 	modelContext, modelCancel := context.WithTimeout(ctx, 10*time.Second)
 	_, err = session.Client().SetManagedModel(modelContext, "model-"+reply.ID, model.Model)
@@ -547,25 +580,38 @@ func resolveAssistantThinkingLevel(requested string, available []string) string 
 	return available[0]
 }
 
-func (runtime *assistantRuntimeCoordinator) releaseBrokerWhenProcessStops(conversationID string, process *pirpc.Session, brokerSession *toolbroker.Session) {
+func (runtime *assistantRuntimeCoordinator) releaseCapabilitiesWhenProcessStops(conversationID string, process *pirpc.Session, providerSession *providerproxy.Session, brokerSession *toolbroker.Session) {
 	<-process.Done()
 	runtime.mu.Lock()
-	current, exists := runtime.brokerSessions[conversationID]
-	if exists && current.session == brokerSession {
+	currentProvider, providerExists := runtime.providerSessions[conversationID]
+	if providerExists && currentProvider == providerSession {
+		delete(runtime.providerSessions, conversationID)
 		delete(runtime.brokerSessions, conversationID)
 		delete(runtime.sessionConfigs, conversationID)
 	}
 	runtime.mu.Unlock()
-	_ = brokerSession.Close()
+	closeContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	_ = providerSession.Close(closeContext)
+	cancel()
+	if brokerSession != nil {
+		_ = brokerSession.Close()
+	}
 }
 
 func (runtime *assistantRuntimeCoordinator) stopManagedSession(ctx context.Context, conversationID string) error {
 	stopErr := runtime.supervisor.Stop(ctx, conversationID)
 	runtime.mu.Lock()
 	bound := runtime.brokerSessions[conversationID]
+	providerSession := runtime.providerSessions[conversationID]
 	delete(runtime.brokerSessions, conversationID)
+	delete(runtime.providerSessions, conversationID)
 	delete(runtime.sessionConfigs, conversationID)
 	runtime.mu.Unlock()
+	if providerSession != nil {
+		if err := providerSession.Close(ctx); stopErr == nil {
+			stopErr = err
+		}
+	}
 	if bound.session != nil {
 		if err := bound.session.Close(); stopErr == nil {
 			stopErr = err
@@ -1074,8 +1120,20 @@ func (runtime *assistantRuntimeCoordinator) Close(ctx context.Context) error {
 		}
 	}
 	runtime.brokerSessions = make(map[string]assistantBrokerRuntimeSession)
+	providerSessions := make([]*providerproxy.Session, 0, len(runtime.providerSessions))
+	for _, session := range runtime.providerSessions {
+		if session != nil {
+			providerSessions = append(providerSessions, session)
+		}
+	}
+	runtime.providerSessions = make(map[string]*providerproxy.Session)
 	runtime.sessionConfigs = make(map[string]string)
 	runtime.mu.Unlock()
+	for _, session := range providerSessions {
+		if err := session.Close(ctx); closeErr == nil {
+			closeErr = err
+		}
+	}
 	for _, session := range boundSessions {
 		if err := session.Close(); closeErr == nil {
 			closeErr = err
