@@ -744,12 +744,16 @@ func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.Read
 	if active != nil && active.timeoutTimer != nil {
 		active.timeoutTimer.Stop()
 	}
+	terminal := ""
+	if active != nil {
+		terminal = active.terminal
+	}
 	m.mu.Unlock()
 	status := "succeeded"
 	exitCode := 0
 	errorText := ""
-	if active != nil && active.terminal != "" {
-		status = active.terminal
+	if terminal != "" {
+		status = terminal
 		if waitErr != nil {
 			errorText = waitErr.Error()
 		}
@@ -800,9 +804,13 @@ func (m *Manager) timeout(id string) {
 	time.AfterFunc(m.timeoutGrace, func() {
 		m.mu.Lock()
 		stillActive := m.active[id]
-		m.mu.Unlock()
+		var forceProcess *os.Process
 		if stillActive != nil && stillActive.terminal == "timed_out" {
-			_ = terminateProcess(stillActive.command.Process, true)
+			forceProcess = stillActive.command.Process
+		}
+		m.mu.Unlock()
+		if forceProcess != nil {
+			_ = terminateProcess(forceProcess, true)
 		}
 	})
 }
@@ -893,8 +901,32 @@ func (m *Manager) Get(id string) (Run, error) {
 	if err != nil {
 		return Run{}, err
 	}
-	result.Events, _ = readEvents(logPath)
+	if result.LogExpired {
+		return result, nil
+	}
+	result.Events, err = readEvents(logPath)
+	if err != nil {
+		return Run{}, fmt.Errorf("read Run log: %w", err)
+	}
 	return result, nil
+}
+
+// StreamEvents emits the persisted Run log in sequence without retaining the
+// complete log in memory. The callback is not invoked if the log cannot be
+// opened, allowing callers to choose an error response before writing output.
+func (m *Manager) StreamEvents(id string, emit func(Event) error) error {
+	run, logPath, err := m.getMetadata(id)
+	if err != nil {
+		return err
+	}
+	if run.LogExpired {
+		return nil
+	}
+	_, err = scanEvents(logPath, 0, 0, emit)
+	if err != nil {
+		return fmt.Errorf("read Run log: %w", err)
+	}
+	return nil
 }
 
 func (m *Manager) FollowEvents(ctx context.Context, id string, afterSequence int64, emit func(Event) error) (string, error) {
@@ -1183,30 +1215,41 @@ func readEvents(path string) ([]Event, error) {
 }
 
 func readEventsAfter(path string, offset, afterSequence int64) ([]Event, int64, error) {
+	var events []Event
+	nextOffset, err := scanEvents(path, offset, afterSequence, func(event Event) error {
+		events = append(events, event)
+		return nil
+	})
+	return events, nextOffset, err
+}
+
+func scanEvents(path string, offset, afterSequence int64, emit func(Event) error) (int64, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, offset, nil
-		}
-		return nil, offset, err
+		return offset, err
 	}
 	defer file.Close()
 	if _, err := file.Seek(offset, io.SeekStart); err != nil {
-		return nil, offset, err
+		return offset, err
 	}
-	var events []Event
 	scanner := bufio.NewScanner(file)
 	buffer := make([]byte, 64<<10)
 	scanner.Buffer(buffer, 1<<20)
 	for scanner.Scan() {
+		lineOffset := offset
 		offset += int64(len(scanner.Bytes()) + 1)
 		var persisted persistedEvent
-		if json.Unmarshal(scanner.Bytes(), &persisted) == nil && persisted.Sequence > afterSequence {
+		if err := json.Unmarshal(scanner.Bytes(), &persisted); err != nil {
+			return lineOffset, fmt.Errorf("decode Run log at byte %d: %w", lineOffset, err)
+		}
+		if persisted.Sequence > afterSequence {
 			text, encodingError := decodeOutput(persisted.Data)
-			events = append(events, Event{Sequence: persisted.Sequence, Time: time.Unix(0, persisted.Time).UTC(), Source: persisted.Source, Data: text, EncodingError: encodingError})
+			if err := emit(Event{Sequence: persisted.Sequence, Time: time.Unix(0, persisted.Time).UTC(), Source: persisted.Source, Data: text, EncodingError: encodingError}); err != nil {
+				return offset, err
+			}
 		}
 	}
-	return events, offset, scanner.Err()
+	return offset, scanner.Err()
 }
 
 func (m *Manager) Close() {

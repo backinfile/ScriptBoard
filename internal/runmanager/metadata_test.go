@@ -97,6 +97,74 @@ func TestGetMetadataDoesNotReadRunLog(t *testing.T) {
 	}
 }
 
+func TestGetReportsUnavailableRunLogUnlessRetentionExpiredIt(t *testing.T) {
+	root := t.TempDir()
+	db := openRunMetadataTestDB(t, root)
+	defer db.Close()
+
+	missing := filepath.Join(root, "missing.jsonl")
+	insertRunMetadataTestRow(t, db, "run-missing", missing, time.Now().UTC())
+	insertRunMetadataTestRow(t, db, "run-expired", missing, time.Now().UTC())
+	if _, err := db.Exec("UPDATE runs SET log_expired = 1 WHERE id = 'run-expired'"); err != nil {
+		t.Fatal(err)
+	}
+	manager := New(db, testHostFiles(t), root, 0, nil)
+
+	if _, err := manager.Get("run-missing"); err == nil {
+		t.Fatal("Get accepted a missing non-expired Run log")
+	}
+	expired, err := manager.Get("run-expired")
+	if err != nil {
+		t.Fatalf("Get expired Run: %v", err)
+	}
+	if !expired.LogExpired || len(expired.Events) != 0 {
+		t.Fatalf("expired Run = %#v", expired)
+	}
+}
+
+func TestGetReportsMalformedRunLog(t *testing.T) {
+	root := t.TempDir()
+	db := openRunMetadataTestDB(t, root)
+	defer db.Close()
+
+	logPath := filepath.Join(root, "malformed.jsonl")
+	if err := os.WriteFile(logPath, []byte("not-json\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	insertRunMetadataTestRow(t, db, "run-malformed", logPath, time.Now().UTC())
+	manager := New(db, testHostFiles(t), root, 0, nil)
+
+	if _, err := manager.Get("run-malformed"); err == nil {
+		t.Fatal("Get accepted a malformed Run log")
+	}
+}
+
+func TestStreamEventsEmitsPersistedEventsWithoutBuildingRunEvents(t *testing.T) {
+	root := t.TempDir()
+	db := openRunMetadataTestDB(t, root)
+	defer db.Close()
+
+	logPath := filepath.Join(root, "run.jsonl")
+	log := `{"sequence":1,"time":1,"source":"stdout","data":"Zmlyc3QK"}` + "\n" +
+		`{"sequence":2,"time":2,"source":"stderr","data":"c2Vjb25kCg=="}` + "\n"
+	if err := os.WriteFile(logPath, []byte(log), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	insertRunMetadataTestRow(t, db, "run-1", logPath, time.Now().UTC())
+	manager := New(db, testHostFiles(t), root, 0, nil)
+
+	var events []Event
+	if err := manager.StreamEvents("run-1", func(event Event) error {
+		events = append(events, event)
+		return nil
+	}); err != nil {
+		t.Fatalf("StreamEvents: %v", err)
+	}
+	if len(events) != 2 || events[0].Data != "first\n" || events[1].Data != "second\n" {
+		t.Fatalf("events = %#v", events)
+	}
+}
+
 func TestFollowEventsResumesAfterSequenceAndReturnsFinalStatus(t *testing.T) {
 	root := t.TempDir()
 	db := openRunMetadataTestDB(t, root)

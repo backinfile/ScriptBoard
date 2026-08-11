@@ -134,8 +134,18 @@ const (
 
 type listedFile struct {
 	hostfiles.Entry
-	Path     string
-	Category fileCategory
+	Path              string
+	Category          fileCategory
+	DisplayCategory   fileCategory
+	PreviewableText   bool
+	ContentClassified bool
+}
+
+func (file listedFile) visibleCategory() fileCategory {
+	if file.ContentClassified {
+		return file.DisplayCategory
+	}
+	return file.Category
 }
 
 type fileNamePart struct {
@@ -144,6 +154,10 @@ type fileNamePart struct {
 }
 
 func prepareFileListing(entries []hostfiles.Entry, _ string, query, sortField, direction string, showHidden bool) []listedFile {
+	return prepareFileListingWithContent(entries, query, sortField, direction, showHidden, nil)
+}
+
+func prepareFileListingWithContent(entries []hostfiles.Entry, query, sortField, direction string, showHidden bool, classifyContent func(listedFile) (fileCategory, bool)) []listedFile {
 	result := make([]listedFile, 0, len(entries))
 	for _, entry := range entries {
 		if !showHidden && entry.Hidden {
@@ -153,18 +167,23 @@ func prepareFileListing(entries []hostfiles.Entry, _ string, query, sortField, d
 			continue
 		}
 		path := entry.Path
-		result = append(result, listedFile{
+		listed := listedFile{
 			Entry:    entry,
 			Path:     path,
 			Category: classifyFile(entry, path),
-		})
+		}
+		if sortField == "type" && classifyContent != nil {
+			listed.DisplayCategory, listed.PreviewableText = classifyContent(listed)
+			listed.ContentClassified = true
+		}
+		result = append(result, listed)
 	}
 	if sortField == "" {
 		return result
 	}
 	sort.SliceStable(result, func(left, right int) bool {
 		comparison := compareListedFiles(result[left], result[right], sortField)
-		if direction == "desc" && result[left].Category != fileCategoryDirectory && result[right].Category != fileCategoryDirectory {
+		if direction == "desc" && result[left].visibleCategory() != fileCategoryDirectory && result[right].visibleCategory() != fileCategoryDirectory {
 			comparison = -comparison
 		}
 		return comparison < 0
@@ -185,17 +204,18 @@ func normalizeFileSort(field, direction string) (string, string) {
 }
 
 func compareListedFiles(left, right listedFile, field string) int {
-	if left.Category == fileCategoryDirectory && right.Category != fileCategoryDirectory {
+	leftCategory, rightCategory := left.visibleCategory(), right.visibleCategory()
+	if leftCategory == fileCategoryDirectory && rightCategory != fileCategoryDirectory {
 		return -1
 	}
-	if left.Category != fileCategoryDirectory && right.Category == fileCategoryDirectory {
+	if leftCategory != fileCategoryDirectory && rightCategory == fileCategoryDirectory {
 		return 1
 	}
 
 	comparison := 0
 	switch field {
 	case "type":
-		comparison = cmp.Compare(fileCategoryRank(left.Category), fileCategoryRank(right.Category))
+		comparison = cmp.Compare(fileCategoryRank(leftCategory), fileCategoryRank(rightCategory))
 	case "size":
 		comparison = cmp.Compare(left.Size, right.Size)
 	case "modified":

@@ -692,6 +692,22 @@ func TestFileWorkspaceOffersPreviewForUnknownTextButNotUnknownBinary(t *testing.
 		}
 	}
 
+	response, err = client.Get(hostFilesRequestURLWithQuery(serverURL, hostRoot, url.Values{"sort": {"type"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	typeSortedPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	typeSortedHTML := string(typeSortedPage)
+	textPosition := strings.Index(typeSortedHTML, ">notes.payload</a>")
+	binaryPosition := strings.Index(typeSortedHTML, ">archive.payload</span>")
+	if textPosition < 0 || binaryPosition < 0 || textPosition > binaryPosition {
+		t.Fatalf("content-based type sort did not place previewable text before other files: %s", typeSortedHTML)
+	}
+
 	response, err = client.Get(hostFileRequestURL(serverURL, "/resources/files/view", textPath))
 	if err != nil {
 		t.Fatal(err)

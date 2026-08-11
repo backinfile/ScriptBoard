@@ -3376,7 +3376,7 @@ func (a *App) runDetails(response http.ResponseWriter, request *http.Request) {
 }
 
 func (a *App) downloadRun(response http.ResponseWriter, request *http.Request) {
-	run, err := a.runs.Get(request.PathValue("id"))
+	run, err := a.runs.GetMetadata(request.PathValue("id"))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			http.Error(response, "Run not found", http.StatusNotFound)
@@ -3386,54 +3386,56 @@ func (a *App) downloadRun(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	response.Header().Set("Cache-Control", "no-store")
-	response.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="scriptboard-run-%s.txt"`, sanitizeDownloadName(run.ID)))
-	response.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	response.Header().Set("X-Content-Type-Options", "nosniff")
-	_, _ = response.Write(formatRunDownload(run))
+	var header bytes.Buffer
+	writeRunDownloadMetadata(&header, run)
+	wroteHeader := false
+	eventCount := 0
+	lastEventHadNewline := true
+	writeHeader := func() error {
+		if wroteHeader {
+			return nil
+		}
+		wroteHeader = true
+		response.Header().Set("Cache-Control", "no-store")
+		response.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="scriptboard-run-%s.txt"`, sanitizeDownloadName(run.ID)))
+		response.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		response.Header().Set("X-Content-Type-Options", "nosniff")
+		_, err := response.Write(header.Bytes())
+		return err
+	}
+	err = a.runs.StreamEvents(run.ID, func(event runmanager.Event) error {
+		if err := writeHeader(); err != nil {
+			return err
+		}
+		eventCount++
+		lastEventHadNewline = strings.HasSuffix(event.Data, "\n")
+		_, err := io.WriteString(response, event.Data)
+		return err
+	})
+	if err != nil {
+		if !wroteHeader {
+			http.Error(response, "Unable to read Run log: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !lastEventHadNewline {
+			_, _ = io.WriteString(response, "\n")
+		}
+		_, _ = io.WriteString(response, "[Run log could not be read completely]\n")
+		return
+	}
+	if err := writeHeader(); err != nil {
+		return
+	}
+	if eventCount == 0 {
+		_, _ = io.WriteString(response, "(no output)\n")
+	} else if !lastEventHadNewline {
+		_, _ = io.WriteString(response, "\n")
+	}
 }
 
 func formatRunDownload(run runmanager.Run) []byte {
 	var result bytes.Buffer
-	result.WriteString("ScriptBoard Run Record\n")
-	result.WriteString("======================\n")
-	fmt.Fprintf(&result, "Run ID: %s\n", run.ID)
-	fmt.Fprintf(&result, "Script: %s\n", run.ScriptPath)
-	fmt.Fprintf(&result, "Status: %s\n", run.Status)
-	fmt.Fprintf(&result, "Created: %s\n", run.CreatedAt.UTC().Format(time.RFC3339Nano))
-	writeRunDownloadTime(&result, "Started", run.StartedAt)
-	writeRunDownloadTime(&result, "Finished", run.FinishedAt)
-	fmt.Fprintf(&result, "Source: %s", run.SourceType)
-	if run.SourceName != "" && run.SourceName != "manual" {
-		fmt.Fprintf(&result, " / %s", run.SourceName)
-	}
-	result.WriteByte('\n')
-	if run.InitiatorUsername != "" {
-		fmt.Fprintf(&result, "Initiated by: %s\n", run.InitiatorUsername)
-	}
-	fmt.Fprintf(&result, "Runtime identity: %s\n", run.RuntimeIdentity)
-	fmt.Fprintf(&result, "Executor: %s\n", run.Executor)
-	fmt.Fprintf(&result, "Timeout: %ds\n", run.TimeoutSeconds)
-	if run.ExitCode != nil {
-		fmt.Fprintf(&result, "Exit code: %d\n", *run.ExitCode)
-	}
-	if run.ArgumentsTemplate != "" {
-		fmt.Fprintf(&result, "Argument template: %s\n", run.ArgumentsTemplate)
-	}
-	if run.WorkingDirectory != "" {
-		fmt.Fprintf(&result, "Working directory: %s\n", run.WorkingDirectory)
-	}
-	if run.Error != "" {
-		fmt.Fprintf(&result, "Error: %s\n", run.Error)
-	}
-	fmt.Fprintf(&result, "SHA-256: %s\n", run.ScriptDigest)
-	fmt.Fprintf(&result, "Log expired: %t\n", run.LogExpired)
-	fmt.Fprintf(&result, "Log incomplete: %t\n", run.LogIncomplete)
-	fmt.Fprintf(&result, "Log truncated: %t\n", run.LogTruncated)
-	if run.LogTruncated {
-		fmt.Fprintf(&result, "Dropped bytes: %d\n", run.DroppedBytes)
-	}
-	result.WriteString("\nOutput\n======\n")
+	writeRunDownloadMetadata(&result, run)
 	if len(run.Events) == 0 {
 		result.WriteString("(no output)\n")
 		return result.Bytes()
@@ -3445,6 +3447,48 @@ func formatRunDownload(run runmanager.Run) []byte {
 		result.WriteByte('\n')
 	}
 	return result.Bytes()
+}
+
+func writeRunDownloadMetadata(result *bytes.Buffer, run runmanager.Run) {
+	result.WriteString("ScriptBoard Run Record\n")
+	result.WriteString("======================\n")
+	fmt.Fprintf(result, "Run ID: %s\n", run.ID)
+	fmt.Fprintf(result, "Script: %s\n", run.ScriptPath)
+	fmt.Fprintf(result, "Status: %s\n", run.Status)
+	fmt.Fprintf(result, "Created: %s\n", run.CreatedAt.UTC().Format(time.RFC3339Nano))
+	writeRunDownloadTime(result, "Started", run.StartedAt)
+	writeRunDownloadTime(result, "Finished", run.FinishedAt)
+	fmt.Fprintf(result, "Source: %s", run.SourceType)
+	if run.SourceName != "" && run.SourceName != "manual" {
+		fmt.Fprintf(result, " / %s", run.SourceName)
+	}
+	result.WriteByte('\n')
+	if run.InitiatorUsername != "" {
+		fmt.Fprintf(result, "Initiated by: %s\n", run.InitiatorUsername)
+	}
+	fmt.Fprintf(result, "Runtime identity: %s\n", run.RuntimeIdentity)
+	fmt.Fprintf(result, "Executor: %s\n", run.Executor)
+	fmt.Fprintf(result, "Timeout: %ds\n", run.TimeoutSeconds)
+	if run.ExitCode != nil {
+		fmt.Fprintf(result, "Exit code: %d\n", *run.ExitCode)
+	}
+	if run.ArgumentsTemplate != "" {
+		fmt.Fprintf(result, "Argument template: %s\n", run.ArgumentsTemplate)
+	}
+	if run.WorkingDirectory != "" {
+		fmt.Fprintf(result, "Working directory: %s\n", run.WorkingDirectory)
+	}
+	if run.Error != "" {
+		fmt.Fprintf(result, "Error: %s\n", run.Error)
+	}
+	fmt.Fprintf(result, "SHA-256: %s\n", run.ScriptDigest)
+	fmt.Fprintf(result, "Log expired: %t\n", run.LogExpired)
+	fmt.Fprintf(result, "Log incomplete: %t\n", run.LogIncomplete)
+	fmt.Fprintf(result, "Log truncated: %t\n", run.LogTruncated)
+	if run.LogTruncated {
+		fmt.Fprintf(result, "Dropped bytes: %d\n", run.DroppedBytes)
+	}
+	result.WriteString("\nOutput\n======\n")
 }
 
 func writeRunDownloadTime(result *bytes.Buffer, label string, value *time.Time) {
@@ -4438,7 +4482,9 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		writeHostFileError(response, "无法读取主机目录", err)
 		return
 	}
-	listing := prepareFileListing(entries, relative, query, sortField, direction, showHidden)
+	listing := prepareFileListingWithContent(entries, query, sortField, direction, showHidden, func(listed listedFile) (fileCategory, bool) {
+		return a.classifyFileContent(listed)
+	})
 	pagination := newPagination(request, len(listing))
 	if pagination.HasPrevious {
 		pagination.PreviousURL = filesStateURL(relative, query, sortField, direction, showHidden, pagination.Page-1)
@@ -4460,16 +4506,9 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 	for _, listed := range pageEntries {
 		entry, path := listed.Entry, listed.Path
 		category := listed.Category
-		previewableText := false
-		if entry.Kind == hostfiles.Regular && (category == fileCategoryOther || category == fileCategoryText || category == fileCategoryScript) {
-			likelyText, detectErr := a.files.IsLikelyText(path, 64<<10)
-			previewableText = detectErr == nil && likelyText
-		}
-		displayCategory := category
-		if category == fileCategoryOther && previewableText {
-			displayCategory = fileCategoryText
-		} else if category == fileCategoryText && !previewableText {
-			displayCategory = fileCategoryOther
+		displayCategory, previewableText := listed.DisplayCategory, listed.PreviewableText
+		if !listed.ContentClassified {
+			displayCategory, previewableText = a.classifyFileContent(listed)
 		}
 		view := fileView{
 			Entry: entry, Path: path, IconClass: fileCategoryIcon(displayCategory),
@@ -4551,6 +4590,22 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		CanManageExecution: roleAllows(current.role, permissionManageExecution),
 		Breadcrumbs:        breadcrumbs, Locale: locale, ShowHidden: showHidden,
 	})
+}
+
+func (a *App) classifyFileContent(listed listedFile) (fileCategory, bool) {
+	category := listed.Category
+	if listed.Kind != hostfiles.Regular || category != fileCategoryOther && category != fileCategoryText && category != fileCategoryScript {
+		return category, false
+	}
+	likelyText, err := a.files.IsLikelyText(listed.Path, 64<<10)
+	previewableText := err == nil && likelyText
+	displayCategory := category
+	if category == fileCategoryOther && previewableText {
+		displayCategory = fileCategoryText
+	} else if category == fileCategoryText && !previewableText {
+		displayCategory = fileCategoryOther
+	}
+	return displayCategory, previewableText
 }
 
 type fileBreadcrumbView struct {
