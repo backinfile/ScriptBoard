@@ -29,7 +29,7 @@ ScriptBoard 已有一批值得保留的安全基础：Argon2id 密码哈希、�
 | 计划项 | 本分支状态 | 说明 |
 | --- | --- | --- |
 | P0-01 | 完成 | 240 条路由均通过 fail-closed 注册器声明方法、认证方式、权限、CSRF 与请求体策略；运行时前缀权限推断已删除，角色/方法矩阵从 `RouteSpec` 清单自动验证。 |
-| P0-03 | 部分完成 | Run 使用最小环境；执行器必须解析为规范绝对普通文件，Linux 校验 root/服务身份所有权及不可被组/其他用户写入，参数控制字符被拒绝并有 fuzz 覆盖；跨模块统一启动器和 Windows owner SID/ACL 校验随身份拆分继续。 |
+| P0-03 | 两个切片完成 | Run 使用最小环境；执行器必须解析为规范绝对普通文件，Linux 校验 root/服务身份所有权及不可被组/其他用户写入，Windows 仅接受服务身份、SYSTEM、Administrators 或 TrustedInstaller 所有并拒绝不可信主体的写入型 ACL；参数控制字符被拒绝并有 fuzz 覆盖。跨模块统一启动器仍随身份拆分继续。 |
 | P0-04 | 两个切片完成 | 建立共享出站策略并覆盖网站 HTTP/WebSocket 探测、远程监控聚合、GitHub 更新检查/下载及签名 Assistant Runtime 下载；这些默认客户端不使用环境代理，DNS 解析后的实际 IP 由受控 Dialer 固定并拒绝私网、元数据和非常规端口。Assistant Provider 运行时出站代理仍待 P0-08 的隔离批次。 |
 | P0-05 | 首个切片完成 | 代理默认信任为空，非可信转发头被清理；新增 `allowed_hosts` 与 `canonical_external_url` 安全默认，可信代理 Host 仍须通过白名单，错误 Host/Origin 在业务 Handler 前拒绝。 |
 | P0-06 | 外部上传切片完成 | 外部上传空 allowlist 及活动/双扩展一律拒绝；内容以随机无扩展名和 0600 权限进入 State Root 私有 inbox，管理员核对 SHA-256 与目标后才能经并发领取、原子写入和审计发布。普通上传及各类导入仍按独立策略继续迁移。 |

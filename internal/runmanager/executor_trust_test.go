@@ -13,6 +13,7 @@ func TestExecutorTrustRequiresCanonicalRegularFile(t *testing.T) {
 	if err := os.WriteFile(executable, []byte("fixture"), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	protectExecutorFixture(t, executable)
 	resolved, err := validateExecutorTrust(executable)
 	if err != nil {
 		t.Fatalf("trusted executor rejected: %v", err)
