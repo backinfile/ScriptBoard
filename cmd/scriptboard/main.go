@@ -324,6 +324,17 @@ func runService(action string, arguments []string) error {
 		if err != nil {
 			return err
 		}
+		initializer, err := app.Open(app.Config{
+			StateRoot: metadata.StateRoot, InstallRoot: metadata.InstallRoot, ConfigPath: metadata.ConfigPath, TLSKey: loaded.TLSKey,
+			RunTimeoutGrace: loaded.RunTimeoutGrace, ExecutorChains: loaded.ExecutorChains,
+			AdminUsername: loaded.AdminUsername, AdminPasswordFile: loaded.AdminPasswordFile,
+		})
+		if err != nil {
+			return fmt.Errorf("初始化 managed service 状态: %w", err)
+		}
+		if err := initializer.Close(); err != nil {
+			return fmt.Errorf("完成 managed service 状态初始化: %w", err)
+		}
 		if err := platformservice.Install(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, installation.ServiceUpdaterExecutable(metadata), metadata.StateRoot); err != nil {
 			return err
 		}

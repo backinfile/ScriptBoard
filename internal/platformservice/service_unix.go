@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"scriptboard/internal/processlaunch"
@@ -15,6 +16,7 @@ import (
 const (
 	serviceName     = "ScriptBoard"
 	unitPath        = "/etc/systemd/system/scriptboard.service"
+	brokerUnitPath  = "/etc/systemd/system/scriptboard-broker.service"
 	updaterUnitPath = "/etc/systemd/system/scriptboard-updater@.service"
 )
 
@@ -30,9 +32,12 @@ func Exists() (bool, error) {
 }
 
 func Install(executable, configPath, updaterExecutable, stateRoot string) error {
+	brokerExecutable := filepath.Join(filepath.Dir(executable), "scriptboard-broker")
 	unit := fmt.Sprintf(`[Unit]
 Description=ScriptBoard
 After=network.target
+Requires=scriptboard-broker.service
+After=scriptboard-broker.service
 
 [Service]
 Type=simple
@@ -44,6 +49,24 @@ NoNewPrivileges=true
 [Install]
 WantedBy=multi-user.target
 `, systemdQuote(executable), systemdQuote(configPath))
+	brokerUnit := fmt.Sprintf(`[Unit]
+Description=ScriptBoard privileged operation Broker
+After=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=%s --state-root %s --allowed-identity root
+Restart=on-failure
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
+`, systemdQuote(brokerExecutable), systemdQuote(stateRoot))
 	updaterUnit := fmt.Sprintf(`[Unit]
 Description=ScriptBoard update operation %%i
 After=network.target
@@ -57,10 +80,16 @@ TimeoutStartSec=0
 	if err := os.WriteFile(unitPath, []byte(unit), 0o644); err != nil {
 		return err
 	}
+	if err := os.WriteFile(brokerUnitPath, []byte(brokerUnit), 0o644); err != nil {
+		return err
+	}
 	if err := os.WriteFile(updaterUnitPath, []byte(updaterUnit), 0o644); err != nil {
 		return err
 	}
 	if err := systemctl("daemon-reload"); err != nil {
+		return err
+	}
+	if err := systemctl("enable", "scriptboard-broker.service"); err != nil {
 		return err
 	}
 	return systemctl("enable", "scriptboard.service")
@@ -82,10 +111,13 @@ func Uninstall() error {
 			if !exists {
 				return nil
 			}
-			return systemctl("disable", "--now", "scriptboard.service")
+			if err := systemctl("disable", "--now", "scriptboard.service"); err != nil {
+				return err
+			}
+			return systemctl("disable", "--now", "scriptboard-broker.service")
 		},
 		func() error {
-			for _, path := range []string{unitPath, updaterUnitPath} {
+			for _, path := range []string{unitPath, brokerUnitPath, updaterUnitPath} {
 				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 					return err
 				}
@@ -96,9 +128,24 @@ func Uninstall() error {
 	)
 }
 
-func Start() error   { return systemctl("start", "scriptboard.service") }
-func Stop() error    { return systemctl("stop", "scriptboard.service") }
-func Restart() error { return systemctl("restart", "scriptboard.service") }
+func Start() error {
+	if err := systemctl("start", "scriptboard-broker.service"); err != nil {
+		return err
+	}
+	return systemctl("start", "scriptboard.service")
+}
+func Stop() error {
+	if err := systemctl("stop", "scriptboard.service"); err != nil {
+		return err
+	}
+	return systemctl("stop", "scriptboard-broker.service")
+}
+func Restart() error {
+	if err := Stop(); err != nil {
+		return err
+	}
+	return Start()
+}
 
 func Status() (string, error) {
 	command, commandErr := processlaunch.Prepare(processlaunch.Spec{
@@ -130,8 +177,23 @@ func MatchesExecutable(executable, configPath string) (bool, error) {
 		return false, err
 	}
 	expected := "ExecStart=" + systemdQuote(executable) + " serve --config " + systemdQuote(configPath)
+	webMatches := false
 	for _, line := range strings.Split(string(unit), "\n") {
 		if strings.TrimSpace(line) == expected {
+			webMatches = true
+			break
+		}
+	}
+	if !webMatches {
+		return false, nil
+	}
+	brokerUnit, err := os.ReadFile(brokerUnitPath)
+	if err != nil {
+		return false, err
+	}
+	expectedBrokerPrefix := "ExecStart=" + systemdQuote(filepath.Join(filepath.Dir(executable), "scriptboard-broker")) + " --state-root "
+	for _, line := range strings.Split(string(brokerUnit), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), expectedBrokerPrefix) {
 			return true, nil
 		}
 	}

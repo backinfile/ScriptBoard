@@ -33,8 +33,8 @@ ScriptBoard 是一款面向单台 Windows 或 Linux 主机的自托管脚本操�
 
 | 系统 | 架构 | 发布包 |
 | --- | --- | --- |
-| Windows 10/11、Windows Server 2019+ | amd64、arm64 | ZIP，包含服务、托盘和更新程序 |
-| 使用 systemd 的 Linux | amd64、arm64 | tar.gz，包含服务和更新程序 |
+| Windows 10/11、Windows Server 2019+ | amd64、arm64 | ZIP，包含 Web 服务、特权 Broker、托盘和更新程序 |
+| 使用 systemd 的 Linux | amd64、arm64 | tar.gz，包含 Web 服务、特权 Broker 和更新程序 |
 
 请在主机上安装脚本所需的解释器，例如 PowerShell、Python 或 Bash。ScriptBoard 不提供 Docker 部署包。
 
@@ -60,6 +60,8 @@ chmod +x ./scriptboard
 mkdir -p ./state
 ./scriptboard serve --state-root "$PWD/state"
 ```
+
+便携模式只启动 Web 进程，主机防火墙、Fail2ban、UFW 与系统组件安装等特权写操作默认不可用。需要这些能力时，请使用下文的系统服务安装方式，由安装器同时注册受保护的 `scriptboard-broker` 服务。
 
 ### 3. 登录
 
@@ -93,7 +95,7 @@ state/secrets/initial-admin-password
 .\scriptboard.exe service status
 ```
 
-服务默认安装到 `C:\Program Files\ScriptBoard`，状态数据保存在 `C:\ProgramData\ScriptBoard\state`。安装时会为当前 Windows 用户配置托盘自启动。
+服务默认安装到 `C:\Program Files\ScriptBoard`，状态数据保存在 `C:\ProgramData\ScriptBoard\state`。安装会初始化状态并注册 Web 与 `ScriptBoardBroker` 两个服务；防火墙和主机安全写操作只经保护的本机 Named Pipe 进入 Broker。安装时还会为当前 Windows 用户配置托盘自启动。
 
 ### Linux
 
@@ -105,7 +107,7 @@ sudo /opt/scriptboard/current/scriptboard service start
 sudo /opt/scriptboard/current/scriptboard service status
 ```
 
-服务默认安装到 `/opt/scriptboard`，状态数据保存在 `/var/lib/scriptboard/state`。
+服务默认安装到 `/opt/scriptboard`，状态数据保存在 `/var/lib/scriptboard/state`。安装会初始化状态并注册 `scriptboard.service` 与 `scriptboard-broker.service`；防火墙和主机安全写操作只经校验 peer UID 的本机 Unix Socket 进入 Broker。
 
 只有需要修改监听地址、TLS、状态目录等设置时，才需要创建 YAML 配置文件，并在安装时通过 `--config CONFIG_PATH` 指定。未指定时，ScriptBoard 会使用平台默认配置路径（Windows 为 `C:\ProgramData\ScriptBoard\config.yaml`，Linux 为 `/etc/scriptboard/config.yaml`）；该文件不存在时直接使用内置默认值。
 

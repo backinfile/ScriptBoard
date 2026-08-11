@@ -141,6 +141,42 @@ func TestReadOnlyOpenDoesNotBootstrapMissingTrustMaterial(t *testing.T) {
 	}
 }
 
+func TestIndependentWritersAdoptOnlyForwardSignedCheckpoints(t *testing.T) {
+	ctx := context.Background()
+	db := openCheckpointDB(t)
+	audit := auditlog.New(db)
+	root := filepath.Join(t.TempDir(), "state")
+	vault, err := secretstore.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := New(Options{StateRoot: root, SecretStore: vault})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.VerifyOrBootstrap(ctx, audit, time.Unix(10, 0)); err != nil {
+		t.Fatal(err)
+	}
+	second, err := New(Options{StateRoot: root, SecretStore: vault})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := second.VerifyOrBootstrap(ctx, audit, time.Unix(11, 0)); err != nil {
+		t.Fatal(err)
+	}
+	firstID, _ := audit.Append(ctx, auditlog.Event{OccurredAt: "1", Action: "first-writer"})
+	if err := first.Write(ctx, audit, time.Unix(12, 0)); err != nil {
+		t.Fatal(err)
+	}
+	secondID, _ := audit.Append(ctx, auditlog.Event{OccurredAt: "2", Action: "second-writer"})
+	if err := second.Write(ctx, audit, time.Unix(13, 0)); err != nil {
+		t.Fatalf("second writer did not adopt a forward signed checkpoint: %v", err)
+	}
+	if secondID <= firstID || second.CheckpointEventID() != secondID {
+		t.Fatalf("first=%d second=%d checkpoint=%d", firstID, secondID, second.CheckpointEventID())
+	}
+}
+
 func openCheckpointDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "audit.db"))

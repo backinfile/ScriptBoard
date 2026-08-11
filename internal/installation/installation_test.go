@@ -28,12 +28,12 @@ func TestPrepareCreatesVersionedInstallation(t *testing.T) {
 	}
 	raw, _ := json.Marshal(info)
 	files := map[string][]byte{
-		"scriptboard": []byte("service"), "scriptboard-updater": []byte("updater"),
+		"scriptboard": []byte("service"), "scriptboard-broker": []byte("broker"), "scriptboard-updater": []byte("updater"),
 		buildinfo.ReleaseInfoFilename: raw,
 	}
 	if runtime.GOOS == "windows" {
 		files = map[string][]byte{
-			"scriptboard.exe": []byte("service"), "scriptboard-tray.exe": []byte("tray"),
+			"scriptboard.exe": []byte("service"), "scriptboard-broker.exe": []byte("broker"), "scriptboard-tray.exe": []byte("tray"),
 			"scriptboard-tray-launcher.exe": []byte("launcher"), "scriptboard-updater.exe": []byte("updater"),
 			buildinfo.ReleaseInfoFilename: raw,
 		}
@@ -72,6 +72,11 @@ func TestPrepareCreatesVersionedInstallation(t *testing.T) {
 		wantService = filepath.Join(install, "versions", "1.2.3", "scriptboard.exe")
 	}
 	assertSameFile(t, "service entry executable", ServiceEntryExecutable(metadata), wantService)
+	wantBroker := filepath.Join(install, "current", "scriptboard-broker")
+	if runtime.GOOS == "windows" {
+		wantBroker = filepath.Join(install, "versions", "1.2.3", "scriptboard-broker.exe")
+	}
+	assertSameFile(t, "privileged Broker executable", ServiceBrokerExecutable(metadata), wantBroker)
 	assertSameFile(t, "state root", metadata.StateRoot, state)
 }
 

@@ -14,7 +14,10 @@ import (
 	"golang.org/x/sys/windows/svc/mgr"
 )
 
-const serviceName = "ScriptBoard"
+const (
+	serviceName       = "ScriptBoard"
+	brokerServiceName = "ScriptBoardBroker"
+)
 
 func Exists() (bool, error) {
 	manager, err := mgr.Connect()
@@ -33,15 +36,46 @@ func Exists() (bool, error) {
 	return true, nil
 }
 
-func Install(executable, configPath, _, _ string) error {
+func Install(executable, configPath, _ string, stateRoot string) error {
 	manager, err := mgr.Connect()
 	if err != nil {
 		return err
 	}
 	defer manager.Disconnect()
+	brokerExecutable := filepath.Join(filepath.Dir(executable), "scriptboard-broker.exe")
+	brokerConfiguration := mgr.Config{
+		StartType: mgr.StartAutomatic, DisplayName: "ScriptBoard Privileged Broker",
+		Description: "ScriptBoard fixed privileged operation broker",
+	}
+	broker, err := manager.CreateService(brokerServiceName, brokerExecutable, brokerConfiguration, "--state-root", stateRoot)
+	if errors.Is(err, windows.ERROR_SERVICE_EXISTS) {
+		broker, err = manager.OpenService(brokerServiceName)
+		if err != nil {
+			return err
+		}
+		current, configErr := broker.Config()
+		if configErr != nil {
+			broker.Close()
+			return configErr
+		}
+		current.BinaryPathName = windows.ComposeCommandLine([]string{brokerExecutable, "--state-root", stateRoot})
+		current.StartType = mgr.StartAutomatic
+		current.DisplayName = brokerConfiguration.DisplayName
+		current.Description = brokerConfiguration.Description
+		if err = broker.UpdateConfig(current); err != nil {
+			broker.Close()
+			return err
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("install Windows privileged Broker service: %w", err)
+	}
+	if err := broker.Close(); err != nil {
+		return err
+	}
 	configuration := mgr.Config{
 		StartType: mgr.StartAutomatic, DisplayName: "ScriptBoard",
-		Description: "ScriptBoard trusted-script management service",
+		Description: "ScriptBoard trusted-script management service", Dependencies: []string{brokerServiceName},
 	}
 	service, err := manager.CreateService(serviceName, executable, configuration, "serve", "--config", configPath)
 	if errors.Is(err, windows.ERROR_SERVICE_EXISTS) {
@@ -58,6 +92,7 @@ func Install(executable, configPath, _, _ string) error {
 		current.StartType = mgr.StartAutomatic
 		current.DisplayName = "ScriptBoard"
 		current.Description = configuration.Description
+		current.Dependencies = configuration.Dependencies
 		if err = service.UpdateConfig(current); err != nil {
 			service.Close()
 			return err
@@ -85,7 +120,24 @@ func SwitchExecutable(executable, configPath string) error {
 		return err
 	}
 	configuration.BinaryPathName = windows.ComposeCommandLine([]string{executable, "serve", "--config", configPath})
-	return service.UpdateConfig(configuration)
+	if err := service.UpdateConfig(configuration); err != nil {
+		return err
+	}
+	broker, err := manager.OpenService(brokerServiceName)
+	if err != nil {
+		return err
+	}
+	defer broker.Close()
+	brokerConfiguration, err := broker.Config()
+	if err != nil {
+		return err
+	}
+	arguments, err := windows.DecomposeCommandLine(brokerConfiguration.BinaryPathName)
+	if err != nil || len(arguments) != 3 || arguments[1] != "--state-root" {
+		return errors.New("Windows privileged Broker service command is invalid")
+	}
+	brokerConfiguration.BinaryPathName = windows.ComposeCommandLine([]string{filepath.Join(filepath.Dir(executable), "scriptboard-broker.exe"), "--state-root", arguments[2]})
+	return broker.UpdateConfig(brokerConfiguration)
 }
 
 func Uninstall() error {
@@ -94,33 +146,68 @@ func Uninstall() error {
 		return err
 	}
 	defer manager.Disconnect()
-	service, err := manager.OpenService(serviceName)
-	if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
-		return nil
+	for _, name := range []string{serviceName, brokerServiceName} {
+		service, err := manager.OpenService(name)
+		if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		deleteErr := service.Delete()
+		closeErr := service.Close()
+		if deleteErr != nil {
+			return deleteErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
 	}
-	if err != nil {
-		return err
-	}
-	defer service.Close()
-	return service.Delete()
+	return nil
 }
 
 func Start() error {
-	manager, service, err := openService()
+	manager, err := mgr.Connect()
 	if err != nil {
 		return err
 	}
 	defer manager.Disconnect()
-	defer service.Close()
-	return service.Start()
+	if err := startWindowsService(manager, brokerServiceName); err != nil {
+		return err
+	}
+	return startWindowsService(manager, serviceName)
 }
 
 func Stop() error {
-	manager, service, err := openService()
+	manager, err := mgr.Connect()
 	if err != nil {
 		return err
 	}
 	defer manager.Disconnect()
+	if err := stopWindowsService(manager, serviceName); err != nil {
+		return err
+	}
+	return stopWindowsService(manager, brokerServiceName)
+}
+
+func startWindowsService(manager *mgr.Mgr, name string) error {
+	service, err := manager.OpenService(name)
+	if err != nil {
+		return err
+	}
+	defer service.Close()
+	status, err := service.Query()
+	if err == nil && status.State == svc.Running {
+		return nil
+	}
+	return service.Start()
+}
+
+func stopWindowsService(manager *mgr.Mgr, name string) error {
+	service, err := manager.OpenService(name)
+	if err != nil {
+		return err
+	}
 	defer service.Close()
 	status, err := service.Query()
 	if err != nil {
@@ -143,7 +230,7 @@ func Stop() error {
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	return errors.New("Windows service did not stop within 45 seconds")
+	return fmt.Errorf("Windows service %s did not stop within 45 seconds", name)
 }
 
 func Restart() error {
@@ -202,7 +289,19 @@ func MatchesExecutable(executable, configPath string) (bool, error) {
 		arguments[1] != "serve" || arguments[2] != "--config" || !sameWindowsPath(arguments[3], configPath) {
 		return false, nil
 	}
-	return true, nil
+	broker, err := manager.OpenService(brokerServiceName)
+	if err != nil {
+		return false, err
+	}
+	defer broker.Close()
+	brokerConfiguration, err := broker.Config()
+	if err != nil {
+		return false, err
+	}
+	brokerArguments, err := windows.DecomposeCommandLine(brokerConfiguration.BinaryPathName)
+	return err == nil && len(brokerArguments) == 3 &&
+		sameWindowsPath(brokerArguments[0], filepath.Join(filepath.Dir(executable), "scriptboard-broker.exe")) &&
+		brokerArguments[1] == "--state-root" && filepath.IsAbs(brokerArguments[2]), err
 }
 
 func sameWindowsPath(first, second string) bool {

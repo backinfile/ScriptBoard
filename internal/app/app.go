@@ -54,6 +54,7 @@ import (
 	"scriptboard/internal/mfa"
 	"scriptboard/internal/mysqlmanager"
 	"scriptboard/internal/privatepath"
+	"scriptboard/internal/privilegebroker"
 	"scriptboard/internal/runmanager"
 	"scriptboard/internal/scheduler"
 	"scriptboard/internal/secretredaction"
@@ -315,30 +316,31 @@ const (
 )
 
 type Config struct {
-	StateRoot              string
-	ConfigPath             string
-	InstallRoot            string
-	TLSKey                 string
-	FileTopology           hostfiles.Topology
-	RunTimeoutGrace        time.Duration
-	SchedulerNow           func() time.Time
-	SchedulerTick          time.Duration
-	ExecutorChains         map[string][]string
-	AdminUsername          string
-	AdminPasswordFile      string
-	TrustedProxies         []string
-	AllowedHosts           []string
-	CanonicalExternalURL   string
-	WebsiteMonitorOptions  websitemonitor.Options
-	CustomDashboardClient  *http.Client
-	UpdateCheck            bool
-	UpdateInterval         time.Duration
-	UpdateSource           updatepkg.ReleaseSource
-	RequestShutdown        func()
-	RequestRestart         func() error
-	ApplicationProbe       appstatus.Probe
-	AssistantRuntimeSource runtimeinstall.Source
-	HostSecurity           hostsecurity.Service
+	StateRoot                string
+	ConfigPath               string
+	InstallRoot              string
+	TLSKey                   string
+	FileTopology             hostfiles.Topology
+	RunTimeoutGrace          time.Duration
+	SchedulerNow             func() time.Time
+	SchedulerTick            time.Duration
+	ExecutorChains           map[string][]string
+	AdminUsername            string
+	AdminPasswordFile        string
+	TrustedProxies           []string
+	AllowedHosts             []string
+	CanonicalExternalURL     string
+	WebsiteMonitorOptions    websitemonitor.Options
+	CustomDashboardClient    *http.Client
+	UpdateCheck              bool
+	UpdateInterval           time.Duration
+	UpdateSource             updatepkg.ReleaseSource
+	RequestShutdown          func()
+	RequestRestart           func() error
+	ApplicationProbe         appstatus.Probe
+	AssistantRuntimeSource   runtimeinstall.Source
+	HostSecurity             hostsecurity.Service
+	PrivilegedBrokerEndpoint string
 }
 
 type App struct {
@@ -482,7 +484,21 @@ func Open(config Config) (*App, error) {
 	}
 	hostSecurityService := config.HostSecurity
 	if hostSecurityService == nil {
-		hostSecurityService = hostsecurity.NewManager(hostsecurity.Options{})
+		hostSecurityReader := hostsecurity.NewManager(hostsecurity.Options{})
+		brokerEndpoint := strings.TrimSpace(config.PrivilegedBrokerEndpoint)
+		if brokerEndpoint == "" {
+			brokerEndpoint, err = privilegebroker.DefaultEndpoint(stateRoot)
+			if err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("resolve privileged Broker endpoint: %w", err)
+			}
+		}
+		brokerClient := privilegebroker.NewClient(privilegebroker.ClientOptions{Dial: privilegebroker.Dial(brokerEndpoint)})
+		hostSecurityService, err = privilegebroker.NewHostSecurityService(hostSecurityReader, brokerClient)
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("configure privileged host security Broker: %w", err)
+		}
 	}
 	application := &App{
 		db: db, stateRoot: stateRoot, files: files, uploadInbox: uploadInboxStore, instanceLock: instanceLock, mfa: mfaStore,
@@ -5563,6 +5579,7 @@ type session struct {
 	authenticationAssurance int
 	reauthenticatedAt       int64
 	tokenHash               string
+	rawToken                string
 	csrfToken               string
 }
 
@@ -5574,6 +5591,7 @@ func (a *App) loadSession(request *http.Request) (session, string, bool) {
 	var current session
 	var lastSeen, expiresAt int64
 	current.tokenHash = hashToken(cookie.Value)
+	current.rawToken = cookie.Value
 	err = a.db.QueryRow(`
 		SELECT sessions.csrf_token, sessions.last_seen_at, sessions.expires_at,
 			sessions.authentication_assurance, sessions.reauthenticated_at,
@@ -5614,6 +5632,10 @@ func (a *App) requireSession(next http.Handler) http.Handler {
 			_, _ = a.db.Exec("UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?", now.Unix(), hashToken(cookie.Value))
 		}
 		authenticatedContext := context.WithValue(request.Context(), sessionContextKey, current)
+		correlationID, _ := request.Context().Value(requestIDContextKey).(string)
+		authenticatedContext = privilegebroker.WithAuthorization(authenticatedContext, privilegebroker.Authorization{
+			SessionToken: current.rawToken, RequestID: correlationID,
+		})
 		authenticatedContext, cancel := context.WithCancel(authenticatedContext)
 		requestID := a.registerAuthenticatedRequest(current.userID, cancel)
 		defer a.unregisterAuthenticatedRequest(current.userID, requestID)

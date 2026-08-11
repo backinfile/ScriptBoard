@@ -414,6 +414,7 @@ install-root/
   versions/<version>/
     RELEASE.json
     scriptboard[.exe]
+    scriptboard-broker[.exe]       # 固定主机写动作的独立特权进程
     scriptboard-updater[.exe]
     ...                            # 对应平台完整 Release 内容
   scriptboard-updater              # 仅 Linux；切换前原子刷新、供恢复使用的独立 helper
@@ -421,6 +422,12 @@ install-root/
 ```
 
 Update Operation 是文件系统持久化事务，不写入 SQLite 作为事实来源，以便数据库本身被恢复时仍能继续判断更新阶段。终态结果由应用在正常启动后幂等导入审计一次。
+
+主机安全写操作使用独立 Broker 的内存 capability，不新增 SQLite capability 表。Broker 收到
+authorize 请求后直接用原始会话 token 的 SHA-256 查询 `sessions`/`users`，重新检查认证版本、
+角色、期限与近期 step-up；随机 capability 只在 Broker 内存保留 30 秒并在任何 execute 尝试时
+先消费。`privileged_broker.<action>` 的 `attempted` 与终态事件由 Broker 自己写入审计链并刷新
+外部签名 checkpoint，Web 的同层业务审计不作为 Broker 执行授权或成功事实来源。
 
 ## 8. 网站监控
 

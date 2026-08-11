@@ -27,6 +27,8 @@ const (
 	checkpointVersion = "scriptboard-audit-checkpoint-v1"
 	keyPurpose        = "audit-checkpoint-signing-key-v1"
 	maxCheckpointSize = 64 << 10
+	lockStaleAfter    = time.Minute
+	lockRetryInterval = 25 * time.Millisecond
 )
 
 type Options struct {
@@ -152,6 +154,16 @@ func (store *Store) VerifyOrBootstrap(ctx context.Context, audit *auditlog.Store
 		if store.readOnly || !store.newKey {
 			return errors.New("external audit checkpoint is missing")
 		}
+		release, lockErr := store.acquireFileLock(ctx)
+		if lockErr != nil {
+			return lockErr
+		}
+		defer release()
+		if _, statErr := os.Stat(store.checkpointPath); statErr == nil {
+			return errors.New("external audit checkpoint appeared during initialization; retry startup")
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return statErr
+		}
 		verification, err := audit.Verify(ctx)
 		if err != nil {
 			return err
@@ -178,6 +190,11 @@ func (store *Store) Write(ctx context.Context, audit *auditlog.Store, now time.T
 	if store.readOnly {
 		return errors.New("read-only audit checkpoint store cannot write")
 	}
+	release, err := store.acquireFileLock(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 	if store.newKey {
 		verification, err := audit.Verify(ctx)
 		if err != nil {
@@ -214,13 +231,54 @@ func (store *Store) verifyTrustedCheckpoint(ctx context.Context, audit *auditlog
 		return auditlog.Verification{}, err
 	}
 	if document != *store.trusted {
-		return auditlog.Verification{}, errors.New("external audit checkpoint changed after verification")
+		if document.EventID < store.trusted.EventID ||
+			document.EventID == store.trusted.EventID && document.EventSHA256 != store.trusted.EventSHA256 {
+			return auditlog.Verification{}, errors.New("external audit checkpoint moved backward or changed identity after verification")
+		}
+		if document.EventID == 0 && store.trusted.EventID > 0 {
+			return auditlog.Verification{}, errors.New("external audit checkpoint moved back to the retained anchor")
+		}
 	}
 	verification, err := audit.VerifyWithCheckpoint(ctx, document.EventID, document.EventSHA256)
 	if err != nil {
 		return auditlog.Verification{}, fmt.Errorf("refuse to refresh from an untrusted audit chain: %w", err)
 	}
+	store.trusted = &document
 	return verification, nil
+}
+
+func (store *Store) acquireFileLock(ctx context.Context) (func(), error) {
+	lockPath := store.checkpointPath + ".lock"
+	for {
+		file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err == nil {
+			_, writeErr := fmt.Fprintf(file, "%d\n", os.Getpid())
+			closeErr := file.Close()
+			if writeErr != nil || closeErr != nil {
+				_ = os.Remove(lockPath)
+				if writeErr != nil {
+					return nil, writeErr
+				}
+				return nil, closeErr
+			}
+			return func() { _ = os.Remove(lockPath) }, nil
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return nil, fmt.Errorf("acquire external audit checkpoint lock: %w", err)
+		}
+		if info, statErr := os.Lstat(lockPath); statErr == nil && info.Mode().IsRegular() && time.Since(info.ModTime()) > lockStaleAfter {
+			if removeErr := os.Remove(lockPath); removeErr == nil || errors.Is(removeErr, os.ErrNotExist) {
+				continue
+			}
+		}
+		timer := time.NewTimer(lockRetryInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, fmt.Errorf("wait for external audit checkpoint lock: %w", ctx.Err())
+		case <-timer.C:
+		}
+	}
 }
 
 func (store *Store) bootstrap(verification auditlog.Verification, now time.Time) error {

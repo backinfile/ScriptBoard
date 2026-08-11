@@ -33,8 +33,8 @@ The web interface is available in Simplified Chinese and US English and works on
 
 | System | Architectures | Release package |
 | --- | --- | --- |
-| Windows 10/11 and Windows Server 2019+ | amd64, arm64 | ZIP with service, tray, and updater programs |
-| Linux with systemd | amd64, arm64 | tar.gz with service and updater programs |
+| Windows 10/11 and Windows Server 2019+ | amd64, arm64 | ZIP with Web service, privileged Broker, tray, and updater programs |
+| Linux with systemd | amd64, arm64 | tar.gz with Web service, privileged Broker, and updater programs |
 
 Install the interpreters required by your scripts, such as PowerShell, Python, or Bash. ScriptBoard does not provide an official Docker deployment package.
 
@@ -60,6 +60,8 @@ chmod +x ./scriptboard
 mkdir -p ./state
 ./scriptboard serve --state-root "$PWD/state"
 ```
+
+Portable mode starts only the Web process, so privileged writes such as host firewall, Fail2ban, UFW, and system component installation are unavailable by default. Use the system-service installation below when those capabilities are required; the installer registers the protected `scriptboard-broker` service as well.
 
 ### 3. Sign in
 
@@ -88,7 +90,7 @@ Run the following in an elevated PowerShell window:
 .\scriptboard.exe service status
 ```
 
-The service is installed under `C:\Program Files\ScriptBoard`, and state is stored under `C:\ProgramData\ScriptBoard\state`. Installation also enables the tray app for the current Windows user.
+The service is installed under `C:\Program Files\ScriptBoard`, and state is stored under `C:\ProgramData\ScriptBoard\state`. Installation initializes state and registers both the Web service and `ScriptBoardBroker`; firewall and host-security mutations enter the Broker only through its protected local named pipe. Installation also enables the tray app for the current Windows user.
 
 ### Linux
 
@@ -100,7 +102,7 @@ sudo /opt/scriptboard/current/scriptboard service start
 sudo /opt/scriptboard/current/scriptboard service status
 ```
 
-The service is installed under `/opt/scriptboard`, and state is stored under `/var/lib/scriptboard/state`.
+The service is installed under `/opt/scriptboard`, and state is stored under `/var/lib/scriptboard/state`. Installation initializes state and registers both `scriptboard.service` and `scriptboard-broker.service`; firewall and host-security mutations enter the Broker only through a local Unix socket with peer-UID verification.
 
 Create a YAML configuration file only when you need to change settings such as the listen address, TLS, or the state directory, then pass it during installation with `--config CONFIG_PATH`. Without that flag, ScriptBoard uses the platform's default configuration path (`C:\ProgramData\ScriptBoard\config.yaml` on Windows or `/etc/scriptboard/config.yaml` on Linux); if the file does not exist, the built-in defaults are used.
 
