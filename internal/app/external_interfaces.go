@@ -17,6 +17,7 @@ import (
 
 	"scriptboard/internal/externaltrigger"
 	"scriptboard/internal/runmanager"
+	"scriptboard/internal/websitemonitor"
 )
 
 type externalKeyView struct {
@@ -136,7 +137,7 @@ func (a *App) externalInterfacesPage(response http.ResponseWriter, request *http
 				view.EnabledEntries++
 			}
 			entryView := externalEntryView{
-				Entry: entry, TypeText: externalActionText(locale, entry.Type), TargetText: externalTargetText(entry),
+				Entry: entry, TypeText: externalActionText(locale, entry.Type), TargetText: externalTargetText(locale, entry),
 			}
 			if entry.Type == externaltrigger.ActionLog {
 				var config externaltrigger.LogConfig
@@ -175,13 +176,15 @@ func externalActionText(locale webLocale, action externaltrigger.ActionType) str
 	return webText(locale, "external.action."+string(action))
 }
 
-func externalTargetText(entry externaltrigger.Entry) string {
+func externalTargetText(locale webLocale, entry externaltrigger.Entry) string {
 	switch entry.Type {
 	case externaltrigger.ActionLog:
 		var config externaltrigger.LogConfig
 		if entry.DecodeConfig(&config) == nil {
 			return config.File
 		}
+	case externaltrigger.ActionWebsiteMonitor:
+		return webText(locale, "external.website_monitor_target")
 	}
 	return entry.Target
 }
@@ -426,12 +429,18 @@ func (a *App) externalEntryDetail(response http.ResponseWriter, request *http.Re
 		callBodyKey = "external.call_body.upload"
 	case externaltrigger.ActionVariable:
 		callBodyKey = "external.call_body.variable"
+	case externaltrigger.ActionWebsiteMonitor:
+		callBodyKey = "external.call_body.website_monitor"
+	}
+	callMethod := http.MethodPost
+	if entry.Type == externaltrigger.ActionWebsiteMonitor {
+		callMethod = http.MethodGet
 	}
 	renderExternalInterfaceForm(response, externalInterfaceFormData{
 		Kind: "entry-detail", Title: entry.Label, Description: webText(locale, "external.function_details_description"),
 		BackURL: "/config/external-interfaces", CSRFToken: current.csrfToken, Locale: locale, Key: key, Entry: entry, EntryEnabled: entry.Enabled,
-		CallMethod: http.MethodPost, CallURL: "/trigger?name=" + url.QueryEscape(entry.Name), CallBody: webText(locale, callBodyKey),
-		TypeText: externalActionText(locale, entry.Type), TargetText: externalTargetText(entry), PreviewURL: previewURL,
+		CallMethod: callMethod, CallURL: "/trigger?name=" + url.QueryEscape(entry.Name), CallBody: webText(locale, callBodyKey),
+		TypeText: externalActionText(locale, entry.Type), TargetText: externalTargetText(locale, entry), PreviewURL: previewURL,
 	})
 }
 
@@ -464,6 +473,7 @@ func (a *App) editExternalEntryTask(response http.ResponseWriter, request *http.
 		_ = entry.DecodeConfig(&data.QuickRunConfig)
 	case externaltrigger.ActionVariable:
 		_ = entry.DecodeConfig(&data.VariableConfig)
+	case externaltrigger.ActionWebsiteMonitor:
 	}
 	renderExternalInterfaceForm(response, data)
 }
@@ -655,6 +665,8 @@ func (a *App) externalEntryConfig(request *http.Request, actionType externaltrig
 		}
 		config, err := parseExternalVariableConfig(request, name)
 		return config, name, err
+	case externaltrigger.ActionWebsiteMonitor:
+		return externaltrigger.WebsiteMonitorConfig{}, "", nil
 	default:
 		return nil, "", errors.New("invalid action type")
 	}
@@ -755,6 +767,10 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 		return
 	}
 	payload := map[string]any{"ok": true, "request_id": requestID, "action": string(entry.Type)}
+	if result.payload != nil {
+		payload["data"] = result.payload
+		payload["schema_version"] = 1
+	}
 	if result.runID != "" {
 		payload["run_id"] = result.runID
 	}
@@ -773,6 +789,7 @@ type externalActionResult struct {
 	runID         string
 	filename      string
 	bytesReceived int64
+	payload       any
 }
 
 type recordedExternalActionExecution struct {
@@ -799,9 +816,24 @@ func (a *App) executeExternalAction(response http.ResponseWriter, request *http.
 		return a.executeExternalQuickRun(response, request, entry)
 	case externaltrigger.ActionVariable:
 		return a.executeExternalVariable(response, request, entry)
+	case externaltrigger.ActionWebsiteMonitor:
+		return a.executeExternalWebsiteMonitor(request)
 	default:
 		return externalFailure(http.StatusInternalServerError, "action_failed")
 	}
+}
+
+func (a *App) executeExternalWebsiteMonitor(request *http.Request) externalActionResult {
+	if request.Method != http.MethodGet {
+		return externalFailure(http.StatusMethodNotAllowed, "method_not_allowed")
+	}
+	monitors, err := a.websiteMonitor.List(request.Context(), websitemonitor.Filter{})
+	if err != nil {
+		return externalFailure(http.StatusInternalServerError, "action_failed")
+	}
+	locale := resolveWebLocale(request)
+	snapshot := a.newWebsiteMonitorListDataView(request.Context(), monitors, monitors, locale)
+	return externalActionResult{status: http.StatusOK, result: "succeeded", payload: snapshot}
 }
 
 func (a *App) executeExternalLog(response http.ResponseWriter, request *http.Request, entry externaltrigger.Entry) externalActionResult {

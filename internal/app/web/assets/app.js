@@ -756,6 +756,11 @@
     setTaskLinkBusy(request.trigger, false);
   }
 
+  function syncPageTheme(nextDocument) {
+    const pageThemes = ["custom-dashboard-admin", "custom-dashboard-public", "custom-dashboard-monitor"];
+    pageThemes.forEach(className => document.body.classList.toggle(className, nextDocument.body.classList.contains(className)));
+  }
+
   async function navigate(url, push = true, options = {}) {
     closeFileConflictDialog();
     cancelTaskPanelRequest();
@@ -811,6 +816,7 @@
         return;
       }
       cleanupPage();
+      syncPageTheme(result.document);
       currentMain.replaceWith(document.importNode(nextMain, true));
       document.title = result.document.title;
       document.documentElement.lang = result.document.documentElement.lang || document.documentElement.lang;
@@ -6149,3 +6155,264 @@
   initPage();
   initStatus();
 })();
+
+document.addEventListener("change", function (event) {
+  const select = event.target.closest("[data-dashboard-card-type]");
+  if (!select) return;
+  const form = select.closest("form");
+  if (!form) return;
+  const type = select.value;
+  const website = type === "website";
+  form.querySelectorAll("[data-dashboard-http-field]").forEach((field) => { field.hidden = website; });
+  form.querySelectorAll("[data-dashboard-card-types]").forEach((field) => {
+    field.hidden = !field.dataset.dashboardCardTypes.split(",").includes(type);
+    field.querySelectorAll("[data-dashboard-expression-required]").forEach((input) => {
+      input.required = !field.hidden;
+    });
+  });
+  const websiteField = form.querySelector("[data-dashboard-website-field]");
+  if (websiteField) websiteField.hidden = !website;
+  const valueLabel = form.querySelector("[data-dashboard-value-expression-label]");
+  const valueInput = form.querySelector("[data-dashboard-value-expression-input]");
+  const labels = { number: "数值表达式", percentage: "百分比表达式", quota: "已用额度表达式" };
+  const placeholders = { number: "data.value", percentage: "data.used / data.total * 100", quota: "data.used" };
+  if (valueLabel) valueLabel.textContent = labels[type] || "数值表达式";
+  if (valueInput) valueInput.placeholder = placeholders[type] || "data.value";
+  form.querySelectorAll("[data-dashboard-card-preview]").forEach((preview) => {
+    preview.hidden = preview.dataset.dashboardCardPreview !== type;
+  });
+  const previewLabel = form.querySelector("[data-dashboard-preview-label]");
+  if (previewLabel) previewLabel.textContent = ({ number: "数值", percentage: "百分比", quota: "额度", website: "网站状态" })[type] || "数值";
+});
+
+document.querySelectorAll("[data-dashboard-card-type]:checked").forEach((input) => {
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+});
+
+document.addEventListener("input", function (event) {
+  const input = event.target.closest("[data-dashboard-slug-input]");
+  if (!input) return;
+  const preview = input.closest("label")?.querySelector("[data-dashboard-slug-preview]");
+  if (!preview) return;
+  preview.textContent = `/public/dashboard/${input.value.trim() || "service-status"}`;
+});
+
+function openDashboardDrawer(drawer) {
+	if (!drawer) return;
+	if (drawer._dashboardCloseTimer) window.clearTimeout(drawer._dashboardCloseTimer);
+	drawer._dashboardCloseTimer = null;
+	drawer.classList.remove("is-closing");
+	drawer.classList.add("is-opening");
+	drawer.open = true;
+	// Commit the off-canvas start state before transitioning the sheet into view.
+	drawer.querySelector(".custom-dashboard-drawer")?.getBoundingClientRect();
+	window.requestAnimationFrame(() => drawer.classList.remove("is-opening"));
+}
+
+function closeDashboardDrawer(drawer, returnFocus = true) {
+	if (!drawer?.open || drawer.classList.contains("is-closing")) return;
+	const trigger = drawer.querySelector(":scope > summary");
+	drawer.classList.remove("is-opening");
+	drawer.classList.add("is-closing");
+	const delay = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 220;
+	drawer._dashboardCloseTimer = window.setTimeout(() => {
+		drawer.open = false;
+		drawer.classList.remove("is-closing");
+		drawer._dashboardCloseTimer = null;
+		syncDashboardDrawerState();
+		if (returnFocus) trigger?.focus();
+	}, delay);
+}
+
+function syncDashboardDrawerState() {
+  document.body.classList.toggle("has-custom-dashboard-drawer", Boolean(document.querySelector("[data-dashboard-drawer][open]")));
+}
+
+function openDashboardCardRow(row) {
+  const trigger = row?.querySelector("[data-dashboard-card-edit]");
+  if (!trigger) return;
+  trigger.click();
+}
+
+document.addEventListener("click", function (event) {
+	const summary = event.target.closest("summary");
+	const summaryDrawer = summary?.parentElement;
+	if (summaryDrawer?.matches("[data-dashboard-drawer]")) {
+		event.preventDefault();
+		if (summaryDrawer.open) closeDashboardDrawer(summaryDrawer);
+		else openDashboardDrawer(summaryDrawer);
+		return;
+	}
+	const drawerButton = event.target.closest("[data-dashboard-open-drawer]");
+	if (drawerButton) {
+		const name = drawerButton.dataset.dashboardOpenDrawer;
+		const drawer = document.querySelector(`[data-dashboard-drawer-name="${CSS.escape(name)}"]`);
+		openDashboardDrawer(drawer);
+		return;
+	}
+  const deleteButton = event.target.closest("[data-dashboard-delete-open]");
+	if (deleteButton) {
+		const drawer = document.querySelector("[data-dashboard-delete-drawer]");
+		openDashboardDrawer(drawer);
+		return;
+	}
+  const row = event.target.closest("[data-dashboard-card-row]");
+  if (!row || event.target.closest("a,button,input,select,textarea,summary,details,form,label")) return;
+  openDashboardCardRow(row);
+});
+
+document.addEventListener("keydown", function (event) {
+  const row = event.target.closest?.("[data-dashboard-card-row]");
+  if (!row || event.target !== row || (event.key !== "Enter" && event.key !== " ")) return;
+  event.preventDefault();
+  openDashboardCardRow(row);
+});
+
+document.addEventListener("toggle", function (event) {
+  const drawer = event.target.closest?.("[data-dashboard-drawer]");
+  if (!drawer) return;
+	if (drawer.open && !drawer.classList.contains("is-closing")) {
+    document.querySelectorAll("[data-dashboard-drawer][open]").forEach((other) => {
+      if (other !== drawer) closeDashboardDrawer(other, false);
+    });
+    window.requestAnimationFrame(() => {
+      const focusTarget = drawer.querySelector(".custom-dashboard-drawer input:not([type=hidden]), .custom-dashboard-drawer button:not([disabled]), .custom-dashboard-drawer a[href]");
+      focusTarget?.focus();
+    });
+  }
+  syncDashboardDrawerState();
+}, true);
+
+document.addEventListener("click", function (event) {
+  const close = event.target.closest("[data-dashboard-drawer-close]");
+  if (!close) return;
+  const drawer = close.closest("[data-dashboard-drawer]");
+  if (!drawer) return;
+  event.preventDefault();
+  closeDashboardDrawer(drawer);
+  syncDashboardDrawerState();
+});
+
+document.addEventListener("keydown", function (event) {
+  const drawer = document.querySelector("[data-dashboard-drawer][open]");
+  if (!drawer) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeDashboardDrawer(drawer);
+    syncDashboardDrawerState();
+    return;
+  }
+  if (event.key !== "Tab") return;
+  const focusable = Array.from(drawer.querySelectorAll(".custom-dashboard-drawer a[href], .custom-dashboard-drawer button:not([disabled]), .custom-dashboard-drawer input:not([disabled]), .custom-dashboard-drawer textarea:not([disabled]), .custom-dashboard-drawer select:not([disabled])")).filter((element) => element.offsetParent !== null);
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+});
+
+document.addEventListener("click", async function (event) {
+  const button = event.target.closest("[data-copy-dashboard-url]");
+  if (!button) return;
+  const label = button.querySelector("[data-copy-dashboard-label]");
+  try {
+    await navigator.clipboard.writeText(new URL(button.dataset.copyDashboardUrl, window.location.origin).href);
+    if (label) label.textContent = "已复制";
+  } catch (_) {
+    if (label) label.textContent = "复制失败";
+  }
+  window.setTimeout(() => { if (label) label.textContent = "复制公开地址"; }, 1800);
+});
+
+syncDashboardDrawerState();
+
+function syncDashboardCardSelection(root) {
+  if (!root) return;
+  const checkboxes = Array.from(root.querySelectorAll('input[name="selection"]'));
+  const selected = checkboxes.filter((checkbox) => checkbox.checked).length;
+  const count = root.querySelector("[data-dashboard-selection-count]");
+  const submit = root.querySelector("[data-dashboard-selection-submit]");
+  if (count) count.textContent = `${selected} 张卡片已选择`;
+  if (submit) submit.disabled = selected === 0;
+}
+
+function dashboardTransferTypeLabel(type) {
+  return ({ number: "数值", percentage: "百分比", quota: "额度", website: "网站状态", key_value: "数据" })[type] || "未知类型";
+}
+
+async function renderDashboardImportSelection(input) {
+  const form = input.closest("[data-dashboard-import-form]");
+  const filename = form?.querySelector("[data-dashboard-import-filename]");
+  const selection = form?.querySelector("[data-dashboard-import-selection]");
+  const selectionPresent = form?.querySelector("[data-dashboard-import-selection-present]");
+  const list = form?.querySelector("[data-dashboard-import-card-list]");
+  const error = form?.querySelector("[data-dashboard-import-file-error]");
+  const file = input.files?.[0];
+  if (filename) filename.textContent = file?.name || "选择面板文件";
+  if (selection) selection.hidden = true;
+  if (selectionPresent) selectionPresent.disabled = true;
+  if (list) list.replaceChildren();
+  if (error) error.hidden = true;
+  input.setCustomValidity("");
+  if (!file || !form || !selection || !selectionPresent || !list) {
+    syncDashboardCardSelection(form);
+    return;
+  }
+  try {
+    const bundle = JSON.parse(await file.text());
+    const cards = bundle?.dashboard?.cards;
+    if (!Array.isArray(cards) || cards.length === 0 || cards.length > 100) throw new Error("invalid cards");
+    cards.forEach((card, index) => {
+      const item = document.createElement("label");
+      const checkbox = document.createElement("input");
+      const text = document.createElement("span");
+      const name = document.createElement("strong");
+      const type = document.createElement("small");
+      checkbox.type = "checkbox";
+      checkbox.name = "selection";
+      checkbox.value = String(index);
+      checkbox.checked = true;
+      name.textContent = String(card?.name || `卡片 ${index + 1}`);
+      type.textContent = dashboardTransferTypeLabel(card?.type);
+      text.append(name, type);
+      item.append(checkbox, text);
+      list.append(item);
+    });
+    selection.hidden = false;
+    selectionPresent.disabled = false;
+  } catch (_) {
+    input.setCustomValidity("无法读取卡片清单，请选择由 ScriptBoard 导出的 JSON 文件。");
+    if (error) {
+      error.hidden = false;
+      const message = error.querySelector("span:last-child");
+      if (message) message.textContent = input.validationMessage;
+    }
+  }
+  syncDashboardCardSelection(form);
+}
+
+document.addEventListener("change", function (event) {
+  const importInput = event.target.closest('[data-dashboard-import-file] input[type="file"]');
+  if (importInput) {
+    renderDashboardImportSelection(importInput);
+    return;
+  }
+  const selection = event.target.closest('[data-dashboard-card-selection] input[name="selection"]');
+  if (selection) syncDashboardCardSelection(selection.closest("[data-dashboard-card-selection]"));
+});
+
+document.addEventListener("click", function (event) {
+  const control = event.target.closest("[data-dashboard-selection-all],[data-dashboard-selection-none]");
+  if (!control) return;
+  const root = control.closest("[data-dashboard-card-selection]");
+  const checked = control.hasAttribute("data-dashboard-selection-all");
+  root?.querySelectorAll('input[name="selection"]').forEach((checkbox) => { checkbox.checked = checked; });
+  syncDashboardCardSelection(root);
+});
+
+document.querySelectorAll("[data-dashboard-card-selection]").forEach(syncDashboardCardSelection);

@@ -27,7 +27,7 @@
 | 配置、网络与部署 | [ADR-0019 回环 HTTP](./0019-bind-plain-http-to-loopback-only.md)、[ADR-0020 Windows 服务与托盘](./0020-separate-windows-service-and-tray-controller.md)、[ADR-0056 配置分层](./0056-layer-startup-configuration-with-cli-highest.md)、[ADR-0064 服务管理 CLI](./0064-provide-native-service-management-commands.md)、[ADR-0082 非回环 TLS](./0082-require-tls-for-non-loopback-access.md) |
 | 历史、日志与诊断 | [ADR-0014 Run 事件日志](./0014-use-one-ordered-run-event-log.md)、[ADR-0039 单次日志上限](./0039-cap-each-run-log-while-preserving-head-and-tail.md)、[ADR-0040 总日志空间](./0040-retain-run-metadata-and-bound-total-log-storage.md)、[ADR-0078 历史不可删除](./0078-run-history-cannot-be-deleted.md)、[ADR-0090 doctor](./0090-provide-a-read-only-local-doctor-command.md) |
 | Web 架构与体验 | [ADR-0060 纯 Go 服务端渲染](./0060-use-a-server-rendered-pure-go-stack.md)、[ADR-0108 双语 Web](./0108-localize-the-web-in-zh-cn-and-en-us.md)、[ADR-0109 按意图分组路由](./0109-group-web-routes-by-operator-intent.md)、[ADR-0110 Chromium 门禁](./0110-use-desktop-chromium-as-the-browser-gate.md)、[ADR-0113 主机 Markdown 渐进增强](./0113-progressively-render-managed-markdown.md) |
-| 主机、应用与网站观测 | [ADR-0107 宿主状态](./0107-provide-bounded-local-host-status.md)、[ADR-0109 网站监控模块](./0109-own-website-monitoring-in-a-bounded-module.md)、[ADR-0118 应用与容器观测](./0118-observe-host-applications-and-local-docker-containers.md)、[ADR-0119 源日志](./0119-stream-source-logs-on-demand.md) |
+| 主机、应用与网站观测 | [ADR-0107 宿主状态](./0107-provide-bounded-local-host-status.md)、[ADR-0109 网站监控模块](./0109-own-website-monitoring-in-a-bounded-module.md)、[ADR-0118 应用与容器观测](./0118-observe-host-applications-and-local-docker-containers.md)、[ADR-0119 源日志](./0119-stream-source-logs-on-demand.md)、[ADR-0128 实例间只读网站监控](./0128-share-website-monitoring-read-only-between-instances.md) |
 | AI 对话、工具与 Pi Runtime | [ADR-0123 私有 Pi RPC Runtime](./0123-use-pi-rpc-as-a-private-assistant-runtime.md)、[ADR-0124 Tool Broker 与一次性审批](./0124-broker-assistant-tools-and-bind-state-changes-to-approvals.md)、[ADR-0125 签名 Runtime 发布](./0125-pin-pi-runtime-to-signed-scriptboard-releases.md) |
 | 发布与应用更新 | [ADR-0065 支持平台](./0065-support-modern-windows-and-systemd-linux.md)、[ADR-0115 管理员确认更新](./0115-auto-check-and-require-admin-approval-for-updates.md)、[ADR-0116 签名发布清单](./0116-use-signed-release-manifests-for-updates.md)、[ADR-0117 版本化安装](./0117-use-versioned-service-installs-and-an-external-updater.md) |
 
@@ -51,6 +51,7 @@
 ## 最新决策
 
 - [ADR-0127 仅开放有界的外部触发动作](./0127-expose-only-bounded-external-trigger-actions.md)，取代 ADR-0063 的全面不开放公开接口结论。
+- [ADR-0128 在 ScriptBoard 实例之间只读共享网站监控](./0128-share-website-monitoring-read-only-between-instances.md)，扩展 External Interface 的有界只读能力。
 
 ## 基线文档
 

@@ -24,6 +24,7 @@ var (
 	applicationErrorTemplate      = mustWebTemplate("application-error")
 	applicationShellTemplate      = mustWebTemplate("application-shell")
 	applicationsTemplate          = mustWebTemplate("applications")
+	customDashboardTemplate       = mustWebTemplate("custom-dashboard")
 	auditTemplate                 = mustWebTemplate("audit")
 	deleteImpactTemplate          = mustWebTemplate("delete-impact")
 	displaySettingsTemplate       = mustWebTemplate("display-settings")

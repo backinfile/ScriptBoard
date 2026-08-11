@@ -20,10 +20,11 @@ import (
 )
 
 const (
-	ActionLog      ActionType = "log"
-	ActionUpload   ActionType = "upload"
-	ActionQuickRun ActionType = "quick_run"
-	ActionVariable ActionType = "variable"
+	ActionLog            ActionType = "log"
+	ActionUpload         ActionType = "upload"
+	ActionQuickRun       ActionType = "quick_run"
+	ActionVariable       ActionType = "variable"
+	ActionWebsiteMonitor ActionType = "website_monitor"
 )
 
 const (
@@ -59,7 +60,7 @@ var SchemaStatements = []string{
 		key_id TEXT NOT NULL REFERENCES external_trigger_keys(id) ON DELETE CASCADE,
 		name TEXT NOT NULL,
 		label TEXT NOT NULL,
-		action_type TEXT NOT NULL CHECK (action_type IN ('log', 'upload', 'quick_run', 'variable')),
+		action_type TEXT NOT NULL CHECK (action_type IN ('log', 'upload', 'quick_run', 'variable', 'website_monitor')),
 		target TEXT NOT NULL DEFAULT '',
 		config_json TEXT NOT NULL DEFAULT '{}',
 		enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
@@ -82,6 +83,14 @@ var SchemaStatements = []string{
 		run_id TEXT NOT NULL DEFAULT '',
 		message TEXT NOT NULL DEFAULT '',
 		source_address TEXT NOT NULL DEFAULT ''
+	)`,
+	`CREATE TABLE IF NOT EXISTS website_monitor_remote_sources (
+		id TEXT PRIMARY KEY,
+		label TEXT NOT NULL COLLATE NOCASE UNIQUE,
+		endpoint TEXT NOT NULL,
+		token_hint TEXT NOT NULL,
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL
 	)`,
 	`CREATE INDEX IF NOT EXISTS external_trigger_entries_key_idx ON external_trigger_entries(key_id, created_at)`,
 	`CREATE INDEX IF NOT EXISTS external_trigger_requests_time_idx ON external_trigger_requests(occurred_at DESC)`,
@@ -139,6 +148,8 @@ type UploadConfig struct {
 type QuickRunConfig struct {
 	QuickRunID string `json:"quick_run_id"`
 }
+
+type WebsiteMonitorConfig struct{}
 
 type VariableConfig struct {
 	VariableName string       `json:"variable_name"`
@@ -282,6 +293,18 @@ func New(db *sql.DB, options Options) *Manager {
 
 func (manager *Manager) KeySecret(id string) (string, error) {
 	return manager.secretStore.get(id)
+}
+
+func (manager *Manager) StoreSecret(id, secret string) error {
+	return manager.secretStore.set(id, secret)
+}
+
+func (manager *Manager) Secret(id string) (string, error) {
+	return manager.secretStore.get(id)
+}
+
+func (manager *Manager) DeleteSecret(id string) error {
+	return manager.secretStore.delete(id)
 }
 
 func (manager *Manager) CreateKey(ctx context.Context, input CreateKeyInput) (Key, string, error) {
@@ -450,6 +473,11 @@ func validateEntry(name, label string, actionType ActionType, target string, con
 			return "", "", err
 		}
 		normalized, target = value, value.VariableName
+	case ActionWebsiteMonitor:
+		if _, ok := config.(WebsiteMonitorConfig); !ok {
+			return "", "", fmt.Errorf("%w: website monitor config", ErrInvalidInput)
+		}
+		normalized, target = WebsiteMonitorConfig{}, ""
 	default:
 		return "", "", fmt.Errorf("%w: action type", ErrInvalidInput)
 	}

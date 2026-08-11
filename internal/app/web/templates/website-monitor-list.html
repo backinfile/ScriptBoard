@@ -44,6 +44,17 @@ FORM: Responsive signal ledger with a right-side detail task on capable clients 
 <svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
 {{t .Locale "website.add"}}
 </a>
+<details class="website-remote-connect">
+<summary class="button"><span data-lucide="network" aria-hidden="true"></span>{{t .Locale "website.remote.add"}}</summary>
+<form method="post" action="/monitor/websites/remotes">
+<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+<label>{{t .Locale "website.remote.name"}}<input name="label" maxlength="128" required placeholder="{{t .Locale "website.remote.name_placeholder"}}"></label>
+<label>{{t .Locale "website.remote.endpoint"}}<input name="endpoint" type="url" maxlength="2048" required placeholder="https://scriptboard.example/trigger?name=website-status"></label>
+<label>{{t .Locale "website.remote.key"}}<input name="key" type="password" maxlength="128" required autocomplete="off" placeholder="sbk_…"></label>
+<small>{{t .Locale "website.remote.hint"}}</small>
+<button class="button button--primary" type="submit"><span data-lucide="link" aria-hidden="true"></span>{{t .Locale "website.remote.connect"}}</button>
+</form>
+</details>
 {{end}}
 </div>
 </header>
@@ -167,6 +178,25 @@ FORM: Responsive signal ledger with a right-side detail task on capable clients 
 <svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
 <h2>{{t .Locale "website.empty_title"}}</h2>
 <p>{{t .Locale "website.empty_description"}}</p>
+</section>
+{{end}}
+
+{{range .RemoteSources}}
+<section class="website-remote-source" aria-labelledby="website-remote-{{.ID}}">
+<header>
+<div><p class="page-eyebrow">{{t $.Locale "website.remote.eyebrow"}}</p><h2 id="website-remote-{{.ID}}">{{.Label}}</h2><p><span class="website-status website-status--paused">{{t $.Locale "website.remote.read_only"}}</span> <code>{{.Endpoint}}</code></p></div>
+{{if $.CanManage}}<form method="post" action="/monitor/websites/remotes/{{.ID}}/delete"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="confirm" value="yes"><button class="button button--quiet button--danger" type="submit"><span data-lucide="unlink" aria-hidden="true"></span>{{t $.Locale "website.remote.remove"}}</button></form>{{end}}
+</header>
+{{if .Error}}<div class="website-empty website-empty--compact"><h3>{{t $.Locale "website.remote.unavailable_title"}}</h3><p>{{.Error}}</p></div>{{else}}
+<dl class="fact-strip website-counts"><div><dt>{{t $.Locale "website.state.up"}}</dt><dd>{{.Snapshot.Counts.Up}}</dd></div><div><dt>{{t $.Locale "website.state.verifying"}}</dt><dd>{{.Snapshot.Counts.Verifying}}</dd></div><div><dt>{{t $.Locale "website.state.down"}}</dt><dd>{{.Snapshot.Counts.Down}}</dd></div><div><dt>{{t $.Locale "website.state.paused"}}</dt><dd>{{.Snapshot.Counts.Paused}}</dd></div></dl>
+<section class="website-ledger" aria-label="{{.Label}} {{t $.Locale "website.ledger"}}">
+<header class="website-ledger__head"><span>{{t $.Locale "website.ledger.website"}}</span><span>{{t $.Locale "website.ledger.last_24h"}}</span><span>{{t $.Locale "website.ledger.latest_check"}}</span><span></span></header>
+{{range .Snapshot.Monitors}}<article class="website-ledger__row" data-monitor-state="{{.State}}">
+<div class="website-identity"><div class="website-identity__title"><strong>{{.Name}}</strong><span class="website-status website-status--{{.State}}">{{.StateLabel}}</span></div><code>{{.URL}}</code><div><span>{{.ScopeLabel}}</span><span>{{.MethodLabel}}</span></div></div>
+<div class="website-history-cell"><div class="website-availability" aria-label="{{.Name}} {{t $.Locale "website.availability_aria"}}">{{range .Availability}}<span class="website-availability__{{.Tone}}{{if .Provisional}} website-availability__provisional{{end}}" title="{{.Title}}" aria-hidden="true"></span>{{end}}</div></div>
+<div class="website-evidence"><strong>{{.LatestLabel}} · {{.LatencyLabel}}</strong><span>{{.LatestSummary}}</span><small>{{if .LastCheckedAt.IsZero}}{{t $.Locale "website.waiting_first_check"}}{{else}}<time datetime="{{machineTime .LastCheckedAt}}" data-local-time>{{localTime $.Locale .LastCheckedAt}}</time>{{end}}</small></div><span></span>
+</article>{{else}}<div class="website-empty website-empty--compact"><p>{{t $.Locale "website.remote.empty"}}</p></div>{{end}}
+</section>{{end}}
 </section>
 {{end}}
 </div>

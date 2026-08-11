@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="{{.Locale}}">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script>
+<title>{{if .Dashboard.Name}}{{.Dashboard.Name}}{{else}}自定义面板{{end}} · ScriptBoard</title>
+</head>
+<body class="{{if .PublicView}}custom-dashboard-public{{else if .MonitorView}}custom-dashboard-public custom-dashboard-monitor{{else}}custom-dashboard-admin{{end}}">
+<main class="workspace custom-dashboard-workspace">
+{{if .PublicView}}
+<header class="custom-dashboard-public-head"><a class="brand-wordmark" href="/">ScriptBoard</a><span>状态面板</span></header>
+{{else if not .MonitorView}}
+<header class="page-heading custom-dashboard-heading"><div><p class="page-eyebrow">配置 / 自定义面板</p><h1>自定义面板</h1><p>创建面板，并集中展示 API 数据、额度与网站状态。</p></div>{{if .CanManage}}<div class="heading-actions"><details class="custom-dashboard-drawer-host" data-dashboard-drawer><summary class="button button--primary custom-dashboard-drawer-trigger"><span data-lucide="plus" aria-hidden="true"></span>新建面板</summary><div class="custom-dashboard-drawer-layer"><a class="custom-dashboard-drawer-scrim" href="/config/dashboards" aria-label="关闭新建面板" data-dashboard-drawer-close></a><section class="custom-dashboard-drawer" role="dialog" aria-modal="true" aria-labelledby="custom-dashboard-create-title"><header class="custom-dashboard-drawer__head"><div><p class="page-eyebrow">面板设置</p><h2 id="custom-dashboard-create-title">新建面板</h2></div><a class="icon-button" href="/config/dashboards" aria-label="关闭新建面板" data-dashboard-drawer-close><span data-lucide="x" aria-hidden="true"></span></a></header><form class="custom-dashboard-drawer__form" method="post" action="/config/dashboards"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><div class="custom-dashboard-drawer__body"><label class="custom-dashboard-field"><span>面板名称</span><input name="name" required maxlength="80" autocomplete="off" placeholder="例如：服务状态"></label><label class="custom-dashboard-field"><span>地址标识</span><input class="custom-dashboard-slug-input" name="slug" required pattern="[a-z0-9]+(?:-[a-z0-9]+)*" maxlength="80" autocomplete="off" placeholder="service-status" data-dashboard-slug-input><span class="custom-dashboard-url-preview"><span data-lucide="globe-2" aria-hidden="true"></span><span>公开地址</span><code data-dashboard-slug-preview>/public/dashboard/service-status</code></span></label></div><footer class="custom-dashboard-drawer__footer"><a class="button button--quiet" href="/config/dashboards" data-dashboard-drawer-close>取消</a><button class="button button--primary" type="submit">创建面板</button></footer></form></section></div></details></div>{{end}}</header>
+<nav class="custom-dashboard-tabs" aria-label="面板列表">{{range .Dashboards}}<a href="/config/dashboards?dashboard={{.ID}}" {{if eq .ID $.Dashboard.ID}}aria-current="page"{{end}}><span>{{.Name}}</span><small>{{if .Public}}公开{{else}}私有{{end}} · {{len .Cards}} 张卡片</small></a>{{else}}<span class="custom-dashboard-empty-tab">还没有面板</span>{{end}}</nav>
+{{end}}
+
+{{if .Dashboard.ID}}
+<section class="custom-dashboard-surface">
+<header class="custom-dashboard-title">
+  <div class="custom-dashboard-title__identity">
+    <h2>{{.Dashboard.Name}}</h2>
+    <div class="custom-dashboard-title__meta"><code>{{if .Dashboard.Public}}/public/dashboard/{{.Dashboard.Slug}}{{else}}仅自己可见{{end}}</code>{{if .DashboardUpdatedLabel}}<span>{{.DashboardUpdatedLabel}} 更新</span>{{end}}</div>
+  </div>
+	{{if and .CanManage (not .PublicView)}}
+	<div class="custom-dashboard-title__controls">
+	<form class="custom-dashboard-publish" method="post" action="/config/dashboards/{{.Dashboard.ID}}">
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="name" value="{{.Dashboard.Name}}"><input type="hidden" name="slug" value="{{.Dashboard.Slug}}"><input type="hidden" name="public" value="{{if .Dashboard.Public}}0{{else}}1{{end}}">
+    <span><strong>{{if .Dashboard.Public}}公开访问已开启{{else}}此面板仅自己可见{{end}}</strong></span>
+		<button class="custom-dashboard-switch {{if .Dashboard.Public}}is-on{{end}}" type="submit" role="switch" aria-checked="{{if .Dashboard.Public}}true{{else}}false{{end}}" aria-label="{{if .Dashboard.Public}}关闭公开访问{{else}}开启公开访问{{end}}"><i></i></button>
+	</form>
+	<div class="custom-dashboard-title__actions">
+		<button class="icon-button" type="button" data-dashboard-open-drawer="edit" aria-label="编辑面板" title="编辑面板"><span data-lucide="square-pen" aria-hidden="true"></span></button>
+		{{if .Dashboard.Public}}<a class="icon-button" href="/public/dashboard/{{.Dashboard.Slug}}" target="_blank" aria-label="预览公开页" title="预览公开页" data-dashboard-public-action><span data-lucide="external-link" aria-hidden="true"></span></a><button class="icon-button" type="button" data-copy-dashboard-url="/public/dashboard/{{.Dashboard.Slug}}" aria-label="复制公开地址" title="复制公开地址" data-dashboard-public-action><span data-lucide="copy" aria-hidden="true"></span><span class="sr-only" data-copy-dashboard-label>复制公开地址</span></button>{{else}}<button class="icon-button" type="button" aria-label="预览公开页" title="开启公开访问后可预览" data-dashboard-public-action disabled><span data-lucide="external-link" aria-hidden="true"></span></button><button class="icon-button" type="button" aria-label="复制公开地址" title="开启公开访问后可复制" data-dashboard-public-action disabled><span data-lucide="copy" aria-hidden="true"></span></button>{{end}}
+		<button class="button button--primary" type="button" data-dashboard-open-drawer="add-card"><span data-lucide="plus" aria-hidden="true"></span>添加卡片</button>
+	</div>
+	</div>
+	{{end}}
+</header>
+{{if and .Dashboard.ID .CanManage (not .PublicView)}}
+<div class="custom-dashboard-toolbar">
+  <div class="custom-dashboard-actions">
+    <a class="button" href="/monitor/dashboard/{{.Dashboard.ID}}"><span data-lucide="panel-top" aria-hidden="true"></span>打开监控页</a>
+    <a class="button" href="/config/dashboards?dashboard={{.Dashboard.ID}}{{if not .Reorder}}&amp;reorder=1{{end}}"><span data-lucide="arrow-up-down" aria-hidden="true"></span>{{if .Reorder}}完成排序{{else}}调整顺序{{end}}</a>
+		<button class="button" type="button" data-dashboard-open-drawer="export"><span data-lucide="download" aria-hidden="true"></span>导出</button>
+		<button class="button" type="button" data-dashboard-open-drawer="import"><span data-lucide="upload" aria-hidden="true"></span>导入</button>
+		<details class="custom-dashboard-drawer-host" data-dashboard-drawer data-dashboard-drawer-name="export">
+			<summary class="sr-only">导出面板</summary>
+			<div class="custom-dashboard-drawer-layer">
+				<a class="custom-dashboard-drawer-scrim" href="/config/dashboards?dashboard={{.Dashboard.ID}}" aria-label="关闭导出面板" data-dashboard-drawer-close></a>
+				<section class="custom-dashboard-drawer" role="dialog" aria-modal="true" aria-labelledby="custom-dashboard-export-title">
+					<header class="custom-dashboard-drawer__head"><div><p class="page-eyebrow">面板迁移</p><h2 id="custom-dashboard-export-title">导出面板</h2></div><a class="icon-button" href="/config/dashboards?dashboard={{.Dashboard.ID}}" aria-label="关闭导出面板" data-dashboard-drawer-close><span data-lucide="x" aria-hidden="true"></span></a></header>
+					<form class="custom-dashboard-drawer__form" method="get" action="/config/dashboards/{{.Dashboard.ID}}/export" data-dashboard-card-selection>
+						<div class="custom-dashboard-drawer__body custom-dashboard-transfer-body">
+							<p>选择要写入导出文件的卡片。卡片将按当前顺序保存。</p>
+							<div class="custom-dashboard-transfer-selection">
+								<div class="custom-dashboard-transfer-selection__head"><strong>选择卡片</strong><span><button type="button" data-dashboard-selection-all>全选</button><button type="button" data-dashboard-selection-none>清空</button></span></div>
+								<div class="custom-dashboard-transfer-list">{{range .Cards}}<label><input type="checkbox" name="selection" value="{{.ID}}" checked><span><strong>{{.Name}}</strong><small>{{if eq .Type "quota"}}额度{{else if eq .Type "percentage"}}百分比{{else if eq .Type "number"}}数值{{else if eq .Type "website"}}网站状态{{else}}数据{{end}}</small></span></label>{{else}}<p>这个面板还没有可导出的卡片。</p>{{end}}</div>
+								<small data-dashboard-selection-count>{{len .Cards}} 张卡片已选择</small>
+							</div>
+							<div class="custom-dashboard-import-warning"><span data-lucide="shield-alert" aria-hidden="true"></span><p><strong>文件可能包含敏感请求头</strong><small>API Key 或 Authorization 请求头会随所选卡片导出，请妥善保管文件。</small></p></div>
+						</div>
+						<footer class="custom-dashboard-drawer__footer"><a class="button button--quiet" href="/config/dashboards?dashboard={{.Dashboard.ID}}" data-dashboard-drawer-close>取消</a><button class="button button--primary" type="submit" data-dashboard-selection-submit {{if not .Cards}}disabled{{end}}><span data-lucide="download" aria-hidden="true"></span>导出所选卡片</button></footer>
+					</form>
+				</section>
+			</div>
+		</details>
+		<details class="custom-dashboard-drawer-host" data-dashboard-drawer data-dashboard-drawer-name="import" {{if .ImportError}}open{{end}}>
+			<summary class="sr-only">导入面板</summary>
+			<div class="custom-dashboard-drawer-layer">
+				<a class="custom-dashboard-drawer-scrim" href="/config/dashboards?dashboard={{.Dashboard.ID}}" aria-label="关闭导入面板" data-dashboard-drawer-close></a>
+				<section class="custom-dashboard-drawer" role="dialog" aria-modal="true" aria-labelledby="custom-dashboard-import-title">
+					<header class="custom-dashboard-drawer__head"><div><p class="page-eyebrow">面板迁移</p><h2 id="custom-dashboard-import-title">导入面板</h2></div><a class="icon-button" href="/config/dashboards?dashboard={{.Dashboard.ID}}" aria-label="关闭导入面板" data-dashboard-drawer-close><span data-lucide="x" aria-hidden="true"></span></a></header>
+					<form class="custom-dashboard-drawer__form" method="post" action="/config/dashboards/import" enctype="multipart/form-data" data-dashboard-import-form data-dashboard-card-selection>
+						<input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="dashboard_id" value="{{.Dashboard.ID}}">
+						<div class="custom-dashboard-drawer__body custom-dashboard-import-body custom-dashboard-transfer-body">
+							<p>选择由 ScriptBoard 导出的面板 JSON，再决定要导入其中哪些卡片。导入后会创建一个新的私有面板。</p>
+							{{if .ImportError}}<div class="custom-dashboard-import-error" role="alert"><span data-lucide="triangle-alert" aria-hidden="true"></span><span>{{.ImportError}}</span></div>{{end}}
+							<label class="custom-dashboard-import-file" data-dashboard-import-file><span data-lucide="file-json-2" aria-hidden="true"></span><span><strong data-dashboard-import-filename>选择面板文件</strong><small>JSON，最大 2 MB</small></span><input type="file" name="dashboard_file" accept="application/json,.json" required></label>
+							<div class="custom-dashboard-import-error" role="alert" data-dashboard-import-file-error hidden><span data-lucide="triangle-alert" aria-hidden="true"></span><span></span></div>
+							<div class="custom-dashboard-transfer-selection" data-dashboard-import-selection hidden>
+								<input type="hidden" name="selection_present" value="1" disabled data-dashboard-import-selection-present>
+								<div class="custom-dashboard-transfer-selection__head"><strong>选择卡片</strong><span><button type="button" data-dashboard-selection-all>全选</button><button type="button" data-dashboard-selection-none>清空</button></span></div>
+								<div class="custom-dashboard-transfer-list" data-dashboard-import-card-list></div>
+								<small data-dashboard-selection-count>0 张卡片已选择</small>
+							</div>
+							<div class="custom-dashboard-import-warning"><span data-lucide="shield-alert" aria-hidden="true"></span><p><strong>文件可能包含敏感请求头</strong><small>导出文件会包含卡片使用的 API Key 或 Authorization 请求头，请仅在可信环境中保存和传输。</small></p></div>
+						</div>
+						<footer class="custom-dashboard-drawer__footer"><a class="button button--quiet" href="/config/dashboards?dashboard={{.Dashboard.ID}}" data-dashboard-drawer-close>取消</a><button class="button button--primary" type="submit" data-dashboard-selection-submit><span data-lucide="upload" aria-hidden="true"></span>导入所选卡片</button></footer>
+					</form>
+				</section>
+			</div>
+		</details>
+		<details class="custom-dashboard-drawer-host" data-dashboard-drawer data-dashboard-drawer-name="edit">
+			<summary class="sr-only">编辑面板</summary>
+      <div class="custom-dashboard-drawer-layer">
+        <a class="custom-dashboard-drawer-scrim" href="/config/dashboards?dashboard={{.Dashboard.ID}}" aria-label="关闭编辑面板" data-dashboard-drawer-close></a>
+        <section class="custom-dashboard-drawer" role="dialog" aria-modal="true" aria-labelledby="custom-dashboard-edit-title">
+          <header class="custom-dashboard-drawer__head"><div><p class="page-eyebrow">面板设置</p><h2 id="custom-dashboard-edit-title">编辑面板</h2></div><a class="icon-button" href="/config/dashboards?dashboard={{.Dashboard.ID}}" aria-label="关闭编辑面板" data-dashboard-drawer-close><span data-lucide="x" aria-hidden="true"></span></a></header>
+          <form class="custom-dashboard-drawer__form" method="post" action="/config/dashboards/{{.Dashboard.ID}}">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <div class="custom-dashboard-drawer__body"><label class="custom-dashboard-field"><span>面板名称</span><input name="name" value="{{.Dashboard.Name}}" required maxlength="80"></label><label class="custom-dashboard-field"><span>地址标识</span><input class="custom-dashboard-slug-input" name="slug" value="{{.Dashboard.Slug}}" required pattern="[a-z0-9]+(?:-[a-z0-9]+)*" maxlength="80" data-dashboard-slug-input><span class="custom-dashboard-url-preview"><span data-lucide="globe-2" aria-hidden="true"></span><span>公开地址</span><code data-dashboard-slug-preview>/public/dashboard/{{.Dashboard.Slug}}</code></span></label></div>
+            <footer class="custom-dashboard-drawer__footer custom-dashboard-drawer__footer--split"><button class="button button--danger" type="button" data-dashboard-delete-open><span data-lucide="trash-2" aria-hidden="true"></span>删除面板</button><span><a class="button button--quiet" href="/config/dashboards?dashboard={{.Dashboard.ID}}" data-dashboard-drawer-close>取消</a><button class="button button--primary" type="submit">保存面板</button></span></footer>
+          </form>
+        </section>
+      </div>
+    </details>
+    <details class="custom-dashboard-drawer-host" data-dashboard-drawer data-dashboard-delete-drawer>
+      <summary class="sr-only">确认删除面板</summary>
+      <div class="custom-dashboard-drawer-layer">
+        <a class="custom-dashboard-drawer-scrim" href="/config/dashboards?dashboard={{.Dashboard.ID}}" aria-label="取消删除面板" data-dashboard-drawer-close></a>
+        <section class="custom-dashboard-drawer custom-dashboard-drawer--confirm" role="alertdialog" aria-modal="true" aria-labelledby="custom-dashboard-delete-title" aria-describedby="custom-dashboard-delete-description">
+          <header class="custom-dashboard-drawer__head"><div><p class="page-eyebrow">危险操作</p><h2 id="custom-dashboard-delete-title">删除“{{.Dashboard.Name}}”？</h2></div><a class="icon-button" href="/config/dashboards?dashboard={{.Dashboard.ID}}" aria-label="取消删除面板" data-dashboard-drawer-close><span data-lucide="x" aria-hidden="true"></span></a></header>
+          <form class="custom-dashboard-drawer__form" method="post" action="/config/dashboards/{{.Dashboard.ID}}/delete">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="confirm" value="yes">
+            <div class="custom-dashboard-drawer__body custom-dashboard-delete-confirm"><span data-lucide="triangle-alert" aria-hidden="true"></span><p id="custom-dashboard-delete-description">面板及其中的全部卡片将被永久删除，此操作无法撤销。</p></div>
+            <footer class="custom-dashboard-drawer__footer"><a class="button button--quiet" href="/config/dashboards?dashboard={{.Dashboard.ID}}" data-dashboard-drawer-close>保留面板</a><button class="button button--danger" type="submit"><span data-lucide="trash-2" aria-hidden="true"></span>确认删除</button></footer>
+          </form>
+        </section>
+      </div>
+    </details>
+	</div>
+	<div class="custom-dashboard-toolbar__end">
+		<details class="custom-dashboard-drawer-host" data-dashboard-drawer data-dashboard-drawer-name="add-card">
+			<summary class="sr-only">添加卡片</summary>
+      <div class="custom-dashboard-drawer-layer">
+        <a class="custom-dashboard-drawer-scrim" href="/config/dashboards?dashboard={{.Dashboard.ID}}" aria-label="关闭添加卡片" data-dashboard-drawer-close></a>
+        <section class="custom-dashboard-drawer custom-dashboard-drawer--card" role="dialog" aria-modal="true" aria-labelledby="custom-dashboard-add-card-title">
+          <header class="custom-dashboard-drawer__head"><div><p class="page-eyebrow">卡片设置</p><h2 id="custom-dashboard-add-card-title">添加卡片</h2></div><a class="icon-button" href="/config/dashboards?dashboard={{.Dashboard.ID}}" aria-label="关闭添加卡片" data-dashboard-drawer-close><span data-lucide="x" aria-hidden="true"></span></a></header>
+          <form class="custom-dashboard-drawer__form" method="post" action="/config/dashboards/{{.Dashboard.ID}}/cards">
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <div class="custom-dashboard-drawer__body custom-dashboard-form-grid">
+              <label>卡片名称<input name="name" required maxlength="80"></label>
+              <fieldset class="custom-dashboard-type-field"><legend>卡片类型</legend><div class="custom-dashboard-type-grid">
+				<label><input type="radio" name="type" value="number" checked data-dashboard-card-type><span data-lucide="chart-no-axes-column-increasing" aria-hidden="true"></span><span><strong>数值</strong><small>显示一个数值</small></span></label>
+				<label><input type="radio" name="type" value="percentage" data-dashboard-card-type><span data-lucide="circle-percent" aria-hidden="true"></span><span><strong>百分比</strong><small>显示 0–100 的进度</small></span></label>
+				<label><input type="radio" name="type" value="quota" data-dashboard-card-type><span data-lucide="gauge" aria-hidden="true"></span><span><strong>额度</strong><small>显示剩余值与总额度</small></span></label>
+				<label><input type="radio" name="type" value="website" data-dashboard-card-type><span data-lucide="globe-2" aria-hidden="true"></span><span><strong>网站状态</strong><small>索引已有网站监控结果</small></span></label>
+			</div></fieldset>
+			<section class="custom-dashboard-card-preview" aria-live="polite" aria-label="卡片预览">
+				<header><span>预览</span><strong data-dashboard-preview-label>数值</strong></header>
+				<div class="custom-dashboard-card-preview__body" data-dashboard-card-preview="number"><span class="custom-dashboard-card-preview__eyebrow">当前数值</span><strong class="custom-dashboard-card-preview__number">128</strong></div>
+				<div class="custom-dashboard-card-preview__body" data-dashboard-card-preview="percentage" hidden><span class="custom-dashboard-card-preview__eyebrow">使用率</span><div class="custom-dashboard-card-preview__ring"><svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="20" pathLength="100"></circle><circle cx="24" cy="24" r="20" pathLength="100" stroke-dasharray="68 100"></circle></svg><strong>68<small>%</small></strong></div></div>
+				<div class="custom-dashboard-card-preview__body" data-dashboard-card-preview="quota" hidden><div class="custom-dashboard-card-preview__quota"><div class="custom-dashboard-card-preview__quota-ring"><svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="20" pathLength="100"></circle><circle cx="24" cy="24" r="20" pathLength="100" stroke-dasharray="68 100"></circle></svg><strong>68<small>%</small></strong></div><span><small>已用</small><strong>680</strong></span><span><small>剩余</small><strong>320</strong></span></div></div>
+				<div class="custom-dashboard-card-preview__body" data-dashboard-card-preview="website" hidden><div class="custom-dashboard-card-preview__website"><span><strong>api.example.com</strong><small><i></i>正常</small></span><div><i data-state="up"></i><i data-state="up"></i><i data-state="up"></i><i data-state="up"></i><i data-state="up"></i><i data-state="up"></i><i data-state="up"></i><i data-state="down"></i><i data-state="up"></i><i data-state="up"></i><i data-state="up"></i><i data-state="up"></i></div></div></div>
+			</section>
+				<label data-dashboard-http-field>数据地址<input type="url" name="source_url" placeholder="https://api.example.com/usage"></label><label data-dashboard-card-types="number,percentage,quota"><span data-dashboard-value-expression-label>数值表达式</span><input name="value_path" placeholder="data.value" data-dashboard-value-expression-input data-dashboard-expression-required><small class="custom-dashboard-expression-hint">支持 JSON 路径与 + − × ÷、括号运算</small></label><label data-dashboard-card-types="quota" hidden>剩余额度表达式<input name="secondary_path" placeholder="data.total - data.used" data-dashboard-expression-required><small class="custom-dashboard-expression-hint">支持 JSON 路径或计算公式</small></label><label data-dashboard-card-types="number,quota">单位（可选）<input name="unit" maxlength="16" placeholder="例如：GB、次、ms"></label><label data-dashboard-http-field>请求头<textarea name="headers" rows="3" placeholder="Authorization: Bearer ..."></textarea></label><label data-dashboard-http-field>刷新间隔<select name="refresh_seconds"><option value="60">1 分钟</option><option value="300">5 分钟</option><option value="900">15 分钟</option><option value="3600">1 小时</option></select></label>
+              <fieldset data-dashboard-website-field hidden><legend>网站监控</legend>{{range .WebsiteMonitors}}<label class="checkbox-row"><input type="checkbox" name="monitor_id" value="{{.ID}}">{{.Config.Name}}</label>{{else}}<p>请先创建网站监控。</p>{{end}}</fieldset>
+            </div>
+            <footer class="custom-dashboard-drawer__footer"><a class="button button--quiet" href="/config/dashboards?dashboard={{.Dashboard.ID}}" data-dashboard-drawer-close>取消</a><button class="button button--primary" type="submit">添加卡片</button></footer>
+          </form>
+        </section>
+      </div>
+    </details>
+  </div>
+</div>
+{{end}}
+
+<div class="custom-dashboard-grid">
+{{range .Cards}}
+{{$card := .}}<article class="custom-dashboard-card custom-dashboard-card--{{.Type}}" data-state="{{if .LastError}}stale{{else}}current{{end}}" {{if and $.CanManage (not $.PublicView) (not $.MonitorView)}}data-dashboard-card-row tabindex="0" aria-label="编辑 {{.Name}}"{{end}}>
+{{if and $.CanManage (not $.PublicView) (not $.MonitorView)}}<span class="custom-dashboard-card__index" aria-label="顺序 {{.DisplayIndex}}">{{printf "%02d" .DisplayIndex}}</span>{{end}}
+<header>
+	<div>{{if and (not $.PublicView) (not $.MonitorView)}}<span class="custom-dashboard-card__type">{{if eq .Type "quota"}}额度{{else if eq .Type "percentage"}}百分比{{else if eq .Type "number"}}数值{{else if eq .Type "key_value"}}数据{{else}}网站状态{{end}}</span>{{end}}<div class="custom-dashboard-card__title"><h3>{{.Name}}</h3>{{if and .LastError (or $.PublicView $.MonitorView)}}<span class="custom-dashboard-card__status-badge"><span data-lucide="triangle-alert" aria-hidden="true"></span>数据异常</span>{{end}}</div></div>
+  {{if and $.CanManage (not $.PublicView)}}
+  <div class="custom-dashboard-card__actions">
+		{{if $.Reorder}}<form method="post" action="/config/dashboard-cards/{{.ID}}/move"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="icon-button" type="submit" name="direction" value="up" aria-label="上移 {{.Name}}" {{if not .CanMoveUp}}disabled{{end}}><span data-lucide="chevron-up" aria-hidden="true"></span></button><button class="icon-button" type="submit" name="direction" value="down" aria-label="下移 {{.Name}}" {{if not .CanMoveDown}}disabled{{end}}><span data-lucide="chevron-down" aria-hidden="true"></span></button></form>{{end}}
+    <details class="custom-dashboard-drawer-host" data-dashboard-drawer>
+      <summary class="icon-button" aria-label="编辑 {{.Name}}" data-dashboard-card-edit><span data-lucide="pencil" aria-hidden="true"></span></summary>
+      <div class="custom-dashboard-drawer-layer">
+        <a class="custom-dashboard-drawer-scrim" href="/config/dashboards?dashboard={{$.Dashboard.ID}}" aria-label="关闭编辑卡片" data-dashboard-drawer-close></a>
+        <section class="custom-dashboard-drawer custom-dashboard-drawer--card" role="dialog" aria-modal="true" aria-labelledby="custom-dashboard-card-title-{{.ID}}">
+          <header class="custom-dashboard-drawer__head"><div><p class="page-eyebrow">卡片设置</p><h2 id="custom-dashboard-card-title-{{.ID}}">编辑卡片</h2></div><a class="icon-button" href="/config/dashboards?dashboard={{$.Dashboard.ID}}" aria-label="关闭编辑卡片" data-dashboard-drawer-close><span data-lucide="x" aria-hidden="true"></span></a></header>
+          <form class="custom-dashboard-drawer__form custom-dashboard-card-form" method="post" action="/config/dashboard-cards/{{.ID}}">
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="type" value="{{.Type}}">
+			<div class="custom-dashboard-drawer__body"><label>卡片名称<input name="name" value="{{.Name}}" required></label>{{if eq .Type "website"}}<fieldset><legend>网站监控</legend>{{range $.WebsiteMonitors}}<label class="checkbox-row"><input type="checkbox" name="monitor_id" value="{{.ID}}" {{if index $card.SelectedMonitorIDs .ID}}checked{{end}}>{{.Config.Name}}</label>{{end}}</fieldset>{{else}}<label>数据地址<input type="url" name="source_url" value="{{.SourceURL}}" required></label><label>{{if eq .Type "percentage"}}百分比表达式{{else if eq .Type "quota"}}已用额度表达式{{else}}数值表达式{{end}}<input name="value_path" value="{{.ValuePath}}" required><small class="custom-dashboard-expression-hint">支持 JSON 路径与 + − × ÷、括号运算</small></label>{{if eq .Type "quota"}}<label>剩余额度表达式<input name="secondary_path" value="{{.SecondaryPath}}" required><small class="custom-dashboard-expression-hint">支持 JSON 路径或计算公式</small></label>{{end}}{{if or (eq .Type "number") (eq .Type "quota")}}<label>单位（可选）<input name="unit" value="{{.Unit}}" maxlength="16" placeholder="例如：GB、次、ms"></label>{{end}}<label>请求头<textarea name="headers" rows="3">{{.HeadersText}}</textarea></label><label>刷新间隔<select name="refresh_seconds"><option value="60" {{if eq .RefreshSeconds 60}}selected{{end}}>1 分钟</option><option value="300" {{if eq .RefreshSeconds 300}}selected{{end}}>5 分钟</option><option value="900" {{if eq .RefreshSeconds 900}}selected{{end}}>15 分钟</option><option value="3600" {{if eq .RefreshSeconds 3600}}selected{{end}}>1 小时</option></select></label>{{end}}</div>
+            <footer class="custom-dashboard-drawer__footer custom-dashboard-drawer__footer--split"><button class="button button--danger" type="submit" form="custom-dashboard-card-delete-{{.ID}}" name="confirm" value="yes"><span data-lucide="trash-2" aria-hidden="true"></span>删除卡片</button><span><a class="button button--quiet" href="/config/dashboards?dashboard={{$.Dashboard.ID}}" data-dashboard-drawer-close>取消</a><button class="button button--primary" type="submit">保存卡片</button></span></footer>
+          </form>
+          <form id="custom-dashboard-card-delete-{{.ID}}" method="post" action="/config/dashboard-cards/{{.ID}}/delete"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="dashboard_id" value="{{$.Dashboard.ID}}"></form>
+        </section>
+      </div>
+    </details>
+  </div>
+  {{end}}
+</header>
+{{if and (not $.PublicView) (not $.MonitorView)}}
+<div class="custom-dashboard-card__config">
+  {{if eq .Type "website"}}<span><span data-lucide="network" aria-hidden="true"></span>已关联 {{len .SelectedMonitorIDs}} 个网站监控</span>
+  {{else}}<code title="{{.SourceURL}}">{{.SourceURL}}</code>{{end}}
+</div>
+{{else}}
+{{if eq .Type "website"}}<div class="custom-dashboard-sites">{{range .Websites}}<div class="custom-dashboard-site"><div class="custom-dashboard-site__identity"><strong>{{.Name}}</strong><span class="custom-dashboard-site__state" data-state="{{.State}}">{{.StateLabel}}</span></div><div class="custom-dashboard-site__history"><div class="custom-dashboard-site__availability" aria-label="{{.Name}} 过去 24 小时可用性">{{range .Availability}}<span class="custom-dashboard-site__segment" data-state="{{.Tone}}" {{if .Provisional}}data-provisional{{end}} title="{{.Title}}" aria-hidden="true"></span>{{end}}</div><div class="custom-dashboard-site__axis"><span>24 小时前</span><span>现在</span></div></div><div class="custom-dashboard-site__metrics"><span><small>可用率</small><strong>{{.AvailabilityLabel}}</strong></span><span><small>响应</small><strong>{{.LatencyLabel}}</strong></span></div>{{if or (eq .SSLTone "warning") (eq .SSLTone "danger")}}<span class="custom-dashboard-site__tls-badge" data-tone="{{.SSLTone}}"><span data-lucide="shield-alert" aria-hidden="true"></span>{{.SSLLabel}}</span>{{end}}</div>{{else}}<p class="custom-dashboard-empty-card">没有选择网站监控</p>{{end}}</div>
+{{else}}{{if eq .Type "quota"}}<div class="custom-dashboard-card__quota-display"><div class="custom-dashboard-card__quota-chart"><svg class="custom-dashboard-card__quota-ring" viewBox="0 0 120 120" role="progressbar" aria-label="已用比例 {{.QuotaProgressLabel}}%" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{printf "%.2f" .QuotaProgress}}"><circle class="custom-dashboard-card__quota-track" cx="60" cy="60" r="52" pathLength="100"></circle><circle class="custom-dashboard-card__quota-progress" cx="60" cy="60" r="52" pathLength="100" stroke-dasharray="{{printf "%.2f" .QuotaProgress}} 100"></circle></svg><span class="custom-dashboard-card__quota-chart-value"><small>已用比例</small><strong>{{.QuotaProgressLabel}}<i>%</i></strong></span></div><div class="custom-dashboard-card__quota-values"><span><small>已用</small><strong>{{.ValueLabel}}{{if .Unit}}<small class="custom-dashboard-card__unit">{{.Unit}}</small>{{end}}</strong></span><span><small>剩余</small><strong>{{if .SecondaryLabel}}{{.SecondaryLabel}}{{else}}0{{end}}{{if .Unit}}<small class="custom-dashboard-card__unit">{{.Unit}}</small>{{end}}</strong></span></div></div>{{else}}<div class="custom-dashboard-card__value">{{if eq .Type "percentage"}}<svg class="custom-dashboard-card__quota-ring" viewBox="0 0 120 120" role="img" aria-label="进度 {{.ValueLabel}}%"><circle class="custom-dashboard-card__quota-track" cx="60" cy="60" r="52" pathLength="100"></circle><circle class="custom-dashboard-card__quota-progress" cx="60" cy="60" r="52" pathLength="100" stroke-dasharray="{{printf "%.2f" .QuotaProgress}} 100"></circle></svg><span class="custom-dashboard-card__quota-value">{{.ValueLabel}}<small class="custom-dashboard-card__percentage-unit">%</small></span>{{else}}{{.ValueLabel}}{{if and .Unit (eq .Type "number")}}<small class="custom-dashboard-card__unit">{{.Unit}}</small>{{end}}{{end}}</div>{{if .SecondaryLabel}}<p class="custom-dashboard-card__secondary">{{.SecondaryLabel}}</p>{{end}}{{end}}
+{{end}}
+{{end}}</article>
+{{else}}<div class="custom-dashboard-empty"><span data-lucide="panel-top" aria-hidden="true"></span><h3>这个面板还没有卡片</h3>{{if .CanManage}}<p>添加第一张卡片。</p>{{end}}</div>{{end}}
+</div>
+
+</section>
+{{else if not .PublicView}}<div class="custom-dashboard-empty"><span data-lucide="layout-dashboard" aria-hidden="true"></span><h2>创建第一个监控面板</h2></div>{{end}}
+</main>
+</body></html>
