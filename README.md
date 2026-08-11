@@ -206,6 +206,12 @@ scriptboard emergency revoke-key --key-id KEY_ID --confirm-key-id KEY_ID --confi
 scriptboard emergency export-evidence --output ABSOLUTE_JSONL_PATH --config CONFIG_PATH
 ```
 
+在隔离或断网主机上，可同时提供正式 Release 的归档、`release-manifest.json` 与 `release-manifest.json.sig`，离线验证内置签名信任根、平台、文件名、大小、SHA-256、归档边界和 `RELEASE.json`，此命令不会安装或修改当前版本：
+
+```text
+scriptboard update verify-package --archive ABSOLUTE_ARCHIVE_PATH --manifest ABSOLUTE_MANIFEST_PATH --signature ABSOLUTE_SIGNATURE_PATH
+```
+
 ## 常见问题
 
 先运行只读诊断：

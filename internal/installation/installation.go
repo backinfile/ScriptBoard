@@ -314,6 +314,19 @@ func validateReleaseInfo(sourceRoot string, want buildinfo.Info) error {
 	return nil
 }
 
+// ValidateReleaseSource verifies that an extracted formal release contains the
+// complete platform payload described by its RELEASE.json metadata.
+func ValidateReleaseSource(sourceRoot string, want buildinfo.Info) error {
+	if !want.ValidRelease() {
+		return errors.New("expected build does not identify a formal release")
+	}
+	required := []string{"scriptboard", "scriptboard-updater", buildinfo.ReleaseInfoFilename}
+	if runtime.GOOS == "windows" {
+		required = []string{"scriptboard.exe", "scriptboard-tray.exe", "scriptboard-tray-launcher.exe", "scriptboard-updater.exe", buildinfo.ReleaseInfoFilename}
+	}
+	return validateInstalledVersion(sourceRoot, want, required)
+}
+
 func prepareVersion(sourceRoot, versionRoot string, info buildinfo.Info) error {
 	required := []string{"scriptboard", "scriptboard-updater", buildinfo.ReleaseInfoFilename}
 	optional := []string{"README.md", "README_EN.md", "LICENSE"}

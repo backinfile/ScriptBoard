@@ -199,6 +199,12 @@ scriptboard emergency revoke-key --key-id KEY_ID --confirm-key-id KEY_ID --confi
 scriptboard emergency export-evidence --output ABSOLUTE_JSONL_PATH --config CONFIG_PATH
 ```
 
+On an isolated or offline host, provide the formal release archive together with `release-manifest.json` and `release-manifest.json.sig`. The command below verifies the embedded signing trust root, platform, file name, size, SHA-256, archive boundaries, and `RELEASE.json` without installing or changing the current version:
+
+```text
+scriptboard update verify-package --archive ABSOLUTE_ARCHIVE_PATH --manifest ABSOLUTE_MANIFEST_PATH --signature ABSOLUTE_SIGNATURE_PATH
+```
+
 ## Troubleshooting
 
 Start with the read-only diagnostic:

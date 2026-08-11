@@ -45,6 +45,13 @@ func TestHelpDoesNotDocumentRemovedManagedRootShortcuts(t *testing.T) {
 	}
 }
 
+func TestUpdateVerifyPackageRequiresAllOfflineArtifacts(t *testing.T) {
+	err := run([]string{"update", "verify-package"})
+	if err == nil || !strings.Contains(err.Error(), "--archive") || !strings.Contains(err.Error(), "--manifest") || !strings.Contains(err.Error(), "--signature") {
+		t.Fatalf("verify-package missing argument error = %v", err)
+	}
+}
+
 func TestAuditVerifyWorksWithoutOpeningTheWebApplication(t *testing.T) {
 	stateRoot := t.TempDir()
 	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))

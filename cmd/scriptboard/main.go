@@ -109,6 +109,7 @@ func printUsage() {
   scriptboard serve [配置选项]
   scriptboard service install|uninstall|start|stop|restart|status
   scriptboard update status|check|recover
+  scriptboard update verify-package --archive PATH --manifest PATH --signature PATH [--json]
   scriptboard admin reset [配置选项]
   scriptboard audit verify [配置选项] [--json]
   scriptboard emergency pause-external --confirm PAUSE-EXTERNAL [配置选项]
@@ -155,6 +156,26 @@ func verifyAudit(arguments []string) error {
 func runUpdate(action string, arguments []string) error {
 	jsonOutput, arguments := takeBooleanArgument(arguments, "--json")
 	switch action {
+	case "verify-package":
+		archivePath, remaining := takeStringArgument(arguments, "--archive")
+		manifestPath, remaining := takeStringArgument(remaining, "--manifest")
+		signaturePath, remaining := takeStringArgument(remaining, "--signature")
+		if archivePath == "" || manifestPath == "" || signaturePath == "" {
+			return errors.New("update verify-package 需要 --archive PATH、--manifest PATH 与 --signature PATH")
+		}
+		if len(remaining) != 0 {
+			return fmt.Errorf("未知 update verify-package 参数: %v", remaining)
+		}
+		verified, err := updatepkg.VerifyOfflinePackage(archivePath, manifestPath, signaturePath)
+		if err != nil {
+			return fmt.Errorf("离线更新包验证失败: %w", err)
+		}
+		if jsonOutput {
+			return json.NewEncoder(os.Stdout).Encode(verified)
+		}
+		fmt.Fprintf(os.Stdout, "离线更新包有效：%s (%s/%s)，签名 Key %s，SHA-256 %s\n",
+			verified.Version, verified.OS, verified.Arch, verified.KeyID, verified.ArchiveSHA256)
+		return nil
 	case "status", "check":
 		loaded, err := config.Load(arguments, os.Getenv)
 		if err != nil {
