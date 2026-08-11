@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="{{.Locale}}">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "mfa.title"}} · ScriptBoard</title></head>
+<body>
+<main class="workspace task-page" data-task-page data-task-kind="account-mfa">
+  <a class="task-back" href="/settings/account"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "common.back"}}</a>
+  <section class="task-sheet">
+    <header><div><p class="page-eyebrow">{{t .Locale "settings.account"}}</p><h1>{{t .Locale "mfa.title"}}</h1><p>{{t .Locale "mfa.description"}}</p></div></header>
+    {{if .Error}}<p class="page-error" role="alert">{{.Error}}</p>{{end}}
+    {{if .RecoveryCodes}}
+      <aside class="inline-notice"><span data-lucide="triangle-alert" aria-hidden="true"></span><p>{{t .Locale "mfa.recovery_once"}}</p></aside>
+      <div class="field-readonly"><span>{{t .Locale "mfa.recovery_codes"}}</span><pre>{{range .RecoveryCodes}}{{.}}
+{{end}}</pre></div>
+      <footer><a class="button button--primary" href="/login">{{t .Locale "mfa.sign_in_again"}}</a></footer>
+    {{else if .Enrollment}}
+      <div class="field-readonly"><span>{{t .Locale "mfa.secret"}}</span><code data-mfa-secret>{{.Enrollment.Secret}}</code></div>
+      <div class="field-readonly"><span>{{t .Locale "mfa.uri"}}</span><code>{{.Enrollment.URI}}</code></div>
+      <form method="post" action="/settings/account/mfa/confirm">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <label>{{t .Locale "mfa.code"}} <input name="mfa_code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required autofocus></label>
+        <footer><a class="button button--quiet" href="/settings/account/mfa">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="shield-check" aria-hidden="true"></span>{{t .Locale "mfa.confirm"}}</button></footer>
+      </form>
+    {{else if .Enabled}}
+      <dl class="settings-summary"><div><dt>{{t .Locale "common.status"}}</dt><dd>{{t .Locale "mfa.enabled"}}</dd></div><div><dt>{{t .Locale "mfa.recovery_remaining"}}</dt><dd>{{.RecoveryRemaining}}</dd></div></dl>
+      <form method="post" action="/settings/account/mfa/reset">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <footer><a class="button button--quiet" href="/settings/account">{{t .Locale "common.back"}}</a><button class="button button--danger" type="submit"><span data-lucide="shield-off" aria-hidden="true"></span>{{t .Locale "mfa.reset"}}</button></footer>
+      </form>
+    {{else}}
+      <aside class="inline-notice"><span data-lucide="info" aria-hidden="true"></span><p>{{t .Locale "mfa.enroll_hint"}}</p></aside>
+      <form method="post" action="/settings/account/mfa/enroll">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <footer><a class="button button--quiet" href="/settings/account">{{t .Locale "common.back"}}</a><button class="button button--primary" type="submit"><span data-lucide="shield-plus" aria-hidden="true"></span>{{t .Locale "mfa.enroll"}}</button></footer>
+      </form>
+    {{end}}
+  </section>
+</main>
+</body>
+</html>

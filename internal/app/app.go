@@ -50,6 +50,7 @@ import (
 	"scriptboard/internal/hostsecurity"
 	"scriptboard/internal/hoststatus"
 	"scriptboard/internal/instancelock"
+	"scriptboard/internal/mfa"
 	"scriptboard/internal/mysqlmanager"
 	"scriptboard/internal/privatepath"
 	"scriptboard/internal/runmanager"
@@ -372,6 +373,7 @@ type App struct {
 	externalTriggers     *externaltrigger.Manager
 	externalLimit        *externaltrigger.Limiter
 	mysql                *mysqlmanager.Manager
+	mfa                  *mfa.Store
 	mysqlContext         context.Context
 	mysqlCancel          context.CancelFunc
 	mysqlWG              sync.WaitGroup
@@ -416,6 +418,10 @@ func Open(config Config) (*App, error) {
 		return nil, err
 	}
 	credentialStore, err := secretstore.New(stateRoot)
+	if err != nil {
+		return nil, err
+	}
+	mfaStore, err := mfa.New(mfa.Options{StateRoot: stateRoot, SecretStore: credentialStore})
 	if err != nil {
 		return nil, err
 	}
@@ -475,7 +481,7 @@ func Open(config Config) (*App, error) {
 		hostSecurityService = hostsecurity.NewManager(hostsecurity.Options{})
 	}
 	application := &App{
-		db: db, stateRoot: stateRoot, files: files, uploadInbox: uploadInboxStore, instanceLock: instanceLock,
+		db: db, stateRoot: stateRoot, files: files, uploadInbox: uploadInboxStore, instanceLock: instanceLock, mfa: mfaStore,
 		execUploadExts: buildExecutableUploadExtensions(config.ExecutorChains),
 		loginSlots:     make(chan struct{}, 2), loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies,
 		allowedHosts: allowedHosts, canonicalExternalURL: config.CanonicalExternalURL,
@@ -1012,6 +1018,10 @@ func (a *App) ResetAdminCredentials(username string) (string, error) {
 	if err := transaction.Commit(); err != nil {
 		_ = os.Remove(passwordPath)
 		return "", err
+	}
+	if err := a.mfa.Reset("administrator"); err != nil {
+		a.recordAudit("admin_reset_mfa", username, "failed", "local-cli")
+		return "", fmt.Errorf("reset administrator MFA after credentials changed: %w", err)
 	}
 	a.cancelAllAuthenticatedRequests()
 	a.recordAudit("admin_reset", username, "succeeded", "local-cli")
@@ -2221,17 +2231,23 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /monitor/websites/{id}/delete", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.deleteWebsiteMonitor)))
 	mux.Handle("GET /settings/account", a.requirePermission(permissionObserve, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		current := request.Context().Value(sessionContextKey).(session)
+		mfaStatus, err := a.mfa.Status(current.userID)
+		if err != nil {
+			http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusInternalServerError)
+			return
+		}
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = accountTemplate.Execute(response, struct {
 			Username, CSRFToken string
 			CredentialOverride  bool
 			CanRename           bool
+			MFAEnabled          bool
 			Locale              webLocale
 			SettingsNavigation  settingsNavigationData
 		}{
 			Username: current.username, CSRFToken: current.csrfToken,
 			CredentialOverride: a.credentialOverride && current.role == roleAdministrator,
-			CanRename:          current.role == roleAdministrator, Locale: resolveWebLocale(request),
+			CanRename:          current.role == roleAdministrator, MFAEnabled: mfaStatus.Enabled, Locale: resolveWebLocale(request),
 			SettingsNavigation: newSettingsNavigation(current, resolveWebLocale(request), "account"),
 		})
 	})))
@@ -2240,6 +2256,10 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /settings/account/username", a.requirePermission(permissionObserve, http.HandlerFunc(a.changeUsername)))
 	mux.Handle("GET /settings/account/password", a.requirePermission(permissionObserve, http.HandlerFunc(a.accountPasswordTask)))
 	mux.Handle("POST /settings/account/password", a.requirePermission(permissionObserve, http.HandlerFunc(a.changePassword)))
+	mux.Handle("GET /settings/account/mfa", a.requirePermission(permissionObserve, http.HandlerFunc(a.accountMFAPage)))
+	mux.Handle("POST /settings/account/mfa/enroll", a.requireStepUp(permissionObserve, http.HandlerFunc(a.beginMFAEnrollment)))
+	mux.Handle("POST /settings/account/mfa/confirm", a.requireStepUp(permissionObserve, http.HandlerFunc(a.confirmMFAEnrollment)))
+	mux.Handle("POST /settings/account/mfa/reset", a.requireStepUp(permissionObserve, http.HandlerFunc(a.resetMFA)))
 	mux.Handle("GET /settings/users", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.usersPage)))
 	mux.Handle("GET /settings/users/create", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.createUserTask)))
 	mux.Handle("POST /settings/users", a.requireStepUp(permissionManageUsers, http.HandlerFunc(a.createUser)))
@@ -5317,8 +5337,28 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 	if err != nil || !enabled || !passwordMatches {
 		a.recordLoginFailure(loginKeys...)
 		a.recordAuditForRequest(request, "login", loginIdentity, "failed")
-		renderLoginFailure(response, request, http.StatusUnauthorized, request.FormValue("username"), "用户名或密码错误")
+		renderLoginFailure(response, request, http.StatusUnauthorized, request.FormValue("username"), webText(resolveWebLocale(request), "login.invalid_credentials"))
 		return
+	}
+	authenticationAssurance := 1
+	mfaStatus, err := a.mfa.Status(userID)
+	if err != nil {
+		renderLoginFailure(response, request, http.StatusInternalServerError, request.FormValue("username"), webText(resolveWebLocale(request), "mfa.unavailable"))
+		return
+	}
+	if mfaStatus.Enabled {
+		verified, verifyErr := a.mfa.Verify(userID, request.FormValue("mfa_code"))
+		if verifyErr != nil {
+			renderLoginFailure(response, request, http.StatusInternalServerError, request.FormValue("username"), webText(resolveWebLocale(request), "mfa.unavailable"))
+			return
+		}
+		if !verified {
+			a.recordLoginFailure(loginKeys...)
+			a.recordAuditForRequest(request, "login", loginIdentity, "failed")
+			renderLoginFailure(response, request, http.StatusUnauthorized, request.FormValue("username"), webText(resolveWebLocale(request), "login.invalid_credentials"))
+			return
+		}
+		authenticationAssurance = 2
 	}
 	a.clearLoginFailures(loginKeys...)
 
@@ -5335,7 +5375,7 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 	now := time.Now().UTC()
 	if _, err := a.db.Exec(
 		"INSERT INTO sessions (token_hash, user_id, auth_version, authentication_assurance, reauthenticated_at, csrf_token, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		hashToken(token), userID, authVersion, 1, now.Unix(), sessionCSRF, now.Unix(), now.Unix(), now.Add(7*24*time.Hour).Unix(),
+		hashToken(token), userID, authVersion, authenticationAssurance, now.Unix(), sessionCSRF, now.Unix(), now.Unix(), now.Add(7*24*time.Hour).Unix(),
 	); err != nil {
 		renderLoginFailure(response, request, http.StatusInternalServerError, request.FormValue("username"), "暂时无法登录，请稍后重试")
 		return
@@ -5350,7 +5390,7 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 		MaxAge:   7 * 24 * 60 * 60,
 	})
 	http.SetCookie(response, &http.Cookie{Name: loginCSRFCookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(request), SameSite: http.SameSiteStrictMode})
-	auditSession := session{userID: userID, username: username, role: role, authVersion: authVersion, authenticationAssurance: 1, reauthenticatedAt: now.Unix()}
+	auditSession := session{userID: userID, username: username, role: role, authVersion: authVersion, authenticationAssurance: authenticationAssurance, reauthenticatedAt: now.Unix()}
 	auditRequest := request.WithContext(context.WithValue(request.Context(), sessionContextKey, auditSession))
 	a.recordAuditWithRequestActor(auditRequest, "login", username, "succeeded", request.RemoteAddr, userID, username, role)
 	completeLogin(response, request, "/monitor")

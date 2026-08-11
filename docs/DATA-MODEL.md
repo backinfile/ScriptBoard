@@ -590,6 +590,12 @@ schema 27 增加 `external_trigger_keys`、`external_trigger_entries` 和 `exter
 
 schema 38 增加持久化单例 `external_trigger_control`，用于全局紧急暂停所有有效外部调用。schema 39 在 Entry 上增加 `require_signature`，并用 `external_trigger_nonces` 原子消费短期 nonce；nonce 按 Key 唯一并带过期时间。迁移的旧 Entry 默认保持 Bearer 兼容，新 Entry 默认要求 5 分钟时间戳、唯一 nonce 和 HMAC-SHA256 签名。schema 40 在 `sessions` 增加 `authentication_assurance` 和 `reauthenticated_at`；高风险声明式路由要求 10 分钟内的浏览器会话密码认证，Assistant UI 动作不会为这些路由提供替代入口。schema 41 在 `audit_events` 增加 `request_id` 与 `authentication_assurance`；新事件把两者纳入 v2 哈希，历史空字段事件继续按 v1 验证。
 
+账户 TOTP 状态不新增 SQLite 明文秘密列，而是保存在 `state-root/secrets/account-mfa.enc`：整个
+用户映射由 State Root 外的统一主密钥以用途绑定 AES-GCM 密封。每个账户记录已确认或待确认的
+TOTP secret、最后接受的时间步与恢复码 SHA-256 摘要；恢复码具有独立 128 bit 随机熵、只显示
+一次并在使用时原子移除。已配置账户的登录与 step-up 均接受 TOTP 或未使用恢复码，成功会话记录
+`aal2`；同一 TOTP 时间步不能重放。本机管理员重置会清除管理员 MFA 并撤销会话。
+
 只读远程网站来源等仍需恢复的 External Interface 相关秘密使用统一 credential store 密封；
 旧 `external-interface.master-key` 与逐项密文启动时解密、重封并先删除旧原始 key。一次显示
 Trigger Key 本身只保留不可逆 verifier，不进入这套可恢复秘密存储。

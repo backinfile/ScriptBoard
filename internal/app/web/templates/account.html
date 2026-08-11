@@ -12,6 +12,7 @@
       <section class="settings-block"><h3>{{t .Locale "account.security"}}</h3><p>{{t .Locale "account.security_description"}}</p><div class="account-action-list">
         {{if .CanRename}}<a href="/settings/account/username" data-task-link><span data-lucide="signature" aria-hidden="true"></span><span><strong>{{t .Locale "account.change_username"}}</strong><small>{{t .Locale "account.change_username_hint"}}</small></span><span data-lucide="chevron-right" aria-hidden="true"></span></a>{{end}}
         <a href="/settings/account/password" data-task-link><span data-lucide="key-round" aria-hidden="true"></span><span><strong>{{t .Locale "account.change_password"}}</strong><small>{{t .Locale "account.change_password_hint"}}</small></span><span data-lucide="chevron-right" aria-hidden="true"></span></a>
+		<a href="/settings/account/mfa" data-task-link><span data-lucide="shield-check" aria-hidden="true"></span><span><strong>{{t .Locale "mfa.title"}}</strong><small>{{if .MFAEnabled}}{{t .Locale "mfa.enabled_hint"}}{{else}}{{t .Locale "mfa.disabled_hint"}}{{end}}</small></span><span data-lucide="chevron-right" aria-hidden="true"></span></a>
       </div></section>
   </section>
 </main>

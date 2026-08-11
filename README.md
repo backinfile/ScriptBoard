@@ -72,6 +72,10 @@ state/secrets/initial-admin-password
 登录后请先在“账户”中更换密码，然后前往“文件”选择已有脚本。上传脚本或可执行文件时，
 内容会先进入私有上传收件箱；核对 SHA-256 与目标并再次认证后发布，才能从文件页运行。
 
+建议随后在“账户 → 双重认证”配置兼容 RFC 6238 的 TOTP 认证器。启用时会一次性显示 10 个
+恢复码；恢复码仅保存摘要、每个只能使用一次。启用后，登录和高风险 step-up 都必须同时提供
+动态验证码或未使用的恢复码，启用动作会撤销该账户已有会话。
+
 ## 安装为系统服务
 
 使用内置默认设置时，无需创建或传入 YAML 配置文件。ScriptBoard 默认只监听本机的 `127.0.0.1:8787`。
@@ -262,6 +266,7 @@ scriptboard doctor --config CONFIG_PATH
 scriptboard admin reset --config CONFIG_PATH
 ```
 
-新的一次性密码会写入 `state_root/secrets/initial-admin-password`。
+新的一次性密码会写入 `state_root/secrets/initial-admin-password`；本机重置同时清除管理员的
+TOTP 配置，以便在认证器和恢复码都丢失时带外恢复，并撤销全部会话。
 
 更多命令可运行 `scriptboard help` 查看。开发、测试和发布说明请参阅 [项目文档](./docs/)。

@@ -11,6 +11,12 @@ import (
 
 func (a *App) stepUpTask(response http.ResponseWriter, request *http.Request) {
 	response.Header().Set("Cache-Control", "no-store")
+	current := request.Context().Value(sessionContextKey).(session)
+	mfaStatus, err := a.mfa.Status(current.userID)
+	if err != nil {
+		http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusInternalServerError)
+		return
+	}
 	returnTo := safeStepUpReturnTo(request.URL.Query().Get("return_to"))
 	a.renderTaskPage(response, request, taskPageData{
 		Kind:        "step-up",
@@ -19,6 +25,7 @@ func (a *App) stepUpTask(response http.ResponseWriter, request *http.Request) {
 		BackURL:     returnTo,
 		Action:      "/auth/step-up",
 		ReturnTo:    returnTo,
+		MFAEnabled:  mfaStatus.Enabled,
 	})
 }
 
@@ -55,10 +62,30 @@ func (a *App) stepUp(response http.ResponseWriter, request *http.Request) {
 		a.renderStepUpFailure(response, request, http.StatusUnauthorized, returnTo, "step_up.failed")
 		return
 	}
+	authenticationAssurance := 1
+	mfaStatus, err := a.mfa.Status(current.userID)
+	if err != nil {
+		http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusInternalServerError)
+		return
+	}
+	if mfaStatus.Enabled {
+		verified, verifyErr := a.mfa.Verify(current.userID, request.FormValue("mfa_code"))
+		if verifyErr != nil {
+			http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusInternalServerError)
+			return
+		}
+		if !verified {
+			a.recordLoginFailure(keys...)
+			a.recordAuditForRequest(request, "step_up_authentication", current.username, "failed")
+			a.renderStepUpFailure(response, request, http.StatusUnauthorized, returnTo, "mfa.invalid_code")
+			return
+		}
+		authenticationAssurance = 2
+	}
 	now := time.Now().UTC().Unix()
 	result, err := a.db.ExecContext(request.Context(), `UPDATE sessions
-		SET authentication_assurance = 1, reauthenticated_at = ?
-		WHERE token_hash = ? AND user_id = ? AND auth_version = ?`, now, current.tokenHash, current.userID, current.authVersion)
+		SET authentication_assurance = ?, reauthenticated_at = ?
+		WHERE token_hash = ? AND user_id = ? AND auth_version = ?`, authenticationAssurance, now, current.tokenHash, current.userID, current.authVersion)
 	if err != nil {
 		http.Error(response, webText(resolveWebLocale(request), "step_up.unavailable"), http.StatusInternalServerError)
 		return
@@ -69,7 +96,7 @@ func (a *App) stepUp(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	a.clearLoginFailures(keys...)
-	current.authenticationAssurance = 1
+	current.authenticationAssurance = authenticationAssurance
 	current.reauthenticatedAt = now
 	auditRequest := request.WithContext(context.WithValue(request.Context(), sessionContextKey, current))
 	a.recordAuditForRequest(auditRequest, "step_up_authentication", current.username, "succeeded")
@@ -78,6 +105,8 @@ func (a *App) stepUp(response http.ResponseWriter, request *http.Request) {
 
 func (a *App) renderStepUpFailure(response http.ResponseWriter, request *http.Request, status int, returnTo, messageKey string) {
 	locale := resolveWebLocale(request)
+	current := request.Context().Value(sessionContextKey).(session)
+	mfaStatus, _ := a.mfa.Status(current.userID)
 	a.renderTaskPageStatus(response, request, status, taskPageData{
 		Kind:        "step-up",
 		Title:       webText(locale, "step_up.title"),
@@ -85,6 +114,7 @@ func (a *App) renderStepUpFailure(response http.ResponseWriter, request *http.Re
 		BackURL:     returnTo,
 		Action:      "/auth/step-up",
 		ReturnTo:    returnTo,
+		MFAEnabled:  mfaStatus.Enabled,
 		Error:       webText(locale, messageKey),
 	})
 }

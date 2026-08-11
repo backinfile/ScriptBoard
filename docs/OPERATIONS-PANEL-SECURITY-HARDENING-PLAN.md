@@ -33,7 +33,7 @@ ScriptBoard 已有一批值得保留的安全基础：Argon2id 密码哈希、�
 | P0-04 | 五个切片完成 | 建立共享出站策略并覆盖网站 HTTP/WebSocket 探测、远程监控聚合、GitHub 更新检查/下载、签名 Assistant Runtime 下载、Assistant Provider 代理及 Custom Dashboard 数据源；这些默认客户端不使用环境代理，DNS 解析后的实际 IP 由受控 Dialer 固定并拒绝私网、元数据和非常规端口。Provider 代理只转发当前会话绑定的 Provider、模型和推理 API 路径；Dashboard 数据源禁止重定向、URL 内嵌凭据及保留请求头；远程 ScriptBoard 聚合只接受 HTTPS，网站探测跳过 TLS 验证的例外最长一小时并记录到期时间。 |
 | P0-05 | 两个切片完成 | 代理默认信任为空，非可信转发头被清理；新增 `allowed_hosts` 与 `canonical_external_url` 安全默认，可信代理 Host 仍须通过白名单，错误 Host/Origin 在业务 Handler 前拒绝。可信 peer 只接受单值 `X-Forwarded-*` 合同，拒绝标准 `Forwarded` 混用、重复字段、空值、非法 IP/Host/Proto 和超过 8 跳的链；黑盒 Handler 测试覆盖可信 HTTPS 的 HSTS/Secure Cookie、Host poisoning 421 以及非可信伪造不提升安全状态。真实 Nginx/Caddy/IIS 与 IPv6 部署矩阵仍待平台门禁。 |
 | P0-06 | 四个切片完成 | 外部上传空 allowlist 及活动/双扩展一律拒绝；内容以随机无扩展名和 0600 权限进入 State Root 私有 inbox，管理员核对 SHA-256 与目标后才能经并发领取、原子写入和审计发布。普通 Host Files 上传识别内置及自定义执行器扩展，可执行内容同样只能先进入 inbox，需近期认证并明确核对摘要和目标后发布，普通上传不能直接覆盖现有可执行文件；文件移动也提升为 step-up 动作。MySQL 导入只接受 `.sql`/`.sql.gz`，gzip 在落库和每次恢复前校验流完整性、非空内容与 8 GiB 解压上限，客户端以禁用本地命令的模式消费。Dashboard 与网站监控配置导入只接受安全 `.json` 文件名、受限 JSON/text/octet-stream MIME、UTF-8 无 NUL 且对象根内容，并继续执行各自的 schema、字段、数量和大小限制。 |
-| P0-07 | 五个切片完成 | 外部 Trigger Key 创建和轮换后只显示一次，完整 Key 不再可恢复保存或提供复制接口；启动时清理旧版本残留的可恢复 Key。schema 40 记录会话认证保证和最近认证时间，新登录提供 10 分钟保证窗口，高风险声明式路由过期后必须在当前浏览器会话重新验证密码；失败/成功均审计，return URL 防开放重定向，Assistant UI Action 对这些路由 fail closed。YAML、环境变量和 CLI 的明文管理员密码入口均已删除并提供迁移错误，只保留绝对路径 password file、首次启动和本机重置的一次性凭据。日志、审计、错误、导出和 doctor 共用 secret redaction。Provider、MySQL 与远程网站 Key 现使用统一 AEAD 密封，主密钥位于 State Root 之外；Windows 由机器级 DPAPI 再封装，Unix 使用 root-only 外部 key。启动会单向迁移并删除 State Root 内的明文 Provider 文件和旧原始主密钥，doctor 检查外部 key，单独复制 State Root 不能解密。WebAuthn/TOTP 与恢复码仍待结构性批次。 |
+| P0-07 | 六个切片完成 | 外部 Trigger Key 创建和轮换后只显示一次，完整 Key 不再可恢复保存或提供复制接口；启动时清理旧版本残留的可恢复 Key。schema 40 记录会话认证保证和最近认证时间，高风险声明式路由过期后必须在当前浏览器会话 step-up；失败/成功均审计，return URL 防开放重定向，Assistant UI Action 对这些路由 fail closed。YAML、环境变量和 CLI 的明文管理员密码入口均已删除，只保留绝对路径 password file、首次启动和本机重置的一次性凭据。日志、审计、错误、导出和 doctor 共用 secret redaction。Provider、MySQL 与远程网站 Key 使用 State Root 外主密钥统一 AEAD 密封。账户现可配置 TOTP：登录和 step-up 没有降级旁路，成功为 `aal2`，时间步不可重放；10 个 128 bit 恢复码只显示一次、仅保存摘要并逐个消费，启用/重置撤销会话，本机管理员重置同时清除 MFA。WebAuthn/passkey 与 Administrator/Maintainer 默认强制注册策略仍待结构性批次。 |
 | P0-08 | 两个切片完成 | 每个受管 Pi 进程现只获得环回 Provider 代理地址和随机短期 capability；上游 Endpoint 与真实凭据不再进入 Pi 参数、环境或 `models.json`。代理只允许当前 Provider 对应的 POST 推理路径和精确模型，限制请求/响应大小、清理请求头、注入真实凭据、禁止重定向，并随进程停止撤销。Windows Pi Job Object 现限制为单进程、1 GiB 进程/作业内存和 15 分钟累计用户态 CPU，禁止桌面、剪贴板、全局 atom、句柄及系统参数 UI 访问，并在句柄关闭时强制回收。Runtime 仍与 Web 服务共享 OS 身份且可直接出站，独立 UID/受限 Token、秘密目录 ACL、网络默认拒绝和 Linux 沙箱仍是本项完成前的必需结构性工作。 |
 | P0-09 | 五个切片完成 | Quick Run 记录脚本 SHA-256 与单调配置修订；外部入口只能绑定已锁定且摘要有效的发布修订，配置、锁定状态或脚本变化会使旧授权 fail-closed，Runner 在启动点复核摘要并将外部并发限制为每脚本一个 Run。每个 Key 现原子绑定一个不可变 Entry，绑定时轮换临时凭据，删除 Entry 同时删除 Key；旧多 Entry Key 被保留配置地拆分并 fail-closed。限流已覆盖每 Key、规范化来源、动作和全局四层原子请求/并发配额，并限制来源状态基数。外部接口提供持久化人工全局熔断；新功能默认启用 5 分钟时间戳、唯一 nonce 与 HMAC-SHA256 防重放，旧功能兼容迁移并可显式启用；拒绝均记录调用与审计。 |
 | P0-12 | 部分完成 | 增加 vet、race、govulncheck、CodeQL、secret scan、SBOM 与 release provenance 门禁；race 覆盖 App、审计链、外部能力、Run、受控进程、上传/导入、出站策略及 Assistant Runtime/Provider 代理等并发安全边界。已加入出站地址、Host 和命令参数 fuzz target，更多真实代理、服务安装和故障注入黑盒不变量继续补充。 |
@@ -137,7 +137,7 @@ flowchart LR
 | 网站探测 | HTTP 重定向只限制最多 5 跳；WebSocket 走环境代理；管理员可跳过 TLS 校验 | 可访问内网、环回、链路本地和云元数据；重定向/DNS 重绑定每跳未重验；环境代理扩大信任面 |
 | 远程监控汇聚 | 禁止重定向且 Bearer 不会跨跳泄露，但 Endpoint 仍可指向任意 HTTP(S) 地址 | 仍需出站地址策略、DNS 固定和 HTTPS 默认要求 |
 | 外部上传 | 有 Key、大小、单文件、文件名和可选扩展限制；扩展列表为空时允许任意扩展 | 上传内容可能进入可被管理员或快捷执行项运行的位置；需要默认拒绝可执行类型和隔离发布 |
-| 密钥保存 | 外部 Key 和 MySQL 密码使用 AES-GCM，但主密钥与密文位于同一个 State Root | 可防误读，不能抵御 State Root 被完整窃取；应接入 OS 密钥存储或独立密钥文件 |
+| 密钥保存 | Provider、MySQL、远程网站 Key 与 TOTP 状态使用用途绑定 AES-GCM，主密钥在 State Root 外；Windows 再由机器级 DPAPI 保护 | 单独窃取 State Root 不能离线解密；Unix 外部 key 仍须作为 root-only 秘密独立备份 |
 | 初始管理员密码 | 明文 `admin_password`、环境变量和 CLI 参数已移除；旧入口返回迁移错误，仅保留绝对路径 password file 与一次性引导 | 已消除配置备份、进程环境、进程列表和 Shell 历史中的长期明文凭据入口；OS secret provider 仍随秘密迁移批次继续 |
 | 审计 | 已记录用户、动作、目标、结果和来源 | 数据库管理员或主机入侵者可同时修改业务数据和审计；缺少哈希链、外部转发和安全事件告警 |
 
@@ -384,7 +384,7 @@ Windows：
 ### 批次 B：结构性重构，独立功能分支
 
 - [ ] P0-02 非特权 Web + 特权 Broker + Runner 身份拆分。
-- [ ] P0-07 MFA、step-up、秘密迁移和一次显示 Key。
+- [ ] P0-07 已完成 TOTP/恢复码、step-up、秘密迁移和一次显示 Key；仍需 WebAuthn/passkey 与高权限角色默认注册策略。
 - [ ] P0-08 AI Runtime OS 沙箱和受控 Provider 网络。
 - [x] P0-09 发布型 Quick Run 与外部能力令牌。
 - [ ] P0-11 审计哈希链、远端转发和安全告警。

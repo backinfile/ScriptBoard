@@ -34,6 +34,7 @@ var (
 	fileOperationTemplate         = mustWebTemplate("file-operation")
 	filesTemplate                 = mustWebTemplate("files")
 	loginTemplate                 = mustWebTemplate("login")
+	mfaTemplate                   = mustWebTemplate("mfa")
 	mysqlDatabasesTemplate        = mustWebTemplate("mysql-databases")
 	liveLogTemplate               = mustWebTemplate("live-log")
 	overlapTemplate               = mustWebTemplate("overlap")

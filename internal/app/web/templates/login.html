@@ -11,6 +11,7 @@
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <label>{{t .Locale "login.username"}} <input name="username" value="{{.Username}}" autocomplete="username" spellcheck="false" required></label>
       <label>{{t .Locale "login.password"}} <input name="password" type="password" autocomplete="current-password" required></label>
+	  <label>{{t .Locale "mfa.code"}} <input name="mfa_code" inputmode="numeric" autocomplete="one-time-code" maxlength="64"><small>{{t .Locale "mfa.login_hint"}}</small></label>
       <button class="button button--primary" type="submit" data-pending-label="{{t .Locale "login.pending"}}">{{t .Locale "login.submit"}}<span data-lucide="arrow-right" aria-hidden="true"></span></button>
     </form>
     <form class="login-locale" method="post" action="/settings/locale">
