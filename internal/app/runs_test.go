@@ -58,6 +58,7 @@ func TestAdminCanRunScriptAndReadCompletedOutput(t *testing.T) {
 	runURL := serverURL + response.Header.Get("Location")
 
 	deadline := time.Now().Add(10 * time.Second)
+	var completedPage string
 	for {
 		response, err = client.Get(runURL)
 		if err != nil {
@@ -70,12 +71,51 @@ func TestAdminCanRunScriptAndReadCompletedOutput(t *testing.T) {
 		}
 		text := string(body)
 		if strings.Contains(text, "succeeded") && strings.Contains(text, "hello-run") {
+			completedPage = text
 			break
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("run did not complete with output: status=%d body=%s", response.StatusCode, text)
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+	if !strings.Contains(completedPage, `href="`+strings.TrimPrefix(runURL, serverURL)+`/download"`) ||
+		!strings.Contains(completedPage, `data-native`) || !strings.Contains(completedPage, `data-lucide="download"`) {
+		t.Fatalf("completed Run detail does not offer a native TXT download: %s", completedPage)
+	}
+	if !strings.Contains(completedPage, `href="#run-details-bottom"`) ||
+		!strings.Contains(completedPage, `id="run-details-bottom"`) ||
+		!strings.Contains(completedPage, `data-run-jump-bottom`) ||
+		!strings.Contains(completedPage, `data-lucide="arrow-down-to-line"`) {
+		t.Fatalf("completed Run detail does not offer a jump to its bottom: %s", completedPage)
+	}
+
+	response, err = client.Get(runURL + "/download")
+	if err != nil {
+		t.Fatalf("download run record: %v", err)
+	}
+	downloaded, readErr := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if readErr != nil {
+		t.Fatalf("read downloaded run record: %v", readErr)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("download run record: status=%d body=%s", response.StatusCode, downloaded)
+	}
+	if contentType := response.Header.Get("Content-Type"); contentType != "text/plain; charset=utf-8" {
+		t.Fatalf("download content type=%q", contentType)
+	}
+	if disposition := response.Header.Get("Content-Disposition"); !strings.Contains(disposition, "attachment") || !strings.Contains(disposition, "scriptboard-run-") || !strings.Contains(disposition, ".txt") {
+		t.Fatalf("download disposition=%q", disposition)
+	}
+	if cacheControl := response.Header.Get("Cache-Control"); cacheControl != "no-store" {
+		t.Fatalf("download cache control=%q", cacheControl)
+	}
+	downloadText := string(downloaded)
+	for _, expected := range []string{"ScriptBoard Run Record", "Run ID:", "Script: " + filepath.Join(hostRoot, scriptName), "Status: succeeded", "Output", "hello-run"} {
+		if !strings.Contains(downloadText, expected) {
+			t.Fatalf("downloaded run record missing %q: %s", expected, downloadText)
+		}
 	}
 }
 

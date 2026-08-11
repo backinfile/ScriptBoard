@@ -682,6 +682,31 @@ func TestFileWorkspaceOffersPreviewForUnknownTextButNotUnknownBinary(t *testing.
 	if strings.Contains(html, `href="`+hostFileHref("/resources/files/edit", textPath)+`"`) {
 		t.Fatalf("content-detected text unexpectedly has an edit link: %s", html)
 	}
+	for _, expected := range []string{
+		`>notes.payload</a><small><span>Previewable text</span>`,
+		`>archive.payload</span><small><span>Other file</span>`,
+		`>renamed.txt</span><small><span>Other file</span>`,
+	} {
+		if !strings.Contains(html, expected) {
+			t.Errorf("content-based preview state is missing %q: %s", expected, html)
+		}
+	}
+
+	response, err = client.Get(hostFilesRequestURLWithQuery(serverURL, hostRoot, url.Values{"sort": {"type"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	typeSortedPage, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	typeSortedHTML := string(typeSortedPage)
+	textPosition := strings.Index(typeSortedHTML, ">notes.payload</a>")
+	binaryPosition := strings.Index(typeSortedHTML, ">archive.payload</span>")
+	if textPosition < 0 || binaryPosition < 0 || textPosition > binaryPosition {
+		t.Fatalf("content-based type sort did not place previewable text before other files: %s", typeSortedHTML)
+	}
 
 	response, err = client.Get(hostFileRequestURL(serverURL, "/resources/files/view", textPath))
 	if err != nil {

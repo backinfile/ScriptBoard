@@ -224,15 +224,11 @@ func (m *Manager) reconcileMissed() {
 		if err != nil {
 			continue
 		}
-		advance, err := m.db.Exec(`UPDATE schedules SET next_fire_at = ?, updated_at = ?
-			WHERE id = ? AND enabled = 1 AND deleted = 0 AND next_fire_at = ?`, next.UnixNano(), now.UnixNano(), item.id, item.scheduledFor)
-		if err != nil {
+		reserved, err := m.advanceWithTrigger(item.id, item.scheduledFor, next.UnixNano(), now.UnixNano(), triggerID, "missed",
+			fmt.Sprintf("服务停机期间错过 %d 次触发", missedCount))
+		if err != nil || !reserved {
 			continue
 		}
-		if affected, affectedErr := advance.RowsAffected(); affectedErr != nil || affected != 1 {
-			continue
-		}
-		_, _ = m.db.Exec("INSERT INTO schedule_triggers (id, schedule_id, scheduled_for, result, run_id, error) VALUES (?, ?, ?, 'missed', '', ?)", triggerID, item.id, item.scheduledFor, fmt.Sprintf("服务停机期间错过 %d 次触发", missedCount))
 		m.recordAudit("schedule_trigger", item.id, "missed")
 	}
 }
@@ -290,17 +286,25 @@ func (m *Manager) RunNowAs(id, userID, username string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	triggerID, err := randomID()
+	if err != nil {
+		return "", err
+	}
+	if _, err := m.db.Exec("INSERT INTO schedule_triggers (id, schedule_id, scheduled_for, result, run_id, error) VALUES (?, ?, ?, 'pending', '', '')", triggerID, schedule.ID, m.now().UnixNano()); err != nil {
+		return "", fmt.Errorf("record pending schedule trigger: %w", err)
+	}
 	runID, err := m.runs.Start(runmanager.StartRequest{
 		ScriptPath: schedule.ScriptPath, ArgumentsTemplate: schedule.ArgumentsTemplate, TimeoutSeconds: schedule.TimeoutSeconds,
 		SourceType: "admin/schedule-now", SourceName: schedule.Name, SourceID: schedule.ID, Variables: variables,
 		InitiatorUserID: userID, InitiatorUsername: username,
 	})
-	triggerID, _ := randomID()
 	result, errorText := "created", ""
 	if err != nil {
 		result, errorText = "rejected", err.Error()
 	}
-	_, _ = m.db.Exec("INSERT INTO schedule_triggers (id, schedule_id, scheduled_for, result, run_id, error) VALUES (?, ?, ?, ?, ?, ?)", triggerID, schedule.ID, m.now().UnixNano(), result, runID, errorText)
+	if completeErr := m.completeTrigger(triggerID, result, runID, errorText); completeErr != nil {
+		m.recordAudit("schedule_trigger_record", schedule.Name, "pending")
+	}
 	m.recordAudit("schedule_run_now", schedule.Name, result)
 	if err != nil {
 		return "", err
@@ -478,22 +482,18 @@ func (m *Manager) fireDue() {
 		if err != nil {
 			continue
 		}
-		advance, err := m.db.Exec(`UPDATE schedules SET next_fire_at = ?, updated_at = ?
-			WHERE id = ? AND enabled = 1 AND deleted = 0 AND next_fire_at = ?`, next.UnixNano(), now.UnixNano(), item.id, item.scheduledFor)
-		if err != nil {
-			continue
-		}
-		if affected, affectedErr := advance.RowsAffected(); affectedErr != nil || affected != 1 {
+		reserved, err := m.advanceWithTrigger(item.id, item.scheduledFor, next.UnixNano(), now.UnixNano(), triggerID, "pending", "")
+		if err != nil || !reserved {
 			continue
 		}
 		if !item.allowOverlap && m.runs.IsActiveScript(item.scriptPath) {
-			_, _ = m.db.Exec("INSERT INTO schedule_triggers (id, schedule_id, scheduled_for, result, run_id, error) VALUES (?, ?, ?, 'skipped', '', '')", triggerID, item.id, item.scheduledFor)
+			_ = m.completeTrigger(triggerID, "skipped", "", "")
 			m.recordAudit("schedule_trigger", item.name, "skipped")
 			continue
 		}
 		variables, loadErr := m.loadVariables()
 		if loadErr != nil {
-			_, _ = m.db.Exec("INSERT INTO schedule_triggers (id, schedule_id, scheduled_for, result, run_id, error) VALUES (?, ?, ?, 'rejected', '', ?)", triggerID, item.id, item.scheduledFor, loadErr.Error())
+			_ = m.completeTrigger(triggerID, "rejected", "", loadErr.Error())
 			m.recordAudit("schedule_trigger", item.name, "rejected")
 			continue
 		}
@@ -502,13 +502,54 @@ func (m *Manager) fireDue() {
 			SourceType: "scheduler", SourceName: item.name, SourceID: item.id, Variables: variables,
 		})
 		if startErr != nil {
-			_, _ = m.db.Exec("INSERT INTO schedule_triggers (id, schedule_id, scheduled_for, result, run_id, error) VALUES (?, ?, ?, 'rejected', '', ?)", triggerID, item.id, item.scheduledFor, startErr.Error())
+			_ = m.completeTrigger(triggerID, "rejected", "", startErr.Error())
 			m.recordAudit("schedule_trigger", item.name, "rejected")
 			continue
 		}
-		_, _ = m.db.Exec("INSERT INTO schedule_triggers (id, schedule_id, scheduled_for, result, run_id, error) VALUES (?, ?, ?, 'created', ?, '')", triggerID, item.id, item.scheduledFor, runID)
+		_ = m.completeTrigger(triggerID, "created", runID, "")
 		m.recordAudit("schedule_trigger", item.name, "created")
 	}
+}
+
+func (m *Manager) advanceWithTrigger(scheduleID string, scheduledFor, nextFireAt, updatedAt int64, triggerID, result, errorText string) (bool, error) {
+	transaction, err := m.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer transaction.Rollback()
+	advance, err := transaction.Exec(`UPDATE schedules SET next_fire_at = ?, updated_at = ?
+		WHERE id = ? AND enabled = 1 AND deleted = 0 AND next_fire_at = ?`, nextFireAt, updatedAt, scheduleID, scheduledFor)
+	if err != nil {
+		return false, err
+	}
+	affected, err := advance.RowsAffected()
+	if err != nil || affected != 1 {
+		return false, err
+	}
+	if _, err := transaction.Exec(`INSERT INTO schedule_triggers
+		(id, schedule_id, scheduled_for, result, run_id, error) VALUES (?, ?, ?, ?, '', ?)`,
+		triggerID, scheduleID, scheduledFor, result, errorText); err != nil {
+		return false, err
+	}
+	if err := transaction.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (m *Manager) completeTrigger(triggerID, result, runID, errorText string) error {
+	updated, err := m.db.Exec(`UPDATE schedule_triggers SET result = ?, run_id = ?, error = ? WHERE id = ?`, result, runID, errorText, triggerID)
+	if err != nil {
+		return err
+	}
+	affected, err := updated.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (m *Manager) disableInvalidSchedules() {

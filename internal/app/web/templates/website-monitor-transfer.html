@@ -25,7 +25,7 @@
 <a class="button button--primary" href="/monitor/websites">{{t .Locale "website.nginx.view_ledger"}}</a>
 </section>
 {{else if eq .Mode "export"}}
-<form class="website-transfer-form" method="post" action="/monitor/websites/export" data-website-selection-form>
+<form class="website-transfer-form" method="post" action="/monitor/websites/export" data-website-selection-form data-native>
 <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
 <section class="nginx-preview-heading">
 <div><h2>{{t .Locale "website.transfer.choose_export"}}</h2><p>{{t .Locale "website.transfer.export_selection_hint"}}</p></div>

@@ -247,6 +247,9 @@ func TestWebsiteMonitorConfigurationsExportSelectedAndImportSelected(t *testing.
 	if len(selections) != 2 || !bytes.Contains(exportPage, []byte("全选")) {
 		t.Fatalf("export selection page does not list both monitors with select-all: %s", exportPage)
 	}
+	if !bytes.Contains(exportPage, []byte(`data-website-selection-form data-native`)) {
+		t.Fatalf("export form must use native submission so attachment responses trigger a download: %s", exportPage)
+	}
 
 	response, err = client.PostForm(serverURL+"/monitor/websites/export", url.Values{
 		"csrf_token": {formToken(t, exportPage)}, "selection": {string(selections[0][1])},
