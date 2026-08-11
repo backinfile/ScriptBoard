@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strings"
 	"unicode/utf8"
 )
@@ -53,8 +54,7 @@ func Prepare(spec Spec) (*exec.Cmd, error) {
 		}
 	case EnvironmentExact:
 		for index, entry := range spec.Env {
-			name, _, found := strings.Cut(entry, "=")
-			if !found || name == "" || strings.Contains(name, "=") || !validProcessValue(entry) {
+			if !validEnvironmentEntry(entry) {
 				return nil, fmt.Errorf("process environment entry %d is invalid", index+1)
 			}
 		}
@@ -63,6 +63,22 @@ func Prepare(spec Spec) (*exec.Cmd, error) {
 		return nil, errors.New("process environment policy is required")
 	}
 	return command, nil
+}
+
+func validEnvironmentEntry(entry string) bool {
+	if !validProcessValue(entry) {
+		return false
+	}
+	name, _, found := strings.Cut(entry, "=")
+	if found && name != "" && !strings.Contains(name, "=") {
+		return true
+	}
+	// Windows exposes per-drive current directories as hidden environment
+	// entries such as "=C:=C:\\work". os/exec preserves these entries, and
+	// callers that intentionally clone os.Environ must be able to do the same.
+	return runtime.GOOS == "windows" && len(entry) >= 4 && entry[0] == '=' &&
+		(entry[1] >= 'A' && entry[1] <= 'Z' || entry[1] >= 'a' && entry[1] <= 'z') &&
+		entry[2] == ':' && entry[3] == '='
 }
 
 func validProcessValue(value string) bool {
