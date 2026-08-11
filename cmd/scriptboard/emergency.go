@@ -35,7 +35,7 @@ func runEmergency(action string, arguments []string) error {
 			return err
 		}
 		defer database.Close()
-		if err := emergencyMutation(context.Background(), database, func(ctx context.Context, tx *sql.Tx) (auditlog.Event, error) {
+		if err := emergencyMutation(context.Background(), database, loaded.StateRoot, func(ctx context.Context, tx *sql.Tx) (auditlog.Event, error) {
 			result, err := tx.ExecContext(ctx, "UPDATE external_trigger_control SET enabled = 0, updated_at = ? WHERE id = 1", time.Now().UTC().Unix())
 			if err != nil {
 				return auditlog.Event{}, err
@@ -68,7 +68,7 @@ func runEmergency(action string, arguments []string) error {
 			return err
 		}
 		defer database.Close()
-		if err := emergencyMutation(context.Background(), database, func(ctx context.Context, tx *sql.Tx) (auditlog.Event, error) {
+		if err := emergencyMutation(context.Background(), database, loaded.StateRoot, func(ctx context.Context, tx *sql.Tx) (auditlog.Event, error) {
 			result, err := tx.ExecContext(ctx, "UPDATE external_trigger_keys SET enabled = 0, updated_at = ? WHERE id = ?", time.Now().UTC().Unix(), keyID)
 			if err != nil {
 				return auditlog.Event{}, err
@@ -100,6 +100,9 @@ func runEmergency(action string, arguments []string) error {
 			return err
 		}
 		defer database.Close()
+		if err := verifySignedAuditCheckpoint(context.Background(), loaded.StateRoot, auditlog.New(database)); err != nil {
+			return err
+		}
 		return exportEmergencyEvidence(context.Background(), database, output)
 	default:
 		return fmt.Errorf("未知应急命令 %q；可用命令：emergency pause-external|revoke-key|export-evidence", action)
@@ -132,8 +135,15 @@ func openEmergencyDatabaseReadOnly(stateRoot string) (*sql.DB, error) {
 	return database, nil
 }
 
-func emergencyMutation(ctx context.Context, database *sql.DB, mutate func(context.Context, *sql.Tx) (auditlog.Event, error)) error {
+func emergencyMutation(ctx context.Context, database *sql.DB, stateRoot string, mutate func(context.Context, *sql.Tx) (auditlog.Event, error)) error {
 	store := auditlog.New(database)
+	checkpoint, err := openSignedAuditCheckpoint(stateRoot, false)
+	if err != nil {
+		return err
+	}
+	if err := checkpoint.VerifyOrBootstrap(ctx, store, time.Now().UTC()); err != nil {
+		return fmt.Errorf("verify signed audit checkpoint before mutation: %w", err)
+	}
 	transaction, err := store.Begin(ctx)
 	if err != nil {
 		return err
@@ -146,7 +156,13 @@ func emergencyMutation(ctx context.Context, database *sql.DB, mutate func(contex
 	if _, err := transaction.Append(ctx, event); err != nil {
 		return err
 	}
-	return transaction.Commit()
+	if err := transaction.Commit(); err != nil {
+		return err
+	}
+	if err := checkpoint.Write(ctx, store, time.Now().UTC()); err != nil {
+		return fmt.Errorf("mutation committed but signed audit checkpoint refresh failed: %w", err)
+	}
+	return nil
 }
 
 func localEmergencyEvent(action, target string) auditlog.Event {

@@ -129,6 +129,45 @@ func TestAuditRetentionAdvancesHashChainAnchor(t *testing.T) {
 	}
 }
 
+func TestAuditRetentionPreservesTheExternallyCheckpointedSuffix(t *testing.T) {
+	t.Parallel()
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "checkpoint-retention.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, statement := range []string{
+		`CREATE TABLE audit_events (id INTEGER PRIMARY KEY AUTOINCREMENT, occurred_at INTEGER NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, result TEXT NOT NULL, source_address TEXT NOT NULL, actor_user_id TEXT NOT NULL DEFAULT '', actor_username TEXT NOT NULL DEFAULT '', actor_role TEXT NOT NULL DEFAULT '', request_id TEXT NOT NULL DEFAULT '', authentication_assurance TEXT NOT NULL DEFAULT '', previous_hash TEXT NOT NULL DEFAULT '', event_hash TEXT NOT NULL DEFAULT '')`,
+		`CREATE TABLE audit_chain_state (id INTEGER PRIMARY KEY CHECK(id = 1), anchor_hash TEXT NOT NULL, tail_hash TEXT NOT NULL)`,
+		`INSERT INTO audit_chain_state VALUES (1, '', '')`,
+		`CREATE TABLE runs (id TEXT PRIMARY KEY, script_kind TEXT NOT NULL, source_filename TEXT NOT NULL, source_expired INTEGER NOT NULL, source_audit_event_id INTEGER)`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store := auditlog.New(db)
+	old := time.Now().AddDate(-2, 0, 0).UTC().Unix()
+	var ids []int64
+	for index := 0; index < 3; index++ {
+		id, err := store.Append(context.Background(), auditlog.Event{
+			OccurredAt: fmt.Sprint(old + int64(index)), Action: "retention", Target: "event", Result: "succeeded", SourceAddress: "test",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	deleted, err := cleanupExpiredAuditEventsBefore(db, t.TempDir(), time.Now().AddDate(-1, 0, 0), ids[1])
+	if err != nil || deleted != 1 {
+		t.Fatalf("deleted=%d err=%v", deleted, err)
+	}
+	verification, err := store.Verify(context.Background())
+	if err != nil || verification.Count != 2 || verification.LastID != ids[2] {
+		t.Fatalf("verification=%#v err=%v", verification, err)
+	}
+}
+
 func TestAuditRetentionKeepsAuditWhenSourceCannotBeRemoved(t *testing.T) {
 	t.Parallel()
 

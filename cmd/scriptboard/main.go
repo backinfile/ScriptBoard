@@ -144,14 +144,21 @@ func verifyAudit(arguments []string) error {
 		return err
 	}
 	defer database.Close()
-	verification, err := auditlog.New(database).Verify(context.Background())
+	ctx := context.Background()
+	audit := auditlog.New(database)
+	verification, err := audit.Verify(ctx)
 	if err != nil {
 		return fmt.Errorf("审计哈希链验证失败: %w", err)
 	}
-	if jsonOutput {
-		return json.NewEncoder(os.Stdout).Encode(map[string]any{"valid": true, "events": verification.Count, "tail_sha256": verification.LastHash})
+	if err := verifySignedAuditCheckpoint(ctx, loaded.StateRoot, audit); err != nil {
+		return err
 	}
-	fmt.Fprintf(os.Stdout, "审计哈希链有效：%d 条事件，链尾 %s\n", verification.Count, verification.LastHash)
+	if jsonOutput {
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{
+			"valid": true, "events": verification.Count, "tail_sha256": verification.LastHash, "signed_checkpoint": "valid",
+		})
+	}
+	fmt.Fprintf(os.Stdout, "审计哈希链与外部签名 checkpoint 有效：%d 条事件，链尾 %s\n", verification.Count, verification.LastHash)
 	return nil
 }
 
@@ -172,7 +179,7 @@ func runUpdate(action string, arguments []string) error {
 			return fmt.Errorf("修复当前安装版本: %w", err)
 		}
 		if database, auditErr := openEmergencyDatabase(loaded.StateRoot); auditErr == nil {
-			auditErr = emergencyMutation(context.Background(), database, func(context.Context, *sql.Tx) (auditlog.Event, error) {
+			auditErr = emergencyMutation(context.Background(), database, loaded.StateRoot, func(context.Context, *sql.Tx) (auditlog.Event, error) {
 				return localEmergencyEvent("emergency.update.repair-current", info.Version), nil
 			})
 			_ = database.Close()

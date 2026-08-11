@@ -25,7 +25,9 @@ func TestDoctorReportsHealthyDirectoriesAndSQLite(t *testing.T) {
 	if !report.Healthy {
 		t.Fatalf("doctor report is unhealthy: %+v", report.Checks)
 	}
-	if !report.HasHealthy("state-root") || !report.HasHealthy("sqlite-integrity") || !report.HasHealthy("credential-master-key") {
+	if !report.HasHealthy("state-root") || !report.HasHealthy("sqlite-integrity") ||
+		!report.HasHealthy("credential-master-key") || !report.HasHealthy("audit-checkpoint-key") ||
+		!report.HasHealthy("audit-checkpoint") {
 		t.Fatalf("required checks missing: %+v", report.Checks)
 	}
 }

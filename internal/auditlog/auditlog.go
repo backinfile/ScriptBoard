@@ -31,6 +31,7 @@ type Event struct {
 
 type Verification struct {
 	Count    int
+	LastID   int64
 	LastHash string
 }
 
@@ -168,6 +169,68 @@ func (store *Store) Verify(ctx context.Context) (Verification, error) {
 	return verifyTransaction(ctx, tx)
 }
 
+// VerifyWithCheckpoint validates the complete chain and a signed checkpoint
+// against one read transaction so a concurrent writer cannot change the
+// database between the two checks.
+func (store *Store) VerifyWithCheckpoint(ctx context.Context, eventID int64, eventSHA256 string) (Verification, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	tx, err := store.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return Verification{}, err
+	}
+	defer tx.Rollback()
+	verification, err := verifyTransaction(ctx, tx)
+	if err != nil {
+		return Verification{}, err
+	}
+	if err := verifyCheckpointTransaction(ctx, tx, eventID, eventSHA256); err != nil {
+		return Verification{}, err
+	}
+	return verification, nil
+}
+
+// VerifyCheckpoint confirms that a previously signed event identity is still
+// present in the local chain. Callers verify the full chain separately before
+// trusting this membership check.
+func (store *Store) VerifyCheckpoint(ctx context.Context, eventID int64, eventSHA256 string) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	tx, err := store.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	return verifyCheckpointTransaction(ctx, tx, eventID, eventSHA256)
+}
+
+func verifyCheckpointTransaction(ctx context.Context, tx *sql.Tx, eventID int64, eventSHA256 string) error {
+	if eventID < 0 || eventSHA256 == "" && eventID != 0 {
+		return errors.New("audit checkpoint identity is invalid")
+	}
+	if eventID == 0 {
+		var anchor string
+		if err := tx.QueryRowContext(ctx, `SELECT anchor_hash FROM audit_chain_state WHERE id = 1`).Scan(&anchor); err != nil {
+			return err
+		}
+		if anchor != eventSHA256 {
+			return errors.New("audit checkpoint no longer matches the retained chain anchor")
+		}
+		return nil
+	}
+	var recorded string
+	if err := tx.QueryRowContext(ctx, `SELECT event_hash FROM audit_events WHERE id = ?`, eventID).Scan(&recorded); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("audit checkpoint event %d is missing", eventID)
+		}
+		return err
+	}
+	if recorded != eventSHA256 {
+		return fmt.Errorf("audit checkpoint event %d digest mismatch", eventID)
+	}
+	return nil
+}
+
 // Export writes a verified, snapshot-consistent JSON Lines evidence artifact.
 // The first line describes the verified chain and every following line is an
 // audit event including its recorded chain links. No output is written when
@@ -251,6 +314,7 @@ func verifyTransaction(ctx context.Context, tx *sql.Tx) (Verification, error) {
 		}
 		previous = recordedHash
 		verification.Count++
+		verification.LastID = id
 	}
 	if err := rows.Err(); err != nil {
 		return Verification{}, err

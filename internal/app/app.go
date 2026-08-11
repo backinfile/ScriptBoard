@@ -42,6 +42,7 @@ import (
 	"scriptboard/internal/assistant/raster"
 	"scriptboard/internal/assistant/runtimeinstall"
 	"scriptboard/internal/assistant/toolbroker"
+	"scriptboard/internal/auditcheckpoint"
 	"scriptboard/internal/auditlog"
 	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/customdashboard"
@@ -351,6 +352,9 @@ type App struct {
 	assistantBroker      *toolbroker.Broker
 	files                *hostfiles.Manager
 	auditLog             *auditlog.Store
+	auditCheckpoint      *auditcheckpoint.Store
+	auditCheckpointStop  context.CancelFunc
+	auditCheckpointWG    sync.WaitGroup
 	uploadInbox          *uploadinbox.Store
 	execUploadExts       map[string]struct{}
 	fileOperations       *sqliteFileOperationStore
@@ -498,6 +502,15 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("verify audit hash chain: %w", err)
 	}
+	application.auditCheckpoint, err = auditcheckpoint.New(auditcheckpoint.Options{StateRoot: stateRoot, SecretStore: credentialStore})
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("initialize external audit checkpoint: %w", err)
+	}
+	if err := application.auditCheckpoint.VerifyOrBootstrap(context.Background(), application.auditLog, time.Now().UTC()); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("verify external audit checkpoint: %w", err)
+	}
 	application.externalTriggers = externaltrigger.New(db, externaltrigger.Options{SecretsDirectory: filepath.Join(stateRoot, "secrets"), SecretStore: credentialStore})
 	if err := application.externalTriggers.MigrateSecrets(); err != nil {
 		_ = db.Close()
@@ -568,7 +581,11 @@ func Open(config Config) (*App, error) {
 			_ = db.Close()
 			return nil, err
 		}
-		_, _ = cleanupExpiredAuditEvents(db, stateRoot, time.Now().UTC().AddDate(-1, 0, 0))
+		_, _ = cleanupExpiredAuditEventsBefore(db, stateRoot, time.Now().UTC().AddDate(-1, 0, 0), application.auditCheckpoint.CheckpointEventID())
+		if err := application.auditCheckpoint.Write(context.Background(), application.auditLog, time.Now().UTC()); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("refresh external audit checkpoint after retention: %w", err)
+		}
 	}
 	timeoutGrace := config.RunTimeoutGrace
 	if timeoutGrace <= 0 {
@@ -695,6 +712,10 @@ func Open(config Config) (*App, error) {
 	go application.monitorUpdateResults()
 	application.shellStatusCache = newShellStatusCache(5*time.Second, time.Now, application.loadShellStatus)
 	application.handler = application.routes()
+	auditCheckpointContext, auditCheckpointStop := context.WithCancel(context.Background())
+	application.auditCheckpointStop = auditCheckpointStop
+	application.auditCheckpointWG.Add(1)
+	go application.monitorAuditCheckpoint(auditCheckpointContext)
 	opened = true
 	return application, nil
 }
@@ -724,6 +745,20 @@ func (a *App) executableUploadRequiresPublication(name string) bool {
 
 func (a *App) Handler() http.Handler {
 	return a.handler
+}
+
+func (a *App) monitorAuditCheckpoint(ctx context.Context) {
+	defer a.auditCheckpointWG.Done()
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			_ = a.auditCheckpoint.Write(ctx, a.auditLog, now.UTC())
+		}
+	}
 }
 
 func (a *App) ValidationOperationID() string {
@@ -1112,6 +1147,10 @@ func (a *App) applyCredentialOverride(username, passwordFile string) error {
 }
 
 func (a *App) Close() error {
+	if a.auditCheckpointStop != nil {
+		a.auditCheckpointStop()
+		a.auditCheckpointWG.Wait()
+	}
 	if a.mysqlCancel != nil {
 		a.mysqlCancel()
 		a.mysqlWG.Wait()
@@ -1149,11 +1188,18 @@ func (a *App) Close() error {
 	if a.runs != nil {
 		a.runs.Close()
 	}
+	var checkpointErr error
+	if a.auditCheckpoint != nil && a.auditLog != nil {
+		checkpointErr = a.auditCheckpoint.Write(context.Background(), a.auditLog, time.Now().UTC())
+	}
 	_, _ = a.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
 	dbErr := a.db.Close()
 	lockErr := a.instanceLock.Close()
 	if dbErr != nil {
 		return dbErr
+	}
+	if checkpointErr != nil {
+		return checkpointErr
 	}
 	return lockErr
 }

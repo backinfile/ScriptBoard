@@ -18,6 +18,10 @@ type expiredAuditCandidate struct {
 }
 
 func cleanupExpiredAuditEvents(db *sql.DB, stateRoot string, cutoff time.Time) (int, error) {
+	return cleanupExpiredAuditEventsBefore(db, stateRoot, cutoff, 0)
+}
+
+func cleanupExpiredAuditEventsBefore(db *sql.DB, stateRoot string, cutoff time.Time, preserveFromAuditID int64) (int, error) {
 	chainEnabled := auditRetentionChainEnabled(db)
 	hashColumn := "''"
 	if chainEnabled {
@@ -37,6 +41,9 @@ func cleanupExpiredAuditEvents(db *sql.DB, stateRoot string, cutoff time.Time) (
 		if err := rows.Scan(&candidate.auditID, &candidate.runID, &candidate.sourceFilename, &candidate.sourceExpired, &occurredAt, &candidate.eventHash); err != nil {
 			_ = rows.Close()
 			return 0, err
+		}
+		if preserveFromAuditID > 0 && candidate.auditID >= preserveFromAuditID {
+			break
 		}
 		if occurredAt >= cutoff.UTC().Unix() {
 			break

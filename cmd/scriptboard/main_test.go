@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"scriptboard/internal/app"
+	"scriptboard/internal/auditcheckpoint"
 	"scriptboard/internal/auditlog"
 )
 
@@ -60,21 +61,12 @@ func TestUpdateRepairCurrentRequiresExplicitConfirmation(t *testing.T) {
 }
 
 func TestAuditVerifyWorksWithoutOpeningTheWebApplication(t *testing.T) {
-	stateRoot := t.TempDir()
+	stateRoot := initializedStateRoot(t)
 	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	for _, statement := range []string{
-		`CREATE TABLE audit_events (id INTEGER PRIMARY KEY AUTOINCREMENT, occurred_at INTEGER NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, result TEXT NOT NULL, source_address TEXT NOT NULL, actor_user_id TEXT NOT NULL DEFAULT '', actor_username TEXT NOT NULL DEFAULT '', actor_role TEXT NOT NULL DEFAULT '', request_id TEXT NOT NULL DEFAULT '', authentication_assurance TEXT NOT NULL DEFAULT '', previous_hash TEXT NOT NULL DEFAULT '', event_hash TEXT NOT NULL DEFAULT '')`,
-		`CREATE TABLE audit_chain_state (id INTEGER PRIMARY KEY CHECK(id = 1), anchor_hash TEXT NOT NULL, tail_hash TEXT NOT NULL)`,
-		`INSERT INTO audit_chain_state VALUES (1, '', '')`,
-	} {
-		if _, err := database.Exec(statement); err != nil {
-			t.Fatal(err)
-		}
-	}
 	if _, err := auditlog.New(database).Append(context.Background(), auditlog.Event{
 		OccurredAt: "1786410000", Action: "test", Target: "resource", Result: "succeeded", SourceAddress: "local",
 	}); err != nil {
@@ -92,15 +84,39 @@ func TestAuditVerifyWorksWithoutOpeningTheWebApplication(t *testing.T) {
 		os.Stdout = originalStdout
 		_ = output.Close()
 	})
-	if err := run([]string{"audit", "verify", "--state-root", stateRoot}); err != nil {
+	if err := run([]string{"audit", "verify", "--state-root", stateRoot, "--json"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := output.Seek(0, io.SeekStart); err != nil {
 		t.Fatal(err)
 	}
-	content, _ := io.ReadAll(output)
-	if !strings.Contains(string(content), "1 条事件") {
-		t.Fatalf("audit verification output = %s", content)
+	var result struct {
+		Valid            bool   `json:"valid"`
+		Events           int    `json:"events"`
+		SignedCheckpoint string `json:"signed_checkpoint"`
+	}
+	if err := json.NewDecoder(output).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.Valid || result.Events < 1 || result.SignedCheckpoint != "valid" {
+		t.Fatalf("audit verification output = %+v", result)
+	}
+}
+
+func TestAuditVerifyDoesNotBootstrapAMissingSignedCheckpoint(t *testing.T) {
+	stateRoot := initializedStateRoot(t)
+	_, _, checkpointPath, err := auditcheckpoint.PathsForStateRoot(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(checkpointPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"audit", "verify", "--state-root", stateRoot}); err == nil {
+		t.Fatal("audit verify trusted a missing external checkpoint")
+	}
+	if _, err := os.Stat(checkpointPath); !os.IsNotExist(err) {
+		t.Fatalf("read-only audit verify recreated checkpoint: %v", err)
 	}
 }
 
@@ -118,6 +134,7 @@ func TestEmergencyPauseExternalRequiresConfirmationAndAuditsAtomically(t *testin
 	}
 	assertExternalControl(t, database, false)
 	assertLatestAudit(t, database, "emergency.external.pause", "external-interfaces", "succeeded")
+	assertSignedCheckpointAtLatestAudit(t, stateRoot, database)
 }
 
 func TestEmergencyRevokeKeyDisablesKeyAndPreservesForensicRecord(t *testing.T) {
@@ -252,5 +269,30 @@ func assertLatestAudit(t *testing.T, database *sql.DB, action, target, result st
 	}
 	if actualAction != action || actualTarget != target || actualResult != result {
 		t.Fatalf("latest audit = (%q, %q, %q), want (%q, %q, %q)", actualAction, actualTarget, actualResult, action, target, result)
+	}
+}
+
+func assertSignedCheckpointAtLatestAudit(t *testing.T, stateRoot string, database *sql.DB) {
+	t.Helper()
+	_, _, checkpointPath, err := auditcheckpoint.PathsForStateRoot(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(checkpointPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var checkpoint struct {
+		EventID int64 `json:"event_id"`
+	}
+	if err := json.Unmarshal(body, &checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	var latest int64
+	if err := database.QueryRow("SELECT COALESCE(MAX(id), 0) FROM audit_events").Scan(&latest); err != nil {
+		t.Fatal(err)
+	}
+	if checkpoint.EventID != latest {
+		t.Fatalf("signed checkpoint event=%d, latest audit=%d", checkpoint.EventID, latest)
 	}
 }

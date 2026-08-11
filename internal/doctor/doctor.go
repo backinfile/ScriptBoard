@@ -15,6 +15,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"scriptboard/internal/auditcheckpoint"
 	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/diskspace"
 	"scriptboard/internal/installation"
@@ -76,6 +77,23 @@ func Run(config Config) Report {
 		required("credential-master-key", false, statErr.Error())
 	} else {
 		required("credential-master-key", info.Mode().IsRegular(), credentialKeyPath)
+	}
+	_, auditKeyPath, auditCheckpointPath, auditCheckpointErr := auditcheckpoint.PathsForStateRoot(config.StateRoot)
+	if auditCheckpointErr != nil {
+		required("audit-checkpoint-key", false, auditCheckpointErr.Error())
+		required("audit-checkpoint", false, auditCheckpointErr.Error())
+	} else {
+		for _, check := range []struct {
+			name string
+			path string
+		}{{"audit-checkpoint-key", auditKeyPath}, {"audit-checkpoint", auditCheckpointPath}} {
+			info, err := os.Stat(check.path)
+			if err != nil {
+				required(check.name, false, err.Error())
+			} else {
+				required(check.name, info.Mode().IsRegular(), check.path)
+			}
+		}
 	}
 	checkConfig(&report, config.ConfigPath)
 	checkDisk(&report, "state-disk", config.StateRoot)

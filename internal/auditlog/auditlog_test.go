@@ -158,3 +158,28 @@ func TestAppendPersistsRequestCorrelationAndAuthenticationAssuranceInChain(t *te
 		t.Fatal("authentication assurance tampering was not detected")
 	}
 }
+
+func TestVerificationReportsTailEventID(t *testing.T) {
+	store, _ := testStore(t)
+	first, err := store.Append(context.Background(), Event{OccurredAt: "1", Action: "first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.Append(context.Background(), Event{OccurredAt: "2", Action: "second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	verification, err := store.Verify(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first <= 0 || verification.LastID != second {
+		t.Fatalf("first=%d second=%d verification=%#v", first, second, verification)
+	}
+	if err := store.VerifyCheckpoint(context.Background(), second, verification.LastHash); err != nil {
+		t.Fatalf("verify current checkpoint: %v", err)
+	}
+	if err := store.VerifyCheckpoint(context.Background(), second, strings.Repeat("0", 64)); err == nil {
+		t.Fatal("wrong checkpoint hash was accepted")
+	}
+}

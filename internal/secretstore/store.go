@@ -46,6 +46,26 @@ func New(stateRoot string) (*Store, error) {
 	return store, nil
 }
 
+// Open loads an existing host key without creating directories or key
+// material. Read-only verification commands use it to avoid mutating evidence.
+func Open(stateRoot string) (*Store, error) {
+	keyPath, err := KeyPathForStateRoot(stateRoot)
+	if err != nil {
+		return nil, err
+	}
+	body, err := os.ReadFile(keyPath)
+	if err != nil {
+		return nil, fmt.Errorf("read external credential key: %w", err)
+	}
+	key, err := decodeKey(body)
+	if err != nil {
+		return nil, err
+	}
+	store := &Store{keyPath: keyPath}
+	copy(store.key[:], key)
+	return store, nil
+}
+
 func KeyPathForStateRoot(stateRoot string) (string, error) {
 	absolute, err := filepath.Abs(stateRoot)
 	if err != nil {

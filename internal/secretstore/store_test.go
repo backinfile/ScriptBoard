@@ -2,6 +2,7 @@ package secretstore
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,5 +54,19 @@ func TestPurposeIsAuthenticated(t *testing.T) {
 	}
 	if _, err := os.Stat(store.KeyPath()); err != nil {
 		t.Fatalf("external key missing: %v", err)
+	}
+}
+
+func TestOpenDoesNotCreateMissingHostKey(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	keyPath, err := KeyPathForStateRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(root); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("open missing host key error=%v", err)
+	}
+	if _, err := os.Stat(keyPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("read-only open created key: %v", err)
 	}
 }

@@ -590,6 +590,16 @@ schema 27 增加 `external_trigger_keys`、`external_trigger_entries` 和 `exter
 
 schema 38 增加持久化单例 `external_trigger_control`，用于全局紧急暂停所有有效外部调用。schema 39 在 Entry 上增加 `require_signature`，并用 `external_trigger_nonces` 原子消费短期 nonce；nonce 按 Key 唯一并带过期时间。迁移的旧 Entry 默认保持 Bearer 兼容，新 Entry 默认要求 5 分钟时间戳、唯一 nonce 和 HMAC-SHA256 签名。schema 40 在 `sessions` 增加 `authentication_assurance` 和 `reauthenticated_at`；高风险声明式路由要求 10 分钟内的浏览器会话密码认证，Assistant UI 动作不会为这些路由提供替代入口。schema 41 在 `audit_events` 增加 `request_id` 与 `authentication_assurance`；新事件把两者纳入 v2 哈希，历史空字段事件继续按 v1 验证。
 
+`audit_events` 按 ID 顺序链接 `previous_hash` 与 `event_hash`，`audit_chain_state` 保存保留锚点和
+当前链尾。为防止事件尾部与同库链尾状态一起回退后仍通过本地校验，每个 State Root 另有一份
+Ed25519 签名 checkpoint，记录实例路径身份、最后事件 ID/摘要、签名时间和公钥。签名私钥密文
+`../secrets/audit-checkpoint-signing-<实例摘要>.enc` 与
+`../secrets/audit-checkpoint-<实例摘要>.json` 均位于 State Root 外；私钥由统一外部主密钥以
+独立用途密封。启动、`audit verify` 和取证导出同时验证本地链、签名、公钥绑定与 checkpoint
+成员关系；只读命令缺失材料时失败而不初始化。正常关闭、保留清理后和每五分钟刷新 checkpoint。
+它限制 State Root 单独回退，不等同于远端不可变日志；最近刷新后的尾部窗口与拥有外部 secrets
+目录权限的高权限攻击者仍需由后续远端转发和告警覆盖。
+
 账户 TOTP 状态不新增 SQLite 明文秘密列，而是保存在 `state-root/secrets/account-mfa.enc`：整个
 用户映射由 State Root 外的统一主密钥以用途绑定 AES-GCM 密封。每个账户记录已确认或待确认的
 TOTP secret、最后接受的时间步与恢复码 SHA-256 摘要；恢复码具有独立 128 bit 随机熵、只显示
