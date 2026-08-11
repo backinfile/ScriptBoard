@@ -12,7 +12,7 @@ We will acknowledge a complete report as soon as practical, coordinate validatio
 
 ## Emergency containment
 
-If compromise is suspected, isolate the host from untrusted networks and stop ScriptBoard. From a trusted local administrator shell, run `scriptboard emergency pause-external --confirm PAUSE-EXTERNAL`, revoke each exposed capability with `scriptboard emergency revoke-key --key-id ID --confirm-key-id ID`, and export the verified audit chain to a new absolute path with `scriptboard emergency export-evidence --output PATH`. Preserve the State Root, exported evidence, and service logs before rotating administrator, provider, or database credentials. Reinstall or roll back only from a verified signed release, and do not delete logs before collecting evidence.
+If compromise is suspected, isolate the host from untrusted networks and stop ScriptBoard. From a trusted local administrator shell, run `scriptboard emergency pause-external --confirm PAUSE-EXTERNAL`, revoke each exposed capability with `scriptboard emergency revoke-key --key-id ID --confirm-key-id ID`, and export the verified audit chain to a new absolute path with `scriptboard emergency export-evidence --output PATH`. Preserve the State Root, exported evidence, and service logs before rotating administrator, provider, or database credentials. Reinstall or roll back only from a verified signed release. `update recover` restores the selected operation's pre-update database snapshot and therefore discards later database changes; preserve the current state first. Do not delete logs before collecting evidence.
 
 ## Security boundary
 

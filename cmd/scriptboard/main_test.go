@@ -52,6 +52,13 @@ func TestUpdateVerifyPackageRequiresAllOfflineArtifacts(t *testing.T) {
 	}
 }
 
+func TestUpdateRepairCurrentRequiresExplicitConfirmation(t *testing.T) {
+	err := run([]string{"update", "repair-current"})
+	if err == nil || !strings.Contains(err.Error(), "REPAIR-CURRENT") {
+		t.Fatalf("repair-current confirmation error = %v", err)
+	}
+}
+
 func TestAuditVerifyWorksWithoutOpeningTheWebApplication(t *testing.T) {
 	stateRoot := t.TempDir()
 	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))

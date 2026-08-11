@@ -94,7 +94,7 @@ func run(arguments []string) error {
 		return runService(arguments[1], arguments[2:])
 	case "update":
 		if len(arguments) < 2 {
-			return errors.New("可用更新命令：update status|check|recover")
+			return errors.New("可用更新命令：update status|check|verify-package|repair-current|recover")
 		}
 		return runUpdate(arguments[1], arguments[2:])
 	default:
@@ -108,8 +108,10 @@ func printUsage() {
 用法：
   scriptboard serve [配置选项]
   scriptboard service install|uninstall|start|stop|restart|status
-  scriptboard update status|check|recover
+  scriptboard update status|check
   scriptboard update verify-package --archive PATH --manifest PATH --signature PATH [--json]
+  scriptboard update repair-current --confirm REPAIR-CURRENT [配置选项]
+  scriptboard update recover --operation ID --confirm-operation ID [配置选项]
   scriptboard admin reset [配置选项]
   scriptboard audit verify [配置选项] [--json]
   scriptboard emergency pause-external --confirm PAUSE-EXTERNAL [配置选项]
@@ -156,6 +158,32 @@ func verifyAudit(arguments []string) error {
 func runUpdate(action string, arguments []string) error {
 	jsonOutput, arguments := takeBooleanArgument(arguments, "--json")
 	switch action {
+	case "repair-current":
+		confirmation, remaining := takeStringArgument(arguments, "--confirm")
+		if confirmation != "REPAIR-CURRENT" {
+			return errors.New("update repair-current 需要 --confirm REPAIR-CURRENT")
+		}
+		loaded, err := config.Load(remaining, os.Getenv)
+		if err != nil {
+			return err
+		}
+		info, err := updatepkg.RepairCurrentInstallation(loaded.StateRoot)
+		if err != nil {
+			return fmt.Errorf("修复当前安装版本: %w", err)
+		}
+		if database, auditErr := openEmergencyDatabase(loaded.StateRoot); auditErr == nil {
+			auditErr = emergencyMutation(context.Background(), database, func(context.Context, *sql.Tx) (auditlog.Event, error) {
+				return localEmergencyEvent("emergency.update.repair-current", info.Version), nil
+			})
+			_ = database.Close()
+			if auditErr != nil {
+				fmt.Fprintln(os.Stderr, "警告：当前版本已修复，但无法写入本地审计链："+secretredaction.String(auditErr.Error()))
+			}
+		} else {
+			fmt.Fprintln(os.Stderr, "警告：当前版本已修复，但无法打开本地审计数据库："+secretredaction.String(auditErr.Error()))
+		}
+		fmt.Fprintf(os.Stdout, "当前已验证版本 %s 的服务指针已修复；服务保持停止状态。\n", info.Version)
+		return nil
 	case "verify-package":
 		archivePath, remaining := takeStringArgument(arguments, "--archive")
 		manifestPath, remaining := takeStringArgument(remaining, "--manifest")

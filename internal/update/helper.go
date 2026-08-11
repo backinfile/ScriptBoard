@@ -3,6 +3,7 @@ package update
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"runtime"
 	"time"
 
+	_ "modernc.org/sqlite"
 	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/config"
 	"scriptboard/internal/installation"
@@ -77,7 +79,6 @@ func ApplyOperation(ctx context.Context, stateRoot, operationID string) error {
 	if err := writeResult(operation, ""); err != nil {
 		return err
 	}
-	_ = os.Remove(operation.SnapshotPath)
 	return nil
 }
 
@@ -94,6 +95,10 @@ func RecoverOperation(ctx context.Context, stateRoot, operationID string) error 
 	switch operation.Phase {
 	case PhaseHandoff, PhaseWaitingForOldExit, PhaseSnapshotting, PhaseFailedSafe:
 		return recoverBeforeSwitch(ctx, &operation, errors.New("administrator recovered an update before version switching"))
+	case PhaseCommitted:
+		if err := verifyCommittedRollback(operation); err != nil {
+			return fmt.Errorf("committed update rollback preflight: %w", err)
+		}
 	case PhaseNeedsRecovery, PhaseRollingBack, PhaseValidating, PhaseStartingTarget, PhaseSwitching:
 	default:
 		return fmt.Errorf("operation phase %s does not require recovery", operation.Phase)
@@ -105,6 +110,90 @@ func RecoverOperation(ctx context.Context, stateRoot, operationID string) error 
 		}
 	}
 	return err
+}
+
+// RepairCurrentInstallation revalidates the active formal release and repairs
+// only the service manager's pointer to it. The service must already be stopped.
+func RepairCurrentInstallation(stateRoot string) (buildinfo.Info, error) {
+	lock, err := acquireOperationLock(stateRoot)
+	if err != nil {
+		return buildinfo.Info{}, err
+	}
+	defer lock.Close()
+	running, err := platformservice.IsRunning()
+	if err != nil {
+		return buildinfo.Info{}, fmt.Errorf("query ScriptBoard service before repair: %w", err)
+	}
+	if running {
+		return buildinfo.Info{}, errors.New("stop the ScriptBoard service before repairing the current version")
+	}
+	metadata, err := installation.Load(stateRoot)
+	if err != nil {
+		return buildinfo.Info{}, err
+	}
+	info, err := installation.ReadVersionInfo(metadata, metadata.Current)
+	if err != nil {
+		return buildinfo.Info{}, err
+	}
+	if err := installation.ValidateVersion(metadata, metadata.Current, info); err != nil {
+		return buildinfo.Info{}, err
+	}
+	metadata, err = installation.SetCurrent(metadata, metadata.Current)
+	if err != nil {
+		return buildinfo.Info{}, err
+	}
+	if err := platformservice.SwitchExecutable(installation.ServiceExecutable(metadata), metadata.ConfigPath); err != nil {
+		return buildinfo.Info{}, err
+	}
+	return info, nil
+}
+
+func verifyCommittedRollback(operation Operation) error {
+	if err := verifyDatabaseSnapshot(operation.SnapshotPath); err != nil {
+		return err
+	}
+	metadata, err := loadOperationInstallation(operation)
+	if err != nil {
+		return err
+	}
+	if metadata.Current != operation.TargetVersion {
+		return errors.New("managed installation no longer points at the committed target version")
+	}
+	targetInfo := targetBuild(operation)
+	if err := installation.ValidateVersion(metadata, operation.TargetVersion, targetInfo); err != nil {
+		return fmt.Errorf("validate committed target release: %w", err)
+	}
+	previousInfo, err := installation.ReadVersionInfo(metadata, operation.PreviousVersion)
+	if err != nil {
+		return err
+	}
+	if previousInfo.Commit != operation.PreviousCommit {
+		return errors.New("previous Installed Release commit does not match the update operation")
+	}
+	return installation.ValidateVersion(metadata, operation.PreviousVersion, previousInfo)
+}
+
+func verifyDatabaseSnapshot(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("update database snapshot: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Size() == 0 {
+		return errors.New("update database snapshot is not a non-empty regular file")
+	}
+	database, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
+	if err != nil {
+		return err
+	}
+	defer database.Close()
+	var result string
+	if err := database.QueryRow("PRAGMA quick_check(1)").Scan(&result); err != nil {
+		return fmt.Errorf("check update database snapshot: %w", err)
+	}
+	if result != "ok" {
+		return fmt.Errorf("update database snapshot integrity check failed: %s", result)
+	}
+	return nil
 }
 
 func recoverBeforeSwitch(ctx context.Context, operation *Operation, cause error) error {

@@ -212,6 +212,18 @@ scriptboard emergency export-evidence --output ABSOLUTE_JSONL_PATH --config CONF
 scriptboard update verify-package --archive ABSOLUTE_ARCHIVE_PATH --manifest ABSOLUTE_MANIFEST_PATH --signature ABSOLUTE_SIGNATURE_PATH
 ```
 
+受管服务的当前版本文件完整但服务指针损坏时，先停止服务，再验证当前正式版本并重建指针；命令不会自动启动服务：
+
+```text
+scriptboard update repair-current --confirm REPAIR-CURRENT --config CONFIG_PATH
+```
+
+每次成功更新会保留该 operation 的更新前数据库快照。需要回滚已提交更新时，先停止服务，再重复输入 operation ID；回滚会恢复旧版本及该快照，因此会丢弃更新完成后写入 State Root 数据库的变更，应先保全现状和取证证据：
+
+```text
+scriptboard update recover --operation OPERATION_ID --confirm-operation OPERATION_ID --config CONFIG_PATH
+```
+
 ## 常见问题
 
 先运行只读诊断：

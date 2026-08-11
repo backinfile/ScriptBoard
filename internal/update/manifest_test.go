@@ -389,3 +389,39 @@ func TestOperationLockRejectsConcurrentHelper(t *testing.T) {
 		t.Fatal("concurrent update operation lock succeeded")
 	}
 }
+
+func TestCommittedUpdateRecoveryRequiresIntactSnapshotBeforeSwitching(t *testing.T) {
+	stateRoot := t.TempDir()
+	id, _ := NewOperationID()
+	nonce, _ := NewOperationID()
+	root, _ := OperationDirectory(stateRoot, id)
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manifest := validManifest()
+	operation := Operation{
+		Schema: OperationSchema, ID: id, Nonce: nonce, Phase: PhaseCommitted,
+		PreviousVersion: "1.0.0", TargetVersion: manifest.Version,
+		PreviousCommit: strings.Repeat("a", 40), TargetCommit: manifest.Commit,
+		InstallRoot: filepath.Join(t.TempDir(), "install"), StateRoot: stateRoot,
+		ConfigPath: filepath.Join(t.TempDir(), "config.yaml"), DatabasePath: filepath.Join(stateRoot, "app.db"),
+		ArchivePath: filepath.Join(root, "archive.zip"), ExtractedPath: filepath.Join(root, "extracted"),
+		SnapshotPath: filepath.Join(root, "database-before-update.db"), Manifest: manifest,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if err := SaveOperation(operation); err != nil {
+		t.Fatal(err)
+	}
+
+	err := RecoverOperation(context.Background(), stateRoot, id)
+	if err == nil || !strings.Contains(err.Error(), "snapshot") {
+		t.Fatalf("committed recovery without snapshot error = %v", err)
+	}
+	reloaded, err := LoadOperation(stateRoot, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Phase != PhaseCommitted {
+		t.Fatalf("failed preflight changed phase to %s", reloaded.Phase)
+	}
+}

@@ -205,6 +205,18 @@ On an isolated or offline host, provide the formal release archive together with
 scriptboard update verify-package --archive ABSOLUTE_ARCHIVE_PATH --manifest ABSOLUTE_MANIFEST_PATH --signature ABSOLUTE_SIGNATURE_PATH
 ```
 
+If the current managed release files are intact but the service pointer is damaged, stop the service, revalidate the formal current release, and rebuild the pointer. The command leaves the service stopped:
+
+```text
+scriptboard update repair-current --confirm REPAIR-CURRENT --config CONFIG_PATH
+```
+
+Every successful update retains that operation's pre-update database snapshot. To roll back a committed update, stop the service and repeat the operation ID. Rollback restores both the prior release and that snapshot, so it discards State Root database changes made after the update; preserve current evidence and state first:
+
+```text
+scriptboard update recover --operation OPERATION_ID --confirm-operation OPERATION_ID --config CONFIG_PATH
+```
+
 ## Troubleshooting
 
 Start with the read-only diagnostic:
