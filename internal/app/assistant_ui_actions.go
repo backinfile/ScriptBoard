@@ -52,6 +52,10 @@ const (
 func (a *App) assistantUIActions() []assistantUIActionSpec {
 	action := func(key, label, domain, path, deepLink string, pathFields, formFields []string, handler http.HandlerFunc) assistantUIActionSpec {
 		spec := assistantUIActionSpec{Key: key, Label: label, Domain: domain, Path: path, DeepLink: deepLink, PathFields: pathFields, FormFields: formFields, Permission: a.declaredRoutePermission(http.MethodPost, path), Handler: handler}
+		if a.declaredRouteStepUp(http.MethodPost, path) {
+			spec.BrowserOnly = "Recent authentication is required in the protected browser session."
+			spec.Handler = nil
+		}
 		switch key {
 		case "websites.create", "websites.update":
 			spec.FormValueModes = map[string]assistantUIActionValueMode{"verify_tls": assistantUIActionBinary, "follow_redirects": assistantUIActionBinary}

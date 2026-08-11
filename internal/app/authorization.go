@@ -2,6 +2,9 @@ package app
 
 import (
 	"net/http"
+	"net/url"
+	"strings"
+	"time"
 )
 
 type userRole string
@@ -57,4 +60,71 @@ func (a *App) requirePermission(required permission, next http.Handler) http.Han
 		next.ServeHTTP(response, request)
 	}))
 	return declaredRouteHandler{auth: routeAuthSession, permission: required, handler: protected}
+}
+
+const recentAuthenticationWindow = 10 * time.Minute
+
+func (a *App) requireStepUp(required permission, next http.Handler) http.Handler {
+	protected := a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		current, ok := request.Context().Value(sessionContextKey).(session)
+		if !ok || !roleAllows(current.role, required) {
+			http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
+			return
+		}
+		if current.authenticationAssurance < 1 || !recentAuthenticationValid(current.reauthenticatedAt, time.Now().UTC()) {
+			returnTo := stepUpReturnTarget(request)
+			location := "/auth/step-up?" + url.Values{"return_to": {returnTo}}.Encode()
+			response.Header().Set("Cache-Control", "no-store")
+			http.Redirect(response, request, location, http.StatusSeeOther)
+			return
+		}
+		next.ServeHTTP(response, request)
+	}))
+	return declaredRouteHandler{auth: routeAuthSession, permission: required, stepUp: true, handler: protected}
+}
+
+func recentAuthenticationValid(timestamp int64, now time.Time) bool {
+	if timestamp <= 0 {
+		return false
+	}
+	authenticatedAt := time.Unix(timestamp, 0)
+	return !authenticatedAt.After(now.Add(time.Minute)) && now.Sub(authenticatedAt) <= recentAuthenticationWindow
+}
+
+func stepUpReturnTarget(request *http.Request) string {
+	if referer := strings.TrimSpace(request.Referer()); referer != "" {
+		if parsed, err := url.Parse(referer); err == nil && strings.EqualFold(parsed.Host, request.Host) {
+			if target := safeStepUpReturnTo(parsed.RequestURI()); target != "/monitor" {
+				return target
+			}
+		}
+	}
+	for _, candidate := range []struct{ prefix, target string }{
+		{"/settings/users", "/settings/users"},
+		{"/config/external-interfaces", "/config/external-interfaces"},
+		{"/monitor/security", "/monitor/security"},
+		{"/settings/updates", "/settings/updates"},
+		{"/settings/ai", "/settings/ai"},
+		{"/resources/databases", "/resources/databases"},
+		{"/resources/inbox", "/resources/inbox"},
+		{"/resources/files", "/resources/files"},
+	} {
+		if strings.HasPrefix(request.URL.Path, candidate.prefix) {
+			return candidate.target
+		}
+	}
+	return "/monitor"
+}
+
+func safeStepUpReturnTo(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") || strings.ContainsAny(raw, "\\\r\n\x00") {
+		return "/monitor"
+	}
+	parsed, err := url.ParseRequestURI(raw)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.User != nil || parsed.Fragment != "" ||
+		strings.HasPrefix(parsed.Path, "//") || strings.ContainsAny(parsed.Path, "\\\r\n\x00") || strings.HasPrefix(parsed.Path, "/auth/step-up") {
+		return "/monitor"
+	}
+	return parsed.RequestURI()
 }

@@ -606,6 +606,43 @@ func TestOpenDatabaseMigratesSchema38ExternalSignatureProtection(t *testing.T) {
 	}
 }
 
+func TestOpenDatabaseMigratesSchema39SessionAuthenticationAssurance(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	database, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`ALTER TABLE sessions DROP COLUMN authentication_assurance`,
+		`ALTER TABLE sessions DROP COLUMN reauthenticated_at`,
+		`PRAGMA user_version=39`,
+		`PRAGMA wal_checkpoint(TRUNCATE)`,
+	} {
+		if _, err := database.Exec(statement); err != nil {
+			t.Fatalf("prepare schema 39 with %q: %v", statement, err)
+		}
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := openDatabase(path)
+	if err != nil {
+		t.Fatalf("migrate schema 39: %v", err)
+	}
+	defer migrated.Close()
+	var version int
+	if err := migrated.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != currentSchemaVersion {
+		t.Fatalf("version=%d err=%v", version, err)
+	}
+	for _, column := range []string{"authentication_assurance", "reauthenticated_at"} {
+		var count int
+		if err := migrated.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = ?`, column).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("column %s count=%d err=%v", column, count, err)
+		}
+	}
+}
+
 func TestOpenDatabaseMigratesSchema30MySQLConnectionState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "app.db")
 	db, err := openDatabase(path)

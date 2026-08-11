@@ -36,6 +36,7 @@ type taskPageData struct {
 	TimeoutInput       string
 	CronPreview        scheduleCronPreviewPayload
 	CronError          string
+	Error              string
 	Source             string
 	WorkingDirectory   string
 	FileName           string

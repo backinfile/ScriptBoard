@@ -1177,6 +1177,8 @@ func openDatabase(path string) (*sql.DB, error) {
 			token_hash TEXT PRIMARY KEY,
 			user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 			auth_version INTEGER NOT NULL,
+			authentication_assurance INTEGER NOT NULL DEFAULT 1 CHECK (authentication_assurance BETWEEN 1 AND 2),
+			reauthenticated_at INTEGER NOT NULL DEFAULT 0,
 			csrf_token TEXT NOT NULL,
 			created_at INTEGER NOT NULL,
 			last_seen_at INTEGER NOT NULL,
@@ -1717,6 +1719,24 @@ func openDatabase(path string) (*sql.DB, error) {
 			}
 		}
 	}
+	if schemaVersion >= 20 && schemaVersion <= 39 {
+		for _, column := range []struct{ name, definition string }{
+			{"authentication_assurance", "authentication_assurance INTEGER NOT NULL DEFAULT 1 CHECK (authentication_assurance BETWEEN 1 AND 2)"},
+			{"reauthenticated_at", "reauthenticated_at INTEGER NOT NULL DEFAULT 0"},
+		} {
+			exists, err := sqliteColumnExists(migration, "sessions", column.name)
+			if err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("inspect session authentication assurance migration: %w", err)
+			}
+			if !exists {
+				if _, err := migration.Exec("ALTER TABLE sessions ADD COLUMN " + column.definition); err != nil {
+					_ = db.Close()
+					return nil, fmt.Errorf("add session authentication assurance: %w", err)
+				}
+			}
+		}
+	}
 	for _, statement := range []string{
 		"CREATE UNIQUE INDEX IF NOT EXISTS users_single_administrator_idx ON users(role) WHERE role = 'administrator'",
 		"CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id)",
@@ -1790,10 +1810,11 @@ func compatibleDatabaseSchema(version int) bool {
 	// hash chain, schema 36 locks Quick Runs to a script digest and revision, and
 	// schema 37 binds each External Interface key to one immutable Entry, and
 	// schema 38 adds a persistent global emergency control for external calls,
-	// and schema 39 adds opt-in timestamp, nonce, and HMAC replay protection.
+	// schema 39 adds opt-in timestamp, nonce, and HMAC replay protection, and
+	// schema 40 records session authentication assurance and recent reauthentication.
 	// Each supported predecessor has an explicit
 	// transactional forward path.
-	return version == currentSchemaVersion || currentSchemaVersion == 39 && version >= 20 && version <= 38
+	return version == currentSchemaVersion || currentSchemaVersion == 40 && version >= 20 && version <= 39
 }
 
 func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {
@@ -1982,22 +2003,24 @@ func (a *App) routes() http.Handler {
 	mux.Public("POST /settings/locale", a.setWebLocale)
 	mux.External("GET /trigger", a.externalTrigger)
 	mux.External("POST /trigger", a.externalTrigger)
+	mux.Handle("GET /auth/step-up", a.requirePermission(permissionObserve, http.HandlerFunc(a.stepUpTask)))
+	mux.Handle("POST /auth/step-up", a.requirePermission(permissionObserve, http.HandlerFunc(a.stepUp)))
 	mux.Handle("POST /logout", a.requirePermission(permissionObserve, http.HandlerFunc(a.logout)))
 	mux.Handle("GET /monitor", a.requirePermission(permissionObserve, http.HandlerFunc(a.overviewPage)))
 	mux.Handle("GET /monitor/security", a.requirePermission(permissionObserve, http.HandlerFunc(a.securityPage)))
-	mux.Handle("POST /monitor/security/components/{component}/install", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.installSecurityComponent)))
-	mux.Handle("POST /monitor/security/fail2ban/unban", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.unbanSecurityIP)))
+	mux.Handle("POST /monitor/security/components/{component}/install", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.installSecurityComponent)))
+	mux.Handle("POST /monitor/security/fail2ban/unban", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.unbanSecurityIP)))
 	mux.Handle("POST /monitor/security/firewall/draft/rules", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.addSecurityFirewallDraftRule)))
 	mux.Handle("POST /monitor/security/firewall/draft/defaults", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.updateSecurityFirewallDraftDefaults)))
 	mux.Handle("POST /monitor/security/firewall/draft/toggle", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.toggleSecurityFirewallDraftRule)))
 	mux.Handle("POST /monitor/security/firewall/draft/delete", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.deleteSecurityFirewallDraftRule)))
 	mux.Handle("POST /monitor/security/firewall/draft/discard", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.discardSecurityFirewallDraft)))
-	mux.Handle("POST /monitor/security/firewall/draft/apply", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.applySecurityFirewallDraft)))
-	mux.Handle("POST /monitor/security/firewall/enable", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.enableSecurityFirewall)))
+	mux.Handle("POST /monitor/security/firewall/draft/apply", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.applySecurityFirewallDraft)))
+	mux.Handle("POST /monitor/security/firewall/enable", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.enableSecurityFirewall)))
 	mux.Handle("GET /monitor/security/windows-firewall/rules/new", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.newWindowsFirewallRuleTask)))
-	mux.Handle("POST /monitor/security/windows-firewall/rules", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.addWindowsFirewallRule)))
-	mux.Handle("POST /monitor/security/windows-firewall/toggle", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.toggleWindowsFirewallRule)))
-	mux.Handle("POST /monitor/security/windows-firewall/delete", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.deleteWindowsFirewallRule)))
+	mux.Handle("POST /monitor/security/windows-firewall/rules", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.addWindowsFirewallRule)))
+	mux.Handle("POST /monitor/security/windows-firewall/toggle", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.toggleWindowsFirewallRule)))
+	mux.Handle("POST /monitor/security/windows-firewall/delete", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.deleteWindowsFirewallRule)))
 	mux.Handle("GET /ai", a.requirePermission(permissionObserve, http.HandlerFunc(a.assistantPage)))
 	mux.Handle("GET /ai/resources", a.requirePermission(permissionObserve, http.HandlerFunc(a.assistantResourceSearch)))
 	mux.Handle("POST /ai/conversations", a.requirePermission(permissionObserve, http.HandlerFunc(a.createAssistantConversation)))
@@ -2092,12 +2115,12 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /settings/account/password", a.requirePermission(permissionObserve, http.HandlerFunc(a.changePassword)))
 	mux.Handle("GET /settings/users", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.usersPage)))
 	mux.Handle("GET /settings/users/create", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.createUserTask)))
-	mux.Handle("POST /settings/users", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.createUser)))
+	mux.Handle("POST /settings/users", a.requireStepUp(permissionManageUsers, http.HandlerFunc(a.createUser)))
 	mux.Handle("GET /settings/users/{id}/edit", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.editUserTask)))
-	mux.Handle("POST /settings/users/{id}/disable", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.disableUser)))
-	mux.Handle("POST /settings/users/{id}/enable", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.enableUser)))
-	mux.Handle("POST /settings/users/{id}/update", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.updateUser)))
-	mux.Handle("POST /settings/users/{id}/reset-password", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.resetUserPassword)))
+	mux.Handle("POST /settings/users/{id}/disable", a.requireStepUp(permissionManageUsers, http.HandlerFunc(a.disableUser)))
+	mux.Handle("POST /settings/users/{id}/enable", a.requireStepUp(permissionManageUsers, http.HandlerFunc(a.enableUser)))
+	mux.Handle("POST /settings/users/{id}/update", a.requireStepUp(permissionManageUsers, http.HandlerFunc(a.updateUser)))
+	mux.Handle("POST /settings/users/{id}/reset-password", a.requireStepUp(permissionManageUsers, http.HandlerFunc(a.resetUserPassword)))
 	mux.Handle("GET /settings/display", a.requirePermission(permissionManageSystem, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		current := request.Context().Value(sessionContextKey).(session)
 		locale := resolveWebLocale(request)
@@ -2114,15 +2137,15 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /settings/ai/llms/{id}/delete", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.deleteAssistantModel)))
 	mux.Handle("POST /settings/ai/defaults", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.saveAssistantDefaults)))
 	mux.Handle("POST /settings/ai/runtime/check", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.checkAssistantRuntime)))
-	mux.Handle("POST /settings/ai/runtime/install", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.installAssistantRuntime)))
-	mux.Handle("POST /settings/ai/runtime/offline", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.installAssistantRuntimeOffline)))
-	mux.Handle("POST /settings/ai/runtime/rollback", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.rollbackAssistantRuntime)))
+	mux.Handle("POST /settings/ai/runtime/install", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.installAssistantRuntime)))
+	mux.Handle("POST /settings/ai/runtime/offline", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.installAssistantRuntimeOffline)))
+	mux.Handle("POST /settings/ai/runtime/rollback", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.rollbackAssistantRuntime)))
 	mux.Handle("GET /settings/updates", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.updatesPage)))
 	mux.Handle("GET /settings/updates/status", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.updateStatus)))
 	mux.Handle("POST /settings/updates/check", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.checkUpdate)))
 	mux.Handle("POST /settings/updates/prepare", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.prepareUpdate)))
-	mux.Handle("POST /settings/updates/apply", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.applyUpdate)))
-	mux.Handle("POST /settings/updates/restart", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.restartService)))
+	mux.Handle("POST /settings/updates/apply", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.applyUpdate)))
+	mux.Handle("POST /settings/updates/restart", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.restartService)))
 	mux.Handle("GET /resources/databases", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.mysqlDatabasesPage)))
 	mux.Handle("POST /resources/databases/instances", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.saveMySQLInstance)))
 	mux.Handle("POST /resources/databases/settings/backup-root", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.setMySQLBackupRoot)))
@@ -2132,13 +2155,13 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /resources/databases/instances/{id}/databases", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.createMySQLDatabase)))
 	mux.Handle("POST /resources/databases/instances/{id}/backup", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.startMySQLBackup)))
 	mux.Handle("POST /resources/databases/instances/{id}/backup/batch", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.startMySQLBatchBackup)))
-	mux.Handle("POST /resources/databases/instances/{id}/drop", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.startDropMySQLDatabase)))
+	mux.Handle("POST /resources/databases/instances/{id}/drop", a.requireStepUp(permissionManageDatabases, http.HandlerFunc(a.startDropMySQLDatabase)))
 	mux.Handle("POST /resources/databases/instances/{id}/imports", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.importMySQLBackup)))
 	mux.Handle("POST /resources/databases/instances/{id}/imports/server", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.importMySQLServerBackup)))
 	mux.Handle("POST /resources/databases/instances/{id}/plans", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.saveMySQLPlan)))
 	mux.Handle("POST /resources/databases/plans/{plan_id}/delete", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.deleteMySQLPlan)))
 	mux.Handle("GET /resources/databases/backups/{backup_id}/download", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.downloadMySQLBackup)))
-	mux.Handle("POST /resources/databases/backups/{backup_id}/restore", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.startMySQLRestore)))
+	mux.Handle("POST /resources/databases/backups/{backup_id}/restore", a.requireStepUp(permissionManageDatabases, http.HandlerFunc(a.startMySQLRestore)))
 	mux.Handle("POST /resources/databases/backups/{backup_id}/delete", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.deleteMySQLBackup)))
 	mux.Handle("GET /resources/databases/operations/{operation_id}/status", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.mysqlOperationStatus)))
 	mux.Handle("GET /resources/databases/operations/{operation_id}/events", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.mysqlOperationEvents)))
@@ -2164,14 +2187,14 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /resources/files/view", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.previewTextPage)))
 	mux.Handle("POST /resources/files/delete", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.deleteFile)))
 	mux.Handle("POST /resources/files/move", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.moveFile)))
-	mux.Handle("POST /resources/files/toggle-executable", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.toggleExecutable)))
+	mux.Handle("POST /resources/files/toggle-executable", a.requireStepUp(permissionWriteFiles, http.HandlerFunc(a.toggleExecutable)))
 	mux.Handle("GET /resources/files/operations/{id}", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.fileOperationPage)))
 	mux.Handle("GET /resources/files/operations/{id}/status", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.fileOperationStatus)))
 	mux.Handle("GET /resources/files/operations/{id}/events", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.fileOperationEvents)))
 	mux.Handle("POST /resources/files/operations/{id}/cancel", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.cancelFileOperation)))
 	mux.Handle("GET /resources/trash", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.trashPage)))
 	mux.Handle("GET /resources/inbox", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.uploadInboxPage)))
-	mux.Handle("POST /resources/inbox/{id}/publish", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.publishInboxUpload)))
+	mux.Handle("POST /resources/inbox/{id}/publish", a.requireStepUp(permissionWriteFiles, http.HandlerFunc(a.publishInboxUpload)))
 	mux.Handle("POST /resources/inbox/{id}/discard", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.discardInboxUpload)))
 	mux.Handle("POST /resources/trash/restore", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.restoreTrash)))
 	mux.Handle("POST /resources/trash/purge", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.purgeTrash)))
@@ -2230,22 +2253,22 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /config/schedules/{id}/run", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.runScheduleNow)))
 	mux.Handle("POST /config/schedules/{id}/delete", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.deleteSchedule)))
 	mux.Handle("GET /config/external-interfaces", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.externalInterfacesPage)))
-	mux.Handle("POST /config/external-interfaces/control", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.setExternalGlobalControl)))
+	mux.Handle("POST /config/external-interfaces/control", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.setExternalGlobalControl)))
 	mux.Handle("GET /config/external-interfaces/keys/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.newExternalKeyTask)))
-	mux.Handle("POST /config/external-interfaces/keys", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.createExternalKey)))
+	mux.Handle("POST /config/external-interfaces/keys", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.createExternalKey)))
 	mux.Handle("GET /config/external-interfaces/keys/{id}/edit", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.editExternalKeyTask)))
 	mux.Handle("GET /config/external-interfaces/keys/{id}/rotate", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.rotateExternalKeyTask)))
-	mux.Handle("POST /config/external-interfaces/keys/{id}", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.updateExternalKey)))
-	mux.Handle("POST /config/external-interfaces/keys/{id}/toggle", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.toggleExternalKey)))
-	mux.Handle("POST /config/external-interfaces/keys/{id}/rotate", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.rotateExternalKey)))
-	mux.Handle("POST /config/external-interfaces/keys/{id}/delete", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.deleteExternalKey)))
+	mux.Handle("POST /config/external-interfaces/keys/{id}", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.updateExternalKey)))
+	mux.Handle("POST /config/external-interfaces/keys/{id}/toggle", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.toggleExternalKey)))
+	mux.Handle("POST /config/external-interfaces/keys/{id}/rotate", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.rotateExternalKey)))
+	mux.Handle("POST /config/external-interfaces/keys/{id}/delete", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.deleteExternalKey)))
 	mux.Handle("GET /config/external-interfaces/keys/{id}/entries/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.newExternalEntryTask)))
-	mux.Handle("POST /config/external-interfaces/keys/{id}/entries", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.createExternalEntry)))
+	mux.Handle("POST /config/external-interfaces/keys/{id}/entries", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.createExternalEntry)))
 	mux.Handle("GET /config/external-interfaces/entries/{id}", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.externalEntryDetail)))
 	mux.Handle("GET /config/external-interfaces/entries/{id}/edit", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.editExternalEntryTask)))
-	mux.Handle("POST /config/external-interfaces/entries/{id}", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.updateExternalEntry)))
-	mux.Handle("POST /config/external-interfaces/entries/{id}/toggle", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.toggleExternalEntry)))
-	mux.Handle("POST /config/external-interfaces/entries/{id}/delete", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.deleteExternalEntry)))
+	mux.Handle("POST /config/external-interfaces/entries/{id}", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.updateExternalEntry)))
+	mux.Handle("POST /config/external-interfaces/entries/{id}/toggle", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.toggleExternalEntry)))
+	mux.Handle("POST /config/external-interfaces/entries/{id}/delete", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.deleteExternalEntry)))
 	mux.Handle("GET /history/audit", a.requirePermission(permissionReadAudit, http.HandlerFunc(a.auditPage)))
 	mux.Handle("GET /history/audit.csv", a.requirePermission(permissionReadAudit, http.HandlerFunc(a.auditDownload)))
 	a.routeSpecs = mux.Specs()
@@ -5131,8 +5154,8 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 	}
 	now := time.Now().UTC()
 	if _, err := a.db.Exec(
-		"INSERT INTO sessions (token_hash, user_id, auth_version, csrf_token, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		hashToken(token), userID, authVersion, sessionCSRF, now.Unix(), now.Unix(), now.Add(7*24*time.Hour).Unix(),
+		"INSERT INTO sessions (token_hash, user_id, auth_version, authentication_assurance, reauthenticated_at, csrf_token, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		hashToken(token), userID, authVersion, 1, now.Unix(), sessionCSRF, now.Unix(), now.Unix(), now.Add(7*24*time.Hour).Unix(),
 	); err != nil {
 		renderLoginFailure(response, request, http.StatusInternalServerError, request.FormValue("username"), "暂时无法登录，请稍后重试")
 		return
@@ -5265,12 +5288,14 @@ func (a *App) clearLoginFailures(keys ...string) {
 }
 
 type session struct {
-	userID      string
-	username    string
-	role        userRole
-	authVersion int64
-	tokenHash   string
-	csrfToken   string
+	userID                  string
+	username                string
+	role                    userRole
+	authVersion             int64
+	authenticationAssurance int
+	reauthenticatedAt       int64
+	tokenHash               string
+	csrfToken               string
 }
 
 func (a *App) loadSession(request *http.Request) (session, string, bool) {
@@ -5283,10 +5308,12 @@ func (a *App) loadSession(request *http.Request) (session, string, bool) {
 	current.tokenHash = hashToken(cookie.Value)
 	err = a.db.QueryRow(`
 		SELECT sessions.csrf_token, sessions.last_seen_at, sessions.expires_at,
+			sessions.authentication_assurance, sessions.reauthenticated_at,
 			users.id, users.username, users.role, users.auth_version
 		FROM sessions JOIN users ON users.id = sessions.user_id
 		WHERE sessions.token_hash = ? AND sessions.auth_version = users.auth_version AND users.enabled = 1`, current.tokenHash,
-	).Scan(&current.csrfToken, &lastSeen, &expiresAt, &current.userID, &current.username, &current.role, &current.authVersion)
+	).Scan(&current.csrfToken, &lastSeen, &expiresAt, &current.authenticationAssurance, &current.reauthenticatedAt,
+		&current.userID, &current.username, &current.role, &current.authVersion)
 	now := time.Now().UTC()
 	if err != nil || now.Unix() >= expiresAt || now.Sub(time.Unix(lastSeen, 0)) >= 12*time.Hour {
 		if err == nil {

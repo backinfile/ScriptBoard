@@ -138,6 +138,28 @@ func TestEveryRouteDeclaresMethodAuthenticationAndMutationPolicy(t *testing.T) {
 	}
 }
 
+func TestHighRiskRoutesDeclareRecentAuthentication(t *testing.T) {
+	t.Parallel()
+	application := &App{}
+	application.routes()
+	for _, route := range []struct{ method, path string }{
+		{http.MethodPost, "/settings/users"},
+		{http.MethodPost, "/settings/users/user-one/reset-password"},
+		{http.MethodPost, "/config/external-interfaces/control"},
+		{http.MethodPost, "/config/external-interfaces/keys/key-one/rotate"},
+		{http.MethodPost, "/monitor/security/firewall/draft/apply"},
+		{http.MethodPost, "/settings/updates/apply"},
+		{http.MethodPost, "/resources/databases/backups/backup-one/restore"},
+		{http.MethodPost, "/resources/inbox/upload-one/publish"},
+	} {
+		request := httptest.NewRequest(route.method, route.path, nil)
+		spec, ok := declaredSpecForRequest(application.routeSpecs, request)
+		if !ok || !spec.StepUp {
+			t.Errorf("%s %s does not declare step-up authentication", route.method, route.path)
+		}
+	}
+}
+
 func TestRouteMuxRejectsUndeclaredHandlersAndMethodlessPatterns(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

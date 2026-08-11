@@ -29,6 +29,7 @@ type RouteSpec struct {
 	Path         string
 	Auth         routeAuthMode
 	Permission   permission
+	StepUp       bool
 	CSRF         routeCSRFPolicy
 	MaxBodyBytes int64
 }
@@ -36,6 +37,7 @@ type RouteSpec struct {
 type declaredRouteHandler struct {
 	auth       routeAuthMode
 	permission permission
+	stepUp     bool
 	handler    http.Handler
 }
 
@@ -81,7 +83,7 @@ func (mux *declaredRouteMux) register(pattern string, declared declaredRouteHand
 	}
 	spec := RouteSpec{
 		Pattern: pattern, Method: method, Path: path, Auth: declared.auth,
-		Permission: declared.permission, CSRF: csrf, MaxBodyBytes: maxBodyBytes,
+		Permission: declared.permission, StepUp: declared.stepUp, CSRF: csrf, MaxBodyBytes: maxBodyBytes,
 	}
 	mux.specs = append(mux.specs, spec)
 	mux.mux.Handle(pattern, enforceRouteRequestPolicy(spec, declared))
@@ -122,6 +124,15 @@ func (a *App) declaredRoutePermission(method, path string) permission {
 		}
 	}
 	panic("protected route has no permission declaration: " + method + " " + path)
+}
+
+func (a *App) declaredRouteStepUp(method, path string) bool {
+	for _, spec := range a.routeSpecs {
+		if spec.Method == method && spec.Path == path {
+			return spec.StepUp
+		}
+	}
+	panic("protected route has no authentication declaration: " + method + " " + path)
 }
 
 func splitRoutePattern(pattern string) (string, string) {
