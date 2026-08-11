@@ -28,7 +28,7 @@
 | 历史、日志与诊断 | [ADR-0014 Run 事件日志](./0014-use-one-ordered-run-event-log.md)、[ADR-0039 单次日志上限](./0039-cap-each-run-log-while-preserving-head-and-tail.md)、[ADR-0040 总日志空间](./0040-retain-run-metadata-and-bound-total-log-storage.md)、[ADR-0078 历史不可删除](./0078-run-history-cannot-be-deleted.md)、[ADR-0090 doctor](./0090-provide-a-read-only-local-doctor-command.md)、[ADR-0132 统一秘密脱敏](./0132-redact-secrets-at-observability-and-export-boundaries.md) |
 | Web 架构与体验 | [ADR-0060 纯 Go 服务端渲染](./0060-use-a-server-rendered-pure-go-stack.md)、[ADR-0108 双语 Web](./0108-localize-the-web-in-zh-cn-and-en-us.md)、[ADR-0109 按意图分组路由](./0109-group-web-routes-by-operator-intent.md)、[ADR-0110 Chromium 门禁](./0110-use-desktop-chromium-as-the-browser-gate.md)、[ADR-0113 主机 Markdown 渐进增强](./0113-progressively-render-managed-markdown.md) |
 | 主机、应用与网站观测 | [ADR-0107 宿主状态](./0107-provide-bounded-local-host-status.md)、[ADR-0109 网站监控模块](./0109-own-website-monitoring-in-a-bounded-module.md)、[ADR-0118 应用与容器观测](./0118-observe-host-applications-and-local-docker-containers.md)、[ADR-0119 源日志](./0119-stream-source-logs-on-demand.md)、[ADR-0128 实例间只读网站监控](./0128-share-website-monitoring-read-only-between-instances.md) |
-| AI 对话、工具与 Pi Runtime | [ADR-0123 私有 Pi RPC Runtime](./0123-use-pi-rpc-as-a-private-assistant-runtime.md)、[ADR-0124 Tool Broker 与一次性审批](./0124-broker-assistant-tools-and-bind-state-changes-to-approvals.md)、[ADR-0125 签名 Runtime 发布](./0125-pin-pi-runtime-to-signed-scriptboard-releases.md)、[ADR-0135 会话级 Provider 凭据代理](./0135-proxy-assistant-provider-credentials-per-runtime-session.md) |
+| AI 对话、工具与 Pi Runtime | [ADR-0123 私有 Pi RPC Runtime](./0123-use-pi-rpc-as-a-private-assistant-runtime.md)、[ADR-0124 Tool Broker 与一次性审批](./0124-broker-assistant-tools-and-bind-state-changes-to-approvals.md)、[ADR-0125 签名 Runtime 发布](./0125-pin-pi-runtime-to-signed-scriptboard-releases.md)、[ADR-0135 会话级 Provider 凭据代理](./0135-proxy-assistant-provider-credentials-per-runtime-session.md)、[ADR-0136 Windows Job Object 限制](./0136-bound-windows-assistant-runtime-with-job-objects.md) |
 | 发布与应用更新 | [ADR-0065 支持平台](./0065-support-modern-windows-and-systemd-linux.md)、[ADR-0115 管理员确认更新](./0115-auto-check-and-require-admin-approval-for-updates.md)、[ADR-0116 签名发布清单](./0116-use-signed-release-manifests-for-updates.md)、[ADR-0117 版本化安装](./0117-use-versioned-service-installs-and-an-external-updater.md) |
 
 ## 已取代决策
@@ -52,6 +52,7 @@
 
 ## 最新决策
 
+- [ADR-0136 使用 Job Object 限制 Windows Assistant Runtime](./0136-bound-windows-assistant-runtime-with-job-objects.md)，为 Pi 增加单进程、内存、CPU、UI 与强制回收边界。
 - [ADR-0135 按 Runtime 会话代理 Assistant Provider 凭据](./0135-proxy-assistant-provider-credentials-per-runtime-session.md)，从 Pi 环境与配置移除真实上游地址和凭据，并用进程生命周期 capability 收口正常 Provider 流量。
 - [ADR-0134 统一生产子进程启动策略](./0134-centralize-process-launch-policy.md)，让所有生产 Go 子进程显式选择环境策略并用仓库级门禁阻止旁路。
 - [ADR-0133 审计事件记录请求关联与认证保证](./0133-correlate-audit-events-with-requests-and-authentication-assurance.md)，用可验证的结构字段关联 Web、External Interface 和认证上下文。
