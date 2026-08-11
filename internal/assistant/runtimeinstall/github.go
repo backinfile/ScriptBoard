@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"scriptboard/internal/buildinfo"
+	"scriptboard/internal/outboundpolicy"
 )
 
 type Remote struct {
@@ -43,7 +44,7 @@ type githubRelease struct {
 }
 
 func NewGitHubSource() *GitHubSource {
-	client := &http.Client{Timeout: 45 * time.Second}
+	client := &http.Client{Timeout: 45 * time.Second, Transport: outboundpolicy.Policy{}.Transport()}
 	client.CheckRedirect = func(request *http.Request, via []*http.Request) error {
 		if len(via) >= 5 {
 			return errors.New("too many assistant runtime redirects")
