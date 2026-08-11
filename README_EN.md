@@ -191,6 +191,14 @@ Back up these locations regularly:
 
 Back up before upgrading from an older version. The current release uses database schema 31 and can migrate schemas 20–30 automatically; older databases and legacy configuration files are not migrated automatically.
 
+When the panel is unavailable or compromise is suspected, use the local out-of-band emergency commands below. Mutations require an exact fixed confirmation or the complete Key ID and are atomically appended to the audit chain as `local-administrator`; evidence export verifies the chain first, creates only a new file, and never overwrites existing evidence:
+
+```text
+scriptboard emergency pause-external --confirm PAUSE-EXTERNAL --config CONFIG_PATH
+scriptboard emergency revoke-key --key-id KEY_ID --confirm-key-id KEY_ID --config CONFIG_PATH
+scriptboard emergency export-evidence --output ABSOLUTE_JSONL_PATH --config CONFIG_PATH
+```
+
 ## Troubleshooting
 
 Start with the read-only diagnostic:

@@ -198,6 +198,14 @@ scriptboard audit verify --config CONFIG_PATH
 
 从旧版本升级前请先备份。当前版本使用数据库 schema 41，可自动迁移 schema 20–40；更早版本的数据库和旧式配置不会自动迁移。schema 40 会记录会话认证保证级别和最近再次认证时间；新登录视为最近认证，高风险操作在 10 分钟后要求于受保护的浏览器会话中重新输入当前密码。schema 41 为审计事件增加服务端 Request ID 与认证保证字段，并把新字段纳入兼容旧事件的 v2 哈希。旧快捷执行项会以未发布状态迁移，在管理员重新保存前不能启动或绑定外部入口。旧版本中共享一个 Key 的多个外部功能会拆成独立 Key：保留最早功能的原 Key，其余功能迁移到默认停用、必须轮换并显式启用 Key 与功能后才能使用的新 Key。为保持兼容，迁移后的外部功能不会自动要求 HMAC；管理员可在编辑页启用，新建功能默认启用。外部接口页面提供持久化全局紧急开关；暂停后所有有效外部调用以低信息 503 响应拒绝且不会执行操作。审计记录形成带保留锚点与链尾的 SHA-256 哈希链；服务启动时会验证，亦可在面板不可用时运行 `scriptboard audit verify --config CONFIG_PATH` 离线检查中间记录修改、删除或截断。
 
+面板不可用或疑似遭入侵时，可在主机本地使用带外应急命令。写操作要求重复输入固定确认值或完整 Key ID，并作为 `local-administrator` 原子写入审计链；取证导出先验证审计链，只创建新文件且不会覆盖已有证据：
+
+```text
+scriptboard emergency pause-external --confirm PAUSE-EXTERNAL --config CONFIG_PATH
+scriptboard emergency revoke-key --key-id KEY_ID --confirm-key-id KEY_ID --config CONFIG_PATH
+scriptboard emergency export-evidence --output ABSOLUTE_JSONL_PATH --config CONFIG_PATH
+```
+
 ## 常见问题
 
 先运行只读诊断：

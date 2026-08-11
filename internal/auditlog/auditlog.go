@@ -6,11 +6,14 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash"
+	"io"
 	"strconv"
 	"sync"
+	"time"
 
 	"scriptboard/internal/secretredaction"
 )
@@ -29,6 +32,30 @@ type Event struct {
 type Verification struct {
 	Count    int
 	LastHash string
+}
+
+type exportMetadata struct {
+	Type       string `json:"type"`
+	ExportedAt string `json:"exported_at"`
+	Events     int    `json:"events"`
+	TailSHA256 string `json:"tail_sha256"`
+}
+
+type exportEvent struct {
+	Type                    string `json:"type"`
+	ID                      int64  `json:"id"`
+	OccurredAt              int64  `json:"occurred_at"`
+	Action                  string `json:"action"`
+	Target                  string `json:"target"`
+	Result                  string `json:"result"`
+	SourceAddress           string `json:"source_address"`
+	ActorUserID             string `json:"actor_user_id"`
+	ActorUsername           string `json:"actor_username"`
+	ActorRole               string `json:"actor_role"`
+	RequestID               string `json:"request_id"`
+	AuthenticationAssurance string `json:"authentication_assurance"`
+	PreviousSHA256          string `json:"previous_sha256"`
+	EventSHA256             string `json:"event_sha256"`
 }
 
 type Store struct {
@@ -138,6 +165,59 @@ func (store *Store) Verify(ctx context.Context) (Verification, error) {
 		return Verification{}, err
 	}
 	defer tx.Rollback()
+	return verifyTransaction(ctx, tx)
+}
+
+// Export writes a verified, snapshot-consistent JSON Lines evidence artifact.
+// The first line describes the verified chain and every following line is an
+// audit event including its recorded chain links. No output is written when
+// verification fails.
+func (store *Store) Export(ctx context.Context, destination io.Writer, exportedAt time.Time) (Verification, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	tx, err := store.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return Verification{}, err
+	}
+	defer tx.Rollback()
+	verification, err := verifyTransaction(ctx, tx)
+	if err != nil {
+		return Verification{}, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id, occurred_at, action, target, result, source_address,
+		actor_user_id, actor_username, actor_role, request_id, authentication_assurance,
+		previous_hash, event_hash FROM audit_events ORDER BY id`)
+	if err != nil {
+		return Verification{}, err
+	}
+	defer rows.Close()
+	encoder := json.NewEncoder(destination)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(exportMetadata{
+		Type: "scriptboard.audit-evidence.v1", ExportedAt: exportedAt.UTC().Format(time.RFC3339Nano),
+		Events: verification.Count, TailSHA256: verification.LastHash,
+	}); err != nil {
+		return Verification{}, err
+	}
+	for rows.Next() {
+		var event exportEvent
+		event.Type = "scriptboard.audit-event.v1"
+		if err := rows.Scan(&event.ID, &event.OccurredAt, &event.Action, &event.Target, &event.Result,
+			&event.SourceAddress, &event.ActorUserID, &event.ActorUsername, &event.ActorRole,
+			&event.RequestID, &event.AuthenticationAssurance, &event.PreviousSHA256, &event.EventSHA256); err != nil {
+			return Verification{}, err
+		}
+		if err := encoder.Encode(event); err != nil {
+			return Verification{}, err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return Verification{}, err
+	}
+	return verification, nil
+}
+
+func verifyTransaction(ctx context.Context, tx *sql.Tx) (Verification, error) {
 	var anchor, tail string
 	if err := tx.QueryRowContext(ctx, "SELECT anchor_hash, tail_hash FROM audit_chain_state WHERE id = 1").Scan(&anchor, &tail); err != nil {
 		return Verification{}, err
