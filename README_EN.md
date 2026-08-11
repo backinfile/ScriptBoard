@@ -21,7 +21,7 @@ ScriptBoard is a self-hosted script console for a single Windows or Linux host. 
 - create schedules with five-field Cron expressions;
 - expose bounded inbound triggers for logs, uploads, Quick Runs, and constrained variable updates;
 - review remote-login activity and manage Windows Defender Firewall or Linux UFW and Fail2Ban;
-- view host resources, local applications, Docker containers, websites, run history, and audit records;
+- view host resources, local applications, Docker containers, websites, run history, and audit records, and compose importable custom monitoring dashboards;
 - manage local or remote MySQL/MariaDB instances with checksummed logical backups and safety rollback;
 - use the optional AI assistant with resources you choose to reference;
 - restore files deleted through the web interface from ScriptBoard Trash;
@@ -118,6 +118,12 @@ Separate script arguments with spaces and quote arguments that contain spaces. T
 
 After running a script, save its path, argument template, and timeout as a Quick Run. Schedules use standard five-field Cron expressions; for example, `0 2 * * *` runs every day at 02:00. Missed triggers are not replayed after the service restarts.
 
+### Custom dashboards and website monitoring
+
+Administrators and Maintainers can combine external JSON data with existing Website Monitoring results under Configuration → Custom Dashboards, create number, percentage, quota, key-value, and website cards, and import or export dashboard configurations. Public dashboards expose results without revealing sources, request headers, formulas, or management controls.
+
+Website checks can send custom HTTP headers and resolve `{{VARIABLE_NAME}}` references when a check runs. For secrets, use password variables instead of writing credentials directly into an exportable monitor configuration. To consolidate multiple ScriptBoard hosts, use the bounded external interface below to connect another instance's Website Monitoring snapshot.
+
 ### External Interfaces
 
 Administrators and Maintainers can create time-limited keys under Configuration → External Interfaces. Each key may contain multiple named function entries for recording a log, uploading one file to a fixed directory, starting one existing Quick Run, updating one non-password variable under Boolean, integer, enum, or short-text constraints, or exposing a read-only Website Monitoring snapshot.
@@ -187,7 +193,7 @@ Back up these locations regularly:
 - `state_root`, which contains the database, run logs, sessions, audit records, and AI data;
 - the service `config.yaml` file, if you created a custom configuration.
 
-Back up before upgrading from an older version. The current release uses database schema 31 and can migrate schemas 20–30 automatically; older databases and legacy configuration files are not migrated automatically.
+Back up before upgrading from an older version. The current release uses database schema 34 and can migrate schemas 20–33 automatically; older databases and legacy configuration files are not migrated automatically.
 
 ## Troubleshooting
 
