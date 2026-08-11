@@ -137,7 +137,7 @@ func (a *App) importCustomDashboard(response http.ResponseWriter, request *http.
 		http.Error(response, "页面已过期，请重试", http.StatusForbidden)
 		return
 	}
-	file, _, err := request.FormFile("dashboard_file")
+	file, header, err := request.FormFile("dashboard_file")
 	if err != nil {
 		a.redirectCustomDashboardImportError(response, request, "file_required")
 		return
@@ -146,6 +146,10 @@ func (a *App) importCustomDashboard(response http.ResponseWriter, request *http.
 	raw, err := io.ReadAll(io.LimitReader(file, customDashboardImportMaxSize+1))
 	if err != nil || len(raw) > customDashboardImportMaxSize {
 		a.redirectCustomDashboardImportError(response, request, "too_large")
+		return
+	}
+	if err := validateJSONConfigurationImport(header.Filename, header.Header.Get("Content-Type"), raw, customDashboardImportMaxSize); err != nil {
+		a.redirectCustomDashboardImportError(response, request, "invalid")
 		return
 	}
 	bundle, err := decodeCustomDashboardConfigFile(raw)

@@ -52,6 +52,7 @@
 
 ## 最新决策
 
+- [ADR-0139 配置导入先验证文件边界再进入领域解码](./0139-validate-configuration-imports-before-domain-decoding.md)，为 JSON 配置建立文件名、MIME、编码和对象根约束。
 - [ADR-0138 可信代理只接受一套有界 X-Forwarded 合同](./0138-use-one-bounded-trusted-proxy-header-contract.md)，拒绝多规范混用、坏值、重复字段和无界代理链。
 - [ADR-0137 MySQL 恢复禁用本地客户端命令并限制 gzip 展开](./0137-disable-local-mysql-commands-during-restore.md)，防止导入 SQL 调用宿主命令并限制压缩展开资源。
 - [ADR-0136 使用 Job Object 限制 Windows Assistant Runtime](./0136-bound-windows-assistant-runtime-with-job-objects.md)，为 Pi 增加单进程、内存、CPU、UI 与强制回收边界。

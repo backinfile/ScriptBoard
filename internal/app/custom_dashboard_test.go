@@ -193,7 +193,13 @@ func TestCustomDashboardCanBeExportedAndImported(t *testing.T) {
 	if response.StatusCode != http.StatusSeeOther || !strings.Contains(response.Header.Get("Location"), "import_error=invalid") {
 		t.Fatalf("invalid import response=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
-	response, err = client.Get(serverURL + response.Header.Get("Location"))
+	invalidLocation := response.Header.Get("Location")
+	response = postImport("dashboard.json.exe", exportedAll)
+	response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || !strings.Contains(response.Header.Get("Location"), "import_error=invalid") {
+		t.Fatalf("active-extension import response=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+	response, err = client.Get(serverURL + invalidLocation)
 	if err != nil {
 		t.Fatal(err)
 	}

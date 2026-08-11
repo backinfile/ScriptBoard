@@ -231,7 +231,7 @@ func (a *App) previewWebsiteMonitorImport(response http.ResponseWriter, request 
 		http.Error(response, webText(locale, "website.error.csrf"), http.StatusForbidden)
 		return
 	}
-	file, _, err := request.FormFile("config_file")
+	file, header, err := request.FormFile("config_file")
 	if err != nil {
 		base.Error = webText(locale, "website.transfer.file_required")
 		renderWebsiteMonitorTransfer(response, http.StatusUnprocessableEntity, base)
@@ -242,6 +242,11 @@ func (a *App) previewWebsiteMonitorImport(response http.ResponseWriter, request 
 	if err != nil || len(raw) > websiteMonitorImportMaxSize {
 		base.Error = webText(locale, "website.transfer.file_too_large")
 		renderWebsiteMonitorTransfer(response, http.StatusRequestEntityTooLarge, base)
+		return
+	}
+	if err := validateJSONConfigurationImport(header.Filename, header.Header.Get("Content-Type"), raw, websiteMonitorImportMaxSize); err != nil {
+		base.Error = webText(locale, "website.transfer.invalid_file")
+		renderWebsiteMonitorTransfer(response, http.StatusUnprocessableEntity, base)
 		return
 	}
 	bundle, err := decodeWebsiteMonitorConfigFile(raw)

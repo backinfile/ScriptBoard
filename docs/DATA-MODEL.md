@@ -452,6 +452,12 @@ stateDiagram-v2
 应用消息规则只处理文本帧和二进制帧；Ping/Pong 规则只处理 RFC 6455
 控制帧。
 
+网站监控与 Custom Dashboard 配置导入共享“JSON 配置文件”外层安全约束，但继续使用
+独立的领域 schema：文件名必须是安全的单一 `.json` 目标，MIME 只接受 JSON、纯文本或
+通用 multipart 二进制，内容必须是 UTF-8、无 NUL 且以 JSON 对象开始。之后分别执行
+网站监控最多 100 项/128 MiB 与 Dashboard 最多 100 卡片/2 MiB 的未知字段拒绝、版本和
+领域字段校验；外层策略不能替代领域解码。
+
 ## 9. 一次性 Run 源码
 
 `Run.script_kind` 区分 `host_file` 与 `one_time`。一次性 Run 额外保存：
