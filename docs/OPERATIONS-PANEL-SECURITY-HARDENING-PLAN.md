@@ -36,7 +36,7 @@ ScriptBoard 已有一批值得保留的安全基础：Argon2id 密码哈希、�
 | P0-07 | 四个切片完成 | 外部 Trigger Key 创建和轮换后只显示一次，完整 Key 不再可恢复保存或提供复制接口；启动时清理旧版本残留的可恢复 Key。schema 40 记录会话认证保证和最近认证时间，新登录提供 10 分钟保证窗口，高风险声明式路由过期后必须在当前浏览器会话重新验证密码；失败/成功均审计，return URL 防开放重定向，Assistant UI Action 对这些路由 fail closed。YAML、环境变量和 CLI 的明文管理员密码入口均已删除并提供迁移错误，只保留绝对路径 password file、首次启动和本机重置的一次性凭据。日志、审计哈希前数据、错误持久化与响应、配置导出和 doctor 现共用 secret redaction，覆盖常见密码、Token、Key、URL 凭据、JWT 与私钥格式；配置导出明确不再充当凭据备份。WebAuthn/TOTP、恢复码与 OS secret provider 仍待结构性批次。 |
 | P0-09 | 五个切片完成 | Quick Run 记录脚本 SHA-256 与单调配置修订；外部入口只能绑定已锁定且摘要有效的发布修订，配置、锁定状态或脚本变化会使旧授权 fail-closed，Runner 在启动点复核摘要并将外部并发限制为每脚本一个 Run。每个 Key 现原子绑定一个不可变 Entry，绑定时轮换临时凭据，删除 Entry 同时删除 Key；旧多 Entry Key 被保留配置地拆分并 fail-closed。限流已覆盖每 Key、规范化来源、动作和全局四层原子请求/并发配额，并限制来源状态基数。外部接口提供持久化人工全局熔断；新功能默认启用 5 分钟时间戳、唯一 nonce 与 HMAC-SHA256 防重放，旧功能兼容迁移并可显式启用；拒绝均记录调用与审计。 |
 | P0-12 | 部分完成 | 增加 vet、race、govulncheck、CodeQL、secret scan、SBOM 与 release provenance 门禁；已加入出站地址、Host 和命令参数 fuzz target，更多黑盒不变量继续补充。 |
-| P0-11 | 首个切片完成 | 新增覆盖 Web、Runner 与 Scheduler 的串行 SHA-256 审计链，保留策略通过锚点/链尾维持可验证性，启动时 fail-closed 校验，并提供不依赖 Web UI 的 `audit verify` 命令；远端 checkpoint/转发和告警仍待后续切片。`SECURITY.md` 已明确私密报告、支持范围与应急控制。 |
+| P0-11 | 两个切片完成 | 新增覆盖 Web、Runner 与 Scheduler 的串行 SHA-256 审计链，保留策略通过锚点/链尾维持可验证性，启动时 fail-closed 校验，并提供不依赖 Web UI 的 `audit verify` 命令。schema 41 为每个 Web 请求生成服务端 Request ID，审计独立记录请求关联与认证保证，External Interface 复用 invocation ID；v2 摘要保护新字段且与 v1 历史链兼容。远端签名 checkpoint、转发、更多资源 revision/digest 字段和告警仍待后续切片。`SECURITY.md` 已明确私密报告、支持范围与应急控制。 |
 
 P0-02、P0-07 至 P0-11 的其余结构性工作以及 P1/P2 未在本分支宣称完成。
 

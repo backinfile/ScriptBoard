@@ -113,6 +113,11 @@ func TestExpiredRecentAuthenticationRequiresPasswordStepUp(t *testing.T) {
 	if err := database.QueryRow(`SELECT reauthenticated_at FROM sessions`).Scan(&recent); err != nil || recent <= 0 {
 		t.Fatalf("successful step-up timestamp=%d err=%v", recent, err)
 	}
+	var assurance string
+	if err := database.QueryRow(`SELECT authentication_assurance FROM audit_events
+		WHERE action='step_up_authentication' AND result='succeeded'`).Scan(&assurance); err != nil || assurance != "aal1+step-up" {
+		t.Fatalf("successful step-up assurance=%q err=%v", assurance, err)
+	}
 
 	pageResponse, err = client.Get(server.URL + "/config/external-interfaces")
 	if err != nil {

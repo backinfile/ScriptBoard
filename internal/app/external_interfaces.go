@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -778,6 +779,7 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 		writeExternalTriggerError(response, http.StatusInternalServerError, "action_failed")
 		return
 	}
+	request = request.WithContext(context.WithValue(request.Context(), requestIDContextKey, requestID))
 	if entry.RequireSignature {
 		timestampRaw := request.Header.Get("X-ScriptBoard-Timestamp")
 		timestamp, timestampErr := strconv.ParseInt(timestampRaw, 10, 64)
@@ -789,7 +791,7 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 				ID: requestID, KeyID: key.ID, KeyLabel: key.Label, EntryID: entry.ID, EntryName: entry.Name,
 				ActionType: entry.Type, Result: "rejected", HTTPStatus: http.StatusUnauthorized, Source: request.RemoteAddr,
 			})
-			a.recordAuditWithActor("external_trigger_"+string(entry.Type), "key="+key.ID+" entry="+entry.Name+" request="+requestID, "rejected", request.RemoteAddr, "", key.Label, userRole("external"))
+			a.recordAuditWithRequestActor(request, "external_trigger_"+string(entry.Type), "key="+key.ID+" entry="+entry.Name, "rejected", request.RemoteAddr, "", key.Label, userRole("external"))
 			writeExternalTriggerError(response, http.StatusUnauthorized, "invalid_key")
 			return
 		}
@@ -801,7 +803,7 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 			ID: requestID, KeyID: key.ID, KeyLabel: key.Label, EntryID: entry.ID, EntryName: entry.Name,
 			ActionType: entry.Type, Result: "rejected", HTTPStatus: http.StatusServiceUnavailable, Source: request.RemoteAddr,
 		})
-		a.recordAuditWithActor("external_trigger_"+string(entry.Type), "key="+key.ID+" entry="+entry.Name+" request="+requestID, "rejected", request.RemoteAddr, "", key.Label, userRole("external"))
+		a.recordAuditWithRequestActor(request, "external_trigger_"+string(entry.Type), "key="+key.ID+" entry="+entry.Name, "rejected", request.RemoteAddr, "", key.Label, userRole("external"))
 		writeExternalTriggerError(response, http.StatusServiceUnavailable, "unavailable")
 		return
 	}
@@ -809,7 +811,7 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 	if !allowed {
 		response.Header().Set("Retry-After", "60")
 		_ = a.externalTriggers.RecordInvocation(request.Context(), externaltrigger.Invocation{ID: requestID, KeyID: key.ID, KeyLabel: key.Label, EntryID: entry.ID, EntryName: entry.Name, ActionType: entry.Type, Result: "rejected", HTTPStatus: http.StatusTooManyRequests, Source: request.RemoteAddr})
-		a.recordAuditWithActor("external_trigger_"+string(entry.Type), "key="+key.ID+" entry="+entry.Name+" request="+requestID, "rejected", request.RemoteAddr, "", key.Label, userRole("external"))
+		a.recordAuditWithRequestActor(request, "external_trigger_"+string(entry.Type), "key="+key.ID+" entry="+entry.Name, "rejected", request.RemoteAddr, "", key.Label, userRole("external"))
 		writeExternalTriggerError(response, http.StatusTooManyRequests, "rate_limited")
 		return
 	}
@@ -833,7 +835,7 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 		return
 	}
 	result := execution.Result
-	a.recordAuditWithActor("external_trigger_"+string(entry.Type), "key="+key.ID+" entry="+entry.Name+" request="+requestID, result.result, request.RemoteAddr, "", key.Label, userRole("external"))
+	a.recordAuditWithRequestActor(request, "external_trigger_"+string(entry.Type), "key="+key.ID+" entry="+entry.Name, result.result, request.RemoteAddr, "", key.Label, userRole("external"))
 	if result.status >= 400 {
 		writeExternalTriggerError(response, result.status, result.code)
 		return

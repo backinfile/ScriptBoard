@@ -18,7 +18,7 @@ func testStore(t *testing.T) (*Store, *sql.DB) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	for _, statement := range []string{
-		`CREATE TABLE audit_events (id INTEGER PRIMARY KEY AUTOINCREMENT, occurred_at INTEGER NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, result TEXT NOT NULL, source_address TEXT NOT NULL, actor_user_id TEXT NOT NULL DEFAULT '', actor_username TEXT NOT NULL DEFAULT '', actor_role TEXT NOT NULL DEFAULT '', previous_hash TEXT NOT NULL DEFAULT '', event_hash TEXT NOT NULL DEFAULT '')`,
+		`CREATE TABLE audit_events (id INTEGER PRIMARY KEY AUTOINCREMENT, occurred_at INTEGER NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, result TEXT NOT NULL, source_address TEXT NOT NULL, actor_user_id TEXT NOT NULL DEFAULT '', actor_username TEXT NOT NULL DEFAULT '', actor_role TEXT NOT NULL DEFAULT '', request_id TEXT NOT NULL DEFAULT '', authentication_assurance TEXT NOT NULL DEFAULT '', previous_hash TEXT NOT NULL DEFAULT '', event_hash TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE audit_chain_state (id INTEGER PRIMARY KEY CHECK(id = 1), anchor_hash TEXT NOT NULL, tail_hash TEXT NOT NULL)`,
 		`INSERT INTO audit_chain_state VALUES (1, '', '')`,
 	} {
@@ -130,5 +130,31 @@ func TestAppendRedactsSecretsBeforeHashingAndPersistence(t *testing.T) {
 	}
 	if verification, err := store.Verify(ctx); err != nil || verification.Count != 1 {
 		t.Fatalf("verification=%#v err=%v", verification, err)
+	}
+}
+
+func TestAppendPersistsRequestCorrelationAndAuthenticationAssuranceInChain(t *testing.T) {
+	store, db := testStore(t)
+	ctx := context.Background()
+	event := Event{
+		OccurredAt: "1786410000", Action: "change_role", Target: "user-1", Result: "succeeded", SourceAddress: "local",
+		ActorUserID: "actor-1", ActorUsername: "admin", ActorRole: "administrator",
+		RequestID: "request-1", AuthenticationAssurance: "aal1+step-up",
+	}
+	if _, err := store.Append(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	var requestID, assurance string
+	if err := db.QueryRow("SELECT request_id, authentication_assurance FROM audit_events").Scan(&requestID, &assurance); err != nil {
+		t.Fatal(err)
+	}
+	if requestID != event.RequestID || assurance != event.AuthenticationAssurance {
+		t.Fatalf("request_id=%q assurance=%q", requestID, assurance)
+	}
+	if _, err := db.Exec("UPDATE audit_events SET authentication_assurance = 'aal1' WHERE request_id = ?", event.RequestID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Verify(ctx); err == nil {
+		t.Fatal("authentication assurance tampering was not detected")
 	}
 }

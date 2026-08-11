@@ -82,6 +82,44 @@ func TestAuditPageAndCSVDefensivelyRedactLegacySecrets(t *testing.T) {
 	}
 }
 
+func TestAuthenticatedAuditCarriesServerRequestIDAndAssurance(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	stateRoot := filepath.Join(root, "state")
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), stateRoot)
+	response, err := client.Get(serverURL + "/resources/variables")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/resources/variables", url.Values{
+		"name": {"CORRELATED"}, "value": {"safe"}, "csrf_token": {formToken(t, page)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestID := response.Header.Get("X-Request-ID")
+	_ = response.Body.Close()
+	if requestID == "" {
+		t.Fatal("response did not expose its server request ID")
+	}
+	db, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var recordedID, assurance string
+	if err := db.QueryRow(`SELECT request_id, authentication_assurance FROM audit_events
+		WHERE action = 'create_variable' AND target = 'CORRELATED'`).Scan(&recordedID, &assurance); err != nil {
+		t.Fatal(err)
+	}
+	if recordedID != requestID || assurance != "aal1+step-up" {
+		t.Fatalf("request_id=%q want=%q assurance=%q", recordedID, requestID, assurance)
+	}
+}
+
 func TestAuditPageFiltersByInclusiveLocalDateRange(t *testing.T) {
 	t.Parallel()
 

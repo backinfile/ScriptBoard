@@ -15,11 +15,15 @@ import (
 	"scriptboard/internal/secretredaction"
 )
 
-const chainVersion = "scriptboard-audit-chain-v1"
+const (
+	chainVersionV1 = "scriptboard-audit-chain-v1"
+	chainVersionV2 = "scriptboard-audit-chain-v2"
+)
 
 type Event struct {
 	OccurredAt, Action, Target, Result, SourceAddress string
 	ActorUserID, ActorUsername, ActorRole             string
+	RequestID, AuthenticationAssurance                string
 }
 
 type Verification struct {
@@ -79,10 +83,11 @@ func (transaction *Transaction) Append(ctx context.Context, event Event) (int64,
 	}
 	digest := eventDigest(previous, event)
 	result, err := transaction.tx.ExecContext(ctx, `INSERT INTO audit_events
-		(occurred_at, action, target, result, source_address, actor_user_id, actor_username, actor_role, previous_hash, event_hash)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(occurred_at, action, target, result, source_address, actor_user_id, actor_username, actor_role,
+		 request_id, authentication_assurance, previous_hash, event_hash)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		event.OccurredAt, event.Action, event.Target, event.Result, event.SourceAddress,
-		event.ActorUserID, event.ActorUsername, event.ActorRole, previous, digest)
+		event.ActorUserID, event.ActorUsername, event.ActorRole, event.RequestID, event.AuthenticationAssurance, previous, digest)
 	if err != nil {
 		return 0, err
 	}
@@ -100,6 +105,8 @@ func redactEvent(event Event) Event {
 	event.ActorUserID = secretredaction.String(event.ActorUserID)
 	event.ActorUsername = secretredaction.String(event.ActorUsername)
 	event.ActorRole = secretredaction.String(event.ActorRole)
+	event.RequestID = secretredaction.String(event.RequestID)
+	event.AuthenticationAssurance = secretredaction.String(event.AuthenticationAssurance)
 	return event
 }
 
@@ -136,7 +143,8 @@ func (store *Store) Verify(ctx context.Context) (Verification, error) {
 		return Verification{}, err
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT id, occurred_at, action, target, result, source_address,
-		actor_user_id, actor_username, actor_role, previous_hash, event_hash FROM audit_events ORDER BY id`)
+		actor_user_id, actor_username, actor_role, request_id, authentication_assurance,
+		previous_hash, event_hash FROM audit_events ORDER BY id`)
 	if err != nil {
 		return Verification{}, err
 	}
@@ -149,7 +157,8 @@ func (store *Store) Verify(ctx context.Context) (Verification, error) {
 		var event Event
 		var recordedPrevious, recordedHash string
 		if err := rows.Scan(&id, &occurredAt, &event.Action, &event.Target, &event.Result, &event.SourceAddress,
-			&event.ActorUserID, &event.ActorUsername, &event.ActorRole, &recordedPrevious, &recordedHash); err != nil {
+			&event.ActorUserID, &event.ActorUsername, &event.ActorRole, &event.RequestID, &event.AuthenticationAssurance,
+			&recordedPrevious, &recordedHash); err != nil {
 			return Verification{}, err
 		}
 		event.OccurredAt = strconv.FormatInt(occurredAt, 10)
@@ -220,8 +229,14 @@ func currentTail(ctx context.Context, tx *sql.Tx) (string, error) {
 
 func eventDigest(previous string, event Event) string {
 	digest := sha256.New()
-	for _, value := range []string{chainVersion, previous, event.OccurredAt, event.Action, event.Target, event.Result,
-		event.SourceAddress, event.ActorUserID, event.ActorUsername, event.ActorRole} {
+	version := chainVersionV1
+	values := []string{previous, event.OccurredAt, event.Action, event.Target, event.Result,
+		event.SourceAddress, event.ActorUserID, event.ActorUsername, event.ActorRole}
+	if event.RequestID != "" || event.AuthenticationAssurance != "" {
+		version = chainVersionV2
+		values = append(values, event.RequestID, event.AuthenticationAssurance)
+	}
+	for _, value := range append([]string{version}, values...) {
 		writeField(digest, value)
 	}
 	return hex.EncodeToString(digest.Sum(nil))

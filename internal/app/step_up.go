@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"database/sql"
 	"math"
 	"net/http"
@@ -68,7 +69,10 @@ func (a *App) stepUp(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	a.clearLoginFailures(keys...)
-	a.recordAuditForRequest(request, "step_up_authentication", current.username, "succeeded")
+	current.authenticationAssurance = 1
+	current.reauthenticatedAt = now
+	auditRequest := request.WithContext(context.WithValue(request.Context(), sessionContextKey, current))
+	a.recordAuditForRequest(auditRequest, "step_up_authentication", current.username, "succeeded")
 	http.Redirect(response, request, returnTo, http.StatusSeeOther)
 }
 

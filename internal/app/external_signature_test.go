@@ -81,7 +81,7 @@ func TestExternalSignedRequestRejectsUnsignedAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	var rejectedRequests, succeededRequests, rejectedAudits int
+	var rejectedRequests, succeededRequests, rejectedAudits, correlatedAudits int
 	if err := database.QueryRow(`SELECT COUNT(*) FROM external_trigger_requests WHERE entry_name='signed-log' AND result='rejected' AND http_status=401`).Scan(&rejectedRequests); err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,13 @@ func TestExternalSignedRequestRejectsUnsignedAndReplay(t *testing.T) {
 	if err := database.QueryRow(`SELECT COUNT(*) FROM audit_events WHERE action='external_trigger_log' AND result='rejected'`).Scan(&rejectedAudits); err != nil {
 		t.Fatal(err)
 	}
-	if rejectedRequests != 2 || succeededRequests != 1 || rejectedAudits != 2 {
-		t.Fatalf("rejected requests=%d succeeded requests=%d rejected audits=%d", rejectedRequests, succeededRequests, rejectedAudits)
+	if err := database.QueryRow(`SELECT COUNT(*) FROM audit_events AS audit
+		JOIN external_trigger_requests AS request ON request.id = audit.request_id
+		WHERE audit.action='external_trigger_log' AND audit.authentication_assurance='external-capability'
+		AND audit.target NOT LIKE '%request=%'`).Scan(&correlatedAudits); err != nil {
+		t.Fatal(err)
+	}
+	if rejectedRequests != 2 || succeededRequests != 1 || rejectedAudits != 2 || correlatedAudits != 3 {
+		t.Fatalf("rejected requests=%d succeeded requests=%d rejected audits=%d correlated audits=%d", rejectedRequests, succeededRequests, rejectedAudits, correlatedAudits)
 	}
 }

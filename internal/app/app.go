@@ -306,8 +306,9 @@ const (
 type contextKey string
 
 const (
-	sessionContextKey contextKey = "session"
-	secureContextKey  contextKey = "secure-request"
+	sessionContextKey   contextKey = "session"
+	secureContextKey    contextKey = "secure-request"
+	requestIDContextKey contextKey = "request-id"
 )
 
 type Config struct {
@@ -1205,6 +1206,8 @@ func openDatabase(path string) (*sql.DB, error) {
 			actor_user_id TEXT NOT NULL DEFAULT '',
 			actor_username TEXT NOT NULL DEFAULT '',
 			actor_role TEXT NOT NULL DEFAULT '',
+			request_id TEXT NOT NULL DEFAULT '',
+			authentication_assurance TEXT NOT NULL DEFAULT '',
 			previous_hash TEXT NOT NULL DEFAULT '',
 			event_hash TEXT NOT NULL DEFAULT ''
 		)`,
@@ -1748,6 +1751,24 @@ func openDatabase(path string) (*sql.DB, error) {
 			}
 		}
 	}
+	if schemaVersion >= 20 && schemaVersion <= 40 {
+		for _, column := range []struct{ name, definition string }{
+			{"request_id", "request_id TEXT NOT NULL DEFAULT ''"},
+			{"authentication_assurance", "authentication_assurance TEXT NOT NULL DEFAULT ''"},
+		} {
+			exists, err := sqliteColumnExists(migration, "audit_events", column.name)
+			if err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("inspect audit correlation migration: %w", err)
+			}
+			if !exists {
+				if _, err := migration.Exec("ALTER TABLE audit_events ADD COLUMN " + column.definition); err != nil {
+					_ = db.Close()
+					return nil, fmt.Errorf("add audit correlation metadata: %w", err)
+				}
+			}
+		}
+	}
 	for _, statement := range []string{
 		"CREATE UNIQUE INDEX IF NOT EXISTS users_single_administrator_idx ON users(role) WHERE role = 'administrator'",
 		"CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id)",
@@ -1822,10 +1843,11 @@ func compatibleDatabaseSchema(version int) bool {
 	// schema 37 binds each External Interface key to one immutable Entry, and
 	// schema 38 adds a persistent global emergency control for external calls,
 	// schema 39 adds opt-in timestamp, nonce, and HMAC replay protection, and
-	// schema 40 records session authentication assurance and recent reauthentication.
+	// schema 40 records session authentication assurance and recent reauthentication,
+	// and schema 41 adds request correlation and authentication assurance to audit events.
 	// Each supported predecessor has an explicit
 	// transactional forward path.
-	return version == currentSchemaVersion || currentSchemaVersion == 40 && version >= 20 && version <= 39
+	return version == currentSchemaVersion || currentSchemaVersion == 41 && version >= 20 && version <= 40
 }
 
 func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {
@@ -2284,6 +2306,13 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /history/audit.csv", a.requirePermission(permissionReadAudit, http.HandlerFunc(a.auditDownload)))
 	a.routeSpecs = mux.Specs()
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		requestID, err := randomToken(18)
+		if err != nil {
+			http.Error(response, "unable to create request correlation", http.StatusInternalServerError)
+			return
+		}
+		request = request.WithContext(context.WithValue(request.Context(), requestIDContextKey, requestID))
+		response.Header().Set("X-Request-ID", requestID)
 		request = a.applyTrustedProxy(request)
 		if !a.validRequestHost(request.Host) {
 			http.Error(response, "request host is not allowed", http.StatusMisdirectedRequest)
@@ -2644,6 +2673,8 @@ type auditView struct {
 	Source     string
 	Actor      string
 	ActorRole  string
+	RequestID  string
+	Assurance  string
 }
 
 var (
@@ -2744,22 +2775,23 @@ func (a *App) auditPage(response http.ResponseWriter, request *http.Request) {
 	like := "%" + filters.Query + "%"
 	var total int
 	if err := a.db.QueryRow(`SELECT COUNT(*) FROM audit_events
-		WHERE (? = '' OR action LIKE ? OR target LIKE ? OR result LIKE ? OR source_address LIKE ? OR actor_username LIKE ? OR actor_role LIKE ?)
+		WHERE (? = '' OR action LIKE ? OR target LIKE ? OR result LIKE ? OR source_address LIKE ? OR actor_username LIKE ? OR actor_role LIKE ? OR request_id LIKE ? OR authentication_assurance LIKE ?)
 		AND (? = 0 OR occurred_at >= ?)
 		AND (? = 0 OR occurred_at < ?)`,
-		filters.Query, like, like, like, like, like, like,
+		filters.Query, like, like, like, like, like, like, like, like,
 		filters.HasFromDate, filters.FromUnix,
 		filters.HasToDate, filters.ToExclusiveUnix).Scan(&total); err != nil {
 		http.Error(response, "无法读取审计事件", http.StatusInternalServerError)
 		return
 	}
 	pagination := newPagination(request, total)
-	rows, err := a.db.Query(`SELECT occurred_at, action, target, result, source_address, actor_username, actor_role FROM audit_events
-		WHERE (? = '' OR action LIKE ? OR target LIKE ? OR result LIKE ? OR source_address LIKE ? OR actor_username LIKE ? OR actor_role LIKE ?)
+	rows, err := a.db.Query(`SELECT occurred_at, action, target, result, source_address, actor_username, actor_role,
+		request_id, authentication_assurance FROM audit_events
+		WHERE (? = '' OR action LIKE ? OR target LIKE ? OR result LIKE ? OR source_address LIKE ? OR actor_username LIKE ? OR actor_role LIKE ? OR request_id LIKE ? OR authentication_assurance LIKE ?)
 		AND (? = 0 OR occurred_at >= ?)
 		AND (? = 0 OR occurred_at < ?)
 		ORDER BY occurred_at DESC LIMIT ? OFFSET ?`,
-		filters.Query, like, like, like, like, like, like,
+		filters.Query, like, like, like, like, like, like, like, like,
 		filters.HasFromDate, filters.FromUnix,
 		filters.HasToDate, filters.ToExclusiveUnix,
 		listPageSize, pagination.Start)
@@ -2772,7 +2804,8 @@ func (a *App) auditPage(response http.ResponseWriter, request *http.Request) {
 	for rows.Next() {
 		var event auditView
 		var occurredAt int64
-		if err := rows.Scan(&occurredAt, &event.Action, &event.Target, &event.Result, &event.Source, &event.Actor, &event.ActorRole); err != nil {
+		if err := rows.Scan(&occurredAt, &event.Action, &event.Target, &event.Result, &event.Source, &event.Actor, &event.ActorRole,
+			&event.RequestID, &event.Assurance); err != nil {
 			http.Error(response, "无法读取审计事件", http.StatusInternalServerError)
 			return
 		}
@@ -2782,6 +2815,8 @@ func (a *App) auditPage(response http.ResponseWriter, request *http.Request) {
 		event.Source = secretredaction.String(event.Source)
 		event.Actor = secretredaction.String(event.Actor)
 		event.ActorRole = secretredaction.String(event.ActorRole)
+		event.RequestID = secretredaction.String(event.RequestID)
+		event.Assurance = secretredaction.String(event.Assurance)
 		event.OccurredAt = time.Unix(occurredAt, 0).UTC()
 		events = append(events, event)
 	}
@@ -2801,7 +2836,7 @@ func (a *App) auditDownload(response http.ResponseWriter, _ *http.Request) {
 		http.Error(response, "无法读取审计哈希链", http.StatusInternalServerError)
 		return
 	}
-	rows, err := a.db.Query("SELECT id, occurred_at, action, target, result, source_address, actor_user_id, actor_username, actor_role, previous_hash, event_hash FROM audit_events ORDER BY id")
+	rows, err := a.db.Query("SELECT id, occurred_at, action, target, result, source_address, actor_user_id, actor_username, actor_role, request_id, authentication_assurance, previous_hash, event_hash FROM audit_events ORDER BY id")
 	if err != nil {
 		http.Error(response, "无法导出审计事件", http.StatusInternalServerError)
 		return
@@ -2810,14 +2845,14 @@ func (a *App) auditDownload(response http.ResponseWriter, _ *http.Request) {
 	response.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	response.Header().Set("Content-Disposition", `attachment; filename="scriptboard-audit.csv"`)
 	writer := csv.NewWriter(response)
-	_ = writer.Write([]string{"id", "occurred_at", "action", "target", "result", "source_address", "actor_user_id", "actor_username", "actor_role", "previous_hash", "event_hash", "chain_anchor", "chain_tail"})
+	_ = writer.Write([]string{"id", "occurred_at", "action", "target", "result", "source_address", "actor_user_id", "actor_username", "actor_role", "request_id", "authentication_assurance", "previous_hash", "event_hash", "chain_anchor", "chain_tail"})
 	for rows.Next() {
 		var id, occurred int64
-		var action, target, result, source, actorUserID, actorUsername, actorRole, previousHash, eventHash string
-		if rows.Scan(&id, &occurred, &action, &target, &result, &source, &actorUserID, &actorUsername, &actorRole, &previousHash, &eventHash) != nil {
+		var action, target, result, source, actorUserID, actorUsername, actorRole, requestID, assurance, previousHash, eventHash string
+		if rows.Scan(&id, &occurred, &action, &target, &result, &source, &actorUserID, &actorUsername, &actorRole, &requestID, &assurance, &previousHash, &eventHash) != nil {
 			return
 		}
-		record := []string{strconv.FormatInt(id, 10), time.Unix(occurred, 0).UTC().Format(time.RFC3339), action, target, result, source, actorUserID, actorUsername, actorRole, previousHash, eventHash, anchor, tail}
+		record := []string{strconv.FormatInt(id, 10), time.Unix(occurred, 0).UTC().Format(time.RFC3339), action, target, result, source, actorUserID, actorUsername, actorRole, requestID, assurance, previousHash, eventHash, anchor, tail}
 		for index := range record {
 			record[index] = spreadsheetSafeCSVCell(secretredaction.String(record[index]))
 		}
@@ -3998,7 +4033,7 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 			if moveErr != nil {
 				result = "failed"
 			}
-			a.recordAuditWithActor("cross_filesystem_move", source+" -> "+destination, result, sourceAddress, current.userID, current.username, current.role)
+			a.recordAuditWithRequestActor(request, "cross_filesystem_move", source+" -> "+destination, result, sourceAddress, current.userID, current.username, current.role)
 			finished <- moveErr
 		}()
 		select {
@@ -5193,7 +5228,9 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 		MaxAge:   7 * 24 * 60 * 60,
 	})
 	http.SetCookie(response, &http.Cookie{Name: loginCSRFCookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(request), SameSite: http.SameSiteStrictMode})
-	a.recordAuditWithActor("login", username, "succeeded", request.RemoteAddr, userID, username, role)
+	auditSession := session{userID: userID, username: username, role: role, authVersion: authVersion, authenticationAssurance: 1, reauthenticatedAt: now.Unix()}
+	auditRequest := request.WithContext(context.WithValue(request.Context(), sessionContextKey, auditSession))
+	a.recordAuditWithRequestActor(auditRequest, "login", username, "succeeded", request.RemoteAddr, userID, username, role)
 	completeLogin(response, request, "/monitor")
 }
 
@@ -5442,7 +5479,26 @@ func (a *App) recordAudit(action, target, result, source string) {
 
 func (a *App) recordAuditForRequest(request *http.Request, action, target, result string) {
 	current, _ := request.Context().Value(sessionContextKey).(session)
-	a.recordAuditWithActor(action, target, result, request.RemoteAddr, current.userID, current.username, current.role)
+	a.recordAuditWithRequestActor(request, action, target, result, request.RemoteAddr, current.userID, current.username, current.role)
+}
+
+func (a *App) recordAuditWithRequestActor(request *http.Request, action, target, result, source, actorUserID, actorUsername string, actorRole userRole) {
+	requestID, _ := request.Context().Value(requestIDContextKey).(string)
+	assurance := ""
+	if current, ok := request.Context().Value(sessionContextKey).(session); ok {
+		assurance = "aal" + strconv.Itoa(current.authenticationAssurance)
+		if recentAuthenticationValid(current.reauthenticatedAt, time.Now().UTC()) {
+			assurance += "+step-up"
+		}
+	} else if actorRole == userRole("external") {
+		assurance = "external-capability"
+	}
+	_, _ = a.auditLog.Append(context.Background(), auditlog.Event{
+		OccurredAt: strconv.FormatInt(time.Now().UTC().Unix(), 10),
+		Action:     action, Target: target, Result: result, SourceAddress: source,
+		ActorUserID: actorUserID, ActorUsername: actorUsername, ActorRole: string(actorRole),
+		RequestID: requestID, AuthenticationAssurance: assurance,
+	})
 }
 
 func (a *App) recordAuditWithActor(action, target, result, source, actorUserID, actorUsername string, actorRole userRole) {

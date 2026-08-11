@@ -643,6 +643,39 @@ func TestOpenDatabaseMigratesSchema39SessionAuthenticationAssurance(t *testing.T
 	}
 }
 
+func TestOpenDatabaseMigratesSchema40AuditCorrelationMetadata(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	database, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`ALTER TABLE audit_events DROP COLUMN request_id`,
+		`ALTER TABLE audit_events DROP COLUMN authentication_assurance`,
+		`PRAGMA user_version=40`,
+		`PRAGMA wal_checkpoint(TRUNCATE)`,
+	} {
+		if _, err := database.Exec(statement); err != nil {
+			t.Fatalf("prepare schema 40 with %q: %v", statement, err)
+		}
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := openDatabase(path)
+	if err != nil {
+		t.Fatalf("migrate schema 40: %v", err)
+	}
+	defer migrated.Close()
+	for _, column := range []string{"request_id", "authentication_assurance"} {
+		var count int
+		if err := migrated.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('audit_events') WHERE name = ?`, column).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("column %s count=%d err=%v", column, count, err)
+		}
+	}
+}
+
 func TestOpenDatabaseMigratesSchema30MySQLConnectionState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "app.db")
 	db, err := openDatabase(path)
