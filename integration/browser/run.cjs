@@ -2,6 +2,7 @@
 
 const assert = require("node:assert/strict");
 const { spawn, spawnSync } = require("node:child_process");
+const { createHmac, randomBytes } = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { chromium } = require("playwright");
@@ -11,6 +12,18 @@ const repositoryRoot = path.resolve(browserRoot, "..", "..");
 const snapshotRoot = path.join(browserRoot, "snapshots");
 const resultRoot = path.join(browserRoot, "test-results");
 const fixtureBinary = path.join(resultRoot, process.platform === "win32" ? "scriptboard-browser-fixture.exe" : "scriptboard-browser-fixture");
+
+function externalSignatureHeaders(secret, method, requestURI) {
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const nonce = randomBytes(18).toString("base64url");
+  const payload = ["v1", timestamp, nonce, method.toUpperCase(), requestURI].join("\n");
+  return {
+    Authorization: `Bearer ${secret}`,
+    "X-ScriptBoard-Timestamp": timestamp,
+    "X-ScriptBoard-Nonce": nonce,
+    "X-ScriptBoard-Signature": `v1=${createHmac("sha256", secret).update(payload).digest("hex")}`,
+  };
+}
 
 fs.mkdirSync(snapshotRoot, { recursive: true });
 fs.rmSync(resultRoot, { recursive: true, force: true });
@@ -1219,6 +1232,7 @@ async function assertExternalInterfaces(page, fixture) {
   await form.locator('input[name="upload_max_bytes"]').fill("1024");
   await form.locator('input[name="upload_extensions"]').fill(".txt");
   await form.locator('select[name="upload_conflict"]').selectOption("rename");
+  assert.equal(await form.locator('input[name="require_signature"]').isChecked(), true);
   await form.locator('button[type="submit"]').click();
   await page.locator("#external-key-secret").waitFor();
   const secret = (await page.locator("#external-key-secret").textContent()).trim();
@@ -1233,8 +1247,9 @@ async function assertExternalInterfaces(page, fixture) {
   await globalControl.getByRole("button", { name: "Pause all external calls", exact: true }).click();
   await page.waitForFunction(() => document.querySelector("[data-external-global-control]")?.dataset.externalGlobalControl === "disabled");
   assert.equal(await globalControl.getAttribute("data-external-global-control"), "disabled");
-  const blockedTrigger = await page.request.post(`${fixture.baseURL}/trigger?name=artifact`, {
-    headers: { Authorization: `Bearer ${secret}` },
+  const requestURI = "/trigger?name=artifact";
+  const blockedTrigger = await page.request.post(`${fixture.baseURL}${requestURI}`, {
+    headers: externalSignatureHeaders(secret, "POST", requestURI),
     multipart: { file: { name: "blocked.txt", mimeType: "text/plain", buffer: Buffer.from("must not publish") } },
   });
   assert.equal(blockedTrigger.status(), 503);
@@ -1243,8 +1258,8 @@ async function assertExternalInterfaces(page, fixture) {
   await page.waitForFunction(() => document.querySelector("[data-external-global-control]")?.dataset.externalGlobalControl === "enabled");
   assert.equal(await globalControl.getAttribute("data-external-global-control"), "enabled");
 
-  const trigger = await page.request.post(`${fixture.baseURL}/trigger?name=artifact`, {
-    headers: { Authorization: `Bearer ${secret}` },
+  const trigger = await page.request.post(`${fixture.baseURL}${requestURI}`, {
+    headers: externalSignatureHeaders(secret, "POST", requestURI),
     multipart: { file: { name: "external-result.txt", mimeType: "text/plain", buffer: Buffer.from("fixture complete") } },
   });
   assert.equal(trigger.status(), 202);

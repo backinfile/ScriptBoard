@@ -71,6 +71,7 @@ var SchemaStatements = []string{
 		action_type TEXT NOT NULL CHECK (action_type IN ('log', 'upload', 'quick_run', 'variable', 'website_monitor')),
 		target TEXT NOT NULL DEFAULT '',
 		config_json TEXT NOT NULL DEFAULT '{}',
+		require_signature INTEGER NOT NULL DEFAULT 0 CHECK (require_signature IN (0, 1)),
 		enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
 		created_at INTEGER NOT NULL,
 		updated_at INTEGER NOT NULL,
@@ -92,6 +93,12 @@ var SchemaStatements = []string{
 		message TEXT NOT NULL DEFAULT '',
 		source_address TEXT NOT NULL DEFAULT ''
 	)`,
+	`CREATE TABLE IF NOT EXISTS external_trigger_nonces (
+		key_id TEXT NOT NULL REFERENCES external_trigger_keys(id) ON DELETE CASCADE,
+		nonce TEXT NOT NULL,
+		expires_at INTEGER NOT NULL,
+		PRIMARY KEY (key_id, nonce)
+	)`,
 	`CREATE TABLE IF NOT EXISTS website_monitor_remote_sources (
 		id TEXT PRIMARY KEY,
 		label TEXT NOT NULL COLLATE NOCASE UNIQUE,
@@ -103,6 +110,7 @@ var SchemaStatements = []string{
 	`CREATE INDEX IF NOT EXISTS external_trigger_entries_key_idx ON external_trigger_entries(key_id, created_at)`,
 	`CREATE INDEX IF NOT EXISTS external_trigger_requests_time_idx ON external_trigger_requests(occurred_at DESC)`,
 	`CREATE INDEX IF NOT EXISTS external_trigger_requests_key_time_idx ON external_trigger_requests(key_id, occurred_at DESC)`,
+	`CREATE INDEX IF NOT EXISTS external_trigger_nonces_expiry_idx ON external_trigger_nonces(expires_at)`,
 }
 
 type ActionType string
@@ -130,6 +138,7 @@ type Entry struct {
 	Type                           ActionType
 	ConfigJSON                     string
 	Enabled                        bool
+	RequireSignature               bool
 	CreatedAt, UpdatedAt           time.Time
 }
 
@@ -183,15 +192,17 @@ type CreateEntryInput struct {
 	Type               ActionType
 	Target             string
 	Enabled            bool
+	RequireSignature   bool
 	Config             any
 }
 
 type UpdateEntryInput struct {
-	ID, Name, Label string
-	Type            ActionType
-	Target          string
-	Enabled         bool
-	Config          any
+	ID, Name, Label  string
+	Type             ActionType
+	Target           string
+	Enabled          bool
+	RequireSignature bool
+	Config           any
 }
 
 type Invocation struct {
@@ -466,8 +477,8 @@ func (manager *Manager) CreateEntry(ctx context.Context, input CreateEntryInput)
 		return Entry{}, "", ErrKeyScopeBound
 	}
 	result, err := transaction.ExecContext(ctx, `INSERT INTO external_trigger_entries
-		(id, key_id, name, label, action_type, target, config_json, enabled, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, input.KeyID, input.Name, strings.TrimSpace(input.Label), input.Type, target, configJSON, input.Enabled, now.Unix(), now.Unix())
+		(id, key_id, name, label, action_type, target, config_json, require_signature, enabled, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, input.KeyID, input.Name, strings.TrimSpace(input.Label), input.Type, target, configJSON, input.RequireSignature, input.Enabled, now.Unix(), now.Unix())
 	if err != nil {
 		if strings.Contains(err.Error(), "external_trigger_entries.key_id") {
 			return Entry{}, "", ErrKeyScopeBound
@@ -487,7 +498,7 @@ func (manager *Manager) CreateEntry(ctx context.Context, input CreateEntryInput)
 	if err := transaction.Commit(); err != nil {
 		return Entry{}, "", err
 	}
-	return Entry{ID: id, KeyID: input.KeyID, Name: input.Name, Label: strings.TrimSpace(input.Label), Type: input.Type, Target: target, ConfigJSON: configJSON, Enabled: input.Enabled, CreatedAt: now, UpdatedAt: now}, secret, nil
+	return Entry{ID: id, KeyID: input.KeyID, Name: input.Name, Label: strings.TrimSpace(input.Label), Type: input.Type, Target: target, ConfigJSON: configJSON, RequireSignature: input.RequireSignature, Enabled: input.Enabled, CreatedAt: now, UpdatedAt: now}, secret, nil
 }
 
 func (manager *Manager) UpdateEntry(ctx context.Context, input UpdateEntryInput) (Entry, error) {
@@ -504,8 +515,8 @@ func (manager *Manager) UpdateEntry(ctx context.Context, input UpdateEntryInput)
 	}
 	now := manager.now().UTC()
 	result, err := manager.db.ExecContext(ctx, `UPDATE external_trigger_entries SET
-		label = ?, enabled = ?, updated_at = ? WHERE id = ?`,
-		strings.TrimSpace(input.Label), input.Enabled, now.Unix(), input.ID)
+		label = ?, require_signature = ?, enabled = ?, updated_at = ? WHERE id = ?`,
+		strings.TrimSpace(input.Label), input.RequireSignature, input.Enabled, now.Unix(), input.ID)
 	if err != nil {
 		return Entry{}, fmt.Errorf("update external trigger entry: %w", err)
 	}
@@ -649,11 +660,11 @@ func (manager *Manager) Resolve(ctx context.Context, token, name string) (Key, E
 		return Key{}, Entry{}, ErrInvalidKey
 	}
 	var entry Entry
-	var entryEnabled int
+	var entryEnabled, requireSignature int
 	var entryCreatedAt, entryUpdatedAt int64
-	err = manager.db.QueryRowContext(ctx, `SELECT id, key_id, name, label, action_type, target, config_json, enabled, created_at, updated_at
+	err = manager.db.QueryRowContext(ctx, `SELECT id, key_id, name, label, action_type, target, config_json, require_signature, enabled, created_at, updated_at
 		FROM external_trigger_entries WHERE key_id = ? AND name = ?`, key.ID, name).Scan(
-		&entry.ID, &entry.KeyID, &entry.Name, &entry.Label, &entry.Type, &entry.Target, &entry.ConfigJSON, &entryEnabled, &entryCreatedAt, &entryUpdatedAt)
+		&entry.ID, &entry.KeyID, &entry.Name, &entry.Label, &entry.Type, &entry.Target, &entry.ConfigJSON, &requireSignature, &entryEnabled, &entryCreatedAt, &entryUpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return key, Entry{}, ErrEntryNotFound
 	}
@@ -661,6 +672,7 @@ func (manager *Manager) Resolve(ctx context.Context, token, name string) (Key, E
 		return Key{}, Entry{}, err
 	}
 	entry.Enabled = entryEnabled != 0
+	entry.RequireSignature = requireSignature != 0
 	entry.CreatedAt, entry.UpdatedAt = time.Unix(entryCreatedAt, 0).UTC(), time.Unix(entryUpdatedAt, 0).UTC()
 	if !entry.Enabled {
 		return key, entry, ErrEntryDisabled
@@ -686,14 +698,15 @@ func (manager *Manager) Key(ctx context.Context, id string) (Key, error) {
 
 func (manager *Manager) Entry(ctx context.Context, id string) (Entry, error) {
 	var entry Entry
-	var enabled int
+	var enabled, requireSignature int
 	var createdAt, updatedAt int64
-	err := manager.db.QueryRowContext(ctx, `SELECT id, key_id, name, label, action_type, target, config_json, enabled, created_at, updated_at
-		FROM external_trigger_entries WHERE id = ?`, id).Scan(&entry.ID, &entry.KeyID, &entry.Name, &entry.Label, &entry.Type, &entry.Target, &entry.ConfigJSON, &enabled, &createdAt, &updatedAt)
+	err := manager.db.QueryRowContext(ctx, `SELECT id, key_id, name, label, action_type, target, config_json, require_signature, enabled, created_at, updated_at
+		FROM external_trigger_entries WHERE id = ?`, id).Scan(&entry.ID, &entry.KeyID, &entry.Name, &entry.Label, &entry.Type, &entry.Target, &entry.ConfigJSON, &requireSignature, &enabled, &createdAt, &updatedAt)
 	if err != nil {
 		return Entry{}, err
 	}
 	entry.Enabled = enabled != 0
+	entry.RequireSignature = requireSignature != 0
 	entry.CreatedAt, entry.UpdatedAt = time.Unix(createdAt, 0).UTC(), time.Unix(updatedAt, 0).UTC()
 	return entry, nil
 }
@@ -733,7 +746,7 @@ func (manager *Manager) List(ctx context.Context) ([]Key, error) {
 }
 
 func (manager *Manager) entriesForKey(ctx context.Context, keyID string) ([]Entry, error) {
-	rows, err := manager.db.QueryContext(ctx, `SELECT id, key_id, name, label, action_type, target, config_json, enabled, created_at, updated_at
+	rows, err := manager.db.QueryContext(ctx, `SELECT id, key_id, name, label, action_type, target, config_json, require_signature, enabled, created_at, updated_at
 		FROM external_trigger_entries WHERE key_id = ? ORDER BY created_at, id`, keyID)
 	if err != nil {
 		return nil, err
@@ -742,12 +755,13 @@ func (manager *Manager) entriesForKey(ctx context.Context, keyID string) ([]Entr
 	var entries []Entry
 	for rows.Next() {
 		var entry Entry
-		var enabled int
+		var enabled, requireSignature int
 		var createdAt, updatedAt int64
-		if err := rows.Scan(&entry.ID, &entry.KeyID, &entry.Name, &entry.Label, &entry.Type, &entry.Target, &entry.ConfigJSON, &enabled, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&entry.ID, &entry.KeyID, &entry.Name, &entry.Label, &entry.Type, &entry.Target, &entry.ConfigJSON, &requireSignature, &enabled, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 		entry.Enabled = enabled != 0
+		entry.RequireSignature = requireSignature != 0
 		entry.CreatedAt, entry.UpdatedAt = time.Unix(createdAt, 0).UTC(), time.Unix(updatedAt, 0).UTC()
 		entries = append(entries, entry)
 	}

@@ -1704,6 +1704,19 @@ func openDatabase(path string) (*sql.DB, error) {
 			}
 		}
 	}
+	if schemaVersion >= 20 && schemaVersion <= 38 {
+		exists, err := sqliteColumnExists(migration, "external_trigger_entries", "require_signature")
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("inspect External Interface signature migration: %w", err)
+		}
+		if !exists {
+			if _, err := migration.Exec(`ALTER TABLE external_trigger_entries ADD COLUMN require_signature INTEGER NOT NULL DEFAULT 0 CHECK (require_signature IN (0, 1))`); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("add External Interface signature requirement: %w", err)
+			}
+		}
+	}
 	for _, statement := range []string{
 		"CREATE UNIQUE INDEX IF NOT EXISTS users_single_administrator_idx ON users(role) WHERE role = 'administrator'",
 		"CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id)",
@@ -1776,10 +1789,11 @@ func compatibleDatabaseSchema(version int) bool {
 	// adds dedicated percentage cards, schema 35 adds a tamper-evident audit
 	// hash chain, schema 36 locks Quick Runs to a script digest and revision, and
 	// schema 37 binds each External Interface key to one immutable Entry, and
-	// schema 38 adds a persistent global emergency control for external calls.
+	// schema 38 adds a persistent global emergency control for external calls,
+	// and schema 39 adds opt-in timestamp, nonce, and HMAC replay protection.
 	// Each supported predecessor has an explicit
 	// transactional forward path.
-	return version == currentSchemaVersion || currentSchemaVersion == 38 && version >= 20 && version <= 37
+	return version == currentSchemaVersion || currentSchemaVersion == 39 && version >= 20 && version <= 38
 }
 
 func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {

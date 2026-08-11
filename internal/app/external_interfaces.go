@@ -67,6 +67,7 @@ type externalInterfaceFormData struct {
 	QuickRunConfig                                       externaltrigger.QuickRunConfig
 	VariableConfig                                       externaltrigger.VariableConfig
 	EntryEnabled                                         bool
+	RequireSignature                                     bool
 	Submitted                                            bool
 	LogMessageLimitInput, UploadMaxBytesInput            string
 	UploadExtensionsInput, VariableMinimumInput          string
@@ -422,7 +423,7 @@ func (a *App) newExternalEntryTask(response http.ResponseWriter, request *http.R
 	renderExternalInterfaceForm(response, externalInterfaceFormData{
 		Kind: "entry-new", Title: webText(locale, "external.add_function_title"), Description: webText(locale, "external.add_function_description"),
 		BackURL: "/config/external-interfaces", Action: "/config/external-interfaces/keys/" + key.ID + "/entries",
-		CSRFToken: current.csrfToken, Locale: locale, Key: key, QuickRuns: quickRuns, Variables: variables, EntryEnabled: true,
+		CSRFToken: current.csrfToken, Locale: locale, Key: key, QuickRuns: quickRuns, Variables: variables, EntryEnabled: true, RequireSignature: true,
 	})
 }
 
@@ -463,7 +464,7 @@ func (a *App) externalEntryDetail(response http.ResponseWriter, request *http.Re
 	}
 	renderExternalInterfaceForm(response, externalInterfaceFormData{
 		Kind: "entry-detail", Title: entry.Label, Description: webText(locale, "external.function_details_description"),
-		BackURL: "/config/external-interfaces", CSRFToken: current.csrfToken, Locale: locale, Key: key, Entry: entry, EntryEnabled: entry.Enabled,
+		BackURL: "/config/external-interfaces", CSRFToken: current.csrfToken, Locale: locale, Key: key, Entry: entry, EntryEnabled: entry.Enabled, RequireSignature: entry.RequireSignature,
 		CallMethod: callMethod, CallURL: "/trigger?name=" + url.QueryEscape(entry.Name), CallBody: webText(locale, callBodyKey),
 		TypeText: externalActionText(locale, entry.Type), TargetText: externalTargetText(locale, entry), PreviewURL: previewURL,
 	})
@@ -485,7 +486,7 @@ func (a *App) editExternalEntryTask(response http.ResponseWriter, request *http.
 		http.Error(response, "Unable to read action targets", http.StatusInternalServerError)
 		return
 	}
-	data := externalInterfaceFormData{Kind: "entry-edit", BackURL: "/config/external-interfaces", Action: "/config/external-interfaces/entries/" + entry.ID, Key: key, Entry: entry, EntryEnabled: entry.Enabled, QuickRuns: quickRuns, Variables: variables}
+	data := externalInterfaceFormData{Kind: "entry-edit", BackURL: "/config/external-interfaces", Action: "/config/external-interfaces/entries/" + entry.ID, Key: key, Entry: entry, EntryEnabled: entry.Enabled, RequireSignature: entry.RequireSignature, QuickRuns: quickRuns, Variables: variables}
 	data.Locale = resolveWebLocale(request)
 	data.Title, data.Description = webText(data.Locale, "external.edit_function"), webText(data.Locale, "external.edit_function_description")
 	data.CSRFToken = request.Context().Value(sessionContextKey).(session).csrfToken
@@ -561,7 +562,7 @@ func (a *App) createExternalEntry(response http.ResponseWriter, request *http.Re
 	}
 	entry, secret, err := a.externalTriggers.CreateEntry(request.Context(), externaltrigger.CreateEntryInput{
 		KeyID: keyID, Name: strings.TrimSpace(request.FormValue("name")), Label: request.FormValue("label"), Type: actionType,
-		Target: target, Enabled: request.FormValue("enabled") == "1", Config: config,
+		Target: target, Enabled: request.FormValue("enabled") == "1", RequireSignature: request.FormValue("require_signature") == "1", Config: config,
 	})
 	if err != nil {
 		a.renderExternalEntrySubmissionError(response, request, key)
@@ -591,7 +592,7 @@ func (a *App) renderExternalEntrySubmissionError(response http.ResponseWriter, r
 		Kind: "entry-new", Title: webText(locale, "external.add_function_title"), Description: webText(locale, "external.add_function_description"),
 		BackURL: "/config/external-interfaces", Action: "/config/external-interfaces/keys/" + key.ID + "/entries",
 		CSRFToken: request.Context().Value(sessionContextKey).(session).csrfToken, Locale: locale, Key: key,
-		QuickRuns: quickRuns, Variables: variables, EntryEnabled: request.FormValue("enabled") == "1", Submitted: true,
+		QuickRuns: quickRuns, Variables: variables, EntryEnabled: request.FormValue("enabled") == "1", RequireSignature: request.FormValue("require_signature") == "1", Submitted: true,
 		FormError:            webText(locale, "external.entry_save_error"),
 		Entry:                externaltrigger.Entry{Name: strings.TrimSpace(request.FormValue("name")), Label: request.FormValue("label"), Type: externaltrigger.ActionType(request.FormValue("action_type"))},
 		LogConfig:            externaltrigger.LogConfig{File: request.FormValue("log_file"), Category: request.FormValue("log_category")},
@@ -624,7 +625,7 @@ func (a *App) updateExternalEntry(response http.ResponseWriter, request *http.Re
 		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
 	}
-	entry, err := a.externalTriggers.UpdateEntry(request.Context(), externaltrigger.UpdateEntryInput{ID: id, Name: strings.TrimSpace(request.FormValue("name")), Label: request.FormValue("label"), Type: actionType, Target: target, Enabled: request.FormValue("enabled") == "1", Config: config})
+	entry, err := a.externalTriggers.UpdateEntry(request.Context(), externaltrigger.UpdateEntryInput{ID: id, Name: strings.TrimSpace(request.FormValue("name")), Label: request.FormValue("label"), Type: actionType, Target: target, Enabled: request.FormValue("enabled") == "1", RequireSignature: request.FormValue("require_signature") == "1", Config: config})
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
@@ -776,6 +777,22 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 	if err != nil {
 		writeExternalTriggerError(response, http.StatusInternalServerError, "action_failed")
 		return
+	}
+	if entry.RequireSignature {
+		timestampRaw := request.Header.Get("X-ScriptBoard-Timestamp")
+		timestamp, timestampErr := strconv.ParseInt(timestampRaw, 10, 64)
+		if timestampErr != nil || timestampRaw != strconv.FormatInt(timestamp, 10) || a.externalTriggers.VerifyAndConsumeSignature(
+			request.Context(), key.ID, token, timestamp, request.Header.Get("X-ScriptBoard-Nonce"), request.Method,
+			request.URL.RequestURI(), request.Header.Get("X-ScriptBoard-Signature"),
+		) != nil {
+			_ = a.externalTriggers.RecordInvocation(request.Context(), externaltrigger.Invocation{
+				ID: requestID, KeyID: key.ID, KeyLabel: key.Label, EntryID: entry.ID, EntryName: entry.Name,
+				ActionType: entry.Type, Result: "rejected", HTTPStatus: http.StatusUnauthorized, Source: request.RemoteAddr,
+			})
+			a.recordAuditWithActor("external_trigger_"+string(entry.Type), "key="+key.ID+" entry="+entry.Name+" request="+requestID, "rejected", request.RemoteAddr, "", key.Label, userRole("external"))
+			writeExternalTriggerError(response, http.StatusUnauthorized, "invalid_key")
+			return
+		}
 	}
 	globalEnabled, _, controlErr := a.externalTriggers.GlobalEnabled(request.Context())
 	if controlErr != nil || !globalEnabled {
