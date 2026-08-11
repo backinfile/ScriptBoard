@@ -30,7 +30,7 @@ ScriptBoard 已有一批值得保留的安全基础：Argon2id 密码哈希、�
 | --- | --- | --- |
 | P0-01 | 完成 | 240 条路由均通过 fail-closed 注册器声明方法、认证方式、权限、CSRF 与请求体策略；运行时前缀权限推断已删除，角色/方法矩阵从 `RouteSpec` 清单自动验证。 |
 | P0-03 | 部分完成 | Run 使用最小环境；执行器必须解析为规范绝对普通文件，Linux 校验 root/服务身份所有权及不可被组/其他用户写入，参数控制字符被拒绝并有 fuzz 覆盖；跨模块统一启动器和 Windows owner SID/ACL 校验随身份拆分继续。 |
-| P0-04 | 首个切片完成 | 建立共享出站策略并覆盖网站 HTTP/WebSocket 探测和远程监控聚合；更新与 AI Provider 的迁移仍待后续切片。 |
+| P0-04 | 两个切片完成 | 建立共享出站策略并覆盖网站 HTTP/WebSocket 探测、远程监控聚合及 GitHub 更新检查/下载；默认更新客户端不使用环境代理，DNS 解析后的实际 IP 由受控 Dialer 固定并拒绝私网、元数据和非常规端口。AI Provider 的迁移仍待后续切片。 |
 | P0-05 | 首个切片完成 | 代理默认信任为空，非可信转发头被清理；新增 `allowed_hosts` 与 `canonical_external_url` 安全默认，可信代理 Host 仍须通过白名单，错误 Host/Origin 在业务 Handler 前拒绝。 |
 | P0-06 | 外部上传切片完成 | 外部上传空 allowlist 及活动/双扩展一律拒绝；内容以随机无扩展名和 0600 权限进入 State Root 私有 inbox，管理员核对 SHA-256 与目标后才能经并发领取、原子写入和审计发布。普通上传及各类导入仍按独立策略继续迁移。 |
 | P0-07 | 首个切片完成 | 外部 Trigger Key 创建和轮换后只显示一次，完整 Key 不再可恢复保存或提供复制接口；启动时清理旧版本残留的可恢复 Key，同时保留其他业务秘密存储。MFA、step-up 与 OS secret provider 仍待结构性批次。 |
@@ -373,7 +373,7 @@ Windows：
 
 - [ ] P0-01 路由声明、未知路由默认拒绝、完整角色/方法矩阵。
 - [ ] P0-03 命令封装、环境 allowlist、控制字符和 option injection 测试。
-- [ ] P0-04 共享 OutboundPolicy，先覆盖网站监控和远程监控。
+- [x] P0-04 共享 OutboundPolicy，先覆盖网站监控和远程监控。
 - [ ] P0-05 代理默认关闭、Host/Origin 校验。
 - [ ] P0-06 外部上传默认拒绝任意扩展并引入 inbox。
 - [ ] P0-12 建立 `govulncheck`、CodeQL、secret scan 和首批 fuzz target。
