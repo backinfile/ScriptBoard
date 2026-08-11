@@ -66,6 +66,21 @@ function hostFileHref(endpoint, hostPath, parameters = {}) {
   return `${target.pathname}${target.search}`;
 }
 
+async function assertFocusReturns(page, locator, message) {
+  // Dialog teardown restores focus asynchronously. Loaded Windows CI runners
+  // can observe the close click before that focus task runs, so wait for the
+  // user-visible state instead of sampling document.activeElement immediately.
+  const target = await locator.elementHandle();
+  assert.ok(target, `${message}: focus target is missing`);
+  try {
+    await page.waitForFunction(element => document.activeElement === element, target, { timeout: 3000 });
+  } catch {
+    assert.equal(await locator.evaluate(element => element === document.activeElement), true, message);
+  } finally {
+    await target.dispose();
+  }
+}
+
 async function assertNoHorizontalOverflow(page, label) {
   const dimensions = await page.evaluate(() => ({
     viewport: window.innerWidth,
@@ -357,7 +372,7 @@ async function assertServerErrorNavigationPreservesWorkspace(page) {
     assert.match(await dialog.textContent(), /Unable to read account settings/);
     await dialog.getByRole("button", { name: "Close", exact: true }).last().click();
     await dialog.waitFor({ state: "detached" });
-    assert.equal(await accountLink.evaluate(element => element === document.activeElement), true, "closing the error dialog did not restore focus");
+    await assertFocusReturns(page, accountLink, "closing the error dialog did not restore focus");
   } finally {
     await page.unroute("**/settings/account", routeHandler);
   }
@@ -386,7 +401,7 @@ async function assertServerErrorTaskPanelPreservesWorkspace(page) {
     assert.equal(await page.locator("[data-task-panel]").count(), 0, "failed task left an empty task panel behind");
     assert.equal(await dialog.getByRole("button", { name: "Reopen", exact: true }).count(), 1, "task failure did not offer a safe GET retry");
     await dialog.getByRole("button", { name: "Close", exact: true }).last().click();
-    assert.equal(await taskLink.evaluate(element => element === document.activeElement), true, "task error did not restore focus");
+    await assertFocusReturns(page, taskLink, "task error did not restore focus");
   } finally {
     await page.unroute("**/resources/variables/new", routeHandler);
   }
@@ -416,7 +431,7 @@ async function assertNativePostServerErrorPreservesWorkspace(page) {
     assert.equal(await dialog.getByRole("button", { name: "Submit again", exact: true }).count(), 0, "write failure offered an unsafe automatic resubmission");
     assert.equal(await dialog.getByRole("button", { name: "Refresh current page", exact: true }).count(), 1, "write failure did not offer a safe state refresh");
     await dialog.getByRole("button", { name: "Close", exact: true }).last().click();
-    assert.equal(await pinButton.evaluate(element => element === document.activeElement), true, "native POST error did not restore focus");
+    await assertFocusReturns(page, pinButton, "native POST error did not restore focus");
   } finally {
     await page.unroute("**/monitor/applications/*/pin", routeHandler);
   }
@@ -458,7 +473,7 @@ async function assertAsyncPostServerErrorPreservesWorkspace(page) {
     assert.equal(await page.locator("[data-updates-page]").count(), 1, "async POST server error replaced the updates page");
     assert.match(await dialog.textContent(), /Unable to check for updates/);
     await dialog.getByRole("button", { name: "Close", exact: true }).last().click();
-    assert.equal(await checkButton.evaluate(element => element === document.activeElement), true, "async POST error did not restore focus");
+    await assertFocusReturns(page, checkButton, "async POST error did not restore focus");
     await page.locator("[data-update-source-close]").last().click();
   } finally {
     await page.unroute("**/settings/updates/check", routeHandler);
