@@ -1762,7 +1762,7 @@ async function assertExternalInterfaces(page, fixture) {
     const parentDirectory = page.getByRole("link", { name: "Back to parent folder" });
     assert.equal((await parentDirectory.textContent()).trim(), "", "parent-directory control should be icon-only");
     await Promise.all([
-      page.waitForURL(hostFilesWorkspaceURL),
+      page.waitForURL(matchesFixtureURL(hostFilesWorkspaceURL)),
       parentDirectory.click(),
     ]);
     const uploadTaskRequests = [];
