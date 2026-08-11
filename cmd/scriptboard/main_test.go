@@ -37,3 +37,19 @@ func TestHelpDoesNotDocumentRemovedManagedRootShortcuts(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateNetworkConfigurationAllowsConfiguredNonLoopbackHTTP(t *testing.T) {
+	for _, address := range []string{"0.0.0.0:8787", "192.168.1.20:8787", "[::]:8787"} {
+		t.Run(address, func(t *testing.T) {
+			if err := validateNetworkConfiguration(address, "", ""); err != nil {
+				t.Fatalf("validateNetworkConfiguration(%q) returned %v", address, err)
+			}
+		})
+	}
+}
+
+func TestValidateNetworkConfigurationRejectsMalformedListenAddress(t *testing.T) {
+	if err := validateNetworkConfiguration("0.0.0.0", "", ""); err == nil {
+		t.Fatal("validateNetworkConfiguration accepted an address without a port")
+	}
+}

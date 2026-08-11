@@ -314,7 +314,7 @@ func serveContext(runContext context.Context, arguments []string) error {
 	if err != nil {
 		return err
 	}
-	if err := requireSafeNetwork(loaded.Listen, loaded.TLSCert, loaded.TLSKey, loaded.TrustedProxies); err != nil {
+	if err := validateNetworkConfiguration(loaded.Listen, loaded.TLSCert, loaded.TLSKey); err != nil {
 		return err
 	}
 	updateShutdown := make(chan struct{}, 1)
@@ -422,33 +422,24 @@ func validateConfig(arguments []string) error {
 	if loaded.StateRoot == "" {
 		return errors.New("State Root 不能为空")
 	}
-	if err := requireSafeNetwork(loaded.Listen, loaded.TLSCert, loaded.TLSKey, loaded.TrustedProxies); err != nil {
+	if err := validateNetworkConfiguration(loaded.Listen, loaded.TLSCert, loaded.TLSKey); err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stdout, "配置有效\nState Root: %s\nListen: %s\n", loaded.StateRoot, loaded.Listen)
 	return nil
 }
 
-func requireSafeNetwork(address, certificate, key string, _ []string) error {
+func validateNetworkConfiguration(address, certificate, key string) error {
 	if (certificate == "") != (key == "") {
 		return errors.New("TLS 证书与私钥必须同时配置")
+	}
+	if _, _, err := net.SplitHostPort(address); err != nil {
+		return fmt.Errorf("无效监听地址 %q: %w", address, err)
 	}
 	if certificate != "" {
 		if _, err := tls.LoadX509KeyPair(certificate, key); err != nil {
 			return fmt.Errorf("TLS 证书或私钥无效: %w", err)
 		}
-		return nil
-	}
-	host, _, err := net.SplitHostPort(address)
-	if err != nil {
-		return fmt.Errorf("无效监听地址 %q: %w", address, err)
-	}
-	if host == "localhost" {
-		return nil
-	}
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
-		return errors.New("明文 HTTP 只能监听回环地址")
 	}
 	return nil
 }
