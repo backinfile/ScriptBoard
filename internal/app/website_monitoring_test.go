@@ -176,7 +176,26 @@ func TestWebsiteMonitorConfigurationsExportSelectedAndImportSelected(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !bytes.Contains(newPage, []byte(`name="request_headers"`)) || !bytes.Contains(newPage, []byte(`maxlength="16384"`)) {
+		t.Fatalf("new monitor form missing custom request headers field: %s", newPage)
+	}
 	csrfToken := formToken(t, newPage)
+	invalidResponse, err := client.PostForm(serverURL+"/monitor/websites", url.Values{
+		"csrf_token": {csrfToken}, "name": {"Invalid headers"}, "scope": {"external"}, "kind": {"http"},
+		"url": {"https://invalid-headers.example/"}, "frequency_seconds": {"60"}, "timeout_seconds": {"10"},
+		"http_method": {"GET"}, "request_headers": {"Content-Length: 10"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidPage, err := io.ReadAll(invalidResponse.Body)
+	_ = invalidResponse.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if invalidResponse.StatusCode != http.StatusUnprocessableEntity || !bytes.Contains(invalidPage, []byte(`name="request_headers"`)) {
+		t.Fatalf("invalid headers status=%d body=%s", invalidResponse.StatusCode, invalidPage)
+	}
 	create := func(name, target string) {
 		t.Helper()
 		response, postErr := client.PostForm(serverURL+"/monitor/websites", url.Values{
@@ -184,6 +203,7 @@ func TestWebsiteMonitorConfigurationsExportSelectedAndImportSelected(t *testing.
 			"url": {target}, "frequency_seconds": {"60"}, "timeout_seconds": {"10"},
 			"http_method": {"POST"}, "http_content_type": {"application/json"},
 			"http_body": {`{"probe":"ready"}`}, "http_success_mode": {"exact"},
+			"request_headers":   {"Authorization: Bearer secret\nX-Tenant: north"},
 			"expected_statuses": {"200;204"}, "response_keyword": {"ready"},
 			"follow_redirects": {"1"}, "verify_tls": {"1"},
 		})
@@ -251,6 +271,10 @@ func TestWebsiteMonitorConfigurationsExportSelectedAndImportSelected(t *testing.
 		t.Fatalf("exported monitors=%#v, want one selected monitor", bundle["monitors"])
 	}
 	record := monitors[0].(map[string]any)
+	headers, headersOK := record["request_headers"].([]any)
+	if !headersOK || len(headers) != 2 {
+		t.Fatalf("exported request headers = %#v", record["request_headers"])
+	}
 	if record["name"] != "导出目标" || record["http_body"] != `{"probe":"ready"}` {
 		t.Fatalf("exported configuration lost selected settings: %#v", record)
 	}
