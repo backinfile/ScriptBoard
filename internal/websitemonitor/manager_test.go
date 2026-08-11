@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -937,7 +936,10 @@ func (p *sequenceProbe) Check(_ context.Context, _ Config) Evidence {
 
 func newTestManager(t *testing.T, options Options) *Manager {
 	t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "monitor.db"))
+	// Windows CI can retain the SQLite file handle briefly after Close, making
+	// TempDir cleanup fail even though the manager test itself passed. These
+	// tests do not exercise persistence, so keep each test database in memory.
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}

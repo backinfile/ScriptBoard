@@ -1245,6 +1245,9 @@ async function assertExternalInterfaces(page, fixture) {
     hostFileURL(fixture.baseURL, endpoint, fixtureHostPath(...relative.split("/")), parameters);
   const fixtureFileHref = (endpoint, relative, parameters = {}) =>
     hostFileHref(endpoint, fixtureHostPath(...relative.split("/")), parameters);
+  // GitHub Windows runners may serialize the same temporary path with either
+  // a literal "~" or "%7E". Compare decoded query entries so a successful
+  // navigation is not mistaken for a timeout.
   const matchesFixtureURL = expected => current => {
     const target = new URL(expected);
     return current.origin === target.origin && current.pathname === target.pathname &&
@@ -1392,7 +1395,7 @@ async function assertExternalInterfaces(page, fixture) {
     await saveSnapshot(page, "script-preview");
 
     await Promise.all([
-      page.waitForURL(fixtureFilesURL("automation")),
+      page.waitForURL(matchesFixtureURL(fixtureFilesURL("automation"))),
       page.locator(".task-back").click(),
     ]);
     const executableScriptRow = page.locator(".file-table tbody tr").filter({ hasText: "weekly-system-check.ps1" });
@@ -1814,7 +1817,7 @@ async function assertExternalInterfaces(page, fixture) {
     await resetQuickAccess.waitFor({ state: "visible" });
     assert.notEqual(await resetQuickAccess.getAttribute("open"), null, "Quick access did not open after the Files tab was clicked");
     await Promise.all([
-      page.waitForURL(fixtureFilesURL("automation")),
+      page.waitForURL(matchesFixtureURL(fixtureFilesURL("automation"))),
       resetQuickAccess.getByRole("link", { name: /automation/ }).click(),
     ]);
     const shortcutDestinationQuickAccess = page.locator("[data-file-quick-access]");
