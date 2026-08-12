@@ -207,6 +207,31 @@ func TestHostSecurityUpdatesPageIsReadOnlyAndShowsBoundedProviderInventory(t *te
 	}
 }
 
+func TestHostSecurityBaselineExplainsEffectiveChecksWithoutMutationControls(t *testing.T) {
+	t.Parallel()
+	service := &securityFixtureService{
+		capabilities: hostsecurity.Capabilities{
+			OS: "linux", Hostname: "baseline-01", CollectedAt: time.Now().UTC(), AdministratorKnown: true,
+			Firewall: hostsecurity.Component{Installed: true, Running: true}, SSH: hostsecurity.Component{Installed: true, Running: true},
+			SSHLogin: hostsecurity.SSHLoginSurface{PublicKeyAuthentication: "yes", PasswordAuthentication: "yes", RootLogin: "prohibit-password", EmptyPasswords: "no", MaxAuthTries: 3},
+			Fail2Ban: hostsecurity.Component{Installed: true, Running: true},
+		},
+		updateReport: hostsecurity.SecurityUpdateReport{Supported: true, Provider: "APT package metadata", Updates: []hostsecurity.SecurityUpdate{{Identifier: "openssl"}}},
+	}
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: filepath.Join(t.TempDir(), "state"), HostSecurity: service})
+	page := getSecurityPage(t, client, serverURL+"/monitor/security?tab=baseline")
+	for _, expected := range [][]byte{[]byte("Host security baseline"), []byte("77 / 100"), []byte("SSH password authentication"), []byte("OS security updates"), []byte("Web control plane least privilege"), []byte("not a compliance certification")} {
+		if !bytes.Contains(page, expected) {
+			t.Fatalf("security baseline page missing %q: %s", expected, page)
+		}
+	}
+	for _, forbidden := range [][]byte{[]byte("Apply baseline"), []byte("Fix all"), []byte(`method="post" action="/monitor/security/baseline`)} {
+		if bytes.Contains(page, forbidden) {
+			t.Fatalf("read-only baseline exposes mutation %q: %s", forbidden, page)
+		}
+	}
+}
+
 func TestWindowsFirewallRulesSupportFilteringAndPagination(t *testing.T) {
 	t.Parallel()
 	rules := make([]hostsecurity.FirewallRule, 25)
