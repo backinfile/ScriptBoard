@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -421,7 +422,13 @@ func (runtime *assistantRuntimeCoordinator) ExecuteWithImages(ctx context.Contex
 	}
 	runtime.mu.Unlock()
 
-	configurationIdentity := strings.Join([]string{managedRuntime.Version, conversation.ModelID, strconv.FormatInt(model.UpdatedAt.UnixNano(), 10), conversation.CapabilityProfile, conversation.ThinkingLevel}, "\x00")
+	brokerAuthorization, _ := privilegebroker.AuthorizationFromContext(ctx)
+	brokerSessionIdentity := ""
+	if brokerAuthorization.SessionToken != "" {
+		digest := sha256.Sum256([]byte(brokerAuthorization.SessionToken))
+		brokerSessionIdentity = hex.EncodeToString(digest[:])
+	}
+	configurationIdentity := strings.Join([]string{managedRuntime.Version, conversation.ModelID, strconv.FormatInt(model.UpdatedAt.UnixNano(), 10), conversation.CapabilityProfile, conversation.ThinkingLevel, brokerSessionIdentity}, "\x00")
 	session, exists := runtime.supervisor.Session(conversation.ID)
 	started := false
 	runtime.mu.Lock()
@@ -470,7 +477,8 @@ func (runtime *assistantRuntimeCoordinator) ExecuteWithImages(ctx context.Contex
 				return errors.New("Assistant Tool Broker is unavailable")
 			}
 			processBroker, err = broker.Start(toolbroker.SessionBinding{
-				RuntimeID: managedRuntime.Version, UserID: actor.UserID, ConversationID: conversation.ID, ExpiresAt: capabilityExpiry,
+				RuntimeID: managedRuntime.Version, UserID: actor.UserID, ConversationID: conversation.ID,
+				PrivilegedSessionToken: brokerAuthorization.SessionToken, ExpiresAt: capabilityExpiry,
 			})
 			if err != nil {
 				closeContext, cancel := context.WithTimeout(context.Background(), 2*time.Second)

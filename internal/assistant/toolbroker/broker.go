@@ -73,6 +73,7 @@ type Response struct {
 
 type SessionBinding struct {
 	RuntimeID, UserID, ConversationID string
+	PrivilegedSessionToken            string
 	ExpiresAt                         time.Time
 }
 

@@ -1309,7 +1309,7 @@ func (a *App) assistantResourceSearch(response http.ResponseWriter, request *htt
 		_ = json.NewEncoder(response).Encode(map[string]any{"resources": []assistantResourceView{}})
 		return
 	}
-	resources, err := a.assistantHostPathResources(query)
+	resources, err := a.assistantHostPathResources(request.Context(), query)
 	if err != nil {
 		http.Error(response, "Unable to search host path", http.StatusBadRequest)
 		return
@@ -1319,9 +1319,9 @@ func (a *App) assistantResourceSearch(response http.ResponseWriter, request *htt
 	_ = json.NewEncoder(response).Encode(map[string]any{"resources": resources})
 }
 
-func (a *App) assistantHostPathResources(query string) ([]assistantResourceView, error) {
+func (a *App) assistantHostPathResources(ctx context.Context, query string) ([]assistantResourceView, error) {
 	query = filepath.Clean(query)
-	if roots, err := a.files.Roots(); err == nil {
+	if roots, err := a.hostRoots(ctx); err == nil {
 		for _, root := range roots {
 			if hostfiles.ComparisonKey(root.Path) == hostfiles.ComparisonKey(query) {
 				return []assistantResourceView{{Kind: "directory", ID: root.Name, Label: root.Name, Detail: query, Icon: "folder", Category: "files"}}, nil
@@ -1329,7 +1329,7 @@ func (a *App) assistantHostPathResources(query string) ([]assistantResourceView,
 		}
 	}
 	parent, nameQuery := filepath.Dir(query), strings.ToLower(filepath.Base(query))
-	entries, err := a.files.List(parent)
+	entries, err := a.hostList(ctx, parent)
 	if err != nil {
 		return nil, err
 	}
@@ -1341,7 +1341,7 @@ func (a *App) assistantHostPathResources(query string) ([]assistantResourceView,
 		if nameQuery != "." && nameQuery != "" && !strings.Contains(strings.ToLower(entry.Name), nameQuery) {
 			continue
 		}
-		resource, found := a.assistantHostEntryResource(entry)
+		resource, found := a.assistantHostEntryResource(ctx, entry)
 		if !found {
 			continue
 		}
@@ -1353,8 +1353,8 @@ func (a *App) assistantHostPathResources(query string) ([]assistantResourceView,
 	return resources, nil
 }
 
-func (a *App) assistantHostEntryResource(entry hostfiles.Entry) (assistantResourceView, bool) {
-	roots, err := a.files.Roots()
+func (a *App) assistantHostEntryResource(ctx context.Context, entry hostfiles.Entry) (assistantResourceView, bool) {
+	roots, err := a.hostRoots(ctx)
 	if err != nil {
 		return assistantResourceView{}, false
 	}
@@ -1392,7 +1392,7 @@ func (a *App) assistantHostEntryResource(entry hostfiles.Entry) (assistantResour
 func (a *App) assistantResourceCatalog(request *http.Request, role userRole) []assistantResourceView {
 	resources := make([]assistantResourceView, 0, 40)
 	if roleAllows(role, permissionReadFiles) && a.files != nil {
-		if roots, err := a.files.Roots(); err == nil {
+		if roots, err := a.hostRoots(request.Context()); err == nil {
 			fileCount := 0
 			directoryCount := 0
 			for _, root := range roots {
@@ -1400,7 +1400,7 @@ func (a *App) assistantResourceCatalog(request *http.Request, role userRole) []a
 				if fileCount >= 8 && directoryCount >= 8 {
 					continue
 				}
-				entries, listErr := a.files.List(root.Path)
+				entries, listErr := a.hostList(request.Context(), root.Path)
 				if listErr != nil {
 					continue
 				}
@@ -1565,11 +1565,11 @@ func (a *App) assistantContextReferencesFromForm(request *http.Request, role use
 			if persistedExists {
 				resource = assistantResourceView{Kind: persisted.Kind, ID: persisted.StableID, Label: persisted.Label}
 			} else if kinds[index] == "file" || kinds[index] == "directory" {
-				entry, found := a.assistantHostEntryByStableID(kinds[index], strings.TrimSpace(ids[index]))
+				entry, found := a.assistantHostEntryByStableID(request.Context(), kinds[index], strings.TrimSpace(ids[index]))
 				if !found {
 					return nil, fmt.Errorf("%w: unknown context reference", assistant.ErrInvalidInput)
 				}
-				resource, found = a.assistantHostEntryResource(entry)
+				resource, found = a.assistantHostEntryResource(request.Context(), entry)
 				if !found {
 					return nil, fmt.Errorf("%w: unknown context reference", assistant.ErrInvalidInput)
 				}

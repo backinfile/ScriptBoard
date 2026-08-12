@@ -300,7 +300,7 @@ func (executor *assistantToolExecutor) planPerformUIAction(ctx context.Context, 
 		if fileErr != nil {
 			return assistantToolPlan{}, errAssistantToolNotFound
 		}
-		document, fileErr := executor.app.files.ReadText(relative, 1<<20)
+		document, fileErr := executor.app.hostReadText(ctx, relative, 1<<20)
 		if fileErr != nil {
 			return assistantToolPlan{}, fileErr
 		}
