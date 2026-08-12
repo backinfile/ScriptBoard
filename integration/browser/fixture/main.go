@@ -18,6 +18,7 @@ import (
 	"scriptboard/internal/assistant/runtimehost"
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/logstream"
+	"scriptboard/internal/mysqlmanager"
 	"scriptboard/internal/privilegebroker"
 	"scriptboard/internal/runnerhost"
 )
@@ -212,6 +213,7 @@ func main() {
 		applicationConfig.PasskeyStore = privilegebroker.NewRemotePasskey(brokerClient)
 		applicationConfig.RemoteWebsiteService = privilegebroker.NewRemoteWebsite(brokerClient)
 		applicationConfig.ProviderCredentials = privilegebroker.NewProviderCredentials(brokerClient)
+		applicationConfig.MySQLBackend = privilegebroker.NewMySQLBackend(brokerClient, mysqlmanager.ToolSettings{DumpExecutable: "mysqldump", ClientExecutable: "mysql"})
 		applicationConfig.AssistantProcessLauncher = runtimehost.NewClientLauncher(runtimehost.Dial(assistantEndpoint))
 		applicationConfig.RunnerProcessLauncher = runnerhost.NewClientLauncher(runnerhost.Dial(runnerEndpoint))
 	}
