@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"time"
 
 	"scriptboard/internal/mfa"
@@ -55,6 +56,9 @@ func (remote *RemoteMFA) ConfirmContext(ctx context.Context, userID, code string
 }
 
 func (remote *RemoteMFA) Verify(userID, code string) (bool, error) {
+	if strings.TrimSpace(code) == "" {
+		return false, nil
+	}
 	response, err := remote.call(context.Background(), operationMFAVerify, userID, "", code, false)
 	return response.MFAVerified, err
 }
