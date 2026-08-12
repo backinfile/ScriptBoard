@@ -121,6 +121,18 @@ func TestExternalHostFilesLogProtocolRejectsGenericAndSessionFields(t *testing.T
 	}
 }
 
+func TestScheduledHostFilesProtocolIsSessionlessAndFixed(t *testing.T) {
+	valid := wireRequest{Version: ProtocolVersion, Operation: operationHostFilesPrepareSchedule, RequestID: "scheduled-host-files-test",
+		HostFiles: &hostFilesWireRequest{ScheduleID: "schedule-1"}}
+	if err := validateWireRequest(valid); err != nil {
+		t.Fatalf("valid scheduled Host Files request rejected: %v", err)
+	}
+	valid.SessionToken = strings.Repeat("s", 32)
+	if err := validateWireRequest(valid); err == nil {
+		t.Fatal("scheduled Host Files request accepted a reusable user session")
+	}
+}
+
 func TestHostFilesStagesUploadsAndStreamsLargeDownloadsThroughBroker(t *testing.T) {
 	root := t.TempDir()
 	hostRoot := filepath.Join(root, "host")

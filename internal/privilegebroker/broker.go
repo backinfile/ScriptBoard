@@ -33,82 +33,84 @@ import (
 )
 
 const (
-	ProtocolVersion                 = 1
-	MaxRequestBytes                 = 128 << 10
-	MaxResponseBytes                = 5 << 20
-	capabilityLifetime              = 30 * time.Second
-	maxCapabilities                 = 1024
-	maxMFAVerifyFailureUsers        = 4096
-	maxMFAVerifyFailures            = 5
-	mfaVerifyFailureWindow          = 5 * time.Minute
-	operationAuthorize              = "authorize"
-	operationExecute                = "execute"
-	operationCheckpointVerify       = "checkpoint_verify"
-	operationCheckpointWrite        = "checkpoint_write"
-	operationMFAStatus              = "mfa_status"
-	operationMFABegin               = "mfa_begin"
-	operationMFAConfirm             = "mfa_confirm"
-	operationMFAVerify              = "mfa_verify"
-	operationMFAReset               = "mfa_reset"
-	operationPasskeyUser            = "passkey_user"
-	operationPasskeyList            = "passkey_list"
-	operationPasskeyAdd             = "passkey_add"
-	operationPasskeyUpdate          = "passkey_update"
-	operationPasskeyDelete          = "passkey_delete"
-	operationPasskeyReset           = "passkey_reset"
-	operationRemoteWebsiteStore     = "remote_website_store"
-	operationRemoteWebsiteFetch     = "remote_website_fetch"
-	operationRemoteWebsiteDelete    = "remote_website_delete"
-	operationProviderStore          = "provider_store"
-	operationProviderDelete         = "provider_delete"
-	operationProviderStart          = "provider_start"
-	operationProviderStop           = "provider_stop"
-	operationMySQLStore             = "mysql_store"
-	operationMySQLDelete            = "mysql_delete"
-	operationMySQLTest              = "mysql_test"
-	operationMySQLDatabases         = "mysql_databases"
-	operationMySQLStatus            = "mysql_status"
-	operationMySQLExists            = "mysql_exists"
-	operationMySQLCreate            = "mysql_create"
-	operationMySQLReplace           = "mysql_replace"
-	operationMySQLDrop              = "mysql_drop"
-	operationMySQLDump              = "mysql_dump"
-	operationMySQLImport            = "mysql_import"
-	operationMySQLSetTools          = "mysql_set_tools"
-	operationMySQLTestTools         = "mysql_test_tools"
-	operationMySQLCancel            = "mysql_cancel"
-	operationHostFilesRoots         = "host_files_roots"
-	operationHostFilesList          = "host_files_list"
-	operationHostFilesInfo          = "host_files_info"
-	operationHostFilesReadText      = "host_files_read_text"
-	operationHostFilesCanonical     = "host_files_canonical"
-	operationHostFilesAvailable     = "host_files_available_name"
-	operationHostFilesMkdir         = "host_files_mkdir"
-	operationHostFilesToggleExec    = "host_files_toggle_execute"
-	operationHostFilesTrash         = "host_files_trash"
-	operationHostFilesRestore       = "host_files_restore"
-	operationHostFilesPurge         = "host_files_purge"
-	operationHostFilesMove          = "host_files_move"
-	operationHostFilesReadChunk     = "host_files_read_chunk"
-	operationHostFilesOpenRead      = "host_files_open_read"
-	operationHostFilesCloseRead     = "host_files_close_read"
-	operationHostFilesUpload        = "host_files_upload"
-	operationHostFilesSaveText      = "host_files_save_text"
-	operationHostFilesRollback      = "host_files_rollback"
-	operationHostFilesRemove        = "host_files_remove"
-	operationHostFilesPrepare       = "host_files_prepare"
-	operationHostFilesSameFS        = "host_files_same_filesystem"
-	operationHostFilesAppend        = "host_files_append"
-	operationHostFilesLogOpen       = "host_files_log_open"
-	operationHostFilesLogHistory    = "host_files_log_history"
-	operationHostFilesLogFollow     = "host_files_log_follow"
-	operationHostFilesLogClose      = "host_files_log_close"
-	operationHostFilesCrossMove     = "host_files_cross_move"
-	operationHostFilesPrepareAppend = "host_files_prepare_append"
-	operationHostFilesExternalLog   = "host_files_external_log"
-	statusOK                        = "ok"
-	statusError                     = "error"
-	defaultCallDeadline             = 35 * time.Second
+	ProtocolVersion                   = 1
+	MaxRequestBytes                   = 128 << 10
+	MaxResponseBytes                  = 5 << 20
+	capabilityLifetime                = 30 * time.Second
+	maxCapabilities                   = 1024
+	maxMFAVerifyFailureUsers          = 4096
+	maxMFAVerifyFailures              = 5
+	mfaVerifyFailureWindow            = 5 * time.Minute
+	operationAuthorize                = "authorize"
+	operationExecute                  = "execute"
+	operationCheckpointVerify         = "checkpoint_verify"
+	operationCheckpointWrite          = "checkpoint_write"
+	operationMFAStatus                = "mfa_status"
+	operationMFABegin                 = "mfa_begin"
+	operationMFAConfirm               = "mfa_confirm"
+	operationMFAVerify                = "mfa_verify"
+	operationMFAReset                 = "mfa_reset"
+	operationPasskeyUser              = "passkey_user"
+	operationPasskeyList              = "passkey_list"
+	operationPasskeyAdd               = "passkey_add"
+	operationPasskeyUpdate            = "passkey_update"
+	operationPasskeyDelete            = "passkey_delete"
+	operationPasskeyReset             = "passkey_reset"
+	operationRemoteWebsiteStore       = "remote_website_store"
+	operationRemoteWebsiteFetch       = "remote_website_fetch"
+	operationRemoteWebsiteDelete      = "remote_website_delete"
+	operationProviderStore            = "provider_store"
+	operationProviderDelete           = "provider_delete"
+	operationProviderStart            = "provider_start"
+	operationProviderStop             = "provider_stop"
+	operationMySQLStore               = "mysql_store"
+	operationMySQLDelete              = "mysql_delete"
+	operationMySQLTest                = "mysql_test"
+	operationMySQLDatabases           = "mysql_databases"
+	operationMySQLStatus              = "mysql_status"
+	operationMySQLExists              = "mysql_exists"
+	operationMySQLCreate              = "mysql_create"
+	operationMySQLReplace             = "mysql_replace"
+	operationMySQLDrop                = "mysql_drop"
+	operationMySQLDump                = "mysql_dump"
+	operationMySQLImport              = "mysql_import"
+	operationMySQLSetTools            = "mysql_set_tools"
+	operationMySQLTestTools           = "mysql_test_tools"
+	operationMySQLCancel              = "mysql_cancel"
+	operationMySQLBackupChunk         = "mysql_backup_chunk"
+	operationHostFilesRoots           = "host_files_roots"
+	operationHostFilesList            = "host_files_list"
+	operationHostFilesInfo            = "host_files_info"
+	operationHostFilesReadText        = "host_files_read_text"
+	operationHostFilesCanonical       = "host_files_canonical"
+	operationHostFilesAvailable       = "host_files_available_name"
+	operationHostFilesMkdir           = "host_files_mkdir"
+	operationHostFilesToggleExec      = "host_files_toggle_execute"
+	operationHostFilesTrash           = "host_files_trash"
+	operationHostFilesRestore         = "host_files_restore"
+	operationHostFilesPurge           = "host_files_purge"
+	operationHostFilesMove            = "host_files_move"
+	operationHostFilesReadChunk       = "host_files_read_chunk"
+	operationHostFilesOpenRead        = "host_files_open_read"
+	operationHostFilesCloseRead       = "host_files_close_read"
+	operationHostFilesUpload          = "host_files_upload"
+	operationHostFilesSaveText        = "host_files_save_text"
+	operationHostFilesRollback        = "host_files_rollback"
+	operationHostFilesRemove          = "host_files_remove"
+	operationHostFilesPrepare         = "host_files_prepare"
+	operationHostFilesSameFS          = "host_files_same_filesystem"
+	operationHostFilesAppend          = "host_files_append"
+	operationHostFilesLogOpen         = "host_files_log_open"
+	operationHostFilesLogHistory      = "host_files_log_history"
+	operationHostFilesLogFollow       = "host_files_log_follow"
+	operationHostFilesLogClose        = "host_files_log_close"
+	operationHostFilesCrossMove       = "host_files_cross_move"
+	operationHostFilesPrepareAppend   = "host_files_prepare_append"
+	operationHostFilesExternalLog     = "host_files_external_log"
+	operationHostFilesPrepareSchedule = "host_files_prepare_schedule"
+	statusOK                          = "ok"
+	statusError                       = "error"
+	defaultCallDeadline               = 35 * time.Second
 )
 
 type Action string
@@ -262,6 +264,7 @@ type MySQLService interface {
 	ValidateInstanceID(context.Context, string) error
 	CancelOperation(context.Context, string) error
 	ArtifactRoot(context.Context) (string, error)
+	ReadBackupChunk(context.Context, string, int64, int) ([]byte, int64, string, error)
 }
 
 type HostFilesService interface {
@@ -294,6 +297,7 @@ type HostFilesService interface {
 	StartCrossFilesystemMove(context.Context, string, string, string, string, string) (hostfiles.FileOperation, error)
 	PrepareAppend(context.Context, string) (string, error)
 	AppendExternalLog(context.Context, string, string, string, string) (Actor, string, error)
+	PrepareSchedule(context.Context, string) (hostFilesPrepared, error)
 }
 
 type ServerOptions struct {
@@ -474,7 +478,7 @@ func (server *Server) handle(connection net.Conn) {
 		response = server.providerOperation(request)
 	case operationMySQLStore, operationMySQLDelete, operationMySQLTest, operationMySQLDatabases, operationMySQLStatus,
 		operationMySQLExists, operationMySQLCreate, operationMySQLReplace, operationMySQLDrop, operationMySQLDump,
-		operationMySQLImport, operationMySQLSetTools, operationMySQLTestTools, operationMySQLCancel:
+		operationMySQLImport, operationMySQLSetTools, operationMySQLTestTools, operationMySQLCancel, operationMySQLBackupChunk:
 		_ = connection.SetDeadline(server.now().Add(2 * time.Hour))
 		operationContext, cancelOperation := context.WithCancel(context.Background())
 		peerClosed := make(chan struct{})
@@ -496,6 +500,8 @@ func (server *Server) handle(connection net.Conn) {
 		response = server.hostFilesOperation(request)
 	case operationHostFilesExternalLog:
 		response = server.externalHostFilesLogOperation(request)
+	case operationHostFilesPrepareSchedule:
+		response = server.hostFilesScheduleOperation(request)
 	default:
 		response = wireResponse{Status: statusError, ErrorCode: "operation_forbidden", Message: "operation is not supported"}
 	}
@@ -1172,6 +1178,9 @@ func validateWireRequest(request wireRequest) error {
 	if request.Operation == operationHostFilesExternalLog {
 		return validateExternalHostFilesLogRequest(request)
 	}
+	if request.Operation == operationHostFilesPrepareSchedule {
+		return validateHostFilesScheduleRequest(request)
+	}
 	if isHostFilesOperation(request.Operation) {
 		return validateHostFilesRequest(request)
 	}
@@ -1404,7 +1413,7 @@ func isMySQLOperation(operation string) bool {
 	switch operation {
 	case operationMySQLStore, operationMySQLDelete, operationMySQLTest, operationMySQLDatabases, operationMySQLStatus,
 		operationMySQLExists, operationMySQLCreate, operationMySQLReplace, operationMySQLDrop, operationMySQLDump,
-		operationMySQLImport, operationMySQLSetTools, operationMySQLTestTools, operationMySQLCancel:
+		operationMySQLImport, operationMySQLSetTools, operationMySQLTestTools, operationMySQLCancel, operationMySQLBackupChunk:
 		return true
 	default:
 		return false

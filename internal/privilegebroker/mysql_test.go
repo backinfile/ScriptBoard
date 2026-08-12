@@ -1,6 +1,7 @@
 package privilegebroker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net"
@@ -49,6 +50,11 @@ func TestMySQLUsesTypedAuthorizedBrokerOperations(t *testing.T) {
 	}
 	if _, err := backend.Dump(authorized, instance, "application", destination); err != nil {
 		t.Fatal(err)
+	}
+	var downloaded bytes.Buffer
+	filename, size, err := backend.DownloadBackup(authorized, "backup-one", &downloaded)
+	if err != nil || filename != "fixture.sql.gz" || size != 6 || downloaded.String() != "backup" {
+		t.Fatalf("Broker backup download = %q %d %q, %v", filename, size, downloaded.String(), err)
 	}
 	if service.password != "secret" || service.instance.Host != instance.Host || service.dumps != 1 || service.tests != 1 {
 		t.Fatalf("typed MySQL fields were not preserved: %+v", service)
@@ -209,6 +215,9 @@ func (*fixtureMySQLService) ValidateInstanceID(context.Context, string) error { 
 func (*fixtureMySQLService) CancelOperation(context.Context, string) error    { return nil }
 func (service *fixtureMySQLService) ArtifactRoot(context.Context) (string, error) {
 	return service.artifactRoot, nil
+}
+func (*fixtureMySQLService) ReadBackupChunk(context.Context, string, int64, int) ([]byte, int64, string, error) {
+	return []byte("backup"), 6, "fixture.sql.gz", nil
 }
 
 var _ MySQLService = (*fixtureMySQLService)(nil)

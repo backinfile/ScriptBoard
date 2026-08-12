@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -23,6 +25,9 @@ type mysqlWireRequest struct {
 	OperationID string                           `json:"operation_id,omitempty"`
 	Create      mysqlmanager.CreateDatabaseInput `json:"create"`
 	Tools       mysqlmanager.ToolSettings        `json:"tools"`
+	BackupID    string                           `json:"backup_id,omitempty"`
+	Offset      int64                            `json:"offset,omitempty"`
+	Limit       int                              `json:"limit,omitempty"`
 }
 
 type mysqlWireResponse struct {
@@ -32,6 +37,9 @@ type mysqlWireResponse struct {
 	Exists         bool                         `json:"exists,omitempty"`
 	Dump           *mysqlmanager.DumpResult     `json:"dump,omitempty"`
 	ToolStatus     *mysqlmanager.ToolStatus     `json:"tool_status,omitempty"`
+	Content        []byte                       `json:"content,omitempty"`
+	TotalBytes     int64                        `json:"total_bytes,omitempty"`
+	Filename       string                       `json:"filename,omitempty"`
 }
 
 type brokerMySQLService struct {
@@ -86,6 +94,37 @@ func (service *brokerMySQLService) ArtifactRoot(ctx context.Context) (string, er
 		return "", errors.New("configured MySQL backup root is invalid")
 	}
 	return filepath.Clean(configured), nil
+}
+
+func (service *brokerMySQLService) ReadBackupChunk(ctx context.Context, id string, offset int64, limit int) ([]byte, int64, string, error) {
+	var path, database string
+	var total int64
+	if err := service.db.QueryRowContext(ctx, "SELECT path, size_bytes, database_name FROM mysql_backups WHERE id = ?", id).Scan(&path, &total, &database); err != nil {
+		return nil, 0, "", errors.New("MySQL backup is unavailable")
+	}
+	root, err := service.ArtifactRoot(ctx)
+	if err != nil || !pathWithinRoot(root, path) {
+		return nil, 0, "", errors.New("MySQL backup path is outside the configured root")
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() != total {
+		return nil, 0, "", errors.New("MySQL backup file changed")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, 0, "", err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(info, opened) {
+		return nil, 0, "", errors.New("MySQL backup file changed while opening")
+	}
+	buffer := make([]byte, min(limit, int(max(int64(0), total-offset))))
+	read, readErr := file.ReadAt(buffer, offset)
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return nil, 0, "", readErr
+	}
+	return buffer[:read], total, database + "-" + id + ".sql.gz", nil
 }
 
 func (service *brokerMySQLService) SetTools(ctx context.Context, tools mysqlmanager.ToolSettings) error {
@@ -185,7 +224,7 @@ func (server *Server) mysqlOperation(parent context.Context, request wireRequest
 	}
 	ctx, cancel := context.WithTimeout(parent, 2*time.Hour)
 	defer cancel()
-	if request.Operation != operationMySQLDelete && request.Operation != operationMySQLTestTools && request.Operation != operationMySQLSetTools && request.Operation != operationMySQLCancel {
+	if request.Operation != operationMySQLDelete && request.Operation != operationMySQLTestTools && request.Operation != operationMySQLSetTools && request.Operation != operationMySQLCancel && request.Operation != operationMySQLBackupChunk {
 		if err := server.mysql.ValidateInstance(ctx, payload.Instance); err != nil {
 			return wireResponse{Status: statusError, ErrorCode: "mysql_instance_mismatch", Message: "MySQL instance does not match committed metadata"}
 		}
@@ -231,6 +270,8 @@ func (server *Server) mysqlOperation(parent context.Context, request wireRequest
 		response.MySQL.ToolStatus = &value
 	case operationMySQLCancel:
 		err = server.mysql.CancelOperation(ctx, payload.OperationID)
+	case operationMySQLBackupChunk:
+		response.MySQL.Content, response.MySQL.TotalBytes, response.MySQL.Filename, err = server.mysql.ReadBackupChunk(ctx, payload.BackupID, payload.Offset, payload.Limit)
 	}
 	result := "succeeded"
 	if err != nil {
@@ -254,8 +295,12 @@ func (server *Server) authorizeMySQLOperation(request wireRequest) (Actor, Actio
 	payload := request.MySQL
 	action, recent := mysqlAction(request.Operation)
 	body, _ := json.Marshal(payload)
+	resource := payload.Instance.ID
+	if request.Operation == operationMySQLBackupChunk {
+		resource = payload.BackupID
+	}
 	authorization := AuthorizationRequest{SessionToken: request.SessionToken, RequestID: request.RequestID, Action: action,
-		Resource: payload.Instance.ID, Revision: "mysql-instance-v1", ParametersSHA256: parametersDigest(body)}
+		Resource: resource, Revision: "mysql-instance-v1", ParametersSHA256: parametersDigest(body)}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	var actor Actor
@@ -322,8 +367,12 @@ func validateMySQLRequest(request wireRequest) error {
 	}
 	payload := request.MySQL
 	minimalInstance := request.Operation == operationMySQLDelete || request.Operation == operationMySQLTestTools || request.Operation == operationMySQLSetTools
-	minimalInstance = minimalInstance || request.Operation == operationMySQLCancel
-	if (!minimalInstance && !validMySQLInstance(payload.Instance)) || (minimalInstance && !validRemoteWebsiteID(payload.Instance.ID)) || len(payload.Password) > 8<<10 || len(payload.Database) > 64 || strings.ContainsAny(payload.Database+payload.Path+payload.OperationID, "\r\n\x00") || len(payload.Path) > 4096 || len(payload.OperationID) > 160 {
+	minimalInstance = minimalInstance || request.Operation == operationMySQLCancel || request.Operation == operationMySQLBackupChunk
+	validMinimalInstance := validRemoteWebsiteID(payload.Instance.ID)
+	if request.Operation == operationMySQLBackupChunk {
+		validMinimalInstance = payload.Instance == (mysqlmanager.Instance{})
+	}
+	if (!minimalInstance && !validMySQLInstance(payload.Instance)) || (minimalInstance && !validMinimalInstance) || len(payload.Password) > 8<<10 || len(payload.Database) > 64 || strings.ContainsAny(payload.Database+payload.Path+payload.OperationID+payload.BackupID, "\r\n\x00") || len(payload.Path) > 4096 || len(payload.OperationID) > 160 || len(payload.BackupID) > 160 {
 		return errors.New("MySQL request fields are invalid")
 	}
 	if !validCredentialSessionToken(request.SessionToken) {
@@ -331,6 +380,9 @@ func validateMySQLRequest(request wireRequest) error {
 	}
 	if request.Operation != operationMySQLCancel && payload.OperationID != "" {
 		return errors.New("MySQL request contains an unrelated operation ID")
+	}
+	if request.Operation != operationMySQLBackupChunk && (payload.BackupID != "" || payload.Offset != 0 || payload.Limit != 0) {
+		return errors.New("MySQL request contains unrelated backup download fields")
 	}
 	emptyCreate := payload.Create == (mysqlmanager.CreateDatabaseInput{})
 	emptyTools := payload.Tools == (mysqlmanager.ToolSettings{})
@@ -362,6 +414,10 @@ func validateMySQLRequest(request wireRequest) error {
 	case operationMySQLCancel:
 		if payload.Password != "" || payload.Database != "" || payload.Path != "" || payload.OperationID == "" || !emptyCreate || !emptyTools {
 			return errors.New("MySQL cancellation request is invalid")
+		}
+	case operationMySQLBackupChunk:
+		if payload.Password != "" || payload.Database != "" || payload.Path != "" || payload.BackupID == "" || payload.Offset < 0 || payload.Limit <= 0 || payload.Limit > 3<<20 || !emptyCreate || !emptyTools {
+			return errors.New("MySQL backup download request is invalid")
 		}
 	}
 	return nil
@@ -408,6 +464,36 @@ func (backend *MySQLBackend) call(ctx context.Context, operation string, payload
 		return mysqlWireResponse{}, errors.New("privileged Broker returned an invalid MySQL response")
 	}
 	return *response.MySQL, nil
+}
+
+func (backend *MySQLBackend) DownloadBackup(ctx context.Context, id string, destination io.Writer) (string, int64, error) {
+	var offset int64
+	var filename string
+	var total int64
+	for {
+		value, err := backend.call(ctx, operationMySQLBackupChunk, mysqlWireRequest{BackupID: id, Offset: offset, Limit: 3 << 20})
+		if err != nil {
+			return "", 0, err
+		}
+		if offset == 0 {
+			filename, total = value.Filename, value.TotalBytes
+		}
+		if value.TotalBytes != total || value.Filename != filename || offset+int64(len(value.Content)) > total {
+			return "", 0, errors.New("privileged Broker returned inconsistent MySQL backup content")
+		}
+		if len(value.Content) > 0 {
+			if _, err := destination.Write(value.Content); err != nil {
+				return "", 0, err
+			}
+			offset += int64(len(value.Content))
+		}
+		if offset == total {
+			return filename, total, nil
+		}
+		if len(value.Content) == 0 {
+			return "", 0, io.ErrUnexpectedEOF
+		}
+	}
 }
 
 func (backend *MySQLBackend) StoreCredential(ctx context.Context, instance mysqlmanager.Instance, password string) error {

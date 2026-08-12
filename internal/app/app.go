@@ -780,6 +780,16 @@ func Open(config Config) (*App, error) {
 	} else {
 		application.scheduler = scheduler.New(db, application.runs, application.loadVariables, config.SchedulerNow, config.SchedulerTick, application.recordAudit)
 	}
+	if application.hostFilesBackend != nil {
+		application.scheduler.SetScriptPreparer(func(scheduleID string) (hostfiles.Script, hostfiles.PreparedDirectory, error) {
+			requestID, tokenErr := randomToken(18)
+			if tokenErr != nil {
+				return hostfiles.Script{}, hostfiles.PreparedDirectory{}, tokenErr
+			}
+			script, prepareErr := application.hostFilesBackend.PrepareSchedule(context.Background(), "scheduler-"+requestID, scheduleID)
+			return script, hostfiles.PreparedDirectory{Path: script.Directory}, prepareErr
+		})
+	}
 	probe, _ := hoststatus.NewSystemProbe(stateRoot, installRoot)
 	application.hostStatus, err = hoststatus.New(db, probe, hoststatus.Options{SkipInitialCleanup: validating})
 	if err != nil {

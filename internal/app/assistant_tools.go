@@ -1135,7 +1135,7 @@ func (executor *assistantToolExecutor) planStartQuickRun(authorization assistant
 	return assistantToolPlan{
 		targetSummary: parameters.ID + " quick-run", parameterSummary: "start saved Quick Run",
 		normalized: parameters, targetState: state, deepLink: "/config/quick-runs", approvalTitle: "Start Quick Run", approvalMessage: fmt.Sprintf("Start the saved Quick Run %q now?", name),
-		execute: func(context.Context) (any, string, bool, error) {
+		execute: func(execContext context.Context) (any, string, bool, error) {
 			variables, err := executor.app.loadVariables()
 			if err != nil {
 				return nil, "", false, err
@@ -1144,7 +1144,12 @@ func (executor *assistantToolExecutor) planStartQuickRun(authorization assistant
 			if loadErr != nil || quick.Revision != revision || quick.ScriptSHA256 != scriptSHA256 {
 				return nil, "Quick Run is no longer available.", false, errors.New("quick run is not published")
 			}
-			runID, err := executor.app.runs.Start(runmanager.StartRequest{ScriptPath: quick.ScriptPath, ExpectedDigest: quick.ScriptSHA256, ArgumentsTemplate: quick.ArgumentsTemplate, TimeoutSeconds: quick.TimeoutSeconds, SourceType: "assistant/quick-run", SourceName: quick.Name, SourceID: parameters.ID, Variables: variables, InitiatorUserID: authorization.Actor.UserID, InitiatorUsername: authorization.Actor.Username})
+			prepared, err := executor.app.hostPrepareScript(execContext, quick.ScriptPath)
+			if err != nil || subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(quick.ScriptSHA256)) != 1 {
+				return nil, "Quick Run is no longer available.", false, errors.New("quick run script changed")
+			}
+			workingDirectory := hostfiles.PreparedDirectory{Path: prepared.Directory}
+			runID, err := executor.app.runs.Start(runmanager.StartRequest{ScriptPath: quick.ScriptPath, ExpectedDigest: quick.ScriptSHA256, ArgumentsTemplate: quick.ArgumentsTemplate, TimeoutSeconds: quick.TimeoutSeconds, SourceType: "assistant/quick-run", SourceName: quick.Name, SourceID: parameters.ID, Variables: variables, InitiatorUserID: authorization.Actor.UserID, InitiatorUsername: authorization.Actor.Username, PreparedScript: &prepared, PreparedDirectory: &workingDirectory})
 			if err != nil {
 				return nil, "", false, err
 			}

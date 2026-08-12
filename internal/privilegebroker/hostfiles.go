@@ -73,6 +73,7 @@ type hostFilesWireRequest struct {
 	ExternalEntryID   string                 `json:"external_entry_id,omitempty"`
 	ExternalEntryName string                 `json:"external_entry_name,omitempty"`
 	ExternalMessage   string                 `json:"external_message,omitempty"`
+	ScheduleID        string                 `json:"schedule_id,omitempty"`
 }
 
 type hostFilesWireResponse struct {
@@ -470,6 +471,18 @@ func (service *brokerHostFilesService) AppendExternalLog(ctx context.Context, to
 	return Actor{UserID: "external:" + key.ID, Username: key.Label, Role: "external"}, entry.ID, nil
 }
 
+func (service *brokerHostFilesService) PrepareSchedule(ctx context.Context, id string) (hostFilesPrepared, error) {
+	if service.db == nil {
+		return hostFilesPrepared{}, errors.New("Broker schedule database is unavailable")
+	}
+	var path string
+	if err := service.db.QueryRowContext(ctx, "SELECT script_path FROM schedules WHERE id = ? AND deleted = 0", id).Scan(&path); err != nil {
+		return hostFilesPrepared{}, err
+	}
+	prepared, err := service.files.PrepareScript(path)
+	return hostFilesPrepared{Path: prepared.Path, Directory: prepared.Directory, Digest: prepared.Digest}, err
+}
+
 func (service *brokerHostFilesService) StartCrossFilesystemMove(_ context.Context, id, source, destination, displacedStoredPath, displacedID string) (hostfiles.FileOperation, error) {
 	if service.moveEngine == nil || service.db == nil {
 		return hostfiles.FileOperation{}, errors.New("Broker Host Files move engine is unavailable")
@@ -676,6 +689,19 @@ func (server *Server) externalHostFilesLogOperation(request wireRequest) wireRes
 	return wireResponse{Status: statusOK}
 }
 
+func (server *Server) hostFilesScheduleOperation(request wireRequest) wireResponse {
+	if server.hostFiles == nil {
+		return wireResponse{Status: statusError, ErrorCode: "host_files_unavailable", Message: "Host Files service is unavailable"}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	prepared, err := server.hostFiles.PrepareSchedule(ctx, request.HostFiles.ScheduleID)
+	if err != nil {
+		return wireResponse{Status: statusError, ErrorCode: "host_files_failed", Message: "Scheduled Host Files resource is unavailable"}
+	}
+	return wireResponse{Status: statusOK, HostFiles: &hostFilesWireResponse{Prepared: &prepared}}
+}
+
 func hostFilesAction(operation string) (Action, bool) {
 	switch operation {
 	case operationHostFilesTrash, operationHostFilesRestore, operationHostFilesPurge:
@@ -845,6 +871,17 @@ func validateExternalHostFilesLogRequest(request wireRequest) error {
 	return nil
 }
 
+func validateHostFilesScheduleRequest(request wireRequest) error {
+	if request.HostFiles == nil || request.SessionToken != "" || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" || request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil {
+		return errors.New("Scheduled Host Files request contains unrelated fields")
+	}
+	payload := request.HostFiles
+	if len(payload.ScheduleID) == 0 || len(payload.ScheduleID) > 255 || strings.ContainsAny(payload.ScheduleID, "\r\n\x00") || *payload != (hostFilesWireRequest{ScheduleID: payload.ScheduleID}) {
+		return errors.New("Scheduled Host Files request is invalid")
+	}
+	return nil
+}
+
 func hostFilesExpectedPayload(operation string, payload hostFilesWireRequest) hostFilesWireRequest {
 	switch operation {
 	case operationHostFilesRoots:
@@ -953,6 +990,19 @@ func (backend *HostFilesBackend) AppendExternalLog(ctx context.Context, requestI
 	_, err := backend.client.call(ctx, wireRequest{Version: ProtocolVersion, Operation: operationHostFilesExternalLog, RequestID: requestID,
 		HostFiles: &hostFilesWireRequest{ExternalToken: token, ExternalEntryID: entryID, ExternalEntryName: entryName, ExternalMessage: message}})
 	return err
+}
+
+func (backend *HostFilesBackend) PrepareSchedule(ctx context.Context, requestID, scheduleID string) (hostfiles.Script, error) {
+	if backend == nil || backend.client == nil || !requestIDPattern.MatchString(requestID) {
+		return hostfiles.Script{}, ErrHostFilesUnavailable
+	}
+	response, err := backend.client.call(ctx, wireRequest{Version: ProtocolVersion, Operation: operationHostFilesPrepareSchedule,
+		RequestID: requestID, HostFiles: &hostFilesWireRequest{ScheduleID: scheduleID}})
+	if response.HostFiles == nil || response.HostFiles.Prepared == nil {
+		return hostfiles.Script{}, errors.Join(err, errors.New("privileged Broker returned no scheduled Host Files resource"))
+	}
+	prepared := response.HostFiles.Prepared
+	return hostfiles.Script{Path: prepared.Path, Directory: prepared.Directory, Digest: prepared.Digest}, err
 }
 
 func (backend *HostFilesBackend) Roots(ctx context.Context) ([]hostfiles.Entry, error) {
