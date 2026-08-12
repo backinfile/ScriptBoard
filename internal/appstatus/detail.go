@@ -159,7 +159,7 @@ func (m *Monitor) Details(ctx context.Context, id, selectedRange string) (Applic
 			}
 		}
 	}
-	if !application.Running {
+	if !application.Running && (application.Kind != KindDocker || request.Container == nil) {
 		result.Runtime = RuntimeDetail{
 			State: RuntimeUnavailable, Kind: application.Kind,
 			Code: "not_running", Message: "The application is not present in the current snapshot.",

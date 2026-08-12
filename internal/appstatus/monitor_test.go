@@ -745,5 +745,14 @@ func openStore(t *testing.T) *sql.DB {
 	)`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.Exec(`CREATE TABLE application_versions (
+		application_id TEXT NOT NULL,
+		observed_at INTEGER NOT NULL,
+		image TEXT NOT NULL,
+		container_id TEXT NOT NULL,
+		PRIMARY KEY(application_id, observed_at)
+	)`); err != nil {
+		t.Fatal(err)
+	}
 	return db
 }

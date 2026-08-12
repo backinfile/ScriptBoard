@@ -165,7 +165,7 @@ func TestOpenDatabaseCreatesFixedRoleUserSchema(t *testing.T) {
 	if adminTable != 0 {
 		t.Fatal("legacy admin table should not exist")
 	}
-	for _, table := range []string{"file_operations", "file_quick_access_pins", "trash_entries", "assistant_settings", "assistant_models", "assistant_conversations", "assistant_messages", "external_trigger_keys", "external_trigger_entries", "external_trigger_requests", "website_monitor_remote_sources"} {
+	for _, table := range []string{"file_operations", "file_quick_access_pins", "trash_entries", "assistant_settings", "assistant_models", "assistant_conversations", "assistant_messages", "external_trigger_keys", "external_trigger_entries", "external_trigger_requests", "website_monitor_remote_sources", "application_versions", "kubernetes_connection", "kubernetes_versions", "kubernetes_metric_minutes"} {
 		var count int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil || count != 1 {
 			t.Fatalf("required schema table %q is missing: count=%d error=%v", table, count, err)

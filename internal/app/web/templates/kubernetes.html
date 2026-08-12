@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="{{.Locale}}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/assets/app-v2.css?v={{assetVersion}}">
+  <script defer src="/assets/app-v2.js?v={{assetVersion}}"></script>
+  <title>{{t .Locale "kubernetes.title"}} · ScriptBoard</title>
+</head>
+<body>
+<main class="workspace kubernetes-page" data-kubernetes-page data-csrf-token="{{.CSRFToken}}">
+  <header class="page-heading kubernetes-heading">
+    <div>
+      <h1>{{t .Locale "kubernetes.title"}}</h1>
+      <p>{{t .Locale "kubernetes.description"}}</p>
+    </div>
+    {{if .Connection.Name}}<a class="button" href="/monitor/kubernetes/connection"><span data-lucide="settings" aria-hidden="true"></span>{{t .Locale "kubernetes.connection_settings"}}</a>{{end}}
+  </header>
+
+  {{if not .Connection.Name}}
+  <section class="kubernetes-onboarding" aria-labelledby="kubernetes-connect-heading">
+    <div class="kubernetes-onboarding__mark"><span data-lucide="box" aria-hidden="true"></span></div>
+    <div>
+      <h2 id="kubernetes-connect-heading">{{t .Locale "kubernetes.connect_title"}}</h2>
+      <p>{{t .Locale "kubernetes.connect_description"}}</p>
+    </div>
+    <a class="button button--primary" href="/monitor/kubernetes/connection"><span data-lucide="zap" aria-hidden="true"></span>{{t .Locale "kubernetes.connect"}}</a>
+  </section>
+  {{else}}
+  <section class="kubernetes-control-line" aria-label="{{t .Locale "kubernetes.connection"}}">
+    <div class="kubernetes-cluster-identity">
+      <span class="status-dot" data-state="{{if .Connection.Connected}}up{{else}}down{{end}}"></span>
+      <div><strong>{{.Connection.Name}}</strong><small>{{if .Connection.Context}}{{.Connection.Context}}{{else}}{{t .Locale "kubernetes.current_context"}}{{end}} · {{.ServerVersion}}</small></div>
+    </div>
+    <dl>
+      <div><dt>{{t .Locale "kubernetes.mode"}}</dt><dd>{{if eq .Connection.Mode "limited"}}{{t .Locale "kubernetes.limited_operations"}}{{else}}{{t .Locale "kubernetes.observe_only"}}{{end}}</dd></div>
+      <div><dt>{{t .Locale "kubernetes.last_snapshot"}}</dt><dd><time datetime="{{machineTime .CollectedAt}}" data-local-time>{{localTime .Locale .CollectedAt}}</time></dd></div>
+      <div><dt>{{t .Locale "kubernetes.metrics"}}</dt><dd>{{if .MetricsAvailable}}{{t .Locale "kubernetes.available"}}{{else}}{{t .Locale "kubernetes.unavailable"}}{{end}}</dd></div>
+    </dl>
+  </section>
+
+  {{if .Connection.Error}}<div class="kubernetes-alert" role="alert"><span data-lucide="triangle-alert" aria-hidden="true"></span><div><strong>{{t .Locale "kubernetes.snapshot_failed"}}</strong><p>{{.Connection.Error}}</p></div></div>{{end}}
+
+  <dl class="kubernetes-facts" aria-label="{{t .Locale "kubernetes.cluster_facts"}}">
+    <div><dt>{{t .Locale "kubernetes.nodes"}}</dt><dd>{{len .Nodes}}</dd></div>
+    <div><dt>{{t .Locale "kubernetes.workloads"}}</dt><dd>{{.Total}}</dd><small>{{.Ready}} {{t .Locale "kubernetes.ready"}}</small></div>
+    <div><dt>{{t .Locale "kubernetes.pods"}}</dt><dd>{{.PodsReady}}<span>/{{.PodsTotal}}</span></dd></div>
+    <div><dt>{{t .Locale "kubernetes.namespaces"}}</dt><dd>{{.Namespaces}}</dd></div>
+  </dl>
+
+  <section class="kubernetes-section" aria-labelledby="kubernetes-workloads-heading">
+    <header class="section-heading kubernetes-section-heading">
+      <h2 id="kubernetes-workloads-heading">{{t .Locale "kubernetes.workloads"}}</h2>
+    </header>
+    <div class="kubernetes-workload-controls">
+      <nav class="monitor-status-switch kubernetes-status-tabs" aria-label="{{t .Locale "kubernetes.status_filter"}}">
+        <a href="/monitor/kubernetes" {{if eq .Query.Status "all"}}aria-current="page"{{end}}><span>{{t .Locale "kubernetes.all"}}</span><strong>{{.Total}}</strong></a>
+        <a href="/monitor/kubernetes?status=ready" {{if eq .Query.Status "ready"}}aria-current="page"{{end}}><span>{{t .Locale "kubernetes.ready"}}</span><strong>{{.Ready}}</strong></a>
+        <a href="/monitor/kubernetes?status=progressing" {{if eq .Query.Status "progressing"}}aria-current="page"{{end}}><span>{{t .Locale "kubernetes.progressing"}}</span><strong>{{.Progressing}}</strong></a>
+        <a href="/monitor/kubernetes?status=degraded" {{if eq .Query.Status "degraded"}}aria-current="page"{{end}}><span>{{t .Locale "kubernetes.needs_attention"}}</span><strong>{{.Degraded}}</strong></a>
+      </nav>
+      <form class="kubernetes-toolbar" method="get" action="/monitor/kubernetes">
+        <label><span data-lucide="search" aria-hidden="true"></span><span class="sr-only">{{t .Locale "common.search"}}</span><input type="search" name="query" value="{{.Query.Search}}" placeholder="{{t .Locale "kubernetes.search_placeholder"}}"></label>
+        <select name="namespace" aria-label="{{t .Locale "kubernetes.namespace"}}"><option value="all">{{t .Locale "kubernetes.all_namespaces"}}</option>{{range .NamespaceOptions}}<option value="{{.}}" {{if eq $.Query.Namespace .}}selected{{end}}>{{.}}</option>{{end}}</select>
+        <select name="kind" aria-label="{{t .Locale "kubernetes.kind"}}"><option value="all">{{t .Locale "kubernetes.all_kinds"}}</option>{{range $kind := (stringSlice "Deployment" "StatefulSet" "DaemonSet" "CronJob")}}<option value="{{$kind}}" {{if eq $.Query.Kind $kind}}selected{{end}}>{{$kind}}</option>{{end}}</select>
+        <input type="hidden" name="status" value="{{.Query.Status}}"><input type="hidden" name="sort" value="{{.Query.Sort}}"><input type="hidden" name="direction" value="{{.Query.Direction}}">
+        <button class="button button--compact" type="submit">{{t .Locale "common.search"}}</button>
+      </form>
+    </div>
+    <div class="kubernetes-table-shell">
+      <table class="kubernetes-table">
+        <caption class="sr-only">{{t .Locale "kubernetes.workloads"}}</caption>
+        <thead><tr>
+          {{range $field := (stringSlice "name" "namespace" "status" "ready" "cpu" "memory" "restarts")}}<th scope="col" {{if eq $.Query.Sort $field}}aria-sort="{{if eq $.Query.Direction "asc"}}ascending{{else}}descending{{end}}"{{end}}><a class="kubernetes-sort-link" href="{{kubernetesSortURL $.Query $field}}"><span>{{t $.Locale (printf "kubernetes.column.%s" $field)}}</span><span data-lucide="{{if eq $.Query.Sort $field}}{{if eq $.Query.Direction "asc"}}arrow-up{{else}}arrow-down{{end}}{{else}}arrow-up-down{{end}}" aria-hidden="true"></span></a></th>{{end}}
+          <th scope="col"><span class="sr-only">{{t .Locale "applications.more_actions"}}</span></th>
+        </tr></thead>
+        <tbody>{{range .Workloads}}<tr>
+          <td><button type="button" class="kubernetes-workload-open" data-kubernetes-detail-url="/monitor/kubernetes/workloads/{{.Namespace}}/{{.Kind}}/{{.Name}}/details"><span><strong>{{.Name}}</strong><small>{{.Kind}} · {{.Image}}</small></span></button></td>
+          <td><code>{{.Namespace}}</code></td>
+          <td><span class="kubernetes-state" data-state="{{.Status}}"><i></i>{{if eq .Status "ready"}}{{t $.Locale "kubernetes.ready"}}{{else if eq .Status "progressing"}}{{t $.Locale "kubernetes.progressing"}}{{else}}{{t $.Locale "kubernetes.needs_attention"}}{{end}}</span></td>
+          <td><strong>{{.Ready}} / {{.Desired}}</strong></td>
+          <td>{{.CPUMillicores}}m</td><td>{{humanBytes .MemoryBytes}}</td><td>{{.Restarts}}</td>
+          <td>{{if $.CanManage}}<details class="action-menu"><summary aria-label="{{t $.Locale "applications.more_actions"}} {{.Name}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
+            {{if and (eq $.Connection.Mode "limited") $.Connection.Capabilities.Redeploy (ne .Kind "CronJob")}}<form method="post" action="/monitor/kubernetes/workloads/{{.Namespace}}/{{.Kind}}/{{.Name}}/operate" data-kubernetes-confirm="{{t $.Locale "kubernetes.confirm_redeploy"}}"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="operation" value="redeploy"><button type="submit"><span data-lucide="rotate-cw" aria-hidden="true"></span>{{t $.Locale "kubernetes.redeploy"}}</button></form>{{end}}
+            {{if and (eq $.Connection.Mode "limited") $.Connection.Capabilities.Scale (or (eq .Kind "Deployment") (eq .Kind "StatefulSet"))}}
+            {{if gt .Desired 0}}<form method="post" action="/monitor/kubernetes/workloads/{{.Namespace}}/{{.Kind}}/{{.Name}}/operate" data-kubernetes-confirm="{{t $.Locale "kubernetes.confirm_scale_down"}}"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="operation" value="scale"><input type="hidden" name="replicas" value="{{addInt .Desired -1}}"><button type="submit"><span data-lucide="minus" aria-hidden="true"></span>{{t $.Locale "kubernetes.scale_down"}}</button></form>{{end}}
+            <form method="post" action="/monitor/kubernetes/workloads/{{.Namespace}}/{{.Kind}}/{{.Name}}/operate" data-kubernetes-confirm="{{t $.Locale "kubernetes.confirm_scale_up"}}"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="operation" value="scale"><input type="hidden" name="replicas" value="{{addInt .Desired 1}}"><button type="submit"><span data-lucide="plus" aria-hidden="true"></span>{{t $.Locale "kubernetes.scale_up"}}</button></form>
+            {{end}}
+            {{if and (eq $.Connection.Mode "limited") $.Connection.Capabilities.RunCron (eq .Kind "CronJob")}}<form method="post" action="/monitor/kubernetes/workloads/{{.Namespace}}/{{.Kind}}/{{.Name}}/operate" data-kubernetes-confirm="{{t $.Locale "kubernetes.confirm_run"}}"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="operation" value="run_cron"><button type="submit"><span data-lucide="play" aria-hidden="true"></span>{{t $.Locale "kubernetes.run_now"}}</button></form>{{end}}
+            <button type="button" data-kubernetes-detail-url="/monitor/kubernetes/workloads/{{.Namespace}}/{{.Kind}}/{{.Name}}/details"><span data-lucide="chevron-right" aria-hidden="true"></span>{{t $.Locale "kubernetes.open_details"}}</button>
+          </div></details>{{end}}</td>
+        </tr>{{else}}<tr><td colspan="8" class="kubernetes-table-empty">{{t .Locale "kubernetes.no_matches"}}</td></tr>{{end}}</tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="kubernetes-section" aria-labelledby="kubernetes-nodes-heading">
+    <header class="section-heading kubernetes-section-heading"><h2 id="kubernetes-nodes-heading">{{t .Locale "kubernetes.nodes"}}</h2></header>
+    <div class="kubernetes-node-list">{{range .Nodes}}<article><span data-lucide="hard-drive" aria-hidden="true"></span><div><strong>{{.Name}}</strong><small>{{.Role}} · {{.Version}}</small></div><span class="kubernetes-state" data-state="{{if .Ready}}ready{{else}}degraded{{end}}"><i></i>{{if .Ready}}{{t $.Locale "kubernetes.ready"}}{{else}}{{t $.Locale "kubernetes.not_ready"}}{{end}}</span><dl><div><dt>CPU</dt><dd>{{percent .CPUPercent}}</dd></div><div><dt>{{t $.Locale "kubernetes.column.memory"}}</dt><dd>{{percent .MemoryPercent}}</dd></div></dl></article>{{else}}<div class="kubernetes-empty-inline"><p>{{t .Locale "kubernetes.nodes_unavailable"}}</p></div>{{end}}</div>
+  </section>
+
+  <dialog class="kubernetes-drawer" data-kubernetes-drawer aria-labelledby="kubernetes-drawer-title">
+    <header><div><p class="page-eyebrow">{{t .Locale "kubernetes.workload_detail"}}</p><h2 id="kubernetes-drawer-title" data-kubernetes-drawer-title>—</h2><p data-kubernetes-drawer-meta></p></div><button class="icon-button" type="button" data-kubernetes-drawer-close aria-label="{{t .Locale "common.close"}}"><span data-lucide="x" aria-hidden="true"></span></button></header>
+    <div class="kubernetes-drawer__body" data-kubernetes-drawer-body><div class="kubernetes-drawer__loading"><span data-lucide="loader-circle" aria-hidden="true"></span>{{t .Locale "common.loading"}}</div></div>
+  </dialog>
+  {{end}}
+</main>
+</body>
+</html>

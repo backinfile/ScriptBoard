@@ -432,7 +432,7 @@ scriptboard version
 - 使用纯 Go SQLite 驱动。
 - 启用 WAL、`synchronous=FULL`、foreign keys 和 busy timeout。
 - 高频 Run 输出不逐事件写数据库。
-- 数据库 schema 固定为 24；全新库直接创建 24，schema 20–23 只执行显式 Assistant 兼容迁移并在同一事务提交。早于 20 或高于当前版本的 schema 在任何写入前拒绝启动，不猜测迁移或删除旧状态。
+- 数据库 schema 固定为 37；全新库直接创建 37，schema 20–36 只执行显式兼容迁移并在同一事务提交。早于 20 或高于当前版本的 schema 在任何写入前拒绝启动，不猜测迁移或删除旧状态。
 - 检测到数据库完整性异常时拒绝提供执行能力，只允许本机诊断和人工恢复流程。
 
 ### 17.3 磁盘与日志
@@ -485,7 +485,7 @@ scriptboard version
 - 多用户、角色、用户组、LDAP、OAuth、SSO
 - 不可信代码沙箱或逐脚本身份切换
 - 公共 API、API Token、远程 CLI
-- DAG、流水线、多服务器和 Kubernetes 编排
+- DAG、流水线、多服务器、Kubernetes 多集群管理、通用资源编辑和编排
 - Docker 作为正式部署方式
 - 系统 crontab 集成
 - Git 远程同步、子模块、LFS 和外部过滤器

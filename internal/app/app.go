@@ -43,6 +43,7 @@ import (
 	"scriptboard/internal/assistant/runtimeinstall"
 	"scriptboard/internal/assistant/toolbroker"
 	"scriptboard/internal/buildinfo"
+	"scriptboard/internal/clusterstatus"
 	"scriptboard/internal/customdashboard"
 	"scriptboard/internal/externaltrigger"
 	"scriptboard/internal/hostfiles"
@@ -106,6 +107,8 @@ func webTemplateFunctions() template.FuncMap {
 	return template.FuncMap{
 		"assetVersion": func() string { return webAssetVersion },
 		"join":         strings.Join,
+		"stringSlice":  func(values ...string) []string { return values },
+		"addInt":       func(value, delta int) int { return value + delta },
 		"displayTime": func(input any) string {
 			value, ok := input.(time.Time)
 			if pointer, pointerOK := input.(*time.Time); pointerOK && pointer != nil {
@@ -130,6 +133,9 @@ func webTemplateFunctions() template.FuncMap {
 		"humanRate":                func(value float64) string { return humanBytes(uint64(math.Max(0, value))) + "/s" },
 		"percent":                  func(value float64) string { return fmt.Sprintf("%.1f%%", value) },
 		"applicationSortURL":       applicationSortURL,
+		"containerSortURL":         containerSortURL,
+		"containerStatusURL":       containerStatusURL,
+		"kubernetesSortURL":        kubernetesSortURL,
 		"duration":                 humanDuration,
 		"localDuration": func(locale webLocale, value time.Duration) string {
 			if locale == localeSimplifiedChinese {
@@ -322,6 +328,7 @@ type Config struct {
 	RequestShutdown        func()
 	RequestRestart         func() error
 	ApplicationProbe       appstatus.Probe
+	KubernetesFactory      clusterstatus.Factory
 	AssistantRuntimeSource runtimeinstall.Source
 	HostSecurity           hostsecurity.Service
 }
@@ -348,6 +355,7 @@ type App struct {
 	securityDraftMu    sync.Mutex
 	securityDrafts     map[string]securityFirewallDraft
 	applicationStatus  *appstatus.Monitor
+	kubernetesStatus   *clusterstatus.Manager
 	logStreamSlots     chan struct{}
 	logHistorySlots    chan struct{}
 	shellStatusCache   *shellStatusCache
@@ -591,10 +599,26 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("initialize custom dashboards: %w", err)
 	}
+	kubernetesFactory := config.KubernetesFactory
+	if kubernetesFactory == nil {
+		kubernetesFactory = clusterstatus.HTTPFactory{}
+	}
+	application.kubernetesStatus, err = clusterstatus.New(clusterstatus.Options{DB: db, Factory: kubernetesFactory})
+	if err != nil {
+		application.customDashboards.Close()
+		application.websiteMonitor.Close()
+		application.applicationStatus.Close()
+		application.hostStatus.Close()
+		application.scheduler.Close()
+		application.runs.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("initialize Kubernetes monitoring: %w", err)
+	}
 	application.assistantTools = newAssistantToolExecutor(application)
 	application.assistantRuntime.SetTurnSettled(application.assistantTools.releaseTurn)
 	application.assistantBroker, err = toolbroker.New(stateRoot, application.assistantTools)
 	if err != nil {
+		application.kubernetesStatus.Close()
 		application.customDashboards.Close()
 		application.websiteMonitor.Close()
 		application.applicationStatus.Close()
@@ -608,6 +632,7 @@ func Open(config Config) (*App, error) {
 	if !validating {
 		application.hostStatus.Start(context.Background())
 		application.applicationStatus.Start(context.Background())
+		application.kubernetesStatus.Start(context.Background())
 		_ = application.mysql.ReconcilePlans(context.Background())
 		application.mysqlWG.Add(2)
 		go func() {
@@ -978,6 +1003,9 @@ func (a *App) Close() error {
 	if a.applicationStatus != nil {
 		a.applicationStatus.Close()
 	}
+	if a.kubernetesStatus != nil {
+		a.kubernetesStatus.Close()
+	}
 	if a.websiteMonitor != nil {
 		a.websiteMonitor.Close()
 	}
@@ -1324,6 +1352,13 @@ func openDatabase(path string) (*sql.DB, error) {
 			write_maximum REAL NOT NULL,
 			PRIMARY KEY (application_id, bucket_at)
 		)`,
+		`CREATE TABLE IF NOT EXISTS application_versions (
+			application_id TEXT NOT NULL,
+			observed_at INTEGER NOT NULL,
+			image TEXT NOT NULL,
+			container_id TEXT NOT NULL,
+			PRIMARY KEY (application_id, observed_at)
+		)`,
 	} {
 		if _, err := migration.Exec(statement); err != nil {
 			_ = db.Close()
@@ -1358,6 +1393,12 @@ func openDatabase(path string) (*sql.DB, error) {
 		if _, err := migration.Exec(statement); err != nil {
 			_ = db.Close()
 			return nil, fmt.Errorf("initialize custom dashboard SQLite schema: %w", err)
+		}
+	}
+	for _, statement := range clusterstatus.SchemaStatements {
+		if _, err := migration.Exec(statement); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("initialize Kubernetes monitoring SQLite schema: %w", err)
 		}
 	}
 	if schemaVersion == 21 {
@@ -1673,9 +1714,12 @@ func compatibleDatabaseSchema(version int) bool {
 	// custom dashboards with independently public card collections, schema 34
 	// adds dedicated percentage cards, schema 35 adds model-level reasoning
 	// capability and default thinking strength, schema 36 adds instance-level
-	// presentation settings, and schema 37 adds Docker Registry cards with encrypted
-	// credentials. Each supported predecessor has an explicit transactional forward path.
-	return version == currentSchemaVersion || currentSchemaVersion == 37 && version >= 20 && version <= 36
+	// presentation settings, schema 37 adds Docker Registry cards with encrypted
+	// credentials, and schema 38 adds the single Kubernetes connection, workload
+	// version and metric history, plus Docker container versions keyed by the
+	// existing stable application identity. Each supported predecessor has an
+	// explicit transactional forward path.
+	return version == currentSchemaVersion || currentSchemaVersion == 38 && version >= 20 && version <= 37
 }
 
 func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {
@@ -1905,6 +1949,21 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /monitor/applications/{id}/pin", a.requireSession(http.HandlerFunc(a.pinApplication)))
 	mux.Handle("POST /monitor/applications/{id}/unpin", a.requireSession(http.HandlerFunc(a.unpinApplication)))
 	mux.Handle("POST /monitor/applications/{id}/move", a.requireSession(http.HandlerFunc(a.movePinnedApplication)))
+	mux.Handle("GET /monitor/containers", a.requireSession(http.HandlerFunc(a.containersPage)))
+	mux.Handle("GET /monitor/containers/data", a.requireSession(http.HandlerFunc(a.containersData)))
+	mux.Handle("GET /monitor/containers/{name}/details", a.requireSession(http.HandlerFunc(a.containerDetails)))
+	mux.Handle("POST /monitor/containers/{name}/pin", a.requireSession(http.HandlerFunc(a.pinContainer)))
+	mux.Handle("POST /monitor/containers/{name}/unpin", a.requireSession(http.HandlerFunc(a.unpinContainer)))
+	mux.Handle("POST /monitor/containers/{name}/move", a.requireSession(http.HandlerFunc(a.movePinnedContainer)))
+	mux.Handle("POST /monitor/containers/{name}/operate", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.operateContainer)))
+	mux.Handle("GET /monitor/kubernetes", a.requireSession(http.HandlerFunc(a.kubernetesPage)))
+	mux.Handle("GET /monitor/kubernetes/data", a.requireSession(http.HandlerFunc(a.kubernetesData)))
+	mux.Handle("GET /monitor/kubernetes/connection", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.kubernetesConnectionTask)))
+	mux.Handle("POST /monitor/kubernetes/connection", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.saveKubernetesConnection)))
+	mux.Handle("POST /monitor/kubernetes/connection/test", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.testKubernetesConnection)))
+	mux.Handle("GET /monitor/kubernetes/workloads/{namespace}/{kind}/{name}/details", a.requireSession(http.HandlerFunc(a.kubernetesWorkloadDetails)))
+	mux.Handle("GET /monitor/kubernetes/workloads/{namespace}/{kind}/{name}/logs", a.requireSession(http.HandlerFunc(a.kubernetesWorkloadLogs)))
+	mux.Handle("POST /monitor/kubernetes/workloads/{namespace}/{kind}/{name}/operate", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.operateKubernetesWorkload)))
 	mux.Handle("GET /monitor/websites", a.requireSession(http.HandlerFunc(a.websiteMonitorList)))
 	mux.Handle("GET /config/dashboards", a.requireSession(http.HandlerFunc(a.customDashboardPage)))
 	mux.Handle("POST /config/dashboards", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.createCustomDashboard)))
