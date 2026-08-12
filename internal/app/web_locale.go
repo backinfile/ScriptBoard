@@ -1652,7 +1652,7 @@ var webMessages = map[string]localizedMessage{
 	"task.quick_edit.title":                         {"编辑快捷执行", "Edit Quick Run"},
 	"task.quick_edit.description":                   {"名称、参数和超时可以修改；脚本路径保持不变。", "You can change the name, arguments, and timeout. The script path stays the same."},
 	"task.quick_copy.title":                         {"复制快捷执行", "Copy Quick Run"},
-	"task.quick_copy.description":                   {"复制后可单独修改，不会影响原任务。", "Edit the copy independently without changing the original task."},
+	"task.quick_copy.description":                   {"复制时可更换执行脚本并修改其他配置，不会影响原任务。", "Choose a different script or edit other settings without changing the original task."},
 	"task.variable_new.title":                       {"创建变量", "Create variable"},
 	"task.variable_edit.title":                      {"编辑变量", "Edit variable"},
 	"task.variable_description":                     {"名称使用大写字母、数字与下划线，最多 64 个字符。", "Use uppercase letters, numbers, and underscores; maximum 64 characters."},

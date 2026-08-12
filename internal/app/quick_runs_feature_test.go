@@ -1,6 +1,7 @@
 package app_test
 
 import (
+	"html"
 	"io"
 	"net/http"
 	"net/url"
@@ -512,15 +513,21 @@ func TestAdminCanCopyQuickRunNextToItsSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	scriptName, scriptContent := "copyable.sh", "printf 'copyable\\n'\n"
+	replacementName, replacementContent := "replacement.sh", "printf 'replacement\\n'\n"
 	if runtime.GOOS == "windows" {
 		scriptName, scriptContent = "copyable.cmd", "@echo off\r\necho copyable\r\n"
+		replacementName, replacementContent = "replacement.cmd", "@echo off\r\necho replacement\r\n"
 	}
 	if err := os.WriteFile(filepath.Join(hostRoot, scriptName), []byte(scriptContent), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hostRoot, replacementName), []byte(replacementContent), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
 	groupID, _ := createQuickRunGroup(t, client, serverURL, "Copies")
 	scriptPath := filepath.Join(hostRoot, scriptName)
+	replacementPath := filepath.Join(hostRoot, replacementName)
 	createQuickRunFromFile(t, client, serverURL, scriptPath, "Original", groupID)
 	page := getQuickRunsPage(t, client, serverURL)
 	sourceID := quickRunIDForName(t, page, "Original")
@@ -534,20 +541,17 @@ func TestAdminCanCopyQuickRunNextToItsSource(t *testing.T) {
 	for _, expected := range []string{
 		`data-task-kind="quick-copy"`,
 		`name="name" autocomplete="off" value="Original copy"`,
-		`<code>` + scriptPath + `</code>`,
+		`name="script" autocomplete="off" spellcheck="false" value="` + html.EscapeString(scriptPath) + `"`,
 		`value="` + groupID + `" selected`,
 	} {
 		if !strings.Contains(string(taskPage), expected) {
 			t.Fatalf("copy Quick Run task missing %q: %s", expected, taskPage)
 		}
 	}
-	if strings.Contains(string(taskPage), `name="script"`) {
-		t.Fatalf("copy Quick Run task exposes a script field: %s", taskPage)
-	}
-
 	response, err = client.PostForm(serverURL+"/config/quick-runs/"+sourceID+"/copy", url.Values{
 		"csrf_token":      {formToken(t, taskPage)},
 		"name":            {"Replica"},
+		"script":          {replacementPath},
 		"arguments":       {"--copy"},
 		"timeout_seconds": {"12"},
 		"group_id":        {groupID},
@@ -575,7 +579,7 @@ func TestAdminCanCopyQuickRunNextToItsSource(t *testing.T) {
 	}
 	replicaTaskPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, expected := range []string{`name="arguments"`, `value="--copy"`, `name="timeout_seconds"`, `value="12"`} {
+	for _, expected := range []string{`<code>` + replacementPath + `</code>`, `name="arguments"`, `value="--copy"`, `name="timeout_seconds"`, `value="12"`} {
 		if !strings.Contains(string(replicaTaskPage), expected) {
 			t.Fatalf("copy edit task missing %q: %s", expected, replicaTaskPage)
 		}

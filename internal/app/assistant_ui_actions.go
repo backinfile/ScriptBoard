@@ -163,7 +163,7 @@ func (a *App) assistantUIActions() []assistantUIActionSpec {
 		action("quick_run_groups.delete", "Delete Quick Run group", "quick_runs", "/config/quick-runs/groups/{id}/delete", "/config/quick-runs", []string{"id"}, []string{"confirm"}, a.deleteQuickRunGroup),
 		action("quick_runs.move_group", "Move Quick Run to group", "quick_runs", "/config/quick-runs/{id}/move-group", "/config/quick-runs", []string{"id"}, []string{"group_id"}, a.moveQuickRunToGroup),
 		action("quick_runs.update", "Update Quick Run", "quick_runs", "/config/quick-runs/{id}/update", "/config/quick-runs", []string{"id"}, []string{"name", "arguments", "timeout_seconds"}, a.updateQuickRun),
-		action("quick_runs.copy", "Copy Quick Run", "quick_runs", "/config/quick-runs/{id}/copy", "/config/quick-runs", []string{"id"}, []string{"name", "arguments", "timeout_seconds", "group_id"}, a.copyQuickRun),
+		action("quick_runs.copy", "Copy Quick Run", "quick_runs", "/config/quick-runs/{id}/copy", "/config/quick-runs", []string{"id"}, []string{"script", "name", "arguments", "timeout_seconds", "group_id"}, a.copyQuickRun),
 		action("quick_runs.lock", "Set Quick Run lock", "quick_runs", "/config/quick-runs/{id}/lock", "/config/quick-runs", []string{"id"}, []string{"locked"}, a.setQuickRunLocked),
 		action("quick_runs.start", "Start Quick Run", "quick_runs", "/config/quick-runs/{id}/start", "/config/quick-runs", []string{"id"}, nil, a.startQuickRun),
 		action("quick_runs.move", "Move Quick Run", "quick_runs", "/config/quick-runs/{id}/move", "/config/quick-runs", []string{"id"}, []string{"direction"}, a.moveQuickRun),

@@ -183,7 +183,7 @@
     {{else if eq .Kind "quick-copy"}}
     <form method="post" action="{{.Action}}" data-async>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <div class="field-readonly"><span>{{t .Locale "common.script"}}</span><code>{{.Path}}</code></div>
+      <label>{{t .Locale "common.script"}} <input name="script" autocomplete="off" spellcheck="false" value="{{.Path}}" required></label>
       <label>{{t .Locale "run_detail.quick_name"}} <input name="name" autocomplete="off" value="{{.Name}}" required autofocus></label>
       <label>{{t .Locale "task.arguments"}} <input name="arguments" autocomplete="off" spellcheck="false" value="{{.Arguments}}"></label>
       <label>{{t .Locale "task.timeout_seconds"}} <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}"></label>

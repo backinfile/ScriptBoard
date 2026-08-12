@@ -2967,14 +2967,9 @@ func (a *App) createQuickRunFromFile(response http.ResponseWriter, request *http
 		http.Error(response, "快捷执行名称无效", http.StatusBadRequest)
 		return
 	}
-	scriptPath, err := a.files.CanonicalExisting(request.FormValue("script"))
+	scriptPath, err := a.canonicalQuickRunScript(request.FormValue("script"))
 	if err != nil {
 		writeHostFileError(response, "脚本不存在或不可运行", err)
-		return
-	}
-	info, err := a.files.Info(scriptPath)
-	if err != nil || !info.Mode().IsRegular() || !isScriptExtension(scriptPath) {
-		http.Error(response, "脚本不存在或不可运行", http.StatusBadRequest)
 		return
 	}
 	timeoutSeconds := 0

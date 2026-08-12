@@ -161,6 +161,21 @@ func (a *App) parseQuickRunEditableRequest(request *http.Request) (string, strin
 	return name, arguments, timeoutSeconds, nil
 }
 
+func (a *App) canonicalQuickRunScript(value string) (string, error) {
+	scriptPath, err := a.files.CanonicalExisting(value)
+	if err != nil {
+		return "", err
+	}
+	info, err := a.files.Info(scriptPath)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() || !isScriptExtension(scriptPath) {
+		return "", errors.New("path is not a runnable script")
+	}
+	return scriptPath, nil
+}
+
 func (a *App) resolveQuickRunGroupID(value string) (*string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -574,7 +589,7 @@ func (a *App) copyQuickRunTask(response http.ResponseWriter, request *http.Reque
 	})
 }
 
-func (a *App) createQuickRunCopy(source quickRunRecord, name, arguments string, timeoutSeconds int, groupID *string) (string, error) {
+func (a *App) createQuickRunCopy(source quickRunRecord, scriptPath, name, arguments string, timeoutSeconds int, groupID *string) (string, error) {
 	id, err := randomToken(18)
 	if err != nil {
 		return "", err
@@ -604,11 +619,15 @@ func (a *App) createQuickRunCopy(source quickRunRecord, name, arguments string, 
 		return "", err
 	}
 	now := time.Now().UTC().Unix()
+	var sourceRunID any
+	if hostfiles.ComparisonKey(source.ScriptPath) == hostfiles.ComparisonKey(scriptPath) && source.SourceRunID.Valid {
+		sourceRunID = source.SourceRunID.String
+	}
 	if _, err = transaction.Exec(`INSERT INTO quick_runs
 		(id, name, script_path, script_path_key, arguments_template, timeout_seconds, source_run_id,
 		sort_order, created_at, group_id, locked, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
-		id, name, source.ScriptPath, hostfiles.ComparisonKey(source.ScriptPath), arguments, timeoutSeconds, source.SourceRunID,
+		id, name, scriptPath, hostfiles.ComparisonKey(scriptPath), arguments, timeoutSeconds, sourceRunID,
 		sortOrder, now, targetGroup, now); err != nil {
 		return "", err
 	}
@@ -633,12 +652,21 @@ func (a *App) copyQuickRun(response http.ResponseWriter, request *http.Request) 
 		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
 	}
+	scriptValue := request.FormValue("script")
+	if scriptValue == "" {
+		scriptValue = source.ScriptPath
+	}
+	scriptPath, err := a.canonicalQuickRunScript(scriptValue)
+	if err != nil {
+		writeHostFileError(response, "脚本不存在或不可运行", err)
+		return
+	}
 	groupID, err := a.resolveQuickRunGroupID(request.FormValue("group_id"))
 	if err != nil {
 		http.Error(response, "快捷执行分组不存在", http.StatusConflict)
 		return
 	}
-	id, err := a.createQuickRunCopy(source, name, arguments, timeoutSeconds, groupID)
+	id, err := a.createQuickRunCopy(source, scriptPath, name, arguments, timeoutSeconds, groupID)
 	if err != nil {
 		http.Error(response, "无法复制快捷执行", http.StatusInternalServerError)
 		return
