@@ -240,6 +240,33 @@ func TestPurgeLegacyKeySecretsKeepsUnrelatedSecrets(t *testing.T) {
 	}
 }
 
+func TestMigrateRemoteWebsiteCredentialsBindsEndpointBeforeRemovingLegacySecret(t *testing.T) {
+	manager, db := testManager(t, time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC))
+	if _, err := db.Exec(`INSERT INTO website_monitor_remote_sources (id, label, endpoint, token_hint, created_at, updated_at) VALUES ('source-one', 'Branch', 'https://example.com/trigger?name=status', 'hint', 1, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.StoreSecret("remote-website:source-one", "remote-secret"); err != nil {
+		t.Fatal(err)
+	}
+	destination := &capturingRemoteWebsiteDestination{}
+	if err := manager.MigrateRemoteWebsiteCredentials(context.Background(), destination); err != nil {
+		t.Fatal(err)
+	}
+	if destination.id != "source-one" || destination.endpoint != "https://example.com/trigger?name=status" || destination.key != "remote-secret" {
+		t.Fatalf("migration binding=%+v", destination)
+	}
+	if _, err := manager.Secret("remote-website:source-one"); !errors.Is(err, ErrSecretUnavailable) {
+		t.Fatalf("legacy secret remained after migration: %v", err)
+	}
+}
+
+type capturingRemoteWebsiteDestination struct{ id, endpoint, key string }
+
+func (destination *capturingRemoteWebsiteDestination) Store(_ context.Context, id, endpoint, key string) error {
+	destination.id, destination.endpoint, destination.key = id, endpoint, key
+	return nil
+}
+
 func TestResolveRejectsExpiredKeyAndDisabledEntry(t *testing.T) {
 	now := time.Date(2026, 8, 5, 9, 0, 0, 0, time.UTC)
 	manager, _ := testManager(t, now)

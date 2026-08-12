@@ -15,10 +15,12 @@ import (
 
 	"scriptboard/internal/auditcheckpoint"
 	"scriptboard/internal/auditlog"
+	"scriptboard/internal/externaltrigger"
 	"scriptboard/internal/hostsecurity"
 	"scriptboard/internal/mfa"
 	"scriptboard/internal/passkey"
 	"scriptboard/internal/privilegebroker"
+	"scriptboard/internal/remotewebsite"
 	"scriptboard/internal/secretredaction"
 	"scriptboard/internal/secretstore"
 	"scriptboard/internal/shutdownsignal"
@@ -88,6 +90,20 @@ func runContext(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("initialize Broker-owned passkey state: %w", err)
 	}
+	remoteWebsites, err := remotewebsite.New(remotewebsite.Options{StateRoot: absolute, SecretStore: vault})
+	if err != nil {
+		return fmt.Errorf("initialize Broker-owned remote website credentials: %w", err)
+	}
+	legacyExternal := externaltrigger.New(database, externaltrigger.Options{SecretsDirectory: filepath.Join(absolute, "secrets"), SecretStore: vault})
+	if err := legacyExternal.MigrateSecrets(); err != nil {
+		return fmt.Errorf("migrate External Interface secrets in Broker: %w", err)
+	}
+	if err := legacyExternal.MigrateRemoteWebsiteCredentials(context.Background(), remoteWebsites); err != nil {
+		return fmt.Errorf("migrate remote website credentials in Broker: %w", err)
+	}
+	if err := legacyExternal.PurgeLegacyKeySecrets(context.Background()); err != nil {
+		return fmt.Errorf("purge recoverable External Interface keys in Broker: %w", err)
+	}
 	databaseSecurity, err := privilegebroker.NewDatabaseSecurity(database, audit, time.Now)
 	if err != nil {
 		return err
@@ -110,7 +126,7 @@ func runContext(ctx context.Context, arguments []string) error {
 		Listener: transport.Listener, VerifyPeer: transport.VerifyPeer,
 		Authorizer: databaseSecurity, Executor: executor, Auditor: databaseSecurity,
 		Checkpoint: brokerCheckpointService{store: checkpoint, audit: audit}, Now: time.Now,
-		MFA: mfaStore, Passkeys: passkeyStore,
+		MFA: mfaStore, Passkeys: passkeyStore, RemoteWebsites: remoteWebsites,
 	})
 	if err != nil {
 		return err

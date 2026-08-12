@@ -44,7 +44,34 @@ func NewDatabaseSecurity(db *sql.DB, audit *auditlog.Store, now func() time.Time
 }
 
 func (security *DatabaseSecurity) Authorize(ctx context.Context, request AuthorizationRequest) (Actor, error) {
-	digest := sha256.Sum256([]byte(request.SessionToken))
+	actor, authVersion, userAuthVersion, assurance, reauthenticatedAt, _, err := security.sessionActor(ctx, request.SessionToken)
+	if err != nil {
+		return Actor{}, err
+	}
+	now := security.now().UTC()
+	reauthenticated := time.Unix(reauthenticatedAt, 0)
+	if authVersion != userAuthVersion || (actor.Role != "administrator" && actor.Role != "maintainer") ||
+		assurance < 1 || reauthenticatedAt <= 0 || reauthenticated.After(now.Add(time.Minute)) || now.Sub(reauthenticated) > brokerRecentAuthenticationWindow {
+		return Actor{}, errors.New("privileged Broker session is not authorized for a recent system mutation")
+	}
+	actor.AuthenticationAssurance = assurance
+	return actor, nil
+}
+
+func (security *DatabaseSecurity) AuthorizeSession(ctx context.Context, request AuthorizationRequest) (Actor, error) {
+	actor, authVersion, userAuthVersion, assurance, _, _, err := security.sessionActor(ctx, request.SessionToken)
+	if err != nil {
+		return Actor{}, err
+	}
+	if authVersion != userAuthVersion || assurance < 1 {
+		return Actor{}, errors.New("privileged Broker session is not authorized")
+	}
+	actor.AuthenticationAssurance = assurance
+	return actor, nil
+}
+
+func (security *DatabaseSecurity) sessionActor(ctx context.Context, sessionToken string) (Actor, int64, int64, int, int64, int64, error) {
+	digest := sha256.Sum256([]byte(sessionToken))
 	tokenHash := hex.EncodeToString(digest[:])
 	var actor Actor
 	var authVersion, userAuthVersion int64
@@ -59,17 +86,13 @@ func (security *DatabaseSecurity) Authorize(ctx context.Context, request Authori
 		&reauthenticatedAt, &lastSeenAt, &expiresAt,
 	)
 	if err != nil {
-		return Actor{}, errors.New("privileged Broker session is invalid")
+		return Actor{}, 0, 0, 0, 0, 0, errors.New("privileged Broker session is invalid")
 	}
 	now := security.now().UTC()
-	reauthenticated := time.Unix(reauthenticatedAt, 0)
-	if authVersion != userAuthVersion || (actor.Role != "administrator" && actor.Role != "maintainer") ||
-		assurance < 1 || now.Unix() >= expiresAt || now.Sub(time.Unix(lastSeenAt, 0)) >= brokerIdleSessionWindow ||
-		reauthenticatedAt <= 0 || reauthenticated.After(now.Add(time.Minute)) || now.Sub(reauthenticated) > brokerRecentAuthenticationWindow {
-		return Actor{}, errors.New("privileged Broker session is not authorized for a recent system mutation")
+	if now.Unix() >= expiresAt || now.Sub(time.Unix(lastSeenAt, 0)) >= brokerIdleSessionWindow {
+		return Actor{}, 0, 0, 0, 0, 0, errors.New("privileged Broker session is expired")
 	}
-	actor.AuthenticationAssurance = assurance
-	return actor, nil
+	return actor, authVersion, userAuthVersion, assurance, reauthenticatedAt, lastSeenAt, nil
 }
 
 func (security *DatabaseSecurity) Record(ctx context.Context, record AuditRecord) error {

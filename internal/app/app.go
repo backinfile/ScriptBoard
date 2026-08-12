@@ -58,6 +58,7 @@ import (
 	"scriptboard/internal/passkey"
 	"scriptboard/internal/privatepath"
 	"scriptboard/internal/privilegebroker"
+	"scriptboard/internal/remotewebsite"
 	"scriptboard/internal/runmanager"
 	"scriptboard/internal/scheduler"
 	"scriptboard/internal/secretredaction"
@@ -350,6 +351,7 @@ type Config struct {
 	AuditCheckpoint           AuditCheckpoint
 	MFAStore                  MFAStore
 	PasskeyStore              PasskeyStore
+	RemoteWebsiteService      RemoteWebsiteService
 	SecurityEventEndpoint     string
 	SecurityEventToken        string
 	SecurityEventTokenFile    string
@@ -378,6 +380,12 @@ type PasskeyStore interface {
 	Update(string, webauthn.Credential) error
 	Delete(string, string) error
 	Reset(string) error
+}
+
+type RemoteWebsiteService interface {
+	Store(context.Context, string, string, string) error
+	Fetch(context.Context, string, string) (json.RawMessage, error)
+	Delete(context.Context, string) error
 }
 
 type contextualMFAStore interface {
@@ -462,6 +470,7 @@ type App struct {
 	websiteMonitor       *websitemonitor.Manager
 	customDashboards     *customdashboard.Manager
 	externalTriggers     *externaltrigger.Manager
+	remoteWebsites       RemoteWebsiteService
 	externalLimit        *externaltrigger.Limiter
 	mysql                *mysqlmanager.Manager
 	mfa                  MFAStore
@@ -638,13 +647,25 @@ func Open(config Config) (*App, error) {
 		return nil, fmt.Errorf("verify external audit checkpoint: %w", err)
 	}
 	application.externalTriggers = externaltrigger.New(db, externaltrigger.Options{SecretsDirectory: filepath.Join(stateRoot, "secrets"), SecretStore: credentialStore})
-	if err := application.externalTriggers.MigrateSecrets(); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("migrate External Interface secrets: %w", err)
-	}
-	if err := application.externalTriggers.PurgeLegacyKeySecrets(context.Background()); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("purge recoverable External Interface keys: %w", err)
+	application.remoteWebsites = config.RemoteWebsiteService
+	if application.remoteWebsites == nil {
+		application.remoteWebsites, err = remotewebsite.New(remotewebsite.Options{StateRoot: stateRoot, SecretStore: credentialStore})
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("initialize remote website credential service: %w", err)
+		}
+		if err := application.externalTriggers.MigrateSecrets(); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("migrate External Interface secrets: %w", err)
+		}
+		if err := application.externalTriggers.MigrateRemoteWebsiteCredentials(context.Background(), application.remoteWebsites); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("migrate remote website credentials: %w", err)
+		}
+		if err := application.externalTriggers.PurgeLegacyKeySecrets(context.Background()); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("purge recoverable External Interface keys: %w", err)
+		}
 	}
 	application.externalLimit = externaltrigger.NewLimiter(externaltrigger.LimiterOptions{RequestsPerMinute: 60, Concurrent: 4})
 	application.mysql, err = mysqlmanager.New(mysqlmanager.Options{DB: db, StateRoot: stateRoot, SecretStore: credentialStore, Audit: func(event mysqlmanager.AuditEvent) {
@@ -2433,8 +2454,8 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /monitor/dashboard-cards/{id}/delete", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.deleteCustomDashboardCard)))
 	mux.Public("GET /public/dashboard/{slug}", a.publicCustomDashboard)
 	mux.Handle("GET /monitor/websites/data", a.requirePermission(permissionObserve, http.HandlerFunc(a.websiteMonitorData)))
-	mux.Handle("POST /monitor/websites/remotes", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.createWebsiteMonitorRemoteSource)))
-	mux.Handle("POST /monitor/websites/remotes/{id}/delete", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.deleteWebsiteMonitorRemoteSource)))
+	mux.Handle("POST /monitor/websites/remotes", a.requireStepUp(permissionManageOperations, http.HandlerFunc(a.createWebsiteMonitorRemoteSource)))
+	mux.Handle("POST /monitor/websites/remotes/{id}/delete", a.requireStepUp(permissionManageOperations, http.HandlerFunc(a.deleteWebsiteMonitorRemoteSource)))
 	mux.Handle("GET /monitor/websites/new", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.websiteMonitorCreateTask)))
 	mux.Handle("POST /monitor/websites", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.createWebsiteMonitor)))
 	mux.Handle("POST /monitor/websites/reorder", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.reorderWebsiteMonitors)))

@@ -36,6 +36,14 @@ func TestDatabaseSecurityRequiresCurrentPrivilegedStepUp(t *testing.T) {
 	if _, err := security.Authorize(context.Background(), AuthorizationRequest{SessionToken: "operator-session-token-0123456789"}); err == nil {
 		t.Fatal("operator session authorized for privileged mutation")
 	}
+	actor, err = security.AuthorizeSession(context.Background(), AuthorizationRequest{SessionToken: "expired-step-up-token-0123456789"})
+	if err != nil || actor.Role != "administrator" {
+		t.Fatalf("valid session with stale step-up was rejected: actor=%+v err=%v", actor, err)
+	}
+	actor, err = security.AuthorizeSession(context.Background(), AuthorizationRequest{SessionToken: "operator-session-token-0123456789"})
+	if err != nil || actor.Role != "operator" {
+		t.Fatalf("valid operator read session was rejected: actor=%+v err=%v", actor, err)
+	}
 }
 
 func TestDatabaseSecurityWritesIndependentIntentAndResultAudit(t *testing.T) {

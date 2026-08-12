@@ -4,22 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
-
-	"scriptboard/internal/outboundpolicy"
 )
 
 const (
-	remoteWebsiteSecretPrefix = "remote-website:"
-	maxRemoteWebsiteSources   = 20
-	maxRemoteWebsiteResponse  = 4 << 20
+	maxRemoteWebsiteSources  = 20
+	maxRemoteWebsiteResponse = 4 << 20
 )
 
 type websiteMonitorRemoteSource struct {
@@ -81,7 +76,8 @@ func (a *App) createWebsiteMonitorRemoteSource(response http.ResponseWriter, req
 		http.Error(response, webText(locale, "website.remote.duplicate"), http.StatusConflict)
 		return
 	}
-	if err := a.externalTriggers.StoreSecret(remoteWebsiteSecretPrefix+id, key); err != nil {
+	if err := a.remoteWebsites.Store(request.Context(), id, endpoint, key); err != nil {
+		_ = a.remoteWebsites.Delete(request.Context(), id)
 		_, _ = a.db.ExecContext(request.Context(), `DELETE FROM website_monitor_remote_sources WHERE id = ?`, id)
 		http.Error(response, webText(locale, "error.internal"), http.StatusInternalServerError)
 		return
@@ -97,6 +93,19 @@ func (a *App) deleteWebsiteMonitorRemoteSource(response http.ResponseWriter, req
 		return
 	}
 	id := request.PathValue("id")
+	var exists int
+	if err := a.db.QueryRowContext(request.Context(), `SELECT EXISTS(SELECT 1 FROM website_monitor_remote_sources WHERE id = ?)`, id).Scan(&exists); err != nil {
+		http.Error(response, webText(locale, "error.internal"), http.StatusInternalServerError)
+		return
+	}
+	if exists == 0 {
+		http.NotFound(response, request)
+		return
+	}
+	if err := a.remoteWebsites.Delete(request.Context(), id); err != nil {
+		http.Error(response, webText(locale, "error.internal"), http.StatusInternalServerError)
+		return
+	}
 	result, err := a.db.ExecContext(request.Context(), `DELETE FROM website_monitor_remote_sources WHERE id = ?`, id)
 	if err != nil {
 		http.Error(response, webText(locale, "error.internal"), http.StatusInternalServerError)
@@ -106,7 +115,6 @@ func (a *App) deleteWebsiteMonitorRemoteSource(response http.ResponseWriter, req
 		http.NotFound(response, request)
 		return
 	}
-	_ = a.externalTriggers.DeleteSecret(remoteWebsiteSecretPrefix + id)
 	a.recordAuditForRequest(request, "delete_remote_website_monitor_source", id, "succeeded")
 	http.Redirect(response, request, "/monitor/websites", http.StatusSeeOther)
 }
@@ -147,12 +155,12 @@ func (a *App) websiteMonitorRemoteSources(ctx context.Context, locale webLocale)
 				result[index].Error = webText(locale, "website.remote.unavailable")
 				return
 			}
-			secret, err := a.externalTriggers.Secret(remoteWebsiteSecretPrefix + result[index].ID)
+			payload, err := a.remoteWebsites.Fetch(fetchContext, result[index].ID, string(locale))
 			if err != nil {
-				result[index].Error = webText(locale, "website.remote.key_unavailable")
+				result[index].Error = webText(locale, "website.remote.unavailable")
 				return
 			}
-			snapshot, err := fetchRemoteWebsiteMonitors(fetchContext, result[index].Endpoint, secret, locale)
+			snapshot, err := decodeRemoteWebsiteMonitors(payload)
 			if err != nil {
 				result[index].Error = webText(locale, "website.remote.unavailable")
 				return
@@ -164,32 +172,8 @@ func (a *App) websiteMonitorRemoteSources(ctx context.Context, locale webLocale)
 	return result, nil
 }
 
-func fetchRemoteWebsiteMonitors(ctx context.Context, endpoint, key string, locale webLocale) (websiteMonitorListDataView, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return websiteMonitorListDataView{}, err
-	}
-	request.Header.Set("Authorization", "Bearer "+key)
-	request.Header.Set("Accept", "application/json")
-	request.Header.Set("Accept-Language", string(locale))
-	request.Header.Set("User-Agent", "ScriptBoard/remote-website-monitor")
-	client := &http.Client{
-		Transport: outboundpolicy.Policy{}.Transport(),
-		Timeout:   10 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	response, err := client.Do(request)
-	if err != nil {
-		return websiteMonitorListDataView{}, err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK || !strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "application/json") {
-		return websiteMonitorListDataView{}, fmt.Errorf("remote website monitor status %d", response.StatusCode)
-	}
-	content, err := io.ReadAll(io.LimitReader(response.Body, maxRemoteWebsiteResponse+1))
-	if err != nil || len(content) > maxRemoteWebsiteResponse {
+func decodeRemoteWebsiteMonitors(content json.RawMessage) (websiteMonitorListDataView, error) {
+	if len(content) > maxRemoteWebsiteResponse {
 		return websiteMonitorListDataView{}, errors.New("remote website monitor response is too large")
 	}
 	var payload remoteWebsiteMonitorResponse

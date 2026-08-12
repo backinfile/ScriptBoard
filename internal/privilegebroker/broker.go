@@ -29,32 +29,35 @@ import (
 )
 
 const (
-	ProtocolVersion           = 1
-	MaxRequestBytes           = 128 << 10
-	MaxResponseBytes          = 1 << 20
-	capabilityLifetime        = 30 * time.Second
-	maxCapabilities           = 1024
-	maxMFAVerifyFailureUsers  = 4096
-	maxMFAVerifyFailures      = 5
-	mfaVerifyFailureWindow    = 5 * time.Minute
-	operationAuthorize        = "authorize"
-	operationExecute          = "execute"
-	operationCheckpointVerify = "checkpoint_verify"
-	operationCheckpointWrite  = "checkpoint_write"
-	operationMFAStatus        = "mfa_status"
-	operationMFABegin         = "mfa_begin"
-	operationMFAConfirm       = "mfa_confirm"
-	operationMFAVerify        = "mfa_verify"
-	operationMFAReset         = "mfa_reset"
-	operationPasskeyUser      = "passkey_user"
-	operationPasskeyList      = "passkey_list"
-	operationPasskeyAdd       = "passkey_add"
-	operationPasskeyUpdate    = "passkey_update"
-	operationPasskeyDelete    = "passkey_delete"
-	operationPasskeyReset     = "passkey_reset"
-	statusOK                  = "ok"
-	statusError               = "error"
-	defaultCallDeadline       = 35 * time.Second
+	ProtocolVersion              = 1
+	MaxRequestBytes              = 128 << 10
+	MaxResponseBytes             = 5 << 20
+	capabilityLifetime           = 30 * time.Second
+	maxCapabilities              = 1024
+	maxMFAVerifyFailureUsers     = 4096
+	maxMFAVerifyFailures         = 5
+	mfaVerifyFailureWindow       = 5 * time.Minute
+	operationAuthorize           = "authorize"
+	operationExecute             = "execute"
+	operationCheckpointVerify    = "checkpoint_verify"
+	operationCheckpointWrite     = "checkpoint_write"
+	operationMFAStatus           = "mfa_status"
+	operationMFABegin            = "mfa_begin"
+	operationMFAConfirm          = "mfa_confirm"
+	operationMFAVerify           = "mfa_verify"
+	operationMFAReset            = "mfa_reset"
+	operationPasskeyUser         = "passkey_user"
+	operationPasskeyList         = "passkey_list"
+	operationPasskeyAdd          = "passkey_add"
+	operationPasskeyUpdate       = "passkey_update"
+	operationPasskeyDelete       = "passkey_delete"
+	operationPasskeyReset        = "passkey_reset"
+	operationRemoteWebsiteStore  = "remote_website_store"
+	operationRemoteWebsiteFetch  = "remote_website_fetch"
+	operationRemoteWebsiteDelete = "remote_website_delete"
+	statusOK                     = "ok"
+	statusError                  = "error"
+	defaultCallDeadline          = 35 * time.Second
 )
 
 type Action string
@@ -73,6 +76,9 @@ const (
 	ActionPasskeyAdd            Action = "passkey_add"
 	ActionPasskeyDelete         Action = "passkey_delete"
 	ActionPasskeyReset          Action = "passkey_reset"
+	ActionRemoteWebsiteStore    Action = "remote_website_store"
+	ActionRemoteWebsiteFetch    Action = "remote_website_fetch"
+	ActionRemoteWebsiteDelete   Action = "remote_website_delete"
 )
 
 var (
@@ -113,6 +119,10 @@ type AuthorizationRequest struct {
 
 type Authorizer interface {
 	Authorize(context.Context, AuthorizationRequest) (Actor, error)
+}
+
+type SessionAuthorizer interface {
+	AuthorizeSession(context.Context, AuthorizationRequest) (Actor, error)
 }
 
 type Executor interface {
@@ -164,28 +174,36 @@ type PasskeyService interface {
 	Reset(string) error
 }
 
+type RemoteWebsiteService interface {
+	Store(context.Context, string, string, string) error
+	Fetch(context.Context, string, string) (json.RawMessage, error)
+	Delete(context.Context, string) error
+}
+
 type ServerOptions struct {
-	Listener   net.Listener
-	VerifyPeer func(net.Conn) error
-	Authorizer Authorizer
-	Executor   Executor
-	Auditor    Auditor
-	Checkpoint CheckpointService
-	MFA        MFAService
-	Passkeys   PasskeyService
-	Now        func() time.Time
+	Listener       net.Listener
+	VerifyPeer     func(net.Conn) error
+	Authorizer     Authorizer
+	Executor       Executor
+	Auditor        Auditor
+	Checkpoint     CheckpointService
+	MFA            MFAService
+	Passkeys       PasskeyService
+	RemoteWebsites RemoteWebsiteService
+	Now            func() time.Time
 }
 
 type Server struct {
-	listener   net.Listener
-	verifyPeer func(net.Conn) error
-	authorizer Authorizer
-	executor   Executor
-	auditor    Auditor
-	checkpoint CheckpointService
-	mfa        MFAService
-	passkeys   PasskeyService
-	now        func() time.Time
+	listener       net.Listener
+	verifyPeer     func(net.Conn) error
+	authorizer     Authorizer
+	executor       Executor
+	auditor        Auditor
+	checkpoint     CheckpointService
+	mfa            MFAService
+	passkeys       PasskeyService
+	remoteWebsites RemoteWebsiteService
+	now            func() time.Time
 
 	mu                sync.Mutex
 	capabilities      map[string]capabilityBinding
@@ -212,40 +230,45 @@ type capabilityBinding struct {
 }
 
 type wireRequest struct {
-	Version             int                  `json:"version"`
-	Operation           string               `json:"operation"`
-	RequestID           string               `json:"request_id"`
-	SessionToken        string               `json:"session_token,omitempty"`
-	Capability          string               `json:"capability,omitempty"`
-	Action              Action               `json:"action"`
-	Resource            string               `json:"resource"`
-	Revision            string               `json:"revision"`
-	ParametersSHA256    string               `json:"parameters_sha256"`
-	Parameters          json.RawMessage      `json:"parameters,omitempty"`
-	MFAUserID           string               `json:"mfa_user_id,omitempty"`
-	MFAAccount          string               `json:"mfa_account,omitempty"`
-	MFACode             string               `json:"mfa_code,omitempty"`
-	PasskeyUserID       string               `json:"passkey_user_id,omitempty"`
-	PasskeyUsername     string               `json:"passkey_username,omitempty"`
-	PasskeyName         string               `json:"passkey_name,omitempty"`
-	PasskeyCredentialID string               `json:"passkey_credential_id,omitempty"`
-	PasskeyCredential   *webauthn.Credential `json:"passkey_credential,omitempty"`
+	Version               int                  `json:"version"`
+	Operation             string               `json:"operation"`
+	RequestID             string               `json:"request_id"`
+	SessionToken          string               `json:"session_token,omitempty"`
+	Capability            string               `json:"capability,omitempty"`
+	Action                Action               `json:"action"`
+	Resource              string               `json:"resource"`
+	Revision              string               `json:"revision"`
+	ParametersSHA256      string               `json:"parameters_sha256"`
+	Parameters            json.RawMessage      `json:"parameters,omitempty"`
+	MFAUserID             string               `json:"mfa_user_id,omitempty"`
+	MFAAccount            string               `json:"mfa_account,omitempty"`
+	MFACode               string               `json:"mfa_code,omitempty"`
+	PasskeyUserID         string               `json:"passkey_user_id,omitempty"`
+	PasskeyUsername       string               `json:"passkey_username,omitempty"`
+	PasskeyName           string               `json:"passkey_name,omitempty"`
+	PasskeyCredentialID   string               `json:"passkey_credential_id,omitempty"`
+	PasskeyCredential     *webauthn.Credential `json:"passkey_credential,omitempty"`
+	RemoteWebsiteID       string               `json:"remote_website_id,omitempty"`
+	RemoteWebsiteEndpoint string               `json:"remote_website_endpoint,omitempty"`
+	RemoteWebsiteKey      string               `json:"remote_website_key,omitempty"`
+	RemoteWebsiteLocale   string               `json:"remote_website_locale,omitempty"`
 }
 
 type wireResponse struct {
-	Status             string                   `json:"status"`
-	Capability         string                   `json:"capability,omitempty"`
-	ExpiresAt          int64                    `json:"expires_at,omitempty"`
-	ErrorCode          string                   `json:"error_code,omitempty"`
-	Message            string                   `json:"message,omitempty"`
-	EventID            int64                    `json:"event_id,omitempty"`
-	MFAEnabled         bool                     `json:"mfa_enabled,omitempty"`
-	MFARecoveryCodes   int                      `json:"mfa_recovery_codes,omitempty"`
-	MFAEnrollment      *mfa.Enrollment          `json:"mfa_enrollment,omitempty"`
-	MFARecoveryValues  []string                 `json:"mfa_recovery_values,omitempty"`
-	MFAVerified        bool                     `json:"mfa_verified,omitempty"`
-	PasskeyUser        *passkey.User            `json:"passkey_user,omitempty"`
-	PasskeyCredentials []passkey.CredentialView `json:"passkey_credentials,omitempty"`
+	Status               string                   `json:"status"`
+	Capability           string                   `json:"capability,omitempty"`
+	ExpiresAt            int64                    `json:"expires_at,omitempty"`
+	ErrorCode            string                   `json:"error_code,omitempty"`
+	Message              string                   `json:"message,omitempty"`
+	EventID              int64                    `json:"event_id,omitempty"`
+	MFAEnabled           bool                     `json:"mfa_enabled,omitempty"`
+	MFARecoveryCodes     int                      `json:"mfa_recovery_codes,omitempty"`
+	MFAEnrollment        *mfa.Enrollment          `json:"mfa_enrollment,omitempty"`
+	MFARecoveryValues    []string                 `json:"mfa_recovery_values,omitempty"`
+	MFAVerified          bool                     `json:"mfa_verified,omitempty"`
+	PasskeyUser          *passkey.User            `json:"passkey_user,omitempty"`
+	PasskeyCredentials   []passkey.CredentialView `json:"passkey_credentials,omitempty"`
+	RemoteWebsitePayload json.RawMessage          `json:"remote_website_payload,omitempty"`
 }
 
 func NewServer(options ServerOptions) (*Server, error) {
@@ -258,7 +281,7 @@ func NewServer(options ServerOptions) (*Server, error) {
 	}
 	return &Server{
 		listener: options.Listener, verifyPeer: options.VerifyPeer, authorizer: options.Authorizer,
-		executor: options.Executor, auditor: options.Auditor, checkpoint: options.Checkpoint, mfa: options.MFA, passkeys: options.Passkeys, now: now,
+		executor: options.Executor, auditor: options.Auditor, checkpoint: options.Checkpoint, mfa: options.MFA, passkeys: options.Passkeys, remoteWebsites: options.RemoteWebsites, now: now,
 		capabilities: make(map[string]capabilityBinding), done: make(chan struct{}),
 		mfaVerifyFailures: make(map[string]mfaVerifyFailure),
 	}, nil
@@ -309,10 +332,79 @@ func (server *Server) handle(connection net.Conn) {
 		response = server.mfaOperation(request)
 	case operationPasskeyUser, operationPasskeyList, operationPasskeyAdd, operationPasskeyUpdate, operationPasskeyDelete, operationPasskeyReset:
 		response = server.passkeyOperation(request)
+	case operationRemoteWebsiteStore, operationRemoteWebsiteFetch, operationRemoteWebsiteDelete:
+		response = server.remoteWebsiteOperation(request)
 	default:
 		response = wireResponse{Status: statusError, ErrorCode: "operation_forbidden", Message: "operation is not supported"}
 	}
 	writeWireResponse(connection, response)
+}
+
+func (server *Server) remoteWebsiteOperation(request wireRequest) wireResponse {
+	if server.remoteWebsites == nil {
+		return wireResponse{Status: statusError, ErrorCode: "remote_website_unavailable", Message: "remote website service is unavailable"}
+	}
+	mutation, response := server.authorizeRemoteWebsiteOperation(request)
+	if response.Status != "" {
+		return response
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	response = wireResponse{Status: statusOK}
+	var err error
+	switch request.Operation {
+	case operationRemoteWebsiteStore:
+		err = server.remoteWebsites.Store(ctx, request.RemoteWebsiteID, request.RemoteWebsiteEndpoint, request.RemoteWebsiteKey)
+	case operationRemoteWebsiteFetch:
+		response.RemoteWebsitePayload, err = server.remoteWebsites.Fetch(ctx, request.RemoteWebsiteID, request.RemoteWebsiteLocale)
+	case operationRemoteWebsiteDelete:
+		err = server.remoteWebsites.Delete(ctx, request.RemoteWebsiteID)
+	}
+	if err == nil {
+		if mutation != nil {
+			if auditErr := server.recordCredentialMutation(*mutation, "succeeded"); auditErr != nil {
+				return wireResponse{Status: statusError, ErrorCode: "audit_failed_after_execution", Message: "remote website operation completed but result audit failed"}
+			}
+		}
+		return response
+	}
+	if mutation != nil {
+		_ = server.recordCredentialMutation(*mutation, "failed")
+	}
+	return wireResponse{Status: statusError, ErrorCode: "remote_website_failed", Message: "remote website operation failed"}
+}
+
+func (server *Server) authorizeRemoteWebsiteOperation(request wireRequest) (*credentialMutation, wireResponse) {
+	if request.Operation == operationRemoteWebsiteFetch {
+		authorization := AuthorizationRequest{
+			SessionToken: request.SessionToken, RequestID: request.RequestID, Action: ActionRemoteWebsiteFetch,
+			Resource: request.RemoteWebsiteID, Revision: "remote-website-connection-v1",
+			ParametersSHA256: parametersDigest([]byte(request.RemoteWebsiteLocale)),
+		}
+		var err error
+		if authorizer, ok := server.authorizer.(SessionAuthorizer); ok {
+			_, err = authorizer.AuthorizeSession(context.Background(), authorization)
+		} else {
+			_, err = server.authorizer.Authorize(context.Background(), authorization)
+		}
+		if err != nil {
+			return nil, wireResponse{Status: statusError, ErrorCode: "authorization_denied", Message: "remote website session authorization denied"}
+		}
+		return nil, wireResponse{}
+	}
+	action := ActionRemoteWebsiteFetch
+	switch request.Operation {
+	case operationRemoteWebsiteStore:
+		action = ActionRemoteWebsiteStore
+	case operationRemoteWebsiteDelete:
+		action = ActionRemoteWebsiteDelete
+	}
+	parameters, _ := json.Marshal(struct {
+		Endpoint string `json:"endpoint,omitempty"`
+		Key      string `json:"key,omitempty"`
+		Locale   string `json:"locale,omitempty"`
+	}{request.RemoteWebsiteEndpoint, request.RemoteWebsiteKey, request.RemoteWebsiteLocale})
+	return server.authorizeDomainOperation(request, action, request.RemoteWebsiteID, "remote-website-connection-v1", parameters, false)
 }
 
 func (server *Server) passkeyOperation(request wireRequest) wireResponse {
@@ -508,6 +600,10 @@ func (server *Server) authorizePasskeyMutation(request wireRequest) (*credential
 }
 
 func (server *Server) authorizeCredentialMutation(request wireRequest, action Action, resource, revision string, parameters []byte) (*credentialMutation, wireResponse) {
+	return server.authorizeDomainOperation(request, action, resource, revision, parameters, true)
+}
+
+func (server *Server) authorizeDomainOperation(request wireRequest, action Action, resource, revision string, parameters []byte, bindActorToResource bool) (*credentialMutation, wireResponse) {
 	digest := parametersDigest(parameters)
 	actor, err := server.authorizer.Authorize(context.Background(), AuthorizationRequest{
 		SessionToken: request.SessionToken, RequestID: request.RequestID, Action: action,
@@ -516,7 +612,7 @@ func (server *Server) authorizeCredentialMutation(request wireRequest, action Ac
 	if err != nil {
 		return nil, wireResponse{Status: statusError, ErrorCode: "authorization_denied", Message: "credential operation authorization denied"}
 	}
-	if actor.UserID != resource {
+	if bindActorToResource && actor.UserID != resource {
 		return nil, wireResponse{Status: statusError, ErrorCode: "authorization_denied", Message: "credential operation user binding denied"}
 	}
 	mutation := credentialMutation{action: action, resource: resource, revision: revision, requestID: request.RequestID, parametersSHA256: digest, actor: actor}
@@ -754,14 +850,14 @@ func validateWireRequest(request wireRequest) error {
 	}
 	if request.Operation == operationCheckpointVerify || request.Operation == operationCheckpointWrite {
 		if request.SessionToken != "" || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
-			request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) {
+			request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) {
 			return errors.New("checkpoint request is invalid")
 		}
 		return nil
 	}
 	if isMFAOperation(request.Operation) {
 		if request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
-			request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasPasskeyFields(request) || len(request.MFAUserID) == 0 || len(request.MFAUserID) > 160 || strings.ContainsAny(request.MFAUserID, "\r\n\x00") {
+			request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || len(request.MFAUserID) == 0 || len(request.MFAUserID) > 160 || strings.ContainsAny(request.MFAUserID, "\r\n\x00") {
 			return errors.New("MFA request is invalid")
 		}
 		switch request.Operation {
@@ -791,7 +887,10 @@ func validateWireRequest(request wireRequest) error {
 	if isPasskeyOperation(request.Operation) {
 		return validatePasskeyRequest(request)
 	}
-	if hasMFAFields(request) || hasPasskeyFields(request) {
+	if isRemoteWebsiteOperation(request.Operation) {
+		return validateRemoteWebsiteRequest(request)
+	}
+	if hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) {
 		return errors.New("privileged action contains credential-domain fields")
 	}
 	if _, ok := actions[request.Action]; !ok {
@@ -824,7 +923,7 @@ func validateWireRequest(request wireRequest) error {
 
 func validatePasskeyRequest(request wireRequest) error {
 	if request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
-		request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || len(request.PasskeyUserID) == 0 ||
+		request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasRemoteWebsiteFields(request) || len(request.PasskeyUserID) == 0 ||
 		len(request.PasskeyUserID) > 160 || strings.ContainsAny(request.PasskeyUserID, "\r\n\x00") {
 		return errors.New("passkey request is invalid")
 	}
@@ -863,6 +962,55 @@ func validatePasskeyRequest(request wireRequest) error {
 	return nil
 }
 
+func validateRemoteWebsiteRequest(request wireRequest) error {
+	if request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" || request.ParametersSHA256 != "" ||
+		len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || !validRemoteWebsiteID(request.RemoteWebsiteID) ||
+		!validCredentialSessionToken(request.SessionToken) {
+		return errors.New("remote website request is invalid")
+	}
+	switch request.Operation {
+	case operationRemoteWebsiteStore:
+		if len(request.RemoteWebsiteEndpoint) == 0 || len(request.RemoteWebsiteEndpoint) > 2048 || strings.ContainsAny(request.RemoteWebsiteEndpoint, "\r\n\x00") ||
+			!validRemoteWebsiteKey(request.RemoteWebsiteKey) || request.RemoteWebsiteLocale != "" {
+			return errors.New("remote website store request is invalid")
+		}
+	case operationRemoteWebsiteFetch:
+		if request.RemoteWebsiteEndpoint != "" || request.RemoteWebsiteKey != "" || len(request.RemoteWebsiteLocale) > 64 || strings.ContainsAny(request.RemoteWebsiteLocale, "\r\n\x00") {
+			return errors.New("remote website fetch request is invalid")
+		}
+	case operationRemoteWebsiteDelete:
+		if request.RemoteWebsiteEndpoint != "" || request.RemoteWebsiteKey != "" || request.RemoteWebsiteLocale != "" {
+			return errors.New("remote website delete request is invalid")
+		}
+	}
+	return nil
+}
+
+func validRemoteWebsiteID(value string) bool {
+	return len(value) > 0 && len(value) <= 160 && !strings.ContainsAny(value, "\r\n\x00")
+}
+
+func validRemoteWebsiteKey(value string) bool {
+	if !strings.HasPrefix(value, "sbk_") || len(value) > 128 {
+		return false
+	}
+	identity, secret, ok := strings.Cut(strings.TrimPrefix(value, "sbk_"), ".")
+	return ok && len(identity) == 16 && len(secret) == 43 && isBase64URLValue(identity) && isBase64URLValue(secret)
+}
+
+func isBase64URLValue(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, character := range value {
+		if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '-' || character == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 func validPasskeyCredential(credential *webauthn.Credential) bool {
 	if credential == nil || len(credential.ID) == 0 || len(credential.ID) > 1024 {
 		return false
@@ -883,6 +1031,10 @@ func hasPasskeyFields(request wireRequest) bool {
 	return request.PasskeyUserID != "" || request.PasskeyUsername != "" || request.PasskeyName != "" || request.PasskeyCredentialID != "" || request.PasskeyCredential != nil
 }
 
+func hasRemoteWebsiteFields(request wireRequest) bool {
+	return request.RemoteWebsiteID != "" || request.RemoteWebsiteEndpoint != "" || request.RemoteWebsiteKey != "" || request.RemoteWebsiteLocale != ""
+}
+
 func isMFAOperation(operation string) bool {
 	switch operation {
 	case operationMFAStatus, operationMFABegin, operationMFAConfirm, operationMFAVerify, operationMFAReset:
@@ -895,6 +1047,15 @@ func isMFAOperation(operation string) bool {
 func isPasskeyOperation(operation string) bool {
 	switch operation {
 	case operationPasskeyUser, operationPasskeyList, operationPasskeyAdd, operationPasskeyUpdate, operationPasskeyDelete, operationPasskeyReset:
+		return true
+	default:
+		return false
+	}
+}
+
+func isRemoteWebsiteOperation(operation string) bool {
+	switch operation {
+	case operationRemoteWebsiteStore, operationRemoteWebsiteFetch, operationRemoteWebsiteDelete:
 		return true
 	default:
 		return false

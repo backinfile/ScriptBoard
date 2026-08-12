@@ -302,6 +302,10 @@ type Manager struct {
 	secretStore *encryptedSecretStore
 }
 
+type RemoteWebsiteCredentialDestination interface {
+	Store(context.Context, string, string, string) error
+}
+
 func New(db *sql.DB, options Options) *Manager {
 	now := options.Now
 	if now == nil {
@@ -365,6 +369,49 @@ func (manager *Manager) Secret(id string) (string, error) {
 
 func (manager *Manager) DeleteSecret(id string) error {
 	return manager.secretStore.delete(id)
+}
+
+// MigrateRemoteWebsiteCredentials moves legacy remote-monitor credentials into
+// their endpoint-bound domain store before the generic encrypted store is no
+// longer available to managed Web.
+func (manager *Manager) MigrateRemoteWebsiteCredentials(ctx context.Context, destination RemoteWebsiteCredentialDestination) error {
+	if destination == nil {
+		return errors.New("remote website credential destination is unavailable")
+	}
+	rows, err := manager.db.QueryContext(ctx, `SELECT id, endpoint FROM website_monitor_remote_sources ORDER BY id`)
+	if err != nil {
+		return fmt.Errorf("list remote website credentials for migration: %w", err)
+	}
+	defer rows.Close()
+	type source struct{ id, endpoint string }
+	var sources []source
+	for rows.Next() {
+		var value source
+		if err := rows.Scan(&value.id, &value.endpoint); err != nil {
+			return err
+		}
+		sources = append(sources, value)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, value := range sources {
+		legacyID := "remote-website:" + value.id
+		secret, err := manager.Secret(legacyID)
+		if errors.Is(err, ErrSecretUnavailable) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("read legacy remote website credential %q: %w", value.id, err)
+		}
+		if err := destination.Store(ctx, value.id, value.endpoint, secret); err != nil {
+			return fmt.Errorf("migrate remote website credential %q: %w", value.id, err)
+		}
+		if err := manager.DeleteSecret(legacyID); err != nil {
+			return fmt.Errorf("remove migrated remote website credential %q: %w", value.id, err)
+		}
+	}
+	return nil
 }
 
 // PurgeLegacyKeySecrets removes complete External Interface keys persisted by

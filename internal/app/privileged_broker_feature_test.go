@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -19,8 +20,79 @@ import (
 	"scriptboard/internal/mfa"
 	"scriptboard/internal/passkey"
 	"scriptboard/internal/privilegebroker"
+	"scriptboard/internal/remotewebsite"
 	"scriptboard/internal/secretstore"
 )
+
+func TestManagedRemoteWebsiteCredentialIsOwnedAndUsedByPrivilegedBroker(t *testing.T) {
+	root := t.TempDir()
+	stateRoot := filepath.Join(root, "web-state")
+	brokerSecretRoot := filepath.Join(root, "broker-secrets")
+	transportOptions := privilegebroker.TransportOptions{StateRoot: stateRoot, DevelopmentCurrentUser: true}
+	if runtime.GOOS == "linux" {
+		transportOptions.Endpoint = filepath.Join(root, "broker.sock")
+	}
+	transport, err := privilegebroker.Listen(transportOptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var authorization string
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		authorization = request.Header.Get("Authorization")
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(response, `{"ok":true,"action":"website_monitor","schema_version":1,"data":{"monitors":[],"alerts":[],"counts":{},"total":0,"needsCare":0}}`)
+	}))
+	defer upstream.Close()
+	vault, err := secretstore.New(brokerSecretRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	brokerRemoteWebsites, err := remotewebsite.New(remotewebsite.Options{StateRoot: brokerSecretRoot, SecretStore: vault, Client: upstream.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := privilegebroker.NewServer(privilegebroker.ServerOptions{
+		Listener: transport.Listener, VerifyPeer: transport.VerifyPeer, Authorizer: &capturingPrivilegedAuthorizer{},
+		Executor: &capturingPrivilegedExecutor{}, RemoteWebsites: brokerRemoteWebsites,
+	})
+	if err != nil {
+		_ = transport.Close()
+		t.Fatal(err)
+	}
+	server.Start()
+	t.Cleanup(func() {
+		_ = server.Close()
+		_ = transport.Close()
+	})
+	brokerClient := privilegebroker.NewClient(privilegebroker.ClientOptions{Dial: privilegebroker.Dial(transport.Endpoint)})
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{
+		StateRoot: stateRoot, PrivilegedBrokerEndpoint: transport.Endpoint,
+		RemoteWebsiteService: privilegebroker.NewRemoteWebsite(brokerClient),
+	})
+	page := getBody(t, client, serverURL+"/monitor/websites", http.StatusOK)
+	key := "sbk_0123456789abcdef." + strings.Repeat("a", 43)
+	response, err := client.PostForm(serverURL+"/monitor/websites/remotes", url.Values{
+		"csrf_token": {formToken(t, page)}, "label": {"Broker branch"},
+		"endpoint": {upstream.URL + "/trigger?name=website-status"}, "key": {key},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("create status=%d", response.StatusCode)
+	}
+	body := getBody(t, client, serverURL+"/monitor/websites", http.StatusOK)
+	if !strings.Contains(string(body), "Broker branch") || authorization != "Bearer "+key {
+		t.Fatalf("authorization=%q body=%s", authorization, body)
+	}
+	if _, err := os.Stat(filepath.Join(brokerSecretRoot, "secrets", "remote-website-connections.enc")); err != nil {
+		t.Fatalf("Broker-owned remote website state missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stateRoot, "secrets", "remote-website-connections.enc")); !os.IsNotExist(err) {
+		t.Fatalf("Web State Root unexpectedly owns remote website ciphertext: %v", err)
+	}
+}
 
 func TestManagedPasskeyDomainStateIsOwnedByPrivilegedBroker(t *testing.T) {
 	root := t.TempDir()
