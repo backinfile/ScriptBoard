@@ -263,4 +263,16 @@ type Options struct {
 	RetryDelay     time.Duration
 	MaxConcurrency int
 	NginxProcesses NginxProcessSource
+	OnTransition   func(Transition)
+}
+
+type Transition struct {
+	MonitorID     string
+	Name          string
+	State         State
+	CheckedAt     time.Time
+	StatusCode    int
+	Latency       time.Duration
+	ErrorCategory string
+	Summary       string
 }

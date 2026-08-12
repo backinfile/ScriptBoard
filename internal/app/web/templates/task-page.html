@@ -73,7 +73,7 @@
     <form method="post" action="{{.Action}}">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <label>{{t .Locale "account.current_password"}} <input name="current_password" type="password" autocomplete="current-password" required autofocus></label>
-      <label>{{t .Locale "account.new_password"}} <input name="new_password" type="password" autocomplete="new-password" required></label>
+      <label>{{t .Locale "account.new_password"}} <input name="new_password" type="password" autocomplete="new-password" minlength="15" maxlength="256" required><small>{{t .Locale "account.password_policy"}}</small></label>
       <label>{{t .Locale "account.confirm_password"}} <input name="confirm_password" type="password" autocomplete="new-password" required></label>
       <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "account.save"}}</button></footer>
     </form>

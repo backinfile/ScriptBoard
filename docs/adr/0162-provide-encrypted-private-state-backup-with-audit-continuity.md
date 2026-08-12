@@ -8,6 +8,6 @@ ScriptBoard 提供 `backup create`、`backup inspect` 与 `backup restore` 本�
 
 恢复旧数据库通常会落后于当前外部审计 checkpoint，因此常规 checkpoint 刷新必须继续拒绝它。备份携带创建时已经由外部 Ed25519 密钥签名、且属于 snapshot 审计链的 checkpoint。恢复提交前分别验证当前 checkpoint 与备份 checkpoint；恢复后追加 `state_backup.restore` 连续性事件，事件绑定恢复前 checkpoint 文档摘要并记录备份 checkpoint 身份，然后才使用同一受保护私钥生成新 checkpoint。恢复前 checkpoint 文档随原状态保留。只有这个固定恢复动作允许受控的向后 Event ID 转换，普通启动和刷新路径仍然 fail closed。
 
-CLI 是服务不可用时的恢复入口，不替代 Web 权限模型。后续 Web 页面只能创建或检查备份、发起由 Broker/Updater 执行的 staging 恢复；提交恢复必须重新验证 Administrator/Maintainer 的近期 AAL2 会话并再次核对 Backup ID，Web 进程不得直接替换自己的活动数据库或解封 checkpoint 私钥。
+CLI 是服务不可用时的恢复入口，不替代 Web 权限模型。受管 Web 页面已经可以在近期 AAL2 下创建、检查、暂存和丢弃恢复；Broker 独立复核会话与参数、验证归档和签名 checkpoint、撤销恢复出的 Session，并用暂存后逐文件摘要绑定 24 小时内待提交的 payload。Web 只接触服务器绝对路径和去敏公开清单，不得直接替换自己的活动数据库或解封 checkpoint 私钥。最终提交恢复仍必须停止四个组件、再次核对 Backup ID 并走离线恢复入口。
 
 本决策取代 ADR-0100 的“没有用户备份命令”结论，也取代 ADR-0074 对密钥打包和无审计连续性恢复的旧细节；继续沿用 ADR-0143 的外部主密钥、ADR-0145/ADR-0155 的外部签名锚点和 Broker 私钥隔离边界。

@@ -107,7 +107,7 @@ sudo /opt/scriptboard/current/scriptboard service start
 sudo /opt/scriptboard/current/scriptboard service status
 ```
 
-服务默认安装到 `/opt/scriptboard`，状态数据保存在 `/var/lib/scriptboard/state`。安装会初始化状态，创建无登录 `scriptboard-web`、`scriptboard-ai` 与 `scriptboard-runner` 系统用户，并注册 Web、Broker、AI Host 与 Runner 四个 systemd 服务；Web 不以 root 运行，防火墙和主机安全写操作只经校验 peer UID 的本机 Unix Socket 进入 root Broker。AI 只允许环回网络，Runner 默认无 IP 网络；两个 Runtime 服务都使用 systemd seccomp allowlist、空 capability 和资源上限。
+服务默认安装到 `/opt/scriptboard`，状态数据保存在 `/var/lib/scriptboard/state`。安装会初始化状态，创建无登录 `scriptboard-web`、`scriptboard-ai` 与 `scriptboard-runner` 系统用户，并注册 Web、Broker、AI Host 与 Runner 四个 systemd 组件；Web 与 Broker 常驻，AI Host 和 Runner 由各自受保护的 Unix Socket 按需激活，未使用 AI 或尚无 Run 时不会预先启动对应执行进程。Web 不以 root 运行，防火墙和主机安全写操作只经校验 peer UID 的本机 Unix Socket 进入 root Broker。AI 只允许环回网络，Runner 默认无 IP 网络；两个 Runtime 服务都使用 systemd seccomp allowlist、空 capability 和资源上限。
 
 只有需要修改监听地址、TLS、状态目录等设置时，才需要创建 YAML 配置文件，并在安装时通过 `--config CONFIG_PATH` 指定。未指定时，ScriptBoard 会使用平台默认配置路径（Windows 为 `C:\ProgramData\ScriptBoard\config.yaml`，Linux 为 `/etc/scriptboard/config.yaml`）；该文件不存在时直接使用内置默认值。
 
@@ -201,13 +201,15 @@ scriptboard audit verify --config CONFIG_PATH
 
 `allowed_hosts` 是 Host Header 白名单；通配或非回环监听必须显式配置。`canonical_external_url` 的主机必须位于该白名单中，生成对外绝对 URL 时只使用这个值。反向代理部署还须显式配置直连代理的 `trusted_proxies`，未受信来源提供的转发头会被忽略。
 
-配置 `security_event_endpoint` 后，已提交的审计事件会先原子写入 State Root 内的有界 outbox，再按审计链顺序发送到 HTTPS 接收端；失败会指数退避并在重启后继续。Bearer token 只能通过绝对路径 `security_event_token_file` 提供，URL 禁止内嵌凭据且不跟随重定向。默认出站策略拒绝私网、回环和云元数据地址；确需同网段 SIEM 时必须显式开启 `security_event_allow_private`，元数据地址仍不可放行。审计事件可携带纳入 v3 哈希链的结构化资源 revision 与 SHA-256；Broker 参数、Quick Run 发布版本和一次性脚本摘要会随 CSV、取证 JSONL 与远端载荷输出。认证失败、权限拒绝与外部 Trigger 拒绝的突发，以及签名/Runner/Runtime 边界失败，会同时写入权限受限且轮转的 `logs/security-alerts.jsonl`。管理员和维护员可在“系统设置 → 通知与告警”只读查看接收端主机名、outbox 占用、本地告警状态、连续失败和下次尝试时间；页面不会显示 URL 路径、查询参数、认证令牌或事件正文。连续失败八次后投递会熔断五分钟，开路期间新事件仍安全进入 outbox。邮件渠道和网站监控结果模板尚未实现。
+配置 `security_event_endpoint` 后，已提交的审计事件会先原子写入 State Root 内的有界 outbox，再按审计链顺序发送到 HTTPS 接收端；失败会指数退避并在重启后继续。Bearer token 只能通过绝对路径 `security_event_token_file` 提供，URL 禁止内嵌凭据且不跟随重定向。默认出站策略拒绝私网、回环和云元数据地址；确需同网段 SIEM 时必须显式开启 `security_event_allow_private`，元数据地址仍不可放行。审计事件可携带纳入 v3 哈希链的结构化资源 revision 与 SHA-256；Broker 参数、Quick Run 发布版本和一次性脚本摘要会随 CSV、取证 JSONL 与远端载荷输出。认证失败、权限拒绝与外部 Trigger 拒绝的突发，以及签名/Runner/Runtime 边界失败，会同时写入权限受限且轮转的 `logs/security-alerts.jsonl`。网站监控确认故障与恢复会生成固定 `website-monitor-result-v1` 结构化模板；故障同时进入本地告警，两个状态转换都随 Webhook 发送，模板只携带监控资源 ID 和固定摘要，不复制探测响应正文或技术错误。管理员和维护员可在“系统设置 → 通知与告警”只读查看接收端主机名、outbox 占用、本地告警状态、连续失败、下次尝试时间与模板状态；页面不会显示 URL 路径、查询参数、认证令牌或事件正文。连续失败八次后投递会熔断五分钟，开路期间新事件仍安全进入 outbox。邮件渠道尚未实现。
 
 网站监控默认验证 HTTPS/WSS 证书。关闭验证只会签发一小时的临时例外，页面持续显示警告，
 创建或更新审计会记录到期时间；到期后自动恢复验证。连接另一台 ScriptBoard 汇聚网站状态
 时必须使用 HTTPS Endpoint，HTTP、重定向、回环、私网和云元数据目标都会被拒绝。
 
 管理员启动凭据不接受明文 `admin_password`、`SCRIPTBOARD_ADMIN_PASSWORD` 或 `--admin-password`；旧配置会以包含迁移指引的错误拒绝启动。需要启动时覆盖凭据时，只能使用绝对路径的 `admin_password_file`、`SCRIPTBOARD_ADMIN_PASSWORD_FILE` 或 `--admin-password-file`。首次启动与 `scriptboard admin reset` 仍会生成 State Root 内权限受限、修改密码后删除的一次性凭据文件。
+
+本地账户的新口令至少包含 15 个 Unicode 字符且不超过 256 个 UTF-8 字节。策略允许空格且不强制大小写、数字或符号组合，但会拒绝用户名、内置常见口令、单字符重复以及复用当前口令；随机首次凭据和管理员重置凭据满足同一强度边界。
 
 ## 更新与备份
 

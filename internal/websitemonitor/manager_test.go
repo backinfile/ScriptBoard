@@ -84,14 +84,16 @@ func TestTLSVerificationExceptionIsIssuedForOneHour(t *testing.T) {
 }
 
 func TestTwoConsecutiveFailuresConfirmAnIncident(t *testing.T) {
+	transitions := make(chan Transition, 1)
 	probe := &sequenceProbe{results: []Evidence{
 		{ErrorCategory: "connect", Summary: "网站拒绝连接"},
 		{ErrorCategory: "connect", Summary: "网站仍然拒绝连接"},
 	}}
 	manager := newTestManager(t, Options{
-		Probe:      probe,
-		Tick:       5 * time.Millisecond,
-		RetryDelay: 20 * time.Millisecond,
+		Probe:        probe,
+		Tick:         5 * time.Millisecond,
+		RetryDelay:   20 * time.Millisecond,
+		OnTransition: func(transition Transition) { transitions <- transition },
 	})
 	created, err := manager.Create(context.Background(), Config{
 		Name:  "媒体代理",
@@ -126,6 +128,14 @@ func TestTwoConsecutiveFailuresConfirmAnIncident(t *testing.T) {
 	if !incidents[0].StartedAt.Equal(verifying.Latest.CheckedAt) {
 		t.Fatalf("incident started at %v, want first failure at %v",
 			incidents[0].StartedAt, verifying.Latest.CheckedAt)
+	}
+	select {
+	case transition := <-transitions:
+		if transition.MonitorID != created.ID || transition.Name != "媒体代理" || transition.State != StateDown || transition.ErrorCategory != "connect" {
+			t.Fatalf("transition=%#v", transition)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("confirmed outage did not emit a transition")
 	}
 }
 

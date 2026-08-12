@@ -1008,7 +1008,7 @@ func TestAdministratorRenamesAccountFromFocusedTask(t *testing.T) {
 		t.Fatalf("read username task: %v", err)
 	}
 
-	const password = "用于自动测试的专用安全密码"
+	const password = "用于自动测试的专用安全密码凭据版本"
 	response, err = client.PostForm(serverURL+"/settings/account/username", url.Values{
 		"csrf_token":       {formToken(t, taskPage)},
 		"username":         {"renamed-admin"},
@@ -1591,7 +1591,7 @@ func TestFirstPasswordChangeRevokesSessionAndRemovesCredentialFile(t *testing.T)
 		t.Fatalf("read initial password: %v", err)
 	}
 	initialPassword := strings.TrimSpace(string(passwordBytes))
-	const newPassword = "这是一个新的安全密码短语"
+	const newPassword = "这是一个新的安全密码短语凭据版本"
 
 	jar, err := cookiejar.New(nil)
 	if err != nil {
@@ -1768,7 +1768,7 @@ func authenticatedClientWithConfig(t *testing.T, config app.Config) (*http.Clien
 	if err != nil {
 		t.Fatalf("read account settings: %v", err)
 	}
-	const password = "用于自动测试的专用安全密码"
+	const password = "用于自动测试的专用安全密码凭据版本"
 	response, err = client.PostForm(server.URL+"/settings/account", url.Values{
 		"current_password": {initialPassword},
 		"new_password":     {password},

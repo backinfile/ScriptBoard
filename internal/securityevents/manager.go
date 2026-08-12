@@ -52,6 +52,16 @@ type Envelope struct {
 	SentAt        string                  `json:"sent_at"`
 	Audit         auditlog.CommittedEvent `json:"audit"`
 	Alerts        []Alert                 `json:"alerts,omitempty"`
+	Notification  *Notification           `json:"notification,omitempty"`
+}
+
+type Notification struct {
+	Template   string `json:"template"`
+	Severity   string `json:"severity"`
+	Title      string `json:"title"`
+	Summary    string `json:"summary"`
+	ResourceID string `json:"resource_id"`
+	State      string `json:"state"`
 }
 
 type Status struct {
@@ -64,6 +74,7 @@ type Status struct {
 	DeliveryFailures int
 	CircuitOpen      bool
 	NextAttemptAt    time.Time
+	WebsiteTemplates bool
 }
 
 type Manager struct {
@@ -131,7 +142,7 @@ func New(options Options) (*Manager, error) {
 func (manager *Manager) Observe(event auditlog.CommittedEvent) {
 	now := manager.now().UTC()
 	alerts := manager.detect(event, now)
-	envelope := Envelope{Type: "scriptboard.security-event", SchemaVersion: 1, SentAt: now.Format(time.RFC3339Nano), Audit: event, Alerts: alerts}
+	envelope := Envelope{Type: "scriptboard.security-event", SchemaVersion: 1, SentAt: now.Format(time.RFC3339Nano), Audit: event, Alerts: alerts, Notification: notificationFor(event)}
 	if len(alerts) > 0 {
 		_ = manager.appendAlerts(envelope)
 	}
@@ -172,7 +183,7 @@ func (manager *Manager) Status() (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	status := Status{WebhookEnabled: manager.endpoint != "", Pending: pending, Capacity: maxPendingEvents}
+	status := Status{WebhookEnabled: manager.endpoint != "", Pending: pending, Capacity: maxPendingEvents, WebsiteTemplates: true}
 	manager.mu.Lock()
 	status.DeliveryFailures = manager.deliveryFailures
 	status.NextAttemptAt = manager.nextAttemptAt
@@ -219,7 +230,22 @@ func (manager *Manager) detect(event auditlog.CommittedEvent, now time.Time) []A
 			alerts = append(alerts, Alert{Kind: "external_trigger_rejection_burst", Severity: "high", Summary: "External trigger rejections crossed the alert threshold", WindowHits: hits})
 		}
 	}
+	if action == "website_monitor_down" && failed {
+		alerts = append(alerts, Alert{Kind: "website_monitor_outage", Severity: "high", Summary: "A website monitor entered the confirmed down state"})
+	}
 	return alerts
+}
+
+func notificationFor(event auditlog.CommittedEvent) *Notification {
+	action := strings.ToLower(event.Event.Action)
+	switch action {
+	case "website_monitor_down":
+		return &Notification{Template: "website-monitor-result-v1", Severity: "high", Title: "Website monitor confirmed an outage", Summary: "Two consecutive checks failed. Review the current incident in ScriptBoard.", ResourceID: event.Event.Target, State: "down"}
+	case "website_monitor_recovered":
+		return &Notification{Template: "website-monitor-result-v1", Severity: "info", Title: "Website monitor recovered", Summary: "A successful check closed the current incident.", ResourceID: event.Event.Target, State: "recovered"}
+	default:
+		return nil
+	}
 }
 
 func (manager *Manager) windowHit(key string, now time.Time, window time.Duration) int {

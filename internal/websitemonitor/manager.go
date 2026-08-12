@@ -758,6 +758,14 @@ func (m *Manager) recordResult(id string, generation int64, evidence Evidence) {
 			nextState = StateDown
 		}
 	}
+	var transition *Transition
+	if (nextState == StateDown && current != StateDown) || (evidence.Success && current == StateDown) {
+		transition = &Transition{
+			MonitorID: id, Name: config.Name, State: nextState, CheckedAt: evidence.CheckedAt,
+			StatusCode: evidence.StatusCode, Latency: evidence.Latency,
+			ErrorCategory: evidence.ErrorCategory, Summary: evidence.Summary,
+		}
+	}
 	_, err = transaction.Exec(`UPDATE website_monitors SET state = ?, failure_count = ?, next_check_at = ?,
 		last_success = ?, last_status_code = ?, last_latency_ms = ?, last_checked_at = ?,
 		last_error_category = ?, last_summary = ?, last_technical_error = ?, last_certificate_json = ?,
@@ -846,6 +854,9 @@ func (m *Manager) recordResult(id string, generation int64, evidence Evidence) {
 		}
 	}
 	if transaction.Commit() == nil {
+		if transition != nil && m.options.OnTransition != nil {
+			m.options.OnTransition(*transition)
+		}
 		m.signalWake()
 	}
 }

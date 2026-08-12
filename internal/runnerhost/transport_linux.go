@@ -14,6 +14,8 @@ import (
 	"strings"
 
 	"golang.org/x/sys/unix"
+
+	"scriptboard/internal/systemdactivation"
 )
 
 func DefaultEndpoint(stateRoot string) (string, error) {
@@ -40,28 +42,19 @@ func Listen(options TransportOptions) (*Transport, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Dir(endpoint), 0o750); err != nil {
-		return nil, err
-	}
-	if info, statErr := os.Lstat(endpoint); statErr == nil {
-		if info.Mode()&os.ModeSocket == 0 {
-			return nil, errors.New("Runner Host endpoint exists and is not a socket")
-		}
-		if err := os.Remove(endpoint); err != nil {
-			return nil, err
-		}
-	} else if !os.IsNotExist(statErr) {
-		return nil, statErr
-	}
-	listener, err := net.Listen("unix", endpoint)
+	listener, activated, err := systemdactivation.Listener("scriptboard-runner", endpoint)
 	if err != nil {
 		return nil, err
 	}
-	cleanup := func() { _ = os.Remove(endpoint) }
-	if err := os.Chmod(endpoint, 0o660); err != nil {
-		_ = listener.Close()
-		cleanup()
-		return nil, err
+	if !activated {
+		listener, err = listenRunnerUnix(endpoint)
+		if err != nil {
+			return nil, err
+		}
+	}
+	cleanup := func() {}
+	if !activated {
+		cleanup = func() { _ = os.Remove(endpoint) }
 	}
 	verify := func(connection net.Conn) error {
 		unixConnection, ok := connection.(*net.UnixConn)
@@ -88,6 +81,32 @@ func Listen(options TransportOptions) (*Transport, error) {
 		return nil
 	}
 	return &Transport{Listener: listener, Endpoint: endpoint, VerifyPeer: verify, cleanup: cleanup}, nil
+}
+
+func listenRunnerUnix(endpoint string) (net.Listener, error) {
+	if err := os.MkdirAll(filepath.Dir(endpoint), 0o750); err != nil {
+		return nil, err
+	}
+	if info, statErr := os.Lstat(endpoint); statErr == nil {
+		if info.Mode()&os.ModeSocket == 0 {
+			return nil, errors.New("Runner Host endpoint exists and is not a socket")
+		}
+		if err := os.Remove(endpoint); err != nil {
+			return nil, err
+		}
+	} else if !os.IsNotExist(statErr) {
+		return nil, statErr
+	}
+	listener, err := net.Listen("unix", endpoint)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(endpoint, 0o660); err != nil {
+		_ = listener.Close()
+		_ = os.Remove(endpoint)
+		return nil, err
+	}
+	return listener, nil
 }
 
 func allowedLinuxUID(options TransportOptions) (int, error) {

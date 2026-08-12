@@ -127,12 +127,34 @@ func TestStatusExposesOnlyEndpointHostAndBoundedOutboxState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !status.WebhookEnabled || status.EndpointHost != "notify.example:8443" || status.Pending != 1 || status.Capacity != maxPendingEvents {
+	if !status.WebhookEnabled || status.EndpointHost != "notify.example:8443" || status.Pending != 1 || status.Capacity != maxPendingEvents || !status.WebsiteTemplates {
 		t.Fatalf("notification status = %#v", status)
 	}
 	encoded, _ := json.Marshal(status)
 	if strings.Contains(string(encoded), "tenant=secret") || strings.Contains(string(encoded), "must-not-be-exposed") {
 		t.Fatalf("status exposed endpoint query or token: %s", encoded)
+	}
+}
+
+func TestWebsiteTransitionsUseBoundedStructuredNotificationTemplate(t *testing.T) {
+	event := auditlog.CommittedEvent{ID: 9, EventSHA256: "digest", Event: auditlog.Event{Action: "website_monitor_down", Target: "monitor-safe-id", Result: "failed"}}
+	notification := notificationFor(event)
+	if notification == nil || notification.Template != "website-monitor-result-v1" || notification.State != "down" || notification.ResourceID != "monitor-safe-id" {
+		t.Fatalf("notification=%#v", notification)
+	}
+	manager, err := New(Options{StateRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	manager.Observe(event)
+	body, err := os.ReadFile(filepath.Join(manager.alertLog))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope Envelope
+	if err := json.Unmarshal(body, &envelope); err != nil || envelope.Notification == nil || envelope.Notification.State != "down" || len(envelope.Alerts) != 1 {
+		t.Fatalf("envelope=%#v err=%v", envelope, err)
 	}
 }
 

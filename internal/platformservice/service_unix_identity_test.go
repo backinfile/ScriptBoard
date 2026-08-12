@@ -51,9 +51,20 @@ func TestLinuxRuntimeUnitsRequireSeccompAndNetworkIsolation(t *testing.T) {
 		"PrivateDevices=true", "ProtectKernelLogs=true", "RestrictRealtime=true",
 		"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6", "IPAddressAllow=localhost",
 		"RestrictAddressFamilies=AF_UNIX", "IPAddressDeny=any",
+		"Requires=scriptboard-broker.service scriptboard-ai.socket scriptboard-runner.socket",
+		"FileDescriptorName=scriptboard-ai", "FileDescriptorName=scriptboard-runner",
+		"systemctl(\"enable\", \"scriptboard-ai.socket\")", "systemctl(\"enable\", \"scriptboard-runner.socket\")",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("Linux runtime units are missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"systemctl(\"enable\", \"scriptboard-ai.service\")",
+		"systemctl(\"enable\", \"scriptboard-runner.service\")",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("Linux runtime service is still enabled eagerly: %q", forbidden)
 		}
 	}
 	if count := strings.Count(text, "MemorySwapMax=0"); count != 2 {

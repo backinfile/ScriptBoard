@@ -18,6 +18,7 @@ func TestNotificationsPageIsReadOnlyAndStatesImplementedCoverage(t *testing.T) {
 		[]byte("Every committed audit event"),
 		[]byte("No alert records yet"),
 		[]byte("Email delivery"),
+		[]byte("Structured v1 outage and recovery templates are enabled"),
 		[]byte("tokens are never shown"),
 	} {
 		if !bytes.Contains(page, expected) {

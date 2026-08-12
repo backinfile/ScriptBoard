@@ -841,6 +841,18 @@ func Open(config Config) (*App, error) {
 			return application.loadVariables()
 		}
 	}
+	existingWebsiteTransition := config.WebsiteMonitorOptions.OnTransition
+	config.WebsiteMonitorOptions.OnTransition = func(transition websitemonitor.Transition) {
+		result := "succeeded"
+		action := "website_monitor_recovered"
+		if transition.State == websitemonitor.StateDown {
+			action, result = "website_monitor_down", "failed"
+		}
+		application.recordAudit(action, transition.MonitorID, result, "website-monitor")
+		if existingWebsiteTransition != nil {
+			existingWebsiteTransition(transition)
+		}
+	}
 	application.websiteMonitor, err = websitemonitor.New(db, config.WebsiteMonitorOptions)
 	if err != nil {
 		application.applicationStatus.Close()
@@ -1315,8 +1327,8 @@ func (a *App) applyCredentialOverride(username, passwordFile string) error {
 	changed := username != currentUsername
 	newHash := currentHash
 	if password != "" {
-		if !utf8.ValidString(password) || utf8.RuneCountInString(password) < 12 || len([]byte(password)) > 256 || password == username {
-			return errors.New("管理员密码覆盖不符合长度规则")
+		if err := validatePasswordPolicy(password, username); err != nil {
+			return errors.New("管理员密码覆盖不符合密码策略")
 		}
 		if !verifyPassword(password, currentHash) {
 			changed = true
@@ -5598,8 +5610,8 @@ func (a *App) changePassword(response http.ResponseWriter, request *http.Request
 		http.Error(response, "两次输入的新密码不一致", http.StatusBadRequest)
 		return
 	}
-	if !utf8.ValidString(newPassword) || utf8.RuneCountInString(newPassword) < 12 || len([]byte(newPassword)) > 256 || newPassword == username {
-		http.Error(response, "密码必须至少包含 12 个 Unicode 字符、不超过 256 个 UTF-8 字节，且不能与用户名相同", http.StatusBadRequest)
+	if validatePasswordPolicy(newPassword, username) != nil || verifyPassword(newPassword, passwordHash) {
+		http.Error(response, webText(resolveWebLocale(request), "account.password_policy_error"), http.StatusBadRequest)
 		return
 	}
 	newHash, err := hashPassword(newPassword)

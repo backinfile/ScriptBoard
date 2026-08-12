@@ -12,7 +12,9 @@ import (
 	"strconv"
 	"strings"
 
+	"scriptboard/internal/assistant/runtimehost"
 	"scriptboard/internal/processlaunch"
+	"scriptboard/internal/runnerhost"
 )
 
 const (
@@ -20,7 +22,9 @@ const (
 	unitPath          = "/etc/systemd/system/scriptboard.service"
 	brokerUnitPath    = "/etc/systemd/system/scriptboard-broker.service"
 	aiUnitPath        = "/etc/systemd/system/scriptboard-ai.service"
+	aiSocketUnitPath  = "/etc/systemd/system/scriptboard-ai.socket"
 	runnerUnitPath    = "/etc/systemd/system/scriptboard-runner.service"
+	runnerSocketPath  = "/etc/systemd/system/scriptboard-runner.socket"
 	updaterUnitPath   = "/etc/systemd/system/scriptboard-updater@.service"
 	webServiceUser    = "scriptboard-web"
 	aiServiceUser     = "scriptboard-ai"
@@ -94,11 +98,19 @@ func Install(executable, configPath, updaterExecutable, stateRoot string) error 
 	brokerExecutable := filepath.Join(filepath.Dir(executable), "scriptboard-broker")
 	aiExecutable := filepath.Join(filepath.Dir(executable), "scriptboard-ai-host")
 	runnerExecutable := filepath.Join(filepath.Dir(executable), "scriptboard-runner")
+	aiEndpoint, err := runtimehost.DefaultEndpoint(stateRoot)
+	if err != nil {
+		return err
+	}
+	runnerEndpoint, err := runnerhost.DefaultEndpoint(stateRoot)
+	if err != nil {
+		return err
+	}
 	unit := fmt.Sprintf(`[Unit]
 Description=ScriptBoard
 After=network.target
-Requires=scriptboard-broker.service scriptboard-ai.service scriptboard-runner.service
-After=scriptboard-broker.service scriptboard-ai.service scriptboard-runner.service
+Requires=scriptboard-broker.service scriptboard-ai.socket scriptboard-runner.socket
+After=scriptboard-broker.service scriptboard-ai.socket scriptboard-runner.socket
 
 [Service]
 Type=simple
@@ -142,15 +154,14 @@ WantedBy=multi-user.target
 `, systemdQuote(brokerExecutable), systemdQuote(stateRoot))
 	aiUnit := fmt.Sprintf(`[Unit]
 Description=ScriptBoard isolated AI Runtime Host
-After=network.target
+Requires=scriptboard-ai.socket
+After=network.target scriptboard-ai.socket
 
 [Service]
 Type=simple
 User=scriptboard-ai
 Group=scriptboard-ai
 SupplementaryGroups=scriptboard-ai
-RuntimeDirectory=scriptboard-ai
-RuntimeDirectoryMode=0750
 ExecStart=%s --state-root %s --allowed-identity scriptboard-web
 Restart=on-failure
 NoNewPrivileges=true
@@ -181,20 +192,32 @@ MemorySwapMax=0
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 IPAddressDeny=any
 IPAddressAllow=localhost
+`, systemdQuote(aiExecutable), systemdQuote(stateRoot), systemdQuote(filepath.Join(stateRoot, "assistant")))
+	aiSocketUnit := fmt.Sprintf(`[Unit]
+Description=ScriptBoard AI Runtime Host activation socket
+
+[Socket]
+ListenStream=%s
+FileDescriptorName=scriptboard-ai
+Service=scriptboard-ai.service
+SocketUser=scriptboard-ai
+SocketGroup=scriptboard-ai
+SocketMode=0660
+DirectoryMode=0755
+RemoveOnStop=true
 
 [Install]
-WantedBy=multi-user.target
-`, systemdQuote(aiExecutable), systemdQuote(stateRoot), systemdQuote(filepath.Join(stateRoot, "assistant")))
+WantedBy=sockets.target
+`, systemdQuote(aiEndpoint))
 	runnerUnit := fmt.Sprintf(`[Unit]
 Description=ScriptBoard isolated Run Worker
-After=network.target
+Requires=scriptboard-runner.socket
+After=network.target scriptboard-runner.socket
 
 [Service]
 Type=simple
 User=scriptboard-runner
 Group=scriptboard-runner
-RuntimeDirectory=scriptboard-runner
-RuntimeDirectoryMode=0750
 ExecStart=%s --config %s --state-root %s --allowed-identity scriptboard-web
 Restart=on-failure
 NoNewPrivileges=true
@@ -222,10 +245,23 @@ MemoryMax=2G
 MemorySwapMax=0
 RestrictAddressFamilies=AF_UNIX
 IPAddressDeny=any
+`, systemdQuote(runnerExecutable), systemdQuote(configPath), systemdQuote(stateRoot))
+	runnerSocketUnit := fmt.Sprintf(`[Unit]
+Description=ScriptBoard Run Worker activation socket
+
+[Socket]
+ListenStream=%s
+FileDescriptorName=scriptboard-runner
+Service=scriptboard-runner.service
+SocketUser=scriptboard-runner
+SocketGroup=scriptboard-runner
+SocketMode=0660
+DirectoryMode=0755
+RemoveOnStop=true
 
 [Install]
-WantedBy=multi-user.target
-`, systemdQuote(runnerExecutable), systemdQuote(configPath), systemdQuote(stateRoot))
+WantedBy=sockets.target
+`, systemdQuote(runnerEndpoint))
 	updaterUnit := fmt.Sprintf(`[Unit]
 Description=ScriptBoard update operation %%i
 After=network.target
@@ -245,7 +281,13 @@ TimeoutStartSec=0
 	if err := os.WriteFile(aiUnitPath, []byte(aiUnit), 0o644); err != nil {
 		return err
 	}
+	if err := os.WriteFile(aiSocketUnitPath, []byte(aiSocketUnit), 0o644); err != nil {
+		return err
+	}
 	if err := os.WriteFile(runnerUnitPath, []byte(runnerUnit), 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile(runnerSocketPath, []byte(runnerSocketUnit), 0o644); err != nil {
 		return err
 	}
 	if err := os.WriteFile(updaterUnitPath, []byte(updaterUnit), 0o644); err != nil {
@@ -257,10 +299,10 @@ TimeoutStartSec=0
 	if err := systemctl("enable", "scriptboard-broker.service"); err != nil {
 		return err
 	}
-	if err := systemctl("enable", "scriptboard-ai.service"); err != nil {
+	if err := systemctl("enable", "scriptboard-ai.socket"); err != nil {
 		return err
 	}
-	if err := systemctl("enable", "scriptboard-runner.service"); err != nil {
+	if err := systemctl("enable", "scriptboard-runner.socket"); err != nil {
 		return err
 	}
 	return systemctl("enable", "scriptboard.service")
@@ -514,16 +556,18 @@ func Uninstall() error {
 			if err := systemctl("disable", "--now", "scriptboard.service"); err != nil {
 				return err
 			}
-			if err := systemctl("disable", "--now", "scriptboard-ai.service"); err != nil {
+			if err := systemctl("disable", "--now", "scriptboard-ai.socket"); err != nil {
 				return err
 			}
-			if err := systemctl("disable", "--now", "scriptboard-runner.service"); err != nil {
+			if err := systemctl("disable", "--now", "scriptboard-runner.socket"); err != nil {
 				return err
 			}
+			_ = systemctl("stop", "scriptboard-ai.service")
+			_ = systemctl("stop", "scriptboard-runner.service")
 			return systemctl("disable", "--now", "scriptboard-broker.service")
 		},
 		func() error {
-			for _, path := range []string{unitPath, brokerUnitPath, aiUnitPath, runnerUnitPath, updaterUnitPath} {
+			for _, path := range []string{unitPath, brokerUnitPath, aiUnitPath, aiSocketUnitPath, runnerUnitPath, runnerSocketPath, updaterUnitPath} {
 				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 					return err
 				}
@@ -538,10 +582,10 @@ func Start() error {
 	if err := systemctl("start", "scriptboard-broker.service"); err != nil {
 		return err
 	}
-	if err := systemctl("start", "scriptboard-ai.service"); err != nil {
+	if err := systemctl("start", "scriptboard-ai.socket"); err != nil {
 		return err
 	}
-	if err := systemctl("start", "scriptboard-runner.service"); err != nil {
+	if err := systemctl("start", "scriptboard-runner.socket"); err != nil {
 		return err
 	}
 	return systemctl("start", "scriptboard.service")
@@ -554,6 +598,12 @@ func Stop() error {
 		return err
 	}
 	if err := systemctl("stop", "scriptboard-runner.service"); err != nil {
+		return err
+	}
+	if err := systemctl("stop", "scriptboard-ai.socket"); err != nil {
+		return err
+	}
+	if err := systemctl("stop", "scriptboard-runner.socket"); err != nil {
 		return err
 	}
 	return systemctl("stop", "scriptboard-broker.service")
