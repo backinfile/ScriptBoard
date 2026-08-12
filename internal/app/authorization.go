@@ -54,6 +54,9 @@ func (a *App) requirePermission(required permission, next http.Handler) http.Han
 	protected := a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		current, ok := request.Context().Value(sessionContextKey).(session)
 		if !ok || !roleAllows(current.role, required) {
+			if ok {
+				a.recordAuditForRequest(request, "authorization_denied", request.Method+" "+request.URL.Path, "blocked")
+			}
 			http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
 			return
 		}
@@ -68,6 +71,9 @@ func (a *App) requireStepUp(required permission, next http.Handler) http.Handler
 	protected := a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		current, ok := request.Context().Value(sessionContextKey).(session)
 		if !ok || !roleAllows(current.role, required) {
+			if ok {
+				a.recordAuditForRequest(request, "authorization_denied", request.Method+" "+request.URL.Path, "blocked")
+			}
 			http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
 			return
 		}

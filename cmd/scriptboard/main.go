@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"scriptboard/internal/app"
@@ -430,6 +431,17 @@ func serveContext(runContext context.Context, arguments []string) error {
 	if err := requireSafeNetwork(loaded.Listen, loaded.TLSCert, loaded.TLSKey, loaded.TrustedProxies); err != nil {
 		return err
 	}
+	securityEventToken := ""
+	if loaded.SecurityEventTokenFile != "" {
+		body, readErr := os.ReadFile(loaded.SecurityEventTokenFile)
+		if readErr != nil {
+			return fmt.Errorf("read security event token file: %w", readErr)
+		}
+		if len(body) > 4096 || strings.TrimSpace(string(body)) == "" {
+			return errors.New("security event token file must contain 1 to 4096 bytes")
+		}
+		securityEventToken = strings.TrimSpace(string(body))
+	}
 	installRoot := applicationInstallRoot(loaded.StateRoot)
 	var assistantLauncher pirpc.ProcessLauncher
 	var runnerLauncher runmanager.ProcessLauncher
@@ -458,6 +470,8 @@ func serveContext(runContext context.Context, arguments []string) error {
 		StateRoot: loaded.StateRoot, InstallRoot: installRoot, ConfigPath: loaded.ConfigPath, TLSKey: loaded.TLSKey,
 		RunTimeoutGrace: loaded.RunTimeoutGrace, ExecutorChains: loaded.ExecutorChains, AdminUsername: loaded.AdminUsername, AdminPasswordFile: loaded.AdminPasswordFile, TrustedProxies: loaded.TrustedProxies,
 		AllowedHosts: loaded.AllowedHosts, CanonicalExternalURL: loaded.CanonicalExternalURL,
+		SecurityEventEndpoint: loaded.SecurityEventEndpoint, SecurityEventToken: securityEventToken,
+		SecurityEventTokenFile: loaded.SecurityEventTokenFile, SecurityEventAllowPrivate: loaded.SecurityEventAllowPrivate,
 		UpdateCheck: loaded.UpdateCheck, UpdateInterval: loaded.UpdateInterval,
 		RequestShutdown: func() {
 			select {

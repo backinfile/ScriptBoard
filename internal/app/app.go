@@ -61,6 +61,7 @@ import (
 	"scriptboard/internal/scheduler"
 	"scriptboard/internal/secretredaction"
 	"scriptboard/internal/secretstore"
+	"scriptboard/internal/securityevents"
 	updatepkg "scriptboard/internal/update"
 	"scriptboard/internal/uploadinbox"
 	"scriptboard/internal/websitemonitor"
@@ -318,33 +319,38 @@ const (
 )
 
 type Config struct {
-	StateRoot                string
-	ConfigPath               string
-	InstallRoot              string
-	TLSKey                   string
-	FileTopology             hostfiles.Topology
-	RunTimeoutGrace          time.Duration
-	SchedulerNow             func() time.Time
-	SchedulerTick            time.Duration
-	ExecutorChains           map[string][]string
-	AdminUsername            string
-	AdminPasswordFile        string
-	TrustedProxies           []string
-	AllowedHosts             []string
-	CanonicalExternalURL     string
-	WebsiteMonitorOptions    websitemonitor.Options
-	CustomDashboardClient    *http.Client
-	UpdateCheck              bool
-	UpdateInterval           time.Duration
-	UpdateSource             updatepkg.ReleaseSource
-	RequestShutdown          func()
-	RequestRestart           func() error
-	ApplicationProbe         appstatus.Probe
-	AssistantRuntimeSource   runtimeinstall.Source
-	HostSecurity             hostsecurity.Service
-	PrivilegedBrokerEndpoint string
-	AssistantProcessLauncher pirpc.ProcessLauncher
-	RunnerProcessLauncher    runmanager.ProcessLauncher
+	StateRoot                 string
+	ConfigPath                string
+	InstallRoot               string
+	TLSKey                    string
+	FileTopology              hostfiles.Topology
+	RunTimeoutGrace           time.Duration
+	SchedulerNow              func() time.Time
+	SchedulerTick             time.Duration
+	ExecutorChains            map[string][]string
+	AdminUsername             string
+	AdminPasswordFile         string
+	TrustedProxies            []string
+	AllowedHosts              []string
+	CanonicalExternalURL      string
+	WebsiteMonitorOptions     websitemonitor.Options
+	CustomDashboardClient     *http.Client
+	UpdateCheck               bool
+	UpdateInterval            time.Duration
+	UpdateSource              updatepkg.ReleaseSource
+	RequestShutdown           func()
+	RequestRestart            func() error
+	ApplicationProbe          appstatus.Probe
+	AssistantRuntimeSource    runtimeinstall.Source
+	HostSecurity              hostsecurity.Service
+	PrivilegedBrokerEndpoint  string
+	AssistantProcessLauncher  pirpc.ProcessLauncher
+	RunnerProcessLauncher     runmanager.ProcessLauncher
+	SecurityEventEndpoint     string
+	SecurityEventToken        string
+	SecurityEventTokenFile    string
+	SecurityEventAllowPrivate bool
+	SecurityEventClient       *http.Client
 }
 
 type App struct {
@@ -359,6 +365,7 @@ type App struct {
 	files                *hostfiles.Manager
 	auditLog             *auditlog.Store
 	auditCheckpoint      *auditcheckpoint.Store
+	securityEvents       *securityevents.Manager
 	auditCheckpointStop  context.CancelFunc
 	auditCheckpointWG    sync.WaitGroup
 	uploadInbox          *uploadinbox.Store
@@ -449,7 +456,7 @@ func Open(config Config) (*App, error) {
 	}
 	instanceDigest := sha256.Sum256([]byte(stateRoot))
 	files, err := hostfiles.Open(hostfiles.Options{
-		ProtectedPaths: []string{stateRoot, filepath.Dir(credentialStore.KeyPath()), installRoot, config.ConfigPath, config.AdminPasswordFile, config.TLSKey},
+		ProtectedPaths: []string{stateRoot, filepath.Dir(credentialStore.KeyPath()), installRoot, config.ConfigPath, config.AdminPasswordFile, config.SecurityEventTokenFile, config.TLSKey},
 		InstanceID:     hex.EncodeToString(instanceDigest[:]), Topology: config.FileTopology,
 	})
 	if err != nil {
@@ -529,6 +536,15 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("verify audit hash chain: %w", err)
 	}
+	application.securityEvents, err = securityevents.New(securityevents.Options{
+		StateRoot: stateRoot, Endpoint: config.SecurityEventEndpoint, Token: config.SecurityEventToken,
+		AllowPrivate: config.SecurityEventAllowPrivate, Client: config.SecurityEventClient,
+	})
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("configure security event forwarding: %w", err)
+	}
+	application.auditLog.SetObserver(application.securityEvents.Observe)
 	application.auditCheckpoint, err = auditcheckpoint.New(auditcheckpoint.Options{StateRoot: stateRoot, SecretStore: credentialStore})
 	if err != nil {
 		_ = db.Close()
@@ -1218,6 +1234,12 @@ func (a *App) Close() error {
 	}
 	if a.runs != nil {
 		a.runs.Close()
+	}
+	if a.auditLog != nil {
+		a.auditLog.SetObserver(nil)
+	}
+	if a.securityEvents != nil {
+		_ = a.securityEvents.Close()
 	}
 	var checkpointErr error
 	if a.auditCheckpoint != nil && a.auditLog != nil {
@@ -2569,6 +2591,15 @@ func (a *App) routes() http.Handler {
 		pageResponse := &pageResponseWriter{ResponseWriter: response}
 		mux.ServeHTTP(pageResponse, request)
 		pageResponse.finish(a, request)
+		if pageResponse.status == http.StatusMethodNotAllowed {
+			auditRequest := request
+			if current, _, ok := a.loadSession(request); ok {
+				auditRequest = request.WithContext(context.WithValue(request.Context(), sessionContextKey, current))
+				a.recordAuditForRequest(auditRequest, "unknown_method", request.Method+" "+request.URL.Path, "blocked")
+			} else {
+				a.recordAuditWithRequestActor(auditRequest, "unknown_method", request.Method+" "+request.URL.Path, "blocked", request.RemoteAddr, "", "", "")
+			}
+		}
 	})
 }
 

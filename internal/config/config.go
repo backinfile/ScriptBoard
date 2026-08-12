@@ -20,39 +20,45 @@ import (
 )
 
 type Config struct {
-	StateRoot            string              `yaml:"state_root"`
-	Listen               string              `yaml:"listen"`
-	TLSCert              string              `yaml:"tls_cert"`
-	TLSKey               string              `yaml:"tls_key"`
-	ExecutorChains       map[string][]string `yaml:"executor_chains"`
-	AdminUsername        string              `yaml:"admin_username"`
-	AdminPasswordFile    string              `yaml:"admin_password_file"`
-	TrustedProxies       []string            `yaml:"trusted_proxies"`
-	AllowedHosts         []string            `yaml:"allowed_hosts"`
-	CanonicalExternalURL string              `yaml:"canonical_external_url"`
-	RunTimeoutGrace      time.Duration       `yaml:"-"`
-	UpdateCheck          bool                `yaml:"update_check"`
-	UpdateInterval       time.Duration       `yaml:"-"`
-	ConfigPath           string              `yaml:"-"`
+	StateRoot                 string              `yaml:"state_root"`
+	Listen                    string              `yaml:"listen"`
+	TLSCert                   string              `yaml:"tls_cert"`
+	TLSKey                    string              `yaml:"tls_key"`
+	ExecutorChains            map[string][]string `yaml:"executor_chains"`
+	AdminUsername             string              `yaml:"admin_username"`
+	AdminPasswordFile         string              `yaml:"admin_password_file"`
+	TrustedProxies            []string            `yaml:"trusted_proxies"`
+	AllowedHosts              []string            `yaml:"allowed_hosts"`
+	CanonicalExternalURL      string              `yaml:"canonical_external_url"`
+	SecurityEventEndpoint     string              `yaml:"security_event_endpoint"`
+	SecurityEventTokenFile    string              `yaml:"security_event_token_file"`
+	SecurityEventAllowPrivate bool                `yaml:"security_event_allow_private"`
+	RunTimeoutGrace           time.Duration       `yaml:"-"`
+	UpdateCheck               bool                `yaml:"update_check"`
+	UpdateInterval            time.Duration       `yaml:"-"`
+	ConfigPath                string              `yaml:"-"`
 }
 
 type yamlConfig struct {
-	StateRoot              string              `yaml:"state_root"`
-	Listen                 string              `yaml:"listen"`
-	TLSCert                string              `yaml:"tls_cert"`
-	TLSKey                 string              `yaml:"tls_key"`
-	ExecutorChains         map[string][]string `yaml:"executor_chains"`
-	AdminUsername          string              `yaml:"admin_username"`
-	AdminPasswordFile      string              `yaml:"admin_password_file"`
-	TrustedProxies         []string            `yaml:"trusted_proxies"`
-	AllowedHosts           []string            `yaml:"allowed_hosts"`
-	CanonicalExternalURL   string              `yaml:"canonical_external_url"`
-	RunTimeoutGraceSeconds *int                `yaml:"run_timeout_grace_seconds"`
-	UpdateCheck            *bool               `yaml:"update_check"`
-	UpdateIntervalHours    *int                `yaml:"update_check_interval_hours"`
-	RemovedManagedRoot     yaml.Node           `yaml:"managed_root"`
-	RemovedGitExecutable   yaml.Node           `yaml:"git_executable"`
-	RemovedAdminPassword   yaml.Node           `yaml:"admin_password"`
+	StateRoot                 string              `yaml:"state_root"`
+	Listen                    string              `yaml:"listen"`
+	TLSCert                   string              `yaml:"tls_cert"`
+	TLSKey                    string              `yaml:"tls_key"`
+	ExecutorChains            map[string][]string `yaml:"executor_chains"`
+	AdminUsername             string              `yaml:"admin_username"`
+	AdminPasswordFile         string              `yaml:"admin_password_file"`
+	TrustedProxies            []string            `yaml:"trusted_proxies"`
+	AllowedHosts              []string            `yaml:"allowed_hosts"`
+	CanonicalExternalURL      string              `yaml:"canonical_external_url"`
+	SecurityEventEndpoint     string              `yaml:"security_event_endpoint"`
+	SecurityEventTokenFile    string              `yaml:"security_event_token_file"`
+	SecurityEventAllowPrivate *bool               `yaml:"security_event_allow_private"`
+	RunTimeoutGraceSeconds    *int                `yaml:"run_timeout_grace_seconds"`
+	UpdateCheck               *bool               `yaml:"update_check"`
+	UpdateIntervalHours       *int                `yaml:"update_check_interval_hours"`
+	RemovedManagedRoot        yaml.Node           `yaml:"managed_root"`
+	RemovedGitExecutable      yaml.Node           `yaml:"git_executable"`
+	RemovedAdminPassword      yaml.Node           `yaml:"admin_password"`
 }
 
 func Load(arguments []string, getenv func(string) string) (Config, error) {
@@ -134,6 +140,9 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 		return nil
 	})
 	flags.StringVar(&result.CanonicalExternalURL, "canonical-external-url", result.CanonicalExternalURL, "对外访问的规范 URL")
+	flags.StringVar(&result.SecurityEventEndpoint, "security-event-endpoint", result.SecurityEventEndpoint, "HTTPS security event receiver")
+	flags.StringVar(&result.SecurityEventTokenFile, "security-event-token-file", result.SecurityEventTokenFile, "absolute path to the receiver bearer token")
+	flags.BoolVar(&result.SecurityEventAllowPrivate, "security-event-allow-private", result.SecurityEventAllowPrivate, "allow an explicitly configured private receiver address")
 	if err := flags.Parse(arguments); err != nil {
 		return Config{}, err
 	}
@@ -148,6 +157,18 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 	}
 	if result.AdminPasswordFile != "" && !filepath.IsAbs(result.AdminPasswordFile) {
 		return Config{}, errors.New("admin_password_file must be an absolute path")
+	}
+	if result.SecurityEventTokenFile != "" && !filepath.IsAbs(result.SecurityEventTokenFile) {
+		return Config{}, errors.New("security_event_token_file must be an absolute path")
+	}
+	if result.SecurityEventEndpoint == "" && (result.SecurityEventTokenFile != "" || result.SecurityEventAllowPrivate) {
+		return Config{}, errors.New("security event token/private-address settings require security_event_endpoint")
+	}
+	if result.SecurityEventEndpoint != "" {
+		endpoint, endpointErr := url.Parse(result.SecurityEventEndpoint)
+		if endpointErr != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil || endpoint.Fragment != "" {
+			return Config{}, errors.New("security_event_endpoint must be an HTTPS URL without credentials or fragment")
+		}
 	}
 	for extension, chain := range result.ExecutorChains {
 		if extension == "" || extension[0] != '.' || len(chain) == 0 {
@@ -244,6 +265,15 @@ func applyYAML(result *Config, values yamlConfig) {
 	if values.CanonicalExternalURL != "" {
 		result.CanonicalExternalURL = values.CanonicalExternalURL
 	}
+	if values.SecurityEventEndpoint != "" {
+		result.SecurityEventEndpoint = strings.TrimSpace(values.SecurityEventEndpoint)
+	}
+	if values.SecurityEventTokenFile != "" {
+		result.SecurityEventTokenFile = strings.TrimSpace(values.SecurityEventTokenFile)
+	}
+	if values.SecurityEventAllowPrivate != nil {
+		result.SecurityEventAllowPrivate = *values.SecurityEventAllowPrivate
+	}
 	if values.RunTimeoutGraceSeconds != nil {
 		result.RunTimeoutGrace = time.Duration(*values.RunTimeoutGraceSeconds) * time.Second
 	}
@@ -300,6 +330,17 @@ func applyEnvironment(result *Config, getenv func(string) string) {
 	}
 	if value := getenv("SCRIPTBOARD_CANONICAL_EXTERNAL_URL"); value != "" {
 		result.CanonicalExternalURL = strings.TrimSpace(value)
+	}
+	if value := getenv("SCRIPTBOARD_SECURITY_EVENT_ENDPOINT"); value != "" {
+		result.SecurityEventEndpoint = strings.TrimSpace(value)
+	}
+	if value := getenv("SCRIPTBOARD_SECURITY_EVENT_TOKEN_FILE"); value != "" {
+		result.SecurityEventTokenFile = strings.TrimSpace(value)
+	}
+	if value := getenv("SCRIPTBOARD_SECURITY_EVENT_ALLOW_PRIVATE"); value != "" {
+		if enabled, err := strconv.ParseBool(value); err == nil {
+			result.SecurityEventAllowPrivate = enabled
+		}
 	}
 }
 

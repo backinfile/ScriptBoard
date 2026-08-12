@@ -24,9 +24,22 @@ const (
 )
 
 type Event struct {
-	OccurredAt, Action, Target, Result, SourceAddress string
-	ActorUserID, ActorUsername, ActorRole             string
-	RequestID, AuthenticationAssurance                string
+	OccurredAt              string `json:"occurred_at"`
+	Action                  string `json:"action"`
+	Target                  string `json:"target"`
+	Result                  string `json:"result"`
+	SourceAddress           string `json:"source_address"`
+	ActorUserID             string `json:"actor_user_id"`
+	ActorUsername           string `json:"actor_username"`
+	ActorRole               string `json:"actor_role"`
+	RequestID               string `json:"request_id"`
+	AuthenticationAssurance string `json:"authentication_assurance"`
+}
+
+type CommittedEvent struct {
+	ID          int64  `json:"id"`
+	Event       Event  `json:"event"`
+	EventSHA256 string `json:"event_sha256"`
 }
 
 type Verification struct {
@@ -60,17 +73,29 @@ type exportEvent struct {
 }
 
 type Store struct {
-	db *sql.DB
-	mu sync.Mutex
+	db         *sql.DB
+	mu         sync.Mutex
+	observerMu sync.RWMutex
+	observer   func(CommittedEvent)
 }
 
 type Transaction struct {
 	store    *Store
 	tx       *sql.Tx
 	finished bool
+	events   []CommittedEvent
 }
 
 func New(db *sql.DB) *Store { return &Store{db: db} }
+
+// SetObserver installs a post-commit observer. It never runs while the audit
+// chain mutex or SQL transaction is held, so observers cannot delay or alter
+// the audit commit itself.
+func (store *Store) SetObserver(observer func(CommittedEvent)) {
+	store.observerMu.Lock()
+	store.observer = observer
+	store.observerMu.Unlock()
+}
 
 func (store *Store) Append(ctx context.Context, event Event) (int64, error) {
 	transaction, err := store.Begin(ctx)
@@ -122,7 +147,12 @@ func (transaction *Transaction) Append(ctx context.Context, event Event) (int64,
 	if _, err := transaction.tx.ExecContext(ctx, "UPDATE audit_chain_state SET tail_hash = ? WHERE id = 1", digest); err != nil {
 		return 0, err
 	}
-	return result.LastInsertId()
+	id, err := result.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	transaction.events = append(transaction.events, CommittedEvent{ID: id, Event: event, EventSHA256: digest})
+	return id, nil
 }
 
 func redactEvent(event Event) Event {
@@ -145,7 +175,22 @@ func (transaction *Transaction) Commit() error {
 	transaction.finished = true
 	err := transaction.tx.Commit()
 	transaction.store.mu.Unlock()
+	if err == nil {
+		transaction.store.notify(transaction.events)
+	}
 	return err
+}
+
+func (store *Store) notify(events []CommittedEvent) {
+	store.observerMu.RLock()
+	observer := store.observer
+	store.observerMu.RUnlock()
+	if observer == nil {
+		return
+	}
+	for _, event := range events {
+		observer(event)
+	}
 }
 
 func (transaction *Transaction) Rollback() error {

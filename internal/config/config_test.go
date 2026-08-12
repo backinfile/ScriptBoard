@@ -57,6 +57,34 @@ func TestLoadDerivesLoopbackAllowedHostsAndCanonicalURL(t *testing.T) {
 	}
 }
 
+func TestLoadValidatesSecurityEventReceiverBoundary(t *testing.T) {
+	t.Parallel()
+	for _, data := range []string{
+		"security_event_endpoint: http://siem.example/events\n",
+		"security_event_endpoint: https://user:secret@siem.example/events\n",
+		"security_event_token_file: relative-token\n",
+		"security_event_allow_private: true\n",
+	} {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := config.Load([]string{"--config", path}, func(string) string { return "" }); err == nil {
+			t.Fatalf("unsafe security event configuration accepted: %s", data)
+		}
+	}
+	tokenPath := filepath.Join(t.TempDir(), "receiver-token")
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	data := "security_event_endpoint: https://siem.example/events\nsecurity_event_token_file: " + filepath.ToSlash(tokenPath) + "\nsecurity_event_allow_private: true\n"
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := config.Load([]string{"--config", path}, func(string) string { return "" })
+	if err != nil || loaded.SecurityEventEndpoint == "" || loaded.SecurityEventTokenFile != filepath.ToSlash(tokenPath) || !loaded.SecurityEventAllowPrivate {
+		t.Fatalf("loaded=%#v err=%v", loaded, err)
+	}
+}
+
 func TestLoadRequiresExplicitHostsForWildcardListenAndBindsCanonicalHost(t *testing.T) {
 	t.Parallel()
 	missingHosts := filepath.Join(t.TempDir(), "missing-hosts.yaml")

@@ -54,6 +54,31 @@ func TestConcurrentAppendsRemainOneLinearChain(t *testing.T) {
 	}
 }
 
+func TestObserverOnlyReceivesCommittedRedactedEvents(t *testing.T) {
+	store, _ := testStore(t)
+	var observed []CommittedEvent
+	store.SetObserver(func(event CommittedEvent) { observed = append(observed, event) })
+	transaction, err := store.Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transaction.Append(context.Background(), Event{OccurredAt: "1786410000", Action: "login", Target: "Bearer secret-value", Result: "failed", SourceAddress: "local"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := transaction.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if len(observed) != 0 {
+		t.Fatalf("rollback notified observer: %#v", observed)
+	}
+	if _, err := store.Append(context.Background(), Event{OccurredAt: "1786410000", Action: "login", Target: "Bearer secret-value", Result: "failed", SourceAddress: "local"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(observed) != 1 || observed[0].ID == 0 || observed[0].EventSHA256 == "" || strings.Contains(observed[0].Event.Target, "secret-value") {
+		t.Fatalf("observed event=%#v", observed)
+	}
+}
+
 func TestVerifyDetectsModifiedDeletedAndTruncatedEvents(t *testing.T) {
 	store, db := testStore(t)
 	ctx := context.Background()

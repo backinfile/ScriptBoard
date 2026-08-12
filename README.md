@@ -179,6 +179,10 @@ allowed_hosts:
   - 127.0.0.1
   - localhost
 canonical_external_url: http://127.0.0.1:8787
+# 可选：远端安全事件接收端必须使用 HTTPS；token 只从受保护文件读取。
+# security_event_endpoint: https://siem.example/api/scriptboard
+# security_event_token_file: C:\ProgramData\ScriptBoard\secrets\siem-token
+# security_event_allow_private: false
 update_check: true
 update_check_interval_hours: 6
 ```
@@ -194,6 +198,8 @@ scriptboard audit verify --config CONFIG_PATH
 配置优先级为：内置默认值 → YAML 配置 → `SCRIPTBOARD_*` 环境变量 → 命令行参数。
 
 `allowed_hosts` 是 Host Header 白名单；通配或非回环监听必须显式配置。`canonical_external_url` 的主机必须位于该白名单中，生成对外绝对 URL 时只使用这个值。反向代理部署还须显式配置直连代理的 `trusted_proxies`，未受信来源提供的转发头会被忽略。
+
+配置 `security_event_endpoint` 后，已提交的审计事件会先原子写入 State Root 内的有界 outbox，再按审计链顺序发送到 HTTPS 接收端；失败会指数退避并在重启后继续。Bearer token 只能通过绝对路径 `security_event_token_file` 提供，URL 禁止内嵌凭据且不跟随重定向。默认出站策略拒绝私网、回环和云元数据地址；确需同网段 SIEM 时必须显式开启 `security_event_allow_private`，元数据地址仍不可放行。认证失败、权限拒绝与外部 Trigger 拒绝的突发，以及签名/Runner/Runtime 边界失败，会同时写入权限受限且轮转的 `logs/security-alerts.jsonl`。
 
 网站监控默认验证 HTTPS/WSS 证书。关闭验证只会签发一小时的临时例外，页面持续显示警告，
 创建或更新审计会记录到期时间；到期后自动恢复验证。连接另一台 ScriptBoard 汇聚网站状态
