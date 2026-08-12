@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -61,6 +62,12 @@ type unsignedCheckpoint struct {
 type checkpointDocument struct {
 	unsignedCheckpoint
 	Signature string `json:"signature"`
+}
+
+type DocumentInfo struct {
+	EventID     int64
+	EventSHA256 string
+	SignedAt    time.Time
 }
 
 func New(options Options) (*Store, error) {
@@ -216,6 +223,106 @@ func (store *Store) CheckpointEventID() int64 {
 		return 0
 	}
 	return store.trusted.EventID
+}
+
+// TrustedDocument returns the exact signed document most recently verified by
+// VerifyOrBootstrap. Callers can embed it in an authenticated recovery artifact
+// without exporting the protected signing key.
+func (store *Store) TrustedDocument() ([]byte, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.trusted == nil {
+		return nil, errors.New("external audit checkpoint has not been trusted")
+	}
+	body, err := os.ReadFile(store.checkpointPath)
+	if err != nil {
+		return nil, fmt.Errorf("read trusted external audit checkpoint: %w", err)
+	}
+	document, err := store.verifyDocument(body)
+	if err != nil {
+		return nil, err
+	}
+	if document != *store.trusted {
+		return nil, errors.New("external audit checkpoint changed after verification")
+	}
+	return append([]byte(nil), body...), nil
+}
+
+// VerifyDetached validates a signed checkpoint embedded in a recovery artifact
+// against the supplied audit database. It does not change the currently trusted
+// external checkpoint.
+func (store *Store) VerifyDetached(ctx context.Context, audit *auditlog.Store, body []byte) (DocumentInfo, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	document, err := store.verifyDocument(body)
+	if err != nil {
+		return DocumentInfo{}, fmt.Errorf("verify detached audit checkpoint document: %w", err)
+	}
+	if _, err := audit.VerifyWithCheckpoint(ctx, document.EventID, document.EventSHA256); err != nil {
+		return DocumentInfo{}, fmt.Errorf("verify detached audit checkpoint against restored chain: %w", err)
+	}
+	return documentInfo(document), nil
+}
+
+// ReanchorRestoredState is the only supported backward checkpoint transition.
+// It requires the exact currently trusted document and a separately signed
+// checkpoint that belongs to the restored chain, records both identities in a
+// new audit event, and only then replaces the external checkpoint.
+func (store *Store) ReanchorRestoredState(ctx context.Context, audit *auditlog.Store, previousBody, backupBody []byte, event auditlog.Event, now time.Time) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.readOnly {
+		return errors.New("read-only audit checkpoint store cannot reanchor restored state")
+	}
+	if store.trusted == nil {
+		return errors.New("external audit checkpoint has not been trusted")
+	}
+	if event.Action != "state_backup.restore" {
+		return errors.New("restored-state reanchor requires the state_backup.restore audit action")
+	}
+	release, err := store.acquireFileLock(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	currentBody, err := os.ReadFile(store.checkpointPath)
+	if err != nil {
+		return fmt.Errorf("read external audit checkpoint before restored-state reanchor: %w", err)
+	}
+	if !bytes.Equal(currentBody, previousBody) {
+		return errors.New("external audit checkpoint changed before restored-state reanchor")
+	}
+	previous, err := store.verifyDocument(previousBody)
+	if err != nil {
+		return err
+	}
+	if previous != *store.trusted {
+		return errors.New("restored-state reanchor does not reference the trusted previous checkpoint")
+	}
+	backup, err := store.verifyDocument(backupBody)
+	if err != nil {
+		return fmt.Errorf("verify backup audit checkpoint document: %w", err)
+	}
+	if _, err := audit.VerifyWithCheckpoint(ctx, backup.EventID, backup.EventSHA256); err != nil {
+		return fmt.Errorf("verify backup audit checkpoint against restored chain: %w", err)
+	}
+	previousDigest := sha256.Sum256(previousBody)
+	backupDigest := sha256.Sum256(backupBody)
+	event.Result = fmt.Sprintf("succeeded; previous_checkpoint_event_id=%d; backup_checkpoint_event_id=%d; backup_checkpoint_sha256=%s", previous.EventID, backup.EventID, hex.EncodeToString(backupDigest[:]))
+	event.ResourceRevision = strconv.FormatInt(previous.EventID, 10)
+	event.ResourceDigestSHA256 = hex.EncodeToString(previousDigest[:])
+	if _, err := audit.Append(ctx, event); err != nil {
+		return fmt.Errorf("append restored-state audit continuity event: %w", err)
+	}
+	verification, err := audit.Verify(ctx)
+	if err != nil {
+		return fmt.Errorf("verify restored audit chain after continuity event: %w", err)
+	}
+	return store.writeCheckpoint(verification, now)
+}
+
+func documentInfo(document checkpointDocument) DocumentInfo {
+	return DocumentInfo{EventID: document.EventID, EventSHA256: document.EventSHA256, SignedAt: time.Unix(document.SignedAt, 0).UTC()}
 }
 
 func (store *Store) verifyTrustedCheckpoint(ctx context.Context, audit *auditlog.Store) (auditlog.Verification, error) {

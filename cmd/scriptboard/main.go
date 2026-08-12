@@ -89,6 +89,11 @@ func run(arguments []string) error {
 			return errors.New("可用应急命令：emergency pause-external|revoke-key|export-evidence")
 		}
 		return runEmergency(arguments[1], arguments[2:])
+	case "backup":
+		if len(arguments) < 2 {
+			return errors.New("可用备份命令：backup create|inspect|restore")
+		}
+		return runBackup(arguments[1], arguments[2:])
 	case "admin":
 		if len(arguments) < 2 || arguments[1] != "reset" {
 			return errors.New("可用管理员命令：admin reset")
@@ -105,7 +110,7 @@ func run(arguments []string) error {
 		}
 		return runUpdate(arguments[1], arguments[2:])
 	default:
-		return fmt.Errorf("未知命令 %q；可用命令：serve、service、update、emergency、admin、audit、config、doctor、version", arguments[0])
+		return fmt.Errorf("未知命令 %q；可用命令：serve、service、update、backup、emergency、admin、audit、config、doctor、version", arguments[0])
 	}
 }
 
@@ -119,6 +124,9 @@ func printUsage() {
   scriptboard update verify-package --archive PATH --manifest PATH --signature PATH [--json]
   scriptboard update repair-current --confirm REPAIR-CURRENT [配置选项]
   scriptboard update recover --operation ID --confirm-operation ID [配置选项]
+  scriptboard backup create --output ABSOLUTE_PATH --passphrase-file ABSOLUTE_PATH [配置选项]
+  scriptboard backup inspect --archive ABSOLUTE_PATH --passphrase-file ABSOLUTE_PATH [--json]
+  scriptboard backup restore --archive ABSOLUTE_PATH --passphrase-file ABSOLUTE_PATH --confirm-backup-id ID [配置选项]
   scriptboard admin reset [配置选项]
   scriptboard audit verify [配置选项] [--json]
   scriptboard emergency pause-external --confirm PAUSE-EXTERNAL [配置选项]

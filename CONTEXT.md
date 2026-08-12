@@ -64,6 +64,10 @@ _Avoid_: 受管根目录、文件库、应用沙箱
 仅供 ScriptBoard 保存数据库、密钥、执行日志、文件操作日志和暂存数据的私有目录。它是受保护路径，不属于用户可通过文件页面查看或管理的内容。
 _Avoid_: 主机文件系统、共享目录、文件库
 
+**私有状态备份（Private State Backup）**：
+由 ScriptBoard 从一致性 SQLite snapshot 和固定私有状态白名单生成的认证加密恢复包。它携带逐文件摘要与签名审计 checkpoint，但不包含外部主密钥、checkpoint 签名私钥、启动配置、TLS 材料、诊断日志、上传 inbox 或 MySQL 备份；因此不是 State Root 的目录副本，也不是完整主机灾备。
+_Avoid_: State Root 副本、配置导出、MySQL 备份、整机镜像
+
 **AI 对话（Assistant Conversation）**：
 由一个 ScriptBoard 用户拥有、绑定一个必选 LLM 配置并保存消息、资源引用、审批模式和 Pi session 身份的持久对话。用户只能查看、订阅和修改自己的 AI 对话；归档不删除历史或 session。
 _Avoid_: 全局聊天室、Pi 终端会话、共享提示词

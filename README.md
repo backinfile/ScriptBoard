@@ -226,7 +226,22 @@ Root 不包含解密材料，这是预期安全属性。相同外部目录还保
 `audit-checkpoint-<实例摘要>.json`；备份和同路径恢复必须同时保留这三项外部材料，否则不能
 证明恢复前后的审计连续性。`scriptboard doctor` 会分别检查它们是否存在。
 
-从旧版本升级前请先备份。当前版本使用数据库 schema 42，可自动迁移 schema 20–41；更早版本的数据库和旧式配置不会自动迁移。schema 40 会记录会话认证保证级别和最近再次认证时间；新登录视为最近认证，高风险操作在 10 分钟后要求于受保护的浏览器会话中重新输入当前密码。schema 41 为审计事件增加服务端 Request ID 与认证保证字段，并把新字段纳入兼容旧事件的 v2 哈希。schema 42 为 Administrator/Maintainer 记录 MFA 注册截止时间；到期未注册 TOTP 或 passkey 的账户只能进入 MFA 设置与登出路径。旧实例获得七天注册窗口，首次管理员与新 Maintainer 获得 24 小时窗口。旧快捷执行项会以未发布状态迁移，在管理员重新保存前不能启动或绑定外部入口。旧版本中共享一个 Key 的多个外部功能会拆成独立 Key：保留最早功能的原 Key，其余功能迁移到默认停用、必须轮换并显式启用 Key 与功能后才能使用的新 Key。为保持兼容，迁移后的外部功能不会自动要求 HMAC；管理员可在编辑页启用，新建功能默认启用。外部接口页面提供持久化全局紧急开关；暂停后所有有效外部调用以低信息 503 响应拒绝且不会执行操作。审计记录形成带保留锚点与链尾的 SHA-256 哈希链，并由 State Root 外 Ed25519 checkpoint 锚定；服务启动时会 fail closed 验证，正常关闭及每五分钟刷新。面板不可用时可运行 `scriptboard audit verify --config CONFIG_PATH`，离线检查中间记录修改、删除、截断，以及链尾和同库状态一起回退；取证导出也执行相同验证。此 checkpoint 仍是主机本地边界，不替代远端不可变日志。
+可使用本机 CLI 生成认证加密的私有状态备份。口令必须放在绝对路径普通文件中且至少 16
+字节；输出路径必须位于 State Root 外，已有文件不会被覆盖。`inspect` 会完整认证包、清单和
+逐文件摘要。恢复前停止 ScriptBoard 的全部服务，并重复输入 `inspect` 返回的 Backup ID：
+
+```text
+scriptboard backup create --output ABSOLUTE_BACKUP_PATH --passphrase-file ABSOLUTE_PASSPHRASE_FILE --config CONFIG_PATH
+scriptboard backup inspect --archive ABSOLUTE_BACKUP_PATH --passphrase-file ABSOLUTE_PASSPHRASE_FILE
+scriptboard backup restore --archive ABSOLUTE_BACKUP_PATH --passphrase-file ABSOLUTE_PASSPHRASE_FILE --confirm-backup-id BACKUP_ID --config CONFIG_PATH
+```
+
+该包只包含一致性 SQLite snapshot、Broker 密文和固定私有证据，不包含外部主密钥、审计签名
+私钥、配置、TLS 材料、诊断日志、上传 inbox 或 MySQL 备份。当前恢复流程要求同一 State Root
+路径的外部密钥和当前签名 checkpoint 仍可验证；成功后撤销全部恢复出的 Web Session，保留
+恢复前私有状态和 checkpoint，并在审计链写入绑定前后锚点的恢复事件。
+
+从旧版本升级前请先备份。当前版本使用数据库 schema 43，可自动迁移 schema 20–42；更早版本的数据库和旧式配置不会自动迁移。schema 40 会记录会话认证保证级别和最近再次认证时间；新登录视为最近认证，高风险操作在 10 分钟后要求于受保护的浏览器会话中重新输入当前密码。schema 41 为审计事件增加服务端 Request ID 与认证保证字段，并把新字段纳入兼容旧事件的 v2 哈希。schema 42 为 Administrator/Maintainer 记录 MFA 注册截止时间；到期未注册 TOTP 或 passkey 的账户只能进入 MFA 设置与登出路径。旧实例获得七天注册窗口，首次管理员与新 Maintainer 获得 24 小时窗口。旧快捷执行项会以未发布状态迁移，在管理员重新保存前不能启动或绑定外部入口。旧版本中共享一个 Key 的多个外部功能会拆成独立 Key：保留最早功能的原 Key，其余功能迁移到默认停用、必须轮换并显式启用 Key 与功能后才能使用的新 Key。为保持兼容，迁移后的外部功能不会自动要求 HMAC；管理员可在编辑页启用，新建功能默认启用。外部接口页面提供持久化全局紧急开关；暂停后所有有效外部调用以低信息 503 响应拒绝且不会执行操作。审计记录形成带保留锚点与链尾的 SHA-256 哈希链，并由 State Root 外 Ed25519 checkpoint 锚定；服务启动时会 fail closed 验证，正常关闭及每五分钟刷新。面板不可用时可运行 `scriptboard audit verify --config CONFIG_PATH`，离线检查中间记录修改、删除、截断，以及链尾和同库状态一起回退；取证导出也执行相同验证。此 checkpoint 仍是主机本地边界，不替代远端不可变日志。
 
 面板不可用或疑似遭入侵时，可在主机本地使用带外应急命令。写操作要求重复输入固定确认值或完整 Key ID，并作为 `local-administrator` 原子写入审计链；取证导出先验证审计链，只创建新文件且不会覆盖已有证据：
 

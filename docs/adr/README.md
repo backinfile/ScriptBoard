@@ -40,7 +40,7 @@
 | [ADR-0023 默认使用宿主系统最高权限](./0023-default-to-highest-host-privileges.md) | [ADR-0002 信任管理员脚本](./0002-trust-admin-provided-scripts.md) |
 | [ADR-0027 允许无队列并发](./0027-allow-unbounded-concurrent-runs-without-a-queue.md) | [ADR-0012 拒绝并发](./0012-reject-instead-of-queueing-executions.md)、[ADR-0025 繁忙时跳过](./0025-skip-busy-cron-triggers-without-queueing.md) |
 | [ADR-0030 使用内置调度器](./0030-use-an-internal-scheduler-instead-of-crontab.md) | [ADR-0024 管理 crontab 条目](./0024-manage-only-owned-entries-in-runtime-users-crontab.md)、[ADR-0026 本机控制套接字](./0026-trigger-cron-runs-through-a-local-control-socket.md) |
-| [ADR-0100 不提供用户备份命令](./0100-do-not-provide-user-facing-backup-commands.md) | [ADR-0074 CLI 备份与恢复](./0074-provide-cli-backup-for-private-application-state.md) |
+| [ADR-0162 带审计连续性的加密私有状态备份](./0162-provide-encrypted-private-state-backup-with-audit-continuity.md) | [ADR-0074 CLI 备份与恢复](./0074-provide-cli-backup-for-private-application-state.md)、[ADR-0100 不提供用户备份命令](./0100-do-not-provide-user-facing-backup-commands.md) |
 | [ADR-0108 Web 提供中英文](./0108-localize-the-web-in-zh-cn-and-en-us.md) | [ADR-0081 仅简体中文](./0081-ship-a-simplified-chinese-only-mvp.md) |
 | [ADR-0110 使用桌面 Chromium 门禁](./0110-use-desktop-chromium-as-the-browser-gate.md) | [ADR-0083 现代浏览器自动化范围](./0083-support-modern-desktop-and-mobile-browsers.md) |
 | [ADR-0111 从文件或历史创建快捷执行](./0111-create-quick-runs-from-files-or-run-history.md) | [ADR-0015 仅显式保存快捷执行](./0015-save-quick-runs-explicitly.md) |
@@ -52,6 +52,7 @@
 
 ## 最新决策
 
+- [ADR-0162 提供带审计连续性的加密私有状态备份](./0162-provide-encrypted-private-state-backup-with-audit-continuity.md)，用一致性 SQLite snapshot、分块认证加密、固定归档边界和受控审计重锚建立 State Root 带外恢复基础。
 - [ADR-0161 将受管 Host Files 宿主访问限制在 Broker 内](./0161-keep-managed-host-file-access-inside-the-broker.md)，把目录、内容、日志、发布、移动与无人值守固定资源访问移出 Web，并以用户绑定短期句柄和执行点复核收口。
 - [ADR-0160 将受管 MySQL 凭据与执行能力限制在 Broker 内](./0160-keep-managed-mysql-credentials-and-execution-inside-the-broker.md)，让 Broker 持有密码、数据库连接、客户端进程、备份计划与中断恢复，Web 只编排无秘密元数据。
 - [ADR-0159 将受管 Assistant Provider 凭据与代理会话限制在 Broker 内](./0159-keep-managed-assistant-provider-credentials-and-proxies-inside-the-broker.md)，由 Broker 绑定 Owner、模型、Endpoint 与 Key，并只向 Web 返回短期环回代理能力和撤销句柄。

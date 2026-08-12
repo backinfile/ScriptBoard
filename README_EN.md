@@ -191,7 +191,27 @@ Back up these locations regularly:
 - `state_root`, which contains the database, run logs, sessions, audit records, and AI data;
 - the service `config.yaml` file, if you created a custom configuration.
 
-Back up before upgrading from an older version. The current release uses database schema 31 and can migrate schemas 20–30 automatically; older databases and legacy configuration files are not migrated automatically.
+The local CLI can create an authenticated encrypted Private State Backup. The
+passphrase must be stored in an absolute regular-file path and contain at least
+16 bytes; the output must be outside the State Root and is never overwritten.
+Stop all ScriptBoard services before restore, then repeat the Backup ID returned
+by `inspect`:
+
+```text
+scriptboard backup create --output ABSOLUTE_BACKUP_PATH --passphrase-file ABSOLUTE_PASSPHRASE_FILE --config CONFIG_PATH
+scriptboard backup inspect --archive ABSOLUTE_BACKUP_PATH --passphrase-file ABSOLUTE_PASSPHRASE_FILE
+scriptboard backup restore --archive ABSOLUTE_BACKUP_PATH --passphrase-file ABSOLUTE_PASSPHRASE_FILE --confirm-backup-id BACKUP_ID --config CONFIG_PATH
+```
+
+The package contains a consistent SQLite snapshot, Broker ciphertexts, and a
+fixed allowlist of private evidence. It excludes the external master key, audit
+signing key, configuration, TLS material, diagnostic logs, upload inbox, and
+MySQL backups. The current restore flow requires the matching external keys and
+the current signed checkpoint for the same State Root path. It revokes restored
+web sessions, preserves the previous private state and checkpoint, and records
+an audit-continuity event before issuing a new checkpoint.
+
+Back up before upgrading from an older version. The current release uses database schema 43 and can migrate schemas 20–42 automatically; older databases and legacy configuration files are not migrated automatically.
 
 When the panel is unavailable or compromise is suspected, use the local out-of-band emergency commands below. Mutations require an exact fixed confirmation or the complete Key ID and are atomically appended to the audit chain as `local-administrator`; evidence export verifies the chain first, creates only a new file, and never overwrites existing evidence:
 

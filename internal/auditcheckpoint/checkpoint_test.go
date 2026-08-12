@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -174,6 +175,83 @@ func TestIndependentWritersAdoptOnlyForwardSignedCheckpoints(t *testing.T) {
 	}
 	if secondID <= firstID || second.CheckpointEventID() != secondID {
 		t.Fatalf("first=%d second=%d checkpoint=%d", firstID, secondID, second.CheckpointEventID())
+	}
+}
+
+func TestRestoredStateReanchorRequiresBothSignedCheckpointsAndRecordsContinuity(t *testing.T) {
+	ctx := context.Background()
+	currentDB := openCheckpointDB(t)
+	currentAudit := auditlog.New(currentDB)
+	if _, err := currentAudit.Append(ctx, auditlog.Event{OccurredAt: "1", Action: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(t.TempDir(), "state")
+	vault, err := secretstore.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoints, err := New(Options{StateRoot: root, SecretStore: vault})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkpoints.VerifyOrBootstrap(ctx, currentAudit, time.Unix(10, 0)); err != nil {
+		t.Fatal(err)
+	}
+	backupDocument, err := checkpoints.TrustedDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoredPath := filepath.Join(t.TempDir(), "restored.db")
+	if _, err := currentDB.Exec(`VACUUM INTO ?`, restoredPath); err != nil {
+		t.Fatal(err)
+	}
+	for index, action := range []string{"second", "third"} {
+		if _, err := currentAudit.Append(ctx, auditlog.Event{OccurredAt: strconv.Itoa(index + 2), Action: action}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := checkpoints.Write(ctx, currentAudit, time.Unix(11, 0)); err != nil {
+		t.Fatal(err)
+	}
+	previousDocument, err := checkpoints.TrustedDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checkpoints.CheckpointEventID() != 3 {
+		t.Fatalf("current checkpoint event = %d", checkpoints.CheckpointEventID())
+	}
+	restoredDB, err := sql.Open("sqlite", restoredPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restoredDB.Close()
+	restoredAudit := auditlog.New(restoredDB)
+	if _, err := checkpoints.VerifyDetached(ctx, restoredAudit, backupDocument); err != nil {
+		t.Fatal(err)
+	}
+	event := auditlog.Event{
+		OccurredAt: "12", Action: "state_backup.restore", Target: "backup-id",
+		SourceAddress: "local-cli", ActorRole: "local-administrator", AuthenticationAssurance: "local-os-access",
+	}
+	if err := checkpoints.ReanchorRestoredState(ctx, restoredAudit, previousDocument, backupDocument, event, time.Unix(12, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if checkpoints.CheckpointEventID() != 2 {
+		t.Fatalf("restored checkpoint event = %d, want controlled backward transition to 2", checkpoints.CheckpointEventID())
+	}
+	var action, target, result, revision, digest string
+	if err := restoredDB.QueryRow(`SELECT action, target, result, resource_revision, resource_digest_sha256 FROM audit_events WHERE id = 2`).Scan(&action, &target, &result, &revision, &digest); err != nil {
+		t.Fatal(err)
+	}
+	if action != "state_backup.restore" || target != "backup-id" || revision != "3" || len(digest) != 64 || !strings.Contains(result, "backup_checkpoint_event_id=1") {
+		t.Fatalf("continuity event = action=%q target=%q result=%q revision=%q digest=%q", action, target, result, revision, digest)
+	}
+	verificationStore, err := New(Options{StateRoot: root, SecretStore: vault})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verificationStore.VerifyOrBootstrap(ctx, restoredAudit, time.Time{}); err != nil {
+		t.Fatalf("fresh verifier rejected reanchored restored chain: %v", err)
 	}
 }
 

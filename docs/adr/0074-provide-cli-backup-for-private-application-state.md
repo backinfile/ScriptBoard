@@ -1,5 +1,5 @@
 ---
-status: superseded by ADR-0100
+status: superseded by ADR-0162
 ---
 
 # 提供应用私有状态的 CLI 备份与恢复

@@ -13,6 +13,7 @@ import (
 	"scriptboard/internal/app"
 	"scriptboard/internal/auditcheckpoint"
 	"scriptboard/internal/auditlog"
+	"scriptboard/internal/statebackup"
 )
 
 func TestHelpDoesNotDocumentRemovedManagedRootShortcuts(t *testing.T) {
@@ -57,6 +58,62 @@ func TestUpdateRepairCurrentRequiresExplicitConfirmation(t *testing.T) {
 	err := run([]string{"update", "repair-current"})
 	if err == nil || !strings.Contains(err.Error(), "REPAIR-CURRENT") {
 		t.Fatalf("repair-current confirmation error = %v", err)
+	}
+}
+
+func TestBackupCreateWorksWithoutOpeningTheWebApplication(t *testing.T) {
+	stateRoot := initializedStateRoot(t)
+	passphraseFile := filepath.Join(t.TempDir(), "backup-passphrase")
+	passphrase := []byte("correct horse battery staple for cli backup")
+	if err := os.WriteFile(passphraseFile, append(append([]byte(nil), passphrase...), '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(t.TempDir(), "state.sbsb")
+	if err := run([]string{"backup", "create", "--state-root", stateRoot, "--output", output, "--passphrase-file", passphraseFile}); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := statebackup.Inspect(context.Background(), output, passphrase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.ID == "" || manifest.SchemaVersion != 43 {
+		t.Fatalf("backup manifest = %#v", manifest)
+	}
+}
+
+func TestBackupRestoreReanchorsAuditAndPreservesPreviousCheckpoint(t *testing.T) {
+	stateRoot := initializedStateRoot(t)
+	passphraseFile := filepath.Join(t.TempDir(), "backup-passphrase")
+	passphrase := []byte("correct horse battery staple for cli restore")
+	if err := os.WriteFile(passphraseFile, passphrase, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	archivePath := filepath.Join(t.TempDir(), "state.sbsb")
+	if err := run([]string{"backup", "create", "--state-root", stateRoot, "--output", archivePath, "--passphrase-file", passphraseFile}); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := statebackup.Inspect(context.Background(), archivePath, passphrase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"backup", "restore", "--state-root", stateRoot, "--archive", archivePath, "--passphrase-file", passphraseFile, "--confirm-backup-id", manifest.ID}); err != nil {
+		t.Fatal(err)
+	}
+	database, err := openEmergencyDatabaseReadOnly(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := verifySignedAuditCheckpoint(context.Background(), stateRoot, auditlog.New(database)); err != nil {
+		t.Fatalf("restored audit checkpoint verification failed: %v", err)
+	}
+	var restoreEvents int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM audit_events WHERE action = 'state_backup.restore' AND target = ?`, manifest.ID).Scan(&restoreEvents); err != nil || restoreEvents != 1 {
+		t.Fatalf("restore audit events = %d, err = %v", restoreEvents, err)
+	}
+	preserved := filepath.Join(filepath.Dir(stateRoot), filepath.Base(stateRoot)+".before-restore-"+manifest.ID)
+	if info, err := os.Stat(filepath.Join(preserved, "external-audit-checkpoint.before-restore.json")); err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("preserved checkpoint info=%v err=%v", info, err)
 	}
 }
 
