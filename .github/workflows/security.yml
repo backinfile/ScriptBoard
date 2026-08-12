@@ -16,6 +16,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Fuzz security boundaries
+        run: bash ./scripts/run-fuzz-security-gate.sh
+
   vulnerability-and-secret-scan:
     runs-on: ubuntu-latest
     steps:

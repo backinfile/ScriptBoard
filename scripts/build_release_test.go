@@ -78,3 +78,65 @@ func TestWindowsSCMSecurityGateCoversManagedBoundary(t *testing.T) {
 		t.Fatal("CI does not execute the Windows SCM security gate")
 	}
 }
+
+func TestFormalReleaseDependsOnSecurityGates(t *testing.T) {
+	workflow, err := os.ReadFile("../.github/workflows/release.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(workflow)
+	for _, expected := range []string{
+		"release-windows:",
+		"go test ./... -count=1",
+		"go vet ./...",
+		"./scripts/windows-scm-security-gate.ps1",
+		"release-race:",
+		"bash ./scripts/run-race-security-gate.sh",
+		"release-fuzz:",
+		"bash ./scripts/run-fuzz-security-gate.sh",
+		"release-browser:",
+		"pnpm test",
+		"release-security:",
+		"golang/govulncheck-action@v1",
+		"gitleaks/gitleaks-action@v2",
+		"release-codeql:",
+		"github/codeql-action/analyze@v4",
+		"needs: [release-windows, release-race, release-fuzz, release-browser, release-security, release-codeql]",
+	} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("formal release workflow does not contain %q", expected)
+		}
+	}
+	raceGate, err := os.ReadFile("run-race-security-gate.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"go test -race",
+		"./internal/assistant/runtimehost",
+		"./internal/auditnotification",
+		"./internal/privilegebroker",
+		"./internal/runnerhost",
+		"./internal/securityevents",
+		"./internal/statebackup",
+		"./internal/update",
+	} {
+		if !strings.Contains(string(raceGate), expected) {
+			t.Fatalf("race security gate does not contain %q", expected)
+		}
+	}
+	ciWorkflow, err := os.ReadFile("../.github/workflows/ci.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(ciWorkflow), "bash ./scripts/run-race-security-gate.sh") {
+		t.Fatal("CI and formal release do not share the race security gate")
+	}
+	securityWorkflow, err := os.ReadFile("../.github/workflows/security.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(securityWorkflow), "bash ./scripts/run-fuzz-security-gate.sh") {
+		t.Fatal("security workflow does not execute the fuzz security gate")
+	}
+}
