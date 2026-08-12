@@ -51,6 +51,22 @@ func TestWindowsServiceEventsRequireFixedEncodedRecords(t *testing.T) {
 	}
 }
 
+func TestWindowsProviderTreatsNoMatchingEventsAsAnEmptySupportedReport(t *testing.T) {
+	runner := &fixtureRunner{}
+	reader := New(Options{GOOS: "windows", Runner: runner, Now: func() time.Time { return time.Date(2026, 8, 12, 8, 0, 0, 0, time.UTC) }})
+	report, err := reader.List(context.Background(), Query{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Supported || report.Provider != "Windows System Event Log" || len(report.Entries) != 0 {
+		t.Fatalf("empty Windows report = %#v", report)
+	}
+	call := strings.Join(runner.arguments, " ")
+	if !strings.Contains(call, "NoMatchingEventsFound") || !strings.Contains(call, "-MaxEvents 2000") || !strings.Contains(call, "ScriptBoardRunner") || !strings.HasSuffix(strings.TrimSpace(call), "exit 0") {
+		t.Fatalf("Windows provider script is not fixed and empty-safe: %s", call)
+	}
+}
+
 type fixtureRunner struct {
 	available map[string]bool
 	output    string

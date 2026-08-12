@@ -391,11 +391,19 @@ func (commandRunner) LookPath(name string) bool {
 }
 
 const windowsServiceLogScript = `$ErrorActionPreference = 'Stop'
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+$OutputEncoding = $utf8
+[Console]::OutputEncoding = $utf8
 $since = [DateTime]::Parse('__SINCE__').ToUniversalTime()
 $names = @('ScriptBoard','ScriptBoardBroker','ScriptBoardAI','ScriptBoardRunner')
 function Encode-Field([object]$value) {[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$value))}
 $count = 0
-$events = @(Get-WinEvent -FilterHashtable @{LogName='System';ProviderName='Service Control Manager';StartTime=$since} -MaxEvents 2000 -ErrorAction Stop)
+$events = @()
+try {
+  $events = @(Get-WinEvent -FilterHashtable @{LogName='System';ProviderName='Service Control Manager';StartTime=$since} -MaxEvents 2000 -ErrorAction Stop)
+} catch {
+  if ([string]$_.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound*') {throw}
+}
 foreach ($event in $events) {
   $matched = ''
   foreach ($name in $names) {if ($event.Message.IndexOf($name,[StringComparison]::OrdinalIgnoreCase) -ge 0) {$matched=$name;break}}
@@ -403,4 +411,5 @@ foreach ($event in $events) {
   $message = [string]$event.Message; if ($message.Length -gt 4096) {$message=$message.Substring(0,4096)}
   'SBSERVICE|' + (Encode-Field $event.TimeCreated.ToUniversalTime().ToString('o')) + '|' + (Encode-Field $matched) + '|' + (Encode-Field $event.Id) + '|' + (Encode-Field $event.LevelDisplayName) + '|' + (Encode-Field $message) + '|0'
   $count++; if ($count -ge 2000) {break}
-}`
+}
+exit 0`
