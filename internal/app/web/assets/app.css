@@ -336,7 +336,7 @@ body[data-app-shell] { padding-left: var(--sidebar-width); }
   align-items: baseline;
   gap: 6px;
   color: var(--ink);
-  font: 680 1.05rem/1 var(--font-display);
+  font: 680 1.05rem/1.25 var(--font-display);
   letter-spacing: -.02em;
   text-decoration: none;
 }
