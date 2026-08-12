@@ -3,6 +3,7 @@ package privilegebroker
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -64,24 +65,26 @@ type hostFilesWireRequest struct {
 	DirectoryPrepare bool                   `json:"directory_prepare,omitempty"`
 	Record           string                 `json:"record,omitempty"`
 	Cursor           string                 `json:"cursor,omitempty"`
+	OperationID      string                 `json:"operation_id,omitempty"`
 }
 
 type hostFilesWireResponse struct {
-	Entries        []hostfiles.Entry       `json:"entries,omitempty"`
-	Info           *HostFileInfo           `json:"info,omitempty"`
-	Document       *hostfiles.TextDocument `json:"document,omitempty"`
-	CanonicalPath  string                  `json:"canonical_path,omitempty"`
-	AvailableName  string                  `json:"available_name,omitempty"`
-	Execute        *bool                   `json:"execute,omitempty"`
-	Trashed        *hostfiles.Trashed      `json:"trashed,omitempty"`
-	NextOffset     int                     `json:"next_offset,omitempty"`
-	Content        []byte                  `json:"content,omitempty"`
-	Handle         string                  `json:"handle,omitempty"`
-	Prepared       *hostFilesPrepared      `json:"prepared,omitempty"`
-	SameFilesystem *bool                   `json:"same_filesystem,omitempty"`
-	Metadata       *logstream.Metadata     `json:"metadata,omitempty"`
-	Page           *logstream.Page         `json:"page,omitempty"`
-	Events         []logstream.Event       `json:"events,omitempty"`
+	Entries        []hostfiles.Entry        `json:"entries,omitempty"`
+	Info           *HostFileInfo            `json:"info,omitempty"`
+	Document       *hostfiles.TextDocument  `json:"document,omitempty"`
+	CanonicalPath  string                   `json:"canonical_path,omitempty"`
+	AvailableName  string                   `json:"available_name,omitempty"`
+	Execute        *bool                    `json:"execute,omitempty"`
+	Trashed        *hostfiles.Trashed       `json:"trashed,omitempty"`
+	NextOffset     int                      `json:"next_offset,omitempty"`
+	Content        []byte                   `json:"content,omitempty"`
+	Handle         string                   `json:"handle,omitempty"`
+	Prepared       *hostFilesPrepared       `json:"prepared,omitempty"`
+	SameFilesystem *bool                    `json:"same_filesystem,omitempty"`
+	Metadata       *logstream.Metadata      `json:"metadata,omitempty"`
+	Page           *logstream.Page          `json:"page,omitempty"`
+	Events         []logstream.Event        `json:"events,omitempty"`
+	Operation      *hostfiles.FileOperation `json:"operation,omitempty"`
 }
 
 type hostFilesPrepared struct {
@@ -96,6 +99,9 @@ type brokerHostFilesService struct {
 	mu          sync.Mutex
 	reads       map[string]*hostFilesReadHandle
 	logs        map[string]*hostFilesLogHandle
+	moveEngine  *hostfiles.MoveEngine
+	moveContext context.Context
+	db          *sql.DB
 }
 
 type hostFilesReadHandle struct {
@@ -121,7 +127,19 @@ func NewBrokerHostFilesService(files *hostfiles.Manager, stagingRoots ...string)
 			return nil, errors.New("Broker Host Files staging root must be absolute")
 		}
 	}
-	return &brokerHostFilesService{files: files, stagingRoot: stagingRoot, reads: make(map[string]*hostFilesReadHandle), logs: make(map[string]*hostFilesLogHandle)}, nil
+	return newBrokerHostFilesService(files, stagingRoot, nil, context.Background(), nil), nil
+}
+
+func NewBrokerHostFilesServiceWithMoves(files *hostfiles.Manager, stagingRoot string, engine *hostfiles.MoveEngine, moveContext context.Context, db *sql.DB) (HostFilesService, error) {
+	if files == nil || engine == nil || moveContext == nil || db == nil || !filepath.IsAbs(filepath.Clean(stagingRoot)) {
+		return nil, errors.New("Broker Host Files move service is not fully configured")
+	}
+	return newBrokerHostFilesService(files, filepath.Clean(stagingRoot), engine, moveContext, db), nil
+}
+
+func newBrokerHostFilesService(files *hostfiles.Manager, stagingRoot string, engine *hostfiles.MoveEngine, moveContext context.Context, db *sql.DB) *brokerHostFilesService {
+	return &brokerHostFilesService{files: files, stagingRoot: stagingRoot, reads: make(map[string]*hostFilesReadHandle),
+		logs: make(map[string]*hostFilesLogHandle), moveEngine: engine, moveContext: moveContext, db: db}
 }
 
 func (service *brokerHostFilesService) Roots(context.Context) ([]hostfiles.Entry, error) {
@@ -416,6 +434,37 @@ func (service *brokerHostFilesService) AppendText(_ context.Context, path, recor
 	return service.files.AppendText(path, record)
 }
 
+func (service *brokerHostFilesService) StartCrossFilesystemMove(_ context.Context, id, source, destination, displacedStoredPath, displacedID string) (hostfiles.FileOperation, error) {
+	if service.moveEngine == nil || service.db == nil {
+		return hostfiles.FileOperation{}, errors.New("Broker Host Files move engine is unavailable")
+	}
+	started := make(chan hostfiles.FileOperation, 1)
+	finished := make(chan struct {
+		operation hostfiles.FileOperation
+		err       error
+	}, 1)
+	go func() {
+		operation, err := service.moveEngine.ExecuteWithStart(service.moveContext, id, source, destination, func(value hostfiles.FileOperation) { started <- value })
+		if err != nil && displacedStoredPath != "" {
+			if _, destinationErr := service.files.Info(destination); os.IsNotExist(destinationErr) {
+				if restoreErr := service.files.RestoreFromTrash(displacedStoredPath, destination); restoreErr == nil {
+					_, _ = service.db.ExecContext(context.WithoutCancel(service.moveContext), "DELETE FROM trash_entries WHERE id = ? AND stored_path_key = ?", displacedID, hostfiles.ComparisonKey(displacedStoredPath))
+				}
+			}
+		}
+		finished <- struct {
+			operation hostfiles.FileOperation
+			err       error
+		}{operation: operation, err: err}
+	}()
+	select {
+	case operation := <-started:
+		return operation, nil
+	case result := <-finished:
+		return result.operation, result.err
+	}
+}
+
 func (server *Server) hostFilesOperation(request wireRequest) wireResponse {
 	if server.hostFiles == nil {
 		return wireResponse{Status: statusError, ErrorCode: "host_files_unavailable", Message: "Host Files service is unavailable"}
@@ -511,6 +560,10 @@ func (server *Server) hostFilesOperation(request wireRequest) wireResponse {
 		result.Events, err = server.hostFiles.LogFollow(ctx, actor.UserID, payload.Handle, payload.Cursor)
 	case operationHostFilesLogClose:
 		err = server.hostFiles.CloseLog(ctx, actor.UserID, payload.Handle)
+	case operationHostFilesCrossMove:
+		var operation hostfiles.FileOperation
+		operation, err = server.hostFiles.StartCrossFilesystemMove(ctx, payload.OperationID, payload.Path, payload.Destination, payload.StoredPath, payload.StoredName)
+		result.Operation = &operation
 	}
 	mutation := action != ActionHostFilesRead
 	if mutation && server.auditor != nil {
@@ -565,7 +618,7 @@ func hostFilesAction(operation string) (Action, bool) {
 	switch operation {
 	case operationHostFilesTrash, operationHostFilesRestore, operationHostFilesPurge:
 		return ActionHostFilesDelete, true
-	case operationHostFilesMove, operationHostFilesToggleExec:
+	case operationHostFilesMove, operationHostFilesToggleExec, operationHostFilesCrossMove:
 		return ActionHostFilesMove, true
 	case operationHostFilesMkdir, operationHostFilesUpload, operationHostFilesSaveText, operationHostFilesRollback,
 		operationHostFilesRemove, operationHostFilesAppend:
@@ -595,7 +648,7 @@ func validateHostFilesRequest(request wireRequest) error {
 			return errors.New("Host Files path is invalid")
 		}
 	}
-	if len(payload.Handle) > 128 || len(payload.StagingPath) > 4096 || len(payload.ExpectedDigest) > 128 || len(payload.Record) > 64<<10 || len(payload.Cursor) > 2048 || strings.ContainsAny(payload.Handle+payload.StagingPath+payload.ExpectedDigest+payload.Record+payload.Cursor, "\r\n\x00") {
+	if len(payload.Handle) > 128 || len(payload.OperationID) > 255 || len(payload.StagingPath) > 4096 || len(payload.ExpectedDigest) > 128 || len(payload.Record) > 64<<10 || len(payload.Cursor) > 2048 || strings.ContainsAny(payload.Handle+payload.OperationID+payload.StagingPath+payload.ExpectedDigest+payload.Record+payload.Cursor, "\r\n\x00") {
 		return errors.New("Host Files request value is invalid")
 	}
 	for _, value := range []string{payload.Name, payload.StoredName} {
@@ -604,7 +657,7 @@ func validateHostFilesRequest(request wireRequest) error {
 		}
 	}
 	emptyPaths := func() bool {
-		return payload.Path == "" && payload.Directory == "" && payload.Name == "" && payload.Destination == "" && payload.StoredPath == "" && payload.StoredName == "" && payload.CanonicalKind == "" && !payload.RestoreAvailable && payload.MaxBytes == 0 && payload.ByteOffset == 0 && payload.ByteLimit == 0 && payload.Handle == "" && payload.StagingPath == "" && payload.ExpectedDigest == "" && !payload.Replace && !payload.DirectoryPrepare && payload.Record == "" && payload.Cursor == ""
+		return payload.Path == "" && payload.Directory == "" && payload.Name == "" && payload.Destination == "" && payload.StoredPath == "" && payload.StoredName == "" && payload.CanonicalKind == "" && !payload.RestoreAvailable && payload.MaxBytes == 0 && payload.ByteOffset == 0 && payload.ByteLimit == 0 && payload.Handle == "" && payload.OperationID == "" && payload.StagingPath == "" && payload.ExpectedDigest == "" && !payload.Replace && !payload.DirectoryPrepare && payload.Record == "" && payload.Cursor == ""
 	}
 	switch request.Operation {
 	case operationHostFilesRoots:
@@ -704,6 +757,10 @@ func validateHostFilesRequest(request wireRequest) error {
 		if !onlyHostFileHandle(payload) || payload.Cursor != "" {
 			return errors.New("Host Files log-close request is invalid")
 		}
+	case operationHostFilesCrossMove:
+		if payload.OperationID == "" || payload.Path == "" || !filepath.IsAbs(payload.Path) || payload.Destination == "" || !filepath.IsAbs(payload.Destination) || payload.Directory != "" || payload.Name != "" || payload.CanonicalKind != "" || payload.RestoreAvailable || payload.MaxBytes != 0 || payload.Offset != 0 || payload.Limit != 0 || payload.ByteOffset != 0 || payload.ByteLimit != 0 || payload.Handle != "" || payload.StagingPath != "" || payload.ExpectedDigest != "" || payload.Replace || payload.DirectoryPrepare || payload.Record != "" || payload.Cursor != "" || (payload.StoredPath == "") != (payload.StoredName == "") || (payload.StoredPath != "" && !filepath.IsAbs(payload.StoredPath)) {
+			return errors.New("Host Files cross-filesystem move request is invalid")
+		}
 	}
 	if hostFilesExpectedPayload(request.Operation, *payload) != *payload {
 		return errors.New("Host Files request contains operation-forbidden fields")
@@ -751,6 +808,8 @@ func hostFilesExpectedPayload(operation string, payload hostFilesWireRequest) ho
 		return hostFilesWireRequest{Handle: payload.Handle, Cursor: payload.Cursor}
 	case operationHostFilesLogClose:
 		return hostFilesWireRequest{Handle: payload.Handle}
+	case operationHostFilesCrossMove:
+		return hostFilesWireRequest{OperationID: payload.OperationID, Path: payload.Path, Destination: payload.Destination, StoredPath: payload.StoredPath, StoredName: payload.StoredName}
 	default:
 		return hostFilesWireRequest{}
 	}
@@ -772,7 +831,7 @@ func isHostFilesOperation(operation string) bool {
 		operationHostFilesOpenRead, operationHostFilesReadChunk, operationHostFilesCloseRead, operationHostFilesUpload,
 		operationHostFilesSaveText, operationHostFilesRollback, operationHostFilesRemove, operationHostFilesPrepare,
 		operationHostFilesSameFS, operationHostFilesAppend, operationHostFilesLogOpen, operationHostFilesLogHistory,
-		operationHostFilesLogFollow, operationHostFilesLogClose:
+		operationHostFilesLogFollow, operationHostFilesLogClose, operationHostFilesCrossMove:
 		return true
 	default:
 		return false
@@ -1080,6 +1139,15 @@ func (backend *HostFilesBackend) SameFilesystem(ctx context.Context, source, des
 func (backend *HostFilesBackend) AppendText(ctx context.Context, path, record string) error {
 	_, err := backend.call(ctx, operationHostFilesAppend, hostFilesWireRequest{Path: path, Record: record})
 	return err
+}
+
+func (backend *HostFilesBackend) StartCrossFilesystemMove(ctx context.Context, id, source, destination, displacedStoredPath, displacedID string) (hostfiles.FileOperation, error) {
+	value, err := backend.call(ctx, operationHostFilesCrossMove, hostFilesWireRequest{OperationID: id, Path: source,
+		Destination: destination, StoredPath: displacedStoredPath, StoredName: displacedID})
+	if value.Operation == nil {
+		return hostfiles.FileOperation{}, errors.Join(err, errors.New("privileged Broker returned no Host Files operation"))
+	}
+	return *value.Operation, err
 }
 
 type RemoteHostFileLogSource struct {

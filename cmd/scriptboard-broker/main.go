@@ -137,7 +137,15 @@ func runContext(ctx context.Context, arguments []string) error {
 	if err := os.MkdirAll(hostFilesStagingRoot, 0o750); err != nil {
 		return fmt.Errorf("prepare Broker Host Files exchange root: %w", err)
 	}
-	hostFilesService, err := privilegebroker.NewBrokerHostFilesService(brokerFiles, hostFilesStagingRoot)
+	hostFileOperationStore, err := privilegebroker.NewBrokerHostFileOperationStore(database)
+	if err != nil {
+		return err
+	}
+	hostFileMoveEngine := hostfiles.NewMoveEngine(brokerFiles, hostFileOperationStore)
+	if err := hostFileMoveEngine.Recover(context.Background()); err != nil {
+		return fmt.Errorf("recover Broker-owned Host Files operations: %w", err)
+	}
+	hostFilesService, err := privilegebroker.NewBrokerHostFilesServiceWithMoves(brokerFiles, hostFilesStagingRoot, hostFileMoveEngine, ctx, database)
 	if err != nil {
 		return err
 	}

@@ -728,8 +728,10 @@ func Open(config Config) (*App, error) {
 		Protected:     application.assistant.ReferencedRuntimeVersions,
 	})
 	application.fileOperations = newSQLiteFileOperationStore(db)
-	application.fileMoves = hostfiles.NewMoveEngine(files, application.fileOperations)
-	application.fileOperationCtx, application.fileOperationStop = context.WithCancel(context.Background())
+	if application.hostFilesBackend == nil {
+		application.fileMoves = hostfiles.NewMoveEngine(files, application.fileOperations)
+		application.fileOperationCtx, application.fileOperationStop = context.WithCancel(context.Background())
+	}
 	if !validating {
 		if err := application.initializeAdmin(stateRoot); err != nil {
 			_ = db.Close()
@@ -750,10 +752,12 @@ func Open(config Config) (*App, error) {
 		timeoutGrace = 30 * time.Second
 	}
 	application.runs = runmanager.NewWithLauncher(db, application.files, stateRoot, timeoutGrace, config.ExecutorChains, config.RunnerProcessLauncher, application.auditLog)
-	if err := application.fileMoves.Recover(context.Background()); err != nil {
-		application.runs.Close()
-		_ = db.Close()
-		return nil, fmt.Errorf("recover filesystem operations: %w", err)
+	if application.fileMoves != nil {
+		if err := application.fileMoves.Recover(context.Background()); err != nil {
+			application.runs.Close()
+			_ = db.Close()
+			return nil, fmt.Errorf("recover filesystem operations: %w", err)
+		}
 	}
 	if validating {
 		if _, entered := application.runs.EnterMaintenance(); !entered {
@@ -4385,11 +4389,14 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 		}
 		leaseID = "file-operation:" + operationID
 	}
-	if err := a.files.AcquireLease(leaseID, source, destination); err != nil {
-		http.Error(response, "移动路径正在使用中："+err.Error(), http.StatusConflict)
-		return
+	brokerCrossMove := !sameFilesystem && a.hostFilesBackend != nil
+	if !brokerCrossMove {
+		if err := a.files.AcquireLease(leaseID, source, destination); err != nil {
+			http.Error(response, "移动路径正在使用中："+err.Error(), http.StatusConflict)
+			return
+		}
 	}
-	leaseOwned := true
+	leaseOwned := !brokerCrossMove
 	defer func() {
 		if leaseOwned {
 			a.files.ReleaseLease(leaseID)
@@ -4432,6 +4439,19 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 		}
 	}
 	if !sameFilesystem {
+		if brokerCrossMove {
+			displacedStoredPath := ""
+			if displaced != nil {
+				displacedStoredPath = displaced.StoredPath
+			}
+			if _, moveErr := a.hostStartCrossFilesystemMove(request.Context(), operationID, source, destination, displacedStoredPath, displacedID); moveErr != nil {
+				http.Error(response, "unable to start cross-filesystem move: "+moveErr.Error(), http.StatusBadRequest)
+				return
+			}
+			a.recordAuditForRequest(request, "cross_filesystem_move", source+" -> "+destination, "accepted")
+			http.Redirect(response, request, "/resources/files/operations/"+url.PathEscape(operationID), http.StatusSeeOther)
+			return
+		}
 		started := make(chan struct{})
 		finished := make(chan error, 1)
 		current := request.Context().Value(sessionContextKey).(session)

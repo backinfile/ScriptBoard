@@ -103,6 +103,7 @@ const (
 	operationHostFilesLogHistory = "host_files_log_history"
 	operationHostFilesLogFollow  = "host_files_log_follow"
 	operationHostFilesLogClose   = "host_files_log_close"
+	operationHostFilesCrossMove  = "host_files_cross_move"
 	statusOK                     = "ok"
 	statusError                  = "error"
 	defaultCallDeadline          = 35 * time.Second
@@ -288,6 +289,7 @@ type HostFilesService interface {
 	LogHistory(context.Context, string, string, string) (logstream.Page, error)
 	LogFollow(context.Context, string, string, string) ([]logstream.Event, error)
 	CloseLog(context.Context, string, string) error
+	StartCrossFilesystemMove(context.Context, string, string, string, string, string) (hostfiles.FileOperation, error)
 }
 
 type ServerOptions struct {
@@ -485,7 +487,8 @@ func (server *Server) handle(connection net.Conn) {
 		operationHostFilesTrash, operationHostFilesRestore, operationHostFilesPurge, operationHostFilesMove,
 		operationHostFilesOpenRead, operationHostFilesReadChunk, operationHostFilesCloseRead, operationHostFilesUpload, operationHostFilesSaveText, operationHostFilesRollback,
 		operationHostFilesRemove, operationHostFilesPrepare, operationHostFilesSameFS, operationHostFilesAppend,
-		operationHostFilesLogOpen, operationHostFilesLogHistory, operationHostFilesLogFollow, operationHostFilesLogClose:
+		operationHostFilesLogOpen, operationHostFilesLogHistory, operationHostFilesLogFollow, operationHostFilesLogClose,
+		operationHostFilesCrossMove:
 		response = server.hostFilesOperation(request)
 	default:
 		response = wireResponse{Status: statusError, ErrorCode: "operation_forbidden", Message: "operation is not supported"}

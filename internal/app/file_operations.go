@@ -153,7 +153,7 @@ func (a *App) fileOperationPage(response http.ResponseWriter, request *http.Requ
 	}
 	current := request.Context().Value(sessionContextKey).(session)
 	destination, _ := hostfiles.Parent(operation.DestinationPath)
-	if info, infoErr := a.files.Info(operation.DestinationPath); infoErr == nil && info.IsDir() {
+	if info, _, infoErr := a.hostInfo(request.Context(), operation.DestinationPath); infoErr == nil && info.IsDir() {
 		destination = operation.DestinationPath
 	}
 	canCancel := operation.Phase == hostfiles.OperationScanning || operation.Phase == hostfiles.OperationCopying || operation.Phase == hostfiles.OperationReadyToCommit

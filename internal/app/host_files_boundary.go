@@ -217,3 +217,10 @@ func (a *App) hostOpenLogSource(ctx context.Context, path string) (logstream.Sou
 	}
 	return a.files.OpenLogSource(path)
 }
+
+func (a *App) hostStartCrossFilesystemMove(ctx context.Context, id, source, destination, displacedStoredPath, displacedID string) (hostfiles.FileOperation, error) {
+	if a.hostFilesBackend != nil {
+		return a.hostFilesBackend.StartCrossFilesystemMove(ctx, id, source, destination, displacedStoredPath, displacedID)
+	}
+	return a.fileMoves.Execute(ctx, id, source, destination)
+}

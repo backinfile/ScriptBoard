@@ -66,7 +66,7 @@ func (a *App) updateFileQuickAccessPin(response http.ResponseWriter, request *ht
 
 	pathKey := hostfiles.ComparisonKey(path)
 	if pinned {
-		canonical, err := a.files.CanonicalDirectory(path)
+		canonical, err := a.hostCanonicalDirectory(request.Context(), path)
 		if err != nil {
 			writeHostFileError(response, "Unable to pin directory", err)
 			return
