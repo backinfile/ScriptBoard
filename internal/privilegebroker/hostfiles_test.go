@@ -141,6 +141,67 @@ func TestHostFilesStagesUploadsAndStreamsLargeDownloadsThroughBroker(t *testing.
 	}
 }
 
+func TestHostFilesReadHandlesAreBoundToTheAuthorizedUser(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "bound.txt")
+	if err := os.WriteFile(path, []byte("bound content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := hostfiles.Open(hostfiles.Options{Topology: fixtureHostFilesTopology{root: root}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serviceValue, err := NewBrokerHostFilesService(manager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := serviceValue.(*brokerHostFilesService)
+	handle, _, err := service.OpenRead(context.Background(), "user-a", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ReadChunk(context.Background(), "user-b", handle, 0, 5); err == nil {
+		t.Fatal("a different user consumed a Host Files read handle")
+	}
+	content, err := service.ReadChunk(context.Background(), "user-a", handle, 0, 32)
+	if err != nil || string(content) != "bound content" {
+		t.Fatalf("owner read = %q, %v", content, err)
+	}
+	if err := service.CloseRead(context.Background(), "user-a", handle); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHostFilesLogHistoryRunsInsideBroker(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "service.log")
+	if err := os.WriteFile(path, []byte("first line\nsecond line\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := hostfiles.Open(hostfiles.Options{Topology: fixtureHostFilesTopology{root: root}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewBrokerHostFilesService(manager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend, closeServer := hostFilesTestBackend(t, service)
+	defer closeServer()
+	ctx := WithAuthorization(context.Background(), Authorization{SessionToken: strings.Repeat("s", 32), RequestID: "host-files-log-test"})
+	source, err := backend.OpenLogSource(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := source.History(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Entries) != 2 || page.Entries[0].Text != "first line" || page.Entries[1].Text != "second line" {
+		t.Fatalf("unexpected Broker log history: %+v", page.Entries)
+	}
+}
+
 func hostFilesTestBackend(t *testing.T, service HostFilesService) (*HostFilesBackend, func()) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

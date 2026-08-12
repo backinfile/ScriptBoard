@@ -25,6 +25,7 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 
 	"scriptboard/internal/hostfiles"
+	"scriptboard/internal/logstream"
 	"scriptboard/internal/mfa"
 	"scriptboard/internal/mysqlmanager"
 	"scriptboard/internal/passkey"
@@ -98,6 +99,10 @@ const (
 	operationHostFilesPrepare    = "host_files_prepare"
 	operationHostFilesSameFS     = "host_files_same_filesystem"
 	operationHostFilesAppend     = "host_files_append"
+	operationHostFilesLogOpen    = "host_files_log_open"
+	operationHostFilesLogHistory = "host_files_log_history"
+	operationHostFilesLogFollow  = "host_files_log_follow"
+	operationHostFilesLogClose   = "host_files_log_close"
 	statusOK                     = "ok"
 	statusError                  = "error"
 	defaultCallDeadline          = 35 * time.Second
@@ -269,9 +274,9 @@ type HostFilesService interface {
 	RestoreFromTrash(context.Context, string, string, bool) (string, error)
 	PurgeTrash(context.Context, string) error
 	Move(context.Context, string, string) error
-	OpenRead(context.Context, string) (string, HostFileInfo, error)
-	ReadChunk(context.Context, string, int64, int) ([]byte, error)
-	CloseRead(context.Context, string) error
+	OpenRead(context.Context, string, string) (string, HostFileInfo, error)
+	ReadChunk(context.Context, string, string, int64, int) ([]byte, error)
+	CloseRead(context.Context, string, string) error
 	Upload(context.Context, string, string, string, int64, bool, string) (*hostfiles.Trashed, error)
 	SaveText(context.Context, string, string, string, string, int64) (hostfiles.Trashed, error)
 	RollbackTextSave(context.Context, string, string) error
@@ -279,6 +284,10 @@ type HostFilesService interface {
 	Prepare(context.Context, string, bool) (hostFilesPrepared, error)
 	SameFilesystem(context.Context, string, string) (bool, error)
 	AppendText(context.Context, string, string) error
+	OpenLog(context.Context, string, string) (string, logstream.Metadata, error)
+	LogHistory(context.Context, string, string, string) (logstream.Page, error)
+	LogFollow(context.Context, string, string, string) ([]logstream.Event, error)
+	CloseLog(context.Context, string, string) error
 }
 
 type ServerOptions struct {
@@ -475,7 +484,8 @@ func (server *Server) handle(connection net.Conn) {
 		operationHostFilesCanonical, operationHostFilesAvailable, operationHostFilesMkdir, operationHostFilesToggleExec,
 		operationHostFilesTrash, operationHostFilesRestore, operationHostFilesPurge, operationHostFilesMove,
 		operationHostFilesOpenRead, operationHostFilesReadChunk, operationHostFilesCloseRead, operationHostFilesUpload, operationHostFilesSaveText, operationHostFilesRollback,
-		operationHostFilesRemove, operationHostFilesPrepare, operationHostFilesSameFS, operationHostFilesAppend:
+		operationHostFilesRemove, operationHostFilesPrepare, operationHostFilesSameFS, operationHostFilesAppend,
+		operationHostFilesLogOpen, operationHostFilesLogHistory, operationHostFilesLogFollow, operationHostFilesLogClose:
 		response = server.hostFilesOperation(request)
 	default:
 		response = wireResponse{Status: statusError, ErrorCode: "operation_forbidden", Message: "operation is not supported"}

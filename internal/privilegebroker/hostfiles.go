@@ -15,9 +15,13 @@ import (
 	"time"
 
 	"scriptboard/internal/hostfiles"
+	"scriptboard/internal/logstream"
 )
 
-const hostFilesPageSize = 1000
+const (
+	hostFilesPageSize  = 1000
+	hostFilesHandleTTL = 2 * time.Minute
+)
 
 var ErrHostFilesUnavailable = errors.New("privileged Broker Host Files service is unavailable")
 
@@ -59,6 +63,7 @@ type hostFilesWireRequest struct {
 	Replace          bool                   `json:"replace,omitempty"`
 	DirectoryPrepare bool                   `json:"directory_prepare,omitempty"`
 	Record           string                 `json:"record,omitempty"`
+	Cursor           string                 `json:"cursor,omitempty"`
 }
 
 type hostFilesWireResponse struct {
@@ -74,6 +79,9 @@ type hostFilesWireResponse struct {
 	Handle         string                  `json:"handle,omitempty"`
 	Prepared       *hostFilesPrepared      `json:"prepared,omitempty"`
 	SameFilesystem *bool                   `json:"same_filesystem,omitempty"`
+	Metadata       *logstream.Metadata     `json:"metadata,omitempty"`
+	Page           *logstream.Page         `json:"page,omitempty"`
+	Events         []logstream.Event       `json:"events,omitempty"`
 }
 
 type hostFilesPrepared struct {
@@ -86,7 +94,20 @@ type brokerHostFilesService struct {
 	files       *hostfiles.Manager
 	stagingRoot string
 	mu          sync.Mutex
-	reads       map[string]*os.File
+	reads       map[string]*hostFilesReadHandle
+	logs        map[string]*hostFilesLogHandle
+}
+
+type hostFilesReadHandle struct {
+	file      *os.File
+	owner     string
+	expiresAt time.Time
+}
+
+type hostFilesLogHandle struct {
+	source    *hostfiles.LogSource
+	owner     string
+	expiresAt time.Time
 }
 
 func NewBrokerHostFilesService(files *hostfiles.Manager, stagingRoots ...string) (HostFilesService, error) {
@@ -100,7 +121,7 @@ func NewBrokerHostFilesService(files *hostfiles.Manager, stagingRoots ...string)
 			return nil, errors.New("Broker Host Files staging root must be absolute")
 		}
 	}
-	return &brokerHostFilesService{files: files, stagingRoot: stagingRoot, reads: make(map[string]*os.File)}, nil
+	return &brokerHostFilesService{files: files, stagingRoot: stagingRoot, reads: make(map[string]*hostFilesReadHandle), logs: make(map[string]*hostFilesLogHandle)}, nil
 }
 
 func (service *brokerHostFilesService) Roots(context.Context) ([]hostfiles.Entry, error) {
@@ -169,52 +190,163 @@ func (service *brokerHostFilesService) Move(_ context.Context, source, destinati
 	return service.files.Move(source, destination)
 }
 
-func (service *brokerHostFilesService) OpenRead(_ context.Context, path string) (string, HostFileInfo, error) {
+func (service *brokerHostFilesService) pruneHandlesLocked(now time.Time) {
+	for handle, value := range service.reads {
+		if !now.Before(value.expiresAt) {
+			_ = value.file.Close()
+			delete(service.reads, handle)
+		}
+	}
+	for handle, value := range service.logs {
+		if !now.Before(value.expiresAt) {
+			delete(service.logs, handle)
+		}
+	}
+}
+
+func newHostFilesHandle() (string, error) {
+	var token [24]byte
+	if _, err := rand.Read(token[:]); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(token[:]), nil
+}
+
+func (service *brokerHostFilesService) OpenRead(_ context.Context, owner, path string) (string, HostFileInfo, error) {
 	file, info, err := service.files.OpenRegular(path)
 	if err != nil {
 		return "", HostFileInfo{}, err
 	}
-	var token [24]byte
-	if _, err := rand.Read(token[:]); err != nil {
+	handle, err := newHostFilesHandle()
+	if err != nil {
 		_ = file.Close()
 		return "", HostFileInfo{}, err
 	}
-	handle := base64.RawURLEncoding.EncodeToString(token[:])
 	service.mu.Lock()
+	service.pruneHandlesLocked(time.Now())
 	if len(service.reads) >= 1024 {
 		service.mu.Unlock()
 		_ = file.Close()
 		return "", HostFileInfo{}, errors.New("too many open Host Files downloads")
 	}
-	service.reads[handle] = file
+	service.reads[handle] = &hostFilesReadHandle{file: file, owner: owner, expiresAt: time.Now().Add(hostFilesHandleTTL)}
 	service.mu.Unlock()
 	return handle, HostFileInfo{Name: info.Name(), Size: info.Size(), Mode: info.Mode(), ModifiedAt: info.ModTime(), Directory: false}, nil
 }
 
-func (service *brokerHostFilesService) ReadChunk(_ context.Context, handle string, offset int64, limit int) ([]byte, error) {
+func (service *brokerHostFilesService) ReadChunk(_ context.Context, owner, handle string, offset int64, limit int) ([]byte, error) {
 	service.mu.Lock()
-	file := service.reads[handle]
+	service.pruneHandlesLocked(time.Now())
+	value := service.reads[handle]
+	if value != nil && value.owner == owner {
+		value.expiresAt = time.Now().Add(hostFilesHandleTTL)
+	} else {
+		value = nil
+	}
 	service.mu.Unlock()
-	if file == nil {
+	if value == nil {
 		return nil, errors.New("Host Files download handle is unavailable")
 	}
 	buffer := make([]byte, limit)
-	read, err := file.ReadAt(buffer, offset)
+	read, err := value.file.ReadAt(buffer, offset)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, err
 	}
 	return buffer[:read], nil
 }
 
-func (service *brokerHostFilesService) CloseRead(_ context.Context, handle string) error {
+func (service *brokerHostFilesService) CloseRead(_ context.Context, owner, handle string) error {
 	service.mu.Lock()
-	file := service.reads[handle]
-	delete(service.reads, handle)
+	service.pruneHandlesLocked(time.Now())
+	value := service.reads[handle]
+	if value != nil && value.owner == owner {
+		delete(service.reads, handle)
+	} else {
+		value = nil
+	}
 	service.mu.Unlock()
-	if file == nil {
+	if value == nil {
 		return errors.New("Host Files download handle is unavailable")
 	}
-	return file.Close()
+	return value.file.Close()
+}
+
+func (service *brokerHostFilesService) OpenLog(_ context.Context, owner, path string) (string, logstream.Metadata, error) {
+	source, err := service.files.OpenLogSource(path)
+	if err != nil {
+		return "", logstream.Metadata{}, err
+	}
+	handle, err := newHostFilesHandle()
+	if err != nil {
+		return "", logstream.Metadata{}, err
+	}
+	service.mu.Lock()
+	service.pruneHandlesLocked(time.Now())
+	if len(service.logs) >= 1024 {
+		service.mu.Unlock()
+		return "", logstream.Metadata{}, errors.New("too many open Host Files log sources")
+	}
+	service.logs[handle] = &hostFilesLogHandle{source: source, owner: owner, expiresAt: time.Now().Add(hostFilesHandleTTL)}
+	service.mu.Unlock()
+	return handle, source.Metadata(), nil
+}
+
+func (service *brokerHostFilesService) logSource(owner, handle string) (*hostfiles.LogSource, error) {
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	service.pruneHandlesLocked(time.Now())
+	value := service.logs[handle]
+	if value == nil || value.owner != owner {
+		return nil, errors.New("Host Files log handle is unavailable")
+	}
+	value.expiresAt = time.Now().Add(hostFilesHandleTTL)
+	return value.source, nil
+}
+
+func (service *brokerHostFilesService) LogHistory(ctx context.Context, owner, handle, before string) (logstream.Page, error) {
+	source, err := service.logSource(owner, handle)
+	if err != nil {
+		return logstream.Page{}, err
+	}
+	return source.History(ctx, before)
+}
+
+var errHostFilesFollowWindowComplete = errors.New("Host Files follow window complete")
+
+func (service *brokerHostFilesService) LogFollow(ctx context.Context, owner, handle, after string) ([]logstream.Event, error) {
+	source, err := service.logSource(owner, handle)
+	if err != nil {
+		return nil, err
+	}
+	pollContext, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	events := make([]logstream.Event, 0, 32)
+	bytes := 0
+	err = source.Follow(pollContext, after, func(event logstream.Event) error {
+		encoded, _ := json.Marshal(event)
+		if len(events) >= 256 || bytes+len(encoded) > 1<<20 {
+			return errHostFilesFollowWindowComplete
+		}
+		events = append(events, event)
+		bytes += len(encoded)
+		return nil
+	})
+	if err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, errHostFilesFollowWindowComplete) {
+		return nil, err
+	}
+	return events, nil
+}
+
+func (service *brokerHostFilesService) CloseLog(_ context.Context, owner, handle string) error {
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	service.pruneHandlesLocked(time.Now())
+	value := service.logs[handle]
+	if value == nil || value.owner != owner {
+		return errors.New("Host Files log handle is unavailable")
+	}
+	delete(service.logs, handle)
+	return nil
 }
 
 func (service *brokerHostFilesService) consumeStaging(path string) (*os.File, error) {
@@ -341,12 +473,12 @@ func (server *Server) hostFilesOperation(request wireRequest) wireResponse {
 		err = server.hostFiles.Move(ctx, payload.Path, payload.Destination)
 	case operationHostFilesOpenRead:
 		var info HostFileInfo
-		result.Handle, info, err = server.hostFiles.OpenRead(ctx, payload.Path)
+		result.Handle, info, err = server.hostFiles.OpenRead(ctx, actor.UserID, payload.Path)
 		result.Info = &info
 	case operationHostFilesReadChunk:
-		result.Content, err = server.hostFiles.ReadChunk(ctx, payload.Handle, payload.ByteOffset, payload.ByteLimit)
+		result.Content, err = server.hostFiles.ReadChunk(ctx, actor.UserID, payload.Handle, payload.ByteOffset, payload.ByteLimit)
 	case operationHostFilesCloseRead:
-		err = server.hostFiles.CloseRead(ctx, payload.Handle)
+		err = server.hostFiles.CloseRead(ctx, actor.UserID, payload.Handle)
 	case operationHostFilesUpload:
 		result.Trashed, err = server.hostFiles.Upload(ctx, payload.StagingPath, payload.Directory, payload.Name, payload.MaxBytes, payload.Replace, payload.StoredName)
 	case operationHostFilesSaveText:
@@ -367,6 +499,18 @@ func (server *Server) hostFilesOperation(request wireRequest) wireResponse {
 		result.SameFilesystem = &same
 	case operationHostFilesAppend:
 		err = server.hostFiles.AppendText(ctx, payload.Path, payload.Record)
+	case operationHostFilesLogOpen:
+		var metadata logstream.Metadata
+		result.Handle, metadata, err = server.hostFiles.OpenLog(ctx, actor.UserID, payload.Path)
+		result.Metadata = &metadata
+	case operationHostFilesLogHistory:
+		var page logstream.Page
+		page, err = server.hostFiles.LogHistory(ctx, actor.UserID, payload.Handle, payload.Cursor)
+		result.Page = &page
+	case operationHostFilesLogFollow:
+		result.Events, err = server.hostFiles.LogFollow(ctx, actor.UserID, payload.Handle, payload.Cursor)
+	case operationHostFilesLogClose:
+		err = server.hostFiles.CloseLog(ctx, actor.UserID, payload.Handle)
 	}
 	mutation := action != ActionHostFilesRead
 	if mutation && server.auditor != nil {
@@ -451,7 +595,7 @@ func validateHostFilesRequest(request wireRequest) error {
 			return errors.New("Host Files path is invalid")
 		}
 	}
-	if len(payload.Handle) > 128 || len(payload.StagingPath) > 4096 || len(payload.ExpectedDigest) > 128 || len(payload.Record) > 64<<10 || strings.ContainsAny(payload.Handle+payload.StagingPath+payload.ExpectedDigest+payload.Record, "\x00") {
+	if len(payload.Handle) > 128 || len(payload.StagingPath) > 4096 || len(payload.ExpectedDigest) > 128 || len(payload.Record) > 64<<10 || len(payload.Cursor) > 2048 || strings.ContainsAny(payload.Handle+payload.StagingPath+payload.ExpectedDigest+payload.Record+payload.Cursor, "\r\n\x00") {
 		return errors.New("Host Files request value is invalid")
 	}
 	for _, value := range []string{payload.Name, payload.StoredName} {
@@ -460,7 +604,7 @@ func validateHostFilesRequest(request wireRequest) error {
 		}
 	}
 	emptyPaths := func() bool {
-		return payload.Path == "" && payload.Directory == "" && payload.Name == "" && payload.Destination == "" && payload.StoredPath == "" && payload.StoredName == "" && payload.CanonicalKind == "" && !payload.RestoreAvailable && payload.MaxBytes == 0 && payload.ByteOffset == 0 && payload.ByteLimit == 0 && payload.Handle == "" && payload.StagingPath == "" && payload.ExpectedDigest == "" && !payload.Replace && !payload.DirectoryPrepare && payload.Record == ""
+		return payload.Path == "" && payload.Directory == "" && payload.Name == "" && payload.Destination == "" && payload.StoredPath == "" && payload.StoredName == "" && payload.CanonicalKind == "" && !payload.RestoreAvailable && payload.MaxBytes == 0 && payload.ByteOffset == 0 && payload.ByteLimit == 0 && payload.Handle == "" && payload.StagingPath == "" && payload.ExpectedDigest == "" && !payload.Replace && !payload.DirectoryPrepare && payload.Record == "" && payload.Cursor == ""
 	}
 	switch request.Operation {
 	case operationHostFilesRoots:
@@ -548,6 +692,18 @@ func validateHostFilesRequest(request wireRequest) error {
 		if payload.Path == "" || !filepath.IsAbs(payload.Path) || len(payload.Record) > 64<<10 || payload.Record == "" || payload.Directory != "" || payload.Name != "" || payload.Destination != "" || payload.StoredPath != "" || payload.StoredName != "" || payload.CanonicalKind != "" || payload.Handle != "" || payload.StagingPath != "" || payload.ExpectedDigest != "" || payload.MaxBytes != 0 || payload.Offset != 0 || payload.Limit != 0 || payload.ByteOffset != 0 || payload.ByteLimit != 0 {
 			return errors.New("Host Files append request is invalid")
 		}
+	case operationHostFilesLogOpen:
+		if !onlyHostFilePath(payload) {
+			return errors.New("Host Files log-open request is invalid")
+		}
+	case operationHostFilesLogHistory, operationHostFilesLogFollow:
+		if len(payload.Handle) != 32 || payload.Path != "" || payload.Directory != "" || payload.Name != "" || payload.Destination != "" || payload.StoredPath != "" || payload.StoredName != "" || payload.CanonicalKind != "" || payload.RestoreAvailable || payload.MaxBytes != 0 || payload.Offset != 0 || payload.Limit != 0 || payload.ByteOffset != 0 || payload.ByteLimit != 0 || payload.StagingPath != "" || payload.ExpectedDigest != "" || payload.Replace || payload.DirectoryPrepare || payload.Record != "" {
+			return errors.New("Host Files log-read request is invalid")
+		}
+	case operationHostFilesLogClose:
+		if !onlyHostFileHandle(payload) || payload.Cursor != "" {
+			return errors.New("Host Files log-close request is invalid")
+		}
 	}
 	if hostFilesExpectedPayload(request.Operation, *payload) != *payload {
 		return errors.New("Host Files request contains operation-forbidden fields")
@@ -561,7 +717,7 @@ func hostFilesExpectedPayload(operation string, payload hostFilesWireRequest) ho
 		return hostFilesWireRequest{}
 	case operationHostFilesList:
 		return hostFilesWireRequest{Path: payload.Path, Offset: payload.Offset, Limit: payload.Limit}
-	case operationHostFilesInfo, operationHostFilesToggleExec, operationHostFilesOpenRead, operationHostFilesRemove:
+	case operationHostFilesInfo, operationHostFilesToggleExec, operationHostFilesOpenRead, operationHostFilesRemove, operationHostFilesLogOpen:
 		return hostFilesWireRequest{Path: payload.Path}
 	case operationHostFilesReadText:
 		return hostFilesWireRequest{Path: payload.Path, MaxBytes: payload.MaxBytes}
@@ -591,6 +747,10 @@ func hostFilesExpectedPayload(operation string, payload hostFilesWireRequest) ho
 		return hostFilesWireRequest{Path: payload.Path, DirectoryPrepare: payload.DirectoryPrepare}
 	case operationHostFilesAppend:
 		return hostFilesWireRequest{Path: payload.Path, Record: payload.Record}
+	case operationHostFilesLogHistory, operationHostFilesLogFollow:
+		return hostFilesWireRequest{Handle: payload.Handle, Cursor: payload.Cursor}
+	case operationHostFilesLogClose:
+		return hostFilesWireRequest{Handle: payload.Handle}
 	default:
 		return hostFilesWireRequest{}
 	}
@@ -611,7 +771,8 @@ func isHostFilesOperation(operation string) bool {
 		operationHostFilesTrash, operationHostFilesRestore, operationHostFilesPurge, operationHostFilesMove,
 		operationHostFilesOpenRead, operationHostFilesReadChunk, operationHostFilesCloseRead, operationHostFilesUpload,
 		operationHostFilesSaveText, operationHostFilesRollback, operationHostFilesRemove, operationHostFilesPrepare,
-		operationHostFilesSameFS, operationHostFilesAppend:
+		operationHostFilesSameFS, operationHostFilesAppend, operationHostFilesLogOpen, operationHostFilesLogHistory,
+		operationHostFilesLogFollow, operationHostFilesLogClose:
 		return true
 	default:
 		return false
@@ -920,6 +1081,67 @@ func (backend *HostFilesBackend) AppendText(ctx context.Context, path, record st
 	_, err := backend.call(ctx, operationHostFilesAppend, hostFilesWireRequest{Path: path, Record: record})
 	return err
 }
+
+type RemoteHostFileLogSource struct {
+	backend  *HostFilesBackend
+	handle   string
+	metadata logstream.Metadata
+}
+
+func (backend *HostFilesBackend) OpenLogSource(ctx context.Context, path string) (*RemoteHostFileLogSource, error) {
+	value, err := backend.call(ctx, operationHostFilesLogOpen, hostFilesWireRequest{Path: path})
+	if err != nil {
+		return nil, err
+	}
+	if len(value.Handle) != 32 || value.Metadata == nil {
+		return nil, errors.New("privileged Broker returned an invalid Host Files log source")
+	}
+	return &RemoteHostFileLogSource{backend: backend, handle: value.Handle, metadata: *value.Metadata}, nil
+}
+
+func (source *RemoteHostFileLogSource) Metadata() logstream.Metadata { return source.metadata }
+
+func (source *RemoteHostFileLogSource) History(ctx context.Context, before string) (logstream.Page, error) {
+	value, err := source.backend.call(ctx, operationHostFilesLogHistory, hostFilesWireRequest{Handle: source.handle, Cursor: before})
+	closeContext := context.WithoutCancel(ctx)
+	_, closeErr := source.backend.call(closeContext, operationHostFilesLogClose, hostFilesWireRequest{Handle: source.handle})
+	if value.Page == nil {
+		return logstream.Page{}, errors.Join(err, closeErr, errors.New("privileged Broker returned no Host Files log page"))
+	}
+	return *value.Page, errors.Join(err, closeErr)
+}
+
+func (source *RemoteHostFileLogSource) Follow(ctx context.Context, after string, emit func(logstream.Event) error) error {
+	defer func() {
+		_, _ = source.backend.call(context.WithoutCancel(ctx), operationHostFilesLogClose, hostFilesWireRequest{Handle: source.handle})
+	}()
+	lastState := ""
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		value, err := source.backend.call(ctx, operationHostFilesLogFollow, hostFilesWireRequest{Handle: source.handle, Cursor: after})
+		if err != nil {
+			return err
+		}
+		for _, event := range value.Events {
+			if event.Entry != nil && event.Entry.Cursor != "" {
+				after = event.Entry.Cursor
+			}
+			if event.Kind == logstream.EventState && event.State == lastState {
+				continue
+			}
+			if event.Kind == logstream.EventState {
+				lastState = event.State
+			}
+			if err := emit(event); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+var _ logstream.Source = (*RemoteHostFileLogSource)(nil)
 
 func (info HostFileInfo) String() string {
 	return fmt.Sprintf("%s (%d bytes)", info.Name, info.Size)

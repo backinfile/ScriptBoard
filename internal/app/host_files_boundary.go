@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"scriptboard/internal/hostfiles"
+	"scriptboard/internal/logstream"
 )
 
 type remoteHostFileInfo struct{ value remoteHostFileInfoValue }
@@ -208,4 +209,11 @@ func (a *App) hostAppendText(ctx context.Context, path, record string) error {
 		return a.hostFilesBackend.AppendText(ctx, path, record)
 	}
 	return a.files.AppendText(path, record)
+}
+
+func (a *App) hostOpenLogSource(ctx context.Context, path string) (logstream.Source, error) {
+	if a.hostFilesBackend != nil {
+		return a.hostFilesBackend.OpenLogSource(ctx, path)
+	}
+	return a.files.OpenLogSource(path)
 }

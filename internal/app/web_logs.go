@@ -222,7 +222,7 @@ func (a *App) openFileLogSource(request *http.Request) (logstream.Source, error)
 	if relative == "" || !isTextPreviewExtension(relative) {
 		return nil, errUnsupportedLogSource
 	}
-	return a.files.OpenLogSource(relative)
+	return a.hostOpenLogSource(request.Context(), relative)
 }
 
 var errUnsupportedLogSource = errors.New("unsupported log source")
