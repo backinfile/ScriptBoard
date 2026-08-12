@@ -52,19 +52,21 @@
     <header class="section-heading kubernetes-section-heading">
       <h2 id="kubernetes-workloads-heading">{{t .Locale "kubernetes.workloads"}}</h2>
     </header>
-    <nav class="monitor-status-switch kubernetes-status-tabs" aria-label="{{t .Locale "kubernetes.status_filter"}}">
-      <a href="/monitor/kubernetes" {{if eq .Query.Status "all"}}aria-current="page"{{end}}><span>{{t .Locale "kubernetes.all"}}</span><strong>{{.Total}}</strong></a>
-      <a href="/monitor/kubernetes?status=ready" {{if eq .Query.Status "ready"}}aria-current="page"{{end}}><span>{{t .Locale "kubernetes.ready"}}</span><strong>{{.Ready}}</strong></a>
-      <a href="/monitor/kubernetes?status=progressing" {{if eq .Query.Status "progressing"}}aria-current="page"{{end}}><span>{{t .Locale "kubernetes.progressing"}}</span><strong>{{.Progressing}}</strong></a>
-      <a href="/monitor/kubernetes?status=degraded" {{if eq .Query.Status "degraded"}}aria-current="page"{{end}}><span>{{t .Locale "kubernetes.needs_attention"}}</span><strong>{{.Degraded}}</strong></a>
-    </nav>
-    <form class="kubernetes-toolbar" method="get" action="/monitor/kubernetes">
-      <label><span data-lucide="search" aria-hidden="true"></span><span class="sr-only">{{t .Locale "common.search"}}</span><input type="search" name="query" value="{{.Query.Search}}" placeholder="{{t .Locale "kubernetes.search_placeholder"}}"></label>
-      <select name="namespace" aria-label="{{t .Locale "kubernetes.namespace"}}"><option value="all">{{t .Locale "kubernetes.all_namespaces"}}</option>{{range .NamespaceOptions}}<option value="{{.}}" {{if eq $.Query.Namespace .}}selected{{end}}>{{.}}</option>{{end}}</select>
-      <select name="kind" aria-label="{{t .Locale "kubernetes.kind"}}"><option value="all">{{t .Locale "kubernetes.all_kinds"}}</option>{{range $kind := (stringSlice "Deployment" "StatefulSet" "DaemonSet" "CronJob")}}<option value="{{$kind}}" {{if eq $.Query.Kind $kind}}selected{{end}}>{{$kind}}</option>{{end}}</select>
-      <input type="hidden" name="status" value="{{.Query.Status}}"><input type="hidden" name="sort" value="{{.Query.Sort}}"><input type="hidden" name="direction" value="{{.Query.Direction}}">
-      <button class="button button--compact" type="submit">{{t .Locale "common.search"}}</button>
-    </form>
+    <div class="kubernetes-workload-controls">
+      <nav class="monitor-status-switch kubernetes-status-tabs" aria-label="{{t .Locale "kubernetes.status_filter"}}">
+        <a href="/monitor/kubernetes" {{if eq .Query.Status "all"}}aria-current="page"{{end}}><span>{{t .Locale "kubernetes.all"}}</span><strong>{{.Total}}</strong></a>
+        <a href="/monitor/kubernetes?status=ready" {{if eq .Query.Status "ready"}}aria-current="page"{{end}}><span>{{t .Locale "kubernetes.ready"}}</span><strong>{{.Ready}}</strong></a>
+        <a href="/monitor/kubernetes?status=progressing" {{if eq .Query.Status "progressing"}}aria-current="page"{{end}}><span>{{t .Locale "kubernetes.progressing"}}</span><strong>{{.Progressing}}</strong></a>
+        <a href="/monitor/kubernetes?status=degraded" {{if eq .Query.Status "degraded"}}aria-current="page"{{end}}><span>{{t .Locale "kubernetes.needs_attention"}}</span><strong>{{.Degraded}}</strong></a>
+      </nav>
+      <form class="kubernetes-toolbar" method="get" action="/monitor/kubernetes">
+        <label><span data-lucide="search" aria-hidden="true"></span><span class="sr-only">{{t .Locale "common.search"}}</span><input type="search" name="query" value="{{.Query.Search}}" placeholder="{{t .Locale "kubernetes.search_placeholder"}}"></label>
+        <select name="namespace" aria-label="{{t .Locale "kubernetes.namespace"}}"><option value="all">{{t .Locale "kubernetes.all_namespaces"}}</option>{{range .NamespaceOptions}}<option value="{{.}}" {{if eq $.Query.Namespace .}}selected{{end}}>{{.}}</option>{{end}}</select>
+        <select name="kind" aria-label="{{t .Locale "kubernetes.kind"}}"><option value="all">{{t .Locale "kubernetes.all_kinds"}}</option>{{range $kind := (stringSlice "Deployment" "StatefulSet" "DaemonSet" "CronJob")}}<option value="{{$kind}}" {{if eq $.Query.Kind $kind}}selected{{end}}>{{$kind}}</option>{{end}}</select>
+        <input type="hidden" name="status" value="{{.Query.Status}}"><input type="hidden" name="sort" value="{{.Query.Sort}}"><input type="hidden" name="direction" value="{{.Query.Direction}}">
+        <button class="button button--compact" type="submit">{{t .Locale "common.search"}}</button>
+      </form>
+    </div>
     <div class="kubernetes-table-shell">
       <table class="kubernetes-table">
         <caption class="sr-only">{{t .Locale "kubernetes.workloads"}}</caption>
