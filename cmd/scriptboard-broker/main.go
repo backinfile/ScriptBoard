@@ -98,7 +98,8 @@ func runContext(ctx context.Context, arguments []string) error {
 	defer transport.Close()
 	server, err := privilegebroker.NewServer(privilegebroker.ServerOptions{
 		Listener: transport.Listener, VerifyPeer: transport.VerifyPeer,
-		Authorizer: databaseSecurity, Executor: executor, Auditor: databaseSecurity, Now: time.Now,
+		Authorizer: databaseSecurity, Executor: executor, Auditor: databaseSecurity,
+		Checkpoint: brokerCheckpointService{store: checkpoint, audit: audit}, Now: time.Now,
 	})
 	if err != nil {
 		return err
@@ -106,6 +107,25 @@ func runContext(ctx context.Context, arguments []string) error {
 	server.Start()
 	<-ctx.Done()
 	return server.Close()
+}
+
+type brokerCheckpointService struct {
+	store *auditcheckpoint.Store
+	audit *auditlog.Store
+}
+
+func (service brokerCheckpointService) Verify(ctx context.Context) (int64, error) {
+	if err := service.store.VerifyOrBootstrap(ctx, service.audit, time.Now().UTC()); err != nil {
+		return 0, err
+	}
+	return service.store.CheckpointEventID(), nil
+}
+
+func (service brokerCheckpointService) Write(ctx context.Context) (int64, error) {
+	if err := service.store.Write(ctx, service.audit, time.Now().UTC()); err != nil {
+		return 0, err
+	}
+	return service.store.CheckpointEventID(), nil
 }
 
 func openBrokerDatabase(stateRoot string) (*sql.DB, error) {

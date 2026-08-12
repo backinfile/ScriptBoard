@@ -23,6 +23,7 @@ import (
 	"scriptboard/internal/doctor"
 	"scriptboard/internal/installation"
 	"scriptboard/internal/platformservice"
+	"scriptboard/internal/privilegebroker"
 	"scriptboard/internal/runmanager"
 	"scriptboard/internal/runnerhost"
 	"scriptboard/internal/secretredaction"
@@ -445,6 +446,8 @@ func serveContext(runContext context.Context, arguments []string) error {
 	installRoot := applicationInstallRoot(loaded.StateRoot)
 	var assistantLauncher pirpc.ProcessLauncher
 	var runnerLauncher runmanager.ProcessLauncher
+	var auditCheckpoint app.AuditCheckpoint
+	privilegedBrokerEndpoint := ""
 	if installRoot != "" {
 		if err := platformservice.ValidateWebRuntimeIdentity(); err != nil {
 			return fmt.Errorf("refuse to start managed Web service with unsafe OS identity: %w", err)
@@ -459,6 +462,12 @@ func serveContext(runContext context.Context, arguments []string) error {
 			return fmt.Errorf("resolve isolated Runner Host endpoint: %w", err)
 		}
 		runnerLauncher = runnerhost.NewClientLauncher(runnerhost.Dial(runnerEndpoint))
+		privilegedBrokerEndpoint, err = privilegebroker.DefaultEndpoint(loaded.StateRoot)
+		if err != nil {
+			return fmt.Errorf("resolve privileged Broker endpoint: %w", err)
+		}
+		brokerClient := privilegebroker.NewClient(privilegebroker.ClientOptions{Dial: privilegebroker.Dial(privilegedBrokerEndpoint)})
+		auditCheckpoint = privilegebroker.NewRemoteCheckpoint(brokerClient)
 	}
 	updateShutdown := make(chan struct{}, 1)
 	var requestRestart func() error
@@ -482,6 +491,8 @@ func serveContext(runContext context.Context, arguments []string) error {
 		RequestRestart:           requestRestart,
 		AssistantProcessLauncher: assistantLauncher,
 		RunnerProcessLauncher:    runnerLauncher,
+		PrivilegedBrokerEndpoint: privilegedBrokerEndpoint,
+		AuditCheckpoint:          auditCheckpoint,
 	})
 	if err != nil {
 		return err

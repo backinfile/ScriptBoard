@@ -346,11 +346,18 @@ type Config struct {
 	PrivilegedBrokerEndpoint  string
 	AssistantProcessLauncher  pirpc.ProcessLauncher
 	RunnerProcessLauncher     runmanager.ProcessLauncher
+	AuditCheckpoint           AuditCheckpoint
 	SecurityEventEndpoint     string
 	SecurityEventToken        string
 	SecurityEventTokenFile    string
 	SecurityEventAllowPrivate bool
 	SecurityEventClient       *http.Client
+}
+
+type AuditCheckpoint interface {
+	VerifyOrBootstrap(context.Context, *auditlog.Store, time.Time) error
+	Write(context.Context, *auditlog.Store, time.Time) error
+	CheckpointEventID() int64
 }
 
 type App struct {
@@ -364,7 +371,7 @@ type App struct {
 	assistantBroker      *toolbroker.Broker
 	files                *hostfiles.Manager
 	auditLog             *auditlog.Store
-	auditCheckpoint      *auditcheckpoint.Store
+	auditCheckpoint      AuditCheckpoint
 	securityEvents       *securityevents.Manager
 	auditCheckpointStop  context.CancelFunc
 	auditCheckpointWG    sync.WaitGroup
@@ -545,10 +552,13 @@ func Open(config Config) (*App, error) {
 		return nil, fmt.Errorf("configure security event forwarding: %w", err)
 	}
 	application.auditLog.SetObserver(application.securityEvents.Observe)
-	application.auditCheckpoint, err = auditcheckpoint.New(auditcheckpoint.Options{StateRoot: stateRoot, SecretStore: credentialStore})
-	if err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("initialize external audit checkpoint: %w", err)
+	application.auditCheckpoint = config.AuditCheckpoint
+	if application.auditCheckpoint == nil {
+		application.auditCheckpoint, err = auditcheckpoint.New(auditcheckpoint.Options{StateRoot: stateRoot, SecretStore: credentialStore})
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("initialize external audit checkpoint: %w", err)
+		}
 	}
 	if err := application.auditCheckpoint.VerifyOrBootstrap(context.Background(), application.auditLog, time.Now().UTC()); err != nil {
 		_ = db.Close()

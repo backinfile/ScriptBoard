@@ -24,16 +24,18 @@ import (
 )
 
 const (
-	ProtocolVersion     = 1
-	MaxRequestBytes     = 128 << 10
-	MaxResponseBytes    = 16 << 10
-	capabilityLifetime  = 30 * time.Second
-	maxCapabilities     = 1024
-	operationAuthorize  = "authorize"
-	operationExecute    = "execute"
-	statusOK            = "ok"
-	statusError         = "error"
-	defaultCallDeadline = 35 * time.Second
+	ProtocolVersion           = 1
+	MaxRequestBytes           = 128 << 10
+	MaxResponseBytes          = 16 << 10
+	capabilityLifetime        = 30 * time.Second
+	maxCapabilities           = 1024
+	operationAuthorize        = "authorize"
+	operationExecute          = "execute"
+	operationCheckpointVerify = "checkpoint_verify"
+	operationCheckpointWrite  = "checkpoint_write"
+	statusOK                  = "ok"
+	statusError               = "error"
+	defaultCallDeadline       = 35 * time.Second
 )
 
 type Action string
@@ -115,12 +117,18 @@ type Auditor interface {
 	Record(context.Context, AuditRecord) error
 }
 
+type CheckpointService interface {
+	Verify(context.Context) (int64, error)
+	Write(context.Context) (int64, error)
+}
+
 type ServerOptions struct {
 	Listener   net.Listener
 	VerifyPeer func(net.Conn) error
 	Authorizer Authorizer
 	Executor   Executor
 	Auditor    Auditor
+	Checkpoint CheckpointService
 	Now        func() time.Time
 }
 
@@ -130,6 +138,7 @@ type Server struct {
 	authorizer Authorizer
 	executor   Executor
 	auditor    Auditor
+	checkpoint CheckpointService
 	now        func() time.Time
 
 	mu           sync.Mutex
@@ -169,6 +178,7 @@ type wireResponse struct {
 	ExpiresAt  int64  `json:"expires_at,omitempty"`
 	ErrorCode  string `json:"error_code,omitempty"`
 	Message    string `json:"message,omitempty"`
+	EventID    int64  `json:"event_id,omitempty"`
 }
 
 func NewServer(options ServerOptions) (*Server, error) {
@@ -181,7 +191,7 @@ func NewServer(options ServerOptions) (*Server, error) {
 	}
 	return &Server{
 		listener: options.Listener, verifyPeer: options.VerifyPeer, authorizer: options.Authorizer,
-		executor: options.Executor, auditor: options.Auditor, now: now,
+		executor: options.Executor, auditor: options.Auditor, checkpoint: options.Checkpoint, now: now,
 		capabilities: make(map[string]capabilityBinding), done: make(chan struct{}),
 	}, nil
 }
@@ -225,10 +235,33 @@ func (server *Server) handle(connection net.Conn) {
 		response = server.authorize(request)
 	case operationExecute:
 		response = server.execute(request)
+	case operationCheckpointVerify, operationCheckpointWrite:
+		response = server.checkpointOperation(request.Operation)
 	default:
 		response = wireResponse{Status: statusError, ErrorCode: "operation_forbidden", Message: "operation is not supported"}
 	}
 	writeWireResponse(connection, response)
+}
+
+func (server *Server) checkpointOperation(operation string) wireResponse {
+	if server.checkpoint == nil {
+		return wireResponse{Status: statusError, ErrorCode: "checkpoint_unavailable", Message: "audit checkpoint service is unavailable"}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var (
+		eventID int64
+		err     error
+	)
+	if operation == operationCheckpointVerify {
+		eventID, err = server.checkpoint.Verify(ctx)
+	} else {
+		eventID, err = server.checkpoint.Write(ctx)
+	}
+	if err != nil {
+		return wireResponse{Status: statusError, ErrorCode: "checkpoint_failed", Message: "audit checkpoint operation failed"}
+	}
+	return wireResponse{Status: statusOK, EventID: eventID}
 }
 
 func (server *Server) authorize(request wireRequest) wireResponse {
@@ -422,6 +455,13 @@ func (client *Client) call(ctx context.Context, request wireRequest) (wireRespon
 func validateWireRequest(request wireRequest) error {
 	if request.Version != ProtocolVersion || !requestIDPattern.MatchString(request.RequestID) {
 		return errors.New("version or request ID is invalid")
+	}
+	if request.Operation == operationCheckpointVerify || request.Operation == operationCheckpointWrite {
+		if request.SessionToken != "" || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
+			request.ParametersSHA256 != "" || len(request.Parameters) != 0 {
+			return errors.New("checkpoint request is invalid")
+		}
+		return nil
 	}
 	if _, ok := actions[request.Action]; !ok {
 		return errors.New("action is not registered")
