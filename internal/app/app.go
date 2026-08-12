@@ -64,6 +64,7 @@ import (
 	"scriptboard/internal/secretredaction"
 	"scriptboard/internal/secretstore"
 	"scriptboard/internal/securityevents"
+	"scriptboard/internal/servicelogs"
 	updatepkg "scriptboard/internal/update"
 	"scriptboard/internal/uploadinbox"
 	"scriptboard/internal/websitemonitor"
@@ -148,6 +149,7 @@ func webTemplateFunctions() template.FuncMap {
 		"humanRate":                func(value float64) string { return humanBytes(uint64(math.Max(0, value))) + "/s" },
 		"percent":                  func(value float64) string { return fmt.Sprintf("%.1f%%", value) },
 		"applicationSortURL":       applicationSortURL,
+		"serviceLogService":        serviceLogServiceLabel,
 		"duration":                 humanDuration,
 		"localDuration": func(locale webLocale, value time.Duration) string {
 			if locale == localeSimplifiedChinese {
@@ -345,6 +347,7 @@ type Config struct {
 	ApplicationProbe          appstatus.Probe
 	AssistantRuntimeSource    runtimeinstall.Source
 	HostSecurity              hostsecurity.Service
+	ServiceLogs               servicelogs.Reader
 	PrivilegedBrokerEndpoint  string
 	AssistantProcessLauncher  pirpc.ProcessLauncher
 	RunnerProcessLauncher     runmanager.ProcessLauncher
@@ -465,6 +468,7 @@ type App struct {
 	scheduler            *scheduler.Manager
 	hostStatus           *hoststatus.Monitor
 	hostSecurity         hostsecurity.Service
+	serviceLogs          servicelogs.Reader
 	securityDraftMu      sync.Mutex
 	securityDrafts       map[string]securityFirewallDraft
 	applicationStatus    *appstatus.Monitor
@@ -620,9 +624,13 @@ func Open(config Config) (*App, error) {
 		logStreamSlots: make(chan struct{}, 8), logHistorySlots: make(chan struct{}, 4),
 		updateResultsWake: make(chan struct{}, 1),
 		hostSecurity:      hostSecurityService,
+		serviceLogs:       config.ServiceLogs,
 		securityDrafts:    make(map[string]securityFirewallDraft),
 		requestRestart:    config.RequestRestart,
 		instanceID:        fmt.Sprintf("%d-%x", os.Getpid(), time.Now().UnixNano()),
+	}
+	if application.serviceLogs == nil {
+		application.serviceLogs = servicelogs.New(servicelogs.Options{})
 	}
 	application.auditLog = auditlog.New(db)
 	if _, err := application.auditLog.Verify(context.Background()); err != nil {
@@ -2570,6 +2578,8 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /settings/ai/runtime/offline", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.installAssistantRuntimeOffline)))
 	mux.Handle("POST /settings/ai/runtime/rollback", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.rollbackAssistantRuntime)))
 	mux.Handle("GET /settings/updates", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.updatesPage)))
+	mux.Handle("GET /settings/service-logs", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.serviceLogsPage)))
+	mux.Handle("GET /settings/service-logs/export", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.exportServiceLogs)))
 	mux.Handle("GET /settings/updates/status", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.updateStatus)))
 	mux.Handle("POST /settings/updates/check", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.checkUpdate)))
 	mux.Handle("POST /settings/updates/prepare", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.prepareUpdate)))

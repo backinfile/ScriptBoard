@@ -113,6 +113,8 @@ sudo /opt/scriptboard/current/scriptboard service status
 
 以系统服务方式安装后，管理员和维护员可在“系统设置 → 更新”中重启 ScriptBoard。重启会短暂中断网页连接并停止所有活动 Run；服务恢复后页面会自动重新连接。便携运行的实例不提供此入口。
 
+“系统设置 → 服务日志”只读取四个固定受管服务的 systemd journal 或 Windows System Event Log。每次查询最多扫描 2,000 条、返回 500 条，可按服务、时间、级别与消息筛选并导出当前 CSV；消息在页面和导出前统一脱敏。该入口不接受任意 Unit、Windows Service 名称或文件路径。
+
 ## 使用提示
 
 ### 文件与脚本

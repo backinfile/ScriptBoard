@@ -108,6 +108,8 @@ Create a YAML configuration file only when you need to change settings such as t
 
 After installing ScriptBoard as a system service, Administrators and Maintainers can restart it from System Settings → Updates. A restart briefly disconnects the page and stops every active Run; the page reconnects when the service is ready. This control is not available to portable instances.
 
+System Settings → Service Logs reads only the four fixed managed services from systemd journal or the Windows System Event Log. A query scans at most 2,000 entries and returns 500, supports service/time/severity/message filters, and exports the current CSV. Messages are redacted before display and export; arbitrary units, Windows service names, and file paths are not accepted.
+
 ## Using ScriptBoard
 
 ### Files and scripts
