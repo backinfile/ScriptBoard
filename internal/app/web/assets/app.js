@@ -6287,7 +6287,9 @@ document.addEventListener("change", function (event) {
   if (!form) return;
   const type = select.value;
   const website = type === "website";
-  form.querySelectorAll("[data-dashboard-http-field]").forEach((field) => { field.hidden = website; });
+  const registry = type === "registry";
+  form.querySelectorAll("[data-dashboard-http-field]").forEach((field) => { field.hidden = website || registry; });
+  form.querySelectorAll("[data-dashboard-refresh-field]").forEach((field) => { field.hidden = website; });
   form.querySelectorAll("[data-dashboard-card-types]").forEach((field) => {
     field.hidden = !field.dataset.dashboardCardTypes.split(",").includes(type);
     field.querySelectorAll("[data-dashboard-expression-required]").forEach((input) => {
@@ -6296,6 +6298,14 @@ document.addEventListener("change", function (event) {
   });
   const websiteField = form.querySelector("[data-dashboard-website-field]");
   if (websiteField) websiteField.hidden = !website;
+  const registryField = form.querySelector("[data-dashboard-registry-field]");
+  if (registryField) {
+    registryField.hidden = !registry;
+    registryField.querySelectorAll("input, textarea, select").forEach((input) => {
+      input.disabled = !registry;
+      if (input.name === "registry_endpoint" || input.name === "registry_images") input.required = registry;
+    });
+  }
   const valueLabel = form.querySelector("[data-dashboard-value-expression-label]");
   const valueInput = form.querySelector("[data-dashboard-value-expression-input]");
   const labels = { number: "数值表达式", percentage: "百分比表达式", quota: "已用额度表达式" };
@@ -6306,10 +6316,24 @@ document.addEventListener("change", function (event) {
     preview.hidden = preview.dataset.dashboardCardPreview !== type;
   });
   const previewLabel = form.querySelector("[data-dashboard-preview-label]");
-  if (previewLabel) previewLabel.textContent = ({ number: "数值", percentage: "百分比", quota: "额度", website: "网站状态" })[type] || "数值";
+  if (previewLabel) previewLabel.textContent = ({ number: "数值", percentage: "百分比", quota: "额度", website: "网站状态", registry: "镜像版本" })[type] || "数值";
+});
+
+document.addEventListener("change", function (event) {
+  const auth = event.target.closest("[data-dashboard-registry-auth]");
+  if (!auth) return;
+  const credentials = auth.closest("form")?.querySelector("[data-dashboard-registry-credentials]");
+  if (!credentials) return;
+  credentials.hidden = auth.value !== "basic";
+  credentials.querySelectorAll("input").forEach((input) => {
+    input.required = auth.value === "basic" && input.name === "registry_username";
+  });
 });
 
 document.querySelectorAll("[data-dashboard-card-type]:checked").forEach((input) => {
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+});
+document.querySelectorAll("[data-dashboard-registry-auth]").forEach((input) => {
   input.dispatchEvent(new Event("change", { bubbles: true }));
 });
 

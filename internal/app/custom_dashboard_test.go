@@ -227,6 +227,105 @@ func TestCustomDashboardCanBeExportedAndImported(t *testing.T) {
 	}
 }
 
+func TestRegistryCardCanBeConfiguredWithHTTPAndMultipleImages(t *testing.T) {
+	registry := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		username, password, ok := request.BasicAuth()
+		if !ok || username != "robot$board" || password != "registry-secret" {
+			http.Error(response, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		switch request.URL.Path {
+		case "/v2/team/api/tags/list":
+			_, _ = response.Write([]byte(`{"tags":["v2.4.0","v2.5.0"]}`))
+		case "/v2/team/web/tags/list":
+			_, _ = response.Write([]byte(`{"tags":["1.8.1"]}`))
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer registry.Close()
+
+	root := t.TempDir()
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "host"), filepath.Join(root, "state"))
+	response, err := client.Get(serverURL + "/config/dashboards")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	response, err = client.PostForm(serverURL+"/config/dashboards", url.Values{
+		"csrf_token": {formToken(t, page)}, "name": {"镜像版本"}, "slug": {"registry-images"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	location, _ := url.Parse(response.Header.Get("Location"))
+	dashboardID := location.Query().Get("dashboard")
+	response, err = client.Get(serverURL + response.Header.Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ = io.ReadAll(response.Body)
+	response.Body.Close()
+	response, err = client.PostForm(serverURL+"/config/dashboards/"+dashboardID+"/cards", url.Values{
+		"csrf_token": {formToken(t, page)}, "name": {"生产镜像"}, "type": {"registry"},
+		"registry_endpoint": {registry.URL}, "registry_images": {"team/api\nteam/web"},
+		"registry_auth_mode": {"basic"}, "registry_username": {"robot$board"},
+		"registry_password": {"registry-secret"}, "refresh_seconds": {"60"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("create registry card status=%d", response.StatusCode)
+	}
+	response, err = client.Get(serverURL + "/monitor/dashboard/" + dashboardID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	renderedBytes, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	rendered := string(renderedBytes)
+	for _, expected := range []string{"生产镜像", "team/api", "v2.5.0", "team/web", "1.8.1", "仓库未提供"} {
+		if !strings.Contains(rendered, expected) {
+			t.Fatalf("registry card missing %q", expected)
+		}
+	}
+	if strings.Contains(rendered, "registry-secret") || !strings.Contains(rendered, "custom-dashboard-registry-list") {
+		t.Fatal("registry secret leaked or list presentation missing")
+	}
+	response, err = client.Get(serverURL + "/config/dashboards?dashboard=" + dashboardID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ = io.ReadAll(response.Body)
+	response.Body.Close()
+	response, err = client.PostForm(serverURL+"/config/dashboards/"+dashboardID, url.Values{
+		"csrf_token": {formToken(t, page)}, "name": {"镜像版本"}, "slug": {"registry-images"}, "public": {"1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	publicResponse, err := http.Get(serverURL + "/public/dashboard/registry-images")
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicPage, _ := io.ReadAll(publicResponse.Body)
+	publicResponse.Body.Close()
+	publicRendered := string(publicPage)
+	if publicResponse.StatusCode != http.StatusOK || !strings.Contains(publicRendered, "v2.5.0") {
+		t.Fatalf("public registry card missing result: status=%d", publicResponse.StatusCode)
+	}
+	for _, private := range []string{registry.URL, "robot$board", "registry-secret"} {
+		if strings.Contains(publicRendered, private) {
+			t.Fatalf("public registry card exposed %q", private)
+		}
+	}
+}
+
 func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	root := t.TempDir()
 	client, serverURL := authenticatedClient(t, filepath.Join(root, "host"), filepath.Join(root, "state"))
@@ -274,7 +373,7 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	if rendered := string(page); strings.Count(rendered, `data-dashboard-public-action disabled`) != 2 {
 		t.Fatal("private dashboard public actions should remain visible and disabled")
 	}
-	if rendered := string(page); strings.Contains(rendered, "键值数据") || !strings.Contains(rendered, `value="percentage"`) || !strings.Contains(rendered, `data-dashboard-card-preview="percentage"`) {
+	if rendered := string(page); strings.Contains(rendered, "键值数据") || !strings.Contains(rendered, `value="percentage"`) || !strings.Contains(rendered, `data-dashboard-card-preview="percentage"`) || !strings.Contains(rendered, `value="registry"`) || !strings.Contains(rendered, `data-dashboard-card-preview="registry"`) {
 		t.Fatal("dashboard card types or mini previews are incorrect")
 	}
 	privateResponse, err := http.Get(serverURL + "/public/dashboard/api-credits")

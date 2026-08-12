@@ -791,6 +791,49 @@ func TestOpenDatabaseMigratesInstanceSettingsFromSchema35(t *testing.T) {
 	}
 }
 
+func TestOpenDatabaseAddsRegistryCardsFromSchema36(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	db, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		DROP INDEX custom_dashboard_cards_order_idx;
+		ALTER TABLE custom_dashboard_cards RENAME TO custom_dashboard_cards_current;
+		CREATE TABLE custom_dashboard_cards (
+			id TEXT PRIMARY KEY, dashboard_id TEXT NOT NULL REFERENCES custom_dashboards(id) ON DELETE CASCADE,
+			name TEXT NOT NULL, type TEXT NOT NULL CHECK(type IN ('number','percentage','quota','key_value','website')),
+			source_url TEXT NOT NULL DEFAULT '', headers_json TEXT NOT NULL DEFAULT '{}',
+			value_path TEXT NOT NULL DEFAULT '', secondary_path TEXT NOT NULL DEFAULT '', formula TEXT NOT NULL DEFAULT '',
+			config_json TEXT NOT NULL DEFAULT '{}', refresh_seconds INTEGER NOT NULL DEFAULT 60,
+			sort_order INTEGER NOT NULL, snapshot_json TEXT NOT NULL DEFAULT '{}', last_error TEXT NOT NULL DEFAULT '',
+			last_success_at INTEGER NOT NULL DEFAULT 0, last_attempt_at INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+		);
+		DROP TABLE custom_dashboard_cards_current;
+		CREATE INDEX custom_dashboard_cards_order_idx ON custom_dashboard_cards(dashboard_id, sort_order, created_at);
+		PRAGMA user_version=36;
+		PRAGMA wal_checkpoint(TRUNCATE);`); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	if _, err := migrated.Exec(`INSERT INTO custom_dashboards(id,name,slug,is_public,sort_order,created_at,updated_at) VALUES('dashboard','Images','images',0,1,1,1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := migrated.Exec(`INSERT INTO custom_dashboard_cards(id,dashboard_id,name,type,sort_order,created_at,updated_at) VALUES('card','dashboard','Registry','registry',1,1,1)`); err != nil {
+		t.Fatalf("registry card rejected after migration: %v", err)
+	}
+}
+
 func TestOpenDatabaseCreatesIndexesForPeriodicAndTimeOrderedQueries(t *testing.T) {
 	db, err := openDatabase(filepath.Join(t.TempDir(), "app.db"))
 	if err != nil {

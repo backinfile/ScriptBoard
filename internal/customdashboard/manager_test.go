@@ -3,9 +3,11 @@ package customdashboard
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -23,12 +25,126 @@ func testManager(t *testing.T) *Manager {
 			t.Fatal(err)
 		}
 	}
-	manager, err := New(Options{DB: db})
+	manager, err := New(Options{DB: db, SecretsDirectory: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { manager.Close(); db.Close() })
 	return manager
+}
+
+func TestRegistryCardStoresCredentialOutsideDatabaseAndRefreshesMultipleImages(t *testing.T) {
+	failing := false
+	credential := "super-secret"
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		username, password, ok := request.BasicAuth()
+		if !ok || username != "robot$board" || password != credential {
+			http.Error(response, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		switch request.URL.Path {
+		case "/v2/team/api/tags/list":
+			_, _ = response.Write([]byte(`{"tags":["1.2.0","1.3.0"]}`))
+		case "/v2/team/web/tags/list":
+			if failing {
+				http.Error(response, "unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			_, _ = response.Write([]byte(`{"tags":["2.0.0"]}`))
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	manager := testManager(t)
+	ctx := context.Background()
+	dashboard, _ := manager.CreateDashboard(ctx, DashboardInput{Name: "镜像", Slug: "images"})
+	config, _ := json.Marshal(map[string]any{
+		"endpoint": server.URL, "images": []string{"team/api", "team/web"},
+		"authMode": "basic", "username": "robot$board",
+	})
+	card, err := manager.CreateCard(ctx, dashboard.ID, CardInput{
+		Name: "生产镜像", Type: CardRegistry, Config: config, RefreshSeconds: 60,
+		RegistryPassword: "super-secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !card.CredentialConfigured {
+		t.Fatal("credential should be reported as configured")
+	}
+	var storedConfig string
+	if err := manager.db.QueryRow(`SELECT config_json FROM custom_dashboard_cards WHERE id=?`, card.ID).Scan(&storedConfig); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(storedConfig, "super-secret") {
+		t.Fatal("registry password was stored in SQLite")
+	}
+	refreshed, err := manager.RefreshCard(ctx, card.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refreshed.Snapshot.Images) != 2 || refreshed.Snapshot.Images[0].Tag != "1.3.0" || refreshed.Snapshot.Images[1].Tag != "2.0.0" {
+		t.Fatalf("unexpected initial registry snapshot: %#v", refreshed.Snapshot.Images)
+	}
+	failing = true
+	refreshed, err = manager.RefreshCard(ctx, card.ID)
+	if err == nil {
+		t.Fatal("partial registry failure should be returned")
+	}
+	if len(refreshed.Snapshot.Images) != 2 || refreshed.Snapshot.Images[1].Tag != "2.0.0" || refreshed.Snapshot.Images[1].Error == "" || !refreshed.Snapshot.Images[1].Stale {
+		t.Fatalf("unexpected registry snapshot: %#v", refreshed.Snapshot.Images)
+	}
+	credential = "rotated-secret"
+	if _, err := manager.UpdateCard(ctx, card.ID, CardInput{
+		Name: "生产镜像", Type: CardRegistry, Config: config, RefreshSeconds: 300, RegistryPassword: credential,
+	}); err != nil {
+		t.Fatalf("rotate credential: %v", err)
+	}
+	updated, err := manager.UpdateCard(ctx, card.ID, CardInput{
+		Name: "生产镜像", Type: CardRegistry, Config: config, RefreshSeconds: 300, PreserveRegistryPassword: true,
+	})
+	if err != nil || !updated.CredentialConfigured {
+		t.Fatalf("blank edit did not preserve credential: card=%#v err=%v", updated, err)
+	}
+	if err := manager.DeleteCard(ctx, card.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.secrets.get(card.ID); !errors.Is(err, ErrCredentialUnavailable) {
+		t.Fatalf("credential survived card deletion: %v", err)
+	}
+}
+
+func TestRegistryCardImportedWithoutCredentialRequiresOneWhenEdited(t *testing.T) {
+	manager := testManager(t)
+	ctx := context.Background()
+	dashboard, _ := manager.CreateDashboard(ctx, DashboardInput{Name: "镜像", Slug: "imported-images"})
+	config := json.RawMessage(`{"endpoint":"http://registry.lan:5000","images":["team/api"],"authMode":"basic","username":"robot"}`)
+	card, err := manager.CreateCard(ctx, dashboard.ID, CardInput{Name: "镜像版本", Type: CardRegistry, Config: config})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.UpdateCard(ctx, card.ID, CardInput{Name: card.Name, Type: CardRegistry, Config: config, PreserveRegistryPassword: true}); !errors.Is(err, ErrCredentialUnavailable) {
+		t.Fatalf("missing imported credential accepted: %v", err)
+	}
+}
+
+func TestPublicRegistryCardDoesNotExposeConnectionConfiguration(t *testing.T) {
+	manager := testManager(t)
+	ctx := context.Background()
+	dashboard, _ := manager.CreateDashboard(ctx, DashboardInput{Name: "镜像", Slug: "images-public", Public: true})
+	config := json.RawMessage(`{"endpoint":"http://registry.lan:5000","images":["team/api"],"authMode":"anonymous"}`)
+	if _, err := manager.CreateCard(ctx, dashboard.ID, CardInput{Name: "镜像版本", Type: CardRegistry, Config: config}); err != nil {
+		t.Fatal(err)
+	}
+	public, err := manager.GetPublicDashboard(ctx, dashboard.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(public.Cards) != 1 || string(public.Cards[0].Config) != "{}" {
+		t.Fatalf("public connection config was exposed: %s", public.Cards[0].Config)
+	}
 }
 
 func TestDashboardLifecycleKeepsCardsInsideTheirDashboard(t *testing.T) {
