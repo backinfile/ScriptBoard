@@ -70,6 +70,35 @@ func TestInspectExchangesBearerTokenUsingConfiguredCredentials(t *testing.T) {
 	}
 }
 
+func TestInspectAllowsHTTPTokenServiceForHTTPSRegistry(t *testing.T) {
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/token" {
+			http.NotFound(response, request)
+			return
+		}
+		_ = json.NewEncoder(response).Encode(map[string]string{"token": "mixed-transport-token"})
+	}))
+	defer tokenServer.Close()
+
+	registry := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer mixed-transport-token" {
+			response.Header().Set("WWW-Authenticate", `Bearer realm="`+tokenServer.URL+`/token",service="registry.test",scope="repository:team/api:pull"`)
+			http.Error(response, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(response).Encode(map[string]any{"tags": []string{"2.1.0"}})
+	}))
+	defer registry.Close()
+
+	results, err := New(registry.Client()).Inspect(context.Background(), Config{
+		Endpoint: registry.URL,
+		Images:   []string{"team/api"},
+	})
+	if err != nil || len(results) != 1 || results[0].Tag != "2.1.0" || results[0].Error != "" {
+		t.Fatalf("results=%#v err=%v", results, err)
+	}
+}
+
 func TestInspectReadsHarborArtifactPushTime(t *testing.T) {
 	wantTime := time.Date(2026, 8, 12, 9, 30, 0, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -90,6 +119,38 @@ func TestInspectReadsHarborArtifactPushTime(t *testing.T) {
 	}
 	if !results[0].PushedAt.Equal(wantTime) || !results[0].PushTimeAvailable {
 		t.Fatalf("push time was not populated: %#v", results[0])
+	}
+}
+
+func TestInspectAppliesOneDeadlineAcrossAllImages(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+		<-request.Context().Done()
+	}))
+	defer server.Close()
+
+	client := New(server.Client())
+	client.inspectTimeout = 40 * time.Millisecond
+	parent, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	results, err := client.Inspect(parent, Config{
+		Endpoint: server.URL,
+		Images:   []string{"team/api", "team/worker", "team/web"},
+	})
+	elapsed := time.Since(started)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed >= 250*time.Millisecond || parent.Err() != nil {
+		t.Fatalf("inspect exceeded its card deadline: elapsed=%s parent_err=%v", elapsed, parent.Err())
+	}
+	if len(results) != 3 {
+		t.Fatalf("results=%#v", results)
+	}
+	for _, result := range results {
+		if result.Error == "" {
+			t.Fatalf("timed-out image has no error: %#v", result)
+		}
 	}
 }
 

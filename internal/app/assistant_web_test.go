@@ -111,6 +111,7 @@ func TestAIWorkspaceAndSettingsUsePersistedLLMAndConversationState(t *testing.T)
 		`name="default_auto_approval"`, `name="max_active_conversations"`,
 		`>Enable AI conversations<`, `new conversations cannot be created and messages cannot be sent in existing conversations`,
 		`name="shared"`, `name="supports_reasoning"`, `name="default_thinking_level"`,
+		`HTTP and HTTPS endpoints are supported. HTTP sends credentials and prompts without transport encryption.`,
 		`action="/settings/ai/runtime/check"`,
 		`action="/settings/ai/runtime/offline"`, `enctype="multipart/form-data"`,
 		`name="runtime_manifest"`, `name="runtime_signature"`, `name="runtime_archive"`,

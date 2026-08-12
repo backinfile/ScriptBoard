@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -223,19 +222,9 @@ func validateEndpoint(raw string) error {
 	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return fmt.Errorf("invalid provider endpoint")
 	}
-	if parsed.Scheme == "https" {
-		return nil
-	}
-	if parsed.Scheme != "http" {
-		return fmt.Errorf("provider endpoint must use HTTPS or loopback HTTP")
-	}
-	host := parsed.Hostname()
-	if strings.EqualFold(host, "localhost") {
-		return nil
-	}
-	address := net.ParseIP(host)
-	if address == nil || !address.IsLoopback() {
-		return fmt.Errorf("provider endpoint must use HTTPS or loopback HTTP")
+	// Keep runtime validation aligned with the persisted provider transport choice.
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("provider endpoint must use HTTP or HTTPS")
 	}
 	return nil
 }

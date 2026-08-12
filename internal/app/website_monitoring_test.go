@@ -215,7 +215,7 @@ func TestWebsiteMonitorConfigurationsExportSelectedAndImportSelected(t *testing.
 			t.Fatalf("create %q status=%d", name, response.StatusCode)
 		}
 	}
-	create("导出目标", "https://export-one.example/health")
+	create("导出目标", "http://export-one.example/health")
 	create("不导出目标", "https://export-two.example/health")
 
 	response, err = client.Get(serverURL + "/monitor/websites")
@@ -278,11 +278,11 @@ func TestWebsiteMonitorConfigurationsExportSelectedAndImportSelected(t *testing.
 	if !headersOK || len(headers) != 2 {
 		t.Fatalf("exported request headers = %#v", record["request_headers"])
 	}
-	if record["name"] != "导出目标" || record["http_body"] != `{"probe":"ready"}` {
+	if record["name"] != "导出目标" || record["url"] != "http://export-one.example/health" || record["http_body"] != `{"probe":"ready"}` {
 		t.Fatalf("exported configuration lost selected settings: %#v", record)
 	}
 	record["name"] = "导入副本"
-	record["url"] = "https://imported-copy.example/health"
+	record["url"] = "http://imported-copy.example/health"
 	exported, err = json.Marshal(bundle)
 	if err != nil {
 		t.Fatal(err)
@@ -351,7 +351,7 @@ func TestWebsiteMonitorConfigurationsExportSelectedAndImportSelected(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(listPage, []byte("导入副本")) {
+	if !bytes.Contains(listPage, []byte("导入副本")) || !bytes.Contains(listPage, []byte("http://imported-copy.example/health")) {
 		t.Fatalf("imported monitor missing from list: %s", listPage)
 	}
 }
@@ -1146,6 +1146,9 @@ func TestWebsiteMonitoringAddsRemoteScriptBoardAsReadOnlySource(t *testing.T) {
 	}
 	page, _ := io.ReadAll(pageResponse.Body)
 	_ = pageResponse.Body.Close()
+	if !bytes.Contains(page, []byte("HTTP and HTTPS endpoints are supported. HTTP sends the Key and monitoring response without transport encryption.")) {
+		t.Fatalf("remote source form does not explain HTTP support: %s", page)
+	}
 	created, err := client.PostForm(serverURL+"/monitor/websites/remotes", url.Values{
 		"csrf_token": {formToken(t, page)}, "label": {"Branch office"},
 		"endpoint": {remote.URL + "/trigger?name=website-status"}, "key": {key},

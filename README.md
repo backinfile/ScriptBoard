@@ -126,19 +126,19 @@ Windows 从各个可用卷开始浏览，Linux 从 `/` 开始浏览。文件页�
 
 管理员或维护员可在“监控 → Kubernetes”配置一个集群。填写 ScriptBoard 服务所在主机可读取的 kubeconfig 绝对路径，并可选择指定 context；默认使用 kubeconfig 的 `current-context`。连接默认“仅观察”，需要时可明确开启仅包含滚动重部署、单步增减副本和立即运行 CronJob 的“有限操作”。
 
-ScriptBoard 不保存 kubeconfig 中的 token、证书或私钥，并拒绝 `exec`/`auth-provider` 登录插件和 `insecure-skip-tls-verify`。若服务以 systemd 或 Windows 服务运行，请确认该服务身份可以读取 kubeconfig 及其引用的 CA、token 或客户端证书文件。
+Kubeconfig 的 `server` 可使用 `http://` 或 `https://`。HTTPS 连接按 kubeconfig 的 CA、客户端证书或系统信任验证；HTTP 连接也可使用静态 token 或基本认证，但凭据与集群数据会以明文传输。ScriptBoard 不保存 kubeconfig 中的 token、证书或私钥，并拒绝 `exec`/`auth-provider` 登录插件和 `insecure-skip-tls-verify`。若服务以 systemd 或 Windows 服务运行，请确认该服务身份可以读取 kubeconfig 及其引用的 CA、token 或客户端证书文件。
 
 ### 自定义看板与网站监控
 
-管理员和维护员可在“配置 → 自定义看板”组合外部 JSON 数据与已有网站监控结果，创建数字、百分比、额度、键值和网站卡片，强制刷新当前看板的数据，并在当前看板导入或导出所选节点配置。卡片支持使用尚未保存的配置测试请求、从 JSON 结构选择取值字段；刷新失败时保留最后一次成功值，并为有权限的用户提供脱敏请求诊断。测试响应不会写入数据库或审计记录。导出文件不包含看板名称、地址或其他看板信息。公开看板只展示通用结果状态，不公开数据源、请求头、公式或诊断信息。
+管理员和维护员可在“配置 → 自定义看板”组合外部 JSON 数据与已有网站监控结果，创建数字、百分比、额度、键值、网站和 Registry 卡片，强制刷新当前看板的数据，并在当前看板导入或导出所选节点配置。JSON 数据源和 Registry 均支持 HTTP 与 HTTPS；Registry 的 Bearer token 服务也可独立使用任一模式。HTTP 会明文传输请求头、凭据和响应。卡片支持使用尚未保存的配置测试请求、从 JSON 结构选择取值字段；刷新失败时保留最后一次成功值，并为有权限的用户提供脱敏请求诊断。测试响应不会写入数据库或审计记录。导入导出保留 URL scheme，Registry 密码不进入导出文件。公开看板只展示通用结果状态，不公开数据源、请求头、公式或诊断信息。
 
-网站检查可配置自定义 HTTP 请求头，并使用 `{{VARIABLE_NAME}}` 在执行检查时引用变量；如需传递密钥，请使用密码变量，避免把密钥直接写入可导出的监控配置。需要汇总多台 ScriptBoard 时，可通过下方的受限外部接口把另一实例的网站监控快照接入当前实例。
+网站检查支持 HTTP、HTTPS、WS 和 WSS，可配置自定义 HTTP/握手请求头，并使用 `{{VARIABLE_NAME}}` 在执行检查时引用变量；导入导出会保留 scheme 与 TLS 验证选项。如需传递密钥，请使用密码变量，避免把密钥直接写入可导出的监控配置。需要汇总多台 ScriptBoard 时，可通过 HTTP 或 HTTPS 的受限外部接口把另一实例的网站监控快照接入当前实例；HTTP 会明文传输 Key 与监控响应。
 
 ### 外部接口
 
 管理员和维护员可在“配置 → 外部接口”创建带有效期的 Key。每个 Key 可配置多个以 `name` 区分的功能条目：向指定且受保护路径策略约束的日志文件追加记录、向固定目录上传单个文件、启动已有快捷执行、按布尔、整数、枚举、短文本约束修改一个非密码变量，或只读开放本实例的网站监控快照。
 
-调用格式为 `POST /trigger?name=ENTRY_NAME`，并通过 `Authorization: Bearer KEY` 传递 Key。管理员和维护员可在 Key 管理区复制完整 Key；观察员和操作员无权查看。请只将 Key 提供给可信系统，非本机调用必须使用 HTTPS，不再使用时应停用或轮换。
+调用格式为 `POST /trigger?name=ENTRY_NAME`，并通过 `Authorization: Bearer KEY` 传递 Key。管理员和维护员可在 Key 管理区复制完整 Key；观察员和操作员无权查看。HTTP 与 HTTPS 均可调用；HTTP 会明文传输 Key 与请求内容。请只将 Key 提供给可信系统，优先使用 HTTPS 或受信网络，不再使用时应停用或轮换。
 
 “网站监控”条目使用 `GET`。如需在另一个 ScriptBoard 中查看本实例，请复制完整调用 URL 与 Key，在接收端打开“监控 → 网站”，选择“连接其他 ScriptBoard”。远端监控会显示在独立的只读列表中，接收端不能检查、暂停、编辑、排序或删除远端项目；远端 Key 会加密保存在接收端 State Root。
 
@@ -150,13 +150,13 @@ ScriptBoard 不保存 kubeconfig 中的 token、证书或私钥，并拒绝 `exe
 
 ### MySQL 备份与恢复
 
-管理员和维护员可在“资源 → 数据库”登记本机或远程 MySQL/MariaDB 实例、查看数据库与核心状态、执行手动或五字段 Cron 逻辑备份，并从 `.sql` 或 `.sql.gz` 恢复。ScriptBoard 不捆绑数据库客户端；请在宿主 PATH 中安装 `mysqldump` 和 `mysql`，或在页面中配置它们的绝对路径。
+管理员和维护员可在“资源 → 数据库”登记本机或远程 MySQL/MariaDB 实例、查看数据库与核心状态、执行手动或五字段 Cron 逻辑备份，并从 `.sql` 或 `.sql.gz` 恢复。连接可显式选择关闭 TLS、优先 TLS、要求 TLS 或验证证书与主机名；关闭 TLS 时凭据和数据库流量为明文。ScriptBoard 不捆绑数据库客户端；请在宿主 PATH 中安装 `mysqldump` 和 `mysql`，或在页面中配置它们的绝对路径。
 
 每个数据库生成独立的 `.sql.gz` 和 SHA-256。恢复已有数据库或删除数据库前必须先完成安全备份并输入完整库名；恢复失败时会自动尝试回滚。默认产物位于 `state_root/database-backups/mysql`，自定义目录也会加入受保护路径。请仍将这些产物纳入独立的异机备份策略。
 
 ### AI 助手
 
-AI 功能默认关闭。管理员可在“系统设置 → AI”安装与当前版本匹配的 Pi Runtime，再添加 OpenAI、Anthropic 或 OpenAI 兼容服务。
+AI 功能默认关闭。管理员可在“系统设置 → AI”安装与当前版本匹配的 Pi Runtime，再添加 OpenAI、Anthropic 或 OpenAI 兼容服务。模型 Endpoint 支持 HTTP 与 HTTPS；HTTP 会明文传输 API Key、提示词和模型响应。
 
 对话内容和明确引用的资源会发送到所选模型服务，可能产生费用。启用前请确认服务商的隐私、费用和数据驻留政策。
 

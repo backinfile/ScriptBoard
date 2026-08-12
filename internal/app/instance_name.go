@@ -64,6 +64,11 @@ func (a *App) instanceNameSettingsPage(response http.ResponseWriter, request *ht
 }
 
 func (a *App) updateInstanceName(response http.ResponseWriter, request *http.Request) {
+	// A same-site authenticated form can still be forged, so require the session token before writing settings.
+	if !validSessionCSRF(request) {
+		http.Error(response, "Forbidden", http.StatusForbidden)
+		return
+	}
 	if err := request.ParseForm(); err != nil {
 		http.Error(response, "Unable to read site name", http.StatusBadRequest)
 		return

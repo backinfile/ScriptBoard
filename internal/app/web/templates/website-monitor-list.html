@@ -49,7 +49,7 @@ FORM: Responsive signal ledger with a right-side detail task on capable clients 
 <form method="post" action="/monitor/websites/remotes">
 <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
 <label>{{t .Locale "website.remote.name"}}<input name="label" maxlength="128" required placeholder="{{t .Locale "website.remote.name_placeholder"}}"></label>
-<label>{{t .Locale "website.remote.endpoint"}}<input name="endpoint" type="url" maxlength="2048" required placeholder="https://scriptboard.example/trigger?name=website-status"></label>
+<label>{{t .Locale "website.remote.endpoint"}}<input name="endpoint" type="url" maxlength="2048" required placeholder="https://scriptboard.example/trigger?name=website-status"><small>{{t .Locale "website.remote.endpoint_hint"}}</small></label>
 <label>{{t .Locale "website.remote.key"}}<input name="key" type="password" maxlength="128" required autocomplete="off" placeholder="sbk_…"></label>
 <small>{{t .Locale "website.remote.hint"}}</small>
 <button class="button button--primary" type="submit"><span data-lucide="link" aria-hidden="true"></span>{{t .Locale "website.remote.connect"}}</button>

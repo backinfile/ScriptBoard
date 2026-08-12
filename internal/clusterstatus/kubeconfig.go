@@ -114,8 +114,9 @@ func (HTTPFactory) Open(_ context.Context, connection Connection) (Client, error
 		return nil, errors.New("insecure-skip-tls-verify is not supported")
 	}
 	baseURL, err := url.Parse(server)
-	if err != nil || baseURL.Scheme != "https" || baseURL.Host == "" {
-		return nil, errors.New("Kubernetes server must be an absolute HTTPS URL")
+	// The kubeconfig scheme is an explicit transport choice; HTTP is not silently upgraded to TLS.
+	if err != nil || (baseURL.Scheme != "http" && baseURL.Scheme != "https") || baseURL.Host == "" {
+		return nil, errors.New("Kubernetes server must be an absolute HTTP or HTTPS URL")
 	}
 	baseURL.Path = strings.TrimRight(baseURL.Path, "/")
 	var token, tokenFile, certificateFile, certificateData, keyFile, keyData, username, password string
@@ -144,12 +145,9 @@ func (HTTPFactory) Open(_ context.Context, connection Connection) (Client, error
 	if err != nil {
 		return nil, fmt.Errorf("load Kubernetes certificate authority: %w", err)
 	}
-	rootCAs, err := x509.SystemCertPool()
-	if err != nil || rootCAs == nil {
-		rootCAs = x509.NewCertPool()
-	}
-	if len(caPEM) > 0 && !rootCAs.AppendCertsFromPEM(caPEM) {
-		return nil, errors.New("Kubernetes certificate authority is invalid")
+	rootCAs, err := kubeconfigRootCAs(caPEM)
+	if err != nil {
+		return nil, err
 	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: rootCAs}
 	certificatePEM, err := kubeconfigBytes(directory, certificateFile, certificateData)
@@ -170,15 +168,35 @@ func (HTTPFactory) Open(_ context.Context, connection Connection) (Client, error
 		}
 		tlsConfig.Certificates = []tls.Certificate{certificate}
 	}
-	if token == "" && len(tlsConfig.Certificates) == 0 && username == "" {
+	if token == "" && (baseURL.Scheme != "https" || len(tlsConfig.Certificates) == 0) && username == "" {
 		return nil, errors.New("kubeconfig context has no supported credentials")
 	}
 	digest := sha256.Sum256(append([]byte(baseURL.String()+"\x00"), caPEM...))
-	transport := &http.Transport{TLSClientConfig: tlsConfig, Proxy: http.ProxyFromEnvironment, ForceAttemptHTTP2: true}
+	transport := &http.Transport{Proxy: http.ProxyFromEnvironment, ForceAttemptHTTP2: true}
+	if baseURL.Scheme == "https" {
+		transport.TLSClientConfig = tlsConfig
+	}
 	return &kubeHTTPClient{
 		baseURL: baseURL, http: &http.Client{Transport: transport, Timeout: 10 * time.Second}, token: strings.TrimSpace(token),
 		username: username, password: password, defaultNS: namespace, fingerprint: "sha256:" + hex.EncodeToString(digest[:]),
 	}, nil
+}
+
+func kubeconfigRootCAs(caPEM []byte) (*x509.CertPool, error) {
+	if len(caPEM) == 0 {
+		rootCAs, err := x509.SystemCertPool()
+		if err == nil && rootCAs != nil {
+			return rootCAs, nil
+		}
+		return x509.NewCertPool(), nil
+	}
+
+	// An explicit kubeconfig CA replaces system trust, matching Kubernetes TLS semantics.
+	rootCAs := x509.NewCertPool()
+	if !rootCAs.AppendCertsFromPEM(caPEM) {
+		return nil, errors.New("Kubernetes certificate authority is invalid")
+	}
+	return rootCAs, nil
 }
 
 func readBoundedFile(path string) ([]byte, error) {

@@ -126,19 +126,19 @@ After running a script, save its path, argument template, and timeout as a Quick
 
 Administrators and maintainers can configure one cluster under **Monitor → Kubernetes**. Enter an absolute kubeconfig path readable on the host running the ScriptBoard service and optionally select a context; the kubeconfig `current-context` is used by default. Connections start in observe-only mode. Limited operations can be explicitly enabled for rolling redeploys, single-step replica changes, and running a CronJob now.
 
-ScriptBoard does not store kubeconfig tokens, certificates, or private keys, and rejects `exec`/`auth-provider` login plugins and `insecure-skip-tls-verify`. When ScriptBoard runs under systemd or as a Windows service, ensure that service identity can read the kubeconfig and any referenced CA, token, or client-certificate files.
+The kubeconfig `server` may use `http://` or `https://`. HTTPS connections validate the kubeconfig CA and client certificate or system trust. HTTP connections may still use static tokens or basic authentication, but credentials and cluster data travel in plaintext. ScriptBoard does not store kubeconfig tokens, certificates, or private keys, and rejects `exec`/`auth-provider` login plugins and `insecure-skip-tls-verify`. When ScriptBoard runs under systemd or as a Windows service, ensure that service identity can read the kubeconfig and any referenced CA, token, or client-certificate files.
 
 ### Custom dashboards and website monitoring
 
-Administrators and Maintainers can combine external JSON data with existing Website Monitoring results under Configuration → Custom Dashboards, create number, percentage, quota, key-value, and website cards, and import or export dashboard configurations. Unsaved card settings can be tested and mapped from the returned JSON structure. Failed refreshes retain the last successful value and expose redacted request diagnostics only to authorized operators; test responses are not written to the database or audit records. Public dashboards expose only generic result states without revealing sources, request headers, formulas, diagnostics, or management controls.
+Administrators and Maintainers can combine external JSON data with existing Website Monitoring results under Configuration → Custom Dashboards, create number, percentage, quota, key-value, website, and Registry cards, and import or export dashboard configurations. JSON sources and registries support HTTP and HTTPS, and a Registry Bearer token service may independently use either mode. HTTP sends request headers, credentials, and responses in plaintext. Unsaved card settings can be tested and mapped from the returned JSON structure. Failed refreshes retain the last successful value and expose redacted request diagnostics only to authorized operators; test responses are not written to the database or audit records. Imports and exports preserve URL schemes, while Registry passwords are excluded from exports. Public dashboards expose only generic result states without revealing sources, request headers, formulas, diagnostics, or management controls.
 
-Website checks can send custom HTTP headers and resolve `{{VARIABLE_NAME}}` references when a check runs. For secrets, use password variables instead of writing credentials directly into an exportable monitor configuration. To consolidate multiple ScriptBoard hosts, use the bounded external interface below to connect another instance's Website Monitoring snapshot.
+Website checks support HTTP, HTTPS, WS, and WSS. They can send custom HTTP or handshake headers and resolve `{{VARIABLE_NAME}}` references when a check runs; imports and exports preserve the scheme and TLS-verification setting. For secrets, use password variables instead of writing credentials directly into an exportable monitor configuration. To consolidate multiple ScriptBoard hosts, use the bounded external interface below over HTTP or HTTPS; HTTP sends the Key and monitoring response in plaintext.
 
 ### External Interfaces
 
 Administrators and Maintainers can create time-limited keys under Configuration → External Interfaces. Each key may contain multiple named function entries for recording a log, uploading one file to a fixed directory, starting one existing Quick Run, updating one non-password variable under Boolean, integer, enum, or short-text constraints, or exposing a read-only Website Monitoring snapshot.
 
-Call an entry with `POST /trigger?name=ENTRY_NAME` and `Authorization: Bearer KEY`. Administrators and Maintainers can copy the complete key from the key-management area; Operators and Viewers cannot view it. Keep it in a secret store, use HTTPS outside loopback, and disable or rotate it when the calling system no longer needs access.
+Call an entry with `POST /trigger?name=ENTRY_NAME` and `Authorization: Bearer KEY`. Administrators and Maintainers can copy the complete key from the key-management area; Operators and Viewers cannot view it. HTTP and HTTPS are both supported; HTTP sends the Key and request content in plaintext. Keep the Key in a secret store, prefer HTTPS or a trusted network, and disable or rotate it when the calling system no longer needs access.
 
 Website Monitoring entries use `GET` instead of `POST`. To view one ScriptBoard instance from another, copy the complete call URL and Key, open Monitor → Websites on the receiving instance, and choose Connect ScriptBoard. Remote monitors appear in a separate read-only ledger; the receiving instance cannot check, pause, edit, reorder, or delete them. The remote Key is encrypted in the receiving instance's State Root.
 
@@ -150,13 +150,13 @@ Every role can inspect the detected state; only Administrators and Maintainers c
 
 ### MySQL backup and restore
 
-Administrators and Maintainers can register local or remote MySQL/MariaDB instances under Resources → Databases, inspect databases and core status, run manual or five-field Cron logical backups, and restore `.sql` or `.sql.gz` files. ScriptBoard does not bundle database clients; install `mysqldump` and `mysql` on the host PATH or configure their absolute paths in the page.
+Administrators and Maintainers can register local or remote MySQL/MariaDB instances under Resources → Databases, inspect databases and core status, run manual or five-field Cron logical backups, and restore `.sql` or `.sql.gz` files. Each connection can explicitly disable TLS, prefer TLS, require TLS, or verify the certificate and host identity; disabling TLS sends credentials and database traffic in plaintext. ScriptBoard does not bundle database clients; install `mysqldump` and `mysql` on the host PATH or configure their absolute paths in the page.
 
 Each database is stored in a separate `.sql.gz` file with a SHA-256 digest. Replacing or deleting a database requires a successful safety backup and full-name confirmation; a failed replacement automatically attempts rollback. Artifacts default to `state_root/database-backups/mysql`, and a custom directory is also protected from host-file operations. Keep an independent off-host copy for disaster recovery.
 
 ### AI assistant
 
-AI is disabled by default. An Administrator can install the matching Pi Runtime under System Settings → AI, then add an OpenAI, Anthropic, or OpenAI-compatible provider.
+AI is disabled by default. An Administrator can install the matching Pi Runtime under System Settings → AI, then add an OpenAI, Anthropic, or OpenAI-compatible provider. Model endpoints support HTTP and HTTPS; HTTP sends the API Key, prompts, and model responses in plaintext.
 
 Conversation content and explicitly referenced resources are sent to the selected provider and may incur charges. Review the provider's privacy, pricing, and data-residency terms before enabling AI.
 

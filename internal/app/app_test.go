@@ -928,6 +928,36 @@ func TestInstanceNameSettingsUpdateTheApplicationShell(t *testing.T) {
 	}
 }
 
+func TestInstanceNameSettingsRejectMissingCSRF(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
+	response, err := client.PostForm(serverURL+"/settings/name", url.Values{
+		"display_name": {"Forged Name"},
+	})
+	if err != nil {
+		t.Fatalf("submit site name without CSRF: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("missing CSRF status=%d, want %d", response.StatusCode, http.StatusForbidden)
+	}
+
+	response, err = client.Get(serverURL + "/settings/name")
+	if err != nil {
+		t.Fatalf("get site name settings after rejected update: %v", err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read site name settings after rejected update: %v", err)
+	}
+	if strings.Contains(string(page), "Forged Name") || !strings.Contains(string(page), `name="display_name" value="ScriptBoard"`) {
+		t.Fatalf("rejected update changed the site name: %s", page)
+	}
+}
+
 func TestInstanceNameSettingsValidateAndRestoreTheDefault(t *testing.T) {
 	t.Parallel()
 

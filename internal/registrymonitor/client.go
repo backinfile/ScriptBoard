@@ -15,7 +15,10 @@ import (
 	"time"
 )
 
-const maxResponseBytes = 2 << 20
+const (
+	maxResponseBytes      = 2 << 20
+	defaultInspectTimeout = 20 * time.Second
+)
 
 var imagePattern = regexp.MustCompile(`^[a-z0-9]+(?:(?:[._-][a-z0-9]+)|(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*))*$`)
 
@@ -36,13 +39,16 @@ type ImageResult struct {
 	Stale             bool      `json:"stale,omitempty"`
 }
 
-type Client struct{ client *http.Client }
+type Client struct {
+	client         *http.Client
+	inspectTimeout time.Duration
+}
 
 func New(client *http.Client) *Client {
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
 	}
-	return &Client{client: client}
+	return &Client{client: client, inspectTimeout: defaultInspectTimeout}
 }
 
 func NormalizeConfig(config Config) Config {
@@ -99,6 +105,13 @@ func (client *Client) Inspect(ctx context.Context, config Config) ([]ImageResult
 	if err := ValidateConfig(config); err != nil {
 		return nil, err
 	}
+	timeout := client.inspectTimeout
+	if timeout <= 0 {
+		timeout = defaultInspectTimeout
+	}
+	// One deadline covers every image and authentication round trip in this card inspection.
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	results := make([]ImageResult, 0, len(config.Images))
 	for _, image := range config.Images {
 		result := ImageResult{Image: image}
@@ -176,10 +189,7 @@ func (client *Client) exchangeToken(ctx context.Context, challenge string, confi
 	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return "", errors.New("Registry 返回了无效的令牌服务地址")
 	}
-	registryURL, _ := url.Parse(config.Endpoint)
-	if registryURL != nil && registryURL.Scheme == "https" && parsed.Scheme != "https" {
-		return "", errors.New("HTTPS Registry 的令牌服务不能降级为 HTTP")
-	}
+	// A Bearer realm owns its HTTP/HTTPS choice independently from the Registry endpoint.
 	query := parsed.Query()
 	for _, name := range []string{"service", "scope"} {
 		if parameters[name] != "" {

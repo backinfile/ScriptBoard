@@ -38,6 +38,9 @@ func TestAdministratorCanRegisterMySQLInstanceFromDatabaseWorkspace(t *testing.T
 			t.Fatalf("database workspace is missing partial-refresh region %q: %s", expected, body)
 		}
 	}
+	if !strings.Contains(string(body), "TLS can be disabled, preferred, or required. Disabling TLS sends credentials and database traffic in plaintext.") {
+		t.Fatalf("database form does not explain plaintext mode: %s", body)
+	}
 	response, err = client.PostForm(serverURL+"/resources/databases/instances", url.Values{
 		"csrf_token": {formToken(t, body)}, "name": {"Production"}, "host": {"db.internal"}, "port": {"3306"},
 		"username": {"scriptboard"}, "password": {"database-password"}, "tls_mode": {"preferred"},

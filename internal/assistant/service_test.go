@@ -109,6 +109,22 @@ func TestNewModelConfigurationRequiresCredential(t *testing.T) {
 	}
 }
 
+func TestModelConfigurationAcceptsRemoteHTTPServer(t *testing.T) {
+	t.Parallel()
+
+	service, _, _ := newTestService(t)
+	model, err := service.SaveModel(context.Background(), Actor{UserID: "admin-one"}, "", ModelInput{
+		Name: "LAN model", Provider: ProviderOpenAICompatible, Model: "local-model",
+		Endpoint: "http://llm.internal:11434/v1", APIKey: "lan-secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model.Endpoint != "http://llm.internal:11434/v1" {
+		t.Fatalf("endpoint=%q", model.Endpoint)
+	}
+}
+
 func TestModelReasoningDefaultsArePersistedAndInheritedByNewConversations(t *testing.T) {
 	t.Parallel()
 

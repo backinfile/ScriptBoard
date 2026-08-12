@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -419,23 +418,14 @@ func normalizeModelInput(input ModelInput) (ModelInput, error) {
 	if err != nil || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
 		return ModelInput{}, fmt.Errorf("%w: invalid LLM endpoint", ErrInvalidInput)
 	}
-	secure := endpoint.Scheme == "https"
-	loopback := endpoint.Scheme == "http" && isLoopbackHost(endpoint.Hostname())
-	if !secure && !loopback {
-		return ModelInput{}, fmt.Errorf("%w: LLM endpoint must use HTTPS or loopback HTTP", ErrInvalidInput)
+	// LAN and self-hosted providers may intentionally expose a remote plaintext HTTP endpoint.
+	if endpoint.Scheme != "http" && endpoint.Scheme != "https" {
+		return ModelInput{}, fmt.Errorf("%w: LLM endpoint must use HTTP or HTTPS", ErrInvalidInput)
 	}
 	if len(input.APIKey) > 8<<10 || strings.ContainsRune(input.APIKey, 0) || !utf8.ValidString(input.APIKey) {
 		return ModelInput{}, fmt.Errorf("%w: invalid provider credential", ErrInvalidInput)
 	}
 	return input, nil
-}
-
-func isLoopbackHost(host string) bool {
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }
 
 func boundedText(value string, minimum, maximum int) bool {

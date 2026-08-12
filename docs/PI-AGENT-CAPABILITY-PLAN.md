@@ -355,7 +355,7 @@ type ExternalKnowledge interface {
 - 搜索请求只发送用户确认的查询词；默认不自动附加日志、文件正文、主机名或 URL。
 - Fetch 仅接受 Search 返回的短期不透明文档 ID，不接受模型构造的 URL。
 - Adapter 重新解析 DNS，阻止 loopback、私网、链路本地、云元数据地址和不安全重定向。
-- 仅接收 HTTPS 文本内容，限制响应头、正文、解压大小、重定向次数和总耗时。
+- 接收 HTTP 或 HTTPS 文本内容；HTTP 明确标记为明文连接，同时限制响应头、正文、解压大小、重定向次数和总耗时。
 - 外部正文净化后标记来源、抓取时间和不可信数据；不得根据网页指令调用修改工具。
 - 每次出站查询在 Tool Ledger 中可见，并记录不含查询正文的审计摘要。
 - Playbook 不能自动打开联网能力，也不能绕过用户或管理员的出站策略。
@@ -558,7 +558,7 @@ assistant_conversations
 
 - 默认关闭时没有 DNS、HTTP、遥测或包更新请求。
 - 凭据不进入 Pi 环境、数据库、日志、审计或响应正文。
-- 私网、loopback、链路本地、云元数据、非 HTTPS 和危险重定向被拒绝。
+- 私网、loopback、链路本地、云元数据、不支持的非 HTTP(S) scheme 和危险重定向被拒绝；HTTP 作为显式明文模式保留。
 - 查询正文不会自动包含日志、文件、主机名、URL、变量或凭据。
 - 外部 Prompt Injection 不能触发状态修改、启用联网或改变允许列表。
 - Network Adapter 与 Mock Adapter 通过同一个 Interface 测试 surface。

@@ -206,7 +206,7 @@ Windows：
 - 默认不使用进程环境代理；代理必须在 ScriptBoard 中显式配置并作为独立信任边界审计。
 - 网站监控若确需探测内网，创建显式 `internal-network-probe` 高风险能力，由管理员逐监控器开启，并显示目标解析结果和警告。
 - 云元数据地址不可通过普通“允许内网”开关放行，应要求更高一级的明确配置。
-- `SkipTLSVerification` 改为临时、有到期时间的例外，页面持续告警并写审计；远程 ScriptBoard 汇聚默认强制 HTTPS。
+- `SkipTLSVerification` 改为临时、有到期时间的例外，页面持续告警并写审计；远程 ScriptBoard 汇聚同时支持显式 HTTP 与 HTTPS，并持续标记 HTTP 的明文风险。
 
 验收条件：
 

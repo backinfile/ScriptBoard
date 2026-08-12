@@ -64,6 +64,15 @@ func TestKubernetesPageConfiguresTheOnlyClusterAndListsWorkloads(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !bytes.Contains(page, []byte("Connect Kubernetes")) || !bytes.Contains(page, []byte(`/monitor/kubernetes/connection`)) {
 		t.Fatalf("unconfigured page: status=%d body=%s", response.StatusCode, page)
 	}
+	response, err = client.Get(serverURL + "/monitor/kubernetes/connection")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if !bytes.Contains(page, []byte("Kubeconfig servers may use HTTP or HTTPS. HTTP sends credentials and cluster data without transport encryption.")) {
+		t.Fatalf("connection page does not explain HTTP support: %s", page)
+	}
 
 	response, err = client.PostForm(serverURL+"/monitor/kubernetes/connection", url.Values{
 		"csrf_token": {formToken(t, page)}, "name": {"edge-home"}, "kubeconfig_path": {"/etc/scriptboard/kubeconfig"}, "context": {"default"}, "mode": {"limited"},

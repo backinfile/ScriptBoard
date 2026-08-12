@@ -43,6 +43,9 @@ func TestCustomDashboardCanBeExportedAndImported(t *testing.T) {
 	}
 	page, _ = io.ReadAll(response.Body)
 	response.Body.Close()
+	if !bytes.Contains(page, []byte("支持 HTTP 与 HTTPS；HTTP 请求头和响应均为明文传输。")) {
+		t.Fatalf("dashboard form does not explain HTTP support: %s", page)
+	}
 	response, err = client.PostForm(serverURL+"/config/dashboards/"+dashboardID+"/cards", url.Values{
 		"csrf_token": {formToken(t, page)}, "name": {"服务额度"}, "type": {"quota"},
 		"source_url": {"https://api.example.test/usage"}, "value_path": {"usage.used"},
@@ -55,7 +58,7 @@ func TestCustomDashboardCanBeExportedAndImported(t *testing.T) {
 	response.Body.Close()
 	response, err = client.PostForm(serverURL+"/config/dashboards/"+dashboardID+"/cards", url.Values{
 		"csrf_token": {formToken(t, page)}, "name": {"请求次数"}, "type": {"number"},
-		"source_url": {"https://api.example.test/requests"}, "value_path": {"metrics.count"},
+		"source_url": {"http://api.example.test/requests"}, "value_path": {"metrics.count"},
 		"unit": {"次"}, "refresh_seconds": {"60"},
 	})
 	if err != nil {
@@ -178,7 +181,7 @@ func TestCustomDashboardCanBeExportedAndImported(t *testing.T) {
 	importedPage, _ := io.ReadAll(response.Body)
 	response.Body.Close()
 	importedRendered := string(importedPage)
-	for _, expected := range []string{"迁移测试", "私有 · 3 张卡片", "请求次数", "https://api.example.test/requests", `value="次"`, `name="slug" value="transfer-test"`} {
+	for _, expected := range []string{"迁移测试", "私有 · 3 张卡片", "请求次数", "http://api.example.test/requests", `value="次"`, `name="slug" value="transfer-test"`} {
 		if !strings.Contains(importedRendered, expected) {
 			t.Fatalf("imported dashboard missing %q", expected)
 		}

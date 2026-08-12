@@ -69,7 +69,7 @@
             <label class="assistant-field assistant-field--wide"><span>{{t .Locale "assistant.configuration_name"}}</span><input name="name" required maxlength="48" autocomplete="off" placeholder="OpenAI · Production"></label>
             <label class="assistant-field"><span>{{t .Locale "assistant.provider"}}</span><select name="provider" required><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="openai-compatible">OpenAI Compatible</option></select></label>
             <label class="assistant-field"><span>{{t .Locale "assistant.model_id"}}</span><input name="model" required maxlength="160" autocomplete="off" placeholder="gpt-5.2"></label>
-            <label class="assistant-field assistant-field--wide"><span>API Endpoint</span><input name="endpoint" type="url" required value="https://api.openai.com/v1" autocomplete="off"></label>
+            <label class="assistant-field assistant-field--wide"><span>API Endpoint</span><input name="endpoint" type="url" required value="https://api.openai.com/v1" autocomplete="off"><small>{{t .Locale "assistant.endpoint_hint"}}</small></label>
             <label class="assistant-field assistant-field--wide"><span>API Key</span><input name="api_key" type="password" maxlength="8192" autocomplete="new-password" placeholder="{{t .Locale "assistant.credential_placeholder"}}"><small data-credential-help>{{t .Locale "assistant.credential_description"}}</small></label>
           </div>
           <section class="assistant-llm-options" aria-labelledby="llm-capabilities-title">

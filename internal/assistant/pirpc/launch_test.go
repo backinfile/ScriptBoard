@@ -87,6 +87,17 @@ func TestPrepareLaunchUsesPrivateRuntimeAndConversationDirectories(t *testing.T)
 	}
 }
 
+func TestValidateEndpointAcceptsRemoteHTTPAndHTTPS(t *testing.T) {
+	for _, endpoint := range []string{"http://llm.internal:11434/v1", "https://llm.example/v1"} {
+		if err := validateEndpoint(endpoint); err != nil {
+			t.Fatalf("validateEndpoint(%q): %v", endpoint, err)
+		}
+	}
+	if err := validateEndpoint("ftp://llm.internal/model"); err == nil {
+		t.Fatal("unsupported provider scheme was accepted")
+	}
+}
+
 func TestPrepareLaunchIsolatesTwoConversations(t *testing.T) {
 	stateRoot := t.TempDir()
 	executable := filepath.Join(stateRoot, "assistant", "runtime", "versions", "test", runtimeExecutableName())
