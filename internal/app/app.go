@@ -347,6 +347,7 @@ type Config struct {
 	AssistantProcessLauncher  pirpc.ProcessLauncher
 	RunnerProcessLauncher     runmanager.ProcessLauncher
 	AuditCheckpoint           AuditCheckpoint
+	MFAStore                  MFAStore
 	SecurityEventEndpoint     string
 	SecurityEventToken        string
 	SecurityEventTokenFile    string
@@ -358,6 +359,14 @@ type AuditCheckpoint interface {
 	VerifyOrBootstrap(context.Context, *auditlog.Store, time.Time) error
 	Write(context.Context, *auditlog.Store, time.Time) error
 	CheckpointEventID() int64
+}
+
+type MFAStore interface {
+	Status(string) (mfa.Status, error)
+	Begin(string, string) (mfa.Enrollment, error)
+	Confirm(string, string) ([]string, error)
+	Verify(string, string) (bool, error)
+	Reset(string) error
 }
 
 type App struct {
@@ -397,7 +406,7 @@ type App struct {
 	externalTriggers     *externaltrigger.Manager
 	externalLimit        *externaltrigger.Limiter
 	mysql                *mysqlmanager.Manager
-	mfa                  *mfa.Store
+	mfa                  MFAStore
 	passkeys             *passkey.Store
 	passkeyCeremonies    *passkeyCeremonyStore
 	mysqlContext         context.Context
@@ -447,9 +456,12 @@ func Open(config Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	mfaStore, err := mfa.New(mfa.Options{StateRoot: stateRoot, SecretStore: credentialStore})
-	if err != nil {
-		return nil, err
+	mfaStore := config.MFAStore
+	if mfaStore == nil {
+		mfaStore, err = mfa.New(mfa.Options{StateRoot: stateRoot, SecretStore: credentialStore})
+		if err != nil {
+			return nil, err
+		}
 	}
 	passkeyStore, err := passkey.New(passkey.Options{StateRoot: stateRoot, SecretStore: credentialStore})
 	if err != nil {

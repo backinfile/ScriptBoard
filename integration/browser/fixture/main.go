@@ -208,6 +208,7 @@ func main() {
 		applicationConfig.PrivilegedBrokerEndpoint = brokerEndpoint
 		brokerClient := privilegebroker.NewClient(privilegebroker.ClientOptions{Dial: privilegebroker.Dial(brokerEndpoint)})
 		applicationConfig.AuditCheckpoint = privilegebroker.NewRemoteCheckpoint(brokerClient)
+		applicationConfig.MFAStore = privilegebroker.NewRemoteMFA(brokerClient)
 		applicationConfig.AssistantProcessLauncher = runtimehost.NewClientLauncher(runtimehost.Dial(assistantEndpoint))
 		applicationConfig.RunnerProcessLauncher = runnerhost.NewClientLauncher(runnerhost.Dial(runnerEndpoint))
 	}

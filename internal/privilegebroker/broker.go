@@ -21,6 +21,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"scriptboard/internal/mfa"
 )
 
 const (
@@ -33,6 +35,11 @@ const (
 	operationExecute          = "execute"
 	operationCheckpointVerify = "checkpoint_verify"
 	operationCheckpointWrite  = "checkpoint_write"
+	operationMFAStatus        = "mfa_status"
+	operationMFABegin         = "mfa_begin"
+	operationMFAConfirm       = "mfa_confirm"
+	operationMFAVerify        = "mfa_verify"
+	operationMFAReset         = "mfa_reset"
 	statusOK                  = "ok"
 	statusError               = "error"
 	defaultCallDeadline       = 35 * time.Second
@@ -122,6 +129,14 @@ type CheckpointService interface {
 	Write(context.Context) (int64, error)
 }
 
+type MFAService interface {
+	Status(string) (mfa.Status, error)
+	Begin(string, string) (mfa.Enrollment, error)
+	Confirm(string, string) ([]string, error)
+	Verify(string, string) (bool, error)
+	Reset(string) error
+}
+
 type ServerOptions struct {
 	Listener   net.Listener
 	VerifyPeer func(net.Conn) error
@@ -129,6 +144,7 @@ type ServerOptions struct {
 	Executor   Executor
 	Auditor    Auditor
 	Checkpoint CheckpointService
+	MFA        MFAService
 	Now        func() time.Time
 }
 
@@ -139,6 +155,7 @@ type Server struct {
 	executor   Executor
 	auditor    Auditor
 	checkpoint CheckpointService
+	mfa        MFAService
 	now        func() time.Time
 
 	mu           sync.Mutex
@@ -170,15 +187,23 @@ type wireRequest struct {
 	Revision         string          `json:"revision"`
 	ParametersSHA256 string          `json:"parameters_sha256"`
 	Parameters       json.RawMessage `json:"parameters,omitempty"`
+	MFAUserID        string          `json:"mfa_user_id,omitempty"`
+	MFAAccount       string          `json:"mfa_account,omitempty"`
+	MFACode          string          `json:"mfa_code,omitempty"`
 }
 
 type wireResponse struct {
-	Status     string `json:"status"`
-	Capability string `json:"capability,omitempty"`
-	ExpiresAt  int64  `json:"expires_at,omitempty"`
-	ErrorCode  string `json:"error_code,omitempty"`
-	Message    string `json:"message,omitempty"`
-	EventID    int64  `json:"event_id,omitempty"`
+	Status            string          `json:"status"`
+	Capability        string          `json:"capability,omitempty"`
+	ExpiresAt         int64           `json:"expires_at,omitempty"`
+	ErrorCode         string          `json:"error_code,omitempty"`
+	Message           string          `json:"message,omitempty"`
+	EventID           int64           `json:"event_id,omitempty"`
+	MFAEnabled        bool            `json:"mfa_enabled,omitempty"`
+	MFARecoveryCodes  int             `json:"mfa_recovery_codes,omitempty"`
+	MFAEnrollment     *mfa.Enrollment `json:"mfa_enrollment,omitempty"`
+	MFARecoveryValues []string        `json:"mfa_recovery_values,omitempty"`
+	MFAVerified       bool            `json:"mfa_verified,omitempty"`
 }
 
 func NewServer(options ServerOptions) (*Server, error) {
@@ -191,7 +216,7 @@ func NewServer(options ServerOptions) (*Server, error) {
 	}
 	return &Server{
 		listener: options.Listener, verifyPeer: options.VerifyPeer, authorizer: options.Authorizer,
-		executor: options.Executor, auditor: options.Auditor, checkpoint: options.Checkpoint, now: now,
+		executor: options.Executor, auditor: options.Auditor, checkpoint: options.Checkpoint, mfa: options.MFA, now: now,
 		capabilities: make(map[string]capabilityBinding), done: make(chan struct{}),
 	}, nil
 }
@@ -237,10 +262,49 @@ func (server *Server) handle(connection net.Conn) {
 		response = server.execute(request)
 	case operationCheckpointVerify, operationCheckpointWrite:
 		response = server.checkpointOperation(request.Operation)
+	case operationMFAStatus, operationMFABegin, operationMFAConfirm, operationMFAVerify, operationMFAReset:
+		response = server.mfaOperation(request)
 	default:
 		response = wireResponse{Status: statusError, ErrorCode: "operation_forbidden", Message: "operation is not supported"}
 	}
 	writeWireResponse(connection, response)
+}
+
+func (server *Server) mfaOperation(request wireRequest) wireResponse {
+	if server.mfa == nil {
+		return wireResponse{Status: statusError, ErrorCode: "mfa_unavailable", Message: "MFA service is unavailable"}
+	}
+	var err error
+	response := wireResponse{Status: statusOK}
+	switch request.Operation {
+	case operationMFAStatus:
+		var status mfa.Status
+		status, err = server.mfa.Status(request.MFAUserID)
+		response.MFAEnabled, response.MFARecoveryCodes = status.Enabled, status.RecoveryCodes
+	case operationMFABegin:
+		var enrollment mfa.Enrollment
+		enrollment, err = server.mfa.Begin(request.MFAUserID, request.MFAAccount)
+		response.MFAEnrollment = &enrollment
+	case operationMFAConfirm:
+		response.MFARecoveryValues, err = server.mfa.Confirm(request.MFAUserID, request.MFACode)
+	case operationMFAVerify:
+		response.MFAVerified, err = server.mfa.Verify(request.MFAUserID, request.MFACode)
+	case operationMFAReset:
+		err = server.mfa.Reset(request.MFAUserID)
+	}
+	if err == nil {
+		return response
+	}
+	code := "mfa_failed"
+	switch {
+	case errors.Is(err, mfa.ErrAlreadyEnabled):
+		code = "mfa_already_enabled"
+	case errors.Is(err, mfa.ErrEnrollmentAbsent):
+		code = "mfa_enrollment_absent"
+	case errors.Is(err, mfa.ErrInvalidCode):
+		code = "mfa_invalid_code"
+	}
+	return wireResponse{Status: statusError, ErrorCode: code, Message: "MFA operation failed"}
 }
 
 func (server *Server) checkpointOperation(operation string) wireResponse {
@@ -458,10 +522,34 @@ func validateWireRequest(request wireRequest) error {
 	}
 	if request.Operation == operationCheckpointVerify || request.Operation == operationCheckpointWrite {
 		if request.SessionToken != "" || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
-			request.ParametersSHA256 != "" || len(request.Parameters) != 0 {
+			request.ParametersSHA256 != "" || len(request.Parameters) != 0 || request.MFAUserID != "" || request.MFAAccount != "" || request.MFACode != "" {
 			return errors.New("checkpoint request is invalid")
 		}
 		return nil
+	}
+	if isMFAOperation(request.Operation) {
+		if request.SessionToken != "" || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
+			request.ParametersSHA256 != "" || len(request.Parameters) != 0 || len(request.MFAUserID) == 0 || len(request.MFAUserID) > 160 || strings.ContainsAny(request.MFAUserID, "\r\n\x00") {
+			return errors.New("MFA request is invalid")
+		}
+		switch request.Operation {
+		case operationMFAStatus, operationMFAReset:
+			if request.MFAAccount != "" || request.MFACode != "" {
+				return errors.New("MFA request contains unrelated fields")
+			}
+		case operationMFABegin:
+			if len(request.MFAAccount) == 0 || len(request.MFAAccount) > 320 || strings.ContainsAny(request.MFAAccount, "\r\n\x00") || request.MFACode != "" {
+				return errors.New("MFA enrollment request is invalid")
+			}
+		case operationMFAConfirm, operationMFAVerify:
+			if request.MFAAccount != "" || len(request.MFACode) == 0 || len(request.MFACode) > 128 || strings.ContainsAny(request.MFACode, "\r\n\x00") {
+				return errors.New("MFA verification request is invalid")
+			}
+		}
+		return nil
+	}
+	if request.MFAUserID != "" || request.MFAAccount != "" || request.MFACode != "" {
+		return errors.New("privileged action contains MFA fields")
 	}
 	if _, ok := actions[request.Action]; !ok {
 		return errors.New("action is not registered")
@@ -489,6 +577,15 @@ func validateWireRequest(request wireRequest) error {
 		return errors.New("operation is invalid")
 	}
 	return nil
+}
+
+func isMFAOperation(operation string) bool {
+	switch operation {
+	case operationMFAStatus, operationMFABegin, operationMFAConfirm, operationMFAVerify, operationMFAReset:
+		return true
+	default:
+		return false
+	}
 }
 
 func parametersDigest(parameters []byte) string {

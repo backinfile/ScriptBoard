@@ -447,6 +447,7 @@ func serveContext(runContext context.Context, arguments []string) error {
 	var assistantLauncher pirpc.ProcessLauncher
 	var runnerLauncher runmanager.ProcessLauncher
 	var auditCheckpoint app.AuditCheckpoint
+	var mfaStore app.MFAStore
 	privilegedBrokerEndpoint := ""
 	if installRoot != "" {
 		if err := platformservice.ValidateWebRuntimeIdentity(); err != nil {
@@ -468,6 +469,7 @@ func serveContext(runContext context.Context, arguments []string) error {
 		}
 		brokerClient := privilegebroker.NewClient(privilegebroker.ClientOptions{Dial: privilegebroker.Dial(privilegedBrokerEndpoint)})
 		auditCheckpoint = privilegebroker.NewRemoteCheckpoint(brokerClient)
+		mfaStore = privilegebroker.NewRemoteMFA(brokerClient)
 	}
 	updateShutdown := make(chan struct{}, 1)
 	var requestRestart func() error
@@ -493,6 +495,7 @@ func serveContext(runContext context.Context, arguments []string) error {
 		RunnerProcessLauncher:    runnerLauncher,
 		PrivilegedBrokerEndpoint: privilegedBrokerEndpoint,
 		AuditCheckpoint:          auditCheckpoint,
+		MFAStore:                 mfaStore,
 	})
 	if err != nil {
 		return err

@@ -2,17 +2,78 @@ package app_test
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"scriptboard/internal/app"
+	"scriptboard/internal/mfa"
 	"scriptboard/internal/privilegebroker"
+	"scriptboard/internal/secretstore"
 )
+
+func TestManagedMFADomainStateIsOwnedByPrivilegedBroker(t *testing.T) {
+	root := t.TempDir()
+	stateRoot := filepath.Join(root, "web-state")
+	brokerSecretRoot := filepath.Join(root, "broker-secrets")
+	transportOptions := privilegebroker.TransportOptions{StateRoot: stateRoot, DevelopmentCurrentUser: true}
+	if runtime.GOOS == "linux" {
+		transportOptions.Endpoint = filepath.Join(root, "broker.sock")
+	}
+	transport, err := privilegebroker.Listen(transportOptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vault, err := secretstore.New(brokerSecretRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	brokerMFA, err := mfa.New(mfa.Options{StateRoot: brokerSecretRoot, SecretStore: vault})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := privilegebroker.NewServer(privilegebroker.ServerOptions{
+		Listener: transport.Listener, VerifyPeer: transport.VerifyPeer,
+		Authorizer: &capturingPrivilegedAuthorizer{}, Executor: &capturingPrivilegedExecutor{}, MFA: brokerMFA,
+	})
+	if err != nil {
+		_ = transport.Close()
+		t.Fatal(err)
+	}
+	server.Start()
+	t.Cleanup(func() {
+		_ = server.Close()
+		_ = transport.Close()
+	})
+	brokerClient := privilegebroker.NewClient(privilegebroker.ClientOptions{Dial: privilegebroker.Dial(transport.Endpoint)})
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{
+		StateRoot: stateRoot, PrivilegedBrokerEndpoint: transport.Endpoint,
+		MFAStore: privilegebroker.NewRemoteMFA(brokerClient),
+	})
+	page := getBody(t, client, serverURL+"/settings/account/mfa", http.StatusOK)
+	response, err := client.PostForm(serverURL+"/settings/account/mfa/enroll", url.Values{"csrf_token": {formToken(t, page)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK || !strings.Contains(string(body), "data-mfa-secret") {
+		t.Fatalf("remote MFA enrollment status=%d body=%s", response.StatusCode, body)
+	}
+	if _, err := os.Stat(filepath.Join(brokerSecretRoot, "secrets", "account-mfa.enc")); err != nil {
+		t.Fatalf("Broker-owned MFA state missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stateRoot, "secrets", "account-mfa.enc")); !os.IsNotExist(err) {
+		t.Fatalf("Web State Root unexpectedly owns MFA ciphertext: %v", err)
+	}
+}
 
 func TestProductionHostSecurityMutationUsesSessionBoundPrivilegedBroker(t *testing.T) {
 	root := t.TempDir()

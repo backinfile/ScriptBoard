@@ -16,6 +16,7 @@ import (
 	"scriptboard/internal/auditcheckpoint"
 	"scriptboard/internal/auditlog"
 	"scriptboard/internal/hostsecurity"
+	"scriptboard/internal/mfa"
 	"scriptboard/internal/privilegebroker"
 	"scriptboard/internal/secretredaction"
 	"scriptboard/internal/secretstore"
@@ -78,6 +79,10 @@ func runContext(ctx context.Context, arguments []string) error {
 	if err := checkpoint.VerifyOrBootstrap(context.Background(), audit, time.Now().UTC()); err != nil {
 		return fmt.Errorf("verify signed audit checkpoint before privileged Broker startup: %w", err)
 	}
+	mfaStore, err := mfa.New(mfa.Options{StateRoot: absolute, SecretStore: vault})
+	if err != nil {
+		return fmt.Errorf("initialize Broker-owned MFA state: %w", err)
+	}
 	databaseSecurity, err := privilegebroker.NewDatabaseSecurity(database, audit, time.Now)
 	if err != nil {
 		return err
@@ -100,6 +105,7 @@ func runContext(ctx context.Context, arguments []string) error {
 		Listener: transport.Listener, VerifyPeer: transport.VerifyPeer,
 		Authorizer: databaseSecurity, Executor: executor, Auditor: databaseSecurity,
 		Checkpoint: brokerCheckpointService{store: checkpoint, audit: audit}, Now: time.Now,
+		MFA: mfaStore,
 	})
 	if err != nil {
 		return err
