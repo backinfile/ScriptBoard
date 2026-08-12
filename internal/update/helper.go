@@ -293,6 +293,16 @@ func rollbackOperation(ctx context.Context, operation *Operation, cause error) e
 	if err := SaveOperation(*operation); err != nil {
 		return err
 	}
+	// Do not switch executables until the rollback database is known-good. A
+	// corrupt or truncated snapshot must leave the currently active release and
+	// database untouched for explicit recovery.
+	if err := verifyDatabaseSnapshot(operation.SnapshotPath); err != nil {
+		operation.Phase = PhaseNeedsRecovery
+		operation.Error = cause.Error() + "; rollback snapshot failed verification: " + err.Error()
+		_ = SaveOperation(*operation)
+		_ = writeResult(*operation, operation.Error)
+		return errors.New(operation.Error)
+	}
 	_ = platformservice.Stop()
 	metadata, err := loadOperationInstallation(*operation)
 	if err == nil {
@@ -534,17 +544,35 @@ func waitForServiceStopped(ctx context.Context, timeout time.Duration) error {
 }
 
 func restoreDatabase(snapshot, database string) error {
+	if err := verifyDatabaseSnapshot(snapshot); err != nil {
+		return err
+	}
 	temporary := database + ".update-restore"
+	previous := database + ".update-replaced"
 	_ = os.Remove(temporary)
 	if err := copyFileSync(snapshot, temporary, 0o600); err != nil {
 		return err
 	}
+	defer os.Remove(temporary)
+	if err := verifyDatabaseSnapshot(temporary); err != nil {
+		return fmt.Errorf("verify staged database restore: %w", err)
+	}
 	_ = os.Remove(database + "-wal")
 	_ = os.Remove(database + "-shm")
-	if err := os.Remove(database); err != nil && !os.IsNotExist(err) {
+	_ = os.Remove(previous)
+	if _, err := os.Stat(database); err == nil {
+		if err := os.Rename(database, previous); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
 		return err
 	}
-	return os.Rename(temporary, database)
+	if err := os.Rename(temporary, database); err != nil {
+		_ = os.Rename(previous, database)
+		return err
+	}
+	_ = os.Remove(previous)
+	return syncDirectory(filepath.Dir(database))
 }
 
 func copyFileSync(source, destination string, mode os.FileMode) error {
