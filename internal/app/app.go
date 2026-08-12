@@ -3979,8 +3979,15 @@ func (a *App) startRun(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	current := request.Context().Value(sessionContextKey).(session)
+	script, err := a.files.PrepareScript(request.FormValue("script"))
+	if err != nil {
+		a.recordAuditForRequest(request, "start_run", request.FormValue("script"), "rejected")
+		http.Error(response, "脚本不可执行："+err.Error(), http.StatusBadRequest)
+		return
+	}
 	id, err := a.runs.Start(runmanager.StartRequest{
-		ScriptPath:        request.FormValue("script"),
+		ScriptPath:        script.Path,
+		ExpectedDigest:    script.Digest,
 		ArgumentsTemplate: request.FormValue("arguments"),
 		SourceType:        "admin/manual",
 		SourceName:        "manual",
@@ -3990,11 +3997,11 @@ func (a *App) startRun(response http.ResponseWriter, request *http.Request) {
 		InitiatorUsername: current.username,
 	})
 	if err != nil {
-		a.recordAuditForRequest(request, "start_run", request.FormValue("script"), "rejected")
+		a.recordAuditResourceForRequest(request, "start_run", script.Path, "rejected", "", script.Digest)
 		http.Error(response, "无法启动脚本："+err.Error(), http.StatusBadRequest)
 		return
 	}
-	a.recordAuditForRequest(request, "start_run", id, "accepted")
+	a.recordAuditResourceForRequest(request, "start_run", id, "accepted", "", script.Digest)
 	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/history/runs/"+url.PathEscape(id), http.StatusSeeOther)
 }

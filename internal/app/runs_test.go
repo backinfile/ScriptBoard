@@ -1,6 +1,9 @@
 package app_test
 
 import (
+	"crypto/sha256"
+	"database/sql"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -54,6 +57,19 @@ func TestAdminCanRunScriptAndReadCompletedOutput(t *testing.T) {
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusSeeOther || !strings.HasPrefix(response.Header.Get("Location"), "/history/runs/") {
 		t.Fatalf("start response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatalf("open state database: %v", err)
+	}
+	defer database.Close()
+	var auditDigest string
+	if err := database.QueryRow(`SELECT resource_digest_sha256 FROM audit_events
+		WHERE action = 'start_run' AND result = 'accepted' ORDER BY id DESC LIMIT 1`).Scan(&auditDigest); err != nil {
+		t.Fatalf("read start audit digest: %v", err)
+	}
+	if expected := fmt.Sprintf("%x", sha256.Sum256([]byte(scriptContent))); auditDigest != expected {
+		t.Fatalf("start audit digest = %q, want %q", auditDigest, expected)
 	}
 	runURL := serverURL + response.Header.Get("Location")
 
