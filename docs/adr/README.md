@@ -52,6 +52,7 @@
 
 ## 最新决策
 
+- [ADR-0156 将受管 MFA 状态限制在 Broker 内](./0156-keep-managed-mfa-state-inside-the-broker.md)，让受管 Web 只调用状态、注册、确认、验证与重置五个领域操作，并拒绝把 Broker 退化为通用 Seal/Unseal 服务。
 - [ADR-0147 受管 Web 使用低权限、实例专用服务身份](./0147-run-managed-web-under-a-low-privilege-service-identity.md)，让 Linux Web 使用无登录 `scriptboard-web`、Windows Web 使用 `LocalService` 与独立服务 SID，并按目录授予最小 ACL；Broker 保持 root/LocalSystem。
 - [ADR-0148 将 AI Runtime 隔离到独立 Host 身份](./0148-isolate-ai-runtime-behind-a-dedicated-host.md)，让受管 Web 仅通过领域级本机 IPC 启动 Runtime；Linux 使用独立 UID 和环回网络，Windows 使用独立服务 SID 与私有目录 ACL。
 - [ADR-0149 将 Run 隔离到独立 Worker 身份](./0149-isolate-runs-behind-a-dedicated-worker.md)，让受管 Web 只发送不可变作业描述，由独立 Runner 复核摘要、执行器、目录和资源边界。

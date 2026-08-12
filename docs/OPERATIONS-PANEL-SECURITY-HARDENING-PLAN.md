@@ -29,7 +29,7 @@ ScriptBoard 已有一批值得保留的安全基础：Argon2id 密码哈希、�
 | 计划项 | 本分支状态 | 说明 |
 | --- | --- | --- |
 | P0-01 | 完成 | 260 条路由均通过 fail-closed 注册器声明方法、认证方式、权限、CSRF 与请求体策略；运行时前缀权限推断已删除，角色/方法矩阵从 `RouteSpec` 清单自动验证。 |
-| P0-02 | 五个迁移切片完成 | 正式包新增独立 Broker、AI Host 与 Runner 受管服务。固定宿主写动作只经 Broker；受管 Linux Web 使用无登录 `scriptboard-web`，Windows Web 使用独立服务 SID 的 `LocalService`。AI 与 Run 分别使用独立 OS 身份和受保护 IPC：Web 不再持有其子进程，Runner 会在启动点复核脚本摘要、工作目录和自己配置的 executor。受管 Web 也不再解封或持有审计 checkpoint 私钥，只能要求 Broker 独立重验权威数据库后校验/刷新当前链。Ubuntu 26.04 的真实 systemd 安装已验证 AI/Runner 无法读取应用数据库和主密钥；Web 仍可读取通用主密钥，Host Files 与其他领域凭据解封也仍在 Web 进程/身份内，因此 P0-02 验收仍未完成。 |
+| P0-02 | 六个迁移切片完成 | 正式包新增独立 Broker、AI Host 与 Runner 受管服务。固定宿主写动作只经 Broker；受管 Linux Web 使用无登录 `scriptboard-web`，Windows Web 使用独立服务 SID 的 `LocalService`。AI 与 Run 分别使用独立 OS 身份和受保护 IPC：Web 不再持有其子进程，Runner 会在启动点复核脚本摘要、工作目录和自己配置的 executor。受管 Web 不再解封或持有审计 checkpoint 私钥，也不再打开或解封 TOTP/恢复码状态；MFA 只经状态、注册、确认、验证和重置五个 Broker 领域操作，协议拒绝通用密文和任意 payload。Ubuntu 26.04 的真实 systemd 安装已验证 AI/Runner 无法读取应用数据库和主密钥；Web 仍因 Passkey、Provider、MySQL、External Interface/远程连接等兼容消费者而可读取通用主密钥，Host Files 特权也仍在 Web 进程/身份内，因此 P0-02 验收仍未完成。 |
 | P0-03 | 四个切片完成 | Run 使用最小环境；执行器必须解析为规范绝对普通文件，Linux 校验 root/服务身份所有权及不可被组/其他用户写入，Windows 仅接受服务身份、SYSTEM、Administrators 或 TrustedInstaller 所有并拒绝不可信主体的写入型 ACL；参数控制字符被拒绝并有 fuzz 覆盖。所有生产 Go 子进程现经 `internal/processlaunch` 构造并显式选择继承或精确环境，仓库级 AST 门禁阻止包括别名导入在内的 `exec.Command*` 旁路。MySQL 导入参数由固定构造器生成，数据库名置于 `--` 后，并强制非交互 binary/batch 模式禁用 `system`、`source`、pager、tee 等本地客户端命令。各第三方 CLI 的剩余字段类型继续按领域收紧。 |
 | P0-04 | 五个切片完成 | 建立共享出站策略并覆盖网站 HTTP/WebSocket 探测、远程监控聚合、GitHub 更新检查/下载、签名 Assistant Runtime 下载、Assistant Provider 代理及 Custom Dashboard 数据源；这些默认客户端不使用环境代理，DNS 解析后的实际 IP 由受控 Dialer 固定并拒绝私网、元数据和非常规端口。Provider 代理只转发当前会话绑定的 Provider、模型和推理 API 路径；Dashboard 数据源禁止重定向、URL 内嵌凭据及保留请求头；远程 ScriptBoard 聚合只接受 HTTPS，网站探测跳过 TLS 验证的例外最长一小时并记录到期时间。 |
 | P0-05 | 两个切片完成 | 代理默认信任为空，非可信转发头被清理；新增 `allowed_hosts` 与 `canonical_external_url` 安全默认，可信代理 Host 仍须通过白名单，错误 Host/Origin 在业务 Handler 前拒绝。可信 peer 只接受单值 `X-Forwarded-*` 合同，拒绝标准 `Forwarded` 混用、重复字段、空值、非法 IP/Host/Proto 和超过 8 跳的链；黑盒 Handler 测试覆盖可信 HTTPS 的 HSTS/Secure Cookie、Host poisoning 421 以及非可信伪造不提升安全状态。真实 Nginx/Caddy/IIS 与 IPv6 部署矩阵仍待平台门禁。 |
@@ -52,6 +52,7 @@ P0-02、P0-08 至 P0-11 的其余结构性工作以及 P1/P2 未在本分支宣�
 - 受管 Web 启动时通过 Broker 的无参数 `checkpoint_verify` 校验外部审计锚点；正常 systemd stop 时通过 `checkpoint_write` 刷新，且 Broker 在 Web 之后退出。实测 checkpoint 文件随 Web 正常关闭推进，随后离线 `audit verify --json` 仍返回有效链和有效签名；协议拒绝夹带 session、动作、参数或任意签名 payload。
 - `audit verify --json` 在该安装上返回有效链和有效签名 checkpoint。测试发布未嵌入正式更新签名公钥，因此 `doctor` 只有 `update-signing-key` 检查按预期失败；该结果不能替代正式签名发布验证。
 - Windows 本地四进程部署通过登录、远端 Runner 一次性 Run、Quick Run 资源 revision/digest 审计和 Chromium 桌面门禁；随后在 `127.0.0.1:11149` 的外部 Chrome 复验手动 Host Files Run，执行身份为 `scriptboard-runner`，输出成功且审计 SHA-256 与磁盘脚本摘要一致。Windows SCM 安装需要提升权限，本轮未执行。
+- 同一四进程部署升级到 Broker-owned MFA 后，外部 Chrome 可正常读取 MFA 设置页；精确停止 Broker 时该页面返回受控 HTTP 500，Broker 恢复后立即可用，未回退到 Web 本地 MFA store。隔离集成测试还使用不同的 Web/Broker 凭据根确认 MFA 密文只在 Broker 侧产生。
 
 ## 2. 产品边界与设计决策
 
