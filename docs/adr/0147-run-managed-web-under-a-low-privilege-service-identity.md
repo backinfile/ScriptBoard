@@ -14,6 +14,7 @@ Windows Web 改用低权限 `NT AUTHORITY\LocalService`，同时启用 `NT SERVI
 `scriptboard-web` UID 且不能是 UID 0；Windows 必须同时是 LocalService，并带有启用状态的
 `NT SERVICE\ScriptBoard` SID。身份不符时 Web 在打开数据库和监听端口前 fail closed。
 
-这使 Web 漏洞不再自动继承防火墙、包管理和其他 Broker 主机权限，但尚未完成全部 P0-02：Run、
-Assistant Runtime、Host Files 与凭据解封仍需要独立进程/身份边界。目前授予 Web 外部密钥目录
-访问是兼容现有凭据消费者的过渡措施，后续迁移完成后必须收回。
+这使 Web 漏洞不再自动继承防火墙、包管理和其他 Broker 主机权限。Run 与 Assistant Runtime
+已经迁移到独立 Runner/AI Host 身份；Ubuntu 26.04 的实际权限探针也确认这两个身份无法读取应用
+数据库和实例主密钥。但 P0-02 仍未全部完成：Host Files 与凭据解封仍需要移出 Web 的进程/身份
+边界。目前授予 Web 外部密钥目录访问是兼容现有凭据消费者的过渡措施，后续迁移完成后必须收回。
