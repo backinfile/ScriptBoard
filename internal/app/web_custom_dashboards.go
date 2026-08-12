@@ -35,7 +35,7 @@ type customDashboardCardView struct {
 	QuotaProgressLabel                            string
 	QuotaProgress                                 float64
 	DisplayIndex                                  int
-	CanMoveUp, CanMoveDown                        bool
+	CanMoveUp, CanMoveDown, StringValue           bool
 	Websites                                      []customDashboardWebsiteView
 	SelectedMonitorIDs                            map[string]bool
 	InsecureSource                                bool
@@ -187,7 +187,10 @@ func (a *App) newCustomDashboardPageView(request *http.Request, dashboard custom
 		}
 		item.ValueLabel = formatDashboardValue(card.Snapshot.Value)
 		item.SecondaryLabel = formatDashboardValue(card.Snapshot.Secondary)
-		if card.Type == customdashboard.CardPercentage {
+		if _, ok := card.Snapshot.Value.(string); ok && card.Type == customdashboard.CardNumber {
+			item.StringValue = true
+		}
+		if card.Type == customdashboard.CardNumber || card.Type == customdashboard.CardPercentage {
 			item.SecondaryLabel = ""
 		}
 		item.QuotaProgress = card.Snapshot.Number

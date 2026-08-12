@@ -571,8 +571,17 @@ func (m *Manager) RefreshCard(ctx context.Context, id string) (Card, error) {
 		return m.recordFailure(ctx, card, errors.New("返回内容不是有效 JSON"))
 	}
 	snapshot := Snapshot{}
-	snapshot.Number, err = Evaluate(card.ValuePath, document)
-	snapshot.Value = snapshot.Number
+	if card.Type == CardNumber {
+		if value, extractErr := Extract(document, card.ValuePath); extractErr == nil {
+			if text, ok := value.(string); ok {
+				snapshot.Value = text
+			}
+		}
+	}
+	if snapshot.Value == nil {
+		snapshot.Number, err = Evaluate(card.ValuePath, document)
+		snapshot.Value = snapshot.Number
+	}
 	if err == nil && card.SecondaryPath != "" {
 		var secondary float64
 		secondary, err = Evaluate(card.SecondaryPath, document)

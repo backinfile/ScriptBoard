@@ -6308,10 +6308,13 @@ document.addEventListener("change", function (event) {
   }
   const valueLabel = form.querySelector("[data-dashboard-value-expression-label]");
   const valueInput = form.querySelector("[data-dashboard-value-expression-input]");
-  const labels = { number: "数值表达式", percentage: "百分比表达式", quota: "已用额度表达式" };
+  const valueHint = form.querySelector("[data-dashboard-value-expression-hint]");
+  const labels = { number: "取值表达式", percentage: "百分比表达式", quota: "已用额度表达式" };
   const placeholders = { number: "data.value", percentage: "data.used / data.total * 100", quota: "data.used" };
-  if (valueLabel) valueLabel.textContent = labels[type] || "数值表达式";
+  const hints = { number: "字符串使用 JSON 路径；数字支持路径与 + − × ÷、括号运算", percentage: "支持 JSON 路径与 + − × ÷、括号运算", quota: "支持 JSON 路径与 + − × ÷、括号运算" };
+  if (valueLabel) valueLabel.textContent = labels[type] || "取值表达式";
   if (valueInput) valueInput.placeholder = placeholders[type] || "data.value";
+  if (valueHint) valueHint.textContent = hints[type] || hints.number;
   form.querySelectorAll("[data-dashboard-card-preview]").forEach((preview) => {
     preview.hidden = preview.dataset.dashboardCardPreview !== type;
   });

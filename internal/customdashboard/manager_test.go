@@ -226,6 +226,35 @@ func TestRefreshCardEvaluatesBothValueExpressionsAndKeepsLastSuccessOnFailure(t 
 	}
 }
 
+func TestRefreshNumberCardKeepsStringValue(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"release":{"status":"版本 v1.2.3 / 生产环境"}}`))
+	}))
+	defer server.Close()
+
+	manager := testManager(t)
+	ctx := context.Background()
+	dashboard, err := manager.CreateDashboard(ctx, DashboardInput{Name: "发布状态", Slug: "release-status"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	card, err := manager.CreateCard(ctx, dashboard.ID, CardInput{
+		Name: "当前版本", Type: CardNumber, SourceURL: server.URL, ValuePath: "release.status",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	refreshed, err := manager.RefreshCard(ctx, card.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := refreshed.Snapshot.Value, "版本 v1.2.3 / 生产环境"; got != want {
+		t.Fatalf("value=%#v, want %#v", got, want)
+	}
+}
+
 func TestExtractSupportsArrayAndObjectPaths(t *testing.T) {
 	value := map[string]any{"subscriptions": []any{map[string]any{"subscription": map[string]any{"amount_used": float64(12)}}}}
 	got, err := Extract(value, "subscriptions[0].subscription.amount_used")

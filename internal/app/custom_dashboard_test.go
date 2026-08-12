@@ -326,6 +326,66 @@ func TestRegistryCardCanBeConfiguredWithHTTPAndMultipleImages(t *testing.T) {
 	}
 }
 
+func TestNumberCardRendersStringValue(t *testing.T) {
+	root := t.TempDir()
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "host"), filepath.Join(root, "state"))
+	response, err := client.Get(serverURL + "/config/dashboards")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	response, err = client.PostForm(serverURL+"/config/dashboards", url.Values{
+		"csrf_token": {formToken(t, page)}, "name": {"发布状态"}, "slug": {"release-status"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	dashboardLocation := response.Header.Get("Location")
+	dashboardURL, err := url.Parse(dashboardLocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dashboardID := dashboardURL.Query().Get("dashboard")
+	if dashboardID == "" {
+		t.Fatal("created dashboard id missing")
+	}
+	response, err = client.Get(serverURL + dashboardLocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ = io.ReadAll(response.Body)
+	response.Body.Close()
+	if rendered := string(page); !strings.Contains(rendered, "显示数值或文本") || !strings.Contains(rendered, "字符串使用 JSON 路径") {
+		t.Fatalf("number card string guidance missing: %s", rendered)
+	}
+
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"build":{"label":"v1.2.3-rc.1 / 稳定"}}`)
+	}))
+	defer api.Close()
+	response, err = client.PostForm(serverURL+"/config/dashboards/"+dashboardID+"/cards", url.Values{
+		"csrf_token": {formToken(t, page)}, "name": {"当前版本"}, "type": {"number"},
+		"source_url": {api.URL}, "value_path": {"build.label"}, "refresh_seconds": {"60"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+
+	response, err = client.Get(serverURL + "/monitor/dashboard/" + dashboardID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	monitorPage, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	if rendered := string(monitorPage); response.StatusCode != http.StatusOK || !strings.Contains(rendered, "v1.2.3-rc.1 / 稳定") || !strings.Contains(rendered, "custom-dashboard-card__value--text") || strings.Contains(rendered, "custom-dashboard-card__secondary") {
+		t.Fatalf("number card string value missing: status=%d body=%s", response.StatusCode, rendered)
+	}
+}
+
 func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	root := t.TempDir()
 	client, serverURL := authenticatedClient(t, filepath.Join(root, "host"), filepath.Join(root, "state"))
