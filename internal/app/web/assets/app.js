@@ -188,6 +188,52 @@
     return svg;
   }
 
+  async function copyTextToClipboard(text) {
+    const value = String(text ?? "");
+    let clipboardError = null;
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(value);
+        return;
+      } catch (error) {
+        clipboardError = error;
+      }
+    }
+
+    // Remote plain-HTTP origins do not expose Async Clipboard, so retain a
+    // user-gesture fallback for LAN deployments and restore the page state.
+    const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const selection = document.getSelection();
+    const selectedRanges = selection
+      ? Array.from({ length: selection.rangeCount }, (_, index) => selection.getRangeAt(index).cloneRange())
+      : [];
+    const fallback = document.createElement("textarea");
+    fallback.value = value;
+    fallback.setAttribute("readonly", "");
+    fallback.style.position = "fixed";
+    fallback.style.left = "-9999px";
+    fallback.style.top = "0";
+    fallback.style.opacity = "0";
+    document.body.append(fallback);
+    fallback.focus({ preventScroll: true });
+    fallback.select();
+    fallback.setSelectionRange(0, fallback.value.length);
+
+    let copied = false;
+    try {
+      copied = document.execCommand("copy");
+    } finally {
+      fallback.remove();
+      if (selection) {
+        selection.removeAllRanges();
+        selectedRanges.forEach(range => selection.addRange(range));
+      }
+      activeElement?.focus({ preventScroll: true });
+    }
+    if (!copied) throw clipboardError || new Error("Clipboard copy failed");
+  }
+  window.ScriptBoardCopyText = copyTextToClipboard;
+
   function renderIcons(root = document) {
     root.querySelectorAll("[data-lucide]:not([data-icon-ready])").forEach(target => {
       target.prepend(makeIcon(target.dataset.lucide));
@@ -2468,7 +2514,7 @@
         const command = copyButton.closest("dd")?.querySelector("[data-runtime-command]")?.textContent || "";
         const original = copyButton.innerHTML;
         try {
-          await navigator.clipboard.writeText(command.trim());
+          await copyTextToClipboard(command.trim());
           copyButton.textContent = copyButton.dataset.copiedLabel;
           window.setTimeout(() => {
             copyButton.innerHTML = original;
@@ -2808,8 +2854,7 @@
         copyButton.setAttribute("aria-busy", "true");
 
         try {
-          if (!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable");
-          await navigator.clipboard.writeText(copyButton.dataset.copyValue || "");
+          await copyTextToClipboard(copyButton.dataset.copyValue || "");
           copyButton.dataset.state = "success";
           if (label) label.textContent = copyButton.dataset.copiedLabel;
           else {
@@ -2863,7 +2908,6 @@
         setControlIcon(copyIcon, "loader-circle");
 
         try {
-          if (!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable");
           const response = await fetch(copyButton.dataset.copyKeyUrl, {
             credentials: "same-origin",
             headers: { Accept: "application/json" },
@@ -2872,7 +2916,7 @@
           if (!response.ok) throw new Error(`Unable to copy key (${response.status})`);
           const payload = await response.json();
           if (typeof payload.key !== "string" || !payload.key) throw new Error("Key unavailable");
-          await navigator.clipboard.writeText(payload.key);
+          await copyTextToClipboard(payload.key);
           copyButton.dataset.state = "success";
           label.textContent = copyButton.dataset.copiedLabel;
           setControlIcon(copyIcon, "check");
@@ -2913,8 +2957,7 @@
         copyButton.setAttribute("aria-busy", "true");
 
         try {
-          if (!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable");
-          await navigator.clipboard.writeText(content.textContent);
+          await copyTextToClipboard(content.textContent);
           copyButton.dataset.state = "success";
           copyButton.setAttribute("aria-label", copyButton.dataset.copiedLabel);
           copyButton.dataset.tooltip = copyButton.dataset.copiedLabel;
@@ -4497,7 +4540,7 @@
         .map(row => row.dataset.logText || "")
         .join("\n");
       try {
-        await navigator.clipboard.writeText(text);
+        await copyTextToClipboard(text);
         if (copyLabel) copyLabel.textContent = root.dataset.logLabelCopied || "Copied";
         window.setTimeout(() => {
           if (copyLabel) copyLabel.textContent = root.dataset.logLabelCopy || "Copy";
@@ -6510,7 +6553,7 @@ document.addEventListener("click", async function (event) {
   if (!button) return;
   const label = button.querySelector("[data-copy-dashboard-label]");
   try {
-    await navigator.clipboard.writeText(new URL(button.dataset.copyDashboardUrl, window.location.origin).href);
+    await window.ScriptBoardCopyText(new URL(button.dataset.copyDashboardUrl, window.location.origin).href);
     if (label) label.textContent = "已复制";
   } catch (_) {
     if (label) label.textContent = "复制失败";
@@ -6665,20 +6708,7 @@ function updateDashboardTestPreview(form) {
 }
 
 async function copyDashboardFieldPath(path) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(path);
-    return;
-  }
-  const fallback = document.createElement("textarea");
-  fallback.value = path;
-  fallback.setAttribute("readonly", "");
-  fallback.style.position = "fixed";
-  fallback.style.opacity = "0";
-  document.body.append(fallback);
-  fallback.select();
-  const copied = document.execCommand("copy");
-  fallback.remove();
-  if (!copied) throw new Error("copy failed");
+  await window.ScriptBoardCopyText(path);
 }
 
 function renderDashboardJSONTree(root, value, path = "", search = "") {

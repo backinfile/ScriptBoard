@@ -2237,6 +2237,7 @@ async function assertExternalInterfaces(page, fixture) {
       navigator.clipboard.writeText = async () => {
         throw new Error("simulated clipboard failure");
       };
+      document.execCommand = () => false;
     });
     await secondarySecretRow.locator("[data-copy-password]").click();
     await secondarySecretRow.locator('[data-copy-password][data-state="error"]').waitFor();

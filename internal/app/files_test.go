@@ -304,7 +304,7 @@ func TestFilesPageOffersCopyPathsForDirectoriesAndFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{`[data-copy-value]`, `navigator.clipboard.writeText(copyButton.dataset.copyValue || "")`} {
+	for _, expected := range []string{`[data-copy-value]`, `copyTextToClipboard(copyButton.dataset.copyValue || "")`} {
 		if !bytes.Contains(script, []byte(expected)) {
 			t.Fatalf("interaction script does not contain %q", expected)
 		}
