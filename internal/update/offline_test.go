@@ -94,7 +94,7 @@ func writeOfflineReleaseArchive(t *testing.T, name string, release buildinfo.Inf
 	}
 	files := map[string][]byte{buildinfo.ReleaseInfoFilename: releaseRaw}
 	if runtime.GOOS == "windows" {
-		for _, required := range []string{"scriptboard.exe", "scriptboard-broker.exe", "scriptboard-ai-host.exe", "scriptboard-runner.exe", "scriptboard-tray.exe", "scriptboard-tray-launcher.exe", "scriptboard-updater.exe"} {
+		for _, required := range []string{"scriptboard.exe", "scriptboard-broker.exe", "scriptboard-ai-host.exe", "scriptboard-runner.exe", "scriptboard-tray.exe", "scriptboard-tray-launcher.exe", "scriptboard-updater.exe", "install.cmd"} {
 			files[required] = []byte("fixture-" + required)
 		}
 	} else {
@@ -103,6 +103,7 @@ func writeOfflineReleaseArchive(t *testing.T, name string, release buildinfo.Inf
 		files["scriptboard-ai-host"] = []byte("fixture-ai-host")
 		files["scriptboard-runner"] = []byte("fixture-runner")
 		files["scriptboard-updater"] = []byte("fixture-updater")
+		files["install.sh"] = []byte("fixture-installer")
 	}
 	var unpacked int64
 	for _, content := range files {

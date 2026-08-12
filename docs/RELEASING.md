@@ -14,7 +14,7 @@
 - `release-manifest.json`
 - `release-manifest.json.sig`
 
-每个归档都必须包含与二进制一致的 `RELEASE.json`。Windows 归档包含服务、托盘、稳定托盘启动器和 updater；Linux 归档包含服务和 updater。正式发布不允许缺少签名、减少平台或使用 prerelease 版本号。
+每个归档都必须包含与二进制一致的 `RELEASE.json`。Windows 归档包含 `install.cmd`、四个服务组件、托盘、稳定托盘启动器和 updater；Linux 归档包含 `install.sh`、四个服务组件和 updater。两个安装入口都调用主 CLI 的 `service install --start`，安装成功前会自动完成整体服务定义验证。正式发布不允许缺少安装入口、签名、平台或使用 prerelease 版本号。
 
 ## 首次配置签名密钥
 
@@ -113,6 +113,7 @@ Pi 版本、四个平台资产大小与 SHA-256，加入 `runtime/scriptboard-ex
 
 - `scriptboard version --json` 的 `tag`、`version`、完整 `commit`、`release_build` 与目标 Tag 一致；
 - 四个归档内的 `RELEASE.json` 一致，且平台内容完整；
+- 从每个平台归档执行单一安装入口后，输出匹配的产品版本和 `STATE: RUNNING`，无需人工追加 `start` 或 `verify`；
 - `release-manifest.json` 只包含四个平台资产，名称、大小、解压大小和 SHA-256 与实际文件一致；
 - 修改清单、签名或归档任意一个字节都会被拒绝；
 - ZIP/TAR 路径穿越、绝对路径、符号链接/硬链接、特殊文件、重复路径、超限文件数量或大小都会被拒绝；

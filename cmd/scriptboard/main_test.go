@@ -57,6 +57,13 @@ func TestRequireManagedConfigPathRejectsDifferentFile(t *testing.T) {
 	}
 }
 
+func TestRequireManagedConfigPathAcceptsSameMissingDefaultFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := requireManagedConfigPath(path, path); err != nil {
+		t.Fatalf("same absent default config rejected: %v", err)
+	}
+}
+
 func TestHelpDoesNotDocumentRemovedManagedRootShortcuts(t *testing.T) {
 	originalStdout := os.Stdout
 	output, err := os.CreateTemp(t.TempDir(), "scriptboard-help-*.txt")
@@ -85,6 +92,19 @@ func TestHelpDoesNotDocumentRemovedManagedRootShortcuts(t *testing.T) {
 		if strings.Contains(string(help), removed) {
 			t.Fatalf("help still documents removed option %s:\n%s", removed, help)
 		}
+	}
+	if !strings.Contains(string(help), "service install [--start]") {
+		t.Fatalf("help does not document the complete managed install option:\n%s", help)
+	}
+}
+
+func TestServiceInstallStartOptionIsRemovedBeforeConfigParsing(t *testing.T) {
+	start, remaining := takeBooleanArgument([]string{"--config", "fixture.yaml", "--start"}, "--start")
+	if !start {
+		t.Fatal("service install did not recognize --start")
+	}
+	if got := strings.Join(remaining, " "); got != "--config fixture.yaml" {
+		t.Fatalf("remaining service install arguments = %q", got)
 	}
 }
 

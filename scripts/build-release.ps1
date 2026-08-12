@@ -151,6 +151,7 @@ try {
         go build -trimpath -ldflags $commonLDFlags -o (Join-Path $stage "scriptboard-updater.exe") ./cmd/scriptboard-updater
         if ($LASTEXITCODE -ne 0) { throw "Building Windows $arch updater failed" }
         Write-ReleaseInfo $stage
+        Copy-Item (Join-Path $PSScriptRoot "install.cmd") -Destination $stage
         Copy-Item README.md, README_EN.md, LICENSE* -Destination $stage -ErrorAction SilentlyContinue
         Compress-ReleaseArchive $stage (Join-Path $outputRoot "$name.zip")
     }
@@ -170,6 +171,7 @@ try {
         go build -trimpath -ldflags $commonLDFlags -o (Join-Path $stage "scriptboard-updater") ./cmd/scriptboard-updater
         if ($LASTEXITCODE -ne 0) { throw "Building Linux $arch updater failed" }
         Write-ReleaseInfo $stage
+        Copy-Item (Join-Path $PSScriptRoot "install.sh") -Destination $stage
         Copy-Item README.md, README_EN.md, LICENSE* -Destination $stage -ErrorAction SilentlyContinue
         tar -czf (Join-Path $outputRoot "$name.tar.gz") -C $stage .
         if ($LASTEXITCODE -ne 0) { throw "Packaging Linux $arch archive failed" }

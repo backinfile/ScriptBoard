@@ -87,27 +87,25 @@ state/secrets/initial-admin-password
 
 ### Windows
 
-在管理员 PowerShell 中运行：
+解压完整正式发布包后，在管理员 PowerShell 中运行一个安装入口：
 
 ```powershell
-.\scriptboard.exe service install
-.\scriptboard.exe service start
-.\scriptboard.exe service status
-.\scriptboard.exe service verify --config C:\ProgramData\ScriptBoard\config.yaml
+.\install.cmd
 ```
+
+安装入口会整体安装、复核并启动 ScriptBoard；成功时输出产品版本和 `STATE: RUNNING`。高级诊断仍可使用 `.\scriptboard.exe service status` 和 `.\scriptboard.exe service verify`。若需要自定义配置，可把相同的配置参数传给安装入口，例如 `.\install.cmd --config C:\secure\scriptboard.yaml`。
 
 服务默认安装到 `C:\Program Files\ScriptBoard`，状态数据保存在 `C:\ProgramData\ScriptBoard\state`。安装会初始化状态并注册 Web、`ScriptBoardBroker`、`ScriptBoardAI` 与 `ScriptBoardRunner` 四个服务；Web 使用低权限 `LocalService` 与独立服务 SID，Broker 保留 LocalSystem，防火墙和主机安全写操作只经保护的本机 Named Pipe 进入 Broker。AI 与 Runner 使用各自的 restricted service SID 和 SCM demand-start，Web 对二者只有 `START + QUERY_STATUS`；Windows Service Hardening 默认阻断它们的网络，AI 只允许访问 IPv4/IPv6 环回 Provider 代理，Runner 无网络例外。四服务的崩溃恢复采用两次退避重启后停止的有界策略，避免永久重启风暴。安装时还会为当前 Windows 用户配置托盘自启动。
 
 ### Linux
 
-运行：
+解压完整正式发布包后运行一个安装入口：
 
 ```bash
-sudo ./scriptboard service install
-sudo /opt/scriptboard/current/scriptboard service start
-sudo /opt/scriptboard/current/scriptboard service status
-sudo /opt/scriptboard/current/scriptboard service verify --config /etc/scriptboard/config.yaml
+sudo sh ./install.sh
 ```
+
+安装入口会整体安装、复核并启动 ScriptBoard；成功时输出产品版本和 `STATE: RUNNING`。高级诊断仍可使用 `sudo /opt/scriptboard/current/scriptboard service status` 和 `service verify`。若需要自定义配置，可把相同的配置参数传给安装入口，例如 `sudo sh ./install.sh --config /etc/scriptboard/custom.yaml`。
 
 服务默认安装到 `/opt/scriptboard`，状态数据保存在 `/var/lib/scriptboard/state`。安装会初始化状态，创建无登录 `scriptboard-web`、`scriptboard-ai` 与 `scriptboard-runner` 系统用户，并注册 Web、Broker、AI Host 与 Runner 四个 systemd 组件；Web 与 Broker 常驻，AI Host 和 Runner 由各自受保护的 Unix Socket 按需激活，未使用 AI 或尚无 Run 时不会预先启动对应执行进程。Web 不以 root 运行，防火墙和主机安全写操作只经校验 peer UID 的本机 Unix Socket 进入 root Broker。AI 只允许环回网络，Runner 默认无 IP 网络；两个 Runtime 服务都使用 systemd seccomp allowlist、空 capability 和资源上限。
 

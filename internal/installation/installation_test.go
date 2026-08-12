@@ -28,13 +28,13 @@ func TestPrepareCreatesVersionedInstallation(t *testing.T) {
 	}
 	raw, _ := json.Marshal(info)
 	files := map[string][]byte{
-		"scriptboard": []byte("service"), "scriptboard-broker": []byte("broker"), "scriptboard-ai-host": []byte("ai-host"), "scriptboard-runner": []byte("runner"), "scriptboard-updater": []byte("updater"),
+		"scriptboard": []byte("service"), "scriptboard-broker": []byte("broker"), "scriptboard-ai-host": []byte("ai-host"), "scriptboard-runner": []byte("runner"), "scriptboard-updater": []byte("updater"), "install.sh": []byte("installer"),
 		buildinfo.ReleaseInfoFilename: raw,
 	}
 	if runtime.GOOS == "windows" {
 		files = map[string][]byte{
 			"scriptboard.exe": []byte("service"), "scriptboard-broker.exe": []byte("broker"), "scriptboard-ai-host.exe": []byte("ai-host"), "scriptboard-runner.exe": []byte("runner"), "scriptboard-tray.exe": []byte("tray"),
-			"scriptboard-tray-launcher.exe": []byte("launcher"), "scriptboard-updater.exe": []byte("updater"),
+			"scriptboard-tray-launcher.exe": []byte("launcher"), "scriptboard-updater.exe": []byte("updater"), "install.cmd": []byte("installer"),
 			buildinfo.ReleaseInfoFilename: raw,
 		}
 	}
@@ -88,6 +88,16 @@ func TestPrepareCreatesVersionedInstallation(t *testing.T) {
 	}
 	assertSameFile(t, "Runner Host executable", ServiceRunnerExecutable(metadata), wantRunner)
 	assertSameFile(t, "state root", metadata.StateRoot, state)
+	installer := "install.sh"
+	if runtime.GOOS == "windows" {
+		installer = "install.cmd"
+	}
+	if err := os.Remove(filepath.Join(VersionRoot(metadata, metadata.Current), installer)); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateVersion(metadata, metadata.Current, info); err == nil {
+		t.Fatalf("Installed Release without %s passed validation", installer)
+	}
 }
 
 func assertSameFile(t *testing.T, label, got, want string) {

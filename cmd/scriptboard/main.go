@@ -101,7 +101,7 @@ func run(arguments []string) error {
 		return resetAdmin(arguments[2:])
 	case "service":
 		if len(arguments) < 2 {
-			return errors.New("可用服务命令：service install|uninstall|start|stop|restart|status|verify")
+			return errors.New("可用服务命令：service install [--start]|uninstall|start|stop|restart|status|verify")
 		}
 		return runService(arguments[1], arguments[2:])
 	case "update":
@@ -119,7 +119,8 @@ func printUsage() {
 
 用法：
   scriptboard serve [配置选项]
-  scriptboard service install|uninstall|start|stop|restart|status|verify
+  scriptboard service install [--start] [配置选项]
+  scriptboard service uninstall|start|stop|restart|status|verify
   scriptboard update status|check
   scriptboard update verify-package --archive PATH --manifest PATH --signature PATH [--json]
   scriptboard update repair-current --confirm REPAIR-CURRENT [配置选项]
@@ -309,6 +310,7 @@ func takeStringArgument(arguments []string, name string) (string, []string) {
 func runService(action string, arguments []string) error {
 	switch action {
 	case "install":
+		startAfterInstall, arguments := takeBooleanArgument(arguments, "--start")
 		loaded, err := config.Load(arguments, os.Getenv)
 		if err != nil {
 			return err
@@ -331,7 +333,7 @@ func runService(action string, arguments []string) error {
 			if err := platformservice.Install(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, installation.ServiceUpdaterExecutable(metadata), metadata.StateRoot, webStartupFiles(loaded)...); err != nil {
 				return err
 			}
-			return platformservice.InstallTrayAutostart(filepath.Join(metadata.InstallRoot, "scriptboard-tray-launcher.exe"), metadata.ConfigPath)
+			return finishManagedServiceInstall(loaded, metadata, startAfterInstall)
 		}
 		executable, err := os.Executable()
 		if err != nil {
@@ -358,7 +360,7 @@ func runService(action string, arguments []string) error {
 		if err := platformservice.Install(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, installation.ServiceUpdaterExecutable(metadata), metadata.StateRoot, webStartupFiles(loaded)...); err != nil {
 			return err
 		}
-		return platformservice.InstallTrayAutostart(filepath.Join(metadata.InstallRoot, "scriptboard-tray-launcher.exe"), metadata.ConfigPath)
+		return finishManagedServiceInstall(loaded, metadata, startAfterInstall)
 	case "uninstall":
 		if err := platformservice.Uninstall(); err != nil {
 			return err
@@ -390,22 +392,8 @@ func runService(action string, arguments []string) error {
 		if err != nil {
 			return err
 		}
-		metadata, err := installation.Load(loaded.StateRoot)
-		if err != nil {
-			return fmt.Errorf("load managed installation: %w", err)
-		}
-		if err := installation.ValidateVersion(metadata, metadata.Current, buildinfo.Current()); err != nil {
-			return fmt.Errorf("verify managed release: %w", err)
-		}
-		if err := requireManagedConfigPath(loaded.ConfigPath, metadata.ConfigPath); err != nil {
+		if err := verifyManagedService(loaded); err != nil {
 			return err
-		}
-		matches, err := platformservice.MatchesExecutable(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, metadata.StateRoot)
-		if err != nil {
-			return fmt.Errorf("verify managed service definitions: %w", err)
-		}
-		if !matches {
-			return errors.New("managed service definitions do not match the installed four-component release")
 		}
 		fmt.Fprintln(os.Stdout, "MANAGED_SERVICE_DEFINITIONS: VERIFIED")
 		return nil
@@ -414,9 +402,67 @@ func runService(action string, arguments []string) error {
 	}
 }
 
+func finishManagedServiceInstall(loaded config.Config, metadata installation.Metadata, start bool) error {
+	if err := platformservice.InstallTrayAutostart(filepath.Join(metadata.InstallRoot, "scriptboard-tray-launcher.exe"), metadata.ConfigPath); err != nil {
+		return err
+	}
+	if err := verifyManagedService(loaded); err != nil {
+		return fmt.Errorf("post-install verification failed: %w", err)
+	}
+	fmt.Fprintf(os.Stdout, "SCRIPTBOARD_INSTALLATION: VERIFIED\nVERSION: %s\n", metadata.Current)
+	if !start {
+		return nil
+	}
+	if err := platformservice.Start(); err != nil {
+		return fmt.Errorf("start verified ScriptBoard installation: %w", err)
+	}
+	deadline := time.Now().Add(45 * time.Second)
+	for {
+		status, err := platformservice.Status()
+		if err != nil {
+			return fmt.Errorf("read installed ScriptBoard status: %w", err)
+		}
+		if strings.Contains(status, "STATE: RUNNING") {
+			fmt.Fprint(os.Stdout, status)
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return errors.New("verified ScriptBoard installation did not reach RUNNING within 45 seconds")
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
+func verifyManagedService(loaded config.Config) error {
+	metadata, err := installation.Load(loaded.StateRoot)
+	if err != nil {
+		return fmt.Errorf("load managed installation: %w", err)
+	}
+	if err := installation.ValidateVersion(metadata, metadata.Current, buildinfo.Current()); err != nil {
+		return fmt.Errorf("verify managed release: %w", err)
+	}
+	if err := requireManagedConfigPath(loaded.ConfigPath, metadata.ConfigPath); err != nil {
+		return err
+	}
+	matches, err := platformservice.MatchesExecutable(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, metadata.StateRoot)
+	if err != nil {
+		return fmt.Errorf("verify managed service definitions: %w", err)
+	}
+	if !matches {
+		return errors.New("managed service definitions do not match the installed four-component release")
+	}
+	return nil
+}
+
 func requireManagedConfigPath(provided, expected string) error {
 	providedInfo, err := os.Stat(provided)
 	if err != nil {
+		if os.IsNotExist(err) {
+			_, expectedErr := os.Stat(expected)
+			if os.IsNotExist(expectedErr) && filepath.Clean(provided) == filepath.Clean(expected) {
+				return nil
+			}
+		}
 		return fmt.Errorf("inspect provided managed service config: %w", err)
 	}
 	expectedInfo, err := os.Stat(expected)

@@ -82,27 +82,25 @@ No YAML configuration file is needed when using the built-in defaults. ScriptBoa
 
 ### Windows
 
-Run the following in an elevated PowerShell window:
+Extract the complete stable release package, then run one installation entry point in an elevated PowerShell window:
 
 ```powershell
-.\scriptboard.exe service install
-.\scriptboard.exe service start
-.\scriptboard.exe service status
-.\scriptboard.exe service verify --config C:\ProgramData\ScriptBoard\config.yaml
+.\install.cmd
 ```
+
+The entry point installs, verifies, and starts ScriptBoard as one product. Success reports the product version and `STATE: RUNNING`. Advanced diagnostics remain available through `.\scriptboard.exe service status` and `.\scriptboard.exe service verify`. Pass configuration options through the installer when needed, for example `.\install.cmd --config C:\secure\scriptboard.yaml`.
 
 The service is installed under `C:\Program Files\ScriptBoard`, and state is stored under `C:\ProgramData\ScriptBoard\state`. Installation initializes state and registers Web, `ScriptBoardBroker`, `ScriptBoardAI`, and `ScriptBoardRunner` as one versioned product. Web runs as low-privilege `LocalService` with a per-service SID, while the Broker retains LocalSystem. AI Host and Runner use separate restricted service SIDs, default-deny network policy, bounded SCM crash recovery, and demand-start; Web receives only `START + QUERY_STATUS` on those two services. Installation also enables the tray app for the current Windows user.
 
 ### Linux
 
-Run:
+Extract the complete stable release package, then run one installation entry point:
 
 ```bash
-sudo ./scriptboard service install
-sudo /opt/scriptboard/current/scriptboard service start
-sudo /opt/scriptboard/current/scriptboard service status
-sudo /opt/scriptboard/current/scriptboard service verify --config /etc/scriptboard/config.yaml
+sudo sh ./install.sh
 ```
+
+The entry point installs, verifies, and starts ScriptBoard as one product. Success reports the product version and `STATE: RUNNING`. Advanced diagnostics remain available through `sudo /opt/scriptboard/current/scriptboard service status` and `service verify`. Pass configuration options through the installer when needed, for example `sudo sh ./install.sh --config /etc/scriptboard/custom.yaml`.
 
 The service is installed under `/opt/scriptboard`, and state is stored under `/var/lib/scriptboard/state`. Installation creates separate Web, Broker, AI Host, and Runner service identities as one versioned product. Web and Broker stay resident; protected systemd sockets activate AI Host and Runner on demand. Web does not run as root, and privileged or secret-bearing operations enter the root Broker only through a local Unix socket with peer-UID verification.
 

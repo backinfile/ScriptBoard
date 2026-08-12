@@ -131,6 +131,7 @@
 - [ ] Web 不能读取 Broker-only secret 目录；Runner/AI Host 不能读取应用数据库、Broker 密钥或彼此私有工作区；Named Pipe/Unix Socket 拒绝非授权 peer。
 - [ ] 手动运行时继承当前用户且不因不是最高权限而拒绝启动。
 - [ ] 服务安装、卸载、启停、状态、admin reset、config validate、doctor、version 命令可用。
+- [ ] 正式发布包提供一个平台安装入口；默认配置和自定义配置均能在一次调用内安装、自动验证、启动，并输出产品版本与 `STATE: RUNNING`。
 - [ ] 卸载会移除全部四个服务/socket 定义，但不删除配置、主机文件、数据库、外部密钥、备份或磁盘上已有 Git 历史。
 - [ ] `backup create|inspect|stage|commit|export-recovery|recover-host` 与 `update status|check|recover|verify-package` 可在 Web 不可用时执行；所有破坏性恢复均要求完整 ID/目标二次确认并保留可逆副本。
 - [ ] Windows 托盘无主窗口、单实例，菜单与 PRD 一致；退出托盘不停止服务。
@@ -149,7 +150,7 @@
 
 ## 12. 发布与兼容
 
-- [ ] Windows amd64/arm64 ZIP 含服务、托盘、托盘启动器和 updater；Linux amd64/arm64 tar.gz 含服务和 updater。
+- [ ] Windows amd64/arm64 ZIP 含 `install.cmd`、四个服务组件、托盘、托盘启动器和 updater；Linux amd64/arm64 tar.gz 含 `install.sh`、四个服务组件和 updater。
 - [ ] 正式 Tag Release 生成四个平台归档、`SHA256SUMS`、归档内 `RELEASE.json`、严格发布清单及其 Ed25519 detached signature；缺少签名 Secret 时发布失败。
 - [ ] `version --json`、Git Tag、清单、归档名和 `RELEASE.json` 的版本、Commit、平台及协议一致；不依赖 Node.js、Redis、消息队列或外部运行时。
 - [ ] 新版服务安装采用版本化 Install Root；Linux 使用稳定 `current` 入口，Windows 服务明确指向当前 Installed Release；同名旧式服务、缺失新版安装元数据或从不完整发布包安装时明确拒绝，不执行猜测、迁移或清理。

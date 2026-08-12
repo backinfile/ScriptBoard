@@ -408,7 +408,7 @@ starting → failed
 
 ```text
 scriptboard serve
-scriptboard service install|uninstall|start|stop|restart|status|verify
+scriptboard service install [--start]|uninstall|start|stop|restart|status|verify
 scriptboard admin reset
 scriptboard config validate
 scriptboard doctor
@@ -417,6 +417,7 @@ scriptboard version
 
 - Windows 直接使用服务控制管理器，不依赖 NSSM。
 - Linux 只正式支持 systemd。
+- 正式发布包提供单一平台安装入口；它使用 `service install --start` 完成整体安装、自动验证和启动。显式 `service verify` 只作为高级诊断入口，不是正常安装后的必要人工步骤。
 - `service uninstall` 不删除配置、主机文件、状态或已有 Git 历史。
 - 不提供用户备份/恢复命令。
 
