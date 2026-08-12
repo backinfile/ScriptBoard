@@ -39,6 +39,20 @@ func TestStoreEncryptsCredentialsAndPersistsCounterUpdates(t *testing.T) {
 	if err != nil || user.Credentials[0].Authenticator.SignCount != 9 {
 		t.Fatalf("updated user=%#v err=%v", user, err)
 	}
+	replaced := credential
+	replaced.PublicKey = []byte("attacker-controlled-key")
+	if err := store.Update("user-one", replaced); err != ErrCredentialIdentityMismatch {
+		t.Fatalf("public key replacement error=%v", err)
+	}
+	user, err = store.User("user-one", "alice")
+	if err != nil || !bytes.Equal(user.Credentials[0].PublicKey, credential.PublicKey) {
+		t.Fatalf("credential public key changed after rejected update: user=%#v err=%v", user, err)
+	}
+	replaced = credential
+	replaced.Flags.BackupEligible = !credential.Flags.BackupEligible
+	if err := store.Update("user-one", replaced); err != ErrCredentialIdentityMismatch {
+		t.Fatalf("backup eligibility replacement error=%v", err)
+	}
 
 	sealed, err := os.ReadFile(filepath.Join(root, "secrets", "account-passkeys.enc"))
 	if err != nil {

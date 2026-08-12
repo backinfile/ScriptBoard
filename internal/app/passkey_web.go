@@ -263,13 +263,13 @@ func (a *App) finishPasskeyRegistration(response http.ResponseWriter, request *h
 		return
 	}
 	credential, err := provider.CreateCredential(user, sessionData, parsed)
-	if err != nil || a.passkeys.Add(current.userID, input.Name, *credential) != nil {
+	if err != nil || addPasskeyWithContext(request.Context(), a.passkeys, current.userID, input.Name, *credential) != nil {
 		a.recordAuditForRequest(request, "passkey_enrollment", current.username, "failed")
 		http.Error(response, "passkey enrollment failed", http.StatusUnauthorized)
 		return
 	}
 	if _, err := a.db.ExecContext(request.Context(), `DELETE FROM sessions WHERE user_id = ?`, current.userID); err != nil {
-		_ = a.passkeys.Delete(current.userID, fmt.Sprintf("%x", credential.ID))
+		_ = deletePasskeyWithContext(request.Context(), a.passkeys, current.userID, fmt.Sprintf("%x", credential.ID))
 		http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusInternalServerError)
 		return
 	}
@@ -290,7 +290,7 @@ func (a *App) deletePasskey(response http.ResponseWriter, request *http.Request)
 		http.Error(response, "could not revoke sessions", http.StatusInternalServerError)
 		return
 	}
-	if err := a.passkeys.Delete(current.userID, credentialID); err != nil {
+	if err := deletePasskeyWithContext(request.Context(), a.passkeys, current.userID, credentialID); err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, passkey.ErrCredentialNotFound) {
 			status = http.StatusNotFound

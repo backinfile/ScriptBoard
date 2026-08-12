@@ -13,11 +13,67 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
+
 	"scriptboard/internal/app"
 	"scriptboard/internal/mfa"
+	"scriptboard/internal/passkey"
 	"scriptboard/internal/privilegebroker"
 	"scriptboard/internal/secretstore"
 )
+
+func TestManagedPasskeyDomainStateIsOwnedByPrivilegedBroker(t *testing.T) {
+	root := t.TempDir()
+	stateRoot := filepath.Join(root, "web-state")
+	brokerSecretRoot := filepath.Join(root, "broker-secrets")
+	transportOptions := privilegebroker.TransportOptions{StateRoot: stateRoot, DevelopmentCurrentUser: true}
+	if runtime.GOOS == "linux" {
+		transportOptions.Endpoint = filepath.Join(root, "broker.sock")
+	}
+	transport, err := privilegebroker.Listen(transportOptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vault, err := secretstore.New(brokerSecretRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	brokerPasskeys, err := passkey.New(passkey.Options{StateRoot: brokerSecretRoot, SecretStore: vault})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := privilegebroker.NewServer(privilegebroker.ServerOptions{
+		Listener: transport.Listener, VerifyPeer: transport.VerifyPeer,
+		Authorizer: &capturingPrivilegedAuthorizer{}, Executor: &capturingPrivilegedExecutor{}, Passkeys: brokerPasskeys,
+	})
+	if err != nil {
+		_ = transport.Close()
+		t.Fatal(err)
+	}
+	server.Start()
+	t.Cleanup(func() {
+		_ = server.Close()
+		_ = transport.Close()
+	})
+	brokerClient := privilegebroker.NewClient(privilegebroker.ClientOptions{Dial: privilegebroker.Dial(transport.Endpoint)})
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{
+		StateRoot: stateRoot, PrivilegedBrokerEndpoint: transport.Endpoint,
+		PasskeyStore: privilegebroker.NewRemotePasskey(brokerClient),
+	})
+	if err := brokerPasskeys.Add("administrator", "Broker security key", webauthn.Credential{ID: []byte{1, 2, 3}, PublicKey: []byte{4, 5, 6}}); err != nil {
+		t.Fatal(err)
+	}
+	page := getBody(t, client, serverURL+"/settings/account/mfa", http.StatusOK)
+	if !strings.Contains(string(page), "Broker security key") {
+		t.Fatalf("remote passkey is missing from account page: %s", page)
+	}
+	if _, err := os.Stat(filepath.Join(brokerSecretRoot, "secrets", "account-passkeys.enc")); err != nil {
+		t.Fatalf("Broker-owned passkey state missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stateRoot, "secrets", "account-passkeys.enc")); !os.IsNotExist(err) {
+		t.Fatalf("Web State Root unexpectedly owns passkey ciphertext: %v", err)
+	}
+}
 
 func TestManagedMFADomainStateIsOwnedByPrivilegedBroker(t *testing.T) {
 	root := t.TempDir()
@@ -137,7 +193,7 @@ func (authorizer *capturingPrivilegedAuthorizer) Authorize(_ context.Context, re
 	authorizer.mu.Lock()
 	authorizer.request = request
 	authorizer.mu.Unlock()
-	return privilegebroker.Actor{UserID: "admin", Username: "admin", Role: "administrator", AuthenticationAssurance: 1}, nil
+	return privilegebroker.Actor{UserID: "administrator", Username: "admin", Role: "administrator", AuthenticationAssurance: 1}, nil
 }
 
 type capturingPrivilegedExecutor struct {

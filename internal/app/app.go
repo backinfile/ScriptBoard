@@ -34,6 +34,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/go-webauthn/webauthn/webauthn"
 	"golang.org/x/crypto/argon2"
 	_ "modernc.org/sqlite"
 
@@ -348,6 +349,7 @@ type Config struct {
 	RunnerProcessLauncher     runmanager.ProcessLauncher
 	AuditCheckpoint           AuditCheckpoint
 	MFAStore                  MFAStore
+	PasskeyStore              PasskeyStore
 	SecurityEventEndpoint     string
 	SecurityEventToken        string
 	SecurityEventTokenFile    string
@@ -367,6 +369,62 @@ type MFAStore interface {
 	Confirm(string, string) ([]string, error)
 	Verify(string, string) (bool, error)
 	Reset(string) error
+}
+
+type PasskeyStore interface {
+	User(string, string) (passkey.User, error)
+	List(string) ([]passkey.CredentialView, error)
+	Add(string, string, webauthn.Credential) error
+	Update(string, webauthn.Credential) error
+	Delete(string, string) error
+	Reset(string) error
+}
+
+type contextualMFAStore interface {
+	BeginContext(context.Context, string, string) (mfa.Enrollment, error)
+	ConfirmContext(context.Context, string, string) ([]string, error)
+	ResetContext(context.Context, string) error
+}
+
+type contextualPasskeyStore interface {
+	AddContext(context.Context, string, string, webauthn.Credential) error
+	DeleteContext(context.Context, string, string) error
+	ResetContext(context.Context, string) error
+}
+
+func beginMFAWithContext(ctx context.Context, store MFAStore, userID, account string) (mfa.Enrollment, error) {
+	if contextual, ok := store.(contextualMFAStore); ok {
+		return contextual.BeginContext(ctx, userID, account)
+	}
+	return store.Begin(userID, account)
+}
+
+func confirmMFAWithContext(ctx context.Context, store MFAStore, userID, code string) ([]string, error) {
+	if contextual, ok := store.(contextualMFAStore); ok {
+		return contextual.ConfirmContext(ctx, userID, code)
+	}
+	return store.Confirm(userID, code)
+}
+
+func resetMFAWithContext(ctx context.Context, store MFAStore, userID string) error {
+	if contextual, ok := store.(contextualMFAStore); ok {
+		return contextual.ResetContext(ctx, userID)
+	}
+	return store.Reset(userID)
+}
+
+func addPasskeyWithContext(ctx context.Context, store PasskeyStore, userID, name string, credential webauthn.Credential) error {
+	if contextual, ok := store.(contextualPasskeyStore); ok {
+		return contextual.AddContext(ctx, userID, name, credential)
+	}
+	return store.Add(userID, name, credential)
+}
+
+func deletePasskeyWithContext(ctx context.Context, store PasskeyStore, userID, credentialID string) error {
+	if contextual, ok := store.(contextualPasskeyStore); ok {
+		return contextual.DeleteContext(ctx, userID, credentialID)
+	}
+	return store.Delete(userID, credentialID)
 }
 
 type App struct {
@@ -407,7 +465,7 @@ type App struct {
 	externalLimit        *externaltrigger.Limiter
 	mysql                *mysqlmanager.Manager
 	mfa                  MFAStore
-	passkeys             *passkey.Store
+	passkeys             PasskeyStore
 	passkeyCeremonies    *passkeyCeremonyStore
 	mysqlContext         context.Context
 	mysqlCancel          context.CancelFunc
@@ -463,9 +521,12 @@ func Open(config Config) (*App, error) {
 			return nil, err
 		}
 	}
-	passkeyStore, err := passkey.New(passkey.Options{StateRoot: stateRoot, SecretStore: credentialStore})
-	if err != nil {
-		return nil, err
+	passkeyStore := config.PasskeyStore
+	if passkeyStore == nil {
+		passkeyStore, err = passkey.New(passkey.Options{StateRoot: stateRoot, SecretStore: credentialStore})
+		if err != nil {
+			return nil, err
+		}
 	}
 	installRoot := strings.TrimSpace(config.InstallRoot)
 	if installRoot == "" {

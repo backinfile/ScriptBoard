@@ -40,7 +40,7 @@ func (a *App) beginMFAEnrollment(response http.ResponseWriter, request *http.Req
 		return
 	}
 	current := request.Context().Value(sessionContextKey).(session)
-	enrollment, err := a.mfa.Begin(current.userID, current.username)
+	enrollment, err := beginMFAWithContext(request.Context(), a.mfa, current.userID, current.username)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, mfa.ErrAlreadyEnabled) {
@@ -60,16 +60,16 @@ func (a *App) confirmMFAEnrollment(response http.ResponseWriter, request *http.R
 		return
 	}
 	current := request.Context().Value(sessionContextKey).(session)
-	codes, err := a.mfa.Confirm(current.userID, request.FormValue("mfa_code"))
+	codes, err := confirmMFAWithContext(request.Context(), a.mfa, current.userID, request.FormValue("mfa_code"))
 	if err != nil {
-		enrollment, _ := a.mfa.Begin(current.userID, current.username)
+		enrollment, _ := beginMFAWithContext(request.Context(), a.mfa, current.userID, current.username)
 		a.recordAuditForRequest(request, "mfa_enrollment", current.username, "failed")
 		a.renderMFAPage(response, request, http.StatusUnauthorized, mfaPageData{Enrollment: &enrollment, Error: webText(resolveWebLocale(request), "mfa.invalid_code")})
 		return
 	}
 	a.recordAuditForRequest(request, "mfa_enrollment", current.username, "succeeded")
 	if _, err := a.db.ExecContext(request.Context(), `DELETE FROM sessions WHERE user_id = ?`, current.userID); err != nil {
-		_ = a.mfa.Reset(current.userID)
+		_ = resetMFAWithContext(request.Context(), a.mfa, current.userID)
 		http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusInternalServerError)
 		return
 	}
@@ -88,7 +88,7 @@ func (a *App) resetMFA(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusInternalServerError)
 		return
 	}
-	if err := a.mfa.Reset(current.userID); err != nil {
+	if err := resetMFAWithContext(request.Context(), a.mfa, current.userID); err != nil {
 		a.recordAuditForRequest(request, "mfa_reset", current.username, "failed")
 		http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusInternalServerError)
 		return

@@ -22,15 +22,21 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
+
 	"scriptboard/internal/mfa"
+	"scriptboard/internal/passkey"
 )
 
 const (
 	ProtocolVersion           = 1
 	MaxRequestBytes           = 128 << 10
-	MaxResponseBytes          = 16 << 10
+	MaxResponseBytes          = 1 << 20
 	capabilityLifetime        = 30 * time.Second
 	maxCapabilities           = 1024
+	maxMFAVerifyFailureUsers  = 4096
+	maxMFAVerifyFailures      = 5
+	mfaVerifyFailureWindow    = 5 * time.Minute
 	operationAuthorize        = "authorize"
 	operationExecute          = "execute"
 	operationCheckpointVerify = "checkpoint_verify"
@@ -40,6 +46,12 @@ const (
 	operationMFAConfirm       = "mfa_confirm"
 	operationMFAVerify        = "mfa_verify"
 	operationMFAReset         = "mfa_reset"
+	operationPasskeyUser      = "passkey_user"
+	operationPasskeyList      = "passkey_list"
+	operationPasskeyAdd       = "passkey_add"
+	operationPasskeyUpdate    = "passkey_update"
+	operationPasskeyDelete    = "passkey_delete"
+	operationPasskeyReset     = "passkey_reset"
 	statusOK                  = "ok"
 	statusError               = "error"
 	defaultCallDeadline       = 35 * time.Second
@@ -55,6 +67,12 @@ const (
 	ActionWindowsFirewallAdd    Action = "windows_firewall_add"
 	ActionWindowsFirewallSet    Action = "windows_firewall_set_enabled"
 	ActionWindowsFirewallDelete Action = "windows_firewall_delete"
+	ActionMFABegin              Action = "mfa_begin"
+	ActionMFAConfirm            Action = "mfa_confirm"
+	ActionMFAReset              Action = "mfa_reset"
+	ActionPasskeyAdd            Action = "passkey_add"
+	ActionPasskeyDelete         Action = "passkey_delete"
+	ActionPasskeyReset          Action = "passkey_reset"
 )
 
 var (
@@ -137,6 +155,15 @@ type MFAService interface {
 	Reset(string) error
 }
 
+type PasskeyService interface {
+	User(string, string) (passkey.User, error)
+	List(string) ([]passkey.CredentialView, error)
+	Add(string, string, webauthn.Credential) error
+	Update(string, webauthn.Credential) error
+	Delete(string, string) error
+	Reset(string) error
+}
+
 type ServerOptions struct {
 	Listener   net.Listener
 	VerifyPeer func(net.Conn) error
@@ -145,6 +172,7 @@ type ServerOptions struct {
 	Auditor    Auditor
 	Checkpoint CheckpointService
 	MFA        MFAService
+	Passkeys   PasskeyService
 	Now        func() time.Time
 }
 
@@ -156,14 +184,21 @@ type Server struct {
 	auditor    Auditor
 	checkpoint CheckpointService
 	mfa        MFAService
+	passkeys   PasskeyService
 	now        func() time.Time
 
-	mu           sync.Mutex
-	capabilities map[string]capabilityBinding
-	closed       bool
-	closeOnce    sync.Once
-	done         chan struct{}
-	connections  sync.WaitGroup
+	mu                sync.Mutex
+	capabilities      map[string]capabilityBinding
+	closed            bool
+	closeOnce         sync.Once
+	done              chan struct{}
+	connections       sync.WaitGroup
+	mfaVerifyFailures map[string]mfaVerifyFailure
+}
+
+type mfaVerifyFailure struct {
+	count       int
+	windowStart time.Time
 }
 
 type capabilityBinding struct {
@@ -177,33 +212,40 @@ type capabilityBinding struct {
 }
 
 type wireRequest struct {
-	Version          int             `json:"version"`
-	Operation        string          `json:"operation"`
-	RequestID        string          `json:"request_id"`
-	SessionToken     string          `json:"session_token,omitempty"`
-	Capability       string          `json:"capability,omitempty"`
-	Action           Action          `json:"action"`
-	Resource         string          `json:"resource"`
-	Revision         string          `json:"revision"`
-	ParametersSHA256 string          `json:"parameters_sha256"`
-	Parameters       json.RawMessage `json:"parameters,omitempty"`
-	MFAUserID        string          `json:"mfa_user_id,omitempty"`
-	MFAAccount       string          `json:"mfa_account,omitempty"`
-	MFACode          string          `json:"mfa_code,omitempty"`
+	Version             int                  `json:"version"`
+	Operation           string               `json:"operation"`
+	RequestID           string               `json:"request_id"`
+	SessionToken        string               `json:"session_token,omitempty"`
+	Capability          string               `json:"capability,omitempty"`
+	Action              Action               `json:"action"`
+	Resource            string               `json:"resource"`
+	Revision            string               `json:"revision"`
+	ParametersSHA256    string               `json:"parameters_sha256"`
+	Parameters          json.RawMessage      `json:"parameters,omitempty"`
+	MFAUserID           string               `json:"mfa_user_id,omitempty"`
+	MFAAccount          string               `json:"mfa_account,omitempty"`
+	MFACode             string               `json:"mfa_code,omitempty"`
+	PasskeyUserID       string               `json:"passkey_user_id,omitempty"`
+	PasskeyUsername     string               `json:"passkey_username,omitempty"`
+	PasskeyName         string               `json:"passkey_name,omitempty"`
+	PasskeyCredentialID string               `json:"passkey_credential_id,omitempty"`
+	PasskeyCredential   *webauthn.Credential `json:"passkey_credential,omitempty"`
 }
 
 type wireResponse struct {
-	Status            string          `json:"status"`
-	Capability        string          `json:"capability,omitempty"`
-	ExpiresAt         int64           `json:"expires_at,omitempty"`
-	ErrorCode         string          `json:"error_code,omitempty"`
-	Message           string          `json:"message,omitempty"`
-	EventID           int64           `json:"event_id,omitempty"`
-	MFAEnabled        bool            `json:"mfa_enabled,omitempty"`
-	MFARecoveryCodes  int             `json:"mfa_recovery_codes,omitempty"`
-	MFAEnrollment     *mfa.Enrollment `json:"mfa_enrollment,omitempty"`
-	MFARecoveryValues []string        `json:"mfa_recovery_values,omitempty"`
-	MFAVerified       bool            `json:"mfa_verified,omitempty"`
+	Status             string                   `json:"status"`
+	Capability         string                   `json:"capability,omitempty"`
+	ExpiresAt          int64                    `json:"expires_at,omitempty"`
+	ErrorCode          string                   `json:"error_code,omitempty"`
+	Message            string                   `json:"message,omitempty"`
+	EventID            int64                    `json:"event_id,omitempty"`
+	MFAEnabled         bool                     `json:"mfa_enabled,omitempty"`
+	MFARecoveryCodes   int                      `json:"mfa_recovery_codes,omitempty"`
+	MFAEnrollment      *mfa.Enrollment          `json:"mfa_enrollment,omitempty"`
+	MFARecoveryValues  []string                 `json:"mfa_recovery_values,omitempty"`
+	MFAVerified        bool                     `json:"mfa_verified,omitempty"`
+	PasskeyUser        *passkey.User            `json:"passkey_user,omitempty"`
+	PasskeyCredentials []passkey.CredentialView `json:"passkey_credentials,omitempty"`
 }
 
 func NewServer(options ServerOptions) (*Server, error) {
@@ -216,8 +258,9 @@ func NewServer(options ServerOptions) (*Server, error) {
 	}
 	return &Server{
 		listener: options.Listener, verifyPeer: options.VerifyPeer, authorizer: options.Authorizer,
-		executor: options.Executor, auditor: options.Auditor, checkpoint: options.Checkpoint, mfa: options.MFA, now: now,
+		executor: options.Executor, auditor: options.Auditor, checkpoint: options.Checkpoint, mfa: options.MFA, passkeys: options.Passkeys, now: now,
 		capabilities: make(map[string]capabilityBinding), done: make(chan struct{}),
+		mfaVerifyFailures: make(map[string]mfaVerifyFailure),
 	}, nil
 }
 
@@ -264,18 +307,77 @@ func (server *Server) handle(connection net.Conn) {
 		response = server.checkpointOperation(request.Operation)
 	case operationMFAStatus, operationMFABegin, operationMFAConfirm, operationMFAVerify, operationMFAReset:
 		response = server.mfaOperation(request)
+	case operationPasskeyUser, operationPasskeyList, operationPasskeyAdd, operationPasskeyUpdate, operationPasskeyDelete, operationPasskeyReset:
+		response = server.passkeyOperation(request)
 	default:
 		response = wireResponse{Status: statusError, ErrorCode: "operation_forbidden", Message: "operation is not supported"}
 	}
 	writeWireResponse(connection, response)
 }
 
+func (server *Server) passkeyOperation(request wireRequest) wireResponse {
+	if server.passkeys == nil {
+		return wireResponse{Status: statusError, ErrorCode: "passkey_unavailable", Message: "passkey service is unavailable"}
+	}
+	mutation, response := server.authorizePasskeyMutation(request)
+	if response.Status != "" {
+		return response
+	}
+	var err error
+	response = wireResponse{Status: statusOK}
+	switch request.Operation {
+	case operationPasskeyUser:
+		var user passkey.User
+		user, err = server.passkeys.User(request.PasskeyUserID, request.PasskeyUsername)
+		response.PasskeyUser = &user
+	case operationPasskeyList:
+		response.PasskeyCredentials, err = server.passkeys.List(request.PasskeyUserID)
+	case operationPasskeyAdd:
+		err = server.passkeys.Add(request.PasskeyUserID, request.PasskeyName, *request.PasskeyCredential)
+	case operationPasskeyUpdate:
+		err = server.passkeys.Update(request.PasskeyUserID, *request.PasskeyCredential)
+	case operationPasskeyDelete:
+		err = server.passkeys.Delete(request.PasskeyUserID, request.PasskeyCredentialID)
+	case operationPasskeyReset:
+		err = server.passkeys.Reset(request.PasskeyUserID)
+	}
+	if err == nil {
+		if mutation != nil {
+			if auditErr := server.recordCredentialMutation(*mutation, "succeeded"); auditErr != nil {
+				return wireResponse{Status: statusError, ErrorCode: "audit_failed_after_execution", Message: "passkey operation completed but result audit failed"}
+			}
+		}
+		return response
+	}
+	if mutation != nil {
+		_ = server.recordCredentialMutation(*mutation, "failed")
+	}
+	code := "passkey_failed"
+	switch {
+	case errors.Is(err, passkey.ErrDuplicateCredential):
+		code = "passkey_duplicate"
+	case errors.Is(err, passkey.ErrCredentialLimit):
+		code = "passkey_limit"
+	case errors.Is(err, passkey.ErrCredentialNotFound):
+		code = "passkey_not_found"
+	case errors.Is(err, passkey.ErrCredentialIdentityMismatch):
+		code = "passkey_identity_mismatch"
+	case errors.Is(err, passkey.ErrCredentialTooLarge):
+		code = "passkey_too_large"
+	}
+	return wireResponse{Status: statusError, ErrorCode: code, Message: "passkey operation failed"}
+}
+
 func (server *Server) mfaOperation(request wireRequest) wireResponse {
 	if server.mfa == nil {
 		return wireResponse{Status: statusError, ErrorCode: "mfa_unavailable", Message: "MFA service is unavailable"}
 	}
+	mutation, response := server.authorizeMFAMutation(request)
+	if response.Status != "" {
+		return response
+	}
 	var err error
-	response := wireResponse{Status: statusOK}
+	response = wireResponse{Status: statusOK}
 	switch request.Operation {
 	case operationMFAStatus:
 		var status mfa.Status
@@ -288,12 +390,26 @@ func (server *Server) mfaOperation(request wireRequest) wireResponse {
 	case operationMFAConfirm:
 		response.MFARecoveryValues, err = server.mfa.Confirm(request.MFAUserID, request.MFACode)
 	case operationMFAVerify:
+		if !server.allowMFAVerify(request.MFAUserID) {
+			return response
+		}
 		response.MFAVerified, err = server.mfa.Verify(request.MFAUserID, request.MFACode)
+		if err == nil {
+			server.recordMFAVerifyResult(request.MFAUserID, response.MFAVerified)
+		}
 	case operationMFAReset:
 		err = server.mfa.Reset(request.MFAUserID)
 	}
 	if err == nil {
+		if mutation != nil {
+			if auditErr := server.recordCredentialMutation(*mutation, "succeeded"); auditErr != nil {
+				return wireResponse{Status: statusError, ErrorCode: "audit_failed_after_execution", Message: "MFA operation completed but result audit failed"}
+			}
+		}
 		return response
+	}
+	if mutation != nil {
+		_ = server.recordCredentialMutation(*mutation, "failed")
 	}
 	code := "mfa_failed"
 	switch {
@@ -305,6 +421,122 @@ func (server *Server) mfaOperation(request wireRequest) wireResponse {
 		code = "mfa_invalid_code"
 	}
 	return wireResponse{Status: statusError, ErrorCode: code, Message: "MFA operation failed"}
+}
+
+func (server *Server) allowMFAVerify(userID string) bool {
+	now := server.now().UTC()
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	server.pruneMFAVerifyFailuresLocked(now)
+	failure, exists := server.mfaVerifyFailures[userID]
+	if exists && failure.count >= maxMFAVerifyFailures {
+		return false
+	}
+	if !exists {
+		if len(server.mfaVerifyFailures) >= maxMFAVerifyFailureUsers {
+			return false
+		}
+		failure.windowStart = now
+	}
+	failure.count++
+	server.mfaVerifyFailures[userID] = failure
+	return true
+}
+
+func (server *Server) recordMFAVerifyResult(userID string, verified bool) {
+	now := server.now().UTC()
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	server.pruneMFAVerifyFailuresLocked(now)
+	if verified {
+		delete(server.mfaVerifyFailures, userID)
+	}
+}
+
+func (server *Server) pruneMFAVerifyFailuresLocked(now time.Time) {
+	for userID, failure := range server.mfaVerifyFailures {
+		if now.Sub(failure.windowStart) >= mfaVerifyFailureWindow || failure.windowStart.After(now.Add(time.Minute)) {
+			delete(server.mfaVerifyFailures, userID)
+		}
+	}
+}
+
+type credentialMutation struct {
+	action                      Action
+	resource, revision          string
+	requestID, parametersSHA256 string
+	actor                       Actor
+}
+
+func (server *Server) authorizeMFAMutation(request wireRequest) (*credentialMutation, wireResponse) {
+	var action Action
+	switch request.Operation {
+	case operationMFABegin:
+		action = ActionMFABegin
+	case operationMFAConfirm:
+		action = ActionMFAConfirm
+	case operationMFAReset:
+		action = ActionMFAReset
+	default:
+		return nil, wireResponse{}
+	}
+	parameters, _ := json.Marshal(struct {
+		Account string `json:"account,omitempty"`
+		Code    string `json:"code,omitempty"`
+	}{request.MFAAccount, request.MFACode})
+	return server.authorizeCredentialMutation(request, action, request.MFAUserID, "mfa-state-v1", parameters)
+}
+
+func (server *Server) authorizePasskeyMutation(request wireRequest) (*credentialMutation, wireResponse) {
+	var action Action
+	switch request.Operation {
+	case operationPasskeyAdd:
+		action = ActionPasskeyAdd
+	case operationPasskeyDelete:
+		action = ActionPasskeyDelete
+	case operationPasskeyReset:
+		action = ActionPasskeyReset
+	default:
+		return nil, wireResponse{}
+	}
+	parameters, _ := json.Marshal(struct {
+		Name         string               `json:"name,omitempty"`
+		CredentialID string               `json:"credential_id,omitempty"`
+		Credential   *webauthn.Credential `json:"credential,omitempty"`
+	}{request.PasskeyName, request.PasskeyCredentialID, request.PasskeyCredential})
+	return server.authorizeCredentialMutation(request, action, request.PasskeyUserID, "passkey-state-v1", parameters)
+}
+
+func (server *Server) authorizeCredentialMutation(request wireRequest, action Action, resource, revision string, parameters []byte) (*credentialMutation, wireResponse) {
+	digest := parametersDigest(parameters)
+	actor, err := server.authorizer.Authorize(context.Background(), AuthorizationRequest{
+		SessionToken: request.SessionToken, RequestID: request.RequestID, Action: action,
+		Resource: resource, Revision: revision, ParametersSHA256: digest,
+	})
+	if err != nil {
+		return nil, wireResponse{Status: statusError, ErrorCode: "authorization_denied", Message: "credential operation authorization denied"}
+	}
+	if actor.UserID != resource {
+		return nil, wireResponse{Status: statusError, ErrorCode: "authorization_denied", Message: "credential operation user binding denied"}
+	}
+	mutation := credentialMutation{action: action, resource: resource, revision: revision, requestID: request.RequestID, parametersSHA256: digest, actor: actor}
+	if err := server.recordCredentialMutation(mutation, "attempted"); err != nil {
+		return nil, wireResponse{Status: statusError, ErrorCode: "audit_failed", Message: "credential operation was not executed because intent audit failed"}
+	}
+	return &mutation, wireResponse{}
+}
+
+func (server *Server) recordCredentialMutation(mutation credentialMutation, result string) error {
+	if server.auditor == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return server.auditor.Record(ctx, AuditRecord{
+		OccurredAt: server.now().UTC(), RequestID: mutation.requestID, Actor: mutation.actor,
+		Action: mutation.action, Resource: mutation.resource, Revision: mutation.revision,
+		ParametersSHA256: mutation.parametersSHA256, Result: result,
+	})
 }
 
 func (server *Server) checkpointOperation(operation string) wireResponse {
@@ -522,34 +754,45 @@ func validateWireRequest(request wireRequest) error {
 	}
 	if request.Operation == operationCheckpointVerify || request.Operation == operationCheckpointWrite {
 		if request.SessionToken != "" || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
-			request.ParametersSHA256 != "" || len(request.Parameters) != 0 || request.MFAUserID != "" || request.MFAAccount != "" || request.MFACode != "" {
+			request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) {
 			return errors.New("checkpoint request is invalid")
 		}
 		return nil
 	}
 	if isMFAOperation(request.Operation) {
-		if request.SessionToken != "" || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
-			request.ParametersSHA256 != "" || len(request.Parameters) != 0 || len(request.MFAUserID) == 0 || len(request.MFAUserID) > 160 || strings.ContainsAny(request.MFAUserID, "\r\n\x00") {
+		if request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
+			request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasPasskeyFields(request) || len(request.MFAUserID) == 0 || len(request.MFAUserID) > 160 || strings.ContainsAny(request.MFAUserID, "\r\n\x00") {
 			return errors.New("MFA request is invalid")
 		}
 		switch request.Operation {
-		case operationMFAStatus, operationMFAReset:
-			if request.MFAAccount != "" || request.MFACode != "" {
+		case operationMFAStatus:
+			if request.SessionToken != "" || request.MFAAccount != "" || request.MFACode != "" {
 				return errors.New("MFA request contains unrelated fields")
 			}
+		case operationMFAReset:
+			if !validCredentialSessionToken(request.SessionToken) || request.MFAAccount != "" || request.MFACode != "" {
+				return errors.New("MFA reset request is invalid")
+			}
 		case operationMFABegin:
-			if len(request.MFAAccount) == 0 || len(request.MFAAccount) > 320 || strings.ContainsAny(request.MFAAccount, "\r\n\x00") || request.MFACode != "" {
+			if !validCredentialSessionToken(request.SessionToken) || len(request.MFAAccount) == 0 || len(request.MFAAccount) > 320 || strings.ContainsAny(request.MFAAccount, "\r\n\x00") || request.MFACode != "" {
 				return errors.New("MFA enrollment request is invalid")
 			}
-		case operationMFAConfirm, operationMFAVerify:
-			if request.MFAAccount != "" || len(request.MFACode) == 0 || len(request.MFACode) > 128 || strings.ContainsAny(request.MFACode, "\r\n\x00") {
+		case operationMFAConfirm:
+			if !validCredentialSessionToken(request.SessionToken) || request.MFAAccount != "" || len(request.MFACode) == 0 || len(request.MFACode) > 128 || strings.ContainsAny(request.MFACode, "\r\n\x00") {
+				return errors.New("MFA confirmation request is invalid")
+			}
+		case operationMFAVerify:
+			if request.SessionToken != "" || request.MFAAccount != "" || len(request.MFACode) == 0 || len(request.MFACode) > 128 || strings.ContainsAny(request.MFACode, "\r\n\x00") {
 				return errors.New("MFA verification request is invalid")
 			}
 		}
 		return nil
 	}
-	if request.MFAUserID != "" || request.MFAAccount != "" || request.MFACode != "" {
-		return errors.New("privileged action contains MFA fields")
+	if isPasskeyOperation(request.Operation) {
+		return validatePasskeyRequest(request)
+	}
+	if hasMFAFields(request) || hasPasskeyFields(request) {
+		return errors.New("privileged action contains credential-domain fields")
 	}
 	if _, ok := actions[request.Action]; !ok {
 		return errors.New("action is not registered")
@@ -579,9 +822,79 @@ func validateWireRequest(request wireRequest) error {
 	return nil
 }
 
+func validatePasskeyRequest(request wireRequest) error {
+	if request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
+		request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || len(request.PasskeyUserID) == 0 ||
+		len(request.PasskeyUserID) > 160 || strings.ContainsAny(request.PasskeyUserID, "\r\n\x00") {
+		return errors.New("passkey request is invalid")
+	}
+	switch request.Operation {
+	case operationPasskeyUser:
+		if request.SessionToken != "" || len(request.PasskeyUsername) == 0 || len(request.PasskeyUsername) > 320 || strings.ContainsAny(request.PasskeyUsername, "\r\n\x00") ||
+			request.PasskeyName != "" || request.PasskeyCredentialID != "" || request.PasskeyCredential != nil {
+			return errors.New("passkey user request is invalid")
+		}
+	case operationPasskeyList:
+		if request.SessionToken != "" || request.PasskeyUsername != "" || request.PasskeyName != "" || request.PasskeyCredentialID != "" || request.PasskeyCredential != nil {
+			return errors.New("passkey request contains unrelated fields")
+		}
+	case operationPasskeyReset:
+		if !validCredentialSessionToken(request.SessionToken) || request.PasskeyUsername != "" || request.PasskeyName != "" || request.PasskeyCredentialID != "" || request.PasskeyCredential != nil {
+			return errors.New("passkey reset request is invalid")
+		}
+	case operationPasskeyAdd:
+		if !validCredentialSessionToken(request.SessionToken) || request.PasskeyUsername != "" || len(request.PasskeyName) > 256 || strings.ContainsAny(request.PasskeyName, "\r\n\x00") ||
+			request.PasskeyCredentialID != "" || !validPasskeyCredential(request.PasskeyCredential) {
+			return errors.New("passkey add request is invalid")
+		}
+	case operationPasskeyUpdate:
+		if request.SessionToken != "" || request.PasskeyUsername != "" || request.PasskeyName != "" || request.PasskeyCredentialID != "" || !validPasskeyCredential(request.PasskeyCredential) {
+			return errors.New("passkey update request is invalid")
+		}
+	case operationPasskeyDelete:
+		if !validCredentialSessionToken(request.SessionToken) || request.PasskeyUsername != "" || request.PasskeyName != "" || request.PasskeyCredential != nil || len(request.PasskeyCredentialID) == 0 ||
+			len(request.PasskeyCredentialID) > 1024 || len(request.PasskeyCredentialID)%2 != 0 {
+			return errors.New("passkey delete request is invalid")
+		}
+		if _, err := hex.DecodeString(request.PasskeyCredentialID); err != nil || request.PasskeyCredentialID != strings.ToLower(request.PasskeyCredentialID) {
+			return errors.New("passkey credential ID is invalid")
+		}
+	}
+	return nil
+}
+
+func validPasskeyCredential(credential *webauthn.Credential) bool {
+	if credential == nil || len(credential.ID) == 0 || len(credential.ID) > 1024 {
+		return false
+	}
+	body, err := json.Marshal(credential)
+	return err == nil && len(body) <= 64<<10
+}
+
+func validCredentialSessionToken(token string) bool {
+	return len(token) >= 16 && len(token) <= 256 && !strings.ContainsAny(token, "\r\n\x00")
+}
+
+func hasMFAFields(request wireRequest) bool {
+	return request.MFAUserID != "" || request.MFAAccount != "" || request.MFACode != ""
+}
+
+func hasPasskeyFields(request wireRequest) bool {
+	return request.PasskeyUserID != "" || request.PasskeyUsername != "" || request.PasskeyName != "" || request.PasskeyCredentialID != "" || request.PasskeyCredential != nil
+}
+
 func isMFAOperation(operation string) bool {
 	switch operation {
 	case operationMFAStatus, operationMFABegin, operationMFAConfirm, operationMFAVerify, operationMFAReset:
+		return true
+	default:
+		return false
+	}
+}
+
+func isPasskeyOperation(operation string) bool {
+	switch operation {
+	case operationPasskeyUser, operationPasskeyList, operationPasskeyAdd, operationPasskeyUpdate, operationPasskeyDelete, operationPasskeyReset:
 		return true
 	default:
 		return false

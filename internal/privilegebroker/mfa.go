@@ -20,12 +20,16 @@ type RemoteMFA struct {
 func NewRemoteMFA(client *Client) *RemoteMFA { return &RemoteMFA{client: client} }
 
 func (remote *RemoteMFA) Status(userID string) (mfa.Status, error) {
-	response, err := remote.call(operationMFAStatus, userID, "", "")
+	response, err := remote.call(context.Background(), operationMFAStatus, userID, "", "", false)
 	return mfa.Status{Enabled: response.MFAEnabled, RecoveryCodes: response.MFARecoveryCodes}, err
 }
 
 func (remote *RemoteMFA) Begin(userID, account string) (mfa.Enrollment, error) {
-	response, err := remote.call(operationMFABegin, userID, account, "")
+	return remote.BeginContext(context.Background(), userID, account)
+}
+
+func (remote *RemoteMFA) BeginContext(ctx context.Context, userID, account string) (mfa.Enrollment, error) {
+	response, err := remote.call(ctx, operationMFABegin, userID, account, "", true)
 	if err != nil {
 		return mfa.Enrollment{}, err
 	}
@@ -36,7 +40,11 @@ func (remote *RemoteMFA) Begin(userID, account string) (mfa.Enrollment, error) {
 }
 
 func (remote *RemoteMFA) Confirm(userID, code string) ([]string, error) {
-	response, err := remote.call(operationMFAConfirm, userID, "", code)
+	return remote.ConfirmContext(context.Background(), userID, code)
+}
+
+func (remote *RemoteMFA) ConfirmContext(ctx context.Context, userID, code string) ([]string, error) {
+	response, err := remote.call(ctx, operationMFAConfirm, userID, "", code, true)
 	if err != nil {
 		return nil, err
 	}
@@ -47,28 +55,43 @@ func (remote *RemoteMFA) Confirm(userID, code string) ([]string, error) {
 }
 
 func (remote *RemoteMFA) Verify(userID, code string) (bool, error) {
-	response, err := remote.call(operationMFAVerify, userID, "", code)
+	response, err := remote.call(context.Background(), operationMFAVerify, userID, "", code, false)
 	return response.MFAVerified, err
 }
 
 func (remote *RemoteMFA) Reset(userID string) error {
-	_, err := remote.call(operationMFAReset, userID, "", "")
+	return remote.ResetContext(context.Background(), userID)
+
+}
+
+func (remote *RemoteMFA) ResetContext(ctx context.Context, userID string) error {
+	_, err := remote.call(ctx, operationMFAReset, userID, "", "", true)
 	return err
 }
 
-func (remote *RemoteMFA) call(operation, userID, account, code string) (wireResponse, error) {
+func (remote *RemoteMFA) call(ctx context.Context, operation, userID, account, code string, authorized bool) (wireResponse, error) {
 	if remote == nil || remote.client == nil {
 		return wireResponse{}, errors.New("privileged Broker MFA service is unavailable")
 	}
-	requestID, err := mfaRequestID()
-	if err != nil {
-		return wireResponse{}, err
+	requestID, sessionToken := "", ""
+	if authorized {
+		authorization, ok := AuthorizationFromContext(ctx)
+		if !ok {
+			return wireResponse{}, errors.New("privileged Broker MFA authorization is missing")
+		}
+		requestID, sessionToken = authorization.RequestID, authorization.SessionToken
+	} else {
+		var err error
+		requestID, err = mfaRequestID()
+		if err != nil {
+			return wireResponse{}, err
+		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	response, err := remote.client.call(ctx, wireRequest{
 		Version: ProtocolVersion, Operation: operation, RequestID: requestID,
-		MFAUserID: userID, MFAAccount: account, MFACode: code,
+		SessionToken: sessionToken, MFAUserID: userID, MFAAccount: account, MFACode: code,
 	})
 	if err == nil {
 		return response, nil

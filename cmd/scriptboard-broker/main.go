@@ -17,6 +17,7 @@ import (
 	"scriptboard/internal/auditlog"
 	"scriptboard/internal/hostsecurity"
 	"scriptboard/internal/mfa"
+	"scriptboard/internal/passkey"
 	"scriptboard/internal/privilegebroker"
 	"scriptboard/internal/secretredaction"
 	"scriptboard/internal/secretstore"
@@ -83,6 +84,10 @@ func runContext(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("initialize Broker-owned MFA state: %w", err)
 	}
+	passkeyStore, err := passkey.New(passkey.Options{StateRoot: absolute, SecretStore: vault})
+	if err != nil {
+		return fmt.Errorf("initialize Broker-owned passkey state: %w", err)
+	}
 	databaseSecurity, err := privilegebroker.NewDatabaseSecurity(database, audit, time.Now)
 	if err != nil {
 		return err
@@ -105,7 +110,7 @@ func runContext(ctx context.Context, arguments []string) error {
 		Listener: transport.Listener, VerifyPeer: transport.VerifyPeer,
 		Authorizer: databaseSecurity, Executor: executor, Auditor: databaseSecurity,
 		Checkpoint: brokerCheckpointService{store: checkpoint, audit: audit}, Now: time.Now,
-		MFA: mfaStore,
+		MFA: mfaStore, Passkeys: passkeyStore,
 	})
 	if err != nil {
 		return err

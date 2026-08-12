@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 
@@ -16,15 +17,18 @@ import (
 )
 
 const (
-	storePurpose  = "account-passkey-state-v1"
-	maxStoreBytes = 4 << 20
-	maxPerUser    = 10
+	storePurpose       = "account-passkey-state-v1"
+	maxStoreBytes      = 4 << 20
+	maxPerUser         = 10
+	maxCredentialBytes = 64 << 10
 )
 
 var (
-	ErrDuplicateCredential = errors.New("passkey credential is already registered")
-	ErrCredentialLimit     = errors.New("passkey credential limit reached")
-	ErrCredentialNotFound  = errors.New("passkey credential was not found")
+	ErrDuplicateCredential        = errors.New("passkey credential is already registered")
+	ErrCredentialLimit            = errors.New("passkey credential limit reached")
+	ErrCredentialNotFound         = errors.New("passkey credential was not found")
+	ErrCredentialIdentityMismatch = errors.New("passkey credential identity fields changed")
+	ErrCredentialTooLarge         = errors.New("passkey credential is too large")
 )
 
 type Options struct {
@@ -109,6 +113,10 @@ func (store *Store) List(userID string) ([]CredentialView, error) {
 }
 
 func (store *Store) Add(userID, name string, credential webauthn.Credential) error {
+	encoded, err := json.Marshal(credential)
+	if err != nil || len(encoded) > maxCredentialBytes {
+		return ErrCredentialTooLarge
+	}
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	entries, err := store.load()
@@ -140,6 +148,10 @@ func (store *Store) Add(userID, name string, credential webauthn.Credential) err
 // Update persists the authenticator counter and flags returned by a successful
 // assertion. The entire verified credential is replaced atomically.
 func (store *Store) Update(userID string, credential webauthn.Credential) error {
+	encoded, err := json.Marshal(credential)
+	if err != nil || len(encoded) > maxCredentialBytes {
+		return ErrCredentialTooLarge
+	}
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	entries, err := store.load()
@@ -148,7 +160,19 @@ func (store *Store) Update(userID string, credential webauthn.Credential) error 
 	}
 	for index := range entries[userID] {
 		if bytes.Equal(entries[userID][index].Credential.ID, credential.ID) {
-			entries[userID][index].Credential = credential
+			existing := entries[userID][index].Credential
+			candidate := credential
+			candidate.Flags = existing.Flags
+			candidate.Authenticator.SignCount = existing.Authenticator.SignCount
+			candidate.Authenticator.CloneWarning = existing.Authenticator.CloneWarning
+			if credential.Flags.BackupEligible != existing.Flags.BackupEligible || !reflect.DeepEqual(candidate, existing) {
+				return ErrCredentialIdentityMismatch
+			}
+			updated := existing
+			updated.Flags.BackupState = credential.Flags.BackupState
+			updated.Authenticator.SignCount = credential.Authenticator.SignCount
+			updated.Authenticator.CloneWarning = credential.Authenticator.CloneWarning
+			entries[userID][index].Credential = updated
 			return store.write(entries)
 		}
 	}
