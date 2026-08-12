@@ -14,7 +14,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -122,7 +121,7 @@ type executorCandidate struct {
 }
 
 type activeRun struct {
-	command              *exec.Cmd
+	process              ManagedProcess
 	terminal             string
 	changed              chan struct{}
 	scriptPath           string
@@ -155,6 +154,7 @@ type Manager struct {
 	wg                  sync.WaitGroup
 	timeoutGrace        time.Duration
 	executorChains      map[string][]string
+	launcher            ProcessLauncher
 	startMu             sync.Mutex
 	accepting           bool
 	persistenceStop     chan struct{}
@@ -162,9 +162,16 @@ type Manager struct {
 }
 
 func New(db *sql.DB, files *hostfiles.Manager, stateRoot string, timeoutGrace time.Duration, executorChains map[string][]string, auditStores ...*auditlog.Store) *Manager {
+	return NewWithLauncher(db, files, stateRoot, timeoutGrace, executorChains, nil, auditStores...)
+}
+
+func NewWithLauncher(db *sql.DB, files *hostfiles.Manager, stateRoot string, timeoutGrace time.Duration, executorChains map[string][]string, launcher ProcessLauncher, auditStores ...*auditlog.Store) *Manager {
+	if launcher == nil {
+		launcher = NewLocalProcessLauncher(executorChains)
+	}
 	manager := &Manager{
 		db: db, files: files, stateRoot: stateRoot, active: make(map[string]*activeRun), timeoutGrace: timeoutGrace,
-		executorChains: executorChains, accepting: true, persistenceStop: make(chan struct{}),
+		executorChains: executorChains, launcher: launcher, accepting: true, persistenceStop: make(chan struct{}),
 	}
 	if len(auditStores) > 0 {
 		manager.auditLog = auditStores[0]
@@ -311,6 +318,10 @@ func (m *Manager) StartOneTime(request OneTimeStartRequest) (string, error) {
 	if err := os.Mkdir(runRoot, 0o700); err != nil {
 		return "", fmt.Errorf("create private Run directory: %w", err)
 	}
+	if err := protectOneTimeRunDirectory(runRoot); err != nil {
+		_ = os.Remove(runRoot)
+		return "", fmt.Errorf("protect one-time Run directory: %w", err)
+	}
 	sourceFilename := "source" + extension
 	sourcePath := filepath.Join(runRoot, sourceFilename)
 	sourceFile, err := os.OpenFile(sourcePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
@@ -326,7 +337,7 @@ func (m *Manager) StartOneTime(request OneTimeStartRequest) (string, error) {
 		writeErr = closeErr
 	}
 	if writeErr == nil {
-		writeErr = os.Chmod(sourcePath, 0o400)
+		writeErr = protectOneTimeSourceForRunner(sourcePath)
 	}
 	if writeErr != nil {
 		_ = os.RemoveAll(runRoot)
@@ -387,10 +398,7 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 	argumentJSON, _ := json.Marshal(prepared.arguments)
 	templateArgumentJSON, _ := json.Marshal(prepared.templateArguments)
 	now := time.Now().UTC()
-	runtimeIdentity := "unknown"
-	if currentUser, userErr := user.Current(); userErr == nil {
-		runtimeIdentity = currentUser.Username
-	}
+	runtimeIdentity := m.launcher.RuntimeIdentity()
 	var transaction *sql.Tx
 	var auditTransaction *auditlog.Transaction
 	if prepared.auditSource != "" && m.auditLog != nil {
@@ -459,54 +467,17 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 		return "", fmt.Errorf("commit Run: %w", err)
 	}
 
-	var command *exec.Cmd
-	var stdout, stderr io.ReadCloser
-	var executorPath string
-	var startErrors []string
 	currentDirectoryInfo, directoryErr := os.Lstat(prepared.workingDirectory.Path)
 	if directoryErr != nil || !currentDirectoryInfo.IsDir() || currentDirectoryInfo.Mode()&os.ModeSymlink != 0 || !os.SameFile(currentDirectoryInfo, prepared.workingDirectory.Info) {
 		_ = logFile.Close()
 		m.failStart(id, errors.New("working directory changed before execution"))
 		return id, nil
 	}
-	for _, executor := range prepared.executors {
-		candidate, commandErr := newExecutorCommand(executor, prepared.script.Path, prepared.arguments)
-		if commandErr != nil {
-			startErrors = append(startErrors, executor.path+": "+commandErr.Error())
-			continue
-		}
-		candidate.Dir = prepared.workingDirectory.Path
-		candidate.Env = runEnvironment(id, prepared.displayPath)
-		configureProcess(candidate)
-		candidateStdout, pipeErr := candidate.StdoutPipe()
-		if pipeErr != nil {
-			startErrors = append(startErrors, executor.path+": "+pipeErr.Error())
-			continue
-		}
-		candidateStderr, pipeErr := candidate.StderrPipe()
-		if pipeErr != nil {
-			_ = candidateStdout.Close()
-			startErrors = append(startErrors, executor.path+": "+pipeErr.Error())
-			continue
-		}
-		if startErr := candidate.Start(); startErr != nil {
-			_ = candidateStdout.Close()
-			_ = candidateStderr.Close()
-			startErrors = append(startErrors, executor.path+": "+startErr.Error())
-			continue
-		}
-		command, stdout, stderr, executorPath = candidate, candidateStdout, candidateStderr, executor.path
-		break
-	}
-	if command == nil {
-		_ = logFile.Close()
-		m.failStart(id, fmt.Errorf("所有执行器均无法启动: %s", strings.Join(startErrors, "; ")))
-		return id, nil
-	}
-	cleanup, err := attachProcess(command.Process)
+	process, executorPath, err := m.launcher.Launch(context.Background(), LaunchRequest{
+		RunID: id, ScriptPath: prepared.script.Path, ScriptDigest: prepared.script.Digest,
+		WorkingDirectory: prepared.workingDirectory.Path, Arguments: prepared.arguments,
+	})
 	if err != nil {
-		_ = command.Process.Kill()
-		_ = command.Wait()
 		_ = logFile.Close()
 		m.failStart(id, err)
 		return id, nil
@@ -521,16 +492,16 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 		}
 	}
 	if err != nil {
-		_ = command.Process.Kill()
-		_ = command.Wait()
-		cleanup()
+		_ = process.Terminate(true)
+		_ = process.Wait()
+		_ = process.Close()
 		_ = logFile.Close()
 		m.failStart(id, fmt.Errorf("persist running state: %w", err))
 		return id, nil
 	}
 	m.mu.Lock()
 	active := &activeRun{
-		command: command, cleanup: cleanup, fileInfo: prepared.script.Info, changed: make(chan struct{}, 1),
+		process: process, cleanup: func() { _ = process.Close() }, fileInfo: prepared.script.Info, changed: make(chan struct{}, 1),
 		scriptPath:           normalizeHostPath(prepared.displayPath),
 		workingDirectory:     normalizeHostPath(prepared.workingDirectory.Path),
 		workingDirectoryInfo: prepared.workingDirectory.Info,
@@ -544,7 +515,7 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 	m.mu.Unlock()
 	leaseOwned = false
 	m.wg.Add(1)
-	go m.supervise(id, command, stdout, stderr, logFile, active)
+	go m.supervise(id, process, process.Stdout(), process.Stderr(), logFile, active)
 	return id, nil
 }
 
@@ -654,7 +625,7 @@ func (m *Manager) failStart(id string, startErr error) {
 	}()
 }
 
-func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.ReadCloser, logFile *os.File, activeRun *activeRun) {
+func (m *Manager) supervise(id string, process ManagedProcess, stdout, stderr io.ReadCloser, logFile *os.File, activeRun *activeRun) {
 	defer m.wg.Done()
 	var eventMu sync.Mutex
 	var sequence int64
@@ -736,7 +707,7 @@ func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.Read
 	go writeEvents("stdout", stdout)
 	go writeEvents("stderr", stderr)
 	readers.Wait()
-	waitErr := command.Wait()
+	waitErr := process.Wait()
 	if activeCleanup := func() func() {
 		m.mu.Lock()
 		defer m.mu.Unlock()
@@ -836,17 +807,17 @@ func (m *Manager) timeout(id string) {
 		return
 	}
 	active.terminal = "timed_out"
-	process := active.command.Process
+	process := active.process
 	m.mu.Unlock()
 	_, _ = m.db.Exec("UPDATE runs SET status = 'timing_out' WHERE id = ? AND status = 'running'", id)
 	active.signalChanged()
-	_ = terminateProcess(process, false)
+	_ = process.Terminate(false)
 	time.AfterFunc(m.timeoutGrace, func() {
 		m.mu.Lock()
 		stillActive := m.active[id]
 		m.mu.Unlock()
 		if stillActive != nil && stillActive.terminal == "timed_out" {
-			_ = terminateProcess(stillActive.command.Process, true)
+			_ = stillActive.process.Terminate(true)
 		}
 	})
 }
@@ -864,13 +835,13 @@ func (m *Manager) Stop(id string) error {
 	}
 	force := active.terminal == "cancelled"
 	active.terminal = "cancelled"
-	process := active.command.Process
+	process := active.process
 	m.mu.Unlock()
 	if !force {
 		_, _ = m.db.Exec("UPDATE runs SET status = 'stopping' WHERE id = ? AND status = 'running'", id)
 	}
 	active.signalChanged()
-	if err := terminateProcess(process, force); err != nil {
+	if err := process.Terminate(force); err != nil {
 		if force {
 			return nil
 		}
@@ -1255,15 +1226,15 @@ func readEventsAfter(path string, offset, afterSequence int64) ([]Event, int64, 
 
 func (m *Manager) Close() {
 	m.mu.Lock()
-	processes := make([]*os.Process, 0, len(m.active))
+	processes := make([]ManagedProcess, 0, len(m.active))
 	for _, active := range m.active {
 		active.terminal = "cancelled"
-		processes = append(processes, active.command.Process)
+		processes = append(processes, active.process)
 	}
 	m.mu.Unlock()
 	for _, process := range processes {
-		if err := terminateProcess(process, false); err != nil {
-			_ = terminateProcess(process, true)
+		if err := process.Terminate(false); err != nil {
+			_ = process.Terminate(true)
 		}
 	}
 	done := make(chan struct{})
@@ -1278,7 +1249,7 @@ func (m *Manager) Close() {
 	case <-time.After(30 * time.Second):
 	}
 	for _, process := range processes {
-		_ = terminateProcess(process, true)
+		_ = process.Terminate(true)
 	}
 	select {
 	case <-done:

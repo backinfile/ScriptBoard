@@ -8,7 +8,7 @@ IPC 提交领域级 `RuntimeLaunchRequest`。请求不包含可执行文件路�
 Linux 使用独立无登录 `scriptboard-ai` UID。Runtime 载荷由 Web 身份管理、AI 组只读；Pi Home、
 Session 和 Workspace 只归 AI 身份。systemd 清空 capability，使用只读系统视图、私有临时目录，
 并通过 `IPAddressDeny=any`、`IPAddressAllow=localhost` 将出站限制为环回 Provider/Tool Broker。
-Windows AI Host 使用 `LocalService` 与独立 `NT SERVICE\ScriptBoardAI` SID；安装目录只读，只有
+Windows AI Host 使用 `LocalService` 与 restricted `NT SERVICE\ScriptBoardAI` SID；安装目录只读，只有
 Assistant 私有目录授予该 SID 修改权，Web、Broker 和 AI 使用不同服务 SID。
 
 便携开发和 Runtime 安装健康检查继续使用进程内适配器；它不是受管部署的安全边界。Windows

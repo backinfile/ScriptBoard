@@ -16,13 +16,15 @@ import (
 )
 
 const (
-	serviceName     = "ScriptBoard"
-	unitPath        = "/etc/systemd/system/scriptboard.service"
-	brokerUnitPath  = "/etc/systemd/system/scriptboard-broker.service"
-	aiUnitPath      = "/etc/systemd/system/scriptboard-ai.service"
-	updaterUnitPath = "/etc/systemd/system/scriptboard-updater@.service"
-	webServiceUser  = "scriptboard-web"
-	aiServiceUser   = "scriptboard-ai"
+	serviceName       = "ScriptBoard"
+	unitPath          = "/etc/systemd/system/scriptboard.service"
+	brokerUnitPath    = "/etc/systemd/system/scriptboard-broker.service"
+	aiUnitPath        = "/etc/systemd/system/scriptboard-ai.service"
+	runnerUnitPath    = "/etc/systemd/system/scriptboard-runner.service"
+	updaterUnitPath   = "/etc/systemd/system/scriptboard-updater@.service"
+	webServiceUser    = "scriptboard-web"
+	aiServiceUser     = "scriptboard-ai"
+	runnerServiceUser = "scriptboard-runner"
 )
 
 func Exists() (bool, error) {
@@ -63,6 +65,21 @@ func ValidateAIRuntimeIdentity() error {
 	return nil
 }
 
+func ValidateRunnerRuntimeIdentity() error {
+	account, err := user.Lookup(runnerServiceUser)
+	if err != nil {
+		return fmt.Errorf("resolve managed Runner service account: %w", err)
+	}
+	uid, err := strconv.Atoi(account.Uid)
+	if err != nil {
+		return fmt.Errorf("parse managed Runner service UID: %w", err)
+	}
+	if os.Geteuid() == 0 || os.Geteuid() != uid {
+		return fmt.Errorf("effective UID %d is not dedicated Runner service UID %d", os.Geteuid(), uid)
+	}
+	return nil
+}
+
 func validateLinuxWebRuntimeIdentity(effectiveUID, expectedUID int) error {
 	if effectiveUID == 0 || effectiveUID != expectedUID {
 		return fmt.Errorf("effective UID %d is not dedicated Web service UID %d", effectiveUID, expectedUID)
@@ -76,11 +93,12 @@ func Install(executable, configPath, updaterExecutable, stateRoot string) error 
 	}
 	brokerExecutable := filepath.Join(filepath.Dir(executable), "scriptboard-broker")
 	aiExecutable := filepath.Join(filepath.Dir(executable), "scriptboard-ai-host")
+	runnerExecutable := filepath.Join(filepath.Dir(executable), "scriptboard-runner")
 	unit := fmt.Sprintf(`[Unit]
 Description=ScriptBoard
 After=network.target
-Requires=scriptboard-broker.service scriptboard-ai.service
-After=scriptboard-broker.service scriptboard-ai.service
+Requires=scriptboard-broker.service scriptboard-ai.service scriptboard-runner.service
+After=scriptboard-broker.service scriptboard-ai.service scriptboard-runner.service
 
 [Service]
 Type=simple
@@ -154,6 +172,38 @@ IPAddressAllow=localhost
 [Install]
 WantedBy=multi-user.target
 `, systemdQuote(aiExecutable), systemdQuote(stateRoot), systemdQuote(filepath.Join(stateRoot, "assistant")))
+	runnerUnit := fmt.Sprintf(`[Unit]
+Description=ScriptBoard isolated Run Worker
+After=network.target
+
+[Service]
+Type=simple
+User=scriptboard-runner
+Group=scriptboard-runner
+RuntimeDirectory=scriptboard-runner
+RuntimeDirectoryMode=0750
+ExecStart=%s --config %s --state-root %s --allowed-identity scriptboard-web
+Restart=on-failure
+NoNewPrivileges=true
+UMask=0077
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=true
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictNamespaces=true
+TasksMax=64
+MemoryMax=2G
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+
+[Install]
+WantedBy=multi-user.target
+`, systemdQuote(runnerExecutable), systemdQuote(configPath), systemdQuote(stateRoot))
 	updaterUnit := fmt.Sprintf(`[Unit]
 Description=ScriptBoard update operation %%i
 After=network.target
@@ -173,6 +223,9 @@ TimeoutStartSec=0
 	if err := os.WriteFile(aiUnitPath, []byte(aiUnit), 0o644); err != nil {
 		return err
 	}
+	if err := os.WriteFile(runnerUnitPath, []byte(runnerUnit), 0o644); err != nil {
+		return err
+	}
 	if err := os.WriteFile(updaterUnitPath, []byte(updaterUnit), 0o644); err != nil {
 		return err
 	}
@@ -183,6 +236,9 @@ TimeoutStartSec=0
 		return err
 	}
 	if err := systemctl("enable", "scriptboard-ai.service"); err != nil {
+		return err
+	}
+	if err := systemctl("enable", "scriptboard-runner.service"); err != nil {
 		return err
 	}
 	return systemctl("enable", "scriptboard.service")
@@ -240,6 +296,9 @@ func prepareLinuxWebServiceIdentity(configPath, stateRoot string) error {
 	if err := prepareLinuxAIServiceIdentity(stateRoot); err != nil {
 		return err
 	}
+	if err := prepareLinuxRunnerServiceIdentity(); err != nil {
+		return err
+	}
 	if _, err := os.Stat(configPath); errors.Is(err, os.ErrNotExist) {
 		return nil
 	} else if err != nil {
@@ -250,6 +309,42 @@ func prepareLinuxWebServiceIdentity(configPath, stateRoot string) error {
 	}
 	if err := os.Chmod(configPath, 0o640); err != nil {
 		return fmt.Errorf("protect Linux service config: %w", err)
+	}
+	return nil
+}
+
+func prepareLinuxRunnerServiceIdentity() error {
+	account, err := user.Lookup(runnerServiceUser)
+	if _, unknown := err.(user.UnknownUserError); unknown {
+		command, commandErr := processlaunch.Prepare(processlaunch.Spec{Context: context.Background(), Executable: "/usr/sbin/useradd", Arguments: []string{"--system", "--user-group", "--no-create-home", "--home-dir", "/nonexistent", "--shell", "/usr/sbin/nologin", runnerServiceUser}, Environment: processlaunch.EnvironmentInherit})
+		if commandErr != nil {
+			return commandErr
+		}
+		if output, runErr := command.CombinedOutput(); runErr != nil {
+			return fmt.Errorf("create Linux Runner service account: %w: %s", runErr, strings.TrimSpace(string(output)))
+		}
+		account, err = user.Lookup(runnerServiceUser)
+	}
+	if err != nil {
+		return fmt.Errorf("resolve Linux Runner service account: %w", err)
+	}
+	group, err := user.LookupGroup(runnerServiceUser)
+	if err != nil || group.Gid != account.Gid {
+		return errors.New("Linux Runner service account must use its dedicated group")
+	}
+	command, err := processlaunch.Prepare(processlaunch.Spec{Context: context.Background(), Executable: "/usr/sbin/usermod", Arguments: []string{"--append", "--groups", runnerServiceUser, webServiceUser}, Environment: processlaunch.EnvironmentInherit})
+	if err != nil {
+		return err
+	}
+	if output, runErr := command.CombinedOutput(); runErr != nil {
+		return fmt.Errorf("grant Linux Web access to Runner IPC: %w: %s", runErr, strings.TrimSpace(string(output)))
+	}
+	command, err = processlaunch.Prepare(processlaunch.Spec{Context: context.Background(), Executable: "/usr/sbin/usermod", Arguments: []string{"--append", "--groups", webServiceUser + "," + aiServiceUser, runnerServiceUser}, Environment: processlaunch.EnvironmentInherit})
+	if err != nil {
+		return err
+	}
+	if output, runErr := command.CombinedOutput(); runErr != nil {
+		return fmt.Errorf("grant Linux Runner read access to service config: %w: %s", runErr, strings.TrimSpace(string(output)))
 	}
 	return nil
 }
@@ -400,10 +495,13 @@ func Uninstall() error {
 			if err := systemctl("disable", "--now", "scriptboard-ai.service"); err != nil {
 				return err
 			}
+			if err := systemctl("disable", "--now", "scriptboard-runner.service"); err != nil {
+				return err
+			}
 			return systemctl("disable", "--now", "scriptboard-broker.service")
 		},
 		func() error {
-			for _, path := range []string{unitPath, brokerUnitPath, aiUnitPath, updaterUnitPath} {
+			for _, path := range []string{unitPath, brokerUnitPath, aiUnitPath, runnerUnitPath, updaterUnitPath} {
 				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 					return err
 				}
@@ -421,6 +519,9 @@ func Start() error {
 	if err := systemctl("start", "scriptboard-ai.service"); err != nil {
 		return err
 	}
+	if err := systemctl("start", "scriptboard-runner.service"); err != nil {
+		return err
+	}
 	return systemctl("start", "scriptboard.service")
 }
 func Stop() error {
@@ -428,6 +529,9 @@ func Stop() error {
 		return err
 	}
 	if err := systemctl("stop", "scriptboard-ai.service"); err != nil {
+		return err
+	}
+	if err := systemctl("stop", "scriptboard-runner.service"); err != nil {
 		return err
 	}
 	return systemctl("stop", "scriptboard-broker.service")
@@ -502,8 +606,15 @@ func MatchesExecutable(executable, configPath string) (bool, error) {
 			}
 			expectedAI := "ExecStart=" + systemdQuote(filepath.Join(filepath.Dir(executable), "scriptboard-ai-host")) + " --state-root "
 			aiText := string(aiUnit)
+			runnerUnit, err := os.ReadFile(runnerUnitPath)
+			if err != nil {
+				return false, err
+			}
+			runnerText := string(runnerUnit)
+			expectedRunner := "ExecStart=" + systemdQuote(filepath.Join(filepath.Dir(executable), "scriptboard-runner")) + " --config " + systemdQuote(configPath) + " --state-root "
 			return strings.Contains(aiText, expectedAI) && strings.Contains(aiText, "User="+aiServiceUser) &&
-				strings.Contains(aiText, "IPAddressDeny=any") && strings.Contains(aiText, "IPAddressAllow=localhost"), nil
+				strings.Contains(aiText, "IPAddressDeny=any") && strings.Contains(aiText, "IPAddressAllow=localhost") &&
+				strings.Contains(runnerText, expectedRunner) && strings.Contains(runnerText, "User="+runnerServiceUser) && strings.Contains(runnerText, "IPAddressDeny=any"), nil
 		}
 	}
 	return false, nil

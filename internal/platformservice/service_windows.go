@@ -20,9 +20,11 @@ const (
 	serviceName       = "ScriptBoard"
 	brokerServiceName = "ScriptBoardBroker"
 	aiServiceName     = "ScriptBoardAI"
+	runnerServiceName = "ScriptBoardRunner"
 	webServiceAccount = `NT AUTHORITY\LocalService`
 	webServiceSID     = `NT SERVICE\ScriptBoard`
 	aiServiceSID      = `NT SERVICE\ScriptBoardAI`
+	runnerServiceSID  = `NT SERVICE\ScriptBoardRunner`
 )
 
 func Exists() (bool, error) {
@@ -72,6 +74,10 @@ func ValidateWebRuntimeIdentity() error {
 
 func ValidateAIRuntimeIdentity() error {
 	token := windows.GetCurrentProcessToken()
+	restricted, err := token.IsRestricted()
+	if err != nil || !restricted {
+		return errors.New("managed AI Runtime token is not restricted")
+	}
 	tokenUser, err := token.GetTokenUser()
 	if err != nil {
 		return fmt.Errorf("read managed AI Runtime token user: %w", err)
@@ -101,6 +107,45 @@ func ValidateAIRuntimeIdentity() error {
 	return nil
 }
 
+func ValidateRunnerRuntimeIdentity() error {
+	return validateWindowsServiceIdentity(runnerServiceSID, "Runner")
+}
+
+func validateWindowsServiceIdentity(serviceIdentity, label string) error {
+	token := windows.GetCurrentProcessToken()
+	restricted, err := token.IsRestricted()
+	if err != nil || !restricted {
+		return fmt.Errorf("managed %s token is not restricted", label)
+	}
+	tokenUser, err := token.GetTokenUser()
+	if err != nil {
+		return err
+	}
+	localService, err := windows.StringToSid("S-1-5-19")
+	if err != nil {
+		return err
+	}
+	serviceSID, _, _, err := windows.LookupSID("", serviceIdentity)
+	if err != nil {
+		return err
+	}
+	groups, err := token.GetTokenGroups()
+	if err != nil {
+		return err
+	}
+	enabled := false
+	for _, group := range groups.AllGroups() {
+		if group.Sid != nil && group.Sid.Equals(serviceSID) && group.Attributes&windows.SE_GROUP_ENABLED != 0 {
+			enabled = true
+			break
+		}
+	}
+	if !tokenUser.User.Sid.Equals(localService) || !enabled {
+		return fmt.Errorf("process token is not LocalService with the enabled ScriptBoard%s service SID", label)
+	}
+	return nil
+}
+
 func validateWindowsWebRuntimeIdentity(localService, serviceSIDEnabled bool) error {
 	if !localService || !serviceSIDEnabled {
 		return errors.New("process token is not LocalService with the enabled ScriptBoard service SID")
@@ -116,6 +161,7 @@ func Install(executable, configPath, _ string, stateRoot string) error {
 	defer manager.Disconnect()
 	brokerExecutable := filepath.Join(filepath.Dir(executable), "scriptboard-broker.exe")
 	aiExecutable := filepath.Join(filepath.Dir(executable), "scriptboard-ai-host.exe")
+	runnerExecutable := filepath.Join(filepath.Dir(executable), "scriptboard-runner.exe")
 	brokerConfiguration := mgr.Config{
 		StartType: mgr.StartAutomatic, DisplayName: "ScriptBoard Privileged Broker",
 		Description: "ScriptBoard fixed privileged operation broker", SidType: windows.SERVICE_SID_TYPE_UNRESTRICTED,
@@ -150,7 +196,7 @@ func Install(executable, configPath, _ string, stateRoot string) error {
 	aiConfiguration := mgr.Config{
 		StartType: mgr.StartAutomatic, DisplayName: "ScriptBoard Isolated AI Runtime Host",
 		Description: "ScriptBoard isolated AI Runtime process host", ServiceStartName: webServiceAccount,
-		SidType: windows.SERVICE_SID_TYPE_UNRESTRICTED,
+		SidType: windows.SERVICE_SID_TYPE_RESTRICTED,
 	}
 	aiService, err := manager.CreateService(aiServiceName, aiExecutable, aiConfiguration, "--state-root", stateRoot, "--allowed-identity", webServiceSID)
 	if errors.Is(err, windows.ERROR_SERVICE_EXISTS) {
@@ -181,9 +227,39 @@ func Install(executable, configPath, _ string, stateRoot string) error {
 	if err := aiService.Close(); err != nil {
 		return err
 	}
+	runnerConfiguration := mgr.Config{StartType: mgr.StartAutomatic, DisplayName: "ScriptBoard Isolated Runner", Description: "ScriptBoard isolated Run worker", ServiceStartName: webServiceAccount, SidType: windows.SERVICE_SID_TYPE_RESTRICTED}
+	runnerService, err := manager.CreateService(runnerServiceName, runnerExecutable, runnerConfiguration, "--config", configPath, "--state-root", stateRoot, "--allowed-identity", webServiceSID)
+	if errors.Is(err, windows.ERROR_SERVICE_EXISTS) {
+		runnerService, err = manager.OpenService(runnerServiceName)
+		if err != nil {
+			return err
+		}
+		current, configErr := runnerService.Config()
+		if configErr != nil {
+			runnerService.Close()
+			return configErr
+		}
+		current.BinaryPathName = windows.ComposeCommandLine([]string{runnerExecutable, "--config", configPath, "--state-root", stateRoot, "--allowed-identity", webServiceSID})
+		current.StartType = mgr.StartAutomatic
+		current.DisplayName = runnerConfiguration.DisplayName
+		current.Description = runnerConfiguration.Description
+		current.ServiceStartName = webServiceAccount
+		current.Password = ""
+		current.SidType = runnerConfiguration.SidType
+		if err = runnerService.UpdateConfig(current); err != nil {
+			runnerService.Close()
+			return err
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("install Windows Runner service: %w", err)
+	}
+	if err := runnerService.Close(); err != nil {
+		return err
+	}
 	configuration := mgr.Config{
 		StartType: mgr.StartAutomatic, DisplayName: "ScriptBoard",
-		Description: "ScriptBoard trusted-script management service", Dependencies: []string{brokerServiceName, aiServiceName},
+		Description: "ScriptBoard trusted-script management service", Dependencies: []string{brokerServiceName, aiServiceName, runnerServiceName},
 		ServiceStartName: webServiceAccount, SidType: windows.SERVICE_SID_TYPE_UNRESTRICTED,
 	}
 	service, err := manager.CreateService(serviceName, executable, configuration, "serve", "--config", configPath)
@@ -225,7 +301,32 @@ func Install(executable, configPath, _ string, stateRoot string) error {
 	if err := grantWindowsWebServiceAccess(installRoot, configPath, stateRoot); err != nil {
 		return err
 	}
-	return grantWindowsAIServiceAccess(installRoot, stateRoot)
+	if err := grantWindowsAIServiceAccess(installRoot, stateRoot); err != nil {
+		return err
+	}
+	return grantWindowsRunnerServiceAccess(installRoot, configPath)
+}
+
+func grantWindowsRunnerServiceAccess(installRoot, configPath string) error {
+	sid, _, _, err := windows.LookupSID("", runnerServiceSID)
+	if err != nil {
+		return err
+	}
+	for _, grant := range []struct {
+		path        string
+		permissions windows.ACCESS_MASK
+		recursive   bool
+	}{{installRoot, windows.ACCESS_MASK(windows.FILE_GENERIC_READ | windows.FILE_GENERIC_EXECUTE), true}, {configPath, windows.ACCESS_MASK(windows.FILE_GENERIC_READ), false}} {
+		if _, statErr := os.Stat(grant.path); errors.Is(statErr, os.ErrNotExist) {
+			continue
+		} else if statErr != nil {
+			return statErr
+		}
+		if err := grantWindowsPathAccess(grant.path, sid, grant.permissions, grant.recursive); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func grantWindowsAIServiceAccess(installRoot, stateRoot string) error {
@@ -369,7 +470,24 @@ func SwitchExecutable(executable, configPath string) error {
 		return errors.New("Windows AI Runtime Host service command is invalid")
 	}
 	aiConfiguration.BinaryPathName = windows.ComposeCommandLine([]string{filepath.Join(filepath.Dir(executable), "scriptboard-ai-host.exe"), "--state-root", aiArguments[2], "--allowed-identity", aiArguments[4]})
-	return aiService.UpdateConfig(aiConfiguration)
+	if err := aiService.UpdateConfig(aiConfiguration); err != nil {
+		return err
+	}
+	runnerService, err := manager.OpenService(runnerServiceName)
+	if err != nil {
+		return err
+	}
+	defer runnerService.Close()
+	runnerConfiguration, err := runnerService.Config()
+	if err != nil {
+		return err
+	}
+	runnerArguments, err := windows.DecomposeCommandLine(runnerConfiguration.BinaryPathName)
+	if err != nil || len(runnerArguments) != 7 || runnerArguments[1] != "--config" || runnerArguments[3] != "--state-root" || runnerArguments[5] != "--allowed-identity" {
+		return errors.New("Windows Runner service command is invalid")
+	}
+	runnerConfiguration.BinaryPathName = windows.ComposeCommandLine([]string{filepath.Join(filepath.Dir(executable), "scriptboard-runner.exe"), "--config", runnerArguments[2], "--state-root", runnerArguments[4], "--allowed-identity", runnerArguments[6]})
+	return runnerService.UpdateConfig(runnerConfiguration)
 }
 
 func Uninstall() error {
@@ -378,7 +496,7 @@ func Uninstall() error {
 		return err
 	}
 	defer manager.Disconnect()
-	for _, name := range []string{serviceName, aiServiceName, brokerServiceName} {
+	for _, name := range []string{serviceName, runnerServiceName, aiServiceName, brokerServiceName} {
 		service, err := manager.OpenService(name)
 		if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
 			continue
@@ -410,6 +528,9 @@ func Start() error {
 	if err := startWindowsService(manager, aiServiceName); err != nil {
 		return err
 	}
+	if err := startWindowsService(manager, runnerServiceName); err != nil {
+		return err
+	}
 	return startWindowsService(manager, serviceName)
 }
 
@@ -423,6 +544,9 @@ func Stop() error {
 		return err
 	}
 	if err := stopWindowsService(manager, aiServiceName); err != nil {
+		return err
+	}
+	if err := stopWindowsService(manager, runnerServiceName); err != nil {
 		return err
 	}
 	return stopWindowsService(manager, brokerServiceName)
@@ -557,14 +681,31 @@ func MatchesExecutable(executable, configPath string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if !strings.EqualFold(aiConfiguration.ServiceStartName, webServiceAccount) || aiConfiguration.SidType == windows.SERVICE_SID_TYPE_NONE {
+	if !strings.EqualFold(aiConfiguration.ServiceStartName, webServiceAccount) || aiConfiguration.SidType != windows.SERVICE_SID_TYPE_RESTRICTED {
 		return false, nil
 	}
 	aiArguments, err := windows.DecomposeCommandLine(aiConfiguration.BinaryPathName)
-	return err == nil && len(aiArguments) == 5 &&
-		sameWindowsPath(aiArguments[0], filepath.Join(filepath.Dir(executable), "scriptboard-ai-host.exe")) &&
-		aiArguments[1] == "--state-root" && filepath.IsAbs(aiArguments[2]) &&
-		aiArguments[3] == "--allowed-identity" && strings.EqualFold(aiArguments[4], webServiceSID), err
+	if err != nil || len(aiArguments) != 5 ||
+		!sameWindowsPath(aiArguments[0], filepath.Join(filepath.Dir(executable), "scriptboard-ai-host.exe")) ||
+		aiArguments[1] != "--state-root" || !filepath.IsAbs(aiArguments[2]) || aiArguments[3] != "--allowed-identity" || !strings.EqualFold(aiArguments[4], webServiceSID) {
+		return false, err
+	}
+	runnerService, err := manager.OpenService(runnerServiceName)
+	if err != nil {
+		return false, err
+	}
+	defer runnerService.Close()
+	runnerConfiguration, err := runnerService.Config()
+	if err != nil {
+		return false, err
+	}
+	if !strings.EqualFold(runnerConfiguration.ServiceStartName, webServiceAccount) || runnerConfiguration.SidType != windows.SERVICE_SID_TYPE_RESTRICTED {
+		return false, nil
+	}
+	runnerArguments, err := windows.DecomposeCommandLine(runnerConfiguration.BinaryPathName)
+	return err == nil && len(runnerArguments) == 7 &&
+		sameWindowsPath(runnerArguments[0], filepath.Join(filepath.Dir(executable), "scriptboard-runner.exe")) && runnerArguments[1] == "--config" && sameWindowsPath(runnerArguments[2], configPath) &&
+		runnerArguments[3] == "--state-root" && filepath.IsAbs(runnerArguments[4]) && runnerArguments[5] == "--allowed-identity" && strings.EqualFold(runnerArguments[6], webServiceSID), err
 }
 
 func sameWindowsPath(first, second string) bool {

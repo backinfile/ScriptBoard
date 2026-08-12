@@ -416,6 +416,7 @@ install-root/
     scriptboard[.exe]
     scriptboard-broker[.exe]       # 固定主机写动作的独立特权进程
     scriptboard-ai-host[.exe]      # 独立身份运行 Pi 的受限 Runtime Host
+    scriptboard-runner[.exe]       # 复核摘要并在独立身份执行 Run 的 Worker
     scriptboard-updater[.exe]
     ...                            # 对应平台完整 Release 内容
   scriptboard-updater              # 仅 Linux；切换前原子刷新、供恢复使用的独立 helper

@@ -54,6 +54,7 @@
 
 - [ADR-0147 受管 Web 使用低权限、实例专用服务身份](./0147-run-managed-web-under-a-low-privilege-service-identity.md)，让 Linux Web 使用无登录 `scriptboard-web`、Windows Web 使用 `LocalService` 与独立服务 SID，并按目录授予最小 ACL；Broker 保持 root/LocalSystem。
 - [ADR-0148 将 AI Runtime 隔离到独立 Host 身份](./0148-isolate-ai-runtime-behind-a-dedicated-host.md)，让受管 Web 仅通过领域级本机 IPC 启动 Runtime；Linux 使用独立 UID 和环回网络，Windows 使用独立服务 SID 与私有目录 ACL。
+- [ADR-0149 将 Run 隔离到独立 Worker 身份](./0149-isolate-runs-behind-a-dedicated-worker.md)，让受管 Web 只发送不可变作业描述，由独立 Runner 复核摘要、执行器、目录和资源边界。
 - [ADR-0146 主机写操作通过独立、单次授权的特权 Broker](./0146-route-host-mutations-through-a-privileged-broker.md)，把首批防火墙与主机安全写操作移出 Web 调用路径，并重新验证会话、step-up、资源 revision 和单次 capability。
 - [ADR-0145 使用 State Root 外 Ed25519 checkpoint 锚定审计链](./0145-anchor-audit-chain-outside-state-root.md)，使本地链尾与同库状态一起回退时仍能由外部信任材料发现。
 - [ADR-0144 为账户增加无降级旁路的 TOTP 与单次恢复码](./0144-add-totp-with-one-time-recovery-codes.md)，使已配置账户的登录和 step-up 都达到 AAL2，并提供带外管理员恢复。

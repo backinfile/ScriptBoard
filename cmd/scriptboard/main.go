@@ -23,6 +23,8 @@ import (
 	"scriptboard/internal/doctor"
 	"scriptboard/internal/installation"
 	"scriptboard/internal/platformservice"
+	"scriptboard/internal/runmanager"
+	"scriptboard/internal/runnerhost"
 	"scriptboard/internal/secretredaction"
 	updatepkg "scriptboard/internal/update"
 )
@@ -430,6 +432,7 @@ func serveContext(runContext context.Context, arguments []string) error {
 	}
 	installRoot := applicationInstallRoot(loaded.StateRoot)
 	var assistantLauncher pirpc.ProcessLauncher
+	var runnerLauncher runmanager.ProcessLauncher
 	if installRoot != "" {
 		if err := platformservice.ValidateWebRuntimeIdentity(); err != nil {
 			return fmt.Errorf("refuse to start managed Web service with unsafe OS identity: %w", err)
@@ -439,6 +442,11 @@ func serveContext(runContext context.Context, arguments []string) error {
 			return fmt.Errorf("resolve isolated Runtime Host endpoint: %w", err)
 		}
 		assistantLauncher = runtimehost.NewClientLauncher(runtimehost.Dial(endpoint))
+		runnerEndpoint, err := runnerhost.DefaultEndpoint(loaded.StateRoot)
+		if err != nil {
+			return fmt.Errorf("resolve isolated Runner Host endpoint: %w", err)
+		}
+		runnerLauncher = runnerhost.NewClientLauncher(runnerhost.Dial(runnerEndpoint))
 	}
 	updateShutdown := make(chan struct{}, 1)
 	var requestRestart func() error
@@ -459,6 +467,7 @@ func serveContext(runContext context.Context, arguments []string) error {
 		},
 		RequestRestart:           requestRestart,
 		AssistantProcessLauncher: assistantLauncher,
+		RunnerProcessLauncher:    runnerLauncher,
 	})
 	if err != nil {
 		return err

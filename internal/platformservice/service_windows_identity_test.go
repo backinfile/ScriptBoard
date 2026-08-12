@@ -32,6 +32,12 @@ func TestWindowsAIRuntimeUsesSeparateServiceSID(t *testing.T) {
 	}
 }
 
+func TestWindowsRunnerUsesSeparateServiceSID(t *testing.T) {
+	if strings.EqualFold(runnerServiceSID, webServiceSID) || strings.EqualFold(runnerServiceSID, aiServiceSID) {
+		t.Fatalf("Runner service SID is not separate: %q", runnerServiceSID)
+	}
+}
+
 func TestWindowsManagedWebRuntimeRequiresLowIdentityAndServiceSID(t *testing.T) {
 	if err := validateWindowsWebRuntimeIdentity(false, true); err == nil {
 		t.Fatal("non-LocalService token was accepted")

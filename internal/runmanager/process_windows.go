@@ -89,7 +89,10 @@ func attachProcess(process *os.Process) (func(), error) {
 		return nil, fmt.Errorf("create Job Object: %w", err)
 	}
 	information := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
-	information.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+	information.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | windows.JOB_OBJECT_LIMIT_ACTIVE_PROCESS | windows.JOB_OBJECT_LIMIT_PROCESS_MEMORY | windows.JOB_OBJECT_LIMIT_JOB_MEMORY
+	information.BasicLimitInformation.ActiveProcessLimit = 64
+	information.ProcessMemoryLimit = 2 << 30
+	information.JobMemoryLimit = 4 << 30
 	if _, err := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&information)), uint32(unsafe.Sizeof(information))); err != nil {
 		windows.CloseHandle(job)
 		return nil, fmt.Errorf("configure Job Object: %w", err)

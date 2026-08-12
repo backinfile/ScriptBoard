@@ -343,6 +343,7 @@ type Config struct {
 	HostSecurity             hostsecurity.Service
 	PrivilegedBrokerEndpoint string
 	AssistantProcessLauncher pirpc.ProcessLauncher
+	RunnerProcessLauncher    runmanager.ProcessLauncher
 }
 
 type App struct {
@@ -609,7 +610,7 @@ func Open(config Config) (*App, error) {
 	if timeoutGrace <= 0 {
 		timeoutGrace = 30 * time.Second
 	}
-	application.runs = runmanager.New(db, application.files, stateRoot, timeoutGrace, config.ExecutorChains, application.auditLog)
+	application.runs = runmanager.NewWithLauncher(db, application.files, stateRoot, timeoutGrace, config.ExecutorChains, config.RunnerProcessLauncher, application.auditLog)
 	if err := application.fileMoves.Recover(context.Background()); err != nil {
 		application.runs.Close()
 		_ = db.Close()

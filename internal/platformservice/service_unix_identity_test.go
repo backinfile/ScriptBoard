@@ -16,6 +16,12 @@ func TestLinuxAIRuntimeIdentityIsDedicatedAndSeparate(t *testing.T) {
 	}
 }
 
+func TestLinuxRunnerIdentityIsDedicatedAndSeparate(t *testing.T) {
+	if runnerServiceUser == "" || runnerServiceUser == "root" || runnerServiceUser == webServiceUser || runnerServiceUser == aiServiceUser {
+		t.Fatalf("Runner service identity is not dedicated: %q", runnerServiceUser)
+	}
+}
+
 func TestLinuxManagedWebRuntimeRejectsRootAndOtherUsers(t *testing.T) {
 	if err := validateLinuxWebRuntimeIdentity(0, 1200); err == nil {
 		t.Fatal("root identity was accepted")
