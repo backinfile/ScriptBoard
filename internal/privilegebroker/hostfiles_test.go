@@ -1,0 +1,120 @@
+package privilegebroker
+
+import (
+	"context"
+	"encoding/json"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"scriptboard/internal/hostfiles"
+)
+
+func TestHostFilesUsesTypedAuthorizedBrokerOperations(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "note.txt"), []byte("broker host files"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := hostfiles.Open(hostfiles.Options{Topology: fixtureHostFilesTopology{root: root}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewBrokerHostFilesService(manager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend, closeServer := hostFilesTestBackend(t, service)
+	defer closeServer()
+	ctx := WithAuthorization(context.Background(), Authorization{SessionToken: strings.Repeat("s", 32), RequestID: "host-files-domain-test"})
+
+	entries, err := backend.List(ctx, root)
+	if err != nil || len(entries) != 1 || entries[0].Name != "note.txt" {
+		t.Fatalf("list = %+v, %v", entries, err)
+	}
+	document, err := backend.ReadText(ctx, filepath.Join(root, "note.txt"), 1024)
+	if err != nil || document.Content != "broker host files" {
+		t.Fatalf("document = %+v, %v", document, err)
+	}
+	if err := backend.CreateDirectory(ctx, root, "created"); err != nil {
+		t.Fatal(err)
+	}
+	trash, err := backend.MoveToTrash(ctx, filepath.Join(root, "note.txt"), "trash-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := backend.RestoreFromTrash(ctx, trash.StoredPath, trash.OriginalPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "note.txt")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHostFilesFailsClosedWithoutAuthorizationAndForProtectedPaths(t *testing.T) {
+	root := t.TempDir()
+	protected := filepath.Join(root, "private")
+	if err := os.MkdirAll(protected, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := hostfiles.Open(hostfiles.Options{ProtectedPaths: []string{protected}, Topology: fixtureHostFilesTopology{root: root}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, _ := NewBrokerHostFilesService(manager)
+	backend, closeServer := hostFilesTestBackend(t, service)
+	defer closeServer()
+	if _, err := backend.List(context.Background(), root); err == nil {
+		t.Fatal("Host Files read succeeded without authorization")
+	}
+	ctx := WithAuthorization(context.Background(), Authorization{SessionToken: strings.Repeat("s", 32), RequestID: "host-files-protected-test"})
+	if _, err := backend.List(ctx, protected); err == nil {
+		t.Fatal("Broker exposed a protected path")
+	}
+}
+
+func TestHostFilesProtocolRejectsGenericAndUnrelatedFields(t *testing.T) {
+	valid := wireRequest{Version: ProtocolVersion, Operation: operationHostFilesList, RequestID: "host-files-protocol-test",
+		SessionToken: strings.Repeat("s", 32), HostFiles: &hostFilesWireRequest{Path: filepath.Clean(t.TempDir()), Limit: hostFilesPageSize}}
+	requests := []wireRequest{
+		func() wireRequest { value := valid; value.Parameters = json.RawMessage(`{"path":"no"}`); return value }(),
+		func() wireRequest { value := valid; value.ProviderID = "credential-domain"; return value }(),
+		func() wireRequest { value := valid; value.MySQL = &mysqlWireRequest{}; return value }(),
+		func() wireRequest { value := valid; value.SessionToken = ""; return value }(),
+		func() wireRequest { value := valid; value.HostFiles.Limit = hostFilesPageSize + 1; return value }(),
+	}
+	for _, request := range requests {
+		if err := validateWireRequest(request); err == nil {
+			t.Fatalf("accepted invalid Host Files request: %+v", request)
+		}
+	}
+}
+
+func hostFilesTestBackend(t *testing.T, service HostFilesService) (*HostFilesBackend, func()) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := NewServer(ServerOptions{Listener: listener, VerifyPeer: func(net.Conn) error { return nil },
+		Authorizer: &fixtureMySQLAuthorizer{actor: Actor{UserID: "administrator", Role: "administrator"}}, Executor: &fixtureExecutor{}, HostFiles: service})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.Start()
+	client := NewClient(ClientOptions{Dial: func(ctx context.Context) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", listener.Addr().String())
+	}})
+	return NewHostFilesBackend(client), func() { _ = server.Close() }
+}
+
+type fixtureHostFilesTopology struct{ root string }
+
+func (topology fixtureHostFilesTopology) Roots() ([]hostfiles.Entry, error) {
+	return []hostfiles.Entry{{Name: "fixture", Path: topology.root, Kind: hostfiles.Directory}}, nil
+}
+func (topology fixtureHostFilesTopology) FilesystemRoot(string) (string, error) {
+	return topology.root, nil
+}
+func (fixtureHostFilesTopology) Restricted(string) bool { return false }

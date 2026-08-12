@@ -354,6 +354,7 @@ type Config struct {
 	RemoteWebsiteService      RemoteWebsiteService
 	ProviderCredentials       *privilegebroker.ProviderCredentials
 	MySQLBackend              mysqlmanager.Backend
+	HostFilesBackend          *privilegebroker.HostFilesBackend
 	SecurityEventEndpoint     string
 	SecurityEventToken        string
 	SecurityEventTokenFile    string
@@ -447,6 +448,7 @@ type App struct {
 	assistantRaster      *raster.Processor
 	assistantBroker      *toolbroker.Broker
 	files                *hostfiles.Manager
+	hostFilesBackend     *privilegebroker.HostFilesBackend
 	auditLog             *auditlog.Store
 	auditCheckpoint      AuditCheckpoint
 	securityEvents       *securityevents.Manager
@@ -609,7 +611,7 @@ func Open(config Config) (*App, error) {
 		}
 	}
 	application := &App{
-		db: db, stateRoot: stateRoot, files: files, uploadInbox: uploadInboxStore, instanceLock: instanceLock, mfa: mfaStore,
+		db: db, stateRoot: stateRoot, files: files, hostFilesBackend: config.HostFilesBackend, uploadInbox: uploadInboxStore, instanceLock: instanceLock, mfa: mfaStore,
 		passkeys: passkeyStore, passkeyCeremonies: newPasskeyCeremonyStore(),
 		execUploadExts: buildExecutableUploadExtensions(config.ExecutorChains),
 		loginSlots:     make(chan struct{}, 2), loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies,
@@ -4275,18 +4277,18 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 	destination := request.FormValue("destination")
 	var err error
 	if destination == "" {
-		destination, err = a.files.Destination(request.FormValue("working_directory"), request.FormValue("name"))
+		destination, err = a.hostDestination(request.Context(), request.FormValue("working_directory"), request.FormValue("name"))
 		if err != nil {
 			writeHostFileError(response, "移动目标无效", err)
 			return
 		}
 	}
-	source, err = a.files.CanonicalExisting(source)
+	source, err = a.hostCanonicalExisting(request.Context(), source)
 	if err != nil {
 		writeHostFileError(response, "移动源无效", err)
 		return
 	}
-	destination, err = a.files.CanonicalDestination(destination)
+	destination, err = a.hostCanonicalDestination(request.Context(), destination)
 	if err != nil {
 		writeHostFileError(response, "移动目标无效", err)
 		return
@@ -4316,21 +4318,21 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 			http.Error(response, "新文件名无效："+err.Error(), http.StatusBadRequest)
 			return
 		}
-		destination, err = a.files.Destination(destinationParent, newName)
+		destination, err = a.hostDestination(request.Context(), destinationParent, newName)
 		if err != nil {
 			writeHostFileError(response, "移动目标无效", err)
 			return
 		}
 		destinationName = newName
 	}
-	_, targetErr := a.files.Info(destination)
+	_, _, targetErr := a.hostInfo(request.Context(), destination)
 	targetExists := targetErr == nil
 	if targetErr != nil && !os.IsNotExist(targetErr) {
 		http.Error(response, "无法检查移动目标："+targetErr.Error(), http.StatusBadRequest)
 		return
 	}
 	if targetExists && action != conflictActionOverwrite {
-		suggested, err := a.files.AvailableName(destinationParent, destinationName)
+		suggested, err := a.hostAvailableName(request.Context(), destinationParent, destinationName)
 		if err != nil {
 			http.Error(response, "无法生成可用名称："+err.Error(), http.StatusBadRequest)
 			return
@@ -4379,7 +4381,7 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 			a.files.ReleaseLease(leaseID)
 		}
 	}()
-	_, latestTargetErr := a.files.Info(destination)
+	_, _, latestTargetErr := a.hostInfo(request.Context(), destination)
 	latestTargetExists := latestTargetErr == nil
 	if latestTargetErr != nil && !os.IsNotExist(latestTargetErr) {
 		writeHostFileError(response, "无法重新检查移动目标", latestTargetErr)
@@ -4397,7 +4399,7 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 			http.Error(response, "无法创建覆盖事务", http.StatusInternalServerError)
 			return
 		}
-		moved, err := a.files.MoveToTrash(destination, displacedID)
+		moved, err := a.hostMoveToTrash(request.Context(), destination, displacedID)
 		if err != nil {
 			http.Error(response, "无法暂存同名目标："+err.Error(), http.StatusConflict)
 			return
@@ -4410,7 +4412,7 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 			displacedID, moved.OriginalPath, hostfiles.ComparisonKey(moved.OriginalPath), moved.StoredPath,
 			hostfiles.ComparisonKey(moved.StoredPath), time.Now().UTC().Unix(), moved.Size, moved.Directory,
 		); err != nil {
-			_ = a.files.RestoreFromTrash(moved.StoredPath, moved.OriginalPath)
+			_ = a.hostRestoreFromTrash(request.Context(), moved.StoredPath, moved.OriginalPath)
 			http.Error(response, "无法记录被覆盖的条目", http.StatusInternalServerError)
 			return
 		}
@@ -4430,7 +4432,7 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 				// destination. Restore an overwritten entry only when the move
 				// engine actually rolled the destination back.
 				if _, destinationErr := a.files.Info(destination); os.IsNotExist(destinationErr) {
-					_ = a.restoreTrackedTrash(displacedID, *displaced)
+					_ = a.restoreTrackedTrash(request.Context(), displacedID, *displaced)
 				}
 			}
 			result := "succeeded"
@@ -4452,9 +4454,9 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 		}
 		return
 	}
-	if err := a.files.Move(source, destination); err != nil {
+	if err := a.hostMove(request.Context(), source, destination); err != nil {
 		if displaced != nil {
-			if restoreErr := a.restoreTrackedTrash(displacedID, *displaced); restoreErr != nil {
+			if restoreErr := a.restoreTrackedTrash(request.Context(), displacedID, *displaced); restoreErr != nil {
 				http.Error(response, "无法移动条目："+err.Error()+"；恢复被覆盖条目失败："+restoreErr.Error(), http.StatusInternalServerError)
 				return
 			}
@@ -4473,9 +4475,9 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 		if transaction != nil {
 			_ = transaction.Rollback()
 		}
-		rollbackErr := a.files.Move(destination, source)
+		rollbackErr := a.hostMove(request.Context(), destination, source)
 		if rollbackErr == nil && displaced != nil {
-			rollbackErr = a.restoreTrackedTrash(displacedID, *displaced)
+			rollbackErr = a.restoreTrackedTrash(request.Context(), displacedID, *displaced)
 		}
 		if rollbackErr != nil {
 			http.Error(response, "无法同步更新引用："+err.Error()+"；文件回滚失败："+rollbackErr.Error(), http.StatusInternalServerError)
@@ -4497,7 +4499,7 @@ func (a *App) toggleExecutable(response http.ResponseWriter, request *http.Reque
 		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
 		return
 	}
-	path, err := a.files.CanonicalExisting(request.FormValue("path"))
+	path, err := a.hostCanonicalExisting(request.Context(), request.FormValue("path"))
 	if err != nil {
 		writeHostFileError(response, "执行权限目标无效", err)
 		return
@@ -4508,7 +4510,7 @@ func (a *App) toggleExecutable(response http.ResponseWriter, request *http.Reque
 		return
 	}
 	defer release()
-	if _, err := a.files.ToggleOwnerExecute(path); err != nil {
+	if _, err := a.hostToggleOwnerExecute(request.Context(), path); err != nil {
 		writeHostFileError(response, "无法切换所有者执行权限", err)
 		return
 	}
@@ -4518,12 +4520,12 @@ func (a *App) toggleExecutable(response http.ResponseWriter, request *http.Reque
 }
 
 func (a *App) editTextPage(response http.ResponseWriter, request *http.Request) {
-	relative, err := a.files.CanonicalExisting(request.URL.Query().Get("path"))
+	relative, err := a.hostCanonicalExisting(request.Context(), request.URL.Query().Get("path"))
 	if err != nil {
 		writeHostFileError(response, "无法编辑文件", err)
 		return
 	}
-	document, err := a.files.ReadText(relative, 1<<20)
+	document, err := a.hostReadText(request.Context(), relative, 1<<20)
 	if err != nil {
 		writeHostFileError(response, "无法编辑文件", err)
 		return
@@ -4542,12 +4544,12 @@ func (a *App) editTextPage(response http.ResponseWriter, request *http.Request) 
 }
 
 func (a *App) previewTextPage(response http.ResponseWriter, request *http.Request) {
-	relative, err := a.files.CanonicalExisting(request.URL.Query().Get("path"))
+	relative, err := a.hostCanonicalExisting(request.Context(), request.URL.Query().Get("path"))
 	if err != nil {
 		writeHostFileError(response, "无法预览文件", err)
 		return
 	}
-	document, err := a.files.ReadText(relative, 1<<20)
+	document, err := a.hostReadText(request.Context(), relative, 1<<20)
 	if err != nil {
 		writeHostFileError(response, "无法预览文件", err)
 		return
@@ -4582,7 +4584,7 @@ func (a *App) saveText(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
 		return
 	}
-	relative, err := a.files.CanonicalExisting(request.URL.Query().Get("path"))
+	relative, err := a.hostCanonicalExisting(request.Context(), request.URL.Query().Get("path"))
 	if err != nil {
 		writeHostFileError(response, "无法保存文件", err)
 		return
@@ -4666,7 +4668,7 @@ func (a *App) deleteFile(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
 		return
 	}
-	path, err := a.files.CanonicalExisting(request.FormValue("path"))
+	path, err := a.hostCanonicalExisting(request.Context(), request.FormValue("path"))
 	if err != nil {
 		writeHostFileError(response, "无法删除条目", err)
 		return
@@ -4712,7 +4714,7 @@ func (a *App) deleteFile(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "无法创建回收条目", http.StatusInternalServerError)
 		return
 	}
-	trashed, err := a.files.MoveToTrash(path, id)
+	trashed, err := a.hostMoveToTrash(request.Context(), path, id)
 	if err != nil {
 		http.Error(response, "无法删除条目："+err.Error(), http.StatusBadRequest)
 		return
@@ -4725,7 +4727,7 @@ func (a *App) deleteFile(response http.ResponseWriter, request *http.Request) {
 		hostfiles.ComparisonKey(trashed.StoredPath), time.Now().UTC().Unix(), trashed.Size, trashed.Directory,
 	)
 	if err != nil {
-		_ = a.files.RestoreFromTrash(trashed.StoredPath, trashed.OriginalPath)
+		_ = a.hostRestoreFromTrash(request.Context(), trashed.StoredPath, trashed.OriginalPath)
 		http.Error(response, "无法记录回收条目", http.StatusInternalServerError)
 		return
 	}
@@ -4741,7 +4743,7 @@ func (a *App) deleteFile(response http.ResponseWriter, request *http.Request) {
 		if transaction != nil {
 			_ = transaction.Rollback()
 		}
-		if restoreErr := a.restoreTrackedTrash(id, trashed); restoreErr != nil {
+		if restoreErr := a.restoreTrackedTrash(request.Context(), id, trashed); restoreErr != nil {
 			http.Error(response, "无法停用引用该条目的计划："+err.Error()+"；文件回滚失败："+restoreErr.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -4840,24 +4842,24 @@ func (a *App) restoreTrash(response http.ResponseWriter, request *http.Request) 
 			http.Error(response, "新文件名无效："+err.Error(), http.StatusBadRequest)
 			return
 		}
-		renamedDestination, err := a.files.Destination(parent, newName)
+		renamedDestination, err := a.hostDestination(request.Context(), parent, newName)
 		if err != nil {
 			writeHostFileError(response, "恢复目标无效", err)
 			return
 		}
 		destination = renamedDestination
 	}
-	_, targetErr := a.files.Info(destination)
+	_, _, targetErr := a.hostInfo(request.Context(), destination)
 	targetExists := targetErr == nil
 	if targetErr != nil && !os.IsNotExist(targetErr) {
 		http.Error(response, "无法检查恢复目标："+targetErr.Error(), http.StatusConflict)
 		return
 	}
 	if targetExists && action != conflictActionOverwrite {
-		suggested, err := a.files.AvailableName(parent, originalName)
+		suggested, err := a.hostAvailableName(request.Context(), parent, originalName)
 		if action == conflictActionRename {
 			_, requestedName := parentAndName(destination)
-			suggested, err = a.files.AvailableName(parent, requestedName)
+			suggested, err = a.hostAvailableName(request.Context(), parent, requestedName)
 		}
 		if err != nil {
 			http.Error(response, "无法生成可用名称："+err.Error(), http.StatusConflict)
@@ -4880,7 +4882,7 @@ func (a *App) restoreTrash(response http.ResponseWriter, request *http.Request) 
 		return
 	}
 	defer release()
-	if err := a.commitTrashRestore(id, stored, destination, action == conflictActionOverwrite && targetExists); err != nil {
+	if err := a.commitTrashRestore(request.Context(), id, stored, destination, action == conflictActionOverwrite && targetExists); err != nil {
 		http.Error(response, "无法恢复条目："+err.Error(), http.StatusConflict)
 		return
 	}
@@ -4899,7 +4901,7 @@ func (a *App) purgeTrash(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "回收条目不存在", http.StatusNotFound)
 		return
 	}
-	if err := a.files.PurgeTrash(stored); err != nil {
+	if err := a.hostPurgeTrash(request.Context(), stored); err != nil {
 		http.Error(response, "无法永久清理条目："+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -5131,7 +5133,7 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 	}
 	if relative != "" {
 		var err error
-		relative, err = a.files.CanonicalDirectory(relative)
+		relative, err = a.hostCanonicalDirectory(request.Context(), relative)
 		if err != nil {
 			writeHostFileError(response, "无法读取主机目录", err)
 			return
@@ -5165,7 +5167,7 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		})
 		return
 	}
-	entries, err := a.files.List(relative)
+	entries, err := a.hostList(request.Context(), relative)
 	if err != nil {
 		writeHostFileError(response, "无法读取主机目录", err)
 		return
@@ -5194,13 +5196,14 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		category := listed.Category
 		previewableText := false
 		if entry.Kind == hostfiles.Regular && (category == fileCategoryOther || category == fileCategoryText || category == fileCategoryScript) {
-			likelyText, detectErr := a.files.IsLikelyText(path, 64<<10)
-			previewableText = detectErr == nil && likelyText
+			_, detectErr := a.hostReadText(request.Context(), path, 1<<20)
+			previewableText = detectErr == nil
 		}
+		_, canMutate, _ := a.hostInfo(request.Context(), path)
 		view := fileView{
 			Entry: entry, Path: path, IconClass: fileCategoryIcon(category),
 			NameParts: splitFileNameMatches(entry.Name, query), CategoryLabel: fileCategoryLabel(locale, category),
-			IsHidden: entry.Hidden, CanMutate: a.files.CanMutate(path),
+			IsHidden: entry.Hidden, CanMutate: canMutate,
 		}
 		if view.CanMutate {
 			view.MoveURL = routeFileURL("/resources/files/move", path)
@@ -5299,7 +5302,7 @@ func buildHostBreadcrumbs(path, sortField, direction string, showHidden bool) []
 func (a *App) validateFileQuickAccess(response http.ResponseWriter, request *http.Request) {
 	accessible := false
 	if path := request.URL.Query().Get("path"); path != "" {
-		if info, err := a.files.Info(path); err == nil && info.IsDir() {
+		if info, _, err := a.hostInfo(request.Context(), path); err == nil && info.IsDir() {
 			accessible = true
 		}
 	}
@@ -5363,6 +5366,8 @@ func hostPathParent(path string) (string, bool) {
 func writeHostFileError(response http.ResponseWriter, action string, err error) {
 	status := http.StatusBadRequest
 	switch {
+	case errors.Is(err, privilegebroker.ErrHostFilesUnavailable):
+		status = http.StatusServiceUnavailable
 	case errors.Is(err, hostfiles.ErrProtected), os.IsPermission(err):
 		status = http.StatusForbidden
 	case os.IsNotExist(err):
@@ -5389,7 +5394,7 @@ func (a *App) createDirectory(response http.ResponseWriter, request *http.Reques
 		return
 	}
 	directory := request.FormValue("path")
-	target, err := a.files.Destination(directory, request.FormValue("name"))
+	target, err := a.hostDestination(request.Context(), directory, request.FormValue("name"))
 	if err != nil {
 		writeHostFileError(response, "无法创建目录", err)
 		return
@@ -5400,7 +5405,7 @@ func (a *App) createDirectory(response http.ResponseWriter, request *http.Reques
 		return
 	}
 	defer release()
-	if err := a.files.CreateDirectory(directory, hostfiles.Base(target)); err != nil {
+	if err := a.hostCreateDirectory(request.Context(), directory, hostfiles.Base(target)); err != nil {
 		writeHostFileError(response, "无法创建目录", err)
 		return
 	}

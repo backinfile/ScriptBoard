@@ -17,6 +17,7 @@ import (
 	"scriptboard/internal/auditcheckpoint"
 	"scriptboard/internal/auditlog"
 	"scriptboard/internal/externaltrigger"
+	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/hostsecurity"
 	"scriptboard/internal/mfa"
 	"scriptboard/internal/mysqlmanager"
@@ -119,6 +120,23 @@ func runContext(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return err
 	}
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve privileged Broker executable: %w", err)
+	}
+	brokerFiles, err := hostfiles.Open(hostfiles.Options{ProtectedPaths: []string{
+		absolute, filepath.Dir(vault.KeyPath()), filepath.Dir(executable),
+	}})
+	if err != nil {
+		return fmt.Errorf("configure Broker-owned Host Files access: %w", err)
+	}
+	if err := brokerFiles.Protect(mysqlExecutionManager.BackupRoot()); err != nil {
+		return fmt.Errorf("protect MySQL backup root from Host Files: %w", err)
+	}
+	hostFilesService, err := privilegebroker.NewBrokerHostFilesService(brokerFiles)
+	if err != nil {
+		return err
+	}
 	legacyExternal := externaltrigger.New(database, externaltrigger.Options{SecretsDirectory: filepath.Join(absolute, "secrets"), SecretStore: vault})
 	if err := legacyExternal.MigrateSecrets(); err != nil {
 		return fmt.Errorf("migrate External Interface secrets in Broker: %w", err)
@@ -152,7 +170,7 @@ func runContext(ctx context.Context, arguments []string) error {
 		Authorizer: databaseSecurity, Executor: executor, Auditor: databaseSecurity,
 		Checkpoint: brokerCheckpointService{store: checkpoint, audit: audit}, Now: time.Now,
 		MFA: mfaStore, Passkeys: passkeyStore, RemoteWebsites: remoteWebsites, Providers: providers,
-		MySQL: mysqlService,
+		MySQL: mysqlService, HostFiles: hostFilesService,
 	})
 	if err != nil {
 		return err

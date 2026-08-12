@@ -453,6 +453,7 @@ func serveContext(runContext context.Context, arguments []string) error {
 	var remoteWebsiteService app.RemoteWebsiteService
 	var providerCredentials *privilegebroker.ProviderCredentials
 	var mysqlBackend mysqlmanager.Backend
+	var hostFilesBackend *privilegebroker.HostFilesBackend
 	privilegedBrokerEndpoint := ""
 	if installRoot != "" {
 		if err := platformservice.ValidateWebRuntimeIdentity(); err != nil {
@@ -479,6 +480,7 @@ func serveContext(runContext context.Context, arguments []string) error {
 		remoteWebsiteService = privilegebroker.NewRemoteWebsite(brokerClient)
 		providerCredentials = privilegebroker.NewProviderCredentials(brokerClient)
 		mysqlBackend = privilegebroker.NewMySQLBackend(brokerClient, mysqlmanager.ToolSettings{DumpExecutable: "mysqldump", ClientExecutable: "mysql"})
+		hostFilesBackend = privilegebroker.NewHostFilesBackend(brokerClient)
 	}
 	updateShutdown := make(chan struct{}, 1)
 	var requestRestart func() error
@@ -509,6 +511,7 @@ func serveContext(runContext context.Context, arguments []string) error {
 		RemoteWebsiteService:     remoteWebsiteService,
 		ProviderCredentials:      providerCredentials,
 		MySQLBackend:             mysqlBackend,
+		HostFilesBackend:         hostFilesBackend,
 	})
 	if err != nil {
 		return err

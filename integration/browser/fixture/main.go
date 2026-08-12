@@ -214,6 +214,7 @@ func main() {
 		applicationConfig.RemoteWebsiteService = privilegebroker.NewRemoteWebsite(brokerClient)
 		applicationConfig.ProviderCredentials = privilegebroker.NewProviderCredentials(brokerClient)
 		applicationConfig.MySQLBackend = privilegebroker.NewMySQLBackend(brokerClient, mysqlmanager.ToolSettings{DumpExecutable: "mysqldump", ClientExecutable: "mysql"})
+		applicationConfig.HostFilesBackend = privilegebroker.NewHostFilesBackend(brokerClient)
 		applicationConfig.AssistantProcessLauncher = runtimehost.NewClientLauncher(runtimehost.Dial(assistantEndpoint))
 		applicationConfig.RunnerProcessLauncher = runnerhost.NewClientLauncher(runnerhost.Dial(runnerEndpoint))
 	}

@@ -317,7 +317,7 @@ func pathWithinRoot(root, candidate string) bool {
 
 func validateMySQLRequest(request wireRequest) error {
 	if request.MySQL == nil || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
-		request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) {
+		request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.HostFiles != nil {
 		return errors.New("MySQL request contains unrelated fields")
 	}
 	payload := request.MySQL

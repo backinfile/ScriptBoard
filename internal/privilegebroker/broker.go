@@ -24,6 +24,7 @@ import (
 
 	"github.com/go-webauthn/webauthn/webauthn"
 
+	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/mfa"
 	"scriptboard/internal/mysqlmanager"
 	"scriptboard/internal/passkey"
@@ -75,6 +76,18 @@ const (
 	operationMySQLSetTools       = "mysql_set_tools"
 	operationMySQLTestTools      = "mysql_test_tools"
 	operationMySQLCancel         = "mysql_cancel"
+	operationHostFilesRoots      = "host_files_roots"
+	operationHostFilesList       = "host_files_list"
+	operationHostFilesInfo       = "host_files_info"
+	operationHostFilesReadText   = "host_files_read_text"
+	operationHostFilesCanonical  = "host_files_canonical"
+	operationHostFilesAvailable  = "host_files_available_name"
+	operationHostFilesMkdir      = "host_files_mkdir"
+	operationHostFilesToggleExec = "host_files_toggle_execute"
+	operationHostFilesTrash      = "host_files_trash"
+	operationHostFilesRestore    = "host_files_restore"
+	operationHostFilesPurge      = "host_files_purge"
+	operationHostFilesMove       = "host_files_move"
 	statusOK                     = "ok"
 	statusError                  = "error"
 	defaultCallDeadline          = 35 * time.Second
@@ -112,6 +125,10 @@ const (
 	ActionMySQLImport           Action = "mysql_import"
 	ActionMySQLSetTools         Action = "mysql_set_tools"
 	ActionMySQLCancel           Action = "mysql_cancel"
+	ActionHostFilesRead         Action = "host_files_read"
+	ActionHostFilesWrite        Action = "host_files_write"
+	ActionHostFilesDelete       Action = "host_files_delete"
+	ActionHostFilesMove         Action = "host_files_move"
 )
 
 var (
@@ -229,6 +246,21 @@ type MySQLService interface {
 	ArtifactRoot(context.Context) (string, error)
 }
 
+type HostFilesService interface {
+	Roots(context.Context) ([]hostfiles.Entry, error)
+	List(context.Context, string) ([]hostfiles.Entry, error)
+	Info(context.Context, string) (HostFileInfo, error)
+	ReadText(context.Context, string, int64) (hostfiles.TextDocument, error)
+	Canonical(context.Context, hostFilesCanonicalKind, string, string) (string, error)
+	AvailableName(context.Context, string, string) (string, error)
+	CreateDirectory(context.Context, string, string) error
+	ToggleOwnerExecute(context.Context, string) (bool, error)
+	MoveToTrash(context.Context, string, string) (hostfiles.Trashed, error)
+	RestoreFromTrash(context.Context, string, string, bool) (string, error)
+	PurgeTrash(context.Context, string) error
+	Move(context.Context, string, string) error
+}
+
 type ServerOptions struct {
 	Listener       net.Listener
 	VerifyPeer     func(net.Conn) error
@@ -241,6 +273,7 @@ type ServerOptions struct {
 	RemoteWebsites RemoteWebsiteService
 	Providers      ProviderCredentialService
 	MySQL          MySQLService
+	HostFiles      HostFilesService
 	Now            func() time.Time
 }
 
@@ -256,6 +289,7 @@ type Server struct {
 	remoteWebsites RemoteWebsiteService
 	providers      ProviderCredentialService
 	mysql          MySQLService
+	hostFiles      HostFilesService
 	now            func() time.Time
 
 	mu                sync.Mutex
@@ -283,36 +317,37 @@ type capabilityBinding struct {
 }
 
 type wireRequest struct {
-	Version               int                  `json:"version"`
-	Operation             string               `json:"operation"`
-	RequestID             string               `json:"request_id"`
-	SessionToken          string               `json:"session_token,omitempty"`
-	Capability            string               `json:"capability,omitempty"`
-	Action                Action               `json:"action"`
-	Resource              string               `json:"resource"`
-	Revision              string               `json:"revision"`
-	ParametersSHA256      string               `json:"parameters_sha256"`
-	Parameters            json.RawMessage      `json:"parameters,omitempty"`
-	MFAUserID             string               `json:"mfa_user_id,omitempty"`
-	MFAAccount            string               `json:"mfa_account,omitempty"`
-	MFACode               string               `json:"mfa_code,omitempty"`
-	PasskeyUserID         string               `json:"passkey_user_id,omitempty"`
-	PasskeyUsername       string               `json:"passkey_username,omitempty"`
-	PasskeyName           string               `json:"passkey_name,omitempty"`
-	PasskeyCredentialID   string               `json:"passkey_credential_id,omitempty"`
-	PasskeyCredential     *webauthn.Credential `json:"passkey_credential,omitempty"`
-	RemoteWebsiteID       string               `json:"remote_website_id,omitempty"`
-	RemoteWebsiteEndpoint string               `json:"remote_website_endpoint,omitempty"`
-	RemoteWebsiteKey      string               `json:"remote_website_key,omitempty"`
-	RemoteWebsiteLocale   string               `json:"remote_website_locale,omitempty"`
-	ProviderID            string               `json:"provider_id,omitempty"`
-	ProviderName          string               `json:"provider_name,omitempty"`
-	ProviderModel         string               `json:"provider_model,omitempty"`
-	ProviderEndpoint      string               `json:"provider_endpoint,omitempty"`
-	ProviderCredential    string               `json:"provider_credential,omitempty"`
-	ProviderShared        bool                 `json:"provider_shared,omitempty"`
-	ProviderSessionHandle string               `json:"provider_session_handle,omitempty"`
-	MySQL                 *mysqlWireRequest    `json:"mysql,omitempty"`
+	Version               int                   `json:"version"`
+	Operation             string                `json:"operation"`
+	RequestID             string                `json:"request_id"`
+	SessionToken          string                `json:"session_token,omitempty"`
+	Capability            string                `json:"capability,omitempty"`
+	Action                Action                `json:"action"`
+	Resource              string                `json:"resource"`
+	Revision              string                `json:"revision"`
+	ParametersSHA256      string                `json:"parameters_sha256"`
+	Parameters            json.RawMessage       `json:"parameters,omitempty"`
+	MFAUserID             string                `json:"mfa_user_id,omitempty"`
+	MFAAccount            string                `json:"mfa_account,omitempty"`
+	MFACode               string                `json:"mfa_code,omitempty"`
+	PasskeyUserID         string                `json:"passkey_user_id,omitempty"`
+	PasskeyUsername       string                `json:"passkey_username,omitempty"`
+	PasskeyName           string                `json:"passkey_name,omitempty"`
+	PasskeyCredentialID   string                `json:"passkey_credential_id,omitempty"`
+	PasskeyCredential     *webauthn.Credential  `json:"passkey_credential,omitempty"`
+	RemoteWebsiteID       string                `json:"remote_website_id,omitempty"`
+	RemoteWebsiteEndpoint string                `json:"remote_website_endpoint,omitempty"`
+	RemoteWebsiteKey      string                `json:"remote_website_key,omitempty"`
+	RemoteWebsiteLocale   string                `json:"remote_website_locale,omitempty"`
+	ProviderID            string                `json:"provider_id,omitempty"`
+	ProviderName          string                `json:"provider_name,omitempty"`
+	ProviderModel         string                `json:"provider_model,omitempty"`
+	ProviderEndpoint      string                `json:"provider_endpoint,omitempty"`
+	ProviderCredential    string                `json:"provider_credential,omitempty"`
+	ProviderShared        bool                  `json:"provider_shared,omitempty"`
+	ProviderSessionHandle string                `json:"provider_session_handle,omitempty"`
+	MySQL                 *mysqlWireRequest     `json:"mysql,omitempty"`
+	HostFiles             *hostFilesWireRequest `json:"host_files,omitempty"`
 }
 
 type wireResponse struct {
@@ -334,6 +369,7 @@ type wireResponse struct {
 	ProviderCapability    string                   `json:"provider_capability,omitempty"`
 	ProviderSessionHandle string                   `json:"provider_session_handle,omitempty"`
 	MySQL                 *mysqlWireResponse       `json:"mysql,omitempty"`
+	HostFiles             *hostFilesWireResponse   `json:"host_files,omitempty"`
 }
 
 func NewServer(options ServerOptions) (*Server, error) {
@@ -346,7 +382,7 @@ func NewServer(options ServerOptions) (*Server, error) {
 	}
 	return &Server{
 		listener: options.Listener, verifyPeer: options.VerifyPeer, authorizer: options.Authorizer,
-		executor: options.Executor, auditor: options.Auditor, checkpoint: options.Checkpoint, mfa: options.MFA, passkeys: options.Passkeys, remoteWebsites: options.RemoteWebsites, providers: options.Providers, mysql: options.MySQL, now: now,
+		executor: options.Executor, auditor: options.Auditor, checkpoint: options.Checkpoint, mfa: options.MFA, passkeys: options.Passkeys, remoteWebsites: options.RemoteWebsites, providers: options.Providers, mysql: options.MySQL, hostFiles: options.HostFiles, now: now,
 		capabilities: make(map[string]capabilityBinding), done: make(chan struct{}),
 		mfaVerifyFailures: make(map[string]mfaVerifyFailure),
 	}, nil
@@ -415,6 +451,10 @@ func (server *Server) handle(connection net.Conn) {
 		}()
 		response = server.mysqlOperation(operationContext, request)
 		cancelOperation()
+	case operationHostFilesRoots, operationHostFilesList, operationHostFilesInfo, operationHostFilesReadText,
+		operationHostFilesCanonical, operationHostFilesAvailable, operationHostFilesMkdir, operationHostFilesToggleExec,
+		operationHostFilesTrash, operationHostFilesRestore, operationHostFilesPurge, operationHostFilesMove:
+		response = server.hostFilesOperation(request)
 	default:
 		response = wireResponse{Status: statusError, ErrorCode: "operation_forbidden", Message: "operation is not supported"}
 	}
@@ -1042,14 +1082,14 @@ func validateWireRequest(request wireRequest) error {
 	}
 	if request.Operation == operationCheckpointVerify || request.Operation == operationCheckpointWrite {
 		if request.SessionToken != "" || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
-			request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil {
+			request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || request.HostFiles != nil {
 			return errors.New("checkpoint request is invalid")
 		}
 		return nil
 	}
 	if isMFAOperation(request.Operation) {
 		if request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
-			request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || len(request.MFAUserID) == 0 || len(request.MFAUserID) > 160 || strings.ContainsAny(request.MFAUserID, "\r\n\x00") {
+			request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || request.HostFiles != nil || len(request.MFAUserID) == 0 || len(request.MFAUserID) > 160 || strings.ContainsAny(request.MFAUserID, "\r\n\x00") {
 			return errors.New("MFA request is invalid")
 		}
 		switch request.Operation {
@@ -1088,7 +1128,10 @@ func validateWireRequest(request wireRequest) error {
 	if isMySQLOperation(request.Operation) {
 		return validateMySQLRequest(request)
 	}
-	if hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil {
+	if isHostFilesOperation(request.Operation) {
+		return validateHostFilesRequest(request)
+	}
+	if hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || request.HostFiles != nil {
 		return errors.New("privileged action contains credential-domain fields")
 	}
 	if _, ok := actions[request.Action]; !ok {
@@ -1121,7 +1164,7 @@ func validateWireRequest(request wireRequest) error {
 
 func validatePasskeyRequest(request wireRequest) error {
 	if request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
-		request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || len(request.PasskeyUserID) == 0 ||
+		request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || request.HostFiles != nil || len(request.PasskeyUserID) == 0 ||
 		len(request.PasskeyUserID) > 160 || strings.ContainsAny(request.PasskeyUserID, "\r\n\x00") {
 		return errors.New("passkey request is invalid")
 	}
@@ -1162,7 +1205,7 @@ func validatePasskeyRequest(request wireRequest) error {
 
 func validateRemoteWebsiteRequest(request wireRequest) error {
 	if request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" || request.ParametersSHA256 != "" ||
-		len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasProviderFields(request) || request.MySQL != nil || !validRemoteWebsiteID(request.RemoteWebsiteID) ||
+		len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasProviderFields(request) || request.MySQL != nil || request.HostFiles != nil || !validRemoteWebsiteID(request.RemoteWebsiteID) ||
 		!validCredentialSessionToken(request.SessionToken) {
 		return errors.New("remote website request is invalid")
 	}
@@ -1186,7 +1229,7 @@ func validateRemoteWebsiteRequest(request wireRequest) error {
 
 func validateProviderRequest(request wireRequest) error {
 	if request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" || request.ParametersSHA256 != "" ||
-		len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || request.MySQL != nil {
+		len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || request.MySQL != nil || request.HostFiles != nil {
 		return errors.New("provider request is invalid")
 	}
 	if request.Operation == operationProviderStop {

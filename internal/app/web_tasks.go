@@ -72,7 +72,7 @@ func (a *App) newDirectoryTask(response http.ResponseWriter, request *http.Reque
 		http.Error(response, "请先进入一个主机目录", http.StatusBadRequest)
 		return
 	}
-	if _, err := a.files.List(relative); err != nil {
+	if _, err := a.hostList(request.Context(), relative); err != nil {
 		writeHostFileError(response, "无法打开新建目录任务", err)
 		return
 	}
@@ -89,7 +89,7 @@ func (a *App) uploadTask(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "请先进入一个主机目录", http.StatusBadRequest)
 		return
 	}
-	if _, err := a.files.List(relative); err != nil {
+	if _, err := a.hostList(request.Context(), relative); err != nil {
 		writeHostFileError(response, "无法打开上传任务", err)
 		return
 	}
@@ -101,12 +101,13 @@ func (a *App) uploadTask(response http.ResponseWriter, request *http.Request) {
 }
 
 func (a *App) moveFileTask(response http.ResponseWriter, request *http.Request) {
-	path, err := a.files.CanonicalExisting(request.URL.Query().Get("path"))
+	path, err := a.hostCanonicalExisting(request.Context(), request.URL.Query().Get("path"))
 	if err != nil {
 		writeHostFileError(response, "无法打开移动任务", err)
 		return
 	}
-	if !a.files.CanMutate(path) {
+	_, canMutate, infoErr := a.hostInfo(request.Context(), path)
+	if infoErr != nil || !canMutate {
 		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
 		return
 	}
@@ -125,7 +126,7 @@ func (a *App) moveFileTask(response http.ResponseWriter, request *http.Request) 
 
 func (a *App) runFileTask(response http.ResponseWriter, request *http.Request) {
 	relative := request.URL.Query().Get("path")
-	info, err := a.files.Info(relative)
+	info, _, err := a.hostInfo(request.Context(), relative)
 	if err != nil || !info.Mode().IsRegular() {
 		http.Error(response, "Script not found", http.StatusNotFound)
 		return
@@ -140,7 +141,7 @@ func (a *App) runFileTask(response http.ResponseWriter, request *http.Request) {
 
 func (a *App) quickRunFromFileTask(response http.ResponseWriter, request *http.Request) {
 	relative := request.URL.Query().Get("path")
-	info, err := a.files.Info(relative)
+	info, _, err := a.hostInfo(request.Context(), relative)
 	if err != nil || !info.Mode().IsRegular() || !isScriptExtension(relative) {
 		http.Error(response, "Script not found", http.StatusNotFound)
 		return
