@@ -460,7 +460,7 @@ var webMessages = map[string]localizedMessage{
 	"assistant.configuration_name":                  {"配置名称", "Configuration name"},
 	"assistant.provider":                            {"提供商", "Provider"},
 	"assistant.credential_placeholder":              {"保存后仅显示已配置状态", "Only configured status is shown after saving"},
-	"assistant.credential_description":              {"凭据只以外部主密钥密封后写入 State Root，不进入 SQLite、页面 HTML 或浏览器存储。编辑时留空可保留原凭据。", "Credentials are sealed with an external host key before entering State Root and never reach SQLite, page HTML, or browser storage. Leave blank while editing to keep the current credential."},
+	"assistant.credential_description":              {"受管部署由本机 Broker 保存凭据并注入短期 Provider 代理；非受管部署使用外部主密钥密封。凭据不进入 SQLite、页面 HTML 或浏览器存储，编辑时留空可保留原值。", "Managed deployments keep credentials in the local Broker and inject them into a short-lived Provider proxy; unmanaged deployments seal them with an external host key. Credentials never reach SQLite, page HTML, or browser storage. Leave blank while editing to keep the current value."},
 	"assistant.make_default":                        {"设为新对话默认 LLM", "Use as the default LLM for new conversations"},
 	"assistant.make_default_description":            {"已有对话不会被修改。", "Existing conversations are unchanged."},
 	"assistant.save_configuration":                  {"保存配置", "Save configuration"},

@@ -20,6 +20,7 @@ import (
 	"scriptboard/internal/mfa"
 	"scriptboard/internal/passkey"
 	"scriptboard/internal/privilegebroker"
+	"scriptboard/internal/providercredential"
 	"scriptboard/internal/remotewebsite"
 	"scriptboard/internal/secretredaction"
 	"scriptboard/internal/secretstore"
@@ -94,6 +95,13 @@ func runContext(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("initialize Broker-owned remote website credentials: %w", err)
 	}
+	providers, err := providercredential.New(providercredential.Options{StateRoot: absolute, SecretStore: vault})
+	if err != nil {
+		return fmt.Errorf("initialize Broker-owned provider credentials: %w", err)
+	}
+	if err := providers.MigrateLegacy(context.Background(), database); err != nil {
+		return fmt.Errorf("migrate Assistant provider credentials in Broker: %w", err)
+	}
 	legacyExternal := externaltrigger.New(database, externaltrigger.Options{SecretsDirectory: filepath.Join(absolute, "secrets"), SecretStore: vault})
 	if err := legacyExternal.MigrateSecrets(); err != nil {
 		return fmt.Errorf("migrate External Interface secrets in Broker: %w", err)
@@ -126,7 +134,7 @@ func runContext(ctx context.Context, arguments []string) error {
 		Listener: transport.Listener, VerifyPeer: transport.VerifyPeer,
 		Authorizer: databaseSecurity, Executor: executor, Auditor: databaseSecurity,
 		Checkpoint: brokerCheckpointService{store: checkpoint, audit: audit}, Now: time.Now,
-		MFA: mfaStore, Passkeys: passkeyStore, RemoteWebsites: remoteWebsites,
+		MFA: mfaStore, Passkeys: passkeyStore, RemoteWebsites: remoteWebsites, Providers: providers,
 	})
 	if err != nil {
 		return err

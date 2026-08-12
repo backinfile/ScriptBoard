@@ -352,6 +352,7 @@ type Config struct {
 	MFAStore                  MFAStore
 	PasskeyStore              PasskeyStore
 	RemoteWebsiteService      RemoteWebsiteService
+	ProviderCredentials       *privilegebroker.ProviderCredentials
 	SecurityEventEndpoint     string
 	SecurityEventToken        string
 	SecurityEventTokenFile    string
@@ -680,7 +681,11 @@ func Open(config Config) (*App, error) {
 		return nil, fmt.Errorf("protect MySQL backup root: %w", err)
 	}
 	application.mysqlContext, application.mysqlCancel = context.WithCancel(context.Background())
-	application.assistant, err = assistant.New(db, assistant.Options{StateRoot: stateRoot, SecretStore: credentialStore})
+	assistantOptions := assistant.Options{StateRoot: stateRoot, SecretStore: credentialStore}
+	if config.ProviderCredentials != nil {
+		assistantOptions.ProviderCredentials = config.ProviderCredentials
+	}
+	application.assistant, err = assistant.New(db, assistantOptions)
 	if err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("initialize assistant module: %w", err)
@@ -698,6 +703,9 @@ func Open(config Config) (*App, error) {
 		return nil, fmt.Errorf("load assistant settings: %w", err)
 	}
 	application.assistantRuntime = newAssistantRuntimeCoordinatorWithLauncher(stateRoot, application.assistant, assistantSettings.MaxActiveConversations, config.AssistantProcessLauncher)
+	if config.ProviderCredentials != nil {
+		application.assistantRuntime.SetProviderSessions(brokerAssistantProviderSessions{providers: config.ProviderCredentials})
+	}
 	application.assistantRuntime.SetApprovalAudit(func(actor assistant.Actor, conversationID, approvalID, result string) {
 		var role userRole
 		_ = application.db.QueryRow("SELECT role FROM users WHERE id = ?", actor.UserID).Scan(&role)
@@ -2533,10 +2541,10 @@ func (a *App) routes() http.Handler {
 		}{Locale: locale, SettingsNavigation: newSettingsNavigation(current, locale, "display")})
 	})))
 	mux.Handle("GET /settings/ai", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.assistantSettingsPage)))
-	mux.Handle("POST /settings/ai/llms", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.saveAssistantModel)))
+	mux.Handle("POST /settings/ai/llms", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.saveAssistantModel)))
 	mux.Handle("POST /settings/ai/llms/{id}/test", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.testAssistantModel)))
 	mux.Handle("POST /settings/ai/llms/{id}/default", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.setDefaultAssistantModel)))
-	mux.Handle("POST /settings/ai/llms/{id}/delete", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.deleteAssistantModel)))
+	mux.Handle("POST /settings/ai/llms/{id}/delete", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.deleteAssistantModel)))
 	mux.Handle("POST /settings/ai/defaults", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.saveAssistantDefaults)))
 	mux.Handle("POST /settings/ai/runtime/check", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.checkAssistantRuntime)))
 	mux.Handle("POST /settings/ai/runtime/install", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.installAssistantRuntime)))

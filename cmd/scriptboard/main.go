@@ -450,6 +450,7 @@ func serveContext(runContext context.Context, arguments []string) error {
 	var mfaStore app.MFAStore
 	var passkeyStore app.PasskeyStore
 	var remoteWebsiteService app.RemoteWebsiteService
+	var providerCredentials *privilegebroker.ProviderCredentials
 	privilegedBrokerEndpoint := ""
 	if installRoot != "" {
 		if err := platformservice.ValidateWebRuntimeIdentity(); err != nil {
@@ -474,6 +475,7 @@ func serveContext(runContext context.Context, arguments []string) error {
 		mfaStore = privilegebroker.NewRemoteMFA(brokerClient)
 		passkeyStore = privilegebroker.NewRemotePasskey(brokerClient)
 		remoteWebsiteService = privilegebroker.NewRemoteWebsite(brokerClient)
+		providerCredentials = privilegebroker.NewProviderCredentials(brokerClient)
 	}
 	updateShutdown := make(chan struct{}, 1)
 	var requestRestart func() error
@@ -502,6 +504,7 @@ func serveContext(runContext context.Context, arguments []string) error {
 		MFAStore:                 mfaStore,
 		PasskeyStore:             passkeyStore,
 		RemoteWebsiteService:     remoteWebsiteService,
+		ProviderCredentials:      providerCredentials,
 	})
 	if err != nil {
 		return err

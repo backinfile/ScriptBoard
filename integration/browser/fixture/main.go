@@ -211,6 +211,7 @@ func main() {
 		applicationConfig.MFAStore = privilegebroker.NewRemoteMFA(brokerClient)
 		applicationConfig.PasskeyStore = privilegebroker.NewRemotePasskey(brokerClient)
 		applicationConfig.RemoteWebsiteService = privilegebroker.NewRemoteWebsite(brokerClient)
+		applicationConfig.ProviderCredentials = privilegebroker.NewProviderCredentials(brokerClient)
 		applicationConfig.AssistantProcessLauncher = runtimehost.NewClientLauncher(runtimehost.Dial(assistantEndpoint))
 		applicationConfig.RunnerProcessLauncher = runnerhost.NewClientLauncher(runnerhost.Dial(runnerEndpoint))
 	}
