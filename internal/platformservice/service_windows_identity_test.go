@@ -26,6 +26,12 @@ func TestWindowsWebServiceIdentityIsNotHighlyPrivileged(t *testing.T) {
 	}
 }
 
+func TestWindowsAIRuntimeUsesSeparateServiceSID(t *testing.T) {
+	if strings.EqualFold(aiServiceSID, webServiceSID) || !strings.HasPrefix(strings.ToLower(aiServiceSID), `nt service\`) {
+		t.Fatalf("AI Runtime service SID is not separate: %q", aiServiceSID)
+	}
+}
+
 func TestWindowsManagedWebRuntimeRequiresLowIdentityAndServiceSID(t *testing.T) {
 	if err := validateWindowsWebRuntimeIdentity(false, true); err == nil {
 		t.Fatal("non-LocalService token was accepted")

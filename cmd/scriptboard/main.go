@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"scriptboard/internal/app"
+	"scriptboard/internal/assistant/pirpc"
+	"scriptboard/internal/assistant/runtimehost"
 	"scriptboard/internal/auditlog"
 	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/config"
@@ -427,10 +429,16 @@ func serveContext(runContext context.Context, arguments []string) error {
 		return err
 	}
 	installRoot := applicationInstallRoot(loaded.StateRoot)
+	var assistantLauncher pirpc.ProcessLauncher
 	if installRoot != "" {
 		if err := platformservice.ValidateWebRuntimeIdentity(); err != nil {
 			return fmt.Errorf("refuse to start managed Web service with unsafe OS identity: %w", err)
 		}
+		endpoint, err := runtimehost.DefaultEndpoint(loaded.StateRoot)
+		if err != nil {
+			return fmt.Errorf("resolve isolated Runtime Host endpoint: %w", err)
+		}
+		assistantLauncher = runtimehost.NewClientLauncher(runtimehost.Dial(endpoint))
 	}
 	updateShutdown := make(chan struct{}, 1)
 	var requestRestart func() error
@@ -449,7 +457,8 @@ func serveContext(runContext context.Context, arguments []string) error {
 			default:
 			}
 		},
-		RequestRestart: requestRestart,
+		RequestRestart:           requestRestart,
+		AssistantProcessLauncher: assistantLauncher,
 	})
 	if err != nil {
 		return err

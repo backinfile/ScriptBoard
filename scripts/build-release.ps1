@@ -140,6 +140,8 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Building Windows $arch service failed" }
         go build -trimpath -ldflags $commonLDFlags -o (Join-Path $stage "scriptboard-broker.exe") ./cmd/scriptboard-broker
         if ($LASTEXITCODE -ne 0) { throw "Building Windows $arch privileged Broker failed" }
+        go build -trimpath -ldflags $commonLDFlags -o (Join-Path $stage "scriptboard-ai-host.exe") ./cmd/scriptboard-ai-host
+        if ($LASTEXITCODE -ne 0) { throw "Building Windows $arch AI Runtime Host failed" }
         go build -trimpath -ldflags "$commonLDFlags -H=windowsgui" -o (Join-Path $stage "scriptboard-tray.exe") ./cmd/scriptboard-tray
         if ($LASTEXITCODE -ne 0) { throw "Building Windows $arch tray failed" }
         go build -trimpath -ldflags "$commonLDFlags -H=windowsgui" -o (Join-Path $stage "scriptboard-tray-launcher.exe") ./cmd/scriptboard-tray-launcher
@@ -159,6 +161,8 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Building Linux $arch service failed" }
         go build -trimpath -ldflags $commonLDFlags -o (Join-Path $stage "scriptboard-broker") ./cmd/scriptboard-broker
         if ($LASTEXITCODE -ne 0) { throw "Building Linux $arch privileged Broker failed" }
+        go build -trimpath -ldflags $commonLDFlags -o (Join-Path $stage "scriptboard-ai-host") ./cmd/scriptboard-ai-host
+        if ($LASTEXITCODE -ne 0) { throw "Building Linux $arch AI Runtime Host failed" }
         go build -trimpath -ldflags $commonLDFlags -o (Join-Path $stage "scriptboard-updater") ./cmd/scriptboard-updater
         if ($LASTEXITCODE -ne 0) { throw "Building Linux $arch updater failed" }
         Write-ReleaseInfo $stage

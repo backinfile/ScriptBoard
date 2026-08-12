@@ -250,6 +250,17 @@ func ServiceBrokerExecutable(metadata Metadata) string {
 	return filepath.Join(VersionRoot(metadata, metadata.Current), name)
 }
 
+func ServiceAIHostExecutable(metadata Metadata) string {
+	name := "scriptboard-ai-host"
+	if metadata.OS == "windows" {
+		name += ".exe"
+	}
+	if metadata.OS == "linux" {
+		return filepath.Join(metadata.InstallRoot, "current", name)
+	}
+	return filepath.Join(VersionRoot(metadata, metadata.Current), name)
+}
+
 func UpdaterExecutable(metadata Metadata) string {
 	name := "scriptboard-updater"
 	if metadata.OS == "windows" {
@@ -290,9 +301,9 @@ func ValidateVersion(metadata Metadata, version string, want buildinfo.Info) err
 	if version != want.Version || !want.ValidRelease() {
 		return errors.New("expected build does not identify the Installed Release")
 	}
-	required := []string{"scriptboard", "scriptboard-broker", "scriptboard-updater", buildinfo.ReleaseInfoFilename}
+	required := []string{"scriptboard", "scriptboard-broker", "scriptboard-ai-host", "scriptboard-updater", buildinfo.ReleaseInfoFilename}
 	if metadata.OS == "windows" {
-		required = []string{"scriptboard.exe", "scriptboard-broker.exe", "scriptboard-tray.exe", "scriptboard-tray-launcher.exe", "scriptboard-updater.exe", buildinfo.ReleaseInfoFilename}
+		required = []string{"scriptboard.exe", "scriptboard-broker.exe", "scriptboard-ai-host.exe", "scriptboard-tray.exe", "scriptboard-tray-launcher.exe", "scriptboard-updater.exe", buildinfo.ReleaseInfoFilename}
 	}
 	return validateInstalledVersion(VersionRoot(metadata, version), want, required)
 }
@@ -331,18 +342,18 @@ func ValidateReleaseSource(sourceRoot string, want buildinfo.Info) error {
 	if !want.ValidRelease() {
 		return errors.New("expected build does not identify a formal release")
 	}
-	required := []string{"scriptboard", "scriptboard-broker", "scriptboard-updater", buildinfo.ReleaseInfoFilename}
+	required := []string{"scriptboard", "scriptboard-broker", "scriptboard-ai-host", "scriptboard-updater", buildinfo.ReleaseInfoFilename}
 	if runtime.GOOS == "windows" {
-		required = []string{"scriptboard.exe", "scriptboard-broker.exe", "scriptboard-tray.exe", "scriptboard-tray-launcher.exe", "scriptboard-updater.exe", buildinfo.ReleaseInfoFilename}
+		required = []string{"scriptboard.exe", "scriptboard-broker.exe", "scriptboard-ai-host.exe", "scriptboard-tray.exe", "scriptboard-tray-launcher.exe", "scriptboard-updater.exe", buildinfo.ReleaseInfoFilename}
 	}
 	return validateInstalledVersion(sourceRoot, want, required)
 }
 
 func prepareVersion(sourceRoot, versionRoot string, info buildinfo.Info) error {
-	required := []string{"scriptboard", "scriptboard-broker", "scriptboard-updater", buildinfo.ReleaseInfoFilename}
+	required := []string{"scriptboard", "scriptboard-broker", "scriptboard-ai-host", "scriptboard-updater", buildinfo.ReleaseInfoFilename}
 	optional := []string{"README.md", "README_EN.md", "LICENSE"}
 	if runtime.GOOS == "windows" {
-		required = []string{"scriptboard.exe", "scriptboard-broker.exe", "scriptboard-tray.exe", "scriptboard-tray-launcher.exe", "scriptboard-updater.exe", buildinfo.ReleaseInfoFilename}
+		required = []string{"scriptboard.exe", "scriptboard-broker.exe", "scriptboard-ai-host.exe", "scriptboard-tray.exe", "scriptboard-tray-launcher.exe", "scriptboard-updater.exe", buildinfo.ReleaseInfoFilename}
 	}
 	if existing, err := os.Stat(versionRoot); err == nil && existing.IsDir() {
 		return validateInstalledVersion(versionRoot, info, required)

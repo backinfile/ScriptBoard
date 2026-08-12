@@ -135,8 +135,15 @@ type assistantSubscription struct {
 }
 
 func newAssistantRuntimeCoordinator(stateRoot string, store *assistant.Service, maximum int) *assistantRuntimeCoordinator {
+	return newAssistantRuntimeCoordinatorWithLauncher(stateRoot, store, maximum, nil)
+}
+
+func newAssistantRuntimeCoordinatorWithLauncher(stateRoot string, store *assistant.Service, maximum int, launcher pirpc.ProcessLauncher) *assistantRuntimeCoordinator {
+	if launcher == nil {
+		launcher = pirpc.NewLocalRuntimeLauncher(stateRoot)
+	}
 	return &assistantRuntimeCoordinator{
-		stateRoot: stateRoot, store: store, supervisor: pirpc.NewSupervisor(maximum),
+		stateRoot: stateRoot, store: store, supervisor: pirpc.NewSupervisorWithLauncher(maximum, launcher),
 		turns: make(map[string]*assistantRuntimeTurn), sessionConfigs: make(map[string]string),
 		hubs: make(map[string]*assistantEventHub), lifecycleGates: make(map[string]*sync.Mutex),
 		idleStops: make(map[string]*time.Timer), brokerSessions: make(map[string]assistantBrokerRuntimeSession), providerSessions: make(map[string]*providerproxy.Session), approvals: make(map[string]*assistantRuntimeApproval), warmDuration: defaultAssistantWarmDuration,
@@ -207,7 +214,7 @@ func (runtime *assistantRuntimeCoordinator) ActiveProcesses() int { return runti
 // Conversation or retaining prompt/response content. It validates the exact
 // Runtime, provider endpoint, credential, and model path used by real turns.
 func (runtime *assistantRuntimeCoordinator) TestModel(ctx context.Context, actor assistant.Actor, modelID string) error {
-	managedRuntime, err := runtime.Runtime()
+	_, err := runtime.Runtime()
 	if err != nil {
 		return err
 	}
@@ -249,19 +256,15 @@ func (runtime *assistantRuntimeCoordinator) TestModel(ctx context.Context, actor
 		_ = providerSession.Close(closeContext)
 		cancel()
 	}()
-	spec, err := pirpc.PrepareLaunch(pirpc.LaunchInput{
-		StateRoot: runtime.stateRoot, Executable: managedRuntime.Executable,
+	request := pirpc.RuntimeLaunchRequest{
 		UserID: actor.UserID, ConversationID: testID,
 		Provider: model.Provider, Model: model.Model, ProviderProxyEndpoint: providerSession.Endpoint(), ProviderCapability: providerSession.Capability(),
 		SystemPrompt: "You are a provider connectivity check. Reply only with OK.",
-	})
-	if err != nil {
-		return err
 	}
-	defer cleanupProviderTestDirectories(runtime.stateRoot, spec)
-	session, err := runtime.supervisor.Start(testID, spec)
+	defer cleanupProviderTestDirectories(runtime.stateRoot, actor.UserID, testID)
+	session, err := runtime.supervisor.StartRuntime(testID, request)
 	if errors.Is(err, pirpc.ErrCapacity) && runtime.evictOneIdleSession(testID) {
-		session, err = runtime.supervisor.Start(testID, spec)
+		session, err = runtime.supervisor.StartRuntime(testID, request)
 	}
 	if err != nil {
 		return err
@@ -318,9 +321,13 @@ func (runtime *assistantRuntimeCoordinator) TestModel(ctx context.Context, actor
 	}
 }
 
-func cleanupProviderTestDirectories(stateRoot string, spec pirpc.LaunchSpec) {
+func cleanupProviderTestDirectories(stateRoot, userID, conversationID string) {
 	assistantRoot := filepath.Join(filepath.Clean(stateRoot), "assistant")
-	for _, directory := range []string{spec.PiHome, spec.SessionDir, spec.Workspace} {
+	for _, directory := range []string{
+		filepath.Join(assistantRoot, "pi-home", userID, conversationID),
+		filepath.Join(assistantRoot, "sessions", userID, conversationID),
+		filepath.Join(assistantRoot, "workspaces", userID, conversationID),
+	} {
 		relative, err := filepath.Rel(assistantRoot, filepath.Clean(directory))
 		if err == nil && relative != "." && relative != ".." && !filepath.IsAbs(relative) && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 			_ = os.RemoveAll(directory)
@@ -446,8 +453,7 @@ func (runtime *assistantRuntimeCoordinator) ExecuteWithImages(ctx context.Contex
 			_ = processProvider.Close(closeContext)
 			cancel()
 		}
-		spec, prepareErr := pirpc.PrepareLaunch(pirpc.LaunchInput{
-			StateRoot: runtime.stateRoot, Executable: managedRuntime.Executable, Extension: managedRuntime.Extension,
+		request := pirpc.RuntimeLaunchRequest{
 			UserID: actor.UserID, ConversationID: conversation.ID,
 			Provider: model.Provider, Model: model.Model, ProviderProxyEndpoint: processProvider.Endpoint(), ProviderCapability: processProvider.Capability(),
 			SupportsImages: model.SupportsImages,
@@ -464,15 +470,10 @@ func (runtime *assistantRuntimeCoordinator) ExecuteWithImages(ctx context.Contex
 				}
 				return processBroker.Capability
 			}(),
-		})
-		if prepareErr != nil {
-			closeProcessBroker()
-			closeProcessProvider()
-			return prepareErr
 		}
-		session, err = runtime.supervisor.Start(conversation.ID, spec)
+		session, err = runtime.supervisor.StartRuntime(conversation.ID, request)
 		if errors.Is(err, pirpc.ErrCapacity) && runtime.evictOneIdleSession(conversation.ID) {
-			session, err = runtime.supervisor.Start(conversation.ID, spec)
+			session, err = runtime.supervisor.StartRuntime(conversation.ID, request)
 		}
 		if err != nil {
 			closeProcessBroker()

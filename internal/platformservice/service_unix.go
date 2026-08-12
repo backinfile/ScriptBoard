@@ -19,8 +19,10 @@ const (
 	serviceName     = "ScriptBoard"
 	unitPath        = "/etc/systemd/system/scriptboard.service"
 	brokerUnitPath  = "/etc/systemd/system/scriptboard-broker.service"
+	aiUnitPath      = "/etc/systemd/system/scriptboard-ai.service"
 	updaterUnitPath = "/etc/systemd/system/scriptboard-updater@.service"
 	webServiceUser  = "scriptboard-web"
+	aiServiceUser   = "scriptboard-ai"
 )
 
 func Exists() (bool, error) {
@@ -46,6 +48,21 @@ func ValidateWebRuntimeIdentity() error {
 	return validateLinuxWebRuntimeIdentity(os.Geteuid(), uid)
 }
 
+func ValidateAIRuntimeIdentity() error {
+	account, err := user.Lookup(aiServiceUser)
+	if err != nil {
+		return fmt.Errorf("resolve managed AI Runtime service account: %w", err)
+	}
+	uid, err := strconv.Atoi(account.Uid)
+	if err != nil {
+		return fmt.Errorf("parse managed AI Runtime service UID: %w", err)
+	}
+	if os.Geteuid() == 0 || os.Geteuid() != uid {
+		return fmt.Errorf("effective UID %d is not dedicated AI Runtime service UID %d", os.Geteuid(), uid)
+	}
+	return nil
+}
+
 func validateLinuxWebRuntimeIdentity(effectiveUID, expectedUID int) error {
 	if effectiveUID == 0 || effectiveUID != expectedUID {
 		return fmt.Errorf("effective UID %d is not dedicated Web service UID %d", effectiveUID, expectedUID)
@@ -58,11 +75,12 @@ func Install(executable, configPath, updaterExecutable, stateRoot string) error 
 		return err
 	}
 	brokerExecutable := filepath.Join(filepath.Dir(executable), "scriptboard-broker")
+	aiExecutable := filepath.Join(filepath.Dir(executable), "scriptboard-ai-host")
 	unit := fmt.Sprintf(`[Unit]
 Description=ScriptBoard
 After=network.target
-Requires=scriptboard-broker.service
-After=scriptboard-broker.service
+Requires=scriptboard-broker.service scriptboard-ai.service
+After=scriptboard-broker.service scriptboard-ai.service
 
 [Service]
 Type=simple
@@ -103,6 +121,39 @@ LockPersonality=true
 [Install]
 WantedBy=multi-user.target
 `, systemdQuote(brokerExecutable), systemdQuote(stateRoot))
+	aiUnit := fmt.Sprintf(`[Unit]
+Description=ScriptBoard isolated AI Runtime Host
+After=network.target
+
+[Service]
+Type=simple
+User=scriptboard-ai
+Group=scriptboard-ai
+SupplementaryGroups=scriptboard-ai
+RuntimeDirectory=scriptboard-ai
+RuntimeDirectoryMode=0750
+ExecStart=%s --state-root %s --allowed-identity scriptboard-web
+Restart=on-failure
+NoNewPrivileges=true
+UMask=0007
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=%s
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+
+[Install]
+WantedBy=multi-user.target
+`, systemdQuote(aiExecutable), systemdQuote(stateRoot), systemdQuote(filepath.Join(stateRoot, "assistant")))
 	updaterUnit := fmt.Sprintf(`[Unit]
 Description=ScriptBoard update operation %%i
 After=network.target
@@ -119,6 +170,9 @@ TimeoutStartSec=0
 	if err := os.WriteFile(brokerUnitPath, []byte(brokerUnit), 0o644); err != nil {
 		return err
 	}
+	if err := os.WriteFile(aiUnitPath, []byte(aiUnit), 0o644); err != nil {
+		return err
+	}
 	if err := os.WriteFile(updaterUnitPath, []byte(updaterUnit), 0o644); err != nil {
 		return err
 	}
@@ -126,6 +180,9 @@ TimeoutStartSec=0
 		return err
 	}
 	if err := systemctl("enable", "scriptboard-broker.service"); err != nil {
+		return err
+	}
+	if err := systemctl("enable", "scriptboard-ai.service"); err != nil {
 		return err
 	}
 	return systemctl("enable", "scriptboard.service")
@@ -180,6 +237,9 @@ func prepareLinuxWebServiceIdentity(configPath, stateRoot string) error {
 			return fmt.Errorf("assign %s to Linux Web service account: %w", root, err)
 		}
 	}
+	if err := prepareLinuxAIServiceIdentity(stateRoot); err != nil {
+		return err
+	}
 	if _, err := os.Stat(configPath); errors.Is(err, os.ErrNotExist) {
 		return nil
 	} else if err != nil {
@@ -190,6 +250,130 @@ func prepareLinuxWebServiceIdentity(configPath, stateRoot string) error {
 	}
 	if err := os.Chmod(configPath, 0o640); err != nil {
 		return fmt.Errorf("protect Linux service config: %w", err)
+	}
+	return nil
+}
+
+func prepareLinuxAIServiceIdentity(stateRoot string) error {
+	webAccount, err := user.Lookup(webServiceUser)
+	if err != nil {
+		return fmt.Errorf("resolve Linux Web service account for AI Runtime ACL: %w", err)
+	}
+	webUID, err := strconv.Atoi(webAccount.Uid)
+	if err != nil {
+		return fmt.Errorf("parse Linux Web service UID for AI Runtime ACL: %w", err)
+	}
+	account, err := user.Lookup(aiServiceUser)
+	if _, unknown := err.(user.UnknownUserError); unknown {
+		command, commandErr := processlaunch.Prepare(processlaunch.Spec{
+			Context: context.Background(), Executable: "/usr/sbin/useradd",
+			Arguments:   []string{"--system", "--user-group", "--no-create-home", "--home-dir", "/nonexistent", "--shell", "/usr/sbin/nologin", aiServiceUser},
+			Environment: processlaunch.EnvironmentInherit,
+		})
+		if commandErr != nil {
+			return fmt.Errorf("prepare Linux AI Runtime service account: %w", commandErr)
+		}
+		if output, runErr := command.CombinedOutput(); runErr != nil {
+			return fmt.Errorf("create Linux AI Runtime service account: %w: %s", runErr, strings.TrimSpace(string(output)))
+		}
+		account, err = user.Lookup(aiServiceUser)
+	}
+	if err != nil {
+		return fmt.Errorf("resolve Linux AI Runtime service account: %w", err)
+	}
+	group, err := user.LookupGroup(aiServiceUser)
+	if err != nil || group.Gid != account.Gid {
+		return fmt.Errorf("Linux AI Runtime service account must use its dedicated %s group", aiServiceUser)
+	}
+	command, err := processlaunch.Prepare(processlaunch.Spec{
+		Context: context.Background(), Executable: "/usr/sbin/usermod",
+		Arguments:   []string{"--append", "--groups", aiServiceUser, webServiceUser},
+		Environment: processlaunch.EnvironmentInherit,
+	})
+	if err != nil {
+		return fmt.Errorf("prepare Linux Web access to Runtime Host IPC: %w", err)
+	}
+	if output, runErr := command.CombinedOutput(); runErr != nil {
+		return fmt.Errorf("grant Linux Web access to Runtime Host IPC: %w: %s", runErr, strings.TrimSpace(string(output)))
+	}
+	uid, err := strconv.Atoi(account.Uid)
+	if err != nil {
+		return fmt.Errorf("parse Linux AI Runtime UID: %w", err)
+	}
+	gid, err := strconv.Atoi(account.Gid)
+	if err != nil {
+		return fmt.Errorf("parse Linux AI Runtime GID: %w", err)
+	}
+	assistantRoot := filepath.Join(stateRoot, "assistant")
+	stateInfo, err := os.Stat(stateRoot)
+	if err != nil {
+		return err
+	}
+	// Web remains the State Root owner; the AI group receives traverse only so
+	// it can reach its Assistant subtree without reading the database/secrets.
+	if err := os.Lchown(stateRoot, webUID, gid); err != nil {
+		return err
+	}
+	if err := os.Chmod(stateRoot, stateInfo.Mode().Perm()&0o700|0o010); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(assistantRoot, 0o770); err != nil {
+		return err
+	}
+	if err := os.Lchown(assistantRoot, webUID, gid); err != nil {
+		return err
+	}
+	if err := os.Chmod(assistantRoot, 0o750); err != nil {
+		return err
+	}
+	runtimeRoot := filepath.Join(assistantRoot, "runtime")
+	if _, statErr := os.Lstat(runtimeRoot); statErr == nil {
+		if err := filepath.WalkDir(runtimeRoot, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if err := os.Lchown(path, webUID, gid); err != nil {
+				return err
+			}
+			if entry.Type()&os.ModeSymlink != 0 {
+				return nil
+			}
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			owner := info.Mode().Perm() & 0o700
+			permissions := owner | (owner>>3)&0o050
+			return os.Chmod(path, permissions)
+		}); err != nil {
+			return fmt.Errorf("make Linux AI Runtime payload read-only to Runtime identity: %w", err)
+		}
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return statErr
+	}
+	for _, name := range []string{"pi-home", "sessions", "workspaces"} {
+		privateRoot := filepath.Join(assistantRoot, name)
+		if err := os.MkdirAll(privateRoot, 0o700); err != nil {
+			return err
+		}
+		if err := filepath.WalkDir(privateRoot, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if err := os.Lchown(path, uid, gid); err != nil {
+				return err
+			}
+			if entry.Type()&os.ModeSymlink != 0 {
+				return nil
+			}
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			return os.Chmod(path, info.Mode().Perm()&0o700)
+		}); err != nil {
+			return fmt.Errorf("isolate Linux AI Runtime private directory %s: %w", name, err)
+		}
 	}
 	return nil
 }
@@ -213,10 +397,13 @@ func Uninstall() error {
 			if err := systemctl("disable", "--now", "scriptboard.service"); err != nil {
 				return err
 			}
+			if err := systemctl("disable", "--now", "scriptboard-ai.service"); err != nil {
+				return err
+			}
 			return systemctl("disable", "--now", "scriptboard-broker.service")
 		},
 		func() error {
-			for _, path := range []string{unitPath, brokerUnitPath, updaterUnitPath} {
+			for _, path := range []string{unitPath, brokerUnitPath, aiUnitPath, updaterUnitPath} {
 				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 					return err
 				}
@@ -231,10 +418,16 @@ func Start() error {
 	if err := systemctl("start", "scriptboard-broker.service"); err != nil {
 		return err
 	}
+	if err := systemctl("start", "scriptboard-ai.service"); err != nil {
+		return err
+	}
 	return systemctl("start", "scriptboard.service")
 }
 func Stop() error {
 	if err := systemctl("stop", "scriptboard.service"); err != nil {
+		return err
+	}
+	if err := systemctl("stop", "scriptboard-ai.service"); err != nil {
 		return err
 	}
 	return systemctl("stop", "scriptboard-broker.service")
@@ -303,7 +496,14 @@ func MatchesExecutable(executable, configPath string) (bool, error) {
 	for _, line := range strings.Split(string(brokerUnit), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, expectedBrokerPrefix) && strings.HasSuffix(trimmed, " --allowed-identity "+webServiceUser) {
-			return true, nil
+			aiUnit, err := os.ReadFile(aiUnitPath)
+			if err != nil {
+				return false, err
+			}
+			expectedAI := "ExecStart=" + systemdQuote(filepath.Join(filepath.Dir(executable), "scriptboard-ai-host")) + " --state-root "
+			aiText := string(aiUnit)
+			return strings.Contains(aiText, expectedAI) && strings.Contains(aiText, "User="+aiServiceUser) &&
+				strings.Contains(aiText, "IPAddressDeny=any") && strings.Contains(aiText, "IPAddressAllow=localhost"), nil
 		}
 	}
 	return false, nil

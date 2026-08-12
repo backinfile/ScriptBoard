@@ -39,6 +39,7 @@ import (
 
 	"scriptboard/internal/appstatus"
 	"scriptboard/internal/assistant"
+	"scriptboard/internal/assistant/pirpc"
 	"scriptboard/internal/assistant/raster"
 	"scriptboard/internal/assistant/runtimeinstall"
 	"scriptboard/internal/assistant/toolbroker"
@@ -341,6 +342,7 @@ type Config struct {
 	AssistantRuntimeSource   runtimeinstall.Source
 	HostSecurity             hostsecurity.Service
 	PrivilegedBrokerEndpoint string
+	AssistantProcessLauncher pirpc.ProcessLauncher
 }
 
 type App struct {
@@ -566,7 +568,7 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("load assistant settings: %w", err)
 	}
-	application.assistantRuntime = newAssistantRuntimeCoordinator(stateRoot, application.assistant, assistantSettings.MaxActiveConversations)
+	application.assistantRuntime = newAssistantRuntimeCoordinatorWithLauncher(stateRoot, application.assistant, assistantSettings.MaxActiveConversations, config.AssistantProcessLauncher)
 	application.assistantRuntime.SetApprovalAudit(func(actor assistant.Actor, conversationID, approvalID, result string) {
 		var role userRole
 		_ = application.db.QueryRow("SELECT role FROM users WHERE id = ?", actor.UserID).Scan(&role)

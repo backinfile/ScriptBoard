@@ -28,6 +28,39 @@ type LaunchSpec struct {
 	Args, Env                                                  []string
 }
 
+// RuntimeLaunchRequest is the complete domain-level input accepted by the
+// isolated Runtime Host. Executable paths, extensions, inherited environment,
+// and private directories are deliberately absent: the Host resolves and
+// constructs those values from its own trusted State Root.
+type RuntimeLaunchRequest struct {
+	UserID                string `json:"userId"`
+	ConversationID        string `json:"conversationId"`
+	Provider              string `json:"provider"`
+	Model                 string `json:"model"`
+	ProviderProxyEndpoint string `json:"providerProxyEndpoint"`
+	ProviderCapability    string `json:"providerCapability"`
+	SystemPrompt          string `json:"systemPrompt"`
+	BrokerEndpoint        string `json:"brokerEndpoint,omitempty"`
+	BrokerCapability      string `json:"brokerCapability,omitempty"`
+	SupportsImages        bool   `json:"supportsImages"`
+}
+
+func PrepareRuntimeLaunch(stateRoot string, request RuntimeLaunchRequest) (LaunchSpec, error) {
+	managedRuntime, err := ResolveActiveRuntime(stateRoot)
+	if err != nil {
+		return LaunchSpec{}, err
+	}
+	return PrepareLaunch(LaunchInput{
+		StateRoot: stateRoot, Executable: managedRuntime.Executable, Extension: managedRuntime.Extension,
+		UserID: request.UserID, ConversationID: request.ConversationID,
+		Provider: request.Provider, Model: request.Model,
+		ProviderProxyEndpoint: request.ProviderProxyEndpoint, ProviderCapability: request.ProviderCapability,
+		SystemPrompt: request.SystemPrompt, BrokerEndpoint: request.BrokerEndpoint,
+		BrokerCapability: request.BrokerCapability, SupportsImages: request.SupportsImages,
+		ParentEnvironment: os.Environ(),
+	})
+}
+
 func PrepareLaunch(input LaunchInput) (LaunchSpec, error) {
 	stateRoot, err := filepath.Abs(strings.TrimSpace(input.StateRoot))
 	if err != nil || strings.TrimSpace(input.StateRoot) == "" {
