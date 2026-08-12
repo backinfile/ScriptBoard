@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"scriptboard/internal/externaltrigger"
+	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/runmanager"
 	"scriptboard/internal/uploadinbox"
 	"scriptboard/internal/websitemonitor"
@@ -416,7 +417,7 @@ func (a *App) newExternalEntryTask(response http.ResponseWriter, request *http.R
 	}
 	current := request.Context().Value(sessionContextKey).(session)
 	locale := resolveWebLocale(request)
-	quickRuns, variables, err := a.externalTargetOptions()
+	quickRuns, variables, err := a.externalTargetOptions(request.Context())
 	if err != nil {
 		http.Error(response, "Unable to read action targets", http.StatusInternalServerError)
 		return
@@ -482,7 +483,7 @@ func (a *App) editExternalEntryTask(response http.ResponseWriter, request *http.
 		http.Error(response, "External Interface key not found", http.StatusNotFound)
 		return
 	}
-	quickRuns, variables, err := a.externalTargetOptions()
+	quickRuns, variables, err := a.externalTargetOptions(request.Context())
 	if err != nil {
 		http.Error(response, "Unable to read action targets", http.StatusInternalServerError)
 		return
@@ -505,7 +506,7 @@ func (a *App) editExternalEntryTask(response http.ResponseWriter, request *http.
 	renderExternalInterfaceForm(response, data)
 }
 
-func (a *App) externalTargetOptions() ([]externalTargetOption, []externalTargetOption, error) {
+func (a *App) externalTargetOptions(ctx context.Context) ([]externalTargetOption, []externalTargetOption, error) {
 	quickRows, err := a.db.Query("SELECT id, name, script_path, script_sha256 FROM quick_runs WHERE locked = 1 AND script_sha256 != '' ORDER BY name, id")
 	if err != nil {
 		return nil, nil, err
@@ -518,7 +519,7 @@ func (a *App) externalTargetOptions() ([]externalTargetOption, []externalTargetO
 			_ = quickRows.Close()
 			return nil, nil, err
 		}
-		prepared, err := a.files.PrepareScript(scriptPath)
+		prepared, err := a.hostPrepareScript(ctx, scriptPath)
 		if err != nil || subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(scriptSHA256)) != 1 {
 			continue
 		}
@@ -583,7 +584,7 @@ func (a *App) createExternalEntry(response http.ResponseWriter, request *http.Re
 }
 
 func (a *App) renderExternalEntrySubmissionError(response http.ResponseWriter, request *http.Request, key externaltrigger.Key) {
-	quickRuns, variables, err := a.externalTargetOptions()
+	quickRuns, variables, err := a.externalTargetOptions(request.Context())
 	if err != nil {
 		http.Error(response, "Unable to read action targets", http.StatusInternalServerError)
 		return
@@ -674,7 +675,7 @@ func (a *App) externalEntryConfig(request *http.Request, actionType externaltrig
 		if err != nil {
 			return nil, "", errors.New("invalid log message limit")
 		}
-		path, err := a.files.PrepareAppendFile(strings.TrimSpace(request.FormValue("log_file")))
+		path, err := a.hostPrepareAppend(request.Context(), strings.TrimSpace(request.FormValue("log_file")))
 		if err != nil {
 			return nil, "", fmt.Errorf("invalid log file: %w", err)
 		}
@@ -685,7 +686,7 @@ func (a *App) externalEntryConfig(request *http.Request, actionType externaltrig
 			return nil, "", errors.New("invalid upload byte limit")
 		}
 		directory := strings.TrimSpace(request.FormValue("upload_directory"))
-		prepared, err := a.files.PrepareDirectory(directory)
+		prepared, err := a.hostPrepareDirectory(request.Context(), directory)
 		if err != nil {
 			return nil, "", fmt.Errorf("invalid upload directory: %w", err)
 		}
@@ -698,7 +699,7 @@ func (a *App) externalEntryConfig(request *http.Request, actionType externaltrig
 		if err != nil {
 			return nil, "", errors.New("quick run does not exist")
 		}
-		prepared, err := a.files.PrepareScript(quick.ScriptPath)
+		prepared, err := a.hostPrepareScript(request.Context(), quick.ScriptPath)
 		if err != nil || !quick.Locked || quick.ScriptSHA256 == "" || subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(quick.ScriptSHA256)) != 1 {
 			return nil, "", errors.New("quick run must be locked and republished with its current script digest")
 		}
@@ -823,7 +824,7 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 	}
 	execution := runRecordedExternalAction(
 		func() error { return a.externalTriggers.RecordInvocation(request.Context(), invocation) },
-		func() externalActionResult { return a.executeExternalAction(response, request, entry) },
+		func() externalActionResult { return a.executeExternalAction(response, request, entry, token) },
 		func(result externalActionResult) error {
 			invocation.Result, invocation.HTTPStatus, invocation.Duration = result.result, result.status, time.Since(started)
 			invocation.BytesReceived, invocation.RunID, invocation.Message = result.bytesReceived, result.runID, result.message
@@ -888,10 +889,10 @@ func runRecordedExternalAction(begin func() error, execute func() externalAction
 	return recordedExternalActionExecution{Result: result, Started: true, RecordError: complete(result)}
 }
 
-func (a *App) executeExternalAction(response http.ResponseWriter, request *http.Request, entry externaltrigger.Entry) externalActionResult {
+func (a *App) executeExternalAction(response http.ResponseWriter, request *http.Request, entry externaltrigger.Entry, token string) externalActionResult {
 	switch entry.Type {
 	case externaltrigger.ActionLog:
-		return a.executeExternalLog(response, request, entry)
+		return a.executeExternalLog(response, request, entry, token)
 	case externaltrigger.ActionUpload:
 		return a.executeExternalUpload(response, request, entry)
 	case externaltrigger.ActionQuickRun:
@@ -918,7 +919,7 @@ func (a *App) executeExternalWebsiteMonitor(request *http.Request) externalActio
 	return externalActionResult{status: http.StatusOK, result: "succeeded", payload: snapshot}
 }
 
-func (a *App) executeExternalLog(response http.ResponseWriter, request *http.Request, entry externaltrigger.Entry) externalActionResult {
+func (a *App) executeExternalLog(response http.ResponseWriter, request *http.Request, entry externaltrigger.Entry, token string) externalActionResult {
 	if request.Method != http.MethodGet && request.Method != http.MethodPost {
 		return externalFailure(http.StatusMethodNotAllowed, "method_not_allowed")
 	}
@@ -937,11 +938,18 @@ func (a *App) executeExternalLog(response http.ResponseWriter, request *http.Req
 	if !utf8.ValidString(message) || len([]byte(message)) > config.MaxMessageBytes || strings.IndexFunc(message, unicode.IsControl) >= 0 {
 		return externalFailure(http.StatusBadRequest, "invalid_request")
 	}
-	record := fmt.Sprintf("%s\t%s\n", time.Now().UTC().Format(time.RFC3339Nano), message)
-	if config.Category != "" {
-		record = fmt.Sprintf("%s\t[%s]\t%s\n", time.Now().UTC().Format(time.RFC3339Nano), config.Category, message)
+	requestID, _ := request.Context().Value(requestIDContextKey).(string)
+	var appendErr error
+	if a.hostFilesBackend != nil {
+		appendErr = a.hostAppendExternalLog(request.Context(), requestID, token, entry.ID, entry.Name, message)
+	} else {
+		record := fmt.Sprintf("%s\t%s\n", time.Now().UTC().Format(time.RFC3339Nano), message)
+		if config.Category != "" {
+			record = fmt.Sprintf("%s\t[%s]\t%s\n", time.Now().UTC().Format(time.RFC3339Nano), config.Category, message)
+		}
+		appendErr = a.files.AppendText(config.File, record)
 	}
-	if err := a.files.AppendText(config.File, record); err != nil {
+	if appendErr != nil {
 		return externalFailure(http.StatusConflict, "target_unavailable")
 	}
 	return externalActionResult{status: http.StatusOK, result: "succeeded", message: message}
@@ -1045,15 +1053,13 @@ func (a *App) executeExternalQuickRun(response http.ResponseWriter, request *htt
 	if !quick.Locked || quick.Revision != config.Revision || subtle.ConstantTimeCompare([]byte(quick.ScriptSHA256), []byte(config.ScriptSHA256)) != 1 {
 		return externalFailure(http.StatusConflict, "target_unavailable")
 	}
-	prepared, err := a.files.PrepareScript(quick.ScriptPath)
-	if err != nil || subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(config.ScriptSHA256)) != 1 {
-		return externalFailure(http.StatusConflict, "target_unavailable")
-	}
+	prepared := hostfiles.Script{Path: quick.ScriptPath, Directory: filepath.Dir(quick.ScriptPath), Digest: config.ScriptSHA256}
+	workingDirectory := hostfiles.PreparedDirectory{Path: prepared.Directory}
 	variables, err := a.loadVariables()
 	if err != nil {
 		return externalFailure(http.StatusInternalServerError, "action_failed")
 	}
-	runID, err := a.runs.Start(runmanager.StartRequest{ScriptPath: quick.ScriptPath, ExpectedDigest: config.ScriptSHA256, DisallowOverlap: true, ArgumentsTemplate: quick.ArgumentsTemplate, TimeoutSeconds: quick.TimeoutSeconds, SourceType: "external/quick-run", SourceName: entry.Label, SourceID: entry.ID, Variables: variables})
+	runID, err := a.runs.Start(runmanager.StartRequest{ScriptPath: quick.ScriptPath, ExpectedDigest: config.ScriptSHA256, DisallowOverlap: true, ArgumentsTemplate: quick.ArgumentsTemplate, TimeoutSeconds: quick.TimeoutSeconds, SourceType: "external/quick-run", SourceName: entry.Label, SourceID: entry.ID, Variables: variables, PreparedScript: &prepared, PreparedDirectory: &workingDirectory})
 	if err != nil {
 		return externalFailure(http.StatusConflict, "target_unavailable")
 	}

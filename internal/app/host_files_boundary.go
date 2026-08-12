@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"time"
@@ -209,6 +210,20 @@ func (a *App) hostAppendText(ctx context.Context, path, record string) error {
 		return a.hostFilesBackend.AppendText(ctx, path, record)
 	}
 	return a.files.AppendText(path, record)
+}
+
+func (a *App) hostPrepareAppend(ctx context.Context, path string) (string, error) {
+	if a.hostFilesBackend != nil {
+		return a.hostFilesBackend.PrepareAppend(ctx, path)
+	}
+	return a.files.PrepareAppendFile(path)
+}
+
+func (a *App) hostAppendExternalLog(ctx context.Context, requestID, token, entryID, entryName, message string) error {
+	if a.hostFilesBackend != nil {
+		return a.hostFilesBackend.AppendExternalLog(ctx, requestID, token, entryID, entryName, message)
+	}
+	return errors.New("external Host Files log Broker is unavailable")
 }
 
 func (a *App) hostOpenLogSource(ctx context.Context, path string) (logstream.Source, error) {

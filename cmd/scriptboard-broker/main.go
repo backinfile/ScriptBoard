@@ -137,6 +137,7 @@ func runContext(ctx context.Context, arguments []string) error {
 	if err := os.MkdirAll(hostFilesStagingRoot, 0o750); err != nil {
 		return fmt.Errorf("prepare Broker Host Files exchange root: %w", err)
 	}
+	legacyExternal := externaltrigger.New(database, externaltrigger.Options{SecretsDirectory: filepath.Join(absolute, "secrets"), SecretStore: vault})
 	hostFileOperationStore, err := privilegebroker.NewBrokerHostFileOperationStore(database)
 	if err != nil {
 		return err
@@ -145,11 +146,10 @@ func runContext(ctx context.Context, arguments []string) error {
 	if err := hostFileMoveEngine.Recover(context.Background()); err != nil {
 		return fmt.Errorf("recover Broker-owned Host Files operations: %w", err)
 	}
-	hostFilesService, err := privilegebroker.NewBrokerHostFilesServiceWithMoves(brokerFiles, hostFilesStagingRoot, hostFileMoveEngine, ctx, database)
+	hostFilesService, err := privilegebroker.NewBrokerHostFilesServiceWithMoves(brokerFiles, hostFilesStagingRoot, hostFileMoveEngine, ctx, database, legacyExternal)
 	if err != nil {
 		return err
 	}
-	legacyExternal := externaltrigger.New(database, externaltrigger.Options{SecretsDirectory: filepath.Join(absolute, "secrets"), SecretStore: vault})
 	if err := legacyExternal.MigrateSecrets(); err != nil {
 		return fmt.Errorf("migrate External Interface secrets in Broker: %w", err)
 	}

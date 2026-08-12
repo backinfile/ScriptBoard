@@ -98,6 +98,29 @@ func TestHostFilesProtocolRejectsGenericAndUnrelatedFields(t *testing.T) {
 	}
 }
 
+func TestExternalHostFilesLogProtocolRejectsGenericAndSessionFields(t *testing.T) {
+	valid := wireRequest{Version: ProtocolVersion, Operation: operationHostFilesExternalLog, RequestID: "external-host-log-test",
+		HostFiles: &hostFilesWireRequest{ExternalToken: "sbk_synthetic_external_token_value", ExternalEntryID: "entry-1", ExternalEntryName: "deployment-log", ExternalMessage: "deployment complete"}}
+	if err := validateWireRequest(valid); err != nil {
+		t.Fatalf("valid external Host Files log request rejected: %v", err)
+	}
+	requests := []wireRequest{
+		func() wireRequest { value := valid; value.SessionToken = strings.Repeat("s", 32); return value }(),
+		func() wireRequest { value := valid; value.Parameters = json.RawMessage(`{}`); return value }(),
+		func() wireRequest { value := valid; value.HostFiles.Path = filepath.Clean(t.TempDir()); return value }(),
+		func() wireRequest {
+			value := valid
+			value.HostFiles.ExternalMessage = strings.Repeat("x", (8<<10)+1)
+			return value
+		}(),
+	}
+	for _, request := range requests {
+		if err := validateWireRequest(request); err == nil {
+			t.Fatalf("accepted invalid external Host Files log request: %+v", request)
+		}
+	}
+}
+
 func TestHostFilesStagesUploadsAndStreamsLargeDownloadsThroughBroker(t *testing.T) {
 	root := t.TempDir()
 	hostRoot := filepath.Join(root, "host")

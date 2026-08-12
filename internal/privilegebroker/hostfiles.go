@@ -14,7 +14,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
+	"scriptboard/internal/externaltrigger"
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/logstream"
 )
@@ -45,27 +48,31 @@ type HostFileInfo struct {
 }
 
 type hostFilesWireRequest struct {
-	Path             string                 `json:"path,omitempty"`
-	Directory        string                 `json:"directory,omitempty"`
-	Name             string                 `json:"name,omitempty"`
-	Destination      string                 `json:"destination,omitempty"`
-	StoredPath       string                 `json:"stored_path,omitempty"`
-	StoredName       string                 `json:"stored_name,omitempty"`
-	CanonicalKind    hostFilesCanonicalKind `json:"canonical_kind,omitempty"`
-	RestoreAvailable bool                   `json:"restore_available,omitempty"`
-	MaxBytes         int64                  `json:"max_bytes,omitempty"`
-	Offset           int                    `json:"offset,omitempty"`
-	Limit            int                    `json:"limit,omitempty"`
-	ByteOffset       int64                  `json:"byte_offset,omitempty"`
-	ByteLimit        int                    `json:"byte_limit,omitempty"`
-	Handle           string                 `json:"handle,omitempty"`
-	StagingPath      string                 `json:"staging_path,omitempty"`
-	ExpectedDigest   string                 `json:"expected_digest,omitempty"`
-	Replace          bool                   `json:"replace,omitempty"`
-	DirectoryPrepare bool                   `json:"directory_prepare,omitempty"`
-	Record           string                 `json:"record,omitempty"`
-	Cursor           string                 `json:"cursor,omitempty"`
-	OperationID      string                 `json:"operation_id,omitempty"`
+	Path              string                 `json:"path,omitempty"`
+	Directory         string                 `json:"directory,omitempty"`
+	Name              string                 `json:"name,omitempty"`
+	Destination       string                 `json:"destination,omitempty"`
+	StoredPath        string                 `json:"stored_path,omitempty"`
+	StoredName        string                 `json:"stored_name,omitempty"`
+	CanonicalKind     hostFilesCanonicalKind `json:"canonical_kind,omitempty"`
+	RestoreAvailable  bool                   `json:"restore_available,omitempty"`
+	MaxBytes          int64                  `json:"max_bytes,omitempty"`
+	Offset            int                    `json:"offset,omitempty"`
+	Limit             int                    `json:"limit,omitempty"`
+	ByteOffset        int64                  `json:"byte_offset,omitempty"`
+	ByteLimit         int                    `json:"byte_limit,omitempty"`
+	Handle            string                 `json:"handle,omitempty"`
+	StagingPath       string                 `json:"staging_path,omitempty"`
+	ExpectedDigest    string                 `json:"expected_digest,omitempty"`
+	Replace           bool                   `json:"replace,omitempty"`
+	DirectoryPrepare  bool                   `json:"directory_prepare,omitempty"`
+	Record            string                 `json:"record,omitempty"`
+	Cursor            string                 `json:"cursor,omitempty"`
+	OperationID       string                 `json:"operation_id,omitempty"`
+	ExternalToken     string                 `json:"external_token,omitempty"`
+	ExternalEntryID   string                 `json:"external_entry_id,omitempty"`
+	ExternalEntryName string                 `json:"external_entry_name,omitempty"`
+	ExternalMessage   string                 `json:"external_message,omitempty"`
 }
 
 type hostFilesWireResponse struct {
@@ -102,6 +109,7 @@ type brokerHostFilesService struct {
 	moveEngine  *hostfiles.MoveEngine
 	moveContext context.Context
 	db          *sql.DB
+	external    *externaltrigger.Manager
 }
 
 type hostFilesReadHandle struct {
@@ -130,11 +138,13 @@ func NewBrokerHostFilesService(files *hostfiles.Manager, stagingRoots ...string)
 	return newBrokerHostFilesService(files, stagingRoot, nil, context.Background(), nil), nil
 }
 
-func NewBrokerHostFilesServiceWithMoves(files *hostfiles.Manager, stagingRoot string, engine *hostfiles.MoveEngine, moveContext context.Context, db *sql.DB) (HostFilesService, error) {
-	if files == nil || engine == nil || moveContext == nil || db == nil || !filepath.IsAbs(filepath.Clean(stagingRoot)) {
+func NewBrokerHostFilesServiceWithMoves(files *hostfiles.Manager, stagingRoot string, engine *hostfiles.MoveEngine, moveContext context.Context, db *sql.DB, external *externaltrigger.Manager) (HostFilesService, error) {
+	if files == nil || engine == nil || moveContext == nil || db == nil || external == nil || !filepath.IsAbs(filepath.Clean(stagingRoot)) {
 		return nil, errors.New("Broker Host Files move service is not fully configured")
 	}
-	return newBrokerHostFilesService(files, filepath.Clean(stagingRoot), engine, moveContext, db), nil
+	service := newBrokerHostFilesService(files, filepath.Clean(stagingRoot), engine, moveContext, db)
+	service.external = external
+	return service, nil
 }
 
 func newBrokerHostFilesService(files *hostfiles.Manager, stagingRoot string, engine *hostfiles.MoveEngine, moveContext context.Context, db *sql.DB) *brokerHostFilesService {
@@ -434,6 +444,32 @@ func (service *brokerHostFilesService) AppendText(_ context.Context, path, recor
 	return service.files.AppendText(path, record)
 }
 
+func (service *brokerHostFilesService) PrepareAppend(_ context.Context, path string) (string, error) {
+	return service.files.PrepareAppendFile(path)
+}
+
+func (service *brokerHostFilesService) AppendExternalLog(ctx context.Context, token, entryID, entryName, message string) (Actor, string, error) {
+	if service.external == nil {
+		return Actor{}, "", errors.New("Broker External Interface service is unavailable")
+	}
+	key, entry, err := service.external.Resolve(ctx, token, entryName)
+	if err != nil || entry.ID != entryID || entry.Type != externaltrigger.ActionLog {
+		return Actor{}, "", errors.New("External Interface log capability is invalid")
+	}
+	var config externaltrigger.LogConfig
+	if entry.DecodeConfig(&config) != nil || !utf8.ValidString(message) || len([]byte(message)) > config.MaxMessageBytes || strings.IndexFunc(message, unicode.IsControl) >= 0 {
+		return Actor{}, "", errors.New("External Interface log request is invalid")
+	}
+	record := fmt.Sprintf("%s\t%s\n", time.Now().UTC().Format(time.RFC3339Nano), message)
+	if config.Category != "" {
+		record = fmt.Sprintf("%s\t[%s]\t%s\n", time.Now().UTC().Format(time.RFC3339Nano), config.Category, message)
+	}
+	if err := service.files.AppendText(config.File, record); err != nil {
+		return Actor{}, "", err
+	}
+	return Actor{UserID: "external:" + key.ID, Username: key.Label, Role: "external"}, entry.ID, nil
+}
+
 func (service *brokerHostFilesService) StartCrossFilesystemMove(_ context.Context, id, source, destination, displacedStoredPath, displacedID string) (hostfiles.FileOperation, error) {
 	if service.moveEngine == nil || service.db == nil {
 		return hostfiles.FileOperation{}, errors.New("Broker Host Files move engine is unavailable")
@@ -564,6 +600,8 @@ func (server *Server) hostFilesOperation(request wireRequest) wireResponse {
 		var operation hostfiles.FileOperation
 		operation, err = server.hostFiles.StartCrossFilesystemMove(ctx, payload.OperationID, payload.Path, payload.Destination, payload.StoredPath, payload.StoredName)
 		result.Operation = &operation
+	case operationHostFilesPrepareAppend:
+		result.CanonicalPath, err = server.hostFiles.PrepareAppend(ctx, payload.Path)
 	}
 	mutation := action != ActionHostFilesRead
 	if mutation && server.auditor != nil {
@@ -612,6 +650,30 @@ func (server *Server) authorizeHostFilesOperation(request wireRequest) (Actor, A
 		return Actor{}, action, errors.New("role cannot mutate Host Files")
 	}
 	return actor, action, nil
+}
+
+func (server *Server) externalHostFilesLogOperation(request wireRequest) wireResponse {
+	if server.hostFiles == nil {
+		return wireResponse{Status: statusError, ErrorCode: "host_files_unavailable", Message: "Host Files service is unavailable"}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	actor, resource, err := server.hostFiles.AppendExternalLog(ctx, request.HostFiles.ExternalToken, request.HostFiles.ExternalEntryID, request.HostFiles.ExternalEntryName, request.HostFiles.ExternalMessage)
+	if server.auditor != nil {
+		result := "succeeded"
+		if err != nil {
+			result = "failed"
+		}
+		body, _ := json.Marshal(request.HostFiles)
+		if auditErr := server.auditor.Record(context.Background(), AuditRecord{OccurredAt: server.now().UTC(), RequestID: request.RequestID,
+			Actor: actor, Action: ActionHostFilesWrite, Resource: resource, Revision: "external-log-v1", ParametersSHA256: parametersDigest(body), Result: result}); auditErr != nil && err == nil {
+			return wireResponse{Status: statusError, ErrorCode: "audit_failed_after_execution", Message: "External log completed but result audit failed"}
+		}
+	}
+	if err != nil {
+		return wireResponse{Status: statusError, ErrorCode: "host_files_failed", Message: "External Host Files log operation failed"}
+	}
+	return wireResponse{Status: statusOK}
 }
 
 func hostFilesAction(operation string) (Action, bool) {
@@ -768,13 +830,28 @@ func validateHostFilesRequest(request wireRequest) error {
 	return nil
 }
 
+func validateExternalHostFilesLogRequest(request wireRequest) error {
+	if request.HostFiles == nil || request.SessionToken != "" || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" || request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil {
+		return errors.New("External Host Files log request contains unrelated fields")
+	}
+	payload := request.HostFiles
+	if len(payload.ExternalToken) < 16 || len(payload.ExternalToken) > 256 || len(payload.ExternalEntryID) == 0 || len(payload.ExternalEntryID) > 255 || len(payload.ExternalEntryName) == 0 || len(payload.ExternalEntryName) > 255 || len(payload.ExternalMessage) > 8<<10 || strings.ContainsAny(payload.ExternalToken+payload.ExternalEntryID+payload.ExternalEntryName, "\r\n\x00") || strings.ContainsRune(payload.ExternalMessage, 0) {
+		return errors.New("External Host Files log request is invalid")
+	}
+	want := hostFilesWireRequest{ExternalToken: payload.ExternalToken, ExternalEntryID: payload.ExternalEntryID, ExternalEntryName: payload.ExternalEntryName, ExternalMessage: payload.ExternalMessage}
+	if *payload != want {
+		return errors.New("External Host Files log request contains operation-forbidden fields")
+	}
+	return nil
+}
+
 func hostFilesExpectedPayload(operation string, payload hostFilesWireRequest) hostFilesWireRequest {
 	switch operation {
 	case operationHostFilesRoots:
 		return hostFilesWireRequest{}
 	case operationHostFilesList:
 		return hostFilesWireRequest{Path: payload.Path, Offset: payload.Offset, Limit: payload.Limit}
-	case operationHostFilesInfo, operationHostFilesToggleExec, operationHostFilesOpenRead, operationHostFilesRemove, operationHostFilesLogOpen:
+	case operationHostFilesInfo, operationHostFilesToggleExec, operationHostFilesOpenRead, operationHostFilesRemove, operationHostFilesLogOpen, operationHostFilesPrepareAppend:
 		return hostFilesWireRequest{Path: payload.Path}
 	case operationHostFilesReadText:
 		return hostFilesWireRequest{Path: payload.Path, MaxBytes: payload.MaxBytes}
@@ -831,7 +908,7 @@ func isHostFilesOperation(operation string) bool {
 		operationHostFilesOpenRead, operationHostFilesReadChunk, operationHostFilesCloseRead, operationHostFilesUpload,
 		operationHostFilesSaveText, operationHostFilesRollback, operationHostFilesRemove, operationHostFilesPrepare,
 		operationHostFilesSameFS, operationHostFilesAppend, operationHostFilesLogOpen, operationHostFilesLogHistory,
-		operationHostFilesLogFollow, operationHostFilesLogClose, operationHostFilesCrossMove:
+		operationHostFilesLogFollow, operationHostFilesLogClose, operationHostFilesCrossMove, operationHostFilesPrepareAppend:
 		return true
 	default:
 		return false
@@ -867,6 +944,15 @@ func (backend *HostFilesBackend) call(ctx context.Context, operation string, pay
 		return hostFilesWireResponse{}, errors.New("privileged Broker returned an invalid Host Files response")
 	}
 	return *response.HostFiles, nil
+}
+
+func (backend *HostFilesBackend) AppendExternalLog(ctx context.Context, requestID, token, entryID, entryName, message string) error {
+	if backend == nil || backend.client == nil || !requestIDPattern.MatchString(requestID) {
+		return ErrHostFilesUnavailable
+	}
+	_, err := backend.client.call(ctx, wireRequest{Version: ProtocolVersion, Operation: operationHostFilesExternalLog, RequestID: requestID,
+		HostFiles: &hostFilesWireRequest{ExternalToken: token, ExternalEntryID: entryID, ExternalEntryName: entryName, ExternalMessage: message}})
+	return err
 }
 
 func (backend *HostFilesBackend) Roots(ctx context.Context) ([]hostfiles.Entry, error) {
@@ -1139,6 +1225,11 @@ func (backend *HostFilesBackend) SameFilesystem(ctx context.Context, source, des
 func (backend *HostFilesBackend) AppendText(ctx context.Context, path, record string) error {
 	_, err := backend.call(ctx, operationHostFilesAppend, hostFilesWireRequest{Path: path, Record: record})
 	return err
+}
+
+func (backend *HostFilesBackend) PrepareAppend(ctx context.Context, path string) (string, error) {
+	value, err := backend.call(ctx, operationHostFilesPrepareAppend, hostFilesWireRequest{Path: path})
+	return value.CanonicalPath, err
 }
 
 func (backend *HostFilesBackend) StartCrossFilesystemMove(ctx context.Context, id, source, destination, displacedStoredPath, displacedID string) (hostfiles.FileOperation, error) {
