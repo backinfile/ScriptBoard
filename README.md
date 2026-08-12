@@ -185,6 +185,11 @@ canonical_external_url: http://127.0.0.1:8787
 # security_event_endpoint: https://siem.example/api/scriptboard
 # security_event_token_file: C:\ProgramData\ScriptBoard\secrets\siem-token
 # security_event_allow_private: false
+# 可选：由 Privileged Broker 独立投递固定模板到 HTTPS 邮件中继；Web 不读取 relay token。
+# notification_email_relay_endpoint: https://mail-relay.example/v1/scriptboard
+# notification_email_relay_token_file: C:\ProgramData\ScriptBoard\broker-secrets\mail-relay-token
+# notification_email_recipient: admin@example.com
+# notification_email_relay_allow_private: false
 update_check: true
 update_check_interval_hours: 6
 ```
@@ -201,7 +206,9 @@ scriptboard audit verify --config CONFIG_PATH
 
 `allowed_hosts` 是 Host Header 白名单；通配或非回环监听必须显式配置。`canonical_external_url` 的主机必须位于该白名单中，生成对外绝对 URL 时只使用这个值。反向代理部署还须显式配置直连代理的 `trusted_proxies`，未受信来源提供的转发头会被忽略。
 
-配置 `security_event_endpoint` 后，已提交的审计事件会先原子写入 State Root 内的有界 outbox，再按审计链顺序发送到 HTTPS 接收端；失败会指数退避并在重启后继续。Bearer token 只能通过绝对路径 `security_event_token_file` 提供，URL 禁止内嵌凭据且不跟随重定向。默认出站策略拒绝私网、回环和云元数据地址；确需同网段 SIEM 时必须显式开启 `security_event_allow_private`，元数据地址仍不可放行。审计事件可携带纳入 v3 哈希链的结构化资源 revision 与 SHA-256；Broker 参数、Quick Run 发布版本和一次性脚本摘要会随 CSV、取证 JSONL 与远端载荷输出。认证失败、权限拒绝与外部 Trigger 拒绝的突发，以及签名/Runner/Runtime 边界失败，会同时写入权限受限且轮转的 `logs/security-alerts.jsonl`。网站监控确认故障与恢复会生成固定 `website-monitor-result-v1` 结构化模板；故障同时进入本地告警，两个状态转换都随 Webhook 发送，模板只携带监控资源 ID 和固定摘要，不复制探测响应正文或技术错误。管理员和维护员可在“系统设置 → 通知与告警”只读查看接收端主机名、outbox 占用、本地告警状态、连续失败、下次尝试时间与模板状态；页面不会显示 URL 路径、查询参数、认证令牌或事件正文。连续失败八次后投递会熔断五分钟，开路期间新事件仍安全进入 outbox。邮件渠道尚未实现。
+配置 `security_event_endpoint` 后，已提交的审计事件会先原子写入 State Root 内的有界 outbox，再按审计链顺序发送到 HTTPS 接收端；失败会指数退避并在重启后继续。Bearer token 只能通过绝对路径 `security_event_token_file` 提供，URL 禁止内嵌凭据且不跟随重定向。默认出站策略拒绝私网、回环和云元数据地址；确需同网段 SIEM 时必须显式开启 `security_event_allow_private`，元数据地址仍不可放行。审计事件可携带纳入 v3 哈希链的结构化资源 revision 与 SHA-256；Broker 参数、Quick Run 发布版本和一次性脚本摘要会随 CSV、取证 JSONL 与远端载荷输出。认证失败、权限拒绝与外部 Trigger 拒绝的突发，以及签名/Runner/Runtime 边界失败，会同时写入权限受限且轮转的 `logs/security-alerts.jsonl`。网站监控确认故障与恢复会生成固定 `website-monitor-result-v1` 结构化模板；故障同时进入本地告警，两个状态转换都随 Webhook 发送，模板只携带监控资源 ID 和固定摘要，不复制探测响应正文或技术错误。管理员和维护员可在“系统设置 → 通知与告警”只读查看接收端主机名、outbox 占用、本地告警状态、连续失败、下次尝试时间与模板状态；页面不会显示 URL 路径、查询参数、认证令牌或事件正文。连续失败八次后投递会熔断五分钟，开路期间新事件仍安全进入 outbox。
+
+邮件通知由常驻 Privileged Broker 从已提交审计链按独立持久游标消费；Web 只显示中继主机和脱敏收件人，不读取邮件中继 token，也不拥有邮件出站能力。Broker 仅生成 `security-alert-v1`、`run-result-v1`、`website-monitor-result-v1`、`state-backup-result-v1` 和 `update-result-v1` 固定模板，通过共享 OutboundPolicy 投递到显式 HTTPS relay。relay token 只允许来自绝对路径普通文件，且父目录必须命名为独立 `broker-secrets`；Broker 启动时把该真实目录收紧为 root 或 SYSTEM/Administrators 私有权限，受管 Web 不获得目录 ACL。邮件 outbox 与 Webhook outbox 隔离、容量限制为 10,000 条，并使用相同的有界退避与五分钟熔断。中继负责把版本化 JSON 协议转换成实际邮件，ScriptBoard 不接受任意主题、正文或动态收件人。
 
 网站监控默认验证 HTTPS/WSS 证书。关闭验证只会签发一小时的临时例外，页面持续显示警告，
 创建或更新审计会记录到期时间；到期后自动恢复验证。连接另一台 ScriptBoard 汇聚网站状态

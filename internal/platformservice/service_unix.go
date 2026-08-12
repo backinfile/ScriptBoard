@@ -141,7 +141,7 @@ After=network.target
 [Service]
 Type=simple
 User=root
-ExecStart=%s --state-root %s --allowed-identity scriptboard-web
+ExecStart=%s --config %s --state-root %s --allowed-identity scriptboard-web
 Restart=on-failure
 NoNewPrivileges=true
 PrivateTmp=true
@@ -151,7 +151,7 @@ LockPersonality=true
 
 [Install]
 WantedBy=multi-user.target
-`, systemdQuote(brokerExecutable), systemdQuote(stateRoot))
+`, systemdQuote(brokerExecutable), systemdQuote(configPath), systemdQuote(stateRoot))
 	aiUnit := fmt.Sprintf(`[Unit]
 Description=ScriptBoard isolated AI Runtime Host
 Requires=scriptboard-ai.socket
@@ -668,7 +668,7 @@ func MatchesExecutable(executable, configPath string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	expectedBrokerPrefix := "ExecStart=" + systemdQuote(filepath.Join(filepath.Dir(executable), "scriptboard-broker")) + " --state-root "
+	expectedBrokerPrefix := "ExecStart=" + systemdQuote(filepath.Join(filepath.Dir(executable), "scriptboard-broker")) + " --config " + systemdQuote(configPath) + " --state-root "
 	for _, line := range strings.Split(string(brokerUnit), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, expectedBrokerPrefix) && strings.HasSuffix(trimmed, " --allowed-identity "+webServiceUser) {

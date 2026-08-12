@@ -117,7 +117,9 @@ func TestRemoteForwardingRetriesDurableOrderedOutbox(t *testing.T) {
 
 func TestStatusExposesOnlyEndpointHostAndBoundedOutboxState(t *testing.T) {
 	root := t.TempDir()
-	manager, err := New(Options{StateRoot: root, Endpoint: "https://notify.example:8443/events?tenant=secret", Token: "must-not-be-exposed", Client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, errors.New("offline") })}})
+	manager, err := New(Options{StateRoot: root, Endpoint: "https://notify.example:8443/events?tenant=secret", Token: "must-not-be-exposed",
+		BrokerEmailRelayEndpoint: "https://mail.example:9443/send?tenant=hidden", BrokerEmailRecipient: "administrator@example.com",
+		Client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, errors.New("offline") })}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,18 +129,19 @@ func TestStatusExposesOnlyEndpointHostAndBoundedOutboxState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !status.WebhookEnabled || status.EndpointHost != "notify.example:8443" || status.Pending != 1 || status.Capacity != maxPendingEvents || !status.WebsiteTemplates {
+	if !status.WebhookEnabled || status.EndpointHost != "notify.example:8443" || status.Pending != 1 || status.Capacity != maxPendingEvents || !status.WebsiteTemplates ||
+		!status.EmailEnabled || status.EmailRelayHost != "mail.example:9443" || status.EmailRecipient != "a***@example.com" || !status.EmailTemplates {
 		t.Fatalf("notification status = %#v", status)
 	}
 	encoded, _ := json.Marshal(status)
-	if strings.Contains(string(encoded), "tenant=secret") || strings.Contains(string(encoded), "must-not-be-exposed") {
+	if strings.Contains(string(encoded), "tenant=secret") || strings.Contains(string(encoded), "tenant=hidden") || strings.Contains(string(encoded), "must-not-be-exposed") || strings.Contains(string(encoded), "administrator@example.com") {
 		t.Fatalf("status exposed endpoint query or token: %s", encoded)
 	}
 }
 
 func TestWebsiteTransitionsUseBoundedStructuredNotificationTemplate(t *testing.T) {
 	event := auditlog.CommittedEvent{ID: 9, EventSHA256: "digest", Event: auditlog.Event{Action: "website_monitor_down", Target: "monitor-safe-id", Result: "failed"}}
-	notification := notificationFor(event)
+	notification := NotificationFor(event)
 	if notification == nil || notification.Template != "website-monitor-result-v1" || notification.State != "down" || notification.ResourceID != "monitor-safe-id" {
 		t.Fatalf("notification=%#v", notification)
 	}
@@ -155,6 +158,58 @@ func TestWebsiteTransitionsUseBoundedStructuredNotificationTemplate(t *testing.T
 	var envelope Envelope
 	if err := json.Unmarshal(body, &envelope); err != nil || envelope.Notification == nil || envelope.Notification.State != "down" || len(envelope.Alerts) != 1 {
 		t.Fatalf("envelope=%#v err=%v", envelope, err)
+	}
+}
+
+func TestRunTemplateOnlyAcceptsTerminalRunAudit(t *testing.T) {
+	run := NotificationFor(auditlog.CommittedEvent{Event: auditlog.Event{Action: "run_completed", Target: "run-safe-id", Result: "timed_out"}})
+	if run == nil || run.Template != "run-result-v1" || run.Severity != "high" {
+		t.Fatalf("run notification=%#v", run)
+	}
+	runtimeFailure := NotificationFor(auditlog.CommittedEvent{Event: auditlog.Event{Action: "assistant_runtime_install", Target: "runtime", Result: "failed"}})
+	if runtimeFailure == nil || runtimeFailure.Template != "security-alert-v1" {
+		t.Fatalf("runtime failure was misclassified: %#v", runtimeFailure)
+	}
+}
+
+func TestNotificationOnlyEmailChannelSendsFixedTemplateAndRecipient(t *testing.T) {
+	requests := make(chan *http.Request, 2)
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests <- request.Clone(request.Context())
+		body := io.NopCloser(strings.NewReader("ok"))
+		return &http.Response{StatusCode: http.StatusNoContent, Body: body, Header: make(http.Header)}, nil
+	})}
+	root := t.TempDir()
+	manager, err := New(Options{StateRoot: root, Endpoint: "https://mail.example/send", Token: "broker-secret", Client: client,
+		Channel: "email-outbox", EnvelopeType: "scriptboard.email-notification", Recipient: "admin@example.com", NotificationsOnly: true, DisableLocalAlerts: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	if err := manager.Queue(auditlog.CommittedEvent{ID: 1, EventSHA256: "ignored", Event: auditlog.Event{Action: "page_view", Result: "success"}}); err != nil {
+		t.Fatal(err)
+	}
+	if pending, err := manager.Pending(); err != nil || pending != 0 {
+		t.Fatalf("non-notification pending=%d err=%v", pending, err)
+	}
+	if err := manager.Queue(auditlog.CommittedEvent{ID: 2, EventSHA256: "safe-digest", Event: auditlog.Event{Action: "state_backup.create", Target: "backup-safe-id", Result: "succeeded"}}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case request := <-requests:
+		if request.Header.Get("Authorization") != "Bearer broker-secret" {
+			t.Fatalf("authorization header=%q", request.Header.Get("Authorization"))
+		}
+		body, readErr := io.ReadAll(request.Body)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		var envelope Envelope
+		if err := json.Unmarshal(body, &envelope); err != nil || envelope.Type != "scriptboard.email-notification" || envelope.Recipient != "admin@example.com" || envelope.Notification == nil || envelope.Notification.Template != "state-backup-result-v1" {
+			t.Fatalf("email envelope=%#v err=%v", envelope, err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("email notification was not delivered")
 	}
 }
 

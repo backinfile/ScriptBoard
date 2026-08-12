@@ -166,7 +166,7 @@ func Install(executable, configPath, _ string, stateRoot string) error {
 		StartType: mgr.StartAutomatic, DisplayName: "ScriptBoard Privileged Broker",
 		Description: "ScriptBoard fixed privileged operation broker", SidType: windows.SERVICE_SID_TYPE_UNRESTRICTED,
 	}
-	broker, err := manager.CreateService(brokerServiceName, brokerExecutable, brokerConfiguration, "--state-root", stateRoot)
+	broker, err := manager.CreateService(brokerServiceName, brokerExecutable, brokerConfiguration, "--config", configPath, "--state-root", stateRoot)
 	if errors.Is(err, windows.ERROR_SERVICE_EXISTS) {
 		broker, err = manager.OpenService(brokerServiceName)
 		if err != nil {
@@ -177,7 +177,7 @@ func Install(executable, configPath, _ string, stateRoot string) error {
 			broker.Close()
 			return configErr
 		}
-		current.BinaryPathName = windows.ComposeCommandLine([]string{brokerExecutable, "--state-root", stateRoot})
+		current.BinaryPathName = windows.ComposeCommandLine([]string{brokerExecutable, "--config", configPath, "--state-root", stateRoot})
 		current.StartType = mgr.StartAutomatic
 		current.DisplayName = brokerConfiguration.DisplayName
 		current.Description = brokerConfiguration.Description
@@ -194,7 +194,7 @@ func Install(executable, configPath, _ string, stateRoot string) error {
 		return err
 	}
 	aiConfiguration := mgr.Config{
-		StartType: mgr.StartAutomatic, DisplayName: "ScriptBoard Isolated AI Runtime Host",
+		StartType: mgr.StartManual, DisplayName: "ScriptBoard Isolated AI Runtime Host",
 		Description: "ScriptBoard isolated AI Runtime process host", ServiceStartName: webServiceAccount,
 		SidType: windows.SERVICE_SID_TYPE_RESTRICTED,
 	}
@@ -210,7 +210,7 @@ func Install(executable, configPath, _ string, stateRoot string) error {
 			return configErr
 		}
 		current.BinaryPathName = windows.ComposeCommandLine([]string{aiExecutable, "--state-root", stateRoot, "--allowed-identity", webServiceSID})
-		current.StartType = mgr.StartAutomatic
+		current.StartType = mgr.StartManual
 		current.DisplayName = aiConfiguration.DisplayName
 		current.Description = aiConfiguration.Description
 		current.ServiceStartName = aiConfiguration.ServiceStartName
@@ -227,7 +227,7 @@ func Install(executable, configPath, _ string, stateRoot string) error {
 	if err := aiService.Close(); err != nil {
 		return err
 	}
-	runnerConfiguration := mgr.Config{StartType: mgr.StartAutomatic, DisplayName: "ScriptBoard Isolated Runner", Description: "ScriptBoard isolated Run worker", ServiceStartName: webServiceAccount, SidType: windows.SERVICE_SID_TYPE_RESTRICTED}
+	runnerConfiguration := mgr.Config{StartType: mgr.StartManual, DisplayName: "ScriptBoard Isolated Runner", Description: "ScriptBoard isolated Run worker", ServiceStartName: webServiceAccount, SidType: windows.SERVICE_SID_TYPE_RESTRICTED}
 	runnerService, err := manager.CreateService(runnerServiceName, runnerExecutable, runnerConfiguration, "--config", configPath, "--state-root", stateRoot, "--allowed-identity", webServiceSID)
 	if errors.Is(err, windows.ERROR_SERVICE_EXISTS) {
 		runnerService, err = manager.OpenService(runnerServiceName)
@@ -240,7 +240,7 @@ func Install(executable, configPath, _ string, stateRoot string) error {
 			return configErr
 		}
 		current.BinaryPathName = windows.ComposeCommandLine([]string{runnerExecutable, "--config", configPath, "--state-root", stateRoot, "--allowed-identity", webServiceSID})
-		current.StartType = mgr.StartAutomatic
+		current.StartType = mgr.StartManual
 		current.DisplayName = runnerConfiguration.DisplayName
 		current.Description = runnerConfiguration.Description
 		current.ServiceStartName = webServiceAccount
@@ -259,7 +259,7 @@ func Install(executable, configPath, _ string, stateRoot string) error {
 	}
 	configuration := mgr.Config{
 		StartType: mgr.StartAutomatic, DisplayName: "ScriptBoard",
-		Description: "ScriptBoard trusted-script management service", Dependencies: []string{brokerServiceName, aiServiceName, runnerServiceName},
+		Description: "ScriptBoard trusted-script management service", Dependencies: []string{brokerServiceName},
 		ServiceStartName: webServiceAccount, SidType: windows.SERVICE_SID_TYPE_UNRESTRICTED,
 	}
 	service, err := manager.CreateService(serviceName, executable, configuration, "serve", "--config", configPath)
@@ -292,6 +292,9 @@ func Install(executable, configPath, _ string, stateRoot string) error {
 	if err := service.Close(); err != nil {
 		return err
 	}
+	if err := grantWindowsWebServiceDemandStart(manager); err != nil {
+		return err
+	}
 	versionRoot := filepath.Dir(executable)
 	versionsRoot := filepath.Dir(versionRoot)
 	if !strings.EqualFold(filepath.Base(versionsRoot), "versions") {
@@ -308,6 +311,54 @@ func Install(executable, configPath, _ string, stateRoot string) error {
 		return err
 	}
 	return configureWindowsRuntimeFirewall(aiExecutable, runnerExecutable)
+}
+
+func grantWindowsWebServiceDemandStart(manager *mgr.Mgr) error {
+	sid, _, _, err := windows.LookupSID("", webServiceSID)
+	if err != nil {
+		return fmt.Errorf("resolve Windows Web service SID for demand start: %w", err)
+	}
+	permissions := windows.ACCESS_MASK(windows.SERVICE_START | windows.SERVICE_QUERY_STATUS)
+	for _, name := range []string{aiServiceName, runnerServiceName} {
+		service, openErr := manager.OpenService(name)
+		if openErr != nil {
+			return fmt.Errorf("open Windows service %s for demand-start ACL: %w", name, openErr)
+		}
+		grantErr := grantWindowsServiceAccess(service, sid, permissions)
+		closeErr := service.Close()
+		if grantErr != nil {
+			return fmt.Errorf("grant Windows Web demand-start access to %s: %w", name, grantErr)
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+	return nil
+}
+
+func grantWindowsServiceAccess(service *mgr.Service, sid *windows.SID, permissions windows.ACCESS_MASK) error {
+	descriptor, err := windows.GetSecurityInfo(service.Handle, windows.SE_SERVICE, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return err
+	}
+	currentACL, _, err := descriptor.DACL()
+	if err != nil {
+		return err
+	}
+	var pinner runtime.Pinner
+	pinner.Pin(sid)
+	defer pinner.Unpin()
+	acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{{
+		AccessPermissions: permissions,
+		AccessMode:        windows.GRANT_ACCESS,
+		Trustee: windows.TRUSTEE{
+			TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeValue: windows.TrusteeValueFromSID(sid),
+		},
+	}}, currentACL)
+	if err != nil {
+		return err
+	}
+	return windows.SetSecurityInfo(service.Handle, windows.SE_SERVICE, windows.DACL_SECURITY_INFORMATION, nil, nil, acl, nil)
 }
 
 func grantWindowsRunnerServiceAccess(installRoot, configPath string) error {
@@ -452,10 +503,10 @@ func SwitchExecutable(executable, configPath string) error {
 		return err
 	}
 	arguments, err := windows.DecomposeCommandLine(brokerConfiguration.BinaryPathName)
-	if err != nil || len(arguments) != 3 || arguments[1] != "--state-root" {
+	if err != nil || len(arguments) != 5 || arguments[1] != "--config" || arguments[3] != "--state-root" {
 		return errors.New("Windows privileged Broker service command is invalid")
 	}
-	brokerConfiguration.BinaryPathName = windows.ComposeCommandLine([]string{filepath.Join(filepath.Dir(executable), "scriptboard-broker.exe"), "--state-root", arguments[2]})
+	brokerConfiguration.BinaryPathName = windows.ComposeCommandLine([]string{filepath.Join(filepath.Dir(executable), "scriptboard-broker.exe"), "--config", arguments[2], "--state-root", arguments[4]})
 	if err := broker.UpdateConfig(brokerConfiguration); err != nil {
 		return err
 	}
@@ -556,12 +607,6 @@ func Start() error {
 	}
 	defer manager.Disconnect()
 	if err := startWindowsService(manager, brokerServiceName); err != nil {
-		return err
-	}
-	if err := startWindowsService(manager, aiServiceName); err != nil {
-		return err
-	}
-	if err := startWindowsService(manager, runnerServiceName); err != nil {
 		return err
 	}
 	return startWindowsService(manager, serviceName)
@@ -676,7 +721,8 @@ func MatchesExecutable(executable, configPath string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if !strings.EqualFold(configuration.ServiceStartName, webServiceAccount) || configuration.SidType == windows.SERVICE_SID_TYPE_NONE {
+	if !strings.EqualFold(configuration.ServiceStartName, webServiceAccount) || configuration.SidType == windows.SERVICE_SID_TYPE_NONE ||
+		len(configuration.Dependencies) != 1 || !strings.EqualFold(configuration.Dependencies[0], brokerServiceName) {
 		return false, nil
 	}
 	arguments, err := windows.DecomposeCommandLine(configuration.BinaryPathName)
@@ -696,13 +742,14 @@ func MatchesExecutable(executable, configPath string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if brokerConfiguration.SidType == windows.SERVICE_SID_TYPE_NONE {
+	if brokerConfiguration.SidType == windows.SERVICE_SID_TYPE_NONE || brokerConfiguration.StartType != mgr.StartAutomatic {
 		return false, nil
 	}
 	brokerArguments, err := windows.DecomposeCommandLine(brokerConfiguration.BinaryPathName)
-	if err != nil || len(brokerArguments) != 3 ||
+	if err != nil || len(brokerArguments) != 5 ||
 		!sameWindowsPath(brokerArguments[0], filepath.Join(filepath.Dir(executable), "scriptboard-broker.exe")) ||
-		brokerArguments[1] != "--state-root" || !filepath.IsAbs(brokerArguments[2]) {
+		brokerArguments[1] != "--config" || !sameWindowsPath(brokerArguments[2], configPath) ||
+		brokerArguments[3] != "--state-root" || !filepath.IsAbs(brokerArguments[4]) {
 		return false, err
 	}
 	aiService, err := manager.OpenService(aiServiceName)
@@ -714,7 +761,7 @@ func MatchesExecutable(executable, configPath string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if !strings.EqualFold(aiConfiguration.ServiceStartName, webServiceAccount) || aiConfiguration.SidType != windows.SERVICE_SID_TYPE_RESTRICTED {
+	if !strings.EqualFold(aiConfiguration.ServiceStartName, webServiceAccount) || aiConfiguration.SidType != windows.SERVICE_SID_TYPE_RESTRICTED || aiConfiguration.StartType != mgr.StartManual {
 		return false, nil
 	}
 	aiArguments, err := windows.DecomposeCommandLine(aiConfiguration.BinaryPathName)
@@ -732,7 +779,7 @@ func MatchesExecutable(executable, configPath string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if !strings.EqualFold(runnerConfiguration.ServiceStartName, webServiceAccount) || runnerConfiguration.SidType != windows.SERVICE_SID_TYPE_RESTRICTED {
+	if !strings.EqualFold(runnerConfiguration.ServiceStartName, webServiceAccount) || runnerConfiguration.SidType != windows.SERVICE_SID_TYPE_RESTRICTED || runnerConfiguration.StartType != mgr.StartManual {
 		return false, nil
 	}
 	runnerArguments, err := windows.DecomposeCommandLine(runnerConfiguration.BinaryPathName)

@@ -646,12 +646,15 @@ func (m *Manager) failStart(id string, startErr error) {
 		return nil
 	}
 	if err := write(); err == nil {
+		m.recordTerminalAudit(id, "failed")
 		return
 	}
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
-		retryRunStateWrite(m.persistenceStop, write)
+		if retryRunStateWrite(m.persistenceStop, write) {
+			m.recordTerminalAudit(id, "failed")
+		}
 	}()
 }
 
@@ -808,7 +811,7 @@ func (m *Manager) supervise(id string, process ManagedProcess, stdout, stderr io
 			exitCode = -1
 		}
 	}
-	retryRunStateWrite(m.persistenceStop, func() error {
+	if retryRunStateWrite(m.persistenceStop, func() error {
 		result, err := m.db.Exec("UPDATE runs SET status = ?, finished_at = ?, exit_code = ?, error = ?, log_incomplete = ?, log_truncated = ?, dropped_bytes = ?, log_bytes = ? WHERE id = ?", status, finished.UnixNano(), exitCode, errorText, logIncomplete, droppedBytes > 0, droppedBytes, logBytes, id)
 		if err != nil {
 			return err
@@ -821,12 +824,28 @@ func (m *Manager) supervise(id string, process ManagedProcess, stdout, stderr io
 			return errors.New("run terminal state target is missing")
 		}
 		return nil
-	})
+	}) {
+		m.recordTerminalAudit(id, status)
+	}
 	activeRun.signalChanged()
 	m.mu.Lock()
 	delete(m.active, id)
 	m.mu.Unlock()
 	m.files.ReleaseLease(activeRun.leaseID)
+}
+
+func (m *Manager) recordTerminalAudit(id, status string) {
+	if m.auditLog == nil {
+		return
+	}
+	var userID, username, digest string
+	if err := m.db.QueryRow(`SELECT initiated_by_user_id, initiated_by_username, script_sha256 FROM runs WHERE id = ?`, id).Scan(&userID, &username, &digest); err != nil {
+		return
+	}
+	_, _ = m.auditLog.Append(context.Background(), auditlog.Event{
+		OccurredAt: strconv.FormatInt(time.Now().UTC().Unix(), 10), Action: "run_completed", Target: id, Result: status,
+		SourceAddress: "runmanager", ActorUserID: userID, ActorUsername: username, ResourceDigestSHA256: digest,
+	})
 }
 
 func (m *Manager) timeout(id string) {

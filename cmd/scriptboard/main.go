@@ -474,12 +474,24 @@ func serveContext(runContext context.Context, arguments []string) error {
 		if err != nil {
 			return fmt.Errorf("resolve isolated Runtime Host endpoint: %w", err)
 		}
-		assistantLauncher = runtimehost.NewClientLauncher(runtimehost.Dial(endpoint))
+		assistantDial := runtimehost.Dial(endpoint)
+		assistantLauncher = runtimehost.NewClientLauncher(func(ctx context.Context) (net.Conn, error) {
+			if err := platformservice.EnsureAIRuntimeHostRunning(ctx); err != nil {
+				return nil, fmt.Errorf("start isolated AI Runtime Host on demand: %w", err)
+			}
+			return assistantDial(ctx)
+		})
 		runnerEndpoint, err := runnerhost.DefaultEndpoint(loaded.StateRoot)
 		if err != nil {
 			return fmt.Errorf("resolve isolated Runner Host endpoint: %w", err)
 		}
-		runnerLauncher = runnerhost.NewClientLauncher(runnerhost.Dial(runnerEndpoint))
+		runnerDial := runnerhost.Dial(runnerEndpoint)
+		runnerLauncher = runnerhost.NewClientLauncher(func(ctx context.Context) (net.Conn, error) {
+			if err := platformservice.EnsureRunnerHostRunning(ctx); err != nil {
+				return nil, fmt.Errorf("start isolated Runner Host on demand: %w", err)
+			}
+			return runnerDial(ctx)
+		})
 		privilegedBrokerEndpoint, err = privilegebroker.DefaultEndpoint(loaded.StateRoot)
 		if err != nil {
 			return fmt.Errorf("resolve privileged Broker endpoint: %w", err)
@@ -506,7 +518,9 @@ func serveContext(runContext context.Context, arguments []string) error {
 		AllowedHosts: loaded.AllowedHosts, CanonicalExternalURL: loaded.CanonicalExternalURL,
 		SecurityEventEndpoint: loaded.SecurityEventEndpoint, SecurityEventToken: securityEventToken,
 		SecurityEventTokenFile: loaded.SecurityEventTokenFile, SecurityEventAllowPrivate: loaded.SecurityEventAllowPrivate,
-		UpdateCheck: loaded.UpdateCheck, UpdateInterval: loaded.UpdateInterval,
+		NotificationEmailRelayEndpoint: loaded.NotificationEmailRelayEndpoint, NotificationEmailRecipient: loaded.NotificationEmailRecipient,
+		NotificationEmailRelayTokenFile: loaded.NotificationEmailRelayTokenFile,
+		UpdateCheck:                     loaded.UpdateCheck, UpdateInterval: loaded.UpdateInterval,
 		RequestShutdown: func() {
 			select {
 			case updateShutdown <- struct{}{}:

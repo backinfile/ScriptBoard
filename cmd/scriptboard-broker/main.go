@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -16,17 +17,21 @@ import (
 
 	"scriptboard/internal/auditcheckpoint"
 	"scriptboard/internal/auditlog"
+	"scriptboard/internal/auditnotification"
+	"scriptboard/internal/config"
 	"scriptboard/internal/externaltrigger"
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/hostsecurity"
 	"scriptboard/internal/mfa"
 	"scriptboard/internal/mysqlmanager"
 	"scriptboard/internal/passkey"
+	"scriptboard/internal/privatepath"
 	"scriptboard/internal/privilegebroker"
 	"scriptboard/internal/providercredential"
 	"scriptboard/internal/remotewebsite"
 	"scriptboard/internal/secretredaction"
 	"scriptboard/internal/secretstore"
+	"scriptboard/internal/securityevents"
 	"scriptboard/internal/shutdownsignal"
 	"scriptboard/internal/statebackup"
 )
@@ -54,6 +59,7 @@ func run(arguments []string) error {
 func runContext(ctx context.Context, arguments []string) error {
 	flags := flag.NewFlagSet("scriptboard-broker", flag.ContinueOnError)
 	stateRoot := flags.String("state-root", "", "absolute ScriptBoard State Root")
+	configPath := flags.String("config", "", "absolute ScriptBoard configuration path")
 	endpoint := flags.String("endpoint", "", "local IPC endpoint override")
 	allowedIdentity := flags.String("allowed-identity", "", "authorized Web service OS identity")
 	developmentCurrentUser := flags.Bool("development-current-user", false, "authorize the current OS user for local development")
@@ -67,6 +73,20 @@ func runContext(ctx context.Context, arguments []string) error {
 	if err != nil || strings.TrimSpace(*stateRoot) == "" || !filepath.IsAbs(*stateRoot) {
 		return errors.New("privileged Broker requires an absolute --state-root")
 	}
+	var emailConfig config.Config
+	if strings.TrimSpace(*configPath) != "" {
+		if !filepath.IsAbs(*configPath) {
+			return errors.New("privileged Broker requires an absolute --config path")
+		}
+		emailConfig, err = config.Load([]string{"--config", *configPath}, os.Getenv)
+		if err != nil {
+			return fmt.Errorf("load Broker notification configuration: %w", err)
+		}
+		configuredRoot, rootErr := filepath.Abs(emailConfig.StateRoot)
+		if rootErr != nil || !sameBrokerPath(configuredRoot, absolute) {
+			return errors.New("Broker --state-root does not match the configured State Root")
+		}
+	}
 	database, err := openBrokerDatabase(absolute)
 	if err != nil {
 		return err
@@ -75,6 +95,34 @@ func runContext(ctx context.Context, arguments []string) error {
 	audit := auditlog.New(database)
 	if _, err := audit.Verify(context.Background()); err != nil {
 		return fmt.Errorf("verify audit chain before privileged Broker startup: %w", err)
+	}
+	var emailManager *securityevents.Manager
+	var emailPoller *auditnotification.Poller
+	if emailConfig.NotificationEmailRelayEndpoint != "" {
+		if err := protectBrokerSecretDirectory(emailConfig.NotificationEmailRelayTokenFile); err != nil {
+			return fmt.Errorf("protect Broker-owned email relay credentials: %w", err)
+		}
+		token, tokenErr := readBrokerSecretFile(emailConfig.NotificationEmailRelayTokenFile)
+		if tokenErr != nil {
+			return fmt.Errorf("read Broker-owned email relay token: %w", tokenErr)
+		}
+		emailManager, err = securityevents.New(securityevents.Options{
+			StateRoot: absolute, Endpoint: emailConfig.NotificationEmailRelayEndpoint, Token: token,
+			AllowPrivate: emailConfig.NotificationEmailRelayAllowPrivate, Channel: "email-outbox",
+			EnvelopeType: "scriptboard.email-notification", Recipient: emailConfig.NotificationEmailRecipient,
+			NotificationsOnly: true, DisableLocalAlerts: true,
+		})
+		if err != nil {
+			return fmt.Errorf("configure Broker-owned email relay: %w", err)
+		}
+		defer emailManager.Close()
+		emailPoller, err = auditnotification.New(auditnotification.Options{DB: database, StateRoot: absolute, Observe: emailManager.Queue})
+		if err != nil {
+			return fmt.Errorf("configure Broker-owned audit notification cursor: %w", err)
+		}
+		if err := emailPoller.Start(ctx); err != nil {
+			return fmt.Errorf("start Broker-owned email notifications: %w", err)
+		}
 	}
 	vault, err := secretstore.New(absolute)
 	if err != nil {
@@ -125,9 +173,11 @@ func runContext(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("resolve privileged Broker executable: %w", err)
 	}
-	brokerFiles, err := hostfiles.Open(hostfiles.Options{ProtectedPaths: []string{
-		absolute, filepath.Dir(vault.KeyPath()), filepath.Dir(executable),
-	}})
+	protectedPaths := []string{absolute, filepath.Dir(vault.KeyPath()), filepath.Dir(executable)}
+	if emailConfig.NotificationEmailRelayTokenFile != "" {
+		protectedPaths = append(protectedPaths, emailConfig.NotificationEmailRelayTokenFile)
+	}
+	brokerFiles, err := hostfiles.Open(hostfiles.Options{ProtectedPaths: protectedPaths})
 	if err != nil {
 		return fmt.Errorf("configure Broker-owned Host Files access: %w", err)
 	}
@@ -219,7 +269,55 @@ func runContext(ctx context.Context, arguments []string) error {
 	}()
 	<-ctx.Done()
 	mysqlBackground.Wait()
+	if emailPoller != nil {
+		emailPoller.Wait()
+	}
 	return server.Close()
+}
+
+func sameBrokerPath(first, second string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(filepath.Clean(first), filepath.Clean(second))
+	}
+	return filepath.Clean(first) == filepath.Clean(second)
+}
+
+func readBrokerSecretFile(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" || !filepath.IsAbs(path) {
+		return "", errors.New("email relay token file must be an absolute path")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() || info.Size() < 1 || info.Size() > 4096 {
+		return "", errors.New("email relay token file must be a regular file containing 1 to 4096 bytes")
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	token := strings.TrimSpace(string(body))
+	if token == "" || strings.ContainsAny(token, "\r\n\x00") {
+		return "", errors.New("email relay token is invalid")
+	}
+	return token, nil
+}
+
+func protectBrokerSecretDirectory(path string) error {
+	directory := filepath.Dir(strings.TrimSpace(path))
+	if !filepath.IsAbs(path) || !strings.EqualFold(filepath.Base(directory), "broker-secrets") {
+		return errors.New("email relay token must be inside a dedicated broker-secrets directory")
+	}
+	info, err := os.Lstat(directory)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("email relay credential directory must be a real directory")
+	}
+	return privatepath.ProtectDirectory(directory)
 }
 
 type brokerCheckpointService struct {

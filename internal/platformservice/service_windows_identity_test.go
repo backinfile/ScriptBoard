@@ -50,6 +50,33 @@ func TestWindowsManagedWebRuntimeRequiresLowIdentityAndServiceSID(t *testing.T) 
 	}
 }
 
+func TestWindowsRunnerAndAIHostAreDemandStartServices(t *testing.T) {
+	source, err := os.ReadFile("service_windows.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	if strings.Count(text, "StartType: mgr.StartManual") < 2 || strings.Count(text, "current.StartType = mgr.StartManual") < 2 {
+		t.Fatal("Windows Runner and AI Host are not both installed and upgraded as demand-start services")
+	}
+	if !strings.Contains(text, "Dependencies: []string{brokerServiceName}") {
+		t.Fatal("managed Web must depend only on the resident Broker")
+	}
+	if !strings.Contains(text, "windows.SERVICE_START | windows.SERVICE_QUERY_STATUS") ||
+		!strings.Contains(text, "[]string{aiServiceName, runnerServiceName}") {
+		t.Fatal("managed Web is not granted narrow demand-start access to both isolated services")
+	}
+	onDemandSource, err := os.ReadFile("ondemand_windows.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	onDemandText := string(onDemandSource)
+	if !strings.Contains(onDemandText, "windows.SC_MANAGER_CONNECT") ||
+		!strings.Contains(onDemandText, "windows.SERVICE_START|windows.SERVICE_QUERY_STATUS") {
+		t.Fatal("demand-start client requests broader SCM or service access than its narrow grant")
+	}
+}
+
 func TestWindowsServiceDirectoryGrantPropagatesToExistingChildren(t *testing.T) {
 	root := t.TempDir()
 	child := filepath.Join(root, "existing.txt")

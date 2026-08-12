@@ -325,47 +325,50 @@ const (
 )
 
 type Config struct {
-	StateRoot                 string
-	ConfigPath                string
-	InstallRoot               string
-	TLSKey                    string
-	FileTopology              hostfiles.Topology
-	RunTimeoutGrace           time.Duration
-	SchedulerNow              func() time.Time
-	SchedulerTick             time.Duration
-	ExecutorChains            map[string][]string
-	AdminUsername             string
-	AdminPasswordFile         string
-	TrustedProxies            []string
-	AllowedHosts              []string
-	CanonicalExternalURL      string
-	WebsiteMonitorOptions     websitemonitor.Options
-	CustomDashboardClient     *http.Client
-	UpdateCheck               bool
-	UpdateInterval            time.Duration
-	UpdateSource              updatepkg.ReleaseSource
-	RequestShutdown           func()
-	RequestRestart            func() error
-	ApplicationProbe          appstatus.Probe
-	AssistantRuntimeSource    runtimeinstall.Source
-	HostSecurity              hostsecurity.Service
-	ServiceLogs               servicelogs.Reader
-	PrivilegedBrokerEndpoint  string
-	AssistantProcessLauncher  pirpc.ProcessLauncher
-	RunnerProcessLauncher     runmanager.ProcessLauncher
-	AuditCheckpoint           AuditCheckpoint
-	MFAStore                  MFAStore
-	PasskeyStore              PasskeyStore
-	RemoteWebsiteService      RemoteWebsiteService
-	ProviderCredentials       *privilegebroker.ProviderCredentials
-	MySQLBackend              mysqlmanager.Backend
-	HostFilesBackend          *privilegebroker.HostFilesBackend
-	StateBackups              StateBackupService
-	SecurityEventEndpoint     string
-	SecurityEventToken        string
-	SecurityEventTokenFile    string
-	SecurityEventAllowPrivate bool
-	SecurityEventClient       *http.Client
+	StateRoot                       string
+	ConfigPath                      string
+	InstallRoot                     string
+	TLSKey                          string
+	FileTopology                    hostfiles.Topology
+	RunTimeoutGrace                 time.Duration
+	SchedulerNow                    func() time.Time
+	SchedulerTick                   time.Duration
+	ExecutorChains                  map[string][]string
+	AdminUsername                   string
+	AdminPasswordFile               string
+	TrustedProxies                  []string
+	AllowedHosts                    []string
+	CanonicalExternalURL            string
+	WebsiteMonitorOptions           websitemonitor.Options
+	CustomDashboardClient           *http.Client
+	UpdateCheck                     bool
+	UpdateInterval                  time.Duration
+	UpdateSource                    updatepkg.ReleaseSource
+	RequestShutdown                 func()
+	RequestRestart                  func() error
+	ApplicationProbe                appstatus.Probe
+	AssistantRuntimeSource          runtimeinstall.Source
+	HostSecurity                    hostsecurity.Service
+	ServiceLogs                     servicelogs.Reader
+	PrivilegedBrokerEndpoint        string
+	AssistantProcessLauncher        pirpc.ProcessLauncher
+	RunnerProcessLauncher           runmanager.ProcessLauncher
+	AuditCheckpoint                 AuditCheckpoint
+	MFAStore                        MFAStore
+	PasskeyStore                    PasskeyStore
+	RemoteWebsiteService            RemoteWebsiteService
+	ProviderCredentials             *privilegebroker.ProviderCredentials
+	MySQLBackend                    mysqlmanager.Backend
+	HostFilesBackend                *privilegebroker.HostFilesBackend
+	StateBackups                    StateBackupService
+	SecurityEventEndpoint           string
+	SecurityEventToken              string
+	SecurityEventTokenFile          string
+	SecurityEventAllowPrivate       bool
+	SecurityEventClient             *http.Client
+	NotificationEmailRelayEndpoint  string
+	NotificationEmailRecipient      string
+	NotificationEmailRelayTokenFile string
 }
 
 type AuditCheckpoint interface {
@@ -566,7 +569,7 @@ func Open(config Config) (*App, error) {
 	}
 	instanceDigest := sha256.Sum256([]byte(stateRoot))
 	files, err := hostfiles.Open(hostfiles.Options{
-		ProtectedPaths: []string{stateRoot, filepath.Dir(credentialStore.KeyPath()), installRoot, config.ConfigPath, config.AdminPasswordFile, config.SecurityEventTokenFile, config.TLSKey},
+		ProtectedPaths: []string{stateRoot, filepath.Dir(credentialStore.KeyPath()), installRoot, config.ConfigPath, config.AdminPasswordFile, config.SecurityEventTokenFile, config.NotificationEmailRelayTokenFile, config.TLSKey},
 		InstanceID:     hex.EncodeToString(instanceDigest[:]), Topology: config.FileTopology,
 	})
 	if err != nil {
@@ -658,6 +661,7 @@ func Open(config Config) (*App, error) {
 	application.securityEvents, err = securityevents.New(securityevents.Options{
 		StateRoot: stateRoot, Endpoint: config.SecurityEventEndpoint, Token: config.SecurityEventToken,
 		AllowPrivate: config.SecurityEventAllowPrivate, Client: config.SecurityEventClient,
+		BrokerEmailRelayEndpoint: config.NotificationEmailRelayEndpoint, BrokerEmailRecipient: config.NotificationEmailRecipient,
 	})
 	if err != nil {
 		_ = db.Close()

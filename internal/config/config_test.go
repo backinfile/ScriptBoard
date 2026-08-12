@@ -85,6 +85,35 @@ func TestLoadValidatesSecurityEventReceiverBoundary(t *testing.T) {
 	}
 }
 
+func TestLoadValidatesBrokerOwnedEmailRelayBoundary(t *testing.T) {
+	t.Parallel()
+	for _, data := range []string{
+		"notification_email_relay_endpoint: http://mail.example/send\nnotification_email_recipient: admin@example.com\n",
+		"notification_email_relay_endpoint: https://user:secret@mail.example/send\nnotification_email_recipient: admin@example.com\n",
+		"notification_email_relay_endpoint: https://mail.example/send\nnotification_email_recipient: Admin <admin@example.com>\n",
+		"notification_email_relay_token_file: relative-token\n",
+		"notification_email_relay_allow_private: true\n",
+	} {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := config.Load([]string{"--config", path}, func(string) string { return "" }); err == nil {
+			t.Fatalf("unsafe email relay configuration accepted: %s", data)
+		}
+	}
+	tokenPath := filepath.ToSlash(filepath.Join(t.TempDir(), "broker-secrets", "mail-token"))
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	data := "notification_email_relay_endpoint: https://mail.example/send\nnotification_email_relay_token_file: " + tokenPath + "\nnotification_email_recipient: admin@example.com\nnotification_email_relay_allow_private: true\n"
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := config.Load([]string{"--config", path}, func(string) string { return "" })
+	if err != nil || loaded.NotificationEmailRecipient != "admin@example.com" || loaded.NotificationEmailRelayTokenFile != tokenPath || !loaded.NotificationEmailRelayAllowPrivate {
+		t.Fatalf("loaded=%#v err=%v", loaded, err)
+	}
+}
+
 func TestLoadRequiresExplicitHostsForWildcardListenAndBindsCanonicalHost(t *testing.T) {
 	t.Parallel()
 	missingHosts := filepath.Join(t.TempDir(), "missing-hosts.yaml")

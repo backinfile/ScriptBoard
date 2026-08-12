@@ -37,6 +37,15 @@ type Options struct {
 	AllowPrivate bool
 	Client       *http.Client
 	Now          func() time.Time
+	// Channel isolates durable queues owned by different processes. The empty
+	// value preserves the original SIEM webhook queue.
+	Channel                  string
+	EnvelopeType             string
+	Recipient                string
+	NotificationsOnly        bool
+	DisableLocalAlerts       bool
+	BrokerEmailRelayEndpoint string
+	BrokerEmailRecipient     string
 }
 
 type Alert struct {
@@ -53,6 +62,7 @@ type Envelope struct {
 	Audit         auditlog.CommittedEvent `json:"audit"`
 	Alerts        []Alert                 `json:"alerts,omitempty"`
 	Notification  *Notification           `json:"notification,omitempty"`
+	Recipient     string                  `json:"recipient,omitempty"`
 }
 
 type Notification struct {
@@ -75,22 +85,32 @@ type Status struct {
 	CircuitOpen      bool
 	NextAttemptAt    time.Time
 	WebsiteTemplates bool
+	EmailEnabled     bool
+	EmailRelayHost   string
+	EmailRecipient   string
+	EmailTemplates   bool
 }
 
 type Manager struct {
-	endpoint         string
-	token            string
-	client           *http.Client
-	now              func() time.Time
-	spool            string
-	alertLog         string
-	wake             chan struct{}
-	cancel           context.CancelFunc
-	wg               sync.WaitGroup
-	mu               sync.Mutex
-	windows          map[string][]time.Time
-	deliveryFailures int
-	nextAttemptAt    time.Time
+	endpoint             string
+	token                string
+	client               *http.Client
+	now                  func() time.Time
+	spool                string
+	alertLog             string
+	envelopeType         string
+	recipient            string
+	notificationsOnly    bool
+	disableLocalAlerts   bool
+	brokerEmailRelayHost string
+	brokerEmailRecipient string
+	wake                 chan struct{}
+	cancel               context.CancelFunc
+	wg                   sync.WaitGroup
+	mu                   sync.Mutex
+	windows              map[string][]time.Time
+	deliveryFailures     int
+	nextAttemptAt        time.Time
 }
 
 func New(options Options) (*Manager, error) {
@@ -118,16 +138,30 @@ func New(options Options) (*Manager, error) {
 		now = time.Now
 	}
 	logs := filepath.Join(root, "logs")
-	spool := filepath.Join(root, "security-events", "outbox")
+	channel := strings.TrimSpace(options.Channel)
+	if channel == "" {
+		channel = "outbox"
+	}
+	if channel != "outbox" && channel != "email-outbox" {
+		return nil, errors.New("security event channel is invalid")
+	}
+	spool := filepath.Join(root, "security-events", channel)
 	for _, directory := range []string{logs, spool} {
 		if err := os.MkdirAll(directory, 0o700); err != nil {
 			return nil, err
 		}
 		_ = os.Chmod(directory, 0o700)
 	}
+	envelopeType := strings.TrimSpace(options.EnvelopeType)
+	if envelopeType == "" {
+		envelopeType = "scriptboard.security-event"
+	}
 	manager := &Manager{
 		endpoint: endpoint, token: strings.TrimSpace(options.Token), client: client, now: now,
 		spool: spool, alertLog: filepath.Join(logs, "security-alerts.jsonl"), wake: make(chan struct{}, 1), windows: make(map[string][]time.Time),
+		envelopeType: envelopeType, recipient: strings.TrimSpace(options.Recipient), notificationsOnly: options.NotificationsOnly,
+		disableLocalAlerts:   options.DisableLocalAlerts,
+		brokerEmailRelayHost: endpointHost(options.BrokerEmailRelayEndpoint), brokerEmailRecipient: maskEmail(options.BrokerEmailRecipient),
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	manager.cancel = cancel
@@ -140,18 +174,31 @@ func New(options Options) (*Manager, error) {
 }
 
 func (manager *Manager) Observe(event auditlog.CommittedEvent) {
+	_ = manager.Queue(event)
+}
+
+// Queue converts a committed, already-redacted audit event into a bounded
+// delivery envelope. Callers that keep a durable source cursor use the error
+// to avoid advancing past an event that could not be persisted.
+func (manager *Manager) Queue(event auditlog.CommittedEvent) error {
 	now := manager.now().UTC()
 	alerts := manager.detect(event, now)
-	envelope := Envelope{Type: "scriptboard.security-event", SchemaVersion: 1, SentAt: now.Format(time.RFC3339Nano), Audit: event, Alerts: alerts, Notification: notificationFor(event)}
-	if len(alerts) > 0 {
+	notification := NotificationFor(event)
+	if manager.notificationsOnly && notification == nil {
+		return nil
+	}
+	envelope := Envelope{Type: manager.envelopeType, SchemaVersion: 1, SentAt: now.Format(time.RFC3339Nano), Audit: event, Alerts: alerts, Notification: notification, Recipient: manager.recipient}
+	if len(alerts) > 0 && !manager.disableLocalAlerts {
 		_ = manager.appendAlerts(envelope)
 	}
 	if manager.endpoint == "" {
-		return
+		return nil
 	}
-	if manager.persist(envelope) == nil {
-		manager.signal()
+	if err := manager.persist(envelope); err != nil {
+		return err
 	}
+	manager.signal()
+	return nil
 }
 
 func (manager *Manager) Close() error {
@@ -183,7 +230,8 @@ func (manager *Manager) Status() (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	status := Status{WebhookEnabled: manager.endpoint != "", Pending: pending, Capacity: maxPendingEvents, WebsiteTemplates: true}
+	status := Status{WebhookEnabled: manager.endpoint != "", Pending: pending, Capacity: maxPendingEvents, WebsiteTemplates: true,
+		EmailEnabled: manager.brokerEmailRelayHost != "", EmailRelayHost: manager.brokerEmailRelayHost, EmailRecipient: manager.brokerEmailRecipient, EmailTemplates: true}
 	manager.mu.Lock()
 	status.DeliveryFailures = manager.deliveryFailures
 	status.NextAttemptAt = manager.nextAttemptAt
@@ -201,6 +249,23 @@ func (manager *Manager) Status() (Status, error) {
 		return Status{}, statErr
 	}
 	return status, nil
+}
+
+func endpointHost(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme != "https" {
+		return ""
+	}
+	return parsed.Host
+}
+
+func maskEmail(value string) string {
+	value = strings.TrimSpace(value)
+	at := strings.LastIndexByte(value, '@')
+	if at <= 0 || at == len(value)-1 {
+		return ""
+	}
+	return value[:1] + "***" + value[at:]
 }
 
 func (manager *Manager) detect(event auditlog.CommittedEvent, now time.Time) []Alert {
@@ -236,15 +301,36 @@ func (manager *Manager) detect(event auditlog.CommittedEvent, now time.Time) []A
 	return alerts
 }
 
-func notificationFor(event auditlog.CommittedEvent) *Notification {
+func NotificationFor(event auditlog.CommittedEvent) *Notification {
 	action := strings.ToLower(event.Event.Action)
 	switch action {
 	case "website_monitor_down":
 		return &Notification{Template: "website-monitor-result-v1", Severity: "high", Title: "Website monitor confirmed an outage", Summary: "Two consecutive checks failed. Review the current incident in ScriptBoard.", ResourceID: event.Event.Target, State: "down"}
 	case "website_monitor_recovered":
 		return &Notification{Template: "website-monitor-result-v1", Severity: "info", Title: "Website monitor recovered", Summary: "A successful check closed the current incident.", ResourceID: event.Event.Target, State: "recovered"}
+	}
+	result := strings.ToLower(event.Event.Result)
+	if strings.HasPrefix(action, "state_backup.") || strings.HasPrefix(action, "state_backup_") {
+		return &Notification{Template: "state-backup-result-v1", Severity: resultSeverity(result), Title: "State backup operation completed", Summary: "Review the recorded backup operation in ScriptBoard.", ResourceID: event.Event.Target, State: result}
+	}
+	if strings.HasPrefix(action, "update_") || strings.HasPrefix(action, "update.") {
+		return &Notification{Template: "update-result-v1", Severity: resultSeverity(result), Title: "ScriptBoard update operation completed", Summary: "Review the signed update result in ScriptBoard.", ResourceID: event.Event.Target, State: result}
+	}
+	if action == "run_completed" && (result == "succeeded" || result == "failed" || result == "cancelled" || result == "timed_out") {
+		return &Notification{Template: "run-result-v1", Severity: resultSeverity(result), Title: "Run operation completed", Summary: "Review the bounded Run result in ScriptBoard.", ResourceID: event.Event.Target, State: result}
+	}
+	if result == "failed" || result == "rejected" || result == "blocked" || result == "rate_limited" {
+		return &Notification{Template: "security-alert-v1", Severity: "high", Title: "ScriptBoard security event", Summary: "A protected operation was denied or failed. Review the audit trail.", ResourceID: event.Event.Target, State: result}
+	}
+	return nil
+}
+
+func resultSeverity(result string) string {
+	switch result {
+	case "failed", "rejected", "blocked", "rate_limited", "timed_out":
+		return "high"
 	default:
-		return nil
+		return "info"
 	}
 }
 
@@ -277,6 +363,20 @@ func (manager *Manager) windowHit(key string, now time.Time, window time.Duratio
 func (manager *Manager) persist(envelope Envelope) error {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
+	body, err := json.Marshal(envelope)
+	if err != nil {
+		return err
+	}
+	name := fmt.Sprintf("%020d-%s.json", envelope.Audit.ID, envelope.Audit.EventSHA256)
+	destination := filepath.Join(manager.spool, name)
+	if existing, readErr := os.ReadFile(destination); readErr == nil {
+		if sameEnvelopeIdentity(existing, envelope) {
+			return nil
+		}
+		return errors.New("security event outbox identity collision")
+	} else if !errors.Is(readErr, os.ErrNotExist) {
+		return readErr
+	}
 	entries, err := os.ReadDir(manager.spool)
 	if err != nil {
 		return err
@@ -284,11 +384,6 @@ func (manager *Manager) persist(envelope Envelope) error {
 	if len(entries) >= maxPendingEvents {
 		return errors.New("security event outbox is full")
 	}
-	body, err := json.Marshal(envelope)
-	if err != nil {
-		return err
-	}
-	name := fmt.Sprintf("%020d-%s.json", envelope.Audit.ID, envelope.Audit.EventSHA256)
 	temporary, err := os.CreateTemp(manager.spool, ".event-*.tmp")
 	if err != nil {
 		return err
@@ -310,7 +405,19 @@ func (manager *Manager) persist(envelope Envelope) error {
 	if err := temporary.Close(); err != nil {
 		return err
 	}
-	return os.Rename(temporaryPath, filepath.Join(manager.spool, name))
+	if err := os.Rename(temporaryPath, destination); err != nil {
+		if existing, readErr := os.ReadFile(destination); readErr == nil && sameEnvelopeIdentity(existing, envelope) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func sameEnvelopeIdentity(body []byte, expected Envelope) bool {
+	var existing Envelope
+	return json.Unmarshal(body, &existing) == nil && existing.Type == expected.Type && existing.Recipient == expected.Recipient &&
+		existing.Audit.ID == expected.Audit.ID && existing.Audit.EventSHA256 == expected.Audit.EventSHA256
 }
 
 func (manager *Manager) appendAlerts(envelope Envelope) error {

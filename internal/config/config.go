@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/mail"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -20,45 +21,53 @@ import (
 )
 
 type Config struct {
-	StateRoot                 string              `yaml:"state_root"`
-	Listen                    string              `yaml:"listen"`
-	TLSCert                   string              `yaml:"tls_cert"`
-	TLSKey                    string              `yaml:"tls_key"`
-	ExecutorChains            map[string][]string `yaml:"executor_chains"`
-	AdminUsername             string              `yaml:"admin_username"`
-	AdminPasswordFile         string              `yaml:"admin_password_file"`
-	TrustedProxies            []string            `yaml:"trusted_proxies"`
-	AllowedHosts              []string            `yaml:"allowed_hosts"`
-	CanonicalExternalURL      string              `yaml:"canonical_external_url"`
-	SecurityEventEndpoint     string              `yaml:"security_event_endpoint"`
-	SecurityEventTokenFile    string              `yaml:"security_event_token_file"`
-	SecurityEventAllowPrivate bool                `yaml:"security_event_allow_private"`
-	RunTimeoutGrace           time.Duration       `yaml:"-"`
-	UpdateCheck               bool                `yaml:"update_check"`
-	UpdateInterval            time.Duration       `yaml:"-"`
-	ConfigPath                string              `yaml:"-"`
+	StateRoot                          string              `yaml:"state_root"`
+	Listen                             string              `yaml:"listen"`
+	TLSCert                            string              `yaml:"tls_cert"`
+	TLSKey                             string              `yaml:"tls_key"`
+	ExecutorChains                     map[string][]string `yaml:"executor_chains"`
+	AdminUsername                      string              `yaml:"admin_username"`
+	AdminPasswordFile                  string              `yaml:"admin_password_file"`
+	TrustedProxies                     []string            `yaml:"trusted_proxies"`
+	AllowedHosts                       []string            `yaml:"allowed_hosts"`
+	CanonicalExternalURL               string              `yaml:"canonical_external_url"`
+	SecurityEventEndpoint              string              `yaml:"security_event_endpoint"`
+	SecurityEventTokenFile             string              `yaml:"security_event_token_file"`
+	SecurityEventAllowPrivate          bool                `yaml:"security_event_allow_private"`
+	NotificationEmailRelayEndpoint     string              `yaml:"notification_email_relay_endpoint"`
+	NotificationEmailRelayTokenFile    string              `yaml:"notification_email_relay_token_file"`
+	NotificationEmailRecipient         string              `yaml:"notification_email_recipient"`
+	NotificationEmailRelayAllowPrivate bool                `yaml:"notification_email_relay_allow_private"`
+	RunTimeoutGrace                    time.Duration       `yaml:"-"`
+	UpdateCheck                        bool                `yaml:"update_check"`
+	UpdateInterval                     time.Duration       `yaml:"-"`
+	ConfigPath                         string              `yaml:"-"`
 }
 
 type yamlConfig struct {
-	StateRoot                 string              `yaml:"state_root"`
-	Listen                    string              `yaml:"listen"`
-	TLSCert                   string              `yaml:"tls_cert"`
-	TLSKey                    string              `yaml:"tls_key"`
-	ExecutorChains            map[string][]string `yaml:"executor_chains"`
-	AdminUsername             string              `yaml:"admin_username"`
-	AdminPasswordFile         string              `yaml:"admin_password_file"`
-	TrustedProxies            []string            `yaml:"trusted_proxies"`
-	AllowedHosts              []string            `yaml:"allowed_hosts"`
-	CanonicalExternalURL      string              `yaml:"canonical_external_url"`
-	SecurityEventEndpoint     string              `yaml:"security_event_endpoint"`
-	SecurityEventTokenFile    string              `yaml:"security_event_token_file"`
-	SecurityEventAllowPrivate *bool               `yaml:"security_event_allow_private"`
-	RunTimeoutGraceSeconds    *int                `yaml:"run_timeout_grace_seconds"`
-	UpdateCheck               *bool               `yaml:"update_check"`
-	UpdateIntervalHours       *int                `yaml:"update_check_interval_hours"`
-	RemovedManagedRoot        yaml.Node           `yaml:"managed_root"`
-	RemovedGitExecutable      yaml.Node           `yaml:"git_executable"`
-	RemovedAdminPassword      yaml.Node           `yaml:"admin_password"`
+	StateRoot                          string              `yaml:"state_root"`
+	Listen                             string              `yaml:"listen"`
+	TLSCert                            string              `yaml:"tls_cert"`
+	TLSKey                             string              `yaml:"tls_key"`
+	ExecutorChains                     map[string][]string `yaml:"executor_chains"`
+	AdminUsername                      string              `yaml:"admin_username"`
+	AdminPasswordFile                  string              `yaml:"admin_password_file"`
+	TrustedProxies                     []string            `yaml:"trusted_proxies"`
+	AllowedHosts                       []string            `yaml:"allowed_hosts"`
+	CanonicalExternalURL               string              `yaml:"canonical_external_url"`
+	SecurityEventEndpoint              string              `yaml:"security_event_endpoint"`
+	SecurityEventTokenFile             string              `yaml:"security_event_token_file"`
+	SecurityEventAllowPrivate          *bool               `yaml:"security_event_allow_private"`
+	NotificationEmailRelayEndpoint     string              `yaml:"notification_email_relay_endpoint"`
+	NotificationEmailRelayTokenFile    string              `yaml:"notification_email_relay_token_file"`
+	NotificationEmailRecipient         string              `yaml:"notification_email_recipient"`
+	NotificationEmailRelayAllowPrivate *bool               `yaml:"notification_email_relay_allow_private"`
+	RunTimeoutGraceSeconds             *int                `yaml:"run_timeout_grace_seconds"`
+	UpdateCheck                        *bool               `yaml:"update_check"`
+	UpdateIntervalHours                *int                `yaml:"update_check_interval_hours"`
+	RemovedManagedRoot                 yaml.Node           `yaml:"managed_root"`
+	RemovedGitExecutable               yaml.Node           `yaml:"git_executable"`
+	RemovedAdminPassword               yaml.Node           `yaml:"admin_password"`
 }
 
 func Load(arguments []string, getenv func(string) string) (Config, error) {
@@ -143,6 +152,10 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 	flags.StringVar(&result.SecurityEventEndpoint, "security-event-endpoint", result.SecurityEventEndpoint, "HTTPS security event receiver")
 	flags.StringVar(&result.SecurityEventTokenFile, "security-event-token-file", result.SecurityEventTokenFile, "absolute path to the receiver bearer token")
 	flags.BoolVar(&result.SecurityEventAllowPrivate, "security-event-allow-private", result.SecurityEventAllowPrivate, "allow an explicitly configured private receiver address")
+	flags.StringVar(&result.NotificationEmailRelayEndpoint, "notification-email-relay-endpoint", result.NotificationEmailRelayEndpoint, "Broker-owned HTTPS email relay")
+	flags.StringVar(&result.NotificationEmailRelayTokenFile, "notification-email-relay-token-file", result.NotificationEmailRelayTokenFile, "absolute path to the Broker-owned email relay token")
+	flags.StringVar(&result.NotificationEmailRecipient, "notification-email-recipient", result.NotificationEmailRecipient, "fixed email notification recipient")
+	flags.BoolVar(&result.NotificationEmailRelayAllowPrivate, "notification-email-relay-allow-private", result.NotificationEmailRelayAllowPrivate, "allow an explicitly configured private email relay address")
 	if err := flags.Parse(arguments); err != nil {
 		return Config{}, err
 	}
@@ -168,6 +181,29 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 		endpoint, endpointErr := url.Parse(result.SecurityEventEndpoint)
 		if endpointErr != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil || endpoint.Fragment != "" {
 			return Config{}, errors.New("security_event_endpoint must be an HTTPS URL without credentials or fragment")
+		}
+	}
+	if result.NotificationEmailRelayTokenFile != "" && !filepath.IsAbs(result.NotificationEmailRelayTokenFile) {
+		return Config{}, errors.New("notification_email_relay_token_file must be an absolute path")
+	}
+	if result.NotificationEmailRelayEndpoint == "" {
+		if result.NotificationEmailRelayTokenFile != "" || result.NotificationEmailRecipient != "" || result.NotificationEmailRelayAllowPrivate {
+			return Config{}, errors.New("email relay token, recipient, and private-address settings require notification_email_relay_endpoint")
+		}
+	} else {
+		endpoint, endpointErr := url.Parse(result.NotificationEmailRelayEndpoint)
+		if endpointErr != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil || endpoint.Fragment != "" {
+			return Config{}, errors.New("notification_email_relay_endpoint must be an HTTPS URL without credentials or fragment")
+		}
+		address, addressErr := mail.ParseAddress(strings.TrimSpace(result.NotificationEmailRecipient))
+		if addressErr != nil || address.Address != strings.TrimSpace(result.NotificationEmailRecipient) || len(address.Address) > 320 {
+			return Config{}, errors.New("notification_email_recipient must be one plain email address")
+		}
+		if result.NotificationEmailRelayTokenFile == "" {
+			return Config{}, errors.New("notification_email_relay_token_file is required when email notifications are enabled")
+		}
+		if !strings.EqualFold(filepath.Base(filepath.Dir(result.NotificationEmailRelayTokenFile)), "broker-secrets") {
+			return Config{}, errors.New("notification_email_relay_token_file must be inside a dedicated broker-secrets directory")
 		}
 	}
 	for extension, chain := range result.ExecutorChains {
@@ -274,6 +310,18 @@ func applyYAML(result *Config, values yamlConfig) {
 	if values.SecurityEventAllowPrivate != nil {
 		result.SecurityEventAllowPrivate = *values.SecurityEventAllowPrivate
 	}
+	if values.NotificationEmailRelayEndpoint != "" {
+		result.NotificationEmailRelayEndpoint = strings.TrimSpace(values.NotificationEmailRelayEndpoint)
+	}
+	if values.NotificationEmailRelayTokenFile != "" {
+		result.NotificationEmailRelayTokenFile = strings.TrimSpace(values.NotificationEmailRelayTokenFile)
+	}
+	if values.NotificationEmailRecipient != "" {
+		result.NotificationEmailRecipient = strings.TrimSpace(values.NotificationEmailRecipient)
+	}
+	if values.NotificationEmailRelayAllowPrivate != nil {
+		result.NotificationEmailRelayAllowPrivate = *values.NotificationEmailRelayAllowPrivate
+	}
 	if values.RunTimeoutGraceSeconds != nil {
 		result.RunTimeoutGrace = time.Duration(*values.RunTimeoutGraceSeconds) * time.Second
 	}
@@ -340,6 +388,20 @@ func applyEnvironment(result *Config, getenv func(string) string) {
 	if value := getenv("SCRIPTBOARD_SECURITY_EVENT_ALLOW_PRIVATE"); value != "" {
 		if enabled, err := strconv.ParseBool(value); err == nil {
 			result.SecurityEventAllowPrivate = enabled
+		}
+	}
+	if value := getenv("SCRIPTBOARD_NOTIFICATION_EMAIL_RELAY_ENDPOINT"); value != "" {
+		result.NotificationEmailRelayEndpoint = strings.TrimSpace(value)
+	}
+	if value := getenv("SCRIPTBOARD_NOTIFICATION_EMAIL_RELAY_TOKEN_FILE"); value != "" {
+		result.NotificationEmailRelayTokenFile = strings.TrimSpace(value)
+	}
+	if value := getenv("SCRIPTBOARD_NOTIFICATION_EMAIL_RECIPIENT"); value != "" {
+		result.NotificationEmailRecipient = strings.TrimSpace(value)
+	}
+	if value := getenv("SCRIPTBOARD_NOTIFICATION_EMAIL_RELAY_ALLOW_PRIVATE"); value != "" {
+		if enabled, err := strconv.ParseBool(value); err == nil {
+			result.NotificationEmailRelayAllowPrivate = enabled
 		}
 	}
 }
