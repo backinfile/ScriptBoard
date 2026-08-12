@@ -6318,6 +6318,8 @@ document.addEventListener("change", function (event) {
   form.querySelectorAll("[data-dashboard-card-preview]").forEach((preview) => {
     preview.hidden = preview.dataset.dashboardCardPreview !== type;
   });
+  const testButton = form.querySelector("[data-dashboard-test-request]");
+  if (testButton) testButton.hidden = website;
   const previewLabel = form.querySelector("[data-dashboard-preview-label]");
   if (previewLabel) previewLabel.textContent = ({ number: "数值", percentage: "百分比", quota: "额度", website: "网站状态", registry: "镜像版本" })[type] || "数值";
 });
@@ -6474,7 +6476,7 @@ document.addEventListener("click", function (event) {
   event.preventDefault();
   closeDashboardDrawer(drawer);
   syncDashboardDrawerState();
-});
+}, true);
 
 document.addEventListener("keydown", function (event) {
   const drawer = document.querySelector("[data-dashboard-drawer][open]");
@@ -6608,8 +6610,6 @@ function dashboardJSONPath(documentValue, path) {
     if (current == null || !Object.prototype.hasOwnProperty.call(current, key)) throw new Error("missing");
     current = current[key];
   }
-  const testButton = form.querySelector("[data-dashboard-test-request]");
-  if (testButton) testButton.hidden = website;
   return current;
 }
 

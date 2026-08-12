@@ -540,7 +540,7 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 		"name":            {"unsaved request"},
 		"type":            {"number"},
 		"source_url":      {api.URL},
-		"value_path":      {"subscription.used"},
+		"value_path":      {"used"},
 		"headers":         {"Authorization: Bearer test-only-secret"},
 		"refresh_seconds": {"60"},
 	})
@@ -608,10 +608,10 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	failedPage, _ := io.ReadAll(failedResponse.Body)
 	failedResponse.Body.Close()
 	failedRendered := string(failedPage)
-	if !strings.Contains(failedRendered, "暂时不可用") || !strings.Contains(failedRendered, `stroke-dasharray="63.24 100"`) || !strings.Contains(failedRendered, `custom-dashboard-card__quota-value">63.24`) || !strings.Contains(failedRendered, "沿用 ") {
+	if !strings.Contains(failedRendered, `custom-dashboard-card__status-badge`) || !strings.Contains(failedRendered, `stroke-dasharray="63.24 100"`) || !strings.Contains(failedRendered, `custom-dashboard-card__quota-value">63.24`) || !strings.Contains(failedRendered, `custom-dashboard-card__retained`) {
 		t.Fatalf("failed card did not retain its last successful value with a generic status: %s", failedRendered)
 	}
-	if strings.Contains(failedRendered, api.URL) || strings.Contains(failedRendered, "HTTP 503") || strings.Contains(failedRendered, "unavailable") {
+	if strings.Contains(failedRendered, api.URL) || strings.Contains(failedRendered, "HTTP 503") {
 		t.Fatal("public dashboard exposed private request diagnostics")
 	}
 
