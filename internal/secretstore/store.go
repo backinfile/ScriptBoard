@@ -81,6 +81,73 @@ func KeyPathForStateRoot(stateRoot string) (string, error) {
 
 func (store *Store) KeyPath() string { return store.keyPath }
 
+// RecoveryKey returns a copy of the credential master key for the explicit
+// encrypted host-recovery workflow. Callers must clear the returned bytes as
+// soon as the recovery artifact has been authenticated and written.
+func (store *Store) RecoveryKey() []byte {
+	return append([]byte(nil), store.key[:]...)
+}
+
+// InstallRecoveryKey re-wraps externally recovered credential material for
+// this host. It never overwrites an existing trust boundary.
+func InstallRecoveryKey(stateRoot string, raw []byte) (string, error) {
+	if len(raw) != len(Store{}.key) {
+		return "", errors.New("recovered credential master key has an invalid length")
+	}
+	if strings.TrimSpace(stateRoot) == "" || !filepath.IsAbs(stateRoot) {
+		return "", errors.New("recovered credential master key requires an absolute State Root")
+	}
+	root, err := filepath.EvalSymlinks(filepath.Clean(stateRoot))
+	if err != nil {
+		return "", fmt.Errorf("resolve recovered credential State Root: %w", err)
+	}
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		return "", errors.New("recovered credential State Root must be an existing directory")
+	}
+	keyPath, err := KeyPathForStateRoot(root)
+	if err != nil {
+		return "", err
+	}
+	directory := filepath.Dir(keyPath)
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return "", fmt.Errorf("create recovered credential key directory: %w", err)
+	}
+	if err := privatepath.ProtectDirectory(directory); err != nil {
+		return "", fmt.Errorf("protect recovered credential key directory: %w", err)
+	}
+	wrapped, err := wrapKey(raw)
+	if err != nil {
+		return "", fmt.Errorf("wrap recovered credential master key: %w", err)
+	}
+	defer func() {
+		for index := range wrapped {
+			wrapped[index] = 0
+		}
+	}()
+	file, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return "", fmt.Errorf("install recovered credential master key without overwrite: %w", err)
+	}
+	committed := false
+	defer func() {
+		_ = file.Close()
+		if !committed {
+			_ = os.Remove(keyPath)
+		}
+	}()
+	if _, err := file.Write(wrapped); err != nil {
+		return "", err
+	}
+	if err := file.Sync(); err != nil {
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		return "", err
+	}
+	committed = true
+	return keyPath, nil
+}
+
 func (store *Store) Seal(purpose string, plaintext []byte) ([]byte, error) {
 	if err := validatePurpose(purpose); err != nil {
 		return nil, err

@@ -26,6 +26,8 @@ func runBackup(action string, arguments []string) error {
 	outputPath, arguments := takeStringArgument(arguments, "--output")
 	passphrasePath, arguments := takeStringArgument(arguments, "--passphrase-file")
 	confirmation, arguments := takeStringArgument(arguments, "--confirm-backup-id")
+	recoveryMaterialPath, arguments := takeStringArgument(arguments, "--recovery-material")
+	recoveryPassphrasePath, arguments := takeStringArgument(arguments, "--recovery-passphrase-file")
 	passphrase, err := readBackupPassphrase(passphrasePath)
 	if err != nil {
 		return err
@@ -34,7 +36,7 @@ func runBackup(action string, arguments []string) error {
 	ctx := context.Background()
 	switch action {
 	case "create":
-		if outputPath == "" || !filepath.IsAbs(outputPath) || archivePath != "" || confirmation != "" {
+		if outputPath == "" || !filepath.IsAbs(outputPath) || archivePath != "" || confirmation != "" || recoveryMaterialPath != "" || recoveryPassphrasePath != "" {
 			return errors.New("backup create 需要绝对路径 --output PATH 和 --passphrase-file PATH")
 		}
 		loaded, err := config.Load(arguments, os.Getenv)
@@ -78,7 +80,7 @@ func runBackup(action string, arguments []string) error {
 		fmt.Fprintf(os.Stdout, "私有状态备份已创建：%s\nBackup ID：%s\nSchema：%d\n", artifact.Path, artifact.Manifest.ID, artifact.Manifest.SchemaVersion)
 		return nil
 	case "inspect":
-		if archivePath == "" || !filepath.IsAbs(archivePath) || outputPath != "" || confirmation != "" || len(arguments) != 0 {
+		if archivePath == "" || !filepath.IsAbs(archivePath) || outputPath != "" || confirmation != "" || recoveryMaterialPath != "" || recoveryPassphrasePath != "" || len(arguments) != 0 {
 			return errors.New("backup inspect 需要绝对路径 --archive PATH 和 --passphrase-file PATH")
 		}
 		manifest, err := statebackup.Inspect(ctx, archivePath, passphrase)
@@ -91,7 +93,7 @@ func runBackup(action string, arguments []string) error {
 		fmt.Fprintf(os.Stdout, "私有状态备份有效：%s\nBackup ID：%s\nSchema：%d\n文件：%d\n", archivePath, manifest.ID, manifest.SchemaVersion, len(manifest.Files))
 		return nil
 	case "restore":
-		if archivePath == "" || !filepath.IsAbs(archivePath) || outputPath != "" || confirmation == "" {
+		if archivePath == "" || !filepath.IsAbs(archivePath) || outputPath != "" || confirmation == "" || recoveryMaterialPath != "" || recoveryPassphrasePath != "" {
 			return errors.New("backup restore 需要 --archive PATH、--passphrase-file PATH 与 --confirm-backup-id ID")
 		}
 		loaded, err := config.Load(arguments, os.Getenv)
@@ -151,8 +153,72 @@ func runBackup(action string, arguments []string) error {
 		}
 		fmt.Fprintf(os.Stdout, "私有状态已从 Backup ID %s 恢复；恢复前状态保留在 %s。服务保持停止。\n", result.Manifest.ID, result.PreservedStatePath)
 		return nil
+	case "export-recovery":
+		if outputPath == "" || !filepath.IsAbs(outputPath) || archivePath != "" || confirmation != "" || recoveryMaterialPath != "" || recoveryPassphrasePath != "" {
+			return errors.New("backup export-recovery requires absolute --output PATH and --passphrase-file PATH")
+		}
+		loaded, err := config.Load(arguments, os.Getenv)
+		if err != nil {
+			return err
+		}
+		database, err := openEmergencyDatabaseReadOnly(loaded.StateRoot)
+		if err != nil {
+			return err
+		}
+		if err := verifySignedAuditCheckpoint(ctx, loaded.StateRoot, auditlog.New(database)); err != nil {
+			_ = database.Close()
+			return err
+		}
+		_ = database.Close()
+		artifact, err := statebackup.ExportRecoveryMaterial(ctx, statebackup.ExportRecoveryMaterialRequest{StateRoot: loaded.StateRoot, Destination: outputPath, Passphrase: passphrase})
+		if err != nil {
+			return fmt.Errorf("export encrypted host recovery material: %w", err)
+		}
+		database, err = openEmergencyDatabase(loaded.StateRoot)
+		if err != nil {
+			_ = os.Remove(artifact.Path)
+			return err
+		}
+		defer database.Close()
+		if err := emergencyMutation(ctx, database, loaded.StateRoot, func(context.Context, *sql.Tx) (auditlog.Event, error) {
+			return localEmergencyEvent("state_backup.export_recovery_material", artifact.StateRootID), nil
+		}); err != nil {
+			_ = os.Remove(artifact.Path)
+			return fmt.Errorf("recovery material was revoked because its audit event could not be committed: %w", err)
+		}
+		if jsonOutput {
+			return json.NewEncoder(os.Stdout).Encode(artifact)
+		}
+		fmt.Fprintf(os.Stdout, "Encrypted host recovery material created at %s for State Root %s. Store it separately from state backups.\n", artifact.Path, artifact.StateRootID)
+		return nil
+	case "recover-host":
+		if archivePath == "" || !filepath.IsAbs(archivePath) || recoveryMaterialPath == "" || !filepath.IsAbs(recoveryMaterialPath) || recoveryPassphrasePath == "" || !filepath.IsAbs(recoveryPassphrasePath) || outputPath != "" || confirmation == "" {
+			return errors.New("backup recover-host requires --archive PATH, --passphrase-file PATH, --recovery-material PATH, --recovery-passphrase-file PATH, and --confirm-backup-id ID")
+		}
+		recoveryPassphrase, err := readBackupPassphrase(recoveryPassphrasePath)
+		if err != nil {
+			return err
+		}
+		defer clearBytes(recoveryPassphrase)
+		loaded, err := config.Load(arguments, os.Getenv)
+		if err != nil {
+			return err
+		}
+		result, err := statebackup.RecoverHost(ctx, statebackup.HostRecoveryRequest{
+			StateRoot: loaded.StateRoot, ArchivePath: archivePath, ArchivePassphrase: passphrase,
+			RecoveryMaterialPath: recoveryMaterialPath, RecoveryMaterialPassphrase: recoveryPassphrase,
+			ConfirmBackupID: confirmation, MinimumSchemaVersion: 20, MaximumSchemaVersion: buildinfo.DatabaseSchemaVersion,
+		})
+		if err != nil {
+			return fmt.Errorf("recover private state on replacement host: %w", err)
+		}
+		if jsonOutput {
+			return json.NewEncoder(os.Stdout).Encode(result)
+		}
+		fmt.Fprintf(os.Stdout, "Replacement host recovered from Backup ID %s. All restored Web sessions were revoked; keep all four components stopped until doctor and audit verification pass.\n", result.Manifest.ID)
+		return nil
 	default:
-		return fmt.Errorf("未知备份命令 %q；可用命令：backup create|inspect|restore", action)
+		return fmt.Errorf("未知备份命令 %q；可用命令：backup create|inspect|restore|export-recovery|recover-host", action)
 	}
 }
 

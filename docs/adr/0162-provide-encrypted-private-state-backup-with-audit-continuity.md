@@ -4,7 +4,7 @@ ScriptBoard 提供 `backup create`、`backup inspect` 与 `backup restore` 本�
 
 归档使用 Argon2id 从独立口令派生密钥，并以 XChaCha20-Poly1305 分块认证加密；口令只接受权限受限的绝对路径普通文件，不进入参数或环境。输出使用排他创建且不覆盖；读取必须认证完整终止记录，归档只接受固定相对普通文件路径、唯一条目、文件数量与总展开大小上限。恢复要求服务停止、完整 Backup ID 确认、兼容 schema、完整认证和摘要校验、SQLite `quick_check`，并在同卷 staging 中完成全部验证后才替换。所有恢复出的 Web Session 在提交前撤销，恢复前私有状态保留为同级目录；最终化或审计重锚失败会把原状态放回。
 
-外部可恢复秘密主密钥、审计 checkpoint 签名私钥、启动配置和 TLS 材料不进入备份，必须由管理员独立保护。单独取得备份和口令仍不足以在另一实例解封 Broker 密文。首个实现只恢复到具有匹配外部密钥、checkpoint 和可验证当前状态的同一实例；整机丢失后的新主机恢复需要显式的外部密钥恢复流程，不能静默生成新信任材料或把凭据降级为明文。
+外部可恢复秘密主密钥、审计 checkpoint 签名私钥、启动配置和 TLS 材料不进入状态备份，必须由管理员独立保护。单独取得状态备份和口令仍不足以在另一实例解封 Broker 密文。管理员可用 `backup export-recovery` 生成独立的认证加密 host-recovery 材料；它以单独口令保护 credential master 和经其密封的审计签名密钥，Windows 新主机恢复时把 master 重新封装到本机 DPAPI，而不是复制旧机器 blob 或降级为明文。`backup recover-host` 只接受相同 canonical State Root 路径上的空、未初始化目录，要求四组件停止和完整 Backup ID，拒绝覆盖任何已有外部信任材料；它把状态备份内的签名 checkpoint 与恢复出的链重新验证，撤销所有 Session，记录 `state_backup.recover_host` 后才推进新主机 checkpoint。状态包、recovery 材料和两份口令应分开保管。
 
 恢复旧数据库通常会落后于当前外部审计 checkpoint，因此常规 checkpoint 刷新必须继续拒绝它。备份携带创建时已经由外部 Ed25519 密钥签名、且属于 snapshot 审计链的 checkpoint。恢复提交前分别验证当前 checkpoint 与备份 checkpoint；恢复后追加 `state_backup.restore` 连续性事件，事件绑定恢复前 checkpoint 文档摘要并记录备份 checkpoint 身份，然后才使用同一受保护私钥生成新 checkpoint。恢复前 checkpoint 文档随原状态保留。只有这个固定恢复动作允许受控的向后 Event ID 转换，普通启动和刷新路径仍然 fail closed。
 

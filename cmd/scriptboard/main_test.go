@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"scriptboard/internal/app"
 	"scriptboard/internal/auditcheckpoint"
 	"scriptboard/internal/auditlog"
+	"scriptboard/internal/secretstore"
 	"scriptboard/internal/statebackup"
 )
 
@@ -114,6 +116,91 @@ func TestBackupRestoreReanchorsAuditAndPreservesPreviousCheckpoint(t *testing.T)
 	preserved := filepath.Join(filepath.Dir(stateRoot), filepath.Base(stateRoot)+".before-restore-"+manifest.ID)
 	if info, err := os.Stat(filepath.Join(preserved, "external-audit-checkpoint.before-restore.json")); err != nil || !info.Mode().IsRegular() {
 		t.Fatalf("preserved checkpoint info=%v err=%v", info, err)
+	}
+}
+
+func TestBackupRecoverHostRewrapsExternalKeysAndRestoresAnEmptyCanonicalRoot(t *testing.T) {
+	parent := t.TempDir()
+	stateRoot := filepath.Join(parent, "state")
+	if err := os.Mkdir(stateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	application, err := app.Open(app.Config{StateRoot: stateRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := application.Close(); err != nil {
+		t.Fatal(err)
+	}
+	archivePassphraseFile := filepath.Join(parent, "archive-passphrase")
+	recoveryPassphraseFile := filepath.Join(parent, "recovery-passphrase")
+	archivePassphrase := []byte("archive passphrase for replacement host drill")
+	recoveryPassphrase := []byte("separate recovery material passphrase")
+	if err := os.WriteFile(archivePassphraseFile, archivePassphrase, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(recoveryPassphraseFile, recoveryPassphrase, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	archivePath := filepath.Join(parent, "state.sbsb")
+	recoveryPath := filepath.Join(parent, "host-recovery.sbhr")
+	if err := run([]string{"backup", "create", "--state-root", stateRoot, "--output", archivePath, "--passphrase-file", archivePassphraseFile}); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := statebackup.Inspect(context.Background(), archivePath, archivePassphrase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"backup", "export-recovery", "--state-root", stateRoot, "--output", recoveryPath, "--passphrase-file", recoveryPassphraseFile}); err != nil {
+		t.Fatal(err)
+	}
+	credentialPath, err := secretstore.KeyPathForStateRoot(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, signingPath, checkpointPath, err := auditcheckpoint.PathsForStateRoot(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoveryBody, err := os.ReadFile(recoveryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signingBody, err := os.ReadFile(signingPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(recoveryBody, signingBody) || bytes.Contains(recoveryBody, []byte("credential_key")) || bytes.Contains(recoveryBody, []byte("audit_signing_key")) {
+		t.Fatal("host recovery material exposes plaintext key fields")
+	}
+	if err := os.RemoveAll(stateRoot); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{credentialPath, signingPath, checkpointPath} {
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Mkdir(stateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"backup", "recover-host", "--state-root", stateRoot,
+		"--archive", archivePath, "--passphrase-file", archivePassphraseFile,
+		"--recovery-material", recoveryPath, "--recovery-passphrase-file", recoveryPassphraseFile,
+		"--confirm-backup-id", manifest.ID}); err != nil {
+		t.Fatal(err)
+	}
+	database, err := openEmergencyDatabaseReadOnly(stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := verifySignedAuditCheckpoint(context.Background(), stateRoot, auditlog.New(database)); err != nil {
+		t.Fatalf("recovered host audit verification failed: %v", err)
+	}
+	var recoveryEvents int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM audit_events WHERE action = 'state_backup.recover_host' AND target = ?`, manifest.ID).Scan(&recoveryEvents); err != nil || recoveryEvents != 1 {
+		t.Fatalf("host recovery audit events=%d err=%v", recoveryEvents, err)
 	}
 }
 

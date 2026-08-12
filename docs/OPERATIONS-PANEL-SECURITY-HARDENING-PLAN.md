@@ -412,11 +412,13 @@ Windows：
 ### 批次 C：供应链与恢复
 
 - [ ] P0-10 SBOM、provenance、签名密钥轮换、带外恢复 CLI 和应急演练。
+- [x] P0-10 的本机带外恢复 CLI 已覆盖同实例回滚与空主机恢复；空主机演练会重新封装外部主密钥、验证签名 checkpoint/审计链并拒绝覆盖既有信任材料。P0-10 总项继续保持未完成，直到 SBOM/provenance、正式签名轮换演练和真实服务管理器矩阵通过。
 - [x] 对 updater、安装器、回滚和 State Root 迁移做故障注入测试；真实服务管理器断电矩阵保留为发布平台门禁。
 
 ### 批次 D：补充功能
 
 - [ ] P1 OS 安全更新只读视图、服务日志、State Root 备份、安全基线和通知。OS 安全更新只读视图已完成：Windows Update Agent 与 Debian/Ubuntu APT 只读取本机已有元数据，固定命令不刷新源、不下载或安装，结果限制为 200 项、字段解码有界并缓存十分钟，页面明确显示提供程序、采集时间与只读边界。服务日志只读纵向切片已完成：只接受 Web/Broker/AI/Runner 四个固定来源，systemd journal 或 Windows System Event Log 每次最多扫描 2,000 条、返回 500 条，支持固定筛选和 CSV 导出，消息统一做控制字符处理与秘密脱敏。安全基线只读评估基于当前 Web 权限、主机防火墙、补丁元数据和 Linux SSH/Fail2Ban 或 Windows Firewall Profile 生成可解释逐项证据，只对可用项计分且没有“一键修复”；新增最多 90 个只含检测 ID、状态、得分与时间的历史快照，并显示相对最新快照的状态漂移，证据正文不落入历史文件。账户口令策略已收敛为至少 15 个 Unicode 字符、最多 256 个 UTF-8 字节，不强制字符组合但拒绝用户名、常见口令、单字符重复和当前口令复用；随机首次/重置凭据继续满足边界。Linux 服务最小化也已完成首个部署切片：Web/Broker 常驻，Runner/AI Host 分别由受保护 systemd socket 按需激活，进程接管时复核 activation PID、FD 数、名称和 endpoint，连接后继续校验 peer UID；Windows 按需激活仍属于 SCM 发布门禁。State Root 备份的带外 CLI 纵向切片已完成：一致性 SQLite snapshot、固定私有状态白名单、Argon2id + XChaCha20-Poly1305 分块认证加密、逐文件清单、签名审计 checkpoint、恢复前 staging/完整性/schema 校验、Session 撤销、失败回滚、恢复前状态保留与受控审计重锚均有自动化测试。受管 Web/Broker 纵向切片也已完成：Administrator/Maintainer 可在近期 AAL2 与 CSRF 保护下创建、检查、暂存和丢弃恢复；Web 只传服务器绝对路径，不读取归档、不持有 checkpoint 私钥且不能替换在线数据库；Broker 独立复核会话、写 intent/result 审计、对外移除 checkpoint 文档，暂存最多 4 个并在 24 小时过期，验证 SQLite/schema/签名审计链、撤销恢复 Session，并以暂存后逐文件 SHA-256 绑定待提交 payload。通知可观测性首个只读切片已完成：设置页只显示 HTTPS 接收端主机名、有界 outbox 占用、轮转本地告警状态和投递健康，明确审计事件与安全检测覆盖范围，并禁止回显 URL 路径、查询参数、认证令牌和事件正文；连续失败八次后进入五分钟熔断开路期，期间新事件继续持久入队。网站监控确认故障/恢复现已生成固定 `website-monitor-result-v1` 结构化模板，故障进入本地告警，两个转换均进入 Webhook 且不携带响应正文或技术错误。备份的离线最终提交保持现有 CLI 边界；整机丢失外部密钥恢复演练、Broker-owned 邮件渠道，以及 Windows SCM socket activation 仍待完成。
+  - 整机丢失恢复现已完成 fail-closed 演练入口，取代上句“仍待完成”的旧状态：`backup export-recovery` 用独立口令认证加密 credential master 与审计签名密钥，`backup recover-host` 仅恢复到相同 canonical State Root 的空目录，在新 Windows 主机重新做机器级 DPAPI 封装，拒绝覆盖既有信任材料，复核备份 checkpoint/审计链、撤销 Session 并写入 `state_backup.recover_host`。状态包、recovery 材料与两份口令必须分离保管。当前余项是 Broker-owned 邮件渠道和 Windows SCM socket activation；两者均不得把执行或出站秘密能力合并进 Web。
 - [ ] 根据实际用户需求单独评审 P2 能力，不与 P0 重构混在同一发布中。
 
 依赖关系：P0-01 是所有新 Web 接口的前置；P0-02 是高权限系统写操作的前置；P0-04 是所有新外部集成的前置；P0-08 是扩大 AI 工具能力的前置；P0-10 是自动更新继续扩展的前置。

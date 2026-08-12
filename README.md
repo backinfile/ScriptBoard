@@ -223,9 +223,11 @@ scriptboard audit verify --config CONFIG_PATH
 
 可恢复的 Provider、MySQL 与远程网站凭据只以密文存在 State Root；解密主密钥位于 State
 Root 同级的 `secrets/credential-master-<实例摘要>.key`，文件页把该目录视为受保护路径。
-Linux/Unix 迁移或灾难恢复必须把这个 root-only key 作为独立秘密备份；Windows key 文件
-还由机器级 DPAPI 保护，只能在原主机解封，跨主机恢复需重新录入这些凭据。只复制 State
-Root 不包含解密材料，这是预期安全属性。相同外部目录还保存用途隔离、经主密钥密封的
+Linux/Unix 与 Windows 的迁移或灾难恢复都必须独立保护 credential master；Windows 日常 key 文件
+还由机器级 DPAPI 保护，不能直接复制到另一主机解封。`backup export-recovery` 会把主密钥与用途隔离的
+审计签名密钥放入独立 Argon2id + XChaCha20-Poly1305 加密材料，新主机只在明确的 `recover-host`
+流程中将主密钥重新封装到本机 DPAPI。只复制 State Root 不包含解密材料，这是预期安全属性。
+相同外部目录还保存用途隔离、经主密钥密封的
 `audit-checkpoint-signing-<实例摘要>.enc` 与公开的签名 checkpoint
 `audit-checkpoint-<实例摘要>.json`；备份和同路径恢复必须同时保留这三项外部材料，否则不能
 证明恢复前后的审计连续性。`scriptboard doctor` 会分别检查它们是否存在。
@@ -238,14 +240,18 @@ Root 不包含解密材料，这是预期安全属性。相同外部目录还保
 scriptboard backup create --output ABSOLUTE_BACKUP_PATH --passphrase-file ABSOLUTE_PASSPHRASE_FILE --config CONFIG_PATH
 scriptboard backup inspect --archive ABSOLUTE_BACKUP_PATH --passphrase-file ABSOLUTE_PASSPHRASE_FILE
 scriptboard backup restore --archive ABSOLUTE_BACKUP_PATH --passphrase-file ABSOLUTE_PASSPHRASE_FILE --confirm-backup-id BACKUP_ID --config CONFIG_PATH
+scriptboard backup export-recovery --output ABSOLUTE_RECOVERY_PATH --passphrase-file ABSOLUTE_RECOVERY_PASSPHRASE_FILE --config CONFIG_PATH
+scriptboard backup recover-host --archive ABSOLUTE_BACKUP_PATH --passphrase-file ABSOLUTE_PASSPHRASE_FILE --recovery-material ABSOLUTE_RECOVERY_PATH --recovery-passphrase-file ABSOLUTE_RECOVERY_PASSPHRASE_FILE --confirm-backup-id BACKUP_ID --config CONFIG_PATH
 ```
 
 受管安装还可在“系统设置 → 私有状态备份”中创建、验证和暂存恢复。页面只接受服务器本地绝对路径；所有写操作均要求近期 AAL2，并由同版本 Privileged Broker 执行。暂存恢复会验证加密包、SQLite、schema 和签名审计 checkpoint，撤销备份内 Web Session，并绑定暂存后文件摘要；它不会替换在线数据库。最终提交仍须停止 Web、Broker、Runner 与 AI Host 后使用离线恢复流程。
 
-该包只包含一致性 SQLite snapshot、Broker 密文和固定私有证据，不包含外部主密钥、审计签名
-私钥、配置、TLS 材料、诊断日志、上传 inbox 或 MySQL 备份。当前恢复流程要求同一 State Root
-路径的外部密钥和当前签名 checkpoint 仍可验证；成功后撤销全部恢复出的 Web Session，保留
-恢复前私有状态和 checkpoint，并在审计链写入绑定前后锚点的恢复事件。
+状态包只包含一致性 SQLite snapshot、Broker 密文和固定私有证据，不包含外部主密钥、审计签名
+私钥、配置、TLS 材料、诊断日志、上传 inbox 或 MySQL 备份。常规 `restore` 要求同一 State Root
+路径的现有外部密钥和当前签名 checkpoint 仍可验证；成功后保留恢复前私有状态和 checkpoint，
+并在审计链写入绑定前后锚点的恢复事件。整机恢复要求相同 canonical State Root 路径上的空、未初始化
+目录，且拒绝覆盖任何已有外部信任材料；它使用单独口令认证 recovery 材料、重新封装主密钥、验证备份
+内 checkpoint 与恢复出的审计链，撤销全部 Web Session，再记录 `state_backup.recover_host` 并推进新主机 checkpoint。
 
 从旧版本升级前请先备份。当前版本使用数据库 schema 43，可自动迁移 schema 20–42；更早版本的数据库和旧式配置不会自动迁移。schema 40 会记录会话认证保证级别和最近再次认证时间；新登录视为最近认证，高风险操作在 10 分钟后要求于受保护的浏览器会话中重新输入当前密码。schema 41 为审计事件增加服务端 Request ID 与认证保证字段，并把新字段纳入兼容旧事件的 v2 哈希。schema 42 为 Administrator/Maintainer 记录 MFA 注册截止时间；到期未注册 TOTP 或 passkey 的账户只能进入 MFA 设置与登出路径。旧实例获得七天注册窗口，首次管理员与新 Maintainer 获得 24 小时窗口。旧快捷执行项会以未发布状态迁移，在管理员重新保存前不能启动或绑定外部入口。旧版本中共享一个 Key 的多个外部功能会拆成独立 Key：保留最早功能的原 Key，其余功能迁移到默认停用、必须轮换并显式启用 Key 与功能后才能使用的新 Key。为保持兼容，迁移后的外部功能不会自动要求 HMAC；管理员可在编辑页启用，新建功能默认启用。外部接口页面提供持久化全局紧急开关；暂停后所有有效外部调用以低信息 503 响应拒绝且不会执行操作。审计记录形成带保留锚点与链尾的 SHA-256 哈希链，并由 State Root 外 Ed25519 checkpoint 锚定；服务启动时会 fail closed 验证，正常关闭及每五分钟刷新。面板不可用时可运行 `scriptboard audit verify --config CONFIG_PATH`，离线检查中间记录修改、删除、截断，以及链尾和同库状态一起回退；取证导出也执行相同验证。此 checkpoint 仍是主机本地边界，不替代远端不可变日志。
 

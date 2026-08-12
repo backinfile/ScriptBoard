@@ -320,6 +320,10 @@ func Inspect(ctx context.Context, archivePath string, passphrase []byte) (Manife
 }
 
 func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error) {
+	return restore(ctx, request, true)
+}
+
+func restore(ctx context.Context, request RestoreRequest, acquireInstanceLock bool) (RestoreResult, error) {
 	stateRoot := strings.TrimSpace(request.StateRoot)
 	if stateRoot == "" || !filepath.IsAbs(stateRoot) {
 		return RestoreResult{}, errors.New("state restore requires an absolute State Root")
@@ -361,11 +365,13 @@ func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error)
 	if request.MinimumSchemaVersion <= 0 || request.MaximumSchemaVersion < request.MinimumSchemaVersion || manifest.SchemaVersion < request.MinimumSchemaVersion || manifest.SchemaVersion > request.MaximumSchemaVersion {
 		return RestoreResult{}, fmt.Errorf("state backup schema %d is outside supported range %d..%d", manifest.SchemaVersion, request.MinimumSchemaVersion, request.MaximumSchemaVersion)
 	}
-	lock, err := instancelock.Acquire(stateRoot)
-	if err != nil {
-		return RestoreResult{}, fmt.Errorf("state restore requires the ScriptBoard service to be stopped: %w", err)
+	if acquireInstanceLock {
+		lock, err := instancelock.Acquire(stateRoot)
+		if err != nil {
+			return RestoreResult{}, fmt.Errorf("state restore requires the ScriptBoard service to be stopped: %w", err)
+		}
+		defer lock.Close()
 	}
-	defer lock.Close()
 	if err := ctx.Err(); err != nil {
 		return RestoreResult{}, err
 	}

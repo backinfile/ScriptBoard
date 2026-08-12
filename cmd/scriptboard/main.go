@@ -91,7 +91,7 @@ func run(arguments []string) error {
 		return runEmergency(arguments[1], arguments[2:])
 	case "backup":
 		if len(arguments) < 2 {
-			return errors.New("可用备份命令：backup create|inspect|restore")
+			return errors.New("可用备份命令：backup create|inspect|restore|export-recovery|recover-host")
 		}
 		return runBackup(arguments[1], arguments[2:])
 	case "admin":
@@ -127,6 +127,8 @@ func printUsage() {
   scriptboard backup create --output ABSOLUTE_PATH --passphrase-file ABSOLUTE_PATH [配置选项]
   scriptboard backup inspect --archive ABSOLUTE_PATH --passphrase-file ABSOLUTE_PATH [--json]
   scriptboard backup restore --archive ABSOLUTE_PATH --passphrase-file ABSOLUTE_PATH --confirm-backup-id ID [配置选项]
+  scriptboard backup export-recovery --output ABSOLUTE_PATH --passphrase-file ABSOLUTE_PATH [配置选项]
+  scriptboard backup recover-host --archive ABSOLUTE_PATH --passphrase-file ABSOLUTE_PATH --recovery-material ABSOLUTE_PATH --recovery-passphrase-file ABSOLUTE_PATH --confirm-backup-id ID [配置选项]
   scriptboard admin reset [配置选项]
   scriptboard audit verify [配置选项] [--json]
   scriptboard emergency pause-external --confirm PAUSE-EXTERNAL [配置选项]
