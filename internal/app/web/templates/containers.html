@@ -56,17 +56,19 @@ FORM: A flat engine manifest followed by a sortable operating ledger; state tabs
 
   <section class="container-section" aria-labelledby="container-inventory-heading">
     <header class="section-heading container-section-heading"><h2 id="container-inventory-heading">{{t .Locale "containers.inventory"}}</h2></header>
-    <nav class="monitor-status-switch container-status-tabs" aria-label="{{t .Locale "containers.status_filter"}}" data-container-status-tabs>
-      <a href="{{containerStatusURL .Query "all"}}" data-container-status-link {{if eq .Query.Status "all"}}aria-current="page"{{end}}><span>{{t .Locale "containers.all"}}</span><strong>{{.Total}}</strong></a>
-      <a href="{{containerStatusURL .Query "running"}}" data-container-status-link {{if eq .Query.Status "running"}}aria-current="page"{{end}}><span>{{t .Locale "containers.running"}}</span><strong>{{.Running}}</strong></a>
-      <a href="{{containerStatusURL .Query "stopped"}}" data-container-status-link {{if eq .Query.Status "stopped"}}aria-current="page"{{end}}><span>{{t .Locale "containers.stopped"}}</span><strong>{{.Stopped}}</strong></a>
-      <a href="{{containerStatusURL .Query "attention"}}" data-container-status-link {{if eq .Query.Status "attention"}}aria-current="page"{{end}}><span>{{t .Locale "containers.attention"}}</span><strong>{{.Attention}}</strong></a>
-    </nav>
-    <form class="container-toolbar" method="get" action="/monitor/containers">
-      <label><span data-lucide="search" aria-hidden="true"></span><span class="sr-only">{{t .Locale "common.search"}}</span><input type="search" name="query" value="{{.Query.Search}}" placeholder="{{t .Locale "containers.search_placeholder"}}"></label>
-      <input type="hidden" name="status" value="{{.Query.Status}}"><input type="hidden" name="sort" value="{{.Query.Sort}}"><input type="hidden" name="direction" value="{{.Query.Direction}}"><button class="button button--compact" type="submit">{{t .Locale "common.search"}}</button>
-      <span>{{t .Locale "containers.showing"}} {{len .Containers}} / {{.Matched}}</span>
-    </form>
+    <div class="container-inventory-controls">
+      <nav class="monitor-status-switch container-status-tabs" aria-label="{{t .Locale "containers.status_filter"}}" data-container-status-tabs>
+        <a href="{{containerStatusURL .Query "all"}}" data-container-status-link {{if eq .Query.Status "all"}}aria-current="page"{{end}}><span>{{t .Locale "containers.all"}}</span><strong>{{.Total}}</strong></a>
+        <a href="{{containerStatusURL .Query "running"}}" data-container-status-link {{if eq .Query.Status "running"}}aria-current="page"{{end}}><span>{{t .Locale "containers.running"}}</span><strong>{{.Running}}</strong></a>
+        <a href="{{containerStatusURL .Query "stopped"}}" data-container-status-link {{if eq .Query.Status "stopped"}}aria-current="page"{{end}}><span>{{t .Locale "containers.stopped"}}</span><strong>{{.Stopped}}</strong></a>
+        <a href="{{containerStatusURL .Query "attention"}}" data-container-status-link {{if eq .Query.Status "attention"}}aria-current="page"{{end}}><span>{{t .Locale "containers.attention"}}</span><strong>{{.Attention}}</strong></a>
+      </nav>
+      <form class="container-toolbar" method="get" action="/monitor/containers">
+        <label><span data-lucide="search" aria-hidden="true"></span><span class="sr-only">{{t .Locale "common.search"}}</span><input type="search" name="query" value="{{.Query.Search}}" placeholder="{{t .Locale "containers.search_placeholder"}}"></label>
+        <input type="hidden" name="status" value="{{.Query.Status}}"><input type="hidden" name="sort" value="{{.Query.Sort}}"><input type="hidden" name="direction" value="{{.Query.Direction}}"><button class="button button--compact" type="submit">{{t .Locale "common.search"}}</button>
+        <span>{{t .Locale "containers.showing"}} {{len .Containers}} / {{.Matched}}</span>
+      </form>
+    </div>
     <div class="container-table-shell" data-container-table-shell>
       <table class="container-table"><caption class="sr-only">{{t .Locale "containers.inventory"}}</caption><thead><tr>
         <th scope="col"><span class="sr-only">{{t .Locale "applications.pin"}}</span></th>

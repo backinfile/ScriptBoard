@@ -64,7 +64,7 @@ func TestContainersPageListsAllStatesSortsInHeadersAndGuardsOperations(t *testin
 		[]byte("Api-Prod"), []byte("worker"), []byte("ghcr.io/acme/api:v2"),
 		[]byte(`href="/monitor/containers?direction=asc&amp;sort=name"`),
 		[]byte(`href="/monitor/containers?direction=desc&amp;sort=state"`),
-		[]byte(`data-container-status-link`), []byte(`data-container-operation`),
+		[]byte(`class="container-inventory-controls"`), []byte(`data-container-status-link`), []byte(`data-container-operation`),
 	} {
 		if response.StatusCode != http.StatusOK || !bytes.Contains(page, expected) {
 			t.Fatalf("container page status=%d missing %q: %s", response.StatusCode, expected, page)
