@@ -27,6 +27,7 @@ type taskPageData struct {
 	TimeoutSeconds     int
 	IsPassword         bool
 	MFAEnabled         bool
+	PasskeyEnabled     bool
 	DisallowOverlap    bool
 	GroupID            string
 	Groups             []quickRunGroup

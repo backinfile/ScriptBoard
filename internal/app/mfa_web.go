@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"scriptboard/internal/mfa"
+	"scriptboard/internal/passkey"
 )
 
 type mfaPageData struct {
@@ -15,6 +16,7 @@ type mfaPageData struct {
 	Enrollment        *mfa.Enrollment
 	RecoveryCodes     []string
 	Error             string
+	Passkeys          []passkey.CredentialView
 }
 
 func (a *App) accountMFAPage(response http.ResponseWriter, request *http.Request) {
@@ -24,7 +26,12 @@ func (a *App) accountMFAPage(response http.ResponseWriter, request *http.Request
 		http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusInternalServerError)
 		return
 	}
-	a.renderMFAPage(response, request, http.StatusOK, mfaPageData{Enabled: status.Enabled, RecoveryRemaining: status.RecoveryCodes})
+	passkeys, err := a.passkeys.List(current.userID)
+	if err != nil {
+		http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusInternalServerError)
+		return
+	}
+	a.renderMFAPage(response, request, http.StatusOK, mfaPageData{Enabled: status.Enabled, RecoveryRemaining: status.RecoveryCodes, Passkeys: passkeys})
 }
 
 func (a *App) beginMFAEnrollment(response http.ResponseWriter, request *http.Request) {

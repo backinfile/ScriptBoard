@@ -137,10 +137,14 @@ func (a *App) createUser(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	now := time.Now().UTC().Unix()
+	mfaRequiredAt := int64(0)
+	if role == roleMaintainer {
+		mfaRequiredAt = time.Now().UTC().Add(24 * time.Hour).Unix()
+	}
 	_, err = a.db.Exec(`INSERT INTO users
-		(id, username, password_hash, role, enabled, auth_version, created_at, updated_at)
-		VALUES (?, ?, ?, ?, 1, 1, ?, ?)`,
-		id, username, passwordHash, role, now, now)
+		(id, username, password_hash, role, enabled, auth_version, mfa_required_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, 1, 1, ?, ?, ?)`,
+		id, username, passwordHash, role, mfaRequiredAt, now, now)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unique") {
 			http.Error(response, "用户名已存在", http.StatusConflict)
@@ -242,9 +246,20 @@ func (a *App) updateUser(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	defer transaction.Rollback()
+	mfaRequiredAt := int64(0)
+	if role == roleMaintainer {
+		if user.Role == roleMaintainer {
+			if err := transaction.QueryRow(`SELECT mfa_required_at FROM users WHERE id = ?`, user.ID).Scan(&mfaRequiredAt); err != nil {
+				http.Error(response, "could not read MFA policy", http.StatusInternalServerError)
+				return
+			}
+		} else {
+			mfaRequiredAt = time.Now().UTC().Add(24 * time.Hour).Unix()
+		}
+	}
 	_, err = transaction.Exec(`UPDATE users
-		SET username = ?, role = ?, auth_version = auth_version + 1, updated_at = ?
-		WHERE id = ?`, username, role, time.Now().UTC().Unix(), user.ID)
+		SET username = ?, role = ?, mfa_required_at = ?, auth_version = auth_version + 1, updated_at = ?
+		WHERE id = ?`, username, role, mfaRequiredAt, time.Now().UTC().Unix(), user.ID)
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "unique") {
 			http.Error(response, "用户名已存在", http.StatusConflict)

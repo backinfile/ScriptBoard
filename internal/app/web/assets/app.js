@@ -6353,3 +6353,138 @@ document.addEventListener("click", function (event) {
 });
 
 document.querySelectorAll("[data-dashboard-card-selection]").forEach(syncDashboardCardSelection);
+
+(() => {
+  const decodeBase64URL = (value) => {
+    const normalized = String(value).replace(/-/g, "+").replace(/_/g, "/");
+    const binary = atob(normalized + "=".repeat((4 - normalized.length % 4) % 4));
+    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  };
+  const encodeBase64URL = (value) => {
+    if (value == null) return null;
+    const bytes = new Uint8Array(value);
+    let binary = "";
+    bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  };
+  const decodePublicKey = (wrapper) => {
+    const options = structuredClone(wrapper.publicKey || wrapper);
+    options.challenge = decodeBase64URL(options.challenge);
+    if (options.user?.id) options.user.id = decodeBase64URL(options.user.id);
+    ["allowCredentials", "excludeCredentials"].forEach((field) => {
+      if (Array.isArray(options[field])) options[field].forEach((item) => { item.id = decodeBase64URL(item.id); });
+    });
+    return options;
+  };
+  const credentialJSON = (credential) => {
+    const response = {
+      clientDataJSON: encodeBase64URL(credential.response.clientDataJSON)
+    };
+    if (credential.response.attestationObject) {
+      response.attestationObject = encodeBase64URL(credential.response.attestationObject);
+      response.transports = credential.response.getTransports?.() || [];
+    } else {
+      response.authenticatorData = encodeBase64URL(credential.response.authenticatorData);
+      response.signature = encodeBase64URL(credential.response.signature);
+      response.userHandle = encodeBase64URL(credential.response.userHandle);
+    }
+    return {
+      id: credential.id,
+      rawId: encodeBase64URL(credential.rawId),
+      type: credential.type,
+      authenticatorAttachment: credential.authenticatorAttachment,
+      clientExtensionResults: credential.getClientExtensionResults(),
+      response
+    };
+  };
+  const messageFor = (error) => error?.name === "NotAllowedError"
+    ? (document.documentElement.lang === "zh-CN" ? "认证器未确认操作或请求已取消。" : "The authenticator did not confirm the operation or the request was cancelled.")
+    : (error?.message || (document.documentElement.lang === "zh-CN" ? "通行密钥操作失败。" : "The passkey operation failed."));
+
+  document.addEventListener("click", async (event) => {
+    const loginButton = event.target.closest("[data-passkey-login]");
+    if (loginButton) {
+      const form = loginButton.closest("form");
+      if (!window.PublicKeyCredential || !form?.reportValidity()) return;
+      loginButton.disabled = true;
+      try {
+        const body = new URLSearchParams({
+          username: form.elements.username.value,
+          csrf_token: form.elements.csrf_token.value
+        });
+        const response = await fetch("/auth/passkey/options", { method: "POST", body, credentials: "same-origin" });
+        if (!response.ok) throw new Error(await response.text());
+        const challenge = await response.json();
+        const credential = await navigator.credentials.get({ publicKey: decodePublicKey(challenge.options) });
+        form.elements.passkey_ceremony.value = challenge.ceremony_id;
+        form.elements.passkey_response.value = JSON.stringify(credentialJSON(credential));
+        form.requestSubmit(form.querySelector('button[type="submit"]'));
+      } catch (error) {
+        const box = document.querySelector("[data-login-error]");
+        if (box) {
+          box.hidden = false;
+          const message = box.querySelector("[data-login-error-message]");
+          if (message) message.textContent = messageFor(error);
+        }
+      } finally {
+        loginButton.disabled = false;
+      }
+      return;
+    }
+
+    const stepButton = event.target.closest("[data-passkey-step-up]");
+    if (stepButton) {
+      const form = stepButton.closest("form");
+      if (!window.PublicKeyCredential || !form?.reportValidity()) return;
+      stepButton.disabled = true;
+      try {
+        const response = await fetch("/auth/passkey/step-up/options", {
+          method: "POST", credentials: "same-origin", headers: { "X-CSRF-Token": form.elements.csrf_token.value }
+        });
+        if (!response.ok) throw new Error(await response.text());
+        const challenge = await response.json();
+        const credential = await navigator.credentials.get({ publicKey: decodePublicKey(challenge.options) });
+        form.elements.passkey_ceremony.value = challenge.ceremony_id;
+        form.elements.passkey_response.value = JSON.stringify(credentialJSON(credential));
+        form.requestSubmit(form.querySelector('button[type="submit"]'));
+      } catch (error) {
+        const box = form.closest("[data-task-page]")?.querySelector(".page-error") || document.createElement("p");
+        box.className = "page-error";
+        box.setAttribute("role", "alert");
+        box.textContent = messageFor(error);
+        if (!box.isConnected) form.before(box);
+      } finally {
+        stepButton.disabled = false;
+      }
+      return;
+    }
+
+    const registerButton = event.target.closest("[data-passkey-register]");
+    if (!registerButton) return;
+    const root = registerButton.closest("[data-passkey-registration]");
+    const errorBox = root?.querySelector("[data-passkey-error]");
+    if (!window.PublicKeyCredential || !root) return;
+    registerButton.disabled = true;
+    if (errorBox) errorBox.hidden = true;
+    try {
+      const headers = { "X-CSRF-Token": root.dataset.csrf, "Content-Type": "application/json" };
+      const optionResponse = await fetch(root.dataset.optionsUrl, { method: "POST", credentials: "same-origin", headers });
+      if (!optionResponse.ok) throw new Error(await optionResponse.text());
+      const challenge = await optionResponse.json();
+      const credential = await navigator.credentials.create({ publicKey: decodePublicKey(challenge.options) });
+      const finishResponse = await fetch(root.dataset.finishUrl, {
+        method: "POST", credentials: "same-origin", headers,
+        body: JSON.stringify({ ceremony_id: challenge.ceremony_id, name: root.querySelector('[name="passkey_name"]')?.value || "Passkey", credential: credentialJSON(credential) })
+      });
+      if (!finishResponse.ok) throw new Error(await finishResponse.text());
+      location.assign("/login");
+    } catch (error) {
+      if (errorBox) {
+        errorBox.hidden = false;
+        errorBox.textContent = messageFor(error);
+      }
+    } finally {
+      registerButton.disabled = false;
+    }
+  });
+})();

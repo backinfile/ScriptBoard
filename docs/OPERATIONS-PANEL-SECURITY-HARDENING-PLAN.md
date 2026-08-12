@@ -34,14 +34,14 @@ ScriptBoard 已有一批值得保留的安全基础：Argon2id 密码哈希、�
 | P0-04 | 五个切片完成 | 建立共享出站策略并覆盖网站 HTTP/WebSocket 探测、远程监控聚合、GitHub 更新检查/下载、签名 Assistant Runtime 下载、Assistant Provider 代理及 Custom Dashboard 数据源；这些默认客户端不使用环境代理，DNS 解析后的实际 IP 由受控 Dialer 固定并拒绝私网、元数据和非常规端口。Provider 代理只转发当前会话绑定的 Provider、模型和推理 API 路径；Dashboard 数据源禁止重定向、URL 内嵌凭据及保留请求头；远程 ScriptBoard 聚合只接受 HTTPS，网站探测跳过 TLS 验证的例外最长一小时并记录到期时间。 |
 | P0-05 | 两个切片完成 | 代理默认信任为空，非可信转发头被清理；新增 `allowed_hosts` 与 `canonical_external_url` 安全默认，可信代理 Host 仍须通过白名单，错误 Host/Origin 在业务 Handler 前拒绝。可信 peer 只接受单值 `X-Forwarded-*` 合同，拒绝标准 `Forwarded` 混用、重复字段、空值、非法 IP/Host/Proto 和超过 8 跳的链；黑盒 Handler 测试覆盖可信 HTTPS 的 HSTS/Secure Cookie、Host poisoning 421 以及非可信伪造不提升安全状态。真实 Nginx/Caddy/IIS 与 IPv6 部署矩阵仍待平台门禁。 |
 | P0-06 | 四个切片完成 | 外部上传空 allowlist 及活动/双扩展一律拒绝；内容以随机无扩展名和 0600 权限进入 State Root 私有 inbox，管理员核对 SHA-256 与目标后才能经并发领取、原子写入和审计发布。普通 Host Files 上传识别内置及自定义执行器扩展，可执行内容同样只能先进入 inbox，需近期认证并明确核对摘要和目标后发布，普通上传不能直接覆盖现有可执行文件；文件移动也提升为 step-up 动作。MySQL 导入只接受 `.sql`/`.sql.gz`，gzip 在落库和每次恢复前校验流完整性、非空内容与 8 GiB 解压上限，客户端以禁用本地命令的模式消费。Dashboard 与网站监控配置导入只接受安全 `.json` 文件名、受限 JSON/text/octet-stream MIME、UTF-8 无 NUL 且对象根内容，并继续执行各自的 schema、字段、数量和大小限制。 |
-| P0-07 | 六个切片完成 | 外部 Trigger Key 创建和轮换后只显示一次，完整 Key 不再可恢复保存或提供复制接口；启动时清理旧版本残留的可恢复 Key。schema 40 记录会话认证保证和最近认证时间，高风险声明式路由过期后必须在当前浏览器会话 step-up；失败/成功均审计，return URL 防开放重定向，Assistant UI Action 对这些路由 fail closed。YAML、环境变量和 CLI 的明文管理员密码入口均已删除，只保留绝对路径 password file、首次启动和本机重置的一次性凭据。日志、审计、错误、导出和 doctor 共用 secret redaction。Provider、MySQL 与远程网站 Key 使用 State Root 外主密钥统一 AEAD 密封。账户现可配置 TOTP：登录和 step-up 没有降级旁路，成功为 `aal2`，时间步不可重放；10 个 128 bit 恢复码只显示一次、仅保存摘要并逐个消费，启用/重置撤销会话，本机管理员重置同时清除 MFA。WebAuthn/passkey 与 Administrator/Maintainer 默认强制注册策略仍待结构性批次。 |
+| P0-07 | 七个切片完成 | 外部 Trigger Key 创建和轮换后只显示一次，完整 Key 不再可恢复保存或提供复制接口；启动时清理旧版本残留的可恢复 Key。schema 40 记录会话认证保证和最近认证时间，高风险声明式路由过期后必须在当前浏览器会话 step-up；失败/成功均审计，return URL 防开放重定向，Assistant UI Action 对这些路由 fail closed。YAML、环境变量和 CLI 的明文管理员密码入口均已删除，只保留绝对路径 password file、首次启动和本机重置的一次性凭据。日志、审计、错误、导出和 doctor 共用 secret redaction。Provider、MySQL 与远程网站 Key 使用 State Root 外主密钥统一 AEAD 密封。账户可配置 TOTP/单次恢复码，也可注册要求本地用户验证的 WebAuthn passkey；密码登录和 step-up 可使用任一已配置第二因素，成功为 `aal2`，不存在仅密码降级。WebAuthn challenge 服务端保存、五分钟过期且一次性消费，凭据及计数器整体密封。schema 42 为 Administrator/Maintainer 建立默认注册截止时间；到期未注册时会话被限制在 MFA 设置与登出路径，其他写操作 fail closed 并审计。旧实例有七天迁移窗口，首次管理员和新 Maintainer 有 24 小时窗口，避免升级或初始部署锁死唯一管理员。 |
 | P0-08 | 三个切片完成 | 每个受管 Pi 进程现只获得环回 Provider 代理地址和随机短期 capability；上游 Endpoint 与真实凭据不再进入 Pi 参数、环境或 `models.json`。代理只允许当前 Provider 对应的 POST 推理路径和精确模型，限制请求/响应大小、清理请求头、注入真实凭据、禁止重定向，并随进程停止撤销。Windows Pi Job Object 限制单进程、1 GiB 进程/作业内存和 15 分钟累计用户态 CPU，并隔离 UI。受管部署新增独立 `scriptboard-ai-host`：IPC 只接受不含 executable/workspace/env 的领域启动请求，Host 自行解析签名 Runtime；Linux 使用独立 `scriptboard-ai` UID、私有目录、只读 Runtime、systemd 保护及默认拒绝非环回网络；Windows 使用独立服务 SID 和 Assistant 目录 ACL。Windows 仍需内核级默认拒绝网络/受限 Token，Linux 仍需 seccomp/Landlock/AppArmor 验证，因此 P0-08 尚未完成。 |
 | P0-09 | 五个切片完成 | Quick Run 记录脚本 SHA-256 与单调配置修订；外部入口只能绑定已锁定且摘要有效的发布修订，配置、锁定状态或脚本变化会使旧授权 fail-closed，Runner 在启动点复核摘要并将外部并发限制为每脚本一个 Run。每个 Key 现原子绑定一个不可变 Entry，绑定时轮换临时凭据，删除 Entry 同时删除 Key；旧多 Entry Key 被保留配置地拆分并 fail-closed。限流已覆盖每 Key、规范化来源、动作和全局四层原子请求/并发配额，并限制来源状态基数。外部接口提供持久化人工全局熔断；新功能默认启用 5 分钟时间戳、唯一 nonce 与 HMAC-SHA256 防重放，旧功能兼容迁移并可显式启用；拒绝均记录调用与审计。 |
 | P0-12 | 部分完成 | 增加 vet、race、govulncheck、CodeQL、secret scan、SBOM 与 release provenance 门禁；race 覆盖 App、审计链、外部能力、Run、受控进程、上传/导入、出站策略及 Assistant Runtime/Provider 代理等并发安全边界。已加入出站地址、Host 和命令参数 fuzz target，更多真实代理、服务安装和故障注入黑盒不变量继续补充。 |
 | P0-11 | 三个切片完成 | 新增覆盖 Web、Runner 与 Scheduler 的串行 SHA-256 审计链，保留策略通过锚点/链尾维持可验证性，启动时 fail-closed 校验，并提供不依赖 Web UI 的 `audit verify` 命令。schema 41 为每个 Web 请求生成服务端 Request ID，审计独立记录请求关联与认证保证，External Interface 复用 invocation ID；v2 摘要保护新字段且与 v1 历史链兼容。每个实例现把 Ed25519 私钥密文和签名 checkpoint 放在 State Root 外：启动、离线验证与取证导出都会验证签名及 checkpoint 事件仍属于本地链，可发现连同数据库链尾状态一起回退的有效外观截断；正常关闭、保留清理后和每五分钟刷新，doctor 检查三项外部信任材料。它仍是主机本地边界，远端不可回滚 checkpoint/转发、更多资源 revision/digest 字段和告警仍待后续切片。`SECURITY.md` 已明确私密报告、支持范围与应急控制。 |
 | P0-10 | 四个恢复切片完成 | 新增不依赖 Web UI 的本机 `emergency` CLI：可持久暂停全部 External Interface、按完整 Key ID 吊销单个能力并保留取证元数据，两个写操作都需显式匹配确认并与本地管理员高危事件原子写入审计链；取证导出以只读模式验证同一 SQLite 快照后写入不可覆盖的 JSONL。`update verify-package` 可断网验证正式归档的内置签名信任根、平台、文件名、大小、SHA-256、安全归档边界、展开大小和 `RELEASE.json`，且不改变安装。成功更新保留更新前 SQLite 快照，已提交回滚在切换前验证快照完整性、当前目标版本和旧版本载荷；`repair-current` 可在服务停止时验证并重建当前版本服务指针。Manifest 保持旧单签兼容并支持 current/next 双签，发布二进制嵌入 fail-closed Key 撤销列表，runbook 规定离线/硬件保管、轮换和泄露处置。更完整的 updater/安装器故障注入仍待后续切片。 |
 
-P0-02、P0-07 至 P0-11 的其余结构性工作以及 P1/P2 未在本分支宣称完成。
+P0-02、P0-08 至 P0-11 的其余结构性工作以及 P1/P2 未在本分支宣称完成。
 
 ## 2. 产品边界与设计决策
 
@@ -385,7 +385,7 @@ Windows：
 ### 批次 B：结构性重构，独立功能分支
 
 - [ ] P0-02 非特权 Web + 特权 Broker + Runner 身份拆分。
-- [ ] P0-07 已完成 TOTP/恢复码、step-up、秘密迁移和一次显示 Key；仍需 WebAuthn/passkey 与高权限角色默认注册策略。
+- [x] P0-07 已完成 TOTP/恢复码、WebAuthn/passkey、step-up、秘密迁移、一次显示 Key 与高权限角色默认注册策略。
 - [ ] P0-08 AI Runtime OS 沙箱和受控 Provider 网络。
 - [x] P0-09 发布型 Quick Run 与外部能力令牌。
 - [ ] P0-11 审计哈希链、远端转发和安全告警。

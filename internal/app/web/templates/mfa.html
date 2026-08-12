@@ -33,6 +33,15 @@
         <footer><a class="button button--quiet" href="/settings/account">{{t .Locale "common.back"}}</a><button class="button button--primary" type="submit"><span data-lucide="shield-plus" aria-hidden="true"></span>{{t .Locale "mfa.enroll"}}</button></footer>
       </form>
     {{end}}
+	{{if and (not .RecoveryCodes) (not .Enrollment)}}
+	  <section class="settings-section" data-passkey-registration data-options-url="/settings/account/passkeys/register/options" data-finish-url="/settings/account/passkeys/register/finish" data-csrf="{{.CSRFToken}}">
+	    <header><div><h2>{{t .Locale "passkey.title"}}</h2><p>{{t .Locale "passkey.description"}}</p></div></header>
+	    {{if .Passkeys}}<div class="settings-summary">{{range .Passkeys}}<div><span><strong>{{.Name}}</strong><small><code>{{.ID}}</code></small></span><form method="post" action="/settings/account/passkeys/{{.ID}}/delete"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="button button--danger" type="submit"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "passkey.delete"}}</button></form></div>{{end}}</div>{{end}}
+	    <label>{{t .Locale "passkey.name"}} <input name="passkey_name" maxlength="64" value="{{t .Locale "passkey.default_name"}}" autocomplete="off"></label>
+	    <p class="page-error" role="alert" data-passkey-error hidden></p>
+	    <button class="button button--primary" type="button" data-passkey-register><span data-lucide="key-round" aria-hidden="true"></span>{{t .Locale "passkey.register"}}</button>
+	  </section>
+	{{end}}
   </section>
 </main>
 </body>

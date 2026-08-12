@@ -11,8 +11,10 @@
     <form method="post" action="{{.Action}}">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <input type="hidden" name="return_to" value="{{.ReturnTo}}">
+	  <input type="hidden" name="passkey_ceremony"><input type="hidden" name="passkey_response">
       <label>{{t .Locale "account.current_password"}} <input name="current_password" type="password" autocomplete="current-password" required autofocus></label>
-	  {{if .MFAEnabled}}<label>{{t .Locale "mfa.code"}} <input name="mfa_code" inputmode="numeric" autocomplete="one-time-code" maxlength="64" required><small>{{t .Locale "mfa.step_up_hint"}}</small></label>{{end}}
+	  {{if .MFAEnabled}}<label>{{t .Locale "mfa.code"}} <input name="mfa_code" inputmode="numeric" autocomplete="one-time-code" maxlength="64"><small>{{t .Locale "mfa.step_up_hint"}}</small></label>{{end}}
+	  {{if .PasskeyEnabled}}<button class="button" type="button" data-passkey-step-up><span data-lucide="key-round" aria-hidden="true"></span>{{t .Locale "passkey.use"}}</button>{{end}}
       <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="shield-check" aria-hidden="true"></span>{{t .Locale "step_up.continue"}}</button></footer>
     </form>
     {{else if eq .Kind "windows-firewall-rule"}}

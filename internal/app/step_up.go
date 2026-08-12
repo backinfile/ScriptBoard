@@ -17,15 +17,21 @@ func (a *App) stepUpTask(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusInternalServerError)
 		return
 	}
+	passkeyUser, err := a.passkeys.User(current.userID, current.username)
+	if err != nil {
+		http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusInternalServerError)
+		return
+	}
 	returnTo := safeStepUpReturnTo(request.URL.Query().Get("return_to"))
 	a.renderTaskPage(response, request, taskPageData{
-		Kind:        "step-up",
-		Title:       webText(resolveWebLocale(request), "step_up.title"),
-		Description: webText(resolveWebLocale(request), "step_up.description"),
-		BackURL:     returnTo,
-		Action:      "/auth/step-up",
-		ReturnTo:    returnTo,
-		MFAEnabled:  mfaStatus.Enabled,
+		Kind:           "step-up",
+		Title:          webText(resolveWebLocale(request), "step_up.title"),
+		Description:    webText(resolveWebLocale(request), "step_up.description"),
+		BackURL:        returnTo,
+		Action:         "/auth/step-up",
+		ReturnTo:       returnTo,
+		MFAEnabled:     mfaStatus.Enabled,
+		PasskeyEnabled: len(passkeyUser.Credentials) > 0,
 	})
 }
 
@@ -68,8 +74,19 @@ func (a *App) stepUp(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusInternalServerError)
 		return
 	}
-	if mfaStatus.Enabled {
-		verified, verifyErr := a.mfa.Verify(current.userID, request.FormValue("mfa_code"))
+	passkeyUser, err := a.passkeys.User(current.userID, current.username)
+	if err != nil {
+		http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusInternalServerError)
+		return
+	}
+	if mfaStatus.Enabled || len(passkeyUser.Credentials) > 0 {
+		verified := false
+		var verifyErr error
+		if assertion := request.FormValue("passkey_response"); assertion != "" {
+			verified, verifyErr = a.verifyPasskeyAssertion(request, current.userID, current.username, "step-up", current.tokenHash, request.FormValue("passkey_ceremony"), assertion)
+		} else if mfaStatus.Enabled {
+			verified, verifyErr = a.mfa.Verify(current.userID, request.FormValue("mfa_code"))
+		}
 		if verifyErr != nil {
 			http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusInternalServerError)
 			return
@@ -107,14 +124,16 @@ func (a *App) renderStepUpFailure(response http.ResponseWriter, request *http.Re
 	locale := resolveWebLocale(request)
 	current := request.Context().Value(sessionContextKey).(session)
 	mfaStatus, _ := a.mfa.Status(current.userID)
+	passkeyUser, _ := a.passkeys.User(current.userID, current.username)
 	a.renderTaskPageStatus(response, request, status, taskPageData{
-		Kind:        "step-up",
-		Title:       webText(locale, "step_up.title"),
-		Description: webText(locale, "step_up.description"),
-		BackURL:     returnTo,
-		Action:      "/auth/step-up",
-		ReturnTo:    returnTo,
-		MFAEnabled:  mfaStatus.Enabled,
-		Error:       webText(locale, messageKey),
+		Kind:           "step-up",
+		Title:          webText(locale, "step_up.title"),
+		Description:    webText(locale, "step_up.description"),
+		BackURL:        returnTo,
+		Action:         "/auth/step-up",
+		ReturnTo:       returnTo,
+		MFAEnabled:     mfaStatus.Enabled,
+		PasskeyEnabled: len(passkeyUser.Credentials) > 0,
+		Error:          webText(locale, messageKey),
 	})
 }

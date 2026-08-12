@@ -54,6 +54,7 @@ import (
 	"scriptboard/internal/instancelock"
 	"scriptboard/internal/mfa"
 	"scriptboard/internal/mysqlmanager"
+	"scriptboard/internal/passkey"
 	"scriptboard/internal/privatepath"
 	"scriptboard/internal/privilegebroker"
 	"scriptboard/internal/runmanager"
@@ -383,6 +384,8 @@ type App struct {
 	externalLimit        *externaltrigger.Limiter
 	mysql                *mysqlmanager.Manager
 	mfa                  *mfa.Store
+	passkeys             *passkey.Store
+	passkeyCeremonies    *passkeyCeremonyStore
 	mysqlContext         context.Context
 	mysqlCancel          context.CancelFunc
 	mysqlWG              sync.WaitGroup
@@ -431,6 +434,10 @@ func Open(config Config) (*App, error) {
 		return nil, err
 	}
 	mfaStore, err := mfa.New(mfa.Options{StateRoot: stateRoot, SecretStore: credentialStore})
+	if err != nil {
+		return nil, err
+	}
+	passkeyStore, err := passkey.New(passkey.Options{StateRoot: stateRoot, SecretStore: credentialStore})
 	if err != nil {
 		return nil, err
 	}
@@ -505,6 +512,7 @@ func Open(config Config) (*App, error) {
 	}
 	application := &App{
 		db: db, stateRoot: stateRoot, files: files, uploadInbox: uploadInboxStore, instanceLock: instanceLock, mfa: mfaStore,
+		passkeys: passkeyStore, passkeyCeremonies: newPasskeyCeremonyStore(),
 		execUploadExts: buildExecutableUploadExtensions(config.ExecutorChains),
 		loginSlots:     make(chan struct{}, 2), loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies,
 		allowedHosts: allowedHosts, canonicalExternalURL: config.CanonicalExternalURL,
@@ -1077,6 +1085,10 @@ func (a *App) ResetAdminCredentials(username string) (string, error) {
 		a.recordAudit("admin_reset_mfa", username, "failed", "local-cli")
 		return "", fmt.Errorf("reset administrator MFA after credentials changed: %w", err)
 	}
+	if err := a.passkeys.Reset("administrator"); err != nil {
+		a.recordAudit("admin_reset_passkeys", username, "failed", "local-cli")
+		return "", fmt.Errorf("reset administrator passkeys after credentials changed: %w", err)
+	}
 	a.cancelAllAuthenticatedRequests()
 	a.recordAudit("admin_reset", username, "succeeded", "local-cli")
 	return password, nil
@@ -1351,6 +1363,7 @@ func openDatabase(path string) (*sql.DB, error) {
 			role TEXT NOT NULL CHECK (role IN ('administrator', 'maintainer', 'operator', 'viewer')),
 			enabled INTEGER NOT NULL DEFAULT 1,
 			auth_version INTEGER NOT NULL DEFAULT 1,
+			mfa_required_at INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		)`,
@@ -1938,6 +1951,25 @@ func openDatabase(path string) (*sql.DB, error) {
 			}
 		}
 	}
+	if schemaVersion >= 20 && schemaVersion <= 41 {
+		exists, err := sqliteColumnExists(migration, "users", "mfa_required_at")
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("inspect privileged MFA policy migration: %w", err)
+		}
+		if !exists {
+			if _, err := migration.Exec(`ALTER TABLE users ADD COLUMN mfa_required_at INTEGER NOT NULL DEFAULT 0`); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("add privileged MFA policy: %w", err)
+			}
+			// Existing privileged accounts receive a bounded enrollment window so an
+			// upgrade cannot strand the only local administrator outside the panel.
+			if _, err := migration.Exec(`UPDATE users SET mfa_required_at = ? WHERE role IN ('administrator', 'maintainer')`, time.Now().UTC().Add(7*24*time.Hour).Unix()); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("schedule privileged MFA enrollment: %w", err)
+			}
+		}
+	}
 	for _, statement := range []string{
 		"CREATE UNIQUE INDEX IF NOT EXISTS users_single_administrator_idx ON users(role) WHERE role = 'administrator'",
 		"CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id)",
@@ -2013,10 +2045,11 @@ func compatibleDatabaseSchema(version int) bool {
 	// schema 38 adds a persistent global emergency control for external calls,
 	// schema 39 adds opt-in timestamp, nonce, and HMAC replay protection, and
 	// schema 40 records session authentication assurance and recent reauthentication,
-	// and schema 41 adds request correlation and authentication assurance to audit events.
+	// schema 41 adds request correlation and authentication assurance to audit events,
+	// and schema 42 adds the privileged-account MFA enrollment policy deadline.
 	// Each supported predecessor has an explicit
 	// transactional forward path.
-	return version == currentSchemaVersion || currentSchemaVersion == 41 && version >= 20 && version <= 40
+	return version == currentSchemaVersion || currentSchemaVersion == 42 && version >= 20 && version <= 41
 }
 
 func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {
@@ -2081,8 +2114,8 @@ func (a *App) initializeAdmin(stateRoot string) error {
 	}
 	now := time.Now().UTC().Unix()
 	if _, err := transaction.Exec(
-		"INSERT INTO users (id, username, password_hash, role, enabled, auth_version, created_at, updated_at) VALUES ('administrator', 'admin', ?, 'administrator', 1, 1, ?, ?)",
-		hash, now, now,
+		"INSERT INTO users (id, username, password_hash, role, enabled, auth_version, mfa_required_at, created_at, updated_at) VALUES ('administrator', 'admin', ?, 'administrator', 1, 1, ?, ?, ?)",
+		hash, time.Now().UTC().Add(24*time.Hour).Unix(), now, now,
 	); err != nil {
 		return fmt.Errorf("创建 admin: %w", err)
 	}
@@ -2202,11 +2235,13 @@ func (a *App) routes() http.Handler {
 		renderLoginPage(response, request, http.StatusOK, "", "")
 	})
 	mux.Public("POST /login", a.login)
+	mux.Public("POST /auth/passkey/options", a.beginPasskeyLogin)
 	mux.Public("POST /settings/locale", a.setWebLocale)
 	mux.External("GET /trigger", a.externalTrigger)
 	mux.External("POST /trigger", a.externalTrigger)
 	mux.Handle("GET /auth/step-up", a.requirePermission(permissionObserve, http.HandlerFunc(a.stepUpTask)))
 	mux.Handle("POST /auth/step-up", a.requirePermission(permissionObserve, http.HandlerFunc(a.stepUp)))
+	mux.Handle("POST /auth/passkey/step-up/options", a.requirePermission(permissionObserve, http.HandlerFunc(a.beginPasskeyStepUp)))
 	mux.Handle("POST /logout", a.requirePermission(permissionObserve, http.HandlerFunc(a.logout)))
 	mux.Handle("GET /monitor", a.requirePermission(permissionObserve, http.HandlerFunc(a.overviewPage)))
 	mux.Handle("GET /monitor/security", a.requirePermission(permissionObserve, http.HandlerFunc(a.securityPage)))
@@ -2301,6 +2336,11 @@ func (a *App) routes() http.Handler {
 			http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusInternalServerError)
 			return
 		}
+		passkeyUser, err := a.passkeys.User(current.userID, current.username)
+		if err != nil {
+			http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusInternalServerError)
+			return
+		}
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = accountTemplate.Execute(response, struct {
 			Username, CSRFToken string
@@ -2312,7 +2352,7 @@ func (a *App) routes() http.Handler {
 		}{
 			Username: current.username, CSRFToken: current.csrfToken,
 			CredentialOverride: a.credentialOverride && current.role == roleAdministrator,
-			CanRename:          current.role == roleAdministrator, MFAEnabled: mfaStatus.Enabled, Locale: resolveWebLocale(request),
+			CanRename:          current.role == roleAdministrator, MFAEnabled: mfaStatus.Enabled || len(passkeyUser.Credentials) > 0, Locale: resolveWebLocale(request),
 			SettingsNavigation: newSettingsNavigation(current, resolveWebLocale(request), "account"),
 		})
 	})))
@@ -2325,6 +2365,9 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /settings/account/mfa/enroll", a.requireStepUp(permissionObserve, http.HandlerFunc(a.beginMFAEnrollment)))
 	mux.Handle("POST /settings/account/mfa/confirm", a.requireStepUp(permissionObserve, http.HandlerFunc(a.confirmMFAEnrollment)))
 	mux.Handle("POST /settings/account/mfa/reset", a.requireStepUp(permissionObserve, http.HandlerFunc(a.resetMFA)))
+	mux.Handle("POST /settings/account/passkeys/register/options", a.requireStepUp(permissionObserve, http.HandlerFunc(a.beginPasskeyRegistration)))
+	mux.Handle("POST /settings/account/passkeys/register/finish", a.requireStepUp(permissionObserve, http.HandlerFunc(a.finishPasskeyRegistration)))
+	mux.Handle("POST /settings/account/passkeys/{id}/delete", a.requireStepUp(permissionObserve, http.HandlerFunc(a.deletePasskey)))
 	mux.Handle("GET /settings/users", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.usersPage)))
 	mux.Handle("GET /settings/users/create", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.createUserTask)))
 	mux.Handle("POST /settings/users", a.requireStepUp(permissionManageUsers, http.HandlerFunc(a.createUser)))
@@ -5411,8 +5454,19 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 		renderLoginFailure(response, request, http.StatusInternalServerError, request.FormValue("username"), webText(resolveWebLocale(request), "mfa.unavailable"))
 		return
 	}
-	if mfaStatus.Enabled {
-		verified, verifyErr := a.mfa.Verify(userID, request.FormValue("mfa_code"))
+	passkeyUser, err := a.passkeys.User(userID, username)
+	if err != nil {
+		renderLoginFailure(response, request, http.StatusInternalServerError, request.FormValue("username"), webText(resolveWebLocale(request), "mfa.unavailable"))
+		return
+	}
+	if mfaStatus.Enabled || len(passkeyUser.Credentials) > 0 {
+		verified := false
+		var verifyErr error
+		if assertion := request.FormValue("passkey_response"); assertion != "" {
+			verified, verifyErr = a.verifyPasskeyAssertion(request, userID, username, "login", "", request.FormValue("passkey_ceremony"), assertion)
+		} else if mfaStatus.Enabled {
+			verified, verifyErr = a.mfa.Verify(userID, request.FormValue("mfa_code"))
+		}
 		if verifyErr != nil {
 			renderLoginFailure(response, request, http.StatusInternalServerError, request.FormValue("username"), webText(resolveWebLocale(request), "mfa.unavailable"))
 			return
@@ -5584,6 +5638,7 @@ type session struct {
 	tokenHash               string
 	rawToken                string
 	csrfToken               string
+	mfaRequiredAt           int64
 }
 
 func (a *App) loadSession(request *http.Request) (session, string, bool) {
@@ -5598,11 +5653,11 @@ func (a *App) loadSession(request *http.Request) (session, string, bool) {
 	err = a.db.QueryRow(`
 		SELECT sessions.csrf_token, sessions.last_seen_at, sessions.expires_at,
 			sessions.authentication_assurance, sessions.reauthenticated_at,
-			users.id, users.username, users.role, users.auth_version
+			users.id, users.username, users.role, users.auth_version, users.mfa_required_at
 		FROM sessions JOIN users ON users.id = sessions.user_id
 		WHERE sessions.token_hash = ? AND sessions.auth_version = users.auth_version AND users.enabled = 1`, current.tokenHash,
 	).Scan(&current.csrfToken, &lastSeen, &expiresAt, &current.authenticationAssurance, &current.reauthenticatedAt,
-		&current.userID, &current.username, &current.role, &current.authVersion)
+		&current.userID, &current.username, &current.role, &current.authVersion, &current.mfaRequiredAt)
 	now := time.Now().UTC()
 	if err != nil || now.Unix() >= expiresAt || now.Sub(time.Unix(lastSeen, 0)) >= 12*time.Hour {
 		if err == nil {
@@ -5629,6 +5684,29 @@ func (a *App) requireSession(next http.Handler) http.Handler {
 			http.Redirect(response, request, "/login", http.StatusSeeOther)
 			return
 		}
+		if privilegedMFAEnrollmentDue(current, time.Now().UTC()) {
+			status, statusErr := a.mfa.Status(current.userID)
+			if statusErr != nil {
+				http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusServiceUnavailable)
+				return
+			}
+			passkeyUser, passkeyErr := a.passkeys.User(current.userID, current.username)
+			if passkeyErr != nil {
+				http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusServiceUnavailable)
+				return
+			}
+			if !status.Enabled && len(passkeyUser.Credentials) == 0 && !mfaEnrollmentRouteAllowed(request.URL.Path) {
+				response.Header().Set("Cache-Control", "no-store")
+				auditRequest := request.WithContext(context.WithValue(request.Context(), sessionContextKey, current))
+				a.recordAuditWithRequestActor(auditRequest, "mfa_enrollment_required", current.username, "blocked", request.RemoteAddr, current.userID, current.username, current.role)
+				if request.Method == http.MethodGet || request.Method == http.MethodHead {
+					http.Redirect(response, request, "/settings/account/mfa", http.StatusSeeOther)
+				} else {
+					http.Error(response, webText(resolveWebLocale(request), "mfa.enrollment_required"), http.StatusForbidden)
+				}
+				return
+			}
+		}
 		cookie, _ := request.Cookie(sessionCookieName)
 		now := time.Now().UTC()
 		if !a.validation.Load() {
@@ -5645,6 +5723,17 @@ func (a *App) requireSession(next http.Handler) http.Handler {
 		defer cancel()
 		next.ServeHTTP(response, request.WithContext(authenticatedContext))
 	})
+}
+
+func privilegedMFAEnrollmentDue(current session, now time.Time) bool {
+	return (current.role == roleAdministrator || current.role == roleMaintainer) &&
+		current.mfaRequiredAt > 0 && !now.Before(time.Unix(current.mfaRequiredAt, 0))
+}
+
+func mfaEnrollmentRouteAllowed(path string) bool {
+	return path == "/settings/account" || strings.HasPrefix(path, "/settings/account/mfa") ||
+		strings.HasPrefix(path, "/settings/account/passkeys") ||
+		path == "/auth/step-up" || path == "/logout" || path == "/settings/locale"
 }
 
 func (a *App) registerAuthenticatedRequest(userID string, cancel context.CancelFunc) uint64 {

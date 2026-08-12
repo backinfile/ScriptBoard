@@ -603,7 +603,7 @@ Evidence Query 仍走相同 Tool Broker 和实时角色授权。日志搜索、�
 
 schema 27 增加 `external_trigger_keys`、`external_trigger_entries` 和 `external_trigger_requests`。Key 在 SQLite 中只保存标签、Token 的不可逆摘要与提示、启用状态、到期时间和最近成功使用时间；完整 Token 仅在创建或轮换后返回一次，不持久化。Entry 保存动作类型、固定目标与经过类型校验的 JSON 约束；schema 37 将其收紧为每个 Key 唯一绑定一个不可变能力。Request 保存不可变的调用结果摘要，不通过外键级联删除，以便 Key 删除后仍保留审计上下文。
 
-schema 38 增加持久化单例 `external_trigger_control`，用于全局紧急暂停所有有效外部调用。schema 39 在 Entry 上增加 `require_signature`，并用 `external_trigger_nonces` 原子消费短期 nonce；nonce 按 Key 唯一并带过期时间。迁移的旧 Entry 默认保持 Bearer 兼容，新 Entry 默认要求 5 分钟时间戳、唯一 nonce 和 HMAC-SHA256 签名。schema 40 在 `sessions` 增加 `authentication_assurance` 和 `reauthenticated_at`；高风险声明式路由要求 10 分钟内的浏览器会话密码认证，Assistant UI 动作不会为这些路由提供替代入口。schema 41 在 `audit_events` 增加 `request_id` 与 `authentication_assurance`；新事件把两者纳入 v2 哈希，历史空字段事件继续按 v1 验证。
+schema 38 增加持久化单例 `external_trigger_control`，用于全局紧急暂停所有有效外部调用。schema 39 在 Entry 上增加 `require_signature`，并用 `external_trigger_nonces` 原子消费短期 nonce；nonce 按 Key 唯一并带过期时间。迁移的旧 Entry 默认保持 Bearer 兼容，新 Entry 默认要求 5 分钟时间戳、唯一 nonce 和 HMAC-SHA256 签名。schema 40 在 `sessions` 增加 `authentication_assurance` 和 `reauthenticated_at`；高风险声明式路由要求 10 分钟内的浏览器会话密码认证，Assistant UI 动作不会为这些路由提供替代入口。schema 41 在 `audit_events` 增加 `request_id` 与 `authentication_assurance`；新事件把两者纳入 v2 哈希，历史空字段事件继续按 v1 验证。schema 42 在 `users` 增加 `mfa_required_at`；Administrator/Maintainer 到期且未配置任一第二因素时，只能访问 MFA 注册与带外退出路径。
 
 `audit_events` 按 ID 顺序链接 `previous_hash` 与 `event_hash`，`audit_chain_state` 保存保留锚点和
 当前链尾。为防止事件尾部与同库链尾状态一起回退后仍通过本地校验，每个 State Root 另有一份
@@ -620,6 +620,8 @@ Ed25519 签名 checkpoint，记录实例路径身份、最后事件 ID/摘要、
 TOTP secret、最后接受的时间步与恢复码 SHA-256 摘要；恢复码具有独立 128 bit 随机熵、只显示
 一次并在使用时原子移除。已配置账户的登录与 step-up 均接受 TOTP 或未使用恢复码，成功会话记录
 `aal2`；同一 TOTP 时间步不能重放。本机管理员重置会清除管理员 MFA 并撤销会话。
+
+WebAuthn 凭据保存在 `state-root/secrets/account-passkeys.enc`，使用与 TOTP 不同的用途绑定整体密封。记录包含 credential ID、公钥、attestation 元数据、flags 与 authenticator counter；每次成功断言后原子写回更新后的 counter/flags。注册、登录和 step-up challenge 只存在于进程内存，绑定 ceremony 类型、用户、浏览器会话与精确 Origin，五分钟过期且在 finish 时先消费。注册要求 user verification，优先创建 discoverable credential；登录仍先验证账户密码，passkey 作为第二因素达到 `aal2`。
 
 只读远程网站来源等仍需恢复的 External Interface 相关秘密使用统一 credential store 密封；
 旧 `external-interface.master-key` 与逐项密文启动时解密、重封并先删除旧原始 key。一次显示
