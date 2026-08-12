@@ -177,6 +177,7 @@ SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
 TasksMax=64
 MemoryMax=1G
+MemorySwapMax=0
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 IPAddressDeny=any
 IPAddressAllow=localhost
@@ -218,6 +219,7 @@ SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
 TasksMax=64
 MemoryMax=2G
+MemorySwapMax=0
 RestrictAddressFamilies=AF_UNIX
 IPAddressDeny=any
 

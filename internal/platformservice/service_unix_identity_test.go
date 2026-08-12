@@ -46,6 +46,7 @@ func TestLinuxRuntimeUnitsRequireSeccompAndNetworkIsolation(t *testing.T) {
 	text := string(source)
 	for _, required := range []string{
 		"MemoryDenyWriteExecute=true",
+		"MemorySwapMax=0",
 		"SystemCallArchitectures=native", "SystemCallFilter=@system-service", "SystemCallErrorNumber=EPERM",
 		"PrivateDevices=true", "ProtectKernelLogs=true", "RestrictRealtime=true",
 		"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6", "IPAddressAllow=localhost",
@@ -54,5 +55,8 @@ func TestLinuxRuntimeUnitsRequireSeccompAndNetworkIsolation(t *testing.T) {
 		if !strings.Contains(text, required) {
 			t.Fatalf("Linux runtime units are missing %q", required)
 		}
+	}
+	if count := strings.Count(text, "MemorySwapMax=0"); count != 2 {
+		t.Fatalf("Linux runtime units require two swap limits, found %d", count)
 	}
 }
