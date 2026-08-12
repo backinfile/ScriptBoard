@@ -193,46 +193,6 @@ func (a *App) kubernetesWorkloadLogs(response http.ResponseWriter, request *http
 	_ = json.NewEncoder(response).Encode(lines)
 }
 
-func (a *App) pinKubernetesWorkload(response http.ResponseWriter, request *http.Request) {
-	if !validSessionCSRF(request) {
-		http.Error(response, "CSRF validation failed", http.StatusForbidden)
-		return
-	}
-	key := kubernetesWorkloadKey(request)
-	if err := a.kubernetesStatus.Pin(request.Context(), key); err != nil {
-		http.Error(response, err.Error(), http.StatusBadRequest)
-		return
-	}
-	a.recordAuditForRequest(request, "pin_kubernetes_workload", key, "succeeded")
-	http.Redirect(response, request, "/monitor/kubernetes", http.StatusSeeOther)
-}
-
-func (a *App) unpinKubernetesWorkload(response http.ResponseWriter, request *http.Request) {
-	if !validSessionCSRF(request) {
-		http.Error(response, "CSRF validation failed", http.StatusForbidden)
-		return
-	}
-	key := kubernetesWorkloadKey(request)
-	if err := a.kubernetesStatus.Unpin(request.Context(), key); err != nil {
-		http.Error(response, err.Error(), http.StatusBadRequest)
-		return
-	}
-	a.recordAuditForRequest(request, "unpin_kubernetes_workload", key, "succeeded")
-	http.Redirect(response, request, "/monitor/kubernetes", http.StatusSeeOther)
-}
-
-func (a *App) movePinnedKubernetesWorkload(response http.ResponseWriter, request *http.Request) {
-	if !validSessionCSRF(request) {
-		http.Error(response, "CSRF validation failed", http.StatusForbidden)
-		return
-	}
-	if err := a.kubernetesStatus.MovePin(request.Context(), kubernetesWorkloadKey(request), request.FormValue("direction")); err != nil {
-		http.Error(response, err.Error(), http.StatusBadRequest)
-		return
-	}
-	http.Redirect(response, request, "/monitor/kubernetes", http.StatusSeeOther)
-}
-
 func (a *App) operateKubernetesWorkload(response http.ResponseWriter, request *http.Request) {
 	if !validSessionCSRF(request) {
 		http.Error(response, "CSRF validation failed", http.StatusForbidden)

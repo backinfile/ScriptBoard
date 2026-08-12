@@ -2,6 +2,7 @@ package appstatus
 
 import (
 	"context"
+	"errors"
 	"os"
 	"runtime"
 	"strings"
@@ -81,6 +82,16 @@ func (p *SystemProbe) Close() error {
 		return nil
 	}
 	return p.docker.Close()
+}
+
+func (p *SystemProbe) OperateContainer(ctx context.Context, name string, action ContainerAction) error {
+	if p.dockerError != nil {
+		return p.dockerError
+	}
+	if p.docker == nil {
+		return errors.New("Docker Engine is unavailable")
+	}
+	return p.docker.OperateContainer(ctx, name, action)
 }
 
 func excludeContainerProcesses(processes []RawProcess, containerIDs []string) []RawProcess {

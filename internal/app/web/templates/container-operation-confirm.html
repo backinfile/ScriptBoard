@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="{{.Locale}}">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app-v2.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "containers.confirm_title"}} · ScriptBoard</title></head>
+<body>
+<main class="workspace container-confirm-page">
+  <a class="back-link" href="{{.ReturnTo}}"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "common.back"}}</a>
+  <section class="container-confirm" aria-labelledby="container-confirm-heading">
+    <span class="container-confirm__mark" data-lucide="triangle-alert" aria-hidden="true"></span>
+    <div><p class="page-eyebrow">{{t .Locale "containers.lifecycle"}}</p><h1 id="container-confirm-heading">{{t .Locale "containers.confirm_title"}}</h1><p>{{t .Locale "containers.confirm_description"}} <code>{{.Name}}</code></p><dl><div><dt>{{t .Locale "containers.container"}}</dt><dd>{{.Name}}</dd></div><div><dt>{{t .Locale "containers.operation"}}</dt><dd>{{t .Locale (printf "containers.%s" .Action)}}</dd></div></dl></div>
+    <form method="post" action="/monitor/containers/{{.Name}}/operate"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="action" value="{{.Action}}"><input type="hidden" name="confirmed" value="yes"><input type="hidden" name="return_to" value="{{.ReturnTo}}"><a class="button" href="{{.ReturnTo}}">{{t .Locale "common.cancel"}}</a><button class="button {{if eq .Action "stop"}}button--danger{{else}}button--primary{{end}}" type="submit">{{t .Locale "containers.confirm_action"}}</button></form>
+  </section>
+</main>
+</body>
+</html>

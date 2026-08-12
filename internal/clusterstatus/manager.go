@@ -140,7 +140,7 @@ func (manager *Manager) SaveConnection(ctx context.Context, connection Connectio
 		return ConnectionStatus{}, scanErr
 	}
 	if previousFingerprint != "" && previousFingerprint != client.Fingerprint() {
-		for _, table := range []string{"kubernetes_pins", "kubernetes_versions", "kubernetes_metric_minutes"} {
+		for _, table := range []string{"kubernetes_versions", "kubernetes_metric_minutes"} {
 			if _, err := transaction.ExecContext(ctx, "DELETE FROM "+table); err != nil {
 				_ = client.Close()
 				return ConnectionStatus{}, err
@@ -300,18 +300,6 @@ func (manager *Manager) View(ctx context.Context, query Query) (View, error) {
 	view.CollectedAt, view.ServerVersion, view.Nodes = snapshot.CollectedAt, snapshot.ServerVersion, append([]Node(nil), snapshot.Nodes...)
 	view.PodsReady, view.PodsTotal, view.Namespaces, view.MetricsAvailable, view.Errors = snapshot.PodsReady, snapshot.PodsTotal, snapshot.Namespaces, snapshot.MetricsAvailable, cloneStrings(snapshot.Errors)
 	workloads := append([]Workload(nil), snapshot.Workloads...)
-	pins, err := manager.loadPins(ctx, workloads)
-	if err != nil {
-		return View{}, err
-	}
-	view.Pinned = pins
-	pinnedKeys := make(map[string]struct{}, len(pins))
-	for _, workload := range pins {
-		pinnedKeys[workload.Key] = struct{}{}
-	}
-	for position := range workloads {
-		_, workloads[position].Pinned = pinnedKeys[workloads[position].Key]
-	}
 	view.Total = len(workloads)
 	namespaceSet := make(map[string]struct{})
 	for _, workload := range workloads {
@@ -358,111 +346,6 @@ func (manager *Manager) View(ctx context.Context, query Query) (View, error) {
 	}
 	view.Workloads = filtered
 	return view, nil
-}
-
-func (manager *Manager) Pin(ctx context.Context, key string) error {
-	manager.mu.RLock()
-	var selected Workload
-	for _, workload := range manager.current.Workloads {
-		if workload.Key == key {
-			selected = workload
-			break
-		}
-	}
-	manager.mu.RUnlock()
-	if selected.Key == "" {
-		return errors.New("workload is not in the current snapshot")
-	}
-	transaction, err := manager.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer transaction.Rollback()
-	now := manager.now().UTC().UnixNano()
-	var order int
-	if err := transaction.QueryRowContext(ctx, `SELECT COALESCE(MAX(sort_order),0)+1 FROM kubernetes_pins`).Scan(&order); err != nil {
-		return err
-	}
-	if _, err := transaction.ExecContext(ctx, `INSERT INTO kubernetes_pins
-		(workload_key, namespace, kind, name, sort_order, created_at, updated_at) VALUES (?,?,?,?,?,?,?)
-		ON CONFLICT(workload_key) DO UPDATE SET updated_at=excluded.updated_at`, selected.Key, selected.Namespace, selected.Kind, selected.Name, order, now, now); err != nil {
-		return err
-	}
-	if err := insertVersionIfChanged(ctx, transaction, selected, now); err != nil {
-		return err
-	}
-	if err := upsertMetric(ctx, transaction, selected, manager.now().UTC()); err != nil {
-		return err
-	}
-	return transaction.Commit()
-}
-
-func (manager *Manager) Unpin(ctx context.Context, key string) error {
-	result, err := manager.db.ExecContext(ctx, `DELETE FROM kubernetes_pins WHERE workload_key=?`, key)
-	if err != nil {
-		return err
-	}
-	removed, _ := result.RowsAffected()
-	if removed == 0 {
-		return errors.New("workload is not pinned")
-	}
-	return nil
-}
-
-func (manager *Manager) MovePin(ctx context.Context, key, direction string) error {
-	direction = strings.ToLower(strings.TrimSpace(direction))
-	if direction != "up" && direction != "down" && direction != "top" {
-		return errors.New("pin direction must be top, up, or down")
-	}
-	rows, err := manager.db.QueryContext(ctx, `SELECT workload_key FROM kubernetes_pins ORDER BY sort_order, created_at`)
-	if err != nil {
-		return err
-	}
-	var keys []string
-	for rows.Next() {
-		var value string
-		if err := rows.Scan(&value); err != nil {
-			rows.Close()
-			return err
-		}
-		keys = append(keys, value)
-	}
-	_ = rows.Close()
-	index := -1
-	for position, value := range keys {
-		if value == key {
-			index = position
-			break
-		}
-	}
-	if index < 0 {
-		return errors.New("workload is not pinned")
-	}
-	if direction == "top" {
-		value := keys[index]
-		copy(keys[1:index+1], keys[:index])
-		keys[0] = value
-	} else {
-		target := index - 1
-		if direction == "down" {
-			target = index + 1
-		}
-		if target < 0 || target >= len(keys) {
-			return errors.New("workload pin is already at the requested edge")
-		}
-		keys[index], keys[target] = keys[target], keys[index]
-	}
-	transaction, err := manager.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer transaction.Rollback()
-	for position, value := range keys {
-		if _, err := transaction.ExecContext(ctx, `UPDATE kubernetes_pins SET sort_order=?,updated_at=? WHERE workload_key=?`, position+1, manager.now().UTC().UnixNano(), value); err != nil {
-			return err
-		}
-	}
-	return transaction.Commit()
 }
 
 func (manager *Manager) Detail(ctx context.Context, key string) (Detail, error) {
@@ -581,29 +464,12 @@ func (manager *Manager) Operate(ctx context.Context, operation Operation) error 
 }
 
 func (manager *Manager) persistSnapshot(ctx context.Context, snapshot Snapshot) error {
-	rows, err := manager.db.QueryContext(ctx, `SELECT workload_key FROM kubernetes_pins`)
-	if err != nil {
-		return err
-	}
-	pinned := make(map[string]struct{})
-	for rows.Next() {
-		var key string
-		if err := rows.Scan(&key); err != nil {
-			rows.Close()
-			return err
-		}
-		pinned[key] = struct{}{}
-	}
-	_ = rows.Close()
 	transaction, err := manager.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer transaction.Rollback()
 	for _, workload := range snapshot.Workloads {
-		if _, ok := pinned[workload.Key]; !ok {
-			continue
-		}
 		if err := insertVersionIfChanged(ctx, transaction, workload, snapshot.CollectedAt.UnixNano()); err != nil {
 			return err
 		}
@@ -641,37 +507,6 @@ func upsertMetric(ctx context.Context, transaction *sql.Tx, workload Workload, a
 		ON CONFLICT(workload_key,bucket_at) DO UPDATE SET cpu_millicores=excluded.cpu_millicores,memory_bytes=excluded.memory_bytes,
 		ready=excluded.ready,desired=excluded.desired,restarts=excluded.restarts`, workload.Key, bucket, workload.CPUMillicores, workload.MemoryBytes, workload.Ready, workload.Desired, workload.Restarts)
 	return err
-}
-
-func (manager *Manager) loadPins(ctx context.Context, workloads []Workload) ([]Workload, error) {
-	index := make(map[string]int, len(workloads))
-	for position := range workloads {
-		index[workloads[position].Key] = position
-	}
-	rows, err := manager.db.QueryContext(ctx, `SELECT workload_key,namespace,kind,name FROM kubernetes_pins ORDER BY sort_order,created_at`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var pinned []Workload
-	for rows.Next() {
-		var stored Workload
-		if err := rows.Scan(&stored.Key, &stored.Namespace, &stored.Kind, &stored.Name); err != nil {
-			return nil, err
-		}
-		stored.Pinned = true
-		stored.Status, stored.StatusLabel = "missing", "Missing"
-		if position, ok := index[stored.Key]; ok {
-			workloads[position].Pinned = true
-			stored = workloads[position]
-		}
-		pinned = append(pinned, stored)
-	}
-	for position := range pinned {
-		pinned[position].CanMoveUp = position > 0
-		pinned[position].CanMoveDown = position+1 < len(pinned)
-	}
-	return pinned, rows.Err()
 }
 
 func (manager *Manager) versions(ctx context.Context, key string) ([]Version, error) {

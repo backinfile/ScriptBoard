@@ -51,31 +51,9 @@
     <div><dt>{{t .Locale "kubernetes.namespaces"}}</dt><dd>{{.Namespaces}}</dd><small>{{t .Locale "kubernetes.observed"}}</small></div>
   </dl>
 
-  <section class="kubernetes-section" aria-labelledby="kubernetes-pinned-heading">
-    <header class="section-heading kubernetes-section-heading">
-      <div><p class="section-index">01 / {{t .Locale "kubernetes.focus"}}</p><h2 id="kubernetes-pinned-heading">{{t .Locale "kubernetes.pinned"}}</h2><p>{{t .Locale "kubernetes.pinned_description"}}</p></div>
-    </header>
-    <div class="kubernetes-pin-grid">
-      {{range .Pinned}}
-      <article class="kubernetes-pin" data-workload-key="{{.Key}}">
-        <button class="kubernetes-pin__open" type="button" data-kubernetes-detail-url="/monitor/kubernetes/workloads/{{.Namespace}}/{{.Kind}}/{{.Name}}/details" aria-label="{{t $.Locale "kubernetes.open_details"}} {{.Name}}">
-          <span data-lucide="{{if eq .Status "ready"}}circle-check{{else if eq .Status "progressing"}}loader-circle{{else}}triangle-alert{{end}}" aria-hidden="true"></span>
-          <span><small>{{.Namespace}} / {{.Kind}}</small><strong>{{.Name}}</strong><code>{{.Image}}</code></span>
-          <b>{{.Ready}}/{{.Desired}}</b>
-        </button>
-        {{if $.CanManage}}<details class="action-menu kubernetes-pin__menu"><summary aria-label="{{t $.Locale "applications.more_actions"}} {{.Name}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
-          <form method="post" action="/monitor/kubernetes/workloads/{{.Namespace}}/{{.Kind}}/{{.Name}}/move"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="direction" value="up"><button type="submit" {{if not .CanMoveUp}}disabled{{end}}><span data-lucide="arrow-up" aria-hidden="true"></span>{{t $.Locale "applications.move_up"}}</button></form>
-          <form method="post" action="/monitor/kubernetes/workloads/{{.Namespace}}/{{.Kind}}/{{.Name}}/move"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="direction" value="down"><button type="submit" {{if not .CanMoveDown}}disabled{{end}}><span data-lucide="arrow-down" aria-hidden="true"></span>{{t $.Locale "applications.move_down"}}</button></form>
-          <form method="post" action="/monitor/kubernetes/workloads/{{.Namespace}}/{{.Kind}}/{{.Name}}/unpin"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit"><span data-lucide="pin-off" aria-hidden="true"></span>{{t $.Locale "applications.unpin"}}</button></form>
-        </div></details>{{end}}
-      </article>
-      {{else}}<div class="kubernetes-empty-inline"><span data-lucide="pin" aria-hidden="true"></span><p>{{t .Locale "kubernetes.no_pins"}}</p></div>{{end}}
-    </div>
-  </section>
-
   <section class="kubernetes-section" aria-labelledby="kubernetes-workloads-heading">
     <header class="section-heading kubernetes-section-heading">
-      <div><p class="section-index">02 / {{t .Locale "kubernetes.inventory"}}</p><h2 id="kubernetes-workloads-heading">{{t .Locale "kubernetes.workloads"}}</h2><p>{{t .Locale "kubernetes.workloads_description"}}</p></div>
+      <div><p class="section-index">{{t .Locale "kubernetes.inventory"}}</p><h2 id="kubernetes-workloads-heading">{{t .Locale "kubernetes.workloads"}}</h2><p>{{t .Locale "kubernetes.workloads_description"}}</p></div>
     </header>
     <nav class="kubernetes-status-tabs" aria-label="{{t .Locale "kubernetes.status_filter"}}">
       <a href="/monitor/kubernetes" {{if eq .Query.Status "all"}}aria-current="page"{{end}}><span>{{t .Locale "kubernetes.all"}}</span><strong>{{.Total}}</strong></a>
@@ -94,12 +72,10 @@
       <table class="kubernetes-table">
         <caption class="sr-only">{{t .Locale "kubernetes.workloads"}}</caption>
         <thead><tr>
-          <th scope="col"><span class="sr-only">{{t .Locale "applications.pin"}}</span></th>
           {{range $field := (stringSlice "name" "namespace" "status" "ready" "cpu" "memory" "restarts")}}<th scope="col" {{if eq $.Query.Sort $field}}aria-sort="{{if eq $.Query.Direction "asc"}}ascending{{else}}descending{{end}}"{{end}}><a class="kubernetes-sort-link" href="{{kubernetesSortURL $.Query $field}}"><span>{{t $.Locale (printf "kubernetes.column.%s" $field)}}</span><span data-lucide="{{if eq $.Query.Sort $field}}{{if eq $.Query.Direction "asc"}}arrow-up{{else}}arrow-down{{end}}{{else}}arrow-up-down{{end}}" aria-hidden="true"></span></a></th>{{end}}
           <th scope="col"><span class="sr-only">{{t .Locale "applications.more_actions"}}</span></th>
         </tr></thead>
         <tbody>{{range .Workloads}}<tr>
-          <td>{{if $.CanManage}}<form method="post" action="/monitor/kubernetes/workloads/{{.Namespace}}/{{.Kind}}/{{.Name}}/{{if .Pinned}}unpin{{else}}pin{{end}}"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="icon-button{{if .Pinned}} is-selected{{end}}" type="submit" aria-label="{{if .Pinned}}{{t $.Locale "applications.unpin"}}{{else}}{{t $.Locale "applications.pin"}}{{end}} {{.Name}}"><span data-lucide="pin" aria-hidden="true"></span></button></form>{{end}}</td>
           <td><button type="button" class="kubernetes-workload-open" data-kubernetes-detail-url="/monitor/kubernetes/workloads/{{.Namespace}}/{{.Kind}}/{{.Name}}/details"><span><strong>{{.Name}}</strong><small>{{.Kind}} · {{.Image}}</small></span></button></td>
           <td><code>{{.Namespace}}</code></td>
           <td><span class="kubernetes-state" data-state="{{.Status}}"><i></i>{{if eq .Status "ready"}}{{t $.Locale "kubernetes.ready"}}{{else if eq .Status "progressing"}}{{t $.Locale "kubernetes.progressing"}}{{else}}{{t $.Locale "kubernetes.needs_attention"}}{{end}}</span></td>
@@ -114,13 +90,13 @@
             {{if and (eq $.Connection.Mode "limited") $.Connection.Capabilities.RunCron (eq .Kind "CronJob")}}<form method="post" action="/monitor/kubernetes/workloads/{{.Namespace}}/{{.Kind}}/{{.Name}}/operate" data-kubernetes-confirm="{{t $.Locale "kubernetes.confirm_run"}}"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="operation" value="run_cron"><button type="submit"><span data-lucide="play" aria-hidden="true"></span>{{t $.Locale "kubernetes.run_now"}}</button></form>{{end}}
             <button type="button" data-kubernetes-detail-url="/monitor/kubernetes/workloads/{{.Namespace}}/{{.Kind}}/{{.Name}}/details"><span data-lucide="chevron-right" aria-hidden="true"></span>{{t $.Locale "kubernetes.open_details"}}</button>
           </div></details>{{end}}</td>
-        </tr>{{else}}<tr><td colspan="9" class="kubernetes-table-empty">{{t .Locale "kubernetes.no_matches"}}</td></tr>{{end}}</tbody>
+        </tr>{{else}}<tr><td colspan="8" class="kubernetes-table-empty">{{t .Locale "kubernetes.no_matches"}}</td></tr>{{end}}</tbody>
       </table>
     </div>
   </section>
 
   <section class="kubernetes-section" aria-labelledby="kubernetes-nodes-heading">
-    <header class="section-heading kubernetes-section-heading"><div><p class="section-index">03 / {{t .Locale "kubernetes.foundation"}}</p><h2 id="kubernetes-nodes-heading">{{t .Locale "kubernetes.nodes"}}</h2></div></header>
+    <header class="section-heading kubernetes-section-heading"><div><p class="section-index">{{t .Locale "kubernetes.foundation"}}</p><h2 id="kubernetes-nodes-heading">{{t .Locale "kubernetes.nodes"}}</h2></div></header>
     <div class="kubernetes-node-list">{{range .Nodes}}<article><span data-lucide="hard-drive" aria-hidden="true"></span><div><strong>{{.Name}}</strong><small>{{.Role}} · {{.Version}}</small></div><span class="kubernetes-state" data-state="{{if .Ready}}ready{{else}}degraded{{end}}"><i></i>{{if .Ready}}{{t $.Locale "kubernetes.ready"}}{{else}}{{t $.Locale "kubernetes.not_ready"}}{{end}}</span><dl><div><dt>CPU</dt><dd>{{percent .CPUPercent}}</dd></div><div><dt>{{t $.Locale "kubernetes.column.memory"}}</dt><dd>{{percent .MemoryPercent}}</dd></div></dl></article>{{else}}<div class="kubernetes-empty-inline"><p>{{t .Locale "kubernetes.nodes_unavailable"}}</p></div>{{end}}</div>
   </section>
 

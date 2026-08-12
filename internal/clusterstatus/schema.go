@@ -13,16 +13,6 @@ var SchemaStatements = []string{
 		last_error TEXT NOT NULL DEFAULT '',
 		updated_at INTEGER NOT NULL
 	)`,
-	`CREATE TABLE IF NOT EXISTS kubernetes_pins (
-		workload_key TEXT PRIMARY KEY,
-		namespace TEXT NOT NULL,
-		kind TEXT NOT NULL,
-		name TEXT NOT NULL,
-		sort_order INTEGER NOT NULL,
-		created_at INTEGER NOT NULL,
-		updated_at INTEGER NOT NULL,
-		UNIQUE (namespace, kind, name)
-	)`,
 	`CREATE TABLE IF NOT EXISTS kubernetes_versions (
 		workload_key TEXT NOT NULL,
 		observed_at INTEGER NOT NULL,

@@ -49,7 +49,6 @@ type View struct {
 	ServerVersion                string
 	Nodes                        []Node
 	Workloads                    []Workload
-	Pinned                       []Workload
 	Total, Matched               int
 	Ready, Progressing, Degraded int
 	PodsReady, PodsTotal         int
@@ -72,7 +71,6 @@ type Workload struct {
 	CPUMillicores                                          int64
 	MemoryBytes                                            uint64
 	Nodes, Age, Revision                                   string
-	Pinned, CanMoveUp, CanMoveDown                         bool
 }
 
 type Pod struct {

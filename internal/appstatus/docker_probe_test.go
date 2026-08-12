@@ -1,6 +1,7 @@
 package appstatus
 
 import (
+	"net/netip"
 	"testing"
 	"time"
 
@@ -52,6 +53,33 @@ func TestDeriveDockerContainerNormalizesWholeHostCPUAndBlockRates(t *testing.T) 
 	}
 	if sample.readBytes != 300 || sample.writeBytes != 500 || !sample.collectedAt.Equal(collectedAt) {
 		t.Fatalf("sample = %#v", sample)
+	}
+}
+
+func TestDeriveDockerSummaryKeepsStoppedStateComposeAndPublishedPorts(t *testing.T) {
+	summary := containertypes.Summary{
+		ID: "stopped-id", Names: []string{"/worker"}, Image: "worker:v3",
+		State: "exited", Status: "Exited (0) 2 hours ago",
+		Labels: map[string]string{
+			"com.docker.compose.project": "platform",
+			"com.docker.compose.service": "worker",
+		},
+		Ports: []containertypes.PortSummary{
+			{IP: netip.MustParseAddr("127.0.0.1"), PrivatePort: 8080, PublicPort: 18080, Type: "tcp"},
+			{PrivatePort: 9090, Type: "tcp"},
+		},
+		Health: &containertypes.HealthSummary{Status: containertypes.Unhealthy},
+	}
+
+	container := deriveDockerSummary(summary)
+	if container.State != "exited" || container.Status != summary.Status || container.Health != "unhealthy" {
+		t.Fatalf("runtime state = %#v", container)
+	}
+	if container.ComposeProject != "platform" || container.ComposeService != "worker" {
+		t.Fatalf("compose identity = %#v", container)
+	}
+	if len(container.PublishedPorts) != 1 || container.PublishedPorts[0] != "127.0.0.1:18080 -> 8080/tcp" {
+		t.Fatalf("published ports = %#v", container.PublishedPorts)
 	}
 }
 

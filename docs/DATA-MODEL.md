@@ -25,7 +25,7 @@
 | sort_order | 无上限 Pin 列表中的稳定顺序 |
 | created_at / updated_at | UTC |
 
-Pin 是展示状态，不赋予应用控制能力。当前快照存在时由实时事实覆盖保存的名称与技术信息；应用停止或 Docker 数据源不可用时仍保留 Pin 身份。
+Pin 是展示状态，不赋予应用控制能力。Docker Pin 的 `identity` 固定使用规范化容器名称，不使用镜像标签或容器 ID；因此重建容器和镜像版本变化仍属于同一条观察记录。当前快照存在时由实时事实覆盖保存的名称与技术信息；应用停止或 Docker 数据源不可用时仍保留 Pin 身份。
 
 ## 应用分钟指标（Application Metric Minute）
 
@@ -39,6 +39,16 @@ Pin 是展示状态，不赋予应用控制能力。当前快照存在时由实�
 | write_average / write_maximum | 写入速率平均值与峰值 |
 
 该表只服务已 Pin 应用的 24 小时诊断历史，不是审计记录或长期监控存储。
+
+## 容器版本记录（Application Version）
+
+| 字段 | 约束与语义 |
+| --- | --- |
+| application_id / observed_at | 按规范化容器名称派生的稳定应用 ID 与观测时间，组合主键 |
+| image | 当前镜像引用 |
+| container_id | 当前 Docker 容器 ID |
+
+只为已 Pin 容器记录镜像或容器 ID 变化，每个容器最多保留 100 条；版本变化不会改变索引身份。
 
 ## 1. 核心原则
 
@@ -582,13 +592,12 @@ schema 36 增加单例 `instance_settings`，保存当前实例左上角导航�
 
 ## 15. Kubernetes 单集群监控
 
-schema 37 增加以下实例级表。集群连接是单例；所有工作负载状态以 `namespace/kind/name` 为稳定键，不使用短生命周期 Pod 或容器 ID。
+schema 38 增加以下实例级表。集群连接是单例；所有工作负载状态以 `namespace/kind/name` 为稳定键，不使用短生命周期 Pod 或容器 ID。
 
 | 表 | 关键字段与边界 |
 | --- | --- |
 | `kubernetes_connection` | 显示名称、kubeconfig 主机路径、context、操作模式、API Server/CA 指纹、能力检测结果和最近错误；不保存 token、客户端证书或私钥正文 |
-| `kubernetes_pins` | 工作负载稳定键、namespace、kind、name 与人工顺序；同一实例只有当前集群的一套 Pin |
-| `kubernetes_versions` | 工作负载稳定键、观测时间、镜像集合和 revision；只为 Pin 工作负载记录变化，每个工作负载最多保留 100 个版本 |
-| `kubernetes_metric_minutes` | 工作负载稳定键与分钟桶中的 CPU、内存、就绪/期望副本和重启数；只为 Pin 工作负载保留有界 24 小时历史 |
+| `kubernetes_versions` | 工作负载稳定键、观测时间、镜像集合和 revision；自动记录所有工作负载变化，每个工作负载最多保留 100 个版本 |
+| `kubernetes_metric_minutes` | 工作负载稳定键与分钟桶中的 CPU、内存、就绪/期望副本和重启数；自动为所有工作负载保留有界 24 小时历史 |
 
-保存连接时若 API Server/CA 指纹改变，`kubernetes_pins`、`kubernetes_versions` 与 `kubernetes_metric_minutes` 在同一事务中清空，避免不同集群共享身份和时间线。仅修改同一集群的凭据、context 名称或显示名称不会拆分历史。
+保存连接时若 API Server/CA 指纹改变，`kubernetes_versions` 与 `kubernetes_metric_minutes` 在同一事务中清空，避免不同集群共享身份和时间线。仅修改同一集群的凭据、context 名称或显示名称不会拆分历史。

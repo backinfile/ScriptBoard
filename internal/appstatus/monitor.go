@@ -35,6 +35,9 @@ type RawProcess struct {
 
 type RawContainer struct {
 	ID, Name, Image                         string
+	State, Status, Health                   string
+	ComposeProject, ComposeService          string
+	PublishedPorts                          []string
 	CPUPercent                              float64
 	MemoryBytes, MemoryLimitBytes           uint64
 	ReadBytesPerSecond, WriteBytesPerSecond float64
@@ -161,6 +164,9 @@ func (m *Monitor) Refresh(ctx context.Context) error {
 	m.apps = apps
 	m.mu.Unlock()
 	if err := m.persistMetricSamples(ctx, raw.CollectedAt, apps); err != nil {
+		return err
+	}
+	if err := m.persistContainerVersions(ctx, raw.CollectedAt, apps, raw.Containers); err != nil {
 		return err
 	}
 	now := m.options.Now().UTC()
@@ -507,7 +513,8 @@ func deriveApplications(raw RawSnapshot, previous map[processIdentity]RawProcess
 		}
 		applications = append(applications, Application{
 			ID: stableID(KindDocker, identity), Kind: KindDocker, Name: container.Name,
-			Identity: identity, Technical: container.Image, Pinnable: true, Running: true, RateAvailable: true,
+			Identity: identity, Technical: container.Image, Pinnable: true,
+			Running: containerStateRunning(container.State), RateAvailable: containerStateRunning(container.State),
 			CPUPercent: min(100, max(0, container.CPUPercent)), MemoryBytes: container.MemoryBytes,
 			MemoryPercent: memoryPercent, MemoryLimitBytes: container.MemoryLimitBytes,
 			ReadBytesPerSecond:  container.ReadBytesPerSecond,

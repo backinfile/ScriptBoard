@@ -125,7 +125,6 @@ func TestReplacingConnectionClearsClusterBoundHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, statement := range []string{
-		`INSERT INTO kubernetes_pins (workload_key, namespace, kind, name, sort_order, created_at, updated_at) VALUES ('production/Deployment/api','production','Deployment','api',1,1,1)`,
 		`INSERT INTO kubernetes_versions (workload_key, observed_at, image, revision) VALUES ('production/Deployment/api',1,'api:v1','rev 1')`,
 		`INSERT INTO kubernetes_metric_minutes (workload_key, bucket_at, cpu_millicores, memory_bytes, ready, desired, restarts) VALUES ('production/Deployment/api',1,10,20,1,1,0)`,
 	} {
@@ -137,7 +136,7 @@ func TestReplacingConnectionClearsClusterBoundHistory(t *testing.T) {
 	if _, err := manager.SaveConnection(ctx, Connection{Name: "second", KubeconfigPath: "/second", Mode: ModeObserve}); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"kubernetes_pins", "kubernetes_versions", "kubernetes_metric_minutes"} {
+	for _, table := range []string{"kubernetes_versions", "kubernetes_metric_minutes"} {
 		var count int
 		if err := manager.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&count); err != nil || count != 0 {
 			t.Fatalf("%s count=%d error=%v", table, count, err)
@@ -145,7 +144,7 @@ func TestReplacingConnectionClearsClusterBoundHistory(t *testing.T) {
 	}
 }
 
-func TestPinnedWorkloadKeepsVersionHistoryAcrossRollouts(t *testing.T) {
+func TestWorkloadKeepsVersionHistoryAcrossRollouts(t *testing.T) {
 	now := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
 	client := &fakeClient{fingerprint: "sha256:cluster", capabilities: Capabilities{Workloads: true}, snapshot: Snapshot{
 		CollectedAt: now, Workloads: []Workload{{Key: "production/Deployment/api", Namespace: "production", Kind: "Deployment", Name: "api", Image: "api:v1", Revision: "rev 1", Status: "ready", Ready: 2, Desired: 2}},
@@ -158,15 +157,12 @@ func TestPinnedWorkloadKeepsVersionHistoryAcrossRollouts(t *testing.T) {
 	if err := manager.Refresh(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.Pin(ctx, "production/Deployment/api"); err != nil {
-		t.Fatal(err)
-	}
 	view, err := manager.View(ctx, Query{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(view.Workloads) != 1 || !view.Workloads[0].Pinned {
-		t.Fatalf("current workload pin state = %#v", view.Workloads)
+	if len(view.Workloads) != 1 || view.Workloads[0].Image != "api:v1" {
+		t.Fatalf("current workload state = %#v", view.Workloads)
 	}
 	client.snapshot.Workloads[0].Image = "api:v2"
 	client.snapshot.Workloads[0].Revision = "rev 2"
@@ -179,8 +175,8 @@ func TestPinnedWorkloadKeepsVersionHistoryAcrossRollouts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(view.Pinned) != 1 || view.Pinned[0].Image != "api:v2" || !view.Pinned[0].Pinned {
-		t.Fatalf("pinned workload: %#v", view.Pinned)
+	if len(view.Workloads) != 1 || view.Workloads[0].Image != "api:v2" {
+		t.Fatalf("current workload: %#v", view.Workloads)
 	}
 	detail, err := manager.Detail(ctx, "production/Deployment/api")
 	if err != nil {

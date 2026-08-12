@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -62,7 +65,7 @@ func (c *dockerCollector) Snapshot(ctx context.Context, logicalCores int, now ti
 	}
 
 	listContext, cancelList := context.WithTimeout(ctx, dockerListTimeout)
-	list, err := c.client.ContainerList(listContext, client.ContainerListOptions{})
+	list, err := c.client.ContainerList(listContext, client.ContainerListOptions{All: true})
 	cancelList()
 	if err != nil {
 		c.markUnavailable(now)
@@ -73,6 +76,18 @@ func (c *dockerCollector) Snapshot(ctx context.Context, logicalCores int, now ti
 
 	containers := make([]RawContainer, len(list.Items))
 	ids := make([]string, len(list.Items))
+	running := make([]int, 0, len(list.Items))
+	for index, summary := range list.Items {
+		containers[index] = deriveDockerSummary(summary)
+		ids[index] = summary.ID
+		if containerStateRunning(string(summary.State)) {
+			running = append(running, index)
+		}
+	}
+	if len(running) == 0 {
+		c.previous = make(map[string]dockerBlockSample)
+		return containers, ids, true, nil
+	}
 	type result struct {
 		index     int
 		container RawContainer
@@ -84,7 +99,7 @@ func (c *dockerCollector) Snapshot(ctx context.Context, logicalCores int, now ti
 	statsContext, cancelStats := context.WithTimeout(ctx, dockerStatsTimeout)
 	defer cancelStats()
 
-	workers := min(dockerWorkers, len(list.Items))
+	workers := min(dockerWorkers, len(running))
 	var group sync.WaitGroup
 	group.Add(workers)
 	for range workers {
@@ -98,7 +113,7 @@ func (c *dockerCollector) Snapshot(ctx context.Context, logicalCores int, now ti
 		}()
 	}
 	go func() {
-		for index := range list.Items {
+		for _, index := range running {
 			work <- index
 		}
 		close(work)
@@ -110,10 +125,8 @@ func (c *dockerCollector) Snapshot(ctx context.Context, logicalCores int, now ti
 	failures := 0
 	for item := range results {
 		summary := list.Items[item.index]
-		ids[item.index] = summary.ID
 		if item.err != nil {
 			failures++
-			containers[item.index] = RawContainer{ID: summary.ID, Name: containerName(summary), Image: summary.Image}
 			continue
 		}
 		containers[item.index] = item.container
@@ -162,12 +175,77 @@ func deriveDockerContainer(summary containertypes.Summary, stats containertypes.
 	if processCount == 0 {
 		processCount = int(stats.NumProcs)
 	}
+	container := deriveDockerSummary(summary)
+	container.CPUPercent = dockerCPUPercent(stats, logicalCores)
+	container.MemoryBytes = memoryBytes
+	container.MemoryLimitBytes = stats.MemoryStats.Limit
+	container.ReadBytesPerSecond = readRate
+	container.WriteBytesPerSecond = writeRate
+	container.ProcessCount = processCount
+	return container, sample
+}
+
+func deriveDockerSummary(summary containertypes.Summary) RawContainer {
+	health := ""
+	if summary.Health != nil {
+		health = string(summary.Health.Status)
+	}
 	return RawContainer{
 		ID: summary.ID, Name: containerName(summary), Image: summary.Image,
-		CPUPercent: dockerCPUPercent(stats, logicalCores), MemoryBytes: memoryBytes,
-		MemoryLimitBytes: stats.MemoryStats.Limit, ReadBytesPerSecond: readRate,
-		WriteBytesPerSecond: writeRate, ProcessCount: processCount,
-	}, sample
+		State: string(summary.State), Status: summary.Status, Health: health,
+		ComposeProject: summary.Labels["com.docker.compose.project"],
+		ComposeService: summary.Labels["com.docker.compose.service"],
+		PublishedPorts: dockerPublishedPorts(summary.Ports),
+	}
+}
+
+func dockerPublishedPorts(ports []containertypes.PortSummary) []string {
+	result := make([]string, 0, len(ports))
+	for _, port := range ports {
+		containerEndpoint := strconv.Itoa(int(port.PrivatePort)) + "/" + port.Type
+		if port.PublicPort == 0 {
+			continue
+		}
+		host := port.IP
+		if !host.IsValid() || host == netip.IPv4Unspecified() {
+			host = netip.MustParseAddr("0.0.0.0")
+		}
+		result = append(result, netip.AddrPortFrom(host, port.PublicPort).String()+" -> "+containerEndpoint)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func (c *dockerCollector) OperateContainer(ctx context.Context, name string, action ContainerAction) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	operationContext, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	list, err := c.client.ContainerList(operationContext, client.ContainerListOptions{All: true})
+	if err != nil {
+		return err
+	}
+	containerID := ""
+	for _, summary := range list.Items {
+		if normalizeContainerName(containerName(summary)) == normalizeContainerName(name) {
+			containerID = summary.ID
+			break
+		}
+	}
+	if containerID == "" {
+		return errors.New("container is no longer present in Docker")
+	}
+	switch action {
+	case ContainerStart:
+		_, err = c.client.ContainerStart(operationContext, containerID, client.ContainerStartOptions{})
+	case ContainerStop:
+		_, err = c.client.ContainerStop(operationContext, containerID, client.ContainerStopOptions{})
+	case ContainerRestart:
+		_, err = c.client.ContainerRestart(operationContext, containerID, client.ContainerRestartOptions{})
+	default:
+		return errors.New("unsupported container action")
+	}
+	return err
 }
 
 func dockerMemoryUsage(memory containertypes.MemoryStats) uint64 {

@@ -87,4 +87,9 @@ func TestKubernetesPageConfiguresTheOnlyClusterAndListsWorkloads(t *testing.T) {
 			t.Fatalf("configured page missing %q: %s", expected, page)
 		}
 	}
+	for _, forbidden := range [][]byte{[]byte("Pinned workloads"), []byte("/monitor/kubernetes/workloads/production/Deployment/api/pin")} {
+		if bytes.Contains(page, forbidden) {
+			t.Fatalf("configured page still contains Kubernetes Pin UI %q: %s", forbidden, page)
+		}
+	}
 }

@@ -203,7 +203,7 @@ Back up these locations regularly:
 - `state_root`, which contains the database, run logs, sessions, audit records, and AI data;
 - the service `config.yaml` file, if you created a custom configuration.
 
-Back up before upgrading from an older version. The current release uses database schema 37 and can migrate schemas 20–36 automatically; older databases and legacy configuration files are not migrated automatically.
+Back up before upgrading from an older version. The current release uses database schema 38 and can migrate schemas 20–37 automatically; older databases and legacy configuration files are not migrated automatically.
 
 ## Troubleshooting
 
