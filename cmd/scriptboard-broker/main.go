@@ -28,6 +28,7 @@ import (
 	"scriptboard/internal/secretredaction"
 	"scriptboard/internal/secretstore"
 	"scriptboard/internal/shutdownsignal"
+	"scriptboard/internal/statebackup"
 )
 
 func main() {
@@ -133,6 +134,13 @@ func runContext(ctx context.Context, arguments []string) error {
 	if err := brokerFiles.Protect(mysqlExecutionManager.BackupRoot()); err != nil {
 		return fmt.Errorf("protect MySQL backup root from Host Files: %w", err)
 	}
+	stateRestoreStagingRoot, err := statebackup.StagingRoot(absolute)
+	if err != nil {
+		return fmt.Errorf("resolve protected state restore staging root: %w", err)
+	}
+	if err := brokerFiles.Protect(stateRestoreStagingRoot); err != nil {
+		return fmt.Errorf("protect state restore staging root from Host Files: %w", err)
+	}
 	hostFilesStagingRoot := filepath.Join(absolute, "inbox", "host-files-broker")
 	if err := os.MkdirAll(hostFilesStagingRoot, 0o750); err != nil {
 		return fmt.Errorf("prepare Broker Host Files exchange root: %w", err)
@@ -183,6 +191,7 @@ func runContext(ctx context.Context, arguments []string) error {
 		Checkpoint: brokerCheckpointService{store: checkpoint, audit: audit}, Now: time.Now,
 		MFA: mfaStore, Passkeys: passkeyStore, RemoteWebsites: remoteWebsites, Providers: providers,
 		MySQL: mysqlService, HostFiles: hostFilesService,
+		StateBackups: &brokerStateBackupService{stateRoot: absolute, database: database, checkpoint: checkpoint, audit: audit},
 	})
 	if err != nil {
 		return err

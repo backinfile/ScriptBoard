@@ -37,6 +37,7 @@ var (
 	mfaTemplate                   = mustWebTemplate("mfa")
 	mysqlDatabasesTemplate        = mustWebTemplate("mysql-databases")
 	notificationsTemplate         = mustWebTemplate("notifications")
+	stateBackupsTemplate          = mustWebTemplate("state-backups")
 	liveLogTemplate               = mustWebTemplate("live-log")
 	overlapTemplate               = mustWebTemplate("overlap")
 	overviewTemplate              = mustWebTemplate("overview")

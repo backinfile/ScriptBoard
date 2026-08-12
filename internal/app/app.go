@@ -66,6 +66,7 @@ import (
 	"scriptboard/internal/securitybaseline"
 	"scriptboard/internal/securityevents"
 	"scriptboard/internal/servicelogs"
+	"scriptboard/internal/statebackup"
 	updatepkg "scriptboard/internal/update"
 	"scriptboard/internal/uploadinbox"
 	"scriptboard/internal/websitemonitor"
@@ -359,6 +360,7 @@ type Config struct {
 	ProviderCredentials       *privilegebroker.ProviderCredentials
 	MySQLBackend              mysqlmanager.Backend
 	HostFilesBackend          *privilegebroker.HostFilesBackend
+	StateBackups              StateBackupService
 	SecurityEventEndpoint     string
 	SecurityEventToken        string
 	SecurityEventTokenFile    string
@@ -393,6 +395,14 @@ type RemoteWebsiteService interface {
 	Store(context.Context, string, string, string) error
 	Fetch(context.Context, string, string) (json.RawMessage, error)
 	Delete(context.Context, string) error
+}
+
+type StateBackupService interface {
+	Create(context.Context, string, []byte) (statebackup.Artifact, error)
+	Inspect(context.Context, string, []byte) (statebackup.Manifest, error)
+	Stage(context.Context, string, []byte, string) (statebackup.Stage, error)
+	List(context.Context) ([]statebackup.Stage, error)
+	Discard(context.Context, string) error
 }
 
 type contextualMFAStore interface {
@@ -481,6 +491,7 @@ type App struct {
 	customDashboards     *customdashboard.Manager
 	externalTriggers     *externaltrigger.Manager
 	remoteWebsites       RemoteWebsiteService
+	stateBackups         StateBackupService
 	externalLimit        *externaltrigger.Limiter
 	mysql                *mysqlmanager.Manager
 	mfa                  MFAStore
@@ -617,7 +628,7 @@ func Open(config Config) (*App, error) {
 		}
 	}
 	application := &App{
-		db: db, stateRoot: stateRoot, files: files, hostFilesBackend: config.HostFilesBackend, uploadInbox: uploadInboxStore, instanceLock: instanceLock, mfa: mfaStore,
+		db: db, stateRoot: stateRoot, files: files, hostFilesBackend: config.HostFilesBackend, stateBackups: config.StateBackups, uploadInbox: uploadInboxStore, instanceLock: instanceLock, mfa: mfaStore,
 		passkeys: passkeyStore, passkeyCeremonies: newPasskeyCeremonyStore(),
 		execUploadExts: buildExecutableUploadExtensions(config.ExecutorChains),
 		loginSlots:     make(chan struct{}, 2), loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies,
@@ -2589,6 +2600,11 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /settings/service-logs", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.serviceLogsPage)))
 	mux.Handle("GET /settings/service-logs/export", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.exportServiceLogs)))
 	mux.Handle("GET /settings/notifications", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.notificationsPage)))
+	mux.Handle("GET /settings/state-backups", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.stateBackupsPage)))
+	mux.Handle("POST /settings/state-backups/create", a.requireAAL2StepUp(permissionManageSystem, http.HandlerFunc(a.createStateBackup)))
+	mux.Handle("POST /settings/state-backups/inspect", a.requireAAL2StepUp(permissionManageSystem, http.HandlerFunc(a.inspectStateBackup)))
+	mux.Handle("POST /settings/state-backups/stage", a.requireAAL2StepUp(permissionManageSystem, http.HandlerFunc(a.stageStateBackup)))
+	mux.Handle("POST /settings/state-backups/stages/{id}/discard", a.requireAAL2StepUp(permissionManageSystem, http.HandlerFunc(a.discardStateBackupStage)))
 	mux.Handle("GET /settings/updates/status", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.updateStatus)))
 	mux.Handle("POST /settings/updates/check", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.checkUpdate)))
 	mux.Handle("POST /settings/updates/prepare", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.prepareUpdate)))

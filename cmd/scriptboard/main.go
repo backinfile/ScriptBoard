@@ -462,6 +462,7 @@ func serveContext(runContext context.Context, arguments []string) error {
 	var providerCredentials *privilegebroker.ProviderCredentials
 	var mysqlBackend mysqlmanager.Backend
 	var hostFilesBackend *privilegebroker.HostFilesBackend
+	var stateBackups app.StateBackupService
 	privilegedBrokerEndpoint := ""
 	if installRoot != "" {
 		if err := platformservice.ValidateWebRuntimeIdentity(); err != nil {
@@ -489,6 +490,7 @@ func serveContext(runContext context.Context, arguments []string) error {
 		providerCredentials = privilegebroker.NewProviderCredentials(brokerClient)
 		mysqlBackend = privilegebroker.NewMySQLBackend(brokerClient, mysqlmanager.ToolSettings{DumpExecutable: "mysqldump", ClientExecutable: "mysql"})
 		hostFilesBackend = privilegebroker.NewHostFilesBackend(brokerClient, filepath.Join(loaded.StateRoot, "inbox", "host-files-broker"))
+		stateBackups = privilegebroker.NewStateBackups(brokerClient)
 	}
 	updateShutdown := make(chan struct{}, 1)
 	var requestRestart func() error
@@ -520,6 +522,7 @@ func serveContext(runContext context.Context, arguments []string) error {
 		ProviderCredentials:      providerCredentials,
 		MySQLBackend:             mysqlBackend,
 		HostFilesBackend:         hostFilesBackend,
+		StateBackups:             stateBackups,
 	})
 	if err != nil {
 		return err

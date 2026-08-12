@@ -215,6 +215,7 @@ func main() {
 		applicationConfig.ProviderCredentials = privilegebroker.NewProviderCredentials(brokerClient)
 		applicationConfig.MySQLBackend = privilegebroker.NewMySQLBackend(brokerClient, mysqlmanager.ToolSettings{DumpExecutable: "mysqldump", ClientExecutable: "mysql"})
 		applicationConfig.HostFilesBackend = privilegebroker.NewHostFilesBackend(brokerClient, filepath.Join(stateRoot, "inbox", "host-files-broker"))
+		applicationConfig.StateBackups = privilegebroker.NewStateBackups(brokerClient)
 		applicationConfig.AssistantProcessLauncher = runtimehost.NewClientLauncher(runtimehost.Dial(assistantEndpoint))
 		applicationConfig.RunnerProcessLauncher = runnerhost.NewClientLauncher(runnerhost.Dial(runnerEndpoint))
 	}

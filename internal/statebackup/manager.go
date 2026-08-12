@@ -123,6 +123,10 @@ func New(options Options) (*Manager, error) {
 	if err != nil || !info.IsDir() {
 		return nil, fmt.Errorf("inspect State Root: %w", err)
 	}
+	absolute, err = filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return nil, fmt.Errorf("resolve State Root links: %w", err)
+	}
 	now := options.Now
 	if now == nil {
 		now = time.Now
@@ -328,6 +332,10 @@ func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error)
 	if info, err := os.Stat(stateRoot); err != nil || !info.IsDir() {
 		return RestoreResult{}, errors.New("restore State Root must be an existing directory")
 	}
+	stateRoot, err = filepath.EvalSymlinks(stateRoot)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("resolve restore State Root links: %w", err)
+	}
 	archivePath := strings.TrimSpace(request.ArchivePath)
 	if archivePath == "" || !filepath.IsAbs(archivePath) {
 		return RestoreResult{}, errors.New("state restore archive path must be absolute")
@@ -336,7 +344,11 @@ func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("resolve state restore archive: %w", err)
 	}
-	if withinPath(stateRoot, archivePath) {
+	archivePath, err = canonicalRegularFile(archivePath)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	if withinPath(stateRoot, archivePath) || withinPath(stageRootFor(stateRoot), archivePath) {
 		return RestoreResult{}, errors.New("state restore archive must be outside State Root")
 	}
 	manifest, err := Inspect(ctx, archivePath, request.Passphrase)
@@ -626,11 +638,16 @@ func (manager *Manager) validateDestination(raw string) (string, error) {
 		return "", errors.New("state backup destination must be absolute")
 	}
 	destination = filepath.Clean(destination)
-	if withinPath(manager.stateRoot, destination) {
-		return "", errors.New("state backup destination must be outside State Root")
+	parent, err := filepath.EvalSymlinks(filepath.Dir(destination))
+	if err != nil {
+		return "", errors.New("state backup destination parent must be an existing directory")
 	}
-	parent, err := os.Stat(filepath.Dir(destination))
-	if err != nil || !parent.IsDir() {
+	destination = filepath.Join(parent, filepath.Base(destination))
+	if withinPath(manager.stateRoot, destination) || withinPath(stageRootFor(manager.stateRoot), destination) {
+		return "", errors.New("state backup destination must be outside State Root and restore staging")
+	}
+	parentInfo, err := os.Stat(parent)
+	if err != nil || !parentInfo.IsDir() {
 		return "", errors.New("state backup destination parent must be an existing directory")
 	}
 	return destination, nil
@@ -814,6 +831,18 @@ func randomID(random io.Reader) (string, error) {
 func withinPath(root, candidate string) bool {
 	relative, err := filepath.Rel(root, candidate)
 	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
+}
+
+func canonicalRegularFile(raw string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(filepath.Clean(raw))
+	if err != nil {
+		return "", errors.New("state backup archive must be an existing regular file")
+	}
+	info, err := os.Lstat(resolved)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return "", errors.New("state backup archive must be an existing regular file")
+	}
+	return resolved, nil
 }
 
 type encryptionHeader struct {

@@ -89,6 +89,41 @@ func (a *App) requireStepUp(required permission, next http.Handler) http.Handler
 	return declaredRouteHandler{auth: routeAuthSession, permission: required, stepUp: true, handler: protected}
 }
 
+func (a *App) requireAAL2StepUp(required permission, next http.Handler) http.Handler {
+	protected := a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		current, ok := request.Context().Value(sessionContextKey).(session)
+		if !ok || !roleAllows(current.role, required) {
+			if ok {
+				a.recordAuditForRequest(request, "authorization_denied", request.Method+" "+request.URL.Path, "blocked")
+			}
+			http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
+			return
+		}
+		if current.authenticationAssurance < 2 || !recentAuthenticationValid(current.reauthenticatedAt, time.Now().UTC()) {
+			returnTo := stepUpReturnTarget(request)
+			if current.authenticationAssurance < 2 {
+				status, statusErr := a.mfa.Status(current.userID)
+				passkeyUser, passkeyErr := a.passkeys.User(current.userID, current.username)
+				if statusErr != nil || passkeyErr != nil {
+					http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusServiceUnavailable)
+					return
+				}
+				if !status.Enabled && len(passkeyUser.Credentials) == 0 {
+					response.Header().Set("Cache-Control", "no-store")
+					http.Redirect(response, request, "/settings/account/mfa", http.StatusSeeOther)
+					return
+				}
+			}
+			location := "/auth/step-up?" + url.Values{"return_to": {returnTo}}.Encode()
+			response.Header().Set("Cache-Control", "no-store")
+			http.Redirect(response, request, location, http.StatusSeeOther)
+			return
+		}
+		next.ServeHTTP(response, request)
+	}))
+	return declaredRouteHandler{auth: routeAuthSession, permission: required, stepUp: true, handler: protected}
+}
+
 func recentAuthenticationValid(timestamp int64, now time.Time) bool {
 	if timestamp <= 0 {
 		return false
@@ -110,6 +145,7 @@ func stepUpReturnTarget(request *http.Request) string {
 		{"/config/external-interfaces", "/config/external-interfaces"},
 		{"/monitor/security", "/monitor/security"},
 		{"/settings/updates", "/settings/updates"},
+		{"/settings/state-backups", "/settings/state-backups"},
 		{"/settings/ai", "/settings/ai"},
 		{"/resources/databases", "/resources/databases"},
 		{"/resources/inbox", "/resources/inbox"},

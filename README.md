@@ -238,6 +238,8 @@ scriptboard backup inspect --archive ABSOLUTE_BACKUP_PATH --passphrase-file ABSO
 scriptboard backup restore --archive ABSOLUTE_BACKUP_PATH --passphrase-file ABSOLUTE_PASSPHRASE_FILE --confirm-backup-id BACKUP_ID --config CONFIG_PATH
 ```
 
+受管安装还可在“系统设置 → 私有状态备份”中创建、验证和暂存恢复。页面只接受服务器本地绝对路径；所有写操作均要求近期 AAL2，并由同版本 Privileged Broker 执行。暂存恢复会验证加密包、SQLite、schema 和签名审计 checkpoint，撤销备份内 Web Session，并绑定暂存后文件摘要；它不会替换在线数据库。最终提交仍须停止 Web、Broker、Runner 与 AI Host 后使用离线恢复流程。
+
 该包只包含一致性 SQLite snapshot、Broker 密文和固定私有证据，不包含外部主密钥、审计签名
 私钥、配置、TLS 材料、诊断日志、上传 inbox 或 MySQL 备份。当前恢复流程要求同一 State Root
 路径的外部密钥和当前签名 checkpoint 仍可验证；成功后撤销全部恢复出的 Web Session，保留
