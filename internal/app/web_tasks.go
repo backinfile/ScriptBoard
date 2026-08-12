@@ -26,6 +26,7 @@ type taskPageData struct {
 	Expression         string
 	TimeoutSeconds     int
 	IsPassword         bool
+	IsDirectory        bool
 	DisallowOverlap    bool
 	GroupID            string
 	Groups             []quickRunGroup
@@ -107,15 +108,24 @@ func (a *App) moveFileTask(response http.ResponseWriter, request *http.Request) 
 		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
 		return
 	}
+	info, err := a.files.Info(path)
+	if err != nil {
+		writeHostFileError(response, "无法打开移动任务", err)
+		return
+	}
 	parent, ok := hostPathParent(path)
 	if !ok {
 		http.Error(response, "filesystem roots cannot be moved", http.StatusBadRequest)
 		return
 	}
+	titleKey, descriptionKey := "task.move_file.title", "task.move_file.description"
+	if info.IsDir() {
+		titleKey, descriptionKey = "task.move_directory.title", "task.move_directory.description"
+	}
 	a.renderTaskPage(response, request, taskPageData{
-		Kind: "move-file", Title: webText(resolveWebLocale(request), "task.move_file.title"),
-		Description: webText(resolveWebLocale(request), "task.move_file.description"),
-		BackURL:     filesURL(parent), Action: "/resources/files/move", Path: path,
+		Kind: "move-file", Title: webText(resolveWebLocale(request), titleKey),
+		Description: webText(resolveWebLocale(request), descriptionKey), IsDirectory: info.IsDir(),
+		BackURL: filesURL(parent), Action: "/resources/files/move", Path: path,
 		Name: hostfiles.Base(path), WorkingDirectory: parent,
 	})
 }

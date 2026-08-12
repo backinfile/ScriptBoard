@@ -1041,6 +1041,7 @@
         try {
           const endpoint = new URL(root.dataset.endpoint, location.href);
           endpoint.searchParams.set("path", node.path);
+          if (root.dataset.excludePath) endpoint.searchParams.set("exclude", root.dataset.excludePath);
           const response = await fetch(endpoint, { headers: { Accept: "application/json" }, cache: "no-store", signal: controller.signal });
           if (!response.ok) throw new Error(await response.text());
           const payload = await response.json();

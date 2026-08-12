@@ -82,12 +82,12 @@
     <form method="post" action="{{.Action}}" data-async>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="source" value="{{.Path}}"><input type="hidden" name="conflict_action" value="">
       <div class="field-readonly"><span>{{t .Locale "common.path"}}</span><code>{{.Path}}</code></div>
-      <div class="directory-tree-picker" data-directory-picker data-endpoint="/resources/directories" data-root-label="{{t .Locale "task.directory_picker.root"}}" data-loading-label="{{t .Locale "task.directory_picker.loading"}}" data-empty-label="{{t .Locale "task.directory_picker.empty"}}" data-autofocus>
+      <div class="directory-tree-picker" data-directory-picker data-endpoint="/resources/directories"{{if .IsDirectory}} data-exclude-path="{{.Path}}"{{end}} data-root-label="{{t .Locale "task.directory_picker.root"}}" data-loading-label="{{t .Locale "task.directory_picker.loading"}}" data-empty-label="{{t .Locale "task.directory_picker.empty"}}" data-autofocus>
         <input type="hidden" name="working_directory" value="{{.WorkingDirectory}}" required>
         <div class="directory-tree-picker__heading"><span>{{t .Locale "task.move_file.destination"}}</span><code data-directory-selection>{{.WorkingDirectory}}</code></div>
         <div class="directory-tree-picker__tree" data-directory-tree data-directory-options aria-label="{{t .Locale "task.move_file.destination"}}"></div>
       </div>
-      <label>{{t .Locale "task.move_file.name"}} <input name="name" value="{{.Name}}" autocomplete="off" spellcheck="false" required></label>
+      <label>{{if .IsDirectory}}{{t .Locale "task.move_directory.name"}}{{else}}{{t .Locale "task.move_file.name"}}{{end}} <input name="name" value="{{.Name}}" autocomplete="off" spellcheck="false" required></label>
       <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="folder-input" aria-hidden="true"></span>{{t .Locale "files.move"}}</button></footer>
     </form>
     {{else if eq .Kind "one-time-run"}}

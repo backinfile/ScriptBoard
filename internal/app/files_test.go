@@ -15,6 +15,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"scriptboard/internal/hostfiles"
 )
 
 func TestFilesPageUsesAbsoluteHostPathsAndHasNoFileSettings(t *testing.T) {
@@ -147,6 +149,106 @@ func TestFilesPageOffersAnAbsolutePathMoveTask(t *testing.T) {
 	}
 	if _, err := os.Stat(source); !os.IsNotExist(err) {
 		t.Fatalf("source still exists after move: %v", err)
+	}
+}
+
+func TestFilesPageMovesDirectoryAndExcludesItsTreeFromDestinationPicker(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "host")
+	source := filepath.Join(hostRoot, "source")
+	nested := filepath.Join(source, "nested")
+	destination := filepath.Join(hostRoot, "archive")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(destination, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "report.txt"), []byte("move directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
+
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	listing, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	moveURL := hostFileHref("/resources/files/move", source)
+	if !bytes.Contains(listing, []byte(`href="`+moveURL+`"`)) {
+		t.Fatalf("files page does not offer directory move task %q: %s", moveURL, listing)
+	}
+
+	response, err = client.Get(serverURL + moveURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK ||
+		!bytes.Contains(task, []byte(`data-task-kind="move-file"`)) ||
+		!bytes.Contains(task, []byte(`data-exclude-path="`+html.EscapeString(source)+`"`)) ||
+		!bytes.Contains(task, []byte(`>Move folder<`)) {
+		t.Fatalf("directory move task status=%d body=%s", response.StatusCode, task)
+	}
+	response, err = client.Get(serverURL + "/assets/app-v2.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if !bytes.Contains(script, []byte(`endpoint.searchParams.set("exclude", root.dataset.excludePath)`)) {
+		t.Fatalf("directory picker does not forward the excluded source tree")
+	}
+
+	directoriesURL := serverURL + "/resources/directories?" + url.Values{
+		"path":    {hostRoot},
+		"exclude": {source},
+	}.Encode()
+	response, err = client.Get(directoriesURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Directories []struct {
+			Name string `json:"name"`
+			Path string `json:"path"`
+		} `json:"directories"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		_ = response.Body.Close()
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	for _, directory := range payload.Directories {
+		if hostfiles.Contains(source, directory.Path) {
+			t.Fatalf("destination picker includes source tree entry %#v", directory)
+		}
+	}
+
+	response, err = client.PostForm(serverURL+"/resources/files/move", url.Values{
+		"csrf_token":        {formToken(t, task)},
+		"source":            {source},
+		"working_directory": {destination},
+		"name":              {"moved-source"},
+		"conflict_action":   {""},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("directory move submission status=%d, want %d", response.StatusCode, http.StatusSeeOther)
+	}
+	movedFile := filepath.Join(destination, "moved-source", "nested", "report.txt")
+	if content, err := os.ReadFile(movedFile); err != nil || string(content) != "move directory" {
+		t.Fatalf("moved directory content=%q error=%v", content, err)
+	}
+	if _, err := os.Stat(source); !os.IsNotExist(err) {
+		t.Fatalf("source directory still exists after move: %v", err)
 	}
 }
 

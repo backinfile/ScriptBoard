@@ -95,13 +95,26 @@ func (a *App) hostDirectories(response http.ResponseWriter, request *http.Reques
 		http.Error(response, "working directory is invalid: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	exclude := strings.TrimSpace(request.URL.Query().Get("exclude"))
+	if exclude != "" {
+		exclude, err = a.files.CanonicalExisting(exclude)
+		if err != nil {
+			http.Error(response, "excluded directory is invalid: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		info, infoErr := a.files.Info(exclude)
+		if infoErr != nil || !info.IsDir() {
+			http.Error(response, "excluded directory is invalid", http.StatusBadRequest)
+			return
+		}
+	}
 	type directoryView struct {
 		Name string `json:"name"`
 		Path string `json:"path"`
 	}
 	directories := make([]directoryView, 0)
 	for _, entry := range entries {
-		if entry.Kind == hostfiles.Directory {
+		if entry.Kind == hostfiles.Directory && (exclude == "" || !hostfiles.Contains(exclude, entry.Path)) {
 			directories = append(directories, directoryView{Name: entry.Name, Path: entry.Path})
 		}
 	}
