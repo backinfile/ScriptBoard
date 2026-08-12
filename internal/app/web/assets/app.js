@@ -54,6 +54,7 @@
     "lock": '<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
     "log-out": '<path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>',
     "memory-stick": '<path d="M6 19v-3M10 19v-3M14 19v-3M18 19v-3M8 11V9M16 11V9"/><rect x="2" y="5" width="20" height="11" rx="2"/>',
+    "minus": '<path d="M5 12h14"/>',
     "message-square": '<path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/>',
     "network": '<rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-3h14v3M12 12V8"/>',
     "panel-left-open": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/>',
@@ -6022,6 +6023,146 @@
     });
   }
 
+  function renderKubernetesDetail(payload, logs) {
+    const kubernetesBytes = value => {
+      const bytes = Number(value) || 0;
+      if (bytes < 1024) return `${bytes} B`;
+      const units = ["KiB", "MiB", "GiB", "TiB"];
+      let amount = bytes / 1024;
+      let index = 0;
+      while (amount >= 1024 && index < units.length - 1) { amount /= 1024; index += 1; }
+      return `${amount >= 10 ? amount.toFixed(0) : amount.toFixed(1)} ${units[index]}`;
+    };
+    const kubernetesTime = value => {
+      if (!value) return "—";
+      const parsed = new Date(value);
+      return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleString();
+    };
+    const workload = payload?.Workload || {};
+    const statusLabels = locale() === "zh-CN"
+      ? { ready: "就绪", progressing: "变更中", degraded: "需查看", missing: "未发现" }
+      : { ready: "Ready", progressing: "Progressing", degraded: "Needs attention", missing: "Missing" };
+    const pods = Array.isArray(payload?.Pods) ? payload.Pods : [];
+    const events = Array.isArray(payload?.Events) ? payload.Events : [];
+    const versions = Array.isArray(payload?.Versions) ? payload.Versions : [];
+    const facts = [
+      ["Status", statusLabels[workload.Status] || workload.StatusLabel || workload.Status || "—"],
+      ["Ready", `${workload.Ready ?? 0} / ${workload.Desired ?? 0}`],
+      ["Restarts", workload.Restarts ?? 0],
+      ["CPU", `${workload.CPUMillicores ?? 0}m`],
+      ["Memory", kubernetesBytes(workload.MemoryBytes || 0)],
+      ["Node", workload.Nodes || "—"]
+    ].map(([label, value]) => `<div><dt>${escapeMarkup(label)}</dt><dd>${escapeMarkup(value)}</dd></div>`).join("");
+    const rows = (items, render, empty) => items.length
+      ? items.map(render).join("")
+      : `<div><span>${escapeMarkup(empty)}</span></div>`;
+    const podRows = rows(pods, pod => `<div><strong>${escapeMarkup(pod.Name)}</strong><span>${escapeMarkup(pod.Phase)} · ${escapeMarkup(pod.Ready)} · ${escapeMarkup(pod.Node || "—")} · ${escapeMarkup(pod.Restarts || 0)} restarts</span></div>`, "No Pods returned");
+    const eventRows = rows(events.slice(0, 20), event => `<div><strong>${escapeMarkup(event.Reason || event.Type)}</strong><span>${escapeMarkup(event.Message)}</span></div>`, "No recent events");
+    const versionRows = rows(versions.slice(0, 20), version => `<div><strong>${escapeMarkup(version.Image || "—")}</strong><span>${escapeMarkup(kubernetesTime(version.ObservedAt))} · ${escapeMarkup(version.Revision || "—")}</span></div>`, "Version history begins after this workload is pinned");
+    const logText = Array.isArray(logs) && logs.length
+      ? logs.map(line => `[${line.pod || "pod"}/${line.container || "container"}] ${line.text || ""}`).join("\n")
+      : "Pod logs are unavailable for the current credentials or workload.";
+    return `<dl class="kubernetes-detail-facts">${facts}</dl>
+      <section class="kubernetes-detail-section"><h3>Pods</h3><div class="kubernetes-detail-list">${podRows}</div></section>
+      <section class="kubernetes-detail-section"><h3>Recent events</h3><div class="kubernetes-detail-list">${eventRows}</div></section>
+      <section class="kubernetes-detail-section"><h3>Version history</h3><div class="kubernetes-detail-list">${versionRows}</div></section>
+      <section class="kubernetes-detail-section"><h3>Recent logs</h3><pre class="kubernetes-detail-logs">${escapeMarkup(logText)}</pre></section>`;
+  }
+
+  function initKubernetes(cleanups) {
+    const root = document.querySelector("[data-kubernetes-page]");
+    if (!root) return;
+    const drawer = root.querySelector("[data-kubernetes-drawer]");
+    const body = drawer?.querySelector("[data-kubernetes-drawer-body]");
+    const title = drawer?.querySelector("[data-kubernetes-drawer-title]");
+    const meta = drawer?.querySelector("[data-kubernetes-drawer-meta]");
+    const onSubmit = event => {
+      const form = event.target.closest("form[data-kubernetes-confirm]");
+      if (form && !window.confirm(form.dataset.kubernetesConfirm || "Continue?")) event.preventDefault();
+    };
+    const openDetail = async button => {
+      if (!drawer || !body) return;
+      const url = button.dataset.kubernetesDetailUrl;
+      if (!url) return;
+      title.textContent = button.closest("tr,article")?.querySelector("strong")?.textContent?.trim() || "Workload";
+      meta.textContent = "Loading current Kubernetes state";
+      body.innerHTML = '<div class="kubernetes-drawer__loading"><span data-lucide="loader-circle" aria-hidden="true"></span>Loading…</div>';
+      renderIcons(body);
+      if (!drawer.open) drawer.showModal();
+      try {
+        const [detailResponse, logsResponse] = await Promise.all([
+          fetch(url, { headers: { "Accept": "application/json" } }),
+          fetch(url.replace(/\/details$/, "/logs?limit=120"), { headers: { "Accept": "application/json" } })
+        ]);
+        if (!detailResponse.ok) throw new Error(await detailResponse.text() || `HTTP ${detailResponse.status}`);
+        const payload = await detailResponse.json();
+        const logs = logsResponse.ok ? await logsResponse.json() : [];
+        const workload = payload?.Workload || {};
+        title.textContent = workload.Name || title.textContent;
+        meta.textContent = [workload.Namespace, workload.Kind, workload.Image].filter(Boolean).join(" · ");
+        body.innerHTML = renderKubernetesDetail(payload, logs);
+      } catch (error) {
+        body.textContent = error?.message || "Unable to load workload details.";
+      }
+    };
+    const onClick = event => {
+      const detail = event.target.closest("[data-kubernetes-detail-url]");
+      if (detail) {
+        event.preventDefault();
+        openDetail(detail);
+        return;
+      }
+      if (event.target.closest("[data-kubernetes-drawer-close]")) drawer?.close();
+    };
+    const onDrawerClick = event => {
+      if (event.target === drawer) drawer.close();
+    };
+    root.addEventListener("click", onClick);
+    root.addEventListener("submit", onSubmit);
+    drawer?.addEventListener("click", onDrawerClick);
+    cleanups.push(() => {
+      root.removeEventListener("click", onClick);
+      root.removeEventListener("submit", onSubmit);
+      drawer?.removeEventListener("click", onDrawerClick);
+      if (drawer?.open) drawer.close();
+    });
+  }
+
+  function initKubernetesConnection(cleanups) {
+    const root = document.querySelector("[data-kubernetes-connection-page]");
+    const form = root?.querySelector("[data-kubernetes-connection-form]");
+    const button = root?.querySelector("[data-kubernetes-test]");
+    const result = root?.querySelector("[data-kubernetes-test-result]");
+    if (!form || !button || !result) return;
+    const message = result.querySelector("[data-kubernetes-test-message]");
+    const onClick = async () => {
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+      result.hidden = false;
+      if (message) message.textContent = "Testing API access and permissions…";
+      try {
+        const response = await fetch("/monitor/kubernetes/connection/test", { method: "POST", body: new FormData(form), headers: { "Accept": "application/json" } });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+        const capabilities = payload.capabilities || {};
+        result.querySelectorAll("[data-capability]").forEach(item => {
+          const supported = capabilities[item.dataset.capability] === true;
+          item.dataset.supported = supported ? "true" : "false";
+          item.querySelector("svg")?.replaceWith(makeIcon(supported ? "check" : "minus"));
+        });
+        if (message) message.textContent = `Connected · ${payload.fingerprint?.slice(0, 12) || "verified"}`;
+      } catch (error) {
+        result.querySelectorAll("[data-capability]").forEach(item => item.dataset.supported = "false");
+        if (message) message.textContent = error?.message || "Connection test failed.";
+      } finally {
+        button.disabled = false;
+        button.removeAttribute("aria-busy");
+      }
+    };
+    button.addEventListener("click", onClick);
+    cleanups.push(() => button.removeEventListener("click", onClick));
+  }
+
   function initPage(options = {}) {
     const cleanups = [];
     cleanupPage = () => cleanups.splice(0).forEach(cleanup => cleanup());
@@ -6040,6 +6181,8 @@
     initQuickCreateDefaults(document, cleanups);
     initOverview(cleanups);
     initApplications(cleanups);
+    initKubernetes(cleanups);
+    initKubernetesConnection(cleanups);
     initLiveLog(cleanups);
     initRun(cleanups);
     initGroupedRecords(cleanups);

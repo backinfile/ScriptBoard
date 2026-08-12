@@ -29,6 +29,8 @@ var (
 	deleteImpactTemplate          = mustWebTemplate("delete-impact")
 	displaySettingsTemplate       = mustWebTemplate("display-settings")
 	instanceNameSettingsTemplate  = mustWebTemplate("instance-name-settings")
+	kubernetesTemplate            = mustWebTemplate("kubernetes")
+	kubernetesConnectionTemplate  = mustWebTemplate("kubernetes-connection")
 	externalInterfacesTemplate    = mustWebTemplate("external-interfaces")
 	externalInterfaceFormTemplate = mustWebTemplate("external-interface-form")
 	fileConflictTemplate          = mustWebTemplate("file-conflict")

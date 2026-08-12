@@ -21,7 +21,7 @@ ScriptBoard is a self-hosted script console for a single Windows or Linux host. 
 - create schedules with five-field Cron expressions;
 - expose bounded inbound triggers for logs, uploads, Quick Runs, and constrained variable updates;
 - review remote-login activity and manage Windows Defender Firewall or Linux UFW and Fail2Ban;
-- view host resources, local applications, Docker containers, websites, run history, and audit records, and compose importable custom monitoring dashboards;
+- view host resources, local applications, Docker containers, one Kubernetes cluster, websites, run history, and audit records, and compose importable custom monitoring dashboards;
 - manage local or remote MySQL/MariaDB instances with checksummed logical backups and safety rollback;
 - use the optional AI assistant with resources you choose to reference;
 - restore files deleted through the web interface from ScriptBoard Trash;
@@ -122,6 +122,12 @@ Run details keep output navigation, TXT download, and live pause controls in the
 
 After running a script, save its path, argument template, and timeout as a Quick Run. The Quick Runs list shows the five most recent results and latest duration, with direct links to each Run and the script directory. Schedules use standard five-field Cron expressions; for example, `0 2 * * *` runs every day at 02:00. Missed triggers are not replayed after the service restarts.
 
+### Kubernetes monitoring
+
+Administrators and maintainers can configure one cluster under **Monitor → Kubernetes**. Enter an absolute kubeconfig path readable on the host running the ScriptBoard service and optionally select a context; the kubeconfig `current-context` is used by default. Connections start in observe-only mode. Limited operations can be explicitly enabled for rolling redeploys, single-step replica changes, and running a CronJob now.
+
+ScriptBoard does not store kubeconfig tokens, certificates, or private keys, and rejects `exec`/`auth-provider` login plugins and `insecure-skip-tls-verify`. When ScriptBoard runs under systemd or as a Windows service, ensure that service identity can read the kubeconfig and any referenced CA, token, or client-certificate files.
+
 ### Custom dashboards and website monitoring
 
 Administrators and Maintainers can combine external JSON data with existing Website Monitoring results under Configuration → Custom Dashboards, create number, percentage, quota, key-value, and website cards, and import or export dashboard configurations. Public dashboards expose results without revealing sources, request headers, formulas, or management controls.
@@ -197,7 +203,7 @@ Back up these locations regularly:
 - `state_root`, which contains the database, run logs, sessions, audit records, and AI data;
 - the service `config.yaml` file, if you created a custom configuration.
 
-Back up before upgrading from an older version. The current release uses database schema 34 and can migrate schemas 20–33 automatically; older databases and legacy configuration files are not migrated automatically.
+Back up before upgrading from an older version. The current release uses database schema 37 and can migrate schemas 20–36 automatically; older databases and legacy configuration files are not migrated automatically.
 
 ## Troubleshooting
 

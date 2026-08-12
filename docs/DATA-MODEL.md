@@ -579,3 +579,16 @@ schema 30 增加独立的 `mysqlmanager` 领域表；Web 层只调用领域服�
 ## 14. 实例显示设置
 
 schema 36 增加单例 `instance_settings`，保存当前实例左上角导航使用的 `display_name`、更新时间和最后修改用户。显示名称最多 32 个 Unicode 字符，不接受控制字符或不可见格式字符；空值表示恢复产品默认名称 `ScriptBoard`。该设置只改变网页导航中的实例标识，不改变产品名、发布资产、服务名称或更新身份。
+
+## 15. Kubernetes 单集群监控
+
+schema 37 增加以下实例级表。集群连接是单例；所有工作负载状态以 `namespace/kind/name` 为稳定键，不使用短生命周期 Pod 或容器 ID。
+
+| 表 | 关键字段与边界 |
+| --- | --- |
+| `kubernetes_connection` | 显示名称、kubeconfig 主机路径、context、操作模式、API Server/CA 指纹、能力检测结果和最近错误；不保存 token、客户端证书或私钥正文 |
+| `kubernetes_pins` | 工作负载稳定键、namespace、kind、name 与人工顺序；同一实例只有当前集群的一套 Pin |
+| `kubernetes_versions` | 工作负载稳定键、观测时间、镜像集合和 revision；只为 Pin 工作负载记录变化，每个工作负载最多保留 100 个版本 |
+| `kubernetes_metric_minutes` | 工作负载稳定键与分钟桶中的 CPU、内存、就绪/期望副本和重启数；只为 Pin 工作负载保留有界 24 小时历史 |
+
+保存连接时若 API Server/CA 指纹改变，`kubernetes_pins`、`kubernetes_versions` 与 `kubernetes_metric_minutes` 在同一事务中清空，避免不同集群共享身份和时间线。仅修改同一集群的凭据、context 名称或显示名称不会拆分历史。
