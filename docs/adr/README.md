@@ -52,6 +52,8 @@
 
 ## 最新决策
 
+- [ADR-0161 将受管 Host Files 宿主访问限制在 Broker 内](./0161-keep-managed-host-file-access-inside-the-broker.md)，把目录、内容、日志、发布、移动与无人值守固定资源访问移出 Web，并以用户绑定短期句柄和执行点复核收口。
+- [ADR-0160 将受管 MySQL 凭据与执行能力限制在 Broker 内](./0160-keep-managed-mysql-credentials-and-execution-inside-the-broker.md)，让 Broker 持有密码、数据库连接、客户端进程、备份计划与中断恢复，Web 只编排无秘密元数据。
 - [ADR-0159 将受管 Assistant Provider 凭据与代理会话限制在 Broker 内](./0159-keep-managed-assistant-provider-credentials-and-proxies-inside-the-broker.md)，由 Broker 绑定 Owner、模型、Endpoint 与 Key，并只向 Web 返回短期环回代理能力和撤销句柄。
 - [ADR-0158 将受管远程网站连接凭据与 Endpoint 一并限制在 Broker 内](./0158-keep-managed-remote-website-credentials-inside-the-broker.md)，由 Broker 绑定目标和 Key、注入认证并执行受控 HTTPS 获取，Web 只接收经过验证的领域响应。
 - [ADR-0157 将受管 Passkey 公钥凭据状态限制在 Broker 内](./0157-keep-managed-passkey-state-inside-the-broker.md)，要求变更操作重新验证同用户近期会话，并把登录计数器更新限制为不可替换注册身份的字段集合。
