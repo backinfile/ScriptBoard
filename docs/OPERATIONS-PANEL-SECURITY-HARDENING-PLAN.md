@@ -413,7 +413,7 @@ Windows：
 
 ### 批次 D：补充功能
 
-- [ ] P1 OS 安全更新只读视图、服务日志、State Root 备份、安全基线和通知。OS 安全更新只读视图已完成：Windows Update Agent 与 Debian/Ubuntu APT 只读取本机已有元数据，固定命令不刷新源、不下载或安装，结果限制为 200 项、字段解码有界并缓存十分钟，页面明确显示提供程序、采集时间与只读边界。服务日志只读纵向切片已完成：只接受 Web/Broker/AI/Runner 四个固定来源，systemd journal 或 Windows System Event Log 每次最多扫描 2,000 条、返回 500 条，支持固定筛选和 CSV 导出，消息统一做控制字符处理与秘密脱敏。安全基线首个只读切片已完成：基于当前 Web 权限、主机防火墙、补丁元数据和 Linux SSH/Fail2Ban 或 Windows Firewall Profile 生成可解释逐项证据，只对可用项计分且没有“一键修复”；密码策略、服务最小化、历史快照与漂移检测仍待后续切片。State Root 备份的带外 CLI 纵向切片也已完成：一致性 SQLite snapshot、固定私有状态白名单、Argon2id + XChaCha20-Poly1305 分块认证加密、逐文件清单、签名审计 checkpoint、恢复前 staging/完整性/schema 校验、Session 撤销、失败回滚、恢复前状态保留与受控审计重锚均有自动化测试；备份 Web step-up/Broker staging、整机丢失外部密钥恢复演练以及通知仍待完成。
+- [ ] P1 OS 安全更新只读视图、服务日志、State Root 备份、安全基线和通知。OS 安全更新只读视图已完成：Windows Update Agent 与 Debian/Ubuntu APT 只读取本机已有元数据，固定命令不刷新源、不下载或安装，结果限制为 200 项、字段解码有界并缓存十分钟，页面明确显示提供程序、采集时间与只读边界。服务日志只读纵向切片已完成：只接受 Web/Broker/AI/Runner 四个固定来源，systemd journal 或 Windows System Event Log 每次最多扫描 2,000 条、返回 500 条，支持固定筛选和 CSV 导出，消息统一做控制字符处理与秘密脱敏。安全基线首个只读切片已完成：基于当前 Web 权限、主机防火墙、补丁元数据和 Linux SSH/Fail2Ban 或 Windows Firewall Profile 生成可解释逐项证据，只对可用项计分且没有“一键修复”；密码策略、服务最小化、历史快照与漂移检测仍待后续切片。State Root 备份的带外 CLI 纵向切片也已完成：一致性 SQLite snapshot、固定私有状态白名单、Argon2id + XChaCha20-Poly1305 分块认证加密、逐文件清单、签名审计 checkpoint、恢复前 staging/完整性/schema 校验、Session 撤销、失败回滚、恢复前状态保留与受控审计重锚均有自动化测试。通知可观测性首个只读切片已完成：设置页只显示 HTTPS 接收端主机名、有界 outbox 占用、轮转本地告警状态和投递健康，明确审计事件与安全检测覆盖范围，并禁止回显 URL 路径、查询参数、认证令牌和事件正文；连续失败八次后进入五分钟熔断开路期，期间新事件继续持久入队。备份 Web step-up/Broker staging、整机丢失外部密钥恢复演练、邮件渠道与网站结果模板仍待完成。
 - [ ] 根据实际用户需求单独评审 P2 能力，不与 P0 重构混在同一发布中。
 
 依赖关系：P0-01 是所有新 Web 接口的前置；P0-02 是高权限系统写操作的前置；P0-04 是所有新外部集成的前置；P0-08 是扩大 AI 工具能力的前置；P0-10 是自动更新继续扩展的前置。

@@ -26,6 +26,8 @@ const (
 	maxResponseBytes = 32 << 10
 	maxAlertLogBytes = 10 << 20
 	maxDetectionKeys = 8192
+	circuitThreshold = 8
+	circuitOpenFor   = 5 * time.Minute
 )
 
 type Options struct {
@@ -52,18 +54,32 @@ type Envelope struct {
 	Alerts        []Alert                 `json:"alerts,omitempty"`
 }
 
+type Status struct {
+	WebhookEnabled   bool
+	EndpointHost     string
+	Pending          int
+	Capacity         int
+	LocalAlerts      bool
+	LocalAlertBytes  int64
+	DeliveryFailures int
+	CircuitOpen      bool
+	NextAttemptAt    time.Time
+}
+
 type Manager struct {
-	endpoint string
-	token    string
-	client   *http.Client
-	now      func() time.Time
-	spool    string
-	alertLog string
-	wake     chan struct{}
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
-	mu       sync.Mutex
-	windows  map[string][]time.Time
+	endpoint         string
+	token            string
+	client           *http.Client
+	now              func() time.Time
+	spool            string
+	alertLog         string
+	wake             chan struct{}
+	cancel           context.CancelFunc
+	wg               sync.WaitGroup
+	mu               sync.Mutex
+	windows          map[string][]time.Time
+	deliveryFailures int
+	nextAttemptAt    time.Time
 }
 
 func New(options Options) (*Manager, error) {
@@ -149,6 +165,31 @@ func (manager *Manager) Pending() (int, error) {
 		}
 	}
 	return count, nil
+}
+
+func (manager *Manager) Status() (Status, error) {
+	pending, err := manager.Pending()
+	if err != nil {
+		return Status{}, err
+	}
+	status := Status{WebhookEnabled: manager.endpoint != "", Pending: pending, Capacity: maxPendingEvents}
+	manager.mu.Lock()
+	status.DeliveryFailures = manager.deliveryFailures
+	status.NextAttemptAt = manager.nextAttemptAt
+	status.CircuitOpen = manager.deliveryFailures >= circuitThreshold && manager.now().Before(manager.nextAttemptAt)
+	manager.mu.Unlock()
+	if manager.endpoint != "" {
+		if parsed, parseErr := url.Parse(manager.endpoint); parseErr == nil {
+			status.EndpointHost = parsed.Host
+		}
+	}
+	if info, statErr := os.Stat(manager.alertLog); statErr == nil && info.Mode().IsRegular() {
+		status.LocalAlerts = true
+		status.LocalAlertBytes = info.Size()
+	} else if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		return Status{}, statErr
+	}
+	return status, nil
 }
 
 func (manager *Manager) detect(event auditlog.CommittedEvent, now time.Time) []Alert {
@@ -272,10 +313,11 @@ func (manager *Manager) appendAlerts(envelope Envelope) error {
 
 func (manager *Manager) run(ctx context.Context) {
 	defer manager.wg.Done()
-	backoff := time.Second
+	failures := 0
 	for {
 		if err := manager.forwardOne(ctx); err == nil {
-			backoff = time.Second
+			failures = 0
+			manager.setDeliveryState(0, time.Time{})
 			select {
 			case <-ctx.Done():
 				return
@@ -284,6 +326,8 @@ func (manager *Manager) run(ctx context.Context) {
 			}
 			continue
 		} else if errors.Is(err, os.ErrNotExist) {
+			failures = 0
+			manager.setDeliveryState(0, time.Time{})
 			select {
 			case <-ctx.Done():
 				return
@@ -291,7 +335,19 @@ func (manager *Manager) run(ctx context.Context) {
 			}
 			continue
 		}
-		timer := time.NewTimer(backoff)
+		failures++
+		delay := deliveryRetryDelay(failures)
+		manager.setDeliveryState(failures, manager.now().Add(delay))
+		timer := time.NewTimer(delay)
+		if failures >= circuitThreshold {
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+			continue
+		}
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -300,10 +356,28 @@ func (manager *Manager) run(ctx context.Context) {
 			timer.Stop()
 		case <-timer.C:
 		}
-		if backoff < time.Minute {
-			backoff *= 2
-		}
 	}
+}
+
+func deliveryRetryDelay(failures int) time.Duration {
+	if failures >= circuitThreshold {
+		return circuitOpenFor
+	}
+	delay := time.Second
+	for attempt := 1; attempt < failures && delay < time.Minute; attempt++ {
+		delay *= 2
+	}
+	if delay > time.Minute {
+		return time.Minute
+	}
+	return delay
+}
+
+func (manager *Manager) setDeliveryState(failures int, nextAttemptAt time.Time) {
+	manager.mu.Lock()
+	manager.deliveryFailures = failures
+	manager.nextAttemptAt = nextAttemptAt.UTC()
+	manager.mu.Unlock()
 }
 
 func (manager *Manager) forwardOne(ctx context.Context) error {

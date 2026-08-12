@@ -2,12 +2,14 @@ package securityevents
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -111,4 +113,43 @@ func TestRemoteForwardingRetriesDurableOrderedOutbox(t *testing.T) {
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("outbox entries=%d err=%v", len(entries), err)
 	}
+}
+
+func TestStatusExposesOnlyEndpointHostAndBoundedOutboxState(t *testing.T) {
+	root := t.TempDir()
+	manager, err := New(Options{StateRoot: root, Endpoint: "https://notify.example:8443/events?tenant=secret", Token: "must-not-be-exposed", Client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, errors.New("offline") })}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	manager.Observe(auditlog.CommittedEvent{ID: 1, EventSHA256: "abc", Event: auditlog.Event{Action: "state_backup.create", Result: "succeeded"}})
+	status, err := manager.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.WebhookEnabled || status.EndpointHost != "notify.example:8443" || status.Pending != 1 || status.Capacity != maxPendingEvents {
+		t.Fatalf("notification status = %#v", status)
+	}
+	encoded, _ := json.Marshal(status)
+	if strings.Contains(string(encoded), "tenant=secret") || strings.Contains(string(encoded), "must-not-be-exposed") {
+		t.Fatalf("status exposed endpoint query or token: %s", encoded)
+	}
+}
+
+func TestDeliveryRetryDelayOpensCircuitAfterBoundedFailures(t *testing.T) {
+	if delay := deliveryRetryDelay(1); delay != time.Second {
+		t.Fatalf("first retry delay = %s", delay)
+	}
+	if delay := deliveryRetryDelay(circuitThreshold - 1); delay != time.Minute {
+		t.Fatalf("bounded retry delay = %s", delay)
+	}
+	if delay := deliveryRetryDelay(circuitThreshold); delay != circuitOpenFor {
+		t.Fatalf("circuit-open delay = %s", delay)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return function(request)
 }

@@ -201,7 +201,7 @@ scriptboard audit verify --config CONFIG_PATH
 
 `allowed_hosts` 是 Host Header 白名单；通配或非回环监听必须显式配置。`canonical_external_url` 的主机必须位于该白名单中，生成对外绝对 URL 时只使用这个值。反向代理部署还须显式配置直连代理的 `trusted_proxies`，未受信来源提供的转发头会被忽略。
 
-配置 `security_event_endpoint` 后，已提交的审计事件会先原子写入 State Root 内的有界 outbox，再按审计链顺序发送到 HTTPS 接收端；失败会指数退避并在重启后继续。Bearer token 只能通过绝对路径 `security_event_token_file` 提供，URL 禁止内嵌凭据且不跟随重定向。默认出站策略拒绝私网、回环和云元数据地址；确需同网段 SIEM 时必须显式开启 `security_event_allow_private`，元数据地址仍不可放行。审计事件可携带纳入 v3 哈希链的结构化资源 revision 与 SHA-256；Broker 参数、Quick Run 发布版本和一次性脚本摘要会随 CSV、取证 JSONL 与远端载荷输出。认证失败、权限拒绝与外部 Trigger 拒绝的突发，以及签名/Runner/Runtime 边界失败，会同时写入权限受限且轮转的 `logs/security-alerts.jsonl`。
+配置 `security_event_endpoint` 后，已提交的审计事件会先原子写入 State Root 内的有界 outbox，再按审计链顺序发送到 HTTPS 接收端；失败会指数退避并在重启后继续。Bearer token 只能通过绝对路径 `security_event_token_file` 提供，URL 禁止内嵌凭据且不跟随重定向。默认出站策略拒绝私网、回环和云元数据地址；确需同网段 SIEM 时必须显式开启 `security_event_allow_private`，元数据地址仍不可放行。审计事件可携带纳入 v3 哈希链的结构化资源 revision 与 SHA-256；Broker 参数、Quick Run 发布版本和一次性脚本摘要会随 CSV、取证 JSONL 与远端载荷输出。认证失败、权限拒绝与外部 Trigger 拒绝的突发，以及签名/Runner/Runtime 边界失败，会同时写入权限受限且轮转的 `logs/security-alerts.jsonl`。管理员和维护员可在“系统设置 → 通知与告警”只读查看接收端主机名、outbox 占用、本地告警状态、连续失败和下次尝试时间；页面不会显示 URL 路径、查询参数、认证令牌或事件正文。连续失败八次后投递会熔断五分钟，开路期间新事件仍安全进入 outbox。邮件渠道和网站监控结果模板尚未实现。
 
 网站监控默认验证 HTTPS/WSS 证书。关闭验证只会签发一小时的临时例外，页面持续显示警告，
 创建或更新审计会记录到期时间；到期后自动恢复验证。连接另一台 ScriptBoard 汇聚网站状态

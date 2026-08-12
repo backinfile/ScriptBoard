@@ -2580,6 +2580,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /settings/updates", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.updatesPage)))
 	mux.Handle("GET /settings/service-logs", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.serviceLogsPage)))
 	mux.Handle("GET /settings/service-logs/export", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.exportServiceLogs)))
+	mux.Handle("GET /settings/notifications", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.notificationsPage)))
 	mux.Handle("GET /settings/updates/status", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.updateStatus)))
 	mux.Handle("POST /settings/updates/check", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.checkUpdate)))
 	mux.Handle("POST /settings/updates/prepare", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.prepareUpdate)))
