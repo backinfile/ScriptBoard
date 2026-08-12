@@ -45,6 +45,7 @@ func TestLinuxRuntimeUnitsRequireSeccompAndNetworkIsolation(t *testing.T) {
 	}
 	text := string(source)
 	for _, required := range []string{
+		"MemoryDenyWriteExecute=true",
 		"SystemCallArchitectures=native", "SystemCallFilter=@system-service", "SystemCallErrorNumber=EPERM",
 		"PrivateDevices=true", "ProtectKernelLogs=true", "RestrictRealtime=true",
 		"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6", "IPAddressAllow=localhost",

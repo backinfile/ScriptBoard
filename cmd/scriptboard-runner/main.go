@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
 
@@ -14,6 +13,7 @@ import (
 	"scriptboard/internal/platformservice"
 	"scriptboard/internal/runnerhost"
 	"scriptboard/internal/secretredaction"
+	"scriptboard/internal/shutdownsignal"
 )
 
 func main() {
@@ -31,7 +31,7 @@ func main() {
 }
 
 func run(arguments []string) error {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := shutdownsignal.Context(context.Background())
 	defer stop()
 	return runContext(ctx, arguments)
 }

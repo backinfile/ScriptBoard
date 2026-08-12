@@ -112,6 +112,7 @@ CapabilityBoundingSet=
 AmbientCapabilities=
 PrivateTmp=true
 ProtectHome=true
+MemoryDenyWriteExecute=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

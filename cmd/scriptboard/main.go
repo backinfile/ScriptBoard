@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
 	"time"
@@ -27,6 +26,7 @@ import (
 	"scriptboard/internal/runmanager"
 	"scriptboard/internal/runnerhost"
 	"scriptboard/internal/secretredaction"
+	"scriptboard/internal/shutdownsignal"
 	updatepkg "scriptboard/internal/update"
 )
 
@@ -418,7 +418,7 @@ func runDoctor(arguments []string) error {
 }
 
 func serve(arguments []string) error {
-	interruptContext, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	interruptContext, stop := shutdownsignal.Context(context.Background())
 	defer stop()
 	return serveContext(interruptContext, arguments)
 }

@@ -45,12 +45,20 @@ func Listen(options TransportOptions) (*Transport, error) {
 	if err := os.MkdirAll(directory, 0o755); err != nil {
 		return nil, fmt.Errorf("create privileged Broker socket directory: %w", err)
 	}
+	directoryInfo, err := os.Stat(directory)
+	if err != nil {
+		return nil, err
+	}
+	directoryStat, ok := directoryInfo.Sys().(*syscall.Stat_t)
+	if !directoryInfo.IsDir() || !ok || int(directoryStat.Uid) != os.Geteuid() || directoryInfo.Mode().Perm()&0o022 != 0 {
+		return nil, errors.New("privileged Broker socket directory is not owned and protected by the service identity")
+	}
 	if info, err := os.Lstat(endpoint); err == nil {
 		if info.Mode()&os.ModeSocket == 0 {
 			return nil, errors.New("privileged Broker endpoint exists and is not a socket")
 		}
 		stat, ok := info.Sys().(*syscall.Stat_t)
-		if !ok || int(stat.Uid) != os.Geteuid() {
+		if !ok || !validStaleSocketOwner(int(stat.Uid), os.Geteuid(), allowedUID) {
 			return nil, errors.New("privileged Broker endpoint is not owned by the current service identity")
 		}
 		if err := os.Remove(endpoint); err != nil {
@@ -99,6 +107,10 @@ func Listen(options TransportOptions) (*Transport, error) {
 		return nil
 	}
 	return &Transport{Listener: listener, Endpoint: endpoint, VerifyPeer: verify, cleanup: cleanup}, nil
+}
+
+func validStaleSocketOwner(ownerUID, serviceUID, allowedUID int) bool {
+	return ownerUID == serviceUID || ownerUID == allowedUID
 }
 
 func allowedLinuxUID(options TransportOptions) (int, error) {
