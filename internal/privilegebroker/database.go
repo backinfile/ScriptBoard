@@ -73,16 +73,13 @@ func (security *DatabaseSecurity) Authorize(ctx context.Context, request Authori
 }
 
 func (security *DatabaseSecurity) Record(ctx context.Context, record AuditRecord) error {
-	target := record.Resource
-	if record.Revision != "" {
-		target += " revision=" + record.Revision
-	}
 	_, err := security.audit.Append(ctx, auditlog.Event{
 		OccurredAt: strconv.FormatInt(record.OccurredAt.UTC().Unix(), 10),
-		Action:     "privileged_broker." + string(record.Action), Target: target, Result: record.Result,
+		Action:     "privileged_broker." + string(record.Action), Target: record.Resource, Result: record.Result,
 		SourceAddress: "local-privileged-broker", ActorUserID: record.Actor.UserID,
 		ActorUsername: record.Actor.Username, ActorRole: record.Actor.Role, RequestID: record.RequestID,
 		AuthenticationAssurance: "aal" + strconv.Itoa(record.Actor.AuthenticationAssurance) + "+step-up",
+		ResourceRevision:        record.Revision, ResourceDigestSHA256: record.ParametersSHA256,
 	})
 	if err != nil {
 		return fmt.Errorf("append privileged Broker audit: %w", err)

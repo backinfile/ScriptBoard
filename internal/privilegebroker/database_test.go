@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,17 +44,17 @@ func TestDatabaseSecurityWritesIndependentIntentAndResultAudit(t *testing.T) {
 	security, _ := NewDatabaseSecurity(db, auditlog.New(db), func() time.Time { return now })
 	record := AuditRecord{
 		OccurredAt: now, RequestID: "request-audit-1", Actor: Actor{UserID: "user-1", Username: "admin", Role: "administrator", AuthenticationAssurance: 2},
-		Action: ActionWindowsFirewallDelete, Resource: "rule-1", Revision: "revision-1", Result: "attempted",
+		Action: ActionWindowsFirewallDelete, Resource: "rule-1", Revision: "revision-1", ParametersSHA256: strings.Repeat("a", 64), Result: "attempted",
 	}
 	if err := security.Record(context.Background(), record); err != nil {
 		t.Fatal(err)
 	}
-	var action, result, requestID, assurance string
-	if err := db.QueryRow(`SELECT action, result, request_id, authentication_assurance FROM audit_events ORDER BY id DESC LIMIT 1`).Scan(&action, &result, &requestID, &assurance); err != nil {
+	var action, result, requestID, assurance, revision, digest string
+	if err := db.QueryRow(`SELECT action, result, request_id, authentication_assurance, resource_revision, resource_digest_sha256 FROM audit_events ORDER BY id DESC LIMIT 1`).Scan(&action, &result, &requestID, &assurance, &revision, &digest); err != nil {
 		t.Fatal(err)
 	}
-	if action != "privileged_broker.windows_firewall_delete" || result != "attempted" || requestID != record.RequestID || assurance != "aal2+step-up" {
-		t.Fatalf("audit=%q %q %q %q", action, result, requestID, assurance)
+	if action != "privileged_broker.windows_firewall_delete" || result != "attempted" || requestID != record.RequestID || assurance != "aal2+step-up" || revision != record.Revision || digest != record.ParametersSHA256 {
+		t.Fatalf("audit=%q %q %q %q %q %q", action, result, requestID, assurance, revision, digest)
 	}
 }
 
@@ -67,7 +68,7 @@ func openBrokerDatabase(t *testing.T) *sql.DB {
 	for _, statement := range []string{
 		`CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT, role TEXT, auth_version INTEGER, enabled INTEGER)`,
 		`CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id TEXT, auth_version INTEGER, authentication_assurance INTEGER, reauthenticated_at INTEGER, last_seen_at INTEGER, expires_at INTEGER)`,
-		`CREATE TABLE audit_events (id INTEGER PRIMARY KEY AUTOINCREMENT, occurred_at INTEGER NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, result TEXT NOT NULL, source_address TEXT NOT NULL, actor_user_id TEXT NOT NULL DEFAULT '', actor_username TEXT NOT NULL DEFAULT '', actor_role TEXT NOT NULL DEFAULT '', request_id TEXT NOT NULL DEFAULT '', authentication_assurance TEXT NOT NULL DEFAULT '', previous_hash TEXT NOT NULL DEFAULT '', event_hash TEXT NOT NULL DEFAULT '')`,
+		`CREATE TABLE audit_events (id INTEGER PRIMARY KEY AUTOINCREMENT, occurred_at INTEGER NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, result TEXT NOT NULL, source_address TEXT NOT NULL, actor_user_id TEXT NOT NULL DEFAULT '', actor_username TEXT NOT NULL DEFAULT '', actor_role TEXT NOT NULL DEFAULT '', request_id TEXT NOT NULL DEFAULT '', authentication_assurance TEXT NOT NULL DEFAULT '', resource_revision TEXT NOT NULL DEFAULT '', resource_digest_sha256 TEXT NOT NULL DEFAULT '', previous_hash TEXT NOT NULL DEFAULT '', event_hash TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE audit_chain_state (id INTEGER PRIMARY KEY, anchor_hash TEXT NOT NULL, tail_hash TEXT NOT NULL)`,
 		`INSERT INTO audit_chain_state VALUES (1, '', '')`,
 	} {

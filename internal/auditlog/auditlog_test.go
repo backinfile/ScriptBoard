@@ -18,7 +18,7 @@ func testStore(t *testing.T) (*Store, *sql.DB) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	for _, statement := range []string{
-		`CREATE TABLE audit_events (id INTEGER PRIMARY KEY AUTOINCREMENT, occurred_at INTEGER NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, result TEXT NOT NULL, source_address TEXT NOT NULL, actor_user_id TEXT NOT NULL DEFAULT '', actor_username TEXT NOT NULL DEFAULT '', actor_role TEXT NOT NULL DEFAULT '', request_id TEXT NOT NULL DEFAULT '', authentication_assurance TEXT NOT NULL DEFAULT '', previous_hash TEXT NOT NULL DEFAULT '', event_hash TEXT NOT NULL DEFAULT '')`,
+		`CREATE TABLE audit_events (id INTEGER PRIMARY KEY AUTOINCREMENT, occurred_at INTEGER NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, result TEXT NOT NULL, source_address TEXT NOT NULL, actor_user_id TEXT NOT NULL DEFAULT '', actor_username TEXT NOT NULL DEFAULT '', actor_role TEXT NOT NULL DEFAULT '', request_id TEXT NOT NULL DEFAULT '', authentication_assurance TEXT NOT NULL DEFAULT '', resource_revision TEXT NOT NULL DEFAULT '', resource_digest_sha256 TEXT NOT NULL DEFAULT '', previous_hash TEXT NOT NULL DEFAULT '', event_hash TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE audit_chain_state (id INTEGER PRIMARY KEY CHECK(id = 1), anchor_hash TEXT NOT NULL, tail_hash TEXT NOT NULL)`,
 		`INSERT INTO audit_chain_state VALUES (1, '', '')`,
 	} {
@@ -181,6 +181,50 @@ func TestAppendPersistsRequestCorrelationAndAuthenticationAssuranceInChain(t *te
 	}
 	if _, err := store.Verify(ctx); err == nil {
 		t.Fatal("authentication assurance tampering was not detected")
+	}
+}
+
+func TestAppendPersistsResourceIdentityInChainAndCommittedEvent(t *testing.T) {
+	store, db := testStore(t)
+	var committed CommittedEvent
+	store.SetObserver(func(event CommittedEvent) { committed = event })
+	event := Event{
+		OccurredAt: "1786410000", Action: "publish", Target: "quick-run-1", Result: "succeeded",
+		SourceAddress: "local", RequestID: "request-1", AuthenticationAssurance: "aal2",
+		ResourceRevision: "7", ResourceDigestSHA256: strings.Repeat("a", 64),
+	}
+	if _, err := store.Append(context.Background(), event); err != nil {
+		t.Fatal(err)
+	}
+	if committed.Event.ResourceRevision != event.ResourceRevision || committed.Event.ResourceDigestSHA256 != event.ResourceDigestSHA256 {
+		t.Fatalf("committed event lost resource identity: %#v", committed)
+	}
+	var revision, digest string
+	if err := db.QueryRow("SELECT resource_revision, resource_digest_sha256 FROM audit_events").Scan(&revision, &digest); err != nil {
+		t.Fatal(err)
+	}
+	if revision != event.ResourceRevision || digest != event.ResourceDigestSHA256 {
+		t.Fatalf("revision=%q digest=%q", revision, digest)
+	}
+	if _, err := db.Exec("UPDATE audit_events SET resource_revision='8'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Verify(context.Background()); err == nil {
+		t.Fatal("resource revision tampering was not detected")
+	}
+}
+
+func TestAppendRejectsNonCanonicalResourceIdentity(t *testing.T) {
+	store, _ := testStore(t)
+	for _, event := range []Event{
+		{OccurredAt: "1", Action: "bad", ResourceRevision: strings.Repeat("r", 129)},
+		{OccurredAt: "1", Action: "bad", ResourceRevision: "line\nbreak"},
+		{OccurredAt: "1", Action: "bad", ResourceDigestSHA256: "not-a-digest"},
+		{OccurredAt: "1", Action: "bad", ResourceDigestSHA256: strings.Repeat("A", 64)},
+	} {
+		if _, err := store.Append(context.Background(), event); err == nil {
+			t.Fatalf("invalid resource identity accepted: %#v", event)
+		}
 	}
 }
 

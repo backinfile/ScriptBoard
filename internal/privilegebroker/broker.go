@@ -101,13 +101,14 @@ type ExecutionRequest struct {
 }
 
 type AuditRecord struct {
-	OccurredAt time.Time
-	RequestID  string
-	Actor      Actor
-	Action     Action
-	Resource   string
-	Revision   string
-	Result     string
+	OccurredAt       time.Time
+	RequestID        string
+	Actor            Actor
+	Action           Action
+	Resource         string
+	Revision         string
+	ParametersSHA256 string
+	Result           string
 }
 
 type Auditor interface {
@@ -280,7 +281,7 @@ func (server *Server) execute(request wireRequest) wireResponse {
 		auditContext, auditCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		err := server.auditor.Record(auditContext, AuditRecord{
 			OccurredAt: now, RequestID: binding.RequestID, Actor: binding.Actor, Action: binding.Action,
-			Resource: binding.Resource, Revision: binding.Revision, Result: "attempted",
+			Resource: binding.Resource, Revision: binding.Revision, ParametersSHA256: binding.ParametersSHA256, Result: "attempted",
 		})
 		auditCancel()
 		if err != nil {
@@ -301,7 +302,7 @@ func (server *Server) execute(request wireRequest) wireResponse {
 		auditContext, auditCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		auditErr := server.auditor.Record(auditContext, AuditRecord{
 			OccurredAt: server.now().UTC(), RequestID: binding.RequestID, Actor: binding.Actor, Action: binding.Action,
-			Resource: binding.Resource, Revision: binding.Revision, Result: result,
+			Resource: binding.Resource, Revision: binding.Revision, ParametersSHA256: binding.ParametersSHA256, Result: result,
 		})
 		auditCancel()
 		if auditErr != nil && err == nil {

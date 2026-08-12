@@ -736,6 +736,39 @@ func TestOpenDatabaseRollsBackSchema41MFAEnrollmentOnInjectedFailure(t *testing.
 	}
 }
 
+func TestOpenDatabaseMigratesSchema42AuditResourceIdentity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	database, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`ALTER TABLE audit_events DROP COLUMN resource_revision`,
+		`ALTER TABLE audit_events DROP COLUMN resource_digest_sha256`,
+		`PRAGMA user_version=42`,
+		`PRAGMA wal_checkpoint(TRUNCATE)`,
+	} {
+		if _, err := database.Exec(statement); err != nil {
+			t.Fatalf("prepare schema 42 with %q: %v", statement, err)
+		}
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := openDatabase(path)
+	if err != nil {
+		t.Fatalf("migrate schema 42: %v", err)
+	}
+	defer migrated.Close()
+	for _, column := range []string{"resource_revision", "resource_digest_sha256"} {
+		var count int
+		if err := migrated.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('audit_events') WHERE name=?`, column).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("column %s count=%d err=%v", column, count, err)
+		}
+	}
+}
+
 func TestOpenDatabaseMigratesSchema30MySQLConnectionState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "app.db")
 	db, err := openDatabase(path)

@@ -427,6 +427,7 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 				OccurredAt: strconv.FormatInt(now.Unix(), 10), Action: "start_one_time_run", Target: id, Result: "accepted",
 				SourceAddress: prepared.auditSource, ActorUserID: prepared.initiatorUserID,
 				ActorUsername: prepared.initiatorUsername, ActorRole: prepared.initiatorRole,
+				ResourceDigestSHA256: prepared.script.Digest,
 			})
 		} else {
 			var result sql.Result

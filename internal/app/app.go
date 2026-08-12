@@ -1412,6 +1412,8 @@ func openDatabase(path string) (*sql.DB, error) {
 			actor_role TEXT NOT NULL DEFAULT '',
 			request_id TEXT NOT NULL DEFAULT '',
 			authentication_assurance TEXT NOT NULL DEFAULT '',
+			resource_revision TEXT NOT NULL DEFAULT '',
+			resource_digest_sha256 TEXT NOT NULL DEFAULT '',
 			previous_hash TEXT NOT NULL DEFAULT '',
 			event_hash TEXT NOT NULL DEFAULT ''
 		)`,
@@ -1992,6 +1994,24 @@ func openDatabase(path string) (*sql.DB, error) {
 			}
 		}
 	}
+	if schemaVersion >= 20 && schemaVersion <= 42 {
+		for _, column := range []struct{ name, definition string }{
+			{"resource_revision", "resource_revision TEXT NOT NULL DEFAULT ''"},
+			{"resource_digest_sha256", "resource_digest_sha256 TEXT NOT NULL DEFAULT ''"},
+		} {
+			exists, err := sqliteColumnExists(migration, "audit_events", column.name)
+			if err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("inspect audit resource identity migration: %w", err)
+			}
+			if !exists {
+				if _, err := migration.Exec("ALTER TABLE audit_events ADD COLUMN " + column.definition); err != nil {
+					_ = db.Close()
+					return nil, fmt.Errorf("add audit resource identity: %w", err)
+				}
+			}
+		}
+	}
 	for _, statement := range []string{
 		"CREATE UNIQUE INDEX IF NOT EXISTS users_single_administrator_idx ON users(role) WHERE role = 'administrator'",
 		"CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id)",
@@ -2068,10 +2088,11 @@ func compatibleDatabaseSchema(version int) bool {
 	// schema 39 adds opt-in timestamp, nonce, and HMAC replay protection, and
 	// schema 40 records session authentication assurance and recent reauthentication,
 	// schema 41 adds request correlation and authentication assurance to audit events,
-	// and schema 42 adds the privileged-account MFA enrollment policy deadline.
+	// schema 42 adds the privileged-account MFA enrollment policy deadline,
+	// and schema 43 adds structured resource revision and digest audit fields.
 	// Each supported predecessor has an explicit
 	// transactional forward path.
-	return version == currentSchemaVersion || currentSchemaVersion == 42 && version >= 20 && version <= 41
+	return version == currentSchemaVersion || currentSchemaVersion == 43 && version >= 20 && version <= 42
 }
 
 func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {
@@ -2932,6 +2953,8 @@ type auditView struct {
 	ActorRole  string
 	RequestID  string
 	Assurance  string
+	Revision   string
+	Digest     string
 }
 
 var (
@@ -3032,10 +3055,10 @@ func (a *App) auditPage(response http.ResponseWriter, request *http.Request) {
 	like := "%" + filters.Query + "%"
 	var total int
 	if err := a.db.QueryRow(`SELECT COUNT(*) FROM audit_events
-		WHERE (? = '' OR action LIKE ? OR target LIKE ? OR result LIKE ? OR source_address LIKE ? OR actor_username LIKE ? OR actor_role LIKE ? OR request_id LIKE ? OR authentication_assurance LIKE ?)
+		WHERE (? = '' OR action LIKE ? OR target LIKE ? OR result LIKE ? OR source_address LIKE ? OR actor_username LIKE ? OR actor_role LIKE ? OR request_id LIKE ? OR authentication_assurance LIKE ? OR resource_revision LIKE ? OR resource_digest_sha256 LIKE ?)
 		AND (? = 0 OR occurred_at >= ?)
 		AND (? = 0 OR occurred_at < ?)`,
-		filters.Query, like, like, like, like, like, like, like, like,
+		filters.Query, like, like, like, like, like, like, like, like, like, like,
 		filters.HasFromDate, filters.FromUnix,
 		filters.HasToDate, filters.ToExclusiveUnix).Scan(&total); err != nil {
 		http.Error(response, "无法读取审计事件", http.StatusInternalServerError)
@@ -3043,12 +3066,12 @@ func (a *App) auditPage(response http.ResponseWriter, request *http.Request) {
 	}
 	pagination := newPagination(request, total)
 	rows, err := a.db.Query(`SELECT occurred_at, action, target, result, source_address, actor_username, actor_role,
-		request_id, authentication_assurance FROM audit_events
-		WHERE (? = '' OR action LIKE ? OR target LIKE ? OR result LIKE ? OR source_address LIKE ? OR actor_username LIKE ? OR actor_role LIKE ? OR request_id LIKE ? OR authentication_assurance LIKE ?)
+		request_id, authentication_assurance, resource_revision, resource_digest_sha256 FROM audit_events
+		WHERE (? = '' OR action LIKE ? OR target LIKE ? OR result LIKE ? OR source_address LIKE ? OR actor_username LIKE ? OR actor_role LIKE ? OR request_id LIKE ? OR authentication_assurance LIKE ? OR resource_revision LIKE ? OR resource_digest_sha256 LIKE ?)
 		AND (? = 0 OR occurred_at >= ?)
 		AND (? = 0 OR occurred_at < ?)
 		ORDER BY occurred_at DESC LIMIT ? OFFSET ?`,
-		filters.Query, like, like, like, like, like, like, like, like,
+		filters.Query, like, like, like, like, like, like, like, like, like, like,
 		filters.HasFromDate, filters.FromUnix,
 		filters.HasToDate, filters.ToExclusiveUnix,
 		listPageSize, pagination.Start)
@@ -3062,7 +3085,7 @@ func (a *App) auditPage(response http.ResponseWriter, request *http.Request) {
 		var event auditView
 		var occurredAt int64
 		if err := rows.Scan(&occurredAt, &event.Action, &event.Target, &event.Result, &event.Source, &event.Actor, &event.ActorRole,
-			&event.RequestID, &event.Assurance); err != nil {
+			&event.RequestID, &event.Assurance, &event.Revision, &event.Digest); err != nil {
 			http.Error(response, "无法读取审计事件", http.StatusInternalServerError)
 			return
 		}
@@ -3074,6 +3097,8 @@ func (a *App) auditPage(response http.ResponseWriter, request *http.Request) {
 		event.ActorRole = secretredaction.String(event.ActorRole)
 		event.RequestID = secretredaction.String(event.RequestID)
 		event.Assurance = secretredaction.String(event.Assurance)
+		event.Revision = secretredaction.String(event.Revision)
+		event.Digest = secretredaction.String(event.Digest)
 		event.OccurredAt = time.Unix(occurredAt, 0).UTC()
 		events = append(events, event)
 	}
@@ -3093,7 +3118,7 @@ func (a *App) auditDownload(response http.ResponseWriter, _ *http.Request) {
 		http.Error(response, "无法读取审计哈希链", http.StatusInternalServerError)
 		return
 	}
-	rows, err := a.db.Query("SELECT id, occurred_at, action, target, result, source_address, actor_user_id, actor_username, actor_role, request_id, authentication_assurance, previous_hash, event_hash FROM audit_events ORDER BY id")
+	rows, err := a.db.Query("SELECT id, occurred_at, action, target, result, source_address, actor_user_id, actor_username, actor_role, request_id, authentication_assurance, resource_revision, resource_digest_sha256, previous_hash, event_hash FROM audit_events ORDER BY id")
 	if err != nil {
 		http.Error(response, "无法导出审计事件", http.StatusInternalServerError)
 		return
@@ -3102,14 +3127,14 @@ func (a *App) auditDownload(response http.ResponseWriter, _ *http.Request) {
 	response.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	response.Header().Set("Content-Disposition", `attachment; filename="scriptboard-audit.csv"`)
 	writer := csv.NewWriter(response)
-	_ = writer.Write([]string{"id", "occurred_at", "action", "target", "result", "source_address", "actor_user_id", "actor_username", "actor_role", "request_id", "authentication_assurance", "previous_hash", "event_hash", "chain_anchor", "chain_tail"})
+	_ = writer.Write([]string{"id", "occurred_at", "action", "target", "result", "source_address", "actor_user_id", "actor_username", "actor_role", "request_id", "authentication_assurance", "resource_revision", "resource_digest_sha256", "previous_hash", "event_hash", "chain_anchor", "chain_tail"})
 	for rows.Next() {
 		var id, occurred int64
-		var action, target, result, source, actorUserID, actorUsername, actorRole, requestID, assurance, previousHash, eventHash string
-		if rows.Scan(&id, &occurred, &action, &target, &result, &source, &actorUserID, &actorUsername, &actorRole, &requestID, &assurance, &previousHash, &eventHash) != nil {
+		var action, target, result, source, actorUserID, actorUsername, actorRole, requestID, assurance, revision, digest, previousHash, eventHash string
+		if rows.Scan(&id, &occurred, &action, &target, &result, &source, &actorUserID, &actorUsername, &actorRole, &requestID, &assurance, &revision, &digest, &previousHash, &eventHash) != nil {
 			return
 		}
-		record := []string{strconv.FormatInt(id, 10), time.Unix(occurred, 0).UTC().Format(time.RFC3339), action, target, result, source, actorUserID, actorUsername, actorRole, requestID, assurance, previousHash, eventHash, anchor, tail}
+		record := []string{strconv.FormatInt(id, 10), time.Unix(occurred, 0).UTC().Format(time.RFC3339), action, target, result, source, actorUserID, actorUsername, actorRole, requestID, assurance, revision, digest, previousHash, eventHash, anchor, tail}
 		for index := range record {
 			record[index] = spreadsheetSafeCSVCell(secretredaction.String(record[index]))
 		}
@@ -3402,7 +3427,7 @@ func (a *App) saveQuickRun(response http.ResponseWriter, request *http.Request) 
 		http.Error(response, "无法保存快捷执行", http.StatusInternalServerError)
 		return
 	}
-	a.recordAuditForRequest(request, "create_quick_run", id, "succeeded")
+	a.recordQuickRunAuditForRequest(request, "create_quick_run", id, "succeeded")
 	response.Header().Set(assistantResourceIDHeader, id)
 	destination := "/config/quick-runs"
 	if request.Header.Get("X-ScriptBoard-Navigation") == "pjax" {
@@ -3463,7 +3488,7 @@ func (a *App) createQuickRunFromFile(response http.ResponseWriter, request *http
 		http.Error(response, "无法保存快捷执行", http.StatusInternalServerError)
 		return
 	}
-	a.recordAuditForRequest(request, "create_quick_run", id, "succeeded")
+	a.recordQuickRunAuditForRequest(request, "create_quick_run", id, "succeeded")
 	response.Header().Set(assistantResourceIDHeader, id)
 	destination := "/config/quick-runs"
 	if request.Header.Get("X-ScriptBoard-Navigation") == "pjax" {
@@ -3599,7 +3624,7 @@ func (a *App) startQuickRun(response http.ResponseWriter, request *http.Request)
 		http.Error(response, "无法启动快捷执行："+err.Error(), http.StatusBadRequest)
 		return
 	}
-	a.recordAuditForRequest(request, "start_quick_run", quick.ID, "accepted")
+	a.recordQuickRunAuditForRequest(request, "start_quick_run", quick.ID, "accepted")
 	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/history/runs/"+url.PathEscape(id), http.StatusSeeOther)
 }
@@ -5836,6 +5861,15 @@ func (a *App) recordAuditForRequest(request *http.Request, action, target, resul
 }
 
 func (a *App) recordAuditWithRequestActor(request *http.Request, action, target, result, source, actorUserID, actorUsername string, actorRole userRole) {
+	a.recordAuditResourceWithRequestActor(request, action, target, result, source, actorUserID, actorUsername, actorRole, "", "")
+}
+
+func (a *App) recordAuditResourceForRequest(request *http.Request, action, target, result, revision, digest string) {
+	current, _ := request.Context().Value(sessionContextKey).(session)
+	a.recordAuditResourceWithRequestActor(request, action, target, result, request.RemoteAddr, current.userID, current.username, current.role, revision, digest)
+}
+
+func (a *App) recordAuditResourceWithRequestActor(request *http.Request, action, target, result, source, actorUserID, actorUsername string, actorRole userRole, revision, digest string) {
 	requestID, _ := request.Context().Value(requestIDContextKey).(string)
 	assurance := ""
 	if current, ok := request.Context().Value(sessionContextKey).(session); ok {
@@ -5851,6 +5885,7 @@ func (a *App) recordAuditWithRequestActor(request *http.Request, action, target,
 		Action:     action, Target: target, Result: result, SourceAddress: source,
 		ActorUserID: actorUserID, ActorUsername: actorUsername, ActorRole: string(actorRole),
 		RequestID: requestID, AuthenticationAssurance: assurance,
+		ResourceRevision: revision, ResourceDigestSHA256: digest,
 	})
 }
 

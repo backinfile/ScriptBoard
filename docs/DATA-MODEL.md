@@ -606,7 +606,7 @@ Evidence Query 仍走相同 Tool Broker 和实时角色授权。日志搜索、�
 
 schema 27 增加 `external_trigger_keys`、`external_trigger_entries` 和 `external_trigger_requests`。Key 在 SQLite 中只保存标签、Token 的不可逆摘要与提示、启用状态、到期时间和最近成功使用时间；完整 Token 仅在创建或轮换后返回一次，不持久化。Entry 保存动作类型、固定目标与经过类型校验的 JSON 约束；schema 37 将其收紧为每个 Key 唯一绑定一个不可变能力。Request 保存不可变的调用结果摘要，不通过外键级联删除，以便 Key 删除后仍保留审计上下文。
 
-schema 38 增加持久化单例 `external_trigger_control`，用于全局紧急暂停所有有效外部调用。schema 39 在 Entry 上增加 `require_signature`，并用 `external_trigger_nonces` 原子消费短期 nonce；nonce 按 Key 唯一并带过期时间。迁移的旧 Entry 默认保持 Bearer 兼容，新 Entry 默认要求 5 分钟时间戳、唯一 nonce 和 HMAC-SHA256 签名。schema 40 在 `sessions` 增加 `authentication_assurance` 和 `reauthenticated_at`；高风险声明式路由要求 10 分钟内的浏览器会话密码认证，Assistant UI 动作不会为这些路由提供替代入口。schema 41 在 `audit_events` 增加 `request_id` 与 `authentication_assurance`；新事件把两者纳入 v2 哈希，历史空字段事件继续按 v1 验证。schema 42 在 `users` 增加 `mfa_required_at`；Administrator/Maintainer 到期且未配置任一第二因素时，只能访问 MFA 注册与带外退出路径。
+schema 38 增加持久化单例 `external_trigger_control`，用于全局紧急暂停所有有效外部调用。schema 39 在 Entry 上增加 `require_signature`，并用 `external_trigger_nonces` 原子消费短期 nonce；nonce 按 Key 唯一并带过期时间。迁移的旧 Entry 默认保持 Bearer 兼容，新 Entry 默认要求 5 分钟时间戳、唯一 nonce 和 HMAC-SHA256 签名。schema 40 在 `sessions` 增加 `authentication_assurance` 和 `reauthenticated_at`；高风险声明式路由要求 10 分钟内的浏览器会话密码认证，Assistant UI 动作不会为这些路由提供替代入口。schema 41 在 `audit_events` 增加 `request_id` 与 `authentication_assurance`；新事件把两者纳入 v2 哈希，历史空字段事件继续按 v1 验证。schema 42 在 `users` 增加 `mfa_required_at`；Administrator/Maintainer 到期且未配置任一第二因素时，只能访问 MFA 注册与带外退出路径。schema 43 在 `audit_events` 增加 `resource_revision` 与 `resource_digest_sha256`；字段存在的事件使用 v3 哈希，Broker、Quick Run 和一次性 Run 从自己的领域事实填充。
 
 `audit_events` 按 ID 顺序链接 `previous_hash` 与 `event_hash`，`audit_chain_state` 保存保留锚点和
 当前链尾。为防止事件尾部与同库链尾状态一起回退后仍通过本地校验，每个 State Root 另有一份

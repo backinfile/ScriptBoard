@@ -185,7 +185,7 @@ func openCheckpointDB(t *testing.T) *sql.DB {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	for _, statement := range []string{
-		`CREATE TABLE audit_events (id INTEGER PRIMARY KEY AUTOINCREMENT, occurred_at INTEGER NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, result TEXT NOT NULL, source_address TEXT NOT NULL, actor_user_id TEXT NOT NULL, actor_username TEXT NOT NULL, actor_role TEXT NOT NULL, request_id TEXT NOT NULL, authentication_assurance TEXT NOT NULL, previous_hash TEXT NOT NULL, event_hash TEXT NOT NULL)`,
+		`CREATE TABLE audit_events (id INTEGER PRIMARY KEY AUTOINCREMENT, occurred_at INTEGER NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, result TEXT NOT NULL, source_address TEXT NOT NULL, actor_user_id TEXT NOT NULL, actor_username TEXT NOT NULL, actor_role TEXT NOT NULL, request_id TEXT NOT NULL, authentication_assurance TEXT NOT NULL, resource_revision TEXT NOT NULL, resource_digest_sha256 TEXT NOT NULL, previous_hash TEXT NOT NULL, event_hash TEXT NOT NULL)`,
 		`CREATE TABLE audit_chain_state (id INTEGER PRIMARY KEY, anchor_hash TEXT NOT NULL, tail_hash TEXT NOT NULL)`,
 		`INSERT INTO audit_chain_state VALUES (1, '', '')`,
 	} {

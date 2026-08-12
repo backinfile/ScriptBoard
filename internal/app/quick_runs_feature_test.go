@@ -1,6 +1,9 @@
 package app_test
 
 import (
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"net/url"
@@ -171,6 +174,20 @@ func TestAdminCanCreateQuickRunInAGroupFromHostFile(t *testing.T) {
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusSeeOther {
 		t.Fatalf("create grouped Quick Run status=%d", response.StatusCode)
+	}
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	var revision, digest string
+	if err := database.QueryRow(`SELECT resource_revision, resource_digest_sha256 FROM audit_events
+		WHERE action='create_quick_run' ORDER BY id DESC LIMIT 1`).Scan(&revision, &digest); err != nil {
+		t.Fatal(err)
+	}
+	expectedDigest := sha256.Sum256([]byte(scriptContent))
+	if revision != "1" || digest != hex.EncodeToString(expectedDigest[:]) {
+		t.Fatalf("Quick Run audit revision=%q digest=%q", revision, digest)
 	}
 
 	response, err = client.Get(serverURL + "/config/quick-runs")

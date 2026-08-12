@@ -34,7 +34,8 @@
 > 受保护 IPC、默认拒绝网络和资源/系统调用限制。Run 只继承 Runner 构造的最小环境，不再继承
 > Web 身份与环境。此修订取代下文关于“单进程”、root/LocalSystem Web 和脚本继承 Web 身份的
 > 冲突表述；Host Files 与凭据解封仍在 Web 边界，后续最小权限工作见
-> [安全加固计划](./OPERATIONS-PANEL-SECURITY-HARDENING-PLAN.md)。
+> [安全加固计划](./OPERATIONS-PANEL-SECURITY-HARDENING-PLAN.md)。当前数据库为 schema 43，
+> schema 20–42 仅沿显式事务迁移路径前向升级；下文固定 schema 24 的旧表述不再适用。
 
 ## 1. 产品定义
 

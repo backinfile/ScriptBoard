@@ -12,6 +12,7 @@ import (
 	"hash"
 	"io"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 const (
 	chainVersionV1 = "scriptboard-audit-chain-v1"
 	chainVersionV2 = "scriptboard-audit-chain-v2"
+	chainVersionV3 = "scriptboard-audit-chain-v3"
 )
 
 type Event struct {
@@ -34,6 +36,8 @@ type Event struct {
 	ActorRole               string `json:"actor_role"`
 	RequestID               string `json:"request_id"`
 	AuthenticationAssurance string `json:"authentication_assurance"`
+	ResourceRevision        string `json:"resource_revision"`
+	ResourceDigestSHA256    string `json:"resource_digest_sha256"`
 }
 
 type CommittedEvent struct {
@@ -68,6 +72,8 @@ type exportEvent struct {
 	ActorRole               string `json:"actor_role"`
 	RequestID               string `json:"request_id"`
 	AuthenticationAssurance string `json:"authentication_assurance"`
+	ResourceRevision        string `json:"resource_revision"`
+	ResourceDigestSHA256    string `json:"resource_digest_sha256"`
 	PreviousSHA256          string `json:"previous_sha256"`
 	EventSHA256             string `json:"event_sha256"`
 }
@@ -130,6 +136,9 @@ func (transaction *Transaction) Append(ctx context.Context, event Event) (int64,
 		return 0, errors.New("audit transaction is closed")
 	}
 	event = redactEvent(event)
+	if err := validateResourceIdentity(event); err != nil {
+		return 0, err
+	}
 	previous, err := currentTail(ctx, transaction.tx)
 	if err != nil {
 		return 0, err
@@ -137,10 +146,11 @@ func (transaction *Transaction) Append(ctx context.Context, event Event) (int64,
 	digest := eventDigest(previous, event)
 	result, err := transaction.tx.ExecContext(ctx, `INSERT INTO audit_events
 		(occurred_at, action, target, result, source_address, actor_user_id, actor_username, actor_role,
-		 request_id, authentication_assurance, previous_hash, event_hash)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 request_id, authentication_assurance, resource_revision, resource_digest_sha256, previous_hash, event_hash)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		event.OccurredAt, event.Action, event.Target, event.Result, event.SourceAddress,
-		event.ActorUserID, event.ActorUsername, event.ActorRole, event.RequestID, event.AuthenticationAssurance, previous, digest)
+		event.ActorUserID, event.ActorUsername, event.ActorRole, event.RequestID, event.AuthenticationAssurance,
+		event.ResourceRevision, event.ResourceDigestSHA256, previous, digest)
 	if err != nil {
 		return 0, err
 	}
@@ -165,7 +175,25 @@ func redactEvent(event Event) Event {
 	event.ActorRole = secretredaction.String(event.ActorRole)
 	event.RequestID = secretredaction.String(event.RequestID)
 	event.AuthenticationAssurance = secretredaction.String(event.AuthenticationAssurance)
+	event.ResourceRevision = secretredaction.String(event.ResourceRevision)
+	event.ResourceDigestSHA256 = secretredaction.String(event.ResourceDigestSHA256)
 	return event
+}
+
+func validateResourceIdentity(event Event) error {
+	if len(event.ResourceRevision) > 128 || strings.ContainsAny(event.ResourceRevision, "\r\n\x00") {
+		return errors.New("audit resource revision is invalid")
+	}
+	if event.ResourceDigestSHA256 == "" {
+		return nil
+	}
+	if len(event.ResourceDigestSHA256) != sha256.Size*2 || event.ResourceDigestSHA256 != strings.ToLower(event.ResourceDigestSHA256) {
+		return errors.New("audit resource digest is not a canonical SHA-256")
+	}
+	if _, err := hex.DecodeString(event.ResourceDigestSHA256); err != nil {
+		return errors.New("audit resource digest is not a canonical SHA-256")
+	}
+	return nil
 }
 
 func (transaction *Transaction) Commit() error {
@@ -294,7 +322,7 @@ func (store *Store) Export(ctx context.Context, destination io.Writer, exportedA
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT id, occurred_at, action, target, result, source_address,
 		actor_user_id, actor_username, actor_role, request_id, authentication_assurance,
-		previous_hash, event_hash FROM audit_events ORDER BY id`)
+		resource_revision, resource_digest_sha256, previous_hash, event_hash FROM audit_events ORDER BY id`)
 	if err != nil {
 		return Verification{}, err
 	}
@@ -302,17 +330,18 @@ func (store *Store) Export(ctx context.Context, destination io.Writer, exportedA
 	encoder := json.NewEncoder(destination)
 	encoder.SetEscapeHTML(false)
 	if err := encoder.Encode(exportMetadata{
-		Type: "scriptboard.audit-evidence.v1", ExportedAt: exportedAt.UTC().Format(time.RFC3339Nano),
+		Type: "scriptboard.audit-evidence.v2", ExportedAt: exportedAt.UTC().Format(time.RFC3339Nano),
 		Events: verification.Count, TailSHA256: verification.LastHash,
 	}); err != nil {
 		return Verification{}, err
 	}
 	for rows.Next() {
 		var event exportEvent
-		event.Type = "scriptboard.audit-event.v1"
+		event.Type = "scriptboard.audit-event.v2"
 		if err := rows.Scan(&event.ID, &event.OccurredAt, &event.Action, &event.Target, &event.Result,
 			&event.SourceAddress, &event.ActorUserID, &event.ActorUsername, &event.ActorRole,
-			&event.RequestID, &event.AuthenticationAssurance, &event.PreviousSHA256, &event.EventSHA256); err != nil {
+			&event.RequestID, &event.AuthenticationAssurance, &event.ResourceRevision, &event.ResourceDigestSHA256,
+			&event.PreviousSHA256, &event.EventSHA256); err != nil {
 			return Verification{}, err
 		}
 		if err := encoder.Encode(event); err != nil {
@@ -332,7 +361,7 @@ func verifyTransaction(ctx context.Context, tx *sql.Tx) (Verification, error) {
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT id, occurred_at, action, target, result, source_address,
 		actor_user_id, actor_username, actor_role, request_id, authentication_assurance,
-		previous_hash, event_hash FROM audit_events ORDER BY id`)
+		resource_revision, resource_digest_sha256, previous_hash, event_hash FROM audit_events ORDER BY id`)
 	if err != nil {
 		return Verification{}, err
 	}
@@ -346,7 +375,7 @@ func verifyTransaction(ctx context.Context, tx *sql.Tx) (Verification, error) {
 		var recordedPrevious, recordedHash string
 		if err := rows.Scan(&id, &occurredAt, &event.Action, &event.Target, &event.Result, &event.SourceAddress,
 			&event.ActorUserID, &event.ActorUsername, &event.ActorRole, &event.RequestID, &event.AuthenticationAssurance,
-			&recordedPrevious, &recordedHash); err != nil {
+			&event.ResourceRevision, &event.ResourceDigestSHA256, &recordedPrevious, &recordedHash); err != nil {
 			return Verification{}, err
 		}
 		event.OccurredAt = strconv.FormatInt(occurredAt, 10)
@@ -421,7 +450,10 @@ func eventDigest(previous string, event Event) string {
 	version := chainVersionV1
 	values := []string{previous, event.OccurredAt, event.Action, event.Target, event.Result,
 		event.SourceAddress, event.ActorUserID, event.ActorUsername, event.ActorRole}
-	if event.RequestID != "" || event.AuthenticationAssurance != "" {
+	if event.ResourceRevision != "" || event.ResourceDigestSHA256 != "" {
+		version = chainVersionV3
+		values = append(values, event.RequestID, event.AuthenticationAssurance, event.ResourceRevision, event.ResourceDigestSHA256)
+	} else if event.RequestID != "" || event.AuthenticationAssurance != "" {
 		version = chainVersionV2
 		values = append(values, event.RequestID, event.AuthenticationAssurance)
 	}

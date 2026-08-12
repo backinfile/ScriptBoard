@@ -23,6 +23,15 @@ type quickRunGroup struct {
 	Ungrouped     bool
 }
 
+func (a *App) recordQuickRunAuditForRequest(request *http.Request, action, id, result string) {
+	quick, err := a.loadQuickRun(id)
+	if err != nil {
+		a.recordAuditForRequest(request, action, id, result)
+		return
+	}
+	a.recordAuditResourceForRequest(request, action, id, result, strconv.FormatInt(quick.Revision, 10), quick.ScriptSHA256)
+}
+
 type quickRunRecord struct {
 	quickRunView
 	SourceRunID sql.NullString
@@ -451,7 +460,7 @@ func (a *App) updateQuickRun(response http.ResponseWriter, request *http.Request
 		http.Error(response, "快捷执行不存在", http.StatusNotFound)
 		return
 	}
-	a.recordAuditForRequest(request, "update_quick_run", id, "succeeded")
+	a.recordQuickRunAuditForRequest(request, "update_quick_run", id, "succeeded")
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }
 
@@ -568,7 +577,7 @@ func (a *App) copyQuickRun(response http.ResponseWriter, request *http.Request) 
 		http.Error(response, "无法复制快捷执行", http.StatusInternalServerError)
 		return
 	}
-	a.recordAuditForRequest(request, "copy_quick_run", id, "succeeded")
+	a.recordQuickRunAuditForRequest(request, "copy_quick_run", id, "succeeded")
 	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }
@@ -603,6 +612,6 @@ func (a *App) setQuickRunLocked(response http.ResponseWriter, request *http.Requ
 	if locked {
 		action = "lock_quick_run"
 	}
-	a.recordAuditForRequest(request, action, id, "succeeded")
+	a.recordQuickRunAuditForRequest(request, action, id, "succeeded")
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }
