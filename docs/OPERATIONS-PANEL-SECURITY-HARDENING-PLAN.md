@@ -58,6 +58,7 @@ P0-02、P0-08 至 P0-11 的其余 Windows SCM、真实断电、正式签名发�
 - Broker-owned 远程网站连接隔离测试以不同凭据根确认 Web 页面可保存并使用 Broker 侧 Endpoint/Key 绑定，而 Web 根不产生该密文；协议测试覆盖无会话、过期会话、通用 payload、字段混用、HTTPS/Key 形状、响应上限和重定向不转发凭据。Windows 四进程升级后，外部 Chrome 创建只显示 Endpoint 的测试连接；Broker 下线时删除受控返回 HTTP 500 且元数据保留，重启后同一会话成功清理。随后手动 Host Files Run 再次输出 `RESOURCE_BINDING_V2_OK`，执行身份为 `scriptboard-runner`，浏览器控制台无错误。
 - Broker-owned Assistant Provider 隔离测试以不同凭据根确认 Web 可创建模型元数据，但只有 Broker 产生绑定 Owner/共享策略、Provider、模型、Endpoint 与 Key 的密文，并由 Broker 启动受模型约束的短期环回代理注入真实认证头；固定协议拒绝无会话、过期会话、通用 payload、其他凭据领域字段和非法撤销句柄，旧 `assistant-provider.enc/json` 只有在全部已配置模型成功绑定后才删除。Windows 四进程升级后，外部 Chrome 的过期会话保存首先被声明式 step-up 拦截，重新登录后的创建成功；列表和编辑表单均不回显 Key，Broker 下线时保存受控返回 HTTP 500 且原模型保留，恢复后配置仍可读取。密文无明文匹配，旧文件不存在。
 - Windows 四进程部署最终升级到 Broker v8、Web fixture v11、Runner v3 与 AI Host v3。全量 `go test -p 2 ./...`、`go vet ./...`、Assistant runtime/UI contract 和 Chromium desktop gate 均通过。外部 Chrome 经同一 Web 进程完成 Host Files 卷列表、普通目录搜索和 Markdown 内容预览；精确停止 Broker 后，原预览返回受控 HTTP 503，未回退到 Web 本地文件访问，重启同一 Broker 构建后原页面立即恢复。`127.0.0.1:11149` 的可达性、登录和同会话 Host Files 路径由干净 HTTP 客户端复核；外部 Chrome 的深层流程使用同一监听器的 `localhost` 别名，因为该 Chrome 配置中遗留的 `127.0.0.1` HttpOnly/Secure Cookie 无法由 HTTP 测试登录覆盖，且浏览器安全策略禁止自动清理站点数据。四个进程均来自预期部署目录，Broker/Runner/AI stderr 为空；这项本地证据不替代 Windows SCM 身份/ACL、真实断电或正式签名发布门禁。
+- 当前分支进一步部署为 Broker v9、Web fixture v14、Runner v4 与 AI Host v4。全量 Go 测试、vet、Windows 全命令构建和 Linux amd64 核心五进程构建通过；干净 HTTP 会话与外部 Chrome 均在精确 `http://127.0.0.1:11149/` 完成登录。Chrome 验证了通知队列/熔断状态、安全基线/历史入口、Windows Update Agent 只读补丁清单和 Windows System Event Log 空结果；真实浏览器暴露并回归修复了 `Get-WinEvent` 无匹配记录被误报为提供程序故障的问题，控制台无错误。该环境继续使用 `--development-current-user`，只作为功能证据。
 
 ## 2. 产品边界与设计决策
 
@@ -92,6 +93,8 @@ flowchart LR
 - **特权操作 Broker**：接口小、参数有类型、动作有 allowlist；每次调用重新鉴权并写审计，不接受 shell 字符串。
 - **Run Worker**：按照执行配置使用专用 OS 身份、工作目录、环境白名单和资源配额运行。
 - **AI Runtime**：与 Web 服务身份隔离，只能访问独立工作区和固定 Broker；“审批”不能代替操作系统沙箱。
+
+部署边界按 ADR-0163 收敛：一套发布包只对应一个 ScriptBoard 版本，manifest 同时绑定 Web、Broker、Runner 与 AI Host 的二进制摘要和 IPC 协议；安装、升级、回滚和卸载整体执行，混合版本 fail closed。Web 与 Broker 常驻；Runner 后续优先按作业或 socket activation 启动，AI Host 只在启用 AI 时按需运行。按需启动不能成为把执行或秘密能力合并回 Web 的理由。Windows `--development-current-user` 不属于正式部署，真实 SCM 服务身份、Named Pipe DACL、生命周期和整体版本矩阵仍是发布门禁。
 
 ### 2.3 明确不做
 
