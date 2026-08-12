@@ -17,7 +17,8 @@ func TestNotificationsPageIsReadOnlyAndStatesImplementedCoverage(t *testing.T) {
 		[]byte("Notifications and alerts"),
 		[]byte("Every committed audit event"),
 		[]byte("No alert records yet"),
-		[]byte("Email delivery"),
+		[]byte("Broker email fixed templates"),
+		[]byte("Five fixed v1 templates cover security alerts"),
 		[]byte("Structured v1 outage and recovery templates are enabled"),
 		[]byte("tokens are never shown"),
 	} {
@@ -26,6 +27,9 @@ func TestNotificationsPageIsReadOnlyAndStatesImplementedCoverage(t *testing.T) {
 		}
 	}
 	pageBody := string(page)
+	if strings.Contains(pageBody, "Email delivery is not implemented") {
+		t.Fatalf("notifications page still claims Broker email is unimplemented: %s", page)
+	}
 	pageStart := strings.Index(pageBody, `data-notifications-page`)
 	if pageStart < 0 || strings.Contains(pageBody[pageStart:], "<form") {
 		t.Fatalf("read-only notifications page unexpectedly contains a form: %s", page)
