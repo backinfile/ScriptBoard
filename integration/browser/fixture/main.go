@@ -15,8 +15,11 @@ import (
 
 	"scriptboard/internal/app"
 	"scriptboard/internal/appstatus"
+	"scriptboard/internal/assistant/runtimehost"
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/logstream"
+	"scriptboard/internal/privilegebroker"
+	"scriptboard/internal/runnerhost"
 )
 
 const (
@@ -181,14 +184,33 @@ func main() {
 		panic(err)
 	}
 
-	application, err := app.Open(app.Config{
+	applicationConfig := app.Config{
 		StateRoot:         stateRoot,
 		FileTopology:      fixtureTopology{root: hostRoot},
 		AdminUsername:     fixtureUsername,
 		AdminPasswordFile: passwordFile,
 		ApplicationProbe:  &applicationProbe{},
 		RequestRestart:    func() error { return nil },
-	})
+	}
+	if strings.TrimSpace(os.Getenv("SCRIPTBOARD_FIXTURE_REMOTE_HOSTS")) == "1" {
+		brokerEndpoint, endpointErr := privilegebroker.DefaultEndpoint(stateRoot)
+		if endpointErr != nil {
+			panic(endpointErr)
+		}
+		assistantEndpoint, endpointErr := runtimehost.DefaultEndpoint(stateRoot)
+		if endpointErr != nil {
+			panic(endpointErr)
+		}
+		runnerEndpoint, endpointErr := runnerhost.DefaultEndpoint(stateRoot)
+		if endpointErr != nil {
+			panic(endpointErr)
+		}
+		applicationConfig.PrivilegedBrokerEndpoint = brokerEndpoint
+		applicationConfig.AssistantProcessLauncher = runtimehost.NewClientLauncher(runtimehost.Dial(assistantEndpoint))
+		applicationConfig.RunnerProcessLauncher = runnerhost.NewClientLauncher(runnerhost.Dial(runnerEndpoint))
+	}
+
+	application, err := app.Open(applicationConfig)
 	if err != nil {
 		panic(err)
 	}

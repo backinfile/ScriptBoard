@@ -57,7 +57,7 @@ func runContext(ctx context.Context, arguments []string) error {
 	if *maximum < 1 || *maximum > 32 {
 		return errors.New("Runner Host --maximum must be between 1 and 32")
 	}
-	loaded, err := config.Load([]string{"--config", *configPath, "--state-root", absolute}, os.Getenv)
+	loaded, err := config.Load(runnerConfigArguments(*configPath, absolute), os.Getenv)
 	if err != nil {
 		return err
 	}
@@ -78,4 +78,12 @@ func runContext(ctx context.Context, arguments []string) error {
 	server.Start()
 	<-ctx.Done()
 	return server.Close(context.Background())
+}
+
+func runnerConfigArguments(configPath, stateRoot string) []string {
+	arguments := []string{"--state-root", stateRoot}
+	if path := strings.TrimSpace(configPath); path != "" {
+		arguments = append([]string{"--config", path}, arguments...)
+	}
+	return arguments
 }

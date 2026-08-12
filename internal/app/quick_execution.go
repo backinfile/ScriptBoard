@@ -387,7 +387,7 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 		http.Error(response, "Unable to create Quick Run", http.StatusInternalServerError)
 		return
 	}
-	a.recordAuditForRequest(request, "create_quick_run_from_source", id, "succeeded")
+	a.recordQuickRunAuditForRequest(request, "create_quick_run_from_source", id, "succeeded")
 	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }

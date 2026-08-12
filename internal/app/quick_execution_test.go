@@ -301,6 +301,14 @@ func TestCreateQuickRunFromSourceWritesScriptWithoutRunningIt(t *testing.T) {
 	if expected := fmt.Sprintf("%x", sha256.Sum256([]byte(source))); digest != expected || revision != 1 {
 		t.Fatalf("published Quick Run digest=%q revision=%d, want %q revision=1", digest, revision, expected)
 	}
+	var auditRevision, auditDigest string
+	if err := database.QueryRow(`SELECT resource_revision, resource_digest_sha256 FROM audit_events
+		WHERE action = 'create_quick_run_from_source' ORDER BY id DESC LIMIT 1`).Scan(&auditRevision, &auditDigest); err != nil {
+		t.Fatal(err)
+	}
+	if auditRevision != "1" || auditDigest != digest {
+		t.Fatalf("create audit revision=%q digest=%q, want revision=1 digest=%q", auditRevision, auditDigest, digest)
+	}
 
 	response, err = client.Get(serverURL + "/config/quick-runs")
 	if err != nil {
