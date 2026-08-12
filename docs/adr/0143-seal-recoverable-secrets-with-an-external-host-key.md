@@ -21,4 +21,4 @@ closed，不能带着可独立解密的旧 State Root 继续服务。
 State Root”的保存方式，不改变一次显示 External Trigger Key 只存不可逆 verifier 的新语义。
 Unix 备份必须把外部 key 作为独立秘密处理；Windows 跨主机恢复需重新录入可恢复凭据。
 
-后续 ADR-0156、ADR-0157 与 ADR-0158 已分别把受管部署的 MFA、Passkey 和远程网站连接状态迁入 Broker-owned 领域存储；本决策中的通用外部主密钥在受管 Web 内只继续服务 Provider 与 MySQL，并保留非受管部署的兼容路径。
+后续 ADR-0156、ADR-0157、ADR-0158 与 ADR-0159 已分别把受管部署的 MFA、Passkey、远程网站连接状态及 Assistant Provider 凭据迁入 Broker-owned 领域存储；本决策中的通用外部主密钥在受管 Web 内只继续服务 MySQL，并保留非受管部署的兼容路径。
