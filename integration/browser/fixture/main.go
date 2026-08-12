@@ -218,7 +218,7 @@ func main() {
 	}
 	defer application.Close()
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := net.Listen("tcp", fixtureListenAddress())
 	if err != nil {
 		panic(err)
 	}
@@ -239,6 +239,18 @@ func main() {
 	if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 		panic(err)
 	}
+}
+
+func fixtureListenAddress() string {
+	address := strings.TrimSpace(os.Getenv("SCRIPTBOARD_FIXTURE_LISTEN"))
+	if address == "" {
+		return "127.0.0.1:0"
+	}
+	host, port, err := net.SplitHostPort(address)
+	if err != nil || host != "127.0.0.1" || port == "" {
+		panic("SCRIPTBOARD_FIXTURE_LISTEN must be a 127.0.0.1:port address")
+	}
+	return address
 }
 
 func seedHostFiles(root string) error {
