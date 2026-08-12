@@ -42,6 +42,8 @@ type StartRequest struct {
 	Variables         map[string]string
 	InitiatorUserID   string
 	InitiatorUsername string
+	PreparedScript    *hostfiles.Script
+	PreparedDirectory *hostfiles.PreparedDirectory
 }
 
 type OneTimeStartRequest struct {
@@ -55,6 +57,7 @@ type OneTimeStartRequest struct {
 	InitiatorUserID   string
 	InitiatorUsername string
 	InitiatorRole     string
+	PreparedDirectory *hostfiles.PreparedDirectory
 }
 
 type Run struct {
@@ -225,9 +228,17 @@ func (m *Manager) Start(request StartRequest) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	script, err := m.files.PrepareScript(request.ScriptPath)
-	if err != nil {
-		return "", fmt.Errorf("脚本不可执行: %w", err)
+	var script hostfiles.Script
+	if request.PreparedScript != nil {
+		script = *request.PreparedScript
+		if script.Path != request.ScriptPath || script.Digest == "" || script.Directory != filepath.Dir(script.Path) {
+			return "", errors.New("prepared script does not match the Run request")
+		}
+	} else {
+		script, err = m.files.PrepareScript(request.ScriptPath)
+		if err != nil {
+			return "", fmt.Errorf("脚本不可执行: %w", err)
+		}
 	}
 	if request.ExpectedDigest != "" && subtle.ConstantTimeCompare([]byte(script.Digest), []byte(request.ExpectedDigest)) != 1 {
 		return "", errors.New("script digest no longer matches the published Run configuration")
@@ -239,9 +250,17 @@ func (m *Manager) Start(request StartRequest) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	workingDirectory, err := m.files.PrepareDirectory(script.Directory)
-	if err != nil {
-		return "", fmt.Errorf("脚本工作目录不可用: %w", err)
+	var workingDirectory hostfiles.PreparedDirectory
+	if request.PreparedDirectory != nil {
+		workingDirectory = *request.PreparedDirectory
+		if workingDirectory.Path != script.Directory {
+			return "", errors.New("prepared working directory does not match the script")
+		}
+	} else {
+		workingDirectory, err = m.files.PrepareDirectory(script.Directory)
+		if err != nil {
+			return "", fmt.Errorf("脚本工作目录不可用: %w", err)
+		}
 	}
 	id, err := randomID()
 	if err != nil {
@@ -303,9 +322,17 @@ func (m *Manager) StartOneTime(request OneTimeStartRequest) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	workingDirectory, err := m.files.PrepareDirectory(request.WorkingDirectory)
-	if err != nil {
-		return "", fmt.Errorf("working directory is invalid: %w", err)
+	var workingDirectory hostfiles.PreparedDirectory
+	if request.PreparedDirectory != nil {
+		workingDirectory = *request.PreparedDirectory
+		if workingDirectory.Path != request.WorkingDirectory {
+			return "", errors.New("prepared working directory does not match the one-time Run request")
+		}
+	} else {
+		workingDirectory, err = m.files.PrepareDirectory(request.WorkingDirectory)
+		if err != nil {
+			return "", fmt.Errorf("working directory is invalid: %w", err)
+		}
 	}
 	id, err := randomID()
 	if err != nil {
@@ -380,7 +407,7 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 			m.files.ReleaseLease(leaseID)
 		}
 	}()
-	if prepared.scriptKind == "host_file" {
+	if prepared.scriptKind == "host_file" && prepared.script.Info != nil {
 		current, err := m.files.PrepareScript(prepared.script.Path)
 		if err != nil || current.Digest != prepared.script.Digest || !os.SameFile(current.Info, prepared.script.Info) {
 			return "", errors.New("script changed before its Run lease was acquired")
@@ -468,11 +495,13 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 		return "", fmt.Errorf("commit Run: %w", err)
 	}
 
-	currentDirectoryInfo, directoryErr := os.Lstat(prepared.workingDirectory.Path)
-	if directoryErr != nil || !currentDirectoryInfo.IsDir() || currentDirectoryInfo.Mode()&os.ModeSymlink != 0 || !os.SameFile(currentDirectoryInfo, prepared.workingDirectory.Info) {
-		_ = logFile.Close()
-		m.failStart(id, errors.New("working directory changed before execution"))
-		return id, nil
+	if prepared.workingDirectory.Info != nil {
+		currentDirectoryInfo, directoryErr := os.Lstat(prepared.workingDirectory.Path)
+		if directoryErr != nil || !currentDirectoryInfo.IsDir() || currentDirectoryInfo.Mode()&os.ModeSymlink != 0 || !os.SameFile(currentDirectoryInfo, prepared.workingDirectory.Info) {
+			_ = logFile.Close()
+			m.failStart(id, errors.New("working directory changed before execution"))
+			return id, nil
+		}
 	}
 	process, executorPath, err := m.launcher.Launch(context.Background(), LaunchRequest{
 		RunID: id, ScriptPath: prepared.script.Path, ScriptDigest: prepared.script.Digest,

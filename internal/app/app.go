@@ -3720,6 +3720,11 @@ func (a *App) startQuickRun(response http.ResponseWriter, request *http.Request)
 		http.Error(response, "快捷执行脚本已变化，请由管理员重新发布", http.StatusConflict)
 		return
 	}
+	preparedDirectory, err := a.hostPrepareDirectory(request.Context(), prepared.Directory)
+	if err != nil {
+		http.Error(response, "快捷执行工作目录不可用", http.StatusConflict)
+		return
+	}
 	if a.runs.IsActiveScript(quick.ScriptPath) && request.FormValue("confirm_overlap") != "yes" {
 		current := request.Context().Value(sessionContextKey).(session)
 		response.WriteHeader(http.StatusConflict)
@@ -3736,6 +3741,7 @@ func (a *App) startQuickRun(response http.ResponseWriter, request *http.Request)
 		ScriptPath: quick.ScriptPath, ExpectedDigest: quick.ScriptSHA256, ArgumentsTemplate: quick.ArgumentsTemplate, TimeoutSeconds: quick.TimeoutSeconds,
 		SourceType: "admin/quick-run", SourceName: quick.Name, SourceID: quick.ID, Variables: variables,
 		InitiatorUserID: current.userID, InitiatorUsername: current.username,
+		PreparedScript: &prepared, PreparedDirectory: &preparedDirectory,
 	})
 	if err != nil {
 		http.Error(response, "无法启动快捷执行："+err.Error(), http.StatusBadRequest)
@@ -4092,6 +4098,12 @@ func (a *App) startRun(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "脚本不可执行："+err.Error(), http.StatusBadRequest)
 		return
 	}
+	workingDirectory, err := a.hostPrepareDirectory(request.Context(), script.Directory)
+	if err != nil {
+		a.recordAuditResourceForRequest(request, "start_run", script.Path, "rejected", "", script.Digest)
+		http.Error(response, "脚本工作目录不可用："+err.Error(), http.StatusBadRequest)
+		return
+	}
 	id, err := a.runs.Start(runmanager.StartRequest{
 		ScriptPath:        script.Path,
 		ExpectedDigest:    script.Digest,
@@ -4102,6 +4114,8 @@ func (a *App) startRun(response http.ResponseWriter, request *http.Request) {
 		Variables:         variables,
 		InitiatorUserID:   current.userID,
 		InitiatorUsername: current.username,
+		PreparedScript:    &script,
+		PreparedDirectory: &workingDirectory,
 	})
 	if err != nil {
 		a.recordAuditResourceForRequest(request, "start_run", script.Path, "rejected", "", script.Digest)

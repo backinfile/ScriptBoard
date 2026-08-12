@@ -479,6 +479,7 @@ func (a *App) startOneTimeRun(response http.ResponseWriter, request *http.Reques
 		InitiatorUserID:   current.userID,
 		InitiatorUsername: current.username,
 		InitiatorRole:     string(current.role),
+		PreparedDirectory: &preparedDirectory,
 	})
 	if err != nil {
 		http.Error(response, "Unable to start one-time Run: "+err.Error(), http.StatusBadRequest)

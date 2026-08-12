@@ -549,7 +549,51 @@ func validateHostFilesRequest(request wireRequest) error {
 			return errors.New("Host Files append request is invalid")
 		}
 	}
+	if hostFilesExpectedPayload(request.Operation, *payload) != *payload {
+		return errors.New("Host Files request contains operation-forbidden fields")
+	}
 	return nil
+}
+
+func hostFilesExpectedPayload(operation string, payload hostFilesWireRequest) hostFilesWireRequest {
+	switch operation {
+	case operationHostFilesRoots:
+		return hostFilesWireRequest{}
+	case operationHostFilesList:
+		return hostFilesWireRequest{Path: payload.Path, Offset: payload.Offset, Limit: payload.Limit}
+	case operationHostFilesInfo, operationHostFilesToggleExec, operationHostFilesOpenRead, operationHostFilesRemove:
+		return hostFilesWireRequest{Path: payload.Path}
+	case operationHostFilesReadText:
+		return hostFilesWireRequest{Path: payload.Path, MaxBytes: payload.MaxBytes}
+	case operationHostFilesCanonical:
+		return hostFilesWireRequest{Path: payload.Path, Name: payload.Name, CanonicalKind: payload.CanonicalKind}
+	case operationHostFilesAvailable, operationHostFilesMkdir:
+		return hostFilesWireRequest{Directory: payload.Directory, Name: payload.Name}
+	case operationHostFilesTrash:
+		return hostFilesWireRequest{Path: payload.Path, StoredName: payload.StoredName}
+	case operationHostFilesRestore:
+		return hostFilesWireRequest{StoredPath: payload.StoredPath, Destination: payload.Destination, RestoreAvailable: payload.RestoreAvailable}
+	case operationHostFilesPurge:
+		return hostFilesWireRequest{StoredPath: payload.StoredPath}
+	case operationHostFilesMove, operationHostFilesSameFS:
+		return hostFilesWireRequest{Path: payload.Path, Destination: payload.Destination}
+	case operationHostFilesReadChunk:
+		return hostFilesWireRequest{Handle: payload.Handle, ByteOffset: payload.ByteOffset, ByteLimit: payload.ByteLimit}
+	case operationHostFilesCloseRead:
+		return hostFilesWireRequest{Handle: payload.Handle}
+	case operationHostFilesUpload:
+		return hostFilesWireRequest{StagingPath: payload.StagingPath, Directory: payload.Directory, Name: payload.Name, MaxBytes: payload.MaxBytes, Replace: payload.Replace, StoredName: payload.StoredName}
+	case operationHostFilesSaveText:
+		return hostFilesWireRequest{StagingPath: payload.StagingPath, Path: payload.Path, ExpectedDigest: payload.ExpectedDigest, StoredName: payload.StoredName, MaxBytes: payload.MaxBytes}
+	case operationHostFilesRollback:
+		return hostFilesWireRequest{Path: payload.Path, StoredPath: payload.StoredPath}
+	case operationHostFilesPrepare:
+		return hostFilesWireRequest{Path: payload.Path, DirectoryPrepare: payload.DirectoryPrepare}
+	case operationHostFilesAppend:
+		return hostFilesWireRequest{Path: payload.Path, Record: payload.Record}
+	default:
+		return hostFilesWireRequest{}
+	}
 }
 
 func onlyHostFilePath(payload *hostFilesWireRequest) bool {

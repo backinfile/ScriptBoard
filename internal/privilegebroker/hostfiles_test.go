@@ -85,6 +85,11 @@ func TestHostFilesProtocolRejectsGenericAndUnrelatedFields(t *testing.T) {
 		func() wireRequest { value := valid; value.MySQL = &mysqlWireRequest{}; return value }(),
 		func() wireRequest { value := valid; value.SessionToken = ""; return value }(),
 		func() wireRequest { value := valid; value.HostFiles.Limit = hostFilesPageSize + 1; return value }(),
+		func() wireRequest {
+			value := valid
+			value.HostFiles.StagingPath = filepath.Join(t.TempDir(), "smuggled")
+			return value
+		}(),
 	}
 	for _, request := range requests {
 		if err := validateWireRequest(request); err == nil {
