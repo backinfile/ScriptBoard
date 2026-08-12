@@ -88,6 +88,16 @@ const (
 	operationHostFilesRestore    = "host_files_restore"
 	operationHostFilesPurge      = "host_files_purge"
 	operationHostFilesMove       = "host_files_move"
+	operationHostFilesReadChunk  = "host_files_read_chunk"
+	operationHostFilesOpenRead   = "host_files_open_read"
+	operationHostFilesCloseRead  = "host_files_close_read"
+	operationHostFilesUpload     = "host_files_upload"
+	operationHostFilesSaveText   = "host_files_save_text"
+	operationHostFilesRollback   = "host_files_rollback"
+	operationHostFilesRemove     = "host_files_remove"
+	operationHostFilesPrepare    = "host_files_prepare"
+	operationHostFilesSameFS     = "host_files_same_filesystem"
+	operationHostFilesAppend     = "host_files_append"
 	statusOK                     = "ok"
 	statusError                  = "error"
 	defaultCallDeadline          = 35 * time.Second
@@ -259,6 +269,16 @@ type HostFilesService interface {
 	RestoreFromTrash(context.Context, string, string, bool) (string, error)
 	PurgeTrash(context.Context, string) error
 	Move(context.Context, string, string) error
+	OpenRead(context.Context, string) (string, HostFileInfo, error)
+	ReadChunk(context.Context, string, int64, int) ([]byte, error)
+	CloseRead(context.Context, string) error
+	Upload(context.Context, string, string, string, int64, bool, string) (*hostfiles.Trashed, error)
+	SaveText(context.Context, string, string, string, string, int64) (hostfiles.Trashed, error)
+	RollbackTextSave(context.Context, string, string) error
+	RemoveRegular(context.Context, string) error
+	Prepare(context.Context, string, bool) (hostFilesPrepared, error)
+	SameFilesystem(context.Context, string, string) (bool, error)
+	AppendText(context.Context, string, string) error
 }
 
 type ServerOptions struct {
@@ -453,7 +473,9 @@ func (server *Server) handle(connection net.Conn) {
 		cancelOperation()
 	case operationHostFilesRoots, operationHostFilesList, operationHostFilesInfo, operationHostFilesReadText,
 		operationHostFilesCanonical, operationHostFilesAvailable, operationHostFilesMkdir, operationHostFilesToggleExec,
-		operationHostFilesTrash, operationHostFilesRestore, operationHostFilesPurge, operationHostFilesMove:
+		operationHostFilesTrash, operationHostFilesRestore, operationHostFilesPurge, operationHostFilesMove,
+		operationHostFilesOpenRead, operationHostFilesReadChunk, operationHostFilesCloseRead, operationHostFilesUpload, operationHostFilesSaveText, operationHostFilesRollback,
+		operationHostFilesRemove, operationHostFilesPrepare, operationHostFilesSameFS, operationHostFilesAppend:
 		response = server.hostFilesOperation(request)
 	default:
 		response = wireResponse{Status: statusError, ErrorCode: "operation_forbidden", Message: "operation is not supported"}

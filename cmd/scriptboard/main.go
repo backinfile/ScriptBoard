@@ -480,7 +480,7 @@ func serveContext(runContext context.Context, arguments []string) error {
 		remoteWebsiteService = privilegebroker.NewRemoteWebsite(brokerClient)
 		providerCredentials = privilegebroker.NewProviderCredentials(brokerClient)
 		mysqlBackend = privilegebroker.NewMySQLBackend(brokerClient, mysqlmanager.ToolSettings{DumpExecutable: "mysqldump", ClientExecutable: "mysql"})
-		hostFilesBackend = privilegebroker.NewHostFilesBackend(brokerClient)
+		hostFilesBackend = privilegebroker.NewHostFilesBackend(brokerClient, filepath.Join(loaded.StateRoot, "inbox", "host-files-broker"))
 	}
 	updateShutdown := make(chan struct{}, 1)
 	var requestRestart func() error

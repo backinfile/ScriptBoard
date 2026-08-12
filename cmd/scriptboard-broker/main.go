@@ -133,7 +133,11 @@ func runContext(ctx context.Context, arguments []string) error {
 	if err := brokerFiles.Protect(mysqlExecutionManager.BackupRoot()); err != nil {
 		return fmt.Errorf("protect MySQL backup root from Host Files: %w", err)
 	}
-	hostFilesService, err := privilegebroker.NewBrokerHostFilesService(brokerFiles)
+	hostFilesStagingRoot := filepath.Join(absolute, "inbox", "host-files-broker")
+	if err := os.MkdirAll(hostFilesStagingRoot, 0o750); err != nil {
+		return fmt.Errorf("prepare Broker Host Files exchange root: %w", err)
+	}
+	hostFilesService, err := privilegebroker.NewBrokerHostFilesService(brokerFiles, hostFilesStagingRoot)
 	if err != nil {
 		return err
 	}

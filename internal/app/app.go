@@ -3372,11 +3372,11 @@ func (a *App) scheduleRequest(request *http.Request) (scheduler.CreateRequest, e
 		}
 		timeoutSeconds = parsed
 	}
-	scriptPath, err := a.files.CanonicalExisting(request.FormValue("script"))
+	scriptPath, err := a.hostCanonicalExisting(request.Context(), request.FormValue("script"))
 	if err != nil {
 		return scheduler.CreateRequest{}, fmt.Errorf("计划脚本无效: %w", err)
 	}
-	info, err := a.files.Info(scriptPath)
+	info, _, err := a.hostInfo(request.Context(), scriptPath)
 	if err != nil || !info.Mode().IsRegular() {
 		return scheduler.CreateRequest{}, errors.New("计划脚本必须是普通主机文件")
 	}
@@ -3479,8 +3479,8 @@ type quickRunCreateRequest struct {
 	GroupID           *string
 }
 
-func (a *App) createQuickRun(values quickRunCreateRequest) (string, error) {
-	prepared, err := a.files.PrepareScript(values.ScriptPath)
+func (a *App) createQuickRun(ctx context.Context, values quickRunCreateRequest) (string, error) {
+	prepared, err := a.hostPrepareScript(ctx, values.ScriptPath)
 	if err != nil {
 		return "", err
 	}
@@ -3536,7 +3536,7 @@ func (a *App) saveQuickRun(response http.ResponseWriter, request *http.Request) 
 		http.Error(response, "快捷执行分组不存在", http.StatusConflict)
 		return
 	}
-	id, err := a.createQuickRun(quickRunCreateRequest{
+	id, err := a.createQuickRun(request.Context(), quickRunCreateRequest{
 		Name: name, ScriptPath: source.ScriptPath, ArgumentsTemplate: source.ArgumentsTemplate,
 		TimeoutSeconds: source.TimeoutSeconds, SourceRunID: &source.ID, GroupID: groupID,
 	})
@@ -3563,12 +3563,12 @@ func (a *App) createQuickRunFromFile(response http.ResponseWriter, request *http
 		http.Error(response, "快捷执行名称无效", http.StatusBadRequest)
 		return
 	}
-	scriptPath, err := a.files.CanonicalExisting(request.FormValue("script"))
+	scriptPath, err := a.hostCanonicalExisting(request.Context(), request.FormValue("script"))
 	if err != nil {
 		writeHostFileError(response, "脚本不存在或不可运行", err)
 		return
 	}
-	info, err := a.files.Info(scriptPath)
+	info, _, err := a.hostInfo(request.Context(), scriptPath)
 	if err != nil || !info.Mode().IsRegular() || !isScriptExtension(scriptPath) {
 		http.Error(response, "脚本不存在或不可运行", http.StatusBadRequest)
 		return
@@ -3597,7 +3597,7 @@ func (a *App) createQuickRunFromFile(response http.ResponseWriter, request *http
 		http.Error(response, "快捷执行分组不存在", http.StatusConflict)
 		return
 	}
-	id, err := a.createQuickRun(quickRunCreateRequest{
+	id, err := a.createQuickRun(request.Context(), quickRunCreateRequest{
 		Name: name, ScriptPath: scriptPath, ArgumentsTemplate: argumentsTemplate,
 		TimeoutSeconds: timeoutSeconds, SourceRunID: nil, GroupID: groupID,
 	})
@@ -3657,7 +3657,7 @@ func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request)
 			http.Error(response, "无法读取快捷执行", http.StatusInternalServerError)
 			return
 		}
-		if prepared, prepareErr := a.files.PrepareScript(quick.ScriptPath); prepareErr == nil && quick.ScriptSHA256 != "" && subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(quick.ScriptSHA256)) == 1 {
+		if prepared, prepareErr := a.hostPrepareScript(request.Context(), quick.ScriptPath); prepareErr == nil && quick.ScriptSHA256 != "" && subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(quick.ScriptSHA256)) == 1 {
 			quick.Valid = true
 		}
 		if groupID.Valid {
@@ -3715,7 +3715,7 @@ func (a *App) startQuickRun(response http.ResponseWriter, request *http.Request)
 		http.Error(response, "快捷执行不存在", http.StatusNotFound)
 		return
 	}
-	prepared, err := a.files.PrepareScript(quick.ScriptPath)
+	prepared, err := a.hostPrepareScript(request.Context(), quick.ScriptPath)
 	if err != nil || quick.ScriptSHA256 == "" || subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(quick.ScriptSHA256)) != 1 {
 		http.Error(response, "快捷执行脚本已变化，请由管理员重新发布", http.StatusConflict)
 		return
@@ -4086,7 +4086,7 @@ func (a *App) startRun(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	current := request.Context().Value(sessionContextKey).(session)
-	script, err := a.files.PrepareScript(request.FormValue("script"))
+	script, err := a.hostPrepareScript(request.Context(), request.FormValue("script"))
 	if err != nil {
 		a.recordAuditForRequest(request, "start_run", request.FormValue("script"), "rejected")
 		http.Error(response, "脚本不可执行："+err.Error(), http.StatusBadRequest)
@@ -4349,7 +4349,7 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "活动运行正在使用同名目标，不能覆盖", http.StatusConflict)
 		return
 	}
-	sameFilesystem, err := a.files.SameFilesystem(source, destination)
+	sameFilesystem, err := a.hostSameFilesystem(request.Context(), source, destination)
 	if err != nil {
 		writeHostFileError(response, "无法确定移动边界", err)
 		return
@@ -4600,7 +4600,7 @@ func (a *App) saveText(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "无法创建回收条目", http.StatusInternalServerError)
 		return
 	}
-	trashed, err := a.files.SaveText(relative, request.FormValue("digest"), request.FormValue("content"), id, 1<<20)
+	trashed, err := a.hostSaveText(request.Context(), relative, request.FormValue("digest"), request.FormValue("content"), id, 1<<20)
 	if errors.Is(err, hostfiles.ErrConflict) {
 		http.Error(response, "文件已被外部修改，请重新打开后再保存", http.StatusConflict)
 		return
@@ -4617,7 +4617,7 @@ func (a *App) saveText(response http.ResponseWriter, request *http.Request) {
 		hostfiles.ComparisonKey(trashed.StoredPath), time.Now().UTC().Unix(), trashed.Size,
 	)
 	if err != nil {
-		_ = a.files.RollbackTextSave(relative, trashed.StoredPath)
+		_ = a.hostRollbackTextSave(request.Context(), relative, trashed.StoredPath)
 		http.Error(response, "无法记录文件旧版本", http.StatusInternalServerError)
 		return
 	}
@@ -4629,7 +4629,7 @@ func (a *App) saveText(response http.ResponseWriter, request *http.Request) {
 
 func (a *App) downloadFile(response http.ResponseWriter, request *http.Request) {
 	relative := request.URL.Query().Get("path")
-	file, info, err := a.files.OpenRegular(relative)
+	file, info, err := a.hostOpenRegular(request.Context(), relative)
 	if err != nil {
 		writeHostFileError(response, "无法下载文件", err)
 		return
@@ -4651,7 +4651,7 @@ func (a *App) previewImage(response http.ResponseWriter, request *http.Request) 
 		http.Error(response, "该格式只能下载，不能内嵌预览", http.StatusUnsupportedMediaType)
 		return
 	}
-	file, info, err := a.files.OpenRegular(relative)
+	file, info, err := a.hostOpenRegular(request.Context(), relative)
 	if err != nil {
 		writeHostFileError(response, "无法预览图片", err)
 		return
@@ -4980,7 +4980,7 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 				http.Error(response, "上传目录不能为空", http.StatusBadRequest)
 				return
 			}
-			if _, listErr := a.files.List(relative); listErr != nil {
+			if _, listErr := a.hostList(request.Context(), relative); listErr != nil {
 				_ = part.Close()
 				writeHostFileError(response, "上传目录无效", listErr)
 				return
@@ -4992,7 +4992,7 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: secretredaction.String(nameErr.Error())})
 			continue
 		}
-		targetPath, destinationErr := a.files.Destination(relative, filename)
+		targetPath, destinationErr := a.hostDestination(request.Context(), relative, filename)
 		if destinationErr != nil {
 			_ = part.Close()
 			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: secretredaction.String(destinationErr.Error())})
@@ -5003,7 +5003,7 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: webText(locale, "upload_results.invalid_conflict_action")})
 			continue
 		}
-		targetInfo, targetErr := a.files.Info(targetPath)
+		targetInfo, _, targetErr := a.hostInfo(request.Context(), targetPath)
 		targetExists := targetErr == nil
 		if targetErr != nil && !os.IsNotExist(targetErr) {
 			_ = part.Close()
@@ -5020,13 +5020,13 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 				a.recordAuditForRequest(request, "upload_file", filename, "skipped")
 				continue
 			case conflictActionRename:
-				uploadName, err = a.files.AvailableName(relative, filename)
+				uploadName, err = a.hostAvailableName(request.Context(), relative, filename)
 				if err != nil {
 					_ = part.Close()
 					results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: "无法生成可用名称：" + err.Error()})
 					continue
 				}
-				targetPath, err = a.files.Destination(relative, uploadName)
+				targetPath, err = a.hostDestination(request.Context(), relative, uploadName)
 				if err != nil {
 					_ = part.Close()
 					results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: err.Error()})
@@ -5078,7 +5078,7 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: "无法创建上传事务"})
 			continue
 		}
-		trashed, uploadErr := a.files.Upload(relative, uploadName, part, 1<<30, replace, storedID)
+		trashed, uploadErr := a.hostUpload(request.Context(), relative, uploadName, part, 1<<30, replace, storedID)
 		if uploadErr != nil {
 			release()
 			_ = part.Close()
@@ -5093,7 +5093,7 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 				VALUES (?, ?, ?, ?, ?, ?, ?, 0)`, storedID, trashed.OriginalPath, hostfiles.ComparisonKey(trashed.OriginalPath),
 				trashed.StoredPath, hostfiles.ComparisonKey(trashed.StoredPath), time.Now().UTC().Unix(), trashed.Size)
 			if err != nil {
-				_ = a.files.RollbackTextSave(targetPath, trashed.StoredPath)
+				_ = a.hostRollbackTextSave(request.Context(), targetPath, trashed.StoredPath)
 				release()
 				results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: "替换已回滚：无法记录旧文件"})
 				a.recordAuditForRequest(request, "upload_file", filename, "failed")

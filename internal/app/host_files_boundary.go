@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"io"
 	"os"
 	"time"
 
@@ -137,4 +138,74 @@ func (a *App) hostMove(ctx context.Context, source, destination string) error {
 		return a.hostFilesBackend.Move(ctx, source, destination)
 	}
 	return a.files.Move(source, destination)
+}
+
+type hostReadSeekCloser interface {
+	io.ReadSeeker
+	io.Closer
+}
+
+func (a *App) hostOpenRegular(ctx context.Context, path string) (hostReadSeekCloser, os.FileInfo, error) {
+	if a.hostFilesBackend != nil {
+		file, value, err := a.hostFilesBackend.OpenRegular(ctx, path)
+		info := remoteHostFileInfo{value: remoteHostFileInfoValue{name: value.Name, size: value.Size, mode: value.Mode, modifiedAt: value.ModifiedAt, directory: value.Directory}}
+		return file, info, err
+	}
+	return a.files.OpenRegular(path)
+}
+
+func (a *App) hostUpload(ctx context.Context, directory, name string, source io.Reader, maxBytes int64, replace bool, storedName string) (*hostfiles.Trashed, error) {
+	if a.hostFilesBackend != nil {
+		return a.hostFilesBackend.Upload(ctx, directory, name, source, maxBytes, replace, storedName)
+	}
+	return a.files.Upload(directory, name, source, maxBytes, replace, storedName)
+}
+
+func (a *App) hostSaveText(ctx context.Context, path, expectedDigest, content, storedName string, maxBytes int64) (hostfiles.Trashed, error) {
+	if a.hostFilesBackend != nil {
+		return a.hostFilesBackend.SaveText(ctx, path, expectedDigest, content, storedName, maxBytes)
+	}
+	return a.files.SaveText(path, expectedDigest, content, storedName, maxBytes)
+}
+
+func (a *App) hostRollbackTextSave(ctx context.Context, path, storedPath string) error {
+	if a.hostFilesBackend != nil {
+		return a.hostFilesBackend.RollbackTextSave(ctx, path, storedPath)
+	}
+	return a.files.RollbackTextSave(path, storedPath)
+}
+
+func (a *App) hostRemoveRegular(ctx context.Context, path string) error {
+	if a.hostFilesBackend != nil {
+		return a.hostFilesBackend.RemoveRegular(ctx, path)
+	}
+	return a.files.RemoveRegular(path)
+}
+
+func (a *App) hostPrepareScript(ctx context.Context, path string) (hostfiles.Script, error) {
+	if a.hostFilesBackend != nil {
+		return a.hostFilesBackend.PrepareScript(ctx, path)
+	}
+	return a.files.PrepareScript(path)
+}
+
+func (a *App) hostPrepareDirectory(ctx context.Context, path string) (hostfiles.PreparedDirectory, error) {
+	if a.hostFilesBackend != nil {
+		return a.hostFilesBackend.PrepareDirectory(ctx, path)
+	}
+	return a.files.PrepareDirectory(path)
+}
+
+func (a *App) hostSameFilesystem(ctx context.Context, source, destination string) (bool, error) {
+	if a.hostFilesBackend != nil {
+		return a.hostFilesBackend.SameFilesystem(ctx, source, destination)
+	}
+	return a.files.SameFilesystem(source, destination)
+}
+
+func (a *App) hostAppendText(ctx context.Context, path, record string) error {
+	if a.hostFilesBackend != nil {
+		return a.hostFilesBackend.AppendText(ctx, path, record)
+	}
+	return a.files.AppendText(path, record)
 }

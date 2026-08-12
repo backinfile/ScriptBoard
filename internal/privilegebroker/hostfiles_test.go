@@ -1,8 +1,10 @@
 package privilegebroker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -88,6 +90,49 @@ func TestHostFilesProtocolRejectsGenericAndUnrelatedFields(t *testing.T) {
 		if err := validateWireRequest(request); err == nil {
 			t.Fatalf("accepted invalid Host Files request: %+v", request)
 		}
+	}
+}
+
+func TestHostFilesStagesUploadsAndStreamsLargeDownloadsThroughBroker(t *testing.T) {
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "host")
+	stagingRoot := filepath.Join(root, "exchange")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := hostfiles.Open(hostfiles.Options{Topology: fixtureHostFilesTopology{root: hostRoot}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewBrokerHostFilesService(manager, stagingRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend, closeServer := hostFilesTestBackend(t, service)
+	defer closeServer()
+	backend.stagingRoot = stagingRoot
+	ctx := WithAuthorization(context.Background(), Authorization{SessionToken: strings.Repeat("s", 32), RequestID: "host-files-content-test"})
+	payload := bytes.Repeat([]byte("broker-chunk-proof\n"), 400_000)
+	if _, err := backend.Upload(ctx, hostRoot, "large.txt", bytes.NewReader(payload), int64(len(payload)), false, ""); err != nil {
+		t.Fatal(err)
+	}
+	file, info, err := backend.OpenRegular(ctx, filepath.Join(hostRoot, "large.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	read, err := io.ReadAll(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if info.Size != int64(len(payload)) || !bytes.Equal(read, payload) {
+		t.Fatalf("download size=%d/%d content_equal=%v", info.Size, len(payload), bytes.Equal(read, payload))
+	}
+	entries, err := os.ReadDir(stagingRoot)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("staging entries=%d error=%v", len(entries), err)
 	}
 }
 

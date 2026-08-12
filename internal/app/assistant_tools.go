@@ -901,7 +901,7 @@ func (executor *assistantToolExecutor) plan(ctx context.Context, authorization a
 	case "check_website_now":
 		return executor.planCheckWebsite(ctx, invocation)
 	case "list_ui_actions":
-		return executor.planListUIActions(authorization, invocation)
+		return executor.planListUIActions(ctx, authorization, invocation)
 	case "perform_ui_action":
 		return executor.planPerformUIAction(ctx, authorization, invocation)
 	default:

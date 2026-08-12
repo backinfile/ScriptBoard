@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -435,7 +436,7 @@ func (a *App) updateQuickRun(response http.ResponseWriter, request *http.Request
 		http.Error(response, "快捷执行已锁定，请先解锁", http.StatusConflict)
 		return
 	}
-	prepared, err := a.files.PrepareScript(quick.ScriptPath)
+	prepared, err := a.hostPrepareScript(request.Context(), quick.ScriptPath)
 	if err != nil {
 		http.Error(response, "快捷执行脚本不可用", http.StatusConflict)
 		return
@@ -504,8 +505,8 @@ func (a *App) copyQuickRunTask(response http.ResponseWriter, request *http.Reque
 	})
 }
 
-func (a *App) createQuickRunCopy(source quickRunRecord, name, arguments string, timeoutSeconds int, groupID *string) (string, error) {
-	prepared, err := a.files.PrepareScript(source.ScriptPath)
+func (a *App) createQuickRunCopy(ctx context.Context, source quickRunRecord, name, arguments string, timeoutSeconds int, groupID *string) (string, error) {
+	prepared, err := a.hostPrepareScript(ctx, source.ScriptPath)
 	if err != nil {
 		return "", err
 	}
@@ -572,7 +573,7 @@ func (a *App) copyQuickRun(response http.ResponseWriter, request *http.Request) 
 		http.Error(response, "快捷执行分组不存在", http.StatusConflict)
 		return
 	}
-	id, err := a.createQuickRunCopy(source, name, arguments, timeoutSeconds, groupID)
+	id, err := a.createQuickRunCopy(request.Context(), source, name, arguments, timeoutSeconds, groupID)
 	if err != nil {
 		http.Error(response, "无法复制快捷执行", http.StatusInternalServerError)
 		return

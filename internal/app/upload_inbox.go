@@ -54,14 +54,14 @@ func (a *App) publishInboxUpload(response http.ResponseWriter, request *http.Req
 	name := pending.OriginalName
 	publicationStarted := false
 	if pending.ConflictPolicy == "rename" {
-		name, err = a.files.AvailableName(pending.TargetDirectory, name)
+		name, err = a.hostAvailableName(request.Context(), pending.TargetDirectory, name)
 	}
 	if err == nil {
 		err = claim.BeginPublication()
 		publicationStarted = err == nil
 	}
 	if err == nil {
-		_, err = a.files.Upload(pending.TargetDirectory, name, io.LimitReader(payload, pending.Size+1), pending.Size, false, "")
+		_, err = a.hostUpload(request.Context(), pending.TargetDirectory, name, io.LimitReader(payload, pending.Size+1), pending.Size, false, "")
 	}
 	if err != nil {
 		if publicationStarted && claim.CancelPublication() != nil {

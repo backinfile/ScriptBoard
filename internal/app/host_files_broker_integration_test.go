@@ -69,6 +69,15 @@ func TestManagedFilesPageReadsHostThroughBroker(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(hostRoot, "broker-only.txt")); err != nil {
 		t.Fatal(err)
 	}
+	response, err = httpClient.Get(hostFileRequestURL(serverURL, "/resources/files/download", filepath.Join(hostRoot, "broker-only.txt")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	download, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil || string(download) != "broker boundary" {
+		t.Fatalf("managed Host Files download=%q error=%v", download, err)
+	}
 	if err := server.Close(); err != nil {
 		t.Fatal(err)
 	}

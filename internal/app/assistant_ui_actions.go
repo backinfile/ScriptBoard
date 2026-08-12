@@ -197,7 +197,7 @@ func (a *App) assistantUIActions() []assistantUIActionSpec {
 	}
 }
 
-func (executor *assistantToolExecutor) planListUIActions(authorization assistantToolAuthorization, invocation toolbroker.Invocation) (assistantToolPlan, error) {
+func (executor *assistantToolExecutor) planListUIActions(ctx context.Context, authorization assistantToolAuthorization, invocation toolbroker.Invocation) (assistantToolPlan, error) {
 	var parameters assistantUIActionListParameters
 	if err := decodeAssistantToolParameters(invocation.Request.Parameters, &parameters); err != nil || len(parameters.Domain) > 48 {
 		return assistantToolPlan{}, errAssistantToolParameters
@@ -227,7 +227,7 @@ func (executor *assistantToolExecutor) planListUIActions(authorization assistant
 			item["formFieldGuidance"] = spec.FormFieldGuidance
 		}
 		if spec.Key == "quick_runs.one_time" || spec.Key == "quick_runs.create_from_source" {
-			item["formDefaults"] = map[string]string{"working_directory": executor.app.defaultHostDirectory()}
+			item["formDefaults"] = map[string]string{"working_directory": executor.app.defaultHostDirectory(ctx)}
 			guidance := map[string]string{
 				"working_directory": "Optional absolute, writable, unprotected host directory. The same server-selected default as the web form is used when omitted.",
 			}
@@ -282,7 +282,7 @@ func (executor *assistantToolExecutor) planPerformUIAction(ctx context.Context, 
 		}
 		workingDirectory, present := parameters.Form["working_directory"]
 		if !present || strings.TrimSpace(fmt.Sprint(workingDirectory)) == "" {
-			parameters.Form["working_directory"] = executor.app.defaultHostDirectory()
+			parameters.Form["working_directory"] = executor.app.defaultHostDirectory(ctx)
 		}
 	}
 	path, form, err := normalizeAssistantUIAction(*selected, parameters)
@@ -296,7 +296,7 @@ func (executor *assistantToolExecutor) planPerformUIAction(ctx context.Context, 
 	parameters.PathParameters = normalizedStringMap(parameters.PathParameters)
 	targetState := map[string]any{"auditRevision": revision}
 	if selected.Key == "files.save_text" {
-		relative, fileErr := executor.app.files.CanonicalExisting(parameters.PathParameters["path"])
+		relative, fileErr := executor.app.hostCanonicalExisting(ctx, parameters.PathParameters["path"])
 		if fileErr != nil {
 			return assistantToolPlan{}, errAssistantToolNotFound
 		}
