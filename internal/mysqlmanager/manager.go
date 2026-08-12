@@ -170,6 +170,9 @@ func New(options Options) (*Manager, error) {
 	}
 	if options.Backend != nil {
 		manager.backend = options.Backend
+		if initializer, ok := options.Backend.(interface{ InitializeTools(ToolSettings) }); ok {
+			initializer.InitializeTools(ToolSettings{DumpExecutable: dumpTool, ClientExecutable: clientTool})
+		}
 		return manager, nil
 	}
 	vault := options.SecretStore
@@ -235,18 +238,22 @@ func (m *Manager) SaveInstance(ctx context.Context, input InstanceInput) (Instan
 	}
 	credentialConfigured := input.Password != ""
 	connectionState := ConnectionUntried
+	var previous Instance
+	var err error
 	if !creating && !credentialConfigured {
-		var configured bool
-		var host, username, caPath string
-		var port int
-		var tlsMode TLSMode
-		if err := m.db.QueryRowContext(ctx, `SELECT credential_configured, host, port, username, tls_mode, ca_path, connection_state
-			FROM mysql_instances WHERE id = ?`, id).Scan(&configured, &host, &port, &username, &tlsMode, &caPath, &connectionState); err != nil {
+		previous, err = m.Instance(ctx, id)
+		if err != nil {
 			return Instance{}, err
 		}
-		credentialConfigured = configured
-		if host != input.Host || port != input.Port || username != input.Username || tlsMode != input.TLSMode || caPath != input.CAPath {
+		credentialConfigured = previous.CredentialConfigured
+		connectionState = previous.ConnectionState
+		if previous.Host != input.Host || previous.Port != input.Port || previous.Username != input.Username || previous.TLSMode != input.TLSMode || previous.CAPath != input.CAPath {
 			connectionState = ConnectionUntried
+		}
+	} else if !creating {
+		previous, err = m.Instance(ctx, id)
+		if err != nil {
+			return Instance{}, err
 		}
 	}
 	transaction, err := m.db.BeginTx(ctx, nil)
@@ -267,17 +274,21 @@ func (m *Manager) SaveInstance(ctx context.Context, input InstanceInput) (Instan
 	if err != nil {
 		return Instance{}, err
 	}
+	if err := transaction.Commit(); err != nil {
+		return Instance{}, err
+	}
 	if input.Password != "" {
 		credentialInstance := Instance{ID: id, Name: input.Name, Host: input.Host, Port: input.Port, Username: input.Username, TLSMode: input.TLSMode, CAPath: input.CAPath, CredentialConfigured: true}
 		if err := m.backend.StoreCredential(ctx, credentialInstance, input.Password); err != nil {
+			if creating {
+				_ = m.backend.DeleteCredential(ctx, id)
+				_, _ = m.db.ExecContext(context.Background(), "DELETE FROM mysql_instances WHERE id=?", id)
+			} else {
+				_, _ = m.db.ExecContext(context.Background(), `UPDATE mysql_instances SET name=?,host=?,port=?,username=?,tls_mode=?,ca_path=?,credential_configured=?,connection_state=?,updated_at=? WHERE id=?`,
+					previous.Name, previous.Host, previous.Port, previous.Username, previous.TLSMode, previous.CAPath, previous.CredentialConfigured, previous.ConnectionState, previous.UpdatedAt.UnixNano(), previous.ID)
+			}
 			return Instance{}, err
 		}
-	}
-	if err := transaction.Commit(); err != nil {
-		if creating {
-			_ = m.backend.DeleteCredential(context.Background(), id)
-		}
-		return Instance{}, err
 	}
 	return m.Instance(ctx, id)
 }
@@ -330,6 +341,9 @@ func (m *Manager) DeleteInstance(ctx context.Context, id string) error {
 	if active != 0 {
 		return errors.New("instance has an active MySQL operation")
 	}
+	if err := m.backend.DeleteCredential(ctx, id); err != nil {
+		return err
+	}
 	transaction, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -344,7 +358,7 @@ func (m *Manager) DeleteInstance(ctx context.Context, id string) error {
 	if err := transaction.Commit(); err != nil {
 		return err
 	}
-	return m.backend.DeleteCredential(ctx, id)
+	return nil
 }
 
 func (m *Manager) instancePassword(id string) (string, error) { return m.secrets.get(id) }

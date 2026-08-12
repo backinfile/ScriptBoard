@@ -33,6 +33,12 @@ func validateExecutorTrust(path string) (string, error) {
 	return resolved, nil
 }
 
+// ValidateExecutorTrust exposes the shared service-executable ownership and
+// write-ACL policy to other fixed-domain process launchers.
+func ValidateExecutorTrust(path string) (string, error) {
+	return validateExecutorTrust(path)
+}
+
 func validateProcessArgument(value string) error {
 	for _, character := range value {
 		if character == 0 || unicode.IsControl(character) {

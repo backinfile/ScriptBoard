@@ -353,6 +353,7 @@ type Config struct {
 	PasskeyStore              PasskeyStore
 	RemoteWebsiteService      RemoteWebsiteService
 	ProviderCredentials       *privilegebroker.ProviderCredentials
+	MySQLBackend              mysqlmanager.Backend
 	SecurityEventEndpoint     string
 	SecurityEventToken        string
 	SecurityEventTokenFile    string
@@ -669,7 +670,7 @@ func Open(config Config) (*App, error) {
 		}
 	}
 	application.externalLimit = externaltrigger.NewLimiter(externaltrigger.LimiterOptions{RequestsPerMinute: 60, Concurrent: 4})
-	application.mysql, err = mysqlmanager.New(mysqlmanager.Options{DB: db, StateRoot: stateRoot, SecretStore: credentialStore, Audit: func(event mysqlmanager.AuditEvent) {
+	application.mysql, err = mysqlmanager.New(mysqlmanager.Options{DB: db, StateRoot: stateRoot, SecretStore: credentialStore, Backend: config.MySQLBackend, Audit: func(event mysqlmanager.AuditEvent) {
 		application.recordAuditWithActor(event.Action, event.Target, event.Result, "mysqlmanager", event.Actor.UserID, event.Actor.Username, "")
 	}})
 	if err != nil {
@@ -834,25 +835,27 @@ func Open(config Config) (*App, error) {
 	if !validating {
 		application.hostStatus.Start(context.Background())
 		application.applicationStatus.Start(context.Background())
-		_ = application.mysql.ReconcilePlans(context.Background())
-		application.mysqlWG.Add(2)
-		go func() {
-			defer application.mysqlWG.Done()
-			_ = application.mysql.RecoverInterrupted(application.mysqlContext)
-		}()
-		go func() {
-			defer application.mysqlWG.Done()
-			ticker := time.NewTicker(30 * time.Second)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-application.mysqlContext.Done():
-					return
-				case <-ticker.C:
-					_ = application.mysql.RunDuePlans(application.mysqlContext)
+		if config.MySQLBackend == nil {
+			_ = application.mysql.ReconcilePlans(context.Background())
+			application.mysqlWG.Add(2)
+			go func() {
+				defer application.mysqlWG.Done()
+				_ = application.mysql.RecoverInterrupted(application.mysqlContext)
+			}()
+			go func() {
+				defer application.mysqlWG.Done()
+				ticker := time.NewTicker(30 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-application.mysqlContext.Done():
+						return
+					case <-ticker.C:
+						_ = application.mysql.RunDuePlans(application.mysqlContext)
+					}
 				}
-			}
-		}()
+			}()
+		}
 	}
 	application.updateContext, application.updateCancel = context.WithCancel(context.Background())
 	application.updates = updatepkg.NewManager(updatepkg.ManagerConfig{
@@ -2557,11 +2560,11 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /settings/updates/apply", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.applyUpdate)))
 	mux.Handle("POST /settings/updates/restart", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.restartService)))
 	mux.Handle("GET /resources/databases", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.mysqlDatabasesPage)))
-	mux.Handle("POST /resources/databases/instances", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.saveMySQLInstance)))
+	mux.Handle("POST /resources/databases/instances", a.requireStepUp(permissionManageDatabases, http.HandlerFunc(a.saveMySQLInstance)))
 	mux.Handle("POST /resources/databases/settings/backup-root", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.setMySQLBackupRoot)))
-	mux.Handle("POST /resources/databases/settings/tools", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.setMySQLTools)))
+	mux.Handle("POST /resources/databases/settings/tools", a.requireStepUp(permissionManageDatabases, http.HandlerFunc(a.setMySQLTools)))
 	mux.Handle("POST /resources/databases/instances/{id}/test", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.testMySQLInstance)))
-	mux.Handle("POST /resources/databases/instances/{id}/delete", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.deleteMySQLInstance)))
+	mux.Handle("POST /resources/databases/instances/{id}/delete", a.requireStepUp(permissionManageDatabases, http.HandlerFunc(a.deleteMySQLInstance)))
 	mux.Handle("POST /resources/databases/instances/{id}/databases", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.createMySQLDatabase)))
 	mux.Handle("POST /resources/databases/instances/{id}/backup", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.startMySQLBackup)))
 	mux.Handle("POST /resources/databases/instances/{id}/backup/batch", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.startMySQLBatchBackup)))

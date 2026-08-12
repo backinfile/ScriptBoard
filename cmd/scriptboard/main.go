@@ -22,6 +22,7 @@ import (
 	"scriptboard/internal/config"
 	"scriptboard/internal/doctor"
 	"scriptboard/internal/installation"
+	"scriptboard/internal/mysqlmanager"
 	"scriptboard/internal/platformservice"
 	"scriptboard/internal/privilegebroker"
 	"scriptboard/internal/runmanager"
@@ -451,6 +452,7 @@ func serveContext(runContext context.Context, arguments []string) error {
 	var passkeyStore app.PasskeyStore
 	var remoteWebsiteService app.RemoteWebsiteService
 	var providerCredentials *privilegebroker.ProviderCredentials
+	var mysqlBackend mysqlmanager.Backend
 	privilegedBrokerEndpoint := ""
 	if installRoot != "" {
 		if err := platformservice.ValidateWebRuntimeIdentity(); err != nil {
@@ -476,6 +478,7 @@ func serveContext(runContext context.Context, arguments []string) error {
 		passkeyStore = privilegebroker.NewRemotePasskey(brokerClient)
 		remoteWebsiteService = privilegebroker.NewRemoteWebsite(brokerClient)
 		providerCredentials = privilegebroker.NewProviderCredentials(brokerClient)
+		mysqlBackend = privilegebroker.NewMySQLBackend(brokerClient, mysqlmanager.ToolSettings{DumpExecutable: "mysqldump", ClientExecutable: "mysql"})
 	}
 	updateShutdown := make(chan struct{}, 1)
 	var requestRestart func() error
@@ -505,6 +508,7 @@ func serveContext(runContext context.Context, arguments []string) error {
 		PasskeyStore:             passkeyStore,
 		RemoteWebsiteService:     remoteWebsiteService,
 		ProviderCredentials:      providerCredentials,
+		MySQLBackend:             mysqlBackend,
 	})
 	if err != nil {
 		return err

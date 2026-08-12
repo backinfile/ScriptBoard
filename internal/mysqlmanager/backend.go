@@ -29,8 +29,24 @@ type Backend interface {
 	TestTools(context.Context) ToolStatus
 }
 
+type RemoteOperationCanceller interface {
+	CancelOperation(context.Context, string) error
+}
+
 type DumpResult struct {
 	Warning string
+}
+
+func NewLocalBackend(options Options) (Backend, error) {
+	manager, err := New(options)
+	if err != nil {
+		return nil, err
+	}
+	return manager.backend, nil
+}
+
+func (m *Manager) ExecutionBackend() Backend {
+	return m.backend
 }
 
 // localBackend preserves standalone behavior while keeping the Manager on the
@@ -116,7 +132,7 @@ func (backend *localBackend) Dump(ctx context.Context, instance Instance, databa
 	if tables, tableErr := manager.server.NonTransactionalTables(ctx, instance, password, database); tableErr == nil && len(tables) > 0 {
 		result.Warning = fmt.Sprintf("%d non-InnoDB tables are not covered by the consistent transaction snapshot", len(tables))
 	}
-	output, err := os.OpenFile(destinationPath, os.O_WRONLY|os.O_TRUNC, 0o600)
+	output, err := os.OpenFile(destinationPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return DumpResult{}, err
 	}

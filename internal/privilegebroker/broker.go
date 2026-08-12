@@ -25,6 +25,7 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 
 	"scriptboard/internal/mfa"
+	"scriptboard/internal/mysqlmanager"
 	"scriptboard/internal/passkey"
 	"scriptboard/internal/providercredential"
 )
@@ -60,6 +61,20 @@ const (
 	operationProviderDelete      = "provider_delete"
 	operationProviderStart       = "provider_start"
 	operationProviderStop        = "provider_stop"
+	operationMySQLStore          = "mysql_store"
+	operationMySQLDelete         = "mysql_delete"
+	operationMySQLTest           = "mysql_test"
+	operationMySQLDatabases      = "mysql_databases"
+	operationMySQLStatus         = "mysql_status"
+	operationMySQLExists         = "mysql_exists"
+	operationMySQLCreate         = "mysql_create"
+	operationMySQLReplace        = "mysql_replace"
+	operationMySQLDrop           = "mysql_drop"
+	operationMySQLDump           = "mysql_dump"
+	operationMySQLImport         = "mysql_import"
+	operationMySQLSetTools       = "mysql_set_tools"
+	operationMySQLTestTools      = "mysql_test_tools"
+	operationMySQLCancel         = "mysql_cancel"
 	statusOK                     = "ok"
 	statusError                  = "error"
 	defaultCallDeadline          = 35 * time.Second
@@ -87,6 +102,16 @@ const (
 	ActionProviderStore         Action = "provider_store"
 	ActionProviderDelete        Action = "provider_delete"
 	ActionProviderStart         Action = "provider_start"
+	ActionMySQLRead             Action = "mysql_read"
+	ActionMySQLStore            Action = "mysql_store"
+	ActionMySQLDelete           Action = "mysql_delete"
+	ActionMySQLCreate           Action = "mysql_create"
+	ActionMySQLReplace          Action = "mysql_replace"
+	ActionMySQLDrop             Action = "mysql_drop"
+	ActionMySQLDump             Action = "mysql_dump"
+	ActionMySQLImport           Action = "mysql_import"
+	ActionMySQLSetTools         Action = "mysql_set_tools"
+	ActionMySQLCancel           Action = "mysql_cancel"
 )
 
 var (
@@ -196,6 +221,14 @@ type ProviderCredentialService interface {
 	Close(context.Context) error
 }
 
+type MySQLService interface {
+	mysqlmanager.Backend
+	ValidateInstance(context.Context, mysqlmanager.Instance) error
+	ValidateInstanceID(context.Context, string) error
+	CancelOperation(context.Context, string) error
+	ArtifactRoot(context.Context) (string, error)
+}
+
 type ServerOptions struct {
 	Listener       net.Listener
 	VerifyPeer     func(net.Conn) error
@@ -207,6 +240,7 @@ type ServerOptions struct {
 	Passkeys       PasskeyService
 	RemoteWebsites RemoteWebsiteService
 	Providers      ProviderCredentialService
+	MySQL          MySQLService
 	Now            func() time.Time
 }
 
@@ -221,6 +255,7 @@ type Server struct {
 	passkeys       PasskeyService
 	remoteWebsites RemoteWebsiteService
 	providers      ProviderCredentialService
+	mysql          MySQLService
 	now            func() time.Time
 
 	mu                sync.Mutex
@@ -277,6 +312,7 @@ type wireRequest struct {
 	ProviderCredential    string               `json:"provider_credential,omitempty"`
 	ProviderShared        bool                 `json:"provider_shared,omitempty"`
 	ProviderSessionHandle string               `json:"provider_session_handle,omitempty"`
+	MySQL                 *mysqlWireRequest    `json:"mysql,omitempty"`
 }
 
 type wireResponse struct {
@@ -297,6 +333,7 @@ type wireResponse struct {
 	ProviderProxyEndpoint string                   `json:"provider_proxy_endpoint,omitempty"`
 	ProviderCapability    string                   `json:"provider_capability,omitempty"`
 	ProviderSessionHandle string                   `json:"provider_session_handle,omitempty"`
+	MySQL                 *mysqlWireResponse       `json:"mysql,omitempty"`
 }
 
 func NewServer(options ServerOptions) (*Server, error) {
@@ -309,7 +346,7 @@ func NewServer(options ServerOptions) (*Server, error) {
 	}
 	return &Server{
 		listener: options.Listener, verifyPeer: options.VerifyPeer, authorizer: options.Authorizer,
-		executor: options.Executor, auditor: options.Auditor, checkpoint: options.Checkpoint, mfa: options.MFA, passkeys: options.Passkeys, remoteWebsites: options.RemoteWebsites, providers: options.Providers, now: now,
+		executor: options.Executor, auditor: options.Auditor, checkpoint: options.Checkpoint, mfa: options.MFA, passkeys: options.Passkeys, remoteWebsites: options.RemoteWebsites, providers: options.Providers, mysql: options.MySQL, now: now,
 		capabilities: make(map[string]capabilityBinding), done: make(chan struct{}),
 		mfaVerifyFailures: make(map[string]mfaVerifyFailure),
 	}, nil
@@ -364,6 +401,20 @@ func (server *Server) handle(connection net.Conn) {
 		response = server.remoteWebsiteOperation(request)
 	case operationProviderStore, operationProviderDelete, operationProviderStart, operationProviderStop:
 		response = server.providerOperation(request)
+	case operationMySQLStore, operationMySQLDelete, operationMySQLTest, operationMySQLDatabases, operationMySQLStatus,
+		operationMySQLExists, operationMySQLCreate, operationMySQLReplace, operationMySQLDrop, operationMySQLDump,
+		operationMySQLImport, operationMySQLSetTools, operationMySQLTestTools, operationMySQLCancel:
+		_ = connection.SetDeadline(server.now().Add(2 * time.Hour))
+		operationContext, cancelOperation := context.WithCancel(context.Background())
+		peerClosed := make(chan struct{})
+		go func() {
+			defer close(peerClosed)
+			var probe [1]byte
+			_, _ = connection.Read(probe[:])
+			cancelOperation()
+		}()
+		response = server.mysqlOperation(operationContext, request)
+		cancelOperation()
 	default:
 		response = wireResponse{Status: statusError, ErrorCode: "operation_forbidden", Message: "operation is not supported"}
 	}
@@ -955,7 +1006,19 @@ func (client *Client) call(ctx context.Context, request wireRequest) (wireRespon
 		return wireResponse{}, fmt.Errorf("connect privileged Broker: %w", err)
 	}
 	defer connection.Close()
+	stopCancellationWatch := make(chan struct{})
+	defer close(stopCancellationWatch)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = connection.Close()
+		case <-stopCancellationWatch:
+		}
+	}()
 	deadline := time.Now().Add(defaultCallDeadline)
+	if isMySQLOperation(request.Operation) {
+		deadline = time.Now().Add(2 * time.Hour)
+	}
 	if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
 		deadline = contextDeadline
 	}
@@ -979,14 +1042,14 @@ func validateWireRequest(request wireRequest) error {
 	}
 	if request.Operation == operationCheckpointVerify || request.Operation == operationCheckpointWrite {
 		if request.SessionToken != "" || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
-			request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) {
+			request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil {
 			return errors.New("checkpoint request is invalid")
 		}
 		return nil
 	}
 	if isMFAOperation(request.Operation) {
 		if request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
-			request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || len(request.MFAUserID) == 0 || len(request.MFAUserID) > 160 || strings.ContainsAny(request.MFAUserID, "\r\n\x00") {
+			request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || len(request.MFAUserID) == 0 || len(request.MFAUserID) > 160 || strings.ContainsAny(request.MFAUserID, "\r\n\x00") {
 			return errors.New("MFA request is invalid")
 		}
 		switch request.Operation {
@@ -1022,7 +1085,10 @@ func validateWireRequest(request wireRequest) error {
 	if isProviderOperation(request.Operation) {
 		return validateProviderRequest(request)
 	}
-	if hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) {
+	if isMySQLOperation(request.Operation) {
+		return validateMySQLRequest(request)
+	}
+	if hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil {
 		return errors.New("privileged action contains credential-domain fields")
 	}
 	if _, ok := actions[request.Action]; !ok {
@@ -1055,7 +1121,7 @@ func validateWireRequest(request wireRequest) error {
 
 func validatePasskeyRequest(request wireRequest) error {
 	if request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
-		request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || len(request.PasskeyUserID) == 0 ||
+		request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || len(request.PasskeyUserID) == 0 ||
 		len(request.PasskeyUserID) > 160 || strings.ContainsAny(request.PasskeyUserID, "\r\n\x00") {
 		return errors.New("passkey request is invalid")
 	}
@@ -1096,7 +1162,7 @@ func validatePasskeyRequest(request wireRequest) error {
 
 func validateRemoteWebsiteRequest(request wireRequest) error {
 	if request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" || request.ParametersSHA256 != "" ||
-		len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasProviderFields(request) || !validRemoteWebsiteID(request.RemoteWebsiteID) ||
+		len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasProviderFields(request) || request.MySQL != nil || !validRemoteWebsiteID(request.RemoteWebsiteID) ||
 		!validCredentialSessionToken(request.SessionToken) {
 		return errors.New("remote website request is invalid")
 	}
@@ -1120,7 +1186,7 @@ func validateRemoteWebsiteRequest(request wireRequest) error {
 
 func validateProviderRequest(request wireRequest) error {
 	if request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" || request.ParametersSHA256 != "" ||
-		len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) {
+		len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || request.MySQL != nil {
 		return errors.New("provider request is invalid")
 	}
 	if request.Operation == operationProviderStop {
@@ -1241,6 +1307,17 @@ func isRemoteWebsiteOperation(operation string) bool {
 func isProviderOperation(operation string) bool {
 	switch operation {
 	case operationProviderStore, operationProviderDelete, operationProviderStart, operationProviderStop:
+		return true
+	default:
+		return false
+	}
+}
+
+func isMySQLOperation(operation string) bool {
+	switch operation {
+	case operationMySQLStore, operationMySQLDelete, operationMySQLTest, operationMySQLDatabases, operationMySQLStatus,
+		operationMySQLExists, operationMySQLCreate, operationMySQLReplace, operationMySQLDrop, operationMySQLDump,
+		operationMySQLImport, operationMySQLSetTools, operationMySQLTestTools, operationMySQLCancel:
 		return true
 	default:
 		return false

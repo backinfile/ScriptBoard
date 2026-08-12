@@ -108,6 +108,32 @@ func TestManagedBackendOwnsCredentialAndDatabaseCapabilities(t *testing.T) {
 	}
 }
 
+func TestOperationExclusionSpansManagerProcesses(t *testing.T) {
+	stateRoot := t.TempDir()
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	applyTestSchema(t, database)
+	first, err := New(Options{DB: database, StateRoot: stateRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := New(Options{DB: database, StateRoot: stateRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, release, err := first.beginOperation(context.Background(), "backup", "instance-one", "application", Actor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if _, _, _, err := second.beginOperation(context.Background(), "backup", "instance-one", "application", Actor{}); err == nil || !strings.Contains(err.Error(), "another MySQL operation") {
+		t.Fatalf("second manager bypassed cross-process exclusion: %v", err)
+	}
+}
+
 type recordingBackend struct {
 	storedID, storedPassword, testedID string
 }

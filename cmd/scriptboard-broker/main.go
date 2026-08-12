@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -18,6 +19,7 @@ import (
 	"scriptboard/internal/externaltrigger"
 	"scriptboard/internal/hostsecurity"
 	"scriptboard/internal/mfa"
+	"scriptboard/internal/mysqlmanager"
 	"scriptboard/internal/passkey"
 	"scriptboard/internal/privilegebroker"
 	"scriptboard/internal/providercredential"
@@ -102,6 +104,21 @@ func runContext(ctx context.Context, arguments []string) error {
 	if err := providers.MigrateLegacy(context.Background(), database); err != nil {
 		return fmt.Errorf("migrate Assistant provider credentials in Broker: %w", err)
 	}
+	mysqlExecutionManager, err := mysqlmanager.New(mysqlmanager.Options{DB: database, StateRoot: absolute, SecretStore: vault, Audit: func(event mysqlmanager.AuditEvent) {
+		_, appendErr := audit.Append(context.Background(), auditlog.Event{OccurredAt: fmt.Sprintf("%d", time.Now().UTC().Unix()), Action: event.Action,
+			Target: event.Target, Result: event.Result, SourceAddress: "local-privileged-broker", ActorUserID: event.Actor.UserID,
+			ActorUsername: event.Actor.Username, ActorRole: "system"})
+		if appendErr == nil {
+			_ = checkpoint.Write(context.Background(), audit, time.Now().UTC())
+		}
+	}})
+	if err != nil {
+		return fmt.Errorf("initialize Broker-owned MySQL execution backend: %w", err)
+	}
+	mysqlService, err := privilegebroker.NewBrokerMySQLService(database, mysqlExecutionManager.ExecutionBackend(), mysqlExecutionManager, mysqlExecutionManager.BackupRoot())
+	if err != nil {
+		return err
+	}
 	legacyExternal := externaltrigger.New(database, externaltrigger.Options{SecretsDirectory: filepath.Join(absolute, "secrets"), SecretStore: vault})
 	if err := legacyExternal.MigrateSecrets(); err != nil {
 		return fmt.Errorf("migrate External Interface secrets in Broker: %w", err)
@@ -135,12 +152,34 @@ func runContext(ctx context.Context, arguments []string) error {
 		Authorizer: databaseSecurity, Executor: executor, Auditor: databaseSecurity,
 		Checkpoint: brokerCheckpointService{store: checkpoint, audit: audit}, Now: time.Now,
 		MFA: mfaStore, Passkeys: passkeyStore, RemoteWebsites: remoteWebsites, Providers: providers,
+		MySQL: mysqlService,
 	})
 	if err != nil {
 		return err
 	}
 	server.Start()
+	_ = mysqlExecutionManager.ReconcilePlans(context.Background())
+	var mysqlBackground sync.WaitGroup
+	mysqlBackground.Add(2)
+	go func() {
+		defer mysqlBackground.Done()
+		_ = mysqlExecutionManager.RecoverInterrupted(ctx)
+	}()
+	go func() {
+		defer mysqlBackground.Done()
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				_ = mysqlExecutionManager.RunDuePlans(ctx)
+			}
+		}
+	}()
 	<-ctx.Done()
+	mysqlBackground.Wait()
 	return server.Close()
 }
 

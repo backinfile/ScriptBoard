@@ -69,5 +69,7 @@ var SchemaStatements = []string{
 	`CREATE INDEX IF NOT EXISTS mysql_backups_instance_database_idx ON mysql_backups(instance_id, database_name, created_at DESC)`,
 	`CREATE INDEX IF NOT EXISTS mysql_backups_plan_idx ON mysql_backups(plan_id, created_at DESC)`,
 	`CREATE INDEX IF NOT EXISTS mysql_operations_instance_phase_idx ON mysql_operations(instance_id, phase, created_at)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS mysql_operations_one_active_idx ON mysql_operations(instance_id)
+		WHERE phase NOT IN ('completed','cancelled','failed','rolled_back','needs_attention','skipped_overlap')`,
 	`CREATE INDEX IF NOT EXISTS mysql_backup_plans_due_idx ON mysql_backup_plans(next_fire_at) WHERE enabled = 1`,
 }

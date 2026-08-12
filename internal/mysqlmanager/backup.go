@@ -145,6 +145,10 @@ func (m *Manager) runBackup(ctx context.Context, operation Operation, instance I
 		_ = m.failOperation(ctx, operation.ID, err)
 		return Backup{}, err
 	}
+	if err := os.Remove(temporaryPath); err != nil {
+		_ = m.failOperation(ctx, operation.ID, err)
+		return Backup{}, err
+	}
 	dumpResult, runErr := m.backend.Dump(ctx, instance, request.Database, temporaryPath)
 	if runErr != nil {
 		cause := runErr
@@ -274,6 +278,9 @@ func (m *Manager) beginOperation(ctx context.Context, kind, instanceID, database
 		delete(m.active, instanceID)
 		m.mu.Unlock()
 		cancel()
+		if strings.Contains(strings.ToLower(err.Error()), "unique constraint") || strings.Contains(err.Error(), "mysql_operations_one_active_idx") {
+			return Operation{}, ctx, func() {}, errors.New("another MySQL operation is active for this instance")
+		}
 		return Operation{}, ctx, func() {}, err
 	}
 	return operation, operationContext, func() {
@@ -312,6 +319,8 @@ func (m *Manager) RequestCancel(ctx context.Context, id string) error {
 	m.mu.Unlock()
 	if cancel != nil {
 		cancel()
+	} else if remote, ok := m.backend.(RemoteOperationCanceller); ok {
+		return remote.CancelOperation(ctx, id)
 	}
 	return nil
 }
