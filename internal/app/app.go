@@ -581,7 +581,7 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	application.customDashboards, err = customdashboard.New(customdashboard.Options{DB: db, Paused: validating})
+	application.customDashboards, err = customdashboard.New(customdashboard.Options{DB: db, Paused: validating, SecretsDirectory: filepath.Join(stateRoot, "secrets")})
 	if err != nil {
 		application.websiteMonitor.Close()
 		application.applicationStatus.Close()
@@ -1571,6 +1571,32 @@ func openDatabase(path string) (*sql.DB, error) {
 			}
 		}
 	}
+	if schemaVersion >= 20 && schemaVersion <= 35 {
+		for _, statement := range []string{
+			`ALTER TABLE custom_dashboard_cards RENAME TO custom_dashboard_cards_schema35`,
+			`CREATE TABLE custom_dashboard_cards (
+				id TEXT PRIMARY KEY, dashboard_id TEXT NOT NULL REFERENCES custom_dashboards(id) ON DELETE CASCADE,
+				name TEXT NOT NULL, type TEXT NOT NULL CHECK(type IN ('number','percentage','quota','key_value','website','registry')),
+				source_url TEXT NOT NULL DEFAULT '', headers_json TEXT NOT NULL DEFAULT '{}',
+				value_path TEXT NOT NULL DEFAULT '', secondary_path TEXT NOT NULL DEFAULT '', formula TEXT NOT NULL DEFAULT '',
+				config_json TEXT NOT NULL DEFAULT '{}', refresh_seconds INTEGER NOT NULL DEFAULT 60,
+				sort_order INTEGER NOT NULL, snapshot_json TEXT NOT NULL DEFAULT '{}', last_error TEXT NOT NULL DEFAULT '',
+				last_success_at INTEGER NOT NULL DEFAULT 0, last_attempt_at INTEGER NOT NULL DEFAULT 0,
+				created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+			)`,
+			`INSERT INTO custom_dashboard_cards
+				(id,dashboard_id,name,type,source_url,headers_json,value_path,secondary_path,formula,config_json,refresh_seconds,sort_order,snapshot_json,last_error,last_success_at,last_attempt_at,created_at,updated_at)
+				SELECT id,dashboard_id,name,type,source_url,headers_json,value_path,secondary_path,formula,config_json,refresh_seconds,sort_order,snapshot_json,last_error,last_success_at,last_attempt_at,created_at,updated_at
+				FROM custom_dashboard_cards_schema35`,
+			`DROP TABLE custom_dashboard_cards_schema35`,
+			`CREATE INDEX custom_dashboard_cards_order_idx ON custom_dashboard_cards(dashboard_id, sort_order, created_at)`,
+		} {
+			if _, err := migration.Exec(statement); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("migrate custom dashboard Registry cards: %w", err)
+			}
+		}
+	}
 	for _, statement := range []string{
 		"CREATE UNIQUE INDEX IF NOT EXISTS users_single_administrator_idx ON users(role) WHERE role = 'administrator'",
 		"CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id)",
@@ -1640,9 +1666,10 @@ func compatibleDatabaseSchema(version int) bool {
 	// monitoring interfaces and encrypted remote source metadata, and schema 33 adds
 	// custom dashboards with independently public card collections, schema 34
 	// adds dedicated percentage cards, and schema 35 adds model-level reasoning
-	// capability and default thinking strength. Each supported predecessor has an explicit
+	// capability and default thinking strength, and schema 36 adds Docker Registry
+	// cards with encrypted credentials. Each supported predecessor has an explicit
 	// transactional forward path.
-	return version == currentSchemaVersion || currentSchemaVersion == 35 && version >= 20 && version <= 34
+	return version == currentSchemaVersion || currentSchemaVersion == 36 && version >= 20 && version <= 35
 }
 
 func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {

@@ -3,6 +3,7 @@ package app
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"strings"
 
 	"scriptboard/internal/customdashboard"
+	"scriptboard/internal/registrymonitor"
 	"scriptboard/internal/websitemonitor"
 )
 
@@ -36,6 +38,15 @@ type customDashboardCardView struct {
 	Websites                                      []customDashboardWebsiteView
 	SelectedMonitorIDs                            map[string]bool
 	InsecureSource                                bool
+	RegistryEndpoint, RegistryImagesText          string
+	RegistryAuthMode, RegistryUsername            string
+	RegistryImageCount                            int
+	RegistryImages                                []customDashboardRegistryImageView
+}
+
+type customDashboardRegistryImageView struct {
+	Image, Tag, PushedLabel, Error string
+	Stale                          bool
 }
 
 type customDashboardWebsiteView struct {
@@ -134,6 +145,31 @@ func (a *App) newCustomDashboardPageView(request *http.Request, dashboard custom
 			Unit       string   `json:"unit"`
 		}
 		_ = json.Unmarshal(card.Config, &cardConfig)
+		var registryConfig registrymonitor.Config
+		if card.Type == customdashboard.CardRegistry {
+			_ = json.Unmarshal(card.Config, &registryConfig)
+			item.RegistryEndpoint = registryConfig.Endpoint
+			item.RegistryImagesText = strings.Join(registryConfig.Images, "\n")
+			item.RegistryImageCount = len(registryConfig.Images)
+			item.RegistryAuthMode = registryConfig.AuthMode
+			item.RegistryUsername = registryConfig.Username
+			item.InsecureSource = strings.HasPrefix(strings.ToLower(registryConfig.Endpoint), "http://")
+			for _, image := range card.Snapshot.Images {
+				imageView := customDashboardRegistryImageView{Image: image.Image, Tag: image.Tag, Error: image.Error, Stale: image.Stale}
+				if public && imageView.Error != "" {
+					imageView.Error = "刷新失败"
+				}
+				if imageView.Tag == "" {
+					imageView.Tag = "—"
+				}
+				if image.PushTimeAvailable && !image.PushedAt.IsZero() {
+					imageView.PushedLabel = image.PushedAt.Local().Format("2006-01-02 15:04")
+				} else {
+					imageView.PushedLabel = "仓库未提供"
+				}
+				item.RegistryImages = append(item.RegistryImages, imageView)
+			}
+		}
 		item.Unit = strings.TrimSpace(cardConfig.Unit)
 		headerNames := make([]string, 0, len(card.Headers))
 		for name := range card.Headers {
@@ -145,7 +181,9 @@ func (a *App) newCustomDashboardPageView(request *http.Request, dashboard custom
 			headerLines = append(headerLines, name+": "+card.Headers[name])
 		}
 		item.HeadersText = strings.Join(headerLines, "\n")
-		item.InsecureSource = strings.HasPrefix(strings.ToLower(card.SourceURL), "http://")
+		if card.Type != customdashboard.CardRegistry {
+			item.InsecureSource = strings.HasPrefix(strings.ToLower(card.SourceURL), "http://")
+		}
 		item.ValueLabel = formatDashboardValue(card.Snapshot.Value)
 		item.SecondaryLabel = formatDashboardValue(card.Snapshot.Secondary)
 		if card.Type == customdashboard.CardPercentage {
@@ -283,7 +321,7 @@ func (a *App) createCustomDashboardCard(response http.ResponseWriter, request *h
 		return
 	}
 	id := request.PathValue("id")
-	input, err := customDashboardCardInput(request)
+	input, err := customDashboardCardInput(request, false)
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
 		return
@@ -357,7 +395,7 @@ func (a *App) updateCustomDashboardCard(response http.ResponseWriter, request *h
 		return
 	}
 	id := request.PathValue("id")
-	input, err := customDashboardCardInput(request)
+	input, err := customDashboardCardInput(request, true)
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
 		return
@@ -374,7 +412,7 @@ func (a *App) updateCustomDashboardCard(response http.ResponseWriter, request *h
 	http.Redirect(response, request, "/config/dashboards?dashboard="+card.DashboardID, http.StatusSeeOther)
 }
 
-func customDashboardCardInput(request *http.Request) (customdashboard.CardInput, error) {
+func customDashboardCardInput(request *http.Request, preserveRegistryPassword bool) (customdashboard.CardInput, error) {
 	_ = request.ParseForm()
 	refresh, _ := strconv.Atoi(request.FormValue("refresh_seconds"))
 	headers := map[string]string{}
@@ -392,6 +430,22 @@ func customDashboardCardInput(request *http.Request) (customdashboard.CardInput,
 			return customdashboard.CardInput{}, err
 		}
 		config = encoded
+	} else if cardType == customdashboard.CardRegistry {
+		if request.FormValue("registry_auth_mode") == "basic" && strings.TrimSpace(request.FormValue("registry_username")) == "" {
+			return customdashboard.CardInput{}, errors.New("用户名不能为空")
+		}
+		if request.FormValue("registry_auth_mode") == "basic" && !preserveRegistryPassword && request.FormValue("registry_password") == "" {
+			return customdashboard.CardInput{}, errors.New("密码或访问令牌不能为空")
+		}
+		images := strings.FieldsFunc(request.FormValue("registry_images"), func(character rune) bool { return character == '\n' || character == '\r' || character == ',' })
+		encoded, err := json.Marshal(registrymonitor.Config{
+			Endpoint: request.FormValue("registry_endpoint"), Images: images,
+			AuthMode: request.FormValue("registry_auth_mode"), Username: request.FormValue("registry_username"),
+		})
+		if err != nil {
+			return customdashboard.CardInput{}, err
+		}
+		config = encoded
 	} else if cardType == customdashboard.CardNumber || cardType == customdashboard.CardQuota {
 		unitRunes := []rune(strings.TrimSpace(request.FormValue("unit")))
 		if len(unitRunes) > 16 {
@@ -403,7 +457,7 @@ func customDashboardCardInput(request *http.Request) (customdashboard.CardInput,
 		}
 		config = encoded
 	}
-	return customdashboard.CardInput{Name: request.FormValue("name"), Type: cardType, SourceURL: request.FormValue("source_url"), Headers: headers, ValuePath: request.FormValue("value_path"), SecondaryPath: request.FormValue("secondary_path"), Config: config, RefreshSeconds: refresh}, nil
+	return customdashboard.CardInput{Name: request.FormValue("name"), Type: cardType, SourceURL: request.FormValue("source_url"), Headers: headers, ValuePath: request.FormValue("value_path"), SecondaryPath: request.FormValue("secondary_path"), Config: config, RefreshSeconds: refresh, RegistryPassword: request.FormValue("registry_password"), PreserveRegistryPassword: preserveRegistryPassword && request.FormValue("registry_password") == ""}, nil
 }
 
 func formatDashboardValue(value any) string {

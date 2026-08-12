@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"scriptboard/internal/registrymonitor"
 )
 
 const maxResponseBytes = 2 << 20
@@ -28,7 +30,7 @@ var SchemaStatements = []string{
 	)`,
 	`CREATE TABLE IF NOT EXISTS custom_dashboard_cards (
 		id TEXT PRIMARY KEY, dashboard_id TEXT NOT NULL REFERENCES custom_dashboards(id) ON DELETE CASCADE,
-		name TEXT NOT NULL, type TEXT NOT NULL CHECK(type IN ('number','percentage','quota','key_value','website')),
+		name TEXT NOT NULL, type TEXT NOT NULL CHECK(type IN ('number','percentage','quota','key_value','website','registry')),
 		source_url TEXT NOT NULL DEFAULT '', headers_json TEXT NOT NULL DEFAULT '{}',
 		value_path TEXT NOT NULL DEFAULT '', secondary_path TEXT NOT NULL DEFAULT '', formula TEXT NOT NULL DEFAULT '',
 		config_json TEXT NOT NULL DEFAULT '{}', refresh_seconds INTEGER NOT NULL DEFAULT 60,
@@ -48,6 +50,7 @@ const (
 	CardQuota      CardType = "quota"
 	CardKeyValue   CardType = "key_value"
 	CardWebsite    CardType = "website"
+	CardRegistry   CardType = "registry"
 )
 
 type DashboardInput struct {
@@ -62,11 +65,14 @@ type CardInput struct {
 	ValuePath, SecondaryPath, Formula string
 	Config                            json.RawMessage
 	RefreshSeconds                    int
+	RegistryPassword                  string
+	PreserveRegistryPassword          bool
 }
 type Snapshot struct {
-	Value     any     `json:"value,omitempty"`
-	Number    float64 `json:"number,omitempty"`
-	Secondary any     `json:"secondary,omitempty"`
+	Value     any                           `json:"value,omitempty"`
+	Number    float64                       `json:"number,omitempty"`
+	Secondary any                           `json:"secondary,omitempty"`
+	Images    []registrymonitor.ImageResult `json:"images,omitempty"`
 }
 type Card struct {
 	ID, DashboardID, Name             string
@@ -80,6 +86,7 @@ type Card struct {
 	LastError                         string
 	LastSuccessAt, LastAttemptAt      time.Time
 	Stale                             bool
+	CredentialConfigured              bool
 }
 type Dashboard struct {
 	ID, Name, Slug       string
@@ -90,21 +97,23 @@ type Dashboard struct {
 }
 
 type Options struct {
-	DB     *sql.DB
-	Client *http.Client
-	Now    func() time.Time
-	Tick   time.Duration
-	Paused bool
+	DB               *sql.DB
+	Client           *http.Client
+	Now              func() time.Time
+	Tick             time.Duration
+	Paused           bool
+	SecretsDirectory string
 }
 type Manager struct {
-	db     *sql.DB
-	client *http.Client
-	now    func() time.Time
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
-	tick   time.Duration
-	start  sync.Once
+	db      *sql.DB
+	client  *http.Client
+	now     func() time.Time
+	ctx     context.Context
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
+	tick    time.Duration
+	start   sync.Once
+	secrets credentialStore
 }
 
 func New(options Options) (*Manager, error) {
@@ -118,7 +127,7 @@ func New(options Options) (*Manager, error) {
 		options.Now = time.Now
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	m := &Manager{db: options.DB, client: options.Client, now: options.Now, ctx: ctx, cancel: cancel}
+	m := &Manager{db: options.DB, client: options.Client, now: options.Now, ctx: ctx, cancel: cancel, secrets: credentialStore{directory: options.SecretsDirectory}}
 	if options.Tick <= 0 {
 		options.Tick = time.Minute
 	}
@@ -145,7 +154,7 @@ func (m *Manager) loop(tick time.Duration) {
 	}
 }
 func (m *Manager) refreshDue() {
-	rows, err := m.db.QueryContext(m.ctx, `SELECT id FROM custom_dashboard_cards WHERE type <> 'website' AND source_url <> '' AND (last_attempt_at=0 OR last_attempt_at + refresh_seconds*1000000000 <= ?)`, m.now().UnixNano())
+	rows, err := m.db.QueryContext(m.ctx, `SELECT id FROM custom_dashboard_cards WHERE type <> 'website' AND (type='registry' OR source_url <> '') AND (last_attempt_at=0 OR last_attempt_at + refresh_seconds*1000000000 <= ?)`, m.now().UnixNano())
 	if err != nil {
 		return
 	}
@@ -204,12 +213,27 @@ func (m *Manager) UpdateDashboard(ctx context.Context, id string, input Dashboar
 	return m.GetDashboard(ctx, id)
 }
 func (m *Manager) DeleteDashboard(ctx context.Context, id string) error {
+	rows, err := m.db.QueryContext(ctx, `SELECT id FROM custom_dashboard_cards WHERE dashboard_id=?`, id)
+	if err != nil {
+		return err
+	}
+	var cardIDs []string
+	for rows.Next() {
+		var cardID string
+		if rows.Scan(&cardID) == nil {
+			cardIDs = append(cardIDs, cardID)
+		}
+	}
+	_ = rows.Close()
 	result, err := m.db.ExecContext(ctx, `DELETE FROM custom_dashboards WHERE id=?`, id)
 	if err != nil {
 		return err
 	}
 	if count, _ := result.RowsAffected(); count == 0 {
 		return sql.ErrNoRows
+	}
+	for _, cardID := range cardIDs {
+		_ = m.secrets.delete(cardID)
 	}
 	return nil
 }
@@ -251,6 +275,10 @@ func (m *Manager) GetPublicDashboard(ctx context.Context, slug string) (Dashboar
 		d.Cards[i].ValuePath = ""
 		d.Cards[i].SecondaryPath = ""
 		d.Cards[i].Formula = ""
+		if d.Cards[i].Type == CardRegistry {
+			d.Cards[i].Config = json.RawMessage(`{}`)
+			d.Cards[i].CredentialConfigured = false
+		}
 	}
 	return d, err
 }
@@ -293,11 +321,24 @@ func (m *Manager) CreateCard(ctx context.Context, dashboardID string, input Card
 	if err != nil {
 		return Card{}, err
 	}
+	if input.Type == CardRegistry && input.RegistryPassword != "" {
+		if err := m.secrets.set(id, input.RegistryPassword); err != nil {
+			_, _ = m.db.ExecContext(ctx, `DELETE FROM custom_dashboard_cards WHERE id=?`, id)
+			return Card{}, err
+		}
+	}
 	return m.getCard(ctx, id)
 }
 func (m *Manager) UpdateCard(ctx context.Context, id string, input CardInput) (Card, error) {
 	if err := validateCard(&input); err != nil {
 		return Card{}, err
+	}
+	if input.Type == CardRegistry && input.RegistryPassword == "" && input.PreserveRegistryPassword {
+		var registryConfig registrymonitor.Config
+		_ = json.Unmarshal(input.Config, &registryConfig)
+		if registryConfig.AuthMode == "basic" && !m.secrets.has(id) {
+			return Card{}, ErrCredentialUnavailable
+		}
 	}
 	headers, _ := json.Marshal(input.Headers)
 	config := input.Config
@@ -311,6 +352,21 @@ func (m *Manager) UpdateCard(ctx context.Context, id string, input CardInput) (C
 	if count, _ := result.RowsAffected(); count == 0 {
 		return Card{}, sql.ErrNoRows
 	}
+	if input.Type == CardRegistry {
+		var registryConfig registrymonitor.Config
+		_ = json.Unmarshal(input.Config, &registryConfig)
+		if registryConfig.AuthMode == "anonymous" {
+			_ = m.secrets.delete(id)
+		} else if input.RegistryPassword != "" {
+			if err := m.secrets.set(id, input.RegistryPassword); err != nil {
+				return Card{}, err
+			}
+		} else if !input.PreserveRegistryPassword {
+			_ = m.secrets.delete(id)
+		}
+	} else {
+		_ = m.secrets.delete(id)
+	}
 	return m.getCard(ctx, id)
 }
 func (m *Manager) DeleteCard(ctx context.Context, id string) error {
@@ -321,7 +377,7 @@ func (m *Manager) DeleteCard(ctx context.Context, id string) error {
 	if count, _ := result.RowsAffected(); count == 0 {
 		return sql.ErrNoRows
 	}
-	return nil
+	return m.secrets.delete(id)
 }
 
 func (m *Manager) MoveCard(ctx context.Context, id string, direction int) (string, error) {
@@ -396,12 +452,19 @@ func (m *Manager) listCards(ctx context.Context, dashboardID string) ([]Card, er
 		if err != nil {
 			return nil, err
 		}
+		if card.Type == CardRegistry {
+			card.CredentialConfigured = m.secrets.has(card.ID)
+		}
 		cards = append(cards, card)
 	}
 	return cards, rows.Err()
 }
 func (m *Manager) getCard(ctx context.Context, id string) (Card, error) {
-	return scanCard(m.db.QueryRowContext(ctx, cardSelect+` WHERE id=?`, id))
+	card, err := scanCard(m.db.QueryRowContext(ctx, cardSelect+` WHERE id=?`, id))
+	if err == nil && card.Type == CardRegistry {
+		card.CredentialConfigured = m.secrets.has(card.ID)
+	}
+	return card, err
 }
 
 const cardSelect = `SELECT id,dashboard_id,name,type,source_url,headers_json,value_path,secondary_path,formula,config_json,refresh_seconds,sort_order,snapshot_json,last_error,last_success_at,last_attempt_at FROM custom_dashboard_cards`
@@ -433,6 +496,9 @@ func (m *Manager) RefreshCard(ctx context.Context, id string) (Card, error) {
 	}
 	if card.Type == CardWebsite {
 		return card, errors.New("网站状态卡片引用现有网站监控结果")
+	}
+	if card.Type == CardRegistry {
+		return m.refreshRegistryCard(ctx, card)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, card.SourceURL, nil)
 	if err != nil {
@@ -479,6 +545,69 @@ func (m *Manager) RefreshCard(ctx context.Context, id string) (Card, error) {
 	}
 	return m.getCard(ctx, id)
 }
+
+func (m *Manager) refreshRegistryCard(ctx context.Context, card Card) (Card, error) {
+	var config registrymonitor.Config
+	if err := json.Unmarshal(card.Config, &config); err != nil {
+		return m.recordFailure(ctx, card, errors.New("Registry 卡片配置无效"))
+	}
+	if config.AuthMode == "basic" {
+		password, err := m.secrets.get(card.ID)
+		if err != nil {
+			return m.recordFailure(ctx, card, err)
+		}
+		config.Password = password
+	}
+	results, err := registrymonitor.New(m.client).Inspect(ctx, config)
+	if err != nil {
+		return m.recordFailure(ctx, card, err)
+	}
+	previous := map[string]registrymonitor.ImageResult{}
+	for _, image := range card.Snapshot.Images {
+		previous[image.Image] = image
+	}
+	failures := 0
+	successes := 0
+	for index := range results {
+		if results[index].Error == "" {
+			successes++
+			continue
+		}
+		failures++
+		if old, ok := previous[results[index].Image]; ok && old.Tag != "" {
+			results[index].Tag = old.Tag
+			results[index].PushedAt = old.PushedAt
+			results[index].PushTimeAvailable = old.PushTimeAvailable
+			results[index].Stale = true
+		}
+	}
+	encoded, _ := json.Marshal(Snapshot{Images: results})
+	now := m.now().UTC()
+	lastError := ""
+	if failures > 0 {
+		lastError = fmt.Sprintf("%d 个镜像刷新失败", failures)
+	}
+	lastSuccess := int64(0)
+	if !card.LastSuccessAt.IsZero() {
+		lastSuccess = card.LastSuccessAt.UnixNano()
+	}
+	if successes > 0 {
+		lastSuccess = now.UnixNano()
+	}
+	_, updateErr := m.db.ExecContext(ctx, `UPDATE custom_dashboard_cards SET snapshot_json=?,last_error=?,last_success_at=?,last_attempt_at=?,updated_at=? WHERE id=?`, string(encoded), lastError, lastSuccess, now.UnixNano(), now.UnixNano(), card.ID)
+	if updateErr != nil {
+		return card, updateErr
+	}
+	updated, getErr := m.getCard(ctx, card.ID)
+	if getErr != nil {
+		return card, getErr
+	}
+	if failures > 0 {
+		return updated, errors.New(lastError)
+	}
+	return updated, nil
+}
+
 func (m *Manager) recordFailure(ctx context.Context, card Card, refreshErr error) (Card, error) {
 	message := strings.TrimSpace(refreshErr.Error())
 	if len(message) > 240 {
@@ -518,6 +647,25 @@ func validateCard(input *CardInput) error {
 		if len(input.Config) == 0 {
 			input.Config = []byte(`{"monitorIds":[]}`)
 		}
+	case CardRegistry:
+		var config registrymonitor.Config
+		if err := json.Unmarshal(input.Config, &config); err != nil {
+			return errors.New("Registry 卡片配置无效")
+		}
+		config = registrymonitor.NormalizeConfig(config)
+		if err := registrymonitor.ValidateConfig(config); err != nil {
+			return err
+		}
+		encoded, err := json.Marshal(config)
+		if err != nil {
+			return err
+		}
+		input.Config = encoded
+		input.SourceURL = ""
+		input.Headers = nil
+		input.ValuePath = ""
+		input.SecondaryPath = ""
+		input.Formula = ""
 	default:
 		return errors.New("不支持的卡片类型")
 	}
