@@ -18,7 +18,6 @@ FORM: A flat engine manifest followed by a sortable operating ledger; state tabs
 <main class="workspace container-page" data-container-page data-csrf-token="{{.CSRFToken}}" data-container-can-manage="{{if .CanManage}}true{{else}}false{{end}}" data-container-return-to="{{containerStatusURL .Query .Query.Status}}">
   <header class="page-heading container-heading">
     <div><p class="page-eyebrow">{{t .Locale "containers.eyebrow"}}</p><h1>{{t .Locale "containers.title"}}</h1><p>{{t .Locale "containers.description"}}</p></div>
-    <div class="container-safety"><span data-lucide="shield-check" aria-hidden="true"></span><span>{{t .Locale "containers.safety"}}</span></div>
   </header>
 
   <section class="container-engine-line" data-state="{{if .DockerAvailable}}connected{{else}}unavailable{{end}}" aria-label="{{t .Locale "containers.engine"}}">
@@ -35,16 +34,15 @@ FORM: A flat engine manifest followed by a sortable operating ledger; state tabs
   {{if not .DockerAvailable}}<div class="container-alert" role="alert"><span data-lucide="triangle-alert" aria-hidden="true"></span><div><strong>{{t .Locale "containers.engine_unavailable"}}</strong><p>{{with index .Errors "docker"}}{{.}}{{else}}{{t $.Locale "containers.engine_recovery"}}{{end}}</p></div></div>{{end}}
 
   <section class="container-section" aria-labelledby="pinned-containers-heading">
-    <header class="section-heading container-section-heading"><div><p class="section-index">{{t .Locale "containers.continuous_observation"}}</p><h2 id="pinned-containers-heading">{{t .Locale "containers.pinned"}}</h2><p>{{t .Locale "containers.pinned_description"}}</p></div><span class="container-index-contract"><span data-lucide="key-round" aria-hidden="true"></span>container-name</span></header>
+    <header class="section-heading container-section-heading"><h2 id="pinned-containers-heading">{{t .Locale "containers.pinned"}}</h2></header>
     <div class="container-pin-list">
       {{range .Pinned}}
       <article class="container-pin-row" data-state="{{.State}}">
         <button type="button" class="container-pin-row__open" data-container-detail-url="/monitor/containers/{{.NameKey}}/details" data-container-name="{{.Name}}" data-container-image="{{.Image}}" data-container-state="{{.State}}" data-container-application-id="{{.ApplicationID}}">
-          <span class="container-pin-row__identity"><span data-lucide="package" aria-hidden="true"></span><span><strong>{{.Name}}</strong><code>{{.Image}}</code><small>key / {{.NameKey}}</small></span></span>
+          <span class="container-pin-row__identity"><span data-lucide="package" aria-hidden="true"></span><span><strong>{{.Name}}</strong><code>{{.Image}}</code></span></span>
           <span><small>{{t $.Locale "containers.state"}}</small><b class="container-state" data-state="{{.State}}"><i></i>{{if eq .State "running"}}{{t $.Locale "containers.running"}}{{else if eq .State "restarting"}}{{t $.Locale "containers.restarting"}}{{else if eq .State "paused"}}{{t $.Locale "containers.paused"}}{{else if eq .State "missing"}}{{t $.Locale "containers.missing"}}{{else}}{{t $.Locale "containers.stopped"}}{{end}}</b></span>
           <span><small>CPU</small><b>{{if .RateAvailable}}{{percent .CPUPercent}}{{else}}—{{end}}</b></span>
           <span><small>{{t $.Locale "containers.memory"}}</small><b>{{if .RateAvailable}}{{humanBytes .MemoryBytes}}{{else}}—{{end}}</b></span>
-          <span><small>{{t $.Locale "containers.version_stream"}}</small><b>{{t $.Locale "containers.name_indexed"}}</b></span>
         </button>
         <details class="action-menu"><summary aria-label="{{t $.Locale "applications.more_actions"}} {{.Name}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
           <form method="post" action="/monitor/containers/{{.NameKey}}/move"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="direction" value="up"><input type="hidden" name="return_to" value="{{containerStatusURL $.Query $.Query.Status}}"><button type="submit" {{if not .CanMoveUp}}disabled{{end}}><span data-lucide="arrow-up" aria-hidden="true"></span>{{t $.Locale "applications.move_up"}}</button></form>
@@ -57,8 +55,8 @@ FORM: A flat engine manifest followed by a sortable operating ledger; state tabs
   </section>
 
   <section class="container-section" aria-labelledby="container-inventory-heading">
-    <header class="section-heading container-section-heading"><div><p class="section-index">{{t .Locale "containers.current_snapshot"}}</p><h2 id="container-inventory-heading">{{t .Locale "containers.inventory"}}</h2><p>{{t .Locale "containers.inventory_description"}}</p></div></header>
-    <nav class="container-status-tabs" aria-label="{{t .Locale "containers.status_filter"}}" data-container-status-tabs>
+    <header class="section-heading container-section-heading"><h2 id="container-inventory-heading">{{t .Locale "containers.inventory"}}</h2></header>
+    <nav class="monitor-status-switch container-status-tabs" aria-label="{{t .Locale "containers.status_filter"}}" data-container-status-tabs>
       <a href="{{containerStatusURL .Query "all"}}" data-container-status-link {{if eq .Query.Status "all"}}aria-current="page"{{end}}><span>{{t .Locale "containers.all"}}</span><strong>{{.Total}}</strong></a>
       <a href="{{containerStatusURL .Query "running"}}" data-container-status-link {{if eq .Query.Status "running"}}aria-current="page"{{end}}><span>{{t .Locale "containers.running"}}</span><strong>{{.Running}}</strong></a>
       <a href="{{containerStatusURL .Query "stopped"}}" data-container-status-link {{if eq .Query.Status "stopped"}}aria-current="page"{{end}}><span>{{t .Locale "containers.stopped"}}</span><strong>{{.Stopped}}</strong></a>

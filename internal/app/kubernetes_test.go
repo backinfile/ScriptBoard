@@ -82,7 +82,7 @@ func TestKubernetesPageConfiguresTheOnlyClusterAndListsWorkloads(t *testing.T) {
 	}
 	page, _ = io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, expected := range [][]byte{[]byte("edge-home"), []byte("ghcr.io/acme/api:v2"), []byte("production"), []byte("Connection settings"), []byte(`href="/monitor/kubernetes?direction=asc&amp;sort=name"`), []byte("Select a column heading"), []byte(">Ready<")} {
+	for _, expected := range [][]byte{[]byte("edge-home"), []byte("ghcr.io/acme/api:v2"), []byte("production"), []byte("Connection settings"), []byte(`href="/monitor/kubernetes?direction=asc&amp;sort=name"`), []byte(`class="monitor-status-switch kubernetes-status-tabs"`), []byte(">Ready<")} {
 		if !bytes.Contains(page, expected) {
 			t.Fatalf("configured page missing %q: %s", expected, page)
 		}

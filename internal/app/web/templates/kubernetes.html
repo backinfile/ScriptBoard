@@ -1,5 +1,4 @@
 <!doctype html>
-<!-- Kubernetes stays deliberately shallow: one cluster, current health first, and only guarded day-two actions. -->
 <html lang="{{.Locale}}">
 <head>
   <meta charset="utf-8">
@@ -12,7 +11,6 @@
 <main class="workspace kubernetes-page" data-kubernetes-page data-csrf-token="{{.CSRFToken}}">
   <header class="page-heading kubernetes-heading">
     <div>
-      <p class="page-eyebrow">{{t .Locale "kubernetes.eyebrow"}}</p>
       <h1>{{t .Locale "kubernetes.title"}}</h1>
       <p>{{t .Locale "kubernetes.description"}}</p>
     </div>
@@ -23,7 +21,6 @@
   <section class="kubernetes-onboarding" aria-labelledby="kubernetes-connect-heading">
     <div class="kubernetes-onboarding__mark"><span data-lucide="box" aria-hidden="true"></span></div>
     <div>
-      <p class="section-index">01 / {{t .Locale "kubernetes.single_cluster"}}</p>
       <h2 id="kubernetes-connect-heading">{{t .Locale "kubernetes.connect_title"}}</h2>
       <p>{{t .Locale "kubernetes.connect_description"}}</p>
     </div>
@@ -45,17 +42,17 @@
   {{if .Connection.Error}}<div class="kubernetes-alert" role="alert"><span data-lucide="triangle-alert" aria-hidden="true"></span><div><strong>{{t .Locale "kubernetes.snapshot_failed"}}</strong><p>{{.Connection.Error}}</p></div></div>{{end}}
 
   <dl class="kubernetes-facts" aria-label="{{t .Locale "kubernetes.cluster_facts"}}">
-    <div><dt>{{t .Locale "kubernetes.nodes"}}</dt><dd>{{len .Nodes}}</dd><small>{{range .Nodes}}{{if not .Ready}}{{.Name}} {{end}}{{end}}</small></div>
+    <div><dt>{{t .Locale "kubernetes.nodes"}}</dt><dd>{{len .Nodes}}</dd></div>
     <div><dt>{{t .Locale "kubernetes.workloads"}}</dt><dd>{{.Total}}</dd><small>{{.Ready}} {{t .Locale "kubernetes.ready"}}</small></div>
-    <div><dt>{{t .Locale "kubernetes.pods"}}</dt><dd>{{.PodsReady}}<span>/{{.PodsTotal}}</span></dd><small>{{t .Locale "kubernetes.ready_ratio"}}</small></div>
-    <div><dt>{{t .Locale "kubernetes.namespaces"}}</dt><dd>{{.Namespaces}}</dd><small>{{t .Locale "kubernetes.observed"}}</small></div>
+    <div><dt>{{t .Locale "kubernetes.pods"}}</dt><dd>{{.PodsReady}}<span>/{{.PodsTotal}}</span></dd></div>
+    <div><dt>{{t .Locale "kubernetes.namespaces"}}</dt><dd>{{.Namespaces}}</dd></div>
   </dl>
 
   <section class="kubernetes-section" aria-labelledby="kubernetes-workloads-heading">
     <header class="section-heading kubernetes-section-heading">
-      <div><p class="section-index">{{t .Locale "kubernetes.inventory"}}</p><h2 id="kubernetes-workloads-heading">{{t .Locale "kubernetes.workloads"}}</h2><p>{{t .Locale "kubernetes.workloads_description"}}</p></div>
+      <h2 id="kubernetes-workloads-heading">{{t .Locale "kubernetes.workloads"}}</h2>
     </header>
-    <nav class="kubernetes-status-tabs" aria-label="{{t .Locale "kubernetes.status_filter"}}">
+    <nav class="monitor-status-switch kubernetes-status-tabs" aria-label="{{t .Locale "kubernetes.status_filter"}}">
       <a href="/monitor/kubernetes" {{if eq .Query.Status "all"}}aria-current="page"{{end}}><span>{{t .Locale "kubernetes.all"}}</span><strong>{{.Total}}</strong></a>
       <a href="/monitor/kubernetes?status=ready" {{if eq .Query.Status "ready"}}aria-current="page"{{end}}><span>{{t .Locale "kubernetes.ready"}}</span><strong>{{.Ready}}</strong></a>
       <a href="/monitor/kubernetes?status=progressing" {{if eq .Query.Status "progressing"}}aria-current="page"{{end}}><span>{{t .Locale "kubernetes.progressing"}}</span><strong>{{.Progressing}}</strong></a>
@@ -96,7 +93,7 @@
   </section>
 
   <section class="kubernetes-section" aria-labelledby="kubernetes-nodes-heading">
-    <header class="section-heading kubernetes-section-heading"><div><p class="section-index">{{t .Locale "kubernetes.foundation"}}</p><h2 id="kubernetes-nodes-heading">{{t .Locale "kubernetes.nodes"}}</h2></div></header>
+    <header class="section-heading kubernetes-section-heading"><h2 id="kubernetes-nodes-heading">{{t .Locale "kubernetes.nodes"}}</h2></header>
     <div class="kubernetes-node-list">{{range .Nodes}}<article><span data-lucide="hard-drive" aria-hidden="true"></span><div><strong>{{.Name}}</strong><small>{{.Role}} · {{.Version}}</small></div><span class="kubernetes-state" data-state="{{if .Ready}}ready{{else}}degraded{{end}}"><i></i>{{if .Ready}}{{t $.Locale "kubernetes.ready"}}{{else}}{{t $.Locale "kubernetes.not_ready"}}{{end}}</span><dl><div><dt>CPU</dt><dd>{{percent .CPUPercent}}</dd></div><div><dt>{{t $.Locale "kubernetes.column.memory"}}</dt><dd>{{percent .MemoryPercent}}</dd></div></dl></article>{{else}}<div class="kubernetes-empty-inline"><p>{{t .Locale "kubernetes.nodes_unavailable"}}</p></div>{{end}}</div>
   </section>
 

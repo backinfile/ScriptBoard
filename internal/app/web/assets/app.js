@@ -6026,16 +6026,18 @@
 
   const containerDetailCopy = {
     "zh-CN": {
-      loading: "正在读取容器详情…", loadFailed: "暂时无法读取容器详情", runtime: "运行信息", versions: "镜像与容器版本",
-      versionNote: "历史按规范化容器名连续归档；容器 ID 与镜像变化不会切断记录。", noVersions: "Pin 后开始记录镜像与容器 ID 变化。",
+      loading: "正在读取容器详情…", loadFailed: "无法读取容器详情", runtime: "运行信息", versions: "版本记录", noVersions: "暂无版本记录",
       network: "网络与端口", storage: "挂载", processes: "关联进程", noPorts: "未发布宿主端口", noMounts: "没有可读取的挂载", noProcesses: "当前没有可读取的进程",
-      start: "启动", stop: "停止", restart: "重启", logs: "持续查看日志", confirm: action => `确认${action}这个容器？`, samples: "资源趋势"
+      start: "启动", stop: "停止", restart: "重启", logs: "查看日志", confirm: action => `确认${action}容器？`, samples: "资源趋势",
+      internalOnly: "仅容器内部", readOnly: "只读", readWrite: "读写",
+      facts: { containerId: "容器 ID", image: "镜像", health: "健康状态", restartPolicy: "重启策略", restartCount: "重启次数", networkMode: "网络模式", memory: "内存", cpu: "CPU", processes: "进程" }
     },
     "en-US": {
-      loading: "Reading container details…", loadFailed: "Container details are temporarily unavailable", runtime: "Runtime facts", versions: "Image and container versions",
-      versionNote: "History follows the normalized container name; container ID and image changes do not split the record.", noVersions: "Pin this container to begin recording image and container ID changes.",
+      loading: "Loading container details…", loadFailed: "Container details unavailable", runtime: "Runtime", versions: "Versions", noVersions: "No version records",
       network: "Network and ports", storage: "Mounts", processes: "Related processes", noPorts: "No host ports are published", noMounts: "No readable mounts", noProcesses: "No readable processes right now",
-      start: "Start", stop: "Stop", restart: "Restart", logs: "Follow logs", confirm: action => `Confirm ${action.toLowerCase()} for this container?`, samples: "Resource trend"
+      start: "Start", stop: "Stop", restart: "Restart", logs: "View logs", confirm: action => `${action} this container?`, samples: "Resource trend",
+      internalOnly: "Container only", readOnly: "Read only", readWrite: "Read/write",
+      facts: { containerId: "Container ID", image: "Image", health: "Health", restartPolicy: "Restart policy", restartCount: "Restart count", networkMode: "Network mode", memory: "Memory", cpu: "CPU", processes: "Processes" }
     }
   };
 
@@ -6073,19 +6075,19 @@
       ? `<a class="button button--compact" href="/monitor/applications/${encodeURIComponent(trigger.dataset.containerApplicationId)}/logs"><span data-lucide="scroll-text" aria-hidden="true"></span>${escapeMarkup(words.logs)}</a>`
       : "";
     const facts = [
-      ["Container ID", docker.containerId || "—"], ["Image", docker.image || application.technical || trigger.dataset.containerImage || "—"],
-      ["Health", docker.health || "—"], ["Restart policy", docker.restartPolicy || "—"], ["Restart count", docker.restartCount ?? "—"],
-      ["Network mode", docker.networkMode || "—"], ["Memory", containerBytes(application.memoryBytes || 0)],
-      ["CPU", application.rateAvailable ? `${Number(application.cpuPercent || 0).toFixed(1)}%` : "—"], ["Processes", application.processCount ?? processes.length]
+      [words.facts.containerId, docker.containerId || "—"], [words.facts.image, docker.image || application.technical || trigger.dataset.containerImage || "—"],
+      [words.facts.health, docker.health || "—"], [words.facts.restartPolicy, docker.restartPolicy || "—"], [words.facts.restartCount, docker.restartCount ?? "—"],
+      [words.facts.networkMode, docker.networkMode || "—"], [words.facts.memory, containerBytes(application.memoryBytes || 0)],
+      [words.facts.cpu, application.rateAvailable ? `${Number(application.cpuPercent || 0).toFixed(1)}%` : "—"], [words.facts.processes, application.processCount ?? processes.length]
     ].map(([label, value]) => `<div><dt>${escapeMarkup(label)}</dt><dd>${escapeMarkup(value)}</dd></div>`).join("");
     const versionRows = versions.length ? versions.map(version => `<div><strong>${escapeMarkup(version.image || "—")}</strong><span>${escapeMarkup(new Date(version.observedAt).toLocaleString())} · ${escapeMarkup(version.containerId || "—")}</span></div>`).join("") : `<div class="container-detail-empty">${escapeMarkup(words.noVersions)}</div>`;
-    const portRows = ports.length ? ports.map(port => `<div><strong>${escapeMarkup(`${port.containerPort}/${port.protocol}`)}</strong><span>${escapeMarkup(port.hostPort ? `${port.hostAddress || "0.0.0.0"}:${port.hostPort}` : "internal only")}</span></div>`).join("") : `<div class="container-detail-empty">${escapeMarkup(words.noPorts)}</div>`;
-    const mountRows = mounts.length ? mounts.map(mount => `<div><strong>${escapeMarkup(mount.destination || "—")}</strong><span>${escapeMarkup(`${mount.source || mount.type || "—"} · ${mount.readOnly ? "read only" : "read/write"}`)}</span></div>`).join("") : `<div class="container-detail-empty">${escapeMarkup(words.noMounts)}</div>`;
+    const portRows = ports.length ? ports.map(port => `<div><strong>${escapeMarkup(`${port.containerPort}/${port.protocol}`)}</strong><span>${escapeMarkup(port.hostPort ? `${port.hostAddress || "0.0.0.0"}:${port.hostPort}` : words.internalOnly)}</span></div>`).join("") : `<div class="container-detail-empty">${escapeMarkup(words.noPorts)}</div>`;
+    const mountRows = mounts.length ? mounts.map(mount => `<div><strong>${escapeMarkup(mount.destination || "—")}</strong><span>${escapeMarkup(`${mount.source || mount.type || "—"} · ${mount.readOnly ? words.readOnly : words.readWrite}`)}</span></div>`).join("") : `<div class="container-detail-empty">${escapeMarkup(words.noMounts)}</div>`;
     const processRows = processes.length ? processes.map(process => `<div><strong>${escapeMarkup(process.name || process.commandLine || "—")}</strong><span>PID ${escapeMarkup(process.pid ?? "—")} · ${escapeMarkup(process.user || "—")}</span></div>`).join("") : `<div class="container-detail-empty">${escapeMarkup(words.noProcesses)}</div>`;
     return `<div class="container-detail-actions">${actions}${logLink}</div>
       <section class="container-detail-section"><h3>${escapeMarkup(words.runtime)}</h3><dl class="container-detail-facts">${facts}</dl></section>
       <section class="container-detail-section"><h3>${escapeMarkup(words.samples)}</h3>${renderApplicationHistory(payload)}</section>
-      <section class="container-detail-section"><h3>${escapeMarkup(words.versions)}</h3><div class="container-detail-version-note"><span data-lucide="key-round" aria-hidden="true"></span><div><strong>container-name / ${escapeMarkup(nameKey)}</strong><p>${escapeMarkup(words.versionNote)}</p></div></div><div class="container-detail-list">${versionRows}</div></section>
+      <section class="container-detail-section"><h3>${escapeMarkup(words.versions)}</h3><div class="container-detail-list">${versionRows}</div></section>
       <section class="container-detail-section"><h3>${escapeMarkup(words.network)}</h3><div class="container-detail-list">${portRows}</div></section>
       <section class="container-detail-section"><h3>${escapeMarkup(words.storage)}</h3><div class="container-detail-list">${mountRows}</div></section>
       <section class="container-detail-section"><h3>${escapeMarkup(words.processes)}</h3><div class="container-detail-list">${processRows}</div></section>`;
@@ -6151,7 +6153,31 @@
     cleanups.push(() => { snapshotController?.abort(); root.removeEventListener("click", onClick); root.removeEventListener("submit", onSubmit); drawer?.removeEventListener("click", onDrawerClick); if (drawer?.open) drawer.close(); });
   }
 
+  const kubernetesDetailCopy = {
+    "zh-CN": {
+      loading: "正在读取工作负载…", loadFailed: "无法读取工作负载详情", confirm: "确认执行此操作？",
+      pods: "Pods", events: "事件", versions: "版本记录", logs: "日志",
+      noPods: "暂无 Pod", noEvents: "暂无事件", noVersions: "暂无版本记录", noLogs: "暂无日志",
+      testing: "正在测试连接…", connected: "连接成功", testFailed: "连接测试失败",
+      restartCount: value => `${value} 次重启`,
+      states: { ready: "就绪", progressing: "变更中", degraded: "需查看", missing: "未发现" },
+      facts: { status: "状态", ready: "就绪", restarts: "重启", cpu: "CPU", memory: "内存", node: "节点" }
+    },
+    "en-US": {
+      loading: "Loading workload…", loadFailed: "Workload details unavailable", confirm: "Run this operation?",
+      pods: "Pods", events: "Events", versions: "Versions", logs: "Logs",
+      noPods: "No Pods", noEvents: "No events", noVersions: "No version records", noLogs: "No logs",
+      testing: "Testing connection…", connected: "Connected", testFailed: "Connection test failed",
+      restartCount: value => `${value} restarts`,
+      states: { ready: "Ready", progressing: "Progressing", degraded: "Needs attention", missing: "Missing" },
+      facts: { status: "Status", ready: "Ready", restarts: "Restarts", cpu: "CPU", memory: "Memory", node: "Node" }
+    }
+  };
+
+  function kubernetesWords() { return kubernetesDetailCopy[locale()]; }
+
   function renderKubernetesDetail(payload, logs) {
+    const words = kubernetesWords();
     const kubernetesBytes = value => {
       const bytes = Number(value) || 0;
       if (bytes < 1024) return `${bytes} B`;
@@ -6167,34 +6193,31 @@
       return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleString();
     };
     const workload = payload?.Workload || {};
-    const statusLabels = locale() === "zh-CN"
-      ? { ready: "就绪", progressing: "变更中", degraded: "需查看", missing: "未发现" }
-      : { ready: "Ready", progressing: "Progressing", degraded: "Needs attention", missing: "Missing" };
     const pods = Array.isArray(payload?.Pods) ? payload.Pods : [];
     const events = Array.isArray(payload?.Events) ? payload.Events : [];
     const versions = Array.isArray(payload?.Versions) ? payload.Versions : [];
     const facts = [
-      ["Status", statusLabels[workload.Status] || workload.StatusLabel || workload.Status || "—"],
-      ["Ready", `${workload.Ready ?? 0} / ${workload.Desired ?? 0}`],
-      ["Restarts", workload.Restarts ?? 0],
-      ["CPU", `${workload.CPUMillicores ?? 0}m`],
-      ["Memory", kubernetesBytes(workload.MemoryBytes || 0)],
-      ["Node", workload.Nodes || "—"]
+      [words.facts.status, words.states[workload.Status] || workload.StatusLabel || workload.Status || "—"],
+      [words.facts.ready, `${workload.Ready ?? 0} / ${workload.Desired ?? 0}`],
+      [words.facts.restarts, workload.Restarts ?? 0],
+      [words.facts.cpu, `${workload.CPUMillicores ?? 0}m`],
+      [words.facts.memory, kubernetesBytes(workload.MemoryBytes || 0)],
+      [words.facts.node, workload.Nodes || "—"]
     ].map(([label, value]) => `<div><dt>${escapeMarkup(label)}</dt><dd>${escapeMarkup(value)}</dd></div>`).join("");
     const rows = (items, render, empty) => items.length
       ? items.map(render).join("")
       : `<div><span>${escapeMarkup(empty)}</span></div>`;
-    const podRows = rows(pods, pod => `<div><strong>${escapeMarkup(pod.Name)}</strong><span>${escapeMarkup(pod.Phase)} · ${escapeMarkup(pod.Ready)} · ${escapeMarkup(pod.Node || "—")} · ${escapeMarkup(pod.Restarts || 0)} restarts</span></div>`, "No Pods returned");
-    const eventRows = rows(events.slice(0, 20), event => `<div><strong>${escapeMarkup(event.Reason || event.Type)}</strong><span>${escapeMarkup(event.Message)}</span></div>`, "No recent events");
-    const versionRows = rows(versions.slice(0, 20), version => `<div><strong>${escapeMarkup(version.Image || "—")}</strong><span>${escapeMarkup(kubernetesTime(version.ObservedAt))} · ${escapeMarkup(version.Revision || "—")}</span></div>`, "Version history begins after the first collected snapshot");
+    const podRows = rows(pods, pod => `<div><strong>${escapeMarkup(pod.Name)}</strong><span>${escapeMarkup(pod.Phase)} · ${escapeMarkup(pod.Ready)} · ${escapeMarkup(pod.Node || "—")} · ${escapeMarkup(words.restartCount(pod.Restarts || 0))}</span></div>`, words.noPods);
+    const eventRows = rows(events.slice(0, 20), event => `<div><strong>${escapeMarkup(event.Reason || event.Type)}</strong><span>${escapeMarkup(event.Message)}</span></div>`, words.noEvents);
+    const versionRows = rows(versions.slice(0, 20), version => `<div><strong>${escapeMarkup(version.Image || "—")}</strong><span>${escapeMarkup(kubernetesTime(version.ObservedAt))} · ${escapeMarkup(version.Revision || "—")}</span></div>`, words.noVersions);
     const logText = Array.isArray(logs) && logs.length
       ? logs.map(line => `[${line.pod || "pod"}/${line.container || "container"}] ${line.text || ""}`).join("\n")
-      : "Pod logs are unavailable for the current credentials or workload.";
+      : words.noLogs;
     return `<dl class="kubernetes-detail-facts">${facts}</dl>
-      <section class="kubernetes-detail-section"><h3>Pods</h3><div class="kubernetes-detail-list">${podRows}</div></section>
-      <section class="kubernetes-detail-section"><h3>Recent events</h3><div class="kubernetes-detail-list">${eventRows}</div></section>
-      <section class="kubernetes-detail-section"><h3>Version history</h3><div class="kubernetes-detail-list">${versionRows}</div></section>
-      <section class="kubernetes-detail-section"><h3>Recent logs</h3><pre class="kubernetes-detail-logs">${escapeMarkup(logText)}</pre></section>`;
+      <section class="kubernetes-detail-section"><h3>${escapeMarkup(words.pods)}</h3><div class="kubernetes-detail-list">${podRows}</div></section>
+      <section class="kubernetes-detail-section"><h3>${escapeMarkup(words.events)}</h3><div class="kubernetes-detail-list">${eventRows}</div></section>
+      <section class="kubernetes-detail-section"><h3>${escapeMarkup(words.versions)}</h3><div class="kubernetes-detail-list">${versionRows}</div></section>
+      <section class="kubernetes-detail-section"><h3>${escapeMarkup(words.logs)}</h3><pre class="kubernetes-detail-logs">${escapeMarkup(logText)}</pre></section>`;
   }
 
   function initKubernetes(cleanups) {
@@ -6207,15 +6230,15 @@
     let snapshotController = null;
     const onSubmit = event => {
       const form = event.target.closest("form[data-kubernetes-confirm]");
-      if (form && !window.confirm(form.dataset.kubernetesConfirm || "Continue?")) event.preventDefault();
+      if (form && !window.confirm(form.dataset.kubernetesConfirm || kubernetesWords().confirm)) event.preventDefault();
     };
     const openDetail = async button => {
       if (!drawer || !body) return;
       const url = button.dataset.kubernetesDetailUrl;
       if (!url) return;
       title.textContent = button.closest("tr,article")?.querySelector("strong")?.textContent?.trim() || "Workload";
-      meta.textContent = "Loading current Kubernetes state";
-      body.innerHTML = '<div class="kubernetes-drawer__loading"><span data-lucide="loader-circle" aria-hidden="true"></span>Loading…</div>';
+      meta.textContent = "";
+      body.innerHTML = `<div class="kubernetes-drawer__loading"><span data-lucide="loader-circle" aria-hidden="true"></span>${escapeMarkup(kubernetesWords().loading)}</div>`;
       renderIcons(body);
       if (!drawer.open) drawer.showModal();
       try {
@@ -6231,7 +6254,7 @@
         meta.textContent = [workload.Namespace, workload.Kind, workload.Image].filter(Boolean).join(" · ");
         body.innerHTML = renderKubernetesDetail(payload, logs);
       } catch (error) {
-        body.textContent = error?.message || "Unable to load workload details.";
+        body.textContent = error?.message || kubernetesWords().loadFailed;
       }
     };
     const onClick = event => {
@@ -6288,7 +6311,7 @@
       button.disabled = true;
       button.setAttribute("aria-busy", "true");
       result.hidden = false;
-      if (message) message.textContent = "Testing API access and permissions…";
+      if (message) message.textContent = kubernetesWords().testing;
       try {
         const response = await fetch("/monitor/kubernetes/connection/test", { method: "POST", body: new FormData(form), headers: { "Accept": "application/json" } });
         const payload = await response.json();
@@ -6299,10 +6322,10 @@
           item.dataset.supported = supported ? "true" : "false";
           item.querySelector("svg")?.replaceWith(makeIcon(supported ? "check" : "minus"));
         });
-        if (message) message.textContent = `Connected · ${payload.fingerprint?.slice(0, 12) || "verified"}`;
+        if (message) message.textContent = kubernetesWords().connected;
       } catch (error) {
         result.querySelectorAll("[data-capability]").forEach(item => item.dataset.supported = "false");
-        if (message) message.textContent = error?.message || "Connection test failed.";
+        if (message) message.textContent = error?.message || kubernetesWords().testFailed;
       } finally {
         button.disabled = false;
         button.removeAttribute("aria-busy");

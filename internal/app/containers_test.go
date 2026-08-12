@@ -70,6 +70,11 @@ func TestContainersPageListsAllStatesSortsInHeadersAndGuardsOperations(t *testin
 			t.Fatalf("container page status=%d missing %q: %s", response.StatusCode, expected, page)
 		}
 	}
+	for _, forbidden := range [][]byte{[]byte("Indexed by name"), []byte("container-name /"), []byte("Select a column heading")} {
+		if bytes.Contains(page, forbidden) {
+			t.Fatalf("container page still contains internal copy %q: %s", forbidden, page)
+		}
+	}
 
 	operationURL := serverURL + "/monitor/containers/api-prod/operate"
 	response, err = client.PostForm(operationURL, url.Values{

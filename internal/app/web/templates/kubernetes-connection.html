@@ -10,21 +10,21 @@
 <body>
 <main class="workspace kubernetes-connection-page" data-kubernetes-connection-page>
   <header class="page-heading kubernetes-heading">
-    <div><p class="page-eyebrow">{{t .Locale "kubernetes.single_cluster"}}</p><h1>{{if .Configured}}{{t .Locale "kubernetes.connection_settings"}}{{else}}{{t .Locale "kubernetes.connect_title"}}{{end}}</h1><p>{{t .Locale "kubernetes.connection_description"}}</p></div>
+    <div><h1>{{if .Configured}}{{t .Locale "kubernetes.connection_settings"}}{{else}}{{t .Locale "kubernetes.connect_title"}}{{end}}</h1><p>{{t .Locale "kubernetes.connection_description"}}</p></div>
     <a class="button" href="/monitor/kubernetes"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "kubernetes.back_to_monitor"}}</a>
   </header>
   {{if .Error}}<div class="kubernetes-alert" role="alert"><span data-lucide="triangle-alert" aria-hidden="true"></span><div><strong>{{t .Locale "kubernetes.connection_failed"}}</strong><p>{{.Error}}</p></div></div>{{end}}
   <div class="kubernetes-connection-layout">
     <form class="kubernetes-connection-form" method="post" action="/monitor/kubernetes/connection" data-kubernetes-connection-form>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <section><header><span>01</span><div><h2>{{t .Locale "kubernetes.identity"}}</h2><p>{{t .Locale "kubernetes.identity_description"}}</p></div></header>
+      <section><header><div><h2>{{t .Locale "kubernetes.identity"}}</h2></div></header>
         <label><span>{{t .Locale "kubernetes.connection_name"}}</span><input name="name" value="{{.Connection.Name}}" required autocomplete="off" placeholder="Home cluster"></label>
       </section>
-      <section><header><span>02</span><div><h2>kubeconfig</h2><p>{{t .Locale "kubernetes.kubeconfig_description"}}</p></div></header>
+      <section><header><div><h2>kubeconfig</h2><p>{{t .Locale "kubernetes.kubeconfig_description"}}</p></div></header>
         <label><span>{{t .Locale "kubernetes.kubeconfig_path"}}</span><input name="kubeconfig_path" value="{{.Connection.KubeconfigPath}}" required autocomplete="off" spellcheck="false" placeholder="C:\Users\admin\.kube\config"></label>
         <label><span>{{t .Locale "kubernetes.context_optional"}}</span><input name="context" value="{{.Connection.Context}}" autocomplete="off" spellcheck="false" placeholder="{{t .Locale "kubernetes.current_context"}}"></label>
       </section>
-      <section><header><span>03</span><div><h2>{{t .Locale "kubernetes.operation_mode"}}</h2><p>{{t .Locale "kubernetes.operation_description"}}</p></div></header>
+      <section><header><div><h2>{{t .Locale "kubernetes.operation_mode"}}</h2></div></header>
         <div class="kubernetes-mode-options">
           <label><input type="radio" name="mode" value="observe" {{if ne .Connection.Mode "limited"}}checked{{end}}><span><b data-lucide="eye" aria-hidden="true"></b><strong>{{t .Locale "kubernetes.observe_only"}}</strong><small>{{t .Locale "kubernetes.observe_description"}}</small></span></label>
           <label><input type="radio" name="mode" value="limited" {{if eq .Connection.Mode "limited"}}checked{{end}}><span><b data-lucide="settings" aria-hidden="true"></b><strong>{{t .Locale "kubernetes.limited_operations"}}</strong><small>{{t .Locale "kubernetes.limited_description"}}</small></span></label>
@@ -33,7 +33,7 @@
       <footer><button class="button" type="button" data-kubernetes-test><span data-lucide="scan-search" aria-hidden="true"></span>{{t .Locale "kubernetes.test_connection"}}</button><button class="button button--primary" type="submit"><span data-lucide="check" aria-hidden="true"></span>{{if .Configured}}{{t .Locale "kubernetes.replace_connection"}}{{else}}{{t .Locale "kubernetes.save_connection"}}{{end}}</button></footer>
     </form>
     <aside class="kubernetes-connection-aside">
-      <p class="section-index">{{t .Locale "kubernetes.safety_boundary"}}</p><h2>{{t .Locale "kubernetes.one_connection"}}</h2><p>{{t .Locale "kubernetes.one_connection_description"}}</p>
+      <h2>{{t .Locale "kubernetes.safety_boundary"}}</h2>
       <div class="kubernetes-security-note"><span data-lucide="shield-check" aria-hidden="true"></span><p>{{t .Locale "kubernetes.security_note"}}</p></div>
       <div class="kubernetes-test-result" data-kubernetes-test-result {{if not .Configured}}hidden{{end}}>
         <strong>{{t .Locale "kubernetes.capability_check"}}</strong>
