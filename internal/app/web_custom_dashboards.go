@@ -18,38 +18,38 @@ import (
 )
 
 type customDashboardPageView struct {
-	Locale                                                   webLocale
-	CSRFToken                                                string
-	DashboardUpdatedLabel                                    string
-	ImportError                                              string
-	Dashboards                                               []customdashboard.Dashboard
-	Dashboard                                                customdashboard.Dashboard
-	Cards                                                    []customDashboardCardView
-	WebsiteMonitors                                          []websitemonitor.Monitor
-	CanManage, CanDiagnose, PublicView, MonitorView, Reorder bool
+	Locale                                      webLocale
+	CSRFToken                                   string
+	DashboardUpdatedLabel                       string
+	ImportError                                 string
+	Dashboards                                  []customdashboard.Dashboard
+	Dashboard                                   customdashboard.Dashboard
+	Cards                                       []customDashboardCardView
+	WebsiteMonitors                             []websitemonitor.Monitor
+	CanManage, PublicView, MonitorView, Reorder bool
 }
 
 type customDashboardCardView struct {
 	customdashboard.Card
-	ValueLabel, SecondaryLabel, HeadersText, Unit                   string
-	StatusLabel, RetainedLabel, UnavailableLabel, DiagnosticSummary string
-	QuotaProgressLabel                                              string
-	QuotaProgress                                                   float64
-	DisplayIndex                                                    int
-	CanMoveUp, CanMoveDown, StringValue                             bool
-	Unavailable, DiagnosticOpen                                     bool
-	Websites                                                        []customDashboardWebsiteView
-	SelectedMonitorIDs                                              map[string]bool
-	InsecureSource                                                  bool
-	RegistryEndpoint, RegistryImagesText                            string
-	RegistryAuthMode, RegistryUsername                              string
-	RegistryImageCount, FailureCount                                int
-	RegistryImages                                                  []customDashboardRegistryImageView
+	ValueLabel, SecondaryLabel, HeadersText, Unit string
+	StatusLabel, RetainedLabel, UnavailableLabel  string
+	QuotaProgressLabel                            string
+	QuotaProgress                                 float64
+	DisplayIndex                                  int
+	CanMoveUp, CanMoveDown, StringValue           bool
+	Unavailable                                   bool
+	Websites                                      []customDashboardWebsiteView
+	SelectedMonitorIDs                            map[string]bool
+	InsecureSource                                bool
+	RegistryEndpoint, RegistryImagesText          string
+	RegistryAuthMode, RegistryUsername            string
+	RegistryImageCount                            int
+	RegistryImages                                []customDashboardRegistryImageView
 }
 
 type customDashboardRegistryImageView struct {
-	Image, Tag, PushedLabel, Error string
-	Stale                          bool
+	Image, Tag, PushedLabel string
+	Error, Stale            bool
 }
 
 type customDashboardWebsiteView struct {
@@ -91,7 +91,6 @@ func (a *App) customDashboardPage(response http.ResponseWriter, request *http.Re
 	view.Dashboards = dashboards
 	view.CSRFToken = current.csrfToken
 	view.CanManage = roleAllows(current.role, permissionManageOperations)
-	view.CanDiagnose = view.CanManage
 	view.Reorder = view.CanManage && request.URL.Query().Get("reorder") == "1"
 	view.ImportError = customDashboardImportError(request.URL.Query().Get("import_error"))
 	for index := range view.Cards {
@@ -130,7 +129,6 @@ func (a *App) customDashboardMonitorPage(response http.ResponseWriter, request *
 	view := a.newCustomDashboardPageView(request, dashboard, false)
 	view.MonitorView = true
 	current := request.Context().Value(sessionContextKey).(session)
-	view.CanDiagnose = roleAllows(current.role, permissionManageOperations)
 	view.CSRFToken = current.csrfToken
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -148,8 +146,6 @@ func (a *App) newCustomDashboardPageView(request *http.Request, dashboard custom
 	}
 	for _, card := range dashboard.Cards {
 		item := customDashboardCardView{Card: card, SelectedMonitorIDs: map[string]bool{}}
-		item.DiagnosticSummary = dashboardDiagnosticSummary(locale, card.Snapshot.Diagnostic)
-		item.DiagnosticOpen = request.URL.Query().Get("diagnostic") == card.ID
 		var cardConfig struct {
 			MonitorIDs []string `json:"monitorIds"`
 			Unit       string   `json:"unit"`
@@ -165,10 +161,7 @@ func (a *App) newCustomDashboardPageView(request *http.Request, dashboard custom
 			item.RegistryUsername = registryConfig.Username
 			item.InsecureSource = strings.HasPrefix(strings.ToLower(registryConfig.Endpoint), "http://")
 			for _, image := range card.Snapshot.Images {
-				imageView := customDashboardRegistryImageView{Image: image.Image, Tag: image.Tag, Error: image.Error, Stale: image.Stale}
-				if public && imageView.Error != "" {
-					imageView.Error = "刷新失败"
-				}
+				imageView := customDashboardRegistryImageView{Image: image.Image, Tag: image.Tag, Error: image.Error != "", Stale: image.Stale}
 				if imageView.Tag == "" {
 					imageView.Tag = "—"
 				}
@@ -178,9 +171,6 @@ func (a *App) newCustomDashboardPageView(request *http.Request, dashboard custom
 					imageView.PushedLabel = "仓库未提供"
 				}
 				item.RegistryImages = append(item.RegistryImages, imageView)
-				if image.Error != "" {
-					item.FailureCount++
-				}
 			}
 		}
 		item.Unit = strings.TrimSpace(cardConfig.Unit)
@@ -223,13 +213,7 @@ func (a *App) newCustomDashboardPageView(request *http.Request, dashboard custom
 		}
 		item.QuotaProgressLabel = formatDashboardValue(item.QuotaProgress)
 		if card.LastError != "" {
-			item.StatusLabel = "刷新失败"
-			if card.Type == customdashboard.CardRegistry && item.FailureCount > 0 {
-				item.StatusLabel = fmt.Sprintf("%d 个镜像刷新失败", item.FailureCount)
-			}
-			if public {
-				item.StatusLabel = "暂时不可用"
-			}
+			item.StatusLabel = "错误"
 			if card.LastSuccessAt.IsZero() {
 				item.Unavailable = true
 				item.UnavailableLabel = "暂时无法获取数据"
@@ -237,12 +221,7 @@ func (a *App) newCustomDashboardPageView(request *http.Request, dashboard custom
 				item.RetainedLabel = "沿用 " + card.LastSuccessAt.Local().Format("15:04") + " 的数据"
 			}
 			if locale == localeEnglishUS {
-				item.StatusLabel = "Refresh failed"
-				if public {
-					item.StatusLabel = "Temporarily unavailable"
-				} else if card.Type == customdashboard.CardRegistry && item.FailureCount > 0 {
-					item.StatusLabel = fmt.Sprintf("%d image refreshes failed", item.FailureCount)
-				}
+				item.StatusLabel = "Error"
 				item.UnavailableLabel = "Data is temporarily unavailable"
 				if !card.LastSuccessAt.IsZero() {
 					item.RetainedLabel = "Using data from " + card.LastSuccessAt.Local().Format("15:04")
@@ -258,39 +237,6 @@ func (a *App) newCustomDashboardPageView(request *http.Request, dashboard custom
 		view.Cards = append(view.Cards, item)
 	}
 	return view
-}
-
-func dashboardDiagnosticSummary(locale webLocale, diagnostic *customdashboard.RequestDiagnostic) string {
-	if diagnostic == nil {
-		return webText(locale, "dashboard.request_failed_generic")
-	}
-	if locale == localeSimplifiedChinese {
-		return diagnostic.Summary
-	}
-	switch diagnostic.Code {
-	case customdashboard.DiagnosticDNS:
-		return "Could not connect. Check DNS, the port, and network reachability."
-	case customdashboard.DiagnosticTLS:
-		return "TLS negotiation failed. Check the certificate, hostname, and protocol."
-	case customdashboard.DiagnosticTimeout:
-		return "The request timed out. Check service load and network latency."
-	case customdashboard.DiagnosticUnauthorized, customdashboard.DiagnosticRegistryAuth:
-		return "Authentication failed. Check the credentials and access permissions."
-	case customdashboard.DiagnosticNonJSON:
-		return "The response is not valid JSON. Check the endpoint and Content-Type."
-	case customdashboard.DiagnosticTooLarge:
-		return "The response exceeds the 2 MiB limit. Reduce the endpoint payload."
-	case customdashboard.DiagnosticPathMissing:
-		return "The JSON path does not exist. Select a field from the response structure."
-	case customdashboard.DiagnosticTypeMismatch:
-		return "The matched value has the wrong type for this card."
-	case customdashboard.DiagnosticRegistryManifest:
-		return "The Registry query failed. Check the image name and access permissions."
-	case customdashboard.DiagnosticHTTP:
-		return fmt.Sprintf("The service returned HTTP %d. Check the endpoint status.", diagnostic.HTTPStatus)
-	default:
-		return webText(locale, "dashboard.request_failed_generic")
-	}
 }
 
 func (a *App) customDashboardWebsiteCards(request *http.Request, card customdashboard.Card) []customDashboardWebsiteView {

@@ -24,21 +24,10 @@ type localizedMessage struct {
 }
 
 var webMessages = map[string]localizedMessage{
-	"dashboard.request_diagnostic":                  {"请求诊断", "Request diagnostics"},
-	"dashboard.close_diagnostic":                    {"关闭请求诊断", "Close request diagnostics"},
-	"dashboard.request_failed_generic":              {"请求未成功，请检查连接与卡片配置。", "The request failed. Check the connection and card configuration."},
-	"dashboard.failure_stage":                       {"失败阶段", "Failure stage"},
-	"dashboard.request_time":                        {"请求时间", "Request time"},
-	"dashboard.last_success":                        {"最后成功", "Last success"},
-	"dashboard.never_succeeded":                     {"从未成功", "Never succeeded"},
-	"dashboard.request_url":                         {"请求地址", "Request URL"},
-	"dashboard.http_status":                         {"HTTP 状态", "HTTP status"},
-	"dashboard.duration":                            {"耗时", "Duration"},
-	"dashboard.content_type":                        {"Content-Type", "Content-Type"},
-	"dashboard.response_size":                       {"响应大小", "Response size"},
-	"dashboard.retry_request":                       {"重新请求", "Retry request"},
 	"dashboard.try_later":                           {"请稍后重试", "Try again later"},
 	"dashboard.test_result":                         {"测试结果", "Test result"},
+	"dashboard.test_hint":                           {"使用当前尚未保存的配置发起一次请求，不会修改卡片。", "Send one request with the current unsaved configuration. The card will not be changed."},
+	"dashboard.run_test":                            {"发送测试请求", "Send test request"},
 	"dashboard.awaiting_request":                    {"等待请求", "Awaiting request"},
 	"dashboard.structure":                           {"结构", "Structure"},
 	"dashboard.raw_response":                        {"原始响应", "Raw response"},

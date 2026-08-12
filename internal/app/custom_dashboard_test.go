@@ -608,11 +608,21 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	failedPage, _ := io.ReadAll(failedResponse.Body)
 	failedResponse.Body.Close()
 	failedRendered := string(failedPage)
-	if !strings.Contains(failedRendered, `custom-dashboard-card__status-badge`) || !strings.Contains(failedRendered, `stroke-dasharray="63.24 100"`) || !strings.Contains(failedRendered, `custom-dashboard-card__quota-value">63.24`) || !strings.Contains(failedRendered, `custom-dashboard-card__retained`) {
+	if !strings.Contains(failedRendered, `custom-dashboard-card__status-badge`) || !strings.Contains(failedRendered, `>Error</span>`) || !strings.Contains(failedRendered, `stroke-dasharray="63.24 100"`) || !strings.Contains(failedRendered, `custom-dashboard-card__quota-value">63.24`) || !strings.Contains(failedRendered, `custom-dashboard-card__retained`) {
 		t.Fatalf("failed card did not retain its last successful value with a generic status: %s", failedRendered)
 	}
-	if strings.Contains(failedRendered, api.URL) || strings.Contains(failedRendered, "HTTP 503") {
+	if strings.Contains(failedRendered, api.URL) || strings.Contains(failedRendered, "HTTP 503") || strings.Contains(failedRendered, `custom-dashboard-diagnostic`) || strings.Contains(failedRendered, `data-dashboard-drawer`) {
 		t.Fatal("public dashboard exposed private request diagnostics")
+	}
+	failedMonitorResponse, err := client.Get(serverURL + "/monitor/dashboard/" + dashboardID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failedMonitorPage, _ := io.ReadAll(failedMonitorResponse.Body)
+	failedMonitorResponse.Body.Close()
+	failedMonitorRendered := string(failedMonitorPage)
+	if !strings.Contains(failedMonitorRendered, `>Error</span>`) || strings.Contains(failedMonitorRendered, `custom-dashboard-card__status-action`) || strings.Contains(failedMonitorRendered, `custom-dashboard-diagnostic`) || strings.Contains(failedMonitorRendered, "HTTP 503") || strings.Contains(failedMonitorRendered, api.URL) {
+		t.Fatalf("authenticated card exposed request diagnostics instead of a static error marker: %s", failedMonitorRendered)
 	}
 
 	response, err = client.PostForm(serverURL+"/config/dashboards/"+dashboardID+"/delete", url.Values{"csrf_token": {formToken(t, page)}, "confirm": {"yes"}})

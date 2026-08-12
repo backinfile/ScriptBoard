@@ -194,6 +194,7 @@
       target.dataset.iconReady = "";
     });
   }
+  window.ScriptBoardRenderIcons = renderIcons;
 
   function localizeTimes(root = document) {
     const formatter = new Intl.DateTimeFormat(locale(), {
@@ -6320,6 +6321,8 @@ document.addEventListener("change", function (event) {
   });
   const testButton = form.querySelector("[data-dashboard-test-request]");
   if (testButton) testButton.hidden = website;
+  const testWorkbench = form.querySelector("[data-dashboard-test-workbench]");
+  if (testWorkbench) testWorkbench.hidden = website;
   const previewLabel = form.querySelector("[data-dashboard-preview-label]");
   if (previewLabel) previewLabel.textContent = ({ number: "数值", percentage: "百分比", quota: "额度", website: "网站状态", registry: "镜像版本" })[type] || "数值";
 });
@@ -6660,7 +6663,24 @@ function updateDashboardTestPreview(form) {
   }
 }
 
-function renderDashboardJSONTree(root, value, form, path = "", search = "") {
+async function copyDashboardFieldPath(path) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(path);
+    return;
+  }
+  const fallback = document.createElement("textarea");
+  fallback.value = path;
+  fallback.setAttribute("readonly", "");
+  fallback.style.position = "fixed";
+  fallback.style.opacity = "0";
+  document.body.append(fallback);
+  fallback.select();
+  const copied = document.execCommand("copy");
+  fallback.remove();
+  if (!copied) throw new Error("copy failed");
+}
+
+function renderDashboardJSONTree(root, value, path = "", search = "") {
   root.replaceChildren();
   const append = (parent, current, currentPath, label) => {
     const isContainer = current !== null && typeof current === "object";
@@ -6683,9 +6703,40 @@ function renderDashboardJSONTree(root, value, form, path = "", search = "") {
     const key = document.createElement("code"); key.textContent = label;
     const preview = document.createElement("span"); preview.textContent = typeof current === "string" ? current : JSON.stringify(current);
     const type = document.createElement("small"); type.textContent = dashboardValueType(current);
-    const use = document.createElement("button"); use.type = "button"; use.textContent = dashboardLocaleText("使用此字段", "Use this field");
-    use.addEventListener("click", () => { const input = form.querySelector('[name="value_path"]'); if (input) { input.value = currentPath; input.dispatchEvent(new Event("input", { bubbles: true })); input.focus(); } });
-    row.append(key, preview, type, use); parent.append(row);
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "icon-button icon-button--quiet custom-dashboard-json-copy";
+    const copyLabel = dashboardLocaleText(`复制字段路径：${currentPath}`, `Copy field path: ${currentPath}`);
+    const copiedLabel = dashboardLocaleText(`已复制：${currentPath}`, `Copied: ${currentPath}`);
+    const failedLabel = dashboardLocaleText(`复制失败：${currentPath}`, `Copy failed: ${currentPath}`);
+    copy.setAttribute("aria-label", copyLabel);
+    const renderCopyIcon = (name) => {
+      const icon = document.createElement("span");
+      icon.dataset.lucide = name;
+      icon.setAttribute("aria-hidden", "true");
+      copy.replaceChildren(icon);
+      window.ScriptBoardRenderIcons?.(copy);
+    };
+    renderCopyIcon("copy");
+    copy.addEventListener("click", async () => {
+      window.clearTimeout(copy._dashboardCopyTimer);
+      try {
+        await copyDashboardFieldPath(currentPath);
+        copy.dataset.state = "success";
+        copy.setAttribute("aria-label", copiedLabel);
+        renderCopyIcon("check");
+      } catch (_) {
+        copy.dataset.state = "error";
+        copy.setAttribute("aria-label", failedLabel);
+        renderCopyIcon("triangle-alert");
+      }
+      copy._dashboardCopyTimer = window.setTimeout(() => {
+        delete copy.dataset.state;
+        copy.setAttribute("aria-label", copyLabel);
+        renderCopyIcon("copy");
+      }, 1800);
+    });
+    row.append(key, preview, type, copy); parent.append(row);
   };
   append(root, value, path, path || "root");
 }
@@ -6707,7 +6758,7 @@ async function testDashboardCardRequest(button) {
     panel._testDocument = result.document || null;
     const search = panel.querySelector("[data-dashboard-json-search]");
     const tree = panel.querySelector("[data-dashboard-json-tree]");
-    const rerender = () => result.document ? renderDashboardJSONTree(tree, result.document, form, "", search.value.trim().toLowerCase()) : tree.replaceChildren(document.createTextNode(dashboardLocaleText("当前响应没有可用的 JSON 结构。", "This response has no usable JSON structure.")));
+    const rerender = () => result.document ? renderDashboardJSONTree(tree, result.document, "", search.value.trim().toLowerCase()) : tree.replaceChildren(document.createTextNode(dashboardLocaleText("当前响应没有可用的 JSON 结构。", "This response has no usable JSON structure.")));
     rerender(); search.oninput = rerender;
     panel.querySelector("[data-dashboard-raw-response]").textContent = result.rawResponse || "";
     panel.querySelector("[data-dashboard-raw-note]").textContent = `${diagnostic.code === "non_json" ? dashboardLocaleText("当前卡片取值要求响应为 JSON。", "This card requires a JSON response.") : ""}${result.rawTruncated ? dashboardLocaleText(" 原始响应已截断至 256 KB。", " The raw response was truncated to 256 KB.") : ""}`.trim();
