@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -275,6 +276,20 @@ func (a *App) deleteCustomDashboard(response http.ResponseWriter, request *http.
 	}
 	a.recordAuditForRequest(request, "delete_custom_dashboard", id, "succeeded")
 	http.Redirect(response, request, "/config/dashboards", http.StatusSeeOther)
+}
+
+func (a *App) refreshCustomDashboard(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "页面已过期，请重试", http.StatusForbidden)
+		return
+	}
+	id := request.PathValue("id")
+	result := "succeeded"
+	if err := a.customDashboards.RefreshDashboard(request.Context(), id); err != nil {
+		result = "failed"
+	}
+	a.recordAuditForRequest(request, "refresh_custom_dashboard", id, result)
+	http.Redirect(response, request, "/config/dashboards?dashboard="+url.QueryEscape(id)+"&refreshed=1", http.StatusSeeOther)
 }
 
 func (a *App) createCustomDashboardCard(response http.ResponseWriter, request *http.Request) {

@@ -1886,6 +1886,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /config/dashboards/{id}", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.updateCustomDashboard)))
 	mux.Handle("GET /config/dashboards/{id}/export", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.exportCustomDashboard)))
 	mux.Handle("POST /config/dashboards/{id}/delete", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.deleteCustomDashboard)))
+	mux.Handle("POST /config/dashboards/{id}/refresh", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.refreshCustomDashboard)))
 	mux.Handle("POST /config/dashboards/{id}/cards", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.createCustomDashboardCard)))
 	mux.Handle("POST /config/dashboard-cards/{id}/refresh", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.refreshCustomDashboardCard)))
 	mux.Handle("POST /config/dashboard-cards/{id}/move", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.moveCustomDashboardCard)))

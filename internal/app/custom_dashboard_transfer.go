@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,25 +19,17 @@ import (
 )
 
 const (
-	customDashboardConfigFormat   = "scriptboard.custom-dashboard"
+	customDashboardConfigFormat   = "scriptboard.custom-dashboard-nodes"
 	customDashboardConfigVersion  = 1
 	customDashboardImportMaxSize  = 2 << 20
 	customDashboardImportMaxCards = 100
 )
 
-var customDashboardTransferSlugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
-
 type customDashboardConfigFile struct {
-	Format     string                      `json:"format"`
-	Version    int                         `json:"version"`
-	ExportedAt time.Time                   `json:"exported_at"`
-	Dashboard  customDashboardConfigRecord `json:"dashboard"`
-}
-
-type customDashboardConfigRecord struct {
-	Name  string                            `json:"name"`
-	Slug  string                            `json:"slug"`
-	Cards []customDashboardCardConfigRecord `json:"cards"`
+	Format     string                            `json:"format"`
+	Version    int                               `json:"version"`
+	ExportedAt time.Time                         `json:"exported_at"`
+	Nodes      []customDashboardCardConfigRecord `json:"nodes"`
 }
 
 type customDashboardCardConfigRecord struct {
@@ -72,7 +63,6 @@ func (a *App) exportCustomDashboard(response http.ResponseWriter, request *http.
 	}
 	bundle := customDashboardConfigFile{
 		Format: customDashboardConfigFormat, Version: customDashboardConfigVersion, ExportedAt: time.Now().UTC(),
-		Dashboard: customDashboardConfigRecord{Name: dashboard.Name, Slug: dashboard.Slug},
 	}
 	selectedValues := request.URL.Query()["selection"]
 	selected := make(map[string]struct{}, len(selectedValues))
@@ -82,7 +72,7 @@ func (a *App) exportCustomDashboard(response http.ResponseWriter, request *http.
 		}
 	}
 	if len(selected) == 0 {
-		http.Error(response, "请至少选择一张卡片", http.StatusUnprocessableEntity)
+		http.Error(response, "请至少选择一个节点", http.StatusUnprocessableEntity)
 		return
 	}
 	for _, card := range dashboard.Cards {
@@ -102,15 +92,15 @@ func (a *App) exportCustomDashboard(response http.ResponseWriter, request *http.
 				}
 			}
 		}
-		bundle.Dashboard.Cards = append(bundle.Dashboard.Cards, record)
+		bundle.Nodes = append(bundle.Nodes, record)
 	}
-	if len(selected) != 0 || len(bundle.Dashboard.Cards) == 0 {
-		http.Error(response, "卡片选择无效，请刷新页面后重试", http.StatusUnprocessableEntity)
+	if len(selected) != 0 || len(bundle.Nodes) == 0 {
+		http.Error(response, "节点选择无效，请刷新页面后重试", http.StatusUnprocessableEntity)
 		return
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "application/json; charset=utf-8")
-	response.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="scriptboard-dashboard-%s.json"`, time.Now().Format("20060102-150405")))
+	response.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="scriptboard-dashboard-nodes-%s.json"`, time.Now().Format("20060102-150405")))
 	if err := json.NewEncoder(response).Encode(bundle); err == nil {
 		a.recordAuditForRequest(request, "export_custom_dashboard", dashboard.ID, "succeeded")
 	}
@@ -148,44 +138,40 @@ func (a *App) importCustomDashboard(response http.ResponseWriter, request *http.
 		a.redirectCustomDashboardImportError(response, request, "invalid")
 		return
 	}
-	selectedCards, err := selectedCustomDashboardCards(bundle.Dashboard.Cards, request.Form)
+	selectedCards, err := selectedCustomDashboardCards(bundle.Nodes, request.Form)
 	if err != nil {
 		a.redirectCustomDashboardImportError(response, request, "selection_required")
 		return
 	}
-	bundle.Dashboard.Cards = selectedCards
-	dashboards, err := a.customDashboards.ListDashboards(request.Context())
-	if err != nil {
+	bundle.Nodes = selectedCards
+	dashboardID := strings.TrimSpace(request.FormValue("dashboard_id"))
+	if dashboardID == "" {
 		a.redirectCustomDashboardImportError(response, request, "failed")
 		return
 	}
-	slug := availableCustomDashboardSlug(dashboards, bundle.Dashboard.Slug)
-	created, err := a.customDashboards.CreateDashboard(request.Context(), customdashboard.DashboardInput{
-		Name: bundle.Dashboard.Name, Slug: slug, Public: false,
-	})
-	if err != nil {
+	if _, err := a.customDashboards.GetDashboard(request.Context(), dashboardID); err != nil {
 		a.redirectCustomDashboardImportError(response, request, "failed")
 		return
 	}
 	monitors, _ := a.websiteMonitor.List(request.Context(), websitemonitor.Filter{})
-	for _, record := range bundle.Dashboard.Cards {
+	inputs := make([]customdashboard.CardInput, 0, len(bundle.Nodes))
+	for _, record := range bundle.Nodes {
 		config := append(json.RawMessage(nil), record.Config...)
 		if record.Type == customdashboard.CardWebsite {
 			config = remapCustomDashboardMonitorConfig(config, record.WebsiteMonitors, monitors)
 		}
-		_, err = a.customDashboards.CreateCard(request.Context(), created.ID, customdashboard.CardInput{
+		inputs = append(inputs, customdashboard.CardInput{
 			Name: record.Name, Type: record.Type, SourceURL: record.SourceURL, Headers: record.Headers,
 			ValuePath: record.ValuePath, SecondaryPath: record.SecondaryPath, Formula: record.Formula,
 			Config: config, RefreshSeconds: record.RefreshSeconds,
 		})
-		if err != nil {
-			_ = a.customDashboards.DeleteDashboard(request.Context(), created.ID)
-			a.redirectCustomDashboardImportError(response, request, "failed")
-			return
-		}
 	}
-	a.recordAuditForRequest(request, "import_custom_dashboard", created.ID, "succeeded")
-	http.Redirect(response, request, "/config/dashboards?dashboard="+url.QueryEscape(created.ID)+"&imported=1", http.StatusSeeOther)
+	if err := a.customDashboards.ImportCards(request.Context(), dashboardID, inputs); err != nil {
+		a.redirectCustomDashboardImportError(response, request, "failed")
+		return
+	}
+	a.recordAuditForRequest(request, "import_custom_dashboard", dashboardID, "succeeded")
+	http.Redirect(response, request, "/config/dashboards?dashboard="+url.QueryEscape(dashboardID)+"&imported=1", http.StatusSeeOther)
 }
 
 func decodeCustomDashboardConfigFile(raw []byte) (customDashboardConfigFile, error) {
@@ -201,21 +187,15 @@ func decodeCustomDashboardConfigFile(raw []byte) (customDashboardConfigFile, err
 	if bundle.Format != customDashboardConfigFormat || bundle.Version != customDashboardConfigVersion {
 		return bundle, errors.New("不支持的配置文件版本")
 	}
-	if name := strings.TrimSpace(bundle.Dashboard.Name); name == "" || utf8.RuneCountInString(name) > 80 {
-		return bundle, errors.New("面板名称无效")
+	if len(bundle.Nodes) == 0 || len(bundle.Nodes) > customDashboardImportMaxCards {
+		return bundle, errors.New("节点数量无效或超过限制")
 	}
-	if slug := bundle.Dashboard.Slug; len(slug) > 80 || !customDashboardTransferSlugPattern.MatchString(slug) {
-		return bundle, errors.New("面板地址标识无效")
-	}
-	if len(bundle.Dashboard.Cards) > customDashboardImportMaxCards {
-		return bundle, errors.New("卡片数量超过限制")
-	}
-	for _, card := range bundle.Dashboard.Cards {
+	for _, card := range bundle.Nodes {
 		if name := strings.TrimSpace(card.Name); name == "" || utf8.RuneCountInString(name) > 80 {
-			return bundle, errors.New("卡片名称无效")
+			return bundle, errors.New("节点名称无效")
 		}
 		if len(card.Config) > 0 && !json.Valid(card.Config) {
-			return bundle, errors.New("卡片配置无效")
+			return bundle, errors.New("节点配置无效")
 		}
 	}
 	return bundle, nil
@@ -229,12 +209,12 @@ func selectedCustomDashboardCards(cards []customDashboardCardConfigRecord, form 
 	for _, rawIndex := range form["selection"] {
 		index, err := strconv.Atoi(rawIndex)
 		if err != nil || index < 0 || index >= len(cards) {
-			return nil, errors.New("卡片选择无效")
+			return nil, errors.New("节点选择无效")
 		}
 		requested[index] = struct{}{}
 	}
 	if len(requested) == 0 {
-		return nil, errors.New("至少选择一张卡片")
+		return nil, errors.New("至少选择一个节点")
 	}
 	selected := make([]customDashboardCardConfigRecord, 0, len(requested))
 	for index, card := range cards {
@@ -243,27 +223,6 @@ func selectedCustomDashboardCards(cards []customDashboardCardConfigRecord, form 
 		}
 	}
 	return selected, nil
-}
-
-func availableCustomDashboardSlug(dashboards []customdashboard.Dashboard, desired string) string {
-	used := make(map[string]struct{}, len(dashboards))
-	for _, dashboard := range dashboards {
-		used[dashboard.Slug] = struct{}{}
-	}
-	if _, exists := used[desired]; !exists {
-		return desired
-	}
-	for suffixNumber := 2; ; suffixNumber++ {
-		suffix := fmt.Sprintf("-%d", suffixNumber)
-		prefix := desired
-		if len(prefix)+len(suffix) > 80 {
-			prefix = strings.TrimRight(prefix[:80-len(suffix)], "-")
-		}
-		candidate := prefix + suffix
-		if _, exists := used[candidate]; !exists {
-			return candidate
-		}
-	}
 }
 
 func customDashboardMonitorIDs(config json.RawMessage) []string {
@@ -324,11 +283,11 @@ func customDashboardImportError(code string) string {
 	case "too_large":
 		return "文件超过 2 MB，请检查内容后重试。"
 	case "invalid":
-		return "无法识别这个面板文件，请选择由 ScriptBoard 导出的 JSON。"
+		return "无法识别这个节点配置文件，请选择由 ScriptBoard 导出的 JSON。"
 	case "failed":
-		return "导入失败，文件中的卡片配置可能无效。"
+		return "导入失败，文件中的节点配置可能无效。"
 	case "selection_required":
-		return "请在文件中至少选择一张要导入的卡片。"
+		return "请在文件中至少选择一个要导入的节点。"
 	default:
 		return ""
 	}

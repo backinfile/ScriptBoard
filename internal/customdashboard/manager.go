@@ -295,6 +295,50 @@ func (m *Manager) CreateCard(ctx context.Context, dashboardID string, input Card
 	}
 	return m.getCard(ctx, id)
 }
+
+func (m *Manager) ImportCards(ctx context.Context, dashboardID string, inputs []CardInput) error {
+	if _, err := m.GetDashboard(ctx, dashboardID); err != nil {
+		return err
+	}
+	if len(inputs) == 0 {
+		return errors.New("at least one card is required")
+	}
+	for index := range inputs {
+		if err := validateCard(&inputs[index]); err != nil {
+			return err
+		}
+	}
+	ids := make([]string, len(inputs))
+	for index := range ids {
+		id, err := randomID()
+		if err != nil {
+			return err
+		}
+		ids[index] = id
+	}
+	transaction, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer transaction.Rollback()
+	var order int
+	if err := transaction.QueryRowContext(ctx, `SELECT COALESCE(MAX(sort_order),0) FROM custom_dashboard_cards WHERE dashboard_id=?`, dashboardID).Scan(&order); err != nil {
+		return err
+	}
+	now := m.now().UTC().UnixNano()
+	for index, input := range inputs {
+		headers, _ := json.Marshal(input.Headers)
+		config := input.Config
+		if len(config) == 0 {
+			config = []byte(`{}`)
+		}
+		order++
+		if _, err := transaction.ExecContext(ctx, `INSERT INTO custom_dashboard_cards(id,dashboard_id,name,type,source_url,headers_json,value_path,secondary_path,formula,config_json,refresh_seconds,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, ids[index], dashboardID, input.Name, input.Type, input.SourceURL, string(headers), input.ValuePath, input.SecondaryPath, input.Formula, string(config), input.RefreshSeconds, order, now, now); err != nil {
+			return err
+		}
+	}
+	return transaction.Commit()
+}
 func (m *Manager) UpdateCard(ctx context.Context, id string, input CardInput) (Card, error) {
 	if err := validateCard(&input); err != nil {
 		return Card{}, err
@@ -478,6 +522,23 @@ func (m *Manager) RefreshCard(ctx context.Context, id string) (Card, error) {
 		return card, err
 	}
 	return m.getCard(ctx, id)
+}
+
+func (m *Manager) RefreshDashboard(ctx context.Context, id string) error {
+	dashboard, err := m.GetDashboard(ctx, id)
+	if err != nil {
+		return err
+	}
+	var refreshErrors []error
+	for _, card := range dashboard.Cards {
+		if card.Type == CardWebsite {
+			continue
+		}
+		if _, err := m.RefreshCard(ctx, card.ID); err != nil {
+			refreshErrors = append(refreshErrors, err)
+		}
+	}
+	return errors.Join(refreshErrors...)
 }
 func (m *Manager) recordFailure(ctx context.Context, card Card, refreshErr error) (Card, error) {
 	message := strings.TrimSpace(refreshErr.Error())

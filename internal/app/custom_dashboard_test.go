@@ -72,8 +72,13 @@ func TestCustomDashboardCanBeExportedAndImported(t *testing.T) {
 	if len(cardMatches) != 2 {
 		t.Fatalf("expected two selectable cards, got %d", len(cardMatches))
 	}
-	if rendered := string(page); !strings.Contains(rendered, `data-dashboard-drawer-name="export"`) || !strings.Contains(rendered, `data-dashboard-import-selection`) || strings.Count(rendered, `name="selection"`) != 2 {
-		t.Fatal("dashboard transfer selection UI is incomplete")
+	if rendered := string(page); !strings.Contains(rendered, `data-dashboard-drawer-name="export"`) || !strings.Contains(rendered, `data-dashboard-import-selection`) || strings.Count(rendered, `name="selection"`) != 2 ||
+		!strings.Contains(rendered, `data-dashboard-open-drawer="export"><span data-lucide="upload"`) ||
+		!strings.Contains(rendered, `data-dashboard-open-drawer="import"><span data-lucide="download"`) ||
+		!strings.Contains(rendered, `data-lucide="upload" aria-hidden="true"></span>导出所选节点`) ||
+		!strings.Contains(rendered, `data-lucide="download" aria-hidden="true"></span>导入所选节点`) ||
+		!strings.Contains(rendered, "导入到当前面板") || strings.Contains(rendered, "创建一个新的私有面板") {
+		t.Fatal("dashboard node transfer UI is incomplete")
 	}
 	postExport := func(selections ...string) (*http.Response, []byte) {
 		t.Helper()
@@ -98,25 +103,22 @@ func TestCustomDashboardCanBeExportedAndImported(t *testing.T) {
 		t.Fatal("export included runtime card state")
 	}
 	var bundle struct {
-		Format    string `json:"format"`
-		Dashboard struct {
-			Name  string `json:"name"`
-			Slug  string `json:"slug"`
-			Cards []struct {
-				Name           string            `json:"name"`
-				Headers        map[string]string `json:"headers"`
-				RefreshSeconds int               `json:"refresh_seconds"`
-				Config         map[string]any    `json:"config"`
-			} `json:"cards"`
-		} `json:"dashboard"`
+		Format    string          `json:"format"`
+		Dashboard json.RawMessage `json:"dashboard"`
+		Nodes     []struct {
+			Name           string            `json:"name"`
+			Headers        map[string]string `json:"headers"`
+			RefreshSeconds int               `json:"refresh_seconds"`
+			Config         map[string]any    `json:"config"`
+		} `json:"nodes"`
 	}
 	if err := json.Unmarshal(exported, &bundle); err != nil {
 		t.Fatal(err)
 	}
-	if bundle.Format != "scriptboard.custom-dashboard" || bundle.Dashboard.Name != "迁移测试" || len(bundle.Dashboard.Cards) != 1 {
+	if bundle.Format != "scriptboard.custom-dashboard-nodes" || len(bundle.Dashboard) != 0 || len(bundle.Nodes) != 1 {
 		t.Fatalf("unexpected export bundle: %#v", bundle)
 	}
-	if card := bundle.Dashboard.Cards[0]; card.Name != "服务额度" || card.Headers["Authorization"] != "Bearer test-secret" || card.RefreshSeconds != 300 || card.Config["unit"] != "GB" {
+	if card := bundle.Nodes[0]; card.Name != "服务额度" || card.Headers["Authorization"] != "Bearer test-secret" || card.RefreshSeconds != 300 || card.Config["unit"] != "GB" {
 		t.Fatalf("exported card configuration mismatch: %#v", card)
 	}
 	_, exportedAll := postExport(cardMatches[0][1], cardMatches[1][1])
@@ -166,7 +168,7 @@ func TestCustomDashboardCanBeExportedAndImported(t *testing.T) {
 	importLocation := response.Header.Get("Location")
 	importURL, _ := url.Parse(importLocation)
 	importedID := importURL.Query().Get("dashboard")
-	if importedID == "" || importedID == dashboardID {
+	if importedID != dashboardID {
 		t.Fatalf("imported dashboard id=%q", importedID)
 	}
 	response, err = client.Get(serverURL + importLocation)
@@ -176,13 +178,14 @@ func TestCustomDashboardCanBeExportedAndImported(t *testing.T) {
 	importedPage, _ := io.ReadAll(response.Body)
 	response.Body.Close()
 	importedRendered := string(importedPage)
-	for _, expected := range []string{"迁移测试", "私有 · 1 张卡片", "请求次数", "https://api.example.test/requests", `value="次"`, `name="slug" value="transfer-test-2"`} {
+	for _, expected := range []string{"迁移测试", "私有 · 3 张卡片", "请求次数", "https://api.example.test/requests", `value="次"`, `name="slug" value="transfer-test"`} {
 		if !strings.Contains(importedRendered, expected) {
 			t.Fatalf("imported dashboard missing %q", expected)
 		}
 	}
-	if strings.Contains(importedRendered, "服务额度") {
-		t.Fatal("unselected card was imported")
+	tabs := regexp.MustCompile(`(?s)<nav class="custom-dashboard-tabs"[^>]*>(.*?)</nav>`).FindStringSubmatch(importedRendered)
+	if len(tabs) != 2 || strings.Count(tabs[1], `<a `) != 1 {
+		t.Fatalf("import created an unexpected dashboard: %s", importedRendered)
 	}
 
 	response = postImport("invalid.json", []byte(`{"not":"a dashboard"}`))
@@ -196,8 +199,31 @@ func TestCustomDashboardCanBeExportedAndImported(t *testing.T) {
 	}
 	errorPage, _ := io.ReadAll(response.Body)
 	response.Body.Close()
-	if !strings.Contains(string(errorPage), "无法识别这个面板文件") || !strings.Contains(string(errorPage), `data-dashboard-drawer-name="import" open`) {
+	if !strings.Contains(string(errorPage), "无法识别这个节点配置文件") || !strings.Contains(string(errorPage), `data-dashboard-drawer-name="import" open`) {
 		t.Fatal("invalid import did not reopen the drawer with a useful error")
+	}
+
+	legacy := []byte(`{"format":"scriptboard.custom-dashboard","version":1,"exported_at":"2026-08-12T00:00:00Z","dashboard":{"name":"旧面板","slug":"legacy","cards":[]}}`)
+	response = postImport("legacy.json", legacy)
+	response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || !strings.Contains(response.Header.Get("Location"), "import_error=invalid") {
+		t.Fatalf("legacy import response=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+
+	partiallyInvalid := []byte(`{"format":"scriptboard.custom-dashboard-nodes","version":1,"exported_at":"2026-08-12T00:00:00Z","nodes":[{"name":"不应保留","type":"number","source_url":"https://api.example.test/temporary","value_path":"value","refresh_seconds":60},{"name":"无效节点","type":"unsupported","refresh_seconds":60}]}`)
+	response = postImport("partially-invalid.json", partiallyInvalid)
+	response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || !strings.Contains(response.Header.Get("Location"), "import_error=failed") {
+		t.Fatalf("partially invalid import response=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+	response, err = client.Get(serverURL + dashboardLocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rollbackPage, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	if strings.Contains(string(rollbackPage), "不应保留") || !strings.Contains(string(rollbackPage), "私有 · 3 张卡片") {
+		t.Fatalf("failed node import was not rolled back: %s", rollbackPage)
 	}
 }
 
@@ -265,7 +291,9 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	}
 	response.Body.Close()
 	var apiFailed atomic.Bool
+	var apiRequests atomic.Int32
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apiRequests.Add(1)
 		if apiFailed.Load() {
 			http.Error(w, "upstream unavailable", http.StatusServiceUnavailable)
 			return
@@ -348,6 +376,21 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	if !strings.Contains(configRendered, `href="/monitor/dashboard/`+dashboardID+`"`) || !strings.Contains(configRendered, "打开监控页") || !strings.Contains(configRendered, `data-dashboard-card-row`) {
 		t.Fatal("dashboard configuration page is missing its monitor shortcut or clickable card row")
 	}
+	if !strings.Contains(configRendered, `action="/config/dashboards/`+dashboardID+`/refresh"`) || !strings.Contains(configRendered, `data-lucide="refresh-cw"`) {
+		t.Fatal("dashboard configuration page is missing its force refresh control")
+	}
+	requestsBeforeRefresh := apiRequests.Load()
+	response, err = client.PostForm(serverURL+"/config/dashboards/"+dashboardID+"/refresh", url.Values{"csrf_token": {formToken(t, page)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/config/dashboards?dashboard="+dashboardID+"&refreshed=1" {
+		t.Fatalf("dashboard refresh status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+	if got := apiRequests.Load() - requestsBeforeRefresh; got != 2 {
+		t.Fatalf("dashboard refresh requested %d sources, want 2", got)
+	}
 	if strings.Contains(configRendered, `custom-dashboard-sites`) || strings.Contains(configRendered, `custom-dashboard-card__value`) {
 		t.Fatal("dashboard configuration page rendered the live dashboard layout")
 	}
@@ -360,7 +403,7 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	if reorderRendered := string(reorderPage); !strings.Contains(reorderRendered, "完成排序") || !strings.Contains(reorderRendered, `/config/dashboard-cards/`) || !strings.Contains(reorderRendered, `/move`) {
 		t.Fatal("dashboard card reorder mode is missing")
 	}
-	if strings.Contains(configRendered, `/refresh"`) {
+	if regexp.MustCompile(`action="/config/dashboard-cards/[^/"]+/refresh"`).MatchString(configRendered) {
 		t.Fatal("dashboard configuration row still exposes a refresh action")
 	}
 	refreshMatch := regexp.MustCompile(`action="/config/dashboard-cards/([^/"]+)"`).FindStringSubmatch(configRendered)

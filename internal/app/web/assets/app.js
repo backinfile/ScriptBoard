@@ -6461,7 +6461,7 @@ function syncDashboardCardSelection(root) {
   const selected = checkboxes.filter((checkbox) => checkbox.checked).length;
   const count = root.querySelector("[data-dashboard-selection-count]");
   const submit = root.querySelector("[data-dashboard-selection-submit]");
-  if (count) count.textContent = `${selected} 张卡片已选择`;
+  if (count) count.textContent = `${selected} 个节点已选择`;
   if (submit) submit.disabled = selected === 0;
 }
 
@@ -6477,7 +6477,7 @@ async function renderDashboardImportSelection(input) {
   const list = form?.querySelector("[data-dashboard-import-card-list]");
   const error = form?.querySelector("[data-dashboard-import-file-error]");
   const file = input.files?.[0];
-  if (filename) filename.textContent = file?.name || "选择面板文件";
+  if (filename) filename.textContent = file?.name || "选择节点配置文件";
   if (selection) selection.hidden = true;
   if (selectionPresent) selectionPresent.disabled = true;
   if (list) list.replaceChildren();
@@ -6489,9 +6489,9 @@ async function renderDashboardImportSelection(input) {
   }
   try {
     const bundle = JSON.parse(await file.text());
-    const cards = bundle?.dashboard?.cards;
-    if (!Array.isArray(cards) || cards.length === 0 || cards.length > 100) throw new Error("invalid cards");
-    cards.forEach((card, index) => {
+    const nodes = bundle?.nodes;
+    if (!Array.isArray(nodes) || nodes.length === 0 || nodes.length > 100) throw new Error("invalid nodes");
+    nodes.forEach((node, index) => {
       const item = document.createElement("label");
       const checkbox = document.createElement("input");
       const text = document.createElement("span");
@@ -6501,8 +6501,8 @@ async function renderDashboardImportSelection(input) {
       checkbox.name = "selection";
       checkbox.value = String(index);
       checkbox.checked = true;
-      name.textContent = String(card?.name || `卡片 ${index + 1}`);
-      type.textContent = dashboardTransferTypeLabel(card?.type);
+      name.textContent = String(node?.name || `节点 ${index + 1}`);
+      type.textContent = dashboardTransferTypeLabel(node?.type);
       text.append(name, type);
       item.append(checkbox, text);
       list.append(item);
@@ -6510,7 +6510,7 @@ async function renderDashboardImportSelection(input) {
     selection.hidden = false;
     selectionPresent.disabled = false;
   } catch (_) {
-    input.setCustomValidity("无法读取卡片清单，请选择由 ScriptBoard 导出的 JSON 文件。");
+    input.setCustomValidity("无法读取节点清单，请选择由 ScriptBoard 导出的 JSON 文件。");
     if (error) {
       error.hidden = false;
       const message = error.querySelector("span:last-child");
