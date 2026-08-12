@@ -426,8 +426,9 @@ install-root/
 受管 Linux Web 服务以无登录 `scriptboard-web` 运行，Windows Web 服务以 `LocalService` 加独立
 `NT SERVICE\ScriptBoard` SID 运行；它们只获 Install Root 读/执行、配置读取以及 State Root 和
 实例外部密钥目录修改权限。特权 Broker 分别保留 root/LocalSystem，并只通过受保护本机 IPC
-接受该 Web 服务身份。Run、Assistant 与凭据解封尚未完成独立身份迁移，不能把当前 ACL 视为
-最终最小权限模型。
+接受该 Web 服务身份。Run 与 Assistant 分别由独立 Runner/AI Host 身份执行；Linux 使用 systemd
+地址与 seccomp 策略，Windows 使用 restricted service SID、Job Object 和 Windows Service
+Hardening。Host Files 与凭据解封仍属于 Web 边界，当前 ACL 尚不是最终最小权限模型。
 
 Update Operation 是文件系统持久化事务，不写入 SQLite 作为事实来源，以便数据库本身被恢复时仍能继续判断更新阶段。终态结果由应用在正常启动后幂等导入审计一次。
 
@@ -575,12 +576,14 @@ key 文件仅允许服务身份/root。旧明文 `assistant-provider.json` 在�
 进程内持有实际 Provider Endpoint 与 API Key，只接受绑定模型对应的固定推理 POST 路径，
 禁止重定向并复用共享出站策略；Pi 的参数、环境和 `models.json` 不再包含上游 Endpoint
 或真实 API Key。代理随 Pi 进程退出或会话停止而关闭。该进程内边界不替代 P0-08 要求的
-独立 OS 身份、秘密目录 ACL 和 Runtime 网络默认拒绝。
+独立 OS 身份、秘密目录 ACL 和 Runtime 网络默认拒绝；正式受管部署已经通过独立 AI Host
+落实这些边界，便携模式不提供同等级隔离。
 
 Windows 上每个 Pi 进程还进入独立 Job Object：最多一个活动进程，进程与作业内存各限
 1 GiB，累计用户态 CPU 限 15 分钟，并禁止桌面、显示设置、退出系统、全局 atom、句柄、
-剪贴板和系统参数 UI 能力；Job 句柄关闭时终止剩余进程。该资源边界同样不赋予受限
-Token，也不代替秘密目录 ACL。
+剪贴板和系统参数 UI 能力；Job 句柄关闭时终止剩余进程。AI Host 本身使用 restricted
+service SID 与私有目录 ACL，Windows Service Hardening 默认拒绝非环回网络；Job Object
+只负责进程树资源与生命周期，不替代这些身份和网络边界。
 
 Evidence Query 仍走相同 Tool Broker 和实时角色授权。日志搜索、日志窗口、Run 对比、计划
 历史和审计列表都有结果条数与文本字节上限；继续读取使用带 HMAC、五分钟过期并绑定用户、

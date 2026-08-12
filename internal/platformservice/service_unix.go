@@ -157,14 +157,25 @@ UMask=0007
 CapabilityBoundingSet=
 AmbientCapabilities=
 PrivateTmp=true
+PrivateDevices=true
 ProtectHome=true
 ProtectSystem=strict
 ReadWritePaths=%s
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelLogs=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
 LockPersonality=true
+RestrictNamespaces=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+TasksMax=64
+MemoryMax=1G
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 IPAddressDeny=any
 IPAddressAllow=localhost
@@ -189,13 +200,21 @@ UMask=0077
 CapabilityBoundingSet=
 AmbientCapabilities=
 PrivateTmp=true
+PrivateDevices=true
 ProtectHome=true
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelLogs=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
 LockPersonality=true
 RestrictNamespaces=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
 TasksMax=64
 MemoryMax=2G
 RestrictAddressFamilies=AF_UNIX
@@ -614,7 +633,9 @@ func MatchesExecutable(executable, configPath string) (bool, error) {
 			expectedRunner := "ExecStart=" + systemdQuote(filepath.Join(filepath.Dir(executable), "scriptboard-runner")) + " --config " + systemdQuote(configPath) + " --state-root "
 			return strings.Contains(aiText, expectedAI) && strings.Contains(aiText, "User="+aiServiceUser) &&
 				strings.Contains(aiText, "IPAddressDeny=any") && strings.Contains(aiText, "IPAddressAllow=localhost") &&
-				strings.Contains(runnerText, expectedRunner) && strings.Contains(runnerText, "User="+runnerServiceUser) && strings.Contains(runnerText, "IPAddressDeny=any"), nil
+				strings.Contains(aiText, "SystemCallFilter=@system-service") && strings.Contains(aiText, "SystemCallArchitectures=native") &&
+				strings.Contains(runnerText, expectedRunner) && strings.Contains(runnerText, "User="+runnerServiceUser) && strings.Contains(runnerText, "IPAddressDeny=any") &&
+				strings.Contains(runnerText, "SystemCallFilter=@system-service") && strings.Contains(runnerText, "SystemCallArchitectures=native"), nil
 		}
 	}
 	return false, nil

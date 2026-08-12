@@ -29,6 +29,13 @@
 > [ADR-0126](./adr/0126-version-assistant-playbooks-with-the-signed-runtime.md)。数据库当前为
 > schema 24，schema 20–23 可在单事务内前向迁移。
 
+> **2026-08-12 安全修订**：受管部署改为 Web、特权 Broker、AI Host 与 Runner 四服务边界。
+> Web 使用专用低权限身份；Broker 保留 root/LocalSystem；AI 与 Runner 使用独立受限身份、
+> 受保护 IPC、默认拒绝网络和资源/系统调用限制。Run 只继承 Runner 构造的最小环境，不再继承
+> Web 身份与环境。此修订取代下文关于“单进程”、root/LocalSystem Web 和脚本继承 Web 身份的
+> 冲突表述；Host Files 与凭据解封仍在 Web 边界，后续最小权限工作见
+> [安全加固计划](./OPERATIONS-PANEL-SECURITY-HARDENING-PLAN.md)。
+
 ## 1. 产品定义
 
 ScriptBoard 是一个自托管、单机、少量可信用户使用的主机文件与脚本操作台，为服务身份可访问的普通文件提供浏览和管理，并为其中的可信脚本提供本地执行、实时日志、历史追踪、快捷执行和内置计划。

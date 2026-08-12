@@ -5,6 +5,7 @@ go 1.26.5
 require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/getlantern/systray v1.2.2
+	github.com/go-ole/go-ole v1.2.6
 	github.com/go-sql-driver/mysql v1.10.0
 	github.com/go-webauthn/webauthn v0.17.4
 	github.com/gorilla/websocket v1.5.3
@@ -38,7 +39,6 @@ require (
 	github.com/getlantern/ops v0.0.0-20190325191751-d70cb0d6f85f // indirect
 	github.com/go-logr/logr v1.4.2 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
-	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/go-stack/stack v1.8.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/go-webauthn/x v0.2.6 // indirect

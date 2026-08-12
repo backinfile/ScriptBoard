@@ -9,7 +9,8 @@ stdout、stderr 和退出状态通过有界二进制帧分别返回；优雅/强
 只依赖 `ProcessLauncher`/`ManagedProcess` 接口，本地与 IPC 两个适配器共享相同监督、日志、超时
 和状态机测试。一次性脚本只给 Web owner 与 Runner SID/组读取，Worker 不读取应用数据库或秘密。
 
-Linux 使用无登录 `scriptboard-runner`、空 capability、`NoNewPrivileges`、进程/内存上限和默认
-拒绝网络。Windows 使用 `LocalService` 与 restricted `NT SERVICE\ScriptBoardRunner` SID，并通过每个
-Run 的 Job Object 限制进程数和内存。Windows 默认拒绝网络及 Linux 每 Run 独立 cgroup/系统调用
-过滤仍是后续跨平台隔离验收项。
+Linux 使用无登录 `scriptboard-runner`、空 capability、`NoNewPrivileges`、进程/内存上限、
+`@system-service` seccomp allowlist 和默认拒绝网络。Windows 使用 `LocalService` 与 restricted
+`NT SERVICE\ScriptBoardRunner` SID，通过 Windows Service Hardening 默认拒绝网络，并通过每个 Run
+的 Job Object 限制进程数和内存。每 Run 独立 cgroup 不是当前实现边界；正式发布必须在真实服务
+管理器中验证 service-wide 限额、系统调用和网络阻断。

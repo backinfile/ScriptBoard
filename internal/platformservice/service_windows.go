@@ -304,7 +304,10 @@ func Install(executable, configPath, _ string, stateRoot string) error {
 	if err := grantWindowsAIServiceAccess(installRoot, stateRoot); err != nil {
 		return err
 	}
-	return grantWindowsRunnerServiceAccess(installRoot, configPath)
+	if err := grantWindowsRunnerServiceAccess(installRoot, configPath); err != nil {
+		return err
+	}
+	return configureWindowsRuntimeFirewall(aiExecutable, runnerExecutable)
 }
 
 func grantWindowsRunnerServiceAccess(installRoot, configPath string) error {
@@ -469,10 +472,6 @@ func SwitchExecutable(executable, configPath string) error {
 	if err != nil || len(aiArguments) != 5 || aiArguments[1] != "--state-root" || aiArguments[3] != "--allowed-identity" {
 		return errors.New("Windows AI Runtime Host service command is invalid")
 	}
-	aiConfiguration.BinaryPathName = windows.ComposeCommandLine([]string{filepath.Join(filepath.Dir(executable), "scriptboard-ai-host.exe"), "--state-root", aiArguments[2], "--allowed-identity", aiArguments[4]})
-	if err := aiService.UpdateConfig(aiConfiguration); err != nil {
-		return err
-	}
 	runnerService, err := manager.OpenService(runnerServiceName)
 	if err != nil {
 		return err
@@ -486,8 +485,22 @@ func SwitchExecutable(executable, configPath string) error {
 	if err != nil || len(runnerArguments) != 7 || runnerArguments[1] != "--config" || runnerArguments[3] != "--state-root" || runnerArguments[5] != "--allowed-identity" {
 		return errors.New("Windows Runner service command is invalid")
 	}
-	runnerConfiguration.BinaryPathName = windows.ComposeCommandLine([]string{filepath.Join(filepath.Dir(executable), "scriptboard-runner.exe"), "--config", runnerArguments[2], "--state-root", runnerArguments[4], "--allowed-identity", runnerArguments[6]})
-	return runnerService.UpdateConfig(runnerConfiguration)
+	newAIExecutable := filepath.Join(filepath.Dir(executable), "scriptboard-ai-host.exe")
+	newRunnerExecutable := filepath.Join(filepath.Dir(executable), "scriptboard-runner.exe")
+	// Install the new version's WSH restrictions before any service definition
+	// points at it. Old restrictions remain until both definitions are updated.
+	if err := configureWindowsRuntimeFirewall(newAIExecutable, newRunnerExecutable); err != nil {
+		return err
+	}
+	aiConfiguration.BinaryPathName = windows.ComposeCommandLine([]string{newAIExecutable, "--state-root", aiArguments[2], "--allowed-identity", aiArguments[4]})
+	if err := aiService.UpdateConfig(aiConfiguration); err != nil {
+		return err
+	}
+	runnerConfiguration.BinaryPathName = windows.ComposeCommandLine([]string{newRunnerExecutable, "--config", runnerArguments[2], "--state-root", runnerArguments[4], "--allowed-identity", runnerArguments[6]})
+	if err := runnerService.UpdateConfig(runnerConfiguration); err != nil {
+		return err
+	}
+	return retireWindowsRuntimeFirewall(aiArguments[0], runnerArguments[0], newAIExecutable, newRunnerExecutable)
 }
 
 func Uninstall() error {
@@ -496,6 +509,26 @@ func Uninstall() error {
 		return err
 	}
 	defer manager.Disconnect()
+	var aiExecutable, runnerExecutable string
+	if service, openErr := manager.OpenService(aiServiceName); openErr == nil {
+		if configuration, configErr := service.Config(); configErr == nil {
+			if arguments, parseErr := windows.DecomposeCommandLine(configuration.BinaryPathName); parseErr == nil && len(arguments) > 0 {
+				aiExecutable = arguments[0]
+			}
+		}
+		service.Close()
+	}
+	if service, openErr := manager.OpenService(runnerServiceName); openErr == nil {
+		if configuration, configErr := service.Config(); configErr == nil {
+			if arguments, parseErr := windows.DecomposeCommandLine(configuration.BinaryPathName); parseErr == nil && len(arguments) > 0 {
+				runnerExecutable = arguments[0]
+			}
+		}
+		service.Close()
+	}
+	if err := removeWindowsRuntimeFirewall(aiExecutable, runnerExecutable); err != nil {
+		return err
+	}
 	for _, name := range []string{serviceName, runnerServiceName, aiServiceName, brokerServiceName} {
 		service, err := manager.OpenService(name)
 		if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
