@@ -71,3 +71,17 @@ func TestLinuxRuntimeUnitsRequireSeccompAndNetworkIsolation(t *testing.T) {
 		t.Fatalf("Linux runtime units require two swap limits, found %d", count)
 	}
 }
+
+func TestLinuxWebStartupSecretsAreNotSharedWithRunnerGroup(t *testing.T) {
+	source, err := os.ReadFile("service_unix.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	if !strings.Contains(text, "os.Chown(path, uid, -1)") || !strings.Contains(text, "os.Chmod(path, 0o600)") {
+		t.Fatal("Linux Web startup files are not assigned to the Web identity with owner-only access")
+	}
+	if strings.Contains(text, "assign Linux Web startup file group") {
+		t.Fatal("Linux Web startup files are still shared through the Web group used by Runner")
+	}
+}

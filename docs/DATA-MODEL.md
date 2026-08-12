@@ -425,10 +425,11 @@ install-root/
 
 受管 Linux Web 服务以无登录 `scriptboard-web` 运行，Windows Web 服务以 `LocalService` 加独立
 `NT SERVICE\ScriptBoard` SID 运行；它们只获 Install Root 读/执行、配置读取以及 State Root 和
-实例外部密钥目录修改权限。特权 Broker 分别保留 root/LocalSystem，并只通过受保护本机 IPC
-接受该 Web 服务身份。Run 与 Assistant 分别由独立 Runner/AI Host 身份执行；Linux 使用 systemd
-地址与 seccomp 策略，Windows 使用 restricted service SID、Job Object 和 Windows Service
-Hardening。Host Files 与凭据解封仍属于 Web 边界，当前 ACL 尚不是最终最小权限模型。
+State Root 中的 Web-owned 数据修改权限。特权 Broker 分别保留 root/LocalSystem，并只通过受保护
+本机 IPC 接受该 Web 服务身份；Broker-owned 外部密钥、`broker-secrets` 与 Host Files 不向 Web
+授予读取权限。Run 与 Assistant 分别由独立 Runner/AI Host 身份执行；Linux 使用 systemd 地址与
+seccomp 策略，Windows 使用 restricted service SID、Job Object、Windows Service Hardening 与
+最小 demand-start 服务 ACL。四组件版本、摘要和 IPC 协议由同一 Installed Release 绑定。
 
 Update Operation 是文件系统持久化事务，不写入 SQLite 作为事实来源，以便数据库本身被恢复时仍能继续判断更新阶段。终态结果由应用在正常启动后幂等导入审计一次。
 

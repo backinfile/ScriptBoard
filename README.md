@@ -9,7 +9,7 @@ ScriptBoard 是一款面向单台 Windows 或 Linux 主机的自托管脚本操�
 [下载最新版本](https://github.com/backinfile/ScriptBoard/releases/latest) · [快速开始](#快速开始) · [安装为系统服务](#安装为系统服务) · [常见问题](#常见问题)
 
 > [!WARNING]
-> ScriptBoard 不是安全沙箱。脚本会使用 ScriptBoard 服务的系统身份和权限运行，但只接收 ScriptBoard 提供的最小环境变量。请只运行可信脚本，只向可信用户开放，并且不要将服务直接暴露到公网。
+> ScriptBoard 不是不可信代码沙箱。脚本使用独立 Runner 的系统身份和权限运行，只接收 ScriptBoard 提供的最小环境，并受资源与默认拒绝网络边界约束；仍请只运行可信脚本、只向可信用户开放，且不要将 Web 直接暴露到公网。
 
 ![ScriptBoard 快捷执行页面](./integration/browser/snapshots/readme-quick-runs-zh.png)
 
@@ -93,9 +93,10 @@ state/secrets/initial-admin-password
 .\scriptboard.exe service install
 .\scriptboard.exe service start
 .\scriptboard.exe service status
+.\scriptboard.exe service verify --config C:\ProgramData\ScriptBoard\config.yaml
 ```
 
-服务默认安装到 `C:\Program Files\ScriptBoard`，状态数据保存在 `C:\ProgramData\ScriptBoard\state`。安装会初始化状态并注册 Web、`ScriptBoardBroker`、`ScriptBoardAI` 与 `ScriptBoardRunner` 四个服务；Web 使用低权限 `LocalService` 与独立服务 SID，Broker 保留 LocalSystem，防火墙和主机安全写操作只经保护的本机 Named Pipe 进入 Broker。AI 与 Runner 使用各自的 restricted service SID；Windows Service Hardening 默认阻断它们的网络，AI 只允许访问 IPv4/IPv6 环回 Provider 代理，Runner 无网络例外。安装时还会为当前 Windows 用户配置托盘自启动。
+服务默认安装到 `C:\Program Files\ScriptBoard`，状态数据保存在 `C:\ProgramData\ScriptBoard\state`。安装会初始化状态并注册 Web、`ScriptBoardBroker`、`ScriptBoardAI` 与 `ScriptBoardRunner` 四个服务；Web 使用低权限 `LocalService` 与独立服务 SID，Broker 保留 LocalSystem，防火墙和主机安全写操作只经保护的本机 Named Pipe 进入 Broker。AI 与 Runner 使用各自的 restricted service SID 和 SCM demand-start，Web 对二者只有 `START + QUERY_STATUS`；Windows Service Hardening 默认阻断它们的网络，AI 只允许访问 IPv4/IPv6 环回 Provider 代理，Runner 无网络例外。四服务的崩溃恢复采用两次退避重启后停止的有界策略，避免永久重启风暴。安装时还会为当前 Windows 用户配置托盘自启动。
 
 ### Linux
 
@@ -105,6 +106,7 @@ state/secrets/initial-admin-password
 sudo ./scriptboard service install
 sudo /opt/scriptboard/current/scriptboard service start
 sudo /opt/scriptboard/current/scriptboard service status
+sudo /opt/scriptboard/current/scriptboard service verify --config /etc/scriptboard/config.yaml
 ```
 
 服务默认安装到 `/opt/scriptboard`，状态数据保存在 `/var/lib/scriptboard/state`。安装会初始化状态，创建无登录 `scriptboard-web`、`scriptboard-ai` 与 `scriptboard-runner` 系统用户，并注册 Web、Broker、AI Host 与 Runner 四个 systemd 组件；Web 与 Broker 常驻，AI Host 和 Runner 由各自受保护的 Unix Socket 按需激活，未使用 AI 或尚无 Run 时不会预先启动对应执行进程。Web 不以 root 运行，防火墙和主机安全写操作只经校验 peer UID 的本机 Unix Socket 进入 root Broker。AI 只允许环回网络，Runner 默认无 IP 网络；两个 Runtime 服务都使用 systemd seccomp allowlist、空 capability 和资源上限。
@@ -143,7 +145,7 @@ Windows 从各个可用卷开始浏览，Linux 从 `/` 开始浏览。文件页�
 
 “监控 → 主机安全”集中显示 Windows 登录事件或 Linux SSH 登录记录、远程登录配置和防火墙状态。“安全更新”页签以只读方式读取 Windows Update Agent 或 Debian/Ubuntu APT 已有元数据中的待安装安全更新，不刷新软件源，也不下载或安装软件包。“安全基线”把当前运行权限、防火墙、更新元数据，以及 Linux SSH/Fail2Ban 或 Windows 防火墙 Profile 聚合成逐项证据与只读得分；得分只计算可用检测项，不是合规认证，也不会自动修改系统。管理员和维护员可保存最多 90 个基线快照并查看相对最新快照的状态漂移；历史只保存检测项 ID、状态、得分和采集时间，不保存证据正文。Windows 主机可管理 Windows Defender 防火墙规则；Linux 主机可安装 Fail2Ban 与 UFW、查看或解除 SSH 封禁，并在预览差异后同步 UFW 规则和默认策略。
 
-所有角色都可查看检测结果；只有管理员和维护员可修改系统防护。防火墙、远程登录和封禁操作可能中断主机连接，请确认服务以管理员或 root 权限运行，并保留当前管理端口的允许规则和带外恢复方式。
+所有角色都可查看检测结果；只有管理员和维护员可修改系统防护。防火墙、远程登录和封禁操作可能中断主机连接，请确认 Privileged Broker 以 LocalSystem 或 root 身份正常运行，并保留当前管理端口的允许规则和带外恢复方式；不要为此提升 Web、Runner 或 AI Host 的权限。
 
 ### MySQL 备份与恢复
 

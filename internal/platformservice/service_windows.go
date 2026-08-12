@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
@@ -17,15 +18,22 @@ import (
 )
 
 const (
-	serviceName       = "ScriptBoard"
-	brokerServiceName = "ScriptBoardBroker"
-	aiServiceName     = "ScriptBoardAI"
-	runnerServiceName = "ScriptBoardRunner"
-	webServiceAccount = `NT AUTHORITY\LocalService`
-	webServiceSID     = `NT SERVICE\ScriptBoard`
-	aiServiceSID      = `NT SERVICE\ScriptBoardAI`
-	runnerServiceSID  = `NT SERVICE\ScriptBoardRunner`
+	serviceName                 = "ScriptBoard"
+	brokerServiceName           = "ScriptBoardBroker"
+	aiServiceName               = "ScriptBoardAI"
+	runnerServiceName           = "ScriptBoardRunner"
+	webServiceAccount           = `NT AUTHORITY\LocalService`
+	webServiceSID               = `NT SERVICE\ScriptBoard`
+	aiServiceSID                = `NT SERVICE\ScriptBoardAI`
+	runnerServiceSID            = `NT SERVICE\ScriptBoardRunner`
+	windowsRecoveryResetSeconds = 24 * 60 * 60
 )
+
+var windowsRecoveryActions = []mgr.RecoveryAction{
+	{Type: mgr.ServiceRestart, Delay: 2 * time.Second},
+	{Type: mgr.ServiceRestart, Delay: 10 * time.Second},
+	{Type: mgr.NoAction},
+}
 
 func Exists() (bool, error) {
 	manager, err := mgr.Connect()
@@ -153,7 +161,7 @@ func validateWindowsWebRuntimeIdentity(localService, serviceSIDEnabled bool) err
 	return nil
 }
 
-func Install(executable, configPath, _ string, stateRoot string) error {
+func Install(executable, configPath, _ string, stateRoot string, webReadPaths ...string) error {
 	manager, err := mgr.Connect()
 	if err != nil {
 		return err
@@ -190,6 +198,10 @@ func Install(executable, configPath, _ string, stateRoot string) error {
 	if err != nil {
 		return fmt.Errorf("install Windows privileged Broker service: %w", err)
 	}
+	if err := configureWindowsServiceRecovery(broker); err != nil {
+		broker.Close()
+		return fmt.Errorf("configure Windows privileged Broker recovery: %w", err)
+	}
 	if err := broker.Close(); err != nil {
 		return err
 	}
@@ -224,6 +236,10 @@ func Install(executable, configPath, _ string, stateRoot string) error {
 	if err != nil {
 		return fmt.Errorf("install Windows AI Runtime Host service: %w", err)
 	}
+	if err := configureWindowsServiceRecovery(aiService); err != nil {
+		aiService.Close()
+		return fmt.Errorf("configure Windows AI Runtime Host recovery: %w", err)
+	}
 	if err := aiService.Close(); err != nil {
 		return err
 	}
@@ -253,6 +269,10 @@ func Install(executable, configPath, _ string, stateRoot string) error {
 	}
 	if err != nil {
 		return fmt.Errorf("install Windows Runner service: %w", err)
+	}
+	if err := configureWindowsServiceRecovery(runnerService); err != nil {
+		runnerService.Close()
+		return fmt.Errorf("configure Windows Runner recovery: %w", err)
 	}
 	if err := runnerService.Close(); err != nil {
 		return err
@@ -289,6 +309,10 @@ func Install(executable, configPath, _ string, stateRoot string) error {
 	if err != nil {
 		return fmt.Errorf("install Windows service: %w", err)
 	}
+	if err := configureWindowsServiceRecovery(service); err != nil {
+		service.Close()
+		return fmt.Errorf("configure Windows Web service recovery: %w", err)
+	}
 	if err := service.Close(); err != nil {
 		return err
 	}
@@ -301,7 +325,7 @@ func Install(executable, configPath, _ string, stateRoot string) error {
 		return errors.New("Windows Web service executable is outside the managed versions directory")
 	}
 	installRoot := filepath.Dir(versionsRoot)
-	if err := grantWindowsWebServiceAccess(installRoot, configPath, stateRoot); err != nil {
+	if err := grantWindowsWebServiceAccess(installRoot, configPath, stateRoot, webReadPaths...); err != nil {
 		return err
 	}
 	if err := grantWindowsAIServiceAccess(installRoot, stateRoot); err != nil {
@@ -311,6 +335,34 @@ func Install(executable, configPath, _ string, stateRoot string) error {
 		return err
 	}
 	return configureWindowsRuntimeFirewall(aiExecutable, runnerExecutable)
+}
+
+func configureWindowsServiceRecovery(service *mgr.Service) error {
+	if err := service.SetRecoveryActions(windowsRecoveryActions, windowsRecoveryResetSeconds); err != nil {
+		return err
+	}
+	return service.SetRecoveryActionsOnNonCrashFailures(true)
+}
+
+func matchesWindowsServiceRecovery(service *mgr.Service) (bool, error) {
+	actions, err := service.RecoveryActions()
+	if err != nil {
+		return false, err
+	}
+	if len(actions) != len(windowsRecoveryActions) {
+		return false, nil
+	}
+	for index := range actions {
+		if actions[index].Type != windowsRecoveryActions[index].Type || actions[index].Delay != windowsRecoveryActions[index].Delay {
+			return false, nil
+		}
+	}
+	reset, err := service.ResetPeriod()
+	if err != nil || reset != windowsRecoveryResetSeconds {
+		return false, err
+	}
+	nonCrash, err := service.RecoveryActionsOnNonCrashFailures()
+	return nonCrash, err
 }
 
 func grantWindowsWebServiceDemandStart(manager *mgr.Mgr) error {
@@ -359,6 +411,37 @@ func grantWindowsServiceAccess(service *mgr.Service, sid *windows.SID, permissio
 		return err
 	}
 	return windows.SetSecurityInfo(service.Handle, windows.SE_SERVICE, windows.DACL_SECURITY_INFORMATION, nil, nil, acl, nil)
+}
+
+func windowsServiceHasExactGrant(service *mgr.Service, sid *windows.SID, permissions windows.ACCESS_MASK) (bool, error) {
+	descriptor, err := windows.GetSecurityInfo(service.Handle, windows.SE_SERVICE, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return false, err
+	}
+	dacl, _, err := descriptor.DACL()
+	if err != nil || dacl == nil {
+		return false, err
+	}
+	found := false
+	for index := uint32(0); index < uint32(dacl.AceCount); index++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, index, &ace); err != nil {
+			return false, err
+		}
+		if ace == nil || ace.Header.AceFlags&windows.INHERIT_ONLY_ACE != 0 ||
+			(ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE && ace.Header.AceType != windows.ACCESS_DENIED_ACE_TYPE) {
+			continue
+		}
+		trustee := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		if !trustee.IsValid() || !trustee.Equals(sid) {
+			continue
+		}
+		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE || ace.Mask != permissions {
+			return false, nil
+		}
+		found = true
+	}
+	return found, nil
 }
 
 func grantWindowsRunnerServiceAccess(installRoot, configPath string) error {
@@ -412,7 +495,7 @@ func grantWindowsAIServiceAccess(installRoot, stateRoot string) error {
 	return nil
 }
 
-func grantWindowsWebServiceAccess(installRoot, configPath, stateRoot string) error {
+func grantWindowsWebServiceAccess(installRoot, configPath, stateRoot string, webReadPaths ...string) error {
 	if !filepath.IsAbs(installRoot) || !filepath.IsAbs(configPath) || !filepath.IsAbs(stateRoot) {
 		return errors.New("Windows service ACL paths must be absolute")
 	}
@@ -439,6 +522,21 @@ func grantWindowsWebServiceAccess(installRoot, configPath, stateRoot string) err
 		}
 		if err := grantWindowsPathAccess(grant.path, sid, grant.permissions, grant.recursive); err != nil {
 			return fmt.Errorf("grant Web service access to %s: %w", grant.path, err)
+		}
+	}
+	for _, path := range webReadPaths {
+		if !filepath.IsAbs(path) {
+			return fmt.Errorf("Windows Web startup file path must be absolute: %s", path)
+		}
+		info, statErr := os.Lstat(path)
+		if statErr != nil {
+			return fmt.Errorf("inspect Windows Web startup file %s: %w", path, statErr)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("Windows Web startup path must be a regular file without links: %s", path)
+		}
+		if err := grantWindowsPathAccess(path, sid, windows.ACCESS_MASK(windows.FILE_GENERIC_READ), false); err != nil {
+			return fmt.Errorf("grant Web service read access to %s: %w", path, err)
 		}
 	}
 	return nil
@@ -710,7 +808,7 @@ func IsRunning() (bool, error) {
 	return strings.Contains(status, "STATE: RUNNING"), err
 }
 
-func MatchesExecutable(executable, configPath string) (bool, error) {
+func MatchesExecutable(executable, configPath, stateRoot string) (bool, error) {
 	manager, service, err := openService()
 	if err != nil {
 		return false, err
@@ -721,9 +819,12 @@ func MatchesExecutable(executable, configPath string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if !strings.EqualFold(configuration.ServiceStartName, webServiceAccount) || configuration.SidType == windows.SERVICE_SID_TYPE_NONE ||
+	if !strings.EqualFold(configuration.ServiceStartName, webServiceAccount) || configuration.SidType != windows.SERVICE_SID_TYPE_UNRESTRICTED || configuration.StartType != mgr.StartAutomatic ||
 		len(configuration.Dependencies) != 1 || !strings.EqualFold(configuration.Dependencies[0], brokerServiceName) {
 		return false, nil
+	}
+	if recoveryMatches, recoveryErr := matchesWindowsServiceRecovery(service); recoveryErr != nil || !recoveryMatches {
+		return false, recoveryErr
 	}
 	arguments, err := windows.DecomposeCommandLine(configuration.BinaryPathName)
 	if err != nil {
@@ -742,14 +843,17 @@ func MatchesExecutable(executable, configPath string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if brokerConfiguration.SidType == windows.SERVICE_SID_TYPE_NONE || brokerConfiguration.StartType != mgr.StartAutomatic {
+	if !strings.EqualFold(strings.TrimSpace(brokerConfiguration.ServiceStartName), "LocalSystem") || brokerConfiguration.SidType != windows.SERVICE_SID_TYPE_UNRESTRICTED || brokerConfiguration.StartType != mgr.StartAutomatic {
 		return false, nil
+	}
+	if recoveryMatches, recoveryErr := matchesWindowsServiceRecovery(broker); recoveryErr != nil || !recoveryMatches {
+		return false, recoveryErr
 	}
 	brokerArguments, err := windows.DecomposeCommandLine(brokerConfiguration.BinaryPathName)
 	if err != nil || len(brokerArguments) != 5 ||
 		!sameWindowsPath(brokerArguments[0], filepath.Join(filepath.Dir(executable), "scriptboard-broker.exe")) ||
 		brokerArguments[1] != "--config" || !sameWindowsPath(brokerArguments[2], configPath) ||
-		brokerArguments[3] != "--state-root" || !filepath.IsAbs(brokerArguments[4]) {
+		brokerArguments[3] != "--state-root" || !sameWindowsPath(brokerArguments[4], stateRoot) {
 		return false, err
 	}
 	aiService, err := manager.OpenService(aiServiceName)
@@ -764,10 +868,13 @@ func MatchesExecutable(executable, configPath string) (bool, error) {
 	if !strings.EqualFold(aiConfiguration.ServiceStartName, webServiceAccount) || aiConfiguration.SidType != windows.SERVICE_SID_TYPE_RESTRICTED || aiConfiguration.StartType != mgr.StartManual {
 		return false, nil
 	}
+	if recoveryMatches, recoveryErr := matchesWindowsServiceRecovery(aiService); recoveryErr != nil || !recoveryMatches {
+		return false, recoveryErr
+	}
 	aiArguments, err := windows.DecomposeCommandLine(aiConfiguration.BinaryPathName)
 	if err != nil || len(aiArguments) != 5 ||
 		!sameWindowsPath(aiArguments[0], filepath.Join(filepath.Dir(executable), "scriptboard-ai-host.exe")) ||
-		aiArguments[1] != "--state-root" || !filepath.IsAbs(aiArguments[2]) || aiArguments[3] != "--allowed-identity" || !strings.EqualFold(aiArguments[4], webServiceSID) {
+		aiArguments[1] != "--state-root" || !sameWindowsPath(aiArguments[2], stateRoot) || aiArguments[3] != "--allowed-identity" || !strings.EqualFold(aiArguments[4], webServiceSID) {
 		return false, err
 	}
 	runnerService, err := manager.OpenService(runnerServiceName)
@@ -782,10 +889,24 @@ func MatchesExecutable(executable, configPath string) (bool, error) {
 	if !strings.EqualFold(runnerConfiguration.ServiceStartName, webServiceAccount) || runnerConfiguration.SidType != windows.SERVICE_SID_TYPE_RESTRICTED || runnerConfiguration.StartType != mgr.StartManual {
 		return false, nil
 	}
+	if recoveryMatches, recoveryErr := matchesWindowsServiceRecovery(runnerService); recoveryErr != nil || !recoveryMatches {
+		return false, recoveryErr
+	}
+	webSID, _, _, err := windows.LookupSID("", webServiceSID)
+	if err != nil {
+		return false, err
+	}
+	demandStartPermissions := windows.ACCESS_MASK(windows.SERVICE_START | windows.SERVICE_QUERY_STATUS)
+	for _, target := range []*mgr.Service{aiService, runnerService} {
+		granted, grantErr := windowsServiceHasExactGrant(target, webSID, demandStartPermissions)
+		if grantErr != nil || !granted {
+			return false, grantErr
+		}
+	}
 	runnerArguments, err := windows.DecomposeCommandLine(runnerConfiguration.BinaryPathName)
 	return err == nil && len(runnerArguments) == 7 &&
 		sameWindowsPath(runnerArguments[0], filepath.Join(filepath.Dir(executable), "scriptboard-runner.exe")) && runnerArguments[1] == "--config" && sameWindowsPath(runnerArguments[2], configPath) &&
-		runnerArguments[3] == "--state-root" && filepath.IsAbs(runnerArguments[4]) && runnerArguments[5] == "--allowed-identity" && strings.EqualFold(runnerArguments[6], webServiceSID), err
+		runnerArguments[3] == "--state-root" && sameWindowsPath(runnerArguments[4], stateRoot) && runnerArguments[5] == "--allowed-identity" && strings.EqualFold(runnerArguments[6], webServiceSID), err
 }
 
 func sameWindowsPath(first, second string) bool {

@@ -78,3 +78,16 @@ jobs:
         run: pnpm exec playwright install chromium
       - name: Run browser gate
         run: pnpm test
+
+  windows-scm-security:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify four-service SCM security boundary
+        shell: pwsh
+        run: ./scripts/windows-scm-security-gate.ps1

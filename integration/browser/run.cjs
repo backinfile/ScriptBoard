@@ -1012,12 +1012,30 @@ async function assertViewerCannotManageMySQL(browser, baseURL, password) {
   await context.close();
 }
 
+const administratorSettingsHrefs = [
+  "/settings/account",
+  "/settings/users",
+  "/settings/display",
+  "/settings/ai",
+  "/settings/service-logs",
+  "/settings/notifications",
+  "/settings/state-backups",
+  "/settings/updates",
+];
+
+async function assertAdministratorSettingsNavigation(page) {
+  assert.deepEqual(
+    await page.locator(".settings-nav a").evaluateAll(links => links.map(link => link.getAttribute("href"))),
+    administratorSettingsHrefs,
+  );
+}
+
 async function assertAccountSettings(page, baseURL) {
   await page.goto(`${baseURL}/settings/account`);
   assert.equal(await page.locator(".app-sidebar .sidebar-account").count(), 0);
   assert.equal(await page.locator('.app-sidebar a[href="/settings/users"]').count(), 0);
   assert.equal(await page.locator('.settings-nav a[href="/settings/users"]').count(), 1);
-  assert.equal(await page.locator(".settings-nav a").count(), 5);
+  await assertAdministratorSettingsNavigation(page);
   assert.equal(await page.locator(".settings-layout").count(), 0);
   const settingsLayout = await page.locator(".settings-nav, .settings-content").evaluateAll(elements =>
     elements.map(element => ({
@@ -1077,7 +1095,7 @@ async function assertAssistantSettingsAndWorkspace(page, baseURL) {
   await page.goto(`${baseURL}/settings/ai`);
   await page.locator("[data-assistant-settings]").waitFor();
   await assertNoHorizontalOverflow(page, "AI settings");
-  assert.equal(await page.locator(".settings-nav a").count(), 5);
+  await assertAdministratorSettingsNavigation(page);
 
   await page.locator("[data-add-llm]").click();
   const drawer = page.locator('[data-llm-drawer][data-open="true"]');

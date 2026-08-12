@@ -33,7 +33,10 @@
 > Web 使用专用低权限身份；Broker 保留 root/LocalSystem；AI 与 Runner 使用独立受限身份、
 > 受保护 IPC、默认拒绝网络和资源/系统调用限制。Run 只继承 Runner 构造的最小环境，不再继承
 > Web 身份与环境。此修订取代下文关于“单进程”、root/LocalSystem Web 和脚本继承 Web 身份的
-> 冲突表述；Host Files 与凭据解封仍在 Web 边界，后续最小权限工作见
+> 冲突表述；Host Files、MFA、Passkey、远程网站、Assistant Provider、MySQL、审计签名与备份
+> 密钥能力均由 Broker 持有，Web 只调用固定领域协议。四个二进制作为一个版本化发布单元整体
+> 安装、升级、回滚和卸载，Linux Runner/AI Host 使用 socket activation，Windows 使用 SCM
+> demand-start。完整最小权限工作见
 > [安全加固计划](./OPERATIONS-PANEL-SECURITY-HARDENING-PLAN.md)。当前数据库为 schema 43，
 > schema 20–42 仅沿显式事务迁移路径前向升级；下文固定 schema 24 的旧表述不再适用。
 
@@ -41,7 +44,7 @@
 
 ScriptBoard 是一个自托管、单机、少量可信用户使用的主机文件与脚本操作台，为服务身份可访问的普通文件提供浏览和管理，并为其中的可信脚本提供本地执行、实时日志、历史追踪、快捷执行和内置计划。
 
-它不是通用多用户运维平台，也不隔离恶意脚本。脚本直接继承 ScriptBoard 服务进程的操作系统身份与环境；默认服务安装使用 Linux root 或 Windows LocalSystem，因此文件页可读取的范围很大，所有可登录用户和可执行脚本都必须属于宿主机可信边界。
+它不是通用多用户运维平台，也不把管理员发布的脚本视为不可信代码。受管部署仍通过独立 Runner 身份、最小环境、摘要复核、资源限制和默认拒绝网络来限制脚本的宿主影响；文件访问与特权动作由 Broker 的固定领域协议承担，不能从 Web 退回任意高权限进程启动。
 
 ## 2. 产品目标
 
@@ -53,16 +56,17 @@ ScriptBoard 是一个自托管、单机、少量可信用户使用的主机文�
      → 保存快捷执行或计划 → 必要时从文件系统回收区恢复误删文件
 ```
 
-MVP 优先保持单服务进程、SQLite、单机文件系统与平台原生服务部署，不引入运行时集群依赖。
+MVP 保持 SQLite、单机文件系统与平台原生服务部署，不引入运行时集群依赖。一个 ScriptBoard 产品版本包含 Web、Privileged Broker、Runner 与 AI Host 四个内部组件；它们共享一个发布事务，但保持独立 OS 身份和 IPC 边界。
 
 ## 3. 信任与权限边界
 
-- 只有一个 admin 账号，没有角色、用户组或逐脚本授权。
-- 管理员上传和启动的脚本视为可信代码，不提供沙箱。
-- ScriptBoard 不在应用内部提权、降权或切换用户；脚本继承服务进程身份与环境。
-- Windows 服务默认使用 LocalSystem；Linux systemd 服务默认使用 root。安装者可在操作系统服务配置中改用其他账号。
+- 实例使用固定四角色多用户模型，并且只允许一个系统管理员；脚本发布、执行和高风险操作仍受角色、step-up 与审计约束。
+- 管理员发布的脚本视为可信业务代码，但只能由独立 Runner 身份在最小环境和资源边界内执行。
+- Web 默认低权限：Windows 使用 LocalService + 独立服务 SID，Linux 使用无登录 `scriptboard-web`；只有固定 Broker 保留 LocalSystem/root。
+- Runner 与 AI Host 使用独立受限身份。Web 不能直接解封 Broker 秘密、读取 Host Files 或把任意命令交给高权限进程。
+- 四组件必须来自同一发布版本；混合二进制/IPC 协议组合 fail closed。Web 与 Broker 常驻，Runner/AI Host 按需启动。
 - 明文 HTTP 只能监听回环地址。非回环访问必须使用内置 TLS，或由同机可信 HTTPS 反向代理转发到回环后端。
-- 所有文件、日志、SSE、变量和执行入口必须验证 admin Session；匿名仅允许登录入口和无敏感内容的静态资源。
+- 所有文件、日志、SSE、变量和执行入口必须验证用户 Session 与声明式角色权限；匿名仅允许登录入口和无敏感内容的静态资源。
 
 ## 4. 信息架构
 
@@ -404,7 +408,7 @@ starting → failed
 
 ```text
 scriptboard serve
-scriptboard service install|uninstall|start|stop|restart|status
+scriptboard service install|uninstall|start|stop|restart|status|verify
 scriptboard admin reset
 scriptboard config validate
 scriptboard doctor

@@ -37,7 +37,7 @@
 | --- | --- |
 | [ADR-0131 管理员启动凭据只接受密码文件或一次性引导](./0131-remove-plaintext-admin-password-configuration.md) | [ADR-0021 自动初始化并允许启动时重设管理员凭据](./0021-bootstrap-and-reset-the-admin-credential.md) 中的明文 `--admin-password` 部分 |
 | [ADR-0130 安全边界默认拒绝并最小化子进程环境](./0130-default-to-closed-security-boundaries.md) | [ADR-0047 脚本继承服务进程环境](./0047-inherit-the-service-process-environment.md) |
-| [ADR-0023 默认使用宿主系统最高权限](./0023-default-to-highest-host-privileges.md) | [ADR-0002 信任管理员脚本](./0002-trust-admin-provided-scripts.md) |
+| [ADR-0147 低权限 Web](./0147-run-managed-web-under-a-low-privilege-service-identity.md)、[ADR-0148 独立 AI Host](./0148-isolate-ai-runtime-behind-a-dedicated-host.md)、[ADR-0149 独立 Runner](./0149-isolate-runs-behind-a-dedicated-worker.md)、[ADR-0163 四组件整体发布](./0163-ship-four-trust-boundaries-as-one-versioned-product.md) | [ADR-0023 默认使用宿主系统最高权限](./0023-default-to-highest-host-privileges.md) 的单个 root/LocalSystem Web 与脚本继承模型 |
 | [ADR-0027 允许无队列并发](./0027-allow-unbounded-concurrent-runs-without-a-queue.md) | [ADR-0012 拒绝并发](./0012-reject-instead-of-queueing-executions.md)、[ADR-0025 繁忙时跳过](./0025-skip-busy-cron-triggers-without-queueing.md) |
 | [ADR-0030 使用内置调度器](./0030-use-an-internal-scheduler-instead-of-crontab.md) | [ADR-0024 管理 crontab 条目](./0024-manage-only-owned-entries-in-runtime-users-crontab.md)、[ADR-0026 本机控制套接字](./0026-trigger-cron-runs-through-a-local-control-socket.md) |
 | [ADR-0162 带审计连续性的加密私有状态备份](./0162-provide-encrypted-private-state-backup-with-audit-continuity.md) | [ADR-0074 CLI 备份与恢复](./0074-provide-cli-backup-for-private-application-state.md)、[ADR-0100 不提供用户备份命令](./0100-do-not-provide-user-facing-backup-commands.md) |

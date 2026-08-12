@@ -77,6 +77,20 @@ func TestWindowsRunnerAndAIHostAreDemandStartServices(t *testing.T) {
 	}
 }
 
+func TestWindowsManagedServicesHaveBoundedCrashRecovery(t *testing.T) {
+	if len(windowsRecoveryActions) != 3 {
+		t.Fatalf("recovery actions=%d, want two restarts and a terminal no-op", len(windowsRecoveryActions))
+	}
+	if windowsRecoveryActions[0].Type != mgr.ServiceRestart || windowsRecoveryActions[1].Type != mgr.ServiceRestart ||
+		windowsRecoveryActions[2].Type != mgr.NoAction {
+		t.Fatalf("unexpected recovery actions: %#v", windowsRecoveryActions)
+	}
+	if windowsRecoveryActions[0].Delay <= 0 || windowsRecoveryActions[1].Delay <= windowsRecoveryActions[0].Delay ||
+		windowsRecoveryResetSeconds != 24*60*60 {
+		t.Fatalf("recovery policy is not bounded with backoff: %#v reset=%d", windowsRecoveryActions, windowsRecoveryResetSeconds)
+	}
+}
+
 func TestWindowsServiceDirectoryGrantPropagatesToExistingChildren(t *testing.T) {
 	root := t.TempDir()
 	child := filepath.Join(root, "existing.txt")

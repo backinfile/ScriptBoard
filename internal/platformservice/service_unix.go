@@ -91,8 +91,8 @@ func validateLinuxWebRuntimeIdentity(effectiveUID, expectedUID int) error {
 	return nil
 }
 
-func Install(executable, configPath, updaterExecutable, stateRoot string) error {
-	if err := prepareLinuxWebServiceIdentity(configPath, stateRoot); err != nil {
+func Install(executable, configPath, updaterExecutable, stateRoot string, webReadPaths ...string) error {
+	if err := prepareLinuxWebServiceIdentity(configPath, stateRoot, webReadPaths...); err != nil {
 		return err
 	}
 	brokerExecutable := filepath.Join(filepath.Dir(executable), "scriptboard-broker")
@@ -308,7 +308,7 @@ TimeoutStartSec=0
 	return systemctl("enable", "scriptboard.service")
 }
 
-func prepareLinuxWebServiceIdentity(configPath, stateRoot string) error {
+func prepareLinuxWebServiceIdentity(configPath, stateRoot string, webReadPaths ...string) error {
 	if !filepath.IsAbs(configPath) || !filepath.IsAbs(stateRoot) || filepath.Clean(stateRoot) == string(filepath.Separator) {
 		return errors.New("Linux service identity paths must be absolute and State Root cannot be filesystem root")
 	}
@@ -373,6 +373,24 @@ func prepareLinuxWebServiceIdentity(configPath, stateRoot string) error {
 	}
 	if err := os.Chmod(configPath, 0o640); err != nil {
 		return fmt.Errorf("protect Linux service config: %w", err)
+	}
+	for _, path := range webReadPaths {
+		if !filepath.IsAbs(path) {
+			return fmt.Errorf("Linux Web startup file path must be absolute: %s", path)
+		}
+		info, statErr := os.Lstat(path)
+		if statErr != nil {
+			return fmt.Errorf("inspect Linux Web startup file %s: %w", path, statErr)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("Linux Web startup path must be a regular file without links: %s", path)
+		}
+		if err := os.Chown(path, uid, -1); err != nil {
+			return fmt.Errorf("assign Linux Web startup file owner for %s: %w", path, err)
+		}
+		if err := os.Chmod(path, 0o600); err != nil {
+			return fmt.Errorf("protect Linux Web startup file %s: %w", path, err)
+		}
 	}
 	return nil
 }
@@ -639,7 +657,7 @@ func IsRunning() (bool, error) {
 	return strings.Contains(status, "STATE: RUNNING"), err
 }
 
-func MatchesExecutable(executable, configPath string) (bool, error) {
+func MatchesExecutable(executable, configPath, stateRoot string) (bool, error) {
 	unit, err := os.ReadFile(unitPath)
 	if err != nil {
 		return false, err
@@ -668,22 +686,22 @@ func MatchesExecutable(executable, configPath string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	expectedBrokerPrefix := "ExecStart=" + systemdQuote(filepath.Join(filepath.Dir(executable), "scriptboard-broker")) + " --config " + systemdQuote(configPath) + " --state-root "
+	expectedBroker := "ExecStart=" + systemdQuote(filepath.Join(filepath.Dir(executable), "scriptboard-broker")) + " --config " + systemdQuote(configPath) + " --state-root " + systemdQuote(stateRoot) + " --allowed-identity " + webServiceUser
 	for _, line := range strings.Split(string(brokerUnit), "\n") {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, expectedBrokerPrefix) && strings.HasSuffix(trimmed, " --allowed-identity "+webServiceUser) {
+		if trimmed == expectedBroker {
 			aiUnit, err := os.ReadFile(aiUnitPath)
 			if err != nil {
 				return false, err
 			}
-			expectedAI := "ExecStart=" + systemdQuote(filepath.Join(filepath.Dir(executable), "scriptboard-ai-host")) + " --state-root "
+			expectedAI := "ExecStart=" + systemdQuote(filepath.Join(filepath.Dir(executable), "scriptboard-ai-host")) + " --state-root " + systemdQuote(stateRoot) + " --allowed-identity " + webServiceUser
 			aiText := string(aiUnit)
 			runnerUnit, err := os.ReadFile(runnerUnitPath)
 			if err != nil {
 				return false, err
 			}
 			runnerText := string(runnerUnit)
-			expectedRunner := "ExecStart=" + systemdQuote(filepath.Join(filepath.Dir(executable), "scriptboard-runner")) + " --config " + systemdQuote(configPath) + " --state-root "
+			expectedRunner := "ExecStart=" + systemdQuote(filepath.Join(filepath.Dir(executable), "scriptboard-runner")) + " --config " + systemdQuote(configPath) + " --state-root " + systemdQuote(stateRoot) + " --allowed-identity " + webServiceUser
 			return strings.Contains(aiText, expectedAI) && strings.Contains(aiText, "User="+aiServiceUser) &&
 				strings.Contains(aiText, "IPAddressDeny=any") && strings.Contains(aiText, "IPAddressAllow=localhost") &&
 				strings.Contains(aiText, "SystemCallFilter=@system-service") && strings.Contains(aiText, "SystemCallArchitectures=native") &&

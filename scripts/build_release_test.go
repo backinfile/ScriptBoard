@@ -47,3 +47,34 @@ func TestBuildReleaseEmbedsUpdateKeyRevocations(t *testing.T) {
 		}
 	}
 }
+
+func TestWindowsSCMSecurityGateCoversManagedBoundary(t *testing.T) {
+	script, err := os.ReadFile("windows-scm-security-gate.ps1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(script)
+	for _, expected := range []string{
+		`service", "verify"`,
+		`Assert-ServiceDefinition "ScriptBoard" "NT AUTHORITY\LocalService" "Auto"`,
+		`Assert-ServiceDefinition "ScriptBoardBroker" "LocalSystem" "Auto"`,
+		`admin_password_file:`,
+		`Wait-ServiceState "ScriptBoardRunner" "Stopped"`,
+		`/config/quick-runs/one-time`,
+		`Assert-PipeDenied`,
+		`Assert-PrivateBrokerPath`,
+		`Stop-Process -Id $running.ProcessId -Force`,
+		`service", "uninstall"`,
+	} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("Windows SCM gate does not contain %q", expected)
+		}
+	}
+	workflow, err := os.ReadFile("../.github/workflows/ci.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(workflow), "./scripts/windows-scm-security-gate.ps1") {
+		t.Fatal("CI does not execute the Windows SCM security gate")
+	}
+}

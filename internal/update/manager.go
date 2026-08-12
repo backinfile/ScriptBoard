@@ -487,7 +487,7 @@ func (manager *Manager) managedInstallation() (installation.Metadata, error) {
 	if err := installation.ValidateVersion(metadata, metadata.Current, manager.build); err != nil {
 		return installation.Metadata{}, err
 	}
-	matches, err := platformservice.MatchesExecutable(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath)
+	matches, err := platformservice.MatchesExecutable(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, metadata.StateRoot)
 	if err != nil {
 		return installation.Metadata{}, err
 	}

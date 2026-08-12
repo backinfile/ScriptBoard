@@ -145,7 +145,7 @@ func checkUpdateInstallation(report *Report, stateRoot string) {
 	}
 	if err == nil {
 		var matches bool
-		matches, err = platformservice.MatchesExecutable(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath)
+		matches, err = platformservice.MatchesExecutable(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, metadata.StateRoot)
 		if err == nil && !matches {
 			err = fmt.Errorf("service target does not match the active Installed Release")
 		}

@@ -9,7 +9,7 @@ ScriptBoard is a self-hosted script console for a single Windows or Linux host. 
 [Download the latest release](https://github.com/backinfile/ScriptBoard/releases/latest) · [Quick start](#quick-start) · [Install as a system service](#install-as-a-system-service) · [Troubleshooting](#troubleshooting)
 
 > [!WARNING]
-> ScriptBoard is not a security sandbox. Scripts run with the operating-system identity and permissions of the ScriptBoard service, but receive only a minimal ScriptBoard-provided environment. Run only trusted scripts, grant access only to trusted users, and never expose the service directly to the public internet.
+> ScriptBoard is not a sandbox for untrusted code. Scripts run under the separate Runner identity with a minimal ScriptBoard-provided environment, resource bounds, and default-deny networking. Run only trusted scripts, grant access only to trusted users, and never expose Web directly to the public internet.
 
 ![ScriptBoard Quick Runs page](./integration/browser/snapshots/readme-quick-runs-en.png)
 
@@ -88,9 +88,10 @@ Run the following in an elevated PowerShell window:
 .\scriptboard.exe service install
 .\scriptboard.exe service start
 .\scriptboard.exe service status
+.\scriptboard.exe service verify --config C:\ProgramData\ScriptBoard\config.yaml
 ```
 
-The service is installed under `C:\Program Files\ScriptBoard`, and state is stored under `C:\ProgramData\ScriptBoard\state`. Installation initializes state and registers both the Web service and `ScriptBoardBroker`; Web runs as low-privilege `LocalService` with a per-service SID, while the Broker retains LocalSystem, and firewall or host-security mutations enter it only through the protected local named pipe. Installation also enables the tray app for the current Windows user.
+The service is installed under `C:\Program Files\ScriptBoard`, and state is stored under `C:\ProgramData\ScriptBoard\state`. Installation initializes state and registers Web, `ScriptBoardBroker`, `ScriptBoardAI`, and `ScriptBoardRunner` as one versioned product. Web runs as low-privilege `LocalService` with a per-service SID, while the Broker retains LocalSystem. AI Host and Runner use separate restricted service SIDs, default-deny network policy, bounded SCM crash recovery, and demand-start; Web receives only `START + QUERY_STATUS` on those two services. Installation also enables the tray app for the current Windows user.
 
 ### Linux
 
@@ -100,9 +101,10 @@ Run:
 sudo ./scriptboard service install
 sudo /opt/scriptboard/current/scriptboard service start
 sudo /opt/scriptboard/current/scriptboard service status
+sudo /opt/scriptboard/current/scriptboard service verify --config /etc/scriptboard/config.yaml
 ```
 
-The service is installed under `/opt/scriptboard`, and state is stored under `/var/lib/scriptboard/state`. Installation initializes state, creates the non-login `scriptboard-web` system user, and registers both `scriptboard.service` and `scriptboard-broker.service`; Web does not run as root, and firewall or host-security mutations enter the root Broker only through a local Unix socket with peer-UID verification.
+The service is installed under `/opt/scriptboard`, and state is stored under `/var/lib/scriptboard/state`. Installation creates separate Web, Broker, AI Host, and Runner service identities as one versioned product. Web and Broker stay resident; protected systemd sockets activate AI Host and Runner on demand. Web does not run as root, and privileged or secret-bearing operations enter the root Broker only through a local Unix socket with peer-UID verification.
 
 Create a YAML configuration file only when you need to change settings such as the listen address, TLS, or the state directory, then pass it during installation with `--config CONFIG_PATH`. Without that flag, ScriptBoard uses the platform's default configuration path (`C:\ProgramData\ScriptBoard\config.yaml` on Windows or `/etc/scriptboard/config.yaml` on Linux); if the file does not exist, the built-in defaults are used.
 
@@ -134,7 +136,7 @@ Website Monitoring entries use `GET` instead of `POST`. To view one ScriptBoard 
 
 Monitoring → Host Security brings together Windows login events or Linux SSH login records, remote-login configuration, and firewall status. Its Security Updates tab reads pending security updates from existing Windows Update Agent or Debian/Ubuntu APT metadata without refreshing sources, downloading, or installing packages. Security Baseline aggregates runtime privilege, firewall state, update metadata, plus Linux SSH/Fail2Ban or Windows firewall profiles into evidence-backed checks and a read-only score. Only available checks are scored; this is not compliance certification and it never changes the system automatically. On Windows, it can manage Windows Defender Firewall rules. On Linux, it can install Fail2Ban and UFW, inspect or remove SSH bans, and synchronize UFW rules and default policies after a change review.
 
-Every role can inspect the detected state; only Administrators and Maintainers can change host defenses. Firewall, remote-login, and ban operations can interrupt access to the host. Confirm that the service runs with Administrator or root privileges, preserve an allow rule for the active management port, and keep an out-of-band recovery path.
+Every role can inspect the detected state; only Administrators and Maintainers can change host defenses. Firewall, remote-login, and ban operations can interrupt access to the host. Confirm that the Privileged Broker runs as LocalSystem or root, preserve an allow rule for the active management port, and keep an out-of-band recovery path; do not elevate Web, Runner, or AI Host for these operations.
 
 ### MySQL backup and restore
 

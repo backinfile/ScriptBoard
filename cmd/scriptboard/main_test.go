@@ -14,9 +14,48 @@ import (
 	"scriptboard/internal/app"
 	"scriptboard/internal/auditcheckpoint"
 	"scriptboard/internal/auditlog"
+	"scriptboard/internal/config"
 	"scriptboard/internal/secretstore"
 	"scriptboard/internal/statebackup"
 )
+
+func TestWebStartupFilesIncludeOnlyConfiguredWebOwnedFiles(t *testing.T) {
+	loaded := config.Config{
+		AdminPasswordFile: `C:\\secrets\\admin-password.txt`,
+		TLSCert:           `C:\\tls\\server.crt`,
+		TLSKey:            `C:\\tls\\server.key`,
+	}
+	want := []string{loaded.AdminPasswordFile, loaded.TLSCert, loaded.TLSKey}
+	got := webStartupFiles(loaded)
+	if len(got) != len(want) {
+		t.Fatalf("startup files=%v, want %v", got, want)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("startup files[%d]=%q, want %q", index, got[index], want[index])
+		}
+	}
+	if empty := webStartupFiles(config.Config{}); len(empty) != 0 {
+		t.Fatalf("empty config exposed startup files: %v", empty)
+	}
+}
+
+func TestRequireManagedConfigPathRejectsDifferentFile(t *testing.T) {
+	root := t.TempDir()
+	managed := filepath.Join(root, "managed.yaml")
+	other := filepath.Join(root, "other.yaml")
+	for _, path := range []string{managed, other} {
+		if err := os.WriteFile(path, []byte("state_root: fixture\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := requireManagedConfigPath(managed, managed); err != nil {
+		t.Fatalf("managed config rejected: %v", err)
+	}
+	if err := requireManagedConfigPath(other, managed); err == nil {
+		t.Fatal("different config file was accepted for the managed installation")
+	}
+}
 
 func TestHelpDoesNotDocumentRemovedManagedRootShortcuts(t *testing.T) {
 	originalStdout := os.Stdout

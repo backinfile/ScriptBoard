@@ -11,7 +11,7 @@
 - [ ] Run 保存启动用户 ID 和用户名快照；执行员只能停止自己启动的 Run。
 - [ ] 审计保存操作者 ID、用户名与角色快照，且随机密码只在创建或重置成功响应中展示一次。
 - [ ] Argon2id 哈希包含版本化参数和独立 Salt，数据库不出现明文密码。
-- [ ] 密码不满足 12 Unicode 字符、超过 256 UTF-8 字节或等于用户名时被拒绝。
+- [ ] 密码少于 15 个 Unicode 字符、超过 256 UTF-8 字节、等于/包含用户名、属于常见口令或为单字符重复时被拒绝。
 - [ ] 未登录访问文件、下载、日志、SSE、变量、计划和执行路由均被拒绝。
 - [ ] 所有状态修改路由拒绝缺失或错误 CSRF Token。
 - [ ] Session 空闲 12 小时、绝对 7 天后失效；服务重启不使有效 Session 失效。
@@ -125,11 +125,14 @@
 
 ## 10. 服务、托盘与配置
 
-- [ ] Windows 服务默认 LocalSystem、自动启动；Linux systemd 服务默认 root、自动启动。
+- [ ] 一个版本化发布单元同时包含 Web、Privileged Broker、Runner 与 AI Host，安装、升级、回滚和卸载始终绑定四个二进制版本、摘要与 IPC 协议。
+- [ ] Windows Web 使用 LocalService + `NT SERVICE\ScriptBoard`，Broker 使用 LocalSystem，Runner/AI Host 使用独立 restricted service SID；Linux 使用 `scriptboard-web`、root Broker 和独立 Runner/AI UID。
+- [ ] Web 与 Broker 常驻；Windows Runner/AI Host 为 SCM demand-start，Linux Runner/AI Host 由受保护的 systemd socket activation 按需启动；Web 不因空闲组件未运行而降级为进程内执行。
+- [ ] Web 不能读取 Broker-only secret 目录；Runner/AI Host 不能读取应用数据库、Broker 密钥或彼此私有工作区；Named Pipe/Unix Socket 拒绝非授权 peer。
 - [ ] 手动运行时继承当前用户且不因不是最高权限而拒绝启动。
 - [ ] 服务安装、卸载、启停、状态、admin reset、config validate、doctor、version 命令可用。
-- [ ] 卸载服务不删除配置、主机文件、数据库或磁盘上已有 Git 历史。
-- [ ] 不存在用户 backup/restore 命令；`update status|check|recover` 命令可用且恢复命令要求完整 Operation ID 二次确认。
+- [ ] 卸载会移除全部四个服务/socket 定义，但不删除配置、主机文件、数据库、外部密钥、备份或磁盘上已有 Git 历史。
+- [ ] `backup create|inspect|stage|commit|export-recovery|recover-host` 与 `update status|check|recover|verify-package` 可在 Web 不可用时执行；所有破坏性恢复均要求完整 ID/目标二次确认并保留可逆副本。
 - [ ] Windows 托盘无主窗口、单实例，菜单与 PRD 一致；退出托盘不停止服务。
 - [ ] 托盘区分服务进程运行与 HTTP 就绪；端口错误时显示异常并可打开日志。
 - [ ] 默认配置优先级正确，命令行覆盖不写回 YAML。
@@ -167,7 +170,7 @@
 
 ## 13. 明确不验收
 
-MVP 不验收自定义 RBAC、沙箱、公共 API、DAG、多服务器、Docker 正式部署、系统 crontab、内置 Git 版本保护、用户备份命令、通知、插件、交互终端、目录打包、通用权限编辑、用户 impersonation、无人值守自动安装、自定义更新源/频道、旧配置/状态迁移、Web 之外界面的多语言或正式多实例。
+MVP 不验收自定义 RBAC、恶意脚本的通用沙箱、公共 API、DAG、多服务器、Docker 正式部署、系统 crontab、内置 Git 版本保护、动态插件、交互终端、目录打包、通用权限编辑、用户 impersonation、无人值守自动安装、自定义更新信任根/频道、早于 schema 20 的状态迁移、Web 之外界面的多语言或正式多实例。通知只验收固定 Webhook/本地告警/Broker 邮件模板，不验收任意正文、收件人或端点。
 
 ### MySQL 备份恢复管理
 
