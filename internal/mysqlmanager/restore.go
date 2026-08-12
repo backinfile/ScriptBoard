@@ -1,12 +1,9 @@
 package mysqlmanager
 
 import (
-	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"strings"
 	"time"
 )
@@ -28,7 +25,7 @@ func (m *Manager) Restore(ctx context.Context, request RestoreRequest) (Operatio
 	if backup.InstanceID != request.InstanceID {
 		return Operation{}, errors.New("backup belongs to another MySQL instance")
 	}
-	instance, password, err := m.instanceAndPassword(ctx, request.InstanceID)
+	instance, err := m.Instance(ctx, request.InstanceID)
 	if err != nil {
 		return Operation{}, err
 	}
@@ -51,7 +48,7 @@ func (m *Manager) Restore(ctx context.Context, request RestoreRequest) (Operatio
 		result, _ := m.Operation(ctx, operation.ID)
 		return result, err
 	}
-	exists, err := m.server.DatabaseExists(ctx, instance, password, request.TargetDatabase)
+	exists, err := m.backend.DatabaseExists(ctx, instance, request.TargetDatabase)
 	if err != nil {
 		_ = m.failOperation(ctx, operation.ID, err)
 		result, _ := m.Operation(ctx, operation.ID)
@@ -73,7 +70,7 @@ func (m *Manager) Restore(ctx context.Context, request RestoreRequest) (Operatio
 			return operation, err
 		}
 	}
-	if err := m.server.ReplaceDatabase(ctx, instance, password, request.TargetDatabase); err != nil {
+	if err := m.backend.ReplaceDatabase(ctx, instance, request.TargetDatabase); err != nil {
 		_ = m.failOperation(ctx, operation.ID, err)
 		result, _ := m.Operation(ctx, operation.ID)
 		return result, err
@@ -88,7 +85,7 @@ func (m *Manager) Restore(ctx context.Context, request RestoreRequest) (Operatio
 		rollbackContext, cancelRollback := context.WithTimeout(context.Background(), 2*time.Hour)
 		defer cancelRollback()
 		if safety.ID == "" {
-			rollbackError := m.server.DropDatabase(rollbackContext, instance, password, request.TargetDatabase)
+			rollbackError := m.backend.DropDatabase(rollbackContext, instance, request.TargetDatabase)
 			if rollbackError != nil {
 				_ = m.updateOperation(rollbackContext, operation.ID, "needs_attention", originalError.Error(), rollbackError.Error(), 0, 0)
 				result, _ := m.Operation(rollbackContext, operation.ID)
@@ -101,7 +98,7 @@ func (m *Manager) Restore(ctx context.Context, request RestoreRequest) (Operatio
 			return result, fmt.Errorf("restore failed and the new database was removed: %w", originalError)
 		}
 		_ = m.updateOperation(rollbackContext, operation.ID, "rolling_back", originalError.Error(), "", safety.SizeBytes, 0)
-		rollbackError := m.server.ReplaceDatabase(rollbackContext, instance, password, request.TargetDatabase)
+		rollbackError := m.backend.ReplaceDatabase(rollbackContext, instance, request.TargetDatabase)
 		if rollbackError == nil {
 			rollbackError = m.importBackup(rollbackContext, instance, request.TargetDatabase, safety)
 		}
@@ -119,31 +116,7 @@ func (m *Manager) Restore(ctx context.Context, request RestoreRequest) (Operatio
 }
 
 func (m *Manager) importBackup(ctx context.Context, instance Instance, target string, backup Backup) error {
-	optionPath, cleanup, err := m.clientOptionFile(instance)
-	if err != nil {
-		return err
-	}
-	defer cleanup()
-	file, err := os.Open(backup.Path)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	var input io.Reader = file
-	if strings.HasSuffix(strings.ToLower(backup.Path), ".gz") {
-		compressed, err := gzip.NewReader(file)
-		if err != nil {
-			return err
-		}
-		defer compressed.Close()
-		input = compressed
-	}
-	stderr := &boundedBuffer{maximum: 64 << 10}
-	if err := m.runner.Run(ctx, m.Tools().ClientExecutable, mysqlImportArguments(optionPath, target), input, io.Discard, stderr); err != nil {
-		password, _ := m.instancePassword(instance.ID)
-		return fmt.Errorf("mysql import failed: %w%s", err, sanitizedCommandError(stderr.String(), password, optionPath))
-	}
-	return nil
+	return m.backend.Import(ctx, instance, target, backup.Path)
 }
 
 // mysqlImportArguments keeps imported SQL in non-interactive binary mode.

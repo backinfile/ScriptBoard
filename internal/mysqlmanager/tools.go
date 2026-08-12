@@ -19,12 +19,20 @@ type ToolStatus struct {
 }
 
 func (m *Manager) Tools() ToolSettings {
+	return m.backend.Tools()
+}
+
+func (m *Manager) localTools() ToolSettings {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return ToolSettings{DumpExecutable: m.dumpTool, ClientExecutable: m.clientTool}
 }
 
 func (m *Manager) SetTools(ctx context.Context, settings ToolSettings) error {
+	return m.backend.SetTools(ctx, settings)
+}
+
+func (m *Manager) setLocalTools(ctx context.Context, settings ToolSettings) error {
 	settings.DumpExecutable, settings.ClientExecutable = strings.TrimSpace(settings.DumpExecutable), strings.TrimSpace(settings.ClientExecutable)
 	if !validToolPath(settings.DumpExecutable) || !validToolPath(settings.ClientExecutable) {
 		return errors.New("MySQL tools must be command names from PATH or absolute executable paths")
@@ -51,7 +59,7 @@ func (m *Manager) SetTools(ctx context.Context, settings ToolSettings) error {
 }
 
 func (m *Manager) dumpArguments(ctx context.Context, optionPath, database string) []string {
-	settings := m.Tools()
+	settings := m.localTools()
 	m.mu.Lock()
 	flavor, flavorTool := m.dumpFlavor, m.flavorTool
 	m.mu.Unlock()
@@ -74,7 +82,11 @@ func (m *Manager) dumpArguments(ctx context.Context, optionPath, database string
 }
 
 func (m *Manager) TestTools(ctx context.Context) ToolStatus {
-	settings := m.Tools()
+	return m.backend.TestTools(ctx)
+}
+
+func (m *Manager) testLocalTools(ctx context.Context) ToolStatus {
+	settings := m.localTools()
 	result := ToolStatus{DumpExecutable: settings.DumpExecutable, ClientExecutable: settings.ClientExecutable}
 	for executable, target := range map[string]*struct {
 		version *string

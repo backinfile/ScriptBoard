@@ -58,6 +58,7 @@ type Options struct {
 	Now              func() time.Time
 	Audit            func(AuditEvent)
 	SecretStore      *secretstore.Store
+	Backend          Backend
 }
 
 type AuditEvent struct {
@@ -129,6 +130,7 @@ type Manager struct {
 	active     map[string]string
 	cancels    map[string]context.CancelFunc
 	server     databaseServer
+	backend    Backend
 	audit      func(AuditEvent)
 	mu         sync.Mutex
 }
@@ -162,6 +164,14 @@ func New(options Options) (*Manager, error) {
 	if now == nil {
 		now = time.Now
 	}
+	manager := &Manager{
+		db: options.DB, stateRoot: stateRoot, backupRoot: backupRoot, now: now,
+		dumpTool: dumpTool, clientTool: clientTool, active: make(map[string]string), cancels: make(map[string]context.CancelFunc), audit: options.Audit,
+	}
+	if options.Backend != nil {
+		manager.backend = options.Backend
+		return manager, nil
+	}
 	vault := options.SecretStore
 	if vault == nil {
 		vault, err = secretstore.New(stateRoot)
@@ -169,15 +179,14 @@ func New(options Options) (*Manager, error) {
 			return nil, fmt.Errorf("initialize MySQL credential store: %w", err)
 		}
 	}
-	secrets := credentialStore{directory: filepath.Join(stateRoot, "secrets"), vault: vault}
-	if err := secrets.ensureMigrated(); err != nil {
+	manager.secrets = credentialStore{directory: filepath.Join(stateRoot, "secrets"), vault: vault}
+	if err := manager.secrets.ensureMigrated(); err != nil {
 		return nil, fmt.Errorf("migrate MySQL credentials: %w", err)
 	}
-	return &Manager{
-		db: options.DB, stateRoot: stateRoot, backupRoot: backupRoot, now: now,
-		secrets: secrets, runner: osCommandRunner{},
-		dumpTool: dumpTool, clientTool: clientTool, active: make(map[string]string), cancels: make(map[string]context.CancelFunc), server: &mysqlDatabaseServer{}, audit: options.Audit,
-	}, nil
+	manager.runner = osCommandRunner{}
+	manager.server = &mysqlDatabaseServer{}
+	manager.backend = &localBackend{manager: manager}
+	return manager, nil
 }
 
 func (m *Manager) recordAudit(event AuditEvent) {
@@ -256,13 +265,14 @@ func (m *Manager) SaveInstance(ctx context.Context, input InstanceInput) (Instan
 		return Instance{}, err
 	}
 	if input.Password != "" {
-		if err := m.secrets.set(id, input.Password); err != nil {
+		credentialInstance := Instance{ID: id, Name: input.Name, Host: input.Host, Port: input.Port, Username: input.Username, TLSMode: input.TLSMode, CAPath: input.CAPath, CredentialConfigured: true}
+		if err := m.backend.StoreCredential(ctx, credentialInstance, input.Password); err != nil {
 			return Instance{}, err
 		}
 	}
 	if err := transaction.Commit(); err != nil {
 		if creating {
-			_ = m.secrets.delete(id)
+			_ = m.backend.DeleteCredential(context.Background(), id)
 		}
 		return Instance{}, err
 	}
@@ -331,7 +341,7 @@ func (m *Manager) DeleteInstance(ctx context.Context, id string) error {
 	if err := transaction.Commit(); err != nil {
 		return err
 	}
-	return m.secrets.delete(id)
+	return m.backend.DeleteCredential(ctx, id)
 }
 
 func (m *Manager) instancePassword(id string) (string, error) { return m.secrets.get(id) }

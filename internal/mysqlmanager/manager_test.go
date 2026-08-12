@@ -63,6 +63,88 @@ func TestSaveInstanceKeepsPasswordOutOfSQLite(t *testing.T) {
 	}
 }
 
+func TestManagedBackendOwnsCredentialAndDatabaseCapabilities(t *testing.T) {
+	stateRoot := t.TempDir()
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	applyTestSchema(t, database)
+	backend := &recordingBackend{}
+	manager, err := New(Options{DB: database, StateRoot: stateRoot, Backend: backend})
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := manager.SaveInstance(context.Background(), InstanceInput{
+		Name: "Managed", Host: "db.internal", Port: 3306, Username: "scriptboard",
+		Password: "broker-only-secret", TLSMode: TLSRequired,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if backend.storedID != instance.ID || backend.storedPassword != "broker-only-secret" {
+		t.Fatalf("credential was not delegated to managed backend: %+v", backend)
+	}
+	if _, err := manager.TestInstance(context.Background(), instance.ID); err != nil {
+		t.Fatal(err)
+	}
+	if backend.testedID != instance.ID {
+		t.Fatalf("database connection was not delegated to managed backend: %+v", backend)
+	}
+	if _, err := os.Stat(filepath.Join(stateRoot, "secrets", "mysql-credentials.v2.enc")); !os.IsNotExist(err) {
+		t.Fatalf("managed Web initialized a local MySQL credential store: %v", err)
+	}
+	if manager.runner != nil || manager.server != nil || manager.secrets.vault != nil {
+		t.Fatal("managed Web retained a local MySQL secret, process, or database capability")
+	}
+	if bytes.Contains(mustReadFile(t, filepath.Join(stateRoot, "app.db")), []byte("broker-only-secret")) {
+		t.Fatal("managed Web database contains plaintext MySQL password")
+	}
+}
+
+type recordingBackend struct {
+	storedID, storedPassword, testedID string
+}
+
+func (backend *recordingBackend) StoreCredential(_ context.Context, instance Instance, password string) error {
+	backend.storedID, backend.storedPassword = instance.ID, password
+	return nil
+}
+func (*recordingBackend) DeleteCredential(context.Context, string) error { return nil }
+func (backend *recordingBackend) Test(_ context.Context, instance Instance) (ConnectionTest, error) {
+	backend.testedID = instance.ID
+	return ConnectionTest{OK: true}, nil
+}
+func (*recordingBackend) Databases(context.Context, Instance) ([]Database, error) {
+	return nil, nil
+}
+func (*recordingBackend) Status(context.Context, Instance) (Status, error) { return Status{}, nil }
+func (*recordingBackend) DatabaseExists(context.Context, Instance, string) (bool, error) {
+	return false, nil
+}
+func (*recordingBackend) CreateDatabase(context.Context, Instance, CreateDatabaseInput) error {
+	return nil
+}
+func (*recordingBackend) ReplaceDatabase(context.Context, Instance, string) error { return nil }
+func (*recordingBackend) DropDatabase(context.Context, Instance, string) error    { return nil }
+func (*recordingBackend) Dump(context.Context, Instance, string, string) (DumpResult, error) {
+	return DumpResult{}, nil
+}
+func (*recordingBackend) Import(context.Context, Instance, string, string) error { return nil }
+func (*recordingBackend) Tools() ToolSettings                                    { return ToolSettings{} }
+func (*recordingBackend) SetTools(context.Context, ToolSettings) error           { return nil }
+func (*recordingBackend) TestTools(context.Context) ToolStatus                   { return ToolStatus{} }
+
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
 func TestManagerMigratesStateRootMySQLKeyToExternalSealedStore(t *testing.T) {
 	stateRoot := t.TempDir()
 	secretsDirectory := filepath.Join(stateRoot, "secrets")

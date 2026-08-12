@@ -65,11 +65,7 @@ func (m *Manager) TestInstance(ctx context.Context, id string) (ConnectionTest, 
 	if err != nil {
 		return ConnectionTest{}, err
 	}
-	password, err := m.instancePassword(id)
-	if err != nil {
-		return ConnectionTest{}, err
-	}
-	result, testErr := m.server.Test(ctx, instance, password)
+	result, testErr := m.backend.Test(ctx, instance)
 	state := ConnectionConnected
 	if testErr != nil || !result.OK {
 		state = ConnectionFailed
@@ -81,19 +77,19 @@ func (m *Manager) TestInstance(ctx context.Context, id string) (ConnectionTest, 
 }
 
 func (m *Manager) Databases(ctx context.Context, id string) ([]Database, error) {
-	instance, password, err := m.instanceAndPassword(ctx, id)
+	instance, err := m.Instance(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	return m.server.Databases(ctx, instance, password)
+	return m.backend.Databases(ctx, instance)
 }
 
 func (m *Manager) Status(ctx context.Context, id string) (Status, error) {
-	instance, password, err := m.instanceAndPassword(ctx, id)
+	instance, err := m.Instance(ctx, id)
 	if err != nil {
 		return Status{}, err
 	}
-	status, statusErr := m.server.Status(ctx, instance, password)
+	status, statusErr := m.backend.Status(ctx, instance)
 	state := ConnectionConnected
 	if statusErr != nil {
 		state = ConnectionFailed
@@ -115,20 +111,11 @@ func (m *Manager) CreateDatabase(ctx context.Context, id string, input CreateDat
 	if IsSystemDatabase(input.Name) {
 		return errors.New("system databases cannot be created or replaced")
 	}
-	instance, password, err := m.instanceAndPassword(ctx, id)
+	instance, err := m.Instance(ctx, id)
 	if err != nil {
 		return err
 	}
-	return m.server.CreateDatabase(ctx, instance, password, input)
-}
-
-func (m *Manager) instanceAndPassword(ctx context.Context, id string) (Instance, string, error) {
-	instance, err := m.Instance(ctx, id)
-	if err != nil {
-		return Instance{}, "", err
-	}
-	password, err := m.instancePassword(id)
-	return instance, password, err
+	return m.backend.CreateDatabase(ctx, instance, input)
 }
 
 func (server *mysqlDatabaseServer) Test(ctx context.Context, instance Instance, password string) (ConnectionTest, error) {

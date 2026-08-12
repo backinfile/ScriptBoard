@@ -23,7 +23,7 @@ func (m *Manager) DropDatabase(ctx context.Context, request DropDatabaseRequest)
 	if request.Database == "" || IsSystemDatabase(request.Database) || request.Confirmation != request.Database {
 		return Operation{}, errors.New("the complete non-system database name is required to confirm deletion")
 	}
-	instance, password, err := m.instanceAndPassword(ctx, request.InstanceID)
+	instance, err := m.Instance(ctx, request.InstanceID)
 	if err != nil {
 		return Operation{}, err
 	}
@@ -44,7 +44,7 @@ func (m *Manager) DropDatabase(ctx context.Context, request DropDatabaseRequest)
 	if _, err := m.db.ExecContext(ctx, "UPDATE mysql_operations SET safety_backup_id=?, target_database=?, phase='replacing', updated_at=? WHERE id=?", safety.ID, request.Database, m.now().UTC().UnixNano(), operation.ID); err != nil {
 		return operation, err
 	}
-	if err := m.server.DropDatabase(ctx, instance, password, request.Database); err != nil {
+	if err := m.backend.DropDatabase(ctx, instance, request.Database); err != nil {
 		_ = m.failOperation(ctx, operation.ID, err)
 		result, _ := m.Operation(ctx, operation.ID)
 		return result, err
