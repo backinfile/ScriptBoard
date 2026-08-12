@@ -205,6 +205,7 @@ func TestPJAXDataShellIsLimitedToLargeListRoutes(t *testing.T) {
 		{path: "/monitor/security", deferred: true},
 		{path: "/monitor", deferred: false},
 		{path: "/settings/account", deferred: false},
+		{path: "/settings/name", deferred: false},
 		{path: "/settings/display", deferred: false},
 	}
 	for _, test := range tests {
@@ -460,6 +461,7 @@ func TestGroupedWebRoutesReplaceLegacyModulePaths(t *testing.T) {
 		"/config/schedules",
 		"/history/audit",
 		"/settings/account",
+		"/settings/name",
 		"/settings/display",
 		"/settings/updates",
 	} {
@@ -506,6 +508,7 @@ func TestAdministratorAlwaysSeesUsersTabAcrossSettingsPages(t *testing.T) {
 	for _, path := range []string{
 		"/settings/account",
 		"/settings/users",
+		"/settings/name",
 		"/settings/display",
 		"/settings/updates",
 	} {
@@ -682,6 +685,7 @@ func TestPrimaryWorkspacesRenderCompleteLocalizedDocuments(t *testing.T) {
 		"/config/schedules",
 		"/history/audit",
 		"/settings/account",
+		"/settings/name",
 		"/settings/display",
 		"/settings/updates",
 	} {
@@ -723,6 +727,7 @@ func TestEachWorkspaceAndTaskExposeAtMostOnePrimaryAction(t *testing.T) {
 		"/config/schedules/groups/new",
 		"/history/audit",
 		"/settings/account",
+		"/settings/name",
 		"/settings/display",
 		"/settings/updates",
 	} {

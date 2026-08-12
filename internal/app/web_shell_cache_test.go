@@ -73,8 +73,9 @@ func TestApplicationShellProvidesVisiblePJAXNavigationProgress(t *testing.T) {
 func TestApplicationShellShowsTheCurrentVersionBesideTheBrand(t *testing.T) {
 	var rendered bytes.Buffer
 	if err := applicationShellTemplate.Execute(&rendered, applicationShellData{
-		Locale:  localeEnglishUS,
-		Version: "2.0.19",
+		Locale:          localeEnglishUS,
+		ApplicationName: defaultApplicationName,
+		Version:         "2.0.19",
 	}); err != nil {
 		t.Fatal(err)
 	}

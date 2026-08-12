@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="{{.Locale}}">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "instance_name.title"}} · ScriptBoard</title></head>
+<body>
+<main class="workspace settings-workspace" data-instance-name-settings>
+  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "settings.eyebrow"}}</p><h1>{{t .Locale "settings.title"}}</h1><p>{{t .Locale "settings.description"}}</p></div></header>
+  {{template "settings-navigation" .SettingsNavigation}}
+  <section class="settings-content">
+    <header class="settings-section-heading"><div><h2>{{t .Locale "instance_name.title"}}</h2><p>{{t .Locale "instance_name.description"}}</p></div></header>
+    {{if .Saved}}<aside class="inline-notice" role="status"><span data-lucide="circle-check" aria-hidden="true"></span><p>{{t .Locale "instance_name.saved"}}</p></aside>{{end}}
+    <section class="settings-block">
+      <form class="instance-name-form" method="post" action="/settings/name" data-native>
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <label for="instance-display-name"><span>{{t .Locale "instance_name.field"}}</span><input id="instance-display-name" name="display_name" value="{{.DisplayName}}" maxlength="32" autocomplete="off" spellcheck="false" aria-describedby="instance-name-hint{{if .Error}} instance-name-error{{end}}" {{if .Error}}aria-invalid="true"{{end}}><small class="field-hint" id="instance-name-hint">{{t .Locale "instance_name.hint"}}</small></label>
+        {{if .Error}}<p class="field-error" id="instance-name-error" role="alert">{{.Error}}</p>{{end}}
+        <div class="instance-name-form__actions"><button class="button button--primary" type="submit"><span data-lucide="check" aria-hidden="true"></span>{{t .Locale "instance_name.save"}}</button></div>
+      </form>
+    </section>
+  </section>
+</main>
+</body>
+</html>

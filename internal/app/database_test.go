@@ -762,6 +762,35 @@ func TestOpenDatabaseMigratesModelReasoningDefaultsFromSchema34(t *testing.T) {
 	}
 }
 
+func TestOpenDatabaseMigratesInstanceSettingsFromSchema35(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	db, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP TABLE instance_settings; PRAGMA user_version=35; PRAGMA wal_checkpoint(TRUNCATE);`); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	if _, err := migrated.Exec(`INSERT INTO instance_settings
+		(singleton, display_name, updated_at, updated_by_user_id) VALUES (1, 'Operations', 1, 'admin')`); err != nil {
+		t.Fatalf("write migrated instance settings: %v", err)
+	}
+	var version int
+	if err := migrated.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != currentSchemaVersion {
+		t.Fatalf("migrated schema version=%d error=%v, want %d", version, err, currentSchemaVersion)
+	}
+}
+
 func TestOpenDatabaseCreatesIndexesForPeriodicAndTimeOrderedQueries(t *testing.T) {
 	db, err := openDatabase(filepath.Join(t.TempDir(), "app.db"))
 	if err != nil {

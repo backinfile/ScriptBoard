@@ -180,6 +180,7 @@ type shellNavigationGroup struct {
 type applicationShellData struct {
 	Locale                                webLocale
 	Username, CSRFToken, ReturnTo         string
+	ApplicationName                       string
 	Version                               string
 	Role                                  string
 	Environment, Status, StatusState      string
@@ -232,9 +233,14 @@ func (a *App) addApplicationShell(request *http.Request, body []byte) []byte {
 		}
 	}
 	var shell bytes.Buffer
+	applicationName, err := a.loadInstanceDisplayName(request.Context())
+	if err != nil {
+		applicationName = defaultApplicationName
+	}
 	_ = applicationShellTemplate.Execute(&shell, applicationShellData{
 		Locale: locale, Username: username, Role: string(current.role), CSRFToken: current.csrfToken, ReturnTo: request.URL.RequestURI(), Version: displayShellVersion(buildinfo.Current().Version),
-		Environment: environment, Status: status, StatusState: statusState, CurrentErrorCount: currentShellErrorCount(shellStatus), ActiveRuns: shellStatus.ActiveRuns,
+		ApplicationName: applicationName,
+		Environment:     environment, Status: status, StatusState: statusState, CurrentErrorCount: currentShellErrorCount(shellStatus), ActiveRuns: shellStatus.ActiveRuns,
 		WebsiteState: shellStatus.WebsiteState, WebsiteDown: shellStatus.WebsiteDown, WebsiteVerifying: shellStatus.WebsiteVerifying,
 		StoppedPinnedApplications: shellStatus.StoppedPinnedApplications, ApplicationIssueCount: shellStatus.ApplicationIssueCount,
 		Navigation: navigation, SettingsCurrent: strings.HasPrefix(request.URL.Path, "/settings/"),

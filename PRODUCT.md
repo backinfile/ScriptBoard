@@ -44,12 +44,12 @@ ScriptBoard 将分散在文件系统中的脚本变成一套可浏览、可执�
 - 资源：`/resources/files`、`/resources/variables`、`/resources/trash`
 - 配置：`/config/quick-runs`、`/config/schedules`
 - 历史：`/history/runs`、`/history/runs/{id}`、`/history/audit`
-- 设置：`/settings/account`、`/settings/users`、`/settings/display`、`/settings/updates`
+- 设置：`/settings/account`、`/settings/users`、`/settings/name`、`/settings/display`、`/settings/updates`
 - 任务链接使用语义化 GET 地址，可直接打开完整页面；增强模式在当前工作区右侧打开同一内容且不替换地址栏中的工作区 URL。
 
 ## Brand Commitments
 
-- 产品名为 ScriptBoard。
+- 产品名为 ScriptBoard；实例可自定义左上角导航显示名称，但不改变产品身份。
 - 界面统一使用 Lucide 图标，禁止使用表情符号。
 - 视觉语言是轻量、极简的“校准台账”：冷白画布、石墨色规则线、单一低饱和冷蓝强调、系统字体和静止时的平面层级。
 - 不使用渐变、装饰性卡片、Canvas 背景或深色主题；动效只解释导航、状态与任务上下文。

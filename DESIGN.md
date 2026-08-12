@@ -203,7 +203,7 @@ Desktop uses a fixed 232px sidebar with grouped destinations:
 - Configuration: Quick runs, Schedules
 - History: Runs, Audit
 
-Status, language, and settings controls live at the bottom. The wordmark is plain text. Settings is a separate workspace with one shared horizontal tab band below the page heading: Account is available to every signed-in user, Users appears only for the administrator, and status display and application updates appear for the administrator and maintainer. The tab band scrolls horizontally on narrow screens instead of becoming a second sidebar. Website fault-color choice is a browser-local display preference and never changes monitoring truth.
+Status, language, and settings controls live at the bottom. The wordmark is plain text and may use the instance display name configured by an administrator or maintainer; long names truncate within the fixed sidebar. Settings is a separate workspace with one shared horizontal tab band below the page heading: Account is available to every signed-in user, Users appears only for the administrator, and site name, status display, AI, and application updates appear for the administrator and maintainer. The tab band scrolls horizontally on narrow screens instead of becoming a second sidebar. Website fault-color choice is a browser-local display preference and never changes monitoring truth.
 
 Below 1024px the sidebar becomes a modal drawer with a scrim. The underlying page does not reflow into a second navigation system.
 

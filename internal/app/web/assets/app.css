@@ -331,6 +331,8 @@ body[data-app-shell] { padding-left: var(--sidebar-width); }
 .brand-wordmark {
   display: inline-flex;
   min-width: 0;
+  max-width: 150px;
+  overflow: hidden;
   align-items: baseline;
   gap: 6px;
   color: var(--ink);
@@ -339,7 +341,14 @@ body[data-app-shell] { padding-left: var(--sidebar-width); }
   text-decoration: none;
 }
 .brand-wordmark:hover { color: var(--ink); }
+.brand-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .brand-version {
+  flex: 0 0 auto;
   overflow: hidden;
   color: var(--muted);
   font: 650 .7rem/1 var(--font-ui);
@@ -2868,6 +2877,11 @@ td.record-actions { width: 1%; }
 .settings-summary dd { margin: 0; font-weight: 620; overflow-wrap: anywhere; }
 .settings-block { margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--rule-strong); }
 .settings-block > p { max-width: 68ch; color: var(--muted); }
+.instance-name-form { display: grid; max-width: 560px; gap: 18px; }
+.instance-name-form label { display: grid; gap: 7px; }
+.instance-name-form label > span:first-child { color: var(--ink); font-size: .75rem; font-weight: 650; }
+.instance-name-form input { width: 100%; max-width: none; }
+.instance-name-form__actions { display: flex; justify-content: flex-end; padding-top: 18px; border-top: 1px solid var(--rule); }
 .settings-section-heading > form { flex: 0 0 auto; }
 .update-source-drawer-host { position: fixed; z-index: 120; inset: 0; visibility: hidden; pointer-events: none; }
 .update-source-drawer-host.is-open { visibility: visible; pointer-events: auto; }

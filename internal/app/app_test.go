@@ -872,6 +872,119 @@ func TestAccountCredentialsStayReadOnlyUntilTheirTaskPanelsOpen(t *testing.T) {
 	}
 }
 
+func TestInstanceNameSettingsUpdateTheApplicationShell(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
+	response, err := client.Get(serverURL + "/settings/name")
+	if err != nil {
+		t.Fatalf("get site name settings: %v", err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read site name settings: %v", err)
+	}
+	for _, expected := range []string{
+		`href="/settings/name" aria-current="page"`,
+		`action="/settings/name" data-native`,
+		`name="display_name" value="ScriptBoard"`,
+		`maxlength="32"`,
+	} {
+		if !strings.Contains(string(page), expected) {
+			t.Fatalf("site name settings are missing %q: %s", expected, page)
+		}
+	}
+
+	response, err = client.PostForm(serverURL+"/settings/name", url.Values{
+		"csrf_token":   {formToken(t, page)},
+		"display_name": {"North Host"},
+	})
+	if err != nil {
+		t.Fatalf("update site name: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/settings/name?saved=1" {
+		t.Fatalf("update site name status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+
+	response, err = client.Get(serverURL + "/monitor")
+	if err != nil {
+		t.Fatalf("get shell with custom site name: %v", err)
+	}
+	shell, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read shell with custom site name: %v", err)
+	}
+	for _, expected := range []string{
+		`aria-label="North Host dev"`,
+		`<span class="brand-name">North Host</span>`,
+	} {
+		if !strings.Contains(string(shell), expected) {
+			t.Fatalf("custom site name is missing %q: %s", expected, shell)
+		}
+	}
+}
+
+func TestInstanceNameSettingsValidateAndRestoreTheDefault(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
+	response, err := client.Get(serverURL + "/settings/name")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	response, err = client.PostForm(serverURL+"/settings/name", url.Values{
+		"csrf_token":   {formToken(t, page)},
+		"display_name": {strings.Repeat("界", 33)},
+	})
+	if err != nil {
+		t.Fatalf("submit overlong site name: %v", err)
+	}
+	invalid, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(string(invalid), `aria-invalid="true"`) {
+		t.Fatalf("overlong site name status=%d body=%s", response.StatusCode, invalid)
+	}
+
+	response, err = client.PostForm(serverURL+"/settings/name", url.Values{
+		"csrf_token":   {formToken(t, invalid)},
+		"display_name": {""},
+	})
+	if err != nil {
+		t.Fatalf("restore default site name: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("restore default site name status=%d", response.StatusCode)
+	}
+
+	response, err = client.Get(serverURL + "/monitor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shell, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(shell), `<span class="brand-name">ScriptBoard</span>`) {
+		t.Fatalf("default site name was not restored: %s", shell)
+	}
+}
+
 func TestUpdateSourcesRenderInRightmostSettingsDrawer(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

@@ -575,3 +575,7 @@ schema 30 增加独立的 `mysqlmanager` 领域表；Web 层只调用领域服�
 实例密码由 State Root 下的私有主密钥使用 AES-GCM 加密后保存到独立凭据文件。CLI 每次只读取临时、权限受限的 option file，完成后立即删除；参数、错误、审计和 HTML 均不得包含密码。默认备份根目录是 `state-root/database-backups/mysql`，自定义绝对目录同样进入 Host Filesystem Protected Path。
 
 每个成功备份对应一个原子提交的 `.sql.gz` 和 SHA-256。现有库恢复在替换前强制创建 `safety` 备份；导入失败自动从该产物回滚，回滚失败进入 `needs_attention`。服务启动会删除未提交的 `.partial`，并根据持久化阶段恢复破坏性操作。计划只轮换自身成功产物，手动、导入和安全备份不参与轮换。
+
+## 14. 实例显示设置
+
+schema 36 增加单例 `instance_settings`，保存当前实例左上角导航使用的 `display_name`、更新时间和最后修改用户。显示名称最多 32 个 Unicode 字符，不接受控制字符或不可见格式字符；空值表示恢复产品默认名称 `ScriptBoard`。该设置只改变网页导航中的实例标识，不改变产品名、发布资产、服务名称或更新身份。

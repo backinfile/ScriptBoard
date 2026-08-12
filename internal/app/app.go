@@ -1150,6 +1150,12 @@ func openDatabase(path string) (*sql.DB, error) {
 			actor_username TEXT NOT NULL DEFAULT '',
 			actor_role TEXT NOT NULL DEFAULT ''
 		)`,
+		`CREATE TABLE IF NOT EXISTS instance_settings (
+			singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+			display_name TEXT NOT NULL DEFAULT '',
+			updated_at INTEGER NOT NULL,
+			updated_by_user_id TEXT NOT NULL DEFAULT ''
+		)`,
 		`CREATE TABLE IF NOT EXISTS trash_entries (
 			id TEXT PRIMARY KEY,
 			original_path TEXT NOT NULL,
@@ -1639,10 +1645,11 @@ func compatibleDatabaseSchema(version int) bool {
 	// MySQL connection state, and schema 32 adds read-only cross-instance website
 	// monitoring interfaces and encrypted remote source metadata, and schema 33 adds
 	// custom dashboards with independently public card collections, schema 34
-	// adds dedicated percentage cards, and schema 35 adds model-level reasoning
-	// capability and default thinking strength. Each supported predecessor has an explicit
-	// transactional forward path.
-	return version == currentSchemaVersion || currentSchemaVersion == 35 && version >= 20 && version <= 34
+	// adds dedicated percentage cards, schema 35 adds model-level reasoning
+	// capability and default thinking strength, and schema 36 adds instance-level
+	// presentation settings. Each supported predecessor has an explicit transactional
+	// forward path.
+	return version == currentSchemaVersion || currentSchemaVersion == 36 && version >= 20 && version <= 35
 }
 
 func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {
@@ -1946,6 +1953,8 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /settings/users/{id}/enable", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.enableUser)))
 	mux.Handle("POST /settings/users/{id}/update", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.updateUser)))
 	mux.Handle("POST /settings/users/{id}/reset-password", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.resetUserPassword)))
+	mux.Handle("GET /settings/name", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.instanceNameSettingsPage)))
+	mux.Handle("POST /settings/name", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.updateInstanceName)))
 	mux.Handle("GET /settings/display", a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		current := request.Context().Value(sessionContextKey).(session)
 		locale := resolveWebLocale(request)

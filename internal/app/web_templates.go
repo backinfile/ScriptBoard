@@ -28,6 +28,7 @@ var (
 	auditTemplate                 = mustWebTemplate("audit")
 	deleteImpactTemplate          = mustWebTemplate("delete-impact")
 	displaySettingsTemplate       = mustWebTemplate("display-settings")
+	instanceNameSettingsTemplate  = mustWebTemplate("instance-name-settings")
 	externalInterfacesTemplate    = mustWebTemplate("external-interfaces")
 	externalInterfaceFormTemplate = mustWebTemplate("external-interface-form")
 	fileConflictTemplate          = mustWebTemplate("file-conflict")
