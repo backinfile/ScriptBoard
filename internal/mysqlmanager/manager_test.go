@@ -61,6 +61,11 @@ func TestSaveInstanceKeepsPasswordOutOfSQLite(t *testing.T) {
 	if strings.Contains(string(secretBytes), "never-store-this-in-sqlite") {
 		t.Fatal("credential file contains plaintext MySQL password")
 	}
+	changed := instance
+	changed.Host = "attacker-controlled.internal"
+	if _, err := manager.secrets.getForInstance(changed); err == nil {
+		t.Fatal("credential binding allowed an instance endpoint substitution")
+	}
 }
 
 func TestManagedBackendOwnsCredentialAndDatabaseCapabilities(t *testing.T) {
@@ -178,6 +183,12 @@ func TestManagerMigratesStateRootMySQLKeyToExternalSealedStore(t *testing.T) {
 	}
 	defer database.Close()
 	applyTestSchema(t, database)
+	_, err = database.Exec(`INSERT INTO mysql_instances
+		(id,name,host,port,username,tls_mode,ca_path,credential_configured,connection_state,created_at,updated_at)
+		VALUES ('instance-one','Legacy','legacy.internal',3306,'legacy-user','preferred','',1,'untried',1,1)`)
+	if err != nil {
+		t.Fatal(err)
+	}
 	manager, err := New(Options{DB: database, StateRoot: stateRoot})
 	if err != nil {
 		t.Fatal(err)

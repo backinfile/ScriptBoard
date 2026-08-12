@@ -1,8 +1,10 @@
 package mysqlmanager
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +15,14 @@ import (
 )
 
 const mysqlCredentialPurpose = "mysql-credentials-v2"
+
+const mysqlCredentialBindingPurpose = "mysql-credential-bindings-v1"
+
+type credentialBinding struct {
+	Host, Username, CAPath string
+	Port                   int
+	TLSMode                TLSMode
+}
 
 type credentialStore struct {
 	directory string
@@ -31,13 +41,37 @@ func (store credentialStore) get(id string) (string, error) {
 	return password, nil
 }
 
-func (store credentialStore) set(id, password string) error {
+func (store credentialStore) getForInstance(instance Instance) (string, error) {
+	password, err := store.get(instance.ID)
+	if err != nil {
+		return "", err
+	}
+	bindings, err := store.loadBindings()
+	if err != nil {
+		return "", err
+	}
+	binding, ok := bindings[instance.ID]
+	if !ok || binding != bindingForInstance(instance) {
+		return "", errors.New("MySQL credential binding does not match the requested instance")
+	}
+	return password, nil
+}
+
+func (store credentialStore) set(instance Instance, password string) error {
 	values, err := store.load()
 	if err != nil {
 		return err
 	}
-	values[id] = password
-	return store.write(values)
+	values[instance.ID] = password
+	if err := store.write(values); err != nil {
+		return err
+	}
+	bindings, err := store.loadBindings()
+	if err != nil {
+		return err
+	}
+	bindings[instance.ID] = bindingForInstance(instance)
+	return store.writeBindings(bindings)
 }
 
 func (store credentialStore) delete(id string) error {
@@ -46,7 +80,87 @@ func (store credentialStore) delete(id string) error {
 		return err
 	}
 	delete(values, id)
-	return store.write(values)
+	if err := store.write(values); err != nil {
+		return err
+	}
+	bindings, err := store.loadBindings()
+	if err != nil {
+		return err
+	}
+	delete(bindings, id)
+	return store.writeBindings(bindings)
+}
+
+func bindingForInstance(instance Instance) credentialBinding {
+	return credentialBinding{Host: instance.Host, Port: instance.Port, Username: instance.Username, TLSMode: instance.TLSMode, CAPath: instance.CAPath}
+}
+
+func (store credentialStore) ensureBindings(database *sql.DB) error {
+	values, err := store.load()
+	if err != nil {
+		return err
+	}
+	bindings, err := store.loadBindings()
+	if err != nil {
+		return err
+	}
+	changed := false
+	for id := range values {
+		if _, ok := bindings[id]; ok {
+			continue
+		}
+		var instance Instance
+		if err := database.QueryRowContext(context.Background(), `SELECT host,port,username,tls_mode,ca_path FROM mysql_instances WHERE id=?`, id).
+			Scan(&instance.Host, &instance.Port, &instance.Username, &instance.TLSMode, &instance.CAPath); err != nil {
+			return fmt.Errorf("bind legacy MySQL credential %s: %w", id, err)
+		}
+		bindings[id] = bindingForInstance(instance)
+		changed = true
+	}
+	for id := range bindings {
+		if _, ok := values[id]; !ok {
+			delete(bindings, id)
+			changed = true
+		}
+	}
+	if changed {
+		return store.writeBindings(bindings)
+	}
+	return nil
+}
+
+func (store credentialStore) loadBindings() (map[string]credentialBinding, error) {
+	body, err := os.ReadFile(store.bindingPath())
+	if errors.Is(err, os.ErrNotExist) {
+		return make(map[string]credentialBinding), nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read sealed MySQL credential bindings: %w", err)
+	}
+	if len(body) > 4<<20 {
+		return nil, errors.New("sealed MySQL credential binding file is too large")
+	}
+	plain, err := store.vault.Unseal(mysqlCredentialBindingPurpose, body)
+	if err != nil {
+		return nil, fmt.Errorf("unseal MySQL credential bindings: %w", err)
+	}
+	values := make(map[string]credentialBinding)
+	if err := json.Unmarshal(plain, &values); err != nil {
+		return nil, fmt.Errorf("decode MySQL credential bindings: %w", err)
+	}
+	return values, nil
+}
+
+func (store credentialStore) writeBindings(values map[string]credentialBinding) error {
+	plain, err := json.Marshal(values)
+	if err != nil {
+		return err
+	}
+	body, err := store.vault.Seal(mysqlCredentialBindingPurpose, plain)
+	if err != nil {
+		return fmt.Errorf("seal MySQL credential bindings: %w", err)
+	}
+	return writePrivateFile(store.bindingPath(), body)
 }
 
 func (store credentialStore) load() (map[string]string, error) {
@@ -174,6 +288,10 @@ func decryptLegacyMySQLCredentials(key, body []byte) (map[string]string, error) 
 
 func (store credentialStore) sealedPath() string {
 	return filepath.Join(store.directory, "mysql-credentials.v2.enc")
+}
+
+func (store credentialStore) bindingPath() string {
+	return filepath.Join(store.directory, "mysql-credential-bindings.v1.enc")
 }
 
 func writePrivateFile(path string, body []byte) error {

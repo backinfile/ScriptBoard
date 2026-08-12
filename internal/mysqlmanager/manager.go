@@ -183,6 +183,9 @@ func New(options Options) (*Manager, error) {
 	if err := manager.secrets.ensureMigrated(); err != nil {
 		return nil, fmt.Errorf("migrate MySQL credentials: %w", err)
 	}
+	if err := manager.secrets.ensureBindings(options.DB); err != nil {
+		return nil, fmt.Errorf("bind MySQL credentials to instances: %w", err)
+	}
 	manager.runner = osCommandRunner{}
 	manager.server = &mysqlDatabaseServer{}
 	manager.backend = &localBackend{manager: manager}

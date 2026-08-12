@@ -217,7 +217,7 @@ func fileSHA256(path string) (string, error) {
 }
 
 func (m *Manager) clientOptionFile(instance Instance) (string, func(), error) {
-	password, err := m.instancePassword(instance.ID)
+	password, err := m.secrets.getForInstance(instance)
 	if err != nil {
 		return "", func() {}, err
 	}

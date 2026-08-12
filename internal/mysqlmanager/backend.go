@@ -38,7 +38,7 @@ type DumpResult struct {
 type localBackend struct{ manager *Manager }
 
 func (backend *localBackend) StoreCredential(_ context.Context, instance Instance, password string) error {
-	return backend.manager.secrets.set(instance.ID, password)
+	return backend.manager.secrets.set(instance, password)
 }
 
 func (backend *localBackend) DeleteCredential(_ context.Context, id string) error {
@@ -46,7 +46,7 @@ func (backend *localBackend) DeleteCredential(_ context.Context, id string) erro
 }
 
 func (backend *localBackend) Test(ctx context.Context, instance Instance) (ConnectionTest, error) {
-	password, err := backend.manager.instancePassword(instance.ID)
+	password, err := backend.manager.secrets.getForInstance(instance)
 	if err != nil {
 		return ConnectionTest{}, err
 	}
@@ -54,7 +54,7 @@ func (backend *localBackend) Test(ctx context.Context, instance Instance) (Conne
 }
 
 func (backend *localBackend) Databases(ctx context.Context, instance Instance) ([]Database, error) {
-	password, err := backend.manager.instancePassword(instance.ID)
+	password, err := backend.manager.secrets.getForInstance(instance)
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +62,7 @@ func (backend *localBackend) Databases(ctx context.Context, instance Instance) (
 }
 
 func (backend *localBackend) Status(ctx context.Context, instance Instance) (Status, error) {
-	password, err := backend.manager.instancePassword(instance.ID)
+	password, err := backend.manager.secrets.getForInstance(instance)
 	if err != nil {
 		return Status{}, err
 	}
@@ -70,7 +70,7 @@ func (backend *localBackend) Status(ctx context.Context, instance Instance) (Sta
 }
 
 func (backend *localBackend) DatabaseExists(ctx context.Context, instance Instance, name string) (bool, error) {
-	password, err := backend.manager.instancePassword(instance.ID)
+	password, err := backend.manager.secrets.getForInstance(instance)
 	if err != nil {
 		return false, err
 	}
@@ -78,7 +78,7 @@ func (backend *localBackend) DatabaseExists(ctx context.Context, instance Instan
 }
 
 func (backend *localBackend) CreateDatabase(ctx context.Context, instance Instance, input CreateDatabaseInput) error {
-	password, err := backend.manager.instancePassword(instance.ID)
+	password, err := backend.manager.secrets.getForInstance(instance)
 	if err != nil {
 		return err
 	}
@@ -86,7 +86,7 @@ func (backend *localBackend) CreateDatabase(ctx context.Context, instance Instan
 }
 
 func (backend *localBackend) ReplaceDatabase(ctx context.Context, instance Instance, name string) error {
-	password, err := backend.manager.instancePassword(instance.ID)
+	password, err := backend.manager.secrets.getForInstance(instance)
 	if err != nil {
 		return err
 	}
@@ -94,7 +94,7 @@ func (backend *localBackend) ReplaceDatabase(ctx context.Context, instance Insta
 }
 
 func (backend *localBackend) DropDatabase(ctx context.Context, instance Instance, name string) error {
-	password, err := backend.manager.instancePassword(instance.ID)
+	password, err := backend.manager.secrets.getForInstance(instance)
 	if err != nil {
 		return err
 	}
@@ -108,7 +108,7 @@ func (backend *localBackend) Dump(ctx context.Context, instance Instance, databa
 		return DumpResult{}, err
 	}
 	defer cleanup()
-	password, err := manager.instancePassword(instance.ID)
+	password, err := manager.secrets.getForInstance(instance)
 	if err != nil {
 		return DumpResult{}, err
 	}
@@ -163,7 +163,7 @@ func (backend *localBackend) Import(ctx context.Context, instance Instance, targ
 	}
 	stderr := &boundedBuffer{maximum: 64 << 10}
 	if err := manager.runner.Run(ctx, manager.localTools().ClientExecutable, mysqlImportArguments(optionPath, target), input, io.Discard, stderr); err != nil {
-		password, _ := manager.instancePassword(instance.ID)
+		password, _ := manager.secrets.getForInstance(instance)
 		return fmt.Errorf("mysql import failed: %w%s", err, sanitizedCommandError(stderr.String(), password, optionPath))
 	}
 	return nil
