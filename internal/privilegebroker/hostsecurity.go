@@ -30,6 +30,10 @@ func (service *HostSecurityService) Capabilities(ctx context.Context) hostsecuri
 	return service.reader.Capabilities(ctx)
 }
 
+func (service *HostSecurityService) SecurityUpdates(ctx context.Context, refresh bool) (hostsecurity.SecurityUpdateReport, error) {
+	return service.reader.SecurityUpdates(ctx, refresh)
+}
+
 func (service *HostSecurityService) Logins(ctx context.Context, query hostsecurity.LoginQuery) (hostsecurity.LoginPage, error) {
 	return service.reader.Logins(ctx, query)
 }

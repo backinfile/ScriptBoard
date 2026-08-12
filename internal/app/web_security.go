@@ -46,6 +46,8 @@ type securityPageView struct {
 	HasBanPrevious   bool
 	HasBanNext       bool
 	Capabilities     hostsecurity.Capabilities
+	UpdateReport     hostsecurity.SecurityUpdateReport
+	UpdateError      string
 	LoginPage        hostsecurity.LoginPage
 	DisplayedLogins  []hostsecurity.LoginRecord
 	BanPage          hostsecurity.BanPage
@@ -106,7 +108,7 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 	current := request.Context().Value(sessionContextKey).(session)
 	locale := resolveWebLocale(request)
 	tab := request.URL.Query().Get("tab")
-	if tab != "logins" && tab != "defense" {
+	if tab != "logins" && tab != "defense" && tab != "updates" {
 		tab = "overview"
 	}
 	rangeValue := request.URL.Query().Get("range")
@@ -201,6 +203,15 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 			view.HasBanNext = banPage.Page < banPage.Pages
 			view.BanPrevious = max(1, banPage.Page-1)
 			view.BanNext = min(banPage.Pages, banPage.Page+1)
+		}
+	}
+	if tab == "updates" {
+		updateContext, cancelUpdates := context.WithTimeout(request.Context(), 30*time.Second)
+		report, err := a.hostSecurity.SecurityUpdates(updateContext, request.URL.Query().Get("refresh") == "1")
+		cancelUpdates()
+		view.UpdateReport = report
+		if err != nil {
+			view.UpdateError = secretredaction.String(err.Error())
 		}
 	}
 	view.Rules = append([]hostsecurity.FirewallRule(nil), capabilities.Rules...)

@@ -132,6 +132,23 @@ type LoginStats struct {
 	Locked        int
 }
 
+type SecurityUpdate struct {
+	Identifier      string
+	Title           string
+	Version         string
+	Severity        string
+	Source          string
+	RestartRequired bool
+}
+
+type SecurityUpdateReport struct {
+	Supported   bool
+	Provider    string
+	CollectedAt time.Time
+	Cached      bool
+	Updates     []SecurityUpdate
+}
+
 type Ban struct {
 	IP        string
 	Jail      string
@@ -188,6 +205,7 @@ type Options struct {
 	Now                func() time.Time
 	CapabilityCacheTTL time.Duration
 	LoginCacheTTL      time.Duration
+	UpdateCacheTTL     time.Duration
 }
 
 type loginCacheEntry struct {
@@ -197,6 +215,7 @@ type loginCacheEntry struct {
 
 type Service interface {
 	Capabilities(context.Context) Capabilities
+	SecurityUpdates(context.Context, bool) (SecurityUpdateReport, error)
 	Logins(context.Context, LoginQuery) (LoginPage, error)
 	Bans(context.Context, int, int) (BanPage, error)
 	Install(context.Context, string) error
@@ -217,8 +236,12 @@ type Manager struct {
 	capabilityCacheValid bool
 	loginCacheTTL        time.Duration
 	loginCache           map[string]loginCacheEntry
+	updateCacheTTL       time.Duration
+	updateCache          SecurityUpdateReport
+	updateCacheValid     bool
 	mu                   sync.Mutex
 	loginMu              sync.Mutex
+	updateMu             sync.Mutex
 }
 
 func NewManager(options Options) *Manager {
@@ -242,10 +265,61 @@ func NewManager(options Options) *Manager {
 	if loginCacheTTL == 0 {
 		loginCacheTTL = 30 * time.Second
 	}
+	updateCacheTTL := options.UpdateCacheTTL
+	if updateCacheTTL == 0 {
+		updateCacheTTL = 10 * time.Minute
+	}
 	return &Manager{
 		goos: goos, runner: runner, now: now, capabilityCacheTTL: cacheTTL,
-		loginCacheTTL: loginCacheTTL, loginCache: make(map[string]loginCacheEntry),
+		loginCacheTTL: loginCacheTTL, loginCache: make(map[string]loginCacheEntry), updateCacheTTL: updateCacheTTL,
 	}
+}
+
+func (m *Manager) SecurityUpdates(ctx context.Context, refresh bool) (SecurityUpdateReport, error) {
+	m.updateMu.Lock()
+	defer m.updateMu.Unlock()
+	now := m.now().UTC()
+	if m.updateCacheValid && !refresh && m.updateCacheTTL > 0 && now.Sub(m.updateCache.CollectedAt) >= 0 && now.Sub(m.updateCache.CollectedAt) < m.updateCacheTTL {
+		cached := cloneSecurityUpdateReport(m.updateCache)
+		cached.Cached = true
+		return cached, nil
+	}
+	report := SecurityUpdateReport{CollectedAt: now}
+	var err error
+	switch m.goos {
+	case "windows":
+		report.Supported = true
+		report.Provider = "Windows Update Agent"
+		var output string
+		output, err = m.runner.Run(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", windowsSecurityUpdatesScript)
+		if err == nil {
+			report.Updates, err = parseWindowsSecurityUpdates(output)
+		}
+	case "linux":
+		if !m.runner.LookPath("apt-get") {
+			return report, nil
+		}
+		report.Supported = true
+		report.Provider = "APT package metadata"
+		var output string
+		output, err = m.runner.Run(ctx, "apt-get", "-s", "-o", "Debug::NoLocking=1", "upgrade")
+		if err == nil {
+			report.Updates = parseAPTSecurityUpdates(output)
+		}
+	default:
+		return report, nil
+	}
+	if err != nil {
+		return report, fmt.Errorf("read available OS security updates: %w", err)
+	}
+	m.updateCache = cloneSecurityUpdateReport(report)
+	m.updateCacheValid = true
+	return cloneSecurityUpdateReport(report), nil
+}
+
+func cloneSecurityUpdateReport(report SecurityUpdateReport) SecurityUpdateReport {
+	report.Updates = append([]SecurityUpdate(nil), report.Updates...)
+	return report
 }
 
 func (m *Manager) Capabilities(ctx context.Context) Capabilities {
@@ -1024,3 +1098,21 @@ $events = @(Get-WinEvent -ErrorAction SilentlyContinue -FilterHashtable @{LogNam
   [pscustomobject]@{Time=$_.TimeCreated.ToUniversalTime().ToString('o');EventID=[string]$_.Id;User=$data.TargetUserName;IP=$data.IpAddress;LogonType=$data.LogonType;Status=$data.Status;SubStatus=$data.SubStatus}
 })
 ConvertTo-Json -InputObject $events -Compress`
+
+const windowsSecurityUpdatesScript = `$ErrorActionPreference = 'Stop'
+function Encode-Field([object]$value) {[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$value))}
+$session = New-Object -ComObject Microsoft.Update.Session
+$searcher = $session.CreateUpdateSearcher()
+$result = $searcher.Search("IsInstalled=0 and IsHidden=0 and Type='Software'")
+$count = 0
+foreach ($update in $result.Updates) {
+  $categories = @($update.Categories | ForEach-Object {$_.Name})
+  $security = -not [string]::IsNullOrWhiteSpace($update.MsrcSeverity) -or ($categories -contains 'Security Updates') -or ($categories -contains 'Critical Updates')
+  if (-not $security) {continue}
+  $identifier = $update.Identity.UpdateID
+  $version = @($update.KBArticleIDs) -join ','
+  $severity = if ([string]::IsNullOrWhiteSpace($update.MsrcSeverity)) {'Security'} else {$update.MsrcSeverity}
+  $restart = if ($update.InstallationBehavior.RebootBehavior -eq 1) {'1'} else {'0'}
+  'SBUPDATE|' + (Encode-Field $identifier) + '|' + (Encode-Field $update.Title) + '|' + (Encode-Field $version) + '|' + (Encode-Field $severity) + '|' + (Encode-Field ($categories -join ',')) + '|' + $restart
+  $count++; if ($count -ge 200) {break}
+}`

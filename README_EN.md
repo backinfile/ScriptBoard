@@ -130,7 +130,7 @@ Website Monitoring entries use `GET` instead of `POST`. To view one ScriptBoard 
 
 ### Host security
 
-Monitoring → Host Security brings together Windows login events or Linux SSH login records, remote-login configuration, and firewall status. On Windows, it can manage Windows Defender Firewall rules. On Linux, it can install Fail2Ban and UFW, inspect or remove SSH bans, and synchronize UFW rules and default policies after a change review.
+Monitoring → Host Security brings together Windows login events or Linux SSH login records, remote-login configuration, and firewall status. Its Security Updates tab reads pending security updates from existing Windows Update Agent or Debian/Ubuntu APT metadata without refreshing sources, downloading, or installing packages. On Windows, it can manage Windows Defender Firewall rules. On Linux, it can install Fail2Ban and UFW, inspect or remove SSH bans, and synchronize UFW rules and default policies after a change review.
 
 Every role can inspect the detected state; only Administrators and Maintainers can change host defenses. Firewall, remote-login, and ban operations can interrupt access to the host. Confirm that the service runs with Administrator or root privileges, preserve an allow rule for the active management port, and keep an out-of-band recovery path.
 

@@ -180,6 +180,33 @@ func TestHostSecurityLoginFiltersArePassedToService(t *testing.T) {
 	}
 }
 
+func TestHostSecurityUpdatesPageIsReadOnlyAndShowsBoundedProviderInventory(t *testing.T) {
+	t.Parallel()
+	service := &securityFixtureService{
+		capabilities: hostsecurity.Capabilities{OS: "windows", Hostname: "win-update-01", CollectedAt: time.Now().UTC(), Firewall: hostsecurity.Component{Installed: true, Running: true}},
+		updateReport: hostsecurity.SecurityUpdateReport{Supported: true, Provider: "Windows Update Agent", CollectedAt: time.Date(2026, 8, 12, 8, 0, 0, 0, time.UTC), Updates: []hostsecurity.SecurityUpdate{{
+			Identifier: "update-id", Title: "Cumulative Security Update", Version: "KB123456", Severity: "Critical", Source: "Security Updates", RestartRequired: true,
+		}}},
+	}
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: filepath.Join(t.TempDir(), "state"), HostSecurity: service})
+	page := getSecurityPage(t, client, serverURL+"/monitor/security?tab=updates&refresh=1")
+	for _, expected := range [][]byte{[]byte("Available OS security updates"), []byte("Windows Update Agent"), []byte("Cumulative Security Update"), []byte("KB123456"), []byte("Critical"), []byte("Required"), []byte("does not refresh indexes, download, or install")} {
+		if !bytes.Contains(page, expected) {
+			t.Fatalf("security updates page missing %q: %s", expected, page)
+		}
+	}
+	for _, forbidden := range [][]byte{[]byte("Install update"), []byte("apt-get update"), []byte("Download update")} {
+		if bytes.Contains(page, forbidden) {
+			t.Fatalf("read-only security updates page exposes mutation text %q: %s", forbidden, page)
+		}
+	}
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	if service.updateCalls != 1 || !service.updateRefresh {
+		t.Fatalf("update calls=%d refresh=%v", service.updateCalls, service.updateRefresh)
+	}
+}
+
 func TestWindowsFirewallRulesSupportFilteringAndPagination(t *testing.T) {
 	t.Parallel()
 	rules := make([]hostsecurity.FirewallRule, 25)
@@ -315,9 +342,12 @@ type securityFixtureService struct {
 	capabilities    hostsecurity.Capabilities
 	logins          hostsecurity.LoginPage
 	bans            hostsecurity.BanPage
+	updateReport    hostsecurity.SecurityUpdateReport
 	lastQuery       hostsecurity.LoginQuery
 	capabilityCalls int
 	loginCalls      int
+	updateCalls     int
+	updateRefresh   bool
 	applyCalls      int
 	appliedDesired  []hostsecurity.FirewallRule
 	appliedDefaults hostsecurity.UFWDefaults
@@ -328,6 +358,14 @@ func (s *securityFixtureService) Capabilities(context.Context) hostsecurity.Capa
 	s.capabilityCalls++
 	s.mu.Unlock()
 	return s.capabilities
+}
+
+func (s *securityFixtureService) SecurityUpdates(_ context.Context, refresh bool) (hostsecurity.SecurityUpdateReport, error) {
+	s.mu.Lock()
+	s.updateCalls++
+	s.updateRefresh = refresh
+	s.mu.Unlock()
+	return s.updateReport, nil
 }
 
 func (s *securityFixtureService) Logins(_ context.Context, query hostsecurity.LoginQuery) (hostsecurity.LoginPage, error) {

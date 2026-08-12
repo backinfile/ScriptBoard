@@ -76,6 +76,9 @@ type fixtureHostSecurity struct {
 func (fixture *fixtureHostSecurity) Capabilities(context.Context) hostsecurity.Capabilities {
 	return fixture.capabilities
 }
+func (*fixtureHostSecurity) SecurityUpdates(context.Context, bool) (hostsecurity.SecurityUpdateReport, error) {
+	return hostsecurity.SecurityUpdateReport{}, nil
+}
 func (*fixtureHostSecurity) Logins(context.Context, hostsecurity.LoginQuery) (hostsecurity.LoginPage, error) {
 	return hostsecurity.LoginPage{}, nil
 }

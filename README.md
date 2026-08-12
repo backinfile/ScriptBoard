@@ -139,7 +139,7 @@ Windows 从各个可用卷开始浏览，Linux 从 `/` 开始浏览。文件页�
 
 ### 主机安全
 
-“监控 → 主机安全”集中显示 Windows 登录事件或 Linux SSH 登录记录、远程登录配置和防火墙状态。Windows 主机可管理 Windows Defender 防火墙规则；Linux 主机可安装 Fail2Ban 与 UFW、查看或解除 SSH 封禁，并在预览差异后同步 UFW 规则和默认策略。
+“监控 → 主机安全”集中显示 Windows 登录事件或 Linux SSH 登录记录、远程登录配置和防火墙状态。“安全更新”页签以只读方式读取 Windows Update Agent 或 Debian/Ubuntu APT 已有元数据中的待安装安全更新，不刷新软件源，也不下载或安装软件包。Windows 主机可管理 Windows Defender 防火墙规则；Linux 主机可安装 Fail2Ban 与 UFW、查看或解除 SSH 封禁，并在预览差异后同步 UFW 规则和默认策略。
 
 所有角色都可查看检测结果；只有管理员和维护员可修改系统防护。防火墙、远程登录和封禁操作可能中断主机连接，请确认服务以管理员或 root 权限运行，并保留当前管理端口的允许规则和带外恢复方式。
 
