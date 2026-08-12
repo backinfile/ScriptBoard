@@ -29,63 +29,65 @@ type securityFirewallChange struct {
 }
 
 type securityPageView struct {
-	Locale           webLocale
-	CSRFToken        string
-	Tab              string
-	Range            string
-	Result           string
-	LoginType        string
-	FromDate         string
-	ToDate           string
-	PageSize         int
-	LoginPrevious    int
-	LoginNext        int
-	BanPrevious      int
-	BanNext          int
-	HasLoginPrevious bool
-	HasLoginNext     bool
-	HasBanPrevious   bool
-	HasBanNext       bool
-	Capabilities     hostsecurity.Capabilities
-	UpdateReport     hostsecurity.SecurityUpdateReport
-	UpdateError      string
-	Baseline         securitybaseline.Report
-	LoginPage        hostsecurity.LoginPage
-	DisplayedLogins  []hostsecurity.LoginRecord
-	BanPage          hostsecurity.BanPage
-	Rules            []hostsecurity.FirewallRule
-	RuleProtocol     string
-	RulePort         string
-	RuleAddress      string
-	RuleDirection    string
-	RuleStatus       string
-	RulePageSize     int
-	RulePage         int
-	RulePages        int
-	RuleTotal        int
-	RulePreviousURL  string
-	RuleNextURL      string
-	HasRulePrevious  bool
-	HasRuleNext      bool
-	RuleFiltering    bool
-	RefreshURL       string
-	DraftChanges     []securityFirewallChange
-	DraftUpdatedAt   time.Time
-	CanManage        bool
-	ShowBans         bool
-	ShowReview       bool
-	Notice           string
-	LoginError       string
-	BanError         string
-	Linux            bool
-	Windows          bool
-	HasDraft         bool
-	HasSSHAllowRule  bool
-	UFWDefaults      hostsecurity.UFWDefaults
-	CanApplyDraft    bool
-	RemoteLoginRows  []securityRemoteLoginRow
-	RemoteLogin      securityRemoteLoginSummary
-	DeferredData     bool
+	Locale               webLocale
+	CSRFToken            string
+	Tab                  string
+	Range                string
+	Result               string
+	LoginType            string
+	FromDate             string
+	ToDate               string
+	PageSize             int
+	LoginPrevious        int
+	LoginNext            int
+	BanPrevious          int
+	BanNext              int
+	HasLoginPrevious     bool
+	HasLoginNext         bool
+	HasBanPrevious       bool
+	HasBanNext           bool
+	Capabilities         hostsecurity.Capabilities
+	UpdateReport         hostsecurity.SecurityUpdateReport
+	UpdateError          string
+	Baseline             securitybaseline.Report
+	BaselineDrift        securitybaseline.Drift
+	BaselineHistoryError string
+	LoginPage            hostsecurity.LoginPage
+	DisplayedLogins      []hostsecurity.LoginRecord
+	BanPage              hostsecurity.BanPage
+	Rules                []hostsecurity.FirewallRule
+	RuleProtocol         string
+	RulePort             string
+	RuleAddress          string
+	RuleDirection        string
+	RuleStatus           string
+	RulePageSize         int
+	RulePage             int
+	RulePages            int
+	RuleTotal            int
+	RulePreviousURL      string
+	RuleNextURL          string
+	HasRulePrevious      bool
+	HasRuleNext          bool
+	RuleFiltering        bool
+	RefreshURL           string
+	DraftChanges         []securityFirewallChange
+	DraftUpdatedAt       time.Time
+	CanManage            bool
+	ShowBans             bool
+	ShowReview           bool
+	Notice               string
+	LoginError           string
+	BanError             string
+	Linux                bool
+	Windows              bool
+	HasDraft             bool
+	HasSSHAllowRule      bool
+	UFWDefaults          hostsecurity.UFWDefaults
+	CanApplyDraft        bool
+	RemoteLoginRows      []securityRemoteLoginRow
+	RemoteLogin          securityRemoteLoginSummary
+	DeferredData         bool
 }
 
 type securityRemoteLoginSummary struct {
@@ -217,6 +219,11 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 		}
 		if tab == "baseline" {
 			view.Baseline = securitybaseline.Evaluate(capabilities, report, err)
+			if drift, historyErr := a.securityHistory.Compare(view.Baseline); historyErr != nil {
+				view.BaselineHistoryError = secretredaction.String(historyErr.Error())
+			} else {
+				view.BaselineDrift = drift
+			}
 		}
 	}
 	view.Rules = append([]hostsecurity.FirewallRule(nil), capabilities.Rules...)
@@ -487,12 +494,34 @@ func securityNotice(locale webLocale, code string) string {
 		"drafted": "security.notice_drafted", "discarded": "security.notice_discarded",
 		"synced": "security.notice_synced", "ufw_enabled": "security.notice_ufw_enabled",
 		"windows_rule_saved": "security.notice_windows_rule_saved",
+		"baseline_captured":  "security.notice_baseline_captured",
 	}
 	key, ok := allowed[code]
 	if !ok {
 		return ""
 	}
 	return webText(locale, key)
+}
+
+func (a *App) captureSecurityBaseline(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
+		return
+	}
+	capabilityContext, cancelCapabilities := context.WithTimeout(request.Context(), 12*time.Second)
+	capabilities := a.hostSecurity.Capabilities(capabilityContext)
+	cancelCapabilities()
+	updateContext, cancelUpdates := context.WithTimeout(request.Context(), 30*time.Second)
+	updates, updateErr := a.hostSecurity.SecurityUpdates(updateContext, true)
+	cancelUpdates()
+	report := securitybaseline.Evaluate(capabilities, updates, updateErr)
+	if _, err := a.securityHistory.Capture(report, time.Now().UTC()); err != nil {
+		a.recordAuditForRequest(request, "capture_security_baseline", "host-security", "failed")
+		writeSecurityError(response, request, err)
+		return
+	}
+	a.recordAuditForRequest(request, "capture_security_baseline", "host-security", "succeeded")
+	securityRedirect(response, request, "baseline", "baseline_captured", nil)
 }
 
 func (a *App) installSecurityComponent(response http.ResponseWriter, request *http.Request) {

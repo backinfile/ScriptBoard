@@ -63,6 +63,7 @@ import (
 	"scriptboard/internal/scheduler"
 	"scriptboard/internal/secretredaction"
 	"scriptboard/internal/secretstore"
+	"scriptboard/internal/securitybaseline"
 	"scriptboard/internal/securityevents"
 	"scriptboard/internal/servicelogs"
 	updatepkg "scriptboard/internal/update"
@@ -468,6 +469,7 @@ type App struct {
 	scheduler            *scheduler.Manager
 	hostStatus           *hoststatus.Monitor
 	hostSecurity         hostsecurity.Service
+	securityHistory      *securitybaseline.HistoryStore
 	serviceLogs          servicelogs.Reader
 	securityDraftMu      sync.Mutex
 	securityDrafts       map[string]securityFirewallDraft
@@ -631,6 +633,11 @@ func Open(config Config) (*App, error) {
 	}
 	if application.serviceLogs == nil {
 		application.serviceLogs = servicelogs.New(servicelogs.Options{})
+	}
+	application.securityHistory, err = securitybaseline.NewHistoryStore(stateRoot)
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("initialize security baseline history: %w", err)
 	}
 	application.auditLog = auditlog.New(db)
 	if _, err := application.auditLog.Verify(context.Background()); err != nil {
@@ -2427,6 +2434,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /logout", a.requirePermission(permissionObserve, http.HandlerFunc(a.logout)))
 	mux.Handle("GET /monitor", a.requirePermission(permissionObserve, http.HandlerFunc(a.overviewPage)))
 	mux.Handle("GET /monitor/security", a.requirePermission(permissionObserve, http.HandlerFunc(a.securityPage)))
+	mux.Handle("POST /monitor/security/baseline/snapshot", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.captureSecurityBaseline)))
 	mux.Handle("POST /monitor/security/components/{component}/install", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.installSecurityComponent)))
 	mux.Handle("POST /monitor/security/fail2ban/unban", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.unbanSecurityIP)))
 	mux.Handle("POST /monitor/security/firewall/draft/rules", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.addSecurityFirewallDraftRule)))

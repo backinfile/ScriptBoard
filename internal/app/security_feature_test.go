@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -207,7 +208,7 @@ func TestHostSecurityUpdatesPageIsReadOnlyAndShowsBoundedProviderInventory(t *te
 	}
 }
 
-func TestHostSecurityBaselineExplainsEffectiveChecksWithoutMutationControls(t *testing.T) {
+func TestHostSecurityBaselineExplainsEffectiveChecksAndCapturesStatusOnlyHistory(t *testing.T) {
 	t.Parallel()
 	service := &securityFixtureService{
 		capabilities: hostsecurity.Capabilities{
@@ -218,17 +219,37 @@ func TestHostSecurityBaselineExplainsEffectiveChecksWithoutMutationControls(t *t
 		},
 		updateReport: hostsecurity.SecurityUpdateReport{Supported: true, Provider: "APT package metadata", Updates: []hostsecurity.SecurityUpdate{{Identifier: "openssl"}}},
 	}
-	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: filepath.Join(t.TempDir(), "state"), HostSecurity: service})
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: stateRoot, HostSecurity: service})
 	page := getSecurityPage(t, client, serverURL+"/monitor/security?tab=baseline")
-	for _, expected := range [][]byte{[]byte("Host security baseline"), []byte("77 / 100"), []byte("SSH password authentication"), []byte("OS security updates"), []byte("Web control plane least privilege"), []byte("not a compliance certification")} {
+	for _, expected := range [][]byte{[]byte("Host security baseline"), []byte("77 / 100"), []byte("SSH password authentication"), []byte("OS security updates"), []byte("Web control plane least privilege"), []byte("not a compliance certification"), []byte("Capture baseline snapshot"), []byte("No baseline snapshot exists yet")} {
 		if !bytes.Contains(page, expected) {
 			t.Fatalf("security baseline page missing %q: %s", expected, page)
 		}
 	}
-	for _, forbidden := range [][]byte{[]byte("Apply baseline"), []byte("Fix all"), []byte(`method="post" action="/monitor/security/baseline`)} {
+	for _, forbidden := range [][]byte{[]byte("Apply baseline"), []byte("Fix all")} {
 		if bytes.Contains(page, forbidden) {
 			t.Fatalf("read-only baseline exposes mutation %q: %s", forbidden, page)
 		}
+	}
+	response, err := client.PostForm(serverURL+"/monitor/security/baseline/snapshot", url.Values{"csrf_token": {formToken(t, page)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("capture baseline status=%d", response.StatusCode)
+	}
+	capturedPage := getSecurityPage(t, client, serverURL+response.Header.Get("Location"))
+	if !bytes.Contains(capturedPage, []byte("Security baseline snapshot captured")) || !bytes.Contains(capturedPage, []byte("Current check statuses match the latest snapshot")) {
+		t.Fatalf("captured baseline page=%s", capturedPage)
+	}
+	history, err := os.ReadFile(filepath.Join(stateRoot, "security-baseline", "history.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(history, []byte("Web process")) || bytes.Contains(history, []byte("pending security updates")) {
+		t.Fatalf("baseline history persisted evidence text: %s", history)
 	}
 }
 
