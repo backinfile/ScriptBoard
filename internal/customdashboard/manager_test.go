@@ -2,9 +2,11 @@ package customdashboard
 
 import (
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -107,6 +109,13 @@ func TestRegistryCardStoresCredentialOutsideDatabaseAndRefreshesMultipleImages(t
 	})
 	if err != nil || !updated.CredentialConfigured {
 		t.Fatalf("blank edit did not preserve credential: card=%#v err=%v", updated, err)
+	}
+	failing = false
+	preview, err := manager.TestCard(ctx, CardInput{
+		Name: updated.Name, Type: CardRegistry, Config: config, PreserveRegistryPassword: true,
+	}, card.ID)
+	if err != nil || !preview.OK || len(preview.Images) != 2 {
+		t.Fatalf("test request did not reuse saved credential: result=%#v err=%v", preview, err)
 	}
 	if err := manager.DeleteCard(ctx, card.ID); err != nil {
 		t.Fatal(err)
@@ -252,6 +261,137 @@ func TestRefreshNumberCardKeepsStringValue(t *testing.T) {
 	}
 	if got, want := refreshed.Snapshot.Value, "版本 v1.2.3 / 生产环境"; got != want {
 		t.Fatalf("value=%#v, want %#v", got, want)
+	}
+}
+
+func TestRefreshFailurePersistsSafeDiagnosticAndKeepsSnapshot(t *testing.T) {
+	failing := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if failing {
+			w.Header().Set("X-Secret", "do-not-store")
+			http.Error(w, `{"token":"do-not-store"}`, http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(`{"value":42}`))
+	}))
+	defer server.Close()
+
+	manager := testManager(t)
+	ctx := context.Background()
+	dashboard, _ := manager.CreateDashboard(ctx, DashboardInput{Name: "diagnostics", Slug: "diagnostics"})
+	card, err := manager.CreateCard(ctx, dashboard.ID, CardInput{
+		Name: "value", Type: CardNumber, SourceURL: server.URL + "?access_token=do-not-store",
+		ValuePath: "value", Headers: map[string]string{"Authorization": "Bearer do-not-store"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = manager.RefreshCard(ctx, card.ID); err != nil {
+		t.Fatal(err)
+	}
+	failing = true
+	stale, err := manager.RefreshCard(ctx, card.ID)
+	if err == nil {
+		t.Fatal("expected refresh failure")
+	}
+	if stale.Snapshot.Value != float64(42) || stale.Snapshot.Diagnostic == nil {
+		t.Fatalf("snapshot or diagnostic missing: %#v", stale.Snapshot)
+	}
+	if got := stale.Snapshot.Diagnostic.Code; got != DiagnosticUnauthorized {
+		t.Fatalf("diagnostic code=%q", got)
+	}
+	encoded, _ := json.Marshal(stale.Snapshot.Diagnostic)
+	if strings.Contains(string(encoded), "do-not-store") || !strings.Contains(stale.Snapshot.Diagnostic.URL, "access_token=%5BREDACTED%5D") {
+		t.Fatalf("unsafe or unredacted diagnostic: %s", encoded)
+	}
+	var storedSnapshot, storedError string
+	if err := manager.db.QueryRow(`SELECT snapshot_json,last_error FROM custom_dashboard_cards WHERE id=?`, card.ID).Scan(&storedSnapshot, &storedError); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(storedSnapshot+storedError, "do-not-store") || strings.Contains(storedSnapshot+storedError, "private response") {
+		t.Fatalf("sensitive failure data was persisted: snapshot=%s error=%s", storedSnapshot, storedError)
+	}
+}
+
+func TestCardRequestDoesNotPersistPreviewAndReturnsBoundedRawResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = w.Write([]byte(`{"release":{"version":"v2.4.1"}}`))
+	}))
+	defer server.Close()
+
+	manager := testManager(t)
+	ctx := context.Background()
+	dashboard, _ := manager.CreateDashboard(ctx, DashboardInput{Name: "test bench", Slug: "test-bench"})
+	card, err := manager.CreateCard(ctx, dashboard.ID, CardInput{Name: "version", Type: CardNumber, SourceURL: server.URL, ValuePath: "release.version"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := manager.TestCard(ctx, CardInput{Name: card.Name, Type: card.Type, SourceURL: card.SourceURL, ValuePath: card.ValuePath}, card.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Value != "v2.4.1" || result.ValueType != "string" || result.RawResponse == "" || result.Diagnostic.HTTPStatus != http.StatusOK {
+		t.Fatalf("unexpected test result: %#v", result)
+	}
+	unchanged, err := manager.getCard(ctx, card.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.LastAttemptAt.IsZero() == false || unchanged.Snapshot.Value != nil {
+		t.Fatalf("test request mutated card: %#v", unchanged)
+	}
+}
+
+func TestRequestDiagnosticsClassifySafeFailureModes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/forbidden":
+			http.Error(w, "private response", http.StatusForbidden)
+		case "/text":
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte("not json"))
+		case "/large":
+			_, _ = w.Write([]byte(strings.Repeat("x", maxResponseBytes+1)))
+		default:
+			_, _ = w.Write([]byte(`{"text":"not-a-number"}`))
+		}
+	}))
+	defer server.Close()
+	manager := testManager(t)
+
+	cases := []struct {
+		name, path, expression, code string
+	}{
+		{"forbidden", "/forbidden", "value", DiagnosticUnauthorized},
+		{"non json", "/text", "value", DiagnosticNonJSON},
+		{"too large", "/large", "value", DiagnosticTooLarge},
+		{"path missing", "/json", "missing.value", DiagnosticPathMissing},
+		{"type mismatch", "/json", "text + 1", DiagnosticTypeMismatch},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := manager.TestCard(context.Background(), CardInput{Name: test.name, Type: CardPercentage, SourceURL: server.URL + test.path, ValuePath: test.expression}, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.OK || result.Diagnostic.Code != test.code {
+				t.Fatalf("result=%#v, want code %q", result, test.code)
+			}
+			if test.code == DiagnosticTooLarge && (!result.RawTruncated || len(result.RawResponse) != maxTestPreviewBytes) {
+				t.Fatalf("large response preview was not bounded: length=%d truncated=%v", len(result.RawResponse), result.RawTruncated)
+			}
+		})
+	}
+	if got := classifyNetworkError(context.DeadlineExceeded); got != DiagnosticTimeout {
+		t.Fatalf("timeout classified as %q", got)
+	}
+	if got := classifyNetworkError(&net.DNSError{Err: "no such host", Name: "private.invalid"}); got != DiagnosticDNS {
+		t.Fatalf("DNS failure classified as %q", got)
+	}
+	if got := classifyNetworkError(tls.RecordHeaderError{}); got != DiagnosticTLS {
+		t.Fatalf("TLS failure classified as %q", got)
 	}
 }
 

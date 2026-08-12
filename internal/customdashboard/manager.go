@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -69,10 +68,11 @@ type CardInput struct {
 	PreserveRegistryPassword          bool
 }
 type Snapshot struct {
-	Value     any                           `json:"value,omitempty"`
-	Number    float64                       `json:"number,omitempty"`
-	Secondary any                           `json:"secondary,omitempty"`
-	Images    []registrymonitor.ImageResult `json:"images,omitempty"`
+	Value      any                           `json:"value,omitempty"`
+	Number     float64                       `json:"number,omitempty"`
+	Secondary  any                           `json:"secondary,omitempty"`
+	Images     []registrymonitor.ImageResult `json:"images,omitempty"`
+	Diagnostic *RequestDiagnostic            `json:"diagnostic,omitempty"`
 }
 type Card struct {
 	ID, DashboardID, Name             string
@@ -270,6 +270,7 @@ func (m *Manager) GetPublicDashboard(ctx context.Context, slug string) (Dashboar
 	}
 	d.Cards, err = m.listCards(ctx, d.ID)
 	for i := range d.Cards {
+		d.Cards[i].Snapshot.Diagnostic = nil
 		d.Cards[i].SourceURL = ""
 		d.Cards[i].Headers = nil
 		d.Cards[i].ValuePath = ""
@@ -544,51 +545,14 @@ func (m *Manager) RefreshCard(ctx context.Context, id string) (Card, error) {
 	if card.Type == CardRegistry {
 		return m.refreshRegistryCard(ctx, card)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, card.SourceURL, nil)
-	if err != nil {
-		return m.recordFailure(ctx, card, err)
+	input := CardInput{Name: card.Name, Type: card.Type, SourceURL: card.SourceURL, Headers: card.Headers, ValuePath: card.ValuePath, SecondaryPath: card.SecondaryPath, Formula: card.Formula, Config: card.Config, RefreshSeconds: card.RefreshSeconds}
+	result, refreshErr := m.runCardRequest(ctx, input, card.ID)
+	if refreshErr != nil {
+		return m.recordFailureDiagnostic(ctx, card, refreshErr, result.Diagnostic)
 	}
-	for name, value := range card.Headers {
-		req.Header.Set(name, value)
-	}
-	response, err := m.client.Do(req)
-	if err != nil {
-		return m.recordFailure(ctx, card, err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return m.recordFailure(ctx, card, fmt.Errorf("数据地址返回 HTTP %d", response.StatusCode))
-	}
-	raw, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
-	if err != nil || len(raw) > maxResponseBytes {
-		if err == nil {
-			err = errors.New("返回数据超过 2 MiB")
-		}
-		return m.recordFailure(ctx, card, err)
-	}
-	var document any
-	if err = json.Unmarshal(raw, &document); err != nil {
-		return m.recordFailure(ctx, card, errors.New("返回内容不是有效 JSON"))
-	}
-	snapshot := Snapshot{}
-	if card.Type == CardNumber {
-		if value, extractErr := Extract(document, card.ValuePath); extractErr == nil {
-			if text, ok := value.(string); ok {
-				snapshot.Value = text
-			}
-		}
-	}
-	if snapshot.Value == nil {
-		snapshot.Number, err = Evaluate(card.ValuePath, document)
-		snapshot.Value = snapshot.Number
-	}
-	if err == nil && card.SecondaryPath != "" {
-		var secondary float64
-		secondary, err = Evaluate(card.SecondaryPath, document)
-		snapshot.Secondary = secondary
-	}
-	if err != nil {
-		return m.recordFailure(ctx, card, err)
+	snapshot := Snapshot{Value: result.Value, Secondary: result.Secondary}
+	if number, ok := asNumber(result.Value); ok {
+		snapshot.Number = number
 	}
 	encoded, _ := json.Marshal(snapshot)
 	now := m.now().UTC()
@@ -621,16 +585,11 @@ func (m *Manager) refreshRegistryCard(ctx context.Context, card Card) (Card, err
 	if err := json.Unmarshal(card.Config, &config); err != nil {
 		return m.recordFailure(ctx, card, errors.New("Registry 卡片配置无效"))
 	}
-	if config.AuthMode == "basic" {
-		password, err := m.secrets.get(card.ID)
-		if err != nil {
-			return m.recordFailure(ctx, card, err)
-		}
-		config.Password = password
-	}
-	results, err := registrymonitor.New(m.client).Inspect(ctx, config)
-	if err != nil {
-		return m.recordFailure(ctx, card, err)
+	input := CardInput{Name: card.Name, Type: card.Type, Config: card.Config, PreserveRegistryPassword: true}
+	testResult, err := m.runRegistryRequest(ctx, input, card.ID)
+	results := testResult.Images
+	if err != nil && len(results) == 0 {
+		return m.recordFailureDiagnostic(ctx, card, err, testResult.Diagnostic)
 	}
 	previous := map[string]registrymonitor.ImageResult{}
 	for _, image := range card.Snapshot.Images {
@@ -651,7 +610,11 @@ func (m *Manager) refreshRegistryCard(ctx context.Context, card Card) (Card, err
 			results[index].Stale = true
 		}
 	}
-	encoded, _ := json.Marshal(Snapshot{Images: results})
+	snapshot := Snapshot{Images: results}
+	if failures > 0 {
+		snapshot.Diagnostic = &testResult.Diagnostic
+	}
+	encoded, _ := json.Marshal(snapshot)
 	now := m.now().UTC()
 	lastError := ""
 	if failures > 0 {
@@ -679,12 +642,21 @@ func (m *Manager) refreshRegistryCard(ctx context.Context, card Card) (Card, err
 }
 
 func (m *Manager) recordFailure(ctx context.Context, card Card, refreshErr error) (Card, error) {
-	message := strings.TrimSpace(refreshErr.Error())
+	code := classifyNetworkError(refreshErr)
+	diagnostic := RequestDiagnostic{Code: code, Stage: "request", Summary: actionableSummary(code), URL: redactRequestURL(card.SourceURL), AttemptedAt: m.now().UTC()}
+	return m.recordFailureDiagnostic(ctx, card, refreshErr, diagnostic)
+}
+
+func (m *Manager) recordFailureDiagnostic(ctx context.Context, card Card, refreshErr error, diagnostic RequestDiagnostic) (Card, error) {
+	message := strings.TrimSpace(diagnostic.Summary)
 	if len(message) > 240 {
 		message = message[:240]
 	}
 	now := m.now().UTC()
-	_, _ = m.db.ExecContext(ctx, `UPDATE custom_dashboard_cards SET last_error=?,last_attempt_at=?,updated_at=? WHERE id=?`, message, now.UnixNano(), now.UnixNano(), card.ID)
+	diagnostic.AttemptedAt = now
+	card.Snapshot.Diagnostic = &diagnostic
+	encoded, _ := json.Marshal(card.Snapshot)
+	_, _ = m.db.ExecContext(ctx, `UPDATE custom_dashboard_cards SET snapshot_json=?,last_error=?,last_attempt_at=?,updated_at=? WHERE id=?`, string(encoded), message, now.UnixNano(), now.UnixNano(), card.ID)
 	updated, _ := m.getCard(ctx, card.ID)
 	return updated, refreshErr
 }

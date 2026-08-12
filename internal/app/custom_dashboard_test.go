@@ -535,6 +535,32 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	if !strings.Contains(configRendered, `href="/monitor/dashboard/`+dashboardID+`"`) || !strings.Contains(configRendered, "打开监控页") || !strings.Contains(configRendered, `data-dashboard-card-row`) {
 		t.Fatal("dashboard configuration page is missing its monitor shortcut or clickable card row")
 	}
+	testResponse, err := client.PostForm(serverURL+"/config/dashboard-card-tests", url.Values{
+		"csrf_token":      {formToken(t, page)},
+		"name":            {"unsaved request"},
+		"type":            {"number"},
+		"source_url":      {api.URL},
+		"value_path":      {"subscription.used"},
+		"headers":         {"Authorization: Bearer test-only-secret"},
+		"refresh_seconds": {"60"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	testPayload, _ := io.ReadAll(testResponse.Body)
+	testResponse.Body.Close()
+	if testResponse.StatusCode != http.StatusOK || !strings.Contains(string(testPayload), `"ok":true`) || !strings.Contains(string(testPayload), `"Authorization":"[REDACTED]"`) || strings.Contains(string(testPayload), "test-only-secret") {
+		t.Fatalf("unsafe or unsuccessful test request: status=%d body=%s", testResponse.StatusCode, testPayload)
+	}
+	afterTestResponse, err := client.Get(dashboardURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterTestPage, _ := io.ReadAll(afterTestResponse.Body)
+	afterTestResponse.Body.Close()
+	if got := len(regexp.MustCompile(`action="/config/dashboard-cards/([^/"]+)"`).FindAllStringSubmatch(string(afterTestPage), -1)); got != 2 {
+		t.Fatalf("test request mutated dashboard cards: got %d", got)
+	}
 	if !strings.Contains(configRendered, `action="/config/dashboards/`+dashboardID+`/refresh"`) || !strings.Contains(configRendered, `data-lucide="refresh-cw"`) {
 		t.Fatal("dashboard configuration page is missing its force refresh control")
 	}
@@ -582,8 +608,11 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	failedPage, _ := io.ReadAll(failedResponse.Body)
 	failedResponse.Body.Close()
 	failedRendered := string(failedPage)
-	if !strings.Contains(failedRendered, "数据异常") || !strings.Contains(failedRendered, `stroke-dasharray="0.00 100"`) || strings.Contains(failedRendered, `custom-dashboard-card__quota-value">63.24`) {
-		t.Fatalf("failed quota did not reset and expose its title badge: %s", failedRendered)
+	if !strings.Contains(failedRendered, "暂时不可用") || !strings.Contains(failedRendered, `stroke-dasharray="63.24 100"`) || !strings.Contains(failedRendered, `custom-dashboard-card__quota-value">63.24`) || !strings.Contains(failedRendered, "沿用 ") {
+		t.Fatalf("failed card did not retain its last successful value with a generic status: %s", failedRendered)
+	}
+	if strings.Contains(failedRendered, api.URL) || strings.Contains(failedRendered, "HTTP 503") || strings.Contains(failedRendered, "unavailable") {
+		t.Fatal("public dashboard exposed private request diagnostics")
 	}
 
 	response, err = client.PostForm(serverURL+"/config/dashboards/"+dashboardID+"/delete", url.Values{"csrf_token": {formToken(t, page)}, "confirm": {"yes"}})

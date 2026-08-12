@@ -43,3 +43,26 @@ func TestEnhancedFileUploadUsesClosableResultsDialog(t *testing.T) {
 		t.Fatal("enhanced upload still forces a full-page form submission")
 	}
 }
+
+func TestCustomDashboardDrawerWaitsForItsActualTransition(t *testing.T) {
+	t.Parallel()
+
+	script, err := webFiles.ReadFile("web/assets/app.js")
+	if err != nil {
+		t.Fatalf("read application script: %v", err)
+	}
+	source := string(script)
+	for _, expected := range []string{
+		`panel.addEventListener("transitionend", finish)`,
+		`event.propertyName !== "transform"`,
+		`clearDashboardDrawerCloseWait(drawer)`,
+		`summaryDrawer.classList.contains("is-closing")`,
+	} {
+		if !strings.Contains(source, expected) {
+			t.Fatalf("custom dashboard drawer animation is missing %q", expected)
+		}
+	}
+	if strings.Contains(source, `const delay = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 220`) {
+		t.Fatal("custom dashboard drawer still closes on a fixed timer")
+	}
+}

@@ -6350,29 +6350,60 @@ document.addEventListener("input", function (event) {
 
 function openDashboardDrawer(drawer) {
 	if (!drawer) return;
-	if (drawer._dashboardCloseTimer) window.clearTimeout(drawer._dashboardCloseTimer);
-	drawer._dashboardCloseTimer = null;
+	clearDashboardDrawerCloseWait(drawer);
+	drawer._dashboardReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
 	drawer.classList.remove("is-closing");
 	drawer.classList.add("is-opening");
 	drawer.open = true;
-	// Commit the off-canvas start state before transitioning the sheet into view.
+	syncDashboardDrawerState();
+	// Commit the off-canvas start state, then cross a paint boundary before entering.
 	drawer.querySelector(".custom-dashboard-drawer")?.getBoundingClientRect();
-	window.requestAnimationFrame(() => drawer.classList.remove("is-opening"));
+	window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+		if (drawer.open && !drawer.classList.contains("is-closing")) drawer.classList.remove("is-opening");
+	}));
+}
+
+function clearDashboardDrawerCloseWait(drawer) {
+	if (!drawer) return;
+	if (drawer._dashboardCloseTimer) window.clearTimeout(drawer._dashboardCloseTimer);
+	drawer._dashboardCloseTimer = null;
+	if (drawer._dashboardCloseTransition) {
+		const { panel, finish } = drawer._dashboardCloseTransition;
+		panel.removeEventListener("transitionend", finish);
+		drawer._dashboardCloseTransition = null;
+	}
 }
 
 function closeDashboardDrawer(drawer, returnFocus = true) {
 	if (!drawer?.open || drawer.classList.contains("is-closing")) return;
-	const trigger = drawer.querySelector(":scope > summary");
+	clearDashboardDrawerCloseWait(drawer);
+	const panel = drawer.querySelector(".custom-dashboard-drawer");
 	drawer.classList.remove("is-opening");
 	drawer.classList.add("is-closing");
-	const delay = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 220;
-	drawer._dashboardCloseTimer = window.setTimeout(() => {
+	const complete = () => {
+		clearDashboardDrawerCloseWait(drawer);
 		drawer.open = false;
 		drawer.classList.remove("is-closing");
-		drawer._dashboardCloseTimer = null;
 		syncDashboardDrawerState();
-		if (returnFocus) trigger?.focus();
-	}, delay);
+		if (returnFocus) {
+			const fallback = drawer.querySelector(":scope > summary");
+			const target = drawer._dashboardReturnFocus?.isConnected ? drawer._dashboardReturnFocus : fallback;
+			target?.focus();
+		}
+		drawer._dashboardReturnFocus = null;
+	};
+	if (!panel || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+		complete();
+		return;
+	}
+	const finish = (event) => {
+		if (event.target !== panel || event.propertyName !== "transform") return;
+		complete();
+	};
+	panel.addEventListener("transitionend", finish);
+	drawer._dashboardCloseTransition = { panel, finish };
+	// A fallback only covers removed/disabled transitions; normal completion follows CSS.
+	drawer._dashboardCloseTimer = window.setTimeout(complete, 600);
 }
 
 function syncDashboardDrawerState() {
@@ -6390,7 +6421,8 @@ document.addEventListener("click", function (event) {
 	const summaryDrawer = summary?.parentElement;
 	if (summaryDrawer?.matches("[data-dashboard-drawer]")) {
 		event.preventDefault();
-		if (summaryDrawer.open) closeDashboardDrawer(summaryDrawer);
+		if (summaryDrawer.classList.contains("is-closing")) openDashboardDrawer(summaryDrawer);
+		else if (summaryDrawer.open) closeDashboardDrawer(summaryDrawer);
 		else openDashboardDrawer(summaryDrawer);
 		return;
 	}
@@ -6567,3 +6599,139 @@ document.addEventListener("click", function (event) {
 });
 
 document.querySelectorAll("[data-dashboard-card-selection]").forEach(syncDashboardCardSelection);
+
+function dashboardJSONPath(documentValue, path) {
+  const tokens = String(path || "").trim().match(/[^.[\]]+|\[(\d+)\]/g) || [];
+  let current = documentValue;
+  for (const token of tokens) {
+    const key = token[0] === "[" ? Number(token.slice(1, -1)) : token;
+    if (current == null || !Object.prototype.hasOwnProperty.call(current, key)) throw new Error("missing");
+    current = current[key];
+  }
+  const testButton = form.querySelector("[data-dashboard-test-request]");
+  if (testButton) testButton.hidden = website;
+  return current;
+}
+
+function dashboardLocaleText(zh, en) {
+  return document.documentElement.lang.toLowerCase().startsWith("zh") ? zh : en;
+}
+
+function dashboardExpressionValue(documentValue, expressionText) {
+  const source = String(expressionText || "").trim();
+  if (!/[+*/()\-]/.test(source)) return dashboardJSONPath(documentValue, source);
+  const tokens = source.match(/\s*(\d+(?:\.\d+)?|[A-Za-z_$][\w$]*(?:\[\d+\]|\.[A-Za-z_$][\w$]*)*|[()+*/-])\s*/g);
+  if (!tokens || tokens.join("").replace(/\s/g, "") !== source.replace(/\s/g, "")) throw new Error("invalid");
+  let index = 0;
+  const factor = () => {
+    const token = tokens[index++]?.trim();
+    if (token === "(") { const value = expression(); if (tokens[index++]?.trim() !== ")") throw new Error("invalid"); return value; }
+    if (token === "+" || token === "-") { const value = factor(); return token === "-" ? -value : value; }
+    const number = Number(token);
+    if (token !== "" && Number.isFinite(number)) return number;
+    const value = dashboardJSONPath(documentValue, token);
+    if (typeof value !== "number") throw new Error("type");
+    return value;
+  };
+  const term = () => { let value = factor(); while (["*", "/"].includes(tokens[index]?.trim())) { const op = tokens[index++].trim(); const right = factor(); value = op === "*" ? value * right : value / right; } return value; };
+  const expression = () => { let value = term(); while (["+", "-"].includes(tokens[index]?.trim())) { const op = tokens[index++].trim(); const right = term(); value = op === "+" ? value + right : value - right; } return value; };
+  const value = expression();
+  if (index !== tokens.length || !Number.isFinite(value)) throw new Error("invalid");
+  return value;
+}
+
+function dashboardValueType(value) {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value;
+}
+
+function updateDashboardTestPreview(form) {
+  const panel = form.querySelector("[data-dashboard-test-result]");
+  if (!panel?._testDocument) return;
+  const expression = form.querySelector('[name="value_path"]')?.value || "";
+  try {
+    const value = dashboardExpressionValue(panel._testDocument, expression);
+    panel.querySelector("[data-dashboard-test-value]").textContent = typeof value === "string" ? value : JSON.stringify(value);
+    panel.querySelector("[data-dashboard-test-type]").textContent = dashboardValueType(value);
+  } catch (_) {
+    panel.querySelector("[data-dashboard-test-value]").textContent = dashboardLocaleText("未匹配", "No match");
+    panel.querySelector("[data-dashboard-test-type]").textContent = "—";
+  }
+}
+
+function renderDashboardJSONTree(root, value, form, path = "", search = "") {
+  root.replaceChildren();
+  const append = (parent, current, currentPath, label) => {
+    const isContainer = current !== null && typeof current === "object";
+    const searchable = `${label} ${currentPath}`.toLowerCase();
+    if (search && !searchable.includes(search) && !JSON.stringify(current).toLowerCase().includes(search)) return;
+    if (isContainer) {
+      const details = document.createElement("details");
+      details.open = currentPath.split(/[.[]/).length < 3;
+      const summary = document.createElement("summary");
+      summary.textContent = `${label} ${Array.isArray(current) ? `[${current.length}]` : `{${Object.keys(current).length}}`}`;
+      details.append(summary);
+      const children = document.createElement("div");
+      Object.entries(current).forEach(([key, child]) => append(children, child, currentPath ? (Array.isArray(current) ? `${currentPath}[${key}]` : `${currentPath}.${key}`) : key, key));
+      details.append(children);
+      parent.append(details);
+      return;
+    }
+    const row = document.createElement("div");
+    row.className = "custom-dashboard-json-leaf";
+    const key = document.createElement("code"); key.textContent = label;
+    const preview = document.createElement("span"); preview.textContent = typeof current === "string" ? current : JSON.stringify(current);
+    const type = document.createElement("small"); type.textContent = dashboardValueType(current);
+    const use = document.createElement("button"); use.type = "button"; use.textContent = dashboardLocaleText("使用此字段", "Use this field");
+    use.addEventListener("click", () => { const input = form.querySelector('[name="value_path"]'); if (input) { input.value = currentPath; input.dispatchEvent(new Event("input", { bubbles: true })); input.focus(); } });
+    row.append(key, preview, type, use); parent.append(row);
+  };
+  append(root, value, path, path || "root");
+}
+
+async function testDashboardCardRequest(button) {
+  const form = button.form;
+  const panel = form?.querySelector("[data-dashboard-test-result]");
+  if (!form || !panel || !form.reportValidity()) return;
+  button.disabled = true;
+  panel.hidden = false;
+  panel.querySelector("[data-dashboard-test-summary]").textContent = dashboardLocaleText("正在请求…", "Requesting…");
+  try {
+    const response = await fetch(button.formAction, { method: "POST", body: new FormData(form), headers: { Accept: "application/json" }, credentials: "same-origin" });
+    if (!response.ok) throw new Error(await response.text());
+    const result = await response.json();
+    const diagnostic = result.diagnostic || {};
+    panel.querySelector("[data-dashboard-test-summary]").textContent = result.ok ? dashboardLocaleText("请求成功", "Request succeeded") : (diagnostic.summary || dashboardLocaleText("请求失败", "Request failed"));
+    panel.querySelector("[data-dashboard-test-metrics]").textContent = `${diagnostic.httpStatus || "—"} · ${diagnostic.durationMs || 0} ms · ${diagnostic.responseBytes || 0} B · ${diagnostic.contentType || "—"}`;
+    panel._testDocument = result.document || null;
+    const search = panel.querySelector("[data-dashboard-json-search]");
+    const tree = panel.querySelector("[data-dashboard-json-tree]");
+    const rerender = () => result.document ? renderDashboardJSONTree(tree, result.document, form, "", search.value.trim().toLowerCase()) : tree.replaceChildren(document.createTextNode(dashboardLocaleText("当前响应没有可用的 JSON 结构。", "This response has no usable JSON structure.")));
+    rerender(); search.oninput = rerender;
+    panel.querySelector("[data-dashboard-raw-response]").textContent = result.rawResponse || "";
+    panel.querySelector("[data-dashboard-raw-note]").textContent = `${diagnostic.code === "non_json" ? dashboardLocaleText("当前卡片取值要求响应为 JSON。", "This card requires a JSON response.") : ""}${result.rawTruncated ? dashboardLocaleText(" 原始响应已截断至 256 KB。", " The raw response was truncated to 256 KB.") : ""}`.trim();
+    const requestInfo = panel.querySelector("[data-dashboard-request-info]"); requestInfo.replaceChildren();
+    const entries = [[dashboardLocaleText("地址", "URL"), diagnostic.url || "—"], [dashboardLocaleText("阶段", "Stage"), diagnostic.stage || "—"], ...Object.entries(result.requestHeaders || {}).map(([name, value]) => [`${dashboardLocaleText("请求头", "Header")} · ${name}`, value])];
+    entries.forEach(([name, value]) => { const row = document.createElement("div"); const dt = document.createElement("dt"); const dd = document.createElement("dd"); dt.textContent = name; dd.textContent = value; row.append(dt, dd); requestInfo.append(row); });
+    updateDashboardTestPreview(form);
+  } catch (error) {
+    panel.querySelector("[data-dashboard-test-summary]").textContent = String(error.message || error).trim() || dashboardLocaleText("测试请求失败", "Test request failed");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+document.addEventListener("click", function (event) {
+  const testButton = event.target.closest("[data-dashboard-test-request]");
+  if (testButton) { event.preventDefault(); testDashboardCardRequest(testButton); return; }
+  const tab = event.target.closest("[data-dashboard-test-tab]");
+  if (!tab) return;
+  const panel = tab.closest("[data-dashboard-test-result]");
+  panel.querySelectorAll("[data-dashboard-test-tab]").forEach((item) => item.setAttribute("aria-pressed", String(item === tab)));
+  panel.querySelectorAll("[data-dashboard-test-pane]").forEach((pane) => { pane.hidden = pane.dataset.dashboardTestPane !== tab.dataset.dashboardTestTab; });
+});
+
+document.addEventListener("input", function (event) {
+  if (event.target.matches('.custom-dashboard-card-form [name="value_path"], .custom-dashboard-form-grid [name="value_path"]')) updateDashboardTestPreview(event.target.form);
+});

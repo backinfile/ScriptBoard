@@ -124,7 +124,7 @@ After running a script, save its path, argument template, and timeout as a Quick
 
 ### Custom dashboards and website monitoring
 
-Administrators and Maintainers can combine external JSON data with existing Website Monitoring results under Configuration → Custom Dashboards, create number, percentage, quota, key-value, and website cards, and import or export dashboard configurations. Public dashboards expose results without revealing sources, request headers, formulas, or management controls.
+Administrators and Maintainers can combine external JSON data with existing Website Monitoring results under Configuration → Custom Dashboards, create number, percentage, quota, key-value, and website cards, and import or export dashboard configurations. Unsaved card settings can be tested and mapped from the returned JSON structure. Failed refreshes retain the last successful value and expose redacted request diagnostics only to authorized operators; test responses are not written to the database or audit records. Public dashboards expose only generic result states without revealing sources, request headers, formulas, diagnostics, or management controls.
 
 Website checks can send custom HTTP headers and resolve `{{VARIABLE_NAME}}` references when a check runs. For secrets, use password variables instead of writing credentials directly into an exportable monitor configuration. To consolidate multiple ScriptBoard hosts, use the bounded external interface below to connect another instance's Website Monitoring snapshot.
 
