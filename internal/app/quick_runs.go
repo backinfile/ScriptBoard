@@ -53,6 +53,7 @@ func (a *App) loadQuickRunHistory(quickRuns []quickRunView, locale webLocale) er
 		return err
 	}
 	defer rows.Close()
+	loadedAt := time.Now().UnixNano()
 	for rows.Next() {
 		var sourceID, runID, status string
 		var startedAt, finishedAt sql.NullInt64
@@ -63,15 +64,35 @@ func (a *App) loadQuickRunHistory(quickRuns []quickRunView, locale webLocale) er
 		if quick == nil {
 			continue
 		}
-		quick.RecentRuns = append(quick.RecentRuns, quickRunHistoryView{
-			ID: runID, Status: status, Icon: quickRunHistoryIcon(status),
-		})
-		if len(quick.RecentRuns) == 1 && startedAt.Valid && finishedAt.Valid && finishedAt.Int64 >= startedAt.Int64 {
-			quick.LastDuration = quickRunDuration(locale, time.Duration(finishedAt.Int64-startedAt.Int64))
-			quick.HasLastDuration = true
+		history := quickRunHistoryView{ID: runID, Status: status, Icon: quickRunHistoryIcon(status)}
+		if startedAt.Valid {
+			history.StartedAt = time.Unix(0, startedAt.Int64).UTC()
+			durationEnd := finishedAt
+			if !durationEnd.Valid && quickRunHistoryActive(status) {
+				durationEnd = sql.NullInt64{Int64: loadedAt, Valid: true}
+			}
+			if durationEnd.Valid && durationEnd.Int64 >= startedAt.Int64 {
+				history.Duration = quickRunDuration(locale, time.Duration(durationEnd.Int64-startedAt.Int64))
+				history.HasDuration = true
+			}
+		}
+		quick.RecentRuns = append(quick.RecentRuns, history)
+		if len(quick.RecentRuns) == 1 {
+			quick.LastStartedAt = history.StartedAt
+			quick.LastDuration = history.Duration
+			quick.HasLastDuration = history.HasDuration
 		}
 	}
 	return rows.Err()
+}
+
+func quickRunHistoryActive(status string) bool {
+	switch status {
+	case "starting", "running", "stopping", "timing_out":
+		return true
+	default:
+		return false
+	}
 }
 
 func quickRunHistoryIcon(status string) string {

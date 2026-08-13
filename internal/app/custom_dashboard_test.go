@@ -489,6 +489,9 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	publicPage, _ := io.ReadAll(publicResponse.Body)
 	publicResponse.Body.Close()
 	rendered := string(publicPage)
+	if strings.Contains(rendered, `custom-dashboard-title__meta`) || strings.Contains(rendered, `/public/dashboard/api-credits`) {
+		t.Fatal("live public dashboard exposed its path or update metadata")
+	}
 	if publicResponse.StatusCode != http.StatusOK || !strings.Contains(rendered, "使用率") || !strings.Contains(rendered, "63.24") {
 		t.Fatalf("public page missing card: status=%d body=%s", publicResponse.StatusCode, rendered)
 	}
@@ -512,6 +515,9 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	monitorPage, _ := io.ReadAll(monitorResponse.Body)
 	monitorResponse.Body.Close()
 	monitorRendered := string(monitorPage)
+	if strings.Contains(monitorRendered, `custom-dashboard-title__meta`) || strings.Contains(monitorRendered, `/public/dashboard/api-credits`) {
+		t.Fatal("live monitor dashboard exposed its path or update metadata")
+	}
 	if monitorResponse.StatusCode != http.StatusOK || !strings.Contains(monitorRendered, `custom-dashboard-monitor`) || !strings.Contains(monitorRendered, "63.24") {
 		t.Fatalf("authenticated monitor view missing dashboard data: status=%d body=%s", monitorResponse.StatusCode, monitorRendered)
 	}
@@ -526,6 +532,9 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	page, _ = io.ReadAll(response.Body)
 	response.Body.Close()
 	configRendered := string(page)
+	if strings.Contains(configRendered, `custom-dashboard-title__meta`) {
+		t.Fatal("dashboard heading still renders path or update metadata")
+	}
 	if !strings.Contains(configRendered, api.URL) || !strings.Contains(configRendered, `name="refresh_seconds"`) {
 		t.Fatal("dashboard configuration page missing card source settings")
 	}
