@@ -509,7 +509,7 @@ scriptboard version
 - 多用户、角色、用户组、LDAP、OAuth、SSO
 - 不可信代码沙箱或逐脚本身份切换
 - 公共 API、API Token、远程 CLI
-- DAG、流水线、多服务器、Kubernetes 多集群管理、通用资源编辑和编排
+- DAG、流水线、多服务器、跨集群编排、通用 Kubernetes 资源编辑和集群生命周期管理；允许在监控页保存并切换多个独立集群连接
 - Docker 作为正式部署方式
 - 系统 crontab 集成
 - Git 远程同步、子模块、LFS 和外部过滤器

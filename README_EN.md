@@ -21,7 +21,7 @@ ScriptBoard is a self-hosted script console for a single Windows or Linux host. 
 - create schedules with five-field Cron expressions;
 - expose bounded inbound triggers for logs, uploads, Quick Runs, and constrained variable updates;
 - review remote-login activity and manage Windows Defender Firewall or Linux UFW and Fail2Ban;
-- view host resources, local applications, Docker containers, one Kubernetes cluster, websites, run history, and audit records, and compose importable custom monitoring dashboards, including multi-image Registry version cards;
+- view host resources, local applications, Docker containers, multiple Kubernetes clusters, websites, run history, and audit records, and compose importable custom monitoring dashboards, including multi-image Registry version cards;
 - manage local or remote MySQL/MariaDB instances with checksummed logical backups and safety rollback;
 - use the optional AI assistant with resources you choose to reference;
 - restore files deleted through the web interface from ScriptBoard Trash;
@@ -140,7 +140,7 @@ After running a script, save its path, argument template, and timeout as a Quick
 
 ### Kubernetes monitoring
 
-Administrators and maintainers can configure one cluster under **Monitor → Kubernetes**. Enter an absolute kubeconfig path readable on the host running the ScriptBoard service and optionally select a context; the kubeconfig `current-context` is used by default. Connections start in observe-only mode. Limited operations can be explicitly enabled for rolling redeploys, single-step replica changes, and running a CronJob now.
+Administrators and maintainers can configure multiple clusters in the **Cluster connections** tab under **Monitor → Kubernetes**, then switch the active cluster from the **Cluster monitor** tab. Enter an absolute kubeconfig path readable on the host running the ScriptBoard service and optionally select a context; the kubeconfig `current-context` is used by default. Connections start in observe-only mode. Limited operations can be explicitly enabled for rolling redeploys, single-step replica changes, and running a CronJob now.
 
 The kubeconfig `server` may use `http://` or `https://`. HTTPS connections validate the kubeconfig CA and client certificate or system trust. HTTP connections may still use static tokens or basic authentication, but credentials and cluster data travel in plaintext. ScriptBoard does not store kubeconfig tokens, certificates, or private keys, and rejects `exec`/`auth-provider` login plugins and `insecure-skip-tls-verify`. When ScriptBoard runs under systemd or as a Windows service, ensure that service identity can read the kubeconfig and any referenced CA, token, or client-certificate files.
 

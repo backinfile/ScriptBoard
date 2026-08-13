@@ -21,7 +21,7 @@ ScriptBoard 是一款面向单台 Windows 或 Linux 主机的自托管脚本操�
 - 使用五字段 Cron 创建计划任务；
 - 通过受限外部接口接收日志、文件上传、快捷执行和约束变量修改；
 - 审查远程登录活动，并管理 Windows Defender 防火墙或 Linux UFW 与 Fail2Ban；
-- 查看宿主资源、本机应用、Docker 容器、单个 Kubernetes 集群、网站状态、运行历史和审计记录，并创建可导入导出的自定义监控看板（含多镜像 Registry 版本卡片）；
+- 查看宿主资源、本机应用、Docker 容器、多个 Kubernetes 集群、网站状态、运行历史和审计记录，并创建可导入导出的自定义监控看板（含多镜像 Registry 版本卡片）；
 - 管理本机或远程 MySQL/MariaDB 实例，执行带校验和及安全回滚的逻辑备份与恢复；
 - 通过可选的 AI 助手引用当前资源并辅助分析；
 - 从 ScriptBoard 回收站恢复通过网页误删的文件；
@@ -148,7 +148,7 @@ Windows 从各个可用卷开始浏览，Linux 从 `/` 开始浏览。文件页�
 
 ### Kubernetes 监控
 
-管理员或维护员可在“监控 → Kubernetes”配置一个集群。填写 ScriptBoard 服务所在主机可读取的 kubeconfig 绝对路径，并可选择指定 context；默认使用 kubeconfig 的 `current-context`。连接默认“仅观察”，需要时可明确开启仅包含滚动重部署、单步增减副本和立即运行 CronJob 的“有限操作”。
+管理员或维护员可在“监控 → Kubernetes”的“集群连接”页签配置多个集群，并在“集群监控”页签通过下拉框切换当前集群。填写 ScriptBoard 服务所在主机可读取的 kubeconfig 绝对路径，并可选择指定 context；默认使用 kubeconfig 的 `current-context`。连接默认“仅观察”，需要时可明确开启仅包含滚动重部署、单步增减副本和立即运行 CronJob 的“有限操作”。
 
 Kubeconfig 的 `server` 可使用 `http://` 或 `https://`。HTTPS 连接按 kubeconfig 的 CA、客户端证书或系统信任验证；HTTP 连接也可使用静态 token 或基本认证，但凭据与集群数据会以明文传输。ScriptBoard 不保存 kubeconfig 中的 token、证书或私钥，并拒绝 `exec`/`auth-provider` 登录插件和 `insecure-skip-tls-verify`。若服务以 systemd 或 Windows 服务运行，请确认该服务身份可以读取 kubeconfig 及其引用的 CA、token 或客户端证书文件。
 
