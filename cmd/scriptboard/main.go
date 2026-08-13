@@ -8,29 +8,22 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"scriptboard/internal/app"
-	"scriptboard/internal/assistant/pirpc"
-	"scriptboard/internal/assistant/runtimehost"
 	"scriptboard/internal/auditlog"
+	"scriptboard/internal/bootstrap"
 	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/config"
-	"scriptboard/internal/customdashboard"
 	"scriptboard/internal/doctor"
 	"scriptboard/internal/installation"
-	"scriptboard/internal/mysqlmanager"
 	"scriptboard/internal/platformservice"
-	"scriptboard/internal/privilegebroker"
-	"scriptboard/internal/runmanager"
-	"scriptboard/internal/runnerhost"
 	"scriptboard/internal/secretredaction"
 	"scriptboard/internal/shutdownsignal"
 	updatepkg "scriptboard/internal/update"
+	app "scriptboard/internal/web"
 )
 
 func main() {
@@ -535,161 +528,7 @@ func serve(arguments []string) error {
 }
 
 func serveContext(runContext context.Context, arguments []string) error {
-	loaded, err := config.Load(arguments, os.Getenv)
-	if err != nil {
-		return err
-	}
-	if err := validateNetworkConfiguration(loaded.Listen, loaded.TLSCert, loaded.TLSKey); err != nil {
-		return err
-	}
-	securityEventToken := ""
-	if loaded.SecurityEventTokenFile != "" {
-		body, readErr := os.ReadFile(loaded.SecurityEventTokenFile)
-		if readErr != nil {
-			return fmt.Errorf("read security event token file: %w", readErr)
-		}
-		if len(body) > 4096 || strings.TrimSpace(string(body)) == "" {
-			return errors.New("security event token file must contain 1 to 4096 bytes")
-		}
-		securityEventToken = strings.TrimSpace(string(body))
-	}
-	installRoot := applicationInstallRoot(loaded.StateRoot)
-	var assistantLauncher pirpc.ProcessLauncher
-	var runnerLauncher runmanager.ProcessLauncher
-	var auditCheckpoint app.AuditCheckpoint
-	var mfaStore app.MFAStore
-	var passkeyStore app.PasskeyStore
-	var remoteWebsiteService app.RemoteWebsiteService
-	var registryConnections customdashboard.RegistryConnections
-	var providerCredentials *privilegebroker.ProviderCredentials
-	var mysqlBackend mysqlmanager.Backend
-	var hostFilesBackend *privilegebroker.HostFilesBackend
-	var stateBackups app.StateBackupService
-	privilegedBrokerEndpoint := ""
-	if installRoot != "" {
-		if err := platformservice.ValidateWebRuntimeIdentity(); err != nil {
-			return fmt.Errorf("refuse to start managed Web service with unsafe OS identity: %w", err)
-		}
-		endpoint, err := runtimehost.DefaultEndpoint(loaded.StateRoot)
-		if err != nil {
-			return fmt.Errorf("resolve isolated Runtime Host endpoint: %w", err)
-		}
-		assistantDial := runtimehost.Dial(endpoint)
-		assistantLauncher = runtimehost.NewClientLauncher(func(ctx context.Context) (net.Conn, error) {
-			if err := platformservice.EnsureAIRuntimeHostRunning(ctx); err != nil {
-				return nil, fmt.Errorf("start isolated AI Runtime Host on demand: %w", err)
-			}
-			return assistantDial(ctx)
-		})
-		runnerEndpoint, err := runnerhost.DefaultEndpoint(loaded.StateRoot)
-		if err != nil {
-			return fmt.Errorf("resolve isolated Runner Host endpoint: %w", err)
-		}
-		runnerDial := runnerhost.Dial(runnerEndpoint)
-		runnerLauncher = runnerhost.NewClientLauncher(func(ctx context.Context) (net.Conn, error) {
-			if err := platformservice.EnsureRunnerHostRunning(ctx); err != nil {
-				return nil, fmt.Errorf("start isolated Runner Host on demand: %w", err)
-			}
-			return runnerDial(ctx)
-		})
-		privilegedBrokerEndpoint, err = privilegebroker.DefaultEndpoint(loaded.StateRoot)
-		if err != nil {
-			return fmt.Errorf("resolve privileged Broker endpoint: %w", err)
-		}
-		brokerClient := privilegebroker.NewClient(privilegebroker.ClientOptions{Dial: privilegebroker.Dial(privilegedBrokerEndpoint)})
-		auditCheckpoint = privilegebroker.NewRemoteCheckpoint(brokerClient)
-		mfaStore = privilegebroker.NewRemoteMFA(brokerClient)
-		passkeyStore = privilegebroker.NewRemotePasskey(brokerClient)
-		remoteWebsiteService = privilegebroker.NewRemoteWebsite(brokerClient)
-		registryConnections = privilegebroker.NewRegistryConnections(brokerClient)
-		providerCredentials = privilegebroker.NewProviderCredentials(brokerClient)
-		mysqlBackend = privilegebroker.NewMySQLBackend(brokerClient, mysqlmanager.ToolSettings{DumpExecutable: "mysqldump", ClientExecutable: "mysql"})
-		hostFilesBackend = privilegebroker.NewHostFilesBackend(brokerClient, filepath.Join(loaded.StateRoot, "inbox", "host-files-broker"))
-		stateBackups = privilegebroker.NewStateBackups(brokerClient)
-	}
-	updateShutdown := make(chan struct{}, 1)
-	var requestRestart func() error
-	if canRestartManagedService(loaded.StateRoot, loaded.ConfigPath) {
-		requestRestart = func() error { return platformservice.RequestRestart(time.Second) }
-	}
-
-	application, err := app.Open(app.Config{
-		StateRoot: loaded.StateRoot, InstallRoot: installRoot, ConfigPath: loaded.ConfigPath, TLSKey: loaded.TLSKey,
-		RunTimeoutGrace: loaded.RunTimeoutGrace, ExecutorChains: loaded.ExecutorChains, AdminUsername: loaded.AdminUsername, AdminPasswordFile: loaded.AdminPasswordFile, TrustedProxies: loaded.TrustedProxies,
-		AllowedHosts: loaded.AllowedHosts, CanonicalExternalURL: loaded.CanonicalExternalURL,
-		SecurityEventEndpoint: loaded.SecurityEventEndpoint, SecurityEventToken: securityEventToken,
-		SecurityEventTokenFile: loaded.SecurityEventTokenFile, SecurityEventAllowPrivate: loaded.SecurityEventAllowPrivate,
-		NotificationEmailRelayEndpoint: loaded.NotificationEmailRelayEndpoint, NotificationEmailRecipient: loaded.NotificationEmailRecipient,
-		NotificationEmailRelayTokenFile: loaded.NotificationEmailRelayTokenFile,
-		UpdateCheck:                     loaded.UpdateCheck, UpdateInterval: loaded.UpdateInterval,
-		RequestShutdown: func() {
-			select {
-			case updateShutdown <- struct{}{}:
-			default:
-			}
-		},
-		RequestRestart:           requestRestart,
-		AssistantProcessLauncher: assistantLauncher,
-		RunnerProcessLauncher:    runnerLauncher,
-		PrivilegedBrokerEndpoint: privilegedBrokerEndpoint,
-		AuditCheckpoint:          auditCheckpoint,
-		MFAStore:                 mfaStore,
-		PasskeyStore:             passkeyStore,
-		RemoteWebsiteService:     remoteWebsiteService,
-		RegistryConnections:      registryConnections,
-		ProviderCredentials:      providerCredentials,
-		MySQLBackend:             mysqlBackend,
-		HostFilesBackend:         hostFilesBackend,
-		StateBackups:             stateBackups,
-	})
-	if err != nil {
-		return err
-	}
-	defer application.Close()
-
-	listener, err := net.Listen("tcp", loaded.Listen)
-	if err != nil {
-		return fmt.Errorf("监听 %s: %w", loaded.Listen, err)
-	}
-	defer listener.Close()
-	if _, err := updatepkg.WriteRuntimeMarker(loaded.StateRoot, application.ValidationOperationID()); err != nil {
-		return fmt.Errorf("写入运行时标记: %w", err)
-	}
-	defer updatepkg.RemoveRuntimeMarker(loaded.StateRoot)
-
-	server := &http.Server{
-		Handler:           application.Handler(),
-		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       15 * time.Minute,
-		IdleTimeout:       2 * time.Minute,
-		MaxHeaderBytes:    1 << 20,
-		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12},
-	}
-	scheme := "http"
-	if loaded.TLSCert != "" {
-		scheme = "https"
-	}
-	fmt.Fprintln(os.Stdout, "ScriptBoard 已启动："+scheme+"://"+listener.Addr().String())
-
-	go func() {
-		select {
-		case <-runContext.Done():
-		case <-updateShutdown:
-		}
-		shutdownContext, cancel := context.WithTimeout(context.WithoutCancel(runContext), 30*time.Second)
-		defer cancel()
-		_ = server.Shutdown(shutdownContext)
-	}()
-
-	if loaded.TLSCert != "" {
-		err = server.ServeTLS(listener, loaded.TLSCert, loaded.TLSKey)
-	} else {
-		err = server.Serve(listener)
-	}
-	if err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("HTTP 服务失败: %w", err)
-	}
-	return nil
+	return bootstrap.RunWeb(runContext, arguments, os.Getenv, os.Stdout)
 }
 
 func applicationInstallRoot(stateRoot string) string {

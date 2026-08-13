@@ -60,7 +60,7 @@ ScriptBoard 将分散在文件系统中的脚本变成一套可浏览、可执�
 - 产品边界与术语：`CONTEXT.md`
 - 产品需求与验收：`docs/PRD.md`、`docs/ACCEPTANCE.md`
 - 领域决策：`docs/adr/`
-- 页面与真实业务文案：`internal/app/web/templates/`
+- 页面与真实业务文案：`internal/web/ui/templates/`
 - 当前没有客户证言、商业指标、品牌摄影或外部奖项背书；设计不得虚构这些内容。
 
 ## Product Principles

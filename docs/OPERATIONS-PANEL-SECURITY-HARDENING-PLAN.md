@@ -155,7 +155,7 @@ flowchart LR
 
 | 区域 | 当前实现 | 风险判断 |
 | --- | --- | --- |
-| 路由授权 | `internal/app/authorization.go:142` 对未匹配路径默认返回 `permissionObserve`；`requireSession` 再按该结果放行 | 新增路由若忘记分类，Viewer 可能意外获得访问；应改为未知即拒绝 |
+| 路由授权 | `internal/web/authorization.go:142` 对未匹配路径默认返回 `permissionObserve`；`requireSession` 再按该结果放行 | 新增路由若忘记分类，Viewer 可能意外获得访问；应改为未知即拒绝 |
 | 服务身份 | `internal/platformservice/service_unix.go:37` 使用 `User=root`；Windows 安装未声明专用低权限账户 | Web 漏洞、依赖漏洞和子进程漏洞的主机影响过大 |
 | 脚本执行 | `internal/runmanager/manager.go:435` 从 `os.Environ()` 继承完整服务环境；子进程使用服务身份 | 可能泄露代理、凭据和服务环境；没有 CPU、内存、进程数、文件句柄和网络配额 |
 | AI 隔离 | Linux 仅设置进程组和父进程死亡信号；Windows Job Object 目前主要用于随父进程终止 | 私有目录和固定 Broker 是好基础，但尚不是安全沙箱；Runtime 仍与服务共享 OS 权限 |

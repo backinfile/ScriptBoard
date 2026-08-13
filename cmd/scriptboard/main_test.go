@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"scriptboard/internal/app"
+	app "scriptboard/internal/web"
 	"scriptboard/internal/auditcheckpoint"
 	"scriptboard/internal/auditlog"
 	"scriptboard/internal/buildinfo"
