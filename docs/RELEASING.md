@@ -107,7 +107,7 @@ Pi 版本、四个平台资产大小与 SHA-256，加入 `runtime/scriptboard-ex
 ./scripts/build-release.ps1 -Version development
 ```
 
-这些安装器用于编译和包装验证。它们只支持 `--version-json`，不能安装受管服务、检查或应用更新，也不能作为正式服务更新基线。不要把 `development` 产物上传到正式 GitHub Release。
+这些安装器用于编译和包装验证。它们只支持 `--version-json`，不能安装受管服务、检查或应用更新，也不能作为正式服务更新基线。`development-installers` workflow 会执行同一元数据合同 smoke test；不要把 `development` 产物上传到正式 GitHub Release。
 
 ## 发布前检查
 

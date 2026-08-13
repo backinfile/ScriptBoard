@@ -1113,6 +1113,7 @@ async function assertViewerCannotManageMySQL(browser, baseURL, password) {
 const administratorSettingsHrefs = [
   "/settings/account",
   "/settings/users",
+  "/settings/name",
   "/settings/display",
   "/settings/ai",
   "/settings/service-logs",
@@ -1756,7 +1757,7 @@ async function assertExternalInterfaces(page, fixture) {
     await savedQuickRun.waitFor();
     await savedQuickRun.getByText("No run history", { exact: true }).waitFor();
     assert.equal(await savedQuickRun.locator("[data-quick-run-history-entry]").count(), 0);
-    assert.equal((await savedQuickRun.locator(".quick-run-history__duration strong").textContent()).trim(), "—");
+    assert.equal((await savedQuickRun.locator(".quick-run-history__latest dd").nth(1).textContent()).trim(), "—");
     const quickHeadingActions = page.locator(".quick-run-heading-actions > .button");
     assert.equal(await quickHeadingActions.count(), 3);
     const quickHeadingMetrics = await quickHeadingActions.evaluateAll(actions => actions.map(action => {

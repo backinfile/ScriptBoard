@@ -2,7 +2,7 @@
 set -euo pipefail
 
 go test -race \
-  ./internal/app \
+  ./internal/web \
   ./internal/assistant/pirpc \
   ./internal/assistant/providerproxy \
   ./internal/assistant/runtimehost \
