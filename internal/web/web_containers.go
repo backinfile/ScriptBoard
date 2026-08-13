@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"scriptboard/internal/identity"
 	"strings"
 
 	"scriptboard/internal/appstatus"
@@ -116,7 +117,7 @@ func (a *App) containersPage(response http.ResponseWriter, request *http.Request
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = containersTemplate.Execute(response, containersPageView{
 		ContainerView: view, Locale: resolveWebLocale(request), CSRFToken: current.csrfToken, Query: query,
-		CanManage: roleAllows(current.role, permissionManageOperations),
+		CanManage: identity.Allows(current.role, identity.PermissionManageOperations),
 	})
 }
 

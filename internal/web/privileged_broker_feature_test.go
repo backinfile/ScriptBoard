@@ -18,7 +18,6 @@ import (
 
 	"github.com/go-webauthn/webauthn/webauthn"
 
-	app "scriptboard/internal/web"
 	"scriptboard/internal/mfa"
 	"scriptboard/internal/mysqlmanager"
 	"scriptboard/internal/passkey"
@@ -26,6 +25,7 @@ import (
 	"scriptboard/internal/providercredential"
 	"scriptboard/internal/remotewebsite"
 	"scriptboard/internal/secretstore"
+	app "scriptboard/internal/web"
 )
 
 func TestManagedMySQLCredentialAndExecutionAreOwnedByPrivilegedBroker(t *testing.T) {

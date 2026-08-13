@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"scriptboard/internal/identity"
 	"strings"
 	"time"
 
@@ -164,7 +165,7 @@ func (a *App) assistantHostEntryByStableID(ctx context.Context, kind, stableID s
 // assistantPromptWithReferences supplies a fresh host overview and reauthorizes
 // every persisted reference. The JSON encoder escapes HTML delimiters so
 // resource-controlled labels and values cannot close the untrusted boundary.
-func (a *App) assistantPromptWithReferences(ctx context.Context, role userRole, message string, references []assistant.ContextRef) string {
+func (a *App) assistantPromptWithReferences(ctx context.Context, role identity.Role, message string, references []assistant.ContextRef) string {
 	snapshots := make([]assistantPromptReference, 0, len(references)+1)
 	snapshots = append(snapshots, a.assistantHostPromptSnapshot(ctx, role))
 	for _, reference := range references {
@@ -192,9 +193,9 @@ func (a *App) assistantPromptWithReferences(ctx context.Context, role userRole, 
 	return builder.String()
 }
 
-func (a *App) assistantPreparedPromptWithReferences(ctx context.Context, role userRole, message string, references []assistant.ContextRef) (assistantPreparedPrompt, error) {
+func (a *App) assistantPreparedPromptWithReferences(ctx context.Context, role identity.Role, message string, references []assistant.ContextRef) (assistantPreparedPrompt, error) {
 	prepared := assistantPreparedPrompt{Text: a.assistantPromptWithReferences(ctx, role, message, references)}
-	if !roleAllows(role, permissionReadFiles) || a.files == nil || a.assistantRaster == nil {
+	if !identity.Allows(role, identity.PermissionReadFiles) || a.files == nil || a.assistantRaster == nil {
 		return prepared, nil
 	}
 	for _, reference := range references {
@@ -235,9 +236,9 @@ func (a *App) assistantManagedFilePath(ctx context.Context, stableID string) (st
 	return "", false
 }
 
-func (a *App) assistantHostPromptSnapshot(ctx context.Context, role userRole) assistantPromptReference {
+func (a *App) assistantHostPromptSnapshot(ctx context.Context, role identity.Role) assistantPromptReference {
 	snapshot := assistantPromptReference{Kind: "host_overview", Label: "Current host overview", Status: "unavailable"}
-	if !roleAllows(role, permissionObserve) {
+	if !identity.Allows(role, identity.PermissionObserve) {
 		snapshot.Status = "forbidden"
 		return snapshot
 	}
@@ -267,11 +268,11 @@ func (a *App) assistantHostPromptSnapshot(ctx context.Context, role userRole) as
 	return snapshot
 }
 
-func (a *App) assistantReferenceSnapshot(ctx context.Context, role userRole, reference assistant.ContextRef) assistantPromptReference {
+func (a *App) assistantReferenceSnapshot(ctx context.Context, role identity.Role, reference assistant.ContextRef) assistantPromptReference {
 	snapshot := assistantPromptReference{Kind: reference.Kind, Label: reference.Label, Status: "unavailable"}
 	switch reference.Kind {
 	case "directory":
-		if !roleAllows(role, permissionReadFiles) {
+		if !identity.Allows(role, identity.PermissionReadFiles) {
 			snapshot.Status = "forbidden"
 			return snapshot
 		}
@@ -304,7 +305,7 @@ func (a *App) assistantReferenceSnapshot(ctx context.Context, role userRole, ref
 			return assistantDirectoryPromptSnapshot(snapshot, entries)
 		}
 	case "file":
-		if !roleAllows(role, permissionReadFiles) {
+		if !identity.Allows(role, identity.PermissionReadFiles) {
 			snapshot.Status = "forbidden"
 			return snapshot
 		}
@@ -332,7 +333,7 @@ func (a *App) assistantReferenceSnapshot(ctx context.Context, role userRole, ref
 			return snapshot
 		}
 	case "application":
-		if !roleAllows(role, permissionObserve) {
+		if !identity.Allows(role, identity.PermissionObserve) {
 			snapshot.Status = "forbidden"
 			return snapshot
 		}
@@ -367,7 +368,7 @@ func (a *App) assistantReferenceSnapshot(ctx context.Context, role userRole, ref
 			return snapshot
 		}
 	case "website":
-		if !roleAllows(role, permissionObserve) {
+		if !identity.Allows(role, identity.PermissionObserve) {
 			snapshot.Status = "forbidden"
 			return snapshot
 		}
@@ -399,7 +400,7 @@ func (a *App) assistantReferenceSnapshot(ctx context.Context, role userRole, ref
 			return snapshot
 		}
 	case "run":
-		if !roleAllows(role, permissionObserve) {
+		if !identity.Allows(role, identity.PermissionObserve) {
 			snapshot.Status = "forbidden"
 			return snapshot
 		}
@@ -425,7 +426,7 @@ func (a *App) assistantReferenceSnapshot(ctx context.Context, role userRole, ref
 		}
 		return snapshot
 	case "quick_run":
-		if !roleAllows(role, permissionObserve) {
+		if !identity.Allows(role, identity.PermissionObserve) {
 			snapshot.Status = "forbidden"
 			return snapshot
 		}
@@ -452,7 +453,7 @@ func (a *App) assistantReferenceSnapshot(ctx context.Context, role userRole, ref
 		}
 		return snapshot
 	case "schedule":
-		if !roleAllows(role, permissionObserve) {
+		if !identity.Allows(role, identity.PermissionObserve) {
 			snapshot.Status = "forbidden"
 			return snapshot
 		}

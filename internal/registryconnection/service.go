@@ -32,7 +32,7 @@ const (
 	storeFilename        = "registry-monitor-connections.enc"
 	maxConnections       = 100
 	maxPendingOperations = 128
-	maxCompleted         = 256
+	maxCompleted         = 10_000
 	maxStoreBytes        = 1 << 20
 	maxCredentialBytes   = 8 << 10
 )
@@ -56,9 +56,10 @@ type storedRecord struct {
 }
 
 type persistedState struct {
-	Active    map[string]storedRecord      `json:"active"`
-	Pending   map[string]preparedOperation `json:"pending"`
-	Completed []string                     `json:"completed,omitempty"`
+	Active         map[string]storedRecord      `json:"active"`
+	Pending        map[string]preparedOperation `json:"pending"`
+	Completed      []string                     `json:"completed,omitempty"`
+	LegacyMigrated bool                         `json:"legacy_migrated,omitempty"`
 }
 
 type Service struct {
@@ -104,7 +105,7 @@ func New(options Options) (*Service, error) {
 // Prepare stores an inert mutation. The active connection is unchanged until
 // Commit succeeds, so a caller can commit its SQLite transaction first.
 func (service *Service) Prepare(_ context.Context, operationID, cardID string, config registrymonitor.Config, password string, preserve bool) error {
-	operationID, cardID, password = strings.TrimSpace(operationID), strings.TrimSpace(cardID), strings.TrimSpace(password)
+	operationID, cardID = strings.TrimSpace(operationID), strings.TrimSpace(cardID)
 	config = registrymonitor.NormalizeConfig(config)
 	if !validID(operationID) || !validID(cardID) || registrymonitor.ValidateConfig(config) != nil || !validCredential(password, true) {
 		return ErrInvalidConnection
@@ -195,6 +196,13 @@ func (service *Service) Commit(_ context.Context, operationID string) error {
 	if !ok {
 		return ErrNotFound
 	}
+	// Completed IDs are retained until the SQLite coordinator explicitly
+	// acknowledges them. Refuse the mutation before applying it when the
+	// durable receipt set is full; silently evicting receipts can make crash
+	// recovery impossible.
+	if len(state.Completed) >= maxCompleted {
+		return ErrInvalidConnection
+	}
 	if operation.Delete {
 		delete(state.Active, operation.CardID)
 	} else {
@@ -202,10 +210,34 @@ func (service *Service) Commit(_ context.Context, operationID string) error {
 	}
 	delete(state.Pending, operationID)
 	state.Completed = append(state.Completed, operationID)
-	if len(state.Completed) > maxCompleted {
-		state.Completed = append([]string(nil), state.Completed[len(state.Completed)-maxCompleted:]...)
-	}
 	return service.write(state)
+}
+
+// Acknowledge releases a durable commit receipt after the SQLite coordinator
+// has recorded that Commit succeeded. It is idempotent so recovery may repeat
+// the acknowledgement after either process is interrupted.
+func (service *Service) Acknowledge(_ context.Context, operationID string) error {
+	operationID = strings.TrimSpace(operationID)
+	if !validID(operationID) {
+		return ErrInvalidConnection
+	}
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	state, err := service.load()
+	if err != nil {
+		return err
+	}
+	if _, pending := state.Pending[operationID]; pending {
+		return ErrInvalidConnection
+	}
+	for index, candidate := range state.Completed {
+		if candidate != operationID {
+			continue
+		}
+		state.Completed = append(state.Completed[:index], state.Completed[index+1:]...)
+		return service.write(state)
+	}
+	return nil
 }
 
 func (service *Service) Abort(_ context.Context, operationID string) error {
@@ -266,7 +298,7 @@ func (service *Service) Inspect(ctx context.Context, cardID string) ([]registrym
 
 func (service *Service) Test(ctx context.Context, cardID string, config registrymonitor.Config, password string, preserve bool) ([]registrymonitor.ImageResult, error) {
 	config = registrymonitor.NormalizeConfig(config)
-	cardID, password = strings.TrimSpace(cardID), strings.TrimSpace(password)
+	cardID = strings.TrimSpace(cardID)
 	if registrymonitor.ValidateConfig(config) != nil || !validCredential(password, true) || preserve && !validID(cardID) {
 		return nil, ErrInvalidConnection
 	}

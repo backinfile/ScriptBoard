@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	app "scriptboard/internal/web"
 	"scriptboard/internal/appstatus"
 	"scriptboard/internal/logstream"
+	app "scriptboard/internal/web"
 )
 
 func TestFileLogHistoryReturnsTheLatestHostTextLines(t *testing.T) {

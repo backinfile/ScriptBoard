@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"scriptboard/internal/identity"
 	"strconv"
 	"strings"
 
@@ -97,7 +98,7 @@ func (a *App) kubernetesPage(response http.ResponseWriter, request *http.Request
 		return
 	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = kubernetesTemplate.Execute(response, kubernetesPageView{View: view, Locale: resolveWebLocale(request), CSRFToken: current.csrfToken, Query: query, CanManage: roleAllows(current.role, permissionManageOperations), NamespaceOptions: view.AvailableNamespaces})
+	_ = kubernetesTemplate.Execute(response, kubernetesPageView{View: view, Locale: resolveWebLocale(request), CSRFToken: current.csrfToken, Query: query, CanManage: identity.Allows(current.role, identity.PermissionManageOperations), NamespaceOptions: view.AvailableNamespaces})
 }
 
 func (a *App) kubernetesData(response http.ResponseWriter, request *http.Request) {

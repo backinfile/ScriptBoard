@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"runtime"
+	"scriptboard/internal/identity"
 	"sort"
 	"strconv"
 	"strings"
@@ -34,7 +35,7 @@ type assistantUIActionSpec struct {
 	FormValueModes                      map[string]assistantUIActionValueMode
 	FormAllowedValues                   map[string][]string
 	FormFieldGuidance                   map[string]string
-	Permission                          permission
+	Permission                          identity.Permission
 	Handler                             http.HandlerFunc
 	BrowserOnly                         string
 	UnavailableReason                   string
@@ -208,7 +209,7 @@ func (executor *assistantToolExecutor) planListUIActions(ctx context.Context, au
 	}
 	items := make([]map[string]any, 0)
 	for _, spec := range executor.app.assistantUIActions() {
-		if parameters.Domain != "" && spec.Domain != parameters.Domain || !roleAllows(authorization.Role, spec.Permission) {
+		if parameters.Domain != "" && spec.Domain != parameters.Domain || !identity.Allows(authorization.Role, spec.Permission) {
 			continue
 		}
 		item := map[string]any{
@@ -270,7 +271,7 @@ func (executor *assistantToolExecutor) planPerformUIAction(ctx context.Context, 
 	if selected == nil {
 		return assistantToolPlan{}, errAssistantToolNotFound
 	}
-	if !roleAllows(authorization.Role, selected.Permission) || selected.BrowserOnly != "" || selected.Handler == nil {
+	if !identity.Allows(authorization.Role, selected.Permission) || selected.BrowserOnly != "" || selected.Handler == nil {
 		return assistantToolPlan{}, errAssistantToolForbidden
 	}
 	if selected.UnavailableReason != "" {

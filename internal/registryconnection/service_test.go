@@ -120,3 +120,62 @@ func TestPreparePreservesCredentialOnlyInsideExistingBinding(t *testing.T) {
 		t.Fatalf("active record=%#v", state.Active["card"])
 	}
 }
+
+func TestPasswordsPreserveLeadingAndTrailingWhitespace(t *testing.T) {
+	var received string
+	registry := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		_, received, _ = request.BasicAuth()
+		_ = json.NewEncoder(response).Encode(map[string]any{"tags": []string{"latest"}})
+	}))
+	defer registry.Close()
+	service, err := New(Options{StateRoot: t.TempDir(), Client: registry.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := registrymonitor.Config{Endpoint: registry.URL, Images: []string{"team/api"}, AuthMode: "basic", Username: "robot"}
+	const password = "  exact secret  "
+	if err := service.Prepare(context.Background(), "whitespace", "card", config, password, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Commit(context.Background(), "whitespace"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Inspect(context.Background(), "card"); err != nil {
+		t.Fatal(err)
+	}
+	if received != password {
+		t.Fatalf("stored password = %q, want exact %q", received, password)
+	}
+	if _, err := service.Test(context.Background(), "", config, password, false); err != nil {
+		t.Fatal(err)
+	}
+	if received != password {
+		t.Fatalf("tested password = %q, want exact %q", received, password)
+	}
+}
+
+func TestCommitReceiptSurvivesUntilAcknowledged(t *testing.T) {
+	service, err := New(Options{StateRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := registrymonitor.Config{Endpoint: "http://registry.test", Images: []string{"team/api"}, AuthMode: "anonymous"}
+	if err := service.Prepare(context.Background(), "receipt", "card", config, "", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Commit(context.Background(), "receipt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Commit(context.Background(), "receipt"); err != nil {
+		t.Fatalf("durable receipt did not make Commit idempotent: %v", err)
+	}
+	if err := service.Acknowledge(context.Background(), "receipt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Acknowledge(context.Background(), "receipt"); err != nil {
+		t.Fatalf("acknowledgement is not idempotent: %v", err)
+	}
+	if err := service.Commit(context.Background(), "receipt"); err != ErrNotFound {
+		t.Fatalf("acknowledged receipt remained durable: %v", err)
+	}
+}

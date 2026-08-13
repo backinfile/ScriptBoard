@@ -13,8 +13,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	app "scriptboard/internal/web"
 	"scriptboard/internal/statebackup"
+	app "scriptboard/internal/web"
 )
 
 func TestStateBackupSettingsUsesStepUpProtectedServiceWithoutRenderingPassphrase(t *testing.T) {

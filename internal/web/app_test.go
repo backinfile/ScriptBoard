@@ -18,8 +18,8 @@ import (
 	"strings"
 	"testing"
 
-	app "scriptboard/internal/web"
 	"scriptboard/internal/hostfiles"
+	app "scriptboard/internal/web"
 )
 
 func TestFirstStartCreatesCredentialAndProtectsFiles(t *testing.T) {

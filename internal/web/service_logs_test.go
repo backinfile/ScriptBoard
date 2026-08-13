@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	app "scriptboard/internal/web"
 	"scriptboard/internal/logstream"
 	"scriptboard/internal/servicelogs"
+	app "scriptboard/internal/web"
 )
 
 func TestServiceLogsPageAndExportKeepFixedFiltersAndRedaction(t *testing.T) {

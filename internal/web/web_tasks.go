@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"scriptboard/internal/hostfiles"
+	"scriptboard/internal/quickrun"
 	"scriptboard/internal/scheduler"
 )
 
@@ -43,7 +44,7 @@ type taskPageData struct {
 	Source             string
 	WorkingDirectory   string
 	FileName           string
-	Languages          []scriptLanguageOption
+	Languages          []quickrun.Language
 	Language           string
 	Conflict           bool
 	ConflictPath       string

@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	app "scriptboard/internal/web"
 	"scriptboard/internal/mfa"
+	app "scriptboard/internal/web"
 )
 
 func TestTOTPEnrollmentRequiresSecondFactorForLoginAndStepUp(t *testing.T) {

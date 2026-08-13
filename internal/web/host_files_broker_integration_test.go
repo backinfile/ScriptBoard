@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	app "scriptboard/internal/web"
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/privilegebroker"
+	app "scriptboard/internal/web"
 )
 
 func TestManagedFilesPageReadsHostThroughBroker(t *testing.T) {

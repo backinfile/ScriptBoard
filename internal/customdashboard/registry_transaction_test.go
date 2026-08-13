@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -73,6 +74,72 @@ func TestRegistryCommitFailureIsRecoveredFromDurableOperationLog(t *testing.T) {
 	}
 }
 
+func TestRegistryAcknowledgementFailureResumesFromCommittedPhase(t *testing.T) {
+	connections := newFixtureRegistryConnections()
+	connections.acknowledgeErr = errors.New("Broker acknowledgement interrupted")
+	manager := testManagerWithRegistry(t, connections)
+	ctx := context.Background()
+	dashboard, err := manager.CreateDashboard(ctx, DashboardInput{Name: "Registry", Slug: "registry-ack-recovery"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := json.RawMessage(`{"endpoint":"http://registry.test","images":["team/api"],"authMode":"anonymous"}`)
+	if _, err := manager.CreateCard(ctx, dashboard.ID, CardInput{Name: "Image", Type: CardRegistry, Config: config}); err == nil {
+		t.Fatal("create hid Registry acknowledgement failure")
+	}
+	var phase string
+	if err := manager.db.QueryRow(`SELECT phase FROM custom_dashboard_registry_operations`).Scan(&phase); err != nil || phase != "committed" {
+		t.Fatalf("operation phase=%q err=%v", phase, err)
+	}
+	commits := connections.commits
+	connections.acknowledgeErr = nil
+	if err := manager.ReconcileRegistryOperations(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if connections.commits != commits {
+		t.Fatalf("reconciliation repeated an already recorded commit: %d -> %d", commits, connections.commits)
+	}
+}
+
+func TestConcurrentPreserveUpdateCannotResurrectOldPassword(t *testing.T) {
+	connections := newBlockingRegistryConnections()
+	manager := testManagerWithRegistry(t, connections)
+	ctx := context.Background()
+	dashboard, err := manager.CreateDashboard(ctx, DashboardInput{Name: "Registry", Slug: "registry-concurrency"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := json.RawMessage(`{"endpoint":"http://registry.test","images":["team/api"],"authMode":"basic","username":"robot"}`)
+	card, err := manager.CreateCard(ctx, dashboard.ID, CardInput{Name: "Image", Type: CardRegistry, Config: config, RegistryPassword: "old-secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := make(chan error, 1)
+	go func() {
+		_, updateErr := manager.UpdateCard(ctx, card.ID, CardInput{Name: "New password", Type: CardRegistry, Config: config, RegistryPassword: "new-secret"})
+		first <- updateErr
+	}()
+	<-connections.newPasswordPrepared
+	second := make(chan error, 1)
+	go func() {
+		_, updateErr := manager.UpdateCard(ctx, card.ID, CardInput{Name: "Preserve", Type: CardRegistry, Config: config, PreserveRegistryPassword: true})
+		second <- updateErr
+	}()
+	close(connections.releaseNewPassword)
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-second; err != nil {
+		t.Fatal(err)
+	}
+	connections.mu.Lock()
+	password := connections.activePassword
+	connections.mu.Unlock()
+	if password != "new-secret" {
+		t.Fatalf("preserve update restored stale password %q", password)
+	}
+}
+
 func testManagerWithRegistry(t *testing.T, connections RegistryConnections) *Manager {
 	t.Helper()
 	database, err := sql.Open("sqlite", "file:"+t.Name()+"?mode=memory&cache=shared")
@@ -94,10 +161,12 @@ func testManagerWithRegistry(t *testing.T, connections RegistryConnections) *Man
 }
 
 type fixtureRegistryConnections struct {
-	pending    map[string]fixtureRegistryMutation
-	active     map[string]registrymonitor.Config
-	prepareErr error
-	commitErr  error
+	pending        map[string]fixtureRegistryMutation
+	active         map[string]registrymonitor.Config
+	prepareErr     error
+	commitErr      error
+	acknowledgeErr error
+	commits        int
 }
 
 type fixtureRegistryMutation struct {
@@ -128,6 +197,7 @@ func (connections *fixtureRegistryConnections) Commit(_ context.Context, operati
 	if connections.commitErr != nil {
 		return connections.commitErr
 	}
+	connections.commits++
 	mutation, ok := connections.pending[operationID]
 	if !ok {
 		return nil
@@ -139,6 +209,9 @@ func (connections *fixtureRegistryConnections) Commit(_ context.Context, operati
 	}
 	delete(connections.pending, operationID)
 	return nil
+}
+func (connections *fixtureRegistryConnections) Acknowledge(context.Context, string) error {
+	return connections.acknowledgeErr
 }
 func (connections *fixtureRegistryConnections) Abort(_ context.Context, operationID string) error {
 	delete(connections.pending, operationID)
@@ -153,4 +226,50 @@ func (connections *fixtureRegistryConnections) Inspect(context.Context, string) 
 }
 func (connections *fixtureRegistryConnections) Test(context.Context, string, registrymonitor.Config, string, bool) ([]registrymonitor.ImageResult, error) {
 	return nil, nil
+}
+
+type blockingRegistryConnections struct {
+	*fixtureRegistryConnections
+	mu                  sync.Mutex
+	activePassword      string
+	pendingPasswords    map[string]string
+	newPasswordPrepared chan struct{}
+	releaseNewPassword  chan struct{}
+	preparedOnce        sync.Once
+}
+
+func newBlockingRegistryConnections() *blockingRegistryConnections {
+	return &blockingRegistryConnections{
+		fixtureRegistryConnections: newFixtureRegistryConnections(),
+		pendingPasswords:           map[string]string{},
+		newPasswordPrepared:        make(chan struct{}),
+		releaseNewPassword:         make(chan struct{}),
+	}
+}
+
+func (connections *blockingRegistryConnections) Prepare(ctx context.Context, operationID, cardID string, config registrymonitor.Config, password string, preserve bool) error {
+	if password == "new-secret" {
+		connections.preparedOnce.Do(func() { close(connections.newPasswordPrepared) })
+		<-connections.releaseNewPassword
+	}
+	connections.mu.Lock()
+	if preserve && password == "" {
+		password = connections.activePassword
+	}
+	connections.pendingPasswords[operationID] = password
+	connections.mu.Unlock()
+	return connections.fixtureRegistryConnections.Prepare(ctx, operationID, cardID, config, password, preserve)
+}
+
+func (connections *blockingRegistryConnections) Commit(ctx context.Context, operationID string) error {
+	if err := connections.fixtureRegistryConnections.Commit(ctx, operationID); err != nil {
+		return err
+	}
+	connections.mu.Lock()
+	if password, ok := connections.pendingPasswords[operationID]; ok {
+		connections.activePassword = password
+		delete(connections.pendingPasswords, operationID)
+	}
+	connections.mu.Unlock()
+	return nil
 }

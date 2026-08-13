@@ -2,6 +2,7 @@ package web
 
 import (
 	"net/http"
+	"scriptboard/internal/identity"
 	"strings"
 )
 
@@ -28,7 +29,7 @@ type RouteSpec struct {
 	Method       string
 	Path         string
 	Auth         routeAuthMode
-	Permission   permission
+	Permission   identity.Permission
 	StepUp       bool
 	CSRF         routeCSRFPolicy
 	MaxBodyBytes int64
@@ -36,7 +37,7 @@ type RouteSpec struct {
 
 type declaredRouteHandler struct {
 	auth       routeAuthMode
-	permission permission
+	permission identity.Permission
 	stepUp     bool
 	handler    http.Handler
 }
@@ -117,7 +118,7 @@ func (mux *declaredRouteMux) Specs() []RouteSpec {
 	return append([]RouteSpec(nil), mux.specs...)
 }
 
-func (a *App) declaredRoutePermission(method, path string) permission {
+func (a *App) declaredRoutePermission(method, path string) identity.Permission {
 	for _, spec := range a.routeSpecs {
 		if spec.Method == method && spec.Path == path {
 			return spec.Permission

@@ -192,11 +192,7 @@ jobs:
         run: ./scripts/build-release.ps1 -Version development
       - name: Verify development installer contract
         shell: pwsh
-        run: |
-          $info = & ./dist/scriptboard-development-windows-amd64-setup.exe --version-json | ConvertFrom-Json
-          if ($info.version -ne "development" -or $info.release_build) {
-            throw "Development installer metadata contract changed"
-          }
+        run: ./scripts/verify-development-installers.ps1
       - uses: actions/upload-artifact@v4
         with:
           name: scriptboard-development-installers

@@ -35,7 +35,7 @@ import (
 )
 
 const (
-	ProtocolVersion                   = 1
+	ProtocolVersion                   = 2
 	MaxRequestBytes                   = 128 << 10
 	MaxResponseBytes                  = 5 << 20
 	capabilityLifetime                = 30 * time.Second
@@ -118,6 +118,7 @@ const (
 	operationRegistryPrepare          = "registry_prepare"
 	operationRegistryPrepareDelete    = "registry_prepare_delete"
 	operationRegistryCommit           = "registry_commit"
+	operationRegistryAcknowledge      = "registry_acknowledge"
 	operationRegistryAbort            = "registry_abort"
 	operationRegistryConfigured       = "registry_configured"
 	operationRegistryInspect          = "registry_inspect"
@@ -333,6 +334,7 @@ type RegistryService interface {
 	Prepare(context.Context, string, string, registrymonitor.Config, string, bool) error
 	PrepareDelete(context.Context, string, string) error
 	Commit(context.Context, string) error
+	Acknowledge(context.Context, string) error
 	Abort(context.Context, string) error
 	Configured(context.Context, string) (bool, error)
 	Inspect(context.Context, string) ([]registrymonitor.ImageResult, error)
@@ -551,7 +553,7 @@ func (server *Server) handle(connection net.Conn) {
 		response = server.hostFilesScheduleOperation(request)
 	case operationStateBackupCreate, operationStateBackupInspect, operationStateBackupStage, operationStateBackupList, operationStateBackupDiscard:
 		response = server.stateBackupOperation(request)
-	case operationRegistryPrepare, operationRegistryPrepareDelete, operationRegistryCommit, operationRegistryAbort,
+	case operationRegistryPrepare, operationRegistryPrepareDelete, operationRegistryCommit, operationRegistryAcknowledge, operationRegistryAbort,
 		operationRegistryConfigured, operationRegistryInspect, operationRegistryTest:
 		response = server.registryOperation(request)
 	default:
@@ -1495,7 +1497,7 @@ func isStateBackupOperation(operation string) bool {
 
 func isRegistryOperation(operation string) bool {
 	switch operation {
-	case operationRegistryPrepare, operationRegistryPrepareDelete, operationRegistryCommit, operationRegistryAbort,
+	case operationRegistryPrepare, operationRegistryPrepareDelete, operationRegistryCommit, operationRegistryAcknowledge, operationRegistryAbort,
 		operationRegistryConfigured, operationRegistryInspect, operationRegistryTest:
 		return true
 	default:

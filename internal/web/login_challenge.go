@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"scriptboard/internal/identity"
 	"sync"
 	"time"
 )
@@ -16,7 +17,7 @@ const (
 type loginChallenge struct {
 	UserID         string
 	Username       string
-	Role           userRole
+	Role           identity.Role
 	AuthVersion    int64
 	RemoteHost     string
 	MFAEnabled     bool

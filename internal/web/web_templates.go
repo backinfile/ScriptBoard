@@ -1,5 +1,7 @@
 package web
 
+import "scriptboard/internal/identity"
+
 type settingsNavigationData struct {
 	Locale          webLocale
 	Current         string
@@ -10,8 +12,8 @@ type settingsNavigationData struct {
 func newSettingsNavigation(current session, locale webLocale, active string) settingsNavigationData {
 	return settingsNavigationData{
 		Locale: locale, Current: active,
-		CanManageUsers:  roleAllows(current.role, permissionManageUsers),
-		CanManageSystem: roleAllows(current.role, permissionManageSystem),
+		CanManageUsers:  identity.Allows(current.role, identity.PermissionManageUsers),
+		CanManageSystem: identity.Allows(current.role, identity.PermissionManageSystem),
 	}
 }
 

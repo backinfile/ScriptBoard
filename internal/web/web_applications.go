@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"scriptboard/internal/identity"
 	"strings"
 
 	"scriptboard/internal/appstatus"
@@ -97,7 +98,7 @@ func (a *App) applicationsPage(response http.ResponseWriter, request *http.Reque
 	current := request.Context().Value(sessionContextKey).(session)
 	page := applicationsPageView{
 		View: view, Locale: resolveWebLocale(request), CSRFToken: current.csrfToken, Query: query,
-		CanManage: roleAllows(current.role, permissionManageOperations),
+		CanManage: identity.Allows(current.role, identity.PermissionManageOperations),
 	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = applicationsTemplate.Execute(response, page)

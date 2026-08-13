@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"scriptboard/internal/assistant"
 	"scriptboard/internal/assistant/toolbroker"
 	"scriptboard/internal/buildinfo"
+	"scriptboard/internal/quickrun"
 )
 
 func TestAssistantStateToolApprovalFreezesTargetAndNeverReplaysChangedAction(t *testing.T) {
@@ -352,7 +354,7 @@ func TestAssistantUIActionResultsAreComposableAndFailuresAreActionable(t *testin
 	if err := os.MkdirAll(workingDirectory, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	language := platformScriptLanguages()[0]
+	language := quickrun.PlatformLanguages(runtime.GOOS)[0]
 	source := "printf 'assistant action ok\\n'\n"
 	if language.ID == "powershell" {
 		source = "Write-Output 'assistant action ok'\n"

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"scriptboard/internal/identity"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -12,7 +13,7 @@ import (
 type userView struct {
 	ID        string
 	Username  string
-	Role      userRole
+	Role      identity.Role
 	Enabled   bool
 	CreatedAt time.Time
 }
@@ -112,12 +113,12 @@ func (a *App) createUser(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	username := strings.TrimSpace(request.FormValue("username"))
-	role := userRole(request.FormValue("role"))
+	role := identity.Role(request.FormValue("role"))
 	if !validUsername(username) {
 		http.Error(response, "用户名必须为 1 至 64 个有效 Unicode 字符", http.StatusBadRequest)
 		return
 	}
-	if !validAssignableRole(role) {
+	if !identity.ValidAssignableRole(role) {
 		http.Error(response, "用户角色无效", http.StatusBadRequest)
 		return
 	}
@@ -138,7 +139,7 @@ func (a *App) createUser(response http.ResponseWriter, request *http.Request) {
 	}
 	now := time.Now().UTC().Unix()
 	mfaRequiredAt := int64(0)
-	if role == roleMaintainer {
+	if role == identity.RoleMaintainer {
 		mfaRequiredAt = time.Now().UTC().Add(24 * time.Hour).Unix()
 	}
 	_, err = a.db.Exec(`INSERT INTO users
@@ -171,7 +172,7 @@ func (a *App) setUserEnabled(response http.ResponseWriter, request *http.Request
 		http.Error(response, "无法读取用户", http.StatusInternalServerError)
 		return
 	}
-	if user.Role == roleAdministrator {
+	if user.Role == identity.RoleAdministrator {
 		http.Error(response, "系统管理员不能停用或恢复", http.StatusForbidden)
 		return
 	}
@@ -226,17 +227,17 @@ func (a *App) updateUser(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "无法读取用户", http.StatusInternalServerError)
 		return
 	}
-	if user.Role == roleAdministrator {
+	if user.Role == identity.RoleAdministrator {
 		http.Error(response, "系统管理员角色不能修改", http.StatusForbidden)
 		return
 	}
 	username := strings.TrimSpace(request.FormValue("username"))
-	role := userRole(request.FormValue("role"))
+	role := identity.Role(request.FormValue("role"))
 	if !validUsername(username) {
 		http.Error(response, "用户名必须为 1 至 64 个有效 Unicode 字符", http.StatusBadRequest)
 		return
 	}
-	if !validAssignableRole(role) {
+	if !identity.ValidAssignableRole(role) {
 		http.Error(response, "用户角色无效", http.StatusBadRequest)
 		return
 	}
@@ -247,8 +248,8 @@ func (a *App) updateUser(response http.ResponseWriter, request *http.Request) {
 	}
 	defer transaction.Rollback()
 	mfaRequiredAt := int64(0)
-	if role == roleMaintainer {
-		if user.Role == roleMaintainer {
+	if role == identity.RoleMaintainer {
+		if user.Role == identity.RoleMaintainer {
 			if err := transaction.QueryRow(`SELECT mfa_required_at FROM users WHERE id = ?`, user.ID).Scan(&mfaRequiredAt); err != nil {
 				http.Error(response, "could not read MFA policy", http.StatusInternalServerError)
 				return
@@ -300,7 +301,7 @@ func (a *App) resetUserPassword(response http.ResponseWriter, request *http.Requ
 		http.Error(response, "could not read user", http.StatusInternalServerError)
 		return
 	}
-	if user.Role == roleAdministrator {
+	if user.Role == identity.RoleAdministrator {
 		http.Error(response, "the system administrator password cannot be reset here", http.StatusForbidden)
 		return
 	}
@@ -326,7 +327,7 @@ func (a *App) resetUserPassword(response http.ResponseWriter, request *http.Requ
 		UPDATE users
 		SET password_hash = ?, auth_version = auth_version + 1, updated_at = ?
 		WHERE id = ? AND role <> ?
-	`, passwordHash, time.Now().UTC().Unix(), user.ID, roleAdministrator)
+	`, passwordHash, time.Now().UTC().Unix(), user.ID, identity.RoleAdministrator)
 	if err != nil {
 		http.Error(response, "could not reset password", http.StatusInternalServerError)
 		return

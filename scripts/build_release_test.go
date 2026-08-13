@@ -165,7 +165,7 @@ func TestFormalReleaseDependsOnSecurityGates(t *testing.T) {
 	}
 }
 
-func TestDevelopmentInstallerWorkflowOnlyUsesMetadataContract(t *testing.T) {
+func TestDevelopmentInstallerWorkflowEnforcesAllPlatformContracts(t *testing.T) {
 	workflow, err := os.ReadFile("../.github/workflows/release.yml")
 	if err != nil {
 		t.Fatal(err)
@@ -177,18 +177,22 @@ func TestDevelopmentInstallerWorkflowOnlyUsesMetadataContract(t *testing.T) {
 		t.Fatal("development installer workflow is missing")
 	}
 	job := content[start : start+end]
-	for _, expected := range []string{
-		"scriptboard-development-windows-amd64-setup.exe --version-json",
-		`$info.version -ne "development"`,
-		`$info.release_build`,
-	} {
-		if !strings.Contains(job, expected) {
-			t.Fatalf("development installer workflow does not assert %q", expected)
-		}
+	if !strings.Contains(job, "./scripts/verify-development-installers.ps1") {
+		t.Fatal("development installer workflow does not run the shared contract verifier")
 	}
-	for _, forbidden := range []string{"--extract-to", "service install"} {
-		if strings.Contains(job, forbidden) {
-			t.Fatalf("development installer workflow exceeds its metadata-only contract with %q", forbidden)
+	verifier, err := os.ReadFile("verify-development-installers.ps1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"scriptboard-development-windows-amd64-setup.exe",
+		"scriptboard-development-windows-arm64-setup.exe",
+		"scriptboard-development-linux-amd64.run",
+		"scriptboard-development-linux-arm64.run",
+		"--version-json", "--extract-to", "accepted a no-argument install",
+	} {
+		if !strings.Contains(string(verifier), expected) {
+			t.Fatalf("development installer verifier does not assert %q", expected)
 		}
 	}
 }

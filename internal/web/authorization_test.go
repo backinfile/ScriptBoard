@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"scriptboard/internal/identity"
 	"testing"
 )
 
@@ -42,48 +43,48 @@ func TestFixedRolesCoverEveryProtectedRouteClass(t *testing.T) {
 		name    string
 		method  string
 		path    string
-		allowed []userRole
+		allowed []identity.Role
 	}{
-		{"operations html", http.MethodGet, "/monitor", []userRole{roleAdministrator, roleMaintainer, roleOperator, roleViewer}},
-		{"operations json", http.MethodGet, "/monitor/data", []userRole{roleAdministrator, roleMaintainer, roleOperator, roleViewer}},
-		{"application log sse", http.MethodGet, "/monitor/applications/docker:one/logs/events", []userRole{roleAdministrator, roleMaintainer, roleOperator, roleViewer}},
-		{"run log sse", http.MethodGet, "/history/runs/run-one/events", []userRole{roleAdministrator, roleMaintainer, roleOperator, roleViewer}},
-		{"run text download", http.MethodGet, "/history/runs/run-one/download", []userRole{roleAdministrator, roleMaintainer, roleOperator, roleViewer}},
-		{"manage monitor", http.MethodPost, "/monitor/websites/site-one/check", []userRole{roleAdministrator, roleMaintainer}},
-		{"export monitor configurations", http.MethodGet, "/monitor/websites/export", []userRole{roleAdministrator, roleMaintainer}},
-		{"import monitor configurations", http.MethodGet, "/monitor/websites/import", []userRole{roleAdministrator, roleMaintainer}},
-		{"file listing", http.MethodGet, "/resources/files", []userRole{roleAdministrator, roleMaintainer, roleOperator}},
-		{"directory json", http.MethodGet, "/resources/directories", []userRole{roleAdministrator, roleMaintainer, roleOperator}},
-		{"file download", http.MethodGet, "/resources/files/download?path=C%3A%5Cscripts%5Cscript.ps1", []userRole{roleAdministrator, roleMaintainer, roleOperator}},
-		{"file upload task", http.MethodGet, "/resources/files/upload", []userRole{roleAdministrator, roleMaintainer}},
-		{"file move task", http.MethodGet, "/resources/files/move?path=C%3A%5Cscripts%5Cscript.ps1", []userRole{roleAdministrator, roleMaintainer}},
-		{"file mutation", http.MethodPost, "/resources/files/delete", []userRole{roleAdministrator, roleMaintainer}},
-		{"external upload inbox", http.MethodGet, "/resources/inbox", []userRole{roleAdministrator, roleMaintainer}},
-		{"publish external upload", http.MethodPost, "/resources/inbox/upload-one/publish", []userRole{roleAdministrator, roleMaintainer}},
-		{"file quick access pin", http.MethodPost, "/resources/files/quick-access", []userRole{roleAdministrator, roleMaintainer, roleOperator}},
-		{"file script task", http.MethodGet, "/resources/files/run?path=C%3A%5Cscripts%5Cscript.ps1", []userRole{roleAdministrator, roleMaintainer, roleOperator}},
-		{"quick run start", http.MethodPost, "/config/quick-runs/quick-one/start", []userRole{roleAdministrator, roleMaintainer, roleOperator}},
-		{"one time source", http.MethodPost, "/config/quick-runs/one-time", []userRole{roleAdministrator, roleMaintainer}},
-		{"schedule list", http.MethodGet, "/config/schedules", []userRole{roleAdministrator, roleMaintainer, roleOperator, roleViewer}},
-		{"schedule run now", http.MethodPost, "/config/schedules/schedule-one/run", []userRole{roleAdministrator, roleMaintainer}},
-		{"variables", http.MethodGet, "/resources/variables", []userRole{roleAdministrator, roleMaintainer}},
-		{"mysql databases", http.MethodGet, "/resources/databases", []userRole{roleAdministrator, roleMaintainer}},
-		{"mysql backup mutation", http.MethodPost, "/resources/databases/instances/instance-one/backup", []userRole{roleAdministrator, roleMaintainer}},
-		{"external interfaces", http.MethodGet, "/config/external-interfaces", []userRole{roleAdministrator, roleMaintainer}},
-		{"external interface global control", http.MethodPost, "/config/external-interfaces/control", []userRole{roleAdministrator, roleMaintainer}},
-		{"external interface mutation", http.MethodPost, "/config/external-interfaces/keys/key-one/toggle", []userRole{roleAdministrator, roleMaintainer}},
-		{"audit html", http.MethodGet, "/history/audit", []userRole{roleAdministrator, roleMaintainer}},
-		{"audit download", http.MethodGet, "/history/audit.csv", []userRole{roleAdministrator, roleMaintainer}},
-		{"system settings", http.MethodGet, "/settings/updates/status", []userRole{roleAdministrator, roleMaintainer}},
-		{"restart service", http.MethodPost, "/settings/updates/restart", []userRole{roleAdministrator, roleMaintainer}},
-		{"user management", http.MethodGet, "/settings/users", []userRole{roleAdministrator}},
-		{"user edit task", http.MethodGet, "/settings/users/user-one/edit", []userRole{roleAdministrator}},
-		{"own account", http.MethodPost, "/settings/account", []userRole{roleAdministrator, roleMaintainer, roleOperator, roleViewer}},
-		{"own password task", http.MethodGet, "/settings/account/password", []userRole{roleAdministrator, roleMaintainer, roleOperator, roleViewer}},
-		{"own username task", http.MethodGet, "/settings/account/username", []userRole{roleAdministrator, roleMaintainer, roleOperator, roleViewer}},
+		{"operations html", http.MethodGet, "/monitor", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator, identity.RoleViewer}},
+		{"operations json", http.MethodGet, "/monitor/data", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator, identity.RoleViewer}},
+		{"application log sse", http.MethodGet, "/monitor/applications/docker:one/logs/events", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator, identity.RoleViewer}},
+		{"run log sse", http.MethodGet, "/history/runs/run-one/events", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator, identity.RoleViewer}},
+		{"run text download", http.MethodGet, "/history/runs/run-one/download", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator, identity.RoleViewer}},
+		{"manage monitor", http.MethodPost, "/monitor/websites/site-one/check", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
+		{"export monitor configurations", http.MethodGet, "/monitor/websites/export", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
+		{"import monitor configurations", http.MethodGet, "/monitor/websites/import", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
+		{"file listing", http.MethodGet, "/resources/files", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator}},
+		{"directory json", http.MethodGet, "/resources/directories", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator}},
+		{"file download", http.MethodGet, "/resources/files/download?path=C%3A%5Cscripts%5Cscript.ps1", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator}},
+		{"file upload task", http.MethodGet, "/resources/files/upload", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
+		{"file move task", http.MethodGet, "/resources/files/move?path=C%3A%5Cscripts%5Cscript.ps1", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
+		{"file mutation", http.MethodPost, "/resources/files/delete", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
+		{"external upload inbox", http.MethodGet, "/resources/inbox", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
+		{"publish external upload", http.MethodPost, "/resources/inbox/upload-one/publish", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
+		{"file quick access pin", http.MethodPost, "/resources/files/quick-access", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator}},
+		{"file script task", http.MethodGet, "/resources/files/run?path=C%3A%5Cscripts%5Cscript.ps1", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator}},
+		{"quick run start", http.MethodPost, "/config/quick-runs/quick-one/start", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator}},
+		{"one time source", http.MethodPost, "/config/quick-runs/one-time", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
+		{"schedule list", http.MethodGet, "/config/schedules", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator, identity.RoleViewer}},
+		{"schedule run now", http.MethodPost, "/config/schedules/schedule-one/run", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
+		{"variables", http.MethodGet, "/resources/variables", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
+		{"mysql databases", http.MethodGet, "/resources/databases", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
+		{"mysql backup mutation", http.MethodPost, "/resources/databases/instances/instance-one/backup", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
+		{"external interfaces", http.MethodGet, "/config/external-interfaces", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
+		{"external interface global control", http.MethodPost, "/config/external-interfaces/control", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
+		{"external interface mutation", http.MethodPost, "/config/external-interfaces/keys/key-one/toggle", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
+		{"audit html", http.MethodGet, "/history/audit", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
+		{"audit download", http.MethodGet, "/history/audit.csv", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
+		{"system settings", http.MethodGet, "/settings/updates/status", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
+		{"restart service", http.MethodPost, "/settings/updates/restart", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
+		{"user management", http.MethodGet, "/settings/users", []identity.Role{identity.RoleAdministrator}},
+		{"user edit task", http.MethodGet, "/settings/users/user-one/edit", []identity.Role{identity.RoleAdministrator}},
+		{"own account", http.MethodPost, "/settings/account", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator, identity.RoleViewer}},
+		{"own password task", http.MethodGet, "/settings/account/password", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator, identity.RoleViewer}},
+		{"own username task", http.MethodGet, "/settings/account/username", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator, identity.RoleViewer}},
 	}
 
-	roles := []userRole{roleAdministrator, roleMaintainer, roleOperator, roleViewer}
+	roles := []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator, identity.RoleViewer}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(test.method, test.path, nil)
@@ -93,7 +94,7 @@ func TestFixedRolesCoverEveryProtectedRouteClass(t *testing.T) {
 			}
 			for _, role := range roles {
 				want := containsRole(test.allowed, role)
-				if got := roleAllows(role, spec.Permission); got != want {
+				if got := identity.Allows(role, spec.Permission); got != want {
 					t.Errorf("%s %s role=%s allowed=%v, want %v (permission=%d)", test.method, test.path, role, got, want, spec.Permission)
 				}
 			}
@@ -128,7 +129,7 @@ func TestEveryRouteDeclaresMethodAuthenticationAndMutationPolicy(t *testing.T) {
 		}
 		seen[spec.Pattern] = true
 		if spec.Auth == routeAuthSession {
-			if !roleAllows(roleAdministrator, spec.Permission) {
+			if !identity.Allows(identity.RoleAdministrator, spec.Permission) {
 				t.Errorf("administrator cannot access declared route %s", spec.Pattern)
 			}
 			mutating := spec.Method != http.MethodGet && spec.Method != http.MethodHead
@@ -202,7 +203,7 @@ func declaredSpecForRequest(specs []RouteSpec, request *http.Request) (RouteSpec
 	return matched, found
 }
 
-func containsRole(roles []userRole, target userRole) bool {
+func containsRole(roles []identity.Role, target identity.Role) bool {
 	for _, role := range roles {
 		if role == target {
 			return true

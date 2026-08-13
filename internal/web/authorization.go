@@ -9,42 +9,10 @@ import (
 	"scriptboard/internal/identity"
 )
 
-type userRole = identity.Role
-
-const (
-	roleAdministrator = identity.RoleAdministrator
-	roleMaintainer    = identity.RoleMaintainer
-	roleOperator      = identity.RoleOperator
-	roleViewer        = identity.RoleViewer
-)
-
-type permission = identity.Permission
-
-const (
-	permissionObserve          = identity.PermissionObserve
-	permissionManageOperations = identity.PermissionManageOperations
-	permissionReadFiles        = identity.PermissionReadFiles
-	permissionWriteFiles       = identity.PermissionWriteFiles
-	permissionExecute          = identity.PermissionExecute
-	permissionManageExecution  = identity.PermissionManageExecution
-	permissionReadAudit        = identity.PermissionReadAudit
-	permissionManageSystem     = identity.PermissionManageSystem
-	permissionManageUsers      = identity.PermissionManageUsers
-	permissionManageDatabases  = identity.PermissionManageDatabases
-)
-
-func validAssignableRole(role userRole) bool {
-	return identity.ValidAssignableRole(role)
-}
-
-func roleAllows(role userRole, required permission) bool {
-	return identity.Allows(role, required)
-}
-
-func (a *App) requirePermission(required permission, next http.Handler) http.Handler {
+func (a *App) requirePermission(required identity.Permission, next http.Handler) http.Handler {
 	protected := a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		current, ok := request.Context().Value(sessionContextKey).(session)
-		if !ok || !roleAllows(current.role, required) {
+		if !ok || !identity.Allows(current.role, required) {
 			if ok {
 				a.recordAuditForRequest(request, "authorization_denied", request.Method+" "+request.URL.Path, "blocked")
 			}
@@ -56,19 +24,17 @@ func (a *App) requirePermission(required permission, next http.Handler) http.Han
 	return declaredRouteHandler{auth: routeAuthSession, permission: required, handler: protected}
 }
 
-const recentAuthenticationWindow = identity.RecentAuthenticationWindow
-
-func (a *App) requireStepUp(required permission, next http.Handler) http.Handler {
+func (a *App) requireStepUp(required identity.Permission, next http.Handler) http.Handler {
 	protected := a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		current, ok := request.Context().Value(sessionContextKey).(session)
-		if !ok || !roleAllows(current.role, required) {
+		if !ok || !identity.Allows(current.role, required) {
 			if ok {
 				a.recordAuditForRequest(request, "authorization_denied", request.Method+" "+request.URL.Path, "blocked")
 			}
 			http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
 			return
 		}
-		if current.authenticationAssurance < 1 || !recentAuthenticationValid(current.reauthenticatedAt, time.Now().UTC()) {
+		if current.authenticationAssurance < 1 || !identity.RecentAuthenticationValid(current.reauthenticatedAt, time.Now().UTC()) {
 			returnTo := stepUpReturnTarget(request)
 			location := "/auth/step-up?" + url.Values{"return_to": {returnTo}}.Encode()
 			response.Header().Set("Cache-Control", "no-store")
@@ -80,17 +46,17 @@ func (a *App) requireStepUp(required permission, next http.Handler) http.Handler
 	return declaredRouteHandler{auth: routeAuthSession, permission: required, stepUp: true, handler: protected}
 }
 
-func (a *App) requireAAL2StepUp(required permission, next http.Handler) http.Handler {
+func (a *App) requireAAL2StepUp(required identity.Permission, next http.Handler) http.Handler {
 	protected := a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		current, ok := request.Context().Value(sessionContextKey).(session)
-		if !ok || !roleAllows(current.role, required) {
+		if !ok || !identity.Allows(current.role, required) {
 			if ok {
 				a.recordAuditForRequest(request, "authorization_denied", request.Method+" "+request.URL.Path, "blocked")
 			}
 			http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
 			return
 		}
-		if current.authenticationAssurance < 2 || !recentAuthenticationValid(current.reauthenticatedAt, time.Now().UTC()) {
+		if current.authenticationAssurance < 2 || !identity.RecentAuthenticationValid(current.reauthenticatedAt, time.Now().UTC()) {
 			returnTo := stepUpReturnTarget(request)
 			if current.authenticationAssurance < 2 {
 				status, statusErr := a.mfa.Status(current.userID)
@@ -113,10 +79,6 @@ func (a *App) requireAAL2StepUp(required permission, next http.Handler) http.Han
 		next.ServeHTTP(response, request)
 	}))
 	return declaredRouteHandler{auth: routeAuthSession, permission: required, stepUp: true, handler: protected}
-}
-
-func recentAuthenticationValid(timestamp int64, now time.Time) bool {
-	return identity.RecentAuthenticationValid(timestamp, now)
 }
 
 func stepUpReturnTarget(request *http.Request) string {

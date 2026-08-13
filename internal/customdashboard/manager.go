@@ -48,7 +48,9 @@ var SchemaStatements = []string{
 	`CREATE INDEX IF NOT EXISTS custom_dashboards_order_idx ON custom_dashboards(sort_order, created_at)`,
 	`CREATE INDEX IF NOT EXISTS custom_dashboard_cards_order_idx ON custom_dashboard_cards(dashboard_id, sort_order, created_at)`,
 	`CREATE TABLE IF NOT EXISTS custom_dashboard_registry_operations (
-		operation_id TEXT PRIMARY KEY, card_id TEXT NOT NULL, created_at INTEGER NOT NULL
+		operation_id TEXT PRIMARY KEY, card_id TEXT NOT NULL,
+		phase TEXT NOT NULL DEFAULT 'prepared' CHECK(phase IN ('prepared','committed')),
+		created_at INTEGER NOT NULL
 	)`,
 }
 
@@ -120,6 +122,7 @@ type RegistryConnections interface {
 	Prepare(context.Context, string, string, registrymonitor.Config, string, bool) error
 	PrepareDelete(context.Context, string, string) error
 	Commit(context.Context, string) error
+	Acknowledge(context.Context, string) error
 	Abort(context.Context, string) error
 	Configured(context.Context, string) (bool, error)
 	Inspect(context.Context, string) ([]registrymonitor.ImageResult, error)
@@ -127,15 +130,16 @@ type RegistryConnections interface {
 }
 
 type Manager struct {
-	db       *sql.DB
-	client   *http.Client
-	registry RegistryConnections
-	now      func() time.Time
-	ctx      context.Context
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
-	tick     time.Duration
-	start    sync.Once
+	db                 *sql.DB
+	client             *http.Client
+	registry           RegistryConnections
+	now                func() time.Time
+	ctx                context.Context
+	cancel             context.CancelFunc
+	wg                 sync.WaitGroup
+	tick               time.Duration
+	start              sync.Once
+	registryMutationMu sync.Mutex
 }
 
 func New(options Options) (*Manager, error) {
@@ -252,6 +256,8 @@ func (m *Manager) UpdateDashboard(ctx context.Context, id string, input Dashboar
 	return m.GetDashboard(ctx, id)
 }
 func (m *Manager) DeleteDashboard(ctx context.Context, id string) error {
+	m.registryMutationMu.Lock()
+	defer m.registryMutationMu.Unlock()
 	rows, err := m.db.QueryContext(ctx, `SELECT id FROM custom_dashboard_cards WHERE dashboard_id=? AND type='registry'`, id)
 	if err != nil {
 		return err
@@ -359,6 +365,8 @@ func scanDashboard(row scanner) (Dashboard, error) {
 }
 
 func (m *Manager) CreateCard(ctx context.Context, dashboardID string, input CardInput) (Card, error) {
+	m.registryMutationMu.Lock()
+	defer m.registryMutationMu.Unlock()
 	if _, err := m.GetDashboard(ctx, dashboardID); err != nil {
 		return Card{}, err
 	}
@@ -418,6 +426,8 @@ func (m *Manager) CreateCard(ctx context.Context, dashboardID string, input Card
 }
 
 func (m *Manager) ImportCards(ctx context.Context, dashboardID string, inputs []CardInput) error {
+	m.registryMutationMu.Lock()
+	defer m.registryMutationMu.Unlock()
 	if _, err := m.GetDashboard(ctx, dashboardID); err != nil {
 		return err
 	}
@@ -486,6 +496,8 @@ func (m *Manager) ImportCards(ctx context.Context, dashboardID string, inputs []
 	return m.completeRegistryOperations(ctx, operations)
 }
 func (m *Manager) UpdateCard(ctx context.Context, id string, input CardInput) (Card, error) {
+	m.registryMutationMu.Lock()
+	defer m.registryMutationMu.Unlock()
 	if err := validateCard(&input); err != nil {
 		return Card{}, err
 	}
@@ -551,6 +563,8 @@ func (m *Manager) UpdateCard(ctx context.Context, id string, input CardInput) (C
 	return m.getCard(ctx, id)
 }
 func (m *Manager) DeleteCard(ctx context.Context, id string) error {
+	m.registryMutationMu.Lock()
+	defer m.registryMutationMu.Unlock()
 	card, err := m.getCard(ctx, id)
 	if err != nil {
 		return err
@@ -806,6 +820,7 @@ func (m *Manager) refreshRegistryCard(ctx context.Context, card Card) (Card, err
 
 type registryOperation struct {
 	ID, CardID string
+	Phase      string
 }
 
 func (m *Manager) prepareRegistryConnection(ctx context.Context, cardID string, input CardInput) (registryOperation, error) {
@@ -848,7 +863,15 @@ func (m *Manager) recordRegistryOperations(ctx context.Context, transaction *sql
 
 func (m *Manager) completeRegistryOperations(ctx context.Context, operations []registryOperation) error {
 	for _, operation := range operations {
-		if err := m.registry.Commit(ctx, operation.ID); err != nil {
+		if operation.Phase != "committed" {
+			if err := m.registry.Commit(ctx, operation.ID); err != nil {
+				return err
+			}
+			if _, err := m.db.ExecContext(ctx, `UPDATE custom_dashboard_registry_operations SET phase='committed' WHERE operation_id=?`, operation.ID); err != nil {
+				return err
+			}
+		}
+		if err := m.registry.Acknowledge(ctx, operation.ID); err != nil {
 			return err
 		}
 		if _, err := m.db.ExecContext(ctx, `DELETE FROM custom_dashboard_registry_operations WHERE operation_id=?`, operation.ID); err != nil {
@@ -867,7 +890,9 @@ func (m *Manager) abortRegistryOperations(operations []registryOperation) {
 // ReconcileRegistryOperations finishes Broker mutations whose SQLite commit
 // succeeded before the Web process was interrupted. Commit is idempotent.
 func (m *Manager) ReconcileRegistryOperations(ctx context.Context) error {
-	rows, err := m.db.QueryContext(ctx, `SELECT operation_id,card_id FROM custom_dashboard_registry_operations ORDER BY created_at,operation_id`)
+	m.registryMutationMu.Lock()
+	defer m.registryMutationMu.Unlock()
+	rows, err := m.db.QueryContext(ctx, `SELECT operation_id,card_id,phase FROM custom_dashboard_registry_operations ORDER BY created_at,operation_id`)
 	if err != nil {
 		return err
 	}
@@ -875,7 +900,7 @@ func (m *Manager) ReconcileRegistryOperations(ctx context.Context) error {
 	var operations []registryOperation
 	for rows.Next() {
 		var operation registryOperation
-		if err := rows.Scan(&operation.ID, &operation.CardID); err != nil {
+		if err := rows.Scan(&operation.ID, &operation.CardID, &operation.Phase); err != nil {
 			return err
 		}
 		operations = append(operations, operation)

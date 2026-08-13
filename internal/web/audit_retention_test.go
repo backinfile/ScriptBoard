@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	auditdomain "scriptboard/internal/audit"
 	"scriptboard/internal/auditlog"
 )
 
@@ -68,7 +69,7 @@ func TestAuditRetentionRemovesLinkedOneTimeSourceButKeepsRunArtifacts(t *testing
 		t.Fatal(err)
 	}
 
-	deleted, err := cleanupExpiredAuditEvents(db, stateRoot, time.Now().AddDate(-1, 0, 0))
+	deleted, err := auditdomain.CleanupExpiredEvents(db, stateRoot, time.Now().AddDate(-1, 0, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +121,7 @@ func TestAuditRetentionAdvancesHashChainAnchor(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	deleted, err := cleanupExpiredAuditEvents(db, t.TempDir(), time.Now().AddDate(-1, 0, 0))
+	deleted, err := auditdomain.CleanupExpiredEvents(db, t.TempDir(), time.Now().AddDate(-1, 0, 0))
 	if err != nil || deleted != 1 {
 		t.Fatalf("deleted=%d err=%v", deleted, err)
 	}
@@ -158,7 +159,7 @@ func TestAuditRetentionPreservesTheExternallyCheckpointedSuffix(t *testing.T) {
 		}
 		ids = append(ids, id)
 	}
-	deleted, err := cleanupExpiredAuditEventsBefore(db, t.TempDir(), time.Now().AddDate(-1, 0, 0), ids[1])
+	deleted, err := auditdomain.CleanupExpiredEventsBefore(db, t.TempDir(), time.Now().AddDate(-1, 0, 0), ids[1])
 	if err != nil || deleted != 1 {
 		t.Fatalf("deleted=%d err=%v", deleted, err)
 	}
@@ -202,7 +203,7 @@ func TestAuditRetentionKeepsAuditWhenSourceCannotBeRemoved(t *testing.T) {
 	}
 	stateRoot := filepath.Dir(filepath.Dir(filepath.Dir(sourcePath)))
 
-	if _, err := cleanupExpiredAuditEvents(db, stateRoot, time.Now().AddDate(-1, 0, 0)); err == nil {
+	if _, err := auditdomain.CleanupExpiredEvents(db, stateRoot, time.Now().AddDate(-1, 0, 0)); err == nil {
 		t.Fatal("cleanup unexpectedly succeeded")
 	}
 	var expired, audits int

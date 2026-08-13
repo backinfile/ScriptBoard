@@ -14,8 +14,8 @@ import (
 
 	"github.com/go-webauthn/webauthn/webauthn"
 
-	app "scriptboard/internal/web"
 	passkeydomain "scriptboard/internal/passkey"
+	app "scriptboard/internal/web"
 )
 
 type configuredLoginPasskeyStore struct{}

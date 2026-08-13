@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"scriptboard/internal/identity"
 	"sort"
 	"strconv"
 	"strings"
@@ -233,7 +234,7 @@ func (a *App) renderAssistantPage(response http.ResponseWriter, request *http.Re
 		Locale: locale, CSRFToken: currentSession.csrfToken, Models: assistantModelViews(models),
 		Conversations: conversations, Archived: archived, Current: current, SelectedModelID: selectedModelID, SelectedProfile: selectedProfile,
 		DefaultAutoApproval: settings.DefaultAutoApproval, RuntimeAvailable: runtimeAvailable, RuntimeVersion: managedRuntime.Version,
-		CanManageAI: roleAllows(currentSession.role, permissionManageSystem),
+		CanManageAI: identity.Allows(currentSession.role, identity.PermissionManageSystem),
 		Resources:   resources, ContextReferences: contextReferences,
 		InspectorReferences: inspectorReferences, Usage: usage,
 		Messages: messages, Timeline: assistantMessageTimeline(messages, toolCalls, locale), ToolCalls: toolCalls,
@@ -1304,7 +1305,7 @@ func assistantModelViews(models []assistant.ModelConfig) []assistantModelView {
 
 func (a *App) assistantResourceSearch(response http.ResponseWriter, request *http.Request) {
 	currentSession := request.Context().Value(sessionContextKey).(session)
-	if !roleAllows(currentSession.role, permissionReadFiles) || a.files == nil {
+	if !identity.Allows(currentSession.role, identity.PermissionReadFiles) || a.files == nil {
 		http.Error(response, "File references are not available for this role", http.StatusForbidden)
 		return
 	}
@@ -1395,9 +1396,9 @@ func (a *App) assistantHostEntryResource(ctx context.Context, entry hostfiles.En
 	return assistantResourceView{}, false
 }
 
-func (a *App) assistantResourceCatalog(request *http.Request, role userRole) []assistantResourceView {
+func (a *App) assistantResourceCatalog(request *http.Request, role identity.Role) []assistantResourceView {
 	resources := make([]assistantResourceView, 0, 40)
-	if roleAllows(role, permissionReadFiles) && a.files != nil {
+	if identity.Allows(role, identity.PermissionReadFiles) && a.files != nil {
 		if roots, err := a.hostRoots(request.Context()); err == nil {
 			fileCount := 0
 			directoryCount := 0
@@ -1543,7 +1544,7 @@ func markAssistantResourcesSelected(resources []assistantResourceView, reference
 	return resources
 }
 
-func (a *App) assistantContextReferencesFromForm(request *http.Request, role userRole, existing []assistant.ContextRef) ([]assistant.ContextRef, error) {
+func (a *App) assistantContextReferencesFromForm(request *http.Request, role identity.Role, existing []assistant.ContextRef) ([]assistant.ContextRef, error) {
 	kinds := request.PostForm["context_kind"]
 	ids := request.PostForm["context_id"]
 	if len(kinds) != len(ids) || len(kinds) > 32 {

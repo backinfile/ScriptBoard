@@ -48,6 +48,11 @@ func (connections *RegistryConnections) Commit(ctx context.Context, operationID 
 	return err
 }
 
+func (connections *RegistryConnections) Acknowledge(ctx context.Context, operationID string) error {
+	_, err := connections.callPeer(ctx, operationRegistryAcknowledge, registryWireRequest{OperationID: operationID})
+	return err
+}
+
 func (connections *RegistryConnections) Abort(ctx context.Context, operationID string) error {
 	_, err := connections.callPeer(ctx, operationRegistryAbort, registryWireRequest{OperationID: operationID})
 	return err
@@ -156,6 +161,8 @@ func (server *Server) executeRegistryOperation(operation string, payload registr
 		err = server.registry.PrepareDelete(ctx, payload.OperationID, payload.CardID)
 	case operationRegistryCommit:
 		err = server.registry.Commit(ctx, payload.OperationID)
+	case operationRegistryAcknowledge:
+		err = server.registry.Acknowledge(ctx, payload.OperationID)
 	case operationRegistryAbort:
 		err = server.registry.Abort(ctx, payload.OperationID)
 	case operationRegistryConfigured:
@@ -193,7 +200,7 @@ func validateRegistryRequest(request wireRequest) error {
 		if payload.OperationID == "" || payload.CardID == "" || payload.Password != "" || payload.Preserve || payload.Config.Endpoint != "" || len(payload.Config.Images) != 0 {
 			return errors.New("Registry delete request is invalid")
 		}
-	case operationRegistryCommit, operationRegistryAbort:
+	case operationRegistryCommit, operationRegistryAcknowledge, operationRegistryAbort:
 		if payload.OperationID == "" || payload.CardID != "" || payload.Password != "" || payload.Preserve || payload.Config.Endpoint != "" || len(payload.Config.Images) != 0 {
 			return errors.New("Registry completion request is invalid")
 		}

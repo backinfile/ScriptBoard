@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"scriptboard/internal/identity"
 	"strings"
 	"sync"
 	"time"
@@ -216,7 +217,7 @@ func (a *App) addApplicationShell(request *http.Request, body []byte) []byte {
 	statusState := shellStatus.State
 	status := webText(locale, "status."+statusState)
 	navigation := shellNavigation(locale, request.URL.Path, current.role)
-	if roleAllows(current.role, permissionObserve) {
+	if identity.Allows(current.role, identity.PermissionObserve) {
 		if dashboards, dashboardErr := a.customDashboards.ListDashboards(request.Context()); dashboardErr == nil {
 			for index := range navigation {
 				if navigation[index].Label != webText(locale, "nav.monitor") {
@@ -245,7 +246,7 @@ func (a *App) addApplicationShell(request *http.Request, body []byte) []byte {
 		StoppedPinnedApplications: shellStatus.StoppedPinnedApplications, ApplicationIssueCount: shellStatus.ApplicationIssueCount,
 		Navigation: navigation, SettingsCurrent: strings.HasPrefix(request.URL.Path, "/settings/"),
 		ChineseLocaleCurrent: locale == localeSimplifiedChinese,
-		CanManageUsers:       roleAllows(current.role, permissionManageUsers),
+		CanManageUsers:       identity.Allows(current.role, identity.PermissionManageUsers),
 	})
 
 	bodyText := prepareApplicationDocument(body, locale)
@@ -293,26 +294,26 @@ func prepareApplicationDocument(body []byte, locale webLocale) string {
 	return bodyText
 }
 
-func shellNavigation(locale webLocale, path string, role userRole) []shellNavigationGroup {
+func shellNavigation(locale webLocale, path string, role identity.Role) []shellNavigationGroup {
 	type itemSpec struct {
 		href, key, icon string
-		permission      permission
+		permission      identity.Permission
 	}
 	specs := []struct {
 		key   string
 		items []itemSpec
 	}{
-		{key: "nav.monitor", items: []itemSpec{{"/monitor", "nav.overview", "activity", permissionObserve}, {"/monitor/applications", "nav.applications", "app-window", permissionObserve}, {"/monitor/containers", "nav.containers", "package", permissionObserve}, {"/monitor/kubernetes", "nav.kubernetes", "box", permissionObserve}, {"/monitor/websites", "nav.websites", "network", permissionObserve}, {"/monitor/security", "nav.security", "shield-check", permissionObserve}}},
-		{key: "nav.resources", items: []itemSpec{{"/resources/files", "nav.files", "folder-code", permissionReadFiles}, {"/resources/variables", "nav.variables", "braces", permissionManageExecution}, {"/resources/databases", "nav.databases", "database", permissionManageDatabases}}},
-		{key: "nav.configuration", items: []itemSpec{{"/config/quick-runs", "nav.quick_runs", "zap", permissionObserve}, {"/config/schedules", "nav.schedules", "calendar-clock", permissionObserve}, {"/config/external-interfaces", "nav.external_interfaces", "plug", permissionManageExecution}, {"/config/dashboards", "nav.dashboards", "layout-dashboard", permissionObserve}}},
-		{key: "nav.history", items: []itemSpec{{"/history/runs", "nav.runs", "square-terminal", permissionObserve}, {"/history/audit", "nav.audit", "scroll-text", permissionReadAudit}}},
-		{key: "nav.assistant", items: []itemSpec{{"/ai", "nav.ai", "sparkles", permissionObserve}}},
+		{key: "nav.monitor", items: []itemSpec{{"/monitor", "nav.overview", "activity", identity.PermissionObserve}, {"/monitor/applications", "nav.applications", "app-window", identity.PermissionObserve}, {"/monitor/containers", "nav.containers", "package", identity.PermissionObserve}, {"/monitor/kubernetes", "nav.kubernetes", "box", identity.PermissionObserve}, {"/monitor/websites", "nav.websites", "network", identity.PermissionObserve}, {"/monitor/security", "nav.security", "shield-check", identity.PermissionObserve}}},
+		{key: "nav.resources", items: []itemSpec{{"/resources/files", "nav.files", "folder-code", identity.PermissionReadFiles}, {"/resources/variables", "nav.variables", "braces", identity.PermissionManageExecution}, {"/resources/databases", "nav.databases", "database", identity.PermissionManageDatabases}}},
+		{key: "nav.configuration", items: []itemSpec{{"/config/quick-runs", "nav.quick_runs", "zap", identity.PermissionObserve}, {"/config/schedules", "nav.schedules", "calendar-clock", identity.PermissionObserve}, {"/config/external-interfaces", "nav.external_interfaces", "plug", identity.PermissionManageExecution}, {"/config/dashboards", "nav.dashboards", "layout-dashboard", identity.PermissionObserve}}},
+		{key: "nav.history", items: []itemSpec{{"/history/runs", "nav.runs", "square-terminal", identity.PermissionObserve}, {"/history/audit", "nav.audit", "scroll-text", identity.PermissionReadAudit}}},
+		{key: "nav.assistant", items: []itemSpec{{"/ai", "nav.ai", "sparkles", identity.PermissionObserve}}},
 	}
 	groups := make([]shellNavigationGroup, 0, len(specs))
 	for _, group := range specs {
 		items := make([]shellNavigationItem, 0, len(group.items))
 		for _, item := range group.items {
-			if !roleAllows(role, item.permission) {
+			if !identity.Allows(role, item.permission) {
 				continue
 			}
 			current := path == item.href || item.href == "/monitor" && path == "/monitor" ||

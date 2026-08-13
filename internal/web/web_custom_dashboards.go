@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"scriptboard/internal/identity"
 	"sort"
 	"strconv"
 	"strings"
@@ -89,7 +90,7 @@ func (a *App) customDashboardPage(response http.ResponseWriter, request *http.Re
 	view := a.newCustomDashboardPageView(request, dashboard, false)
 	view.Dashboards = dashboards
 	view.CSRFToken = current.csrfToken
-	view.CanManage = roleAllows(current.role, permissionManageOperations)
+	view.CanManage = identity.Allows(current.role, identity.PermissionManageOperations)
 	view.Reorder = view.CanManage && request.URL.Query().Get("reorder") == "1"
 	view.ImportError = customDashboardImportError(request.URL.Query().Get("import_error"))
 	for index := range view.Cards {

@@ -68,4 +68,16 @@ func TestMigrateLegacyActivatesBoundConnectionBeforeDeletingOldKey(t *testing.T)
 	if err := service.MigrateLegacy(context.Background(), database, legacy); err != nil {
 		t.Fatalf("idempotent migration: %v", err)
 	}
+	// Simulate an interruption after one of the two legacy files was removed.
+	// The sealed completion marker must make the orphan safe to clean up.
+	orphan := filepath.Join(legacy, "custom-dashboard-registry.master-key")
+	if err := os.WriteFile(orphan, key, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.MigrateLegacy(context.Background(), database, legacy); err != nil {
+		t.Fatalf("resume partial legacy cleanup: %v", err)
+	}
+	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+		t.Fatalf("legacy orphan survived resumed cleanup: %v", err)
+	}
 }

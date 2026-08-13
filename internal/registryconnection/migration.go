@@ -33,6 +33,13 @@ func (service *Service) MigrateLegacy(ctx context.Context, database *sql.DB, leg
 	if errors.Is(keyErr, os.ErrNotExist) && errors.Is(dataErr, os.ErrNotExist) {
 		return nil
 	}
+	migrated, err := service.legacyMigrationComplete()
+	if err != nil {
+		return err
+	}
+	if migrated {
+		return removeLegacyRegistryFiles(dataPath, keyPath)
+	}
 	if keyErr != nil || dataErr != nil || len(key) != 32 || len(body) > maxLegacyStoreBytes {
 		return errors.New("legacy Registry credential store is incomplete or invalid")
 	}
@@ -77,7 +84,37 @@ func (service *Service) MigrateLegacy(ctx context.Context, database *sql.DB, leg
 		if err := service.Commit(ctx, operationID); err != nil {
 			return fmt.Errorf("commit legacy Registry card %q: %w", cardID, err)
 		}
+		if err := service.Acknowledge(ctx, operationID); err != nil {
+			return fmt.Errorf("acknowledge legacy Registry card %q: %w", cardID, err)
+		}
 	}
+	// Persist the completion marker before deleting either legacy file. A
+	// restart after only one deletion can then safely finish the cleanup.
+	if err := service.markLegacyMigrationComplete(); err != nil {
+		return err
+	}
+	return removeLegacyRegistryFiles(dataPath, keyPath)
+}
+
+func (service *Service) legacyMigrationComplete() (bool, error) {
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	state, err := service.load()
+	return state.LegacyMigrated, err
+}
+
+func (service *Service) markLegacyMigrationComplete() error {
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	state, err := service.load()
+	if err != nil || state.LegacyMigrated {
+		return err
+	}
+	state.LegacyMigrated = true
+	return service.write(state)
+}
+
+func removeLegacyRegistryFiles(dataPath, keyPath string) error {
 	if err := os.Remove(dataPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove legacy Registry credential map: %w", err)
 	}

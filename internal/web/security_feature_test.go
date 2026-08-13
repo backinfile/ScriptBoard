@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	app "scriptboard/internal/web"
 	"scriptboard/internal/hostsecurity"
+	app "scriptboard/internal/web"
 )
 
 func TestHostSecurityPageAndUFWDraftFlow(t *testing.T) {

@@ -2,6 +2,7 @@ package web
 
 import (
 	"net/http"
+	"scriptboard/internal/identity"
 	"testing"
 	"time"
 )
@@ -15,13 +16,13 @@ func TestRecentAuthenticationValidityIsBounded(t *testing.T) {
 	}{
 		{"missing", 0, false},
 		{"current", now.Unix(), true},
-		{"window boundary", now.Add(-recentAuthenticationWindow).Unix(), true},
-		{"expired", now.Add(-recentAuthenticationWindow - time.Second).Unix(), false},
+		{"window boundary", now.Add(-identity.RecentAuthenticationWindow).Unix(), true},
+		{"expired", now.Add(-identity.RecentAuthenticationWindow - time.Second).Unix(), false},
 		{"clock skew", now.Add(time.Minute).Unix(), true},
 		{"future", now.Add(time.Minute + time.Second).Unix(), false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got := recentAuthenticationValid(test.timestamp, now); got != test.want {
+			if got := identity.RecentAuthenticationValid(test.timestamp, now); got != test.want {
 				t.Fatalf("valid=%v, want %v", got, test.want)
 			}
 		})

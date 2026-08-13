@@ -109,7 +109,8 @@ func (service *fixtureRegistryService) Commit(_ context.Context, operationID str
 	service.commits++
 	return nil
 }
-func (*fixtureRegistryService) Abort(context.Context, string) error { return nil }
+func (*fixtureRegistryService) Acknowledge(context.Context, string) error { return nil }
+func (*fixtureRegistryService) Abort(context.Context, string) error       { return nil }
 func (*fixtureRegistryService) Configured(context.Context, string) (bool, error) {
 	return true, nil
 }

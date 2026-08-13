@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"scriptboard/internal/identity"
 	"strings"
 	"sync"
 	"time"
@@ -48,7 +49,7 @@ type assistantToolExecutor struct {
 
 type assistantToolAuthorization struct {
 	Actor       assistant.Actor
-	Role        userRole
+	Role        identity.Role
 	AuthVersion int64
 }
 
@@ -155,7 +156,7 @@ func (executor *assistantToolExecutor) Invoke(ctx context.Context, invocation to
 		return toolbroker.Response{Status: toolbroker.StatusForbidden, ErrorCode: "tool_forbidden", Summary: "Current ScriptBoard authorization does not allow this tool call."}
 	}
 	required, stateful := assistantToolPermission(invocation.Request.Tool)
-	if !roleAllows(authorization.Role, required) {
+	if !identity.Allows(authorization.Role, required) {
 		if invocation.Request.ApprovalID != "" {
 			persistResponse = true
 			_ = executor.app.assistant.InvalidateApproval(ctx, authorization.Actor, invocation.Binding.ConversationID, invocation.Request.ApprovalID, "tool_forbidden")
@@ -250,7 +251,7 @@ func (executor *assistantToolExecutor) authorize(ctx context.Context, binding to
 	if err := executor.app.db.QueryRowContext(ctx, `SELECT username, role, enabled, auth_version FROM users WHERE id = ?`, binding.UserID).Scan(&username, &role, &enabled, &authVersion); err != nil {
 		return assistantToolAuthorization{}, false
 	}
-	authorization := assistantToolAuthorization{Actor: assistant.Actor{UserID: binding.UserID, Username: username}, Role: userRole(role), AuthVersion: authVersion}
+	authorization := assistantToolAuthorization{Actor: assistant.Actor{UserID: binding.UserID, Username: username}, Role: identity.Role(role), AuthVersion: authVersion}
 	if enabled != 1 {
 		return authorization, false
 	}
@@ -260,22 +261,22 @@ func (executor *assistantToolExecutor) authorize(ctx context.Context, binding to
 	return authorization, true
 }
 
-func assistantToolPermission(name string) (permission, bool) {
+func assistantToolPermission(name string) (identity.Permission, bool) {
 	switch name {
 	case "read_managed_text":
-		return permissionReadFiles, false
+		return identity.PermissionReadFiles, false
 	case "list_audit_events":
-		return permissionReadAudit, false
+		return identity.PermissionReadAudit, false
 	case "start_quick_run", "stop_run":
-		return permissionExecute, true
+		return identity.PermissionExecute, true
 	case "run_schedule_now":
-		return permissionManageExecution, true
+		return identity.PermissionManageExecution, true
 	case "check_website_now":
-		return permissionManageOperations, true
+		return identity.PermissionManageOperations, true
 	case "perform_ui_action":
-		return permissionObserve, true
+		return identity.PermissionObserve, true
 	default:
-		return permissionObserve, false
+		return identity.PermissionObserve, false
 	}
 }
 
@@ -1199,7 +1200,7 @@ func (executor *assistantToolExecutor) planStopRun(authorization assistantToolAu
 	if !assistantToolRunActive(run.Status) {
 		return assistantToolPlan{}, errAssistantToolNotFound
 	}
-	if authorization.Role == roleOperator && run.InitiatorUserID != authorization.Actor.UserID {
+	if authorization.Role == identity.RoleOperator && run.InitiatorUserID != authorization.Actor.UserID {
 		return assistantToolPlan{}, errAssistantToolForbidden
 	}
 	state := struct {

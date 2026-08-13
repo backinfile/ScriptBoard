@@ -25,16 +25,25 @@ func TestLegacyAppPackageCannotReturn(t *testing.T) {
 			}
 			return nil
 		}
-		if filepath.Ext(path) != ".go" {
+		// Runtime paths are also embedded in frontend tooling, shell scripts and
+		// workflows. Restricting this gate to Go imports allowed stale deployment
+		// paths to survive a package move.
+		scannedExtensions := map[string]bool{
+			".go": true, ".js": true, ".mjs": true, ".cjs": true, ".ts": true, ".tsx": true,
+			".sh": true, ".ps1": true, ".yml": true, ".yaml": true, ".json": true,
+		}
+		if !scannedExtensions[strings.ToLower(filepath.Ext(path))] {
 			return nil
 		}
 		body, readErr := os.ReadFile(path)
 		if readErr != nil {
 			return readErr
 		}
-		legacyImport := `"scriptboard/internal/` + `app"`
-		if strings.Contains(string(body), legacyImport) {
-			t.Errorf("legacy app import in %s", path)
+		content := strings.ReplaceAll(string(body), `\`, "/")
+		for _, legacyPath := range []string{`"scriptboard/internal/` + `app"`, "internal/web/" + "web/"} {
+			if strings.Contains(content, legacyPath) {
+				t.Errorf("legacy runtime path %q in %s", legacyPath, path)
+			}
 		}
 		return nil
 	})

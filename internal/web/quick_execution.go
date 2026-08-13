@@ -17,34 +17,6 @@ import (
 	"scriptboard/internal/runmanager"
 )
 
-const maxQuickExecutionSourceBytes = quickrun.MaxSourceBytes
-
-type scriptLanguageOption = quickrun.Language
-
-func platformScriptLanguages() []scriptLanguageOption {
-	return quickrun.PlatformLanguages(runtime.GOOS)
-}
-
-func platformScriptLanguage(id string) (scriptLanguageOption, error) {
-	return quickrun.PlatformLanguage(runtime.GOOS, id)
-}
-
-func validateQuickExecutionSource(source string) error {
-	return quickrun.ValidateSource(source)
-}
-
-func quickExecutionFileName(name, extension string) string {
-	return quickrun.FileName(name, extension)
-}
-
-func quickExecutionFileStem(name, extension string) string {
-	return quickrun.FileStem(name, extension)
-}
-
-func parseQuickExecutionTimeout(value string) (int, error) {
-	return quickrun.ParseTimeout(value)
-}
-
 func (a *App) hostDirectories(response http.ResponseWriter, request *http.Request) {
 	relative := request.URL.Query().Get("path")
 	entries, err := a.hostList(request.Context(), relative)
@@ -138,7 +110,7 @@ func (a *App) oneTimeRunTask(response http.ResponseWriter, request *http.Request
 		Description:      webText(resolveWebLocale(request), "task.one_time.description"),
 		BackURL:          "/config/quick-runs",
 		Action:           "/config/quick-runs/one-time",
-		Languages:        platformScriptLanguages(),
+		Languages:        quickrun.PlatformLanguages(runtime.GOOS),
 		WorkingDirectory: a.defaultHostDirectory(request.Context()),
 	})
 }
@@ -155,7 +127,7 @@ func (a *App) quickCreateTask(response http.ResponseWriter, request *http.Reques
 		Description:      webText(resolveWebLocale(request), "task.quick_create.description"),
 		BackURL:          "/config/quick-runs",
 		Action:           "/config/quick-runs/from-source",
-		Languages:        platformScriptLanguages(),
+		Languages:        quickrun.PlatformLanguages(runtime.GOOS),
 		Groups:           groups,
 		WorkingDirectory: a.defaultHostDirectory(request.Context()),
 	})
@@ -166,7 +138,7 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 		http.Error(response, "CSRF token is invalid", http.StatusForbidden)
 		return
 	}
-	language, err := platformScriptLanguage(request.FormValue("language"))
+	language, err := quickrun.PlatformLanguage(runtime.GOOS, request.FormValue("language"))
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
@@ -176,7 +148,7 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 		return
 	}
 	source := request.FormValue("source")
-	if err := validateQuickExecutionSource(source); err != nil {
+	if err := quickrun.ValidateSource(source); err != nil {
 		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -192,7 +164,7 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 		http.Error(response, "file name is invalid: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	fileName = quickExecutionFileName(fileName, language.Extension)
+	fileName = quickrun.FileName(fileName, language.Extension)
 	name := strings.TrimSpace(request.FormValue("name"))
 	if name == "" {
 		name = strings.TrimSpace(request.FormValue("file_name"))
@@ -201,7 +173,7 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 		http.Error(response, "Quick Run name is invalid", http.StatusBadRequest)
 		return
 	}
-	timeoutSeconds, err := parseQuickExecutionTimeout(request.FormValue("timeout_seconds"))
+	timeoutSeconds, err := quickrun.ParseTimeout(request.FormValue("timeout_seconds"))
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
@@ -245,9 +217,9 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 			return
 		}
 		a.renderQuickCreateConflict(response, request, quickCreateValues{
-			WorkingDirectory: workingDirectory, Language: language.ID, FileName: quickExecutionFileStem(fileName, language.Extension),
+			WorkingDirectory: workingDirectory, Language: language.ID, FileName: quickrun.FileStem(fileName, language.Extension),
 			Source: source, Name: name, Arguments: argumentsTemplate, TimeoutSeconds: timeoutSeconds, GroupID: request.FormValue("group_id"),
-		}, targetPath, quickExecutionFileStem(suggested, language.Extension), targetInfo.Mode().IsRegular() && !a.runs.ConflictsPath(targetPath))
+		}, targetPath, quickrun.FileStem(suggested, language.Extension), targetInfo.Mode().IsRegular() && !a.runs.ConflictsPath(targetPath))
 		return
 	}
 	if targetExists && action == conflictActionOverwrite && (!targetInfo.Mode().IsRegular() || a.runs.ConflictsPath(targetPath)) {
@@ -290,7 +262,7 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 			return
 		}
 	}
-	trashed, err := a.hostUpload(request.Context(), workingDirectory, fileName, bytes.NewBufferString(source), maxQuickExecutionSourceBytes, targetExists, trashID)
+	trashed, err := a.hostUpload(request.Context(), workingDirectory, fileName, bytes.NewBufferString(source), quickrun.MaxSourceBytes, targetExists, trashID)
 	if err != nil {
 		http.Error(response, "Unable to create script: "+err.Error(), http.StatusConflict)
 		return
@@ -391,7 +363,7 @@ func (a *App) renderQuickCreateConflict(response http.ResponseWriter, request *h
 	a.renderTaskPageStatus(response, request, http.StatusConflict, taskPageData{
 		Kind: "quick-create", Title: webText(resolveWebLocale(request), "task.quick_create.title"),
 		Description: webText(resolveWebLocale(request), "task.quick_create.description"),
-		BackURL:     "/config/quick-runs", Action: "/config/quick-runs/from-source", Languages: platformScriptLanguages(),
+		BackURL:     "/config/quick-runs", Action: "/config/quick-runs/from-source", Languages: quickrun.PlatformLanguages(runtime.GOOS),
 		WorkingDirectory: values.WorkingDirectory, FileName: values.FileName, Source: values.Source, Name: values.Name,
 		Arguments: values.Arguments, TimeoutSeconds: values.TimeoutSeconds, GroupID: values.GroupID, Groups: groups, Language: values.Language,
 		Conflict: true, ConflictPath: targetPath, SuggestedName: suggestedName, CanOverwrite: canOverwrite,
@@ -404,13 +376,13 @@ func (a *App) startOneTimeRun(response http.ResponseWriter, request *http.Reques
 		http.Error(response, "CSRF token is invalid", http.StatusForbidden)
 		return
 	}
-	language, err := platformScriptLanguage(request.FormValue("language"))
+	language, err := quickrun.PlatformLanguage(runtime.GOOS, request.FormValue("language"))
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
 	}
 	source := request.FormValue("source")
-	if err := validateQuickExecutionSource(source); err != nil {
+	if err := quickrun.ValidateSource(source); err != nil {
 		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -421,7 +393,7 @@ func (a *App) startOneTimeRun(response http.ResponseWriter, request *http.Reques
 		return
 	}
 	workingDirectory = preparedDirectory.Path
-	timeoutSeconds, err := parseQuickExecutionTimeout(request.FormValue("timeout_seconds"))
+	timeoutSeconds, err := quickrun.ParseTimeout(request.FormValue("timeout_seconds"))
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusBadRequest)
 		return

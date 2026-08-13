@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	app "scriptboard/internal/web"
 	"scriptboard/internal/appstatus"
+	app "scriptboard/internal/web"
 )
 
 type containerFixtureOperation struct {

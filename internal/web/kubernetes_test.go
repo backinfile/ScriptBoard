@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	app "scriptboard/internal/web"
 	"scriptboard/internal/clusterstatus"
+	app "scriptboard/internal/web"
 )
 
 type kubernetesFixtureFactory struct{ client *kubernetesFixtureClient }

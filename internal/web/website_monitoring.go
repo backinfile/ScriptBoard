@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"scriptboard/internal/identity"
 	"strconv"
 	"strings"
 	"time"
@@ -201,7 +202,7 @@ func (a *App) websiteMonitorList(response http.ResponseWriter, request *http.Req
 	view := websiteMonitorListView{
 		Locale: locale, State: state, Scope: scope, CSRFToken: current.csrfToken,
 		Total: len(monitors), HasFilters: state != "" || scope != "",
-		HasAny: len(all) > 0, CanManage: roleAllows(current.role, permissionManageOperations),
+		HasAny: len(all) > 0, CanManage: identity.Allows(current.role, identity.PermissionManageOperations),
 		DataURL: "/monitor/websites/data", RefreshURL: request.URL.RequestURI(),
 		RemoteSources: remoteSources,
 	}
@@ -547,7 +548,7 @@ func (a *App) websiteMonitorDetail(response http.ResponseWriter, request *http.R
 		FailedChecks: details.FailedChecks, IncidentCount: details.IncidentCount,
 		RecentChecks: details.RecentChecks, CurrentIncident: details.CurrentIncident,
 		Incidents: details.Incidents, Locale: locale, CSRFToken: current.csrfToken,
-		CanManage: roleAllows(current.role, permissionManageOperations),
+		CanManage: identity.Allows(current.role, identity.PermissionManageOperations),
 	})
 }
 

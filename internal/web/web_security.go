@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"scriptboard/internal/identity"
 	"strconv"
 	"strings"
 	"time"
@@ -156,7 +157,7 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 		_ = securityTemplate.Execute(response, securityPageView{
 			Locale: locale, CSRFToken: current.csrfToken, Tab: tab, Range: rangeValue,
 			Result: string(query.Result), LoginType: query.Type, FromDate: dateRange.FromDate, ToDate: dateRange.ToDate,
-			PageSize: pageSize, CanManage: roleAllows(current.role, permissionManageSystem), DeferredData: true,
+			PageSize: pageSize, CanManage: identity.Allows(current.role, identity.PermissionManageSystem), DeferredData: true,
 			RuleProtocol: ruleProtocol, RulePort: rulePort, RuleAddress: ruleAddress, RuleDirection: ruleDirection,
 			RuleStatus: ruleStatus, RulePage: rulePage, RulePageSize: rulePageSize,
 			RefreshURL: securityRefreshURL(request.URL.Query()),
@@ -170,7 +171,7 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 	view := securityPageView{
 		Locale: locale, CSRFToken: current.csrfToken, Tab: tab, Range: rangeValue,
 		Result: string(query.Result), LoginType: query.Type, FromDate: dateRange.FromDate, ToDate: dateRange.ToDate,
-		PageSize: pageSize, Capabilities: capabilities, CanManage: roleAllows(current.role, permissionManageSystem),
+		PageSize: pageSize, Capabilities: capabilities, CanManage: identity.Allows(current.role, identity.PermissionManageSystem),
 		ShowBans: request.URL.Query().Get("bans") == "1", ShowReview: request.URL.Query().Get("review") == "1",
 		Notice: securityNotice(locale, request.URL.Query().Get("notice")), Linux: capabilities.OS == "linux", Windows: capabilities.OS == "windows",
 		RuleProtocol: ruleProtocol, RulePort: rulePort, RuleAddress: ruleAddress, RuleDirection: ruleDirection,
