@@ -27,6 +27,8 @@ const (
 	maxSourceHeaderBytes = 16 << 10
 )
 
+var ErrCredentialUnavailable = errors.New("Registry 凭据未配置")
+
 var SchemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS custom_dashboards (
 		id TEXT PRIMARY KEY, name TEXT NOT NULL, slug TEXT NOT NULL UNIQUE,
@@ -45,6 +47,9 @@ var SchemaStatements = []string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS custom_dashboards_order_idx ON custom_dashboards(sort_order, created_at)`,
 	`CREATE INDEX IF NOT EXISTS custom_dashboard_cards_order_idx ON custom_dashboard_cards(dashboard_id, sort_order, created_at)`,
+	`CREATE TABLE IF NOT EXISTS custom_dashboard_registry_operations (
+		operation_id TEXT PRIMARY KEY, card_id TEXT NOT NULL, created_at INTEGER NOT NULL
+	)`,
 }
 
 type CardType string
@@ -103,28 +108,42 @@ type Dashboard struct {
 }
 
 type Options struct {
-	DB               *sql.DB
-	Client           *http.Client
-	Now              func() time.Time
-	Tick             time.Duration
-	Paused           bool
-	SecretsDirectory string
+	DB                  *sql.DB
+	Client              *http.Client
+	RegistryConnections RegistryConnections
+	Now                 func() time.Time
+	Tick                time.Duration
+	Paused              bool
 }
+
+type RegistryConnections interface {
+	Prepare(context.Context, string, string, registrymonitor.Config, string, bool) error
+	PrepareDelete(context.Context, string, string) error
+	Commit(context.Context, string) error
+	Abort(context.Context, string) error
+	Configured(context.Context, string) (bool, error)
+	Inspect(context.Context, string) ([]registrymonitor.ImageResult, error)
+	Test(context.Context, string, registrymonitor.Config, string, bool) ([]registrymonitor.ImageResult, error)
+}
+
 type Manager struct {
-	db      *sql.DB
-	client  *http.Client
-	now     func() time.Time
-	ctx     context.Context
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
-	tick    time.Duration
-	start   sync.Once
-	secrets credentialStore
+	db       *sql.DB
+	client   *http.Client
+	registry RegistryConnections
+	now      func() time.Time
+	ctx      context.Context
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
+	tick     time.Duration
+	start    sync.Once
 }
 
 func New(options Options) (*Manager, error) {
 	if options.DB == nil {
 		return nil, errors.New("custom dashboard database is required")
+	}
+	if options.RegistryConnections == nil {
+		return nil, errors.New("custom dashboard Registry connection module is required")
 	}
 	if options.Client == nil {
 		options.Client = &http.Client{
@@ -143,11 +162,15 @@ func New(options Options) (*Manager, error) {
 		options.Now = time.Now
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	m := &Manager{db: options.DB, client: &client, now: options.Now, ctx: ctx, cancel: cancel, secrets: credentialStore{directory: options.SecretsDirectory}}
+	m := &Manager{db: options.DB, client: &client, registry: options.RegistryConnections, now: options.Now, ctx: ctx, cancel: cancel}
 	if options.Tick <= 0 {
 		options.Tick = time.Minute
 	}
 	m.tick = options.Tick
+	if err := m.ReconcileRegistryOperations(context.Background()); err != nil {
+		cancel()
+		return nil, fmt.Errorf("reconcile Registry connections: %w", err)
+	}
 	if !options.Paused {
 		m.Start()
 	}
@@ -229,29 +252,51 @@ func (m *Manager) UpdateDashboard(ctx context.Context, id string, input Dashboar
 	return m.GetDashboard(ctx, id)
 }
 func (m *Manager) DeleteDashboard(ctx context.Context, id string) error {
-	rows, err := m.db.QueryContext(ctx, `SELECT id FROM custom_dashboard_cards WHERE dashboard_id=?`, id)
+	rows, err := m.db.QueryContext(ctx, `SELECT id FROM custom_dashboard_cards WHERE dashboard_id=? AND type='registry'`, id)
 	if err != nil {
 		return err
 	}
-	var cardIDs []string
+	var operations []registryOperation
 	for rows.Next() {
 		var cardID string
 		if rows.Scan(&cardID) == nil {
-			cardIDs = append(cardIDs, cardID)
+			operation, prepareErr := m.prepareRegistryDelete(ctx, cardID)
+			if prepareErr != nil {
+				_ = rows.Close()
+				m.abortRegistryOperations(operations)
+				return prepareErr
+			}
+			operations = append(operations, operation)
 		}
 	}
-	_ = rows.Close()
-	result, err := m.db.ExecContext(ctx, `DELETE FROM custom_dashboards WHERE id=?`, id)
+	if err := rows.Close(); err != nil {
+		m.abortRegistryOperations(operations)
+		return err
+	}
+	transaction, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
+		m.abortRegistryOperations(operations)
+		return err
+	}
+	defer transaction.Rollback()
+	result, err := transaction.ExecContext(ctx, `DELETE FROM custom_dashboards WHERE id=?`, id)
+	if err != nil {
+		m.abortRegistryOperations(operations)
 		return err
 	}
 	if count, _ := result.RowsAffected(); count == 0 {
+		m.abortRegistryOperations(operations)
 		return sql.ErrNoRows
 	}
-	for _, cardID := range cardIDs {
-		_ = m.secrets.delete(cardID)
+	if err := m.recordRegistryOperations(ctx, transaction, operations); err != nil {
+		m.abortRegistryOperations(operations)
+		return err
 	}
-	return nil
+	if err := transaction.Commit(); err != nil {
+		m.abortRegistryOperations(operations)
+		return err
+	}
+	return m.completeRegistryOperations(ctx, operations)
 }
 func (m *Manager) ListDashboards(ctx context.Context) ([]Dashboard, error) {
 	rows, err := m.db.QueryContext(ctx, `SELECT id,name,slug,is_public,sort_order,created_at,updated_at FROM custom_dashboards ORDER BY sort_order,created_at`)
@@ -324,9 +369,28 @@ func (m *Manager) CreateCard(ctx context.Context, dashboardID string, input Card
 	if err != nil {
 		return Card{}, err
 	}
+	var operations []registryOperation
+	if input.Type == CardRegistry {
+		var registryConfig registrymonitor.Config
+		_ = json.Unmarshal(input.Config, &registryConfig)
+		if registryConfig.AuthMode == "anonymous" || input.RegistryPassword != "" {
+			operation, prepareErr := m.prepareRegistryConnection(ctx, id, input)
+			if prepareErr != nil {
+				return Card{}, prepareErr
+			}
+			operations = append(operations, operation)
+		}
+	}
+	transaction, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		m.abortRegistryOperations(operations)
+		return Card{}, err
+	}
+	defer transaction.Rollback()
 	now := m.now().UTC()
 	var order int
-	if err = m.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(sort_order),0)+1 FROM custom_dashboard_cards WHERE dashboard_id=?`, dashboardID).Scan(&order); err != nil {
+	if err = transaction.QueryRowContext(ctx, `SELECT COALESCE(MAX(sort_order),0)+1 FROM custom_dashboard_cards WHERE dashboard_id=?`, dashboardID).Scan(&order); err != nil {
+		m.abortRegistryOperations(operations)
 		return Card{}, err
 	}
 	headers, _ := json.Marshal(input.Headers)
@@ -334,15 +398,21 @@ func (m *Manager) CreateCard(ctx context.Context, dashboardID string, input Card
 	if len(config) == 0 {
 		config = []byte(`{}`)
 	}
-	_, err = m.db.ExecContext(ctx, `INSERT INTO custom_dashboard_cards(id,dashboard_id,name,type,source_url,headers_json,value_path,secondary_path,formula,config_json,refresh_seconds,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, dashboardID, input.Name, input.Type, input.SourceURL, string(headers), input.ValuePath, input.SecondaryPath, input.Formula, string(config), input.RefreshSeconds, order, now.UnixNano(), now.UnixNano())
+	_, err = transaction.ExecContext(ctx, `INSERT INTO custom_dashboard_cards(id,dashboard_id,name,type,source_url,headers_json,value_path,secondary_path,formula,config_json,refresh_seconds,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, dashboardID, input.Name, input.Type, input.SourceURL, string(headers), input.ValuePath, input.SecondaryPath, input.Formula, string(config), input.RefreshSeconds, order, now.UnixNano(), now.UnixNano())
 	if err != nil {
+		m.abortRegistryOperations(operations)
 		return Card{}, err
 	}
-	if input.Type == CardRegistry && input.RegistryPassword != "" {
-		if err := m.secrets.set(id, input.RegistryPassword); err != nil {
-			_, _ = m.db.ExecContext(ctx, `DELETE FROM custom_dashboard_cards WHERE id=?`, id)
-			return Card{}, err
-		}
+	if err := m.recordRegistryOperations(ctx, transaction, operations); err != nil {
+		m.abortRegistryOperations(operations)
+		return Card{}, err
+	}
+	if err := transaction.Commit(); err != nil {
+		m.abortRegistryOperations(operations)
+		return Card{}, err
+	}
+	if err := m.completeRegistryOperations(ctx, operations); err != nil {
+		return Card{}, err
 	}
 	return m.getCard(ctx, id)
 }
@@ -360,20 +430,36 @@ func (m *Manager) ImportCards(ctx context.Context, dashboardID string, inputs []
 		}
 	}
 	ids := make([]string, len(inputs))
+	var operations []registryOperation
 	for index := range ids {
 		id, err := randomID()
 		if err != nil {
+			m.abortRegistryOperations(operations)
 			return err
 		}
 		ids[index] = id
+		if inputs[index].Type == CardRegistry {
+			var config registrymonitor.Config
+			_ = json.Unmarshal(inputs[index].Config, &config)
+			if config.AuthMode == "anonymous" {
+				operation, prepareErr := m.prepareRegistryConnection(ctx, id, inputs[index])
+				if prepareErr != nil {
+					m.abortRegistryOperations(operations)
+					return prepareErr
+				}
+				operations = append(operations, operation)
+			}
+		}
 	}
 	transaction, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
+		m.abortRegistryOperations(operations)
 		return err
 	}
 	defer transaction.Rollback()
 	var order int
 	if err := transaction.QueryRowContext(ctx, `SELECT COALESCE(MAX(sort_order),0) FROM custom_dashboard_cards WHERE dashboard_id=?`, dashboardID).Scan(&order); err != nil {
+		m.abortRegistryOperations(operations)
 		return err
 	}
 	now := m.now().UTC().UnixNano()
@@ -385,60 +471,122 @@ func (m *Manager) ImportCards(ctx context.Context, dashboardID string, inputs []
 		}
 		order++
 		if _, err := transaction.ExecContext(ctx, `INSERT INTO custom_dashboard_cards(id,dashboard_id,name,type,source_url,headers_json,value_path,secondary_path,formula,config_json,refresh_seconds,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, ids[index], dashboardID, input.Name, input.Type, input.SourceURL, string(headers), input.ValuePath, input.SecondaryPath, input.Formula, string(config), input.RefreshSeconds, order, now, now); err != nil {
+			m.abortRegistryOperations(operations)
 			return err
 		}
 	}
-	return transaction.Commit()
+	if err := m.recordRegistryOperations(ctx, transaction, operations); err != nil {
+		m.abortRegistryOperations(operations)
+		return err
+	}
+	if err := transaction.Commit(); err != nil {
+		m.abortRegistryOperations(operations)
+		return err
+	}
+	return m.completeRegistryOperations(ctx, operations)
 }
 func (m *Manager) UpdateCard(ctx context.Context, id string, input CardInput) (Card, error) {
 	if err := validateCard(&input); err != nil {
 		return Card{}, err
 	}
-	if input.Type == CardRegistry && input.RegistryPassword == "" && input.PreserveRegistryPassword {
+	current, err := m.getCard(ctx, id)
+	if err != nil {
+		return Card{}, err
+	}
+	var operations []registryOperation
+	if input.Type == CardRegistry {
 		var registryConfig registrymonitor.Config
 		_ = json.Unmarshal(input.Config, &registryConfig)
-		if registryConfig.AuthMode == "basic" && !m.secrets.has(id) {
-			return Card{}, ErrCredentialUnavailable
+		if registryConfig.AuthMode == "basic" && input.RegistryPassword == "" && !input.PreserveRegistryPassword {
+			operation, prepareErr := m.prepareRegistryDelete(ctx, id)
+			if prepareErr != nil {
+				return Card{}, prepareErr
+			}
+			operations = append(operations, operation)
+		} else {
+			operation, prepareErr := m.prepareRegistryConnection(ctx, id, input)
+			if prepareErr != nil {
+				return Card{}, prepareErr
+			}
+			operations = append(operations, operation)
 		}
+	} else if current.Type == CardRegistry {
+		operation, prepareErr := m.prepareRegistryDelete(ctx, id)
+		if prepareErr != nil {
+			return Card{}, prepareErr
+		}
+		operations = append(operations, operation)
 	}
 	headers, _ := json.Marshal(input.Headers)
 	config := input.Config
 	if len(config) == 0 {
 		config = []byte(`{}`)
 	}
-	result, err := m.db.ExecContext(ctx, `UPDATE custom_dashboard_cards SET name=?,type=?,source_url=?,headers_json=?,value_path=?,secondary_path=?,formula=?,config_json=?,refresh_seconds=?,updated_at=? WHERE id=?`, input.Name, input.Type, input.SourceURL, string(headers), input.ValuePath, input.SecondaryPath, input.Formula, string(config), input.RefreshSeconds, m.now().UnixNano(), id)
+	transaction, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
+		m.abortRegistryOperations(operations)
+		return Card{}, err
+	}
+	defer transaction.Rollback()
+	result, err := transaction.ExecContext(ctx, `UPDATE custom_dashboard_cards SET name=?,type=?,source_url=?,headers_json=?,value_path=?,secondary_path=?,formula=?,config_json=?,refresh_seconds=?,updated_at=? WHERE id=?`, input.Name, input.Type, input.SourceURL, string(headers), input.ValuePath, input.SecondaryPath, input.Formula, string(config), input.RefreshSeconds, m.now().UnixNano(), id)
+	if err != nil {
+		m.abortRegistryOperations(operations)
 		return Card{}, err
 	}
 	if count, _ := result.RowsAffected(); count == 0 {
+		m.abortRegistryOperations(operations)
 		return Card{}, sql.ErrNoRows
 	}
-	if input.Type == CardRegistry {
-		var registryConfig registrymonitor.Config
-		_ = json.Unmarshal(input.Config, &registryConfig)
-		if registryConfig.AuthMode == "anonymous" {
-			_ = m.secrets.delete(id)
-		} else if input.RegistryPassword != "" {
-			if err := m.secrets.set(id, input.RegistryPassword); err != nil {
-				return Card{}, err
-			}
-		} else if !input.PreserveRegistryPassword {
-			_ = m.secrets.delete(id)
-		}
-	} else {
-		_ = m.secrets.delete(id)
+	if err := m.recordRegistryOperations(ctx, transaction, operations); err != nil {
+		m.abortRegistryOperations(operations)
+		return Card{}, err
+	}
+	if err := transaction.Commit(); err != nil {
+		m.abortRegistryOperations(operations)
+		return Card{}, err
+	}
+	if err := m.completeRegistryOperations(ctx, operations); err != nil {
+		return Card{}, err
 	}
 	return m.getCard(ctx, id)
 }
 func (m *Manager) DeleteCard(ctx context.Context, id string) error {
-	result, err := m.db.ExecContext(ctx, `DELETE FROM custom_dashboard_cards WHERE id=?`, id)
+	card, err := m.getCard(ctx, id)
 	if err != nil {
 		return err
 	}
+	var operations []registryOperation
+	if card.Type == CardRegistry {
+		operation, prepareErr := m.prepareRegistryDelete(ctx, id)
+		if prepareErr != nil {
+			return prepareErr
+		}
+		operations = append(operations, operation)
+	}
+	transaction, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		m.abortRegistryOperations(operations)
+		return err
+	}
+	defer transaction.Rollback()
+	result, err := transaction.ExecContext(ctx, `DELETE FROM custom_dashboard_cards WHERE id=?`, id)
+	if err != nil {
+		m.abortRegistryOperations(operations)
+		return err
+	}
 	if count, _ := result.RowsAffected(); count == 0 {
+		m.abortRegistryOperations(operations)
 		return sql.ErrNoRows
 	}
-	return m.secrets.delete(id)
+	if err := m.recordRegistryOperations(ctx, transaction, operations); err != nil {
+		m.abortRegistryOperations(operations)
+		return err
+	}
+	if err := transaction.Commit(); err != nil {
+		m.abortRegistryOperations(operations)
+		return err
+	}
+	return m.completeRegistryOperations(ctx, operations)
 }
 
 func (m *Manager) MoveCard(ctx context.Context, id string, direction int) (string, error) {
@@ -514,7 +662,7 @@ func (m *Manager) listCards(ctx context.Context, dashboardID string) ([]Card, er
 			return nil, err
 		}
 		if card.Type == CardRegistry {
-			card.CredentialConfigured = m.secrets.has(card.ID)
+			card.CredentialConfigured, _ = m.registry.Configured(ctx, card.ID)
 		}
 		cards = append(cards, card)
 	}
@@ -523,7 +671,7 @@ func (m *Manager) listCards(ctx context.Context, dashboardID string) ([]Card, er
 func (m *Manager) getCard(ctx context.Context, id string) (Card, error) {
 	card, err := scanCard(m.db.QueryRowContext(ctx, cardSelect+` WHERE id=?`, id))
 	if err == nil && card.Type == CardRegistry {
-		card.CredentialConfigured = m.secrets.has(card.ID)
+		card.CredentialConfigured, _ = m.registry.Configured(ctx, card.ID)
 	}
 	return card, err
 }
@@ -601,8 +749,7 @@ func (m *Manager) refreshRegistryCard(ctx context.Context, card Card) (Card, err
 	if err := json.Unmarshal(card.Config, &config); err != nil {
 		return m.recordFailure(ctx, card, errors.New("Registry 卡片配置无效"))
 	}
-	input := CardInput{Name: card.Name, Type: card.Type, Config: card.Config, PreserveRegistryPassword: true}
-	testResult, err := m.runRegistryRequest(ctx, input, card.ID)
+	testResult, err := m.runStoredRegistryRequest(ctx, card)
 	results := testResult.Images
 	if err != nil && len(results) == 0 {
 		return m.recordFailureDiagnostic(ctx, card, err, testResult.Diagnostic)
@@ -655,6 +802,114 @@ func (m *Manager) refreshRegistryCard(ctx context.Context, card Card) (Card, err
 		return updated, errors.New(lastError)
 	}
 	return updated, nil
+}
+
+type registryOperation struct {
+	ID, CardID string
+}
+
+func (m *Manager) prepareRegistryConnection(ctx context.Context, cardID string, input CardInput) (registryOperation, error) {
+	operationID, err := randomID()
+	if err != nil {
+		return registryOperation{}, err
+	}
+	var config registrymonitor.Config
+	if err := json.Unmarshal(input.Config, &config); err != nil {
+		return registryOperation{}, err
+	}
+	if err := m.registry.Prepare(ctx, operationID, cardID, config, input.RegistryPassword, input.PreserveRegistryPassword); err != nil {
+		if input.PreserveRegistryPassword && input.RegistryPassword == "" {
+			return registryOperation{}, ErrCredentialUnavailable
+		}
+		return registryOperation{}, err
+	}
+	return registryOperation{ID: operationID, CardID: cardID}, nil
+}
+
+func (m *Manager) prepareRegistryDelete(ctx context.Context, cardID string) (registryOperation, error) {
+	operationID, err := randomID()
+	if err != nil {
+		return registryOperation{}, err
+	}
+	if err := m.registry.PrepareDelete(ctx, operationID, cardID); err != nil {
+		return registryOperation{}, err
+	}
+	return registryOperation{ID: operationID, CardID: cardID}, nil
+}
+
+func (m *Manager) recordRegistryOperations(ctx context.Context, transaction *sql.Tx, operations []registryOperation) error {
+	for _, operation := range operations {
+		if _, err := transaction.ExecContext(ctx, `INSERT INTO custom_dashboard_registry_operations(operation_id,card_id,created_at) VALUES(?,?,?)`, operation.ID, operation.CardID, m.now().UTC().UnixNano()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *Manager) completeRegistryOperations(ctx context.Context, operations []registryOperation) error {
+	for _, operation := range operations {
+		if err := m.registry.Commit(ctx, operation.ID); err != nil {
+			return err
+		}
+		if _, err := m.db.ExecContext(ctx, `DELETE FROM custom_dashboard_registry_operations WHERE operation_id=?`, operation.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *Manager) abortRegistryOperations(operations []registryOperation) {
+	for _, operation := range operations {
+		_ = m.registry.Abort(context.Background(), operation.ID)
+	}
+}
+
+// ReconcileRegistryOperations finishes Broker mutations whose SQLite commit
+// succeeded before the Web process was interrupted. Commit is idempotent.
+func (m *Manager) ReconcileRegistryOperations(ctx context.Context) error {
+	rows, err := m.db.QueryContext(ctx, `SELECT operation_id,card_id FROM custom_dashboard_registry_operations ORDER BY created_at,operation_id`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var operations []registryOperation
+	for rows.Next() {
+		var operation registryOperation
+		if err := rows.Scan(&operation.ID, &operation.CardID); err != nil {
+			return err
+		}
+		operations = append(operations, operation)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	return m.completeRegistryOperations(ctx, operations)
+}
+
+func (m *Manager) runStoredRegistryRequest(ctx context.Context, card Card) (TestResult, error) {
+	started := time.Now()
+	var config registrymonitor.Config
+	_ = json.Unmarshal(card.Config, &config)
+	result := TestResult{Diagnostic: RequestDiagnostic{Code: DiagnosticOK, Stage: "complete", Summary: "请求成功", URL: redactRequestURL(config.Endpoint), AttemptedAt: m.now().UTC()}}
+	images, err := m.registry.Inspect(ctx, card.ID)
+	if err != nil {
+		return finishRequestFailure(result, started, "registry_auth", DiagnosticRegistryAuth, "无法使用已保存的 Registry 连接", err), err
+	}
+	result.Images = images
+	failures := 0
+	for index, image := range images {
+		if image.Error != "" {
+			failures++
+			result.Images[index].Error = safeRegistryError(image.Error)
+		}
+	}
+	if failures > 0 {
+		err = fmt.Errorf("%d 个镜像查询失败", failures)
+		return finishRequestFailure(result, started, "registry_manifest", DiagnosticRegistryManifest, err.Error(), err), err
+	}
+	result.OK = true
+	result.Diagnostic.DurationMS = elapsedMilliseconds(started, time.Now())
+	return result, nil
 }
 
 func (m *Manager) recordFailure(ctx context.Context, card Card, refreshErr error) (Card, error) {

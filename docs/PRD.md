@@ -37,7 +37,7 @@
 > 密钥能力均由 Broker 持有，Web 只调用固定领域协议。四个二进制作为一个版本化发布单元整体
 > 安装、升级、回滚和卸载，Linux Runner/AI Host 使用 socket activation，Windows 使用 SCM
 > demand-start。完整最小权限工作见
-> [安全加固计划](./OPERATIONS-PANEL-SECURITY-HARDENING-PLAN.md)。当前数据库为 schema 44，
+> [安全加固计划](./OPERATIONS-PANEL-SECURITY-HARDENING-PLAN.md)。当前数据库为 schema 45，
 > schema 20–43 仅沿显式事务迁移路径前向升级；下文固定 schema 24 的旧表述不再适用。
 
 ## 1. 产品定义

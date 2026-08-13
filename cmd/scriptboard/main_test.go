@@ -14,6 +14,7 @@ import (
 	"scriptboard/internal/app"
 	"scriptboard/internal/auditcheckpoint"
 	"scriptboard/internal/auditlog"
+	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/config"
 	"scriptboard/internal/secretstore"
 	"scriptboard/internal/statebackup"
@@ -137,7 +138,7 @@ func TestBackupCreateWorksWithoutOpeningTheWebApplication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifest.ID == "" || manifest.SchemaVersion != 44 {
+	if manifest.ID == "" || manifest.SchemaVersion != buildinfo.DatabaseSchemaVersion {
 		t.Fatalf("backup manifest = %#v", manifest)
 	}
 }

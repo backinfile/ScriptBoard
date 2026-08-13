@@ -28,6 +28,7 @@ import (
 	"scriptboard/internal/privatepath"
 	"scriptboard/internal/privilegebroker"
 	"scriptboard/internal/providercredential"
+	"scriptboard/internal/registryconnection"
 	"scriptboard/internal/remotewebsite"
 	"scriptboard/internal/secretredaction"
 	"scriptboard/internal/secretstore"
@@ -154,6 +155,13 @@ func runContext(ctx context.Context, arguments []string) error {
 	if err := providers.MigrateLegacy(context.Background(), database); err != nil {
 		return fmt.Errorf("migrate Assistant provider credentials in Broker: %w", err)
 	}
+	registryConnections, err := registryconnection.New(registryconnection.Options{StateRoot: absolute, SecretStore: vault})
+	if err != nil {
+		return fmt.Errorf("initialize Broker-owned Registry connections: %w", err)
+	}
+	if err := registryConnections.MigrateLegacy(context.Background(), database, filepath.Join(absolute, "secrets")); err != nil {
+		return fmt.Errorf("migrate Registry connections in Broker: %w", err)
+	}
 	mysqlExecutionManager, err := mysqlmanager.New(mysqlmanager.Options{DB: database, StateRoot: absolute, SecretStore: vault, Audit: func(event mysqlmanager.AuditEvent) {
 		_, appendErr := audit.Append(context.Background(), auditlog.Event{OccurredAt: fmt.Sprintf("%d", time.Now().UTC().Unix()), Action: event.Action,
 			Target: event.Target, Result: event.Result, SourceAddress: "local-privileged-broker", ActorUserID: event.Actor.UserID,
@@ -241,6 +249,7 @@ func runContext(ctx context.Context, arguments []string) error {
 		Checkpoint: brokerCheckpointService{store: checkpoint, audit: audit}, Now: time.Now,
 		MFA: mfaStore, Passkeys: passkeyStore, RemoteWebsites: remoteWebsites, Providers: providers,
 		MySQL: mysqlService, HostFiles: hostFilesService,
+		Registry:     registryConnections,
 		StateBackups: &brokerStateBackupService{stateRoot: absolute, database: database, checkpoint: checkpoint, audit: audit},
 	})
 	if err != nil {

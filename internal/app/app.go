@@ -59,6 +59,7 @@ import (
 	"scriptboard/internal/passkey"
 	"scriptboard/internal/privatepath"
 	"scriptboard/internal/privilegebroker"
+	"scriptboard/internal/registryconnection"
 	"scriptboard/internal/remotewebsite"
 	"scriptboard/internal/runmanager"
 	"scriptboard/internal/scheduler"
@@ -365,6 +366,7 @@ type Config struct {
 	MFAStore                        MFAStore
 	PasskeyStore                    PasskeyStore
 	RemoteWebsiteService            RemoteWebsiteService
+	RegistryConnections             customdashboard.RegistryConnections
 	ProviderCredentials             *privilegebroker.ProviderCredentials
 	MySQLBackend                    mysqlmanager.Backend
 	HostFilesBackend                *privilegebroker.HostFilesBackend
@@ -464,79 +466,81 @@ func deletePasskeyWithContext(ctx context.Context, store PasskeyStore, userID, c
 }
 
 type App struct {
-	db                   *sql.DB
-	stateRoot            string
-	assistant            *assistant.Service
-	assistantRuntime     *assistantRuntimeCoordinator
-	assistantRuntimes    *runtimeinstall.Manager
-	assistantTools       *assistantToolExecutor
-	assistantRaster      *raster.Processor
-	assistantBroker      *toolbroker.Broker
-	files                *hostfiles.Manager
-	hostFilesBackend     *privilegebroker.HostFilesBackend
-	auditLog             *auditlog.Store
-	auditCheckpoint      AuditCheckpoint
-	securityEvents       *securityevents.Manager
-	auditCheckpointStop  context.CancelFunc
-	auditCheckpointWG    sync.WaitGroup
-	uploadInbox          *uploadinbox.Store
-	execUploadExts       map[string]struct{}
-	fileOperations       *sqliteFileOperationStore
-	fileMoves            *hostfiles.MoveEngine
-	fileOperationCtx     context.Context
-	fileOperationStop    context.CancelFunc
-	fileOperationWG      sync.WaitGroup
-	runs                 *runmanager.Manager
-	scheduler            *scheduler.Manager
-	hostStatus           *hoststatus.Monitor
-	hostSecurity         hostsecurity.Service
-	securityHistory      *securitybaseline.HistoryStore
-	serviceLogs          servicelogs.Reader
-	securityDraftMu      sync.Mutex
-	securityDrafts       map[string]securityFirewallDraft
-	applicationStatus    *appstatus.Monitor
-	kubernetesStatus     *clusterstatus.Manager
-	logStreamSlots       chan struct{}
-	logHistorySlots      chan struct{}
-	shellStatusCache     *shellStatusCache
-	websiteMonitor       *websitemonitor.Manager
-	customDashboards     *customdashboard.Manager
-	externalTriggers     *externaltrigger.Manager
-	remoteWebsites       RemoteWebsiteService
-	stateBackups         StateBackupService
-	externalLimit        *externaltrigger.Limiter
-	mysql                *mysqlmanager.Manager
-	mfa                  MFAStore
-	passkeys             PasskeyStore
-	passkeyCeremonies    *passkeyCeremonyStore
-	loginChallenges      *loginChallengeStore
-	mysqlContext         context.Context
-	mysqlCancel          context.CancelFunc
-	mysqlWG              sync.WaitGroup
-	instanceLock         *instancelock.Lock
-	handler              http.Handler
-	routeSpecs           []RouteSpec
-	loginMu              sync.Mutex
-	loginSlots           chan struct{}
-	loginFailures        map[string]loginFailure
-	loginLastPrune       time.Time
-	loginRateSalt        [32]byte
-	activeRequestsMu     sync.Mutex
-	activeRequests       map[string]map[uint64]context.CancelFunc
-	activeRequestID      uint64
-	credentialOverride   bool
-	trustedProxies       []*net.IPNet
-	allowedHosts         map[string]struct{}
-	canonicalExternalURL string
-	updates              *updatepkg.Manager
-	requestRestart       func() error
-	instanceID           string
-	restartRequested     atomic.Bool
-	updateCancel         context.CancelFunc
-	updateContext        context.Context
-	updateResultsWake    chan struct{}
-	validation           atomic.Bool
-	validationID         string
+	db                    *sql.DB
+	stateRoot             string
+	assistant             *assistant.Service
+	assistantRuntime      *assistantRuntimeCoordinator
+	assistantRuntimes     *runtimeinstall.Manager
+	assistantTools        *assistantToolExecutor
+	assistantRaster       *raster.Processor
+	assistantBroker       *toolbroker.Broker
+	files                 *hostfiles.Manager
+	hostFilesBackend      *privilegebroker.HostFilesBackend
+	auditLog              *auditlog.Store
+	auditCheckpoint       AuditCheckpoint
+	securityEvents        *securityevents.Manager
+	auditCheckpointStop   context.CancelFunc
+	auditCheckpointWG     sync.WaitGroup
+	uploadInbox           *uploadinbox.Store
+	execUploadExts        map[string]struct{}
+	fileOperations        *sqliteFileOperationStore
+	fileMoves             *hostfiles.MoveEngine
+	fileOperationCtx      context.Context
+	fileOperationStop     context.CancelFunc
+	fileOperationWG       sync.WaitGroup
+	runs                  *runmanager.Manager
+	scheduler             *scheduler.Manager
+	hostStatus            *hoststatus.Monitor
+	hostSecurity          hostsecurity.Service
+	securityHistory       *securitybaseline.HistoryStore
+	serviceLogs           servicelogs.Reader
+	securityDraftMu       sync.Mutex
+	securityDrafts        map[string]securityFirewallDraft
+	applicationStatus     *appstatus.Monitor
+	kubernetesStatus      *clusterstatus.Manager
+	logStreamSlots        chan struct{}
+	logHistorySlots       chan struct{}
+	shellStatusCache      *shellStatusCache
+	websiteMonitor        *websitemonitor.Manager
+	customDashboards      *customdashboard.Manager
+	externalTriggers      *externaltrigger.Manager
+	externalReconcileStop context.CancelFunc
+	externalReconcileWG   sync.WaitGroup
+	remoteWebsites        RemoteWebsiteService
+	stateBackups          StateBackupService
+	externalLimit         *externaltrigger.Limiter
+	mysql                 *mysqlmanager.Manager
+	mfa                   MFAStore
+	passkeys              PasskeyStore
+	passkeyCeremonies     *passkeyCeremonyStore
+	loginChallenges       *loginChallengeStore
+	mysqlContext          context.Context
+	mysqlCancel           context.CancelFunc
+	mysqlWG               sync.WaitGroup
+	instanceLock          *instancelock.Lock
+	handler               http.Handler
+	routeSpecs            []RouteSpec
+	loginMu               sync.Mutex
+	loginSlots            chan struct{}
+	loginFailures         map[string]loginFailure
+	loginLastPrune        time.Time
+	loginRateSalt         [32]byte
+	activeRequestsMu      sync.Mutex
+	activeRequests        map[string]map[uint64]context.CancelFunc
+	activeRequestID       uint64
+	credentialOverride    bool
+	trustedProxies        []*net.IPNet
+	allowedHosts          map[string]struct{}
+	canonicalExternalURL  string
+	updates               *updatepkg.Manager
+	requestRestart        func() error
+	instanceID            string
+	restartRequested      atomic.Bool
+	updateCancel          context.CancelFunc
+	updateContext         context.Context
+	updateResultsWake     chan struct{}
+	validation            atomic.Bool
+	validationID          string
 }
 
 type loginFailure struct {
@@ -691,6 +695,12 @@ func Open(config Config) (*App, error) {
 		return nil, fmt.Errorf("verify external audit checkpoint: %w", err)
 	}
 	application.externalTriggers = externaltrigger.New(db, externaltrigger.Options{SecretsDirectory: filepath.Join(stateRoot, "secrets"), SecretStore: credentialStore})
+	if !validating {
+		if err := application.externalTriggers.ReconcileInvocations(context.Background(), time.Now().UTC().Add(-5*time.Minute)); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("reconcile External Interface invocations: %w", err)
+		}
+	}
 	application.remoteWebsites = config.RemoteWebsiteService
 	if application.remoteWebsites == nil {
 		application.remoteWebsites, err = remotewebsite.New(remotewebsite.Options{StateRoot: stateRoot, SecretStore: credentialStore})
@@ -876,7 +886,25 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	application.customDashboards, err = customdashboard.New(customdashboard.Options{DB: db, Client: config.CustomDashboardClient, Paused: validating, SecretsDirectory: filepath.Join(stateRoot, "secrets")})
+	registryConnections := config.RegistryConnections
+	if registryConnections == nil {
+		registryConnections, err = registryconnection.New(registryconnection.Options{StateRoot: stateRoot, SecretStore: credentialStore, Client: config.CustomDashboardClient})
+		if err != nil {
+			application.websiteMonitor.Close()
+			application.applicationStatus.Close()
+			application.hostStatus.Close()
+			application.scheduler.Close()
+			application.runs.Close()
+			_ = db.Close()
+			return nil, fmt.Errorf("initialize local Registry connections: %w", err)
+		}
+		if local, ok := registryConnections.(*registryconnection.Service); ok {
+			if err := local.MigrateLegacy(context.Background(), db, filepath.Join(stateRoot, "secrets")); err != nil {
+				return nil, fmt.Errorf("migrate local Registry connections: %w", err)
+			}
+		}
+	}
+	application.customDashboards, err = customdashboard.New(customdashboard.Options{DB: db, Client: config.CustomDashboardClient, RegistryConnections: registryConnections, Paused: validating})
 	if err != nil {
 		application.websiteMonitor.Close()
 		application.applicationStatus.Close()
@@ -955,6 +983,12 @@ func Open(config Config) (*App, error) {
 	go application.monitorUpdateResults()
 	application.shellStatusCache = newShellStatusCache(5*time.Second, time.Now, application.loadShellStatus)
 	application.handler = application.routes()
+	if !validating {
+		externalContext, externalStop := context.WithCancel(context.Background())
+		application.externalReconcileStop = externalStop
+		application.externalReconcileWG.Add(1)
+		go application.monitorExternalInvocationReconciliation(externalContext)
+	}
 	auditCheckpointContext, auditCheckpointStop := context.WithCancel(context.Background())
 	application.auditCheckpointStop = auditCheckpointStop
 	application.auditCheckpointWG.Add(1)
@@ -1006,6 +1040,20 @@ func (a *App) monitorAuditCheckpoint(ctx context.Context) {
 
 func (a *App) ValidationOperationID() string {
 	return a.validationID
+}
+
+func (a *App) monitorExternalInvocationReconciliation(ctx context.Context) {
+	defer a.externalReconcileWG.Done()
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			_ = a.externalTriggers.ReconcileInvocations(ctx, now.UTC().Add(-5*time.Minute))
+		}
+	}
 }
 
 func (a *App) beginUpdateMaintenance() (int, bool) {
@@ -1394,6 +1442,10 @@ func (a *App) applyCredentialOverride(username, passwordFile string) error {
 }
 
 func (a *App) Close() error {
+	if a.externalReconcileStop != nil {
+		a.externalReconcileStop()
+		a.externalReconcileWG.Wait()
+	}
 	if a.auditCheckpointStop != nil {
 		a.auditCheckpointStop()
 		a.auditCheckpointWG.Wait()
@@ -2352,9 +2404,10 @@ func compatibleDatabaseSchema(version int) bool {
 	// and Kubernetes/container monitoring while the security line independently
 	// used 35-43 for audit integrity, immutable execution resources, External
 	// Interface controls, authentication assurance, MFA policy, and resource
-	// identity. Schema 44 is the reconciled union; migrations below inspect the
-	// actual tables and columns so either predecessor can advance safely.
-	return version == currentSchemaVersion || currentSchemaVersion == 44 && version >= 20 && version <= 43
+	// identity. Schema 44 is the reconciled union; schema 45 adds the durable
+	// Registry operation log. Migrations inspect the actual tables and columns
+	// so every supported predecessor can advance safely.
+	return version == currentSchemaVersion || currentSchemaVersion == 45 && version >= 20 && version <= 44
 }
 
 func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {

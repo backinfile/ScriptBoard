@@ -836,6 +836,9 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 		return
 	}
 	result := execution.Result
+	if execution.RecordError != nil {
+		a.recordAuditWithRequestActor(request, "external_trigger_completion_deferred", "request="+requestID+" entry="+entry.Name, "deferred", request.RemoteAddr, "", key.Label, userRole("external"))
+	}
 	a.recordAuditWithRequestActor(request, "external_trigger_"+string(entry.Type), "key="+key.ID+" entry="+entry.Name, result.result, request.RemoteAddr, "", key.Label, userRole("external"))
 	if result.status >= 400 {
 		writeExternalTriggerError(response, result.status, result.code)

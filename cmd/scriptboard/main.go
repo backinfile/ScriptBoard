@@ -20,6 +20,7 @@ import (
 	"scriptboard/internal/auditlog"
 	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/config"
+	"scriptboard/internal/customdashboard"
 	"scriptboard/internal/doctor"
 	"scriptboard/internal/installation"
 	"scriptboard/internal/mysqlmanager"
@@ -559,6 +560,7 @@ func serveContext(runContext context.Context, arguments []string) error {
 	var mfaStore app.MFAStore
 	var passkeyStore app.PasskeyStore
 	var remoteWebsiteService app.RemoteWebsiteService
+	var registryConnections customdashboard.RegistryConnections
 	var providerCredentials *privilegebroker.ProviderCredentials
 	var mysqlBackend mysqlmanager.Backend
 	var hostFilesBackend *privilegebroker.HostFilesBackend
@@ -599,6 +601,7 @@ func serveContext(runContext context.Context, arguments []string) error {
 		mfaStore = privilegebroker.NewRemoteMFA(brokerClient)
 		passkeyStore = privilegebroker.NewRemotePasskey(brokerClient)
 		remoteWebsiteService = privilegebroker.NewRemoteWebsite(brokerClient)
+		registryConnections = privilegebroker.NewRegistryConnections(brokerClient)
 		providerCredentials = privilegebroker.NewProviderCredentials(brokerClient)
 		mysqlBackend = privilegebroker.NewMySQLBackend(brokerClient, mysqlmanager.ToolSettings{DumpExecutable: "mysqldump", ClientExecutable: "mysql"})
 		hostFilesBackend = privilegebroker.NewHostFilesBackend(brokerClient, filepath.Join(loaded.StateRoot, "inbox", "host-files-broker"))
@@ -633,6 +636,7 @@ func serveContext(runContext context.Context, arguments []string) error {
 		MFAStore:                 mfaStore,
 		PasskeyStore:             passkeyStore,
 		RemoteWebsiteService:     remoteWebsiteService,
+		RegistryConnections:      registryConnections,
 		ProviderCredentials:      providerCredentials,
 		MySQLBackend:             mysqlBackend,
 		HostFilesBackend:         hostFilesBackend,

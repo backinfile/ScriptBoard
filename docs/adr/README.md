@@ -52,6 +52,8 @@
 
 ## 最新决策
 
+- [ADR-0169 持久恢复 External Interface 完成记录且不重复动作](./0169-reconcile-external-invocation-completions-without-repeating-actions.md)，在动作已执行但最终记录失败时持久化并幂等回放真实结果，过期未决记录明确标记为 `unknown`。
+- [ADR-0168 将 Registry 监控连接与请求限制在 Broker 内](./0168-keep-registry-monitor-connections-inside-the-broker.md)，用外部主密钥、Broker 内探测和跨进程操作日志消除 Web 密钥与“新 Endpoint + 旧密码”状态。
 - [ADR-0163 四个信任边界作为一个带版本的产品整体发布](./0163-ship-four-trust-boundaries-as-one-versioned-product.md)，保持 Web/Broker/Runner/AI Host 隔离，同时把安装、升级、回滚与卸载收敛为绑定四个摘要和 IPC 协议的一套发布事务。
 - [ADR-0162 提供带审计连续性的加密私有状态备份](./0162-provide-encrypted-private-state-backup-with-audit-continuity.md)，用一致性 SQLite snapshot、分块认证加密、固定归档边界和受控审计重锚建立 State Root 带外恢复基础。
 - [ADR-0161 将受管 Host Files 宿主访问限制在 Broker 内](./0161-keep-managed-host-file-access-inside-the-broker.md)，把目录、内容、日志、发布、移动与无人值守固定资源访问移出 Web，并以用户绑定短期句柄和执行点复核收口。
