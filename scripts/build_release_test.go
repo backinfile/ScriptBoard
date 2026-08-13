@@ -48,35 +48,27 @@ func TestBuildReleaseEmbedsUpdateKeyRevocations(t *testing.T) {
 	}
 }
 
-func TestBuildReleaseIncludesSingleInstallEntryPointPerPlatform(t *testing.T) {
+func TestBuildReleaseCreatesSingleFileInstallersPerPlatform(t *testing.T) {
 	script, err := os.ReadFile("build-release.ps1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	content := string(script)
 	for _, expected := range []string{
-		`Copy-Item (Join-Path $PSScriptRoot "install.cmd") -Destination $stage`,
-		`Copy-Item (Join-Path $PSScriptRoot "install.sh") -Destination $stage`,
+		`$name-setup.exe`,
+		`$name.run`,
+		`./cmd/scriptboard-installer`,
+		`Join-SelfExtractingBundle`,
 	} {
 		if !strings.Contains(content, expected) {
 			t.Fatalf("release script does not package the platform installer %q", expected)
 		}
 	}
 
-	windowsInstaller, err := os.ReadFile("install.cmd")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(windowsInstaller), `service install --start %*`) {
-		t.Fatal("Windows install entry point does not perform the complete managed installation")
-	}
-
-	linuxInstaller, err := os.ReadFile("install.sh")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(linuxInstaller), `service install --start`) {
-		t.Fatal("Linux install entry point does not perform the complete managed installation")
+	for _, removed := range []string{"$name.zip", "$name.tar.gz", `Copy-Item (Join-Path $PSScriptRoot "install.`} {
+		if strings.Contains(content, removed) {
+			t.Fatalf("release script still publishes the superseded artifact %q", removed)
+		}
 	}
 }
 

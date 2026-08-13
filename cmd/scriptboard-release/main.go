@@ -209,7 +209,7 @@ func buildManifest(version, tag, commit, publishedAt, assetsDirectory string) (u
 	if err != nil || published.Location() != time.UTC {
 		return updatepkg.Manifest{}, errors.New("published-at must be UTC RFC3339")
 	}
-	pattern := regexp.MustCompile(`^scriptboard-v` + regexp.QuoteMeta(version) + `-(windows|linux)-(amd64|arm64)\.(zip|tar\.gz)$`)
+	pattern := regexp.MustCompile(`^scriptboard-v` + regexp.QuoteMeta(version) + `-(?:(windows)-(amd64|arm64)-setup\.(exe)|(linux)-(amd64|arm64)\.(run))$`)
 	entries, err := os.ReadDir(assetsDirectory)
 	if err != nil {
 		return updatepkg.Manifest{}, err
@@ -223,8 +223,9 @@ func buildManifest(version, tag, commit, publishedAt, assetsDirectory string) (u
 		if match == nil {
 			continue
 		}
-		if match[1] == "windows" && match[3] != "zip" || match[1] == "linux" && match[3] != "tar.gz" {
-			return updatepkg.Manifest{}, fmt.Errorf("asset %q uses the wrong archive format", entry.Name())
+		assetOS, assetArch := match[1], match[2]
+		if assetOS == "" {
+			assetOS, assetArch = match[4], match[5]
 		}
 		path := filepath.Join(assetsDirectory, entry.Name())
 		info, err := entry.Info()
@@ -240,7 +241,7 @@ func buildManifest(version, tag, commit, publishedAt, assetsDirectory string) (u
 			return updatepkg.Manifest{}, fmt.Errorf("measure %s: %w", entry.Name(), err)
 		}
 		assets = append(assets, updatepkg.Asset{
-			OS: match[1], Arch: match[2], Name: entry.Name(),
+			OS: assetOS, Arch: assetArch, Name: entry.Name(),
 			SHA256: hash, Size: info.Size(), UnpackedSize: unpackedSize,
 		})
 	}
@@ -257,7 +258,7 @@ func buildManifest(version, tag, commit, publishedAt, assetsDirectory string) (u
 		Schema: updatepkg.ManifestSchema, Product: "scriptboard", Repository: buildinfo.Repository,
 		Version: version, Tag: tag, Commit: commit, PublishedAt: publishedAt,
 		DatabaseSchema:  buildinfo.DatabaseSchemaVersion,
-		UpdaterProtocol: buildinfo.UpdaterProtocolVersion, MinimumUpdaterProtocol: 1,
+		UpdaterProtocol: buildinfo.UpdaterProtocolVersion, MinimumUpdaterProtocol: 2,
 		Assets: assets,
 	}
 	if err := manifest.Validate(); err != nil {

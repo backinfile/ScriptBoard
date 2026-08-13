@@ -32,10 +32,10 @@ func ExtractArchive(archivePath, destination string, expectedSize int64) error {
 	var count int
 	seen := make(map[string]struct{})
 	var err error
-	switch {
-	case strings.HasSuffix(strings.ToLower(archivePath), ".zip"):
+	switch archiveFormat(archivePath) {
+	case "zip":
 		extracted, count, err = extractZIP(archivePath, destination, expectedSize, seen)
-	case strings.HasSuffix(strings.ToLower(archivePath), ".tar.gz"):
+	case "tar.gz":
 		extracted, count, err = extractTarGZ(archivePath, destination, expectedSize, seen)
 	default:
 		err = errors.New("unsupported release archive format")
@@ -55,8 +55,8 @@ func ExtractArchive(archivePath, destination string, expectedSize int64) error {
 // total number of regular-file bytes represented by the archive.
 func MeasureArchive(archivePath string) (int64, int, error) {
 	seen := make(map[string]struct{})
-	switch {
-	case strings.HasSuffix(strings.ToLower(archivePath), ".zip"):
+	switch archiveFormat(archivePath) {
+	case "zip":
 		reader, err := zip.OpenReader(archivePath)
 		if err != nil {
 			return 0, 0, err
@@ -96,7 +96,7 @@ func MeasureArchive(archivePath string) (int64, int, error) {
 			return 0, 0, errors.New("archive contains no entries")
 		}
 		return total, entries, nil
-	case strings.HasSuffix(strings.ToLower(archivePath), ".tar.gz"):
+	case "tar.gz":
 		file, err := os.Open(archivePath)
 		if err != nil {
 			return 0, 0, err
@@ -150,6 +150,18 @@ func MeasureArchive(archivePath string) (int64, int, error) {
 		return total, entries, nil
 	default:
 		return 0, 0, errors.New("unsupported release archive format")
+	}
+}
+
+func archiveFormat(archivePath string) string {
+	lower := strings.ToLower(archivePath)
+	switch {
+	case strings.HasSuffix(lower, ".zip"), strings.HasSuffix(lower, ".exe"), strings.HasSuffix(lower, ".run"):
+		return "zip"
+	case strings.HasSuffix(lower, ".tar.gz"):
+		return "tar.gz"
+	default:
+		return ""
 	}
 }
 

@@ -1,9 +1,7 @@
 package update
 
 import (
-	"archive/tar"
 	"archive/zip"
-	"compress/gzip"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
@@ -12,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 
 	"scriptboard/internal/buildinfo"
@@ -79,11 +76,10 @@ func TestVerifyOfflinePackageChecksSignatureArchiveAndReleaseMetadata(t *testing
 }
 
 func offlineAssetName(version string) string {
-	extension := "zip"
-	if runtime.GOOS != "windows" {
-		extension = "tar.gz"
+	if runtime.GOOS == "windows" {
+		return "scriptboard-v" + version + "-windows-" + runtime.GOARCH + "-setup.exe"
 	}
-	return "scriptboard-v" + version + "-" + runtime.GOOS + "-" + runtime.GOARCH + "." + extension
+	return "scriptboard-v" + version + "-linux-" + runtime.GOARCH + ".run"
 }
 
 func writeOfflineReleaseArchive(t *testing.T, name string, release buildinfo.Info) (string, int64) {
@@ -94,7 +90,7 @@ func writeOfflineReleaseArchive(t *testing.T, name string, release buildinfo.Inf
 	}
 	files := map[string][]byte{buildinfo.ReleaseInfoFilename: releaseRaw}
 	if runtime.GOOS == "windows" {
-		for _, required := range []string{"scriptboard.exe", "scriptboard-broker.exe", "scriptboard-ai-host.exe", "scriptboard-runner.exe", "scriptboard-tray.exe", "scriptboard-tray-launcher.exe", "scriptboard-updater.exe", "install.cmd"} {
+		for _, required := range []string{"scriptboard.exe", "scriptboard-broker.exe", "scriptboard-ai-host.exe", "scriptboard-runner.exe", "scriptboard-tray.exe", "scriptboard-tray-launcher.exe", "scriptboard-updater.exe"} {
 			files[required] = []byte("fixture-" + required)
 		}
 	} else {
@@ -103,58 +99,30 @@ func writeOfflineReleaseArchive(t *testing.T, name string, release buildinfo.Inf
 		files["scriptboard-ai-host"] = []byte("fixture-ai-host")
 		files["scriptboard-runner"] = []byte("fixture-runner")
 		files["scriptboard-updater"] = []byte("fixture-updater")
-		files["install.sh"] = []byte("fixture-installer")
 	}
 	var unpacked int64
 	for _, content := range files {
 		unpacked += int64(len(content))
 	}
 	path := filepath.Join(t.TempDir(), name)
-	if runtime.GOOS == "windows" {
-		file, err := os.Create(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		writer := zip.NewWriter(file)
-		for name, content := range files {
-			entry, err := writer.Create(name)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := entry.Write(content); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if err := writer.Close(); err != nil {
-			t.Fatal(err)
-		}
-		if err := file.Close(); err != nil {
-			t.Fatal(err)
-		}
-		return path, unpacked
-	}
 	file, err := os.Create(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	gzipWriter := gzip.NewWriter(file)
-	tarWriter := tar.NewWriter(gzipWriter)
-	for name, content := range files {
-		mode := int64(0o644)
-		if strings.HasPrefix(name, "scriptboard") && name != buildinfo.ReleaseInfoFilename {
-			mode = 0o755
-		}
-		if err := tarWriter.WriteHeader(&tar.Header{Name: name, Mode: mode, Size: int64(len(content)), Typeflag: tar.TypeReg}); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := tarWriter.Write(content); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := tarWriter.Close(); err != nil {
+	if _, err := file.Write([]byte("fixture-native-installer")); err != nil {
 		t.Fatal(err)
 	}
-	if err := gzipWriter.Close(); err != nil {
+	writer := zip.NewWriter(file)
+	for name, content := range files {
+		entry, err := writer.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := entry.Write(content); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if err := file.Close(); err != nil {

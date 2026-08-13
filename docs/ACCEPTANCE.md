@@ -150,12 +150,12 @@
 
 ## 12. 发布与兼容
 
-- [ ] Windows amd64/arm64 ZIP 含 `install.cmd`、四个服务组件、托盘、托盘启动器和 updater；Linux amd64/arm64 tar.gz 含 `install.sh`、四个服务组件和 updater。
-- [ ] 正式 Tag Release 生成四个平台归档、`SHA256SUMS`、归档内 `RELEASE.json`、严格发布清单及其 Ed25519 detached signature；缺少签名 Secret 时发布失败。
-- [ ] `version --json`、Git Tag、清单、归档名和 `RELEASE.json` 的版本、Commit、平台及协议一致；不依赖 Node.js、Redis、消息队列或外部运行时。
+- [ ] Windows amd64/arm64 各发布一个 Setup EXE，Linux amd64/arm64 各发布一个可执行 `.run`；每个文件内嵌完整平台组件，`--extract-to` 可恢复便携目录。
+- [ ] 正式 Tag Release 生成四个平台安装器、`SHA256SUMS`、载荷内 `RELEASE.json`、严格发布清单及其 Ed25519 detached signature；缺少签名 Secret 时发布失败。
+- [ ] 安装器 `--version-json`、Git Tag、清单、安装器名和载荷 `RELEASE.json` 的版本、Commit、平台及协议一致；不依赖 Node.js、Redis、消息队列或外部运行时。
 - [ ] 新版服务安装采用版本化 Install Root；Linux 使用稳定 `current` 入口，Windows 服务明确指向当前 Installed Release；同名旧式服务、缺失新版安装元数据或从不完整发布包安装时明确拒绝，不执行猜测、迁移或清理。
 - [ ] 正式构建默认按配置周期检查固定官方仓库的最新非 Draft、非 Prerelease 稳定版；开发构建不联网，便携构建不可应用更新。
-- [ ] 未签名、未知 key ID、签名错误、Tag/版本/仓库不一致、平台不匹配、摘要错误、协议过新、超限或含路径穿越/链接/重复条目的归档全部拒绝。
+- [ ] 自动更新直接下载对应平台安装器；未签名、未知 key ID、签名错误、Tag/版本/仓库不一致、平台不匹配、安装器摘要错误、协议过新、超限或内嵌载荷含路径穿越/链接/重复条目时全部拒绝。
 - [ ] 更新只能由已登录管理员通过 CSRF 保护的动作发起；安装前有明确二次确认，不提供无人值守安装。
 - [ ] 进入维护门后调度暂停且新 Run 被同步拒绝；存在任何活动 Run 时返回冲突、恢复正常入口且不停止 Run。
 - [ ] updater 在主进程退出后保存数据库快照、切换目标版本并启动 Validation Mode；验证期间不触发计划、不接受 Run 或业务写请求。

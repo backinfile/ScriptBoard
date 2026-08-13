@@ -397,7 +397,7 @@ state-root/
       database-before-update.db # helper 在旧进程退出后创建的一致快照
       release-manifest.json
       release-manifest.json.sig
-      scriptboard-v*.{zip,tar.gz}
+      scriptboard-v*.{exe,run} # 与首次安装相同的自解包安装器，更新器直接验证并提取其 ZIP 载荷
       extracted/              # 安全解压后的 Release 内容
       helper/                 # Windows 本次事务使用的独立 helper
   tmp/

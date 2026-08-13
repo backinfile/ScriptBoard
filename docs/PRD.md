@@ -488,9 +488,10 @@ scriptboard version
 - 不引入 Node.js 构建链、SPA、Redis 或消息队列。
 - Windows 托盘为同模块独立 GUI 可执行文件。
 - 正式平台：Windows 10/11、Windows Server 2019+、systemd Linux；amd64 与 arm64。
-- Windows 发布 ZIP，Linux 发布 tar.gz；四个平台归档均提供 SHA-256、归档内 `RELEASE.json`，正式 Release 还提供 Ed25519 签名的发布清单。
+- Windows 发布单文件 Setup EXE，Linux 发布单文件可执行 `.run`；两者都是原生启动器附加有界 ZIP 载荷，四个平台安装器均提供 SHA-256、载荷内 `RELEASE.json`，正式 Release 还提供 Ed25519 签名的发布清单。
 - 正式 Release 以 Git Tag 作为版本事实来源。服务程序、托盘、托盘启动器和 updater 共用同一份构建元数据；开发构建必须明确标记为 `development`。
 - 正式构建默认每 6 小时检查固定官方仓库 `backinfile/ScriptBoard` 的最新稳定版，只信任与内置公钥匹配的签名清单。检查失败不得影响已有服务能力。
+- 单文件安装器从 updater protocol 2 起生效；protocol 1 安装必须手工执行一次新安装器建立基线，不能把不兼容资产伪装成可自动更新。
 - 更新不会静默安装。管理员可在 Web 或 CLI 明确发起检查；下载验证与安装只在 Web 完成，并在安装前二次确认；第一版不提供无人值守定时安装。
 - 新版 `service install` 将完整 Release 复制到版本化 Install Root：Windows 为 `C:\Program Files\ScriptBoard`，Linux 为 `/opt/scriptboard`。Linux 服务使用稳定的 `current` 入口，Windows 服务配置明确指向当前 Installed Release。
 - 旧式“服务直接指向单个可执行文件”的安装不迁移、不兼容；发现同名旧服务或缺失新版安装元数据时必须拒绝安装，并要求管理员先手工卸载后全新安装。
@@ -498,7 +499,7 @@ scriptboard version
 - updater 在旧进程退出后创建一致数据库快照、切换服务目标并以 Validation Mode 启动新版本。验证期间不触发计划、不接受 Run 或业务写请求；服务状态、精确构建运行标记和 HTTP 就绪持续通过后才能提交。
 - 验活、启动或数据库迁移失败时，updater 自动恢复旧服务目标和更新前数据库快照，并重新启动旧版本。已正常提交并产生新业务数据的版本不提供任意一键降级。
 - 便携 Release 可检查版本和打开官方 Release 页面，但不允许原地自更新；源码开发构建既不自动检查也不下载更新。
-- 发布仍使用便携归档，不制作 MSI/DEB/RPM。
+- 每个平台只提供一个自解包安装器，不制作 MSI/DEB/RPM；安装器的 `--extract-to` 可恢复完整便携目录。
 - Web 界面、状态、动作、错误和日期完整提供简体中文与美式英语；首次访问按 `Accept-Language` 协商，中文语言范围选择简体中文，其余选择美式英语，之后由 Cookie 记忆。URL 不带语言前缀；结构化标识和技术详情保持稳定英文。托盘和 CLI 帮助仍只提供简体中文。
 - 自动化浏览器门禁固定为桌面 Chromium；Chrome、Edge、Firefox 和 Safari 为最佳努力兼容。移动端必须可完成核心操作，但不进入当前自动化截图门禁。
 - 正式支持每台主机单实例；状态目录持有排他实例锁。

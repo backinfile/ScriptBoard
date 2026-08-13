@@ -33,16 +33,27 @@ ScriptBoard 是一款面向单台 Windows 或 Linux 主机的自托管脚本操�
 
 | 系统 | 架构 | 发布包 |
 | --- | --- | --- |
-| Windows 10/11、Windows Server 2019+ | amd64、arm64 | ZIP，包含 Web 服务、特权 Broker、托盘和更新程序 |
-| 使用 systemd 的 Linux | amd64、arm64 | tar.gz，包含 Web 服务、特权 Broker 和更新程序 |
+| Windows 10/11、Windows Server 2019+ | amd64、arm64 | 单文件 `*-setup.exe` 安装器 |
+| 使用 systemd 的 Linux | amd64、arm64 | 单文件可执行 `.run` 安装器 |
 
 请在主机上安装脚本所需的解释器，例如 PowerShell、Python 或 Bash。ScriptBoard 不提供 Docker 部署包。
 
 ## 快速开始
 
-### 1. 下载并解压
+### 1. 下载并解包为便携目录
 
-从 [GitHub Releases](https://github.com/backinfile/ScriptBoard/releases/latest) 下载与系统和架构匹配的完整压缩包，并解压到独立目录。
+从 [GitHub Releases](https://github.com/backinfile/ScriptBoard/releases/latest) 下载与系统和架构匹配的单文件安装器。若只需便携模式，可把内嵌的完整发布内容解包到独立目录：
+
+```powershell
+.\scriptboard-vX.Y.Z-windows-amd64-setup.exe --extract-to C:\ScriptBoard-Portable
+Set-Location C:\ScriptBoard-Portable
+```
+
+```bash
+chmod +x ./scriptboard-vX.Y.Z-linux-amd64.run
+./scriptboard-vX.Y.Z-linux-amd64.run --extract-to "$PWD/scriptboard-portable"
+cd ./scriptboard-portable
+```
 
 ### 2. 启动便携实例
 
@@ -87,25 +98,26 @@ state/secrets/initial-admin-password
 
 ### Windows
 
-解压完整正式发布包后，在管理员 PowerShell 中运行一个安装入口：
+下载匹配架构的正式 Setup 后，在管理员 PowerShell 中运行：
 
 ```powershell
-.\install.cmd
+.\scriptboard-vX.Y.Z-windows-amd64-setup.exe
 ```
 
-安装入口会整体安装、复核并启动 ScriptBoard；成功时输出产品版本和 `STATE: RUNNING`。高级诊断仍可使用 `.\scriptboard.exe service status` 和 `.\scriptboard.exe service verify`。若需要自定义配置，可把相同的配置参数传给安装入口，例如 `.\install.cmd --config C:\secure\scriptboard.yaml`。
+Setup 会安全解开内嵌发布内容，整体安装、复核并启动 ScriptBoard；成功时输出产品版本和 `STATE: RUNNING`。高级诊断可使用已安装的 `scriptboard.exe service status` 和 `service verify`。若需要自定义配置，可传给 Setup，例如 `.\scriptboard-vX.Y.Z-windows-amd64-setup.exe --config C:\secure\scriptboard.yaml`。
 
 服务默认安装到 `C:\Program Files\ScriptBoard`，状态数据保存在 `C:\ProgramData\ScriptBoard\state`。安装会初始化状态并注册 Web、`ScriptBoardBroker`、`ScriptBoardAI` 与 `ScriptBoardRunner` 四个服务；Web 使用低权限 `LocalService` 与独立服务 SID，Broker 保留 LocalSystem，防火墙和主机安全写操作只经保护的本机 Named Pipe 进入 Broker。AI 与 Runner 使用各自的 restricted service SID 和 SCM demand-start，Web 对二者只有 `START + QUERY_STATUS`；Windows Service Hardening 默认阻断它们的网络，AI 只允许访问 IPv4/IPv6 环回 Provider 代理，Runner 无网络例外。四服务的崩溃恢复采用两次退避重启后停止的有界策略，避免永久重启风暴。安装时还会为当前 Windows 用户配置托盘自启动。
 
 ### Linux
 
-解压完整正式发布包后运行一个安装入口：
+下载匹配架构的正式 `.run` 后执行：
 
 ```bash
-sudo sh ./install.sh
+chmod +x ./scriptboard-vX.Y.Z-linux-amd64.run
+sudo ./scriptboard-vX.Y.Z-linux-amd64.run
 ```
 
-安装入口会整体安装、复核并启动 ScriptBoard；成功时输出产品版本和 `STATE: RUNNING`。高级诊断仍可使用 `sudo /opt/scriptboard/current/scriptboard service status` 和 `service verify`。若需要自定义配置，可把相同的配置参数传给安装入口，例如 `sudo sh ./install.sh --config /etc/scriptboard/custom.yaml`。
+`.run` 会安全解开内嵌发布内容，整体安装、复核并启动 ScriptBoard；成功时输出产品版本和 `STATE: RUNNING`。高级诊断仍可使用 `sudo /opt/scriptboard/current/scriptboard service status` 和 `service verify`。若需要自定义配置，可传给安装器，例如 `sudo ./scriptboard-vX.Y.Z-linux-amd64.run --config /etc/scriptboard/custom.yaml`。
 
 服务默认安装到 `/opt/scriptboard`，状态数据保存在 `/var/lib/scriptboard/state`。安装会初始化状态，创建无登录 `scriptboard-web`、`scriptboard-ai` 与 `scriptboard-runner` 系统用户，并注册 Web、Broker、AI Host 与 Runner 四个 systemd 组件；Web 与 Broker 常驻，AI Host 和 Runner 由各自受保护的 Unix Socket 按需激活，未使用 AI 或尚无 Run 时不会预先启动对应执行进程。Web 不以 root 运行，防火墙和主机安全写操作只经校验 peer UID 的本机 Unix Socket 进入 root Broker。AI 只允许环回网络，Runner 默认无 IP 网络；两个 Runtime 服务都使用 systemd seccomp allowlist、空 capability 和资源上限。
 
@@ -270,7 +282,7 @@ scriptboard emergency revoke-key --key-id KEY_ID --confirm-key-id KEY_ID --confi
 scriptboard emergency export-evidence --output ABSOLUTE_JSONL_PATH --config CONFIG_PATH
 ```
 
-在隔离或断网主机上，可同时提供正式 Release 的归档、`release-manifest.json` 与 `release-manifest.json.sig`，离线验证内置签名信任根、平台、文件名、大小、SHA-256、归档边界和 `RELEASE.json`，此命令不会安装或修改当前版本：
+在隔离或断网主机上，可同时提供正式 Release 的单文件安装器、`release-manifest.json` 与 `release-manifest.json.sig`，离线验证内置签名信任根、平台、文件名、大小、SHA-256、内嵌载荷边界和 `RELEASE.json`，此命令不会安装或修改当前版本：
 
 ```text
 scriptboard update verify-package --archive ABSOLUTE_ARCHIVE_PATH --manifest ABSOLUTE_MANIFEST_PATH --signature ABSOLUTE_SIGNATURE_PATH

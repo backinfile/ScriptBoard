@@ -33,16 +33,27 @@ The web interface is available in Simplified Chinese and US English and works on
 
 | System | Architectures | Release package |
 | --- | --- | --- |
-| Windows 10/11 and Windows Server 2019+ | amd64, arm64 | ZIP with Web service, privileged Broker, tray, and updater programs |
-| Linux with systemd | amd64, arm64 | tar.gz with Web service, privileged Broker, and updater programs |
+| Windows 10/11 and Windows Server 2019+ | amd64, arm64 | Single-file `*-setup.exe` installer |
+| Linux with systemd | amd64, arm64 | Single executable `.run` installer |
 
 Install the interpreters required by your scripts, such as PowerShell, Python, or Bash. ScriptBoard does not provide an official Docker deployment package.
 
 ## Quick start
 
-### 1. Download and extract
+### 1. Download and extract for portable use
 
-Download the complete archive for your system and architecture from [GitHub Releases](https://github.com/backinfile/ScriptBoard/releases/latest), then extract it into its own directory.
+Download the single-file installer for your system and architecture from [GitHub Releases](https://github.com/backinfile/ScriptBoard/releases/latest). For portable mode, extract its embedded complete release into a dedicated directory:
+
+```powershell
+.\scriptboard-vX.Y.Z-windows-amd64-setup.exe --extract-to C:\ScriptBoard-Portable
+Set-Location C:\ScriptBoard-Portable
+```
+
+```bash
+chmod +x ./scriptboard-vX.Y.Z-linux-amd64.run
+./scriptboard-vX.Y.Z-linux-amd64.run --extract-to "$PWD/scriptboard-portable"
+cd ./scriptboard-portable
+```
 
 ### 2. Start a portable instance
 
@@ -82,25 +93,26 @@ No YAML configuration file is needed when using the built-in defaults. ScriptBoa
 
 ### Windows
 
-Extract the complete stable release package, then run one installation entry point in an elevated PowerShell window:
+Download the stable Setup for the matching architecture, then run it in an elevated PowerShell window:
 
 ```powershell
-.\install.cmd
+.\scriptboard-vX.Y.Z-windows-amd64-setup.exe
 ```
 
-The entry point installs, verifies, and starts ScriptBoard as one product. Success reports the product version and `STATE: RUNNING`. Advanced diagnostics remain available through `.\scriptboard.exe service status` and `.\scriptboard.exe service verify`. Pass configuration options through the installer when needed, for example `.\install.cmd --config C:\secure\scriptboard.yaml`.
+Setup safely extracts the embedded release, then installs, verifies, and starts ScriptBoard as one product. Success reports the product version and `STATE: RUNNING`. Advanced diagnostics remain available through the installed `scriptboard.exe service status` and `service verify`. Pass configuration options through Setup when needed, for example `.\scriptboard-vX.Y.Z-windows-amd64-setup.exe --config C:\secure\scriptboard.yaml`.
 
 The service is installed under `C:\Program Files\ScriptBoard`, and state is stored under `C:\ProgramData\ScriptBoard\state`. Installation initializes state and registers Web, `ScriptBoardBroker`, `ScriptBoardAI`, and `ScriptBoardRunner` as one versioned product. Web runs as low-privilege `LocalService` with a per-service SID, while the Broker retains LocalSystem. AI Host and Runner use separate restricted service SIDs, default-deny network policy, bounded SCM crash recovery, and demand-start; Web receives only `START + QUERY_STATUS` on those two services. Installation also enables the tray app for the current Windows user.
 
 ### Linux
 
-Extract the complete stable release package, then run one installation entry point:
+Download the stable `.run` for the matching architecture, then execute it:
 
 ```bash
-sudo sh ./install.sh
+chmod +x ./scriptboard-vX.Y.Z-linux-amd64.run
+sudo ./scriptboard-vX.Y.Z-linux-amd64.run
 ```
 
-The entry point installs, verifies, and starts ScriptBoard as one product. Success reports the product version and `STATE: RUNNING`. Advanced diagnostics remain available through `sudo /opt/scriptboard/current/scriptboard service status` and `service verify`. Pass configuration options through the installer when needed, for example `sudo sh ./install.sh --config /etc/scriptboard/custom.yaml`.
+The `.run` safely extracts the embedded release, then installs, verifies, and starts ScriptBoard as one product. Success reports the product version and `STATE: RUNNING`. Advanced diagnostics remain available through `sudo /opt/scriptboard/current/scriptboard service status` and `service verify`. Pass configuration options through the installer when needed, for example `sudo ./scriptboard-vX.Y.Z-linux-amd64.run --config /etc/scriptboard/custom.yaml`.
 
 The service is installed under `/opt/scriptboard`, and state is stored under `/var/lib/scriptboard/state`. Installation creates separate Web, Broker, AI Host, and Runner service identities as one versioned product. Web and Broker stay resident; protected systemd sockets activate AI Host and Runner on demand. Web does not run as root, and privileged or secret-bearing operations enter the root Broker only through a local Unix socket with peer-UID verification.
 
@@ -223,7 +235,7 @@ scriptboard emergency revoke-key --key-id KEY_ID --confirm-key-id KEY_ID --confi
 scriptboard emergency export-evidence --output ABSOLUTE_JSONL_PATH --config CONFIG_PATH
 ```
 
-On an isolated or offline host, provide the formal release archive together with `release-manifest.json` and `release-manifest.json.sig`. The command below verifies the embedded signing trust root, platform, file name, size, SHA-256, archive boundaries, and `RELEASE.json` without installing or changing the current version:
+On an isolated or offline host, provide the formal single-file installer together with `release-manifest.json` and `release-manifest.json.sig`. The command below verifies the embedded signing trust root, platform, file name, size, SHA-256, embedded payload boundaries, and `RELEASE.json` without installing or changing the current version:
 
 ```text
 scriptboard update verify-package --archive ABSOLUTE_ARCHIVE_PATH --manifest ABSOLUTE_MANIFEST_PATH --signature ABSOLUTE_SIGNATURE_PATH

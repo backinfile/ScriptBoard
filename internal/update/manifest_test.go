@@ -36,12 +36,12 @@ func validManifest() Manifest {
 		Version: "1.2.3", Tag: "v1.2.3",
 		Commit:      "0123456789abcdef0123456789abcdef01234567",
 		PublishedAt: "2026-07-29T00:00:00Z", DatabaseSchema: 14,
-		UpdaterProtocol: 1, MinimumUpdaterProtocol: 1,
+		UpdaterProtocol: 2, MinimumUpdaterProtocol: 2,
 		Assets: []Asset{
-			{OS: "windows", Arch: "amd64", Name: "scriptboard-v1.2.3-windows-amd64.zip", SHA256: strings.Repeat("0", 64), Size: 100, UnpackedSize: 200},
-			{OS: "windows", Arch: "arm64", Name: "scriptboard-v1.2.3-windows-arm64.zip", SHA256: strings.Repeat("1", 64), Size: 101, UnpackedSize: 201},
-			{OS: "linux", Arch: "amd64", Name: "scriptboard-v1.2.3-linux-amd64.tar.gz", SHA256: strings.Repeat("2", 64), Size: 102, UnpackedSize: 202},
-			{OS: "linux", Arch: "arm64", Name: "scriptboard-v1.2.3-linux-arm64.tar.gz", SHA256: strings.Repeat("3", 64), Size: 103, UnpackedSize: 203},
+			{OS: "windows", Arch: "amd64", Name: "scriptboard-v1.2.3-windows-amd64-setup.exe", SHA256: strings.Repeat("0", 64), Size: 100, UnpackedSize: 200},
+			{OS: "windows", Arch: "arm64", Name: "scriptboard-v1.2.3-windows-arm64-setup.exe", SHA256: strings.Repeat("1", 64), Size: 101, UnpackedSize: 201},
+			{OS: "linux", Arch: "amd64", Name: "scriptboard-v1.2.3-linux-amd64.run", SHA256: strings.Repeat("2", 64), Size: 102, UnpackedSize: 202},
+			{OS: "linux", Arch: "arm64", Name: "scriptboard-v1.2.3-linux-arm64.run", SHA256: strings.Repeat("3", 64), Size: 103, UnpackedSize: 203},
 		},
 	}
 }

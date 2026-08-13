@@ -128,6 +128,19 @@ function Compress-ReleaseArchive([string]$Stage, [string]$Destination) {
     }
 }
 
+function Join-SelfExtractingBundle([string]$Launcher, [string]$Payload, [string]$Destination) {
+    $output = [IO.File]::Open($Destination, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try {
+        foreach ($sourcePath in @($Launcher, $Payload)) {
+            $source = [IO.File]::OpenRead($sourcePath)
+            try { $source.CopyTo($output) } finally { $source.Dispose() }
+        }
+        $output.Flush($true)
+    } finally {
+        $output.Dispose()
+    }
+}
+
 $originalGOOS = $env:GOOS
 $originalGOARCH = $env:GOARCH
 try {
@@ -151,9 +164,13 @@ try {
         go build -trimpath -ldflags $commonLDFlags -o (Join-Path $stage "scriptboard-updater.exe") ./cmd/scriptboard-updater
         if ($LASTEXITCODE -ne 0) { throw "Building Windows $arch updater failed" }
         Write-ReleaseInfo $stage
-        Copy-Item (Join-Path $PSScriptRoot "install.cmd") -Destination $stage
         Copy-Item README.md, README_EN.md, LICENSE* -Destination $stage -ErrorAction SilentlyContinue
-        Compress-ReleaseArchive $stage (Join-Path $outputRoot "$name.zip")
+        $payload = Join-Path $stageRoot "$name-payload.zip"
+        $launcher = Join-Path $stageRoot "$name-installer.exe"
+        Compress-ReleaseArchive $stage $payload
+        go build -trimpath -ldflags $commonLDFlags -o $launcher ./cmd/scriptboard-installer
+        if ($LASTEXITCODE -ne 0) { throw "Building Windows $arch Setup launcher failed" }
+        Join-SelfExtractingBundle $launcher $payload (Join-Path $outputRoot "$name-setup.exe")
     }
     foreach ($arch in @("amd64", "arm64")) {
         $env:GOOS = "linux"; $env:GOARCH = $arch
@@ -171,10 +188,13 @@ try {
         go build -trimpath -ldflags $commonLDFlags -o (Join-Path $stage "scriptboard-updater") ./cmd/scriptboard-updater
         if ($LASTEXITCODE -ne 0) { throw "Building Linux $arch updater failed" }
         Write-ReleaseInfo $stage
-        Copy-Item (Join-Path $PSScriptRoot "install.sh") -Destination $stage
         Copy-Item README.md, README_EN.md, LICENSE* -Destination $stage -ErrorAction SilentlyContinue
-        tar -czf (Join-Path $outputRoot "$name.tar.gz") -C $stage .
-        if ($LASTEXITCODE -ne 0) { throw "Packaging Linux $arch archive failed" }
+        $payload = Join-Path $stageRoot "$name-payload.zip"
+        $launcher = Join-Path $stageRoot "$name-installer"
+        Compress-ReleaseArchive $stage $payload
+        go build -trimpath -ldflags $commonLDFlags -o $launcher ./cmd/scriptboard-installer
+        if ($LASTEXITCODE -ne 0) { throw "Building Linux $arch installer failed" }
+        Join-SelfExtractingBundle $launcher $payload (Join-Path $outputRoot "$name.run")
     }
     if ($formalRelease) {
         # The archive loops leave GOOS/GOARCH on the final Linux target. This

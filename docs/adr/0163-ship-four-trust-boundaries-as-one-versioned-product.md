@@ -4,7 +4,7 @@ ScriptBoard 保留 Web、Privileged Broker、Runner 与 AI Host 四个独立进�
 
 部署体验收敛为“一套发布包、一个产品版本、四个内部组件”，而不是四个可任意组合升级的产品。正式 manifest 必须绑定四个二进制的名称、平台、版本、SHA-256 和 IPC 协议版本；安装、升级、回滚与卸载整体准备、验证和提交，拒绝未知或不兼容的混合版本。每条 IPC 在建立连接时交换组件身份与协议版本，不支持的组合 fail closed。诊断页可以展示组件版本与摘要，但不能提供绕过整体事务的单组件升级入口。
 
-正常安装同样只暴露一个产品入口：Windows 发布包提供不受 PowerShell 脚本执行策略影响的 `install.cmd`，Linux 发布包提供 `install.sh`。入口把配置参数原样交给受信任的主 CLI，由 `service install --start` 整体安装、复核并启动；安装成功必须已经通过与显式 `service verify` 相同的完整版本和服务定义检查。四组件细节保留在高级诊断中，普通安装流程只报告 ScriptBoard 产品版本和整体运行状态。
+正常安装同样只暴露一个产品入口：Windows 每个架构发布一个原生 Setup EXE，Linux 每个架构发布一个原生可执行 `.run`。两者都是极小 Go 启动器附加完整 ZIP 载荷，复用自动更新器的安全解包边界，把配置参数交给受信任的主 CLI，并由 `service install --start` 整体安装、复核和启动。安装成功必须已经通过与显式 `service verify` 相同的完整版本和服务定义检查；`--extract-to` 只解包完整便携目录。四组件细节保留在高级诊断中，普通安装流程只报告 ScriptBoard 产品版本和整体运行状态。
 
 Web 与 Broker 是常驻服务。Linux 受管安装通过两个独立的 systemd `.socket` unit 激活 Runner 与 AI Host：Web 只依赖受保护 Unix Socket，未发生 Run 或未使用 AI 时对应执行进程不预先启动；服务进程接管 systemd 传入的唯一 FD 时会复核 PID、FD 数、FD 名和实际 Unix endpoint，随后仍逐连接校验 Web peer UID。Windows 把 Runner 与 AI Host 注册为 SCM demand-start 服务，Web 仅持有两者的 `START + QUERY_STATUS` 精确 ACE，并在第一次 IPC 前请求启动；真实账户、Named Pipe DACL、崩溃恢复与卸载由提升权限发布门禁复核。按需启动只能减少常驻攻击面，不能把 Runner 或 AI 逻辑搬回 Web，也不能让 Web 直接继承它们的凭据、工作目录或网络能力。Broker 是否进一步按需激活，要等平台身份、审计 checkpoint 和恢复路径能在激活期间保持 fail closed 后再单独评审。
 
