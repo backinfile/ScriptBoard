@@ -20,12 +20,13 @@ import (
 	"time"
 
 	"scriptboard/internal/buildinfo"
+	"scriptboard/internal/secretredaction"
 	updatepkg "scriptboard/internal/update"
 )
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "error: "+err.Error())
+		fmt.Fprintln(os.Stderr, secretredaction.String("error: "+err.Error()))
 		os.Exit(1)
 	}
 }
@@ -148,12 +149,45 @@ func generateManifest(arguments []string) error {
 		!bytes.Equal(ed25519.PrivateKey(privateKeyRaw).Public().(ed25519.PublicKey), publicKeyRaw) {
 		return errors.New("release signing private key does not match the embedded public key")
 	}
-	signature, err := updatepkg.SignManifest(raw, keyID, ed25519.PrivateKey(privateKeyRaw))
+	signingKeys := []updatepkg.ManifestSigningKey{{KeyID: keyID, PrivateKey: ed25519.PrivateKey(privateKeyRaw)}}
+	verificationKeys := []struct {
+		id  string
+		key ed25519.PublicKey
+	}{{id: keyID, key: ed25519.PublicKey(publicKeyRaw)}}
+	nextPrivateEncoded := strings.TrimSpace(os.Getenv("SCRIPTBOARD_UPDATE_NEXT_SIGNING_KEY"))
+	if nextPrivateEncoded != "" {
+		nextKeyID := strings.TrimSpace(os.Getenv("SCRIPTBOARD_UPDATE_NEXT_KEY_ID"))
+		nextPublicRaw, publicErr := base64.StdEncoding.DecodeString(strings.TrimSpace(os.Getenv("SCRIPTBOARD_UPDATE_NEXT_PUBLIC_KEY")))
+		nextPrivateRaw, privateErr := base64.StdEncoding.DecodeString(nextPrivateEncoded)
+		if privateErr != nil {
+			return errors.New("SCRIPTBOARD_UPDATE_NEXT_SIGNING_KEY is not valid base64")
+		}
+		if len(nextPrivateRaw) == ed25519.SeedSize {
+			nextPrivateRaw = ed25519.NewKeyFromSeed(nextPrivateRaw)
+		}
+		if nextKeyID == "" || publicErr != nil || len(nextPublicRaw) != ed25519.PublicKeySize || len(nextPrivateRaw) != ed25519.PrivateKeySize ||
+			!bytes.Equal(ed25519.PrivateKey(nextPrivateRaw).Public().(ed25519.PublicKey), nextPublicRaw) {
+			return errors.New("next release signing private key does not match the configured next public key")
+		}
+		signingKeys = append(signingKeys, updatepkg.ManifestSigningKey{KeyID: nextKeyID, PrivateKey: ed25519.PrivateKey(nextPrivateRaw)})
+		verificationKeys = append(verificationKeys, struct {
+			id  string
+			key ed25519.PublicKey
+		}{id: nextKeyID, key: ed25519.PublicKey(nextPublicRaw)})
+	}
+	var signature []byte
+	if len(signingKeys) == 1 {
+		signature, err = updatepkg.SignManifest(raw, signingKeys[0].KeyID, signingKeys[0].PrivateKey)
+	} else {
+		signature, err = updatepkg.SignManifestWithKeys(raw, signingKeys)
+	}
 	if err != nil {
 		return err
 	}
-	if err := updatepkg.VerifyManifestSignature(raw, signature, keyID, ed25519.PublicKey(publicKeyRaw)); err != nil {
-		return fmt.Errorf("verify generated release signature: %w", err)
+	for _, verificationKey := range verificationKeys {
+		if err := updatepkg.VerifyManifestSignature(raw, signature, verificationKey.id, verificationKey.key); err != nil {
+			return fmt.Errorf("verify generated release signature %s: %w", verificationKey.id, err)
+		}
 	}
 	return os.WriteFile(filepath.Join(filepath.Dir(outputPath), updatepkg.SignatureFilename), append(signature, '\n'), 0o644)
 }
@@ -175,7 +209,7 @@ func buildManifest(version, tag, commit, publishedAt, assetsDirectory string) (u
 	if err != nil || published.Location() != time.UTC {
 		return updatepkg.Manifest{}, errors.New("published-at must be UTC RFC3339")
 	}
-	pattern := regexp.MustCompile(`^scriptboard-v` + regexp.QuoteMeta(version) + `-(windows|linux)-(amd64|arm64)\.(zip|tar\.gz)$`)
+	pattern := regexp.MustCompile(`^scriptboard-v` + regexp.QuoteMeta(version) + `-(?:(windows)-(amd64|arm64)-setup\.(exe)|(linux)-(amd64|arm64)\.(run))$`)
 	entries, err := os.ReadDir(assetsDirectory)
 	if err != nil {
 		return updatepkg.Manifest{}, err
@@ -189,8 +223,9 @@ func buildManifest(version, tag, commit, publishedAt, assetsDirectory string) (u
 		if match == nil {
 			continue
 		}
-		if match[1] == "windows" && match[3] != "zip" || match[1] == "linux" && match[3] != "tar.gz" {
-			return updatepkg.Manifest{}, fmt.Errorf("asset %q uses the wrong archive format", entry.Name())
+		assetOS, assetArch := match[1], match[2]
+		if assetOS == "" {
+			assetOS, assetArch = match[4], match[5]
 		}
 		path := filepath.Join(assetsDirectory, entry.Name())
 		info, err := entry.Info()
@@ -206,7 +241,7 @@ func buildManifest(version, tag, commit, publishedAt, assetsDirectory string) (u
 			return updatepkg.Manifest{}, fmt.Errorf("measure %s: %w", entry.Name(), err)
 		}
 		assets = append(assets, updatepkg.Asset{
-			OS: match[1], Arch: match[2], Name: entry.Name(),
+			OS: assetOS, Arch: assetArch, Name: entry.Name(),
 			SHA256: hash, Size: info.Size(), UnpackedSize: unpackedSize,
 		})
 	}
@@ -223,7 +258,7 @@ func buildManifest(version, tag, commit, publishedAt, assetsDirectory string) (u
 		Schema: updatepkg.ManifestSchema, Product: "scriptboard", Repository: buildinfo.Repository,
 		Version: version, Tag: tag, Commit: commit, PublishedAt: publishedAt,
 		DatabaseSchema:  buildinfo.DatabaseSchemaVersion,
-		UpdaterProtocol: buildinfo.UpdaterProtocolVersion, MinimumUpdaterProtocol: 1,
+		UpdaterProtocol: buildinfo.UpdaterProtocolVersion, MinimumUpdaterProtocol: 2,
 		Assets: assets,
 	}
 	if err := manifest.Validate(); err != nil {

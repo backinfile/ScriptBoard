@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -21,32 +22,24 @@ import (
 )
 
 var externalKeyPattern = regexp.MustCompile(`sbk_[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{43}`)
-var externalCopyURLPattern = regexp.MustCompile(`/config/external-interfaces/keys/([A-Za-z0-9_-]{16})/copy`)
+
+func createdExternalTestKey(t *testing.T, body []byte) (string, string) {
+	t.Helper()
+	secret := string(externalKeyPattern.Find(body))
+	if secret == "" {
+		t.Fatalf("created key response is missing the one-time secret: %s", body)
+	}
+	identifier, _, ok := strings.Cut(strings.TrimPrefix(secret, "sbk_"), ".")
+	if !ok || len(identifier) != 16 {
+		t.Fatalf("invalid external key secret: %q", secret)
+	}
+	return secret, identifier
+}
 
 func createdExternalKeyID(t *testing.T, body []byte) string {
 	t.Helper()
-	match := externalCopyURLPattern.FindSubmatch(body)
-	if len(match) != 2 {
-		t.Fatalf("created key response is missing its copy action: %s", body)
-	}
-	return string(match[1])
-}
-
-func copyExternalTestKey(t *testing.T, client *http.Client, serverURL, keyID string) string {
-	t.Helper()
-	response, err := client.Get(serverURL + "/config/external-interfaces/keys/" + keyID + "/copy")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer response.Body.Close()
-	var payload map[string]string
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		t.Fatal(err)
-	}
-	if response.StatusCode != http.StatusOK || !externalKeyPattern.MatchString(payload["key"]) {
-		t.Fatalf("copy key status=%d key=%q", response.StatusCode, payload["key"])
-	}
-	return payload["key"]
+	_, identifier := createdExternalTestKey(t, body)
+	return identifier
 }
 
 func invokeExternalForm(t *testing.T, client *http.Client, serverURL, secret, name string, values url.Values) *http.Response {
@@ -64,7 +57,7 @@ func invokeExternalForm(t *testing.T, client *http.Client, serverURL, secret, na
 	return response
 }
 
-func TestViewerCannotCopyExternalInterfaceKey(t *testing.T) {
+func TestExternalInterfaceKeyCannotBeRetrievedAfterCreation(t *testing.T) {
 	root := t.TempDir()
 	admin, serverURL := authenticatedClient(t, filepath.Join(root, "host"), filepath.Join(root, "state"))
 	pageResponse, err := admin.Get(serverURL + "/config/external-interfaces")
@@ -81,16 +74,18 @@ func TestViewerCannotCopyExternalInterfaceKey(t *testing.T) {
 	}
 	createdBody, _ := io.ReadAll(created.Body)
 	_ = created.Body.Close()
-	keyID := createdExternalKeyID(t, createdBody)
+	secret, keyID := createdExternalTestKey(t, createdBody)
 	viewer := createRoleUserClient(t, admin, serverURL, "external-key-viewer", "viewer")
-	response, err := viewer.Get(serverURL + "/config/external-interfaces/keys/" + keyID + "/copy")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusForbidden {
+	for name, client := range map[string]*http.Client{"administrator": admin, "viewer": viewer} {
+		response, err := client.Get(serverURL + "/config/external-interfaces/keys/" + keyID + "/copy")
+		if err != nil {
+			t.Fatal(err)
+		}
 		body, _ := io.ReadAll(response.Body)
-		t.Fatalf("viewer copy status=%d body=%s", response.StatusCode, body)
+		_ = response.Body.Close()
+		if response.StatusCode == http.StatusOK || bytes.Contains(body, []byte(secret)) {
+			t.Fatalf("%s retrieved a one-time external key: status=%d body=%s", name, response.StatusCode, body)
+		}
 	}
 }
 
@@ -129,8 +124,7 @@ func TestExternalWebsiteMonitorEntryReturnsReadOnlySnapshot(t *testing.T) {
 	}
 	createdKeyPage, _ := io.ReadAll(createdKey.Body)
 	_ = createdKey.Body.Close()
-	keyID := createdExternalKeyID(t, createdKeyPage)
-	secret := copyExternalTestKey(t, client, serverURL, keyID)
+	secret, keyID := createdExternalTestKey(t, createdKeyPage)
 
 	entryTask, err := client.Get(serverURL + "/config/external-interfaces/keys/" + keyID + "/entries/new")
 	if err != nil {
@@ -145,7 +139,9 @@ func TestExternalWebsiteMonitorEntryReturnsReadOnlySnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	createdEntryPage, _ := io.ReadAll(createdEntry.Body)
 	_ = createdEntry.Body.Close()
+	secret, _ = createdExternalTestKey(t, createdEntryPage)
 
 	request, _ := http.NewRequest(http.MethodGet, serverURL+"/trigger?name=website-status", nil)
 	request.Header.Set("Authorization", "Bearer "+secret)
@@ -301,31 +297,13 @@ func TestAdministratorCreatesKeyAndExternalLogTrigger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	keyID := createdExternalKeyID(t, createdBody)
+	secret, keyID := createdExternalTestKey(t, createdBody)
 	if response.StatusCode != http.StatusCreated || !strings.Contains(string(createdBody), `data-task-kind="external-key-created"`) ||
 		!strings.Contains(string(createdBody), `data-task-refresh-on-close`) ||
-		!strings.Contains(string(createdBody), `data-copy-key-url="/config/external-interfaces/keys/`+keyID+`/copy"`) ||
-		externalKeyPattern.Match(createdBody) || strings.Contains(string(createdBody), `class="task-back"`) {
-		t.Fatalf("create key should render a masked in-drawer result: status=%d body=%s", response.StatusCode, createdBody)
-	}
-	secret := copyExternalTestKey(t, client, serverURL, keyID)
-	expectedCreatedHint := "sbk_" + keyID + ".••••" + secret[len(secret)-4:]
-	if !strings.Contains(string(createdBody), expectedCreatedHint) {
-		t.Fatalf("created key response missing masked key %q: %s", expectedCreatedHint, createdBody)
-	}
-
-	response, err = client.Get(serverURL + "/config/external-interfaces/keys/" + keyID + "/copy")
-	if err != nil {
-		t.Fatal(err)
-	}
-	copyBody, _ := io.ReadAll(response.Body)
-	_ = response.Body.Close()
-	var copiedKey map[string]string
-	if err := json.Unmarshal(copyBody, &copiedKey); err != nil {
-		t.Fatalf("decode copied key: %v body=%s", err, copyBody)
-	}
-	if response.StatusCode != http.StatusOK || copiedKey["key"] != secret || response.Header.Get("Cache-Control") != "no-store" {
-		t.Fatalf("copy key status=%d body=%s", response.StatusCode, copyBody)
+		!strings.Contains(string(createdBody), `data-copy-text data-copy-target="external-key-secret"`) ||
+		!strings.Contains(string(createdBody), secret) || response.Header.Get("Cache-Control") != "no-store" ||
+		strings.Contains(string(createdBody), `class="task-back"`) {
+		t.Fatalf("create key should render a one-time in-drawer result: status=%d body=%s", response.StatusCode, createdBody)
 	}
 
 	response, err = client.Get(serverURL + "/config/external-interfaces")
@@ -335,8 +313,8 @@ func TestAdministratorCreatesKeyAndExternalLogTrigger(t *testing.T) {
 	keyList, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	copyURL := "/config/external-interfaces/keys/" + keyID + "/copy"
-	if !strings.Contains(string(keyList), `data-copy-key-url="`+copyURL+`"`) || strings.Contains(string(keyList), `href="`+copyURL+`"`) {
-		t.Fatalf("copy key should be an inline copy button: %s", keyList)
+	if strings.Contains(string(keyList), copyURL) || strings.Contains(string(keyList), secret) || strings.Contains(string(keyList), `data-copy-key`) {
+		t.Fatalf("key list retained a complete-key retrieval surface: %s", keyList)
 	}
 	rotateTaskURL := "/config/external-interfaces/keys/" + keyID + "/rotate"
 	if strings.Contains(string(keyList), `href="`+rotateTaskURL+`"`) {
@@ -406,10 +384,12 @@ func TestAdministratorCreatesKeyAndExternalLogTrigger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	boundKeyPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusSeeOther {
-		t.Fatalf("create entry status=%d", response.StatusCode)
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("create entry status=%d body=%s", response.StatusCode, boundKeyPage)
 	}
+	secret, _ = createdExternalTestKey(t, boundKeyPage)
 
 	queryRequest, _ := http.NewRequest(http.MethodPost, serverURL+"/trigger?key="+url.QueryEscape(secret)+"&name=deployment-log", strings.NewReader(url.Values{"message": {"must not be logged"}}.Encode()))
 	queryRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -482,7 +462,7 @@ func TestAdministratorCreatesKeyAndExternalLogTrigger(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !strings.Contains(string(detail), `data-task-kind="external-entry-detail"`) ||
 		!strings.Contains(string(detail), "POST /trigger?name=deployment-log") ||
 		!strings.Contains(string(detail), "Authorization: Bearer YOUR_KEY") || !strings.Contains(string(detail), "message") ||
-		!strings.Contains(string(detail), `href="`+previewURL+`"`) || !strings.Contains(string(detail), `/entries/`+entryID+`/edit`) ||
+		!strings.Contains(string(detail), `href="`+previewURL+`"`) || strings.Contains(string(detail), `/entries/`+entryID+`/edit`) ||
 		!strings.Contains(string(detail), `/entries/`+entryID+`/toggle`) || !strings.Contains(string(detail), `/entries/`+entryID+`/delete`) {
 		t.Fatalf("entry detail status=%d body=%s", response.StatusCode, detail)
 	}
@@ -497,7 +477,7 @@ func TestAdministratorCreatesKeyAndExternalLogTrigger(t *testing.T) {
 	}
 }
 
-func TestRotatedExternalKeyIsCopiedWithoutRenderingTheSecret(t *testing.T) {
+func TestRotatedExternalKeyIsRenderedOnceAndNotRecoverable(t *testing.T) {
 	root := t.TempDir()
 	client, serverURL := authenticatedClient(t, filepath.Join(root, "host"), filepath.Join(root, "state"))
 	original, keyID := createExternalTestKey(t, client, serverURL, "Rotation display")
@@ -515,26 +495,21 @@ func TestRotatedExternalKeyIsCopiedWithoutRenderingTheSecret(t *testing.T) {
 	}
 	rotatedPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
+	rotated, rotatedID := createdExternalTestKey(t, rotatedPage)
 	if response.StatusCode != http.StatusCreated || !strings.Contains(string(rotatedPage), `data-task-kind="external-key-rotated"`) ||
 		!strings.Contains(string(rotatedPage), `data-task-refresh-on-close`) ||
-		!strings.Contains(string(rotatedPage), `data-copy-key-url="/config/external-interfaces/keys/`+keyID+`/copy"`) || externalKeyPattern.Match(rotatedPage) {
-		t.Fatalf("rotated key response exposes the secret or lacks the copy action: status=%d body=%s", response.StatusCode, rotatedPage)
+		!strings.Contains(string(rotatedPage), `data-copy-text data-copy-target="external-key-secret"`) ||
+		response.Header.Get("Cache-Control") != "no-store" || rotatedID != keyID || rotated == original {
+		t.Fatalf("rotated key response is missing its one-time secret: status=%d body=%s", response.StatusCode, rotatedPage)
 	}
 	response, err = client.Get(serverURL + "/config/external-interfaces/keys/" + keyID + "/copy")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var payload map[string]string
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		t.Fatal(err)
-	}
+	copyBody, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if payload["key"] == "" || payload["key"] == original {
-		t.Fatalf("rotated key was not replaced: %q", payload["key"])
-	}
-	expectedRotatedHint := "sbk_" + keyID + ".••••" + payload["key"][len(payload["key"])-4:]
-	if !strings.Contains(string(rotatedPage), expectedRotatedHint) {
-		t.Fatalf("rotated key response missing masked key %q: %s", expectedRotatedHint, rotatedPage)
+	if response.StatusCode == http.StatusOK || bytes.Contains(copyBody, []byte(rotated)) {
+		t.Fatalf("rotated key remained recoverable: status=%d body=%s", response.StatusCode, copyBody)
 	}
 }
 
@@ -605,7 +580,7 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 		t.Fatal(err)
 	}
 	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
-	secret, keyID := createExternalTestKey(t, client, serverURL, "Build agent")
+	_, keyID := createExternalTestKey(t, client, serverURL, "Build agent")
 	response, err := client.Get(serverURL + "/config/external-interfaces/keys/" + keyID + "/edit")
 	if err != nil {
 		t.Fatal(err)
@@ -637,12 +612,13 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.Exec(`INSERT INTO quick_runs(id, name, script_path, script_path_key, arguments_template, timeout_seconds, sort_order, created_at, updated_at)
-		VALUES ('external-quick', 'External quick run', ?, ?, '', 30, 1, 1, 1)`, scriptPath, hostfiles.ComparisonKey(scriptPath)); err != nil {
+	scriptDigest := fmt.Sprintf("%x", sha256.Sum256([]byte(scriptContent)))
+	if _, err := database.Exec(`INSERT INTO quick_runs(id, name, script_path, script_path_key, arguments_template, timeout_seconds, sort_order, created_at, locked, script_sha256, revision, updated_at)
+		VALUES ('external-quick', 'External quick run', ?, ?, '', 30, 1, 1, 1, ?, 1, 1)`, scriptPath, hostfiles.ComparisonKey(scriptPath), scriptDigest); err != nil {
 		t.Fatal(err)
 	}
 
-	createExternalTestEntry(t, client, serverURL, keyID, url.Values{
+	uploadSecret := createExternalTestEntry(t, client, serverURL, keyID, url.Values{
 		"name": {"artifact"}, "label": {"Artifact upload"}, "action_type": {"upload"}, "enabled": {"1"},
 		"upload_directory": {uploadRoot}, "upload_max_bytes": {"32"}, "upload_extensions": {".txt"}, "upload_conflict": {"reject"},
 	})
@@ -666,27 +642,8 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 	}
 	entryDetail, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	editPattern := regexp.MustCompile(`/config/external-interfaces/entries/([A-Za-z0-9_-]+)/edit`)
-	editMatch := editPattern.FindSubmatch(entryDetail)
-	if len(editMatch) != 2 {
-		t.Fatalf("entry edit action missing from detail drawer: %s", entryDetail)
-	}
-	response, err = client.Get(serverURL + string(editMatch[0]))
-	if err != nil {
-		t.Fatal(err)
-	}
-	entryEdit, _ := io.ReadAll(response.Body)
-	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/config/external-interfaces/entries/"+string(detailMatch[1]), url.Values{
-		"csrf_token": {formToken(t, entryEdit)}, "name": {"artifact"}, "label": {"Artifact receiver"}, "action_type": {"upload"}, "enabled": {"1"},
-		"upload_directory": {uploadRoot}, "upload_max_bytes": {"32"}, "upload_extensions": {".txt"}, "upload_conflict": {"reject"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = response.Body.Close()
-	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusSeeOther {
-		t.Fatalf("update entry status=%d", response.StatusCode)
+	if bytes.Contains(entryDetail, []byte(`/config/external-interfaces/entries/`+string(detailMatch[1])+`/edit`)) {
+		t.Fatalf("immutable capability exposes an edit action: %s", entryDetail)
 	}
 	var upload bytes.Buffer
 	writer := multipart.NewWriter(&upload)
@@ -697,7 +654,7 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 	_, _ = part.Write([]byte("complete"))
 	_ = writer.Close()
 	request, _ := http.NewRequest(http.MethodPost, serverURL+"/trigger?name=artifact", &upload)
-	request.Header.Set("Authorization", "Bearer "+secret)
+	request.Header.Set("Authorization", "Bearer "+uploadSecret)
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 	response, err = client.Do(request)
 	if err != nil {
@@ -705,18 +662,60 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 	}
 	body, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusCreated {
+	if response.StatusCode != http.StatusAccepted {
 		t.Fatalf("upload trigger status=%d body=%s", response.StatusCode, body)
+	}
+	if _, err := os.Stat(filepath.Join(uploadRoot, "result.txt")); !os.IsNotExist(err) {
+		t.Fatalf("external upload bypassed private staging: %v", err)
+	}
+	var uploadResponse struct {
+		Data struct {
+			InboxID string `json:"inbox_id"`
+			SHA256  string `json:"sha256"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &uploadResponse); err != nil || uploadResponse.Data.InboxID == "" || uploadResponse.Data.SHA256 == "" {
+		t.Fatalf("invalid staged upload response: %s err=%v", body, err)
+	}
+	inboxResponse, err := client.Get(serverURL + "/resources/inbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inboxPage, _ := io.ReadAll(inboxResponse.Body)
+	_ = inboxResponse.Body.Close()
+	rejectedPublish, err := client.PostForm(serverURL+"/resources/inbox/"+uploadResponse.Data.InboxID+"/publish", url.Values{
+		"csrf_token": {formToken(t, inboxPage)}, "sha256": {strings.Repeat("0", 64)}, "confirm": {"yes"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = rejectedPublish.Body.Close()
+	if rejectedPublish.StatusCode != http.StatusConflict {
+		t.Fatalf("digest mismatch publish status=%d", rejectedPublish.StatusCode)
+	}
+	if _, err := os.Stat(filepath.Join(uploadRoot, "result.txt")); !os.IsNotExist(err) {
+		t.Fatalf("digest mismatch still published content: %v", err)
+	}
+	published, err := client.PostForm(serverURL+"/resources/inbox/"+uploadResponse.Data.InboxID+"/publish", url.Values{
+		"csrf_token": {formToken(t, inboxPage)}, "sha256": {uploadResponse.Data.SHA256}, "confirm": {"yes"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = published.Body.Close()
+	if published.StatusCode != http.StatusSeeOther {
+		t.Fatalf("publish staged upload status=%d", published.StatusCode)
 	}
 	if content, err := os.ReadFile(filepath.Join(uploadRoot, "result.txt")); err != nil || string(content) != "complete" {
 		t.Fatalf("uploaded content=%q err=%v", content, err)
 	}
 
-	createExternalTestEntry(t, client, serverURL, keyID, url.Values{
+	_, variableKeyID := createExternalTestKey(t, client, serverURL, "Variable agent")
+	variableSecret := createExternalTestEntry(t, client, serverURL, variableKeyID, url.Values{
 		"name": {"environment"}, "label": {"Deployment environment"}, "action_type": {"variable"}, "enabled": {"1"},
 		"variable_name": {"environment"}, "variable_type": {"enum"}, "variable_options": {"staging\nproduction"},
 	})
-	response = invokeExternalForm(t, client, serverURL, secret, "environment", url.Values{"value": {"production"}})
+	response = invokeExternalForm(t, client, serverURL, variableSecret, "environment", url.Values{"value": {"production"}})
 	body, _ = io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusOK {
@@ -726,17 +725,18 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 	if err := database.QueryRow("SELECT value FROM variables WHERE name = 'environment'").Scan(&value); err != nil || value != "production" {
 		t.Fatalf("variable value=%q err=%v", value, err)
 	}
-	response = invokeExternalForm(t, client, serverURL, secret, "environment", url.Values{"value": {"root"}})
+	response = invokeExternalForm(t, client, serverURL, variableSecret, "environment", url.Values{"value": {"root"}})
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusBadRequest {
 		t.Fatalf("invalid enum status=%d", response.StatusCode)
 	}
 
-	createExternalTestEntry(t, client, serverURL, keyID, url.Values{
+	_, quickKeyID := createExternalTestKey(t, client, serverURL, "Quick Run agent")
+	quickSecret := createExternalTestEntry(t, client, serverURL, quickKeyID, url.Values{
 		"name": {"quick"}, "label": {"External quick run"}, "action_type": {"quick_run"}, "enabled": {"1"}, "quick_run_id": {"external-quick"},
 	})
 	request, _ = http.NewRequest(http.MethodPost, serverURL+"/trigger?name=quick", nil)
-	request.Header.Set("Authorization", "Bearer "+secret)
+	request.Header.Set("Authorization", "Bearer "+quickSecret)
 	response, err = client.Do(request)
 	if err != nil {
 		t.Fatal(err)
@@ -745,6 +745,36 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusAccepted || !bytes.Contains(body, []byte(`"run_id"`)) {
 		t.Fatalf("quick run trigger status=%d body=%s", response.StatusCode, body)
+	}
+	var acceptedRuns int
+	if err := database.QueryRow("SELECT count(*) FROM runs WHERE source_type = 'external/quick-run'").Scan(&acceptedRuns); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec("UPDATE quick_runs SET revision = revision + 1 WHERE id = 'external-quick'"); err != nil {
+		t.Fatal(err)
+	}
+	response = invokeExternalForm(t, client, serverURL, quickSecret, "quick", nil)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusConflict {
+		t.Fatalf("stale Quick Run revision status=%d", response.StatusCode)
+	}
+	if _, err := database.Exec("UPDATE quick_runs SET revision = 1 WHERE id = 'external-quick'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(scriptPath, []byte(scriptContent+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	response = invokeExternalForm(t, client, serverURL, quickSecret, "quick", nil)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusConflict {
+		t.Fatalf("changed Quick Run script status=%d", response.StatusCode)
+	}
+	var finalRuns int
+	if err := database.QueryRow("SELECT count(*) FROM runs WHERE source_type = 'external/quick-run'").Scan(&finalRuns); err != nil {
+		t.Fatal(err)
+	}
+	if finalRuns != acceptedRuns {
+		t.Fatalf("rejected stale Quick Runs started work: before=%d after=%d", acceptedRuns, finalRuns)
 	}
 }
 
@@ -762,14 +792,13 @@ func createExternalTestKey(t *testing.T, client *http.Client, serverURL, label s
 	}
 	created, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusCreated || externalKeyPattern.Match(created) {
+	if response.StatusCode != http.StatusCreated || !externalKeyPattern.Match(created) || response.Header.Get("Cache-Control") != "no-store" {
 		t.Fatalf("create key status=%d body=%s", response.StatusCode, created)
 	}
-	keyID := createdExternalKeyID(t, created)
-	return copyExternalTestKey(t, client, serverURL, keyID), keyID
+	return createdExternalTestKey(t, created)
 }
 
-func createExternalTestEntry(t *testing.T, client *http.Client, serverURL, keyID string, values url.Values) {
+func createExternalTestEntry(t *testing.T, client *http.Client, serverURL, keyID string, values url.Values) string {
 	t.Helper()
 	response, err := client.Get(serverURL + "/config/external-interfaces/keys/" + keyID + "/entries/new")
 	if err != nil {
@@ -784,7 +813,9 @@ func createExternalTestEntry(t *testing.T, client *http.Client, serverURL, keyID
 	}
 	body, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusSeeOther {
+	if response.StatusCode != http.StatusCreated {
 		t.Fatalf("create entry status=%d body=%s", response.StatusCode, body)
 	}
+	secret, _ := createdExternalTestKey(t, body)
+	return secret
 }

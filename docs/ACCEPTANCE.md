@@ -11,7 +11,7 @@
 - [ ] Run 保存启动用户 ID 和用户名快照；执行员只能停止自己启动的 Run。
 - [ ] 审计保存操作者 ID、用户名与角色快照，且随机密码只在创建或重置成功响应中展示一次。
 - [ ] Argon2id 哈希包含版本化参数和独立 Salt，数据库不出现明文密码。
-- [ ] 密码不满足 12 Unicode 字符、超过 256 UTF-8 字节或等于用户名时被拒绝。
+- [ ] 密码少于 15 个 Unicode 字符、超过 256 UTF-8 字节、等于/包含用户名、属于常见口令或为单字符重复时被拒绝。
 - [ ] 未登录访问文件、下载、日志、SSE、变量、计划和执行路由均被拒绝。
 - [ ] 所有状态修改路由拒绝缺失或错误 CSRF Token。
 - [ ] Session 空闲 12 小时、绝对 7 天后失效；服务重启不使有效 Session 失效。
@@ -125,11 +125,15 @@
 
 ## 10. 服务、托盘与配置
 
-- [ ] Windows 服务默认 LocalSystem、自动启动；Linux systemd 服务默认 root、自动启动。
+- [ ] 一个版本化发布单元同时包含 Web、Privileged Broker、Runner 与 AI Host，安装、升级、回滚和卸载始终绑定四个二进制版本、摘要与 IPC 协议。
+- [ ] Windows Web 使用 LocalService + `NT SERVICE\ScriptBoard`，Broker 使用 LocalSystem，Runner/AI Host 使用独立 restricted service SID；Linux 使用 `scriptboard-web`、root Broker 和独立 Runner/AI UID。
+- [ ] Web 与 Broker 常驻；Windows Runner/AI Host 为 SCM demand-start，Linux Runner/AI Host 由受保护的 systemd socket activation 按需启动；Web 不因空闲组件未运行而降级为进程内执行。
+- [ ] Web 不能读取 Broker-only secret 目录；Runner/AI Host 不能读取应用数据库、Broker 密钥或彼此私有工作区；Named Pipe/Unix Socket 拒绝非授权 peer。
 - [ ] 手动运行时继承当前用户且不因不是最高权限而拒绝启动。
 - [ ] 服务安装、卸载、启停、状态、admin reset、config validate、doctor、version 命令可用。
-- [ ] 卸载服务不删除配置、主机文件、数据库或磁盘上已有 Git 历史。
-- [ ] 不存在用户 backup/restore 命令；`update status|check|recover` 命令可用且恢复命令要求完整 Operation ID 二次确认。
+- [ ] 正式发布包提供一个平台安装入口；默认配置和自定义配置均能在一次调用内安装、自动验证、启动，并输出产品版本与 `STATE: RUNNING`。
+- [ ] 卸载会移除全部四个服务/socket 定义，但不删除配置、主机文件、数据库、外部密钥、备份或磁盘上已有 Git 历史。
+- [ ] `backup create|inspect|stage|commit|export-recovery|recover-host` 与 `update status|check|recover|verify-package` 可在 Web 不可用时执行；所有破坏性恢复均要求完整 ID/目标二次确认并保留可逆副本。
 - [ ] Windows 托盘无主窗口、单实例，菜单与 PRD 一致；退出托盘不停止服务。
 - [ ] 托盘区分服务进程运行与 HTTP 就绪；端口错误时显示异常并可打开日志。
 - [ ] 默认配置优先级正确，命令行覆盖不写回 YAML。
@@ -146,12 +150,12 @@
 
 ## 12. 发布与兼容
 
-- [ ] Windows amd64/arm64 ZIP 含服务、托盘、托盘启动器和 updater；Linux amd64/arm64 tar.gz 含服务和 updater。
-- [ ] 正式 Tag Release 生成四个平台归档、`SHA256SUMS`、归档内 `RELEASE.json`、严格发布清单及其 Ed25519 detached signature；缺少签名 Secret 时发布失败。
-- [ ] `version --json`、Git Tag、清单、归档名和 `RELEASE.json` 的版本、Commit、平台及协议一致；不依赖 Node.js、Redis、消息队列或外部运行时。
+- [ ] Windows amd64/arm64 各发布一个 Setup EXE，Linux amd64/arm64 各发布一个可执行 `.run`；每个文件内嵌完整平台组件，`--extract-to` 可恢复便携目录。
+- [ ] 正式 Tag Release 生成四个平台安装器、`SHA256SUMS`、载荷内 `RELEASE.json`、严格发布清单及其 Ed25519 detached signature；缺少签名 Secret 时发布失败。
+- [ ] 安装器 `--version-json`、Git Tag、清单、安装器名和载荷 `RELEASE.json` 的版本、Commit、平台及协议一致；不依赖 Node.js、Redis、消息队列或外部运行时。
 - [ ] 新版服务安装采用版本化 Install Root；Linux 使用稳定 `current` 入口，Windows 服务明确指向当前 Installed Release；同名旧式服务、缺失新版安装元数据或从不完整发布包安装时明确拒绝，不执行猜测、迁移或清理。
 - [ ] 正式构建默认按配置周期检查固定官方仓库的最新非 Draft、非 Prerelease 稳定版；开发构建不联网，便携构建不可应用更新。
-- [ ] 未签名、未知 key ID、签名错误、Tag/版本/仓库不一致、平台不匹配、摘要错误、协议过新、超限或含路径穿越/链接/重复条目的归档全部拒绝。
+- [ ] 自动更新直接下载对应平台安装器；未签名、未知 key ID、签名错误、Tag/版本/仓库不一致、平台不匹配、安装器摘要错误、协议过新、超限或内嵌载荷含路径穿越/链接/重复条目时全部拒绝。
 - [ ] 更新只能由已登录管理员通过 CSRF 保护的动作发起；安装前有明确二次确认，不提供无人值守安装。
 - [ ] 进入维护门后调度暂停且新 Run 被同步拒绝；存在任何活动 Run 时返回冲突、恢复正常入口且不停止 Run。
 - [ ] updater 在主进程退出后保存数据库快照、切换目标版本并启动 Validation Mode；验证期间不触发计划、不接受 Run 或业务写请求。
@@ -167,7 +171,7 @@
 
 ## 13. 明确不验收
 
-MVP 不验收自定义 RBAC、沙箱、公共 API、DAG、多服务器、Docker 正式部署、系统 crontab、内置 Git 版本保护、用户备份命令、通知、插件、交互终端、目录打包、通用权限编辑、用户 impersonation、无人值守自动安装、自定义更新源/频道、旧配置/状态迁移、Web 之外界面的多语言或正式多实例。
+MVP 不验收自定义 RBAC、恶意脚本的通用沙箱、公共 API、DAG、多服务器、Docker 正式部署、系统 crontab、内置 Git 版本保护、动态插件、交互终端、目录打包、通用权限编辑、用户 impersonation、无人值守自动安装、自定义更新信任根/频道、早于 schema 20 的状态迁移、Web 之外界面的多语言或正式多实例。通知只验收固定 Webhook/本地告警/Broker 邮件模板，不验收任意正文、收件人或端点。
 
 ### MySQL 备份恢复管理
 
@@ -299,9 +303,9 @@ MVP 不验收自定义 RBAC、沙箱、公共 API、DAG、多服务器、Docker 
 
 ## 20. 外部接口
 
-- [x] 管理员和维护员可创建、编辑、启停、轮换、复制完整 Key 和删除 Key；观察员与操作员不能查看或复制。数据库仅保存摘要与提示，完整 Key 加密保存在 State Root 的私有密钥文件中。
-- [x] 每个 Key 可创建多个名称唯一的功能条目，并可独立编辑、启停和删除；到期或停用 Key、停用条目均拒绝调用。
-- [x] `/trigger` 支持 Query Key 与 Bearer Key，按动作限制方法和请求体，返回稳定 JSON 错误；每 Key 限制为每分钟 60 次、最多 4 个并发请求。
+- [x] 管理员和维护员可创建、编辑、启停、轮换和删除 Key；观察员与操作员不能查看。数据库仅保存不可逆摘要与提示，完整 Key 只在创建或轮换后显示一次且不持久化。
+- [x] 每个 Key 只绑定一个不可变功能能力；删除功能会同时删除专用 Key。到期或停用 Key、停用功能以及全局紧急暂停均拒绝调用。
+- [x] `/trigger` 仅接受 Bearer Key，按动作限制方法和请求体，返回稳定低信息 JSON 错误；请求受每 Key、规范化来源、动作和全局四层请求/并发配额约束。新功能默认要求 5 分钟时间戳、唯一 nonce 和绑定方法及请求路径的 HMAC-SHA256 签名，nonce 只能原子消费一次。
 - [x] 日志只向预先指定并通过宿主路径保护校验的文件追加有界纯文本；上传固定目录、单文件、大小、扩展名和冲突策略；快捷执行不接受外部路径或参数；变量仅允许非密码目标和预设类型约束。
 - [x] 调用记录与审计不保存 Key 明文、上传正文或变量值；最近记录可在页面查看，记录按一年或 10,000 条上限清理。
 - [x] 快捷执行、变量和上传目录引用受到删除保护；目录移动事务性更新上传目标。桌面、390px 移动端和无 JavaScript 表单均可操作。

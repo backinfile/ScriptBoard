@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -180,6 +181,78 @@ func TestHostSecurityLoginFiltersArePassedToService(t *testing.T) {
 	}
 }
 
+func TestHostSecurityUpdatesPageIsReadOnlyAndShowsBoundedProviderInventory(t *testing.T) {
+	t.Parallel()
+	service := &securityFixtureService{
+		capabilities: hostsecurity.Capabilities{OS: "windows", Hostname: "win-update-01", CollectedAt: time.Now().UTC(), Firewall: hostsecurity.Component{Installed: true, Running: true}},
+		updateReport: hostsecurity.SecurityUpdateReport{Supported: true, Provider: "Windows Update Agent", CollectedAt: time.Date(2026, 8, 12, 8, 0, 0, 0, time.UTC), Updates: []hostsecurity.SecurityUpdate{{
+			Identifier: "update-id", Title: "Cumulative Security Update", Version: "KB123456", Severity: "Critical", Source: "Security Updates", RestartRequired: true,
+		}}},
+	}
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: filepath.Join(t.TempDir(), "state"), HostSecurity: service})
+	page := getSecurityPage(t, client, serverURL+"/monitor/security?tab=updates&refresh=1")
+	for _, expected := range [][]byte{[]byte("Available OS security updates"), []byte("Windows Update Agent"), []byte("Cumulative Security Update"), []byte("KB123456"), []byte("Critical"), []byte("Required"), []byte("does not refresh indexes, download, or install")} {
+		if !bytes.Contains(page, expected) {
+			t.Fatalf("security updates page missing %q: %s", expected, page)
+		}
+	}
+	for _, forbidden := range [][]byte{[]byte("Install update"), []byte("apt-get update"), []byte("Download update")} {
+		if bytes.Contains(page, forbidden) {
+			t.Fatalf("read-only security updates page exposes mutation text %q: %s", forbidden, page)
+		}
+	}
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	if service.updateCalls != 1 || !service.updateRefresh {
+		t.Fatalf("update calls=%d refresh=%v", service.updateCalls, service.updateRefresh)
+	}
+}
+
+func TestHostSecurityBaselineExplainsEffectiveChecksAndCapturesStatusOnlyHistory(t *testing.T) {
+	t.Parallel()
+	service := &securityFixtureService{
+		capabilities: hostsecurity.Capabilities{
+			OS: "linux", Hostname: "baseline-01", CollectedAt: time.Now().UTC(), AdministratorKnown: true,
+			Firewall: hostsecurity.Component{Installed: true, Running: true}, SSH: hostsecurity.Component{Installed: true, Running: true},
+			SSHLogin: hostsecurity.SSHLoginSurface{PublicKeyAuthentication: "yes", PasswordAuthentication: "yes", RootLogin: "prohibit-password", EmptyPasswords: "no", MaxAuthTries: 3},
+			Fail2Ban: hostsecurity.Component{Installed: true, Running: true},
+		},
+		updateReport: hostsecurity.SecurityUpdateReport{Supported: true, Provider: "APT package metadata", Updates: []hostsecurity.SecurityUpdate{{Identifier: "openssl"}}},
+	}
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: stateRoot, HostSecurity: service})
+	page := getSecurityPage(t, client, serverURL+"/monitor/security?tab=baseline")
+	for _, expected := range [][]byte{[]byte("Host security baseline"), []byte("77 / 100"), []byte("SSH password authentication"), []byte("OS security updates"), []byte("Web control plane least privilege"), []byte("not a compliance certification"), []byte("Capture baseline snapshot"), []byte("No baseline snapshot exists yet")} {
+		if !bytes.Contains(page, expected) {
+			t.Fatalf("security baseline page missing %q: %s", expected, page)
+		}
+	}
+	for _, forbidden := range [][]byte{[]byte("Apply baseline"), []byte("Fix all")} {
+		if bytes.Contains(page, forbidden) {
+			t.Fatalf("read-only baseline exposes mutation %q: %s", forbidden, page)
+		}
+	}
+	response, err := client.PostForm(serverURL+"/monitor/security/baseline/snapshot", url.Values{"csrf_token": {formToken(t, page)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("capture baseline status=%d", response.StatusCode)
+	}
+	capturedPage := getSecurityPage(t, client, serverURL+response.Header.Get("Location"))
+	if !bytes.Contains(capturedPage, []byte("Security baseline snapshot captured")) || !bytes.Contains(capturedPage, []byte("Current check statuses match the latest snapshot")) {
+		t.Fatalf("captured baseline page=%s", capturedPage)
+	}
+	history, err := os.ReadFile(filepath.Join(stateRoot, "security-baseline", "history.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(history, []byte("Web process")) || bytes.Contains(history, []byte("pending security updates")) {
+		t.Fatalf("baseline history persisted evidence text: %s", history)
+	}
+}
+
 func TestWindowsFirewallRulesSupportFilteringAndPagination(t *testing.T) {
 	t.Parallel()
 	rules := make([]hostsecurity.FirewallRule, 25)
@@ -315,9 +388,12 @@ type securityFixtureService struct {
 	capabilities    hostsecurity.Capabilities
 	logins          hostsecurity.LoginPage
 	bans            hostsecurity.BanPage
+	updateReport    hostsecurity.SecurityUpdateReport
 	lastQuery       hostsecurity.LoginQuery
 	capabilityCalls int
 	loginCalls      int
+	updateCalls     int
+	updateRefresh   bool
 	applyCalls      int
 	appliedDesired  []hostsecurity.FirewallRule
 	appliedDefaults hostsecurity.UFWDefaults
@@ -328,6 +404,14 @@ func (s *securityFixtureService) Capabilities(context.Context) hostsecurity.Capa
 	s.capabilityCalls++
 	s.mu.Unlock()
 	return s.capabilities
+}
+
+func (s *securityFixtureService) SecurityUpdates(_ context.Context, refresh bool) (hostsecurity.SecurityUpdateReport, error) {
+	s.mu.Lock()
+	s.updateCalls++
+	s.updateRefresh = refresh
+	s.mu.Unlock()
+	return s.updateReport, nil
 }
 
 func (s *securityFixtureService) Logins(_ context.Context, query hostsecurity.LoginQuery) (hostsecurity.LoginPage, error) {

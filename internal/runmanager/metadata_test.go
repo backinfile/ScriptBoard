@@ -6,11 +6,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	_ "modernc.org/sqlite"
 
+	"scriptboard/internal/auditlog"
 	"scriptboard/internal/hostfiles"
 )
 
@@ -30,6 +32,38 @@ func TestRunStateWriteRetriesUntilPersistenceSucceeds(t *testing.T) {
 	}
 	if attempts != 2 {
 		t.Fatalf("state write attempts = %d, want 2", attempts)
+	}
+}
+
+func TestTerminalRunAuditDrivesResultNotificationsWithoutLogContent(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:run-terminal-audit?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, statement := range []string{
+		`CREATE TABLE runs (id TEXT PRIMARY KEY, initiated_by_user_id TEXT NOT NULL, initiated_by_username TEXT NOT NULL, script_sha256 TEXT NOT NULL)`,
+		`CREATE TABLE audit_events (id INTEGER PRIMARY KEY AUTOINCREMENT, occurred_at INTEGER NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL, result TEXT NOT NULL, source_address TEXT NOT NULL, actor_user_id TEXT NOT NULL DEFAULT '', actor_username TEXT NOT NULL DEFAULT '', actor_role TEXT NOT NULL DEFAULT '', request_id TEXT NOT NULL DEFAULT '', authentication_assurance TEXT NOT NULL DEFAULT '', resource_revision TEXT NOT NULL DEFAULT '', resource_digest_sha256 TEXT NOT NULL DEFAULT '', previous_hash TEXT NOT NULL DEFAULT '', event_hash TEXT NOT NULL DEFAULT '')`,
+		`CREATE TABLE audit_chain_state (id INTEGER PRIMARY KEY CHECK(id = 1), anchor_hash TEXT NOT NULL, tail_hash TEXT NOT NULL)`,
+		`INSERT INTO audit_chain_state VALUES (1, '', '')`,
+		`INSERT INTO runs VALUES ('run-safe-id', 'user-safe-id', 'operator', '` + strings.Repeat("a", 64) + `')`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	audit := auditlog.New(db)
+	observed := make(chan auditlog.CommittedEvent, 1)
+	audit.SetObserver(func(event auditlog.CommittedEvent) { observed <- event })
+	manager := &Manager{db: db, auditLog: audit}
+	manager.recordTerminalAudit("run-safe-id", "failed")
+	select {
+	case event := <-observed:
+		if event.Event.Action != "run_completed" || event.Event.Result != "failed" || event.Event.Target != "run-safe-id" || event.Event.ActorUserID != "user-safe-id" || event.Event.ResourceDigestSHA256 != strings.Repeat("a", 64) {
+			t.Fatalf("terminal audit=%#v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("terminal Run audit was not committed")
 	}
 }
 

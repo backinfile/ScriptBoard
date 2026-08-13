@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"scriptboard/internal/hostfiles"
+	"scriptboard/internal/secretredaction"
 )
 
 type sqliteFileOperationStore struct {
@@ -28,7 +29,7 @@ func (store *sqliteFileOperationStore) Create(ctx context.Context, operation hos
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
 		operation.ID, operation.Kind, operation.SourcePath, operation.SourcePathKey, operation.DestinationPath, operation.DestinationPathKey,
 		operation.TemporaryPath, operation.TrashPath, operation.Phase, operation.BytesTotal, operation.BytesCompleted,
-		operation.VerificationDigest, operation.Error, operation.CreatedAt.UnixNano(), operation.UpdatedAt.UnixNano())
+		operation.VerificationDigest, secretredaction.String(operation.Error), operation.CreatedAt.UnixNano(), operation.UpdatedAt.UnixNano())
 	return err
 }
 
@@ -36,7 +37,7 @@ func (store *sqliteFileOperationStore) Update(ctx context.Context, operation hos
 	_, err := store.db.ExecContext(ctx, `UPDATE file_operations SET
 		temporary_path = ?, trash_path = ?, phase = ?, bytes_total = ?, bytes_completed = ?, verification_digest = ?, error = ?, updated_at = ?
 		WHERE id = ?`, operation.TemporaryPath, operation.TrashPath, operation.Phase, operation.BytesTotal,
-		operation.BytesCompleted, operation.VerificationDigest, operation.Error, operation.UpdatedAt.UnixNano(), operation.ID)
+		operation.BytesCompleted, operation.VerificationDigest, secretredaction.String(operation.Error), operation.UpdatedAt.UnixNano(), operation.ID)
 	return err
 }
 
@@ -152,7 +153,7 @@ func (a *App) fileOperationPage(response http.ResponseWriter, request *http.Requ
 	}
 	current := request.Context().Value(sessionContextKey).(session)
 	destination, _ := hostfiles.Parent(operation.DestinationPath)
-	if info, infoErr := a.files.Info(operation.DestinationPath); infoErr == nil && info.IsDir() {
+	if info, _, infoErr := a.hostInfo(request.Context(), operation.DestinationPath); infoErr == nil && info.IsDir() {
 		destination = operation.DestinationPath
 	}
 	canCancel := operation.Phase == hostfiles.OperationScanning || operation.Phase == hostfiles.OperationCopying || operation.Phase == hostfiles.OperationReadyToCommit

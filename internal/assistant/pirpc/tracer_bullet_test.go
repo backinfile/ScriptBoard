@@ -34,7 +34,7 @@ func TestPrivateRuntimeTracerBullet(t *testing.T) {
 	spec, err := PrepareLaunch(LaunchInput{
 		StateRoot: stateRoot, Executable: managedRuntime.Executable,
 		UserID: "user", ConversationID: "conversation", Provider: "openai-compatible", Model: "fixture-model",
-		Endpoint: "http://127.0.0.1:11434/v1", APIKey: "fixture-key", SystemPrompt: "bounded",
+		ProviderProxyEndpoint: "http://127.0.0.1:11434/v1", ProviderCapability: "session-provider-capability-fixture-value", SystemPrompt: "bounded",
 	})
 	if err != nil {
 		t.Fatal(err)

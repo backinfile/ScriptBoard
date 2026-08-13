@@ -56,9 +56,9 @@ func (m *Manager) RecoverInterrupted(ctx context.Context) error {
 			m.recordAudit(AuditEvent{Action: "mysql_restore_recovery", Target: operation.InstanceID + "/" + operation.TargetDatabase, Result: "needs_attention", Actor: operation.Actor})
 			continue
 		}
-		instance, password, err := m.instanceAndPassword(ctx, operation.InstanceID)
+		instance, err := m.Instance(ctx, operation.InstanceID)
 		if err == nil {
-			err = m.server.ReplaceDatabase(ctx, instance, password, operation.TargetDatabase)
+			err = m.backend.ReplaceDatabase(ctx, instance, operation.TargetDatabase)
 		}
 		if err == nil {
 			err = m.importBackup(ctx, instance, operation.TargetDatabase, safety)

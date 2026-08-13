@@ -4,7 +4,11 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -50,12 +54,183 @@ func TestSaveInstanceKeepsPasswordOutOfSQLite(t *testing.T) {
 	if err != nil || password != "never-store-this-in-sqlite" {
 		t.Fatalf("password round trip = %q, %v", password, err)
 	}
-	secretBytes, err := os.ReadFile(filepath.Join(stateRoot, "secrets", "mysql-credentials.enc"))
+	secretBytes, err := os.ReadFile(filepath.Join(stateRoot, "secrets", "mysql-credentials.v2.enc"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(secretBytes), "never-store-this-in-sqlite") {
 		t.Fatal("credential file contains plaintext MySQL password")
+	}
+	changed := instance
+	changed.Host = "attacker-controlled.internal"
+	if _, err := manager.secrets.getForInstance(changed); err == nil {
+		t.Fatal("credential binding allowed an instance endpoint substitution")
+	}
+}
+
+func TestManagedBackendOwnsCredentialAndDatabaseCapabilities(t *testing.T) {
+	stateRoot := t.TempDir()
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	applyTestSchema(t, database)
+	backend := &recordingBackend{}
+	manager, err := New(Options{DB: database, StateRoot: stateRoot, Backend: backend})
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := manager.SaveInstance(context.Background(), InstanceInput{
+		Name: "Managed", Host: "db.internal", Port: 3306, Username: "scriptboard",
+		Password: "broker-only-secret", TLSMode: TLSRequired,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if backend.storedID != instance.ID || backend.storedPassword != "broker-only-secret" {
+		t.Fatalf("credential was not delegated to managed backend: %+v", backend)
+	}
+	if _, err := manager.TestInstance(context.Background(), instance.ID); err != nil {
+		t.Fatal(err)
+	}
+	if backend.testedID != instance.ID {
+		t.Fatalf("database connection was not delegated to managed backend: %+v", backend)
+	}
+	if _, err := os.Stat(filepath.Join(stateRoot, "secrets", "mysql-credentials.v2.enc")); !os.IsNotExist(err) {
+		t.Fatalf("managed Web initialized a local MySQL credential store: %v", err)
+	}
+	if manager.runner != nil || manager.server != nil || manager.secrets.vault != nil {
+		t.Fatal("managed Web retained a local MySQL secret, process, or database capability")
+	}
+	if bytes.Contains(mustReadFile(t, filepath.Join(stateRoot, "app.db")), []byte("broker-only-secret")) {
+		t.Fatal("managed Web database contains plaintext MySQL password")
+	}
+}
+
+func TestOperationExclusionSpansManagerProcesses(t *testing.T) {
+	stateRoot := t.TempDir()
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	applyTestSchema(t, database)
+	first, err := New(Options{DB: database, StateRoot: stateRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := New(Options{DB: database, StateRoot: stateRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, release, err := first.beginOperation(context.Background(), "backup", "instance-one", "application", Actor{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if _, _, _, err := second.beginOperation(context.Background(), "backup", "instance-one", "application", Actor{}); err == nil || !strings.Contains(err.Error(), "another MySQL operation") {
+		t.Fatalf("second manager bypassed cross-process exclusion: %v", err)
+	}
+}
+
+type recordingBackend struct {
+	storedID, storedPassword, testedID string
+}
+
+func (backend *recordingBackend) StoreCredential(_ context.Context, instance Instance, password string) error {
+	backend.storedID, backend.storedPassword = instance.ID, password
+	return nil
+}
+func (*recordingBackend) DeleteCredential(context.Context, string) error { return nil }
+func (backend *recordingBackend) Test(_ context.Context, instance Instance) (ConnectionTest, error) {
+	backend.testedID = instance.ID
+	return ConnectionTest{OK: true}, nil
+}
+func (*recordingBackend) Databases(context.Context, Instance) ([]Database, error) {
+	return nil, nil
+}
+func (*recordingBackend) Status(context.Context, Instance) (Status, error) { return Status{}, nil }
+func (*recordingBackend) DatabaseExists(context.Context, Instance, string) (bool, error) {
+	return false, nil
+}
+func (*recordingBackend) CreateDatabase(context.Context, Instance, CreateDatabaseInput) error {
+	return nil
+}
+func (*recordingBackend) ReplaceDatabase(context.Context, Instance, string) error { return nil }
+func (*recordingBackend) DropDatabase(context.Context, Instance, string) error    { return nil }
+func (*recordingBackend) Dump(context.Context, Instance, string, string) (DumpResult, error) {
+	return DumpResult{}, nil
+}
+func (*recordingBackend) Import(context.Context, Instance, string, string) error { return nil }
+func (*recordingBackend) Tools() ToolSettings                                    { return ToolSettings{} }
+func (*recordingBackend) SetTools(context.Context, ToolSettings) error           { return nil }
+func (*recordingBackend) TestTools(context.Context) ToolStatus                   { return ToolStatus{} }
+
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+func TestManagerMigratesStateRootMySQLKeyToExternalSealedStore(t *testing.T) {
+	stateRoot := t.TempDir()
+	secretsDirectory := filepath.Join(stateRoot, "secrets")
+	if err := os.MkdirAll(secretsDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatal(err)
+	}
+	block, _ := aes.NewCipher(key)
+	gcm, _ := cipher.NewGCM(block)
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		t.Fatal(err)
+	}
+	legacy, _ := json.Marshal(map[string][]byte{
+		"instance-one": gcm.Seal(nonce, nonce, []byte("legacy-mysql-secret"), []byte("instance-one")),
+	})
+	legacyKeyPath := filepath.Join(secretsDirectory, "mysql-credentials.key")
+	legacyDataPath := filepath.Join(secretsDirectory, "mysql-credentials.enc")
+	if err := os.WriteFile(legacyKeyPath, key, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyDataPath, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	applyTestSchema(t, database)
+	_, err = database.Exec(`INSERT INTO mysql_instances
+		(id,name,host,port,username,tls_mode,ca_path,credential_configured,connection_state,created_at,updated_at)
+		VALUES ('instance-one','Legacy','legacy.internal',3306,'legacy-user','preferred','',1,'untried',1,1)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := New(Options{DB: database, StateRoot: stateRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	password, err := manager.instancePassword("instance-one")
+	if err != nil || password != "legacy-mysql-secret" {
+		t.Fatalf("migrated password=%q err=%v", password, err)
+	}
+	for _, path := range []string{legacyKeyPath, legacyDataPath} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("legacy credential material remained at %s: %v", path, err)
+		}
+	}
+	sealed, err := os.ReadFile(filepath.Join(secretsDirectory, "mysql-credentials.v2.enc"))
+	if err != nil || bytes.Contains(sealed, []byte("legacy-mysql-secret")) {
+		t.Fatalf("sealed migration output invalid: err=%v body=%s", err, sealed)
 	}
 }
 
@@ -295,6 +470,43 @@ func TestImportRejectsCorruptGzipAndRedactsCommandErrors(t *testing.T) {
 	redacted := sanitizedCommandError("access denied password=highly-sensitive", "highly-sensitive")
 	if strings.Contains(redacted, "highly-sensitive") || !strings.Contains(redacted, "[REDACTED]") {
 		t.Fatalf("command error was not redacted: %q", redacted)
+	}
+}
+
+func TestMySQLImportArgumentsDisableLocalClientCommands(t *testing.T) {
+	arguments := mysqlImportArguments("C:/private/client.cnf", "inventory")
+	want := []string{
+		"--defaults-extra-file=C:/private/client.cnf",
+		"--binary-mode", "--batch", "--skip-reconnect", "--default-character-set=utf8mb4", "--", "inventory",
+	}
+	if strings.Join(arguments, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("import arguments = %#v, want %#v", arguments, want)
+	}
+}
+
+func TestValidateGzipSQLRejectsExpansionBeyondLimit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "expansion.sql.gz")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compressed := gzip.NewWriter(file)
+	if _, err := compressed.Write(bytes.Repeat([]byte("A"), 2048)); err != nil {
+		t.Fatal(err)
+	}
+	if err := compressed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	file, err = os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if err := validateGzipSQL(file, 1024); err == nil || !strings.Contains(err.Error(), "expanded size") {
+		t.Fatalf("gzip expansion error = %v", err)
 	}
 }
 

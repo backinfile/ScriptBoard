@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/moby/moby/client"
+
+	"scriptboard/internal/secretredaction"
 )
 
 const dockerDetailTimeout = 3 * time.Second
@@ -31,7 +33,7 @@ func (c *dockerCollector) RuntimeDetail(ctx context.Context, request DetailReque
 	if err != nil {
 		result.State = RuntimeUnavailable
 		result.Code = "docker_inspect_unavailable"
-		result.Message = err.Error()
+		result.Message = secretredaction.String(err.Error())
 		return result
 	}
 	value := inspection.Container
@@ -125,7 +127,7 @@ func (c *dockerCollector) RuntimeDetail(ctx context.Context, request DetailReque
 	if topErr != nil {
 		result.State = RuntimePartial
 		result.Code = "docker_top_unavailable"
-		result.Message = topErr.Error()
+		result.Message = secretredaction.String(topErr.Error())
 	} else {
 		result.State = RuntimeAvailable
 	}

@@ -2,7 +2,9 @@ package app_test
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"database/sql"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -285,6 +287,27 @@ func TestCreateQuickRunFromSourceWritesScriptWithoutRunningIt(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(hostRoot, "ops", "marker.txt")); !os.IsNotExist(err) {
 		t.Fatalf("script ran during creation: %v", err)
+	}
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	var digest string
+	var revision int64
+	if err := database.QueryRow("SELECT script_sha256, revision FROM quick_runs WHERE name = 'Inventory snapshot'").Scan(&digest, &revision); err != nil {
+		t.Fatal(err)
+	}
+	if expected := fmt.Sprintf("%x", sha256.Sum256([]byte(source))); digest != expected || revision != 1 {
+		t.Fatalf("published Quick Run digest=%q revision=%d, want %q revision=1", digest, revision, expected)
+	}
+	var auditRevision, auditDigest string
+	if err := database.QueryRow(`SELECT resource_revision, resource_digest_sha256 FROM audit_events
+		WHERE action = 'create_quick_run_from_source' ORDER BY id DESC LIMIT 1`).Scan(&auditRevision, &auditDigest); err != nil {
+		t.Fatal(err)
+	}
+	if auditRevision != "1" || auditDigest != digest {
+		t.Fatalf("create audit revision=%q digest=%q, want revision=1 digest=%q", auditRevision, auditDigest, digest)
 	}
 
 	response, err = client.Get(serverURL + "/config/quick-runs")

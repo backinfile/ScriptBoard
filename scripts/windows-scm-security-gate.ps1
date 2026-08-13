@@ -1,0 +1,270 @@
+param(
+    [string]$WorkingRoot = "",
+    [int]$Port = 0
+)
+
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+
+if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
+    throw "The Windows SCM security gate must run on Windows"
+}
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$principal = [Security.Principal.WindowsPrincipal]::new($identity)
+if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    throw "The Windows SCM security gate requires an elevated Administrator token"
+}
+
+$repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
+if ([string]::IsNullOrWhiteSpace($WorkingRoot)) {
+    $base = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [IO.Path]::GetTempPath() }
+    $WorkingRoot = Join-Path $base ("scriptboard-windows-scm-gate-" + [Guid]::NewGuid().ToString("N"))
+}
+$gateRoot = [IO.Path]::GetFullPath($WorkingRoot)
+if ([IO.Path]::GetPathRoot($gateRoot) -eq $gateRoot -or (Test-Path -LiteralPath $gateRoot)) {
+    throw "WorkingRoot must be a new, non-root directory"
+}
+
+$releaseRoot = Join-Path $gateRoot "release"
+$programFilesRoot = Join-Path $gateRoot "program-files"
+$stateRoot = Join-Path $gateRoot "state"
+$configPath = Join-Path $gateRoot "config.yaml"
+$passwordPath = Join-Path $gateRoot "admin-password"
+$brokerSecrets = Join-Path $gateRoot "broker-secrets"
+$relayTokenPath = Join-Path $brokerSecrets "mail-relay-token"
+$windowsTemp = [IO.Path]::GetFullPath((Join-Path $env:windir "Temp"))
+$runWorkRoot = Join-Path $windowsTemp ("scriptboard-scm-gate-" + [Guid]::NewGuid().ToString("N"))
+$serviceNames = @("ScriptBoard", "ScriptBoardBroker", "ScriptBoardRunner", "ScriptBoardAI")
+$installed = $false
+
+function Invoke-Checked([string]$FilePath, [string[]]$Arguments) {
+    & $FilePath @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "$FilePath failed with exit code $LASTEXITCODE"
+    }
+}
+
+function Write-UTF8NoBOM([string]$Path, [string]$Value) {
+    [IO.File]::WriteAllText($Path, $Value, [Text.UTF8Encoding]::new($false))
+}
+
+function New-RandomBase64([int]$ByteCount) {
+    $bytes = [byte[]]::new($ByteCount)
+    $generator = [Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $generator.GetBytes($bytes) } finally { $generator.Dispose() }
+    return [Convert]::ToBase64String($bytes)
+}
+
+function Wait-ServiceState([string]$Name, [string]$State, [int]$TimeoutSeconds = 45) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    do {
+        $service = Get-CimInstance Win32_Service -Filter "Name='$Name'" -ErrorAction SilentlyContinue
+        if ($service -and $service.State -eq $State) { return $service }
+        Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "Service $Name did not reach $State"
+}
+
+function Wait-NewServiceProcess([string]$Name, [uint32]$PreviousPID) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(45)
+    do {
+        $service = Get-CimInstance Win32_Service -Filter "Name='$Name'" -ErrorAction SilentlyContinue
+        if ($service -and $service.State -eq "Running" -and $service.ProcessId -ne 0 -and $service.ProcessId -ne $PreviousPID) {
+            return $service
+        }
+        Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "Service $Name did not recover with a new process"
+}
+
+function Wait-Pipe([string]$Pattern) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(15)
+    do {
+        $pipe = Get-ChildItem -LiteralPath "\\.\pipe\" | Where-Object Name -Like $Pattern | Select-Object -First 1
+        if ($pipe) { return $pipe.Name }
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "Named Pipe $Pattern was not created"
+}
+
+function Assert-PipeDenied([string]$PipeName) {
+    $client = [IO.Pipes.NamedPipeClientStream]::new(
+        ".", $PipeName, [IO.Pipes.PipeDirection]::InOut,
+        [IO.Pipes.PipeOptions]::None, [Security.Principal.TokenImpersonationLevel]::Identification
+    )
+    try {
+        $client.Connect(2000)
+        throw "Administrator unexpectedly connected to protected pipe $PipeName"
+    } catch [UnauthorizedAccessException] {
+        return
+    } finally {
+        $client.Dispose()
+    }
+}
+
+function Assert-ServiceDefinition([string]$Name, [string]$StartName, [string]$StartMode) {
+    $service = Get-CimInstance Win32_Service -Filter "Name='$Name'"
+    if (-not $service -or $service.StartName -ne $StartName -or $service.StartMode -ne $StartMode) {
+        throw "Unexpected service definition for ${Name}: $($service | ConvertTo-Json -Compress)"
+    }
+}
+
+function Assert-PrivateBrokerPath([string]$Path, [string]$WebSID) {
+    $sddl = (Get-Acl -LiteralPath $Path).Sddl
+    foreach ($forbidden in @(";;;WD)", ";;;BU)", ";;;AU)", ";;;LS)", $WebSID)) {
+        if ($sddl -match [Regex]::Escape($forbidden)) {
+            throw "Broker-only path $Path grants a Web or broad trustee: $sddl"
+        }
+    }
+}
+
+try {
+    New-Item -ItemType Directory -Path $releaseRoot, $programFilesRoot, $stateRoot, $brokerSecrets, $runWorkRoot | Out-Null
+    if ($Port -eq 0) {
+        $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+        $listener.Start()
+        $Port = ([Net.IPEndPoint]$listener.LocalEndpoint).Port
+        $listener.Stop()
+    }
+    if ($Port -lt 1024 -or $Port -gt 65535) { throw "Port must be between 1024 and 65535" }
+
+    $version = "0.0.0"
+    $tag = "v$version"
+    $commit = (git -C $repoRoot rev-parse HEAD).Trim().ToLowerInvariant()
+    if ($commit -notmatch '^[0-9a-f]{40}$') { throw "Unable to resolve the Git commit" }
+    $builtAt = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
+    $ldflags = @(
+        "-X", "scriptboard/internal/buildinfo.Version=$version",
+        "-X", "scriptboard/internal/buildinfo.Tag=$tag",
+        "-X", "scriptboard/internal/buildinfo.Commit=$commit",
+        "-X", "scriptboard/internal/buildinfo.BuiltAt=$builtAt",
+        "-X", "scriptboard/internal/buildinfo.ReleaseBuildValue=true"
+    ) -join " "
+    foreach ($binary in @(
+        @{ Name = "scriptboard.exe"; Package = "./cmd/scriptboard"; GUI = $false },
+        @{ Name = "scriptboard-broker.exe"; Package = "./cmd/scriptboard-broker"; GUI = $false },
+        @{ Name = "scriptboard-runner.exe"; Package = "./cmd/scriptboard-runner"; GUI = $false },
+        @{ Name = "scriptboard-ai-host.exe"; Package = "./cmd/scriptboard-ai-host"; GUI = $false },
+        @{ Name = "scriptboard-updater.exe"; Package = "./cmd/scriptboard-updater"; GUI = $false },
+        @{ Name = "scriptboard-tray.exe"; Package = "./cmd/scriptboard-tray"; GUI = $true },
+        @{ Name = "scriptboard-tray-launcher.exe"; Package = "./cmd/scriptboard-tray-launcher"; GUI = $true }
+    )) {
+        $binaryFlags = if ($binary.GUI) { "$ldflags -H=windowsgui" } else { $ldflags }
+        Invoke-Checked "go" @("build", "-trimpath", "-ldflags", $binaryFlags, "-o", (Join-Path $releaseRoot $binary.Name), $binary.Package)
+    }
+    $releaseInfo = [ordered]@{
+        version = $version; tag = $tag; commit = $commit; built_at = $builtAt; release_build = $true
+        database_schema = 43; updater_protocol = 1; repository = "backinfile/ScriptBoard"
+    }
+    Write-UTF8NoBOM (Join-Path $releaseRoot "RELEASE.json") ($releaseInfo | ConvertTo-Json)
+
+    $adminPassword = New-RandomBase64 24
+    $adminPassword | Set-Content -LiteralPath $passwordPath -Encoding ascii -NoNewline
+    New-RandomBase64 32 | Set-Content -LiteralPath $relayTokenPath -Encoding ascii -NoNewline
+    $configBody = @"
+state_root: '$($stateRoot.Replace("'", "''"))'
+listen: '127.0.0.1:$Port'
+admin_username: 'admin'
+admin_password_file: '$($passwordPath.Replace("'", "''"))'
+notification_email_relay_endpoint: 'https://mail.invalid/v1/scriptboard'
+notification_email_relay_token_file: '$($relayTokenPath.Replace("'", "''"))'
+notification_email_recipient: 'security@example.invalid'
+"@
+    Write-UTF8NoBOM $configPath $configBody
+
+    foreach ($name in $serviceNames) {
+        if (Get-Service -Name $name -ErrorAction SilentlyContinue) { throw "Service $name already exists" }
+    }
+    $oldProgramFiles = $env:ProgramFiles
+    $env:ProgramFiles = $programFilesRoot
+    try {
+        Invoke-Checked (Join-Path $releaseRoot "scriptboard.exe") @("service", "install", "--config", $configPath)
+    } finally {
+        $env:ProgramFiles = $oldProgramFiles
+    }
+    $installed = $true
+    Invoke-Checked (Join-Path $releaseRoot "scriptboard.exe") @("service", "verify", "--config", $configPath)
+
+    Assert-ServiceDefinition "ScriptBoard" "NT AUTHORITY\LocalService" "Auto"
+    Assert-ServiceDefinition "ScriptBoardBroker" "LocalSystem" "Auto"
+    Assert-ServiceDefinition "ScriptBoardRunner" "NT AUTHORITY\LocalService" "Manual"
+    Assert-ServiceDefinition "ScriptBoardAI" "NT AUTHORITY\LocalService" "Manual"
+
+    Invoke-Checked (Join-Path $releaseRoot "scriptboard.exe") @("service", "start")
+    $web = Wait-ServiceState "ScriptBoard" "Running"
+    $broker = Wait-ServiceState "ScriptBoardBroker" "Running"
+    Wait-ServiceState "ScriptBoardRunner" "Stopped" | Out-Null
+    Wait-ServiceState "ScriptBoardAI" "Stopped" | Out-Null
+    $deadline = [DateTime]::UtcNow.AddSeconds(45)
+    do {
+        try { $response = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/login" -TimeoutSec 2 } catch { $response = $null }
+        if ($response -and $response.StatusCode -eq 200) { break }
+        Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $deadline)
+    if (-not $response -or $response.StatusCode -ne 200) { throw "Managed Web did not become HTTP ready" }
+
+    Assert-PipeDenied (Wait-Pipe "scriptboard-privileged-broker-*")
+
+    $baseURL = "http://127.0.0.1:$Port"
+    $loginPage = Invoke-WebRequest -Uri "$baseURL/login" -SessionVariable webSession
+    $loginToken = [Regex]::Match($loginPage.Content, 'name="csrf_token" value="([^"]+)"').Groups[1].Value
+    if ([string]::IsNullOrWhiteSpace($loginToken)) { throw "Login CSRF token was not rendered" }
+    Invoke-WebRequest -Uri "$baseURL/login" -Method Post -WebSession $webSession -Body @{
+        username = "admin"; password = $adminPassword; csrf_token = $loginToken
+    } | Out-Null
+    $taskPage = Invoke-WebRequest -Uri "$baseURL/config/quick-runs/one-time/new" -WebSession $webSession
+    $taskToken = [Regex]::Match($taskPage.Content, 'name="csrf_token" value="([^"]+)"').Groups[1].Value
+    if ([string]::IsNullOrWhiteSpace($taskToken)) { throw "One-time Run CSRF token was not rendered" }
+    $markerPath = Join-Path $runWorkRoot "demand-start-ok.txt"
+    $source = "@echo off`r`necho SCM_DEMAND_START_OK>`"$markerPath`"`r`n"
+    Invoke-WebRequest -Uri "$baseURL/config/quick-runs/one-time" -Method Post -WebSession $webSession -Body @{
+        csrf_token = $taskToken; working_directory = $runWorkRoot; language = "batch"
+        source = $source; timeout_seconds = "30"; arguments = ""
+    } | Out-Null
+    $runner = Wait-ServiceState "ScriptBoardRunner" "Running"
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    do {
+        if ((Test-Path -LiteralPath $markerPath) -and (Get-Content -Raw -LiteralPath $markerPath) -match "SCM_DEMAND_START_OK") { break }
+        Start-Sleep -Milliseconds 200
+    } while ([DateTime]::UtcNow -lt $deadline)
+    if (-not (Test-Path -LiteralPath $markerPath)) { throw "Web could not demand-start Runner and complete a managed Run" }
+
+    Start-Service -Name "ScriptBoardAI"
+    $ai = Wait-ServiceState "ScriptBoardAI" "Running"
+    Assert-PipeDenied (Wait-Pipe "scriptboard-runner-*")
+    Assert-PipeDenied (Wait-Pipe "scriptboard-ai-runtime-*")
+
+    $webSID = ([Security.Principal.NTAccount]::new("NT SERVICE", "ScriptBoard")).Translate([Security.Principal.SecurityIdentifier]).Value
+    Assert-PrivateBrokerPath $brokerSecrets $webSID
+    Assert-PrivateBrokerPath $relayTokenPath $webSID
+
+    foreach ($running in @($web, $broker, $runner, $ai)) {
+        Stop-Process -Id $running.ProcessId -Force
+        Wait-NewServiceProcess $running.Name $running.ProcessId | Out-Null
+    }
+    Invoke-Checked (Join-Path $releaseRoot "scriptboard.exe") @("service", "verify", "--config", $configPath)
+
+    Invoke-Checked (Join-Path $releaseRoot "scriptboard.exe") @("service", "stop")
+    foreach ($name in $serviceNames) { Wait-ServiceState $name "Stopped" | Out-Null }
+    Invoke-Checked (Join-Path $releaseRoot "scriptboard.exe") @("service", "start")
+    Wait-ServiceState "ScriptBoard" "Running" | Out-Null
+    Wait-ServiceState "ScriptBoardBroker" "Running" | Out-Null
+
+    Invoke-Checked (Join-Path $releaseRoot "scriptboard.exe") @("service", "uninstall")
+    $installed = $false
+    foreach ($name in $serviceNames) {
+        if (Get-Service -Name $name -ErrorAction SilentlyContinue) { throw "Service $name remains after uninstall" }
+    }
+    Write-Host "WINDOWS_SCM_SECURITY_GATE: PASSED"
+} finally {
+    $managedDefinitionExists = $serviceNames | Where-Object { Get-Service -Name $_ -ErrorAction SilentlyContinue } | Select-Object -First 1
+    if (($installed -or $managedDefinitionExists) -and (Test-Path -LiteralPath (Join-Path $releaseRoot "scriptboard.exe"))) {
+        try { & (Join-Path $releaseRoot "scriptboard.exe") service uninstall } catch { Write-Warning $_ }
+    }
+    if (Test-Path -LiteralPath $gateRoot) {
+        Remove-Item -LiteralPath $gateRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path -LiteralPath $runWorkRoot) {
+        Remove-Item -LiteralPath $runWorkRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}

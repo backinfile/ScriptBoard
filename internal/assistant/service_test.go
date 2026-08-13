@@ -69,13 +69,13 @@ func TestModelConfigurationsKeepCredentialsOutsideSQLiteAndMaintainOneDefault(t 
 		}
 	}
 
-	secretPath := filepath.Join(stateRoot, "secrets", "assistant-provider.json")
+	secretPath := filepath.Join(stateRoot, "secrets", "assistant-provider.enc")
 	secretBody, err := os.ReadFile(secretPath)
 	if err != nil {
 		t.Fatalf("read credential file: %v", err)
 	}
-	if !strings.Contains(string(secretBody), "sk-secret-primary") || !strings.Contains(string(secretBody), "sk-secret-secondary") {
-		t.Fatalf("credential file does not contain both configured keys: %s", secretBody)
+	if strings.Contains(string(secretBody), "sk-secret-primary") || strings.Contains(string(secretBody), "sk-secret-secondary") {
+		t.Fatalf("credential file contains plaintext provider keys: %s", secretBody)
 	}
 
 	updated, err := service.SaveModel(ctx, actor, primary.ID, ModelInput{
@@ -94,6 +94,38 @@ func TestModelConfigurationsKeepCredentialsOutsideSQLiteAndMaintainOneDefault(t 
 	}
 	if credential != "sk-secret-primary" {
 		t.Fatalf("credential changed during metadata-only edit")
+	}
+}
+
+func TestServiceMigratesPlaintextProviderCredentialsToSealedStorage(t *testing.T) {
+	stateRoot := t.TempDir()
+	secretsDirectory := filepath.Join(stateRoot, "secrets")
+	if err := os.MkdirAll(secretsDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacyPath := filepath.Join(secretsDirectory, "assistant-provider.json")
+	if err := os.WriteFile(legacyPath, []byte(`{"model-one":"legacy-provider-secret"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", "file:"+t.Name()+"?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	service, err := New(db, Options{StateRoot: stateRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentials, err := service.loadCredentials()
+	if err != nil || credentials["model-one"] != "legacy-provider-secret" {
+		t.Fatalf("migrated credentials=%v err=%v", credentials, err)
+	}
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Fatalf("plaintext credential file remained after migration: %v", err)
+	}
+	sealed, err := os.ReadFile(filepath.Join(secretsDirectory, "assistant-provider.enc"))
+	if err != nil || strings.Contains(string(sealed), "legacy-provider-secret") {
+		t.Fatalf("sealed migration output is invalid: err=%v body=%s", err, sealed)
 	}
 }
 

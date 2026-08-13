@@ -4,12 +4,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -21,6 +21,7 @@ import (
 	"scriptboard/internal/config"
 	"scriptboard/internal/localtls"
 	"scriptboard/internal/platformservice"
+	"scriptboard/internal/processlaunch"
 )
 
 var loaded config.Config
@@ -149,11 +150,23 @@ func serviceURL() string {
 }
 
 func openURL(value string) {
-	_ = exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", value).Start()
+	command, err := processlaunch.Prepare(processlaunch.Spec{
+		Context: context.Background(), Executable: "rundll32.exe",
+		Arguments: []string{"url.dll,FileProtocolHandler", value}, Environment: processlaunch.EnvironmentInherit,
+	})
+	if err == nil && command.Start() == nil {
+		_ = command.Process.Release()
+	}
 }
 func openFolder(path string) {
 	_ = os.MkdirAll(path, 0o755)
-	_ = exec.Command("explorer.exe", path).Start()
+	command, err := processlaunch.Prepare(processlaunch.Spec{
+		Context: context.Background(), Executable: "explorer.exe", Arguments: []string{path},
+		Environment: processlaunch.EnvironmentInherit,
+	})
+	if err == nil && command.Start() == nil {
+		_ = command.Process.Release()
+	}
 }
 
 func trayIcon() []byte {

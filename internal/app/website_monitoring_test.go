@@ -281,6 +281,9 @@ func TestWebsiteMonitorConfigurationsExportSelectedAndImportSelected(t *testing.
 	if record["name"] != "导出目标" || record["url"] != "http://export-one.example/health" || record["http_body"] != `{"probe":"ready"}` {
 		t.Fatalf("exported configuration lost selected settings: %#v", record)
 	}
+	if strings.Contains(string(exported), "Bearer secret") || !strings.Contains(string(exported), "[REDACTED]") {
+		t.Fatalf("website monitor export did not redact authorization: %s", exported)
+	}
 	record["name"] = "导入副本"
 	record["url"] = "http://imported-copy.example/health"
 	exported, err = json.Marshal(bundle)
@@ -1128,7 +1131,7 @@ func TestWebsiteMonitoringDataReturnsCompletePollingAndDetailSnapshots(t *testin
 	}
 }
 
-func TestWebsiteMonitoringAddsRemoteScriptBoardAsReadOnlySource(t *testing.T) {
+func TestWebsiteMonitoringRejectsInsecurePrivateRemoteScriptBoardDestination(t *testing.T) {
 	const key = "sbk_0123456789abcdef.0123456789abcdef0123456789abcdef01234567890"
 	var authorization string
 	remote := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -1157,7 +1160,7 @@ func TestWebsiteMonitoringAddsRemoteScriptBoardAsReadOnlySource(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = created.Body.Close()
-	if created.StatusCode != http.StatusSeeOther {
+	if created.StatusCode != http.StatusBadRequest {
 		t.Fatalf("create remote source status=%d", created.StatusCode)
 	}
 
@@ -1167,9 +1170,7 @@ func TestWebsiteMonitoringAddsRemoteScriptBoardAsReadOnlySource(t *testing.T) {
 	}
 	body, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if authorization != "Bearer "+key || !bytes.Contains(body, []byte("Branch office")) ||
-		!bytes.Contains(body, []byte("Remote checkout")) || !bytes.Contains(body, []byte("Read-only")) ||
-		bytes.Contains(body, []byte(`href="/monitor/websites/remote-one"`)) {
+	if authorization != "" || bytes.Contains(body, []byte(`href="/monitor/websites/remote-one"`)) {
 		t.Fatalf("authorization=%q body=%s", authorization, body)
 	}
 	if bytes.Contains(body, []byte(key)) {

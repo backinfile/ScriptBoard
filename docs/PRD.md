@@ -29,11 +29,22 @@
 > [ADR-0126](./adr/0126-version-assistant-playbooks-with-the-signed-runtime.md)。数据库当前为
 > schema 24，schema 20–23 可在单事务内前向迁移。
 
+> **2026-08-12 安全修订**：受管部署改为 Web、特权 Broker、AI Host 与 Runner 四服务边界。
+> Web 使用专用低权限身份；Broker 保留 root/LocalSystem；AI 与 Runner 使用独立受限身份、
+> 受保护 IPC、默认拒绝网络和资源/系统调用限制。Run 只继承 Runner 构造的最小环境，不再继承
+> Web 身份与环境。此修订取代下文关于“单进程”、root/LocalSystem Web 和脚本继承 Web 身份的
+> 冲突表述；Host Files、MFA、Passkey、远程网站、Assistant Provider、MySQL、审计签名与备份
+> 密钥能力均由 Broker 持有，Web 只调用固定领域协议。四个二进制作为一个版本化发布单元整体
+> 安装、升级、回滚和卸载，Linux Runner/AI Host 使用 socket activation，Windows 使用 SCM
+> demand-start。完整最小权限工作见
+> [安全加固计划](./OPERATIONS-PANEL-SECURITY-HARDENING-PLAN.md)。当前数据库为 schema 44，
+> schema 20–43 仅沿显式事务迁移路径前向升级；下文固定 schema 24 的旧表述不再适用。
+
 ## 1. 产品定义
 
 ScriptBoard 是一个自托管、单机、少量可信用户使用的主机文件与脚本操作台，为服务身份可访问的普通文件提供浏览和管理，并为其中的可信脚本提供本地执行、实时日志、历史追踪、快捷执行和内置计划。
 
-它不是通用多用户运维平台，也不隔离恶意脚本。脚本直接继承 ScriptBoard 服务进程的操作系统身份与环境；默认服务安装使用 Linux root 或 Windows LocalSystem，因此文件页可读取的范围很大，所有可登录用户和可执行脚本都必须属于宿主机可信边界。
+它不是通用多用户运维平台，也不把管理员发布的脚本视为不可信代码。受管部署仍通过独立 Runner 身份、最小环境、摘要复核、资源限制和默认拒绝网络来限制脚本的宿主影响；文件访问与特权动作由 Broker 的固定领域协议承担，不能从 Web 退回任意高权限进程启动。
 
 ## 2. 产品目标
 
@@ -45,16 +56,17 @@ ScriptBoard 是一个自托管、单机、少量可信用户使用的主机文�
      → 保存快捷执行或计划 → 必要时从文件系统回收区恢复误删文件
 ```
 
-MVP 优先保持单服务进程、SQLite、单机文件系统与平台原生服务部署，不引入运行时集群依赖。
+MVP 保持 SQLite、单机文件系统与平台原生服务部署，不引入运行时集群依赖。一个 ScriptBoard 产品版本包含 Web、Privileged Broker、Runner 与 AI Host 四个内部组件；它们共享一个发布事务，但保持独立 OS 身份和 IPC 边界。
 
 ## 3. 信任与权限边界
 
-- 只有一个 admin 账号，没有角色、用户组或逐脚本授权。
-- 管理员上传和启动的脚本视为可信代码，不提供沙箱。
-- ScriptBoard 不在应用内部提权、降权或切换用户；脚本继承服务进程身份与环境。
-- Windows 服务默认使用 LocalSystem；Linux systemd 服务默认使用 root。安装者可在操作系统服务配置中改用其他账号。
-- 默认监听回环地址；管理员可显式配置其他监听地址。非回环访问应使用内置 TLS，或由可信 HTTPS 反向代理转发。
-- 所有文件、日志、SSE、变量和执行入口必须验证 admin Session；匿名仅允许登录入口和无敏感内容的静态资源。
+- 实例使用固定四角色多用户模型，并且只允许一个系统管理员；脚本发布、执行和高风险操作仍受角色、step-up 与审计约束。
+- 管理员发布的脚本视为可信业务代码，但只能由独立 Runner 身份在最小环境和资源边界内执行。
+- Web 默认低权限：Windows 使用 LocalService + 独立服务 SID，Linux 使用无登录 `scriptboard-web`；只有固定 Broker 保留 LocalSystem/root。
+- Runner 与 AI Host 使用独立受限身份。Web 不能直接解封 Broker 秘密、读取 Host Files 或把任意命令交给高权限进程。
+- 四组件必须来自同一发布版本；混合二进制/IPC 协议组合 fail closed。Web 与 Broker 常驻，Runner/AI Host 按需启动。
+- 明文 HTTP 只能监听回环地址。非回环访问必须使用内置 TLS，或由同机可信 HTTPS 反向代理转发到回环后端。
+- 所有文件、日志、SSE、变量和执行入口必须验证用户 Session 与声明式角色权限；匿名仅允许登录入口和无敏感内容的静态资源。
 
 ## 4. 信息架构
 
@@ -129,7 +141,7 @@ AI
 - 自动生成至少 128 bit 随机熵的初始密码，写入权限受限的一次性文件。
 - 首次登录强制修改密码；成功后删除一次性文件。
 - Windows 托盘可复制初始密码。
-- 启动时可用用户名、密码文件或明文密码覆盖数据库凭据。覆盖值不同则重设账号并撤销全部 Session。
+- 启动时只可用用户名和绝对路径密码文件覆盖数据库凭据；YAML、环境变量和 CLI 的明文密码入口必须拒绝并给出迁移指引。覆盖值不同则重设账号并撤销全部 Session。
 - 网页修改凭据时，如果启动配置仍提供覆盖值，必须提示下次重启会再次覆盖。
 
 ### 5.2 密码
@@ -157,6 +169,15 @@ AI
 - 不永久锁定账号；本机 CLI 可清除限速状态。
 - 登录成功、失败和限速均写审计事件，不记录密码。
 
+### 5.5 双重认证与 step-up
+
+- 账户可配置 RFC 6238 TOTP；已配置账户的密码登录和高风险 step-up 都必须提供动态验证码或一个未使用恢复码，不存在仅密码降级路径。
+- 同一 TOTP 时间步只能接受一次。恢复码各自具有 128 bit 随机熵，只显示一次、仅保存摘要并在成功使用后原子移除。
+- TOTP 状态整体由 State Root 外的统一主密钥密封；单独复制 State Root 不能恢复认证器 secret。
+- 启用或网页重置 MFA 撤销该账户全部 Session；本机管理员重置同时清除管理员 MFA，作为丢失认证器和恢复码后的带外恢复路径。
+- 账户可注册要求 authenticator user verification 的 WebAuthn/passkey；challenge 只在服务端短期保存并一次性消费，凭据记录由外部主密钥整体密封，登录与 step-up 成功后更新计数器与 flags。
+- Administrator、Maintainer 默认带 MFA 注册截止时间。超过截止时间且未配置 TOTP 或 passkey 时，只允许进入账户/MFA/登出路径，其他状态改变请求在业务 Handler 前 fail closed 并审计；旧实例和首次部署使用有界注册窗口避免锁死唯一管理员。
+
 ## 6. 主机文件管理
 
 ### 6.1 顶层、路径与保护边界
@@ -179,6 +200,7 @@ AI
 
 - 支持多文件上传和新建目录，不支持目录上传、服务端解压、链接或特殊文件上传。
 - 上传流式写入目标同目录临时文件；同名默认拒绝，明确确认后才通过回收区原子替换。
+- 内置脚本/可执行扩展及 `executor_chains` 配置的扩展不能由普通上传直接进入主机路径：内容先以无扩展名、0600 权限进入 State Root 私有收件箱，管理员或维护员在近期认证后核对 SHA-256 和目标再发布。普通上传不能直接覆盖现有可执行文件；文件移动同样要求近期认证并单独审计。
 - 在线编辑只接受不超过 1 MiB、有效 UTF-8 且不含 NUL 的普通文件，使用摘要冲突检测、同目录临时文件和原子替换。
 - PNG、JPEG、GIF、WebP 可安全内嵌预览；主动内容和未知格式只下载。只下载单个普通文件，并设置 attachment 与 nosniff。
 - 所有写操作按实际目标文件系统检查最低可用空间；运行中或被文件操作租约覆盖的路径拒绝修改。
@@ -386,7 +408,7 @@ starting → failed
 
 ```text
 scriptboard serve
-scriptboard service install|uninstall|start|stop|restart|status
+scriptboard service install [--start]|uninstall|start|stop|restart|status|verify
 scriptboard admin reset
 scriptboard config validate
 scriptboard doctor
@@ -395,6 +417,7 @@ scriptboard version
 
 - Windows 直接使用服务控制管理器，不依赖 NSSM。
 - Linux 只正式支持 systemd。
+- 正式发布包提供单一平台安装入口；它使用 `service install --start` 完成整体安装、自动验证和启动。显式 `service verify` 只作为高级诊断入口，不是正常安装后的必要人工步骤。
 - `service uninstall` 不删除配置、主机文件、状态或已有 Git 历史。
 - 不提供用户备份/恢复命令。
 
@@ -451,7 +474,7 @@ scriptboard version
 
 - 登录管理员可在独立“网站监控”页面维护最多 100 个 HTTP/HTTPS 或 WebSocket/WSS 端点；列表按管理员顺序展示并支持状态、服务位置筛选，不提供搜索。
 - 保存或恢复后立即检查；首次失败进入复核，第二次连续失败才确认故障。默认全局最多并发检查 10 个，同一监控检查合并且不并发。
-- HTTP 支持 GET/POST、200–399、任意成功返回，或以 `200;401-499;503` 形式组合指定状态码与范围；同时支持可选返回内容、最多五次跳转与 TLS 验证开关。HTTP 请求与 WebSocket 握手均可配置最多 32 项自定义请求头；请求头值可嵌入 `{{VARIABLE_NAME}}` 并在每次检查时读取最新变量，配置只保存引用模板；协议栈管理的保留头不能覆盖。
+- HTTP 支持 GET/POST、200–399、任意成功返回，或以 `200;401-499;503` 形式组合指定状态码与范围；同时支持可选返回内容、最多五次跳转与 TLS 验证。管理员关闭 TLS 验证时只获得一小时、写入审计的临时例外，到期自动恢复验证。HTTP 请求与 WebSocket 握手均可配置最多 32 项自定义请求头；请求头值可嵌入 `{{VARIABLE_NAME}}` 并在每次检查时读取最新变量，配置只保存引用模板；协议栈管理的保留头不能覆盖。
 - WebSocket 支持连接建立、任意应用消息、匹配应用消息和 RFC 6455 Ping/Pong 四类成功条件。应用文本/二进制帧与控制帧严格分离；Ping/Pong 只有收到载荷逐字节一致的 Pong 控制帧才成功，解码载荷上限为 125 字节。
 - Nginx 扫描只能由管理员显式发起，先预览全部候选，再单独导入选中项；重复项不可选。扫描有文件数、单文件大小、总字节和 include 深度边界，不扫描端口、不修改或重载 Nginx。
 - 页面每十秒渐进增强刷新；无 JavaScript 时仍可完成创建、编辑、筛选、立即检查、暂停/恢复、上下移动和删除。
@@ -465,9 +488,10 @@ scriptboard version
 - 不引入 Node.js 构建链、SPA、Redis 或消息队列。
 - Windows 托盘为同模块独立 GUI 可执行文件。
 - 正式平台：Windows 10/11、Windows Server 2019+、systemd Linux；amd64 与 arm64。
-- Windows 发布 ZIP，Linux 发布 tar.gz；四个平台归档均提供 SHA-256、归档内 `RELEASE.json`，正式 Release 还提供 Ed25519 签名的发布清单。
+- Windows 发布单文件 Setup EXE，Linux 发布单文件可执行 `.run`；两者都是原生启动器附加有界 ZIP 载荷，四个平台安装器均提供 SHA-256、载荷内 `RELEASE.json`，正式 Release 还提供 Ed25519 签名的发布清单。
 - 正式 Release 以 Git Tag 作为版本事实来源。服务程序、托盘、托盘启动器和 updater 共用同一份构建元数据；开发构建必须明确标记为 `development`。
 - 正式构建默认每 6 小时检查固定官方仓库 `backinfile/ScriptBoard` 的最新稳定版，只信任与内置公钥匹配的签名清单。检查失败不得影响已有服务能力。
+- 单文件安装器从 updater protocol 2 起生效；protocol 1 安装必须手工执行一次新安装器建立基线，不能把不兼容资产伪装成可自动更新。
 - 更新不会静默安装。管理员可在 Web 或 CLI 明确发起检查；下载验证与安装只在 Web 完成，并在安装前二次确认；第一版不提供无人值守定时安装。
 - 新版 `service install` 将完整 Release 复制到版本化 Install Root：Windows 为 `C:\Program Files\ScriptBoard`，Linux 为 `/opt/scriptboard`。Linux 服务使用稳定的 `current` 入口，Windows 服务配置明确指向当前 Installed Release。
 - 旧式“服务直接指向单个可执行文件”的安装不迁移、不兼容；发现同名旧服务或缺失新版安装元数据时必须拒绝安装，并要求管理员先手工卸载后全新安装。
@@ -475,7 +499,7 @@ scriptboard version
 - updater 在旧进程退出后创建一致数据库快照、切换服务目标并以 Validation Mode 启动新版本。验证期间不触发计划、不接受 Run 或业务写请求；服务状态、精确构建运行标记和 HTTP 就绪持续通过后才能提交。
 - 验活、启动或数据库迁移失败时，updater 自动恢复旧服务目标和更新前数据库快照，并重新启动旧版本。已正常提交并产生新业务数据的版本不提供任意一键降级。
 - 便携 Release 可检查版本和打开官方 Release 页面，但不允许原地自更新；源码开发构建既不自动检查也不下载更新。
-- 发布仍使用便携归档，不制作 MSI/DEB/RPM。
+- 每个平台只提供一个自解包安装器，不制作 MSI/DEB/RPM；安装器的 `--extract-to` 可恢复完整便携目录。
 - Web 界面、状态、动作、错误和日期完整提供简体中文与美式英语；首次访问按 `Accept-Language` 协商，中文语言范围选择简体中文，其余选择美式英语，之后由 Cookie 记忆。URL 不带语言前缀；结构化标识和技术详情保持稳定英文。托盘和 CLI 帮助仍只提供简体中文。
 - 自动化浏览器门禁固定为桌面 Chromium；Chrome、Edge、Firefox 和 Safari 为最佳努力兼容。移动端必须可完成核心操作，但不进入当前自动化截图门禁。
 - 正式支持每台主机单实例；状态目录持有排他实例锁。
@@ -523,7 +547,7 @@ scriptboard version
 - `/ai` 是所有已登录固定角色可访问的原生对话工作区；左侧对话 Rail、中部消息与
   Composer、右侧上下文 Inspector 共同组成桌面布局，移动端以分层布局保留核心操作。
 - 每个对话由当前用户独占并必须选择一个已配置、带服务端 API Key 的 LLM；设置页可
-  新增、修改、删除未引用配置并选择唯一默认模型。API Key 只写入 State Root 私有凭据
+  新增、修改、删除未引用配置并选择唯一默认模型。API Key 以 State Root 外部主密钥密封后只写入私有凭据
   文件，页面、SQLite、审计和普通日志均不回显。
 - 新对话继承系统设置中的自动审批默认值；每个对话可在模型选择旁直接切换审批模式。
   该开关不改变固定角色权限；状态修改执行前仍重新授权并建立一次性审批记录。

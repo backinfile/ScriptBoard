@@ -407,13 +407,13 @@ state-root/
       database-before-update.db # helper 在旧进程退出后创建的一致快照
       release-manifest.json
       release-manifest.json.sig
-      scriptboard-v*.{zip,tar.gz}
+      scriptboard-v*.{exe,run} # 与首次安装相同的自解包安装器，更新器直接验证并提取其 ZIP 载荷
       extracted/              # 安全解压后的 Release 内容
       helper/                 # Windows 本次事务使用的独立 helper
   tmp/
 ```
 
-State Root、Install Root、活动配置、管理员密码文件、TLS 私钥和各文件系统回收区均为受保护路径。文件页面不显示这些路径；其祖先不能执行会影响后代的写入、移动、删除、覆盖或执行。磁盘上已有 `.git/` 不属于应用状态，ScriptBoard 不修改或删除它。
+State Root、State Root 同级的外部凭据主密钥目录、Install Root、活动配置、管理员密码文件、TLS 私钥和各文件系统回收区均为受保护路径。文件页面不显示这些路径；其祖先不能执行会影响后代的写入、移动、删除、覆盖或执行。磁盘上已有 `.git/` 不属于应用状态，ScriptBoard 不修改或删除它。
 
 正式系统服务另有独立程序布局，不属于 State Root：
 
@@ -424,13 +424,30 @@ install-root/
   versions/<version>/
     RELEASE.json
     scriptboard[.exe]
+    scriptboard-broker[.exe]       # 固定主机写动作的独立特权进程
+    scriptboard-ai-host[.exe]      # 独立身份运行 Pi 的受限 Runtime Host
+    scriptboard-runner[.exe]       # 复核摘要并在独立身份执行 Run 的 Worker
     scriptboard-updater[.exe]
     ...                            # 对应平台完整 Release 内容
   scriptboard-updater              # 仅 Linux；切换前原子刷新、供恢复使用的独立 helper
   scriptboard-tray-launcher.exe    # 仅 Windows；稳定托盘入口
 ```
 
+受管 Linux Web 服务以无登录 `scriptboard-web` 运行，Windows Web 服务以 `LocalService` 加独立
+`NT SERVICE\ScriptBoard` SID 运行；它们只获 Install Root 读/执行、配置读取以及 State Root 和
+State Root 中的 Web-owned 数据修改权限。特权 Broker 分别保留 root/LocalSystem，并只通过受保护
+本机 IPC 接受该 Web 服务身份；Broker-owned 外部密钥、`broker-secrets` 与 Host Files 不向 Web
+授予读取权限。Run 与 Assistant 分别由独立 Runner/AI Host 身份执行；Linux 使用 systemd 地址与
+seccomp 策略，Windows 使用 restricted service SID、Job Object、Windows Service Hardening 与
+最小 demand-start 服务 ACL。四组件版本、摘要和 IPC 协议由同一 Installed Release 绑定。
+
 Update Operation 是文件系统持久化事务，不写入 SQLite 作为事实来源，以便数据库本身被恢复时仍能继续判断更新阶段。终态结果由应用在正常启动后幂等导入审计一次。
+
+主机安全写操作使用独立 Broker 的内存 capability，不新增 SQLite capability 表。Broker 收到
+authorize 请求后直接用原始会话 token 的 SHA-256 查询 `sessions`/`users`，重新检查认证版本、
+角色、期限与近期 step-up；随机 capability 只在 Broker 内存保留 30 秒并在任何 execute 尝试时
+先消费。`privileged_broker.<action>` 的 `attempted` 与终态事件由 Broker 自己写入审计链并刷新
+外部签名 checkpoint，Web 的同层业务审计不作为 Broker 执行授权或成功事实来源。
 
 ## 8. 网站监控
 
@@ -461,6 +478,21 @@ stateDiagram-v2
 的在途结果不得回写。管理员暂停或删除时同样递增 generation。WebSocket
 应用消息规则只处理文本帧和二进制帧；Ping/Pong 规则只处理 RFC 6455
 控制帧。
+
+网站探测的 TLS 验证例外不是永久配置。管理员每次保存关闭验证的监控时只签发一小时
+例外，到期后读取和执行配置都会恢复验证；创建和更新审计目标记录例外到期时间。远程
+ScriptBoard 网站状态来源只接受 HTTPS，且仍经过共享出站地址策略并禁止重定向。
+
+网站监控与 Custom Dashboard 配置导入共享“JSON 配置文件”外层安全约束，但继续使用
+独立的领域 schema：文件名必须是安全的单一 `.json` 目标，MIME 只接受 JSON、纯文本或
+通用 multipart 二进制，内容必须是 UTF-8、无 NUL 且以 JSON 对象开始。之后分别执行
+网站监控最多 100 项/128 MiB 与 Dashboard 最多 100 卡片/2 MiB 的未知字段拒绝、版本和
+领域字段校验；外层策略不能替代领域解码。
+
+Custom Dashboard 的 HTTP 数据源继续允许保存 `Authorization`、`Cookie` 等业务凭据头，
+但 URL 不得内嵌凭据或片段，请求头不得覆盖 Host、代理认证、连接或传输语义。运行时使用
+共享出站策略固定经校验的公网目标，不读取环境代理、不跟随重定向，并限制请求头、响应
+大小和超时；默认不能访问回环、私网、链路本地或云元数据服务。
 
 ## 9. 一次性 Run 源码
 
@@ -527,7 +559,7 @@ state-root/
         runtime.json                 # Pi/RPC/Broker 合同和上游 commit
         LICENSE
     pi-home/<user-id>/<conversation-id>/
-      models.json                    # 只引用子进程环境变量，不含实际 API Key
+      models.json                    # 只引用会话 Provider capability，不含上游 Endpoint 或实际 API Key
     sessions/<user-id>/<conversation-id>/
     workspaces/<user-id>/<conversation-id>/
 ```
@@ -546,6 +578,23 @@ capability 不持久化；AssistantToolCall 记录规范参数、目标、有界
 capability 和 Provider 凭据的有界调用/返回 JSON，
 AssistantApproval 绑定用户、角色、授权版本、对话、Tool Call、参数和目标当前状态。
 服务重启把尚未完成的工具标记为 interrupted，并取消 pending/approved 的状态修改。
+
+Provider 凭据 JSON 先由统一 credential store 以用途绑定的 AES-GCM 密封，再写入 State
+Root；其主密钥在 State Root 同级受保护目录，Windows key blob 使用机器级 DPAPI，Unix
+key 文件仅允许服务身份/root。旧明文 `assistant-provider.json` 在启动时原子迁移并删除。
+
+每个受管 Pi 进程同时获得独立的环回 Provider 代理和 256-bit capability。代理在 Web
+进程内持有实际 Provider Endpoint 与 API Key，只接受绑定模型对应的固定推理 POST 路径，
+禁止重定向并复用共享出站策略；Pi 的参数、环境和 `models.json` 不再包含上游 Endpoint
+或真实 API Key。代理随 Pi 进程退出或会话停止而关闭。该进程内边界不替代 P0-08 要求的
+独立 OS 身份、秘密目录 ACL 和 Runtime 网络默认拒绝；正式受管部署已经通过独立 AI Host
+落实这些边界，便携模式不提供同等级隔离。
+
+Windows 上每个 Pi 进程还进入独立 Job Object：最多一个活动进程，进程与作业内存各限
+1 GiB，累计用户态 CPU 限 15 分钟，并禁止桌面、显示设置、退出系统、全局 atom、句柄、
+剪贴板和系统参数 UI 能力；Job 句柄关闭时终止剩余进程。AI Host 本身使用 restricted
+service SID 与私有目录 ACL，Windows Service Hardening 默认拒绝非环回网络；Job Object
+只负责进程树资源与生命周期，不替代这些身份和网络边界。
 
 Evidence Query 仍走相同 Tool Broker 和实时角色授权。日志搜索、日志窗口、Run 对比、计划
 历史和审计列表都有结果条数与文本字节上限；继续读取使用带 HMAC、五分钟过期并绑定用户、
@@ -566,9 +615,41 @@ Evidence Query 仍走相同 Tool Broker 和实时角色授权。日志搜索、�
 
 ## 12. External Interfaces
 
-schema 27 增加 `external_trigger_keys`、`external_trigger_entries` 和 `external_trigger_requests`。Key 在 SQLite 中保存标签、Token 摘要与提示、启用状态、到期时间和最近成功使用时间；完整 Token 使用独立主密钥加密后保存在 State Root 的私有密钥文件中，不写入数据库。Entry 通过 `(key_id, name)` 唯一，保存动作类型、固定目标与经过类型校验的 JSON 约束。Request 保存不可变的调用结果摘要，不通过外键级联删除，以便 Key 删除后仍保留审计上下文。
+schema 27 增加 `external_trigger_keys`、`external_trigger_entries` 和 `external_trigger_requests`。Key 在 SQLite 中只保存标签、Token 的不可逆摘要与提示、启用状态、到期时间和最近成功使用时间；完整 Token 仅在创建或轮换后返回一次，不持久化。Entry 保存动作类型、固定目标与经过类型校验的 JSON 约束；schema 37 将其收紧为每个 Key 唯一绑定一个不可变能力。Request 保存不可变的调用结果摘要，不通过外键级联删除，以便 Key 删除后仍保留审计上下文。
+
+schema 38 增加持久化单例 `external_trigger_control`，用于全局紧急暂停所有有效外部调用。schema 39 在 Entry 上增加 `require_signature`，并用 `external_trigger_nonces` 原子消费短期 nonce；nonce 按 Key 唯一并带过期时间。迁移的旧 Entry 默认保持 Bearer 兼容，新 Entry 默认要求 5 分钟时间戳、唯一 nonce 和 HMAC-SHA256 签名。schema 40 在 `sessions` 增加 `authentication_assurance` 和 `reauthenticated_at`；高风险声明式路由要求 10 分钟内的浏览器会话密码认证，Assistant UI 动作不会为这些路由提供替代入口。schema 41 在 `audit_events` 增加 `request_id` 与 `authentication_assurance`；新事件把两者纳入 v2 哈希，历史空字段事件继续按 v1 验证。schema 42 在 `users` 增加 `mfa_required_at`；Administrator/Maintainer 到期且未配置任一第二因素时，只能访问 MFA 注册与带外退出路径。schema 43 在 `audit_events` 增加 `resource_revision` 与 `resource_digest_sha256`；字段存在的事件使用 v3 哈希，Broker、Quick Run 和一次性 Run 从自己的领域事实填充。
+
+schema 44 收敛了并行开发期间重复使用 35–43 版本号的两条数据库历史：一条包含 Assistant reasoning、实例品牌、Registry 卡片与 Kubernetes/容器监控，另一条包含上述安全能力。迁移会检查实际表和列，并在事务中补齐缺失部分，因此任一 schema 20–43 前身都可前向升级；更早或更新的未知 schema 会拒绝启动并提示使用新的 State Root，而不会尝试猜测性修改数据。
+
+`audit_events` 按 ID 顺序链接 `previous_hash` 与 `event_hash`，`audit_chain_state` 保存保留锚点和
+当前链尾。为防止事件尾部与同库链尾状态一起回退后仍通过本地校验，每个 State Root 另有一份
+Ed25519 签名 checkpoint，记录实例路径身份、最后事件 ID/摘要、签名时间和公钥。签名私钥密文
+`../secrets/audit-checkpoint-signing-<实例摘要>.enc` 与
+`../secrets/audit-checkpoint-<实例摘要>.json` 均位于 State Root 外；私钥由统一外部主密钥以
+独立用途密封。启动、`audit verify` 和取证导出同时验证本地链、签名、公钥绑定与 checkpoint
+成员关系；只读命令缺失材料时失败而不初始化。正常关闭、保留清理后和每五分钟刷新 checkpoint。
+它限制 State Root 单独回退，不等同于远端不可变日志；最近刷新后的尾部窗口与拥有外部 secrets
+目录权限的高权限攻击者仍需由后续远端转发和告警覆盖。
+
+账户 TOTP 状态不新增 SQLite 明文秘密列，而是保存在 `state-root/secrets/account-mfa.enc`：整个
+用户映射由 State Root 外的统一主密钥以用途绑定 AES-GCM 密封。每个账户记录已确认或待确认的
+TOTP secret、最后接受的时间步与恢复码 SHA-256 摘要；恢复码具有独立 128 bit 随机熵、只显示
+一次并在使用时原子移除。已配置账户的登录与 step-up 均接受 TOTP 或未使用恢复码，成功会话记录
+`aal2`；同一 TOTP 时间步不能重放。本机管理员重置会清除管理员 MFA 并撤销会话。
+
+WebAuthn 凭据保存在 `state-root/secrets/account-passkeys.enc`，使用与 TOTP 不同的用途绑定整体密封。记录包含 credential ID、公钥、attestation 元数据、flags 与 authenticator counter；每次成功断言后原子写回更新后的 counter/flags。注册、登录和 step-up challenge 只存在于进程内存，绑定 ceremony 类型、用户、浏览器会话与精确 Origin，五分钟过期且在 finish 时先消费。注册要求 user verification，优先创建 discoverable credential；登录仍先验证账户密码，passkey 作为第二因素达到 `aal2`。
+
+只读远程网站来源等仍需恢复的 External Interface 相关秘密使用统一 credential store 密封；
+旧 `external-interface.master-key` 与逐项密文启动时解密、重封并先删除旧原始 key。一次显示
+Trigger Key 本身只保留不可逆 verifier，不进入这套可恢复秘密存储。
 
 变量与快捷执行条目使用 `target` 建立领域引用：目标被引用时禁止删除；变量被引用时也禁止改名或转为密码变量。日志文件与上传目录都在配置和调用时通过 Host Filesystem 边界重新验证；日志动作将规范化后的文件绝对路径保存在 `target` 与 `config_json.file` 中。到期 Key 不需要后台任务修改数据库；鉴权时根据当前时间派生为不可用状态。
+
+私有上传收件箱同时接收 External Interface 文件与 Host Files 页面提交的可执行扩展。两类
+payload 都只使用随机目录内固定无扩展名、0600 文件，metadata 保存来源、原始文件名、规范
+目标目录、冲突策略、大小、SHA-256 和创建时间。Host Files 普通文档仍可原子直传；内置或
+自定义执行器扩展必须经 step-up 发布路由重新读取并校验整个 payload 后才进入主机路径，且
+普通上传不得直接覆盖已有可执行文件。
 
 ## 13. MySQL 备份恢复管理
 
@@ -582,7 +663,7 @@ schema 30 增加独立的 `mysqlmanager` 领域表；Web 层只调用领域服�
 | MySQLOperation | 操作类型、目标库、阶段、进度、安全备份引用、错误摘要、取消请求和起止时间 |
 | MySQLSetting | 备份根目录以及宿主 `mysqldump`/`mysql` 客户端路径 |
 
-实例密码由 State Root 下的私有主密钥使用 AES-GCM 加密后保存到独立凭据文件。CLI 每次只读取临时、权限受限的 option file，完成后立即删除；参数、错误、审计和 HTML 均不得包含密码。默认备份根目录是 `state-root/database-backups/mysql`，自定义绝对目录同样进入 Host Filesystem Protected Path。
+实例密码由 State Root 外的统一主密钥使用用途绑定 AES-GCM 密封后保存到独立凭据文件；Windows 主密钥 blob 再受机器级 DPAPI 保护，Unix 使用 root-only 外部 key。旧 State Root 内 MySQL 原始 key 在启动迁移时先删除。CLI 每次只读取临时、权限受限的 option file，完成后立即删除；参数、错误、审计和 HTML 均不得包含密码。默认备份根目录是 `state-root/database-backups/mysql`，自定义绝对目录同样进入 Host Filesystem Protected Path。
 
 每个成功备份对应一个原子提交的 `.sql.gz` 和 SHA-256。现有库恢复在替换前强制创建 `safety` 备份；导入失败自动从该产物回滚，回滚失败进入 `needs_attention`。服务启动会删除未提交的 `.partial`，并根据持久化阶段恢复破坏性操作。计划只轮换自身成功产物，手动、导入和安全备份不参与轮换。
 
@@ -601,3 +682,8 @@ schema 38 增加以下实例级表。集群连接是单例；所有工作负载�
 | `kubernetes_metric_minutes` | 工作负载稳定键与分钟桶中的 CPU、内存、就绪/期望副本和重启数；自动为所有工作负载保留有界 24 小时历史 |
 
 保存连接时若 API Server/CA 指纹改变，`kubernetes_versions` 与 `kubernetes_metric_minutes` 在同一事务中清空，避免不同集群共享身份和时间线。仅修改同一集群的凭据、context 名称或显示名称不会拆分历史。
+导入只接受 `.sql` 或 `.sql.gz`。gzip 在接收时及每次恢复前完整解码验证，解压后 SQL
+最多 8 GiB，避免小型压缩包造成无界 CPU/磁盘输入。恢复客户端固定使用
+`--binary-mode --batch --skip-reconnect`，数据库参数放在 `--` 后；MySQL 与 MariaDB 的
+非交互 binary mode 会禁用 `system`、`source`、pager、tee 等本地客户端命令，同时保留
+dump 所需的字符集与 delimiter 语义。

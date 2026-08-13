@@ -1,11 +1,14 @@
 package app
 
 import (
+	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -16,7 +19,9 @@ import (
 	"unicode/utf8"
 
 	"scriptboard/internal/externaltrigger"
+	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/runmanager"
+	"scriptboard/internal/uploadinbox"
 	"scriptboard/internal/websitemonitor"
 )
 
@@ -24,7 +29,6 @@ type externalKeyView struct {
 	externaltrigger.Key
 	Status, StatusText string
 	EnabledEntries     int
-	CanCopy            bool
 }
 
 type externalEntryView struct {
@@ -38,15 +42,16 @@ type externalInvocationView struct {
 }
 
 type externalInterfacesPageData struct {
-	ActiveTab  string
-	Keys       []externalKeyView
-	Entries    map[string][]externalEntryView
-	Requests   []externalInvocationView
-	Filters    auditFilters
-	Pagination paginationView
-	CSRFToken  string
-	Locale     webLocale
-	Now        time.Time
+	ActiveTab     string
+	Keys          []externalKeyView
+	Entries       map[string][]externalEntryView
+	Requests      []externalInvocationView
+	Filters       auditFilters
+	Pagination    paginationView
+	CSRFToken     string
+	Locale        webLocale
+	Now           time.Time
+	GlobalEnabled bool
 }
 
 type externalInterfaceFormData struct {
@@ -64,6 +69,7 @@ type externalInterfaceFormData struct {
 	QuickRunConfig                                       externaltrigger.QuickRunConfig
 	VariableConfig                                       externaltrigger.VariableConfig
 	EntryEnabled                                         bool
+	RequireSignature                                     bool
 	Submitted                                            bool
 	LogMessageLimitInput, UploadMaxBytesInput            string
 	UploadExtensionsInput, VariableMinimumInput          string
@@ -97,6 +103,11 @@ func (a *App) externalInterfacesPage(response http.ResponseWriter, request *http
 		http.Error(response, "Unable to read External Interfaces", http.StatusInternalServerError)
 		return
 	}
+	globalEnabled, _, err := a.externalTriggers.GlobalEnabled(request.Context())
+	if err != nil {
+		http.Error(response, "Unable to read External Interface control", http.StatusInternalServerError)
+		return
+	}
 	invocationFilter := externaltrigger.InvocationFilter{
 		Query: filters.Query, FromUnix: filters.FromUnix, ToExclusiveUnix: filters.ToExclusiveUnix,
 		HasFromDate: filters.HasFromDate, HasToDate: filters.HasToDate,
@@ -124,9 +135,6 @@ func (a *App) externalInterfacesPage(response http.ResponseWriter, request *http
 	entries := make(map[string][]externalEntryView, len(keys))
 	for _, key := range keys {
 		view := externalKeyView{Key: key, Status: "disabled", StatusText: webText(locale, "external.disabled")}
-		if _, secretErr := a.externalTriggers.KeySecret(key.ID); secretErr == nil {
-			view.CanCopy = true
-		}
 		if key.Expired(now) {
 			view.Status, view.StatusText = "expired", webText(locale, "external.expired")
 		} else if key.Enabled {
@@ -152,24 +160,33 @@ func (a *App) externalInterfacesPage(response http.ResponseWriter, request *http
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := externalInterfacesTemplate.Execute(response, externalInterfacesPageData{
 		ActiveTab: activeTab, Keys: views, Entries: entries, Requests: requests, Filters: filters, Pagination: pagination,
-		CSRFToken: current.csrfToken, Locale: locale, Now: now,
+		CSRFToken: current.csrfToken, Locale: locale, Now: now, GlobalEnabled: globalEnabled,
 	}); err != nil {
 		http.Error(response, "Unable to render External Interfaces", http.StatusInternalServerError)
 	}
 }
 
-func (a *App) copyExternalKeyTask(response http.ResponseWriter, request *http.Request) {
-	id := request.PathValue("id")
-	secret, err := a.externalTriggers.KeySecret(id)
-	if err != nil {
-		http.Error(response, webText(resolveWebLocale(request), "external.key_copy_unavailable"), http.StatusConflict)
+func (a *App) setExternalGlobalControl(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
 		return
 	}
-	response.Header().Set("Cache-Control", "no-store")
-	response.Header().Set("Content-Type", "application/json; charset=utf-8")
-	response.Header().Set("X-Content-Type-Options", "nosniff")
-	a.recordAuditForRequest(request, "copy_external_interface_key", id, "succeeded")
-	_ = json.NewEncoder(response).Encode(map[string]string{"key": secret})
+	rawEnabled := request.FormValue("enabled")
+	if rawEnabled != "0" && rawEnabled != "1" {
+		http.Error(response, "Invalid External Interface control", http.StatusBadRequest)
+		return
+	}
+	enabled := rawEnabled == "1"
+	if err := a.externalTriggers.SetGlobalEnabled(request.Context(), enabled); err != nil {
+		http.Error(response, "Unable to update External Interface control", http.StatusInternalServerError)
+		return
+	}
+	target := "disabled"
+	if enabled {
+		target = "enabled"
+	}
+	a.recordAuditForRequest(request, "set_external_interface_global_control", target, "succeeded")
+	http.Redirect(response, request, "/config/external-interfaces", http.StatusSeeOther)
 }
 
 func externalActionText(locale webLocale, action externaltrigger.ActionType) string {
@@ -208,7 +225,7 @@ func (a *App) createExternalKey(response http.ResponseWriter, request *http.Requ
 		a.renderExternalKeySubmissionError(response, request, "key-new", externaltrigger.Key{}, webText(resolveWebLocale(request), "external.key_save_error"))
 		return
 	}
-	key, _, err := a.externalTriggers.CreateKey(request.Context(), externaltrigger.CreateKeyInput{
+	key, secret, err := a.externalTriggers.CreateKey(request.Context(), externaltrigger.CreateKeyInput{
 		Label: request.FormValue("label"), Enabled: request.FormValue("enabled") == "1", ExpiresAt: expiresAt,
 	})
 	if err != nil {
@@ -221,11 +238,12 @@ func (a *App) createExternalKey(response http.ResponseWriter, request *http.Requ
 	}
 	a.recordAuditForRequest(request, "create_external_interface_key", key.ID, "succeeded")
 	locale := resolveWebLocale(request)
+	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	response.WriteHeader(http.StatusCreated)
 	renderExternalInterfaceForm(response, externalInterfaceFormData{
 		Kind: "key-created", Title: webText(locale, "external.key_created"), Description: webText(locale, "external.key_created_description"),
-		BackURL: "/config/external-interfaces", Locale: locale, Key: key,
+		BackURL: "/config/external-interfaces", Locale: locale, Key: key, Secret: secret,
 	})
 }
 
@@ -335,16 +353,17 @@ func (a *App) rotateExternalKey(response http.ResponseWriter, request *http.Requ
 		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
 		return
 	}
-	key, _, err := a.externalTriggers.RotateKey(request.Context(), request.PathValue("id"))
+	key, secret, err := a.externalTriggers.RotateKey(request.Context(), request.PathValue("id"))
 	if err != nil {
 		http.Error(response, "External Interface key not found", http.StatusNotFound)
 		return
 	}
 	a.recordAuditForRequest(request, "rotate_external_interface_key", key.ID, "succeeded")
 	locale := resolveWebLocale(request)
+	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	response.WriteHeader(http.StatusCreated)
-	renderExternalInterfaceForm(response, externalInterfaceFormData{Kind: "key-rotated", Title: webText(locale, "external.key_rotated"), Description: webText(locale, "external.key_rotated_description"), BackURL: "/config/external-interfaces", Locale: locale, Key: key})
+	renderExternalInterfaceForm(response, externalInterfaceFormData{Kind: "key-rotated", Title: webText(locale, "external.key_rotated"), Description: webText(locale, "external.key_rotated_description"), BackURL: "/config/external-interfaces", Locale: locale, Key: key, Secret: secret})
 }
 
 func (a *App) deleteExternalKey(response http.ResponseWriter, request *http.Request) {
@@ -387,9 +406,18 @@ func (a *App) newExternalEntryTask(response http.ResponseWriter, request *http.R
 		http.Error(response, "External Interface key not found", http.StatusNotFound)
 		return
 	}
+	entries, err := a.externalTriggers.EntriesForKey(request.Context(), key.ID)
+	if err != nil {
+		http.Error(response, "Unable to inspect External Interface key scope", http.StatusInternalServerError)
+		return
+	}
+	if len(entries) != 0 {
+		http.Error(response, "External Interface key is already bound to a callable function", http.StatusConflict)
+		return
+	}
 	current := request.Context().Value(sessionContextKey).(session)
 	locale := resolveWebLocale(request)
-	quickRuns, variables, err := a.externalTargetOptions()
+	quickRuns, variables, err := a.externalTargetOptions(request.Context())
 	if err != nil {
 		http.Error(response, "Unable to read action targets", http.StatusInternalServerError)
 		return
@@ -397,7 +425,7 @@ func (a *App) newExternalEntryTask(response http.ResponseWriter, request *http.R
 	renderExternalInterfaceForm(response, externalInterfaceFormData{
 		Kind: "entry-new", Title: webText(locale, "external.add_function_title"), Description: webText(locale, "external.add_function_description"),
 		BackURL: "/config/external-interfaces", Action: "/config/external-interfaces/keys/" + key.ID + "/entries",
-		CSRFToken: current.csrfToken, Locale: locale, Key: key, QuickRuns: quickRuns, Variables: variables, EntryEnabled: true,
+		CSRFToken: current.csrfToken, Locale: locale, Key: key, QuickRuns: quickRuns, Variables: variables, EntryEnabled: true, RequireSignature: true,
 	})
 }
 
@@ -438,7 +466,7 @@ func (a *App) externalEntryDetail(response http.ResponseWriter, request *http.Re
 	}
 	renderExternalInterfaceForm(response, externalInterfaceFormData{
 		Kind: "entry-detail", Title: entry.Label, Description: webText(locale, "external.function_details_description"),
-		BackURL: "/config/external-interfaces", CSRFToken: current.csrfToken, Locale: locale, Key: key, Entry: entry, EntryEnabled: entry.Enabled,
+		BackURL: "/config/external-interfaces", CSRFToken: current.csrfToken, Locale: locale, Key: key, Entry: entry, EntryEnabled: entry.Enabled, RequireSignature: entry.RequireSignature,
 		CallMethod: callMethod, CallURL: "/trigger?name=" + url.QueryEscape(entry.Name), CallBody: webText(locale, callBodyKey),
 		TypeText: externalActionText(locale, entry.Type), TargetText: externalTargetText(locale, entry), PreviewURL: previewURL,
 	})
@@ -455,12 +483,12 @@ func (a *App) editExternalEntryTask(response http.ResponseWriter, request *http.
 		http.Error(response, "External Interface key not found", http.StatusNotFound)
 		return
 	}
-	quickRuns, variables, err := a.externalTargetOptions()
+	quickRuns, variables, err := a.externalTargetOptions(request.Context())
 	if err != nil {
 		http.Error(response, "Unable to read action targets", http.StatusInternalServerError)
 		return
 	}
-	data := externalInterfaceFormData{Kind: "entry-edit", BackURL: "/config/external-interfaces", Action: "/config/external-interfaces/entries/" + entry.ID, Key: key, Entry: entry, EntryEnabled: entry.Enabled, QuickRuns: quickRuns, Variables: variables}
+	data := externalInterfaceFormData{Kind: "entry-edit", BackURL: "/config/external-interfaces", Action: "/config/external-interfaces/entries/" + entry.ID, Key: key, Entry: entry, EntryEnabled: entry.Enabled, RequireSignature: entry.RequireSignature, QuickRuns: quickRuns, Variables: variables}
 	data.Locale = resolveWebLocale(request)
 	data.Title, data.Description = webText(data.Locale, "external.edit_function"), webText(data.Locale, "external.edit_function_description")
 	data.CSRFToken = request.Context().Value(sessionContextKey).(session).csrfToken
@@ -478,17 +506,22 @@ func (a *App) editExternalEntryTask(response http.ResponseWriter, request *http.
 	renderExternalInterfaceForm(response, data)
 }
 
-func (a *App) externalTargetOptions() ([]externalTargetOption, []externalTargetOption, error) {
-	quickRows, err := a.db.Query("SELECT id, name FROM quick_runs ORDER BY name, id")
+func (a *App) externalTargetOptions(ctx context.Context) ([]externalTargetOption, []externalTargetOption, error) {
+	quickRows, err := a.db.Query("SELECT id, name, script_path, script_sha256 FROM quick_runs WHERE locked = 1 AND script_sha256 != '' ORDER BY name, id")
 	if err != nil {
 		return nil, nil, err
 	}
 	var quickRuns []externalTargetOption
 	for quickRows.Next() {
 		var option externalTargetOption
-		if err := quickRows.Scan(&option.Value, &option.Label); err != nil {
+		var scriptPath, scriptSHA256 string
+		if err := quickRows.Scan(&option.Value, &option.Label, &scriptPath, &scriptSHA256); err != nil {
 			_ = quickRows.Close()
 			return nil, nil, err
+		}
+		prepared, err := a.hostPrepareScript(ctx, scriptPath)
+		if err != nil || subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(scriptSHA256)) != 1 {
+			continue
 		}
 		quickRuns = append(quickRuns, option)
 	}
@@ -529,20 +562,29 @@ func (a *App) createExternalEntry(response http.ResponseWriter, request *http.Re
 		a.renderExternalEntrySubmissionError(response, request, key)
 		return
 	}
-	entry, err := a.externalTriggers.CreateEntry(request.Context(), externaltrigger.CreateEntryInput{
+	entry, secret, err := a.externalTriggers.CreateEntry(request.Context(), externaltrigger.CreateEntryInput{
 		KeyID: keyID, Name: strings.TrimSpace(request.FormValue("name")), Label: request.FormValue("label"), Type: actionType,
-		Target: target, Enabled: request.FormValue("enabled") == "1", Config: config,
+		Target: target, Enabled: request.FormValue("enabled") == "1", RequireSignature: request.FormValue("require_signature") == "1", Config: config,
 	})
 	if err != nil {
 		a.renderExternalEntrySubmissionError(response, request, key)
 		return
 	}
 	a.recordAuditForRequest(request, "create_external_interface_entry", entry.ID, "succeeded")
-	http.Redirect(response, request, "/config/external-interfaces", http.StatusSeeOther)
+	key, err = a.externalTriggers.Key(request.Context(), key.ID)
+	if err != nil {
+		http.Error(response, "Unable to read bound External Interface key", http.StatusInternalServerError)
+		return
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Pragma", "no-cache")
+	response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	response.WriteHeader(http.StatusCreated)
+	renderExternalInterfaceForm(response, externalInterfaceFormData{Kind: "key-rotated", Title: webText(resolveWebLocale(request), "external.key_rotated"), Description: webText(resolveWebLocale(request), "external.key_rotated_description"), BackURL: "/config/external-interfaces", Locale: resolveWebLocale(request), Key: key, Secret: secret})
 }
 
 func (a *App) renderExternalEntrySubmissionError(response http.ResponseWriter, request *http.Request, key externaltrigger.Key) {
-	quickRuns, variables, err := a.externalTargetOptions()
+	quickRuns, variables, err := a.externalTargetOptions(request.Context())
 	if err != nil {
 		http.Error(response, "Unable to read action targets", http.StatusInternalServerError)
 		return
@@ -552,7 +594,7 @@ func (a *App) renderExternalEntrySubmissionError(response http.ResponseWriter, r
 		Kind: "entry-new", Title: webText(locale, "external.add_function_title"), Description: webText(locale, "external.add_function_description"),
 		BackURL: "/config/external-interfaces", Action: "/config/external-interfaces/keys/" + key.ID + "/entries",
 		CSRFToken: request.Context().Value(sessionContextKey).(session).csrfToken, Locale: locale, Key: key,
-		QuickRuns: quickRuns, Variables: variables, EntryEnabled: request.FormValue("enabled") == "1", Submitted: true,
+		QuickRuns: quickRuns, Variables: variables, EntryEnabled: request.FormValue("enabled") == "1", RequireSignature: request.FormValue("require_signature") == "1", Submitted: true,
 		FormError:            webText(locale, "external.entry_save_error"),
 		Entry:                externaltrigger.Entry{Name: strings.TrimSpace(request.FormValue("name")), Label: request.FormValue("label"), Type: externaltrigger.ActionType(request.FormValue("action_type"))},
 		LogConfig:            externaltrigger.LogConfig{File: request.FormValue("log_file"), Category: request.FormValue("log_category")},
@@ -585,7 +627,7 @@ func (a *App) updateExternalEntry(response http.ResponseWriter, request *http.Re
 		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
 	}
-	entry, err := a.externalTriggers.UpdateEntry(request.Context(), externaltrigger.UpdateEntryInput{ID: id, Name: strings.TrimSpace(request.FormValue("name")), Label: request.FormValue("label"), Type: actionType, Target: target, Enabled: request.FormValue("enabled") == "1", Config: config})
+	entry, err := a.externalTriggers.UpdateEntry(request.Context(), externaltrigger.UpdateEntryInput{ID: id, Name: strings.TrimSpace(request.FormValue("name")), Label: request.FormValue("label"), Type: actionType, Target: target, Enabled: request.FormValue("enabled") == "1", RequireSignature: request.FormValue("require_signature") == "1", Config: config})
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
@@ -633,7 +675,7 @@ func (a *App) externalEntryConfig(request *http.Request, actionType externaltrig
 		if err != nil {
 			return nil, "", errors.New("invalid log message limit")
 		}
-		path, err := a.files.PrepareAppendFile(strings.TrimSpace(request.FormValue("log_file")))
+		path, err := a.hostPrepareAppend(request.Context(), strings.TrimSpace(request.FormValue("log_file")))
 		if err != nil {
 			return nil, "", fmt.Errorf("invalid log file: %w", err)
 		}
@@ -644,7 +686,7 @@ func (a *App) externalEntryConfig(request *http.Request, actionType externaltrig
 			return nil, "", errors.New("invalid upload byte limit")
 		}
 		directory := strings.TrimSpace(request.FormValue("upload_directory"))
-		prepared, err := a.files.PrepareDirectory(directory)
+		prepared, err := a.hostPrepareDirectory(request.Context(), directory)
 		if err != nil {
 			return nil, "", fmt.Errorf("invalid upload directory: %w", err)
 		}
@@ -653,10 +695,15 @@ func (a *App) externalEntryConfig(request *http.Request, actionType externaltrig
 		return externaltrigger.UploadConfig{Directory: directory, MaxBytes: maximum, Extensions: extensions, ConflictPolicy: request.FormValue("upload_conflict")}, directory, nil
 	case externaltrigger.ActionQuickRun:
 		id := strings.TrimSpace(request.FormValue("quick_run_id"))
-		if _, err := a.loadQuickRun(id); err != nil {
+		quick, err := a.loadQuickRun(id)
+		if err != nil {
 			return nil, "", errors.New("quick run does not exist")
 		}
-		return externaltrigger.QuickRunConfig{QuickRunID: id}, id, nil
+		prepared, err := a.hostPrepareScript(request.Context(), quick.ScriptPath)
+		if err != nil || !quick.Locked || quick.ScriptSHA256 == "" || subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(quick.ScriptSHA256)) != 1 {
+			return nil, "", errors.New("quick run must be locked and republished with its current script digest")
+		}
+		return externaltrigger.QuickRunConfig{QuickRunID: id, Revision: quick.Revision, ScriptSHA256: quick.ScriptSHA256}, id, nil
 	case externaltrigger.ActionVariable:
 		name := strings.TrimSpace(request.FormValue("variable_name"))
 		var isPassword bool
@@ -733,11 +780,39 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 		writeExternalTriggerError(response, http.StatusInternalServerError, "action_failed")
 		return
 	}
-	release, allowed := a.externalLimit.Acquire(key.ID)
+	request = request.WithContext(context.WithValue(request.Context(), requestIDContextKey, requestID))
+	if entry.RequireSignature {
+		timestampRaw := request.Header.Get("X-ScriptBoard-Timestamp")
+		timestamp, timestampErr := strconv.ParseInt(timestampRaw, 10, 64)
+		if timestampErr != nil || timestampRaw != strconv.FormatInt(timestamp, 10) || a.externalTriggers.VerifyAndConsumeSignature(
+			request.Context(), key.ID, token, timestamp, request.Header.Get("X-ScriptBoard-Nonce"), request.Method,
+			request.URL.RequestURI(), request.Header.Get("X-ScriptBoard-Signature"),
+		) != nil {
+			_ = a.externalTriggers.RecordInvocation(request.Context(), externaltrigger.Invocation{
+				ID: requestID, KeyID: key.ID, KeyLabel: key.Label, EntryID: entry.ID, EntryName: entry.Name,
+				ActionType: entry.Type, Result: "rejected", HTTPStatus: http.StatusUnauthorized, Source: request.RemoteAddr,
+			})
+			a.recordAuditWithRequestActor(request, "external_trigger_"+string(entry.Type), "key="+key.ID+" entry="+entry.Name, "rejected", request.RemoteAddr, "", key.Label, userRole("external"))
+			writeExternalTriggerError(response, http.StatusUnauthorized, "invalid_key")
+			return
+		}
+	}
+	globalEnabled, _, controlErr := a.externalTriggers.GlobalEnabled(request.Context())
+	if controlErr != nil || !globalEnabled {
+		response.Header().Set("Retry-After", "60")
+		_ = a.externalTriggers.RecordInvocation(request.Context(), externaltrigger.Invocation{
+			ID: requestID, KeyID: key.ID, KeyLabel: key.Label, EntryID: entry.ID, EntryName: entry.Name,
+			ActionType: entry.Type, Result: "rejected", HTTPStatus: http.StatusServiceUnavailable, Source: request.RemoteAddr,
+		})
+		a.recordAuditWithRequestActor(request, "external_trigger_"+string(entry.Type), "key="+key.ID+" entry="+entry.Name, "rejected", request.RemoteAddr, "", key.Label, userRole("external"))
+		writeExternalTriggerError(response, http.StatusServiceUnavailable, "unavailable")
+		return
+	}
+	release, allowed := a.externalLimit.Acquire(externaltrigger.LimitSubject{KeyID: key.ID, Source: externalLimitSource(request.RemoteAddr), Action: entry.Type})
 	if !allowed {
 		response.Header().Set("Retry-After", "60")
 		_ = a.externalTriggers.RecordInvocation(request.Context(), externaltrigger.Invocation{ID: requestID, KeyID: key.ID, KeyLabel: key.Label, EntryID: entry.ID, EntryName: entry.Name, ActionType: entry.Type, Result: "rejected", HTTPStatus: http.StatusTooManyRequests, Source: request.RemoteAddr})
-		a.recordAuditWithActor("external_trigger_"+string(entry.Type), "key="+key.ID+" entry="+entry.Name+" request="+requestID, "rejected", request.RemoteAddr, "", key.Label, userRole("external"))
+		a.recordAuditWithRequestActor(request, "external_trigger_"+string(entry.Type), "key="+key.ID+" entry="+entry.Name, "rejected", request.RemoteAddr, "", key.Label, userRole("external"))
 		writeExternalTriggerError(response, http.StatusTooManyRequests, "rate_limited")
 		return
 	}
@@ -749,7 +824,7 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 	}
 	execution := runRecordedExternalAction(
 		func() error { return a.externalTriggers.RecordInvocation(request.Context(), invocation) },
-		func() externalActionResult { return a.executeExternalAction(response, request, entry) },
+		func() externalActionResult { return a.executeExternalAction(response, request, entry, token) },
 		func(result externalActionResult) error {
 			invocation.Result, invocation.HTTPStatus, invocation.Duration = result.result, result.status, time.Since(started)
 			invocation.BytesReceived, invocation.RunID, invocation.Message = result.bytesReceived, result.runID, result.message
@@ -761,7 +836,7 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 		return
 	}
 	result := execution.Result
-	a.recordAuditWithActor("external_trigger_"+string(entry.Type), "key="+key.ID+" entry="+entry.Name+" request="+requestID, result.result, request.RemoteAddr, "", key.Label, userRole("external"))
+	a.recordAuditWithRequestActor(request, "external_trigger_"+string(entry.Type), "key="+key.ID+" entry="+entry.Name, result.result, request.RemoteAddr, "", key.Label, userRole("external"))
 	if result.status >= 400 {
 		writeExternalTriggerError(response, result.status, result.code)
 		return
@@ -780,6 +855,14 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 	}
 	response.WriteHeader(result.status)
 	_ = json.NewEncoder(response).Encode(payload)
+}
+
+func externalLimitSource(address string) string {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(address))
+	if err == nil {
+		return strings.ToLower(host)
+	}
+	return strings.ToLower(strings.TrimSpace(address))
 }
 
 type externalActionResult struct {
@@ -806,10 +889,10 @@ func runRecordedExternalAction(begin func() error, execute func() externalAction
 	return recordedExternalActionExecution{Result: result, Started: true, RecordError: complete(result)}
 }
 
-func (a *App) executeExternalAction(response http.ResponseWriter, request *http.Request, entry externaltrigger.Entry) externalActionResult {
+func (a *App) executeExternalAction(response http.ResponseWriter, request *http.Request, entry externaltrigger.Entry, token string) externalActionResult {
 	switch entry.Type {
 	case externaltrigger.ActionLog:
-		return a.executeExternalLog(response, request, entry)
+		return a.executeExternalLog(response, request, entry, token)
 	case externaltrigger.ActionUpload:
 		return a.executeExternalUpload(response, request, entry)
 	case externaltrigger.ActionQuickRun:
@@ -836,7 +919,7 @@ func (a *App) executeExternalWebsiteMonitor(request *http.Request) externalActio
 	return externalActionResult{status: http.StatusOK, result: "succeeded", payload: snapshot}
 }
 
-func (a *App) executeExternalLog(response http.ResponseWriter, request *http.Request, entry externaltrigger.Entry) externalActionResult {
+func (a *App) executeExternalLog(response http.ResponseWriter, request *http.Request, entry externaltrigger.Entry, token string) externalActionResult {
 	if request.Method != http.MethodGet && request.Method != http.MethodPost {
 		return externalFailure(http.StatusMethodNotAllowed, "method_not_allowed")
 	}
@@ -855,11 +938,18 @@ func (a *App) executeExternalLog(response http.ResponseWriter, request *http.Req
 	if !utf8.ValidString(message) || len([]byte(message)) > config.MaxMessageBytes || strings.IndexFunc(message, unicode.IsControl) >= 0 {
 		return externalFailure(http.StatusBadRequest, "invalid_request")
 	}
-	record := fmt.Sprintf("%s\t%s\n", time.Now().UTC().Format(time.RFC3339Nano), message)
-	if config.Category != "" {
-		record = fmt.Sprintf("%s\t[%s]\t%s\n", time.Now().UTC().Format(time.RFC3339Nano), config.Category, message)
+	requestID, _ := request.Context().Value(requestIDContextKey).(string)
+	var appendErr error
+	if a.hostFilesBackend != nil {
+		appendErr = a.hostAppendExternalLog(request.Context(), requestID, token, entry.ID, entry.Name, message)
+	} else {
+		record := fmt.Sprintf("%s\t%s\n", time.Now().UTC().Format(time.RFC3339Nano), message)
+		if config.Category != "" {
+			record = fmt.Sprintf("%s\t[%s]\t%s\n", time.Now().UTC().Format(time.RFC3339Nano), config.Category, message)
+		}
+		appendErr = a.files.AppendText(config.File, record)
 	}
-	if err := a.files.AppendText(config.File, record); err != nil {
+	if appendErr != nil {
 		return externalFailure(http.StatusConflict, "target_unavailable")
 	}
 	return externalActionResult{status: http.StatusOK, result: "succeeded", message: message}
@@ -910,25 +1000,34 @@ func (a *App) executeExternalUpload(response http.ResponseWriter, request *http.
 	if name != header.Filename {
 		return externalFailure(http.StatusBadRequest, "file_not_allowed")
 	}
-	if config.ConflictPolicy == "rename" {
-		name, err = a.files.AvailableName(config.Directory, name)
-	}
-	if err == nil {
-		_, err = a.files.Upload(config.Directory, name, io.LimitReader(file, config.MaxBytes+1), config.MaxBytes, false, "")
-	}
+	pending, err := a.uploadInbox.Receive(uploadinbox.Input{
+		EntryID: entry.ID, OriginalName: name, TargetDirectory: config.Directory, ConflictPolicy: config.ConflictPolicy,
+	}, io.LimitReader(file, config.MaxBytes+1), config.MaxBytes)
 	if err != nil {
 		return externalFailure(http.StatusConflict, "upload_failed")
 	}
-	return externalActionResult{status: http.StatusCreated, result: "succeeded", message: name, filename: name, bytesReceived: header.Size}
+	return externalActionResult{
+		status: http.StatusAccepted, result: "accepted", message: name, filename: name, bytesReceived: header.Size,
+		payload: map[string]any{"inbox_id": pending.ID, "sha256": pending.SHA256, "state": "pending_review"},
+	}
 }
 
 func externalExtensionAllowed(name string, allowed []string) bool {
 	if len(allowed) == 0 {
-		return true
+		return false
 	}
-	name = strings.ToLower(name)
+	name = strings.ToLower(filepath.Base(name))
+	extension := filepath.Ext(name)
+	stem := strings.TrimSuffix(name, extension)
+	if filepath.Ext(stem) != "" {
+		return false
+	}
+	switch extension {
+	case ".bat", ".cmd", ".com", ".desktop", ".dll", ".exe", ".html", ".htm", ".js", ".lnk", ".msi", ".ps1", ".service", ".sh", ".svg", ".url", ".vbs", ".wsf":
+		return false
+	}
 	for _, extension := range allowed {
-		if strings.HasSuffix(name, extension) {
+		if strings.EqualFold(filepath.Ext(name), extension) {
 			return true
 		}
 	}
@@ -951,11 +1050,16 @@ func (a *App) executeExternalQuickRun(response http.ResponseWriter, request *htt
 	if err != nil {
 		return externalFailure(http.StatusConflict, "target_unavailable")
 	}
+	if !quick.Locked || quick.Revision != config.Revision || subtle.ConstantTimeCompare([]byte(quick.ScriptSHA256), []byte(config.ScriptSHA256)) != 1 {
+		return externalFailure(http.StatusConflict, "target_unavailable")
+	}
+	prepared := hostfiles.Script{Path: quick.ScriptPath, Directory: filepath.Dir(quick.ScriptPath), Digest: config.ScriptSHA256}
+	workingDirectory := hostfiles.PreparedDirectory{Path: prepared.Directory}
 	variables, err := a.loadVariables()
 	if err != nil {
 		return externalFailure(http.StatusInternalServerError, "action_failed")
 	}
-	runID, err := a.runs.Start(runmanager.StartRequest{ScriptPath: quick.ScriptPath, ArgumentsTemplate: quick.ArgumentsTemplate, TimeoutSeconds: quick.TimeoutSeconds, SourceType: "external/quick-run", SourceName: entry.Label, SourceID: entry.ID, Variables: variables})
+	runID, err := a.runs.Start(runmanager.StartRequest{ScriptPath: quick.ScriptPath, ExpectedDigest: config.ScriptSHA256, DisallowOverlap: true, ArgumentsTemplate: quick.ArgumentsTemplate, TimeoutSeconds: quick.TimeoutSeconds, SourceType: "external/quick-run", SourceName: entry.Label, SourceID: entry.ID, Variables: variables, PreparedScript: &prepared, PreparedDirectory: &workingDirectory})
 	if err != nil {
 		return externalFailure(http.StatusConflict, "target_unavailable")
 	}

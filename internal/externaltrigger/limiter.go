@@ -6,9 +6,22 @@ import (
 )
 
 type LimiterOptions struct {
-	RequestsPerMinute int
-	Concurrent        int
-	Now               func() time.Time
+	RequestsPerMinute       int
+	Concurrent              int
+	SourceRequestsPerMinute int
+	SourceConcurrent        int
+	ActionRequestsPerMinute int
+	ActionConcurrent        int
+	GlobalRequestsPerMinute int
+	GlobalConcurrent        int
+	MaxSubjects             int
+	Now                     func() time.Time
+}
+
+type LimitSubject struct {
+	KeyID  string
+	Source string
+	Action ActionType
 }
 
 type limitState struct {
@@ -17,53 +30,119 @@ type limitState struct {
 	active      int
 }
 
-type Limiter struct {
-	mu                sync.Mutex
-	states            map[string]limitState
+type bucketLimit struct {
 	requestsPerMinute int
 	concurrent        int
-	now               func() time.Time
+}
+
+type Limiter struct {
+	mu          sync.Mutex
+	states      map[string]limitState
+	key         bucketLimit
+	source      bucketLimit
+	action      bucketLimit
+	global      bucketLimit
+	maxSubjects int
+	lastCleanup time.Time
+	now         func() time.Time
 }
 
 func NewLimiter(options LimiterOptions) *Limiter {
-	if options.RequestsPerMinute <= 0 {
-		options.RequestsPerMinute = 60
-	}
-	if options.Concurrent <= 0 {
-		options.Concurrent = 4
-	}
+	options.RequestsPerMinute = positiveOr(options.RequestsPerMinute, 60)
+	options.Concurrent = positiveOr(options.Concurrent, 4)
+	options.SourceRequestsPerMinute = positiveOr(options.SourceRequestsPerMinute, 120)
+	options.SourceConcurrent = positiveOr(options.SourceConcurrent, 8)
+	options.ActionRequestsPerMinute = positiveOr(options.ActionRequestsPerMinute, 60)
+	options.ActionConcurrent = positiveOr(options.ActionConcurrent, 4)
+	options.GlobalRequestsPerMinute = positiveOr(options.GlobalRequestsPerMinute, 600)
+	options.GlobalConcurrent = positiveOr(options.GlobalConcurrent, 32)
+	options.MaxSubjects = positiveOr(options.MaxSubjects, 8192)
 	if options.Now == nil {
 		options.Now = time.Now
 	}
-	return &Limiter{states: make(map[string]limitState), requestsPerMinute: options.RequestsPerMinute, concurrent: options.Concurrent, now: options.Now}
+	return &Limiter{
+		states:      make(map[string]limitState),
+		key:         bucketLimit{requestsPerMinute: options.RequestsPerMinute, concurrent: options.Concurrent},
+		source:      bucketLimit{requestsPerMinute: options.SourceRequestsPerMinute, concurrent: options.SourceConcurrent},
+		action:      bucketLimit{requestsPerMinute: options.ActionRequestsPerMinute, concurrent: options.ActionConcurrent},
+		global:      bucketLimit{requestsPerMinute: options.GlobalRequestsPerMinute, concurrent: options.GlobalConcurrent},
+		maxSubjects: options.MaxSubjects,
+		now:         options.Now,
+	}
 }
 
-func (limiter *Limiter) Acquire(keyID string) (func(), bool) {
+func positiveOr(value, fallback int) int {
+	if value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+func (limiter *Limiter) Acquire(subject LimitSubject) (func(), bool) {
 	limiter.mu.Lock()
 	now := limiter.now()
-	state := limiter.states[keyID]
-	if state.windowStart.IsZero() || now.Sub(state.windowStart) >= time.Minute {
-		state.windowStart, state.requests = now, 0
+	limiter.cleanup(now)
+	keys := []string{
+		"global",
+		"key\x00" + subject.KeyID,
+		"source\x00" + subject.Source,
+		"action\x00" + string(subject.Action),
 	}
-	if state.requests >= limiter.requestsPerMinute || state.active >= limiter.concurrent {
-		limiter.states[keyID] = state
+	limits := []bucketLimit{limiter.global, limiter.key, limiter.source, limiter.action}
+	newSubjects := 0
+	for _, key := range keys {
+		if _, exists := limiter.states[key]; !exists {
+			newSubjects++
+		}
+	}
+	if len(limiter.states)+newSubjects > limiter.maxSubjects {
 		limiter.mu.Unlock()
 		return func() {}, false
 	}
-	state.requests++
-	state.active++
-	limiter.states[keyID] = state
+	states := make([]limitState, len(keys))
+	for index, key := range keys {
+		state := limiter.states[key]
+		if state.windowStart.IsZero() || now.Sub(state.windowStart) >= time.Minute {
+			state.windowStart, state.requests = now, 0
+		}
+		if state.requests >= limits[index].requestsPerMinute || state.active >= limits[index].concurrent {
+			limiter.states[key] = state
+			limiter.mu.Unlock()
+			return func() {}, false
+		}
+		states[index] = state
+	}
+	for index, key := range keys {
+		state := states[index]
+		state.requests++
+		state.active++
+		limiter.states[key] = state
+	}
 	limiter.mu.Unlock()
 	var once sync.Once
 	return func() {
 		once.Do(func() {
 			limiter.mu.Lock()
-			state := limiter.states[keyID]
-			if state.active > 0 {
-				state.active--
+			for _, key := range keys {
+				state := limiter.states[key]
+				if state.active > 0 {
+					state.active--
+				}
+				limiter.states[key] = state
 			}
-			limiter.states[keyID] = state
 			limiter.mu.Unlock()
 		})
 	}, true
+}
+
+func (limiter *Limiter) cleanup(now time.Time) {
+	if !limiter.lastCleanup.IsZero() && now.Sub(limiter.lastCleanup) < time.Minute {
+		return
+	}
+	for key, state := range limiter.states {
+		if key != "global" && state.active == 0 && !state.windowStart.IsZero() && now.Sub(state.windowStart) >= time.Minute {
+			delete(limiter.states, key)
+		}
+	}
+	limiter.lastCleanup = now
 }

@@ -1,0 +1,579 @@
+package privilegebroker
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"scriptboard/internal/mysqlmanager"
+	"scriptboard/internal/runmanager"
+)
+
+type mysqlWireRequest struct {
+	Instance    mysqlmanager.Instance            `json:"instance"`
+	Password    string                           `json:"password,omitempty"`
+	Database    string                           `json:"database,omitempty"`
+	Path        string                           `json:"path,omitempty"`
+	OperationID string                           `json:"operation_id,omitempty"`
+	Create      mysqlmanager.CreateDatabaseInput `json:"create"`
+	Tools       mysqlmanager.ToolSettings        `json:"tools"`
+	BackupID    string                           `json:"backup_id,omitempty"`
+	Offset      int64                            `json:"offset,omitempty"`
+	Limit       int                              `json:"limit,omitempty"`
+}
+
+type mysqlWireResponse struct {
+	ConnectionTest *mysqlmanager.ConnectionTest `json:"connection_test,omitempty"`
+	Databases      []mysqlmanager.Database      `json:"databases,omitempty"`
+	Status         *mysqlmanager.Status         `json:"status,omitempty"`
+	Exists         bool                         `json:"exists,omitempty"`
+	Dump           *mysqlmanager.DumpResult     `json:"dump,omitempty"`
+	ToolStatus     *mysqlmanager.ToolStatus     `json:"tool_status,omitempty"`
+	Content        []byte                       `json:"content,omitempty"`
+	TotalBytes     int64                        `json:"total_bytes,omitempty"`
+	Filename       string                       `json:"filename,omitempty"`
+}
+
+type brokerMySQLService struct {
+	mysqlmanager.Backend
+	db         *sql.DB
+	operations interface {
+		RequestCancel(context.Context, string) error
+	}
+	backupRoot string
+}
+
+func NewBrokerMySQLService(database *sql.DB, backend mysqlmanager.Backend, operations interface {
+	RequestCancel(context.Context, string) error
+}, backupRoot string) (MySQLService, error) {
+	if database == nil || backend == nil || operations == nil || strings.TrimSpace(backupRoot) == "" {
+		return nil, errors.New("Broker MySQL database and execution backend are required")
+	}
+	return &brokerMySQLService{Backend: backend, db: database, operations: operations, backupRoot: backupRoot}, nil
+}
+
+func (service *brokerMySQLService) ValidateInstance(ctx context.Context, requested mysqlmanager.Instance) error {
+	var actual mysqlmanager.Instance
+	if err := service.db.QueryRowContext(ctx, `SELECT id,name,host,port,username,tls_mode,ca_path,credential_configured FROM mysql_instances WHERE id=?`, requested.ID).
+		Scan(&actual.ID, &actual.Name, &actual.Host, &actual.Port, &actual.Username, &actual.TLSMode, &actual.CAPath, &actual.CredentialConfigured); err != nil {
+		return errors.New("MySQL instance is unavailable")
+	}
+	if actual.ID != requested.ID || actual.Host != requested.Host || actual.Port != requested.Port || actual.Username != requested.Username || actual.TLSMode != requested.TLSMode || actual.CAPath != requested.CAPath || !actual.CredentialConfigured {
+		return errors.New("MySQL instance request does not match committed metadata")
+	}
+	return nil
+}
+
+func (service *brokerMySQLService) ValidateInstanceID(ctx context.Context, id string) error {
+	var exists bool
+	if err := service.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM mysql_instances WHERE id=? AND credential_configured=1)", id).Scan(&exists); err != nil || !exists {
+		return errors.New("MySQL instance is unavailable")
+	}
+	return nil
+}
+
+func (service *brokerMySQLService) CancelOperation(ctx context.Context, id string) error {
+	return service.operations.RequestCancel(ctx, id)
+}
+
+func (service *brokerMySQLService) ArtifactRoot(ctx context.Context) (string, error) {
+	var configured string
+	err := service.db.QueryRowContext(ctx, "SELECT value FROM mysql_settings WHERE key='backup_root'").Scan(&configured)
+	if errors.Is(err, sql.ErrNoRows) {
+		return service.backupRoot, nil
+	}
+	if err != nil || !filepath.IsAbs(configured) {
+		return "", errors.New("configured MySQL backup root is invalid")
+	}
+	return filepath.Clean(configured), nil
+}
+
+func (service *brokerMySQLService) ReadBackupChunk(ctx context.Context, id string, offset int64, limit int) ([]byte, int64, string, error) {
+	var path, database string
+	var total int64
+	if err := service.db.QueryRowContext(ctx, "SELECT path, size_bytes, database_name FROM mysql_backups WHERE id = ?", id).Scan(&path, &total, &database); err != nil {
+		return nil, 0, "", errors.New("MySQL backup is unavailable")
+	}
+	root, err := service.ArtifactRoot(ctx)
+	if err != nil || !pathWithinRoot(root, path) {
+		return nil, 0, "", errors.New("MySQL backup path is outside the configured root")
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() != total {
+		return nil, 0, "", errors.New("MySQL backup file changed")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, 0, "", err
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(info, opened) {
+		return nil, 0, "", errors.New("MySQL backup file changed while opening")
+	}
+	buffer := make([]byte, min(limit, int(max(int64(0), total-offset))))
+	read, readErr := file.ReadAt(buffer, offset)
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return nil, 0, "", readErr
+	}
+	return buffer[:read], total, database + "-" + id + ".sql.gz", nil
+}
+
+func (service *brokerMySQLService) SetTools(ctx context.Context, tools mysqlmanager.ToolSettings) error {
+	dump, err := trustedMySQLExecutable(tools.DumpExecutable, true)
+	if err != nil {
+		return err
+	}
+	client, err := trustedMySQLExecutable(tools.ClientExecutable, false)
+	if err != nil {
+		return err
+	}
+	return service.Backend.SetTools(ctx, mysqlmanager.ToolSettings{DumpExecutable: dump, ClientExecutable: client})
+}
+
+func (service *brokerMySQLService) Dump(ctx context.Context, instance mysqlmanager.Instance, database, path string) (mysqlmanager.DumpResult, error) {
+	tools := service.Backend.Tools()
+	resolved, err := trustedMySQLExecutable(tools.DumpExecutable, true)
+	if err != nil {
+		return mysqlmanager.DumpResult{}, err
+	}
+	if resolved != tools.DumpExecutable {
+		tools.DumpExecutable = resolved
+		if err := service.Backend.SetTools(ctx, tools); err != nil {
+			return mysqlmanager.DumpResult{}, err
+		}
+	}
+	return service.Backend.Dump(ctx, instance, database, path)
+}
+
+func (service *brokerMySQLService) Import(ctx context.Context, instance mysqlmanager.Instance, database, path string) error {
+	tools := service.Backend.Tools()
+	resolved, err := trustedMySQLExecutable(tools.ClientExecutable, false)
+	if err != nil {
+		return err
+	}
+	if resolved != tools.ClientExecutable {
+		tools.ClientExecutable = resolved
+		if err := service.Backend.SetTools(ctx, tools); err != nil {
+			return err
+		}
+	}
+	return service.Backend.Import(ctx, instance, database, path)
+}
+
+func (service *brokerMySQLService) TestTools(ctx context.Context) mysqlmanager.ToolStatus {
+	tools := service.Backend.Tools()
+	result := mysqlmanager.ToolStatus{DumpExecutable: tools.DumpExecutable, ClientExecutable: tools.ClientExecutable}
+	dump, dumpErr := trustedMySQLExecutable(tools.DumpExecutable, true)
+	client, clientErr := trustedMySQLExecutable(tools.ClientExecutable, false)
+	if dumpErr != nil || clientErr != nil {
+		return result
+	}
+	if dump != tools.DumpExecutable || client != tools.ClientExecutable {
+		if err := service.Backend.SetTools(ctx, mysqlmanager.ToolSettings{DumpExecutable: dump, ClientExecutable: client}); err != nil {
+			return result
+		}
+	}
+	return service.Backend.TestTools(ctx)
+}
+
+func trustedMySQLExecutable(value string, dump bool) (string, error) {
+	value = strings.TrimSpace(value)
+	base := strings.ToLower(filepath.Base(value))
+	base = strings.TrimSuffix(base, ".exe")
+	allowed := base == "mysql" || base == "mariadb"
+	if dump {
+		allowed = base == "mysqldump" || base == "mariadb-dump"
+	}
+	if !allowed {
+		return "", errors.New("MySQL executable is not an allowed client tool")
+	}
+	resolved := value
+	if !filepath.IsAbs(resolved) {
+		var err error
+		resolved, err = exec.LookPath(resolved)
+		if err != nil {
+			return "", errors.New("MySQL executable is unavailable")
+		}
+	}
+	return runmanager.ValidateExecutorTrust(resolved)
+}
+
+func (server *Server) mysqlOperation(parent context.Context, request wireRequest) wireResponse {
+	if server.mysql == nil {
+		return wireResponse{Status: statusError, ErrorCode: "mysql_unavailable", Message: "MySQL execution service is unavailable"}
+	}
+	payload := request.MySQL
+	actor, action, err := server.authorizeMySQLOperation(request)
+	if err != nil {
+		return wireResponse{Status: statusError, ErrorCode: "mysql_forbidden", Message: "MySQL operation is not authorized"}
+	}
+	if request.Operation == operationMySQLDump || request.Operation == operationMySQLImport {
+		root, rootErr := server.mysql.ArtifactRoot(context.Background())
+		if rootErr != nil || !pathWithinRoot(root, payload.Path) {
+			return wireResponse{Status: statusError, ErrorCode: "mysql_path_forbidden", Message: "MySQL artifact path is outside the configured backup root"}
+		}
+	}
+	ctx, cancel := context.WithTimeout(parent, 2*time.Hour)
+	defer cancel()
+	if request.Operation != operationMySQLDelete && request.Operation != operationMySQLTestTools && request.Operation != operationMySQLSetTools && request.Operation != operationMySQLCancel && request.Operation != operationMySQLBackupChunk {
+		if err := server.mysql.ValidateInstance(ctx, payload.Instance); err != nil {
+			return wireResponse{Status: statusError, ErrorCode: "mysql_instance_mismatch", Message: "MySQL instance does not match committed metadata"}
+		}
+	} else if request.Operation == operationMySQLDelete {
+		if err := server.mysql.ValidateInstanceID(ctx, payload.Instance.ID); err != nil {
+			return wireResponse{Status: statusError, ErrorCode: "mysql_instance_mismatch", Message: "MySQL instance is unavailable"}
+		}
+	}
+	response := wireResponse{Status: statusOK, MySQL: &mysqlWireResponse{}}
+	switch request.Operation {
+	case operationMySQLStore:
+		err = server.mysql.StoreCredential(ctx, payload.Instance, payload.Password)
+	case operationMySQLDelete:
+		err = server.mysql.DeleteCredential(ctx, payload.Instance.ID)
+	case operationMySQLTest:
+		var value mysqlmanager.ConnectionTest
+		value, err = server.mysql.Test(ctx, payload.Instance)
+		response.MySQL.ConnectionTest = &value
+	case operationMySQLDatabases:
+		response.MySQL.Databases, err = server.mysql.Databases(ctx, payload.Instance)
+	case operationMySQLStatus:
+		var value mysqlmanager.Status
+		value, err = server.mysql.Status(ctx, payload.Instance)
+		response.MySQL.Status = &value
+	case operationMySQLExists:
+		response.MySQL.Exists, err = server.mysql.DatabaseExists(ctx, payload.Instance, payload.Database)
+	case operationMySQLCreate:
+		err = server.mysql.CreateDatabase(ctx, payload.Instance, payload.Create)
+	case operationMySQLReplace:
+		err = server.mysql.ReplaceDatabase(ctx, payload.Instance, payload.Database)
+	case operationMySQLDrop:
+		err = server.mysql.DropDatabase(ctx, payload.Instance, payload.Database)
+	case operationMySQLDump:
+		var value mysqlmanager.DumpResult
+		value, err = server.mysql.Dump(ctx, payload.Instance, payload.Database, payload.Path)
+		response.MySQL.Dump = &value
+	case operationMySQLImport:
+		err = server.mysql.Import(ctx, payload.Instance, payload.Database, payload.Path)
+	case operationMySQLSetTools:
+		err = server.mysql.SetTools(ctx, payload.Tools)
+	case operationMySQLTestTools:
+		value := server.mysql.TestTools(ctx)
+		response.MySQL.ToolStatus = &value
+	case operationMySQLCancel:
+		err = server.mysql.CancelOperation(ctx, payload.OperationID)
+	case operationMySQLBackupChunk:
+		response.MySQL.Content, response.MySQL.TotalBytes, response.MySQL.Filename, err = server.mysql.ReadBackupChunk(ctx, payload.BackupID, payload.Offset, payload.Limit)
+	}
+	result := "succeeded"
+	if err != nil {
+		result = "failed"
+	}
+	if action != ActionMySQLRead && server.auditor != nil {
+		body, _ := json.Marshal(payload)
+		auditErr := server.auditor.Record(context.Background(), AuditRecord{OccurredAt: server.now().UTC(), RequestID: request.RequestID,
+			Actor: actor, Action: action, Resource: payload.Instance.ID, Revision: "mysql-instance-v1", ParametersSHA256: parametersDigest(body), Result: result})
+		if auditErr != nil && err == nil {
+			return wireResponse{Status: statusError, ErrorCode: "audit_failed_after_execution", Message: "MySQL operation completed but result audit failed"}
+		}
+	}
+	if err != nil {
+		return wireResponse{Status: statusError, ErrorCode: "mysql_failed", Message: "MySQL operation failed"}
+	}
+	return response
+}
+
+func (server *Server) authorizeMySQLOperation(request wireRequest) (Actor, Action, error) {
+	payload := request.MySQL
+	action, recent := mysqlAction(request.Operation)
+	body, _ := json.Marshal(payload)
+	resource := payload.Instance.ID
+	if request.Operation == operationMySQLBackupChunk {
+		resource = payload.BackupID
+	}
+	authorization := AuthorizationRequest{SessionToken: request.SessionToken, RequestID: request.RequestID, Action: action,
+		Resource: resource, Revision: "mysql-instance-v1", ParametersSHA256: parametersDigest(body)}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var actor Actor
+	var err error
+	if recent {
+		actor, err = server.authorizer.Authorize(ctx, authorization)
+	} else if sessions, ok := server.authorizer.(SessionAuthorizer); ok {
+		actor, err = sessions.AuthorizeSession(ctx, authorization)
+	} else {
+		err = errors.New("session authorization is unavailable")
+	}
+	if err == nil && actor.Role != "administrator" && actor.Role != "maintainer" {
+		err = errors.New("role cannot manage databases")
+	}
+	return actor, action, err
+}
+
+func mysqlAction(operation string) (Action, bool) {
+	switch operation {
+	case operationMySQLStore:
+		return ActionMySQLStore, true
+	case operationMySQLDelete:
+		return ActionMySQLDelete, true
+	case operationMySQLCreate:
+		return ActionMySQLCreate, false
+	case operationMySQLReplace:
+		return ActionMySQLReplace, true
+	case operationMySQLDrop:
+		return ActionMySQLDrop, true
+	case operationMySQLDump:
+		return ActionMySQLDump, false
+	case operationMySQLImport:
+		return ActionMySQLImport, true
+	case operationMySQLSetTools:
+		return ActionMySQLSetTools, true
+	case operationMySQLCancel:
+		return ActionMySQLCancel, false
+	default:
+		return ActionMySQLRead, false
+	}
+}
+
+func pathWithinRoot(root, candidate string) bool {
+	if strings.TrimSpace(root) == "" || !filepath.IsAbs(candidate) {
+		return false
+	}
+	canonicalRoot, err := filepath.EvalSymlinks(filepath.Clean(root))
+	if err != nil {
+		return false
+	}
+	canonicalParent, err := filepath.EvalSymlinks(filepath.Dir(filepath.Clean(candidate)))
+	if err != nil {
+		return false
+	}
+	canonicalCandidate := filepath.Join(canonicalParent, filepath.Base(candidate))
+	relative, err := filepath.Rel(canonicalRoot, canonicalCandidate)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) && !filepath.IsAbs(relative)
+}
+
+func validateMySQLRequest(request wireRequest) error {
+	if request.MySQL == nil || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
+		request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.HostFiles != nil {
+		return errors.New("MySQL request contains unrelated fields")
+	}
+	payload := request.MySQL
+	minimalInstance := request.Operation == operationMySQLDelete || request.Operation == operationMySQLTestTools || request.Operation == operationMySQLSetTools
+	minimalInstance = minimalInstance || request.Operation == operationMySQLCancel || request.Operation == operationMySQLBackupChunk
+	validMinimalInstance := validRemoteWebsiteID(payload.Instance.ID)
+	if request.Operation == operationMySQLBackupChunk {
+		validMinimalInstance = payload.Instance == (mysqlmanager.Instance{})
+	}
+	if (!minimalInstance && !validMySQLInstance(payload.Instance)) || (minimalInstance && !validMinimalInstance) || len(payload.Password) > 8<<10 || len(payload.Database) > 64 || strings.ContainsAny(payload.Database+payload.Path+payload.OperationID+payload.BackupID, "\r\n\x00") || len(payload.Path) > 4096 || len(payload.OperationID) > 160 || len(payload.BackupID) > 160 {
+		return errors.New("MySQL request fields are invalid")
+	}
+	if !validCredentialSessionToken(request.SessionToken) {
+		return errors.New("MySQL session authorization is invalid")
+	}
+	if request.Operation != operationMySQLCancel && payload.OperationID != "" {
+		return errors.New("MySQL request contains an unrelated operation ID")
+	}
+	if request.Operation != operationMySQLBackupChunk && (payload.BackupID != "" || payload.Offset != 0 || payload.Limit != 0) {
+		return errors.New("MySQL request contains unrelated backup download fields")
+	}
+	emptyCreate := payload.Create == (mysqlmanager.CreateDatabaseInput{})
+	emptyTools := payload.Tools == (mysqlmanager.ToolSettings{})
+	switch request.Operation {
+	case operationMySQLStore:
+		if payload.Password == "" || payload.Database != "" || payload.Path != "" || !emptyCreate || !emptyTools {
+			return errors.New("MySQL credential store request is invalid")
+		}
+	case operationMySQLDelete, operationMySQLTest, operationMySQLDatabases, operationMySQLStatus, operationMySQLTestTools:
+		if payload.Password != "" || payload.Database != "" || payload.Path != "" || !emptyCreate || !emptyTools {
+			return errors.New("MySQL request contains operation-forbidden fields")
+		}
+	case operationMySQLCreate:
+		if payload.Password != "" || payload.Database != "" || payload.Path != "" || emptyCreate || !emptyTools {
+			return errors.New("MySQL create request is invalid")
+		}
+	case operationMySQLExists, operationMySQLReplace, operationMySQLDrop:
+		if payload.Password != "" || payload.Database == "" || payload.Path != "" || !emptyCreate || !emptyTools {
+			return errors.New("MySQL database mutation request is invalid")
+		}
+	case operationMySQLDump, operationMySQLImport:
+		if payload.Password != "" || payload.Database == "" || payload.Path == "" || !filepath.IsAbs(payload.Path) || !emptyCreate || !emptyTools {
+			return errors.New("MySQL artifact request is invalid")
+		}
+	case operationMySQLSetTools:
+		if payload.Password != "" || payload.Database != "" || payload.Path != "" || !emptyCreate || emptyTools {
+			return errors.New("MySQL tool settings request is invalid")
+		}
+	case operationMySQLCancel:
+		if payload.Password != "" || payload.Database != "" || payload.Path != "" || payload.OperationID == "" || !emptyCreate || !emptyTools {
+			return errors.New("MySQL cancellation request is invalid")
+		}
+	case operationMySQLBackupChunk:
+		if payload.Password != "" || payload.Database != "" || payload.Path != "" || payload.BackupID == "" || payload.Offset < 0 || payload.Limit <= 0 || payload.Limit > 3<<20 || !emptyCreate || !emptyTools {
+			return errors.New("MySQL backup download request is invalid")
+		}
+	}
+	return nil
+}
+
+func validMySQLInstance(instance mysqlmanager.Instance) bool {
+	validTLS := instance.TLSMode == mysqlmanager.TLSDisabled || instance.TLSMode == mysqlmanager.TLSPreferred || instance.TLSMode == mysqlmanager.TLSRequired || instance.TLSMode == mysqlmanager.TLSVerifyIdentity
+	return validRemoteWebsiteID(instance.ID) && len(instance.Host) > 0 && len(instance.Host) <= 253 && instance.Port > 0 && instance.Port <= 65535 && validTLS &&
+		len(instance.Username) > 0 && len(instance.Username) <= 320 && len(instance.CAPath) <= 4096 &&
+		!strings.ContainsAny(instance.ID+instance.Host+instance.Username+instance.CAPath, "\r\n\x00") && instance.Password == ""
+}
+
+type MySQLBackend struct {
+	client *Client
+	mu     sync.Mutex
+	tools  mysqlmanager.ToolSettings
+}
+
+func NewMySQLBackend(client *Client, tools mysqlmanager.ToolSettings) *MySQLBackend {
+	return &MySQLBackend{client: client, tools: tools}
+}
+
+func (backend *MySQLBackend) InitializeTools(tools mysqlmanager.ToolSettings) {
+	backend.mu.Lock()
+	backend.tools = tools
+	backend.mu.Unlock()
+}
+
+func (backend *MySQLBackend) call(ctx context.Context, operation string, payload mysqlWireRequest) (mysqlWireResponse, error) {
+	if backend == nil || backend.client == nil {
+		return mysqlWireResponse{}, errors.New("privileged Broker MySQL service is unavailable")
+	}
+	request := wireRequest{Version: ProtocolVersion, Operation: operation, MySQL: &payload}
+	authorization, ok := AuthorizationFromContext(ctx)
+	if !ok {
+		return mysqlWireResponse{}, errors.New("privileged Broker MySQL authorization is missing")
+	}
+	request.RequestID, request.SessionToken = authorization.RequestID, authorization.SessionToken
+	response, err := backend.client.call(ctx, request)
+	if err != nil {
+		return mysqlWireResponse{}, err
+	}
+	if response.MySQL == nil {
+		return mysqlWireResponse{}, errors.New("privileged Broker returned an invalid MySQL response")
+	}
+	return *response.MySQL, nil
+}
+
+func (backend *MySQLBackend) DownloadBackup(ctx context.Context, id string, destination io.Writer) (string, int64, error) {
+	var offset int64
+	var filename string
+	var total int64
+	for {
+		value, err := backend.call(ctx, operationMySQLBackupChunk, mysqlWireRequest{BackupID: id, Offset: offset, Limit: 3 << 20})
+		if err != nil {
+			return "", 0, err
+		}
+		if offset == 0 {
+			filename, total = value.Filename, value.TotalBytes
+		}
+		if value.TotalBytes != total || value.Filename != filename || offset+int64(len(value.Content)) > total {
+			return "", 0, errors.New("privileged Broker returned inconsistent MySQL backup content")
+		}
+		if len(value.Content) > 0 {
+			if _, err := destination.Write(value.Content); err != nil {
+				return "", 0, err
+			}
+			offset += int64(len(value.Content))
+		}
+		if offset == total {
+			return filename, total, nil
+		}
+		if len(value.Content) == 0 {
+			return "", 0, io.ErrUnexpectedEOF
+		}
+	}
+}
+
+func (backend *MySQLBackend) StoreCredential(ctx context.Context, instance mysqlmanager.Instance, password string) error {
+	_, err := backend.call(ctx, operationMySQLStore, mysqlWireRequest{Instance: instance, Password: password})
+	return err
+}
+func (backend *MySQLBackend) DeleteCredential(ctx context.Context, id string) error {
+	_, err := backend.call(ctx, operationMySQLDelete, mysqlWireRequest{Instance: mysqlmanager.Instance{ID: id}})
+	return err
+}
+func (backend *MySQLBackend) Test(ctx context.Context, instance mysqlmanager.Instance) (mysqlmanager.ConnectionTest, error) {
+	value, err := backend.call(ctx, operationMySQLTest, mysqlWireRequest{Instance: instance})
+	if value.ConnectionTest == nil {
+		return mysqlmanager.ConnectionTest{}, errors.Join(err, errors.New("privileged Broker returned no MySQL connection test"))
+	}
+	return *value.ConnectionTest, err
+}
+func (backend *MySQLBackend) Databases(ctx context.Context, instance mysqlmanager.Instance) ([]mysqlmanager.Database, error) {
+	value, err := backend.call(ctx, operationMySQLDatabases, mysqlWireRequest{Instance: instance})
+	return value.Databases, err
+}
+func (backend *MySQLBackend) Status(ctx context.Context, instance mysqlmanager.Instance) (mysqlmanager.Status, error) {
+	value, err := backend.call(ctx, operationMySQLStatus, mysqlWireRequest{Instance: instance})
+	if value.Status == nil {
+		return mysqlmanager.Status{}, errors.Join(err, errors.New("privileged Broker returned no MySQL status"))
+	}
+	return *value.Status, err
+}
+func (backend *MySQLBackend) DatabaseExists(ctx context.Context, instance mysqlmanager.Instance, database string) (bool, error) {
+	value, err := backend.call(ctx, operationMySQLExists, mysqlWireRequest{Instance: instance, Database: database})
+	return value.Exists, err
+}
+func (backend *MySQLBackend) CreateDatabase(ctx context.Context, instance mysqlmanager.Instance, input mysqlmanager.CreateDatabaseInput) error {
+	_, err := backend.call(ctx, operationMySQLCreate, mysqlWireRequest{Instance: instance, Create: input})
+	return err
+}
+func (backend *MySQLBackend) ReplaceDatabase(ctx context.Context, instance mysqlmanager.Instance, database string) error {
+	_, err := backend.call(ctx, operationMySQLReplace, mysqlWireRequest{Instance: instance, Database: database})
+	return err
+}
+func (backend *MySQLBackend) DropDatabase(ctx context.Context, instance mysqlmanager.Instance, database string) error {
+	_, err := backend.call(ctx, operationMySQLDrop, mysqlWireRequest{Instance: instance, Database: database})
+	return err
+}
+func (backend *MySQLBackend) Dump(ctx context.Context, instance mysqlmanager.Instance, database, path string) (mysqlmanager.DumpResult, error) {
+	value, err := backend.call(ctx, operationMySQLDump, mysqlWireRequest{Instance: instance, Database: database, Path: path})
+	if value.Dump == nil {
+		return mysqlmanager.DumpResult{}, errors.Join(err, errors.New("privileged Broker returned no MySQL dump result"))
+	}
+	return *value.Dump, err
+}
+func (backend *MySQLBackend) Import(ctx context.Context, instance mysqlmanager.Instance, database, path string) error {
+	_, err := backend.call(ctx, operationMySQLImport, mysqlWireRequest{Instance: instance, Database: database, Path: path})
+	return err
+}
+func (backend *MySQLBackend) Tools() mysqlmanager.ToolSettings {
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	return backend.tools
+}
+func (backend *MySQLBackend) SetTools(ctx context.Context, tools mysqlmanager.ToolSettings) error {
+	if _, err := backend.call(ctx, operationMySQLSetTools, mysqlWireRequest{Instance: mysqlmanager.Instance{ID: "tools"}, Tools: tools}); err != nil {
+		return err
+	}
+	backend.mu.Lock()
+	backend.tools = tools
+	backend.mu.Unlock()
+	return nil
+}
+func (backend *MySQLBackend) TestTools(ctx context.Context) mysqlmanager.ToolStatus {
+	value, _ := backend.call(ctx, operationMySQLTestTools, mysqlWireRequest{Instance: mysqlmanager.Instance{ID: "tools"}})
+	if value.ToolStatus == nil {
+		return mysqlmanager.ToolStatus{}
+	}
+	return *value.ToolStatus
+}
+
+func (backend *MySQLBackend) CancelOperation(ctx context.Context, id string) error {
+	_, err := backend.call(ctx, operationMySQLCancel, mysqlWireRequest{Instance: mysqlmanager.Instance{ID: "operations"}, OperationID: id})
+	return err
+}
+
+var _ mysqlmanager.Backend = (*MySQLBackend)(nil)

@@ -1,6 +1,7 @@
 package app_test
 
 import (
+	"database/sql"
 	"fmt"
 	"io"
 	"net/http"
@@ -46,6 +47,76 @@ func TestAuditRecordsActionWithoutVariableValue(t *testing.T) {
 	}
 	if strings.Contains(string(body), sensitiveValue) {
 		t.Fatalf("variable value leaked into audit: %s", body)
+	}
+}
+
+func TestAuditPageAndCSVDefensivelyRedactLegacySecrets(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	stateRoot := filepath.Join(root, "state")
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), stateRoot)
+	db, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	const secret = "legacy-audit-password"
+	if _, err := db.Exec(`INSERT INTO audit_events (occurred_at, action, target, result, source_address)
+		VALUES (?, 'legacy_secret_test', ?, 'succeeded', 'local')`, time.Now().Unix(), "password="+secret); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/history/audit", "/history/audit.csv"} {
+		response, err := client.Get(serverURL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, readErr := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if response.StatusCode != http.StatusOK || strings.Contains(string(body), secret) || !strings.Contains(string(body), "[REDACTED]") {
+			t.Fatalf("audit output %s was not redacted: status=%d body=%s", path, response.StatusCode, body)
+		}
+	}
+}
+
+func TestAuthenticatedAuditCarriesServerRequestIDAndAssurance(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	stateRoot := filepath.Join(root, "state")
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), stateRoot)
+	response, err := client.Get(serverURL + "/resources/variables")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/resources/variables", url.Values{
+		"name": {"CORRELATED"}, "value": {"safe"}, "csrf_token": {formToken(t, page)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestID := response.Header.Get("X-Request-ID")
+	_ = response.Body.Close()
+	if requestID == "" {
+		t.Fatal("response did not expose its server request ID")
+	}
+	db, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var recordedID, assurance string
+	if err := db.QueryRow(`SELECT request_id, authentication_assurance FROM audit_events
+		WHERE action = 'create_variable' AND target = 'CORRELATED'`).Scan(&recordedID, &assurance); err != nil {
+		t.Fatal(err)
+	}
+	if recordedID != requestID || assurance != "aal1+step-up" {
+		t.Fatalf("request_id=%q want=%q assurance=%q", recordedID, requestID, assurance)
 	}
 }
 

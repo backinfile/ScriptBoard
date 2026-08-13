@@ -9,7 +9,7 @@ ScriptBoard is a self-hosted script console for a single Windows or Linux host. 
 [Download the latest release](https://github.com/backinfile/ScriptBoard/releases/latest) · [Quick start](#quick-start) · [Install as a system service](#install-as-a-system-service) · [Troubleshooting](#troubleshooting)
 
 > [!WARNING]
-> ScriptBoard is not a security sandbox. Scripts run with the operating-system identity, permissions, and environment of the ScriptBoard service. Run only trusted scripts, grant access only to trusted users, and never expose the service directly to the public internet.
+> ScriptBoard is not a sandbox for untrusted code. Scripts run under the separate Runner identity with a minimal ScriptBoard-provided environment, resource bounds, and default-deny networking. Run only trusted scripts, grant access only to trusted users, and never expose Web directly to the public internet.
 
 ![ScriptBoard Quick Runs page](./integration/browser/snapshots/readme-quick-runs-en.png)
 
@@ -33,16 +33,27 @@ The web interface is available in Simplified Chinese and US English and works on
 
 | System | Architectures | Release package |
 | --- | --- | --- |
-| Windows 10/11 and Windows Server 2019+ | amd64, arm64 | ZIP with service, tray, and updater programs |
-| Linux with systemd | amd64, arm64 | tar.gz with service and updater programs |
+| Windows 10/11 and Windows Server 2019+ | amd64, arm64 | Single-file `*-setup.exe` installer |
+| Linux with systemd | amd64, arm64 | Single executable `.run` installer |
 
 Install the interpreters required by your scripts, such as PowerShell, Python, or Bash. ScriptBoard does not provide an official Docker deployment package.
 
 ## Quick start
 
-### 1. Download and extract
+### 1. Download and extract for portable use
 
-Download the complete archive for your system and architecture from [GitHub Releases](https://github.com/backinfile/ScriptBoard/releases/latest), then extract it into its own directory.
+Download the single-file installer for your system and architecture from [GitHub Releases](https://github.com/backinfile/ScriptBoard/releases/latest). For portable mode, extract its embedded complete release into a dedicated directory:
+
+```powershell
+.\scriptboard-vX.Y.Z-windows-amd64-setup.exe --extract-to C:\ScriptBoard-Portable
+Set-Location C:\ScriptBoard-Portable
+```
+
+```bash
+chmod +x ./scriptboard-vX.Y.Z-linux-amd64.run
+./scriptboard-vX.Y.Z-linux-amd64.run --extract-to "$PWD/scriptboard-portable"
+cd ./scriptboard-portable
+```
 
 ### 2. Start a portable instance
 
@@ -60,6 +71,8 @@ chmod +x ./scriptboard
 mkdir -p ./state
 ./scriptboard serve --state-root "$PWD/state"
 ```
+
+Portable mode starts only the Web process, so privileged writes such as host firewall, Fail2ban, UFW, and system component installation are unavailable by default. Use the system-service installation below when those capabilities are required; the installer registers the protected `scriptboard-broker` service as well.
 
 ### 3. Sign in
 
@@ -80,31 +93,34 @@ No YAML configuration file is needed when using the built-in defaults. ScriptBoa
 
 ### Windows
 
-Run the following in an elevated PowerShell window:
+Download the stable Setup for the matching architecture, then run it in an elevated PowerShell window:
 
 ```powershell
-.\scriptboard.exe service install
-.\scriptboard.exe service start
-.\scriptboard.exe service status
+.\scriptboard-vX.Y.Z-windows-amd64-setup.exe
 ```
 
-The service is installed under `C:\Program Files\ScriptBoard`, and state is stored under `C:\ProgramData\ScriptBoard\state`. Installation also enables the tray app for the current Windows user.
+Setup safely extracts the embedded release, then installs, verifies, and starts ScriptBoard as one product. Success reports the product version and `STATE: RUNNING`. Advanced diagnostics remain available through the installed `scriptboard.exe service status` and `service verify`. Pass configuration options through Setup when needed, for example `.\scriptboard-vX.Y.Z-windows-amd64-setup.exe --config C:\secure\scriptboard.yaml`.
+
+The service is installed under `C:\Program Files\ScriptBoard`, and state is stored under `C:\ProgramData\ScriptBoard\state`. Installation initializes state and registers Web, `ScriptBoardBroker`, `ScriptBoardAI`, and `ScriptBoardRunner` as one versioned product. Web runs as low-privilege `LocalService` with a per-service SID, while the Broker retains LocalSystem. AI Host and Runner use separate restricted service SIDs, default-deny network policy, bounded SCM crash recovery, and demand-start; Web receives only `START + QUERY_STATUS` on those two services. Installation also enables the tray app for the current Windows user.
 
 ### Linux
 
-Run:
+Download the stable `.run` for the matching architecture, then execute it:
 
 ```bash
-sudo ./scriptboard service install
-sudo /opt/scriptboard/current/scriptboard service start
-sudo /opt/scriptboard/current/scriptboard service status
+chmod +x ./scriptboard-vX.Y.Z-linux-amd64.run
+sudo ./scriptboard-vX.Y.Z-linux-amd64.run
 ```
 
-The service is installed under `/opt/scriptboard`, and state is stored under `/var/lib/scriptboard/state`.
+The `.run` safely extracts the embedded release, then installs, verifies, and starts ScriptBoard as one product. Success reports the product version and `STATE: RUNNING`. Advanced diagnostics remain available through `sudo /opt/scriptboard/current/scriptboard service status` and `service verify`. Pass configuration options through the installer when needed, for example `sudo ./scriptboard-vX.Y.Z-linux-amd64.run --config /etc/scriptboard/custom.yaml`.
+
+The service is installed under `/opt/scriptboard`, and state is stored under `/var/lib/scriptboard/state`. Installation creates separate Web, Broker, AI Host, and Runner service identities as one versioned product. Web and Broker stay resident; protected systemd sockets activate AI Host and Runner on demand. Web does not run as root, and privileged or secret-bearing operations enter the root Broker only through a local Unix socket with peer-UID verification.
 
 Create a YAML configuration file only when you need to change settings such as the listen address, TLS, or the state directory, then pass it during installation with `--config CONFIG_PATH`. Without that flag, ScriptBoard uses the platform's default configuration path (`C:\ProgramData\ScriptBoard\config.yaml` on Windows or `/etc/scriptboard/config.yaml` on Linux); if the file does not exist, the built-in defaults are used.
 
 After installing ScriptBoard as a system service, Administrators and Maintainers can restart it from System Settings → Updates. A restart briefly disconnects the page and stops every active Run; the page reconnects when the service is ready. This control is not available to portable instances.
+
+System Settings → Service Logs reads only the four fixed managed services from systemd journal or the Windows System Event Log. A query scans at most 2,000 entries and returns 500, supports service/time/severity/message filters, and exports the current CSV. Messages are redacted before display and export; arbitrary units, Windows service names, and file paths are not accepted.
 
 ## Using ScriptBoard
 
@@ -144,9 +160,9 @@ Website Monitoring entries use `GET` instead of `POST`. To view one ScriptBoard 
 
 ### Host security
 
-Monitoring → Host Security brings together Windows login events or Linux SSH login records, remote-login configuration, and firewall status. On Windows, it can manage Windows Defender Firewall rules. On Linux, it can install Fail2Ban and UFW, inspect or remove SSH bans, and synchronize UFW rules and default policies after a change review.
+Monitoring → Host Security brings together Windows login events or Linux SSH login records, remote-login configuration, and firewall status. Its Security Updates tab reads pending security updates from existing Windows Update Agent or Debian/Ubuntu APT metadata without refreshing sources, downloading, or installing packages. Security Baseline aggregates runtime privilege, firewall state, update metadata, plus Linux SSH/Fail2Ban or Windows firewall profiles into evidence-backed checks and a read-only score. Only available checks are scored; this is not compliance certification and it never changes the system automatically. On Windows, it can manage Windows Defender Firewall rules. On Linux, it can install Fail2Ban and UFW, inspect or remove SSH bans, and synchronize UFW rules and default policies after a change review.
 
-Every role can inspect the detected state; only Administrators and Maintainers can change host defenses. Firewall, remote-login, and ban operations can interrupt access to the host. Confirm that the service runs with Administrator or root privileges, preserve an allow rule for the active management port, and keep an out-of-band recovery path.
+Every role can inspect the detected state; only Administrators and Maintainers can change host defenses. Firewall, remote-login, and ban operations can interrupt access to the host. Confirm that the Privileged Broker runs as LocalSystem or root, preserve an allow rule for the active management port, and keep an out-of-band recovery path; do not elevate Web, Runner, or AI Host for these operations.
 
 ### MySQL backup and restore
 
@@ -193,6 +209,8 @@ scriptboard doctor --config CONFIG_PATH
 
 Configuration precedence is: built-in defaults → YAML file → `SCRIPTBOARD_*` environment variables → command-line flags.
 
+Administrator startup credentials no longer accept plaintext `admin_password`, `SCRIPTBOARD_ADMIN_PASSWORD`, or `--admin-password`; legacy configuration is rejected with migration guidance. To override credentials at startup, use only an absolute `admin_password_file`, `SCRIPTBOARD_ADMIN_PASSWORD_FILE`, or `--admin-password-file`. First start and `scriptboard admin reset` still create a permission-restricted one-time credential file inside the State Root, which is deleted after the password is changed.
+
 ## Updates and backups
 
 Stable releases periodically check GitHub Releases but never install updates automatically. An Administrator can download, verify, and install an update under System Settings → Updates. ScriptBoard will not switch versions while a script is running.
@@ -203,7 +221,55 @@ Back up these locations regularly:
 - `state_root`, which contains the database, run logs, sessions, audit records, and AI data;
 - the service `config.yaml` file, if you created a custom configuration.
 
-Back up before upgrading from an older version. The current release uses database schema 38 and can migrate schemas 20–37 automatically; older databases and legacy configuration files are not migrated automatically.
+The local CLI can create an authenticated encrypted Private State Backup. The
+passphrase must be stored in an absolute regular-file path and contain at least
+16 bytes; the output must be outside the State Root and is never overwritten.
+Stop all ScriptBoard services before restore, then repeat the Backup ID returned
+by `inspect`:
+
+```text
+scriptboard backup create --output ABSOLUTE_BACKUP_PATH --passphrase-file ABSOLUTE_PASSPHRASE_FILE --config CONFIG_PATH
+scriptboard backup inspect --archive ABSOLUTE_BACKUP_PATH --passphrase-file ABSOLUTE_PASSPHRASE_FILE
+scriptboard backup restore --archive ABSOLUTE_BACKUP_PATH --passphrase-file ABSOLUTE_PASSPHRASE_FILE --confirm-backup-id BACKUP_ID --config CONFIG_PATH
+```
+
+The package contains a consistent SQLite snapshot, Broker ciphertexts, and a
+fixed allowlist of private evidence. It excludes the external master key, audit
+signing key, configuration, TLS material, diagnostic logs, upload inbox, and
+MySQL backups. The current restore flow requires the matching external keys and
+the current signed checkpoint for the same State Root path. It revokes restored
+web sessions, preserves the previous private state and checkpoint, and records
+an audit-continuity event before issuing a new checkpoint.
+
+Back up before upgrading from an older version. The current release uses database schema 44 and can migrate schemas 20–43 automatically; older databases and legacy configuration files are not migrated automatically.
+
+When the panel is unavailable or compromise is suspected, use the local out-of-band emergency commands below. Mutations require an exact fixed confirmation or the complete Key ID and are atomically appended to the audit chain as `local-administrator`; evidence export verifies the chain first, creates only a new file, and never overwrites existing evidence:
+
+```text
+scriptboard emergency pause-external --confirm PAUSE-EXTERNAL --config CONFIG_PATH
+scriptboard emergency revoke-key --key-id KEY_ID --confirm-key-id KEY_ID --config CONFIG_PATH
+scriptboard emergency export-evidence --output ABSOLUTE_JSONL_PATH --config CONFIG_PATH
+```
+
+On an isolated or offline host, provide the formal single-file installer together with `release-manifest.json` and `release-manifest.json.sig`. The command below verifies the embedded signing trust root, platform, file name, size, SHA-256, embedded payload boundaries, and `RELEASE.json` without installing or changing the current version:
+
+```text
+scriptboard update verify-package --archive ABSOLUTE_ARCHIVE_PATH --manifest ABSOLUTE_MANIFEST_PATH --signature ABSOLUTE_SIGNATURE_PATH
+```
+
+If the current managed release files are intact but the service pointer is damaged, stop the service, revalidate the formal current release, and rebuild the pointer. The command leaves the service stopped:
+
+```text
+scriptboard update repair-current --confirm REPAIR-CURRENT --config CONFIG_PATH
+```
+
+Every successful update retains that operation's pre-update database snapshot. To roll back a committed update, stop the service and repeat the operation ID. Rollback restores both the prior release and that snapshot, so it discards State Root database changes made after the update; preserve current evidence and state first:
+
+```text
+scriptboard update recover --operation OPERATION_ID --confirm-operation OPERATION_ID --config CONFIG_PATH
+```
+
+Formal releases follow the [update signing key runbook](./docs/UPDATE-SIGNING-KEY-RUNBOOK.md) for rotation, dual signing, revocation, and compromise response. The revocation list is embedded in client binaries; an older client that has not received it needs an independently authenticated manual upgrade and cannot trust revocation information asserted by the compromised key itself.
 
 ## Troubleshooting
 

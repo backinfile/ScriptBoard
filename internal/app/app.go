@@ -34,14 +34,18 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/go-webauthn/webauthn/webauthn"
 	"golang.org/x/crypto/argon2"
 	_ "modernc.org/sqlite"
 
 	"scriptboard/internal/appstatus"
 	"scriptboard/internal/assistant"
+	"scriptboard/internal/assistant/pirpc"
 	"scriptboard/internal/assistant/raster"
 	"scriptboard/internal/assistant/runtimeinstall"
 	"scriptboard/internal/assistant/toolbroker"
+	"scriptboard/internal/auditcheckpoint"
+	"scriptboard/internal/auditlog"
 	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/clusterstatus"
 	"scriptboard/internal/customdashboard"
@@ -50,11 +54,22 @@ import (
 	"scriptboard/internal/hostsecurity"
 	"scriptboard/internal/hoststatus"
 	"scriptboard/internal/instancelock"
+	"scriptboard/internal/mfa"
 	"scriptboard/internal/mysqlmanager"
+	"scriptboard/internal/passkey"
 	"scriptboard/internal/privatepath"
+	"scriptboard/internal/privilegebroker"
+	"scriptboard/internal/remotewebsite"
 	"scriptboard/internal/runmanager"
 	"scriptboard/internal/scheduler"
+	"scriptboard/internal/secretredaction"
+	"scriptboard/internal/secretstore"
+	"scriptboard/internal/securitybaseline"
+	"scriptboard/internal/securityevents"
+	"scriptboard/internal/servicelogs"
+	"scriptboard/internal/statebackup"
 	updatepkg "scriptboard/internal/update"
+	"scriptboard/internal/uploadinbox"
 	"scriptboard/internal/websitemonitor"
 )
 
@@ -109,6 +124,12 @@ func webTemplateFunctions() template.FuncMap {
 		"join":         strings.Join,
 		"stringSlice":  func(values ...string) []string { return values },
 		"addInt":       func(value, delta int) int { return value + delta },
+		"shortDigest": func(value string) string {
+			if len(value) <= 12 {
+				return value
+			}
+			return value[:12] + "…"
+		},
 		"displayTime": func(input any) string {
 			value, ok := input.(time.Time)
 			if pointer, pointerOK := input.(*time.Time); pointerOK && pointer != nil {
@@ -136,6 +157,7 @@ func webTemplateFunctions() template.FuncMap {
 		"containerSortURL":         containerSortURL,
 		"containerStatusURL":       containerStatusURL,
 		"kubernetesSortURL":        kubernetesSortURL,
+		"serviceLogService":        serviceLogServiceLabel,
 		"duration":                 humanDuration,
 		"localDuration": func(locale webLocale, value time.Duration) string {
 			if locale == localeSimplifiedChinese {
@@ -303,91 +325,216 @@ const (
 type contextKey string
 
 const (
-	sessionContextKey contextKey = "session"
-	secureContextKey  contextKey = "secure-request"
+	sessionContextKey   contextKey = "session"
+	secureContextKey    contextKey = "secure-request"
+	requestIDContextKey contextKey = "request-id"
 )
 
 type Config struct {
-	StateRoot              string
-	ConfigPath             string
-	InstallRoot            string
-	TLSKey                 string
-	FileTopology           hostfiles.Topology
-	RunTimeoutGrace        time.Duration
-	SchedulerNow           func() time.Time
-	SchedulerTick          time.Duration
-	ExecutorChains         map[string][]string
-	AdminUsername          string
-	AdminPassword          string
-	AdminPasswordFile      string
-	TrustedProxies         []string
-	WebsiteMonitorOptions  websitemonitor.Options
-	UpdateCheck            bool
-	UpdateInterval         time.Duration
-	UpdateSource           updatepkg.ReleaseSource
-	RequestShutdown        func()
-	RequestRestart         func() error
-	ApplicationProbe       appstatus.Probe
-	KubernetesFactory      clusterstatus.Factory
-	AssistantRuntimeSource runtimeinstall.Source
-	HostSecurity           hostsecurity.Service
+	StateRoot                       string
+	ConfigPath                      string
+	InstallRoot                     string
+	TLSKey                          string
+	FileTopology                    hostfiles.Topology
+	RunTimeoutGrace                 time.Duration
+	SchedulerNow                    func() time.Time
+	SchedulerTick                   time.Duration
+	ExecutorChains                  map[string][]string
+	AdminUsername                   string
+	AdminPasswordFile               string
+	TrustedProxies                  []string
+	AllowedHosts                    []string
+	CanonicalExternalURL            string
+	WebsiteMonitorOptions           websitemonitor.Options
+	CustomDashboardClient           *http.Client
+	UpdateCheck                     bool
+	UpdateInterval                  time.Duration
+	UpdateSource                    updatepkg.ReleaseSource
+	RequestShutdown                 func()
+	RequestRestart                  func() error
+	ApplicationProbe                appstatus.Probe
+	KubernetesFactory               clusterstatus.Factory
+	AssistantRuntimeSource          runtimeinstall.Source
+	HostSecurity                    hostsecurity.Service
+	ServiceLogs                     servicelogs.Reader
+	PrivilegedBrokerEndpoint        string
+	AssistantProcessLauncher        pirpc.ProcessLauncher
+	RunnerProcessLauncher           runmanager.ProcessLauncher
+	AuditCheckpoint                 AuditCheckpoint
+	MFAStore                        MFAStore
+	PasskeyStore                    PasskeyStore
+	RemoteWebsiteService            RemoteWebsiteService
+	ProviderCredentials             *privilegebroker.ProviderCredentials
+	MySQLBackend                    mysqlmanager.Backend
+	HostFilesBackend                *privilegebroker.HostFilesBackend
+	StateBackups                    StateBackupService
+	SecurityEventEndpoint           string
+	SecurityEventToken              string
+	SecurityEventTokenFile          string
+	SecurityEventAllowPrivate       bool
+	SecurityEventClient             *http.Client
+	NotificationEmailRelayEndpoint  string
+	NotificationEmailRecipient      string
+	NotificationEmailRelayTokenFile string
+}
+
+type AuditCheckpoint interface {
+	VerifyOrBootstrap(context.Context, *auditlog.Store, time.Time) error
+	Write(context.Context, *auditlog.Store, time.Time) error
+	CheckpointEventID() int64
+}
+
+type MFAStore interface {
+	Status(string) (mfa.Status, error)
+	Begin(string, string) (mfa.Enrollment, error)
+	Confirm(string, string) ([]string, error)
+	Verify(string, string) (bool, error)
+	Reset(string) error
+}
+
+type PasskeyStore interface {
+	User(string, string) (passkey.User, error)
+	List(string) ([]passkey.CredentialView, error)
+	Add(string, string, webauthn.Credential) error
+	Update(string, webauthn.Credential) error
+	Delete(string, string) error
+	Reset(string) error
+}
+
+type RemoteWebsiteService interface {
+	Store(context.Context, string, string, string) error
+	Fetch(context.Context, string, string) (json.RawMessage, error)
+	Delete(context.Context, string) error
+}
+
+type StateBackupService interface {
+	Create(context.Context, string, []byte) (statebackup.Artifact, error)
+	Inspect(context.Context, string, []byte) (statebackup.Manifest, error)
+	Stage(context.Context, string, []byte, string) (statebackup.Stage, error)
+	List(context.Context) ([]statebackup.Stage, error)
+	Discard(context.Context, string) error
+}
+
+type contextualMFAStore interface {
+	BeginContext(context.Context, string, string) (mfa.Enrollment, error)
+	ConfirmContext(context.Context, string, string) ([]string, error)
+	ResetContext(context.Context, string) error
+}
+
+type contextualPasskeyStore interface {
+	AddContext(context.Context, string, string, webauthn.Credential) error
+	DeleteContext(context.Context, string, string) error
+	ResetContext(context.Context, string) error
+}
+
+func beginMFAWithContext(ctx context.Context, store MFAStore, userID, account string) (mfa.Enrollment, error) {
+	if contextual, ok := store.(contextualMFAStore); ok {
+		return contextual.BeginContext(ctx, userID, account)
+	}
+	return store.Begin(userID, account)
+}
+
+func confirmMFAWithContext(ctx context.Context, store MFAStore, userID, code string) ([]string, error) {
+	if contextual, ok := store.(contextualMFAStore); ok {
+		return contextual.ConfirmContext(ctx, userID, code)
+	}
+	return store.Confirm(userID, code)
+}
+
+func resetMFAWithContext(ctx context.Context, store MFAStore, userID string) error {
+	if contextual, ok := store.(contextualMFAStore); ok {
+		return contextual.ResetContext(ctx, userID)
+	}
+	return store.Reset(userID)
+}
+
+func addPasskeyWithContext(ctx context.Context, store PasskeyStore, userID, name string, credential webauthn.Credential) error {
+	if contextual, ok := store.(contextualPasskeyStore); ok {
+		return contextual.AddContext(ctx, userID, name, credential)
+	}
+	return store.Add(userID, name, credential)
+}
+
+func deletePasskeyWithContext(ctx context.Context, store PasskeyStore, userID, credentialID string) error {
+	if contextual, ok := store.(contextualPasskeyStore); ok {
+		return contextual.DeleteContext(ctx, userID, credentialID)
+	}
+	return store.Delete(userID, credentialID)
 }
 
 type App struct {
-	db                 *sql.DB
-	stateRoot          string
-	assistant          *assistant.Service
-	assistantRuntime   *assistantRuntimeCoordinator
-	assistantRuntimes  *runtimeinstall.Manager
-	assistantTools     *assistantToolExecutor
-	assistantRaster    *raster.Processor
-	assistantBroker    *toolbroker.Broker
-	files              *hostfiles.Manager
-	fileOperations     *sqliteFileOperationStore
-	fileMoves          *hostfiles.MoveEngine
-	fileOperationCtx   context.Context
-	fileOperationStop  context.CancelFunc
-	fileOperationWG    sync.WaitGroup
-	runs               *runmanager.Manager
-	scheduler          *scheduler.Manager
-	hostStatus         *hoststatus.Monitor
-	hostSecurity       hostsecurity.Service
-	securityDraftMu    sync.Mutex
-	securityDrafts     map[string]securityFirewallDraft
-	applicationStatus  *appstatus.Monitor
-	kubernetesStatus   *clusterstatus.Manager
-	logStreamSlots     chan struct{}
-	logHistorySlots    chan struct{}
-	shellStatusCache   *shellStatusCache
-	websiteMonitor     *websitemonitor.Manager
-	customDashboards   *customdashboard.Manager
-	externalTriggers   *externaltrigger.Manager
-	externalLimit      *externaltrigger.Limiter
-	mysql              *mysqlmanager.Manager
-	mysqlContext       context.Context
-	mysqlCancel        context.CancelFunc
-	mysqlWG            sync.WaitGroup
-	instanceLock       *instancelock.Lock
-	handler            http.Handler
-	loginMu            sync.Mutex
-	loginSlots         chan struct{}
-	loginFailures      map[string]loginFailure
-	loginLastPrune     time.Time
-	loginRateSalt      [32]byte
-	activeRequestsMu   sync.Mutex
-	activeRequests     map[string]map[uint64]context.CancelFunc
-	activeRequestID    uint64
-	credentialOverride bool
-	trustedProxies     []*net.IPNet
-	updates            *updatepkg.Manager
-	requestRestart     func() error
-	instanceID         string
-	restartRequested   atomic.Bool
-	updateCancel       context.CancelFunc
-	updateContext      context.Context
-	updateResultsWake  chan struct{}
-	validation         atomic.Bool
-	validationID       string
+	db                   *sql.DB
+	stateRoot            string
+	assistant            *assistant.Service
+	assistantRuntime     *assistantRuntimeCoordinator
+	assistantRuntimes    *runtimeinstall.Manager
+	assistantTools       *assistantToolExecutor
+	assistantRaster      *raster.Processor
+	assistantBroker      *toolbroker.Broker
+	files                *hostfiles.Manager
+	hostFilesBackend     *privilegebroker.HostFilesBackend
+	auditLog             *auditlog.Store
+	auditCheckpoint      AuditCheckpoint
+	securityEvents       *securityevents.Manager
+	auditCheckpointStop  context.CancelFunc
+	auditCheckpointWG    sync.WaitGroup
+	uploadInbox          *uploadinbox.Store
+	execUploadExts       map[string]struct{}
+	fileOperations       *sqliteFileOperationStore
+	fileMoves            *hostfiles.MoveEngine
+	fileOperationCtx     context.Context
+	fileOperationStop    context.CancelFunc
+	fileOperationWG      sync.WaitGroup
+	runs                 *runmanager.Manager
+	scheduler            *scheduler.Manager
+	hostStatus           *hoststatus.Monitor
+	hostSecurity         hostsecurity.Service
+	securityHistory      *securitybaseline.HistoryStore
+	serviceLogs          servicelogs.Reader
+	securityDraftMu      sync.Mutex
+	securityDrafts       map[string]securityFirewallDraft
+	applicationStatus    *appstatus.Monitor
+	kubernetesStatus     *clusterstatus.Manager
+	logStreamSlots       chan struct{}
+	logHistorySlots      chan struct{}
+	shellStatusCache     *shellStatusCache
+	websiteMonitor       *websitemonitor.Manager
+	customDashboards     *customdashboard.Manager
+	externalTriggers     *externaltrigger.Manager
+	remoteWebsites       RemoteWebsiteService
+	stateBackups         StateBackupService
+	externalLimit        *externaltrigger.Limiter
+	mysql                *mysqlmanager.Manager
+	mfa                  MFAStore
+	passkeys             PasskeyStore
+	passkeyCeremonies    *passkeyCeremonyStore
+	mysqlContext         context.Context
+	mysqlCancel          context.CancelFunc
+	mysqlWG              sync.WaitGroup
+	instanceLock         *instancelock.Lock
+	handler              http.Handler
+	routeSpecs           []RouteSpec
+	loginMu              sync.Mutex
+	loginSlots           chan struct{}
+	loginFailures        map[string]loginFailure
+	loginLastPrune       time.Time
+	loginRateSalt        [32]byte
+	activeRequestsMu     sync.Mutex
+	activeRequests       map[string]map[uint64]context.CancelFunc
+	activeRequestID      uint64
+	credentialOverride   bool
+	trustedProxies       []*net.IPNet
+	allowedHosts         map[string]struct{}
+	canonicalExternalURL string
+	updates              *updatepkg.Manager
+	requestRestart       func() error
+	instanceID           string
+	restartRequested     atomic.Bool
+	updateCancel         context.CancelFunc
+	updateContext        context.Context
+	updateResultsWake    chan struct{}
+	validation           atomic.Bool
+	validationID         string
 }
 
 type loginFailure struct {
@@ -404,6 +551,24 @@ func Open(config Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	credentialStore, err := secretstore.New(stateRoot)
+	if err != nil {
+		return nil, err
+	}
+	mfaStore := config.MFAStore
+	if mfaStore == nil {
+		mfaStore, err = mfa.New(mfa.Options{StateRoot: stateRoot, SecretStore: credentialStore})
+		if err != nil {
+			return nil, err
+		}
+	}
+	passkeyStore := config.PasskeyStore
+	if passkeyStore == nil {
+		passkeyStore, err = passkey.New(passkey.Options{StateRoot: stateRoot, SecretStore: credentialStore})
+		if err != nil {
+			return nil, err
+		}
+	}
 	installRoot := strings.TrimSpace(config.InstallRoot)
 	if installRoot == "" {
 		if executable, executableErr := os.Executable(); executableErr == nil {
@@ -412,7 +577,7 @@ func Open(config Config) (*App, error) {
 	}
 	instanceDigest := sha256.Sum256([]byte(stateRoot))
 	files, err := hostfiles.Open(hostfiles.Options{
-		ProtectedPaths: []string{stateRoot, installRoot, config.ConfigPath, config.AdminPasswordFile, config.TLSKey},
+		ProtectedPaths: []string{stateRoot, filepath.Dir(credentialStore.KeyPath()), installRoot, config.ConfigPath, config.AdminPasswordFile, config.SecurityEventTokenFile, config.NotificationEmailRelayTokenFile, config.TLSKey},
 		InstanceID:     hex.EncodeToString(instanceDigest[:]), Topology: config.FileTopology,
 	})
 	if err != nil {
@@ -440,6 +605,16 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	uploadInboxStore, err := uploadinbox.New(filepath.Join(stateRoot, "inbox", "uploads"))
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	allowedHosts, err := parseAllowedHosts(config.AllowedHosts)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	var loginRateSalt [32]byte
 	if _, err := rand.Read(loginRateSalt[:]); err != nil {
 		_ = db.Close()
@@ -447,22 +622,95 @@ func Open(config Config) (*App, error) {
 	}
 	hostSecurityService := config.HostSecurity
 	if hostSecurityService == nil {
-		hostSecurityService = hostsecurity.NewManager(hostsecurity.Options{})
+		hostSecurityReader := hostsecurity.NewManager(hostsecurity.Options{})
+		brokerEndpoint := strings.TrimSpace(config.PrivilegedBrokerEndpoint)
+		if brokerEndpoint == "" {
+			brokerEndpoint, err = privilegebroker.DefaultEndpoint(stateRoot)
+			if err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("resolve privileged Broker endpoint: %w", err)
+			}
+		}
+		brokerClient := privilegebroker.NewClient(privilegebroker.ClientOptions{Dial: privilegebroker.Dial(brokerEndpoint)})
+		hostSecurityService, err = privilegebroker.NewHostSecurityService(hostSecurityReader, brokerClient)
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("configure privileged host security Broker: %w", err)
+		}
 	}
 	application := &App{
-		db: db, stateRoot: stateRoot, files: files, instanceLock: instanceLock,
-		loginSlots: make(chan struct{}, 2), loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies,
+		db: db, stateRoot: stateRoot, files: files, hostFilesBackend: config.HostFilesBackend, stateBackups: config.StateBackups, uploadInbox: uploadInboxStore, instanceLock: instanceLock, mfa: mfaStore,
+		passkeys: passkeyStore, passkeyCeremonies: newPasskeyCeremonyStore(),
+		execUploadExts: buildExecutableUploadExtensions(config.ExecutorChains),
+		loginSlots:     make(chan struct{}, 2), loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies,
+		allowedHosts: allowedHosts, canonicalExternalURL: config.CanonicalExternalURL,
 		loginRateSalt:  loginRateSalt,
 		logStreamSlots: make(chan struct{}, 8), logHistorySlots: make(chan struct{}, 4),
 		updateResultsWake: make(chan struct{}, 1),
 		hostSecurity:      hostSecurityService,
+		serviceLogs:       config.ServiceLogs,
 		securityDrafts:    make(map[string]securityFirewallDraft),
 		requestRestart:    config.RequestRestart,
 		instanceID:        fmt.Sprintf("%d-%x", os.Getpid(), time.Now().UnixNano()),
 	}
-	application.externalTriggers = externaltrigger.New(db, externaltrigger.Options{SecretsDirectory: filepath.Join(stateRoot, "secrets")})
+	if application.serviceLogs == nil {
+		application.serviceLogs = servicelogs.New(servicelogs.Options{})
+	}
+	application.securityHistory, err = securitybaseline.NewHistoryStore(stateRoot)
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("initialize security baseline history: %w", err)
+	}
+	application.auditLog = auditlog.New(db)
+	if _, err := application.auditLog.Verify(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("verify audit hash chain: %w", err)
+	}
+	application.securityEvents, err = securityevents.New(securityevents.Options{
+		StateRoot: stateRoot, Endpoint: config.SecurityEventEndpoint, Token: config.SecurityEventToken,
+		AllowPrivate: config.SecurityEventAllowPrivate, Client: config.SecurityEventClient,
+		BrokerEmailRelayEndpoint: config.NotificationEmailRelayEndpoint, BrokerEmailRecipient: config.NotificationEmailRecipient,
+	})
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("configure security event forwarding: %w", err)
+	}
+	application.auditLog.SetObserver(application.securityEvents.Observe)
+	application.auditCheckpoint = config.AuditCheckpoint
+	if application.auditCheckpoint == nil {
+		application.auditCheckpoint, err = auditcheckpoint.New(auditcheckpoint.Options{StateRoot: stateRoot, SecretStore: credentialStore})
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("initialize external audit checkpoint: %w", err)
+		}
+	}
+	if err := application.auditCheckpoint.VerifyOrBootstrap(context.Background(), application.auditLog, time.Now().UTC()); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("verify external audit checkpoint: %w", err)
+	}
+	application.externalTriggers = externaltrigger.New(db, externaltrigger.Options{SecretsDirectory: filepath.Join(stateRoot, "secrets"), SecretStore: credentialStore})
+	application.remoteWebsites = config.RemoteWebsiteService
+	if application.remoteWebsites == nil {
+		application.remoteWebsites, err = remotewebsite.New(remotewebsite.Options{StateRoot: stateRoot, SecretStore: credentialStore})
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("initialize remote website credential service: %w", err)
+		}
+		if err := application.externalTriggers.MigrateSecrets(); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("migrate External Interface secrets: %w", err)
+		}
+		if err := application.externalTriggers.MigrateRemoteWebsiteCredentials(context.Background(), application.remoteWebsites); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("migrate remote website credentials: %w", err)
+		}
+		if err := application.externalTriggers.PurgeLegacyKeySecrets(context.Background()); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("purge recoverable External Interface keys: %w", err)
+		}
+	}
 	application.externalLimit = externaltrigger.NewLimiter(externaltrigger.LimiterOptions{RequestsPerMinute: 60, Concurrent: 4})
-	application.mysql, err = mysqlmanager.New(mysqlmanager.Options{DB: db, StateRoot: stateRoot, Audit: func(event mysqlmanager.AuditEvent) {
+	application.mysql, err = mysqlmanager.New(mysqlmanager.Options{DB: db, StateRoot: stateRoot, SecretStore: credentialStore, Backend: config.MySQLBackend, Audit: func(event mysqlmanager.AuditEvent) {
 		application.recordAuditWithActor(event.Action, event.Target, event.Result, "mysqlmanager", event.Actor.UserID, event.Actor.Username, "")
 	}})
 	if err != nil {
@@ -474,7 +722,11 @@ func Open(config Config) (*App, error) {
 		return nil, fmt.Errorf("protect MySQL backup root: %w", err)
 	}
 	application.mysqlContext, application.mysqlCancel = context.WithCancel(context.Background())
-	application.assistant, err = assistant.New(db, assistant.Options{StateRoot: stateRoot})
+	assistantOptions := assistant.Options{StateRoot: stateRoot, SecretStore: credentialStore}
+	if config.ProviderCredentials != nil {
+		assistantOptions.ProviderCredentials = config.ProviderCredentials
+	}
+	application.assistant, err = assistant.New(db, assistantOptions)
 	if err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("initialize assistant module: %w", err)
@@ -491,7 +743,10 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("load assistant settings: %w", err)
 	}
-	application.assistantRuntime = newAssistantRuntimeCoordinator(stateRoot, application.assistant, assistantSettings.MaxActiveConversations)
+	application.assistantRuntime = newAssistantRuntimeCoordinatorWithLauncher(stateRoot, application.assistant, assistantSettings.MaxActiveConversations, config.AssistantProcessLauncher)
+	if config.ProviderCredentials != nil {
+		application.assistantRuntime.SetProviderSessions(brokerAssistantProviderSessions{providers: config.ProviderCredentials})
+	}
 	application.assistantRuntime.SetApprovalAudit(func(actor assistant.Actor, conversationID, approvalID, result string) {
 		var role userRole
 		_ = application.db.QueryRow("SELECT role FROM users WHERE id = ?", actor.UserID).Scan(&role)
@@ -511,28 +766,36 @@ func Open(config Config) (*App, error) {
 		Protected:     application.assistant.ReferencedRuntimeVersions,
 	})
 	application.fileOperations = newSQLiteFileOperationStore(db)
-	application.fileMoves = hostfiles.NewMoveEngine(files, application.fileOperations)
-	application.fileOperationCtx, application.fileOperationStop = context.WithCancel(context.Background())
+	if application.hostFilesBackend == nil {
+		application.fileMoves = hostfiles.NewMoveEngine(files, application.fileOperations)
+		application.fileOperationCtx, application.fileOperationStop = context.WithCancel(context.Background())
+	}
 	if !validating {
 		if err := application.initializeAdmin(stateRoot); err != nil {
 			_ = db.Close()
 			return nil, err
 		}
-		if err := application.applyCredentialOverride(config.AdminUsername, config.AdminPassword, config.AdminPasswordFile); err != nil {
+		if err := application.applyCredentialOverride(config.AdminUsername, config.AdminPasswordFile); err != nil {
 			_ = db.Close()
 			return nil, err
 		}
-		_, _ = cleanupExpiredAuditEvents(db, stateRoot, time.Now().UTC().AddDate(-1, 0, 0))
+		_, _ = cleanupExpiredAuditEventsBefore(db, stateRoot, time.Now().UTC().AddDate(-1, 0, 0), application.auditCheckpoint.CheckpointEventID())
+		if err := application.auditCheckpoint.Write(context.Background(), application.auditLog, time.Now().UTC()); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("refresh external audit checkpoint after retention: %w", err)
+		}
 	}
 	timeoutGrace := config.RunTimeoutGrace
 	if timeoutGrace <= 0 {
 		timeoutGrace = 30 * time.Second
 	}
-	application.runs = runmanager.New(db, application.files, stateRoot, timeoutGrace, config.ExecutorChains)
-	if err := application.fileMoves.Recover(context.Background()); err != nil {
-		application.runs.Close()
-		_ = db.Close()
-		return nil, fmt.Errorf("recover filesystem operations: %w", err)
+	application.runs = runmanager.NewWithLauncher(db, application.files, stateRoot, timeoutGrace, config.ExecutorChains, config.RunnerProcessLauncher, application.auditLog)
+	if application.fileMoves != nil {
+		if err := application.fileMoves.Recover(context.Background()); err != nil {
+			application.runs.Close()
+			_ = db.Close()
+			return nil, fmt.Errorf("recover filesystem operations: %w", err)
+		}
 	}
 	if validating {
 		if _, entered := application.runs.EnterMaintenance(); !entered {
@@ -551,9 +814,19 @@ func Open(config Config) (*App, error) {
 		}
 	}
 	if validating {
-		application.scheduler = scheduler.NewPaused(db, application.runs, application.loadVariables, config.SchedulerNow, config.SchedulerTick)
+		application.scheduler = scheduler.NewPaused(db, application.runs, application.loadVariables, config.SchedulerNow, config.SchedulerTick, application.recordAudit)
 	} else {
-		application.scheduler = scheduler.New(db, application.runs, application.loadVariables, config.SchedulerNow, config.SchedulerTick)
+		application.scheduler = scheduler.New(db, application.runs, application.loadVariables, config.SchedulerNow, config.SchedulerTick, application.recordAudit)
+	}
+	if application.hostFilesBackend != nil {
+		application.scheduler.SetScriptPreparer(func(scheduleID string) (hostfiles.Script, hostfiles.PreparedDirectory, error) {
+			requestID, tokenErr := randomToken(18)
+			if tokenErr != nil {
+				return hostfiles.Script{}, hostfiles.PreparedDirectory{}, tokenErr
+			}
+			script, prepareErr := application.hostFilesBackend.PrepareSchedule(context.Background(), "scheduler-"+requestID, scheduleID)
+			return script, hostfiles.PreparedDirectory{Path: script.Directory}, prepareErr
+		})
 	}
 	probe, _ := hoststatus.NewSystemProbe(stateRoot, installRoot)
 	application.hostStatus, err = hoststatus.New(db, probe, hoststatus.Options{SkipInitialCleanup: validating})
@@ -580,6 +853,18 @@ func Open(config Config) (*App, error) {
 			return application.loadVariables()
 		}
 	}
+	existingWebsiteTransition := config.WebsiteMonitorOptions.OnTransition
+	config.WebsiteMonitorOptions.OnTransition = func(transition websitemonitor.Transition) {
+		result := "succeeded"
+		action := "website_monitor_recovered"
+		if transition.State == websitemonitor.StateDown {
+			action, result = "website_monitor_down", "failed"
+		}
+		application.recordAudit(action, transition.MonitorID, result, "website-monitor")
+		if existingWebsiteTransition != nil {
+			existingWebsiteTransition(transition)
+		}
+	}
 	application.websiteMonitor, err = websitemonitor.New(db, config.WebsiteMonitorOptions)
 	if err != nil {
 		application.applicationStatus.Close()
@@ -589,7 +874,7 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	application.customDashboards, err = customdashboard.New(customdashboard.Options{DB: db, Paused: validating, SecretsDirectory: filepath.Join(stateRoot, "secrets")})
+	application.customDashboards, err = customdashboard.New(customdashboard.Options{DB: db, Client: config.CustomDashboardClient, Paused: validating, SecretsDirectory: filepath.Join(stateRoot, "secrets")})
 	if err != nil {
 		application.websiteMonitor.Close()
 		application.applicationStatus.Close()
@@ -633,25 +918,27 @@ func Open(config Config) (*App, error) {
 		application.hostStatus.Start(context.Background())
 		application.applicationStatus.Start(context.Background())
 		application.kubernetesStatus.Start(context.Background())
-		_ = application.mysql.ReconcilePlans(context.Background())
-		application.mysqlWG.Add(2)
-		go func() {
-			defer application.mysqlWG.Done()
-			_ = application.mysql.RecoverInterrupted(application.mysqlContext)
-		}()
-		go func() {
-			defer application.mysqlWG.Done()
-			ticker := time.NewTicker(30 * time.Second)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-application.mysqlContext.Done():
-					return
-				case <-ticker.C:
-					_ = application.mysql.RunDuePlans(application.mysqlContext)
+		if config.MySQLBackend == nil {
+			_ = application.mysql.ReconcilePlans(context.Background())
+			application.mysqlWG.Add(2)
+			go func() {
+				defer application.mysqlWG.Done()
+				_ = application.mysql.RecoverInterrupted(application.mysqlContext)
+			}()
+			go func() {
+				defer application.mysqlWG.Done()
+				ticker := time.NewTicker(30 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-application.mysqlContext.Done():
+						return
+					case <-ticker.C:
+						_ = application.mysql.RunDuePlans(application.mysqlContext)
+					}
 				}
-			}
-		}()
+			}()
+		}
 	}
 	application.updateContext, application.updateCancel = context.WithCancel(context.Background())
 	application.updates = updatepkg.NewManager(updatepkg.ManagerConfig{
@@ -666,12 +953,53 @@ func Open(config Config) (*App, error) {
 	go application.monitorUpdateResults()
 	application.shellStatusCache = newShellStatusCache(5*time.Second, time.Now, application.loadShellStatus)
 	application.handler = application.routes()
+	auditCheckpointContext, auditCheckpointStop := context.WithCancel(context.Background())
+	application.auditCheckpointStop = auditCheckpointStop
+	application.auditCheckpointWG.Add(1)
+	go application.monitorAuditCheckpoint(auditCheckpointContext)
 	opened = true
 	return application, nil
 }
 
+func buildExecutableUploadExtensions(configured map[string][]string) map[string]struct{} {
+	extensions := make(map[string]struct{})
+	for _, extension := range []string{
+		".appimage", ".bat", ".cmd", ".com", ".cpl", ".desktop", ".dll", ".exe", ".hta",
+		".jar", ".js", ".jse", ".msi", ".ps1", ".py", ".reg", ".scr", ".service", ".sh",
+		".vbe", ".vbs", ".wsf", ".wsh",
+	} {
+		extensions[extension] = struct{}{}
+	}
+	for extension := range configured {
+		extension = strings.ToLower(strings.TrimSpace(extension))
+		if strings.HasPrefix(extension, ".") {
+			extensions[extension] = struct{}{}
+		}
+	}
+	return extensions
+}
+
+func (a *App) executableUploadRequiresPublication(name string) bool {
+	_, active := a.execUploadExts[strings.ToLower(filepath.Ext(name))]
+	return active
+}
+
 func (a *App) Handler() http.Handler {
 	return a.handler
+}
+
+func (a *App) monitorAuditCheckpoint(ctx context.Context) {
+	defer a.auditCheckpointWG.Done()
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			_ = a.auditCheckpoint.Write(ctx, a.auditLog, now.UTC())
+		}
+	}
 }
 
 func (a *App) ValidationOperationID() string {
@@ -818,7 +1146,9 @@ func parseTrustedProxies(values []string) ([]*net.IPNet, error) {
 	return result, nil
 }
 
-func (a *App) applyTrustedProxy(request *http.Request) *http.Request {
+const maximumForwardedChainLength = 8
+
+func (a *App) applyTrustedProxy(request *http.Request) (*http.Request, error) {
 	host, _, err := net.SplitHostPort(request.RemoteAddr)
 	if err != nil {
 		host = request.RemoteAddr
@@ -832,14 +1162,27 @@ func (a *App) applyTrustedProxy(request *http.Request) *http.Request {
 		}
 	}
 	if !trusted {
-		return request
+		request.Header.Del("Forwarded")
+		request.Header.Del("X-Forwarded-For")
+		request.Header.Del("X-Forwarded-Host")
+		request.Header.Del("X-Forwarded-Proto")
+		return request, nil
 	}
-	forwarded := strings.Split(request.Header.Get("X-Forwarded-For"), ",")
+	if len(request.Header.Values("Forwarded")) != 0 {
+		return nil, errors.New("the Forwarded header is not accepted; use the configured X-Forwarded contract")
+	}
+	forwardedFor, err := singleForwardedHeader(request.Header, "X-Forwarded-For")
+	if err != nil {
+		return nil, err
+	}
+	forwarded, err := validatedForwardedValues(forwardedFor, func(value string) bool {
+		return net.ParseIP(value) != nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("invalid X-Forwarded-For: %w", err)
+	}
 	for index := len(forwarded) - 1; index >= 0; index-- {
-		client := net.ParseIP(strings.TrimSpace(forwarded[index]))
-		if client == nil {
-			continue
-		}
+		client := net.ParseIP(forwarded[index])
 		clientTrusted := false
 		for _, network := range a.trustedProxies {
 			if network.Contains(client) {
@@ -852,11 +1195,63 @@ func (a *App) applyTrustedProxy(request *http.Request) *http.Request {
 			break
 		}
 	}
-	forwardedProto := strings.Split(request.Header.Get("X-Forwarded-Proto"), ",")
-	if strings.EqualFold(strings.TrimSpace(forwardedProto[len(forwardedProto)-1]), "https") {
+	rawProto, err := singleForwardedHeader(request.Header, "X-Forwarded-Proto")
+	if err != nil {
+		return nil, err
+	}
+	forwardedProto, err := validatedForwardedValues(rawProto, func(value string) bool {
+		return strings.EqualFold(value, "http") || strings.EqualFold(value, "https")
+	})
+	if err != nil {
+		return nil, fmt.Errorf("invalid X-Forwarded-Proto: %w", err)
+	}
+	if len(forwardedProto) > 0 && strings.EqualFold(forwardedProto[len(forwardedProto)-1], "https") {
 		request = request.WithContext(context.WithValue(request.Context(), secureContextKey, true))
 	}
-	return request
+	rawHost, err := singleForwardedHeader(request.Header, "X-Forwarded-Host")
+	if err != nil {
+		return nil, err
+	}
+	forwardedHost, err := validatedForwardedValues(rawHost, func(value string) bool {
+		_, normalizeErr := normalizeHTTPHost(value)
+		return normalizeErr == nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("invalid X-Forwarded-Host: %w", err)
+	}
+	if len(forwardedHost) > 0 {
+		request.Host = forwardedHost[len(forwardedHost)-1]
+	}
+	return request, nil
+}
+
+func singleForwardedHeader(header http.Header, name string) (string, error) {
+	values := header.Values(name)
+	if len(values) > 1 {
+		return "", fmt.Errorf("multiple %s header fields are not allowed", name)
+	}
+	if len(values) == 0 {
+		return "", nil
+	}
+	return values[0], nil
+}
+
+func validatedForwardedValues(raw string, valid func(string) bool) ([]string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	parts := strings.Split(raw, ",")
+	if len(parts) > maximumForwardedChainLength {
+		return nil, errors.New("forwarded chain is too long")
+	}
+	values := make([]string, len(parts))
+	for index, part := range parts {
+		values[index] = strings.TrimSpace(part)
+		if values[index] == "" || !valid(values[index]) {
+			return nil, fmt.Errorf("invalid forwarded value at position %d", index+1)
+		}
+	}
+	return values, nil
 }
 
 func isSecureRequest(request *http.Request) bool {
@@ -900,13 +1295,32 @@ func (a *App) ResetAdminCredentials(username string) (string, error) {
 		_ = os.Remove(passwordPath)
 		return "", err
 	}
+	if err := a.mfa.Reset("administrator"); err != nil {
+		a.recordAudit("admin_reset_mfa", username, "failed", "local-cli")
+		return "", fmt.Errorf("reset administrator MFA after credentials changed: %w", err)
+	}
+	if err := a.passkeys.Reset("administrator"); err != nil {
+		a.recordAudit("admin_reset_passkeys", username, "failed", "local-cli")
+		return "", fmt.Errorf("reset administrator passkeys after credentials changed: %w", err)
+	}
 	a.cancelAllAuthenticatedRequests()
 	a.recordAudit("admin_reset", username, "succeeded", "local-cli")
 	return password, nil
 }
 
-func (a *App) applyCredentialOverride(username, password, passwordFile string) error {
+func (a *App) applyCredentialOverride(username, passwordFile string) error {
+	password := ""
 	if passwordFile != "" {
+		if !filepath.IsAbs(passwordFile) {
+			return errors.New("administrator password file path must be absolute")
+		}
+		info, err := os.Lstat(passwordFile)
+		if err != nil {
+			return fmt.Errorf("inspect administrator password file: %w", err)
+		}
+		if !info.Mode().IsRegular() {
+			return errors.New("administrator password file must be a regular file without links")
+		}
 		file, err := os.Open(passwordFile)
 		if err != nil {
 			return fmt.Errorf("读取管理员密码文件: %w", err)
@@ -942,8 +1356,8 @@ func (a *App) applyCredentialOverride(username, password, passwordFile string) e
 	changed := username != currentUsername
 	newHash := currentHash
 	if password != "" {
-		if !utf8.ValidString(password) || utf8.RuneCountInString(password) < 12 || len([]byte(password)) > 256 || password == username {
-			return errors.New("管理员密码覆盖不符合长度规则")
+		if err := validatePasswordPolicy(password, username); err != nil {
+			return errors.New("管理员密码覆盖不符合密码策略")
 		}
 		if !verifyPassword(password, currentHash) {
 			changed = true
@@ -978,6 +1392,10 @@ func (a *App) applyCredentialOverride(username, password, passwordFile string) e
 }
 
 func (a *App) Close() error {
+	if a.auditCheckpointStop != nil {
+		a.auditCheckpointStop()
+		a.auditCheckpointWG.Wait()
+	}
 	if a.mysqlCancel != nil {
 		a.mysqlCancel()
 		a.mysqlWG.Wait()
@@ -1018,11 +1436,24 @@ func (a *App) Close() error {
 	if a.runs != nil {
 		a.runs.Close()
 	}
+	if a.auditLog != nil {
+		a.auditLog.SetObserver(nil)
+	}
+	if a.securityEvents != nil {
+		_ = a.securityEvents.Close()
+	}
+	var checkpointErr error
+	if a.auditCheckpoint != nil && a.auditLog != nil {
+		checkpointErr = a.auditCheckpoint.Write(context.Background(), a.auditLog, time.Now().UTC())
+	}
 	_, _ = a.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
 	dbErr := a.db.Close()
 	lockErr := a.instanceLock.Close()
 	if dbErr != nil {
 		return dbErr
+	}
+	if checkpointErr != nil {
+		return checkpointErr
 	}
 	return lockErr
 }
@@ -1155,6 +1586,7 @@ func openDatabase(path string) (*sql.DB, error) {
 			role TEXT NOT NULL CHECK (role IN ('administrator', 'maintainer', 'operator', 'viewer')),
 			enabled INTEGER NOT NULL DEFAULT 1,
 			auth_version INTEGER NOT NULL DEFAULT 1,
+			mfa_required_at INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		)`,
@@ -1162,6 +1594,8 @@ func openDatabase(path string) (*sql.DB, error) {
 			token_hash TEXT PRIMARY KEY,
 			user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 			auth_version INTEGER NOT NULL,
+			authentication_assurance INTEGER NOT NULL DEFAULT 1 CHECK (authentication_assurance BETWEEN 1 AND 2),
+			reauthenticated_at INTEGER NOT NULL DEFAULT 0,
 			csrf_token TEXT NOT NULL,
 			created_at INTEGER NOT NULL,
 			last_seen_at INTEGER NOT NULL,
@@ -1176,7 +1610,13 @@ func openDatabase(path string) (*sql.DB, error) {
 			source_address TEXT NOT NULL,
 			actor_user_id TEXT NOT NULL DEFAULT '',
 			actor_username TEXT NOT NULL DEFAULT '',
-			actor_role TEXT NOT NULL DEFAULT ''
+			actor_role TEXT NOT NULL DEFAULT '',
+			request_id TEXT NOT NULL DEFAULT '',
+			authentication_assurance TEXT NOT NULL DEFAULT '',
+			resource_revision TEXT NOT NULL DEFAULT '',
+			resource_digest_sha256 TEXT NOT NULL DEFAULT '',
+			previous_hash TEXT NOT NULL DEFAULT '',
+			event_hash TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE TABLE IF NOT EXISTS instance_settings (
 			singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -1184,6 +1624,12 @@ func openDatabase(path string) (*sql.DB, error) {
 			updated_at INTEGER NOT NULL,
 			updated_by_user_id TEXT NOT NULL DEFAULT ''
 		)`,
+		`CREATE TABLE IF NOT EXISTS audit_chain_state (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			anchor_hash TEXT NOT NULL DEFAULT '',
+			tail_hash TEXT NOT NULL DEFAULT ''
+		)`,
+		`INSERT OR IGNORE INTO audit_chain_state (id, anchor_hash, tail_hash) VALUES (1, '', '')`,
 		`CREATE TABLE IF NOT EXISTS trash_entries (
 			id TEXT PRIMARY KEY,
 			original_path TEXT NOT NULL,
@@ -1255,6 +1701,8 @@ func openDatabase(path string) (*sql.DB, error) {
 			created_at INTEGER NOT NULL,
 			group_id TEXT REFERENCES quick_run_groups(id) ON DELETE SET NULL,
 			locked INTEGER NOT NULL DEFAULT 0,
+			script_sha256 TEXT NOT NULL DEFAULT '',
+			revision INTEGER NOT NULL DEFAULT 1,
 			updated_at INTEGER NOT NULL DEFAULT 0
 		)`,
 		`CREATE TABLE IF NOT EXISTS schedule_groups (
@@ -1545,7 +1993,7 @@ func openDatabase(path string) (*sql.DB, error) {
 			}
 		}
 	}
-	if schemaVersion >= 20 && schemaVersion <= 34 {
+	if schemaVersion >= 20 && schemaVersion <= 43 {
 		for _, column := range []struct{ name, definition string }{
 			{"supports_reasoning", `supports_reasoning INTEGER NOT NULL DEFAULT 0`},
 			{"default_thinking_level", `default_thinking_level TEXT NOT NULL DEFAULT 'medium' CHECK (default_thinking_level IN ('off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'))`},
@@ -1618,7 +2066,7 @@ func openDatabase(path string) (*sql.DB, error) {
 			}
 		}
 	}
-	if schemaVersion >= 20 && schemaVersion <= 36 {
+	if schemaVersion >= 20 && schemaVersion <= 43 {
 		for _, statement := range []string{
 			`ALTER TABLE custom_dashboard_cards RENAME TO custom_dashboard_cards_schema36`,
 			`CREATE TABLE custom_dashboard_cards (
@@ -1644,6 +2092,190 @@ func openDatabase(path string) (*sql.DB, error) {
 			}
 		}
 	}
+	if schemaVersion >= 20 && schemaVersion <= 43 {
+		for _, column := range []struct{ name, definition string }{
+			{"previous_hash", "previous_hash TEXT NOT NULL DEFAULT ''"},
+			{"event_hash", "event_hash TEXT NOT NULL DEFAULT ''"},
+		} {
+			exists, err := sqliteColumnExists(migration, "audit_events", column.name)
+			if err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("inspect audit chain migration: %w", err)
+			}
+			if !exists {
+				if _, err := migration.Exec("ALTER TABLE audit_events ADD COLUMN " + column.definition); err != nil {
+					_ = db.Close()
+					return nil, fmt.Errorf("add audit chain column: %w", err)
+				}
+			}
+		}
+		if err := auditlog.BackfillTransaction(context.Background(), migration); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("backfill audit hash chain: %w", err)
+		}
+	}
+	if schemaVersion >= 20 && schemaVersion <= 43 {
+		for _, column := range []struct{ name, definition string }{
+			{"script_sha256", "script_sha256 TEXT NOT NULL DEFAULT ''"},
+			{"revision", "revision INTEGER NOT NULL DEFAULT 1"},
+		} {
+			exists, err := sqliteColumnExists(migration, "quick_runs", column.name)
+			if err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("inspect Quick Run publication migration: %w", err)
+			}
+			if !exists {
+				if _, err := migration.Exec("ALTER TABLE quick_runs ADD COLUMN " + column.definition); err != nil {
+					_ = db.Close()
+					return nil, fmt.Errorf("add Quick Run publication column: %w", err)
+				}
+			}
+		}
+	}
+	if schemaVersion >= 20 && schemaVersion <= 43 {
+		rows, err := migration.Query(`SELECT entry.id, entry.created_at
+			FROM external_trigger_entries AS entry
+			WHERE EXISTS (
+				SELECT 1 FROM external_trigger_entries AS earlier
+				WHERE earlier.key_id = entry.key_id
+				AND (earlier.created_at < entry.created_at OR (earlier.created_at = entry.created_at AND earlier.id < entry.id))
+			)
+			ORDER BY entry.key_id, entry.created_at, entry.id`)
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("inspect External Interface capability migration: %w", err)
+		}
+		type extraExternalEntry struct {
+			id        string
+			createdAt int64
+		}
+		var extras []extraExternalEntry
+		for rows.Next() {
+			var entry extraExternalEntry
+			if err := rows.Scan(&entry.id, &entry.createdAt); err != nil {
+				_ = rows.Close()
+				_ = db.Close()
+				return nil, fmt.Errorf("read External Interface capability migration: %w", err)
+			}
+			extras = append(extras, entry)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			_ = db.Close()
+			return nil, fmt.Errorf("iterate External Interface capability migration: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("finish External Interface capability migration: %w", err)
+		}
+		now := time.Now().UTC().Unix()
+		for _, entry := range extras {
+			keyID, keyErr := randomToken(12)
+			secretPart, secretErr := randomToken(32)
+			if keyErr != nil || secretErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("generate migrated External Interface capability key: %v %v", keyErr, secretErr)
+			}
+			secret := "sbk_" + keyID + "." + secretPart
+			if _, err := migration.Exec(`INSERT INTO external_trigger_keys
+				(id, label, token_hash, token_hint, enabled, expires_at, created_at, updated_at, last_used_at)
+				VALUES (?, ?, ?, ?, 0, NULL, ?, ?, NULL)`,
+				keyID, "Migrated capability "+entry.id, hashToken(secret), "rotation required", entry.createdAt, now); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("create migrated External Interface capability key: %w", err)
+			}
+			if _, err := migration.Exec(`UPDATE external_trigger_entries SET key_id = ?, enabled = 0, updated_at = ? WHERE id = ?`, keyID, now, entry.id); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("split migrated External Interface capability: %w", err)
+			}
+		}
+	}
+	if schemaVersion >= 20 && schemaVersion <= 43 {
+		exists, err := sqliteColumnExists(migration, "external_trigger_entries", "require_signature")
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("inspect External Interface signature migration: %w", err)
+		}
+		if !exists {
+			if _, err := migration.Exec(`ALTER TABLE external_trigger_entries ADD COLUMN require_signature INTEGER NOT NULL DEFAULT 0 CHECK (require_signature IN (0, 1))`); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("add External Interface signature requirement: %w", err)
+			}
+		}
+	}
+	if schemaVersion >= 20 && schemaVersion <= 43 {
+		for _, column := range []struct{ name, definition string }{
+			{"authentication_assurance", "authentication_assurance INTEGER NOT NULL DEFAULT 1 CHECK (authentication_assurance BETWEEN 1 AND 2)"},
+			{"reauthenticated_at", "reauthenticated_at INTEGER NOT NULL DEFAULT 0"},
+		} {
+			exists, err := sqliteColumnExists(migration, "sessions", column.name)
+			if err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("inspect session authentication assurance migration: %w", err)
+			}
+			if !exists {
+				if _, err := migration.Exec("ALTER TABLE sessions ADD COLUMN " + column.definition); err != nil {
+					_ = db.Close()
+					return nil, fmt.Errorf("add session authentication assurance: %w", err)
+				}
+			}
+		}
+	}
+	if schemaVersion >= 20 && schemaVersion <= 43 {
+		for _, column := range []struct{ name, definition string }{
+			{"request_id", "request_id TEXT NOT NULL DEFAULT ''"},
+			{"authentication_assurance", "authentication_assurance TEXT NOT NULL DEFAULT ''"},
+		} {
+			exists, err := sqliteColumnExists(migration, "audit_events", column.name)
+			if err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("inspect audit correlation migration: %w", err)
+			}
+			if !exists {
+				if _, err := migration.Exec("ALTER TABLE audit_events ADD COLUMN " + column.definition); err != nil {
+					_ = db.Close()
+					return nil, fmt.Errorf("add audit correlation metadata: %w", err)
+				}
+			}
+		}
+	}
+	if schemaVersion >= 20 && schemaVersion <= 43 {
+		exists, err := sqliteColumnExists(migration, "users", "mfa_required_at")
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("inspect privileged MFA policy migration: %w", err)
+		}
+		if !exists {
+			if _, err := migration.Exec(`ALTER TABLE users ADD COLUMN mfa_required_at INTEGER NOT NULL DEFAULT 0`); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("add privileged MFA policy: %w", err)
+			}
+			// Existing privileged accounts receive a bounded enrollment window so an
+			// upgrade cannot strand the only local administrator outside the panel.
+			if _, err := migration.Exec(`UPDATE users SET mfa_required_at = ? WHERE role IN ('administrator', 'maintainer')`, time.Now().UTC().Add(7*24*time.Hour).Unix()); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("schedule privileged MFA enrollment: %w", err)
+			}
+		}
+	}
+	if schemaVersion >= 20 && schemaVersion <= 43 {
+		for _, column := range []struct{ name, definition string }{
+			{"resource_revision", "resource_revision TEXT NOT NULL DEFAULT ''"},
+			{"resource_digest_sha256", "resource_digest_sha256 TEXT NOT NULL DEFAULT ''"},
+		} {
+			exists, err := sqliteColumnExists(migration, "audit_events", column.name)
+			if err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("inspect audit resource identity migration: %w", err)
+			}
+			if !exists {
+				if _, err := migration.Exec("ALTER TABLE audit_events ADD COLUMN " + column.definition); err != nil {
+					_ = db.Close()
+					return nil, fmt.Errorf("add audit resource identity: %w", err)
+				}
+			}
+		}
+	}
 	for _, statement := range []string{
 		"CREATE UNIQUE INDEX IF NOT EXISTS users_single_administrator_idx ON users(role) WHERE role = 'administrator'",
 		"CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id)",
@@ -1664,6 +2296,7 @@ func openDatabase(path string) (*sql.DB, error) {
 		"CREATE INDEX IF NOT EXISTS trash_entries_original_path_idx ON trash_entries(original_path_key)",
 		"CREATE INDEX IF NOT EXISTS file_operations_phase_idx ON file_operations(phase, created_at)",
 		"CREATE INDEX IF NOT EXISTS file_quick_access_pins_order_idx ON file_quick_access_pins(sort_order, created_at)",
+		"CREATE UNIQUE INDEX IF NOT EXISTS external_trigger_entries_key_unique_idx ON external_trigger_entries(key_id)",
 		"CREATE INDEX IF NOT EXISTS schedules_due_idx ON schedules(next_fire_at) WHERE enabled = 1 AND deleted = 0",
 		"CREATE INDEX IF NOT EXISTS schedule_triggers_schedule_time_idx ON schedule_triggers(schedule_id, scheduled_for DESC)",
 		"CREATE INDEX IF NOT EXISTS schedule_triggers_unlinked_time_idx ON schedule_triggers(scheduled_for) WHERE run_id = ''",
@@ -1712,14 +2345,14 @@ func compatibleDatabaseSchema(version int) bool {
 	// MySQL connection state, and schema 32 adds read-only cross-instance website
 	// monitoring interfaces and encrypted remote source metadata, and schema 33 adds
 	// custom dashboards with independently public card collections, schema 34
-	// adds dedicated percentage cards, schema 35 adds model-level reasoning
-	// capability and default thinking strength, schema 36 adds instance-level
-	// presentation settings, schema 37 adds Docker Registry cards with encrypted
-	// credentials, and schema 38 adds the single Kubernetes connection, workload
-	// version and metric history, plus Docker container versions keyed by the
-	// existing stable application identity. Each supported predecessor has an
-	// explicit transactional forward path.
-	return version == currentSchemaVersion || currentSchemaVersion == 38 && version >= 20 && version <= 37
+	// Schema 34 adds dedicated percentage cards. The former dev line then used
+	// schemas 35-38 for reasoning defaults, instance branding, Registry cards,
+	// and Kubernetes/container monitoring while the security line independently
+	// used 35-43 for audit integrity, immutable execution resources, External
+	// Interface controls, authentication assurance, MFA policy, and resource
+	// identity. Schema 44 is the reconciled union; migrations below inspect the
+	// actual tables and columns so either predecessor can advance safely.
+	return version == currentSchemaVersion || currentSchemaVersion == 44 && version >= 20 && version <= 43
 }
 
 func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {
@@ -1784,8 +2417,8 @@ func (a *App) initializeAdmin(stateRoot string) error {
 	}
 	now := time.Now().UTC().Unix()
 	if _, err := transaction.Exec(
-		"INSERT INTO users (id, username, password_hash, role, enabled, auth_version, created_at, updated_at) VALUES ('administrator', 'admin', ?, 'administrator', 1, 1, ?, ?)",
-		hash, now, now,
+		"INSERT INTO users (id, username, password_hash, role, enabled, auth_version, mfa_required_at, created_at, updated_at) VALUES ('administrator', 'admin', ?, 'administrator', 1, 1, ?, ?, ?)",
+		hash, time.Now().UTC().Add(24*time.Hour).Unix(), now, now,
 	); err != nil {
 		return fmt.Errorf("创建 admin: %w", err)
 	}
@@ -1866,106 +2499,112 @@ func verifyPasswordContext(ctx context.Context, password, encoded string) bool {
 }
 
 func (a *App) routes() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /assets/app-v2.css", func(response http.ResponseWriter, request *http.Request) {
+	mux := newDeclaredRouteMux()
+	mux.Public("GET /assets/app-v2.css", func(response http.ResponseWriter, request *http.Request) {
 		serveWebAsset(response, request, "text/css; charset=utf-8", appCSS)
 	})
-	mux.HandleFunc("GET /assets/app.css", func(response http.ResponseWriter, request *http.Request) {
+	mux.Public("GET /assets/app.css", func(response http.ResponseWriter, request *http.Request) {
 		serveWebAsset(response, request, "text/css; charset=utf-8", appCSS)
 	})
-	mux.HandleFunc("GET /assets/app-v2.js", func(response http.ResponseWriter, request *http.Request) {
+	mux.Public("GET /assets/app-v2.js", func(response http.ResponseWriter, request *http.Request) {
 		serveWebAsset(response, request, "text/javascript; charset=utf-8", appJS)
 	})
-	mux.HandleFunc("GET /assets/markdown-it.min.js", func(response http.ResponseWriter, request *http.Request) {
+	mux.Public("GET /assets/markdown-it.min.js", func(response http.ResponseWriter, request *http.Request) {
 		serveWebAsset(response, request, "text/javascript; charset=utf-8", markdownItJS)
 	})
-	mux.HandleFunc("GET /assets/purify.min.js", func(response http.ResponseWriter, request *http.Request) {
+	mux.Public("GET /assets/purify.min.js", func(response http.ResponseWriter, request *http.Request) {
 		serveWebAsset(response, request, "text/javascript; charset=utf-8", domPurifyJS)
 	})
-	mux.HandleFunc("GET /assets/highlight.min.js", func(response http.ResponseWriter, request *http.Request) {
+	mux.Public("GET /assets/highlight.min.js", func(response http.ResponseWriter, request *http.Request) {
 		serveWebAsset(response, request, "text/javascript; charset=utf-8", highlightJS)
 	})
-	mux.HandleFunc("GET /assets/highlight-powershell.min.js", func(response http.ResponseWriter, request *http.Request) {
+	mux.Public("GET /assets/highlight-powershell.min.js", func(response http.ResponseWriter, request *http.Request) {
 		serveWebAsset(response, request, "text/javascript; charset=utf-8", highlightPowerShellJS)
 	})
-	mux.HandleFunc("GET /assets/highlight-dos.min.js", func(response http.ResponseWriter, request *http.Request) {
+	mux.Public("GET /assets/highlight-dos.min.js", func(response http.ResponseWriter, request *http.Request) {
 		serveWebAsset(response, request, "text/javascript; charset=utf-8", highlightDOSJS)
 	})
-	mux.HandleFunc("GET /favicon.ico", func(response http.ResponseWriter, request *http.Request) {
+	mux.Public("GET /favicon.ico", func(response http.ResponseWriter, request *http.Request) {
 		serveWebAsset(response, request, "image/x-icon", scriptboardFaviconICO)
 	})
-	mux.Handle("GET /{$}", a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	mux.Handle("GET /{$}", a.requirePermission(permissionObserve, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		http.Redirect(response, request, "/monitor", http.StatusSeeOther)
 	})))
-	mux.HandleFunc("GET /login", func(response http.ResponseWriter, request *http.Request) {
+	mux.Public("GET /login", func(response http.ResponseWriter, request *http.Request) {
 		if _, _, ok := a.loadSession(request); ok {
 			http.Redirect(response, request, "/monitor", http.StatusSeeOther)
 			return
 		}
 		renderLoginPage(response, request, http.StatusOK, "", "")
 	})
-	mux.HandleFunc("POST /login", a.login)
-	mux.HandleFunc("POST /settings/locale", a.setWebLocale)
-	mux.HandleFunc("/trigger", a.externalTrigger)
-	mux.Handle("POST /logout", a.requireSession(http.HandlerFunc(a.logout)))
-	mux.Handle("GET /monitor", a.requireSession(http.HandlerFunc(a.overviewPage)))
-	mux.Handle("GET /monitor/security", a.requireSession(http.HandlerFunc(a.securityPage)))
-	mux.Handle("POST /monitor/security/components/{component}/install", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.installSecurityComponent)))
-	mux.Handle("POST /monitor/security/fail2ban/unban", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.unbanSecurityIP)))
+	mux.Public("POST /login", a.login)
+	mux.Public("POST /auth/passkey/options", a.beginPasskeyLogin)
+	mux.Public("POST /settings/locale", a.setWebLocale)
+	mux.External("GET /trigger", a.externalTrigger)
+	mux.External("POST /trigger", a.externalTrigger)
+	mux.Handle("GET /auth/step-up", a.requirePermission(permissionObserve, http.HandlerFunc(a.stepUpTask)))
+	mux.Handle("POST /auth/step-up", a.requirePermission(permissionObserve, http.HandlerFunc(a.stepUp)))
+	mux.Handle("POST /auth/passkey/step-up/options", a.requirePermission(permissionObserve, http.HandlerFunc(a.beginPasskeyStepUp)))
+	mux.Handle("POST /logout", a.requirePermission(permissionObserve, http.HandlerFunc(a.logout)))
+	mux.Handle("GET /monitor", a.requirePermission(permissionObserve, http.HandlerFunc(a.overviewPage)))
+	mux.Handle("GET /monitor/security", a.requirePermission(permissionObserve, http.HandlerFunc(a.securityPage)))
+	mux.Handle("POST /monitor/security/baseline/snapshot", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.captureSecurityBaseline)))
+	mux.Handle("POST /monitor/security/components/{component}/install", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.installSecurityComponent)))
+	mux.Handle("POST /monitor/security/fail2ban/unban", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.unbanSecurityIP)))
 	mux.Handle("POST /monitor/security/firewall/draft/rules", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.addSecurityFirewallDraftRule)))
 	mux.Handle("POST /monitor/security/firewall/draft/defaults", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.updateSecurityFirewallDraftDefaults)))
 	mux.Handle("POST /monitor/security/firewall/draft/toggle", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.toggleSecurityFirewallDraftRule)))
 	mux.Handle("POST /monitor/security/firewall/draft/delete", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.deleteSecurityFirewallDraftRule)))
 	mux.Handle("POST /monitor/security/firewall/draft/discard", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.discardSecurityFirewallDraft)))
-	mux.Handle("POST /monitor/security/firewall/draft/apply", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.applySecurityFirewallDraft)))
-	mux.Handle("POST /monitor/security/firewall/enable", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.enableSecurityFirewall)))
+	mux.Handle("POST /monitor/security/firewall/draft/apply", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.applySecurityFirewallDraft)))
+	mux.Handle("POST /monitor/security/firewall/enable", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.enableSecurityFirewall)))
 	mux.Handle("GET /monitor/security/windows-firewall/rules/new", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.newWindowsFirewallRuleTask)))
-	mux.Handle("POST /monitor/security/windows-firewall/rules", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.addWindowsFirewallRule)))
-	mux.Handle("POST /monitor/security/windows-firewall/toggle", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.toggleWindowsFirewallRule)))
-	mux.Handle("POST /monitor/security/windows-firewall/delete", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.deleteWindowsFirewallRule)))
-	mux.Handle("GET /ai", a.requireSession(http.HandlerFunc(a.assistantPage)))
-	mux.Handle("GET /ai/resources", a.requireSession(http.HandlerFunc(a.assistantResourceSearch)))
-	mux.Handle("POST /ai/conversations", a.requireSession(http.HandlerFunc(a.createAssistantConversation)))
-	mux.Handle("GET /ai/conversations/{id}", a.requireSession(http.HandlerFunc(a.assistantConversationPage)))
-	mux.Handle("POST /ai/conversations/{id}/messages", a.requireSession(http.HandlerFunc(a.postAssistantMessage)))
-	mux.Handle("POST /ai/conversations/{id}/abort", a.requireSession(http.HandlerFunc(a.abortAssistantTurn)))
-	mux.Handle("GET /ai/conversations/{id}/events", a.requireSession(http.HandlerFunc(a.assistantConversationEvents)))
-	mux.Handle("POST /ai/conversations/{id}/model", a.requireSession(http.HandlerFunc(a.setAssistantConversationModel)))
-	mux.Handle("POST /ai/conversations/{id}/approval-mode", a.requireSession(http.HandlerFunc(a.setAssistantApprovalMode)))
-	mux.Handle("POST /ai/conversations/{id}/profile", a.requireSession(http.HandlerFunc(a.setAssistantCapabilityProfile)))
-	mux.Handle("POST /ai/conversations/{id}/thinking", a.requireSession(http.HandlerFunc(a.setAssistantThinkingLevel)))
-	mux.Handle("POST /ai/conversations/{id}/compact", a.requireSession(http.HandlerFunc(a.compactAssistantConversation)))
-	mux.Handle("POST /ai/conversations/{id}/approvals/{approval_id}", a.requireSession(http.HandlerFunc(a.resolveAssistantApproval)))
-	mux.Handle("POST /ai/conversations/{id}/archive", a.requireSession(http.HandlerFunc(a.archiveAssistantConversation)))
-	mux.Handle("POST /ai/conversations/{id}/restore", a.requireSession(http.HandlerFunc(a.restoreAssistantConversation)))
-	mux.Handle("GET /monitor/data", a.requireSession(http.HandlerFunc(a.overviewData)))
-	mux.Handle("GET /monitor/status", a.requireSession(http.HandlerFunc(a.shellStatus)))
-	mux.Handle("GET /monitor/applications", a.requireSession(http.HandlerFunc(a.applicationsPage)))
-	mux.Handle("GET /monitor/applications/data", a.requireSession(http.HandlerFunc(a.applicationsData)))
-	mux.Handle("GET /monitor/applications/{id}/logs", a.requireSession(http.HandlerFunc(a.applicationLogPage)))
-	mux.Handle("GET /monitor/applications/{id}/logs/history", a.requireSession(http.HandlerFunc(a.applicationLogHistory)))
-	mux.Handle("GET /monitor/applications/{id}/logs/events", a.requireSession(http.HandlerFunc(a.applicationLogEvents)))
-	mux.Handle("GET /monitor/applications/{id}/details", a.requireSession(http.HandlerFunc(a.applicationDetails)))
-	mux.Handle("POST /monitor/applications/{id}/pin", a.requireSession(http.HandlerFunc(a.pinApplication)))
-	mux.Handle("POST /monitor/applications/{id}/unpin", a.requireSession(http.HandlerFunc(a.unpinApplication)))
-	mux.Handle("POST /monitor/applications/{id}/move", a.requireSession(http.HandlerFunc(a.movePinnedApplication)))
-	mux.Handle("GET /monitor/containers", a.requireSession(http.HandlerFunc(a.containersPage)))
-	mux.Handle("GET /monitor/containers/data", a.requireSession(http.HandlerFunc(a.containersData)))
-	mux.Handle("GET /monitor/containers/{name}/details", a.requireSession(http.HandlerFunc(a.containerDetails)))
-	mux.Handle("POST /monitor/containers/{name}/pin", a.requireSession(http.HandlerFunc(a.pinContainer)))
-	mux.Handle("POST /monitor/containers/{name}/unpin", a.requireSession(http.HandlerFunc(a.unpinContainer)))
-	mux.Handle("POST /monitor/containers/{name}/move", a.requireSession(http.HandlerFunc(a.movePinnedContainer)))
+	mux.Handle("POST /monitor/security/windows-firewall/rules", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.addWindowsFirewallRule)))
+	mux.Handle("POST /monitor/security/windows-firewall/toggle", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.toggleWindowsFirewallRule)))
+	mux.Handle("POST /monitor/security/windows-firewall/delete", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.deleteWindowsFirewallRule)))
+	mux.Handle("GET /ai", a.requirePermission(permissionObserve, http.HandlerFunc(a.assistantPage)))
+	mux.Handle("GET /ai/resources", a.requirePermission(permissionObserve, http.HandlerFunc(a.assistantResourceSearch)))
+	mux.Handle("POST /ai/conversations", a.requirePermission(permissionObserve, http.HandlerFunc(a.createAssistantConversation)))
+	mux.Handle("GET /ai/conversations/{id}", a.requirePermission(permissionObserve, http.HandlerFunc(a.assistantConversationPage)))
+	mux.Handle("POST /ai/conversations/{id}/messages", a.requirePermission(permissionObserve, http.HandlerFunc(a.postAssistantMessage)))
+	mux.Handle("POST /ai/conversations/{id}/abort", a.requirePermission(permissionObserve, http.HandlerFunc(a.abortAssistantTurn)))
+	mux.Handle("GET /ai/conversations/{id}/events", a.requirePermission(permissionObserve, http.HandlerFunc(a.assistantConversationEvents)))
+	mux.Handle("POST /ai/conversations/{id}/model", a.requirePermission(permissionObserve, http.HandlerFunc(a.setAssistantConversationModel)))
+	mux.Handle("POST /ai/conversations/{id}/approval-mode", a.requirePermission(permissionObserve, http.HandlerFunc(a.setAssistantApprovalMode)))
+	mux.Handle("POST /ai/conversations/{id}/profile", a.requirePermission(permissionObserve, http.HandlerFunc(a.setAssistantCapabilityProfile)))
+	mux.Handle("POST /ai/conversations/{id}/thinking", a.requirePermission(permissionObserve, http.HandlerFunc(a.setAssistantThinkingLevel)))
+	mux.Handle("POST /ai/conversations/{id}/compact", a.requirePermission(permissionObserve, http.HandlerFunc(a.compactAssistantConversation)))
+	mux.Handle("POST /ai/conversations/{id}/approvals/{approval_id}", a.requirePermission(permissionObserve, http.HandlerFunc(a.resolveAssistantApproval)))
+	mux.Handle("POST /ai/conversations/{id}/archive", a.requirePermission(permissionObserve, http.HandlerFunc(a.archiveAssistantConversation)))
+	mux.Handle("POST /ai/conversations/{id}/restore", a.requirePermission(permissionObserve, http.HandlerFunc(a.restoreAssistantConversation)))
+	mux.Handle("GET /monitor/data", a.requirePermission(permissionObserve, http.HandlerFunc(a.overviewData)))
+	mux.Handle("GET /monitor/status", a.requirePermission(permissionObserve, http.HandlerFunc(a.shellStatus)))
+	mux.Handle("GET /monitor/applications", a.requirePermission(permissionObserve, http.HandlerFunc(a.applicationsPage)))
+	mux.Handle("GET /monitor/applications/data", a.requirePermission(permissionObserve, http.HandlerFunc(a.applicationsData)))
+	mux.Handle("GET /monitor/applications/{id}/logs", a.requirePermission(permissionObserve, http.HandlerFunc(a.applicationLogPage)))
+	mux.Handle("GET /monitor/applications/{id}/logs/history", a.requirePermission(permissionObserve, http.HandlerFunc(a.applicationLogHistory)))
+	mux.Handle("GET /monitor/applications/{id}/logs/events", a.requirePermission(permissionObserve, http.HandlerFunc(a.applicationLogEvents)))
+	mux.Handle("GET /monitor/applications/{id}/details", a.requirePermission(permissionObserve, http.HandlerFunc(a.applicationDetails)))
+	mux.Handle("POST /monitor/applications/{id}/pin", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.pinApplication)))
+	mux.Handle("POST /monitor/applications/{id}/unpin", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.unpinApplication)))
+	mux.Handle("POST /monitor/applications/{id}/move", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.movePinnedApplication)))
+	mux.Handle("GET /monitor/containers", a.requirePermission(permissionObserve, http.HandlerFunc(a.containersPage)))
+	mux.Handle("GET /monitor/containers/data", a.requirePermission(permissionObserve, http.HandlerFunc(a.containersData)))
+	mux.Handle("GET /monitor/containers/{name}/details", a.requirePermission(permissionObserve, http.HandlerFunc(a.containerDetails)))
+	mux.Handle("POST /monitor/containers/{name}/pin", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.pinContainer)))
+	mux.Handle("POST /monitor/containers/{name}/unpin", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.unpinContainer)))
+	mux.Handle("POST /monitor/containers/{name}/move", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.movePinnedContainer)))
 	mux.Handle("POST /monitor/containers/{name}/operate", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.operateContainer)))
-	mux.Handle("GET /monitor/kubernetes", a.requireSession(http.HandlerFunc(a.kubernetesPage)))
-	mux.Handle("GET /monitor/kubernetes/data", a.requireSession(http.HandlerFunc(a.kubernetesData)))
+	mux.Handle("GET /monitor/kubernetes", a.requirePermission(permissionObserve, http.HandlerFunc(a.kubernetesPage)))
+	mux.Handle("GET /monitor/kubernetes/data", a.requirePermission(permissionObserve, http.HandlerFunc(a.kubernetesData)))
 	mux.Handle("GET /monitor/kubernetes/connection", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.kubernetesConnectionTask)))
 	mux.Handle("POST /monitor/kubernetes/connection", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.saveKubernetesConnection)))
 	mux.Handle("POST /monitor/kubernetes/connection/test", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.testKubernetesConnection)))
-	mux.Handle("GET /monitor/kubernetes/workloads/{namespace}/{kind}/{name}/details", a.requireSession(http.HandlerFunc(a.kubernetesWorkloadDetails)))
-	mux.Handle("GET /monitor/kubernetes/workloads/{namespace}/{kind}/{name}/logs", a.requireSession(http.HandlerFunc(a.kubernetesWorkloadLogs)))
+	mux.Handle("GET /monitor/kubernetes/workloads/{namespace}/{kind}/{name}/details", a.requirePermission(permissionObserve, http.HandlerFunc(a.kubernetesWorkloadDetails)))
+	mux.Handle("GET /monitor/kubernetes/workloads/{namespace}/{kind}/{name}/logs", a.requirePermission(permissionObserve, http.HandlerFunc(a.kubernetesWorkloadLogs)))
 	mux.Handle("POST /monitor/kubernetes/workloads/{namespace}/{kind}/{name}/operate", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.operateKubernetesWorkload)))
-	mux.Handle("GET /monitor/websites", a.requireSession(http.HandlerFunc(a.websiteMonitorList)))
-	mux.Handle("GET /config/dashboards", a.requireSession(http.HandlerFunc(a.customDashboardPage)))
+	mux.Handle("GET /monitor/websites", a.requirePermission(permissionObserve, http.HandlerFunc(a.websiteMonitorList)))
+	mux.Handle("GET /config/dashboards", a.requirePermission(permissionObserve, http.HandlerFunc(a.customDashboardPage)))
 	mux.Handle("POST /config/dashboards", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.createCustomDashboard)))
 	mux.Handle("POST /config/dashboards/import", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.importCustomDashboard)))
 	mux.Handle("POST /config/dashboards/{id}", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.updateCustomDashboard)))
@@ -1979,8 +2618,8 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /config/dashboard-cards/{id}/move", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.moveCustomDashboardCard)))
 	mux.Handle("POST /config/dashboard-cards/{id}", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.updateCustomDashboardCard)))
 	mux.Handle("POST /config/dashboard-cards/{id}/delete", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.deleteCustomDashboardCard)))
-	mux.Handle("GET /monitor/dashboards", a.requireSession(http.HandlerFunc(a.legacyCustomDashboardPage)))
-	mux.Handle("GET /monitor/dashboard/{id}", a.requireSession(http.HandlerFunc(a.customDashboardMonitorPage)))
+	mux.Handle("GET /monitor/dashboards", a.requirePermission(permissionObserve, http.HandlerFunc(a.legacyCustomDashboardPage)))
+	mux.Handle("GET /monitor/dashboard/{id}", a.requirePermission(permissionObserve, http.HandlerFunc(a.customDashboardMonitorPage)))
 	mux.Handle("POST /monitor/dashboards", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.createCustomDashboard)))
 	mux.Handle("POST /monitor/dashboards/{id}", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.updateCustomDashboard)))
 	mux.Handle("POST /monitor/dashboards/{id}/delete", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.deleteCustomDashboard)))
@@ -1988,62 +2627,80 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /monitor/dashboard-cards/{id}/refresh", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.refreshCustomDashboardCard)))
 	mux.Handle("POST /monitor/dashboard-cards/{id}", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.updateCustomDashboardCard)))
 	mux.Handle("POST /monitor/dashboard-cards/{id}/delete", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.deleteCustomDashboardCard)))
-	mux.HandleFunc("GET /public/dashboard/{slug}", a.publicCustomDashboard)
-	mux.Handle("GET /monitor/websites/data", a.requireSession(http.HandlerFunc(a.websiteMonitorData)))
-	mux.Handle("POST /monitor/websites/remotes", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.createWebsiteMonitorRemoteSource)))
-	mux.Handle("POST /monitor/websites/remotes/{id}/delete", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.deleteWebsiteMonitorRemoteSource)))
-	mux.Handle("GET /monitor/websites/new", a.requireSession(http.HandlerFunc(a.websiteMonitorCreateTask)))
-	mux.Handle("POST /monitor/websites", a.requireSession(http.HandlerFunc(a.createWebsiteMonitor)))
-	mux.Handle("POST /monitor/websites/reorder", a.requireSession(http.HandlerFunc(a.reorderWebsiteMonitors)))
-	mux.Handle("GET /monitor/websites/export", a.requireSession(http.HandlerFunc(a.websiteMonitorExportTask)))
-	mux.Handle("POST /monitor/websites/export", a.requireSession(http.HandlerFunc(a.exportWebsiteMonitors)))
-	mux.Handle("GET /monitor/websites/import", a.requireSession(http.HandlerFunc(a.websiteMonitorImportTask)))
-	mux.Handle("POST /monitor/websites/import/preview", a.requireSession(http.HandlerFunc(a.previewWebsiteMonitorImport)))
-	mux.Handle("POST /monitor/websites/import", a.requireSession(http.HandlerFunc(a.importWebsiteMonitors)))
-	mux.Handle("GET /monitor/websites/nginx", a.requireSession(http.HandlerFunc(a.websiteMonitorNginxTask)))
-	mux.Handle("POST /monitor/websites/nginx/scan", a.requireSession(http.HandlerFunc(a.scanWebsiteMonitorNginx)))
-	mux.Handle("POST /monitor/websites/nginx/import", a.requireSession(http.HandlerFunc(a.importWebsiteMonitorNginx)))
-	mux.Handle("GET /monitor/websites/{id}/edit", a.requireSession(http.HandlerFunc(a.websiteMonitorEditTask)))
-	mux.Handle("POST /monitor/websites/{id}", a.requireSession(http.HandlerFunc(a.updateWebsiteMonitor)))
-	mux.Handle("GET /monitor/websites/{id}", a.requireSession(http.HandlerFunc(a.websiteMonitorDetail)))
-	mux.Handle("GET /monitor/websites/{id}/data", a.requireSession(http.HandlerFunc(a.websiteMonitorDetailData)))
-	mux.Handle("POST /monitor/websites/{id}/check", a.requireSession(http.HandlerFunc(a.checkWebsiteMonitorNow)))
-	mux.Handle("POST /monitor/websites/{id}/pause", a.requireSession(http.HandlerFunc(a.pauseWebsiteMonitor)))
-	mux.Handle("POST /monitor/websites/{id}/resume", a.requireSession(http.HandlerFunc(a.resumeWebsiteMonitor)))
-	mux.Handle("POST /monitor/websites/{id}/move", a.requireSession(http.HandlerFunc(a.moveWebsiteMonitor)))
-	mux.Handle("POST /monitor/websites/{id}/delete", a.requireSession(http.HandlerFunc(a.deleteWebsiteMonitor)))
-	mux.Handle("GET /settings/account", a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	mux.Public("GET /public/dashboard/{slug}", a.publicCustomDashboard)
+	mux.Handle("GET /monitor/websites/data", a.requirePermission(permissionObserve, http.HandlerFunc(a.websiteMonitorData)))
+	mux.Handle("POST /monitor/websites/remotes", a.requireStepUp(permissionManageOperations, http.HandlerFunc(a.createWebsiteMonitorRemoteSource)))
+	mux.Handle("POST /monitor/websites/remotes/{id}/delete", a.requireStepUp(permissionManageOperations, http.HandlerFunc(a.deleteWebsiteMonitorRemoteSource)))
+	mux.Handle("GET /monitor/websites/new", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.websiteMonitorCreateTask)))
+	mux.Handle("POST /monitor/websites", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.createWebsiteMonitor)))
+	mux.Handle("POST /monitor/websites/reorder", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.reorderWebsiteMonitors)))
+	mux.Handle("GET /monitor/websites/export", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.websiteMonitorExportTask)))
+	mux.Handle("POST /monitor/websites/export", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.exportWebsiteMonitors)))
+	mux.Handle("GET /monitor/websites/import", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.websiteMonitorImportTask)))
+	mux.Handle("POST /monitor/websites/import/preview", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.previewWebsiteMonitorImport)))
+	mux.Handle("POST /monitor/websites/import", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.importWebsiteMonitors)))
+	mux.Handle("GET /monitor/websites/nginx", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.websiteMonitorNginxTask)))
+	mux.Handle("POST /monitor/websites/nginx/scan", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.scanWebsiteMonitorNginx)))
+	mux.Handle("POST /monitor/websites/nginx/import", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.importWebsiteMonitorNginx)))
+	mux.Handle("GET /monitor/websites/{id}/edit", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.websiteMonitorEditTask)))
+	mux.Handle("POST /monitor/websites/{id}", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.updateWebsiteMonitor)))
+	mux.Handle("GET /monitor/websites/{id}", a.requirePermission(permissionObserve, http.HandlerFunc(a.websiteMonitorDetail)))
+	mux.Handle("GET /monitor/websites/{id}/data", a.requirePermission(permissionObserve, http.HandlerFunc(a.websiteMonitorDetailData)))
+	mux.Handle("POST /monitor/websites/{id}/check", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.checkWebsiteMonitorNow)))
+	mux.Handle("POST /monitor/websites/{id}/pause", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.pauseWebsiteMonitor)))
+	mux.Handle("POST /monitor/websites/{id}/resume", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.resumeWebsiteMonitor)))
+	mux.Handle("POST /monitor/websites/{id}/move", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.moveWebsiteMonitor)))
+	mux.Handle("POST /monitor/websites/{id}/delete", a.requirePermission(permissionManageOperations, http.HandlerFunc(a.deleteWebsiteMonitor)))
+	mux.Handle("GET /settings/account", a.requirePermission(permissionObserve, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		current := request.Context().Value(sessionContextKey).(session)
+		mfaStatus, err := a.mfa.Status(current.userID)
+		if err != nil {
+			http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusInternalServerError)
+			return
+		}
+		passkeyUser, err := a.passkeys.User(current.userID, current.username)
+		if err != nil {
+			http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusInternalServerError)
+			return
+		}
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = accountTemplate.Execute(response, struct {
 			Username, CSRFToken string
 			CredentialOverride  bool
 			CanRename           bool
+			MFAEnabled          bool
 			Locale              webLocale
 			SettingsNavigation  settingsNavigationData
 		}{
 			Username: current.username, CSRFToken: current.csrfToken,
 			CredentialOverride: a.credentialOverride && current.role == roleAdministrator,
-			CanRename:          current.role == roleAdministrator, Locale: resolveWebLocale(request),
+			CanRename:          current.role == roleAdministrator, MFAEnabled: mfaStatus.Enabled || len(passkeyUser.Credentials) > 0, Locale: resolveWebLocale(request),
 			SettingsNavigation: newSettingsNavigation(current, resolveWebLocale(request), "account"),
 		})
 	})))
-	mux.Handle("POST /settings/account", a.requireSession(http.HandlerFunc(a.changePassword)))
-	mux.Handle("GET /settings/account/username", a.requireSession(http.HandlerFunc(a.accountUsernameTask)))
-	mux.Handle("POST /settings/account/username", a.requireSession(http.HandlerFunc(a.changeUsername)))
-	mux.Handle("GET /settings/account/password", a.requireSession(http.HandlerFunc(a.accountPasswordTask)))
-	mux.Handle("POST /settings/account/password", a.requireSession(http.HandlerFunc(a.changePassword)))
+	mux.Handle("POST /settings/account", a.requirePermission(permissionObserve, http.HandlerFunc(a.changePassword)))
+	mux.Handle("GET /settings/account/username", a.requirePermission(permissionObserve, http.HandlerFunc(a.accountUsernameTask)))
+	mux.Handle("POST /settings/account/username", a.requirePermission(permissionObserve, http.HandlerFunc(a.changeUsername)))
+	mux.Handle("GET /settings/account/password", a.requirePermission(permissionObserve, http.HandlerFunc(a.accountPasswordTask)))
+	mux.Handle("POST /settings/account/password", a.requirePermission(permissionObserve, http.HandlerFunc(a.changePassword)))
+	mux.Handle("GET /settings/account/mfa", a.requirePermission(permissionObserve, http.HandlerFunc(a.accountMFAPage)))
+	mux.Handle("POST /settings/account/mfa/enroll", a.requireStepUp(permissionObserve, http.HandlerFunc(a.beginMFAEnrollment)))
+	mux.Handle("POST /settings/account/mfa/confirm", a.requireStepUp(permissionObserve, http.HandlerFunc(a.confirmMFAEnrollment)))
+	mux.Handle("POST /settings/account/mfa/reset", a.requireStepUp(permissionObserve, http.HandlerFunc(a.resetMFA)))
+	mux.Handle("POST /settings/account/passkeys/register/options", a.requireStepUp(permissionObserve, http.HandlerFunc(a.beginPasskeyRegistration)))
+	mux.Handle("POST /settings/account/passkeys/register/finish", a.requireStepUp(permissionObserve, http.HandlerFunc(a.finishPasskeyRegistration)))
+	mux.Handle("POST /settings/account/passkeys/{id}/delete", a.requireStepUp(permissionObserve, http.HandlerFunc(a.deletePasskey)))
 	mux.Handle("GET /settings/users", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.usersPage)))
 	mux.Handle("GET /settings/users/create", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.createUserTask)))
-	mux.Handle("POST /settings/users", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.createUser)))
+	mux.Handle("POST /settings/users", a.requireStepUp(permissionManageUsers, http.HandlerFunc(a.createUser)))
 	mux.Handle("GET /settings/users/{id}/edit", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.editUserTask)))
-	mux.Handle("POST /settings/users/{id}/disable", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.disableUser)))
-	mux.Handle("POST /settings/users/{id}/enable", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.enableUser)))
-	mux.Handle("POST /settings/users/{id}/update", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.updateUser)))
-	mux.Handle("POST /settings/users/{id}/reset-password", a.requirePermission(permissionManageUsers, http.HandlerFunc(a.resetUserPassword)))
+	mux.Handle("POST /settings/users/{id}/disable", a.requireStepUp(permissionManageUsers, http.HandlerFunc(a.disableUser)))
+	mux.Handle("POST /settings/users/{id}/enable", a.requireStepUp(permissionManageUsers, http.HandlerFunc(a.enableUser)))
+	mux.Handle("POST /settings/users/{id}/update", a.requireStepUp(permissionManageUsers, http.HandlerFunc(a.updateUser)))
+	mux.Handle("POST /settings/users/{id}/reset-password", a.requireStepUp(permissionManageUsers, http.HandlerFunc(a.resetUserPassword)))
 	mux.Handle("GET /settings/name", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.instanceNameSettingsPage)))
-	mux.Handle("POST /settings/name", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.updateInstanceName)))
-	mux.Handle("GET /settings/display", a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	mux.Handle("POST /settings/name", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.updateInstanceName)))
+	mux.Handle("GET /settings/display", a.requirePermission(permissionManageSystem, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		current := request.Context().Value(sessionContextKey).(session)
 		locale := resolveWebLocale(request)
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -2053,163 +2710,184 @@ func (a *App) routes() http.Handler {
 		}{Locale: locale, SettingsNavigation: newSettingsNavigation(current, locale, "display")})
 	})))
 	mux.Handle("GET /settings/ai", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.assistantSettingsPage)))
-	mux.Handle("POST /settings/ai/llms", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.saveAssistantModel)))
+	mux.Handle("POST /settings/ai/llms", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.saveAssistantModel)))
 	mux.Handle("POST /settings/ai/llms/{id}/test", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.testAssistantModel)))
 	mux.Handle("POST /settings/ai/llms/{id}/default", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.setDefaultAssistantModel)))
-	mux.Handle("POST /settings/ai/llms/{id}/delete", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.deleteAssistantModel)))
+	mux.Handle("POST /settings/ai/llms/{id}/delete", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.deleteAssistantModel)))
 	mux.Handle("POST /settings/ai/defaults", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.saveAssistantDefaults)))
 	mux.Handle("POST /settings/ai/runtime/check", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.checkAssistantRuntime)))
-	mux.Handle("POST /settings/ai/runtime/install", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.installAssistantRuntime)))
-	mux.Handle("POST /settings/ai/runtime/offline", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.installAssistantRuntimeOffline)))
-	mux.Handle("POST /settings/ai/runtime/rollback", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.rollbackAssistantRuntime)))
-	mux.Handle("GET /settings/updates", a.requireSession(http.HandlerFunc(a.updatesPage)))
-	mux.Handle("GET /settings/updates/status", a.requireSession(http.HandlerFunc(a.updateStatus)))
-	mux.Handle("POST /settings/updates/check", a.requireSession(http.HandlerFunc(a.checkUpdate)))
-	mux.Handle("POST /settings/updates/prepare", a.requireSession(http.HandlerFunc(a.prepareUpdate)))
-	mux.Handle("POST /settings/updates/apply", a.requireSession(http.HandlerFunc(a.applyUpdate)))
-	mux.Handle("POST /settings/updates/restart", a.requireSession(http.HandlerFunc(a.restartService)))
+	mux.Handle("POST /settings/ai/runtime/install", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.installAssistantRuntime)))
+	mux.Handle("POST /settings/ai/runtime/offline", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.installAssistantRuntimeOffline)))
+	mux.Handle("POST /settings/ai/runtime/rollback", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.rollbackAssistantRuntime)))
+	mux.Handle("GET /settings/updates", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.updatesPage)))
+	mux.Handle("GET /settings/service-logs", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.serviceLogsPage)))
+	mux.Handle("GET /settings/service-logs/export", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.exportServiceLogs)))
+	mux.Handle("GET /settings/notifications", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.notificationsPage)))
+	mux.Handle("GET /settings/state-backups", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.stateBackupsPage)))
+	mux.Handle("POST /settings/state-backups/create", a.requireAAL2StepUp(permissionManageSystem, http.HandlerFunc(a.createStateBackup)))
+	mux.Handle("POST /settings/state-backups/inspect", a.requireAAL2StepUp(permissionManageSystem, http.HandlerFunc(a.inspectStateBackup)))
+	mux.Handle("POST /settings/state-backups/stage", a.requireAAL2StepUp(permissionManageSystem, http.HandlerFunc(a.stageStateBackup)))
+	mux.Handle("POST /settings/state-backups/stages/{id}/discard", a.requireAAL2StepUp(permissionManageSystem, http.HandlerFunc(a.discardStateBackupStage)))
+	mux.Handle("GET /settings/updates/status", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.updateStatus)))
+	mux.Handle("POST /settings/updates/check", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.checkUpdate)))
+	mux.Handle("POST /settings/updates/prepare", a.requirePermission(permissionManageSystem, http.HandlerFunc(a.prepareUpdate)))
+	mux.Handle("POST /settings/updates/apply", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.applyUpdate)))
+	mux.Handle("POST /settings/updates/restart", a.requireStepUp(permissionManageSystem, http.HandlerFunc(a.restartService)))
 	mux.Handle("GET /resources/databases", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.mysqlDatabasesPage)))
-	mux.Handle("POST /resources/databases/instances", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.saveMySQLInstance)))
+	mux.Handle("POST /resources/databases/instances", a.requireStepUp(permissionManageDatabases, http.HandlerFunc(a.saveMySQLInstance)))
 	mux.Handle("POST /resources/databases/settings/backup-root", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.setMySQLBackupRoot)))
-	mux.Handle("POST /resources/databases/settings/tools", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.setMySQLTools)))
+	mux.Handle("POST /resources/databases/settings/tools", a.requireStepUp(permissionManageDatabases, http.HandlerFunc(a.setMySQLTools)))
 	mux.Handle("POST /resources/databases/instances/{id}/test", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.testMySQLInstance)))
-	mux.Handle("POST /resources/databases/instances/{id}/delete", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.deleteMySQLInstance)))
+	mux.Handle("POST /resources/databases/instances/{id}/delete", a.requireStepUp(permissionManageDatabases, http.HandlerFunc(a.deleteMySQLInstance)))
 	mux.Handle("POST /resources/databases/instances/{id}/databases", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.createMySQLDatabase)))
 	mux.Handle("POST /resources/databases/instances/{id}/backup", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.startMySQLBackup)))
 	mux.Handle("POST /resources/databases/instances/{id}/backup/batch", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.startMySQLBatchBackup)))
-	mux.Handle("POST /resources/databases/instances/{id}/drop", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.startDropMySQLDatabase)))
+	mux.Handle("POST /resources/databases/instances/{id}/drop", a.requireStepUp(permissionManageDatabases, http.HandlerFunc(a.startDropMySQLDatabase)))
 	mux.Handle("POST /resources/databases/instances/{id}/imports", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.importMySQLBackup)))
 	mux.Handle("POST /resources/databases/instances/{id}/imports/server", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.importMySQLServerBackup)))
 	mux.Handle("POST /resources/databases/instances/{id}/plans", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.saveMySQLPlan)))
 	mux.Handle("POST /resources/databases/plans/{plan_id}/delete", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.deleteMySQLPlan)))
 	mux.Handle("GET /resources/databases/backups/{backup_id}/download", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.downloadMySQLBackup)))
-	mux.Handle("POST /resources/databases/backups/{backup_id}/restore", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.startMySQLRestore)))
+	mux.Handle("POST /resources/databases/backups/{backup_id}/restore", a.requireStepUp(permissionManageDatabases, http.HandlerFunc(a.startMySQLRestore)))
 	mux.Handle("POST /resources/databases/backups/{backup_id}/delete", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.deleteMySQLBackup)))
 	mux.Handle("GET /resources/databases/operations/{operation_id}/status", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.mysqlOperationStatus)))
 	mux.Handle("GET /resources/databases/operations/{operation_id}/events", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.mysqlOperationEvents)))
 	mux.Handle("POST /resources/databases/operations/{operation_id}/cancel", a.requirePermission(permissionManageDatabases, http.HandlerFunc(a.cancelMySQLOperation)))
-	mux.Handle("GET /resources/files/new-directory", a.requireSession(http.HandlerFunc(a.newDirectoryTask)))
-	mux.Handle("GET /resources/files/upload", a.requireSession(http.HandlerFunc(a.uploadTask)))
-	mux.Handle("GET /resources/files/move", a.requireSession(http.HandlerFunc(a.moveFileTask)))
-	mux.Handle("GET /resources/directories", a.requireSession(http.HandlerFunc(a.hostDirectories)))
-	mux.Handle("GET /resources/files/log", a.requireSession(http.HandlerFunc(a.fileLogPage)))
-	mux.Handle("GET /resources/files/log/history", a.requireSession(http.HandlerFunc(a.fileLogHistory)))
-	mux.Handle("GET /resources/files/log/events", a.requireSession(http.HandlerFunc(a.fileLogEvents)))
-	mux.Handle("GET /resources/files/run", a.requireSession(http.HandlerFunc(a.runFileTask)))
-	mux.Handle("GET /resources/files/quick-run", a.requireSession(http.HandlerFunc(a.quickRunFromFileTask)))
-	mux.Handle("GET /resources/files", a.requireSession(http.HandlerFunc(a.filesPage)))
-	mux.Handle("GET /resources/files/validate", a.requireSession(http.HandlerFunc(a.validateFileQuickAccess)))
-	mux.Handle("GET /resources/files/quick-access", a.requireSession(http.HandlerFunc(a.fileQuickAccessPins)))
-	mux.Handle("POST /resources/files/quick-access", a.requireSession(http.HandlerFunc(a.updateFileQuickAccessPin)))
-	mux.Handle("POST /resources/files/mkdir", a.requireSession(http.HandlerFunc(a.createDirectory)))
-	mux.Handle("POST /resources/files/conflicts", a.requireSession(http.HandlerFunc(a.uploadConflicts)))
-	mux.Handle("POST /resources/files/upload", a.requireSession(http.HandlerFunc(a.uploadFiles)))
-	mux.Handle("GET /resources/files/download", a.requireSession(http.HandlerFunc(a.downloadFile)))
-	mux.Handle("GET /resources/files/preview", a.requireSession(http.HandlerFunc(a.previewImage)))
-	mux.Handle("GET /resources/files/view", a.requireSession(http.HandlerFunc(a.previewTextPage)))
-	mux.Handle("POST /resources/files/delete", a.requireSession(http.HandlerFunc(a.deleteFile)))
-	mux.Handle("POST /resources/files/move", a.requireSession(http.HandlerFunc(a.moveFile)))
-	mux.Handle("POST /resources/files/toggle-executable", a.requireSession(http.HandlerFunc(a.toggleExecutable)))
-	mux.Handle("GET /resources/files/operations/{id}", a.requireSession(http.HandlerFunc(a.fileOperationPage)))
-	mux.Handle("GET /resources/files/operations/{id}/status", a.requireSession(http.HandlerFunc(a.fileOperationStatus)))
-	mux.Handle("GET /resources/files/operations/{id}/events", a.requireSession(http.HandlerFunc(a.fileOperationEvents)))
-	mux.Handle("POST /resources/files/operations/{id}/cancel", a.requireSession(http.HandlerFunc(a.cancelFileOperation)))
-	mux.Handle("GET /resources/trash", a.requireSession(http.HandlerFunc(a.trashPage)))
-	mux.Handle("POST /resources/trash/restore", a.requireSession(http.HandlerFunc(a.restoreTrash)))
-	mux.Handle("POST /resources/trash/purge", a.requireSession(http.HandlerFunc(a.purgeTrash)))
-	mux.Handle("GET /resources/files/edit", a.requireSession(http.HandlerFunc(a.editTextPage)))
-	mux.Handle("POST /resources/files/edit", a.requireSession(http.HandlerFunc(a.saveText)))
-	mux.Handle("POST /history/runs/start", a.requireSession(http.HandlerFunc(a.startRun)))
-	mux.Handle("GET /history/runs", a.requireSession(http.HandlerFunc(a.runsPage)))
-	mux.Handle("GET /history/runs/{id}/save-quick-run", a.requireSession(http.HandlerFunc(a.saveQuickRunTask)))
-	mux.Handle("GET /history/runs/{id}/source", a.requireSession(http.HandlerFunc(a.runSource)))
-	mux.Handle("GET /history/runs/{id}/download", a.requireSession(http.HandlerFunc(a.downloadRun)))
-	mux.Handle("GET /history/runs/{id}", a.requireSession(http.HandlerFunc(a.runDetails)))
-	mux.Handle("POST /history/runs/{id}/stop", a.requireSession(http.HandlerFunc(a.stopRun)))
-	mux.Handle("GET /history/runs/{id}/events", a.requireSession(http.HandlerFunc(a.runEvents)))
-	mux.Handle("GET /resources/variables", a.requireSession(http.HandlerFunc(a.variablesPage)))
-	mux.Handle("GET /resources/variables/new", a.requireSession(http.HandlerFunc(a.newVariableTask)))
-	mux.Handle("GET /resources/variables/{name}/edit", a.requireSession(http.HandlerFunc(a.editVariableTask)))
-	mux.Handle("POST /resources/variables", a.requireSession(http.HandlerFunc(a.createVariable)))
-	mux.Handle("POST /resources/variables/{name}/update", a.requireSession(http.HandlerFunc(a.updateVariable)))
-	mux.Handle("POST /resources/variables/{name}/delete", a.requireSession(http.HandlerFunc(a.deleteVariable)))
-	mux.Handle("POST /history/runs/{id}/quick-run", a.requireSession(http.HandlerFunc(a.saveQuickRun)))
-	mux.Handle("GET /config/quick-runs", a.requireSession(http.HandlerFunc(a.quickRunsPage)))
-	mux.Handle("POST /config/quick-runs", a.requireSession(http.HandlerFunc(a.createQuickRunFromFile)))
-	mux.Handle("GET /config/quick-runs/one-time/new", a.requireSession(http.HandlerFunc(a.oneTimeRunTask)))
-	mux.Handle("POST /config/quick-runs/one-time", a.requireSession(http.HandlerFunc(a.startOneTimeRun)))
-	mux.Handle("GET /config/quick-runs/from-source/new", a.requireSession(http.HandlerFunc(a.quickCreateTask)))
-	mux.Handle("POST /config/quick-runs/from-source", a.requireSession(http.HandlerFunc(a.createQuickRunFromSource)))
-	mux.Handle("GET /config/quick-runs/groups/new", a.requireSession(http.HandlerFunc(a.newQuickRunGroupTask)))
-	mux.Handle("POST /config/quick-runs/groups", a.requireSession(http.HandlerFunc(a.createQuickRunGroup)))
-	mux.Handle("GET /config/quick-runs/groups/{id}/edit", a.requireSession(http.HandlerFunc(a.editQuickRunGroupTask)))
-	mux.Handle("POST /config/quick-runs/groups/{id}/update", a.requireSession(http.HandlerFunc(a.updateQuickRunGroup)))
-	mux.Handle("POST /config/quick-runs/groups/{id}/move", a.requireSession(http.HandlerFunc(a.moveQuickRunGroup)))
-	mux.Handle("POST /config/quick-runs/groups/{id}/delete", a.requireSession(http.HandlerFunc(a.deleteQuickRunGroup)))
-	mux.Handle("GET /config/quick-runs/{id}/move-group", a.requireSession(http.HandlerFunc(a.moveQuickRunToGroupTask)))
-	mux.Handle("POST /config/quick-runs/{id}/move-group", a.requireSession(http.HandlerFunc(a.moveQuickRunToGroup)))
-	mux.Handle("GET /config/quick-runs/{id}/edit", a.requireSession(http.HandlerFunc(a.editQuickRunTask)))
-	mux.Handle("POST /config/quick-runs/{id}/update", a.requireSession(http.HandlerFunc(a.updateQuickRun)))
-	mux.Handle("GET /config/quick-runs/{id}/copy", a.requireSession(http.HandlerFunc(a.copyQuickRunTask)))
-	mux.Handle("POST /config/quick-runs/{id}/copy", a.requireSession(http.HandlerFunc(a.copyQuickRun)))
-	mux.Handle("POST /config/quick-runs/{id}/lock", a.requireSession(http.HandlerFunc(a.setQuickRunLocked)))
-	mux.Handle("POST /config/quick-runs/{id}/start", a.requireSession(http.HandlerFunc(a.startQuickRun)))
-	mux.Handle("POST /config/quick-runs/{id}/move", a.requireSession(http.HandlerFunc(a.moveQuickRun)))
-	mux.Handle("POST /config/quick-runs/{id}/delete", a.requireSession(http.HandlerFunc(a.deleteQuickRun)))
-	mux.Handle("GET /config/schedules", a.requireSession(http.HandlerFunc(a.schedulesPage)))
-	mux.Handle("GET /config/schedules/groups/new", a.requireSession(http.HandlerFunc(a.newScheduleGroupTask)))
-	mux.Handle("POST /config/schedules/groups", a.requireSession(http.HandlerFunc(a.createScheduleGroup)))
-	mux.Handle("GET /config/schedules/groups/{id}/edit", a.requireSession(http.HandlerFunc(a.editScheduleGroupTask)))
-	mux.Handle("POST /config/schedules/groups/{id}/update", a.requireSession(http.HandlerFunc(a.updateScheduleGroup)))
-	mux.Handle("POST /config/schedules/groups/{id}/move", a.requireSession(http.HandlerFunc(a.moveScheduleGroup)))
-	mux.Handle("POST /config/schedules/groups/{id}/delete", a.requireSession(http.HandlerFunc(a.deleteScheduleGroup)))
-	mux.Handle("GET /config/schedules/new", a.requireSession(http.HandlerFunc(a.newScheduleTask)))
-	mux.Handle("GET /config/schedules/{id}/edit", a.requireSession(http.HandlerFunc(a.editScheduleTask)))
-	mux.Handle("POST /config/schedules/preview", a.requireSession(http.HandlerFunc(a.previewScheduleCron)))
-	mux.Handle("POST /config/schedules/{id}/preview", a.requireSession(http.HandlerFunc(a.previewScheduleCron)))
-	mux.Handle("POST /config/schedules", a.requireSession(http.HandlerFunc(a.createSchedule)))
-	mux.Handle("POST /config/schedules/{id}/update", a.requireSession(http.HandlerFunc(a.updateSchedule)))
-	mux.Handle("POST /config/schedules/{id}/toggle", a.requireSession(http.HandlerFunc(a.toggleSchedule)))
-	mux.Handle("POST /config/schedules/{id}/run", a.requireSession(http.HandlerFunc(a.runScheduleNow)))
-	mux.Handle("POST /config/schedules/{id}/delete", a.requireSession(http.HandlerFunc(a.deleteSchedule)))
+	mux.Handle("GET /resources/files/new-directory", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.newDirectoryTask)))
+	mux.Handle("GET /resources/files/upload", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.uploadTask)))
+	mux.Handle("GET /resources/files/move", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.moveFileTask)))
+	mux.Handle("GET /resources/directories", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.hostDirectories)))
+	mux.Handle("GET /resources/files/log", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.fileLogPage)))
+	mux.Handle("GET /resources/files/log/history", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.fileLogHistory)))
+	mux.Handle("GET /resources/files/log/events", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.fileLogEvents)))
+	mux.Handle("GET /resources/files/run", a.requirePermission(permissionExecute, http.HandlerFunc(a.runFileTask)))
+	mux.Handle("GET /resources/files/quick-run", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.quickRunFromFileTask)))
+	mux.Handle("GET /resources/files", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.filesPage)))
+	mux.Handle("GET /resources/files/validate", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.validateFileQuickAccess)))
+	mux.Handle("GET /resources/files/quick-access", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.fileQuickAccessPins)))
+	mux.Handle("POST /resources/files/quick-access", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.updateFileQuickAccessPin)))
+	mux.Handle("POST /resources/files/mkdir", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.createDirectory)))
+	mux.Handle("POST /resources/files/conflicts", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.uploadConflicts)))
+	mux.Handle("POST /resources/files/upload", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.uploadFiles)))
+	mux.Handle("GET /resources/files/download", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.downloadFile)))
+	mux.Handle("GET /resources/files/preview", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.previewImage)))
+	mux.Handle("GET /resources/files/view", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.previewTextPage)))
+	mux.Handle("POST /resources/files/delete", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.deleteFile)))
+	mux.Handle("POST /resources/files/move", a.requireStepUp(permissionWriteFiles, http.HandlerFunc(a.moveFile)))
+	mux.Handle("POST /resources/files/toggle-executable", a.requireStepUp(permissionWriteFiles, http.HandlerFunc(a.toggleExecutable)))
+	mux.Handle("GET /resources/files/operations/{id}", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.fileOperationPage)))
+	mux.Handle("GET /resources/files/operations/{id}/status", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.fileOperationStatus)))
+	mux.Handle("GET /resources/files/operations/{id}/events", a.requirePermission(permissionReadFiles, http.HandlerFunc(a.fileOperationEvents)))
+	mux.Handle("POST /resources/files/operations/{id}/cancel", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.cancelFileOperation)))
+	mux.Handle("GET /resources/trash", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.trashPage)))
+	mux.Handle("GET /resources/inbox", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.uploadInboxPage)))
+	mux.Handle("POST /resources/inbox/{id}/publish", a.requireStepUp(permissionWriteFiles, http.HandlerFunc(a.publishInboxUpload)))
+	mux.Handle("POST /resources/inbox/{id}/discard", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.discardInboxUpload)))
+	mux.Handle("POST /resources/trash/restore", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.restoreTrash)))
+	mux.Handle("POST /resources/trash/purge", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.purgeTrash)))
+	mux.Handle("GET /resources/files/edit", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.editTextPage)))
+	mux.Handle("POST /resources/files/edit", a.requirePermission(permissionWriteFiles, http.HandlerFunc(a.saveText)))
+	mux.Handle("POST /history/runs/start", a.requirePermission(permissionExecute, http.HandlerFunc(a.startRun)))
+	mux.Handle("GET /history/runs", a.requirePermission(permissionObserve, http.HandlerFunc(a.runsPage)))
+	mux.Handle("GET /history/runs/{id}/save-quick-run", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.saveQuickRunTask)))
+	mux.Handle("GET /history/runs/{id}/source", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.runSource)))
+	mux.Handle("GET /history/runs/{id}/download", a.requirePermission(permissionObserve, http.HandlerFunc(a.downloadRun)))
+	mux.Handle("GET /history/runs/{id}", a.requirePermission(permissionObserve, http.HandlerFunc(a.runDetails)))
+	mux.Handle("POST /history/runs/{id}/stop", a.requirePermission(permissionExecute, http.HandlerFunc(a.stopRun)))
+	mux.Handle("GET /history/runs/{id}/events", a.requirePermission(permissionObserve, http.HandlerFunc(a.runEvents)))
+	mux.Handle("GET /resources/variables", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.variablesPage)))
+	mux.Handle("GET /resources/variables/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.newVariableTask)))
+	mux.Handle("GET /resources/variables/{name}/edit", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.editVariableTask)))
+	mux.Handle("POST /resources/variables", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.createVariable)))
+	mux.Handle("POST /resources/variables/{name}/update", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.updateVariable)))
+	mux.Handle("POST /resources/variables/{name}/delete", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.deleteVariable)))
+	mux.Handle("POST /history/runs/{id}/quick-run", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.saveQuickRun)))
+	mux.Handle("GET /config/quick-runs", a.requirePermission(permissionObserve, http.HandlerFunc(a.quickRunsPage)))
+	mux.Handle("POST /config/quick-runs", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.createQuickRunFromFile)))
+	mux.Handle("GET /config/quick-runs/one-time/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.oneTimeRunTask)))
+	mux.Handle("POST /config/quick-runs/one-time", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.startOneTimeRun)))
+	mux.Handle("GET /config/quick-runs/from-source/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.quickCreateTask)))
+	mux.Handle("POST /config/quick-runs/from-source", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.createQuickRunFromSource)))
+	mux.Handle("GET /config/quick-runs/groups/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.newQuickRunGroupTask)))
+	mux.Handle("POST /config/quick-runs/groups", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.createQuickRunGroup)))
+	mux.Handle("GET /config/quick-runs/groups/{id}/edit", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.editQuickRunGroupTask)))
+	mux.Handle("POST /config/quick-runs/groups/{id}/update", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.updateQuickRunGroup)))
+	mux.Handle("POST /config/quick-runs/groups/{id}/move", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.moveQuickRunGroup)))
+	mux.Handle("POST /config/quick-runs/groups/{id}/delete", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.deleteQuickRunGroup)))
+	mux.Handle("GET /config/quick-runs/{id}/move-group", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.moveQuickRunToGroupTask)))
+	mux.Handle("POST /config/quick-runs/{id}/move-group", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.moveQuickRunToGroup)))
+	mux.Handle("GET /config/quick-runs/{id}/edit", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.editQuickRunTask)))
+	mux.Handle("POST /config/quick-runs/{id}/update", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.updateQuickRun)))
+	mux.Handle("GET /config/quick-runs/{id}/copy", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.copyQuickRunTask)))
+	mux.Handle("POST /config/quick-runs/{id}/copy", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.copyQuickRun)))
+	mux.Handle("POST /config/quick-runs/{id}/lock", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.setQuickRunLocked)))
+	mux.Handle("POST /config/quick-runs/{id}/start", a.requirePermission(permissionExecute, http.HandlerFunc(a.startQuickRun)))
+	mux.Handle("POST /config/quick-runs/{id}/move", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.moveQuickRun)))
+	mux.Handle("POST /config/quick-runs/{id}/delete", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.deleteQuickRun)))
+	mux.Handle("GET /config/schedules", a.requirePermission(permissionObserve, http.HandlerFunc(a.schedulesPage)))
+	mux.Handle("GET /config/schedules/groups/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.newScheduleGroupTask)))
+	mux.Handle("POST /config/schedules/groups", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.createScheduleGroup)))
+	mux.Handle("GET /config/schedules/groups/{id}/edit", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.editScheduleGroupTask)))
+	mux.Handle("POST /config/schedules/groups/{id}/update", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.updateScheduleGroup)))
+	mux.Handle("POST /config/schedules/groups/{id}/move", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.moveScheduleGroup)))
+	mux.Handle("POST /config/schedules/groups/{id}/delete", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.deleteScheduleGroup)))
+	mux.Handle("GET /config/schedules/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.newScheduleTask)))
+	mux.Handle("GET /config/schedules/{id}/edit", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.editScheduleTask)))
+	mux.Handle("POST /config/schedules/preview", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.previewScheduleCron)))
+	mux.Handle("POST /config/schedules/{id}/preview", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.previewScheduleCron)))
+	mux.Handle("POST /config/schedules", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.createSchedule)))
+	mux.Handle("POST /config/schedules/{id}/update", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.updateSchedule)))
+	mux.Handle("POST /config/schedules/{id}/toggle", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.toggleSchedule)))
+	mux.Handle("POST /config/schedules/{id}/run", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.runScheduleNow)))
+	mux.Handle("POST /config/schedules/{id}/delete", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.deleteSchedule)))
 	mux.Handle("GET /config/external-interfaces", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.externalInterfacesPage)))
+	mux.Handle("POST /config/external-interfaces/control", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.setExternalGlobalControl)))
 	mux.Handle("GET /config/external-interfaces/keys/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.newExternalKeyTask)))
-	mux.Handle("POST /config/external-interfaces/keys", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.createExternalKey)))
+	mux.Handle("POST /config/external-interfaces/keys", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.createExternalKey)))
 	mux.Handle("GET /config/external-interfaces/keys/{id}/edit", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.editExternalKeyTask)))
-	mux.Handle("GET /config/external-interfaces/keys/{id}/copy", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.copyExternalKeyTask)))
 	mux.Handle("GET /config/external-interfaces/keys/{id}/rotate", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.rotateExternalKeyTask)))
-	mux.Handle("POST /config/external-interfaces/keys/{id}", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.updateExternalKey)))
-	mux.Handle("POST /config/external-interfaces/keys/{id}/toggle", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.toggleExternalKey)))
-	mux.Handle("POST /config/external-interfaces/keys/{id}/rotate", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.rotateExternalKey)))
-	mux.Handle("POST /config/external-interfaces/keys/{id}/delete", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.deleteExternalKey)))
+	mux.Handle("POST /config/external-interfaces/keys/{id}", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.updateExternalKey)))
+	mux.Handle("POST /config/external-interfaces/keys/{id}/toggle", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.toggleExternalKey)))
+	mux.Handle("POST /config/external-interfaces/keys/{id}/rotate", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.rotateExternalKey)))
+	mux.Handle("POST /config/external-interfaces/keys/{id}/delete", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.deleteExternalKey)))
 	mux.Handle("GET /config/external-interfaces/keys/{id}/entries/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.newExternalEntryTask)))
-	mux.Handle("POST /config/external-interfaces/keys/{id}/entries", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.createExternalEntry)))
+	mux.Handle("POST /config/external-interfaces/keys/{id}/entries", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.createExternalEntry)))
 	mux.Handle("GET /config/external-interfaces/entries/{id}", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.externalEntryDetail)))
 	mux.Handle("GET /config/external-interfaces/entries/{id}/edit", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.editExternalEntryTask)))
-	mux.Handle("POST /config/external-interfaces/entries/{id}", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.updateExternalEntry)))
-	mux.Handle("POST /config/external-interfaces/entries/{id}/toggle", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.toggleExternalEntry)))
-	mux.Handle("POST /config/external-interfaces/entries/{id}/delete", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.deleteExternalEntry)))
-	mux.Handle("GET /history/audit", a.requireSession(http.HandlerFunc(a.auditPage)))
-	mux.Handle("GET /history/audit.csv", a.requireSession(http.HandlerFunc(a.auditDownload)))
+	mux.Handle("POST /config/external-interfaces/entries/{id}", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.updateExternalEntry)))
+	mux.Handle("POST /config/external-interfaces/entries/{id}/toggle", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.toggleExternalEntry)))
+	mux.Handle("POST /config/external-interfaces/entries/{id}/delete", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.deleteExternalEntry)))
+	mux.Handle("GET /history/audit", a.requirePermission(permissionReadAudit, http.HandlerFunc(a.auditPage)))
+	mux.Handle("GET /history/audit.csv", a.requirePermission(permissionReadAudit, http.HandlerFunc(a.auditDownload)))
+	a.routeSpecs = mux.Specs()
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		request = a.applyTrustedProxy(request)
+		requestID, err := randomToken(18)
+		if err != nil {
+			http.Error(response, "unable to create request correlation", http.StatusInternalServerError)
+			return
+		}
+		request = request.WithContext(context.WithValue(request.Context(), requestIDContextKey, requestID))
+		response.Header().Set("X-Request-ID", requestID)
+		request, err = a.applyTrustedProxy(request)
+		if err != nil {
+			http.Error(response, "invalid trusted proxy headers", http.StatusBadRequest)
+			return
+		}
+		if !a.validRequestHost(request.Host) {
+			http.Error(response, "request host is not allowed", http.StatusMisdirectedRequest)
+			return
+		}
 		response.Header().Set("X-Content-Type-Options", "nosniff")
 		response.Header().Set("X-Frame-Options", "DENY")
-		response.Header().Set("Referrer-Policy", "no-referrer")
+		// Keep same-origin form submissions bound to a concrete Origin. Chromium
+		// serializes the Origin as "null" for native POST forms under no-referrer,
+		// which makes strict same-origin validation indistinguishable from an
+		// opaque, potentially hostile origin.
+		response.Header().Set("Referrer-Policy", "same-origin")
 		response.Header().Set("Permissions-Policy", "camera=(), geolocation=(), microphone=()")
 		response.Header().Set("Content-Security-Policy", "default-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		if isSecureRequest(request) {
 			response.Header().Set("Strict-Transport-Security", "max-age=31536000")
-		}
-		if request.Body != nil && request.Method != http.MethodGet && request.Method != http.MethodHead &&
-			request.URL.Path != "/resources/files/upload" && request.URL.Path != "/settings/ai/runtime/offline" && request.URL.Path != "/trigger" {
-			if request.ContentLength > maxFormRequestBytes {
-				http.Error(response, "request body is too large", http.StatusRequestEntityTooLarge)
-				return
-			}
-			resetReadDeadline := setRequestReadDeadline(response, boundedFormReadTimeout)
-			defer resetReadDeadline()
-			request.Body = http.MaxBytesReader(response, request.Body, maxFormRequestBytes)
 		}
 		if a.validation.Load() && (request.Method != http.MethodGet || request.URL.Path == "/trigger") {
 			response.Header().Set("Retry-After", "2")
@@ -2224,6 +2902,15 @@ func (a *App) routes() http.Handler {
 		pageResponse := &pageResponseWriter{ResponseWriter: response}
 		mux.ServeHTTP(pageResponse, request)
 		pageResponse.finish(a, request)
+		if pageResponse.status == http.StatusMethodNotAllowed {
+			auditRequest := request
+			if current, _, ok := a.loadSession(request); ok {
+				auditRequest = request.WithContext(context.WithValue(request.Context(), sessionContextKey, current))
+				a.recordAuditForRequest(auditRequest, "unknown_method", request.Method+" "+request.URL.Path, "blocked")
+			} else {
+				a.recordAuditWithRequestActor(auditRequest, "unknown_method", request.Method+" "+request.URL.Path, "blocked", request.RemoteAddr, "", "", "")
+			}
+		}
 	})
 }
 
@@ -2252,8 +2939,7 @@ func (w *pageResponseWriter) WriteHeader(status int) {
 	w.committed = true
 	w.status = status
 	contentType := w.Header().Get("Content-Type")
-	w.buffering = (strings.HasPrefix(contentType, "text/html") && (status < 300 || status >= 400)) ||
-		(status >= 400 && strings.HasPrefix(contentType, "text/plain"))
+	w.buffering = status >= 400 || (strings.HasPrefix(contentType, "text/html") && status < 300)
 	if !w.buffering {
 		w.ResponseWriter.WriteHeader(status)
 	}
@@ -2276,7 +2962,11 @@ func (w *pageResponseWriter) Flush() {
 	if w.buffering {
 		w.Header().Del("Content-Length")
 		w.ResponseWriter.WriteHeader(w.status)
-		_, _ = w.ResponseWriter.Write(w.body.Bytes())
+		body := w.body.Bytes()
+		if w.status >= 400 {
+			body = secretredaction.Bytes(body)
+		}
+		_, _ = w.ResponseWriter.Write(body)
 		w.body.Reset()
 		w.buffering = false
 	}
@@ -2294,6 +2984,9 @@ func (w *pageResponseWriter) finish(a *App, request *http.Request) {
 		return
 	}
 	body := w.body.Bytes()
+	if w.status >= 400 {
+		body = secretredaction.Bytes(body)
+	}
 	if w.status >= 400 && strings.HasPrefix(w.Header().Get("Content-Type"), "text/plain") {
 		body = renderApplicationError(request, w.status, strings.TrimSpace(string(body)))
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -2548,6 +3241,10 @@ type auditView struct {
 	Source     string
 	Actor      string
 	ActorRole  string
+	RequestID  string
+	Assurance  string
+	Revision   string
+	Digest     string
 }
 
 var (
@@ -2648,22 +3345,23 @@ func (a *App) auditPage(response http.ResponseWriter, request *http.Request) {
 	like := "%" + filters.Query + "%"
 	var total int
 	if err := a.db.QueryRow(`SELECT COUNT(*) FROM audit_events
-		WHERE (? = '' OR action LIKE ? OR target LIKE ? OR result LIKE ? OR source_address LIKE ? OR actor_username LIKE ? OR actor_role LIKE ?)
+		WHERE (? = '' OR action LIKE ? OR target LIKE ? OR result LIKE ? OR source_address LIKE ? OR actor_username LIKE ? OR actor_role LIKE ? OR request_id LIKE ? OR authentication_assurance LIKE ? OR resource_revision LIKE ? OR resource_digest_sha256 LIKE ?)
 		AND (? = 0 OR occurred_at >= ?)
 		AND (? = 0 OR occurred_at < ?)`,
-		filters.Query, like, like, like, like, like, like,
+		filters.Query, like, like, like, like, like, like, like, like, like, like,
 		filters.HasFromDate, filters.FromUnix,
 		filters.HasToDate, filters.ToExclusiveUnix).Scan(&total); err != nil {
 		http.Error(response, "无法读取审计事件", http.StatusInternalServerError)
 		return
 	}
 	pagination := newPagination(request, total)
-	rows, err := a.db.Query(`SELECT occurred_at, action, target, result, source_address, actor_username, actor_role FROM audit_events
-		WHERE (? = '' OR action LIKE ? OR target LIKE ? OR result LIKE ? OR source_address LIKE ? OR actor_username LIKE ? OR actor_role LIKE ?)
+	rows, err := a.db.Query(`SELECT occurred_at, action, target, result, source_address, actor_username, actor_role,
+		request_id, authentication_assurance, resource_revision, resource_digest_sha256 FROM audit_events
+		WHERE (? = '' OR action LIKE ? OR target LIKE ? OR result LIKE ? OR source_address LIKE ? OR actor_username LIKE ? OR actor_role LIKE ? OR request_id LIKE ? OR authentication_assurance LIKE ? OR resource_revision LIKE ? OR resource_digest_sha256 LIKE ?)
 		AND (? = 0 OR occurred_at >= ?)
 		AND (? = 0 OR occurred_at < ?)
 		ORDER BY occurred_at DESC LIMIT ? OFFSET ?`,
-		filters.Query, like, like, like, like, like, like,
+		filters.Query, like, like, like, like, like, like, like, like, like, like,
 		filters.HasFromDate, filters.FromUnix,
 		filters.HasToDate, filters.ToExclusiveUnix,
 		listPageSize, pagination.Start)
@@ -2676,10 +3374,21 @@ func (a *App) auditPage(response http.ResponseWriter, request *http.Request) {
 	for rows.Next() {
 		var event auditView
 		var occurredAt int64
-		if err := rows.Scan(&occurredAt, &event.Action, &event.Target, &event.Result, &event.Source, &event.Actor, &event.ActorRole); err != nil {
+		if err := rows.Scan(&occurredAt, &event.Action, &event.Target, &event.Result, &event.Source, &event.Actor, &event.ActorRole,
+			&event.RequestID, &event.Assurance, &event.Revision, &event.Digest); err != nil {
 			http.Error(response, "无法读取审计事件", http.StatusInternalServerError)
 			return
 		}
+		event.Action = secretredaction.String(event.Action)
+		event.Target = secretredaction.String(event.Target)
+		event.Result = secretredaction.String(event.Result)
+		event.Source = secretredaction.String(event.Source)
+		event.Actor = secretredaction.String(event.Actor)
+		event.ActorRole = secretredaction.String(event.ActorRole)
+		event.RequestID = secretredaction.String(event.RequestID)
+		event.Assurance = secretredaction.String(event.Assurance)
+		event.Revision = secretredaction.String(event.Revision)
+		event.Digest = secretredaction.String(event.Digest)
 		event.OccurredAt = time.Unix(occurredAt, 0).UTC()
 		events = append(events, event)
 	}
@@ -2694,7 +3403,12 @@ func (a *App) auditPage(response http.ResponseWriter, request *http.Request) {
 }
 
 func (a *App) auditDownload(response http.ResponseWriter, _ *http.Request) {
-	rows, err := a.db.Query("SELECT occurred_at, action, target, result, source_address, actor_user_id, actor_username, actor_role FROM audit_events ORDER BY occurred_at")
+	var anchor, tail string
+	if err := a.db.QueryRow("SELECT anchor_hash, tail_hash FROM audit_chain_state WHERE id = 1").Scan(&anchor, &tail); err != nil {
+		http.Error(response, "无法读取审计哈希链", http.StatusInternalServerError)
+		return
+	}
+	rows, err := a.db.Query("SELECT id, occurred_at, action, target, result, source_address, actor_user_id, actor_username, actor_role, request_id, authentication_assurance, resource_revision, resource_digest_sha256, previous_hash, event_hash FROM audit_events ORDER BY id")
 	if err != nil {
 		http.Error(response, "无法导出审计事件", http.StatusInternalServerError)
 		return
@@ -2703,16 +3417,16 @@ func (a *App) auditDownload(response http.ResponseWriter, _ *http.Request) {
 	response.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	response.Header().Set("Content-Disposition", `attachment; filename="scriptboard-audit.csv"`)
 	writer := csv.NewWriter(response)
-	_ = writer.Write([]string{"occurred_at", "action", "target", "result", "source_address", "actor_user_id", "actor_username", "actor_role"})
+	_ = writer.Write([]string{"id", "occurred_at", "action", "target", "result", "source_address", "actor_user_id", "actor_username", "actor_role", "request_id", "authentication_assurance", "resource_revision", "resource_digest_sha256", "previous_hash", "event_hash", "chain_anchor", "chain_tail"})
 	for rows.Next() {
-		var occurred int64
-		var action, target, result, source, actorUserID, actorUsername, actorRole string
-		if rows.Scan(&occurred, &action, &target, &result, &source, &actorUserID, &actorUsername, &actorRole) != nil {
+		var id, occurred int64
+		var action, target, result, source, actorUserID, actorUsername, actorRole, requestID, assurance, revision, digest, previousHash, eventHash string
+		if rows.Scan(&id, &occurred, &action, &target, &result, &source, &actorUserID, &actorUsername, &actorRole, &requestID, &assurance, &revision, &digest, &previousHash, &eventHash) != nil {
 			return
 		}
-		record := []string{time.Unix(occurred, 0).UTC().Format(time.RFC3339), action, target, result, source, actorUserID, actorUsername, actorRole}
+		record := []string{strconv.FormatInt(id, 10), time.Unix(occurred, 0).UTC().Format(time.RFC3339), action, target, result, source, actorUserID, actorUsername, actorRole, requestID, assurance, revision, digest, previousHash, eventHash, anchor, tail}
 		for index := range record {
-			record[index] = spreadsheetSafeCSVCell(record[index])
+			record[index] = spreadsheetSafeCSVCell(secretredaction.String(record[index]))
 		}
 		_ = writer.Write(record)
 	}
@@ -2831,11 +3545,11 @@ func (a *App) scheduleRequest(request *http.Request) (scheduler.CreateRequest, e
 		}
 		timeoutSeconds = parsed
 	}
-	scriptPath, err := a.files.CanonicalExisting(request.FormValue("script"))
+	scriptPath, err := a.hostCanonicalExisting(request.Context(), request.FormValue("script"))
 	if err != nil {
 		return scheduler.CreateRequest{}, fmt.Errorf("计划脚本无效: %w", err)
 	}
-	info, err := a.files.Info(scriptPath)
+	info, _, err := a.hostInfo(request.Context(), scriptPath)
 	if err != nil || !info.Mode().IsRegular() {
 		return scheduler.CreateRequest{}, errors.New("计划脚本必须是普通主机文件")
 	}
@@ -2924,6 +3638,8 @@ type quickRunView struct {
 	RecentRuns        []quickRunHistoryView
 	LastDuration      string
 	HasLastDuration   bool
+	ScriptSHA256      string
+	Revision          int64
 }
 
 type quickRunHistoryView struct {
@@ -2946,7 +3662,11 @@ type quickRunCreateRequest struct {
 	GroupID           *string
 }
 
-func (a *App) createQuickRun(values quickRunCreateRequest) (string, error) {
+func (a *App) createQuickRun(ctx context.Context, values quickRunCreateRequest) (string, error) {
+	prepared, err := a.hostPrepareScript(ctx, values.ScriptPath)
+	if err != nil {
+		return "", err
+	}
 	id, err := randomToken(18)
 	if err != nil {
 		return "", err
@@ -2962,10 +3682,10 @@ func (a *App) createQuickRun(values quickRunCreateRequest) (string, error) {
 	}
 	now := time.Now().UTC().Unix()
 	if _, err := transaction.Exec(`INSERT INTO quick_runs
-		(id, name, script_path, script_path_key, arguments_template, timeout_seconds, source_run_id, sort_order, created_at, group_id, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, values.Name, values.ScriptPath, hostfiles.ComparisonKey(values.ScriptPath), values.ArgumentsTemplate, values.TimeoutSeconds,
-		values.SourceRunID, sortOrder, now, values.GroupID, now,
+		(id, name, script_path, script_path_key, arguments_template, timeout_seconds, source_run_id, sort_order, created_at, group_id, script_sha256, revision, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+		id, values.Name, prepared.Path, hostfiles.ComparisonKey(prepared.Path), values.ArgumentsTemplate, values.TimeoutSeconds,
+		values.SourceRunID, sortOrder, now, values.GroupID, prepared.Digest, now,
 	); err != nil {
 		return "", err
 	}
@@ -2999,7 +3719,7 @@ func (a *App) saveQuickRun(response http.ResponseWriter, request *http.Request) 
 		http.Error(response, "快捷执行分组不存在", http.StatusConflict)
 		return
 	}
-	id, err := a.createQuickRun(quickRunCreateRequest{
+	id, err := a.createQuickRun(request.Context(), quickRunCreateRequest{
 		Name: name, ScriptPath: source.ScriptPath, ArgumentsTemplate: source.ArgumentsTemplate,
 		TimeoutSeconds: source.TimeoutSeconds, SourceRunID: &source.ID, GroupID: groupID,
 	})
@@ -3007,7 +3727,7 @@ func (a *App) saveQuickRun(response http.ResponseWriter, request *http.Request) 
 		http.Error(response, "无法保存快捷执行", http.StatusInternalServerError)
 		return
 	}
-	a.recordAuditForRequest(request, "create_quick_run", id, "succeeded")
+	a.recordQuickRunAuditForRequest(request, "create_quick_run", id, "succeeded")
 	response.Header().Set(assistantResourceIDHeader, id)
 	destination := "/config/quick-runs"
 	if request.Header.Get("X-ScriptBoard-Navigation") == "pjax" {
@@ -3026,9 +3746,14 @@ func (a *App) createQuickRunFromFile(response http.ResponseWriter, request *http
 		http.Error(response, "快捷执行名称无效", http.StatusBadRequest)
 		return
 	}
-	scriptPath, err := a.canonicalQuickRunScript(request.FormValue("script"))
+	scriptPath, err := a.hostCanonicalExisting(request.Context(), request.FormValue("script"))
 	if err != nil {
 		writeHostFileError(response, "脚本不存在或不可运行", err)
+		return
+	}
+	info, _, err := a.hostInfo(request.Context(), scriptPath)
+	if err != nil || !info.Mode().IsRegular() || !isScriptExtension(scriptPath) {
+		http.Error(response, "脚本不存在或不可运行", http.StatusBadRequest)
 		return
 	}
 	timeoutSeconds := 0
@@ -3055,7 +3780,7 @@ func (a *App) createQuickRunFromFile(response http.ResponseWriter, request *http
 		http.Error(response, "快捷执行分组不存在", http.StatusConflict)
 		return
 	}
-	id, err := a.createQuickRun(quickRunCreateRequest{
+	id, err := a.createQuickRun(request.Context(), quickRunCreateRequest{
 		Name: name, ScriptPath: scriptPath, ArgumentsTemplate: argumentsTemplate,
 		TimeoutSeconds: timeoutSeconds, SourceRunID: nil, GroupID: groupID,
 	})
@@ -3063,7 +3788,7 @@ func (a *App) createQuickRunFromFile(response http.ResponseWriter, request *http
 		http.Error(response, "无法保存快捷执行", http.StatusInternalServerError)
 		return
 	}
-	a.recordAuditForRequest(request, "create_quick_run", id, "succeeded")
+	a.recordQuickRunAuditForRequest(request, "create_quick_run", id, "succeeded")
 	response.Header().Set(assistantResourceIDHeader, id)
 	destination := "/config/quick-runs"
 	if request.Header.Get("X-ScriptBoard-Navigation") == "pjax" {
@@ -3100,7 +3825,7 @@ func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request)
 		http.Error(response, "无法读取快捷执行分组", http.StatusInternalServerError)
 		return
 	}
-	rows, err := a.db.Query(`SELECT id, name, script_path, arguments_template, timeout_seconds, group_id, locked
+	rows, err := a.db.Query(`SELECT id, name, script_path, arguments_template, timeout_seconds, group_id, locked, script_sha256, revision
 		FROM quick_runs ORDER BY sort_order, created_at`)
 	if err != nil {
 		http.Error(response, "无法读取快捷执行", http.StatusInternalServerError)
@@ -3110,12 +3835,12 @@ func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request)
 	for rows.Next() {
 		var quick quickRunView
 		var groupID sql.NullString
-		if err := rows.Scan(&quick.ID, &quick.Name, &quick.ScriptPath, &quick.ArgumentsTemplate, &quick.TimeoutSeconds, &groupID, &quick.Locked); err != nil {
+		if err := rows.Scan(&quick.ID, &quick.Name, &quick.ScriptPath, &quick.ArgumentsTemplate, &quick.TimeoutSeconds, &groupID, &quick.Locked, &quick.ScriptSHA256, &quick.Revision); err != nil {
 			_ = rows.Close()
 			http.Error(response, "无法读取快捷执行", http.StatusInternalServerError)
 			return
 		}
-		if info, infoErr := a.files.Info(quick.ScriptPath); infoErr == nil && info.Mode().IsRegular() {
+		if prepared, prepareErr := a.hostPrepareScript(request.Context(), quick.ScriptPath); prepareErr == nil && quick.ScriptSHA256 != "" && subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(quick.ScriptSHA256)) == 1 {
 			quick.Valid = true
 		}
 		if groupID.Valid {
@@ -3173,11 +3898,19 @@ func (a *App) startQuickRun(response http.ResponseWriter, request *http.Request)
 		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
 		return
 	}
-	var quick quickRunView
-	if err := a.db.QueryRow("SELECT id, name, script_path, arguments_template, timeout_seconds FROM quick_runs WHERE id = ?", request.PathValue("id")).Scan(
-		&quick.ID, &quick.Name, &quick.ScriptPath, &quick.ArgumentsTemplate, &quick.TimeoutSeconds,
-	); err != nil {
+	quick, err := a.loadQuickRun(request.PathValue("id"))
+	if err != nil {
 		http.Error(response, "快捷执行不存在", http.StatusNotFound)
+		return
+	}
+	prepared, err := a.hostPrepareScript(request.Context(), quick.ScriptPath)
+	if err != nil || quick.ScriptSHA256 == "" || subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(quick.ScriptSHA256)) != 1 {
+		http.Error(response, "快捷执行脚本已变化，请由管理员重新发布", http.StatusConflict)
+		return
+	}
+	preparedDirectory, err := a.hostPrepareDirectory(request.Context(), prepared.Directory)
+	if err != nil {
+		http.Error(response, "快捷执行工作目录不可用", http.StatusConflict)
 		return
 	}
 	if a.runs.IsActiveScript(quick.ScriptPath) && request.FormValue("confirm_overlap") != "yes" {
@@ -3193,15 +3926,16 @@ func (a *App) startQuickRun(response http.ResponseWriter, request *http.Request)
 	}
 	current := request.Context().Value(sessionContextKey).(session)
 	id, err := a.runs.Start(runmanager.StartRequest{
-		ScriptPath: quick.ScriptPath, ArgumentsTemplate: quick.ArgumentsTemplate, TimeoutSeconds: quick.TimeoutSeconds,
+		ScriptPath: quick.ScriptPath, ExpectedDigest: quick.ScriptSHA256, ArgumentsTemplate: quick.ArgumentsTemplate, TimeoutSeconds: quick.TimeoutSeconds,
 		SourceType: "admin/quick-run", SourceName: quick.Name, SourceID: quick.ID, Variables: variables,
 		InitiatorUserID: current.userID, InitiatorUsername: current.username,
+		PreparedScript: &prepared, PreparedDirectory: &preparedDirectory,
 	})
 	if err != nil {
 		http.Error(response, "无法启动快捷执行："+err.Error(), http.StatusBadRequest)
 		return
 	}
-	a.recordAuditForRequest(request, "start_quick_run", quick.ID, "accepted")
+	a.recordQuickRunAuditForRequest(request, "start_quick_run", quick.ID, "accepted")
 	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/history/runs/"+url.PathEscape(id), http.StatusSeeOther)
 }
@@ -3442,7 +4176,7 @@ func (a *App) updateVariable(response http.ResponseWriter, request *http.Request
 	result, err := transaction.Exec("UPDATE variables SET name = ?, value = ?, is_password = ?, updated_at = ? WHERE name = ?", name, value, isPassword, time.Now().UTC().Unix(), original)
 	if err == nil && name != original {
 		oldReference, newReference := "{{"+original+"}}", "{{"+name+"}}"
-		_, err = transaction.Exec("UPDATE quick_runs SET arguments_template = replace(arguments_template, ?, ?)", oldReference, newReference)
+		_, err = transaction.Exec("UPDATE quick_runs SET arguments_template = replace(arguments_template, ?, ?), revision = revision + 1 WHERE arguments_template LIKE ?", oldReference, newReference, "%"+oldReference+"%")
 		if err == nil {
 			_, err = transaction.Exec("UPDATE schedules SET arguments_template = replace(arguments_template, ?, ?)", oldReference, newReference)
 		}
@@ -3546,8 +4280,21 @@ func (a *App) startRun(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	current := request.Context().Value(sessionContextKey).(session)
+	script, err := a.hostPrepareScript(request.Context(), request.FormValue("script"))
+	if err != nil {
+		a.recordAuditForRequest(request, "start_run", request.FormValue("script"), "rejected")
+		http.Error(response, "脚本不可执行："+err.Error(), http.StatusBadRequest)
+		return
+	}
+	workingDirectory, err := a.hostPrepareDirectory(request.Context(), script.Directory)
+	if err != nil {
+		a.recordAuditResourceForRequest(request, "start_run", script.Path, "rejected", "", script.Digest)
+		http.Error(response, "脚本工作目录不可用："+err.Error(), http.StatusBadRequest)
+		return
+	}
 	id, err := a.runs.Start(runmanager.StartRequest{
-		ScriptPath:        request.FormValue("script"),
+		ScriptPath:        script.Path,
+		ExpectedDigest:    script.Digest,
 		ArgumentsTemplate: request.FormValue("arguments"),
 		SourceType:        "admin/manual",
 		SourceName:        "manual",
@@ -3555,13 +4302,15 @@ func (a *App) startRun(response http.ResponseWriter, request *http.Request) {
 		Variables:         variables,
 		InitiatorUserID:   current.userID,
 		InitiatorUsername: current.username,
+		PreparedScript:    &script,
+		PreparedDirectory: &workingDirectory,
 	})
 	if err != nil {
-		a.recordAuditForRequest(request, "start_run", request.FormValue("script"), "rejected")
+		a.recordAuditResourceForRequest(request, "start_run", script.Path, "rejected", "", script.Digest)
 		http.Error(response, "无法启动脚本："+err.Error(), http.StatusBadRequest)
 		return
 	}
-	a.recordAuditForRequest(request, "start_run", id, "accepted")
+	a.recordAuditResourceForRequest(request, "start_run", id, "accepted", "", script.Digest)
 	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/history/runs/"+url.PathEscape(id), http.StatusSeeOther)
 }
@@ -3852,18 +4601,18 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 	destination := request.FormValue("destination")
 	var err error
 	if destination == "" {
-		destination, err = a.files.Destination(request.FormValue("working_directory"), request.FormValue("name"))
+		destination, err = a.hostDestination(request.Context(), request.FormValue("working_directory"), request.FormValue("name"))
 		if err != nil {
 			writeHostFileError(response, "移动目标无效", err)
 			return
 		}
 	}
-	source, err = a.files.CanonicalExisting(source)
+	source, err = a.hostCanonicalExisting(request.Context(), source)
 	if err != nil {
 		writeHostFileError(response, "移动源无效", err)
 		return
 	}
-	destination, err = a.files.CanonicalDestination(destination)
+	destination, err = a.hostCanonicalDestination(request.Context(), destination)
 	if err != nil {
 		writeHostFileError(response, "移动目标无效", err)
 		return
@@ -3893,21 +4642,21 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 			http.Error(response, "新文件名无效："+err.Error(), http.StatusBadRequest)
 			return
 		}
-		destination, err = a.files.Destination(destinationParent, newName)
+		destination, err = a.hostDestination(request.Context(), destinationParent, newName)
 		if err != nil {
 			writeHostFileError(response, "移动目标无效", err)
 			return
 		}
 		destinationName = newName
 	}
-	_, targetErr := a.files.Info(destination)
+	_, _, targetErr := a.hostInfo(request.Context(), destination)
 	targetExists := targetErr == nil
 	if targetErr != nil && !os.IsNotExist(targetErr) {
 		http.Error(response, "无法检查移动目标："+targetErr.Error(), http.StatusBadRequest)
 		return
 	}
 	if targetExists && action != conflictActionOverwrite {
-		suggested, err := a.files.AvailableName(destinationParent, destinationName)
+		suggested, err := a.hostAvailableName(request.Context(), destinationParent, destinationName)
 		if err != nil {
 			http.Error(response, "无法生成可用名称："+err.Error(), http.StatusBadRequest)
 			return
@@ -3924,7 +4673,7 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "活动运行正在使用同名目标，不能覆盖", http.StatusConflict)
 		return
 	}
-	sameFilesystem, err := a.files.SameFilesystem(source, destination)
+	sameFilesystem, err := a.hostSameFilesystem(request.Context(), source, destination)
 	if err != nil {
 		writeHostFileError(response, "无法确定移动边界", err)
 		return
@@ -3946,17 +4695,20 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 		}
 		leaseID = "file-operation:" + operationID
 	}
-	if err := a.files.AcquireLease(leaseID, source, destination); err != nil {
-		http.Error(response, "移动路径正在使用中："+err.Error(), http.StatusConflict)
-		return
+	brokerCrossMove := !sameFilesystem && a.hostFilesBackend != nil
+	if !brokerCrossMove {
+		if err := a.files.AcquireLease(leaseID, source, destination); err != nil {
+			http.Error(response, "移动路径正在使用中："+err.Error(), http.StatusConflict)
+			return
+		}
 	}
-	leaseOwned := true
+	leaseOwned := !brokerCrossMove
 	defer func() {
 		if leaseOwned {
 			a.files.ReleaseLease(leaseID)
 		}
 	}()
-	_, latestTargetErr := a.files.Info(destination)
+	_, _, latestTargetErr := a.hostInfo(request.Context(), destination)
 	latestTargetExists := latestTargetErr == nil
 	if latestTargetErr != nil && !os.IsNotExist(latestTargetErr) {
 		writeHostFileError(response, "无法重新检查移动目标", latestTargetErr)
@@ -3974,7 +4726,7 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 			http.Error(response, "无法创建覆盖事务", http.StatusInternalServerError)
 			return
 		}
-		moved, err := a.files.MoveToTrash(destination, displacedID)
+		moved, err := a.hostMoveToTrash(request.Context(), destination, displacedID)
 		if err != nil {
 			http.Error(response, "无法暂存同名目标："+err.Error(), http.StatusConflict)
 			return
@@ -3987,12 +4739,25 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 			displacedID, moved.OriginalPath, hostfiles.ComparisonKey(moved.OriginalPath), moved.StoredPath,
 			hostfiles.ComparisonKey(moved.StoredPath), time.Now().UTC().Unix(), moved.Size, moved.Directory,
 		); err != nil {
-			_ = a.files.RestoreFromTrash(moved.StoredPath, moved.OriginalPath)
+			_ = a.hostRestoreFromTrash(request.Context(), moved.StoredPath, moved.OriginalPath)
 			http.Error(response, "无法记录被覆盖的条目", http.StatusInternalServerError)
 			return
 		}
 	}
 	if !sameFilesystem {
+		if brokerCrossMove {
+			displacedStoredPath := ""
+			if displaced != nil {
+				displacedStoredPath = displaced.StoredPath
+			}
+			if _, moveErr := a.hostStartCrossFilesystemMove(request.Context(), operationID, source, destination, displacedStoredPath, displacedID); moveErr != nil {
+				http.Error(response, "unable to start cross-filesystem move: "+moveErr.Error(), http.StatusBadRequest)
+				return
+			}
+			a.recordAuditForRequest(request, "cross_filesystem_move", source+" -> "+destination, "accepted")
+			http.Redirect(response, request, "/resources/files/operations/"+url.PathEscape(operationID), http.StatusSeeOther)
+			return
+		}
 		started := make(chan struct{})
 		finished := make(chan error, 1)
 		current := request.Context().Value(sessionContextKey).(session)
@@ -4007,14 +4772,14 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 				// destination. Restore an overwritten entry only when the move
 				// engine actually rolled the destination back.
 				if _, destinationErr := a.files.Info(destination); os.IsNotExist(destinationErr) {
-					_ = a.restoreTrackedTrash(displacedID, *displaced)
+					_ = a.restoreTrackedTrash(request.Context(), displacedID, *displaced)
 				}
 			}
 			result := "succeeded"
 			if moveErr != nil {
 				result = "failed"
 			}
-			a.recordAuditWithActor("cross_filesystem_move", source+" -> "+destination, result, sourceAddress, current.userID, current.username, current.role)
+			a.recordAuditWithRequestActor(request, "cross_filesystem_move", source+" -> "+destination, result, sourceAddress, current.userID, current.username, current.role)
 			finished <- moveErr
 		}()
 		select {
@@ -4029,9 +4794,9 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 		}
 		return
 	}
-	if err := a.files.Move(source, destination); err != nil {
+	if err := a.hostMove(request.Context(), source, destination); err != nil {
 		if displaced != nil {
-			if restoreErr := a.restoreTrackedTrash(displacedID, *displaced); restoreErr != nil {
+			if restoreErr := a.restoreTrackedTrash(request.Context(), displacedID, *displaced); restoreErr != nil {
 				http.Error(response, "无法移动条目："+err.Error()+"；恢复被覆盖条目失败："+restoreErr.Error(), http.StatusInternalServerError)
 				return
 			}
@@ -4050,9 +4815,9 @@ func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {
 		if transaction != nil {
 			_ = transaction.Rollback()
 		}
-		rollbackErr := a.files.Move(destination, source)
+		rollbackErr := a.hostMove(request.Context(), destination, source)
 		if rollbackErr == nil && displaced != nil {
-			rollbackErr = a.restoreTrackedTrash(displacedID, *displaced)
+			rollbackErr = a.restoreTrackedTrash(request.Context(), displacedID, *displaced)
 		}
 		if rollbackErr != nil {
 			http.Error(response, "无法同步更新引用："+err.Error()+"；文件回滚失败："+rollbackErr.Error(), http.StatusInternalServerError)
@@ -4074,7 +4839,7 @@ func (a *App) toggleExecutable(response http.ResponseWriter, request *http.Reque
 		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
 		return
 	}
-	path, err := a.files.CanonicalExisting(request.FormValue("path"))
+	path, err := a.hostCanonicalExisting(request.Context(), request.FormValue("path"))
 	if err != nil {
 		writeHostFileError(response, "执行权限目标无效", err)
 		return
@@ -4085,7 +4850,7 @@ func (a *App) toggleExecutable(response http.ResponseWriter, request *http.Reque
 		return
 	}
 	defer release()
-	if _, err := a.files.ToggleOwnerExecute(path); err != nil {
+	if _, err := a.hostToggleOwnerExecute(request.Context(), path); err != nil {
 		writeHostFileError(response, "无法切换所有者执行权限", err)
 		return
 	}
@@ -4095,12 +4860,12 @@ func (a *App) toggleExecutable(response http.ResponseWriter, request *http.Reque
 }
 
 func (a *App) editTextPage(response http.ResponseWriter, request *http.Request) {
-	relative, err := a.files.CanonicalExisting(request.URL.Query().Get("path"))
+	relative, err := a.hostCanonicalExisting(request.Context(), request.URL.Query().Get("path"))
 	if err != nil {
 		writeHostFileError(response, "无法编辑文件", err)
 		return
 	}
-	document, err := a.files.ReadText(relative, 1<<20)
+	document, err := a.hostReadText(request.Context(), relative, 1<<20)
 	if err != nil {
 		writeHostFileError(response, "无法编辑文件", err)
 		return
@@ -4119,12 +4884,12 @@ func (a *App) editTextPage(response http.ResponseWriter, request *http.Request) 
 }
 
 func (a *App) previewTextPage(response http.ResponseWriter, request *http.Request) {
-	relative, err := a.files.CanonicalExisting(request.URL.Query().Get("path"))
+	relative, err := a.hostCanonicalExisting(request.Context(), request.URL.Query().Get("path"))
 	if err != nil {
 		writeHostFileError(response, "无法预览文件", err)
 		return
 	}
-	document, err := a.files.ReadText(relative, 1<<20)
+	document, err := a.hostReadText(request.Context(), relative, 1<<20)
 	if err != nil {
 		writeHostFileError(response, "无法预览文件", err)
 		return
@@ -4159,7 +4924,7 @@ func (a *App) saveText(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
 		return
 	}
-	relative, err := a.files.CanonicalExisting(request.URL.Query().Get("path"))
+	relative, err := a.hostCanonicalExisting(request.Context(), request.URL.Query().Get("path"))
 	if err != nil {
 		writeHostFileError(response, "无法保存文件", err)
 		return
@@ -4175,7 +4940,7 @@ func (a *App) saveText(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "无法创建回收条目", http.StatusInternalServerError)
 		return
 	}
-	trashed, err := a.files.SaveText(relative, request.FormValue("digest"), request.FormValue("content"), id, 1<<20)
+	trashed, err := a.hostSaveText(request.Context(), relative, request.FormValue("digest"), request.FormValue("content"), id, 1<<20)
 	if errors.Is(err, hostfiles.ErrConflict) {
 		http.Error(response, "文件已被外部修改，请重新打开后再保存", http.StatusConflict)
 		return
@@ -4192,7 +4957,7 @@ func (a *App) saveText(response http.ResponseWriter, request *http.Request) {
 		hostfiles.ComparisonKey(trashed.StoredPath), time.Now().UTC().Unix(), trashed.Size,
 	)
 	if err != nil {
-		_ = a.files.RollbackTextSave(relative, trashed.StoredPath)
+		_ = a.hostRollbackTextSave(request.Context(), relative, trashed.StoredPath)
 		http.Error(response, "无法记录文件旧版本", http.StatusInternalServerError)
 		return
 	}
@@ -4204,7 +4969,7 @@ func (a *App) saveText(response http.ResponseWriter, request *http.Request) {
 
 func (a *App) downloadFile(response http.ResponseWriter, request *http.Request) {
 	relative := request.URL.Query().Get("path")
-	file, info, err := a.files.OpenRegular(relative)
+	file, info, err := a.hostOpenRegular(request.Context(), relative)
 	if err != nil {
 		writeHostFileError(response, "无法下载文件", err)
 		return
@@ -4226,7 +4991,7 @@ func (a *App) previewImage(response http.ResponseWriter, request *http.Request) 
 		http.Error(response, "该格式只能下载，不能内嵌预览", http.StatusUnsupportedMediaType)
 		return
 	}
-	file, info, err := a.files.OpenRegular(relative)
+	file, info, err := a.hostOpenRegular(request.Context(), relative)
 	if err != nil {
 		writeHostFileError(response, "无法预览图片", err)
 		return
@@ -4243,7 +5008,7 @@ func (a *App) deleteFile(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
 		return
 	}
-	path, err := a.files.CanonicalExisting(request.FormValue("path"))
+	path, err := a.hostCanonicalExisting(request.Context(), request.FormValue("path"))
 	if err != nil {
 		writeHostFileError(response, "无法删除条目", err)
 		return
@@ -4289,7 +5054,7 @@ func (a *App) deleteFile(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "无法创建回收条目", http.StatusInternalServerError)
 		return
 	}
-	trashed, err := a.files.MoveToTrash(path, id)
+	trashed, err := a.hostMoveToTrash(request.Context(), path, id)
 	if err != nil {
 		http.Error(response, "无法删除条目："+err.Error(), http.StatusBadRequest)
 		return
@@ -4302,7 +5067,7 @@ func (a *App) deleteFile(response http.ResponseWriter, request *http.Request) {
 		hostfiles.ComparisonKey(trashed.StoredPath), time.Now().UTC().Unix(), trashed.Size, trashed.Directory,
 	)
 	if err != nil {
-		_ = a.files.RestoreFromTrash(trashed.StoredPath, trashed.OriginalPath)
+		_ = a.hostRestoreFromTrash(request.Context(), trashed.StoredPath, trashed.OriginalPath)
 		http.Error(response, "无法记录回收条目", http.StatusInternalServerError)
 		return
 	}
@@ -4318,7 +5083,7 @@ func (a *App) deleteFile(response http.ResponseWriter, request *http.Request) {
 		if transaction != nil {
 			_ = transaction.Rollback()
 		}
-		if restoreErr := a.restoreTrackedTrash(id, trashed); restoreErr != nil {
+		if restoreErr := a.restoreTrackedTrash(request.Context(), id, trashed); restoreErr != nil {
 			http.Error(response, "无法停用引用该条目的计划："+err.Error()+"；文件回滚失败："+restoreErr.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -4417,24 +5182,24 @@ func (a *App) restoreTrash(response http.ResponseWriter, request *http.Request) 
 			http.Error(response, "新文件名无效："+err.Error(), http.StatusBadRequest)
 			return
 		}
-		renamedDestination, err := a.files.Destination(parent, newName)
+		renamedDestination, err := a.hostDestination(request.Context(), parent, newName)
 		if err != nil {
 			writeHostFileError(response, "恢复目标无效", err)
 			return
 		}
 		destination = renamedDestination
 	}
-	_, targetErr := a.files.Info(destination)
+	_, _, targetErr := a.hostInfo(request.Context(), destination)
 	targetExists := targetErr == nil
 	if targetErr != nil && !os.IsNotExist(targetErr) {
 		http.Error(response, "无法检查恢复目标："+targetErr.Error(), http.StatusConflict)
 		return
 	}
 	if targetExists && action != conflictActionOverwrite {
-		suggested, err := a.files.AvailableName(parent, originalName)
+		suggested, err := a.hostAvailableName(request.Context(), parent, originalName)
 		if action == conflictActionRename {
 			_, requestedName := parentAndName(destination)
-			suggested, err = a.files.AvailableName(parent, requestedName)
+			suggested, err = a.hostAvailableName(request.Context(), parent, requestedName)
 		}
 		if err != nil {
 			http.Error(response, "无法生成可用名称："+err.Error(), http.StatusConflict)
@@ -4457,7 +5222,7 @@ func (a *App) restoreTrash(response http.ResponseWriter, request *http.Request) 
 		return
 	}
 	defer release()
-	if err := a.commitTrashRestore(id, stored, destination, action == conflictActionOverwrite && targetExists); err != nil {
+	if err := a.commitTrashRestore(request.Context(), id, stored, destination, action == conflictActionOverwrite && targetExists); err != nil {
 		http.Error(response, "无法恢复条目："+err.Error(), http.StatusConflict)
 		return
 	}
@@ -4476,7 +5241,7 @@ func (a *App) purgeTrash(response http.ResponseWriter, request *http.Request) {
 		http.Error(response, "回收条目不存在", http.StatusNotFound)
 		return
 	}
-	if err := a.files.PurgeTrash(stored); err != nil {
+	if err := a.hostPurgeTrash(request.Context(), stored); err != nil {
 		http.Error(response, "无法永久清理条目："+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -4555,7 +5320,7 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 				http.Error(response, "上传目录不能为空", http.StatusBadRequest)
 				return
 			}
-			if _, listErr := a.files.List(relative); listErr != nil {
+			if _, listErr := a.hostList(request.Context(), relative); listErr != nil {
 				_ = part.Close()
 				writeHostFileError(response, "上传目录无效", listErr)
 				return
@@ -4564,13 +5329,13 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 		}
 		if nameErr := hostfiles.ValidateName(filename); nameErr != nil {
 			_ = part.Close()
-			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: nameErr.Error()})
+			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: secretredaction.String(nameErr.Error())})
 			continue
 		}
-		targetPath, destinationErr := a.files.Destination(relative, filename)
+		targetPath, destinationErr := a.hostDestination(request.Context(), relative, filename)
 		if destinationErr != nil {
 			_ = part.Close()
-			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: destinationErr.Error()})
+			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: secretredaction.String(destinationErr.Error())})
 			continue
 		}
 		if !validConflictAction(conflictAction) {
@@ -4578,11 +5343,11 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: webText(locale, "upload_results.invalid_conflict_action")})
 			continue
 		}
-		targetInfo, targetErr := a.files.Info(targetPath)
+		targetInfo, _, targetErr := a.hostInfo(request.Context(), targetPath)
 		targetExists := targetErr == nil
 		if targetErr != nil && !os.IsNotExist(targetErr) {
 			_ = part.Close()
-			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: "无法检查同名文件：" + targetErr.Error()})
+			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: secretredaction.String("无法检查同名文件：" + targetErr.Error())})
 			continue
 		}
 		uploadName := filename
@@ -4595,13 +5360,13 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 				a.recordAuditForRequest(request, "upload_file", filename, "skipped")
 				continue
 			case conflictActionRename:
-				uploadName, err = a.files.AvailableName(relative, filename)
+				uploadName, err = a.hostAvailableName(request.Context(), relative, filename)
 				if err != nil {
 					_ = part.Close()
 					results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: "无法生成可用名称：" + err.Error()})
 					continue
 				}
-				targetPath, err = a.files.Destination(relative, uploadName)
+				targetPath, err = a.hostDestination(request.Context(), relative, uploadName)
 				if err != nil {
 					_ = part.Close()
 					results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: err.Error()})
@@ -4615,10 +5380,34 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 			a.recordAuditForRequest(request, "upload_file", filename, "rejected")
 			continue
 		}
+		if a.executableUploadRequiresPublication(uploadName) {
+			if replace {
+				_ = part.Close()
+				results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: webText(locale, "upload_results.executable_overwrite")})
+				a.recordAuditForRequest(request, "stage_executable_upload", uploadName, "rejected")
+				continue
+			}
+			pending, stageErr := a.uploadInbox.Receive(uploadinbox.Input{
+				EntryID: "host-files", OriginalName: uploadName, TargetDirectory: relative, ConflictPolicy: "reject",
+			}, part, 1<<30)
+			_ = part.Close()
+			if stageErr != nil {
+				results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: secretredaction.String(stageErr.Error())})
+				a.recordAuditForRequest(request, "stage_executable_upload", uploadName, "rejected")
+				continue
+			}
+			a.recordAuditForRequest(request, "stage_executable_upload", pending.ID+" "+pending.SHA256+" "+relative+"/"+uploadName, "succeeded")
+			results = append(results, uploadResult{
+				Name: uploadName, Result: webText(locale, "upload_results.staged"),
+				Detail: webText(locale, "upload_results.staged_detail"), Succeeded: true,
+			})
+			succeeded++
+			continue
+		}
 		release, leaseErr := a.acquireFileMutationLease(targetPath)
 		if leaseErr != nil {
 			_ = part.Close()
-			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: leaseErr.Error()})
+			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: secretredaction.String(leaseErr.Error())})
 			a.recordAuditForRequest(request, "upload_file", filename, "rejected")
 			continue
 		}
@@ -4629,11 +5418,11 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: "无法创建上传事务"})
 			continue
 		}
-		trashed, uploadErr := a.files.Upload(relative, uploadName, part, 1<<30, replace, storedID)
+		trashed, uploadErr := a.hostUpload(request.Context(), relative, uploadName, part, 1<<30, replace, storedID)
 		if uploadErr != nil {
 			release()
 			_ = part.Close()
-			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: uploadErr.Error()})
+			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: secretredaction.String(uploadErr.Error())})
 			a.recordAuditForRequest(request, "upload_file", filename, "rejected")
 			continue
 		}
@@ -4644,7 +5433,7 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 				VALUES (?, ?, ?, ?, ?, ?, ?, 0)`, storedID, trashed.OriginalPath, hostfiles.ComparisonKey(trashed.OriginalPath),
 				trashed.StoredPath, hostfiles.ComparisonKey(trashed.StoredPath), time.Now().UTC().Unix(), trashed.Size)
 			if err != nil {
-				_ = a.files.RollbackTextSave(targetPath, trashed.StoredPath)
+				_ = a.hostRollbackTextSave(request.Context(), targetPath, trashed.StoredPath)
 				release()
 				results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: "替换已回滚：无法记录旧文件"})
 				a.recordAuditForRequest(request, "upload_file", filename, "failed")
@@ -4684,7 +5473,7 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 	}
 	if relative != "" {
 		var err error
-		relative, err = a.files.CanonicalDirectory(relative)
+		relative, err = a.hostCanonicalDirectory(request.Context(), relative)
 		if err != nil {
 			writeHostFileError(response, "无法读取主机目录", err)
 			return
@@ -4718,7 +5507,7 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		})
 		return
 	}
-	entries, err := a.files.List(relative)
+	entries, err := a.hostList(request.Context(), relative)
 	if err != nil {
 		writeHostFileError(response, "无法读取主机目录", err)
 		return
@@ -4751,10 +5540,11 @@ func (a *App) filesPage(response http.ResponseWriter, request *http.Request) {
 		if !listed.ContentClassified {
 			displayCategory, previewableText = a.classifyFileContent(listed)
 		}
+		_, canMutate, _ := a.hostInfo(request.Context(), path)
 		view := fileView{
 			Entry: entry, Path: path, IconClass: fileCategoryIcon(displayCategory),
 			NameParts: splitFileNameMatches(entry.Name, query), CategoryLabel: fileCategoryLabel(locale, displayCategory),
-			IsHidden: entry.Hidden, CanMutate: a.files.CanMutate(path),
+			IsHidden: entry.Hidden, CanMutate: canMutate,
 		}
 		if view.CanMutate {
 			view.MoveURL = routeFileURL("/resources/files/move", path)
@@ -4869,7 +5659,7 @@ func buildHostBreadcrumbs(path, sortField, direction string, showHidden bool) []
 func (a *App) validateFileQuickAccess(response http.ResponseWriter, request *http.Request) {
 	accessible := false
 	if path := request.URL.Query().Get("path"); path != "" {
-		if info, err := a.files.Info(path); err == nil && info.IsDir() {
+		if info, _, err := a.hostInfo(request.Context(), path); err == nil && info.IsDir() {
 			accessible = true
 		}
 	}
@@ -4933,6 +5723,8 @@ func hostPathParent(path string) (string, bool) {
 func writeHostFileError(response http.ResponseWriter, action string, err error) {
 	status := http.StatusBadRequest
 	switch {
+	case errors.Is(err, privilegebroker.ErrHostFilesUnavailable):
+		status = http.StatusServiceUnavailable
 	case errors.Is(err, hostfiles.ErrProtected), os.IsPermission(err):
 		status = http.StatusForbidden
 	case os.IsNotExist(err):
@@ -4959,7 +5751,7 @@ func (a *App) createDirectory(response http.ResponseWriter, request *http.Reques
 		return
 	}
 	directory := request.FormValue("path")
-	target, err := a.files.Destination(directory, request.FormValue("name"))
+	target, err := a.hostDestination(request.Context(), directory, request.FormValue("name"))
 	if err != nil {
 		writeHostFileError(response, "无法创建目录", err)
 		return
@@ -4970,7 +5762,7 @@ func (a *App) createDirectory(response http.ResponseWriter, request *http.Reques
 		return
 	}
 	defer release()
-	if err := a.files.CreateDirectory(directory, hostfiles.Base(target)); err != nil {
+	if err := a.hostCreateDirectory(request.Context(), directory, hostfiles.Base(target)); err != nil {
 		writeHostFileError(response, "无法创建目录", err)
 		return
 	}
@@ -5084,8 +5876,8 @@ func (a *App) changePassword(response http.ResponseWriter, request *http.Request
 		http.Error(response, "两次输入的新密码不一致", http.StatusBadRequest)
 		return
 	}
-	if !utf8.ValidString(newPassword) || utf8.RuneCountInString(newPassword) < 12 || len([]byte(newPassword)) > 256 || newPassword == username {
-		http.Error(response, "密码必须至少包含 12 个 Unicode 字符、不超过 256 个 UTF-8 字节，且不能与用户名相同", http.StatusBadRequest)
+	if validatePasswordPolicy(newPassword, username) != nil || verifyPassword(newPassword, passwordHash) {
+		http.Error(response, webText(resolveWebLocale(request), "account.password_policy_error"), http.StatusBadRequest)
 		return
 	}
 	newHash, err := hashPassword(newPassword)
@@ -5193,8 +5985,39 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 	if err != nil || !enabled || !passwordMatches {
 		a.recordLoginFailure(loginKeys...)
 		a.recordAuditForRequest(request, "login", loginIdentity, "failed")
-		renderLoginFailure(response, request, http.StatusUnauthorized, request.FormValue("username"), "用户名或密码错误")
+		renderLoginFailure(response, request, http.StatusUnauthorized, request.FormValue("username"), webText(resolveWebLocale(request), "login.invalid_credentials"))
 		return
+	}
+	authenticationAssurance := 1
+	mfaStatus, err := a.mfa.Status(userID)
+	if err != nil {
+		renderLoginFailure(response, request, http.StatusInternalServerError, request.FormValue("username"), webText(resolveWebLocale(request), "mfa.unavailable"))
+		return
+	}
+	passkeyUser, err := a.passkeys.User(userID, username)
+	if err != nil {
+		renderLoginFailure(response, request, http.StatusInternalServerError, request.FormValue("username"), webText(resolveWebLocale(request), "mfa.unavailable"))
+		return
+	}
+	if mfaStatus.Enabled || len(passkeyUser.Credentials) > 0 {
+		verified := false
+		var verifyErr error
+		if assertion := request.FormValue("passkey_response"); assertion != "" {
+			verified, verifyErr = a.verifyPasskeyAssertion(request, userID, username, "login", "", request.FormValue("passkey_ceremony"), assertion)
+		} else if mfaStatus.Enabled {
+			verified, verifyErr = a.mfa.Verify(userID, request.FormValue("mfa_code"))
+		}
+		if verifyErr != nil {
+			renderLoginFailure(response, request, http.StatusInternalServerError, request.FormValue("username"), webText(resolveWebLocale(request), "mfa.unavailable"))
+			return
+		}
+		if !verified {
+			a.recordLoginFailure(loginKeys...)
+			a.recordAuditForRequest(request, "login", loginIdentity, "failed")
+			renderLoginFailure(response, request, http.StatusUnauthorized, request.FormValue("username"), webText(resolveWebLocale(request), "login.invalid_credentials"))
+			return
+		}
+		authenticationAssurance = 2
 	}
 	a.clearLoginFailures(loginKeys...)
 
@@ -5210,8 +6033,8 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 	}
 	now := time.Now().UTC()
 	if _, err := a.db.Exec(
-		"INSERT INTO sessions (token_hash, user_id, auth_version, csrf_token, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		hashToken(token), userID, authVersion, sessionCSRF, now.Unix(), now.Unix(), now.Add(7*24*time.Hour).Unix(),
+		"INSERT INTO sessions (token_hash, user_id, auth_version, authentication_assurance, reauthenticated_at, csrf_token, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		hashToken(token), userID, authVersion, authenticationAssurance, now.Unix(), sessionCSRF, now.Unix(), now.Unix(), now.Add(7*24*time.Hour).Unix(),
 	); err != nil {
 		renderLoginFailure(response, request, http.StatusInternalServerError, request.FormValue("username"), "暂时无法登录，请稍后重试")
 		return
@@ -5226,7 +6049,9 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 		MaxAge:   7 * 24 * 60 * 60,
 	})
 	http.SetCookie(response, &http.Cookie{Name: loginCSRFCookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(request), SameSite: http.SameSiteStrictMode})
-	a.recordAuditWithActor("login", username, "succeeded", request.RemoteAddr, userID, username, role)
+	auditSession := session{userID: userID, username: username, role: role, authVersion: authVersion, authenticationAssurance: authenticationAssurance, reauthenticatedAt: now.Unix()}
+	auditRequest := request.WithContext(context.WithValue(request.Context(), sessionContextKey, auditSession))
+	a.recordAuditWithRequestActor(auditRequest, "login", username, "succeeded", request.RemoteAddr, userID, username, role)
 	completeLogin(response, request, "/monitor")
 }
 
@@ -5344,12 +6169,16 @@ func (a *App) clearLoginFailures(keys ...string) {
 }
 
 type session struct {
-	userID      string
-	username    string
-	role        userRole
-	authVersion int64
-	tokenHash   string
-	csrfToken   string
+	userID                  string
+	username                string
+	role                    userRole
+	authVersion             int64
+	authenticationAssurance int
+	reauthenticatedAt       int64
+	tokenHash               string
+	rawToken                string
+	csrfToken               string
+	mfaRequiredAt           int64
 }
 
 func (a *App) loadSession(request *http.Request) (session, string, bool) {
@@ -5360,12 +6189,15 @@ func (a *App) loadSession(request *http.Request) (session, string, bool) {
 	var current session
 	var lastSeen, expiresAt int64
 	current.tokenHash = hashToken(cookie.Value)
+	current.rawToken = cookie.Value
 	err = a.db.QueryRow(`
 		SELECT sessions.csrf_token, sessions.last_seen_at, sessions.expires_at,
-			users.id, users.username, users.role, users.auth_version
+			sessions.authentication_assurance, sessions.reauthenticated_at,
+			users.id, users.username, users.role, users.auth_version, users.mfa_required_at
 		FROM sessions JOIN users ON users.id = sessions.user_id
 		WHERE sessions.token_hash = ? AND sessions.auth_version = users.auth_version AND users.enabled = 1`, current.tokenHash,
-	).Scan(&current.csrfToken, &lastSeen, &expiresAt, &current.userID, &current.username, &current.role, &current.authVersion)
+	).Scan(&current.csrfToken, &lastSeen, &expiresAt, &current.authenticationAssurance, &current.reauthenticatedAt,
+		&current.userID, &current.username, &current.role, &current.authVersion, &current.mfaRequiredAt)
 	now := time.Now().UTC()
 	if err != nil || now.Unix() >= expiresAt || now.Sub(time.Unix(lastSeen, 0)) >= 12*time.Hour {
 		if err == nil {
@@ -5392,9 +6224,28 @@ func (a *App) requireSession(next http.Handler) http.Handler {
 			http.Redirect(response, request, "/login", http.StatusSeeOther)
 			return
 		}
-		if !roleAllows(current.role, permissionForRequest(request)) {
-			http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
-			return
+		if privilegedMFAEnrollmentDue(current, time.Now().UTC()) {
+			status, statusErr := a.mfa.Status(current.userID)
+			if statusErr != nil {
+				http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusServiceUnavailable)
+				return
+			}
+			passkeyUser, passkeyErr := a.passkeys.User(current.userID, current.username)
+			if passkeyErr != nil {
+				http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusServiceUnavailable)
+				return
+			}
+			if !status.Enabled && len(passkeyUser.Credentials) == 0 && !mfaEnrollmentRouteAllowed(request.URL.Path) {
+				response.Header().Set("Cache-Control", "no-store")
+				auditRequest := request.WithContext(context.WithValue(request.Context(), sessionContextKey, current))
+				a.recordAuditWithRequestActor(auditRequest, "mfa_enrollment_required", current.username, "blocked", request.RemoteAddr, current.userID, current.username, current.role)
+				if request.Method == http.MethodGet || request.Method == http.MethodHead {
+					http.Redirect(response, request, "/settings/account/mfa", http.StatusSeeOther)
+				} else {
+					http.Error(response, webText(resolveWebLocale(request), "mfa.enrollment_required"), http.StatusForbidden)
+				}
+				return
+			}
 		}
 		cookie, _ := request.Cookie(sessionCookieName)
 		now := time.Now().UTC()
@@ -5402,12 +6253,27 @@ func (a *App) requireSession(next http.Handler) http.Handler {
 			_, _ = a.db.Exec("UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?", now.Unix(), hashToken(cookie.Value))
 		}
 		authenticatedContext := context.WithValue(request.Context(), sessionContextKey, current)
+		correlationID, _ := request.Context().Value(requestIDContextKey).(string)
+		authenticatedContext = privilegebroker.WithAuthorization(authenticatedContext, privilegebroker.Authorization{
+			SessionToken: current.rawToken, RequestID: correlationID,
+		})
 		authenticatedContext, cancel := context.WithCancel(authenticatedContext)
 		requestID := a.registerAuthenticatedRequest(current.userID, cancel)
 		defer a.unregisterAuthenticatedRequest(current.userID, requestID)
 		defer cancel()
 		next.ServeHTTP(response, request.WithContext(authenticatedContext))
 	})
+}
+
+func privilegedMFAEnrollmentDue(current session, now time.Time) bool {
+	return (current.role == roleAdministrator || current.role == roleMaintainer) &&
+		current.mfaRequiredAt > 0 && !now.Before(time.Unix(current.mfaRequiredAt, 0))
+}
+
+func mfaEnrollmentRouteAllowed(path string) bool {
+	return path == "/settings/account" || strings.HasPrefix(path, "/settings/account/mfa") ||
+		strings.HasPrefix(path, "/settings/account/passkeys") ||
+		path == "/auth/step-up" || path == "/logout" || path == "/settings/locale"
 }
 
 func (a *App) registerAuthenticatedRequest(userID string, cancel context.CancelFunc) uint64 {
@@ -5475,16 +6341,44 @@ func (a *App) recordAudit(action, target, result, source string) {
 
 func (a *App) recordAuditForRequest(request *http.Request, action, target, result string) {
 	current, _ := request.Context().Value(sessionContextKey).(session)
-	a.recordAuditWithActor(action, target, result, request.RemoteAddr, current.userID, current.username, current.role)
+	a.recordAuditWithRequestActor(request, action, target, result, request.RemoteAddr, current.userID, current.username, current.role)
+}
+
+func (a *App) recordAuditWithRequestActor(request *http.Request, action, target, result, source, actorUserID, actorUsername string, actorRole userRole) {
+	a.recordAuditResourceWithRequestActor(request, action, target, result, source, actorUserID, actorUsername, actorRole, "", "")
+}
+
+func (a *App) recordAuditResourceForRequest(request *http.Request, action, target, result, revision, digest string) {
+	current, _ := request.Context().Value(sessionContextKey).(session)
+	a.recordAuditResourceWithRequestActor(request, action, target, result, request.RemoteAddr, current.userID, current.username, current.role, revision, digest)
+}
+
+func (a *App) recordAuditResourceWithRequestActor(request *http.Request, action, target, result, source, actorUserID, actorUsername string, actorRole userRole, revision, digest string) {
+	requestID, _ := request.Context().Value(requestIDContextKey).(string)
+	assurance := ""
+	if current, ok := request.Context().Value(sessionContextKey).(session); ok {
+		assurance = "aal" + strconv.Itoa(current.authenticationAssurance)
+		if recentAuthenticationValid(current.reauthenticatedAt, time.Now().UTC()) {
+			assurance += "+step-up"
+		}
+	} else if actorRole == userRole("external") {
+		assurance = "external-capability"
+	}
+	_, _ = a.auditLog.Append(context.Background(), auditlog.Event{
+		OccurredAt: strconv.FormatInt(time.Now().UTC().Unix(), 10),
+		Action:     action, Target: target, Result: result, SourceAddress: source,
+		ActorUserID: actorUserID, ActorUsername: actorUsername, ActorRole: string(actorRole),
+		RequestID: requestID, AuthenticationAssurance: assurance,
+		ResourceRevision: revision, ResourceDigestSHA256: digest,
+	})
 }
 
 func (a *App) recordAuditWithActor(action, target, result, source, actorUserID, actorUsername string, actorRole userRole) {
-	_, _ = a.db.Exec(
-		`INSERT INTO audit_events
-			(occurred_at, action, target, result, source_address, actor_user_id, actor_username, actor_role)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		time.Now().UTC().Unix(), action, target, result, source, actorUserID, actorUsername, actorRole,
-	)
+	_, _ = a.auditLog.Append(context.Background(), auditlog.Event{
+		OccurredAt: strconv.FormatInt(time.Now().UTC().Unix(), 10),
+		Action:     action, Target: target, Result: result, SourceAddress: source,
+		ActorUserID: actorUserID, ActorUsername: actorUsername, ActorRole: string(actorRole),
+	})
 }
 
 type loginPageData struct {

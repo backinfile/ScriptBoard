@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"scriptboard/internal/buildinfo"
+	"scriptboard/internal/outboundpolicy"
 )
 
 const githubLatestReleaseURL = "https://api.github.com/repos/" + buildinfo.Repository + "/releases/latest"
@@ -67,7 +68,7 @@ func newGitHubProxySource(proxyBaseURL string, proxyAPI bool) *GitHubSource {
 			proxyHost = parsed.Hostname()
 		}
 	}
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second, Transport: outboundpolicy.Policy{}.Transport()}
 	client.CheckRedirect = func(request *http.Request, via []*http.Request) error {
 		if len(via) >= 5 {
 			return errors.New("too many release download redirects")

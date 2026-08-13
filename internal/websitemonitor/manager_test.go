@@ -47,15 +47,52 @@ func TestCreateImmediatelyChecksHTTPMonitor(t *testing.T) {
 	}
 }
 
+func TestTLSVerificationExceptionIsIssuedForOneHour(t *testing.T) {
+	now := time.Date(2026, time.August, 11, 8, 0, 0, 0, time.UTC)
+	manager := newTestManager(t, Options{
+		Now:  func() time.Time { return now },
+		Tick: time.Hour,
+		Probe: probeFunc(func(context.Context, Config) Evidence {
+			return Evidence{Success: true, StatusCode: http.StatusOK}
+		}),
+	})
+	created, err := manager.Create(context.Background(), Config{
+		Name: "temporary TLS exception", Kind: KindHTTP, URL: "https://example.com/",
+		SkipTLSVerification: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := now.Add(time.Hour); !created.Config.TLSVerificationDisabledUntil.Equal(want) {
+		t.Fatalf("TLS exception expires at %v, want %v", created.Config.TLSVerificationDisabledUntil, want)
+	}
+	if !created.Config.SkipTLSVerificationAt(now.Add(30 * time.Minute)) {
+		t.Fatal("active TLS exception was not honored")
+	}
+	if created.Config.SkipTLSVerificationAt(now.Add(time.Hour)) {
+		t.Fatal("expired TLS exception remained active")
+	}
+	now = now.Add(time.Hour)
+	loaded, err := manager.Get(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Config.SkipTLSVerification || !loaded.Config.TLSVerificationDisabledUntil.IsZero() {
+		t.Fatalf("expired TLS exception was exposed as active: %#v", loaded.Config)
+	}
+}
+
 func TestTwoConsecutiveFailuresConfirmAnIncident(t *testing.T) {
+	transitions := make(chan Transition, 1)
 	probe := &sequenceProbe{results: []Evidence{
 		{ErrorCategory: "connect", Summary: "网站拒绝连接"},
 		{ErrorCategory: "connect", Summary: "网站仍然拒绝连接"},
 	}}
 	manager := newTestManager(t, Options{
-		Probe:      probe,
-		Tick:       5 * time.Millisecond,
-		RetryDelay: 20 * time.Millisecond,
+		Probe:        probe,
+		Tick:         5 * time.Millisecond,
+		RetryDelay:   20 * time.Millisecond,
+		OnTransition: func(transition Transition) { transitions <- transition },
 	})
 	created, err := manager.Create(context.Background(), Config{
 		Name:  "媒体代理",
@@ -90,6 +127,14 @@ func TestTwoConsecutiveFailuresConfirmAnIncident(t *testing.T) {
 	if !incidents[0].StartedAt.Equal(verifying.Latest.CheckedAt) {
 		t.Fatalf("incident started at %v, want first failure at %v",
 			incidents[0].StartedAt, verifying.Latest.CheckedAt)
+	}
+	select {
+	case transition := <-transitions:
+		if transition.MonitorID != created.ID || transition.Name != "媒体代理" || transition.State != StateDown || transition.ErrorCategory != "connect" {
+			t.Fatalf("transition=%#v", transition)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("confirmed outage did not emit a transition")
 	}
 }
 
@@ -132,7 +177,7 @@ func TestPingPongRequiresAMatchingPongControlFrame(t *testing.T) {
 		manager := newTestManager(t, Options{})
 		created, err := manager.Create(context.Background(), Config{
 			Name:              "实时通知通道",
-			Scope:             ScopeExternal,
+			Scope:             ScopeLocal,
 			Kind:              KindWebSocket,
 			URL:               websocketURL(server.URL),
 			Timeout:           time.Second,
@@ -160,7 +205,7 @@ func TestPingPongRequiresAMatchingPongControlFrame(t *testing.T) {
 		manager := newTestManager(t, Options{})
 		created, err := manager.Create(context.Background(), Config{
 			Name:              "错误的活性通道",
-			Scope:             ScopeExternal,
+			Scope:             ScopeLocal,
 			Kind:              KindWebSocket,
 			URL:               websocketURL(server.URL),
 			Timeout:           100 * time.Millisecond,

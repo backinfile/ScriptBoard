@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"scriptboard/internal/secretredaction"
 )
 
 const (
@@ -150,7 +152,7 @@ func (m *Manager) nginxConfigPaths(ctx context.Context, request NginxScanRequest
 	}
 	processes, err := m.options.NginxProcesses.Processes(ctx)
 	if err != nil {
-		warnings = append(warnings, "无法读取运行中 Nginx 的启动参数："+err.Error())
+		warnings = append(warnings, secretredaction.String("无法读取运行中 Nginx 的启动参数："+err.Error()))
 	}
 	for _, process := range processes {
 		if !strings.EqualFold(process.Name, "nginx") && !strings.EqualFold(process.Name, "nginx.exe") {

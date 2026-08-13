@@ -15,10 +15,13 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"scriptboard/internal/auditcheckpoint"
 	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/diskspace"
 	"scriptboard/internal/installation"
 	"scriptboard/internal/platformservice"
+	"scriptboard/internal/secretredaction"
+	"scriptboard/internal/secretstore"
 	updatepkg "scriptboard/internal/update"
 )
 
@@ -67,6 +70,31 @@ func Run(config Config) Report {
 		required(name, info.IsDir(), path)
 	}
 	checkDirectory("state-root", config.StateRoot)
+	credentialKeyPath, credentialKeyErr := secretstore.KeyPathForStateRoot(config.StateRoot)
+	if credentialKeyErr != nil {
+		required("credential-master-key", false, credentialKeyErr.Error())
+	} else if info, statErr := os.Stat(credentialKeyPath); statErr != nil {
+		required("credential-master-key", false, statErr.Error())
+	} else {
+		required("credential-master-key", info.Mode().IsRegular(), credentialKeyPath)
+	}
+	_, auditKeyPath, auditCheckpointPath, auditCheckpointErr := auditcheckpoint.PathsForStateRoot(config.StateRoot)
+	if auditCheckpointErr != nil {
+		required("audit-checkpoint-key", false, auditCheckpointErr.Error())
+		required("audit-checkpoint", false, auditCheckpointErr.Error())
+	} else {
+		for _, check := range []struct {
+			name string
+			path string
+		}{{"audit-checkpoint-key", auditKeyPath}, {"audit-checkpoint", auditCheckpointPath}} {
+			info, err := os.Stat(check.path)
+			if err != nil {
+				required(check.name, false, err.Error())
+			} else {
+				required(check.name, info.Mode().IsRegular(), check.path)
+			}
+		}
+	}
 	checkConfig(&report, config.ConfigPath)
 	checkDisk(&report, "state-disk", config.StateRoot)
 	checkSQLite(&report, filepath.Join(config.StateRoot, "app.db"))
@@ -74,6 +102,9 @@ func Run(config Config) Report {
 	checkNetwork(&report, config.Listen, config.TLSCert, config.TLSKey)
 	checkService(&report)
 	checkUpdateInstallation(&report, config.StateRoot)
+	for index := range report.Checks {
+		report.Checks[index].Detail = secretredaction.String(report.Checks[index].Detail)
+	}
 	return report
 }
 
@@ -114,7 +145,7 @@ func checkUpdateInstallation(report *Report, stateRoot string) {
 	}
 	if err == nil {
 		var matches bool
-		matches, err = platformservice.MatchesExecutable(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath)
+		matches, err = platformservice.MatchesExecutable(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, metadata.StateRoot)
 		if err == nil && !matches {
 			err = fmt.Errorf("service target does not match the active Installed Release")
 		}

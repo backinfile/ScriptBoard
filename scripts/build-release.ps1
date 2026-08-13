@@ -55,11 +55,26 @@ if ($formalRelease) {
         try { $nextPublicKeyBytes = [Convert]::FromBase64String($env:SCRIPTBOARD_UPDATE_NEXT_PUBLIC_KEY) } catch { throw "SCRIPTBOARD_UPDATE_NEXT_PUBLIC_KEY is not valid base64" }
         if ($nextPublicKeyBytes.Length -ne 32) { throw "SCRIPTBOARD_UPDATE_NEXT_PUBLIC_KEY must be a 32-byte Ed25519 public key" }
     }
+    $hasNextSigningKey = -not [string]::IsNullOrWhiteSpace($env:SCRIPTBOARD_UPDATE_NEXT_SIGNING_KEY)
+    if ($hasNextSigningKey -and -not $hasNextKeyID) {
+        throw "SCRIPTBOARD_UPDATE_NEXT_SIGNING_KEY requires the next key ID and public key"
+    }
+    $revokedIDs = @()
+    if (-not [string]::IsNullOrWhiteSpace($env:SCRIPTBOARD_UPDATE_REVOKED_KEY_IDS)) {
+        $revokedIDs = @($env:SCRIPTBOARD_UPDATE_REVOKED_KEY_IDS.Split(',') | ForEach-Object { $_.Trim() })
+        if ($revokedIDs.Count -ne (@($revokedIDs | Sort-Object -Unique)).Count -or @($revokedIDs | Where-Object { $_ -notmatch '^[A-Za-z0-9._-]{1,64}$' }).Count -ne 0) {
+            throw "SCRIPTBOARD_UPDATE_REVOKED_KEY_IDS must be a unique comma-separated key ID list"
+        }
+        if ($revokedIDs -contains $env:SCRIPTBOARD_UPDATE_KEY_ID -or ($hasNextKeyID -and $revokedIDs -contains $env:SCRIPTBOARD_UPDATE_NEXT_KEY_ID)) {
+            throw "An embedded trusted update key cannot also be revoked"
+        }
+    }
 }
 $publicKeyID = if ($formalRelease) { $env:SCRIPTBOARD_UPDATE_KEY_ID } else { "" }
 $publicKey = if ($formalRelease) { $env:SCRIPTBOARD_UPDATE_PUBLIC_KEY } else { "" }
 $nextKeyID = if ($formalRelease) { $env:SCRIPTBOARD_UPDATE_NEXT_KEY_ID } else { "" }
 $nextPublicKey = if ($formalRelease) { $env:SCRIPTBOARD_UPDATE_NEXT_PUBLIC_KEY } else { "" }
+$revokedKeyIDs = if ($formalRelease) { $revokedIDs -join "," } else { "" }
 $commonLDFlags = @(
     "-s", "-w",
     "-X", "scriptboard/internal/buildinfo.Version=$normalizedVersion",
@@ -70,7 +85,8 @@ $commonLDFlags = @(
     "-X", "scriptboard/internal/buildinfo.UpdatePublicKeyID=$publicKeyID",
     "-X", "scriptboard/internal/buildinfo.UpdatePublicKeyBase64=$publicKey",
     "-X", "scriptboard/internal/buildinfo.UpdateNextKeyID=$nextKeyID",
-    "-X", "scriptboard/internal/buildinfo.UpdateNextKeyBase64=$nextPublicKey"
+    "-X", "scriptboard/internal/buildinfo.UpdateNextKeyBase64=$nextPublicKey",
+    "-X", "scriptboard/internal/buildinfo.UpdateRevokedKeyIDs=$revokedKeyIDs"
 ) -join " "
 
 if (Test-Path -LiteralPath $outputRoot) { Remove-Item -LiteralPath $outputRoot -Recurse -Force }
@@ -112,6 +128,19 @@ function Compress-ReleaseArchive([string]$Stage, [string]$Destination) {
     }
 }
 
+function Join-SelfExtractingBundle([string]$Launcher, [string]$Payload, [string]$Destination) {
+    $output = [IO.File]::Open($Destination, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try {
+        foreach ($sourcePath in @($Launcher, $Payload)) {
+            $source = [IO.File]::OpenRead($sourcePath)
+            try { $source.CopyTo($output) } finally { $source.Dispose() }
+        }
+        $output.Flush($true)
+    } finally {
+        $output.Dispose()
+    }
+}
+
 $originalGOOS = $env:GOOS
 $originalGOARCH = $env:GOARCH
 try {
@@ -122,6 +151,12 @@ try {
         New-Item -ItemType Directory -Path $stage | Out-Null
         go build -trimpath -ldflags $commonLDFlags -o (Join-Path $stage "scriptboard.exe") ./cmd/scriptboard
         if ($LASTEXITCODE -ne 0) { throw "Building Windows $arch service failed" }
+        go build -trimpath -ldflags $commonLDFlags -o (Join-Path $stage "scriptboard-broker.exe") ./cmd/scriptboard-broker
+        if ($LASTEXITCODE -ne 0) { throw "Building Windows $arch privileged Broker failed" }
+        go build -trimpath -ldflags $commonLDFlags -o (Join-Path $stage "scriptboard-ai-host.exe") ./cmd/scriptboard-ai-host
+        if ($LASTEXITCODE -ne 0) { throw "Building Windows $arch AI Runtime Host failed" }
+        go build -trimpath -ldflags $commonLDFlags -o (Join-Path $stage "scriptboard-runner.exe") ./cmd/scriptboard-runner
+        if ($LASTEXITCODE -ne 0) { throw "Building Windows $arch Runner Host failed" }
         go build -trimpath -ldflags "$commonLDFlags -H=windowsgui" -o (Join-Path $stage "scriptboard-tray.exe") ./cmd/scriptboard-tray
         if ($LASTEXITCODE -ne 0) { throw "Building Windows $arch tray failed" }
         go build -trimpath -ldflags "$commonLDFlags -H=windowsgui" -o (Join-Path $stage "scriptboard-tray-launcher.exe") ./cmd/scriptboard-tray-launcher
@@ -130,7 +165,12 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Building Windows $arch updater failed" }
         Write-ReleaseInfo $stage
         Copy-Item README.md, README_EN.md, LICENSE* -Destination $stage -ErrorAction SilentlyContinue
-        Compress-ReleaseArchive $stage (Join-Path $outputRoot "$name.zip")
+        $payload = Join-Path $stageRoot "$name-payload.zip"
+        $launcher = Join-Path $stageRoot "$name-installer.exe"
+        Compress-ReleaseArchive $stage $payload
+        go build -trimpath -ldflags $commonLDFlags -o $launcher ./cmd/scriptboard-installer
+        if ($LASTEXITCODE -ne 0) { throw "Building Windows $arch Setup launcher failed" }
+        Join-SelfExtractingBundle $launcher $payload (Join-Path $outputRoot "$name-setup.exe")
     }
     foreach ($arch in @("amd64", "arm64")) {
         $env:GOOS = "linux"; $env:GOARCH = $arch
@@ -139,12 +179,22 @@ try {
         New-Item -ItemType Directory -Path $stage | Out-Null
         go build -trimpath -ldflags $commonLDFlags -o (Join-Path $stage "scriptboard") ./cmd/scriptboard
         if ($LASTEXITCODE -ne 0) { throw "Building Linux $arch service failed" }
+        go build -trimpath -ldflags $commonLDFlags -o (Join-Path $stage "scriptboard-broker") ./cmd/scriptboard-broker
+        if ($LASTEXITCODE -ne 0) { throw "Building Linux $arch privileged Broker failed" }
+        go build -trimpath -ldflags $commonLDFlags -o (Join-Path $stage "scriptboard-ai-host") ./cmd/scriptboard-ai-host
+        if ($LASTEXITCODE -ne 0) { throw "Building Linux $arch AI Runtime Host failed" }
+        go build -trimpath -ldflags $commonLDFlags -o (Join-Path $stage "scriptboard-runner") ./cmd/scriptboard-runner
+        if ($LASTEXITCODE -ne 0) { throw "Building Linux $arch Runner Host failed" }
         go build -trimpath -ldflags $commonLDFlags -o (Join-Path $stage "scriptboard-updater") ./cmd/scriptboard-updater
         if ($LASTEXITCODE -ne 0) { throw "Building Linux $arch updater failed" }
         Write-ReleaseInfo $stage
         Copy-Item README.md, README_EN.md, LICENSE* -Destination $stage -ErrorAction SilentlyContinue
-        tar -czf (Join-Path $outputRoot "$name.tar.gz") -C $stage .
-        if ($LASTEXITCODE -ne 0) { throw "Packaging Linux $arch archive failed" }
+        $payload = Join-Path $stageRoot "$name-payload.zip"
+        $launcher = Join-Path $stageRoot "$name-installer"
+        Compress-ReleaseArchive $stage $payload
+        go build -trimpath -ldflags $commonLDFlags -o $launcher ./cmd/scriptboard-installer
+        if ($LASTEXITCODE -ne 0) { throw "Building Linux $arch installer failed" }
+        Join-SelfExtractingBundle $launcher $payload (Join-Path $outputRoot "$name.run")
     }
     if ($formalRelease) {
         # The archive loops leave GOOS/GOARCH on the final Linux target. This

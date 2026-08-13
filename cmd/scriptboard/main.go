@@ -3,35 +3,45 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
-	"os/signal"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"scriptboard/internal/app"
+	"scriptboard/internal/assistant/pirpc"
+	"scriptboard/internal/assistant/runtimehost"
+	"scriptboard/internal/auditlog"
 	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/config"
 	"scriptboard/internal/doctor"
 	"scriptboard/internal/installation"
+	"scriptboard/internal/mysqlmanager"
 	"scriptboard/internal/platformservice"
+	"scriptboard/internal/privilegebroker"
+	"scriptboard/internal/runmanager"
+	"scriptboard/internal/runnerhost"
+	"scriptboard/internal/secretredaction"
+	"scriptboard/internal/shutdownsignal"
 	updatepkg "scriptboard/internal/update"
 )
 
 func main() {
 	if handled, err := runAsWindowsService(os.Args[1:]); handled {
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "Windows 服务错误："+err.Error())
+			fmt.Fprintln(os.Stderr, secretredaction.String("Windows 服务错误："+err.Error()))
 			os.Exit(1)
 		}
 		return
 	}
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "错误："+err.Error())
+		fmt.Fprintln(os.Stderr, secretredaction.String("错误："+err.Error()))
 		os.Exit(1)
 	}
 }
@@ -69,6 +79,21 @@ func run(arguments []string) error {
 		return validateConfig(arguments[2:])
 	case "doctor":
 		return runDoctor(arguments[1:])
+	case "audit":
+		if len(arguments) < 2 || arguments[1] != "verify" {
+			return errors.New("可用审计命令：audit verify")
+		}
+		return verifyAudit(arguments[2:])
+	case "emergency":
+		if len(arguments) < 2 {
+			return errors.New("可用应急命令：emergency pause-external|revoke-key|export-evidence")
+		}
+		return runEmergency(arguments[1], arguments[2:])
+	case "backup":
+		if len(arguments) < 2 {
+			return errors.New("可用备份命令：backup create|inspect|restore|export-recovery|recover-host")
+		}
+		return runBackup(arguments[1], arguments[2:])
 	case "admin":
 		if len(arguments) < 2 || arguments[1] != "reset" {
 			return errors.New("可用管理员命令：admin reset")
@@ -76,16 +101,16 @@ func run(arguments []string) error {
 		return resetAdmin(arguments[2:])
 	case "service":
 		if len(arguments) < 2 {
-			return errors.New("可用服务命令：service install|uninstall|start|stop|restart|status")
+			return errors.New("可用服务命令：service install [--start]|uninstall|start|stop|restart|status|verify")
 		}
 		return runService(arguments[1], arguments[2:])
 	case "update":
 		if len(arguments) < 2 {
-			return errors.New("可用更新命令：update status|check|recover")
+			return errors.New("可用更新命令：update status|check|verify-package|repair-current|recover")
 		}
 		return runUpdate(arguments[1], arguments[2:])
 	default:
-		return fmt.Errorf("未知命令 %q；可用命令：serve、service、update、admin、config、doctor、version", arguments[0])
+		return fmt.Errorf("未知命令 %q；可用命令：serve、service、update、backup、emergency、admin、audit、config、doctor、version", arguments[0])
 	}
 }
 
@@ -94,9 +119,22 @@ func printUsage() {
 
 用法：
   scriptboard serve [配置选项]
-  scriptboard service install|uninstall|start|stop|restart|status
-  scriptboard update status|check|recover
+  scriptboard service install [--start] [配置选项]
+  scriptboard service uninstall|start|stop|restart|status|verify
+  scriptboard update status|check
+  scriptboard update verify-package --archive PATH --manifest PATH --signature PATH [--json]
+  scriptboard update repair-current --confirm REPAIR-CURRENT [配置选项]
+  scriptboard update recover --operation ID --confirm-operation ID [配置选项]
+  scriptboard backup create --output ABSOLUTE_PATH --passphrase-file ABSOLUTE_PATH [配置选项]
+  scriptboard backup inspect --archive ABSOLUTE_PATH --passphrase-file ABSOLUTE_PATH [--json]
+  scriptboard backup restore --archive ABSOLUTE_PATH --passphrase-file ABSOLUTE_PATH --confirm-backup-id ID [配置选项]
+  scriptboard backup export-recovery --output ABSOLUTE_PATH --passphrase-file ABSOLUTE_PATH [配置选项]
+  scriptboard backup recover-host --archive ABSOLUTE_PATH --passphrase-file ABSOLUTE_PATH --recovery-material ABSOLUTE_PATH --recovery-passphrase-file ABSOLUTE_PATH --confirm-backup-id ID [配置选项]
   scriptboard admin reset [配置选项]
+  scriptboard audit verify [配置选项] [--json]
+  scriptboard emergency pause-external --confirm PAUSE-EXTERNAL [配置选项]
+  scriptboard emergency revoke-key --key-id ID --confirm-key-id ID [配置选项]
+  scriptboard emergency export-evidence --output ABSOLUTE_PATH [配置选项]
   scriptboard config validate [配置选项]
   scriptboard doctor [配置选项]
   scriptboard version
@@ -107,12 +145,90 @@ func printUsage() {
   --listen ADDRESS           HTTP 监听地址
   --tls-cert PATH            TLS 证书
   --tls-key PATH             TLS 私钥
-  --trusted-proxy IP_OR_CIDR 可信反向代理（可重复）`)
+  --trusted-proxy IP_OR_CIDR 可信反向代理（可重复）
+  --allowed-host HOST        允许的 HTTP Host（可重复）
+  --canonical-external-url URL 对外访问的规范 URL`)
+}
+
+func verifyAudit(arguments []string) error {
+	jsonOutput, arguments := takeBooleanArgument(arguments, "--json")
+	loaded, err := config.Load(arguments, os.Getenv)
+	if err != nil {
+		return err
+	}
+	databasePath := filepath.ToSlash(filepath.Join(loaded.StateRoot, "app.db"))
+	database, err := sql.Open("sqlite", "file:"+databasePath+"?mode=ro")
+	if err != nil {
+		return err
+	}
+	defer database.Close()
+	ctx := context.Background()
+	audit := auditlog.New(database)
+	verification, err := audit.Verify(ctx)
+	if err != nil {
+		return fmt.Errorf("审计哈希链验证失败: %w", err)
+	}
+	if err := verifySignedAuditCheckpoint(ctx, loaded.StateRoot, audit); err != nil {
+		return err
+	}
+	if jsonOutput {
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{
+			"valid": true, "events": verification.Count, "tail_sha256": verification.LastHash, "signed_checkpoint": "valid",
+		})
+	}
+	fmt.Fprintf(os.Stdout, "审计哈希链与外部签名 checkpoint 有效：%d 条事件，链尾 %s\n", verification.Count, verification.LastHash)
+	return nil
 }
 
 func runUpdate(action string, arguments []string) error {
 	jsonOutput, arguments := takeBooleanArgument(arguments, "--json")
 	switch action {
+	case "repair-current":
+		confirmation, remaining := takeStringArgument(arguments, "--confirm")
+		if confirmation != "REPAIR-CURRENT" {
+			return errors.New("update repair-current 需要 --confirm REPAIR-CURRENT")
+		}
+		loaded, err := config.Load(remaining, os.Getenv)
+		if err != nil {
+			return err
+		}
+		info, err := updatepkg.RepairCurrentInstallation(loaded.StateRoot)
+		if err != nil {
+			return fmt.Errorf("修复当前安装版本: %w", err)
+		}
+		if database, auditErr := openEmergencyDatabase(loaded.StateRoot); auditErr == nil {
+			auditErr = emergencyMutation(context.Background(), database, loaded.StateRoot, func(context.Context, *sql.Tx) (auditlog.Event, error) {
+				return localEmergencyEvent("emergency.update.repair-current", info.Version), nil
+			})
+			_ = database.Close()
+			if auditErr != nil {
+				fmt.Fprintln(os.Stderr, "警告：当前版本已修复，但无法写入本地审计链："+secretredaction.String(auditErr.Error()))
+			}
+		} else {
+			fmt.Fprintln(os.Stderr, "警告：当前版本已修复，但无法打开本地审计数据库："+secretredaction.String(auditErr.Error()))
+		}
+		fmt.Fprintf(os.Stdout, "当前已验证版本 %s 的服务指针已修复；服务保持停止状态。\n", info.Version)
+		return nil
+	case "verify-package":
+		archivePath, remaining := takeStringArgument(arguments, "--archive")
+		manifestPath, remaining := takeStringArgument(remaining, "--manifest")
+		signaturePath, remaining := takeStringArgument(remaining, "--signature")
+		if archivePath == "" || manifestPath == "" || signaturePath == "" {
+			return errors.New("update verify-package 需要 --archive PATH、--manifest PATH 与 --signature PATH")
+		}
+		if len(remaining) != 0 {
+			return fmt.Errorf("未知 update verify-package 参数: %v", remaining)
+		}
+		verified, err := updatepkg.VerifyOfflinePackage(archivePath, manifestPath, signaturePath)
+		if err != nil {
+			return fmt.Errorf("离线更新包验证失败: %w", err)
+		}
+		if jsonOutput {
+			return json.NewEncoder(os.Stdout).Encode(verified)
+		}
+		fmt.Fprintf(os.Stdout, "离线更新包有效：%s (%s/%s)，签名 Key %s，SHA-256 %s\n",
+			verified.Version, verified.OS, verified.Arch, verified.KeyID, verified.ArchiveSHA256)
+		return nil
 	case "status", "check":
 		loaded, err := config.Load(arguments, os.Getenv)
 		if err != nil {
@@ -194,6 +310,7 @@ func takeStringArgument(arguments []string, name string) (string, []string) {
 func runService(action string, arguments []string) error {
 	switch action {
 	case "install":
+		startAfterInstall, arguments := takeBooleanArgument(arguments, "--start")
 		loaded, err := config.Load(arguments, os.Getenv)
 		if err != nil {
 			return err
@@ -207,13 +324,16 @@ func runService(action string, arguments []string) error {
 			if loadErr != nil || installation.ValidateVersion(metadata, metadata.Current, buildinfo.Current()) != nil {
 				return errors.New("已存在的 ScriptBoard 服务不是受支持的新版 managed service；请先手工卸载旧服务再全新安装")
 			}
+			if err := requireManagedConfigPath(loaded.ConfigPath, metadata.ConfigPath); err != nil {
+				return err
+			}
 			if metadata.Current != buildinfo.Current().Version {
 				return errors.New("服务已经由新版安装流程管理；请通过应用更新功能升级")
 			}
-			if err := platformservice.Install(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, installation.ServiceUpdaterExecutable(metadata), metadata.StateRoot); err != nil {
+			if err := platformservice.Install(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, installation.ServiceUpdaterExecutable(metadata), metadata.StateRoot, webStartupFiles(loaded)...); err != nil {
 				return err
 			}
-			return platformservice.InstallTrayAutostart(filepath.Join(metadata.InstallRoot, "scriptboard-tray-launcher.exe"), metadata.ConfigPath)
+			return finishManagedServiceInstall(loaded, metadata, startAfterInstall)
 		}
 		executable, err := os.Executable()
 		if err != nil {
@@ -226,10 +346,21 @@ func runService(action string, arguments []string) error {
 		if err != nil {
 			return err
 		}
-		if err := platformservice.Install(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, installation.ServiceUpdaterExecutable(metadata), metadata.StateRoot); err != nil {
+		initializer, err := app.Open(app.Config{
+			StateRoot: metadata.StateRoot, InstallRoot: metadata.InstallRoot, ConfigPath: metadata.ConfigPath, TLSKey: loaded.TLSKey,
+			RunTimeoutGrace: loaded.RunTimeoutGrace, ExecutorChains: loaded.ExecutorChains,
+			AdminUsername: loaded.AdminUsername, AdminPasswordFile: loaded.AdminPasswordFile,
+		})
+		if err != nil {
+			return fmt.Errorf("初始化 managed service 状态: %w", err)
+		}
+		if err := initializer.Close(); err != nil {
+			return fmt.Errorf("完成 managed service 状态初始化: %w", err)
+		}
+		if err := platformservice.Install(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, installation.ServiceUpdaterExecutable(metadata), metadata.StateRoot, webStartupFiles(loaded)...); err != nil {
 			return err
 		}
-		return platformservice.InstallTrayAutostart(filepath.Join(metadata.InstallRoot, "scriptboard-tray-launcher.exe"), metadata.ConfigPath)
+		return finishManagedServiceInstall(loaded, metadata, startAfterInstall)
 	case "uninstall":
 		if err := platformservice.Uninstall(); err != nil {
 			return err
@@ -256,9 +387,102 @@ func runService(action string, arguments []string) error {
 		status, err := platformservice.Status()
 		fmt.Fprint(os.Stdout, status)
 		return err
+	case "verify":
+		loaded, err := config.Load(arguments, os.Getenv)
+		if err != nil {
+			return err
+		}
+		if err := verifyManagedService(loaded); err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stdout, "MANAGED_SERVICE_DEFINITIONS: VERIFIED")
+		return nil
 	default:
 		return fmt.Errorf("未知服务命令 %q", action)
 	}
+}
+
+func finishManagedServiceInstall(loaded config.Config, metadata installation.Metadata, start bool) error {
+	if err := platformservice.InstallTrayAutostart(filepath.Join(metadata.InstallRoot, "scriptboard-tray-launcher.exe"), metadata.ConfigPath); err != nil {
+		return err
+	}
+	if err := verifyManagedService(loaded); err != nil {
+		return fmt.Errorf("post-install verification failed: %w", err)
+	}
+	fmt.Fprintf(os.Stdout, "SCRIPTBOARD_INSTALLATION: VERIFIED\nVERSION: %s\n", metadata.Current)
+	if !start {
+		return nil
+	}
+	if err := platformservice.Start(); err != nil {
+		return fmt.Errorf("start verified ScriptBoard installation: %w", err)
+	}
+	deadline := time.Now().Add(45 * time.Second)
+	for {
+		status, err := platformservice.Status()
+		if err != nil {
+			return fmt.Errorf("read installed ScriptBoard status: %w", err)
+		}
+		if strings.Contains(status, "STATE: RUNNING") {
+			fmt.Fprint(os.Stdout, status)
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return errors.New("verified ScriptBoard installation did not reach RUNNING within 45 seconds")
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
+func verifyManagedService(loaded config.Config) error {
+	metadata, err := installation.Load(loaded.StateRoot)
+	if err != nil {
+		return fmt.Errorf("load managed installation: %w", err)
+	}
+	if err := installation.ValidateVersion(metadata, metadata.Current, buildinfo.Current()); err != nil {
+		return fmt.Errorf("verify managed release: %w", err)
+	}
+	if err := requireManagedConfigPath(loaded.ConfigPath, metadata.ConfigPath); err != nil {
+		return err
+	}
+	matches, err := platformservice.MatchesExecutable(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, metadata.StateRoot)
+	if err != nil {
+		return fmt.Errorf("verify managed service definitions: %w", err)
+	}
+	if !matches {
+		return errors.New("managed service definitions do not match the installed four-component release")
+	}
+	return nil
+}
+
+func requireManagedConfigPath(provided, expected string) error {
+	providedInfo, err := os.Stat(provided)
+	if err != nil {
+		if os.IsNotExist(err) {
+			_, expectedErr := os.Stat(expected)
+			if os.IsNotExist(expectedErr) && filepath.Clean(provided) == filepath.Clean(expected) {
+				return nil
+			}
+		}
+		return fmt.Errorf("inspect provided managed service config: %w", err)
+	}
+	expectedInfo, err := os.Stat(expected)
+	if err != nil {
+		return fmt.Errorf("inspect installed managed service config: %w", err)
+	}
+	if !os.SameFile(providedInfo, expectedInfo) {
+		return errors.New("provided config does not match the managed installation config")
+	}
+	return nil
+}
+
+func webStartupFiles(loaded config.Config) []string {
+	result := make([]string, 0, 3)
+	for _, path := range []string{loaded.AdminPasswordFile, loaded.TLSCert, loaded.TLSKey} {
+		if path != "" {
+			result = append(result, path)
+		}
+	}
+	return result
 }
 
 func resetAdmin(arguments []string) error {
@@ -304,7 +528,7 @@ func runDoctor(arguments []string) error {
 }
 
 func serve(arguments []string) error {
-	interruptContext, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	interruptContext, stop := shutdownsignal.Context(context.Background())
 	defer stop()
 	return serveContext(interruptContext, arguments)
 }
@@ -317,6 +541,69 @@ func serveContext(runContext context.Context, arguments []string) error {
 	if err := validateNetworkConfiguration(loaded.Listen, loaded.TLSCert, loaded.TLSKey); err != nil {
 		return err
 	}
+	securityEventToken := ""
+	if loaded.SecurityEventTokenFile != "" {
+		body, readErr := os.ReadFile(loaded.SecurityEventTokenFile)
+		if readErr != nil {
+			return fmt.Errorf("read security event token file: %w", readErr)
+		}
+		if len(body) > 4096 || strings.TrimSpace(string(body)) == "" {
+			return errors.New("security event token file must contain 1 to 4096 bytes")
+		}
+		securityEventToken = strings.TrimSpace(string(body))
+	}
+	installRoot := applicationInstallRoot(loaded.StateRoot)
+	var assistantLauncher pirpc.ProcessLauncher
+	var runnerLauncher runmanager.ProcessLauncher
+	var auditCheckpoint app.AuditCheckpoint
+	var mfaStore app.MFAStore
+	var passkeyStore app.PasskeyStore
+	var remoteWebsiteService app.RemoteWebsiteService
+	var providerCredentials *privilegebroker.ProviderCredentials
+	var mysqlBackend mysqlmanager.Backend
+	var hostFilesBackend *privilegebroker.HostFilesBackend
+	var stateBackups app.StateBackupService
+	privilegedBrokerEndpoint := ""
+	if installRoot != "" {
+		if err := platformservice.ValidateWebRuntimeIdentity(); err != nil {
+			return fmt.Errorf("refuse to start managed Web service with unsafe OS identity: %w", err)
+		}
+		endpoint, err := runtimehost.DefaultEndpoint(loaded.StateRoot)
+		if err != nil {
+			return fmt.Errorf("resolve isolated Runtime Host endpoint: %w", err)
+		}
+		assistantDial := runtimehost.Dial(endpoint)
+		assistantLauncher = runtimehost.NewClientLauncher(func(ctx context.Context) (net.Conn, error) {
+			if err := platformservice.EnsureAIRuntimeHostRunning(ctx); err != nil {
+				return nil, fmt.Errorf("start isolated AI Runtime Host on demand: %w", err)
+			}
+			return assistantDial(ctx)
+		})
+		runnerEndpoint, err := runnerhost.DefaultEndpoint(loaded.StateRoot)
+		if err != nil {
+			return fmt.Errorf("resolve isolated Runner Host endpoint: %w", err)
+		}
+		runnerDial := runnerhost.Dial(runnerEndpoint)
+		runnerLauncher = runnerhost.NewClientLauncher(func(ctx context.Context) (net.Conn, error) {
+			if err := platformservice.EnsureRunnerHostRunning(ctx); err != nil {
+				return nil, fmt.Errorf("start isolated Runner Host on demand: %w", err)
+			}
+			return runnerDial(ctx)
+		})
+		privilegedBrokerEndpoint, err = privilegebroker.DefaultEndpoint(loaded.StateRoot)
+		if err != nil {
+			return fmt.Errorf("resolve privileged Broker endpoint: %w", err)
+		}
+		brokerClient := privilegebroker.NewClient(privilegebroker.ClientOptions{Dial: privilegebroker.Dial(privilegedBrokerEndpoint)})
+		auditCheckpoint = privilegebroker.NewRemoteCheckpoint(brokerClient)
+		mfaStore = privilegebroker.NewRemoteMFA(brokerClient)
+		passkeyStore = privilegebroker.NewRemotePasskey(brokerClient)
+		remoteWebsiteService = privilegebroker.NewRemoteWebsite(brokerClient)
+		providerCredentials = privilegebroker.NewProviderCredentials(brokerClient)
+		mysqlBackend = privilegebroker.NewMySQLBackend(brokerClient, mysqlmanager.ToolSettings{DumpExecutable: "mysqldump", ClientExecutable: "mysql"})
+		hostFilesBackend = privilegebroker.NewHostFilesBackend(brokerClient, filepath.Join(loaded.StateRoot, "inbox", "host-files-broker"))
+		stateBackups = privilegebroker.NewStateBackups(brokerClient)
+	}
 	updateShutdown := make(chan struct{}, 1)
 	var requestRestart func() error
 	if canRestartManagedService(loaded.StateRoot, loaded.ConfigPath) {
@@ -324,16 +611,32 @@ func serveContext(runContext context.Context, arguments []string) error {
 	}
 
 	application, err := app.Open(app.Config{
-		StateRoot: loaded.StateRoot, InstallRoot: applicationInstallRoot(loaded.StateRoot), ConfigPath: loaded.ConfigPath, TLSKey: loaded.TLSKey,
-		RunTimeoutGrace: loaded.RunTimeoutGrace, ExecutorChains: loaded.ExecutorChains, AdminUsername: loaded.AdminUsername, AdminPassword: loaded.AdminPassword, AdminPasswordFile: loaded.AdminPasswordFile, TrustedProxies: loaded.TrustedProxies,
-		UpdateCheck: loaded.UpdateCheck, UpdateInterval: loaded.UpdateInterval,
+		StateRoot: loaded.StateRoot, InstallRoot: installRoot, ConfigPath: loaded.ConfigPath, TLSKey: loaded.TLSKey,
+		RunTimeoutGrace: loaded.RunTimeoutGrace, ExecutorChains: loaded.ExecutorChains, AdminUsername: loaded.AdminUsername, AdminPasswordFile: loaded.AdminPasswordFile, TrustedProxies: loaded.TrustedProxies,
+		AllowedHosts: loaded.AllowedHosts, CanonicalExternalURL: loaded.CanonicalExternalURL,
+		SecurityEventEndpoint: loaded.SecurityEventEndpoint, SecurityEventToken: securityEventToken,
+		SecurityEventTokenFile: loaded.SecurityEventTokenFile, SecurityEventAllowPrivate: loaded.SecurityEventAllowPrivate,
+		NotificationEmailRelayEndpoint: loaded.NotificationEmailRelayEndpoint, NotificationEmailRecipient: loaded.NotificationEmailRecipient,
+		NotificationEmailRelayTokenFile: loaded.NotificationEmailRelayTokenFile,
+		UpdateCheck:                     loaded.UpdateCheck, UpdateInterval: loaded.UpdateInterval,
 		RequestShutdown: func() {
 			select {
 			case updateShutdown <- struct{}{}:
 			default:
 			}
 		},
-		RequestRestart: requestRestart,
+		RequestRestart:           requestRestart,
+		AssistantProcessLauncher: assistantLauncher,
+		RunnerProcessLauncher:    runnerLauncher,
+		PrivilegedBrokerEndpoint: privilegedBrokerEndpoint,
+		AuditCheckpoint:          auditCheckpoint,
+		MFAStore:                 mfaStore,
+		PasskeyStore:             passkeyStore,
+		RemoteWebsiteService:     remoteWebsiteService,
+		ProviderCredentials:      providerCredentials,
+		MySQLBackend:             mysqlBackend,
+		HostFilesBackend:         hostFilesBackend,
+		StateBackups:             stateBackups,
 	})
 	if err != nil {
 		return err
@@ -398,7 +701,7 @@ func canRestartManagedService(stateRoot, configPath string) bool {
 	if err != nil {
 		return false
 	}
-	matches, err := platformservice.MatchesExecutable(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath)
+	matches, err := platformservice.MatchesExecutable(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, metadata.StateRoot)
 	if err != nil || !matches {
 		return false
 	}

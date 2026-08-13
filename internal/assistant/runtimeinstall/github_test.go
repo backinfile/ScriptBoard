@@ -1,7 +1,9 @@
 package runtimeinstall
 
 import (
+	"context"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -25,6 +27,19 @@ func TestRuntimeReleaseURLsArePinnedToOfficialRepository(t *testing.T) {
 		if err := validateRuntimeReleaseAssetURL(rawURL, "v1.2.3", ManifestFilename); err == nil {
 			t.Fatalf("untrusted asset URL accepted: %s", rawURL)
 		}
+	}
+}
+
+func TestRuntimeDownloadUsesSharedOutboundPolicy(t *testing.T) {
+	transport, ok := NewGitHubSource().Client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("runtime transport type=%T", NewGitHubSource().Client.Transport)
+	}
+	if transport.Proxy != nil {
+		t.Fatal("runtime downloads must not use the environment proxy")
+	}
+	if _, err := transport.DialContext(context.Background(), "tcp", "169.254.169.254:443"); err == nil || !strings.Contains(err.Error(), "not allowed") {
+		t.Fatalf("metadata runtime dial error=%v", err)
 	}
 }
 

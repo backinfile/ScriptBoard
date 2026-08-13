@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"scriptboard/internal/secretredaction"
 	"scriptboard/internal/websitemonitor"
 )
 
@@ -176,7 +177,11 @@ func (a *App) exportWebsiteMonitors(response http.ResponseWriter, request *http.
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "application/json; charset=utf-8")
 	response.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="scriptboard-website-monitors-%s.json"`, time.Now().Format("20060102-150405")))
-	if err := json.NewEncoder(response).Encode(bundle); err != nil {
+	encoded, err := secretredaction.MarshalJSON(bundle)
+	if err != nil {
+		return
+	}
+	if _, err := response.Write(append(encoded, '\n')); err != nil {
 		return
 	}
 	a.recordAuditForRequest(request, "export_website_monitors", fmt.Sprintf("%d monitors", len(bundle.Monitors)), "succeeded")
@@ -226,7 +231,7 @@ func (a *App) previewWebsiteMonitorImport(response http.ResponseWriter, request 
 		http.Error(response, webText(locale, "website.error.csrf"), http.StatusForbidden)
 		return
 	}
-	file, _, err := request.FormFile("config_file")
+	file, header, err := request.FormFile("config_file")
 	if err != nil {
 		base.Error = webText(locale, "website.transfer.file_required")
 		renderWebsiteMonitorTransfer(response, http.StatusUnprocessableEntity, base)
@@ -237,6 +242,11 @@ func (a *App) previewWebsiteMonitorImport(response http.ResponseWriter, request 
 	if err != nil || len(raw) > websiteMonitorImportMaxSize {
 		base.Error = webText(locale, "website.transfer.file_too_large")
 		renderWebsiteMonitorTransfer(response, http.StatusRequestEntityTooLarge, base)
+		return
+	}
+	if err := validateJSONConfigurationImport(header.Filename, header.Header.Get("Content-Type"), raw, websiteMonitorImportMaxSize); err != nil {
+		base.Error = webText(locale, "website.transfer.invalid_file")
+		renderWebsiteMonitorTransfer(response, http.StatusUnprocessableEntity, base)
 		return
 	}
 	bundle, err := decodeWebsiteMonitorConfigFile(raw)

@@ -9,8 +9,8 @@ import (
 
 const (
 	Repository             = "backinfile/ScriptBoard"
-	DatabaseSchemaVersion  = 38
-	UpdaterProtocolVersion = 1
+	DatabaseSchemaVersion  = 44
+	UpdaterProtocolVersion = 2
 	ReleaseInfoFilename    = "RELEASE.json"
 )
 
@@ -26,6 +26,7 @@ var (
 	UpdatePublicKeyBase64 = ""
 	UpdateNextKeyID       = ""
 	UpdateNextKeyBase64   = ""
+	UpdateRevokedKeyIDs   = ""
 )
 
 type Info struct {

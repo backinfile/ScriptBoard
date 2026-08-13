@@ -3,12 +3,13 @@
 package main
 
 import (
+	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 
 	"scriptboard/internal/config"
 	"scriptboard/internal/installation"
+	"scriptboard/internal/processlaunch"
 )
 
 func main() {
@@ -21,8 +22,13 @@ func main() {
 		return
 	}
 	tray := filepath.Join(installation.VersionRoot(metadata, metadata.Current), "scriptboard-tray.exe")
-	command := exec.Command(tray, "--config", loaded.ConfigPath)
-	command.Dir = filepath.Dir(tray)
+	command, err := processlaunch.Prepare(processlaunch.Spec{
+		Context: context.Background(), Executable: tray, Arguments: []string{"--config", loaded.ConfigPath},
+		Environment: processlaunch.EnvironmentInherit, Directory: filepath.Dir(tray),
+	})
+	if err != nil {
+		return
+	}
 	if command.Start() == nil {
 		_ = command.Process.Release()
 	}

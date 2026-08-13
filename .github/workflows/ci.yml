@@ -24,8 +24,21 @@ jobs:
           cache: true
       - name: Test
         run: go test ./... -count=1
+      - name: Vet
+        run: go vet ./...
       - name: Build
         run: go build ./cmd/...
+
+  race:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Race-sensitive security packages
+        run: bash ./scripts/run-race-security-gate.sh
 
   browser:
     runs-on: windows-latest
@@ -52,3 +65,16 @@ jobs:
         run: pnpm exec playwright install chromium
       - name: Run browser gate
         run: pnpm test
+
+  windows-scm-security:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify four-service SCM security boundary
+        shell: pwsh
+        run: ./scripts/windows-scm-security-gate.ps1

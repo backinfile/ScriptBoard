@@ -2,6 +2,7 @@
 
 const assert = require("node:assert/strict");
 const { spawn, spawnSync } = require("node:child_process");
+const { createHmac, randomBytes } = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { chromium } = require("playwright");
@@ -11,6 +12,18 @@ const repositoryRoot = path.resolve(browserRoot, "..", "..");
 const snapshotRoot = path.join(browserRoot, "snapshots");
 const resultRoot = path.join(browserRoot, "test-results");
 const fixtureBinary = path.join(resultRoot, process.platform === "win32" ? "scriptboard-browser-fixture.exe" : "scriptboard-browser-fixture");
+
+function externalSignatureHeaders(secret, method, requestURI) {
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const nonce = randomBytes(18).toString("base64url");
+  const payload = ["v1", timestamp, nonce, method.toUpperCase(), requestURI].join("\n");
+  return {
+    Authorization: `Bearer ${secret}`,
+    "X-ScriptBoard-Timestamp": timestamp,
+    "X-ScriptBoard-Nonce": nonce,
+    "X-ScriptBoard-Signature": `v1=${createHmac("sha256", secret).update(payload).digest("hex")}`,
+  };
+}
 
 fs.mkdirSync(snapshotRoot, { recursive: true });
 fs.rmSync(resultRoot, { recursive: true, force: true });
@@ -1097,12 +1110,30 @@ async function assertViewerCannotManageMySQL(browser, baseURL, password) {
   await context.close();
 }
 
+const administratorSettingsHrefs = [
+  "/settings/account",
+  "/settings/users",
+  "/settings/display",
+  "/settings/ai",
+  "/settings/service-logs",
+  "/settings/notifications",
+  "/settings/state-backups",
+  "/settings/updates",
+];
+
+async function assertAdministratorSettingsNavigation(page) {
+  assert.deepEqual(
+    await page.locator(".settings-nav a").evaluateAll(links => links.map(link => link.getAttribute("href"))),
+    administratorSettingsHrefs,
+  );
+}
+
 async function assertAccountSettings(page, baseURL) {
   await page.goto(`${baseURL}/settings/account`);
   assert.equal(await page.locator(".app-sidebar .sidebar-account").count(), 0);
   assert.equal(await page.locator('.app-sidebar a[href="/settings/users"]').count(), 0);
   assert.equal(await page.locator('.settings-nav a[href="/settings/users"]').count(), 1);
-  assert.equal(await page.locator(".settings-nav a").count(), 6);
+  await assertAdministratorSettingsNavigation(page);
   assert.equal(await page.locator(".settings-layout").count(), 0);
   const settingsLayout = await page.locator(".settings-nav, .settings-content").evaluateAll(elements =>
     elements.map(element => ({
@@ -1162,7 +1193,7 @@ async function assertAssistantSettingsAndWorkspace(page, baseURL) {
   await page.goto(`${baseURL}/settings/ai`);
   await page.locator("[data-assistant-settings]").waitFor();
   await assertNoHorizontalOverflow(page, "AI settings");
-  assert.equal(await page.locator(".settings-nav a").count(), 6);
+  await assertAdministratorSettingsNavigation(page);
 
   await page.locator("[data-add-llm]").click();
   const drawer = page.locator('[data-llm-drawer][data-open="true"]');
@@ -1297,14 +1328,14 @@ async function assertExternalInterfaces(page, fixture) {
   await keyForm.locator('input[name="label"]').fill("Browser fixture");
   await keyForm.locator('select[name="duration"]').selectOption("1d");
   await keyForm.locator('button[type="submit"]').click();
-  const maskedSecret = (await page.locator(".external-secret code").textContent()).trim();
-  assert.match(maskedSecret, /^sbk_[A-Za-z0-9_-]{16}\.••••[A-Za-z0-9_-]{4}$/);
-  const copyKey = page.locator("[data-copy-key]");
+  const renderedSecret = (await page.locator(".external-secret code").textContent()).trim();
+  assert.match(renderedSecret, /^sbk_[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{43}$/);
+  const copyKey = page.locator('[data-copy-text][data-copy-target="external-key-secret"]');
   await copyKey.click();
-  await copyKey.locator('[data-copy-key-label]').getByText("Copied").waitFor();
-  const secret = await page.evaluate(() => navigator.clipboard.readText());
-  assert.match(secret, /^sbk_[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{43}$/);
-  const keyID = secret.slice(4).split(".")[0];
+  const provisionalSecret = await page.evaluate(() => navigator.clipboard.readText());
+  assert.equal(provisionalSecret, renderedSecret);
+  assert.match(provisionalSecret, /^sbk_[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{43}$/);
+  const keyID = provisionalSecret.slice(4).split(".")[0];
 
   await page.goto(`${fixture.baseURL}/config/external-interfaces/keys/${keyID}/entries/new`);
   const form = page.locator("[data-external-entry-form]");
@@ -1317,16 +1348,47 @@ async function assertExternalInterfaces(page, fixture) {
   await form.locator('input[name="upload_max_bytes"]').fill("1024");
   await form.locator('input[name="upload_extensions"]').fill(".txt");
   await form.locator('select[name="upload_conflict"]').selectOption("rename");
+  assert.equal(await form.locator('input[name="require_signature"]').isChecked(), true);
   await form.locator('button[type="submit"]').click();
+  await page.locator("#external-key-secret").waitFor();
+  const secret = (await page.locator("#external-key-secret").textContent()).trim();
+  assert.match(secret, /^sbk_[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{43}$/);
+  assert.notEqual(secret, provisionalSecret);
+  await page.getByRole("link", { name: "Done", exact: true }).click();
   await page.locator("[data-external-interfaces-page]").waitFor();
   assert.equal(await page.getByText("Artifact upload", { exact: true }).count(), 1);
 
-  const trigger = await page.request.post(`${fixture.baseURL}/trigger?name=artifact`, {
-    headers: { Authorization: `Bearer ${secret}` },
+  const globalControl = page.locator("[data-external-global-control]");
+  assert.equal(await globalControl.getAttribute("data-external-global-control"), "enabled");
+  await globalControl.getByRole("button", { name: "Pause all external calls", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector("[data-external-global-control]")?.dataset.externalGlobalControl === "disabled");
+  assert.equal(await globalControl.getAttribute("data-external-global-control"), "disabled");
+  const requestURI = "/trigger?name=artifact";
+  const blockedTrigger = await page.request.post(`${fixture.baseURL}${requestURI}`, {
+    headers: externalSignatureHeaders(secret, "POST", requestURI),
+    multipart: { file: { name: "blocked.txt", mimeType: "text/plain", buffer: Buffer.from("must not publish") } },
+  });
+  assert.equal(blockedTrigger.status(), 503);
+  assert.equal((await blockedTrigger.json()).error, "unavailable");
+  await globalControl.getByRole("button", { name: "Resume all external calls", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector("[data-external-global-control]")?.dataset.externalGlobalControl === "enabled");
+  assert.equal(await globalControl.getAttribute("data-external-global-control"), "enabled");
+
+  const trigger = await page.request.post(`${fixture.baseURL}${requestURI}`, {
+    headers: externalSignatureHeaders(secret, "POST", requestURI),
     multipart: { file: { name: "external-result.txt", mimeType: "text/plain", buffer: Buffer.from("fixture complete") } },
   });
-  assert.equal(trigger.status(), 201);
-  assert.equal((await trigger.json()).action, "upload");
+  assert.equal(trigger.status(), 202);
+  const uploadPayload = await trigger.json();
+  assert.equal(uploadPayload.action, "upload");
+  assert.equal(uploadPayload.data.state, "pending_review");
+  await page.goto(`${fixture.baseURL}/resources/inbox`);
+  await page.getByRole("heading", { name: "Upload inbox", exact: true }).waitFor();
+  await page.getByText("external-result.txt", { exact: true }).waitFor();
+  page.once("dialog", dialog => dialog.accept());
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  await page.waitForURL("**/resources/inbox");
+  await page.getByText("No external uploads are awaiting review.", { exact: true }).waitFor();
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();

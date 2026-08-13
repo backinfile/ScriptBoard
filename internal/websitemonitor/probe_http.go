@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"scriptboard/internal/outboundpolicy"
+	"scriptboard/internal/secretredaction"
 )
 
 const maxResponseBodyBytes = 1 << 20
@@ -27,6 +29,7 @@ func (NetworkProbe) Check(ctx context.Context, config Config) Evidence {
 	}
 	started := time.Now()
 	result := Evidence{CheckedAt: started.UTC()}
+	skipTLSVerification := config.SkipTLSVerificationAt(started)
 	if config.Kind != KindHTTP {
 		result.ErrorCategory = "internal"
 		result.Summary = "暂不支持这种检查方式"
@@ -36,7 +39,7 @@ func (NetworkProbe) Check(ctx context.Context, config Config) Evidence {
 	if err != nil {
 		result.ErrorCategory = "internal"
 		result.Summary = "无法创建网站请求"
-		result.TechnicalError = err.Error()
+		result.TechnicalError = secretredaction.String(err.Error())
 		return result
 	}
 	applyHTTPRequestHeaders(request, config.RequestHeaders)
@@ -46,12 +49,16 @@ func (NetworkProbe) Check(ctx context.Context, config Config) Evidence {
 	if config.HTTPMethod == http.MethodPost && config.HTTPContentType != "" && request.Header.Get("Content-Type") == "" {
 		request.Header.Set("Content-Type", config.HTTPContentType)
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: config.SkipTLSVerification} //nolint:gosec -- explicit per-monitor administrator setting
+	policy := outboundPolicy(config)
+	transport := policy.Transport()
+	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: skipTLSVerification} //nolint:gosec -- bounded per-monitor administrator exception
 	client := &http.Client{
 		Transport: transport,
 		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
 			if config.DisableRedirects {
+				return http.ErrUseLastResponse
+			}
+			if len(via) > 0 && (via[0].Header.Get("Authorization") != "" || via[0].Header.Get("Cookie") != "") {
 				return http.ErrUseLastResponse
 			}
 			if len(via) > 5 {
@@ -69,12 +76,12 @@ func (NetworkProbe) Check(ctx context.Context, config Config) Evidence {
 	if err != nil {
 		result.ErrorCategory = categorizeNetworkError(err)
 		result.Summary = "网站请求未完成"
-		result.TechnicalError = err.Error()
+		result.TechnicalError = secretredaction.String(err.Error())
 		return result
 	}
 	defer response.Body.Close()
 	result.StatusCode = response.StatusCode
-	result.Certificate = certificateFromHTTP(response, !config.SkipTLSVerification, result.CheckedAt)
+	result.Certificate = certificateFromHTTP(response, !skipTLSVerification, result.CheckedAt)
 	if !acceptedHTTPStatus(config, response.StatusCode) {
 		result.ErrorCategory = "http-status"
 		result.Summary = fmt.Sprintf("网站返回了不符合预期的 HTTP %d", response.StatusCode)
@@ -85,7 +92,7 @@ func (NetworkProbe) Check(ctx context.Context, config Config) Evidence {
 		if readErr != nil {
 			result.ErrorCategory = "connect"
 			result.Summary = "读取网站响应时连接中断"
-			result.TechnicalError = readErr.Error()
+			result.TechnicalError = secretredaction.String(readErr.Error())
 			return result
 		}
 		if len(body) > maxResponseBodyBytes {
@@ -108,9 +115,10 @@ func (NetworkProbe) Check(ctx context.Context, config Config) Evidence {
 func checkWebSocket(ctx context.Context, config Config) Evidence {
 	started := time.Now()
 	result := Evidence{CheckedAt: started.UTC()}
+	skipTLSVerification := config.SkipTLSVerificationAt(started)
 	dialer := websocket.Dialer{
-		Proxy:           http.ProxyFromEnvironment,
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: config.SkipTLSVerification}, //nolint:gosec -- explicit per-monitor administrator setting
+		NetDialContext:  outboundPolicy(config).DialContext,
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: skipTLSVerification}, //nolint:gosec -- bounded per-monitor administrator exception
 	}
 	headers := http.Header{}
 	applyRequestHeaders(headers, config.RequestHeaders)
@@ -123,7 +131,7 @@ func checkWebSocket(ctx context.Context, config Config) Evidence {
 	if err != nil {
 		result.ErrorCategory = categorizeNetworkError(err)
 		result.Summary = "WebSocket 连接未建立"
-		result.TechnicalError = err.Error()
+		result.TechnicalError = secretredaction.String(err.Error())
 		if response != nil {
 			result.StatusCode = response.StatusCode
 			_ = response.Body.Close()
@@ -132,7 +140,7 @@ func checkWebSocket(ctx context.Context, config Config) Evidence {
 	}
 	defer connection.Close()
 	result.StatusCode = http.StatusSwitchingProtocols
-	result.Certificate = certificateFromConnection(connection.UnderlyingConn(), !config.SkipTLSVerification, result.CheckedAt)
+	result.Certificate = certificateFromConnection(connection.UnderlyingConn(), !skipTLSVerification, result.CheckedAt)
 	if config.WebSocketSuccess == "" || config.WebSocketSuccess == WebSocketHandshake {
 		result.Success = true
 		result.Summary = "WebSocket 连接已建立"
@@ -149,7 +157,7 @@ func checkWebSocket(ctx context.Context, config Config) Evidence {
 	if err := writeApplicationMessage(connection, config); err != nil {
 		result.ErrorCategory = "connect"
 		result.Summary = "WebSocket 应用消息未发送"
-		result.TechnicalError = err.Error()
+		result.TechnicalError = secretredaction.String(err.Error())
 		return result
 	}
 	for {
@@ -157,7 +165,7 @@ func checkWebSocket(ctx context.Context, config Config) Evidence {
 		if err != nil {
 			result.ErrorCategory = categorizeNetworkError(err)
 			result.Summary = "等待 WebSocket 应用消息时未收到有效响应"
-			result.TechnicalError = err.Error()
+			result.TechnicalError = secretredaction.String(err.Error())
 			return result
 		}
 		if messageType != websocket.TextMessage && messageType != websocket.BinaryMessage {
@@ -174,6 +182,11 @@ func checkWebSocket(ctx context.Context, config Config) Evidence {
 			return result
 		}
 	}
+}
+
+func outboundPolicy(config Config) outboundpolicy.Policy {
+	local := config.Scope == ScopeLocal
+	return outboundpolicy.Policy{AllowPrivate: local, AllowAnyPort: local}
 }
 
 func applyRequestHeaders(target http.Header, headers []RequestHeader) {
@@ -198,7 +211,7 @@ func checkWebSocketPingPong(ctx context.Context, connection *websocket.Conn, con
 		result.ErrorCategory = "internal"
 		result.Summary = "Ping 载荷无效"
 		if err != nil {
-			result.TechnicalError = err.Error()
+			result.TechnicalError = secretredaction.String(err.Error())
 		}
 		return result
 	}
@@ -228,7 +241,7 @@ func checkWebSocketPingPong(ctx context.Context, connection *websocket.Conn, con
 	if err := connection.WriteControl(websocket.PingMessage, payload, deadline); err != nil {
 		result.ErrorCategory = categorizeNetworkError(err)
 		result.Summary = "Ping 控制帧未发送"
-		result.TechnicalError = err.Error()
+		result.TechnicalError = secretredaction.String(err.Error())
 		return result
 	}
 	select {
@@ -239,7 +252,7 @@ func checkWebSocketPingPong(ctx context.Context, connection *websocket.Conn, con
 	case err := <-readError:
 		result.ErrorCategory = categorizeNetworkError(err)
 		result.Summary = "等待匹配的 Pong 时连接已结束"
-		result.TechnicalError = err.Error()
+		result.TechnicalError = secretredaction.String(err.Error())
 		return result
 	case <-ctx.Done():
 		result.ErrorCategory = "timeout"

@@ -341,12 +341,12 @@ func TestAIWorkspaceAndSettingsUsePersistedLLMAndConversationState(t *testing.T)
 		t.Fatalf("toggle approval status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
 
-	secretBody, err := os.ReadFile(filepath.Join(root, "state", "secrets", "assistant-provider.json"))
+	secretBody, err := os.ReadFile(filepath.Join(root, "state", "secrets", "assistant-provider.enc"))
 	if err != nil {
 		t.Fatalf("read assistant provider secret file: %v", err)
 	}
-	if !strings.Contains(string(secretBody), "sk-never-render-this") {
-		t.Fatalf("provider credential was not persisted outside SQLite: %s", secretBody)
+	if strings.Contains(string(secretBody), "sk-never-render-this") {
+		t.Fatalf("sealed provider credential file contains plaintext: %s", secretBody)
 	}
 }
 

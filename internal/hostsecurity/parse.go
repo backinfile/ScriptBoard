@@ -1,12 +1,16 @@
 package hostsecurity
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 var (
@@ -19,9 +23,88 @@ var (
 	ufwRulePattern             = regexp.MustCompile(`^\[\s*(\d+)\]\s+(\S+)(\s+\(v6\))?\s+(ALLOW|DENY|LIMIT|REJECT)(?:\s+(IN|OUT))?\s+(.+?)\s*$`)
 	ufwDefaultsPattern         = regexp.MustCompile(`(?i)^Default:\s*(allow|deny)\s*\(incoming\),\s*(allow|deny)\s*\(outgoing\)`)
 	fail2BanEventPattern       = regexp.MustCompile(`^(\S+)\s+.*?fail2ban\.actions\s+\[.*?\]:\s+NOTICE\s+\[(\S+)\]\s+Ban\s+([0-9a-fA-F:.]+)\s*$`)
+	aptUpgradePattern          = regexp.MustCompile(`^Inst\s+(\S+)(?:\s+\[[^\]]+\])?\s+\((\S+)\s+(.+)\)$`)
 )
 
 const linuxLoginSessionWindow = 10 * time.Minute
+
+func parseAPTSecurityUpdates(output string) []SecurityUpdate {
+	updates := make([]SecurityUpdate, 0)
+	seen := make(map[string]struct{})
+	for _, line := range strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n") {
+		match := aptUpgradePattern.FindStringSubmatch(strings.TrimSpace(line))
+		if len(match) == 0 {
+			continue
+		}
+		source := strings.TrimSpace(match[3])
+		lowerSource := strings.ToLower(source)
+		if !strings.Contains(lowerSource, "security") && !strings.Contains(lowerSource, "-esm-") && !strings.Contains(lowerSource, " esm-") {
+			continue
+		}
+		identifier, version := match[1], match[2]
+		if !validUpdateField(identifier, 256) || !validUpdateField(version, 512) {
+			continue
+		}
+		key := strings.ToLower(identifier)
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+		updates = append(updates, SecurityUpdate{Identifier: identifier, Title: identifier, Version: version, Severity: "Security", Source: boundedUpdateField(source, 512)})
+		if len(updates) == 200 {
+			break
+		}
+	}
+	return updates
+}
+
+func parseWindowsSecurityUpdates(output string) ([]SecurityUpdate, error) {
+	updates := make([]SecurityUpdate, 0)
+	seen := make(map[string]struct{})
+	for _, line := range strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Split(line, "|")
+		if len(fields) != 7 || fields[0] != "SBUPDATE" || fields[6] != "0" && fields[6] != "1" {
+			return nil, errors.New("Windows Update Agent returned an invalid bounded record")
+		}
+		decoded := make([]string, 5)
+		for index := range decoded {
+			value, err := base64.StdEncoding.DecodeString(fields[index+1])
+			if err != nil || !validUpdateField(string(value), 2048) {
+				return nil, errors.New("Windows Update Agent returned an invalid encoded field")
+			}
+			decoded[index] = string(value)
+		}
+		if decoded[0] == "" || decoded[1] == "" {
+			return nil, errors.New("Windows Update Agent returned an incomplete record")
+		}
+		key := strings.ToLower(decoded[0])
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+		updates = append(updates, SecurityUpdate{Identifier: decoded[0], Title: decoded[1], Version: decoded[2], Severity: decoded[3], Source: decoded[4], RestartRequired: fields[6] == "1"})
+		if len(updates) == 200 {
+			break
+		}
+	}
+	return updates, nil
+}
+
+func validUpdateField(value string, maximum int) bool {
+	return len(value) <= maximum && utf8.ValidString(value) && strings.IndexFunc(value, unicode.IsControl) < 0
+}
+
+func boundedUpdateField(value string, maximum int) string {
+	value = strings.TrimSpace(value)
+	if len(value) > maximum {
+		return value[:maximum]
+	}
+	return value
+}
 
 type linuxLoginEvent struct {
 	record    LoginRecord

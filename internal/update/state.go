@@ -14,6 +14,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"scriptboard/internal/secretredaction"
 )
 
 const OperationSchema = 1
@@ -120,6 +122,7 @@ func SaveOperation(operation Operation) error {
 	if err := operation.Validate(operation.StateRoot); err != nil {
 		return err
 	}
+	operation.Error = secretredaction.String(operation.Error)
 	root, err := OperationDirectory(operation.StateRoot, operation.ID)
 	if err != nil {
 		return err
@@ -232,6 +235,7 @@ func validateCache(cache Cache) (Cache, error) {
 }
 
 func saveCache(stateRoot string, cache Cache) error {
+	cache.LastError = secretredaction.String(cache.LastError)
 	cache.Schema = ManifestSchema
 	validated, err := validateCache(cache)
 	if err != nil {
@@ -256,7 +260,7 @@ func loadCheckState(stateRoot string) (CheckState, error) {
 
 func saveCheckState(stateRoot, checkedAt, lastError string) error {
 	return writeAtomicJSON(filepath.Join(stateRoot, "updates", "check.json"), CheckState{
-		Schema: ManifestSchema, CheckedAt: checkedAt, LastError: lastError,
+		Schema: ManifestSchema, CheckedAt: checkedAt, LastError: secretredaction.String(lastError),
 	}, 0o600)
 }
 

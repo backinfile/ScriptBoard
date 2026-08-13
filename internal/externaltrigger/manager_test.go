@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -33,45 +32,35 @@ func TestCreateKeyAndResolveEnabledLogEntry(t *testing.T) {
 	now := time.Date(2026, 8, 5, 9, 0, 0, 0, time.UTC)
 	manager, db := testManager(t, now)
 	expiresAt := now.Add(24 * time.Hour)
-	key, secret, err := manager.CreateKey(context.Background(), CreateKeyInput{
+	key, provisionalSecret, err := manager.CreateKey(context.Background(), CreateKeyInput{
 		Label: "CI pipeline", Enabled: true, ExpiresAt: &expiresAt,
 	})
 	if err != nil {
 		t.Fatalf("create key: %v", err)
 	}
-	if !strings.HasPrefix(secret, "sbk_") || strings.Contains(key.TokenHint, secret) {
-		t.Fatalf("secret=%q hint=%q", secret, key.TokenHint)
+	if !strings.HasPrefix(provisionalSecret, "sbk_") || strings.Contains(key.TokenHint, provisionalSecret) {
+		t.Fatalf("secret=%q hint=%q", provisionalSecret, key.TokenHint)
 	}
 	var storedHash string
 	if err := db.QueryRow("SELECT token_hash FROM external_trigger_keys WHERE id = ?", key.ID).Scan(&storedHash); err != nil {
 		t.Fatal(err)
 	}
-	if storedHash == secret || strings.Contains(storedHash, secret) {
+	if storedHash == provisionalSecret || strings.Contains(storedHash, provisionalSecret) {
 		t.Fatal("plaintext key was persisted")
 	}
-	revealed, err := manager.KeySecret(key.ID)
-	if err != nil || revealed != secret {
-		t.Fatalf("revealed secret=%q error=%v", revealed, err)
-	}
-	if err := filepath.Walk(manager.secretsDirectory, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil || info.IsDir() {
-			return walkErr
-		}
-		content, readErr := os.ReadFile(path)
-		if readErr == nil && strings.Contains(string(content), secret) {
-			t.Fatalf("plaintext key was persisted in %s", path)
-		}
-		return readErr
-	}); err != nil {
-		t.Fatal(err)
+	if _, err := manager.secretStore.get(key.ID); !errors.Is(err, ErrSecretUnavailable) {
+		t.Fatalf("external key remained recoverable after creation: %v", err)
 	}
 
-	entry, err := manager.CreateEntry(context.Background(), CreateEntryInput{
+	entry, secret, err := manager.CreateEntry(context.Background(), CreateEntryInput{
 		KeyID: key.ID, Name: "deployment-log", Label: "Deployment callback", Type: ActionLog,
 		Enabled: true, Config: LogConfig{File: "/logs/deploy.log", Category: "deploy", MaxMessageBytes: 1024},
 	})
 	if err != nil {
 		t.Fatalf("create entry: %v", err)
+	}
+	if _, _, err := manager.Resolve(context.Background(), provisionalSecret, "deployment-log"); !errors.Is(err, ErrInvalidKey) {
+		t.Fatalf("provisional key remained valid after capability binding: %v", err)
 	}
 	resolvedKey, resolvedEntry, err := manager.Resolve(context.Background(), secret, "deployment-log")
 	if err != nil {
@@ -87,13 +76,13 @@ func TestCreateKeyAndResolveEnabledLogEntry(t *testing.T) {
 
 func TestCreateAndResolveWebsiteMonitorEntry(t *testing.T) {
 	manager, _ := testManager(t, time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC))
-	key, secret, err := manager.CreateKey(context.Background(), CreateKeyInput{
+	key, _, err := manager.CreateKey(context.Background(), CreateKeyInput{
 		Label: "Remote dashboard", Enabled: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry, err := manager.CreateEntry(context.Background(), CreateEntryInput{
+	entry, secret, err := manager.CreateEntry(context.Background(), CreateEntryInput{
 		KeyID: key.ID, Name: "website-status", Label: "Website monitoring",
 		Type: ActionWebsiteMonitor, Enabled: true, Config: WebsiteMonitorConfig{},
 	})
@@ -106,6 +95,80 @@ func TestCreateAndResolveWebsiteMonitorEntry(t *testing.T) {
 	}
 	if resolved.Type != ActionWebsiteMonitor || resolved.Target != "" || resolved.ConfigJSON != "{}" {
 		t.Fatalf("website monitor entry = %#v", resolved)
+	}
+}
+
+func TestKeyBindsOneImmutableEntryAndIsDeletedWithIt(t *testing.T) {
+	manager, _ := testManager(t, time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC))
+	key, _, err := manager.CreateKey(context.Background(), CreateKeyInput{Label: "Single capability", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, _, err := manager.CreateEntry(context.Background(), CreateEntryInput{
+		KeyID: key.ID, Name: "notice", Label: "Notice", Type: ActionLog, Enabled: true,
+		Config: LogConfig{File: "/logs/notice.log", MaxMessageBytes: 100},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := manager.CreateEntry(context.Background(), CreateEntryInput{
+		KeyID: key.ID, Name: "other", Label: "Other", Type: ActionLog, Enabled: true,
+		Config: LogConfig{File: "/logs/other.log", MaxMessageBytes: 100},
+	}); !errors.Is(err, ErrKeyScopeBound) {
+		t.Fatalf("second capability error = %v", err)
+	}
+	if _, err := manager.UpdateEntry(context.Background(), UpdateEntryInput{
+		ID: entry.ID, Name: entry.Name, Label: entry.Label, Type: ActionLog, Enabled: true,
+		Config: LogConfig{File: "/logs/changed.log", MaxMessageBytes: 100},
+	}); !errors.Is(err, ErrEntryImmutable) {
+		t.Fatalf("capability scope update error = %v", err)
+	}
+	if err := manager.DeleteEntry(context.Background(), entry.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Key(context.Background(), key.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("credential survived capability deletion: %v", err)
+	}
+}
+
+func TestGlobalControlDefaultsEnabledAndPersistsToggle(t *testing.T) {
+	now := time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC)
+	manager, db := testManager(t, now)
+	enabled, updatedAt, err := manager.GlobalEnabled(context.Background())
+	if err != nil || !enabled || !updatedAt.IsZero() {
+		t.Fatalf("default global control enabled=%v updated=%v err=%v", enabled, updatedAt, err)
+	}
+	if err := manager.SetGlobalEnabled(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	reopened := New(db, Options{Now: func() time.Time { return now.Add(time.Minute) }, SecretsDirectory: filepath.Join(t.TempDir(), "secrets")})
+	enabled, updatedAt, err = reopened.GlobalEnabled(context.Background())
+	if err != nil || enabled || !updatedAt.Equal(now) {
+		t.Fatalf("persisted global control enabled=%v updated=%v err=%v", enabled, updatedAt, err)
+	}
+}
+
+func TestQuickRunEntryRequiresPublishedRevisionAndDigest(t *testing.T) {
+	validDigest := strings.Repeat("a", 64)
+	for _, test := range []struct {
+		name   string
+		config QuickRunConfig
+		valid  bool
+	}{
+		{name: "published", config: QuickRunConfig{QuickRunID: "quick-1", Revision: 3, ScriptSHA256: validDigest}, valid: true},
+		{name: "missing revision", config: QuickRunConfig{QuickRunID: "quick-1", ScriptSHA256: validDigest}},
+		{name: "missing digest", config: QuickRunConfig{QuickRunID: "quick-1", Revision: 3}},
+		{name: "invalid digest", config: QuickRunConfig{QuickRunID: "quick-1", Revision: 3, ScriptSHA256: "not-a-digest"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, _, err := validateEntry("quick", "Quick run", ActionQuickRun, "", test.config)
+			if test.valid && err != nil {
+				t.Fatalf("valid published Quick Run rejected: %v", err)
+			}
+			if !test.valid && !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("invalid published Quick Run error = %v", err)
+			}
+		})
 	}
 }
 
@@ -130,7 +193,7 @@ func TestKeyNamesAreUniqueIgnoringCaseAndSurroundingWhitespace(t *testing.T) {
 	}
 }
 
-func TestRotateAndDeleteKeyUpdateRecoverableSecret(t *testing.T) {
+func TestRotateAndDeleteKeyNeverPersistRecoverableSecret(t *testing.T) {
 	manager, _ := testManager(t, time.Date(2026, 8, 5, 9, 0, 0, 0, time.UTC))
 	key, original, err := manager.CreateKey(context.Background(), CreateKeyInput{Label: "Agent", Enabled: true})
 	if err != nil {
@@ -143,15 +206,65 @@ func TestRotateAndDeleteKeyUpdateRecoverableSecret(t *testing.T) {
 	if rotated == original {
 		t.Fatal("rotation did not replace the key")
 	}
-	if revealed, revealErr := manager.KeySecret(key.ID); revealErr != nil || revealed != rotated {
-		t.Fatalf("revealed rotated secret=%q error=%v", revealed, revealErr)
+	if _, revealErr := manager.secretStore.get(key.ID); !errors.Is(revealErr, ErrSecretUnavailable) {
+		t.Fatalf("rotated key remained recoverable: %v", revealErr)
 	}
 	if err := manager.DeleteKey(context.Background(), key.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manager.KeySecret(key.ID); !errors.Is(err, ErrSecretUnavailable) {
+	if _, err := manager.secretStore.get(key.ID); !errors.Is(err, ErrSecretUnavailable) {
 		t.Fatalf("deleted key secret error=%v", err)
 	}
+}
+
+func TestPurgeLegacyKeySecretsKeepsUnrelatedSecrets(t *testing.T) {
+	manager, _ := testManager(t, time.Date(2026, 8, 5, 9, 0, 0, 0, time.UTC))
+	key, _, err := manager.CreateKey(context.Background(), CreateKeyInput{Label: "Legacy", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.secretStore.set(key.ID, "legacy-complete-key"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.StoreSecret("remote-website:one", "remote-secret"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.PurgeLegacyKeySecrets(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.secretStore.get(key.ID); !errors.Is(err, ErrSecretUnavailable) {
+		t.Fatalf("legacy external key was not purged: %v", err)
+	}
+	if secret, err := manager.Secret("remote-website:one"); err != nil || secret != "remote-secret" {
+		t.Fatalf("unrelated secret changed: secret=%q err=%v", secret, err)
+	}
+}
+
+func TestMigrateRemoteWebsiteCredentialsBindsEndpointBeforeRemovingLegacySecret(t *testing.T) {
+	manager, db := testManager(t, time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC))
+	if _, err := db.Exec(`INSERT INTO website_monitor_remote_sources (id, label, endpoint, token_hint, created_at, updated_at) VALUES ('source-one', 'Branch', 'https://example.com/trigger?name=status', 'hint', 1, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.StoreSecret("remote-website:source-one", "remote-secret"); err != nil {
+		t.Fatal(err)
+	}
+	destination := &capturingRemoteWebsiteDestination{}
+	if err := manager.MigrateRemoteWebsiteCredentials(context.Background(), destination); err != nil {
+		t.Fatal(err)
+	}
+	if destination.id != "source-one" || destination.endpoint != "https://example.com/trigger?name=status" || destination.key != "remote-secret" {
+		t.Fatalf("migration binding=%+v", destination)
+	}
+	if _, err := manager.Secret("remote-website:source-one"); !errors.Is(err, ErrSecretUnavailable) {
+		t.Fatalf("legacy secret remained after migration: %v", err)
+	}
+}
+
+type capturingRemoteWebsiteDestination struct{ id, endpoint, key string }
+
+func (destination *capturingRemoteWebsiteDestination) Store(_ context.Context, id, endpoint, key string) error {
+	destination.id, destination.endpoint, destination.key = id, endpoint, key
+	return nil
 }
 
 func TestResolveRejectsExpiredKeyAndDisabledEntry(t *testing.T) {
@@ -162,7 +275,7 @@ func TestResolveRejectsExpiredKeyAndDisabledEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry, err := manager.CreateEntry(context.Background(), CreateEntryInput{KeyID: key.ID, Name: "notice", Label: "Notice", Type: ActionLog, Enabled: false, Config: LogConfig{File: "/logs/notice.log", MaxMessageBytes: 100}})
+	entry, secret, err := manager.CreateEntry(context.Background(), CreateEntryInput{KeyID: key.ID, Name: "notice", Label: "Notice", Type: ActionLog, Enabled: false, Config: LogConfig{File: "/logs/notice.log", MaxMessageBytes: 100}})
 	if err != nil {
 		t.Fatal(err)
 	}

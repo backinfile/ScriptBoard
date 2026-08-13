@@ -7,7 +7,7 @@
 
 验证记录（2026-08-01）：`go test ./... -count=1`、`go vet ./...`、JavaScript
 语法检查、真实受管 Pi 0.83.0 Provider 连接、只读工具、一次性批准/拒绝，以及桌面和
-390px 外部 Chrome 验收均通过。测试凭据只保存在隔离 State Root 私有凭据文件中。
+390px 外部 Chrome 验收均通过。测试凭据只以外部主密钥密封后保存在隔离 State Root 私有凭据文件中。
 
 后续能力增强（Profile、Session Telemetry、Evidence Query 与安全图片上下文）见
 [Pi Agent 能力增强实施计划](./PI-AGENT-CAPABILITY-PLAN.md)；其发布门禁独立于本基线的
@@ -484,12 +484,11 @@ Schema、权限检查、目录限制和审批。
 第一版正式支持由管理员或维护员配置的实例级 API Key Provider：
 
 - 非秘密设置保存在数据库，包括 Provider、Model、thinking、允许模型和启用状态。
-- 凭据保存在 `State Root/secrets/assistant-provider.json`，使用原子写入和 State Root
-  私有权限，不写 SQLite、审计或页面 HTML。
+- 凭据密封保存在 `State Root/secrets/assistant-provider.enc`，使用原子写入；解密主密钥位于 State Root 之外，Windows 使用机器级 DPAPI、Unix 使用 root-only key；密文文件沿用 State Root 私有权限，不写 SQLite、审计或页面 HTML。
 - 设置页只能显示“已配置”、末次验证时间和可选非秘密标识，不能回显 Key。
 - 更换 Key 必须输入完整新值；空提交保持原值；删除凭据需要再次确认。
-- Provider Key 不通过命令行参数传递，避免出现在进程列表中。
-- Pi 子进程只收到当前 Provider 所需的单个环境变量或私有 Pi auth 配置。
+- Provider Key 不通过命令行参数、环境或 Pi 配置传递，避免进入进程列表和 Runtime 文件。
+- Pi 子进程只收到当前会话的环回 Provider 代理地址与短期 capability；代理持有并注入真实 Key。
 - 凭据验证使用最小无工具请求，设置超时和响应大小限制，并明确说明可能产生费用。
 
 复用本机 Pi OAuth、复制 OAuth refresh token、浏览器 OAuth 和多人共用订阅账号在第一

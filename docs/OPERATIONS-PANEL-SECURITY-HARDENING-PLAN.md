@@ -1,15 +1,15 @@
 # ScriptBoard 运维面板安全加固与设计调整计划
 
-状态：待实施  
+状态：实现已收口；发布平台与灾难恢复门禁待执行
 创建日期：2026-08-11  
 适用范围：ScriptBoard Web 服务、脚本执行、文件管理、网站监控、外部接口、MySQL、AI Runtime、更新与服务安装  
 研究基线：截至 2026-08-11 已公开的运维面板漏洞、厂商公告和当前仓库实现
 
 ## 1. 结论先行
 
-ScriptBoard 已有一批值得保留的安全基础：Argon2id 密码哈希、服务端会话、CSRF、CSP/HSTS、请求体和超时限制、默认回环监听与可选 TLS、受保护路径、文件原子替换与回收站、参数化 SQL、更新包 Ed25519 签名与摘要校验、归档路径穿越防护、外部 Key 哈希与限流、AI 工具审批和固定 Tool Broker。
+ScriptBoard 已有一批值得保留的安全基础：Argon2id 密码哈希、服务端会话、CSRF、CSP/HSTS、请求体和超时限制、非回环监听强制 TLS、受保护路径、文件原子替换与回收站、参数化 SQL、更新包 Ed25519 签名与摘要校验、归档路径穿越防护、外部 Key 哈希与限流、AI 工具审批和固定 Tool Broker。
 
-当前最重要的问题不是缺少更多运维按钮，而是高权限边界仍然过宽：Web 服务、脚本执行和 AI 子进程最终处在同一个高权限服务身份下。Linux 服务明确使用 `root`，Windows 服务未指定低权限账户；一旦 Web、解析器、依赖或 Agent Runtime 出现可利用漏洞，影响容易直接扩大为整机接管。
+原始审阅确认最重要的问题不是缺少更多运维按钮，而是 Web、脚本执行与 AI 子进程共享高权限身份。当前实现已经将其拆为低权限 Web、特权 Broker、独立 Runner 与独立 AI Host，并把四个组件绑定成同一版本化产品；剩余工作是由正式发布平台执行真实服务身份、ACL、崩溃/断电、签名轮换和外部集成矩阵，不能再通过回退到高权限单体来简化部署。
 
 实施顺序必须是：
 
@@ -19,6 +19,53 @@ ScriptBoard 已有一批值得保留的安全基础：Argon2id 密码哈希、�
 4. 不增加通用 Web Terminal、任意远程 SSH、多主机密码复用或动态任意插件。
 
 本文是修复与架构实施计划，不等同于已经证实 ScriptBoard 存在下述 CVE，也不替代独立渗透测试。文中“缺口”表示从代码审查确认的设计风险；“预防项”表示根据同类产品漏洞提前建立的控制。
+
+### 1.1 实施审阅记录（2026-08-11）
+
+本计划方向正确，但不能作为单个提交或单个发布周期整体执行。P0-02 会直接取代 ADR-0023 的最高宿主权限模型，并影响主机文件管理、安装器、更新器和受信脚本语义；P0-07、P0-08、P0-10 与 P0-11 也分别需要数据迁移、平台隔离验证、发布基础设施和运维演练。它们必须保留为独立批次，不能用未验证的“加固配置”假装完成。
+
+本分支已经连续落实以下安全切片：
+
+| 计划项 | 本分支状态 | 说明 |
+| --- | --- | --- |
+| P0-01 | 完成 | 260 条路由均通过 fail-closed 注册器声明方法、认证方式、权限、CSRF 与请求体策略；运行时前缀权限推断已删除，角色/方法矩阵从 `RouteSpec` 清单自动验证。 |
+| P0-02 | 十一个迁移切片完成 | 正式包新增独立 Broker、AI Host 与 Runner 受管服务。固定宿主写动作只经 Broker；受管 Linux Web 使用无登录 `scriptboard-web`，Windows Web 使用独立服务 SID 的 `LocalService`。AI 与 Run 分别使用独立 OS 身份和受保护 IPC：Web 不再持有其子进程，Runner 会在启动点复核脚本摘要、工作目录和自己配置的 executor。受管 Web 不再解封或持有审计 checkpoint 私钥，也不再打开或解封 TOTP/恢复码、Passkey 公钥凭据、远程网站连接 Key、Assistant Provider 凭据、MySQL 密码或宿主文件；这些领域只经固定 Broker 操作。Host Files 的目录/元数据、文本与分块内容、上传发布、日志跟随、同/跨文件系统移动、删除和执行准备均迁入 Broker；跨文件系统 MoveEngine 与崩溃恢复也由 Broker 持有。没有浏览器会话的 External Log 与 Scheduler 使用数据库绑定的固定资源操作，不借用后台系统会话。MySQL 的直接连接、client option file、`mysql`/`mysqldump` 启动、定时备份与中断恢复也迁入 Broker，实例字段与密码原子绑定，路径、客户端可执行文件和跨进程单活动操作均在执行点复核。远程连接 Endpoint 与 Key 原子绑定并由 Broker 执行受控 HTTPS 获取；Provider 的 Owner/共享策略、Endpoint、模型与 Key 同样原子绑定，Broker 只返回短期环回代理地址、模型能力和随机撤销句柄。凭据变更重新验证近期会话并独立审计，观察与 Provider 代理启动重新验证有效会话；TOTP 验证在 Broker 内有界限流，Passkey 计数器更新禁止替换注册身份字段。Ubuntu 26.04 的真实 systemd 安装已验证 AI/Runner 无法读取应用数据库和主密钥；Windows SCM 身份、精确 demand-start ACL、启动凭据 ACL、崩溃恢复和卸载矩阵已有提升权限 CI 门禁，仍须在正式发布运行中取得通过证据。 |
+| P0-03 | 四个切片完成 | Run 使用最小环境；执行器必须解析为规范绝对普通文件，Linux 校验 root/服务身份所有权及不可被组/其他用户写入，Windows 仅接受服务身份、SYSTEM、Administrators 或 TrustedInstaller 所有并拒绝不可信主体的写入型 ACL；参数控制字符被拒绝并有 fuzz 覆盖。所有生产 Go 子进程现经 `internal/processlaunch` 构造并显式选择继承或精确环境，仓库级 AST 门禁阻止包括别名导入在内的 `exec.Command*` 旁路。MySQL 导入参数由固定构造器生成，数据库名置于 `--` 后，并强制非交互 binary/batch 模式禁用 `system`、`source`、pager、tee 等本地客户端命令。各第三方 CLI 的剩余字段类型继续按领域收紧。 |
+| P0-04 | 五个切片完成 | 建立共享出站策略并覆盖网站 HTTP/WebSocket 探测、远程监控聚合、GitHub 更新检查/下载、签名 Assistant Runtime 下载、Broker-owned Assistant Provider 代理及 Custom Dashboard 数据源；这些默认客户端不使用环境代理，DNS 解析后的实际 IP 由受控 Dialer 固定并拒绝私网、元数据和非常规端口。Provider 代理只转发当前会话绑定的 Provider、模型和推理 API 路径；Dashboard 数据源禁止重定向、URL 内嵌凭据及保留请求头；远程 ScriptBoard 聚合只接受 HTTPS，网站探测跳过 TLS 验证的例外最长一小时并记录到期时间。 |
+| P0-05 | 两个切片完成 | 代理默认信任为空，非可信转发头被清理；新增 `allowed_hosts` 与 `canonical_external_url` 安全默认，可信代理 Host 仍须通过白名单，错误 Host/Origin 在业务 Handler 前拒绝。可信 peer 只接受单值 `X-Forwarded-*` 合同，拒绝标准 `Forwarded` 混用、重复字段、空值、非法 IP/Host/Proto 和超过 8 跳的链；黑盒 Handler 测试覆盖可信 HTTPS 的 HSTS/Secure Cookie、Host poisoning 421 以及非可信伪造不提升安全状态。真实 Nginx/Caddy/IIS 与 IPv6 部署矩阵仍待平台门禁。 |
+| P0-06 | 四个切片完成 | 外部上传空 allowlist 及活动/双扩展一律拒绝；内容以随机无扩展名和 0600 权限进入 State Root 私有 inbox，管理员核对 SHA-256 与目标后才能经并发领取、原子写入和审计发布。普通 Host Files 上传识别内置及自定义执行器扩展，可执行内容同样只能先进入 inbox，需近期认证并明确核对摘要和目标后发布，普通上传不能直接覆盖现有可执行文件；文件移动也提升为 step-up 动作。MySQL 导入只接受 `.sql`/`.sql.gz`，gzip 在落库和每次恢复前校验流完整性、非空内容与 8 GiB 解压上限，客户端以禁用本地命令的模式消费。Dashboard 与网站监控配置导入只接受安全 `.json` 文件名、受限 JSON/text/octet-stream MIME、UTF-8 无 NUL 且对象根内容，并继续执行各自的 schema、字段、数量和大小限制。 |
+| P0-07 | 七个切片完成 | 外部 Trigger Key 创建和轮换后只显示一次，完整 Key 不再可恢复保存或提供复制接口；启动时清理旧版本残留的可恢复 Key。schema 40 记录会话认证保证和最近认证时间，高风险声明式路由过期后必须在当前浏览器会话 step-up；失败/成功均审计，return URL 防开放重定向，Assistant UI Action 对这些路由 fail closed。YAML、环境变量和 CLI 的明文管理员密码入口均已删除，只保留绝对路径 password file、首次启动和本机重置的一次性凭据。日志、审计、错误、导出和 doctor 共用 secret redaction。MySQL、Provider 与远程网站的可恢复凭据均已迁入 Broker-owned 领域存储，并使用 State Root 外主密钥 AEAD 密封。账户可配置 TOTP/单次恢复码，也可注册要求本地用户验证的 WebAuthn passkey；密码登录和 step-up 可使用任一已配置第二因素，成功为 `aal2`，不存在仅密码降级。WebAuthn challenge 服务端保存、五分钟过期且一次性消费，凭据及计数器整体密封。schema 42 为 Administrator/Maintainer 建立默认注册截止时间；到期未注册时会话被限制在 MFA 设置与登出路径，其他写操作 fail closed 并审计。旧实例有七天迁移窗口，首次管理员和新 Maintainer 有 24 小时窗口，避免升级或初始部署锁死唯一管理员。 |
+| P0-08 | 四个切片完成 | 每个受管 Pi 进程现只获得环回 Provider 代理地址和随机短期 capability；上游 Endpoint 与真实凭据不再进入 Pi 参数、环境或 `models.json`。代理只允许当前 Provider 对应的 POST 推理路径和精确模型，限制请求/响应大小、清理请求头、注入真实凭据、禁止重定向，并随进程停止撤销。Windows Pi Job Object 限制单进程、1 GiB 进程/作业内存和 15 分钟累计用户态 CPU，并隔离 UI。受管部署新增独立 `scriptboard-ai-host`：IPC 只接受不含 executable/workspace/env 的领域启动请求，Host 自行解析签名 Runtime。Linux 使用独立 UID、私有目录、只读 Runtime、systemd 地址策略与 `@system-service` seccomp allowlist；Windows 使用 restricted service SID、Assistant 目录 ACL 和 Windows Service Hardening 的默认双向网络阻断，AI 仅开放 IPv4/IPv6 环回 TCP，Runner 无网络例外。Ubuntu 26.04 已通过真实安装、完整启停、逐服务 `SIGKILL` 自动恢复、主动网络阻断以及 memory/tasks cgroup 限额探针；Windows 服务生命周期、网络阻断与资源耗尽矩阵仍是发布门禁。 |
+| P0-09 | 五个切片完成 | Quick Run 记录脚本 SHA-256 与单调配置修订；外部入口只能绑定已锁定且摘要有效的发布修订，配置、锁定状态或脚本变化会使旧授权 fail-closed，Runner 在启动点复核摘要并将外部并发限制为每脚本一个 Run。每个 Key 现原子绑定一个不可变 Entry，绑定时轮换临时凭据，删除 Entry 同时删除 Key；旧多 Entry Key 被保留配置地拆分并 fail-closed。限流已覆盖每 Key、规范化来源、动作和全局四层原子请求/并发配额，并限制来源状态基数。外部接口提供持久化人工全局熔断；新功能默认启用 5 分钟时间戳、唯一 nonce 与 HMAC-SHA256 防重放，旧功能兼容迁移并可显式启用；拒绝均记录调用与审计。 |
+| P0-12 | 部分完成 | 增加 vet、race、govulncheck、CodeQL、secret scan、SBOM 与 release provenance 门禁；正式 Tag 的归档构建现直接依赖同一 Tag commit 上的全量测试/vet/build、关键安全包 race、安全边界 fuzz、Chromium、govulncheck、gitleaks、CodeQL 与提升权限 Windows SCM 四服务矩阵，普通分支 CI 的历史结果不能替代发布门禁。race 清单由 CI 与 Release 共用，并覆盖 App、审计链/通知、外部能力、Run/Runner、Broker、Host Files、State Backup、更新、受控进程、上传/导入、出站策略及 Assistant Runtime/Provider 代理等并发安全边界。出站地址、Host 和命令参数 fuzz target 现在由安全工作流及每个正式 Tag 各执行 30 秒，而不再只运行 seed corpus；故障测试覆盖审计事务回滚、远端事件 503 重试、检测基数、更新数据库快照截断、恢复 staging 校验、Linux 当前版本指针/metadata 之间的中断修复，以及 schema 41→42 State Root 迁移中途失败时的事务回滚。Ubuntu 26.04 已验证四服务逐一 `SIGKILL` 和完整 stop/start 恢复；真实主机断电、Windows SCM 与跨文件系统平台故障矩阵继续补充。 |
+| P0-11 | 六个切片完成 | 新增覆盖 Web、Runner 与 Scheduler 的串行 SHA-256 审计链，保留策略通过锚点/链尾维持可验证性，启动时 fail-closed 校验，并提供不依赖 Web UI 的 `audit verify` 命令。schema 41 为每个 Web 请求生成服务端 Request ID，审计独立记录请求关联与认证保证，External Interface 复用 invocation ID；schema 43 的 v3 摘要继续保护结构化 resource revision/digest，并与 v1/v2 历史链兼容。Broker intent/result 记录授权 revision 与规范参数摘要，Quick Run、一次性 Run 及手动 Host Files Run 均记录发布修订或脚本摘要；手动入口把首次解析的摘要传给 Runner 启动路径复核，避免审计绑定与实际执行资源分离。每个实例把 Ed25519 私钥密文和签名 checkpoint 放在 State Root 外：受管 Web 不再读取私钥，只有 Broker 可在独立验证本地链后签名；启动、离线验证与取证导出都会验证签名及 checkpoint 事件仍属于本地链，可发现连同数据库链尾状态一起回退的有效外观截断。审计事务成功 commit 后，事件连同 ID/链摘要先持久化到有界 outbox，再经共享 OutboundPolicy 按链顺序发送到显式 HTTPS SIEM 端点；失败退避并可跨重启恢复。检测器对认证失败、权限拒绝、Trigger 拒绝进行有界窗口聚合，并对签名、Runner/Runtime 隔离失败即时告警；本地告警写入受限轮转 JSONL。真实 SIEM 产品兼容矩阵仍待发布平台门禁。`SECURITY.md` 已明确私密报告、支持范围与应急控制。 |
+| P0-10 | 五个恢复切片完成 | 新增不依赖 Web UI 的本机 `emergency` CLI：可持久暂停全部 External Interface、按完整 Key ID 吊销单个能力并保留取证元数据，两个写操作都需显式匹配确认并与本地管理员高危事件原子写入审计链；取证导出以只读模式验证同一 SQLite 快照后写入不可覆盖的 JSONL。`update verify-package` 可断网验证正式归档的内置签名信任根、平台、文件名、大小、SHA-256、安全归档边界、展开大小和 `RELEASE.json`，且不改变安装。成功更新保留更新前 SQLite 快照；任何回滚在停止服务或切换 executable 前验证快照，恢复副本写入 staging 后再次执行 SQLite quick-check，再以保留旧库的可逆替换落盘。故障注入覆盖截断 snapshot 不改变活动库、staging/替换残留清理及 Linux 指针已切换但 metadata 写失败后的确定性修复。Manifest 保持旧单签兼容并支持 current/next 双签，发布二进制嵌入 fail-closed Key 撤销列表，runbook 规定离线/硬件保管、轮换和泄露处置。Ubuntu 26.04 的真实 systemd 安装已通过完整 stop/start 和进程崩溃恢复；Windows SCM 与真实主机断电矩阵仍待平台门禁。 |
+
+P0-02、P0-08 与 P0-11 的代码切片已经完成；P0-10/P0-12 的正式签名轮换演练、真实断电、跨文件系统故障和 SIEM 产品矩阵，以及 P2 未在本分支宣称完成。Windows SCM 提升权限门禁已经进入 CI，但本机当前令牌不具备管理员权限，因此本地 `--development-current-user` 证据仍不能替代正式门禁结果。
+
+### 1.1 本地平台门禁记录（2026-08-12）
+
+- 在 Ubuntu 26.04 LTS（WSL2、systemd）从正式发布归档布局安装 Broker、AI Host、Runner 与 Web，四个 unit 均以声明的独立身份启动，`systemd-analyze verify` 通过，Web readiness 返回 HTTP 200。
+- 对四个主进程逐一发送 `SIGKILL`，systemd 均按策略自动恢复；随后执行完整 stop/start，四个 unit 再次 active。测试暴露并修复了服务入口未处理 `SIGTERM`、Broker 无法安全接管授权 Web 身份遗留 socket 的真实生命周期缺陷。
+- Web unit 的 `MemoryDenyWriteExecute=yes` 已由实际 unit 属性确认。主动网络探针确认 AI 可访问环回代理但不能访问非环回地址，Runner 不能创建 TCP socket；主动资源探针确认 `TasksMax` 拒绝超额进程。内存探针发现单独使用 `MemoryMax` 时工作集可转入默认无限 swap，因而为 AI/Runner 补充 `MemorySwapMax=0`；修复后同一超限探针被 cgroup 终止，实际 unit 属性也确认 swap 上限为零。
+- OS 权限探针确认 `scriptboard-ai` 与 `scriptboard-runner` 无法读取应用数据库或实例凭据主密钥；MySQL 兼容路径现已迁入 Broker，下一轮真实安装需复验 `scriptboard-web` 也无法读取主密钥。
+- 受管 Web 启动时通过 Broker 的无参数 `checkpoint_verify` 校验外部审计锚点；正常 systemd stop 时通过 `checkpoint_write` 刷新，且 Broker 在 Web 之后退出。实测 checkpoint 文件随 Web 正常关闭推进，随后离线 `audit verify --json` 仍返回有效链和有效签名；协议拒绝夹带 session、动作、参数或任意签名 payload。
+- `audit verify --json` 在该安装上返回有效链和有效签名 checkpoint。测试发布未嵌入正式更新签名公钥，因此 `doctor` 只有 `update-signing-key` 检查按预期失败；该结果不能替代正式签名发布验证。
+- Windows 本地四进程部署通过登录、远端 Runner 一次性 Run、Quick Run 资源 revision/digest 审计和 Chromium 桌面门禁；随后在 `127.0.0.1:11149` 的外部 Chrome 复验手动 Host Files Run，执行身份为 `scriptboard-runner`，输出成功且审计 SHA-256 与磁盘脚本摘要一致。Windows SCM 安装需要提升权限，本轮未执行。
+- 同一 Windows 四进程部署升级到 Broker v7 / Web fixture v10 后，在外部 Chrome 创建了仅指向不可达环回端口的 `Broker MySQL 探针`：页面只显示非秘密连接元数据和受控失败，不回显密码。精确停止 Broker 后，Web 保留元数据但特权调用 fail closed；重启同一 Broker 构建后可重新读取实例。Broker 生成 `mysql-credentials.v2.enc` 与端点绑定密文，探针明文不在两份密文中，旧 `mysql-credentials.key` / `mysql-credentials.enc` 均不存在，Web 与 Broker stderr 均为空。自动化集成测试另以分离的 Web/Broker 凭据根验证只有 Broker 产生 MySQL 密文，并覆盖端点替换、路径逃逸、固定协议、客户端 allowlist、跨进程单活动操作和取消传播。
+- 同一四进程部署升级到 Broker-owned MFA 后，外部 Chrome 可正常读取 MFA 设置页；精确停止 Broker 时该页面返回受控 HTTP 500，Broker 恢复后立即可用，未回退到 Web 本地 MFA store。隔离集成测试还使用不同的 Web/Broker 凭据根确认 MFA 密文只在 Broker 侧产生。
+- Broker-owned Passkey 隔离测试以不同凭据根确认 Web 可列出 Broker 侧公钥凭据且本地不产生 Passkey 密文；协议测试覆盖无会话、过期 step-up、跨用户调用、通用 payload、公钥替换与 Broker 内 TOTP 限流。本切片重新部署 Windows 四进程后，外部 Chrome 完成登录、MFA/Passkey 页面读取与受会话保护的 MFA 注册初始化；精确停止 Broker 时页面受控返回 HTTP 500，重启后同一会话恢复。随后手动 Host Files Run 输出 `RESOURCE_BINDING_V2_OK`，执行身份仍为 `scriptboard-runner`。
+- Broker-owned 远程网站连接隔离测试以不同凭据根确认 Web 页面可保存并使用 Broker 侧 Endpoint/Key 绑定，而 Web 根不产生该密文；协议测试覆盖无会话、过期会话、通用 payload、字段混用、HTTPS/Key 形状、响应上限和重定向不转发凭据。Windows 四进程升级后，外部 Chrome 创建只显示 Endpoint 的测试连接；Broker 下线时删除受控返回 HTTP 500 且元数据保留，重启后同一会话成功清理。随后手动 Host Files Run 再次输出 `RESOURCE_BINDING_V2_OK`，执行身份为 `scriptboard-runner`，浏览器控制台无错误。
+- Broker-owned Assistant Provider 隔离测试以不同凭据根确认 Web 可创建模型元数据，但只有 Broker 产生绑定 Owner/共享策略、Provider、模型、Endpoint 与 Key 的密文，并由 Broker 启动受模型约束的短期环回代理注入真实认证头；固定协议拒绝无会话、过期会话、通用 payload、其他凭据领域字段和非法撤销句柄，旧 `assistant-provider.enc/json` 只有在全部已配置模型成功绑定后才删除。Windows 四进程升级后，外部 Chrome 的过期会话保存首先被声明式 step-up 拦截，重新登录后的创建成功；列表和编辑表单均不回显 Key，Broker 下线时保存受控返回 HTTP 500 且原模型保留，恢复后配置仍可读取。密文无明文匹配，旧文件不存在。
+- Windows 四进程部署最终升级到 Broker v8、Web fixture v11、Runner v3 与 AI Host v3。全量 `go test -p 2 ./...`、`go vet ./...`、Assistant runtime/UI contract 和 Chromium desktop gate 均通过。外部 Chrome 经同一 Web 进程完成 Host Files 卷列表、普通目录搜索和 Markdown 内容预览；精确停止 Broker 后，原预览返回受控 HTTP 503，未回退到 Web 本地文件访问，重启同一 Broker 构建后原页面立即恢复。`127.0.0.1:11149` 的可达性、登录和同会话 Host Files 路径由干净 HTTP 客户端复核；外部 Chrome 的深层流程使用同一监听器的 `localhost` 别名，因为该 Chrome 配置中遗留的 `127.0.0.1` HttpOnly/Secure Cookie 无法由 HTTP 测试登录覆盖，且浏览器安全策略禁止自动清理站点数据。四个进程均来自预期部署目录，Broker/Runner/AI stderr 为空；这项本地证据不替代 Windows SCM 身份/ACL、真实断电或正式签名发布门禁。
+- 当前分支进一步部署为 Broker v9、Web fixture v14、Runner v4 与 AI Host v4。全量 Go 测试、vet、Windows 全命令构建和 Linux amd64 核心五进程构建通过；干净 HTTP 会话与外部 Chrome 均在精确 `http://127.0.0.1:11149/` 完成登录。Chrome 验证了通知队列/熔断状态、安全基线/历史入口、Windows Update Agent 只读补丁清单和 Windows System Event Log 空结果；真实浏览器暴露并回归修复了 `Get-WinEvent` 无匹配记录被误报为提供程序故障的问题，控制台无错误。该环境继续使用 `--development-current-user`，只作为功能证据。
+- 当前收尾切片把邮件外发能力留在 Privileged Broker：Broker 从已提交审计链按持久游标消费，只为安全、Run、网站、备份和更新生成五类固定模板，并经独立有界 outbox、共享 OutboundPolicy、退避和熔断发送到显式 HTTPS 邮件中继；Web 不读取 relay token，不接受任意主题、正文、动态收件人或端点。Windows 安装定义把 Runner/AI Host 改为 SCM demand-start，Web 只依赖常驻 Broker；安装器只向 Web 服务 SID 授予两个目标服务的 `QUERY_STATUS + START`，第一次 Runner/AI IPC 调用以最小 SCM 句柄启动对应受限服务。Linux 继续使用 systemd socket activation。真实提升权限 SCM 生命周期/ACL/网络/资源耗尽矩阵仍是发布门禁。
+- 实现提交 `60c0040` 以统一版本 `security-hardening-2026.08.12.3` 重建 Broker、Web fixture、Runner 与 AI Host；四进程均从同一部署目录启动，Broker 显式加载绝对配置，`http://127.0.0.1:11149/` 返回 HTTP 200，四份 stderr 为空。外部 Chrome 在原认证会话验证了版本、Broker 邮件五类固定模板和秘密隐藏文案，真实执行 `Resource binding smoke` 得到 `RESOURCE_BINDING_OK`，审计页出现绑定 Run ID/脚本 SHA-256 的 `run_completed` 成功事件，控制台无 warning/error。此记录仍是 `--development-current-user` 功能证据，不替代提升权限 SCM 身份与 Named Pipe DACL 发布矩阵。
+- 收口切片新增 `service verify` 与提升权限 `windows-scm-security-gate.ps1`：复核一套 Installed Release 的四个服务路径、同一 State Root、账户、SID 类型、启动模式、依赖、有界恢复动作及 Web 对 Runner/AI 的精确 `START + QUERY_STATUS` ACE；实际启动后还验证 Web/Broker 常驻、Runner demand-start、三条 Named Pipe 拒绝管理员旁路、Broker-only 目录和令牌 ACL、四服务强杀恢复、整组停启和卸载无残留。安装器显式向 Web 自有的管理员 password file 与 TLS 材料授予最小只读权限，不向 Broker relay token 扩权。当前非提升本机执行在任何变更前按预期拒绝；门禁已接入 Windows CI，正式结果以提升权限 runner 为准。
+- 提交 `3535215` 以统一版本 `security-hardening-2026.08.12.5` 重建并部署 Broker、Web fixture、Runner 与 AI Host。保留 Broker-owned MFA 状态后，干净 HTTP 客户端缺少 MFA code 时现按普通认证失败返回 HTTP 401，不再把空 code 误报为 Broker 状态不可用；Broker 协议本身继续 fail closed。外部 Chrome 在精确 `http://127.0.0.1:11149/` 复用已认证会话，确认页面版本、五类 Broker 固定邮件模板、秘密隐藏与有界队列文案；从 UI 运行 `Resource binding smoke`，Run `uEZJZwuuddGiMkN5UTERkJbW` 以 `scriptboard-runner` 身份成功输出 `RESOURCE_BINDING_OK`，审计出现同 Run ID 的 `run_completed` 成功事件，控制台无 warning/error，四进程 stderr 为空。该部署继续属于 `--development-current-user` 功能证据，不能替代提升权限 SCM、Named Pipe DACL、正式签名轮换和真实断电矩阵。
+- 后续完成性审计发现正式 Tag 工作流原先只直接执行全量 Go 测试，归档/签名作业并未依赖 race、浏览器、漏洞扫描、CodeQL 或 Windows SCM 结果；现已将这些门禁和实际 fuzz 作为 Tag commit 的硬依赖，并让普通 CI 与 Release 共用扩展后的 race/fuzz 脚本。本机对三个 fuzz target 各执行 5 秒、全量 Go 测试、vet、Chromium desktop gate、shell 语法与 actionlint v1.7.11 均通过；受保护 Environment 的正式运行结果仍须由 Tag 工作流产生。
+- 提交 `adac8d7` 以统一版本 `security-hardening-2026.08.12.6` 重建并部署四个进程；Broker、Runner、AI Host 与 Web fixture 全部从同一部署目录运行，四份 stderr 为空。外部 Chrome 在精确 `http://127.0.0.1:11149/` 确认新版本和通知秘密边界，从 UI 运行 `Resource binding smoke` 后得到 `RESOURCE_BINDING_OK`，执行身份为 `scriptboard-runner`，审计页记录同一 Run `yaWcBCw3VraKuovv5rDJfonT` 的 `run_completed` 成功事件，控制台无 warning/error。
+- 部署入口先收敛为 `install.cmd`/`install.sh`，随后进一步替换为每个平台一个原生自解包文件：Windows `*-setup.exe`、Linux `.run`。启动器附加完整 ZIP 载荷，首次安装与自动更新复用同一套摘要、路径、类型、数量、解压大小和 `RELEASE.json` 验证，再统一调用 `service install --start`；`--extract-to` 保留便携目录能力。发布清单直接绑定四个平台安装器，updater protocol 提升为 2 并拒绝把 protocol 1 伪装为兼容。四组件内部边界、整体版本、事务切换与回滚语义不变。
 
 ## 2. 产品边界与设计决策
 
@@ -36,7 +83,7 @@ Cockpit 值得借鉴的是它的权限分层、按需提权和系统原生接口
 
 ### 2.2 必须修改的架构
 
-目标架构拆为三个信任域：
+目标架构拆为四个进程信任边界，并作为一套发布包、一个版本号整体管理：
 
 ```mermaid
 flowchart LR
@@ -53,6 +100,8 @@ flowchart LR
 - **特权操作 Broker**：接口小、参数有类型、动作有 allowlist；每次调用重新鉴权并写审计，不接受 shell 字符串。
 - **Run Worker**：按照执行配置使用专用 OS 身份、工作目录、环境白名单和资源配额运行。
 - **AI Runtime**：与 Web 服务身份隔离，只能访问独立工作区和固定 Broker；“审批”不能代替操作系统沙箱。
+
+部署边界按 ADR-0163 收敛：一套发布包只对应一个 ScriptBoard 版本，manifest 同时绑定 Web、Broker、Runner 与 AI Host 的二进制摘要和 IPC 协议；安装、升级、回滚和卸载整体执行，混合版本 fail closed。Web 与 Broker 常驻；Linux Runner/AI Host 使用 systemd socket activation，Windows 使用 SCM demand-start 并在首次 IPC 前启动对应服务。按需启动不能成为把执行或秘密能力合并回 Web 的理由。Windows `--development-current-user` 不属于正式部署；真实 SCM 服务身份、Named Pipe DACL、生命周期和整体版本门禁已自动化，仍须由提升权限发布 runner 执行。
 
 ### 2.3 明确不做
 
@@ -115,8 +164,8 @@ flowchart LR
 | 网站探测 | HTTP 重定向只限制最多 5 跳；WebSocket 走环境代理；管理员可跳过 TLS 校验 | 可访问内网、环回、链路本地和云元数据；重定向/DNS 重绑定每跳未重验；环境代理扩大信任面 |
 | 远程监控汇聚 | 禁止重定向且 Bearer 不会跨跳泄露，但 Endpoint 仍可指向任意 HTTP(S) 地址 | 仍需出站地址策略、DNS 固定和 HTTPS 默认要求 |
 | 外部上传 | 有 Key、大小、单文件、文件名和可选扩展限制；扩展列表为空时允许任意扩展 | 上传内容可能进入可被管理员或快捷执行项运行的位置；需要默认拒绝可执行类型和隔离发布 |
-| 密钥保存 | 外部 Key 和 MySQL 密码使用 AES-GCM，但主密钥与密文位于同一个 State Root | 可防误读，不能抵御 State Root 被完整窃取；应接入 OS 密钥存储或独立密钥文件 |
-| 初始管理员密码 | 配置支持明文 `admin_password` 和环境变量 | 容易被配置备份、进程环境或诊断信息泄露；应优先 password file/首次启动引导 |
+| 密钥保存 | MySQL 使用用途绑定 AES-GCM，主密钥在 State Root 外；TOTP、Passkey、Endpoint 绑定的远程网站 Key 及完整 Provider/模型绑定已迁入 Broker-owned 领域存储；Windows 主密钥再由机器级 DPAPI 保护 | 单独窃取 State Root 不能离线解密；受管 Web 不再读取已迁移领域状态；Unix 外部 key 仍须作为 root-only 秘密独立备份 |
+| 初始管理员密码 | 明文 `admin_password`、环境变量和 CLI 参数已移除；旧入口返回迁移错误，仅保留绝对路径 password file 与一次性引导 | 已消除配置备份、进程环境、进程列表和 Shell 历史中的长期明文凭据入口；OS secret provider 仍随秘密迁移批次继续 |
 | 审计 | 已记录用户、动作、目标、结果和来源 | 数据库管理员或主机入侵者可同时修改业务数据和审计；缺少哈希链、外部转发和安全事件告警 |
 
 ### 4.2 已有控制，应保留并补测试
@@ -345,37 +394,40 @@ Windows：
 - 虚拟机状态：只读优先；创建/导入镜像需独立威胁模型。
 - 企业 SSO：OIDC/SAML 与本地 break-glass 账户并存，统一 MFA assurance，不能形成旁路。
 
+本轮 P2 评审结论：当前用户目标是完成安全边界、部署和发布门禁，没有提出网络/磁盘/容器/虚拟机控制面或企业 SSO 的产品需求；这些能力也不是本计划完成定义的组成部分。因此本安全分支不实现 P2，不把它们借机并入高权限 Broker。未来只有在出现独立用户需求、威胁模型、权限边界和验收计划后，才各自立项。
+
 多主机集中控制只有在以下条件全部具备后再立项：独立 Agent 身份、双向 TLS、节点级授权、可撤销能力、网络隔离、版本协商、远端审计和失联处置。不能通过复用 SSH 密码、浏览器输入任意主机名或 `InsecureSkipVerify` 快速实现。
 
 ## 8. 实施批次与依赖
 
 ### 批次 A：立即可做，1 个发布周期
 
-- [ ] P0-01 路由声明、未知路由默认拒绝、完整角色/方法矩阵。
-- [ ] P0-03 命令封装、环境 allowlist、控制字符和 option injection 测试。
-- [ ] P0-04 共享 OutboundPolicy，先覆盖网站监控和远程监控。
-- [ ] P0-05 代理默认关闭、Host/Origin 校验。
-- [ ] P0-06 外部上传默认拒绝任意扩展并引入 inbox。
-- [ ] P0-12 建立 `govulncheck`、CodeQL、secret scan 和首批 fuzz target。
-- [ ] 新建 `SECURITY.md`，公布支持版本和报告方式。
+- [x] P0-01 路由声明、未知路由默认拒绝、完整角色/方法矩阵。
+- [x] P0-03 命令封装、环境 allowlist、控制字符和 option injection 测试。
+- [x] P0-04 共享 OutboundPolicy，先覆盖网站监控和远程监控。
+- [x] P0-05 代理默认关闭、Host/Origin 校验；真实代理/IPv6 平台矩阵保留为后续门禁。
+- [x] P0-06 外部上传默认拒绝任意扩展并引入 inbox。
+- [x] P0-12 建立 `govulncheck`、CodeQL、secret scan 和首批 fuzz target。
+- [x] 新建 `SECURITY.md`，公布支持版本和报告方式。
 
 ### 批次 B：结构性重构，独立功能分支
 
-- [ ] P0-02 非特权 Web + 特权 Broker + Runner 身份拆分。
-- [ ] P0-07 MFA、step-up、秘密迁移和一次显示 Key。
-- [ ] P0-08 AI Runtime OS 沙箱和受控 Provider 网络。
-- [ ] P0-09 发布型 Quick Run 与外部能力令牌。
-- [ ] P0-11 审计哈希链、远端转发和安全告警。
+- [x] P0-02 非特权 Web + 特权 Broker + Runner 身份拆分；真实 Windows SCM 验证由提升权限 CI 门禁负责。
+- [x] P0-07 已完成 TOTP/恢复码、WebAuthn/passkey、step-up、秘密迁移、一次显示 Key 与高权限角色默认注册策略。
+- [x] P0-08 AI Runtime OS 沙箱和受控 Provider 网络；Windows 资源耗尽实机矩阵仍是发布门禁。
+- [x] P0-09 发布型 Quick Run 与外部能力令牌。
+- [x] P0-11 审计哈希链、远端转发和安全告警；真实 SIEM 产品兼容性不改变本地 fail-closed 合同。
 
 ### 批次 C：供应链与恢复
 
-- [ ] P0-10 SBOM、provenance、签名密钥轮换、带外恢复 CLI 和应急演练。
-- [ ] 对 updater、安装器、回滚和 State Root 迁移做故障注入测试。
+- [ ] P0-10 SBOM、provenance、签名密钥轮换、带外恢复 CLI 和应急演练。代码、release workflow、双签/撤销合同、runbook 与本机恢复演练已完成；总项保持未完成，直到受保护 release 环境完成一次正式签名轮换演练和真实服务管理器矩阵。
+- [x] P0-10 的本机带外恢复 CLI 已覆盖同实例回滚与空主机恢复；空主机演练会重新封装外部主密钥、验证签名 checkpoint/审计链并拒绝覆盖既有信任材料。
+- [x] 对 updater、安装器、回滚和 State Root 迁移做故障注入测试；真实服务管理器断电矩阵保留为发布平台门禁。
 
 ### 批次 D：补充功能
 
-- [ ] P1 OS 安全更新只读视图、服务日志、State Root 备份、安全基线和通知。
-- [ ] 根据实际用户需求单独评审 P2 能力，不与 P0 重构混在同一发布中。
+- [x] P1 OS 安全更新只读视图、服务日志、State Root 备份、安全基线和通知。OS 安全更新只读视图已完成：Windows Update Agent 与 Debian/Ubuntu APT 只读取本机已有元数据，固定命令不刷新源、不下载或安装，结果限制为 200 项、字段解码有界并缓存十分钟，页面明确显示提供程序、采集时间与只读边界。服务日志只读纵向切片已完成：只接受 Web/Broker/AI/Runner 四个固定来源，systemd journal 或 Windows System Event Log 每次最多扫描 2,000 条、返回 500 条，支持固定筛选和 CSV 导出，消息统一做控制字符处理与秘密脱敏。安全基线只读评估基于当前 Web 权限、主机防火墙、补丁元数据和 Linux SSH/Fail2Ban 或 Windows Firewall Profile 生成可解释逐项证据，只对可用项计分且没有“一键修复”；新增最多 90 个只含检测 ID、状态、得分与时间的历史快照，并显示相对最新快照的状态漂移，证据正文不落入历史文件。账户口令策略已收敛为至少 15 个 Unicode 字符、最多 256 个 UTF-8 字节，不强制字符组合但拒绝用户名、常见口令、单字符重复和当前口令复用；随机首次/重置凭据继续满足边界。Linux Web/Broker 常驻，Runner/AI Host 由受保护 systemd socket 按需激活并复核 activation PID、FD 数、名称、endpoint 和 peer UID；Windows 对应服务采用 SCM demand-start，Web 只依赖 Broker，首次 IPC 前启动目标服务。State Root 备份覆盖一致性 SQLite snapshot、固定私有状态白名单、Argon2id + XChaCha20-Poly1305 分块认证加密、签名审计 checkpoint、恢复前 staging/完整性/schema 校验、Session 撤销、失败回滚、整机丢失 recovery 材料和受控审计重锚；Web/Broker 页面只允许近期 AAL2 创建、检查、暂存和丢弃，最终提交仍保持离线 CLI 边界。通知覆盖 HTTPS Webhook、轮转本地告警和 Broker-owned 邮件：邮件从已提交审计链按独立持久游标消费，只生成 `security-alert-v1`、`run-result-v1`、`website-monitor-result-v1`、`state-backup-result-v1`、`update-result-v1` 固定模板，relay token 只由 Broker 从受保护绝对路径文件读取，独立 outbox 最多 10,000 条并有有界退避/熔断；Web 只显示中继主机与脱敏收件人。真实提升权限 Windows SCM 生命周期/ACL/网络/资源耗尽矩阵继续作为 P0 发布门禁，不能由 development-current-user 功能部署替代。
+- [x] 已根据当前用户目标单独评审 P2：没有新增控制面或 SSO 需求，本分支明确不实现；未来需求必须另立威胁模型与计划，不与 P0 重构混合。
 
 依赖关系：P0-01 是所有新 Web 接口的前置；P0-02 是高权限系统写操作的前置；P0-04 是所有新外部集成的前置；P0-08 是扩大 AI 工具能力的前置；P0-10 是自动更新继续扩展的前置。
 

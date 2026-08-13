@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	"scriptboard/internal/mysqlmanager"
+	"scriptboard/internal/privilegebroker"
+	"scriptboard/internal/secretredaction"
 )
 
 type mysqlDatabasesPageData struct {
@@ -140,7 +143,7 @@ func (a *App) mysqlDatabasesPage(response http.ResponseWriter, request *http.Req
 		}
 		cancel()
 		if statusErr != nil {
-			data.LoadError = statusErr.Error()
+			data.LoadError = secretredaction.String(statusErr.Error())
 		}
 		data.DatabaseCount = len(data.Databases)
 		page := mysqlRequestedPage(request)
@@ -215,6 +218,14 @@ func mysqlActor(request *http.Request) mysqlmanager.Actor {
 	return mysqlmanager.Actor{UserID: current.userID, Username: current.username}
 }
 
+func mysqlOperationContext(base context.Context, request *http.Request) context.Context {
+	authorization, ok := privilegebroker.AuthorizationFromContext(request.Context())
+	if !ok {
+		return base
+	}
+	return privilegebroker.WithAuthorization(base, authorization)
+}
+
 func (a *App) testMySQLInstance(response http.ResponseWriter, request *http.Request) {
 	if !validSessionCSRF(request) {
 		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
@@ -268,10 +279,11 @@ func (a *App) startMySQLBackup(response http.ResponseWriter, request *http.Reque
 		return
 	}
 	id, database, actor := request.PathValue("id"), request.FormValue("database"), mysqlActor(request)
+	operationContext := mysqlOperationContext(a.mysqlContext, request)
 	a.mysqlWG.Add(1)
 	go func() {
 		defer a.mysqlWG.Done()
-		_, _ = a.mysql.Backup(a.mysqlContext, mysqlmanager.BackupRequest{InstanceID: id, Database: database, Kind: mysqlmanager.BackupManual, ActorUserID: actor.UserID, ActorUsername: actor.Username})
+		_, _ = a.mysql.Backup(operationContext, mysqlmanager.BackupRequest{InstanceID: id, Database: database, Kind: mysqlmanager.BackupManual, ActorUserID: actor.UserID, ActorUsername: actor.Username})
 	}()
 	a.recordAuditForRequest(request, "start_mysql_backup", id+"/"+database, "accepted")
 	http.Redirect(response, request, "/resources/databases?instance="+url.QueryEscape(id), http.StatusSeeOther)
@@ -291,10 +303,11 @@ func (a *App) startMySQLBatchBackup(response http.ResponseWriter, request *http.
 		http.Error(response, "select at least one database", http.StatusBadRequest)
 		return
 	}
+	operationContext := mysqlOperationContext(a.mysqlContext, request)
 	a.mysqlWG.Add(1)
 	go func() {
 		defer a.mysqlWG.Done()
-		_, _ = a.mysql.BackupBatch(a.mysqlContext, mysqlmanager.BatchBackupRequest{InstanceID: id, Databases: databases, Actor: actor})
+		_, _ = a.mysql.BackupBatch(operationContext, mysqlmanager.BatchBackupRequest{InstanceID: id, Databases: databases, Actor: actor})
 	}()
 	a.recordAuditForRequest(request, "start_mysql_batch_backup", id, "accepted")
 	http.Redirect(response, request, "/resources/databases?instance="+url.QueryEscape(id), http.StatusSeeOther)
@@ -315,10 +328,11 @@ func (a *App) startMySQLRestore(response http.ResponseWriter, request *http.Requ
 		http.Error(response, "enter the complete target database name to confirm restore", http.StatusBadRequest)
 		return
 	}
+	operationContext := mysqlOperationContext(a.mysqlContext, request)
 	a.mysqlWG.Add(1)
 	go func() {
 		defer a.mysqlWG.Done()
-		_, _ = a.mysql.Restore(a.mysqlContext, mysqlmanager.RestoreRequest{InstanceID: backup.InstanceID, BackupID: backup.ID, TargetDatabase: target, Actor: actor})
+		_, _ = a.mysql.Restore(operationContext, mysqlmanager.RestoreRequest{InstanceID: backup.InstanceID, BackupID: backup.ID, TargetDatabase: target, Actor: actor})
 	}()
 	a.recordAuditForRequest(request, "start_mysql_restore", backup.InstanceID+"/"+target, "accepted")
 	http.Redirect(response, request, "/resources/databases?instance="+url.QueryEscape(backup.InstanceID), http.StatusSeeOther)
@@ -335,10 +349,11 @@ func (a *App) startDropMySQLDatabase(response http.ResponseWriter, request *http
 		http.Error(response, "enter the complete database name to confirm deletion", http.StatusBadRequest)
 		return
 	}
+	operationContext := mysqlOperationContext(a.mysqlContext, request)
 	a.mysqlWG.Add(1)
 	go func() {
 		defer a.mysqlWG.Done()
-		_, _ = a.mysql.DropDatabase(a.mysqlContext, mysqlmanager.DropDatabaseRequest{InstanceID: id, Database: database, Confirmation: confirmation, Actor: actor})
+		_, _ = a.mysql.DropDatabase(operationContext, mysqlmanager.DropDatabaseRequest{InstanceID: id, Database: database, Confirmation: confirmation, Actor: actor})
 	}()
 	a.recordAuditForRequest(request, "start_drop_mysql_database", id+"/"+database, "accepted")
 	http.Redirect(response, request, "/resources/databases?instance="+url.QueryEscape(id), http.StatusSeeOther)
@@ -381,7 +396,7 @@ func (a *App) importMySQLServerBackup(response http.ResponseWriter, request *htt
 		return
 	}
 	path := strings.TrimSpace(request.FormValue("path"))
-	file, _, err := a.files.OpenRegular(path)
+	file, _, err := a.hostOpenRegular(request.Context(), path)
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
@@ -407,7 +422,17 @@ func (a *App) downloadMySQLBackup(response http.ResponseWriter, request *http.Re
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s-%s.sql.gz"`, sanitizeDownloadName(backup.Database), backup.ID))
-	http.ServeFile(response, request, backup.Path)
+	if downloader, ok := a.mysql.ExecutionBackend().(interface {
+		DownloadBackup(context.Context, string, io.Writer) (string, int64, error)
+	}); ok {
+		response.Header().Set("Content-Type", "application/gzip")
+		response.Header().Set("Content-Length", strconv.FormatInt(backup.SizeBytes, 10))
+		if _, _, err := downloader.DownloadBackup(request.Context(), backup.ID, response); err != nil {
+			return
+		}
+	} else {
+		http.ServeFile(response, request, backup.Path)
+	}
 	a.recordAuditForRequest(request, "download_mysql_backup", backup.ID, "succeeded")
 }
 

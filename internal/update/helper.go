@@ -3,6 +3,7 @@ package update
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -15,11 +16,13 @@ import (
 	"runtime"
 	"time"
 
+	_ "modernc.org/sqlite"
 	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/config"
 	"scriptboard/internal/installation"
 	"scriptboard/internal/localtls"
 	"scriptboard/internal/platformservice"
+	"scriptboard/internal/secretredaction"
 )
 
 type Result struct {
@@ -76,7 +79,6 @@ func ApplyOperation(ctx context.Context, stateRoot, operationID string) error {
 	if err := writeResult(operation, ""); err != nil {
 		return err
 	}
-	_ = os.Remove(operation.SnapshotPath)
 	return nil
 }
 
@@ -93,6 +95,10 @@ func RecoverOperation(ctx context.Context, stateRoot, operationID string) error 
 	switch operation.Phase {
 	case PhaseHandoff, PhaseWaitingForOldExit, PhaseSnapshotting, PhaseFailedSafe:
 		return recoverBeforeSwitch(ctx, &operation, errors.New("administrator recovered an update before version switching"))
+	case PhaseCommitted:
+		if err := verifyCommittedRollback(operation); err != nil {
+			return fmt.Errorf("committed update rollback preflight: %w", err)
+		}
 	case PhaseNeedsRecovery, PhaseRollingBack, PhaseValidating, PhaseStartingTarget, PhaseSwitching:
 	default:
 		return fmt.Errorf("operation phase %s does not require recovery", operation.Phase)
@@ -104,6 +110,90 @@ func RecoverOperation(ctx context.Context, stateRoot, operationID string) error 
 		}
 	}
 	return err
+}
+
+// RepairCurrentInstallation revalidates the active formal release and repairs
+// only the service manager's pointer to it. The service must already be stopped.
+func RepairCurrentInstallation(stateRoot string) (buildinfo.Info, error) {
+	lock, err := acquireOperationLock(stateRoot)
+	if err != nil {
+		return buildinfo.Info{}, err
+	}
+	defer lock.Close()
+	running, err := platformservice.IsRunning()
+	if err != nil {
+		return buildinfo.Info{}, fmt.Errorf("query ScriptBoard service before repair: %w", err)
+	}
+	if running {
+		return buildinfo.Info{}, errors.New("stop the ScriptBoard service before repairing the current version")
+	}
+	metadata, err := installation.Load(stateRoot)
+	if err != nil {
+		return buildinfo.Info{}, err
+	}
+	info, err := installation.ReadVersionInfo(metadata, metadata.Current)
+	if err != nil {
+		return buildinfo.Info{}, err
+	}
+	if err := installation.ValidateVersion(metadata, metadata.Current, info); err != nil {
+		return buildinfo.Info{}, err
+	}
+	metadata, err = installation.SetCurrent(metadata, metadata.Current)
+	if err != nil {
+		return buildinfo.Info{}, err
+	}
+	if err := platformservice.SwitchExecutable(installation.ServiceExecutable(metadata), metadata.ConfigPath); err != nil {
+		return buildinfo.Info{}, err
+	}
+	return info, nil
+}
+
+func verifyCommittedRollback(operation Operation) error {
+	if err := verifyDatabaseSnapshot(operation.SnapshotPath); err != nil {
+		return err
+	}
+	metadata, err := loadOperationInstallation(operation)
+	if err != nil {
+		return err
+	}
+	if metadata.Current != operation.TargetVersion {
+		return errors.New("managed installation no longer points at the committed target version")
+	}
+	targetInfo := targetBuild(operation)
+	if err := installation.ValidateVersion(metadata, operation.TargetVersion, targetInfo); err != nil {
+		return fmt.Errorf("validate committed target release: %w", err)
+	}
+	previousInfo, err := installation.ReadVersionInfo(metadata, operation.PreviousVersion)
+	if err != nil {
+		return err
+	}
+	if previousInfo.Commit != operation.PreviousCommit {
+		return errors.New("previous Installed Release commit does not match the update operation")
+	}
+	return installation.ValidateVersion(metadata, operation.PreviousVersion, previousInfo)
+}
+
+func verifyDatabaseSnapshot(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("update database snapshot: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Size() == 0 {
+		return errors.New("update database snapshot is not a non-empty regular file")
+	}
+	database, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
+	if err != nil {
+		return err
+	}
+	defer database.Close()
+	var result string
+	if err := database.QueryRow("PRAGMA quick_check(1)").Scan(&result); err != nil {
+		return fmt.Errorf("check update database snapshot: %w", err)
+	}
+	if result != "ok" {
+		return fmt.Errorf("update database snapshot integrity check failed: %s", result)
+	}
+	return nil
 }
 
 func recoverBeforeSwitch(ctx context.Context, operation *Operation, cause error) error {
@@ -202,6 +292,16 @@ func rollbackOperation(ctx context.Context, operation *Operation, cause error) e
 	operation.Error = cause.Error()
 	if err := SaveOperation(*operation); err != nil {
 		return err
+	}
+	// Do not switch executables until the rollback database is known-good. A
+	// corrupt or truncated snapshot must leave the currently active release and
+	// database untouched for explicit recovery.
+	if err := verifyDatabaseSnapshot(operation.SnapshotPath); err != nil {
+		operation.Phase = PhaseNeedsRecovery
+		operation.Error = cause.Error() + "; rollback snapshot failed verification: " + err.Error()
+		_ = SaveOperation(*operation)
+		_ = writeResult(*operation, operation.Error)
+		return errors.New(operation.Error)
 	}
 	_ = platformservice.Stop()
 	metadata, err := loadOperationInstallation(*operation)
@@ -444,17 +544,35 @@ func waitForServiceStopped(ctx context.Context, timeout time.Duration) error {
 }
 
 func restoreDatabase(snapshot, database string) error {
+	if err := verifyDatabaseSnapshot(snapshot); err != nil {
+		return err
+	}
 	temporary := database + ".update-restore"
+	previous := database + ".update-replaced"
 	_ = os.Remove(temporary)
 	if err := copyFileSync(snapshot, temporary, 0o600); err != nil {
 		return err
 	}
+	defer os.Remove(temporary)
+	if err := verifyDatabaseSnapshot(temporary); err != nil {
+		return fmt.Errorf("verify staged database restore: %w", err)
+	}
 	_ = os.Remove(database + "-wal")
 	_ = os.Remove(database + "-shm")
-	if err := os.Remove(database); err != nil && !os.IsNotExist(err) {
+	_ = os.Remove(previous)
+	if _, err := os.Stat(database); err == nil {
+		if err := os.Rename(database, previous); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
 		return err
 	}
-	return os.Rename(temporary, database)
+	if err := os.Rename(temporary, database); err != nil {
+		_ = os.Rename(previous, database)
+		return err
+	}
+	_ = os.Remove(previous)
+	return syncDirectory(filepath.Dir(database))
 }
 
 func copyFileSync(source, destination string, mode os.FileMode) error {
@@ -487,7 +605,7 @@ func writeResult(operation Operation, resultError string) error {
 	result := Result{
 		Schema: OperationSchema, OperationID: operation.ID, Outcome: operation.Phase,
 		PreviousVersion: operation.PreviousVersion, TargetVersion: operation.TargetVersion,
-		CompletedAt: time.Now().UTC().Format(time.RFC3339Nano), Error: resultError,
+		CompletedAt: time.Now().UTC().Format(time.RFC3339Nano), Error: secretredaction.String(resultError),
 	}
 	return writeAtomicJSON(filepath.Join(root, "result.json"), result, 0o600)
 }

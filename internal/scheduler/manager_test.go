@@ -7,7 +7,18 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"scriptboard/internal/hostfiles"
 )
+
+func TestPreparedScheduleRejectsBrokerResourceSubstitution(t *testing.T) {
+	manager := &Manager{prepareScript: func(string) (hostfiles.Script, hostfiles.PreparedDirectory, error) {
+		return hostfiles.Script{Path: "/other/job.sh", Directory: "/other", Digest: "digest"}, hostfiles.PreparedDirectory{Path: "/other"}, nil
+	}}
+	if _, _, err := manager.preparedSchedule("schedule-1", "/scripts/job.sh"); err == nil {
+		t.Fatal("accepted a Broker-prepared script for a different schedule path")
+	}
+}
 
 func TestDueScheduleDoesNotExecuteWhenAdvanceFails(t *testing.T) {
 	t.Parallel()

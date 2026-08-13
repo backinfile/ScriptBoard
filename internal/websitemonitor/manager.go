@@ -348,6 +348,17 @@ func (m *Manager) normalizeConfig(ctx context.Context, config Config) (Config, e
 	if err != nil {
 		return Config{}, err
 	}
+	now := m.options.Now().UTC()
+	if normalized.SkipTLSVerification {
+		if normalized.TLSVerificationDisabledUntil.IsZero() {
+			normalized.TLSVerificationDisabledUntil = now.Add(TLSVerificationExceptionDuration)
+		}
+		if !normalized.TLSVerificationDisabledUntil.After(now) || normalized.TLSVerificationDisabledUntil.After(now.Add(TLSVerificationExceptionDuration)) {
+			return Config{}, errors.New("TLS 验证例外必须在一小时内到期")
+		}
+	} else {
+		normalized.TLSVerificationDisabledUntil = time.Time{}
+	}
 	if _, err := m.resolveRequestHeaders(ctx, normalized.RequestHeaders); err != nil {
 		return Config{}, err
 	}
@@ -394,6 +405,10 @@ func (m *Manager) Get(ctx context.Context, id string) (Monitor, error) {
 	}
 	if err := json.Unmarshal([]byte(configJSON), &value.Config); err != nil {
 		return Monitor{}, fmt.Errorf("decode website monitor config: %w", err)
+	}
+	if value.Config.SkipTLSVerification && !value.Config.SkipTLSVerificationAt(m.options.Now()) {
+		value.Config.SkipTLSVerification = false
+		value.Config.TLSVerificationDisabledUntil = time.Time{}
 	}
 	_ = json.Unmarshal([]byte(certificateJSON), &value.Latest.Certificate)
 	value.Latest.Success = lastSuccess
@@ -743,6 +758,14 @@ func (m *Manager) recordResult(id string, generation int64, evidence Evidence) {
 			nextState = StateDown
 		}
 	}
+	var transition *Transition
+	if (nextState == StateDown && current != StateDown) || (evidence.Success && current == StateDown) {
+		transition = &Transition{
+			MonitorID: id, Name: config.Name, State: nextState, CheckedAt: evidence.CheckedAt,
+			StatusCode: evidence.StatusCode, Latency: evidence.Latency,
+			ErrorCategory: evidence.ErrorCategory, Summary: evidence.Summary,
+		}
+	}
 	_, err = transaction.Exec(`UPDATE website_monitors SET state = ?, failure_count = ?, next_check_at = ?,
 		last_success = ?, last_status_code = ?, last_latency_ms = ?, last_checked_at = ?,
 		last_error_category = ?, last_summary = ?, last_technical_error = ?, last_certificate_json = ?,
@@ -831,6 +854,9 @@ func (m *Manager) recordResult(id string, generation int64, evidence Evidence) {
 		}
 	}
 	if transaction.Commit() == nil {
+		if transition != nil && m.options.OnTransition != nil {
+			m.options.OnTransition(*transition)
+		}
 		m.signalWake()
 	}
 }

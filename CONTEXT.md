@@ -1,6 +1,6 @@
 # ScriptBoard
 
-ScriptBoard 是面向单机、少量可信用户场景的主机文件与脚本操作台。它通过服务进程的操作系统身份浏览主机文件系统，并为其中的可信脚本增加执行和追踪能力；它不是通用运维编排平台或安全沙箱。
+ScriptBoard 是面向单机、少量可信用户场景的主机文件与脚本操作台。它通过受限领域边界访问主机文件、执行可信脚本并追踪结果；它不是通用运维编排平台或不可信代码沙箱。
 
 ## Language
 
@@ -37,12 +37,28 @@ _Avoid_: 运行身份、触发来源、当前用户名
 _Avoid_: 注册任务、作业、Action
 
 **受信脚本（Trusted Script）**：
-管理员明确交由 ScriptBoard 执行、并被视为可信代码的脚本。它默认拥有宿主系统最高权限，不受应用级安全沙箱保护。
+管理员明确发布并交由 ScriptBoard 执行、被视为可信业务代码的脚本。它仍受独立 Runner 的身份、环境、资源与网络边界约束，但这些边界不构成不可信代码沙箱。
 _Avoid_: 沙箱脚本、安全脚本
 
 **运行身份（Runtime Identity）**：
-操作系统为 ScriptBoard 服务进程配置的账号；所有脚本直接继承该身份及权限，应用内部不提升、降低或切换身份。
-_Avoid_: 权限模式、脚本账号、应用角色
+操作系统为某个 ScriptBoard 组件配置的独立账号或服务 SID；Run 的运行身份始终是 Runner 身份，不是启动用户、Web 身份或应用角色。
+_Avoid_: 权限模式、启动用户、应用角色
+
+**Web 控制面（Web Control Plane）**：
+处理 HTTP、身份、授权与页面状态的低权限组件。它协调领域操作，但不拥有主机特权、脚本执行身份或 AI Runtime 能力。
+_Avoid_: 后台单体、执行服务、特权服务
+
+**特权操作 Broker（Privileged Broker）**：
+通过固定领域操作持有主机修改能力与 Broker-owned 秘密的受信组件。它不是任意命令、Shell 或通用提权代理。
+_Avoid_: root Web、命令代理、通用 Agent
+
+**Runner**：
+在独立运行身份中复核并执行已绑定脚本与作业描述的组件。它不继承 Web 凭据，也不拥有 Broker 秘密或 AI 工作区。
+_Avoid_: Web 子进程、脚本沙箱、启动用户
+
+**AI Host**：
+在独立运行身份中承载受管 AI Runtime 的组件。它只持有会话绑定的短期能力，不拥有 Web 会话或 Broker 秘密。
+_Avoid_: Web 子进程、Tool Broker、模型提供商
 
 **触发来源（Run Source）**：
 发起一次执行的入口类型，区分手动、快捷执行和内置调度器，不等同于启动用户或进程的运行身份。
@@ -57,12 +73,16 @@ _Avoid_: 全平台脚本支持
 _Avoid_: 失败重试、脚本重跑
 
 **主机文件系统（Host Filesystem）**：
-ScriptBoard 服务身份可访问的本机文件系统集合。Windows 顶层是可用的本地卷、移动卷和网络卷，Linux 顶层是 `/`；最终可访问性始终由服务身份的操作系统权限决定。
+ScriptBoard 的特权操作 Broker 身份可访问的本机文件系统集合。Windows 顶层是可用的本地卷、移动卷和网络卷，Linux 顶层是 `/`；最终可访问性始终由 Broker 的操作系统权限决定。
 _Avoid_: 受管根目录、文件库、应用沙箱
 
 **内部状态目录（State Root）**：
 仅供 ScriptBoard 保存数据库、密钥、执行日志、文件操作日志和暂存数据的私有目录。它是受保护路径，不属于用户可通过文件页面查看或管理的内容。
 _Avoid_: 主机文件系统、共享目录、文件库
+
+**私有状态备份（Private State Backup）**：
+由 ScriptBoard 从一致性 SQLite snapshot 和固定私有状态白名单生成的认证加密恢复包。它携带逐文件摘要与签名审计 checkpoint，但不包含外部主密钥、checkpoint 签名私钥、启动配置、TLS 材料、诊断日志、上传 inbox 或 MySQL 备份；因此不是 State Root 的目录副本，也不是完整主机灾备。
+_Avoid_: State Root 副本、配置导出、MySQL 备份、整机镜像
 
 **AI 对话（Assistant Conversation）**：
 由一个 ScriptBoard 用户拥有、绑定一个必选 LLM 配置并保存消息、资源引用、审批模式和 Pi session 身份的持久对话。用户只能查看、订阅和修改自己的 AI 对话；归档不删除历史或 session。

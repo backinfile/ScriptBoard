@@ -122,6 +122,21 @@ func TestCredentialOverrideRejectsOversizedPasswordFile(t *testing.T) {
 	}
 }
 
+func TestCredentialOverrideRejectsNonRegularPasswordFile(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	application, err := app.Open(app.Config{
+		StateRoot:         filepath.Join(root, "state"),
+		AdminPasswordFile: root,
+	})
+	if application != nil {
+		_ = application.Close()
+	}
+	if err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("directory credential error=%q", err)
+	}
+}
+
 func TestResetAdminCredentialsRejectsInvalidUsername(t *testing.T) {
 	t.Parallel()
 
@@ -221,10 +236,14 @@ func TestLoginAcceptsBrowserMultipartForm(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
+	passwordPath := filepath.Join(root, "admin-password")
+	if err := os.WriteFile(passwordPath, []byte("browser-multipart-password\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	application, err := app.Open(app.Config{
-		StateRoot:     filepath.Join(root, "state"),
-		AdminUsername: "admin",
-		AdminPassword: "browser-multipart-password",
+		StateRoot:         filepath.Join(root, "state"),
+		AdminUsername:     "admin",
+		AdminPasswordFile: passwordPath,
 	})
 	if err != nil {
 		t.Fatalf("open application: %v", err)
@@ -1157,7 +1176,7 @@ func TestAdministratorRenamesAccountFromFocusedTask(t *testing.T) {
 		t.Fatalf("read username task: %v", err)
 	}
 
-	const password = "用于自动测试的专用安全密码"
+	const password = "用于自动测试的专用安全密码凭据版本"
 	response, err = client.PostForm(serverURL+"/settings/account/username", url.Values{
 		"csrf_token":       {formToken(t, taskPage)},
 		"username":         {"renamed-admin"},
@@ -1226,7 +1245,7 @@ func TestInvalidLoginRendersInlineErrorPage(t *testing.T) {
 	if contentType := response.Header.Get("Content-Type"); !strings.HasPrefix(contentType, "text/html") {
 		t.Fatalf("invalid login content type = %q, want HTML", contentType)
 	}
-	for _, expected := range []string{"<!doctype html>", "用户名或密码错误", `role="alert"`, `value="admin"`, `action="/login"`} {
+	for _, expected := range []string{"<!doctype html>", "The username, password, or security code is incorrect", `role="alert"`, `value="admin"`, `action="/login"`} {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("invalid login page does not contain %q: %s", expected, page)
 		}
@@ -1293,7 +1312,7 @@ func TestInvalidAJAXLoginReturnsStructuredErrorAndFreshCSRFToken(t *testing.T) {
 	if contentType := response.Header.Get("Content-Type"); !strings.HasPrefix(contentType, "application/json") {
 		t.Fatalf("AJAX login content type = %q, want JSON", contentType)
 	}
-	if payload.Error != "用户名或密码错误" {
+	if payload.Error != "The username, password, or security code is incorrect" {
 		t.Fatalf("AJAX login error = %q", payload.Error)
 	}
 	if payload.CSRFToken == "" || payload.CSRFToken == form.Get("csrf_token") {
@@ -1740,7 +1759,7 @@ func TestFirstPasswordChangeRevokesSessionAndRemovesCredentialFile(t *testing.T)
 		t.Fatalf("read initial password: %v", err)
 	}
 	initialPassword := strings.TrimSpace(string(passwordBytes))
-	const newPassword = "这是一个新的安全密码短语"
+	const newPassword = "这是一个新的安全密码短语凭据版本"
 
 	jar, err := cookiejar.New(nil)
 	if err != nil {
@@ -1832,7 +1851,7 @@ func authenticatedClient(t *testing.T, hostRoot, stateRoot string) (*http.Client
 	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
 		t.Fatalf("create test host root: %v", err)
 	}
-	return authenticatedClientWithConfig(t, app.Config{StateRoot: stateRoot, FileTopology: testHostTopology{root: hostRoot}})
+	return authenticatedClientWithConfig(t, app.Config{StateRoot: stateRoot, FileTopology: testHostTopology{root: hostRoot}, CustomDashboardClient: &http.Client{}})
 }
 
 type testHostTopology struct{ root string }
@@ -1917,7 +1936,7 @@ func authenticatedClientWithConfig(t *testing.T, config app.Config) (*http.Clien
 	if err != nil {
 		t.Fatalf("read account settings: %v", err)
 	}
-	const password = "用于自动测试的专用安全密码"
+	const password = "用于自动测试的专用安全密码凭据版本"
 	response, err = client.PostForm(server.URL+"/settings/account", url.Values{
 		"current_password": {initialPassword},
 		"new_password":     {password},

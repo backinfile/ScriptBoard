@@ -2,7 +2,9 @@ package app
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 )
 
 type userRole string
@@ -48,107 +50,123 @@ func roleAllows(role userRole, required permission) bool {
 	}
 }
 
-// permissionForRequest is the authorization seam for the protected web
-// surface. Route handlers remain responsible for domain-specific constraints
-// such as an Operator stopping only a Run they initiated.
-func permissionForRequest(request *http.Request) permission {
-	path := request.URL.Path
-	if strings.HasPrefix(path, "/settings/users") {
-		return permissionManageUsers
-	}
-	if strings.HasPrefix(path, "/monitor/security") {
-		if request.Method == http.MethodGet {
-			return permissionObserve
-		}
-		return permissionManageSystem
-	}
-	if strings.HasPrefix(path, "/settings/account") || path == "/logout" {
-		return permissionObserve
-	}
-	if strings.HasPrefix(path, "/settings/") {
-		return permissionManageSystem
-	}
-	if strings.HasPrefix(path, "/history/audit") {
-		return permissionReadAudit
-	}
-	if strings.HasPrefix(path, "/resources/variables") {
-		return permissionManageExecution
-	}
-	if strings.HasPrefix(path, "/resources/databases") {
-		return permissionManageDatabases
-	}
-	if strings.HasPrefix(path, "/resources/trash") {
-		return permissionWriteFiles
-	}
-	if path == "/resources/directories" {
-		return permissionReadFiles
-	}
-	if path == "/resources/files" || strings.HasPrefix(path, "/resources/files/") {
-		if path == "/resources/files/quick-access" {
-			return permissionReadFiles
-		}
-		if path == "/resources/files/run" {
-			return permissionExecute
-		}
-		if path == "/resources/files/quick-run" ||
-			path == "/resources/files/edit" ||
-			path == "/resources/files/move" ||
-			path == "/resources/files/new-directory" ||
-			path == "/resources/files/upload" ||
-			request.Method != http.MethodGet {
-			return permissionWriteFiles
-		}
-		return permissionReadFiles
-	}
-	if strings.HasPrefix(path, "/monitor/") {
-		if request.Method != http.MethodGet ||
-			path == "/monitor/websites/new" ||
-			path == "/monitor/websites/export" ||
-			path == "/monitor/websites/import" ||
-			path == "/monitor/websites/nginx" ||
-			strings.HasSuffix(path, "/edit") {
-			return permissionManageOperations
-		}
-		return permissionObserve
-	}
-	if strings.HasPrefix(path, "/config/quick-runs") {
-		if request.Method == http.MethodPost && strings.HasSuffix(path, "/start") {
-			return permissionExecute
-		}
-		if request.Method == http.MethodGet && (path == "/config/quick-runs" || path == "/config/quick-runs/") {
-			return permissionObserve
-		}
-		return permissionManageExecution
-	}
-	if strings.HasPrefix(path, "/config/schedules") {
-		if request.Method == http.MethodGet && (path == "/config/schedules" || path == "/config/schedules/") {
-			return permissionObserve
-		}
-		return permissionManageExecution
-	}
-	if strings.HasPrefix(path, "/config/external-interfaces") {
-		return permissionManageExecution
-	}
-	if strings.HasPrefix(path, "/history/runs") {
-		if strings.HasSuffix(path, "/source") || strings.HasSuffix(path, "/save-quick-run") ||
-			strings.HasSuffix(path, "/quick-run") {
-			return permissionManageExecution
-		}
-		if request.Method == http.MethodPost {
-			return permissionExecute
-		}
-		return permissionObserve
-	}
-	return permissionObserve
-}
-
 func (a *App) requirePermission(required permission, next http.Handler) http.Handler {
-	return a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	protected := a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		current, ok := request.Context().Value(sessionContextKey).(session)
 		if !ok || !roleAllows(current.role, required) {
+			if ok {
+				a.recordAuditForRequest(request, "authorization_denied", request.Method+" "+request.URL.Path, "blocked")
+			}
 			http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
 			return
 		}
 		next.ServeHTTP(response, request)
 	}))
+	return declaredRouteHandler{auth: routeAuthSession, permission: required, handler: protected}
+}
+
+const recentAuthenticationWindow = 10 * time.Minute
+
+func (a *App) requireStepUp(required permission, next http.Handler) http.Handler {
+	protected := a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		current, ok := request.Context().Value(sessionContextKey).(session)
+		if !ok || !roleAllows(current.role, required) {
+			if ok {
+				a.recordAuditForRequest(request, "authorization_denied", request.Method+" "+request.URL.Path, "blocked")
+			}
+			http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
+			return
+		}
+		if current.authenticationAssurance < 1 || !recentAuthenticationValid(current.reauthenticatedAt, time.Now().UTC()) {
+			returnTo := stepUpReturnTarget(request)
+			location := "/auth/step-up?" + url.Values{"return_to": {returnTo}}.Encode()
+			response.Header().Set("Cache-Control", "no-store")
+			http.Redirect(response, request, location, http.StatusSeeOther)
+			return
+		}
+		next.ServeHTTP(response, request)
+	}))
+	return declaredRouteHandler{auth: routeAuthSession, permission: required, stepUp: true, handler: protected}
+}
+
+func (a *App) requireAAL2StepUp(required permission, next http.Handler) http.Handler {
+	protected := a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		current, ok := request.Context().Value(sessionContextKey).(session)
+		if !ok || !roleAllows(current.role, required) {
+			if ok {
+				a.recordAuditForRequest(request, "authorization_denied", request.Method+" "+request.URL.Path, "blocked")
+			}
+			http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
+			return
+		}
+		if current.authenticationAssurance < 2 || !recentAuthenticationValid(current.reauthenticatedAt, time.Now().UTC()) {
+			returnTo := stepUpReturnTarget(request)
+			if current.authenticationAssurance < 2 {
+				status, statusErr := a.mfa.Status(current.userID)
+				passkeyUser, passkeyErr := a.passkeys.User(current.userID, current.username)
+				if statusErr != nil || passkeyErr != nil {
+					http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusServiceUnavailable)
+					return
+				}
+				if !status.Enabled && len(passkeyUser.Credentials) == 0 {
+					response.Header().Set("Cache-Control", "no-store")
+					http.Redirect(response, request, "/settings/account/mfa", http.StatusSeeOther)
+					return
+				}
+			}
+			location := "/auth/step-up?" + url.Values{"return_to": {returnTo}}.Encode()
+			response.Header().Set("Cache-Control", "no-store")
+			http.Redirect(response, request, location, http.StatusSeeOther)
+			return
+		}
+		next.ServeHTTP(response, request)
+	}))
+	return declaredRouteHandler{auth: routeAuthSession, permission: required, stepUp: true, handler: protected}
+}
+
+func recentAuthenticationValid(timestamp int64, now time.Time) bool {
+	if timestamp <= 0 {
+		return false
+	}
+	authenticatedAt := time.Unix(timestamp, 0)
+	return !authenticatedAt.After(now.Add(time.Minute)) && now.Sub(authenticatedAt) <= recentAuthenticationWindow
+}
+
+func stepUpReturnTarget(request *http.Request) string {
+	if referer := strings.TrimSpace(request.Referer()); referer != "" {
+		if parsed, err := url.Parse(referer); err == nil && strings.EqualFold(parsed.Host, request.Host) {
+			if target := safeStepUpReturnTo(parsed.RequestURI()); target != "/monitor" {
+				return target
+			}
+		}
+	}
+	for _, candidate := range []struct{ prefix, target string }{
+		{"/settings/users", "/settings/users"},
+		{"/config/external-interfaces", "/config/external-interfaces"},
+		{"/monitor/security", "/monitor/security"},
+		{"/settings/updates", "/settings/updates"},
+		{"/settings/state-backups", "/settings/state-backups"},
+		{"/settings/ai", "/settings/ai"},
+		{"/resources/databases", "/resources/databases"},
+		{"/resources/inbox", "/resources/inbox"},
+		{"/resources/files", "/resources/files"},
+	} {
+		if strings.HasPrefix(request.URL.Path, candidate.prefix) {
+			return candidate.target
+		}
+	}
+	return "/monitor"
+}
+
+func safeStepUpReturnTo(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") || strings.ContainsAny(raw, "\\\r\n\x00") {
+		return "/monitor"
+	}
+	parsed, err := url.ParseRequestURI(raw)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.User != nil || parsed.Fragment != "" ||
+		strings.HasPrefix(parsed.Path, "//") || strings.ContainsAny(parsed.Path, "\\\r\n\x00") || strings.HasPrefix(parsed.Path, "/auth/step-up") {
+		return "/monitor"
+	}
+	return parsed.RequestURI()
 }

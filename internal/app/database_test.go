@@ -550,10 +550,264 @@ func TestOpenDatabaseMigratesSchema26ExternalInterfaceTables(t *testing.T) {
 	if err := migrated.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != currentSchemaVersion {
 		t.Fatalf("version = %d, error = %v", version, err)
 	}
-	for _, table := range []string{"external_trigger_keys", "external_trigger_entries", "external_trigger_requests"} {
+	for _, table := range []string{"external_trigger_keys", "external_trigger_entries", "external_trigger_requests", "external_trigger_control", "external_trigger_nonces"} {
 		var count int
 		if err := migrated.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", table).Scan(&count); err != nil || count != 1 {
 			t.Fatalf("table %s count = %d, error = %v", table, count, err)
+		}
+	}
+}
+
+func TestOpenDatabaseMigratesSchema38ExternalSignatureProtection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	db, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`ALTER TABLE external_trigger_entries DROP COLUMN require_signature`,
+		`DROP TABLE external_trigger_nonces`,
+		`PRAGMA user_version=38`,
+		`PRAGMA wal_checkpoint(TRUNCATE)`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatalf("prepare schema 38 with %q: %v", statement, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := openDatabase(path)
+	if err != nil {
+		t.Fatalf("migrate schema 38: %v", err)
+	}
+	defer migrated.Close()
+	var version, nonceTable int
+	if err := migrated.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != currentSchemaVersion {
+		t.Fatalf("version = %d, error = %v", version, err)
+	}
+	if err := migrated.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='external_trigger_nonces'`).Scan(&nonceTable); err != nil || nonceTable != 1 {
+		t.Fatalf("nonce table count=%d error=%v", nonceTable, err)
+	}
+	if _, err := migrated.Exec(`INSERT INTO external_trigger_keys
+		(id, label, token_hash, token_hint, enabled, created_at, updated_at)
+		VALUES ('key', 'Key', 'hash', 'hint', 1, 1, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := migrated.Exec(`INSERT INTO external_trigger_entries
+		(id, key_id, name, label, action_type, target, config_json, enabled, created_at, updated_at)
+		VALUES ('entry', 'key', 'log', 'Log', 'log', '', '{}', 1, 1, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	var requireSignature int
+	if err := migrated.QueryRow(`SELECT require_signature FROM external_trigger_entries WHERE id='entry'`).Scan(&requireSignature); err != nil || requireSignature != 0 {
+		t.Fatalf("migrated signature requirement=%d error=%v", requireSignature, err)
+	}
+}
+
+func TestOpenDatabaseMigratesSchema39SessionAuthenticationAssurance(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	database, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`ALTER TABLE sessions DROP COLUMN authentication_assurance`,
+		`ALTER TABLE sessions DROP COLUMN reauthenticated_at`,
+		`PRAGMA user_version=39`,
+		`PRAGMA wal_checkpoint(TRUNCATE)`,
+	} {
+		if _, err := database.Exec(statement); err != nil {
+			t.Fatalf("prepare schema 39 with %q: %v", statement, err)
+		}
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := openDatabase(path)
+	if err != nil {
+		t.Fatalf("migrate schema 39: %v", err)
+	}
+	defer migrated.Close()
+	var version int
+	if err := migrated.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != currentSchemaVersion {
+		t.Fatalf("version=%d err=%v", version, err)
+	}
+	for _, column := range []string{"authentication_assurance", "reauthenticated_at"} {
+		var count int
+		if err := migrated.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = ?`, column).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("column %s count=%d err=%v", column, count, err)
+		}
+	}
+}
+
+func TestOpenDatabaseMigratesSchema40AuditCorrelationMetadata(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	database, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`ALTER TABLE audit_events DROP COLUMN request_id`,
+		`ALTER TABLE audit_events DROP COLUMN authentication_assurance`,
+		`PRAGMA user_version=40`,
+		`PRAGMA wal_checkpoint(TRUNCATE)`,
+	} {
+		if _, err := database.Exec(statement); err != nil {
+			t.Fatalf("prepare schema 40 with %q: %v", statement, err)
+		}
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := openDatabase(path)
+	if err != nil {
+		t.Fatalf("migrate schema 40: %v", err)
+	}
+	defer migrated.Close()
+	for _, column := range []string{"request_id", "authentication_assurance"} {
+		var count int
+		if err := migrated.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('audit_events') WHERE name = ?`, column).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("column %s count=%d err=%v", column, count, err)
+		}
+	}
+}
+
+func TestOpenDatabaseRollsBackSchema41MFAEnrollmentOnInjectedFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	database, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`INSERT INTO users (id, username, password_hash, role, enabled, auth_version, mfa_required_at, created_at, updated_at)
+			VALUES ('administrator', 'admin', 'preserve-hash', 'administrator', 1, 1, 0, 1, 1)`,
+		`ALTER TABLE users DROP COLUMN mfa_required_at`,
+		`CREATE TRIGGER inject_mfa_enrollment_failure
+			BEFORE UPDATE OF mfa_required_at ON users
+			BEGIN SELECT RAISE(ABORT, 'injected State Root migration failure'); END`,
+		`PRAGMA user_version=41`,
+		`PRAGMA wal_checkpoint(TRUNCATE)`,
+	} {
+		if _, err := database.Exec(statement); err != nil {
+			t.Fatalf("prepare schema 41 failure injection with %q: %v", statement, err)
+		}
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := openDatabase(path)
+	if migrated != nil {
+		_ = migrated.Close()
+		t.Fatal("migration unexpectedly succeeded")
+	}
+	if err == nil || !strings.Contains(err.Error(), "injected State Root migration failure") {
+		t.Fatalf("expected injected migration failure, got %v", err)
+	}
+
+	unchanged, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unchanged.Close()
+	var version, mfaColumn int
+	if err := unchanged.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 41 {
+		t.Fatalf("schema version=%d, want rollback to 41", version)
+	}
+	if err := unchanged.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('users') WHERE name='mfa_required_at'`).Scan(&mfaColumn); err != nil {
+		t.Fatal(err)
+	}
+	if mfaColumn != 0 {
+		t.Fatal("mfa_required_at survived the failed transactional migration")
+	}
+	var username, role string
+	if err := unchanged.QueryRow(`SELECT username, role FROM users WHERE id='administrator'`).Scan(&username, &role); err != nil {
+		t.Fatalf("read preserved administrator: %v", err)
+	}
+	if username != "admin" || role != "administrator" {
+		t.Fatalf("administrator changed to username=%q role=%q", username, role)
+	}
+}
+
+func TestOpenDatabaseMigratesSchema42AuditResourceIdentity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	database, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`ALTER TABLE audit_events DROP COLUMN resource_revision`,
+		`ALTER TABLE audit_events DROP COLUMN resource_digest_sha256`,
+		`PRAGMA user_version=42`,
+		`PRAGMA wal_checkpoint(TRUNCATE)`,
+	} {
+		if _, err := database.Exec(statement); err != nil {
+			t.Fatalf("prepare schema 42 with %q: %v", statement, err)
+		}
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := openDatabase(path)
+	if err != nil {
+		t.Fatalf("migrate schema 42: %v", err)
+	}
+	defer migrated.Close()
+	for _, column := range []string{"resource_revision", "resource_digest_sha256"} {
+		var count int
+		if err := migrated.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('audit_events') WHERE name=?`, column).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("column %s count=%d err=%v", column, count, err)
+		}
+	}
+}
+
+func TestOpenDatabaseMigratesSecuritySchema43WithDevSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	database, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`ALTER TABLE assistant_models DROP COLUMN default_thinking_level`,
+		`ALTER TABLE assistant_models DROP COLUMN supports_reasoning`,
+		`DROP TABLE instance_settings`,
+		`DROP TABLE kubernetes_connection`,
+		`DROP TABLE kubernetes_versions`,
+		`DROP TABLE kubernetes_metric_minutes`,
+		`PRAGMA user_version=43`,
+		`PRAGMA wal_checkpoint(TRUNCATE)`,
+	} {
+		if _, err := database.Exec(statement); err != nil {
+			t.Fatalf("prepare security schema 43 with %q: %v", statement, err)
+		}
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := openDatabase(path)
+	if err != nil {
+		t.Fatalf("migrate security schema 43: %v", err)
+	}
+	defer migrated.Close()
+	for _, column := range []string{"supports_reasoning", "default_thinking_level"} {
+		var count int
+		if err := migrated.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('assistant_models') WHERE name=?`, column).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("Assistant model column %s count=%d err=%v", column, count, err)
+		}
+	}
+	for _, table := range []string{"instance_settings", "kubernetes_connection", "kubernetes_versions", "kubernetes_metric_minutes"} {
+		var count int
+		if err := migrated.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("dev-line table %s count=%d err=%v", table, count, err)
 		}
 	}
 }
@@ -707,6 +961,10 @@ func TestFileOperationCommitRegistersRecoverableSourceTrash(t *testing.T) {
 		if path != operation.DestinationPath || key != operation.DestinationPathKey {
 			t.Fatalf("%s reference = %q (%q), want %q (%q)", reference.table, path, key, operation.DestinationPath, operation.DestinationPathKey)
 		}
+	}
+	var quickRevision int64
+	if err := db.QueryRow("SELECT revision FROM quick_runs WHERE id = 'quick-moved'").Scan(&quickRevision); err != nil || quickRevision != 2 {
+		t.Fatalf("moved Quick Run revision = %d, error = %v", quickRevision, err)
 	}
 }
 

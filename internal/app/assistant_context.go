@@ -112,8 +112,8 @@ func assistantEntryStableID(kind, rootName, entryName string) string {
 	return kind + "-" + hex.EncodeToString(digest[:16])
 }
 
-func (a *App) assistantHostEntryByStableID(kind, stableID string) (hostfiles.Entry, bool) {
-	roots, err := a.files.Roots()
+func (a *App) assistantHostEntryByStableID(ctx context.Context, kind, stableID string) (hostfiles.Entry, bool) {
+	roots, err := a.hostRoots(ctx)
 	if err != nil {
 		return hostfiles.Entry{}, false
 	}
@@ -126,7 +126,7 @@ func (a *App) assistantHostEntryByStableID(kind, stableID string) (hostfiles.Ent
 			if !hostfiles.Contains(root.Path, target) {
 				return hostfiles.Entry{}, false
 			}
-			entries, listErr := a.files.List(filepath.Dir(target))
+			entries, listErr := a.hostList(ctx, filepath.Dir(target))
 			if listErr != nil {
 				return hostfiles.Entry{}, false
 			}
@@ -144,7 +144,7 @@ func (a *App) assistantHostEntryByStableID(kind, stableID string) (hostfiles.Ent
 		return hostfiles.Entry{}, false
 	}
 	for _, root := range roots {
-		entries, listErr := a.files.List(root.Path)
+		entries, listErr := a.hostList(ctx, root.Path)
 		if listErr != nil {
 			continue
 		}
@@ -201,11 +201,11 @@ func (a *App) assistantPreparedPromptWithReferences(ctx context.Context, role us
 		if reference.Kind != "file" {
 			continue
 		}
-		path, found := a.assistantManagedFilePath(reference.StableID)
+		path, found := a.assistantManagedFilePath(ctx, reference.StableID)
 		if !found {
 			continue
 		}
-		file, _, err := a.files.OpenRegular(path)
+		file, _, err := a.hostOpenRegular(ctx, path)
 		if err != nil {
 			return assistantPreparedPrompt{}, fmt.Errorf("open referenced raster image: %w", err)
 		}
@@ -227,8 +227,8 @@ func (a *App) assistantPreparedPromptWithReferences(ctx context.Context, role us
 	return prepared, nil
 }
 
-func (a *App) assistantManagedFilePath(stableID string) (string, bool) {
-	entry, found := a.assistantHostEntryByStableID("file", stableID)
+func (a *App) assistantManagedFilePath(ctx context.Context, stableID string) (string, bool) {
+	entry, found := a.assistantHostEntryByStableID(ctx, "file", stableID)
 	if found {
 		return entry.Path, true
 	}
@@ -278,7 +278,7 @@ func (a *App) assistantReferenceSnapshot(ctx context.Context, role userRole, ref
 		if a.files == nil {
 			return snapshot
 		}
-		roots, err := a.files.Roots()
+		roots, err := a.hostRoots(ctx)
 		if err != nil {
 			return snapshot
 		}
@@ -290,14 +290,14 @@ func (a *App) assistantReferenceSnapshot(ctx context.Context, role userRole, ref
 			if targetPath == "" {
 				continue
 			}
-			entries, listErr := a.files.List(targetPath)
+			entries, listErr := a.hostList(ctx, targetPath)
 			if listErr != nil {
 				return snapshot
 			}
 			return assistantDirectoryPromptSnapshot(snapshot, entries)
 		}
-		if entry, found := a.assistantHostEntryByStableID("directory", reference.StableID); found {
-			entries, listErr := a.files.List(entry.Path)
+		if entry, found := a.assistantHostEntryByStableID(ctx, "directory", reference.StableID); found {
+			entries, listErr := a.hostList(ctx, entry.Path)
 			if listErr != nil {
 				return snapshot
 			}
@@ -311,9 +311,9 @@ func (a *App) assistantReferenceSnapshot(ctx context.Context, role userRole, ref
 		if a.files == nil {
 			return snapshot
 		}
-		if entry, found := a.assistantHostEntryByStableID("file", reference.StableID); found {
+		if entry, found := a.assistantHostEntryByStableID(ctx, "file", reference.StableID); found {
 			contentStatus := "available"
-			document, readErr := a.files.ReadText(entry.Path, assistantFileContentLimit)
+			document, readErr := a.hostReadText(ctx, entry.Path, assistantFileContentLimit)
 			if readErr != nil {
 				contentStatus = "unavailable"
 			}

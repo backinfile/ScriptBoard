@@ -5,8 +5,19 @@
 <main class="workspace task-page" data-task-page data-task-kind="{{.Kind}}" data-task-close-label="{{t .Locale "common.close"}}">
   <a class="task-back" href="{{.BackURL}}"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "common.back"}}</a>
   <section class="task-sheet">
-    <header><div><p class="page-eyebrow">{{if or (eq .Kind "user-edit") (eq .Kind "user-create")}}{{t .Locale "users.accounts"}}{{else if or (eq .Kind "account-username") (eq .Kind "account-password")}}{{t .Locale "settings.account"}}{{else if eq .Kind "move-file"}}{{t .Locale "files.move"}}{{else}}{{t .Locale "common.create"}}{{end}}</p><h1>{{.Title}}</h1><p>{{.Description}}</p></div><a class="icon-button" href="{{.BackURL}}" aria-label="{{t .Locale "common.close"}}"><span data-lucide="x" aria-hidden="true"></span></a></header>
-    {{if eq .Kind "windows-firewall-rule"}}
+    <header><div><p class="page-eyebrow">{{if eq .Kind "step-up"}}{{t .Locale "step_up.eyebrow"}}{{else if or (eq .Kind "user-edit") (eq .Kind "user-create")}}{{t .Locale "users.accounts"}}{{else if or (eq .Kind "account-username") (eq .Kind "account-password")}}{{t .Locale "settings.account"}}{{else if eq .Kind "move-file"}}{{t .Locale "files.move"}}{{else}}{{t .Locale "common.create"}}{{end}}</p><h1>{{.Title}}</h1><p>{{.Description}}</p></div><a class="icon-button" href="{{.BackURL}}" aria-label="{{t .Locale "common.close"}}"><span data-lucide="x" aria-hidden="true"></span></a></header>
+    {{if .Error}}<p class="page-error" role="alert">{{.Error}}</p>{{end}}
+    {{if eq .Kind "step-up"}}
+    <form method="post" action="{{.Action}}">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <input type="hidden" name="return_to" value="{{.ReturnTo}}">
+	  <input type="hidden" name="passkey_ceremony"><input type="hidden" name="passkey_response">
+      <label>{{t .Locale "account.current_password"}} <input name="current_password" type="password" autocomplete="current-password" required autofocus></label>
+	  {{if .MFAEnabled}}<label>{{t .Locale "mfa.code"}} <input name="mfa_code" inputmode="numeric" autocomplete="one-time-code" maxlength="64"><small>{{t .Locale "mfa.step_up_hint"}}</small></label>{{end}}
+	  {{if .PasskeyEnabled}}<button class="button" type="button" data-passkey-step-up><span data-lucide="key-round" aria-hidden="true"></span>{{t .Locale "passkey.use"}}</button>{{end}}
+      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="shield-check" aria-hidden="true"></span>{{t .Locale "step_up.continue"}}</button></footer>
+    </form>
+    {{else if eq .Kind "windows-firewall-rule"}}
     <form method="post" action="{{.Action}}">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <label>{{t .Locale "security.direction"}} <select name="direction" required autofocus><option value="in">{{t .Locale "security.inbound"}}</option><option value="out">{{t .Locale "security.outbound"}}</option></select></label>
@@ -62,7 +73,7 @@
     <form method="post" action="{{.Action}}">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <label>{{t .Locale "account.current_password"}} <input name="current_password" type="password" autocomplete="current-password" required autofocus></label>
-      <label>{{t .Locale "account.new_password"}} <input name="new_password" type="password" autocomplete="new-password" required></label>
+      <label>{{t .Locale "account.new_password"}} <input name="new_password" type="password" autocomplete="new-password" minlength="15" maxlength="256" required><small>{{t .Locale "account.password_policy"}}</small></label>
       <label>{{t .Locale "account.confirm_password"}} <input name="confirm_password" type="password" autocomplete="new-password" required></label>
       <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "account.save"}}</button></footer>
     </form>

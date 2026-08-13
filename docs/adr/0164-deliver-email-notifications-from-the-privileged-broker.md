@@ -1,0 +1,11 @@
+# ADR 0164: Deliver fixed email notifications from the Privileged Broker
+
+ScriptBoard keeps Web, Privileged Broker, Runner, and AI Host as four separate trust boundaries shipped in one versioned release unit. Email delivery is an outbound credential capability and therefore does not belong in Web.
+
+Managed installations pass the common configuration path to the resident Broker. When `notification_email_relay_endpoint` is configured, only Broker reads the absolute-path relay token from a dedicated real directory named `broker-secrets`; Broker protects that directory for root or SYSTEM/Administrators and Web receives no directory ACL. Broker consumes committed audit records through a durable event-ID cursor and writes matching notifications to a separate bounded `email-outbox`; a missing cursor starts at the current chain tail to avoid replaying historical events on first enablement. The cursor advances only after an event is either classified as non-notifiable or durably queued.
+
+Email delivery uses an explicit HTTPS relay protected by the shared OutboundPolicy, no redirects, bounded responses, bounded retry, and circuit breaking. ScriptBoard emits only versioned templates for security failures, Run results, website outage/recovery, state backup operations, and updates. It does not accept arbitrary subjects, bodies, recipients, or per-event endpoints. Web may display only the relay host and a masked recipient; it cannot read the token or send mail.
+
+Delivery is intentionally at least once. A crash after the relay accepts an envelope but before the durable audit cursor advances can resend the same notification, so relays should deduplicate by the immutable audit event ID and event hash carried in the envelope.
+
+Windows does not provide a general systemd-style socket activation facility for these Named Pipe services. Managed Windows therefore installs Runner and AI Host as demand-start SCM services and starts the relevant service immediately before its first authenticated pipe connection. Web depends only on the resident Broker. Linux retains systemd socket activation. All four components remain one release unit and executable switching continues to update them together.

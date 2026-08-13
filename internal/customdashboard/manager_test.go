@@ -16,6 +16,10 @@ import (
 )
 
 func testManager(t *testing.T) *Manager {
+	return testManagerWithClient(t, &http.Client{})
+}
+
+func testManagerWithClient(t *testing.T, client *http.Client) *Manager {
 	t.Helper()
 	db, err := sql.Open("sqlite", "file:"+t.Name()+"?mode=memory&cache=shared")
 	if err != nil {
@@ -27,7 +31,7 @@ func testManager(t *testing.T) *Manager {
 			t.Fatal(err)
 		}
 	}
-	manager, err := New(Options{DB: db, SecretsDirectory: t.TempDir()})
+	manager, err := New(Options{DB: db, Client: client, SecretsDirectory: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,6 +213,7 @@ func TestRefreshCardEvaluatesBothValueExpressionsAndKeepsLastSuccessOnFailure(t 
 	}))
 	defer server.Close()
 	manager := testManager(t)
+	manager.client = server.Client()
 	ctx := context.Background()
 	dashboard, _ := manager.CreateDashboard(ctx, DashboardInput{Name: "API", Slug: "api"})
 	card, err := manager.CreateCard(ctx, dashboard.ID, CardInput{Name: "剩余额度", Type: CardQuota, SourceURL: server.URL, ValuePath: "(subscription.limit - subscription.used) / subscription.limit * 100", SecondaryPath: "subscription.limit - subscription.used"})
@@ -392,6 +397,64 @@ func TestRequestDiagnosticsClassifySafeFailureModes(t *testing.T) {
 	}
 	if got := classifyNetworkError(tls.RecordHeaderError{}); got != DiagnosticTLS {
 		t.Fatalf("TLS failure classified as %q", got)
+	}
+}
+
+func TestDefaultDashboardClientBlocksLoopbackSources(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("blocked dashboard request reached loopback")
+	}))
+	defer server.Close()
+	manager := testManagerWithClient(t, nil)
+	dashboard, _ := manager.CreateDashboard(context.Background(), DashboardInput{Name: "Security", Slug: "security"})
+	card, err := manager.CreateCard(context.Background(), dashboard.ID, CardInput{Name: "Blocked", Type: CardNumber, SourceURL: server.URL, ValuePath: "value"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.RefreshCard(context.Background(), card.ID); err == nil {
+		t.Fatal("default dashboard client reached a loopback source")
+	}
+}
+
+func TestDashboardClientRejectsRedirectBeforeForwardingCredentials(t *testing.T) {
+	var targetRequests int
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { targetRequests++ }))
+	defer target.Close()
+	source := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer dashboard-secret" {
+			t.Errorf("source authorization = %q", request.Header.Get("Authorization"))
+		}
+		http.Redirect(response, request, target.URL, http.StatusFound)
+	}))
+	defer source.Close()
+	manager := testManagerWithClient(t, source.Client())
+	dashboard, _ := manager.CreateDashboard(context.Background(), DashboardInput{Name: "Security", Slug: "security"})
+	card, err := manager.CreateCard(context.Background(), dashboard.ID, CardInput{
+		Name: "Redirect", Type: CardNumber, SourceURL: source.URL, ValuePath: "value",
+		Headers: map[string]string{"Authorization": "Bearer dashboard-secret"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.RefreshCard(context.Background(), card.ID); err == nil {
+		t.Fatal("dashboard redirect was accepted")
+	}
+	if targetRequests != 0 {
+		t.Fatalf("dashboard credential crossed redirect origin: requests = %d", targetRequests)
+	}
+}
+
+func TestDashboardCardRejectsURLCredentialsAndReservedHeaders(t *testing.T) {
+	manager := testManager(t)
+	dashboard, _ := manager.CreateDashboard(context.Background(), DashboardInput{Name: "Security", Slug: "security"})
+	for _, input := range []CardInput{
+		{Name: "URL credential", Type: CardNumber, SourceURL: "https://user:secret@example.com/data", ValuePath: "value"},
+		{Name: "Proxy auth", Type: CardNumber, SourceURL: "https://example.com/data", ValuePath: "value", Headers: map[string]string{"Proxy-Authorization": "Basic secret"}},
+		{Name: "Host override", Type: CardNumber, SourceURL: "https://example.com/data", ValuePath: "value", Headers: map[string]string{"Host": "metadata.internal"}},
+	} {
+		if _, err := manager.CreateCard(context.Background(), dashboard.ID, input); err == nil {
+			t.Fatalf("unsafe dashboard card was accepted: %+v", input)
+		}
 	}
 }
 

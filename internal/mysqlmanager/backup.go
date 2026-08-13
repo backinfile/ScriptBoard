@@ -1,7 +1,6 @@
 package mysqlmanager
 
 import (
-	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -10,11 +9,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
+
+	"scriptboard/internal/processlaunch"
 )
 
 type BackupKind string
@@ -61,7 +61,12 @@ type Operation struct {
 type osCommandRunner struct{}
 
 func (osCommandRunner) Run(ctx context.Context, executable string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	command := exec.CommandContext(ctx, executable, args...)
+	command, err := processlaunch.Prepare(processlaunch.Spec{
+		Context: ctx, Executable: executable, Arguments: args, Environment: processlaunch.EnvironmentInherit,
+	})
+	if err != nil {
+		return err
+	}
 	command.Stdin, command.Stdout, command.Stderr = stdin, stdout, stderr
 	return command.Run()
 }
@@ -119,19 +124,6 @@ func (m *Manager) runBackup(ctx context.Context, operation Operation, instance I
 	if err := m.updateOperation(ctx, operation.ID, "dumping", "", "", 0, 0); err != nil {
 		return Backup{}, err
 	}
-	optionPath, cleanup, err := m.clientOptionFile(instance)
-	if err != nil {
-		_ = m.failOperation(ctx, operation.ID, err)
-		return Backup{}, err
-	}
-	defer cleanup()
-	warning := ""
-	password, _ := m.instancePassword(instance.ID)
-	if password != "" {
-		if tables, tableErr := m.server.NonTransactionalTables(ctx, instance, password, request.Database); tableErr == nil && len(tables) > 0 {
-			warning = fmt.Sprintf("%d non-InnoDB tables are not covered by the consistent transaction snapshot", len(tables))
-		}
-	}
 	databaseDigest := sha256.Sum256([]byte(request.Database))
 	directory := filepath.Join(m.BackupRoot(), instance.ID, hex.EncodeToString(databaseDigest[:8]))
 	if err := os.MkdirAll(directory, 0o700); err != nil {
@@ -149,24 +141,17 @@ func (m *Manager) runBackup(ctx context.Context, operation Operation, instance I
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
 	_ = temporary.Chmod(0o600)
-	hash := sha256.New()
-	compressed := gzip.NewWriter(io.MultiWriter(temporary, hash))
-	stderr := &boundedBuffer{maximum: 64 << 10}
-	args := m.dumpArguments(ctx, optionPath, request.Database)
-	runErr := m.runner.Run(ctx, m.Tools().DumpExecutable, args, nil, compressed, stderr)
-	closeErr := compressed.Close()
-	if syncErr := temporary.Sync(); closeErr == nil {
-		closeErr = syncErr
+	if err := temporary.Close(); err != nil {
+		_ = m.failOperation(ctx, operation.ID, err)
+		return Backup{}, err
 	}
-	if fileCloseErr := temporary.Close(); closeErr == nil {
-		closeErr = fileCloseErr
+	if err := os.Remove(temporaryPath); err != nil {
+		_ = m.failOperation(ctx, operation.ID, err)
+		return Backup{}, err
 	}
-	if runErr != nil || closeErr != nil {
+	dumpResult, runErr := m.backend.Dump(ctx, instance, request.Database, temporaryPath)
+	if runErr != nil {
 		cause := runErr
-		if cause == nil {
-			cause = closeErr
-		}
-		cause = fmt.Errorf("mysqldump failed: %w%s", cause, sanitizedCommandError(stderr.String(), password, optionPath))
 		if errors.Is(ctx.Err(), context.Canceled) {
 			_ = m.updateOperation(context.Background(), operation.ID, "cancelled", "operation cancelled before a destructive phase", "", 0, 0)
 			m.recordAudit(AuditEvent{Action: "mysql_backup", Target: instance.ID + "/" + request.Database, Result: "cancelled", Actor: Actor{request.ActorUserID, request.ActorUsername}})
@@ -191,10 +176,16 @@ func (m *Manager) runBackup(ctx context.Context, operation Operation, instance I
 		_ = m.failOperation(ctx, operation.ID, err)
 		return Backup{}, err
 	}
+	hash, err := fileSHA256(finalPath)
+	if err != nil {
+		_ = os.Remove(finalPath)
+		_ = m.failOperation(ctx, operation.ID, err)
+		return Backup{}, err
+	}
 	backup := Backup{
 		ID: backupID, InstanceID: instance.ID, Database: request.Database, PlanID: request.PlanID, Kind: request.Kind,
-		Path: finalPath, SizeBytes: info.Size(), SHA256: hex.EncodeToString(hash.Sum(nil)), CreatedAt: m.now().UTC(),
-		CreatedByUserID: request.ActorUserID, CreatedByUsername: request.ActorUsername, Warning: warning,
+		Path: finalPath, SizeBytes: info.Size(), SHA256: hash, CreatedAt: m.now().UTC(),
+		CreatedByUserID: request.ActorUserID, CreatedByUsername: request.ActorUsername, Warning: dumpResult.Warning,
 	}
 	_, err = m.db.ExecContext(ctx, `INSERT INTO mysql_backups
 		(id, instance_id, database_name, plan_id, kind, path, size_bytes, sha256, warning, created_at, created_by_user_id, created_by_username)
@@ -216,8 +207,21 @@ func (m *Manager) runBackup(ctx context.Context, operation Operation, instance I
 	return backup, nil
 }
 
+func fileSHA256(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
 func (m *Manager) clientOptionFile(instance Instance) (string, func(), error) {
-	password, err := m.instancePassword(instance.ID)
+	password, err := m.secrets.getForInstance(instance)
 	if err != nil {
 		return "", func() {}, err
 	}
@@ -274,6 +278,9 @@ func (m *Manager) beginOperation(ctx context.Context, kind, instanceID, database
 		delete(m.active, instanceID)
 		m.mu.Unlock()
 		cancel()
+		if strings.Contains(strings.ToLower(err.Error()), "unique constraint") || strings.Contains(err.Error(), "mysql_operations_one_active_idx") {
+			return Operation{}, ctx, func() {}, errors.New("another MySQL operation is active for this instance")
+		}
 		return Operation{}, ctx, func() {}, err
 	}
 	return operation, operationContext, func() {
@@ -312,6 +319,8 @@ func (m *Manager) RequestCancel(ctx context.Context, id string) error {
 	m.mu.Unlock()
 	if cancel != nil {
 		cancel()
+	} else if remote, ok := m.backend.(RemoteOperationCanceller); ok {
+		return remote.CancelOperation(ctx, id)
 	}
 	return nil
 }

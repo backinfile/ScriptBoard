@@ -15,8 +15,12 @@ import (
 
 	"scriptboard/internal/app"
 	"scriptboard/internal/appstatus"
+	"scriptboard/internal/assistant/runtimehost"
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/logstream"
+	"scriptboard/internal/mysqlmanager"
+	"scriptboard/internal/privilegebroker"
+	"scriptboard/internal/runnerhost"
 )
 
 const (
@@ -176,21 +180,53 @@ func main() {
 	if err := seedHostFiles(hostRoot); err != nil {
 		panic(err)
 	}
+	passwordFile := filepath.Join(root, "fixture-admin-password")
+	if err := os.WriteFile(passwordFile, []byte(fixturePassword+"\n"), 0o600); err != nil {
+		panic(err)
+	}
 
-	application, err := app.Open(app.Config{
-		StateRoot:        stateRoot,
-		FileTopology:     fixtureTopology{root: hostRoot},
-		AdminUsername:    fixtureUsername,
-		AdminPassword:    fixturePassword,
-		ApplicationProbe: &applicationProbe{},
-		RequestRestart:   func() error { return nil },
-	})
+	applicationConfig := app.Config{
+		StateRoot:         stateRoot,
+		FileTopology:      fixtureTopology{root: hostRoot},
+		AdminUsername:     fixtureUsername,
+		AdminPasswordFile: passwordFile,
+		ApplicationProbe:  &applicationProbe{},
+		RequestRestart:    func() error { return nil },
+	}
+	if strings.TrimSpace(os.Getenv("SCRIPTBOARD_FIXTURE_REMOTE_HOSTS")) == "1" {
+		brokerEndpoint, endpointErr := privilegebroker.DefaultEndpoint(stateRoot)
+		if endpointErr != nil {
+			panic(endpointErr)
+		}
+		assistantEndpoint, endpointErr := runtimehost.DefaultEndpoint(stateRoot)
+		if endpointErr != nil {
+			panic(endpointErr)
+		}
+		runnerEndpoint, endpointErr := runnerhost.DefaultEndpoint(stateRoot)
+		if endpointErr != nil {
+			panic(endpointErr)
+		}
+		applicationConfig.PrivilegedBrokerEndpoint = brokerEndpoint
+		brokerClient := privilegebroker.NewClient(privilegebroker.ClientOptions{Dial: privilegebroker.Dial(brokerEndpoint)})
+		applicationConfig.AuditCheckpoint = privilegebroker.NewRemoteCheckpoint(brokerClient)
+		applicationConfig.MFAStore = privilegebroker.NewRemoteMFA(brokerClient)
+		applicationConfig.PasskeyStore = privilegebroker.NewRemotePasskey(brokerClient)
+		applicationConfig.RemoteWebsiteService = privilegebroker.NewRemoteWebsite(brokerClient)
+		applicationConfig.ProviderCredentials = privilegebroker.NewProviderCredentials(brokerClient)
+		applicationConfig.MySQLBackend = privilegebroker.NewMySQLBackend(brokerClient, mysqlmanager.ToolSettings{DumpExecutable: "mysqldump", ClientExecutable: "mysql"})
+		applicationConfig.HostFilesBackend = privilegebroker.NewHostFilesBackend(brokerClient, filepath.Join(stateRoot, "inbox", "host-files-broker"))
+		applicationConfig.StateBackups = privilegebroker.NewStateBackups(brokerClient)
+		applicationConfig.AssistantProcessLauncher = runtimehost.NewClientLauncher(runtimehost.Dial(assistantEndpoint))
+		applicationConfig.RunnerProcessLauncher = runnerhost.NewClientLauncher(runnerhost.Dial(runnerEndpoint))
+	}
+
+	application, err := app.Open(applicationConfig)
 	if err != nil {
 		panic(err)
 	}
 	defer application.Close()
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := net.Listen("tcp", fixtureListenAddress())
 	if err != nil {
 		panic(err)
 	}
@@ -211,6 +247,18 @@ func main() {
 	if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 		panic(err)
 	}
+}
+
+func fixtureListenAddress() string {
+	address := strings.TrimSpace(os.Getenv("SCRIPTBOARD_FIXTURE_LISTEN"))
+	if address == "" {
+		return "127.0.0.1:0"
+	}
+	host, port, err := net.SplitHostPort(address)
+	if err != nil || host != "127.0.0.1" || port == "" {
+		panic("SCRIPTBOARD_FIXTURE_LISTEN must be a 127.0.0.1:port address")
+	}
+	return address
 }
 
 func seedHostFiles(root string) error {

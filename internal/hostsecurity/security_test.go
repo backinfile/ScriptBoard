@@ -2,11 +2,57 @@ package hostsecurity
 
 import (
 	"context"
+	"encoding/base64"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestLinuxSecurityUpdatesUseExistingAPTMetadataAndReturnOnlySecurityOrigins(t *testing.T) {
+	now := time.Date(2026, time.August, 12, 8, 0, 0, 0, time.UTC)
+	runner := &fakeRunner{responses: map[string]fakeResponse{
+		"lookpath apt-get": {},
+		"apt-get -s -o Debug::NoLocking=1 upgrade": {stdout: strings.Join([]string{
+			"Inst openssl [3.0.1] (3.0.2 Ubuntu:24.04/noble-security [amd64])",
+			"Inst curl [8.0.0] (8.0.1 Ubuntu:24.04/noble-updates [amd64])",
+			"Inst linux-image-generic [1.0] (1.1 UbuntuESMApps:24.04/noble-apps-security [amd64])",
+		}, "\n")},
+	}}
+	manager := NewManager(Options{GOOS: "linux", Runner: runner, Now: func() time.Time { return now }})
+
+	report, err := manager.SecurityUpdates(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Supported || report.Provider != "APT package metadata" || len(report.Updates) != 2 {
+		t.Fatalf("APT security update report = %#v", report)
+	}
+	if report.Updates[0].Identifier != "openssl" || report.Updates[1].Identifier != "linux-image-generic" {
+		t.Fatalf("APT security updates = %#v", report.Updates)
+	}
+	if _, err := manager.SecurityUpdates(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("security update cache calls = %#v", runner.calls)
+	}
+}
+
+func TestParseWindowsSecurityUpdatesRejectsUnboundedRecords(t *testing.T) {
+	encode := func(value string) string { return base64.StdEncoding.EncodeToString([]byte(value)) }
+	line := strings.Join([]string{"SBUPDATE", encode("update-id"), encode("Cumulative Security Update"), encode("KB123456"), encode("Critical"), encode("Security Updates"), "1"}, "|")
+	updates, err := parseWindowsSecurityUpdates(line)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updates) != 1 || updates[0].Identifier != "update-id" || !updates[0].RestartRequired || updates[0].Severity != "Critical" {
+		t.Fatalf("Windows security updates = %#v", updates)
+	}
+	if _, err := parseWindowsSecurityUpdates(line + "\n" + "SBUPDATE|bad"); err == nil {
+		t.Fatal("malformed Windows update output was accepted")
+	}
+}
 
 func TestWindowsLoginScriptTreatsNoMatchingEventsAsEmptyJSON(t *testing.T) {
 	for _, expected := range []string{

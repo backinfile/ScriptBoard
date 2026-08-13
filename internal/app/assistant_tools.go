@@ -25,6 +25,7 @@ import (
 	"scriptboard/internal/assistant/toolbroker"
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/logstream"
+	"scriptboard/internal/privilegebroker"
 	"scriptboard/internal/runmanager"
 	"scriptboard/internal/websitemonitor"
 )
@@ -123,6 +124,12 @@ func (executor *assistantToolExecutor) releaseTurn(conversationID, messageID str
 }
 
 func (executor *assistantToolExecutor) Invoke(ctx context.Context, invocation toolbroker.Invocation) (response toolbroker.Response) {
+	if invocation.Binding.PrivilegedSessionToken != "" {
+		ctx = privilegebroker.WithAuthorization(ctx, privilegebroker.Authorization{
+			SessionToken: invocation.Binding.PrivilegedSessionToken,
+			RequestID:    "assistant-tool-" + invocation.Request.ToolCallID,
+		})
+	}
 	var responseActor assistant.Actor
 	persistResponse := false
 	defer func() {
@@ -901,7 +908,7 @@ func (executor *assistantToolExecutor) plan(ctx context.Context, authorization a
 	case "check_website_now":
 		return executor.planCheckWebsite(ctx, invocation)
 	case "list_ui_actions":
-		return executor.planListUIActions(authorization, invocation)
+		return executor.planListUIActions(ctx, authorization, invocation)
 	case "perform_ui_action":
 		return executor.planPerformUIAction(ctx, authorization, invocation)
 	default:
@@ -998,7 +1005,7 @@ func (executor *assistantToolExecutor) planListQuickRuns(invocation toolbroker.I
 	}
 	parameters.Limit = limit
 	return assistantToolPlan{targetSummary: "quick-runs current", parameterSummary: fmt.Sprintf("limit %d", limit), normalized: parameters, deepLink: "/config/quick-runs", execute: func(context.Context) (any, string, bool, error) {
-		rows, err := executor.app.db.Query(`SELECT id, name, script_path, timeout_seconds, locked FROM quick_runs ORDER BY sort_order, created_at LIMIT ?`, limit+1)
+		rows, err := executor.app.db.Query(`SELECT id, name, script_path, timeout_seconds, locked, script_sha256 FROM quick_runs ORDER BY sort_order, created_at LIMIT ?`, limit+1)
 		if err != nil {
 			return nil, "", false, err
 		}
@@ -1006,20 +1013,17 @@ func (executor *assistantToolExecutor) planListQuickRuns(invocation toolbroker.I
 		items := make([]any, 0, limit)
 		truncated := false
 		for rows.Next() {
-			var id, name, path string
+			var id, name, path, digest string
 			var timeout int
 			var locked bool
-			if err := rows.Scan(&id, &name, &path, &timeout, &locked); err != nil {
+			if err := rows.Scan(&id, &name, &path, &timeout, &locked, &digest); err != nil {
 				return nil, "", false, err
 			}
 			if len(items) >= limit {
 				truncated = true
 				continue
 			}
-			valid := false
-			if info, infoErr := executor.app.files.Info(path); infoErr == nil && info.Mode().IsRegular() {
-				valid = true
-			}
+			valid := strings.TrimSpace(digest) != ""
 			items = append(items, map[string]any{"id": id, "name": name, "script": assistantToolBaseName(path), "timeoutSeconds": timeout, "locked": locked, "available": valid})
 		}
 		return map[string]any{"source": "ScriptBoard Quick Runs", "untrustedData": true, "quickRuns": items}, fmt.Sprintf("Read %d Quick Runs.", len(items)), truncated, rows.Err()
@@ -1081,15 +1085,15 @@ func (executor *assistantToolExecutor) planReadManagedText(ctx context.Context, 
 	if !referenced {
 		return assistantToolPlan{}, errAssistantToolNotFound
 	}
-	return assistantToolPlan{targetSummary: parameters.Reference + " managed-text", parameterSummary: fmt.Sprintf("last %d lines", lines), normalized: parameters, deepLink: "/resources/files", execute: func(context.Context) (any, string, bool, error) {
-		entry, err := executor.resolveManagedFile(parameters.Reference)
+	return assistantToolPlan{targetSummary: parameters.Reference + " managed-text", parameterSummary: fmt.Sprintf("last %d lines", lines), normalized: parameters, deepLink: "/resources/files", execute: func(execContext context.Context) (any, string, bool, error) {
+		entry, err := executor.resolveManagedFile(execContext, parameters.Reference)
 		if err != nil {
 			return nil, "", false, err
 		}
 		if !isTextPreviewExtension(entry.Name) {
 			return nil, "", false, errAssistantToolParameters
 		}
-		document, err := executor.app.files.ReadText(entry.Path, assistantToolTextBytes)
+		document, err := executor.app.hostReadText(execContext, entry.Path, assistantToolTextBytes)
 		if err != nil {
 			return nil, "", false, err
 		}
@@ -1098,8 +1102,8 @@ func (executor *assistantToolExecutor) planReadManagedText(ctx context.Context, 
 	}}, nil
 }
 
-func (executor *assistantToolExecutor) resolveManagedFile(reference string) (hostfiles.Entry, error) {
-	if entry, found := executor.app.assistantHostEntryByStableID("file", reference); found {
+func (executor *assistantToolExecutor) resolveManagedFile(ctx context.Context, reference string) (hostfiles.Entry, error) {
+	if entry, found := executor.app.assistantHostEntryByStableID(ctx, "file", reference); found {
 		return entry, nil
 	}
 	return hostfiles.Entry{}, errAssistantToolNotFound
@@ -1114,27 +1118,38 @@ func (executor *assistantToolExecutor) planStartQuickRun(authorization assistant
 	var timeout int
 	var locked bool
 	var updatedAt int64
-	if err := executor.app.db.QueryRow(`SELECT name, script_path, arguments_template, timeout_seconds, locked, updated_at FROM quick_runs WHERE id = ?`, parameters.ID).Scan(&name, &path, &arguments, &timeout, &locked, &updatedAt); err != nil {
+	var scriptSHA256 string
+	var revision int64
+	if err := executor.app.db.QueryRow(`SELECT name, script_path, arguments_template, timeout_seconds, locked, updated_at, script_sha256, revision FROM quick_runs WHERE id = ?`, parameters.ID).Scan(&name, &path, &arguments, &timeout, &locked, &updatedAt, &scriptSHA256, &revision); err != nil {
 		return assistantToolPlan{}, err
 	}
-	if info, err := executor.app.files.Info(path); err != nil || !info.Mode().IsRegular() {
+	if scriptSHA256 == "" {
 		return assistantToolPlan{}, errAssistantToolNotFound
 	}
 	state := struct {
-		ID, Name, PathKey, Arguments string
-		Timeout                      int
-		UpdatedAt                    int64
-		Locked, Active               bool
-	}{parameters.ID, name, hostfiles.ComparisonKey(path), arguments, timeout, updatedAt, locked, executor.app.runs.IsActiveScript(path)}
+		ID, Name, PathKey, Arguments, ScriptSHA256 string
+		Timeout                                    int
+		UpdatedAt, Revision                        int64
+		Locked, Active                             bool
+	}{parameters.ID, name, hostfiles.ComparisonKey(path), arguments, scriptSHA256, timeout, updatedAt, revision, locked, executor.app.runs.IsActiveScript(path)}
 	return assistantToolPlan{
 		targetSummary: parameters.ID + " quick-run", parameterSummary: "start saved Quick Run",
 		normalized: parameters, targetState: state, deepLink: "/config/quick-runs", approvalTitle: "Start Quick Run", approvalMessage: fmt.Sprintf("Start the saved Quick Run %q now?", name),
-		execute: func(context.Context) (any, string, bool, error) {
+		execute: func(execContext context.Context) (any, string, bool, error) {
 			variables, err := executor.app.loadVariables()
 			if err != nil {
 				return nil, "", false, err
 			}
-			runID, err := executor.app.runs.Start(runmanager.StartRequest{ScriptPath: path, ArgumentsTemplate: arguments, TimeoutSeconds: timeout, SourceType: "assistant/quick-run", SourceName: name, SourceID: parameters.ID, Variables: variables, InitiatorUserID: authorization.Actor.UserID, InitiatorUsername: authorization.Actor.Username})
+			quick, loadErr := executor.app.loadQuickRun(parameters.ID)
+			if loadErr != nil || quick.Revision != revision || quick.ScriptSHA256 != scriptSHA256 {
+				return nil, "Quick Run is no longer available.", false, errors.New("quick run is not published")
+			}
+			prepared, err := executor.app.hostPrepareScript(execContext, quick.ScriptPath)
+			if err != nil || subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(quick.ScriptSHA256)) != 1 {
+				return nil, "Quick Run is no longer available.", false, errors.New("quick run script changed")
+			}
+			workingDirectory := hostfiles.PreparedDirectory{Path: prepared.Directory}
+			runID, err := executor.app.runs.Start(runmanager.StartRequest{ScriptPath: quick.ScriptPath, ExpectedDigest: quick.ScriptSHA256, ArgumentsTemplate: quick.ArgumentsTemplate, TimeoutSeconds: quick.TimeoutSeconds, SourceType: "assistant/quick-run", SourceName: quick.Name, SourceID: parameters.ID, Variables: variables, InitiatorUserID: authorization.Actor.UserID, InitiatorUsername: authorization.Actor.Username, PreparedScript: &prepared, PreparedDirectory: &workingDirectory})
 			if err != nil {
 				return nil, "", false, err
 			}

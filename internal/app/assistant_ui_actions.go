@@ -51,8 +51,11 @@ const (
 
 func (a *App) assistantUIActions() []assistantUIActionSpec {
 	action := func(key, label, domain, path, deepLink string, pathFields, formFields []string, handler http.HandlerFunc) assistantUIActionSpec {
-		request := httptest.NewRequest(http.MethodPost, strings.ReplaceAll(strings.ReplaceAll(path, "{id}", "id"), "{name}", "name"), nil)
-		spec := assistantUIActionSpec{Key: key, Label: label, Domain: domain, Path: path, DeepLink: deepLink, PathFields: pathFields, FormFields: formFields, Permission: permissionForRequest(request), Handler: handler}
+		spec := assistantUIActionSpec{Key: key, Label: label, Domain: domain, Path: path, DeepLink: deepLink, PathFields: pathFields, FormFields: formFields, Permission: a.declaredRoutePermission(http.MethodPost, path), Handler: handler}
+		if a.declaredRouteStepUp(http.MethodPost, path) {
+			spec.BrowserOnly = "Recent authentication is required in the protected browser session."
+			spec.Handler = nil
+		}
 		switch key {
 		case "websites.create", "websites.update":
 			spec.FormValueModes = map[string]assistantUIActionValueMode{"verify_tls": assistantUIActionBinary, "follow_redirects": assistantUIActionBinary}
@@ -96,8 +99,7 @@ func (a *App) assistantUIActions() []assistantUIActionSpec {
 		return spec
 	}
 	browserOnly := func(key, label, domain, path, reason string) assistantUIActionSpec {
-		request := httptest.NewRequest(http.MethodPost, strings.ReplaceAll(strings.ReplaceAll(path, "{id}", "id"), "{name}", "name"), nil)
-		return assistantUIActionSpec{Key: key, Label: label, Domain: domain, Path: path, Permission: permissionForRequest(request), BrowserOnly: reason}
+		return assistantUIActionSpec{Key: key, Label: label, Domain: domain, Path: path, Permission: a.declaredRoutePermission(http.MethodPost, path), BrowserOnly: reason}
 	}
 	return []assistantUIActionSpec{
 		action("applications.pin", "Pin application", "applications", "/monitor/applications/{id}/pin", "/monitor/applications", []string{"id"}, nil, a.pinApplication),
@@ -195,7 +197,7 @@ func (a *App) assistantUIActions() []assistantUIActionSpec {
 	}
 }
 
-func (executor *assistantToolExecutor) planListUIActions(authorization assistantToolAuthorization, invocation toolbroker.Invocation) (assistantToolPlan, error) {
+func (executor *assistantToolExecutor) planListUIActions(ctx context.Context, authorization assistantToolAuthorization, invocation toolbroker.Invocation) (assistantToolPlan, error) {
 	var parameters assistantUIActionListParameters
 	if err := decodeAssistantToolParameters(invocation.Request.Parameters, &parameters); err != nil || len(parameters.Domain) > 48 {
 		return assistantToolPlan{}, errAssistantToolParameters
@@ -225,7 +227,7 @@ func (executor *assistantToolExecutor) planListUIActions(authorization assistant
 			item["formFieldGuidance"] = spec.FormFieldGuidance
 		}
 		if spec.Key == "quick_runs.one_time" || spec.Key == "quick_runs.create_from_source" {
-			item["formDefaults"] = map[string]string{"working_directory": executor.app.defaultHostDirectory()}
+			item["formDefaults"] = map[string]string{"working_directory": executor.app.defaultHostDirectory(ctx)}
 			guidance := map[string]string{
 				"working_directory": "Optional absolute, writable, unprotected host directory. The same server-selected default as the web form is used when omitted.",
 			}
@@ -280,7 +282,7 @@ func (executor *assistantToolExecutor) planPerformUIAction(ctx context.Context, 
 		}
 		workingDirectory, present := parameters.Form["working_directory"]
 		if !present || strings.TrimSpace(fmt.Sprint(workingDirectory)) == "" {
-			parameters.Form["working_directory"] = executor.app.defaultHostDirectory()
+			parameters.Form["working_directory"] = executor.app.defaultHostDirectory(ctx)
 		}
 	}
 	path, form, err := normalizeAssistantUIAction(*selected, parameters)
@@ -294,11 +296,11 @@ func (executor *assistantToolExecutor) planPerformUIAction(ctx context.Context, 
 	parameters.PathParameters = normalizedStringMap(parameters.PathParameters)
 	targetState := map[string]any{"auditRevision": revision}
 	if selected.Key == "files.save_text" {
-		relative, fileErr := executor.app.files.CanonicalExisting(parameters.PathParameters["path"])
+		relative, fileErr := executor.app.hostCanonicalExisting(ctx, parameters.PathParameters["path"])
 		if fileErr != nil {
 			return assistantToolPlan{}, errAssistantToolNotFound
 		}
-		document, fileErr := executor.app.files.ReadText(relative, 1<<20)
+		document, fileErr := executor.app.hostReadText(ctx, relative, 1<<20)
 		if fileErr != nil {
 			return assistantToolPlan{}, fileErr
 		}

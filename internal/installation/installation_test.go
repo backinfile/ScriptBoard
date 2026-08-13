@@ -28,12 +28,12 @@ func TestPrepareCreatesVersionedInstallation(t *testing.T) {
 	}
 	raw, _ := json.Marshal(info)
 	files := map[string][]byte{
-		"scriptboard": []byte("service"), "scriptboard-updater": []byte("updater"),
+		"scriptboard": []byte("service"), "scriptboard-broker": []byte("broker"), "scriptboard-ai-host": []byte("ai-host"), "scriptboard-runner": []byte("runner"), "scriptboard-updater": []byte("updater"),
 		buildinfo.ReleaseInfoFilename: raw,
 	}
 	if runtime.GOOS == "windows" {
 		files = map[string][]byte{
-			"scriptboard.exe": []byte("service"), "scriptboard-tray.exe": []byte("tray"),
+			"scriptboard.exe": []byte("service"), "scriptboard-broker.exe": []byte("broker"), "scriptboard-ai-host.exe": []byte("ai-host"), "scriptboard-runner.exe": []byte("runner"), "scriptboard-tray.exe": []byte("tray"),
 			"scriptboard-tray-launcher.exe": []byte("launcher"), "scriptboard-updater.exe": []byte("updater"),
 			buildinfo.ReleaseInfoFilename: raw,
 		}
@@ -72,6 +72,21 @@ func TestPrepareCreatesVersionedInstallation(t *testing.T) {
 		wantService = filepath.Join(install, "versions", "1.2.3", "scriptboard.exe")
 	}
 	assertSameFile(t, "service entry executable", ServiceEntryExecutable(metadata), wantService)
+	wantBroker := filepath.Join(install, "current", "scriptboard-broker")
+	if runtime.GOOS == "windows" {
+		wantBroker = filepath.Join(install, "versions", "1.2.3", "scriptboard-broker.exe")
+	}
+	assertSameFile(t, "privileged Broker executable", ServiceBrokerExecutable(metadata), wantBroker)
+	wantAIHost := filepath.Join(install, "current", "scriptboard-ai-host")
+	if runtime.GOOS == "windows" {
+		wantAIHost = filepath.Join(install, "versions", "1.2.3", "scriptboard-ai-host.exe")
+	}
+	assertSameFile(t, "AI Runtime Host executable", ServiceAIHostExecutable(metadata), wantAIHost)
+	wantRunner := filepath.Join(install, "current", "scriptboard-runner")
+	if runtime.GOOS == "windows" {
+		wantRunner = filepath.Join(install, "versions", "1.2.3", "scriptboard-runner.exe")
+	}
+	assertSameFile(t, "Runner Host executable", ServiceRunnerExecutable(metadata), wantRunner)
 	assertSameFile(t, "state root", metadata.StateRoot, state)
 }
 

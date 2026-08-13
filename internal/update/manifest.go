@@ -136,11 +136,10 @@ func (a Asset) Validate(version string) error {
 	if a.Arch != "amd64" && a.Arch != "arm64" {
 		return fmt.Errorf("unsupported asset architecture %q", a.Arch)
 	}
-	extension := "tar.gz"
+	wantName := fmt.Sprintf("scriptboard-v%s-linux-%s.run", version, a.Arch)
 	if a.OS == "windows" {
-		extension = "zip"
+		wantName = fmt.Sprintf("scriptboard-v%s-windows-%s-setup.exe", version, a.Arch)
 	}
-	wantName := fmt.Sprintf("scriptboard-v%s-%s-%s.%s", version, a.OS, a.Arch, extension)
 	if a.Name != wantName {
 		return fmt.Errorf("asset name %q does not match %q", a.Name, wantName)
 	}

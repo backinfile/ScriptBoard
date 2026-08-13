@@ -86,6 +86,12 @@ SEED: 94d9bb9f.
 .external-interface-tabs a[aria-current="page"] { color: var(--ink); }
 .external-interface-tabs a[aria-current="page"]::after { position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: var(--accent); content: ""; }
 .external-interface-tabs svg { width: 16px; height: 16px; }
+.external-global-control { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 16px; margin: 0 0 18px; padding: 18px 20px; border: 1px solid var(--rule-strong); border-radius: 8px; background: var(--surface); }
+.external-global-control__icon { width: 22px; height: 22px; color: var(--accent); }
+.external-global-control[data-external-global-control="disabled"] { border-color: var(--danger); background: var(--danger-soft); }
+.external-global-control[data-external-global-control="disabled"] .external-global-control__icon { color: var(--danger); }
+.external-global-control strong { display: block; margin-bottom: 3px; }
+.external-global-control p { margin: 0; color: var(--muted); font-size: .84rem; }
 .external-key-list { border-bottom: 1px solid var(--rule-strong); }
 .external-key { border-top: 1px solid var(--rule-strong); }
 .external-key > summary { min-height: 78px; display: grid; grid-template-columns: minmax(240px,1fr) auto minmax(140px,.55fr) minmax(140px,.55fr) 18px; align-items: center; gap: 20px; padding: 12px 0; list-style: none; cursor: pointer; }
@@ -184,6 +190,8 @@ SEED: 94d9bb9f.
   .external-key__body { padding-left: 0; }
   .external-interfaces-page, .external-key-list, .external-key, .external-key > summary, .external-key__body, .external-entry-table, .external-entry-table td { min-width: 0; max-width: 100%; }
   .external-key-action-row { align-items: flex-start; flex-direction: column; }
+  .external-global-control { grid-template-columns: auto minmax(0, 1fr); }
+  .external-global-control form { grid-column: 1 / -1; }
   .external-call-guide dl > div { grid-template-columns: 1fr; gap: 4px; }
   .external-key-toolbar { align-items: flex-start; flex-direction: column; padding: 10px 0; }
   .external-key-actions { width: 100%; justify-content: flex-start; }

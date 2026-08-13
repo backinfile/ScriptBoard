@@ -15,6 +15,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"scriptboard/internal/secretstore"
 	"unicode"
 	"unicode/utf8"
 )
@@ -38,12 +40,20 @@ var (
 	ErrInvalidKey     = errors.New("external trigger key is invalid")
 	ErrEntryNotFound  = errors.New("external trigger entry does not exist")
 	ErrEntryDisabled  = errors.New("external trigger entry is disabled")
+	ErrKeyScopeBound  = errors.New("external trigger key is already bound to an entry")
+	ErrEntryImmutable = errors.New("external trigger entry scope is immutable")
 	ErrInvalidInput   = errors.New("external trigger input is invalid")
 	ErrKeyLabelExists = errors.New("external trigger key name already exists")
 	entryNamePattern  = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 )
 
 var SchemaStatements = []string{
+	`CREATE TABLE IF NOT EXISTS external_trigger_control (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+		updated_at INTEGER NOT NULL DEFAULT 0
+	)`,
+	`INSERT OR IGNORE INTO external_trigger_control (id, enabled, updated_at) VALUES (1, 1, 0)`,
 	`CREATE TABLE IF NOT EXISTS external_trigger_keys (
 		id TEXT PRIMARY KEY,
 		label TEXT NOT NULL,
@@ -63,10 +73,11 @@ var SchemaStatements = []string{
 		action_type TEXT NOT NULL CHECK (action_type IN ('log', 'upload', 'quick_run', 'variable', 'website_monitor')),
 		target TEXT NOT NULL DEFAULT '',
 		config_json TEXT NOT NULL DEFAULT '{}',
+		require_signature INTEGER NOT NULL DEFAULT 0 CHECK (require_signature IN (0, 1)),
 		enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
 		created_at INTEGER NOT NULL,
 		updated_at INTEGER NOT NULL,
-		UNIQUE (key_id, name)
+		UNIQUE (key_id)
 	)`,
 	`CREATE TABLE IF NOT EXISTS external_trigger_requests (
 		id TEXT PRIMARY KEY,
@@ -84,6 +95,12 @@ var SchemaStatements = []string{
 		message TEXT NOT NULL DEFAULT '',
 		source_address TEXT NOT NULL DEFAULT ''
 	)`,
+	`CREATE TABLE IF NOT EXISTS external_trigger_nonces (
+		key_id TEXT NOT NULL REFERENCES external_trigger_keys(id) ON DELETE CASCADE,
+		nonce TEXT NOT NULL,
+		expires_at INTEGER NOT NULL,
+		PRIMARY KEY (key_id, nonce)
+	)`,
 	`CREATE TABLE IF NOT EXISTS website_monitor_remote_sources (
 		id TEXT PRIMARY KEY,
 		label TEXT NOT NULL COLLATE NOCASE UNIQUE,
@@ -95,6 +112,7 @@ var SchemaStatements = []string{
 	`CREATE INDEX IF NOT EXISTS external_trigger_entries_key_idx ON external_trigger_entries(key_id, created_at)`,
 	`CREATE INDEX IF NOT EXISTS external_trigger_requests_time_idx ON external_trigger_requests(occurred_at DESC)`,
 	`CREATE INDEX IF NOT EXISTS external_trigger_requests_key_time_idx ON external_trigger_requests(key_id, occurred_at DESC)`,
+	`CREATE INDEX IF NOT EXISTS external_trigger_nonces_expiry_idx ON external_trigger_nonces(expires_at)`,
 }
 
 type ActionType string
@@ -122,6 +140,7 @@ type Entry struct {
 	Type                           ActionType
 	ConfigJSON                     string
 	Enabled                        bool
+	RequireSignature               bool
 	CreatedAt, UpdatedAt           time.Time
 }
 
@@ -146,7 +165,9 @@ type UploadConfig struct {
 }
 
 type QuickRunConfig struct {
-	QuickRunID string `json:"quick_run_id"`
+	QuickRunID   string `json:"quick_run_id"`
+	Revision     int64  `json:"revision"`
+	ScriptSHA256 string `json:"script_sha256"`
 }
 
 type WebsiteMonitorConfig struct{}
@@ -173,15 +194,17 @@ type CreateEntryInput struct {
 	Type               ActionType
 	Target             string
 	Enabled            bool
+	RequireSignature   bool
 	Config             any
 }
 
 type UpdateEntryInput struct {
-	ID, Name, Label string
-	Type            ActionType
-	Target          string
-	Enabled         bool
-	Config          any
+	ID, Name, Label  string
+	Type             ActionType
+	Target           string
+	Enabled          bool
+	RequireSignature bool
+	Config           any
 }
 
 type Invocation struct {
@@ -269,14 +292,18 @@ type Options struct {
 	Now              func() time.Time
 	Random           func([]byte) (int, error)
 	SecretsDirectory string
+	SecretStore      *secretstore.Store
 }
 
 type Manager struct {
-	db               *sql.DB
-	now              func() time.Time
-	random           func([]byte) (int, error)
-	secretsDirectory string
-	secretStore      *encryptedSecretStore
+	db          *sql.DB
+	now         func() time.Time
+	random      func([]byte) (int, error)
+	secretStore *encryptedSecretStore
+}
+
+type RemoteWebsiteCredentialDestination interface {
+	Store(context.Context, string, string, string) error
 }
 
 func New(db *sql.DB, options Options) *Manager {
@@ -288,15 +315,52 @@ func New(db *sql.DB, options Options) *Manager {
 	if random == nil {
 		random = rand.Read
 	}
-	return &Manager{db: db, now: now, random: random, secretsDirectory: options.SecretsDirectory, secretStore: &encryptedSecretStore{directory: options.SecretsDirectory}}
+	return &Manager{db: db, now: now, random: random, secretStore: &encryptedSecretStore{directory: options.SecretsDirectory, vault: options.SecretStore}}
 }
 
-func (manager *Manager) KeySecret(id string) (string, error) {
-	return manager.secretStore.get(id)
+// GlobalEnabled returns the persistent emergency control for every External
+// Interface. A missing or unreadable control row is an error so callers can
+// fail closed rather than accidentally accepting external work.
+func (manager *Manager) GlobalEnabled(ctx context.Context) (bool, time.Time, error) {
+	var enabled int
+	var updatedAtUnix int64
+	if err := manager.db.QueryRowContext(ctx, `SELECT enabled, updated_at FROM external_trigger_control WHERE id = 1`).Scan(&enabled, &updatedAtUnix); err != nil {
+		return false, time.Time{}, err
+	}
+	updatedAt := time.Time{}
+	if updatedAtUnix != 0 {
+		updatedAt = time.Unix(updatedAtUnix, 0).UTC()
+	}
+	return enabled == 1, updatedAt, nil
+}
+
+func (manager *Manager) SetGlobalEnabled(ctx context.Context, enabled bool) error {
+	value := 0
+	if enabled {
+		value = 1
+	}
+	result, err := manager.db.ExecContext(ctx, `UPDATE external_trigger_control SET enabled = ?, updated_at = ? WHERE id = 1`, value, manager.now().UTC().Unix())
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (manager *Manager) StoreSecret(id, secret string) error {
 	return manager.secretStore.set(id, secret)
+}
+
+func (manager *Manager) MigrateSecrets() error {
+	manager.secretStore.mu.Lock()
+	defer manager.secretStore.mu.Unlock()
+	return manager.secretStore.ensureMigrated()
 }
 
 func (manager *Manager) Secret(id string) (string, error) {
@@ -305,6 +369,77 @@ func (manager *Manager) Secret(id string) (string, error) {
 
 func (manager *Manager) DeleteSecret(id string) error {
 	return manager.secretStore.delete(id)
+}
+
+// MigrateRemoteWebsiteCredentials moves legacy remote-monitor credentials into
+// their endpoint-bound domain store before the generic encrypted store is no
+// longer available to managed Web.
+func (manager *Manager) MigrateRemoteWebsiteCredentials(ctx context.Context, destination RemoteWebsiteCredentialDestination) error {
+	if destination == nil {
+		return errors.New("remote website credential destination is unavailable")
+	}
+	rows, err := manager.db.QueryContext(ctx, `SELECT id, endpoint FROM website_monitor_remote_sources ORDER BY id`)
+	if err != nil {
+		return fmt.Errorf("list remote website credentials for migration: %w", err)
+	}
+	defer rows.Close()
+	type source struct{ id, endpoint string }
+	var sources []source
+	for rows.Next() {
+		var value source
+		if err := rows.Scan(&value.id, &value.endpoint); err != nil {
+			return err
+		}
+		sources = append(sources, value)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, value := range sources {
+		legacyID := "remote-website:" + value.id
+		secret, err := manager.Secret(legacyID)
+		if errors.Is(err, ErrSecretUnavailable) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("read legacy remote website credential %q: %w", value.id, err)
+		}
+		if err := destination.Store(ctx, value.id, value.endpoint, secret); err != nil {
+			return fmt.Errorf("migrate remote website credential %q: %w", value.id, err)
+		}
+		if err := manager.DeleteSecret(legacyID); err != nil {
+			return fmt.Errorf("remove migrated remote website credential %q: %w", value.id, err)
+		}
+	}
+	return nil
+}
+
+// PurgeLegacyKeySecrets removes complete External Interface keys persisted by
+// earlier releases. Trigger authentication needs only the verifier in SQLite;
+// unrelated recoverable secrets continue to use the encrypted secret store.
+func (manager *Manager) PurgeLegacyKeySecrets(ctx context.Context) error {
+	rows, err := manager.db.QueryContext(ctx, "SELECT id FROM external_trigger_keys")
+	if err != nil {
+		return fmt.Errorf("list legacy external trigger key secrets: %w", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := manager.secretStore.delete(id); err != nil && !errors.Is(err, ErrSecretUnavailable) {
+			return fmt.Errorf("purge legacy external trigger key secret %q: %w", id, err)
+		}
+	}
+	return nil
 }
 
 func (manager *Manager) CreateKey(ctx context.Context, input CreateKeyInput) (Key, string, error) {
@@ -342,10 +477,6 @@ func (manager *Manager) CreateKey(ctx context.Context, input CreateKeyInput) (Ke
 	if changed, _ := result.RowsAffected(); changed == 0 {
 		return Key{}, "", ErrKeyLabelExists
 	}
-	if err := manager.secretStore.set(id, secret); err != nil {
-		_, _ = manager.db.ExecContext(ctx, "DELETE FROM external_trigger_keys WHERE id = ?", id)
-		return Key{}, "", fmt.Errorf("store external trigger key: %w", err)
-	}
 	key := Key{ID: id, Label: label, TokenHint: hint, Enabled: input.Enabled, CreatedAt: now, UpdatedAt: now}
 	if input.ExpiresAt != nil {
 		expires := input.ExpiresAt.UTC()
@@ -366,39 +497,64 @@ func (manager *Manager) RotateKey(ctx context.Context, id string) (Key, string, 
 	secret := "sbk_" + id + "." + secretPart
 	hint := "sbk_" + id + ".••••" + secretPart[len(secretPart)-4:]
 	now := manager.now().UTC()
-	previous, previousErr := manager.secretStore.get(id)
-	if err := manager.secretStore.set(id, secret); err != nil {
-		return Key{}, "", fmt.Errorf("store rotated external trigger key: %w", err)
-	}
 	if _, err := manager.db.ExecContext(ctx, `UPDATE external_trigger_keys SET token_hash = ?, token_hint = ?, updated_at = ? WHERE id = ?`, hashToken(secret), hint, now.Unix(), id); err != nil {
-		if previousErr == nil {
-			_ = manager.secretStore.set(id, previous)
-		} else {
-			_ = manager.secretStore.delete(id)
-		}
 		return Key{}, "", fmt.Errorf("rotate external trigger key: %w", err)
 	}
 	key.TokenHint, key.UpdatedAt = hint, now
 	return key, secret, nil
 }
 
-func (manager *Manager) CreateEntry(ctx context.Context, input CreateEntryInput) (Entry, error) {
+func (manager *Manager) CreateEntry(ctx context.Context, input CreateEntryInput) (Entry, string, error) {
 	configJSON, target, err := validateEntry(input.Name, input.Label, input.Type, input.Target, input.Config)
 	if err != nil {
-		return Entry{}, err
+		return Entry{}, "", err
 	}
 	id, err := manager.randomToken(18)
 	if err != nil {
-		return Entry{}, err
+		return Entry{}, "", err
 	}
-	now := manager.now().UTC()
-	_, err = manager.db.ExecContext(ctx, `INSERT INTO external_trigger_entries
-		(id, key_id, name, label, action_type, target, config_json, enabled, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, input.KeyID, input.Name, strings.TrimSpace(input.Label), input.Type, target, configJSON, input.Enabled, now.Unix(), now.Unix())
+	secretPart, err := manager.randomToken(32)
 	if err != nil {
-		return Entry{}, fmt.Errorf("create external trigger entry: %w", err)
+		return Entry{}, "", err
 	}
-	return Entry{ID: id, KeyID: input.KeyID, Name: input.Name, Label: strings.TrimSpace(input.Label), Type: input.Type, Target: target, ConfigJSON: configJSON, Enabled: input.Enabled, CreatedAt: now, UpdatedAt: now}, nil
+	secret := "sbk_" + input.KeyID + "." + secretPart
+	hint := "sbk_" + input.KeyID + ".••••" + secretPart[len(secretPart)-4:]
+	now := manager.now().UTC()
+	transaction, err := manager.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Entry{}, "", err
+	}
+	defer transaction.Rollback()
+	var existing int
+	if err := transaction.QueryRowContext(ctx, "SELECT COUNT(*) FROM external_trigger_entries WHERE key_id = ?", input.KeyID).Scan(&existing); err != nil {
+		return Entry{}, "", err
+	}
+	if existing != 0 {
+		return Entry{}, "", ErrKeyScopeBound
+	}
+	result, err := transaction.ExecContext(ctx, `INSERT INTO external_trigger_entries
+		(id, key_id, name, label, action_type, target, config_json, require_signature, enabled, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, input.KeyID, input.Name, strings.TrimSpace(input.Label), input.Type, target, configJSON, input.RequireSignature, input.Enabled, now.Unix(), now.Unix())
+	if err != nil {
+		if strings.Contains(err.Error(), "external_trigger_entries.key_id") {
+			return Entry{}, "", ErrKeyScopeBound
+		}
+		return Entry{}, "", fmt.Errorf("create external trigger entry: %w", err)
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return Entry{}, "", ErrKeyScopeBound
+	}
+	result, err = transaction.ExecContext(ctx, `UPDATE external_trigger_keys SET token_hash = ?, token_hint = ?, updated_at = ? WHERE id = ?`, hashToken(secret), hint, now.Unix(), input.KeyID)
+	if err != nil {
+		return Entry{}, "", err
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return Entry{}, "", ErrInvalidKey
+	}
+	if err := transaction.Commit(); err != nil {
+		return Entry{}, "", err
+	}
+	return Entry{ID: id, KeyID: input.KeyID, Name: input.Name, Label: strings.TrimSpace(input.Label), Type: input.Type, Target: target, ConfigJSON: configJSON, RequireSignature: input.RequireSignature, Enabled: input.Enabled, CreatedAt: now, UpdatedAt: now}, secret, nil
 }
 
 func (manager *Manager) UpdateEntry(ctx context.Context, input UpdateEntryInput) (Entry, error) {
@@ -406,10 +562,17 @@ func (manager *Manager) UpdateEntry(ctx context.Context, input UpdateEntryInput)
 	if err != nil {
 		return Entry{}, err
 	}
+	existing, err := manager.Entry(ctx, input.ID)
+	if err != nil {
+		return Entry{}, ErrEntryNotFound
+	}
+	if existing.Name != input.Name || existing.Type != input.Type || existing.Target != target || existing.ConfigJSON != configJSON {
+		return Entry{}, ErrEntryImmutable
+	}
 	now := manager.now().UTC()
 	result, err := manager.db.ExecContext(ctx, `UPDATE external_trigger_entries SET
-		name = ?, label = ?, action_type = ?, target = ?, config_json = ?, enabled = ?, updated_at = ? WHERE id = ?`,
-		input.Name, strings.TrimSpace(input.Label), input.Type, target, configJSON, input.Enabled, now.Unix(), input.ID)
+		label = ?, require_signature = ?, enabled = ?, updated_at = ? WHERE id = ?`,
+		strings.TrimSpace(input.Label), input.RequireSignature, input.Enabled, now.Unix(), input.ID)
 	if err != nil {
 		return Entry{}, fmt.Errorf("update external trigger entry: %w", err)
 	}
@@ -458,7 +621,8 @@ func validateEntry(name, label string, actionType ActionType, target string, con
 		normalized, target = value, value.Directory
 	case ActionQuickRun:
 		value, ok := config.(QuickRunConfig)
-		if !ok || strings.TrimSpace(value.QuickRunID) == "" {
+		digest, digestErr := hex.DecodeString(value.ScriptSHA256)
+		if !ok || strings.TrimSpace(value.QuickRunID) == "" || value.Revision <= 0 || len(digest) != sha256.Size || digestErr != nil {
 			return "", "", fmt.Errorf("%w: quick run config", ErrInvalidInput)
 		}
 		value.QuickRunID = strings.TrimSpace(value.QuickRunID)
@@ -552,11 +716,11 @@ func (manager *Manager) Resolve(ctx context.Context, token, name string) (Key, E
 		return Key{}, Entry{}, ErrInvalidKey
 	}
 	var entry Entry
-	var entryEnabled int
+	var entryEnabled, requireSignature int
 	var entryCreatedAt, entryUpdatedAt int64
-	err = manager.db.QueryRowContext(ctx, `SELECT id, key_id, name, label, action_type, target, config_json, enabled, created_at, updated_at
+	err = manager.db.QueryRowContext(ctx, `SELECT id, key_id, name, label, action_type, target, config_json, require_signature, enabled, created_at, updated_at
 		FROM external_trigger_entries WHERE key_id = ? AND name = ?`, key.ID, name).Scan(
-		&entry.ID, &entry.KeyID, &entry.Name, &entry.Label, &entry.Type, &entry.Target, &entry.ConfigJSON, &entryEnabled, &entryCreatedAt, &entryUpdatedAt)
+		&entry.ID, &entry.KeyID, &entry.Name, &entry.Label, &entry.Type, &entry.Target, &entry.ConfigJSON, &requireSignature, &entryEnabled, &entryCreatedAt, &entryUpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return key, Entry{}, ErrEntryNotFound
 	}
@@ -564,6 +728,7 @@ func (manager *Manager) Resolve(ctx context.Context, token, name string) (Key, E
 		return Key{}, Entry{}, err
 	}
 	entry.Enabled = entryEnabled != 0
+	entry.RequireSignature = requireSignature != 0
 	entry.CreatedAt, entry.UpdatedAt = time.Unix(entryCreatedAt, 0).UTC(), time.Unix(entryUpdatedAt, 0).UTC()
 	if !entry.Enabled {
 		return key, entry, ErrEntryDisabled
@@ -589,14 +754,15 @@ func (manager *Manager) Key(ctx context.Context, id string) (Key, error) {
 
 func (manager *Manager) Entry(ctx context.Context, id string) (Entry, error) {
 	var entry Entry
-	var enabled int
+	var enabled, requireSignature int
 	var createdAt, updatedAt int64
-	err := manager.db.QueryRowContext(ctx, `SELECT id, key_id, name, label, action_type, target, config_json, enabled, created_at, updated_at
-		FROM external_trigger_entries WHERE id = ?`, id).Scan(&entry.ID, &entry.KeyID, &entry.Name, &entry.Label, &entry.Type, &entry.Target, &entry.ConfigJSON, &enabled, &createdAt, &updatedAt)
+	err := manager.db.QueryRowContext(ctx, `SELECT id, key_id, name, label, action_type, target, config_json, require_signature, enabled, created_at, updated_at
+		FROM external_trigger_entries WHERE id = ?`, id).Scan(&entry.ID, &entry.KeyID, &entry.Name, &entry.Label, &entry.Type, &entry.Target, &entry.ConfigJSON, &requireSignature, &enabled, &createdAt, &updatedAt)
 	if err != nil {
 		return Entry{}, err
 	}
 	entry.Enabled = enabled != 0
+	entry.RequireSignature = requireSignature != 0
 	entry.CreatedAt, entry.UpdatedAt = time.Unix(createdAt, 0).UTC(), time.Unix(updatedAt, 0).UTC()
 	return entry, nil
 }
@@ -636,7 +802,7 @@ func (manager *Manager) List(ctx context.Context) ([]Key, error) {
 }
 
 func (manager *Manager) entriesForKey(ctx context.Context, keyID string) ([]Entry, error) {
-	rows, err := manager.db.QueryContext(ctx, `SELECT id, key_id, name, label, action_type, target, config_json, enabled, created_at, updated_at
+	rows, err := manager.db.QueryContext(ctx, `SELECT id, key_id, name, label, action_type, target, config_json, require_signature, enabled, created_at, updated_at
 		FROM external_trigger_entries WHERE key_id = ? ORDER BY created_at, id`, keyID)
 	if err != nil {
 		return nil, err
@@ -645,16 +811,21 @@ func (manager *Manager) entriesForKey(ctx context.Context, keyID string) ([]Entr
 	var entries []Entry
 	for rows.Next() {
 		var entry Entry
-		var enabled int
+		var enabled, requireSignature int
 		var createdAt, updatedAt int64
-		if err := rows.Scan(&entry.ID, &entry.KeyID, &entry.Name, &entry.Label, &entry.Type, &entry.Target, &entry.ConfigJSON, &enabled, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&entry.ID, &entry.KeyID, &entry.Name, &entry.Label, &entry.Type, &entry.Target, &entry.ConfigJSON, &requireSignature, &enabled, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 		entry.Enabled = enabled != 0
+		entry.RequireSignature = requireSignature != 0
 		entry.CreatedAt, entry.UpdatedAt = time.Unix(createdAt, 0).UTC(), time.Unix(updatedAt, 0).UTC()
 		entries = append(entries, entry)
 	}
 	return entries, rows.Err()
+}
+
+func (manager *Manager) EntriesForKey(ctx context.Context, keyID string) ([]Entry, error) {
+	return manager.entriesForKey(ctx, keyID)
 }
 
 func (manager *Manager) SetKeyEnabled(ctx context.Context, id string, enabled bool) error {
@@ -718,12 +889,23 @@ func (manager *Manager) DeleteKey(ctx context.Context, id string) error {
 }
 
 func (manager *Manager) DeleteEntry(ctx context.Context, id string) error {
-	result, err := manager.db.ExecContext(ctx, "DELETE FROM external_trigger_entries WHERE id = ?", id)
+	transaction, err := manager.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	if changed, _ := result.RowsAffected(); changed == 0 {
+	defer transaction.Rollback()
+	var keyID string
+	if err := transaction.QueryRowContext(ctx, "SELECT key_id FROM external_trigger_entries WHERE id = ?", id).Scan(&keyID); err != nil {
 		return sql.ErrNoRows
+	}
+	if _, err := transaction.ExecContext(ctx, "DELETE FROM external_trigger_keys WHERE id = ?", keyID); err != nil {
+		return err
+	}
+	if err := transaction.Commit(); err != nil {
+		return err
+	}
+	if err := manager.secretStore.delete(keyID); err != nil && !errors.Is(err, ErrSecretUnavailable) {
+		return fmt.Errorf("delete External Interface key secret: %w", err)
 	}
 	return nil
 }

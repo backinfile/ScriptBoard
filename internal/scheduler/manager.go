@@ -11,9 +11,12 @@ import (
 
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/runmanager"
+	"scriptboard/internal/secretredaction"
 )
 
 type VariableLoader func() (map[string]string, error)
+type AuditRecorder func(action, target, result, source string)
+type ScriptPreparer func(scheduleID string) (hostfiles.Script, hostfiles.PreparedDirectory, error)
 
 type CreateRequest struct {
 	Name              string
@@ -59,17 +62,20 @@ type Manager struct {
 	pauseMu        sync.Mutex
 	fireMu         sync.Mutex
 	paused         bool
+	audit          AuditRecorder
+	prepareMu      sync.RWMutex
+	prepareScript  ScriptPreparer
 }
 
-func New(db *sql.DB, runs *runmanager.Manager, loadVariables VariableLoader, now func() time.Time, tick time.Duration) *Manager {
-	return newManager(db, runs, loadVariables, now, tick, false)
+func New(db *sql.DB, runs *runmanager.Manager, loadVariables VariableLoader, now func() time.Time, tick time.Duration, audits ...AuditRecorder) *Manager {
+	return newManager(db, runs, loadVariables, now, tick, false, audits...)
 }
 
-func NewPaused(db *sql.DB, runs *runmanager.Manager, loadVariables VariableLoader, now func() time.Time, tick time.Duration) *Manager {
-	return newManager(db, runs, loadVariables, now, tick, true)
+func NewPaused(db *sql.DB, runs *runmanager.Manager, loadVariables VariableLoader, now func() time.Time, tick time.Duration, audits ...AuditRecorder) *Manager {
+	return newManager(db, runs, loadVariables, now, tick, true, audits...)
 }
 
-func newManager(db *sql.DB, runs *runmanager.Manager, loadVariables VariableLoader, now func() time.Time, tick time.Duration, paused bool) *Manager {
+func newManager(db *sql.DB, runs *runmanager.Manager, loadVariables VariableLoader, now func() time.Time, tick time.Duration, paused bool, audits ...AuditRecorder) *Manager {
 	pollClock := now != nil
 	if now == nil {
 		now = time.Now
@@ -82,6 +88,9 @@ func newManager(db *sql.DB, runs *runmanager.Manager, loadVariables VariableLoad
 		now: now, tick: tick, stop: make(chan struct{}), done: make(chan struct{}),
 		wake: make(chan struct{}, 1), pollClock: pollClock, paused: paused,
 	}
+	if len(audits) > 0 {
+		manager.audit = audits[0]
+	}
 	if !paused {
 		manager.initialize()
 	}
@@ -90,6 +99,29 @@ func newManager(db *sql.DB, runs *runmanager.Manager, loadVariables VariableLoad
 }
 
 var ErrPaused = errors.New("scheduler is paused for update maintenance")
+
+func (m *Manager) SetScriptPreparer(preparer ScriptPreparer) {
+	m.prepareMu.Lock()
+	m.prepareScript = preparer
+	m.prepareMu.Unlock()
+}
+
+func (m *Manager) preparedSchedule(id, path string) (*hostfiles.Script, *hostfiles.PreparedDirectory, error) {
+	m.prepareMu.RLock()
+	preparer := m.prepareScript
+	m.prepareMu.RUnlock()
+	if preparer == nil {
+		return nil, nil, nil
+	}
+	script, directory, err := preparer(id)
+	if err != nil || script.Path != path || script.Digest == "" || directory.Path != script.Directory {
+		if err == nil {
+			err = errors.New("Broker returned a mismatched scheduled script")
+		}
+		return nil, nil, err
+	}
+	return &script, &directory, nil
+}
 
 func (m *Manager) initialize() {
 	m.initializeOnce.Do(func() {
@@ -137,8 +169,9 @@ func (m *Manager) aggregateOldTriggers() {
 			return
 		}
 	}
-	_, _ = transaction.Exec("INSERT INTO audit_events (occurred_at, action, target, result, source_address) VALUES (?, 'aggregate_schedule_triggers', ?, 'succeeded', 'system')", m.now().UTC().Unix(), fmt.Sprintf("%d triggers", len(ids)))
-	_ = transaction.Commit()
+	if transaction.Commit() == nil {
+		m.recordAuditSource("aggregate_schedule_triggers", fmt.Sprintf("%d triggers", len(ids)), "succeeded", "system")
+	}
 }
 
 func (m *Manager) Update(id string, request CreateRequest) error {
@@ -293,14 +326,21 @@ func (m *Manager) RunNowAs(id, userID, username string) (string, error) {
 	if _, err := m.db.Exec("INSERT INTO schedule_triggers (id, schedule_id, scheduled_for, result, run_id, error) VALUES (?, ?, ?, 'pending', '', '')", triggerID, schedule.ID, m.now().UnixNano()); err != nil {
 		return "", fmt.Errorf("record pending schedule trigger: %w", err)
 	}
+	prepared, preparedDirectory, err := m.preparedSchedule(schedule.ID, schedule.ScriptPath)
+	if err != nil {
+		_ = m.completeTrigger(triggerID, "rejected", "", secretredaction.String(err.Error()))
+		m.recordAudit("schedule_run_now", schedule.Name, "rejected")
+		return "", err
+	}
 	runID, err := m.runs.Start(runmanager.StartRequest{
 		ScriptPath: schedule.ScriptPath, ArgumentsTemplate: schedule.ArgumentsTemplate, TimeoutSeconds: schedule.TimeoutSeconds,
 		SourceType: "admin/schedule-now", SourceName: schedule.Name, SourceID: schedule.ID, Variables: variables,
 		InitiatorUserID: userID, InitiatorUsername: username,
+		PreparedScript: prepared, PreparedDirectory: preparedDirectory,
 	})
 	result, errorText := "created", ""
 	if err != nil {
-		result, errorText = "rejected", err.Error()
+		result, errorText = "rejected", secretredaction.String(err.Error())
 	}
 	if completeErr := m.completeTrigger(triggerID, result, runID, errorText); completeErr != nil {
 		m.recordAudit("schedule_trigger_record", schedule.Name, "pending")
@@ -493,16 +533,23 @@ func (m *Manager) fireDue() {
 		}
 		variables, loadErr := m.loadVariables()
 		if loadErr != nil {
-			_ = m.completeTrigger(triggerID, "rejected", "", loadErr.Error())
+			_ = m.completeTrigger(triggerID, "rejected", "", secretredaction.String(loadErr.Error()))
+			m.recordAudit("schedule_trigger", item.name, "rejected")
+			continue
+		}
+		prepared, preparedDirectory, prepareErr := m.preparedSchedule(item.id, item.scriptPath)
+		if prepareErr != nil {
+			_ = m.completeTrigger(triggerID, "rejected", "", secretredaction.String(prepareErr.Error()))
 			m.recordAudit("schedule_trigger", item.name, "rejected")
 			continue
 		}
 		runID, startErr := m.runs.Start(runmanager.StartRequest{
 			ScriptPath: item.scriptPath, ArgumentsTemplate: item.arguments, TimeoutSeconds: item.timeout,
 			SourceType: "scheduler", SourceName: item.name, SourceID: item.id, Variables: variables,
+			PreparedScript: prepared, PreparedDirectory: preparedDirectory,
 		})
 		if startErr != nil {
-			_ = m.completeTrigger(triggerID, "rejected", "", startErr.Error())
+			_ = m.completeTrigger(triggerID, "rejected", "", secretredaction.String(startErr.Error()))
 			m.recordAudit("schedule_trigger", item.name, "rejected")
 			continue
 		}
@@ -581,11 +628,19 @@ func (m *Manager) disableInvalidSchedule(id, expression string) {
 	if changed, _ := result.RowsAffected(); changed == 0 {
 		return
 	}
-	_, _ = m.db.Exec("INSERT INTO audit_events (occurred_at, action, target, result, source_address) VALUES (?, 'disable_invalid_schedule', ?, 'failed', 'scheduler')", now.UTC().Unix(), expression)
+	m.recordAudit("disable_invalid_schedule", expression, "failed")
 }
 
 func (m *Manager) recordAudit(action, target, result string) {
-	_, _ = m.db.Exec("INSERT INTO audit_events (occurred_at, action, target, result, source_address) VALUES (?, ?, ?, ?, 'scheduler')", m.now().UTC().Unix(), action, target, result)
+	m.recordAuditSource(action, target, result, "scheduler")
+}
+
+func (m *Manager) recordAuditSource(action, target, result, source string) {
+	if m.audit != nil {
+		m.audit(action, target, result, source)
+		return
+	}
+	_, _ = m.db.Exec("INSERT INTO audit_events (occurred_at, action, target, result, source_address) VALUES (?, ?, ?, ?, ?)", m.now().UTC().Unix(), action, target, result, source)
 }
 
 func (m *Manager) Close() {

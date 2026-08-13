@@ -36,12 +36,12 @@ func validManifest() Manifest {
 		Version: "1.2.3", Tag: "v1.2.3",
 		Commit:      "0123456789abcdef0123456789abcdef01234567",
 		PublishedAt: "2026-07-29T00:00:00Z", DatabaseSchema: 14,
-		UpdaterProtocol: 1, MinimumUpdaterProtocol: 1,
+		UpdaterProtocol: 2, MinimumUpdaterProtocol: 2,
 		Assets: []Asset{
-			{OS: "windows", Arch: "amd64", Name: "scriptboard-v1.2.3-windows-amd64.zip", SHA256: strings.Repeat("0", 64), Size: 100, UnpackedSize: 200},
-			{OS: "windows", Arch: "arm64", Name: "scriptboard-v1.2.3-windows-arm64.zip", SHA256: strings.Repeat("1", 64), Size: 101, UnpackedSize: 201},
-			{OS: "linux", Arch: "amd64", Name: "scriptboard-v1.2.3-linux-amd64.tar.gz", SHA256: strings.Repeat("2", 64), Size: 102, UnpackedSize: 202},
-			{OS: "linux", Arch: "arm64", Name: "scriptboard-v1.2.3-linux-arm64.tar.gz", SHA256: strings.Repeat("3", 64), Size: 103, UnpackedSize: 203},
+			{OS: "windows", Arch: "amd64", Name: "scriptboard-v1.2.3-windows-amd64-setup.exe", SHA256: strings.Repeat("0", 64), Size: 100, UnpackedSize: 200},
+			{OS: "windows", Arch: "arm64", Name: "scriptboard-v1.2.3-windows-arm64-setup.exe", SHA256: strings.Repeat("1", 64), Size: 101, UnpackedSize: 201},
+			{OS: "linux", Arch: "amd64", Name: "scriptboard-v1.2.3-linux-amd64.run", SHA256: strings.Repeat("2", 64), Size: 102, UnpackedSize: 202},
+			{OS: "linux", Arch: "arm64", Name: "scriptboard-v1.2.3-linux-arm64.run", SHA256: strings.Repeat("3", 64), Size: 103, UnpackedSize: 203},
 		},
 	}
 }
@@ -100,6 +100,62 @@ func TestTrustedManifestAcceptsNextRotationKey(t *testing.T) {
 	})
 	if _, err := VerifyTrustedManifest(raw, signature); err != nil {
 		t.Fatalf("verify manifest with next rotation key: %v", err)
+	}
+}
+
+func TestTrustedManifestRejectsEmbeddedRevokedKey(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(validManifest())
+	signature, err := SignManifest(raw, "compromised-key", privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalID, originalKey := buildinfo.UpdatePublicKeyID, buildinfo.UpdatePublicKeyBase64
+	originalRevoked := buildinfo.UpdateRevokedKeyIDs
+	buildinfo.UpdatePublicKeyID = "compromised-key"
+	buildinfo.UpdatePublicKeyBase64 = base64.StdEncoding.EncodeToString(publicKey)
+	buildinfo.UpdateRevokedKeyIDs = "compromised-key"
+	t.Cleanup(func() {
+		buildinfo.UpdatePublicKeyID, buildinfo.UpdatePublicKeyBase64 = originalID, originalKey
+		buildinfo.UpdateRevokedKeyIDs = originalRevoked
+	})
+	if _, err := VerifyTrustedManifest(raw, signature); err == nil || !strings.Contains(err.Error(), "revoked") {
+		t.Fatalf("revoked signature error = %v", err)
+	}
+}
+
+func TestTrustedManifestAcceptsDualSignatureDuringRotation(t *testing.T) {
+	currentPublic, currentPrivate, _ := ed25519.GenerateKey(nil)
+	nextPublic, nextPrivate, _ := ed25519.GenerateKey(nil)
+	raw, _ := json.Marshal(validManifest())
+	signature, err := SignManifestWithKeys(raw, []ManifestSigningKey{
+		{KeyID: "current-key", PrivateKey: currentPrivate},
+		{KeyID: "next-key", PrivateKey: nextPrivate},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalID, originalKey := buildinfo.UpdatePublicKeyID, buildinfo.UpdatePublicKeyBase64
+	originalNextID, originalNextKey := buildinfo.UpdateNextKeyID, buildinfo.UpdateNextKeyBase64
+	buildinfo.UpdatePublicKeyID = "current-key"
+	buildinfo.UpdatePublicKeyBase64 = base64.StdEncoding.EncodeToString(currentPublic)
+	buildinfo.UpdateNextKeyID = "next-key"
+	buildinfo.UpdateNextKeyBase64 = base64.StdEncoding.EncodeToString(nextPublic)
+	t.Cleanup(func() {
+		buildinfo.UpdatePublicKeyID, buildinfo.UpdatePublicKeyBase64 = originalID, originalKey
+		buildinfo.UpdateNextKeyID, buildinfo.UpdateNextKeyBase64 = originalNextID, originalNextKey
+	})
+	if _, err := VerifyTrustedManifest(raw, signature); err != nil {
+		t.Fatalf("verify dual-signed manifest: %v", err)
+	}
+	if err := VerifyManifestSignature(raw, signature, "current-key", currentPublic); err != nil {
+		t.Fatalf("verify current signature in document: %v", err)
+	}
+	if err := VerifyManifestSignature(raw, signature, "next-key", nextPublic); err != nil {
+		t.Fatalf("verify next signature in document: %v", err)
 	}
 }
 
@@ -387,5 +443,41 @@ func TestOperationLockRejectsConcurrentHelper(t *testing.T) {
 	if second, err := acquireOperationLock(stateRoot); err == nil {
 		_ = second.Close()
 		t.Fatal("concurrent update operation lock succeeded")
+	}
+}
+
+func TestCommittedUpdateRecoveryRequiresIntactSnapshotBeforeSwitching(t *testing.T) {
+	stateRoot := t.TempDir()
+	id, _ := NewOperationID()
+	nonce, _ := NewOperationID()
+	root, _ := OperationDirectory(stateRoot, id)
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manifest := validManifest()
+	operation := Operation{
+		Schema: OperationSchema, ID: id, Nonce: nonce, Phase: PhaseCommitted,
+		PreviousVersion: "1.0.0", TargetVersion: manifest.Version,
+		PreviousCommit: strings.Repeat("a", 40), TargetCommit: manifest.Commit,
+		InstallRoot: filepath.Join(t.TempDir(), "install"), StateRoot: stateRoot,
+		ConfigPath: filepath.Join(t.TempDir(), "config.yaml"), DatabasePath: filepath.Join(stateRoot, "app.db"),
+		ArchivePath: filepath.Join(root, "archive.zip"), ExtractedPath: filepath.Join(root, "extracted"),
+		SnapshotPath: filepath.Join(root, "database-before-update.db"), Manifest: manifest,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if err := SaveOperation(operation); err != nil {
+		t.Fatal(err)
+	}
+
+	err := RecoverOperation(context.Background(), stateRoot, id)
+	if err == nil || !strings.Contains(err.Error(), "snapshot") {
+		t.Fatalf("committed recovery without snapshot error = %v", err)
+	}
+	reloaded, err := LoadOperation(stateRoot, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Phase != PhaseCommitted {
+		t.Fatalf("failed preflight changed phase to %s", reloaded.Phase)
 	}
 }

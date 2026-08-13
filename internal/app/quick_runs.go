@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -21,6 +22,15 @@ type quickRunGroup struct {
 	QuickRunCount int
 	Items         []quickRunView
 	Ungrouped     bool
+}
+
+func (a *App) recordQuickRunAuditForRequest(request *http.Request, action, id, result string) {
+	quick, err := a.loadQuickRun(id)
+	if err != nil {
+		a.recordAuditForRequest(request, action, id, result)
+		return
+	}
+	a.recordAuditResourceForRequest(request, action, id, result, strconv.FormatInt(quick.Revision, 10), quick.ScriptSHA256)
 }
 
 type quickRunRecord struct {
@@ -126,10 +136,10 @@ func (a *App) loadQuickRun(id string) (quickRunRecord, error) {
 	var quick quickRunRecord
 	var groupID sql.NullString
 	err := a.db.QueryRow(`SELECT id, name, script_path, arguments_template, timeout_seconds,
-		source_run_id, sort_order, group_id, locked
+		source_run_id, sort_order, group_id, locked, script_sha256, revision
 		FROM quick_runs WHERE id = ?`, id).Scan(
 		&quick.ID, &quick.Name, &quick.ScriptPath, &quick.ArgumentsTemplate, &quick.TimeoutSeconds,
-		&quick.SourceRunID, &quick.SortOrder, &groupID, &quick.Locked,
+		&quick.SourceRunID, &quick.SortOrder, &groupID, &quick.Locked, &quick.ScriptSHA256, &quick.Revision,
 	)
 	if groupID.Valid {
 		quick.GroupID = groupID.String
@@ -525,10 +535,24 @@ func (a *App) updateQuickRun(response http.ResponseWriter, request *http.Request
 		return
 	}
 	id := request.PathValue("id")
+	quick, err := a.loadQuickRun(id)
+	if err != nil {
+		http.Error(response, "快捷执行不存在", http.StatusNotFound)
+		return
+	}
+	if quick.Locked {
+		http.Error(response, "快捷执行已锁定，请先解锁", http.StatusConflict)
+		return
+	}
+	prepared, err := a.hostPrepareScript(request.Context(), quick.ScriptPath)
+	if err != nil {
+		http.Error(response, "快捷执行脚本不可用", http.StatusConflict)
+		return
+	}
 	result, err := a.db.Exec(`UPDATE quick_runs
-		SET name = ?, arguments_template = ?, timeout_seconds = ?, updated_at = ?
+		SET name = ?, arguments_template = ?, timeout_seconds = ?, script_sha256 = ?, revision = revision + 1, updated_at = ?
 		WHERE id = ? AND locked = 0`,
-		name, arguments, timeoutSeconds, time.Now().UTC().Unix(), id)
+		name, arguments, timeoutSeconds, prepared.Digest, time.Now().UTC().Unix(), id)
 	count := int64(0)
 	if err == nil {
 		count, _ = result.RowsAffected()
@@ -545,7 +569,7 @@ func (a *App) updateQuickRun(response http.ResponseWriter, request *http.Request
 		http.Error(response, "快捷执行不存在", http.StatusNotFound)
 		return
 	}
-	a.recordAuditForRequest(request, "update_quick_run", id, "succeeded")
+	a.recordQuickRunAuditForRequest(request, "update_quick_run", id, "succeeded")
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }
 
@@ -589,7 +613,11 @@ func (a *App) copyQuickRunTask(response http.ResponseWriter, request *http.Reque
 	})
 }
 
-func (a *App) createQuickRunCopy(source quickRunRecord, scriptPath, name, arguments string, timeoutSeconds int, groupID *string) (string, error) {
+func (a *App) createQuickRunCopy(ctx context.Context, source quickRunRecord, scriptPath, name, arguments string, timeoutSeconds int, groupID *string) (string, error) {
+	prepared, err := a.hostPrepareScript(ctx, scriptPath)
+	if err != nil {
+		return "", err
+	}
 	id, err := randomToken(18)
 	if err != nil {
 		return "", err
@@ -625,10 +653,10 @@ func (a *App) createQuickRunCopy(source quickRunRecord, scriptPath, name, argume
 	}
 	if _, err = transaction.Exec(`INSERT INTO quick_runs
 		(id, name, script_path, script_path_key, arguments_template, timeout_seconds, source_run_id,
-		sort_order, created_at, group_id, locked, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+		sort_order, created_at, group_id, locked, script_sha256, revision, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 1, ?)`,
 		id, name, scriptPath, hostfiles.ComparisonKey(scriptPath), arguments, timeoutSeconds, sourceRunID,
-		sortOrder, now, targetGroup, now); err != nil {
+		sortOrder, now, targetGroup, prepared.Digest, now); err != nil {
 		return "", err
 	}
 	if err := transaction.Commit(); err != nil {
@@ -666,12 +694,12 @@ func (a *App) copyQuickRun(response http.ResponseWriter, request *http.Request) 
 		http.Error(response, "快捷执行分组不存在", http.StatusConflict)
 		return
 	}
-	id, err := a.createQuickRunCopy(source, scriptPath, name, arguments, timeoutSeconds, groupID)
+	id, err := a.createQuickRunCopy(request.Context(), source, scriptPath, name, arguments, timeoutSeconds, groupID)
 	if err != nil {
 		http.Error(response, "无法复制快捷执行", http.StatusInternalServerError)
 		return
 	}
-	a.recordAuditForRequest(request, "copy_quick_run", id, "succeeded")
+	a.recordQuickRunAuditForRequest(request, "copy_quick_run", id, "succeeded")
 	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }
@@ -688,7 +716,7 @@ func (a *App) setQuickRunLocked(response http.ResponseWriter, request *http.Requ
 	}
 	locked := value == "1"
 	id := request.PathValue("id")
-	result, err := a.db.Exec(`UPDATE quick_runs SET locked = ?, updated_at = ? WHERE id = ?`,
+	result, err := a.db.Exec(`UPDATE quick_runs SET locked = ?, revision = revision + 1, updated_at = ? WHERE id = ?`,
 		locked, time.Now().UTC().Unix(), id)
 	count := int64(0)
 	if err == nil {
@@ -706,6 +734,6 @@ func (a *App) setQuickRunLocked(response http.ResponseWriter, request *http.Requ
 	if locked {
 		action = "lock_quick_run"
 	}
-	a.recordAuditForRequest(request, action, id, "succeeded")
+	a.recordQuickRunAuditForRequest(request, action, id, "succeeded")
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }

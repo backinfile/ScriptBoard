@@ -1,5 +1,5 @@
 ---
-status: superseded by ADR-0130
+status: superseded by ADR-0165
 ---
 
 # 明文 HTTP 只监听本机回环地址

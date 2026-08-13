@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"net/url"
 	"os"
@@ -19,6 +20,9 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"scriptboard/internal/providercredential"
+	"scriptboard/internal/secretstore"
 )
 
 const (
@@ -161,8 +165,15 @@ var SchemaStatements = []string{
 }
 
 type Options struct {
-	StateRoot string
-	Now       func() time.Time
+	StateRoot           string
+	Now                 func() time.Time
+	SecretStore         *secretstore.Store
+	ProviderCredentials ProviderCredentialStore
+}
+
+type ProviderCredentialStore interface {
+	Store(context.Context, providercredential.Record, string) error
+	Delete(context.Context, string) error
 }
 
 type Actor struct {
@@ -247,10 +258,13 @@ type SessionTelemetry struct {
 }
 
 type Service struct {
-	db             *sql.DB
-	now            func() time.Time
-	credentialPath string
-	credentialMu   sync.Mutex
+	db                   *sql.DB
+	now                  func() time.Time
+	credentialPath       string
+	legacyCredentialPath string
+	secretStore          *secretstore.Store
+	providerCredentials  ProviderCredentialStore
+	credentialMu         sync.Mutex
 }
 
 func New(db *sql.DB, options Options) (*Service, error) {
@@ -272,7 +286,30 @@ func New(db *sql.DB, options Options) (*Service, error) {
 	if now == nil {
 		now = time.Now
 	}
-	return &Service{db: db, now: now, credentialPath: filepath.Join(secretsDirectory, "assistant-provider.json")}, nil
+	if options.ProviderCredentials != nil {
+		return &Service{
+			db: db, now: now, providerCredentials: options.ProviderCredentials,
+			credentialPath:       filepath.Join(secretsDirectory, "assistant-provider.enc"),
+			legacyCredentialPath: filepath.Join(secretsDirectory, "assistant-provider.json"),
+		}, nil
+	}
+	vault := options.SecretStore
+	if vault == nil {
+		var err error
+		vault, err = secretstore.New(stateRoot)
+		if err != nil {
+			return nil, fmt.Errorf("initialize assistant credential store: %w", err)
+		}
+	}
+	service := &Service{
+		db: db, now: now, secretStore: vault,
+		credentialPath:       filepath.Join(secretsDirectory, "assistant-provider.enc"),
+		legacyCredentialPath: filepath.Join(secretsDirectory, "assistant-provider.json"),
+	}
+	if err := service.migrateLegacyCredentials(); err != nil {
+		return nil, err
+	}
+	return service, nil
 }
 
 func (s *Service) SaveModel(ctx context.Context, actor Actor, id string, input ModelInput) (ModelConfig, error) {
@@ -284,6 +321,7 @@ func (s *Service) SaveModel(ctx context.Context, actor Actor, id string, input M
 		return ModelConfig{}, err
 	}
 	creating := strings.TrimSpace(id) == ""
+	existingCredentialConfigured := false
 	if creating && normalized.APIKey == "" {
 		return ModelConfig{}, fmt.Errorf("%w: provider credential is required", ErrInvalidInput)
 	}
@@ -294,7 +332,8 @@ func (s *Service) SaveModel(ctx context.Context, actor Actor, id string, input M
 		}
 	} else {
 		var ownerUserID string
-		if err := s.db.QueryRowContext(ctx, "SELECT owner_user_id FROM assistant_models WHERE id = ?", id).Scan(&ownerUserID); err != nil {
+		var configured int
+		if err := s.db.QueryRowContext(ctx, "SELECT owner_user_id, credential_configured FROM assistant_models WHERE id = ?", id).Scan(&ownerUserID, &configured); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ModelConfig{}, ErrNotFound
 			}
@@ -303,33 +342,54 @@ func (s *Service) SaveModel(ctx context.Context, actor Actor, id string, input M
 		if ownerUserID != actor.UserID {
 			return ModelConfig{}, ErrNotFound
 		}
+		existingCredentialConfigured = configured == 1
 	}
-
-	s.credentialMu.Lock()
-	defer s.credentialMu.Unlock()
-	credentials, err := s.loadCredentials()
-	if err != nil {
-		return ModelConfig{}, err
-	}
-	previousCredentials := cloneCredentials(credentials)
-	if normalized.APIKey != "" {
-		credentials[id] = normalized.APIKey
-	}
-	credentialConfigured := strings.TrimSpace(credentials[id]) != ""
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return ModelConfig{}, fmt.Errorf("begin LLM configuration update: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
 	var conflictingID string
-	err = tx.QueryRowContext(ctx, "SELECT id FROM assistant_models WHERE name = ? COLLATE NOCASE AND id <> ?", normalized.Name, id).Scan(&conflictingID)
+	err = s.db.QueryRowContext(ctx, "SELECT id FROM assistant_models WHERE name = ? COLLATE NOCASE AND id <> ?", normalized.Name, id).Scan(&conflictingID)
 	if err == nil {
 		return ModelConfig{}, fmt.Errorf("%w: LLM configuration name already exists", ErrInvalidInput)
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return ModelConfig{}, fmt.Errorf("check LLM configuration name: %w", err)
 	}
+
+	credentialConfigured := existingCredentialConfigured || normalized.APIKey != ""
+	var credentials, previousCredentials map[string]string
+	managedStored := false
+	if s.providerCredentials != nil {
+		err = s.providerCredentials.Store(ctx, providercredential.Record{
+			ID: id, OwnerUserID: actor.UserID, Provider: normalized.Provider, Model: normalized.Model,
+			Endpoint: normalized.Endpoint, Shared: normalized.Shared,
+		}, normalized.APIKey)
+		if err != nil {
+			return ModelConfig{}, fmt.Errorf("store Broker-owned provider credential: %w", err)
+		}
+		managedStored = true
+	} else {
+		s.credentialMu.Lock()
+		defer s.credentialMu.Unlock()
+		credentials, err = s.loadCredentials()
+		if err != nil {
+			return ModelConfig{}, err
+		}
+		previousCredentials = cloneCredentials(credentials)
+		if normalized.APIKey != "" {
+			credentials[id] = normalized.APIKey
+		}
+		credentialConfigured = strings.TrimSpace(credentials[id]) != ""
+	}
+	cleanupManagedCreate := creating && managedStored
+	defer func() {
+		if cleanupManagedCreate {
+			_ = s.providerCredentials.Delete(ctx, id)
+		}
+	}()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ModelConfig{}, fmt.Errorf("begin LLM configuration update: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
 	now := s.now().UTC()
 	if normalized.MakeDefault {
 		if _, err := tx.ExecContext(ctx, "UPDATE assistant_models SET is_default = 0 WHERE owner_user_id = ?", actor.UserID); err != nil {
@@ -374,17 +434,18 @@ func (s *Service) SaveModel(ctx context.Context, actor Actor, id string, input M
 	if err != nil {
 		return ModelConfig{}, fmt.Errorf("save LLM configuration: %w", err)
 	}
-	if normalized.APIKey != "" {
+	if s.providerCredentials == nil && normalized.APIKey != "" {
 		if err := s.writeCredentials(credentials); err != nil {
 			return ModelConfig{}, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		if normalized.APIKey != "" {
+		if s.providerCredentials == nil && normalized.APIKey != "" {
 			_ = s.writeCredentials(previousCredentials)
 		}
 		return ModelConfig{}, fmt.Errorf("commit LLM configuration: %w", err)
 	}
+	cleanupManagedCreate = false
 	model, err := s.model(ctx, id)
 	model.Owned = err == nil && model.OwnerUserID == actor.UserID
 	return model, err
@@ -516,6 +577,9 @@ func (s *Service) ModelForActor(ctx context.Context, actor Actor, id string) (Mo
 }
 
 func (s *Service) ModelCredential(ctx context.Context, id string) (string, error) {
+	if s.providerCredentials != nil {
+		return "", errors.New("Broker-owned provider credentials cannot be read by the Web service")
+	}
 	if _, err := s.model(ctx, id); err != nil {
 		return "", err
 	}
@@ -585,6 +649,9 @@ func (s *Service) DeleteModel(ctx context.Context, actor Actor, id string) error
 	if strings.TrimSpace(actor.UserID) == "" {
 		return fmt.Errorf("%w: actor is required", ErrInvalidInput)
 	}
+	if s.providerCredentials != nil {
+		return s.deleteManagedModel(ctx, actor, id)
+	}
 	s.credentialMu.Lock()
 	defer s.credentialMu.Unlock()
 	credentials, err := s.loadCredentials()
@@ -624,6 +691,36 @@ func (s *Service) DeleteModel(ctx context.Context, actor Actor, id string) error
 		return fmt.Errorf("commit LLM deletion: %w", err)
 	}
 	return nil
+}
+
+func (s *Service) deleteManagedModel(ctx context.Context, actor Actor, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin LLM deletion: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var isDefault, references int
+	if err := tx.QueryRowContext(ctx, `SELECT is_default,
+		EXISTS(SELECT 1 FROM assistant_conversations WHERE model_id = assistant_models.id)
+		FROM assistant_models WHERE id = ? AND owner_user_id = ?`, id, actor.UserID).Scan(&isDefault, &references); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("read LLM before deletion: %w", err)
+	}
+	if isDefault == 1 {
+		return fmt.Errorf("%w: default LLM cannot be deleted", ErrInvalidInput)
+	}
+	if references == 1 {
+		return fmt.Errorf("%w: LLM configuration is referenced by a conversation", ErrInvalidInput)
+	}
+	if err := s.providerCredentials.Delete(ctx, id); err != nil {
+		return fmt.Errorf("delete Broker-owned provider credential: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM assistant_models WHERE id = ? AND owner_user_id = ?", id, actor.UserID); err != nil {
+		return fmt.Errorf("delete LLM configuration: %w", err)
+	}
+	return tx.Commit()
 }
 
 func (s *Service) Settings(ctx context.Context) (Settings, error) {
@@ -1441,14 +1538,26 @@ func (s *Service) loadCredentials() (map[string]string, error) {
 	if len(body) > 1<<20 {
 		return nil, fmt.Errorf("assistant provider credential file is too large")
 	}
+	plain, err := s.secretStore.Unseal("assistant-provider-credentials-v1", body)
+	if err != nil {
+		return nil, fmt.Errorf("unseal assistant provider credentials: %w", err)
+	}
 	credentials := make(map[string]string)
-	if err := json.Unmarshal(body, &credentials); err != nil {
+	if err := json.Unmarshal(plain, &credentials); err != nil {
 		return nil, fmt.Errorf("decode assistant provider credentials: %w", err)
 	}
 	return credentials, nil
 }
 
 func (s *Service) writeCredentials(credentials map[string]string) error {
+	plain, err := json.Marshal(credentials)
+	if err != nil {
+		return fmt.Errorf("encode assistant provider credentials: %w", err)
+	}
+	body, err := s.secretStore.Seal("assistant-provider-credentials-v1", plain)
+	if err != nil {
+		return fmt.Errorf("seal assistant provider credentials: %w", err)
+	}
 	directory := filepath.Dir(s.credentialPath)
 	temporary, err := os.CreateTemp(directory, ".assistant-provider-*.tmp")
 	if err != nil {
@@ -1465,10 +1574,8 @@ func (s *Service) writeCredentials(credentials map[string]string) error {
 	if err := temporary.Chmod(0o600); err != nil {
 		return fmt.Errorf("protect assistant credential staging file: %w", err)
 	}
-	encoder := json.NewEncoder(temporary)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(credentials); err != nil {
-		return fmt.Errorf("encode assistant provider credentials: %w", err)
+	if _, err := temporary.Write(body); err != nil {
+		return fmt.Errorf("write assistant provider credentials: %w", err)
 	}
 	if err := temporary.Sync(); err != nil {
 		return fmt.Errorf("sync assistant provider credentials: %w", err)
@@ -1480,6 +1587,46 @@ func (s *Service) writeCredentials(credentials map[string]string) error {
 		return fmt.Errorf("commit assistant provider credentials: %w", err)
 	}
 	committed = true
+	return nil
+}
+
+func (s *Service) migrateLegacyCredentials() error {
+	body, err := os.ReadFile(s.legacyCredentialPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read legacy assistant provider credentials: %w", err)
+	}
+	if len(body) > 1<<20 {
+		return errors.New("legacy assistant provider credential file is too large")
+	}
+	legacy := make(map[string]string)
+	if err := json.Unmarshal(body, &legacy); err != nil {
+		return fmt.Errorf("decode legacy assistant provider credentials: %w", err)
+	}
+	createdSealed := false
+	if _, statErr := os.Stat(s.credentialPath); statErr == nil {
+		existing, loadErr := s.loadCredentials()
+		if loadErr != nil {
+			return loadErr
+		}
+		if !maps.Equal(existing, legacy) {
+			return errors.New("sealed and legacy assistant provider credentials disagree")
+		}
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return fmt.Errorf("inspect sealed assistant provider credentials: %w", statErr)
+	} else if writeErr := s.writeCredentials(legacy); writeErr != nil {
+		return writeErr
+	} else {
+		createdSealed = true
+	}
+	if err := os.Remove(s.legacyCredentialPath); err != nil {
+		if createdSealed {
+			_ = os.Remove(s.credentialPath)
+		}
+		return fmt.Errorf("remove plaintext assistant provider credentials: %w", err)
+	}
 	return nil
 }
 

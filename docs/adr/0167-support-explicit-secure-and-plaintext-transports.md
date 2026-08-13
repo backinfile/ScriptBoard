@@ -20,4 +20,4 @@ ScriptBoard 的用户可配置连接不得把 SSL/TLS 写死为唯一模式。�
 - Pi Runtime 在线安装同样只读取与当前 ScriptBoard Release 绑定的 GitHub 资产；离线安装提供不依赖网络协议的替代路径，并继续验证签名、版本、大小和 SHA-256。
 - 构建脚本下载固定的 Runtime Release 资产时显式使用 HTTPS/TLS 1.2；这是构建供应链约束，不是运行时连接配置。
 
-本决策扩展 [ADR-0130](./0130-default-to-loopback-and-allow-configured-listen-addresses.md)，并取代 [ADR-0131](./0131-monitor-one-kubernetes-cluster-with-bounded-operations.md) 中“Kubernetes 连接适配器只接受 HTTPS”的部分。历史 ADR-0082 已由 ADR-0130 取代，不再代表当前监听限制。
+本决策扩展 [ADR-0165](./0165-default-to-loopback-and-allow-configured-listen-addresses.md)，并取代 [ADR-0166](./0166-monitor-one-kubernetes-cluster-with-bounded-operations.md) 中“Kubernetes 连接适配器只接受 HTTPS”的部分。历史 ADR-0082 已由 ADR-0165 取代，不再代表当前监听限制。

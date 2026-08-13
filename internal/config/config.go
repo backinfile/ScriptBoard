@@ -7,61 +7,87 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/mail"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"go.yaml.in/yaml/v3"
 )
 
 type Config struct {
-	StateRoot         string              `yaml:"state_root"`
-	Listen            string              `yaml:"listen"`
-	TLSCert           string              `yaml:"tls_cert"`
-	TLSKey            string              `yaml:"tls_key"`
-	ExecutorChains    map[string][]string `yaml:"executor_chains"`
-	AdminUsername     string              `yaml:"admin_username"`
-	AdminPassword     string              `yaml:"admin_password"`
-	AdminPasswordFile string              `yaml:"admin_password_file"`
-	TrustedProxies    []string            `yaml:"trusted_proxies"`
-	RunTimeoutGrace   time.Duration       `yaml:"-"`
-	UpdateCheck       bool                `yaml:"update_check"`
-	UpdateInterval    time.Duration       `yaml:"-"`
-	ConfigPath        string              `yaml:"-"`
+	StateRoot                          string              `yaml:"state_root"`
+	Listen                             string              `yaml:"listen"`
+	TLSCert                            string              `yaml:"tls_cert"`
+	TLSKey                             string              `yaml:"tls_key"`
+	ExecutorChains                     map[string][]string `yaml:"executor_chains"`
+	AdminUsername                      string              `yaml:"admin_username"`
+	AdminPasswordFile                  string              `yaml:"admin_password_file"`
+	TrustedProxies                     []string            `yaml:"trusted_proxies"`
+	AllowedHosts                       []string            `yaml:"allowed_hosts"`
+	CanonicalExternalURL               string              `yaml:"canonical_external_url"`
+	SecurityEventEndpoint              string              `yaml:"security_event_endpoint"`
+	SecurityEventTokenFile             string              `yaml:"security_event_token_file"`
+	SecurityEventAllowPrivate          bool                `yaml:"security_event_allow_private"`
+	NotificationEmailRelayEndpoint     string              `yaml:"notification_email_relay_endpoint"`
+	NotificationEmailRelayTokenFile    string              `yaml:"notification_email_relay_token_file"`
+	NotificationEmailRecipient         string              `yaml:"notification_email_recipient"`
+	NotificationEmailRelayAllowPrivate bool                `yaml:"notification_email_relay_allow_private"`
+	RunTimeoutGrace                    time.Duration       `yaml:"-"`
+	UpdateCheck                        bool                `yaml:"update_check"`
+	UpdateInterval                     time.Duration       `yaml:"-"`
+	ConfigPath                         string              `yaml:"-"`
 }
 
 type yamlConfig struct {
-	StateRoot              string              `yaml:"state_root"`
-	Listen                 string              `yaml:"listen"`
-	TLSCert                string              `yaml:"tls_cert"`
-	TLSKey                 string              `yaml:"tls_key"`
-	ExecutorChains         map[string][]string `yaml:"executor_chains"`
-	AdminUsername          string              `yaml:"admin_username"`
-	AdminPassword          string              `yaml:"admin_password"`
-	AdminPasswordFile      string              `yaml:"admin_password_file"`
-	TrustedProxies         []string            `yaml:"trusted_proxies"`
-	RunTimeoutGraceSeconds *int                `yaml:"run_timeout_grace_seconds"`
-	UpdateCheck            *bool               `yaml:"update_check"`
-	UpdateIntervalHours    *int                `yaml:"update_check_interval_hours"`
-	RemovedManagedRoot     yaml.Node           `yaml:"managed_root"`
-	RemovedGitExecutable   yaml.Node           `yaml:"git_executable"`
+	StateRoot                          string              `yaml:"state_root"`
+	Listen                             string              `yaml:"listen"`
+	TLSCert                            string              `yaml:"tls_cert"`
+	TLSKey                             string              `yaml:"tls_key"`
+	ExecutorChains                     map[string][]string `yaml:"executor_chains"`
+	AdminUsername                      string              `yaml:"admin_username"`
+	AdminPasswordFile                  string              `yaml:"admin_password_file"`
+	TrustedProxies                     []string            `yaml:"trusted_proxies"`
+	AllowedHosts                       []string            `yaml:"allowed_hosts"`
+	CanonicalExternalURL               string              `yaml:"canonical_external_url"`
+	SecurityEventEndpoint              string              `yaml:"security_event_endpoint"`
+	SecurityEventTokenFile             string              `yaml:"security_event_token_file"`
+	SecurityEventAllowPrivate          *bool               `yaml:"security_event_allow_private"`
+	NotificationEmailRelayEndpoint     string              `yaml:"notification_email_relay_endpoint"`
+	NotificationEmailRelayTokenFile    string              `yaml:"notification_email_relay_token_file"`
+	NotificationEmailRecipient         string              `yaml:"notification_email_recipient"`
+	NotificationEmailRelayAllowPrivate *bool               `yaml:"notification_email_relay_allow_private"`
+	RunTimeoutGraceSeconds             *int                `yaml:"run_timeout_grace_seconds"`
+	UpdateCheck                        *bool               `yaml:"update_check"`
+	UpdateIntervalHours                *int                `yaml:"update_check_interval_hours"`
+	RemovedManagedRoot                 yaml.Node           `yaml:"managed_root"`
+	RemovedGitExecutable               yaml.Node           `yaml:"git_executable"`
+	RemovedAdminPassword               yaml.Node           `yaml:"admin_password"`
 }
 
 func Load(arguments []string, getenv func(string) string) (Config, error) {
 	if getenv == nil {
 		getenv = os.Getenv
 	}
-	for _, legacy := range []string{"SCRIPTBOARD_MANAGED_ROOT", "SCRIPTBOARD_GIT_EXECUTABLE"} {
+	for _, legacy := range []string{"SCRIPTBOARD_MANAGED_ROOT", "SCRIPTBOARD_GIT_EXECUTABLE", "SCRIPTBOARD_ADMIN_PASSWORD"} {
 		if strings.TrimSpace(getenv(legacy)) != "" {
+			if legacy == "SCRIPTBOARD_ADMIN_PASSWORD" {
+				return Config{}, errors.New("SCRIPTBOARD_ADMIN_PASSWORD was removed; use SCRIPTBOARD_ADMIN_PASSWORD_FILE or the first-start credential")
+			}
 			return Config{}, fmt.Errorf("%s was removed; create a new configuration and State Root for this version", legacy)
 		}
 	}
 	for _, argument := range arguments {
-		for _, legacy := range []string{"--managed-root", "--here", "--git-executable"} {
+		for _, legacy := range []string{"--managed-root", "--here", "--git-executable", "--admin-password"} {
 			if argument == legacy || strings.HasPrefix(argument, legacy+"=") {
+				if legacy == "--admin-password" {
+					return Config{}, errors.New("--admin-password was removed; use --admin-password-file or the first-start credential")
+				}
 				return Config{}, fmt.Errorf("%s was removed; create a new configuration and State Root for this version", legacy)
 			}
 		}
@@ -83,6 +109,9 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 		if values.RemovedGitExecutable.Kind != 0 {
 			return Config{}, errors.New("git_executable was removed; create a new configuration and State Root for this version")
 		}
+		if values.RemovedAdminPassword.Kind != 0 {
+			return Config{}, errors.New("admin_password was removed; use admin_password_file or the first-start credential")
+		}
 		applyYAML(&result, values)
 	} else if explicit || !os.IsNotExist(err) {
 		return Config{}, fmt.Errorf("读取配置文件 %q: %w", configPath, err)
@@ -100,9 +129,9 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 	flags.BoolVar(&result.UpdateCheck, "update-check", result.UpdateCheck, "定期检查正式版更新")
 	flags.DurationVar(&result.UpdateInterval, "update-check-interval", result.UpdateInterval, "更新检查间隔")
 	flags.StringVar(&result.AdminUsername, "admin-username", result.AdminUsername, "权威管理员用户名覆盖")
-	flags.StringVar(&result.AdminPassword, "admin-password", result.AdminPassword, "权威管理员密码覆盖")
 	flags.StringVar(&result.AdminPasswordFile, "admin-password-file", result.AdminPasswordFile, "权威管理员密码文件")
 	trustedProxyFlagSeen := false
+	allowedHostFlagSeen := false
 	flags.Func("trusted-proxy", "可信反向代理 IP 或 CIDR（可重复）", func(value string) error {
 		if !trustedProxyFlagSeen {
 			result.TrustedProxies = nil
@@ -111,6 +140,22 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 		result.TrustedProxies = append(result.TrustedProxies, value)
 		return nil
 	})
+	flags.Func("allowed-host", "允许的 HTTP Host（可重复）", func(value string) error {
+		if !allowedHostFlagSeen {
+			result.AllowedHosts = nil
+			allowedHostFlagSeen = true
+		}
+		result.AllowedHosts = append(result.AllowedHosts, value)
+		return nil
+	})
+	flags.StringVar(&result.CanonicalExternalURL, "canonical-external-url", result.CanonicalExternalURL, "对外访问的规范 URL")
+	flags.StringVar(&result.SecurityEventEndpoint, "security-event-endpoint", result.SecurityEventEndpoint, "HTTPS security event receiver")
+	flags.StringVar(&result.SecurityEventTokenFile, "security-event-token-file", result.SecurityEventTokenFile, "absolute path to the receiver bearer token")
+	flags.BoolVar(&result.SecurityEventAllowPrivate, "security-event-allow-private", result.SecurityEventAllowPrivate, "allow an explicitly configured private receiver address")
+	flags.StringVar(&result.NotificationEmailRelayEndpoint, "notification-email-relay-endpoint", result.NotificationEmailRelayEndpoint, "Broker-owned HTTPS email relay")
+	flags.StringVar(&result.NotificationEmailRelayTokenFile, "notification-email-relay-token-file", result.NotificationEmailRelayTokenFile, "absolute path to the Broker-owned email relay token")
+	flags.StringVar(&result.NotificationEmailRecipient, "notification-email-recipient", result.NotificationEmailRecipient, "fixed email notification recipient")
+	flags.BoolVar(&result.NotificationEmailRelayAllowPrivate, "notification-email-relay-allow-private", result.NotificationEmailRelayAllowPrivate, "allow an explicitly configured private email relay address")
 	if err := flags.Parse(arguments); err != nil {
 		return Config{}, err
 	}
@@ -122,6 +167,44 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 	}
 	if result.UpdateInterval < time.Hour || result.UpdateInterval > 168*time.Hour {
 		return Config{}, fmt.Errorf("更新检查间隔必须在 1 到 168 小时之间")
+	}
+	if result.AdminPasswordFile != "" && !filepath.IsAbs(result.AdminPasswordFile) {
+		return Config{}, errors.New("admin_password_file must be an absolute path")
+	}
+	if result.SecurityEventTokenFile != "" && !filepath.IsAbs(result.SecurityEventTokenFile) {
+		return Config{}, errors.New("security_event_token_file must be an absolute path")
+	}
+	if result.SecurityEventEndpoint == "" && (result.SecurityEventTokenFile != "" || result.SecurityEventAllowPrivate) {
+		return Config{}, errors.New("security event token/private-address settings require security_event_endpoint")
+	}
+	if result.SecurityEventEndpoint != "" {
+		endpoint, endpointErr := url.Parse(result.SecurityEventEndpoint)
+		if endpointErr != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil || endpoint.Fragment != "" {
+			return Config{}, errors.New("security_event_endpoint must be an HTTPS URL without credentials or fragment")
+		}
+	}
+	if result.NotificationEmailRelayTokenFile != "" && !filepath.IsAbs(result.NotificationEmailRelayTokenFile) {
+		return Config{}, errors.New("notification_email_relay_token_file must be an absolute path")
+	}
+	if result.NotificationEmailRelayEndpoint == "" {
+		if result.NotificationEmailRelayTokenFile != "" || result.NotificationEmailRecipient != "" || result.NotificationEmailRelayAllowPrivate {
+			return Config{}, errors.New("email relay token, recipient, and private-address settings require notification_email_relay_endpoint")
+		}
+	} else {
+		endpoint, endpointErr := url.Parse(result.NotificationEmailRelayEndpoint)
+		if endpointErr != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil || endpoint.Fragment != "" {
+			return Config{}, errors.New("notification_email_relay_endpoint must be an HTTPS URL without credentials or fragment")
+		}
+		address, addressErr := mail.ParseAddress(strings.TrimSpace(result.NotificationEmailRecipient))
+		if addressErr != nil || address.Address != strings.TrimSpace(result.NotificationEmailRecipient) || len(address.Address) > 320 {
+			return Config{}, errors.New("notification_email_recipient must be one plain email address")
+		}
+		if result.NotificationEmailRelayTokenFile == "" {
+			return Config{}, errors.New("notification_email_relay_token_file is required when email notifications are enabled")
+		}
+		if !strings.EqualFold(filepath.Base(filepath.Dir(result.NotificationEmailRelayTokenFile)), "broker-secrets") {
+			return Config{}, errors.New("notification_email_relay_token_file must be inside a dedicated broker-secrets directory")
+		}
 	}
 	for extension, chain := range result.ExecutorChains {
 		if extension == "" || extension[0] != '.' || len(chain) == 0 {
@@ -140,6 +223,9 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 			}
 		}
 	}
+	if err := finalizeHostSecurity(&result); err != nil {
+		return Config{}, err
+	}
 	return result, nil
 }
 
@@ -153,7 +239,7 @@ func defaults() Config {
 		return Config{
 			StateRoot:       filepath.Join(base, "state"),
 			Listen:          "127.0.0.1:8787",
-			TrustedProxies:  []string{"127.0.0.1/32"},
+			TrustedProxies:  nil,
 			RunTimeoutGrace: 30 * time.Second,
 			UpdateCheck:     true,
 			UpdateInterval:  6 * time.Hour,
@@ -163,7 +249,7 @@ func defaults() Config {
 	return Config{
 		StateRoot:       "/var/lib/scriptboard/state",
 		Listen:          "127.0.0.1:8787",
-		TrustedProxies:  []string{"127.0.0.1/32"},
+		TrustedProxies:  nil,
 		RunTimeoutGrace: 30 * time.Second,
 		UpdateCheck:     true,
 		UpdateInterval:  6 * time.Hour,
@@ -203,14 +289,38 @@ func applyYAML(result *Config, values yamlConfig) {
 	if values.AdminUsername != "" {
 		result.AdminUsername = values.AdminUsername
 	}
-	if values.AdminPassword != "" {
-		result.AdminPassword = values.AdminPassword
-	}
 	if values.AdminPasswordFile != "" {
 		result.AdminPasswordFile = values.AdminPasswordFile
 	}
 	if values.TrustedProxies != nil {
 		result.TrustedProxies = append([]string(nil), values.TrustedProxies...)
+	}
+	if values.AllowedHosts != nil {
+		result.AllowedHosts = append([]string(nil), values.AllowedHosts...)
+	}
+	if values.CanonicalExternalURL != "" {
+		result.CanonicalExternalURL = values.CanonicalExternalURL
+	}
+	if values.SecurityEventEndpoint != "" {
+		result.SecurityEventEndpoint = strings.TrimSpace(values.SecurityEventEndpoint)
+	}
+	if values.SecurityEventTokenFile != "" {
+		result.SecurityEventTokenFile = strings.TrimSpace(values.SecurityEventTokenFile)
+	}
+	if values.SecurityEventAllowPrivate != nil {
+		result.SecurityEventAllowPrivate = *values.SecurityEventAllowPrivate
+	}
+	if values.NotificationEmailRelayEndpoint != "" {
+		result.NotificationEmailRelayEndpoint = strings.TrimSpace(values.NotificationEmailRelayEndpoint)
+	}
+	if values.NotificationEmailRelayTokenFile != "" {
+		result.NotificationEmailRelayTokenFile = strings.TrimSpace(values.NotificationEmailRelayTokenFile)
+	}
+	if values.NotificationEmailRecipient != "" {
+		result.NotificationEmailRecipient = strings.TrimSpace(values.NotificationEmailRecipient)
+	}
+	if values.NotificationEmailRelayAllowPrivate != nil {
+		result.NotificationEmailRelayAllowPrivate = *values.NotificationEmailRelayAllowPrivate
 	}
 	if values.RunTimeoutGraceSeconds != nil {
 		result.RunTimeoutGrace = time.Duration(*values.RunTimeoutGraceSeconds) * time.Second
@@ -254,9 +364,6 @@ func applyEnvironment(result *Config, getenv func(string) string) {
 	if value := getenv("SCRIPTBOARD_ADMIN_USERNAME"); value != "" {
 		result.AdminUsername = value
 	}
-	if value := getenv("SCRIPTBOARD_ADMIN_PASSWORD"); value != "" {
-		result.AdminPassword = value
-	}
 	if value := getenv("SCRIPTBOARD_ADMIN_PASSWORD_FILE"); value != "" {
 		result.AdminPasswordFile = value
 	}
@@ -266,7 +373,133 @@ func applyEnvironment(result *Config, getenv func(string) string) {
 			result.TrustedProxies[index] = strings.TrimSpace(result.TrustedProxies[index])
 		}
 	}
-	if result.AdminPassword != "" && result.AdminPasswordFile != "" {
-		result.AdminPassword = ""
+	if value := getenv("SCRIPTBOARD_ALLOWED_HOSTS"); value != "" {
+		result.AllowedHosts = splitCommaList(value)
 	}
+	if value := getenv("SCRIPTBOARD_CANONICAL_EXTERNAL_URL"); value != "" {
+		result.CanonicalExternalURL = strings.TrimSpace(value)
+	}
+	if value := getenv("SCRIPTBOARD_SECURITY_EVENT_ENDPOINT"); value != "" {
+		result.SecurityEventEndpoint = strings.TrimSpace(value)
+	}
+	if value := getenv("SCRIPTBOARD_SECURITY_EVENT_TOKEN_FILE"); value != "" {
+		result.SecurityEventTokenFile = strings.TrimSpace(value)
+	}
+	if value := getenv("SCRIPTBOARD_SECURITY_EVENT_ALLOW_PRIVATE"); value != "" {
+		if enabled, err := strconv.ParseBool(value); err == nil {
+			result.SecurityEventAllowPrivate = enabled
+		}
+	}
+	if value := getenv("SCRIPTBOARD_NOTIFICATION_EMAIL_RELAY_ENDPOINT"); value != "" {
+		result.NotificationEmailRelayEndpoint = strings.TrimSpace(value)
+	}
+	if value := getenv("SCRIPTBOARD_NOTIFICATION_EMAIL_RELAY_TOKEN_FILE"); value != "" {
+		result.NotificationEmailRelayTokenFile = strings.TrimSpace(value)
+	}
+	if value := getenv("SCRIPTBOARD_NOTIFICATION_EMAIL_RECIPIENT"); value != "" {
+		result.NotificationEmailRecipient = strings.TrimSpace(value)
+	}
+	if value := getenv("SCRIPTBOARD_NOTIFICATION_EMAIL_RELAY_ALLOW_PRIVATE"); value != "" {
+		if enabled, err := strconv.ParseBool(value); err == nil {
+			result.NotificationEmailRelayAllowPrivate = enabled
+		}
+	}
+}
+
+func splitCommaList(value string) []string {
+	result := strings.Split(value, ",")
+	for index := range result {
+		result[index] = strings.TrimSpace(result[index])
+	}
+	return result
+}
+
+func finalizeHostSecurity(result *Config) error {
+	listenHost, _, err := net.SplitHostPort(result.Listen)
+	if err != nil {
+		return fmt.Errorf("监听地址 %q 无效: %w", result.Listen, err)
+	}
+	if len(result.AllowedHosts) == 0 {
+		listenIP := net.ParseIP(listenHost)
+		if listenIP != nil && listenIP.IsLoopback() {
+			result.AllowedHosts = []string{listenHost, "localhost"}
+			if listenIP.To4() != nil {
+				result.AllowedHosts = append(result.AllowedHosts, "::1")
+			} else {
+				result.AllowedHosts = append(result.AllowedHosts, "127.0.0.1")
+			}
+		} else if strings.EqualFold(listenHost, "localhost") {
+			result.AllowedHosts = []string{"localhost", "127.0.0.1", "::1"}
+		} else {
+			return errors.New("非回环或通配监听必须显式配置 allowed_hosts")
+		}
+	}
+	seen := make(map[string]bool, len(result.AllowedHosts))
+	for _, allowed := range result.AllowedHosts {
+		normalized, err := normalizeConfiguredHost(allowed)
+		if err != nil {
+			return fmt.Errorf("allowed host %q 无效: %w", allowed, err)
+		}
+		if seen[normalized] {
+			return fmt.Errorf("allowed host %q 重复", allowed)
+		}
+		seen[normalized] = true
+	}
+	if result.CanonicalExternalURL == "" {
+		scheme := "http"
+		if result.TLSCert != "" {
+			scheme = "https"
+		}
+		result.CanonicalExternalURL = scheme + "://" + result.Listen
+	}
+	canonical, err := url.Parse(result.CanonicalExternalURL)
+	if err != nil || (canonical.Scheme != "http" && canonical.Scheme != "https") || canonical.Host == "" || canonical.User != nil || canonical.RawQuery != "" || canonical.Fragment != "" || (canonical.Path != "" && canonical.Path != "/") {
+		return fmt.Errorf("canonical_external_url %q 无效", result.CanonicalExternalURL)
+	}
+	if result.TLSCert != "" && canonical.Scheme != "https" {
+		return fmt.Errorf("canonical_external_url 在启用 TLS 时必须使用 https")
+	}
+	canonicalHost, err := normalizeConfiguredHost(canonical.Host)
+	if err != nil || !seen[canonicalHost] {
+		return fmt.Errorf("canonical_external_url host 必须包含在 allowed_hosts 中")
+	}
+	result.CanonicalExternalURL = strings.TrimSuffix(canonical.String(), "/")
+	return nil
+}
+
+func normalizeConfiguredHost(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if host, rawPort, err := net.SplitHostPort(value); err == nil {
+		port, portErr := strconv.ParseUint(rawPort, 10, 16)
+		if portErr != nil || port == 0 {
+			return "", errors.New("端口格式无效")
+		}
+		value = host
+	} else if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
+		value = strings.TrimSuffix(strings.TrimPrefix(value, "["), "]")
+	} else if strings.Contains(value, ":") && net.ParseIP(value) == nil {
+		return "", errors.New("端口格式无效")
+	}
+	value = strings.TrimSuffix(strings.ToLower(value), ".")
+	if value == "" || strings.ContainsAny(value, "/\\,@ \t\r\n") {
+		return "", errors.New("主机名包含无效字符")
+	}
+	for _, character := range value {
+		if character > unicode.MaxASCII || unicode.IsControl(character) || unicode.IsSpace(character) {
+			return "", errors.New("主机名必须是无控制字符的 ASCII")
+		}
+	}
+	if net.ParseIP(value) == nil {
+		for _, label := range strings.Split(value, ".") {
+			if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+				return "", errors.New("DNS 标签无效")
+			}
+			for _, character := range label {
+				if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '-' {
+					return "", errors.New("DNS 标签包含无效字符")
+				}
+			}
+		}
+	}
+	return value, nil
 }

@@ -17,6 +17,8 @@ import (
 	"github.com/shirou/gopsutil/v4/mem"
 	gnet "github.com/shirou/gopsutil/v4/net"
 	"github.com/shirou/gopsutil/v4/process"
+
+	"scriptboard/internal/secretredaction"
 )
 
 type SystemProbe struct {
@@ -69,7 +71,7 @@ func (p *SystemProbe) Sample(ctx context.Context) RawSample {
 		}
 	}
 	if value, err := mem.VirtualMemoryWithContext(ctx); err != nil {
-		result.Errors["memory"] = err.Error()
+		result.Errors["memory"] = secretredaction.String(err.Error())
 	} else {
 		memory := &Memory{TotalBytes: value.Total, AvailableBytes: value.Available, UsedBytes: value.Total - value.Available}
 		if value.Total > 0 {
@@ -88,7 +90,7 @@ func (p *SystemProbe) Sample(ctx context.Context) RawSample {
 	}
 	p.collectFilesystems(ctx, &result)
 	if counters, err := disk.IOCountersWithContext(ctx); err != nil {
-		result.Errors["disk"] = err.Error()
+		result.Errors["disk"] = secretredaction.String(err.Error())
 	} else {
 		for name, value := range counters {
 			result.Disks[name] = DiskCounters{ReadBytes: value.ReadBytes, WriteBytes: value.WriteBytes, Reads: value.ReadCount, Writes: value.WriteCount, ReadTimeMS: value.ReadTime, WriteTimeMS: value.WriteTime}
@@ -105,7 +107,7 @@ func (p *SystemProbe) Sample(ctx context.Context) RawSample {
 func (p *SystemProbe) collectFilesystems(ctx context.Context, result *RawSample) {
 	partitions, err := disk.PartitionsWithContext(ctx, false)
 	if err != nil {
-		result.Errors["storage"] = err.Error()
+		result.Errors["storage"] = secretredaction.String(err.Error())
 		return
 	}
 	byID := map[string]Filesystem{}
@@ -146,7 +148,7 @@ func assignFilesystemRole(filesystems map[string]Filesystem, path, role string) 
 func (p *SystemProbe) collectNetwork(ctx context.Context, result *RawSample) {
 	interfaces, err := gnet.InterfacesWithContext(ctx)
 	if err != nil {
-		result.Errors["network"] = err.Error()
+		result.Errors["network"] = secretredaction.String(err.Error())
 		return
 	}
 	active := map[string]bool{}
@@ -168,7 +170,7 @@ func (p *SystemProbe) collectNetwork(ctx context.Context, result *RawSample) {
 	}
 	counters, err := gnet.IOCountersWithContext(ctx, true)
 	if err != nil {
-		result.Errors["network"] = err.Error()
+		result.Errors["network"] = secretredaction.String(err.Error())
 		return
 	}
 	for _, value := range counters {
@@ -187,7 +189,7 @@ func (p *SystemProbe) collectProcess(ctx context.Context, result *RawSample) {
 	if percent, err := p.process.PercentWithContext(ctx, 0); err == nil {
 		value.CPUPercent = clampPercent(percent / float64(p.logicalCores))
 	} else {
-		result.Errors["process"] = err.Error()
+		result.Errors["process"] = secretredaction.String(err.Error())
 	}
 	if memory, err := p.process.MemoryInfoWithContext(ctx); err == nil {
 		value.ResidentMemoryBytes = memory.RSS

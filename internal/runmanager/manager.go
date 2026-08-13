@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -13,7 +14,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -24,12 +24,16 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"scriptboard/internal/auditlog"
 	"scriptboard/internal/diskspace"
 	"scriptboard/internal/hostfiles"
+	"scriptboard/internal/secretredaction"
 )
 
 type StartRequest struct {
 	ScriptPath        string
+	ExpectedDigest    string
+	DisallowOverlap   bool
 	ArgumentsTemplate string
 	SourceType        string
 	SourceName        string
@@ -38,6 +42,8 @@ type StartRequest struct {
 	Variables         map[string]string
 	InitiatorUserID   string
 	InitiatorUsername string
+	PreparedScript    *hostfiles.Script
+	PreparedDirectory *hostfiles.PreparedDirectory
 }
 
 type OneTimeStartRequest struct {
@@ -51,6 +57,7 @@ type OneTimeStartRequest struct {
 	InitiatorUserID   string
 	InitiatorUsername string
 	InitiatorRole     string
+	PreparedDirectory *hostfiles.PreparedDirectory
 }
 
 type Run struct {
@@ -117,7 +124,7 @@ type executorCandidate struct {
 }
 
 type activeRun struct {
-	command              *exec.Cmd
+	process              ManagedProcess
 	terminal             string
 	changed              chan struct{}
 	scriptPath           string
@@ -142,6 +149,7 @@ func (r *activeRun) signalChanged() {
 
 type Manager struct {
 	db                  *sql.DB
+	auditLog            *auditlog.Store
 	files               *hostfiles.Manager
 	stateRoot           string
 	mu                  sync.Mutex
@@ -149,22 +157,35 @@ type Manager struct {
 	wg                  sync.WaitGroup
 	timeoutGrace        time.Duration
 	executorChains      map[string][]string
+	launcher            ProcessLauncher
 	startMu             sync.Mutex
 	accepting           bool
 	persistenceStop     chan struct{}
 	persistenceStopOnce sync.Once
 }
 
-func New(db *sql.DB, files *hostfiles.Manager, stateRoot string, timeoutGrace time.Duration, executorChains map[string][]string) *Manager {
-	return &Manager{
-		db: db, files: files, stateRoot: stateRoot, active: make(map[string]*activeRun), timeoutGrace: timeoutGrace,
-		executorChains: executorChains, accepting: true, persistenceStop: make(chan struct{}),
+func New(db *sql.DB, files *hostfiles.Manager, stateRoot string, timeoutGrace time.Duration, executorChains map[string][]string, auditStores ...*auditlog.Store) *Manager {
+	return NewWithLauncher(db, files, stateRoot, timeoutGrace, executorChains, nil, auditStores...)
+}
+
+func NewWithLauncher(db *sql.DB, files *hostfiles.Manager, stateRoot string, timeoutGrace time.Duration, executorChains map[string][]string, launcher ProcessLauncher, auditStores ...*auditlog.Store) *Manager {
+	if launcher == nil {
+		launcher = NewLocalProcessLauncher(executorChains)
 	}
+	manager := &Manager{
+		db: db, files: files, stateRoot: stateRoot, active: make(map[string]*activeRun), timeoutGrace: timeoutGrace,
+		executorChains: executorChains, launcher: launcher, accepting: true, persistenceStop: make(chan struct{}),
+	}
+	if len(auditStores) > 0 {
+		manager.auditLog = auditStores[0]
+	}
+	return manager
 }
 
 var ErrMaintenance = errors.New("ScriptBoard is entering update maintenance mode")
 var ErrSourceExpired = errors.New("one-time source has expired")
 var ErrSourceUnavailable = errors.New("one-time source is unavailable")
+var ErrRunOverlap = errors.New("the published Run already has an active execution")
 
 func prepareArguments(argumentsTemplate string, variables map[string]string) ([]string, []string, error) {
 	if len([]byte(argumentsTemplate)) > 16<<10 {
@@ -207,17 +228,39 @@ func (m *Manager) Start(request StartRequest) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	script, err := m.files.PrepareScript(request.ScriptPath)
-	if err != nil {
-		return "", fmt.Errorf("脚本不可执行: %w", err)
+	var script hostfiles.Script
+	if request.PreparedScript != nil {
+		script = *request.PreparedScript
+		if script.Path != request.ScriptPath || script.Digest == "" || script.Directory != filepath.Dir(script.Path) {
+			return "", errors.New("prepared script does not match the Run request")
+		}
+	} else {
+		script, err = m.files.PrepareScript(request.ScriptPath)
+		if err != nil {
+			return "", fmt.Errorf("脚本不可执行: %w", err)
+		}
+	}
+	if request.ExpectedDigest != "" && subtle.ConstantTimeCompare([]byte(script.Digest), []byte(request.ExpectedDigest)) != 1 {
+		return "", errors.New("script digest no longer matches the published Run configuration")
+	}
+	if request.DisallowOverlap && m.IsActiveScript(script.Path) {
+		return "", ErrRunOverlap
 	}
 	executors, err := resolveExecutors(hostfiles.Extension(script.Path), m.executorChains)
 	if err != nil {
 		return "", err
 	}
-	workingDirectory, err := m.files.PrepareDirectory(script.Directory)
-	if err != nil {
-		return "", fmt.Errorf("脚本工作目录不可用: %w", err)
+	var workingDirectory hostfiles.PreparedDirectory
+	if request.PreparedDirectory != nil {
+		workingDirectory = *request.PreparedDirectory
+		if workingDirectory.Path != script.Directory {
+			return "", errors.New("prepared working directory does not match the script")
+		}
+	} else {
+		workingDirectory, err = m.files.PrepareDirectory(script.Directory)
+		if err != nil {
+			return "", fmt.Errorf("脚本工作目录不可用: %w", err)
+		}
 	}
 	id, err := randomID()
 	if err != nil {
@@ -279,9 +322,17 @@ func (m *Manager) StartOneTime(request OneTimeStartRequest) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	workingDirectory, err := m.files.PrepareDirectory(request.WorkingDirectory)
-	if err != nil {
-		return "", fmt.Errorf("working directory is invalid: %w", err)
+	var workingDirectory hostfiles.PreparedDirectory
+	if request.PreparedDirectory != nil {
+		workingDirectory = *request.PreparedDirectory
+		if workingDirectory.Path != request.WorkingDirectory {
+			return "", errors.New("prepared working directory does not match the one-time Run request")
+		}
+	} else {
+		workingDirectory, err = m.files.PrepareDirectory(request.WorkingDirectory)
+		if err != nil {
+			return "", fmt.Errorf("working directory is invalid: %w", err)
+		}
 	}
 	id, err := randomID()
 	if err != nil {
@@ -293,6 +344,10 @@ func (m *Manager) StartOneTime(request OneTimeStartRequest) (string, error) {
 	}
 	if err := os.Mkdir(runRoot, 0o700); err != nil {
 		return "", fmt.Errorf("create private Run directory: %w", err)
+	}
+	if err := protectOneTimeRunDirectory(runRoot); err != nil {
+		_ = os.Remove(runRoot)
+		return "", fmt.Errorf("protect one-time Run directory: %w", err)
 	}
 	sourceFilename := "source" + extension
 	sourcePath := filepath.Join(runRoot, sourceFilename)
@@ -309,7 +364,7 @@ func (m *Manager) StartOneTime(request OneTimeStartRequest) (string, error) {
 		writeErr = closeErr
 	}
 	if writeErr == nil {
-		writeErr = os.Chmod(sourcePath, 0o400)
+		writeErr = protectOneTimeSourceForRunner(sourcePath)
 	}
 	if writeErr != nil {
 		_ = os.RemoveAll(runRoot)
@@ -352,7 +407,7 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 			m.files.ReleaseLease(leaseID)
 		}
 	}()
-	if prepared.scriptKind == "host_file" {
+	if prepared.scriptKind == "host_file" && prepared.script.Info != nil {
 		current, err := m.files.PrepareScript(prepared.script.Path)
 		if err != nil || current.Digest != prepared.script.Digest || !os.SameFile(current.Info, prepared.script.Info) {
 			return "", errors.New("script changed before its Run lease was acquired")
@@ -370,30 +425,50 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 	argumentJSON, _ := json.Marshal(prepared.arguments)
 	templateArgumentJSON, _ := json.Marshal(prepared.templateArguments)
 	now := time.Now().UTC()
-	runtimeIdentity := "unknown"
-	if currentUser, userErr := user.Current(); userErr == nil {
-		runtimeIdentity = currentUser.Username
+	runtimeIdentity := m.launcher.RuntimeIdentity()
+	var transaction *sql.Tx
+	var auditTransaction *auditlog.Transaction
+	if prepared.auditSource != "" && m.auditLog != nil {
+		auditTransaction, err = m.auditLog.Begin(context.Background())
+		if err == nil {
+			transaction = auditTransaction.SQL()
+		}
+	} else {
+		transaction, err = m.db.Begin()
 	}
-	transaction, err := m.db.Begin()
 	if err != nil {
 		_ = logFile.Close()
 		return "", fmt.Errorf("begin Run record: %w", err)
 	}
-	defer transaction.Rollback()
+	if auditTransaction != nil {
+		defer auditTransaction.Rollback()
+	} else {
+		defer transaction.Rollback()
+	}
 	var auditID any
 	if prepared.auditSource != "" {
-		result, auditErr := transaction.Exec(`INSERT INTO audit_events
-			(occurred_at, action, target, result, source_address, actor_user_id, actor_username, actor_role)
-			VALUES (?, 'start_one_time_run', ?, 'accepted', ?, ?, ?, ?)`,
-			now.Unix(), id, prepared.auditSource, prepared.initiatorUserID, prepared.initiatorUsername, prepared.initiatorRole)
+		var value int64
+		var auditErr error
+		if auditTransaction != nil {
+			value, auditErr = auditTransaction.Append(context.Background(), auditlog.Event{
+				OccurredAt: strconv.FormatInt(now.Unix(), 10), Action: "start_one_time_run", Target: id, Result: "accepted",
+				SourceAddress: prepared.auditSource, ActorUserID: prepared.initiatorUserID,
+				ActorUsername: prepared.initiatorUsername, ActorRole: prepared.initiatorRole,
+				ResourceDigestSHA256: prepared.script.Digest,
+			})
+		} else {
+			var result sql.Result
+			result, auditErr = transaction.Exec(`INSERT INTO audit_events
+				(occurred_at, action, target, result, source_address, actor_user_id, actor_username, actor_role)
+				VALUES (?, 'start_one_time_run', ?, 'accepted', ?, ?, ?, ?)`,
+				now.Unix(), id, prepared.auditSource, prepared.initiatorUserID, prepared.initiatorUsername, prepared.initiatorRole)
+			if auditErr == nil {
+				value, auditErr = result.LastInsertId()
+			}
+		}
 		if auditErr != nil {
 			_ = logFile.Close()
 			return "", fmt.Errorf("record one-time Run audit: %w", auditErr)
-		}
-		value, auditErr := result.LastInsertId()
-		if auditErr != nil {
-			_ = logFile.Close()
-			return "", fmt.Errorf("read one-time Run audit ID: %w", auditErr)
 		}
 		auditID = value
 	}
@@ -410,59 +485,29 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 		_ = logFile.Close()
 		return "", fmt.Errorf("create Run: %w", err)
 	}
-	if err := transaction.Commit(); err != nil {
+	if auditTransaction != nil {
+		err = auditTransaction.Commit()
+	} else {
+		err = transaction.Commit()
+	}
+	if err != nil {
 		_ = logFile.Close()
 		return "", fmt.Errorf("commit Run: %w", err)
 	}
 
-	var command *exec.Cmd
-	var stdout, stderr io.ReadCloser
-	var executorPath string
-	var startErrors []string
-	currentDirectoryInfo, directoryErr := os.Lstat(prepared.workingDirectory.Path)
-	if directoryErr != nil || !currentDirectoryInfo.IsDir() || currentDirectoryInfo.Mode()&os.ModeSymlink != 0 || !os.SameFile(currentDirectoryInfo, prepared.workingDirectory.Info) {
-		_ = logFile.Close()
-		m.failStart(id, errors.New("working directory changed before execution"))
-		return id, nil
+	if prepared.workingDirectory.Info != nil {
+		currentDirectoryInfo, directoryErr := os.Lstat(prepared.workingDirectory.Path)
+		if directoryErr != nil || !currentDirectoryInfo.IsDir() || currentDirectoryInfo.Mode()&os.ModeSymlink != 0 || !os.SameFile(currentDirectoryInfo, prepared.workingDirectory.Info) {
+			_ = logFile.Close()
+			m.failStart(id, errors.New("working directory changed before execution"))
+			return id, nil
+		}
 	}
-	for _, executor := range prepared.executors {
-		candidate, commandErr := newExecutorCommand(executor, prepared.script.Path, prepared.arguments)
-		if commandErr != nil {
-			startErrors = append(startErrors, executor.path+": "+commandErr.Error())
-			continue
-		}
-		candidate.Dir = prepared.workingDirectory.Path
-		candidate.Env = append(os.Environ(), "SCRIPTBOARD_RUN_ID="+id, "SCRIPTBOARD_SCRIPT_PATH="+prepared.displayPath)
-		configureProcess(candidate)
-		candidateStdout, pipeErr := candidate.StdoutPipe()
-		if pipeErr != nil {
-			startErrors = append(startErrors, executor.path+": "+pipeErr.Error())
-			continue
-		}
-		candidateStderr, pipeErr := candidate.StderrPipe()
-		if pipeErr != nil {
-			_ = candidateStdout.Close()
-			startErrors = append(startErrors, executor.path+": "+pipeErr.Error())
-			continue
-		}
-		if startErr := candidate.Start(); startErr != nil {
-			_ = candidateStdout.Close()
-			_ = candidateStderr.Close()
-			startErrors = append(startErrors, executor.path+": "+startErr.Error())
-			continue
-		}
-		command, stdout, stderr, executorPath = candidate, candidateStdout, candidateStderr, executor.path
-		break
-	}
-	if command == nil {
-		_ = logFile.Close()
-		m.failStart(id, fmt.Errorf("所有执行器均无法启动: %s", strings.Join(startErrors, "; ")))
-		return id, nil
-	}
-	cleanup, err := attachProcess(command.Process)
+	process, executorPath, err := m.launcher.Launch(context.Background(), LaunchRequest{
+		RunID: id, ScriptPath: prepared.script.Path, ScriptDigest: prepared.script.Digest,
+		WorkingDirectory: prepared.workingDirectory.Path, Arguments: prepared.arguments,
+	})
 	if err != nil {
-		_ = command.Process.Kill()
-		_ = command.Wait()
 		_ = logFile.Close()
 		m.failStart(id, err)
 		return id, nil
@@ -477,16 +522,16 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 		}
 	}
 	if err != nil {
-		_ = command.Process.Kill()
-		_ = command.Wait()
-		cleanup()
+		_ = process.Terminate(true)
+		_ = process.Wait()
+		_ = process.Close()
 		_ = logFile.Close()
 		m.failStart(id, fmt.Errorf("persist running state: %w", err))
 		return id, nil
 	}
 	m.mu.Lock()
 	active := &activeRun{
-		command: command, cleanup: cleanup, fileInfo: prepared.script.Info, changed: make(chan struct{}, 1),
+		process: process, cleanup: func() { _ = process.Close() }, fileInfo: prepared.script.Info, changed: make(chan struct{}, 1),
 		scriptPath:           normalizeHostPath(prepared.displayPath),
 		workingDirectory:     normalizeHostPath(prepared.workingDirectory.Path),
 		workingDirectoryInfo: prepared.workingDirectory.Info,
@@ -500,7 +545,7 @@ func (m *Manager) startPrepared(prepared preparedStart) (string, error) {
 	m.mu.Unlock()
 	leaseOwned = false
 	m.wg.Add(1)
-	go m.supervise(id, command, stdout, stderr, logFile, active)
+	go m.supervise(id, process, process.Stdout(), process.Stderr(), logFile, active)
 	return id, nil
 }
 
@@ -587,7 +632,7 @@ func (m *Manager) failStart(id string, startErr error) {
 		}
 	}
 	write := func() error {
-		result, err := m.db.Exec("UPDATE runs SET status = 'failed', finished_at = ?, error = ?, log_bytes = ? WHERE id = ?", now, startErr.Error(), logBytes, id)
+		result, err := m.db.Exec("UPDATE runs SET status = 'failed', finished_at = ?, error = ?, log_bytes = ? WHERE id = ?", now, secretredaction.String(startErr.Error()), logBytes, id)
 		if err != nil {
 			return err
 		}
@@ -601,16 +646,19 @@ func (m *Manager) failStart(id string, startErr error) {
 		return nil
 	}
 	if err := write(); err == nil {
+		m.recordTerminalAudit(id, "failed")
 		return
 	}
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
-		retryRunStateWrite(m.persistenceStop, write)
+		if retryRunStateWrite(m.persistenceStop, write) {
+			m.recordTerminalAudit(id, "failed")
+		}
 	}()
 }
 
-func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.ReadCloser, logFile *os.File, activeRun *activeRun) {
+func (m *Manager) supervise(id string, process ManagedProcess, stdout, stderr io.ReadCloser, logFile *os.File, activeRun *activeRun) {
 	defer m.wg.Done()
 	var eventMu sync.Mutex
 	var sequence int64
@@ -639,7 +687,7 @@ func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.Read
 			if count > 0 {
 				eventMu.Lock()
 				sequence++
-				encoded, _ := json.Marshal(persistedEvent{Sequence: sequence, Time: time.Now().UTC().UnixNano(), Source: source, Data: append([]byte(nil), buffer[:count]...)})
+				encoded, _ := json.Marshal(persistedEvent{Sequence: sequence, Time: time.Now().UTC().UnixNano(), Source: source, Data: secretredaction.Bytes(buffer[:count])})
 				line := append(encoded, '\n')
 				if !logIncomplete && written+int64(len(line)) <= headLogBytes {
 					countWritten, writeErr := logFile.Write(line)
@@ -692,7 +740,7 @@ func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.Read
 	go writeEvents("stdout", stdout)
 	go writeEvents("stderr", stderr)
 	readers.Wait()
-	waitErr := command.Wait()
+	waitErr := process.Wait()
 	if activeCleanup := func() func() {
 		m.mu.Lock()
 		defer m.mu.Unlock()
@@ -755,11 +803,11 @@ func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.Read
 	if terminal != "" {
 		status = terminal
 		if waitErr != nil {
-			errorText = waitErr.Error()
+			errorText = secretredaction.String(waitErr.Error())
 		}
 	} else if waitErr != nil {
 		status = "failed"
-		errorText = waitErr.Error()
+		errorText = secretredaction.String(waitErr.Error())
 		var exitError *exec.ExitError
 		if errors.As(waitErr, &exitError) {
 			exitCode = exitError.ExitCode()
@@ -767,7 +815,7 @@ func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.Read
 			exitCode = -1
 		}
 	}
-	retryRunStateWrite(m.persistenceStop, func() error {
+	if retryRunStateWrite(m.persistenceStop, func() error {
 		result, err := m.db.Exec("UPDATE runs SET status = ?, finished_at = ?, exit_code = ?, error = ?, log_incomplete = ?, log_truncated = ?, dropped_bytes = ?, log_bytes = ? WHERE id = ?", status, finished.UnixNano(), exitCode, errorText, logIncomplete, droppedBytes > 0, droppedBytes, logBytes, id)
 		if err != nil {
 			return err
@@ -780,12 +828,28 @@ func (m *Manager) supervise(id string, command *exec.Cmd, stdout, stderr io.Read
 			return errors.New("run terminal state target is missing")
 		}
 		return nil
-	})
+	}) {
+		m.recordTerminalAudit(id, status)
+	}
 	activeRun.signalChanged()
 	m.mu.Lock()
 	delete(m.active, id)
 	m.mu.Unlock()
 	m.files.ReleaseLease(activeRun.leaseID)
+}
+
+func (m *Manager) recordTerminalAudit(id, status string) {
+	if m.auditLog == nil {
+		return
+	}
+	var userID, username, digest string
+	if err := m.db.QueryRow(`SELECT initiated_by_user_id, initiated_by_username, script_sha256 FROM runs WHERE id = ?`, id).Scan(&userID, &username, &digest); err != nil {
+		return
+	}
+	_, _ = m.auditLog.Append(context.Background(), auditlog.Event{
+		OccurredAt: strconv.FormatInt(time.Now().UTC().Unix(), 10), Action: "run_completed", Target: id, Result: status,
+		SourceAddress: "runmanager", ActorUserID: userID, ActorUsername: username, ResourceDigestSHA256: digest,
+	})
 }
 
 func (m *Manager) timeout(id string) {
@@ -796,21 +860,21 @@ func (m *Manager) timeout(id string) {
 		return
 	}
 	active.terminal = "timed_out"
-	process := active.command.Process
+	process := active.process
 	m.mu.Unlock()
 	_, _ = m.db.Exec("UPDATE runs SET status = 'timing_out' WHERE id = ? AND status = 'running'", id)
 	active.signalChanged()
-	_ = terminateProcess(process, false)
+	_ = process.Terminate(false)
 	time.AfterFunc(m.timeoutGrace, func() {
 		m.mu.Lock()
 		stillActive := m.active[id]
-		var forceProcess *os.Process
+		var forceProcess ManagedProcess
 		if stillActive != nil && stillActive.terminal == "timed_out" {
-			forceProcess = stillActive.command.Process
+			forceProcess = stillActive.process
 		}
 		m.mu.Unlock()
 		if forceProcess != nil {
-			_ = terminateProcess(forceProcess, true)
+			_ = forceProcess.Terminate(true)
 		}
 	})
 }
@@ -828,13 +892,13 @@ func (m *Manager) Stop(id string) error {
 	}
 	force := active.terminal == "cancelled"
 	active.terminal = "cancelled"
-	process := active.command.Process
+	process := active.process
 	m.mu.Unlock()
 	if !force {
 		_, _ = m.db.Exec("UPDATE runs SET status = 'stopping' WHERE id = ? AND status = 'running'", id)
 	}
 	active.signalChanged()
-	if err := terminateProcess(process, force); err != nil {
+	if err := process.Terminate(force); err != nil {
 		if force {
 			return nil
 		}
@@ -1254,15 +1318,15 @@ func scanEvents(path string, offset, afterSequence int64, emit func(Event) error
 
 func (m *Manager) Close() {
 	m.mu.Lock()
-	processes := make([]*os.Process, 0, len(m.active))
+	processes := make([]ManagedProcess, 0, len(m.active))
 	for _, active := range m.active {
 		active.terminal = "cancelled"
-		processes = append(processes, active.command.Process)
+		processes = append(processes, active.process)
 	}
 	m.mu.Unlock()
 	for _, process := range processes {
-		if err := terminateProcess(process, false); err != nil {
-			_ = terminateProcess(process, true)
+		if err := process.Terminate(false); err != nil {
+			_ = process.Terminate(true)
 		}
 	}
 	done := make(chan struct{})
@@ -1277,7 +1341,7 @@ func (m *Manager) Close() {
 	case <-time.After(30 * time.Second):
 	}
 	for _, process := range processes {
-		_ = terminateProcess(process, true)
+		_ = process.Terminate(true)
 	}
 	select {
 	case <-done:
@@ -1365,6 +1429,10 @@ func resolveExecutors(extension string, overrides map[string][]string) ([]execut
 			}
 			path = lookedUp
 		}
+		path, err := validateExecutorTrust(path)
+		if err != nil {
+			continue
+		}
 		resolved = append(resolved, executorCandidate{
 			path: path, prefix: candidate.prefix,
 			batch: extension == ".cmd" || extension == ".bat",
@@ -1394,6 +1462,9 @@ func executorPrefix(extension string) []string {
 }
 
 func ParseArguments(input string) ([]string, error) {
+	if err := validateProcessArgument(input); err != nil {
+		return nil, err
+	}
 	var arguments []string
 	var current strings.Builder
 	var quote rune
@@ -1446,6 +1517,9 @@ func ParseArguments(input string) ([]string, error) {
 		flush()
 	}
 	for _, argument := range arguments {
+		if err := validateProcessArgument(argument); err != nil {
+			return nil, err
+		}
 		if len(argument) > 32<<10 {
 			return nil, fmt.Errorf("单个参数过长: %s", strconv.Quote(argument[:min(len(argument), 32)]))
 		}

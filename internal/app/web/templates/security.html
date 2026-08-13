@@ -20,6 +20,8 @@
   <nav class="security-tabs" aria-label="{{t .Locale "security.tabs"}}" data-security-tabs>
     <a href="/monitor/security?tab=overview" {{if eq .Tab "overview"}}aria-current="page"{{end}}><span data-lucide="activity" aria-hidden="true"></span>{{t .Locale "security.overview"}}</a>
     <a href="/monitor/security?tab=logins&amp;range={{.Range}}" {{if eq .Tab "logins"}}aria-current="page"{{end}}><span data-lucide="key-round" aria-hidden="true"></span>{{t .Locale "security.logins"}}</a>
+    <a href="/monitor/security?tab=updates" {{if eq .Tab "updates"}}aria-current="page"{{end}}><span data-lucide="package-search" aria-hidden="true"></span>{{t .Locale "security.os_updates"}}</a>
+    <a href="/monitor/security?tab=baseline" {{if eq .Tab "baseline"}}aria-current="page"{{end}}><span data-lucide="clipboard-check" aria-hidden="true"></span>{{t .Locale "security.baseline"}}</a>
     <a href="/monitor/security?tab=defense" {{if eq .Tab "defense"}}aria-current="page"{{end}}><span data-lucide="shield-check" aria-hidden="true"></span>{{t .Locale "security.defense"}}</a>
   </nav>
 
@@ -77,6 +79,34 @@
     </section>
     {{end}}
 
+  {{end}}
+
+  {{if eq .Tab "updates"}}
+    <section aria-labelledby="security-updates-title">
+      <header class="section-heading"><div><p class="section-index">01 / {{t .Locale "security.read_only"}}</p><h2 id="security-updates-title">{{t .Locale "security.available_security_updates"}}</h2><p>{{t .Locale "security.update_inventory_description"}}</p></div></header>
+      {{if .UpdateError}}<div class="security-warning"><span data-lucide="triangle-alert" aria-hidden="true"></span><span>{{t .Locale "security.update_inventory_unavailable"}}<small>{{.UpdateError}}</small></span></div>{{end}}
+      {{if not .UpdateReport.Supported}}
+        <div class="security-native-notice"><span data-lucide="circle-help" aria-hidden="true"></span><span><strong>{{t .Locale "security.update_provider_unsupported"}}</strong><small>{{t .Locale "security.update_unsupported_detail"}}</small></span></div>
+      {{else}}
+        <dl class="security-facts security-facts--three">
+          <div><dt>{{t .Locale "security.available_updates"}}</dt><dd>{{len .UpdateReport.Updates}}</dd><small>{{t .Locale "security.security_classification"}}</small></div>
+          <div><dt>{{t .Locale "security.update_provider"}}</dt><dd>{{.UpdateReport.Provider}}</dd><small>{{t .Locale "security.read_only_snapshot"}}</small></div>
+          <div><dt>{{t .Locale "security.collected_at"}}</dt><dd><time datetime="{{machineTime .UpdateReport.CollectedAt}}" data-local-time>{{localTime .Locale .UpdateReport.CollectedAt}}</time></dd><small>{{if .UpdateReport.Cached}}{{t .Locale "security.cached"}}{{else}}{{t .Locale "security.current_probe"}}{{end}}</small></div>
+        </dl>
+        <div class="security-warning"><span data-lucide="info" aria-hidden="true"></span><span>{{t .Locale "security.update_inventory_notice"}}</span></div>
+        <div class="table-shell"><table class="records-table"><thead><tr><th>{{t .Locale "common.name"}}</th><th>{{t .Locale "security.version"}}</th><th>{{t .Locale "security.severity"}}</th><th>{{t .Locale "security.source"}}</th><th>{{t .Locale "security.restart"}}</th></tr></thead><tbody>{{range .UpdateReport.Updates}}<tr><td><strong>{{.Title}}</strong><small><code>{{.Identifier}}</code></small></td><td>{{if .Version}}<code>{{.Version}}</code>{{else}}—{{end}}</td><td><span class="status-chip" data-state="attention"><span class="status-dot" aria-hidden="true"></span>{{if .Severity}}{{.Severity}}{{else}}{{t $.Locale "security.security_classification"}}{{end}}</span></td><td>{{if .Source}}{{.Source}}{{else}}—{{end}}</td><td>{{if .RestartRequired}}{{t $.Locale "security.required"}}{{else}}{{t $.Locale "security.not_reported"}}{{end}}</td></tr>{{else}}<tr class="records-table__empty"><td colspan="5">{{t $.Locale "security.no_available_security_updates"}}</td></tr>{{end}}</tbody></table></div>
+      {{end}}
+    </section>
+  {{end}}
+
+  {{if eq .Tab "baseline"}}
+    <section aria-labelledby="security-baseline-title">
+      <header class="section-heading"><div><p class="section-index">01 / {{t .Locale "security.read_only"}}</p><h2 id="security-baseline-title">{{t .Locale "security.baseline_title"}}</h2><p>{{t .Locale "security.baseline_description"}}</p></div>{{if .CanManage}}<form method="post" action="/monitor/security/baseline/snapshot"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button" type="submit"><span data-lucide="camera" aria-hidden="true"></span>{{t .Locale "security.capture_baseline"}}</button></form>{{end}}</header>
+      <dl class="security-facts security-facts--three"><div><dt>{{t .Locale "security.baseline_score"}}</dt><dd>{{.Baseline.Score}} / 100</dd><small>{{t .Locale "security.available_checks_only"}}</small></div><div><dt>{{t .Locale "security.passed"}}</dt><dd>{{.Baseline.Passed}}</dd><small>{{t .Locale "security.current_evidence"}}</small></div><div><dt>{{t .Locale "security.needs_attention"}}</dt><dd>{{.Baseline.Attention}}</dd><small>{{.Baseline.Unavailable}} {{t .Locale "security.unavailable"}}</small></div></dl>
+      <div class="security-warning"><span data-lucide="info" aria-hidden="true"></span><span>{{t .Locale "security.baseline_notice"}}</span></div>
+      {{if .BaselineHistoryError}}<aside class="inline-notice inline-notice--danger"><span data-lucide="triangle-alert" aria-hidden="true"></span><p>{{.BaselineHistoryError}}</p></aside>{{else if .BaselineDrift.HasSnapshot}}<section class="settings-block"><header class="section-heading"><div><h3>{{t .Locale "security.baseline_history"}}</h3><p>{{t .Locale "security.baseline_history_description"}}</p></div></header><dl class="settings-summary"><div><dt>{{t .Locale "security.previous_score"}}</dt><dd>{{.BaselineDrift.Score}} / 100</dd></div><div><dt>{{t .Locale "security.captured_at"}}</dt><dd><time datetime="{{machineTime .BaselineDrift.CapturedAt}}" data-local-time>{{displayTime .BaselineDrift.CapturedAt}}</time></dd></div><div><dt>{{t .Locale "security.drift_count"}}</dt><dd>{{len .BaselineDrift.Changes}}</dd></div></dl>{{if .BaselineDrift.Changes}}<div class="table-shell"><table class="records-table"><thead><tr><th>{{t .Locale "security.check"}}</th><th>{{t .Locale "security.previous"}}</th><th>{{t .Locale "security.current"}}</th></tr></thead><tbody>{{range .BaselineDrift.Changes}}<tr><td><code>{{.ID}}</code></td><td>{{.Previous}}</td><td>{{.Current}}</td></tr>{{end}}</tbody></table></div>{{else}}<aside class="inline-notice"><span data-lucide="circle-check" aria-hidden="true"></span><p>{{t .Locale "security.no_baseline_drift"}}</p></aside>{{end}}</section>{{else}}<aside class="inline-notice"><span data-lucide="history" aria-hidden="true"></span><p>{{t .Locale "security.no_baseline_history"}}</p></aside>{{end}}
+      <div class="security-login-checks" aria-label="{{t .Locale "security.baseline_checks"}}">{{range .Baseline.Checks}}<details class="security-login-check"><summary><span class="security-login-check__icon"><span data-lucide="{{if eq .Status "pass"}}circle-check{{else if eq .Status "attention"}}triangle-alert{{else}}circle-help{{end}}" aria-hidden="true"></span></span><span class="security-login-check__identity"><strong>{{.Title}}</strong><small>{{.Category}} · <code>{{.ID}}</code></small></span><span class="security-login-check__source">{{.Evidence}}</span><span class="status-chip" data-state="{{if eq .Status "pass"}}current{{else if eq .Status "attention"}}attention{{else}}stale{{end}}"><span class="status-dot" aria-hidden="true"></span>{{if eq .Status "pass"}}{{t $.Locale "security.passed"}}{{else if eq .Status "attention"}}{{t $.Locale "security.needs_attention"}}{{else}}{{t $.Locale "security.unavailable"}}{{end}}</span><span class="security-login-check__chevron" data-lucide="chevron-down" aria-hidden="true"></span></summary><div class="security-login-check__evidence"><dl><div><dt>{{t $.Locale "security.evidence"}}</dt><dd>{{.Evidence}}</dd></div>{{if .Guidance}}<div><dt>{{t $.Locale "security.guidance"}}</dt><dd>{{.Guidance}}</dd></div>{{end}}</dl></div></details>{{end}}</div>
+    </section>
   {{end}}
 
   {{if eq .Tab "logins"}}

@@ -80,8 +80,11 @@ func updateMovedScriptReferences(transaction *sql.Tx, source, destination string
 			if err != nil {
 				return err
 			}
-			if _, err := transaction.Exec("UPDATE "+table+" SET script_path = ?, script_path_key = ? WHERE id = ?",
-				movedPath, hostfiles.ComparisonKey(movedPath), reference.id); err != nil {
+			query := "UPDATE " + table + " SET script_path = ?, script_path_key = ? WHERE id = ?"
+			if table == "quick_runs" {
+				query = "UPDATE quick_runs SET script_path = ?, script_path_key = ?, revision = revision + 1, updated_at = unixepoch() WHERE id = ?"
+			}
+			if _, err := transaction.Exec(query, movedPath, hostfiles.ComparisonKey(movedPath), reference.id); err != nil {
 				return fmt.Errorf("update %s file reference: %w", table, err)
 			}
 		}

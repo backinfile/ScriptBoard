@@ -4,6 +4,8 @@
 
 Accepted
 
+> MySQL 主密钥位于 State Root 的保存方式已被 [ADR-0143](./0143-seal-recoverable-secrets-with-an-external-host-key.md) 取代。
+
 ## 背景
 
 ScriptBoard 需要在不捆绑数据库客户端、不暴露凭据、且服务可能在破坏性恢复期间重启的条件下，管理本机及远程 MySQL/MariaDB。直接在 Web handler 中执行管理 SQL 或串联命令，会把凭据、状态恢复、审计和并发规则分散到传输层。

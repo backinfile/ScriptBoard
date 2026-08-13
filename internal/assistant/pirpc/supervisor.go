@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -22,37 +21,78 @@ type Supervisor struct {
 	maximum   int
 	accepting bool
 	active    map[string]*Session
+	launcher  ProcessLauncher
 }
 
 type Session struct {
-	key        string
-	command    *exec.Cmd
-	client     *Client
-	controller assistantProcessController
-	stderr     *boundedTail
-	done       chan struct{}
-	stopOnce   sync.Once
-	waitMu     sync.Mutex
-	waitErr    error
+	key      string
+	process  ManagedProcess
+	client   *Client
+	stderr   *boundedTail
+	done     chan struct{}
+	stopOnce sync.Once
+	waitMu   sync.Mutex
+	waitErr  error
+}
+
+// ManagedProcess is the narrow lifecycle and stream interface needed by the
+// Pi supervisor. Implementations may be a local child or an isolated Runtime
+// Host connection; callers cannot depend on os/exec details.
+type ManagedProcess interface {
+	Stdin() io.WriteCloser
+	Stdout() io.ReadCloser
+	Stderr() io.ReadCloser
+	Wait() error
+	Terminate(force bool) error
+	Close() error
+}
+
+// ProcessLauncher is the deployment seam for Pi. Managed installations use a
+// local IPC adapter while portable development uses the local adapter.
+type ProcessLauncher interface {
+	LaunchSpec(context.Context, LaunchSpec) (ManagedProcess, error)
+	LaunchRuntime(context.Context, RuntimeLaunchRequest) (ManagedProcess, error)
 }
 
 func NewSupervisor(maximum int) *Supervisor {
+	return NewSupervisorWithLauncher(maximum, newLocalProcessLauncher(""))
+}
+
+func NewSupervisorWithLauncher(maximum int, launcher ProcessLauncher) *Supervisor {
 	if maximum < 1 {
 		maximum = 1
 	}
-	return &Supervisor{maximum: maximum, accepting: true, active: make(map[string]*Session)}
+	if launcher == nil {
+		launcher = newLocalProcessLauncher("")
+	}
+	return &Supervisor{maximum: maximum, accepting: true, active: make(map[string]*Session), launcher: launcher}
 }
 
 func (supervisor *Supervisor) Start(key string, spec LaunchSpec) (*Session, error) {
-	key = strings.TrimSpace(key)
-	if key == "" {
-		return nil, fmt.Errorf("assistant process key is required")
-	}
 	if !filepath.IsAbs(spec.Executable) || strings.TrimSpace(spec.Workspace) == "" {
 		return nil, fmt.Errorf("assistant launch spec is incomplete")
 	}
 	if err := ensurePrivateDirectory(spec.Workspace); err != nil {
 		return nil, err
+	}
+	return supervisor.start(key, func() (ManagedProcess, error) {
+		return supervisor.launcher.LaunchSpec(context.Background(), spec)
+	})
+}
+
+func (supervisor *Supervisor) StartRuntime(key string, request RuntimeLaunchRequest) (*Session, error) {
+	if strings.TrimSpace(key) == "" || strings.TrimSpace(key) != strings.TrimSpace(request.ConversationID) {
+		return nil, fmt.Errorf("assistant process key must match the Runtime conversation")
+	}
+	return supervisor.start(key, func() (ManagedProcess, error) {
+		return supervisor.launcher.LaunchRuntime(context.Background(), request)
+	})
+}
+
+func (supervisor *Supervisor) start(key string, launch func() (ManagedProcess, error)) (*Session, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, fmt.Errorf("assistant process key is required")
 	}
 
 	supervisor.mu.Lock()
@@ -84,53 +124,26 @@ func (supervisor *Supervisor) Start(key string, spec LaunchSpec) (*Session, erro
 		supervisor.mu.Unlock()
 	}()
 
-	command := exec.Command(spec.Executable, spec.Args...)
-	command.Dir = spec.Workspace
-	command.Env = append([]string(nil), spec.Env...)
-	configureAssistantProcess(command)
-	stdin, err := command.StdinPipe()
+	process, err := launch()
 	if err != nil {
-		return nil, fmt.Errorf("open Pi stdin: %w", err)
-	}
-	stdout, err := command.StdoutPipe()
-	if err != nil {
-		_ = stdin.Close()
-		return nil, fmt.Errorf("open Pi stdout: %w", err)
-	}
-	stderr, err := command.StderrPipe()
-	if err != nil {
-		_ = stdin.Close()
-		_ = stdout.Close()
-		return nil, fmt.Errorf("open Pi stderr: %w", err)
-	}
-	if err := command.Start(); err != nil {
-		_ = stdin.Close()
-		_ = stdout.Close()
-		_ = stderr.Close()
-		return nil, fmt.Errorf("start private Pi runtime: %w", err)
-	}
-	controller, err := attachAssistantProcess(command.Process)
-	if err != nil {
-		_ = command.Process.Kill()
-		_ = command.Wait()
 		return nil, err
 	}
 	session := &Session{
-		key: key, command: command, client: NewClient(stdout, stdin, ClientOptions{}), controller: controller,
+		key: key, process: process, client: NewClient(process.Stdout(), process.Stdin(), ClientOptions{}),
 		stderr: newBoundedTail(64 << 10), done: make(chan struct{}),
 	}
 	supervisor.mu.Lock()
 	if !supervisor.accepting {
 		supervisor.mu.Unlock()
-		_ = controller.Terminate(true)
-		_ = command.Wait()
-		_ = controller.Close()
+		_ = process.Terminate(true)
+		_ = process.Wait()
+		_ = process.Close()
 		return nil, ErrClientClosed
 	}
 	supervisor.active[key] = session
 	supervisor.mu.Unlock()
 	reserved = false
-	go supervisor.supervise(session, stderr)
+	go supervisor.supervise(session, process.Stderr())
 	return session, nil
 }
 
@@ -148,9 +161,9 @@ func (supervisor *Supervisor) supervise(session *Session, stderr io.ReadCloser) 
 		_ = stderr.Close()
 		close(stderrDone)
 	}()
-	waitErr := session.command.Wait()
+	waitErr := session.process.Wait()
 	_ = session.client.Close()
-	_ = session.controller.Close()
+	_ = session.process.Close()
 	<-stderrDone
 	session.waitMu.Lock()
 	session.waitErr = waitErr
@@ -202,7 +215,7 @@ func (supervisor *Supervisor) Stop(ctx context.Context, key string) error {
 	case <-session.done:
 		return nil
 	case <-ctx.Done():
-		_ = session.controller.Terminate(true)
+		_ = session.process.Terminate(true)
 		select {
 		case <-session.done:
 			return nil
@@ -221,13 +234,13 @@ func stopAssistantSession(session *Session) {
 		return
 	case <-time.After(750 * time.Millisecond):
 	}
-	_ = session.controller.Terminate(false)
+	_ = session.process.Terminate(false)
 	select {
 	case <-session.done:
 		return
 	case <-time.After(1250 * time.Millisecond):
 	}
-	_ = session.controller.Terminate(true)
+	_ = session.process.Terminate(true)
 }
 
 func (supervisor *Supervisor) Close(ctx context.Context) error {

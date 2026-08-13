@@ -6,15 +6,17 @@
 
 正式 `vX.Y.Z` Tag 必须一次生成并发布：
 
-- `scriptboard-vX.Y.Z-windows-amd64.zip`
-- `scriptboard-vX.Y.Z-windows-arm64.zip`
-- `scriptboard-vX.Y.Z-linux-amd64.tar.gz`
-- `scriptboard-vX.Y.Z-linux-arm64.tar.gz`
+- `scriptboard-vX.Y.Z-windows-amd64-setup.exe`
+- `scriptboard-vX.Y.Z-windows-arm64-setup.exe`
+- `scriptboard-vX.Y.Z-linux-amd64.run`
+- `scriptboard-vX.Y.Z-linux-arm64.run`
 - `SHA256SUMS`
 - `release-manifest.json`
 - `release-manifest.json.sig`
 
-每个归档都必须包含与二进制一致的 `RELEASE.json`。Windows 归档包含服务、托盘、稳定托盘启动器和 updater；Linux 归档包含服务和 updater。正式发布不允许缺少签名、减少平台或使用 prerelease 版本号。
+每个平台只发布一个原生自解包安装文件，其 ZIP 载荷必须包含与组件一致的 `RELEASE.json`。Windows Setup 内含四个服务组件、托盘、稳定托盘启动器和 updater；Linux `.run` 内含四个服务组件和 updater。安装器与自动更新器复用同一套有界 ZIP 解包、完整发布校验和 `service install --start` 流程。正式发布不允许缺少安装器、签名、平台或使用 prerelease 版本号。
+
+单文件安装器资产属于 updater protocol 2。protocol 1 客户端不能解析新的资产名称与载荷格式，必须手工下载并执行一次 protocol 2 安装器；进入该基线后，后续版本继续通过应用内事务更新。不得为了兼容旧客户端在同一清单混入旧 ZIP/tar 资产或降低 `minimum_updater_protocol`。
 
 ## 首次配置签名密钥
 
@@ -40,7 +42,7 @@ go run ./cmd/scriptboard-release keygen
 
 1. 确认工作树、版本内容和文档已经完成评审。
 2. 在 Windows 与至少两个代表性 systemd Linux 环境完成服务安装、更新、验活失败回滚和人工恢复演练。
-3. 确认 `go test ./... -count=1` 与 Chromium 浏览器门禁通过。
+3. 确认正式 Tag 的发布门禁将直接执行全量测试、vet/构建、关键安全包 race、安全边界 fuzz、Chromium 浏览器、`govulncheck`、gitleaks、CodeQL 和提升权限 Windows SCM 四服务矩阵；不得用早先分支上的普通 CI 结果替代 Tag commit 的结果。
 4. 创建严格稳定版 Tag，格式只能为 `vX.Y.Z`，并推送该 Tag：
 
    ```powershell
@@ -48,10 +50,10 @@ go run ./cmd/scriptboard-release keygen
    git push origin v1.2.3
    ```
 
-5. GitHub Actions 的 `release` 工作流会测试、构建、签名、对 Linux amd64 二进制执行版本冒烟检查，并在全部通过后创建 GitHub Release。
-6. 发布后核对 Release 不是 Draft 或 Prerelease，四个平台归档和三个验证文件齐全，并从一台已安装的上一版本主机执行“立即检查 → 下载并验证 → 安装并重启”。
+5. GitHub Actions 的 `release` 工作流先在目标 Tag commit 上完成上述安全门禁；只有全部成功后才进入受保护 `release` Environment 构建、签名和 provenance attestation，再对 Linux amd64 二进制执行版本冒烟检查并创建 GitHub Release。
+6. 发布后核对 Release 不是 Draft 或 Prerelease，四个平台安装器和三个验证文件齐全，并从一台已安装的上一版本主机执行“立即检查 → 下载并验证 → 安装并重启”。
 
-Tag Release 缺少任何必需 Secret、私钥与公钥不匹配、归档数量错误或清单校验失败时，工作流必须失败，不得手工发布部分产物。
+Tag Release 的任一安全门禁失败、缺少任何必需 Secret、私钥与公钥不匹配、安装器数量错误或清单校验失败时，工作流必须失败，不得手工发布部分产物。
 
 ## Pi Runtime 配套资产
 
@@ -99,23 +101,24 @@ Pi 版本、四个平台资产大小与 SHA-256，加入 `runtime/scriptboard-ex
 
 ## 本地开发构建
 
-无需密钥即可生成明确标记为 `development` 的未签名归档：
+无需密钥即可生成明确标记为 `development` 的未签名单文件安装器：
 
 ```powershell
 ./scripts/build-release.ps1 -Version development
 ```
 
-这些归档用于编译和包装验证。它们不会自动检查或应用更新，也不能作为正式服务更新基线。不要把 `development` 产物上传到正式 GitHub Release。
+这些安装器用于编译和包装验证。它们只支持 `--version-json`，不能安装受管服务、检查或应用更新，也不能作为正式服务更新基线。不要把 `development` 产物上传到正式 GitHub Release。
 
 ## 发布前检查
 
 至少确认：
 
 - `scriptboard version --json` 的 `tag`、`version`、完整 `commit`、`release_build` 与目标 Tag 一致；
-- 四个归档内的 `RELEASE.json` 一致，且平台内容完整；
+- 四个安装器内嵌载荷的 `RELEASE.json` 一致，且平台内容完整；
+- 从每个平台安装器执行默认入口后，输出匹配的产品版本和 `STATE: RUNNING`，无需人工追加 `start` 或 `verify`；
 - `release-manifest.json` 只包含四个平台资产，名称、大小、解压大小和 SHA-256 与实际文件一致；
-- 修改清单、签名或归档任意一个字节都会被拒绝；
-- ZIP/TAR 路径穿越、绝对路径、符号链接/硬链接、特殊文件、重复路径、超限文件数量或大小都会被拒绝；
+- 修改清单、签名或安装器任意一个字节都会被拒绝；
+- 内嵌 ZIP 的路径穿越、绝对路径、符号链接、特殊文件、重复路径、超限文件数量或大小都会被拒绝；
 - 有活动 Run 时安装返回冲突且 Run 继续执行；
 - 新版本启动失败、迁移失败和 HTTP 验活超时都会恢复旧版本与更新前数据库；
 - 更新成功或回滚后，Web 显示终态且审计只导入一次。
@@ -132,7 +135,7 @@ Pi 版本、四个平台资产大小与 SHA-256，加入 `runtime/scriptboard-ex
 4. 保留足够升级窗口并确认主要安装已进入桥接版本。
 5. 把当前 key ID、公钥和私钥切换为新密钥，清空两个 next Secret，再发布后续版本。
 
-未安装桥接版本的旧实例无法验证只由新密钥签名的最新版，需要管理员手工下载完整归档并按 README 全新安装。不要为了兼容它们重新启用已退役私钥。
+未安装桥接版本的旧实例无法验证只由新密钥签名的最新版，需要管理员手工下载完整安装器并按 README 全新安装。不要为了兼容它们重新启用已退役私钥。
 
 如果当前私钥疑似泄露，立即撤销 GitHub Secret、停止发布并调查 GitHub 仓库与 Environment 权限。因为已安装客户端仍信任对应公钥，不能把普通桥接轮换宣称为安全撤销；恢复方案是通过可信渠道发布新基线并要求管理员手工全新安装。
 
