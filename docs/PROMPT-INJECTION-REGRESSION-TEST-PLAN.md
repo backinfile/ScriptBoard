@@ -103,12 +103,12 @@ ScriptBoard 会把脚本内容、运行日志、网站响应、对象名称和�
 
 建议落点：
 
-- `internal/app/assistant_context_test.go`
-- `internal/app/assistant_tools_test.go`
+- `internal/web/assistant_context_test.go`
+- `internal/web/assistant_tools_test.go`
 - `internal/assistant/toolbroker/broker_test.go`
 - `internal/assistant/service_test.go`
-- 新增 `internal/app/prompt_injection_test.go`
-- 新增 `internal/app/testdata/prompt-injection/`
+- 新增 `internal/web/prompt_injection_test.go`
+- 新增 `internal/web/testdata/prompt-injection/`
 
 ### 6.2 第二层：Fake Pi 全链路测试
 

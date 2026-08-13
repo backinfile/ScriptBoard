@@ -2,6 +2,10 @@
 
 ScriptBoard 是面向单机、少量可信用户场景的主机文件与脚本操作台。它通过受限领域边界访问主机文件、执行可信脚本并追踪结果；它不是通用运维编排平台或不可信代码沙箱。
 
+## Code architecture
+
+进程入口遵循 `cmd -> bootstrap -> web / domain -> store / leaf packages`。`internal/bootstrap` 是 Web、Broker、Runner 与 AI Host 的唯一运行时组合根；`internal/web` 只拥有 HTTP、路由和 UI 适配；SQLite 生命周期与迁移由 `internal/store` 统一管理。身份授权、快捷执行规则、可恢复文件操作与审计保留分别位于 `internal/identity`、`internal/quickrun`、`internal/fileworkflow` 和 `internal/audit`。旧 `internal/app` 已删除，架构测试禁止其恢复。
+
 ## Language
 
 **用户（User）**：

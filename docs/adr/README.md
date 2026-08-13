@@ -11,7 +11,7 @@
 - `status: superseded by ...`、`> 状态：已被 ... 取代` 或正文中的明确取代声明具有同等效力；
 - 已取代的 ADR 不再指导新实现；出现冲突时采用取代它的新 ADR；
 - 新决定应新增 ADR，并在新旧文档中互相链接，不直接重写历史结论；
-- 本目录历史上存在两个 `0109` 文件。它们的完整路径是稳定标识，后续 ADR 不应为修正编号而重命名历史文件。
+- 本目录历史上存在两组重复编号：两个 `0109` 文件和两个 `0128` 文件。它们的完整路径是稳定标识，后续 ADR 不应为修正编号而重命名历史文件；架构门禁会阻止产生新的重复编号。
 
 ## 主题索引
 
@@ -52,6 +52,8 @@
 
 ## 最新决策
 
+- [ADR-0169 持久恢复 External Interface 完成记录且不重复动作](./0169-reconcile-external-invocation-completions-without-repeating-actions.md)，在动作已执行但最终记录失败时持久化并幂等回放真实结果，过期未决记录明确标记为 `unknown`。
+- [ADR-0168 将 Registry 监控连接与请求限制在 Broker 内](./0168-keep-registry-monitor-connections-inside-the-broker.md)，用外部主密钥、Broker 内探测和跨进程操作日志消除 Web 密钥与“新 Endpoint + 旧密码”状态。
 - [ADR-0163 四个信任边界作为一个带版本的产品整体发布](./0163-ship-four-trust-boundaries-as-one-versioned-product.md)，保持 Web/Broker/Runner/AI Host 隔离，同时把安装、升级、回滚与卸载收敛为绑定四个摘要和 IPC 协议的一套发布事务。
 - [ADR-0162 提供带审计连续性的加密私有状态备份](./0162-provide-encrypted-private-state-backup-with-audit-continuity.md)，用一致性 SQLite snapshot、分块认证加密、固定归档边界和受控审计重锚建立 State Root 带外恢复基础。
 - [ADR-0161 将受管 Host Files 宿主访问限制在 Broker 内](./0161-keep-managed-host-file-access-inside-the-broker.md)，把目录、内容、日志、发布、移动与无人值守固定资源访问移出 Web，并以用户绑定短期句柄和执行点复核收口。

@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	_ "modernc.org/sqlite"
+
+	"scriptboard/internal/registryconnection"
 )
 
 func testManager(t *testing.T) *Manager {
@@ -31,7 +33,11 @@ func testManagerWithClient(t *testing.T, client *http.Client) *Manager {
 			t.Fatal(err)
 		}
 	}
-	manager, err := New(Options{DB: db, Client: client, SecretsDirectory: t.TempDir()})
+	connections, err := registryconnection.New(registryconnection.Options{StateRoot: t.TempDir(), Client: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := New(Options{DB: db, Client: client, RegistryConnections: connections})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,8 +130,8 @@ func TestRegistryCardStoresCredentialOutsideDatabaseAndRefreshesMultipleImages(t
 	if err := manager.DeleteCard(ctx, card.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manager.secrets.get(card.ID); !errors.Is(err, ErrCredentialUnavailable) {
-		t.Fatalf("credential survived card deletion: %v", err)
+	if configured, err := manager.registry.Configured(ctx, card.ID); err != nil || configured {
+		t.Fatalf("credential survived card deletion: configured=%v err=%v", configured, err)
 	}
 }
 

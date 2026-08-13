@@ -177,11 +177,18 @@ async function assertTableRowsAligned(page, tableSelector, label) {
 }
 
 async function saveSnapshot(page, name) {
-  await page.screenshot({
-    path: path.join(snapshotRoot, `${name}.png`),
-    fullPage: true,
-    animations: "disabled",
-  });
+  const destination = path.join(snapshotRoot, `${name}.png`);
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await page.screenshot({ path: destination, fullPage: true, animations: "disabled" });
+      return;
+    } catch (error) {
+      // Windows virus scanners and image indexers can briefly hold an existing
+      // snapshot open. Retry only transient filesystem failures, not page errors.
+      if (attempt === 5 || !/\b(UNKNOWN|EBUSY|EPERM)\b/.test(String(error))) throw error;
+      await new Promise(resolve => setTimeout(resolve, attempt * 100));
+    }
+  }
 }
 
 async function createVariable(page, name, value, password = false) {
@@ -1113,6 +1120,7 @@ async function assertViewerCannotManageMySQL(browser, baseURL, password) {
 const administratorSettingsHrefs = [
   "/settings/account",
   "/settings/users",
+  "/settings/name",
   "/settings/display",
   "/settings/ai",
   "/settings/service-logs",
@@ -1350,28 +1358,30 @@ async function assertExternalInterfaces(page, fixture) {
   await form.locator('select[name="upload_conflict"]').selectOption("rename");
   assert.equal(await form.locator('input[name="require_signature"]').isChecked(), true);
   await form.locator('button[type="submit"]').click();
-  await page.locator("#external-key-secret").waitFor();
-  const secret = (await page.locator("#external-key-secret").textContent()).trim();
-  assert.match(secret, /^sbk_[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{43}$/);
-  assert.notEqual(secret, provisionalSecret);
-  await page.getByRole("link", { name: "Done", exact: true }).click();
+  // Group-owned call paths reuse an explicitly selected key; creating a path
+  // must not rotate or redisplay that one-time secret.
+  const secret = provisionalSecret;
   await page.locator("[data-external-interfaces-page]").waitFor();
   assert.equal(await page.getByText("Artifact upload", { exact: true }).count(), 1);
 
   const globalControl = page.locator("[data-external-global-control]");
   assert.equal(await globalControl.getAttribute("data-external-global-control"), "enabled");
-  await globalControl.getByRole("button", { name: "Pause all external calls", exact: true }).click();
-  await page.waitForFunction(() => document.querySelector("[data-external-global-control]")?.dataset.externalGlobalControl === "disabled");
+  await globalControl.getByRole("link", { name: "Pause all external calls", exact: true }).click();
+  await page.locator('[data-task-kind="external-global-control"]').waitFor();
+  await page.getByRole("button", { name: "Pause all external calls", exact: true }).click();
+  await page.locator('[data-external-global-control="disabled"]').waitFor();
   assert.equal(await globalControl.getAttribute("data-external-global-control"), "disabled");
-  const requestURI = "/trigger?name=artifact";
+  const requestURI = "/trigger/artifact";
   const blockedTrigger = await page.request.post(`${fixture.baseURL}${requestURI}`, {
     headers: externalSignatureHeaders(secret, "POST", requestURI),
     multipart: { file: { name: "blocked.txt", mimeType: "text/plain", buffer: Buffer.from("must not publish") } },
   });
   assert.equal(blockedTrigger.status(), 503);
   assert.equal((await blockedTrigger.json()).error, "unavailable");
-  await globalControl.getByRole("button", { name: "Resume all external calls", exact: true }).click();
-  await page.waitForFunction(() => document.querySelector("[data-external-global-control]")?.dataset.externalGlobalControl === "enabled");
+  await globalControl.getByRole("link", { name: "Resume all external calls", exact: true }).click();
+  await page.locator('[data-task-kind="external-global-control"]').waitFor();
+  await page.getByRole("button", { name: "Resume all external calls", exact: true }).click();
+  await page.locator('[data-external-global-control="enabled"]').waitFor();
   assert.equal(await globalControl.getAttribute("data-external-global-control"), "enabled");
 
   const trigger = await page.request.post(`${fixture.baseURL}${requestURI}`, {
@@ -1756,7 +1766,7 @@ async function assertExternalInterfaces(page, fixture) {
     await savedQuickRun.waitFor();
     await savedQuickRun.getByText("No run history", { exact: true }).waitFor();
     assert.equal(await savedQuickRun.locator("[data-quick-run-history-entry]").count(), 0);
-    assert.equal((await savedQuickRun.locator(".quick-run-history__duration strong").textContent()).trim(), "—");
+    assert.equal((await savedQuickRun.locator(".quick-run-history__latest dd").nth(1).textContent()).trim(), "—");
     const quickHeadingActions = page.locator(".quick-run-heading-actions > .button");
     assert.equal(await quickHeadingActions.count(), 3);
     const quickHeadingMetrics = await quickHeadingActions.evaluateAll(actions => actions.map(action => {

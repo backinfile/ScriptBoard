@@ -33,7 +33,7 @@ const { chromium } = require("playwright");
   });
   await page.goto("http://clipboard.test/");
   const repository = path.resolve(__dirname, "../..");
-  await page.addScriptTag({ path: path.join(repository, "internal/app/web/assets/app.js") });
+  await page.addScriptTag({ path: path.join(repository, "internal/web/ui/assets/app.js") });
 
   const copyButton = page.locator("[data-copy-value]");
   await copyButton.click();

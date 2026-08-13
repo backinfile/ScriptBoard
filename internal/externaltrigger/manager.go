@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -313,10 +314,11 @@ type Options struct {
 }
 
 type Manager struct {
-	db          *sql.DB
-	now         func() time.Time
-	random      func([]byte) (int, error)
-	secretStore *encryptedSecretStore
+	db                      *sql.DB
+	now                     func() time.Time
+	random                  func([]byte) (int, error)
+	secretStore             *encryptedSecretStore
+	reconciliationDirectory string
 }
 
 type RemoteWebsiteCredentialDestination interface {
@@ -332,7 +334,11 @@ func New(db *sql.DB, options Options) *Manager {
 	if random == nil {
 		random = rand.Read
 	}
-	return &Manager{db: db, now: now, random: random, secretStore: &encryptedSecretStore{directory: options.SecretsDirectory, vault: options.SecretStore}}
+	return &Manager{
+		db: db, now: now, random: random,
+		secretStore:             &encryptedSecretStore{directory: options.SecretsDirectory, vault: options.SecretStore},
+		reconciliationDirectory: filepath.Join(filepath.Dir(options.SecretsDirectory), "operations", "external-trigger-completions"),
+	}
 }
 
 // GlobalEnabled returns the persistent emergency control for every External
@@ -1095,6 +1101,18 @@ func (manager *Manager) RecordInvocation(ctx context.Context, invocation Invocat
 }
 
 func (manager *Manager) CompleteInvocation(ctx context.Context, invocation Invocation) error {
+	err := manager.completeInvocation(ctx, invocation)
+	if err == nil {
+		_ = manager.removeQueuedCompletion(invocation.ID)
+		return nil
+	}
+	if queueErr := manager.queueCompletion(invocation); queueErr != nil {
+		return errors.Join(err, fmt.Errorf("persist invocation completion for retry: %w", queueErr))
+	}
+	return fmt.Errorf("invocation completion queued for retry: %w", err)
+}
+
+func (manager *Manager) completeInvocation(ctx context.Context, invocation Invocation) error {
 	if invocation.ID == "" {
 		return fmt.Errorf("%w: invocation id", ErrInvalidInput)
 	}

@@ -498,16 +498,16 @@ assistant_conversations
 | `internal/assistant/pirpc/protocol.go` | stats、thinking、compact、能力探测命令与响应 |
 | `internal/assistant/pirpc/supervisor.go` | 冷/热 session 下的统计与控制生命周期 |
 | `internal/assistant/service.go` | Profile、thinking 和 telemetry 持久化 |
-| `internal/app/assistant_runtime.go` | settled 后采集、Playbook 绑定和 Runtime 能力降级 |
+| `internal/web/assistant_runtime.go` | settled 后采集、Playbook 绑定和 Runtime 能力降级 |
 | `internal/assistant/runtimeinstall/` | Capability Bundle 清单、验证、激活和回退 |
 | `runtime/scriptboard-extension.ts` | `before_agent_start` 指导注入和能力元数据 |
 | `runtime/playbooks/` | 固定一方 Operational Playbook |
-| `internal/app/assistant_tools.go` | Evidence Query 和可选外部知识工具 |
-| `internal/app/assistant_context.go` | 安全图片引用与 Prompt 组装 |
-| `internal/app/web_assistant.go` | Profile、统计、压缩、思考级别和图片路由 |
-| `internal/app/web/templates/assistant.html` | Profile 入口与 Inspector UI |
-| `internal/app/web/assets/app.js` | 空闲控制、能力状态和图片 Composer |
-| `internal/app/web/assets/app.css` | 响应式、可访问的新增状态与工具卡 |
+| `internal/web/assistant_tools.go` | Evidence Query 和可选外部知识工具 |
+| `internal/web/assistant_context.go` | 安全图片引用与 Prompt 组装 |
+| `internal/web/web_assistant.go` | Profile、统计、压缩、思考级别和图片路由 |
+| `internal/web/ui/templates/assistant.html` | Profile 入口与 Inspector UI |
+| `internal/web/ui/assets/app.js` | 空闲控制、能力状态和图片 Composer |
+| `internal/web/ui/assets/app.css` | 响应式、可访问的新增状态与工具卡 |
 | `integration/assistant-eval/` | Playbook、Evidence Query、多模态和联网对照 eval |
 | `integration/browser/` | 桌面、移动端、键盘和视觉快照 |
 

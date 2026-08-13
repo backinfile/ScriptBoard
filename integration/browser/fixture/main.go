@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"scriptboard/internal/app"
+	app "scriptboard/internal/web"
 	"scriptboard/internal/appstatus"
 	"scriptboard/internal/assistant/runtimehost"
 	"scriptboard/internal/hostfiles"

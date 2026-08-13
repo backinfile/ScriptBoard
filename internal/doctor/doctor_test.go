@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"scriptboard/internal/app"
+	app "scriptboard/internal/web"
 	"scriptboard/internal/doctor"
 )
 

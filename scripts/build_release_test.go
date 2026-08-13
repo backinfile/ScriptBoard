@@ -164,3 +164,35 @@ func TestFormalReleaseDependsOnSecurityGates(t *testing.T) {
 		t.Fatal("security workflow does not execute the fuzz security gate")
 	}
 }
+
+func TestDevelopmentInstallerWorkflowEnforcesAllPlatformContracts(t *testing.T) {
+	workflow, err := os.ReadFile("../.github/workflows/release.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(workflow)
+	start := strings.Index(content, "  development-installers:")
+	end := strings.Index(content[start:], "\n  linux-smoke:")
+	if start < 0 || end < 0 {
+		t.Fatal("development installer workflow is missing")
+	}
+	job := content[start : start+end]
+	if !strings.Contains(job, "./scripts/verify-development-installers.ps1") {
+		t.Fatal("development installer workflow does not run the shared contract verifier")
+	}
+	verifier, err := os.ReadFile("verify-development-installers.ps1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"scriptboard-development-windows-amd64-setup.exe",
+		"scriptboard-development-windows-arm64-setup.exe",
+		"scriptboard-development-linux-amd64.run",
+		"scriptboard-development-linux-arm64.run",
+		"--version-json", "--extract-to", "accepted a no-argument install",
+	} {
+		if !strings.Contains(string(verifier), expected) {
+			t.Fatalf("development installer verifier does not assert %q", expected)
+		}
+	}
+}

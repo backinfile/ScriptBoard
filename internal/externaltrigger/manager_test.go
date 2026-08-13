@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -378,5 +379,70 @@ func TestCompleteInvocationUpdatesPendingRecord(t *testing.T) {
 	}
 	if result != "accepted" || status != 202 || runID != "run-1" {
 		t.Fatalf("completed invocation result=%q status=%d run=%q", result, status, runID)
+	}
+}
+
+func TestCompletionFailureQueuesExactResultAndReconcilesWithoutRepeatingAction(t *testing.T) {
+	now := time.Date(2026, 8, 13, 10, 0, 0, 0, time.UTC)
+	manager, database := testManager(t, now)
+	ctx := context.Background()
+	key, _, err := manager.CreateKey(ctx, CreateKeyInput{Label: "reconcile", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := Invocation{ID: "request-reconcile", OccurredAt: now, KeyID: key.ID, KeyLabel: key.Label, EntryID: "entry", EntryName: "quick", ActionType: ActionQuickRun, Result: "processing"}
+	if err := manager.RecordInvocation(ctx, pending); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`CREATE TRIGGER fail_external_completion BEFORE UPDATE ON external_trigger_requests
+		WHEN NEW.id='request-reconcile' BEGIN SELECT RAISE(FAIL, 'fixture completion failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	completed := pending
+	completed.Result, completed.HTTPStatus, completed.RunID, completed.Message = "accepted", 202, "run-1", "started once"
+	if err := manager.CompleteInvocation(ctx, completed); err == nil || !strings.Contains(err.Error(), "queued for retry") {
+		t.Fatalf("completion error=%v", err)
+	}
+	entries, err := os.ReadDir(manager.reconciliationDirectory)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("queued entries=%v err=%v", entries, err)
+	}
+	if _, err := database.Exec(`DROP TRIGGER fail_external_completion`); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.ReconcileInvocations(ctx, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	var result, runID, message string
+	var status int
+	if err := database.QueryRow(`SELECT result,http_status,run_id,message FROM external_trigger_requests WHERE id=?`, pending.ID).Scan(&result, &status, &runID, &message); err != nil {
+		t.Fatal(err)
+	}
+	if result != "accepted" || status != 202 || runID != "run-1" || message != "started once" {
+		t.Fatalf("reconciled result=%q status=%d run=%q message=%q", result, status, runID, message)
+	}
+}
+
+func TestStaleProcessingInvocationBecomesUnknown(t *testing.T) {
+	now := time.Date(2026, 8, 13, 10, 0, 0, 0, time.UTC)
+	manager, database := testManager(t, now)
+	ctx := context.Background()
+	key, _, err := manager.CreateKey(ctx, CreateKeyInput{Label: "stale", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	invocation := Invocation{ID: "request-stale", OccurredAt: now.Add(-time.Hour), KeyID: key.ID, KeyLabel: key.Label, EntryID: "entry", EntryName: "quick", ActionType: ActionQuickRun, Result: "processing"}
+	if err := manager.RecordInvocation(ctx, invocation); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.ReconcileInvocations(ctx, now.Add(-5*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	var result, message string
+	if err := database.QueryRow(`SELECT result,message FROM external_trigger_requests WHERE id=?`, invocation.ID).Scan(&result, &message); err != nil {
+		t.Fatal(err)
+	}
+	if result != "unknown" || !strings.Contains(message, "not recorded") {
+		t.Fatalf("stale result=%q message=%q", result, message)
 	}
 }

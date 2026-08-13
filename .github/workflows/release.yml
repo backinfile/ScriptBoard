@@ -190,6 +190,9 @@ jobs:
       - name: Build unsigned development installers
         shell: pwsh
         run: ./scripts/build-release.ps1 -Version development
+      - name: Verify development installer contract
+        shell: pwsh
+        run: ./scripts/verify-development-installers.ps1
       - uses: actions/upload-artifact@v4
         with:
           name: scriptboard-development-installers

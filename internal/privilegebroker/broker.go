@@ -30,11 +30,12 @@ import (
 	"scriptboard/internal/mysqlmanager"
 	"scriptboard/internal/passkey"
 	"scriptboard/internal/providercredential"
+	"scriptboard/internal/registrymonitor"
 	"scriptboard/internal/statebackup"
 )
 
 const (
-	ProtocolVersion                   = 1
+	ProtocolVersion                   = 2
 	MaxRequestBytes                   = 128 << 10
 	MaxResponseBytes                  = 5 << 20
 	capabilityLifetime                = 30 * time.Second
@@ -114,6 +115,14 @@ const (
 	operationStateBackupStage         = "state_backup_stage"
 	operationStateBackupList          = "state_backup_list"
 	operationStateBackupDiscard       = "state_backup_discard"
+	operationRegistryPrepare          = "registry_prepare"
+	operationRegistryPrepareDelete    = "registry_prepare_delete"
+	operationRegistryCommit           = "registry_commit"
+	operationRegistryAcknowledge      = "registry_acknowledge"
+	operationRegistryAbort            = "registry_abort"
+	operationRegistryConfigured       = "registry_configured"
+	operationRegistryInspect          = "registry_inspect"
+	operationRegistryTest             = "registry_test"
 	statusOK                          = "ok"
 	statusError                       = "error"
 	defaultCallDeadline               = 35 * time.Second
@@ -159,6 +168,9 @@ const (
 	ActionStateBackupInspect    Action = "state_backup_inspect"
 	ActionStateBackupStage      Action = "state_backup_stage"
 	ActionStateBackupDiscard    Action = "state_backup_discard"
+	ActionRegistryStore         Action = "registry_store"
+	ActionRegistryDelete        Action = "registry_delete"
+	ActionRegistryInspect       Action = "registry_inspect"
 )
 
 var (
@@ -318,6 +330,17 @@ type StateBackupService interface {
 	Discard(context.Context, string) error
 }
 
+type RegistryService interface {
+	Prepare(context.Context, string, string, registrymonitor.Config, string, bool) error
+	PrepareDelete(context.Context, string, string) error
+	Commit(context.Context, string) error
+	Acknowledge(context.Context, string) error
+	Abort(context.Context, string) error
+	Configured(context.Context, string) (bool, error)
+	Inspect(context.Context, string) ([]registrymonitor.ImageResult, error)
+	Test(context.Context, string, registrymonitor.Config, string, bool) ([]registrymonitor.ImageResult, error)
+}
+
 type ServerOptions struct {
 	Listener       net.Listener
 	VerifyPeer     func(net.Conn) error
@@ -332,6 +355,7 @@ type ServerOptions struct {
 	MySQL          MySQLService
 	HostFiles      HostFilesService
 	StateBackups   StateBackupService
+	Registry       RegistryService
 	Now            func() time.Time
 }
 
@@ -349,6 +373,7 @@ type Server struct {
 	mysql          MySQLService
 	hostFiles      HostFilesService
 	stateBackups   StateBackupService
+	registry       RegistryService
 	now            func() time.Time
 
 	mu                sync.Mutex
@@ -408,6 +433,7 @@ type wireRequest struct {
 	MySQL                 *mysqlWireRequest       `json:"mysql,omitempty"`
 	HostFiles             *hostFilesWireRequest   `json:"host_files,omitempty"`
 	StateBackup           *stateBackupWireRequest `json:"state_backup,omitempty"`
+	Registry              *registryWireRequest    `json:"registry,omitempty"`
 }
 
 type wireResponse struct {
@@ -431,6 +457,7 @@ type wireResponse struct {
 	MySQL                 *mysqlWireResponse       `json:"mysql,omitempty"`
 	HostFiles             *hostFilesWireResponse   `json:"host_files,omitempty"`
 	StateBackup           *stateBackupWireResponse `json:"state_backup,omitempty"`
+	Registry              *registryWireResponse    `json:"registry,omitempty"`
 }
 
 func NewServer(options ServerOptions) (*Server, error) {
@@ -443,7 +470,7 @@ func NewServer(options ServerOptions) (*Server, error) {
 	}
 	return &Server{
 		listener: options.Listener, verifyPeer: options.VerifyPeer, authorizer: options.Authorizer,
-		executor: options.Executor, auditor: options.Auditor, checkpoint: options.Checkpoint, mfa: options.MFA, passkeys: options.Passkeys, remoteWebsites: options.RemoteWebsites, providers: options.Providers, mysql: options.MySQL, hostFiles: options.HostFiles, stateBackups: options.StateBackups, now: now,
+		executor: options.Executor, auditor: options.Auditor, checkpoint: options.Checkpoint, mfa: options.MFA, passkeys: options.Passkeys, remoteWebsites: options.RemoteWebsites, providers: options.Providers, mysql: options.MySQL, hostFiles: options.HostFiles, stateBackups: options.StateBackups, registry: options.Registry, now: now,
 		capabilities: make(map[string]capabilityBinding), done: make(chan struct{}),
 		mfaVerifyFailures: make(map[string]mfaVerifyFailure),
 	}, nil
@@ -526,6 +553,9 @@ func (server *Server) handle(connection net.Conn) {
 		response = server.hostFilesScheduleOperation(request)
 	case operationStateBackupCreate, operationStateBackupInspect, operationStateBackupStage, operationStateBackupList, operationStateBackupDiscard:
 		response = server.stateBackupOperation(request)
+	case operationRegistryPrepare, operationRegistryPrepareDelete, operationRegistryCommit, operationRegistryAcknowledge, operationRegistryAbort,
+		operationRegistryConfigured, operationRegistryInspect, operationRegistryTest:
+		response = server.registryOperation(request)
 	default:
 		response = wireResponse{Status: statusError, ErrorCode: "operation_forbidden", Message: "operation is not supported"}
 	}
@@ -1154,6 +1184,9 @@ func validateWireRequest(request wireRequest) error {
 	if request.StateBackup != nil && !isStateBackupOperation(request.Operation) {
 		return errors.New("request contains unrelated state backup fields")
 	}
+	if request.Registry != nil && !isRegistryOperation(request.Operation) {
+		return errors.New("request contains unrelated Registry fields")
+	}
 	if request.Operation == operationCheckpointVerify || request.Operation == operationCheckpointWrite {
 		if request.SessionToken != "" || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
 			request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || request.HostFiles != nil {
@@ -1204,6 +1237,9 @@ func validateWireRequest(request wireRequest) error {
 	}
 	if isStateBackupOperation(request.Operation) {
 		return validateStateBackupRequest(request)
+	}
+	if isRegistryOperation(request.Operation) {
+		return validateRegistryRequest(request)
 	}
 	if request.Operation == operationHostFilesExternalLog {
 		return validateExternalHostFilesLogRequest(request)
@@ -1453,6 +1489,16 @@ func isMySQLOperation(operation string) bool {
 func isStateBackupOperation(operation string) bool {
 	switch operation {
 	case operationStateBackupCreate, operationStateBackupInspect, operationStateBackupStage, operationStateBackupList, operationStateBackupDiscard:
+		return true
+	default:
+		return false
+	}
+}
+
+func isRegistryOperation(operation string) bool {
+	switch operation {
+	case operationRegistryPrepare, operationRegistryPrepareDelete, operationRegistryCommit, operationRegistryAcknowledge, operationRegistryAbort,
+		operationRegistryConfigured, operationRegistryInspect, operationRegistryTest:
 		return true
 	default:
 		return false

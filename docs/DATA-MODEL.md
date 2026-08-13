@@ -621,6 +621,8 @@ schema 38 增加持久化单例 `external_trigger_control`，用于全局紧急�
 
 schema 44 收敛了并行开发期间重复使用 35–43 版本号的两条数据库历史：一条包含 Assistant reasoning、实例品牌、Registry 卡片与 Kubernetes/容器监控，另一条包含上述安全能力。迁移会检查实际表和列，并在事务中补齐缺失部分，因此任一 schema 20–43 前身都可前向升级；更早或更新的未知 schema 会拒绝启动并提示使用新的 State Root，而不会尝试猜测性修改数据。
 
+schema 45 增加 `custom_dashboard_registry_operations`。Registry 连接在 Broker 中 prepare 后，卡片配置和操作 ID 在同一 SQLite 事务提交；随后 Broker 幂等激活连接并删除操作行。启动时残留行会被重放，因此数据库不会把尚未激活的连接误报为已经完成，也不会把新 Endpoint 与旧密码组合使用。
+
 `audit_events` 按 ID 顺序链接 `previous_hash` 与 `event_hash`，`audit_chain_state` 保存保留锚点和
 当前链尾。为防止事件尾部与同库链尾状态一起回退后仍通过本地校验，每个 State Root 另有一份
 Ed25519 签名 checkpoint，记录实例路径身份、最后事件 ID/摘要、签名时间和公钥。签名私钥密文

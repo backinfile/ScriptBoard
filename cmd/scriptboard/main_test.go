@@ -11,12 +11,13 @@ import (
 	"strings"
 	"testing"
 
-	"scriptboard/internal/app"
 	"scriptboard/internal/auditcheckpoint"
 	"scriptboard/internal/auditlog"
+	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/config"
 	"scriptboard/internal/secretstore"
 	"scriptboard/internal/statebackup"
+	app "scriptboard/internal/web"
 )
 
 func TestWebStartupFilesIncludeOnlyConfiguredWebOwnedFiles(t *testing.T) {
@@ -137,7 +138,7 @@ func TestBackupCreateWorksWithoutOpeningTheWebApplication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifest.ID == "" || manifest.SchemaVersion != 45 {
+	if manifest.ID == "" || manifest.SchemaVersion != buildinfo.DatabaseSchemaVersion {
 		t.Fatalf("backup manifest = %#v", manifest)
 	}
 }

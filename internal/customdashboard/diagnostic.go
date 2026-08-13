@@ -162,16 +162,7 @@ func (m *Manager) runRegistryRequest(ctx context.Context, input CardInput, exist
 	var config registrymonitor.Config
 	_ = json.Unmarshal(input.Config, &config)
 	result := TestResult{Diagnostic: RequestDiagnostic{Code: DiagnosticOK, Stage: "complete", Summary: "请求成功", URL: redactRequestURL(config.Endpoint), AttemptedAt: m.now().UTC()}}
-	if config.AuthMode == "basic" && input.RegistryPassword == "" && input.PreserveRegistryPassword && existingCardID != "" {
-		password, err := m.secrets.get(existingCardID)
-		if err != nil {
-			return finishRequestFailure(result, started, "registry_auth", DiagnosticRegistryAuth, "无法读取已保存凭据，请重新输入", err), err
-		}
-		config.Password = password
-	} else {
-		config.Password = input.RegistryPassword
-	}
-	images, err := registrymonitor.New(m.client).Inspect(ctx, config)
+	images, err := m.registry.Test(ctx, existingCardID, config, input.RegistryPassword, input.PreserveRegistryPassword && input.RegistryPassword == "")
 	if err != nil {
 		return finishRequestFailure(result, started, "registry_manifest", DiagnosticRegistryManifest, "Registry 查询失败，请检查地址与镜像名称", err), err
 	}

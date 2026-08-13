@@ -433,10 +433,10 @@ Playbook 应由固定 Extension 根据任务显式注入，或通过受控的只
 | 区域 | 预期修改 |
 |---|---|
 | `runtime/scriptboard-extension.ts` | 集中工具元数据、严格 Schema、路由提示、错误语义、动态激活 |
-| `internal/app/assistant_runtime.go` | Provider 工具认证、版本化提示接入、认证状态 |
+| `internal/web/assistant_runtime.go` | Provider 工具认证、版本化提示接入、认证状态 |
 | `internal/assistant/pirpc/launch.go` | probe 启动配置和受信资源参数，不放宽隔离 |
-| `internal/app/assistant_tools.go` | 统一错误合同、过滤/搜索、聚合只读工具 |
-| `internal/app/assistant_ui_actions.go` | domain/task 发现、动作字段错误和精确动作适配 |
+| `internal/web/assistant_tools.go` | 统一错误合同、过滤/搜索、聚合只读工具 |
+| `internal/web/assistant_ui_actions.go` | domain/task 发现、动作字段错误和精确动作适配 |
 | `internal/assistant/tool_state.go` | 如有需要，增加非敏感失败分类和尝试元数据 |
 | `integration/assistant-eval/` | 真实模型任务、fixture、grader、脱敏 trace 和报告 |
 | `docs/ACCEPTANCE.md` | 增加可靠性、工具认证和 eval 发布门禁 |

@@ -5,8 +5,8 @@ const path = require("node:path");
 const { chromium } = require("playwright");
 
 const repositoryRoot = path.resolve(__dirname, "..", "..");
-const appScript = path.join(repositoryRoot, "internal", "app", "web", "assets", "app.js");
-const appStyles = path.join(repositoryRoot, "internal", "app", "web", "assets", "app.css");
+const appScript = path.join(repositoryRoot, "internal", "web", "ui", "assets", "app.js");
+const appStyles = path.join(repositoryRoot, "internal", "web", "ui", "assets", "app.css");
 const contract = process.argv[2] || "all";
 
 async function createHarness(browser) {
