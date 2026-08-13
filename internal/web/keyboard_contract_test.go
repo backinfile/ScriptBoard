@@ -19,6 +19,18 @@ func TestGlobalKeyboardShortcutGuardsMissingEventKey(t *testing.T) {
 	}
 }
 
+func TestImportSuccessUsesDOMConstructionAndSameOriginURLValidation(t *testing.T) {
+	t.Parallel()
+	script, err := webFiles.ReadFile("ui/assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(script)
+	if strings.Contains(source, "success.innerHTML=") || !strings.Contains(source, "safeInternalURL(payload?.redirectURL") {
+		t.Fatal("website import success still interpolates markup or skips URL validation")
+	}
+}
+
 func TestEnhancedFileUploadUsesClosableResultsDialog(t *testing.T) {
 	t.Parallel()
 

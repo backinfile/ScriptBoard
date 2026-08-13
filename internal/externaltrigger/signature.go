@@ -20,31 +20,48 @@ var (
 	signatureNonce      = regexp.MustCompile(`^[A-Za-z0-9_-]{16,128}$`)
 )
 
-func RequestSignature(secret string, timestamp int64, nonce, method, requestURI string) string {
+func RequestSignature(secret string, timestamp int64, nonce, method, requestURI, contentType string, body []byte) string {
+	digest := BodySHA256(body)
 	mac := hmac.New(sha256.New, []byte(secret))
-	_, _ = mac.Write([]byte(signaturePayload(timestamp, nonce, method, requestURI)))
-	return "v1=" + hex.EncodeToString(mac.Sum(nil))
+	_, _ = mac.Write([]byte(signaturePayloadV2(timestamp, nonce, method, requestURI, contentType, int64(len(body)), digest)))
+	return "v2=" + hex.EncodeToString(mac.Sum(nil))
 }
 
-func signaturePayload(timestamp int64, nonce, method, requestURI string) string {
-	return fmt.Sprintf("v1\n%d\n%s\n%s\n%s", timestamp, nonce, strings.ToUpper(method), requestURI)
+func BodySHA256(body []byte) string {
+	digest := sha256.Sum256(body)
+	return hex.EncodeToString(digest[:])
 }
 
-func (manager *Manager) VerifyAndConsumeSignature(ctx context.Context, keyID, secret string, timestamp int64, nonce, method, requestURI, signature string) error {
+func signaturePayloadV2(timestamp int64, nonce, method, requestURI, contentType string, contentLength int64, bodySHA256 string) string {
+	return fmt.Sprintf("v2\n%d\n%s\n%s\n%s\n%s\n%d\n%s", timestamp, nonce, strings.ToUpper(method), requestURI, strings.TrimSpace(contentType), contentLength, bodySHA256)
+}
+
+func (manager *Manager) VerifyAndConsumeSignature(ctx context.Context, keyID, secret string, timestamp int64, nonce, method, requestURI, contentType string, contentLength int64, bodySHA256, signature string) error {
+	if strings.TrimSpace(method) == "" || requestURI == "" || contentLength < 0 || len(bodySHA256) != sha256.Size*2 || bodySHA256 != strings.ToLower(bodySHA256) {
+		return ErrSignatureInvalid
+	}
+	if _, err := hex.DecodeString(bodySHA256); err != nil {
+		return ErrSignatureInvalid
+	}
+	return manager.verifyAndConsumeSignature(ctx, keyID, secret, timestamp, nonce, signature, "v2", signaturePayloadV2(timestamp, nonce, method, requestURI, contentType, contentLength, bodySHA256))
+}
+
+func (manager *Manager) verifyAndConsumeSignature(ctx context.Context, keyID, secret string, timestamp int64, nonce, signature, version, payload string) error {
 	now := manager.now().UTC()
 	if timestamp < now.Add(-SignatureWindow).Unix() || timestamp > now.Add(SignatureWindow).Unix() ||
-		!signatureNonce.MatchString(nonce) || keyID == "" || secret == "" || requestURI == "" {
+		!signatureNonce.MatchString(nonce) || keyID == "" || secret == "" {
 		return ErrSignatureInvalid
 	}
-	if len(signature) != len("v1=")+sha256.Size*2 || !strings.HasPrefix(signature, "v1=") {
+	prefix := version + "="
+	if len(signature) != len(prefix)+sha256.Size*2 || !strings.HasPrefix(signature, prefix) {
 		return ErrSignatureInvalid
 	}
-	provided, err := hex.DecodeString(strings.TrimPrefix(signature, "v1="))
+	provided, err := hex.DecodeString(strings.TrimPrefix(signature, prefix))
 	if err != nil || len(provided) != sha256.Size {
 		return ErrSignatureInvalid
 	}
 	expected := hmac.New(sha256.New, []byte(secret))
-	_, _ = expected.Write([]byte(signaturePayload(timestamp, nonce, method, requestURI)))
+	_, _ = expected.Write([]byte(payload))
 	if !hmac.Equal(provided, expected.Sum(nil)) {
 		return ErrSignatureInvalid
 	}

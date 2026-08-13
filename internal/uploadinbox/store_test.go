@@ -52,6 +52,7 @@ func TestReceiveRejectsOversizeAndUnsafeMetadata(t *testing.T) {
 	}
 	for _, input := range []Input{
 		{EntryID: "entry", OriginalName: "../payload.txt", TargetDirectory: "/srv/inbox", ConflictPolicy: "reject"},
+		{EntryID: "entry", OriginalName: "CON.txt", TargetDirectory: "/srv/inbox", ConflictPolicy: "reject"},
 		{EntryID: "entry\nnext", OriginalName: "payload.txt", TargetDirectory: "/srv/inbox", ConflictPolicy: "reject"},
 		{EntryID: "entry", OriginalName: "payload.txt", TargetDirectory: "/srv/inbox", ConflictPolicy: "overwrite"},
 	} {

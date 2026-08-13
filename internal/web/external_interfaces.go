@@ -2,8 +2,10 @@ package web
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,8 +14,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
-	"scriptboard/internal/identity"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +24,8 @@ import (
 
 	"scriptboard/internal/externaltrigger"
 	"scriptboard/internal/hostfiles"
+	"scriptboard/internal/identity"
+	"scriptboard/internal/privatepath"
 	"scriptboard/internal/runmanager"
 	"scriptboard/internal/uploadinbox"
 	"scriptboard/internal/websitemonitor"
@@ -873,37 +877,41 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 	if name == "" {
 		name = request.URL.Query().Get("name")
 	}
+	authRelease, allowed := a.externalAuthLimit.AcquireSource(externalLimitSource(request.RemoteAddr))
+	if !allowed {
+		response.Header().Set("Retry-After", "60")
+		writeExternalTriggerError(response, http.StatusTooManyRequests, "rate_limited")
+		return
+	}
+	defer authRelease()
 	key, entry, err := a.externalTriggers.Resolve(request.Context(), token, name)
 	if err != nil {
-		status, code := http.StatusUnauthorized, "invalid_key"
+		result := "invalid_key"
 		if errors.Is(err, externaltrigger.ErrEntryNotFound) || errors.Is(err, externaltrigger.ErrEntryDisabled) {
-			status, code = http.StatusNotFound, "entry_not_found"
+			result = "entry_not_found"
 		}
-		writeExternalTriggerError(response, status, code)
+		a.recordAuditWithRequestActor(request, "external_trigger_auth", "entry_sha256="+hashToken(name), result, request.RemoteAddr, "", "", identity.Role("external"))
+		writeExternalTriggerError(response, http.StatusUnauthorized, "invalid_key")
 		return
 	}
-	requestID, err := randomToken(18)
-	if err != nil {
-		writeExternalTriggerError(response, http.StatusInternalServerError, "action_failed")
-		return
-	}
-	request = request.WithContext(context.WithValue(request.Context(), requestIDContextKey, requestID))
-	if entry.RequireSignature {
-		timestampRaw := request.Header.Get("X-ScriptBoard-Timestamp")
-		timestamp, timestampErr := strconv.ParseInt(timestampRaw, 10, 64)
-		if timestampErr != nil || timestampRaw != strconv.FormatInt(timestamp, 10) || a.externalTriggers.VerifyAndConsumeSignature(
-			request.Context(), key.ID, token, timestamp, request.Header.Get("X-ScriptBoard-Nonce"), request.Method,
-			request.URL.RequestURI(), request.Header.Get("X-ScriptBoard-Signature"),
-		) != nil {
-			_ = a.externalTriggers.RecordInvocation(request.Context(), externaltrigger.Invocation{
-				ID: requestID, KeyID: key.ID, KeyLabel: key.Label, EntryID: entry.ID, EntryName: entry.Name,
-				ActionType: entry.Type, Result: "rejected", HTTPStatus: http.StatusUnauthorized, Source: request.RemoteAddr,
-			})
-			a.recordAuditWithRequestActor(request, "external_trigger_"+string(entry.Type), "key="+key.ID+" entry="+entry.Name, "rejected", request.RemoteAddr, "", key.Label, identity.Role("external"))
-			writeExternalTriggerError(response, http.StatusUnauthorized, "invalid_key")
+	requestID, _ := request.Context().Value(requestIDContextKey).(string)
+	if requestID == "" {
+		requestID, err = randomToken(18)
+		if err != nil {
+			writeExternalTriggerError(response, http.StatusInternalServerError, "action_failed")
 			return
 		}
+		request = request.WithContext(context.WithValue(request.Context(), requestIDContextKey, requestID))
 	}
+	release, allowed := a.externalLimit.Acquire(externaltrigger.LimitSubject{KeyID: key.ID, Source: externalLimitSource(request.RemoteAddr), Action: entry.Type})
+	if !allowed {
+		response.Header().Set("Retry-After", "60")
+		_ = a.externalTriggers.RecordInvocation(request.Context(), externaltrigger.Invocation{ID: requestID, KeyID: key.ID, KeyLabel: key.Label, EntryID: entry.ID, EntryName: entry.Name, ActionType: entry.Type, Result: "rejected", HTTPStatus: http.StatusTooManyRequests, Source: request.RemoteAddr})
+		a.recordAuditWithRequestActor(request, "external_trigger_"+string(entry.Type), "key="+key.ID+" entry="+entry.Name, "rejected", request.RemoteAddr, "", key.Label, identity.Role("external"))
+		writeExternalTriggerError(response, http.StatusTooManyRequests, "rate_limited")
+		return
+	}
+	defer release()
 	globalEnabled, _, controlErr := a.externalTriggers.GlobalEnabled(request.Context())
 	if controlErr != nil || !globalEnabled {
 		response.Header().Set("Retry-After", "60")
@@ -915,15 +923,37 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 		writeExternalTriggerError(response, http.StatusServiceUnavailable, "unavailable")
 		return
 	}
-	release, allowed := a.externalLimit.Acquire(externaltrigger.LimitSubject{KeyID: key.ID, Source: externalLimitSource(request.RemoteAddr), Action: entry.Type})
-	if !allowed {
-		response.Header().Set("Retry-After", "60")
-		_ = a.externalTriggers.RecordInvocation(request.Context(), externaltrigger.Invocation{ID: requestID, KeyID: key.ID, KeyLabel: key.Label, EntryID: entry.ID, EntryName: entry.Name, ActionType: entry.Type, Result: "rejected", HTTPStatus: http.StatusTooManyRequests, Source: request.RemoteAddr})
-		a.recordAuditWithRequestActor(request, "external_trigger_"+string(entry.Type), "key="+key.ID+" entry="+entry.Name, "rejected", request.RemoteAddr, "", key.Label, identity.Role("external"))
-		writeExternalTriggerError(response, http.StatusTooManyRequests, "rate_limited")
-		return
+	if entry.RequireSignature {
+		bodyLength, bodySHA256, cleanupBody, bodyErr := a.stageExternalSignedBody(request, entry)
+		if bodyErr != nil {
+			status, code := http.StatusBadRequest, "invalid_request"
+			if errors.Is(bodyErr, errExternalSignedBodyTooLarge) {
+				status, code = http.StatusRequestEntityTooLarge, "payload_too_large"
+			}
+			_ = a.externalTriggers.RecordInvocation(request.Context(), externaltrigger.Invocation{
+				ID: requestID, KeyID: key.ID, KeyLabel: key.Label, EntryID: entry.ID, EntryName: entry.Name,
+				ActionType: entry.Type, Result: "rejected", HTTPStatus: status, Source: request.RemoteAddr,
+			})
+			a.recordAuditWithRequestActor(request, "external_trigger_"+string(entry.Type), "key="+key.ID+" entry="+entry.Name, "rejected", request.RemoteAddr, "", key.Label, identity.Role("external"))
+			writeExternalTriggerError(response, status, code)
+			return
+		}
+		defer cleanupBody()
+		timestampRaw := request.Header.Get("X-ScriptBoard-Timestamp")
+		timestamp, timestampErr := strconv.ParseInt(timestampRaw, 10, 64)
+		if timestampErr != nil || timestampRaw != strconv.FormatInt(timestamp, 10) || a.externalTriggers.VerifyAndConsumeSignature(
+			request.Context(), key.ID, token, timestamp, request.Header.Get("X-ScriptBoard-Nonce"), request.Method,
+			request.URL.RequestURI(), request.Header.Get("Content-Type"), bodyLength, bodySHA256, request.Header.Get("X-ScriptBoard-Signature"),
+		) != nil {
+			_ = a.externalTriggers.RecordInvocation(request.Context(), externaltrigger.Invocation{
+				ID: requestID, KeyID: key.ID, KeyLabel: key.Label, EntryID: entry.ID, EntryName: entry.Name,
+				ActionType: entry.Type, Result: "rejected", HTTPStatus: http.StatusUnauthorized, Source: request.RemoteAddr,
+			})
+			a.recordAuditWithRequestActor(request, "external_trigger_"+string(entry.Type), "key="+key.ID+" entry="+entry.Name, "rejected", request.RemoteAddr, "", key.Label, identity.Role("external"))
+			writeExternalTriggerError(response, http.StatusUnauthorized, "invalid_key")
+			return
+		}
 	}
-	defer release()
 	started := time.Now()
 	invocation := externaltrigger.Invocation{
 		ID: requestID, OccurredAt: started.UTC(), KeyID: key.ID, KeyLabel: key.Label, EntryID: entry.ID, EntryName: entry.Name,
@@ -965,6 +995,73 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 	}
 	response.WriteHeader(result.status)
 	_ = json.NewEncoder(response).Encode(payload)
+}
+
+var errExternalSignedBodyTooLarge = errors.New("external signed request body is too large")
+
+func (a *App) stageExternalSignedBody(request *http.Request, entry externaltrigger.Entry) (int64, string, func(), error) {
+	limit, err := externalSignedBodyLimit(entry)
+	if err != nil {
+		return 0, "", func() {}, err
+	}
+	directory := filepath.Join(a.stateRoot, "inbox", "external-bodies")
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return 0, "", func() {}, err
+	}
+	if err := privatepath.ProtectDirectory(directory); err != nil {
+		return 0, "", func() {}, err
+	}
+	file, err := os.CreateTemp(directory, "request-*")
+	if err != nil {
+		return 0, "", func() {}, err
+	}
+	cleanup := func() {
+		_ = file.Close()
+		_ = os.Remove(file.Name())
+	}
+	if err := file.Chmod(0o600); err != nil {
+		cleanup()
+		return 0, "", func() {}, err
+	}
+	hash := sha256.New()
+	written, copyErr := io.Copy(io.MultiWriter(file, hash), io.LimitReader(request.Body, limit+1))
+	_ = request.Body.Close()
+	if copyErr != nil {
+		cleanup()
+		var maximumError *http.MaxBytesError
+		if errors.As(copyErr, &maximumError) {
+			return 0, "", func() {}, errExternalSignedBodyTooLarge
+		}
+		return 0, "", func() {}, copyErr
+	}
+	if written > limit {
+		cleanup()
+		return 0, "", func() {}, errExternalSignedBodyTooLarge
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		cleanup()
+		return 0, "", func() {}, err
+	}
+	request.Body = file
+	request.ContentLength = written
+	return written, hex.EncodeToString(hash.Sum(nil)), cleanup, nil
+}
+
+func externalSignedBodyLimit(entry externaltrigger.Entry) (int64, error) {
+	switch entry.Type {
+	case externaltrigger.ActionLog, externaltrigger.ActionVariable:
+		return 8 << 10, nil
+	case externaltrigger.ActionQuickRun, externaltrigger.ActionWebsiteMonitor:
+		return 1, nil
+	case externaltrigger.ActionUpload:
+		var config externaltrigger.UploadConfig
+		if err := entry.DecodeConfig(&config); err != nil {
+			return 0, err
+		}
+		return config.MaxBytes + (1 << 20), nil
+	default:
+		return 0, errors.New("external action has no signed body policy")
+	}
 }
 
 func externalLimitSource(address string) string {

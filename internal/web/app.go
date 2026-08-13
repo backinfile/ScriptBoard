@@ -509,6 +509,7 @@ type App struct {
 	externalReconcileWG   sync.WaitGroup
 	remoteWebsites        RemoteWebsiteService
 	stateBackups          StateBackupService
+	externalAuthLimit     *externaltrigger.Limiter
 	externalLimit         *externaltrigger.Limiter
 	mysql                 *mysqlmanager.Manager
 	mfa                   MFAStore
@@ -722,6 +723,9 @@ func Open(config Config) (*App, error) {
 			return nil, fmt.Errorf("purge recoverable External Interface keys: %w", err)
 		}
 	}
+	application.externalAuthLimit = externaltrigger.NewLimiter(externaltrigger.LimiterOptions{
+		SourceRequestsPerMinute: 60, SourceConcurrent: 8, GlobalRequestsPerMinute: 600, GlobalConcurrent: 32,
+	})
 	application.externalLimit = externaltrigger.NewLimiter(externaltrigger.LimiterOptions{RequestsPerMinute: 60, Concurrent: 4})
 	application.mysql, err = mysqlmanager.New(mysqlmanager.Options{DB: db, StateRoot: stateRoot, SecretStore: credentialStore, Backend: config.MySQLBackend, Audit: func(event mysqlmanager.AuditEvent) {
 		application.recordAuditWithActor(event.Action, event.Target, event.Result, "mysqlmanager", event.Actor.UserID, event.Actor.Username, "")
@@ -3781,7 +3785,11 @@ func (a *App) saveText(response http.ResponseWriter, request *http.Request) {
 }
 
 func (a *App) downloadFile(response http.ResponseWriter, request *http.Request) {
-	relative := request.URL.Query().Get("path")
+	relative, err := a.hostCanonicalExisting(request.Context(), request.URL.Query().Get("path"))
+	if err != nil {
+		writeHostFileError(response, "Unable to download file", err)
+		return
+	}
 	file, info, err := a.hostOpenRegular(request.Context(), relative)
 	if err != nil {
 		writeHostFileError(response, "无法下载文件", err)
@@ -3796,7 +3804,11 @@ func (a *App) downloadFile(response http.ResponseWriter, request *http.Request) 
 }
 
 func (a *App) previewImage(response http.ResponseWriter, request *http.Request) {
-	relative := request.URL.Query().Get("path")
+	relative, err := a.hostCanonicalExisting(request.Context(), request.URL.Query().Get("path"))
+	if err != nil {
+		writeHostFileError(response, "Unable to preview image", err)
+		return
+	}
 	extension := strings.ToLower(hostfiles.Extension(relative))
 	contentTypes := map[string]string{".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp"}
 	contentType, allowed := contentTypes[extension]

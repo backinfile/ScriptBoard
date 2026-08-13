@@ -53,7 +53,7 @@ func Open(stateRoot string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	body, err := os.ReadFile(keyPath)
+	body, err := readWrappedKey(keyPath)
 	if err != nil {
 		return nil, fmt.Errorf("read external credential key: %w", err)
 	}
@@ -144,6 +144,9 @@ func InstallRecoveryKey(stateRoot string, raw []byte) (string, error) {
 	if err := file.Close(); err != nil {
 		return "", err
 	}
+	if err := validateKeyPath(keyPath); err != nil {
+		return "", fmt.Errorf("validate recovered credential master key: %w", err)
+	}
 	committed = true
 	return keyPath, nil
 }
@@ -195,7 +198,7 @@ func (store *Store) gcm() (cipher.AEAD, error) {
 }
 
 func loadOrCreateKey(path string) ([]byte, error) {
-	body, err := os.ReadFile(path)
+	body, err := readWrappedKey(path)
 	if err == nil {
 		return decodeKey(body)
 	}
@@ -212,7 +215,7 @@ func loadOrCreateKey(path string) ([]byte, error) {
 	}
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if errors.Is(err, os.ErrExist) {
-		body, readErr := os.ReadFile(path)
+		body, readErr := readWrappedKey(path)
 		if readErr != nil {
 			return nil, fmt.Errorf("read concurrently created credential key: %w", readErr)
 		}
@@ -235,7 +238,18 @@ func loadOrCreateKey(path string) ([]byte, error) {
 		_ = os.Remove(path)
 		return nil, fmt.Errorf("close external credential key: %w", err)
 	}
+	if err := validateKeyPath(path); err != nil {
+		_ = os.Remove(path)
+		return nil, fmt.Errorf("validate external credential key: %w", err)
+	}
 	return raw, nil
+}
+
+func readWrappedKey(path string) ([]byte, error) {
+	if err := validateKeyPath(path); err != nil {
+		return nil, err
+	}
+	return os.ReadFile(path)
 }
 
 func decodeKey(body []byte) ([]byte, error) {

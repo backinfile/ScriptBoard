@@ -67,3 +67,43 @@ func TestWindowsBatchCommandPreservesOrdinaryArguments(t *testing.T) {
 		t.Fatalf("batch output = %q", got)
 	}
 }
+
+func FuzzWindowsBatchArgumentRoundTrip(f *testing.F) {
+	for _, seed := range []string{"ordinary argument", "unicode-参数", "trailing\\", "safe.dot-value", "%COMSPEC%", "a&whoami", "quote\"value", "line\r\nbreak"} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, argument string) {
+		if len(argument) > 256 {
+			t.Skip()
+		}
+		executable, err := exec.LookPath("cmd.exe")
+		if err != nil {
+			t.Skip("cmd.exe is unavailable")
+		}
+		root := t.TempDir()
+		script := filepath.Join(root, "round trip.cmd")
+		if err := os.WriteFile(script, []byte("@echo off\r\n<nul set /p =[%~1]\r\nexit /b 0\r\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		command, commandErr := newExecutorCommand(executorCandidate{
+			path: executable, prefix: []string{"/D", "/S", "/V:OFF", "/C"}, batch: true,
+		}, script, []string{argument})
+		unsafe := strings.ContainsAny(argument, "\"&|<>()^%!\x00\r\n") || containsBatchControlCharacter(argument)
+		if unsafe {
+			if commandErr == nil {
+				t.Fatalf("unsafe argument %q was accepted", argument)
+			}
+			return
+		}
+		if commandErr != nil {
+			t.Fatalf("safe argument %q rejected: %v", argument, commandErr)
+		}
+		output, err := command.CombinedOutput()
+		if err != nil {
+			t.Fatalf("execute argument %q: %v: %s", argument, err, output)
+		}
+		if got, want := string(output), "["+argument+"]"; got != want {
+			t.Fatalf("batch argument changed: got=%q want=%q", got, want)
+		}
+	})
+}

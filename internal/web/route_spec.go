@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+const maxExternalRequestBytes int64 = (1 << 30) + (1 << 20)
+
 type routeAuthMode string
 
 const (
@@ -39,6 +41,7 @@ type declaredRouteHandler struct {
 	auth       routeAuthMode
 	permission identity.Permission
 	stepUp     bool
+	maxBody    int64
 	handler    http.Handler
 }
 
@@ -68,7 +71,12 @@ func (mux *declaredRouteMux) Public(pattern string, handler http.HandlerFunc) {
 }
 
 func (mux *declaredRouteMux) External(pattern string, handler http.HandlerFunc) {
-	mux.register(pattern, declaredRouteHandler{auth: routeAuthExternal, handler: handler})
+	method, _ := splitRoutePattern(pattern)
+	maximum := int64(0)
+	if method != http.MethodGet && method != http.MethodHead {
+		maximum = maxExternalRequestBytes
+	}
+	mux.register(pattern, declaredRouteHandler{auth: routeAuthExternal, maxBody: maximum, handler: handler})
 }
 
 func (mux *declaredRouteMux) register(pattern string, declared declaredRouteHandler) {
@@ -77,9 +85,10 @@ func (mux *declaredRouteMux) register(pattern string, declared declaredRouteHand
 	if declared.auth == routeAuthSession && method != http.MethodGet && method != http.MethodHead {
 		csrf = routeCSRFRequired
 	}
-	maxBodyBytes := int64(0)
+	maxBodyBytes := declared.maxBody
 	if method != http.MethodGet && method != http.MethodHead &&
-		path != "/resources/files/upload" && path != "/settings/ai/runtime/offline" && path != "/trigger" {
+		maxBodyBytes == 0 && declared.auth != routeAuthExternal &&
+		path != "/resources/files/upload" && path != "/settings/ai/runtime/offline" {
 		maxBodyBytes = maxFormRequestBytes
 	}
 	spec := RouteSpec{

@@ -2081,6 +2081,14 @@
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+  const safeInternalURL = (value, fallback) => {
+    try {
+      const parsed = new URL(String(value || fallback), location.origin);
+      return parsed.origin === location.origin ? `${parsed.pathname}${parsed.search}${parsed.hash}` : fallback;
+    } catch (_) {
+      return fallback;
+    }
+  };
   const formatApplicationBytes = value => {
     let bytes = Number(value);
     if (!Number.isFinite(bytes) || bytes < 0) return applicationWords().empty;
@@ -3851,7 +3859,20 @@
         const success=document.createElement('section');
         success.className='nginx-import-success';
         success.setAttribute('role','status');
-        success.innerHTML=`<span data-lucide="check" aria-hidden="true"></span><div><h2>${escapeMarkup(root.dataset.successTitle||'Websites added')}</h2><p>${escapeMarkup(imported)} ${escapeMarkup(root.dataset.successDescription||'')}</p></div><a class="button button--primary" href="${escapeMarkup(payload?.redirectURL||'/monitor/websites')}">${escapeMarkup(root.dataset.viewLedger||'View website ledger')}</a>`;
+        const icon=document.createElement('span');
+        icon.dataset.lucide='check';
+        icon.setAttribute('aria-hidden','true');
+        const copy=document.createElement('div');
+        const title=document.createElement('h2');
+        title.textContent=root.dataset.successTitle||'Websites added';
+        const description=document.createElement('p');
+        description.textContent=`${imported} ${root.dataset.successDescription||''}`;
+        copy.append(title,description);
+        const ledger=document.createElement('a');
+        ledger.className='button button--primary';
+        ledger.href=safeInternalURL(payload?.redirectURL,'/monitor/websites');
+        ledger.textContent=root.dataset.viewLedger||'View website ledger';
+        success.append(icon,copy,ledger);
         form.previousElementSibling?.matches('.nginx-warnings')&&form.previousElementSibling.remove();
         form.replaceWith(success);
         renderIcons(success);
@@ -6678,7 +6699,7 @@ document.addEventListener("input", function (event) {
   if (!input) return;
   const preview = input.closest("label")?.querySelector("[data-dashboard-slug-preview]");
   if (!preview) return;
-  preview.textContent = `/public/dashboard/${input.value.trim() || "service-status"}`;
+  preview.textContent = "公开后生成不可猜链接";
 });
 
 function openDashboardDrawer(drawer) {

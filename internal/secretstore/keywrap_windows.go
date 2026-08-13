@@ -4,6 +4,8 @@ package secretstore
 
 import (
 	"errors"
+	"os"
+	"strings"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -13,6 +15,30 @@ var dpapiEntropy = []byte("ScriptBoard credential master key v1")
 
 func wrapKey(raw []byte) ([]byte, error) {
 	return cryptDPAPI(raw, true)
+}
+
+func validateKeyPath(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("credential master path is not a regular file")
+	}
+	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return err
+	}
+	if descriptor == nil {
+		return errors.New("credential master file has no security descriptor")
+	}
+	sddl := descriptor.String()
+	for _, publicTrustee := range []string{";;;WD)", ";;;BU)", ";;;AU)"} {
+		if strings.Contains(sddl, publicTrustee) {
+			return errors.New("credential master file grants a public Windows trustee")
+		}
+	}
+	return nil
 }
 
 func unwrapKey(body []byte) ([]byte, error) {

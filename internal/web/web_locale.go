@@ -1582,7 +1582,7 @@ var webMessages = map[string]localizedMessage{
 	"external.signature_requirement":                {"防重放", "Replay protection"},
 	"external.signature_required":                   {"必须签名", "Signed requests required"},
 	"external.signature_optional":                   {"仅 Bearer Key", "Bearer Key only"},
-	"external.signature_help":                       {"签名载荷依次为版本 v1、Unix 时间戳、nonce、大写 HTTP 方法和原始请求路径（含查询字符串），字段以换行分隔；使用完整 Key 作为 HMAC-SHA256 密钥。时间误差不得超过 5 分钟，每个 nonce 只能使用一次。", "Sign the newline-delimited version v1, Unix timestamp, nonce, uppercase HTTP method, and original request path including its query string. Use the complete Key as the HMAC-SHA256 key. Clock skew must stay within five minutes and each nonce can be used only once."},
+	"external.signature_help":                       {"签名载荷依次为版本 v2、Unix 时间戳、nonce、大写 HTTP 方法、原始请求路径（含查询字符串）、原始 Content-Type、请求体字节数和请求体 SHA-256，字段以换行分隔；使用完整 Key 作为 HMAC-SHA256 密钥。签名覆盖实际传输的请求体字节（包括 multipart boundary），时间误差不得超过 5 分钟，每个 nonce 只能使用一次。", "Sign the newline-delimited version v2, Unix timestamp, nonce, uppercase HTTP method, original request path including its query string, original Content-Type, body byte length, and body SHA-256. Use the complete Key as the HMAC-SHA256 key. The digest covers the exact transmitted body bytes, including multipart boundaries. Clock skew must stay within five minutes and each nonce can be used only once."},
 	"external.global_control":                       {"统一开关", "Master switch"},
 	"external.global_control_disabled_description":  {"当前已关闭。所有外部调用均以低信息 503 响应拒绝，不会执行任何操作。", "Currently off. All external calls are rejected with a low-information 503 response and no actions run."},
 	"external.pause_all":                            {"暂停全部外部调用", "Pause all external calls"},

@@ -324,7 +324,7 @@ func TestRegistryCardCanBeConfiguredWithHTTPAndMultipleImages(t *testing.T) {
 		t.Fatal(err)
 	}
 	response.Body.Close()
-	publicResponse, err := http.Get(serverURL + "/public/dashboard/registry-images")
+	publicResponse, err := http.Get(serverURL + "/public/dashboard/" + dashboardID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -460,7 +460,7 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	if rendered := string(page); strings.Contains(rendered, "键值数据") || !strings.Contains(rendered, `value="percentage"`) || !strings.Contains(rendered, `data-dashboard-card-preview="percentage"`) || !strings.Contains(rendered, `value="registry"`) || !strings.Contains(rendered, `data-dashboard-card-preview="registry"`) {
 		t.Fatal("dashboard card types or mini previews are incorrect")
 	}
-	privateResponse, err := http.Get(serverURL + "/public/dashboard/api-credits")
+	privateResponse, err := http.Get(serverURL + "/public/dashboard/" + dashboardID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -503,14 +503,14 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 		t.Fatal(err)
 	}
 	response.Body.Close()
-	publicResponse, err := http.Get(serverURL + "/public/dashboard/api-credits")
+	publicResponse, err := http.Get(serverURL + "/public/dashboard/" + dashboardID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	publicPage, _ := io.ReadAll(publicResponse.Body)
 	publicResponse.Body.Close()
 	rendered := string(publicPage)
-	if strings.Contains(rendered, `custom-dashboard-title__meta`) || strings.Contains(rendered, `/public/dashboard/api-credits`) {
+	if strings.Contains(rendered, `custom-dashboard-title__meta`) || strings.Contains(rendered, `/public/dashboard/`+dashboardID) {
 		t.Fatal("live public dashboard exposed its path or update metadata")
 	}
 	if publicResponse.StatusCode != http.StatusOK || !strings.Contains(rendered, "使用率") || !strings.Contains(rendered, "63.24") {
@@ -634,7 +634,7 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 		t.Fatal(err)
 	}
 	response.Body.Close()
-	failedResponse, err := http.Get(serverURL + "/public/dashboard/api-credits")
+	failedResponse, err := http.Get(serverURL + "/public/dashboard/" + dashboardID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -666,7 +666,7 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	if response.StatusCode != http.StatusSeeOther {
 		t.Fatalf("delete status=%d", response.StatusCode)
 	}
-	missing, err := http.Get(serverURL + "/public/dashboard/api-credits")
+	missing, err := http.Get(serverURL + "/public/dashboard/" + dashboardID)
 	if err != nil {
 		t.Fatal(err)
 	}

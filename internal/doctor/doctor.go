@@ -73,10 +73,13 @@ func Run(config Config) Report {
 	credentialKeyPath, credentialKeyErr := secretstore.KeyPathForStateRoot(config.StateRoot)
 	if credentialKeyErr != nil {
 		required("credential-master-key", false, credentialKeyErr.Error())
-	} else if info, statErr := os.Stat(credentialKeyPath); statErr != nil {
-		required("credential-master-key", false, statErr.Error())
 	} else {
-		required("credential-master-key", info.Mode().IsRegular(), credentialKeyPath)
+		_, openErr := secretstore.Open(config.StateRoot)
+		detail := credentialKeyPath
+		if openErr != nil {
+			detail = openErr.Error()
+		}
+		required("credential-master-key", openErr == nil, detail)
 	}
 	_, auditKeyPath, auditCheckpointPath, auditCheckpointErr := auditcheckpoint.PathsForStateRoot(config.StateRoot)
 	if auditCheckpointErr != nil {

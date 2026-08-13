@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"scriptboard/internal/hostfiles"
 )
 
 const (
@@ -127,6 +129,9 @@ func (store *Store) Open(id string) (Pending, *os.File, error) {
 	var pending Pending
 	if err := json.Unmarshal(metadata, &pending); err != nil || pending.ID != id {
 		return Pending{}, nil, errors.New("invalid inbox metadata")
+	}
+	if err := validateInput(Input{EntryID: pending.EntryID, OriginalName: pending.OriginalName, TargetDirectory: pending.TargetDirectory, ConflictPolicy: pending.ConflictPolicy}); err != nil {
+		return Pending{}, nil, err
 	}
 	payload, err := os.Open(filepath.Join(directory, payloadName))
 	if err != nil {
@@ -304,6 +309,9 @@ func validateInput(input Input) error {
 		filepath.Base(input.OriginalName) != input.OriginalName || strings.ContainsAny(input.OriginalName, `/\\`) ||
 		(input.ConflictPolicy != "reject" && input.ConflictPolicy != "rename") {
 		return errors.New("invalid inbox metadata")
+	}
+	if err := hostfiles.ValidateName(input.OriginalName); err != nil {
+		return errors.New("invalid inbox filename")
 	}
 	for _, value := range []string{input.EntryID, input.OriginalName, input.TargetDirectory} {
 		if strings.IndexFunc(value, unicode.IsControl) >= 0 {

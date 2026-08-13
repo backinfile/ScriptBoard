@@ -272,15 +272,29 @@ func (server *mysqlDatabaseServer) ReplaceDatabase(ctx context.Context, instance
 	defer database.Close()
 	charset, collation := "utf8mb4", ""
 	_ = database.QueryRowContext(ctx, `SELECT DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=?`, name).Scan(&charset, &collation)
+	statement, err := replacementDatabaseStatement(name, charset, collation)
+	if err != nil {
+		return err
+	}
 	if _, err := database.ExecContext(ctx, "DROP DATABASE IF EXISTS "+quoteIdentifier(name)); err != nil {
 		return err
 	}
-	statement := "CREATE DATABASE " + quoteIdentifier(name) + " CHARACTER SET " + charset
-	if collation != "" {
-		statement += " COLLATE " + collation
-	}
 	_, err = database.ExecContext(ctx, statement)
 	return err
+}
+
+func replacementDatabaseStatement(name, charset, collation string) (string, error) {
+	if !simpleSQLName(charset) {
+		return "", errors.New("invalid MySQL character set metadata")
+	}
+	statement := "CREATE DATABASE " + quoteIdentifier(name) + " CHARACTER SET " + charset
+	if collation != "" {
+		if !simpleSQLName(collation) {
+			return "", errors.New("invalid MySQL collation metadata")
+		}
+		statement += " COLLATE " + collation
+	}
+	return statement, nil
 }
 
 func (server *mysqlDatabaseServer) DropDatabase(ctx context.Context, instance Instance, password, name string) error {

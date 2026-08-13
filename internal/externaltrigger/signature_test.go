@@ -26,11 +26,11 @@ func TestSignedRequestAcceptsOneFreshNonce(t *testing.T) {
 	timestamp := now.Unix()
 	nonce := "nonce_1234567890abcdef"
 	requestURI := "/trigger?name=signed-log"
-	signature := RequestSignature(secret, timestamp, nonce, http.MethodPost, requestURI)
-	if err := manager.VerifyAndConsumeSignature(context.Background(), key.ID, secret, timestamp, nonce, http.MethodPost, requestURI, signature); err != nil {
+	signature := RequestSignature(secret, timestamp, nonce, http.MethodPost, requestURI, "", nil)
+	if err := manager.VerifyAndConsumeSignature(context.Background(), key.ID, secret, timestamp, nonce, http.MethodPost, requestURI, "", 0, BodySHA256(nil), signature); err != nil {
 		t.Fatalf("verify fresh signature: %v", err)
 	}
-	if err := manager.VerifyAndConsumeSignature(context.Background(), key.ID, secret, timestamp, nonce, http.MethodPost, requestURI, signature); !errors.Is(err, ErrSignatureReplay) {
+	if err := manager.VerifyAndConsumeSignature(context.Background(), key.ID, secret, timestamp, nonce, http.MethodPost, requestURI, "", 0, BodySHA256(nil), signature); !errors.Is(err, ErrSignatureReplay) {
 		t.Fatalf("replayed signature error=%v", err)
 	}
 }
@@ -61,16 +61,16 @@ func TestSignedRequestRejectsInvalidOrExpiredProof(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			signature := test.signature
 			if signature == "" {
-				signature = RequestSignature(secret, test.timestamp, test.nonce, test.method, test.requestURI)
+				signature = RequestSignature(secret, test.timestamp, test.nonce, test.method, test.requestURI, "", nil)
 			}
-			if err := manager.VerifyAndConsumeSignature(context.Background(), key.ID, secret, test.timestamp, test.nonce, test.method, test.requestURI, signature); !errors.Is(err, ErrSignatureInvalid) {
+			if err := manager.VerifyAndConsumeSignature(context.Background(), key.ID, secret, test.timestamp, test.nonce, test.method, test.requestURI, "", 0, BodySHA256(nil), signature); !errors.Is(err, ErrSignatureInvalid) {
 				t.Fatalf("signature error=%v", err)
 			}
 		})
 	}
 	nonce := "nonce_wrong_uri_123456"
-	signature := RequestSignature(secret, now.Unix(), nonce, http.MethodPost, "/trigger?name=other")
-	if err := manager.VerifyAndConsumeSignature(context.Background(), key.ID, secret, now.Unix(), nonce, http.MethodPost, "/trigger?name=signed-log", signature); !errors.Is(err, ErrSignatureInvalid) {
+	signature := RequestSignature(secret, now.Unix(), nonce, http.MethodPost, "/trigger?name=other", "", nil)
+	if err := manager.VerifyAndConsumeSignature(context.Background(), key.ID, secret, now.Unix(), nonce, http.MethodPost, "/trigger?name=signed-log", "", 0, BodySHA256(nil), signature); !errors.Is(err, ErrSignatureInvalid) {
 		t.Fatalf("request URI binding error=%v", err)
 	}
 }
@@ -92,7 +92,7 @@ func TestFutureDatedSignatureNonceLivesThroughFullAcceptanceWindow(t *testing.T)
 	timestamp := now.Add(4 * time.Minute).Unix()
 	nonce := "nonce_future_valid_1234"
 	requestURI := "/trigger?name=signed-log"
-	if err := manager.VerifyAndConsumeSignature(context.Background(), key.ID, secret, timestamp, nonce, http.MethodPost, requestURI, RequestSignature(secret, timestamp, nonce, http.MethodPost, requestURI)); err != nil {
+	if err := manager.VerifyAndConsumeSignature(context.Background(), key.ID, secret, timestamp, nonce, http.MethodPost, requestURI, "", 0, BodySHA256(nil), RequestSignature(secret, timestamp, nonce, http.MethodPost, requestURI, "", nil)); err != nil {
 		t.Fatal(err)
 	}
 	var expiresAt int64
@@ -121,7 +121,7 @@ func TestConcurrentSignedRequestConsumesNonceOnce(t *testing.T) {
 	timestamp := now.Unix()
 	nonce := "nonce_concurrent_12345"
 	requestURI := "/trigger?name=signed-log"
-	signature := RequestSignature(secret, timestamp, nonce, http.MethodPost, requestURI)
+	signature := RequestSignature(secret, timestamp, nonce, http.MethodPost, requestURI, "", nil)
 	const attempts = 12
 	results := make(chan error, attempts)
 	var wait sync.WaitGroup
@@ -129,7 +129,7 @@ func TestConcurrentSignedRequestConsumesNonceOnce(t *testing.T) {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			results <- manager.VerifyAndConsumeSignature(context.Background(), key.ID, secret, timestamp, nonce, http.MethodPost, requestURI, signature)
+			results <- manager.VerifyAndConsumeSignature(context.Background(), key.ID, secret, timestamp, nonce, http.MethodPost, requestURI, "", 0, BodySHA256(nil), signature)
 		}()
 	}
 	wait.Wait()

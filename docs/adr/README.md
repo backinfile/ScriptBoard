@@ -1,5 +1,7 @@
 # 架构决策记录
 
+- [ADR-0170 外部 Trigger v2 签名绑定完整请求体](./0170-bind-external-trigger-signatures-to-request-bodies.md)，在认证前限流后有界暂存并把 Content-Type、长度和精确 body SHA-256 纳入 HMAC，拒绝 v1 降级。
+
 本目录保存 ScriptBoard 的 Architecture Decision Records（ADR）。实现、评审或修改某个领域前，先阅读相关的当前决策，再把已取代的 ADR 仅作为历史背景。
 
 [返回项目 README](../../README.md) · [领域词汇](../../CONTEXT.md) · [产品需求](../PRD.md) · [数据模型](../DATA-MODEL.md) · [验收标准](../ACCEPTANCE.md)

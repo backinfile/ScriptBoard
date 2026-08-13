@@ -31,6 +31,10 @@ func newExecutorCommand(executor executorCandidate, script string, arguments []s
 	if !executor.batch {
 		return command, nil
 	}
+	// cmd.exe is the only executor that requires argv to be serialized back
+	// into shell text. Keep delayed expansion disabled and reject every cmd
+	// metacharacter before constructing CmdLine; the Windows fuzz contract
+	// verifies that every accepted argument survives a real cmd.exe round trip.
 	if err := validateBatchScriptPath(script); err != nil {
 		return nil, err
 	}

@@ -79,16 +79,25 @@ func positiveOr(value, fallback int) int {
 }
 
 func (limiter *Limiter) Acquire(subject LimitSubject) (func(), bool) {
+	return limiter.acquire(
+		[]string{"global", "key\x00" + subject.KeyID, "source\x00" + subject.Source, "action\x00" + string(subject.Action)},
+		[]bucketLimit{limiter.global, limiter.key, limiter.source, limiter.action},
+	)
+}
+
+// AcquireSource applies only the global and source limits. It is intended for
+// unauthenticated work that must be bounded before a key or action is known.
+func (limiter *Limiter) AcquireSource(source string) (func(), bool) {
+	return limiter.acquire(
+		[]string{"global", "source\x00" + source},
+		[]bucketLimit{limiter.global, limiter.source},
+	)
+}
+
+func (limiter *Limiter) acquire(keys []string, limits []bucketLimit) (func(), bool) {
 	limiter.mu.Lock()
 	now := limiter.now()
 	limiter.cleanup(now)
-	keys := []string{
-		"global",
-		"key\x00" + subject.KeyID,
-		"source\x00" + subject.Source,
-		"action\x00" + string(subject.Action),
-	}
-	limits := []bucketLimit{limiter.global, limiter.key, limiter.source, limiter.action}
 	newSubjects := 0
 	for _, key := range keys {
 		if _, exists := limiter.states[key]; !exists {

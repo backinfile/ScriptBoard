@@ -140,6 +140,18 @@ func TestEveryRouteDeclaresMethodAuthenticationAndMutationPolicy(t *testing.T) {
 	}
 }
 
+func TestExternalTriggerRoutesShareOneExplicitAbsoluteBodyLimit(t *testing.T) {
+	t.Parallel()
+	application := &App{}
+	application.routes()
+	for _, path := range []string{"/trigger", "/trigger/example"} {
+		spec, ok := declaredSpecForRequest(application.routeSpecs, httptest.NewRequest(http.MethodPost, path, nil))
+		if !ok || spec.Auth != routeAuthExternal || spec.MaxBodyBytes != maxExternalRequestBytes {
+			t.Fatalf("POST %s spec=%+v declared=%v", path, spec, ok)
+		}
+	}
+}
+
 func TestHighRiskRoutesDeclareRecentAuthentication(t *testing.T) {
 	t.Parallel()
 	application := &App{}

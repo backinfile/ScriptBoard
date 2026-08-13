@@ -104,7 +104,7 @@ func (a *App) customDashboardPage(response http.ResponseWriter, request *http.Re
 }
 
 func (a *App) publicCustomDashboard(response http.ResponseWriter, request *http.Request) {
-	dashboard, err := a.customDashboards.GetPublicDashboard(request.Context(), request.PathValue("slug"))
+	dashboard, err := a.customDashboards.GetPublicDashboard(request.Context(), request.PathValue("id"))
 	if err != nil {
 		http.NotFound(response, request)
 		return

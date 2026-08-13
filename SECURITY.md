@@ -19,3 +19,13 @@ For a release-signing key incident, follow [the update signing key runbook](./do
 ## Security boundary
 
 ScriptBoard executes administrator-trusted host scripts and manages host files. It is not a general-purpose sandbox. Keep it behind trusted network controls, use TLS for non-loopback access, configure trusted proxies explicitly, and grant access only to trusted users.
+
+### Credential master key
+
+Recoverable credentials are encrypted with a random master key stored outside State Root. Windows wraps the key with machine-scope DPAPI and relies on the protected file ACL to restrict the blob to the configured service identity, SYSTEM, and administrators. Unix stores the random key in a root- or dedicated-service-owned directory; the directory must be `0700` and the regular key file must be `0600`. Startup, recovery, read-only inspection, and `doctor` reject symlinks, non-regular files, owner changes, group/other Unix permissions, and public Windows trustees.
+
+This protects copied State Root data and separates Runner/AI identities from credential material. It does not protect against root, administrators, a compromised Broker/service identity, or another process already running as the same Unix UID. Treat the external `secrets` directory as independent recovery material and never copy it into ordinary State Root backups. Deployments requiring hardware-backed at-rest protection must protect that directory with the platform's TPM, encrypted filesystem, or managed credential facility; ScriptBoard does not silently derive a wrapping key from readable machine identifiers.
+
+### External Interface transport and signatures
+
+External Trigger signatures use the body-binding v2 format documented in ADR-0170. They detect request mutation and replay but do not hide the Bearer Key or body. Plain HTTP exposes enough material for an active intermediary to create new valid requests, so use TLS for every untrusted network path.
