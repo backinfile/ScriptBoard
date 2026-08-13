@@ -68,6 +68,11 @@ func TestTOTPEnrollmentRequiresSecondFactorForLoginAndStepUp(t *testing.T) {
 	}
 
 	loginPage := getBody(t, client, server.URL+"/login", http.StatusOK)
+	for _, forbidden := range []string{`name="mfa_code"`, `data-passkey-login`, `name="passkey_response"`} {
+		if strings.Contains(string(loginPage), forbidden) {
+			t.Fatalf("first login step exposes second factor control %q: %s", forbidden, loginPage)
+		}
+	}
 	withoutFactor, err := client.PostForm(server.URL+"/login", url.Values{
 		"csrf_token": {formToken(t, loginPage)}, "username": {"admin"}, "password": {password},
 	})
@@ -75,13 +80,16 @@ func TestTOTPEnrollmentRequiresSecondFactorForLoginAndStepUp(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = withoutFactor.Body.Close()
-	if withoutFactor.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("password-only MFA login status=%d", withoutFactor.StatusCode)
+	if withoutFactor.StatusCode != http.StatusSeeOther || withoutFactor.Header.Get("Location") != "/login/verify" {
+		t.Fatalf("password login status=%d location=%q", withoutFactor.StatusCode, withoutFactor.Header.Get("Location"))
 	}
 
-	loginPage = getBody(t, client, server.URL+"/login", http.StatusOK)
-	withRecovery, err := client.PostForm(server.URL+"/login", url.Values{
-		"csrf_token": {formToken(t, loginPage)}, "username": {"admin"}, "password": {password}, "mfa_code": {recoveryCodes[0]},
+	verificationPage := getBody(t, client, server.URL+"/login/verify", http.StatusOK)
+	if !strings.Contains(string(verificationPage), `name="mfa_code"`) || strings.Contains(string(verificationPage), `name="password"`) {
+		t.Fatalf("second login step has incorrect fields: %s", verificationPage)
+	}
+	withRecovery, err := client.PostForm(server.URL+"/login/verify", url.Values{
+		"csrf_token": {formToken(t, verificationPage)}, "mfa_code": {recoveryCodes[0]},
 	})
 	if err != nil {
 		t.Fatal(err)

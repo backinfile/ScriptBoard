@@ -1,23 +1,30 @@
 <!doctype html>
 <html lang="{{.Locale}}">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "login.title"}} · ScriptBoard</title></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{if .SecondFactor}}{{t .Locale "login.verify_title"}}{{else}}{{t .Locale "login.title"}}{{end}} · ScriptBoard</title></head>
 <body class="login-page">
 <main class="login-layout">
-  <section class="login-intro"><a class="brand-wordmark" href="/login">ScriptBoard</a><p>{{t .Locale "login.description"}}</p><div class="login-calibration" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div></section>
   <section class="login-sheet">
-    <header><p class="page-eyebrow">{{t .Locale "login.eyebrow"}}</p><h1>{{t .Locale "login.title"}}</h1></header>
+    <a class="brand-wordmark" href="/login">ScriptBoard</a>
+    <header>
+      <h1>{{if .SecondFactor}}{{t .Locale "login.verify_title"}}{{else}}{{t .Locale "login.title"}}{{end}}</h1>
+      <p>{{if .SecondFactor}}{{t .Locale "login.verify_description"}}{{else}}{{t .Locale "login.description"}}{{end}}</p>
+    </header>
     <div class="login-error" role="alert" aria-live="polite" data-login-error {{if not .Error}}hidden{{end}}><strong>{{t .Locale "login.failure"}}</strong><span data-login-error-message>{{.Error}}</span></div>
-    <form method="post" action="/login" data-login-form data-network-error="{{t .Locale "login.network_error"}}">
+    <form method="post" action="{{if .SecondFactor}}/login/verify{{else}}/login{{end}}" data-login-form data-network-error="{{t .Locale "login.network_error"}}">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-	  <input type="hidden" name="passkey_ceremony"><input type="hidden" name="passkey_response">
+      {{if .SecondFactor}}
+	  {{if .PasskeyEnabled}}<input type="hidden" name="passkey_ceremony"><input type="hidden" name="passkey_response">{{end}}
+      {{if .MFAEnabled}}<label>{{t .Locale "mfa.code"}} <input name="mfa_code" inputmode="numeric" autocomplete="one-time-code" maxlength="64" autofocus><small>{{t .Locale "login.verification_hint"}}</small></label>{{end}}
+	  {{if .PasskeyEnabled}}<button class="button{{if not .MFAEnabled}} button--primary{{end}}" type="button" data-passkey-login><span data-lucide="key-round" aria-hidden="true"></span>{{t .Locale "passkey.use"}}</button>{{end}}
+      {{if .MFAEnabled}}<button class="button button--primary" type="submit" data-pending-label="{{t .Locale "login.pending"}}">{{t .Locale "login.verify_submit"}}<span data-lucide="arrow-right" aria-hidden="true"></span></button>{{end}}
+      {{else}}
       <label>{{t .Locale "login.username"}} <input name="username" value="{{.Username}}" autocomplete="username" spellcheck="false" required></label>
       <label>{{t .Locale "login.password"}} <input name="password" type="password" autocomplete="current-password" required></label>
-	  <label>{{t .Locale "mfa.code"}} <input name="mfa_code" inputmode="numeric" autocomplete="one-time-code" maxlength="64"><small>{{t .Locale "mfa.login_hint"}}</small></label>
-	  <button class="button" type="button" data-passkey-login><span data-lucide="key-round" aria-hidden="true"></span>{{t .Locale "passkey.use"}}</button>
       <button class="button button--primary" type="submit" data-pending-label="{{t .Locale "login.pending"}}">{{t .Locale "login.submit"}}<span data-lucide="arrow-right" aria-hidden="true"></span></button>
+      {{end}}
     </form>
     <form class="login-locale" method="post" action="/settings/locale">
-      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="return_to" value="/login">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="return_to" value="{{if .SecondFactor}}/login/verify{{else}}/login{{end}}">
       <button type="submit" name="locale" value="{{if eq .Locale "zh-CN"}}en-US{{else}}zh-CN{{end}}"><span data-lucide="languages" aria-hidden="true"></span>{{t .Locale "login.language"}}</button>
     </form>
   </section>

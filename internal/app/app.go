@@ -318,8 +318,9 @@ func humanDuration(value time.Duration) string {
 }
 
 const (
-	sessionCookieName   = "scriptboard_session"
-	loginCSRFCookieName = "scriptboard_login_csrf"
+	sessionCookieName        = "scriptboard_session"
+	loginCSRFCookieName      = "scriptboard_login_csrf"
+	loginChallengeCookieName = "scriptboard_login_challenge"
 )
 
 type contextKey string
@@ -508,6 +509,7 @@ type App struct {
 	mfa                  MFAStore
 	passkeys             PasskeyStore
 	passkeyCeremonies    *passkeyCeremonyStore
+	loginChallenges      *loginChallengeStore
 	mysqlContext         context.Context
 	mysqlCancel          context.CancelFunc
 	mysqlWG              sync.WaitGroup
@@ -640,7 +642,7 @@ func Open(config Config) (*App, error) {
 	}
 	application := &App{
 		db: db, stateRoot: stateRoot, files: files, hostFilesBackend: config.HostFilesBackend, stateBackups: config.StateBackups, uploadInbox: uploadInboxStore, instanceLock: instanceLock, mfa: mfaStore,
-		passkeys: passkeyStore, passkeyCeremonies: newPasskeyCeremonyStore(),
+		passkeys: passkeyStore, passkeyCeremonies: newPasskeyCeremonyStore(), loginChallenges: newLoginChallengeStore(),
 		execUploadExts: buildExecutableUploadExtensions(config.ExecutorChains),
 		loginSlots:     make(chan struct{}, 2), loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies,
 		allowedHosts: allowedHosts, canonicalExternalURL: config.CanonicalExternalURL,
@@ -2538,6 +2540,8 @@ func (a *App) routes() http.Handler {
 		renderLoginPage(response, request, http.StatusOK, "", "")
 	})
 	mux.Public("POST /login", a.login)
+	mux.Public("GET /login/verify", a.loginVerificationPage)
+	mux.Public("POST /login/verify", a.verifyLoginFactor)
 	mux.Public("POST /auth/passkey/options", a.beginPasskeyLogin)
 	mux.Public("POST /settings/locale", a.setWebLocale)
 	mux.External("GET /trigger", a.externalTrigger)
@@ -5992,7 +5996,6 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 		renderLoginFailure(response, request, http.StatusUnauthorized, request.FormValue("username"), webText(resolveWebLocale(request), "login.invalid_credentials"))
 		return
 	}
-	authenticationAssurance := 1
 	mfaStatus, err := a.mfa.Status(userID)
 	if err != nil {
 		renderLoginFailure(response, request, http.StatusInternalServerError, request.FormValue("username"), webText(resolveWebLocale(request), "mfa.unavailable"))
@@ -6004,26 +6007,102 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	if mfaStatus.Enabled || len(passkeyUser.Credentials) > 0 {
-		verified := false
-		var verifyErr error
-		if assertion := request.FormValue("passkey_response"); assertion != "" {
-			verified, verifyErr = a.verifyPasskeyAssertion(request, userID, username, "login", "", request.FormValue("passkey_ceremony"), assertion)
-		} else if mfaStatus.Enabled {
-			verified, verifyErr = a.mfa.Verify(userID, request.FormValue("mfa_code"))
-		}
-		if verifyErr != nil {
-			renderLoginFailure(response, request, http.StatusInternalServerError, request.FormValue("username"), webText(resolveWebLocale(request), "mfa.unavailable"))
+		challengeID, challengeErr := a.loginChallenges.put(loginChallenge{
+			UserID: userID, Username: username, Role: role, AuthVersion: authVersion, RemoteHost: remoteHost,
+			MFAEnabled: mfaStatus.Enabled, PasskeyEnabled: len(passkeyUser.Credentials) > 0,
+		}, time.Now().UTC())
+		if challengeErr != nil {
+			renderLoginFailure(response, request, http.StatusServiceUnavailable, requestedUsername, webText(resolveWebLocale(request), "mfa.unavailable"))
 			return
 		}
-		if !verified {
-			a.recordLoginFailure(loginKeys...)
-			a.recordAuditForRequest(request, "login", loginIdentity, "failed")
-			renderLoginFailure(response, request, http.StatusUnauthorized, request.FormValue("username"), webText(resolveWebLocale(request), "login.invalid_credentials"))
-			return
-		}
-		authenticationAssurance = 2
+		http.SetCookie(response, &http.Cookie{
+			Name: loginChallengeCookieName, Value: challengeID, Path: "/", MaxAge: int(loginChallengeLifetime.Seconds()),
+			HttpOnly: true, Secure: isSecureRequest(request), SameSite: http.SameSiteStrictMode,
+		})
+		completeLogin(response, request, "/login/verify")
+		return
 	}
 	a.clearLoginFailures(loginKeys...)
+	a.finishLogin(response, request, userID, username, role, authVersion, 1)
+}
+
+func (a *App) loginVerificationPage(response http.ResponseWriter, request *http.Request) {
+	response.Header().Set("Cache-Control", "no-store")
+	challengeID, challenge, ok := a.pendingLoginChallenge(request)
+	if !ok || !a.loginChallengeCurrent(challenge) {
+		if ok {
+			a.loginChallenges.delete(challengeID)
+		}
+		expireLoginChallengeCookie(response, request)
+		http.Redirect(response, request, "/login", http.StatusSeeOther)
+		return
+	}
+	renderLoginVerificationPage(response, request, http.StatusOK, challenge, "")
+}
+
+func (a *App) verifyLoginFactor(response http.ResponseWriter, request *http.Request) {
+	response.Header().Set("Cache-Control", "no-store")
+	resetReadDeadline := setRequestReadDeadline(response, unauthenticatedFormReadTimeout)
+	defer resetReadDeadline()
+	request.Body = http.MaxBytesReader(response, request.Body, maxLoginRequestBytes)
+	defer removeMultipartForm(request)
+	if err := parseRequestForm(request, maxLoginRequestBytes); err != nil {
+		http.Error(response, "invalid login verification form", http.StatusBadRequest)
+		return
+	}
+	csrfCookie, err := request.Cookie(loginCSRFCookieName)
+	if err != nil || subtle.ConstantTimeCompare([]byte(csrfCookie.Value), []byte(request.FormValue("csrf_token"))) != 1 {
+		a.renderLoginVerificationFailure(response, request, http.StatusForbidden, webText(resolveWebLocale(request), "error.forbidden"))
+		return
+	}
+	challengeID, challenge, ok := a.pendingLoginChallenge(request)
+	if !ok {
+		expireLoginChallengeCookie(response, request)
+		a.renderLoginVerificationFailure(response, request, http.StatusUnauthorized, webText(resolveWebLocale(request), "login.verification_expired"))
+		return
+	}
+	if !a.loginChallengeCurrent(challenge) {
+		a.loginChallenges.delete(challengeID)
+		expireLoginChallengeCookie(response, request)
+		a.renderLoginVerificationFailure(response, request, http.StatusUnauthorized, webText(resolveWebLocale(request), "login.verification_expired"))
+		return
+	}
+	remoteHost := loginRemoteHost(request)
+	loginKeys := []string{a.loginRateKey("ip", remoteHost), a.loginRateKey("account", challenge.Username)}
+	if retryAfter := a.loginRetryAfter(loginKeys...); retryAfter > 0 {
+		response.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(retryAfter.Seconds()))))
+		a.recordAuditForRequest(request, "login", challenge.Username, "rate_limited")
+		a.renderLoginVerificationFailure(response, request, http.StatusTooManyRequests, webText(resolveWebLocale(request), "login.too_many_attempts"))
+		return
+	}
+
+	verified := false
+	var verifyErr error
+	if assertion := request.FormValue("passkey_response"); assertion != "" && challenge.PasskeyEnabled {
+		verified, verifyErr = a.verifyPasskeyAssertion(request, challenge.UserID, challenge.Username, "login", challengeID, request.FormValue("passkey_ceremony"), assertion)
+	} else if challenge.MFAEnabled {
+		verified, verifyErr = a.mfa.Verify(challenge.UserID, request.FormValue("mfa_code"))
+	}
+	if verifyErr != nil {
+		a.renderLoginVerificationFailure(response, request, http.StatusInternalServerError, webText(resolveWebLocale(request), "mfa.unavailable"))
+		return
+	}
+	if !verified {
+		a.recordLoginFailure(loginKeys...)
+		a.recordAuditForRequest(request, "login", challenge.Username, "failed")
+		a.renderLoginVerificationFailure(response, request, http.StatusUnauthorized, webText(resolveWebLocale(request), "login.invalid_verification"))
+		return
+	}
+	if _, ok := a.loginChallenges.take(challengeID, remoteHost, time.Now().UTC()); !ok {
+		a.renderLoginVerificationFailure(response, request, http.StatusUnauthorized, webText(resolveWebLocale(request), "login.verification_expired"))
+		return
+	}
+	a.clearLoginFailures(loginKeys...)
+	expireLoginChallengeCookie(response, request)
+	a.finishLogin(response, request, challenge.UserID, challenge.Username, challenge.Role, challenge.AuthVersion, 2)
+}
+
+func (a *App) finishLogin(response http.ResponseWriter, request *http.Request, userID, username string, role userRole, authVersion int64, authenticationAssurance int) {
 
 	token, err := randomToken(32)
 	if err != nil {
@@ -6057,6 +6136,36 @@ func (a *App) login(response http.ResponseWriter, request *http.Request) {
 	auditRequest := request.WithContext(context.WithValue(request.Context(), sessionContextKey, auditSession))
 	a.recordAuditWithRequestActor(auditRequest, "login", username, "succeeded", request.RemoteAddr, userID, username, role)
 	completeLogin(response, request, "/monitor")
+}
+
+func (a *App) pendingLoginChallenge(request *http.Request) (string, loginChallenge, bool) {
+	cookie, err := request.Cookie(loginChallengeCookieName)
+	if err != nil || cookie.Value == "" {
+		return "", loginChallenge{}, false
+	}
+	challenge, ok := a.loginChallenges.get(cookie.Value, loginRemoteHost(request), time.Now().UTC())
+	return cookie.Value, challenge, ok
+}
+
+func (a *App) loginChallengeCurrent(challenge loginChallenge) bool {
+	var username string
+	var role userRole
+	var enabled bool
+	var authVersion int64
+	err := a.db.QueryRow(`SELECT username, role, enabled, auth_version FROM users WHERE id = ?`, challenge.UserID).Scan(&username, &role, &enabled, &authVersion)
+	return err == nil && enabled && username == challenge.Username && role == challenge.Role && authVersion == challenge.AuthVersion
+}
+
+func loginRemoteHost(request *http.Request) string {
+	remoteHost, _, err := net.SplitHostPort(request.RemoteAddr)
+	if err != nil {
+		return request.RemoteAddr
+	}
+	return remoteHost
+}
+
+func expireLoginChallengeCookie(response http.ResponseWriter, request *http.Request) {
+	http.SetCookie(response, &http.Cookie{Name: loginChallengeCookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(request), SameSite: http.SameSiteStrictMode})
 }
 
 func setRequestReadDeadline(response http.ResponseWriter, timeout time.Duration) func() {
@@ -6386,10 +6495,13 @@ func (a *App) recordAuditWithActor(action, target, result, source, actorUserID, 
 }
 
 type loginPageData struct {
-	CSRFToken string
-	Username  string
-	Error     string
-	Locale    webLocale
+	CSRFToken      string
+	Username       string
+	Error          string
+	Locale         webLocale
+	SecondFactor   bool
+	MFAEnabled     bool
+	PasskeyEnabled bool
 }
 
 func renderLoginPage(response http.ResponseWriter, request *http.Request, status int, username, errorMessage string) {
@@ -6419,6 +6531,51 @@ func renderLoginPage(response http.ResponseWriter, request *http.Request, status
 	locale := resolveWebLocale(request)
 	response.Header().Set("Content-Language", string(locale))
 	_ = loginTemplate.Execute(response, loginPageData{CSRFToken: token, Username: username, Error: errorMessage, Locale: locale})
+}
+
+func renderLoginVerificationPage(response http.ResponseWriter, request *http.Request, status int, challenge loginChallenge, errorMessage string) {
+	token := ""
+	if cookie, err := request.Cookie(loginCSRFCookieName); err == nil {
+		token = cookie.Value
+	}
+	if token == "" {
+		var err error
+		token, err = randomToken(32)
+		if err != nil {
+			http.Error(response, "unable to create login verification form", http.StatusInternalServerError)
+			return
+		}
+		http.SetCookie(response, &http.Cookie{Name: loginCSRFCookieName, Value: token, Path: "/", HttpOnly: true, Secure: isSecureRequest(request), SameSite: http.SameSiteStrictMode})
+	}
+	locale := resolveWebLocale(request)
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	response.Header().Set("Content-Language", string(locale))
+	response.WriteHeader(status)
+	_ = loginTemplate.Execute(response, loginPageData{
+		CSRFToken: token, Username: challenge.Username, Error: errorMessage, Locale: locale, SecondFactor: true,
+		MFAEnabled: challenge.MFAEnabled, PasskeyEnabled: challenge.PasskeyEnabled,
+	})
+}
+
+func (a *App) renderPendingLoginVerification(response http.ResponseWriter, request *http.Request, status int, errorMessage string) {
+	_, challenge, ok := a.pendingLoginChallenge(request)
+	if !ok {
+		renderLoginPage(response, request, status, "", errorMessage)
+		return
+	}
+	renderLoginVerificationPage(response, request, status, challenge, errorMessage)
+}
+
+func (a *App) renderLoginVerificationFailure(response http.ResponseWriter, request *http.Request, status int, errorMessage string) {
+	if !acceptsJSON(request) {
+		a.renderPendingLoginVerification(response, request, status, errorMessage)
+		return
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Content-Type", "application/json; charset=utf-8")
+	response.WriteHeader(status)
+	_ = json.NewEncoder(response).Encode(map[string]string{"error": errorMessage})
 }
 
 func renderLoginFailure(response http.ResponseWriter, request *http.Request, status int, username, errorMessage string) {

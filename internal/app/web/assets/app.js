@@ -7139,7 +7139,6 @@ document.addEventListener("input", function (event) {
       loginButton.disabled = true;
       try {
         const body = new URLSearchParams({
-          username: form.elements.username.value,
           csrf_token: form.elements.csrf_token.value
         });
         const response = await fetch("/auth/passkey/options", { method: "POST", body, credentials: "same-origin" });

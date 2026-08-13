@@ -114,28 +114,15 @@ func (a *App) beginPasskeyLogin(response http.ResponseWriter, request *http.Requ
 		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
 		return
 	}
-	username := strings.TrimSpace(request.FormValue("username"))
-	user := passkey.User{ID: "invalid-login", Name: username}
-	userID := ""
-	var actualUsername string
-	var enabled bool
-	if validUsername(username) {
-		if queryErr := a.db.QueryRow(`SELECT id, username, enabled FROM users WHERE username = ?`, username).Scan(&userID, &actualUsername, &enabled); queryErr == nil && enabled {
-			loaded, loadErr := a.passkeys.User(userID, actualUsername)
-			if loadErr != nil {
-				http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusServiceUnavailable)
-				return
-			}
-			user = loaded
-		}
+	challengeID, challenge, ok := a.pendingLoginChallenge(request)
+	if !ok || !challenge.PasskeyEnabled {
+		http.Error(response, webText(resolveWebLocale(request), "login.verification_expired"), http.StatusUnauthorized)
+		return
 	}
-	if len(user.Credentials) == 0 {
-		// Keep the response shape indistinguishable for unknown users and accounts
-		// without a passkey. The random descriptor can never validate.
-		decoy := make([]byte, 32)
-		_, _ = rand.Read(decoy)
-		user.Credentials = []webauthn.Credential{{ID: decoy}}
-		userID = ""
+	user, err := a.passkeys.User(challenge.UserID, challenge.Username)
+	if err != nil || len(user.Credentials) == 0 {
+		http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusServiceUnavailable)
+		return
 	}
 	provider, origin, err := a.webAuthnForRequest(request)
 	if err != nil {
@@ -147,7 +134,7 @@ func (a *App) beginPasskeyLogin(response http.ResponseWriter, request *http.Requ
 		http.Error(response, "passkey is unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	ceremonyID, err := a.passkeyCeremonies.put(passkeyCeremony{Kind: "login", UserID: userID, Origin: origin, Data: *sessionData}, time.Now().UTC())
+	ceremonyID, err := a.passkeyCeremonies.put(passkeyCeremony{Kind: "login", UserID: challenge.UserID, TokenHash: challengeID, Origin: origin, Data: *sessionData}, time.Now().UTC())
 	if err != nil {
 		http.Error(response, "passkey is busy", http.StatusTooManyRequests)
 		return

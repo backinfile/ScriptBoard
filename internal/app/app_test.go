@@ -1245,7 +1245,7 @@ func TestInvalidLoginRendersInlineErrorPage(t *testing.T) {
 	if contentType := response.Header.Get("Content-Type"); !strings.HasPrefix(contentType, "text/html") {
 		t.Fatalf("invalid login content type = %q, want HTML", contentType)
 	}
-	for _, expected := range []string{"<!doctype html>", "The username, password, or security code is incorrect", `role="alert"`, `value="admin"`, `action="/login"`} {
+	for _, expected := range []string{"<!doctype html>", "The username or password is incorrect", `role="alert"`, `value="admin"`, `action="/login"`} {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("invalid login page does not contain %q: %s", expected, page)
 		}
@@ -1312,7 +1312,7 @@ func TestInvalidAJAXLoginReturnsStructuredErrorAndFreshCSRFToken(t *testing.T) {
 	if contentType := response.Header.Get("Content-Type"); !strings.HasPrefix(contentType, "application/json") {
 		t.Fatalf("AJAX login content type = %q, want JSON", contentType)
 	}
-	if payload.Error != "The username, password, or security code is incorrect" {
+	if payload.Error != "The username or password is incorrect" {
 		t.Fatalf("AJAX login error = %q", payload.Error)
 	}
 	if payload.CSRFToken == "" || payload.CSRFToken == form.Get("csrf_token") {

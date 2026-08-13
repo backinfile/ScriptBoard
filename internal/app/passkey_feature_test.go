@@ -12,8 +12,24 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-webauthn/webauthn/webauthn"
+
 	"scriptboard/internal/app"
+	passkeydomain "scriptboard/internal/passkey"
 )
+
+type configuredLoginPasskeyStore struct{}
+
+func (configuredLoginPasskeyStore) User(userID, username string) (passkeydomain.User, error) {
+	return passkeydomain.User{ID: userID, Name: username, Credentials: []webauthn.Credential{{ID: []byte("configured-login-passkey")}}}, nil
+}
+func (configuredLoginPasskeyStore) List(string) ([]passkeydomain.CredentialView, error) {
+	return nil, nil
+}
+func (configuredLoginPasskeyStore) Add(string, string, webauthn.Credential) error { return nil }
+func (configuredLoginPasskeyStore) Update(string, webauthn.Credential) error      { return nil }
+func (configuredLoginPasskeyStore) Delete(string, string) error                   { return nil }
+func (configuredLoginPasskeyStore) Reset(string) error                            { return nil }
 
 func TestPasskeyCeremoniesRequireCSRFAndUserVerification(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "state")
@@ -76,18 +92,61 @@ func TestPasskeyCeremoniesRequireCSRFAndUserVerification(t *testing.T) {
 		t.Fatalf("unsafe registration options: %s", body)
 	}
 
-	// A fresh unauthenticated client receives a syntactically identical challenge
-	// even for an unknown user, avoiding an explicit account/passkey oracle.
+	// A passkey ceremony cannot begin until the password step has created a
+	// short-lived login challenge.
 	unknownJar, _ := cookiejar.New(nil)
 	unknown := &http.Client{Jar: unknownJar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	page := getBody(t, unknown, server.URL+"/login", http.StatusOK)
-	challenge, err := unknown.PostForm(server.URL+"/auth/passkey/options", url.Values{"username": {"missing-user"}, "csrf_token": {formToken(t, page)}})
+	challenge, err := unknown.PostForm(server.URL+"/auth/passkey/options", url.Values{"csrf_token": {formToken(t, page)}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	challengeBody, _ := io.ReadAll(challenge.Body)
 	_ = challenge.Body.Close()
-	if challenge.StatusCode != http.StatusOK || !strings.Contains(string(challengeBody), `"userVerification":"required"`) {
-		t.Fatalf("unknown challenge status=%d body=%s", challenge.StatusCode, challengeBody)
+	if challenge.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("passkey challenge before password status=%d body=%s", challenge.StatusCode, challengeBody)
+	}
+}
+
+func TestPasskeyLoginIsOnlyOfferedAfterPasswordVerification(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	application, err := app.Open(app.Config{StateRoot: stateRoot, PasskeyStore: configuredLoginPasskeyStore{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = application.Close() })
+	server := httptest.NewServer(application.Handler())
+	t.Cleanup(server.Close)
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	passwordBytes, _ := os.ReadFile(filepath.Join(stateRoot, "secrets", "initial-admin-password"))
+
+	page := getBody(t, client, server.URL+"/login", http.StatusOK)
+	if strings.Contains(string(page), `data-passkey-login`) || strings.Contains(string(page), `name="passkey_response"`) {
+		t.Fatalf("first login step exposes passkey controls: %s", page)
+	}
+	started, err := client.PostForm(server.URL+"/login", url.Values{
+		"csrf_token": {formToken(t, page)}, "username": {"admin"}, "password": {strings.TrimSpace(string(passwordBytes))},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = started.Body.Close()
+	if started.StatusCode != http.StatusSeeOther || started.Header.Get("Location") != "/login/verify" {
+		t.Fatalf("password step status=%d location=%q", started.StatusCode, started.Header.Get("Location"))
+	}
+
+	verificationPage := getBody(t, client, server.URL+"/login/verify", http.StatusOK)
+	if !strings.Contains(string(verificationPage), `data-passkey-login`) || strings.Contains(string(verificationPage), `name="password"`) {
+		t.Fatalf("passkey verification step has incorrect controls: %s", verificationPage)
+	}
+	options, err := client.PostForm(server.URL+"/auth/passkey/options", url.Values{"csrf_token": {formToken(t, verificationPage)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	optionsBody, _ := io.ReadAll(options.Body)
+	_ = options.Body.Close()
+	if options.StatusCode != http.StatusOK || !strings.Contains(string(optionsBody), `"userVerification":"required"`) {
+		t.Fatalf("passkey options status=%d body=%s", options.StatusCode, optionsBody)
 	}
 }
