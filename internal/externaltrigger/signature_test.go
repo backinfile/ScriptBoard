@@ -25,7 +25,7 @@ func TestSignedRequestAcceptsOneFreshNonce(t *testing.T) {
 	}
 	timestamp := now.Unix()
 	nonce := "nonce_1234567890abcdef"
-	requestURI := "/trigger?name=signed-log"
+	requestURI := "/trigger/signed-calls/signed-log"
 	signature := RequestSignature(secret, timestamp, nonce, http.MethodPost, requestURI, "", nil)
 	if err := manager.VerifyAndConsumeSignature(context.Background(), key.ID, secret, timestamp, nonce, http.MethodPost, requestURI, "", 0, BodySHA256(nil), signature); err != nil {
 		t.Fatalf("verify fresh signature: %v", err)
@@ -53,10 +53,10 @@ func TestSignedRequestRejectsInvalidOrExpiredProof(t *testing.T) {
 		name, nonce, method, requestURI, signature string
 		timestamp                                  int64
 	}{
-		{name: "expired", timestamp: now.Add(-6 * time.Minute).Unix(), nonce: "nonce_expired_123456", method: http.MethodPost, requestURI: "/trigger?name=signed-log"},
-		{name: "future", timestamp: now.Add(6 * time.Minute).Unix(), nonce: "nonce_future_12345678", method: http.MethodPost, requestURI: "/trigger?name=signed-log"},
-		{name: "short nonce", timestamp: now.Unix(), nonce: "short", method: http.MethodPost, requestURI: "/trigger?name=signed-log"},
-		{name: "bad signature", timestamp: now.Unix(), nonce: "nonce_bad_sig_123456", method: http.MethodPost, requestURI: "/trigger?name=signed-log", signature: "v1=0000000000000000000000000000000000000000000000000000000000000000"},
+		{name: "expired", timestamp: now.Add(-6 * time.Minute).Unix(), nonce: "nonce_expired_123456", method: http.MethodPost, requestURI: "/trigger/signed-calls/signed-log"},
+		{name: "future", timestamp: now.Add(6 * time.Minute).Unix(), nonce: "nonce_future_12345678", method: http.MethodPost, requestURI: "/trigger/signed-calls/signed-log"},
+		{name: "short nonce", timestamp: now.Unix(), nonce: "short", method: http.MethodPost, requestURI: "/trigger/signed-calls/signed-log"},
+		{name: "bad signature", timestamp: now.Unix(), nonce: "nonce_bad_sig_123456", method: http.MethodPost, requestURI: "/trigger/signed-calls/signed-log", signature: "v1=0000000000000000000000000000000000000000000000000000000000000000"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			signature := test.signature
@@ -69,8 +69,8 @@ func TestSignedRequestRejectsInvalidOrExpiredProof(t *testing.T) {
 		})
 	}
 	nonce := "nonce_wrong_uri_123456"
-	signature := RequestSignature(secret, now.Unix(), nonce, http.MethodPost, "/trigger?name=other", "", nil)
-	if err := manager.VerifyAndConsumeSignature(context.Background(), key.ID, secret, now.Unix(), nonce, http.MethodPost, "/trigger?name=signed-log", "", 0, BodySHA256(nil), signature); !errors.Is(err, ErrSignatureInvalid) {
+	signature := RequestSignature(secret, now.Unix(), nonce, http.MethodPost, "/trigger/signed-calls/other", "", nil)
+	if err := manager.VerifyAndConsumeSignature(context.Background(), key.ID, secret, now.Unix(), nonce, http.MethodPost, "/trigger/signed-calls/signed-log", "", 0, BodySHA256(nil), signature); !errors.Is(err, ErrSignatureInvalid) {
 		t.Fatalf("request URI binding error=%v", err)
 	}
 }
@@ -91,7 +91,7 @@ func TestFutureDatedSignatureNonceLivesThroughFullAcceptanceWindow(t *testing.T)
 	}
 	timestamp := now.Add(4 * time.Minute).Unix()
 	nonce := "nonce_future_valid_1234"
-	requestURI := "/trigger?name=signed-log"
+	requestURI := "/trigger/signed-calls/signed-log"
 	if err := manager.VerifyAndConsumeSignature(context.Background(), key.ID, secret, timestamp, nonce, http.MethodPost, requestURI, "", 0, BodySHA256(nil), RequestSignature(secret, timestamp, nonce, http.MethodPost, requestURI, "", nil)); err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestConcurrentSignedRequestConsumesNonceOnce(t *testing.T) {
 	}
 	timestamp := now.Unix()
 	nonce := "nonce_concurrent_12345"
-	requestURI := "/trigger?name=signed-log"
+	requestURI := "/trigger/signed-calls/signed-log"
 	signature := RequestSignature(secret, timestamp, nonce, http.MethodPost, requestURI, "", nil)
 	const attempts = 12
 	results := make(chan error, attempts)

@@ -195,8 +195,9 @@ func normalizeRemoteWebsiteEndpoint(raw string) (string, error) {
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
 		return "", errors.New("invalid endpoint")
 	}
-	if parsed.RawQuery == "" || parsed.Query().Get("name") == "" {
-		return "", errors.New("missing interface name")
+	parts := strings.Split(strings.TrimPrefix(parsed.EscapedPath(), "/trigger/"), "/")
+	if parsed.RawQuery != "" || !strings.HasPrefix(parsed.EscapedPath(), "/trigger/") || len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", errors.New("invalid interface path")
 	}
 	return parsed.String(), nil
 }

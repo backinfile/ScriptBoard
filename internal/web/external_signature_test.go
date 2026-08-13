@@ -29,7 +29,7 @@ func TestExternalSignedRequestRejectsUnsignedAndReplay(t *testing.T) {
 		"require_signature": {"1"}, "log_file": {logFile}, "log_message_limit": {"1024"},
 	})
 
-	unsigned := invokeExternalForm(t, client, serverURL, secret, "signed-log", url.Values{"message": {"unsigned"}})
+	unsigned := invokeExternalForm(t, client, serverURL, secret, "legacy", "signed-log", url.Values{"message": {"unsigned"}})
 	unsignedBody, _ := io.ReadAll(unsigned.Body)
 	_ = unsigned.Body.Close()
 	if unsigned.StatusCode != http.StatusUnauthorized || !strings.Contains(string(unsignedBody), `"error":"invalid_key"`) {
@@ -37,7 +37,7 @@ func TestExternalSignedRequestRejectsUnsignedAndReplay(t *testing.T) {
 	}
 
 	timestamp := time.Now().UTC().Unix()
-	requestURI := "/trigger?name=signed-log"
+	requestURI := externalTriggerPath("legacy", "signed-log")
 	values := url.Values{"message": {"signed once"}}
 	contentType := "application/x-www-form-urlencoded"
 

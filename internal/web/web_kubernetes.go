@@ -7,6 +7,7 @@ import (
 	"scriptboard/internal/identity"
 	"strconv"
 	"strings"
+	"time"
 
 	"scriptboard/internal/clusterstatus"
 )
@@ -184,14 +185,40 @@ func (a *App) kubernetesWorkloadDetails(response http.ResponseWriter, request *h
 
 func (a *App) kubernetesWorkloadLogs(response http.ResponseWriter, request *http.Request) {
 	limit, _ := strconv.Atoi(request.URL.Query().Get("limit"))
+	if limit <= 0 && strings.Contains(request.Header.Get("Accept"), "text/html") {
+		limit = 500
+	}
 	lines, err := a.kubernetesStatus.Logs(request.Context(), kubernetesWorkloadKey(request), limit)
 	if err != nil {
 		http.Error(response, "Unable to read Kubernetes Pod logs", http.StatusBadRequest)
 		return
 	}
 	response.Header().Set("Cache-Control", "no-store")
+	if strings.Contains(request.Header.Get("Accept"), "text/html") {
+		locale := resolveWebLocale(request)
+		views := make([]kubernetesLogLineView, 0, len(lines))
+		for _, line := range lines {
+			views = append(views, kubernetesLogLineView{At: line.At, Source: line.Pod + "/" + line.Container, Text: line.Text})
+		}
+		response.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = kubernetesLogsTemplate.Execute(response, kubernetesLogsPageView{
+			Locale: locale, Namespace: request.PathValue("namespace"), Kind: request.PathValue("kind"), Name: request.PathValue("name"), Lines: views,
+		})
+		return
+	}
 	response.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(response).Encode(lines)
+}
+
+type kubernetesLogLineView struct {
+	At           time.Time
+	Source, Text string
+}
+
+type kubernetesLogsPageView struct {
+	Locale                webLocale
+	Namespace, Kind, Name string
+	Lines                 []kubernetesLogLineView
 }
 
 func (a *App) operateKubernetesWorkload(response http.ResponseWriter, request *http.Request) {

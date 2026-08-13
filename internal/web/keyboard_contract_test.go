@@ -78,3 +78,39 @@ func TestCustomDashboardDrawerWaitsForItsActualTransition(t *testing.T) {
 		t.Fatal("custom dashboard drawer still closes on a fixed timer")
 	}
 }
+
+func TestCustomDashboardDrawerStartsOpeningOnTheNextPaint(t *testing.T) {
+	t.Parallel()
+
+	script, err := webFiles.ReadFile("ui/assets/app.js")
+	if err != nil {
+		t.Fatalf("read application script: %v", err)
+	}
+	source := string(script)
+	if strings.Contains(source, `window.requestAnimationFrame(() => window.requestAnimationFrame(() => {`) {
+		t.Fatal("custom dashboard drawer delays its entrance for two paint frames")
+	}
+	if !strings.Contains(source, `window.requestAnimationFrame(() => {`) {
+		t.Fatal("custom dashboard drawer does not cross one paint boundary before entering")
+	}
+}
+
+func TestActionFailureStaysInTheCurrentPageErrorDialog(t *testing.T) {
+	t.Parallel()
+
+	script, err := webFiles.ReadFile("ui/assets/app.js")
+	if err != nil {
+		t.Fatalf("read application script: %v", err)
+	}
+	source := string(script)
+	for _, expected := range []string{
+		`if (!result.response.ok && !isTaskValidation)`,
+		`showServerError(result, {`,
+		`includeClientErrors: true`,
+		`fallbackMessage: words().submitFailed`,
+	} {
+		if !strings.Contains(source, expected) {
+			t.Fatalf("action failure does not stay in the current-page error dialog: missing %q", expected)
+		}
+	}
+}

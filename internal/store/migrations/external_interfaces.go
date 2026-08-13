@@ -31,8 +31,8 @@ func migrateExternalInterfaceGroups(migration *sql.Tx, schemaVersion int) error 
 		}
 	}
 	for _, statement := range []string{
-		`INSERT OR IGNORE INTO external_trigger_groups (id, label, enabled, created_at, updated_at)
-		 SELECT 'group-' || id, label, 1, created_at, updated_at FROM external_trigger_keys`,
+		`INSERT OR IGNORE INTO external_trigger_groups (id, label, call_name, enabled, created_at, updated_at)
+		 SELECT 'group-' || id, label, label, 1, created_at, updated_at FROM external_trigger_keys`,
 		`UPDATE external_trigger_keys SET group_id = 'group-' || id WHERE group_id = ''`,
 	} {
 		if _, err := migration.Exec(statement); err != nil {
@@ -69,6 +69,28 @@ func migrateExternalInterfaceGroups(migration *sql.Tx, schemaVersion int) error 
 		if _, err := migration.Exec(statement); err != nil {
 			return fmt.Errorf("migrate External Interface entry groups: %w", err)
 		}
+	}
+	return nil
+}
+
+func migrateExternalInterfaceGroupCallNames(migration *sql.Tx, schemaVersion int) error {
+	if schemaVersion < 20 || schemaVersion > 46 {
+		return nil
+	}
+	exists, err := storesqlite.ColumnExists(migration, "external_trigger_groups", "call_name")
+	if err != nil {
+		return fmt.Errorf("inspect External Interface group call-name migration: %w", err)
+	}
+	if !exists {
+		if _, err := migration.Exec(`ALTER TABLE external_trigger_groups ADD COLUMN call_name TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add External Interface group call names: %w", err)
+		}
+	}
+	if _, err := migration.Exec(`UPDATE external_trigger_groups SET call_name = label WHERE call_name = ''`); err != nil {
+		return fmt.Errorf("backfill External Interface group call names: %w", err)
+	}
+	if _, err := migration.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS external_trigger_groups_call_name_idx ON external_trigger_groups(call_name COLLATE NOCASE)`); err != nil {
+		return fmt.Errorf("index External Interface group call names: %w", err)
 	}
 	return nil
 }

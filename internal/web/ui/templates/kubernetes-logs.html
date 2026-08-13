@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="{{.Locale}}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/assets/app-v2.css?v={{assetVersion}}">
+  <script defer src="/assets/app-v2.js?v={{assetVersion}}"></script>
+  <title>{{.Name}} · {{t .Locale "kubernetes.pod_logs"}} · ScriptBoard</title>
+</head>
+<body>
+<main class="workspace kubernetes-logs-page" data-kubernetes-logs-page>
+  <header class="page-heading kubernetes-logs-heading">
+    <div>
+      <a class="task-back" href="/monitor/kubernetes"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "common.back"}}</a>
+      <p class="page-eyebrow">Kubernetes / {{t .Locale "kubernetes.pod_logs"}}</p>
+      <h1>{{.Name}}</h1>
+      <p><code>{{.Namespace}} / {{.Kind}}</code></p>
+    </div>
+    <a class="button" href=""><span data-lucide="refresh-cw" aria-hidden="true"></span>{{t .Locale "kubernetes.refresh_logs"}}</a>
+  </header>
+  <section class="kubernetes-log-stage" aria-labelledby="kubernetes-log-output-title">
+    <header><div><h2 id="kubernetes-log-output-title">{{t .Locale "kubernetes.pod_logs"}}</h2><p>{{t .Locale "kubernetes.logs_description"}}</p></div><span>{{len .Lines}} {{t .Locale "kubernetes.log_lines"}}</span></header>
+    {{if .Lines}}<div class="kubernetes-log-output" role="log" aria-live="off">{{range .Lines}}<div class="kubernetes-log-line"><time datetime="{{machineTime .At}}" data-local-time>{{localTime $.Locale .At}}</time><code>{{.Source}}</code><pre>{{.Text}}</pre></div>{{end}}</div>{{else}}<p class="kubernetes-log-empty">{{t .Locale "kubernetes.no_logs"}}</p>{{end}}
+  </section>
+</main>
+</body>
+</html>

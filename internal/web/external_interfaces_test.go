@@ -32,7 +32,7 @@ func TestExternalInterfaceGroupOwnsPathsAndMultipleKeys(t *testing.T) {
 	}
 	page, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	response, err = client.PostForm(serverURL+"/config/external-interfaces/groups", url.Values{"csrf_token": {formToken(t, page)}, "label": {"Deployment automation"}})
+	response, err = client.PostForm(serverURL+"/config/external-interfaces/groups", url.Values{"csrf_token": {formToken(t, page)}, "label": {"Deployment automation"}, "call_name": {"deployment-automation"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,6 +59,63 @@ func TestExternalInterfaceGroupOwnsPathsAndMultipleKeys(t *testing.T) {
 			t.Fatalf("group task %s status=%d body=%s", suffix, response.StatusCode, body)
 		}
 	}
+	entryTaskResponse, err := client.Get(serverURL + "/config/external-interfaces/groups/" + groupID + "/entries/new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entryTask, _ := io.ReadAll(entryTaskResponse.Body)
+	_ = entryTaskResponse.Body.Close()
+	for _, expected := range []string{`name="log_target_mode" value="managed"`, `data-external-log-rotate`, `name="log_max_file_mb"`, `name="log_max_backups"`} {
+		if !bytes.Contains(entryTask, []byte(expected)) {
+			t.Fatalf("managed log controls missing %q: %s", expected, entryTask)
+		}
+	}
+	managedValues := url.Values{
+		"csrf_token": {formToken(t, entryTask)}, "name": {"managed-log"}, "label": {"Managed log"}, "action_type": {"log"},
+		"log_target_mode": {"managed"}, "log_rotate": {"1"}, "log_max_file_mb": {"1"}, "log_max_backups": {"2"},
+		"log_message_limit": {"1024"}, "enabled": {"1"},
+	}
+	managedResponse, err := client.PostForm(serverURL+"/config/external-interfaces/groups/"+groupID+"/entries", managedValues)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = managedResponse.Body.Close()
+	database, err := sql.Open("sqlite", filepath.Join(root, "state", "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	var managedTarget, managedConfigJSON string
+	if err := database.QueryRow(`SELECT target, config_json FROM external_trigger_entries WHERE group_id = ? AND name = 'managed-log'`, groupID).Scan(&managedTarget, &managedConfigJSON); err != nil {
+		t.Fatal(err)
+	}
+	wantManagedTarget := filepath.Join(root, "scriptboard-external-"+groupID+"-managed-log.log")
+	if managedTarget != wantManagedTarget || !strings.Contains(managedConfigJSON, `"managed":true`) || !strings.Contains(managedConfigJSON, `"max_file_bytes":1048576`) || !strings.Contains(managedConfigJSON, `"max_backups":2`) {
+		t.Fatalf("managed log target=%q config=%s", managedTarget, managedConfigJSON)
+	}
+	keyTaskResponse, err := client.Get(serverURL + "/config/external-interfaces/groups/" + groupID + "/keys/new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyTask, _ := io.ReadAll(keyTaskResponse.Body)
+	_ = keyTaskResponse.Body.Close()
+	keyValues := url.Values{"csrf_token": {formToken(t, keyTask)}, "label": {"Deploy key"}, "duration": {"1d"}, "enabled": {"1"}}
+	created, err := client.PostForm(serverURL+"/config/external-interfaces/groups/"+groupID+"/keys", keyValues)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = created.Body.Close()
+	duplicate, err := client.PostForm(serverURL+"/config/external-interfaces/groups/"+groupID+"/keys", keyValues)
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicateBody, _ := io.ReadAll(duplicate.Body)
+	_ = duplicate.Body.Close()
+	if duplicate.StatusCode != http.StatusUnprocessableEntity ||
+		!bytes.Contains(duplicateBody, []byte("Deployment automation")) ||
+		!bytes.Contains(duplicateBody, []byte(`action="/config/external-interfaces/groups/`+groupID+`/keys"`)) {
+		t.Fatalf("group key validation must stay in the same drawer and group: status=%d body=%s", duplicate.StatusCode, duplicateBody)
+	}
 }
 
 func createdExternalTestKey(t *testing.T, body []byte) (string, string) {
@@ -80,9 +137,13 @@ func createdExternalKeyID(t *testing.T, body []byte) string {
 	return identifier
 }
 
-func invokeExternalForm(t *testing.T, client *http.Client, serverURL, secret, name string, values url.Values) *http.Response {
+func externalTriggerPath(group, name string) string {
+	return "/trigger/" + url.PathEscape(group) + "/" + url.PathEscape(name)
+}
+
+func invokeExternalForm(t *testing.T, client *http.Client, serverURL, secret, group, name string, values url.Values) *http.Response {
 	t.Helper()
-	request, err := http.NewRequest(http.MethodPost, serverURL+"/trigger?name="+url.QueryEscape(name), strings.NewReader(values.Encode()))
+	request, err := http.NewRequest(http.MethodPost, serverURL+externalTriggerPath(group, name), strings.NewReader(values.Encode()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +242,7 @@ func TestExternalWebsiteMonitorEntryReturnsReadOnlySnapshot(t *testing.T) {
 	_ = createdEntry.Body.Close()
 	secret, _ = createdExternalTestKey(t, createdEntryPage)
 
-	request, _ := http.NewRequest(http.MethodGet, serverURL+"/trigger?name=website-status", nil)
+	request, _ := http.NewRequest(http.MethodGet, serverURL+externalTriggerPath("legacy", "website-status"), nil)
 	request.Header.Set("Authorization", "Bearer "+secret)
 	response, err := client.Do(request)
 	if err != nil {
@@ -302,7 +363,7 @@ func TestAdministratorCreatesKeyAndExternalLogTrigger(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !strings.Contains(string(page), "External Interfaces") {
 		t.Fatalf("external interfaces page status=%d body=%s", response.StatusCode, page)
 	}
-	for _, expected := range []string{`class="external-interface-tabs"`, `href="/config/external-interfaces" aria-current="page"`, `href="/config/external-interfaces?tab=activity"`, `>Interfaces<`} {
+	for _, expected := range []string{`class="external-interface-tabs"`, `href="/config/external-interfaces" aria-current="page"`, `href="/config/external-interfaces?tab=activity"`, `href="/config/external-interfaces?tab=logs"`, `>Interfaces<`} {
 		if !strings.Contains(string(page), expected) {
 			t.Fatalf("external interfaces page is missing tab contract %q: %s", expected, page)
 		}
@@ -317,6 +378,7 @@ func TestAdministratorCreatesKeyAndExternalLogTrigger(t *testing.T) {
 	newKeyTask, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusOK || !strings.Contains(string(newKeyTask), `data-task-kind="external-key-new"`) ||
+		!strings.Contains(string(newKeyTask), `external-key-drawer-page`) ||
 		!strings.Contains(string(newKeyTask), `<form method="post" action="/config/external-interfaces/keys" data-async>`) {
 		t.Fatalf("create key task should submit inside the drawer: status=%d body=%s", response.StatusCode, newKeyTask)
 	}
@@ -350,6 +412,11 @@ func TestAdministratorCreatesKeyAndExternalLogTrigger(t *testing.T) {
 	}
 	keyList, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
+	for _, expected := range []string{`data-external-key-manager`, `class="external-key-manager__sheet"`, `>Manage keys<`, `class="external-key-manager__intro"`} {
+		if !strings.Contains(string(keyList), expected) {
+			t.Fatalf("key management drawer missing %q: %s", expected, keyList)
+		}
+	}
 	copyURL := "/config/external-interfaces/keys/" + keyID + "/copy"
 	if strings.Contains(string(keyList), copyURL) || strings.Contains(string(keyList), secret) || strings.Contains(string(keyList), `data-copy-key`) {
 		t.Fatalf("key list retained a complete-key retrieval surface: %s", keyList)
@@ -429,7 +496,7 @@ func TestAdministratorCreatesKeyAndExternalLogTrigger(t *testing.T) {
 	}
 	secret, _ = createdExternalTestKey(t, boundKeyPage)
 
-	queryRequest, _ := http.NewRequest(http.MethodPost, serverURL+"/trigger?key="+url.QueryEscape(secret)+"&name=deployment-log", strings.NewReader(url.Values{"message": {"must not be logged"}}.Encode()))
+	queryRequest, _ := http.NewRequest(http.MethodPost, serverURL+externalTriggerPath("legacy", "deployment-log")+"?key="+url.QueryEscape(secret), strings.NewReader(url.Values{"message": {"must not be logged"}}.Encode()))
 	queryRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	queryResponse, err := client.Do(queryRequest)
 	if err != nil {
@@ -440,7 +507,7 @@ func TestAdministratorCreatesKeyAndExternalLogTrigger(t *testing.T) {
 		t.Fatalf("query-string key status=%d, want 401", queryResponse.StatusCode)
 	}
 
-	response = invokeExternalForm(t, client, serverURL, secret, "deployment-log", url.Values{"message": {"deployment finished"}})
+	response = invokeExternalForm(t, client, serverURL, secret, "legacy", "deployment-log", url.Values{"message": {"deployment finished"}})
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(response.Body)
@@ -486,7 +553,17 @@ func TestAdministratorCreatesKeyAndExternalLogTrigger(t *testing.T) {
 		t.Fatalf("clickable entry row missing: %s", interfaces)
 	}
 	entryID := string(detailMatch[1])
-	for _, action := range []string{`href="` + previewURL + `"`, `/config/external-interfaces/entries/` + entryID + `/edit`, `/config/external-interfaces/entries/` + entryID + `/toggle`, `/config/external-interfaces/entries/` + entryID + `/delete`} {
+	if !strings.Contains(string(interfaces), `href="/config/external-interfaces/entries/`+entryID+`/edit" data-task-link aria-label="Edit callable function"`) {
+		t.Fatalf("entry edit drawer action missing: %s", interfaces)
+	}
+	if !strings.Contains(string(interfaces), `data-external-group-id=`) ||
+		!strings.Contains(string(interfaces), `<span class="external-key__facts"><span>Callable function <strong>1</strong></span><span aria-hidden="true">·</span><span>Keys <strong>1</strong></span></span>`) ||
+		!strings.Contains(string(interfaces), `/toggle" data-async`) ||
+		!strings.Contains(string(interfaces), `/delete" data-confirm=`) ||
+		!strings.Contains(string(interfaces), `data-confirm="Delete this key and all of its callable functions?" data-async`) {
+		t.Fatalf("external group fragment contract missing: %s", interfaces)
+	}
+	for _, action := range []string{`href="` + previewURL + `"`, `/config/external-interfaces/entries/` + entryID + `/toggle`, `/config/external-interfaces/entries/` + entryID + `/delete`} {
 		if strings.Contains(string(interfaces), action) {
 			t.Fatalf("entry action %q should only appear in the drawer: %s", action, interfaces)
 		}
@@ -498,7 +575,7 @@ func TestAdministratorCreatesKeyAndExternalLogTrigger(t *testing.T) {
 	detail, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusOK || !strings.Contains(string(detail), `data-task-kind="external-entry-detail"`) ||
-		!strings.Contains(string(detail), "POST /trigger/deployment-log") ||
+		!strings.Contains(string(detail), "POST /trigger/legacy/deployment-log") ||
 		!strings.Contains(string(detail), "Authorization: Bearer YOUR_KEY") || !strings.Contains(string(detail), "message") ||
 		!strings.Contains(string(detail), `href="`+previewURL+`"`) || strings.Contains(string(detail), `/entries/`+entryID+`/edit`) ||
 		!strings.Contains(string(detail), `/entries/`+entryID+`/toggle`) || !strings.Contains(string(detail), `/entries/`+entryID+`/delete`) {
@@ -512,6 +589,95 @@ func TestAdministratorCreatesKeyAndExternalLogTrigger(t *testing.T) {
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusOK || !strings.Contains(string(preview), "deployment finished") {
 		t.Fatalf("log preview status=%d body=%s", response.StatusCode, preview)
+	}
+}
+
+func TestExternalLogFilesTabListsSearchesAndDownloadsCurrentAndRotatedFiles(t *testing.T) {
+	root := t.TempDir()
+	hostRoot, stateRoot := filepath.Join(root, "host"), filepath.Join(root, "state")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
+
+	response, err := client.Get(serverURL + "/config/external-interfaces")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/config/external-interfaces/groups", url.Values{
+		"csrf_token": {formToken(t, page)}, "label": {"Archive receivers"}, "call_name": {"archive-receivers"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	response, err = client.Get(serverURL + "/config/external-interfaces")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	groupMatch := regexp.MustCompile(`/config/external-interfaces/groups/([A-Za-z0-9_-]+)/entries/new`).FindSubmatch(page)
+	if len(groupMatch) != 2 {
+		t.Fatalf("created group is missing: %s", page)
+	}
+	groupID := string(groupMatch[1])
+	response, err = client.Get(serverURL + "/config/external-interfaces/groups/" + groupID + "/entries/new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entryTask, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	logFile := filepath.Join(hostRoot, "incoming.log")
+	response, err = client.PostForm(serverURL+"/config/external-interfaces/groups/"+groupID+"/entries", url.Values{
+		"csrf_token": {formToken(t, entryTask)}, "name": {"archive-log"}, "label": {"Archive receiver"}, "action_type": {"log"},
+		"log_target_mode": {"custom"}, "log_file": {logFile}, "log_rotate": {"1"}, "log_max_file_mb": {"1"},
+		"log_max_backups": {"2"}, "log_message_limit": {"1024"}, "enabled": {"1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if err := os.WriteFile(logFile, []byte("current record\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logFile+".1", []byte("rotated record\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	readLogs := func(query string) string {
+		t.Helper()
+		response, requestErr := client.Get(serverURL + "/config/external-interfaces?tab=logs" + query)
+		if requestErr != nil {
+			t.Fatal(requestErr)
+		}
+		body, _ := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("log files page status=%d body=%s", response.StatusCode, body)
+		}
+		return string(body)
+	}
+	logsPage := readLogs("")
+	for _, expected := range []string{
+		`href="/config/external-interfaces?tab=logs" aria-current="page"`, `data-external-log-files`, `Archive receiver`,
+		`<details class="external-log-group" open>`, `class="external-log-group__chevron"`, `class="external-log-entry__identity"`, `<h3>Archive receivers</h3>`, `<code>archive-receivers</code>`,
+		`data-preserve-scroll`,
+		`incoming.log`, `incoming.log.1`, `name="tab" value="logs"`, `/resources/files/download?path=` + url.QueryEscape(logFile),
+	} {
+		if !strings.Contains(logsPage, expected) {
+			t.Fatalf("log files page is missing %q: %s", expected, logsPage)
+		}
+	}
+	searched := readLogs("&q=archive-log")
+	if !strings.Contains(searched, "Archive receiver") || !strings.Contains(searched, "2 log files") {
+		t.Fatalf("log file search did not retain both current and archive files: %s", searched)
+	}
+	missing := readLogs("&q=no-such-log")
+	if !strings.Contains(missing, "No log files match this query.") || strings.Contains(missing, "incoming.log") {
+		t.Fatalf("empty log search state is incorrect: %s", missing)
 	}
 }
 
@@ -671,8 +837,8 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 	if len(detailMatch) != 2 {
 		t.Fatalf("entry detail link missing: %s", interfacesPage)
 	}
-	if bytes.Contains(interfacesPage, []byte(`/config/external-interfaces/entries/`+string(detailMatch[1])+`/edit`)) {
-		t.Fatalf("entry edit action should not be rendered in the list: %s", interfacesPage)
+	if !bytes.Contains(interfacesPage, []byte(`/config/external-interfaces/entries/`+string(detailMatch[1])+`/edit`)) {
+		t.Fatalf("entry edit action should be rendered in the list: %s", interfacesPage)
 	}
 	response, err = client.Get(serverURL + "/config/external-interfaces/entries/" + string(detailMatch[1]))
 	if err != nil {
@@ -691,7 +857,7 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 	}
 	_, _ = part.Write([]byte("complete"))
 	_ = writer.Close()
-	request, _ := http.NewRequest(http.MethodPost, serverURL+"/trigger?name=artifact", &upload)
+	request, _ := http.NewRequest(http.MethodPost, serverURL+externalTriggerPath("legacy", "artifact"), &upload)
 	request.Header.Set("Authorization", "Bearer "+uploadSecret)
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 	response, err = client.Do(request)
@@ -753,7 +919,7 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 		"name": {"environment"}, "label": {"Deployment environment"}, "action_type": {"variable"}, "enabled": {"1"},
 		"variable_name": {"environment"}, "variable_type": {"enum"}, "variable_options": {"staging\nproduction"},
 	})
-	response = invokeExternalForm(t, client, serverURL, variableSecret, "environment", url.Values{"value": {"production"}})
+	response = invokeExternalForm(t, client, serverURL, variableSecret, "legacy", "environment", url.Values{"value": {"production"}})
 	body, _ = io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusOK {
@@ -763,7 +929,7 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 	if err := database.QueryRow("SELECT value FROM variables WHERE name = 'environment'").Scan(&value); err != nil || value != "production" {
 		t.Fatalf("variable value=%q err=%v", value, err)
 	}
-	response = invokeExternalForm(t, client, serverURL, variableSecret, "environment", url.Values{"value": {"root"}})
+	response = invokeExternalForm(t, client, serverURL, variableSecret, "legacy", "environment", url.Values{"value": {"root"}})
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusBadRequest {
 		t.Fatalf("invalid enum status=%d", response.StatusCode)
@@ -773,7 +939,7 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 	quickSecret := createExternalTestEntry(t, client, serverURL, quickKeyID, url.Values{
 		"name": {"quick"}, "label": {"External quick run"}, "action_type": {"quick_run"}, "enabled": {"1"}, "quick_run_id": {"external-quick"},
 	})
-	request, _ = http.NewRequest(http.MethodPost, serverURL+"/trigger?name=quick", nil)
+	request, _ = http.NewRequest(http.MethodPost, serverURL+externalTriggerPath("legacy", "quick"), nil)
 	request.Header.Set("Authorization", "Bearer "+quickSecret)
 	response, err = client.Do(request)
 	if err != nil {
@@ -791,7 +957,7 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 	if _, err := database.Exec("UPDATE quick_runs SET revision = revision + 1 WHERE id = 'external-quick'"); err != nil {
 		t.Fatal(err)
 	}
-	response = invokeExternalForm(t, client, serverURL, quickSecret, "quick", nil)
+	response = invokeExternalForm(t, client, serverURL, quickSecret, "legacy", "quick", nil)
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusConflict {
 		t.Fatalf("stale Quick Run revision status=%d", response.StatusCode)
@@ -802,7 +968,7 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 	if err := os.WriteFile(scriptPath, []byte(scriptContent+"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	response = invokeExternalForm(t, client, serverURL, quickSecret, "quick", nil)
+	response = invokeExternalForm(t, client, serverURL, quickSecret, "legacy", "quick", nil)
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusConflict {
 		t.Fatalf("changed Quick Run script status=%d", response.StatusCode)

@@ -153,6 +153,7 @@ func webTemplateFunctions() template.FuncMap {
 		},
 		"mysqlOperationCancelable": func(phase string) bool { return !mysqlOperationTerminal(phase) },
 		"humanBytes":               humanBytes,
+		"divBytesMB":               func(value int64) int64 { return value / (1 << 20) },
 		"humanRate":                func(value float64) string { return humanBytes(uint64(math.Max(0, value))) + "/s" },
 		"percent":                  func(value float64) string { return fmt.Sprintf("%.1f%%", value) },
 		"applicationSortURL":       applicationSortURL,

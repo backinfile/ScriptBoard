@@ -261,7 +261,7 @@ func TestManagedRemoteWebsiteCredentialIsOwnedAndUsedByPrivilegedBroker(t *testi
 	key := "sbk_0123456789abcdef." + strings.Repeat("a", 43)
 	response, err := client.PostForm(serverURL+"/monitor/websites/remotes", url.Values{
 		"csrf_token": {formToken(t, page)}, "label": {"Broker branch"},
-		"endpoint": {upstream.URL + "/trigger?name=website-status"}, "key": {key},
+		"endpoint": {upstream.URL + "/trigger/monitoring/website-status"}, "key": {key},
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -10,10 +10,10 @@ import (
 func TestRemoteWebsiteMonitorEndpointAndPayloadValidation(t *testing.T) {
 	for _, invalid := range []string{
 		"file:///state/app.db",
-		"http://example.com/trigger?name=websites",
-		"https://user:password@example.com/trigger?name=websites",
+		"http://example.com/trigger/monitoring/websites",
+		"https://user:password@example.com/trigger/monitoring/websites",
 		"https://example.com/trigger",
-		"https://example.com/trigger?name=websites#secret",
+		"https://example.com/trigger/monitoring/websites#secret",
 	} {
 		if _, err := normalizeRemoteWebsiteEndpoint(invalid); err == nil {
 			t.Fatalf("invalid endpoint accepted: %s", invalid)

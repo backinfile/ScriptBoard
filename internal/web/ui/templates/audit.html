@@ -4,6 +4,7 @@
 <body>
 <main class="workspace">
   <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "audit.eyebrow"}}</p><h1>{{t .Locale "audit.title"}}</h1><p>{{t .Locale "audit.description"}}</p></div><a class="button button--quiet" href="/history/audit.csv" data-native><span data-lucide="download" aria-hidden="true"></span>{{t .Locale "audit.download_csv"}}</a></header>
+  <nav class="audit-source-tabs" aria-label="{{t .Locale "audit.sources"}}"><a href="/history/audit" aria-current="page"><span data-lucide="list-checks" aria-hidden="true"></span>{{t .Locale "audit.events"}}</a><a href="/history/audit/service-logs"><span data-lucide="scroll-text" aria-hidden="true"></span>{{t .Locale "service_logs.title"}}</a></nav>
   <section class="section-tools section-tools--history">
     <form class="history-filter-form" method="get" data-async data-async-push>
       <label class="search-field history-filter-search"><span data-lucide="search" aria-hidden="true"></span><span class="sr-only">{{t .Locale "audit.search"}}</span><input type="search" name="q" value="{{.Filters.Query}}" autocomplete="off" placeholder="{{t .Locale "audit.search_placeholder"}}"></label>

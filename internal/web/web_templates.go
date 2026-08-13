@@ -35,6 +35,7 @@ var (
 	instanceNameSettingsTemplate      = mustWebTemplate("instance-name-settings")
 	kubernetesTemplate                = mustWebTemplate("kubernetes")
 	kubernetesConnectionTemplate      = mustWebTemplate("kubernetes-connection")
+	kubernetesLogsTemplate            = mustWebTemplate("kubernetes-logs")
 	externalInterfacesTemplate        = mustWebTemplate("external-interfaces")
 	externalInterfaceFormTemplate     = mustWebTemplate("external-interface-form")
 	fileConflictTemplate              = mustWebTemplate("file-conflict")

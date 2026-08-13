@@ -29,7 +29,7 @@ func TestRemoteWebsiteUsesTypedAuthorizedBrokerOperations(t *testing.T) {
 	}}))
 	authorized := WithAuthorization(context.Background(), Authorization{SessionToken: strings.Repeat("s", 32), RequestID: "remote-website-domain-test"})
 	key := "sbk_0123456789abcdef." + strings.Repeat("a", 43)
-	endpoint := "https://example.com/trigger?name=website-status"
+	endpoint := "https://example.com/trigger/monitoring/website-status"
 	if err := remote.Store(context.Background(), "source-one", endpoint, key); err == nil {
 		t.Fatal("remote website credential stored without session authorization")
 	}

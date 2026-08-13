@@ -18,7 +18,7 @@ func TestExternalResolveErrorsDoNotRevealWhetherAKeyExists(t *testing.T) {
 	invalidToken := "sbk_AAAAAAAAAAAAAAAA." + strings.Repeat("B", 43)
 
 	invoke := func(token string) (int, []byte) {
-		request, err := http.NewRequest(http.MethodPost, serverURL+"/trigger?name=missing", http.NoBody)
+		request, err := http.NewRequest(http.MethodPost, serverURL+externalTriggerPath("legacy", "missing"), http.NoBody)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -45,7 +45,7 @@ func TestExternalAuthenticationFailuresAreAuditedAndSourceLimited(t *testing.T) 
 	invalidToken := "sbk_AAAAAAAAAAAAAAAA." + strings.Repeat("B", 43)
 
 	for attempt := 1; attempt <= 61; attempt++ {
-		request, err := http.NewRequest(http.MethodPost, serverURL+"/trigger?name=missing", strings.NewReader("message=ignored"))
+		request, err := http.NewRequest(http.MethodPost, serverURL+externalTriggerPath("missing-group", "missing"), strings.NewReader("message=ignored"))
 		if err != nil {
 			t.Fatal(err)
 		}

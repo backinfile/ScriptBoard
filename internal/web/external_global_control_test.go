@@ -43,7 +43,7 @@ func TestExternalGlobalControlFailsClosedAndCanResume(t *testing.T) {
 	if !strings.Contains(string(page), `data-external-global-control="enabled"`) {
 		t.Fatalf("enabled global control is not visible: %s", page)
 	}
-	if !strings.Contains(string(page), "Master switch") || !strings.Contains(string(page), `href="/config/external-interfaces/control?enabled=0" data-task-link`) {
+	if !strings.Contains(string(page), "External access") || !strings.Contains(string(page), `href="/config/external-interfaces/control?enabled=0" data-task-link`) {
 		t.Fatalf("master switch confirmation link is not visible: %s", page)
 	}
 	confirmationResponse, err := client.Get(serverURL + "/config/external-interfaces/control?enabled=0")
@@ -87,7 +87,7 @@ func TestExternalGlobalControlFailsClosedAndCanResume(t *testing.T) {
 		t.Fatalf("disable global control status=%d", disabled.StatusCode)
 	}
 
-	response := invokeExternalForm(t, client, serverURL, secret, "controlled-log", url.Values{"message": {"must not be written"}})
+	response := invokeExternalForm(t, client, serverURL, secret, "legacy", "controlled-log", url.Values{"message": {"must not be written"}})
 	body, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	var payload struct {
@@ -119,7 +119,7 @@ func TestExternalGlobalControlFailsClosedAndCanResume(t *testing.T) {
 	if enabled.StatusCode != http.StatusSeeOther {
 		t.Fatalf("enable global control status=%d", enabled.StatusCode)
 	}
-	response = invokeExternalForm(t, client, serverURL, secret, "controlled-log", url.Values{"message": {"resumed"}})
+	response = invokeExternalForm(t, client, serverURL, secret, "legacy", "controlled-log", url.Values{"message": {"resumed"}})
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("resumed trigger status=%d", response.StatusCode)
@@ -145,7 +145,7 @@ func TestExternalGlobalControlFailsClosedAndCanResume(t *testing.T) {
 	if _, err := database.Exec("DROP TABLE external_trigger_control"); err != nil {
 		t.Fatal(err)
 	}
-	response = invokeExternalForm(t, client, serverURL, secret, "controlled-log", url.Values{"message": {"must fail closed"}})
+	response = invokeExternalForm(t, client, serverURL, secret, "legacy", "controlled-log", url.Values{"message": {"must fail closed"}})
 	body, _ = io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	if err := json.Unmarshal(body, &payload); err != nil || response.StatusCode != http.StatusServiceUnavailable || payload.Error != "unavailable" {

@@ -1154,7 +1154,7 @@ func TestWebsiteMonitoringRejectsInsecurePrivateRemoteScriptBoardDestination(t *
 	}
 	created, err := client.PostForm(serverURL+"/monitor/websites/remotes", url.Values{
 		"csrf_token": {formToken(t, page)}, "label": {"Branch office"},
-		"endpoint": {remote.URL + "/trigger?name=website-status"}, "key": {key},
+		"endpoint": {remote.URL + "/trigger/monitoring/website-status"}, "key": {key},
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -73,6 +73,52 @@ func (m *Manager) PrepareAppendFile(path string) (string, error) {
 // links and non-regular files are rejected, and new files are created without
 // replacing a path that appeared after validation.
 func (m *Manager) AppendText(path, record string) error {
+	m.appendMu.Lock()
+	defer m.appendMu.Unlock()
+	return m.appendText(path, record)
+}
+
+// AppendRotatingText appends a record and rotates the target before the write
+// when it would exceed maxBytes. Archives use the stable file.1, file.2, ...
+// convention so readers can keep following the configured current path.
+func (m *Manager) AppendRotatingText(path, record string, maxBytes int64, backups int) error {
+	if maxBytes < 1<<20 || maxBytes > 1<<30 || backups < 1 || backups > 100 {
+		return fmt.Errorf("invalid log rotation policy")
+	}
+	m.appendMu.Lock()
+	defer m.appendMu.Unlock()
+	target, err := m.PrepareAppendFile(path)
+	if err != nil {
+		return err
+	}
+	if info, statErr := os.Lstat(target); statErr == nil && info.Size()+int64(len(record)) > maxBytes {
+		if err := m.rotateAppendTarget(target, backups); err != nil {
+			return err
+		}
+	} else if statErr != nil && !os.IsNotExist(statErr) {
+		return fmt.Errorf("inspect append target: %w", statErr)
+	}
+	return m.appendText(target, record)
+}
+
+func (m *Manager) rotateAppendTarget(target string, backups int) error {
+	if err := os.Remove(target + "." + fmt.Sprint(backups)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove oldest log archive: %w", err)
+	}
+	for generation := backups - 1; generation >= 1; generation-- {
+		source := target + "." + fmt.Sprint(generation)
+		destination := target + "." + fmt.Sprint(generation+1)
+		if err := os.Rename(source, destination); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("advance log archive: %w", err)
+		}
+	}
+	if err := os.Rename(target, target+".1"); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("rotate log file: %w", err)
+	}
+	return nil
+}
+
+func (m *Manager) appendText(path, record string) error {
 	if !utf8.ValidString(record) || strings.IndexByte(record, 0) >= 0 {
 		return fmt.Errorf("append record is not safe UTF-8 text")
 	}

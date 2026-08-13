@@ -33,7 +33,7 @@ func TestStoreBindsCredentialToEndpointAndFetchNeverReturnsCredential(t *testing
 		t.Fatal(err)
 	}
 	key := "sbk_0123456789abcdef." + strings.Repeat("a", 43)
-	if err := service.Store(context.Background(), "source-one", upstream.URL+"/trigger?name=website-status", key); err != nil {
+	if err := service.Store(context.Background(), "source-one", upstream.URL+"/trigger/monitoring/website-status", key); err != nil {
 		t.Fatal(err)
 	}
 	payload, err := service.Fetch(context.Background(), "source-one", "zh-CN")
@@ -59,10 +59,10 @@ func TestStoreRejectsUnboundOrInvalidConnectionFields(t *testing.T) {
 	}
 	validKey := "sbk_0123456789abcdef." + strings.Repeat("a", 43)
 	for _, test := range []struct{ id, endpoint, key string }{
-		{"", "https://example.com/trigger?name=status", validKey},
-		{"source-one", "http://example.com/trigger?name=status", validKey},
+		{"", "https://example.com/trigger/monitoring/status", validKey},
+		{"source-one", "http://example.com/trigger/monitoring/status", validKey},
 		{"source-one", "https://example.com/trigger", validKey},
-		{"source-one", "https://example.com/trigger?name=status", "bad"},
+		{"source-one", "https://example.com/trigger/monitoring/status", "bad"},
 	} {
 		if err := service.Store(context.Background(), test.id, test.endpoint, test.key); err == nil {
 			t.Fatalf("accepted invalid connection: %+v", test)
@@ -82,7 +82,7 @@ func TestFetchDoesNotForwardCredentialAcrossRedirect(t *testing.T) {
 	}))
 	defer target.Close()
 	redirect := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		http.Redirect(response, request, target.URL+"/trigger?name=status", http.StatusFound)
+		http.Redirect(response, request, target.URL+"/trigger/monitoring/status", http.StatusFound)
 	}))
 	defer redirect.Close()
 	client := redirect.Client()
@@ -92,7 +92,7 @@ func TestFetchDoesNotForwardCredentialAcrossRedirect(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := "sbk_0123456789abcdef." + strings.Repeat("a", 43)
-	if err := service.Store(context.Background(), "source-one", redirect.URL+"/trigger?name=status", key); err != nil {
+	if err := service.Store(context.Background(), "source-one", redirect.URL+"/trigger/monitoring/status", key); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := service.Fetch(context.Background(), "source-one", "en-US"); err == nil {

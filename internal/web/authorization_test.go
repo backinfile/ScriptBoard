@@ -75,6 +75,8 @@ func TestFixedRolesCoverEveryProtectedRouteClass(t *testing.T) {
 		{"external interface mutation", http.MethodPost, "/config/external-interfaces/keys/key-one/toggle", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"audit html", http.MethodGet, "/history/audit", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"audit download", http.MethodGet, "/history/audit.csv", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
+		{"audit service logs", http.MethodGet, "/history/audit/service-logs", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
+		{"audit service logs download", http.MethodGet, "/history/audit/service-logs.csv", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"system settings", http.MethodGet, "/settings/updates/status", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"restart service", http.MethodPost, "/settings/updates/restart", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"user management", http.MethodGet, "/settings/users", []identity.Role{identity.RoleAdministrator}},
@@ -144,7 +146,7 @@ func TestExternalTriggerRoutesShareOneExplicitAbsoluteBodyLimit(t *testing.T) {
 	t.Parallel()
 	application := &App{}
 	application.routes()
-	for _, path := range []string{"/trigger", "/trigger/example"} {
+	for _, path := range []string{"/trigger", "/trigger/example", "/trigger/group/example"} {
 		spec, ok := declaredSpecForRequest(application.routeSpecs, httptest.NewRequest(http.MethodPost, path, nil))
 		if !ok || spec.Auth != routeAuthExternal || spec.MaxBodyBytes != maxExternalRequestBytes {
 			t.Fatalf("POST %s spec=%+v declared=%v", path, spec, ok)

@@ -244,7 +244,11 @@ func validEndpoint(value string) bool {
 		return false
 	}
 	parsed, err := url.Parse(value)
-	return err == nil && parsed.Scheme == "https" && parsed.Host != "" && parsed.User == nil && parsed.Fragment == "" && parsed.RawQuery != "" && parsed.Query().Get("name") != ""
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" || parsed.RawQuery != "" {
+		return false
+	}
+	parts := strings.Split(strings.TrimPrefix(parsed.EscapedPath(), "/trigger/"), "/")
+	return strings.HasPrefix(parsed.EscapedPath(), "/trigger/") && len(parts) == 2 && parts[0] != "" && parts[1] != ""
 }
 
 func validKey(value string) bool {

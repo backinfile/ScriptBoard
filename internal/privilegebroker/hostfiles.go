@@ -465,8 +465,14 @@ func (service *brokerHostFilesService) AppendExternalLog(ctx context.Context, to
 	if config.Category != "" {
 		record = fmt.Sprintf("%s\t[%s]\t%s\n", time.Now().UTC().Format(time.RFC3339Nano), config.Category, message)
 	}
-	if err := service.files.AppendText(config.File, record); err != nil {
-		return Actor{}, "", err
+	var appendErr error
+	if config.Rotate {
+		appendErr = service.files.AppendRotatingText(config.File, record, config.MaxFileBytes, config.MaxBackups)
+	} else {
+		appendErr = service.files.AppendText(config.File, record)
+	}
+	if appendErr != nil {
+		return Actor{}, "", appendErr
 	}
 	return Actor{UserID: "external:" + key.ID, Username: key.Label, Role: "external"}, entry.ID, nil
 }

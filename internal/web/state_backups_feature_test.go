@@ -49,6 +49,12 @@ func TestStateBackupSettingsUsesStepUpProtectedServiceWithoutRenderingPassphrase
 			t.Fatalf("state backup page missing %q: %s", expected, page)
 		}
 	}
+	if count := bytes.Count(page, []byte(`<details class="state-backup-drawer" data-state-backup-drawer>`)); count != 3 {
+		t.Fatalf("state backup actions use %d dedicated drawers, want 3: %s", count, page)
+	}
+	if bytes.Contains(page, []byte(`<section class="settings-block" aria-labelledby="state-backup-create-title">`)) {
+		t.Fatalf("state backup inputs are still exposed inline: %s", page)
+	}
 
 	response, body := postStateBackupForm(t, client, serverURL+"/settings/state-backups/create", url.Values{
 		"csrf_token": {formToken(t, page)}, "destination": {destination}, "passphrase": {passphrase}, "passphrase_confirm": {passphrase},

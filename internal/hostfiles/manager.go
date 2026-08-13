@@ -69,6 +69,7 @@ type Options struct {
 type Manager struct {
 	protected   []string
 	protectedMu sync.RWMutex
+	appendMu    sync.Mutex
 	instanceID  string
 	topology    Topology
 	leaseMu     sync.Mutex

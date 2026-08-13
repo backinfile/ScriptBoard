@@ -462,6 +462,9 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 	if err := migrateExternalInterfaceGroups(migration, schemaVersion); err != nil {
 		return err
 	}
+	if err := migrateExternalInterfaceGroupCallNames(migration, schemaVersion); err != nil {
+		return err
+	}
 	for _, statement := range []string{
 		"CREATE UNIQUE INDEX IF NOT EXISTS users_single_administrator_idx ON users(role) WHERE role = 'administrator'",
 		"CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id)",

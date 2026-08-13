@@ -37,6 +37,39 @@ func TestAppendTextCreatesAndExtendsRegularFile(t *testing.T) {
 	}
 }
 
+func TestAppendRotatingTextKeepsCurrentPathAndBackupLimit(t *testing.T) {
+	root := t.TempDir()
+	manager, err := hostfiles.Open(hostfiles.Options{InstanceID: "rotation-test", Topology: fixedTopology{root: root}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "webhook.log")
+	nearLimit := strings.Repeat("a", (1<<20)-4)
+	if err := os.WriteFile(path, []byte(nearLimit), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.AppendRotatingText(path, "next\n", 1<<20, 2); err != nil {
+		t.Fatal(err)
+	}
+	current, currentErr := os.ReadFile(path)
+	archived, archivedErr := os.ReadFile(path + ".1")
+	if currentErr != nil || string(current) != "next\n" || archivedErr != nil || string(archived) != nearLimit {
+		t.Fatalf("current=%q currentErr=%v archiveBytes=%d archiveErr=%v", current, currentErr, len(archived), archivedErr)
+	}
+	if err := os.WriteFile(path, []byte(nearLimit), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.AppendRotatingText(path, "again\n", 1<<20, 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path + ".2"); err != nil {
+		t.Fatalf("second archive missing: %v", err)
+	}
+	if _, err := os.Stat(path + ".3"); !os.IsNotExist(err) {
+		t.Fatalf("archive retention exceeded: %v", err)
+	}
+}
+
 func TestPrepareAppendFileRejectsProtectedTarget(t *testing.T) {
 	root := t.TempDir()
 	protected := filepath.Join(root, "private")

@@ -2,17 +2,17 @@
 <html lang="{{.Locale}}">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "service_logs.title"}} · ScriptBoard</title></head>
 <body>
-<main class="workspace settings-workspace" data-service-logs-page>
-  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "settings.eyebrow"}}</p><h1>{{t .Locale "settings.title"}}</h1><p>{{t .Locale "settings.description"}}</p></div></header>
-  {{template "settings-navigation" .SettingsNavigation}}
-  <section class="settings-content">
-    <header class="settings-section-heading"><div><h2>{{t .Locale "service_logs.title"}}</h2><p>{{t .Locale "service_logs.description"}}</p></div><a class="button" href="/settings/service-logs/export?service={{.Service}}&amp;range={{.Range}}&amp;severity={{.Severity}}&amp;q={{urlquery .Search}}"><span data-lucide="download" aria-hidden="true"></span>{{t .Locale "service_logs.export"}}</a></header>
-    <form class="security-filters" method="get" action="/settings/service-logs">
+<main class="workspace audit-workspace" data-service-logs-page>
+  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "audit.eyebrow"}}</p><h1>{{t .Locale "audit.title"}}</h1><p>{{t .Locale "audit.description"}}</p></div><a class="button button--quiet" href="/history/audit/service-logs.csv?service={{.Service}}&amp;range={{.Range}}&amp;severity={{.Severity}}&amp;q={{urlquery .Search}}" data-native><span data-lucide="download" aria-hidden="true"></span>{{t .Locale "service_logs.export"}}</a></header>
+  <nav class="audit-source-tabs" aria-label="{{t .Locale "audit.sources"}}"><a href="/history/audit"><span data-lucide="list-checks" aria-hidden="true"></span>{{t .Locale "audit.events"}}</a><a href="/history/audit/service-logs" aria-current="page"><span data-lucide="scroll-text" aria-hidden="true"></span>{{t .Locale "service_logs.title"}}</a></nav>
+  <section class="audit-service-logs">
+    <header class="audit-service-logs__heading"><div><h2>{{t .Locale "service_logs.title"}}</h2><p>{{t .Locale "service_logs.description"}}</p></div></header>
+    <form class="security-filters" method="get" action="/history/audit/service-logs">
       <label><span>{{t .Locale "service_logs.service"}}</span><select name="service"><option value="">{{t .Locale "service_logs.all_services"}}</option><option value="web" {{if eq .Service "web"}}selected{{end}}>{{t .Locale "service_logs.service_web"}}</option><option value="broker" {{if eq .Service "broker"}}selected{{end}}>{{t .Locale "service_logs.service_broker"}}</option><option value="ai" {{if eq .Service "ai"}}selected{{end}}>{{t .Locale "service_logs.service_ai"}}</option><option value="runner" {{if eq .Service "runner"}}selected{{end}}>{{t .Locale "service_logs.service_runner"}}</option></select></label>
       <label><span>{{t .Locale "service_logs.range"}}</span><select name="range"><option value="24h" {{if eq .Range "24h"}}selected{{end}}>{{t .Locale "security.range_24h"}}</option><option value="7d" {{if eq .Range "7d"}}selected{{end}}>{{t .Locale "security.range_7d"}}</option><option value="30d" {{if eq .Range "30d"}}selected{{end}}>{{t .Locale "security.range_30d"}}</option></select></label>
       <label><span>{{t .Locale "service_logs.severity"}}</span><select name="severity"><option value="">{{t .Locale "service_logs.all_severities"}}</option><option value="error" {{if eq .Severity "error"}}selected{{end}}>{{t .Locale "service_logs.error"}}</option><option value="warning" {{if eq .Severity "warning"}}selected{{end}}>{{t .Locale "service_logs.warning"}}</option><option value="normal" {{if eq .Severity "normal"}}selected{{end}}>{{t .Locale "service_logs.normal"}}</option></select></label>
       <label><span>{{t .Locale "service_logs.search"}}</span><input name="q" value="{{.Search}}" maxlength="128" autocomplete="off"></label>
-      <div><button class="button button--primary" type="submit"><span data-lucide="list-filter" aria-hidden="true"></span>{{t .Locale "security.filter"}}</button><a class="button button--quiet" href="/settings/service-logs">{{t .Locale "security.reset"}}</a></div>
+      <div><button class="button button--primary" type="submit"><span data-lucide="list-filter" aria-hidden="true"></span>{{t .Locale "security.filter"}}</button><a class="button button--quiet" href="/history/audit/service-logs">{{t .Locale "security.reset"}}</a></div>
     </form>
     {{if .Error}}<aside class="inline-notice inline-notice--danger"><span data-lucide="triangle-alert" aria-hidden="true"></span><p><strong>{{t .Locale "service_logs.unavailable"}}</strong><span>{{.Error}}</span></p></aside>{{end}}
     {{if not .Report.Supported}}<aside class="inline-notice"><span data-lucide="circle-help" aria-hidden="true"></span><p>{{t .Locale "service_logs.unsupported"}}</p></aside>{{else}}

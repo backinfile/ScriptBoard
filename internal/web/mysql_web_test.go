@@ -153,6 +153,9 @@ func TestBackupRecordsFilterAndOpenConfirmationDrawers(t *testing.T) {
 	if strings.Contains(page, "backup-reporting-13") {
 		t.Fatalf("database filter returned another database: %s", page)
 	}
+	if strings.Contains(page, `id="mysql-remove-title"`) || strings.Contains(page, `action="/resources/databases/instances/`+instanceID+`/delete"`) {
+		t.Fatalf("backup tab exposes the overview-only remove-instance action: %s", page)
+	}
 	actionMenu := regexp.MustCompile(`(?s)<details class="action-menu">.*?</details>`).FindString(page)
 	if strings.Contains(actionMenu, "<input") || strings.Contains(actionMenu, "<form") {
 		t.Fatalf("backup action menu still contains inline form controls: %s", actionMenu)

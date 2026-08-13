@@ -1123,7 +1123,6 @@ const administratorSettingsHrefs = [
   "/settings/name",
   "/settings/display",
   "/settings/ai",
-  "/settings/service-logs",
   "/settings/notifications",
   "/settings/state-backups",
   "/settings/updates",
@@ -1371,7 +1370,7 @@ async function assertExternalInterfaces(page, fixture) {
   await page.getByRole("button", { name: "Pause all external calls", exact: true }).click();
   await page.locator('[data-external-global-control="disabled"]').waitFor();
   assert.equal(await globalControl.getAttribute("data-external-global-control"), "disabled");
-  const requestURI = "/trigger/artifact";
+  const requestURI = "/trigger/Browser%20fixture/artifact";
   const blockedTrigger = await page.request.post(`${fixture.baseURL}${requestURI}`, {
     headers: externalSignatureHeaders(secret, "POST", requestURI),
     multipart: { file: { name: "blocked.txt", mimeType: "text/plain", buffer: Buffer.from("must not publish") } },
@@ -1395,8 +1394,8 @@ async function assertExternalInterfaces(page, fixture) {
   await page.goto(`${fixture.baseURL}/resources/inbox`);
   await page.getByRole("heading", { name: "Upload inbox", exact: true }).waitFor();
   await page.getByText("external-result.txt", { exact: true }).waitFor();
-  page.once("dialog", dialog => dialog.accept());
   await page.getByRole("button", { name: "Publish", exact: true }).click();
+  await page.getByRole("dialog", { name: "Confirm action" }).getByRole("button", { name: "Publish", exact: true }).click();
   await page.waitForURL("**/resources/inbox");
   await page.getByText("No external uploads are awaiting review.", { exact: true }).waitFor();
 

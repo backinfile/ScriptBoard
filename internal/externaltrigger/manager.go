@@ -38,15 +38,41 @@ const (
 )
 
 var (
-	ErrInvalidKey     = errors.New("external trigger key is invalid")
-	ErrEntryNotFound  = errors.New("external trigger entry does not exist")
-	ErrEntryDisabled  = errors.New("external trigger entry is disabled")
-	ErrKeyScopeBound  = errors.New("external trigger key is already bound to an entry")
-	ErrEntryImmutable = errors.New("external trigger entry scope is immutable")
-	ErrInvalidInput   = errors.New("external trigger input is invalid")
-	ErrKeyLabelExists = errors.New("external trigger key name already exists")
-	entryNamePattern  = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
+	ErrInvalidKey      = errors.New("external trigger key is invalid")
+	ErrEntryNotFound   = errors.New("external trigger entry does not exist")
+	ErrEntryDisabled   = errors.New("external trigger entry is disabled")
+	ErrKeyScopeBound   = errors.New("external trigger key is already bound to an entry")
+	ErrEntryImmutable  = errors.New("external trigger entry scope is immutable")
+	ErrInvalidInput    = errors.New("external trigger input is invalid")
+	ErrKeyLabelExists  = errors.New("external trigger key name already exists")
+	ErrGroupNameExists = errors.New("external trigger group call name already exists")
+	entryNamePattern   = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 )
+
+func normalizedCallName(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var builder strings.Builder
+	lastSeparator := false
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character == '_' {
+			builder.WriteRune(character)
+			lastSeparator = false
+			continue
+		}
+		if builder.Len() > 0 && !lastSeparator {
+			builder.WriteByte('-')
+			lastSeparator = true
+		}
+	}
+	result := strings.Trim(builder.String(), "-")
+	if result == "" || result[0] < 'a' || result[0] > 'z' {
+		result = "group-" + result
+	}
+	if len(result) > 64 {
+		result = strings.TrimRight(result[:64], "-")
+	}
+	return result
+}
 
 var SchemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS external_trigger_control (
@@ -58,6 +84,7 @@ var SchemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS external_trigger_groups (
 		id TEXT PRIMARY KEY,
 		label TEXT NOT NULL COLLATE NOCASE UNIQUE,
+		call_name TEXT NOT NULL COLLATE NOCASE UNIQUE,
 		enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
 		created_at INTEGER NOT NULL,
 		updated_at INTEGER NOT NULL
@@ -128,7 +155,7 @@ type ActionType string
 type VariableType string
 
 type Group struct {
-	ID, Label            string
+	ID, Label, CallName  string
 	Enabled              bool
 	CreatedAt, UpdatedAt time.Time
 	Keys                 []Key
@@ -170,8 +197,12 @@ func (entry Entry) DecodeConfig(destination any) error {
 
 type LogConfig struct {
 	File            string `json:"file"`
+	Managed         bool   `json:"managed,omitempty"`
 	Category        string `json:"category"`
 	MaxMessageBytes int    `json:"max_message_bytes"`
+	Rotate          bool   `json:"rotate,omitempty"`
+	MaxFileBytes    int64  `json:"max_file_bytes,omitempty"`
+	MaxBackups      int    `json:"max_backups,omitempty"`
 }
 
 type UploadConfig struct {
@@ -465,32 +496,61 @@ func (manager *Manager) PurgeLegacyKeySecrets(ctx context.Context) error {
 	return nil
 }
 
-func (manager *Manager) CreateGroup(ctx context.Context, label string) (Group, error) {
+func (manager *Manager) CreateGroup(ctx context.Context, label, callName string) (Group, error) {
 	label = strings.TrimSpace(label)
 	if label == "" || len([]byte(label)) > 128 || !utf8.ValidString(label) {
 		return Group{}, fmt.Errorf("%w: group label", ErrInvalidInput)
+	}
+	callName = strings.TrimSpace(callName)
+	if !entryNamePattern.MatchString(callName) {
+		return Group{}, fmt.Errorf("%w: group call name", ErrInvalidInput)
 	}
 	id, err := manager.randomToken(12)
 	if err != nil {
 		return Group{}, err
 	}
 	now := manager.now().UTC()
-	result, err := manager.db.ExecContext(ctx, `INSERT INTO external_trigger_groups (id, label, enabled, created_at, updated_at)
-		SELECT ?, ?, 1, ?, ? WHERE NOT EXISTS (SELECT 1 FROM external_trigger_groups WHERE label = ? COLLATE NOCASE)`, id, label, now.Unix(), now.Unix(), label)
+	result, err := manager.db.ExecContext(ctx, `INSERT INTO external_trigger_groups (id, label, call_name, enabled, created_at, updated_at)
+		SELECT ?, ?, ?, 1, ?, ? WHERE NOT EXISTS (
+			SELECT 1 FROM external_trigger_groups WHERE label = ? COLLATE NOCASE OR call_name = ? COLLATE NOCASE
+		)`, id, label, callName, now.Unix(), now.Unix(), label, callName)
 	if err != nil {
 		return Group{}, err
 	}
 	if changed, _ := result.RowsAffected(); changed == 0 {
-		return Group{}, ErrKeyLabelExists
+		return Group{}, ErrGroupNameExists
 	}
-	return Group{ID: id, Label: label, Enabled: true, CreatedAt: now, UpdatedAt: now}, nil
+	return Group{ID: id, Label: label, CallName: callName, Enabled: true, CreatedAt: now, UpdatedAt: now}, nil
+}
+
+func (manager *Manager) UpdateGroup(ctx context.Context, id, label, callName string) (Group, error) {
+	label, callName = strings.TrimSpace(label), strings.TrimSpace(callName)
+	if label == "" || len([]byte(label)) > 128 || !utf8.ValidString(label) || !entryNamePattern.MatchString(callName) {
+		return Group{}, fmt.Errorf("%w: group", ErrInvalidInput)
+	}
+	now := manager.now().UTC()
+	result, err := manager.db.ExecContext(ctx, `UPDATE external_trigger_groups SET label = ?, call_name = ?, updated_at = ?
+		WHERE id = ? AND NOT EXISTS (
+			SELECT 1 FROM external_trigger_groups duplicate WHERE duplicate.id <> ?
+			AND (duplicate.label = ? COLLATE NOCASE OR duplicate.call_name = ? COLLATE NOCASE)
+		)`, label, callName, now.Unix(), id, id, label, callName)
+	if err != nil {
+		return Group{}, err
+	}
+	if changed, _ := result.RowsAffected(); changed == 0 {
+		if _, err := manager.Group(ctx, id); err != nil {
+			return Group{}, err
+		}
+		return Group{}, ErrGroupNameExists
+	}
+	return manager.Group(ctx, id)
 }
 
 func (manager *Manager) Group(ctx context.Context, id string) (Group, error) {
 	var group Group
 	var enabled int
 	var createdAt, updatedAt int64
-	err := manager.db.QueryRowContext(ctx, `SELECT id, label, enabled, created_at, updated_at FROM external_trigger_groups WHERE id = ?`, id).Scan(&group.ID, &group.Label, &enabled, &createdAt, &updatedAt)
+	err := manager.db.QueryRowContext(ctx, `SELECT id, label, call_name, enabled, created_at, updated_at FROM external_trigger_groups WHERE id = ?`, id).Scan(&group.ID, &group.Label, &group.CallName, &enabled, &createdAt, &updatedAt)
 	if err != nil {
 		return Group{}, err
 	}
@@ -551,7 +611,7 @@ func (manager *Manager) CreateKey(ctx context.Context, input CreateKeyInput) (Ke
 	now := manager.now().UTC()
 	groupID := strings.TrimSpace(input.GroupID)
 	if groupID == "" {
-		group, err := manager.CreateGroup(ctx, label)
+		group, err := manager.CreateGroup(ctx, label, normalizedCallName(label))
 		if err != nil {
 			return Key{}, "", err
 		}
@@ -685,17 +745,13 @@ func (manager *Manager) UpdateEntry(ctx context.Context, input UpdateEntryInput)
 	if err != nil {
 		return Entry{}, err
 	}
-	existing, err := manager.Entry(ctx, input.ID)
-	if err != nil {
+	if _, err := manager.Entry(ctx, input.ID); err != nil {
 		return Entry{}, ErrEntryNotFound
-	}
-	if existing.Name != input.Name || existing.Type != input.Type || existing.Target != target || existing.ConfigJSON != configJSON {
-		return Entry{}, ErrEntryImmutable
 	}
 	now := manager.now().UTC()
 	result, err := manager.db.ExecContext(ctx, `UPDATE external_trigger_entries SET
-		label = ?, require_signature = ?, enabled = ?, updated_at = ? WHERE id = ?`,
-		strings.TrimSpace(input.Label), input.RequireSignature, input.Enabled, now.Unix(), input.ID)
+		name = ?, label = ?, action_type = ?, target = ?, config_json = ?, require_signature = ?, enabled = ?, updated_at = ? WHERE id = ?`,
+		input.Name, strings.TrimSpace(input.Label), input.Type, target, configJSON, input.RequireSignature, input.Enabled, now.Unix(), input.ID)
 	if err != nil {
 		return Entry{}, fmt.Errorf("update external trigger entry: %w", err)
 	}
@@ -719,11 +775,15 @@ func validateEntry(name, label string, actionType ActionType, target string, con
 		value.Category = strings.TrimSpace(value.Category)
 		if !ok || value.File == "" || len([]byte(value.File)) > 4096 || !utf8.ValidString(value.File) ||
 			len([]byte(value.Category)) > 64 || !utf8.ValidString(value.Category) || strings.IndexFunc(value.Category, unicode.IsControl) >= 0 ||
-			value.MaxMessageBytes < 0 || value.MaxMessageBytes > 4<<10 {
+			value.MaxMessageBytes < 0 || value.MaxMessageBytes > 4<<10 ||
+			(value.Rotate && (value.MaxFileBytes < 1<<20 || value.MaxFileBytes > 1<<30 || value.MaxBackups < 1 || value.MaxBackups > 100)) {
 			return "", "", fmt.Errorf("%w: log config", ErrInvalidInput)
 		}
 		if value.MaxMessageBytes == 0 {
 			value.MaxMessageBytes = 1024
+		}
+		if !value.Rotate {
+			value.MaxFileBytes, value.MaxBackups = 0, 0
 		}
 		normalized, target = value, value.File
 	case ActionUpload:
@@ -859,6 +919,21 @@ func (manager *Manager) Resolve(ctx context.Context, token, name string) (Key, E
 	entry.CreatedAt, entry.UpdatedAt = time.Unix(entryCreatedAt, 0).UTC(), time.Unix(entryUpdatedAt, 0).UTC()
 	if !entry.Enabled {
 		return key, entry, ErrEntryDisabled
+	}
+	return key, entry, nil
+}
+
+func (manager *Manager) ResolveScoped(ctx context.Context, token, groupLabel, name string) (Key, Entry, error) {
+	key, entry, err := manager.Resolve(ctx, token, name)
+	if err != nil {
+		return key, entry, err
+	}
+	var storedCallName string
+	if err := manager.db.QueryRowContext(ctx, `SELECT call_name FROM external_trigger_groups WHERE id = ?`, key.GroupID).Scan(&storedCallName); err != nil {
+		return Key{}, Entry{}, ErrInvalidKey
+	}
+	if !strings.EqualFold(storedCallName, groupLabel) {
+		return key, Entry{}, ErrEntryNotFound
 	}
 	return key, entry, nil
 }

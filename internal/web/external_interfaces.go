@@ -39,7 +39,7 @@ type externalKeyView struct {
 
 type externalEntryView struct {
 	externaltrigger.Entry
-	TypeText, TargetText, PreviewURL string
+	TypeText, TargetText, PreviewURL, CallPath string
 }
 
 type externalGroupView struct {
@@ -53,12 +53,30 @@ type externalInvocationView struct {
 	ActionText, ResultText string
 }
 
+type externalLogFileView struct {
+	EntryID, EntryName, EntryLabel, GroupLabel        string
+	Path, FileName, PreviewURL, DownloadURL, CallPath string
+	Size                                              int64
+	ModifiedAt                                        time.Time
+	Exists, Managed, Rotate, Archive                  bool
+	ArchiveNumber                                     int
+}
+
+type externalLogGroupView struct {
+	externaltrigger.Group
+	Files []externalLogFileView
+}
+
 type externalInterfacesPageData struct {
 	ActiveTab     string
 	Groups        []externalGroupView
 	Keys          []externalKeyView
 	Entries       map[string][]externalEntryView
 	Requests      []externalInvocationView
+	LogFiles      []externalLogFileView
+	LogGroups     []externalLogGroupView
+	LogFileCount  int
+	LogQuery      string
 	Filters       auditFilters
 	Pagination    paginationView
 	CSRFToken     string
@@ -86,11 +104,16 @@ type externalInterfaceFormData struct {
 	RequireSignature                                     bool
 	Submitted                                            bool
 	LogMessageLimitInput, UploadMaxBytesInput            string
+	LogTargetModeInput, LogMaxFileMBInput                string
+	LogMaxBackupsInput                                   string
+	LogRotateInput                                       bool
 	UploadExtensionsInput, VariableMinimumInput          string
 	VariableMaximumInput, VariableMaxLengthInput         string
 	VariableOptionsInput                                 string
 	KeyLabelInput, KeyDurationInput                      string
 	KeyFormSubmitted, KeyEnabledInput                    bool
+	GroupLabelInput, GroupCallNameInput                  string
+	GroupFormSubmitted                                   bool
 }
 
 type externalTargetOption struct{ Value, Label string }
@@ -100,8 +123,11 @@ func (a *App) externalInterfacesPage(response http.ResponseWriter, request *http
 	locale := resolveWebLocale(request)
 	now := time.Now().UTC()
 	activeTab := "interfaces"
-	if request.URL.Query().Get("tab") == "activity" {
+	switch request.URL.Query().Get("tab") {
+	case "activity":
 		activeTab = "activity"
+	case "logs":
+		activeTab = "logs"
 	}
 	filters, err := parseAuditFilters(request.URL.Query())
 	if err != nil {
@@ -146,8 +172,12 @@ func (a *App) externalInterfacesPage(response http.ResponseWriter, request *http
 		})
 	}
 	groupViews := make([]externalGroupView, 0, len(groups))
+	logQuery := strings.TrimSpace(request.URL.Query().Get("q"))
+	logFiles := make([]externalLogFileView, 0)
+	logGroups := make([]externalLogGroupView, 0)
 	for _, group := range groups {
 		view := externalGroupView{Group: group}
+		groupLogFiles := make([]externalLogFileView, 0)
 		for _, key := range group.Keys {
 			keyView := externalKeyView{Key: key, Status: "disabled", StatusText: webText(locale, "external.disabled")}
 			if key.Expired(now) {
@@ -159,25 +189,80 @@ func (a *App) externalInterfacesPage(response http.ResponseWriter, request *http
 		}
 		for _, entry := range group.Entries {
 			entryView := externalEntryView{
-				Entry: entry, TypeText: externalActionText(locale, entry.Type), TargetText: externalTargetText(locale, entry),
+				Entry: entry, TypeText: externalActionText(locale, entry.Type), TargetText: externalTargetText(locale, entry), CallPath: externalCallPath(group.CallName, entry.Name),
 			}
 			if entry.Type == externaltrigger.ActionLog {
 				var config externaltrigger.LogConfig
 				if entry.DecodeConfig(&config) == nil && config.File != "" {
 					entryView.PreviewURL = routeFileURL("/resources/files/view", config.File)
+					if activeTab == "logs" {
+						entryLogFiles := a.externalLogFiles(request.Context(), group, entry, config, logQuery)
+						logFiles = append(logFiles, entryLogFiles...)
+						groupLogFiles = append(groupLogFiles, entryLogFiles...)
+					}
 				}
 			}
 			view.Entries = append(view.Entries, entryView)
 		}
 		groupViews = append(groupViews, view)
+		if len(groupLogFiles) > 0 {
+			logGroups = append(logGroups, externalLogGroupView{Group: group, Files: groupLogFiles})
+		}
 	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := externalInterfacesTemplate.Execute(response, externalInterfacesPageData{
-		ActiveTab: activeTab, Groups: groupViews, Requests: requests, Filters: filters, Pagination: pagination,
+		ActiveTab: activeTab, Groups: groupViews, Requests: requests, LogFiles: logFiles, LogGroups: logGroups, LogFileCount: len(logFiles), LogQuery: logQuery, Filters: filters, Pagination: pagination,
 		CSRFToken: current.csrfToken, Locale: locale, Now: now, GlobalEnabled: globalEnabled,
 	}); err != nil {
 		http.Error(response, "Unable to render External Interfaces", http.StatusInternalServerError)
 	}
+}
+
+func (a *App) externalLogFiles(ctx context.Context, group externaltrigger.Group, entry externaltrigger.Entry, config externaltrigger.LogConfig, query string) []externalLogFileView {
+	configured := externalLogFileView{
+		EntryID: entry.ID, EntryName: entry.Name, EntryLabel: entry.Label, GroupLabel: group.Label,
+		Path: config.File, FileName: filepath.Base(config.File), CallPath: externalCallPath(group.CallName, entry.Name), Managed: config.Managed, Rotate: config.Rotate,
+	}
+	files := make([]externalLogFileView, 0, 1+config.MaxBackups)
+	if info, _, err := a.hostInfo(ctx, config.File); err == nil && info.Mode().IsRegular() {
+		configured.Exists, configured.Size, configured.ModifiedAt = true, info.Size(), info.ModTime()
+		configured.PreviewURL = routeFileURL("/resources/files/view", config.File)
+		configured.DownloadURL = routeFileURL("/resources/files/download", config.File)
+	}
+	if externalLogMatches(configured, query) {
+		files = append(files, configured)
+	}
+	if !config.Rotate {
+		return files
+	}
+	for archiveNumber := 1; archiveNumber <= config.MaxBackups; archiveNumber++ {
+		archivePath := config.File + "." + strconv.Itoa(archiveNumber)
+		info, _, err := a.hostInfo(ctx, archivePath)
+		if err != nil || !info.Mode().IsRegular() {
+			break
+		}
+		archive := configured
+		archive.Path, archive.FileName = archivePath, filepath.Base(archivePath)
+		archive.Exists, archive.Archive, archive.ArchiveNumber = true, true, archiveNumber
+		archive.Size, archive.ModifiedAt = info.Size(), info.ModTime()
+		archive.PreviewURL = routeFileURL("/resources/files/view", archivePath)
+		archive.DownloadURL = routeFileURL("/resources/files/download", archivePath)
+		if externalLogMatches(archive, query) {
+			files = append(files, archive)
+		}
+	}
+	return files
+}
+
+func externalLogMatches(file externalLogFileView, query string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return true
+	}
+	return strings.Contains(strings.ToLower(file.GroupLabel), query) ||
+		strings.Contains(strings.ToLower(file.EntryLabel), query) ||
+		strings.Contains(strings.ToLower(file.EntryName), query) ||
+		strings.Contains(strings.ToLower(file.Path), query)
 }
 
 func (a *App) setExternalGlobalControl(response http.ResponseWriter, request *http.Request) {
@@ -228,6 +313,10 @@ func externalActionText(locale webLocale, action externaltrigger.ActionType) str
 	return webText(locale, "external.action."+string(action))
 }
 
+func externalCallPath(groupCallName, entryName string) string {
+	return "/trigger/" + url.PathEscape(groupCallName) + "/" + url.PathEscape(entryName)
+}
+
 func externalTargetText(locale webLocale, entry externaltrigger.Entry) string {
 	switch entry.Type {
 	case externaltrigger.ActionLog:
@@ -252,13 +341,57 @@ func (a *App) createExternalGroup(response http.ResponseWriter, request *http.Re
 		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
 		return
 	}
-	group, err := a.externalTriggers.CreateGroup(request.Context(), request.FormValue("label"))
+	group, err := a.externalTriggers.CreateGroup(request.Context(), request.FormValue("label"), request.FormValue("call_name"))
 	if err != nil {
-		http.Error(response, err.Error(), http.StatusBadRequest)
+		a.renderExternalGroupSubmissionError(response, request, "group-new", externaltrigger.Group{}, webText(resolveWebLocale(request), "external.group_save_error"))
 		return
 	}
 	a.recordAuditForRequest(request, "create_external_interface_group", group.ID, "succeeded")
 	http.Redirect(response, request, "/config/external-interfaces", http.StatusSeeOther)
+}
+
+func (a *App) editExternalGroupTask(response http.ResponseWriter, request *http.Request) {
+	group, err := a.externalTriggers.Group(request.Context(), request.PathValue("groupID"))
+	if err != nil {
+		http.Error(response, "External Interface group not found", http.StatusNotFound)
+		return
+	}
+	current := request.Context().Value(sessionContextKey).(session)
+	locale := resolveWebLocale(request)
+	renderExternalInterfaceForm(response, externalInterfaceFormData{
+		Kind: "group-edit", Title: webText(locale, "external.edit_group"), Description: webText(locale, "external.edit_group_description"),
+		BackURL: "/config/external-interfaces", Action: "/config/external-interfaces/groups/" + group.ID,
+		CSRFToken: current.csrfToken, Locale: locale, Group: group,
+	})
+}
+
+func (a *App) updateExternalGroup(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
+		return
+	}
+	group, err := a.externalTriggers.UpdateGroup(request.Context(), request.PathValue("groupID"), request.FormValue("label"), request.FormValue("call_name"))
+	if err != nil {
+		a.renderExternalGroupSubmissionError(response, request, "group-edit", externaltrigger.Group{ID: request.PathValue("groupID")}, webText(resolveWebLocale(request), "external.group_save_error"))
+		return
+	}
+	a.recordAuditForRequest(request, "update_external_interface_group", group.ID, "succeeded")
+	http.Redirect(response, request, "/config/external-interfaces", http.StatusSeeOther)
+}
+
+func (a *App) renderExternalGroupSubmissionError(response http.ResponseWriter, request *http.Request, kind string, group externaltrigger.Group, message string) {
+	current := request.Context().Value(sessionContextKey).(session)
+	locale := resolveWebLocale(request)
+	title, description, action := webText(locale, "external.create_group"), webText(locale, "external.create_group_description"), "/config/external-interfaces/groups"
+	if kind == "group-edit" {
+		title, description, action = webText(locale, "external.edit_group"), webText(locale, "external.edit_group_description"), "/config/external-interfaces/groups/"+group.ID
+	}
+	response.WriteHeader(http.StatusUnprocessableEntity)
+	renderExternalInterfaceForm(response, externalInterfaceFormData{
+		Kind: kind, Title: title, Description: description, BackURL: "/config/external-interfaces", Action: action,
+		CSRFToken: current.csrfToken, Locale: locale, Group: group, FormError: message,
+		GroupFormSubmitted: true, GroupLabelInput: request.FormValue("label"), GroupCallNameInput: request.FormValue("call_name"),
+	})
 }
 
 func (a *App) newExternalKeyTask(response http.ResponseWriter, request *http.Request) {
@@ -319,7 +452,7 @@ func (a *App) createExternalKey(response http.ResponseWriter, request *http.Requ
 	response.WriteHeader(http.StatusCreated)
 	renderExternalInterfaceForm(response, externalInterfaceFormData{
 		Kind: "key-created", Title: webText(locale, "external.key_created"), Description: webText(locale, "external.key_created_description"),
-		BackURL: "/config/external-interfaces", Locale: locale, Key: key, Secret: secret,
+		BackURL: "/config/external-interfaces", Locale: locale, Group: externaltrigger.Group{ID: key.GroupID}, Key: key, Secret: secret,
 	})
 }
 
@@ -332,8 +465,8 @@ func (a *App) ensureLegacyExternalGroup(ctx context.Context) (string, error) {
 	if !errors.Is(err, sql.ErrNoRows) {
 		return "", err
 	}
-	group, err := a.externalTriggers.CreateGroup(ctx, "Legacy interfaces")
-	if errors.Is(err, externaltrigger.ErrKeyLabelExists) {
+	group, err := a.externalTriggers.CreateGroup(ctx, "Legacy interfaces", "legacy")
+	if errors.Is(err, externaltrigger.ErrGroupNameExists) {
 		err = a.db.QueryRowContext(ctx, `SELECT id FROM external_trigger_groups WHERE label = 'Legacy interfaces' COLLATE NOCASE`).Scan(&id)
 		return id, err
 	}
@@ -348,7 +481,7 @@ func (a *App) editExternalKeyTask(response http.ResponseWriter, request *http.Re
 	}
 	current := request.Context().Value(sessionContextKey).(session)
 	locale := resolveWebLocale(request)
-	renderExternalInterfaceForm(response, externalInterfaceFormData{Kind: "key-edit", Title: webText(locale, "external.edit_key"), Description: webText(locale, "external.edit_key_description"), BackURL: "/config/external-interfaces", Action: "/config/external-interfaces/keys/" + key.ID, CSRFToken: current.csrfToken, Locale: locale, Key: key})
+	renderExternalInterfaceForm(response, externalInterfaceFormData{Kind: "key-edit", Title: webText(locale, "external.edit_key"), Description: webText(locale, "external.edit_key_description"), BackURL: "/config/external-interfaces", Action: "/config/external-interfaces/keys/" + key.ID, CSRFToken: current.csrfToken, Locale: locale, Group: externaltrigger.Group{ID: key.GroupID}, Key: key})
 }
 
 func (a *App) rotateExternalKeyTask(response http.ResponseWriter, request *http.Request) {
@@ -362,7 +495,7 @@ func (a *App) rotateExternalKeyTask(response http.ResponseWriter, request *http.
 	renderExternalInterfaceForm(response, externalInterfaceFormData{
 		Kind: "key-rotate", Title: webText(locale, "external.rotate"), Description: webText(locale, "external.rotate_drawer_description"),
 		BackURL: "/config/external-interfaces", Action: "/config/external-interfaces/keys/" + key.ID + "/rotate",
-		CSRFToken: current.csrfToken, Locale: locale, Key: key,
+		CSRFToken: current.csrfToken, Locale: locale, Group: externaltrigger.Group{ID: key.GroupID}, Key: key,
 	})
 }
 
@@ -411,6 +544,15 @@ func (a *App) renderExternalKeySubmissionError(response http.ResponseWriter, req
 	current := request.Context().Value(sessionContextKey).(session)
 	locale := resolveWebLocale(request)
 	title, description, action := webText(locale, "external.create_key_title"), webText(locale, "external.create_key_description"), "/config/external-interfaces/keys"
+	var group externaltrigger.Group
+	if kind == "key-new" {
+		if groupID := request.PathValue("groupID"); groupID != "" {
+			if loaded, err := a.externalTriggers.Group(request.Context(), groupID); err == nil {
+				group = loaded
+				action = "/config/external-interfaces/groups/" + group.ID + "/keys"
+			}
+		}
+	}
 	if kind == "key-edit" {
 		title, description, action = webText(locale, "external.edit_key"), webText(locale, "external.edit_key_description"), "/config/external-interfaces/keys/"+key.ID
 	}
@@ -418,7 +560,7 @@ func (a *App) renderExternalKeySubmissionError(response http.ResponseWriter, req
 	response.WriteHeader(http.StatusUnprocessableEntity)
 	renderExternalInterfaceForm(response, externalInterfaceFormData{
 		Kind: kind, Title: title, Description: description, BackURL: "/config/external-interfaces", Action: action,
-		CSRFToken: current.csrfToken, Locale: locale, Key: key, FormError: message,
+		CSRFToken: current.csrfToken, Locale: locale, Group: group, Key: key, FormError: message,
 		KeyFormSubmitted: true, KeyLabelInput: request.FormValue("label"), KeyDurationInput: request.FormValue("duration"), KeyEnabledInput: request.FormValue("enabled") == "1",
 	})
 }
@@ -456,7 +598,7 @@ func (a *App) rotateExternalKey(response http.ResponseWriter, request *http.Requ
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	response.WriteHeader(http.StatusCreated)
-	renderExternalInterfaceForm(response, externalInterfaceFormData{Kind: "key-rotated", Title: webText(locale, "external.key_rotated"), Description: webText(locale, "external.key_rotated_description"), BackURL: "/config/external-interfaces", Locale: locale, Key: key, Secret: secret})
+	renderExternalInterfaceForm(response, externalInterfaceFormData{Kind: "key-rotated", Title: webText(locale, "external.key_rotated"), Description: webText(locale, "external.key_rotated_description"), BackURL: "/config/external-interfaces", Locale: locale, Group: externaltrigger.Group{ID: key.GroupID}, Key: key, Secret: secret})
 }
 
 func (a *App) deleteExternalKey(response http.ResponseWriter, request *http.Request) {
@@ -519,7 +661,7 @@ func (a *App) newExternalEntryTask(response http.ResponseWriter, request *http.R
 	renderExternalInterfaceForm(response, externalInterfaceFormData{
 		Kind: "entry-new", Title: webText(locale, "external.add_function_title"), Description: webText(locale, "external.add_function_description"),
 		BackURL: "/config/external-interfaces", Action: "/config/external-interfaces/groups/" + group.ID + "/entries",
-		CSRFToken: current.csrfToken, Locale: locale, Group: group, QuickRuns: quickRuns, Variables: variables, EntryEnabled: true, RequireSignature: true,
+		CSRFToken: current.csrfToken, Locale: locale, Group: group, QuickRuns: quickRuns, Variables: variables, LogConfig: externaltrigger.LogConfig{Managed: true}, EntryEnabled: true, RequireSignature: true,
 	})
 }
 
@@ -565,7 +707,7 @@ func (a *App) externalEntryDetail(response http.ResponseWriter, request *http.Re
 	renderExternalInterfaceForm(response, externalInterfaceFormData{
 		Kind: "entry-detail", Title: entry.Label, Description: webText(locale, "external.function_details_description"),
 		BackURL: "/config/external-interfaces", CSRFToken: current.csrfToken, Locale: locale, Group: group, Key: key, Entry: entry, EntryEnabled: entry.Enabled, RequireSignature: entry.RequireSignature,
-		CallMethod: callMethod, CallURL: "/trigger/" + url.PathEscape(entry.Name), CallBody: webText(locale, callBodyKey),
+		CallMethod: callMethod, CallURL: externalCallPath(group.CallName, entry.Name), CallBody: webText(locale, callBodyKey),
 		TypeText: externalActionText(locale, entry.Type), TargetText: externalTargetText(locale, entry), PreviewURL: previewURL,
 	})
 }
@@ -704,11 +846,13 @@ func (a *App) renderExternalEntrySubmissionError(response http.ResponseWriter, r
 		QuickRuns: quickRuns, Variables: variables, EntryEnabled: request.FormValue("enabled") == "1", RequireSignature: request.FormValue("require_signature") == "1", Submitted: true,
 		FormError:            webText(locale, "external.entry_save_error"),
 		Entry:                externaltrigger.Entry{Name: strings.TrimSpace(request.FormValue("name")), Label: request.FormValue("label"), Type: externaltrigger.ActionType(request.FormValue("action_type"))},
-		LogConfig:            externaltrigger.LogConfig{File: request.FormValue("log_file"), Category: request.FormValue("log_category")},
+		LogConfig:            externaltrigger.LogConfig{File: request.FormValue("log_file"), Managed: request.FormValue("log_target_mode") == "managed", Category: request.FormValue("log_category")},
 		UploadConfig:         externaltrigger.UploadConfig{Directory: request.FormValue("upload_directory"), ConflictPolicy: request.FormValue("upload_conflict")},
 		QuickRunConfig:       externaltrigger.QuickRunConfig{QuickRunID: request.FormValue("quick_run_id")},
 		VariableConfig:       externaltrigger.VariableConfig{VariableName: request.FormValue("variable_name"), Type: externaltrigger.VariableType(request.FormValue("variable_type")), Pattern: request.FormValue("variable_pattern"), AllowEmpty: request.FormValue("variable_allow_empty") == "1"},
-		LogMessageLimitInput: request.FormValue("log_message_limit"), UploadMaxBytesInput: request.FormValue("upload_max_bytes"),
+		LogMessageLimitInput: request.FormValue("log_message_limit"), LogTargetModeInput: request.FormValue("log_target_mode"),
+		LogMaxFileMBInput: request.FormValue("log_max_file_mb"), LogMaxBackupsInput: request.FormValue("log_max_backups"), LogRotateInput: request.FormValue("log_rotate") == "1",
+		UploadMaxBytesInput:   request.FormValue("upload_max_bytes"),
 		UploadExtensionsInput: request.FormValue("upload_extensions"), VariableMinimumInput: request.FormValue("variable_minimum"),
 		VariableMaximumInput: request.FormValue("variable_maximum"), VariableMaxLengthInput: request.FormValue("variable_max_length"),
 		VariableOptionsInput: request.FormValue("variable_options"),
@@ -782,11 +926,34 @@ func (a *App) externalEntryConfig(request *http.Request, actionType externaltrig
 		if err != nil {
 			return nil, "", errors.New("invalid log message limit")
 		}
-		path, err := a.hostPrepareAppend(request.Context(), strings.TrimSpace(request.FormValue("log_file")))
+		managed := request.FormValue("log_target_mode") == "managed"
+		rawPath := strings.TrimSpace(request.FormValue("log_file"))
+		if managed {
+			groupID := request.PathValue("groupID")
+			if groupID == "" {
+				if existing, loadErr := a.externalTriggers.Entry(request.Context(), request.PathValue("id")); loadErr == nil {
+					groupID = existing.GroupID
+				}
+			}
+			if groupID == "" {
+				return nil, "", errors.New("invalid managed log target")
+			}
+			rawPath = filepath.Join(filepath.Dir(a.stateRoot), "scriptboard-external-"+groupID+"-"+strings.TrimSpace(request.FormValue("name"))+".log")
+		}
+		path, err := a.hostPrepareAppend(request.Context(), rawPath)
 		if err != nil {
 			return nil, "", fmt.Errorf("invalid log file: %w", err)
 		}
-		return externaltrigger.LogConfig{File: path, Category: strings.TrimSpace(request.FormValue("log_category")), MaxMessageBytes: limit}, path, nil
+		config := externaltrigger.LogConfig{File: path, Managed: managed, Category: strings.TrimSpace(request.FormValue("log_category")), MaxMessageBytes: limit}
+		if request.FormValue("log_rotate") == "1" {
+			maxMB, sizeErr := strconv.ParseInt(request.FormValue("log_max_file_mb"), 10, 64)
+			backups, countErr := strconv.Atoi(request.FormValue("log_max_backups"))
+			if sizeErr != nil || countErr != nil || maxMB < 1 || maxMB > 1024 || backups < 1 || backups > 100 {
+				return nil, "", errors.New("invalid log rotation policy")
+			}
+			config.Rotate, config.MaxFileBytes, config.MaxBackups = true, maxMB<<20, backups
+		}
+		return config, path, nil
 	case externaltrigger.ActionUpload:
 		maximum, err := strconv.ParseInt(request.FormValue("upload_max_bytes"), 10, 64)
 		if err != nil {
@@ -873,10 +1040,7 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 	if authorization := strings.TrimSpace(request.Header.Get("Authorization")); strings.HasPrefix(authorization, "Bearer ") {
 		token = strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer "))
 	}
-	name := request.PathValue("name")
-	if name == "" {
-		name = request.URL.Query().Get("name")
-	}
+	groupName, name := request.PathValue("group"), request.PathValue("name")
 	authRelease, allowed := a.externalAuthLimit.AcquireSource(externalLimitSource(request.RemoteAddr))
 	if !allowed {
 		response.Header().Set("Retry-After", "60")
@@ -884,13 +1048,13 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 		return
 	}
 	defer authRelease()
-	key, entry, err := a.externalTriggers.Resolve(request.Context(), token, name)
+	key, entry, err := a.externalTriggers.ResolveScoped(request.Context(), token, groupName, name)
 	if err != nil {
 		result := "invalid_key"
 		if errors.Is(err, externaltrigger.ErrEntryNotFound) || errors.Is(err, externaltrigger.ErrEntryDisabled) {
 			result = "entry_not_found"
 		}
-		a.recordAuditWithRequestActor(request, "external_trigger_auth", "entry_sha256="+hashToken(name), result, request.RemoteAddr, "", "", identity.Role("external"))
+		a.recordAuditWithRequestActor(request, "external_trigger_auth", "entry_sha256="+hashToken(groupName+"\x00"+name), result, request.RemoteAddr, "", "", identity.Role("external"))
 		writeExternalTriggerError(response, http.StatusUnauthorized, "invalid_key")
 		return
 	}
@@ -1154,7 +1318,11 @@ func (a *App) executeExternalLog(response http.ResponseWriter, request *http.Req
 		if config.Category != "" {
 			record = fmt.Sprintf("%s\t[%s]\t%s\n", time.Now().UTC().Format(time.RFC3339Nano), config.Category, message)
 		}
-		appendErr = a.files.AppendText(config.File, record)
+		if config.Rotate {
+			appendErr = a.files.AppendRotatingText(config.File, record, config.MaxFileBytes, config.MaxBackups)
+		} else {
+			appendErr = a.files.AppendText(config.File, record)
+		}
 	}
 	if appendErr != nil {
 		return externalFailure(http.StatusConflict, "target_unavailable")

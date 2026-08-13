@@ -123,8 +123,10 @@
   let taskPanelRequest = null;
   let taskPanelHistoryClosePending = false;
   let taskPanelRefreshAfterCloseURL = "";
+  let taskPanelGroupRefreshAfterClose = null;
   let activeFileConflictDialog = null;
   let activeServerErrorDialog = null;
+  let activeActionDialog = null;
   let activeUploadResultsDialog = null;
 
   const locale = () => document.documentElement.lang === "zh-CN" ? "zh-CN" : "en-US";
@@ -138,6 +140,7 @@
       serverErrorClose: "关闭", serverErrorRetry: "重新载入", serverErrorRetryTask: "重新打开", serverErrorRetryAction: "重新提交",
       serverErrorRefresh: "刷新当前页面", serverErrorDetails: "技术详情", serverErrorRequest: "请求",
       serverErrorPreserved: "当前工作区已保留", serverErrorNoResubmit: "未自动重试，避免重复执行写操作",
+      confirmTitle: "确认操作", confirmDescription: "请确认是否继续执行此操作。", confirmCancel: "取消", confirmAction: "确认",
       websiteNormal: "网站监控正常", websiteNoOpenIssues: "没有故障或待复核项",
       websiteDownOne: "个网站故障", websiteDownMany: "个网站故障",
       websiteVerifyingOne: "个正在复核", websiteVerifyingMany: "个正在复核",
@@ -162,6 +165,7 @@
       serverErrorClose: "Close", serverErrorRetry: "Reload", serverErrorRetryTask: "Reopen", serverErrorRetryAction: "Submit again",
       serverErrorRefresh: "Refresh current page", serverErrorDetails: "Technical details", serverErrorRequest: "Request",
       serverErrorPreserved: "The current workspace is preserved", serverErrorNoResubmit: "Not retried automatically to avoid repeating a write",
+      confirmTitle: "Confirm action", confirmDescription: "Confirm that you want to continue with this action.", confirmCancel: "Cancel", confirmAction: "Confirm",
       websiteNormal: "Website monitoring normal", websiteNoOpenIssues: "No failures or pending verifications",
       websiteDownOne: "website down", websiteDownMany: "websites down",
       websiteVerifyingOne: "website under verification", websiteVerifyingMany: "websites under verification",
@@ -570,7 +574,7 @@
       headers: { "X-ScriptBoard-Navigation": "pjax", "Accept": "text/html", ...(options.headers || {}) }
     });
     const type = response.headers.get("content-type") || "";
-    if (!type.includes("text/html")) return { response, document: null };
+    if (!type.includes("text/html")) return { response, document: null, text: await response.text() };
     const text = await response.text();
     return { response, document: new DOMParser().parseFromString(text, "text/html") };
   }
@@ -594,13 +598,16 @@
 
   function showServerError(result, options = {}) {
     const status = Number(result?.response?.status || 0);
-    if (status < 500 || status > 599) return false;
+    const minimumStatus = options.includeClientErrors ? 400 : 500;
+    const isHTTPFailure = status >= minimumStatus && status <= 599;
+    if (!isHTTPFailure && options.force !== true) return false;
     closeServerErrorDialog(false);
 
     const source = result.document;
     const title = source?.querySelector(".error-page h1")?.textContent.trim() ||
       (locale() === "zh-CN" ? "操作未完成" : "Operation not completed");
     const summary = source?.querySelector(".error-page .page-error")?.textContent.trim() ||
+      result?.text?.trim() || options.fallbackMessage ||
       (options.method === "POST" ? words().submitFailed : words().loadFailed);
     const technical = source?.querySelector(".error-page .ledger-disclosure .disclosure-body")?.textContent.trim() || "";
     const destination = new URL(options.url || result.response.url || location.href, location.href);
@@ -638,7 +645,7 @@
     const statusLabel = document.createElement("dt");
     statusLabel.textContent = "HTTP";
     const statusValue = document.createElement("dd");
-    statusValue.textContent = String(status);
+    statusValue.textContent = status >= 400 ? String(status) : "—";
     statusFact.append(statusLabel, statusValue);
     const requestFact = document.createElement("div");
     const requestLabel = document.createElement("dt");
@@ -700,6 +707,124 @@
     activeServerErrorDialog = { dialog, returnFocus };
     dialog.showModal();
     close.focus();
+    return true;
+  }
+
+  function closeActionDialog(result = false, restoreFocus = true) {
+    const state = activeActionDialog;
+    if (!state) return;
+    activeActionDialog = null;
+    if (state.dialog.open) state.dialog.close();
+    state.dialog.remove();
+    state.resolve(Boolean(result));
+    if (restoreFocus && state.returnFocus instanceof HTMLElement && state.returnFocus.isConnected) {
+      requestAnimationFrame(() => state.returnFocus?.isConnected && state.returnFocus.focus({ preventScroll: true }));
+    }
+  }
+
+  function showActionDialog(options = {}) {
+    closeActionDialog(false, false);
+    const title = String(options.title || words().confirmTitle);
+    const message = String(options.message || words().confirmDescription);
+    const closeOnly = options.closeOnly === true;
+    const dangerous = options.dangerous === true;
+    const returnFocus = options.returnFocus || document.activeElement;
+
+    return new Promise(resolve => {
+      const dialog = document.createElement("dialog");
+      const identity = `action-dialog-${Date.now()}`;
+      dialog.className = `action-dialog${dangerous ? " action-dialog--danger" : ""}`;
+      dialog.setAttribute("aria-labelledby", `${identity}-title`);
+      dialog.setAttribute("aria-describedby", `${identity}-message`);
+
+      const sheet = document.createElement("section");
+      sheet.className = "action-dialog__sheet";
+      const header = document.createElement("header");
+      const mark = document.createElement("span");
+      mark.className = "action-dialog__mark";
+      mark.append(makeIcon(dangerous ? "triangle-alert" : "shield-check"));
+      const copy = document.createElement("div");
+      const heading = document.createElement("h2");
+      heading.id = `${identity}-title`;
+      heading.textContent = title;
+      const description = document.createElement("p");
+      description.id = `${identity}-message`;
+      description.textContent = message;
+      copy.append(heading, description);
+      const close = document.createElement("button");
+      close.className = "icon-button icon-button--quiet";
+      close.type = "button";
+      close.setAttribute("aria-label", words().serverErrorClose);
+      close.append(makeIcon("x"));
+      header.append(mark, copy, close);
+
+      const footer = document.createElement("footer");
+      if (!closeOnly) {
+        const cancel = document.createElement("button");
+        cancel.className = "button button--quiet";
+        cancel.type = "button";
+        cancel.textContent = options.cancelLabel || words().confirmCancel;
+        cancel.addEventListener("click", () => closeActionDialog(false));
+        footer.append(cancel);
+      }
+      const confirm = document.createElement("button");
+      confirm.className = dangerous ? "button button--danger" : "button button--primary";
+      confirm.type = "button";
+      confirm.textContent = options.confirmLabel || (closeOnly ? words().serverErrorClose : words().confirmAction);
+      confirm.addEventListener("click", () => closeActionDialog(true, closeOnly));
+      footer.append(confirm);
+
+      sheet.append(header, footer);
+      dialog.append(sheet);
+      document.body.append(dialog);
+      close.addEventListener("click", () => closeActionDialog(false));
+      dialog.addEventListener("cancel", event => {
+        event.preventDefault();
+        closeActionDialog(false);
+      });
+      dialog.addEventListener("click", event => {
+        if (event.target === dialog) closeActionDialog(false);
+      });
+      activeActionDialog = { dialog, resolve, returnFocus };
+      dialog.showModal();
+      (closeOnly ? confirm : close).focus();
+    });
+  }
+
+  function confirmationLabel(submitter) {
+    return submitter?.getAttribute("aria-label")?.trim() || submitter?.textContent?.trim() || words().confirmAction;
+  }
+
+  function confirmationIsDangerous(form, submitter) {
+    const action = new URL(form.action || location.href, location.href).pathname;
+    return Boolean(submitter?.matches(".button--danger,.danger-action") || /\/(delete|purge|discard|remove|stop)(\/|$)/.test(action));
+  }
+
+  function confirmFormSubmission(event, form, submitter) {
+    const message = form.dataset.confirm || form.dataset.kubernetesConfirm;
+    if (!message) return false;
+    if (form.dataset.actionDialogConfirmed === "true") {
+      delete form.dataset.actionDialogConfirmed;
+      return false;
+    }
+    event.preventDefault();
+    showActionDialog({
+      message,
+      confirmLabel: confirmationLabel(submitter),
+      dangerous: confirmationIsDangerous(form, submitter),
+      returnFocus: submitter || document.activeElement,
+    }).then(confirmed => {
+      if (!confirmed || !form.isConnected) return;
+      if (form.hasAttribute("data-container-operation") && !form.elements.confirmed) {
+        const value = document.createElement("input");
+        value.type = "hidden";
+        value.name = "confirmed";
+        value.value = "yes";
+        form.append(value);
+      }
+      form.dataset.actionDialogConfirmed = "true";
+      form.requestSubmit(submitter instanceof HTMLElement && submitter.isConnected ? submitter : undefined);
+    });
     return true;
   }
 
@@ -856,19 +981,25 @@
       if (!result.response.ok) {
         if (showServerError(result, {
           url, method: "GET", returnFocus,
+          includeClientErrors: true,
           retry: () => navigate(url, push, { ...options, returnFocus }),
         })) return;
-        location.assign(result.response.url || url);
         return;
       }
       if (!result.document) {
-        location.assign(result.response.url || url);
+        showServerError(result, {
+          url, method: "GET", returnFocus, force: true,
+          retry: () => navigate(url, push, { ...options, returnFocus }),
+        });
         return;
       }
       const nextMain = result.document.querySelector("main");
       const currentMain = document.querySelector("main");
       if (!nextMain || !currentMain) {
-        location.assign(result.response.url || url);
+        showServerError(result, {
+          url, method: "GET", returnFocus, force: true,
+          retry: () => navigate(url, push, { ...options, returnFocus }),
+        });
         return;
       }
       cleanupPage();
@@ -902,6 +1033,7 @@
         if (!dataResult.response.ok) {
           if (showServerError(dataResult, {
             url, method: "GET", returnFocus,
+            includeClientErrors: true,
             retry: () => navigate(url, false, { ...options, deferredData: true, returnFocus }),
           })) {
             showDeferredDataFailure(url, title);
@@ -911,13 +1043,21 @@
           return;
         }
         if (!dataResult.document) {
-          location.assign(dataResult.response.url || url);
+          showServerError(dataResult, {
+            url, method: "GET", returnFocus, force: true,
+            retry: () => navigate(url, false, { ...options, deferredData: true, returnFocus }),
+          });
+          showDeferredDataFailure(url, title);
           return;
         }
         const nextRegion = dataResult.document.querySelector("[data-deferred-region]");
         const currentRegion = document.querySelector("[data-deferred-region]");
         if (!nextRegion || !currentRegion) {
-          location.assign(dataResult.response.url || url);
+          showServerError(dataResult, {
+            url, method: "GET", returnFocus, force: true,
+            retry: () => navigate(url, false, { ...options, deferredData: true, returnFocus }),
+          });
+          showDeferredDataFailure(url, title);
           return;
         }
         cleanupPage();
@@ -943,7 +1083,14 @@
       }
     } catch (error) {
       if (error?.name === "AbortError" || navigationRequest !== request) return;
-      if (!shellCommitted || !showDeferredDataFailure(url, title)) location.assign(url);
+      if (shellCommitted) {
+        showDeferredDataFailure(url, title);
+      } else {
+        showServerError({ response: { status: 0, url }, text: words().loadFailed }, {
+          url, method: "GET", returnFocus, force: true,
+          retry: () => navigate(url, push, { ...options, returnFocus }),
+        });
+      }
     } finally {
       if (navigationRequest === request) {
         navigationRequest = null;
@@ -984,6 +1131,10 @@
     form.dataset.externalReady = "true";
     const action = form.querySelector("[data-external-action-type]");
     const variableType = form.querySelector("[data-external-variable-type]");
+    const logTargetModes = [...form.querySelectorAll("[data-external-log-target-mode]")];
+    const logCustomFile = form.querySelector("[data-external-log-custom-file]");
+    const logRotation = form.querySelector("[data-external-log-rotate]");
+    const logRotationFields = form.querySelector("[data-external-log-rotation-fields]");
     const refresh = () => {
       form.querySelectorAll("[data-external-action-fields]").forEach(section => {
         const active = section.dataset.externalActionFields === action?.value;
@@ -995,11 +1146,30 @@
         section.hidden = !active;
         section.querySelectorAll("input,select,textarea").forEach(field => field.disabled = !active);
       });
+      const logActive = action?.value === "log";
+      const customTarget = logTargetModes.find(field => field.checked)?.value !== "managed";
+      if (logCustomFile) {
+        logCustomFile.hidden = !customTarget;
+        const input = logCustomFile.querySelector('input[name="log_file"]');
+        if (input) {
+          input.disabled = !logActive || !customTarget;
+          input.required = logActive && customTarget;
+        }
+      }
+      if (logRotationFields) {
+        const rotationActive = logActive && Boolean(logRotation?.checked);
+        logRotationFields.hidden = !rotationActive;
+        logRotationFields.querySelectorAll("input").forEach(field => field.disabled = !rotationActive);
+      }
     };
     action?.addEventListener("change", refresh);
     variableType?.addEventListener("change", refresh);
+    logTargetModes.forEach(field => field.addEventListener("change", refresh));
+    logRotation?.addEventListener("change", refresh);
     cleanups.push(() => action?.removeEventListener("change", refresh));
     cleanups.push(() => variableType?.removeEventListener("change", refresh));
+    cleanups.push(() => logTargetModes.forEach(field => field.removeEventListener("change", refresh)));
+    cleanups.push(() => logRotation?.removeEventListener("change", refresh));
     refresh();
   }
 
@@ -1335,17 +1505,25 @@
             url: destination,
             method: "GET",
             returnFocus: trigger,
+            includeClientErrors: true,
+            force: result.response.ok,
             retryLabel: words().serverErrorRetryTask,
             retry: () => openTask(destination, push, trigger),
           })) return;
-          await navigate(destination, push);
           return;
         }
         if (taskPanelRequest !== request) return;
         buildTaskPanel(main, result.response.url, push);
       } catch (error) {
         if (error?.name !== "AbortError" && taskPanelRequest === request) {
-          location.assign(destination);
+          showServerError({ response: { status: 0, url: destination }, text: words().loadFailed }, {
+            url: destination,
+            method: "GET",
+            returnFocus: trigger,
+            force: true,
+            retryLabel: words().serverErrorRetryTask,
+            retry: () => openTask(destination, push, trigger),
+          });
         }
       } finally {
         setTaskLinkBusy(trigger, false);
@@ -1355,10 +1533,56 @@
     return request.promise;
   }
 
+  async function refreshExternalGroup(groupID, options = {}) {
+    if (!groupID) return false;
+    const selector = `[data-external-group-id="${CSS.escape(groupID)}"]`;
+    const currentGroup = document.querySelector(selector);
+    if (!currentGroup) return false;
+    const returnFocus = options.returnFocus || document.activeElement;
+    try {
+      const result = await fetchDocument("/config/external-interfaces", { cache: "no-store" });
+      const nextGroup = result.document?.querySelector(selector);
+      if (!result.response.ok || !nextGroup) {
+        showServerError(result, {
+          url: "/config/external-interfaces", method: "GET", returnFocus,
+          includeClientErrors: true, force: true,
+          retry: () => refreshExternalGroup(groupID, options),
+        });
+        return false;
+      }
+      const imported = document.importNode(nextGroup, true);
+      imported.open = currentGroup.open || options.reopenManager === true;
+      currentGroup.replaceWith(imported);
+      renderIcons(imported);
+      localizeTimes(imported);
+      if (options.reopenManager) {
+        const manager = imported.querySelector("details[data-external-key-manager]");
+        if (manager) {
+          manager.open = true;
+          manager.querySelector(":scope > summary")?.setAttribute("aria-expanded", "true");
+          document.body.style.overflow = "hidden";
+          requestAnimationFrame(() => manager.querySelector(".external-key-manager__sheet")?.focus());
+        }
+      } else {
+        (options.returnFocusSelector ? imported.querySelector(options.returnFocusSelector) : imported.querySelector(":scope > summary"))?.focus({ preventScroll: true });
+      }
+      return true;
+    } catch {
+      showServerError({ response: { status: 0, url: "/config/external-interfaces" }, text: words().loadFailed }, {
+        url: "/config/external-interfaces", method: "GET", returnFocus, force: true,
+        retry: () => refreshExternalGroup(groupID, options),
+      });
+      return false;
+    }
+  }
+
   function closeTaskPanel(useHistory = true, restoreFocus = true) {
     if (!taskPanelState) return;
     const { host, cleanups = [], background = [], returnFocus, returnURL } = taskPanelState;
     const refreshAfterClose = useHistory && host.querySelector("main[data-task-refresh-on-close]");
+    const taskMain = host.querySelector("main[data-task-page]");
+    const groupID = refreshAfterClose ? taskMain?.dataset.externalGroupId || "" : "";
+    const reopenManager = Boolean(groupID && taskMain?.dataset.taskKind?.startsWith("external-key-"));
     taskPanelState = null;
     cleanups.splice(0).forEach(cleanup => cleanup());
     background.forEach(({ child, inert, ariaHidden }) => {
@@ -1371,9 +1595,12 @@
     window.setTimeout(() => host.remove(), 210);
     if (restoreFocus && returnFocus instanceof HTMLElement && returnFocus.isConnected) returnFocus.focus();
     if (useHistory && history.state?.task) {
-      if (refreshAfterClose) taskPanelRefreshAfterCloseURL = returnURL;
+      if (groupID) taskPanelGroupRefreshAfterClose = { groupID, reopenManager };
+      else if (refreshAfterClose) taskPanelRefreshAfterCloseURL = returnURL;
       taskPanelHistoryClosePending = true;
       history.back();
+    } else if (groupID) {
+      refreshExternalGroup(groupID, { reopenManager });
     } else if (refreshAfterClose) {
       navigate(returnURL, false);
     }
@@ -1641,6 +1868,11 @@
   async function submitAsync(form, submitter, options = {}) {
     form.querySelector("[data-async-submit-error]")?.remove();
     const submittingTaskState = taskPanelState?.host.contains(form) ? taskPanelState : null;
+    const externalGroupID = form.closest("[data-external-group-id]")?.dataset.externalGroupId || "";
+    const reopenExternalKeyManager = Boolean(
+      form.closest("[data-external-key-manager]") ||
+      form.closest('main[data-task-kind^="external-key-"]'),
+    );
     const data = new FormData(form);
     if (submitter?.name) data.set(submitter.name, submitter.value);
     if (form.method.toLowerCase() === "get") {
@@ -1672,12 +1904,18 @@
       if (!submittingTaskState && !form.isConnected) return;
       const fileConflict = result.document?.querySelector("main[data-file-conflict]");
       if (fileConflict && openDocumentFileConflict(fileConflict)) return;
-      if (!result.response.ok && result.response.status >= 500 && result.response.status <= 599) {
+      const responseMain = result.document?.querySelector("main");
+      const isTaskValidation = result.response.status === 422 && responseMain &&
+        !responseMain.matches(".error-page");
+      if (!result.response.ok && !isTaskValidation) {
         const retryable = form.hasAttribute("data-server-error-retry");
         showServerError(result, {
           url: action,
           method: form.method,
           returnFocus: submitter || form,
+          includeClientErrors: true,
+          force: true,
+          fallbackMessage: words().submitFailed,
           retryLabel: retryable ? words().serverErrorRetryAction : words().serverErrorRefresh,
           retryIcon: retryable ? "rotate-ccw" : "refresh-cw",
           retry: retryable
@@ -1705,6 +1943,11 @@
             );
             return;
           }
+          if (externalGroupID && new URL(destination, location.href).pathname === "/config/external-interfaces") {
+            taskPanelGroupRefreshAfterClose = { groupID: externalGroupID, reopenManager: reopenExternalKeyManager };
+            closeTaskPanel(true);
+            return;
+          }
           closeTaskPanel(false);
           if (destination === returnURL && history.state?.task) {
             history.replaceState({ pjax: true }, "", destination);
@@ -1713,12 +1956,14 @@
           }
           history.replaceState({ pjax: true }, "", destination);
           await navigate(destination, false);
+        } else if (externalGroupID && new URL(destination, location.href).pathname === "/config/external-interfaces") {
+          await refreshExternalGroup(externalGroupID, { reopenManager: reopenExternalKeyManager });
         } else {
           await navigate(destination, true);
         }
         return;
       }
-      const nextMain = result.document?.querySelector("main");
+      const nextMain = responseMain;
       if (nextMain) {
         if (options.fullNavigationOnSuccess && submittingTaskState && !nextMain.matches("[data-task-page]")) {
           closeTaskPanel(false);
@@ -1819,7 +2064,13 @@
     } catch (error) {
       const main = document.querySelector("[data-updates-page]");
       const title = main?.dataset.updateStartError || "Unable to start the update.";
-      window.alert(error?.message ? `${title}\n\n${error.message}` : title);
+      showActionDialog({
+        title,
+        message: error?.message || words().submitFailed,
+        confirmLabel: words().serverErrorClose,
+        closeOnly: true,
+        dangerous: true,
+      });
       resetSubmit(form);
     }
   }
@@ -1864,7 +2115,13 @@
       location.assign("/settings/updates");
     } catch (error) {
       const title = main?.dataset.restartError || "Unable to restart the service.";
-      window.alert(error?.message ? `${title}\n\n${error.message}` : title);
+      showActionDialog({
+        title,
+        message: error?.message || words().submitFailed,
+        confirmLabel: words().serverErrorClose,
+        closeOnly: true,
+        dangerous: true,
+      });
       resetSubmit(form);
     }
   }
@@ -5800,6 +6057,165 @@
     });
   }
 
+  function initExternalKeyManagers(cleanups) {
+    const root = document.querySelector("[data-external-interfaces-page]");
+    if (!root) return;
+    if (!root.querySelector("details[data-external-key-manager]")) return;
+    let active = null;
+
+    const close = (manager, restoreFocus = true) => {
+      if (!manager?.open) return;
+      manager.open = false;
+      manager.querySelector(":scope > summary")?.setAttribute("aria-expanded", "false");
+      if (active === manager) active = null;
+      document.body.style.overflow = "";
+      if (restoreFocus) manager.querySelector(":scope > summary")?.focus();
+    };
+    const onToggle = event => {
+      const manager = event.target.closest?.("details[data-external-key-manager]");
+      if (!manager || !root.contains(manager)) return;
+      manager.querySelector(":scope > summary")?.setAttribute("aria-expanded", String(manager.open));
+      if (!manager.open) {
+        if (active === manager) {
+          active = null;
+          document.body.style.overflow = "";
+        }
+        return;
+      }
+      root.querySelectorAll("details[data-external-key-manager][open]").forEach(candidate => { if (candidate !== manager) close(candidate, false); });
+      active = manager;
+      document.body.style.overflow = "hidden";
+      window.setTimeout(() => manager.querySelector(".external-key-manager__sheet")?.focus(), 180);
+    };
+    const onClick = event => {
+      const taskLink = event.target.closest("a[data-task-link]");
+      if (taskLink) {
+        const manager = taskLink.closest("details[data-external-key-manager]");
+        if (manager) {
+          event.preventDefault();
+          event.stopPropagation();
+          const returnFocus = manager.querySelector(":scope > summary");
+          const destination = taskLink.href;
+          close(manager, false);
+          openTask(destination, true, returnFocus);
+        }
+        return;
+      }
+      const control = event.target.closest("[data-external-key-manager-close]");
+      if (!control) return;
+      const manager = control.closest("details[data-external-key-manager]");
+      if (!manager) return;
+      event.preventDefault();
+      close(manager);
+    };
+    const onKeydown = event => {
+      if (active && !active.isConnected) active = root.querySelector("details[data-external-key-manager][open]");
+      if (!active?.open) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close(active);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const sheet = active.querySelector(".external-key-manager__sheet");
+      const focusable = [...sheet.querySelectorAll("a[href],button:not([disabled]),input:not([disabled]):not([type='hidden']),[tabindex]:not([tabindex='-1'])")]
+        .filter(element => element.getClientRects().length > 0);
+      if (!focusable.length) { event.preventDefault(); sheet.focus(); return; }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && (event.target === first || !sheet.contains(event.target))) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && event.target === last) { event.preventDefault(); first.focus(); }
+    };
+
+    root.querySelectorAll("details[data-external-key-manager]").forEach(manager => {
+      manager.querySelector(":scope > summary")?.setAttribute("aria-expanded", String(manager.open));
+    });
+    root.addEventListener("toggle", onToggle, true);
+    root.addEventListener("click", onClick);
+    document.addEventListener("keydown", onKeydown);
+    cleanups.push(() => {
+      root.removeEventListener("toggle", onToggle, true);
+      root.removeEventListener("click", onClick);
+      document.removeEventListener("keydown", onKeydown);
+      document.body.style.overflow = "";
+    });
+  }
+
+  function initStateBackupDrawers(cleanups) {
+    const root = document.querySelector("[data-state-backups-page]");
+    if (!root) return;
+    const drawers = [...root.querySelectorAll("details[data-state-backup-drawer]")];
+    if (!drawers.length) return;
+    let active = null;
+
+    const close = (drawer, restoreFocus = true) => {
+      if (!drawer?.open) return;
+      drawer.open = false;
+      drawer.querySelector(":scope > summary")?.setAttribute("aria-expanded", "false");
+      if (active === drawer) active = null;
+      document.body.style.overflow = "";
+      if (restoreFocus) drawer.querySelector(":scope > summary")?.focus();
+    };
+    const onToggle = event => {
+      const drawer = event.currentTarget;
+      const summary = drawer.querySelector(":scope > summary");
+      if (drawer.open && summary?.getAttribute("aria-disabled") === "true") {
+        drawer.open = false;
+        return;
+      }
+      summary?.setAttribute("aria-expanded", String(drawer.open));
+      if (!drawer.open) {
+        if (active === drawer) {
+          active = null;
+          document.body.style.overflow = "";
+        }
+        return;
+      }
+      drawers.forEach(candidate => { if (candidate !== drawer && candidate.open) close(candidate, false); });
+      active = drawer;
+      document.body.style.overflow = "hidden";
+      window.setTimeout(() => drawer.querySelector(".state-backup-drawer__sheet")?.focus(), 180);
+    };
+    const onClick = event => {
+      const control = event.target.closest("[data-state-backup-drawer-close]");
+      if (!control) return;
+      const drawer = control.closest("details[data-state-backup-drawer]");
+      if (!drawer) return;
+      event.preventDefault();
+      close(drawer);
+    };
+    const onKeydown = event => {
+      if (!active?.open) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close(active);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const sheet = active.querySelector(".state-backup-drawer__sheet");
+      const focusable = [...sheet.querySelectorAll("a[href],button:not([disabled]),input:not([disabled]):not([type='hidden']),[tabindex]:not([tabindex='-1'])")]
+        .filter(element => element.getClientRects().length > 0);
+      if (!focusable.length) { event.preventDefault(); sheet.focus(); return; }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && (event.target === first || !sheet.contains(event.target))) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && event.target === last) { event.preventDefault(); first.focus(); }
+    };
+
+    drawers.forEach(drawer => {
+      drawer.querySelector(":scope > summary")?.setAttribute("aria-expanded", String(drawer.open));
+      drawer.addEventListener("toggle", onToggle);
+    });
+    root.addEventListener("click", onClick);
+    document.addEventListener("keydown", onKeydown);
+    cleanups.push(() => {
+      drawers.forEach(drawer => drawer.removeEventListener("toggle", onToggle));
+      root.removeEventListener("click", onClick);
+      document.removeEventListener("keydown", onKeydown);
+      document.body.style.overflow = "";
+    });
+  }
+
   function initSecurityBanDrawer(cleanups) {
     const root = document.querySelector("[data-security-page]");
     const host = document.querySelector("[data-security-ban-drawer]");
@@ -6162,8 +6578,7 @@
       const form = event.target.closest("form[data-container-operation]");
       if (!form || form.elements.confirmed?.value === "yes") return;
       const action = form.elements.action?.value || "", label = containerWords()[action] || action;
-      if (!window.confirm(containerWords().confirm(label))) { event.preventDefault(); return; }
-      const confirmed = document.createElement("input"); confirmed.type = "hidden"; confirmed.name = "confirmed"; confirmed.value = "yes"; form.append(confirmed);
+      form.dataset.confirm = containerWords().confirm(label);
     };
     const onDrawerClick = event => { if (event.target === drawer) drawer.close(); };
     root.addEventListener("click", onClick); root.addEventListener("submit", onSubmit); drawer?.addEventListener("click", onDrawerClick);
@@ -6197,7 +6612,7 @@
 
   function kubernetesWords() { return kubernetesDetailCopy[locale()]; }
 
-  function renderKubernetesDetail(payload, logs, trigger, root) {
+  function renderKubernetesDetail(payload, trigger, root) {
     const words = kubernetesWords();
     const kubernetesBytes = value => {
       const bytes = Number(value) || 0;
@@ -6228,6 +6643,11 @@
       actions += actionForm("scale", words.scaleUp, words.confirmScaleUp, Number(workload.Desired || 0) + 1);
     }
     if (canOperate && workload.Kind === "CronJob" && root.dataset.kubernetesCanRunCron === "true") actions += actionForm("run_cron", words.runNow, words.confirmRun);
+    if (root.dataset.kubernetesCanLogs === "true") {
+      const logURL = new URL(trigger.dataset.kubernetesDetailUrl, location.href).pathname.replace(/\/details$/, "/logs");
+      const logLabel = locale() === "zh-CN" ? "\u67e5\u770b\u65e5\u5fd7" : "View logs";
+      actions += `<a class="button button--compact" href="${escapeMarkup(logURL)}"><span data-lucide="scroll-text" aria-hidden="true"></span>${escapeMarkup(logLabel)}</a>`;
+    }
     const facts = [
       [words.facts.status, words.states[workload.Status] || workload.StatusLabel || workload.Status || "—"],
       [words.facts.ready, `${workload.Ready ?? 0} / ${workload.Desired ?? 0}`],
@@ -6242,15 +6662,11 @@
     const podRows = rows(pods, pod => `<div><strong>${escapeMarkup(pod.Name)}</strong><span>${escapeMarkup(pod.Phase)} · ${escapeMarkup(pod.Ready)} · ${escapeMarkup(pod.Node || "—")} · ${escapeMarkup(words.restartCount(pod.Restarts || 0))}</span></div>`, words.noPods);
     const eventRows = rows(events.slice(0, 20), event => `<div><strong>${escapeMarkup(event.Reason || event.Type)}</strong><span>${escapeMarkup(event.Message)}</span></div>`, words.noEvents);
     const versionRows = rows(versions.slice(0, 20), version => `<div><strong>${escapeMarkup(version.Image || "—")}</strong><span>${escapeMarkup(kubernetesTime(version.ObservedAt))} · ${escapeMarkup(version.Revision || "—")}</span></div>`, words.noVersions);
-    const logText = Array.isArray(logs) && logs.length
-      ? logs.map(line => `[${line.pod || "pod"}/${line.container || "container"}] ${line.text || ""}`).join("\n")
-      : words.noLogs;
     return `${actions ? `<div class="kubernetes-detail-actions">${actions}</div>` : ""}
       <section class="kubernetes-detail-section"><h3>${escapeMarkup(words.runtime)}</h3><dl class="kubernetes-detail-facts">${facts}</dl></section>
       <section class="kubernetes-detail-section"><h3>${escapeMarkup(words.pods)}</h3><div class="kubernetes-detail-list">${podRows}</div></section>
       <section class="kubernetes-detail-section"><h3>${escapeMarkup(words.events)}</h3><div class="kubernetes-detail-list">${eventRows}</div></section>
-      <section class="kubernetes-detail-section"><h3>${escapeMarkup(words.versions)}</h3><div class="kubernetes-detail-list">${versionRows}</div></section>
-      <section class="kubernetes-detail-section"><h3>${escapeMarkup(words.logs)}</h3><pre class="kubernetes-detail-logs">${escapeMarkup(logText)}</pre></section>`;
+      <section class="kubernetes-detail-section"><h3>${escapeMarkup(words.versions)}</h3><div class="kubernetes-detail-list">${versionRows}</div></section>`;
   }
 
   function initKubernetes(cleanups) {
@@ -6261,10 +6677,6 @@
     const title = drawer?.querySelector("[data-kubernetes-drawer-title]");
     const meta = drawer?.querySelector("[data-kubernetes-drawer-meta]");
     let snapshotController = null;
-    const onSubmit = event => {
-      const form = event.target.closest("form[data-kubernetes-confirm]");
-      if (form && !window.confirm(form.dataset.kubernetesConfirm || kubernetesWords().confirm)) event.preventDefault();
-    };
     const openDetail = async button => {
       if (!drawer || !body) return;
       const url = button.dataset.kubernetesDetailUrl;
@@ -6275,17 +6687,13 @@
       renderIcons(body);
       if (!drawer.open) drawer.showModal();
       try {
-        const [detailResponse, logsResponse] = await Promise.all([
-          fetch(url, { headers: { "Accept": "application/json" } }),
-          fetch(url.replace(/\/details$/, "/logs?limit=120"), { headers: { "Accept": "application/json" } })
-        ]);
+        const detailResponse = await fetch(url, { headers: { "Accept": "application/json" } });
         if (!detailResponse.ok) throw new Error(await detailResponse.text() || `HTTP ${detailResponse.status}`);
         const payload = await detailResponse.json();
-        const logs = logsResponse.ok ? await logsResponse.json() : [];
         const workload = payload?.Workload || {};
         title.textContent = workload.Name || title.textContent;
         meta.textContent = [workload.Namespace, workload.Kind, workload.Image].filter(Boolean).join(" · ");
-        body.innerHTML = renderKubernetesDetail(payload, logs, button, root);
+        body.innerHTML = renderKubernetesDetail(payload, button, root);
         renderIcons(body);
       } catch (error) {
         body.innerHTML = `<div class="kubernetes-detail-empty" role="alert">${escapeMarkup(error?.message || kubernetesWords().loadFailed)}</div>`;
@@ -6323,12 +6731,10 @@
       if (event.target === drawer) drawer.close();
     };
     root.addEventListener("click", onClick);
-    root.addEventListener("submit", onSubmit);
     drawer?.addEventListener("click", onDrawerClick);
     cleanups.push(() => {
 	  snapshotController?.abort();
       root.removeEventListener("click", onClick);
-      root.removeEventListener("submit", onSubmit);
       drawer?.removeEventListener("click", onDrawerClick);
       if (drawer?.open) drawer.close();
     });
@@ -6398,6 +6804,8 @@
     initDisplaySettings(cleanups);
 	initSecurityDialogs(cleanups);
 	initMySQLDrawers(cleanups);
+    initExternalKeyManagers(cleanups);
+    initStateBackupDrawers(cleanups);
     initSecurityBanDrawer(cleanups);
     initUpdateSourceDrawer(cleanups);
     initAssistantWorkspace(cleanups);
@@ -6488,11 +6896,8 @@
   document.addEventListener("submit", event => {
     const form = event.target;
     if (!(form instanceof HTMLFormElement) || event.defaultPrevented) return;
-    if (form.dataset.confirm && !window.confirm(form.dataset.confirm)) {
-      event.preventDefault();
-      return;
-    }
     const submitter = event.submitter || (form.matches("[data-file-search]") ? form.querySelector("[data-search-submit]") : null);
+    if (confirmFormSubmission(event, form, submitter)) return;
     if (submitter) {
       if (submitter.name) {
         const mirror = document.createElement("input");
@@ -6604,7 +7009,11 @@
   window.addEventListener("popstate", event => {
     if (taskPanelHistoryClosePending) {
       taskPanelHistoryClosePending = false;
-      if (taskPanelRefreshAfterCloseURL) {
+      if (taskPanelGroupRefreshAfterClose) {
+        const refresh = taskPanelGroupRefreshAfterClose;
+        taskPanelGroupRefreshAfterClose = null;
+        refreshExternalGroup(refresh.groupID, { reopenManager: refresh.reopenManager });
+      } else if (taskPanelRefreshAfterCloseURL) {
         const refreshURL = taskPanelRefreshAfterCloseURL;
         taskPanelRefreshAfterCloseURL = "";
         navigate(refreshURL, false);
@@ -6710,11 +7119,11 @@ function openDashboardDrawer(drawer) {
 	drawer.classList.add("is-opening");
 	drawer.open = true;
 	syncDashboardDrawerState();
-	// Commit the off-canvas start state, then cross a paint boundary before entering.
+	// Commit the off-canvas start state, then enter on the next paint.
 	drawer.querySelector(".custom-dashboard-drawer")?.getBoundingClientRect();
-	window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+	window.requestAnimationFrame(() => {
 		if (drawer.open && !drawer.classList.contains("is-closing")) drawer.classList.remove("is-opening");
-	}));
+	});
 }
 
 function clearDashboardDrawerCloseWait(drawer) {

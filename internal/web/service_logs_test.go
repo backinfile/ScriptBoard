@@ -23,10 +23,15 @@ func TestServiceLogsPageAndExportKeepFixedFiltersAndRedaction(t *testing.T) {
 		Entries: []servicelogs.Entry{{Time: time.Date(2026, 8, 12, 7, 59, 0, 0, time.UTC), Service: "runner", Severity: logstream.SeverityError, EventID: "7036", Source: "Service Control Manager", Message: "runner failed token=<redacted>"}},
 	}}
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: filepath.Join(t.TempDir(), "state"), ServiceLogs: fixture})
-	page := getSecurityPage(t, client, serverURL+"/settings/service-logs?service=runner&range=7d&severity=error&q=failed")
+	page := getSecurityPage(t, client, serverURL+"/history/audit/service-logs?service=runner&range=7d&severity=error&q=failed")
 	for _, expected := range [][]byte{[]byte("Service logs"), []byte("Windows System Event Log"), []byte("Run Worker"), []byte("7036"), []byte("runner failed token=&lt;redacted&gt;"), []byte("scans at most 2,000 entries and returns 500")} {
 		if !bytes.Contains(page, expected) {
 			t.Fatalf("service logs page missing %q: %s", expected, page)
+		}
+	}
+	for _, expected := range [][]byte{[]byte(`class="audit-source-tabs"`), []byte(`href="/history/audit"`), []byte(`href="/history/audit/service-logs" aria-current="page"`)} {
+		if !bytes.Contains(page, expected) {
+			t.Fatalf("service logs are not integrated into the audit workspace: missing %q", expected)
 		}
 	}
 	fixture.mu.Lock()
@@ -36,7 +41,7 @@ func TestServiceLogsPageAndExportKeepFixedFiltersAndRedaction(t *testing.T) {
 		t.Fatalf("service log query = %#v", query)
 	}
 
-	response, err := client.Get(serverURL + "/settings/service-logs/export?service=runner&range=7d&severity=error&q=failed")
+	response, err := client.Get(serverURL + "/history/audit/service-logs.csv?service=runner&range=7d&severity=error&q=failed")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,6 +52,14 @@ func TestServiceLogsPageAndExportKeepFixedFiltersAndRedaction(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "runner failed token=<redacted>") || strings.Contains(string(body), "super-secret-value") {
 		t.Fatalf("service logs CSV = %s", body)
+	}
+	legacy, err := client.Get(serverURL + "/settings/service-logs?service=runner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = legacy.Body.Close()
+	if legacy.StatusCode != http.StatusPermanentRedirect || legacy.Header.Get("Location") != "/history/audit/service-logs?service=runner" {
+		t.Fatalf("legacy service logs route status=%d location=%q", legacy.StatusCode, legacy.Header.Get("Location"))
 	}
 }
 

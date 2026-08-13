@@ -34,6 +34,11 @@ func TestTOTPEnrollmentRequiresSecondFactorForLoginAndStepUp(t *testing.T) {
 	login(t, client, server.URL, password, http.StatusSeeOther)
 
 	page := getBody(t, client, server.URL+"/settings/account/mfa", http.StatusOK)
+	for _, expected := range []string{`class="task-sheet mfa-sheet"`, `class="mfa-content"`, `class="mfa-method`, `mfa-passkeys"`} {
+		if !strings.Contains(string(page), expected) {
+			t.Fatalf("two-factor drawer is missing structured section %q: %s", expected, page)
+		}
+	}
 	enrollmentResponse, err := client.PostForm(server.URL+"/settings/account/mfa/enroll", url.Values{"csrf_token": {formToken(t, page)}})
 	if err != nil {
 		t.Fatal(err)

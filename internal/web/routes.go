@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"scriptboard/internal/identity"
 )
@@ -55,6 +56,8 @@ func (a *App) routes() http.Handler {
 	mux.External("POST /trigger", a.externalTrigger)
 	mux.External("GET /trigger/{name}", a.externalTrigger)
 	mux.External("POST /trigger/{name}", a.externalTrigger)
+	mux.External("GET /trigger/{group}/{name}", a.externalTrigger)
+	mux.External("POST /trigger/{group}/{name}", a.externalTrigger)
 	mux.Handle("GET /auth/step-up", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.stepUpTask)))
 	mux.Handle("POST /auth/step-up", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.stepUp)))
 	mux.Handle("POST /auth/passkey/step-up/options", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.beginPasskeyStepUp)))
@@ -233,8 +236,8 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /settings/ai/runtime/offline", a.requireStepUp(identity.PermissionManageSystem, http.HandlerFunc(a.installAssistantRuntimeOffline)))
 	mux.Handle("POST /settings/ai/runtime/rollback", a.requireStepUp(identity.PermissionManageSystem, http.HandlerFunc(a.rollbackAssistantRuntime)))
 	mux.Handle("GET /settings/updates", a.requirePermission(identity.PermissionManageSystem, http.HandlerFunc(a.updatesPage)))
-	mux.Handle("GET /settings/service-logs", a.requirePermission(identity.PermissionManageSystem, http.HandlerFunc(a.serviceLogsPage)))
-	mux.Handle("GET /settings/service-logs/export", a.requirePermission(identity.PermissionManageSystem, http.HandlerFunc(a.exportServiceLogs)))
+	mux.Handle("GET /settings/service-logs", a.requirePermission(identity.PermissionReadAudit, http.HandlerFunc(redirectLegacyServiceLogs)))
+	mux.Handle("GET /settings/service-logs/export", a.requirePermission(identity.PermissionReadAudit, http.HandlerFunc(redirectLegacyServiceLogsExport)))
 	mux.Handle("GET /settings/notifications", a.requirePermission(identity.PermissionManageSystem, http.HandlerFunc(a.notificationsPage)))
 	mux.Handle("GET /settings/state-backups", a.requirePermission(identity.PermissionManageSystem, http.HandlerFunc(a.stateBackupsPage)))
 	mux.Handle("POST /settings/state-backups/create", a.requireAAL2StepUp(identity.PermissionManageSystem, http.HandlerFunc(a.createStateBackup)))
@@ -358,6 +361,8 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /config/external-interfaces/control", a.requireSecondFactorIfEnabled(identity.PermissionManageExecution, http.HandlerFunc(a.setExternalGlobalControl)))
 	mux.Handle("GET /config/external-interfaces/groups/new", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.newExternalGroupTask)))
 	mux.Handle("POST /config/external-interfaces/groups", a.requireSecondFactorIfEnabled(identity.PermissionManageExecution, http.HandlerFunc(a.createExternalGroup)))
+	mux.Handle("GET /config/external-interfaces/groups/{groupID}/edit", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.editExternalGroupTask)))
+	mux.Handle("POST /config/external-interfaces/groups/{groupID}", a.requireSecondFactorIfEnabled(identity.PermissionManageExecution, http.HandlerFunc(a.updateExternalGroup)))
 	mux.Handle("GET /config/external-interfaces/groups/{groupID}/keys/new", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.newExternalKeyTask)))
 	mux.Handle("GET /config/external-interfaces/keys/new", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.newExternalKeyTask)))
 	mux.Handle("POST /config/external-interfaces/groups/{groupID}/keys", a.requireSecondFactorIfEnabled(identity.PermissionManageExecution, http.HandlerFunc(a.createExternalKey)))
@@ -379,6 +384,8 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /config/external-interfaces/entries/{id}/delete", a.requireSecondFactorIfEnabled(identity.PermissionManageExecution, http.HandlerFunc(a.deleteExternalEntry)))
 	mux.Handle("GET /history/audit", a.requirePermission(identity.PermissionReadAudit, http.HandlerFunc(a.auditPage)))
 	mux.Handle("GET /history/audit.csv", a.requirePermission(identity.PermissionReadAudit, http.HandlerFunc(a.auditDownload)))
+	mux.Handle("GET /history/audit/service-logs", a.requirePermission(identity.PermissionReadAudit, http.HandlerFunc(a.serviceLogsPage)))
+	mux.Handle("GET /history/audit/service-logs.csv", a.requirePermission(identity.PermissionReadAudit, http.HandlerFunc(a.exportServiceLogs)))
 	a.routeSpecs = mux.Specs()
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		requestID, err := randomToken(18)
@@ -409,9 +416,10 @@ func (a *App) routes() http.Handler {
 		if isSecureRequest(request) {
 			response.Header().Set("Strict-Transport-Security", "max-age=31536000")
 		}
-		if a.validation.Load() && (request.Method != http.MethodGet || request.URL.Path == "/trigger") {
+		isExternalTrigger := request.URL.Path == "/trigger" || strings.HasPrefix(request.URL.Path, "/trigger/")
+		if a.validation.Load() && (request.Method != http.MethodGet || isExternalTrigger) {
 			response.Header().Set("Retry-After", "2")
-			if request.URL.Path == "/trigger" {
+			if isExternalTrigger {
 				response.Header().Set("Content-Type", "application/json; charset=utf-8")
 				writeExternalTriggerError(response, http.StatusServiceUnavailable, "service_unavailable")
 			} else {

@@ -13,22 +13,20 @@ import (
 )
 
 type serviceLogsPageData struct {
-	Locale             webLocale
-	SettingsNavigation settingsNavigationData
-	Report             servicelogs.Report
-	Service            string
-	Range              string
-	Severity           string
-	Search             string
-	Error              string
+	Locale   webLocale
+	Report   servicelogs.Report
+	Service  string
+	Range    string
+	Severity string
+	Search   string
+	Error    string
 }
 
 func (a *App) serviceLogsPage(response http.ResponseWriter, request *http.Request) {
-	current := request.Context().Value(sessionContextKey).(session)
 	locale := resolveWebLocale(request)
 	query := serviceLogQuery(request)
 	data := serviceLogsPageData{
-		Locale: locale, SettingsNavigation: newSettingsNavigation(current, locale, "service-logs"),
+		Locale:  locale,
 		Service: query.Service, Range: query.Range, Severity: string(query.Severity), Search: query.Search,
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), 20*time.Second)
@@ -43,6 +41,22 @@ func (a *App) serviceLogsPage(response http.ResponseWriter, request *http.Reques
 	if err := serviceLogsTemplate.Execute(response, data); err != nil {
 		http.Error(response, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func redirectLegacyServiceLogs(response http.ResponseWriter, request *http.Request) {
+	target := "/history/audit/service-logs"
+	if request.URL.RawQuery != "" {
+		target += "?" + request.URL.RawQuery
+	}
+	http.Redirect(response, request, target, http.StatusPermanentRedirect)
+}
+
+func redirectLegacyServiceLogsExport(response http.ResponseWriter, request *http.Request) {
+	target := "/history/audit/service-logs.csv"
+	if request.URL.RawQuery != "" {
+		target += "?" + request.URL.RawQuery
+	}
+	http.Redirect(response, request, target, http.StatusPermanentRedirect)
 }
 
 func (a *App) exportServiceLogs(response http.ResponseWriter, request *http.Request) {

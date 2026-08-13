@@ -6,7 +6,6 @@
   <a href="/settings/name" {{if eq .Current "name"}}aria-current="page"{{end}}><span data-lucide="square-pen" aria-hidden="true"></span>{{t .Locale "instance_name.title"}}</a>
   <a href="/settings/display" {{if eq .Current "display"}}aria-current="page"{{end}}><span data-lucide="eye" aria-hidden="true"></span>{{t .Locale "display.title"}}</a>
   <a href="/settings/ai" {{if eq .Current "ai"}}aria-current="page"{{end}}><span data-lucide="sparkles" aria-hidden="true"></span>{{t .Locale "assistant.settings_title"}}</a>
-  <a href="/settings/service-logs" {{if eq .Current "service-logs"}}aria-current="page"{{end}}><span data-lucide="scroll-text" aria-hidden="true"></span>{{t .Locale "service_logs.title"}}</a>
   <a href="/settings/notifications" {{if eq .Current "notifications"}}aria-current="page"{{end}}><span data-lucide="bell-ring" aria-hidden="true"></span>{{t .Locale "notifications.title"}}</a>
   <a href="/settings/state-backups" {{if eq .Current "state-backups"}}aria-current="page"{{end}}><span data-lucide="archive-restore" aria-hidden="true"></span>{{t .Locale "state_backups.title"}}</a>
   <a href="/settings/updates" {{if eq .Current "updates"}}aria-current="page"{{end}}><span data-lucide="refresh-cw" aria-hidden="true"></span>{{t .Locale "updates.title"}}</a>

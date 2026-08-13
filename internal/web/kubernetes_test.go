@@ -101,4 +101,19 @@ func TestKubernetesPageConfiguresTheOnlyClusterAndListsWorkloads(t *testing.T) {
 			t.Fatalf("configured page still contains Kubernetes Pin UI %q: %s", forbidden, page)
 		}
 	}
+	logRequest, err := http.NewRequest(http.MethodGet, serverURL+"/monitor/kubernetes/workloads/production/Deployment/api/logs", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logRequest.Header.Set("Accept", "text/html")
+	logResponse, err := client.Do(logRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logPage, _ := io.ReadAll(logResponse.Body)
+	_ = logResponse.Body.Close()
+	if logResponse.StatusCode != http.StatusOK || !bytes.Contains(logPage, []byte(`data-kubernetes-logs-page`)) ||
+		!bytes.Contains(logPage, []byte("ready")) || !bytes.Contains(logPage, []byte("api-abc/api")) {
+		t.Fatalf("Kubernetes log page status=%d body=%s", logResponse.StatusCode, logPage)
+	}
 }

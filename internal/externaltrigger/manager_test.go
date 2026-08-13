@@ -119,11 +119,12 @@ func TestGroupSupportsMultipleImmutableEntriesWithoutDeletingKeys(t *testing.T) 
 	if err != nil || second.GroupID != key.GroupID {
 		t.Fatalf("second capability=%#v error=%v", second, err)
 	}
-	if _, err := manager.UpdateEntry(context.Background(), UpdateEntryInput{
+	updated, err := manager.UpdateEntry(context.Background(), UpdateEntryInput{
 		ID: entry.ID, Name: entry.Name, Label: entry.Label, Type: ActionLog, Enabled: true,
 		Config: LogConfig{File: "/logs/changed.log", MaxMessageBytes: 100},
-	}); !errors.Is(err, ErrEntryImmutable) {
-		t.Fatalf("capability scope update error = %v", err)
+	})
+	if err != nil || updated.Target != "/logs/changed.log" {
+		t.Fatalf("capability scope update = %#v error=%v", updated, err)
 	}
 	if err := manager.DeleteEntry(context.Background(), entry.ID); err != nil {
 		t.Fatal(err)
@@ -136,7 +137,7 @@ func TestGroupSupportsMultipleImmutableEntriesWithoutDeletingKeys(t *testing.T) 
 func TestGroupKeysShareEveryCallablePathAndKeepIndependentLifetimes(t *testing.T) {
 	now := time.Date(2026, 8, 13, 9, 0, 0, 0, time.UTC)
 	manager, _ := testManager(t, now)
-	group, err := manager.CreateGroup(context.Background(), "Deploy hooks")
+	group, err := manager.CreateGroup(context.Background(), "Deploy hooks", "deploy-hooks")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,6 +173,37 @@ func TestGroupKeysShareEveryCallablePathAndKeepIndependentLifetimes(t *testing.T
 		t.Fatalf("second key affected by first key toggle: %v", err)
 	}
 	_ = second
+}
+
+func TestGroupCallNameOwnsTheExternalRoute(t *testing.T) {
+	manager, _ := testManager(t, time.Date(2026, 8, 13, 9, 0, 0, 0, time.UTC))
+	group, err := manager.CreateGroup(context.Background(), "Deployment automation", "deploy-hooks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, secret, err := manager.CreateKey(context.Background(), CreateKeyInput{GroupID: group.ID, Label: "CI", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := manager.CreateEntry(context.Background(), CreateEntryInput{GroupID: group.ID, Name: "deploy", Label: "Deploy", Type: ActionLog, Enabled: true, Config: LogConfig{File: "/logs/deploy.log", MaxMessageBytes: 100}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := manager.ResolveScoped(context.Background(), secret, "deploy-hooks", "deploy"); err != nil {
+		t.Fatalf("resolve call name: %v", err)
+	}
+	if _, _, err := manager.ResolveScoped(context.Background(), secret, group.Label, "deploy"); !errors.Is(err, ErrEntryNotFound) {
+		t.Fatalf("display label unexpectedly resolved: %v", err)
+	}
+	updated, err := manager.UpdateGroup(context.Background(), group.ID, "Release automation", "release-hooks")
+	if err != nil || updated.CallName != "release-hooks" || key.GroupID != updated.ID {
+		t.Fatalf("update group = %#v key=%#v err=%v", updated, key, err)
+	}
+	if _, _, err := manager.ResolveScoped(context.Background(), secret, "release-hooks", "deploy"); err != nil {
+		t.Fatalf("resolve updated call name: %v", err)
+	}
+	if _, err := manager.CreateGroup(context.Background(), "Other", "release-hooks"); !errors.Is(err, ErrGroupNameExists) {
+		t.Fatalf("duplicate call name error = %v", err)
+	}
 }
 
 func TestGlobalControlDefaultsEnabledAndPersistsToggle(t *testing.T) {
@@ -217,7 +249,7 @@ func TestQuickRunEntryRequiresPublishedRevisionAndDigest(t *testing.T) {
 
 func TestKeyNamesAreUniqueIgnoringCaseAndSurroundingWhitespace(t *testing.T) {
 	manager, _ := testManager(t, time.Date(2026, 8, 5, 9, 0, 0, 0, time.UTC))
-	group, err := manager.CreateGroup(context.Background(), "Deployment")
+	group, err := manager.CreateGroup(context.Background(), "Deployment", "deployment")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +321,7 @@ func TestPurgeLegacyKeySecretsKeepsUnrelatedSecrets(t *testing.T) {
 
 func TestMigrateRemoteWebsiteCredentialsBindsEndpointBeforeRemovingLegacySecret(t *testing.T) {
 	manager, db := testManager(t, time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC))
-	if _, err := db.Exec(`INSERT INTO website_monitor_remote_sources (id, label, endpoint, token_hint, created_at, updated_at) VALUES ('source-one', 'Branch', 'https://example.com/trigger?name=status', 'hint', 1, 1)`); err != nil {
+	if _, err := db.Exec(`INSERT INTO website_monitor_remote_sources (id, label, endpoint, token_hint, created_at, updated_at) VALUES ('source-one', 'Branch', 'https://example.com/trigger/monitoring/status', 'hint', 1, 1)`); err != nil {
 		t.Fatal(err)
 	}
 	if err := manager.StoreSecret("remote-website:source-one", "remote-secret"); err != nil {
@@ -299,7 +331,7 @@ func TestMigrateRemoteWebsiteCredentialsBindsEndpointBeforeRemovingLegacySecret(
 	if err := manager.MigrateRemoteWebsiteCredentials(context.Background(), destination); err != nil {
 		t.Fatal(err)
 	}
-	if destination.id != "source-one" || destination.endpoint != "https://example.com/trigger?name=status" || destination.key != "remote-secret" {
+	if destination.id != "source-one" || destination.endpoint != "https://example.com/trigger/monitoring/status" || destination.key != "remote-secret" {
 		t.Fatalf("migration binding=%+v", destination)
 	}
 	if _, err := manager.Secret("remote-website:source-one"); !errors.Is(err, ErrSecretUnavailable) {

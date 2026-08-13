@@ -2,15 +2,16 @@
 <html lang="{{.Locale}}">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{.Title}} · ScriptBoard</title></head>
 <body>
-<main class="workspace task-page{{if eq .Kind "entry-detail"}} external-entry-detail-page{{end}}{{if or (eq .Kind "key-created") (eq .Kind "key-rotate") (eq .Kind "key-rotated")}} external-key-drawer-page{{end}}" data-task-page data-task-kind="external-{{.Kind}}" data-task-close-label="{{t .Locale "common.close"}}" {{if eq .Kind "entry-detail"}}data-external-entry-detail{{end}} {{if or (eq .Kind "entry-new") (eq .Kind "key-edit")}}data-task-inner-close{{end}} {{if or (eq .Kind "key-created") (eq .Kind "key-rotated")}}data-task-refresh-on-close{{end}}>
+<main class="workspace task-page{{if eq .Kind "entry-detail"}} external-entry-detail-page{{end}}{{if or (eq .Kind "key-new") (eq .Kind "key-edit") (eq .Kind "key-created") (eq .Kind "key-rotate") (eq .Kind "key-rotated")}} external-key-drawer-page{{end}}" data-task-page data-task-kind="external-{{.Kind}}" data-task-close-label="{{t .Locale "common.close"}}" {{if .Group.ID}}data-external-group-id="{{.Group.ID}}"{{end}} {{if eq .Kind "entry-detail"}}data-external-entry-detail{{end}} {{if or (eq .Kind "entry-new") (eq .Kind "key-edit")}}data-task-inner-close{{end}} {{if or (eq .Kind "key-created") (eq .Kind "key-rotated")}}data-task-refresh-on-close{{end}}>
   <section class="task-sheet external-task-sheet">
     <header><div><p class="page-eyebrow">{{t .Locale "external.title"}}</p><h1>{{.Title}}</h1><p>{{.Description}}</p></div><a class="icon-button" href="{{.BackURL}}" aria-label="{{t .Locale "common.close"}}"><span data-lucide="x" aria-hidden="true"></span></a></header>
     {{if .FormError}}<p class="page-error" role="alert">{{.FormError}}</p>{{end}}
-    {{if eq .Kind "group-new"}}
+    {{if or (eq .Kind "group-new") (eq .Kind "group-edit")}}
     <form method="post" action="{{.Action}}" data-async>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <label>{{t .Locale "external.group_name"}} <input name="label" autocomplete="off" maxlength="128" required autofocus></label>
-      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="folder-plus" aria-hidden="true"></span>{{t .Locale "external.create_group"}}</button></footer>
+      <label>{{t .Locale "external.group_name"}} <input name="label" value="{{if .GroupFormSubmitted}}{{.GroupLabelInput}}{{else}}{{.Group.Label}}{{end}}" autocomplete="off" maxlength="128" required autofocus></label>
+      <label>{{t .Locale "external.group_call_name"}} <input name="call_name" value="{{if .GroupFormSubmitted}}{{.GroupCallNameInput}}{{else}}{{.Group.CallName}}{{end}}" autocomplete="off" maxlength="64" pattern="[a-z][a-z0-9_-]{0,63}" spellcheck="false" aria-describedby="external-group-call-name-hint" required><small id="external-group-call-name-hint">{{t .Locale "external.group_call_name_hint"}}</small></label>
+      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="{{if eq .Kind "group-edit"}}save{{else}}folder-plus{{end}}" aria-hidden="true"></span>{{if eq .Kind "group-edit"}}{{t .Locale "common.save"}}{{else}}{{t .Locale "external.create_group"}}{{end}}</button></footer>
     </form>
     {{else if eq .Kind "key-new"}}
     <form method="post" action="{{.Action}}" data-async>
@@ -53,7 +54,26 @@
       <label>{{t .Locale "external.display_name"}} <input name="label" value="{{.Entry.Label}}" maxlength="128" required autofocus></label>
       <label>{{t .Locale "external.call_name"}} <input name="name" value="{{.Entry.Name}}" autocomplete="off" spellcheck="false" pattern="[a-z][a-z0-9_\-]{0,63}" required><small>{{t .Locale "external.entry_name_hint"}}</small></label>
       <label>{{t .Locale "external.action_type"}} <select name="action_type" data-external-action-type><option value="log" {{if or (and (eq .Kind "entry-new") (not .Submitted)) (eq .Entry.Type "log")}}selected{{end}}>{{t .Locale "external.action.log"}}</option><option value="upload" {{if eq .Entry.Type "upload"}}selected{{end}}>{{t .Locale "external.action.upload"}}</option><option value="quick_run" {{if eq .Entry.Type "quick_run"}}selected{{end}}>{{t .Locale "external.action.quick_run"}}</option><option value="variable" {{if eq .Entry.Type "variable"}}selected{{end}}>{{t .Locale "external.action.variable"}}</option><option value="website_monitor" {{if eq .Entry.Type "website_monitor"}}selected{{end}}>{{t .Locale "external.action.website_monitor"}}</option></select></label>
-      <section data-external-action-fields="log"><label>{{t .Locale "external.log_file"}} <input name="log_file" value="{{.LogConfig.File}}" autocomplete="off" placeholder="C:\logs\webhook.log" required><small>{{t .Locale "external.log_file_hint"}}</small></label><label>{{t .Locale "external.log_category"}} <input name="log_category" value="{{.LogConfig.Category}}" maxlength="64"></label><label>{{t .Locale "external.log_limit"}} <input name="log_message_limit" type="number" min="0" max="4096" value="{{if .Submitted}}{{.LogMessageLimitInput}}{{else if .LogConfig.MaxMessageBytes}}{{.LogConfig.MaxMessageBytes}}{{else}}1024{{end}}" required></label></section>
+      <section data-external-action-fields="log" class="external-log-settings">
+        <fieldset class="external-setting-group"><legend>{{t .Locale "external.log_destination"}}</legend>
+          <div class="external-choice-grid">
+            <label><input type="radio" name="log_target_mode" value="managed" data-external-log-target-mode {{if .Submitted}}{{if eq .LogTargetModeInput "managed"}}checked{{end}}{{else if .LogConfig.Managed}}checked{{end}}> <strong>{{t .Locale "external.log_managed"}}</strong></label>
+            <label><input type="radio" name="log_target_mode" value="custom" data-external-log-target-mode {{if .Submitted}}{{if ne .LogTargetModeInput "managed"}}checked{{end}}{{else if not .LogConfig.Managed}}checked{{end}}> <strong>{{t .Locale "external.log_custom"}}</strong></label>
+          </div>
+          <label data-external-log-custom-file>{{t .Locale "external.log_file"}} <input name="log_file" value="{{.LogConfig.File}}" autocomplete="off" placeholder="C:\logs\webhook.log"><small>{{t .Locale "external.log_file_hint"}}</small></label>
+        </fieldset>
+        <fieldset class="external-setting-group"><legend>{{t .Locale "external.log_retention"}}</legend><p>{{t .Locale "external.log_retention_hint"}}</p>
+          <label class="check-field"><input type="checkbox" name="log_rotate" value="1" data-external-log-rotate {{if .Submitted}}{{if .LogRotateInput}}checked{{end}}{{else if .LogConfig.Rotate}}checked{{end}}> {{t .Locale "external.log_rotation"}}</label>
+          <div class="external-log-rotation-fields" data-external-log-rotation-fields>
+            <label>{{t .Locale "external.log_max_file_mb"}} <input name="log_max_file_mb" type="number" min="1" max="1024" value="{{if .Submitted}}{{.LogMaxFileMBInput}}{{else if .LogConfig.MaxFileBytes}}{{divBytesMB .LogConfig.MaxFileBytes}}{{else}}10{{end}}" inputmode="numeric"></label>
+            <label>{{t .Locale "external.log_max_backups"}} <input name="log_max_backups" type="number" min="1" max="100" value="{{if .Submitted}}{{.LogMaxBackupsInput}}{{else if .LogConfig.MaxBackups}}{{.LogConfig.MaxBackups}}{{else}}5{{end}}" inputmode="numeric"></label>
+          </div>
+        </fieldset>
+        <fieldset class="external-setting-group"><legend>{{t .Locale "external.log_record"}}</legend>
+          <label>{{t .Locale "external.log_category"}} <input name="log_category" value="{{.LogConfig.Category}}" maxlength="64"></label>
+          <label>{{t .Locale "external.log_limit"}} <input name="log_message_limit" type="number" min="0" max="4096" value="{{if .Submitted}}{{.LogMessageLimitInput}}{{else if .LogConfig.MaxMessageBytes}}{{.LogConfig.MaxMessageBytes}}{{else}}1024{{end}}" required></label>
+        </fieldset>
+      </section>
       <section data-external-action-fields="upload">
         <label>{{t .Locale "external.upload_directory"}} <input name="upload_directory" value="{{.UploadConfig.Directory}}" autocomplete="off" placeholder="C:\incoming"></label>
         <label>{{t .Locale "external.upload_max"}} <input name="upload_max_bytes" type="number" min="1" max="1073741824" value="{{if .Submitted}}{{.UploadMaxBytesInput}}{{else if .UploadConfig.MaxBytes}}{{.UploadConfig.MaxBytes}}{{else}}10485760{{end}}"></label>

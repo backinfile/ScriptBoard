@@ -293,10 +293,10 @@
         </div>
       </section>
       <section class="schedule-form-section schedule-policy" aria-labelledby="schedule-policy-title">
-        <header class="schedule-section-heading"><div><span class="section-index">04</span><h2 id="schedule-policy-title">{{t .Locale "schedules.policy_title"}}</h2></div><p>{{t .Locale "schedules.policy_description"}}</p></header>
+        <header class="schedule-section-heading"><div><span class="section-index">04</span><h2 id="schedule-policy-title">{{t .Locale "schedules.policy_title"}}</h2></div></header>
         <div class="schedule-policy-grid">
-          <label>{{t .Locale "task.timeout_seconds"}} <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{if .TimeoutInput}}{{.TimeoutInput}}{{else}}{{.TimeoutSeconds}}{{end}}"><small>{{t .Locale "schedules.timeout_hint"}}</small></label>
-          <label class="check-field schedule-switch"><input name="disallow_overlap" type="checkbox" value="1" {{if .DisallowOverlap}}checked{{end}}> <span><strong>{{t .Locale "task.disallow_overlap"}}</strong><small>{{t .Locale "schedules.overlap_hint"}}</small></span></label>
+          <label>{{t .Locale "task.timeout_seconds"}} <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{if .TimeoutInput}}{{.TimeoutInput}}{{else}}{{.TimeoutSeconds}}{{end}}"></label>
+          <div class="schedule-policy-field"><span>{{t .Locale "schedules.overlap_policy"}}</span><label class="check-field schedule-switch"><input name="disallow_overlap" type="checkbox" value="1" {{if .DisallowOverlap}}checked{{end}}> <strong>{{t .Locale "task.disallow_overlap"}}</strong></label></div>
         </div>
       </section>
       <footer class="schedule-form-actions"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><div><button class="button" type="submit" formaction="{{.PreviewAction}}" formnovalidate data-cron-preview-submit><span data-lucide="calendar-clock" aria-hidden="true"></span>{{t .Locale "cron.preview_action"}}</button><button class="button button--primary" type="submit">{{if eq .Kind "schedule-edit"}}{{t .Locale "task.save_changes"}}{{else}}{{t .Locale "common.create"}}{{end}}</button></div></footer>
