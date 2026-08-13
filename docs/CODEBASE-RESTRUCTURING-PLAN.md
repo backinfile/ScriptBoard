@@ -1,7 +1,9 @@
 # ScriptBoard 代码结构重构执行计划
 
-状态：已在 `codex/codebase-restructure` 执行  
-基线：`dev` `877b79f`  
+状态：已在 `codex/codebase-restructure` 执行
+
+基线：`dev` `877b79f`
+
 范围：最后正式版本之后的提交评审、信任边界修复、目录重组与发布门禁
 
 ## 交付原则
