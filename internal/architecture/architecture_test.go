@@ -59,6 +59,42 @@ func TestWebUIHasOneCanonicalRoot(t *testing.T) {
 	}
 }
 
+func TestADRNumbersDoNotAcquireNewDuplicates(t *testing.T) {
+	root := repositoryRoot(t)
+	entries, err := os.ReadDir(filepath.Join(root, "docs", "adr"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := make(map[string]int)
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || filepath.Ext(name) != ".md" || name == "README.md" {
+			continue
+		}
+		separator := strings.IndexByte(name, '-')
+		if separator != 4 {
+			t.Errorf("ADR filename must start with four digits: %s", name)
+			continue
+		}
+		counts[name[:separator]]++
+	}
+	legacyDuplicates := map[string]int{"0109": 2, "0128": 2}
+	for number, count := range counts {
+		allowed := 1
+		if legacyCount, ok := legacyDuplicates[number]; ok {
+			allowed = legacyCount
+		}
+		if count != allowed {
+			t.Errorf("ADR number %s occurs %d times; expected %d", number, count, allowed)
+		}
+	}
+	for number, expected := range legacyDuplicates {
+		if counts[number] != expected {
+			t.Errorf("documented ADR number %s occurs %d times; expected %d", number, counts[number], expected)
+		}
+	}
+}
+
 func repositoryRoot(t *testing.T) string {
 	t.Helper()
 	_, filename, _, ok := runtime.Caller(0)
