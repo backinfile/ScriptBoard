@@ -73,6 +73,9 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 			return fmt.Errorf("initialize Kubernetes monitoring SQLite schema: %w", err)
 		}
 	}
+	if err := migrateKubernetesConnections(migration); err != nil {
+		return err
+	}
 	if schemaVersion == 21 {
 		if _, err := migration.Exec(`ALTER TABLE assistant_tool_calls ADD COLUMN body_offset INTEGER NOT NULL DEFAULT 0`); err != nil {
 			return fmt.Errorf("migrate Assistant tool-call positions: %w", err)
@@ -493,6 +496,9 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 		"CREATE INDEX IF NOT EXISTS schedule_triggers_unlinked_time_idx ON schedule_triggers(scheduled_for) WHERE run_id = ''",
 		"CREATE INDEX IF NOT EXISTS application_pins_order_idx ON application_pins(sort_order, created_at)",
 		"CREATE INDEX IF NOT EXISTS application_metric_minutes_bucket_idx ON application_metric_minutes(bucket_at)",
+		"CREATE INDEX IF NOT EXISTS kubernetes_connection_name_idx ON kubernetes_connection(name)",
+		"CREATE INDEX IF NOT EXISTS kubernetes_versions_workload_idx ON kubernetes_versions(connection_id, workload_key, observed_at DESC)",
+		"CREATE INDEX IF NOT EXISTS kubernetes_metric_minutes_bucket_idx ON kubernetes_metric_minutes(connection_id, bucket_at)",
 		"CREATE UNIQUE INDEX IF NOT EXISTS assistant_models_owner_default_idx ON assistant_models(owner_user_id) WHERE is_default = 1",
 		"CREATE INDEX IF NOT EXISTS assistant_models_visibility_idx ON assistant_models(owner_user_id, is_shared, is_default DESC, created_at, name)",
 	} {

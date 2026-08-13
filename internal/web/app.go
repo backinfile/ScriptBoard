@@ -160,6 +160,7 @@ func webTemplateFunctions() template.FuncMap {
 		"containerSortURL":         containerSortURL,
 		"containerStatusURL":       containerStatusURL,
 		"kubernetesSortURL":        kubernetesSortURL,
+		"kubernetesStatusURL":      kubernetesStatusURL,
 		"serviceLogService":        serviceLogServiceLabel,
 		"duration":                 humanDuration,
 		"localDuration": func(locale webLocale, value time.Duration) string {

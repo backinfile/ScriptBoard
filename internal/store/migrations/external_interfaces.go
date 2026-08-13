@@ -74,7 +74,7 @@ func migrateExternalInterfaceGroups(migration *sql.Tx, schemaVersion int) error 
 }
 
 func migrateExternalInterfaceGroupCallNames(migration *sql.Tx, schemaVersion int) error {
-	if schemaVersion < 20 || schemaVersion > 46 {
+	if schemaVersion < 20 || schemaVersion > 47 {
 		return nil
 	}
 	exists, err := storesqlite.ColumnExists(migration, "external_trigger_groups", "call_name")

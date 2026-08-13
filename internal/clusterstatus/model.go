@@ -13,6 +13,7 @@ const (
 )
 
 type Connection struct {
+	ID             string `json:"id"`
 	Name           string `json:"name"`
 	KubeconfigPath string `json:"kubeconfigPath"`
 	Context        string `json:"context"`
@@ -40,6 +41,7 @@ type ConnectionStatus struct {
 
 type Query struct {
 	Search, Status, Namespace, Kind, Sort, Direction string
+	ConnectionID                                     string
 	Limit                                            int
 }
 

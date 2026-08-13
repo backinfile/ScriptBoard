@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -47,7 +48,7 @@ func (client *kubernetesFixtureClient) Operate(context.Context, clusterstatus.Op
 	return nil
 }
 
-func TestKubernetesPageConfiguresTheOnlyClusterAndListsWorkloads(t *testing.T) {
+func TestKubernetesPageSeparatesConnectionsFromSelectedClusterMonitoring(t *testing.T) {
 	fixture := &kubernetesFixtureClient{snapshot: clusterstatus.Snapshot{
 		CollectedAt: time.Now().UTC(), ServerVersion: "v1.35.1+k3s1", PodsReady: 2, PodsTotal: 2, Namespaces: 2, MetricsAvailable: true,
 		Nodes:     []clusterstatus.Node{{Name: "edge-control-01", Role: "control-plane", Ready: true, CPUPercent: 12}},
@@ -61,10 +62,10 @@ func TestKubernetesPageConfiguresTheOnlyClusterAndListsWorkloads(t *testing.T) {
 	}
 	page, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusOK || !bytes.Contains(page, []byte("Connect Kubernetes")) || !bytes.Contains(page, []byte(`/monitor/kubernetes/connection`)) {
+	if response.StatusCode != http.StatusOK || !bytes.Contains(page, []byte(`data-kubernetes-tab="connections"`)) || !bytes.Contains(page, []byte(`/monitor/kubernetes/connections/new`)) {
 		t.Fatalf("unconfigured page: status=%d body=%s", response.StatusCode, page)
 	}
-	response, err = client.Get(serverURL + "/monitor/kubernetes/connection")
+	response, err = client.Get(serverURL + "/monitor/kubernetes/connections/new")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,26 +75,61 @@ func TestKubernetesPageConfiguresTheOnlyClusterAndListsWorkloads(t *testing.T) {
 		t.Fatalf("connection page does not explain HTTP support: %s", page)
 	}
 
-	response, err = client.PostForm(serverURL+"/monitor/kubernetes/connection", url.Values{
+	response, err = client.PostForm(serverURL+"/monitor/kubernetes/connections", url.Values{
 		"csrf_token": {formToken(t, page)}, "name": {"edge-home"}, "kubeconfig_path": {"/etc/scriptboard/kubeconfig"}, "context": {"default"}, "mode": {"limited"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/monitor/kubernetes" {
+	location := response.Header.Get("Location")
+	if response.StatusCode != http.StatusSeeOther || !strings.HasPrefix(location, "/monitor/kubernetes?cluster=") {
 		t.Fatalf("save connection: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
 	_ = response.Body.Close()
+	firstID := strings.TrimPrefix(location, "/monitor/kubernetes?cluster=")
 
-	response, err = client.Get(serverURL + "/monitor/kubernetes")
+	response, err = client.Get(serverURL + "/monitor/kubernetes/connections/new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newConnectionPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/monitor/kubernetes/connections", url.Values{
+		"csrf_token": {formToken(t, newConnectionPage)}, "name": {"staging"}, "kubeconfig_path": {"/etc/scriptboard/staging"}, "context": {"staging"}, "mode": {"observe"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondLocation := response.Header.Get("Location")
+	if response.StatusCode != http.StatusSeeOther || !strings.HasPrefix(secondLocation, "/monitor/kubernetes?cluster=") {
+		t.Fatalf("save second connection: status=%d location=%q", response.StatusCode, secondLocation)
+	}
+	_ = response.Body.Close()
+	secondID := strings.TrimPrefix(secondLocation, "/monitor/kubernetes?cluster=")
+	if firstID == "" || secondID == "" || firstID == secondID {
+		t.Fatalf("connection IDs first=%q second=%q", firstID, secondID)
+	}
+
+	response, err = client.Get(serverURL + secondLocation)
 	if err != nil {
 		t.Fatal(err)
 	}
 	page, _ = io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, expected := range [][]byte{[]byte("edge-home"), []byte("ghcr.io/acme/api:v2"), []byte("production"), []byte("Connection settings"), []byte("Monitor / Kubernetes"), []byte(`href="/monitor/kubernetes?direction=asc&amp;sort=name"`), []byte(`class="kubernetes-workload-controls"`), []byte(`class="section-index"`), []byte(`class="monitor-status-switch kubernetes-status-tabs"`), []byte(`data-kubernetes-can-manage="true"`), []byte(`data-kubernetes-can-redeploy="true"`), []byte(`class="kubernetes-drawer"`), []byte(">Ready<")} {
+	for _, expected := range [][]byte{[]byte(`data-kubernetes-tab="monitor"`), []byte(`name="cluster"`), []byte(`value="` + firstID + `"`), []byte(`value="` + secondID + `" selected`), []byte("edge-home"), []byte("staging"), []byte("ghcr.io/acme/api:v2"), []byte("production"), []byte(`href="/monitor/kubernetes?tab=connections"`), []byte(`/monitor/kubernetes/clusters/` + secondID + `/workloads/production/Deployment/api/details`), []byte(`data-kubernetes-can-manage="true"`), []byte(`class="kubernetes-drawer"`), []byte(">Ready<")} {
 		if !bytes.Contains(page, expected) {
 			t.Fatalf("configured page missing %q: %s", expected, page)
+		}
+	}
+	response, err = client.Get(serverURL + "/monitor/kubernetes?tab=connections")
+	if err != nil {
+		t.Fatal(err)
+	}
+	connectionsPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	for _, expected := range [][]byte{[]byte(`data-kubernetes-tab="connections"`), []byte("edge-home"), []byte("staging"), []byte(`/monitor/kubernetes/connections/` + firstID), []byte(`/monitor/kubernetes/connections/` + secondID)} {
+		if !bytes.Contains(connectionsPage, expected) {
+			t.Fatalf("connections page missing %q: %s", expected, connectionsPage)
 		}
 	}
 	for _, forbidden := range [][]byte{[]byte("Pinned workloads"), []byte("/monitor/kubernetes/workloads/production/Deployment/api/pin")} {

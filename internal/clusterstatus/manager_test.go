@@ -15,6 +15,14 @@ type fakeFactory struct {
 	opened []Connection
 }
 
+type connectionFactory struct {
+	clients map[string]Client
+}
+
+func (factory connectionFactory) Open(_ context.Context, connection Connection) (Client, error) {
+	return factory.clients[connection.KubeconfigPath], nil
+}
+
 func (factory *fakeFactory) Open(_ context.Context, connection Connection) (Client, error) {
 	factory.opened = append(factory.opened, connection)
 	return factory.client, factory.err
@@ -65,7 +73,7 @@ func testManager(t *testing.T, factory Factory) *Manager {
 	return manager
 }
 
-func TestSaveConnectionTestsAndPersistsTheOnlyCluster(t *testing.T) {
+func TestSaveConnectionTestsAndPersistsACluster(t *testing.T) {
 	client := &fakeClient{
 		fingerprint:  "sha256:cluster-one",
 		capabilities: Capabilities{Workloads: true, Nodes: true, Metrics: true, Logs: true, Redeploy: true, Scale: true},
@@ -86,7 +94,7 @@ func TestSaveConnectionTestsAndPersistsTheOnlyCluster(t *testing.T) {
 		t.Fatalf("connection was not normalized before testing: %#v", factory.opened)
 	}
 
-	stored, ok, err := manager.Connection(context.Background())
+	stored, ok, err := manager.Connection(context.Background(), result.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +107,8 @@ func TestConnectionTestDoesNotReplaceConfiguredCluster(t *testing.T) {
 	client := &fakeClient{fingerprint: "sha256:first", capabilities: Capabilities{Workloads: true}}
 	manager := testManager(t, &fakeFactory{client: client})
 	ctx := context.Background()
-	if _, err := manager.SaveConnection(ctx, Connection{Name: "first", KubeconfigPath: "/first", Mode: ModeObserve}); err != nil {
+	saved, err := manager.SaveConnection(ctx, Connection{Name: "first", KubeconfigPath: "/first", Mode: ModeObserve})
+	if err != nil {
 		t.Fatal(err)
 	}
 	client.fingerprint = "sha256:candidate"
@@ -110,9 +119,63 @@ func TestConnectionTestDoesNotReplaceConfiguredCluster(t *testing.T) {
 	if !result.Connected || result.Fingerprint != "sha256:candidate" {
 		t.Fatalf("test result = %#v", result)
 	}
-	stored, ok, err := manager.Connection(ctx)
+	stored, ok, err := manager.Connection(ctx, saved.ID)
 	if err != nil || !ok || stored.Name != "first" {
 		t.Fatalf("stored connection = %#v, ok=%v, err=%v", stored, ok, err)
+	}
+}
+
+func TestMultipleConnectionsKeepSnapshotsAndHistoryIndependent(t *testing.T) {
+	now := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
+	production := &fakeClient{fingerprint: "sha256:production", capabilities: Capabilities{Workloads: true}, snapshot: Snapshot{
+		CollectedAt: now, Workloads: []Workload{{Key: "default/Deployment/api", Namespace: "default", Kind: "Deployment", Name: "api", Image: "api:production", Status: "ready", Ready: 2, Desired: 2}},
+	}}
+	staging := &fakeClient{fingerprint: "sha256:staging", capabilities: Capabilities{Workloads: true}, snapshot: Snapshot{
+		CollectedAt: now, Workloads: []Workload{{Key: "default/Deployment/api", Namespace: "default", Kind: "Deployment", Name: "api", Image: "api:staging", Status: "ready", Ready: 1, Desired: 1}},
+	}}
+	manager := testManager(t, connectionFactory{clients: map[string]Client{"/production": production, "/staging": staging}})
+	ctx := context.Background()
+	productionStatus, err := manager.SaveConnection(ctx, Connection{Name: "production", KubeconfigPath: "/production", Mode: ModeObserve})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stagingStatus, err := manager.SaveConnection(ctx, Connection{Name: "staging", KubeconfigPath: "/staging", Mode: ModeObserve})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if productionStatus.ID == "" || stagingStatus.ID == "" || productionStatus.ID == stagingStatus.ID {
+		t.Fatalf("connection IDs are not stable and distinct: production=%q staging=%q", productionStatus.ID, stagingStatus.ID)
+	}
+	if err := manager.Refresh(ctx, productionStatus.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Refresh(ctx, stagingStatus.ID); err != nil {
+		t.Fatal(err)
+	}
+	productionView, err := manager.View(ctx, productionStatus.ID, Query{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stagingView, err := manager.View(ctx, stagingStatus.ID, Query{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := productionView.Workloads[0].Image; got != "api:production" {
+		t.Fatalf("production image = %q", got)
+	}
+	if got := stagingView.Workloads[0].Image; got != "api:staging" {
+		t.Fatalf("staging image = %q", got)
+	}
+	productionDetail, err := manager.Detail(ctx, productionStatus.ID, "default/Deployment/api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stagingDetail, err := manager.Detail(ctx, stagingStatus.ID, "default/Deployment/api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if productionDetail.Versions[0].Image != "api:production" || stagingDetail.Versions[0].Image != "api:staging" {
+		t.Fatalf("history crossed connections: production=%#v staging=%#v", productionDetail.Versions, stagingDetail.Versions)
 	}
 }
 
@@ -121,25 +184,37 @@ func TestReplacingConnectionClearsClusterBoundHistory(t *testing.T) {
 	factory := &fakeFactory{client: client}
 	manager := testManager(t, factory)
 	ctx := context.Background()
-	if _, err := manager.SaveConnection(ctx, Connection{Name: "first", KubeconfigPath: "/first", Mode: ModeObserve}); err != nil {
+	saved, err := manager.SaveConnection(ctx, Connection{Name: "first", KubeconfigPath: "/first", Mode: ModeObserve})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := manager.SaveConnection(ctx, Connection{Name: "other", KubeconfigPath: "/other", Mode: ModeObserve})
+	if err != nil {
 		t.Fatal(err)
 	}
 	for _, statement := range []string{
-		`INSERT INTO kubernetes_versions (workload_key, observed_at, image, revision) VALUES ('production/Deployment/api',1,'api:v1','rev 1')`,
-		`INSERT INTO kubernetes_metric_minutes (workload_key, bucket_at, cpu_millicores, memory_bytes, ready, desired, restarts) VALUES ('production/Deployment/api',1,10,20,1,1,0)`,
+		`INSERT INTO kubernetes_versions (connection_id, workload_key, observed_at, image, revision) VALUES ('` + saved.ID + `','production/Deployment/api',1,'api:v1','rev 1')`,
+		`INSERT INTO kubernetes_metric_minutes (connection_id, workload_key, bucket_at, cpu_millicores, memory_bytes, ready, desired, restarts) VALUES ('` + saved.ID + `','production/Deployment/api',1,10,20,1,1,0)`,
+		`INSERT INTO kubernetes_versions (connection_id, workload_key, observed_at, image, revision) VALUES ('` + other.ID + `','production/Deployment/api',1,'api:other','rev other')`,
+		`INSERT INTO kubernetes_metric_minutes (connection_id, workload_key, bucket_at, cpu_millicores, memory_bytes, ready, desired, restarts) VALUES ('` + other.ID + `','production/Deployment/api',1,10,20,1,1,0)`,
 	} {
 		if _, err := manager.db.ExecContext(ctx, statement); err != nil {
 			t.Fatal(err)
 		}
 	}
 	client.fingerprint = "sha256:second"
-	if _, err := manager.SaveConnection(ctx, Connection{Name: "second", KubeconfigPath: "/second", Mode: ModeObserve}); err != nil {
+	saved.Name = "second"
+	saved.KubeconfigPath = "/second"
+	if _, err := manager.SaveConnection(ctx, saved.Connection); err != nil {
 		t.Fatal(err)
 	}
 	for _, table := range []string{"kubernetes_versions", "kubernetes_metric_minutes"} {
 		var count int
-		if err := manager.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&count); err != nil || count != 0 {
+		if err := manager.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table+" WHERE connection_id=?", saved.ID).Scan(&count); err != nil || count != 0 {
 			t.Fatalf("%s count=%d error=%v", table, count, err)
+		}
+		if err := manager.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table+" WHERE connection_id=?", other.ID).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("%s other connection count=%d error=%v", table, count, err)
 		}
 	}
 }
@@ -151,13 +226,14 @@ func TestWorkloadKeepsVersionHistoryAcrossRollouts(t *testing.T) {
 	}}
 	manager := testManager(t, &fakeFactory{client: client})
 	ctx := context.Background()
-	if _, err := manager.SaveConnection(ctx, Connection{Name: "cluster", KubeconfigPath: "/cluster", Mode: ModeObserve}); err != nil {
+	saved, err := manager.SaveConnection(ctx, Connection{Name: "cluster", KubeconfigPath: "/cluster", Mode: ModeObserve})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.Refresh(ctx); err != nil {
+	if err := manager.Refresh(ctx, saved.ID); err != nil {
 		t.Fatal(err)
 	}
-	view, err := manager.View(ctx, Query{})
+	view, err := manager.View(ctx, saved.ID, Query{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,17 +244,17 @@ func TestWorkloadKeepsVersionHistoryAcrossRollouts(t *testing.T) {
 	client.snapshot.Workloads[0].Revision = "rev 2"
 	client.snapshot.CollectedAt = now.Add(time.Minute)
 	manager.now = func() time.Time { return now.Add(time.Minute) }
-	if err := manager.Refresh(ctx); err != nil {
+	if err := manager.Refresh(ctx, saved.ID); err != nil {
 		t.Fatal(err)
 	}
-	view, err = manager.View(ctx, Query{Sort: "name", Direction: "asc"})
+	view, err = manager.View(ctx, saved.ID, Query{Sort: "name", Direction: "asc"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(view.Workloads) != 1 || view.Workloads[0].Image != "api:v2" {
 		t.Fatalf("current workload: %#v", view.Workloads)
 	}
-	detail, err := manager.Detail(ctx, "production/Deployment/api")
+	detail, err := manager.Detail(ctx, saved.ID, "production/Deployment/api")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,13 +270,14 @@ func TestFilteredViewKeepsAllNamespaceOptionsAndHidesConnectionPath(t *testing.T
 	}}}
 	manager := testManager(t, &fakeFactory{client: client})
 	ctx := context.Background()
-	if _, err := manager.SaveConnection(ctx, Connection{Name: "cluster", KubeconfigPath: "/private/kubeconfig", Mode: ModeObserve}); err != nil {
+	saved, err := manager.SaveConnection(ctx, Connection{Name: "cluster", KubeconfigPath: "/private/kubeconfig", Mode: ModeObserve})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.Refresh(ctx); err != nil {
+	if err := manager.Refresh(ctx, saved.ID); err != nil {
 		t.Fatal(err)
 	}
-	view, err := manager.View(ctx, Query{Status: "ready"})
+	view, err := manager.View(ctx, saved.ID, Query{Status: "ready"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,16 +295,17 @@ func TestLimitedOperationsAllowOnlyOneReplicaStep(t *testing.T) {
 	}}
 	manager := testManager(t, &fakeFactory{client: client})
 	ctx := context.Background()
-	if _, err := manager.SaveConnection(ctx, Connection{Name: "cluster", KubeconfigPath: "/cluster", Mode: ModeLimited}); err != nil {
+	saved, err := manager.SaveConnection(ctx, Connection{Name: "cluster", KubeconfigPath: "/cluster", Mode: ModeLimited})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.Refresh(ctx); err != nil {
+	if err := manager.Refresh(ctx, saved.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.Operate(ctx, Operation{Kind: OperationScale, WorkloadKey: "production/Deployment/api", Replicas: 5}); err == nil {
+	if err := manager.Operate(ctx, saved.ID, Operation{Kind: OperationScale, WorkloadKey: "production/Deployment/api", Replicas: 5}); err == nil {
 		t.Fatal("large replica change was accepted")
 	}
-	if err := manager.Operate(ctx, Operation{Kind: OperationScale, WorkloadKey: "production/Deployment/api", Replicas: 3}); err != nil {
+	if err := manager.Operate(ctx, saved.ID, Operation{Kind: OperationScale, WorkloadKey: "production/Deployment/api", Replicas: 3}); err != nil {
 		t.Fatal(err)
 	}
 	if len(client.operations) != 1 || client.operations[0].Replicas != 3 {

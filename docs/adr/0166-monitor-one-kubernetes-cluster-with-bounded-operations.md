@@ -1,5 +1,7 @@
 # 连接一个 Kubernetes 集群并限制操作面
 
+> 状态：单集群限制已被 [ADR-0171](./0171-monitor-multiple-kubernetes-connections-independently.md) 取代；本 ADR 的凭据与有限操作边界继续有效。
+
 > 传输协议限制已由 [ADR-0167](./0167-support-explicit-secure-and-plaintext-transports.md) 调整：kubeconfig `server` 现在同时接受 HTTP 与 HTTPS；本 ADR 的单集群和操作面限制保持不变。
 
 ScriptBoard 在独立的“Kubernetes 监控”页面连接一个集群。连接由显示名称、主机上的 kubeconfig 路径、可选 context 和操作模式组成；SQLite 不保存 token、证书或私钥。连接适配器接受 HTTP 与 HTTPS，拒绝 `insecure-skip-tls-verify`、`exec` 与 `auth-provider` 凭据插件；HTTPS 使用 kubeconfig 中的 CA、静态 token、基本认证或客户端证书，HTTP 可使用静态 token 或基本认证并明确承担明文传输风险。

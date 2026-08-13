@@ -6672,6 +6672,7 @@
   function initKubernetes(cleanups) {
     const root = document.querySelector("[data-kubernetes-page]");
     if (!root) return;
+    const clusterSelect = root.querySelector("[data-kubernetes-cluster-select]");
     const drawer = root.querySelector("[data-kubernetes-drawer]");
     const body = drawer?.querySelector("[data-kubernetes-drawer-body]");
     const title = drawer?.querySelector("[data-kubernetes-drawer-title]");
@@ -6731,10 +6732,13 @@
       if (event.target === drawer) drawer.close();
     };
     root.addEventListener("click", onClick);
+    const onClusterChange = () => clusterSelect?.form?.requestSubmit();
+    clusterSelect?.addEventListener("change", onClusterChange);
     drawer?.addEventListener("click", onDrawerClick);
     cleanups.push(() => {
-	  snapshotController?.abort();
+      snapshotController?.abort();
       root.removeEventListener("click", onClick);
+      clusterSelect?.removeEventListener("change", onClusterChange);
       drawer?.removeEventListener("click", onDrawerClick);
       if (drawer?.open) drawer.close();
     });
@@ -6753,7 +6757,7 @@
       result.hidden = false;
       if (message) message.textContent = kubernetesWords().testing;
       try {
-        const response = await fetch("/monitor/kubernetes/connection/test", { method: "POST", body: new FormData(form), headers: { "Accept": "application/json" } });
+        const response = await fetch("/monitor/kubernetes/connections/test", { method: "POST", body: new FormData(form), headers: { "Accept": "application/json" } });
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
         const capabilities = payload.capabilities || {};

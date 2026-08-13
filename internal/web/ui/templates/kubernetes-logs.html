@@ -11,7 +11,7 @@
 <main class="workspace kubernetes-logs-page" data-kubernetes-logs-page>
   <header class="page-heading kubernetes-logs-heading">
     <div>
-      <a class="task-back" href="/monitor/kubernetes"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "common.back"}}</a>
+      <a class="task-back" href="/monitor/kubernetes?cluster={{.Connection}}"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "common.back"}}</a>
       <p class="page-eyebrow">Kubernetes / {{t .Locale "kubernetes.pod_logs"}}</p>
       <h1>{{.Name}}</h1>
       <p><code>{{.Namespace}} / {{.Kind}}</code></p>

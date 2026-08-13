@@ -8,6 +8,10 @@ ScriptBoard 是面向单机、少量可信用户场景的主机文件与脚本�
 
 ## Language
 
+**Kubernetes 连接（Kubernetes Connection）**：
+ScriptBoard 可访问的一个 Kubernetes 集群配置，拥有稳定 ID、显示名称、主机 kubeconfig 路径、可选 context 和操作模式。快照、指标、版本历史及有限操作都在连接 ID 范围内隔离；连接不是集群生命周期或跨集群编排对象。
+_Avoid_: 集群资源、集群成员、多集群控制面
+
 **用户（User）**：
 由系统管理员手动创建、可以登录当前 ScriptBoard 实例的本地身份。用户拥有稳定 ID、唯一用户名、固定角色、启用状态和授权版本；账号不永久删除，以保留 Run 与审计归属。
 _Avoid_: 项目成员、操作系统账号、执行身份

@@ -812,6 +812,63 @@ func TestOpenDatabaseMigratesSecuritySchema43WithDevSchema(t *testing.T) {
 	}
 }
 
+func TestOpenDatabaseMigratesSingleKubernetesConnectionToConnectionScopedHistory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	database, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`DROP TABLE kubernetes_metric_minutes`,
+		`DROP TABLE kubernetes_versions`,
+		`DROP TABLE kubernetes_connection`,
+		`CREATE TABLE kubernetes_connection (
+			singleton INTEGER PRIMARY KEY CHECK (singleton = 1), name TEXT NOT NULL, kubeconfig_path TEXT NOT NULL,
+			context_name TEXT NOT NULL DEFAULT '', operation_mode TEXT NOT NULL, fingerprint TEXT NOT NULL DEFAULT '',
+			capabilities_json TEXT NOT NULL DEFAULT '{}', last_tested_at INTEGER NOT NULL DEFAULT 0,
+			last_error TEXT NOT NULL DEFAULT '', updated_at INTEGER NOT NULL)`,
+		`CREATE TABLE kubernetes_versions (
+			workload_key TEXT NOT NULL, observed_at INTEGER NOT NULL, image TEXT NOT NULL, revision TEXT NOT NULL,
+			PRIMARY KEY (workload_key, observed_at))`,
+		`CREATE TABLE kubernetes_metric_minutes (
+			workload_key TEXT NOT NULL, bucket_at INTEGER NOT NULL, cpu_millicores INTEGER NOT NULL, memory_bytes INTEGER NOT NULL,
+			ready INTEGER NOT NULL, desired INTEGER NOT NULL, restarts INTEGER NOT NULL, PRIMARY KEY (workload_key, bucket_at))`,
+		`INSERT INTO kubernetes_connection VALUES (1,'production','/etc/kubeconfig','production','observe','sha256:prod','{}',1,'',2)`,
+		`INSERT INTO kubernetes_versions VALUES ('default/Deployment/api',3,'api:v1','1')`,
+		`INSERT INTO kubernetes_metric_minutes VALUES ('default/Deployment/api',4,5,6,1,1,0)`,
+		`PRAGMA user_version=46`,
+		`PRAGMA wal_checkpoint(TRUNCATE)`,
+	} {
+		if _, err := database.Exec(statement); err != nil {
+			t.Fatalf("prepare single Kubernetes connection with %q: %v", statement, err)
+		}
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	migrated, err := openDatabase(path)
+	if err != nil {
+		t.Fatalf("migrate single Kubernetes connection: %v", err)
+	}
+	defer migrated.Close()
+	var connectionID, name string
+	if err := migrated.QueryRow(`SELECT id,name FROM kubernetes_connection`).Scan(&connectionID, &name); err != nil {
+		t.Fatal(err)
+	}
+	if connectionID == "" || name != "production" {
+		t.Fatalf("migrated connection id=%q name=%q", connectionID, name)
+	}
+	for _, table := range []string{"kubernetes_versions", "kubernetes_metric_minutes"} {
+		var historyConnectionID string
+		if err := migrated.QueryRow(`SELECT connection_id FROM ` + table).Scan(&historyConnectionID); err != nil {
+			t.Fatalf("read %s connection: %v", table, err)
+		}
+		if historyConnectionID != connectionID {
+			t.Fatalf("%s connection=%q want %q", table, historyConnectionID, connectionID)
+		}
+	}
+}
+
 func TestOpenDatabaseMigratesSchema30MySQLConnectionState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "app.db")
 	db, err := openDatabase(path)
