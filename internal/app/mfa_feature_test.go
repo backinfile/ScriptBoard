@@ -120,11 +120,13 @@ func TestTOTPEnrollmentRequiresSecondFactorForLoginAndStepUp(t *testing.T) {
 		t.Fatalf("expired step-up status=%d location=%q", blocked.StatusCode, blocked.Header.Get("Location"))
 	}
 	stepPage := getBody(t, client, server.URL+blocked.Header.Get("Location"), http.StatusOK)
-	if !strings.Contains(string(stepPage), `name="mfa_code"`) {
-		t.Fatalf("MFA step-up field missing: %s", stepPage)
+	if !strings.Contains(string(stepPage), `name="mfa_code"`) ||
+		!strings.Contains(string(stepPage), `name="verification_mode" value="second-factor"`) ||
+		strings.Contains(string(stepPage), `name="current_password"`) {
+		t.Fatalf("second-factor-only verification form is invalid: %s", stepPage)
 	}
 	stepped, err := client.PostForm(server.URL+"/auth/step-up", url.Values{
-		"csrf_token": {formToken(t, stepPage)}, "current_password": {password}, "mfa_code": {recoveryCodes[1]}, "return_to": {"/config/external-interfaces"},
+		"csrf_token": {formToken(t, stepPage)}, "verification_mode": {"second-factor"}, "mfa_code": {recoveryCodes[1]}, "return_to": {"/config/external-interfaces"},
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,6 +37,12 @@ type externalEntryView struct {
 	TypeText, TargetText, PreviewURL string
 }
 
+type externalGroupView struct {
+	externaltrigger.Group
+	Keys    []externalKeyView
+	Entries []externalEntryView
+}
+
 type externalInvocationView struct {
 	externaltrigger.Invocation
 	ActionText, ResultText string
@@ -43,6 +50,7 @@ type externalInvocationView struct {
 
 type externalInterfacesPageData struct {
 	ActiveTab     string
+	Groups        []externalGroupView
 	Keys          []externalKeyView
 	Entries       map[string][]externalEntryView
 	Requests      []externalInvocationView
@@ -60,6 +68,7 @@ type externalInterfaceFormData struct {
 	PreviewURL, FormError                                string
 	Locale                                               webLocale
 	Key                                                  externaltrigger.Key
+	Group                                                externaltrigger.Group
 	Secret                                               string
 	QuickRuns                                            []externalTargetOption
 	Variables                                            []externalTargetOption
@@ -98,7 +107,7 @@ func (a *App) externalInterfacesPage(response http.ResponseWriter, request *http
 		http.Error(response, webText(locale, key), http.StatusBadRequest)
 		return
 	}
-	keys, err := a.externalTriggers.List(request.Context())
+	groups, err := a.externalTriggers.ListGroups(request.Context())
 	if err != nil {
 		http.Error(response, "Unable to read External Interfaces", http.StatusInternalServerError)
 		return
@@ -131,19 +140,19 @@ func (a *App) externalInterfacesPage(response http.ResponseWriter, request *http
 			ResultText: webText(locale, "external.result."+invocation.Result),
 		})
 	}
-	views := make([]externalKeyView, 0, len(keys))
-	entries := make(map[string][]externalEntryView, len(keys))
-	for _, key := range keys {
-		view := externalKeyView{Key: key, Status: "disabled", StatusText: webText(locale, "external.disabled")}
-		if key.Expired(now) {
-			view.Status, view.StatusText = "expired", webText(locale, "external.expired")
-		} else if key.Enabled {
-			view.Status, view.StatusText = "enabled", webText(locale, "external.enabled")
-		}
-		for _, entry := range key.Entries {
-			if entry.Enabled {
-				view.EnabledEntries++
+	groupViews := make([]externalGroupView, 0, len(groups))
+	for _, group := range groups {
+		view := externalGroupView{Group: group}
+		for _, key := range group.Keys {
+			keyView := externalKeyView{Key: key, Status: "disabled", StatusText: webText(locale, "external.disabled")}
+			if key.Expired(now) {
+				keyView.Status, keyView.StatusText = "expired", webText(locale, "external.expired")
+			} else if key.Enabled {
+				keyView.Status, keyView.StatusText = "enabled", webText(locale, "external.enabled")
 			}
+			view.Keys = append(view.Keys, keyView)
+		}
+		for _, entry := range group.Entries {
 			entryView := externalEntryView{
 				Entry: entry, TypeText: externalActionText(locale, entry.Type), TargetText: externalTargetText(locale, entry),
 			}
@@ -153,13 +162,13 @@ func (a *App) externalInterfacesPage(response http.ResponseWriter, request *http
 					entryView.PreviewURL = routeFileURL("/resources/files/view", config.File)
 				}
 			}
-			entries[key.ID] = append(entries[key.ID], entryView)
+			view.Entries = append(view.Entries, entryView)
 		}
-		views = append(views, view)
+		groupViews = append(groupViews, view)
 	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := externalInterfacesTemplate.Execute(response, externalInterfacesPageData{
-		ActiveTab: activeTab, Keys: views, Entries: entries, Requests: requests, Filters: filters, Pagination: pagination,
+		ActiveTab: activeTab, Groups: groupViews, Requests: requests, Filters: filters, Pagination: pagination,
 		CSRFToken: current.csrfToken, Locale: locale, Now: now, GlobalEnabled: globalEnabled,
 	}); err != nil {
 		http.Error(response, "Unable to render External Interfaces", http.StatusInternalServerError)
@@ -172,7 +181,7 @@ func (a *App) setExternalGlobalControl(response http.ResponseWriter, request *ht
 		return
 	}
 	rawEnabled := request.FormValue("enabled")
-	if rawEnabled != "0" && rawEnabled != "1" {
+	if (rawEnabled != "0" && rawEnabled != "1") || request.FormValue("confirmed") != "yes" {
 		http.Error(response, "Invalid External Interface control", http.StatusBadRequest)
 		return
 	}
@@ -187,6 +196,27 @@ func (a *App) setExternalGlobalControl(response http.ResponseWriter, request *ht
 	}
 	a.recordAuditForRequest(request, "set_external_interface_global_control", target, "succeeded")
 	http.Redirect(response, request, "/config/external-interfaces", http.StatusSeeOther)
+}
+
+func (a *App) externalGlobalControlTask(response http.ResponseWriter, request *http.Request) {
+	rawEnabled := request.URL.Query().Get("enabled")
+	if rawEnabled != "0" && rawEnabled != "1" {
+		http.Error(response, "Invalid External Interface control", http.StatusBadRequest)
+		return
+	}
+	enabled := rawEnabled == "1"
+	locale := resolveWebLocale(request)
+	titleKey := "external.pause_confirm_title"
+	descriptionKey := "external.pause_confirm_description"
+	if enabled {
+		titleKey = "external.resume_confirm_title"
+		descriptionKey = "external.resume_confirm_description"
+	}
+	a.renderTaskPage(response, request, taskPageData{
+		Kind: "external-global-control", Title: webText(locale, titleKey),
+		Description: webText(locale, descriptionKey), BackURL: "/config/external-interfaces",
+		Action: "/config/external-interfaces/control", Enabled: enabled,
+	})
 }
 
 func externalActionText(locale webLocale, action externaltrigger.ActionType) string {
@@ -206,12 +236,45 @@ func externalTargetText(locale webLocale, entry externaltrigger.Entry) string {
 	return entry.Target
 }
 
-func (a *App) newExternalKeyTask(response http.ResponseWriter, request *http.Request) {
+func (a *App) newExternalGroupTask(response http.ResponseWriter, request *http.Request) {
 	current := request.Context().Value(sessionContextKey).(session)
 	locale := resolveWebLocale(request)
+	renderExternalInterfaceForm(response, externalInterfaceFormData{Kind: "group-new", Title: webText(locale, "external.create_group"), Description: webText(locale, "external.create_group_description"), BackURL: "/config/external-interfaces", Action: "/config/external-interfaces/groups", CSRFToken: current.csrfToken, Locale: locale})
+}
+
+func (a *App) createExternalGroup(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
+		return
+	}
+	group, err := a.externalTriggers.CreateGroup(request.Context(), request.FormValue("label"))
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
+	a.recordAuditForRequest(request, "create_external_interface_group", group.ID, "succeeded")
+	http.Redirect(response, request, "/config/external-interfaces", http.StatusSeeOther)
+}
+
+func (a *App) newExternalKeyTask(response http.ResponseWriter, request *http.Request) {
+	var group externaltrigger.Group
+	var err error
+	if groupID := request.PathValue("groupID"); groupID != "" {
+		group, err = a.externalTriggers.Group(request.Context(), groupID)
+	}
+	if err != nil {
+		http.Error(response, "External Interface group not found", http.StatusNotFound)
+		return
+	}
+	current := request.Context().Value(sessionContextKey).(session)
+	locale := resolveWebLocale(request)
+	action := "/config/external-interfaces/keys"
+	if group.ID != "" {
+		action = "/config/external-interfaces/groups/" + group.ID + "/keys"
+	}
 	renderExternalInterfaceForm(response, externalInterfaceFormData{
 		Kind: "key-new", Title: webText(locale, "external.create_key_title"), Description: webText(locale, "external.create_key_description"),
-		BackURL: "/config/external-interfaces", Action: "/config/external-interfaces/keys", CSRFToken: current.csrfToken, Locale: locale,
+		BackURL: "/config/external-interfaces", Action: action, CSRFToken: current.csrfToken, Locale: locale, Group: group,
 	})
 }
 
@@ -225,8 +288,16 @@ func (a *App) createExternalKey(response http.ResponseWriter, request *http.Requ
 		a.renderExternalKeySubmissionError(response, request, "key-new", externaltrigger.Key{}, webText(resolveWebLocale(request), "external.key_save_error"))
 		return
 	}
+	groupID := request.PathValue("groupID")
+	if groupID == "" {
+		groupID, err = a.ensureLegacyExternalGroup(request.Context())
+		if err != nil {
+			http.Error(response, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
 	key, secret, err := a.externalTriggers.CreateKey(request.Context(), externaltrigger.CreateKeyInput{
-		Label: request.FormValue("label"), Enabled: request.FormValue("enabled") == "1", ExpiresAt: expiresAt,
+		GroupID: groupID, Label: request.FormValue("label"), Enabled: request.FormValue("enabled") == "1", ExpiresAt: expiresAt,
 	})
 	if err != nil {
 		if errors.Is(err, externaltrigger.ErrKeyLabelExists) {
@@ -245,6 +316,23 @@ func (a *App) createExternalKey(response http.ResponseWriter, request *http.Requ
 		Kind: "key-created", Title: webText(locale, "external.key_created"), Description: webText(locale, "external.key_created_description"),
 		BackURL: "/config/external-interfaces", Locale: locale, Key: key, Secret: secret,
 	})
+}
+
+func (a *App) ensureLegacyExternalGroup(ctx context.Context) (string, error) {
+	var id string
+	err := a.db.QueryRowContext(ctx, `SELECT id FROM external_trigger_groups WHERE label = 'Legacy interfaces' COLLATE NOCASE`).Scan(&id)
+	if err == nil {
+		return id, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	group, err := a.externalTriggers.CreateGroup(ctx, "Legacy interfaces")
+	if errors.Is(err, externaltrigger.ErrKeyLabelExists) {
+		err = a.db.QueryRowContext(ctx, `SELECT id FROM external_trigger_groups WHERE label = 'Legacy interfaces' COLLATE NOCASE`).Scan(&id)
+		return id, err
+	}
+	return group.ID, err
 }
 
 func (a *App) editExternalKeyTask(response http.ResponseWriter, request *http.Request) {
@@ -401,18 +489,19 @@ func externalExpiry(duration string, now time.Time) (*time.Time, error) {
 }
 
 func (a *App) newExternalEntryTask(response http.ResponseWriter, request *http.Request) {
-	key, err := a.externalTriggers.Key(request.Context(), request.PathValue("id"))
-	if err != nil {
-		http.Error(response, "External Interface key not found", http.StatusNotFound)
-		return
+	groupID := request.PathValue("groupID")
+	var legacyKey externaltrigger.Key
+	var err error
+	if groupID == "" {
+		legacyKey, err = a.externalTriggers.Key(request.Context(), request.PathValue("id"))
+		groupID = legacyKey.GroupID
 	}
-	entries, err := a.externalTriggers.EntriesForKey(request.Context(), key.ID)
-	if err != nil {
-		http.Error(response, "Unable to inspect External Interface key scope", http.StatusInternalServerError)
-		return
+	group, groupErr := a.externalTriggers.Group(request.Context(), groupID)
+	if err == nil {
+		err = groupErr
 	}
-	if len(entries) != 0 {
-		http.Error(response, "External Interface key is already bound to a callable function", http.StatusConflict)
+	if err != nil {
+		http.Error(response, "External Interface group not found", http.StatusNotFound)
 		return
 	}
 	current := request.Context().Value(sessionContextKey).(session)
@@ -424,8 +513,8 @@ func (a *App) newExternalEntryTask(response http.ResponseWriter, request *http.R
 	}
 	renderExternalInterfaceForm(response, externalInterfaceFormData{
 		Kind: "entry-new", Title: webText(locale, "external.add_function_title"), Description: webText(locale, "external.add_function_description"),
-		BackURL: "/config/external-interfaces", Action: "/config/external-interfaces/keys/" + key.ID + "/entries",
-		CSRFToken: current.csrfToken, Locale: locale, Key: key, QuickRuns: quickRuns, Variables: variables, EntryEnabled: true, RequireSignature: true,
+		BackURL: "/config/external-interfaces", Action: "/config/external-interfaces/groups/" + group.ID + "/entries",
+		CSRFToken: current.csrfToken, Locale: locale, Group: group, QuickRuns: quickRuns, Variables: variables, EntryEnabled: true, RequireSignature: true,
 	})
 }
 
@@ -435,10 +524,14 @@ func (a *App) externalEntryDetail(response http.ResponseWriter, request *http.Re
 		http.Error(response, "External Interface entry not found", http.StatusNotFound)
 		return
 	}
-	key, err := a.externalTriggers.Key(request.Context(), entry.KeyID)
+	group, err := a.externalTriggers.Group(request.Context(), entry.GroupID)
 	if err != nil {
-		http.Error(response, "External Interface key not found", http.StatusNotFound)
+		http.Error(response, "External Interface group not found", http.StatusNotFound)
 		return
+	}
+	var key externaltrigger.Key
+	if len(group.Keys) > 0 {
+		key = group.Keys[0]
 	}
 	locale := resolveWebLocale(request)
 	current := request.Context().Value(sessionContextKey).(session)
@@ -466,8 +559,8 @@ func (a *App) externalEntryDetail(response http.ResponseWriter, request *http.Re
 	}
 	renderExternalInterfaceForm(response, externalInterfaceFormData{
 		Kind: "entry-detail", Title: entry.Label, Description: webText(locale, "external.function_details_description"),
-		BackURL: "/config/external-interfaces", CSRFToken: current.csrfToken, Locale: locale, Key: key, Entry: entry, EntryEnabled: entry.Enabled, RequireSignature: entry.RequireSignature,
-		CallMethod: callMethod, CallURL: "/trigger?name=" + url.QueryEscape(entry.Name), CallBody: webText(locale, callBodyKey),
+		BackURL: "/config/external-interfaces", CSRFToken: current.csrfToken, Locale: locale, Group: group, Key: key, Entry: entry, EntryEnabled: entry.Enabled, RequireSignature: entry.RequireSignature,
+		CallMethod: callMethod, CallURL: "/trigger/" + url.PathEscape(entry.Name), CallBody: webText(locale, callBodyKey),
 		TypeText: externalActionText(locale, entry.Type), TargetText: externalTargetText(locale, entry), PreviewURL: previewURL,
 	})
 }
@@ -478,9 +571,9 @@ func (a *App) editExternalEntryTask(response http.ResponseWriter, request *http.
 		http.Error(response, "External Interface entry not found", http.StatusNotFound)
 		return
 	}
-	key, err := a.externalTriggers.Key(request.Context(), entry.KeyID)
+	group, err := a.externalTriggers.Group(request.Context(), entry.GroupID)
 	if err != nil {
-		http.Error(response, "External Interface key not found", http.StatusNotFound)
+		http.Error(response, "External Interface group not found", http.StatusNotFound)
 		return
 	}
 	quickRuns, variables, err := a.externalTargetOptions(request.Context())
@@ -488,7 +581,7 @@ func (a *App) editExternalEntryTask(response http.ResponseWriter, request *http.
 		http.Error(response, "Unable to read action targets", http.StatusInternalServerError)
 		return
 	}
-	data := externalInterfaceFormData{Kind: "entry-edit", BackURL: "/config/external-interfaces", Action: "/config/external-interfaces/entries/" + entry.ID, Key: key, Entry: entry, EntryEnabled: entry.Enabled, RequireSignature: entry.RequireSignature, QuickRuns: quickRuns, Variables: variables}
+	data := externalInterfaceFormData{Kind: "entry-edit", BackURL: "/config/external-interfaces", Action: "/config/external-interfaces/entries/" + entry.ID, Group: group, Entry: entry, EntryEnabled: entry.Enabled, RequireSignature: entry.RequireSignature, QuickRuns: quickRuns, Variables: variables}
 	data.Locale = resolveWebLocale(request)
 	data.Title, data.Description = webText(data.Locale, "external.edit_function"), webText(data.Locale, "external.edit_function_description")
 	data.CSRFToken = request.Context().Value(sessionContextKey).(session).csrfToken
@@ -550,40 +643,49 @@ func (a *App) createExternalEntry(response http.ResponseWriter, request *http.Re
 		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
 		return
 	}
-	keyID := request.PathValue("id")
-	key, err := a.externalTriggers.Key(request.Context(), keyID)
+	groupID := request.PathValue("groupID")
+	legacyKeyID := ""
+	if groupID == "" {
+		legacyKeyID = request.PathValue("id")
+		legacyKey, keyErr := a.externalTriggers.Key(request.Context(), legacyKeyID)
+		if keyErr != nil {
+			http.Error(response, "External Interface key not found", http.StatusNotFound)
+			return
+		}
+		groupID = legacyKey.GroupID
+	}
+	group, err := a.externalTriggers.Group(request.Context(), groupID)
 	if err != nil {
-		http.Error(response, "External Interface key not found", http.StatusNotFound)
+		http.Error(response, "External Interface group not found", http.StatusNotFound)
 		return
 	}
 	actionType := externaltrigger.ActionType(request.FormValue("action_type"))
 	config, target, err := a.externalEntryConfig(request, actionType)
 	if err != nil {
-		a.renderExternalEntrySubmissionError(response, request, key)
+		a.renderExternalEntrySubmissionError(response, request, group)
 		return
 	}
 	entry, secret, err := a.externalTriggers.CreateEntry(request.Context(), externaltrigger.CreateEntryInput{
-		KeyID: keyID, Name: strings.TrimSpace(request.FormValue("name")), Label: request.FormValue("label"), Type: actionType,
+		GroupID: groupID, KeyID: legacyKeyID, Name: strings.TrimSpace(request.FormValue("name")), Label: request.FormValue("label"), Type: actionType,
 		Target: target, Enabled: request.FormValue("enabled") == "1", RequireSignature: request.FormValue("require_signature") == "1", Config: config,
 	})
 	if err != nil {
-		a.renderExternalEntrySubmissionError(response, request, key)
+		a.renderExternalEntrySubmissionError(response, request, group)
 		return
 	}
 	a.recordAuditForRequest(request, "create_external_interface_entry", entry.ID, "succeeded")
-	key, err = a.externalTriggers.Key(request.Context(), key.ID)
-	if err != nil {
-		http.Error(response, "Unable to read bound External Interface key", http.StatusInternalServerError)
+	if legacyKeyID != "" {
+		key, _ := a.externalTriggers.Key(request.Context(), legacyKeyID)
+		response.Header().Set("Cache-Control", "no-store")
+		response.Header().Set("Content-Type", "text/html; charset=utf-8")
+		response.WriteHeader(http.StatusCreated)
+		renderExternalInterfaceForm(response, externalInterfaceFormData{Kind: "key-rotated", Title: webText(resolveWebLocale(request), "external.key_rotated"), Description: webText(resolveWebLocale(request), "external.key_rotated_description"), BackURL: "/config/external-interfaces", Locale: resolveWebLocale(request), Key: key, Secret: secret})
 		return
 	}
-	response.Header().Set("Cache-Control", "no-store")
-	response.Header().Set("Pragma", "no-cache")
-	response.Header().Set("Content-Type", "text/html; charset=utf-8")
-	response.WriteHeader(http.StatusCreated)
-	renderExternalInterfaceForm(response, externalInterfaceFormData{Kind: "key-rotated", Title: webText(resolveWebLocale(request), "external.key_rotated"), Description: webText(resolveWebLocale(request), "external.key_rotated_description"), BackURL: "/config/external-interfaces", Locale: resolveWebLocale(request), Key: key, Secret: secret})
+	http.Redirect(response, request, "/config/external-interfaces", http.StatusSeeOther)
 }
 
-func (a *App) renderExternalEntrySubmissionError(response http.ResponseWriter, request *http.Request, key externaltrigger.Key) {
+func (a *App) renderExternalEntrySubmissionError(response http.ResponseWriter, request *http.Request, group externaltrigger.Group) {
 	quickRuns, variables, err := a.externalTargetOptions(request.Context())
 	if err != nil {
 		http.Error(response, "Unable to read action targets", http.StatusInternalServerError)
@@ -592,8 +694,8 @@ func (a *App) renderExternalEntrySubmissionError(response http.ResponseWriter, r
 	locale := resolveWebLocale(request)
 	data := externalInterfaceFormData{
 		Kind: "entry-new", Title: webText(locale, "external.add_function_title"), Description: webText(locale, "external.add_function_description"),
-		BackURL: "/config/external-interfaces", Action: "/config/external-interfaces/keys/" + key.ID + "/entries",
-		CSRFToken: request.Context().Value(sessionContextKey).(session).csrfToken, Locale: locale, Key: key,
+		BackURL: "/config/external-interfaces", Action: "/config/external-interfaces/groups/" + group.ID + "/entries",
+		CSRFToken: request.Context().Value(sessionContextKey).(session).csrfToken, Locale: locale, Group: group,
 		QuickRuns: quickRuns, Variables: variables, EntryEnabled: request.FormValue("enabled") == "1", RequireSignature: request.FormValue("require_signature") == "1", Submitted: true,
 		FormError:            webText(locale, "external.entry_save_error"),
 		Entry:                externaltrigger.Entry{Name: strings.TrimSpace(request.FormValue("name")), Label: request.FormValue("label"), Type: externaltrigger.ActionType(request.FormValue("action_type"))},
@@ -766,7 +868,11 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 	if authorization := strings.TrimSpace(request.Header.Get("Authorization")); strings.HasPrefix(authorization, "Bearer ") {
 		token = strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer "))
 	}
-	key, entry, err := a.externalTriggers.Resolve(request.Context(), token, request.URL.Query().Get("name"))
+	name := request.PathValue("name")
+	if name == "" {
+		name = request.URL.Query().Get("name")
+	}
+	key, entry, err := a.externalTriggers.Resolve(request.Context(), token, name)
 	if err != nil {
 		status, code := http.StatusUnauthorized, "invalid_key"
 		if errors.Is(err, externaltrigger.ErrEntryNotFound) || errors.Is(err, externaltrigger.ErrEntryDisabled) {

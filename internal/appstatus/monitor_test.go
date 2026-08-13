@@ -358,6 +358,90 @@ func TestPinPersistsAcrossMonitorRestarts(t *testing.T) {
 	}
 }
 
+func TestPinFollowsHostApplicationNameAcrossExecutablePathChanges(t *testing.T) {
+	t.Parallel()
+
+	collectedAt := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	probe := &snapshotProbe{snapshots: []appstatus.RawSnapshot{
+		{
+			CollectedAt: collectedAt,
+			Processes: []appstatus.RawProcess{{
+				PID: 91, CreatedAt: collectedAt.Add(-time.Hour), Name: "Worker",
+				ExecutablePath: "/opt/worker/v1/worker", ResidentMemoryBytes: 256,
+			}},
+		},
+		{
+			CollectedAt: collectedAt.Add(time.Minute),
+			Processes: []appstatus.RawProcess{{
+				PID: 92, CreatedAt: collectedAt.Add(30 * time.Second), Name: "worker",
+				ExecutablePath: "/opt/worker/v2/worker", ResidentMemoryBytes: 512,
+			}},
+		},
+	}}
+	monitor, err := appstatus.New(openStore(t), probe, appstatus.Options{HostOS: "linux"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := monitor.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	before, err := monitor.View(context.Background(), appstatus.Query{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := monitor.Pin(context.Background(), before.Applications[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := monitor.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	after, err := monitor.View(context.Background(), appstatus.Query{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Pinned) != 1 || len(after.Applications) != 1 ||
+		after.Pinned[0].ID != before.Applications[0].ID ||
+		after.Pinned[0].Technical != "/opt/worker/v2/worker" ||
+		!after.Applications[0].Pinned {
+		t.Fatalf("pin did not follow the application name across path changes: before=%#v after=%#v", before, after)
+	}
+}
+
+func TestMonitorMigratesLegacyPathPinsToApplicationNames(t *testing.T) {
+	t.Parallel()
+
+	db := openStore(t)
+	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
+	if _, err := db.Exec(`INSERT INTO application_pins
+		(id, kind, identity, name, technical, sort_order, created_at, updated_at)
+		VALUES ('legacy-path-id', 'host', '/opt/worker/v1/worker', 'Worker', '/opt/worker/v1/worker', 1, ?, ?)`,
+		now.UnixNano(), now.UnixNano()); err != nil {
+		t.Fatal(err)
+	}
+	probe := &snapshotProbe{snapshots: []appstatus.RawSnapshot{{
+		CollectedAt: now,
+		Processes: []appstatus.RawProcess{{
+			PID: 92, CreatedAt: now.Add(-time.Minute), Name: "worker",
+			ExecutablePath: "/opt/worker/v2/worker",
+		}},
+	}}}
+	monitor, err := appstatus.New(db, probe, appstatus.Options{HostOS: "linux"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := monitor.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	view, err := monitor.View(context.Background(), appstatus.Query{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Pinned) != 1 || len(view.Applications) != 1 ||
+		view.Pinned[0].ID == "legacy-path-id" || !view.Applications[0].Pinned {
+		t.Fatalf("legacy path pin was not migrated by application name: %#v", view)
+	}
+}
+
 func TestUnpinRemovesTheApplicationWithoutRemovingItsCurrentSnapshot(t *testing.T) {
 	t.Parallel()
 

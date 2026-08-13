@@ -6152,7 +6152,9 @@
   const kubernetesDetailCopy = {
     "zh-CN": {
       loading: "正在读取工作负载…", loadFailed: "无法读取工作负载详情", confirm: "确认执行此操作？",
-      pods: "Pods", events: "事件", versions: "版本记录", logs: "日志",
+      runtime: "运行状态", pods: "Pods", events: "事件", versions: "版本记录", logs: "日志",
+      redeploy: "滚动重部署", scaleDown: "减少 1 个副本", scaleUp: "增加 1 个副本", runNow: "立即运行",
+      confirmRedeploy: "确认触发这个工作负载的滚动重部署？", confirmScaleDown: "确认将副本数减少 1？", confirmScaleUp: "确认将副本数增加 1？", confirmRun: "确认立即从这个 CronJob 创建一次 Job？",
       noPods: "暂无 Pod", noEvents: "暂无事件", noVersions: "暂无版本记录", noLogs: "暂无日志",
       testing: "正在测试连接…", connected: "连接成功", testFailed: "连接测试失败",
       restartCount: value => `${value} 次重启`,
@@ -6161,7 +6163,9 @@
     },
     "en-US": {
       loading: "Loading workload…", loadFailed: "Workload details unavailable", confirm: "Run this operation?",
-      pods: "Pods", events: "Events", versions: "Versions", logs: "Logs",
+      runtime: "Runtime", pods: "Pods", events: "Events", versions: "Versions", logs: "Logs",
+      redeploy: "Rolling redeploy", scaleDown: "Scale down by 1", scaleUp: "Scale up by 1", runNow: "Run now",
+      confirmRedeploy: "Trigger a rolling redeploy for this workload?", confirmScaleDown: "Scale this workload down by one replica?", confirmScaleUp: "Scale this workload up by one replica?", confirmRun: "Create a Job from this CronJob now?",
       noPods: "No Pods", noEvents: "No events", noVersions: "No version records", noLogs: "No logs",
       testing: "Testing connection…", connected: "Connected", testFailed: "Connection test failed",
       restartCount: value => `${value} restarts`,
@@ -6172,7 +6176,7 @@
 
   function kubernetesWords() { return kubernetesDetailCopy[locale()]; }
 
-  function renderKubernetesDetail(payload, logs) {
+  function renderKubernetesDetail(payload, logs, trigger, root) {
     const words = kubernetesWords();
     const kubernetesBytes = value => {
       const bytes = Number(value) || 0;
@@ -6192,6 +6196,17 @@
     const pods = Array.isArray(payload?.Pods) ? payload.Pods : [];
     const events = Array.isArray(payload?.Events) ? payload.Events : [];
     const versions = Array.isArray(payload?.Versions) ? payload.Versions : [];
+    const operationURL = new URL(trigger.dataset.kubernetesDetailUrl, location.href).pathname.replace(/\/details$/, "/operate");
+    const returnTo = `${location.pathname}${location.search}`;
+    const actionForm = (operation, label, confirmation, replicas) => `<form method="post" action="${escapeMarkup(operationURL)}" data-kubernetes-confirm="${escapeMarkup(confirmation)}"><input type="hidden" name="csrf_token" value="${escapeMarkup(root.dataset.csrfToken || "")}"><input type="hidden" name="operation" value="${escapeMarkup(operation)}">${replicas === undefined ? "" : `<input type="hidden" name="replicas" value="${escapeMarkup(replicas)}">`}<input type="hidden" name="return_to" value="${escapeMarkup(returnTo)}"><button class="button button--compact" type="submit"><span data-lucide="${operation === "redeploy" ? "rotate-cw" : operation === "run_cron" ? "play" : replicas < Number(workload.Desired || 0) ? "minus" : "plus"}" aria-hidden="true"></span>${escapeMarkup(label)}</button></form>`;
+    const canOperate = root.dataset.kubernetesCanManage === "true" && root.dataset.kubernetesMode === "limited";
+    let actions = "";
+    if (canOperate && workload.Kind !== "CronJob" && root.dataset.kubernetesCanRedeploy === "true") actions += actionForm("redeploy", words.redeploy, words.confirmRedeploy);
+    if (canOperate && ["Deployment", "StatefulSet"].includes(workload.Kind) && root.dataset.kubernetesCanScale === "true") {
+      if (Number(workload.Desired || 0) > 0) actions += actionForm("scale", words.scaleDown, words.confirmScaleDown, Number(workload.Desired) - 1);
+      actions += actionForm("scale", words.scaleUp, words.confirmScaleUp, Number(workload.Desired || 0) + 1);
+    }
+    if (canOperate && workload.Kind === "CronJob" && root.dataset.kubernetesCanRunCron === "true") actions += actionForm("run_cron", words.runNow, words.confirmRun);
     const facts = [
       [words.facts.status, words.states[workload.Status] || workload.StatusLabel || workload.Status || "—"],
       [words.facts.ready, `${workload.Ready ?? 0} / ${workload.Desired ?? 0}`],
@@ -6202,14 +6217,15 @@
     ].map(([label, value]) => `<div><dt>${escapeMarkup(label)}</dt><dd>${escapeMarkup(value)}</dd></div>`).join("");
     const rows = (items, render, empty) => items.length
       ? items.map(render).join("")
-      : `<div><span>${escapeMarkup(empty)}</span></div>`;
+      : `<div class="kubernetes-detail-empty">${escapeMarkup(empty)}</div>`;
     const podRows = rows(pods, pod => `<div><strong>${escapeMarkup(pod.Name)}</strong><span>${escapeMarkup(pod.Phase)} · ${escapeMarkup(pod.Ready)} · ${escapeMarkup(pod.Node || "—")} · ${escapeMarkup(words.restartCount(pod.Restarts || 0))}</span></div>`, words.noPods);
     const eventRows = rows(events.slice(0, 20), event => `<div><strong>${escapeMarkup(event.Reason || event.Type)}</strong><span>${escapeMarkup(event.Message)}</span></div>`, words.noEvents);
     const versionRows = rows(versions.slice(0, 20), version => `<div><strong>${escapeMarkup(version.Image || "—")}</strong><span>${escapeMarkup(kubernetesTime(version.ObservedAt))} · ${escapeMarkup(version.Revision || "—")}</span></div>`, words.noVersions);
     const logText = Array.isArray(logs) && logs.length
       ? logs.map(line => `[${line.pod || "pod"}/${line.container || "container"}] ${line.text || ""}`).join("\n")
       : words.noLogs;
-    return `<dl class="kubernetes-detail-facts">${facts}</dl>
+    return `${actions ? `<div class="kubernetes-detail-actions">${actions}</div>` : ""}
+      <section class="kubernetes-detail-section"><h3>${escapeMarkup(words.runtime)}</h3><dl class="kubernetes-detail-facts">${facts}</dl></section>
       <section class="kubernetes-detail-section"><h3>${escapeMarkup(words.pods)}</h3><div class="kubernetes-detail-list">${podRows}</div></section>
       <section class="kubernetes-detail-section"><h3>${escapeMarkup(words.events)}</h3><div class="kubernetes-detail-list">${eventRows}</div></section>
       <section class="kubernetes-detail-section"><h3>${escapeMarkup(words.versions)}</h3><div class="kubernetes-detail-list">${versionRows}</div></section>
@@ -6248,9 +6264,10 @@
         const workload = payload?.Workload || {};
         title.textContent = workload.Name || title.textContent;
         meta.textContent = [workload.Namespace, workload.Kind, workload.Image].filter(Boolean).join(" · ");
-        body.innerHTML = renderKubernetesDetail(payload, logs);
+        body.innerHTML = renderKubernetesDetail(payload, logs, button, root);
+        renderIcons(body);
       } catch (error) {
-        body.textContent = error?.message || kubernetesWords().loadFailed;
+        body.innerHTML = `<div class="kubernetes-detail-empty" role="alert">${escapeMarkup(error?.message || kubernetesWords().loadFailed)}</div>`;
       }
     };
     const onClick = event => {

@@ -139,7 +139,11 @@ func New(db *sql.DB, probe Probe, options Options) (*Monitor, error) {
 	if options.Now == nil {
 		options.Now = time.Now
 	}
-	return &Monitor{db: db, probe: probe, options: options, done: make(chan struct{})}, nil
+	monitor := &Monitor{db: db, probe: probe, options: options, done: make(chan struct{})}
+	if err := monitor.migrateHostPinsToApplicationNames(context.Background()); err != nil {
+		return nil, err
+	}
+	return monitor, nil
 }
 
 func (m *Monitor) Refresh(ctx context.Context) error {
@@ -441,6 +445,70 @@ func (m *Monitor) loadPins(ctx context.Context, applications []Application) ([]A
 	return result, nil
 }
 
+func (m *Monitor) migrateHostPinsToApplicationNames(ctx context.Context) error {
+	transaction, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer transaction.Rollback()
+	rows, err := transaction.QueryContext(ctx, `SELECT id, identity, name, technical, sort_order, created_at, updated_at
+		FROM application_pins WHERE kind = ? ORDER BY sort_order, created_at, id`, KindHost)
+	if err != nil {
+		return err
+	}
+	type storedPin struct {
+		id, identity, name, technical string
+		sortOrder                     int
+		createdAt, updatedAt          int64
+	}
+	var pins []storedPin
+	needsMigration := false
+	seen := make(map[string]struct{})
+	for rows.Next() {
+		var pin storedPin
+		if err := rows.Scan(&pin.id, &pin.identity, &pin.name, &pin.technical, &pin.sortOrder, &pin.createdAt, &pin.updatedAt); err != nil {
+			rows.Close()
+			return err
+		}
+		identity := normalizeApplicationName(pin.name)
+		if identity == "" {
+			continue
+		}
+		id := stableID(KindHost, identity)
+		if pin.id != id || pin.identity != identity {
+			needsMigration = true
+		}
+		if _, duplicate := seen[id]; duplicate {
+			needsMigration = true
+			continue
+		}
+		seen[id] = struct{}{}
+		pin.id = id
+		pin.identity = identity
+		pins = append(pins, pin)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if !needsMigration {
+		return transaction.Commit()
+	}
+	if _, err := transaction.ExecContext(ctx, "DELETE FROM application_pins WHERE kind = ?", KindHost); err != nil {
+		return err
+	}
+	for _, pin := range pins {
+		if _, err := transaction.ExecContext(ctx, `INSERT INTO application_pins
+			(id, kind, identity, name, technical, sort_order, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			pin.id, KindHost, pin.identity, pin.name, pin.technical,
+			pin.sortOrder, pin.createdAt, pin.updatedAt,
+		); err != nil {
+			return err
+		}
+	}
+	return transaction.Commit()
+}
+
 func deriveApplications(raw RawSnapshot, previous map[processIdentity]RawProcess, previousAt time.Time, hostOS string) []Application {
 	type aggregate struct {
 		application Application
@@ -455,8 +523,9 @@ func deriveApplications(raw RawSnapshot, previous map[processIdentity]RawProcess
 		if process.KernelThread {
 			continue
 		}
-		identity := normalizeExecutablePath(process.ExecutablePath, hostOS)
-		pinnable := identity != ""
+		pathIdentity := normalizeExecutablePath(process.ExecutablePath, hostOS)
+		identity := normalizeApplicationName(process.Name)
+		pinnable := identity != "" && pathIdentity != ""
 		if !pinnable {
 			identity = restrictedIdentity(process)
 		}
@@ -600,6 +669,10 @@ func normalizeExecutablePath(value, hostOS string) string {
 
 func normalizeContainerName(value string) string {
 	return strings.ToLower(strings.TrimSpace(strings.TrimPrefix(value, "/")))
+}
+
+func normalizeApplicationName(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
 }
 
 func restrictedIdentity(process RawProcess) string {

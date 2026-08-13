@@ -98,7 +98,7 @@ func TestCreateAndResolveWebsiteMonitorEntry(t *testing.T) {
 	}
 }
 
-func TestKeyBindsOneImmutableEntryAndIsDeletedWithIt(t *testing.T) {
+func TestGroupSupportsMultipleImmutableEntriesWithoutDeletingKeys(t *testing.T) {
 	manager, _ := testManager(t, time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC))
 	key, _, err := manager.CreateKey(context.Background(), CreateKeyInput{Label: "Single capability", Enabled: true})
 	if err != nil {
@@ -111,11 +111,12 @@ func TestKeyBindsOneImmutableEntryAndIsDeletedWithIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := manager.CreateEntry(context.Background(), CreateEntryInput{
+	second, _, err := manager.CreateEntry(context.Background(), CreateEntryInput{
 		KeyID: key.ID, Name: "other", Label: "Other", Type: ActionLog, Enabled: true,
 		Config: LogConfig{File: "/logs/other.log", MaxMessageBytes: 100},
-	}); !errors.Is(err, ErrKeyScopeBound) {
-		t.Fatalf("second capability error = %v", err)
+	})
+	if err != nil || second.GroupID != key.GroupID {
+		t.Fatalf("second capability=%#v error=%v", second, err)
 	}
 	if _, err := manager.UpdateEntry(context.Background(), UpdateEntryInput{
 		ID: entry.ID, Name: entry.Name, Label: entry.Label, Type: ActionLog, Enabled: true,
@@ -126,9 +127,50 @@ func TestKeyBindsOneImmutableEntryAndIsDeletedWithIt(t *testing.T) {
 	if err := manager.DeleteEntry(context.Background(), entry.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manager.Key(context.Background(), key.ID); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("credential survived capability deletion: %v", err)
+	if _, err := manager.Key(context.Background(), key.ID); err != nil {
+		t.Fatalf("group credential was deleted with one capability: %v", err)
 	}
+}
+
+func TestGroupKeysShareEveryCallablePathAndKeepIndependentLifetimes(t *testing.T) {
+	now := time.Date(2026, 8, 13, 9, 0, 0, 0, time.UTC)
+	manager, _ := testManager(t, now)
+	group, err := manager.CreateGroup(context.Background(), "Deploy hooks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, firstSecret, err := manager.CreateKey(context.Background(), CreateKeyInput{GroupID: group.ID, Label: "CI", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expires := now.Add(time.Hour)
+	second, secondSecret, err := manager.CreateKey(context.Background(), CreateKeyInput{GroupID: group.ID, Label: "On call", Enabled: true, ExpiresAt: &expires})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"deploy", "notify"} {
+		if _, _, err := manager.CreateEntry(context.Background(), CreateEntryInput{GroupID: group.ID, Name: name, Label: name, Type: ActionLog, Enabled: true, Config: LogConfig{File: "/logs/" + name + ".log", MaxMessageBytes: 100}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, secret := range []string{firstSecret, secondSecret} {
+		for _, name := range []string{"deploy", "notify"} {
+			key, entry, err := manager.Resolve(context.Background(), secret, name)
+			if err != nil || key.GroupID != group.ID || entry.Name != name {
+				t.Fatalf("resolve key=%#v entry=%#v err=%v", key, entry, err)
+			}
+		}
+	}
+	if err := manager.SetKeyEnabled(context.Background(), first.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := manager.Resolve(context.Background(), firstSecret, "deploy"); !errors.Is(err, ErrInvalidKey) {
+		t.Fatalf("disabled key error=%v", err)
+	}
+	if _, _, err := manager.Resolve(context.Background(), secondSecret, "deploy"); err != nil {
+		t.Fatalf("second key affected by first key toggle: %v", err)
+	}
+	_ = second
 }
 
 func TestGlobalControlDefaultsEnabledAndPersistsToggle(t *testing.T) {
@@ -174,14 +216,18 @@ func TestQuickRunEntryRequiresPublishedRevisionAndDigest(t *testing.T) {
 
 func TestKeyNamesAreUniqueIgnoringCaseAndSurroundingWhitespace(t *testing.T) {
 	manager, _ := testManager(t, time.Date(2026, 8, 5, 9, 0, 0, 0, time.UTC))
-	first, _, err := manager.CreateKey(context.Background(), CreateKeyInput{Label: "Webhook", Enabled: true})
+	group, err := manager.CreateGroup(context.Background(), "Deployment")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := manager.CreateKey(context.Background(), CreateKeyInput{Label: " webhook ", Enabled: true}); !errors.Is(err, ErrKeyLabelExists) {
+	first, _, err := manager.CreateKey(context.Background(), CreateKeyInput{GroupID: group.ID, Label: "Webhook", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := manager.CreateKey(context.Background(), CreateKeyInput{GroupID: group.ID, Label: " webhook ", Enabled: true}); !errors.Is(err, ErrKeyLabelExists) {
 		t.Fatalf("duplicate create error = %v", err)
 	}
-	second, _, err := manager.CreateKey(context.Background(), CreateKeyInput{Label: "Deploy", Enabled: true})
+	second, _, err := manager.CreateKey(context.Background(), CreateKeyInput{GroupID: group.ID, Label: "Deploy", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}

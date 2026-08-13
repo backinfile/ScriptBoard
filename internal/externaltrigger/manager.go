@@ -54,8 +54,16 @@ var SchemaStatements = []string{
 		updated_at INTEGER NOT NULL DEFAULT 0
 	)`,
 	`INSERT OR IGNORE INTO external_trigger_control (id, enabled, updated_at) VALUES (1, 1, 0)`,
+	`CREATE TABLE IF NOT EXISTS external_trigger_groups (
+		id TEXT PRIMARY KEY,
+		label TEXT NOT NULL COLLATE NOCASE UNIQUE,
+		enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL
+	)`,
 	`CREATE TABLE IF NOT EXISTS external_trigger_keys (
 		id TEXT PRIMARY KEY,
+		group_id TEXT NOT NULL DEFAULT '',
 		label TEXT NOT NULL,
 		token_hash TEXT NOT NULL UNIQUE,
 		token_hint TEXT NOT NULL,
@@ -67,7 +75,8 @@ var SchemaStatements = []string{
 	)`,
 	`CREATE TABLE IF NOT EXISTS external_trigger_entries (
 		id TEXT PRIMARY KEY,
-		key_id TEXT NOT NULL REFERENCES external_trigger_keys(id) ON DELETE CASCADE,
+		group_id TEXT NOT NULL DEFAULT '',
+		key_id TEXT REFERENCES external_trigger_keys(id) ON DELETE SET NULL,
 		name TEXT NOT NULL,
 		label TEXT NOT NULL,
 		action_type TEXT NOT NULL CHECK (action_type IN ('log', 'upload', 'quick_run', 'variable', 'website_monitor')),
@@ -77,7 +86,7 @@ var SchemaStatements = []string{
 		enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
 		created_at INTEGER NOT NULL,
 		updated_at INTEGER NOT NULL,
-		UNIQUE (key_id)
+		UNIQUE (group_id, name)
 	)`,
 	`CREATE TABLE IF NOT EXISTS external_trigger_requests (
 		id TEXT PRIMARY KEY,
@@ -109,7 +118,6 @@ var SchemaStatements = []string{
 		created_at INTEGER NOT NULL,
 		updated_at INTEGER NOT NULL
 	)`,
-	`CREATE INDEX IF NOT EXISTS external_trigger_entries_key_idx ON external_trigger_entries(key_id, created_at)`,
 	`CREATE INDEX IF NOT EXISTS external_trigger_requests_time_idx ON external_trigger_requests(occurred_at DESC)`,
 	`CREATE INDEX IF NOT EXISTS external_trigger_requests_key_time_idx ON external_trigger_requests(key_id, occurred_at DESC)`,
 	`CREATE INDEX IF NOT EXISTS external_trigger_nonces_expiry_idx ON external_trigger_nonces(expires_at)`,
@@ -118,13 +126,21 @@ var SchemaStatements = []string{
 type ActionType string
 type VariableType string
 
-type Key struct {
-	ID, Label, TokenHint string
+type Group struct {
+	ID, Label            string
 	Enabled              bool
-	ExpiresAt            *time.Time
 	CreatedAt, UpdatedAt time.Time
-	LastUsedAt           *time.Time
+	Keys                 []Key
 	Entries              []Entry
+}
+
+type Key struct {
+	ID, GroupID, Label, TokenHint string
+	Enabled                       bool
+	ExpiresAt                     *time.Time
+	CreatedAt, UpdatedAt          time.Time
+	LastUsedAt                    *time.Time
+	Entries                       []Entry
 }
 
 func (key Key) Active(now time.Time) bool {
@@ -136,12 +152,12 @@ func (key Key) Expired(now time.Time) bool {
 }
 
 type Entry struct {
-	ID, KeyID, Name, Label, Target string
-	Type                           ActionType
-	ConfigJSON                     string
-	Enabled                        bool
-	RequireSignature               bool
-	CreatedAt, UpdatedAt           time.Time
+	ID, GroupID, KeyID, Name, Label, Target string
+	Type                                    ActionType
+	ConfigJSON                              string
+	Enabled                                 bool
+	RequireSignature                        bool
+	CreatedAt, UpdatedAt                    time.Time
 }
 
 func (entry Entry) DecodeConfig(destination any) error {
@@ -184,18 +200,19 @@ type VariableConfig struct {
 }
 
 type CreateKeyInput struct {
+	GroupID   string
 	Label     string
 	Enabled   bool
 	ExpiresAt *time.Time
 }
 
 type CreateEntryInput struct {
-	KeyID, Name, Label string
-	Type               ActionType
-	Target             string
-	Enabled            bool
-	RequireSignature   bool
-	Config             any
+	GroupID, KeyID, Name, Label string
+	Type                        ActionType
+	Target                      string
+	Enabled                     bool
+	RequireSignature            bool
+	Config                      any
 }
 
 type UpdateEntryInput struct {
@@ -442,12 +459,100 @@ func (manager *Manager) PurgeLegacyKeySecrets(ctx context.Context) error {
 	return nil
 }
 
+func (manager *Manager) CreateGroup(ctx context.Context, label string) (Group, error) {
+	label = strings.TrimSpace(label)
+	if label == "" || len([]byte(label)) > 128 || !utf8.ValidString(label) {
+		return Group{}, fmt.Errorf("%w: group label", ErrInvalidInput)
+	}
+	id, err := manager.randomToken(12)
+	if err != nil {
+		return Group{}, err
+	}
+	now := manager.now().UTC()
+	result, err := manager.db.ExecContext(ctx, `INSERT INTO external_trigger_groups (id, label, enabled, created_at, updated_at)
+		SELECT ?, ?, 1, ?, ? WHERE NOT EXISTS (SELECT 1 FROM external_trigger_groups WHERE label = ? COLLATE NOCASE)`, id, label, now.Unix(), now.Unix(), label)
+	if err != nil {
+		return Group{}, err
+	}
+	if changed, _ := result.RowsAffected(); changed == 0 {
+		return Group{}, ErrKeyLabelExists
+	}
+	return Group{ID: id, Label: label, Enabled: true, CreatedAt: now, UpdatedAt: now}, nil
+}
+
+func (manager *Manager) Group(ctx context.Context, id string) (Group, error) {
+	var group Group
+	var enabled int
+	var createdAt, updatedAt int64
+	err := manager.db.QueryRowContext(ctx, `SELECT id, label, enabled, created_at, updated_at FROM external_trigger_groups WHERE id = ?`, id).Scan(&group.ID, &group.Label, &enabled, &createdAt, &updatedAt)
+	if err != nil {
+		return Group{}, err
+	}
+	group.Enabled = enabled != 0
+	group.CreatedAt, group.UpdatedAt = time.Unix(createdAt, 0).UTC(), time.Unix(updatedAt, 0).UTC()
+	group.Keys, err = manager.keysForGroup(ctx, id)
+	if err != nil {
+		return Group{}, err
+	}
+	group.Entries, err = manager.entriesForGroup(ctx, id)
+	return group, err
+}
+
+func (manager *Manager) ListGroups(ctx context.Context) ([]Group, error) {
+	rows, err := manager.db.QueryContext(ctx, `SELECT id FROM external_trigger_groups ORDER BY created_at, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	groups := make([]Group, 0, len(ids))
+	for _, id := range ids {
+		group, err := manager.Group(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		groups = append(groups, group)
+	}
+	return groups, nil
+}
+
+func (manager *Manager) DeleteGroup(ctx context.Context, id string) error {
+	result, err := manager.db.ExecContext(ctx, `DELETE FROM external_trigger_groups WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if changed, _ := result.RowsAffected(); changed == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (manager *Manager) CreateKey(ctx context.Context, input CreateKeyInput) (Key, string, error) {
 	label := strings.TrimSpace(input.Label)
 	if label == "" || len([]byte(label)) > 128 || !utf8.ValidString(label) {
 		return Key{}, "", fmt.Errorf("%w: key label", ErrInvalidInput)
 	}
 	now := manager.now().UTC()
+	groupID := strings.TrimSpace(input.GroupID)
+	if groupID == "" {
+		group, err := manager.CreateGroup(ctx, label)
+		if err != nil {
+			return Key{}, "", err
+		}
+		groupID = group.ID
+	} else if _, err := manager.Group(ctx, groupID); err != nil {
+		return Key{}, "", fmt.Errorf("%w: key group", ErrInvalidInput)
+	}
 	if input.ExpiresAt != nil && !input.ExpiresAt.After(now) {
 		return Key{}, "", fmt.Errorf("%w: key expiry", ErrInvalidInput)
 	}
@@ -466,18 +571,18 @@ func (manager *Manager) CreateKey(ctx context.Context, input CreateKeyInput) (Ke
 		expiresAt = input.ExpiresAt.UTC().Unix()
 	}
 	result, err := manager.db.ExecContext(ctx, `INSERT INTO external_trigger_keys
-		(id, label, token_hash, token_hint, enabled, expires_at, created_at, updated_at)
-		SELECT ?, ?, ?, ?, ?, ?, ?, ?
+		(id, group_id, label, token_hash, token_hint, enabled, expires_at, created_at, updated_at)
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
 		WHERE NOT EXISTS (
-			SELECT 1 FROM external_trigger_keys WHERE label = ? COLLATE NOCASE
-		)`, id, label, hashToken(secret), hint, input.Enabled, expiresAt, now.Unix(), now.Unix(), label)
+			SELECT 1 FROM external_trigger_keys WHERE group_id = ? AND label = ? COLLATE NOCASE
+		)`, id, groupID, label, hashToken(secret), hint, input.Enabled, expiresAt, now.Unix(), now.Unix(), groupID, label)
 	if err != nil {
 		return Key{}, "", fmt.Errorf("create external trigger key: %w", err)
 	}
 	if changed, _ := result.RowsAffected(); changed == 0 {
 		return Key{}, "", ErrKeyLabelExists
 	}
-	key := Key{ID: id, Label: label, TokenHint: hint, Enabled: input.Enabled, CreatedAt: now, UpdatedAt: now}
+	key := Key{ID: id, GroupID: groupID, Label: label, TokenHint: hint, Enabled: input.Enabled, CreatedAt: now, UpdatedAt: now}
 	if input.ExpiresAt != nil {
 		expires := input.ExpiresAt.UTC()
 		key.ExpiresAt = &expires
@@ -513,6 +618,17 @@ func (manager *Manager) CreateEntry(ctx context.Context, input CreateEntryInput)
 	if err != nil {
 		return Entry{}, "", err
 	}
+	groupID := strings.TrimSpace(input.GroupID)
+	if groupID == "" && input.KeyID != "" {
+		key, keyErr := manager.Key(ctx, input.KeyID)
+		if keyErr != nil {
+			return Entry{}, "", keyErr
+		}
+		groupID = key.GroupID
+	}
+	if _, err := manager.Group(ctx, groupID); err != nil {
+		return Entry{}, "", fmt.Errorf("%w: entry group", ErrInvalidInput)
+	}
 	secretPart, err := manager.randomToken(32)
 	if err != nil {
 		return Entry{}, "", err
@@ -525,16 +641,13 @@ func (manager *Manager) CreateEntry(ctx context.Context, input CreateEntryInput)
 		return Entry{}, "", err
 	}
 	defer transaction.Rollback()
-	var existing int
-	if err := transaction.QueryRowContext(ctx, "SELECT COUNT(*) FROM external_trigger_entries WHERE key_id = ?", input.KeyID).Scan(&existing); err != nil {
-		return Entry{}, "", err
-	}
-	if existing != 0 {
-		return Entry{}, "", ErrKeyScopeBound
+	var storedKeyID any
+	if input.KeyID != "" {
+		storedKeyID = input.KeyID
 	}
 	result, err := transaction.ExecContext(ctx, `INSERT INTO external_trigger_entries
-		(id, key_id, name, label, action_type, target, config_json, require_signature, enabled, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, input.KeyID, input.Name, strings.TrimSpace(input.Label), input.Type, target, configJSON, input.RequireSignature, input.Enabled, now.Unix(), now.Unix())
+		(id, group_id, key_id, name, label, action_type, target, config_json, require_signature, enabled, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, groupID, storedKeyID, input.Name, strings.TrimSpace(input.Label), input.Type, target, configJSON, input.RequireSignature, input.Enabled, now.Unix(), now.Unix())
 	if err != nil {
 		if strings.Contains(err.Error(), "external_trigger_entries.key_id") {
 			return Entry{}, "", ErrKeyScopeBound
@@ -544,17 +657,21 @@ func (manager *Manager) CreateEntry(ctx context.Context, input CreateEntryInput)
 	if changed, _ := result.RowsAffected(); changed != 1 {
 		return Entry{}, "", ErrKeyScopeBound
 	}
-	result, err = transaction.ExecContext(ctx, `UPDATE external_trigger_keys SET token_hash = ?, token_hint = ?, updated_at = ? WHERE id = ?`, hashToken(secret), hint, now.Unix(), input.KeyID)
-	if err != nil {
-		return Entry{}, "", err
-	}
-	if changed, _ := result.RowsAffected(); changed != 1 {
-		return Entry{}, "", ErrInvalidKey
+	if input.KeyID != "" {
+		result, err = transaction.ExecContext(ctx, `UPDATE external_trigger_keys SET token_hash = ?, token_hint = ?, updated_at = ? WHERE id = ?`, hashToken(secret), hint, now.Unix(), input.KeyID)
+		if err != nil {
+			return Entry{}, "", err
+		}
+		if changed, _ := result.RowsAffected(); changed != 1 {
+			return Entry{}, "", ErrInvalidKey
+		}
+	} else {
+		secret = ""
 	}
 	if err := transaction.Commit(); err != nil {
 		return Entry{}, "", err
 	}
-	return Entry{ID: id, KeyID: input.KeyID, Name: input.Name, Label: strings.TrimSpace(input.Label), Type: input.Type, Target: target, ConfigJSON: configJSON, RequireSignature: input.RequireSignature, Enabled: input.Enabled, CreatedAt: now, UpdatedAt: now}, secret, nil
+	return Entry{ID: id, GroupID: groupID, KeyID: input.KeyID, Name: input.Name, Label: strings.TrimSpace(input.Label), Type: input.Type, Target: target, ConfigJSON: configJSON, RequireSignature: input.RequireSignature, Enabled: input.Enabled, CreatedAt: now, UpdatedAt: now}, secret, nil
 }
 
 func (manager *Manager) UpdateEntry(ctx context.Context, input UpdateEntryInput) (Entry, error) {
@@ -704,8 +821,8 @@ func (manager *Manager) Resolve(ctx context.Context, token, name string) (Key, E
 	var enabled int
 	var expiresAt, lastUsedAt sql.NullInt64
 	var createdAt, updatedAt int64
-	err := manager.db.QueryRowContext(ctx, `SELECT id, label, token_hash, token_hint, enabled, expires_at, created_at, updated_at, last_used_at
-		FROM external_trigger_keys WHERE id = ?`, id).Scan(&key.ID, &key.Label, &tokenHash, &key.TokenHint, &enabled, &expiresAt, &createdAt, &updatedAt, &lastUsedAt)
+	err := manager.db.QueryRowContext(ctx, `SELECT id, group_id, label, token_hash, token_hint, enabled, expires_at, created_at, updated_at, last_used_at
+		FROM external_trigger_keys WHERE id = ?`, id).Scan(&key.ID, &key.GroupID, &key.Label, &tokenHash, &key.TokenHint, &enabled, &expiresAt, &createdAt, &updatedAt, &lastUsedAt)
 	if err != nil || subtle.ConstantTimeCompare([]byte(tokenHash), []byte(hashToken(token))) != 1 {
 		return Key{}, Entry{}, ErrInvalidKey
 	}
@@ -715,12 +832,16 @@ func (manager *Manager) Resolve(ctx context.Context, token, name string) (Key, E
 	if !key.Active(manager.now().UTC()) {
 		return Key{}, Entry{}, ErrInvalidKey
 	}
+	var groupEnabled int
+	if err := manager.db.QueryRowContext(ctx, `SELECT enabled FROM external_trigger_groups WHERE id = ?`, key.GroupID).Scan(&groupEnabled); err != nil || groupEnabled == 0 {
+		return Key{}, Entry{}, ErrInvalidKey
+	}
 	var entry Entry
 	var entryEnabled, requireSignature int
 	var entryCreatedAt, entryUpdatedAt int64
-	err = manager.db.QueryRowContext(ctx, `SELECT id, key_id, name, label, action_type, target, config_json, require_signature, enabled, created_at, updated_at
-		FROM external_trigger_entries WHERE key_id = ? AND name = ?`, key.ID, name).Scan(
-		&entry.ID, &entry.KeyID, &entry.Name, &entry.Label, &entry.Type, &entry.Target, &entry.ConfigJSON, &requireSignature, &entryEnabled, &entryCreatedAt, &entryUpdatedAt)
+	err = manager.db.QueryRowContext(ctx, `SELECT id, group_id, COALESCE(key_id, ''), name, label, action_type, target, config_json, require_signature, enabled, created_at, updated_at
+		FROM external_trigger_entries WHERE group_id = ? AND name = ?`, key.GroupID, name).Scan(
+		&entry.ID, &entry.GroupID, &entry.KeyID, &entry.Name, &entry.Label, &entry.Type, &entry.Target, &entry.ConfigJSON, &requireSignature, &entryEnabled, &entryCreatedAt, &entryUpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return key, Entry{}, ErrEntryNotFound
 	}
@@ -741,8 +862,8 @@ func (manager *Manager) Key(ctx context.Context, id string) (Key, error) {
 	var enabled int
 	var expiresAt, lastUsedAt sql.NullInt64
 	var createdAt, updatedAt int64
-	err := manager.db.QueryRowContext(ctx, `SELECT id, label, token_hint, enabled, expires_at, created_at, updated_at, last_used_at
-		FROM external_trigger_keys WHERE id = ?`, id).Scan(&key.ID, &key.Label, &key.TokenHint, &enabled, &expiresAt, &createdAt, &updatedAt, &lastUsedAt)
+	err := manager.db.QueryRowContext(ctx, `SELECT id, group_id, label, token_hint, enabled, expires_at, created_at, updated_at, last_used_at
+		FROM external_trigger_keys WHERE id = ?`, id).Scan(&key.ID, &key.GroupID, &key.Label, &key.TokenHint, &enabled, &expiresAt, &createdAt, &updatedAt, &lastUsedAt)
 	if err != nil {
 		return Key{}, err
 	}
@@ -756,8 +877,8 @@ func (manager *Manager) Entry(ctx context.Context, id string) (Entry, error) {
 	var entry Entry
 	var enabled, requireSignature int
 	var createdAt, updatedAt int64
-	err := manager.db.QueryRowContext(ctx, `SELECT id, key_id, name, label, action_type, target, config_json, require_signature, enabled, created_at, updated_at
-		FROM external_trigger_entries WHERE id = ?`, id).Scan(&entry.ID, &entry.KeyID, &entry.Name, &entry.Label, &entry.Type, &entry.Target, &entry.ConfigJSON, &requireSignature, &enabled, &createdAt, &updatedAt)
+	err := manager.db.QueryRowContext(ctx, `SELECT id, group_id, COALESCE(key_id, ''), name, label, action_type, target, config_json, require_signature, enabled, created_at, updated_at
+		FROM external_trigger_entries WHERE id = ?`, id).Scan(&entry.ID, &entry.GroupID, &entry.KeyID, &entry.Name, &entry.Label, &entry.Type, &entry.Target, &entry.ConfigJSON, &requireSignature, &enabled, &createdAt, &updatedAt)
 	if err != nil {
 		return Entry{}, err
 	}
@@ -768,7 +889,7 @@ func (manager *Manager) Entry(ctx context.Context, id string) (Entry, error) {
 }
 
 func (manager *Manager) List(ctx context.Context) ([]Key, error) {
-	rows, err := manager.db.QueryContext(ctx, `SELECT id, label, token_hint, enabled, expires_at, created_at, updated_at, last_used_at
+	rows, err := manager.db.QueryContext(ctx, `SELECT id, group_id, label, token_hint, enabled, expires_at, created_at, updated_at, last_used_at
 		FROM external_trigger_keys ORDER BY created_at, id`)
 	if err != nil {
 		return nil, err
@@ -780,7 +901,7 @@ func (manager *Manager) List(ctx context.Context) ([]Key, error) {
 		var enabled int
 		var expiresAt, lastUsedAt sql.NullInt64
 		var createdAt, updatedAt int64
-		if err := rows.Scan(&key.ID, &key.Label, &key.TokenHint, &enabled, &expiresAt, &createdAt, &updatedAt, &lastUsedAt); err != nil {
+		if err := rows.Scan(&key.ID, &key.GroupID, &key.Label, &key.TokenHint, &enabled, &expiresAt, &createdAt, &updatedAt, &lastUsedAt); err != nil {
 			return nil, err
 		}
 		key.Enabled = enabled != 0
@@ -802,8 +923,16 @@ func (manager *Manager) List(ctx context.Context) ([]Key, error) {
 }
 
 func (manager *Manager) entriesForKey(ctx context.Context, keyID string) ([]Entry, error) {
-	rows, err := manager.db.QueryContext(ctx, `SELECT id, key_id, name, label, action_type, target, config_json, require_signature, enabled, created_at, updated_at
-		FROM external_trigger_entries WHERE key_id = ? ORDER BY created_at, id`, keyID)
+	key, err := manager.Key(ctx, keyID)
+	if err != nil {
+		return nil, err
+	}
+	return manager.entriesForGroup(ctx, key.GroupID)
+}
+
+func (manager *Manager) entriesForGroup(ctx context.Context, groupID string) ([]Entry, error) {
+	rows, err := manager.db.QueryContext(ctx, `SELECT id, group_id, COALESCE(key_id, ''), name, label, action_type, target, config_json, require_signature, enabled, created_at, updated_at
+		FROM external_trigger_entries WHERE group_id = ? ORDER BY created_at, id`, groupID)
 	if err != nil {
 		return nil, err
 	}
@@ -813,7 +942,7 @@ func (manager *Manager) entriesForKey(ctx context.Context, keyID string) ([]Entr
 		var entry Entry
 		var enabled, requireSignature int
 		var createdAt, updatedAt int64
-		if err := rows.Scan(&entry.ID, &entry.KeyID, &entry.Name, &entry.Label, &entry.Type, &entry.Target, &entry.ConfigJSON, &requireSignature, &enabled, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&entry.ID, &entry.GroupID, &entry.KeyID, &entry.Name, &entry.Label, &entry.Type, &entry.Target, &entry.ConfigJSON, &requireSignature, &enabled, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 		entry.Enabled = enabled != 0
@@ -822,6 +951,33 @@ func (manager *Manager) entriesForKey(ctx context.Context, keyID string) ([]Entr
 		entries = append(entries, entry)
 	}
 	return entries, rows.Err()
+}
+
+func (manager *Manager) EntriesForGroup(ctx context.Context, groupID string) ([]Entry, error) {
+	return manager.entriesForGroup(ctx, groupID)
+}
+
+func (manager *Manager) keysForGroup(ctx context.Context, groupID string) ([]Key, error) {
+	rows, err := manager.db.QueryContext(ctx, `SELECT id, group_id, label, token_hint, enabled, expires_at, created_at, updated_at, last_used_at FROM external_trigger_keys WHERE group_id = ? ORDER BY created_at, id`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var keys []Key
+	for rows.Next() {
+		var key Key
+		var enabled int
+		var expiresAt, lastUsedAt sql.NullInt64
+		var createdAt, updatedAt int64
+		if err := rows.Scan(&key.ID, &key.GroupID, &key.Label, &key.TokenHint, &enabled, &expiresAt, &createdAt, &updatedAt, &lastUsedAt); err != nil {
+			return nil, err
+		}
+		key.Enabled = enabled != 0
+		key.CreatedAt, key.UpdatedAt = time.Unix(createdAt, 0).UTC(), time.Unix(updatedAt, 0).UTC()
+		setOptionalTimes(&key, expiresAt, lastUsedAt)
+		keys = append(keys, key)
+	}
+	return keys, rows.Err()
 }
 
 func (manager *Manager) EntriesForKey(ctx context.Context, keyID string) ([]Entry, error) {
@@ -860,7 +1016,7 @@ func (manager *Manager) UpdateKey(ctx context.Context, id, label string, expires
 		SET label = ?, expires_at = ?, updated_at = ?
 		WHERE id = ? AND NOT EXISTS (
 			SELECT 1 FROM external_trigger_keys AS duplicate
-			WHERE duplicate.id <> ? AND duplicate.label = ? COLLATE NOCASE
+			WHERE duplicate.id <> ? AND duplicate.group_id = external_trigger_keys.group_id AND duplicate.label = ? COLLATE NOCASE
 		)`, label, expires, manager.now().UTC().Unix(), id, id, label)
 	if err != nil {
 		return err
@@ -889,23 +1045,12 @@ func (manager *Manager) DeleteKey(ctx context.Context, id string) error {
 }
 
 func (manager *Manager) DeleteEntry(ctx context.Context, id string) error {
-	transaction, err := manager.db.BeginTx(ctx, nil)
+	result, err := manager.db.ExecContext(ctx, "DELETE FROM external_trigger_entries WHERE id = ?", id)
 	if err != nil {
 		return err
 	}
-	defer transaction.Rollback()
-	var keyID string
-	if err := transaction.QueryRowContext(ctx, "SELECT key_id FROM external_trigger_entries WHERE id = ?", id).Scan(&keyID); err != nil {
+	if changed, _ := result.RowsAffected(); changed == 0 {
 		return sql.ErrNoRows
-	}
-	if _, err := transaction.ExecContext(ctx, "DELETE FROM external_trigger_keys WHERE id = ?", keyID); err != nil {
-		return err
-	}
-	if err := transaction.Commit(); err != nil {
-		return err
-	}
-	if err := manager.secretStore.delete(keyID); err != nil && !errors.Is(err, ErrSecretUnavailable) {
-		return fmt.Errorf("delete External Interface key secret: %w", err)
 	}
 	return nil
 }

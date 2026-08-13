@@ -2205,6 +2205,51 @@ func openDatabase(path string) (*sql.DB, error) {
 			}
 		}
 	}
+	if schemaVersion >= 20 && schemaVersion <= 44 {
+		keyGroupExists, err := sqliteColumnExists(migration, "external_trigger_keys", "group_id")
+		if err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("inspect External Interface group migration: %w", err)
+		}
+		if !keyGroupExists {
+			if _, err := migration.Exec(`ALTER TABLE external_trigger_keys ADD COLUMN group_id TEXT NOT NULL DEFAULT ''`); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("add External Interface key groups: %w", err)
+			}
+		}
+		for _, statement := range []string{
+			`INSERT OR IGNORE INTO external_trigger_groups (id, label, enabled, created_at, updated_at)
+			 SELECT 'group-' || id, label, 1, created_at, updated_at FROM external_trigger_keys`,
+			`UPDATE external_trigger_keys SET group_id = 'group-' || id WHERE group_id = ''`,
+			`CREATE TABLE external_trigger_entries_schema45 (
+				id TEXT PRIMARY KEY,
+				group_id TEXT NOT NULL DEFAULT '',
+				key_id TEXT REFERENCES external_trigger_keys(id) ON DELETE SET NULL,
+				name TEXT NOT NULL,
+				label TEXT NOT NULL,
+				action_type TEXT NOT NULL CHECK (action_type IN ('log', 'upload', 'quick_run', 'variable', 'website_monitor')),
+				target TEXT NOT NULL DEFAULT '',
+				config_json TEXT NOT NULL DEFAULT '{}',
+				require_signature INTEGER NOT NULL DEFAULT 0 CHECK (require_signature IN (0, 1)),
+				enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL,
+				UNIQUE (group_id, name)
+			)`,
+			`INSERT INTO external_trigger_entries_schema45
+				(id, group_id, key_id, name, label, action_type, target, config_json, require_signature, enabled, created_at, updated_at)
+			 SELECT entry.id, key.group_id, entry.key_id, entry.name, entry.label, entry.action_type, entry.target, entry.config_json,
+				entry.require_signature, entry.enabled, entry.created_at, entry.updated_at
+			 FROM external_trigger_entries AS entry JOIN external_trigger_keys AS key ON key.id = entry.key_id`,
+			`DROP TABLE external_trigger_entries`,
+			`ALTER TABLE external_trigger_entries_schema45 RENAME TO external_trigger_entries`,
+		} {
+			if _, err := migration.Exec(statement); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("migrate External Interface groups: %w", err)
+			}
+		}
+	}
 	if schemaVersion >= 20 && schemaVersion <= 43 {
 		for _, column := range []struct{ name, definition string }{
 			{"authentication_assurance", "authentication_assurance INTEGER NOT NULL DEFAULT 1 CHECK (authentication_assurance BETWEEN 1 AND 2)"},
@@ -2298,7 +2343,9 @@ func openDatabase(path string) (*sql.DB, error) {
 		"CREATE INDEX IF NOT EXISTS trash_entries_original_path_idx ON trash_entries(original_path_key)",
 		"CREATE INDEX IF NOT EXISTS file_operations_phase_idx ON file_operations(phase, created_at)",
 		"CREATE INDEX IF NOT EXISTS file_quick_access_pins_order_idx ON file_quick_access_pins(sort_order, created_at)",
-		"CREATE UNIQUE INDEX IF NOT EXISTS external_trigger_entries_key_unique_idx ON external_trigger_entries(key_id)",
+		"DROP INDEX IF EXISTS external_trigger_entries_key_unique_idx",
+		"CREATE INDEX IF NOT EXISTS external_trigger_keys_group_idx ON external_trigger_keys(group_id, created_at)",
+		"CREATE INDEX IF NOT EXISTS external_trigger_entries_group_idx ON external_trigger_entries(group_id, created_at)",
 		"CREATE INDEX IF NOT EXISTS schedules_due_idx ON schedules(next_fire_at) WHERE enabled = 1 AND deleted = 0",
 		"CREATE INDEX IF NOT EXISTS schedule_triggers_schedule_time_idx ON schedule_triggers(schedule_id, scheduled_for DESC)",
 		"CREATE INDEX IF NOT EXISTS schedule_triggers_unlinked_time_idx ON schedule_triggers(scheduled_for) WHERE run_id = ''",
@@ -2354,7 +2401,7 @@ func compatibleDatabaseSchema(version int) bool {
 	// Interface controls, authentication assurance, MFA policy, and resource
 	// identity. Schema 44 is the reconciled union; migrations below inspect the
 	// actual tables and columns so either predecessor can advance safely.
-	return version == currentSchemaVersion || currentSchemaVersion == 44 && version >= 20 && version <= 43
+	return version == currentSchemaVersion || currentSchemaVersion == 45 && version >= 20 && version <= 44
 }
 
 func sqliteColumnExists(transaction *sql.Tx, table, column string) (bool, error) {
@@ -2546,6 +2593,8 @@ func (a *App) routes() http.Handler {
 	mux.Public("POST /settings/locale", a.setWebLocale)
 	mux.External("GET /trigger", a.externalTrigger)
 	mux.External("POST /trigger", a.externalTrigger)
+	mux.External("GET /trigger/{name}", a.externalTrigger)
+	mux.External("POST /trigger/{name}", a.externalTrigger)
 	mux.Handle("GET /auth/step-up", a.requirePermission(permissionObserve, http.HandlerFunc(a.stepUpTask)))
 	mux.Handle("POST /auth/step-up", a.requirePermission(permissionObserve, http.HandlerFunc(a.stepUp)))
 	mux.Handle("POST /auth/passkey/step-up/options", a.requirePermission(permissionObserve, http.HandlerFunc(a.beginPasskeyStepUp)))
@@ -2845,22 +2894,29 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /config/schedules/{id}/run", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.runScheduleNow)))
 	mux.Handle("POST /config/schedules/{id}/delete", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.deleteSchedule)))
 	mux.Handle("GET /config/external-interfaces", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.externalInterfacesPage)))
-	mux.Handle("POST /config/external-interfaces/control", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.setExternalGlobalControl)))
+	mux.Handle("GET /config/external-interfaces/control", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.externalGlobalControlTask)))
+	mux.Handle("POST /config/external-interfaces/control", a.requireSecondFactorIfEnabled(permissionManageExecution, http.HandlerFunc(a.setExternalGlobalControl)))
+	mux.Handle("GET /config/external-interfaces/groups/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.newExternalGroupTask)))
+	mux.Handle("POST /config/external-interfaces/groups", a.requireSecondFactorIfEnabled(permissionManageExecution, http.HandlerFunc(a.createExternalGroup)))
+	mux.Handle("GET /config/external-interfaces/groups/{groupID}/keys/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.newExternalKeyTask)))
 	mux.Handle("GET /config/external-interfaces/keys/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.newExternalKeyTask)))
-	mux.Handle("POST /config/external-interfaces/keys", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.createExternalKey)))
+	mux.Handle("POST /config/external-interfaces/groups/{groupID}/keys", a.requireSecondFactorIfEnabled(permissionManageExecution, http.HandlerFunc(a.createExternalKey)))
+	mux.Handle("POST /config/external-interfaces/keys", a.requireSecondFactorIfEnabled(permissionManageExecution, http.HandlerFunc(a.createExternalKey)))
 	mux.Handle("GET /config/external-interfaces/keys/{id}/edit", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.editExternalKeyTask)))
 	mux.Handle("GET /config/external-interfaces/keys/{id}/rotate", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.rotateExternalKeyTask)))
-	mux.Handle("POST /config/external-interfaces/keys/{id}", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.updateExternalKey)))
-	mux.Handle("POST /config/external-interfaces/keys/{id}/toggle", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.toggleExternalKey)))
-	mux.Handle("POST /config/external-interfaces/keys/{id}/rotate", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.rotateExternalKey)))
-	mux.Handle("POST /config/external-interfaces/keys/{id}/delete", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.deleteExternalKey)))
+	mux.Handle("POST /config/external-interfaces/keys/{id}", a.requireSecondFactorIfEnabled(permissionManageExecution, http.HandlerFunc(a.updateExternalKey)))
+	mux.Handle("POST /config/external-interfaces/keys/{id}/toggle", a.requireSecondFactorIfEnabled(permissionManageExecution, http.HandlerFunc(a.toggleExternalKey)))
+	mux.Handle("POST /config/external-interfaces/keys/{id}/rotate", a.requireSecondFactorIfEnabled(permissionManageExecution, http.HandlerFunc(a.rotateExternalKey)))
+	mux.Handle("POST /config/external-interfaces/keys/{id}/delete", a.requireSecondFactorIfEnabled(permissionManageExecution, http.HandlerFunc(a.deleteExternalKey)))
+	mux.Handle("GET /config/external-interfaces/groups/{groupID}/entries/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.newExternalEntryTask)))
+	mux.Handle("POST /config/external-interfaces/groups/{groupID}/entries", a.requireSecondFactorIfEnabled(permissionManageExecution, http.HandlerFunc(a.createExternalEntry)))
 	mux.Handle("GET /config/external-interfaces/keys/{id}/entries/new", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.newExternalEntryTask)))
-	mux.Handle("POST /config/external-interfaces/keys/{id}/entries", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.createExternalEntry)))
+	mux.Handle("POST /config/external-interfaces/keys/{id}/entries", a.requireSecondFactorIfEnabled(permissionManageExecution, http.HandlerFunc(a.createExternalEntry)))
 	mux.Handle("GET /config/external-interfaces/entries/{id}", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.externalEntryDetail)))
 	mux.Handle("GET /config/external-interfaces/entries/{id}/edit", a.requirePermission(permissionManageExecution, http.HandlerFunc(a.editExternalEntryTask)))
-	mux.Handle("POST /config/external-interfaces/entries/{id}", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.updateExternalEntry)))
-	mux.Handle("POST /config/external-interfaces/entries/{id}/toggle", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.toggleExternalEntry)))
-	mux.Handle("POST /config/external-interfaces/entries/{id}/delete", a.requireStepUp(permissionManageExecution, http.HandlerFunc(a.deleteExternalEntry)))
+	mux.Handle("POST /config/external-interfaces/entries/{id}", a.requireSecondFactorIfEnabled(permissionManageExecution, http.HandlerFunc(a.updateExternalEntry)))
+	mux.Handle("POST /config/external-interfaces/entries/{id}/toggle", a.requireSecondFactorIfEnabled(permissionManageExecution, http.HandlerFunc(a.toggleExternalEntry)))
+	mux.Handle("POST /config/external-interfaces/entries/{id}/delete", a.requireSecondFactorIfEnabled(permissionManageExecution, http.HandlerFunc(a.deleteExternalEntry)))
 	mux.Handle("GET /history/audit", a.requirePermission(permissionReadAudit, http.HandlerFunc(a.auditPage)))
 	mux.Handle("GET /history/audit.csv", a.requirePermission(permissionReadAudit, http.HandlerFunc(a.auditDownload)))
 	a.routeSpecs = mux.Specs()
@@ -2893,9 +2949,9 @@ func (a *App) routes() http.Handler {
 		if isSecureRequest(request) {
 			response.Header().Set("Strict-Transport-Security", "max-age=31536000")
 		}
-		if a.validation.Load() && (request.Method != http.MethodGet || request.URL.Path == "/trigger") {
+		if a.validation.Load() && (request.Method != http.MethodGet || strings.HasPrefix(request.URL.Path, "/trigger")) {
 			response.Header().Set("Retry-After", "2")
-			if request.URL.Path == "/trigger" {
+			if strings.HasPrefix(request.URL.Path, "/trigger") {
 				response.Header().Set("Content-Type", "application/json; charset=utf-8")
 				writeExternalTriggerError(response, http.StatusServiceUnavailable, "service_unavailable")
 			} else {

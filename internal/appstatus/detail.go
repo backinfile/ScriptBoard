@@ -143,8 +143,8 @@ func (m *Monitor) Details(ctx context.Context, id, selectedRange string) (Applic
 	switch application.Kind {
 	case KindHost:
 		for _, process := range raw.Processes {
-			identity := normalizeExecutablePath(process.ExecutablePath, m.options.HostOS)
-			if identity == "" {
+			identity := normalizeApplicationName(process.Name)
+			if normalizeExecutablePath(process.ExecutablePath, m.options.HostOS) == "" || identity == "" {
 				identity = restrictedIdentity(process)
 			}
 			if identity == application.Identity {

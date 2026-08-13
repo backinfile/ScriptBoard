@@ -137,7 +137,7 @@ func TestBackupCreateWorksWithoutOpeningTheWebApplication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifest.ID == "" || manifest.SchemaVersion != 44 {
+	if manifest.ID == "" || manifest.SchemaVersion != 45 {
 		t.Fatalf("backup manifest = %#v", manifest)
 	}
 }

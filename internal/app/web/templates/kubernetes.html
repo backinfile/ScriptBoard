@@ -8,7 +8,7 @@
   <title>{{t .Locale "kubernetes.title"}} · ScriptBoard</title>
 </head>
 <body>
-<main class="workspace kubernetes-page" data-kubernetes-page data-csrf-token="{{.CSRFToken}}">
+<main class="workspace kubernetes-page" data-kubernetes-page data-csrf-token="{{.CSRFToken}}" data-kubernetes-can-manage="{{.CanManage}}" data-kubernetes-mode="{{.Connection.Mode}}" data-kubernetes-can-redeploy="{{.Connection.Capabilities.Redeploy}}" data-kubernetes-can-scale="{{.Connection.Capabilities.Scale}}" data-kubernetes-can-run-cron="{{.Connection.Capabilities.RunCron}}">
   <header class="page-heading kubernetes-heading">
     <div>
       <p class="page-eyebrow">{{t .Locale "nav.monitor"}} / {{t .Locale "nav.kubernetes"}}</p>

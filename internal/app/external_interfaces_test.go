@@ -23,6 +23,44 @@ import (
 
 var externalKeyPattern = regexp.MustCompile(`sbk_[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{43}`)
 
+func TestExternalInterfaceGroupOwnsPathsAndMultipleKeys(t *testing.T) {
+	root := t.TempDir()
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "host"), filepath.Join(root, "state"))
+	response, err := client.Get(serverURL + "/config/external-interfaces")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/config/external-interfaces/groups", url.Values{"csrf_token": {formToken(t, page)}, "label": {"Deployment automation"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	response, err = client.Get(serverURL + "/config/external-interfaces")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	groupMatch := regexp.MustCompile(`/config/external-interfaces/groups/([A-Za-z0-9_-]+)/entries/new`).FindSubmatch(page)
+	if len(groupMatch) != 2 || !bytes.Contains(page, []byte("Deployment automation")) {
+		t.Fatalf("group page missing hierarchy: %s", page)
+	}
+	groupID := string(groupMatch[1])
+	for _, suffix := range []string{"/entries/new", "/keys/new"} {
+		response, err = client.Get(serverURL + "/config/external-interfaces/groups/" + groupID + suffix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusOK || !bytes.Contains(body, []byte("Deployment automation")) {
+			t.Fatalf("group task %s status=%d body=%s", suffix, response.StatusCode, body)
+		}
+	}
+}
+
 func createdExternalTestKey(t *testing.T, body []byte) (string, string) {
 	t.Helper()
 	secret := string(externalKeyPattern.Find(body))

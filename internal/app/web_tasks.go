@@ -29,6 +29,7 @@ type taskPageData struct {
 	IsDirectory        bool
 	MFAEnabled         bool
 	PasskeyEnabled     bool
+	SecondFactorOnly   bool
 	DisallowOverlap    bool
 	GroupID            string
 	Groups             []quickRunGroup
@@ -46,6 +47,7 @@ type taskPageData struct {
 	Languages          []scriptLanguageOption
 	Language           string
 	Conflict           bool
+	Enabled            bool
 	ConflictPath       string
 	SuggestedName      string
 	CanOverwrite       bool

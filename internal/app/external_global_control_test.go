@@ -19,6 +19,14 @@ func TestExternalGlobalControlFailsClosedAndCanResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if _, err := database.Exec(`UPDATE sessions SET reauthenticated_at = 0`); err != nil {
+		t.Fatal(err)
+	}
 	_, keyID := createExternalTestKey(t, client, serverURL, "Emergency control")
 	logFile := filepath.Join(hostRoot, "controlled.log")
 	secret := createExternalTestEntry(t, client, serverURL, keyID, url.Values{
@@ -35,6 +43,21 @@ func TestExternalGlobalControlFailsClosedAndCanResume(t *testing.T) {
 	if !strings.Contains(string(page), `data-external-global-control="enabled"`) {
 		t.Fatalf("enabled global control is not visible: %s", page)
 	}
+	if !strings.Contains(string(page), "Master switch") || !strings.Contains(string(page), `href="/config/external-interfaces/control?enabled=0" data-task-link`) {
+		t.Fatalf("master switch confirmation link is not visible: %s", page)
+	}
+	confirmationResponse, err := client.Get(serverURL + "/config/external-interfaces/control?enabled=0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	confirmationPage, _ := io.ReadAll(confirmationResponse.Body)
+	_ = confirmationResponse.Body.Close()
+	if confirmationResponse.StatusCode != http.StatusOK ||
+		!strings.Contains(string(confirmationPage), `data-task-kind="external-global-control"`) ||
+		!strings.Contains(string(confirmationPage), `name="confirmed" value="yes"`) ||
+		strings.Contains(string(confirmationPage), `name="current_password"`) {
+		t.Fatalf("master switch confirmation drawer is invalid: %s", confirmationPage)
+	}
 	withoutCSRF, err := client.PostForm(serverURL+"/config/external-interfaces/control", url.Values{"enabled": {"0"}})
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +67,7 @@ func TestExternalGlobalControlFailsClosedAndCanResume(t *testing.T) {
 		t.Fatalf("global control without CSRF status=%d", withoutCSRF.StatusCode)
 	}
 	invalid, err := client.PostForm(serverURL+"/config/external-interfaces/control", url.Values{
-		"csrf_token": {formToken(t, page)}, "enabled": {"sometimes"},
+		"csrf_token": {formToken(t, page)}, "enabled": {"sometimes"}, "confirmed": {"yes"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -54,7 +77,7 @@ func TestExternalGlobalControlFailsClosedAndCanResume(t *testing.T) {
 		t.Fatalf("invalid global control status=%d", invalid.StatusCode)
 	}
 	disabled, err := client.PostForm(serverURL+"/config/external-interfaces/control", url.Values{
-		"csrf_token": {formToken(t, page)}, "enabled": {"0"},
+		"csrf_token": {formToken(t, confirmationPage)}, "enabled": {"0"}, "confirmed": {"yes"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +110,7 @@ func TestExternalGlobalControlFailsClosedAndCanResume(t *testing.T) {
 		t.Fatalf("disabled global control is not visible: %s", page)
 	}
 	enabled, err := client.PostForm(serverURL+"/config/external-interfaces/control", url.Values{
-		"csrf_token": {formToken(t, page)}, "enabled": {"1"},
+		"csrf_token": {formToken(t, page)}, "enabled": {"1"}, "confirmed": {"yes"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -105,11 +128,6 @@ func TestExternalGlobalControlFailsClosedAndCanResume(t *testing.T) {
 		t.Fatalf("resumed trigger content=%q err=%v", content, err)
 	}
 
-	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer database.Close()
 	var controlEnabled, auditEvents, rejectedInvocations int
 	if err := database.QueryRow("SELECT enabled FROM external_trigger_control WHERE id = 1").Scan(&controlEnabled); err != nil {
 		t.Fatal(err)

@@ -45,25 +45,25 @@ func TestExpiredRecentAuthenticationRequiresPasswordStepUp(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pageResponse, err := client.Get(server.URL + "/config/external-interfaces")
+	pageResponse, err := client.Get(server.URL + "/settings/name")
 	if err != nil {
 		t.Fatal(err)
 	}
 	page, _ := io.ReadAll(pageResponse.Body)
 	_ = pageResponse.Body.Close()
-	blocked, err := client.PostForm(server.URL+"/config/external-interfaces/control", url.Values{
-		"csrf_token": {formToken(t, page)}, "enabled": {"0"},
+	blocked, err := client.PostForm(server.URL+"/settings/name", url.Values{
+		"csrf_token": {formToken(t, page)}, "display_name": {"Changed after step-up"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = blocked.Body.Close()
-	if blocked.StatusCode != http.StatusSeeOther || blocked.Header.Get("Location") != "/auth/step-up?return_to=%2Fconfig%2Fexternal-interfaces" {
+	if blocked.StatusCode != http.StatusSeeOther || blocked.Header.Get("Location") != "/auth/step-up?return_to=%2Fsettings%2Fname" {
 		t.Fatalf("blocked response status=%d location=%q", blocked.StatusCode, blocked.Header.Get("Location"))
 	}
-	var enabled int
-	if err := database.QueryRow(`SELECT enabled FROM external_trigger_control WHERE id = 1`).Scan(&enabled); err != nil || enabled != 1 {
-		t.Fatalf("blocked operation changed control: enabled=%d err=%v", enabled, err)
+	var displayName string
+	if err := database.QueryRow(`SELECT display_name FROM instance_settings WHERE singleton = 1`).Scan(&displayName); err != sql.ErrNoRows {
+		t.Fatalf("blocked operation changed site name: name=%q err=%v", displayName, err)
 	}
 
 	stepResponse, err := client.Get(server.URL + blocked.Header.Get("Location"))
@@ -72,14 +72,14 @@ func TestExpiredRecentAuthenticationRequiresPasswordStepUp(t *testing.T) {
 	}
 	stepPage, _ := io.ReadAll(stepResponse.Body)
 	_ = stepResponse.Body.Close()
-	for _, expected := range []string{`data-task-kind="step-up"`, `name="current_password"`, `name="return_to" value="/config/external-interfaces"`} {
+	for _, expected := range []string{`data-task-kind="step-up"`, `name="current_password"`, `name="return_to" value="/settings/name"`} {
 		if !strings.Contains(string(stepPage), expected) {
 			t.Fatalf("step-up page missing %q: %s", expected, stepPage)
 		}
 	}
 
 	wrong, err := client.PostForm(server.URL+"/auth/step-up", url.Values{
-		"csrf_token": {formToken(t, stepPage)}, "current_password": {"wrong-password"}, "return_to": {"/config/external-interfaces"},
+		"csrf_token": {formToken(t, stepPage)}, "current_password": {"wrong-password"}, "return_to": {"/settings/name"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -101,13 +101,13 @@ func TestExpiredRecentAuthenticationRequiresPasswordStepUp(t *testing.T) {
 	}
 
 	succeeded, err := client.PostForm(server.URL+"/auth/step-up", url.Values{
-		"csrf_token": {formToken(t, stepPage)}, "current_password": {password}, "return_to": {"/config/external-interfaces"},
+		"csrf_token": {formToken(t, stepPage)}, "current_password": {password}, "return_to": {"/settings/name"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = succeeded.Body.Close()
-	if succeeded.StatusCode != http.StatusSeeOther || succeeded.Header.Get("Location") != "/config/external-interfaces" {
+	if succeeded.StatusCode != http.StatusSeeOther || succeeded.Header.Get("Location") != "/settings/name" {
 		t.Fatalf("successful step-up status=%d location=%q", succeeded.StatusCode, succeeded.Header.Get("Location"))
 	}
 	if err := database.QueryRow(`SELECT reauthenticated_at FROM sessions`).Scan(&recent); err != nil || recent <= 0 {
@@ -119,14 +119,14 @@ func TestExpiredRecentAuthenticationRequiresPasswordStepUp(t *testing.T) {
 		t.Fatalf("successful step-up assurance=%q err=%v", assurance, err)
 	}
 
-	pageResponse, err = client.Get(server.URL + "/config/external-interfaces")
+	pageResponse, err = client.Get(server.URL + "/settings/name")
 	if err != nil {
 		t.Fatal(err)
 	}
 	page, _ = io.ReadAll(pageResponse.Body)
 	_ = pageResponse.Body.Close()
-	applied, err := client.PostForm(server.URL+"/config/external-interfaces/control", url.Values{
-		"csrf_token": {formToken(t, page)}, "enabled": {"0"},
+	applied, err := client.PostForm(server.URL+"/settings/name", url.Values{
+		"csrf_token": {formToken(t, page)}, "display_name": {"Changed after step-up"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -135,7 +135,7 @@ func TestExpiredRecentAuthenticationRequiresPasswordStepUp(t *testing.T) {
 	if applied.StatusCode != http.StatusSeeOther {
 		t.Fatalf("step-up protected operation status=%d", applied.StatusCode)
 	}
-	if err := database.QueryRow(`SELECT enabled FROM external_trigger_control WHERE id = 1`).Scan(&enabled); err != nil || enabled != 0 {
-		t.Fatalf("step-up operation not applied: enabled=%d err=%v", enabled, err)
+	if err := database.QueryRow(`SELECT display_name FROM instance_settings WHERE singleton = 1`).Scan(&displayName); err != nil || displayName != "Changed after step-up" {
+		t.Fatalf("step-up operation not applied: name=%q err=%v", displayName, err)
 	}
 }
