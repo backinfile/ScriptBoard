@@ -77,6 +77,11 @@ type Filesystem struct {
 	Online                       bool     `json:"online"`
 }
 
+type StorageSummary struct {
+	TotalBytes, UsedBytes, AvailableBytes uint64  `json:",omitempty"`
+	UsedPercent                           float64 `json:",omitempty"`
+}
+
 type Disk struct {
 	ID, Name                                          string   `json:",omitempty"`
 	ReadBytesPerSecond, WriteBytesPerSecond           float64  `json:",omitempty"`
@@ -132,17 +137,18 @@ type RawSample struct {
 }
 
 type Sample struct {
-	At          time.Time          `json:"at"`
-	CPU         *CPU               `json:"cpu,omitempty"`
-	Memory      *Memory            `json:"memory,omitempty"`
-	Storage     *Filesystem        `json:"storage,omitempty"`
-	Filesystems []Filesystem       `json:"filesystems,omitempty"`
-	Disk        *DiskSummary       `json:"disk,omitempty"`
-	Disks       []Disk             `json:"disks,omitempty"`
-	Network     *NetworkSummary    `json:"network,omitempty"`
-	Interfaces  []NetworkInterface `json:"interfaces,omitempty"`
-	Process     *Process           `json:"process,omitempty"`
-	Errors      map[string]string  `json:"errors,omitempty"`
+	At              time.Time          `json:"at"`
+	CPU             *CPU               `json:"cpu,omitempty"`
+	Memory          *Memory            `json:"memory,omitempty"`
+	Storage         *StorageSummary    `json:"storage,omitempty"`
+	CriticalStorage *Filesystem        `json:"criticalStorage,omitempty"`
+	Filesystems     []Filesystem       `json:"filesystems,omitempty"`
+	Disk            *DiskSummary       `json:"disk,omitempty"`
+	Disks           []Disk             `json:"disks,omitempty"`
+	Network         *NetworkSummary    `json:"network,omitempty"`
+	Interfaces      []NetworkInterface `json:"interfaces,omitempty"`
+	Process         *Process           `json:"process,omitempty"`
+	Errors          map[string]string  `json:"errors,omitempty"`
 }
 
 type MetricValues struct {
@@ -300,7 +306,8 @@ func (m *Monitor) Collect(ctx context.Context) {
 
 func (m *Monitor) derive(raw RawSample) Sample {
 	result := Sample{At: raw.At, Memory: raw.Memory, Filesystems: append([]Filesystem(nil), raw.Filesystems...), Process: raw.Process, Errors: cloneErrors(raw.Errors)}
-	result.Storage = constrainedFilesystem(result.Filesystems)
+	result.Storage = summarizeStorage(result.Filesystems)
+	result.CriticalStorage = constrainedFilesystem(result.Filesystems)
 	if m.previous == nil {
 		return result
 	}
@@ -403,11 +410,11 @@ func (m *Monitor) Overview(ctx context.Context, selectedRange string) (Overview,
 	live := append([]Sample(nil), m.live...)
 	m.mu.RUnlock()
 	result := Overview{Facts: facts, Current: current, CollectedAt: current.At, Capabilities: capabilities(current), Errors: cloneErrors(current.Errors)}
-	if current.Storage != nil && current.Storage.AvailableBytes < diskspace.MinimumWritableBytes {
+	if current.CriticalStorage != nil && current.CriticalStorage.AvailableBytes < diskspace.MinimumWritableBytes {
 		if result.Errors == nil {
 			result.Errors = map[string]string{}
 		}
-		lowSpace := fmt.Sprintf("关键卷 %s 可用空间低于 100 MiB 可写下限", current.Storage.Mountpoint)
+		lowSpace := fmt.Sprintf("关键卷 %s 可用空间低于 100 MiB 可写下限", current.CriticalStorage.Mountpoint)
 		if existing := result.Errors["storage"]; existing != "" {
 			result.Errors["storage"] = existing + "；" + lowSpace
 		} else {
@@ -609,6 +616,37 @@ func constrainedFilesystem(filesystems []Filesystem) *Filesystem {
 		}
 	}
 	return selected
+}
+
+func summarizeStorage(filesystems []Filesystem) *StorageSummary {
+	if len(filesystems) == 0 {
+		return nil
+	}
+	summary := &StorageSummary{}
+	seenDevices := map[string]bool{}
+	for index, filesystem := range filesystems {
+		deviceID := filesystem.Device
+		if deviceID == "" {
+			deviceID = filesystem.ID
+		}
+		if deviceID == "" {
+			deviceID = filesystem.Mountpoint
+		}
+		if deviceID == "" {
+			deviceID = fmt.Sprintf("filesystem-%d", index)
+		}
+		if seenDevices[deviceID] {
+			continue
+		}
+		seenDevices[deviceID] = true
+		summary.TotalBytes += filesystem.TotalBytes
+		summary.UsedBytes += filesystem.UsedBytes
+		summary.AvailableBytes += filesystem.AvailableBytes
+	}
+	if summary.TotalBytes > 0 {
+		summary.UsedPercent = clampPercent(float64(summary.UsedBytes) / float64(summary.TotalBytes) * 100)
+	}
+	return summary
 }
 func capabilities(sample Sample) map[string]bool {
 	return map[string]bool{

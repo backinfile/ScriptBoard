@@ -152,13 +152,15 @@ func TestMonitorMarksDataStaleAfterFifteenSeconds(t *testing.T) {
 	}
 }
 
-func TestMonitorKeepsPartialDataAndSelectsMostConstrainedRelevantVolume(t *testing.T) {
+func TestMonitorKeepsPartialDataAggregatesStorageAndReportsMostConstrainedRelevantVolume(t *testing.T) {
 	base := time.Now().UTC()
 	probe := &sequenceProbe{samples: []RawSample{{At: base,
 		Memory: &Memory{TotalBytes: 1000, AvailableBytes: 400, UsedBytes: 600, UsedPercent: 60},
 		Filesystems: []Filesystem{
-			{ID: "install", Mountpoint: "/opt/scriptboard", UsedPercent: 70, AvailableBytes: 300, Roles: []string{"install"}, Online: true},
-			{ID: "state", Mountpoint: "/state", UsedPercent: 92, AvailableBytes: 80, Roles: []string{"state"}, Online: true},
+			{ID: "install", Device: "disk-install", Mountpoint: "/opt/scriptboard", TotalBytes: 1000, UsedBytes: 700, UsedPercent: 70, AvailableBytes: 300, Roles: []string{"install"}, Online: true},
+			{ID: "state", Device: "disk-state", Mountpoint: "/state", TotalBytes: 1000, UsedBytes: 920, UsedPercent: 92, AvailableBytes: 80, Roles: []string{"state"}, Online: true},
+			{ID: "archive", Device: "disk-archive", Mountpoint: "/archive", TotalBytes: 8000, UsedBytes: 2380, UsedPercent: 29.75, AvailableBytes: 5620, Online: true},
+			{ID: "archive-bind", Device: "disk-archive", Mountpoint: "/mnt/archive", TotalBytes: 8000, UsedBytes: 2380, UsedPercent: 29.75, AvailableBytes: 5620, Online: true},
 		}, Errors: map[string]string{"cpu": "permission denied"},
 	}}}
 	monitor, err := New(openMonitorDB(t), probe, Options{Interval: time.Hour})
@@ -174,8 +176,11 @@ func TestMonitorKeepsPartialDataAndSelectsMostConstrainedRelevantVolume(t *testi
 	if overview.Current.Memory == nil || overview.Current.Memory.UsedPercent != 60 {
 		t.Fatalf("memory lost after CPU failure: %#v", overview.Current)
 	}
-	if overview.Current.Storage == nil || overview.Current.Storage.ID != "state" {
+	if overview.Current.Storage == nil || overview.Current.Storage.TotalBytes != 10000 || overview.Current.Storage.UsedBytes != 4000 || overview.Current.Storage.AvailableBytes != 6000 || overview.Current.Storage.UsedPercent != 40 {
 		t.Fatalf("storage summary = %#v", overview.Current.Storage)
+	}
+	if overview.Current.CriticalStorage == nil || overview.Current.CriticalStorage.ID != "state" {
+		t.Fatalf("critical storage = %#v", overview.Current.CriticalStorage)
 	}
 	if overview.Errors["cpu"] == "" {
 		t.Fatalf("errors = %#v", overview.Errors)

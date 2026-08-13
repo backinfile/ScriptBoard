@@ -6155,7 +6155,7 @@
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const incoming = page?.querySelector("[data-container-page]");
         if (!incoming) throw new Error("Container snapshot was not present in the response.");
-        for (const selector of ["[data-container-status-tabs]", ".container-toolbar", "[data-container-table-shell]"]) {
+        for (const selector of ["[data-container-status-tabs]", ".container-toolbar", ".container-result-summary", "[data-container-table-shell]"]) {
           const current = root.querySelector(selector), next = incoming.querySelector(selector);
           if (current && next) current.replaceWith(next);
         }

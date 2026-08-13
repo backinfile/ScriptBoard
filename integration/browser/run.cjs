@@ -689,6 +689,77 @@ async function assertApplicationMonitoring(page, baseURL) {
   await page.setViewportSize({ width: 1440, height: 1000 });
 }
 
+async function assertContainerAndKubernetesMonitoring(page, baseURL) {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(`${baseURL}/monitor/containers`);
+  const containers = page.locator("[data-container-page]");
+  await containers.waitFor();
+  assert.equal(await containers.locator(".container-fact-strip").count(), 1, "Container snapshot does not use the shared fact strip");
+  assert.equal(await containers.locator(".container-section-heading .section-index").count(), 2, "Container sections do not use the applications hierarchy");
+  const containerHeadingSize = Number.parseFloat(await containers.locator(".container-heading h1").evaluate(element => getComputedStyle(element).fontSize));
+  assert.ok(containerHeadingSize <= 43, `Container title is still oversized: ${containerHeadingSize}px`);
+  const containerControls = await containers.locator(".container-inventory-controls").evaluate(element => {
+    const search = element.querySelector('input[type="search"]').getBoundingClientRect();
+    const statuses = element.querySelector(".container-status-tabs").getBoundingClientRect();
+    return { searchLeft: search.left, statusesLeft: statuses.left };
+  });
+  assert.ok(containerControls.searchLeft < containerControls.statusesLeft, JSON.stringify(containerControls));
+  await containers.locator('[data-container-status-link][href*="status=running"]').click();
+  await page.waitForFunction(() => new URL(location.href).searchParams.get("status") === "running");
+  await containers.locator('.container-toolbar input[type="search"]').fill("api");
+  await Promise.all([
+    page.waitForNavigation(),
+    containers.locator('.container-toolbar button[type="submit"]').click(),
+  ]);
+  assert.match(await containers.locator(".container-result-summary").textContent(), /0 \/ 0/);
+  await containers.locator('[data-container-status-link]:not([href*="status="])').click();
+  await page.waitForFunction(() => !new URL(location.href).searchParams.has("status") && document.querySelectorAll(".container-running-row").length === 1);
+  assert.match(await containers.locator(".container-result-summary").textContent(), /1 \/ 1/, "Container partial navigation left a stale result summary");
+  await assertNoHorizontalOverflow(page, "Containers desktop");
+  await saveSnapshot(page, "containers");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await containers.waitFor();
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.locator(".skip-link").evaluate(element => {
+    element.style.display = "none";
+  });
+  assert.equal(await containers.locator(".container-table thead").evaluate(element => getComputedStyle(element).display), "none");
+  assert.equal(await containers.locator(".container-table-identity").first().evaluate(element => getComputedStyle(element, "::before").display), "none");
+  assert.equal(await containers.locator(".container-pin-row__open>span").nth(2).isVisible(), true, "Pinned container metrics are hidden on mobile");
+  const firstContainerRow = containers.locator(".container-running-row").first();
+  const mobileIdentitySpacing = await firstContainerRow.evaluate(element => {
+    const pin = element.querySelector(".container-table-pin").getBoundingClientRect();
+    const name = element.querySelector(".container-open strong").getBoundingClientRect();
+    return { pinRight: pin.right, nameLeft: name.left };
+  });
+  assert.ok(mobileIdentitySpacing.pinRight <= mobileIdentitySpacing.nameLeft, JSON.stringify(mobileIdentitySpacing));
+  const containerTouchTargets = await containers.locator(".container-table .icon-button,.container-table .action-menu>summary").evaluateAll(elements => elements.map(element => {
+    const bounds = element.getBoundingClientRect();
+    return { width: bounds.width, height: bounds.height };
+  }));
+  assert.ok(containerTouchTargets.every(size => size.width >= 44 && size.height >= 44), JSON.stringify(containerTouchTargets));
+  await assertNoHorizontalOverflow(page, "Containers mobile");
+  await saveSnapshot(page, "containers-mobile");
+
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(`${baseURL}/monitor/kubernetes`);
+  const kubernetes = page.locator("[data-kubernetes-page]");
+  await kubernetes.waitFor();
+  assert.equal(await kubernetes.locator(".kubernetes-heading .page-eyebrow").count(), 1, "Kubernetes title is missing the monitor context");
+  const kubernetesHeadingSize = Number.parseFloat(await kubernetes.locator(".kubernetes-heading h1").evaluate(element => getComputedStyle(element).fontSize));
+  assert.ok(kubernetesHeadingSize <= 43, `Kubernetes title is still oversized: ${kubernetesHeadingSize}px`);
+  const onboarding = kubernetes.locator(".kubernetes-onboarding");
+  if (await onboarding.count()) {
+    assert.equal(await onboarding.evaluate(element => getComputedStyle(element).backgroundImage), "none", "Kubernetes onboarding still uses a decorative gradient");
+  } else {
+    assert.equal(await kubernetes.locator(".kubernetes-facts").count(), 1, "Kubernetes cluster facts are missing");
+  }
+  await assertNoHorizontalOverflow(page, "Kubernetes desktop");
+  await saveSnapshot(page, "kubernetes");
+}
+
 async function assertLiveLogViewer(page, fixture) {
   const { baseURL } = fixture;
   await page.goto(hostFileURL(fixture.baseURL, "/resources/files/log", path.join(fixture.hostRoot, "data", "exports", "service.log")));
@@ -1339,6 +1410,7 @@ async function assertExternalInterfaces(page, fixture) {
     }
 
     await assertApplicationMonitoring(page, fixture.baseURL);
+    await assertContainerAndKubernetesMonitoring(page, fixture.baseURL);
     await assertLiveLogViewer(page, fixture);
     await assertWebsiteMonitoring(page, fixture.baseURL);
     await assertStatusDisplaySettings(page, fixture.baseURL);

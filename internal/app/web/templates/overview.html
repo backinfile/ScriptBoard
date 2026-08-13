@@ -55,9 +55,9 @@
       <p data-metric-detail>{{if .Current.Memory}}{{humanBytes .Current.Memory.UsedBytes}} / {{humanBytes .Current.Memory.TotalBytes}} · {{t .Locale "overview.available"}} {{humanBytes .Current.Memory.AvailableBytes}}{{else}}{{t .Locale "overview.collecting"}}{{end}}</p>
       <svg viewBox="0 0 1000 80" preserveAspectRatio="none" role="img" aria-label="{{t .Locale "overview.memory_history"}}" data-metric-chart="memory.usedPercent"><path class="chart-grid" d="M0 79H1000 M0 40H1000 M0 1H1000"></path><path class="chart-peak" data-chart-peak></path><path class="chart-average" data-chart-average></path></svg>
     </article>
-    <article class="measurement-band {{if and .Current.Storage (lt .Current.Storage.AvailableBytes 104857600)}}measurement-band--danger{{end}}" data-metric-card="storage">
+    <article class="measurement-band {{if and .Current.CriticalStorage (lt .Current.CriticalStorage.AvailableBytes 104857600)}}measurement-band--danger{{end}}" data-metric-card="storage">
       <header><span data-lucide="hard-drive" aria-hidden="true"></span><h3>{{t .Locale "overview.storage"}}</h3><strong data-metric-value>{{if .Current.Storage}}{{percent .Current.Storage.UsedPercent}}{{else}}—{{end}}</strong></header>
-      <p data-metric-detail>{{if .Current.Storage}}{{.Current.Storage.Mountpoint}} · {{t .Locale "overview.available"}} {{humanBytes .Current.Storage.AvailableBytes}}{{else}}{{t .Locale "overview.collecting"}}{{end}}</p>
+      <p data-metric-detail>{{if .Current.Storage}}{{t .Locale "overview.used"}} {{humanBytes .Current.Storage.UsedBytes}} / {{humanBytes .Current.Storage.TotalBytes}} · {{t .Locale "overview.available"}} {{humanBytes .Current.Storage.AvailableBytes}}{{else}}{{t .Locale "overview.collecting"}}{{end}}</p>
       <svg viewBox="0 0 1000 80" preserveAspectRatio="none" role="img" aria-label="{{t .Locale "overview.storage_history"}}" data-metric-chart="storage.usedPercent"><path class="chart-grid" d="M0 79H1000 M0 40H1000 M0 1H1000"></path><path class="chart-peak" data-chart-peak></path><path class="chart-average" data-chart-average></path></svg>
     </article>
     <article class="measurement-band" data-metric-card="network">

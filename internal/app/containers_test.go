@@ -64,7 +64,9 @@ func TestContainersPageListsAllStatesSortsInHeadersAndGuardsOperations(t *testin
 		[]byte("Api-Prod"), []byte("worker"), []byte("ghcr.io/acme/api:v2"),
 		[]byte(`href="/monitor/containers?direction=asc&amp;sort=name"`),
 		[]byte(`href="/monitor/containers?direction=desc&amp;sort=state"`),
-		[]byte(`class="container-inventory-controls"`), []byte(`data-container-status-link`), []byte(`data-container-operation`),
+		[]byte(`class="fact-strip container-fact-strip"`), []byte(`class="section-index"`),
+		[]byte(`class="container-inventory-controls"`), []byte(`class="container-running-row"`),
+		[]byte(`data-label="CPU"`), []byte(`data-container-status-link`), []byte(`data-container-operation`),
 	} {
 		if response.StatusCode != http.StatusOK || !bytes.Contains(page, expected) {
 			t.Fatalf("container page status=%d missing %q: %s", response.StatusCode, expected, page)
@@ -125,6 +127,7 @@ func TestMonitorTabsReplaceOnlyTheSnapshotAndRestoreScroll(t *testing.T) {
 	}
 	for _, expected := range [][]byte{
 		[]byte(`"[data-container-status-link],.container-sort-link"`),
+		[]byte(`".container-result-summary"`),
 		[]byte(`".kubernetes-status-tabs a,.kubernetes-sort-link"`),
 		[]byte(`fetchDocument(destination, { cache: "no-store"`),
 		[]byte(`fetchDocument(snapshotLink.href, { cache: "no-store"`),

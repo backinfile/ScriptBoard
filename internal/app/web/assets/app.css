@@ -6006,10 +6006,10 @@ body.custom-dashboard-monitor .navigation-progress>span[aria-hidden=true]{backgr
 /* Kubernetes monitor — one cluster, one calm operational ledger. */
 .kubernetes-page,.kubernetes-connection-page{--k8s-signal:#2f5ad7;--k8s-violet:#7656d8;max-width:1540px}
 .kubernetes-heading{align-items:flex-end}
-.kubernetes-heading h1{max-width:13ch;font-size:clamp(2.4rem,5vw,5.1rem);line-height:.93;letter-spacing:-.065em}
+.kubernetes-heading h1{max-width:none;font-size:clamp(1.8rem,3vw,2.5rem);line-height:1.1;letter-spacing:-.025em}
 .kubernetes-heading>.button{margin-bottom:4px}
-.kubernetes-onboarding{position:relative;display:grid;min-height:360px;grid-template-columns:120px minmax(0,1fr) auto;gap:38px;align-items:center;padding:54px;border:1px solid var(--rule-strong);overflow:hidden;background:linear-gradient(125deg,var(--surface) 0 67%,var(--accent-soft) 67%)}
-.kubernetes-onboarding::after{position:absolute;right:-80px;bottom:-180px;width:420px;height:420px;border:1px solid var(--accent-border);border-radius:50%;content:""}
+.kubernetes-onboarding{position:relative;display:grid;min-height:0;grid-template-columns:48px minmax(0,1fr) auto;gap:20px;align-items:center;padding:28px 0;border:1px solid var(--rule-strong);overflow:visible;background:transparent}
+.kubernetes-onboarding::after{display:none}
 .kubernetes-onboarding__mark{display:grid;width:104px;height:104px;place-items:center;color:var(--accent);background:var(--accent-soft);border:1px solid var(--accent-border);border-radius:50%}
 .kubernetes-onboarding__mark svg{width:42px;height:42px}
 .kubernetes-onboarding h2{max-width:18ch;margin:8px 0 12px;font-size:clamp(1.8rem,3vw,3.2rem);line-height:1;letter-spacing:-.045em}
@@ -6030,10 +6030,10 @@ body.custom-dashboard-monitor .navigation-progress>span[aria-hidden=true]{backgr
 .kubernetes-connection-layout{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(280px,.7fr);gap:72px;align-items:start}.kubernetes-connection-form>section{display:grid;grid-template-columns:minmax(210px,.6fr) minmax(0,1fr);gap:28px;padding:28px 0;border-top:1px solid var(--rule-strong)}.kubernetes-connection-form section>header{display:block}.kubernetes-connection-form h2{margin:0;font-size:1rem}.kubernetes-connection-form section>header p{margin:6px 0 0;color:var(--muted);font-size:.72rem;line-height:1.55}.kubernetes-connection-form section>label{grid-column:2;display:grid;gap:7px;margin-top:-12px;color:var(--ink);font-size:.72rem;font-weight:650}.kubernetes-connection-form section>label+label{margin-top:0}.kubernetes-connection-form input[type=text],.kubernetes-connection-form input:not([type]){width:100%;min-height:44px;padding:10px 12px;color:var(--ink);background:var(--surface);border:1px solid var(--rule-strong);border-radius:var(--control-radius);font-family:var(--font-mono)}.kubernetes-mode-options{grid-column:2;display:grid;grid-template-columns:1fr 1fr;gap:9px}.kubernetes-mode-options label{cursor:pointer}.kubernetes-mode-options input{position:absolute;opacity:0;pointer-events:none}.kubernetes-mode-options label>span{display:grid;min-height:128px;align-content:start;padding:17px;border:1px solid var(--rule-strong);border-radius:var(--control-radius)}.kubernetes-mode-options input:checked+span{color:var(--accent);background:var(--accent-soft);border-color:var(--accent)}.kubernetes-mode-options b{width:19px;height:19px;margin-bottom:16px}.kubernetes-mode-options strong,.kubernetes-mode-options small{display:block}.kubernetes-mode-options strong{font-size:.78rem}.kubernetes-mode-options small{margin-top:6px;color:var(--muted);font-size:.68rem;line-height:1.5}.kubernetes-connection-form>footer{display:flex;justify-content:flex-end;gap:8px;padding-top:20px;border-top:1px solid var(--rule-strong)}.kubernetes-connection-aside{position:sticky;top:32px;padding:28px;background:var(--canvas);border-top:2px solid var(--accent)}.kubernetes-connection-aside h2{margin:0;font-size:1.25rem}.kubernetes-security-note{display:grid;grid-template-columns:20px 1fr;gap:10px;margin-top:25px;padding-top:20px;border-top:1px solid var(--rule)}.kubernetes-security-note svg{color:var(--success)}.kubernetes-security-note p{margin:0;color:var(--muted);font-size:.68rem;line-height:1.55}.kubernetes-test-result{margin-top:22px;padding-top:19px;border-top:1px solid var(--rule)}.kubernetes-test-result>strong{font-size:.73rem}.kubernetes-test-result ul{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0;padding:0;list-style:none}.kubernetes-test-result li{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:.68rem}.kubernetes-test-result li svg{width:14px;height:14px}.kubernetes-test-result li[data-supported=true]{color:var(--success)}.kubernetes-test-result>p{margin:10px 0 0;color:var(--muted);font-size:.68rem;line-height:1.5}
 @media(max-width:1100px){.kubernetes-connection-layout{gap:34px}.kubernetes-facts>div{padding:20px 18px}.kubernetes-workload-controls{grid-template-columns:1fr}.kubernetes-workload-controls .monitor-status-switch{justify-self:start}}
 @media(max-width:800px){.kubernetes-onboarding{grid-template-columns:80px 1fr;padding:32px}.kubernetes-onboarding>.button{grid-column:2;justify-self:start}.kubernetes-control-line{align-items:flex-start;flex-direction:column}.kubernetes-facts{grid-template-columns:1fr 1fr}.kubernetes-facts>div:nth-child(2){border-right:0}.kubernetes-toolbar{grid-template-columns:1fr 1fr}.kubernetes-toolbar>label{grid-column:1/-1}.kubernetes-connection-layout{grid-template-columns:1fr}.kubernetes-connection-aside{position:static}.kubernetes-node-list>article{grid-template-columns:28px 1fr auto}.kubernetes-node-list dl{grid-column:2/-1}}
-@media(max-width:560px){.kubernetes-heading h1{font-size:2.7rem}.kubernetes-onboarding{grid-template-columns:1fr;gap:20px;padding:26px}.kubernetes-onboarding>.button{grid-column:1}.kubernetes-onboarding__mark{width:72px;height:72px}.kubernetes-facts{grid-template-columns:1fr 1fr}.kubernetes-facts>div{min-height:110px}.kubernetes-toolbar{grid-template-columns:1fr}.kubernetes-toolbar>label{grid-column:auto}.kubernetes-connection-form>section{grid-template-columns:1fr}.kubernetes-connection-form section>label,.kubernetes-mode-options{grid-column:1;margin-top:0}.kubernetes-mode-options{grid-template-columns:1fr}.kubernetes-connection-form>footer{align-items:stretch;flex-direction:column-reverse}.kubernetes-connection-form>footer .button{width:100%}.kubernetes-detail-facts{grid-template-columns:1fr 1fr}}
+@media(max-width:560px){.kubernetes-heading h1{font-size:2.4rem}.kubernetes-onboarding{grid-template-columns:1fr;gap:20px;padding:26px}.kubernetes-onboarding>.button{grid-column:1}.kubernetes-onboarding__mark{width:72px;height:72px}.kubernetes-facts{grid-template-columns:1fr 1fr}.kubernetes-facts>div{min-height:110px}.kubernetes-toolbar{grid-template-columns:1fr}.kubernetes-toolbar>label{grid-column:auto}.kubernetes-connection-form>section{grid-template-columns:1fr}.kubernetes-connection-form section>label,.kubernetes-mode-options{grid-column:1;margin-top:0}.kubernetes-mode-options{grid-template-columns:1fr}.kubernetes-connection-form>footer{align-items:stretch;flex-direction:column-reverse}.kubernetes-connection-form>footer .button{width:100%}.kubernetes-detail-facts{grid-template-columns:1fr 1fr}}
 
 /* Container monitor */
-.container-page{max-width:1540px}.container-heading{align-items:flex-end}.container-heading h1{max-width:12ch;font-size:clamp(2.4rem,5vw,5.1rem);line-height:.93;letter-spacing:-.04em}
+.container-page{max-width:1540px}.container-heading{align-items:flex-start}.container-heading h1{max-width:none;font-size:clamp(1.8rem,3vw,2.5rem);line-height:1.1;letter-spacing:-.025em}
 .container-engine-line{display:grid;grid-template-columns:minmax(230px,1.2fr) minmax(420px,1.5fr) auto;gap:28px;align-items:center;margin-bottom:48px;padding:15px 0;border-top:1px solid var(--rule-strong);border-bottom:1px solid var(--rule-strong)}.container-engine-line__identity{display:flex;min-width:0;align-items:center;gap:12px}.container-engine-line__identity strong,.container-engine-line__identity small{display:block}.container-engine-line__identity strong{font-size:.86rem}.container-engine-line__identity small{margin-top:3px;color:var(--muted);font-size:.67rem}.container-engine-line dl{display:grid;grid-template-columns:repeat(4,1fr);margin:0}.container-engine-line dl>div{padding:2px 18px;border-left:1px solid var(--rule)}.container-engine-line dt{color:var(--faint);font-size:.62rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase}.container-engine-line dd{margin:5px 0 0;font:650 1.45rem/1 var(--font-display)}.container-engine-line dd[data-tone=attention]{color:var(--danger)}.container-engine-line>time{color:var(--faint);font:.65rem/1.4 var(--font-mono)}
 .container-alert{display:grid;grid-template-columns:22px minmax(0,1fr);gap:12px;margin:-24px 0 40px;padding:14px 16px;color:var(--danger);background:var(--danger-soft);border:1px solid var(--danger-border)}.container-alert svg{width:19px}.container-alert strong{font-size:.78rem}.container-alert p{margin:4px 0 0;color:var(--ink);font:.7rem/1.55 var(--font-mono);overflow-wrap:anywhere}
 .container-section{margin-top:54px}.container-section-heading{align-items:flex-end;margin-bottom:18px}.container-section-heading h2{margin:0;font-size:1.55rem;letter-spacing:-.03em}
@@ -6044,4 +6044,141 @@ body.custom-dashboard-monitor .navigation-progress>span[aria-hidden=true]{backgr
 .container-confirm-page{max-width:900px}.container-confirm{display:grid;grid-template-columns:48px minmax(0,1fr);gap:24px;margin-top:44px;padding:42px 0;border-top:1px solid var(--rule-strong);border-bottom:1px solid var(--rule-strong)}.container-confirm__mark{width:32px;height:32px;color:var(--warning)}.container-confirm h1{max-width:18ch;margin:5px 0 12px;font-size:clamp(2rem,5vw,3.8rem);line-height:.96;letter-spacing:-.04em}.container-confirm p{max-width:62ch;color:var(--muted);line-height:1.65}.container-confirm dl{display:grid;grid-template-columns:1fr 1fr;margin:28px 0 0;border-top:1px solid var(--rule)}.container-confirm dl>div{padding:16px 0;border-bottom:1px solid var(--rule)}.container-confirm dl>div+div{padding-left:20px;border-left:1px solid var(--rule)}.container-confirm dt{color:var(--faint);font-size:.62rem;text-transform:uppercase}.container-confirm dd{margin:6px 0 0;font-weight:650}.container-confirm>form{display:flex;grid-column:2;justify-content:flex-end;gap:8px;padding-top:8px}
 @media(max-width:1000px){.container-engine-line{grid-template-columns:1fr}.container-engine-line dl>div:first-child{border-left:0}.container-engine-line>time{justify-self:end}.container-pin-row__open{grid-template-columns:minmax(230px,1fr) repeat(3,minmax(90px,.4fr))}}
 @media(max-width:760px){.container-heading{align-items:flex-start}.container-engine-line dl{grid-template-columns:repeat(2,1fr)}.container-engine-line dl>div{padding:10px 14px;border-bottom:1px solid var(--rule)}.container-engine-line dl>div:nth-child(odd){border-left:0}.container-pin-row__open{grid-template-columns:minmax(0,1fr) 90px}.container-pin-row__open>span:nth-child(n+3){display:none}.container-inventory-controls{grid-template-columns:1fr}.container-status-tabs{justify-self:start}.container-toolbar{grid-template-columns:1fr auto}.container-toolbar>span{grid-column:1/-1;padding-left:0}.container-detail-facts{grid-template-columns:1fr 1fr}.container-detail-facts>div:nth-child(3n){border-right:1px solid var(--rule)}.container-detail-facts>div:nth-child(2n){border-right:0}}
-@media(max-width:520px){.container-heading h1{font-size:2.7rem}.container-engine-line{gap:14px}.container-engine-line>time{justify-self:start}.monitor-status-switch{display:flex}.monitor-status-switch a{flex:1;padding-right:10px;padding-left:10px}.container-toolbar{grid-template-columns:1fr}.container-toolbar .button{width:100%}.container-pin-row{grid-template-columns:minmax(0,1fr) 46px}.container-pin-row__open{grid-template-columns:1fr;padding-left:10px}.container-pin-row__open>span:not(.container-pin-row__identity){display:none}.container-drawer>header,.container-drawer__body{padding-right:16px;padding-left:16px}.container-detail-facts{grid-template-columns:1fr}.container-detail-facts>div{border-right:0!important}.container-detail-list>div{grid-template-columns:1fr}.container-confirm{grid-template-columns:1fr;padding:28px 0}.container-confirm>form{grid-column:1;align-items:stretch;flex-direction:column-reverse}.container-confirm>form .button{width:100%}}
+@media(max-width:520px){.container-heading h1{font-size:2.4rem}.container-engine-line{gap:14px}.container-engine-line>time{justify-self:start}.monitor-status-switch{display:flex}.monitor-status-switch a{flex:1;padding-right:10px;padding-left:10px}.container-toolbar{grid-template-columns:1fr}.container-toolbar .button{width:100%}.container-pin-row{grid-template-columns:minmax(0,1fr) 46px}.container-pin-row__open{grid-template-columns:1fr;padding-left:10px}.container-pin-row__open>span:not(.container-pin-row__identity){display:none}.container-drawer>header,.container-drawer__body{padding-right:16px;padding-left:16px}.container-detail-facts{grid-template-columns:1fr}.container-detail-facts>div{border-right:0!important}.container-detail-list>div{grid-template-columns:1fr}.container-confirm{grid-template-columns:1fr;padding:28px 0}.container-confirm>form{grid-column:1;align-items:stretch;flex-direction:column-reverse}.container-confirm>form .button{width:100%}}
+
+/* Applications-led monitor alignment: shared hierarchy, flat facts, compact records. */
+.container-heading,.kubernetes-heading{align-items:flex-start}
+.container-heading h1,.kubernetes-heading h1{max-width:none;font-size:clamp(1.8rem,3vw,2.5rem);line-height:1.1;letter-spacing:-.025em}
+.container-heading p:last-child,.kubernetes-heading p:last-child{max-width:68ch;margin-bottom:0;color:var(--muted)}
+.kubernetes-heading>.button{align-self:flex-end;margin-bottom:0}
+
+.container-fact-strip{grid-template-columns:1.35fr repeat(4,minmax(0,1fr));margin-bottom:44px;border-top:1px solid var(--rule-strong);border-bottom:1px solid var(--rule)}
+.container-fact-strip>div{min-width:0;padding:12px 18px 13px 0}
+.container-fact-strip>div+div{padding-left:18px;border-left:1px solid var(--rule)}
+.container-fact-strip dt{font-weight:650;letter-spacing:.06em;text-transform:uppercase}
+.container-fact-strip dd{overflow:hidden;color:var(--ink);font:620 .86rem/1.4 var(--font-mono);text-overflow:ellipsis;white-space:nowrap}
+.container-fact-strip__engine dd{display:flex;align-items:center;gap:8px}
+.container-fact-strip__engine dd[data-state=connected]{color:var(--success)}
+.container-fact-strip__engine dd[data-state=unavailable],.container-fact-strip dd[data-tone=attention]{color:var(--danger)}
+.container-fact-strip__engine small{display:block;margin-top:2px;overflow:hidden;color:var(--muted);font:450 .64rem/1.35 var(--font-mono);text-overflow:ellipsis;white-space:nowrap}
+.container-alert{margin:-20px 0 40px}
+
+.container-section{margin-top:0}
+.container-section+.container-section{margin-top:52px}
+.container-section-heading{min-height:74px;align-items:flex-start;gap:30px;margin-bottom:0;padding-bottom:14px;border-bottom:1px solid var(--rule-strong)}
+.container-section-heading h2{margin:1px 0 3px;font-size:1.125rem;letter-spacing:0}
+.container-section-heading p{margin-bottom:0;color:var(--muted);font-size:.8rem}
+.container-section-heading .section-index{color:var(--accent);font:650 .66rem/1.2 var(--font-mono);letter-spacing:.08em;text-transform:uppercase}
+.container-pin-list{border-top:0;border-bottom:1px solid var(--rule-strong)}
+.container-pin-row{grid-template-columns:minmax(0,1fr) 52px}
+.container-pin-row:last-child{border-bottom:0}
+.container-pin-row__open{min-height:102px;grid-template-columns:minmax(280px,1.15fr) minmax(110px,.45fr) minmax(90px,.35fr) minmax(110px,.4fr);gap:18px;padding:16px 14px}
+.container-pin-row__open:hover{background:var(--surface)}
+.container-pin-row__open:focus-visible{position:relative;z-index:1;outline:2px solid var(--accent);outline-offset:-2px}
+.container-pin-row__identity{grid-template-columns:34px minmax(0,1fr);gap:12px;align-items:center}
+.container-pin-row__identity>svg{width:34px;height:34px;padding:7px;color:var(--accent);background:var(--accent-soft);border:1px solid var(--rule);border-radius:5px}
+.container-pin-row__identity strong{font-size:.88rem}
+.container-pin-row__identity code{margin-top:2px;font-size:.72rem}
+.container-pin-row__open>span:not(.container-pin-row__identity) small{margin-bottom:3px;color:var(--muted);font-size:.72rem;font-weight:620;letter-spacing:.04em}
+.container-pin-row__open>span:not(.container-pin-row__identity) b{font:620 .82rem/1.4 var(--font-mono)}
+.container-pin-row>.action-menu{align-self:center;justify-self:end;margin-right:8px}
+
+.container-inventory-controls{grid-template-columns:minmax(280px,1fr) auto;gap:10px 12px;align-items:start;margin:0 0 8px;padding-top:20px}
+.container-toolbar{grid-template-columns:minmax(240px,1fr) auto;margin:0}
+.container-inventory-controls .container-status-tabs{justify-self:end;margin:0}
+.container-result-summary{grid-column:1/-1;color:var(--muted);font-size:.7rem;text-align:right}
+.container-table-shell{border-top:1px solid var(--rule-strong)}
+.container-table{min-width:1000px}
+.container-table th{height:42px;padding:0 12px;font-size:.68rem}
+.container-table th[aria-sort]{color:var(--ink);background:var(--accent-soft)}
+.container-table td{height:80px;padding:12px;color:var(--muted);font-size:.76rem}
+.container-running-row:hover{background:var(--surface)}
+.container-table-pin form{margin:0;padding:0;border:0}
+.container-table-pin .icon-button.is-selected{color:var(--accent);background:var(--accent-soft);border-color:var(--rule-strong)}
+.container-open{display:grid;min-width:220px;grid-template-columns:28px minmax(0,1fr);gap:10px;align-items:center}
+.container-open>svg{width:18px;height:18px;color:var(--ink)}
+.container-open>span{min-width:0}
+.container-open strong{font-size:.82rem}
+.container-open small{margin-top:2px;font-size:.68rem}
+
+.kubernetes-onboarding{min-height:0;grid-template-columns:48px minmax(0,1fr) auto;gap:20px;padding:28px 0;overflow:visible;background:transparent;border-right:0;border-left:0}
+.kubernetes-onboarding::after{display:none}
+.kubernetes-onboarding__mark{width:42px;height:42px;color:var(--accent);background:var(--accent-soft);border:1px solid var(--rule);border-radius:5px}
+.kubernetes-onboarding__mark svg{width:20px;height:20px}
+.kubernetes-onboarding h2{max-width:none;margin:0 0 5px;font-size:1.125rem;line-height:1.25;letter-spacing:0}
+.kubernetes-onboarding p:not(.section-index){margin:0;line-height:1.55}
+.kubernetes-control-line{display:grid;grid-template-columns:minmax(250px,1.35fr) repeat(3,minmax(0,1fr));gap:0;align-items:stretch;margin-bottom:22px;padding:0}
+.kubernetes-cluster-identity{min-width:0;padding:12px 18px 13px 0}
+.kubernetes-cluster-identity strong{font-size:.86rem}
+.kubernetes-control-line dl{display:contents}
+.kubernetes-control-line dl div{min-width:0;padding:12px 18px 13px;border-left:1px solid var(--rule)}
+.kubernetes-control-line dt{font-size:.68rem;font-weight:650;letter-spacing:.06em}
+.kubernetes-control-line dd{margin:3px 0 0;overflow:hidden;font:620 .8rem/1.4 var(--font-mono);text-overflow:ellipsis;white-space:nowrap}
+.kubernetes-facts{grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:44px;border-bottom:1px solid var(--rule)}
+.kubernetes-facts>div{min-height:0;padding:12px 18px 13px 0}
+.kubernetes-facts>div+div{padding-left:18px}
+.kubernetes-facts dt{font-size:.68rem;font-weight:650;letter-spacing:.06em}
+.kubernetes-facts dd{margin:3px 0 0;font:620 .86rem/1.4 var(--font-mono);letter-spacing:0}
+.kubernetes-facts dd span{color:var(--muted);font-size:1em;letter-spacing:0}
+.kubernetes-facts small{font-size:.64rem}
+.kubernetes-section{margin-top:0}
+.kubernetes-section+.kubernetes-section{margin-top:52px}
+.kubernetes-section-heading{min-height:74px;align-items:flex-start;margin-bottom:0;padding-bottom:14px;border-bottom:1px solid var(--rule-strong)}
+.kubernetes-section-heading h2{margin:1px 0 3px;font-size:1.125rem;letter-spacing:0}
+.kubernetes-section-heading p{margin-bottom:0;color:var(--muted);font-size:.8rem}
+.kubernetes-section-heading .section-index{color:var(--accent);font:650 .66rem/1.2 var(--font-mono);letter-spacing:.08em;text-transform:uppercase}
+.kubernetes-workload-controls{padding-top:20px}
+.kubernetes-node-list{border-top:0}
+
+@media(max-width:900px){
+  .container-fact-strip{grid-template-columns:1.35fr repeat(2,minmax(0,1fr))}
+  .container-fact-strip>div:nth-child(4),.container-fact-strip>div:nth-child(5){border-top:1px solid var(--rule)}
+  .container-fact-strip>div:nth-child(4){padding-left:0;border-left:0}
+  .container-inventory-controls{grid-template-columns:1fr}
+  .container-inventory-controls .container-status-tabs{justify-self:start}
+  .kubernetes-control-line{grid-template-columns:1.25fr repeat(3,minmax(0,1fr))}
+}
+@media(max-width:760px){
+  .container-fact-strip{grid-template-columns:1fr 1fr}
+  .container-fact-strip>div{padding-left:0!important;border-top:1px solid var(--rule);border-left:0!important}
+  .container-fact-strip>div:nth-child(even){padding-left:14px!important;border-left:1px solid var(--rule)!important}
+  .container-fact-strip__engine{grid-column:1/-1;border-top:0!important}
+  .container-fact-strip>div:nth-child(2){border-top:0}
+  .container-pin-row__open{grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+  .container-pin-row__identity{grid-column:1/-1}
+  .container-pin-row__open>span:not(.container-pin-row__identity){display:block}
+  .container-table-shell{overflow:visible}
+  .container-table,.container-table tbody{display:block;min-width:0}
+  .container-table thead{display:none}
+  .container-table .container-running-row{position:relative;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));padding:14px 0;border-bottom:1px solid var(--rule)}
+  .container-table .container-running-row>td{display:block;height:auto;padding:9px 8px;border:0;font:620 .76rem/1.4 var(--font-mono)}
+  .container-table .container-running-row>td::before{display:block;margin-bottom:3px;color:var(--muted);font:620 .66rem/1.35 var(--font-ui);content:attr(data-label)}
+  .container-table .container-running-row>.container-table-identity{grid-column:1/-1;padding:0 52px 12px 56px}
+  .container-table .container-running-row>.container-table-identity::before,.container-table .container-running-row>.container-table-pin::before,.container-table .container-running-row>.container-table-actions::before{display:none}
+  .container-table .container-running-row>.container-table-pin,.container-table .container-running-row>.container-table-actions{position:absolute;z-index:1;top:14px;padding:0}
+  .container-table .container-running-row>.container-table-pin{left:0}
+  .container-table .container-running-row>.container-table-actions{right:0}
+  .container-table .icon-button,.container-table .action-menu>summary{width:44px;min-height:44px}
+  .container-open{min-width:0;grid-template-columns:28px minmax(0,1fr)}
+  .kubernetes-control-line{grid-template-columns:1fr 1fr}
+  .kubernetes-cluster-identity{grid-column:1/-1;border-bottom:1px solid var(--rule)}
+  .kubernetes-control-line dl div{border-left:0;border-bottom:1px solid var(--rule)}
+  .kubernetes-control-line dl div:nth-child(even){border-left:1px solid var(--rule)}
+  .kubernetes-control-line dl div:last-child{grid-column:1/-1;border-bottom:0;border-left:0}
+}
+@media(max-width:560px){
+  .container-heading h1,.kubernetes-heading h1{font-size:clamp(1.6rem,8vw,2.4rem)}
+  .container-pin-row{grid-template-columns:minmax(0,1fr) 52px}
+  .container-pin-row__open{grid-template-columns:1fr 1fr;padding-left:8px}
+  .container-pin-row__identity{grid-column:1/-1}
+  .container-pin-row__open>span:not(.container-pin-row__identity){display:block}
+  .container-pin-row__open>span:nth-child(4){grid-column:1/-1}
+  .container-inventory-controls .container-status-tabs{width:100%}
+  .container-toolbar{grid-template-columns:1fr}
+  .container-toolbar .button{width:100%}
+  .kubernetes-heading>.button{align-self:flex-start}
+  .kubernetes-onboarding{grid-template-columns:42px minmax(0,1fr);padding:22px 0}
+  .kubernetes-onboarding>.button{grid-column:1/-1;width:100%}
+  .kubernetes-facts{grid-template-columns:1fr 1fr}
+  .kubernetes-facts>div:nth-child(even){border-right:0}
+}

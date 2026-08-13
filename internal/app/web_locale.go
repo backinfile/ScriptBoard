@@ -712,7 +712,7 @@ var webMessages = map[string]localizedMessage{
 	"overview.memory":                               {"内存", "Memory"},
 	"overview.memory_history":                       {"内存使用率历史", "Memory usage history"},
 	"overview.storage":                              {"存储", "Storage"},
-	"overview.storage_history":                      {"关键卷使用率历史", "Critical volume usage history"},
+	"overview.storage_history":                      {"存储使用率历史", "Storage usage history"},
 	"overview.network":                              {"网络", "Network"},
 	"overview.network_history":                      {"网络接收速率历史", "Network receive-rate history"},
 	"overview.available":                            {"可用", "Available"},
