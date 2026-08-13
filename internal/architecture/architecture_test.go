@@ -95,6 +95,34 @@ func TestADRNumbersDoNotAcquireNewDuplicates(t *testing.T) {
 	}
 }
 
+func TestRuntimeCommandsDelegateCompositionToBootstrap(t *testing.T) {
+	root := repositoryRoot(t)
+	for _, command := range []string{"scriptboard", "scriptboard-broker", "scriptboard-runner", "scriptboard-ai-host"} {
+		path := filepath.Join(root, "cmd", command, "main.go")
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		content := string(body)
+		if !strings.Contains(content, `"scriptboard/internal/bootstrap"`) {
+			t.Errorf("%s main does not delegate to bootstrap", command)
+		}
+		forbiddenImports := []string{
+			`internal/privilegebroker`,
+			`internal/runnerhost`,
+			`internal/assistant/runtimehost`,
+		}
+		if command != "scriptboard" {
+			forbiddenImports = append(forbiddenImports, `"database/sql"`, `"modernc.org/sqlite"`)
+		}
+		for _, forbidden := range forbiddenImports {
+			if strings.Contains(content, forbidden) {
+				t.Errorf("%s main composes runtime dependency %q", command, forbidden)
+			}
+		}
+	}
+}
+
 func repositoryRoot(t *testing.T) string {
 	t.Helper()
 	_, filename, _, ok := runtime.Caller(0)

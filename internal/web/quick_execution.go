@@ -5,88 +5,44 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"os"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"scriptboard/internal/hostfiles"
+	"scriptboard/internal/quickrun"
 	"scriptboard/internal/runmanager"
 )
 
-const maxQuickExecutionSourceBytes = 1 << 20
+const maxQuickExecutionSourceBytes = quickrun.MaxSourceBytes
 
-type scriptLanguageOption struct {
-	ID        string
-	Label     string
-	Extension string
-}
+type scriptLanguageOption = quickrun.Language
 
 func platformScriptLanguages() []scriptLanguageOption {
-	if runtime.GOOS == "windows" {
-		return []scriptLanguageOption{
-			{ID: "powershell", Label: "PowerShell", Extension: ".ps1"},
-			{ID: "batch", Label: "Batch", Extension: ".cmd"},
-			{ID: "python", Label: "Python", Extension: ".py"},
-		}
-	}
-	return []scriptLanguageOption{
-		{ID: "shell", Label: "Shell", Extension: ".sh"},
-		{ID: "python", Label: "Python", Extension: ".py"},
-		{ID: "powershell", Label: "PowerShell", Extension: ".ps1"},
-	}
+	return quickrun.PlatformLanguages(runtime.GOOS)
 }
 
 func platformScriptLanguage(id string) (scriptLanguageOption, error) {
-	for _, language := range platformScriptLanguages() {
-		if language.ID == id {
-			return language, nil
-		}
-	}
-	return scriptLanguageOption{}, errors.New("script language is not supported on this host")
+	return quickrun.PlatformLanguage(runtime.GOOS, id)
 }
 
 func validateQuickExecutionSource(source string) error {
-	if source == "" {
-		return errors.New("source is required")
-	}
-	if len([]byte(source)) > maxQuickExecutionSourceBytes {
-		return fmt.Errorf("source exceeds the %d-byte limit", maxQuickExecutionSourceBytes)
-	}
-	if !utf8.ValidString(source) || strings.ContainsRune(source, 0) {
-		return errors.New("source must be valid UTF-8 without NUL bytes")
-	}
-	return nil
+	return quickrun.ValidateSource(source)
 }
 
 func quickExecutionFileName(name, extension string) string {
-	if strings.HasSuffix(strings.ToLower(name), strings.ToLower(extension)) {
-		return name
-	}
-	return name + extension
+	return quickrun.FileName(name, extension)
 }
 
 func quickExecutionFileStem(name, extension string) string {
-	if strings.HasSuffix(strings.ToLower(name), strings.ToLower(extension)) {
-		return name[:len(name)-len(extension)]
-	}
-	return name
+	return quickrun.FileStem(name, extension)
 }
 
 func parseQuickExecutionTimeout(value string) (int, error) {
-	if value == "" {
-		return 0, nil
-	}
-	seconds, err := strconv.Atoi(value)
-	if err != nil || seconds < 0 || seconds > 24*60*60 {
-		return 0, errors.New("timeout must be from 0 to 86400 seconds")
-	}
-	return seconds, nil
+	return quickrun.ParseTimeout(value)
 }
 
 func (a *App) hostDirectories(response http.ResponseWriter, request *http.Request) {

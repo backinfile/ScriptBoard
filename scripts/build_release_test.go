@@ -164,3 +164,31 @@ func TestFormalReleaseDependsOnSecurityGates(t *testing.T) {
 		t.Fatal("security workflow does not execute the fuzz security gate")
 	}
 }
+
+func TestDevelopmentInstallerWorkflowOnlyUsesMetadataContract(t *testing.T) {
+	workflow, err := os.ReadFile("../.github/workflows/release.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(workflow)
+	start := strings.Index(content, "  development-installers:")
+	end := strings.Index(content[start:], "\n  linux-smoke:")
+	if start < 0 || end < 0 {
+		t.Fatal("development installer workflow is missing")
+	}
+	job := content[start : start+end]
+	for _, expected := range []string{
+		"scriptboard-development-windows-amd64-setup.exe --version-json",
+		`$info.version -ne "development"`,
+		`$info.release_build`,
+	} {
+		if !strings.Contains(job, expected) {
+			t.Fatalf("development installer workflow does not assert %q", expected)
+		}
+	}
+	for _, forbidden := range []string{"--extract-to", "service install"} {
+		if strings.Contains(job, forbidden) {
+			t.Fatalf("development installer workflow exceeds its metadata-only contract with %q", forbidden)
+		}
+	}
+}

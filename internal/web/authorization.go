@@ -5,49 +5,40 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"scriptboard/internal/identity"
 )
 
-type userRole string
+type userRole = identity.Role
 
 const (
-	roleAdministrator userRole = "administrator"
-	roleMaintainer    userRole = "maintainer"
-	roleOperator      userRole = "operator"
-	roleViewer        userRole = "viewer"
+	roleAdministrator = identity.RoleAdministrator
+	roleMaintainer    = identity.RoleMaintainer
+	roleOperator      = identity.RoleOperator
+	roleViewer        = identity.RoleViewer
 )
 
-type permission uint8
+type permission = identity.Permission
 
 const (
-	permissionObserve permission = iota
-	permissionManageOperations
-	permissionReadFiles
-	permissionWriteFiles
-	permissionExecute
-	permissionManageExecution
-	permissionReadAudit
-	permissionManageSystem
-	permissionManageUsers
-	permissionManageDatabases
+	permissionObserve          = identity.PermissionObserve
+	permissionManageOperations = identity.PermissionManageOperations
+	permissionReadFiles        = identity.PermissionReadFiles
+	permissionWriteFiles       = identity.PermissionWriteFiles
+	permissionExecute          = identity.PermissionExecute
+	permissionManageExecution  = identity.PermissionManageExecution
+	permissionReadAudit        = identity.PermissionReadAudit
+	permissionManageSystem     = identity.PermissionManageSystem
+	permissionManageUsers      = identity.PermissionManageUsers
+	permissionManageDatabases  = identity.PermissionManageDatabases
 )
 
 func validAssignableRole(role userRole) bool {
-	return role == roleMaintainer || role == roleOperator || role == roleViewer
+	return identity.ValidAssignableRole(role)
 }
 
 func roleAllows(role userRole, required permission) bool {
-	switch role {
-	case roleAdministrator:
-		return true
-	case roleMaintainer:
-		return required != permissionManageUsers
-	case roleOperator:
-		return required == permissionObserve || required == permissionReadFiles || required == permissionExecute
-	case roleViewer:
-		return required == permissionObserve
-	default:
-		return false
-	}
+	return identity.Allows(role, required)
 }
 
 func (a *App) requirePermission(required permission, next http.Handler) http.Handler {
@@ -65,7 +56,7 @@ func (a *App) requirePermission(required permission, next http.Handler) http.Han
 	return declaredRouteHandler{auth: routeAuthSession, permission: required, handler: protected}
 }
 
-const recentAuthenticationWindow = 10 * time.Minute
+const recentAuthenticationWindow = identity.RecentAuthenticationWindow
 
 func (a *App) requireStepUp(required permission, next http.Handler) http.Handler {
 	protected := a.requireSession(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -125,11 +116,7 @@ func (a *App) requireAAL2StepUp(required permission, next http.Handler) http.Han
 }
 
 func recentAuthenticationValid(timestamp int64, now time.Time) bool {
-	if timestamp <= 0 {
-		return false
-	}
-	authenticatedAt := time.Unix(timestamp, 0)
-	return !authenticatedAt.After(now.Add(time.Minute)) && now.Sub(authenticatedAt) <= recentAuthenticationWindow
+	return identity.RecentAuthenticationValid(timestamp, now)
 }
 
 func stepUpReturnTarget(request *http.Request) string {
