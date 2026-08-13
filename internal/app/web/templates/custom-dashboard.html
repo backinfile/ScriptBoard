@@ -19,7 +19,6 @@
 <header class="custom-dashboard-title">
   <div class="custom-dashboard-title__identity">
     <h2>{{.Dashboard.Name}}</h2>
-    <div class="custom-dashboard-title__meta"><code>{{if .Dashboard.Public}}/public/dashboard/{{.Dashboard.Slug}}{{else}}仅自己可见{{end}}</code>{{if .DashboardUpdatedLabel}}<span>{{.DashboardUpdatedLabel}} 更新</span>{{end}}</div>
   </div>
 	{{if and .CanManage (not .PublicView)}}
 	<div class="custom-dashboard-title__controls">

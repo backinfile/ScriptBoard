@@ -3636,6 +3636,7 @@ type quickRunView struct {
 	Valid             bool
 	Locked            bool
 	RecentRuns        []quickRunHistoryView
+	LastStartedAt     time.Time
 	LastDuration      string
 	HasLastDuration   bool
 	ScriptSHA256      string
@@ -3643,9 +3644,12 @@ type quickRunView struct {
 }
 
 type quickRunHistoryView struct {
-	ID     string
-	Status string
-	Icon   string
+	ID          string
+	Status      string
+	Icon        string
+	StartedAt   time.Time
+	Duration    string
+	HasDuration bool
 }
 
 type overlapView struct {

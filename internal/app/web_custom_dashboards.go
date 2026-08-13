@@ -20,7 +20,6 @@ import (
 type customDashboardPageView struct {
 	Locale                                      webLocale
 	CSRFToken                                   string
-	DashboardUpdatedLabel                       string
 	ImportError                                 string
 	Dashboards                                  []customdashboard.Dashboard
 	Dashboard                                   customdashboard.Dashboard
@@ -138,9 +137,6 @@ func (a *App) customDashboardMonitorPage(response http.ResponseWriter, request *
 func (a *App) newCustomDashboardPageView(request *http.Request, dashboard customdashboard.Dashboard, public bool) customDashboardPageView {
 	locale := resolveWebLocale(request)
 	view := customDashboardPageView{Locale: locale, Dashboard: dashboard, PublicView: public}
-	if !dashboard.UpdatedAt.IsZero() {
-		view.DashboardUpdatedLabel = dashboard.UpdatedAt.Local().Format("01-02 15:04")
-	}
 	if monitors, err := a.websiteMonitor.List(request.Context(), websitemonitor.Filter{}); err == nil {
 		view.WebsiteMonitors = monitors
 	}
