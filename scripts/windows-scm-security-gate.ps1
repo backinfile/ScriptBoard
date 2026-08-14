@@ -258,11 +258,14 @@ notification_email_recipient: 'security@example.invalid'
     if ([string]::IsNullOrWhiteSpace($taskToken)) { throw "One-time Run CSRF token was not rendered" }
     $markerPath = Join-Path $runWorkRoot "demand-start-ok.txt"
     $source = "@echo off`r`necho SCM_DEMAND_START_OK>`"$markerPath`"`r`n"
-    $runSubmission = Invoke-WebRequest -Uri "$baseURL/config/quick-runs/one-time" -Method Post -WebSession $webSession -Body @{
+    $runSubmission = Invoke-WebRequest -Uri "$baseURL/config/quick-runs/one-time" -Method Post -WebSession $webSession -MaximumRedirection 0 -SkipHttpErrorCheck -TimeoutSec 15 -Body @{
         csrf_token = $taskToken; working_directory = $runWorkRoot; language = "batch"
         source = $source; timeout_seconds = "30"; arguments = ""
     }
-    Write-Host ("RUN_SUBMISSION: status=" + $runSubmission.StatusCode + " uri=" + $runSubmission.BaseResponse.RequestMessage.RequestUri.AbsolutePath)
+    if ($runSubmission.StatusCode -ne 303 -or -not $runSubmission.Headers.Location) {
+        throw "One-time Run submission did not return a redirect: status=$($runSubmission.StatusCode)"
+    }
+    Write-Host ("RUN_SUBMISSION: status=" + $runSubmission.StatusCode + " location=" + $runSubmission.Headers.Location)
     $runner = Wait-ServiceState "ScriptBoardRunner" "Running"
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     do {
