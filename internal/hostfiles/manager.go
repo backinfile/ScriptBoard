@@ -113,7 +113,7 @@ func Open(options Options) (*Manager, error) {
 		manager.addProtectedPath(absolute)
 		if resolved, err := filepath.EvalSymlinks(absolute); err == nil {
 			manager.addProtectedPath(resolved)
-		} else if !os.IsNotExist(err) {
+		} else if !unresolvableProtectedPath(err) {
 			return nil, fmt.Errorf("resolve protected path %q: %w", path, err)
 		}
 	}
@@ -147,10 +147,17 @@ func (m *Manager) Protect(path string) error {
 	m.addProtectedPath(absolute)
 	if resolved, err := filepath.EvalSymlinks(absolute); err == nil {
 		m.addProtectedPath(resolved)
-	} else if !os.IsNotExist(err) {
+	} else if !unresolvableProtectedPath(err) {
 		return fmt.Errorf("resolve protected path %q: %w", path, err)
 	}
 	return nil
+}
+
+func unresolvableProtectedPath(err error) bool {
+	// A Broker-only path is intentionally unreadable to the Web service. Its
+	// lexical path (and Windows comparison key, which expands accessible 8.3
+	// ancestors) remains protected while the OS ACL supplies the hard boundary.
+	return os.IsNotExist(err) || errors.Is(err, os.ErrPermission)
 }
 
 func (m *Manager) List(path string) ([]Entry, error) {
