@@ -284,6 +284,14 @@ notification_email_recipient: 'security@example.invalid'
     if (-not (Test-Path -LiteralPath $markerPath)) {
         $runnerSnapshot = Get-CimInstance Win32_Service -Filter "Name='ScriptBoardRunner'" -ErrorAction SilentlyContinue
         Write-Warning ("Runner snapshot: " + ($runnerSnapshot | Select-Object Name, State, Status, ExitCode, ProcessId | ConvertTo-Json -Compress))
+        # Pre-launch failures live in Run metadata, so read the detail notice as well as the event file.
+        try {
+            $failedRunPage = Invoke-WebRequest -Uri "$baseURL/history/runs/$submittedRunID" -WebSession $webSession -TimeoutSec 10
+            $failedRunNotice = [Regex]::Match($failedRunPage.Content, 'inline-notice inline-notice--danger[^>]*>.*?<p>(.*?)</p>', [Text.RegularExpressions.RegexOptions]::Singleline)
+            if ($failedRunNotice.Success) {
+                Write-Warning ("Run failure: " + [Net.WebUtility]::HtmlDecode($failedRunNotice.Groups[1].Value))
+            }
+        } catch { Write-Warning ("Unable to read failed Run detail: " + $_.Exception.Message) }
         $diagnosticLogs = @(
             Get-ChildItem -LiteralPath (Join-Path $stateRoot "runs\$submittedRunID") -File -Recurse -ErrorAction SilentlyContinue
             Get-Item -LiteralPath (Join-Path $stateRoot "logs\service.log") -ErrorAction SilentlyContinue
