@@ -229,6 +229,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      # body_path is resolved in the job workspace, so publish must check out
+      # the tagged release notes before creating the GitHub Release.
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: scriptboard-installers
