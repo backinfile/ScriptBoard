@@ -258,17 +258,28 @@ notification_email_recipient: 'security@example.invalid'
     if ([string]::IsNullOrWhiteSpace($taskToken)) { throw "One-time Run CSRF token was not rendered" }
     $markerPath = Join-Path $runWorkRoot "demand-start-ok.txt"
     $source = "@echo off`r`necho SCM_DEMAND_START_OK>`"$markerPath`"`r`n"
-    Invoke-WebRequest -Uri "$baseURL/config/quick-runs/one-time" -Method Post -WebSession $webSession -Body @{
+    $runSubmission = Invoke-WebRequest -Uri "$baseURL/config/quick-runs/one-time" -Method Post -WebSession $webSession -Body @{
         csrf_token = $taskToken; working_directory = $runWorkRoot; language = "batch"
         source = $source; timeout_seconds = "30"; arguments = ""
-    } | Out-Null
+    }
+    Write-Host ("RUN_SUBMISSION: status=" + $runSubmission.StatusCode + " uri=" + $runSubmission.BaseResponse.RequestMessage.RequestUri.AbsolutePath)
     $runner = Wait-ServiceState "ScriptBoardRunner" "Running"
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     do {
         if ((Test-Path -LiteralPath $markerPath) -and (Get-Content -Raw -LiteralPath $markerPath) -match "SCM_DEMAND_START_OK") { break }
         Start-Sleep -Milliseconds 200
     } while ([DateTime]::UtcNow -lt $deadline)
-    if (-not (Test-Path -LiteralPath $markerPath)) { throw "Web could not demand-start Runner and complete a managed Run" }
+    if (-not (Test-Path -LiteralPath $markerPath)) {
+        $runnerSnapshot = Get-CimInstance Win32_Service -Filter "Name='ScriptBoardRunner'" -ErrorAction SilentlyContinue
+        Write-Warning ("Runner snapshot: " + ($runnerSnapshot | Select-Object Name, State, Status, ExitCode, ProcessId | ConvertTo-Json -Compress))
+        $diagnosticLogs = Get-ChildItem -LiteralPath (Join-Path $stateRoot "logs") -File -Recurse -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 5
+        foreach ($diagnosticLog in $diagnosticLogs) {
+            Write-Warning ("Last lines from " + $diagnosticLog.FullName + ":")
+            Get-Content -LiteralPath $diagnosticLog.FullName -Tail 80 -ErrorAction SilentlyContinue | ForEach-Object { Write-Warning $_ }
+        }
+        throw "Web could not demand-start Runner and complete a managed Run"
+    }
 
     Start-Service -Name "ScriptBoardAI"
     $ai = Wait-ServiceState "ScriptBoardAI" "Running"
