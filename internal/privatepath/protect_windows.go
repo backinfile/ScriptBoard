@@ -18,6 +18,19 @@ func ProtectDirectory(path string) error {
 		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION,
 	)
 	if err != nil {
+		// A managed service can have READ_CONTROL through its per-service SID
+		// while Windows still refuses the combined owner query. The DACL alone
+		// contains everything needed to recognize an installer-hardened path.
+		if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+			daclDescriptor, daclErr := windows.GetNamedSecurityInfo(
+				path,
+				windows.SE_FILE_OBJECT,
+				windows.DACL_SECURITY_INFORMATION,
+			)
+			if daclErr == nil && protectedPrivateDescriptor(daclDescriptor) {
+				return nil
+			}
+		}
 		return fmt.Errorf("read directory owner: %w", err)
 	}
 	if descriptor == nil {
