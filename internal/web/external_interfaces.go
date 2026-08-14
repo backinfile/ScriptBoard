@@ -23,7 +23,6 @@ import (
 	"unicode/utf8"
 
 	"scriptboard/internal/externaltrigger"
-	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/identity"
 	"scriptboard/internal/privatepath"
 	"scriptboard/internal/runmanager"
@@ -1428,8 +1427,14 @@ func (a *App) executeExternalQuickRun(response http.ResponseWriter, request *htt
 	if !quick.Locked || quick.Revision != config.Revision || subtle.ConstantTimeCompare([]byte(quick.ScriptSHA256), []byte(config.ScriptSHA256)) != 1 {
 		return externalFailure(http.StatusConflict, "target_unavailable")
 	}
-	prepared := hostfiles.Script{Path: quick.ScriptPath, Directory: filepath.Dir(quick.ScriptPath), Digest: config.ScriptSHA256}
-	workingDirectory := hostfiles.PreparedDirectory{Path: prepared.Directory}
+	prepared, err := a.hostPrepareScript(request.Context(), quick.ScriptPath)
+	if err != nil || subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(config.ScriptSHA256)) != 1 {
+		return externalFailure(http.StatusConflict, "target_unavailable")
+	}
+	workingDirectory, err := a.hostPrepareDirectory(request.Context(), prepared.Directory)
+	if err != nil {
+		return externalFailure(http.StatusConflict, "target_unavailable")
+	}
 	variables, err := a.loadVariables()
 	if err != nil {
 		return externalFailure(http.StatusInternalServerError, "action_failed")

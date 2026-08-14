@@ -90,7 +90,7 @@ func TestExternalInterfaceGroupOwnsPathsAndMultipleKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantManagedTarget := filepath.Join(root, "scriptboard-external-"+groupID+"-managed-log.log")
-	if hostfiles.ComparisonKey(managedTarget) != hostfiles.ComparisonKey(wantManagedTarget) || !strings.Contains(managedConfigJSON, `"managed":true`) || !strings.Contains(managedConfigJSON, `"max_file_bytes":1048576`) || !strings.Contains(managedConfigJSON, `"max_backups":2`) {
+	if !hostfiles.Contains(managedTarget, wantManagedTarget) || !hostfiles.Contains(wantManagedTarget, managedTarget) || !strings.Contains(managedConfigJSON, `"managed":true`) || !strings.Contains(managedConfigJSON, `"max_file_bytes":1048576`) || !strings.Contains(managedConfigJSON, `"max_backups":2`) {
 		t.Fatalf("managed log target=%q config=%s", managedTarget, managedConfigJSON)
 	}
 	keyTaskResponse, err := client.Get(serverURL + "/config/external-interfaces/groups/" + groupID + "/keys/new")
