@@ -73,6 +73,17 @@ function Wait-ServiceState([string]$Name, [string]$State, [int]$TimeoutSeconds =
     throw "Service $Name did not reach $State"
 }
 
+function Wait-ServiceDeleted([string]$Name, [int]$TimeoutSeconds = 45) {
+    # DeleteService only marks an open service for deletion; SCM removes the
+    # definition after the last service/process handle has closed.
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    do {
+        if (-not (Get-Service -Name $Name -ErrorAction SilentlyContinue)) { return }
+        Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "Service $Name remains after uninstall"
+}
+
 function Invoke-CheckedTimed([string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds = 60) {
     $process = Start-Process -FilePath $FilePath -ArgumentList $Arguments -PassThru -WindowStyle Hidden
     if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
@@ -337,9 +348,7 @@ notification_email_recipient: 'security@example.invalid'
 
     Invoke-Checked (Join-Path $releaseRoot "scriptboard.exe") @("service", "uninstall")
     $installed = $false
-    foreach ($name in $serviceNames) {
-        if (Get-Service -Name $name -ErrorAction SilentlyContinue) { throw "Service $name remains after uninstall" }
-    }
+    foreach ($name in $serviceNames) { Wait-ServiceDeleted $name }
     Write-Host "WINDOWS_SCM_SECURITY_GATE: PASSED"
 } finally {
     $managedDefinitionExists = $serviceNames | Where-Object { Get-Service -Name $_ -ErrorAction SilentlyContinue } | Select-Object -First 1
