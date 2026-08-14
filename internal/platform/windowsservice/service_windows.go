@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"golang.org/x/sys/windows/svc"
+	"golang.org/x/sys/windows/svc/eventlog"
 	"scriptboard/internal/secretredaction"
 )
 
@@ -21,10 +22,11 @@ func Run(name string, arguments []string, run RunFunc) (bool, error) {
 	if err != nil || !isService {
 		return false, err
 	}
-	return true, svc.Run(name, handler{arguments: arguments, run: run})
+	return true, svc.Run(name, handler{name: name, arguments: arguments, run: run})
 }
 
 type handler struct {
+	name      string
 	arguments []string
 	run       RunFunc
 }
@@ -40,7 +42,14 @@ func (service handler) Execute(_ []string, requests <-chan svc.ChangeRequest, st
 		select {
 		case err := <-done:
 			if err != nil {
-				fmt.Fprintln(os.Stderr, secretredaction.String(err.Error()))
+				message := secretredaction.String(err.Error())
+				// SCM services do not have a reliable stderr stream; preserve startup
+				// failures in the Application log for operators and release gates.
+				if logger, openErr := eventlog.Open(service.name); openErr == nil {
+					_ = logger.Error(1, message)
+					_ = logger.Close()
+				}
+				fmt.Fprintln(os.Stderr, message)
 				return true, 1
 			}
 			return false, 0

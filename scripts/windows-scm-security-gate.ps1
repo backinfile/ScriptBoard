@@ -36,6 +36,7 @@ $windowsTemp = [IO.Path]::GetFullPath((Join-Path $env:windir "Temp"))
 $runWorkRoot = Join-Path $windowsTemp ("scriptboard-scm-gate-" + [Guid]::NewGuid().ToString("N"))
 $serviceNames = @("ScriptBoard", "ScriptBoardBroker", "ScriptBoardRunner", "ScriptBoardAI")
 $installed = $false
+$gateStartedAt = Get-Date
 
 function Invoke-Checked([string]$FilePath, [string[]]$Arguments) {
     & $FilePath @Arguments
@@ -301,6 +302,12 @@ notification_email_recipient: 'security@example.invalid'
             Write-Warning ("Last lines from " + $diagnosticLog.FullName + ":")
             Get-Content -LiteralPath $diagnosticLog.FullName -Tail 80 -ErrorAction SilentlyContinue | ForEach-Object { Write-Warning $_ }
         }
+        # Runtime hosts report startup failures to the Application log because
+        # SCM services do not own a dependable stderr stream.
+        Get-WinEvent -FilterHashtable @{ LogName = "Application"; StartTime = $gateStartedAt } -MaxEvents 200 -ErrorAction SilentlyContinue |
+            Where-Object ProviderName -In @("ScriptBoardRunner", "ScriptBoardAI") |
+            Select-Object TimeCreated, ProviderName, Id, LevelDisplayName, Message |
+            Format-List | Out-String | Write-Warning
         throw "Web could not demand-start Runner and complete a managed Run"
     }
 
