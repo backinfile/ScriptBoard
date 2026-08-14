@@ -3413,7 +3413,7 @@ func (a *App) runsPage(response http.ResponseWriter, request *http.Request) {
 		Filters      runFilters
 		Locale       webLocale
 		DeferredData bool
-	}{Runs: newRunListItemViews(runs), Pagination: pagination, Filters: filters, Locale: locale})
+	}{Runs: newRunListItemViews(runs, locale, time.Now().UTC()), Pagination: pagination, Filters: filters, Locale: locale})
 }
 
 func (a *App) moveFile(response http.ResponseWriter, request *http.Request) {

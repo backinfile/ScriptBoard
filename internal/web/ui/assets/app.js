@@ -2885,12 +2885,14 @@
     };
     const handleJumpToTop = event => scrollLog(event, 0);
     const handleJumpToBottom = event => scrollLog(event, log?.scrollHeight || 0);
+    const showLatestLog = () => { if (log) log.scrollTop = log.scrollHeight; };
     jumpToTop?.addEventListener("click", handleJumpToTop);
     jumpToBottom?.addEventListener("click", handleJumpToBottom);
     cleanups.push(() => {
       jumpToTop?.removeEventListener("click", handleJumpToTop);
       jumpToBottom?.removeEventListener("click", handleJumpToBottom);
     });
+    showLatestLog();
     if (!window.EventSource) return;
     const state = root.querySelector("[data-run-live-state]");
     const pause = root.querySelector("[data-run-pause]");
@@ -2913,7 +2915,7 @@
       span.dataset.source = payload.source || "stdout";
       span.textContent = payload.text || "";
       log.append(span);
-      log.scrollTop = log.scrollHeight;
+      showLatestLog();
     };
     const finishPauseControl = () => {
       pause?.remove();

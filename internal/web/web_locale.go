@@ -1538,6 +1538,7 @@ var webMessages = map[string]localizedMessage{
 	"runs.title":                                    {"运行记录", "Runs"},
 	"runs.eyebrow":                                  {"历史 / 运行记录", "History / Runs"},
 	"runs.description":                              {"从每次执行结果定位问题，继续处理失败的 Run。", "Use each result to diagnose problems and follow up on failed Runs."},
+	"runs.duration":                                 {"运行持续时间", "Run duration"},
 	"runs.executor":                                 {"执行器", "Executor"},
 	"runs.search":                                   {"搜索运行记录", "Search run history"},
 	"runs.search_placeholder":                       {"脚本、来源、状态、操作者、执行器或 Run ID…", "Script, source, status, actor, executor, or Run ID…"},
