@@ -37,11 +37,32 @@ func Listen(options TransportOptions) (*Transport, error) {
 	if err != nil {
 		return nil, err
 	}
-	listener, err := winio.ListenPipe(endpoint, &winio.PipeConfig{SecurityDescriptor: "D:P(A;;GA;;;" + allowedSID + ")(A;;GA;;;SY)", MessageMode: false, InputBufferSize: maxHandshakeBytes, OutputBufferSize: maxFrameBytes})
+	serverSID, err := runnerWindowsSID(options)
+	if err != nil {
+		return nil, err
+	}
+	// go-winio creates another pipe instance in Accept, so the protected DACL
+	// must authorize the restricted Runner service as well as its Web client.
+	listener, err := winio.ListenPipe(endpoint, &winio.PipeConfig{SecurityDescriptor: "D:P(A;;GA;;;" + allowedSID + ")(A;;GA;;;" + serverSID + ")(A;;GA;;;SY)", MessageMode: false, InputBufferSize: maxHandshakeBytes, OutputBufferSize: maxFrameBytes})
 	if err != nil {
 		return nil, err
 	}
 	return &Transport{Listener: listener, Endpoint: endpoint, VerifyPeer: func(net.Conn) error { return nil }, cleanup: func() {}}, nil
+}
+
+func runnerWindowsSID(options TransportOptions) (string, error) {
+	if options.DevelopmentCurrentUser {
+		user, err := windows.GetCurrentProcessToken().GetTokenUser()
+		if err != nil {
+			return "", err
+		}
+		return user.User.Sid.String(), nil
+	}
+	sid, err := windowsidentity.ResolveSID(`NT SERVICE\ScriptBoardRunner`)
+	if err != nil {
+		return "", err
+	}
+	return sid.String(), nil
 }
 
 func allowedWindowsSID(options TransportOptions) (string, error) {

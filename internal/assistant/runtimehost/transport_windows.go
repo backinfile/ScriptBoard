@@ -37,14 +37,35 @@ func Listen(options TransportOptions) (*Transport, error) {
 	if err != nil {
 		return nil, err
 	}
+	serverSID, err := runtimeWindowsSID(options)
+	if err != nil {
+		return nil, err
+	}
+	// Accept creates a subsequent pipe instance, which must remain writable by
+	// the restricted AI service after the first instance applies this DACL.
 	listener, err := winio.ListenPipe(endpoint, &winio.PipeConfig{
-		SecurityDescriptor: "D:P(A;;GA;;;" + allowedSID + ")(A;;GA;;;SY)",
+		SecurityDescriptor: "D:P(A;;GA;;;" + allowedSID + ")(A;;GA;;;" + serverSID + ")(A;;GA;;;SY)",
 		MessageMode:        false, InputBufferSize: maxHandshakeBytes, OutputBufferSize: maxHandshakeBytes,
 	})
 	if err != nil {
 		return nil, err
 	}
 	return &Transport{Listener: listener, Endpoint: endpoint, VerifyPeer: func(net.Conn) error { return nil }, cleanup: func() {}}, nil
+}
+
+func runtimeWindowsSID(options TransportOptions) (string, error) {
+	if options.DevelopmentCurrentUser {
+		user, err := windows.GetCurrentProcessToken().GetTokenUser()
+		if err != nil {
+			return "", err
+		}
+		return user.User.Sid.String(), nil
+	}
+	sid, err := windowsidentity.ResolveSID(`NT SERVICE\ScriptBoardAI`)
+	if err != nil {
+		return "", err
+	}
+	return sid.String(), nil
 }
 
 func allowedWindowsSID(options TransportOptions) (string, error) {
