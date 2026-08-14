@@ -1,6 +1,7 @@
 package privilegebroker
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -77,22 +78,34 @@ type hostFilesWireRequest struct {
 }
 
 type hostFilesWireResponse struct {
-	Entries        []hostfiles.Entry        `json:"entries,omitempty"`
-	Info           *HostFileInfo            `json:"info,omitempty"`
-	Document       *hostfiles.TextDocument  `json:"document,omitempty"`
-	CanonicalPath  string                   `json:"canonical_path,omitempty"`
-	AvailableName  string                   `json:"available_name,omitempty"`
-	Execute        *bool                    `json:"execute,omitempty"`
-	Trashed        *hostfiles.Trashed       `json:"trashed,omitempty"`
-	NextOffset     int                      `json:"next_offset,omitempty"`
-	Content        []byte                   `json:"content,omitempty"`
-	Handle         string                   `json:"handle,omitempty"`
-	Prepared       *hostFilesPrepared       `json:"prepared,omitempty"`
-	SameFilesystem *bool                    `json:"same_filesystem,omitempty"`
-	Metadata       *logstream.Metadata      `json:"metadata,omitempty"`
-	Page           *logstream.Page          `json:"page,omitempty"`
-	Events         []logstream.Event        `json:"events,omitempty"`
-	Operation      *hostfiles.FileOperation `json:"operation,omitempty"`
+	Entries        []hostfiles.Entry             `json:"entries,omitempty"`
+	Info           *HostFileInfo                 `json:"info,omitempty"`
+	Document       *hostfiles.TextDocument       `json:"document,omitempty"`
+	CanonicalPath  string                        `json:"canonical_path,omitempty"`
+	AvailableName  string                        `json:"available_name,omitempty"`
+	Execute        *bool                         `json:"execute,omitempty"`
+	Trashed        *hostfiles.Trashed            `json:"trashed,omitempty"`
+	Batch          []hostfiles.UploadBatchResult `json:"batch,omitempty"`
+	NextOffset     int                           `json:"next_offset,omitempty"`
+	Content        []byte                        `json:"content,omitempty"`
+	Handle         string                        `json:"handle,omitempty"`
+	Prepared       *hostFilesPrepared            `json:"prepared,omitempty"`
+	SameFilesystem *bool                         `json:"same_filesystem,omitempty"`
+	Metadata       *logstream.Metadata           `json:"metadata,omitempty"`
+	Page           *logstream.Page               `json:"page,omitempty"`
+	Events         []logstream.Event             `json:"events,omitempty"`
+	Operation      *hostfiles.FileOperation      `json:"operation,omitempty"`
+}
+
+type hostFilesUploadBatchManifest struct {
+	Files []hostFilesUploadBatchFile `json:"files"`
+}
+
+type hostFilesUploadBatchFile struct {
+	Name        string `json:"name"`
+	StagingPath string `json:"staging_path"`
+	MaxBytes    int64  `json:"max_bytes"`
+	StoredName  string `json:"stored_name"`
 }
 
 type hostFilesPrepared struct {
@@ -104,6 +117,7 @@ type hostFilesPrepared struct {
 type brokerHostFilesService struct {
 	files       *hostfiles.Manager
 	stagingRoot string
+	mutationMu  sync.Mutex
 	mu          sync.Mutex
 	reads       map[string]*hostFilesReadHandle
 	logs        map[string]*hostFilesLogHandle
@@ -193,18 +207,26 @@ func (service *brokerHostFilesService) AvailableName(_ context.Context, director
 }
 
 func (service *brokerHostFilesService) CreateDirectory(_ context.Context, directory, name string) error {
+	service.mutationMu.Lock()
+	defer service.mutationMu.Unlock()
 	return service.files.CreateDirectory(directory, name)
 }
 
 func (service *brokerHostFilesService) ToggleOwnerExecute(_ context.Context, path string) (bool, error) {
+	service.mutationMu.Lock()
+	defer service.mutationMu.Unlock()
 	return service.files.ToggleOwnerExecute(path)
 }
 
 func (service *brokerHostFilesService) MoveToTrash(_ context.Context, path, storedName string) (hostfiles.Trashed, error) {
+	service.mutationMu.Lock()
+	defer service.mutationMu.Unlock()
 	return service.files.MoveToTrash(path, storedName)
 }
 
 func (service *brokerHostFilesService) RestoreFromTrash(_ context.Context, storedPath, original string, available bool) (string, error) {
+	service.mutationMu.Lock()
+	defer service.mutationMu.Unlock()
 	if available {
 		return service.files.RestoreFromTrashToAvailablePath(storedPath, original)
 	}
@@ -212,10 +234,14 @@ func (service *brokerHostFilesService) RestoreFromTrash(_ context.Context, store
 }
 
 func (service *brokerHostFilesService) PurgeTrash(_ context.Context, storedPath string) error {
+	service.mutationMu.Lock()
+	defer service.mutationMu.Unlock()
 	return service.files.PurgeTrash(storedPath)
 }
 
 func (service *brokerHostFilesService) Move(_ context.Context, source, destination string) error {
+	service.mutationMu.Lock()
+	defer service.mutationMu.Unlock()
 	return service.files.Move(source, destination)
 }
 
@@ -399,6 +425,8 @@ func (service *brokerHostFilesService) consumeStaging(path string) (*os.File, er
 }
 
 func (service *brokerHostFilesService) Upload(_ context.Context, stagingPath, directory, name string, maxBytes int64, replace bool, storedName string) (*hostfiles.Trashed, error) {
+	service.mutationMu.Lock()
+	defer service.mutationMu.Unlock()
 	file, err := service.consumeStaging(stagingPath)
 	if err != nil {
 		return nil, err
@@ -407,7 +435,78 @@ func (service *brokerHostFilesService) Upload(_ context.Context, stagingPath, di
 	return service.files.Upload(directory, name, file, maxBytes, replace, storedName)
 }
 
+func (service *brokerHostFilesService) UploadBatch(ctx context.Context, manifestPath, directory string, replace bool) ([]hostfiles.UploadBatchResult, error) {
+	service.mutationMu.Lock()
+	defer service.mutationMu.Unlock()
+	manifestFile, err := service.consumeStaging(manifestPath)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = manifestFile.Close(); _ = os.Remove(manifestPath) }()
+	var manifest hostFilesUploadBatchManifest
+	decoder := json.NewDecoder(io.LimitReader(manifestFile, 1<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&manifest); err != nil || len(manifest.Files) == 0 || len(manifest.Files) > 100 {
+		return nil, errors.New("Host Files batch manifest is invalid")
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return nil, errors.New("Host Files batch manifest has trailing content")
+	}
+	inputs := make([]hostfiles.UploadBatchInput, 0, len(manifest.Files))
+	opened := make([]*os.File, 0, len(manifest.Files))
+	defer func() {
+		for _, file := range opened {
+			_ = file.Close()
+		}
+		for _, entry := range manifest.Files {
+			_ = os.Remove(entry.StagingPath)
+		}
+	}()
+	for _, entry := range manifest.Files {
+		if entry.MaxBytes <= 0 || entry.MaxBytes > 1<<30 {
+			return nil, errors.New("Host Files batch file size limit is invalid")
+		}
+		file, openErr := service.consumeStaging(entry.StagingPath)
+		if openErr != nil {
+			return nil, openErr
+		}
+		opened = append(opened, file)
+		inputs = append(inputs, hostfiles.UploadBatchInput{Name: entry.Name, Source: file, MaxBytes: entry.MaxBytes, StoredName: entry.StoredName})
+	}
+	results, err := service.files.UploadBatch(directory, inputs, replace)
+	if err != nil || service.db == nil {
+		return results, err
+	}
+	transaction, err := service.db.BeginTx(ctx, nil)
+	if err == nil {
+		for _, result := range results {
+			if result.Trashed == nil {
+				continue
+			}
+			trashed := result.Trashed
+			_, err = transaction.ExecContext(ctx, `INSERT INTO trash_entries
+				(id, original_path, original_path_key, stored_path, stored_path_key, deleted_at, size, is_directory)
+				VALUES (?, ?, ?, ?, ?, ?, ?, 0)`, trashed.StoredName, trashed.OriginalPath, hostfiles.ComparisonKey(trashed.OriginalPath),
+				trashed.StoredPath, hostfiles.ComparisonKey(trashed.StoredPath), time.Now().UTC().Unix(), trashed.Size)
+			if err != nil {
+				break
+			}
+		}
+	}
+	if err == nil {
+		err = transaction.Commit()
+	} else if transaction != nil {
+		_ = transaction.Rollback()
+	}
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("record batch replacements: %w", err), service.files.RollbackUploadBatch(results))
+	}
+	return results, nil
+}
+
 func (service *brokerHostFilesService) SaveText(_ context.Context, stagingPath, path, expectedDigest, storedName string, maxBytes int64) (hostfiles.Trashed, error) {
+	service.mutationMu.Lock()
+	defer service.mutationMu.Unlock()
 	file, err := service.consumeStaging(stagingPath)
 	if err != nil {
 		return hostfiles.Trashed{}, err
@@ -421,10 +520,14 @@ func (service *brokerHostFilesService) SaveText(_ context.Context, stagingPath, 
 }
 
 func (service *brokerHostFilesService) RollbackTextSave(_ context.Context, path, storedPath string) error {
+	service.mutationMu.Lock()
+	defer service.mutationMu.Unlock()
 	return service.files.RollbackTextSave(path, storedPath)
 }
 
 func (service *brokerHostFilesService) RemoveRegular(_ context.Context, path string) error {
+	service.mutationMu.Lock()
+	defer service.mutationMu.Unlock()
 	return service.files.RemoveRegular(path)
 }
 
@@ -442,6 +545,8 @@ func (service *brokerHostFilesService) SameFilesystem(_ context.Context, source,
 }
 
 func (service *brokerHostFilesService) AppendText(_ context.Context, path, record string) error {
+	service.mutationMu.Lock()
+	defer service.mutationMu.Unlock()
 	return service.files.AppendText(path, record)
 }
 
@@ -585,6 +690,8 @@ func (server *Server) hostFilesOperation(request wireRequest) wireResponse {
 		err = server.hostFiles.CloseRead(ctx, actor.UserID, payload.Handle)
 	case operationHostFilesUpload:
 		result.Trashed, err = server.hostFiles.Upload(ctx, payload.StagingPath, payload.Directory, payload.Name, payload.MaxBytes, payload.Replace, payload.StoredName)
+	case operationHostFilesUploadBatch:
+		result.Batch, err = server.hostFiles.UploadBatch(ctx, payload.StagingPath, payload.Directory, payload.Replace)
 	case operationHostFilesSaveText:
 		var value hostfiles.Trashed
 		value, err = server.hostFiles.SaveText(ctx, payload.StagingPath, payload.Path, payload.ExpectedDigest, payload.StoredName, payload.MaxBytes)
@@ -714,7 +821,7 @@ func hostFilesAction(operation string) (Action, bool) {
 		return ActionHostFilesDelete, true
 	case operationHostFilesMove, operationHostFilesToggleExec, operationHostFilesCrossMove:
 		return ActionHostFilesMove, true
-	case operationHostFilesMkdir, operationHostFilesUpload, operationHostFilesSaveText, operationHostFilesRollback,
+	case operationHostFilesMkdir, operationHostFilesUpload, operationHostFilesUploadBatch, operationHostFilesSaveText, operationHostFilesRollback,
 		operationHostFilesRemove, operationHostFilesAppend:
 		return ActionHostFilesWrite, false
 	default:
@@ -814,6 +921,10 @@ func validateHostFilesRequest(request wireRequest) error {
 	case operationHostFilesUpload:
 		if payload.StagingPath == "" || !filepath.IsAbs(payload.StagingPath) || payload.Directory == "" || !filepath.IsAbs(payload.Directory) || payload.Name == "" || payload.MaxBytes <= 0 || payload.MaxBytes > 1<<30 || payload.Path != "" || payload.Destination != "" || payload.StoredPath != "" || payload.CanonicalKind != "" || payload.ExpectedDigest != "" || payload.Handle != "" || payload.Record != "" || payload.Offset != 0 || payload.Limit != 0 || payload.ByteOffset != 0 || payload.ByteLimit != 0 {
 			return errors.New("Host Files upload request is invalid")
+		}
+	case operationHostFilesUploadBatch:
+		if payload.StagingPath == "" || !filepath.IsAbs(payload.StagingPath) || payload.Directory == "" || !filepath.IsAbs(payload.Directory) || payload.Path != "" || payload.Name != "" || payload.Destination != "" || payload.StoredPath != "" || payload.StoredName != "" || payload.CanonicalKind != "" || payload.ExpectedDigest != "" || payload.Handle != "" || payload.Record != "" || payload.MaxBytes != 0 || payload.Offset != 0 || payload.Limit != 0 || payload.ByteOffset != 0 || payload.ByteLimit != 0 {
+			return errors.New("Host Files batch upload request is invalid")
 		}
 	case operationHostFilesSaveText:
 		if payload.StagingPath == "" || !filepath.IsAbs(payload.StagingPath) || payload.Path == "" || !filepath.IsAbs(payload.Path) || len(payload.ExpectedDigest) != 64 || payload.StoredName == "" || payload.MaxBytes <= 0 || payload.MaxBytes > 1<<20 || payload.Directory != "" || payload.Name != "" || payload.Destination != "" || payload.StoredPath != "" || payload.CanonicalKind != "" || payload.Handle != "" || payload.Record != "" || payload.Replace || payload.Offset != 0 || payload.Limit != 0 || payload.ByteOffset != 0 || payload.ByteLimit != 0 {
@@ -916,6 +1027,8 @@ func hostFilesExpectedPayload(operation string, payload hostFilesWireRequest) ho
 		return hostFilesWireRequest{Handle: payload.Handle}
 	case operationHostFilesUpload:
 		return hostFilesWireRequest{StagingPath: payload.StagingPath, Directory: payload.Directory, Name: payload.Name, MaxBytes: payload.MaxBytes, Replace: payload.Replace, StoredName: payload.StoredName}
+	case operationHostFilesUploadBatch:
+		return hostFilesWireRequest{StagingPath: payload.StagingPath, Directory: payload.Directory, Replace: payload.Replace}
 	case operationHostFilesSaveText:
 		return hostFilesWireRequest{StagingPath: payload.StagingPath, Path: payload.Path, ExpectedDigest: payload.ExpectedDigest, StoredName: payload.StoredName, MaxBytes: payload.MaxBytes}
 	case operationHostFilesRollback:
@@ -948,7 +1061,7 @@ func isHostFilesOperation(operation string) bool {
 	case operationHostFilesRoots, operationHostFilesList, operationHostFilesInfo, operationHostFilesReadText,
 		operationHostFilesCanonical, operationHostFilesAvailable, operationHostFilesMkdir, operationHostFilesToggleExec,
 		operationHostFilesTrash, operationHostFilesRestore, operationHostFilesPurge, operationHostFilesMove,
-		operationHostFilesOpenRead, operationHostFilesReadChunk, operationHostFilesCloseRead, operationHostFilesUpload,
+		operationHostFilesOpenRead, operationHostFilesReadChunk, operationHostFilesCloseRead, operationHostFilesUpload, operationHostFilesUploadBatch,
 		operationHostFilesSaveText, operationHostFilesRollback, operationHostFilesRemove, operationHostFilesPrepare,
 		operationHostFilesSameFS, operationHostFilesAppend, operationHostFilesLogOpen, operationHostFilesLogHistory,
 		operationHostFilesLogFollow, operationHostFilesLogClose, operationHostFilesCrossMove, operationHostFilesPrepareAppend:
@@ -1229,6 +1342,35 @@ func (backend *HostFilesBackend) Upload(ctx context.Context, directory, name str
 	defer os.Remove(staged)
 	value, err := backend.call(ctx, operationHostFilesUpload, hostFilesWireRequest{StagingPath: staged, Directory: directory, Name: name, MaxBytes: maxBytes, Replace: replace, StoredName: storedName})
 	return value.Trashed, err
+}
+
+func (backend *HostFilesBackend) UploadBatch(ctx context.Context, directory string, inputs []hostfiles.UploadBatchInput, replace bool) ([]hostfiles.UploadBatchResult, error) {
+	manifest := hostFilesUploadBatchManifest{Files: make([]hostFilesUploadBatchFile, 0, len(inputs))}
+	stagedPaths := make([]string, 0, len(inputs))
+	defer func() {
+		for _, path := range stagedPaths {
+			_ = os.Remove(path)
+		}
+	}()
+	for _, input := range inputs {
+		staged, err := backend.stage(input.Source, input.MaxBytes)
+		if err != nil {
+			return nil, err
+		}
+		stagedPaths = append(stagedPaths, staged)
+		manifest.Files = append(manifest.Files, hostFilesUploadBatchFile{Name: input.Name, StagingPath: staged, MaxBytes: input.MaxBytes, StoredName: input.StoredName})
+	}
+	body, err := json.Marshal(manifest)
+	if err != nil {
+		return nil, err
+	}
+	manifestPath, err := backend.stage(bytes.NewReader(body), 1<<20)
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(manifestPath)
+	value, err := backend.call(ctx, operationHostFilesUploadBatch, hostFilesWireRequest{StagingPath: manifestPath, Directory: directory, Replace: replace})
+	return value.Batch, err
 }
 
 func (backend *HostFilesBackend) SaveText(ctx context.Context, path, expectedDigest, content, storedName string, maxBytes int64) (hostfiles.Trashed, error) {

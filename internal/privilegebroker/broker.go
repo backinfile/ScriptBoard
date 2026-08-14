@@ -96,6 +96,7 @@ const (
 	operationHostFilesOpenRead        = "host_files_open_read"
 	operationHostFilesCloseRead       = "host_files_close_read"
 	operationHostFilesUpload          = "host_files_upload"
+	operationHostFilesUploadBatch     = "host_files_upload_batch"
 	operationHostFilesSaveText        = "host_files_save_text"
 	operationHostFilesRollback        = "host_files_rollback"
 	operationHostFilesRemove          = "host_files_remove"
@@ -306,6 +307,7 @@ type HostFilesService interface {
 	ReadChunk(context.Context, string, string, int64, int) ([]byte, error)
 	CloseRead(context.Context, string, string) error
 	Upload(context.Context, string, string, string, int64, bool, string) (*hostfiles.Trashed, error)
+	UploadBatch(context.Context, string, string, bool) ([]hostfiles.UploadBatchResult, error)
 	SaveText(context.Context, string, string, string, string, int64) (hostfiles.Trashed, error)
 	RollbackTextSave(context.Context, string, string) error
 	RemoveRegular(context.Context, string) error
@@ -542,7 +544,7 @@ func (server *Server) handle(connection net.Conn) {
 	case operationHostFilesRoots, operationHostFilesList, operationHostFilesInfo, operationHostFilesReadText,
 		operationHostFilesCanonical, operationHostFilesAvailable, operationHostFilesMkdir, operationHostFilesToggleExec,
 		operationHostFilesTrash, operationHostFilesRestore, operationHostFilesPurge, operationHostFilesMove,
-		operationHostFilesOpenRead, operationHostFilesReadChunk, operationHostFilesCloseRead, operationHostFilesUpload, operationHostFilesSaveText, operationHostFilesRollback,
+		operationHostFilesOpenRead, operationHostFilesReadChunk, operationHostFilesCloseRead, operationHostFilesUpload, operationHostFilesUploadBatch, operationHostFilesSaveText, operationHostFilesRollback,
 		operationHostFilesRemove, operationHostFilesPrepare, operationHostFilesSameFS, operationHostFilesAppend,
 		operationHostFilesLogOpen, operationHostFilesLogHistory, operationHostFilesLogFollow, operationHostFilesLogClose,
 		operationHostFilesCrossMove, operationHostFilesPrepareAppend:

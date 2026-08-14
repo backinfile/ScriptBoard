@@ -292,6 +292,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /resources/files/mkdir", a.requirePermission(identity.PermissionWriteFiles, http.HandlerFunc(a.createDirectory)))
 	mux.Handle("POST /resources/files/conflicts", a.requirePermission(identity.PermissionWriteFiles, http.HandlerFunc(a.uploadConflicts)))
 	mux.Handle("POST /resources/files/upload", a.requirePermission(identity.PermissionWriteFiles, http.HandlerFunc(a.uploadFiles)))
+	mux.Handle("POST /resources/files/upload-batch", a.requirePermission(identity.PermissionWriteFiles, http.HandlerFunc(a.uploadBatchFiles)))
 	mux.Handle("GET /resources/files/download", a.requirePermission(identity.PermissionReadFiles, http.HandlerFunc(a.downloadFile)))
 	mux.Handle("GET /resources/files/preview", a.requirePermission(identity.PermissionReadFiles, http.HandlerFunc(a.previewImage)))
 	mux.Handle("GET /resources/files/view", a.requirePermission(identity.PermissionReadFiles, http.HandlerFunc(a.previewTextPage)))

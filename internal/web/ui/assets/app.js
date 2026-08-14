@@ -147,7 +147,7 @@
       websiteNoConfirmedFailure: "没有已确认的网站故障",
       conflictTitle: "已有同名文件", conflictDescription: "选择如何处理同名文件。默认不会覆盖任何内容。",
       conflictBatchDescription: "这个选择将应用到本次上传中的所有同名文件。",
-      conflictSkip: "跳过", conflictOverwrite: "覆盖", conflictRename: "重命名", conflictClose: "关闭",
+      conflictSkip: "取消整批", conflictOverwrite: "全部覆盖", conflictRename: "全部重命名", conflictClose: "关闭",
       conflictOverwriteNote: "覆盖前，当前文件会先移入回收站。",
       conflictOverwriteUnavailable: "部分条目正在使用或不是普通文件，不能覆盖。",
       conflictMore: "个其他同名文件",
@@ -173,7 +173,7 @@
       conflictTitle: "A file with this name already exists",
       conflictDescription: "Choose how to handle name conflicts. Nothing is overwritten by default.",
       conflictBatchDescription: "Your choice applies to every name conflict in this upload.",
-      conflictSkip: "Skip", conflictOverwrite: "Overwrite", conflictRename: "Rename", conflictClose: "Close",
+      conflictSkip: "Cancel batch", conflictOverwrite: "Overwrite all", conflictRename: "Rename all", conflictClose: "Close",
       conflictOverwriteNote: "Before overwriting, the current file is moved to Trash.",
       conflictOverwriteUnavailable: "Some items are in use or are not regular files and cannot be overwritten.",
       conflictMore: "more name conflicts",
@@ -577,6 +577,46 @@
     if (!type.includes("text/html")) return { response, document: null, text: await response.text() };
     const text = await response.text();
     return { response, document: new DOMParser().parseFromString(text, "text/html") };
+  }
+
+  function uploadDocument(url, data, form, files) {
+    return new Promise((resolve, reject) => {
+      const request = new XMLHttpRequest();
+      request.open("POST", url);
+      request.withCredentials = true;
+      request.setRequestHeader("X-ScriptBoard-Navigation", "pjax");
+      request.setRequestHeader("Accept", "text/html");
+      const totalFileBytes = files.reduce((sum, file) => sum + file.size, 0);
+      const publishProgress = event => {
+        const ratio = event.lengthComputable && event.total ? Math.min(1, event.loaded / event.total) : 0;
+        const transferred = ratio * totalFileBytes;
+        let boundary = 0;
+        let currentIndex = Math.max(0, files.length - 1);
+        for (let index = 0; index < files.length; index += 1) {
+          boundary += files[index].size;
+          if (transferred <= boundary) { currentIndex = index; break; }
+        }
+        form.dispatchEvent(new CustomEvent("file-upload-progress", { detail: {
+          phase: "uploading", loaded: event.loaded, total: event.total,
+          percent: Math.round(ratio * 100), index: currentIndex + 1,
+          count: files.length, name: files[currentIndex]?.name || "",
+        } }));
+      };
+      request.upload.addEventListener("progress", publishProgress);
+      request.upload.addEventListener("load", () => form.dispatchEvent(new CustomEvent("file-upload-progress", {
+        detail: { phase: "committing", percent: 100, count: files.length },
+      })));
+      request.addEventListener("error", reject);
+      request.addEventListener("abort", reject);
+      request.addEventListener("load", () => {
+        const headers = new Headers({ "Content-Type": request.getResponseHeader("Content-Type") || "text/plain" });
+        const response = new Response(request.responseText, { status: request.status, statusText: request.statusText, headers });
+        const type = headers.get("Content-Type") || "";
+        const document = type.includes("text/html") ? new DOMParser().parseFromString(request.responseText, "text/html") : null;
+        resolve({ response, document, text: document ? undefined : request.responseText });
+      });
+      request.send(data);
+    });
   }
 
   function closeServerErrorDialog(restoreFocus = true) {
@@ -1744,7 +1784,7 @@
         resolve(value);
       };
       close.addEventListener("click", () => finish(""));
-      skip.addEventListener("click", () => finish("skip"));
+      skip.addEventListener("click", () => finish(""));
       overwrite.addEventListener("click", () => finish("overwrite"));
       rename.addEventListener("click", () => finish("rename"));
       dialog.addEventListener("cancel", event => {
@@ -1800,6 +1840,17 @@
   async function submitFileUpload(form) {
     const data = new FormData(form);
     const files = data.getAll("files").filter(value => value instanceof File && value.name);
+    const uploadURL = files.length === 1 ? "/resources/files/upload" : form.action;
+    const progressNode = form.querySelector("[data-file-upload-progress]");
+    const renderProgress = event => {
+      if (!progressNode) return;
+      const detail = event.detail || {};
+      progressNode.hidden = false;
+      progressNode.textContent = detail.phase === "committing"
+        ? (locale() === "zh-CN" ? "传输完成，正在校验并提交整个批次…" : "Transfer complete. Validating and committing the batch…")
+        : `${detail.percent || 0}% · ${detail.name || ""} (${detail.index || 0}/${detail.count || files.length})`;
+    };
+    form.addEventListener("file-upload-progress", renderProgress);
     const preflight = new URLSearchParams();
     preflight.set("csrf_token", String(data.get("csrf_token") || ""));
     preflight.set("path", String(data.get("path") || ""));
@@ -1819,6 +1870,7 @@
           action = await chooseUploadConflict(conflicts);
           if (!action) {
             resetSubmit(form);
+            form.removeEventListener("file-upload-progress", renderProgress);
             form.dispatchEvent(new CustomEvent("file-upload-cancelled"));
             return;
           }
@@ -1829,7 +1881,7 @@
     if (actionInput) actionInput.value = action;
     data.set("conflict_action", action);
     try {
-      const result = await fetchDocument(form.action, { method: "POST", body: data });
+      const result = await uploadDocument(uploadURL, data, form, files);
       const resultsMain = result.document?.querySelector("main[data-upload-results]");
       if (resultsMain && result.response.ok) {
         const submittedFromTask = taskPanelState?.host.contains(form);
@@ -1839,8 +1891,9 @@
         if (showUploadResults(resultsMain)) return;
       }
       if (showServerError(result, {
-        url: form.action,
+        url: uploadURL,
         method: "POST",
+        includeClientErrors: true,
         returnFocus: form.querySelector('button[type="submit"]') || form,
         retryLabel: words().serverErrorRetryAction,
         retryIcon: "rotate-ccw",
@@ -1861,6 +1914,7 @@
         message.focus();
       }
     } finally {
+      form.removeEventListener("file-upload-progress", renderProgress);
       resetSubmit(form);
     }
   }
@@ -3233,6 +3287,7 @@
       });
       const submitFiles = files => {
         if (!files?.length) return;
+        if (form.getAttribute("aria-busy") === "true") return;
         if (files.length > 100) {
           input.value = "";
           showError(form.dataset.countError);
@@ -3287,6 +3342,15 @@
         resetState();
       };
       const onFailed = event => showError(event.detail?.message || form.dataset.inputError);
+      const onProgress = event => {
+        const detail = event.detail || {};
+        if (detail.phase === "committing") {
+          setState("uploading", form.dataset.uploadingTitle, locale() === "zh-CN" ? "传输完成，正在校验并提交整个批次…" : "Transfer complete. Validating and committing the batch…");
+          return;
+        }
+        const label = detail.name ? `${detail.name} (${detail.index}/${detail.count})` : `${detail.count || 0} files`;
+        setState("uploading", form.dataset.uploadingTitle, `${detail.percent || 0}% · ${label}`);
+      };
       const preventFileNavigation = event => {
         if (!isFileDrag(event.dataTransfer) || zone.contains(event.target)) return;
         event.preventDefault();
@@ -3299,6 +3363,7 @@
       input.addEventListener("change", onChange);
       form.addEventListener("file-upload-cancelled", onCancelled);
       form.addEventListener("file-upload-failed", onFailed);
+      form.addEventListener("file-upload-progress", onProgress);
       document.addEventListener("dragover", preventFileNavigation);
       document.addEventListener("drop", preventFileNavigation);
       cleanups.push(() => {
@@ -3309,6 +3374,7 @@
         input.removeEventListener("change", onChange);
         form.removeEventListener("file-upload-cancelled", onCancelled);
         form.removeEventListener("file-upload-failed", onFailed);
+        form.removeEventListener("file-upload-progress", onProgress);
         document.removeEventListener("dragover", preventFileNavigation);
         document.removeEventListener("drop", preventFileNavigation);
       });

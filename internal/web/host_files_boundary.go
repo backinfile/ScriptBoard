@@ -163,6 +163,41 @@ func (a *App) hostUpload(ctx context.Context, directory, name string, source io.
 	return a.files.Upload(directory, name, source, maxBytes, replace, storedName)
 }
 
+func (a *App) hostUploadBatch(ctx context.Context, directory string, inputs []hostfiles.UploadBatchInput, replace bool) ([]hostfiles.UploadBatchResult, error) {
+	if a.hostFilesBackend != nil {
+		return a.hostFilesBackend.UploadBatch(ctx, directory, inputs, replace)
+	}
+	results, err := a.files.UploadBatch(directory, inputs, replace)
+	if err != nil {
+		return nil, err
+	}
+	transaction, err := a.db.BeginTx(ctx, nil)
+	if err == nil {
+		for _, result := range results {
+			if result.Trashed == nil {
+				continue
+			}
+			trashed := result.Trashed
+			_, err = transaction.ExecContext(ctx, `INSERT INTO trash_entries
+				(id, original_path, original_path_key, stored_path, stored_path_key, deleted_at, size, is_directory)
+				VALUES (?, ?, ?, ?, ?, ?, ?, 0)`, trashed.StoredName, trashed.OriginalPath, hostfiles.ComparisonKey(trashed.OriginalPath),
+				trashed.StoredPath, hostfiles.ComparisonKey(trashed.StoredPath), time.Now().UTC().Unix(), trashed.Size)
+			if err != nil {
+				break
+			}
+		}
+	}
+	if err == nil {
+		err = transaction.Commit()
+	} else if transaction != nil {
+		_ = transaction.Rollback()
+	}
+	if err != nil {
+		return nil, errors.Join(err, a.files.RollbackUploadBatch(results))
+	}
+	return results, nil
+}
+
 func (a *App) hostSaveText(ctx context.Context, path, expectedDigest, content, storedName string, maxBytes int64) (hostfiles.Trashed, error) {
 	if a.hostFilesBackend != nil {
 		return a.hostFilesBackend.SaveText(ctx, path, expectedDigest, content, storedName, maxBytes)

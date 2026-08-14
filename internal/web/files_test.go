@@ -340,7 +340,7 @@ func TestFilesPageOffersDropUploadForCurrentDirectory(t *testing.T) {
 		`data-file-drop-form`,
 		`data-file-upload-form`,
 		`data-file-drop-surface="file-drop-surface"`,
-		`action="/resources/files/upload"`,
+		`action="/resources/files/upload-batch"`,
 		`enctype="multipart/form-data"`,
 		`name="path" value="` + html.EscapeString(filepath.Join(hostRoot, "nested")) + `"`,
 		`name="conflict_action" value=""`,
@@ -1141,6 +1141,103 @@ func postHostUpload(t *testing.T, client *http.Client, serverURL, csrfToken, dir
 		t.Fatalf("read upload response: %v", err)
 	}
 	return response.StatusCode, body
+}
+
+func postHostUploadBatch(t *testing.T, client *http.Client, serverURL, csrfToken, directory, conflictAction string, files map[string]string) (int, []byte) {
+	t.Helper()
+	var requestBody bytes.Buffer
+	writer := multipart.NewWriter(&requestBody)
+	for _, field := range []struct{ name, value string }{
+		{name: "csrf_token", value: csrfToken},
+		{name: "path", value: directory},
+		{name: "conflict_action", value: conflictAction},
+	} {
+		if err := writer.WriteField(field.name, field.value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, content := range files {
+		part, err := writer.CreateFormFile("files", name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := part.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequest(http.MethodPost, serverURL+"/resources/files/upload-batch", &requestBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response.StatusCode, body
+}
+
+func TestHostUploadBatchCommitsThirteenFilesTogether(t *testing.T) {
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "managed")
+	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	files := make(map[string]string, 13)
+	for index := 1; index <= 13; index++ {
+		files[fmt.Sprintf("batch-%02d.txt", index)] = fmt.Sprintf("content-%02d", index)
+	}
+	status, body := postHostUploadBatch(t, client, serverURL, formToken(t, page), hostRoot, "skip", files)
+	if status != http.StatusOK || !bytes.Contains(body, []byte("batch-13.txt")) {
+		t.Fatalf("batch response status=%d body=%s", status, body)
+	}
+	for name, want := range files {
+		content, err := os.ReadFile(filepath.Join(hostRoot, name))
+		if err != nil || string(content) != want {
+			t.Fatalf("uploaded %s content=%q err=%v", name, content, err)
+		}
+	}
+}
+
+func TestHostUploadBatchRejectsEveryFileWhenOneConflicts(t *testing.T) {
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "managed")
+	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
+	conflict := filepath.Join(hostRoot, "existing.txt")
+	if err := os.WriteFile(conflict, []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	status, _ := postHostUploadBatch(t, client, serverURL, formToken(t, page), hostRoot, "skip", map[string]string{
+		"new.txt": "new", "existing.txt": "replacement",
+	})
+	if status != http.StatusConflict {
+		t.Fatalf("batch status=%d, want %d", status, http.StatusConflict)
+	}
+	if _, err := os.Stat(filepath.Join(hostRoot, "new.txt")); !os.IsNotExist(err) {
+		t.Fatalf("non-conflicting file was committed from rejected batch: %v", err)
+	}
+	content, err := os.ReadFile(conflict)
+	if err != nil || string(content) != "original" {
+		t.Fatalf("conflicting file changed: content=%q err=%v", content, err)
+	}
 }
 
 func TestExecutableHostUploadIsStagedUntilExplicitPublication(t *testing.T) {

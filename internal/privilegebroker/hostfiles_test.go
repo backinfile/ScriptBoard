@@ -176,6 +176,44 @@ func TestHostFilesStagesUploadsAndStreamsLargeDownloadsThroughBroker(t *testing.
 	}
 }
 
+func TestHostFilesBatchUploadCrossesBrokerAsOneOperation(t *testing.T) {
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "host")
+	stagingRoot := filepath.Join(root, "exchange")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := hostfiles.Open(hostfiles.Options{Topology: fixtureHostFilesTopology{root: hostRoot}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewBrokerHostFilesService(manager, stagingRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend, closeServer := hostFilesTestBackend(t, service)
+	defer closeServer()
+	backend.stagingRoot = stagingRoot
+	ctx := WithAuthorization(context.Background(), Authorization{SessionToken: strings.Repeat("s", 32), RequestID: "host-files-batch-test"})
+	results, err := backend.UploadBatch(ctx, hostRoot, []hostfiles.UploadBatchInput{
+		{Name: "first.txt", Source: strings.NewReader("first"), MaxBytes: 1024, StoredName: "first-old"},
+		{Name: "second.txt", Source: strings.NewReader("second"), MaxBytes: 1024, StoredName: "second-old"},
+	}, false)
+	if err != nil || len(results) != 2 {
+		t.Fatalf("batch results=%+v err=%v", results, err)
+	}
+	for name, want := range map[string]string{"first.txt": "first", "second.txt": "second"} {
+		content, readErr := os.ReadFile(filepath.Join(hostRoot, name))
+		if readErr != nil || string(content) != want {
+			t.Fatalf("%s content=%q err=%v", name, content, readErr)
+		}
+	}
+	entries, err := os.ReadDir(stagingRoot)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("staging entries=%d error=%v", len(entries), err)
+	}
+}
+
 func TestHostFilesReadHandlesAreBoundToTheAuthorizedUser(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "bound.txt")
