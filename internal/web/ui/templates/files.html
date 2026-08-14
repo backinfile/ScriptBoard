@@ -30,7 +30,7 @@
   </div>
 
   {{if .CanMutateCurrent}}
-  <form id="file-drop-upload-form" class="file-upload-form" method="post" action="/resources/files/upload" enctype="multipart/form-data" hidden
+  <form id="file-drop-upload-form" class="file-upload-form" method="post" action="/resources/files/upload-batch" enctype="multipart/form-data" hidden
     data-file-drop-form data-file-upload-form data-file-drop-surface="file-drop-surface"
     data-active-title="{{t .Locale "files.drop_active"}}"
     data-active-description="{{t .Locale "files.drop_active_description"}}"

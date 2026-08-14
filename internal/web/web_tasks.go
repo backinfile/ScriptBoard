@@ -105,7 +105,7 @@ func (a *App) uploadTask(response http.ResponseWriter, request *http.Request) {
 	a.renderTaskPage(response, request, taskPageData{
 		Kind: "upload", Title: webText(resolveWebLocale(request), "task.upload.title"),
 		Description: webText(resolveWebLocale(request), "task.upload.description"),
-		BackURL:     filesURL(relative), Action: "/resources/files/upload", Path: relative,
+		BackURL:     filesURL(relative), Action: "/resources/files/upload-batch", Path: relative,
 	})
 }
 

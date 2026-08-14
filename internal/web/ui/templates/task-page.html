@@ -162,6 +162,7 @@
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value="{{.Path}}"><input type="hidden" name="conflict_action" value=""><input type="hidden" name="sync_quick_runs" value="">
       <div class="drawer-body">
         <label class="file-picker">{{t .Locale "task.select_files"}} <input name="files" type="file" multiple required autofocus></label>
+        <p class="form-hint" data-file-upload-progress role="status" aria-live="polite" hidden></p>
       </div>
       <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "task.start_upload"}}</button></footer>
     </form>

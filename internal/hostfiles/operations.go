@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"scriptboard/internal/diskspace"
@@ -27,6 +29,21 @@ type Trashed struct {
 	StoredName   string
 	Size         int64
 	Directory    bool
+}
+
+// UploadBatchInput describes one file in an all-or-nothing upload. The caller
+// retains ownership of Source; UploadBatch reads it but does not close it.
+type UploadBatchInput struct {
+	Name       string
+	Source     io.Reader
+	MaxBytes   int64
+	StoredName string
+}
+
+type UploadBatchResult struct {
+	Name    string
+	Path    string
+	Trashed *Trashed
 }
 
 type Script struct {
@@ -238,6 +255,135 @@ func (m *Manager) Upload(directory, name string, source io.Reader, maxBytes int6
 		return nil, fmt.Errorf("commit upload: %w", err)
 	}
 	return trashed, nil
+}
+
+// UploadBatch stages and syncs every input before changing any destination.
+// If a commit step fails, every destination already changed by this call is
+// restored before the error is returned.
+func (m *Manager) UploadBatch(directory string, inputs []UploadBatchInput, replace bool) ([]UploadBatchResult, error) {
+	if len(inputs) == 0 {
+		return nil, fmt.Errorf("at least one upload is required")
+	}
+	parent, err := m.resolveDirectory(directory)
+	if err != nil {
+		return nil, err
+	}
+	if err := diskspace.Require(parent, diskspace.MinimumWritableBytes); err != nil {
+		return nil, err
+	}
+	leaseID := fmt.Sprintf("batch-upload:%p:%d", &inputs, time.Now().UnixNano())
+	if err := m.AcquireLease(leaseID, parent); err != nil {
+		return nil, err
+	}
+	defer m.ReleaseLease(leaseID)
+	type stagedUpload struct {
+		input     UploadBatchInput
+		target    string
+		temporary string
+		exists    bool
+	}
+	staged := make([]stagedUpload, 0, len(inputs))
+	defer func() {
+		for _, item := range staged {
+			_ = os.Remove(item.temporary)
+		}
+	}()
+	seen := make(map[string]struct{}, len(inputs))
+	for _, input := range inputs {
+		if err := ValidateName(input.Name); err != nil {
+			return nil, err
+		}
+		if input.Source == nil || input.MaxBytes <= 0 {
+			return nil, fmt.Errorf("upload %q has no readable content or size limit", input.Name)
+		}
+		key := ComparisonKey(input.Name)
+		if _, duplicate := seen[key]; duplicate {
+			return nil, fmt.Errorf("upload batch contains duplicate name %q", input.Name)
+		}
+		seen[key] = struct{}{}
+		target := filepath.Join(parent, input.Name)
+		if err := m.ensureMutationAllowed(target); err != nil {
+			return nil, err
+		}
+		existing, existingErr := os.Lstat(target)
+		exists := existingErr == nil
+		if exists {
+			if !replace {
+				return nil, fmt.Errorf("an entry with the same name already exists: %s", input.Name)
+			}
+			if !existing.Mode().IsRegular() || existing.Mode()&os.ModeSymlink != 0 {
+				return nil, fmt.Errorf("only a regular file can be replaced: %s", input.Name)
+			}
+			if err := ValidateName(input.StoredName); err != nil {
+				return nil, fmt.Errorf("invalid trash entry ID for %s: %w", input.Name, err)
+			}
+		} else if !os.IsNotExist(existingErr) {
+			return nil, fmt.Errorf("inspect upload target %s: %w", input.Name, existingErr)
+		}
+		temporary, createErr := os.CreateTemp(parent, ".scriptboard-upload-*")
+		if createErr != nil {
+			return nil, fmt.Errorf("create upload temporary file for %s: %w", input.Name, createErr)
+		}
+		temporaryPath := temporary.Name()
+		staged = append(staged, stagedUpload{input: input, target: target, temporary: temporaryPath, exists: exists})
+		if chmodErr := temporary.Chmod(0o644); chmodErr != nil {
+			_ = temporary.Close()
+			return nil, fmt.Errorf("set upload permissions for %s: %w", input.Name, chmodErr)
+		}
+		written, copyErr := io.Copy(temporary, io.LimitReader(input.Source, input.MaxBytes+1))
+		if copyErr == nil && written > input.MaxBytes {
+			copyErr = fmt.Errorf("file exceeds %d byte limit", input.MaxBytes)
+		}
+		if syncErr := temporary.Sync(); copyErr == nil && syncErr != nil {
+			copyErr = syncErr
+		}
+		if closeErr := temporary.Close(); copyErr == nil && closeErr != nil {
+			copyErr = closeErr
+		}
+		if copyErr != nil {
+			return nil, fmt.Errorf("stage upload %s: %w", input.Name, copyErr)
+		}
+	}
+
+	results := make([]UploadBatchResult, 0, len(staged))
+	rollback := func(cause error) error { return errors.Join(cause, m.RollbackUploadBatch(results)) }
+	for _, item := range staged {
+		var trashed *Trashed
+		if item.exists {
+			old, trashErr := m.MoveToTrash(item.target, item.input.StoredName)
+			if trashErr != nil {
+				return nil, rollback(fmt.Errorf("prepare replacement %s: %w", item.input.Name, trashErr))
+			}
+			trashed = &old
+		}
+		if renameErr := os.Rename(item.temporary, item.target); renameErr != nil {
+			if trashed != nil {
+				_ = m.RestoreFromTrash(trashed.StoredPath, trashed.OriginalPath)
+			}
+			return nil, rollback(fmt.Errorf("commit upload %s: %w", item.input.Name, renameErr))
+		}
+		results = append(results, UploadBatchResult{Name: item.input.Name, Path: item.target, Trashed: trashed})
+	}
+	return results, nil
+}
+
+// RollbackUploadBatch restores a completed batch in reverse commit order. It
+// is used when a caller cannot durably record the replacement metadata.
+func (m *Manager) RollbackUploadBatch(results []UploadBatchResult) error {
+	var rollbackErr error
+	for index := len(results) - 1; index >= 0; index-- {
+		result := results[index]
+		if removeErr := os.Remove(result.Path); removeErr != nil && !os.IsNotExist(removeErr) {
+			rollbackErr = errors.Join(rollbackErr, fmt.Errorf("remove committed upload %s: %w", result.Name, removeErr))
+			continue
+		}
+		if result.Trashed != nil {
+			if restoreErr := m.RestoreFromTrash(result.Trashed.StoredPath, result.Trashed.OriginalPath); restoreErr != nil {
+				rollbackErr = errors.Join(rollbackErr, fmt.Errorf("restore replaced file %s: %w", result.Name, restoreErr))
+			}
+		}
+	}
+	return rollbackErr
 }
 
 func (m *Manager) PrepareScript(path string) (Script, error) {
