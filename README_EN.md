@@ -243,7 +243,7 @@ the current signed checkpoint for the same State Root path. It revokes restored
 web sessions, preserves the previous private state and checkpoint, and records
 an audit-continuity event before issuing a new checkpoint.
 
-Back up before upgrading from an older version. The current release uses database schema 45 and can migrate schemas 20–44 automatically; older databases and legacy configuration files are not migrated automatically. Schema 45 adds the durable Registry connection operation log used to reconcile an interruption between the SQLite commit and Broker activation.
+Back up before upgrading from an older version. The current release uses database schema 48 and can migrate schemas 20–47 automatically; older databases and legacy configuration files are not migrated automatically. Schema 45 adds the durable Registry connection operation log, schema 46 adds its crash-safe completion phase, schema 47 separates External Interface display labels from URL call names, and schema 48 converts the single Kubernetes connection and its retained history into independently monitored multiple connections.
 
 When the panel is unavailable or compromise is suspected, use the local out-of-band emergency commands below. Mutations require an exact fixed confirmation or the complete Key ID and are atomically appended to the audit chain as `local-administrator`; evidence export verifies the chain first, creates only a new file, and never overwrites existing evidence:
 
