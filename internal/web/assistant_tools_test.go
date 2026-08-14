@@ -275,7 +275,10 @@ func TestAssistantUIActionCatalogAndExecutorReuseWebValidation(t *testing.T) {
 
 func TestAssistantUIActionResultsAreComposableAndFailuresAreActionable(t *testing.T) {
 	root := t.TempDir()
-	application, err := Open(Config{StateRoot: filepath.Join(root, "state")})
+	application, err := Open(Config{
+		StateRoot:    filepath.Join(root, "state"),
+		FileTopology: assistantContextTestTopology{root: root},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,6 +393,26 @@ func TestAssistantUIActionResultsAreComposableAndFailuresAreActionable(t *testin
 	oneTimePayload, _ := json.Marshal(oneTime.Content)
 	if !strings.Contains(string(oneTimePayload), `"resourceId"`) {
 		t.Fatalf("one-time source result = %s", oneTimePayload)
+	}
+	var oneTimeResult struct {
+		ResourceID string `json:"resourceId"`
+	}
+	if err := json.Unmarshal(oneTimePayload, &oneTimeResult); err != nil || oneTimeResult.ResourceID == "" {
+		t.Fatalf("decode one-time source result: %s, %v", oneTimePayload, err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var status string
+		if err := application.db.QueryRow(`SELECT status FROM runs WHERE id = ?`, oneTimeResult.ResourceID).Scan(&status); err != nil {
+			t.Fatal(err)
+		}
+		if status != "starting" && status != "running" && status != "stopping" && status != "timing_out" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("one-time source run did not finish: status=%s", status)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	defaultDirectoryOneTime := invokeAction("ui-one-time-source-default-directory", map[string]any{
 		"action": "quick_runs.one_time",

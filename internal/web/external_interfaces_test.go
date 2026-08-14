@@ -721,10 +721,11 @@ func TestExternalInvocationHistorySupportsSearchDateFiltersAndPagination(t *test
 	root := t.TempDir()
 	stateRoot := filepath.Join(root, "state")
 	client, serverURL := authenticatedClient(t, filepath.Join(root, "host"), stateRoot)
-	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	database, err := sql.Open("sqlite", "file:"+filepath.ToSlash(filepath.Join(stateRoot, "app.db"))+"?_pragma=busy_timeout(5000)")
 	if err != nil {
 		t.Fatal(err)
 	}
+	database.SetMaxOpenConns(1)
 	defer database.Close()
 	now := time.Now()
 	for index := 0; index < 21; index++ {

@@ -66,7 +66,7 @@ func TestManagedMySQLCredentialAndExecutionAreOwnedByPrivilegedBroker(t *testing
 	}
 	transportOptions := privilegebroker.TransportOptions{StateRoot: stateRoot, DevelopmentCurrentUser: true}
 	if runtime.GOOS == "linux" {
-		transportOptions.Endpoint = filepath.Join(root, "mysql-broker.sock")
+		transportOptions.Endpoint = shortPrivilegedBrokerSocket(t, "mysql-broker-")
 	}
 	transport, err := privilegebroker.Listen(transportOptions)
 	if err != nil {
@@ -127,7 +127,7 @@ func TestManagedProviderCredentialAndProxyAreOwnedByPrivilegedBroker(t *testing.
 	brokerSecretRoot := filepath.Join(root, "broker-secrets")
 	transportOptions := privilegebroker.TransportOptions{StateRoot: stateRoot, DevelopmentCurrentUser: true}
 	if runtime.GOOS == "linux" {
-		transportOptions.Endpoint = filepath.Join(root, "provider-broker.sock")
+		transportOptions.Endpoint = shortPrivilegedBrokerSocket(t, "provider-broker-")
 	}
 	transport, err := privilegebroker.Listen(transportOptions)
 	if err != nil {
@@ -210,6 +210,23 @@ func TestManagedProviderCredentialAndProxyAreOwnedByPrivilegedBroker(t *testing.
 	if strings.Contains(string(page), "provider-secret") {
 		t.Fatal("provider credential was rendered into the Web page")
 	}
+}
+
+func shortPrivilegedBrokerSocket(t *testing.T, prefix string) string {
+	t.Helper()
+	file, err := os.CreateTemp("", prefix+"*.sock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := file.Name()
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(path) })
+	return path
 }
 
 func TestManagedRemoteWebsiteCredentialIsOwnedAndUsedByPrivilegedBroker(t *testing.T) {
