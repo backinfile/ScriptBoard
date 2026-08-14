@@ -741,6 +741,58 @@ func TestFileWorkspaceOffersPreviewForUnknownTextButNotUnknownBinary(t *testing.
 	}
 }
 
+func TestLargeTextPreviewLoadsInBoundedChunks(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "managed")
+	if err := os.MkdirAll(hostRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(hostRoot, "large.txt")
+	content := strings.Repeat("0123456789abcdef\n", 70000) + "TAIL_MARKER\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
+
+	response, err := client.Get(hostFileRequestURL(serverURL, "/resources/files/view", path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || !bytes.Contains(page, []byte(`data-text-preview-pager`)) || bytes.Contains(page, []byte("TAIL_MARKER")) {
+		t.Fatalf("large preview must render only its first bounded chunk: status=%d bytes=%d", response.StatusCode, len(page))
+	}
+	versionMatch := regexp.MustCompile(`data-text-preview-version="([a-f0-9]+)"`).FindSubmatch(page)
+	nextMatch := regexp.MustCompile(`data-text-preview-next="([0-9]+)"`).FindSubmatch(page)
+	if len(versionMatch) != 2 || len(nextMatch) != 2 {
+		t.Fatalf("large preview is missing its paging cursor: %s", page)
+	}
+
+	query := url.Values{"path": {path}, "offset": {string(nextMatch[1])}, "version": {string(versionMatch[1])}}
+	response, err = client.Get(serverURL + "/resources/files/view/content?" + query.Encode())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var chunk struct {
+		Content    string `json:"content"`
+		NextOffset string `json:"nextOffset"`
+		HasMore    bool   `json:"hasMore"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&chunk); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || len(chunk.Content) == 0 || len(chunk.Content) > 16<<10 || !chunk.HasMore || chunk.NextOffset == "" {
+		t.Fatalf("text preview chunk = status %d, %#v", response.StatusCode, chunk)
+	}
+}
+
 func TestScriptPreviewUsesDeterministicHighlightLanguages(t *testing.T) {
 	t.Parallel()
 

@@ -103,11 +103,17 @@ type Filter struct {
 }
 
 type Event struct {
-	Sequence      int64
-	Time          time.Time
-	Source        string
-	Data          string
-	EncodingError bool
+	Sequence      int64     `json:"sequence"`
+	Time          time.Time `json:"time"`
+	Source        string    `json:"source"`
+	Data          string    `json:"text"`
+	EncodingError bool      `json:"encodingError,omitempty"`
+}
+
+type EventPage struct {
+	Events  []Event `json:"events"`
+	Before  int64   `json:"before,omitempty"`
+	HasMore bool    `json:"hasMore"`
 }
 
 type persistedEvent struct {
@@ -991,6 +997,45 @@ func (m *Manager) StreamEvents(id string, emit func(Event) error) error {
 		return fmt.Errorf("read Run log: %w", err)
 	}
 	return nil
+}
+
+// EventPage returns a bounded tail page before the exclusive sequence cursor.
+// A zero cursor selects the newest available events.
+func (m *Manager) EventPage(id string, beforeSequence int64, limit int) (EventPage, error) {
+	if beforeSequence < 0 || limit < 1 || limit > 1000 {
+		return EventPage{}, errors.New("invalid Run event page")
+	}
+	run, logPath, err := m.getMetadata(id)
+	if err != nil {
+		return EventPage{}, err
+	}
+	if run.LogExpired {
+		return EventPage{Events: []Event{}}, nil
+	}
+
+	const maximumPageBytes = 128 << 10
+	page := EventPage{Events: make([]Event, 0, limit)}
+	pageBytes := 0
+	_, err = scanEvents(logPath, 0, 0, func(event Event) error {
+		if beforeSequence > 0 && event.Sequence >= beforeSequence {
+			return nil
+		}
+		page.Events = append(page.Events, event)
+		pageBytes += len(event.Data)
+		for len(page.Events) > limit || pageBytes > maximumPageBytes && len(page.Events) > 1 {
+			pageBytes -= len(page.Events[0].Data)
+			page.Events = page.Events[1:]
+			page.HasMore = true
+		}
+		return nil
+	})
+	if err != nil {
+		return EventPage{}, fmt.Errorf("read Run log: %w", err)
+	}
+	if page.HasMore && len(page.Events) > 0 {
+		page.Before = page.Events[0].Sequence
+	}
+	return page, nil
 }
 
 func (m *Manager) FollowEvents(ctx context.Context, id string, afterSequence int64, emit func(Event) error) (string, error) {

@@ -371,18 +371,21 @@
     blocks.forEach(block => highlightElement(block.element, block.language));
   }
 
-  function initScriptPreview() {
-    const source = document.querySelector("[data-script-preview]");
-    if (!source) return;
+  function renderScriptPreview(source) {
     const language = source.dataset.highlightLanguage || "";
     const container = source.closest("pre");
     container?.setAttribute("aria-busy", "true");
-    loadHighlightLanguages([language]).then(() => {
+    return loadHighlightLanguages([language]).then(() => {
       if (source.isConnected) highlightElement(source, language);
       container?.removeAttribute("aria-busy");
     }).catch(() => {
       container?.removeAttribute("aria-busy");
     });
+  }
+
+  function initScriptPreview() {
+    const source = document.querySelector("[data-script-preview]");
+    if (source) renderScriptPreview(source);
   }
 
   function hostMarkdownPath(reference, basePath) {
@@ -494,12 +497,9 @@
     });
   }
 
-  function initMarkdownPreview() {
-    const preview = document.querySelector("[data-markdown-preview]");
-    const source = document.querySelector("[data-markdown-source]");
-    if (!preview || !source) return;
+  function renderMarkdownPreview(preview, source) {
     preview.setAttribute("aria-busy", "true");
-    loadMarkdownLibraries().then(async () => {
+    return loadMarkdownLibraries().then(async () => {
       if (!preview.isConnected || !source.isConnected) return;
       const renderer = window.markdownit({
         html: false,
@@ -522,6 +522,82 @@
       source.hidden = true;
     }).catch(() => {
       preview.removeAttribute("aria-busy");
+    });
+  }
+
+  function initMarkdownPreview() {
+    const preview = document.querySelector("[data-markdown-preview]");
+    const source = document.querySelector("[data-markdown-source]");
+    if (preview && source) renderMarkdownPreview(preview, source);
+  }
+
+  function initTextPreviewPager(cleanups) {
+    const root = document.querySelector("[data-text-preview-pager]");
+    if (!root) return;
+    const markdownPreview = root.querySelector("[data-markdown-preview]");
+    const source = root.querySelector("[data-markdown-source],[data-script-preview],[data-plain-text-preview]");
+    const status = root.querySelector("[data-text-preview-status]");
+    if (!source) return;
+    let content = source.textContent || "";
+    let nextOffset = root.dataset.textPreviewNext || "";
+    let version = root.dataset.textPreviewVersion || "";
+    let hasMore = root.dataset.textPreviewHasMore === "true";
+    let loading = false;
+    let disposed = false;
+
+    const render = async () => {
+      source.textContent = content;
+      if (source.matches("[data-script-preview]")) await renderScriptPreview(source);
+      if (markdownPreview) await renderMarkdownPreview(markdownPreview, source);
+    };
+    const nearEnd = () => {
+      const documentBottom = document.documentElement.scrollHeight - window.scrollY - window.innerHeight;
+      const surface = markdownPreview && !markdownPreview.hidden ? markdownPreview : source.closest("pre") || source;
+      const surfaceBottom = surface.scrollHeight - surface.scrollTop - surface.clientHeight;
+      const surfaceScrollable = surface.scrollHeight > surface.clientHeight + 1;
+      return documentBottom < 480 || surfaceScrollable && surfaceBottom < 240;
+    };
+    const loadMore = async () => {
+      if (disposed || loading || !hasMore || !nextOffset) return;
+      loading = true;
+      if (status) {
+        status.hidden = false;
+        status.dataset.state = "loading";
+      }
+      try {
+        const url = new URL(root.dataset.textPreviewUrl, location.href);
+        url.searchParams.set("offset", nextOffset);
+        url.searchParams.set("version", version);
+        const response = await fetch(url, { credentials: "same-origin", cache: "no-store", headers: { Accept: "application/json" } });
+        if (!response.ok) throw new Error((await response.text()).trim() || `HTTP ${response.status}`);
+        const page = await response.json();
+        content += page.content || "";
+        nextOffset = page.nextOffset || "";
+        version = page.version || version;
+        hasMore = Boolean(page.hasMore);
+        await render();
+        if (status) status.hidden = !hasMore;
+      } catch (error) {
+        hasMore = false;
+        if (status) {
+          status.hidden = false;
+          status.dataset.state = "error";
+          status.textContent = error.message;
+        }
+      } finally {
+        loading = false;
+        if (!disposed && hasMore && nearEnd()) requestAnimationFrame(loadMore);
+      }
+    };
+    const onScroll = () => { if (nearEnd()) loadMore(); };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    const surface = source.closest("pre");
+    surface?.addEventListener("scroll", onScroll, { passive: true });
+    if (hasMore && nearEnd()) requestAnimationFrame(loadMore);
+    cleanups.push(() => {
+      disposed = true;
+      window.removeEventListener("scroll", onScroll);
+      surface?.removeEventListener("scroll", onScroll);
     });
   }
 
@@ -2874,16 +2950,19 @@
     const root = document.querySelector("[data-run-events-url]");
     if (!root) return;
     const log = root.querySelector("[data-run-log]");
+    const historySentinel = root.querySelector("[data-run-history-sentinel]");
     const jumpToTop = root.querySelector("[data-run-jump-top]");
     const jumpToBottom = root.querySelector("[data-run-jump-bottom]");
     const scrollLog = (event, top) => {
       event.preventDefault();
       if (!log) return;
-      const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
-      log.scrollTo({ top, behavior });
+      log.scrollTo({ top, behavior: "auto" });
       log.focus({ preventScroll: true });
     };
-    const handleJumpToTop = event => scrollLog(event, 0);
+    const handleJumpToTop = event => {
+      scrollLog(event, 0);
+      loadHistory(false, true);
+    };
     const handleJumpToBottom = event => scrollLog(event, log?.scrollHeight || 0);
     const showLatestLog = () => { if (log) log.scrollTop = log.scrollHeight; };
     jumpToTop?.addEventListener("click", handleJumpToTop);
@@ -2892,60 +2971,98 @@
       jumpToTop?.removeEventListener("click", handleJumpToTop);
       jumpToBottom?.removeEventListener("click", handleJumpToBottom);
     });
-    showLatestLog();
-    if (!window.EventSource) return;
     const state = root.querySelector("[data-run-live-state]");
     const pause = root.querySelector("[data-run-pause]");
     const pauseLabel = pause?.querySelector("[data-run-pause-label]");
     let paused = false;
     let completed = false;
     let buffer = [];
-    let lastSequence = Array.from(log.querySelectorAll("[data-sequence]")).reduce(
-      (highest, entry) => Math.max(highest, Number(entry.dataset.sequence) || 0),
-      0,
-    );
+    let lastSequence = 0;
+    let before = "";
+    let hasMore = true;
+    let historyLoading = false;
+    let source = null;
+    let disposed = false;
+    const createEntry = payload => {
+      const sequence = Number(payload.sequence);
+      const span = document.createElement("span");
+      if (Number.isSafeInteger(sequence) && sequence > 0) span.dataset.sequence = String(sequence);
+      span.dataset.source = payload.source || "stdout";
+      if (payload.encodingError) span.dataset.encodingError = "true";
+      span.textContent = payload.text || "";
+      return span;
+    };
     const append = payload => {
       const sequence = Number(payload.sequence);
       if (Number.isSafeInteger(sequence) && sequence > 0) {
         if (sequence <= lastSequence) return;
         lastSequence = sequence;
       }
-      const span = document.createElement("span");
-      if (Number.isSafeInteger(sequence) && sequence > 0) span.dataset.sequence = String(sequence);
-      span.dataset.source = payload.source || "stdout";
-      span.textContent = payload.text || "";
-      log.append(span);
+      log.append(createEntry(payload));
       showLatestLog();
+    };
+    const loadHistory = async (initial, pinToTop = false) => {
+      if (!log || !historySentinel || historyLoading || (!initial && !hasMore)) return;
+      historyLoading = true;
+      log.setAttribute("aria-busy", "true");
+      try {
+        const url = new URL(root.dataset.runHistoryUrl, location.href);
+        if (!initial && before) url.searchParams.set("before", before);
+        const response = await fetch(url, { credentials: "same-origin", cache: "no-store", headers: { Accept: "application/json" } });
+        if (!response.ok) throw new Error((await response.text()).trim() || `HTTP ${response.status}`);
+        const page = await response.json();
+        const entries = Array.isArray(page.events) ? page.events : [];
+        before = page.before ? String(page.before) : "";
+        hasMore = Boolean(page.hasMore);
+        const fragment = document.createDocumentFragment();
+        entries.forEach(entry => fragment.append(createEntry(entry)));
+        if (initial) {
+          historySentinel.after(fragment);
+          if (entries.length) lastSequence = Number(entries[entries.length - 1].sequence) || 0;
+          showLatestLog();
+        } else if (entries.length) {
+          const previousHeight = log.scrollHeight;
+          historySentinel.after(fragment);
+          if (pinToTop) log.scrollTop = 0;
+          else log.scrollTop += log.scrollHeight - previousHeight;
+        }
+      } finally {
+        historyLoading = false;
+        log.removeAttribute("aria-busy");
+      }
     };
     const finishPauseControl = () => {
       pause?.remove();
       root._toggleLogPause = null;
     };
-    const eventsURL = new URL(root.dataset.runEventsUrl, location.href);
-    eventsURL.searchParams.set("after", String(lastSequence));
-    const source = new EventSource(eventsURL);
-    source.addEventListener("open", () => { if (state) state.textContent = words().connected; });
-    source.addEventListener("output", event => {
-      const payload = { ...JSON.parse(event.data), sequence: Number(event.lastEventId) };
-      if (paused) buffer.push(payload); else append(payload);
-    });
-    source.addEventListener("complete", event => {
-      completed = true;
-      source.close();
-      if (state) state.textContent = words().complete;
-      const status = root.querySelector("[data-run-status]");
-      if (status) {
-        const runState = event.data.trim();
-        const dot = document.createElement("span");
-        dot.className = "status-dot";
-        dot.setAttribute("aria-hidden", "true");
-        status.dataset.state = runState;
-        status.replaceChildren(dot, document.createTextNode(words().statuses[runState] || runState));
-      }
-      root.querySelector("[data-run-stop-form]")?.remove();
-      if (!paused || buffer.length === 0) finishPauseControl();
-    });
-    source.addEventListener("error", () => { if (state && source.readyState !== EventSource.CLOSED) state.textContent = words().disconnected; });
+    const connect = () => {
+      if (disposed || !window.EventSource) return;
+      const eventsURL = new URL(root.dataset.runEventsUrl, location.href);
+      eventsURL.searchParams.set("after", String(lastSequence));
+      source = new EventSource(eventsURL);
+      source.addEventListener("open", () => { if (state) state.textContent = words().connected; });
+      source.addEventListener("output", event => {
+        const payload = { ...JSON.parse(event.data), sequence: Number(event.lastEventId) };
+        if (paused) buffer.push(payload); else append(payload);
+      });
+      source.addEventListener("complete", event => {
+        completed = true;
+        source?.close();
+        if (state) state.textContent = words().complete;
+        const status = root.querySelector("[data-run-status]");
+        if (status) {
+          const runState = event.data.trim();
+          const dot = document.createElement("span");
+          dot.className = "status-dot";
+          dot.setAttribute("aria-hidden", "true");
+          status.dataset.state = runState;
+          status.replaceChildren(dot, document.createTextNode(words().statuses[runState] || runState));
+        }
+        root.querySelector("[data-run-stop-form]")?.remove();
+        if (!paused || buffer.length === 0) finishPauseControl();
+      });
+      source.addEventListener("error", () => { if (state && source?.readyState !== EventSource.CLOSED) state.textContent = words().disconnected; });
+    };
     const toggle = () => {
       if (completed && !paused) return;
       paused = !paused;
@@ -2960,9 +3077,17 @@
       }
     };
     pause?.addEventListener("click", toggle);
+    const onScroll = event => { if (event.isTrusted && log.scrollTop < 48) loadHistory(false); };
+    log?.addEventListener("scroll", onScroll, { passive: true });
     root._toggleLogPause = toggle;
+    loadHistory(true).then(connect).catch(() => {
+      if (state) state.textContent = words().disconnected;
+      log?.removeAttribute("aria-busy");
+    });
     cleanups.push(() => {
-      source.close();
+      disposed = true;
+      source?.close();
+      log?.removeEventListener("scroll", onScroll);
       pause?.removeEventListener("click", toggle);
       if (root._toggleLogPause === toggle) root._toggleLogPause = null;
     });
@@ -6876,6 +7001,7 @@
     localizeTimes();
     initMarkdownPreview();
     initScriptPreview();
+    initTextPreviewPager(cleanups);
     initPasswordControls(document, cleanups);
     initCopyControls(document, cleanups);
     initFileDropUpload(document, cleanups);

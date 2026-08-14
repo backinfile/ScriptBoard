@@ -3,6 +3,7 @@ package runmanager
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -196,6 +197,53 @@ func TestStreamEventsEmitsPersistedEventsWithoutBuildingRunEvents(t *testing.T) 
 	}
 	if len(events) != 2 || events[0].Data != "first\n" || events[1].Data != "second\n" {
 		t.Fatalf("events = %#v", events)
+	}
+}
+
+func TestEventPageReturnsTailAndEarlierEvents(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	db := openRunMetadataTestDB(t, root)
+	defer db.Close()
+
+	logPath := filepath.Join(root, "run.jsonl")
+	var log strings.Builder
+	for sequence := int64(1); sequence <= 5; sequence++ {
+		line, err := json.Marshal(persistedEvent{Sequence: sequence, Time: sequence, Source: "stdout", Data: []byte{byte('0' + sequence), '\n'}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		log.Write(line)
+		log.WriteByte('\n')
+	}
+	if err := os.WriteFile(logPath, []byte(log.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	insertRunMetadataTestRow(t, db, "run-1", logPath, time.Now().UTC())
+	manager := New(db, testHostFiles(t), root, 0, nil)
+
+	latest, err := manager.EventPage("run-1", 0, 2)
+	if err != nil {
+		t.Fatalf("latest EventPage: %v", err)
+	}
+	if !latest.HasMore || latest.Before != 4 || len(latest.Events) != 2 || latest.Events[0].Sequence != 4 || latest.Events[1].Sequence != 5 {
+		t.Fatalf("latest page = %#v", latest)
+	}
+
+	earlier, err := manager.EventPage("run-1", latest.Before, 2)
+	if err != nil {
+		t.Fatalf("earlier EventPage: %v", err)
+	}
+	if !earlier.HasMore || earlier.Before != 2 || len(earlier.Events) != 2 || earlier.Events[0].Sequence != 2 || earlier.Events[1].Sequence != 3 {
+		t.Fatalf("earlier page = %#v", earlier)
+	}
+
+	oldest, err := manager.EventPage("run-1", earlier.Before, 2)
+	if err != nil {
+		t.Fatalf("oldest EventPage: %v", err)
+	}
+	if oldest.HasMore || oldest.Before != 0 || len(oldest.Events) != 1 || oldest.Events[0].Sequence != 1 {
+		t.Fatalf("oldest page = %#v", oldest)
 	}
 }
 

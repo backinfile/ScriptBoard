@@ -4782,6 +4782,8 @@ body.has-task-panel { overflow: hidden; }
 .editor-actions > span { margin-right: auto; color: var(--muted); font-size: .78rem; }
 .text-preview { min-height: 60vh; margin: 0; padding: 20px; overflow: auto; color: var(--terminal-ink); background: var(--terminal); font: 450 .82rem/1.65 var(--font-mono); white-space: pre-wrap; }
 .text-preview > code { display: block; min-height: inherit; color: inherit; background: transparent; font: inherit; }
+.text-preview-status { margin: 10px 0 0; color: var(--muted); font-size: .78rem; text-align: center; }
+.text-preview-status[data-state="error"] { color: var(--danger); }
 .hljs { color: var(--terminal-ink); background: transparent; }
 .hljs-comment,
 .hljs-quote { color: #97a4b7; font-style: italic; }

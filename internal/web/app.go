@@ -2888,6 +2888,30 @@ func (a *App) runEvents(response http.ResponseWriter, request *http.Request) {
 	flusher.Flush()
 }
 
+func (a *App) runEventHistory(response http.ResponseWriter, request *http.Request) {
+	before := int64(0)
+	if value := strings.TrimSpace(request.URL.Query().Get("before")); value != "" {
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || parsed < 1 {
+			http.Error(response, "invalid Run history cursor", http.StatusBadRequest)
+			return
+		}
+		before = parsed
+	}
+	page, err := a.runs.EventPage(request.PathValue("id"), before, 100)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(response, "Run not found", http.StatusNotFound)
+			return
+		}
+		http.Error(response, "Unable to read Run log: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(response).Encode(page)
+}
+
 type variableView struct {
 	Name       string
 	Value      string
@@ -3161,7 +3185,7 @@ func (a *App) loadVariables() (map[string]string, error) {
 }
 
 func (a *App) runDetails(response http.ResponseWriter, request *http.Request) {
-	run, err := a.runs.Get(request.PathValue("id"))
+	run, err := a.runs.GetMetadata(request.PathValue("id"))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			http.Error(response, "运行不存在", http.StatusNotFound)
@@ -3169,9 +3193,6 @@ func (a *App) runDetails(response http.ResponseWriter, request *http.Request) {
 		}
 		http.Error(response, "无法读取运行："+err.Error(), http.StatusInternalServerError)
 		return
-	}
-	if len(run.Events) > 1000 {
-		run.Events = run.Events[len(run.Events)-1000:]
 	}
 	current := request.Context().Value(sessionContextKey).(session)
 	canManageExecution := identity.Allows(current.role, identity.PermissionManageExecution)
@@ -3713,7 +3734,7 @@ func (a *App) previewTextPage(response http.ResponseWriter, request *http.Reques
 		writeHostFileError(response, "无法预览文件", err)
 		return
 	}
-	document, err := a.hostReadText(request.Context(), relative, 1<<20)
+	chunk, err := a.readTextPreviewChunk(request.Context(), relative, 0, "")
 	if err != nil {
 		writeHostFileError(response, "无法预览文件", err)
 		return
@@ -3731,15 +3752,16 @@ func (a *App) previewTextPage(response http.ResponseWriter, request *http.Reques
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = textPreviewTemplate.Execute(response, struct {
 		Path, Content, BackURL, EditURL, DownloadURL string
-		LogURL                                       string
+		LogURL, ContentURL, NextOffset, Version      string
 		Title, MarkdownBaseURL, HighlightLanguage    string
-		Markdown                                     bool
+		Markdown, HasMore                            bool
 		Locale                                       webLocale
 	}{
-		Path: relative, Content: document.Content, BackURL: filesURL(parent),
+		Path: relative, Content: chunk.Content, BackURL: filesURL(parent),
 		EditURL: routeFileURL("/resources/files/edit", relative), DownloadURL: routeFileURL("/resources/files/download", relative),
-		LogURL: "/resources/files/log?" + url.Values{"path": {relative}}.Encode(),
-		Title:  title, Markdown: markdown, MarkdownBaseURL: markdownBaseURL, HighlightLanguage: highlightLanguage, Locale: resolveWebLocale(request),
+		LogURL:     "/resources/files/log?" + url.Values{"path": {relative}}.Encode(),
+		ContentURL: routeFileURL("/resources/files/view/content", relative), NextOffset: chunk.NextOffset, Version: chunk.Version, HasMore: chunk.HasMore,
+		Title: title, Markdown: markdown, MarkdownBaseURL: markdownBaseURL, HighlightLanguage: highlightLanguage, Locale: resolveWebLocale(request),
 	})
 }
 

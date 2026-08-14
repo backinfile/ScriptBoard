@@ -271,6 +271,12 @@ func likelyTextContent(content []byte) bool {
 	return runeCount == 0 || controlCount*100 <= runeCount
 }
 
+// IsLikelyTextContent applies the bounded content check used by Host Files
+// previews without requiring callers to read an entire file first.
+func IsLikelyTextContent(content []byte) bool {
+	return likelyTextContent(content)
+}
+
 func hasKnownBinaryMagic(content []byte) bool {
 	for _, signature := range knownBinaryMagic {
 		if bytes.HasPrefix(content, signature) {

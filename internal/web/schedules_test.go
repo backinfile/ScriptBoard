@@ -111,12 +111,16 @@ func TestScheduleTriggersRunAtNextCronTime(t *testing.T) {
 		}
 		body, _ := io.ReadAll(response.Body)
 		_ = response.Body.Close()
-		if strings.Contains(string(body), "succeeded") && strings.Contains(string(body), "scheduled-output") {
+		if strings.Contains(string(body), "succeeded") {
 			break
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("scheduled Run did not finish: %s", body)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+	history := readRunHistoryPage(t, client, serverURL+"/history/runs/"+runID+"/history")
+	if len(history.Events) != 1 || !strings.Contains(history.Events[0].Text, "scheduled-output") {
+		t.Fatalf("scheduled Run output missing: %#v", history)
 	}
 }

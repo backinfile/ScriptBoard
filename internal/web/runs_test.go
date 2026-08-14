@@ -3,6 +3,7 @@ package web_test
 import (
 	"crypto/sha256"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -86,7 +87,7 @@ func TestAdminCanRunScriptAndReadCompletedOutput(t *testing.T) {
 			t.Fatalf("read run: %v", readErr)
 		}
 		text := string(body)
-		if strings.Contains(text, "succeeded") && strings.Contains(text, "hello-run") {
+		if strings.Contains(text, "succeeded") {
 			completedPage = text
 			break
 		}
@@ -94,6 +95,13 @@ func TestAdminCanRunScriptAndReadCompletedOutput(t *testing.T) {
 			t.Fatalf("run did not complete with output: status=%d body=%s", response.StatusCode, text)
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+	if strings.Contains(completedPage, "hello-run") || !strings.Contains(completedPage, `data-run-history-url="`) {
+		t.Fatalf("completed Run detail must defer output to history paging: %s", completedPage)
+	}
+	history := readRunHistoryPage(t, client, runURL+"/history")
+	if len(history.Events) != 1 || !strings.Contains(history.Events[0].Text, "hello-run") {
+		t.Fatalf("Run history page = %#v", history)
 	}
 	if !strings.Contains(completedPage, `href="`+strings.TrimPrefix(runURL, serverURL)+`/download"`) ||
 		!strings.Contains(completedPage, `data-native`) || !strings.Contains(completedPage, `data-lucide="download"`) {
@@ -188,9 +196,6 @@ func TestRunDisplaysLocalizedOutput(t *testing.T) {
 		}
 		text := string(body)
 		if strings.Contains(text, "succeeded") {
-			if !strings.Contains(text, expected) {
-				t.Fatalf("completed run output is not valid UTF-8 text %q: %s", expected, text)
-			}
 			break
 		}
 		if time.Now().After(deadline) {
@@ -198,6 +203,37 @@ func TestRunDisplaysLocalizedOutput(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+	history := readRunHistoryPage(t, client, runURL+"/history")
+	if len(history.Events) != 1 || !strings.Contains(history.Events[0].Text, expected) {
+		t.Fatalf("completed run output is not valid UTF-8 text %q: %#v", expected, history)
+	}
+}
+
+type runHistoryTestPage struct {
+	Events []struct {
+		Sequence int64  `json:"sequence"`
+		Text     string `json:"text"`
+		Source   string `json:"source"`
+	} `json:"events"`
+	Before  int64 `json:"before"`
+	HasMore bool  `json:"hasMore"`
+}
+
+func readRunHistoryPage(t *testing.T, client *http.Client, target string) runHistoryTestPage {
+	t.Helper()
+	response, err := client.Get(target)
+	if err != nil {
+		t.Fatalf("get Run history: %v", err)
+	}
+	defer response.Body.Close()
+	var page runHistoryTestPage
+	if err := json.NewDecoder(response.Body).Decode(&page); err != nil {
+		t.Fatalf("decode Run history: status=%d err=%v", response.StatusCode, err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("Run history status=%d page=%#v", response.StatusCode, page)
+	}
+	return page
 }
 
 func TestRunEventsAreAvailableAsSSE(t *testing.T) {
@@ -760,16 +796,17 @@ func TestNonZeroRunFailsAndPreservesOutputSources(t *testing.T) {
 		body, _ := io.ReadAll(response.Body)
 		_ = response.Body.Close()
 		page := string(body)
-		if strings.Contains(page, "failed") && strings.Contains(page, "from-out") && strings.Contains(page, "from-err") {
-			if !strings.Contains(page, `data-source="stdout"`) || !strings.Contains(page, `data-source="stderr"`) {
-				t.Fatalf("output sources missing: %s", page)
-			}
+		if strings.Contains(page, "failed") {
 			break
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("failed run result missing: %s", page)
 		}
 		time.Sleep(25 * time.Millisecond)
+	}
+	history := readRunHistoryPage(t, client, runURL+"/history")
+	if len(history.Events) != 2 || strings.TrimSpace(history.Events[0].Text) != "from-out" || history.Events[0].Source != "stdout" || strings.TrimSpace(history.Events[1].Text) != "from-err" || history.Events[1].Source != "stderr" {
+		t.Fatalf("failed Run output history = %#v", history)
 	}
 }
 
@@ -887,12 +924,16 @@ func TestRunResolvesVariableAsWholeArgument(t *testing.T) {
 		}
 		body, _ := io.ReadAll(response.Body)
 		_ = response.Body.Close()
-		if strings.Contains(string(body), "succeeded") && strings.Contains(string(body), "[hello variable]") {
+		if strings.Contains(string(body), "succeeded") {
 			break
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("resolved variable output missing: %s", body)
 		}
 		time.Sleep(25 * time.Millisecond)
+	}
+	history := readRunHistoryPage(t, client, runURL+"/history")
+	if len(history.Events) != 1 || !strings.Contains(history.Events[0].Text, "[hello variable]") {
+		t.Fatalf("resolved variable output missing: %#v", history)
 	}
 }

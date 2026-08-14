@@ -2212,6 +2212,7 @@ var webMessages = map[string]localizedMessage{
 	"editor.back_directory":                         {"返回目录", "Back to directory"},
 	"editor.read_only":                              {"只读预览", "Read-only preview"},
 	"editor.content":                                {"文件内容", "File content"},
+	"editor.loading_more":                           {"滚动以加载更多内容…", "Scroll to load more content…"},
 	"editor.save_notice":                            {"若文件已被其他程序修改，保存会停止并保留当前内容。", "If another program changed the file, saving stops and keeps your current content."},
 	"editor.size_limit":                             {"最大 1 MiB", "1 MiB maximum"},
 	"editor.save_file":                              {"保存文件", "Save file"},

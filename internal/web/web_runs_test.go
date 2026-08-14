@@ -43,10 +43,13 @@ func TestRunLogStartsAtLatestOutput(t *testing.T) {
 		t.Fatalf("read app script: %v", err)
 	}
 	text := string(script)
-	showLatest := strings.Index(text, "    showLatestLog();")
-	openEvents := strings.Index(text, "    if (!window.EventSource) return;")
-	if showLatest < 0 || openEvents < 0 || showLatest > openEvents {
+	loadLatest := strings.Index(text, "    loadHistory(true).then(connect)")
+	if loadLatest < 0 {
 		t.Fatalf("Run log must position at the latest output before opening its event stream")
+	}
+	initRun := text[strings.Index(text, "  function initRun("):strings.Index(text, "  function initStatus(")]
+	if !strings.Contains(initRun, `log.scrollTo({ top, behavior: "auto" });`) || strings.Contains(initRun, `behavior: "smooth"`) {
+		t.Fatal("Run log jump controls must move immediately without smooth scrolling")
 	}
 }
 
