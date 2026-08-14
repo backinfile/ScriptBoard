@@ -94,3 +94,29 @@ func TestProtectDirectoryUsesAProtectedPrivateACL(t *testing.T) {
 		}
 	}
 }
+
+func TestProtectedPrivateDescriptorRejectsBroadOrInheritedACLs(t *testing.T) {
+	for _, fixture := range []struct {
+		name string
+		sddl string
+		want bool
+	}{
+		{name: "private service ACL", sddl: "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1301bf;;;S-1-5-80-1234)", want: true},
+		{name: "inherited ACL", sddl: "D:(A;;FA;;;SY)(A;;FA;;;BA)", want: false},
+		{name: "everyone", sddl: "D:P(A;;FA;;;SY)(A;;FR;;;WD)", want: false},
+		{name: "builtin users", sddl: "D:P(A;;FA;;;SY)(A;;FR;;;BU)", want: false},
+		{name: "authenticated users", sddl: "D:P(A;;FA;;;SY)(A;;FR;;;AU)", want: false},
+		{name: "guests", sddl: "D:P(A;;FA;;;SY)(A;;FR;;;BG)", want: false},
+		{name: "anonymous", sddl: "D:P(A;;FA;;;SY)(A;;FR;;;AN)", want: false},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			descriptor, err := windows.SecurityDescriptorFromString(fixture.sddl)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := protectedPrivateDescriptor(descriptor); got != fixture.want {
+				t.Fatalf("protectedPrivateDescriptor(%q) = %t, want %t", fixture.sddl, got, fixture.want)
+			}
+		})
+	}
+}

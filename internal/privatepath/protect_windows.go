@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"strings"
 
 	"golang.org/x/sys/windows"
 )
@@ -73,7 +74,27 @@ func ProtectDirectory(path string) error {
 		acl,
 		nil,
 	); err != nil {
+		// Managed services intentionally receive file modification rights but
+		// not WRITE_DAC. Accept an installer-hardened directory only after
+		// verifying that inheritance is blocked and no broad trustee is present.
+		if errors.Is(err, windows.ERROR_ACCESS_DENIED) && protectedPrivateDescriptor(descriptor) {
+			return nil
+		}
 		return fmt.Errorf("protect directory ACL: %w", err)
 	}
 	return nil
+}
+
+func protectedPrivateDescriptor(descriptor *windows.SECURITY_DESCRIPTOR) bool {
+	control, _, err := descriptor.Control()
+	if err != nil || control&windows.SE_DACL_PROTECTED == 0 {
+		return false
+	}
+	sddl := descriptor.String()
+	for _, broadTrustee := range []string{";;;WD)", ";;;BU)", ";;;AU)", ";;;BG)", ";;;AN)"} {
+		if strings.Contains(sddl, broadTrustee) {
+			return false
+		}
+	}
+	return true
 }
