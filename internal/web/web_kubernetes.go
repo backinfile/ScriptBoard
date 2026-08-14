@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -35,6 +36,7 @@ type kubernetesPageView struct {
 	NamespaceOptions   []string
 	LocalConfig        kubeconfigmanager.Snapshot
 	LocalConfigPaths   []string
+	LocalConnectionIDs map[string]string
 	LocalError         string
 	LocalNotice        string
 }
@@ -171,13 +173,17 @@ func selectLocalKubeconfigPath(paths []string, requested string) (string, bool) 
 	if len(paths) == 0 {
 		return "", false
 	}
-	requested = filepath.Clean(strings.TrimSpace(requested))
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		return paths[0], true
+	}
+	requested = filepath.Clean(requested)
 	for _, path := range paths {
-		if requested != "." && requested == filepath.Clean(path) {
+		if requested == filepath.Clean(path) {
 			return path, true
 		}
 	}
-	return paths[0], strings.TrimSpace(requested) == ""
+	return paths[0], false
 }
 
 func (a *App) kubernetesPage(response http.ResponseWriter, request *http.Request) {
@@ -211,6 +217,7 @@ func (a *App) kubernetesPage(response http.ResponseWriter, request *http.Request
 	}
 	var localConfig kubeconfigmanager.Snapshot
 	var localPaths []string
+	localConnectionIDs := make(map[string]string)
 	var localError string
 	if activeTab == kubernetesTabLocal {
 		localPaths, err = localKubeconfigPaths(connections)
@@ -226,15 +233,39 @@ func (a *App) kubernetesPage(response http.ResponseWriter, request *http.Request
 			if len(localPaths) > 0 {
 				localConfig.Path = localPaths[0]
 			}
+		} else {
+			for _, connection := range connections {
+				if sameKubeconfigPath(connection.KubeconfigPath, localConfig.Path) {
+					contextName := strings.TrimSpace(connection.Context)
+					if contextName == "" {
+						contextName = localConfig.Current
+					}
+					if contextName != "" {
+						localConnectionIDs[contextName] = connection.ID
+					}
+				}
+			}
 		}
 	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = kubernetesTemplate.Execute(response, kubernetesPageView{
 		View: view, Locale: resolveWebLocale(request), CSRFToken: current.csrfToken, Query: query,
 		Connections: sanitizeKubernetesConnections(connections), ActiveTab: activeTab, SelectedConnection: selected,
-		CanManage: canManage, NamespaceOptions: view.AvailableNamespaces, LocalConfig: localConfig, LocalConfigPaths: localPaths,
+		CanManage: canManage, NamespaceOptions: view.AvailableNamespaces, LocalConfig: localConfig, LocalConfigPaths: localPaths, LocalConnectionIDs: localConnectionIDs,
 		LocalError: localError, LocalNotice: request.URL.Query().Get("notice"),
 	})
+}
+
+func sameKubeconfigPath(left, right string) bool {
+	left = filepath.Clean(strings.TrimSpace(left))
+	right = filepath.Clean(strings.TrimSpace(right))
+	if left == "." || right == "." {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(left, right)
+	}
+	return left == right
 }
 
 func (a *App) managedKubeconfigPath(request *http.Request) (string, error) {
@@ -405,6 +436,79 @@ func (a *App) mutateLocalKubeconfigContext(response http.ResponseWriter, request
 	}
 	a.recordAuditForRequest(request, "manage_local_kubeconfig_context", action+":"+name, "succeeded")
 	http.Redirect(response, request, kubernetesLocalURL(path, action), http.StatusSeeOther)
+}
+
+func uniqueKubernetesConnectionName(contextName string, connections []clusterstatus.ConnectionStatus) string {
+	used := make(map[string]bool, len(connections))
+	for _, connection := range connections {
+		used[strings.ToLower(strings.TrimSpace(connection.Name))] = true
+	}
+	base := strings.TrimSpace(contextName)
+	if !used[strings.ToLower(base)] {
+		return base
+	}
+	for suffix := 2; ; suffix++ {
+		candidate := fmt.Sprintf("%s (%d)", base, suffix)
+		if !used[strings.ToLower(candidate)] {
+			return candidate
+		}
+	}
+}
+
+func (a *App) addLocalKubeconfigConnection(response http.ResponseWriter, request *http.Request) {
+	if !requireKubernetesMutation(response, request) {
+		return
+	}
+	path, err := a.managedKubeconfigPath(request)
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
+	contextName := strings.TrimSpace(request.PathValue("context"))
+	snapshot, err := kubeconfigmanager.Inspect(path)
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	found := false
+	for _, context := range snapshot.Contexts {
+		if context.Name == contextName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		http.Error(response, "Kubernetes context was not found", http.StatusNotFound)
+		return
+	}
+	connections, err := a.kubernetesStatus.Connections(request.Context())
+	if err != nil {
+		http.Error(response, "Unable to read Kubernetes connections", http.StatusInternalServerError)
+		return
+	}
+	for _, connection := range connections {
+		connectionContext := strings.TrimSpace(connection.Context)
+		if connectionContext == "" {
+			connectionContext = snapshot.Current
+		}
+		if sameKubeconfigPath(connection.KubeconfigPath, path) && connectionContext == contextName {
+			http.Redirect(response, request, kubernetesLocalURL(path, "connection_exists"), http.StatusSeeOther)
+			return
+		}
+	}
+	result, err := a.kubernetesStatus.SaveConnection(request.Context(), clusterstatus.Connection{
+		Name: uniqueKubernetesConnectionName(contextName, connections), KubeconfigPath: path, Context: contextName, Mode: clusterstatus.ModeObserve,
+	})
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	a.recordAuditForRequest(request, "add_local_kubeconfig_connection", result.ID+":"+result.Name, "succeeded")
+	if err := a.kubernetesStatus.Refresh(request.Context(), result.ID); err != nil {
+		http.Error(response, "Connection saved but initial Kubernetes snapshot failed: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	http.Redirect(response, request, kubernetesLocalURL(path, "connection_added"), http.StatusSeeOther)
 }
 
 func (a *App) kubernetesData(response http.ResponseWriter, request *http.Request) {

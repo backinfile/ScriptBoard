@@ -227,6 +227,12 @@ func (connections *fixtureRegistryConnections) Inspect(context.Context, string) 
 func (connections *fixtureRegistryConnections) Test(context.Context, string, registrymonitor.Config, string, bool) ([]registrymonitor.ImageResult, error) {
 	return nil, nil
 }
+func (connections *fixtureRegistryConnections) InsecureConfigured(context.Context, string) (bool, error) {
+	return false, nil
+}
+func (connections *fixtureRegistryConnections) RegisterInsecure(context.Context, string) (bool, error) {
+	return true, nil
+}
 
 type blockingRegistryConnections struct {
 	*fixtureRegistryConnections

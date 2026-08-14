@@ -156,7 +156,7 @@ Kubeconfig 的 `server` 可使用 `http://` 或 `https://`。HTTPS 连接按 kub
 
 ### 自定义看板与网站监控
 
-管理员和维护员可在“配置 → 自定义看板”组合外部 JSON 数据与已有网站监控结果，创建数字、百分比、额度、键值、网站和 Registry 卡片，强制刷新当前看板的数据，并在当前看板导入或导出所选节点配置。JSON 数据源和 Registry 均支持 HTTP 与 HTTPS；Registry 的 Bearer token 服务也可独立使用任一模式。HTTP 会明文传输请求头、凭据和响应。卡片支持使用尚未保存的配置测试请求、从 JSON 结构选择取值字段；刷新失败时保留最后一次成功值，并为有权限的用户提供脱敏请求诊断。测试响应不会写入数据库或审计记录。导入导出保留 URL scheme，Registry 密码不进入导出文件。公开看板只展示通用结果状态，不公开数据源、请求头、公式或诊断信息。
+管理员和维护员可在“配置 → 自定义看板”组合外部 JSON 数据与已有网站监控结果，创建数字、百分比、额度、键值、网站和 Registry 卡片，强制刷新当前看板的数据，并在当前看板导入或导出所选节点配置。JSON 数据源和 Registry 均支持 HTTP 与 HTTPS；Registry 支持匿名访问或由 Broker 加密保存的用户名与密码/Token，Bearer token 服务也可独立使用 HTTP 或 HTTPS。HTTP 会明文传输请求头、凭据和响应。系统管理员可对已保存的 HTTP Registry 卡片执行近期认证后，将其主机幂等注册到 Docker Engine 的 `insecure-registries`；该操作不会把 Registry 凭据写入 Docker 配置，也不会自动重启 Docker Engine。卡片支持使用尚未保存的配置测试请求、从 JSON 结构选择取值字段；刷新失败时保留最后一次成功值，并为有权限的用户提供脱敏请求诊断。测试响应不会写入数据库或审计记录。导入导出保留 URL scheme，Registry 密码不进入导出文件。公开看板只展示通用结果状态，不公开数据源、请求头、公式或诊断信息。
 
 网站检查支持 HTTP、HTTPS、WS 和 WSS，可配置自定义 HTTP/握手请求头，并使用 `{{VARIABLE_NAME}}` 在执行检查时引用变量；导入导出会保留 scheme 与 TLS 验证选项。如需传递密钥，请使用密码变量，避免把密钥直接写入可导出的监控配置。需要汇总多台 ScriptBoard 时，可通过 HTTP 或 HTTPS 的受限外部接口把另一实例的网站监控快照接入当前实例；HTTP 会明文传输 Key 与监控响应。
 

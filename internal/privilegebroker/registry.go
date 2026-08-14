@@ -18,11 +18,14 @@ type registryWireRequest struct {
 	Config      registrymonitor.Config `json:"config,omitempty"`
 	Password    string                 `json:"password,omitempty"`
 	Preserve    bool                   `json:"preserve,omitempty"`
+	Endpoint    string                 `json:"endpoint,omitempty"`
 }
 
 type registryWireResponse struct {
-	Configured bool                          `json:"configured,omitempty"`
-	Images     []registrymonitor.ImageResult `json:"images,omitempty"`
+	Configured         bool                          `json:"configured,omitempty"`
+	Images             []registrymonitor.ImageResult `json:"images,omitempty"`
+	InsecureConfigured bool                          `json:"insecure_configured,omitempty"`
+	Changed            bool                          `json:"changed,omitempty"`
 }
 
 // RegistryConnections is the Web-side adapter for the Broker-owned Registry
@@ -71,6 +74,16 @@ func (connections *RegistryConnections) Inspect(ctx context.Context, cardID stri
 func (connections *RegistryConnections) Test(ctx context.Context, cardID string, config registrymonitor.Config, password string, preserve bool) ([]registrymonitor.ImageResult, error) {
 	response, err := connections.callAuthorized(ctx, operationRegistryTest, registryWireRequest{CardID: cardID, Config: config, Password: password, Preserve: preserve})
 	return response.Images, err
+}
+
+func (connections *RegistryConnections) InsecureConfigured(ctx context.Context, endpoint string) (bool, error) {
+	response, err := connections.callPeer(ctx, operationRegistryInsecureConfigured, registryWireRequest{Endpoint: endpoint})
+	return response.InsecureConfigured, err
+}
+
+func (connections *RegistryConnections) RegisterInsecure(ctx context.Context, endpoint string) (bool, error) {
+	response, err := connections.callAuthorized(ctx, operationRegistryRegisterInsecure, registryWireRequest{Endpoint: endpoint})
+	return response.Changed, err
 }
 
 func (connections *RegistryConnections) callAuthorized(ctx context.Context, operation string, payload registryWireRequest) (registryWireResponse, error) {
@@ -122,7 +135,7 @@ func (server *Server) registryOperation(request wireRequest) wireResponse {
 	if payload == nil {
 		return wireResponse{Status: statusError, ErrorCode: "request_invalid", Message: "Registry request is missing"}
 	}
-	if request.Operation == operationRegistryPrepare || request.Operation == operationRegistryPrepareDelete || request.Operation == operationRegistryTest {
+	if request.Operation == operationRegistryPrepare || request.Operation == operationRegistryPrepareDelete || request.Operation == operationRegistryTest || request.Operation == operationRegistryRegisterInsecure {
 		action := ActionRegistryStore
 		resource := payload.CardID
 		if request.Operation == operationRegistryPrepareDelete {
@@ -130,6 +143,9 @@ func (server *Server) registryOperation(request wireRequest) wireResponse {
 		}
 		if request.Operation == operationRegistryTest {
 			action, resource = ActionRegistryInspect, "registry-connection-test"
+		}
+		if request.Operation == operationRegistryRegisterInsecure {
+			action, resource = ActionRegistryDockerConfigure, payload.Endpoint
 		}
 		parameters, _ := json.Marshal(payload)
 		mutation, response := server.authorizeDomainOperation(request, action, resource, "registry-connection-v1", parameters, false)
@@ -171,6 +187,10 @@ func (server *Server) executeRegistryOperation(operation string, payload registr
 		response.Registry.Images, err = server.registry.Inspect(ctx, payload.CardID)
 	case operationRegistryTest:
 		response.Registry.Images, err = server.registry.Test(ctx, payload.CardID, payload.Config, payload.Password, payload.Preserve)
+	case operationRegistryInsecureConfigured:
+		response.Registry.InsecureConfigured, err = server.registry.InsecureConfigured(ctx, payload.Endpoint)
+	case operationRegistryRegisterInsecure:
+		response.Registry.Changed, err = server.registry.RegisterInsecure(ctx, payload.Endpoint)
 	}
 	if err != nil {
 		return wireResponse{Status: statusError, ErrorCode: "registry_failed", Message: "Registry operation failed"}
@@ -184,33 +204,37 @@ func validateRegistryRequest(request wireRequest) error {
 		return errors.New("Registry request is invalid")
 	}
 	payload := request.Registry
-	if len(payload.OperationID) > 160 || len(payload.CardID) > 160 || strings.ContainsAny(payload.OperationID+payload.CardID+payload.Password, "\r\n\x00") || len(payload.Password) > 8<<10 {
+	if len(payload.OperationID) > 160 || len(payload.CardID) > 160 || len(payload.Endpoint) > 512 || strings.ContainsAny(payload.OperationID+payload.CardID+payload.Password+payload.Endpoint, "\r\n\x00") || len(payload.Password) > 8<<10 {
 		return errors.New("Registry request contains invalid fields")
 	}
-	requiresAuthorization := request.Operation == operationRegistryPrepare || request.Operation == operationRegistryPrepareDelete || request.Operation == operationRegistryTest
+	requiresAuthorization := request.Operation == operationRegistryPrepare || request.Operation == operationRegistryPrepareDelete || request.Operation == operationRegistryTest || request.Operation == operationRegistryRegisterInsecure
 	if requiresAuthorization && !validCredentialSessionToken(request.SessionToken) || !requiresAuthorization && request.SessionToken != "" {
 		return errors.New("Registry request authorization is invalid")
 	}
 	switch request.Operation {
 	case operationRegistryPrepare:
-		if payload.OperationID == "" || payload.CardID == "" || registrymonitor.ValidateConfig(payload.Config) != nil {
+		if payload.OperationID == "" || payload.CardID == "" || payload.Endpoint != "" || registrymonitor.ValidateConfig(payload.Config) != nil {
 			return errors.New("Registry prepare request is invalid")
 		}
 	case operationRegistryPrepareDelete:
-		if payload.OperationID == "" || payload.CardID == "" || payload.Password != "" || payload.Preserve || payload.Config.Endpoint != "" || len(payload.Config.Images) != 0 {
+		if payload.OperationID == "" || payload.CardID == "" || payload.Password != "" || payload.Preserve || payload.Endpoint != "" || payload.Config.Endpoint != "" || len(payload.Config.Images) != 0 {
 			return errors.New("Registry delete request is invalid")
 		}
 	case operationRegistryCommit, operationRegistryAcknowledge, operationRegistryAbort:
-		if payload.OperationID == "" || payload.CardID != "" || payload.Password != "" || payload.Preserve || payload.Config.Endpoint != "" || len(payload.Config.Images) != 0 {
+		if payload.OperationID == "" || payload.CardID != "" || payload.Password != "" || payload.Preserve || payload.Endpoint != "" || payload.Config.Endpoint != "" || len(payload.Config.Images) != 0 {
 			return errors.New("Registry completion request is invalid")
 		}
 	case operationRegistryConfigured, operationRegistryInspect:
-		if payload.OperationID != "" || payload.CardID == "" || payload.Password != "" || payload.Preserve || payload.Config.Endpoint != "" || len(payload.Config.Images) != 0 {
+		if payload.OperationID != "" || payload.CardID == "" || payload.Password != "" || payload.Preserve || payload.Endpoint != "" || payload.Config.Endpoint != "" || len(payload.Config.Images) != 0 {
 			return errors.New("Registry query request is invalid")
 		}
 	case operationRegistryTest:
-		if payload.OperationID != "" || payload.Preserve && payload.CardID == "" || !payload.Preserve && payload.CardID != "" || registrymonitor.ValidateConfig(payload.Config) != nil {
+		if payload.OperationID != "" || payload.Endpoint != "" || payload.Preserve && payload.CardID == "" || !payload.Preserve && payload.CardID != "" || registrymonitor.ValidateConfig(payload.Config) != nil {
 			return errors.New("Registry test request is invalid")
+		}
+	case operationRegistryInsecureConfigured, operationRegistryRegisterInsecure:
+		if payload.OperationID != "" || payload.CardID != "" || payload.Password != "" || payload.Preserve || payload.Endpoint == "" || payload.Config.Endpoint != "" || len(payload.Config.Images) != 0 {
+			return errors.New("Registry insecure configuration request is invalid")
 		}
 	}
 	return nil

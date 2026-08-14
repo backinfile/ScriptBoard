@@ -16,6 +16,7 @@
 
 {{if .Dashboard.ID}}
 <section class="custom-dashboard-surface">
+{{if .RegistryNotice}}<div class="notice" role="status"><span data-lucide="circle-check" aria-hidden="true"></span>{{if eq .RegistryNotice "registered"}}{{t .Locale "dashboard.registry.registered_notice"}}{{else}}{{t .Locale "dashboard.registry.already_registered_notice"}}{{end}}</div>{{end}}
 <header class="custom-dashboard-title">
   <div class="custom-dashboard-title__identity">
     <h2>{{.Dashboard.Name}}</h2>
@@ -193,7 +194,7 @@
 {{if and (not $.PublicView) (not $.MonitorView)}}
 <div class="custom-dashboard-card__config">
   {{if eq .Type "website"}}<span><span data-lucide="network" aria-hidden="true"></span>已关联 {{len .SelectedMonitorIDs}} 个网站监控</span>
-  {{else if eq .Type "registry"}}<span><span data-lucide="boxes" aria-hidden="true"></span><code title="{{.RegistryEndpoint}}">{{.RegistryEndpoint}}</code> · {{.RegistryImageCount}} 个镜像</span>
+  {{else if eq .Type "registry"}}<span><span data-lucide="boxes" aria-hidden="true"></span><code title="{{.RegistryEndpoint}}">{{.RegistryEndpoint}}</code> · {{.RegistryImageCount}} 个镜像</span>{{if .InsecureSource}}{{if .RegistryInsecureConfigured}}<span class="custom-dashboard-registry-registration" data-state="registered"><span data-lucide="circle-check" aria-hidden="true"></span>{{t $.Locale "dashboard.registry.registered"}}</span>{{else if $.CanManageSystem}}<form method="post" action="/config/dashboard-cards/{{.ID}}/registry/insecure"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="button button--compact" type="submit"><span data-lucide="shield-plus" aria-hidden="true"></span>{{t $.Locale "dashboard.registry.register_http"}}</button></form>{{else}}<span class="custom-dashboard-registry-registration" data-state="required"><span data-lucide="triangle-alert" aria-hidden="true"></span>{{t $.Locale "dashboard.registry.registration_required"}}</span>{{end}}{{end}}
   {{else}}<code title="{{.SourceURL}}">{{.SourceURL}}</code>{{end}}
 </div>
 {{else}}

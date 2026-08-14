@@ -43,6 +43,17 @@ func TestRegistryConnectionsUseAuthorizedMutationAndPeerOnlyCompletion(t *testin
 	if err != nil || !configured {
 		t.Fatalf("configured=%v err=%v", configured, err)
 	}
+	insecureConfigured, err := connections.InsecureConfigured(context.Background(), "http://registry.example:5000")
+	if err != nil || !insecureConfigured {
+		t.Fatalf("insecure configured=%v err=%v", insecureConfigured, err)
+	}
+	if _, err := connections.RegisterInsecure(context.Background(), "http://registry.example:5000"); err == nil {
+		t.Fatal("Docker Registry mutation succeeded without session authorization")
+	}
+	changed, err := connections.RegisterInsecure(authorized, "http://registry.example:5000")
+	if err != nil || !changed {
+		t.Fatalf("register insecure changed=%v err=%v", changed, err)
+	}
 	if service.operationID != "operation" || service.cardID != "card" || service.password != "secret" || service.commits != 1 {
 		t.Fatalf("typed Registry fields not preserved: %+v", service)
 	}
@@ -119,4 +130,10 @@ func (*fixtureRegistryService) Inspect(context.Context, string) ([]registrymonit
 }
 func (*fixtureRegistryService) Test(context.Context, string, registrymonitor.Config, string, bool) ([]registrymonitor.ImageResult, error) {
 	return []registrymonitor.ImageResult{{Image: "team/api", Tag: "1.0.0"}}, nil
+}
+func (*fixtureRegistryService) InsecureConfigured(context.Context, string) (bool, error) {
+	return true, nil
+}
+func (*fixtureRegistryService) RegisterInsecure(context.Context, string) (bool, error) {
+	return true, nil
 }

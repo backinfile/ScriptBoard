@@ -372,6 +372,7 @@ type Config struct {
 	PasskeyStore                    PasskeyStore
 	RemoteWebsiteService            RemoteWebsiteService
 	RegistryConnections             customdashboard.RegistryConnections
+	RegistryDockerDaemonConfigPath  string
 	ProviderCredentials             *privilegebroker.ProviderCredentials
 	MySQLBackend                    mysqlmanager.Backend
 	HostFilesBackend                *privilegebroker.HostFilesBackend
@@ -508,6 +509,7 @@ type App struct {
 	shellStatusCache      *shellStatusCache
 	websiteMonitor        *websitemonitor.Manager
 	customDashboards      *customdashboard.Manager
+	registryConnections   customdashboard.RegistryConnections
 	externalTriggers      *externaltrigger.Manager
 	externalReconcileStop context.CancelFunc
 	externalReconcileWG   sync.WaitGroup
@@ -897,7 +899,7 @@ func Open(config Config) (*App, error) {
 	}
 	registryConnections := config.RegistryConnections
 	if registryConnections == nil {
-		registryConnections, err = registryconnection.New(registryconnection.Options{StateRoot: stateRoot, SecretStore: credentialStore, Client: config.CustomDashboardClient})
+		registryConnections, err = registryconnection.New(registryconnection.Options{StateRoot: stateRoot, SecretStore: credentialStore, Client: config.CustomDashboardClient, DockerDaemonConfigPath: config.RegistryDockerDaemonConfigPath})
 		if err != nil {
 			application.websiteMonitor.Close()
 			application.applicationStatus.Close()
@@ -913,6 +915,7 @@ func Open(config Config) (*App, error) {
 			}
 		}
 	}
+	application.registryConnections = registryConnections
 	application.customDashboards, err = customdashboard.New(customdashboard.Options{DB: db, Client: config.CustomDashboardClient, RegistryConnections: registryConnections, Paused: validating})
 	if err != nil {
 		application.websiteMonitor.Close()

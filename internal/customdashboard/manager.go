@@ -127,6 +127,8 @@ type RegistryConnections interface {
 	Configured(context.Context, string) (bool, error)
 	Inspect(context.Context, string) ([]registrymonitor.ImageResult, error)
 	Test(context.Context, string, registrymonitor.Config, string, bool) ([]registrymonitor.ImageResult, error)
+	InsecureConfigured(context.Context, string) (bool, error)
+	RegisterInsecure(context.Context, string) (bool, error)
 }
 
 type Manager struct {
@@ -688,6 +690,10 @@ func (m *Manager) getCard(ctx context.Context, id string) (Card, error) {
 		card.CredentialConfigured, _ = m.registry.Configured(ctx, card.ID)
 	}
 	return card, err
+}
+
+func (m *Manager) GetCard(ctx context.Context, id string) (Card, error) {
+	return m.getCard(ctx, id)
 }
 
 const cardSelect = `SELECT id,dashboard_id,name,type,source_url,headers_json,value_path,secondary_path,formula,config_json,refresh_seconds,sort_order,snapshot_json,last_error,last_success_at,last_attempt_at FROM custom_dashboard_cards`

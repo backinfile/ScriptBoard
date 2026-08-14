@@ -27,6 +27,8 @@ type customDashboardPageView struct {
 	Cards                                       []customDashboardCardView
 	WebsiteMonitors                             []websitemonitor.Monitor
 	CanManage, PublicView, MonitorView, Reorder bool
+	CanManageSystem                             bool
+	RegistryNotice                              string
 }
 
 type customDashboardCardView struct {
@@ -45,6 +47,7 @@ type customDashboardCardView struct {
 	RegistryAuthMode, RegistryUsername            string
 	RegistryImageCount                            int
 	RegistryImages                                []customDashboardRegistryImageView
+	RegistryInsecureConfigured                    bool
 }
 
 type customDashboardRegistryImageView struct {
@@ -91,6 +94,8 @@ func (a *App) customDashboardPage(response http.ResponseWriter, request *http.Re
 	view.Dashboards = dashboards
 	view.CSRFToken = current.csrfToken
 	view.CanManage = identity.Allows(current.role, identity.PermissionManageOperations)
+	view.CanManageSystem = identity.Allows(current.role, identity.PermissionManageSystem)
+	view.RegistryNotice = request.URL.Query().Get("registry_notice")
 	view.Reorder = view.CanManage && request.URL.Query().Get("reorder") == "1"
 	view.ImportError = customDashboardImportError(request.URL.Query().Get("import_error"))
 	for index := range view.Cards {
@@ -157,6 +162,9 @@ func (a *App) newCustomDashboardPageView(request *http.Request, dashboard custom
 			item.RegistryAuthMode = registryConfig.AuthMode
 			item.RegistryUsername = registryConfig.Username
 			item.InsecureSource = strings.HasPrefix(strings.ToLower(registryConfig.Endpoint), "http://")
+			if item.InsecureSource && !public && a.registryConnections != nil {
+				item.RegistryInsecureConfigured, _ = a.registryConnections.InsecureConfigured(request.Context(), registryConfig.Endpoint)
+			}
 			for _, image := range card.Snapshot.Images {
 				imageView := customDashboardRegistryImageView{Image: image.Image, Tag: image.Tag, Error: image.Error != "", Stale: image.Stale}
 				if imageView.Tag == "" {
@@ -389,6 +397,40 @@ func (a *App) refreshCustomDashboardCard(response http.ResponseWriter, request *
 		a.recordAuditForRequest(request, "refresh_custom_dashboard_card", id, "failed")
 	}
 	http.Redirect(response, request, "/config/dashboards?dashboard="+dashboardID, http.StatusSeeOther)
+}
+
+func (a *App) registerCustomDashboardInsecureRegistry(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "页面已过期，请重试", http.StatusForbidden)
+		return
+	}
+	card, err := a.customDashboards.GetCard(request.Context(), request.PathValue("id"))
+	if err != nil {
+		http.NotFound(response, request)
+		return
+	}
+	if card.Type != customdashboard.CardRegistry {
+		http.Error(response, "只有镜像版本卡片可以注册 HTTP Registry", http.StatusUnprocessableEntity)
+		return
+	}
+	var config registrymonitor.Config
+	if json.Unmarshal(card.Config, &config) != nil || !strings.HasPrefix(strings.ToLower(strings.TrimSpace(config.Endpoint)), "http://") {
+		http.Error(response, "只有 HTTP Registry 可以加入 insecure-registries", http.StatusUnprocessableEntity)
+		return
+	}
+	changed, err := a.registryConnections.RegisterInsecure(request.Context(), config.Endpoint)
+	if err != nil {
+		a.recordAuditForRequest(request, "register_insecure_registry", card.ID, "failed")
+		http.Error(response, "无法更新 Docker Engine 配置："+err.Error(), http.StatusConflict)
+		return
+	}
+	a.recordAuditForRequest(request, "register_insecure_registry", card.ID, "succeeded")
+	notice := "already_registered"
+	if changed {
+		notice = "registered"
+	}
+	values := url.Values{"dashboard": {card.DashboardID}, "registry_notice": {notice}}
+	http.Redirect(response, request, "/config/dashboards?"+values.Encode(), http.StatusSeeOther)
 }
 
 // testCustomDashboardCard intentionally does not write card, schedule, audit or log data.

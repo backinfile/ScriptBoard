@@ -341,6 +341,96 @@ func TestRegistryCardCanBeConfiguredWithHTTPAndMultipleImages(t *testing.T) {
 	}
 }
 
+func TestHTTPRegistryCardCanRegisterDockerInsecureRegistry(t *testing.T) {
+	registry := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		username, password, ok := request.BasicAuth()
+		if !ok || username != "robot" || password != "secret" {
+			http.Error(response, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		_, _ = response.Write([]byte(`{"tags":["1.0.0"]}`))
+	}))
+	defer registry.Close()
+
+	root := t.TempDir()
+	dockerConfigPath := filepath.Join(root, "docker", "daemon.json")
+	if err := os.MkdirAll(filepath.Dir(dockerConfigPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dockerConfigPath, []byte(`{"log-level":"warn"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{
+		StateRoot: root, CustomDashboardClient: registry.Client(), RegistryDockerDaemonConfigPath: dockerConfigPath,
+	})
+	response, err := client.Get(serverURL + "/config/dashboards")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/config/dashboards", url.Values{
+		"csrf_token": {formToken(t, page)}, "name": {"Registry"}, "slug": {"registry"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dashboardLocation := response.Header.Get("Location")
+	_ = response.Body.Close()
+	dashboardURL, _ := url.Parse(dashboardLocation)
+	dashboardID := dashboardURL.Query().Get("dashboard")
+	response, err = client.Get(serverURL + dashboardLocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/config/dashboards/"+dashboardID+"/cards", url.Values{
+		"csrf_token": {formToken(t, page)}, "name": {"Private image"}, "type": {"registry"},
+		"registry_endpoint": {registry.URL}, "registry_images": {"team/api"}, "registry_auth_mode": {"basic"},
+		"registry_username": {"robot"}, "registry_password": {"secret"}, "refresh_seconds": {"60"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	response, err = client.Get(serverURL + "/config/dashboards?dashboard=" + dashboardID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	cardMatch := regexp.MustCompile(`action="/config/dashboard-cards/([^/"]+)/registry/insecure"`).FindSubmatch(page)
+	if len(cardMatch) != 2 || !bytes.Contains(page, []byte("Register HTTP")) || bytes.Contains(page, []byte("secret")) {
+		t.Fatalf("HTTP Registry registration action or credential boundary missing: %s", page)
+	}
+	response, err = client.PostForm(serverURL+"/config/dashboard-cards/"+string(cardMatch[1])+"/registry/insecure", url.Values{
+		"csrf_token": {formToken(t, page)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusSeeOther || !strings.Contains(response.Header.Get("Location"), "registry_notice=registered") {
+		t.Fatalf("register status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+	_ = response.Body.Close()
+	body, err := os.ReadFile(dockerConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		LogLevel           string   `json:"log-level"`
+		InsecureRegistries []string `json:"insecure-registries"`
+	}
+	if err := json.Unmarshal(body, &document); err != nil {
+		t.Fatal(err)
+	}
+	registryURL, _ := url.Parse(registry.URL)
+	if document.LogLevel != "warn" || len(document.InsecureRegistries) != 1 || document.InsecureRegistries[0] != registryURL.Host {
+		t.Fatalf("Docker daemon configuration=%s", body)
+	}
+}
+
 func TestNumberCardRendersStringValue(t *testing.T) {
 	root := t.TempDir()
 	client, serverURL := authenticatedClient(t, filepath.Join(root, "host"), filepath.Join(root, "state"))

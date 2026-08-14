@@ -10,8 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -35,12 +37,14 @@ const (
 	maxCompleted         = 10_000
 	maxStoreBytes        = 1 << 20
 	maxCredentialBytes   = 8 << 10
+	maxDockerConfigBytes = 1 << 20
 )
 
 type Options struct {
-	StateRoot   string
-	SecretStore *secretstore.Store
-	Client      *http.Client
+	StateRoot              string
+	SecretStore            *secretstore.Store
+	Client                 *http.Client
+	DockerDaemonConfigPath string
 }
 
 type preparedOperation struct {
@@ -63,10 +67,11 @@ type persistedState struct {
 }
 
 type Service struct {
-	path      string
-	vault     *secretstore.Store
-	inspector *registrymonitor.Client
-	mu        sync.Mutex
+	path             string
+	vault            *secretstore.Store
+	inspector        *registrymonitor.Client
+	dockerConfigPath string
+	mu               sync.Mutex
 }
 
 func New(options Options) (*Service, error) {
@@ -88,7 +93,13 @@ func New(options Options) (*Service, error) {
 	}
 	client := options.Client
 	if client == nil {
-		client = &http.Client{Timeout: 20 * time.Second, Transport: outboundpolicy.Policy{}.Transport()}
+		client = &http.Client{
+			Timeout: 20 * time.Second,
+			Transport: outboundpolicy.Policy{
+				AllowPrivate: true,
+				AllowAnyPort: true,
+			}.Transport(),
+		}
 	} else {
 		copy := *client
 		client = &copy
@@ -96,10 +107,152 @@ func New(options Options) (*Service, error) {
 	client.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return errors.New("Registry redirects are not allowed")
 	}
+	dockerConfigPath := strings.TrimSpace(options.DockerDaemonConfigPath)
+	if dockerConfigPath == "" {
+		dockerConfigPath = defaultDockerDaemonConfigPath()
+	}
+	if !filepath.IsAbs(dockerConfigPath) {
+		return nil, errors.New("Docker daemon configuration path must be absolute")
+	}
 	return &Service{
 		path: filepath.Join(directory, storeFilename), vault: vault,
-		inspector: registrymonitor.New(client),
+		inspector: registrymonitor.New(client), dockerConfigPath: filepath.Clean(dockerConfigPath),
 	}, nil
+}
+
+func defaultDockerDaemonConfigPath() string {
+	if runtime.GOOS == "windows" {
+		root := strings.TrimSpace(os.Getenv("ProgramData"))
+		if root == "" {
+			root = `C:\ProgramData`
+		}
+		return filepath.Join(root, "docker", "config", "daemon.json")
+	}
+	return "/etc/docker/daemon.json"
+}
+
+func insecureRegistryHost(endpoint string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil || parsed.Scheme != "http" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", errors.New("only an HTTP Registry origin can be registered")
+	}
+	if len(parsed.Host) > 255 || strings.ContainsAny(parsed.Host, "\r\n\x00") {
+		return "", errors.New("Registry host is invalid")
+	}
+	return parsed.Host, nil
+}
+
+func (service *Service) InsecureConfigured(_ context.Context, endpoint string) (bool, error) {
+	host, err := insecureRegistryHost(endpoint)
+	if err != nil {
+		return false, err
+	}
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	registries, _, err := service.readDockerInsecureRegistries()
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, registry := range registries {
+		if strings.EqualFold(strings.TrimSpace(registry), host) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (service *Service) RegisterInsecure(_ context.Context, endpoint string) (bool, error) {
+	host, err := insecureRegistryHost(endpoint)
+	if err != nil {
+		return false, err
+	}
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	registries, document, err := service.readDockerInsecureRegistries()
+	if errors.Is(err, os.ErrNotExist) {
+		registries, document, err = nil, map[string]json.RawMessage{}, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, registry := range registries {
+		if strings.EqualFold(strings.TrimSpace(registry), host) {
+			return false, nil
+		}
+	}
+	registries = append(registries, host)
+	encodedRegistries, err := json.Marshal(registries)
+	if err != nil {
+		return false, err
+	}
+	document["insecure-registries"] = encodedRegistries
+	body, err := json.MarshalIndent(document, "", "  ")
+	if err != nil {
+		return false, fmt.Errorf("encode Docker daemon configuration: %w", err)
+	}
+	body = append(body, '\n')
+	if err := writeDockerConfigAtomic(service.dockerConfigPath, body); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (service *Service) readDockerInsecureRegistries() ([]string, map[string]json.RawMessage, error) {
+	info, err := os.Lstat(service.dockerConfigPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() > maxDockerConfigBytes {
+		return nil, nil, errors.New("Docker daemon configuration must be a bounded regular file")
+	}
+	body, err := os.ReadFile(service.dockerConfigPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	var document map[string]json.RawMessage
+	if len(strings.TrimSpace(string(body))) == 0 || json.Unmarshal(body, &document) != nil || document == nil {
+		return nil, nil, errors.New("Docker daemon configuration is not a valid JSON object")
+	}
+	var registries []string
+	if raw, ok := document["insecure-registries"]; ok && json.Unmarshal(raw, &registries) != nil {
+		return nil, nil, errors.New("Docker insecure-registries must be a string array")
+	}
+	return registries, document, nil
+}
+
+func writeDockerConfigAtomic(path string, body []byte) error {
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		return fmt.Errorf("create Docker configuration directory: %w", err)
+	}
+	temporary, err := os.CreateTemp(directory, ".scriptboard-daemon-*.json")
+	if err != nil {
+		return fmt.Errorf("create Docker daemon configuration: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(body); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("write Docker daemon configuration: %w", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("sync Docker daemon configuration: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return fmt.Errorf("replace Docker daemon configuration: %w", err)
+	}
+	return nil
 }
 
 // Prepare stores an inert mutation. The active connection is unchanged until

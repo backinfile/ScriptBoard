@@ -22,7 +22,8 @@ func (factory kubernetesFixtureFactory) Open(context.Context, clusterstatus.Conn
 }
 
 type kubernetesFixtureClient struct {
-	snapshot clusterstatus.Snapshot
+	snapshot    clusterstatus.Snapshot
+	snapshotErr error
 }
 
 func (client *kubernetesFixtureClient) Close() error { return nil }
@@ -31,7 +32,7 @@ func (client *kubernetesFixtureClient) Capabilities(context.Context) (clustersta
 }
 func (client *kubernetesFixtureClient) Fingerprint() string { return "sha256:fixture" }
 func (client *kubernetesFixtureClient) Snapshot(context.Context) (clusterstatus.Snapshot, error) {
-	return client.snapshot, nil
+	return client.snapshot, client.snapshotErr
 }
 func (client *kubernetesFixtureClient) Detail(_ context.Context, key string) (clusterstatus.Detail, error) {
 	for _, workload := range client.snapshot.Workloads {

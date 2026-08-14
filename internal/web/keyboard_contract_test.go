@@ -95,6 +95,28 @@ func TestCustomDashboardDrawerStartsOpeningOnTheNextPaint(t *testing.T) {
 	}
 }
 
+func TestDrawersUseSharedNonBouncingMotionTokens(t *testing.T) {
+	t.Parallel()
+
+	stylesheet, err := webFiles.ReadFile("ui/assets/app.css")
+	if err != nil {
+		t.Fatalf("read application stylesheet: %v", err)
+	}
+	source := string(stylesheet)
+	for _, expected := range []string{
+		`--drawer-offset: 28px`,
+		`--drawer-enter-transition: 180ms ease-out`,
+		`--drawer-exit-transition: 140ms ease-in`,
+		`--drawer-scrim-transition: 150ms linear`,
+		`transform: translateX(var(--drawer-offset))`,
+		`:is(.kubernetes-drawer, .container-drawer)[open]`,
+	} {
+		if !strings.Contains(source, expected) {
+			t.Fatalf("shared drawer motion is missing %q", expected)
+		}
+	}
+}
+
 func TestActionFailureStaysInTheCurrentPageErrorDialog(t *testing.T) {
 	t.Parallel()
 

@@ -2,6 +2,7 @@ package web_test
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -10,7 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"scriptboard/internal/clusterstatus"
 	"scriptboard/internal/kubeconfigmanager"
 	app "scriptboard/internal/web"
 )
@@ -62,6 +65,9 @@ func TestKubernetesLocalManagementPageAndContextActions(t *testing.T) {
 			t.Fatalf("local page missing %q: status=%d body=%s", expected, response.StatusCode, page)
 		}
 	}
+	if bytes.Contains(page, []byte("The selected kubeconfig path is not managed by ScriptBoard")) {
+		t.Fatalf("default local kubeconfig path was rejected: %s", page)
+	}
 
 	response, err = client.Get(serverURL + "/monitor/kubernetes/local/contexts/staging-dev/download?path=" + url.QueryEscape(path))
 	if err != nil {
@@ -86,6 +92,156 @@ func TestKubernetesLocalManagementPageAndContextActions(t *testing.T) {
 	snapshot, err := kubeconfigmanager.Inspect(path)
 	if err != nil || snapshot.Current != "staging-dev" {
 		t.Fatalf("current context = %q, %v", snapshot.Current, err)
+	}
+}
+
+func TestKubernetesLocalContextCanBeAddedAsConnection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(path, []byte(localKubeconfigFixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KUBECONFIG", path)
+	fixture := &kubernetesFixtureClient{snapshot: clusterstatus.Snapshot{CollectedAt: time.Now().UTC()}}
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{
+		StateRoot: filepath.Join(t.TempDir(), "state"), KubernetesFactory: kubernetesFixtureFactory{client: fixture},
+	})
+
+	response, err := client.Get(serverURL + "/monitor/kubernetes?tab=local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	addAction := `/monitor/kubernetes/local/contexts/production-admin/connection`
+	if response.StatusCode != http.StatusOK || !bytes.Contains(page, []byte(addAction)) || !bytes.Contains(page, []byte("Add cluster connection")) {
+		t.Fatalf("local connection action missing: status=%d body=%s", response.StatusCode, page)
+	}
+
+	response, err = client.PostForm(serverURL+addAction, url.Values{"csrf_token": {formToken(t, page)}, "path": {path}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	location := response.Header.Get("Location")
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || !strings.Contains(location, "notice=connection_added") {
+		t.Fatalf("add local connection: status=%d location=%q", response.StatusCode, location)
+	}
+
+	response, err = client.Get(serverURL + location)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if !bytes.Contains(page, []byte("Open monitor")) || bytes.Contains(page, []byte(`action="`+addAction+`"`)) {
+		t.Fatalf("added context did not switch to monitor action: %s", page)
+	}
+
+	response, err = client.PostForm(serverURL+addAction, url.Values{"csrf_token": {formToken(t, page)}, "path": {path}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusSeeOther || !strings.Contains(response.Header.Get("Location"), "notice=connection_exists") {
+		t.Fatalf("duplicate local connection: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+	_ = response.Body.Close()
+
+	response, err = client.Get(serverURL + "/monitor/kubernetes?tab=connections")
+	if err != nil {
+		t.Fatal(err)
+	}
+	connectionsPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if count := bytes.Count(connectionsPage, []byte(`class="kubernetes-connection-row"`)); count != 1 {
+		t.Fatalf("connection row count=%d body=%s", count, connectionsPage)
+	}
+}
+
+func TestKubernetesLocalCurrentContextConnectionIsNotDuplicated(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(path, []byte(localKubeconfigFixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KUBECONFIG", path)
+	fixture := &kubernetesFixtureClient{snapshot: clusterstatus.Snapshot{CollectedAt: time.Now().UTC()}}
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{
+		StateRoot: filepath.Join(t.TempDir(), "state"), KubernetesFactory: kubernetesFixtureFactory{client: fixture},
+	})
+
+	response, err := client.Get(serverURL + "/monitor/kubernetes/connections/new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/monitor/kubernetes/connections", url.Values{
+		"csrf_token": {formToken(t, page)}, "name": {"current"}, "kubeconfig_path": {path}, "context": {""}, "mode": {"observe"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("save current-context connection status=%d", response.StatusCode)
+	}
+
+	response, err = client.Get(serverURL + "/monitor/kubernetes?tab=local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	addAction := `/monitor/kubernetes/local/contexts/production-admin/connection`
+	if !bytes.Contains(page, []byte("Open monitor")) || bytes.Contains(page, []byte(`action="`+addAction+`"`)) {
+		t.Fatalf("current-context connection was not recognized: %s", page)
+	}
+
+	response, err = client.PostForm(serverURL+addAction, url.Values{"csrf_token": {formToken(t, page)}, "path": {path}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusSeeOther || !strings.Contains(response.Header.Get("Location"), "notice=connection_exists") {
+		t.Fatalf("current-context duplicate status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+	_ = response.Body.Close()
+}
+
+func TestKubernetesLocalConnectionSaveIsAuditedWhenInitialRefreshFails(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(path, []byte(localKubeconfigFixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KUBECONFIG", path)
+	fixture := &kubernetesFixtureClient{snapshotErr: errors.New("snapshot unavailable")}
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{
+		StateRoot: filepath.Join(t.TempDir(), "state"), KubernetesFactory: kubernetesFixtureFactory{client: fixture},
+	})
+
+	response, err := client.Get(serverURL + "/monitor/kubernetes?tab=local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/monitor/kubernetes/local/contexts/production-admin/connection", url.Values{
+		"csrf_token": {formToken(t, page)}, "path": {path},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusBadGateway {
+		t.Fatalf("refresh failure status=%d", response.StatusCode)
+	}
+
+	response, err = client.Get(serverURL + "/history/audit.csv?q=add_local_kubeconfig_connection")
+	if err != nil {
+		t.Fatal(err)
+	}
+	auditPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK || !bytes.Contains(auditPage, []byte("add_local_kubeconfig_connection")) {
+		t.Fatalf("saved connection audit missing: status=%d body=%s", response.StatusCode, auditPage)
 	}
 }
 
