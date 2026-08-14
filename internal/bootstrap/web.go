@@ -175,6 +175,7 @@ func webDependencies(loaded config.Config, installRoot string) (composedWebDepen
 }
 
 func connectOnDemandHost(ctx context.Context, start func(context.Context) error, dial func(context.Context) (net.Conn, error), label string) (net.Conn, error) {
+	// SCM/systemd may report Running before the host has bound its IPC endpoint.
 	readyCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if err := start(readyCtx); err != nil {

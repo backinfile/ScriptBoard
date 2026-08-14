@@ -258,6 +258,7 @@ notification_email_recipient: 'security@example.invalid'
     if ([string]::IsNullOrWhiteSpace($taskToken)) { throw "One-time Run CSRF token was not rendered" }
     $markerPath = Join-Path $runWorkRoot "demand-start-ok.txt"
     $source = "@echo off`r`necho SCM_DEMAND_START_OK>`"$markerPath`"`r`n"
+    # PowerShell throws for MaximumRedirection=0; the exception still represents the expected 303 response.
     try {
         $runSubmission = Invoke-WebRequest -Uri "$baseURL/config/quick-runs/one-time" -Method Post -WebSession $webSession -MaximumRedirection 0 -TimeoutSec 15 -Body @{
             csrf_token = $taskToken; working_directory = $runWorkRoot; language = "batch"
