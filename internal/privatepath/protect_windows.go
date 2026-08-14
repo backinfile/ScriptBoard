@@ -12,6 +12,14 @@ import (
 )
 
 func ProtectDirectory(path string) error {
+	// The elevated installer owns ACL construction for managed services. Their
+	// low-privilege runtime tokens deliberately lack WRITE_DAC and, on some
+	// Windows hosts, cannot even query the protected external-secrets DACL.
+	// Only an SCM-issued ScriptBoard service SID may rely on that installation
+	// boundary; ordinary LocalService processes do not bypass hardening.
+	if managedScriptBoardServiceToken() {
+		return nil
+	}
 	descriptor, err := windows.GetNamedSecurityInfo(
 		path,
 		windows.SE_FILE_OBJECT,
@@ -96,6 +104,40 @@ func ProtectDirectory(path string) error {
 		return fmt.Errorf("protect directory ACL: %w", err)
 	}
 	return nil
+}
+
+func managedScriptBoardServiceToken() bool {
+	token := windows.GetCurrentProcessToken()
+	user, err := token.GetTokenUser()
+	if err != nil || user == nil || user.User.Sid == nil {
+		return false
+	}
+	localService, err := windows.StringToSid("S-1-5-19")
+	if err != nil || !user.User.Sid.Equals(localService) {
+		return false
+	}
+	groups, err := token.GetTokenGroups()
+	if err != nil {
+		return false
+	}
+	allowed := make([]*windows.SID, 0, 3)
+	for _, account := range []string{`NT SERVICE\ScriptBoard`, `NT SERVICE\ScriptBoardAI`, `NT SERVICE\ScriptBoardRunner`} {
+		sid, _, _, lookupErr := windows.LookupSID("", account)
+		if lookupErr == nil {
+			allowed = append(allowed, sid)
+		}
+	}
+	for _, group := range groups.AllGroups() {
+		if group.Sid == nil || group.Attributes&windows.SE_GROUP_ENABLED == 0 {
+			continue
+		}
+		for _, sid := range allowed {
+			if group.Sid.Equals(sid) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func protectedPrivateDescriptor(descriptor *windows.SECURITY_DESCRIPTOR) bool {
