@@ -1,11 +1,42 @@
 package bootstrap
 
 import (
+	"context"
+	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestConnectOnDemandHostRetriesUntilEndpointIsReady(t *testing.T) {
+	starts, attempts := 0, 0
+	peerClosed := make(chan struct{})
+	connection, err := connectOnDemandHost(context.Background(), func(context.Context) error {
+		starts++
+		return nil
+	}, func(context.Context) (net.Conn, error) {
+		attempts++
+		if attempts < 3 {
+			return nil, errors.New("endpoint is not ready")
+		}
+		client, peer := net.Pipe()
+		go func() {
+			_ = peer.Close()
+			close(peerClosed)
+		}()
+		return client, nil
+	}, "test host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = connection.Close()
+	<-peerClosed
+	if starts != 1 || attempts != 3 {
+		t.Fatalf("starts=%d attempts=%d", starts, attempts)
+	}
+}
 
 func TestReadSecurityEventTokenIsBoundedAndTrimmed(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "token")

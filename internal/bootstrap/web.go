@@ -147,10 +147,7 @@ func webDependencies(loaded config.Config, installRoot string) (composedWebDepen
 	}
 	assistantDial := runtimehost.Dial(endpoint)
 	result.assistantLauncher = runtimehost.NewClientLauncher(func(ctx context.Context) (net.Conn, error) {
-		if err := platformservice.EnsureAIRuntimeHostRunning(ctx); err != nil {
-			return nil, fmt.Errorf("start isolated AI Runtime Host on demand: %w", err)
-		}
-		return assistantDial(ctx)
+		return connectOnDemandHost(ctx, platformservice.EnsureAIRuntimeHostRunning, assistantDial, "isolated AI Runtime Host")
 	})
 	runnerEndpoint, err := runnerhost.DefaultEndpoint(loaded.StateRoot)
 	if err != nil {
@@ -158,10 +155,7 @@ func webDependencies(loaded config.Config, installRoot string) (composedWebDepen
 	}
 	runnerDial := runnerhost.Dial(runnerEndpoint)
 	result.runnerLauncher = runnerhost.NewClientLauncher(func(ctx context.Context) (net.Conn, error) {
-		if err := platformservice.EnsureRunnerHostRunning(ctx); err != nil {
-			return nil, fmt.Errorf("start isolated Runner Host on demand: %w", err)
-		}
-		return runnerDial(ctx)
+		return connectOnDemandHost(ctx, platformservice.EnsureRunnerHostRunning, runnerDial, "isolated Runner Host")
 	})
 	result.brokerEndpoint, err = privilegebroker.DefaultEndpoint(loaded.StateRoot)
 	if err != nil {
@@ -178,6 +172,29 @@ func webDependencies(loaded config.Config, installRoot string) (composedWebDepen
 	result.hostFilesBackend = privilegebroker.NewHostFilesBackend(client, filepath.Join(loaded.StateRoot, "inbox", "host-files-broker"))
 	result.stateBackups = privilegebroker.NewStateBackups(client)
 	return result, nil
+}
+
+func connectOnDemandHost(ctx context.Context, start func(context.Context) error, dial func(context.Context) (net.Conn, error), label string) (net.Conn, error) {
+	readyCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := start(readyCtx); err != nil {
+		return nil, fmt.Errorf("start %s on demand: %w", label, err)
+	}
+	var lastErr error
+	for {
+		attemptCtx, cancelAttempt := context.WithTimeout(readyCtx, 250*time.Millisecond)
+		connection, err := dial(attemptCtx)
+		cancelAttempt()
+		if err == nil {
+			return connection, nil
+		}
+		lastErr = err
+		select {
+		case <-readyCtx.Done():
+			return nil, fmt.Errorf("connect to %s after demand start: %w", label, errors.Join(readyCtx.Err(), lastErr))
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
 }
 
 func readSecurityEventToken(path string) (string, error) {
