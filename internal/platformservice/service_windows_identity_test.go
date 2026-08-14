@@ -97,6 +97,17 @@ func TestWindowsServiceDirectoryGrantPropagatesToExistingChildren(t *testing.T) 
 	if err := os.WriteFile(child, []byte("fixture"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	childDescriptor, err := windows.GetNamedSecurityInfo(child, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		t.Fatal(err)
+	}
+	childACL, _, err := childDescriptor.DACL()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.SetNamedSecurityInfo(child, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, childACL, nil); err != nil {
+		t.Fatal(err)
+	}
 	localService, err := windows.StringToSid("S-1-5-19")
 	if err != nil {
 		t.Fatal(err)

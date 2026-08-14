@@ -543,6 +543,34 @@ func grantWindowsWebServiceAccess(installRoot, configPath, stateRoot string, web
 }
 
 func grantWindowsPathAccess(path string, sid *windows.SID, permissions windows.ACCESS_MASK, recursive bool) error {
+	if err := grantWindowsPathAccessEntry(path, sid, permissions, recursive); err != nil {
+		return err
+	}
+	if !recursive {
+		return nil
+	}
+	return filepath.WalkDir(path, func(current string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if current == path {
+			return nil
+		}
+		attributes, attributeErr := windows.GetFileAttributes(windows.StringToUTF16Ptr(current))
+		if attributeErr != nil {
+			return attributeErr
+		}
+		if attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		return grantWindowsPathAccessEntry(current, sid, permissions, entry.IsDir())
+	})
+}
+
+func grantWindowsPathAccessEntry(path string, sid *windows.SID, permissions windows.ACCESS_MASK, inherit bool) error {
 	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		return err
@@ -552,7 +580,7 @@ func grantWindowsPathAccess(path string, sid *windows.SID, permissions windows.A
 		return err
 	}
 	inheritance := uint32(0)
-	if recursive {
+	if inherit {
 		inheritance = windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT
 	}
 	var pinner runtime.Pinner
