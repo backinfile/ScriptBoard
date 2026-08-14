@@ -57,7 +57,9 @@ func TestCreateProducesInspectableEncryptedPrivateStateBackup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if artifact.Path != destination || artifact.Manifest.SchemaVersion != 43 || artifact.Manifest.CreatedAt != "2026-08-12T08:00:00Z" {
+	artifactInfo, artifactErr := os.Stat(artifact.Path)
+	destinationInfo, destinationErr := os.Stat(destination)
+	if artifactErr != nil || destinationErr != nil || !os.SameFile(artifactInfo, destinationInfo) || artifact.Manifest.SchemaVersion != 43 || artifact.Manifest.CreatedAt != "2026-08-12T08:00:00Z" {
 		t.Fatalf("artifact = %#v", artifact)
 	}
 	packageBytes, err := os.ReadFile(destination)

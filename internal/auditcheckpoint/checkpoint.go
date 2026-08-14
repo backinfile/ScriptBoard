@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"scriptboard/internal/auditlog"
+	"scriptboard/internal/pathidentity"
 	"scriptboard/internal/secretstore"
 )
 
@@ -71,7 +72,7 @@ type DocumentInfo struct {
 }
 
 func New(options Options) (*Store, error) {
-	absolute, err := filepath.Abs(options.StateRoot)
+	absolute, err := pathidentity.Absolute(options.StateRoot)
 	if err != nil {
 		return nil, fmt.Errorf("resolve audit checkpoint State Root: %w", err)
 	}
@@ -130,7 +131,7 @@ func New(options Options) (*Store, error) {
 }
 
 func PathsForStateRoot(stateRoot string) (stateRootID, keyPath, checkpointPath string, err error) {
-	absolute, err := filepath.Abs(stateRoot)
+	absolute, err := pathidentity.Absolute(stateRoot)
 	if err != nil {
 		return "", "", "", fmt.Errorf("resolve audit checkpoint State Root: %w", err)
 	}

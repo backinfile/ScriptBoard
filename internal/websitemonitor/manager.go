@@ -634,7 +634,7 @@ func (m *Manager) CheckNow(ctx context.Context, id string) error {
 	if monitor.State == StatePaused {
 		return errors.New("监控已暂停，请先恢复后再检查")
 	}
-	m.startCheck(id, monitor.generation)
+	m.startCheck(id, monitor.generation, true)
 	return nil
 }
 
@@ -665,14 +665,14 @@ func (m *Manager) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-func (m *Manager) startCheck(id string, generation int64) {
+func (m *Manager) startCheck(id string, generation int64, queueIfRunning bool) {
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
 		return
 	}
 	if currentGeneration, running := m.inFlight[id]; running {
-		if currentGeneration != generation {
+		if queueIfRunning || currentGeneration != generation {
 			m.queued[id] = generation
 		}
 		m.mu.Unlock()
@@ -689,7 +689,7 @@ func (m *Manager) startCheck(id string, generation int64) {
 			delete(m.queued, id)
 			m.mu.Unlock()
 			if queued {
-				m.startCheck(id, queuedGeneration)
+				m.startCheck(id, queuedGeneration, false)
 			}
 			m.signalWake()
 			m.wg.Done()
@@ -1242,7 +1242,7 @@ func (m *Manager) startDue() {
 	}
 	_ = rows.Close()
 	for _, value := range values {
-		m.startCheck(value.id, value.generation)
+		m.startCheck(value.id, value.generation, false)
 	}
 }
 

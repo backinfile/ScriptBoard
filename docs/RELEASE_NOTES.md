@@ -1,4 +1,4 @@
-# ScriptBoard v2.0.22
+# ScriptBoard v2.0.23
 
 ## 旧数据迁移
 

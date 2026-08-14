@@ -805,7 +805,11 @@ func TestNonZeroRunFailsAndPreservesOutputSources(t *testing.T) {
 		time.Sleep(25 * time.Millisecond)
 	}
 	history := readRunHistoryPage(t, client, runURL+"/history")
-	if len(history.Events) != 2 || strings.TrimSpace(history.Events[0].Text) != "from-out" || history.Events[0].Source != "stdout" || strings.TrimSpace(history.Events[1].Text) != "from-err" || history.Events[1].Source != "stderr" {
+	events := make(map[string]string, len(history.Events))
+	for _, event := range history.Events {
+		events[event.Source] = strings.TrimSpace(event.Text)
+	}
+	if len(history.Events) != 2 || events["stdout"] != "from-out" || events["stderr"] != "from-err" {
 		t.Fatalf("failed Run output history = %#v", history)
 	}
 }

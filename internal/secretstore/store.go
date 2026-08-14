@@ -15,6 +15,7 @@ import (
 	"strings"
 	"unicode"
 
+	"scriptboard/internal/pathidentity"
 	"scriptboard/internal/privatepath"
 )
 
@@ -67,7 +68,7 @@ func Open(stateRoot string) (*Store, error) {
 }
 
 func KeyPathForStateRoot(stateRoot string) (string, error) {
-	absolute, err := filepath.Abs(stateRoot)
+	absolute, err := pathidentity.Absolute(stateRoot)
 	if err != nil {
 		return "", fmt.Errorf("resolve State Root for credential key: %w", err)
 	}
