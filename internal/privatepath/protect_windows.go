@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"golang.org/x/sys/windows"
+	"scriptboard/internal/windowsidentity"
 )
 
 func ProtectDirectory(path string) error {
@@ -122,7 +123,9 @@ func managedScriptBoardServiceToken() bool {
 	}
 	allowed := make([]*windows.SID, 0, 3)
 	for _, account := range []string{`NT SERVICE\ScriptBoard`, `NT SERVICE\ScriptBoardAI`, `NT SERVICE\ScriptBoardRunner`} {
-		sid, _, _, lookupErr := windows.LookupSID("", account)
+		// Derive virtual service SIDs locally: account lookup can block an SCM
+		// service before its IPC endpoint has been created.
+		sid, lookupErr := windowsidentity.ResolveSID(account)
 		if lookupErr == nil {
 			allowed = append(allowed, sid)
 		}

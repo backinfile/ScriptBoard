@@ -9,10 +9,13 @@ import (
 	"runtime"
 
 	"golang.org/x/sys/windows"
+	"scriptboard/internal/windowsidentity"
 )
 
 func protectOneTimeSourceForRunner(path string) error {
-	sid, _, _, err := windows.LookupSID("", `NT SERVICE\ScriptBoardRunner`)
+	// Avoid account lookup while the managed service is starting; its virtual
+	// service SID is deterministic and can be derived without contacting LSA.
+	sid, err := windowsidentity.ResolveSID(`NT SERVICE\ScriptBoardRunner`)
 	if err != nil {
 		// Portable installations do not provision the managed Runner service SID.
 		return os.Chmod(path, 0o400)
@@ -42,7 +45,7 @@ func protectOneTimeSourceForRunner(path string) error {
 }
 
 func protectOneTimeRunDirectory(path string) error {
-	sid, _, _, err := windows.LookupSID("", `NT SERVICE\ScriptBoardRunner`)
+	sid, err := windowsidentity.ResolveSID(`NT SERVICE\ScriptBoardRunner`)
 	if err != nil {
 		return nil
 	}
