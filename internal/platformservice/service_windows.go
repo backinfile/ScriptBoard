@@ -687,6 +687,13 @@ func Uninstall() error {
 		return err
 	}
 	defer manager.Disconnect()
+	// DeleteService only marks running services for deletion. Stop dependents
+	// first so uninstall removes every definition before the command returns.
+	for _, name := range []string{serviceName, aiServiceName, runnerServiceName, brokerServiceName} {
+		if stopErr := stopWindowsService(manager, name); stopErr != nil && !errors.Is(stopErr, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
+			return fmt.Errorf("stop Windows service %s before uninstall: %w", name, stopErr)
+		}
+	}
 	var aiExecutable, runnerExecutable string
 	if service, openErr := manager.OpenService(aiServiceName); openErr == nil {
 		if configuration, configErr := service.Config(); configErr == nil {
