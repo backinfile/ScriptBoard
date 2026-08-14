@@ -273,6 +273,7 @@ notification_email_recipient: 'security@example.invalid'
         throw "One-time Run submission did not return a redirect: status=$runSubmissionStatus"
     }
     Write-Host ("RUN_SUBMISSION: status=" + $runSubmissionStatus + " location=" + $runSubmissionLocation)
+    $submittedRunID = [IO.Path]::GetFileName($runSubmissionLocation.ToString().TrimEnd('/'))
     $runner = Wait-ServiceState "ScriptBoardRunner" "Running"
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     do {
@@ -282,7 +283,10 @@ notification_email_recipient: 'security@example.invalid'
     if (-not (Test-Path -LiteralPath $markerPath)) {
         $runnerSnapshot = Get-CimInstance Win32_Service -Filter "Name='ScriptBoardRunner'" -ErrorAction SilentlyContinue
         Write-Warning ("Runner snapshot: " + ($runnerSnapshot | Select-Object Name, State, Status, ExitCode, ProcessId | ConvertTo-Json -Compress))
-        $diagnosticLogs = Get-ChildItem -LiteralPath (Join-Path $stateRoot "logs") -File -Recurse -ErrorAction SilentlyContinue |
+        $diagnosticLogs = @(
+            Get-ChildItem -LiteralPath (Join-Path $stateRoot "runs\$submittedRunID") -File -Recurse -ErrorAction SilentlyContinue
+            Get-Item -LiteralPath (Join-Path $stateRoot "logs\service.log") -ErrorAction SilentlyContinue
+        ) |
             Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 5
         foreach ($diagnosticLog in $diagnosticLogs) {
             Write-Warning ("Last lines from " + $diagnosticLog.FullName + ":")
