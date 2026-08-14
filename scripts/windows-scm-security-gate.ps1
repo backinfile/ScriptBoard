@@ -204,6 +204,18 @@ notification_email_recipient: 'security@example.invalid'
     Write-Host ("STATE_ROOT_ACL: " + (Get-Acl -LiteralPath $stateRoot).Sddl)
     Write-Host ("EXTERNAL_SECRETS_ACL: " + (Get-Acl -LiteralPath (Join-Path $gateRoot "secrets")).Sddl)
 
+    $runnerAccount = [Security.Principal.NTAccount]::new("NT SERVICE", "ScriptBoardRunner")
+    $runWorkACL = Get-Acl -LiteralPath $runWorkRoot
+    $runWorkRule = [Security.AccessControl.FileSystemAccessRule]::new(
+        $runnerAccount,
+        [Security.AccessControl.FileSystemRights]::Modify,
+        [Security.AccessControl.InheritanceFlags]"ContainerInherit, ObjectInherit",
+        [Security.AccessControl.PropagationFlags]::None,
+        [Security.AccessControl.AccessControlType]::Allow
+    )
+    $runWorkACL.AddAccessRule($runWorkRule)
+    Set-Acl -LiteralPath $runWorkRoot -AclObject $runWorkACL
+
     Invoke-Checked (Join-Path $releaseRoot "scriptboard.exe") @("service", "start")
     $web = Wait-ServiceState "ScriptBoard" "Running"
     $broker = Wait-ServiceState "ScriptBoardBroker" "Running"
