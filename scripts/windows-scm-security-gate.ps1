@@ -152,11 +152,15 @@ try {
         $binaryFlags = if ($binary.GUI) { "$ldflags -H=windowsgui" } else { $ldflags }
         Invoke-Checked "go" @("build", "-trimpath", "-ldflags", $binaryFlags, "-o", (Join-Path $releaseRoot $binary.Name), $binary.Package)
     }
-    $releaseInfo = [ordered]@{
-        version = $version; tag = $tag; commit = $commit; built_at = $builtAt; release_build = $true
-        database_schema = 43; updater_protocol = 1; repository = "backinfile/ScriptBoard"
-    }
-    Write-UTF8NoBOM (Join-Path $releaseRoot "RELEASE.json") ($releaseInfo | ConvertTo-Json)
+    Invoke-Checked "go" @(
+        "run", "./cmd/scriptboard-release", "info",
+        "--version", $version,
+        "--tag", $tag,
+        "--commit", $commit,
+        "--built-at", $builtAt,
+        "--release",
+        "--output", (Join-Path $releaseRoot "RELEASE.json")
+    )
 
     $adminPassword = New-RandomBase64 24
     $adminPassword | Set-Content -LiteralPath $passwordPath -Encoding ascii -NoNewline
