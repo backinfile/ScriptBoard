@@ -951,6 +951,7 @@ var webMessages = map[string]localizedMessage{
 	"kubernetes.local.open_connection":              {"打开监控", "Open monitor"},
 	"kubernetes.local.connection_added_notice":      {"已加入集群连接，可立即开始监控。", "The cluster connection was added and is ready to monitor."},
 	"kubernetes.local.connection_exists_notice":     {"此 Context 已在集群连接中。", "This Context is already in cluster connections."},
+	"kubernetes.local.delete_context_confirm":       {"确认删除 Context", "Delete Context"},
 	"kubernetes.local.target":                       {"目标配置", "Target configuration"},
 	"kubernetes.local.change_target":                {"切换配置", "Switch configuration"},
 	"kubernetes.local.current":                      {"当前 Context", "Current Context"},

@@ -6930,10 +6930,6 @@
         row.hidden = query !== "" && ![row.dataset.contextName, row.dataset.contextCluster, row.dataset.contextUser, row.dataset.contextNamespace].some(value => (value || "").toLocaleLowerCase().includes(query));
       });
     };
-    const onContextDelete = event => {
-      const form = event.target.closest("[data-kubernetes-context-delete]");
-      if (form && !window.confirm(`Delete Context ${form.dataset.kubernetesContextDelete}?`)) event.preventDefault();
-    };
     const onClusterChange = () => clusterSelect?.form?.requestSubmit();
     clusterSelect?.addEventListener("change", onClusterChange);
     drawer?.addEventListener("click", onDrawerClick);
@@ -6941,7 +6937,6 @@
     contextDrawer?.addEventListener("click", onContextDrawerClick);
     importFile?.addEventListener("change", onImportFile);
     contextSearch?.addEventListener("input", onContextSearch);
-    local?.addEventListener("submit", onContextDelete);
     cleanups.push(() => {
       snapshotController?.abort();
       root.removeEventListener("click", onClick);
@@ -6951,7 +6946,6 @@
       contextDrawer?.removeEventListener("click", onContextDrawerClick);
       importFile?.removeEventListener("change", onImportFile);
       contextSearch?.removeEventListener("input", onContextSearch);
-      local?.removeEventListener("submit", onContextDelete);
       if (drawer?.open) drawer.close();
       if (importDrawer?.open) importDrawer.close();
       if (contextDrawer?.open) contextDrawer.close();

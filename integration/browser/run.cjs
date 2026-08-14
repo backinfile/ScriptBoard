@@ -2,7 +2,7 @@
 
 const assert = require("node:assert/strict");
 const { spawn, spawnSync } = require("node:child_process");
-const { createHmac, randomBytes } = require("node:crypto");
+const { createHash, createHmac, randomBytes } = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { chromium } = require("playwright");
@@ -13,16 +13,24 @@ const snapshotRoot = path.join(browserRoot, "snapshots");
 const resultRoot = path.join(browserRoot, "test-results");
 const fixtureBinary = path.join(resultRoot, process.platform === "win32" ? "scriptboard-browser-fixture.exe" : "scriptboard-browser-fixture");
 
-function externalSignatureHeaders(secret, method, requestURI) {
+function externalSignatureHeaders(secret, method, requestURI, contentType, body) {
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const nonce = randomBytes(18).toString("base64url");
-  const payload = ["v1", timestamp, nonce, method.toUpperCase(), requestURI].join("\n");
+  const digest = createHash("sha256").update(body).digest("hex");
+  const payload = ["v2", timestamp, nonce, method.toUpperCase(), requestURI, contentType, body.length, digest].join("\n");
   return {
     Authorization: `Bearer ${secret}`,
+    "Content-Type": contentType,
     "X-ScriptBoard-Timestamp": timestamp,
     "X-ScriptBoard-Nonce": nonce,
-    "X-ScriptBoard-Signature": `v1=${createHmac("sha256", secret).update(payload).digest("hex")}`,
+    "X-ScriptBoard-Signature": `v2=${createHmac("sha256", secret).update(payload).digest("hex")}`,
   };
+}
+
+function externalUploadBody(filename, content) {
+  const boundary = `----scriptboard-${randomBytes(12).toString("hex")}`;
+  const body = Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: text/plain\r\n\r\n${content}\r\n--${boundary}--\r\n`);
+  return { body, contentType: `multipart/form-data; boundary=${boundary}` };
 }
 
 fs.mkdirSync(snapshotRoot, { recursive: true });
@@ -1325,27 +1333,47 @@ async function assertAssistantSettingsAndWorkspace(page, baseURL) {
 }
 
 async function assertExternalInterfaces(page, fixture) {
-  await page.goto(`${fixture.baseURL}/config/external-interfaces`);
-  await page.locator("[data-external-interfaces-page]").waitFor();
+  const response = await page.goto(`${fixture.baseURL}/config/external-interfaces`);
+  assert.equal(response.status(), 200, `External Interfaces returned ${response.status()} at ${page.url()}`);
+  assert.equal(
+    await page.locator("[data-external-interfaces-page]").count(),
+    1,
+    `External Interfaces marker missing at ${page.url()}: ${(await page.locator("body").innerText()).slice(0, 500)}`,
+  );
   assert.match(await page.locator("h1").textContent(), /External Interfaces/);
   await assertNoHorizontalOverflow(page, "External Interfaces empty state");
 
-  await page.goto(`${fixture.baseURL}/config/external-interfaces/keys/new`);
-  const keyForm = page.locator(".external-task-sheet form");
+  await page.getByRole("link", { name: "Create function group", exact: true }).first().click();
+  const groupForm = page.locator('[data-task-panel] [data-task-kind="external-group-new"] form');
+  await groupForm.waitFor();
+  await groupForm.locator('input[name="label"]').fill("Browser fixture");
+  await groupForm.locator('input[name="call_name"]').fill("browser-fixture");
+  await groupForm.locator('button[type="submit"]').click();
+  const group = page.locator('[data-external-group-id]').filter({ hasText: "Browser fixture" });
+  await group.waitFor();
+  await group.locator(":scope > summary").click();
+  await group.locator("details[data-external-key-manager] > summary").click();
+  await group.getByRole("link", { name: "Create Key", exact: true }).click();
+  const keyForm = page.locator('[data-task-panel] [data-task-kind="external-key-new"] form');
+  await keyForm.waitFor();
   await keyForm.locator('input[name="label"]').fill("Browser fixture");
   await keyForm.locator('select[name="duration"]').selectOption("1d");
   await keyForm.locator('button[type="submit"]').click();
-  const renderedSecret = (await page.locator(".external-secret code").textContent()).trim();
+  const keyResult = page.locator('[data-task-panel] [data-task-kind="external-key-created"]');
+  await keyResult.waitFor();
+  const renderedSecret = (await keyResult.locator(".external-secret code").textContent()).trim();
   assert.match(renderedSecret, /^sbk_[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{43}$/);
-  const copyKey = page.locator('[data-copy-text][data-copy-target="external-key-secret"]');
+  const copyKey = keyResult.locator('[data-copy-text][data-copy-target="external-key-secret"]');
   await copyKey.click();
   const provisionalSecret = await page.evaluate(() => navigator.clipboard.readText());
   assert.equal(provisionalSecret, renderedSecret);
   assert.match(provisionalSecret, /^sbk_[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{43}$/);
-  const keyID = provisionalSecret.slice(4).split(".")[0];
-
-  await page.goto(`${fixture.baseURL}/config/external-interfaces/keys/${keyID}/entries/new`);
-  const form = page.locator("[data-external-entry-form]");
+  await page.goto(`${fixture.baseURL}/config/external-interfaces`);
+  await page.locator("[data-external-interfaces-page]").waitFor();
+  if (await group.getAttribute("open") === null) await group.locator(":scope > summary").click();
+  await group.getByRole("link", { name: "Add", exact: true }).click();
+  const form = page.locator('[data-task-panel] [data-external-entry-form]');
+  await form.waitFor();
   await form.locator('select[name="action_type"]').selectOption("upload");
   assert.equal(await form.locator('[data-external-action-fields="upload"]').isVisible(), true);
   assert.equal(await form.locator('[data-external-action-fields="log"]').isVisible(), false);
@@ -1360,7 +1388,7 @@ async function assertExternalInterfaces(page, fixture) {
   // Group-owned call paths reuse an explicitly selected key; creating a path
   // must not rotate or redisplay that one-time secret.
   const secret = provisionalSecret;
-  await page.locator("[data-external-interfaces-page]").waitFor();
+  await page.getByText("Artifact upload", { exact: true }).waitFor();
   assert.equal(await page.getByText("Artifact upload", { exact: true }).count(), 1);
 
   const globalControl = page.locator("[data-external-global-control]");
@@ -1370,10 +1398,11 @@ async function assertExternalInterfaces(page, fixture) {
   await page.getByRole("button", { name: "Pause all external calls", exact: true }).click();
   await page.locator('[data-external-global-control="disabled"]').waitFor();
   assert.equal(await globalControl.getAttribute("data-external-global-control"), "disabled");
-  const requestURI = "/trigger/Browser%20fixture/artifact";
+  const requestURI = "/trigger/browser-fixture/artifact";
+  const blockedUpload = externalUploadBody("blocked.txt", "must not publish");
   const blockedTrigger = await page.request.post(`${fixture.baseURL}${requestURI}`, {
-    headers: externalSignatureHeaders(secret, "POST", requestURI),
-    multipart: { file: { name: "blocked.txt", mimeType: "text/plain", buffer: Buffer.from("must not publish") } },
+    headers: externalSignatureHeaders(secret, "POST", requestURI, blockedUpload.contentType, blockedUpload.body),
+    data: blockedUpload.body,
   });
   assert.equal(blockedTrigger.status(), 503);
   assert.equal((await blockedTrigger.json()).error, "unavailable");
@@ -1383,9 +1412,10 @@ async function assertExternalInterfaces(page, fixture) {
   await page.locator('[data-external-global-control="enabled"]').waitFor();
   assert.equal(await globalControl.getAttribute("data-external-global-control"), "enabled");
 
+  const acceptedUpload = externalUploadBody("external-result.txt", "fixture complete");
   const trigger = await page.request.post(`${fixture.baseURL}${requestURI}`, {
-    headers: externalSignatureHeaders(secret, "POST", requestURI),
-    multipart: { file: { name: "external-result.txt", mimeType: "text/plain", buffer: Buffer.from("fixture complete") } },
+    headers: externalSignatureHeaders(secret, "POST", requestURI, acceptedUpload.contentType, acceptedUpload.body),
+    data: acceptedUpload.body,
   });
   assert.equal(trigger.status(), 202);
   const uploadPayload = await trigger.json();

@@ -10,7 +10,7 @@
     <form method="post" action="{{.Action}}" data-async>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <label>{{t .Locale "external.group_name"}} <input name="label" value="{{if .GroupFormSubmitted}}{{.GroupLabelInput}}{{else}}{{.Group.Label}}{{end}}" autocomplete="off" maxlength="128" required autofocus></label>
-      <label>{{t .Locale "external.group_call_name"}} <input name="call_name" value="{{if .GroupFormSubmitted}}{{.GroupCallNameInput}}{{else}}{{.Group.CallName}}{{end}}" autocomplete="off" maxlength="64" pattern="[a-z][a-z0-9_-]{0,63}" spellcheck="false" aria-describedby="external-group-call-name-hint" required><small id="external-group-call-name-hint">{{t .Locale "external.group_call_name_hint"}}</small></label>
+      <label>{{t .Locale "external.group_call_name"}} <input name="call_name" value="{{if .GroupFormSubmitted}}{{.GroupCallNameInput}}{{else}}{{.Group.CallName}}{{end}}" autocomplete="off" maxlength="64" pattern="[a-z][a-z0-9_\-]{0,63}" spellcheck="false" aria-describedby="external-group-call-name-hint" required><small id="external-group-call-name-hint">{{t .Locale "external.group_call_name_hint"}}</small></label>
       <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="{{if eq .Kind "group-edit"}}save{{else}}folder-plus{{end}}" aria-hidden="true"></span>{{if eq .Kind "group-edit"}}{{t .Locale "common.save"}}{{else}}{{t .Locale "external.create_group"}}{{end}}</button></footer>
     </form>
     {{else if eq .Kind "key-new"}}
