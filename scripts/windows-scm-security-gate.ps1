@@ -294,13 +294,16 @@ notification_email_recipient: 'security@example.invalid'
         Stop-Process -Id $running.ProcessId -Force
         Wait-NewServiceProcess $running.Name $running.ProcessId | Out-Null
     }
+    Write-Host "SERVICE_RECOVERY: VERIFIED"
     Invoke-Checked (Join-Path $releaseRoot "scriptboard.exe") @("service", "verify", "--config", $configPath)
 
     Invoke-Checked (Join-Path $releaseRoot "scriptboard.exe") @("service", "stop")
     foreach ($name in $serviceNames) { Wait-ServiceState $name "Stopped" | Out-Null }
-    Invoke-Checked (Join-Path $releaseRoot "scriptboard.exe") @("service", "start")
+    Write-Host "SERVICE_STOP_COMMAND: VERIFIED"
+    Invoke-CheckedTimed (Join-Path $releaseRoot "scriptboard.exe") @("service", "start")
     Wait-ServiceState "ScriptBoard" "Running" | Out-Null
     Wait-ServiceState "ScriptBoardBroker" "Running" | Out-Null
+    Write-Host "SERVICE_RESTART_COMMAND: VERIFIED"
 
     Invoke-Checked (Join-Path $releaseRoot "scriptboard.exe") @("service", "uninstall")
     $installed = $false
