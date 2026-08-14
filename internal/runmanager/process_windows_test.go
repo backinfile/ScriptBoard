@@ -8,7 +8,18 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
+
+func TestConfigureProcessUsesAHeadlessProcessGroup(t *testing.T) {
+	command := exec.Command("cmd.exe")
+	configureProcess(command)
+	want := uint32(windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW)
+	if command.SysProcAttr == nil || command.SysProcAttr.CreationFlags&want != want {
+		t.Fatalf("creation flags = %#x, want %#x", command.SysProcAttr.CreationFlags, want)
+	}
+}
 
 func TestWindowsBatchArgumentsRejectCmdMetacharacters(t *testing.T) {
 	t.Parallel()

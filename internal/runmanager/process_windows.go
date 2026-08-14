@@ -84,7 +84,9 @@ func configureProcess(command *exec.Cmd) {
 	if command.SysProcAttr == nil {
 		command.SysProcAttr = &syscall.SysProcAttr{}
 	}
-	command.SysProcAttr.CreationFlags |= windows.CREATE_NEW_PROCESS_GROUP
+	// Managed services have no interactive console or desktop. Starting console
+	// executors without a window avoids Session 0 DLL initialization failures.
+	command.SysProcAttr.CreationFlags |= windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW
 }
 
 func attachProcess(process *os.Process) (func(), error) {
