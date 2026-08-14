@@ -150,6 +150,8 @@ Windows 从各个可用卷开始浏览，Linux 从 `/` 开始浏览。文件页�
 
 管理员或维护员可在“监控 → Kubernetes”的“集群连接”页签配置多个集群，并在“集群监控”页签通过下拉框切换当前集群。填写 ScriptBoard 服务所在主机可读取的 kubeconfig 绝对路径，并可选择指定 context；默认使用 kubeconfig 的 `current-context`。连接默认“仅观察”，需要时可明确开启仅包含滚动重部署、单步增减副本和立即运行 CronJob 的“有限操作”。
 
+“本地管理”页签用于管理 ScriptBoard 服务身份的本机 kubeconfig：可在默认配置和已登记连接的配置路径之间切换，导入并按名称合并配置，查看、搜索、切换、编辑、重命名或删除 Context，并下载整份配置或单个 Context 的独立 YAML。导入文件限制为 2 MiB，写入采用同目录临时文件原子替换；所有修改均要求管理员或维护员权限、CSRF 校验并写入审计记录。
+
 Kubeconfig 的 `server` 可使用 `http://` 或 `https://`。HTTPS 连接按 kubeconfig 的 CA、客户端证书或系统信任验证；HTTP 连接也可使用静态 token 或基本认证，但凭据与集群数据会以明文传输。ScriptBoard 不保存 kubeconfig 中的 token、证书或私钥，并拒绝 `exec`/`auth-provider` 登录插件和 `insecure-skip-tls-verify`。若服务以 systemd 或 Windows 服务运行，请确认该服务身份可以读取 kubeconfig 及其引用的 CA、token 或客户端证书文件。
 
 ### 自定义看板与网站监控

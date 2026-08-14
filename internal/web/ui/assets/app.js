@@ -6677,6 +6677,15 @@
     const body = drawer?.querySelector("[data-kubernetes-drawer-body]");
     const title = drawer?.querySelector("[data-kubernetes-drawer-title]");
     const meta = drawer?.querySelector("[data-kubernetes-drawer-meta]");
+    const local = root.querySelector("[data-kubernetes-local]");
+    const importDrawer = local?.querySelector("[data-kubernetes-import-drawer]");
+    const importForm = local?.querySelector("[data-kubernetes-import-form]");
+    const importFile = local?.querySelector("[data-kubernetes-import-file]");
+    const importPreview = local?.querySelector("[data-kubernetes-import-preview]");
+    const contextDrawer = local?.querySelector("[data-kubernetes-context-drawer]");
+    const contextUpdateForm = local?.querySelector("[data-kubernetes-context-update-form]");
+    const contextRenameForm = local?.querySelector("[data-kubernetes-context-rename-form]");
+    const contextSearch = local?.querySelector("[data-kubernetes-context-search]");
     let snapshotController = null;
     const openDetail = async button => {
       if (!drawer || !body) return;
@@ -6726,21 +6735,99 @@
         openDetail(detail);
         return;
       }
+      if (event.target.closest("[data-kubernetes-import-open]")) {
+        if (importDrawer && !importDrawer.open) importDrawer.showModal();
+        return;
+      }
+      if (event.target.closest("[data-kubernetes-import-close]")) {
+        importDrawer?.close();
+        return;
+      }
+      const editContext = event.target.closest("[data-kubernetes-context-edit]");
+      if (editContext) {
+        const row = editContext.closest("[data-kubernetes-context-row]");
+        const name = row?.dataset.contextName || "";
+        const action = `/monitor/kubernetes/local/contexts/${encodeURIComponent(name)}`;
+        if (contextUpdateForm) {
+          contextUpdateForm.action = action;
+          contextUpdateForm.elements.cluster.value = row?.dataset.contextCluster || "";
+          contextUpdateForm.elements.user.value = row?.dataset.contextUser || "";
+          contextUpdateForm.elements.namespace.value = row?.dataset.contextNamespace || "";
+        }
+        if (contextRenameForm) {
+          contextRenameForm.action = action;
+          contextRenameForm.elements.name.value = name;
+        }
+        const contextTitle = contextDrawer?.querySelector("[data-kubernetes-context-title]");
+        if (contextTitle) contextTitle.textContent = name;
+        if (contextDrawer && !contextDrawer.open) contextDrawer.showModal();
+        return;
+      }
+      if (event.target.closest("[data-kubernetes-context-close]")) {
+        contextDrawer?.close();
+        return;
+      }
       if (event.target.closest("[data-kubernetes-drawer-close]")) drawer?.close();
     };
     const onDrawerClick = event => {
       if (event.target === drawer) drawer.close();
     };
     root.addEventListener("click", onClick);
+    const onImportDrawerClick = event => { if (event.target === importDrawer) importDrawer.close(); };
+    const onContextDrawerClick = event => { if (event.target === contextDrawer) contextDrawer.close(); };
+    const onImportFile = async () => {
+      const file = importFile?.files?.[0];
+      if (!file || !importForm || !importPreview) return;
+      const filename = importForm.querySelector("[data-kubernetes-import-filename]");
+      const error = importForm.querySelector("[data-kubernetes-import-error]");
+      if (filename) filename.textContent = file.name;
+      if (error) error.hidden = true;
+      importPreview.hidden = true;
+      try {
+        const response = await fetch(local.dataset.importPreviewUrl, {method: "POST", body: new FormData(importForm), headers: {"Accept": "application/json"}});
+        if (!response.ok) throw new Error((await response.text()).trim() || `HTTP ${response.status}`);
+        const payload = await response.json();
+        importPreview.querySelector("[data-import-clusters]").textContent = payload.clusters ?? 0;
+        importPreview.querySelector("[data-import-users]").textContent = payload.users ?? 0;
+        importPreview.querySelector("[data-import-contexts]").textContent = payload.contexts ?? 0;
+        const conflicts = Array.isArray(payload.conflicts) ? payload.conflicts : [];
+        importPreview.querySelector("[data-import-conflicts]").textContent = conflicts.length ? `${conflicts.length} conflict(s): ${conflicts.join(", ")}` : "No name conflicts.";
+        importPreview.hidden = false;
+      } catch (failure) {
+        if (error) { error.textContent = failure?.message || "Unable to inspect kubeconfig."; error.hidden = false; }
+      }
+    };
+    const onContextSearch = () => {
+      const query = (contextSearch?.value || "").trim().toLocaleLowerCase();
+      local?.querySelectorAll("[data-kubernetes-context-row]").forEach(row => {
+        row.hidden = query !== "" && ![row.dataset.contextName, row.dataset.contextCluster, row.dataset.contextUser, row.dataset.contextNamespace].some(value => (value || "").toLocaleLowerCase().includes(query));
+      });
+    };
+    const onContextDelete = event => {
+      const form = event.target.closest("[data-kubernetes-context-delete]");
+      if (form && !window.confirm(`Delete Context ${form.dataset.kubernetesContextDelete}?`)) event.preventDefault();
+    };
     const onClusterChange = () => clusterSelect?.form?.requestSubmit();
     clusterSelect?.addEventListener("change", onClusterChange);
     drawer?.addEventListener("click", onDrawerClick);
+    importDrawer?.addEventListener("click", onImportDrawerClick);
+    contextDrawer?.addEventListener("click", onContextDrawerClick);
+    importFile?.addEventListener("change", onImportFile);
+    contextSearch?.addEventListener("input", onContextSearch);
+    local?.addEventListener("submit", onContextDelete);
     cleanups.push(() => {
       snapshotController?.abort();
       root.removeEventListener("click", onClick);
       clusterSelect?.removeEventListener("change", onClusterChange);
       drawer?.removeEventListener("click", onDrawerClick);
+      importDrawer?.removeEventListener("click", onImportDrawerClick);
+      contextDrawer?.removeEventListener("click", onContextDrawerClick);
+      importFile?.removeEventListener("change", onImportFile);
+      contextSearch?.removeEventListener("input", onContextSearch);
+      local?.removeEventListener("submit", onContextDelete);
       if (drawer?.open) drawer.close();
+      if (importDrawer?.open) importDrawer.close();
+      if (contextDrawer?.open) contextDrawer.close();
     });
   }
 

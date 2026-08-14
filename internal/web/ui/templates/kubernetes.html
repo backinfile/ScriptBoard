@@ -20,6 +20,7 @@
   <nav class="kubernetes-page-tabs" aria-label="{{t .Locale "kubernetes.title"}}">
     {{if .SelectedConnection}}<a href="/monitor/kubernetes?cluster={{.SelectedConnection}}" {{if eq .ActiveTab "monitor"}}aria-current="page"{{end}}><span data-lucide="activity" aria-hidden="true"></span>{{t .Locale "kubernetes.tab.monitor"}}</a>{{else}}<span aria-disabled="true"><span data-lucide="activity" aria-hidden="true"></span>{{t .Locale "kubernetes.tab.monitor"}}</span>{{end}}
     <a href="/monitor/kubernetes?tab=connections" {{if eq .ActiveTab "connections"}}aria-current="page"{{end}}><span data-lucide="network" aria-hidden="true"></span>{{t .Locale "kubernetes.tab.connections"}}</a>
+    {{if .CanManage}}<a href="/monitor/kubernetes?tab=local" {{if eq .ActiveTab "local"}}aria-current="page"{{end}}><span data-lucide="terminal-square" aria-hidden="true"></span>{{t .Locale "kubernetes.tab.local"}}</a>{{end}}
   </nav>
 
   {{if eq .ActiveTab "connections"}}
@@ -45,6 +46,59 @@
       </div>
       {{end}}
     </div>
+  </section>
+  {{else if eq .ActiveTab "local"}}
+  <section class="kubernetes-local" data-kubernetes-local data-import-preview-url="/monitor/kubernetes/local/import/preview">
+    <header class="section-heading kubernetes-section-heading kubernetes-local__heading">
+      <div><p class="section-index">kubectl / kubeconfig</p><h2>{{t .Locale "kubernetes.local.title"}}</h2><p>{{t .Locale "kubernetes.local.description"}}</p></div>
+      <div class="kubernetes-local__actions">
+        {{if .LocalConfig.Exists}}<a class="button" href="/monitor/kubernetes/local/download?path={{queryEscape .LocalConfig.Path}}"><span data-lucide="download" aria-hidden="true"></span>{{t .Locale "kubernetes.local.download_all"}}</a>{{end}}
+        <button class="button button--primary" type="button" data-kubernetes-import-open><span data-lucide="upload" aria-hidden="true"></span>{{t .Locale "kubernetes.local.import"}}</button>
+      </div>
+    </header>
+    {{if .LocalError}}<div class="kubernetes-alert" role="alert"><span data-lucide="triangle-alert" aria-hidden="true"></span><div><strong>{{t .Locale "kubernetes.local.read_failed"}}</strong><p>{{.LocalError}}</p></div></div>{{end}}
+    {{if .LocalNotice}}<div class="notice" role="status"><span data-lucide="circle-check" aria-hidden="true"></span>{{t .Locale "kubernetes.local.saved"}}</div>{{end}}
+    <form class="kubernetes-local__target" method="get" action="/monitor/kubernetes">
+      <input type="hidden" name="tab" value="local">
+      <label><span>{{t .Locale "kubernetes.local.target"}}</span><select name="path">{{range .LocalConfigPaths}}<option value="{{.}}" {{if eq . $.LocalConfig.Path}}selected{{end}}>{{.}}</option>{{end}}</select></label>
+      <button class="button button--compact" type="submit"><span data-lucide="folder-sync" aria-hidden="true"></span>{{t .Locale "kubernetes.local.change_target"}}</button>
+    </form>
+    <dl class="kubernetes-local__facts">
+      <div><dt>{{t .Locale "kubernetes.local.target"}}</dt><dd><code>{{.LocalConfig.Path}}</code></dd></div>
+      <div><dt>{{t .Locale "kubernetes.local.current"}}</dt><dd>{{if .LocalConfig.Current}}{{.LocalConfig.Current}}{{else}}—{{end}}</dd></div>
+      <div><dt>CONTEXTS</dt><dd>{{len .LocalConfig.Contexts}}</dd></div>
+      <div><dt>{{t .Locale "kubernetes.local.modified"}}</dt><dd>{{if .LocalConfig.ModifiedAt.IsZero}}—{{else}}<time datetime="{{machineTime .LocalConfig.ModifiedAt}}" data-local-time>{{localTime .Locale .LocalConfig.ModifiedAt}}</time>{{end}}</dd></div>
+    </dl>
+    <div class="kubernetes-local__toolbar"><label><span data-lucide="search" aria-hidden="true"></span><span class="sr-only">{{t .Locale "common.search"}}</span><input type="search" placeholder="{{t .Locale "kubernetes.local.search"}}" data-kubernetes-context-search></label><span>{{len .LocalConfig.Contexts}} contexts</span></div>
+    <div class="kubernetes-context-list">
+      {{range .LocalConfig.Contexts}}
+      <article class="kubernetes-context-row" data-kubernetes-context-row data-context-name="{{.Name}}" data-context-cluster="{{.Cluster}}" data-context-user="{{.User}}" data-context-namespace="{{.Namespace}}">
+        <span class="status-dot" data-state="{{if .Current}}up{{else}}idle{{end}}"></span>
+        <div class="kubernetes-context-row__identity"><strong>{{.Name}}</strong>{{if .Current}}<small>{{t $.Locale "kubernetes.local.current_context"}}</small>{{end}}</div>
+        <div><small>CLUSTER</small><code>{{.Cluster}}</code></div><div><small>USER</small><code>{{.User}}</code></div><div><small>NAMESPACE</small><code>{{if .Namespace}}{{.Namespace}}{{else}}default{{end}}</code></div>
+        <div class="kubernetes-context-row__actions">
+          {{if not .Current}}<form method="post" action="/monitor/kubernetes/local/contexts/{{pathEscape .Name}}"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="path" value="{{$.LocalConfig.Path}}"><input type="hidden" name="action" value="use"><button class="button button--compact" type="submit">{{t $.Locale "kubernetes.local.use"}}</button></form>{{end}}
+          <a class="icon-button" href="/monitor/kubernetes/local/contexts/{{pathEscape .Name}}/download?path={{queryEscape $.LocalConfig.Path}}" aria-label="{{t $.Locale "kubernetes.local.download_context"}} {{.Name}}"><span data-lucide="download" aria-hidden="true"></span></a>
+          <button class="icon-button" type="button" data-kubernetes-context-edit aria-label="{{t $.Locale "common.edit"}} {{.Name}}"><span data-lucide="pencil" aria-hidden="true"></span></button>
+          <form method="post" action="/monitor/kubernetes/local/contexts/{{pathEscape .Name}}" data-kubernetes-context-delete="{{.Name}}"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="path" value="{{$.LocalConfig.Path}}"><input type="hidden" name="action" value="delete"><button class="icon-button" type="submit" aria-label="{{t $.Locale "common.delete"}} {{.Name}}"><span data-lucide="trash-2" aria-hidden="true"></span></button></form>
+        </div>
+      </article>
+      {{else}}<div class="kubernetes-onboarding"><div class="kubernetes-onboarding__mark"><span data-lucide="terminal-square" aria-hidden="true"></span></div><div><h2>{{t .Locale "kubernetes.local.empty_title"}}</h2><p>{{t .Locale "kubernetes.local.empty"}}</p></div><button class="button button--primary" type="button" data-kubernetes-import-open><span data-lucide="upload" aria-hidden="true"></span>{{t .Locale "kubernetes.local.import"}}</button></div>{{end}}
+    </div>
+    <dialog class="kubernetes-drawer kubernetes-import-drawer" data-kubernetes-import-drawer aria-labelledby="kubernetes-import-title">
+      <header><div><p class="page-eyebrow">KUBECONFIG</p><h2 id="kubernetes-import-title">{{t .Locale "kubernetes.local.import"}}</h2><p>{{t .Locale "kubernetes.local.import_description"}}</p></div><button class="icon-button" type="button" data-kubernetes-import-close aria-label="{{t .Locale "common.close"}}"><span data-lucide="x" aria-hidden="true"></span></button></header>
+      <form class="kubernetes-drawer__body kubernetes-import-form" method="post" action="/monitor/kubernetes/local/import" enctype="multipart/form-data" data-kubernetes-import-form>
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value="{{.LocalConfig.Path}}">
+        <div class="kubernetes-import-rules"><h3>{{t .Locale "kubernetes.local.merge_rules"}}</h3><p>{{t .Locale "kubernetes.local.merge_description"}}</p><ul><li>{{t .Locale "kubernetes.local.max_size"}}</li><li>YAML / YML / config</li><li>{{t .Locale "kubernetes.local.atomic_write"}}</li></ul></div>
+        <label class="kubernetes-import-drop"><input type="file" name="kubeconfig" accept=".yaml,.yml,.config,application/yaml,text/yaml" required data-kubernetes-import-file><span data-lucide="file-up" aria-hidden="true"></span><strong data-kubernetes-import-filename>{{t .Locale "kubernetes.local.choose_file"}}</strong><small>{{t .Locale "kubernetes.local.choose_hint"}}</small></label>
+        <div class="kubernetes-import-preview" data-kubernetes-import-preview hidden><dl><div><dt>CLUSTERS</dt><dd data-import-clusters>0</dd></div><div><dt>USERS</dt><dd data-import-users>0</dd></div><div><dt>CONTEXTS</dt><dd data-import-contexts>0</dd></div></dl><p data-import-conflicts></p><label><span>{{t .Locale "kubernetes.local.import_current"}}</span><select name="current_context"><option value="keep">{{t .Locale "kubernetes.local.keep_current"}}</option><option value="import">{{t .Locale "kubernetes.local.use_imported_current"}}</option></select></label></div>
+        <p class="form-error" data-kubernetes-import-error hidden></p><button class="button button--primary" type="submit"><span data-lucide="merge" aria-hidden="true"></span>{{t .Locale "kubernetes.local.confirm_import"}}</button>
+      </form>
+    </dialog>
+    <dialog class="kubernetes-drawer kubernetes-context-drawer" data-kubernetes-context-drawer aria-labelledby="kubernetes-context-title">
+      <header><div><p class="page-eyebrow">KUBECTL CONFIG SET-CONTEXT</p><h2 id="kubernetes-context-title" data-kubernetes-context-title>—</h2><p>{{t .Locale "kubernetes.local.edit_description"}}</p></div><button class="icon-button" type="button" data-kubernetes-context-close aria-label="{{t .Locale "common.close"}}"><span data-lucide="x" aria-hidden="true"></span></button></header>
+      <div class="kubernetes-drawer__body"><form class="kubernetes-context-form" method="post" data-kubernetes-context-update-form><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value="{{.LocalConfig.Path}}"><input type="hidden" name="action" value="update"><label><span>Cluster</span><input name="cluster" required></label><label><span>User</span><input name="user" required></label><label><span>Namespace</span><input name="namespace" placeholder="default"></label><button class="button button--primary" type="submit">{{t .Locale "common.save"}}</button></form><form class="kubernetes-context-form kubernetes-context-rename" method="post" data-kubernetes-context-rename-form><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value="{{.LocalConfig.Path}}"><input type="hidden" name="action" value="rename"><label><span>{{t .Locale "kubernetes.local.context_name"}}</span><input name="name" required></label><button class="button" type="submit">{{t .Locale "kubernetes.local.rename"}}</button></form></div>
+    </dialog>
   </section>
   {{else}}
   <section class="kubernetes-cluster-switch" aria-label="{{t .Locale "kubernetes.select_cluster"}}">

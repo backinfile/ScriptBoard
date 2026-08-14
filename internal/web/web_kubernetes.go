@@ -2,19 +2,25 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"scriptboard/internal/clusterstatus"
 	"scriptboard/internal/identity"
+	"scriptboard/internal/kubeconfigmanager"
 )
 
 const (
 	kubernetesTabMonitor     = "monitor"
 	kubernetesTabConnections = "connections"
+	kubernetesTabLocal       = "local"
 )
 
 type kubernetesPageView struct {
@@ -27,6 +33,10 @@ type kubernetesPageView struct {
 	SelectedConnection string
 	CanManage          bool
 	NamespaceOptions   []string
+	LocalConfig        kubeconfigmanager.Snapshot
+	LocalConfigPaths   []string
+	LocalError         string
+	LocalNotice        string
 }
 
 type kubernetesConnectionView struct {
@@ -139,6 +149,37 @@ func selectKubernetesConnection(connections []clusterstatus.ConnectionStatus, re
 	return ""
 }
 
+func localKubeconfigPaths(connections []clusterstatus.ConnectionStatus) ([]string, error) {
+	defaultPath, err := kubeconfigmanager.DefaultPath()
+	if err != nil {
+		return nil, err
+	}
+	paths := []string{defaultPath}
+	seen := map[string]bool{filepath.Clean(defaultPath): true}
+	for _, connection := range connections {
+		path := filepath.Clean(strings.TrimSpace(connection.KubeconfigPath))
+		if !filepath.IsAbs(path) || seen[path] {
+			continue
+		}
+		seen[path] = true
+		paths = append(paths, path)
+	}
+	return paths, nil
+}
+
+func selectLocalKubeconfigPath(paths []string, requested string) (string, bool) {
+	if len(paths) == 0 {
+		return "", false
+	}
+	requested = filepath.Clean(strings.TrimSpace(requested))
+	for _, path := range paths {
+		if requested != "." && requested == filepath.Clean(path) {
+			return path, true
+		}
+	}
+	return paths[0], strings.TrimSpace(requested) == ""
+}
+
 func (a *App) kubernetesPage(response http.ResponseWriter, request *http.Request) {
 	response.Header().Set("Cache-Control", "no-store")
 	current := request.Context().Value(sessionContextKey).(session)
@@ -150,26 +191,220 @@ func (a *App) kubernetesPage(response http.ResponseWriter, request *http.Request
 	}
 	selected := selectKubernetesConnection(connections, query.ConnectionID)
 	query.ConnectionID = selected
+	canManage := identity.Allows(current.role, identity.PermissionManageOperations)
 	activeTab := request.URL.Query().Get("tab")
-	if len(connections) == 0 {
+	if activeTab == kubernetesTabLocal && !canManage {
+		activeTab = ""
+	}
+	if len(connections) == 0 && activeTab != kubernetesTabLocal {
 		activeTab = kubernetesTabConnections
-	} else if activeTab != kubernetesTabConnections {
+	} else if activeTab != kubernetesTabConnections && activeTab != kubernetesTabLocal {
 		activeTab = kubernetesTabMonitor
 	}
 	var view clusterstatus.View
-	if selected != "" {
+	if selected != "" && activeTab == kubernetesTabMonitor {
 		view, err = a.loadKubernetes(request, selected, query)
 		if err != nil {
 			http.Error(response, "Unable to read Kubernetes status", http.StatusInternalServerError)
 			return
 		}
 	}
+	var localConfig kubeconfigmanager.Snapshot
+	var localPaths []string
+	var localError string
+	if activeTab == kubernetesTabLocal {
+		localPaths, err = localKubeconfigPaths(connections)
+		if err == nil {
+			localPath, valid := selectLocalKubeconfigPath(localPaths, request.URL.Query().Get("path"))
+			if !valid {
+				localError = "The selected kubeconfig path is not managed by ScriptBoard"
+			}
+			localConfig, err = kubeconfigmanager.Inspect(localPath)
+		}
+		if err != nil {
+			localError = err.Error()
+			if len(localPaths) > 0 {
+				localConfig.Path = localPaths[0]
+			}
+		}
+	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = kubernetesTemplate.Execute(response, kubernetesPageView{
 		View: view, Locale: resolveWebLocale(request), CSRFToken: current.csrfToken, Query: query,
 		Connections: sanitizeKubernetesConnections(connections), ActiveTab: activeTab, SelectedConnection: selected,
-		CanManage: identity.Allows(current.role, identity.PermissionManageOperations), NamespaceOptions: view.AvailableNamespaces,
+		CanManage: canManage, NamespaceOptions: view.AvailableNamespaces, LocalConfig: localConfig, LocalConfigPaths: localPaths,
+		LocalError: localError, LocalNotice: request.URL.Query().Get("notice"),
 	})
+}
+
+func (a *App) managedKubeconfigPath(request *http.Request) (string, error) {
+	connections, err := a.kubernetesStatus.Connections(request.Context())
+	if err != nil {
+		return "", err
+	}
+	paths, err := localKubeconfigPaths(connections)
+	if err != nil {
+		return "", err
+	}
+	requested := request.FormValue("path")
+	if requested == "" {
+		requested = request.URL.Query().Get("path")
+	}
+	path, valid := selectLocalKubeconfigPath(paths, requested)
+	if !valid {
+		return "", errors.New("selected kubeconfig path is not managed by ScriptBoard")
+	}
+	return path, nil
+}
+
+func kubernetesLocalURL(path, notice string) string {
+	values := url.Values{"tab": {kubernetesTabLocal}}
+	if path != "" {
+		values.Set("path", path)
+	}
+	if notice != "" {
+		values.Set("notice", notice)
+	}
+	return "/monitor/kubernetes?" + values.Encode()
+}
+
+func requireKubernetesMutation(response http.ResponseWriter, request *http.Request) bool {
+	if !validSessionCSRF(request) {
+		http.Error(response, "CSRF validation failed", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+func (a *App) downloadLocalKubeconfig(response http.ResponseWriter, request *http.Request) {
+	path, err := a.managedKubeconfigPath(request)
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
+	raw, err := kubeconfigmanager.Download(path)
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusNotFound)
+		return
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Content-Type", "application/yaml; charset=utf-8")
+	response.Header().Set("Content-Disposition", `attachment; filename="kubeconfig.yaml"`)
+	_, _ = response.Write(raw)
+}
+
+func (a *App) downloadLocalKubeconfigContext(response http.ResponseWriter, request *http.Request) {
+	path, err := a.managedKubeconfigPath(request)
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
+	raw, err := kubeconfigmanager.DownloadContext(path, request.PathValue("context"))
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusNotFound)
+		return
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Content-Type", "application/yaml; charset=utf-8")
+	response.Header().Set("Content-Disposition", `attachment; filename="kubeconfig-context.yaml"`)
+	_, _ = response.Write(raw)
+}
+
+func readKubeconfigUpload(response http.ResponseWriter, request *http.Request) ([]byte, error) {
+	if request.MultipartForm == nil {
+		request.Body = http.MaxBytesReader(response, request.Body, kubeconfigmanager.MaxFileSize+(64<<10))
+		if err := request.ParseMultipartForm(kubeconfigmanager.MaxFileSize); err != nil {
+			return nil, errors.New("invalid or oversized multipart upload")
+		}
+	}
+	file, _, err := request.FormFile("kubeconfig")
+	if err != nil {
+		return nil, errors.New("kubeconfig file is required")
+	}
+	defer file.Close()
+	raw, err := io.ReadAll(io.LimitReader(file, kubeconfigmanager.MaxFileSize+1))
+	if err != nil || len(raw) > kubeconfigmanager.MaxFileSize {
+		return nil, errors.New("kubeconfig file exceeds 2 MiB")
+	}
+	return raw, nil
+}
+
+func (a *App) previewLocalKubeconfigImport(response http.ResponseWriter, request *http.Request) {
+	raw, err := readKubeconfigUpload(response, request)
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !requireKubernetesMutation(response, request) {
+		return
+	}
+	path, err := a.managedKubeconfigPath(request)
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
+	preview, err := kubeconfigmanager.PreviewImport(path, raw)
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(response).Encode(preview)
+}
+
+func (a *App) importLocalKubeconfig(response http.ResponseWriter, request *http.Request) {
+	raw, err := readKubeconfigUpload(response, request)
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !requireKubernetesMutation(response, request) {
+		return
+	}
+	path, err := a.managedKubeconfigPath(request)
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_, err = kubeconfigmanager.Import(path, raw, request.FormValue("current_context") == "import")
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	a.recordAuditForRequest(request, "import_local_kubeconfig", filepath.Base(path), "succeeded")
+	http.Redirect(response, request, kubernetesLocalURL(path, "imported"), http.StatusSeeOther)
+}
+
+func (a *App) mutateLocalKubeconfigContext(response http.ResponseWriter, request *http.Request) {
+	if !requireKubernetesMutation(response, request) {
+		return
+	}
+	path, err := a.managedKubeconfigPath(request)
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
+	name := request.PathValue("context")
+	action := request.FormValue("action")
+	switch action {
+	case "use":
+		err = kubeconfigmanager.UseContext(path, name)
+	case "update":
+		err = kubeconfigmanager.UpdateContext(path, name, request.FormValue("cluster"), request.FormValue("user"), request.FormValue("namespace"))
+	case "rename":
+		err = kubeconfigmanager.RenameContext(path, name, request.FormValue("name"))
+	case "delete":
+		err = kubeconfigmanager.DeleteContext(path, name)
+	default:
+		err = fmt.Errorf("unsupported context action %q", action)
+	}
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	a.recordAuditForRequest(request, "manage_local_kubeconfig_context", action+":"+name, "succeeded")
+	http.Redirect(response, request, kubernetesLocalURL(path, action), http.StatusSeeOther)
 }
 
 func (a *App) kubernetesData(response http.ResponseWriter, request *http.Request) {

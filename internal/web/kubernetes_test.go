@@ -137,7 +137,7 @@ func TestKubernetesPageSeparatesConnectionsFromSelectedClusterMonitoring(t *test
 			t.Fatalf("configured page still contains Kubernetes Pin UI %q: %s", forbidden, page)
 		}
 	}
-	logRequest, err := http.NewRequest(http.MethodGet, serverURL+"/monitor/kubernetes/workloads/production/Deployment/api/logs", nil)
+	logRequest, err := http.NewRequest(http.MethodGet, serverURL+"/monitor/kubernetes/clusters/"+secondID+"/workloads/production/Deployment/api/logs", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

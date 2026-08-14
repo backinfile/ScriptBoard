@@ -126,6 +126,8 @@ func webTemplateFunctions() template.FuncMap {
 		"join":         strings.Join,
 		"stringSlice":  func(values ...string) []string { return values },
 		"addInt":       func(value, delta int) int { return value + delta },
+		"pathEscape":   url.PathEscape,
+		"queryEscape":  url.QueryEscape,
 		"shortDigest": func(value string) string {
 			if len(value) <= 12 {
 				return value
