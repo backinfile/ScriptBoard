@@ -214,19 +214,12 @@ func TestManagedProviderCredentialAndProxyAreOwnedByPrivilegedBroker(t *testing.
 
 func shortPrivilegedBrokerSocket(t *testing.T, prefix string) string {
 	t.Helper()
-	file, err := os.CreateTemp("", prefix+"*.sock")
+	directory, err := os.MkdirTemp("", prefix)
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := file.Name()
-	if err := file.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Remove(path) })
-	return path
+	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+	return filepath.Join(directory, "broker.sock")
 }
 
 func TestManagedRemoteWebsiteCredentialIsOwnedAndUsedByPrivilegedBroker(t *testing.T) {
