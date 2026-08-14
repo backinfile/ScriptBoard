@@ -72,6 +72,17 @@ function Wait-ServiceState([string]$Name, [string]$State, [int]$TimeoutSeconds =
     throw "Service $Name did not reach $State"
 }
 
+function Invoke-CheckedTimed([string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds = 60) {
+    $process = Start-Process -FilePath $FilePath -ArgumentList $Arguments -PassThru -WindowStyle Hidden
+    if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+        Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+        throw "$FilePath timed out after $TimeoutSeconds seconds"
+    }
+    if ($process.ExitCode -ne 0) {
+        throw "$FilePath failed with exit code $($process.ExitCode)"
+    }
+}
+
 function Wait-NewServiceProcess([string]$Name, [uint32]$PreviousPID) {
     $deadline = [DateTime]::UtcNow.AddSeconds(45)
     do {
@@ -217,7 +228,9 @@ notification_email_recipient: 'security@example.invalid'
     Invoke-Checked "icacls.exe" @($runWorkRoot, "/grant", "*${runnerSID}:(OI)(CI)M")
     Write-Host "RUNNER_WORKSPACE_ACL: VERIFIED"
 
-    Invoke-Checked (Join-Path $releaseRoot "scriptboard.exe") @("service", "start")
+    Write-Host "SERVICE_START_COMMAND: BEGIN"
+    Invoke-CheckedTimed (Join-Path $releaseRoot "scriptboard.exe") @("service", "start")
+    Write-Host "SERVICE_START_COMMAND: RETURNED"
     $web = Wait-ServiceState "ScriptBoard" "Running"
     $broker = Wait-ServiceState "ScriptBoardBroker" "Running"
     Wait-ServiceState "ScriptBoardRunner" "Stopped" | Out-Null
@@ -229,6 +242,7 @@ notification_email_recipient: 'security@example.invalid'
         Start-Sleep -Milliseconds 250
     } while ([DateTime]::UtcNow -lt $deadline)
     if (-not $response -or $response.StatusCode -ne 200) { throw "Managed Web did not become HTTP ready" }
+    Write-Host "MANAGED_WEB_HTTP: READY"
 
     Assert-PipeDenied (Wait-Pipe "scriptboard-privileged-broker-*")
 
