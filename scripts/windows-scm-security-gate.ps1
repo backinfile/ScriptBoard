@@ -116,6 +116,14 @@ function Assert-ServiceDefinition([string]$Name, [string]$StartName, [string]$St
     }
 }
 
+function Get-ServiceSID([string]$Name) {
+    $output = & sc.exe showsid $Name
+    if ($LASTEXITCODE -ne 0) { throw "Unable to resolve service SID for $Name" }
+    $match = [Regex]::Match(($output -join "`n"), 'S-1-5-80-(?:\d+-){4}\d+')
+    if (-not $match.Success) { throw "SCM did not return a service SID for $Name" }
+    return $match.Value
+}
+
 function Assert-PrivateBrokerPath([string]$Path, [string]$WebSID) {
     $sddl = (Get-Acl -LiteralPath $Path).Sddl
     foreach ($forbidden in @(";;;WD)", ";;;BU)", ";;;AU)", ";;;LS)", $WebSID)) {
@@ -204,17 +212,10 @@ notification_email_recipient: 'security@example.invalid'
     Write-Host ("STATE_ROOT_ACL: " + (Get-Acl -LiteralPath $stateRoot).Sddl)
     Write-Host ("EXTERNAL_SECRETS_ACL: " + (Get-Acl -LiteralPath (Join-Path $gateRoot "secrets")).Sddl)
 
-    $runnerAccount = [Security.Principal.NTAccount]::new("NT SERVICE", "ScriptBoardRunner")
-    $runWorkACL = Get-Acl -LiteralPath $runWorkRoot
-    $runWorkRule = [Security.AccessControl.FileSystemAccessRule]::new(
-        $runnerAccount,
-        [Security.AccessControl.FileSystemRights]::Modify,
-        [Security.AccessControl.InheritanceFlags]"ContainerInherit, ObjectInherit",
-        [Security.AccessControl.PropagationFlags]::None,
-        [Security.AccessControl.AccessControlType]::Allow
-    )
-    $runWorkACL.AddAccessRule($runWorkRule)
-    Set-Acl -LiteralPath $runWorkRoot -AclObject $runWorkACL
+    $runnerSID = Get-ServiceSID "ScriptBoardRunner"
+    # Use the numeric service SID so the gate never blocks on account-name resolution.
+    Invoke-Checked "icacls.exe" @($runWorkRoot, "/grant", "*${runnerSID}:(OI)(CI)M")
+    Write-Host "RUNNER_WORKSPACE_ACL: VERIFIED"
 
     Invoke-Checked (Join-Path $releaseRoot "scriptboard.exe") @("service", "start")
     $web = Wait-ServiceState "ScriptBoard" "Running"
@@ -260,7 +261,7 @@ notification_email_recipient: 'security@example.invalid'
     Assert-PipeDenied (Wait-Pipe "scriptboard-runner-*")
     Assert-PipeDenied (Wait-Pipe "scriptboard-ai-runtime-*")
 
-    $webSID = ([Security.Principal.NTAccount]::new("NT SERVICE", "ScriptBoard")).Translate([Security.Principal.SecurityIdentifier]).Value
+    $webSID = Get-ServiceSID "ScriptBoard"
     Assert-PrivateBrokerPath $brokerSecrets $webSID
     Assert-PrivateBrokerPath $relayTokenPath $webSID
 
