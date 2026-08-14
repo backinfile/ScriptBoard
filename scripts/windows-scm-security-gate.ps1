@@ -201,6 +201,9 @@ notification_email_recipient: 'security@example.invalid'
     Assert-ServiceDefinition "ScriptBoardRunner" "NT AUTHORITY\LocalService" "Manual"
     Assert-ServiceDefinition "ScriptBoardAI" "NT AUTHORITY\LocalService" "Manual"
 
+    Write-Host ("STATE_ROOT_ACL: " + (Get-Acl -LiteralPath $stateRoot).Sddl)
+    Write-Host ("EXTERNAL_SECRETS_ACL: " + (Get-Acl -LiteralPath (Join-Path $gateRoot "secrets")).Sddl)
+
     Invoke-Checked (Join-Path $releaseRoot "scriptboard.exe") @("service", "start")
     $web = Wait-ServiceState "ScriptBoard" "Running"
     $broker = Wait-ServiceState "ScriptBoardBroker" "Running"
