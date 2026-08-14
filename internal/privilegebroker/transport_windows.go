@@ -10,6 +10,7 @@ import (
 
 	"github.com/Microsoft/go-winio"
 	"golang.org/x/sys/windows"
+	"scriptboard/internal/windowsidentity"
 )
 
 func DefaultEndpoint(stateRoot string) (string, error) {
@@ -62,7 +63,7 @@ func allowedWindowsSID(options TransportOptions) (string, error) {
 	if identity == "" {
 		identity = `NT SERVICE\ScriptBoard`
 	}
-	sid, _, _, err := windows.LookupSID("", identity)
+	sid, err := windowsidentity.ResolveSID(identity)
 	if err != nil {
 		return "", err
 	}

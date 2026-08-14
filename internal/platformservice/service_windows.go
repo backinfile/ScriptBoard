@@ -15,6 +15,7 @@ import (
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
+	"scriptboard/internal/windowsidentity"
 )
 
 const (
@@ -62,7 +63,7 @@ func ValidateWebRuntimeIdentity() error {
 	if err != nil {
 		return err
 	}
-	serviceSID, _, _, err := windows.LookupSID("", webServiceSID)
+	serviceSID, err := windowsidentity.ResolveSID(webServiceSID)
 	if err != nil {
 		return fmt.Errorf("resolve managed Web service SID: %w", err)
 	}
@@ -94,7 +95,7 @@ func ValidateAIRuntimeIdentity() error {
 	if err != nil {
 		return err
 	}
-	serviceSID, _, _, err := windows.LookupSID("", aiServiceSID)
+	serviceSID, err := windowsidentity.ResolveSID(aiServiceSID)
 	if err != nil {
 		return fmt.Errorf("resolve managed AI Runtime service SID: %w", err)
 	}
@@ -133,7 +134,7 @@ func validateWindowsServiceIdentity(serviceIdentity, label string) error {
 	if err != nil {
 		return err
 	}
-	serviceSID, _, _, err := windows.LookupSID("", serviceIdentity)
+	serviceSID, err := windowsidentity.ResolveSID(serviceIdentity)
 	if err != nil {
 		return err
 	}
@@ -366,7 +367,7 @@ func matchesWindowsServiceRecovery(service *mgr.Service) (bool, error) {
 }
 
 func grantWindowsWebServiceDemandStart(manager *mgr.Mgr) error {
-	sid, _, _, err := windows.LookupSID("", webServiceSID)
+	sid, err := windowsidentity.ResolveSID(webServiceSID)
 	if err != nil {
 		return fmt.Errorf("resolve Windows Web service SID for demand start: %w", err)
 	}
@@ -445,7 +446,7 @@ func windowsServiceHasExactGrant(service *mgr.Service, sid *windows.SID, permiss
 }
 
 func grantWindowsRunnerServiceAccess(installRoot, configPath string) error {
-	sid, _, _, err := windows.LookupSID("", runnerServiceSID)
+	sid, err := windowsidentity.ResolveSID(runnerServiceSID)
 	if err != nil {
 		return err
 	}
@@ -467,7 +468,7 @@ func grantWindowsRunnerServiceAccess(installRoot, configPath string) error {
 }
 
 func grantWindowsAIServiceAccess(installRoot, stateRoot string) error {
-	sid, _, _, err := windows.LookupSID("", aiServiceSID)
+	sid, err := windowsidentity.ResolveSID(aiServiceSID)
 	if err != nil {
 		return fmt.Errorf("resolve Windows AI Runtime service SID: %w", err)
 	}
@@ -499,7 +500,7 @@ func grantWindowsWebServiceAccess(installRoot, configPath, stateRoot string, web
 	if !filepath.IsAbs(installRoot) || !filepath.IsAbs(configPath) || !filepath.IsAbs(stateRoot) {
 		return errors.New("Windows service ACL paths must be absolute")
 	}
-	sid, _, _, err := windows.LookupSID("", webServiceSID)
+	sid, err := windowsidentity.ResolveSID(webServiceSID)
 	if err != nil {
 		return fmt.Errorf("resolve Windows Web service SID: %w", err)
 	}
@@ -920,7 +921,7 @@ func MatchesExecutable(executable, configPath, stateRoot string) (bool, error) {
 	if recoveryMatches, recoveryErr := matchesWindowsServiceRecovery(runnerService); recoveryErr != nil || !recoveryMatches {
 		return false, recoveryErr
 	}
-	webSID, _, _, err := windows.LookupSID("", webServiceSID)
+	webSID, err := windowsidentity.ResolveSID(webServiceSID)
 	if err != nil {
 		return false, err
 	}
