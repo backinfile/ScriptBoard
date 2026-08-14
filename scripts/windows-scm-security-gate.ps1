@@ -62,6 +62,13 @@ function Wait-ServiceState([string]$Name, [string]$State, [int]$TimeoutSeconds =
         if ($service -and $service.State -eq $State) { return $service }
         Start-Sleep -Milliseconds 250
     } while ([DateTime]::UtcNow -lt $deadline)
+    $snapshot = Get-CimInstance Win32_Service -Filter "Name='$Name'" -ErrorAction SilentlyContinue
+    Write-Warning ("Service timeout snapshot: " + ($snapshot | Select-Object Name, State, Status, ExitCode, ProcessId | ConvertTo-Json -Compress))
+    $serviceLog = Join-Path $stateRoot "logs\service.log"
+    if (Test-Path -LiteralPath $serviceLog) {
+        Write-Warning "Last service.log lines:"
+        Get-Content -LiteralPath $serviceLog -Tail 80 | ForEach-Object { Write-Warning $_ }
+    }
     throw "Service $Name did not reach $State"
 }
 
