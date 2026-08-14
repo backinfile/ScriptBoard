@@ -192,7 +192,9 @@ func (policy *oleWindowsServiceRestriction) AddLoopbackRule(name, serviceName, e
 	}{
 		{"Name", name}, {"Description", "Only permit the isolated AI Runtime to reach ScriptBoard loopback proxies"},
 		{"ApplicationName", executable}, {"ServiceName", serviceName},
-		{"Protocol", 6}, {"RemoteAddresses", "127.0.0.1,::1"},
+		// The Provider proxy is deliberately tcp4-only. Including ::1 makes the
+		// COM API reject the entire rule on hosts where IPv6 is disabled.
+		{"Protocol", 6}, {"RemoteAddresses", "127.0.0.1"},
 		{"Action", 1}, {"Direction", 2}, {"Enabled", true}, {"Profiles", 0x7fffffff},
 	} {
 		result, err := oleutil.PutProperty(rule, property.name, property.value)
