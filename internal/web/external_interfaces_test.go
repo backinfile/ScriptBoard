@@ -80,11 +80,7 @@ func TestExternalInterfaceGroupOwnsPathsAndMultipleKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = managedResponse.Body.Close()
-	database, err := sql.Open("sqlite", filepath.Join(root, "state", "app.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer database.Close()
+	database := openExternalTestDatabase(t, filepath.Join(root, "state", "app.db"))
 	var managedTarget, managedConfigJSON string
 	if err := database.QueryRow(`SELECT target, config_json FROM external_trigger_entries WHERE group_id = ? AND name = 'managed-log'`, groupID).Scan(&managedTarget, &managedConfigJSON); err != nil {
 		t.Fatal(err)
@@ -721,15 +717,10 @@ func TestExternalInvocationHistorySupportsSearchDateFiltersAndPagination(t *test
 	root := t.TempDir()
 	stateRoot := filepath.Join(root, "state")
 	client, serverURL := authenticatedClient(t, filepath.Join(root, "host"), stateRoot)
-	database, err := sql.Open("sqlite", "file:"+filepath.ToSlash(filepath.Join(stateRoot, "app.db"))+"?_pragma=busy_timeout(5000)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	database.SetMaxOpenConns(1)
-	defer database.Close()
+	database := openExternalTestDatabase(t, filepath.Join(stateRoot, "app.db"))
 	now := time.Now()
 	for index := 0; index < 21; index++ {
-		_, err = database.Exec(`INSERT INTO external_trigger_requests
+		_, err := database.Exec(`INSERT INTO external_trigger_requests
 			(id, occurred_at, key_id, key_label, entry_id, entry_name, action_type, result, http_status, message)
 			VALUES (?, ?, 'key', 'Release service', 'entry', ?, 'log', 'succeeded', 200, ?)`,
 			fmt.Sprintf("request-%02d", index), now.Unix(), fmt.Sprintf("call-%02d", index), fmt.Sprintf("message-%02d", index))
@@ -737,7 +728,7 @@ func TestExternalInvocationHistorySupportsSearchDateFiltersAndPagination(t *test
 			t.Fatal(err)
 		}
 	}
-	_, err = database.Exec(`INSERT INTO external_trigger_requests
+	_, err := database.Exec(`INSERT INTO external_trigger_requests
 		(id, occurred_at, key_id, key_label, entry_id, entry_name, action_type, result, http_status, message)
 		VALUES ('old-request', ?, 'key', 'Legacy service', 'entry', 'legacy-call', 'log', 'rejected', 400, 'old-message')`, now.AddDate(0, 0, -10).Unix())
 	if err != nil {
@@ -801,11 +792,7 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 		t.Fatalf("update key status=%d", response.StatusCode)
 	}
 
-	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer database.Close()
+	database := openExternalTestDatabase(t, filepath.Join(stateRoot, "app.db"))
 	if _, err := database.Exec("INSERT INTO variables(name, value, is_password, created_at, updated_at) VALUES (?, ?, 0, 1, 1)", "environment", "staging"); err != nil {
 		t.Fatal(err)
 	}
@@ -985,6 +972,18 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 	if finalRuns != acceptedRuns {
 		t.Fatalf("rejected stale Quick Runs started work: before=%d after=%d", acceptedRuns, finalRuns)
 	}
+}
+
+func openExternalTestDatabase(t *testing.T, path string) *sql.DB {
+	t.Helper()
+	// Match the application's lock-wait policy when a test opens a second connection.
+	database, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	database.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = database.Close() })
+	return database
 }
 
 func createExternalTestKey(t *testing.T, client *http.Client, serverURL, label string) (string, string) {
