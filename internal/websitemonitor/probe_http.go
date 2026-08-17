@@ -186,7 +186,8 @@ func checkWebSocket(ctx context.Context, config Config) Evidence {
 
 func outboundPolicy(config Config) outboundpolicy.Policy {
 	local := config.Scope == ScopeLocal
-	return outboundpolicy.Policy{AllowPrivate: local, AllowAnyPort: local}
+	// Website monitors may target services on any valid port; scope still controls private network access.
+	return outboundpolicy.Policy{AllowPrivate: local, AllowAnyPort: true}
 }
 
 func applyRequestHeaders(target http.Header, headers []RequestHeader) {
