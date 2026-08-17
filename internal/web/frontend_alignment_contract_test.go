@@ -104,7 +104,6 @@ func TestApplicationsPageExposesLiveFactsAndExpandableObservationDetails(t *test
 		`data-application-history-output`,
 		`data-application-detail-panel="runtime"`,
 		`data-application-runtime-output`,
-		`data-applications-kind-filter`,
 		`name="direction" value="top"`,
 		`class="application-running-table"`,
 		`class="application-running-row"`,
@@ -112,8 +111,9 @@ func TestApplicationsPageExposesLiveFactsAndExpandableObservationDetails(t *test
 		`tabindex="0" aria-haspopup="dialog"`,
 	)
 	if bytes.Contains(page, []byte(`data-application-detail-toggle`)) ||
-		bytes.Contains(page, []byte(`data-running-detail-for`)) {
-		t.Fatal("application details must use the shared drawer instead of inline expansion")
+		bytes.Contains(page, []byte(`data-running-detail-for`)) ||
+		bytes.Contains(page, []byte(`data-applications-kind-filter`)) {
+		t.Fatal("application details must use the shared drawer and the page must not expose an application kind filter")
 	}
 
 	response, err = client.Get(serverURL + "/assets/app-v2.js")
@@ -141,12 +141,13 @@ func TestApplicationsPageExposesLiveFactsAndExpandableObservationDetails(t *test
 		`backgroundSurfaceBlocked`,
 		`drawerNavigation.hidden = activeMode === "runtime"`,
 		`loadDrawerDetails(true)`,
-		`kindFilter.form?.requestSubmit()`,
+		`const row = event.target.closest("[data-application-row]")`,
 		`application-series--${item.color}`,
 		`state !== "available" && state !== "partial"`,
 	)
-	if bytes.Contains(script, []byte(`form.submit();`)) {
-		t.Fatal("async POST failures must not replay the form submission")
+	if bytes.Contains(script, []byte(`form.submit();`)) ||
+		bytes.Contains(script, []byte(`data-applications-kind-filter`)) {
+		t.Fatal("async POST failures must not replay the form submission and applications must not retain the kind filter handler")
 	}
 
 	response, err = client.Get(serverURL + "/assets/app-v2.css")

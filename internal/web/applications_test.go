@@ -75,7 +75,7 @@ func TestDockerSourceFailureStaysOnApplicationsPageAndOutOfShellAttention(t *tes
 		t.Fatal(err)
 	}
 	if response.StatusCode != http.StatusOK ||
-		!bytes.Contains(page, []byte("Source unavailable")) ||
+		bytes.Contains(page, []byte("Source unavailable")) ||
 		!bytes.Contains(page, []byte(`data-shell-attention-item="applications" hidden`)) {
 		t.Fatalf("docker source failure leaked into shell attention: status=%d body=%s", response.StatusCode, page)
 	}
@@ -111,6 +111,7 @@ func TestApplicationsPageListsDeterministicProbeDataAndPersistsPin(t *testing.T)
 			Processes: []appstatus.RawProcess{{
 				PID: 201, CreatedAt: collectedAt.Add(-time.Hour), Name: "Host Agent",
 				ExecutablePath: "/opt/host-agent", ResidentMemoryBytes: 256 << 20, Threads: 8,
+				CPUSeconds: 12, ReadBytes: 2 << 20, WriteBytes: 1 << 20,
 			}},
 			Containers: []appstatus.RawContainer{{
 				Name: "api-prod", Image: "ghcr.io/example/api:2026.07", CPUPercent: 22.5,
@@ -136,10 +137,9 @@ func TestApplicationsPageListsDeterministicProbeDataAndPersistsPin(t *testing.T)
 		!bytes.Contains(page, []byte(`data-disabled-label="Live updates off"`)) {
 		t.Fatalf("refresh switch labels are not safely embedded: %s", page)
 	}
-	apiPosition := bytes.Index(page, []byte("api-prod"))
 	hostPosition := bytes.Index(page, []byte("Host Agent"))
-	if apiPosition < 0 || hostPosition < 0 || apiPosition >= hostPosition {
-		t.Fatalf("default CPU ordering is not reflected in page: %s", page)
+	if bytes.Contains(page, []byte("api-prod")) || bytes.Contains(page, []byte("applications-kind-switch")) || hostPosition < 0 {
+		t.Fatalf("applications page rendered docker data or missed host data: %s", page)
 	}
 	action := regexp.MustCompile(`action="(/monitor/applications/[^"]+/pin)"`).FindSubmatch(page)
 	if len(action) != 2 {
@@ -165,7 +165,7 @@ func TestApplicationsPageListsDeterministicProbeDataAndPersistsPin(t *testing.T)
 	_ = response.Body.Close()
 	pinnedStart := bytes.Index(pinnedPage, []byte(`data-pinned-applications`))
 	runningStart := bytes.Index(pinnedPage, []byte(`data-running-applications`))
-	if pinnedStart < 0 || runningStart <= pinnedStart || !bytes.Contains(pinnedPage[pinnedStart:runningStart], []byte("api-prod")) {
+	if pinnedStart < 0 || runningStart <= pinnedStart || !bytes.Contains(pinnedPage[pinnedStart:runningStart], []byte("Host Agent")) {
 		t.Fatalf("pinned application is not rendered in the pinned section: %s", pinnedPage)
 	}
 
@@ -181,8 +181,10 @@ func TestApplicationsPageListsDeterministicProbeDataAndPersistsPin(t *testing.T)
 		t.Fatal(err)
 	}
 	_ = response.Body.Close()
-	if len(payload.Pinned) != 1 || payload.Pinned[0].Name != "api-prod" ||
-		payload.Applications[0].Name != "api-prod" || payload.Applications[0].MemoryLimitBytes != 2<<30 {
+	if len(payload.Pinned) != 1 || payload.Pinned[0].Name != "Host Agent" ||
+		payload.Applications[0].Name != "Host Agent" ||
+		payload.Applications[0].Kind != appstatus.KindHost ||
+		payload.Applications[0].MemoryLimitBytes != 0 {
 		t.Fatalf("applications data = %#v", payload)
 	}
 
@@ -263,8 +265,8 @@ func TestApplicationsPageSortHeadersToggleDirectionAndPreserveFilters(t *testing
 	for _, expected := range []string{
 		`class="application-running-table"`,
 		`aria-sort="descending"`,
-		`data-application-sort="memory" href="/monitor/applications?direction=asc&amp;kind=host&amp;query=agent&amp;sort=memory"`,
-		`data-application-sort="cpu" href="/monitor/applications?direction=desc&amp;kind=host&amp;query=agent&amp;sort=cpu"`,
+		`data-application-sort="memory" href="/monitor/applications?direction=asc&amp;query=agent&amp;sort=memory"`,
+		`data-application-sort="cpu" href="/monitor/applications?direction=desc&amp;query=agent&amp;sort=cpu"`,
 	} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("sortable application table is missing %q: %s", expected, rendered)
@@ -280,7 +282,10 @@ func TestApplicationsPinRequiresCSRF(t *testing.T) {
 		StateRoot: filepath.Join(root, "state"),
 		ApplicationProbe: applicationFixtureProbe{snapshot: appstatus.RawSnapshot{
 			CollectedAt: time.Now().UTC(),
-			Containers:  []appstatus.RawContainer{{Name: "api-prod", Image: "example/api"}},
+			Processes: []appstatus.RawProcess{{
+				PID: 201, CreatedAt: time.Now().UTC().Add(-time.Hour), Name: "Host Agent",
+				ExecutablePath: "/opt/host-agent",
+			}},
 		}},
 	})
 	response, err := client.Get(serverURL + "/monitor/applications/data")
@@ -378,10 +383,10 @@ func TestMovePinnedApplicationRoutePersistsOrderAndRequiresCSRF(t *testing.T) {
 		StateRoot: filepath.Join(root, "state"),
 		ApplicationProbe: applicationFixtureProbe{snapshot: appstatus.RawSnapshot{
 			CollectedAt: time.Now().UTC(),
-			Containers: []appstatus.RawContainer{
-				{ID: "alpha-id", Name: "alpha"},
-				{ID: "beta-id", Name: "beta"},
-				{ID: "gamma-id", Name: "gamma"},
+			Processes: []appstatus.RawProcess{
+				{PID: 101, CreatedAt: time.Now().UTC().Add(-time.Hour), Name: "alpha", ExecutablePath: "/usr/bin/alpha"},
+				{PID: 102, CreatedAt: time.Now().UTC().Add(-time.Hour), Name: "beta", ExecutablePath: "/usr/bin/beta"},
+				{PID: 103, CreatedAt: time.Now().UTC().Add(-time.Hour), Name: "gamma", ExecutablePath: "/usr/bin/gamma"},
 			},
 		}},
 	})

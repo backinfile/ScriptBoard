@@ -448,7 +448,7 @@ async function assertServerErrorTaskPanelPreservesWorkspace(page) {
 async function assertNativePostServerErrorPreservesWorkspace(page) {
   await page.goto(new URL("/monitor/applications", page.url()).toString());
   const workspaceURL = page.url();
-  const pinButton = page.getByRole("button", { name: "Pin api-prod", exact: true });
+  const pinButton = page.getByRole("button", { name: "Pin Host Agent", exact: true });
   const routeHandler = route => route.fulfill({
     status: 500,
     contentType: "text/html; charset=utf-8",
@@ -598,11 +598,13 @@ async function assertApplicationMonitoring(page, baseURL) {
     "page",
     "Applications navigation is not selected",
   );
-  await page.locator('[data-running-applications-list] [data-kind="docker"]').filter({ hasText: "api-prod" }).waitFor();
+  await page.locator('[data-running-applications-list] [data-kind="host"]').filter({ hasText: "Host Agent" }).waitFor();
   await page.getByText("Host Agent", { exact: true }).waitFor();
   assert.equal(await page.locator('.applications-sort-fields select[name="sort"]').inputValue(), "cpu");
   assert.equal(await page.locator('th[aria-sort="descending"] [data-application-sort="cpu"]').count(), 1);
-  assert.match((await page.locator("[data-running-applications-list] [data-application-row]").first().textContent()).trim(), /api-prod/);
+  assert.equal(await page.locator('[data-running-applications-list] [data-kind="docker"]').count(), 0);
+  assert.equal(await page.locator(".applications-kind-switch").count(), 0);
+  assert.match((await page.locator("[data-running-applications-list] [data-application-row]").first().textContent()).trim(), /Host Agent/);
   const memorySort = page.locator('[data-application-sort="memory"]');
   await memorySort.click();
   await page.waitForFunction(() => new URL(location.href).searchParams.get("sort") === "memory" &&
@@ -612,7 +614,6 @@ async function assertApplicationMonitoring(page, baseURL) {
   await page.waitForFunction(() => new URL(location.href).searchParams.get("sort") === "memory" &&
     new URL(location.href).searchParams.get("direction") === "asc");
   assert.equal(await page.locator('th[aria-sort="ascending"] [data-application-sort="memory"]').count(), 1);
-  assert.equal(await page.locator('[data-running-applications-list] [data-kind="docker"] .application-kind').count(), 2);
   assert.equal(
     await page.locator('[data-running-applications-list] [data-kind="host"] .application-kind').count(),
     0,
@@ -629,8 +630,8 @@ async function assertApplicationMonitoring(page, baseURL) {
   await runningRefresh.click();
   assert.equal(await runningRefresh.getAttribute("aria-checked"), "false");
 
-  const apiRow = page.locator('[data-running-applications-list] [data-kind="docker"]').filter({ hasText: "api-prod" });
-  await apiRow.click();
+  const hostRow = page.locator('[data-running-applications-list] [data-kind="host"]').filter({ hasText: "Host Agent" });
+  await hostRow.click();
   const applicationDrawer = page.locator("[data-application-drawer]");
   await page.waitForFunction(() => document.querySelector(".application-drawer")?.getBoundingClientRect().left < innerWidth);
   await applicationDrawer.locator("[data-application-runtime-output] .application-runtime-facts").waitFor();
@@ -643,9 +644,9 @@ async function assertApplicationMonitoring(page, baseURL) {
 
   await Promise.all([
     page.waitForNavigation(),
-    apiRow.getByRole("button", { name: "Pin api-prod", exact: true }).click(),
+    hostRow.getByRole("button", { name: "Pin Host Agent", exact: true }).click(),
   ]);
-  const pinnedAPI = page.locator("[data-pinned-applications] .pinned-application").filter({ hasText: "api-prod" });
+  const pinnedAPI = page.locator("[data-pinned-applications] .pinned-application").filter({ hasText: "Host Agent" });
   await pinnedAPI.waitFor();
   assert.match(await pinnedAPI.textContent(), /CPU/);
   assert.match(await pinnedAPI.textContent(), /Memory/);
@@ -702,7 +703,7 @@ async function assertApplicationMonitoring(page, baseURL) {
     }),
   );
   assert.ok(mobilePinSizes.every(size => size.width >= 44 && size.height >= 44), JSON.stringify(mobilePinSizes));
-  const mobileRuntimeRow = page.locator('[data-running-applications-list] [data-kind="docker"]').filter({ hasText: "cache-local" });
+  const mobileRuntimeRow = page.locator('[data-running-applications-list] [data-kind="host"]').filter({ hasText: "Worker" });
   await mobileRuntimeRow.click();
   await page.waitForFunction(() => document.querySelector(".application-drawer")?.getBoundingClientRect().left < innerWidth);
   await applicationDrawer.locator("[data-application-runtime-output] .application-runtime-facts").waitFor();
@@ -836,11 +837,10 @@ async function assertLiveLogViewer(page, fixture) {
   assert.equal(await viewer.locator(".live-log-entry").count(), 0);
   await page.setViewportSize({ width: 1440, height: 1000 });
 
-  await page.goto(`${baseURL}/monitor/applications`);
-  const dockerLogURL = await page.locator(
-    '[data-running-applications-list] [data-kind="docker"] .application-log-link',
-  ).first().getAttribute("href");
-  assert.ok(dockerLogURL, "Docker rows do not expose a log entry");
+  await page.goto(`${baseURL}/monitor/containers`);
+  await page.locator(".container-open").filter({ hasText: "api-prod" }).click();
+  const dockerLogURL = await page.getByRole("link", { name: "View logs", exact: true }).getAttribute("href");
+  assert.ok(dockerLogURL, "Container details do not expose a log entry");
   await page.goto(`${baseURL}${dockerLogURL}`);
   await page.waitForFunction(() => document.querySelectorAll(".live-log-entry").length >= 4);
   assert.equal(await page.locator('.live-log-entry[data-severity="error"]').count(), 1);
@@ -2626,10 +2626,10 @@ async function assertExternalInterfaces(page, fixture) {
     await noScriptPage.locator('[data-username="browser-viewer"] .user-account-link').click();
     assert.equal(await noScriptPage.locator('[data-task-kind="user-edit"]').count(), 1);
     assert.equal(await noScriptPage.locator('input[name="username"]').inputValue(), "browser-viewer");
-    await noScriptPage.goto(`${fixture.baseURL}/monitor/applications?kind=docker&query=cache&sort=memory&direction=asc`);
+    await noScriptPage.goto(`${fixture.baseURL}/monitor/applications?query=host&sort=memory&direction=asc`);
     const noScriptRunning = noScriptPage.locator("[data-running-applications-list] [data-application-row]");
     assert.equal(await noScriptRunning.count(), 1);
-    assert.match(await noScriptRunning.textContent(), /cache-local/);
+    assert.match(await noScriptRunning.textContent(), /Host Agent/);
     assert.equal(await noScriptPage.locator(".applications-sort-fields").count(), 1);
     assert.equal(await noScriptRunning.locator('form[method="post"] input[name="csrf_token"]').count(), 1);
     await noScriptContext.close();

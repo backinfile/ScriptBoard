@@ -1087,7 +1087,7 @@ var webMessages = map[string]localizedMessage{
 	"applications.all":                              {"全部应用", "All applications"},
 	"applications.running_title":                    {"正在运行", "Running"},
 	"applications.running_description":              {"选择应用，查看当前进程与资源占用；列表默认显示 CPU 占用最高的 100 个应用。", "Choose an application to see its processes and resource use. The 100 highest CPU users appear first."},
-	"applications.search_placeholder":               {"搜索应用名称、路径或镜像", "Search names, paths, or images"},
+	"applications.search_placeholder":               {"搜索应用名称或路径", "Search names or paths"},
 	"applications.kind":                             {"类型", "Kind"},
 	"applications.kind_all":                         {"全部", "All"},
 	"applications.kind_host":                        {"本机", "Host"},

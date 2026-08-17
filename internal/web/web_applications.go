@@ -5,10 +5,10 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
-	"scriptboard/internal/identity"
 	"strings"
 
 	"scriptboard/internal/appstatus"
+	"scriptboard/internal/identity"
 )
 
 type applicationsPageView struct {
@@ -28,9 +28,6 @@ func applicationSortURL(query appstatus.Query, field string) string {
 		"direction": {direction},
 		"sort":      {field},
 	}
-	if query.Kind != "" {
-		values.Set("kind", string(query.Kind))
-	}
 	if query.Search != "" {
 		values.Set("query", query.Search)
 	}
@@ -45,11 +42,8 @@ func parseApplicationsQuery(request *http.Request) (appstatus.Query, error) {
 		Limit:     100,
 	}
 	switch request.URL.Query().Get("kind") {
-	case "", "all":
-	case "host":
+	case "", "all", "host":
 		query.Kind = appstatus.KindHost
-	case "docker":
-		query.Kind = appstatus.KindDocker
 	default:
 		return appstatus.Query{}, errors.New("invalid application kind")
 	}
@@ -70,7 +64,19 @@ func parseApplicationsQuery(request *http.Request) (appstatus.Query, error) {
 	return query, nil
 }
 
+func hostApplicationsOnly(view appstatus.View) appstatus.View {
+	pinned := view.Pinned[:0]
+	for _, application := range view.Pinned {
+		if application.Kind == appstatus.KindHost {
+			pinned = append(pinned, application)
+		}
+	}
+	view.Pinned = pinned
+	return view
+}
+
 func (a *App) loadApplications(request *http.Request, query appstatus.Query) (appstatus.View, error) {
+	query.Kind = appstatus.KindHost
 	view, err := a.applicationStatus.View(request.Context(), query)
 	if err != nil {
 		return appstatus.View{}, err
@@ -79,9 +85,12 @@ func (a *App) loadApplications(request *http.Request, query appstatus.Query) (ap
 		if err := a.applicationStatus.Refresh(request.Context()); err != nil {
 			return appstatus.View{}, err
 		}
-		return a.applicationStatus.View(request.Context(), query)
+		view, err = a.applicationStatus.View(request.Context(), query)
 	}
-	return view, nil
+	if err != nil {
+		return appstatus.View{}, err
+	}
+	return hostApplicationsOnly(view), nil
 }
 
 func (a *App) applicationsPage(response http.ResponseWriter, request *http.Request) {

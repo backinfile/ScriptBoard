@@ -261,17 +261,31 @@ func TestDockerLogRoutesUseTheSharedViewerAndRejectHostApplications(t *testing.T
 		t.Fatal(err)
 	}
 	_ = response.Body.Close()
-	var dockerID, hostID string
+	var hostID string
 	for _, application := range applications.Applications {
-		switch application.Kind {
-		case appstatus.KindDocker:
-			dockerID = application.ID
-		case appstatus.KindHost:
+		if application.Kind == appstatus.KindHost {
 			hostID = application.ID
 		}
 	}
-	if dockerID == "" || hostID == "" {
+	if hostID == "" {
 		t.Fatalf("applications = %#v", applications.Applications)
+	}
+	response, err = client.Get(serverURL + "/monitor/containers/data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var containers appstatus.ContainerView
+	if err := json.NewDecoder(response.Body).Decode(&containers); err != nil {
+		_ = response.Body.Close()
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	var dockerID string
+	if len(containers.Containers) > 0 {
+		dockerID = containers.Containers[0].ApplicationID
+	}
+	if dockerID == "" {
+		t.Fatalf("containers = %#v", containers.Containers)
 	}
 
 	response, err = client.Get(serverURL + "/monitor/applications/" + dockerID + "/logs")
@@ -286,15 +300,14 @@ func TestDockerLogRoutesUseTheSharedViewerAndRejectHostApplications(t *testing.T
 		t.Fatalf("docker log page status=%d body=%s", response.StatusCode, pageBody)
 	}
 
-	response, err = client.Get(serverURL + "/monitor/applications")
+	response, err = client.Get(serverURL + "/monitor/containers")
 	if err != nil {
 		t.Fatal(err)
 	}
-	applicationsPage, _ := io.ReadAll(response.Body)
+	containersPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if !bytes.Contains(applicationsPage, []byte(`/monitor/applications/`+dockerID+`/logs`)) ||
-		!bytes.Contains(applicationsPage, []byte(`data-application-drawer-logs`)) {
-		t.Fatalf("applications page is missing Docker log entries: %s", applicationsPage)
+	if !bytes.Contains(containersPage, []byte(`data-container-application-id="`+dockerID+`"`)) {
+		t.Fatalf("containers page is missing Docker application identity: %s", containersPage)
 	}
 
 	response, err = client.Get(serverURL + "/monitor/applications/" + dockerID + "/logs/history")

@@ -2284,12 +2284,8 @@
         detail_unavailable: "运行详情未返回可读结果",
         unsupported_application_kind: "暂不支持此类应用的运行详情",
         process_exited: "进程已在采集期间退出",
-        container_exited: "容器已在采集期间退出",
         identity_restricted: "进程身份受系统权限限制",
         permission_denied: "当前服务账户无权读取这些事实",
-        docker_unavailable: "Docker 当前不可用",
-        docker_inspect_unavailable: "无法读取容器配置",
-        docker_top_unavailable: "无法读取容器进程",
       },
       requestErrors: {
         application_not_found: "应用已不在当前快照中",
@@ -2318,16 +2314,6 @@
       listeningPorts: "监听端口",
       connections: "连接",
       startMethod: "启动方式",
-      containerId: "容器 ID",
-      hostPid: "宿主 PID",
-      containerPid: "容器 PID",
-      health: "健康状态",
-      restartPolicy: "重启策略",
-      restartCount: "重启次数",
-      image: "镜像",
-      ports: "端口映射",
-      networkMode: "网络模式",
-      mounts: "挂载",
       relatedProcesses: "关联进程",
       copy: "复制命令",
       copied: "已复制",
@@ -2351,12 +2337,8 @@
         detail_unavailable: "The runtime detail collector returned no readable result",
         unsupported_application_kind: "Runtime details are not supported for this application kind",
         process_exited: "The process exited while details were collected",
-        container_exited: "The container exited while details were collected",
         identity_restricted: "The process identity is restricted by the operating system",
         permission_denied: "The service account cannot read these runtime facts",
-        docker_unavailable: "Docker is unavailable",
-        docker_inspect_unavailable: "Container configuration cannot be read",
-        docker_top_unavailable: "Container processes cannot be read",
       },
       requestErrors: {
         application_not_found: "The application is no longer in the current snapshot",
@@ -2385,16 +2367,6 @@
       listeningPorts: "Listening ports",
       connections: "Connections",
       startMethod: "Start method",
-      containerId: "Container ID",
-      hostPid: "Host PID",
-      containerPid: "Container PID",
-      health: "Health",
-      restartPolicy: "Restart policy",
-      restartCount: "Restart count",
-      image: "Image",
-      ports: "Port mappings",
-      networkMode: "Network mode",
-      mounts: "Mounts",
       relatedProcesses: "Related processes",
       copy: "Copy command",
       copied: "Copied",
@@ -2519,17 +2491,13 @@
     const reason = showNotice
       ? applicationWords().runtimeReasons[reasonCode] || applicationWords().unavailable
       : "";
-    const facts = applicationValue(runtime, "kind") === "docker"
-      ? applicationValue(runtime, "docker") || {}
-      : applicationValue(runtime, "host") || {};
+    const facts = applicationValue(runtime, "host") || {};
     const notice = showNotice ? `<div class="application-runtime-notice" data-state="${escapeMarkup(state)}">
       <span data-lucide="${state === "restricted" ? "shield-alert" : "info"}" aria-hidden="true"></span>
       <div><strong>${escapeMarkup(reason)}</strong>
       <p>${escapeMarkup(reasonCode)}</p></div>
     </div>` : "";
-    const keys = applicationValue(runtime, "kind") === "docker"
-      ? ["commandLine", "containerId", "hostPid", "containerPid", "startedAt", "durationSeconds", "health", "restartPolicy", "restartCount", "image", "workingDirectory", "ports", "networkMode", "mounts"]
-      : ["commandLine", "pid", "parentPid", "user", "startedAt", "durationSeconds", "architecture", "threads", "handles", "executablePath", "workingDirectory", "listeningPorts", "connections", "startMethod"];
+    const keys = ["commandLine", "pid", "parentPid", "user", "startedAt", "durationSeconds", "architecture", "threads", "handles", "executablePath", "workingDirectory", "listeningPorts", "connections", "startMethod"];
     const factsHTML = keys.map(key => {
       let value = applicationValue(facts, key);
       if (key === "startedAt") value = formatApplicationTime(value);
@@ -2929,16 +2897,10 @@
         next.click();
       }
     };
-    const onApplicationsChange = event => {
-      const kindFilter = event.target.closest("[data-applications-kind-filter]");
-      if (kindFilter?.checked) kindFilter.form?.requestSubmit();
-    };
     root.addEventListener("click", onApplicationsClick);
-    root.addEventListener("change", onApplicationsChange);
     root.addEventListener("keydown", onApplicationsKeydown);
     cleanups.push(() => {
       root.removeEventListener("click", onApplicationsClick);
-      root.removeEventListener("change", onApplicationsChange);
       root.removeEventListener("keydown", onApplicationsKeydown);
       closeDrawer(false);
       pendingDetails.forEach(request => request.controller?.abort());
