@@ -6,9 +6,73 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
 
+	"scriptboard/internal/auditlog"
 	"scriptboard/internal/registrymonitor"
 )
+
+func TestRegistryConnectionOperationsAcceptValidSessionWithoutRecentStepUp(t *testing.T) {
+	now := time.Unix(1786957701, 0).UTC()
+	database := openBrokerDatabase(t)
+	security, err := NewDatabaseSecurity(database, auditlog.New(database), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := "registry-session-token-0123456789"
+	insertBrokerSession(t, database, token, "maintainer", now.Add(-4*time.Hour).Unix(), now.Add(time.Hour).Unix())
+
+	service := &fixtureRegistryService{}
+	connections := registryTestConnections(t, security, service)
+	authorized := WithAuthorization(context.Background(), Authorization{SessionToken: token, RequestID: "registry-session-test"})
+	config := registrymonitor.Config{Endpoint: "http://registry.example:5000", Images: []string{"team/api"}, AuthMode: "anonymous"}
+	if err := connections.Prepare(authorized, "operation", "card", config, "", false); err != nil {
+		t.Fatalf("valid session could not prepare Registry connection: %v", err)
+	}
+	if _, err := connections.Test(authorized, "", config, "", false); err != nil {
+		t.Fatalf("valid session could not test Registry connection: %v", err)
+	}
+	if err := connections.PrepareDelete(authorized, "delete-operation", "card"); err != nil {
+		t.Fatalf("valid session could not prepare Registry connection deletion: %v", err)
+	}
+	if service.prepares != 1 || service.tests != 1 || service.deletes != 1 {
+		t.Fatalf("Registry operations = prepare:%d test:%d delete:%d", service.prepares, service.tests, service.deletes)
+	}
+}
+
+func TestRegistryDockerConfigurationStillRequiresRecentStepUp(t *testing.T) {
+	now := time.Unix(1786957701, 0).UTC()
+	database := openBrokerDatabase(t)
+	security, err := NewDatabaseSecurity(database, auditlog.New(database), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := "registry-docker-session-token-0123456789"
+	insertBrokerSession(t, database, token, "administrator", now.Add(-4*time.Hour).Unix(), now.Add(time.Hour).Unix())
+
+	service := &fixtureRegistryService{}
+	connections := registryTestConnections(t, security, service)
+	authorized := WithAuthorization(context.Background(), Authorization{SessionToken: token, RequestID: "registry-docker-step-up-test"})
+	if _, err := connections.RegisterInsecure(authorized, "http://registry.example:5000"); err == nil {
+		t.Fatal("stale step-up changed Docker insecure Registry configuration")
+	}
+	if service.insecureRegistrations != 0 {
+		t.Fatal("denied Docker Registry configuration reached execution")
+	}
+}
+
+func TestRegistryConnectionMutationRejectsUnprivilegedSession(t *testing.T) {
+	service := &fixtureRegistryService{}
+	connections := registryTestConnections(t, &fixtureAuthorizer{actor: Actor{UserID: "viewer", Role: "viewer"}}, service)
+	authorized := WithAuthorization(context.Background(), Authorization{SessionToken: strings.Repeat("s", 32), RequestID: "registry-role-test"})
+	config := registrymonitor.Config{Endpoint: "https://registry.example", Images: []string{"team/api"}, AuthMode: "anonymous"}
+	if err := connections.Prepare(authorized, "operation", "card", config, "", false); err == nil {
+		t.Fatal("viewer session prepared Registry connection")
+	}
+	if service.prepares != 0 {
+		t.Fatal("unprivileged Registry request reached execution")
+	}
+}
 
 func TestRegistryConnectionsUseAuthorizedMutationAndPeerOnlyCompletion(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -18,7 +82,7 @@ func TestRegistryConnectionsUseAuthorizedMutationAndPeerOnlyCompletion(t *testin
 	service := &fixtureRegistryService{}
 	server, err := NewServer(ServerOptions{
 		Listener: listener, VerifyPeer: func(net.Conn) error { return nil },
-		Authorizer: &fixtureAuthorizer{actor: Actor{UserID: "administrator"}}, Executor: &fixtureExecutor{}, Registry: service,
+		Authorizer: &fixtureAuthorizer{actor: Actor{UserID: "administrator", Role: "administrator"}}, Executor: &fixtureExecutor{}, Registry: service,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -102,9 +166,31 @@ func TestRegistryProtocolRejectsUnrelatedFieldsAndAuthorizationMixing(t *testing
 	}
 }
 
+func registryTestConnections(t *testing.T, authorizer Authorizer, service RegistryService) *RegistryConnections {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := NewServer(ServerOptions{
+		Listener: listener, VerifyPeer: func(net.Conn) error { return nil },
+		Authorizer: authorizer, Executor: &fixtureExecutor{}, Registry: service,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.Start()
+	t.Cleanup(func() { _ = server.Close() })
+	return NewRegistryConnections(NewClient(ClientOptions{Dial: func(ctx context.Context) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", listener.Addr().String())
+	}}))
+}
+
 type fixtureRegistryService struct {
 	operationID, cardID, password string
-	prepares, commits             int
+	prepares, commits, tests      int
+	deletes                       int
+	insecureRegistrations         int
 }
 
 func (service *fixtureRegistryService) Prepare(_ context.Context, operationID, cardID string, _ registrymonitor.Config, password string, _ bool) error {
@@ -112,7 +198,10 @@ func (service *fixtureRegistryService) Prepare(_ context.Context, operationID, c
 	service.prepares++
 	return nil
 }
-func (service *fixtureRegistryService) PrepareDelete(context.Context, string, string) error {
+
+func (service *fixtureRegistryService) PrepareDelete(_ context.Context, operationID, cardID string) error {
+	service.operationID, service.cardID = operationID, cardID
+	service.deletes++
 	return nil
 }
 func (service *fixtureRegistryService) Commit(_ context.Context, operationID string) error {
@@ -128,12 +217,16 @@ func (*fixtureRegistryService) Configured(context.Context, string) (bool, error)
 func (*fixtureRegistryService) Inspect(context.Context, string) ([]registrymonitor.ImageResult, error) {
 	return []registrymonitor.ImageResult{{Image: "team/api", Tag: "1.0.0"}}, nil
 }
-func (*fixtureRegistryService) Test(context.Context, string, registrymonitor.Config, string, bool) ([]registrymonitor.ImageResult, error) {
+
+func (service *fixtureRegistryService) Test(context.Context, string, registrymonitor.Config, string, bool) ([]registrymonitor.ImageResult, error) {
+	service.tests++
 	return []registrymonitor.ImageResult{{Image: "team/api", Tag: "1.0.0"}}, nil
 }
 func (*fixtureRegistryService) InsecureConfigured(context.Context, string) (bool, error) {
 	return true, nil
 }
-func (*fixtureRegistryService) RegisterInsecure(context.Context, string) (bool, error) {
+
+func (service *fixtureRegistryService) RegisterInsecure(context.Context, string) (bool, error) {
+	service.insecureRegistrations++
 	return true, nil
 }

@@ -714,7 +714,9 @@ func (server *Server) hostFilesScheduleOperation(request wireRequest) wireRespon
 func hostFilesAction(operation string) (Action, bool) {
 	switch operation {
 	case operationHostFilesTrash, operationHostFilesRestore, operationHostFilesPurge:
-		return ActionHostFilesDelete, true
+		// The trash lifecycle follows normal WriteFiles authorization; path moves
+		// and executable changes below remain explicit recent-step-up operations.
+		return ActionHostFilesDelete, false
 	case operationHostFilesMove, operationHostFilesToggleExec, operationHostFilesCrossMove:
 		return ActionHostFilesMove, true
 	case operationHostFilesMkdir, operationHostFilesUpload, operationHostFilesSaveText, operationHostFilesRollback,

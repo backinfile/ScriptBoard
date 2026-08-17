@@ -746,7 +746,7 @@ func (server *Server) authorizeRemoteWebsiteOperation(request wireRequest) (*cre
 		Key      string `json:"key,omitempty"`
 		Locale   string `json:"locale,omitempty"`
 	}{request.RemoteWebsiteEndpoint, request.RemoteWebsiteKey, request.RemoteWebsiteLocale})
-	return server.authorizeDomainOperation(request, action, request.RemoteWebsiteID, "remote-website-connection-v1", parameters, false)
+	return server.authorizeDomainOperation(request, action, request.RemoteWebsiteID, "remote-website-connection-v1", parameters, domainAuthorizationRecentPrivileged)
 }
 
 func (server *Server) passkeyOperation(request wireRequest) wireResponse {
@@ -902,6 +902,14 @@ type credentialMutation struct {
 	actor                       Actor
 }
 
+type domainAuthorizationMode uint8
+
+const (
+	domainAuthorizationCurrentPrivileged domainAuthorizationMode = iota
+	domainAuthorizationRecentPrivileged
+	domainAuthorizationRecentActor
+)
+
 func (server *Server) authorizeMFAMutation(request wireRequest) (*credentialMutation, wireResponse) {
 	var action Action
 	switch request.Operation {
@@ -942,19 +950,35 @@ func (server *Server) authorizePasskeyMutation(request wireRequest) (*credential
 }
 
 func (server *Server) authorizeCredentialMutation(request wireRequest, action Action, resource, revision string, parameters []byte) (*credentialMutation, wireResponse) {
-	return server.authorizeDomainOperation(request, action, resource, revision, parameters, true)
+	return server.authorizeDomainOperation(request, action, resource, revision, parameters, domainAuthorizationRecentActor)
 }
 
-func (server *Server) authorizeDomainOperation(request wireRequest, action Action, resource, revision string, parameters []byte, bindActorToResource bool) (*credentialMutation, wireResponse) {
+func (server *Server) authorizeDomainOperation(request wireRequest, action Action, resource, revision string, parameters []byte, mode domainAuthorizationMode) (*credentialMutation, wireResponse) {
 	digest := parametersDigest(parameters)
-	actor, err := server.authorizer.Authorize(context.Background(), AuthorizationRequest{
+	authorization := AuthorizationRequest{
 		SessionToken: request.SessionToken, RequestID: request.RequestID, Action: action,
 		Resource: resource, Revision: revision, ParametersSHA256: digest,
-	})
+	}
+	var (
+		actor Actor
+		err   error
+	)
+	if mode == domainAuthorizationCurrentPrivileged {
+		if sessions, ok := server.authorizer.(SessionAuthorizer); ok {
+			actor, err = sessions.AuthorizeSession(context.Background(), authorization)
+		} else {
+			err = errors.New("session authorization is unavailable")
+		}
+	} else {
+		actor, err = server.authorizer.Authorize(context.Background(), authorization)
+	}
 	if err != nil {
 		return nil, wireResponse{Status: statusError, ErrorCode: "authorization_denied", Message: "credential operation authorization denied"}
 	}
-	if bindActorToResource && actor.UserID != resource {
+	if mode == domainAuthorizationCurrentPrivileged && actor.Role != "administrator" && actor.Role != "maintainer" {
+		return nil, wireResponse{Status: statusError, ErrorCode: "authorization_denied", Message: "credential operation role authorization denied"}
+	}
+	if mode == domainAuthorizationRecentActor && actor.UserID != resource {
 		return nil, wireResponse{Status: statusError, ErrorCode: "authorization_denied", Message: "credential operation user binding denied"}
 	}
 	mutation := credentialMutation{action: action, resource: resource, revision: revision, requestID: request.RequestID, parametersSHA256: digest, actor: actor}

@@ -148,7 +148,13 @@ func (server *Server) registryOperation(request wireRequest) wireResponse {
 			action, resource = ActionRegistryDockerConfigure, payload.Endpoint
 		}
 		parameters, _ := json.Marshal(payload)
-		mutation, response := server.authorizeDomainOperation(request, action, resource, "registry-connection-v1", parameters, false)
+		// Registry connection edits follow normal ManageOperations authorization;
+		// only changing Docker's insecure Registry configuration needs recent step-up.
+		mode := domainAuthorizationCurrentPrivileged
+		if request.Operation == operationRegistryRegisterInsecure {
+			mode = domainAuthorizationRecentPrivileged
+		}
+		mutation, response := server.authorizeDomainOperation(request, action, resource, "registry-connection-v1", parameters, mode)
 		if response.Status != "" {
 			return response
 		}

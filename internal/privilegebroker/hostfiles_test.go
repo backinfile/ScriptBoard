@@ -11,9 +11,63 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"scriptboard/internal/auditlog"
 	"scriptboard/internal/hostfiles"
 )
+
+func TestHostFilesTrashLifecycleAcceptsValidSessionWithoutRecentStepUp(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "note.txt")
+	if err := os.WriteFile(path, []byte("trash lifecycle"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := hostfiles.Open(hostfiles.Options{Topology: fixtureHostFilesTopology{root: root}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewBrokerHostFilesService(manager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1786957701, 0).UTC()
+	database := openBrokerDatabase(t)
+	security, err := NewDatabaseSecurity(database, auditlog.New(database), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := "host-files-session-token-0123456789"
+	insertBrokerSession(t, database, token, "maintainer", now.Add(-4*time.Hour).Unix(), now.Add(time.Hour).Unix())
+	backend, closeServer := hostFilesTestBackendWithAuthorizer(t, service, security)
+	defer closeServer()
+	ctx := WithAuthorization(context.Background(), Authorization{SessionToken: token, RequestID: "host-files-trash-session-test"})
+
+	trashed, err := backend.MoveToTrash(ctx, path, "trash-session")
+	if err != nil {
+		t.Fatalf("valid session could not move Host Entry to trash: %v", err)
+	}
+	if err := backend.RestoreFromTrash(ctx, trashed.StoredPath, trashed.OriginalPath); err != nil {
+		t.Fatalf("valid session could not restore Host Entry: %v", err)
+	}
+	trashed, err = backend.MoveToTrash(ctx, path, "trash-session-purge")
+	if err != nil {
+		t.Fatalf("valid session could not move restored Host Entry to trash: %v", err)
+	}
+	if err := backend.PurgeTrash(ctx, trashed.StoredPath); err != nil {
+		t.Fatalf("valid session could not purge trash: %v", err)
+	}
+	source, destination := filepath.Join(root, "source.txt"), filepath.Join(root, "destination.txt")
+	if err := os.WriteFile(source, []byte("high-risk move"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := backend.Move(ctx, source, destination); err == nil {
+		t.Fatal("stale step-up moved a Host Entry")
+	}
+	if _, err := os.Stat(source); err != nil {
+		t.Fatalf("denied Host Entry move changed source: %v", err)
+	}
+}
 
 func TestHostFilesUsesTypedAuthorizedBrokerOperations(t *testing.T) {
 	root := t.TempDir()
@@ -297,13 +351,17 @@ func TestHostFilesLogHistoryRunsInsideBroker(t *testing.T) {
 }
 
 func hostFilesTestBackend(t *testing.T, service HostFilesService) (*HostFilesBackend, func()) {
+	return hostFilesTestBackendWithAuthorizer(t, service, &fixtureMySQLAuthorizer{actor: Actor{UserID: "administrator", Role: "administrator"}})
+}
+
+func hostFilesTestBackendWithAuthorizer(t *testing.T, service HostFilesService, authorizer Authorizer) (*HostFilesBackend, func()) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	server, err := NewServer(ServerOptions{Listener: listener, VerifyPeer: func(net.Conn) error { return nil },
-		Authorizer: &fixtureMySQLAuthorizer{actor: Actor{UserID: "administrator", Role: "administrator"}}, Executor: &fixtureExecutor{}, HostFiles: service})
+		Authorizer: authorizer, Executor: &fixtureExecutor{}, HostFiles: service})
 	if err != nil {
 		t.Fatal(err)
 	}

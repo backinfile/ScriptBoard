@@ -125,7 +125,7 @@ func (server *Server) stateBackupOperation(request wireRequest) wireResponse {
 		return wireResponse{Status: statusOK, StateBackup: &stateBackupWireResponse{Stages: stages}}
 	}
 	action, resource, safeParameters := stateBackupMutationBinding(request.Operation, *backupRequest)
-	mutation, denied := server.authorizeDomainOperation(request, action, resource, "state-backup-v1", safeParameters, false)
+	mutation, denied := server.authorizeDomainOperation(request, action, resource, "state-backup-v1", safeParameters, domainAuthorizationRecentPrivileged)
 	if mutation == nil {
 		return denied
 	}
