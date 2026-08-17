@@ -40,7 +40,8 @@ func TestEnhancedFileUploadUsesClosableResultsDialog(t *testing.T) {
 	}
 	source := string(script)
 	for _, expected := range []string{
-		`const result = await fetchDocument(form.action, { method: "POST", body: data })`,
+		`const actionURL = formActionURL(form)`,
+		`const result = await fetchDocument(actionURL, { method: "POST", body: data })`,
 		`function showUploadResults(main)`,
 		`dialog.className = "upload-results-dialog"`,
 		`dialog.showModal()`,

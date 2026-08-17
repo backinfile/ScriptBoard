@@ -95,6 +95,41 @@ func TestKubernetesLocalManagementPageAndContextActions(t *testing.T) {
 	}
 }
 
+func TestKubernetesLocalContextWithSlashCanBeRenamed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	fixture := strings.Replace(localKubeconfigFixture, "- name: staging-dev\n", "- name: team/staging-dev\n", 1)
+	if err := os.WriteFile(path, []byte(fixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KUBECONFIG", path)
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: filepath.Join(t.TempDir(), "state")})
+
+	response, err := client.Get(serverURL + "/monitor/kubernetes?tab=local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/monitor/kubernetes/local/contexts", url.Values{
+		"csrf_token": {formToken(t, page)}, "path": {path}, "context": {"team/staging-dev"}, "action": {"rename"}, "name": {"team/preview"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("rename slash context status=%d body=%s", response.StatusCode, body)
+	}
+	snapshot, err := kubeconfigmanager.Inspect(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Contexts[1].Name != "team/preview" {
+		t.Fatalf("renamed context=%q", snapshot.Contexts[1].Name)
+	}
+}
+
 func TestKubernetesLocalContextCanBeAddedAsConnection(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config")
 	if err := os.WriteFile(path, []byte(localKubeconfigFixture), 0o600); err != nil {

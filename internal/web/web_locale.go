@@ -1050,7 +1050,7 @@ var webMessages = map[string]localizedMessage{
 	"kubernetes.update_connection":                  {"保存修改", "Save changes"},
 	"kubernetes.save_connection":                    {"保存连接", "Save connection"},
 	"kubernetes.safety_boundary":                    {"连接安全", "Connection security"},
-	"kubernetes.security_note":                      {"kubeconfig 的 server 可使用 HTTP 或 HTTPS。HTTP 会以明文传输凭据和集群数据；仍不支持 exec/auth-provider 登录插件或跳过 TLS 校验，也不会保存凭据内容。", "Kubeconfig servers may use HTTP or HTTPS. HTTP sends credentials and cluster data without transport encryption. exec/auth-provider plugins and skipped TLS verification remain unsupported, and credential contents are not stored."},
+	"kubernetes.security_note":                      {"kubeconfig 的 server 可使用 HTTP 或 HTTPS。HTTP 会以明文传输凭据和集群数据；HTTPS 可显式跳过证书验证，但会失去服务端身份认证并面临中间人攻击风险。仍不支持 exec/auth-provider 登录插件，也不会保存凭据内容。", "Kubeconfig servers may use HTTP or HTTPS. HTTP sends credentials and cluster data without transport encryption. HTTPS may explicitly skip certificate verification, which removes server authentication and permits man-in-the-middle attacks. exec/auth-provider plugins remain unsupported, and credential contents are not stored."},
 	"kubernetes.capability_check":                   {"能力检测", "Capability check"},
 	"kubernetes.pod_logs":                           {"Pod 日志", "Pod logs"},
 	"kubernetes.view_logs":                          {"查看日志", "View logs"},

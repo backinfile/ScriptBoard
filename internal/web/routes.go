@@ -123,6 +123,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /monitor/kubernetes/local/contexts/{context}/download", a.requirePermission(identity.PermissionManageOperations, http.HandlerFunc(a.downloadLocalKubeconfigContext)))
 	mux.Handle("POST /monitor/kubernetes/local/import/preview", a.requirePermission(identity.PermissionManageOperations, http.HandlerFunc(a.previewLocalKubeconfigImport)))
 	mux.Handle("POST /monitor/kubernetes/local/import", a.requirePermission(identity.PermissionManageOperations, http.HandlerFunc(a.importLocalKubeconfig)))
+	mux.Handle("POST /monitor/kubernetes/local/contexts", a.requirePermission(identity.PermissionManageOperations, http.HandlerFunc(a.mutateLocalKubeconfigContext)))
 	mux.Handle("POST /monitor/kubernetes/local/contexts/{context}/connection", a.requirePermission(identity.PermissionManageOperations, http.HandlerFunc(a.addLocalKubeconfigConnection)))
 	mux.Handle("POST /monitor/kubernetes/local/contexts/{context}", a.requirePermission(identity.PermissionManageOperations, http.HandlerFunc(a.mutateLocalKubeconfigContext)))
 	mux.Handle("GET /monitor/kubernetes/clusters/{connection}/workloads/{namespace}/{kind}/{name}/details", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.kubernetesWorkloadDetails)))

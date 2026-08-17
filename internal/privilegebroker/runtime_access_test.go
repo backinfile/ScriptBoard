@@ -273,8 +273,9 @@ func TestRuntimeMutationFailsClosedBeforeExecutionWhenIntentAuditFails(t *testin
 }
 
 type fixtureKubernetesFactory struct {
-	client     *fixtureKubernetesClient
-	connection clusterstatus.Connection
+	client           *fixtureKubernetesClient
+	connection       clusterstatus.Connection
+	openCandidateErr error
 }
 
 func (factory fixtureKubernetesFactory) Open(context.Context, clusterstatus.Connection) (clusterstatus.Client, error) {
@@ -286,6 +287,9 @@ func (factory fixtureKubernetesFactory) ResolveConnection(_ context.Context, id 
 }
 
 func (factory fixtureKubernetesFactory) OpenCandidate(ctx context.Context, connection clusterstatus.Connection) (clusterstatus.Client, error) {
+	if factory.openCandidateErr != nil {
+		return nil, factory.openCandidateErr
+	}
 	return factory.Open(ctx, connection)
 }
 
@@ -332,6 +336,26 @@ func TestKubernetesFactoryReadsClusterSnapshotThroughBroker(t *testing.T) {
 	}
 	if actual.ServerVersion != "v1.35.0" || len(actual.Workloads) != 1 || actual.Workloads[0].Name != "api" {
 		t.Fatalf("broker Kubernetes snapshot = %#v", actual)
+	}
+}
+
+func TestKubernetesCandidateOpenReturnsActionableCredentialGuidance(t *testing.T) {
+	connection := clusterstatus.Connection{ID: "new-k8s", Name: "local", KubeconfigPath: filepath.Join(t.TempDir(), "kubeconfig.yaml"), Context: "default", Mode: clusterstatus.ModeObserve}
+	server, brokerClient := brokerFixture(t, &fixtureAuthorizer{actor: Actor{UserID: "user-1", Role: "maintainer"}}, &fixtureExecutor{})
+	server.kubernetes = fixtureKubernetesFactory{openCandidateErr: errors.New("new kubeconfig connections must embed certificate authority data")}
+	defer server.Close()
+
+	ctx := WithAuthorization(context.Background(), Authorization{SessionToken: "session-token-fixture-0123456789", RequestID: "kubernetes-candidate-open"})
+	_, err := NewKubernetesFactory(brokerClient).Open(ctx, connection)
+	if err == nil || !strings.Contains(err.Error(), "embed certificate authority data") {
+		t.Fatalf("candidate open error = %v", err)
+	}
+}
+
+func TestKubernetesOpenFailureGuidanceDoesNotExposeUnknownBrokerDetails(t *testing.T) {
+	message := kubernetesOpenFailureMessage(errors.New(`open C:\\private\\cluster.yaml: token=secret`))
+	if strings.Contains(message, "private") || strings.Contains(message, "secret") || !strings.Contains(message, "embedded, supported credentials") {
+		t.Fatalf("unsafe Kubernetes open guidance = %q", message)
 	}
 }
 

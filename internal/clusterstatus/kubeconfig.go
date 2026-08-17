@@ -148,9 +148,6 @@ func openKubeconfig(_ context.Context, connection Connection, raw []byte) (Clien
 			break
 		}
 	}
-	if insecure {
-		return nil, errors.New("insecure-skip-tls-verify is not supported")
-	}
 	baseURL, err := url.Parse(server)
 	// The kubeconfig scheme is an explicit transport choice; HTTP is not silently upgraded to TLS.
 	if err != nil || (baseURL.Scheme != "http" && baseURL.Scheme != "https") || baseURL.Host == "" {
@@ -187,7 +184,9 @@ func openKubeconfig(_ context.Context, connection Connection, raw []byte) (Clien
 	if err != nil {
 		return nil, err
 	}
-	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: rootCAs}
+	// The kubeconfig explicitly controls peer verification. This mirrors kubectl
+	// and keeps HTTPS available for clusters that intentionally use insecure TLS.
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: rootCAs, InsecureSkipVerify: insecure} //nolint:gosec
 	certificatePEM, err := kubeconfigBytes(directory, certificateFile, certificateData)
 	if err != nil {
 		return nil, fmt.Errorf("load Kubernetes client certificate: %w", err)

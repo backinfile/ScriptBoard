@@ -874,8 +874,15 @@
     return submitter?.getAttribute("aria-label")?.trim() || submitter?.textContent?.trim() || words().confirmAction;
   }
 
+  function formActionURL(form, submitter) {
+    const configured = submitter?.hasAttribute("formaction")
+      ? submitter.getAttribute("formaction")
+      : form.getAttribute("action");
+    return new URL(configured || location.href, location.href).href;
+  }
+
   function confirmationIsDangerous(form, submitter) {
-    const action = new URL(form.action || location.href, location.href).pathname;
+    const action = new URL(formActionURL(form, submitter)).pathname;
     return Boolean(submitter?.matches(".button--danger,.danger-action") || /\/(delete|purge|discard|remove|stop)(\/|$)/.test(action));
   }
 
@@ -1908,7 +1915,8 @@
     if (actionInput) actionInput.value = action;
     data.set("conflict_action", action);
     try {
-      const result = await fetchDocument(form.action, { method: "POST", body: data });
+      const actionURL = formActionURL(form);
+      const result = await fetchDocument(actionURL, { method: "POST", body: data });
       const resultsMain = result.document?.querySelector("main[data-upload-results]");
       if (resultsMain && result.response.ok) {
         const submittedFromTask = taskPanelState?.host.contains(form);
@@ -1918,7 +1926,7 @@
         if (showUploadResults(resultsMain)) return;
       }
       if (showServerError(result, {
-        url: form.action,
+        url: actionURL,
         method: "POST",
         returnFocus: form.querySelector('button[type="submit"]') || form,
         retryLabel: words().serverErrorRetryAction,
@@ -1955,7 +1963,7 @@
     const data = new FormData(form);
     if (submitter?.name) data.set(submitter.name, submitter.value);
     if (form.method.toLowerCase() === "get") {
-      const destination = new URL(form.action || location.href, location.href);
+      const destination = new URL(formActionURL(form, submitter));
       destination.search = "";
       data.forEach((value, name) => {
         if (typeof value === "string" && value !== "") destination.searchParams.append(name, value);
@@ -1977,7 +1985,7 @@
       return;
     }
     try {
-      const action = submitter?.hasAttribute("formaction") ? submitter.formAction : form.action;
+      const action = formActionURL(form, submitter);
       const result = await fetchDocument(action, { method: form.method, body: data });
       if (submittingTaskState && taskPanelState !== submittingTaskState) return;
       if (!submittingTaskState && !form.isConnected) return;
@@ -6925,6 +6933,7 @@
     const importDrawer = local?.querySelector("[data-kubernetes-import-drawer]");
     const importForm = local?.querySelector("[data-kubernetes-import-form]");
     const importFile = local?.querySelector("[data-kubernetes-import-file]");
+    const importDrop = local?.querySelector("[data-kubernetes-import-drop]");
     const importPreview = local?.querySelector("[data-kubernetes-import-preview]");
     const contextDrawer = local?.querySelector("[data-kubernetes-context-drawer]");
     const contextUpdateForm = local?.querySelector("[data-kubernetes-context-update-form]");
@@ -7013,15 +7022,14 @@
       if (editContext) {
         const row = editContext.closest("[data-kubernetes-context-row]");
         const name = row?.dataset.contextName || "";
-        const action = `/monitor/kubernetes/local/contexts/${encodeURIComponent(name)}`;
         if (contextUpdateForm) {
-          contextUpdateForm.action = action;
+          contextUpdateForm.elements.context.value = name;
           contextUpdateForm.elements.cluster.value = row?.dataset.contextCluster || "";
           contextUpdateForm.elements.user.value = row?.dataset.contextUser || "";
           contextUpdateForm.elements.namespace.value = row?.dataset.contextNamespace || "";
         }
         if (contextRenameForm) {
-          contextRenameForm.action = action;
+          contextRenameForm.elements.context.value = name;
           contextRenameForm.elements.name.value = name;
         }
         const contextTitle = contextDrawer?.querySelector("[data-kubernetes-context-title]");
@@ -7063,6 +7071,28 @@
         if (error) { error.textContent = failure?.message || "Unable to inspect kubeconfig."; error.hidden = false; }
       }
     };
+    const isKubeconfigFileDrag = dataTransfer => Array.from(dataTransfer?.types || []).includes("Files");
+    const onImportDragOver = event => {
+      if (!isKubeconfigFileDrag(event.dataTransfer)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+      importDrop?.classList.add("is-dragging");
+    };
+    const onImportDragLeave = event => {
+      if (event.relatedTarget && importDrop?.contains(event.relatedTarget)) return;
+      importDrop?.classList.remove("is-dragging");
+    };
+    const onImportDrop = event => {
+      if (!isKubeconfigFileDrag(event.dataTransfer)) return;
+      event.preventDefault();
+      importDrop?.classList.remove("is-dragging");
+      const file = event.dataTransfer?.files?.[0];
+      if (!file || !importFile) return;
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      importFile.files = transfer.files;
+      onImportFile();
+    };
     const onContextSearch = () => {
       const query = (contextSearch?.value || "").trim().toLocaleLowerCase();
       local?.querySelectorAll("[data-kubernetes-context-row]").forEach(row => {
@@ -7078,6 +7108,9 @@
     importDrawer?.addEventListener("click", onImportDrawerClick);
     contextDrawer?.addEventListener("click", onContextDrawerClick);
     importFile?.addEventListener("change", onImportFile);
+    importDrop?.addEventListener("dragover", onImportDragOver);
+    importDrop?.addEventListener("dragleave", onImportDragLeave);
+    importDrop?.addEventListener("drop", onImportDrop);
     contextSearch?.addEventListener("input", onContextSearch);
     cleanups.push(() => {
       snapshotController?.abort();
@@ -7087,6 +7120,9 @@
       importDrawer?.removeEventListener("click", onImportDrawerClick);
       contextDrawer?.removeEventListener("click", onContextDrawerClick);
       importFile?.removeEventListener("change", onImportFile);
+      importDrop?.removeEventListener("dragover", onImportDragOver);
+      importDrop?.removeEventListener("dragleave", onImportDragLeave);
+      importDrop?.removeEventListener("drop", onImportDrop);
       contextSearch?.removeEventListener("input", onContextSearch);
       if (drawer?.open) drawer.close();
       if (importDrawer?.open) importDrawer.close();
@@ -7295,8 +7331,8 @@
     } else if (form.method.toLowerCase() === "post" &&
         document.querySelector("[data-app-shell]") &&
         !form.hasAttribute("data-native") &&
-        new URL(form.action || location.href, location.href).origin === location.origin &&
-        new URL(form.action || location.href, location.href).pathname !== "/logout") {
+        new URL(formActionURL(form, event.submitter)).origin === location.origin &&
+        new URL(formActionURL(form, event.submitter)).pathname !== "/logout") {
       event.preventDefault();
       submitAsync(form, submitter, { fullNavigationOnSuccess: true });
     }

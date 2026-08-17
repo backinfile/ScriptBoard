@@ -175,44 +175,79 @@ func TestKubeconfigRootCAsReplaceSystemTrustWhenExplicit(t *testing.T) {
 	}
 }
 
-func TestKubeconfigFactoryRejectsExecutableAndInsecureAuthentication(t *testing.T) {
-	for name, fragment := range map[string]string{
-		"exec plugin": `users:
-- name: scriptboard
-  user:
-    exec:
-      command: steal-credentials`,
-		"insecure TLS": `users:
-- name: scriptboard
-  user:
-    token: token`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			insecure := ""
-			if name == "insecure TLS" {
-				insecure = "    insecure-skip-tls-verify: true\n"
-			}
-			config := `apiVersion: v1
+func TestKubeconfigFactoryRejectsExecutableAuthentication(t *testing.T) {
+	config := `apiVersion: v1
 kind: Config
 current-context: selected
 clusters:
 - name: cluster
   cluster:
     server: https://127.0.0.1:6443
-` + insecure + fragment + `
+users:
+- name: scriptboard
+  user:
+    exec:
+      command: steal-credentials
 contexts:
 - name: selected
   context:
     cluster: cluster
     user: scriptboard
 `
-			path := filepath.Join(t.TempDir(), "kubeconfig")
-			if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := (HTTPFactory{}).Open(context.Background(), Connection{Name: "cluster", KubeconfigPath: path}); err == nil {
-				t.Fatal("unsafe kubeconfig was accepted")
-			}
-		})
+	path := filepath.Join(t.TempDir(), "kubeconfig")
+	if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (HTTPFactory{}).Open(context.Background(), Connection{Name: "cluster", KubeconfigPath: path}); err == nil {
+		t.Fatal("unsafe kubeconfig was accepted")
+	}
+}
+
+func TestKubeconfigFactoryAllowsInsecureTLS(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/version":
+			_, _ = response.Write([]byte(`{"gitVersion":"v1.35.1"}`))
+		case "/apis/authorization.k8s.io/v1/selfsubjectaccessreviews":
+			_, _ = response.Write([]byte(`{"status":{"allowed":true}}`))
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	config := fmt.Sprintf(`apiVersion: v1
+kind: Config
+current-context: selected
+clusters:
+- name: cluster
+  cluster:
+    server: %s
+    insecure-skip-tls-verify: true
+users:
+- name: scriptboard
+  user:
+    token: token
+contexts:
+- name: selected
+  context:
+    cluster: cluster
+    user: scriptboard
+`, server.URL)
+	path := filepath.Join(t.TempDir(), "kubeconfig")
+	if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client, err := (HTTPFactory{}).Open(context.Background(), Connection{Name: "cluster", KubeconfigPath: path})
+	if err != nil {
+		t.Fatalf("open insecure TLS kubeconfig: %v", err)
+	}
+	defer client.Close()
+	capabilities, err := client.Capabilities(context.Background())
+	if err != nil {
+		t.Fatalf("probe insecure TLS kubeconfig: %v", err)
+	}
+	if !capabilities.Workloads {
+		t.Fatalf("capabilities=%#v", capabilities)
 	}
 }

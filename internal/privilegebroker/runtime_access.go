@@ -305,7 +305,7 @@ func (server *Server) kubernetesOperation(ctx context.Context, request wireReque
 		client, err = server.kubernetes.Open(ctx, connection)
 	}
 	if err != nil {
-		return wireResponse{Status: statusError, ErrorCode: "kubernetes_open_failed", Message: "Kubernetes connection could not be opened"}
+		return wireResponse{Status: statusError, ErrorCode: "kubernetes_open_failed", Message: kubernetesOpenFailureMessage(err)}
 	}
 	defer client.Close()
 	response := &runtimeWireResponse{}
@@ -330,6 +330,34 @@ func (server *Server) kubernetesOperation(ctx context.Context, request wireReque
 		return wireResponse{Status: statusError, ErrorCode: "kubernetes_operation_failed", Message: "Kubernetes operation failed"}
 	}
 	return wireResponse{Status: statusOK, Runtime: response}
+}
+
+func kubernetesOpenFailureMessage(err error) string {
+	detail := err.Error()
+	switch {
+	case strings.Contains(detail, "embed certificate authority data"):
+		return "Kubernetes connection could not be opened: new connections must embed certificate authority data"
+	case strings.Contains(detail, "embed token, client certificate, and key data"):
+		return "Kubernetes connection could not be opened: new connections must embed token, client certificate, and key data"
+	case strings.Contains(detail, "executable and auth-provider kubeconfig credentials are not supported"):
+		return "Kubernetes connection could not be opened: exec and auth-provider kubeconfig credentials are not supported"
+	case strings.Contains(detail, "kubeconfig has no selected context"):
+		return "Kubernetes connection could not be opened: the kubeconfig has no selected context"
+	case strings.Contains(detail, "kubeconfig context") && strings.Contains(detail, "was not found"):
+		return "Kubernetes connection could not be opened: the selected context was not found"
+	case strings.Contains(detail, "Kubernetes server must be an absolute HTTP or HTTPS URL"):
+		return "Kubernetes connection could not be opened: the server must be an absolute HTTP or HTTPS URL"
+	case strings.Contains(detail, "kubeconfig context has no supported credentials"):
+		return "Kubernetes connection could not be opened: the selected context has no supported credentials"
+	case strings.Contains(detail, "parse kubeconfig"):
+		return "Kubernetes connection could not be opened: the kubeconfig is invalid"
+	case strings.Contains(detail, "certificate authority"), strings.Contains(detail, "client certificate"), strings.Contains(detail, "client key"):
+		return "Kubernetes connection could not be opened: embedded certificate data is invalid"
+	case strings.Contains(detail, "read kubeconfig"):
+		return "Kubernetes connection could not be opened: the privileged Broker cannot read the kubeconfig path"
+	default:
+		return "Kubernetes connection could not be opened: verify that the kubeconfig uses embedded, supported credentials"
+	}
 }
 
 var errRuntimeLogBatchFull = errors.New("runtime log batch is full")
