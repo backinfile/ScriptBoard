@@ -236,7 +236,7 @@ func TestQuickRunEntryRequiresPublishedRevisionAndDigest(t *testing.T) {
 		{name: "invalid digest", config: QuickRunConfig{QuickRunID: "quick-1", Revision: 3, ScriptSHA256: "not-a-digest"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, _, err := validateEntry("quick", "Quick run", ActionQuickRun, "", test.config)
+			_, _, err := validateEntry("quick", "Quick run", ActionQuickRun, test.config)
 			if test.valid && err != nil {
 				t.Fatalf("valid published Quick Run rejected: %v", err)
 			}
@@ -350,7 +350,7 @@ func TestResolveRejectsExpiredKeyAndDisabledEntry(t *testing.T) {
 	now := time.Date(2026, 8, 5, 9, 0, 0, 0, time.UTC)
 	manager, _ := testManager(t, now)
 	expiresAt := now.Add(time.Hour)
-	key, secret, err := manager.CreateKey(context.Background(), CreateKeyInput{Label: "Agent", Enabled: true, ExpiresAt: &expiresAt})
+	key, _, err := manager.CreateKey(context.Background(), CreateKeyInput{Label: "Agent", Enabled: true, ExpiresAt: &expiresAt})
 	if err != nil {
 		t.Fatal(err)
 	}

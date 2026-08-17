@@ -231,7 +231,7 @@ func (s *Service) ConsumeApproval(ctx context.Context, actor Actor, conversation
 	if err != nil {
 		return err
 	}
-	if approval.ToolCallID != toolCallRecordID(conversationID, externalToolCallID) || subtleDigestCompare(approval.ParameterDigest, digest) == false {
+	if approval.ToolCallID != toolCallRecordID(conversationID, externalToolCallID) || !subtleDigestCompare(approval.ParameterDigest, digest) {
 		return ErrApprovalInvalid
 	}
 	if approval.Status == "rejected" {

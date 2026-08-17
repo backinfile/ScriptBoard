@@ -806,14 +806,14 @@ func (a *App) createExternalEntry(response http.ResponseWriter, request *http.Re
 		return
 	}
 	actionType := externaltrigger.ActionType(request.FormValue("action_type"))
-	config, target, err := a.externalEntryConfig(request, actionType)
+	config, err := a.externalEntryConfig(request, actionType)
 	if err != nil {
 		a.renderExternalEntrySubmissionError(response, request, group)
 		return
 	}
 	entry, secret, err := a.externalTriggers.CreateEntry(request.Context(), externaltrigger.CreateEntryInput{
 		GroupID: groupID, KeyID: legacyKeyID, Name: strings.TrimSpace(request.FormValue("name")), Label: request.FormValue("label"), Type: actionType,
-		Target: target, Enabled: request.FormValue("enabled") == "1", RequireSignature: request.FormValue("require_signature") == "1", Config: config,
+		Enabled: request.FormValue("enabled") == "1", RequireSignature: request.FormValue("require_signature") == "1", Config: config,
 	})
 	if err != nil {
 		a.renderExternalEntrySubmissionError(response, request, group)
@@ -872,12 +872,12 @@ func (a *App) updateExternalEntry(response http.ResponseWriter, request *http.Re
 		return
 	}
 	actionType := externaltrigger.ActionType(request.FormValue("action_type"))
-	config, target, err := a.externalEntryConfig(request, actionType)
+	config, err := a.externalEntryConfig(request, actionType)
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
 	}
-	entry, err := a.externalTriggers.UpdateEntry(request.Context(), externaltrigger.UpdateEntryInput{ID: id, Name: strings.TrimSpace(request.FormValue("name")), Label: request.FormValue("label"), Type: actionType, Target: target, Enabled: request.FormValue("enabled") == "1", RequireSignature: request.FormValue("require_signature") == "1", Config: config})
+	entry, err := a.externalTriggers.UpdateEntry(request.Context(), externaltrigger.UpdateEntryInput{ID: id, Name: strings.TrimSpace(request.FormValue("name")), Label: request.FormValue("label"), Type: actionType, Enabled: request.FormValue("enabled") == "1", RequireSignature: request.FormValue("require_signature") == "1", Config: config})
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
@@ -918,12 +918,12 @@ func (a *App) deleteExternalEntry(response http.ResponseWriter, request *http.Re
 	http.Redirect(response, request, "/config/external-interfaces", http.StatusSeeOther)
 }
 
-func (a *App) externalEntryConfig(request *http.Request, actionType externaltrigger.ActionType) (any, string, error) {
+func (a *App) externalEntryConfig(request *http.Request, actionType externaltrigger.ActionType) (any, error) {
 	switch actionType {
 	case externaltrigger.ActionLog:
 		limit, err := strconv.Atoi(request.FormValue("log_message_limit"))
 		if err != nil {
-			return nil, "", errors.New("invalid log message limit")
+			return nil, errors.New("invalid log message limit")
 		}
 		managed := request.FormValue("log_target_mode") == "managed"
 		rawPath := strings.TrimSpace(request.FormValue("log_file"))
@@ -935,60 +935,60 @@ func (a *App) externalEntryConfig(request *http.Request, actionType externaltrig
 				}
 			}
 			if groupID == "" {
-				return nil, "", errors.New("invalid managed log target")
+				return nil, errors.New("invalid managed log target")
 			}
 			rawPath = filepath.Join(filepath.Dir(a.stateRoot), "scriptboard-external-"+groupID+"-"+strings.TrimSpace(request.FormValue("name"))+".log")
 		}
 		path, err := a.hostPrepareAppend(request.Context(), rawPath)
 		if err != nil {
-			return nil, "", fmt.Errorf("invalid log file: %w", err)
+			return nil, fmt.Errorf("invalid log file: %w", err)
 		}
 		config := externaltrigger.LogConfig{File: path, Managed: managed, Category: strings.TrimSpace(request.FormValue("log_category")), MaxMessageBytes: limit}
 		if request.FormValue("log_rotate") == "1" {
 			maxMB, sizeErr := strconv.ParseInt(request.FormValue("log_max_file_mb"), 10, 64)
 			backups, countErr := strconv.Atoi(request.FormValue("log_max_backups"))
 			if sizeErr != nil || countErr != nil || maxMB < 1 || maxMB > 1024 || backups < 1 || backups > 100 {
-				return nil, "", errors.New("invalid log rotation policy")
+				return nil, errors.New("invalid log rotation policy")
 			}
 			config.Rotate, config.MaxFileBytes, config.MaxBackups = true, maxMB<<20, backups
 		}
-		return config, path, nil
+		return config, nil
 	case externaltrigger.ActionUpload:
 		maximum, err := strconv.ParseInt(request.FormValue("upload_max_bytes"), 10, 64)
 		if err != nil {
-			return nil, "", errors.New("invalid upload byte limit")
+			return nil, errors.New("invalid upload byte limit")
 		}
 		directory := strings.TrimSpace(request.FormValue("upload_directory"))
 		prepared, err := a.hostPrepareDirectory(request.Context(), directory)
 		if err != nil {
-			return nil, "", fmt.Errorf("invalid upload directory: %w", err)
+			return nil, fmt.Errorf("invalid upload directory: %w", err)
 		}
 		directory = prepared.Path
 		extensions := strings.FieldsFunc(request.FormValue("upload_extensions"), func(value rune) bool { return value == ',' || value == '\n' || value == '\r' })
-		return externaltrigger.UploadConfig{Directory: directory, MaxBytes: maximum, Extensions: extensions, ConflictPolicy: request.FormValue("upload_conflict")}, directory, nil
+		return externaltrigger.UploadConfig{Directory: directory, MaxBytes: maximum, Extensions: extensions, ConflictPolicy: request.FormValue("upload_conflict")}, nil
 	case externaltrigger.ActionQuickRun:
 		id := strings.TrimSpace(request.FormValue("quick_run_id"))
 		quick, err := a.loadQuickRun(id)
 		if err != nil {
-			return nil, "", errors.New("quick run does not exist")
+			return nil, errors.New("quick run does not exist")
 		}
 		prepared, err := a.hostPrepareScript(request.Context(), quick.ScriptPath)
 		if err != nil || !quick.Locked || quick.ScriptSHA256 == "" || subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(quick.ScriptSHA256)) != 1 {
-			return nil, "", errors.New("quick run must be locked and republished with its current script digest")
+			return nil, errors.New("quick run must be locked and republished with its current script digest")
 		}
-		return externaltrigger.QuickRunConfig{QuickRunID: id, Revision: quick.Revision, ScriptSHA256: quick.ScriptSHA256}, id, nil
+		return externaltrigger.QuickRunConfig{QuickRunID: id, Revision: quick.Revision, ScriptSHA256: quick.ScriptSHA256}, nil
 	case externaltrigger.ActionVariable:
 		name := strings.TrimSpace(request.FormValue("variable_name"))
 		var isPassword bool
 		if err := a.db.QueryRow("SELECT is_password FROM variables WHERE name = ?", name).Scan(&isPassword); err != nil || isPassword {
-			return nil, "", errors.New("variable does not exist or is password-protected")
+			return nil, errors.New("variable does not exist or is password-protected")
 		}
 		config, err := parseExternalVariableConfig(request, name)
-		return config, name, err
+		return config, err
 	case externaltrigger.ActionWebsiteMonitor:
-		return externaltrigger.WebsiteMonitorConfig{}, "", nil
+		return externaltrigger.WebsiteMonitorConfig{}, nil
 	default:
-		return nil, "", errors.New("invalid action type")
+		return nil, errors.New("invalid action type")
 	}
 }
 

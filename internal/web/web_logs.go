@@ -64,41 +64,11 @@ func (a *App) applicationLogPage(response http.ResponseWriter, request *http.Req
 }
 
 func (a *App) applicationLogHistory(response http.ResponseWriter, request *http.Request) {
-	response.Header().Set("Cache-Control", "no-store")
-	if !acquireLogSlot(a.logHistorySlots) {
-		response.Header().Set("Retry-After", "1")
-		http.Error(response, "too many concurrent log history reads", http.StatusTooManyRequests)
-		return
-	}
-	defer releaseLogSlot(a.logHistorySlots)
-	source, err := a.openApplicationLogSource(request)
-	if err != nil {
-		writeApplicationLogJSONError(response, err)
-		return
-	}
-	page, err := source.History(request.Context(), request.URL.Query().Get("before"))
-	if err != nil {
-		writeApplicationLogJSONError(response, err)
-		return
-	}
-	response.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(response).Encode(page)
+	serveLogHistory(response, request, a.logHistorySlots, "too many concurrent log history reads", a.openApplicationLogSource, writeApplicationLogJSONError)
 }
 
 func (a *App) applicationLogEvents(response http.ResponseWriter, request *http.Request) {
-	response.Header().Set("Cache-Control", "no-store")
-	if !acquireLogSlot(a.logStreamSlots) {
-		response.Header().Set("Retry-After", "1")
-		http.Error(response, "too many concurrent live log streams", http.StatusTooManyRequests)
-		return
-	}
-	defer releaseLogSlot(a.logStreamSlots)
-	source, err := a.openApplicationLogSource(request)
-	if err != nil {
-		writeApplicationLogJSONError(response, err)
-		return
-	}
-	streamLogEvents(response, request, source)
+	serveLogEvents(response, request, a.logStreamSlots, a.openApplicationLogSource, writeApplicationLogJSONError)
 }
 
 func (a *App) openApplicationLogSource(request *http.Request) (logstream.Source, error) {
@@ -106,38 +76,49 @@ func (a *App) openApplicationLogSource(request *http.Request) (logstream.Source,
 }
 
 func (a *App) fileLogHistory(response http.ResponseWriter, request *http.Request) {
+	serveLogHistory(response, request, a.logHistorySlots, "实时日志历史读取过于繁忙", a.openFileLogSource, writeFileLogJSONError)
+}
+
+func (a *App) fileLogEvents(response http.ResponseWriter, request *http.Request) {
+	serveLogEvents(response, request, a.logStreamSlots, a.openFileLogSource, writeFileLogJSONError)
+}
+
+type logSourceOpener func(*http.Request) (logstream.Source, error)
+type logErrorWriter func(http.ResponseWriter, error)
+
+func serveLogHistory(response http.ResponseWriter, request *http.Request, slots chan struct{}, busyMessage string, open logSourceOpener, writeError logErrorWriter) {
 	response.Header().Set("Cache-Control", "no-store")
-	if !acquireLogSlot(a.logHistorySlots) {
+	if !acquireLogSlot(slots) {
 		response.Header().Set("Retry-After", "1")
-		http.Error(response, "实时日志历史读取过于繁忙", http.StatusTooManyRequests)
+		http.Error(response, busyMessage, http.StatusTooManyRequests)
 		return
 	}
-	defer releaseLogSlot(a.logHistorySlots)
-	source, err := a.openFileLogSource(request)
+	defer releaseLogSlot(slots)
+	source, err := open(request)
 	if err != nil {
-		writeFileLogJSONError(response, err)
+		writeError(response, err)
 		return
 	}
 	page, err := source.History(request.Context(), request.URL.Query().Get("before"))
 	if err != nil {
-		writeFileLogJSONError(response, err)
+		writeError(response, err)
 		return
 	}
 	response.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(response).Encode(page)
 }
 
-func (a *App) fileLogEvents(response http.ResponseWriter, request *http.Request) {
+func serveLogEvents(response http.ResponseWriter, request *http.Request, slots chan struct{}, open logSourceOpener, writeError logErrorWriter) {
 	response.Header().Set("Cache-Control", "no-store")
-	if !acquireLogSlot(a.logStreamSlots) {
+	if !acquireLogSlot(slots) {
 		response.Header().Set("Retry-After", "1")
 		http.Error(response, "too many concurrent live log streams", http.StatusTooManyRequests)
 		return
 	}
-	defer releaseLogSlot(a.logStreamSlots)
-	source, err := a.openFileLogSource(request)
+	defer releaseLogSlot(slots)
+	source, err := open(request)
 	if err != nil {
-		writeFileLogJSONError(response, err)
+		writeError(response, err)
 		return
 	}
 	streamLogEvents(response, request, source)

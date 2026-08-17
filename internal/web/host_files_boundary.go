@@ -121,13 +121,6 @@ func (a *App) hostRestoreFromTrash(ctx context.Context, storedPath, original str
 	return a.files.RestoreFromTrash(storedPath, original)
 }
 
-func (a *App) hostRestoreFromTrashToAvailablePath(ctx context.Context, storedPath, original string) (string, error) {
-	if a.hostFilesBackend != nil {
-		return a.hostFilesBackend.RestoreFromTrashToAvailablePath(ctx, storedPath, original)
-	}
-	return a.files.RestoreFromTrashToAvailablePath(storedPath, original)
-}
-
 func (a *App) hostPurgeTrash(ctx context.Context, storedPath string) error {
 	if a.hostFilesBackend != nil {
 		return a.hostFilesBackend.PurgeTrash(ctx, storedPath)
@@ -203,13 +196,6 @@ func (a *App) hostSameFilesystem(ctx context.Context, source, destination string
 		return a.hostFilesBackend.SameFilesystem(ctx, source, destination)
 	}
 	return a.files.SameFilesystem(source, destination)
-}
-
-func (a *App) hostAppendText(ctx context.Context, path, record string) error {
-	if a.hostFilesBackend != nil {
-		return a.hostFilesBackend.AppendText(ctx, path, record)
-	}
-	return a.files.AppendText(path, record)
 }
 
 func (a *App) hostPrepareAppend(ctx context.Context, path string) (string, error) {

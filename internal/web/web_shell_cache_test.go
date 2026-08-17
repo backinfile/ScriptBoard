@@ -260,6 +260,30 @@ func TestCurrentShellErrorCountIncludesConfirmedHostWebsiteAndApplicationErrors(
 	}
 }
 
+func TestCurrentShellNavigationItem(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		href string
+		want bool
+	}{
+		{name: "exact", path: "/history/runs", href: "/history/runs", want: true},
+		{name: "section child", path: "/monitor/security/firewall", href: "/monitor/security", want: true},
+		{name: "monitor root does not own children", path: "/monitor/security", href: "/monitor", want: false},
+		{name: "files owns trash", path: "/resources/trash", href: "/resources/files", want: true},
+		{name: "files does not own variables", path: "/resources/variables", href: "/resources/files", want: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if got := currentShellNavigationItem(test.path, test.href); got != test.want {
+				t.Fatalf("currentShellNavigationItem(%q, %q)=%t, want %t", test.path, test.href, got, test.want)
+			}
+		})
+	}
+}
+
 type observedDoneContext struct {
 	context.Context
 	observed chan struct{}

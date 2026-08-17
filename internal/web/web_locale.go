@@ -2323,15 +2323,6 @@ func webText(locale webLocale, key string) string {
 	return key
 }
 
-func webMessageKeys() []string {
-	keys := make([]string, 0, len(webMessages))
-	for key := range webMessages {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
 func (a *App) setWebLocale(response http.ResponseWriter, request *http.Request) {
 	resetReadDeadline := setRequestReadDeadline(response, unauthenticatedFormReadTimeout)
 	defer resetReadDeadline()

@@ -753,116 +753,118 @@ func validateHostFilesRequest(request wireRequest) error {
 			return errors.New("Host Files name is invalid")
 		}
 	}
-	emptyPaths := func() bool {
-		return payload.Path == "" && payload.Directory == "" && payload.Name == "" && payload.Destination == "" && payload.StoredPath == "" && payload.StoredName == "" && payload.CanonicalKind == "" && !payload.RestoreAvailable && payload.MaxBytes == 0 && payload.ByteOffset == 0 && payload.ByteLimit == 0 && payload.Handle == "" && payload.OperationID == "" && payload.StagingPath == "" && payload.ExpectedDigest == "" && !payload.Replace && !payload.DirectoryPrepare && payload.Record == "" && payload.Cursor == ""
+	if hostFilesExpectedPayload(request.Operation, *payload) != *payload {
+		return errors.New("Host Files request contains operation-forbidden fields")
 	}
 	switch request.Operation {
 	case operationHostFilesRoots:
-		if !emptyPaths() || payload.Offset != 0 || payload.Limit != 0 {
-			return errors.New("Host Files roots request is invalid")
-		}
 	case operationHostFilesList:
-		if payload.Path != "" && !filepath.IsAbs(payload.Path) || payload.Directory != "" || payload.Name != "" || payload.Destination != "" || payload.StoredPath != "" || payload.StoredName != "" || payload.CanonicalKind != "" || payload.RestoreAvailable || payload.MaxBytes != 0 || payload.Offset < 0 || payload.Limit != hostFilesPageSize {
+		if payload.Path != "" && !filepath.IsAbs(payload.Path) || payload.Offset < 0 || payload.Limit != hostFilesPageSize {
 			return errors.New("Host Files list request is invalid")
 		}
 	case operationHostFilesInfo:
-		if !onlyHostFilePath(payload) {
+		if !isAbsoluteHostFilePath(payload.Path) {
 			return errors.New("Host Files info request is invalid")
 		}
+	case operationHostFilesToggleExec:
+		if !isAbsoluteHostFilePath(payload.Path) {
+			return errors.New("Host Files execute-bit request is invalid")
+		}
+	case operationHostFilesOpenRead:
+		if !isAbsoluteHostFilePath(payload.Path) {
+			return errors.New("Host Files open-read request is invalid")
+		}
+	case operationHostFilesRemove:
+		if !isAbsoluteHostFilePath(payload.Path) {
+			return errors.New("Host Files remove request is invalid")
+		}
+	case operationHostFilesLogOpen:
+		if !isAbsoluteHostFilePath(payload.Path) {
+			return errors.New("Host Files log-open request is invalid")
+		}
+	case operationHostFilesPrepareAppend:
+		if !isAbsoluteHostFilePath(payload.Path) {
+			return errors.New("Host Files prepare-append request is invalid")
+		}
 	case operationHostFilesReadText:
-		if payload.Path == "" || !filepath.IsAbs(payload.Path) || payload.MaxBytes <= 0 || payload.MaxBytes > 1<<20 || payload.Directory != "" || payload.Name != "" || payload.Destination != "" || payload.StoredPath != "" || payload.StoredName != "" || payload.CanonicalKind != "" || payload.RestoreAvailable || payload.Offset != 0 || payload.Limit != 0 {
+		if !isAbsoluteHostFilePath(payload.Path) || payload.MaxBytes <= 0 || payload.MaxBytes > 1<<20 {
 			return errors.New("Host Files text request is invalid")
 		}
 	case operationHostFilesCanonical:
 		validKind := payload.CanonicalKind == hostFilesCanonicalExisting || payload.CanonicalKind == hostFilesCanonicalDirectory || payload.CanonicalKind == hostFilesCanonicalDestination || payload.CanonicalKind == hostFilesCanonicalChild
-		if !validKind || payload.Path == "" || !filepath.IsAbs(payload.Path) || payload.Directory != "" || payload.Destination != "" || payload.StoredPath != "" || payload.StoredName != "" || payload.RestoreAvailable || payload.MaxBytes != 0 || payload.Offset != 0 || payload.Limit != 0 || (payload.CanonicalKind == hostFilesCanonicalChild) != (payload.Name != "") {
+		if !validKind || !isAbsoluteHostFilePath(payload.Path) || (payload.CanonicalKind == hostFilesCanonicalChild) != (payload.Name != "") {
 			return errors.New("Host Files canonical request is invalid")
 		}
 	case operationHostFilesAvailable, operationHostFilesMkdir:
-		if payload.Directory == "" || !filepath.IsAbs(payload.Directory) || payload.Name == "" || payload.Path != "" || payload.Destination != "" || payload.StoredPath != "" || payload.StoredName != "" || payload.CanonicalKind != "" || payload.RestoreAvailable || payload.MaxBytes != 0 || payload.Offset != 0 || payload.Limit != 0 {
+		if !isAbsoluteHostFilePath(payload.Directory) || payload.Name == "" {
 			return errors.New("Host Files directory request is invalid")
 		}
-	case operationHostFilesToggleExec:
-		if !onlyHostFilePath(payload) {
-			return errors.New("Host Files execute-bit request is invalid")
-		}
 	case operationHostFilesTrash:
-		if payload.Path == "" || !filepath.IsAbs(payload.Path) || payload.StoredName == "" || payload.Directory != "" || payload.Name != "" || payload.Destination != "" || payload.StoredPath != "" || payload.CanonicalKind != "" || payload.RestoreAvailable || payload.MaxBytes != 0 || payload.Offset != 0 || payload.Limit != 0 {
+		if !isAbsoluteHostFilePath(payload.Path) || payload.StoredName == "" {
 			return errors.New("Host Files trash request is invalid")
 		}
 	case operationHostFilesRestore:
-		if payload.StoredPath == "" || !filepath.IsAbs(payload.StoredPath) || payload.Destination == "" || !filepath.IsAbs(payload.Destination) || payload.Path != "" || payload.Directory != "" || payload.Name != "" || payload.StoredName != "" || payload.CanonicalKind != "" || payload.MaxBytes != 0 || payload.Offset != 0 || payload.Limit != 0 {
+		if !isAbsoluteHostFilePath(payload.StoredPath) || !isAbsoluteHostFilePath(payload.Destination) {
 			return errors.New("Host Files restore request is invalid")
 		}
 	case operationHostFilesPurge:
-		if payload.StoredPath == "" || !filepath.IsAbs(payload.StoredPath) || payload.Path != "" || payload.Directory != "" || payload.Name != "" || payload.Destination != "" || payload.StoredName != "" || payload.CanonicalKind != "" || payload.RestoreAvailable || payload.MaxBytes != 0 || payload.Offset != 0 || payload.Limit != 0 {
+		if !isAbsoluteHostFilePath(payload.StoredPath) {
 			return errors.New("Host Files purge request is invalid")
 		}
 	case operationHostFilesMove:
-		if payload.Path == "" || !filepath.IsAbs(payload.Path) || payload.Destination == "" || !filepath.IsAbs(payload.Destination) || payload.Directory != "" || payload.Name != "" || payload.StoredPath != "" || payload.StoredName != "" || payload.CanonicalKind != "" || payload.RestoreAvailable || payload.MaxBytes != 0 || payload.Offset != 0 || payload.Limit != 0 {
+		if !isAbsoluteHostFilePath(payload.Path) || !isAbsoluteHostFilePath(payload.Destination) {
 			return errors.New("Host Files move request is invalid")
 		}
-	case operationHostFilesOpenRead:
-		if !onlyHostFilePath(payload) {
-			return errors.New("Host Files open-read request is invalid")
+	case operationHostFilesSameFS:
+		if !isAbsoluteHostFilePath(payload.Path) || !isAbsoluteHostFilePath(payload.Destination) {
+			return errors.New("Host Files filesystem request is invalid")
 		}
 	case operationHostFilesReadChunk:
-		if !onlyHostFileHandle(payload) || payload.ByteOffset < 0 || payload.ByteLimit <= 0 || payload.ByteLimit > 3<<20 {
+		if len(payload.Handle) != 32 || payload.ByteOffset < 0 || payload.ByteLimit <= 0 || payload.ByteLimit > 3<<20 {
 			return errors.New("Host Files read-chunk request is invalid")
 		}
 	case operationHostFilesCloseRead:
-		if !onlyHostFileHandle(payload) || payload.ByteOffset != 0 || payload.ByteLimit != 0 {
+		if len(payload.Handle) != 32 {
 			return errors.New("Host Files close-read request is invalid")
 		}
 	case operationHostFilesUpload:
-		if payload.StagingPath == "" || !filepath.IsAbs(payload.StagingPath) || payload.Directory == "" || !filepath.IsAbs(payload.Directory) || payload.Name == "" || payload.MaxBytes <= 0 || payload.MaxBytes > 1<<30 || payload.Path != "" || payload.Destination != "" || payload.StoredPath != "" || payload.CanonicalKind != "" || payload.ExpectedDigest != "" || payload.Handle != "" || payload.Record != "" || payload.Offset != 0 || payload.Limit != 0 || payload.ByteOffset != 0 || payload.ByteLimit != 0 {
+		if !isAbsoluteHostFilePath(payload.StagingPath) || !isAbsoluteHostFilePath(payload.Directory) || payload.Name == "" || payload.MaxBytes <= 0 || payload.MaxBytes > 1<<30 {
 			return errors.New("Host Files upload request is invalid")
 		}
 	case operationHostFilesSaveText:
-		if payload.StagingPath == "" || !filepath.IsAbs(payload.StagingPath) || payload.Path == "" || !filepath.IsAbs(payload.Path) || len(payload.ExpectedDigest) != 64 || payload.StoredName == "" || payload.MaxBytes <= 0 || payload.MaxBytes > 1<<20 || payload.Directory != "" || payload.Name != "" || payload.Destination != "" || payload.StoredPath != "" || payload.CanonicalKind != "" || payload.Handle != "" || payload.Record != "" || payload.Replace || payload.Offset != 0 || payload.Limit != 0 || payload.ByteOffset != 0 || payload.ByteLimit != 0 {
+		if !isAbsoluteHostFilePath(payload.StagingPath) || !isAbsoluteHostFilePath(payload.Path) || len(payload.ExpectedDigest) != 64 || payload.StoredName == "" || payload.MaxBytes <= 0 || payload.MaxBytes > 1<<20 {
 			return errors.New("Host Files save-text request is invalid")
 		}
 	case operationHostFilesRollback:
-		if payload.Path == "" || !filepath.IsAbs(payload.Path) || payload.StoredPath == "" || !filepath.IsAbs(payload.StoredPath) || payload.Directory != "" || payload.Name != "" || payload.Destination != "" || payload.StoredName != "" || payload.CanonicalKind != "" || payload.Handle != "" || payload.StagingPath != "" || payload.ExpectedDigest != "" || payload.Record != "" || payload.MaxBytes != 0 || payload.Offset != 0 || payload.Limit != 0 || payload.ByteOffset != 0 || payload.ByteLimit != 0 {
+		if !isAbsoluteHostFilePath(payload.Path) || !isAbsoluteHostFilePath(payload.StoredPath) {
 			return errors.New("Host Files rollback request is invalid")
 		}
-	case operationHostFilesRemove:
-		if !onlyHostFilePath(payload) {
-			return errors.New("Host Files remove request is invalid")
-		}
 	case operationHostFilesPrepare:
-		if payload.Path == "" || !filepath.IsAbs(payload.Path) || payload.Directory != "" || payload.Name != "" || payload.Destination != "" || payload.StoredPath != "" || payload.StoredName != "" || payload.CanonicalKind != "" || payload.Handle != "" || payload.StagingPath != "" || payload.ExpectedDigest != "" || payload.Record != "" || payload.MaxBytes != 0 || payload.Offset != 0 || payload.Limit != 0 || payload.ByteOffset != 0 || payload.ByteLimit != 0 {
+		if !isAbsoluteHostFilePath(payload.Path) {
 			return errors.New("Host Files prepare request is invalid")
 		}
-	case operationHostFilesSameFS:
-		if payload.Path == "" || !filepath.IsAbs(payload.Path) || payload.Destination == "" || !filepath.IsAbs(payload.Destination) || payload.Directory != "" || payload.Name != "" || payload.StoredPath != "" || payload.StoredName != "" || payload.CanonicalKind != "" || payload.Handle != "" || payload.StagingPath != "" || payload.ExpectedDigest != "" || payload.Record != "" || payload.MaxBytes != 0 || payload.Offset != 0 || payload.Limit != 0 || payload.ByteOffset != 0 || payload.ByteLimit != 0 {
-			return errors.New("Host Files filesystem request is invalid")
-		}
 	case operationHostFilesAppend:
-		if payload.Path == "" || !filepath.IsAbs(payload.Path) || len(payload.Record) > 64<<10 || payload.Record == "" || payload.Directory != "" || payload.Name != "" || payload.Destination != "" || payload.StoredPath != "" || payload.StoredName != "" || payload.CanonicalKind != "" || payload.Handle != "" || payload.StagingPath != "" || payload.ExpectedDigest != "" || payload.MaxBytes != 0 || payload.Offset != 0 || payload.Limit != 0 || payload.ByteOffset != 0 || payload.ByteLimit != 0 {
+		if !isAbsoluteHostFilePath(payload.Path) || payload.Record == "" {
 			return errors.New("Host Files append request is invalid")
 		}
-	case operationHostFilesLogOpen:
-		if !onlyHostFilePath(payload) {
-			return errors.New("Host Files log-open request is invalid")
-		}
 	case operationHostFilesLogHistory, operationHostFilesLogFollow:
-		if len(payload.Handle) != 32 || payload.Path != "" || payload.Directory != "" || payload.Name != "" || payload.Destination != "" || payload.StoredPath != "" || payload.StoredName != "" || payload.CanonicalKind != "" || payload.RestoreAvailable || payload.MaxBytes != 0 || payload.Offset != 0 || payload.Limit != 0 || payload.ByteOffset != 0 || payload.ByteLimit != 0 || payload.StagingPath != "" || payload.ExpectedDigest != "" || payload.Replace || payload.DirectoryPrepare || payload.Record != "" {
+		if len(payload.Handle) != 32 {
 			return errors.New("Host Files log-read request is invalid")
 		}
 	case operationHostFilesLogClose:
-		if !onlyHostFileHandle(payload) || payload.Cursor != "" {
+		if len(payload.Handle) != 32 {
 			return errors.New("Host Files log-close request is invalid")
 		}
 	case operationHostFilesCrossMove:
-		if payload.OperationID == "" || payload.Path == "" || !filepath.IsAbs(payload.Path) || payload.Destination == "" || !filepath.IsAbs(payload.Destination) || payload.Directory != "" || payload.Name != "" || payload.CanonicalKind != "" || payload.RestoreAvailable || payload.MaxBytes != 0 || payload.Offset != 0 || payload.Limit != 0 || payload.ByteOffset != 0 || payload.ByteLimit != 0 || payload.Handle != "" || payload.StagingPath != "" || payload.ExpectedDigest != "" || payload.Replace || payload.DirectoryPrepare || payload.Record != "" || payload.Cursor != "" || (payload.StoredPath == "") != (payload.StoredName == "") || (payload.StoredPath != "" && !filepath.IsAbs(payload.StoredPath)) {
+		if payload.OperationID == "" || !isAbsoluteHostFilePath(payload.Path) || !isAbsoluteHostFilePath(payload.Destination) || (payload.StoredPath == "") != (payload.StoredName == "") || (payload.StoredPath != "" && !isAbsoluteHostFilePath(payload.StoredPath)) {
 			return errors.New("Host Files cross-filesystem move request is invalid")
 		}
 	}
-	if hostFilesExpectedPayload(request.Operation, *payload) != *payload {
-		return errors.New("Host Files request contains operation-forbidden fields")
-	}
 	return nil
+}
+
+func isAbsoluteHostFilePath(path string) bool {
+	return path != "" && filepath.IsAbs(path)
 }
 
 func validateExternalHostFilesLogRequest(request wireRequest) error {
@@ -936,14 +938,6 @@ func hostFilesExpectedPayload(operation string, payload hostFilesWireRequest) ho
 	default:
 		return hostFilesWireRequest{}
 	}
-}
-
-func onlyHostFilePath(payload *hostFilesWireRequest) bool {
-	return payload.Path != "" && filepath.IsAbs(payload.Path) && payload.Directory == "" && payload.Name == "" && payload.Destination == "" && payload.StoredPath == "" && payload.StoredName == "" && payload.CanonicalKind == "" && !payload.RestoreAvailable && payload.MaxBytes == 0 && payload.Offset == 0 && payload.Limit == 0 && payload.ByteOffset == 0 && payload.ByteLimit == 0 && payload.Handle == "" && payload.StagingPath == "" && payload.ExpectedDigest == "" && !payload.Replace && !payload.DirectoryPrepare && payload.Record == ""
-}
-
-func onlyHostFileHandle(payload *hostFilesWireRequest) bool {
-	return len(payload.Handle) == 32 && payload.Path == "" && payload.Directory == "" && payload.Name == "" && payload.Destination == "" && payload.StoredPath == "" && payload.StoredName == "" && payload.CanonicalKind == "" && !payload.RestoreAvailable && payload.MaxBytes == 0 && payload.Offset == 0 && payload.Limit == 0 && payload.StagingPath == "" && payload.ExpectedDigest == "" && !payload.Replace && !payload.DirectoryPrepare && payload.Record == ""
 }
 
 func isHostFilesOperation(operation string) bool {

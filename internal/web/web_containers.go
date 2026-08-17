@@ -5,10 +5,10 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
-	"scriptboard/internal/identity"
 	"strings"
 
 	"scriptboard/internal/appstatus"
+	"scriptboard/internal/identity"
 )
 
 type containersPageView struct {
@@ -60,8 +60,11 @@ func containerQueryURL(query appstatus.ContainerQuery) string {
 
 func parseContainerQuery(request *http.Request) (appstatus.ContainerQuery, error) {
 	query := appstatus.ContainerQuery{
-		Search: strings.TrimSpace(request.URL.Query().Get("query")), Status: request.URL.Query().Get("status"),
-		Sort: request.URL.Query().Get("sort"), Direction: request.URL.Query().Get("direction"), Limit: 100,
+		Search:    strings.TrimSpace(request.URL.Query().Get("query")),
+		Status:    request.URL.Query().Get("status"),
+		Sort:      request.URL.Query().Get("sort"),
+		Direction: request.URL.Query().Get("direction"),
+		Limit:     100,
 	}
 	if query.Status == "" {
 		query.Status = "all"

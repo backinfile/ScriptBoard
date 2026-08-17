@@ -219,7 +219,7 @@ func TestExternalWebsiteMonitorEntryReturnsReadOnlySnapshot(t *testing.T) {
 	}
 	createdKeyPage, _ := io.ReadAll(createdKey.Body)
 	_ = createdKey.Body.Close()
-	secret, keyID := createdExternalTestKey(t, createdKeyPage)
+	_, keyID := createdExternalTestKey(t, createdKeyPage)
 
 	entryTask, err := client.Get(serverURL + "/config/external-interfaces/keys/" + keyID + "/entries/new")
 	if err != nil {
@@ -236,7 +236,7 @@ func TestExternalWebsiteMonitorEntryReturnsReadOnlySnapshot(t *testing.T) {
 	}
 	createdEntryPage, _ := io.ReadAll(createdEntry.Body)
 	_ = createdEntry.Body.Close()
-	secret, _ = createdExternalTestKey(t, createdEntryPage)
+	secret, _ := createdExternalTestKey(t, createdEntryPage)
 
 	request, _ := http.NewRequest(http.MethodGet, serverURL+externalTriggerPath("legacy", "website-status"), nil)
 	request.Header.Set("Authorization", "Bearer "+secret)

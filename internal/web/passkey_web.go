@@ -110,7 +110,7 @@ func (a *App) beginPasskeyLogin(response http.ResponseWriter, request *http.Requ
 		return
 	}
 	csrfCookie, err := request.Cookie(loginCSRFCookieName)
-	if err != nil || subtleCompare(csrfCookie.Value, request.FormValue("csrf_token")) == false {
+	if err != nil || !subtleCompare(csrfCookie.Value, request.FormValue("csrf_token")) {
 		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
 		return
 	}

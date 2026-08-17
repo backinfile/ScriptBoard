@@ -618,10 +618,6 @@ func (engine *MoveEngine) rollbackRecoveredTarget(ctx context.Context, operation
 	return err
 }
 
-func digestRegularFile(path string, expected os.FileInfo) (string, error) {
-	return digestRegularFileChecked(path, expected, nil)
-}
-
 func digestRegularFileChecked(path string, expected os.FileInfo, check func() error) (string, error) {
 	file, err := os.Open(path)
 	if err != nil {
