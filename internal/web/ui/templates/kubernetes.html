@@ -8,7 +8,7 @@
   <title>{{t .Locale "kubernetes.title"}} · ScriptBoard</title>
 </head>
 <body>
-<main class="workspace kubernetes-page" data-kubernetes-page data-kubernetes-tab="{{.ActiveTab}}" data-csrf-token="{{.CSRFToken}}" data-kubernetes-can-manage="{{.CanManage}}" data-kubernetes-mode="{{.Connection.Mode}}" data-kubernetes-can-redeploy="{{.Connection.Capabilities.Redeploy}}" data-kubernetes-can-scale="{{.Connection.Capabilities.Scale}}" data-kubernetes-can-run-cron="{{.Connection.Capabilities.RunCron}}" data-kubernetes-can-logs="{{.Connection.Capabilities.Logs}}">
+<main class="workspace kubernetes-page" data-kubernetes-page data-kubernetes-tab="{{.ActiveTab}}" data-refresh-unavailable="{{t .Locale "applications.refresh_unavailable"}}" data-csrf-token="{{.CSRFToken}}" data-kubernetes-can-manage="{{.CanManage}}" data-kubernetes-mode="{{.Connection.Mode}}" data-kubernetes-can-redeploy="{{.Connection.Capabilities.Redeploy}}" data-kubernetes-can-scale="{{.Connection.Capabilities.Scale}}" data-kubernetes-can-run-cron="{{.Connection.Capabilities.RunCron}}" data-kubernetes-can-logs="{{.Connection.Capabilities.Logs}}">
   <header class="page-heading kubernetes-heading">
     <div>
       <p class="page-eyebrow">{{t .Locale "nav.monitor"}} / {{t .Locale "nav.kubernetes"}}</p>
@@ -122,7 +122,7 @@
     </dl>
   </section>
 
-  {{if .Connection.Error}}<div class="kubernetes-alert" role="alert"><span data-lucide="triangle-alert" aria-hidden="true"></span><div><strong>{{t .Locale "kubernetes.snapshot_failed"}}</strong><p>{{.Connection.Error}}</p></div></div>{{end}}
+  <div data-kubernetes-alert-slot>{{if .Connection.Error}}<div class="kubernetes-alert" role="alert"><span data-lucide="triangle-alert" aria-hidden="true"></span><div><strong>{{t .Locale "kubernetes.snapshot_failed"}}</strong><p>{{.Connection.Error}}</p></div></div>{{end}}</div>
 
   <dl class="kubernetes-facts" aria-label="{{t .Locale "kubernetes.cluster_facts"}}">
     <div><dt>{{t .Locale "kubernetes.nodes"}}</dt><dd>{{len .Nodes}}</dd></div>
@@ -133,7 +133,7 @@
   </div>
 
   <section class="kubernetes-section" aria-labelledby="kubernetes-workloads-heading">
-    <header class="section-heading kubernetes-section-heading"><div><p class="section-index">{{t .Locale "kubernetes.cluster_facts"}}</p><h2 id="kubernetes-workloads-heading">{{t .Locale "kubernetes.workloads"}}</h2><p>{{t .Locale "kubernetes.status_filter"}}</p></div></header>
+    <header class="section-heading kubernetes-section-heading"><div><p class="section-index">{{t .Locale "kubernetes.cluster_facts"}}</p><h2 id="kubernetes-workloads-heading">{{t .Locale "kubernetes.workloads"}}</h2><p>{{t .Locale "kubernetes.status_filter"}}</p></div><div class="applications-refresh" data-monitor-refresh-control><span><strong>{{t .Locale "applications.live_off"}}</strong><time datetime="{{machineTime .CollectedAt}}" data-local-time data-monitor-refresh-time>{{localTime .Locale .CollectedAt}}</time><small>{{t .Locale "applications.last_snapshot"}}</small></span><button type="button" class="applications-switch" role="switch" aria-checked="false" aria-label="{{t .Locale "kubernetes.start_live"}}" data-monitor-refresh data-enabled-label="{{t .Locale "applications.live_on"}}" data-disabled-label="{{t .Locale "applications.live_off"}}" data-enabled-description="{{t .Locale "applications.every_five_seconds"}}" data-disabled-description="{{t .Locale "applications.last_snapshot"}}" data-pause-label="{{t .Locale "kubernetes.pause_live"}}" data-start-label="{{t .Locale "kubernetes.start_live"}}"></button></div></header>
     <div class="kubernetes-workload-controls">
       <nav class="monitor-status-switch kubernetes-status-tabs" aria-label="{{t .Locale "kubernetes.status_filter"}}">
         <a href="{{kubernetesStatusURL .Query "all"}}" {{if eq .Query.Status "all"}}aria-current="page"{{end}}><span>{{t .Locale "kubernetes.all"}}</span><strong>{{.Total}}</strong></a>
@@ -178,7 +178,7 @@
 
   <section class="kubernetes-section" aria-labelledby="kubernetes-nodes-heading">
     <header class="section-heading kubernetes-section-heading"><div><p class="section-index">{{t .Locale "kubernetes.cluster_facts"}}</p><h2 id="kubernetes-nodes-heading">{{t .Locale "kubernetes.nodes"}}</h2></div></header>
-    <div class="kubernetes-node-list">{{range .Nodes}}<article><span data-lucide="hard-drive" aria-hidden="true"></span><div><strong>{{.Name}}</strong><small>{{.Role}} · {{.Version}}</small></div><span class="kubernetes-state" data-state="{{if .Ready}}ready{{else}}degraded{{end}}"><i></i>{{if .Ready}}{{t $.Locale "kubernetes.ready"}}{{else}}{{t $.Locale "kubernetes.not_ready"}}{{end}}</span><dl><div><dt>CPU</dt><dd>{{percent .CPUPercent}}</dd></div><div><dt>{{t $.Locale "kubernetes.column.memory"}}</dt><dd>{{percent .MemoryPercent}}</dd></div></dl></article>{{else}}<div class="kubernetes-empty-inline"><p>{{t .Locale "kubernetes.nodes_unavailable"}}</p></div>{{end}}</div>
+    <div class="kubernetes-node-list" data-kubernetes-node-list>{{range .Nodes}}<article><span data-lucide="hard-drive" aria-hidden="true"></span><div><strong>{{.Name}}</strong><small>{{.Role}} · {{.Version}}</small></div><span class="kubernetes-state" data-state="{{if .Ready}}ready{{else}}degraded{{end}}"><i></i>{{if .Ready}}{{t $.Locale "kubernetes.ready"}}{{else}}{{t $.Locale "kubernetes.not_ready"}}{{end}}</span><dl><div><dt>CPU</dt><dd>{{percent .CPUPercent}}</dd></div><div><dt>{{t $.Locale "kubernetes.column.memory"}}</dt><dd>{{percent .MemoryPercent}}</dd></div></dl></article>{{else}}<div class="kubernetes-empty-inline"><p>{{t .Locale "kubernetes.nodes_unavailable"}}</p></div>{{end}}</div>
   </section>
 
   <dialog class="kubernetes-drawer" data-kubernetes-drawer aria-labelledby="kubernetes-drawer-title">

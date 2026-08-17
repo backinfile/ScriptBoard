@@ -6615,6 +6615,70 @@
       <section class="container-detail-section"><h3>${escapeMarkup(words.processes)}</h3><div class="container-detail-list">${processRows}</div></section>`;
   }
 
+  function setupMonitorRefresh(root, refresh, cleanups, cancelRefresh) {
+    const control = root.querySelector("[data-monitor-refresh]");
+    if (!control) return;
+    const label = control.closest("[data-monitor-refresh-control]")?.querySelector("span");
+    const state = { enabled: control.getAttribute("aria-checked") === "true", pending: false, timer: null, seconds: 5, failed: false };
+    const renderState = () => {
+      control.setAttribute("aria-checked", String(state.enabled));
+      control.setAttribute("aria-label", state.enabled ? control.dataset.pauseLabel : control.dataset.startLabel);
+      if (!label) return;
+      const strong = label.querySelector("strong");
+      const small = label.querySelector("small");
+      if (strong) strong.textContent = state.enabled ? control.dataset.enabledLabel : control.dataset.disabledLabel;
+      if (small) {
+        if (state.failed) small.textContent = root.dataset.refreshUnavailable || control.dataset.disabledDescription;
+        else if (state.enabled) small.textContent = `${control.dataset.enabledDescription} · ${state.seconds}s`;
+        else small.textContent = control.dataset.disabledDescription;
+      }
+    };
+    const runRefresh = async () => {
+      if (!state.enabled || state.pending) return;
+      state.pending = true;
+      try {
+        await refresh();
+        state.failed = false;
+        state.seconds = 5;
+      } catch (error) {
+        if (error?.name !== "AbortError") {
+          state.failed = true;
+          console.debug("Monitor snapshot update unavailable");
+        }
+      } finally {
+        state.pending = false;
+        renderState();
+      }
+    };
+    const schedule = () => {
+      if (state.timer) window.clearInterval(state.timer);
+      state.seconds = 5;
+      state.timer = state.enabled ? window.setInterval(() => {
+        state.seconds -= 1;
+        if (state.seconds <= 0) {
+          state.seconds = 5;
+          runRefresh();
+        }
+        renderState();
+      }, 1000) : null;
+    };
+    const onToggle = () => {
+      state.enabled = !state.enabled;
+      state.failed = false;
+      if (!state.enabled) cancelRefresh?.();
+      renderState();
+      schedule();
+      if (state.enabled) runRefresh();
+    };
+    control.addEventListener("click", onToggle);
+    renderState();
+    schedule();
+    cleanups.push(() => {
+      control.removeEventListener("click", onToggle);
+      if (state.timer) window.clearInterval(state.timer);
+    });
+  }
+
   function initContainers(cleanups) {
     const root = document.querySelector("[data-container-page]");
     if (!root) return;
@@ -6623,7 +6687,7 @@
     const title = drawer?.querySelector("[data-container-drawer-title]");
     const meta = drawer?.querySelector("[data-container-drawer-meta]");
     let snapshotController = null;
-    const replaceSnapshot = async destination => {
+    const replaceSnapshot = async (destination, options = {}) => {
       snapshotController?.abort(); snapshotController = new AbortController();
       const scrollX = window.scrollX, scrollY = window.scrollY;
       root.setAttribute("aria-busy", "true");
@@ -6632,16 +6696,23 @@
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const incoming = page?.querySelector("[data-container-page]");
         if (!incoming) throw new Error("Container snapshot was not present in the response.");
-        for (const selector of ["[data-container-status-tabs]", ".container-toolbar", ".container-result-summary", "[data-container-table-shell]"]) {
+        for (const selector of [".container-fact-strip", "[data-container-alert-slot]", "[data-container-pin-list]", "[data-container-status-tabs]", ".container-toolbar", ".container-result-summary", "[data-container-table-shell]"]) {
           const current = root.querySelector(selector), next = incoming.querySelector(selector);
           if (current && next) current.replaceWith(next);
         }
+        const sourceTime = incoming.querySelector("[data-monitor-refresh-time]");
+        const currentTime = root.querySelector("[data-monitor-refresh-time]");
+        if (sourceTime && currentTime) {
+          currentTime.dateTime = sourceTime.dateTime;
+          currentTime.textContent = sourceTime.textContent;
+        }
         root.dataset.containerReturnTo = incoming.dataset.containerReturnTo || "/monitor/containers";
-        history.pushState({ containerMonitor: true }, "", destination);
-        renderIcons(root); window.requestAnimationFrame(() => window.scrollTo(scrollX, scrollY));
-      } catch (error) { if (error?.name !== "AbortError") console.error(error); }
+        if (options.pushHistory !== false) history.pushState({ containerMonitor: true }, "", destination);
+        renderIcons(root); localizeTimes(root); window.requestAnimationFrame(() => window.scrollTo(scrollX, scrollY));
+      } catch (error) { if (error?.name !== "AbortError") console.error(error); throw error; }
       finally { root.removeAttribute("aria-busy"); }
     };
+    setupMonitorRefresh(root, () => replaceSnapshot(location.href, { pushHistory: false }), cleanups, () => snapshotController?.abort());
     const openDetail = async trigger => {
       if (!drawer || !body) return;
       title.textContent = trigger.dataset.containerName || "Container"; meta.textContent = trigger.dataset.containerImage || "";
@@ -6658,7 +6729,7 @@
     };
     const onClick = event => {
       const snapshotLink = event.target.closest("[data-container-status-link],.container-sort-link");
-      if (snapshotLink && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); replaceSnapshot(snapshotLink.href); return; }
+      if (snapshotLink && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); replaceSnapshot(snapshotLink.href, { pushHistory: true }).catch(() => {}); return; }
       const detail = event.target.closest("[data-container-detail-url]");
       if (detail) { event.preventDefault(); openDetail(detail); return; }
       if (event.target.closest("[data-container-drawer-close]")) drawer?.close();
@@ -6761,7 +6832,6 @@
   function initKubernetes(cleanups) {
     const root = document.querySelector("[data-kubernetes-page]");
     if (!root) return;
-    const clusterSelect = root.querySelector("[data-kubernetes-cluster-select]");
     const drawer = root.querySelector("[data-kubernetes-drawer]");
     const body = drawer?.querySelector("[data-kubernetes-drawer-body]");
     const title = drawer?.querySelector("[data-kubernetes-drawer-title]");
@@ -6776,6 +6846,41 @@
     const contextRenameForm = local?.querySelector("[data-kubernetes-context-rename-form]");
     const contextSearch = local?.querySelector("[data-kubernetes-context-search]");
     let snapshotController = null;
+    const replaceSnapshot = async (destination, options = {}) => {
+      const scrollX = window.scrollX, scrollY = window.scrollY;
+      snapshotController?.abort(); snapshotController = new AbortController();
+      root.setAttribute("aria-busy", "true");
+      try {
+        const { response, document: page } = await fetchDocument(destination, { cache: "no-store", signal: snapshotController.signal });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const incoming = page?.querySelector("[data-kubernetes-page]");
+        if (!incoming) throw new Error("Kubernetes snapshot was not present in the response.");
+        for (const selector of [".kubernetes-monitor-summary", "[data-kubernetes-alert-slot]", ".kubernetes-workload-controls", ".kubernetes-table-shell", "[data-kubernetes-node-list]"]) {
+          const current = root.querySelector(selector), next = incoming.querySelector(selector);
+          if (current && next) current.replaceWith(next);
+        }
+        const sourceTime = incoming.querySelector("[data-monitor-refresh-time]");
+        const currentTime = root.querySelector("[data-monitor-refresh-time]");
+        if (sourceTime && currentTime) {
+          currentTime.dateTime = sourceTime.dateTime;
+          currentTime.textContent = sourceTime.textContent;
+        }
+        root.dataset.kubernetesCanManage = incoming.dataset.kubernetesCanManage || root.dataset.kubernetesCanManage || "";
+        root.dataset.kubernetesMode = incoming.dataset.kubernetesMode || root.dataset.kubernetesMode || "";
+        root.dataset.kubernetesCanRedeploy = incoming.dataset.kubernetesCanRedeploy || root.dataset.kubernetesCanRedeploy || "";
+        root.dataset.kubernetesCanScale = incoming.dataset.kubernetesCanScale || root.dataset.kubernetesCanScale || "";
+        root.dataset.kubernetesCanRunCron = incoming.dataset.kubernetesCanRunCron || root.dataset.kubernetesCanRunCron || "";
+        root.dataset.kubernetesCanLogs = incoming.dataset.kubernetesCanLogs || root.dataset.kubernetesCanLogs || "";
+        if (options.pushHistory !== false) history.pushState({ kubernetesMonitor: true }, "", destination);
+        renderIcons(root); localizeTimes(root); window.requestAnimationFrame(() => window.scrollTo(scrollX, scrollY));
+      } catch (error) {
+        if (error?.name !== "AbortError") console.error(error);
+        throw error;
+      } finally {
+        root.removeAttribute("aria-busy");
+      }
+    };
+    setupMonitorRefresh(root, () => replaceSnapshot(location.href, { pushHistory: false }), cleanups, () => snapshotController?.abort());
     const openDetail = async button => {
       if (!drawer || !body) return;
       const url = button.dataset.kubernetesDetailUrl;
@@ -6802,20 +6907,7 @@
       const snapshotLink = event.target.closest(".kubernetes-status-tabs a,.kubernetes-sort-link");
       if (snapshotLink && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
         event.preventDefault();
-        const scrollX = window.scrollX, scrollY = window.scrollY;
-        snapshotController?.abort(); snapshotController = new AbortController();
-        root.setAttribute("aria-busy", "true");
-        fetchDocument(snapshotLink.href, { cache: "no-store", signal: snapshotController.signal }).then(({response, document: page}) => {
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          const incoming = page?.querySelector("[data-kubernetes-page]");
-          if (!incoming) throw new Error("Kubernetes snapshot was not present in the response.");
-          for (const selector of [".kubernetes-status-tabs", ".kubernetes-toolbar", ".kubernetes-table-shell"]) {
-            const current = root.querySelector(selector), next = incoming.querySelector(selector);
-            if (current && next) current.replaceWith(next);
-          }
-          history.pushState({ kubernetesMonitor: true }, "", snapshotLink.href);
-          renderIcons(root); window.requestAnimationFrame(() => window.scrollTo(scrollX, scrollY));
-        }).catch(error => { if (error?.name !== "AbortError") console.error(error); }).finally(() => root.removeAttribute("aria-busy"));
+        replaceSnapshot(snapshotLink.href, { pushHistory: true }).catch(() => {});
         return;
       }
       const detail = event.target.closest("[data-kubernetes-detail-url]");
@@ -6892,8 +6984,11 @@
         row.hidden = query !== "" && ![row.dataset.contextName, row.dataset.contextCluster, row.dataset.contextUser, row.dataset.contextNamespace].some(value => (value || "").toLocaleLowerCase().includes(query));
       });
     };
-    const onClusterChange = () => clusterSelect?.form?.requestSubmit();
-    clusterSelect?.addEventListener("change", onClusterChange);
+    const onClusterChange = event => {
+      const select = event.target.closest("[data-kubernetes-cluster-select]");
+      if (select && root.contains(select)) select.form?.requestSubmit();
+    };
+    root.addEventListener("change", onClusterChange);
     drawer?.addEventListener("click", onDrawerClick);
     importDrawer?.addEventListener("click", onImportDrawerClick);
     contextDrawer?.addEventListener("click", onContextDrawerClick);
@@ -6902,7 +6997,7 @@
     cleanups.push(() => {
       snapshotController?.abort();
       root.removeEventListener("click", onClick);
-      clusterSelect?.removeEventListener("change", onClusterChange);
+      root.removeEventListener("change", onClusterChange);
       drawer?.removeEventListener("click", onDrawerClick);
       importDrawer?.removeEventListener("click", onImportDrawerClick);
       contextDrawer?.removeEventListener("click", onContextDrawerClick);

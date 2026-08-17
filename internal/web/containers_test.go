@@ -67,6 +67,7 @@ func TestContainersPageListsAllStatesSortsInHeadersAndGuardsOperations(t *testin
 		[]byte(`class="fact-strip container-fact-strip"`), []byte(`class="section-index"`),
 		[]byte(`class="container-inventory-controls"`), []byte(`class="container-running-row"`),
 		[]byte(`data-label="CPU"`), []byte(`data-container-status-link`), []byte(`data-container-operation`),
+		[]byte(`data-monitor-refresh`), []byte("Showing the latest snapshot"),
 	} {
 		if response.StatusCode != http.StatusOK || !bytes.Contains(page, expected) {
 			t.Fatalf("container page status=%d missing %q: %s", response.StatusCode, expected, page)
@@ -127,10 +128,14 @@ func TestMonitorTabsReplaceOnlyTheSnapshotAndRestoreScroll(t *testing.T) {
 	}
 	for _, expected := range [][]byte{
 		[]byte(`"[data-container-status-link],.container-sort-link"`),
+		[]byte(`setupMonitorRefresh(root, () => replaceSnapshot(location.href, { pushHistory: false }), cleanups, () => snapshotController?.abort());`),
+		[]byte(`"[data-container-alert-slot]"`),
+		[]byte(`"[data-container-pin-list]"`),
 		[]byte(`".container-result-summary"`),
 		[]byte(`".kubernetes-status-tabs a,.kubernetes-sort-link"`),
+		[]byte(`"[data-kubernetes-alert-slot]"`),
+		[]byte(`"[data-kubernetes-node-list]"`),
 		[]byte(`fetchDocument(destination, { cache: "no-store"`),
-		[]byte(`fetchDocument(snapshotLink.href, { cache: "no-store"`),
 		[]byte(`const scrollX = window.scrollX, scrollY = window.scrollY;`),
 		[]byte(`window.scrollTo(scrollX, scrollY)`),
 	} {

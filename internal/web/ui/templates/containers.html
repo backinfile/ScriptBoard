@@ -15,7 +15,7 @@ FORM: An application-style fact strip and responsive record ledger; state tabs u
   <title>{{t .Locale "containers.title"}} · ScriptBoard</title>
 </head>
 <body>
-<main class="workspace container-page" data-container-page data-csrf-token="{{.CSRFToken}}" data-container-can-manage="{{if .CanManage}}true{{else}}false{{end}}" data-container-return-to="{{containerStatusURL .Query .Query.Status}}">
+<main class="workspace container-page" data-container-page data-refresh-unavailable="{{t .Locale "applications.refresh_unavailable"}}" data-csrf-token="{{.CSRFToken}}" data-container-can-manage="{{if .CanManage}}true{{else}}false{{end}}" data-container-return-to="{{containerStatusURL .Query .Query.Status}}">
   <header class="page-heading container-heading">
     <div><p class="page-eyebrow">{{t .Locale "containers.eyebrow"}}</p><h1>{{t .Locale "containers.title"}}</h1><p>{{t .Locale "containers.description"}}</p></div>
   </header>
@@ -32,11 +32,11 @@ FORM: An application-style fact strip and responsive record ledger; state tabs u
     <div><dt>{{t .Locale "containers.attention"}}</dt><dd{{if gt .Attention 0}} data-tone="attention"{{end}}>{{.Attention}}</dd></div>
   </dl>
 
-  {{if not .DockerAvailable}}<div class="container-alert" role="alert"><span data-lucide="triangle-alert" aria-hidden="true"></span><div><strong>{{t .Locale "containers.engine_unavailable"}}</strong><p>{{with index .Errors "docker"}}{{.}}{{else}}{{t $.Locale "containers.engine_recovery"}}{{end}}</p></div></div>{{end}}
+  <div data-container-alert-slot>{{if not .DockerAvailable}}<div class="container-alert" role="alert"><span data-lucide="triangle-alert" aria-hidden="true"></span><div><strong>{{t .Locale "containers.engine_unavailable"}}</strong><p>{{with index .Errors "docker"}}{{.}}{{else}}{{t $.Locale "containers.engine_recovery"}}{{end}}</p></div></div>{{end}}</div>
 
   <section class="container-section" aria-labelledby="pinned-containers-heading">
     <header class="section-heading container-section-heading"><div><p class="section-index">{{t .Locale "applications.focus"}}</p><h2 id="pinned-containers-heading">{{t .Locale "containers.pinned"}}</h2><p>{{t .Locale "containers.no_pins_description"}}</p></div></header>
-    <div class="container-pin-list">
+    <div class="container-pin-list" data-container-pin-list>
       {{range .Pinned}}
       <article class="container-pin-row" data-state="{{.State}}">
         <button type="button" class="container-pin-row__open" data-container-detail-url="/monitor/containers/{{.NameKey}}/details" data-container-name="{{.Name}}" data-container-image="{{.Image}}" data-container-state="{{.State}}" data-container-application-id="{{.ApplicationID}}">
@@ -56,7 +56,7 @@ FORM: An application-style fact strip and responsive record ledger; state tabs u
   </section>
 
   <section class="container-section" aria-labelledby="container-inventory-heading">
-    <header class="section-heading container-section-heading"><div><p class="section-index">{{t .Locale "containers.all"}}</p><h2 id="container-inventory-heading">{{t .Locale "containers.inventory"}}</h2><p>{{t .Locale "containers.status_filter"}}</p></div></header>
+    <header class="section-heading container-section-heading"><div><p class="section-index">{{t .Locale "containers.all"}}</p><h2 id="container-inventory-heading">{{t .Locale "containers.inventory"}}</h2><p>{{t .Locale "containers.status_filter"}}</p></div><div class="applications-refresh" data-monitor-refresh-control><span><strong>{{t .Locale "applications.live_off"}}</strong><time datetime="{{machineTime .CollectedAt}}" data-local-time data-monitor-refresh-time>{{localTime .Locale .CollectedAt}}</time><small>{{t .Locale "applications.last_snapshot"}}</small></span><button type="button" class="applications-switch" role="switch" aria-checked="false" aria-label="{{t .Locale "containers.start_live"}}" data-monitor-refresh data-enabled-label="{{t .Locale "applications.live_on"}}" data-disabled-label="{{t .Locale "applications.live_off"}}" data-enabled-description="{{t .Locale "applications.every_five_seconds"}}" data-disabled-description="{{t .Locale "applications.last_snapshot"}}" data-pause-label="{{t .Locale "containers.pause_live"}}" data-start-label="{{t .Locale "containers.start_live"}}"></button></div></header>
     <div class="container-inventory-controls">
       <form class="container-toolbar" method="get" action="/monitor/containers">
         <label><span data-lucide="search" aria-hidden="true"></span><span class="sr-only">{{t .Locale "common.search"}}</span><input type="search" name="query" value="{{.Query.Search}}" placeholder="{{t .Locale "containers.search_placeholder"}}"></label>

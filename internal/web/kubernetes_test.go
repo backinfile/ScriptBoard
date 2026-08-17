@@ -117,7 +117,7 @@ func TestKubernetesPageSeparatesConnectionsFromSelectedClusterMonitoring(t *test
 	}
 	page, _ = io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, expected := range [][]byte{[]byte(`data-kubernetes-tab="monitor"`), []byte(`name="cluster"`), []byte(`value="` + firstID + `"`), []byte(`value="` + secondID + `" selected`), []byte("edge-home"), []byte("staging"), []byte("ghcr.io/acme/api:v2"), []byte("production"), []byte(`href="/monitor/kubernetes?tab=connections"`), []byte(`/monitor/kubernetes/clusters/` + secondID + `/workloads/production/Deployment/api/details`), []byte(`data-kubernetes-can-manage="true"`), []byte(`class="kubernetes-drawer"`), []byte(">Ready<")} {
+	for _, expected := range [][]byte{[]byte(`data-kubernetes-tab="monitor"`), []byte(`data-monitor-refresh`), []byte("Showing the latest snapshot"), []byte(`name="cluster"`), []byte(`value="` + firstID + `"`), []byte(`value="` + secondID + `" selected`), []byte("edge-home"), []byte("staging"), []byte("ghcr.io/acme/api:v2"), []byte("production"), []byte(`href="/monitor/kubernetes?tab=connections"`), []byte(`/monitor/kubernetes/clusters/` + secondID + `/workloads/production/Deployment/api/details`), []byte(`data-kubernetes-can-manage="true"`), []byte(`class="kubernetes-drawer"`), []byte(">Ready<")} {
 		if !bytes.Contains(page, expected) {
 			t.Fatalf("configured page missing %q: %s", expected, page)
 		}
