@@ -105,6 +105,10 @@ func (fixture *fixtureAuthorizer) Authorize(_ context.Context, request Authoriza
 	return fixture.actor, nil
 }
 
+func (fixture *fixtureAuthorizer) AuthorizeSession(ctx context.Context, request AuthorizationRequest) (Actor, error) {
+	return fixture.Authorize(ctx, request)
+}
+
 type fixtureExecutor struct {
 	mu         sync.Mutex
 	calls      int

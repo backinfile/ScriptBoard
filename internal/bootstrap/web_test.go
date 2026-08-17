@@ -2,13 +2,59 @@ package bootstrap
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"scriptboard/internal/clusterstatus"
+	"scriptboard/internal/config"
+	"scriptboard/internal/privilegebroker"
 )
+
+func TestRuntimeDependenciesFollowDeploymentMode(t *testing.T) {
+	portable, err := webDependencies(config.Config{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if portable.applicationProbe != nil || portable.kubernetesFactory != nil || portable.brokerEndpoint != "" {
+		t.Fatalf("portable dependencies unexpectedly use Broker runtime: %#v", portable)
+	}
+	managed, err := webDependenciesWithIdentity(config.Config{StateRoot: t.TempDir()}, t.TempDir(), func() error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if managed.brokerEndpoint == "" {
+		t.Fatal("managed dependencies have no Broker endpoint")
+	}
+	if _, ok := managed.applicationProbe.(*privilegebroker.ApplicationProbe); !ok {
+		t.Fatalf("managed application probe type = %T", managed.applicationProbe)
+	}
+	if _, ok := managed.kubernetesFactory.(privilegebroker.KubernetesFactory); !ok {
+		t.Fatalf("managed Kubernetes factory type = %T", managed.kubernetesFactory)
+	}
+}
+
+func TestBrokerKubernetesServiceResolvesSavedConnection(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:broker-kubernetes-resolver?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE kubernetes_connection (id TEXT PRIMARY KEY, name TEXT, kubeconfig_path TEXT, context_name TEXT, operation_mode TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO kubernetes_connection VALUES ('k8s-local','Local','C:\\secure\\kubeconfig','production','limited')`); err != nil {
+		t.Fatal(err)
+	}
+	connection, found, err := (brokerKubernetesService{db: db, factory: clusterstatus.HTTPFactory{}}).ResolveConnection(context.Background(), "k8s-local")
+	if err != nil || !found || connection.Name != "Local" || connection.Context != "production" || connection.Mode != clusterstatus.ModeLimited {
+		t.Fatalf("connection=%#v found=%v err=%v", connection, found, err)
+	}
+}
 
 func TestConnectOnDemandHostRetriesUntilEndpointIsReady(t *testing.T) {
 	starts, attempts := 0, 0

@@ -14,8 +14,10 @@ import (
 	"strings"
 	"time"
 
+	"scriptboard/internal/appstatus"
 	"scriptboard/internal/assistant/pirpc"
 	"scriptboard/internal/assistant/runtimehost"
+	"scriptboard/internal/clusterstatus"
 	"scriptboard/internal/config"
 	"scriptboard/internal/customdashboard"
 	"scriptboard/internal/installation"
@@ -61,7 +63,7 @@ func RunWeb(runContext context.Context, arguments []string, getenv func(string) 
 		NotificationEmailRelayEndpoint: loaded.NotificationEmailRelayEndpoint, NotificationEmailRecipient: loaded.NotificationEmailRecipient,
 		NotificationEmailRelayTokenFile: loaded.NotificationEmailRelayTokenFile,
 		UpdateCheck:                     loaded.UpdateCheck, UpdateInterval: loaded.UpdateInterval,
-		RunnerIdentityMode:              loaded.RunnerIdentityMode,
+		RunnerIdentityMode: loaded.RunnerIdentityMode,
 		RequestShutdown: func() {
 			select {
 			case updateShutdown <- struct{}{}:
@@ -70,6 +72,7 @@ func RunWeb(runContext context.Context, arguments []string, getenv func(string) 
 		},
 		RequestRestart: requestRestart, AssistantProcessLauncher: dependencies.assistantLauncher,
 		RunnerProcessLauncher: dependencies.runnerLauncher, PrivilegedBrokerEndpoint: dependencies.brokerEndpoint,
+		ApplicationProbe: dependencies.applicationProbe, KubernetesFactory: dependencies.kubernetesFactory,
 		AuditCheckpoint: dependencies.auditCheckpoint, MFAStore: dependencies.mfaStore, PasskeyStore: dependencies.passkeyStore,
 		RemoteWebsiteService: dependencies.remoteWebsites, RegistryConnections: dependencies.registryConnections,
 		ProviderCredentials: dependencies.providerCredentials, MySQLBackend: dependencies.mysqlBackend,
@@ -132,15 +135,21 @@ type composedWebDependencies struct {
 	mysqlBackend        mysqlmanager.Backend
 	hostFilesBackend    *privilegebroker.HostFilesBackend
 	stateBackups        webapp.StateBackupService
+	applicationProbe    appstatus.Probe
+	kubernetesFactory   clusterstatus.Factory
 	brokerEndpoint      string
 }
 
 func webDependencies(loaded config.Config, installRoot string) (composedWebDependencies, error) {
+	return webDependenciesWithIdentity(loaded, installRoot, platformservice.ValidateWebRuntimeIdentity)
+}
+
+func webDependenciesWithIdentity(loaded config.Config, installRoot string, validateIdentity func() error) (composedWebDependencies, error) {
 	var result composedWebDependencies
 	if installRoot == "" {
 		return result, nil
 	}
-	if err := platformservice.ValidateWebRuntimeIdentity(); err != nil {
+	if err := validateIdentity(); err != nil {
 		return result, fmt.Errorf("refuse managed Web service with unsafe OS identity: %w", err)
 	}
 	endpoint, err := runtimehost.DefaultEndpoint(loaded.StateRoot)
@@ -173,7 +182,12 @@ func webDependencies(loaded config.Config, installRoot string) (composedWebDepen
 	result.mysqlBackend = privilegebroker.NewMySQLBackend(client, mysqlmanager.ToolSettings{DumpExecutable: "mysqldump", ClientExecutable: "mysql"})
 	result.hostFilesBackend = privilegebroker.NewHostFilesBackend(client, filepath.Join(loaded.StateRoot, "inbox", "host-files-broker"))
 	result.stateBackups = privilegebroker.NewStateBackups(client)
+	result.applicationProbe, result.kubernetesFactory = brokerRuntimeDependencies(client)
 	return result, nil
+}
+
+func brokerRuntimeDependencies(client *privilegebroker.Client) (appstatus.Probe, clusterstatus.Factory) {
+	return privilegebroker.NewApplicationProbe(client), privilegebroker.NewKubernetesFactory(client)
 }
 
 func runnerRuntimeIdentity(mode string) string {

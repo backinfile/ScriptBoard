@@ -440,20 +440,20 @@ func TestLogHistoryLimitRejectsTheFifthConcurrentRead(t *testing.T) {
 		StateRoot:        filepath.Join(root, "state"),
 		ApplicationProbe: probe,
 	})
-	response, err := client.Get(serverURL + "/monitor/applications/data")
+	response, err := client.Get(serverURL + "/monitor/containers/data")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var applications appstatus.View
-	if err := json.NewDecoder(response.Body).Decode(&applications); err != nil {
+	var containers appstatus.ContainerView
+	if err := json.NewDecoder(response.Body).Decode(&containers); err != nil {
 		_ = response.Body.Close()
 		t.Fatal(err)
 	}
 	_ = response.Body.Close()
-	if len(applications.Applications) != 1 {
-		t.Fatalf("applications = %#v", applications.Applications)
+	if len(containers.Containers) != 1 {
+		t.Fatalf("containers = %#v", containers.Containers)
 	}
-	historyURL := serverURL + "/monitor/applications/" + applications.Applications[0].ID + "/logs/history"
+	historyURL := serverURL + "/monitor/applications/" + containers.Containers[0].ApplicationID + "/logs/history"
 	type result struct {
 		response *http.Response
 		err      error

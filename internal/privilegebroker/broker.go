@@ -35,7 +35,7 @@ import (
 )
 
 const (
-	ProtocolVersion                     = 2
+	ProtocolVersion                     = 3
 	MaxRequestBytes                     = 128 << 10
 	MaxResponseBytes                    = 5 << 20
 	capabilityLifetime                  = 30 * time.Second
@@ -125,6 +125,17 @@ const (
 	operationRegistryTest               = "registry_test"
 	operationRegistryInsecureConfigured = "registry_insecure_configured"
 	operationRegistryRegisterInsecure   = "registry_register_insecure"
+	operationApplicationSnapshot        = "application_snapshot"
+	operationApplicationDetail          = "application_detail"
+	operationApplicationOperate         = "application_operate"
+	operationApplicationLogOpen         = "application_log_open"
+	operationApplicationLogHistory      = "application_log_history"
+	operationApplicationLogFollow       = "application_log_follow"
+	operationKubernetesOpen             = "kubernetes_open"
+	operationKubernetesSnapshot         = "kubernetes_snapshot"
+	operationKubernetesDetail           = "kubernetes_detail"
+	operationKubernetesLogs             = "kubernetes_logs"
+	operationKubernetesOperate          = "kubernetes_operate"
 	statusOK                            = "ok"
 	statusError                         = "error"
 	defaultCallDeadline                 = 35 * time.Second
@@ -174,6 +185,8 @@ const (
 	ActionRegistryDelete          Action = "registry_delete"
 	ActionRegistryInspect         Action = "registry_inspect"
 	ActionRegistryDockerConfigure Action = "registry_docker_configure"
+	ActionApplicationOperate      Action = "application_operate"
+	ActionKubernetesOperate       Action = "kubernetes_operate"
 )
 
 var (
@@ -181,6 +194,7 @@ var (
 	actions          = map[Action]struct{}{
 		ActionInstallComponent: {}, ActionFail2BanUnban: {}, ActionUFWEnable: {}, ActionUFWApply: {},
 		ActionWindowsFirewallAdd: {}, ActionWindowsFirewallSet: {}, ActionWindowsFirewallDelete: {},
+		ActionApplicationOperate: {}, ActionKubernetesOperate: {},
 	}
 )
 
@@ -361,6 +375,8 @@ type ServerOptions struct {
 	HostFiles      HostFilesService
 	StateBackups   StateBackupService
 	Registry       RegistryService
+	Applications   ApplicationService
+	Kubernetes     KubernetesService
 	Now            func() time.Time
 }
 
@@ -379,6 +395,8 @@ type Server struct {
 	hostFiles      HostFilesService
 	stateBackups   StateBackupService
 	registry       RegistryService
+	applications   ApplicationService
+	kubernetes     KubernetesService
 	now            func() time.Time
 
 	mu                sync.Mutex
@@ -439,6 +457,7 @@ type wireRequest struct {
 	HostFiles             *hostFilesWireRequest   `json:"host_files,omitempty"`
 	StateBackup           *stateBackupWireRequest `json:"state_backup,omitempty"`
 	Registry              *registryWireRequest    `json:"registry,omitempty"`
+	Runtime               *runtimeWireRequest     `json:"runtime,omitempty"`
 }
 
 type wireResponse struct {
@@ -463,6 +482,7 @@ type wireResponse struct {
 	HostFiles             *hostFilesWireResponse   `json:"host_files,omitempty"`
 	StateBackup           *stateBackupWireResponse `json:"state_backup,omitempty"`
 	Registry              *registryWireResponse    `json:"registry,omitempty"`
+	Runtime               *runtimeWireResponse     `json:"runtime,omitempty"`
 }
 
 func NewServer(options ServerOptions) (*Server, error) {
@@ -475,7 +495,7 @@ func NewServer(options ServerOptions) (*Server, error) {
 	}
 	return &Server{
 		listener: options.Listener, verifyPeer: options.VerifyPeer, authorizer: options.Authorizer,
-		executor: options.Executor, auditor: options.Auditor, checkpoint: options.Checkpoint, mfa: options.MFA, passkeys: options.Passkeys, remoteWebsites: options.RemoteWebsites, providers: options.Providers, mysql: options.MySQL, hostFiles: options.HostFiles, stateBackups: options.StateBackups, registry: options.Registry, now: now,
+		executor: options.Executor, auditor: options.Auditor, checkpoint: options.Checkpoint, mfa: options.MFA, passkeys: options.Passkeys, remoteWebsites: options.RemoteWebsites, providers: options.Providers, mysql: options.MySQL, hostFiles: options.HostFiles, stateBackups: options.StateBackups, registry: options.Registry, applications: options.Applications, kubernetes: options.Kubernetes, now: now,
 		capabilities: make(map[string]capabilityBinding), done: make(chan struct{}),
 		mfaVerifyFailures: make(map[string]mfaVerifyFailure),
 	}, nil
@@ -561,6 +581,10 @@ func (server *Server) handle(connection net.Conn) {
 	case operationRegistryPrepare, operationRegistryPrepareDelete, operationRegistryCommit, operationRegistryAcknowledge, operationRegistryAbort,
 		operationRegistryConfigured, operationRegistryInspect, operationRegistryTest, operationRegistryInsecureConfigured, operationRegistryRegisterInsecure:
 		response = server.registryOperation(request)
+	case operationApplicationSnapshot, operationApplicationDetail, operationApplicationOperate,
+		operationApplicationLogOpen, operationApplicationLogHistory, operationApplicationLogFollow,
+		operationKubernetesOpen, operationKubernetesSnapshot, operationKubernetesDetail, operationKubernetesLogs, operationKubernetesOperate:
+		response = server.runtimeOperation(request)
 	default:
 		response = wireResponse{Status: statusError, ErrorCode: "operation_forbidden", Message: "operation is not supported"}
 	}
@@ -1032,10 +1056,16 @@ func (server *Server) execute(request wireRequest) wireResponse {
 		}
 	}
 	executionContext, cancel := context.WithTimeout(context.Background(), 25*time.Second)
-	err := server.executor.Execute(executionContext, ExecutionRequest{
+	execution := ExecutionRequest{
 		Action: binding.Action, Resource: binding.Resource, Revision: binding.Revision,
 		Parameters: append(json.RawMessage(nil), request.Parameters...), RequestID: binding.RequestID, Actor: binding.Actor,
-	})
+	}
+	var err error
+	if binding.Action == ActionApplicationOperate || binding.Action == ActionKubernetesOperate {
+		err = server.executeRuntimeMutation(executionContext, execution)
+	} else {
+		err = server.executor.Execute(executionContext, execution)
+	}
 	cancel()
 	result := "succeeded"
 	if err != nil {
@@ -1082,6 +1112,12 @@ func (server *Server) Close() error {
 			cancel()
 			if closeErr == nil {
 				closeErr = providerErr
+			}
+		}
+		if server.applications != nil {
+			applicationErr := server.applications.Close()
+			if closeErr == nil {
+				closeErr = applicationErr
 			}
 		}
 	})
@@ -1185,6 +1221,9 @@ func (client *Client) call(ctx context.Context, request wireRequest) (wireRespon
 func validateWireRequest(request wireRequest) error {
 	if request.Version != ProtocolVersion || !requestIDPattern.MatchString(request.RequestID) {
 		return errors.New("version or request ID is invalid")
+	}
+	if request.Runtime != nil || isRuntimeOperation(request.Operation) {
+		return validateRuntimeRequest(request)
 	}
 	if request.StateBackup != nil && !isStateBackupOperation(request.Operation) {
 		return errors.New("request contains unrelated state backup fields")

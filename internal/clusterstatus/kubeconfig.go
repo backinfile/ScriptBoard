@@ -26,6 +26,39 @@ const maxCredentialFileSize = 2 << 20
 
 type HTTPFactory struct{}
 
+// OpenCandidate validates and opens the same immutable kubeconfig bytes so a
+// writable path cannot be swapped between the security check and client setup.
+func (HTTPFactory) OpenCandidate(ctx context.Context, connection Connection) (Client, error) {
+	raw, err := readBoundedFile(filepath.Clean(connection.KubeconfigPath))
+	if err != nil {
+		return nil, fmt.Errorf("read kubeconfig candidate: %w", err)
+	}
+	if err := validateKubeconfigCandidate(raw); err != nil {
+		return nil, err
+	}
+	return openKubeconfig(ctx, connection, raw)
+}
+
+func validateKubeconfigCandidate(raw []byte) error {
+	var config kubeconfigFile
+	decoder := yaml.NewDecoder(bytes.NewReader(raw))
+	decoder.KnownFields(false)
+	if err := decoder.Decode(&config); err != nil {
+		return fmt.Errorf("parse kubeconfig candidate: %w", err)
+	}
+	for _, cluster := range config.Clusters {
+		if strings.TrimSpace(cluster.Cluster.CertificateAuthority) != "" {
+			return errors.New("new kubeconfig connections must embed certificate authority data")
+		}
+	}
+	for _, user := range config.Users {
+		if strings.TrimSpace(user.User.TokenFile) != "" || strings.TrimSpace(user.User.ClientCertificate) != "" || strings.TrimSpace(user.User.ClientKey) != "" {
+			return errors.New("new kubeconfig connections must embed token, client certificate, and key data")
+		}
+	}
+	return nil
+}
+
 type kubeconfigFile struct {
 	CurrentContext string `yaml:"current-context"`
 	Clusters       []struct {
@@ -72,12 +105,17 @@ type kubeHTTPClient struct {
 	fingerprint string
 }
 
-func (HTTPFactory) Open(_ context.Context, connection Connection) (Client, error) {
+func (HTTPFactory) Open(ctx context.Context, connection Connection) (Client, error) {
 	path := filepath.Clean(connection.KubeconfigPath)
 	raw, err := readBoundedFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read kubeconfig: %w", err)
 	}
+	return openKubeconfig(ctx, connection, raw)
+}
+
+func openKubeconfig(_ context.Context, connection Connection, raw []byte) (Client, error) {
+	path := filepath.Clean(connection.KubeconfigPath)
 	var config kubeconfigFile
 	decoder := yaml.NewDecoder(bytes.NewReader(raw))
 	decoder.KnownFields(false)

@@ -15,9 +15,11 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"scriptboard/internal/appstatus"
 	"scriptboard/internal/auditcheckpoint"
 	"scriptboard/internal/auditlog"
 	"scriptboard/internal/auditnotification"
+	"scriptboard/internal/clusterstatus"
 	"scriptboard/internal/config"
 	"scriptboard/internal/externaltrigger"
 	"scriptboard/internal/hostfiles"
@@ -221,6 +223,7 @@ func RunBroker(ctx context.Context, arguments []string, getenv func(string) stri
 		return err
 	}
 	defer transport.Close()
+	applications := appstatus.NewSystemProbe()
 	server, err := privilegebroker.NewServer(privilegebroker.ServerOptions{
 		Listener: transport.Listener, VerifyPeer: transport.VerifyPeer,
 		Authorizer: databaseSecurity, Executor: executor, Auditor: databaseSecurity,
@@ -228,9 +231,11 @@ func RunBroker(ctx context.Context, arguments []string, getenv func(string) stri
 		MFA: mfaStore, Passkeys: passkeyStore, RemoteWebsites: remoteWebsites, Providers: providers,
 		MySQL: mysqlService, HostFiles: hostFilesService,
 		Registry:     registryConnections,
+		Applications: applications, Kubernetes: brokerKubernetesService{db: database, factory: clusterstatus.HTTPFactory{}},
 		StateBackups: &brokerStateBackupService{stateRoot: absolute, database: database, checkpoint: checkpoint, audit: audit},
 	})
 	if err != nil {
+		_ = applications.Close()
 		return err
 	}
 	server.Start()
@@ -260,6 +265,36 @@ func RunBroker(ctx context.Context, arguments []string, getenv func(string) stri
 		emailPoller.Wait()
 	}
 	return server.Close()
+}
+
+type brokerKubernetesService struct {
+	db      *sql.DB
+	factory clusterstatus.Factory
+}
+
+func (service brokerKubernetesService) Open(ctx context.Context, connection clusterstatus.Connection) (clusterstatus.Client, error) {
+	return service.factory.Open(ctx, connection)
+}
+
+func (service brokerKubernetesService) ResolveConnection(ctx context.Context, id string) (clusterstatus.Connection, bool, error) {
+	var connection clusterstatus.Connection
+	err := service.db.QueryRowContext(ctx, `SELECT id, name, kubeconfig_path, context_name, operation_mode FROM kubernetes_connection WHERE id=?`, id).Scan(
+		&connection.ID, &connection.Name, &connection.KubeconfigPath, &connection.Context, &connection.Mode,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return clusterstatus.Connection{}, false, nil
+	}
+	return connection, err == nil, err
+}
+
+func (service brokerKubernetesService) OpenCandidate(ctx context.Context, connection clusterstatus.Connection) (clusterstatus.Client, error) {
+	factory, ok := service.factory.(interface {
+		OpenCandidate(context.Context, clusterstatus.Connection) (clusterstatus.Client, error)
+	})
+	if !ok {
+		return nil, errors.New("Kubernetes factory does not support candidate connections")
+	}
+	return factory.OpenCandidate(ctx, connection)
 }
 
 func samePath(first, second string) bool {

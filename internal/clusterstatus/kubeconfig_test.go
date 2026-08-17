@@ -134,6 +134,31 @@ contexts:
 	}
 }
 
+func TestKubeconfigCandidateRejectsExternalCredentialFiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "kubeconfig.yaml")
+	config := `clusters:
+- name: local
+  cluster:
+    server: https://127.0.0.1:6443
+    certificate-authority: root-ca.pem
+users:
+- name: scriptboard
+  user:
+    tokenFile: root-token
+contexts:
+- name: local
+  context:
+    cluster: local
+    user: scriptboard
+`
+	if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (HTTPFactory{}).OpenCandidate(context.Background(), Connection{Name: "candidate", KubeconfigPath: path}); err == nil {
+		t.Fatal("candidate with external credential files was accepted")
+	}
+}
+
 func TestKubeconfigRootCAsReplaceSystemTrustWhenExplicit(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer server.Close()

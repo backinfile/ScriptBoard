@@ -106,7 +106,7 @@ state/secrets/initial-admin-password
 
 Setup 会安全解开内嵌发布内容，整体安装、复核并启动 ScriptBoard；成功时输出产品版本和 `STATE: RUNNING`。高级诊断可使用已安装的 `scriptboard.exe service status` 和 `service verify`。若需要自定义配置，可传给 Setup，例如 `.\scriptboard-vX.Y.Z-windows-amd64-setup.exe --config C:\secure\scriptboard.yaml`。
 
-服务默认安装到 `C:\Program Files\ScriptBoard`，状态数据保存在 `C:\ProgramData\ScriptBoard\state`。安装会初始化状态并注册 Web、`ScriptBoardBroker`、`ScriptBoardAI` 与 `ScriptBoardRunner` 四个服务；Web 使用低权限 `LocalService` 与独立服务 SID，Broker 保留 LocalSystem，防火墙和主机安全写操作只经保护的本机 Named Pipe 进入 Broker。AI 与 Runner 使用各自的 restricted service SID 和 SCM demand-start，Web 对二者只有 `START + QUERY_STATUS`；Windows Service Hardening 默认阻断它们的网络，AI 只允许访问 IPv4/IPv6 环回 Provider 代理，Runner 无网络例外。四服务的崩溃恢复采用两次退避重启后停止的有界策略，避免永久重启风暴。安装时还会为当前 Windows 用户配置托盘自启动。
+服务默认安装到 `C:\Program Files\ScriptBoard`，状态数据保存在 `C:\ProgramData\ScriptBoard\state`。安装会初始化状态并注册 Web、`ScriptBoardBroker`、`ScriptBoardAI` 与 `ScriptBoardRunner` 四个服务；Web 使用低权限 `LocalService` 与独立服务 SID，Broker 保留 LocalSystem，防火墙、主机安全、Docker Named Pipe 与 Kubernetes 集群访问只经保护的本机 Named Pipe 进入 Broker。Web 不需要加入 `docker-users`。AI 与 Runner 使用各自的 restricted service SID 和 SCM demand-start，Web 对二者只有 `START + QUERY_STATUS`；Windows Service Hardening 默认阻断它们的网络，AI 只允许访问 IPv4/IPv6 环回 Provider 代理，Runner 无网络例外。四服务的崩溃恢复采用两次退避重启后停止的有界策略，避免永久重启风暴。安装时还会为当前 Windows 用户配置托盘自启动。
 
 ### Linux
 
@@ -119,7 +119,7 @@ sudo ./scriptboard-vX.Y.Z-linux-amd64.run
 
 `.run` 会安全解开内嵌发布内容，整体安装、复核并启动 ScriptBoard；成功时输出产品版本和 `STATE: RUNNING`。高级诊断仍可使用 `sudo /opt/scriptboard/current/scriptboard service status` 和 `service verify`。若需要自定义配置，可传给安装器，例如 `sudo ./scriptboard-vX.Y.Z-linux-amd64.run --config /etc/scriptboard/custom.yaml`。
 
-服务默认安装到 `/opt/scriptboard`，状态数据保存在 `/var/lib/scriptboard/state`。安装会初始化状态，创建无登录 `scriptboard-web`、`scriptboard-ai` 与 `scriptboard-runner` 系统用户，并注册 Web、Broker、AI Host 与 Runner 四个 systemd 组件；Web 与 Broker 常驻，AI Host 和 Runner 由各自受保护的 Unix Socket 按需激活，未使用 AI 或尚无 Run 时不会预先启动对应执行进程。Web 不以 root 运行，防火墙和主机安全写操作只经校验 peer UID 的本机 Unix Socket 进入 root Broker。AI 只允许环回网络，Runner 默认无 IP 网络；两个 Runtime 服务都使用 systemd seccomp allowlist、空 capability 和资源上限。
+服务默认安装到 `/opt/scriptboard`，状态数据保存在 `/var/lib/scriptboard/state`。安装会初始化状态，创建无登录 `scriptboard-web`、`scriptboard-ai` 与 `scriptboard-runner` 系统用户，并注册 Web、Broker、AI Host 与 Runner 四个 systemd 组件；Web 与 Broker 常驻，AI Host 和 Runner 由各自受保护的 Unix Socket 按需激活，未使用 AI 或尚无 Run 时不会预先启动对应执行进程。Web 不以 root 运行，防火墙、主机安全、本机 Docker Socket 与 Kubernetes 集群访问只经校验 peer UID 的本机 Unix Socket 进入 root Broker。AI 只允许环回网络，Runner 默认无 IP 网络；两个 Runtime 服务都使用 systemd seccomp allowlist、空 capability 和资源上限。
 
 只有需要修改监听地址、TLS、状态目录等设置时，才需要创建 YAML 配置文件，并在安装时通过 `--config CONFIG_PATH` 指定。未指定时，ScriptBoard 会使用平台默认配置路径（Windows 为 `C:\ProgramData\ScriptBoard\config.yaml`，Linux 为 `/etc/scriptboard/config.yaml`）；该文件不存在时直接使用内置默认值。
 
@@ -148,7 +148,7 @@ Windows 从各个可用卷开始浏览，Linux 从 `/` 开始浏览。文件页�
 
 ### Kubernetes 监控
 
-管理员或维护员可在“监控 → Kubernetes”的“集群连接”页签配置多个集群，并在“集群监控”页签通过下拉框切换当前集群。填写 ScriptBoard 服务所在主机可读取的 kubeconfig 绝对路径，并可选择指定 context；默认使用 kubeconfig 的 `current-context`。连接默认“仅观察”，需要时可明确开启仅包含滚动重部署、单步增减副本和立即运行 CronJob 的“有限操作”。
+管理员或维护员可在“监控 → Kubernetes”的“集群连接”页签配置多个集群，并在“集群监控”页签通过下拉框切换当前集群。受管部署由 Privileged Broker 读取 kubeconfig；填写 Broker 身份可读取的主机绝对路径，并可选择指定 context，默认使用 kubeconfig 的 `current-context`。首次登记或测试的 kubeconfig 必须内嵌 token、CA、客户端证书和私钥数据，不能引用外部凭据文件；已登记连接按数据库中的路径、Context 和模式精确绑定。连接默认“仅观察”，需要时可明确开启仅包含滚动重部署、单步增减副本和立即运行 CronJob 的“有限操作”。便携模式仍使用启动 ScriptBoard 的当前用户身份。
 
 “本地管理”页签用于管理 ScriptBoard 服务身份的本机 kubeconfig：可在默认配置和已登记连接的配置路径之间切换，导入并按名称合并配置，查看、搜索、切换、编辑、重命名或删除 Context，并下载整份配置或单个 Context 的独立 YAML。导入文件限制为 2 MiB，写入采用同目录临时文件原子替换；所有修改均要求管理员或维护员权限、CSRF 校验并写入审计记录。
 
