@@ -661,11 +661,20 @@ func TestExternalLogFilesTabListsSearchesAndDownloadsCurrentAndRotatedFiles(t *t
 		`href="/config/external-interfaces?tab=logs" aria-current="page"`, `data-external-log-files`, `Archive receiver`,
 		`<details class="external-log-group" open>`, `class="external-log-group__chevron"`, `class="external-log-entry__identity"`, `<h3>Archive receivers</h3>`, `<code>archive-receivers</code>`,
 		`data-preserve-scroll`,
-		`incoming.log`, `incoming.log.1`, `name="tab" value="logs"`, `/resources/files/download?path=` + url.QueryEscape(logFile),
+		`incoming.log`, `incoming.log.1`, `name="tab" value="logs"`, `/resources/files/log?path=` + url.QueryEscape(logFile), `/resources/files/log/download?path=` + url.QueryEscape(logFile),
 	} {
 		if !strings.Contains(logsPage, expected) {
 			t.Fatalf("log files page is missing %q: %s", expected, logsPage)
 		}
+	}
+	archiveDownload, err := client.Get(hostFileRequestURL(serverURL, "/resources/files/log/download", logFile+".1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	archiveBody, _ := io.ReadAll(archiveDownload.Body)
+	_ = archiveDownload.Body.Close()
+	if archiveDownload.StatusCode != http.StatusOK || !strings.Contains(archiveDownload.Header.Get("Content-Disposition"), ".txt") || !bytes.Contains(archiveBody, []byte("rotated record")) {
+		t.Fatalf("rotated external log TXT status=%d disposition=%q body=%s", archiveDownload.StatusCode, archiveDownload.Header.Get("Content-Disposition"), archiveBody)
 	}
 	searched := readLogs("&q=archive-log")
 	if !strings.Contains(searched, "Archive receiver") || !strings.Contains(searched, "2 log files") {

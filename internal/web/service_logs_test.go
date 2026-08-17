@@ -24,7 +24,7 @@ func TestServiceLogsPageAndExportKeepFixedFiltersAndRedaction(t *testing.T) {
 	}}
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: filepath.Join(t.TempDir(), "state"), ServiceLogs: fixture})
 	page := getSecurityPage(t, client, serverURL+"/history/audit/service-logs?service=runner&range=7d&severity=error&q=failed")
-	for _, expected := range [][]byte{[]byte("Service logs"), []byte("Windows System Event Log"), []byte("Run Worker"), []byte("7036"), []byte("runner failed token=&lt;redacted&gt;"), []byte("scans at most 2,000 entries and returns 500")} {
+	for _, expected := range [][]byte{[]byte("Service logs"), []byte("Windows System Event Log"), []byte("Run Worker"), []byte("7036"), []byte("runner failed token=&lt;redacted&gt;"), []byte("scans at most 2,000 entries and returns 500"), []byte(`class="run-log-section service-log-console"`), []byte(`/history/audit/service-logs.txt?`)} {
 		if !bytes.Contains(page, expected) {
 			t.Fatalf("service logs page missing %q: %s", expected, page)
 		}
@@ -52,6 +52,15 @@ func TestServiceLogsPageAndExportKeepFixedFiltersAndRedaction(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "runner failed token=<redacted>") || strings.Contains(string(body), "super-secret-value") {
 		t.Fatalf("service logs CSV = %s", body)
+	}
+	response, err = client.Get(serverURL + "/history/audit/service-logs.txt?service=runner&range=7d&severity=error&q=failed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil || response.StatusCode != http.StatusOK || !strings.Contains(response.Header.Get("Content-Disposition"), ".txt") || !strings.Contains(string(body), "runner failed token=<redacted>") {
+		t.Fatalf("service logs TXT status=%d disposition=%q err=%v body=%s", response.StatusCode, response.Header.Get("Content-Disposition"), err, body)
 	}
 	legacy, err := client.Get(serverURL + "/settings/service-logs?service=runner")
 	if err != nil {

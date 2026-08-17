@@ -225,8 +225,8 @@ func (a *App) externalLogFiles(ctx context.Context, group externaltrigger.Group,
 	files := make([]externalLogFileView, 0, 1+config.MaxBackups)
 	if info, _, err := a.hostInfo(ctx, config.File); err == nil && info.Mode().IsRegular() {
 		configured.Exists, configured.Size, configured.ModifiedAt = true, info.Size(), info.ModTime()
-		configured.PreviewURL = routeFileURL("/resources/files/view", config.File)
-		configured.DownloadURL = routeFileURL("/resources/files/download", config.File)
+		configured.PreviewURL = routeFileURL("/resources/files/log", config.File)
+		configured.DownloadURL = routeFileURL("/resources/files/log/download", config.File)
 	}
 	if externalLogMatches(configured, query) {
 		files = append(files, configured)
@@ -244,8 +244,8 @@ func (a *App) externalLogFiles(ctx context.Context, group externaltrigger.Group,
 		archive.Path, archive.FileName = archivePath, filepath.Base(archivePath)
 		archive.Exists, archive.Archive, archive.ArchiveNumber = true, true, archiveNumber
 		archive.Size, archive.ModifiedAt = info.Size(), info.ModTime()
-		archive.PreviewURL = routeFileURL("/resources/files/view", archivePath)
-		archive.DownloadURL = routeFileURL("/resources/files/download", archivePath)
+		archive.PreviewURL = routeFileURL("/resources/files/log", archivePath)
+		archive.DownloadURL = routeFileURL("/resources/files/log/download", archivePath)
 		if externalLogMatches(archive, query) {
 			files = append(files, archive)
 		}

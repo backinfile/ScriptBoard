@@ -285,6 +285,8 @@ Write-Output "filesystem: healthy"
 Write-Output "database: healthy"
 Write-Output "scheduler: healthy"
 Write-Output "host-filesystem: ready"
+Write-Warning "cache nearing capacity"
+Write-Output "ERROR fixture error marker"
 Write-Output "result=passed"
 `,
 		"automation/maintenance/archive-old-logs.cmd":    "@echo off\r\necho archived=42\r\necho result=passed\r\n",

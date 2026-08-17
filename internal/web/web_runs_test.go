@@ -51,6 +51,49 @@ func TestRunLogStartsAtLatestOutput(t *testing.T) {
 	if !strings.Contains(initRun, `log.scrollTo({ top, behavior: "auto" });`) || strings.Contains(initRun, `behavior: "smooth"`) {
 		t.Fatal("Run log jump controls must move immediately without smooth scrolling")
 	}
+	for _, expected := range []string{`data-run-duration`, `root.dataset.runStartedAt`, `renderDuration()`} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("Run duration must update beside the last-output age; missing %q", expected)
+		}
+	}
+}
+
+func TestRunLogUsesSeverityInsteadOfScriptLanguage(t *testing.T) {
+	t.Parallel()
+	page, err := webFiles.ReadFile("ui/templates/run.html")
+	if err != nil {
+		t.Fatalf("read run template: %v", err)
+	}
+	if !strings.Contains(string(page), `data-run-log`) {
+		t.Fatalf("Run log must expose its semantic output region: %s", page)
+	}
+	if strings.Contains(string(page), `data-highlight-language`) || strings.Contains(string(page), `data-script-preview`) || strings.Contains(string(page), `language-`) {
+		t.Fatalf("Run log must not opt into file-type syntax highlighting: %s", page)
+	}
+	script, err := webFiles.ReadFile("ui/assets/app.js")
+	if err != nil {
+		t.Fatalf("read app script: %v", err)
+	}
+	if !strings.Contains(string(script), `element.closest("[data-run-log]")`) || !strings.Contains(string(script), `span.dataset.severity = payload.severity || "normal"`) {
+		t.Fatal("Run logs must skip script highlighting and render their log severity")
+	}
+}
+
+func TestRunLogEventViewClassifiesSeverity(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		text string
+		want string
+	}{
+		{text: "request complete", want: "normal"},
+		{text: "WARNING cache nearing capacity", want: "warning"},
+		{text: "fatal: worker stopped after warning", want: "error"},
+	}
+	for _, test := range tests {
+		if got := string(newRunLogEventView(runmanager.Event{Data: test.text}).Severity); got != test.want {
+			t.Errorf("severity for %q = %q, want %q", test.text, got, test.want)
+		}
+	}
 }
 
 func TestRunListItemViewBuildsDuration(t *testing.T) {

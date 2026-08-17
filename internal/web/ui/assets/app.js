@@ -349,6 +349,7 @@
   }
 
   function highlightElement(element, language) {
+    if (element.closest("[data-run-log]")) return false;
     const fragment = sanitizedHighlight(element.textContent, language);
     if (!fragment) return false;
     element.replaceChildren(fragment);
@@ -2937,6 +2938,7 @@
     });
     const state = root.querySelector("[data-run-live-state]");
     const idle = root.querySelector("[data-run-log-idle]");
+    const duration = root.querySelector("[data-run-duration]");
     const pause = root.querySelector("[data-run-pause]");
     const pauseLabel = pause?.querySelector("[data-run-pause-label]");
     let paused = false;
@@ -2950,6 +2952,8 @@
     let lastLogAt = null;
     let idleTimer = null;
     let disposed = false;
+    const startedAt = root.dataset.runStartedAt ? new Date(root.dataset.runStartedAt) : null;
+    let finishedAt = root.dataset.runFinishedAt ? new Date(root.dataset.runFinishedAt) : null;
     const formatElapsed = seconds => {
       const value = Math.max(0, Math.floor(seconds));
       if (value < 60) return `${value}${words().secondShort}`;
@@ -2968,6 +2972,11 @@
       idle.dateTime = lastLogAt.toISOString();
       idle.textContent = `${idle.dataset.prefix || ""} ${formatElapsed((Date.now() - lastLogAt.getTime()) / 1000)}`.trim();
     };
+    const renderDuration = () => {
+      if (!duration || !startedAt || Number.isNaN(startedAt.getTime())) return;
+      const end = finishedAt && !Number.isNaN(finishedAt.getTime()) ? finishedAt : new Date();
+      duration.textContent = `${duration.dataset.prefix || ""} ${formatElapsed((end.getTime() - startedAt.getTime()) / 1000)}`.trim();
+    };
     const markLastLog = payload => {
       const parsed = payload?.time ? new Date(payload.time) : new Date();
       if (!Number.isNaN(parsed.getTime()) && (!lastLogAt || parsed > lastLogAt)) {
@@ -2977,13 +2986,15 @@
     };
     if (idle) {
       renderIdle();
-      idleTimer = window.setInterval(renderIdle, 1000);
+      renderDuration();
+      idleTimer = window.setInterval(() => { renderIdle(); renderDuration(); }, 1000);
     }
     const createEntry = payload => {
       const sequence = Number(payload.sequence);
       const span = document.createElement("span");
       if (Number.isSafeInteger(sequence) && sequence > 0) span.dataset.sequence = String(sequence);
       span.dataset.source = payload.source || "stdout";
+      span.dataset.severity = payload.severity || "normal";
       if (payload.encodingError) span.dataset.encodingError = "true";
       span.textContent = payload.text || "";
       return span;
@@ -3050,6 +3061,8 @@
       });
       source.addEventListener("complete", event => {
         completed = true;
+        if (!finishedAt) finishedAt = new Date();
+        renderDuration();
         source?.close();
         if (state) state.textContent = words().complete;
         const status = root.querySelector("[data-run-status]");
@@ -4619,6 +4632,7 @@
     const pause = root.querySelector("[data-log-pause]");
     const pauseLabel = root.querySelector("[data-log-pause-label]");
     const autoFollow = root.querySelector("[data-log-autofollow]");
+    const jumpTop = root.querySelector("[data-log-jump-top]");
     const copyButton = root.querySelector("[data-log-copy]");
     const copyLabel = root.querySelector("[data-log-copy-label]");
     const clearButton = root.querySelector("[data-log-clear]");
@@ -4890,6 +4904,12 @@
       pause?.setAttribute("aria-pressed", String(paused));
     };
     const onAutoFollow = () => setAutoFollow(!shouldFollow);
+    const onJumpTop = () => {
+      setAutoFollow(false);
+      output.scrollTo({ top: 0, behavior: "auto" });
+      loadHistory(false);
+      output.focus({ preventScroll: true });
+    };
     const onNewLines = () => setAutoFollow(true);
     const onClear = () => {
       output.querySelectorAll(".live-log-entry,.live-log-notice").forEach(row => row.remove());
@@ -4915,6 +4935,7 @@
     output.addEventListener("scroll", onScroll, { passive: true });
     pause?.addEventListener("click", onPause);
     autoFollow?.addEventListener("click", onAutoFollow);
+    jumpTop?.addEventListener("click", onJumpTop);
     newLinesButton?.addEventListener("click", onNewLines);
     clearButton?.addEventListener("click", onClear);
     copyButton?.addEventListener("click", onCopy);
@@ -4933,9 +4954,31 @@
       output.removeEventListener("scroll", onScroll);
       pause?.removeEventListener("click", onPause);
       autoFollow?.removeEventListener("click", onAutoFollow);
+      jumpTop?.removeEventListener("click", onJumpTop);
       newLinesButton?.removeEventListener("click", onNewLines);
       clearButton?.removeEventListener("click", onClear);
       copyButton?.removeEventListener("click", onCopy);
+    });
+  }
+
+  function initStaticLogControls(cleanups) {
+    document.querySelectorAll("[data-static-log-section]").forEach(section => {
+      const output = section.querySelector("[data-static-log-output]");
+      if (!output) return;
+      const top = section.querySelector("[data-static-log-top]");
+      const bottom = section.querySelector("[data-static-log-bottom]");
+      const scroll = position => {
+        output.scrollTo({ top: position, behavior: "auto" });
+        output.focus({ preventScroll: true });
+      };
+      const onTop = () => scroll(0);
+      const onBottom = () => scroll(output.scrollHeight);
+      top?.addEventListener("click", onTop);
+      bottom?.addEventListener("click", onBottom);
+      cleanups.push(() => {
+        top?.removeEventListener("click", onTop);
+        bottom?.removeEventListener("click", onBottom);
+      });
     });
   }
 
@@ -7109,6 +7152,7 @@
     initKubernetes(cleanups);
     initKubernetesConnection(cleanups);
     initLiveLog(cleanups);
+    initStaticLogControls(cleanups);
     initRun(cleanups);
     initGroupedRecords(cleanups);
     initScheduleCron(cleanups);

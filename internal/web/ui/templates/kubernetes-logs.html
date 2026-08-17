@@ -18,9 +18,9 @@
     </div>
     <a class="button" href=""><span data-lucide="refresh-cw" aria-hidden="true"></span>{{t .Locale "kubernetes.refresh_logs"}}</a>
   </header>
-  <section class="kubernetes-log-stage" aria-labelledby="kubernetes-log-output-title">
-    <header><div><h2 id="kubernetes-log-output-title">{{t .Locale "kubernetes.pod_logs"}}</h2><p>{{t .Locale "kubernetes.logs_description"}}</p></div><span>{{len .Lines}} {{t .Locale "kubernetes.log_lines"}}</span></header>
-    {{if .Lines}}<div class="kubernetes-log-output" role="log" aria-live="off">{{range .Lines}}<div class="kubernetes-log-line"><time datetime="{{machineTime .At}}" data-local-time>{{localTime $.Locale .At}}</time><code>{{.Source}}</code><pre>{{.Text}}</pre></div>{{end}}</div>{{else}}<p class="kubernetes-log-empty">{{t .Locale "kubernetes.no_logs"}}</p>{{end}}
+  <section class="run-log-section kubernetes-log-stage" aria-labelledby="kubernetes-log-output-title" data-static-log-section>
+    <header><div><h2 id="kubernetes-log-output-title">{{t .Locale "kubernetes.pod_logs"}}</h2><div class="run-log-status-line"><span>{{len .Lines}} {{t .Locale "kubernetes.log_lines"}}</span></div></div><div class="run-log-actions"><button class="button button--compact" type="button" data-static-log-top><span data-lucide="arrow-up-to-line" aria-hidden="true"></span>{{t .Locale "run_detail.jump_top"}}</button><button class="button button--compact" type="button" data-static-log-bottom><span data-lucide="arrow-down-to-line" aria-hidden="true"></span>{{t .Locale "run_detail.jump_bottom"}}</button><a class="button button--compact" href="{{.DownloadURL}}" data-native><span data-lucide="download" aria-hidden="true"></span>{{t .Locale "run_detail.download_txt"}}</a></div></header>
+    {{if .Lines}}<pre class="static-log-output" data-static-log-output tabindex="0" role="log" aria-live="off">{{range .Lines}}<span data-source="kubernetes" data-severity="{{.Severity}}">[{{machineTime .At}}] [{{.Source}}] {{.Text}}</span>{{end}}</pre>{{else}}<p class="kubernetes-log-empty">{{t .Locale "kubernetes.no_logs"}}</p>{{end}}
   </section>
 </main>
 </body>

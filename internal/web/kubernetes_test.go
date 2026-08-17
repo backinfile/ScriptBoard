@@ -150,7 +150,18 @@ func TestKubernetesPageSeparatesConnectionsFromSelectedClusterMonitoring(t *test
 	logPage, _ := io.ReadAll(logResponse.Body)
 	_ = logResponse.Body.Close()
 	if logResponse.StatusCode != http.StatusOK || !bytes.Contains(logPage, []byte(`data-kubernetes-logs-page`)) ||
-		!bytes.Contains(logPage, []byte("ready")) || !bytes.Contains(logPage, []byte("api-abc/api")) {
+		!bytes.Contains(logPage, []byte("ready")) || !bytes.Contains(logPage, []byte("api-abc/api")) ||
+		!bytes.Contains(logPage, []byte(`class="run-log-section kubernetes-log-stage"`)) ||
+		!bytes.Contains(logPage, []byte(`/logs/download`)) {
 		t.Fatalf("Kubernetes log page status=%d body=%s", logResponse.StatusCode, logPage)
+	}
+	logDownload, err := client.Get(serverURL + "/monitor/kubernetes/clusters/" + secondID + "/workloads/production/Deployment/api/logs/download")
+	if err != nil {
+		t.Fatal(err)
+	}
+	logText, _ := io.ReadAll(logDownload.Body)
+	_ = logDownload.Body.Close()
+	if logDownload.StatusCode != http.StatusOK || !strings.Contains(logDownload.Header.Get("Content-Disposition"), ".txt") || !bytes.Contains(logText, []byte("api-abc/api")) || !bytes.Contains(logText, []byte("ready")) {
+		t.Fatalf("Kubernetes log TXT download status=%d disposition=%q body=%s", logDownload.StatusCode, logDownload.Header.Get("Content-Disposition"), logText)
 	}
 }

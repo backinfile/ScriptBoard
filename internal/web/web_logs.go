@@ -41,7 +41,7 @@ func (a *App) fileLogPage(response http.ResponseWriter, request *http.Request) {
 		Metadata: metadata, Title: webText(locale, "logs.live_view"), BackURL: filesURL(parent),
 		HistoryURL:  "/resources/files/log/history?" + values.Encode(),
 		EventsURL:   "/resources/files/log/events?" + values.Encode(),
-		DownloadURL: routeFileURL("/resources/files/download", relative),
+		DownloadURL: "/resources/files/log/download?" + values.Encode(),
 		Locale:      locale,
 	})
 }
@@ -58,9 +58,53 @@ func (a *App) applicationLogPage(response http.ResponseWriter, request *http.Req
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = liveLogTemplate.Execute(response, liveLogPageView{
 		Metadata: metadata, Title: metadata.Name, BackURL: "/monitor/applications",
-		HistoryURL: baseURL + "/history", EventsURL: baseURL + "/events",
+		HistoryURL: baseURL + "/history", EventsURL: baseURL + "/events", DownloadURL: baseURL + "/download",
 		Locale: resolveWebLocale(request),
 	})
+}
+
+func (a *App) fileLogDownload(response http.ResponseWriter, request *http.Request) {
+	source, err := a.openFileLogSource(request)
+	if err != nil {
+		writeLogSourceError(response, err)
+		return
+	}
+	if err := writeLogTextDownload(response, request, source); err != nil {
+		writeLogSourceError(response, err)
+	}
+}
+
+func (a *App) applicationLogDownload(response http.ResponseWriter, request *http.Request) {
+	source, err := a.openApplicationLogSource(request)
+	if err != nil {
+		writeApplicationLogPageError(response, err)
+		return
+	}
+	if err := writeLogTextDownload(response, request, source); err != nil {
+		writeApplicationLogPageError(response, err)
+	}
+}
+
+func writeLogTextDownload(response http.ResponseWriter, request *http.Request, source logstream.Source) error {
+	page, err := source.History(request.Context(), "")
+	if err != nil {
+		return err
+	}
+	metadata := source.Metadata()
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	response.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s-logs.txt"`, sanitizeDownloadName(metadata.Name)))
+	response.Header().Set("X-Content-Type-Options", "nosniff")
+	for _, entry := range page.Entries {
+		stamp := "-"
+		if entry.Time != nil {
+			stamp = entry.Time.UTC().Format(time.RFC3339Nano)
+		}
+		if _, err := fmt.Fprintf(response, "[%s] [%s] [%s] %s\n", stamp, strings.ToUpper(string(entry.Severity)), strings.ToUpper(string(entry.Source)), entry.Text); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (a *App) applicationLogHistory(response http.ResponseWriter, request *http.Request) {

@@ -9,7 +9,7 @@
 </head>
 <body class="live-log-body">
 <main
-  class="workspace live-log-page"
+  class="workspace run-page live-log-page"
   data-live-log-viewer
   data-log-history-url="{{.HistoryURL}}"
   data-log-events-url="{{.EventsURL}}"
@@ -46,19 +46,20 @@
         <span class="status-dot" aria-hidden="true"></span>
         <span data-log-state-label>{{t .Locale "logs.connecting"}}</span>
       </span>
-      {{if .DownloadURL}}<a class="button button--compact" href="{{.DownloadURL}}" data-native>
-        <span data-lucide="download" aria-hidden="true"></span>{{t .Locale "common.download"}}
-      </a>{{end}}
     </div>
   </header>
 
-  <section class="live-log-stage" aria-labelledby="live-log-output-title">
+  <section class="run-log-section live-log-stage" aria-labelledby="live-log-output-title">
     <header class="live-log-toolbar">
       <div>
         <h2 id="live-log-output-title">{{t .Locale "logs.output"}}</h2>
         <p>{{t .Locale "logs.description"}}</p>
       </div>
-      <div class="live-log-toolbar__actions">
+      <div class="run-log-actions live-log-toolbar__actions">
+        <button class="button button--compact" type="button" data-log-jump-top>
+          <span data-lucide="arrow-up-to-line" aria-hidden="true"></span>
+          <span>{{t .Locale "run_detail.jump_top"}}</span>
+        </button>
         <button class="button button--compact" type="button" data-log-autofollow aria-pressed="true">
           <span data-lucide="arrow-down-to-line" aria-hidden="true"></span>
           <span>{{t .Locale "logs.auto_follow"}}</span>
@@ -67,6 +68,9 @@
           <span data-lucide="copy" aria-hidden="true"></span>
           <span data-log-copy-label>{{t .Locale "logs.copy"}}</span>
         </button>
+        {{if .DownloadURL}}<a class="button button--compact" href="{{.DownloadURL}}" data-native>
+          <span data-lucide="download" aria-hidden="true"></span>{{t .Locale "run_detail.download_txt"}}
+        </a>{{end}}
         <button class="button button--compact" type="button" data-log-clear>
           <span data-lucide="eraser" aria-hidden="true"></span>
           <span>{{t .Locale "logs.clear_view"}}</span>

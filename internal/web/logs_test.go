@@ -100,6 +100,8 @@ func TestFileLogPageRendersTheSharedLiveViewerShell(t *testing.T) {
 		`data-live-log-viewer`,
 		`data-log-history-url="` + hostFileHref("/resources/files/log/history", logPath) + `"`,
 		`data-log-events-url="` + hostFileHref("/resources/files/log/events", logPath) + `"`,
+		`href="` + hostFileHref("/resources/files/log/download", logPath) + `"`,
+		`class="run-log-section live-log-stage"`,
 		`data-log-output`,
 		`service.log`,
 	} {
@@ -109,6 +111,15 @@ func TestFileLogPageRendersTheSharedLiveViewerShell(t *testing.T) {
 	}
 	if !bytes.Contains(body.Bytes(), []byte(`<h1>Live view</h1>`)) || bytes.Contains(body.Bytes(), []byte(`<h1>`+logPath+`</h1>`)) {
 		t.Fatalf("file log viewer should use a page title instead of repeating the file path: %s", body.String())
+	}
+	response, err = client.Get(hostFileRequestURL(serverURL, "/resources/files/log/download", logPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	download, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK || !strings.Contains(response.Header.Get("Content-Disposition"), ".txt") || !bytes.Contains(download, []byte("ready")) {
+		t.Fatalf("file log TXT download status=%d disposition=%q body=%s", response.StatusCode, response.Header.Get("Content-Disposition"), download)
 	}
 
 	response, err = client.Get(hostFilesRequestURL(serverURL, hostRoot))
@@ -296,8 +307,19 @@ func TestDockerLogRoutesUseTheSharedViewerAndRejectHostApplications(t *testing.T
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusOK ||
 		!bytes.Contains(pageBody, []byte(`data-live-log-viewer`)) ||
-		!bytes.Contains(pageBody, []byte("/monitor/applications/"+dockerID+"/logs/history")) {
+		!bytes.Contains(pageBody, []byte("/monitor/applications/"+dockerID+"/logs/history")) ||
+		!bytes.Contains(pageBody, []byte("/monitor/applications/"+dockerID+"/logs/download")) ||
+		!bytes.Contains(pageBody, []byte(`class="run-log-section live-log-stage"`)) {
 		t.Fatalf("docker log page status=%d body=%s", response.StatusCode, pageBody)
+	}
+	response, err = client.Get(serverURL + "/monitor/applications/" + dockerID + "/logs/download")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dockerDownload, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK || !strings.Contains(response.Header.Get("Content-Disposition"), ".txt") || !bytes.Contains(dockerDownload, []byte("ERROR")) {
+		t.Fatalf("Docker log TXT download status=%d disposition=%q body=%s", response.StatusCode, response.Header.Get("Content-Disposition"), dockerDownload)
 	}
 
 	response, err = client.Get(serverURL + "/monitor/containers")

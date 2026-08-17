@@ -795,6 +795,8 @@ async function assertLiveLogViewer(page, fixture) {
   const viewer = page.locator("[data-live-log-viewer]");
   const output = viewer.locator("[data-log-output]");
   await viewer.waitFor();
+  assert.equal(await viewer.locator(".run-log-section.live-log-stage").count(), 1);
+  assert.match(await viewer.locator('a[download],a[href*="/log/download"]').first().getAttribute("href"), /\/log\/download/);
   await page.waitForFunction(() => document.querySelectorAll(".live-log-entry").length === 500);
   assert.equal(await viewer.locator('.live-log-entry[data-severity="error"]').count(), 1);
   assert.equal(await viewer.locator('.live-log-entry[data-severity="warning"]').count(), 0);
@@ -843,6 +845,8 @@ async function assertLiveLogViewer(page, fixture) {
   assert.ok(dockerLogURL, "Container details do not expose a log entry");
   await page.goto(`${baseURL}${dockerLogURL}`);
   await page.waitForFunction(() => document.querySelectorAll(".live-log-entry").length >= 4);
+  assert.equal(await page.locator(".run-log-section.live-log-stage").count(), 1);
+  assert.match(await page.locator('a[href$="/logs/download"]').getAttribute("href"), /\/logs\/download$/);
   assert.equal(await page.locator('.live-log-entry[data-severity="error"]').count(), 1);
   assert.ok(await page.locator('.live-log-entry[data-severity="warning"]').count() >= 2);
   await assertNoHorizontalOverflow(page, "Docker live logs desktop");
@@ -1630,7 +1634,12 @@ async function assertExternalInterfaces(page, fixture) {
     await page.locator("[data-run-log]").waitFor();
     await page.waitForFunction(() => document.querySelector("[data-run-log]")?.textContent.includes("result=passed"));
     assert.match(await page.locator("[data-run-log]").textContent(), /environment=staging/);
+    assert.equal(await page.locator("[data-run-log] .hljs-keyword").count(), 0);
+    assert.equal(await page.locator("[data-run-log]").getAttribute("data-highlight-language"), null);
+    await page.locator('[data-run-log] [data-severity="warning"]').filter({ hasText: /warning|cache nearing capacity/i }).first().waitFor();
+    await page.locator('[data-run-log] [data-severity="error"]').filter({ hasText: /error|fixture error marker/i }).first().waitFor();
     await page.waitForFunction(() => document.querySelector("[data-run-live-state]")?.textContent.includes("complete"));
+    assert.match((await page.locator("[data-run-duration]").textContent()).trim(), /^Run duration \d+(?:s|m|h)/);
     assert.equal((await page.locator("[data-run-status]").textContent()).trim(), "Succeeded");
     assert.equal(await page.locator("[data-run-stop-form]").count(), 0);
     await page.reload();

@@ -16,6 +16,7 @@ import (
 	"scriptboard/internal/clusterstatus"
 	"scriptboard/internal/identity"
 	"scriptboard/internal/kubeconfigmanager"
+	"scriptboard/internal/logstream"
 )
 
 const (
@@ -637,11 +638,12 @@ func (a *App) kubernetesWorkloadLogs(response http.ResponseWriter, request *http
 		locale := resolveWebLocale(request)
 		views := make([]kubernetesLogLineView, 0, len(lines))
 		for _, line := range lines {
-			views = append(views, kubernetesLogLineView{At: line.At, Source: line.Pod + "/" + line.Container, Text: line.Text})
+			views = append(views, kubernetesLogLineView{At: line.At, Source: line.Pod + "/" + line.Container, Severity: string(logstream.ClassifySeverity(line.Text)), Text: line.Text})
 		}
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = kubernetesLogsTemplate.Execute(response, kubernetesLogsPageView{
 			Locale: locale, Connection: request.PathValue("connection"), Namespace: request.PathValue("namespace"), Kind: request.PathValue("kind"), Name: request.PathValue("name"), Lines: views,
+			DownloadURL: strings.TrimSuffix(request.URL.Path, "/") + "/download",
 		})
 		return
 	}
@@ -650,14 +652,32 @@ func (a *App) kubernetesWorkloadLogs(response http.ResponseWriter, request *http
 }
 
 type kubernetesLogLineView struct {
-	At           time.Time
-	Source, Text string
+	At                     time.Time
+	Source, Severity, Text string
 }
 
 type kubernetesLogsPageView struct {
 	Locale                            webLocale
 	Connection, Namespace, Kind, Name string
+	DownloadURL                       string
 	Lines                             []kubernetesLogLineView
+}
+
+func (a *App) downloadKubernetesWorkloadLogs(response http.ResponseWriter, request *http.Request) {
+	lines, err := a.kubernetesStatus.Logs(request.Context(), request.PathValue("connection"), kubernetesWorkloadKey(request), 500)
+	if err != nil {
+		http.Error(response, "Unable to read Kubernetes Pod logs", http.StatusBadRequest)
+		return
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	response.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="kubernetes-%s-logs.txt"`, sanitizeDownloadName(request.PathValue("name"))))
+	response.Header().Set("X-Content-Type-Options", "nosniff")
+	for _, line := range lines {
+		if _, err := fmt.Fprintf(response, "[%s] [%s/%s] %s\n", line.At.UTC().Format(time.RFC3339Nano), line.Pod, line.Container, line.Text); err != nil {
+			return
+		}
+	}
 }
 
 func (a *App) operateKubernetesWorkload(response http.ResponseWriter, request *http.Request) {

@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"encoding/csv"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -82,6 +83,25 @@ func (a *App) exportServiceLogs(response http.ResponseWriter, request *http.Requ
 		}
 	}
 	writer.Flush()
+}
+
+func (a *App) exportServiceLogsText(response http.ResponseWriter, request *http.Request) {
+	ctx, cancel := context.WithTimeout(request.Context(), 20*time.Second)
+	report, err := a.serviceLogs.List(ctx, serviceLogQuery(request))
+	cancel()
+	if err != nil {
+		http.Error(response, "Service logs are temporarily unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	response.Header().Set("Content-Disposition", `attachment; filename="scriptboard-service-logs.txt"`)
+	response.Header().Set("X-Content-Type-Options", "nosniff")
+	for _, entry := range report.Entries {
+		if _, err := fmt.Fprintf(response, "[%s] [%s] [%s] [%s] %s\n", entry.Time.UTC().Format(time.RFC3339Nano), strings.ToUpper(string(entry.Severity)), entry.Service, entry.Source, secretredaction.String(entry.Message)); err != nil {
+			return
+		}
+	}
 }
 
 func serviceLogQuery(request *http.Request) servicelogs.Query {

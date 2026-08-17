@@ -100,7 +100,7 @@ func TestAdminCanRunScriptAndReadCompletedOutput(t *testing.T) {
 		t.Fatalf("completed Run detail must defer output to history paging: %s", completedPage)
 	}
 	history := readRunHistoryPage(t, client, runURL+"/history")
-	if len(history.Events) != 1 || !strings.Contains(history.Events[0].Text, "hello-run") {
+	if len(history.Events) != 1 || !strings.Contains(history.Events[0].Text, "hello-run") || history.Events[0].Severity != "normal" {
 		t.Fatalf("Run history page = %#v", history)
 	}
 	if !strings.Contains(completedPage, `href="`+strings.TrimPrefix(runURL, serverURL)+`/download"`) ||
@@ -215,6 +215,7 @@ type runHistoryTestPage struct {
 		Sequence int64  `json:"sequence"`
 		Text     string `json:"text"`
 		Source   string `json:"source"`
+		Severity string `json:"severity"`
 	} `json:"events"`
 	Before  int64 `json:"before"`
 	HasMore bool  `json:"hasMore"`
@@ -287,7 +288,7 @@ func TestRunEventsAreAvailableAsSSE(t *testing.T) {
 	if !strings.HasPrefix(response.Header.Get("Content-Type"), "text/event-stream") {
 		t.Fatalf("SSE content type = %q", response.Header.Get("Content-Type"))
 	}
-	if !strings.Contains(string(body), "id: 1") || !strings.Contains(string(body), "sse-output") || !strings.Contains(string(body), `"source":"stdout"`) {
+	if !strings.Contains(string(body), "id: 1") || !strings.Contains(string(body), "sse-output") || !strings.Contains(string(body), `"source":"stdout"`) || !strings.Contains(string(body), `"severity":"normal"`) {
 		t.Fatalf("unexpected SSE body: %s", body)
 	}
 }

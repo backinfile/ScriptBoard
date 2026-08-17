@@ -53,6 +53,7 @@ import (
 	"scriptboard/internal/hostsecurity"
 	"scriptboard/internal/hoststatus"
 	"scriptboard/internal/instancelock"
+	"scriptboard/internal/logstream"
 	"scriptboard/internal/mfa"
 	"scriptboard/internal/mysqlmanager"
 	"scriptboard/internal/passkey"
@@ -2825,6 +2826,29 @@ func (a *App) deleteQuickRun(response http.ResponseWriter, request *http.Request
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }
 
+type runLogEventView struct {
+	Sequence      int64              `json:"sequence"`
+	Time          time.Time          `json:"time"`
+	Source        string             `json:"source"`
+	Severity      logstream.Severity `json:"severity"`
+	Text          string             `json:"text"`
+	EncodingError bool               `json:"encodingError,omitempty"`
+}
+
+type runLogEventPageView struct {
+	Events  []runLogEventView `json:"events"`
+	Before  int64             `json:"before,omitempty"`
+	HasMore bool              `json:"hasMore"`
+}
+
+func newRunLogEventView(event runmanager.Event) runLogEventView {
+	return runLogEventView{
+		Sequence: event.Sequence, Time: event.Time, Source: event.Source,
+		Severity: logstream.ClassifySeverity(event.Data), Text: event.Data,
+		EncodingError: event.EncodingError,
+	}
+}
+
 func (a *App) runEvents(response http.ResponseWriter, request *http.Request) {
 	lastSequence := int64(0)
 	if value := request.URL.Query().Get("after"); value != "" {
@@ -2851,7 +2875,7 @@ func (a *App) runEvents(response http.ResponseWriter, request *http.Request) {
 	response.Header().Set("Cache-Control", "no-cache")
 	response.Header().Set("X-Content-Type-Options", "nosniff")
 	status, err := a.runs.FollowEvents(request.Context(), runID, lastSequence, func(event runmanager.Event) error {
-		payload, _ := json.Marshal(map[string]any{"source": event.Source, "text": event.Data, "time": event.Time, "encoding_error": event.EncodingError})
+		payload, _ := json.Marshal(newRunLogEventView(event))
 		if _, err := fmt.Fprintf(response, "id: %d\nevent: output\ndata: %s\n\n", event.Sequence, payload); err != nil {
 			return err
 		}
@@ -2886,7 +2910,11 @@ func (a *App) runEventHistory(response http.ResponseWriter, request *http.Reques
 	}
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(response).Encode(page)
+	events := make([]runLogEventView, 0, len(page.Events))
+	for _, event := range page.Events {
+		events = append(events, newRunLogEventView(event))
+	}
+	_ = json.NewEncoder(response).Encode(runLogEventPageView{Events: events, Before: page.Before, HasMore: page.HasMore})
 }
 
 type variableView struct {
@@ -3175,14 +3203,24 @@ func (a *App) runDetails(response http.ResponseWriter, request *http.Request) {
 	canManageExecution := identity.Allows(current.role, identity.PermissionManageExecution)
 	canStop := current.role == identity.RoleAdministrator || current.role == identity.RoleMaintainer ||
 		current.role == identity.RoleOperator && run.InitiatorUserID == current.userID
+	startedAt := run.CreatedAt
+	if run.StartedAt != nil {
+		startedAt = *run.StartedAt
+	}
+	finishedAt := ""
+	if run.FinishedAt != nil {
+		finishedAt = run.FinishedAt.UTC().Format(time.RFC3339Nano)
+	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = runTemplate.Execute(response, struct {
 		Run                         runmanager.Run
 		CSRFToken                   string
 		Locale                      webLocale
+		StartedAt, FinishedAt       string
 		CanStop, CanManageExecution bool
 	}{
 		Run: run, CSRFToken: current.csrfToken, Locale: resolveWebLocale(request),
+		StartedAt: startedAt.UTC().Format(time.RFC3339Nano), FinishedAt: finishedAt,
 		CanStop: canStop, CanManageExecution: canManageExecution,
 	})
 }
@@ -4476,7 +4514,11 @@ func (a *App) validateFileQuickAccess(response http.ResponseWriter, request *htt
 }
 
 func isTextPreviewExtension(path string) bool {
-	switch strings.ToLower(hostfiles.Extension(path)) {
+	extension := strings.ToLower(hostfiles.Extension(path))
+	if _, err := strconv.Atoi(strings.TrimPrefix(extension, ".")); err == nil {
+		extension = strings.ToLower(hostfiles.Extension(strings.TrimSuffix(path, hostfiles.Extension(path))))
+	}
+	switch extension {
 	case ".txt", ".md", ".json", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg", ".log", ".csv", ".tsv", ".xml", ".html", ".css", ".js", ".ts", ".go", ".py", ".ps1", ".cmd", ".bat", ".sh", ".sql":
 		return true
 	default:
