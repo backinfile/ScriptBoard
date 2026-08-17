@@ -62,6 +62,20 @@ func TestHostSecurityPageAndUFWDraftFlow(t *testing.T) {
 		}
 	}
 	service.mu.Lock()
+	overviewLoginCalls := service.loginCalls
+	overviewBanCalls := service.banCalls
+	service.mu.Unlock()
+	if overviewLoginCalls != 0 {
+		t.Fatalf("Linux security overview read login records %d times; journal reads belong on the logins tab", overviewLoginCalls)
+	}
+	if overviewBanCalls != 0 {
+		t.Fatalf("Linux security overview read bans %d times; Fail2Ban journal reads belong on the defense tab", overviewBanCalls)
+	}
+	loginsPage := getSecurityPage(t, client, serverURL+"/monitor/security?tab=logins")
+	if !bytes.Contains(loginsPage, []byte("203.0.113.8")) {
+		t.Fatalf("security logins tab did not render login data: %s", loginsPage)
+	}
+	service.mu.Lock()
 	defaultPageSize := service.lastQuery.PageSize
 	service.mu.Unlock()
 	if defaultPageSize != 5 {
@@ -392,6 +406,7 @@ type securityFixtureService struct {
 	lastQuery       hostsecurity.LoginQuery
 	capabilityCalls int
 	loginCalls      int
+	banCalls        int
 	updateCalls     int
 	updateRefresh   bool
 	applyCalls      int
@@ -423,6 +438,9 @@ func (s *securityFixtureService) Logins(_ context.Context, query hostsecurity.Lo
 }
 
 func (s *securityFixtureService) Bans(context.Context, int, int) (hostsecurity.BanPage, error) {
+	s.mu.Lock()
+	s.banCalls++
+	s.mu.Unlock()
 	return s.bans, nil
 }
 

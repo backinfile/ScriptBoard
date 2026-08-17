@@ -54,8 +54,10 @@ type securityPageView struct {
 	BaselineDrift        securitybaseline.Drift
 	BaselineHistoryError string
 	LoginPage            hostsecurity.LoginPage
+	LoginDataLoaded      bool
 	DisplayedLogins      []hostsecurity.LoginRecord
 	BanPage              hostsecurity.BanPage
+	BanDataLoaded        bool
 	Rules                []hostsecurity.FirewallRule
 	RuleProtocol         string
 	RulePort             string
@@ -179,7 +181,9 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 		RefreshURL: securityRefreshURL(request.URL.Query()),
 	}
 
-	if tab == "overview" || tab == "logins" || tab == "defense" && capabilities.OS == "windows" {
+	// Linux SSH journals can be large; keep overview on configuration probes and load journal-backed login records only on the logins tab.
+	loadLogins := tab == "logins" || capabilities.OS == "windows" && (tab == "overview" || tab == "defense")
+	if loadLogins {
 		loginContext, cancelLogins := context.WithTimeout(request.Context(), 15*time.Second)
 		loginPage, err := a.hostSecurity.Logins(loginContext, query)
 		cancelLogins()
@@ -187,6 +191,7 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 			view.LoginError = secretredaction.String(err.Error())
 		} else {
 			view.LoginPage = loginPage
+			view.LoginDataLoaded = true
 			view.HasLoginPrevious = loginPage.Page > 1
 			view.HasLoginNext = loginPage.Page < loginPage.Pages
 			view.LoginPrevious = max(1, loginPage.Page-1)
@@ -196,7 +201,8 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 			}
 		}
 	}
-	if capabilities.Fail2Ban.Installed && capabilities.Fail2Ban.Running && (tab == "overview" || tab == "defense") {
+	// Fail2Ban details include journal enrichment; keep that work on the defense tab instead of blocking the Linux overview.
+	if capabilities.Fail2Ban.Installed && capabilities.Fail2Ban.Running && tab == "defense" {
 		banContext, cancelBans := context.WithTimeout(request.Context(), 8*time.Second)
 		banPage, err := a.hostSecurity.Bans(banContext, positiveInt(request.URL.Query().Get("ban_page"), 1), 20)
 		cancelBans()
@@ -204,6 +210,7 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 			view.BanError = secretredaction.String(err.Error())
 		} else {
 			view.BanPage = banPage
+			view.BanDataLoaded = true
 			view.HasBanPrevious = banPage.Page > 1
 			view.HasBanNext = banPage.Page < banPage.Pages
 			view.BanPrevious = max(1, banPage.Page-1)
@@ -253,7 +260,7 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 	view.HasSSHAllowRule = securityHasSSHAllowRule(view.Rules, capabilities.SSHPort)
 	view.CanApplyDraft = !view.Linux || !capabilities.UFWEnabled || view.UFWDefaults.Incoming != hostsecurity.PolicyDeny || view.HasSSHAllowRule
 	if view.Linux && tab == "overview" {
-		view.RemoteLoginRows = securityRemoteLoginRows(locale, capabilities, view.BanPage.Total)
+		view.RemoteLoginRows = securityRemoteLoginRows(locale, capabilities, view.BanPage.Total, view.BanDataLoaded)
 		view.RemoteLogin = securityRemoteLoginSummaryFor(locale, capabilities)
 	}
 	response.Header().Set("Cache-Control", "no-store")
@@ -314,7 +321,7 @@ func securityRemoteLoginSummaryFor(locale webLocale, capabilities hostsecurity.C
 	return summary
 }
 
-func securityRemoteLoginRows(locale webLocale, capabilities hostsecurity.Capabilities, currentBans int) []securityRemoteLoginRow {
+func securityRemoteLoginRows(locale webLocale, capabilities hostsecurity.Capabilities, currentBans int, banDataLoaded bool) []securityRemoteLoginRow {
 	port := capabilities.SSHLogin.Port
 	if port == "" {
 		port = capabilities.SSHPort
@@ -361,8 +368,12 @@ func securityRemoteLoginRows(locale webLocale, capabilities hostsecurity.Capabil
 
 	fail2Ban := securityRemoteLoginRow{
 		Icon: "shield-check", Title: webText(locale, "security.bruteforce_protection_status"), Subtitle: "fail2ban.service · sshd",
-		Value: strconv.Itoa(currentBans), Status: webText(locale, "security.not_installed"), Tone: "stale",
-		Evidence: webText(locale, "security.current_bans") + ": " + strconv.Itoa(currentBans),
+		Value: "—", Status: webText(locale, "security.not_installed"), Tone: "stale",
+		Evidence: webText(locale, "security.current_bans") + ": —",
+	}
+	if banDataLoaded {
+		fail2Ban.Value = strconv.Itoa(currentBans)
+		fail2Ban.Evidence = webText(locale, "security.current_bans") + ": " + strconv.Itoa(currentBans)
 	}
 	if capabilities.Fail2Ban.Installed {
 		fail2Ban.Status = webText(locale, "security.stopped")

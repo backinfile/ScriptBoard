@@ -44,8 +44,8 @@
       <dl class="security-facts security-facts--verdict" data-security-login-verdict>
         <div class="security-fact-verdict" data-state="{{.RemoteLogin.StatusTone}}"><dt>{{t .Locale "security.monitoring_status"}}</dt><dd>{{.RemoteLogin.Status}}</dd><small>{{.RemoteLogin.StatusDetail}}</small></div>
         <div><dt>{{t .Locale "security.remote_entry"}}</dt><dd>{{.RemoteLogin.EntryCount}}</dd><small>{{.RemoteLogin.EntryDetail}}</small></div>
-        <div><dt>{{t .Locale "security.failed_logins"}}</dt><dd>{{.LoginPage.Stats.Failure}}</dd><small>{{t .Locale "security.last_24h"}}</small></div>
-        <div><dt>{{t .Locale "security.current_bans"}}</dt><dd>{{if .Capabilities.Fail2Ban.Installed}}{{.BanPage.Total}}{{else}}—{{end}}</dd><small>{{if .Capabilities.Fail2Ban.Installed}}Fail2Ban · sshd{{else}}{{t .Locale "security.fail2ban_not_installed"}}{{end}}</small></div>
+        <div><dt>{{t .Locale "security.failed_logins"}}</dt><dd>{{if .LoginDataLoaded}}{{.LoginPage.Stats.Failure}}{{else}}—{{end}}</dd><small>{{t .Locale "security.last_24h"}}</small></div>
+        <div><dt>{{t .Locale "security.current_bans"}}</dt><dd>{{if .BanDataLoaded}}{{.BanPage.Total}}{{else}}—{{end}}</dd><small>{{if .Capabilities.Fail2Ban.Installed}}Fail2Ban · sshd{{else}}{{t .Locale "security.fail2ban_not_installed"}}{{end}}</small></div>
       </dl>
       <div class="security-login-checks-heading"><h3>{{t .Locale "security.detection_items"}}</h3><span>{{t .Locale "security.show_evidence"}}</span></div>
       <div class="security-login-checks" aria-label="{{t .Locale "security.detection_items"}}">

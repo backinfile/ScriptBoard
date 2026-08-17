@@ -42,7 +42,7 @@ const (
 	ActionReject FirewallAction = "reject"
 )
 
-const linuxLoginJournalLimit = 5000
+const linuxSecurityJournalLimit = 5000
 
 type FirewallPolicy string
 
@@ -438,7 +438,7 @@ func (m *Manager) Logins(ctx context.Context, query LoginQuery) (LoginPage, erro
 	if m.goos == "windows" {
 		records, collectedAt, cached, err = m.cachedWindowsLogins(ctx, query, loadQuery)
 	} else if m.goos == "linux" {
-		records, err = m.linuxLogins(ctx, loadQuery)
+		records, collectedAt, cached, err = m.cachedLinuxLogins(ctx, query, loadQuery)
 	} else {
 		return LoginPage{}, ErrUnsupported
 	}
@@ -458,7 +458,7 @@ func (m *Manager) Logins(ctx context.Context, query LoginQuery) (LoginPage, erro
 }
 
 func (m *Manager) cachedWindowsLogins(ctx context.Context, query, loadQuery LoginQuery) ([]LoginRecord, time.Time, bool, error) {
-	key := windowsLoginCacheKey(query)
+	key := loginCacheKey(query)
 	m.loginMu.Lock()
 	defer m.loginMu.Unlock()
 	now := m.now().UTC()
@@ -476,7 +476,26 @@ func (m *Manager) cachedWindowsLogins(ctx context.Context, query, loadQuery Logi
 	return records, collectedAt, false, nil
 }
 
-func windowsLoginCacheKey(query LoginQuery) string {
+func (m *Manager) cachedLinuxLogins(ctx context.Context, query, loadQuery LoginQuery) ([]LoginRecord, time.Time, bool, error) {
+	key := loginCacheKey(query)
+	m.loginMu.Lock()
+	defer m.loginMu.Unlock()
+	now := m.now().UTC()
+	if entry, ok := m.loginCache[key]; ok && !query.Refresh && m.loginCacheTTL > 0 && now.Sub(entry.collectedAt) >= 0 && now.Sub(entry.collectedAt) < m.loginCacheTTL {
+		return append([]LoginRecord(nil), entry.records...), entry.collectedAt, true, nil
+	}
+	records, err := m.linuxLogins(ctx, loadQuery)
+	if err != nil {
+		return nil, time.Time{}, false, err
+	}
+	collectedAt := m.now().UTC()
+	if m.loginCacheTTL > 0 {
+		m.loginCache[key] = loginCacheEntry{records: append([]LoginRecord(nil), records...), collectedAt: collectedAt}
+	}
+	return records, collectedAt, false, nil
+}
+
+func loginCacheKey(query LoginQuery) string {
 	return strings.Join([]string{
 		query.Range,
 		query.Start.UTC().Format(time.RFC3339Nano),
@@ -484,12 +503,9 @@ func windowsLoginCacheKey(query LoginQuery) string {
 	}, "|")
 }
 
-func (m *Manager) linuxLogins(ctx context.Context, query LoginQuery) ([]LoginRecord, error) {
-	since := query.Start
-	if since.IsZero() {
-		since = m.now().Add(-rangeDuration(query.Range))
-	}
-	output, err := m.runner.Run(ctx, "journalctl", "-u", "ssh", "-u", "sshd", "--since", since.Format(time.RFC3339), "--lines", strconv.Itoa(linuxLoginJournalLimit), "--no-pager", "-o", "short-iso", "--reverse")
+func (m *Manager) linuxLogins(ctx context.Context, _ LoginQuery) ([]LoginRecord, error) {
+	// Read from the journal tail so large, long-lived journals do not require a time-range scan before the bounded result is returned.
+	output, err := m.runner.Run(ctx, "journalctl", "-u", "ssh", "-u", "sshd", "--lines", strconv.Itoa(linuxSecurityJournalLimit), "--no-pager", "-o", "short-iso", "--reverse")
 	if err != nil {
 		return nil, fmt.Errorf("read SSH journal: %w", err)
 	}
@@ -612,7 +628,7 @@ func (m *Manager) Bans(ctx context.Context, page, pageSize int) (BanPage, error)
 			duration = time.Duration(seconds) * time.Second
 		}
 	}
-	if events, eventsErr := m.runner.Run(ctx, "journalctl", "-u", "fail2ban", "--since", "-30 days", "--no-pager", "-o", "short-iso", "--reverse"); eventsErr == nil {
+	if events, eventsErr := m.runner.Run(ctx, "journalctl", "-u", "fail2ban", "--lines", strconv.Itoa(linuxSecurityJournalLimit), "--no-pager", "-o", "short-iso", "--reverse"); eventsErr == nil {
 		started := parseFail2BanEvents(events, "sshd")
 		now := m.now().UTC()
 		for index := range bans {

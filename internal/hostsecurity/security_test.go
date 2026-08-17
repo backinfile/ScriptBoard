@@ -90,6 +90,45 @@ func TestLinuxLoginJournalReadIsBounded(t *testing.T) {
 	if len(runner.calls) != 1 || !strings.Contains(runner.calls[0], "--lines 5000") {
 		t.Fatalf("Linux journal call is not bounded: %#v", runner.calls)
 	}
+	if strings.Contains(runner.calls[0], "--since") {
+		t.Fatalf("Linux journal call scans from a time boundary instead of reading the bounded tail: %#v", runner.calls)
+	}
+}
+
+func TestLinuxLoginCacheAvoidsRepeatedJournalProbes(t *testing.T) {
+	now := time.Date(2026, time.August, 6, 2, 0, 0, 0, time.UTC)
+	runner := &fakeRunner{}
+	manager := NewManager(Options{GOOS: "linux", Runner: runner, Now: func() time.Time { return now }})
+	query := LoginQuery{Range: "24h", Page: 1, PageSize: 20}
+
+	if _, err := manager.Logins(context.Background(), query); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Logins(context.Background(), query); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(runner.calls) != 1 {
+		t.Fatalf("Linux journal probes=%d, want 1 within the cache lifetime; calls=%#v", len(runner.calls), runner.calls)
+	}
+}
+
+func TestFail2BanJournalReadUsesBoundedTail(t *testing.T) {
+	runner := &fakeRunner{responses: map[string]fakeResponse{
+		"lookpath fail2ban-client": {},
+	}}
+	manager := NewManager(Options{GOOS: "linux", Runner: runner, Now: time.Now})
+
+	if _, err := manager.Bans(context.Background(), 1, 20); err != nil {
+		t.Fatal(err)
+	}
+	journalCall := runner.calls[len(runner.calls)-1]
+	if !strings.Contains(journalCall, "journalctl -u fail2ban") || !strings.Contains(journalCall, "--lines 5000") {
+		t.Fatalf("Fail2Ban journal call is not bounded: %#v", runner.calls)
+	}
+	if strings.Contains(journalCall, "--since") {
+		t.Fatalf("Fail2Ban journal call scans from a time boundary instead of reading the bounded tail: %#v", runner.calls)
+	}
 }
 
 func TestCapabilitiesCacheAvoidsRepeatedWindowsFirewallProbes(t *testing.T) {
