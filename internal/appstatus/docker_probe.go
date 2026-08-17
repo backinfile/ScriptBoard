@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	dockerListTimeout  = 800 * time.Millisecond
+	dockerListTimeout  = 5 * time.Second
 	dockerStatsTimeout = 3 * time.Second
 	dockerRetryDelay   = 30 * time.Second
 	dockerWorkers      = 8
@@ -68,7 +68,7 @@ func (c *dockerCollector) Snapshot(ctx context.Context, logicalCores int, now ti
 	list, err := c.client.ContainerList(listContext, client.ContainerListOptions{All: true})
 	cancelList()
 	if err != nil {
-		c.markUnavailable(now)
+		c.markUnavailable(now, err)
 		return nil, nil, false, err
 	}
 	c.retryAfter = time.Time{}
@@ -305,7 +305,7 @@ func containerName(summary containertypes.Summary) string {
 	return summary.ID
 }
 
-func (c *dockerCollector) markUnavailable(now time.Time) {
+func (c *dockerCollector) markUnavailable(now time.Time, err error) {
 	c.retryAfter = now.Add(dockerRetryDelay)
-	c.lastFailure = errors.New("Docker Engine is unavailable")
+	c.lastFailure = err
 }

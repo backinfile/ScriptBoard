@@ -1,12 +1,44 @@
 package appstatus
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"testing"
 	"time"
 
 	containertypes "github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 )
+
+func TestDockerSnapshotAllowsSlowLocalEngineResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		time.Sleep(1200 * time.Millisecond)
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte("[]"))
+	}))
+	defer server.Close()
+
+	api, err := client.New(
+		client.WithHost(server.URL),
+		client.WithHTTPClient(server.Client()),
+		client.WithVersion("1.48"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	collector := &dockerCollector{client: api, previous: make(map[string]dockerBlockSample)}
+	defer collector.Close()
+
+	containers, _, available, err := collector.Snapshot(context.Background(), 1, time.Now())
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	if !available || len(containers) != 0 {
+		t.Fatalf("Snapshot() = available %v, containers %#v", available, containers)
+	}
+}
 
 func TestDeriveDockerContainerNormalizesWholeHostCPUAndBlockRates(t *testing.T) {
 	collectedAt := time.Date(2026, 7, 29, 9, 0, 5, 0, time.UTC)
