@@ -2,56 +2,28 @@ package runmanager
 
 import (
 	"os"
-	"runtime"
 	"strings"
 )
 
 func runEnvironment(runID, scriptPath string) []string {
-	return minimalRunEnvironment(runtime.GOOS, os.Environ(), runID, scriptPath)
+	return runEnvironmentFromParent(os.Environ(), runID, scriptPath)
 }
 
-func minimalRunEnvironment(goos string, parent []string, runID, scriptPath string) []string {
-	var environment []string
-	if goos == "windows" {
-		root := environmentValue(parent, "SystemRoot")
-		if root == "" {
-			root = `C:\Windows`
-		}
-		root = strings.TrimRight(root, `\/`)
-		path := environmentValue(parent, "PATH")
-		if strings.TrimSpace(path) == "" {
-			path = root + `\System32;` + root
-		}
-		environment = []string{
-			"SystemRoot=" + root,
-			"WINDIR=" + root,
-			"ComSpec=" + root + `\System32\cmd.exe`,
-			"PATH=" + path,
-			"PATHEXT=.COM;.EXE;.BAT;.CMD",
-			"TEMP=" + root + `\Temp`,
-			"TMP=" + root + `\Temp`,
-		}
-	} else {
-		environment = []string{
-			"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-			"HOME=/var/empty",
-			"LANG=C.UTF-8",
-			"LC_ALL=C.UTF-8",
-			"TMPDIR=/tmp",
-		}
-	}
-	return append(environment,
-		"SCRIPTBOARD_RUN_ID="+runID,
-		"SCRIPTBOARD_SCRIPT_PATH="+scriptPath,
-	)
+func runEnvironmentFromParent(parent []string, runID, scriptPath string) []string {
+	environment := append([]string{}, parent...)
+	environment = setEnvironmentValue(environment, "SCRIPTBOARD_RUN_ID", runID)
+	environment = setEnvironmentValue(environment, "SCRIPTBOARD_SCRIPT_PATH", scriptPath)
+	return environment
 }
 
-func environmentValue(environment []string, name string) string {
-	for _, entry := range environment {
-		key, value, ok := strings.Cut(entry, "=")
+func setEnvironmentValue(environment []string, name, value string) []string {
+	entry := name + "=" + value
+	for index, existing := range environment {
+		key, _, ok := strings.Cut(existing, "=")
 		if ok && strings.EqualFold(key, name) {
-			return value
+			environment[index] = entry
+			return environment
 		}
 	}
-	return ""
+	return append(environment, entry)
 }
