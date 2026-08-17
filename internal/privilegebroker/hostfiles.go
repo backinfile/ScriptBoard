@@ -636,6 +636,9 @@ func (server *Server) hostFilesOperation(request wireRequest) wireResponse {
 		}
 	}
 	if err != nil {
+		if request.Operation == operationHostFilesInfo && os.IsNotExist(err) {
+			return wireResponse{Status: statusError, ErrorCode: "host_files_not_found", Message: "Host Files path does not exist"}
+		}
 		return wireResponse{Status: statusError, ErrorCode: "host_files_failed", Message: "Host Files operation failed"}
 	}
 	return response
@@ -981,6 +984,9 @@ func (backend *HostFilesBackend) call(ctx context.Context, operation string, pay
 	}
 	response, err := backend.client.call(ctx, wireRequest{Version: ProtocolVersion, Operation: operation, RequestID: authorization.RequestID, SessionToken: authorization.SessionToken, HostFiles: &payload})
 	if err != nil {
+		if response.ErrorCode == "host_files_not_found" {
+			return hostFilesWireResponse{}, fmt.Errorf("%w: %v", &os.PathError{Op: "stat", Path: payload.Path, Err: os.ErrNotExist}, err)
+		}
 		return hostFilesWireResponse{}, fmt.Errorf("%w: %v", ErrHostFilesUnavailable, err)
 	}
 	if response.HostFiles == nil {
@@ -1036,6 +1042,9 @@ func (backend *HostFilesBackend) List(ctx context.Context, path string) ([]hostf
 
 func (backend *HostFilesBackend) Info(ctx context.Context, path string) (HostFileInfo, error) {
 	value, err := backend.call(ctx, operationHostFilesInfo, hostFilesWireRequest{Path: path})
+	if errors.Is(err, os.ErrNotExist) {
+		return HostFileInfo{}, err
+	}
 	if value.Info == nil {
 		return HostFileInfo{}, errors.Join(err, errors.New("privileged Broker returned no Host Files metadata"))
 	}

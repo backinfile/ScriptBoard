@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -51,6 +52,25 @@ func TestHostFilesUsesTypedAuthorizedBrokerOperations(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "note.txt")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestHostFilesInfoPreservesNotExistThroughBroker(t *testing.T) {
+	root := t.TempDir()
+	manager, err := hostfiles.Open(hostfiles.Options{Topology: fixtureHostFilesTopology{root: root}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewBrokerHostFilesService(manager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend, closeServer := hostFilesTestBackend(t, service)
+	defer closeServer()
+	ctx := WithAuthorization(context.Background(), Authorization{SessionToken: strings.Repeat("s", 32), RequestID: "host-files-missing-info-test"})
+
+	if _, err := backend.Info(ctx, filepath.Join(root, "new-upload.env")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing Host Files info error = %v, want os.ErrNotExist", err)
 	}
 }
 

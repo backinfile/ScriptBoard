@@ -18,11 +18,15 @@ func minimalRunEnvironment(goos string, parent []string, runID, scriptPath strin
 			root = `C:\Windows`
 		}
 		root = strings.TrimRight(root, `\/`)
+		path := environmentValue(parent, "PATH")
+		if strings.TrimSpace(path) == "" {
+			path = root + `\System32;` + root
+		}
 		environment = []string{
 			"SystemRoot=" + root,
 			"WINDIR=" + root,
 			"ComSpec=" + root + `\System32\cmd.exe`,
-			"PATH=" + root + `\System32;` + root,
+			"PATH=" + path,
 			"PATHEXT=.COM;.EXE;.BAT;.CMD",
 			"TEMP=" + root + `\Temp`,
 			"TMP=" + root + `\Temp`,

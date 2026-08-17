@@ -34,12 +34,13 @@ func TestWindowsRunEnvironmentKeepsOnlyRequiredSystemLocations(t *testing.T) {
 
 	environment := minimalRunEnvironment("windows", []string{
 		`SystemRoot=C:\Windows`,
+		`PATH=C:\Python314;C:\Windows\System32;C:\Windows`,
 		`TEMP=C:\Service\Temp`,
 		`USERPROFILE=C:\Users\Service`,
 		`AZURE_CLIENT_SECRET=secret`,
 	}, "run-456", `C:\jobs\backup.ps1`)
 
-	for _, required := range []string{`SystemRoot=C:\Windows`, `PATH=C:\Windows\System32;C:\Windows`, `SCRIPTBOARD_RUN_ID=run-456`} {
+	for _, required := range []string{`SystemRoot=C:\Windows`, `PATH=C:\Python314;C:\Windows\System32;C:\Windows`, `SCRIPTBOARD_RUN_ID=run-456`} {
 		if !slices.Contains(environment, required) {
 			t.Fatalf("Windows run environment is missing %q: %#v", required, environment)
 		}

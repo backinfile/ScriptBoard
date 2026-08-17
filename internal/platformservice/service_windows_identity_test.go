@@ -88,6 +88,25 @@ func TestWindowsRunnerAndAIHostAreDemandStartServices(t *testing.T) {
 	}
 }
 
+func TestWindowsInstallGrantsRunDirectoryProtectionAccess(t *testing.T) {
+	source, err := os.ReadFile("service_windows.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{
+		`runsRoot := filepath.Join(stateRoot, "runs")`,
+		`os.MkdirAll(runsRoot, 0o700)`,
+		`{runsRoot, windows.ACCESS_MASK(windows.GENERIC_ALL), true}`,
+		`{filepath.Join(stateRoot, "runs"), windows.ACCESS_MASK(windows.FILE_GENERIC_READ | windows.FILE_GENERIC_EXECUTE), true}`,
+		`grantWindowsRunnerServiceAccess(installRoot, configPath, stateRoot)`,
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("Windows installation permission design is missing %q", required)
+		}
+	}
+}
+
 func TestWindowsManagedServicesHaveBoundedCrashRecovery(t *testing.T) {
 	if len(windowsRecoveryActions) != 3 {
 		t.Fatalf("recovery actions=%d, want two restarts and a terminal no-op", len(windowsRecoveryActions))

@@ -354,7 +354,7 @@ func Install(executable, configPath, _ string, stateRoot, runnerIdentityMode str
 	if err := grantWindowsAIServiceAccess(installRoot, stateRoot); err != nil {
 		return err
 	}
-	if err := grantWindowsRunnerServiceAccess(installRoot, configPath); err != nil {
+	if err := grantWindowsRunnerServiceAccess(installRoot, configPath, stateRoot); err != nil {
 		return err
 	}
 	return configureWindowsRuntimeFirewall(aiExecutable, runnerExecutable, runnerIdentityMode)
@@ -474,7 +474,7 @@ func windowsServiceHasExactGrant(service *mgr.Service, sid *windows.SID, permiss
 	return found, nil
 }
 
-func grantWindowsRunnerServiceAccess(installRoot, configPath string) error {
+func grantWindowsRunnerServiceAccess(installRoot, configPath, stateRoot string) error {
 	sid, err := windowsidentity.ResolveSID(runnerServiceSID)
 	if err != nil {
 		return err
@@ -483,7 +483,11 @@ func grantWindowsRunnerServiceAccess(installRoot, configPath string) error {
 		path        string
 		permissions windows.ACCESS_MASK
 		recursive   bool
-	}{{installRoot, windows.ACCESS_MASK(windows.FILE_GENERIC_READ | windows.FILE_GENERIC_EXECUTE), true}, {configPath, windows.ACCESS_MASK(windows.FILE_GENERIC_READ), false}} {
+	}{
+		{installRoot, windows.ACCESS_MASK(windows.FILE_GENERIC_READ | windows.FILE_GENERIC_EXECUTE), true},
+		{configPath, windows.ACCESS_MASK(windows.FILE_GENERIC_READ), false},
+		{filepath.Join(stateRoot, "runs"), windows.ACCESS_MASK(windows.FILE_GENERIC_READ | windows.FILE_GENERIC_EXECUTE), true},
+	} {
 		if _, statErr := os.Stat(grant.path); errors.Is(statErr, os.ErrNotExist) {
 			continue
 		} else if statErr != nil {
@@ -535,6 +539,10 @@ func grantWindowsWebServiceAccess(installRoot, configPath, stateRoot string, web
 	}
 	const fileDeleteChild windows.ACCESS_MASK = 0x00000040
 	modify := windows.ACCESS_MASK(windows.FILE_GENERIC_READ | windows.FILE_GENERIC_WRITE | windows.FILE_GENERIC_EXECUTE | windows.DELETE | fileDeleteChild)
+	runsRoot := filepath.Join(stateRoot, "runs")
+	if err := os.MkdirAll(runsRoot, 0o700); err != nil {
+		return fmt.Errorf("create Windows Run state directory %s: %w", runsRoot, err)
+	}
 	for _, grant := range []struct {
 		path        string
 		permissions windows.ACCESS_MASK
@@ -543,6 +551,7 @@ func grantWindowsWebServiceAccess(installRoot, configPath, stateRoot string, web
 		{installRoot, windows.ACCESS_MASK(windows.FILE_GENERIC_READ | windows.FILE_GENERIC_EXECUTE), true},
 		{configPath, windows.ACCESS_MASK(windows.FILE_GENERIC_READ), false},
 		{stateRoot, modify, true},
+		{runsRoot, windows.ACCESS_MASK(windows.GENERIC_ALL), true},
 		{filepath.Join(filepath.Dir(stateRoot), "secrets"), modify, true},
 	} {
 		if _, statErr := os.Stat(grant.path); errors.Is(statErr, os.ErrNotExist) {

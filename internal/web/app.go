@@ -489,7 +489,6 @@ type App struct {
 	auditCheckpointStop   context.CancelFunc
 	auditCheckpointWG     sync.WaitGroup
 	uploadInbox           *uploadinbox.Store
-	execUploadExts        map[string]struct{}
 	fileOperations        *sqliteFileOperationStore
 	fileMoves             *hostfiles.MoveEngine
 	fileOperationCtx      context.Context
@@ -656,8 +655,7 @@ func Open(config Config) (*App, error) {
 	application := &App{
 		db: db, stateRoot: stateRoot, files: files, hostFilesBackend: config.HostFilesBackend, stateBackups: config.StateBackups, uploadInbox: uploadInboxStore, instanceLock: instanceLock, mfa: mfaStore,
 		passkeys: passkeyStore, passkeyCeremonies: newPasskeyCeremonyStore(), loginChallenges: newLoginChallengeStore(),
-		execUploadExts: buildExecutableUploadExtensions(config.ExecutorChains),
-		loginSlots:     make(chan struct{}, 2), loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies,
+		loginSlots: make(chan struct{}, 2), loginFailures: make(map[string]loginFailure), trustedProxies: trustedProxies,
 		allowedHosts: allowedHosts, canonicalExternalURL: config.CanonicalExternalURL,
 		loginRateSalt:  loginRateSalt,
 		logStreamSlots: make(chan struct{}, 8), logHistorySlots: make(chan struct{}, 4),
@@ -987,7 +985,7 @@ func Open(config Config) (*App, error) {
 	application.updates = updatepkg.NewManager(updatepkg.ManagerConfig{
 		StateRoot: stateRoot, CheckEnabled: config.UpdateCheck, CheckInterval: config.UpdateInterval,
 		RunnerIdentityMode: config.RunnerIdentityMode,
-		Source: config.UpdateSource, RequestShutdown: config.RequestShutdown,
+		Source:             config.UpdateSource, RequestShutdown: config.RequestShutdown,
 	})
 	if validating {
 		go application.monitorUpdateValidation(validationID)
@@ -1009,29 +1007,6 @@ func Open(config Config) (*App, error) {
 	go application.monitorAuditCheckpoint(auditCheckpointContext)
 	opened = true
 	return application, nil
-}
-
-func buildExecutableUploadExtensions(configured map[string][]string) map[string]struct{} {
-	extensions := make(map[string]struct{})
-	for _, extension := range []string{
-		".appimage", ".bat", ".cmd", ".com", ".cpl", ".desktop", ".dll", ".exe", ".hta",
-		".jar", ".js", ".jse", ".msi", ".ps1", ".py", ".reg", ".scr", ".service", ".sh",
-		".vbe", ".vbs", ".wsf", ".wsh",
-	} {
-		extensions[extension] = struct{}{}
-	}
-	for extension := range configured {
-		extension = strings.ToLower(strings.TrimSpace(extension))
-		if strings.HasPrefix(extension, ".") {
-			extensions[extension] = struct{}{}
-		}
-	}
-	return extensions
-}
-
-func (a *App) executableUploadRequiresPublication(name string) bool {
-	_, active := a.execUploadExts[strings.ToLower(filepath.Ext(name))]
-	return active
 }
 
 func (a *App) Handler() http.Handler {
@@ -4201,7 +4176,7 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 		}
 		targetInfo, _, targetErr := a.hostInfo(request.Context(), targetPath)
 		targetExists := targetErr == nil
-		if targetErr != nil && !os.IsNotExist(targetErr) {
+		if targetErr != nil && !errors.Is(targetErr, os.ErrNotExist) {
 			_ = part.Close()
 			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: secretredaction.String("无法检查同名文件：" + targetErr.Error())})
 			continue
@@ -4234,30 +4209,6 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 			_ = part.Close()
 			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: webText(locale, "upload_results.cannot_overwrite")})
 			a.recordAuditForRequest(request, "upload_file", filename, "rejected")
-			continue
-		}
-		if a.executableUploadRequiresPublication(uploadName) {
-			if replace {
-				_ = part.Close()
-				results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: webText(locale, "upload_results.executable_overwrite")})
-				a.recordAuditForRequest(request, "stage_executable_upload", uploadName, "rejected")
-				continue
-			}
-			pending, stageErr := a.uploadInbox.Receive(uploadinbox.Input{
-				EntryID: "host-files", OriginalName: uploadName, TargetDirectory: relative, ConflictPolicy: "reject",
-			}, part, 1<<30)
-			_ = part.Close()
-			if stageErr != nil {
-				results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: secretredaction.String(stageErr.Error())})
-				a.recordAuditForRequest(request, "stage_executable_upload", uploadName, "rejected")
-				continue
-			}
-			a.recordAuditForRequest(request, "stage_executable_upload", pending.ID+" "+pending.SHA256+" "+relative+"/"+uploadName, "succeeded")
-			results = append(results, uploadResult{
-				Name: uploadName, Result: webText(locale, "upload_results.staged"),
-				Detail: webText(locale, "upload_results.staged_detail"), Succeeded: true,
-			})
-			succeeded++
 			continue
 		}
 		release, leaseErr := a.acquireFileMutationLease(targetPath)
