@@ -2,13 +2,11 @@ package websitemonitor
 
 import "testing"
 
-func TestExternalWebsiteMonitorAllowsAnyPortWithoutPrivateNetworkAccess(t *testing.T) {
-	policy := outboundPolicy(Config{Scope: ScopeExternal})
-
-	if !policy.AllowAnyPort {
-		t.Fatal("external website monitors should allow non-standard ports")
-	}
-	if policy.AllowPrivate {
-		t.Fatal("external website monitors should not gain private network access")
+func TestWebsiteMonitorScopeDoesNotChangeOutboundAccess(t *testing.T) {
+	for _, scope := range []Scope{ScopeLocal, ScopeExternal} {
+		policy := outboundPolicy(Config{Scope: scope})
+		if !policy.AllowAnyPort || !policy.AllowPrivate {
+			t.Fatalf("website monitor scope %q changed outbound access: %#v", scope, policy)
+		}
 	}
 }
