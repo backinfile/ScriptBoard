@@ -82,6 +82,7 @@ func TestWindowsSCMSecurityGateCoversManagedBoundary(t *testing.T) {
 		`service", "verify"`,
 		`Assert-ServiceDefinition "ScriptBoard" "NT AUTHORITY\LocalService" "Auto"`,
 		`Assert-ServiceDefinition "ScriptBoardBroker" "LocalSystem" "Auto"`,
+		`Assert-ServiceDefinition "ScriptBoardRunner" "LocalSystem" "Manual"`,
 		`admin_password_file:`,
 		`Wait-ServiceState "ScriptBoardRunner" "Stopped"`,
 		`/config/quick-runs/one-time`,

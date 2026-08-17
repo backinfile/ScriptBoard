@@ -229,7 +229,7 @@ notification_email_recipient: 'security@example.invalid'
 
     Assert-ServiceDefinition "ScriptBoard" "NT AUTHORITY\LocalService" "Auto"
     Assert-ServiceDefinition "ScriptBoardBroker" "LocalSystem" "Auto"
-    Assert-ServiceDefinition "ScriptBoardRunner" "NT AUTHORITY\LocalService" "Manual"
+    Assert-ServiceDefinition "ScriptBoardRunner" "LocalSystem" "Manual"
     Assert-ServiceDefinition "ScriptBoardAI" "NT AUTHORITY\LocalService" "Manual"
 
     Write-Host ("STATE_ROOT_ACL: " + (Get-Acl -LiteralPath $stateRoot).Sddl)

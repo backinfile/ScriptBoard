@@ -20,22 +20,23 @@ type windowsServiceRestriction interface {
 	AddLoopbackRule(name, serviceName, executable string) error
 }
 
-func configureWindowsRuntimeFirewall(aiExecutable, runnerExecutable string) error {
+func configureWindowsRuntimeFirewall(aiExecutable, runnerExecutable, runnerIdentityMode string) error {
 	policy, closePolicy, err := openWindowsServiceRestriction()
 	if err != nil {
 		return err
 	}
 	defer closePolicy()
-	return applyWindowsRuntimeFirewall(policy, aiExecutable, runnerExecutable)
+	return applyWindowsRuntimeFirewall(policy, aiExecutable, runnerExecutable, runnerIdentityMode)
 }
 
-func applyWindowsRuntimeFirewall(policy windowsServiceRestriction, aiExecutable, runnerExecutable string) error {
+func applyWindowsRuntimeFirewall(policy windowsServiceRestriction, aiExecutable, runnerExecutable, runnerIdentityMode string) error {
 	if !filepath.IsAbs(aiExecutable) || !filepath.IsAbs(runnerExecutable) {
 		return errors.New("Windows runtime firewall executable paths must be absolute")
 	}
 	// Windows Service Hardening installs kernel-enforced block-all inbound and
 	// outbound filters. AI receives one exact outbound loopback exception for
-	// the Web-owned Provider proxy; Runner receives no network exception.
+	// the Web-owned Provider proxy. Runner is restricted only in isolated mode;
+	// privileged mode is the full host-control default.
 	if err := policy.Restrict(aiServiceName, aiExecutable, true, true); err != nil {
 		return fmt.Errorf("restrict Windows AI Runtime network: %w", err)
 	}
@@ -44,6 +45,12 @@ func applyWindowsRuntimeFirewall(policy windowsServiceRestriction, aiExecutable,
 	}
 	if err := policy.AddLoopbackRule(aiLoopbackFirewallRuleName, aiServiceName, aiExecutable); err != nil {
 		return fmt.Errorf("allow Windows AI Runtime loopback proxy: %w", err)
+	}
+	if runnerIdentityMode != RunnerIdentityIsolated {
+		if err := policy.Restrict(runnerServiceName, runnerExecutable, false, true); err != nil {
+			return fmt.Errorf("remove Windows Runner network restriction: %w", err)
+		}
+		return nil
 	}
 	if err := policy.Restrict(runnerServiceName, runnerExecutable, true, true); err != nil {
 		return fmt.Errorf("restrict Windows Runner network: %w", err)

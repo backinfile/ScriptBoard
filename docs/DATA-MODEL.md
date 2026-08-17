@@ -426,7 +426,7 @@ install-root/
     scriptboard[.exe]
     scriptboard-broker[.exe]       # 固定主机写动作的独立特权进程
     scriptboard-ai-host[.exe]      # 独立身份运行 Pi 的受限 Runtime Host
-    scriptboard-runner[.exe]       # 复核摘要并在独立身份执行 Run 的 Worker
+    scriptboard-runner[.exe]       # 复核摘要并按配置身份执行 Run 的 Worker
     scriptboard-updater[.exe]
     ...                            # 对应平台完整 Release 内容
   scriptboard-updater              # 仅 Linux；切换前原子刷新、供恢复使用的独立 helper
@@ -437,9 +437,11 @@ install-root/
 `NT SERVICE\ScriptBoard` SID 运行；它们只获 Install Root 读/执行、配置读取以及 State Root 和
 State Root 中的 Web-owned 数据修改权限。特权 Broker 分别保留 root/LocalSystem，并只通过受保护
 本机 IPC 接受该 Web 服务身份；Broker-owned 外部密钥、`broker-secrets` 与 Host Files 不向 Web
-授予读取权限。Run 与 Assistant 分别由独立 Runner/AI Host 身份执行；Linux 使用 systemd 地址与
-seccomp 策略，Windows 使用 restricted service SID、Job Object、Windows Service Hardening 与
-最小 demand-start 服务 ACL。四组件版本、摘要和 IPC 协议由同一 Installed Release 绑定。
+授予读取权限。Run 由独立 Runner 服务执行，默认使用 root/LocalSystem；配置
+`runner_identity_mode: isolated` 时改用独立受限 Runner 身份与额外网络/系统调用边界。
+Assistant 由独立受限 AI Host 身份执行。Linux 使用 systemd 地址，Windows 使用 demand-start
+服务 ACL；AI Host 以及 isolated Runner 使用 seccomp 或 Windows Service Hardening。四组件版本、
+摘要和 IPC 协议由同一 Installed Release 绑定。
 
 Update Operation 是文件系统持久化事务，不写入 SQLite 作为事实来源，以便数据库本身被恢复时仍能继续判断更新阶段。终态结果由应用在正常启动后幂等导入审计一次。
 

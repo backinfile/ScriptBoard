@@ -1,6 +1,6 @@
 # 架构决策记录
 
-- [ADR-0170 外部 Trigger v2 签名绑定完整请求体](./0170-bind-external-trigger-signatures-to-request-bodies.md)，在认证前限流后有界暂存并把 Content-Type、长度和精确 body SHA-256 纳入 HMAC，拒绝 v1 降级。
+- [ADR-0172 默认 Runner 使用最高宿主权限](./0172-default-runner-to-privileged-host-control.md)，把受管部署默认执行身份改为 root/LocalSystem，并保留显式 isolated Runner 模式。
 
 本目录保存 ScriptBoard 的 Architecture Decision Records（ADR）。实现、评审或修改某个领域前，先阅读相关的当前决策，再把已取代的 ADR 仅作为历史背景。
 
@@ -21,7 +21,7 @@
 
 | 主题 | 建议先读 |
 | --- | --- |
-| 执行模型与进程生命周期 | [ADR-0001 跨平台执行](./0001-capability-based-cross-platform-execution.md)、[ADR-0006 原位执行](./0006-execute-scripts-in-place-without-registration.md)、[ADR-0027 无队列并发](./0027-allow-unbounded-concurrent-runs-without-a-queue.md)、[ADR-0050 Run 状态机](./0050-use-an-explicit-run-state-machine-without-queueing.md)、[ADR-0120 一次性源码](./0120-separate-one-time-source-ownership-from-workdir.md)、[ADR-0134 统一进程启动策略](./0134-centralize-process-launch-policy.md) |
+| 执行模型与进程生命周期 | [ADR-0001 跨平台执行](./0001-capability-based-cross-platform-execution.md)、[ADR-0006 原位执行](./0006-execute-scripts-in-place-without-registration.md)、[ADR-0027 无队列并发](./0027-allow-unbounded-concurrent-runs-without-a-queue.md)、[ADR-0050 Run 状态机](./0050-use-an-explicit-run-state-machine-without-queueing.md)、[ADR-0120 一次性源码](./0120-separate-one-time-source-ownership-from-workdir.md)、[ADR-0134 统一进程启动策略](./0134-centralize-process-launch-policy.md)、[ADR-0172 默认 Runner 最高权限](./0172-default-runner-to-privileged-host-control.md) |
 | 主机文件系统与恢复 | [ADR-0122 主机文件系统与受保护路径](./0122-browse-the-host-filesystem-with-protected-paths.md)、[ADR-0004 不跟随链接](./0004-do-not-follow-filesystem-links.md)、[ADR-0036 原子替换](./0036-replace-uploaded-files-atomically-through-trash.md)、[ADR-0045 文本编辑](./0045-provide-bounded-optimistic-text-editing.md) |
 | 快捷执行与变量 | [ADR-0016 默认立即执行](./0016-quick-runs-start-immediately-by-default.md)、[ADR-0017 普通参数变量](./0017-use-plain-parameter-variables.md)、[ADR-0061 引用完整性](./0061-enforce-variable-reference-integrity.md)、[ADR-0111 创建快捷执行](./0111-create-quick-runs-from-files-or-run-history.md)、[ADR-0112 组织与软锁](./0112-organize-edit-copy-and-soft-lock-quick-runs.md) |
 | 计划与重叠策略 | [ADR-0028 重叠确认](./0028-confirm-human-overlaps-and-configure-cron-overlaps.md)、[ADR-0030 内置调度器](./0030-use-an-internal-scheduler-instead-of-crontab.md)、[ADR-0031 不补跑](./0031-do-not-catch-up-missed-schedules.md)、[ADR-0032 实例时区](./0032-use-one-instance-time-zone.md)、[ADR-0033 五字段 Cron](./0033-use-five-field-minute-granularity-schedules.md) |
@@ -39,6 +39,7 @@
 | --- | --- |
 | [ADR-0131 管理员启动凭据只接受密码文件或一次性引导](./0131-remove-plaintext-admin-password-configuration.md) | [ADR-0021 自动初始化并允许启动时重设管理员凭据](./0021-bootstrap-and-reset-the-admin-credential.md) 中的明文 `--admin-password` 部分 |
 | [ADR-0130 安全边界默认拒绝并最小化子进程环境](./0130-default-to-closed-security-boundaries.md) | [ADR-0047 脚本继承服务进程环境](./0047-inherit-the-service-process-environment.md) |
+| [ADR-0172 默认 Runner 使用最高宿主权限](./0172-default-runner-to-privileged-host-control.md) | [ADR-0149 独立 Runner](./0149-isolate-runs-behind-a-dedicated-worker.md) 与 [ADR-0163 四组件整体发布](./0163-ship-four-trust-boundaries-as-one-versioned-product.md) 中“Runner 默认受限身份”的部分；四进程边界与执行点复核仍保留 |
 | [ADR-0147 低权限 Web](./0147-run-managed-web-under-a-low-privilege-service-identity.md)、[ADR-0148 独立 AI Host](./0148-isolate-ai-runtime-behind-a-dedicated-host.md)、[ADR-0149 独立 Runner](./0149-isolate-runs-behind-a-dedicated-worker.md)、[ADR-0163 四组件整体发布](./0163-ship-four-trust-boundaries-as-one-versioned-product.md) | [ADR-0023 默认使用宿主系统最高权限](./0023-default-to-highest-host-privileges.md) 的单个 root/LocalSystem Web 与脚本继承模型 |
 | [ADR-0027 允许无队列并发](./0027-allow-unbounded-concurrent-runs-without-a-queue.md) | [ADR-0012 拒绝并发](./0012-reject-instead-of-queueing-executions.md)、[ADR-0025 繁忙时跳过](./0025-skip-busy-cron-triggers-without-queueing.md) |
 | [ADR-0030 使用内置调度器](./0030-use-an-internal-scheduler-instead-of-crontab.md) | [ADR-0024 管理 crontab 条目](./0024-manage-only-owned-entries-in-runtime-users-crontab.md)、[ADR-0026 本机控制套接字](./0026-trigger-cron-runs-through-a-local-control-socket.md) |
@@ -54,6 +55,7 @@
 
 ## 最新决策
 
+- [ADR-0172 默认 Runner 使用最高宿主权限](./0172-default-runner-to-privileged-host-control.md)，把受管部署默认执行身份改为 root/LocalSystem，并保留显式 isolated Runner 模式。
 - [ADR-0169 持久恢复 External Interface 完成记录且不重复动作](./0169-reconcile-external-invocation-completions-without-repeating-actions.md)，在动作已执行但最终记录失败时持久化并幂等回放真实结果，过期未决记录明确标记为 `unknown`。
 - [ADR-0168 将 Registry 监控连接与请求限制在 Broker 内](./0168-keep-registry-monitor-connections-inside-the-broker.md)，用外部主密钥、Broker 内探测和跨进程操作日志消除 Web 密钥与“新 Endpoint + 旧密码”状态。
 - [ADR-0163 四个信任边界作为一个带版本的产品整体发布](./0163-ship-four-trust-boundaries-as-one-versioned-product.md)，保持 Web/Broker/Runner/AI Host 隔离，同时把安装、升级、回滚与卸载收敛为绑定四个摘要和 IPC 协议的一套发布事务。
@@ -69,7 +71,7 @@
 - [ADR-0149 将 Run 隔离到独立 Worker 身份](./0149-isolate-runs-behind-a-dedicated-worker.md)，让受管 Web 只发送不可变作业描述，由独立 Runner 复核摘要、执行器、目录和资源边界。
 - [ADR-0151 通过持久 outbox 转发已提交审计事件](./0151-forward-committed-audit-events-through-a-durable-outbox.md)，把本地链成功提交后的事件可靠发送到 HTTPS SIEM，并生成有界窗口安全告警。
 - [ADR-0152 在版本回切前验证并分阶段恢复数据库](./0152-verify-and-stage-database-rollback-before-version-switch.md)，用双重 SQLite 校验、可逆文件替换与故障注入避免损坏 snapshot 覆盖活动库。
-- [ADR-0153 使用 Windows Service Hardening 与 systemd seccomp 隔离 Runtime Host](./0153-use-service-hardening-and-seccomp-for-runtime-hosts.md)，让 AI 仅能访问环回代理、Runner 默认无网络，并在两个平台收紧服务 Token、系统调用和资源边界。
+- [ADR-0153 使用 Windows Service Hardening 与 systemd seccomp 隔离 Runtime Host](./0153-use-service-hardening-and-seccomp-for-runtime-hosts.md)，让 AI 仅能访问环回代理，并让显式 isolated Runner 在两个平台收紧服务 Token、网络、系统调用和资源边界。
 - [ADR-0154 将审计事件绑定到资源 revision 与 digest](./0154-bind-audit-events-to-resource-revisions-and-digests.md)，用 audit chain v3 保护 Broker 参数、Quick Run 发布版本和脚本摘要等结构化资源身份。
 - [ADR-0146 主机写操作通过独立、单次授权的特权 Broker](./0146-route-host-mutations-through-a-privileged-broker.md)，把首批防火墙与主机安全写操作移出 Web 调用路径，并重新验证会话、step-up、资源 revision 和单次 capability。
 - [ADR-0145 使用 State Root 外 Ed25519 checkpoint 锚定审计链](./0145-anchor-audit-chain-outside-state-root.md)，使本地链尾与同库状态一起回退时仍能由外部信任材料发现。

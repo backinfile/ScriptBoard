@@ -38,6 +38,17 @@ func TestWindowsRunnerUsesSeparateServiceSID(t *testing.T) {
 	}
 }
 
+func TestWindowsRunnerDefaultsToPrivilegedIdentity(t *testing.T) {
+	configuration := windowsRunnerServiceConfig(RunnerIdentityPrivileged)
+	if strings.TrimSpace(configuration.ServiceStartName) != "" || configuration.SidType != windows.SERVICE_SID_TYPE_NONE {
+		t.Fatalf("privileged Runner configuration = %#v", configuration)
+	}
+	isolated := windowsRunnerServiceConfig(RunnerIdentityIsolated)
+	if !strings.EqualFold(isolated.ServiceStartName, webServiceAccount) || isolated.SidType != windows.SERVICE_SID_TYPE_RESTRICTED {
+		t.Fatalf("isolated Runner configuration = %#v", isolated)
+	}
+}
+
 func TestWindowsManagedWebRuntimeRequiresLowIdentityAndServiceSID(t *testing.T) {
 	if err := validateWindowsWebRuntimeIdentity(false, true); err == nil {
 		t.Fatal("non-LocalService token was accepted")

@@ -52,11 +52,11 @@ func (fake *fakeServiceRestriction) AddLoopbackRule(name, service, executable st
 	return nil
 }
 
-func TestWindowsRuntimeFirewallUsesServiceHardeningDefaultDeny(t *testing.T) {
+func TestWindowsRuntimeFirewallUsesServiceHardeningDefaultDenyForIsolatedRunner(t *testing.T) {
 	aiExecutable := filepath.Join(t.TempDir(), "scriptboard-ai-host.exe")
 	runnerExecutable := filepath.Join(t.TempDir(), "scriptboard-runner.exe")
 	fake := &fakeServiceRestriction{}
-	if err := applyWindowsRuntimeFirewall(fake, aiExecutable, runnerExecutable); err != nil {
+	if err := applyWindowsRuntimeFirewall(fake, aiExecutable, runnerExecutable, RunnerIdentityIsolated); err != nil {
 		t.Fatal(err)
 	}
 	if len(fake.restrictions) != 2 {
@@ -78,12 +78,30 @@ func TestWindowsRuntimeFirewallUsesServiceHardeningDefaultDeny(t *testing.T) {
 	}
 }
 
+func TestWindowsRuntimeFirewallLeavesPrivilegedRunnerUnrestricted(t *testing.T) {
+	aiExecutable := filepath.Join(t.TempDir(), "scriptboard-ai-host.exe")
+	runnerExecutable := filepath.Join(t.TempDir(), "scriptboard-runner.exe")
+	fake := &fakeServiceRestriction{}
+	if err := applyWindowsRuntimeFirewall(fake, aiExecutable, runnerExecutable, RunnerIdentityPrivileged); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.restrictions) != 2 {
+		t.Fatalf("restrictions=%#v", fake.restrictions)
+	}
+	if fake.restrictions[0].service != aiServiceName || !fake.restrictions[0].enabled {
+		t.Fatalf("AI Runtime was not restricted: %#v", fake.restrictions)
+	}
+	if fake.restrictions[1].service != runnerServiceName || fake.restrictions[1].enabled {
+		t.Fatalf("privileged Runner restriction was not removed: %#v", fake.restrictions)
+	}
+}
+
 func TestWindowsRuntimeFirewallFailsClosedWhenRestrictionOrAllowFails(t *testing.T) {
 	aiExecutable := filepath.Join(t.TempDir(), "scriptboard-ai-host.exe")
 	runnerExecutable := filepath.Join(t.TempDir(), "scriptboard-runner.exe")
 	for _, failure := range []string{"restrict:" + aiServiceName, "allow", "restrict:" + runnerServiceName} {
 		t.Run(failure, func(t *testing.T) {
-			if err := applyWindowsRuntimeFirewall(&fakeServiceRestriction{fail: failure}, aiExecutable, runnerExecutable); err == nil {
+			if err := applyWindowsRuntimeFirewall(&fakeServiceRestriction{fail: failure}, aiExecutable, runnerExecutable, RunnerIdentityIsolated); err == nil {
 				t.Fatal("firewall installation unexpectedly succeeded")
 			}
 		})

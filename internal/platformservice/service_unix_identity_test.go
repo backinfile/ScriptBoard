@@ -26,6 +26,23 @@ func TestLinuxRunnerIdentityIsDedicatedAndSeparate(t *testing.T) {
 	}
 }
 
+func TestLinuxRunnerDefaultsToPrivilegedRoot(t *testing.T) {
+	user, group := linuxRunnerServiceAccount(RunnerIdentityPrivileged)
+	if user != "root" || group != "root" {
+		t.Fatalf("privileged Runner account = %s:%s", user, group)
+	}
+	user, group = linuxRunnerServiceAccount(RunnerIdentityIsolated)
+	if user != runnerServiceUser || group != runnerServiceUser {
+		t.Fatalf("isolated Runner account = %s:%s", user, group)
+	}
+	if policy := linuxRunnerServicePolicy(RunnerIdentityPrivileged); policy != "" {
+		t.Fatalf("privileged Runner should not receive isolated systemd policy: %q", policy)
+	}
+	if policy := linuxRunnerServicePolicy(RunnerIdentityIsolated); !strings.Contains(policy, "IPAddressDeny=any") {
+		t.Fatalf("isolated Runner policy is missing network denial: %q", policy)
+	}
+}
+
 func TestLinuxManagedWebRuntimeRejectsRootAndOtherUsers(t *testing.T) {
 	if err := validateLinuxWebRuntimeIdentity(0, 1200); err == nil {
 		t.Fatal("root identity was accepted")

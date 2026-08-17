@@ -139,6 +139,7 @@ func printUsage() {
   --listen ADDRESS           HTTP 监听地址
   --tls-cert PATH            TLS 证书
   --tls-key PATH             TLS 私钥
+  --runner-identity-mode MODE Runner 身份模式：privileged（默认）或 isolated
   --trusted-proxy IP_OR_CIDR 可信反向代理（可重复）
   --allowed-host HOST        允许的 HTTP Host（可重复）
   --canonical-external-url URL 对外访问的规范 URL`)
@@ -324,7 +325,7 @@ func runService(action string, arguments []string) error {
 			if metadata.Current != buildinfo.Current().Version {
 				return errors.New("服务已经由新版安装流程管理；请通过应用更新功能升级")
 			}
-			if err := platformservice.Install(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, installation.ServiceUpdaterExecutable(metadata), metadata.StateRoot, webStartupFiles(loaded)...); err != nil {
+			if err := platformservice.Install(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, installation.ServiceUpdaterExecutable(metadata), metadata.StateRoot, loaded.RunnerIdentityMode, webStartupFiles(loaded)...); err != nil {
 				return err
 			}
 			return finishManagedServiceInstall(loaded, metadata, startAfterInstall)
@@ -351,7 +352,7 @@ func runService(action string, arguments []string) error {
 		if err := initializer.Close(); err != nil {
 			return fmt.Errorf("完成 managed service 状态初始化: %w", err)
 		}
-		if err := platformservice.Install(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, installation.ServiceUpdaterExecutable(metadata), metadata.StateRoot, webStartupFiles(loaded)...); err != nil {
+		if err := platformservice.Install(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, installation.ServiceUpdaterExecutable(metadata), metadata.StateRoot, loaded.RunnerIdentityMode, webStartupFiles(loaded)...); err != nil {
 			return err
 		}
 		return finishManagedServiceInstall(loaded, metadata, startAfterInstall)
@@ -438,7 +439,7 @@ func verifyManagedService(loaded config.Config) error {
 	if err := requireManagedConfigPath(loaded.ConfigPath, metadata.ConfigPath); err != nil {
 		return err
 	}
-	matches, err := platformservice.MatchesExecutable(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, metadata.StateRoot)
+	matches, err := platformservice.MatchesExecutable(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, metadata.StateRoot, loaded.RunnerIdentityMode)
 	if err != nil {
 		return fmt.Errorf("verify managed service definitions: %w", err)
 	}
@@ -544,7 +545,11 @@ func canRestartManagedService(stateRoot, configPath string) bool {
 	if err != nil {
 		return false
 	}
-	matches, err := platformservice.MatchesExecutable(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, metadata.StateRoot)
+	loaded, loadErr := config.Load([]string{"--config", metadata.ConfigPath}, os.Getenv)
+	if loadErr != nil {
+		return false
+	}
+	matches, err := platformservice.MatchesExecutable(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, metadata.StateRoot, loaded.RunnerIdentityMode)
 	if err != nil || !matches {
 		return false
 	}

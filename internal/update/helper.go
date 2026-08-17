@@ -142,7 +142,11 @@ func RepairCurrentInstallation(stateRoot string) (buildinfo.Info, error) {
 	if err != nil {
 		return buildinfo.Info{}, err
 	}
-	if err := platformservice.SwitchExecutable(installation.ServiceExecutable(metadata), metadata.ConfigPath); err != nil {
+	loaded, loadErr := config.Load([]string{"--config", metadata.ConfigPath}, os.Getenv)
+	if loadErr != nil {
+		return buildinfo.Info{}, loadErr
+	}
+	if err := platformservice.SwitchExecutable(installation.ServiceExecutable(metadata), metadata.ConfigPath, loaded.RunnerIdentityMode); err != nil {
 		return buildinfo.Info{}, err
 	}
 	return info, nil
@@ -223,7 +227,11 @@ func recoverBeforeSwitch(ctx context.Context, operation *Operation, cause error)
 	if err := SaveOperation(*operation); err != nil {
 		return err
 	}
-	if err := platformservice.SwitchExecutable(installation.ServiceExecutable(metadata), metadata.ConfigPath); err != nil {
+	loaded, loadErr := config.Load([]string{"--config", metadata.ConfigPath}, os.Getenv)
+	if loadErr != nil {
+		return markRecoveryFailure(operation, cause, loadErr)
+	}
+	if err := platformservice.SwitchExecutable(installation.ServiceExecutable(metadata), metadata.ConfigPath, loaded.RunnerIdentityMode); err != nil {
 		return markRecoveryFailure(operation, cause, err)
 	}
 	RemoveRuntimeMarker(operation.StateRoot)
@@ -268,7 +276,11 @@ func switchAndValidate(ctx context.Context, operation *Operation) error {
 	if err != nil {
 		return err
 	}
-	if err := platformservice.SwitchExecutable(installation.ServiceExecutable(metadata), metadata.ConfigPath); err != nil {
+	loaded, loadErr := config.Load([]string{"--config", metadata.ConfigPath}, os.Getenv)
+	if loadErr != nil {
+		return loadErr
+	}
+	if err := platformservice.SwitchExecutable(installation.ServiceExecutable(metadata), metadata.ConfigPath, loaded.RunnerIdentityMode); err != nil {
 		return err
 	}
 	operation.Phase = PhaseStartingTarget
@@ -319,7 +331,11 @@ func rollbackOperation(ctx context.Context, operation *Operation, cause error) e
 		metadata, err = installation.SetCurrent(metadata, operation.PreviousVersion)
 	}
 	if err == nil {
-		err = platformservice.SwitchExecutable(installation.ServiceExecutable(metadata), metadata.ConfigPath)
+		if loaded, loadErr := config.Load([]string{"--config", metadata.ConfigPath}, os.Getenv); loadErr != nil {
+			err = loadErr
+		} else {
+			err = platformservice.SwitchExecutable(installation.ServiceExecutable(metadata), metadata.ConfigPath, loaded.RunnerIdentityMode)
+		}
 	}
 	if err == nil {
 		err = restoreDatabase(operation.SnapshotPath, operation.DatabasePath)

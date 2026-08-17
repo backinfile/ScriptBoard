@@ -1,6 +1,8 @@
 # 使用 Windows Service Hardening 与 systemd seccomp 隔离 Runtime Host
 
-Windows 受管 AI Host 与 Runner 都使用 `LocalService`、各自的 restricted service SID 和私有目录 ACL。安装器进一步通过 Windows Firewall `INetFwServiceRestriction` 启用 Windows Service Hardening：系统为服务建立默认阻断入站、出站流量的 WFP 过滤器；AI 只在专用 WSH 规则集合中获得到 `127.0.0.1` 与 `::1` 的 TCP 出站例外，用于访问 Web 进程持有的 Provider/Tool Broker 代理；Runner 没有网络例外。安装或版本切换必须先为新 executable 建立限制，服务定义切换成功后才撤销旧 executable 的限制；任一步失败都不得以未受限服务继续安装。卸载只移除本产品拥有的规则和两个服务限制。
+> **部分被取代（2026-08-17）**：Runner 默认身份和默认网络策略由 [ADR-0172](./0172-default-runner-to-privileged-host-control.md) 调整为 root/LocalSystem 完全控制模式。本 ADR 对 AI Host 始终有效；对 Runner 仅在显式 `runner_identity_mode: isolated` 时完整适用。
+
+Windows 受管 AI Host 与 isolated Runner 都使用 `LocalService`、各自的 restricted service SID 和私有目录 ACL。安装器进一步通过 Windows Firewall `INetFwServiceRestriction` 启用 Windows Service Hardening：系统为服务建立默认阻断入站、出站流量的 WFP 过滤器；AI 只在专用 WSH 规则集合中获得到 `127.0.0.1` 与 `::1` 的 TCP 出站例外，用于访问 Web 进程持有的 Provider/Tool Broker 代理；isolated Runner 没有网络例外。安装或版本切换必须先为新 executable 建立对应限制，服务定义切换成功后才撤销旧 executable 的限制；任一步失败都不得以错误的 Runtime Host 策略继续安装。卸载只移除本产品拥有的规则和服务限制。
 
 Linux 的 AI Host 与 Runner 在独立 UID、空 capability、`NoNewPrivileges` 和 systemd 地址限制之外，启用 `SystemCallArchitectures=native`、`SystemCallFilter=@system-service` 与 `SystemCallErrorNumber=EPERM`，由 systemd 生成 seccomp allowlist；同时隔离设备、时钟、主机名、内核日志、namespace 与实时调度。AI 服务维持仅环回地址例外并限制为 1 GiB/64 tasks，Runner 不允许 IP 地址族并限制为 2 GiB/64 tasks。两个服务同时设置 `MemorySwapMax=0`；否则进程可在到达 `MemoryMax` 后继续把工作集换出，绕过“有限内存占用”的安全目标并耗尽宿主 swap。
 

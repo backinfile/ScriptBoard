@@ -25,6 +25,7 @@ type Config struct {
 	Listen                             string              `yaml:"listen"`
 	TLSCert                            string              `yaml:"tls_cert"`
 	TLSKey                             string              `yaml:"tls_key"`
+	RunnerIdentityMode                 string              `yaml:"runner_identity_mode"`
 	ExecutorChains                     map[string][]string `yaml:"executor_chains"`
 	AdminUsername                      string              `yaml:"admin_username"`
 	AdminPasswordFile                  string              `yaml:"admin_password_file"`
@@ -49,6 +50,7 @@ type yamlConfig struct {
 	Listen                             string              `yaml:"listen"`
 	TLSCert                            string              `yaml:"tls_cert"`
 	TLSKey                             string              `yaml:"tls_key"`
+	RunnerIdentityMode                 string              `yaml:"runner_identity_mode"`
 	ExecutorChains                     map[string][]string `yaml:"executor_chains"`
 	AdminUsername                      string              `yaml:"admin_username"`
 	AdminPasswordFile                  string              `yaml:"admin_password_file"`
@@ -125,6 +127,7 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 	flags.StringVar(&result.Listen, "listen", result.Listen, "HTTP 监听地址")
 	flags.StringVar(&result.TLSCert, "tls-cert", result.TLSCert, "TLS 证书路径")
 	flags.StringVar(&result.TLSKey, "tls-key", result.TLSKey, "TLS 私钥路径")
+	flags.StringVar(&result.RunnerIdentityMode, "runner-identity-mode", result.RunnerIdentityMode, "Runner 运行身份模式：privileged 或 isolated")
 	flags.DurationVar(&result.RunTimeoutGrace, "run-timeout-grace", result.RunTimeoutGrace, "自动超时强杀宽限")
 	flags.BoolVar(&result.UpdateCheck, "update-check", result.UpdateCheck, "定期检查正式版更新")
 	flags.DurationVar(&result.UpdateInterval, "update-check-interval", result.UpdateInterval, "更新检查间隔")
@@ -167,6 +170,12 @@ func Load(arguments []string, getenv func(string) string) (Config, error) {
 	}
 	if result.UpdateInterval < time.Hour || result.UpdateInterval > 168*time.Hour {
 		return Config{}, fmt.Errorf("更新检查间隔必须在 1 到 168 小时之间")
+	}
+	result.RunnerIdentityMode = strings.TrimSpace(result.RunnerIdentityMode)
+	switch result.RunnerIdentityMode {
+	case RunnerIdentityPrivileged, RunnerIdentityIsolated:
+	default:
+		return Config{}, fmt.Errorf("runner_identity_mode 必须是 %q 或 %q", RunnerIdentityPrivileged, RunnerIdentityIsolated)
 	}
 	if result.AdminPasswordFile != "" && !filepath.IsAbs(result.AdminPasswordFile) {
 		return Config{}, errors.New("admin_password_file must be an absolute path")
@@ -237,25 +246,32 @@ func defaults() Config {
 		}
 		base := filepath.Join(programData, "ScriptBoard")
 		return Config{
-			StateRoot:       filepath.Join(base, "state"),
-			Listen:          "127.0.0.1:8787",
-			TrustedProxies:  nil,
-			RunTimeoutGrace: 30 * time.Second,
-			UpdateCheck:     true,
-			UpdateInterval:  6 * time.Hour,
-			ConfigPath:      filepath.Join(base, "config.yaml"),
+			StateRoot:          filepath.Join(base, "state"),
+			Listen:             "127.0.0.1:8787",
+			RunnerIdentityMode: RunnerIdentityPrivileged,
+			TrustedProxies:     nil,
+			RunTimeoutGrace:    30 * time.Second,
+			UpdateCheck:        true,
+			UpdateInterval:     6 * time.Hour,
+			ConfigPath:         filepath.Join(base, "config.yaml"),
 		}
 	}
 	return Config{
-		StateRoot:       "/var/lib/scriptboard/state",
-		Listen:          "127.0.0.1:8787",
-		TrustedProxies:  nil,
-		RunTimeoutGrace: 30 * time.Second,
-		UpdateCheck:     true,
-		UpdateInterval:  6 * time.Hour,
-		ConfigPath:      "/etc/scriptboard/config.yaml",
+		StateRoot:          "/var/lib/scriptboard/state",
+		Listen:             "127.0.0.1:8787",
+		RunnerIdentityMode: RunnerIdentityPrivileged,
+		TrustedProxies:     nil,
+		RunTimeoutGrace:    30 * time.Second,
+		UpdateCheck:        true,
+		UpdateInterval:     6 * time.Hour,
+		ConfigPath:         "/etc/scriptboard/config.yaml",
 	}
 }
+
+const (
+	RunnerIdentityPrivileged = "privileged"
+	RunnerIdentityIsolated   = "isolated"
+)
 
 func requestedConfigPath(arguments []string, fallback string) (string, bool) {
 	for index, argument := range arguments {
@@ -282,6 +298,9 @@ func applyYAML(result *Config, values yamlConfig) {
 	}
 	if values.TLSKey != "" {
 		result.TLSKey = values.TLSKey
+	}
+	if values.RunnerIdentityMode != "" {
+		result.RunnerIdentityMode = strings.TrimSpace(values.RunnerIdentityMode)
 	}
 	if values.ExecutorChains != nil {
 		result.ExecutorChains = values.ExecutorChains
@@ -345,6 +364,9 @@ func applyEnvironment(result *Config, getenv func(string) string) {
 	}
 	if value := getenv("SCRIPTBOARD_TLS_KEY"); value != "" {
 		result.TLSKey = value
+	}
+	if value := getenv("SCRIPTBOARD_RUNNER_IDENTITY_MODE"); value != "" {
+		result.RunnerIdentityMode = strings.TrimSpace(value)
 	}
 	if value := getenv("SCRIPTBOARD_RUN_TIMEOUT_GRACE_SECONDS"); value != "" {
 		if seconds, err := strconv.Atoi(value); err == nil {

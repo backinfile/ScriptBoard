@@ -30,8 +30,10 @@
 > schema 24，schema 20–23 可在单事务内前向迁移。
 
 > **2026-08-12 安全修订**：受管部署改为 Web、特权 Broker、AI Host 与 Runner 四服务边界。
-> Web 使用专用低权限身份；Broker 保留 root/LocalSystem；AI 与 Runner 使用独立受限身份、
-> 受保护 IPC、默认拒绝网络和资源/系统调用限制。Run 只继承 Runner 构造的最小环境，不再继承
+> Web 使用专用低权限身份；Broker 保留 root/LocalSystem；AI 使用独立受限身份。Runner 保留
+> 独立服务边界与受保护 IPC，默认以 root/LocalSystem 执行可信脚本；显式
+> `runner_identity_mode: isolated` 时才使用受限身份、默认拒绝网络和资源/系统调用限制。
+> Run 只继承 Runner 构造的最小环境，不再继承
 > Web 身份与环境。此修订取代下文关于“单进程”、root/LocalSystem Web 和脚本继承 Web 身份的
 > 冲突表述；Host Files、MFA、Passkey、远程网站、Assistant Provider、MySQL、审计签名与备份
 > 密钥能力均由 Broker 持有，Web 只调用固定领域协议。四个二进制作为一个版本化发布单元整体
@@ -44,7 +46,7 @@
 
 ScriptBoard 是一个自托管、单机、少量可信用户使用的主机文件与脚本操作台，为服务身份可访问的普通文件提供浏览和管理，并为其中的可信脚本提供本地执行、实时日志、历史追踪、快捷执行和内置计划。
 
-它不是通用多用户运维平台，也不把管理员发布的脚本视为不可信代码。受管部署仍通过独立 Runner 身份、最小环境、摘要复核、资源限制和默认拒绝网络来限制脚本的宿主影响；文件访问与特权动作由 Broker 的固定领域协议承担，不能从 Web 退回任意高权限进程启动。
+它不是通用多用户运维平台，也不把管理员发布的脚本视为不可信代码。受管部署默认把 Run 视为最高权限宿主操作，由独立 Runner 以 root/LocalSystem 执行；管理员可通过 `runner_identity_mode: isolated` 改用受限 Runner 身份、网络与系统调用边界。无论 Runner 模式如何，文件访问与特权动作都由 Broker 的固定领域协议承担，不能从 Web 退回任意高权限进程启动。
 
 ## 2. 产品目标
 
@@ -61,9 +63,9 @@ MVP 保持 SQLite、单机文件系统与平台原生服务部署，不引入运
 ## 3. 信任与权限边界
 
 - 实例使用固定四角色多用户模型，并且只允许一个系统管理员；脚本发布、执行和高风险操作仍受角色、step-up 与审计约束。
-- 管理员发布的脚本视为可信业务代码，但只能由独立 Runner 身份在最小环境和资源边界内执行。
+- 管理员发布的脚本视为可信业务代码，默认由独立 Runner 以 root/LocalSystem 执行；`runner_identity_mode: isolated` 可改为受限 Runner 身份和资源边界。
 - Web 默认低权限：Windows 使用 LocalService + 独立服务 SID，Linux 使用无登录 `scriptboard-web`；只有固定 Broker 保留 LocalSystem/root。
-- Runner 与 AI Host 使用独立受限身份。Web 不能直接解封 Broker 秘密、读取 Host Files 或把任意命令交给高权限进程。
+- Runner 与 AI Host 都不由 Web 直接派生；AI Host 始终使用独立受限身份，Runner 默认使用 root/LocalSystem，显式 isolated 模式使用独立受限身份。Web 不能直接解封 Broker 秘密、读取 Host Files 或把任意命令交给高权限进程。
 - 四组件必须来自同一发布版本；混合二进制/IPC 协议组合 fail closed。Web 与 Broker 常驻，Runner/AI Host 按需启动。
 - 明文 HTTP 只能监听回环地址。非回环访问必须使用内置 TLS，或由同机可信 HTTPS 反向代理转发到回环后端。
 - 所有文件、日志、SSE、变量和执行入口必须验证用户 Session 与声明式角色权限；匿名仅允许登录入口和无敏感内容的静态资源。

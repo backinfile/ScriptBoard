@@ -38,7 +38,7 @@ func RunRunner(ctx context.Context, arguments []string, getenv func(string) stri
 		return err
 	}
 	if !*developmentCurrentUser {
-		if err := platformservice.ValidateRunnerRuntimeIdentity(); err != nil {
+		if err := platformservice.ValidateRunnerRuntimeIdentity(loaded.RunnerIdentityMode); err != nil {
 			return fmt.Errorf("refuse to start managed Runner Host with unsafe OS identity: %w", err)
 		}
 	}

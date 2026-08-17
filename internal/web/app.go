@@ -356,6 +356,7 @@ type Config struct {
 	CustomDashboardClient           *http.Client
 	UpdateCheck                     bool
 	UpdateInterval                  time.Duration
+	RunnerIdentityMode              string
 	UpdateSource                    updatepkg.ReleaseSource
 	RequestShutdown                 func()
 	RequestRestart                  func() error
@@ -985,6 +986,7 @@ func Open(config Config) (*App, error) {
 	application.updateContext, application.updateCancel = context.WithCancel(context.Background())
 	application.updates = updatepkg.NewManager(updatepkg.ManagerConfig{
 		StateRoot: stateRoot, CheckEnabled: config.UpdateCheck, CheckInterval: config.UpdateInterval,
+		RunnerIdentityMode: config.RunnerIdentityMode,
 		Source: config.UpdateSource, RequestShutdown: config.RequestShutdown,
 	})
 	if validating {

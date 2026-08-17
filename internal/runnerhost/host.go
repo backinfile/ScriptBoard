@@ -227,14 +227,24 @@ func (server *Server) Close(ctx context.Context) error {
 }
 
 type ClientLauncher struct {
-	dial func(context.Context) (net.Conn, error)
+	dial            func(context.Context) (net.Conn, error)
+	runtimeIdentity string
 }
 
-func NewClientLauncher(dial func(context.Context) (net.Conn, error)) *ClientLauncher {
-	return &ClientLauncher{dial: dial}
+func NewClientLauncher(dial func(context.Context) (net.Conn, error), runtimeIdentity ...string) *ClientLauncher {
+	identity := "scriptboard-runner"
+	if len(runtimeIdentity) > 0 && strings.TrimSpace(runtimeIdentity[0]) != "" {
+		identity = strings.TrimSpace(runtimeIdentity[0])
+	}
+	return &ClientLauncher{dial: dial, runtimeIdentity: identity}
 }
 
-func (launcher *ClientLauncher) RuntimeIdentity() string { return "scriptboard-runner" }
+func (launcher *ClientLauncher) RuntimeIdentity() string {
+	if launcher == nil || launcher.runtimeIdentity == "" {
+		return "scriptboard-runner"
+	}
+	return launcher.runtimeIdentity
+}
 
 func (launcher *ClientLauncher) Launch(ctx context.Context, request runmanager.LaunchRequest) (runmanager.ManagedProcess, string, error) {
 	if launcher == nil || launcher.dial == nil {
@@ -242,7 +252,7 @@ func (launcher *ClientLauncher) Launch(ctx context.Context, request runmanager.L
 	}
 	connection, err := launcher.dial(ctx)
 	if err != nil {
-		return nil, "", fmt.Errorf("connect isolated Runner Host: %w", err)
+		return nil, "", fmt.Errorf("connect Runner Host: %w", err)
 	}
 	_ = connection.SetDeadline(time.Now().Add(5 * time.Second))
 	if err := json.NewEncoder(connection).Encode(launchEnvelope{Key: request.RunID, Request: request}); err != nil {

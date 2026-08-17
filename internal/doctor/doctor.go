@@ -17,6 +17,7 @@ import (
 
 	"scriptboard/internal/auditcheckpoint"
 	"scriptboard/internal/buildinfo"
+	sbconfig "scriptboard/internal/config"
 	"scriptboard/internal/diskspace"
 	"scriptboard/internal/installation"
 	"scriptboard/internal/platformservice"
@@ -146,9 +147,18 @@ func checkUpdateInstallation(report *Report, stateRoot string) {
 	if err == nil {
 		err = installation.ValidateVersion(metadata, metadata.Current, info)
 	}
+	runnerIdentityMode := ""
+	if err == nil {
+		loaded, loadErr := sbconfig.Load([]string{"--config", metadata.ConfigPath}, os.Getenv)
+		if loadErr != nil {
+			err = loadErr
+		} else {
+			runnerIdentityMode = loaded.RunnerIdentityMode
+		}
+	}
 	if err == nil {
 		var matches bool
-		matches, err = platformservice.MatchesExecutable(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, metadata.StateRoot)
+		matches, err = platformservice.MatchesExecutable(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, metadata.StateRoot, runnerIdentityMode)
 		if err == nil && !matches {
 			err = fmt.Errorf("service target does not match the active Installed Release")
 		}

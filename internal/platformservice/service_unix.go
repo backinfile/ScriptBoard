@@ -31,6 +31,11 @@ const (
 	runnerServiceUser = "scriptboard-runner"
 )
 
+const (
+	RunnerIdentityPrivileged = "privileged"
+	RunnerIdentityIsolated   = "isolated"
+)
+
 func Exists() (bool, error) {
 	_, err := os.Stat(unitPath)
 	if err == nil {
@@ -69,7 +74,16 @@ func ValidateAIRuntimeIdentity() error {
 	return nil
 }
 
-func ValidateRunnerRuntimeIdentity() error {
+func ValidateRunnerRuntimeIdentity(mode string) error {
+	if mode == "" || mode == RunnerIdentityPrivileged {
+		if os.Geteuid() != 0 {
+			return fmt.Errorf("effective UID %d is not root for privileged Runner mode", os.Geteuid())
+		}
+		return nil
+	}
+	if mode != RunnerIdentityIsolated {
+		return fmt.Errorf("unknown Runner identity mode %q", mode)
+	}
 	account, err := user.Lookup(runnerServiceUser)
 	if err != nil {
 		return fmt.Errorf("resolve managed Runner service account: %w", err)
@@ -91,7 +105,7 @@ func validateLinuxWebRuntimeIdentity(effectiveUID, expectedUID int) error {
 	return nil
 }
 
-func Install(executable, configPath, updaterExecutable, stateRoot string, webReadPaths ...string) error {
+func Install(executable, configPath, updaterExecutable, stateRoot, runnerIdentityMode string, webReadPaths ...string) error {
 	if err := prepareLinuxWebServiceIdentity(configPath, stateRoot, webReadPaths...); err != nil {
 		return err
 	}
@@ -209,43 +223,20 @@ RemoveOnStop=true
 [Install]
 WantedBy=sockets.target
 `, systemdQuote(aiEndpoint))
+	runnerUser, runnerGroup := linuxRunnerServiceAccount(runnerIdentityMode)
+	runnerPolicy := linuxRunnerServicePolicy(runnerIdentityMode)
 	runnerUnit := fmt.Sprintf(`[Unit]
-Description=ScriptBoard isolated Run Worker
+Description=ScriptBoard Run Worker
 Requires=scriptboard-runner.socket
 After=network.target scriptboard-runner.socket
 
 [Service]
 Type=simple
-User=scriptboard-runner
-Group=scriptboard-runner
+User=%s
+Group=%s
 ExecStart=%s --config %s --state-root %s --allowed-identity scriptboard-web
 Restart=on-failure
-NoNewPrivileges=true
-UMask=0077
-CapabilityBoundingSet=
-AmbientCapabilities=
-PrivateTmp=true
-PrivateDevices=true
-ProtectHome=true
-ProtectClock=true
-ProtectHostname=true
-ProtectKernelLogs=true
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
-RestrictSUIDSGID=true
-LockPersonality=true
-RestrictNamespaces=true
-RestrictRealtime=true
-SystemCallArchitectures=native
-SystemCallFilter=@system-service
-SystemCallErrorNumber=EPERM
-TasksMax=64
-MemoryMax=2G
-MemorySwapMax=0
-RestrictAddressFamilies=AF_UNIX
-IPAddressDeny=any
-`, systemdQuote(runnerExecutable), systemdQuote(configPath), systemdQuote(stateRoot))
+%s`, runnerUser, runnerGroup, systemdQuote(runnerExecutable), systemdQuote(configPath), systemdQuote(stateRoot), runnerPolicy)
 	runnerSocketUnit := fmt.Sprintf(`[Unit]
 Description=ScriptBoard Run Worker activation socket
 
@@ -555,7 +546,7 @@ func prepareLinuxAIServiceIdentity(stateRoot string) error {
 	return nil
 }
 
-func SwitchExecutable(_, _ string) error {
+func SwitchExecutable(_, _, _ string) error {
 	// The systemd service points at Install Root/current. installation.SetCurrent
 	// atomically changes that symlink, so the unit never needs to be rewritten.
 	return nil
@@ -657,7 +648,7 @@ func IsRunning() (bool, error) {
 	return strings.Contains(status, "STATE: RUNNING"), err
 }
 
-func MatchesExecutable(executable, configPath, stateRoot string) (bool, error) {
+func MatchesExecutable(executable, configPath, stateRoot, runnerIdentityMode string) (bool, error) {
 	unit, err := os.ReadFile(unitPath)
 	if err != nil {
 		return false, err
@@ -702,14 +693,60 @@ func MatchesExecutable(executable, configPath, stateRoot string) (bool, error) {
 			}
 			runnerText := string(runnerUnit)
 			expectedRunner := "ExecStart=" + systemdQuote(filepath.Join(filepath.Dir(executable), "scriptboard-runner")) + " --config " + systemdQuote(configPath) + " --state-root " + systemdQuote(stateRoot) + " --allowed-identity " + webServiceUser
+			runnerUser, _ := linuxRunnerServiceAccount(runnerIdentityMode)
+			runnerMatches := strings.Contains(runnerText, expectedRunner) && strings.Contains(runnerText, "User="+runnerUser)
+			if runnerIdentityMode == RunnerIdentityIsolated {
+				runnerMatches = runnerMatches && strings.Contains(runnerText, "IPAddressDeny=any") &&
+					strings.Contains(runnerText, "RestrictAddressFamilies=AF_UNIX") &&
+					strings.Contains(runnerText, "SystemCallFilter=@system-service") &&
+					strings.Contains(runnerText, "SystemCallArchitectures=native")
+			}
 			return strings.Contains(aiText, expectedAI) && strings.Contains(aiText, "User="+aiServiceUser) &&
 				strings.Contains(aiText, "IPAddressDeny=any") && strings.Contains(aiText, "IPAddressAllow=localhost") &&
 				strings.Contains(aiText, "SystemCallFilter=@system-service") && strings.Contains(aiText, "SystemCallArchitectures=native") &&
-				strings.Contains(runnerText, expectedRunner) && strings.Contains(runnerText, "User="+runnerServiceUser) && strings.Contains(runnerText, "IPAddressDeny=any") &&
-				strings.Contains(runnerText, "SystemCallFilter=@system-service") && strings.Contains(runnerText, "SystemCallArchitectures=native"), nil
+				runnerMatches, nil
 		}
 	}
 	return false, nil
+}
+
+func linuxRunnerServiceAccount(mode string) (string, string) {
+	if mode == RunnerIdentityIsolated {
+		return runnerServiceUser, runnerServiceUser
+	}
+	return "root", "root"
+}
+
+func linuxRunnerServicePolicy(mode string) string {
+	if mode != RunnerIdentityIsolated {
+		return ""
+	}
+	return `NoNewPrivileges=true
+UMask=0077
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictNamespaces=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+TasksMax=64
+MemoryMax=2G
+MemorySwapMax=0
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+`
 }
 
 func StartUpdater(_, _, operationID string) error {

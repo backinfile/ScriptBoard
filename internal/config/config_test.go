@@ -22,8 +22,30 @@ func TestLoadUsesMinimalInstallationDefaults(t *testing.T) {
 	if loaded.Listen != "127.0.0.1:8787" {
 		t.Fatalf("default listen = %q", loaded.Listen)
 	}
+	if loaded.RunnerIdentityMode != config.RunnerIdentityPrivileged {
+		t.Fatalf("default runner identity mode = %q", loaded.RunnerIdentityMode)
+	}
 	if len(loaded.TrustedProxies) != 0 {
 		t.Fatalf("default trusted proxies = %#v, want none", loaded.TrustedProxies)
+	}
+}
+
+func TestLoadRunnerIdentityModeConfiguration(t *testing.T) {
+	t.Parallel()
+
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte("runner_identity_mode: isolated\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := config.Load([]string{"--config", configPath}, func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.RunnerIdentityMode != config.RunnerIdentityIsolated {
+		t.Fatalf("runner identity mode = %q", loaded.RunnerIdentityMode)
+	}
+	if _, err := config.Load([]string{"--config", configPath, "--runner-identity-mode", "invalid"}, func(string) string { return "" }); err == nil {
+		t.Fatal("invalid runner identity mode was accepted")
 	}
 }
 

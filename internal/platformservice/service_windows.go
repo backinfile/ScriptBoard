@@ -30,6 +30,11 @@ const (
 	windowsRecoveryResetSeconds = 24 * 60 * 60
 )
 
+const (
+	RunnerIdentityPrivileged = "privileged"
+	RunnerIdentityIsolated   = "isolated"
+)
+
 var windowsRecoveryActions = []mgr.RecoveryAction{
 	{Type: mgr.ServiceRestart, Delay: 2 * time.Second},
 	{Type: mgr.ServiceRestart, Delay: 10 * time.Second},
@@ -116,7 +121,24 @@ func ValidateAIRuntimeIdentity() error {
 	return nil
 }
 
-func ValidateRunnerRuntimeIdentity() error {
+func ValidateRunnerRuntimeIdentity(mode string) error {
+	if mode == "" || mode == RunnerIdentityPrivileged {
+		tokenUser, err := windows.GetCurrentProcessToken().GetTokenUser()
+		if err != nil {
+			return fmt.Errorf("read managed Runner token user: %w", err)
+		}
+		localSystem, err := windows.StringToSid("S-1-5-18")
+		if err != nil {
+			return err
+		}
+		if !tokenUser.User.Sid.Equals(localSystem) {
+			return errors.New("process token is not LocalSystem for privileged Runner mode")
+		}
+		return nil
+	}
+	if mode != RunnerIdentityIsolated {
+		return fmt.Errorf("unknown Runner identity mode %q", mode)
+	}
 	return validateWindowsServiceIdentity(runnerServiceSID, "Runner")
 }
 
@@ -162,7 +184,7 @@ func validateWindowsWebRuntimeIdentity(localService, serviceSIDEnabled bool) err
 	return nil
 }
 
-func Install(executable, configPath, _ string, stateRoot string, webReadPaths ...string) error {
+func Install(executable, configPath, _ string, stateRoot, runnerIdentityMode string, webReadPaths ...string) error {
 	manager, err := mgr.Connect()
 	if err != nil {
 		return err
@@ -244,7 +266,7 @@ func Install(executable, configPath, _ string, stateRoot string, webReadPaths ..
 	if err := aiService.Close(); err != nil {
 		return err
 	}
-	runnerConfiguration := mgr.Config{StartType: mgr.StartManual, DisplayName: "ScriptBoard Isolated Runner", Description: "ScriptBoard isolated Run worker", ServiceStartName: webServiceAccount, SidType: windows.SERVICE_SID_TYPE_RESTRICTED}
+	runnerConfiguration := windowsRunnerServiceConfig(runnerIdentityMode)
 	runnerService, err := manager.CreateService(runnerServiceName, runnerExecutable, runnerConfiguration, "--config", configPath, "--state-root", stateRoot, "--allowed-identity", webServiceSID)
 	if errors.Is(err, windows.ERROR_SERVICE_EXISTS) {
 		runnerService, err = manager.OpenService(runnerServiceName)
@@ -260,8 +282,8 @@ func Install(executable, configPath, _ string, stateRoot string, webReadPaths ..
 		current.StartType = mgr.StartManual
 		current.DisplayName = runnerConfiguration.DisplayName
 		current.Description = runnerConfiguration.Description
-		current.ServiceStartName = webServiceAccount
-		current.Password = ""
+		current.ServiceStartName = runnerConfiguration.ServiceStartName
+		current.Password = runnerConfiguration.Password
 		current.SidType = runnerConfiguration.SidType
 		if err = runnerService.UpdateConfig(current); err != nil {
 			runnerService.Close()
@@ -335,7 +357,14 @@ func Install(executable, configPath, _ string, stateRoot string, webReadPaths ..
 	if err := grantWindowsRunnerServiceAccess(installRoot, configPath); err != nil {
 		return err
 	}
-	return configureWindowsRuntimeFirewall(aiExecutable, runnerExecutable)
+	return configureWindowsRuntimeFirewall(aiExecutable, runnerExecutable, runnerIdentityMode)
+}
+
+func windowsRunnerServiceConfig(mode string) mgr.Config {
+	if mode == RunnerIdentityIsolated {
+		return mgr.Config{StartType: mgr.StartManual, DisplayName: "ScriptBoard Isolated Runner", Description: "ScriptBoard isolated Run worker", ServiceStartName: webServiceAccount, SidType: windows.SERVICE_SID_TYPE_RESTRICTED}
+	}
+	return mgr.Config{StartType: mgr.StartManual, DisplayName: "ScriptBoard Privileged Runner", Description: "ScriptBoard full host-control Run worker", SidType: windows.SERVICE_SID_TYPE_NONE}
 }
 
 func configureWindowsServiceRecovery(service *mgr.Service) error {
@@ -601,7 +630,7 @@ func grantWindowsPathAccessEntry(path string, sid *windows.SID, permissions wind
 	return windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION, nil, nil, acl, nil)
 }
 
-func SwitchExecutable(executable, configPath string) error {
+func SwitchExecutable(executable, configPath, runnerIdentityMode string) error {
 	manager, err := mgr.Connect()
 	if err != nil {
 		return err
@@ -665,9 +694,10 @@ func SwitchExecutable(executable, configPath string) error {
 	}
 	newAIExecutable := filepath.Join(filepath.Dir(executable), "scriptboard-ai-host.exe")
 	newRunnerExecutable := filepath.Join(filepath.Dir(executable), "scriptboard-runner.exe")
+	targetRunnerConfiguration := windowsRunnerServiceConfig(runnerIdentityMode)
 	// Install the new version's WSH restrictions before any service definition
 	// points at it. Old restrictions remain until both definitions are updated.
-	if err := configureWindowsRuntimeFirewall(newAIExecutable, newRunnerExecutable); err != nil {
+	if err := configureWindowsRuntimeFirewall(newAIExecutable, newRunnerExecutable, runnerIdentityMode); err != nil {
 		return err
 	}
 	aiConfiguration.BinaryPathName = windows.ComposeCommandLine([]string{newAIExecutable, "--state-root", aiArguments[2], "--allowed-identity", aiArguments[4]})
@@ -675,6 +705,11 @@ func SwitchExecutable(executable, configPath string) error {
 		return err
 	}
 	runnerConfiguration.BinaryPathName = windows.ComposeCommandLine([]string{newRunnerExecutable, "--config", runnerArguments[2], "--state-root", runnerArguments[4], "--allowed-identity", runnerArguments[6]})
+	runnerConfiguration.ServiceStartName = targetRunnerConfiguration.ServiceStartName
+	runnerConfiguration.Password = targetRunnerConfiguration.Password
+	runnerConfiguration.SidType = targetRunnerConfiguration.SidType
+	runnerConfiguration.DisplayName = targetRunnerConfiguration.DisplayName
+	runnerConfiguration.Description = targetRunnerConfiguration.Description
 	if err := runnerService.UpdateConfig(runnerConfiguration); err != nil {
 		return err
 	}
@@ -844,7 +879,7 @@ func IsRunning() (bool, error) {
 	return strings.Contains(status, "STATE: RUNNING"), err
 }
 
-func MatchesExecutable(executable, configPath, stateRoot string) (bool, error) {
+func MatchesExecutable(executable, configPath, stateRoot, runnerIdentityMode string) (bool, error) {
 	manager, service, err := openService()
 	if err != nil {
 		return false, err
@@ -922,7 +957,7 @@ func MatchesExecutable(executable, configPath, stateRoot string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if !strings.EqualFold(runnerConfiguration.ServiceStartName, webServiceAccount) || runnerConfiguration.SidType != windows.SERVICE_SID_TYPE_RESTRICTED || runnerConfiguration.StartType != mgr.StartManual {
+	if !windowsRunnerServiceConfigMatches(runnerConfiguration, runnerIdentityMode) {
 		return false, nil
 	}
 	if recoveryMatches, recoveryErr := matchesWindowsServiceRecovery(runnerService); recoveryErr != nil || !recoveryMatches {
@@ -943,6 +978,17 @@ func MatchesExecutable(executable, configPath, stateRoot string) (bool, error) {
 	return err == nil && len(runnerArguments) == 7 &&
 		sameWindowsPath(runnerArguments[0], filepath.Join(filepath.Dir(executable), "scriptboard-runner.exe")) && runnerArguments[1] == "--config" && sameWindowsPath(runnerArguments[2], configPath) &&
 		runnerArguments[3] == "--state-root" && sameWindowsPath(runnerArguments[4], stateRoot) && runnerArguments[5] == "--allowed-identity" && strings.EqualFold(runnerArguments[6], webServiceSID), err
+}
+
+func windowsRunnerServiceConfigMatches(configuration mgr.Config, mode string) bool {
+	if configuration.StartType != mgr.StartManual {
+		return false
+	}
+	if mode == RunnerIdentityIsolated {
+		return strings.EqualFold(configuration.ServiceStartName, webServiceAccount) && configuration.SidType == windows.SERVICE_SID_TYPE_RESTRICTED
+	}
+	serviceStartName := strings.TrimSpace(configuration.ServiceStartName)
+	return (serviceStartName == "" || strings.EqualFold(serviceStartName, "LocalSystem")) && configuration.SidType == windows.SERVICE_SID_TYPE_NONE
 }
 
 func sameWindowsPath(first, second string) bool {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"scriptboard/internal/buildinfo"
+	"scriptboard/internal/config"
 	"scriptboard/internal/diskspace"
 	"scriptboard/internal/installation"
 	"scriptboard/internal/platformservice"
@@ -20,14 +21,15 @@ import (
 )
 
 type ManagerConfig struct {
-	StateRoot       string
-	CheckEnabled    bool
-	CheckInterval   time.Duration
-	Source          ReleaseSource
-	Sources         map[string]ReleaseSource
-	Now             func() time.Time
-	RequestShutdown func()
-	Build           *buildinfo.Info
+	StateRoot          string
+	CheckEnabled       bool
+	CheckInterval      time.Duration
+	RunnerIdentityMode string
+	Source             ReleaseSource
+	Sources            map[string]ReleaseSource
+	Now                func() time.Time
+	RequestShutdown    func()
+	Build              *buildinfo.Info
 }
 
 type Snapshot struct {
@@ -50,19 +52,20 @@ type Snapshot struct {
 }
 
 type Manager struct {
-	stateRoot        string
-	build            buildinfo.Info
-	checkEnabled     bool
-	checkInterval    time.Duration
-	source           ReleaseSource
-	sources          map[string]ReleaseSource
-	selectedSource   string
-	now              func() time.Time
-	requestShutdown  func()
-	mu               sync.Mutex
-	lastError        string
-	lastForcedCheck  time.Time
-	lastForcedSource string
+	stateRoot          string
+	build              buildinfo.Info
+	checkEnabled       bool
+	checkInterval      time.Duration
+	source             ReleaseSource
+	sources            map[string]ReleaseSource
+	selectedSource     string
+	now                func() time.Time
+	requestShutdown    func()
+	runnerIdentityMode string
+	mu                 sync.Mutex
+	lastError          string
+	lastForcedCheck    time.Time
+	lastForcedSource   string
 }
 
 func NewManager(config ManagerConfig) *Manager {
@@ -91,7 +94,7 @@ func NewManager(config ManagerConfig) *Manager {
 		stateRoot: config.StateRoot, build: build,
 		checkEnabled: config.CheckEnabled, checkInterval: config.CheckInterval,
 		source: config.Source, sources: sources, selectedSource: SourceGitHub,
-		now: config.Now, requestShutdown: config.RequestShutdown,
+		now: config.Now, requestShutdown: config.RequestShutdown, runnerIdentityMode: config.RunnerIdentityMode,
 	}
 	if cache, err := loadCache(config.StateRoot); err == nil {
 		if _, ok := sources[cache.SourceID]; ok {
@@ -487,7 +490,15 @@ func (manager *Manager) managedInstallation() (installation.Metadata, error) {
 	if err := installation.ValidateVersion(metadata, metadata.Current, manager.build); err != nil {
 		return installation.Metadata{}, err
 	}
-	matches, err := platformservice.MatchesExecutable(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, metadata.StateRoot)
+	mode := manager.runnerIdentityMode
+	if mode == "" {
+		loaded, loadErr := config.Load([]string{"--config", metadata.ConfigPath}, os.Getenv)
+		if loadErr != nil {
+			return installation.Metadata{}, loadErr
+		}
+		mode = loaded.RunnerIdentityMode
+	}
+	matches, err := platformservice.MatchesExecutable(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, metadata.StateRoot, mode)
 	if err != nil {
 		return installation.Metadata{}, err
 	}

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -60,6 +61,7 @@ func RunWeb(runContext context.Context, arguments []string, getenv func(string) 
 		NotificationEmailRelayEndpoint: loaded.NotificationEmailRelayEndpoint, NotificationEmailRecipient: loaded.NotificationEmailRecipient,
 		NotificationEmailRelayTokenFile: loaded.NotificationEmailRelayTokenFile,
 		UpdateCheck:                     loaded.UpdateCheck, UpdateInterval: loaded.UpdateInterval,
+		RunnerIdentityMode:              loaded.RunnerIdentityMode,
 		RequestShutdown: func() {
 			select {
 			case updateShutdown <- struct{}{}:
@@ -151,12 +153,12 @@ func webDependencies(loaded config.Config, installRoot string) (composedWebDepen
 	})
 	runnerEndpoint, err := runnerhost.DefaultEndpoint(loaded.StateRoot)
 	if err != nil {
-		return result, fmt.Errorf("resolve isolated Runner Host endpoint: %w", err)
+		return result, fmt.Errorf("resolve Runner Host endpoint: %w", err)
 	}
 	runnerDial := runnerhost.Dial(runnerEndpoint)
 	result.runnerLauncher = runnerhost.NewClientLauncher(func(ctx context.Context) (net.Conn, error) {
-		return connectOnDemandHost(ctx, platformservice.EnsureRunnerHostRunning, runnerDial, "isolated Runner Host")
-	})
+		return connectOnDemandHost(ctx, platformservice.EnsureRunnerHostRunning, runnerDial, "Runner Host")
+	}, runnerRuntimeIdentity(loaded.RunnerIdentityMode))
 	result.brokerEndpoint, err = privilegebroker.DefaultEndpoint(loaded.StateRoot)
 	if err != nil {
 		return result, fmt.Errorf("resolve privileged Broker endpoint: %w", err)
@@ -172,6 +174,16 @@ func webDependencies(loaded config.Config, installRoot string) (composedWebDepen
 	result.hostFilesBackend = privilegebroker.NewHostFilesBackend(client, filepath.Join(loaded.StateRoot, "inbox", "host-files-broker"))
 	result.stateBackups = privilegebroker.NewStateBackups(client)
 	return result, nil
+}
+
+func runnerRuntimeIdentity(mode string) string {
+	if mode == config.RunnerIdentityIsolated {
+		return "scriptboard-runner"
+	}
+	if runtime.GOOS == "windows" {
+		return "LocalSystem"
+	}
+	return "root"
 }
 
 func connectOnDemandHost(ctx context.Context, start func(context.Context) error, dial func(context.Context) (net.Conn, error), label string) (net.Conn, error) {
@@ -240,7 +252,11 @@ func canRestartManagedService(stateRoot, configPath string) bool {
 	if err != nil {
 		return false
 	}
-	matches, err := platformservice.MatchesExecutable(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, metadata.StateRoot)
+	loaded, loadErr := config.Load([]string{"--config", metadata.ConfigPath}, os.Getenv)
+	if loadErr != nil {
+		return false
+	}
+	matches, err := platformservice.MatchesExecutable(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, metadata.StateRoot, loaded.RunnerIdentityMode)
 	if err != nil || !matches {
 		return false
 	}
