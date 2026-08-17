@@ -17,7 +17,7 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 if ([string]::IsNullOrWhiteSpace($WorkingRoot)) {
-    $base = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [IO.Path]::GetTempPath() }
+    $base = if ($env:ProgramData) { $env:ProgramData } else { [IO.Path]::GetFullPath((Join-Path $env:windir "Temp")) }
     $WorkingRoot = Join-Path $base ("scriptboard-windows-scm-gate-" + [Guid]::NewGuid().ToString("N"))
 }
 $gateRoot = [IO.Path]::GetFullPath($WorkingRoot)
@@ -158,6 +158,7 @@ function Assert-PrivateBrokerPath([string]$Path, [string]$WebSID) {
 
 try {
     New-Item -ItemType Directory -Path $releaseRoot, $programFilesRoot, $stateRoot, $brokerSecrets, $runWorkRoot | Out-Null
+    Invoke-Checked "icacls.exe" @($gateRoot, "/grant", "*S-1-5-19:(RX)")
     if ($Port -eq 0) {
         $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
         $listener.Start()
@@ -218,11 +219,14 @@ notification_email_recipient: 'security@example.invalid'
         if (Get-Service -Name $name -ErrorAction SilentlyContinue) { throw "Service $name already exists" }
     }
     $oldProgramFiles = $env:ProgramFiles
+    $oldProgramW6432 = $env:ProgramW6432
     $env:ProgramFiles = $programFilesRoot
+    $env:ProgramW6432 = $programFilesRoot
     try {
         Invoke-Checked (Join-Path $releaseRoot "scriptboard.exe") @("service", "install", "--config", $configPath)
     } finally {
         $env:ProgramFiles = $oldProgramFiles
+        $env:ProgramW6432 = $oldProgramW6432
     }
     $installed = $true
     Invoke-Checked (Join-Path $releaseRoot "scriptboard.exe") @("service", "verify", "--config", $configPath)

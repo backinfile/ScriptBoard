@@ -423,7 +423,7 @@ func validateInstalledVersion(root string, want buildinfo.Info, required []strin
 		return err
 	}
 	if got != want {
-		return errors.New("Installed Release metadata does not match the expected build")
+		return fmt.Errorf("Installed Release metadata does not match the expected build: got=%+v want=%+v", got, want)
 	}
 	return nil
 }

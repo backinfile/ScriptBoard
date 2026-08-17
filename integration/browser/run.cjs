@@ -188,7 +188,7 @@ async function saveSnapshot(page, name) {
   const destination = path.join(snapshotRoot, `${name}.png`);
   for (let attempt = 1; ; attempt += 1) {
     try {
-      await page.screenshot({ path: destination, fullPage: true, animations: "disabled" });
+      await page.screenshot({ path: destination, fullPage: true, animations: "disabled", timeout: 90000 });
       return;
     } catch (error) {
       // Windows virus scanners and image indexers can briefly hold an existing
@@ -723,6 +723,11 @@ async function assertContainerAndKubernetesMonitoring(page, baseURL) {
   await page.goto(`${baseURL}/monitor/containers`);
   const containers = page.locator("[data-container-page]");
   await containers.waitFor();
+  const apiContainerRow = containers.locator(".container-running-row").filter({ hasText: "api-prod" });
+  await Promise.all([
+    page.waitForNavigation(),
+    apiContainerRow.locator(".container-table-pin button").click(),
+  ]);
   assert.equal(await containers.locator(".container-fact-strip").count(), 1, "Container snapshot does not use the shared fact strip");
   assert.equal(await containers.locator(".container-section-heading .section-index").count(), 2, "Container sections do not use the applications hierarchy");
   const containerHeadingSize = Number.parseFloat(await containers.locator(".container-heading h1").evaluate(element => getComputedStyle(element).fontSize));
@@ -826,12 +831,16 @@ async function assertLiveLogViewer(page, fixture) {
   assert.equal((await viewer.locator("[data-log-pause-label]").textContent()).trim(), "Resume");
   await pause.click();
   await page.waitForFunction(() => document.querySelector("[data-log-state]")?.dataset.state === "live");
+  await pause.click();
+  await page.waitForFunction(() => document.querySelector("[data-log-state]")?.dataset.state === "paused");
 
   await assertNoHorizontalOverflow(page, "File live logs desktop");
   await saveSnapshot(page, "live-logs-file");
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
   await page.waitForFunction(() => document.querySelectorAll(".live-log-entry").length === 500);
+  await viewer.locator("[data-log-pause]").click();
+  await page.waitForFunction(() => document.querySelector("[data-log-state]")?.dataset.state === "paused");
   await assertNoHorizontalOverflow(page, "File live logs mobile");
   await saveSnapshot(page, "live-logs-file-mobile");
 

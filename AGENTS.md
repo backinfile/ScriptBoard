@@ -20,7 +20,7 @@ This is a single-context repo using root `CONTEXT.md` and `docs/adr/`. See `docs
 + 小改动可直接提交到 `dev`；大功能从 `dev` 创建功能分支，CI 通过后合并并删除。
 + 发布前在 `dev` 完成测试，并按需更新面向用户的 `README`。
 + 从 `dev` 创建 `release/X.Y.Z`，在同一提交打 `vX.Y.Z` Tag，由项目 workflow 发布。
-+ 执行发布任务时，必须主动检查并优先遵循仓库已有 workflow。
++ 执行发布任务时，必须主动检查并优先遵循仓库已有 GitHub Actions workflow。
 + release 分支和正式 Tag 不可修改；发现问题须回到 `dev` 修复、测试，再发布新版本。修复问题时要添加简要注释记录下
 + worktree创建目录：../worktrees/projectName/xxxx
 
