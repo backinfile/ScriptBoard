@@ -152,7 +152,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /monitor/dashboard-cards/{id}/refresh", a.requirePermission(identity.PermissionManageOperations, http.HandlerFunc(a.refreshCustomDashboardCard)))
 	mux.Handle("POST /monitor/dashboard-cards/{id}", a.requirePermission(identity.PermissionManageOperations, http.HandlerFunc(a.updateCustomDashboardCard)))
 	mux.Handle("POST /monitor/dashboard-cards/{id}/delete", a.requirePermission(identity.PermissionManageOperations, http.HandlerFunc(a.deleteCustomDashboardCard)))
-	mux.Public("GET /public/dashboard/{id}", a.publicCustomDashboard)
+	mux.Public("GET /public/dashboard/{slug}", a.publicCustomDashboard)
 	mux.Handle("GET /monitor/websites/data", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.websiteMonitorData)))
 	mux.Handle("POST /monitor/websites/remotes", a.requireStepUp(identity.PermissionManageOperations, http.HandlerFunc(a.createWebsiteMonitorRemoteSource)))
 	mux.Handle("POST /monitor/websites/remotes/{id}/delete", a.requireStepUp(identity.PermissionManageOperations, http.HandlerFunc(a.deleteWebsiteMonitorRemoteSource)))

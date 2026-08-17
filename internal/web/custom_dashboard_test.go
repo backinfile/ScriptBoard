@@ -324,7 +324,7 @@ func TestRegistryCardCanBeConfiguredWithHTTPAndMultipleImages(t *testing.T) {
 		t.Fatal(err)
 	}
 	response.Body.Close()
-	publicResponse, err := http.Get(serverURL + "/public/dashboard/" + dashboardID)
+	publicResponse, err := http.Get(serverURL + "/public/dashboard/registry-images")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -550,7 +550,7 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	if rendered := string(page); strings.Contains(rendered, "键值数据") || !strings.Contains(rendered, `value="percentage"`) || !strings.Contains(rendered, `data-dashboard-card-preview="percentage"`) || !strings.Contains(rendered, `value="registry"`) || !strings.Contains(rendered, `data-dashboard-card-preview="registry"`) {
 		t.Fatal("dashboard card types or mini previews are incorrect")
 	}
-	privateResponse, err := http.Get(serverURL + "/public/dashboard/" + dashboardID)
+	privateResponse, err := http.Get(serverURL + "/public/dashboard/api-credits")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -593,7 +593,7 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 		t.Fatal(err)
 	}
 	response.Body.Close()
-	publicResponse, err := http.Get(serverURL + "/public/dashboard/" + dashboardID)
+	publicResponse, err := http.Get(serverURL + "/public/dashboard/api-credits")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -724,7 +724,7 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 		t.Fatal(err)
 	}
 	response.Body.Close()
-	failedResponse, err := http.Get(serverURL + "/public/dashboard/" + dashboardID)
+	failedResponse, err := http.Get(serverURL + "/public/dashboard/api-credits")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -756,7 +756,7 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	if response.StatusCode != http.StatusSeeOther {
 		t.Fatalf("delete status=%d", response.StatusCode)
 	}
-	missing, err := http.Get(serverURL + "/public/dashboard/" + dashboardID)
+	missing, err := http.Get(serverURL + "/public/dashboard/api-credits")
 	if err != nil {
 		t.Fatal(err)
 	}

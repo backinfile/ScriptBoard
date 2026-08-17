@@ -157,7 +157,7 @@ func TestPublicRegistryCardDoesNotExposeConnectionConfiguration(t *testing.T) {
 	if _, err := manager.CreateCard(ctx, dashboard.ID, CardInput{Name: "镜像版本", Type: CardRegistry, Config: config}); err != nil {
 		t.Fatal(err)
 	}
-	public, err := manager.GetPublicDashboard(ctx, dashboard.ID)
+	public, err := manager.GetPublicDashboard(ctx, dashboard.Slug)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,11 +191,14 @@ func TestDashboardLifecycleKeepsCardsInsideTheirDashboard(t *testing.T) {
 	if len(view.Cards) != 1 || view.Cards[0].Name != "主模型额度" {
 		t.Fatalf("unexpected cards: %#v", view.Cards)
 	}
-	public, err := manager.GetPublicDashboard(ctx, first.ID)
+	public, err := manager.GetPublicDashboard(ctx, first.Slug)
 	if err != nil || public.ID != first.ID {
 		t.Fatalf("public dashboard: %#v %v", public, err)
 	}
-	if _, err := manager.GetPublicDashboard(ctx, second.ID); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := manager.GetPublicDashboard(ctx, first.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("public dashboard accepted id as public slug: %v", err)
+	}
+	if _, err := manager.GetPublicDashboard(ctx, second.Slug); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("private dashboard exposed: %v", err)
 	}
 

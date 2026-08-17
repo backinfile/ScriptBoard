@@ -331,8 +331,9 @@ func (m *Manager) GetDashboard(ctx context.Context, id string) (Dashboard, error
 	d.Cards, err = m.listCards(ctx, d.ID)
 	return d, err
 }
-func (m *Manager) GetPublicDashboard(ctx context.Context, id string) (Dashboard, error) {
-	row := m.db.QueryRowContext(ctx, `SELECT id,name,slug,is_public,sort_order,created_at,updated_at FROM custom_dashboards WHERE id=? AND is_public=1`, id)
+func (m *Manager) GetPublicDashboard(ctx context.Context, slug string) (Dashboard, error) {
+	slug = strings.TrimSpace(strings.ToLower(slug))
+	row := m.db.QueryRowContext(ctx, `SELECT id,name,slug,is_public,sort_order,created_at,updated_at FROM custom_dashboards WHERE slug=? AND is_public=1`, slug)
 	d, err := scanDashboard(row)
 	if err != nil {
 		return Dashboard{}, err
