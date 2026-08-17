@@ -879,10 +879,10 @@ func TestRunResolvesVariableAsWholeArgument(t *testing.T) {
 		t.Fatalf("create host root: %v", err)
 	}
 	scriptName := "argument.sh"
-	scriptContent := "printf '[%s]\\n' \"$1\"\n"
+	scriptContent := "printf '[%s]\\n' \"$1\" \"$2\"\n"
 	if runtime.GOOS == "windows" {
 		scriptName = "argument.cmd"
-		scriptContent = "@echo off\r\necho [%~1]\r\n"
+		scriptContent = "@echo off\r\necho [%~1]\r\necho [%~2]\r\n"
 	}
 	if err := os.WriteFile(filepath.Join(hostRoot, scriptName), []byte(scriptContent), 0o755); err != nil {
 		t.Fatalf("write script: %v", err)
@@ -906,6 +906,16 @@ func TestRunResolvesVariableAsWholeArgument(t *testing.T) {
 	if response.StatusCode != http.StatusSeeOther {
 		t.Fatalf("create variable status = %d", response.StatusCode)
 	}
+	response, err = client.PostForm(serverURL+"/resources/variables", url.Values{
+		"name": {"RELEASE_VERSION"}, "value": {"1.7.0"}, "value_type": {"version"}, "csrf_token": {formToken(t, variablesPage)},
+	})
+	if err != nil {
+		t.Fatalf("create typed variable: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("create typed variable status = %d", response.StatusCode)
+	}
 	response, err = client.Get(hostFilesRequestURL(serverURL, hostRoot))
 	if err != nil {
 		t.Fatalf("get files: %v", err)
@@ -914,7 +924,7 @@ func TestRunResolvesVariableAsWholeArgument(t *testing.T) {
 	_ = response.Body.Close()
 	response, err = client.PostForm(serverURL+"/history/runs/start", url.Values{
 		"script":     {filepath.Join(hostRoot, scriptName)},
-		"arguments":  {"{{GREETING}}"},
+		"arguments":  {"{{GREETING}} {{RELEASE_VERSION}}"},
 		"csrf_token": {formToken(t, filesPage)},
 	})
 	if err != nil {
@@ -939,7 +949,11 @@ func TestRunResolvesVariableAsWholeArgument(t *testing.T) {
 		time.Sleep(25 * time.Millisecond)
 	}
 	history := readRunHistoryPage(t, client, runURL+"/history")
-	if len(history.Events) != 1 || !strings.Contains(history.Events[0].Text, "[hello variable]") {
+	var output strings.Builder
+	for _, event := range history.Events {
+		output.WriteString(event.Text)
+	}
+	if !strings.Contains(output.String(), "[hello variable]") || !strings.Contains(output.String(), "[1.7.0]") {
 		t.Fatalf("resolved variable output missing: %#v", history)
 	}
 }

@@ -9,10 +9,11 @@ package migrations
 // used 35-43; schema 44 reconciled them, schema 45 added the durable Registry
 // operation log, schema 46 added its crash-safe completion phase, schema 47
 // separated External Interface display labels from URL call names, and schema
-// 48 made Kubernetes connections and retained history connection-scoped.
+// 48 made Kubernetes connections and retained history connection-scoped;
+// schema 49 added intrinsic Variable value types.
 //
 // The explicit current-version guard forces a deliberate policy update when a
 // future schema is introduced instead of silently promising an untested path.
 func Compatible(current, existing int) bool {
-	return existing == current || current == 48 && existing >= 20 && existing <= 47
+	return existing == current || current == 49 && existing >= 20 && existing <= 48
 }

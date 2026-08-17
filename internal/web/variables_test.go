@@ -134,3 +134,163 @@ func TestPasswordVariableIsStoredNormallyAndMaskedByDefault(t *testing.T) {
 		}
 	}
 }
+
+func TestCreateTypedVariablePersistsItsValidatedType(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	stateRoot := filepath.Join(root, "state")
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), stateRoot)
+	response, err := client.Get(serverURL + "/resources/variables/new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{`data-variable-form`, `name="value_type" data-variable-value-type`, `value="text"`, `value="bool"`, `value="integer"`, `value="float"`, `value="version"`, `data-variable-value-field="text"`, `data-variable-value-field="bool"`, `data-variable-value-field="scalar"`} {
+		if !strings.Contains(string(page), marker) {
+			t.Fatalf("new Variable form is missing %q", marker)
+		}
+	}
+
+	response, err = client.PostForm(serverURL+"/resources/variables", url.Values{
+		"name":       {"RETRIES"},
+		"value":      {"12"},
+		"value_type": {"integer"},
+		"csrf_token": {formToken(t, page)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status=%d", response.StatusCode)
+	}
+
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	var value, valueType string
+	if err := database.QueryRow(`SELECT value, value_type FROM variables WHERE name = 'RETRIES'`).Scan(&value, &valueType); err != nil {
+		t.Fatal(err)
+	}
+	if value != "12" || valueType != "integer" {
+		t.Fatalf("value=%q type=%q", value, valueType)
+	}
+
+	response, err = client.Get(serverURL + "/resources/variables")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if !strings.Contains(string(page), `data-variable-type="integer">Integer</small>`) {
+		t.Fatalf("Variable list does not show the integer type: %s", page)
+	}
+}
+
+func TestCreateTypedVariableRejectsAValueWithTheWrongFormat(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	stateRoot := filepath.Join(root, "state")
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), stateRoot)
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	response, err := client.Get(serverURL + "/resources/variables/new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	response, err = client.PostForm(serverURL+"/resources/variables", url.Values{
+		"name":       {"RETRIES"},
+		"value":      {"1.5"},
+		"value_type": {"integer"},
+		"csrf_token": {formToken(t, page)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status=%d", response.StatusCode)
+	}
+
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	var count int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM variables WHERE name = 'RETRIES'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatal("invalid typed variable was persisted")
+	}
+}
+
+func TestEditVariableChangesTypeOnlyWhenTheSubmittedValueMatches(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	stateRoot := filepath.Join(root, "state")
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), stateRoot)
+	response, err := client.Get(serverURL + "/resources/variables/new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/resources/variables", url.Values{
+		"name": {"RELEASE_VERSION"}, "value": {"draft"}, "value_type": {"text"}, "csrf_token": {formToken(t, page)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	_, keyID := createExternalTestKey(t, client, serverURL, "Release Variable agent")
+	_ = createExternalTestEntry(t, client, serverURL, keyID, url.Values{
+		"name": {"release-version"}, "label": {"Release version"}, "action_type": {"variable"}, "enabled": {"1"},
+		"variable_name": {"RELEASE_VERSION"}, "variable_type": {"text"}, "variable_max_length": {"128"}, "variable_allow_empty": {"1"},
+	})
+
+	response, err = client.Get(serverURL + "/resources/variables/RELEASE_VERSION/edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/resources/variables/RELEASE_VERSION/update", url.Values{
+		"name": {"RELEASE_VERSION"}, "value": {"2.4.1"}, "value_type": {"version"}, "csrf_token": {formToken(t, page)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status=%d", response.StatusCode)
+	}
+
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	var value, valueType string
+	if err := database.QueryRow(`SELECT value, value_type FROM variables WHERE name = 'RELEASE_VERSION'`).Scan(&value, &valueType); err != nil {
+		t.Fatal(err)
+	}
+	if value != "2.4.1" || valueType != "version" {
+		t.Fatalf("value=%q type=%q", value, valueType)
+	}
+}

@@ -932,6 +932,23 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 		t.Fatalf("invalid enum status=%d", response.StatusCode)
 	}
 
+	if _, err := database.Exec(`INSERT INTO variables(name, value, value_type, is_password, created_at, updated_at) VALUES ('build_number', '1', 'integer', 0, 1, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	_, typedVariableKeyID := createExternalTestKey(t, client, serverURL, "Typed Variable agent")
+	typedVariableSecret := createExternalTestEntry(t, client, serverURL, typedVariableKeyID, url.Values{
+		"name": {"build-number"}, "label": {"Build number"}, "action_type": {"variable"}, "enabled": {"1"},
+		"variable_name": {"build_number"}, "variable_type": {"text"}, "variable_max_length": {"128"}, "variable_allow_empty": {"1"},
+	})
+	response = invokeExternalForm(t, client, serverURL, typedVariableSecret, "legacy", "build-number", url.Values{"value": {"1.5"}})
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("intrinsic integer type mismatch status=%d", response.StatusCode)
+	}
+	if err := database.QueryRow("SELECT value FROM variables WHERE name = 'build_number'").Scan(&value); err != nil || value != "1" {
+		t.Fatalf("typed variable value=%q err=%v", value, err)
+	}
+
 	_, quickKeyID := createExternalTestKey(t, client, serverURL, "Quick Run agent")
 	quickSecret := createExternalTestEntry(t, client, serverURL, quickKeyID, url.Values{
 		"name": {"quick"}, "label": {"External quick run"}, "action_type": {"quick_run"}, "enabled": {"1"}, "quick_run_id": {"external-quick"},

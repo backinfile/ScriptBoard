@@ -1187,6 +1187,7 @@
     initQuickCreateDefaults(main, cleanups);
     initScheduleCron(cleanups, main);
     initExternalEntryForm(main, cleanups);
+	initVariableForm(main, cleanups);
 	initCopyControls(main, cleanups);
     const websiteForm = main.querySelector("[data-website-monitor-form]");
     if (websiteForm) cleanups.push(initWebsiteMonitorForm(websiteForm));
@@ -1249,6 +1250,27 @@
     cleanups.push(() => variableType?.removeEventListener("change", refresh));
     cleanups.push(() => logTargetModes.forEach(field => field.removeEventListener("change", refresh)));
     cleanups.push(() => logRotation?.removeEventListener("change", refresh));
+    refresh();
+  }
+
+  function initVariableForm(root = document, cleanups = []) {
+    const form = root.querySelector("[data-variable-form]");
+    if (!form || form.dataset.variableReady) return;
+    form.dataset.variableReady = "true";
+    const type = form.querySelector("[data-variable-value-type]");
+    const fields = [...form.querySelectorAll("[data-variable-value-field]")];
+    const versionHint = form.querySelector("[data-variable-version-hint]");
+    const refresh = () => {
+      const mode = type?.value === "text" ? "text" : type?.value === "bool" ? "bool" : "scalar";
+      fields.forEach(field => {
+        const active = field.dataset.variableValueField === mode;
+        field.hidden = !active;
+        field.querySelectorAll("input,select,textarea").forEach(control => control.disabled = !active);
+      });
+      if (versionHint) versionHint.hidden = type?.value !== "version";
+    };
+    type?.addEventListener("change", refresh);
+    cleanups.push(() => type?.removeEventListener("change", refresh));
     refresh();
   }
 

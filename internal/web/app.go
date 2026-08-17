@@ -73,6 +73,7 @@ import (
 	storesqlite "scriptboard/internal/store/sqlite"
 	updatepkg "scriptboard/internal/update"
 	"scriptboard/internal/uploadinbox"
+	"scriptboard/internal/variables"
 	"scriptboard/internal/websitemonitor"
 )
 
@@ -2920,6 +2921,7 @@ func (a *App) runEventHistory(response http.ResponseWriter, request *http.Reques
 type variableView struct {
 	Name       string
 	Value      string
+	ValueType  variables.Kind
 	IsPassword bool
 }
 
@@ -2943,7 +2945,7 @@ func (a *App) variablesPage(response http.ResponseWriter, request *http.Request)
 		return
 	}
 	pagination := newPagination(request, total)
-	rows, err := a.db.Query("SELECT name, value, is_password FROM variables ORDER BY name LIMIT ? OFFSET ?", listPageSize, pagination.Start)
+	rows, err := a.db.Query("SELECT name, value, value_type, is_password FROM variables ORDER BY name LIMIT ? OFFSET ?", listPageSize, pagination.Start)
 	if err != nil {
 		http.Error(response, "无法读取变量", http.StatusInternalServerError)
 		return
@@ -2951,7 +2953,7 @@ func (a *App) variablesPage(response http.ResponseWriter, request *http.Request)
 	var variables []variableView
 	for rows.Next() {
 		var variable variableView
-		if err := rows.Scan(&variable.Name, &variable.Value, &variable.IsPassword); err != nil {
+		if err := rows.Scan(&variable.Name, &variable.Value, &variable.ValueType, &variable.IsPassword); err != nil {
 			_ = rows.Close()
 			http.Error(response, "无法读取变量", http.StatusInternalServerError)
 			return
@@ -2971,16 +2973,33 @@ func (a *App) variablesPage(response http.ResponseWriter, request *http.Request)
 
 var variableNamePattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,63}$`)
 
+func parseVariableValue(request *http.Request) (variables.Kind, string, error) {
+	valueType := variables.Kind(request.FormValue("value_type"))
+	if valueType == "" {
+		valueType = variables.KindText
+	}
+	value, err := variables.Parse(valueType, request.FormValue("value"))
+	return valueType, value, err
+}
+
 func (a *App) createVariable(response http.ResponseWriter, request *http.Request) {
 	if !validSessionCSRF(request) {
 		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
 		return
 	}
 	name := request.FormValue("name")
-	value := request.FormValue("value")
+	valueType, value, valueErr := parseVariableValue(request)
 	isPassword := request.FormValue("is_password") == "1"
-	if !variableNamePattern.MatchString(name) || len([]byte(value)) > 4<<10 {
-		http.Error(response, "变量名称或值无效", http.StatusBadRequest)
+	if !variableNamePattern.MatchString(name) {
+		http.Error(response, "变量名称无效", http.StatusBadRequest)
+		return
+	}
+	if valueErr != nil {
+		message := "变量值不符合所选类型"
+		if errors.Is(valueErr, variables.ErrInvalidKind) {
+			message = "变量类型无效"
+		}
+		http.Error(response, message, http.StatusBadRequest)
 		return
 	}
 	var count int
@@ -2989,7 +3008,7 @@ func (a *App) createVariable(response http.ResponseWriter, request *http.Request
 		return
 	}
 	now := time.Now().UTC().Unix()
-	if _, err := a.db.Exec("INSERT INTO variables (name, value, is_password, created_at, updated_at) VALUES (?, ?, ?, ?, ?)", name, value, isPassword, now, now); err != nil {
+	if _, err := a.db.Exec("INSERT INTO variables (name, value, value_type, is_password, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)", name, value, valueType, isPassword, now, now); err != nil {
 		http.Error(response, "变量已存在或无法保存", http.StatusConflict)
 		return
 	}
@@ -3003,10 +3022,19 @@ func (a *App) updateVariable(response http.ResponseWriter, request *http.Request
 		return
 	}
 	original := request.PathValue("name")
-	name, value := request.FormValue("name"), request.FormValue("value")
+	name := request.FormValue("name")
+	valueType, value, valueErr := parseVariableValue(request)
 	isPassword := request.FormValue("is_password") == "1"
-	if !variableNamePattern.MatchString(name) || len([]byte(value)) > 4<<10 {
-		http.Error(response, "变量名称或值无效", http.StatusBadRequest)
+	if !variableNamePattern.MatchString(name) {
+		http.Error(response, "变量名称无效", http.StatusBadRequest)
+		return
+	}
+	if valueErr != nil {
+		message := "变量值不符合所选类型"
+		if errors.Is(valueErr, variables.ErrInvalidKind) {
+			message = "变量类型无效"
+		}
+		http.Error(response, message, http.StatusBadRequest)
 		return
 	}
 	if name != original || isPassword {
@@ -3026,7 +3054,7 @@ func (a *App) updateVariable(response http.ResponseWriter, request *http.Request
 		return
 	}
 	defer transaction.Rollback()
-	result, err := transaction.Exec("UPDATE variables SET name = ?, value = ?, is_password = ?, updated_at = ? WHERE name = ?", name, value, isPassword, time.Now().UTC().Unix(), original)
+	result, err := transaction.Exec("UPDATE variables SET name = ?, value = ?, value_type = ?, is_password = ?, updated_at = ? WHERE name = ?", name, value, valueType, isPassword, time.Now().UTC().Unix(), original)
 	if err == nil && name != original {
 		oldReference, newReference := "{{"+original+"}}", "{{"+name+"}}"
 		_, err = transaction.Exec("UPDATE quick_runs SET arguments_template = replace(arguments_template, ?, ?), revision = revision + 1 WHERE arguments_template LIKE ?", oldReference, newReference, "%"+oldReference+"%")

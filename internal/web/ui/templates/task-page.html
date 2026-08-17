@@ -210,10 +210,19 @@
       <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="copy" aria-hidden="true"></span>{{t .Locale "quick_runs.copy"}}</button></footer>
     </form>
     {{else if or (eq .Kind "variable-new") (eq .Kind "variable-edit")}}
-    <form method="post" action="{{.Action}}" data-async>
+    <form method="post" action="{{.Action}}" data-async data-variable-form>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <label>{{t .Locale "common.name"}} <input name="name" autocomplete="off" spellcheck="false" pattern="[A-Z][A-Z0-9_]{0,63}" value="{{.Name}}" required autofocus></label>
-      <label>{{t .Locale "common.value"}} <textarea name="value" autocomplete="off" maxlength="4096">{{.Value}}</textarea></label>
+      <label>{{t .Locale "variables.value_type"}} <select name="value_type" data-variable-value-type required>
+        <option value="text" {{if eq .ValueType "text"}}selected{{end}}>{{t .Locale "variables.type.text"}}</option>
+        <option value="bool" {{if eq .ValueType "bool"}}selected{{end}}>{{t .Locale "variables.type.bool"}}</option>
+        <option value="integer" {{if eq .ValueType "integer"}}selected{{end}}>{{t .Locale "variables.type.integer"}}</option>
+        <option value="float" {{if eq .ValueType "float"}}selected{{end}}>{{t .Locale "variables.type.float"}}</option>
+        <option value="version" {{if eq .ValueType "version"}}selected{{end}}>{{t .Locale "variables.type.version"}}</option>
+      </select></label>
+      <label data-variable-value-field="text" {{if ne .ValueType "text"}}hidden{{end}}>{{t .Locale "common.value"}} <textarea name="value" autocomplete="off" maxlength="4096" {{if ne .ValueType "text"}}disabled{{end}}>{{.Value}}</textarea></label>
+      <label data-variable-value-field="bool" {{if ne .ValueType "bool"}}hidden{{end}}>{{t .Locale "common.value"}} <select name="value" {{if ne .ValueType "bool"}}disabled{{end}}><option value="false" {{if ne .Value "true"}}selected{{end}}>false</option><option value="true" {{if eq .Value "true"}}selected{{end}}>true</option></select></label>
+      <label data-variable-value-field="scalar" {{if or (eq .ValueType "text") (eq .ValueType "bool")}}hidden{{end}}>{{t .Locale "common.value"}} <input name="value" value="{{.Value}}" autocomplete="off" spellcheck="false" maxlength="4096" inputmode="decimal" {{if or (eq .ValueType "text") (eq .ValueType "bool")}}disabled{{end}}><small data-variable-version-hint {{if ne .ValueType "version"}}hidden{{end}}>{{t .Locale "variables.version_hint"}}</small></label>
       <label class="check-field"><input type="checkbox" name="is_password" value="1" {{if .IsPassword}}checked{{end}}> {{t .Locale "task.password_type"}}</label>
       <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{if eq .Kind "variable-edit"}}{{t .Locale "task.save_changes"}}{{else}}{{t .Locale "common.create"}}{{end}}</button></footer>
     </form>

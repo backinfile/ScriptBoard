@@ -18,6 +18,7 @@ ScriptBoard is a self-hosted script console for a single Windows or Linux host. 
 - Browse, search, upload, download, preview, and edit host files;
 - run PowerShell, Python, Shell, Batch, and CMD scripts with live output;
 - save frequently used scripts as Quick Runs with reusable parameters and variables, then review recent results at a glance;
+- type Variables as text, Boolean, integer, float, or an `x.y.z` version while still expanding every value as one string argument at runtime;
 - create schedules with five-field Cron expressions;
 - expose bounded inbound triggers for logs, uploads, Quick Runs, and constrained variable updates;
 - review remote-login activity and manage Windows Defender Firewall or Linux UFW and Fail2Ban;
@@ -243,7 +244,7 @@ the current signed checkpoint for the same State Root path. It revokes restored
 web sessions, preserves the previous private state and checkpoint, and records
 an audit-continuity event before issuing a new checkpoint.
 
-Back up before upgrading from an older version. The current release uses database schema 48 and can migrate schemas 20–47 automatically; older databases and legacy configuration files are not migrated automatically. Schema 45 adds the durable Registry connection operation log, schema 46 adds its crash-safe completion phase, schema 47 separates External Interface display labels from URL call names, and schema 48 converts the single Kubernetes connection and its retained history into independently monitored multiple connections.
+Back up before upgrading from an older version. The current release uses database schema 49 and can migrate schemas 20–48 automatically; older databases and legacy configuration files are not migrated automatically. Schema 45 adds the durable Registry connection operation log, schema 46 adds its crash-safe completion phase, schema 47 separates External Interface display labels from URL call names, schema 48 converts the single Kubernetes connection and its retained history into independently monitored multiple connections, and schema 49 adds Variable value types while migrating existing Variables to `text`.
 
 When the panel is unavailable or compromise is suspected, use the local out-of-band emergency commands below. Mutations require an exact fixed confirmation or the complete Key ID and are atomically appended to the audit chain as `local-administrator`; evidence export verifies the chain first, creates only a new file, and never overwrites existing evidence:
 
