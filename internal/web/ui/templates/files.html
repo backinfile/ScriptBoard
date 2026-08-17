@@ -116,7 +116,7 @@
           <span class="file-hidden-toggle__track" aria-hidden="true"><span></span></span>
           <span>{{t .Locale "files.show_hidden"}}</span>
         </label>
-        {{if .CanWrite}}<a class="button button--quiet" href="/resources/inbox"><span data-lucide="shield-check" aria-hidden="true"></span>{{t .Locale "inbox.title"}}</a><a class="button button--quiet file-trash-link" href="/resources/trash"><span data-lucide="trash-2" aria-hidden="true"></span>{{t .Locale "files.trash"}}</a>{{end}}
+        {{if .CanWrite}}<span class="file-search-links"><a class="button button--quiet" href="/resources/inbox"><span data-lucide="shield-check" aria-hidden="true"></span>{{t .Locale "inbox.title"}}</a><a class="button button--quiet file-trash-link" href="/resources/trash"><span data-lucide="trash-2" aria-hidden="true"></span>{{t .Locale "files.trash"}}</a></span>{{end}}
       </form>
     </section>
 

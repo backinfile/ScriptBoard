@@ -40,7 +40,7 @@ func TestFilesPageUsesAbsoluteHostPathsAndHasNoFileSettings(t *testing.T) {
 		t.Fatalf("read files: %v", err)
 	}
 	filesPage := string(body)
-	for _, expected := range []string{"This host", html.EscapeString(hostRoot), `name="path" value="` + html.EscapeString(hostRoot) + `"`} {
+	for _, expected := range []string{"This host", html.EscapeString(hostRoot), `name="path" value="` + html.EscapeString(hostRoot) + `"`, `class="file-search-links"`, `href="/resources/inbox"`, `href="/resources/trash"`} {
 		if !strings.Contains(filesPage, expected) {
 			t.Fatalf("files page does not contain %q: %s", expected, filesPage)
 		}
