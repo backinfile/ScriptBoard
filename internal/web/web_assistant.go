@@ -548,7 +548,7 @@ func (a *App) postAssistantMessage(response http.ResponseWriter, request *http.R
 	}
 	actor := assistantActor(request)
 	id := strings.TrimSpace(request.PathValue("id"))
-	conversation, err := a.assistant.Conversation(request.Context(), actor, id)
+	_, err := a.assistant.Conversation(request.Context(), actor, id)
 	if errors.Is(err, assistant.ErrNotFound) {
 		http.NotFound(response, request)
 		return
@@ -595,7 +595,7 @@ func (a *App) postAssistantMessage(response http.ResponseWriter, request *http.R
 		http.Error(response, webText(resolveWebLocale(request), key), status)
 		return
 	}
-	conversation, err = a.assistant.Conversation(request.Context(), actor, id)
+	conversation, err := a.assistant.Conversation(request.Context(), actor, id)
 	if err != nil {
 		_ = a.assistant.FinishTurn(request.Context(), actor, id, turn.Assistant.ID, "error", managedRuntime.Version)
 		a.writeAssistantMutationError(response, request, err)

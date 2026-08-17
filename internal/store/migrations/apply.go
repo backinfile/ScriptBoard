@@ -37,40 +37,23 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 		return fmt.Errorf("begin SQLite migration: %w", err)
 	}
 	defer func() { _ = migration.Rollback() }()
-	for _, statement := range baseSchemaStatements {
-		if _, err := migration.Exec(statement); err != nil {
-			return fmt.Errorf("initialize SQLite schema: %w", err)
-		}
+	schemas := []struct {
+		name       string
+		statements []string
+	}{
+		{name: "SQLite", statements: baseSchemaStatements},
+		{name: "Website Monitor SQLite", statements: websitemonitor.SchemaStatements},
+		{name: "Assistant SQLite", statements: assistant.SchemaStatements},
+		{name: "External Interface SQLite", statements: externaltrigger.SchemaStatements},
+		{name: "MySQL management SQLite", statements: mysqlmanager.SchemaStatements},
+		{name: "custom dashboard SQLite", statements: customdashboard.SchemaStatements},
+		{name: "Kubernetes monitoring SQLite", statements: clusterstatus.SchemaStatements},
 	}
-
-	for _, statement := range websitemonitor.SchemaStatements {
-		if _, err := migration.Exec(statement); err != nil {
-			return fmt.Errorf("initialize Website Monitor SQLite schema: %w", err)
-		}
-	}
-	for _, statement := range assistant.SchemaStatements {
-		if _, err := migration.Exec(statement); err != nil {
-			return fmt.Errorf("initialize Assistant SQLite schema: %w", err)
-		}
-	}
-	for _, statement := range externaltrigger.SchemaStatements {
-		if _, err := migration.Exec(statement); err != nil {
-			return fmt.Errorf("initialize External Interface SQLite schema: %w", err)
-		}
-	}
-	for _, statement := range mysqlmanager.SchemaStatements {
-		if _, err := migration.Exec(statement); err != nil {
-			return fmt.Errorf("initialize MySQL management SQLite schema: %w", err)
-		}
-	}
-	for _, statement := range customdashboard.SchemaStatements {
-		if _, err := migration.Exec(statement); err != nil {
-			return fmt.Errorf("initialize custom dashboard SQLite schema: %w", err)
-		}
-	}
-	for _, statement := range clusterstatus.SchemaStatements {
-		if _, err := migration.Exec(statement); err != nil {
-			return fmt.Errorf("initialize Kubernetes monitoring SQLite schema: %w", err)
+	for _, schema := range schemas {
+		for _, statement := range schema.statements {
+			if _, err := migration.Exec(statement); err != nil {
+				return fmt.Errorf("initialize %s schema: %w", schema.name, err)
+			}
 		}
 	}
 	if err := migrateKubernetesConnections(migration); err != nil {

@@ -118,6 +118,45 @@ func TestHostFilesProtocolRejectsGenericAndUnrelatedFields(t *testing.T) {
 	}
 }
 
+func TestHostFilesProtocolRejectsOperationForbiddenFieldsForEveryOperation(t *testing.T) {
+	operations := []string{
+		operationHostFilesRoots, operationHostFilesList, operationHostFilesInfo, operationHostFilesReadText,
+		operationHostFilesCanonical, operationHostFilesAvailable, operationHostFilesMkdir, operationHostFilesToggleExec,
+		operationHostFilesTrash, operationHostFilesRestore, operationHostFilesPurge, operationHostFilesMove,
+		operationHostFilesOpenRead, operationHostFilesReadChunk, operationHostFilesCloseRead, operationHostFilesUpload,
+		operationHostFilesSaveText, operationHostFilesRollback, operationHostFilesRemove, operationHostFilesPrepare,
+		operationHostFilesSameFS, operationHostFilesAppend, operationHostFilesLogOpen, operationHostFilesLogHistory,
+		operationHostFilesLogFollow, operationHostFilesLogClose, operationHostFilesCrossMove, operationHostFilesPrepareAppend,
+	}
+	for _, operation := range operations {
+		t.Run(operation, func(t *testing.T) {
+			request := wireRequest{
+				Operation:    operation,
+				SessionToken: strings.Repeat("s", 32),
+				HostFiles:    &hostFilesWireRequest{ExternalToken: "smuggled-field"},
+			}
+			if err := validateHostFilesRequest(request); err == nil {
+				t.Fatal("accepted an operation-forbidden field")
+			}
+		})
+	}
+}
+
+func TestHostFilesPrepareAppendRequiresAnAbsolutePath(t *testing.T) {
+	request := wireRequest{
+		Operation:    operationHostFilesPrepareAppend,
+		SessionToken: strings.Repeat("s", 32),
+		HostFiles:    &hostFilesWireRequest{Path: filepath.Join(t.TempDir(), "events.log")},
+	}
+	if err := validateHostFilesRequest(request); err != nil {
+		t.Fatalf("valid prepare-append request rejected: %v", err)
+	}
+	request.HostFiles.Path = "relative.log"
+	if err := validateHostFilesRequest(request); err == nil {
+		t.Fatal("prepare-append accepted a relative path")
+	}
+}
+
 func TestExternalHostFilesLogProtocolRejectsGenericAndSessionFields(t *testing.T) {
 	valid := wireRequest{Version: ProtocolVersion, Operation: operationHostFilesExternalLog, RequestID: "external-host-log-test",
 		HostFiles: &hostFilesWireRequest{ExternalToken: "sbk_synthetic_external_token_value", ExternalEntryID: "entry-1", ExternalEntryName: "deployment-log", ExternalMessage: "deployment complete"}}

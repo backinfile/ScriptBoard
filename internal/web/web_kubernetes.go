@@ -93,9 +93,13 @@ func kubernetesStatusURL(query clusterstatus.Query, status string) string {
 func parseKubernetesQuery(request *http.Request) clusterstatus.Query {
 	query := clusterstatus.Query{
 		ConnectionID: strings.TrimSpace(request.URL.Query().Get("cluster")),
-		Search:       strings.TrimSpace(request.URL.Query().Get("query")), Status: request.URL.Query().Get("status"),
-		Namespace: request.URL.Query().Get("namespace"), Kind: request.URL.Query().Get("kind"),
-		Sort: request.URL.Query().Get("sort"), Direction: request.URL.Query().Get("direction"), Limit: 100,
+		Search:       strings.TrimSpace(request.URL.Query().Get("query")),
+		Status:       request.URL.Query().Get("status"),
+		Namespace:    request.URL.Query().Get("namespace"),
+		Kind:         request.URL.Query().Get("kind"),
+		Sort:         request.URL.Query().Get("sort"),
+		Direction:    request.URL.Query().Get("direction"),
+		Limit:        100,
 	}
 	if query.Status == "" {
 		query.Status = "all"

@@ -241,7 +241,6 @@ type CreateKeyInput struct {
 type CreateEntryInput struct {
 	GroupID, KeyID, Name, Label string
 	Type                        ActionType
-	Target                      string
 	Enabled                     bool
 	RequireSignature            bool
 	Config                      any
@@ -250,7 +249,6 @@ type CreateEntryInput struct {
 type UpdateEntryInput struct {
 	ID, Name, Label  string
 	Type             ActionType
-	Target           string
 	Enabled          bool
 	RequireSignature bool
 	Config           any
@@ -676,7 +674,7 @@ func (manager *Manager) RotateKey(ctx context.Context, id string) (Key, string, 
 }
 
 func (manager *Manager) CreateEntry(ctx context.Context, input CreateEntryInput) (Entry, string, error) {
-	configJSON, target, err := validateEntry(input.Name, input.Label, input.Type, input.Target, input.Config)
+	configJSON, target, err := validateEntry(input.Name, input.Label, input.Type, input.Config)
 	if err != nil {
 		return Entry{}, "", err
 	}
@@ -741,7 +739,7 @@ func (manager *Manager) CreateEntry(ctx context.Context, input CreateEntryInput)
 }
 
 func (manager *Manager) UpdateEntry(ctx context.Context, input UpdateEntryInput) (Entry, error) {
-	configJSON, target, err := validateEntry(input.Name, input.Label, input.Type, input.Target, input.Config)
+	configJSON, target, err := validateEntry(input.Name, input.Label, input.Type, input.Config)
 	if err != nil {
 		return Entry{}, err
 	}
@@ -761,13 +759,13 @@ func (manager *Manager) UpdateEntry(ctx context.Context, input UpdateEntryInput)
 	return manager.Entry(ctx, input.ID)
 }
 
-func validateEntry(name, label string, actionType ActionType, target string, config any) (string, string, error) {
+func validateEntry(name, label string, actionType ActionType, config any) (string, string, error) {
 	label = strings.TrimSpace(label)
-	target = strings.TrimSpace(target)
 	if !entryNamePattern.MatchString(name) || label == "" || len([]byte(label)) > 128 || !utf8.ValidString(label) {
 		return "", "", fmt.Errorf("%w: entry identity", ErrInvalidInput)
 	}
 	var normalized any
+	var target string
 	switch actionType {
 	case ActionLog:
 		value, ok := config.(LogConfig)

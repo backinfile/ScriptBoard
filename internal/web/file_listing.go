@@ -153,10 +153,6 @@ type fileNamePart struct {
 	Match bool
 }
 
-func prepareFileListing(entries []hostfiles.Entry, _ string, query, sortField, direction string, showHidden bool) []listedFile {
-	return prepareFileListingWithContent(entries, query, sortField, direction, showHidden, nil)
-}
-
 func prepareFileListingWithContent(entries []hostfiles.Entry, query, sortField, direction string, showHidden bool, classifyContent func(listedFile) (fileCategory, bool)) []listedFile {
 	result := make([]listedFile, 0, len(entries))
 	for _, entry := range entries {

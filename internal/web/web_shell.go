@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
-	"scriptboard/internal/identity"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +13,7 @@ import (
 	"scriptboard/internal/appstatus"
 	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/hoststatus"
+	"scriptboard/internal/identity"
 	"scriptboard/internal/websitemonitor"
 )
 
@@ -51,42 +51,40 @@ func newShellStatusCache(ttl time.Duration, now func() time.Time, load func(cont
 }
 
 func (c *shellStatusCache) Read(ctx context.Context) (shellStatusResponse, error) {
-	for {
-		c.mu.Lock()
-		if c.valid && c.now().Before(c.expiresAt) {
-			value := c.value
-			c.mu.Unlock()
-			return value, nil
-		}
-		if c.refresh != nil {
-			refresh := c.refresh
-			c.mu.Unlock()
-			select {
-			case <-refresh.done:
-				return refresh.value, refresh.err
-			case <-ctx.Done():
-				return shellStatusResponse{}, ctx.Err()
-			}
-		}
-		c.refresh = &shellStatusRefresh{done: make(chan struct{})}
+	c.mu.Lock()
+	if c.valid && c.now().Before(c.expiresAt) {
+		value := c.value
+		c.mu.Unlock()
+		return value, nil
+	}
+	if c.refresh != nil {
 		refresh := c.refresh
 		c.mu.Unlock()
-
-		value, err := c.load(ctx)
-
-		c.mu.Lock()
-		refresh.value = value
-		refresh.err = err
-		if err == nil {
-			c.value = value
-			c.expiresAt = c.now().Add(c.ttl)
-			c.valid = true
+		select {
+		case <-refresh.done:
+			return refresh.value, refresh.err
+		case <-ctx.Done():
+			return shellStatusResponse{}, ctx.Err()
 		}
-		c.refresh = nil
-		close(refresh.done)
-		c.mu.Unlock()
-		return value, err
 	}
+	c.refresh = &shellStatusRefresh{done: make(chan struct{})}
+	refresh := c.refresh
+	c.mu.Unlock()
+
+	value, err := c.load(ctx)
+
+	c.mu.Lock()
+	refresh.value = value
+	refresh.err = err
+	if err == nil {
+		c.value = value
+		c.expiresAt = c.now().Add(c.ttl)
+		c.valid = true
+	}
+	c.refresh = nil
+	close(refresh.done)
+	c.mu.Unlock()
+	return value, err
 }
 
 func (a *App) loadShellStatus(ctx context.Context) (shellStatusResponse, error) {
@@ -316,9 +314,7 @@ func shellNavigation(locale webLocale, path string, role identity.Role) []shellN
 			if !identity.Allows(role, item.permission) {
 				continue
 			}
-			current := path == item.href || item.href == "/monitor" && path == "/monitor" ||
-				item.href == "/resources/files" && (path == "/resources/files" || path == "/resources/trash") ||
-				item.href != "/monitor" && item.href != "/resources/files" && strings.HasPrefix(path, item.href)
+			current := currentShellNavigationItem(path, item.href)
 			items = append(items, shellNavigationItem{Href: item.href, Label: webText(locale, item.key), Icon: item.icon, Current: current})
 		}
 		if len(items) > 0 {
@@ -326,6 +322,19 @@ func shellNavigation(locale webLocale, path string, role identity.Role) []shellN
 		}
 	}
 	return groups
+}
+
+func currentShellNavigationItem(path, href string) bool {
+	if path == href {
+		return true
+	}
+	if href == "/resources/files" {
+		return path == "/resources/trash"
+	}
+	if href == "/monitor" {
+		return false
+	}
+	return strings.HasPrefix(path, href)
 }
 
 func setHTMLLocale(body string, locale webLocale) string {

@@ -540,31 +540,6 @@ func applicationInstallRoot(stateRoot string) string {
 	return metadata.InstallRoot
 }
 
-func canRestartManagedService(stateRoot, configPath string) bool {
-	metadata, err := installation.Detect(stateRoot)
-	if err != nil {
-		return false
-	}
-	loaded, loadErr := config.Load([]string{"--config", metadata.ConfigPath}, os.Getenv)
-	if loadErr != nil {
-		return false
-	}
-	matches, err := platformservice.MatchesExecutable(installation.ServiceEntryExecutable(metadata), metadata.ConfigPath, metadata.StateRoot, loaded.RunnerIdentityMode)
-	if err != nil || !matches {
-		return false
-	}
-	executable, err := os.Executable()
-	if err != nil {
-		return false
-	}
-	currentExecutable, currentErr := os.Stat(executable)
-	serviceExecutable, serviceErr := os.Stat(installation.ServiceEntryExecutable(metadata))
-	currentConfig, currentConfigErr := os.Stat(configPath)
-	serviceConfig, serviceConfigErr := os.Stat(metadata.ConfigPath)
-	return currentErr == nil && serviceErr == nil && os.SameFile(currentExecutable, serviceExecutable) &&
-		currentConfigErr == nil && serviceConfigErr == nil && os.SameFile(currentConfig, serviceConfig)
-}
-
 func validateConfig(arguments []string) error {
 	loaded, err := config.Load(arguments, os.Getenv)
 	if err != nil {

@@ -226,6 +226,16 @@ func mysqlOperationContext(base context.Context, request *http.Request) context.
 	return privilegebroker.WithAuthorization(base, authorization)
 }
 
+func (a *App) startMySQLBackgroundOperation(request *http.Request, action, target string, operation func(context.Context)) {
+	operationContext := mysqlOperationContext(a.mysqlContext, request)
+	a.mysqlWG.Add(1)
+	go func() {
+		defer a.mysqlWG.Done()
+		operation(operationContext)
+	}()
+	a.recordAuditForRequest(request, action, target, "accepted")
+}
+
 func (a *App) testMySQLInstance(response http.ResponseWriter, request *http.Request) {
 	if !validSessionCSRF(request) {
 		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
@@ -279,13 +289,9 @@ func (a *App) startMySQLBackup(response http.ResponseWriter, request *http.Reque
 		return
 	}
 	id, database, actor := request.PathValue("id"), request.FormValue("database"), mysqlActor(request)
-	operationContext := mysqlOperationContext(a.mysqlContext, request)
-	a.mysqlWG.Add(1)
-	go func() {
-		defer a.mysqlWG.Done()
+	a.startMySQLBackgroundOperation(request, "start_mysql_backup", id+"/"+database, func(operationContext context.Context) {
 		_, _ = a.mysql.Backup(operationContext, mysqlmanager.BackupRequest{InstanceID: id, Database: database, Kind: mysqlmanager.BackupManual, ActorUserID: actor.UserID, ActorUsername: actor.Username})
-	}()
-	a.recordAuditForRequest(request, "start_mysql_backup", id+"/"+database, "accepted")
+	})
 	http.Redirect(response, request, "/resources/databases?instance="+url.QueryEscape(id), http.StatusSeeOther)
 }
 
@@ -303,13 +309,9 @@ func (a *App) startMySQLBatchBackup(response http.ResponseWriter, request *http.
 		http.Error(response, "select at least one database", http.StatusBadRequest)
 		return
 	}
-	operationContext := mysqlOperationContext(a.mysqlContext, request)
-	a.mysqlWG.Add(1)
-	go func() {
-		defer a.mysqlWG.Done()
+	a.startMySQLBackgroundOperation(request, "start_mysql_batch_backup", id, func(operationContext context.Context) {
 		_, _ = a.mysql.BackupBatch(operationContext, mysqlmanager.BatchBackupRequest{InstanceID: id, Databases: databases, Actor: actor})
-	}()
-	a.recordAuditForRequest(request, "start_mysql_batch_backup", id, "accepted")
+	})
 	http.Redirect(response, request, "/resources/databases?instance="+url.QueryEscape(id), http.StatusSeeOther)
 }
 
@@ -328,13 +330,9 @@ func (a *App) startMySQLRestore(response http.ResponseWriter, request *http.Requ
 		http.Error(response, "enter the complete target database name to confirm restore", http.StatusBadRequest)
 		return
 	}
-	operationContext := mysqlOperationContext(a.mysqlContext, request)
-	a.mysqlWG.Add(1)
-	go func() {
-		defer a.mysqlWG.Done()
+	a.startMySQLBackgroundOperation(request, "start_mysql_restore", backup.InstanceID+"/"+target, func(operationContext context.Context) {
 		_, _ = a.mysql.Restore(operationContext, mysqlmanager.RestoreRequest{InstanceID: backup.InstanceID, BackupID: backup.ID, TargetDatabase: target, Actor: actor})
-	}()
-	a.recordAuditForRequest(request, "start_mysql_restore", backup.InstanceID+"/"+target, "accepted")
+	})
 	http.Redirect(response, request, "/resources/databases?instance="+url.QueryEscape(backup.InstanceID), http.StatusSeeOther)
 }
 
@@ -349,13 +347,9 @@ func (a *App) startDropMySQLDatabase(response http.ResponseWriter, request *http
 		http.Error(response, "enter the complete database name to confirm deletion", http.StatusBadRequest)
 		return
 	}
-	operationContext := mysqlOperationContext(a.mysqlContext, request)
-	a.mysqlWG.Add(1)
-	go func() {
-		defer a.mysqlWG.Done()
+	a.startMySQLBackgroundOperation(request, "start_drop_mysql_database", id+"/"+database, func(operationContext context.Context) {
 		_, _ = a.mysql.DropDatabase(operationContext, mysqlmanager.DropDatabaseRequest{InstanceID: id, Database: database, Confirmation: confirmation, Actor: actor})
-	}()
-	a.recordAuditForRequest(request, "start_drop_mysql_database", id+"/"+database, "accepted")
+	})
 	http.Redirect(response, request, "/resources/databases?instance="+url.QueryEscape(id), http.StatusSeeOther)
 }
 

@@ -1070,7 +1070,6 @@ func (m *Manager) FollowEvents(ctx context.Context, id string, afterSequence int
 				if err := emit(event); err != nil {
 					return "", err
 				}
-				afterSequence = event.Sequence
 			}
 			return status, nil
 		}
