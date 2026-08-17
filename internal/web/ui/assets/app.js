@@ -145,6 +145,7 @@
       websiteDownOne: "个网站故障", websiteDownMany: "个网站故障",
       websiteVerifyingOne: "个正在复核", websiteVerifyingMany: "个正在复核",
       websiteNoConfirmedFailure: "没有已确认的网站故障",
+      secondShort: "秒", minuteShort: "分", hourShort: "小时",
       conflictTitle: "已有同名文件", conflictDescription: "选择如何处理同名文件。默认不会覆盖任何内容。",
       conflictBatchDescription: "这个选择将应用到本次上传中的所有同名文件。",
       conflictSkip: "跳过", conflictOverwrite: "覆盖", conflictRename: "重命名", conflictClose: "关闭",
@@ -170,6 +171,7 @@
       websiteDownOne: "website down", websiteDownMany: "websites down",
       websiteVerifyingOne: "website under verification", websiteVerifyingMany: "websites under verification",
       websiteNoConfirmedFailure: "No confirmed website failures",
+      secondShort: "s", minuteShort: "m", hourShort: "h",
       conflictTitle: "A file with this name already exists",
       conflictDescription: "Choose how to handle name conflicts. Nothing is overwritten by default.",
       conflictBatchDescription: "Your choice applies to every name conflict in this upload.",
@@ -2934,6 +2936,7 @@
       jumpToBottom?.removeEventListener("click", handleJumpToBottom);
     });
     const state = root.querySelector("[data-run-live-state]");
+    const idle = root.querySelector("[data-run-log-idle]");
     const pause = root.querySelector("[data-run-pause]");
     const pauseLabel = pause?.querySelector("[data-run-pause-label]");
     let paused = false;
@@ -2944,7 +2947,38 @@
     let hasMore = true;
     let historyLoading = false;
     let source = null;
+    let lastLogAt = null;
+    let idleTimer = null;
     let disposed = false;
+    const formatElapsed = seconds => {
+      const value = Math.max(0, Math.floor(seconds));
+      if (value < 60) return `${value}${words().secondShort}`;
+      const minutes = Math.floor(value / 60);
+      if (minutes < 60) return `${minutes}${words().minuteShort} ${value % 60}${words().secondShort}`;
+      const hours = Math.floor(minutes / 60);
+      return `${hours}${words().hourShort} ${minutes % 60}${words().minuteShort}`;
+    };
+    const renderIdle = () => {
+      if (!idle) return;
+      if (!lastLogAt) {
+        idle.textContent = idle.dataset.emptyLabel || "";
+        idle.removeAttribute("datetime");
+        return;
+      }
+      idle.dateTime = lastLogAt.toISOString();
+      idle.textContent = `${idle.dataset.prefix || ""} ${formatElapsed((Date.now() - lastLogAt.getTime()) / 1000)}`.trim();
+    };
+    const markLastLog = payload => {
+      const parsed = payload?.time ? new Date(payload.time) : new Date();
+      if (!Number.isNaN(parsed.getTime()) && (!lastLogAt || parsed > lastLogAt)) {
+        lastLogAt = parsed;
+        renderIdle();
+      }
+    };
+    if (idle) {
+      renderIdle();
+      idleTimer = window.setInterval(renderIdle, 1000);
+    }
     const createEntry = payload => {
       const sequence = Number(payload.sequence);
       const span = document.createElement("span");
@@ -2961,6 +2995,7 @@
         lastSequence = sequence;
       }
       log.append(createEntry(payload));
+      markLastLog(payload);
       showLatestLog();
     };
     const loadHistory = async (initial, pinToTop = false) => {
@@ -2981,6 +3016,7 @@
         if (initial) {
           historySentinel.after(fragment);
           if (entries.length) lastSequence = Number(entries[entries.length - 1].sequence) || 0;
+          if (entries.length) markLastLog(entries[entries.length - 1]);
           showLatestLog();
         } else if (entries.length) {
           const previousHeight = log.scrollHeight;
@@ -3005,7 +3041,12 @@
       source.addEventListener("open", () => { if (state) state.textContent = words().connected; });
       source.addEventListener("output", event => {
         const payload = { ...JSON.parse(event.data), sequence: Number(event.lastEventId) };
-        if (paused) buffer.push(payload); else append(payload);
+        if (paused) {
+          markLastLog(payload);
+          buffer.push(payload);
+        } else {
+          append(payload);
+        }
       });
       source.addEventListener("complete", event => {
         completed = true;
@@ -3049,6 +3090,7 @@
     cleanups.push(() => {
       disposed = true;
       source?.close();
+      if (idleTimer) window.clearInterval(idleTimer);
       log?.removeEventListener("scroll", onScroll);
       pause?.removeEventListener("click", toggle);
       if (root._toggleLogPause === toggle) root._toggleLogPause = null;

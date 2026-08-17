@@ -4188,7 +4188,10 @@ body.has-task-panel { overflow: hidden; }
 .run-log-section > header { display: flex; min-height: 50px; align-items: center; justify-content: space-between; gap: 16px; padding: 9px 14px; border-bottom: 1px solid #363b43; }
 .run-log-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .run-log-section h2 { margin: 0; color: #fff; font-size: .85rem; }
-.run-log-section [data-run-live-state] { color: #aeb7c4; font-size: .72rem; }
+.run-log-status-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.run-log-section [data-run-live-state], .run-log-section [data-run-log-idle] { color: #aeb7c4; font-size: .72rem; }
+.run-log-section [data-run-log-idle] { color: #d7dde6; font-variant-numeric: tabular-nums; }
+.run-log-section [data-run-log-idle]::before { color: #6f7885; content: "/"; margin-right: 12px; }
 .run-log-section .button { min-height: 32px; color: #d7dde6; background: transparent; border-color: #535b67; font-size: .75rem; }
 .run-log-section pre { min-height: 420px; max-height: 68vh; margin: 0; padding: 18px; overflow: auto; color: var(--terminal-ink); font: 450 .8rem/1.65 var(--font-mono); white-space: pre-wrap; }
 .run-log-section pre span { display: block; }

@@ -2204,6 +2204,8 @@ var webMessages = map[string]localizedMessage{
 	"run_detail.arguments_template":                 {"参数模板", "Argument template"},
 	"run_detail.output":                             {"输出日志", "Output log"},
 	"run_detail.connecting":                         {"正在连接实时输出…", "Connecting to live output…"},
+	"run_detail.no_log_yet":                         {"暂无日志", "No output yet"},
+	"run_detail.since_last_log":                     {"距上次日志", "Since last output"},
 	"run_detail.pause":                              {"暂停显示", "Pause display"},
 	"run_detail.resume":                             {"继续显示", "Resume display"},
 	"run_detail.log_expired":                        {"运行日志已按保留策略清理。", "The Run log was removed by the retention policy."},

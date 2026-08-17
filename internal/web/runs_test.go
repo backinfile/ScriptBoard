@@ -110,6 +110,7 @@ func TestAdminCanRunScriptAndReadCompletedOutput(t *testing.T) {
 	for _, expected := range []string{
 		`data-run-jump-top`, `data-lucide="arrow-up-to-line"`,
 		`data-run-jump-bottom`, `data-lucide="arrow-down-to-line"`,
+		`data-run-log-idle`, `Since last output`, `No output yet`,
 	} {
 		if !strings.Contains(completedPage, expected) {
 			t.Fatalf("completed Run output controls missing %q: %s", expected, completedPage)
