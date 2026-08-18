@@ -428,7 +428,7 @@ func (a *App) routes() http.Handler {
 		// opaque, potentially hostile origin.
 		response.Header().Set("Referrer-Policy", "same-origin")
 		response.Header().Set("Permissions-Policy", "camera=(), geolocation=(), microphone=()")
-		response.Header().Set("Content-Security-Policy", "default-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		response.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		if isSecureRequest(request) {
 			response.Header().Set("Strict-Transport-Security", "max-age=31536000")
 		}

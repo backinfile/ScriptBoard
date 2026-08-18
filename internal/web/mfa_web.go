@@ -1,8 +1,11 @@
 package web
 
 import (
+	"encoding/base64"
 	"errors"
 	"net/http"
+
+	qrcode "github.com/skip2/go-qrcode"
 
 	"scriptboard/internal/mfa"
 	"scriptboard/internal/passkey"
@@ -14,6 +17,7 @@ type mfaPageData struct {
 	Enabled           bool
 	RecoveryRemaining int
 	Enrollment        *mfa.Enrollment
+	QRCodeBase64      string
 	RecoveryCodes     []string
 	Error             string
 	Passkeys          []passkey.CredentialView
@@ -101,6 +105,14 @@ func (a *App) resetMFA(response http.ResponseWriter, request *http.Request) {
 
 func (a *App) renderMFAPage(response http.ResponseWriter, request *http.Request, status int, data mfaPageData) {
 	current := request.Context().Value(sessionContextKey).(session)
+	if data.Enrollment != nil {
+		qrPNG, err := qrcode.Encode(data.Enrollment.URI, qrcode.Medium, 256)
+		if err != nil {
+			http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusInternalServerError)
+			return
+		}
+		data.QRCodeBase64 = base64.StdEncoding.EncodeToString(qrPNG)
+	}
 	data.Locale = resolveWebLocale(request)
 	data.CSRFToken = current.csrfToken
 	response.Header().Set("Cache-Control", "no-store")
