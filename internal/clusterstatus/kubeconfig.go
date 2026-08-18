@@ -26,12 +26,41 @@ const maxCredentialFileSize = 2 << 20
 
 type HTTPFactory struct{}
 
+type KubeconfigOpenErrorKind string
+
+const (
+	KubeconfigUnreadable             KubeconfigOpenErrorKind = "unreadable"
+	KubeconfigInvalid                KubeconfigOpenErrorKind = "invalid"
+	KubeconfigRequiresEmbeddedCA     KubeconfigOpenErrorKind = "requires_embedded_ca"
+	KubeconfigRequiresEmbeddedAuth   KubeconfigOpenErrorKind = "requires_embedded_auth"
+	KubeconfigUnsupportedAuth        KubeconfigOpenErrorKind = "unsupported_auth"
+	KubeconfigNoSelectedContext      KubeconfigOpenErrorKind = "no_selected_context"
+	KubeconfigContextNotFound        KubeconfigOpenErrorKind = "context_not_found"
+	KubeconfigInvalidServer          KubeconfigOpenErrorKind = "invalid_server"
+	KubeconfigUnsupportedCredentials KubeconfigOpenErrorKind = "unsupported_credentials"
+	KubeconfigInvalidTLSMaterial     KubeconfigOpenErrorKind = "invalid_tls_material"
+)
+
+// KubeconfigOpenError gives privilege boundaries a stable, non-secret reason
+// while retaining the detailed cause for trusted callers and logs.
+type KubeconfigOpenError struct {
+	Kind  KubeconfigOpenErrorKind
+	Cause error
+}
+
+func (err *KubeconfigOpenError) Error() string { return err.Cause.Error() }
+func (err *KubeconfigOpenError) Unwrap() error { return err.Cause }
+
+func kubeconfigOpenError(kind KubeconfigOpenErrorKind, cause error) error {
+	return &KubeconfigOpenError{Kind: kind, Cause: cause}
+}
+
 // OpenCandidate validates and opens the same immutable kubeconfig bytes so a
 // writable path cannot be swapped between the security check and client setup.
 func (HTTPFactory) OpenCandidate(ctx context.Context, connection Connection) (Client, error) {
 	raw, err := readBoundedFile(filepath.Clean(connection.KubeconfigPath))
 	if err != nil {
-		return nil, fmt.Errorf("read kubeconfig candidate: %w", err)
+		return nil, kubeconfigOpenError(KubeconfigUnreadable, fmt.Errorf("read kubeconfig candidate: %w", err))
 	}
 	if err := validateKubeconfigCandidate(raw); err != nil {
 		return nil, err
@@ -44,16 +73,16 @@ func validateKubeconfigCandidate(raw []byte) error {
 	decoder := yaml.NewDecoder(bytes.NewReader(raw))
 	decoder.KnownFields(false)
 	if err := decoder.Decode(&config); err != nil {
-		return fmt.Errorf("parse kubeconfig candidate: %w", err)
+		return kubeconfigOpenError(KubeconfigInvalid, fmt.Errorf("parse kubeconfig candidate: %w", err))
 	}
 	for _, cluster := range config.Clusters {
 		if strings.TrimSpace(cluster.Cluster.CertificateAuthority) != "" {
-			return errors.New("new kubeconfig connections must embed certificate authority data")
+			return kubeconfigOpenError(KubeconfigRequiresEmbeddedCA, errors.New("new kubeconfig connections must embed certificate authority data"))
 		}
 	}
 	for _, user := range config.Users {
 		if strings.TrimSpace(user.User.TokenFile) != "" || strings.TrimSpace(user.User.ClientCertificate) != "" || strings.TrimSpace(user.User.ClientKey) != "" {
-			return errors.New("new kubeconfig connections must embed token, client certificate, and key data")
+			return kubeconfigOpenError(KubeconfigRequiresEmbeddedAuth, errors.New("new kubeconfig connections must embed token, client certificate, and key data"))
 		}
 	}
 	return nil
@@ -109,7 +138,7 @@ func (HTTPFactory) Open(ctx context.Context, connection Connection) (Client, err
 	path := filepath.Clean(connection.KubeconfigPath)
 	raw, err := readBoundedFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("read kubeconfig: %w", err)
+		return nil, kubeconfigOpenError(KubeconfigUnreadable, fmt.Errorf("read kubeconfig: %w", err))
 	}
 	return openKubeconfig(ctx, connection, raw)
 }
@@ -120,14 +149,14 @@ func openKubeconfig(_ context.Context, connection Connection, raw []byte) (Clien
 	decoder := yaml.NewDecoder(bytes.NewReader(raw))
 	decoder.KnownFields(false)
 	if err := decoder.Decode(&config); err != nil {
-		return nil, fmt.Errorf("parse kubeconfig: %w", err)
+		return nil, kubeconfigOpenError(KubeconfigInvalid, fmt.Errorf("parse kubeconfig: %w", err))
 	}
 	contextName := strings.TrimSpace(connection.Context)
 	if contextName == "" {
 		contextName = strings.TrimSpace(config.CurrentContext)
 	}
 	if contextName == "" {
-		return nil, errors.New("kubeconfig has no selected context")
+		return nil, kubeconfigOpenError(KubeconfigNoSelectedContext, errors.New("kubeconfig has no selected context"))
 	}
 	var clusterName, userName, namespace string
 	for _, candidate := range config.Contexts {
@@ -137,7 +166,7 @@ func openKubeconfig(_ context.Context, connection Connection, raw []byte) (Clien
 		}
 	}
 	if clusterName == "" {
-		return nil, fmt.Errorf("kubeconfig context %q was not found", contextName)
+		return nil, kubeconfigOpenError(KubeconfigContextNotFound, fmt.Errorf("kubeconfig context %q was not found", contextName))
 	}
 	var server, caFile, caData string
 	var insecure bool
@@ -151,7 +180,7 @@ func openKubeconfig(_ context.Context, connection Connection, raw []byte) (Clien
 	baseURL, err := url.Parse(server)
 	// The kubeconfig scheme is an explicit transport choice; HTTP is not silently upgraded to TLS.
 	if err != nil || (baseURL.Scheme != "http" && baseURL.Scheme != "https") || baseURL.Host == "" {
-		return nil, errors.New("Kubernetes server must be an absolute HTTP or HTTPS URL")
+		return nil, kubeconfigOpenError(KubeconfigInvalidServer, errors.New("Kubernetes server must be an absolute HTTP or HTTPS URL"))
 	}
 	baseURL.Path = strings.TrimRight(baseURL.Path, "/")
 	var token, tokenFile, certificateFile, certificateData, keyFile, keyData, username, password string
@@ -160,7 +189,7 @@ func openKubeconfig(_ context.Context, connection Connection, raw []byte) (Clien
 			continue
 		}
 		if len(candidate.User.Exec) > 0 || len(candidate.User.AuthProvider) > 0 {
-			return nil, errors.New("executable and auth-provider kubeconfig credentials are not supported")
+			return nil, kubeconfigOpenError(KubeconfigUnsupportedAuth, errors.New("executable and auth-provider kubeconfig credentials are not supported"))
 		}
 		token, tokenFile = candidate.User.Token, candidate.User.TokenFile
 		certificateFile, certificateData = candidate.User.ClientCertificate, candidate.User.ClientCertificateData
@@ -182,31 +211,31 @@ func openKubeconfig(_ context.Context, connection Connection, raw []byte) (Clien
 	}
 	rootCAs, err := kubeconfigRootCAs(caPEM)
 	if err != nil {
-		return nil, err
+		return nil, kubeconfigOpenError(KubeconfigInvalidTLSMaterial, err)
 	}
 	// The kubeconfig explicitly controls peer verification. This mirrors kubectl
 	// and keeps HTTPS available for clusters that intentionally use insecure TLS.
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: rootCAs, InsecureSkipVerify: insecure} //nolint:gosec
 	certificatePEM, err := kubeconfigBytes(directory, certificateFile, certificateData)
 	if err != nil {
-		return nil, fmt.Errorf("load Kubernetes client certificate: %w", err)
+		return nil, kubeconfigOpenError(KubeconfigInvalidTLSMaterial, fmt.Errorf("load Kubernetes client certificate: %w", err))
 	}
 	keyPEM, err := kubeconfigBytes(directory, keyFile, keyData)
 	if err != nil {
-		return nil, fmt.Errorf("load Kubernetes client key: %w", err)
+		return nil, kubeconfigOpenError(KubeconfigInvalidTLSMaterial, fmt.Errorf("load Kubernetes client key: %w", err))
 	}
 	if len(certificatePEM) > 0 || len(keyPEM) > 0 {
 		if len(certificatePEM) == 0 || len(keyPEM) == 0 {
-			return nil, errors.New("both Kubernetes client certificate and key are required")
+			return nil, kubeconfigOpenError(KubeconfigInvalidTLSMaterial, errors.New("both Kubernetes client certificate and key are required"))
 		}
 		certificate, err := tls.X509KeyPair(certificatePEM, keyPEM)
 		if err != nil {
-			return nil, fmt.Errorf("parse Kubernetes client certificate: %w", err)
+			return nil, kubeconfigOpenError(KubeconfigInvalidTLSMaterial, fmt.Errorf("parse Kubernetes client certificate: %w", err))
 		}
 		tlsConfig.Certificates = []tls.Certificate{certificate}
 	}
 	if token == "" && (baseURL.Scheme != "https" || len(tlsConfig.Certificates) == 0) && username == "" {
-		return nil, errors.New("kubeconfig context has no supported credentials")
+		return nil, kubeconfigOpenError(KubeconfigUnsupportedCredentials, errors.New("kubeconfig context has no supported credentials"))
 	}
 	digest := sha256.Sum256(append([]byte(baseURL.String()+"\x00"), caPEM...))
 	transport := &http.Transport{Proxy: http.ProxyFromEnvironment, ForceAttemptHTTP2: true}

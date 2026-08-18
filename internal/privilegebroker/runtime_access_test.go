@@ -342,7 +342,10 @@ func TestKubernetesFactoryReadsClusterSnapshotThroughBroker(t *testing.T) {
 func TestKubernetesCandidateOpenReturnsActionableCredentialGuidance(t *testing.T) {
 	connection := clusterstatus.Connection{ID: "new-k8s", Name: "local", KubeconfigPath: filepath.Join(t.TempDir(), "kubeconfig.yaml"), Context: "default", Mode: clusterstatus.ModeObserve}
 	server, brokerClient := brokerFixture(t, &fixtureAuthorizer{actor: Actor{UserID: "user-1", Role: "maintainer"}}, &fixtureExecutor{})
-	server.kubernetes = fixtureKubernetesFactory{openCandidateErr: errors.New("new kubeconfig connections must embed certificate authority data")}
+	server.kubernetes = fixtureKubernetesFactory{openCandidateErr: &clusterstatus.KubeconfigOpenError{
+		Kind:  clusterstatus.KubeconfigRequiresEmbeddedCA,
+		Cause: errors.New("new kubeconfig connections must embed certificate authority data"),
+	}}
 	defer server.Close()
 
 	ctx := WithAuthorization(context.Background(), Authorization{SessionToken: "session-token-fixture-0123456789", RequestID: "kubernetes-candidate-open"})
