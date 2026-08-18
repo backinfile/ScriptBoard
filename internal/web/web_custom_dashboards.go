@@ -27,7 +27,7 @@ type customDashboardPageView struct {
 	Cards                                       []customDashboardCardView
 	WebsiteMonitors                             []websitemonitor.Monitor
 	CanManage, PublicView, MonitorView, Reorder bool
-	CanManageSystem                             bool
+	CanConfigureDockerEngine                    bool
 	RegistryNotice                              string
 }
 
@@ -94,7 +94,7 @@ func (a *App) customDashboardPage(response http.ResponseWriter, request *http.Re
 	view.Dashboards = dashboards
 	view.CSRFToken = current.csrfToken
 	view.CanManage = identity.Allows(current.role, identity.PermissionManageOperations)
-	view.CanManageSystem = identity.Allows(current.role, identity.PermissionManageSystem)
+	view.CanConfigureDockerEngine = identity.Allows(current.role, identity.PermissionConfigureDockerEngine)
 	view.RegistryNotice = request.URL.Query().Get("registry_notice")
 	view.Reorder = view.CanManage && request.URL.Query().Get("reorder") == "1"
 	view.ImportError = customDashboardImportError(request.URL.Query().Get("import_error"))

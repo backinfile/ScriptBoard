@@ -404,6 +404,16 @@ func TestHTTPRegistryCardCanRegisterDockerInsecureRegistry(t *testing.T) {
 	if len(cardMatch) != 2 || !bytes.Contains(page, []byte("Register HTTP")) || bytes.Contains(page, []byte("secret")) {
 		t.Fatalf("HTTP Registry registration action or credential boundary missing: %s", page)
 	}
+	maintainer := createRoleUserClient(t, client, serverURL, "registry-maintainer", "maintainer")
+	maintainerResponse, err := maintainer.Get(serverURL + "/config/dashboards?dashboard=" + dashboardID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	maintainerPage, _ := io.ReadAll(maintainerResponse.Body)
+	_ = maintainerResponse.Body.Close()
+	if bytes.Contains(maintainerPage, []byte(`/registry/insecure`)) || !bytes.Contains(maintainerPage, []byte("HTTP registration requires a system administrator")) {
+		t.Fatalf("maintainer was offered Docker Engine configuration: %s", maintainerPage)
+	}
 	response, err = client.PostForm(serverURL+"/config/dashboard-cards/"+string(cardMatch[1])+"/registry/insecure", url.Values{
 		"csrf_token": {formToken(t, page)},
 	})
