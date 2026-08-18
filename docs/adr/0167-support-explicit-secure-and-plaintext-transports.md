@@ -5,14 +5,14 @@ ScriptBoard 的用户可配置连接不得把 SSL/TLS 写死为唯一模式。�
 | 连接边界 | 安全模式 | 明文模式 | 持久化与导入导出 |
 | --- | --- | --- | --- |
 | ScriptBoard 监听 | 配置证书与私钥后使用 HTTPS | 未配置证书时使用 HTTP，包括显式非回环监听 | 配置文件保留 TLS 证书与私钥选择 |
-| Kubernetes API | kubeconfig `server: https://...`，支持自定义 CA、系统根和客户端证书 | kubeconfig `server: http://...`，支持静态 token 或基本认证 | SQLite 只保存 kubeconfig 路径和 context；凭据仍留在 kubeconfig |
+| Kubernetes API | kubeconfig `server: https://...`，支持自定义 CA、系统根、客户端证书及显式 `insecure-skip-tls-verify` | kubeconfig `server: http://...`，支持静态 token 或基本认证 | SQLite 只保存 kubeconfig 路径和 context；凭据与 TLS 验证选择仍留在 kubeconfig |
 | AI / LLM Provider | HTTPS Endpoint | HTTP Endpoint，不限于回环地址 | Endpoint 保存在模型配置；API Key 仍只进入 State Root 私有凭据文件 |
 | 自定义看板 JSON 与 Registry | HTTPS | HTTP | 导入导出保留 scheme；Registry 密码不导出；Bearer token realm 可独立使用 HTTP 或 HTTPS |
 | 网站监控 | HTTPS、WSS | HTTP、WS | 导入导出保留 scheme、请求设置和 TLS 验证选项 |
 | 远端网站监控汇聚与外部接口 | HTTPS | HTTP | 完整 Endpoint 保存在 SQLite；Key 加密保存在 State Root |
 | MySQL / MariaDB | `required`、`verify_identity` | `disabled`；`preferred` 允许服务端不支持 TLS 时回退明文 | TLS 模式进入实例模型，并同步写入备份/恢复客户端配置 |
 
-`insecure-skip-tls-verify` 仍不作为 Kubernetes 的连接模式接受：它不是对应的明文协议，而是无法认证对端身份的 TLS。需要明文时应显式使用 HTTP；需要 TLS 时应提供可验证的 CA 或系统信任链。
+Kubernetes 的 `insecure-skip-tls-verify` 作为 kubeconfig 中显式选择的 HTTPS 模式予以保留和支持。它仍加密传输，但无法认证 API Server 身份并可能遭受中间人攻击；界面和文档必须提示风险，ScriptBoard 不得静默启用该选项。需要完全明文时仍应显式使用 HTTP。
 
 以下路径仍只使用 HTTPS，原因不是通用连接器强制 TLS，而是它们是固定的发布供应链：
 

@@ -421,7 +421,10 @@ func (a *App) mutateLocalKubeconfigContext(response http.ResponseWriter, request
 		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
 	}
-	name := request.PathValue("context")
+	name := strings.TrimSpace(request.PathValue("context"))
+	if name == "" {
+		name = strings.TrimSpace(request.FormValue("context"))
+	}
 	action := request.FormValue("action")
 	switch action {
 	case "use":

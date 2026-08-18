@@ -4,7 +4,7 @@
 
 > 传输协议限制已由 [ADR-0167](./0167-support-explicit-secure-and-plaintext-transports.md) 调整：kubeconfig `server` 现在同时接受 HTTP 与 HTTPS；本 ADR 的单集群和操作面限制保持不变。
 
-ScriptBoard 在独立的“Kubernetes 监控”页面连接一个集群。连接由显示名称、主机上的 kubeconfig 路径、可选 context 和操作模式组成；SQLite 不保存 token、证书或私钥。连接适配器接受 HTTP 与 HTTPS，拒绝 `insecure-skip-tls-verify`、`exec` 与 `auth-provider` 凭据插件；HTTPS 使用 kubeconfig 中的 CA、静态 token、基本认证或客户端证书，HTTP 可使用静态 token 或基本认证并明确承担明文传输风险。
+ScriptBoard 在独立的“Kubernetes 监控”页面连接一个集群。连接由显示名称、主机上的 kubeconfig 路径、可选 context 和操作模式组成；SQLite 不保存 token、证书或私钥。连接适配器接受 HTTP 与 HTTPS，并保留 kubeconfig 显式选择的 `insecure-skip-tls-verify`，但仍拒绝 `exec` 与 `auth-provider` 凭据插件；HTTPS 使用 kubeconfig 中的 CA、静态 token、基本认证或客户端证书，选择跳过证书验证时明确承担中间人攻击风险，HTTP 可使用静态 token 或基本认证并明确承担明文传输风险。
 
 监控以 `namespace/kind/name` 作为工作负载的稳定身份，覆盖 Deployment、StatefulSet、DaemonSet 与 CronJob。Pin、分钟指标和镜像/revision 版本历史共享这一个身份，因此滚动发布或容器实例变化不会拆散历史。保存指向不同 API Server/CA 指纹的连接时，必须清空 Pin、指标和版本历史，避免不同集群共用时间线。产品不提供多集群选择器。
 

@@ -9,6 +9,10 @@ const { chromium } = require("playwright");
   try {
     const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
     const repository = path.resolve(__dirname, "../..");
+    await page.addInitScript(() => Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async value => { window.__copiedServerError = value; } },
+    }));
     await page.route("http://scriptboard.test/**", async route => {
       const request = route.request();
       if (request.url().endsWith("/network-fail")) {
@@ -48,6 +52,17 @@ const { chromium } = require("playwright");
     assert.equal(await page.locator("[data-preserved-workspace]").count(), 1, "the current workspace must remain mounted");
     assert.match(await dialog.textContent(), /The submitted content could not be processed\./);
     assert.match(await dialog.textContent(), /fixture validation failed/);
+    const copyDetails = dialog.getByRole("button", { name: "Copy error details" });
+    assert.equal((await copyDetails.textContent()).trim(), "", "copy-error-details control should be icon-only");
+    await copyDetails.click();
+    assert.equal(await page.evaluate(() => window.__copiedServerError), [
+      "Operation not completed",
+      "The submitted content could not be processed.",
+      "HTTP: 400",
+      "Request: POST /fail",
+      "Technical details:",
+      "fixture validation failed",
+    ].join("\n"), "copy-error-details should include every relevant failure field");
     await dialog.getByRole("button", { name: "Close", exact: true }).last().click();
     await dialog.waitFor({ state: "detached" });
 

@@ -305,7 +305,7 @@ func (server *Server) kubernetesOperation(ctx context.Context, request wireReque
 		client, err = server.kubernetes.Open(ctx, connection)
 	}
 	if err != nil {
-		return wireResponse{Status: statusError, ErrorCode: "kubernetes_open_failed", Message: "Kubernetes connection could not be opened"}
+		return wireResponse{Status: statusError, ErrorCode: "kubernetes_open_failed", Message: kubernetesOpenFailureMessage(err)}
 	}
 	defer client.Close()
 	response := &runtimeWireResponse{}
@@ -330,6 +330,37 @@ func (server *Server) kubernetesOperation(ctx context.Context, request wireReque
 		return wireResponse{Status: statusError, ErrorCode: "kubernetes_operation_failed", Message: "Kubernetes operation failed"}
 	}
 	return wireResponse{Status: statusOK, Runtime: response}
+}
+
+func kubernetesOpenFailureMessage(err error) string {
+	var openError *clusterstatus.KubeconfigOpenError
+	if !errors.As(err, &openError) {
+		return "Kubernetes connection could not be opened: verify that the kubeconfig uses embedded, supported credentials"
+	}
+	switch openError.Kind {
+	case clusterstatus.KubeconfigRequiresEmbeddedCA:
+		return "Kubernetes connection could not be opened: new connections must embed certificate authority data"
+	case clusterstatus.KubeconfigRequiresEmbeddedAuth:
+		return "Kubernetes connection could not be opened: new connections must embed token, client certificate, and key data"
+	case clusterstatus.KubeconfigUnsupportedAuth:
+		return "Kubernetes connection could not be opened: exec and auth-provider kubeconfig credentials are not supported"
+	case clusterstatus.KubeconfigNoSelectedContext:
+		return "Kubernetes connection could not be opened: the kubeconfig has no selected context"
+	case clusterstatus.KubeconfigContextNotFound:
+		return "Kubernetes connection could not be opened: the selected context was not found"
+	case clusterstatus.KubeconfigInvalidServer:
+		return "Kubernetes connection could not be opened: the server must be an absolute HTTP or HTTPS URL"
+	case clusterstatus.KubeconfigUnsupportedCredentials:
+		return "Kubernetes connection could not be opened: the selected context has no supported credentials"
+	case clusterstatus.KubeconfigInvalid:
+		return "Kubernetes connection could not be opened: the kubeconfig is invalid"
+	case clusterstatus.KubeconfigInvalidTLSMaterial:
+		return "Kubernetes connection could not be opened: certificate authority, client certificate, or client key data is invalid"
+	case clusterstatus.KubeconfigUnreadable:
+		return "Kubernetes connection could not be opened: the privileged Broker cannot read the kubeconfig path"
+	default:
+		return "Kubernetes connection could not be opened: verify that the kubeconfig uses embedded, supported credentials"
+	}
 }
 
 var errRuntimeLogBatchFull = errors.New("runtime log batch is full")
