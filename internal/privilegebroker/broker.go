@@ -217,6 +217,7 @@ func AuthorizationFromContext(ctx context.Context) (Authorization, bool) {
 type Actor struct {
 	UserID, Username, Role  string
 	AuthenticationAssurance int
+	RecentAuthentication    bool
 }
 
 type AuthorizationRequest struct {
@@ -907,6 +908,7 @@ type domainAuthorizationMode uint8
 const (
 	domainAuthorizationCurrentPrivileged domainAuthorizationMode = iota
 	domainAuthorizationRecentPrivileged
+	domainAuthorizationRecentAdministrator
 	domainAuthorizationRecentActor
 )
 
@@ -959,6 +961,21 @@ func (server *Server) authorizeDomainOperation(request wireRequest, action Actio
 		SessionToken: request.SessionToken, RequestID: request.RequestID, Action: action,
 		Resource: resource, Revision: revision, ParametersSHA256: digest,
 	}
+	actor, err := server.authorizeActor(authorization, mode)
+	if err != nil {
+		return nil, wireResponse{Status: statusError, ErrorCode: "authorization_denied", Message: "credential operation authorization denied"}
+	}
+	if mode == domainAuthorizationRecentActor && actor.UserID != resource {
+		return nil, wireResponse{Status: statusError, ErrorCode: "authorization_denied", Message: "credential operation user binding denied"}
+	}
+	mutation := credentialMutation{action: action, resource: resource, revision: revision, requestID: request.RequestID, parametersSHA256: digest, actor: actor}
+	if err := server.recordCredentialMutation(mutation, "attempted"); err != nil {
+		return nil, wireResponse{Status: statusError, ErrorCode: "audit_failed", Message: "credential operation was not executed because intent audit failed"}
+	}
+	return &mutation, wireResponse{}
+}
+
+func (server *Server) authorizeActor(authorization AuthorizationRequest, mode domainAuthorizationMode) (Actor, error) {
 	var (
 		actor Actor
 		err   error
@@ -973,19 +990,15 @@ func (server *Server) authorizeDomainOperation(request wireRequest, action Actio
 		actor, err = server.authorizer.Authorize(context.Background(), authorization)
 	}
 	if err != nil {
-		return nil, wireResponse{Status: statusError, ErrorCode: "authorization_denied", Message: "credential operation authorization denied"}
+		return Actor{}, err
+	}
+	if mode == domainAuthorizationRecentAdministrator && actor.Role != "administrator" {
+		return Actor{}, errors.New("role is not authorized for administrator operation")
 	}
 	if mode == domainAuthorizationCurrentPrivileged && actor.Role != "administrator" && actor.Role != "maintainer" {
-		return nil, wireResponse{Status: statusError, ErrorCode: "authorization_denied", Message: "credential operation role authorization denied"}
+		return Actor{}, errors.New("role is not authorized for privileged operation")
 	}
-	if mode == domainAuthorizationRecentActor && actor.UserID != resource {
-		return nil, wireResponse{Status: statusError, ErrorCode: "authorization_denied", Message: "credential operation user binding denied"}
-	}
-	mutation := credentialMutation{action: action, resource: resource, revision: revision, requestID: request.RequestID, parametersSHA256: digest, actor: actor}
-	if err := server.recordCredentialMutation(mutation, "attempted"); err != nil {
-		return nil, wireResponse{Status: statusError, ErrorCode: "audit_failed", Message: "credential operation was not executed because intent audit failed"}
-	}
-	return &mutation, wireResponse{}
+	return actor, nil
 }
 
 func (server *Server) recordCredentialMutation(mutation credentialMutation, result string) error {
@@ -1023,10 +1036,14 @@ func (server *Server) checkpointOperation(operation string) wireResponse {
 }
 
 func (server *Server) authorize(request wireRequest) wireResponse {
-	actor, err := server.authorizer.Authorize(context.Background(), AuthorizationRequest{
+	mode := domainAuthorizationRecentPrivileged
+	if request.Action == ActionApplicationOperate || request.Action == ActionKubernetesOperate {
+		mode = domainAuthorizationCurrentPrivileged
+	}
+	actor, err := server.authorizeActor(AuthorizationRequest{
 		SessionToken: request.SessionToken, RequestID: request.RequestID, Action: request.Action,
 		Resource: request.Resource, Revision: request.Revision, ParametersSHA256: request.ParametersSHA256,
-	})
+	}, mode)
 	if err != nil {
 		return wireResponse{Status: statusError, ErrorCode: "authorization_denied", Message: "authorization denied"}
 	}

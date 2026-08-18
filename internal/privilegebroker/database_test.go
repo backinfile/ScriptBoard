@@ -24,7 +24,7 @@ func TestDatabaseSecurityRequiresCurrentPrivilegedStepUp(t *testing.T) {
 	}
 	insertBrokerSession(t, db, "allowed-session-token-0123456789", "maintainer", now.Add(-time.Minute).Unix(), now.Add(time.Hour).Unix())
 	actor, err := security.Authorize(context.Background(), AuthorizationRequest{SessionToken: "allowed-session-token-0123456789"})
-	if err != nil || actor.Role != "maintainer" || actor.AuthenticationAssurance != 2 {
+	if err != nil || actor.Role != "maintainer" || actor.AuthenticationAssurance != 2 || !actor.RecentAuthentication {
 		t.Fatalf("actor=%+v err=%v", actor, err)
 	}
 
@@ -37,7 +37,7 @@ func TestDatabaseSecurityRequiresCurrentPrivilegedStepUp(t *testing.T) {
 		t.Fatal("operator session authorized for privileged mutation")
 	}
 	actor, err = security.AuthorizeSession(context.Background(), AuthorizationRequest{SessionToken: "expired-step-up-token-0123456789"})
-	if err != nil || actor.Role != "administrator" {
+	if err != nil || actor.Role != "administrator" || actor.RecentAuthentication {
 		t.Fatalf("valid session with stale step-up was rejected: actor=%+v err=%v", actor, err)
 	}
 	actor, err = security.AuthorizeSession(context.Background(), AuthorizationRequest{SessionToken: "operator-session-token-0123456789"})
@@ -51,7 +51,7 @@ func TestDatabaseSecurityWritesIndependentIntentAndResultAudit(t *testing.T) {
 	db := openBrokerDatabase(t)
 	security, _ := NewDatabaseSecurity(db, auditlog.New(db), func() time.Time { return now })
 	record := AuditRecord{
-		OccurredAt: now, RequestID: "request-audit-1", Actor: Actor{UserID: "user-1", Username: "admin", Role: "administrator", AuthenticationAssurance: 2},
+		OccurredAt: now, RequestID: "request-audit-1", Actor: Actor{UserID: "user-1", Username: "admin", Role: "administrator", AuthenticationAssurance: 2, RecentAuthentication: true},
 		Action: ActionWindowsFirewallDelete, Resource: "rule-1", Revision: "revision-1", ParametersSHA256: strings.Repeat("a", 64), Result: "attempted",
 	}
 	if err := security.Record(context.Background(), record); err != nil {
@@ -63,6 +63,27 @@ func TestDatabaseSecurityWritesIndependentIntentAndResultAudit(t *testing.T) {
 	}
 	if action != "privileged_broker.windows_firewall_delete" || result != "attempted" || requestID != record.RequestID || assurance != "aal2+step-up" || revision != record.Revision || digest != record.ParametersSHA256 {
 		t.Fatalf("audit=%q %q %q %q %q %q", action, result, requestID, assurance, revision, digest)
+	}
+}
+
+func TestDatabaseSecurityDoesNotClaimStepUpForCurrentSessionAudit(t *testing.T) {
+	now := time.Unix(1786420000, 0).UTC()
+	db := openBrokerDatabase(t)
+	security, _ := NewDatabaseSecurity(db, auditlog.New(db), func() time.Time { return now })
+	record := AuditRecord{
+		OccurredAt: now, RequestID: "request-audit-current-session",
+		Actor:  Actor{UserID: "user-1", Username: "maintainer", Role: "maintainer", AuthenticationAssurance: 2},
+		Action: ActionApplicationOperate, Resource: "container-1", Revision: "runtime-v1", ParametersSHA256: strings.Repeat("b", 64), Result: "attempted",
+	}
+	if err := security.Record(context.Background(), record); err != nil {
+		t.Fatal(err)
+	}
+	var assurance string
+	if err := db.QueryRow(`SELECT authentication_assurance FROM audit_events ORDER BY id DESC LIMIT 1`).Scan(&assurance); err != nil {
+		t.Fatal(err)
+	}
+	if assurance != "aal2" {
+		t.Fatalf("current-session audit assurance = %q, want aal2", assurance)
 	}
 }
 

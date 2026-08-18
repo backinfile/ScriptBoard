@@ -61,6 +61,27 @@ func TestRegistryDockerConfigurationStillRequiresRecentStepUp(t *testing.T) {
 	}
 }
 
+func TestRegistryDockerConfigurationRequiresAdministrator(t *testing.T) {
+	now := time.Unix(1786957701, 0).UTC()
+	database := openBrokerDatabase(t)
+	security, err := NewDatabaseSecurity(database, auditlog.New(database), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := "registry-maintainer-token-0123456789"
+	insertBrokerSession(t, database, token, "maintainer", now.Add(-time.Minute).Unix(), now.Add(time.Hour).Unix())
+
+	service := &fixtureRegistryService{}
+	connections := registryTestConnections(t, security, service)
+	authorized := WithAuthorization(context.Background(), Authorization{SessionToken: token, RequestID: "registry-docker-admin-test"})
+	if _, err := connections.RegisterInsecure(authorized, "http://registry.example:5000"); err == nil {
+		t.Fatal("maintainer changed Docker insecure Registry configuration")
+	}
+	if service.insecureRegistrations != 0 {
+		t.Fatal("denied maintainer request reached Docker Registry configuration")
+	}
+}
+
 func TestRegistryConnectionMutationRejectsUnprivilegedSession(t *testing.T) {
 	service := &fixtureRegistryService{}
 	connections := registryTestConnections(t, &fixtureAuthorizer{actor: Actor{UserID: "viewer", Role: "viewer"}}, service)

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"scriptboard/internal/appstatus"
+	"scriptboard/internal/auditlog"
 	"scriptboard/internal/clusterstatus"
 	"scriptboard/internal/logstream"
 )
@@ -66,6 +67,29 @@ func TestApplicationProbeOperatesDockerContainerThroughBroker(t *testing.T) {
 	ctx := WithAuthorization(context.Background(), Authorization{SessionToken: "session-token-fixture-0123456789", RequestID: "container-operation-1"})
 	if err := NewApplicationProbe(client).OperateContainer(ctx, "api", appstatus.ContainerRestart); err != nil {
 		t.Fatal(err)
+	}
+	if applications.operated != "api" || applications.action != appstatus.ContainerRestart {
+		t.Fatalf("operation = %q %q", applications.operated, applications.action)
+	}
+}
+
+func TestApplicationOperationAcceptsValidSessionWithoutRecentStepUp(t *testing.T) {
+	now := time.Unix(1786957701, 0).UTC()
+	database := openBrokerDatabase(t)
+	security, err := NewDatabaseSecurity(database, auditlog.New(database), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := "application-session-token-0123456789"
+	insertBrokerSession(t, database, token, "maintainer", now.Add(-4*time.Hour).Unix(), now.Add(time.Hour).Unix())
+	applications := &fixtureApplicationService{}
+	server, client := brokerFixture(t, security, &fixtureExecutor{})
+	server.applications = applications
+	defer server.Close()
+
+	ctx := WithAuthorization(context.Background(), Authorization{SessionToken: token, RequestID: "application-session-test"})
+	if err := NewApplicationProbe(client).OperateContainer(ctx, "api", appstatus.ContainerRestart); err != nil {
+		t.Fatalf("valid session could not operate container: %v", err)
 	}
 	if applications.operated != "api" || applications.action != appstatus.ContainerRestart {
 		t.Fatalf("operation = %q %q", applications.operated, applications.action)
@@ -394,6 +418,35 @@ func TestKubernetesFactoryRunsLimitedOperationThroughBroker(t *testing.T) {
 		t.Fatal(err)
 	}
 	if fixture.operated.Kind != clusterstatus.OperationRedeploy || fixture.operated.WorkloadKey != operation.WorkloadKey {
+		t.Fatalf("operation = %#v", fixture.operated)
+	}
+}
+
+func TestKubernetesOperationAcceptsValidSessionWithoutRecentStepUp(t *testing.T) {
+	now := time.Unix(1786957701, 0).UTC()
+	database := openBrokerDatabase(t)
+	security, err := NewDatabaseSecurity(database, auditlog.New(database), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := "kubernetes-session-token-0123456789"
+	insertBrokerSession(t, database, token, "maintainer", now.Add(-4*time.Hour).Unix(), now.Add(time.Hour).Unix())
+	connection := clusterstatus.Connection{ID: "k8s-local", Name: "local", KubeconfigPath: filepath.Join(t.TempDir(), "kubeconfig.yaml"), Context: "default", Mode: clusterstatus.ModeLimited}
+	fixture := &fixtureKubernetesClient{snapshot: clusterstatus.Snapshot{Workloads: []clusterstatus.Workload{{Key: "default/Deployment/api", Kind: "Deployment", Desired: 2}}}}
+	server, brokerClient := brokerFixture(t, security, &fixtureExecutor{})
+	server.kubernetes = fixtureKubernetesFactory{client: fixture, connection: connection}
+	defer server.Close()
+
+	client, err := NewKubernetesFactory(brokerClient).Open(context.Background(), connection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := WithAuthorization(context.Background(), Authorization{SessionToken: token, RequestID: "kubernetes-session-test"})
+	operation := clusterstatus.Operation{Kind: clusterstatus.OperationRedeploy, WorkloadKey: "default/Deployment/api"}
+	if err := client.Operate(ctx, operation); err != nil {
+		t.Fatalf("valid session could not operate Kubernetes workload: %v", err)
+	}
+	if fixture.operated.Kind != operation.Kind || fixture.operated.WorkloadKey != operation.WorkloadKey {
 		t.Fatalf("operation = %#v", fixture.operated)
 	}
 }

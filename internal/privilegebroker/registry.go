@@ -152,7 +152,7 @@ func (server *Server) registryOperation(request wireRequest) wireResponse {
 		// only changing Docker's insecure Registry configuration needs recent step-up.
 		mode := domainAuthorizationCurrentPrivileged
 		if request.Operation == operationRegistryRegisterInsecure {
-			mode = domainAuthorizationRecentPrivileged
+			mode = domainAuthorizationRecentAdministrator
 		}
 		mutation, response := server.authorizeDomainOperation(request, action, resource, "registry-connection-v1", parameters, mode)
 		if response.Status != "" {

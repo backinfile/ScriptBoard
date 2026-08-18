@@ -55,6 +55,7 @@ func (security *DatabaseSecurity) Authorize(ctx context.Context, request Authori
 		return Actor{}, errors.New("privileged Broker session is not authorized for a recent system mutation")
 	}
 	actor.AuthenticationAssurance = assurance
+	actor.RecentAuthentication = true
 	return actor, nil
 }
 
@@ -96,12 +97,16 @@ func (security *DatabaseSecurity) sessionActor(ctx context.Context, sessionToken
 }
 
 func (security *DatabaseSecurity) Record(ctx context.Context, record AuditRecord) error {
+	authenticationAssurance := "aal" + strconv.Itoa(record.Actor.AuthenticationAssurance)
+	if record.Actor.RecentAuthentication {
+		authenticationAssurance += "+step-up"
+	}
 	_, err := security.audit.Append(ctx, auditlog.Event{
 		OccurredAt: strconv.FormatInt(record.OccurredAt.UTC().Unix(), 10),
 		Action:     "privileged_broker." + string(record.Action), Target: record.Resource, Result: record.Result,
 		SourceAddress: "local-privileged-broker", ActorUserID: record.Actor.UserID,
 		ActorUsername: record.Actor.Username, ActorRole: record.Actor.Role, RequestID: record.RequestID,
-		AuthenticationAssurance: "aal" + strconv.Itoa(record.Actor.AuthenticationAssurance) + "+step-up",
+		AuthenticationAssurance: authenticationAssurance,
 		ResourceRevision:        record.Revision, ResourceDigestSHA256: record.ParametersSHA256,
 	})
 	if err != nil {
