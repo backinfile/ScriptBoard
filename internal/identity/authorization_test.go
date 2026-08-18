@@ -12,6 +12,9 @@ func TestRoleMatrix(t *testing.T) {
 	if Allows(RoleMaintainer, PermissionManageUsers) {
 		t.Fatal("maintainer must not manage users")
 	}
+	if Allows(RoleMaintainer, PermissionConfigureDockerEngine) {
+		t.Fatal("maintainer must not configure Docker Engine")
+	}
 	if !Allows(RoleOperator, PermissionExecute) || Allows(RoleOperator, PermissionWriteFiles) {
 		t.Fatal("operator permissions changed")
 	}

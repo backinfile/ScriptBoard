@@ -141,7 +141,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /config/dashboard-card-tests", a.requirePermission(identity.PermissionManageOperations, http.HandlerFunc(a.testCustomDashboardCard)))
 	mux.Handle("POST /config/dashboard-cards/{id}/test", a.requirePermission(identity.PermissionManageOperations, http.HandlerFunc(a.testCustomDashboardCard)))
 	mux.Handle("POST /config/dashboard-cards/{id}/refresh", a.requirePermission(identity.PermissionManageOperations, http.HandlerFunc(a.refreshCustomDashboardCard)))
-	mux.Handle("POST /config/dashboard-cards/{id}/registry/insecure", a.requireStepUp(identity.PermissionManageSystem, http.HandlerFunc(a.registerCustomDashboardInsecureRegistry)))
+	mux.Handle("POST /config/dashboard-cards/{id}/registry/insecure", a.requireStepUp(identity.PermissionConfigureDockerEngine, http.HandlerFunc(a.registerCustomDashboardInsecureRegistry)))
 	mux.Handle("POST /config/dashboard-cards/{id}/move", a.requirePermission(identity.PermissionManageOperations, http.HandlerFunc(a.moveCustomDashboardCard)))
 	mux.Handle("POST /config/dashboard-cards/{id}", a.requirePermission(identity.PermissionManageOperations, http.HandlerFunc(a.updateCustomDashboardCard)))
 	mux.Handle("POST /config/dashboard-cards/{id}/delete", a.requirePermission(identity.PermissionManageOperations, http.HandlerFunc(a.deleteCustomDashboardCard)))

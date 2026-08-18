@@ -303,18 +303,11 @@ func (server *Server) authorizeMySQLOperation(request wireRequest) (Actor, Actio
 		Resource: resource, Revision: "mysql-instance-v1", ParametersSHA256: parametersDigest(body)}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	var actor Actor
-	var err error
+	mode := domainAuthorizationCurrentPrivileged
 	if recent {
-		actor, err = server.authorizer.Authorize(ctx, authorization)
-	} else if sessions, ok := server.authorizer.(SessionAuthorizer); ok {
-		actor, err = sessions.AuthorizeSession(ctx, authorization)
-	} else {
-		err = errors.New("session authorization is unavailable")
+		mode = domainAuthorizationRecentPrivileged
 	}
-	if err == nil && actor.Role != "administrator" && actor.Role != "maintainer" {
-		err = errors.New("role cannot manage databases")
-	}
+	actor, err := server.authorizeActor(ctx, authorization, mode)
 	return actor, action, err
 }
 

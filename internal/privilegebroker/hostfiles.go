@@ -652,15 +652,13 @@ func (server *Server) authorizeHostFilesOperation(request wireRequest) (Actor, A
 		Resource: hostFilesResource(payload), Revision: "host-files-v1", ParametersSHA256: parametersDigest(body)}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	var actor Actor
-	var err error
+	mode := domainAuthorizationCurrentPrivileged
 	if recent {
-		actor, err = server.authorizer.Authorize(ctx, authorization)
-	} else if sessions, ok := server.authorizer.(SessionAuthorizer); ok {
-		actor, err = sessions.AuthorizeSession(ctx, authorization)
-	} else {
-		err = errors.New("session authorization is unavailable")
+		mode = domainAuthorizationRecentPrivileged
+	} else if action == ActionHostFilesRead {
+		mode = domainAuthorizationCurrentActor
 	}
+	actor, err := server.authorizeActor(ctx, authorization, mode)
 	if err != nil {
 		return Actor{}, action, err
 	}

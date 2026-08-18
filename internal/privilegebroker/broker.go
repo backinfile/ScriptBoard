@@ -906,7 +906,8 @@ type credentialMutation struct {
 type domainAuthorizationMode uint8
 
 const (
-	domainAuthorizationCurrentPrivileged domainAuthorizationMode = iota
+	domainAuthorizationCurrentActor domainAuthorizationMode = iota
+	domainAuthorizationCurrentPrivileged
 	domainAuthorizationRecentPrivileged
 	domainAuthorizationRecentAdministrator
 	domainAuthorizationRecentActor
@@ -961,7 +962,7 @@ func (server *Server) authorizeDomainOperation(request wireRequest, action Actio
 		SessionToken: request.SessionToken, RequestID: request.RequestID, Action: action,
 		Resource: resource, Revision: revision, ParametersSHA256: digest,
 	}
-	actor, err := server.authorizeActor(authorization, mode)
+	actor, err := server.authorizeActor(context.Background(), authorization, mode)
 	if err != nil {
 		return nil, wireResponse{Status: statusError, ErrorCode: "authorization_denied", Message: "credential operation authorization denied"}
 	}
@@ -975,19 +976,19 @@ func (server *Server) authorizeDomainOperation(request wireRequest, action Actio
 	return &mutation, wireResponse{}
 }
 
-func (server *Server) authorizeActor(authorization AuthorizationRequest, mode domainAuthorizationMode) (Actor, error) {
+func (server *Server) authorizeActor(ctx context.Context, authorization AuthorizationRequest, mode domainAuthorizationMode) (Actor, error) {
 	var (
 		actor Actor
 		err   error
 	)
-	if mode == domainAuthorizationCurrentPrivileged {
+	if mode == domainAuthorizationCurrentActor || mode == domainAuthorizationCurrentPrivileged {
 		if sessions, ok := server.authorizer.(SessionAuthorizer); ok {
-			actor, err = sessions.AuthorizeSession(context.Background(), authorization)
+			actor, err = sessions.AuthorizeSession(ctx, authorization)
 		} else {
 			err = errors.New("session authorization is unavailable")
 		}
 	} else {
-		actor, err = server.authorizer.Authorize(context.Background(), authorization)
+		actor, err = server.authorizer.Authorize(ctx, authorization)
 	}
 	if err != nil {
 		return Actor{}, err
@@ -1040,7 +1041,7 @@ func (server *Server) authorize(request wireRequest) wireResponse {
 	if request.Action == ActionApplicationOperate || request.Action == ActionKubernetesOperate {
 		mode = domainAuthorizationCurrentPrivileged
 	}
-	actor, err := server.authorizeActor(AuthorizationRequest{
+	actor, err := server.authorizeActor(context.Background(), AuthorizationRequest{
 		SessionToken: request.SessionToken, RequestID: request.RequestID, Action: request.Action,
 		Resource: request.Resource, Revision: request.Revision, ParametersSHA256: request.ParametersSHA256,
 	}, mode)

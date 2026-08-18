@@ -25,6 +25,7 @@ const (
 	PermissionManageSystem
 	PermissionManageUsers
 	PermissionManageDatabases
+	PermissionConfigureDockerEngine
 )
 
 const RecentAuthenticationWindow = 10 * time.Minute
@@ -38,7 +39,7 @@ func Allows(role Role, required Permission) bool {
 	case RoleAdministrator:
 		return true
 	case RoleMaintainer:
-		return required != PermissionManageUsers
+		return required != PermissionManageUsers && required != PermissionConfigureDockerEngine
 	case RoleOperator:
 		return required == PermissionObserve || required == PermissionReadFiles || required == PermissionExecute
 	case RoleViewer:

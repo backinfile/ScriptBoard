@@ -83,6 +83,7 @@ func TestFixedRolesCoverEveryProtectedRouteClass(t *testing.T) {
 		{"audit service logs download", http.MethodGet, "/history/audit/service-logs.csv", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"audit service logs text download", http.MethodGet, "/history/audit/service-logs.txt", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"system settings", http.MethodGet, "/settings/updates/status", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
+		{"Docker insecure Registry configuration", http.MethodPost, "/config/dashboard-cards/card-one/registry/insecure", []identity.Role{identity.RoleAdministrator}},
 		{"restart service", http.MethodPost, "/settings/updates/restart", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"user management", http.MethodGet, "/settings/users", []identity.Role{identity.RoleAdministrator}},
 		{"user edit task", http.MethodGet, "/settings/users/user-one/edit", []identity.Role{identity.RoleAdministrator}},
