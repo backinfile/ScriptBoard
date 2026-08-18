@@ -2026,7 +2026,7 @@ var webMessages = map[string]localizedMessage{
 	"users.role_guide_description":                  {"创建后仍可调整角色；系统管理员角色不可分配。", "Roles can be changed later. The Administrator role cannot be assigned."},
 	"users.role.maintainer_permissions":             {"可管理文件、Run、计划、数据库和系统设置；不能管理用户或配置 Docker Engine。", "Manage files, Runs, schedules, databases, and system settings; cannot manage users or Docker Engine configuration."},
 	"users.role.operator_permissions":               {"可读取文件并启动 Run；不能修改文件或管理配置。", "Read files and start Runs; cannot modify files or manage configuration."},
-	"users.role.viewer_permissions":                 {"只能查看监控与 Run 状态；不能读取文件或启动 Run。", "View monitoring and Run status only; cannot read files or start Runs."},
+	"users.role.viewer_permissions":                 {"可查看监控、应用、网站、快捷执行、计划、Run 历史与原始日志；不能读取文件或启动 Run。", "View monitoring, applications, websites, Quick Runs, schedules, Run history, and raw logs; cannot read files or start Runs."},
 	"users.enabled":                                 {"已启用", "Enabled"},
 	"users.disabled":                                {"已停用", "Disabled"},
 	"users.password_once":                           {"请立即保存此密码；离开页面后无法再次查看。", "Save this password now. It cannot be shown again after you leave this page."},

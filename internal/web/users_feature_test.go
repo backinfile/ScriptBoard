@@ -154,7 +154,7 @@ func TestUsersPageOffersOneCreateUserDrawerTask(t *testing.T) {
 		`data-user-role-guide`,
 		`Manage files, Runs, schedules, databases, and system settings; cannot manage users or Docker Engine configuration.`,
 		`Read files and start Runs; cannot modify files or manage configuration.`,
-		`View monitoring and Run status only; cannot read files or start Runs.`,
+		`View monitoring, applications, websites, Quick Runs, schedules, Run history, and raw logs; cannot read files or start Runs.`,
 	} {
 		if !strings.Contains(string(taskPage), expected) {
 			t.Fatalf("create-user task is missing %q: %s", expected, taskPage)

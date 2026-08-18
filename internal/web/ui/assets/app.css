@@ -3311,40 +3311,40 @@ body.has-update-source-drawer { overflow: hidden; }
 .state-backup-action-list__icon { color: var(--accent); }
 .state-backup-action-list h4 { margin: 0 0 3px; font-size: .92rem; }
 .state-backup-action-list p { max-width: 64ch; margin: 0; color: var(--muted); font-size: .8rem; }
-.state-backup-drawer > summary { list-style: none; }
-.state-backup-drawer > summary::-webkit-details-marker { display: none; }
+.state-backup-drawer > summary,
+.trash-cleanup-drawer > summary { list-style: none; }
+.state-backup-drawer > summary::-webkit-details-marker,
+.trash-cleanup-drawer > summary::-webkit-details-marker { display: none; }
 .state-backup-drawer > summary[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
-.state-backup-drawer__layer { position: fixed; z-index: 85; inset: 0; visibility: hidden; pointer-events: none; }
-.state-backup-drawer[open] > .state-backup-drawer__layer { visibility: visible; pointer-events: auto; }
-.state-backup-drawer__scrim { position: absolute; inset: 0; background: var(--overlay-scrim); opacity: 0; transition: opacity var(--drawer-scrim-transition); }
-.state-backup-drawer[open] .state-backup-drawer__scrim { opacity: 1; }
-.state-backup-drawer__sheet { position: absolute; inset: 0 0 0 auto; display: flex; width: min(600px, 100%); flex-direction: column; overflow: hidden; background: var(--surface); border-left: 1px solid var(--rule-strong); box-shadow: var(--overlay-shadow); transform: translateX(var(--drawer-offset)); transition: transform var(--overlay-transition); }
-.state-backup-drawer[open] .state-backup-drawer__sheet { transform: translateX(0); }
-.state-backup-drawer__sheet > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding: var(--overlay-header-y) var(--overlay-header-x) 21px; border-bottom: 1px solid var(--rule-strong); }
+.state-backup-drawer__layer,
+.trash-cleanup-drawer__layer { position: fixed; z-index: 85; inset: 0; visibility: hidden; pointer-events: none; }
+.state-backup-drawer[open] > .state-backup-drawer__layer,
+.trash-cleanup-drawer[open] > .trash-cleanup-drawer__layer { visibility: visible; pointer-events: auto; }
+.state-backup-drawer__scrim,
+.trash-cleanup-drawer__scrim { position: absolute; inset: 0; background: var(--overlay-scrim); opacity: 0; transition: opacity var(--drawer-scrim-transition); }
+.state-backup-drawer[open] .state-backup-drawer__scrim,
+.trash-cleanup-drawer[open] .trash-cleanup-drawer__scrim { opacity: 1; }
+.state-backup-drawer__sheet,
+.trash-cleanup-drawer__sheet { position: absolute; inset: 0 0 0 auto; display: flex; width: min(600px, 100%); flex-direction: column; overflow: hidden; background: var(--surface); border-left: 1px solid var(--rule-strong); box-shadow: var(--overlay-shadow); transform: translateX(var(--drawer-offset)); transition: transform var(--overlay-transition); }
+.state-backup-drawer[open] .state-backup-drawer__sheet,
+.trash-cleanup-drawer[open] .trash-cleanup-drawer__sheet { transform: translateX(0); }
+.state-backup-drawer__sheet > header,
+.trash-cleanup-drawer__sheet > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding: var(--overlay-header-y) var(--overlay-header-x) 21px; border-bottom: 1px solid var(--rule-strong); }
 .state-backup-drawer__sheet > header p { margin: 0 0 4px; color: var(--accent); font-size: .7rem; font-weight: 650; }
-.state-backup-drawer__sheet > header h2 { margin: 0 0 5px; font-size: 1.35rem; line-height: 1.2; letter-spacing: -.025em; }
-.state-backup-drawer__sheet > header small { display: block; max-width: 54ch; color: var(--muted); }
-.state-backup-drawer__sheet > form { display: flex; min-height: 0; flex: 1; flex-direction: column; }
+.state-backup-drawer__sheet > header h2,
+.trash-cleanup-drawer__sheet > header h2 { margin: 0 0 5px; font-size: 1.35rem; line-height: 1.2; letter-spacing: -.025em; }
+.state-backup-drawer__sheet > header small,
+.trash-cleanup-drawer__sheet > header small { display: block; max-width: 54ch; color: var(--muted); }
+.state-backup-drawer__sheet > form,
+.trash-cleanup-drawer__sheet > form { display: flex; min-height: 0; flex: 1; flex-direction: column; }
 .state-backup-drawer__body { display: grid; gap: 18px; overflow-y: auto; padding: 24px var(--overlay-header-x); }
-.state-backup-drawer__sheet > form > footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; padding: 16px var(--overlay-footer-x) 20px; background: var(--canvas); border-top: 1px solid var(--rule); }
+.state-backup-drawer__sheet > form > footer,
+.trash-cleanup-drawer__sheet > form > footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; padding: 16px var(--overlay-footer-x) 20px; background: var(--canvas); border-top: 1px solid var(--rule); }
 
 /* Trash retention cleanup drawer */
-.trash-cleanup-drawer > summary { list-style: none; }
-.trash-cleanup-drawer > summary::-webkit-details-marker { display: none; }
-.trash-cleanup-drawer__layer { position: fixed; z-index: 85; inset: 0; visibility: hidden; pointer-events: none; }
-.trash-cleanup-drawer[open] > .trash-cleanup-drawer__layer { visibility: visible; pointer-events: auto; }
-.trash-cleanup-drawer__scrim { position: absolute; inset: 0; background: var(--overlay-scrim); opacity: 0; transition: opacity var(--drawer-scrim-transition); }
-.trash-cleanup-drawer[open] .trash-cleanup-drawer__scrim { opacity: 1; }
-.trash-cleanup-drawer__sheet { position: absolute; inset: 0 0 0 auto; display: flex; width: min(600px, 100%); flex-direction: column; overflow: hidden; background: var(--surface); border-left: 1px solid var(--rule-strong); box-shadow: var(--overlay-shadow); transform: translateX(var(--drawer-offset)); transition: transform var(--overlay-transition); }
-.trash-cleanup-drawer[open] .trash-cleanup-drawer__sheet { transform: translateX(0); }
-.trash-cleanup-drawer__sheet > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding: var(--overlay-header-y) var(--overlay-header-x) 21px; border-bottom: 1px solid var(--rule-strong); }
 .trash-cleanup-drawer__sheet > header p { margin: 0 0 4px; color: var(--danger); font-size: .7rem; font-weight: 650; }
-.trash-cleanup-drawer__sheet > header h2 { margin: 0 0 5px; font-size: 1.35rem; line-height: 1.2; letter-spacing: -.025em; }
-.trash-cleanup-drawer__sheet > header small { display: block; max-width: 54ch; color: var(--muted); }
-.trash-cleanup-drawer__sheet > form { display: flex; min-height: 0; flex: 1; flex-direction: column; }
 .trash-cleanup-drawer__body { display: grid; gap: 20px; overflow-y: auto; padding: 24px var(--overlay-header-x); }
 .trash-cleanup-drawer__body .inline-notice { margin: 0; }
-.trash-cleanup-drawer__sheet > form > footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; padding: 16px var(--overlay-footer-x) 20px; background: var(--canvas); border-top: 1px solid var(--rule); }
 .trash-retention-options { display: grid; gap: 10px; margin: 0; padding: 0; border: 0; }
 .trash-retention-options > legend { margin-bottom: 10px; color: var(--ink); font-size: .78rem; font-weight: 700; }
 .trash-retention-options > label { display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: start; gap: 12px; padding: 15px 16px; background: var(--canvas); border: 1px solid var(--rule); border-radius: 8px; cursor: pointer; transition: border-color var(--transition-fast), background var(--transition-fast), transform var(--transition-fast); }
