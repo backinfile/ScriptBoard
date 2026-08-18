@@ -3,6 +3,8 @@ package registrymonitor
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -150,6 +152,188 @@ func TestInspectAppliesOneDeadlineAcrossAllImages(t *testing.T) {
 	for _, result := range results {
 		if result.Error == "" {
 			t.Fatalf("timed-out image has no error: %#v", result)
+		}
+	}
+}
+
+func TestInspectExpandsNamespaceAndAllImageSelectors(t *testing.T) {
+	var catalogRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/v2/_catalog":
+			catalogRequests++
+			if request.URL.Query().Get("last") == "team/web" {
+				_ = json.NewEncoder(response).Encode(map[string]any{"repositories": []string{"tools/worker"}})
+				return
+			}
+			response.Header().Set("Link", `</v2/_catalog?n=100&last=other%2Fdb>; rel="prev", </v2/_catalog?n=100&last=team%2Fweb>; rel="next"`)
+			_ = json.NewEncoder(response).Encode(map[string]any{"repositories": []string{"other/db", "team/web", "team/api"}})
+		case "/v2/team/api/tags/list":
+			_ = json.NewEncoder(response).Encode(map[string]any{"tags": []string{"1.2.0"}})
+		case "/v2/team/web/tags/list":
+			_ = json.NewEncoder(response).Encode(map[string]any{"tags": []string{"2.1.0"}})
+		case "/v2/other/db/tags/list":
+			_ = json.NewEncoder(response).Encode(map[string]any{"tags": []string{"3.0.0"}})
+		case "/v2/tools/worker/tags/list":
+			_ = json.NewEncoder(response).Encode(map[string]any{"tags": []string{"4.0.0"}})
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	results, err := New(server.Client()).Inspect(context.Background(), Config{
+		Endpoint: server.URL,
+		Images:   []string{"team/*", "team/api", "*/*"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if catalogRequests != 2 {
+		t.Fatalf("catalog requests=%d, want 2", catalogRequests)
+	}
+	wantImages := []string{"team/api", "team/web", "other/db", "tools/worker"}
+	if len(results) != len(wantImages) {
+		t.Fatalf("results=%#v", results)
+	}
+	for index, want := range wantImages {
+		if results[index].Image != want || results[index].Error != "" {
+			t.Fatalf("result[%d]=%#v, want image %q", index, results[index], want)
+		}
+	}
+}
+
+func TestInspectRejectsCatalogRedirects(t *testing.T) {
+	redirectedRequests := 0
+	redirectTarget := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		redirectedRequests++
+		_ = json.NewEncoder(response).Encode(map[string]any{"repositories": []string{"private/image"}})
+	}))
+	defer redirectTarget.Close()
+	registry := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		http.Redirect(response, request, redirectTarget.URL+"/v2/_catalog", http.StatusFound)
+	}))
+	defer registry.Close()
+
+	results, err := New(registry.Client()).Inspect(context.Background(), Config{Endpoint: registry.URL, Images: []string{"*"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if redirectedRequests != 0 || len(results) != 1 || !strings.Contains(results[0].Error, "302") {
+		t.Fatalf("redirected_requests=%d results=%#v", redirectedRequests, results)
+	}
+}
+
+func TestInspectBoundsCatalogExpansion(t *testing.T) {
+	repositories := make([]string, maxCatalogRepositories+1)
+	for index := range repositories {
+		repositories[index] = fmt.Sprintf("team/image-%04d", index)
+	}
+	registry := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		_ = json.NewEncoder(response).Encode(map[string]any{"repositories": repositories})
+	}))
+	defer registry.Close()
+
+	results, err := New(registry.Client()).Inspect(context.Background(), Config{Endpoint: registry.URL, Images: []string{"*"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || !strings.Contains(results[0].Error, "过多") {
+		t.Fatalf("results=%#v", results)
+	}
+}
+
+func TestInspectBoundsCatalogPagesAndSurfacesCancellation(t *testing.T) {
+	requests := 0
+	registry := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		requests++
+		response.Header().Set("Link", fmt.Sprintf(`</v2/_catalog?n=100&last=page-%d>; rel="next"`, requests))
+		_ = json.NewEncoder(response).Encode(map[string]any{"repositories": []string{}})
+	}))
+	defer registry.Close()
+
+	results, err := New(registry.Client()).Inspect(context.Background(), Config{Endpoint: registry.URL, Images: []string{"*"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requests != maxCatalogPages || len(results) != 1 || !strings.Contains(results[0].Error, "分页过多") {
+		t.Fatalf("requests=%d results=%#v", requests, results)
+	}
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	results, err = New(registry.Client()).Inspect(cancelled, Config{Endpoint: registry.URL, Images: []string{"*"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || !strings.Contains(results[0].Error, "context canceled") {
+		t.Fatalf("cancelled results=%#v", results)
+	}
+}
+
+func TestExpandImageSelectorsBoundsResultsAndHonorsCancellation(t *testing.T) {
+	repositories := make([]string, maxExpandedImages+1)
+	for index := range repositories {
+		repositories[index] = fmt.Sprintf("team/image-%04d", index)
+	}
+	if _, err := expandImageSelectors(context.Background(), []string{"*"}, repositories); err == nil || !strings.Contains(err.Error(), "匹配结果过多") {
+		t.Fatalf("expanded result error=%v", err)
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := expandImageSelectors(cancelled, []string{"*"}, []string{"team/api"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled expansion error=%v", err)
+	}
+}
+
+func TestCredentialedRegistryRequestsDoNotFollowRedirects(t *testing.T) {
+	redirectedRequests := 0
+	redirectTarget := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		redirectedRequests++
+		_ = json.NewEncoder(response).Encode(map[string]string{"token": "escaped"})
+	}))
+	defer redirectTarget.Close()
+	tokenService := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		http.Redirect(response, request, redirectTarget.URL+"/token", http.StatusFound)
+	}))
+	defer tokenService.Close()
+	var registryURL string
+	registry := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.URL.Path == "/v2/team/api/tags/list":
+			response.Header().Set("WWW-Authenticate", `Bearer realm="`+tokenService.URL+`/token",service="registry.test",scope="repository:team/api:pull"`)
+			http.Error(response, "unauthorized", http.StatusUnauthorized)
+		case request.URL.Path == "/v2/team/web/tags/list":
+			_ = json.NewEncoder(response).Encode(map[string]any{"tags": []string{"1.0.0"}})
+		case request.URL.Path == "/api/v2.0/projects/team/repositories/web/artifacts/1.0.0":
+			http.Redirect(response, request, redirectTarget.URL+"/artifact", http.StatusFound)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer registry.Close()
+	registryURL = registry.URL
+
+	results, err := New(registry.Client()).Inspect(context.Background(), Config{
+		Endpoint: registryURL, Images: []string{"team/api", "team/web"}, AuthMode: "basic", Username: "robot", Password: "secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if redirectedRequests != 0 || len(results) != 2 || !strings.Contains(results[0].Error, "302") || results[1].PushTimeAvailable {
+		t.Fatalf("redirected_requests=%d results=%#v", redirectedRequests, results)
+	}
+}
+
+func TestValidateConfigAcceptsOnlyCompleteImageWildcards(t *testing.T) {
+	for _, selector := range []string{"team/*", "*", "*/*"} {
+		if err := ValidateConfig(Config{Endpoint: "https://registry.example", Images: []string{selector}}); err != nil {
+			t.Fatalf("selector %q rejected: %v", selector, err)
+		}
+	}
+	for _, selector := range []string{"team*", "team/*/api", "*/api"} {
+		if err := ValidateConfig(Config{Endpoint: "https://registry.example", Images: []string{selector}}); err == nil {
+			t.Fatalf("invalid selector %q accepted", selector)
 		}
 	}
 }

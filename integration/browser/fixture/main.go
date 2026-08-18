@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	app "scriptboard/internal/web"
 	"scriptboard/internal/appstatus"
 	"scriptboard/internal/assistant/runtimehost"
 	"scriptboard/internal/hostfiles"
@@ -21,6 +20,7 @@ import (
 	"scriptboard/internal/mysqlmanager"
 	"scriptboard/internal/privilegebroker"
 	"scriptboard/internal/runnerhost"
+	app "scriptboard/internal/web"
 )
 
 const (
@@ -211,7 +211,6 @@ func main() {
 		applicationConfig.AuditCheckpoint = privilegebroker.NewRemoteCheckpoint(brokerClient)
 		applicationConfig.MFAStore = privilegebroker.NewRemoteMFA(brokerClient)
 		applicationConfig.PasskeyStore = privilegebroker.NewRemotePasskey(brokerClient)
-		applicationConfig.RemoteWebsiteService = privilegebroker.NewRemoteWebsite(brokerClient)
 		applicationConfig.ProviderCredentials = privilegebroker.NewProviderCredentials(brokerClient)
 		applicationConfig.MySQLBackend = privilegebroker.NewMySQLBackend(brokerClient, mysqlmanager.ToolSettings{DumpExecutable: "mysqldump", ClientExecutable: "mysql"})
 		applicationConfig.HostFilesBackend = privilegebroker.NewHostFilesBackend(brokerClient, filepath.Join(stateRoot, "inbox", "host-files-broker"))

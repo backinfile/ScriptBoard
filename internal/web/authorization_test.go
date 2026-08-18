@@ -173,8 +173,6 @@ func TestHighRiskRoutesDeclareRecentAuthentication(t *testing.T) {
 		{http.MethodPost, "/settings/updates/apply"},
 		{http.MethodPost, "/resources/databases/backups/backup-one/restore"},
 		{http.MethodPost, "/resources/inbox/upload-one/publish"},
-		{http.MethodPost, "/monitor/websites/remotes"},
-		{http.MethodPost, "/monitor/websites/remotes/source-one/delete"},
 		{http.MethodPost, "/settings/ai/llms"},
 		{http.MethodPost, "/settings/ai/llms/model-one/delete"},
 	} {

@@ -60,7 +60,6 @@ import (
 	"scriptboard/internal/privatepath"
 	"scriptboard/internal/privilegebroker"
 	"scriptboard/internal/registryconnection"
-	"scriptboard/internal/remotewebsite"
 	"scriptboard/internal/runmanager"
 	"scriptboard/internal/scheduler"
 	"scriptboard/internal/secretredaction"
@@ -373,7 +372,6 @@ type Config struct {
 	AuditCheckpoint                 AuditCheckpoint
 	MFAStore                        MFAStore
 	PasskeyStore                    PasskeyStore
-	RemoteWebsiteService            RemoteWebsiteService
 	RegistryConnections             customdashboard.RegistryConnections
 	RegistryDockerDaemonConfigPath  string
 	ProviderCredentials             *privilegebroker.ProviderCredentials
@@ -411,12 +409,6 @@ type PasskeyStore interface {
 	Update(string, webauthn.Credential) error
 	Delete(string, string) error
 	Reset(string) error
-}
-
-type RemoteWebsiteService interface {
-	Store(context.Context, string, string, string) error
-	Fetch(context.Context, string, string) (json.RawMessage, error)
-	Delete(context.Context, string) error
 }
 
 type StateBackupService interface {
@@ -515,7 +507,6 @@ type App struct {
 	externalTriggers      *externaltrigger.Manager
 	externalReconcileStop context.CancelFunc
 	externalReconcileWG   sync.WaitGroup
-	remoteWebsites        RemoteWebsiteService
 	stateBackups          StateBackupService
 	externalAuthLimit     *externaltrigger.Limiter
 	externalLimit         *externaltrigger.Limiter
@@ -704,31 +695,30 @@ func Open(config Config) (*App, error) {
 		return nil, fmt.Errorf("verify external audit checkpoint: %w", err)
 	}
 	application.externalTriggers = externaltrigger.New(db, externaltrigger.Options{SecretsDirectory: filepath.Join(stateRoot, "secrets"), SecretStore: credentialStore})
+	retiredRemoteSourceIDs, err := retireRemoteWebsiteFeature(db, stateRoot)
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("retire remote website monitoring feature: %w", err)
+	}
 	if !validating {
 		if err := application.externalTriggers.ReconcileInvocations(context.Background(), time.Now().UTC().Add(-5*time.Minute)); err != nil {
 			_ = db.Close()
 			return nil, fmt.Errorf("reconcile External Interface invocations: %w", err)
 		}
 	}
-	application.remoteWebsites = config.RemoteWebsiteService
-	if application.remoteWebsites == nil {
-		application.remoteWebsites, err = remotewebsite.New(remotewebsite.Options{StateRoot: stateRoot, SecretStore: credentialStore})
-		if err != nil {
+	if err := application.externalTriggers.MigrateSecrets(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate External Interface secrets: %w", err)
+	}
+	for _, sourceID := range retiredRemoteSourceIDs {
+		if err := application.externalTriggers.DeleteSecret("remote-website:" + sourceID); err != nil && !errors.Is(err, externaltrigger.ErrSecretUnavailable) {
 			_ = db.Close()
-			return nil, fmt.Errorf("initialize remote website credential service: %w", err)
+			return nil, fmt.Errorf("remove retired remote website credential: %w", err)
 		}
-		if err := application.externalTriggers.MigrateSecrets(); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("migrate External Interface secrets: %w", err)
-		}
-		if err := application.externalTriggers.MigrateRemoteWebsiteCredentials(context.Background(), application.remoteWebsites); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("migrate remote website credentials: %w", err)
-		}
-		if err := application.externalTriggers.PurgeLegacyKeySecrets(context.Background()); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("purge recoverable External Interface keys: %w", err)
-		}
+	}
+	if err := application.externalTriggers.PurgeLegacyKeySecrets(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("purge recoverable External Interface keys: %w", err)
 	}
 	application.externalAuthLimit = externaltrigger.NewLimiter(externaltrigger.LimiterOptions{
 		SourceRequestsPerMinute: 60, SourceConcurrent: 8, GlobalRequestsPerMinute: 600, GlobalConcurrent: 32,
@@ -1009,6 +999,61 @@ func Open(config Config) (*App, error) {
 	go application.monitorAuditCheckpoint(auditCheckpointContext)
 	opened = true
 	return application, nil
+}
+
+func retireRemoteWebsiteFeature(db *sql.DB, stateRoot string) ([]string, error) {
+	transaction, err := db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer transaction.Rollback()
+	var sourceIDs []string
+	var remoteSourceTable int
+	if err := transaction.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='website_monitor_remote_sources'`).Scan(&remoteSourceTable); err != nil {
+		return nil, err
+	}
+	if remoteSourceTable == 1 {
+		rows, err := transaction.Query(`SELECT id FROM website_monitor_remote_sources ORDER BY id`)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var sourceID string
+			if err := rows.Scan(&sourceID); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			sourceIDs = append(sourceIDs, sourceID)
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := transaction.Exec(`DELETE FROM external_trigger_entries WHERE action_type = 'website_monitor'`); err != nil {
+		return nil, err
+	}
+	if _, err := transaction.Exec(`DROP TABLE IF EXISTS website_monitor_remote_sources`); err != nil {
+		return nil, err
+	}
+	if err := transaction.Commit(); err != nil {
+		return nil, err
+	}
+	root, err := filepath.Abs(stateRoot)
+	if err != nil {
+		return nil, err
+	}
+	secretPath := filepath.Join(root, "secrets", "remote-website-connections.enc")
+	relative, err := filepath.Rel(root, secretPath)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return nil, errors.New("remote website secret path escaped State Root")
+	}
+	if err := os.Remove(secretPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	return sourceIDs, nil
 }
 
 func (a *App) Handler() http.Handler {
@@ -2730,7 +2775,7 @@ func (a *App) startQuickRun(response http.ResponseWriter, request *http.Request)
 	current := request.Context().Value(sessionContextKey).(session)
 	id, err := a.runs.Start(runmanager.StartRequest{
 		ScriptPath: quick.ScriptPath, ExpectedDigest: quick.ScriptSHA256, ArgumentsTemplate: quick.ArgumentsTemplate, TimeoutSeconds: quick.TimeoutSeconds,
-		SourceType: "admin/quick-run", SourceName: quick.Name, SourceID: quick.ID, Variables: variables,
+		SourceType: "admin/quick-run", SourceName: a.quickRunSourceSnapshot(quick), SourceID: quick.ID, Variables: variables,
 		InitiatorUserID: current.userID, InitiatorUsername: current.username,
 		PreparedScript: &prepared, PreparedDirectory: &preparedDirectory,
 	})
@@ -3239,18 +3284,32 @@ func (a *App) runDetails(response http.ResponseWriter, request *http.Request) {
 	if run.FinishedAt != nil {
 		finishedAt = run.FinishedAt.UTC().Format(time.RFC3339Nano)
 	}
+	locale := resolveWebLocale(request)
+	quickRunSourceLabel, quickRunURL := a.runQuickRunSource(request.Context(), run, locale)
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = runTemplate.Execute(response, struct {
 		Run                         runmanager.Run
 		CSRFToken                   string
 		Locale                      webLocale
 		StartedAt, FinishedAt       string
+		QuickRunSourceLabel         string
+		QuickRunURL                 string
 		CanStop, CanManageExecution bool
 	}{
-		Run: run, CSRFToken: current.csrfToken, Locale: resolveWebLocale(request),
+		Run: run, CSRFToken: current.csrfToken, Locale: locale,
 		StartedAt: startedAt.UTC().Format(time.RFC3339Nano), FinishedAt: finishedAt,
+		QuickRunSourceLabel: quickRunSourceLabel, QuickRunURL: quickRunURL,
 		CanStop: canStop, CanManageExecution: canManageExecution,
 	})
+}
+
+func (a *App) runQuickRunSource(_ context.Context, run runmanager.Run, _ webLocale) (string, string) {
+	switch run.SourceType {
+	case "admin/quick-run", "assistant/quick-run", "external/quick-run":
+		return run.SourceName, "/config/quick-runs"
+	default:
+		return "", ""
+	}
 }
 
 func (a *App) downloadRun(response http.ResponseWriter, request *http.Request) {
@@ -4147,6 +4206,68 @@ func (a *App) purgeTrash(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	a.recordAuditForRequest(request, "purge_trash", original, "succeeded")
+	http.Redirect(response, request, "/resources/trash", http.StatusSeeOther)
+}
+
+func (a *App) cleanupTrash(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) || request.FormValue("confirm") != "yes" {
+		http.Error(response, "批量清理需要 CSRF 和明确确认", http.StatusForbidden)
+		return
+	}
+	retention := request.FormValue("retention")
+	retentionDurations := map[string]time.Duration{
+		"1d":  24 * time.Hour,
+		"7d":  7 * 24 * time.Hour,
+		"30d": 30 * 24 * time.Hour,
+	}
+	cutoff := int64(^uint64(0) >> 1)
+	if retention != "all" {
+		duration, ok := retentionDurations[retention]
+		if !ok {
+			http.Error(response, "回收站保留范围无效", http.StatusBadRequest)
+			return
+		}
+		cutoff = time.Now().UTC().Add(-duration).Unix()
+	}
+
+	type purgeTarget struct {
+		id       string
+		original string
+		stored   string
+	}
+	rows, err := a.db.Query("SELECT id, original_path, stored_path FROM trash_entries WHERE deleted_at < ? ORDER BY deleted_at ASC", cutoff)
+	if err != nil {
+		http.Error(response, "无法读取待清理的回收条目", http.StatusInternalServerError)
+		return
+	}
+	var targets []purgeTarget
+	for rows.Next() {
+		var target purgeTarget
+		if err := rows.Scan(&target.id, &target.original, &target.stored); err != nil {
+			_ = rows.Close()
+			http.Error(response, "无法读取待清理的回收条目", http.StatusInternalServerError)
+			return
+		}
+		targets = append(targets, target)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		http.Error(response, "无法读取待清理的回收条目", http.StatusInternalServerError)
+		return
+	}
+	_ = rows.Close()
+
+	for _, target := range targets {
+		if err := a.hostPurgeTrash(request.Context(), target.stored); err != nil {
+			http.Error(response, "无法永久清理条目："+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if _, err := a.db.Exec("DELETE FROM trash_entries WHERE id = ?", target.id); err != nil {
+			http.Error(response, "回收条目已清理，但无法更新记录", http.StatusInternalServerError)
+			return
+		}
+		a.recordAuditForRequest(request, "purge_trash", target.original, "succeeded")
+	}
 	http.Redirect(response, request, "/resources/trash", http.StatusSeeOther)
 }
 

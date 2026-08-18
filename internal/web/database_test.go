@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -165,7 +166,7 @@ func TestOpenDatabaseCreatesFixedRoleUserSchema(t *testing.T) {
 	if adminTable != 0 {
 		t.Fatal("legacy admin table should not exist")
 	}
-	for _, table := range []string{"file_operations", "file_quick_access_pins", "trash_entries", "assistant_settings", "assistant_models", "assistant_conversations", "assistant_messages", "external_trigger_keys", "external_trigger_entries", "external_trigger_requests", "website_monitor_remote_sources", "application_versions", "kubernetes_connection", "kubernetes_versions", "kubernetes_metric_minutes"} {
+	for _, table := range []string{"file_operations", "file_quick_access_pins", "trash_entries", "assistant_settings", "assistant_models", "assistant_conversations", "assistant_messages", "external_trigger_keys", "external_trigger_entries", "external_trigger_requests", "application_versions", "kubernetes_connection", "kubernetes_versions", "kubernetes_metric_minutes"} {
 		var count int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil || count != 1 {
 			t.Fatalf("required schema table %q is missing: count=%d error=%v", table, count, err)
@@ -908,7 +909,7 @@ func TestOpenDatabaseMigratesSchema30MySQLConnectionState(t *testing.T) {
 	}
 }
 
-func TestOpenDatabaseMigratesSchema31WebsiteMonitorExternalInterfaces(t *testing.T) {
+func TestOpenDatabaseRetiresSchema31WebsiteMonitorExternalInterfaces(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "app.db")
 	db, err := openDatabase(path)
 	if err != nil {
@@ -941,16 +942,52 @@ func TestOpenDatabaseMigratesSchema31WebsiteMonitorExternalInterfaces(t *testing
 		VALUES ('key', 'Key', 'hash', 'hint', 1, 1, 1)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := migrated.Exec(`INSERT INTO external_trigger_entries
-		(id, key_id, name, label, action_type, target, config_json, enabled, created_at, updated_at)
-		VALUES ('entry', 'key', 'websites', 'Websites', 'website_monitor', '', '{}', 1, 1, 1)`); err != nil {
-		t.Fatalf("new action type rejected after migration: %v", err)
+	var remoteSources int
+	if err := migrated.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='website_monitor_remote_sources'`).Scan(&remoteSources); err != nil || remoteSources != 0 {
+		t.Fatalf("retired remote source table count=%d error=%v", remoteSources, err)
 	}
-	for _, table := range []string{"external_trigger_entries", "website_monitor_remote_sources"} {
-		var count int
-		if err := migrated.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&count); err != nil || count != 1 {
-			t.Fatalf("table %s count=%d error=%v", table, count, err)
-		}
+}
+
+func TestRetireRemoteWebsiteFeatureRemovesRowsMetadataAndDedicatedSecret(t *testing.T) {
+	stateRoot := t.TempDir()
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "retire.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if _, err := database.Exec(`CREATE TABLE external_trigger_entries (action_type TEXT NOT NULL);
+		INSERT INTO external_trigger_entries VALUES ('website_monitor'), ('quick_run');
+		CREATE TABLE website_monitor_remote_sources (id TEXT PRIMARY KEY);
+		INSERT INTO website_monitor_remote_sources VALUES ('branch')`); err != nil {
+		t.Fatal(err)
+	}
+	secretDirectory := filepath.Join(stateRoot, "secrets")
+	if err := os.MkdirAll(secretDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	secretPath := filepath.Join(secretDirectory, "remote-website-connections.enc")
+	if err := os.WriteFile(secretPath, []byte("retired ciphertext"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	retiredIDs, err := retireRemoteWebsiteFeature(database, stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(retiredIDs) != 1 || retiredIDs[0] != "branch" {
+		t.Fatalf("retired source IDs=%v", retiredIDs)
+	}
+	var remoteEntries, remoteTable int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM external_trigger_entries WHERE action_type='website_monitor'`).Scan(&remoteEntries); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='website_monitor_remote_sources'`).Scan(&remoteTable); err != nil {
+		t.Fatal(err)
+	}
+	if remoteEntries != 0 || remoteTable != 0 {
+		t.Fatalf("retired rows=%d table=%d", remoteEntries, remoteTable)
+	}
+	if _, err := os.Stat(secretPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("dedicated remote website secret still exists: %v", err)
 	}
 }
 

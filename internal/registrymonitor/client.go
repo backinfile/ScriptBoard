@@ -16,8 +16,11 @@ import (
 )
 
 const (
-	maxResponseBytes      = 2 << 20
-	defaultInspectTimeout = 20 * time.Second
+	maxResponseBytes       = 2 << 20
+	defaultInspectTimeout  = 20 * time.Second
+	maxCatalogPages        = 100
+	maxCatalogRepositories = 480
+	maxExpandedImages      = 500
 )
 
 var imagePattern = regexp.MustCompile(`^[a-z0-9]+(?:(?:[._-][a-z0-9]+)|(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*))*$`)
@@ -87,7 +90,7 @@ func ValidateConfig(config Config) error {
 		return errors.New("一张卡片最多查询 20 个镜像")
 	}
 	for _, image := range config.Images {
-		if !imagePattern.MatchString(image) {
+		if !imagePattern.MatchString(image) && !isImageSelector(image) {
 			return fmt.Errorf("镜像名称无效：%s（请勿包含仓库地址、标签或摘要）", image)
 		}
 	}
@@ -112,9 +115,37 @@ func (client *Client) Inspect(ctx context.Context, config Config) ([]ImageResult
 	// One deadline covers every image and authentication round trip in this card inspection.
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	results := make([]ImageResult, 0, len(config.Images))
-	for _, image := range config.Images {
+	images := config.Images
+	var catalogErr error
+	if hasImageSelector(images) {
+		var repositories []string
+		repositories, catalogErr = client.catalog(ctx, config)
+		if catalogErr == nil {
+			var expandErr error
+			images, expandErr = expandImageSelectors(ctx, images, repositories)
+			if expandErr != nil {
+				catalogErr = expandErr
+				images = config.Images
+			}
+		}
+	}
+	results := make([]ImageResult, 0, len(images))
+	for _, image := range images {
 		result := ImageResult{Image: image}
+		if isImageSelector(image) {
+			if catalogErr != nil {
+				result.Error = compactError(catalogErr)
+			} else {
+				result.Error = "Registry 仓库目录没有匹配的镜像"
+			}
+			results = append(results, result)
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			result.Error = compactError(err)
+			results = append(results, result)
+			continue
+		}
 		tags, err := client.tags(ctx, config, image)
 		if err != nil {
 			result.Error = compactError(err)
@@ -134,6 +165,202 @@ func (client *Client) Inspect(ctx context.Context, config Config) ([]ImageResult
 		results = append(results, result)
 	}
 	return results, nil
+}
+
+func isImageSelector(value string) bool {
+	if value == "*" || value == "*/*" {
+		return true
+	}
+	prefix, ok := strings.CutSuffix(value, "/*")
+	return ok && imagePattern.MatchString(prefix)
+}
+
+func hasImageSelector(images []string) bool {
+	for _, image := range images {
+		if isImageSelector(image) {
+			return true
+		}
+	}
+	return false
+}
+
+func expandImageSelectors(ctx context.Context, configured, repositories []string) ([]string, error) {
+	sort.Strings(repositories)
+	expanded := make([]string, 0, len(configured)+len(repositories))
+	seen := map[string]bool{}
+	appendImage := func(image string) error {
+		if !seen[image] {
+			if len(expanded) >= maxExpandedImages {
+				return fmt.Errorf("Registry 镜像匹配结果过多（最多 %d 个）", maxExpandedImages)
+			}
+			expanded = append(expanded, image)
+			seen[image] = true
+		}
+		return nil
+	}
+	for _, configuredImage := range configured {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if !isImageSelector(configuredImage) {
+			if err := appendImage(configuredImage); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		matched := false
+		prefix := strings.TrimSuffix(configuredImage, "*")
+		for _, repository := range repositories {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if prefix == "" || prefix == "*/" || strings.HasPrefix(repository, prefix) {
+				if err := appendImage(repository); err != nil {
+					return nil, err
+				}
+				matched = true
+			}
+		}
+		if !matched {
+			// Preserve an empty selector as an error row instead of silently
+			// producing an empty card.
+			if err := appendImage(configuredImage); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return expanded, nil
+}
+
+func (client *Client) catalog(ctx context.Context, config Config) ([]string, error) {
+	endpoint, err := url.Parse(config.Endpoint)
+	if err != nil {
+		return nil, err
+	}
+	catalogPath := strings.TrimRight(endpoint.Path, "/") + "/v2/_catalog"
+	next := *endpoint
+	next.Path, next.RawPath, next.RawQuery = catalogPath, "", "n=100"
+	seenPages := map[string]bool{}
+	repositories := []string{}
+	seenRepositories := map[string]bool{}
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if len(seenPages) >= maxCatalogPages {
+			return nil, fmt.Errorf("Registry 仓库目录分页过多（最多 %d 页）", maxCatalogPages)
+		}
+		pageURL := next.String()
+		if seenPages[pageURL] {
+			return nil, errors.New("Registry 仓库目录返回了重复分页")
+		}
+		seenPages[pageURL] = true
+		response, requestErr := client.doAuthenticated(ctx, pageURL, config)
+		if requestErr != nil {
+			return nil, requestErr
+		}
+		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			response.Body.Close()
+			return nil, fmt.Errorf("Registry 仓库目录返回 HTTP %d", response.StatusCode)
+		}
+		var document struct {
+			Repositories []string `json:"repositories"`
+		}
+		decodeErr := decodeJSON(response.Body, &document)
+		link := strings.Join(response.Header.Values("Link"), ",")
+		response.Body.Close()
+		if decodeErr != nil {
+			return nil, fmt.Errorf("解析 Registry 仓库目录：%w", decodeErr)
+		}
+		for _, repository := range document.Repositories {
+			repository = strings.Trim(strings.ToLower(strings.TrimSpace(repository)), "/")
+			if imagePattern.MatchString(repository) && !seenRepositories[repository] {
+				if len(repositories) >= maxCatalogRepositories {
+					return nil, fmt.Errorf("Registry 仓库目录包含过多镜像（最多 %d 个）", maxCatalogRepositories)
+				}
+				repositories = append(repositories, repository)
+				seenRepositories[repository] = true
+			}
+		}
+		if strings.TrimSpace(link) == "" {
+			return repositories, nil
+		}
+		resolved, resolveErr := resolveCatalogLink(link, &next, endpoint, catalogPath)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		next = *resolved
+	}
+}
+
+func resolveCatalogLink(link string, current, endpoint *url.URL, catalogPath string) (*url.URL, error) {
+	var target string
+	for _, value := range splitLinkValues(link) {
+		start := strings.Index(value, "<")
+		end := strings.Index(value, ">")
+		if start < 0 || end <= start+1 || !linkHasRelation(value[end+1:], "next") {
+			continue
+		}
+		target = value[start+1 : end]
+		break
+	}
+	if target == "" {
+		return nil, errors.New("Registry 仓库目录返回了无效分页")
+	}
+	reference, err := url.Parse(target)
+	if err != nil {
+		return nil, errors.New("Registry 仓库目录返回了无效分页")
+	}
+	resolved := current.ResolveReference(reference)
+	if resolved.Scheme != endpoint.Scheme || resolved.Host != endpoint.Host || resolved.User != nil || resolved.Path != catalogPath || resolved.Fragment != "" {
+		return nil, errors.New("Registry 仓库目录分页不能离开当前 Registry")
+	}
+	for name := range resolved.Query() {
+		if name != "n" && name != "last" {
+			return nil, errors.New("Registry 仓库目录返回了无效分页参数")
+		}
+	}
+	return resolved, nil
+}
+
+func splitLinkValues(header string) []string {
+	values := []string{}
+	start := 0
+	inAngle, inQuote, escaped := false, false, false
+	for index, character := range header {
+		switch {
+		case escaped:
+			escaped = false
+		case inQuote && character == '\\':
+			escaped = true
+		case character == '"' && !inAngle:
+			inQuote = !inQuote
+		case character == '<' && !inQuote:
+			inAngle = true
+		case character == '>' && !inQuote:
+			inAngle = false
+		case character == ',' && !inAngle && !inQuote:
+			values = append(values, strings.TrimSpace(header[start:index]))
+			start = index + 1
+		}
+	}
+	values = append(values, strings.TrimSpace(header[start:]))
+	return values
+}
+
+func linkHasRelation(parameters, wanted string) bool {
+	for _, parameter := range strings.Split(parameters, ";") {
+		name, value, ok := strings.Cut(strings.TrimSpace(parameter), "=")
+		if !ok || !strings.EqualFold(name, "rel") {
+			continue
+		}
+		for _, relation := range strings.Fields(strings.Trim(strings.TrimSpace(value), `"`)) {
+			if strings.EqualFold(relation, wanted) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (client *Client) tags(ctx context.Context, config Config, image string) ([]string, error) {
@@ -164,7 +391,7 @@ func (client *Client) doAuthenticated(ctx context.Context, endpoint string, conf
 	if config.AuthMode == "basic" || config.Username != "" {
 		request.SetBasicAuth(config.Username, config.Password)
 	}
-	response, err := client.client.Do(request)
+	response, err := client.doRegistryRequest(request)
 	if err != nil || response.StatusCode != http.StatusUnauthorized {
 		return response, err
 	}
@@ -179,7 +406,13 @@ func (client *Client) doAuthenticated(ctx context.Context, endpoint string, conf
 	}
 	retry := request.Clone(ctx)
 	retry.Header.Set("Authorization", "Bearer "+token)
-	return client.client.Do(retry)
+	return client.doRegistryRequest(retry)
+}
+
+func (client *Client) doRegistryRequest(request *http.Request) (*http.Response, error) {
+	registryClient := *client.client
+	registryClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return registryClient.Do(request)
 }
 
 func (client *Client) exchangeToken(ctx context.Context, challenge string, config Config) (string, error) {
@@ -207,7 +440,7 @@ func (client *Client) exchangeToken(ctx context.Context, challenge string, confi
 	if config.AuthMode == "basic" || config.Username != "" {
 		request.SetBasicAuth(config.Username, config.Password)
 	}
-	response, err := client.client.Do(request)
+	response, err := client.doRegistryRequest(request)
 	if err != nil {
 		return "", err
 	}
@@ -244,7 +477,7 @@ func (client *Client) harborPushTime(ctx context.Context, config Config, image, 
 	if config.AuthMode == "basic" || config.Username != "" {
 		request.SetBasicAuth(config.Username, config.Password)
 	}
-	response, err := client.client.Do(request)
+	response, err := client.doRegistryRequest(request)
 	if err != nil {
 		return time.Time{}, false
 	}

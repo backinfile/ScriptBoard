@@ -74,7 +74,7 @@ func RunWeb(runContext context.Context, arguments []string, getenv func(string) 
 		RunnerProcessLauncher: dependencies.runnerLauncher, PrivilegedBrokerEndpoint: dependencies.brokerEndpoint,
 		ApplicationProbe: dependencies.applicationProbe, KubernetesFactory: dependencies.kubernetesFactory,
 		AuditCheckpoint: dependencies.auditCheckpoint, MFAStore: dependencies.mfaStore, PasskeyStore: dependencies.passkeyStore,
-		RemoteWebsiteService: dependencies.remoteWebsites, RegistryConnections: dependencies.registryConnections,
+		RegistryConnections: dependencies.registryConnections,
 		ProviderCredentials: dependencies.providerCredentials, MySQLBackend: dependencies.mysqlBackend,
 		HostFilesBackend: dependencies.hostFilesBackend, StateBackups: dependencies.stateBackups,
 	})
@@ -129,7 +129,6 @@ type composedWebDependencies struct {
 	auditCheckpoint     webapp.AuditCheckpoint
 	mfaStore            webapp.MFAStore
 	passkeyStore        webapp.PasskeyStore
-	remoteWebsites      webapp.RemoteWebsiteService
 	registryConnections customdashboard.RegistryConnections
 	providerCredentials *privilegebroker.ProviderCredentials
 	mysqlBackend        mysqlmanager.Backend
@@ -176,7 +175,6 @@ func webDependenciesWithIdentity(loaded config.Config, installRoot string, valid
 	result.auditCheckpoint = privilegebroker.NewRemoteCheckpoint(client)
 	result.mfaStore = privilegebroker.NewRemoteMFA(client)
 	result.passkeyStore = privilegebroker.NewRemotePasskey(client)
-	result.remoteWebsites = privilegebroker.NewRemoteWebsite(client)
 	result.registryConnections = privilegebroker.NewRegistryConnections(client)
 	result.providerCredentials = privilegebroker.NewProviderCredentials(client)
 	result.mysqlBackend = privilegebroker.NewMySQLBackend(client, mysqlmanager.ToolSettings{DumpExecutable: "mysqldump", ClientExecutable: "mysql"})

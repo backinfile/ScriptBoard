@@ -23,11 +23,10 @@ import (
 )
 
 const (
-	ActionLog            ActionType = "log"
-	ActionUpload         ActionType = "upload"
-	ActionQuickRun       ActionType = "quick_run"
-	ActionVariable       ActionType = "variable"
-	ActionWebsiteMonitor ActionType = "website_monitor"
+	ActionLog      ActionType = "log"
+	ActionUpload   ActionType = "upload"
+	ActionQuickRun ActionType = "quick_run"
+	ActionVariable ActionType = "variable"
 )
 
 const (
@@ -107,7 +106,7 @@ var SchemaStatements = []string{
 		key_id TEXT REFERENCES external_trigger_keys(id) ON DELETE SET NULL,
 		name TEXT NOT NULL,
 		label TEXT NOT NULL,
-		action_type TEXT NOT NULL CHECK (action_type IN ('log', 'upload', 'quick_run', 'variable', 'website_monitor')),
+		action_type TEXT NOT NULL CHECK (action_type IN ('log', 'upload', 'quick_run', 'variable')),
 		target TEXT NOT NULL DEFAULT '',
 		config_json TEXT NOT NULL DEFAULT '{}',
 		require_signature INTEGER NOT NULL DEFAULT 0 CHECK (require_signature IN (0, 1)),
@@ -137,14 +136,6 @@ var SchemaStatements = []string{
 		nonce TEXT NOT NULL,
 		expires_at INTEGER NOT NULL,
 		PRIMARY KEY (key_id, nonce)
-	)`,
-	`CREATE TABLE IF NOT EXISTS website_monitor_remote_sources (
-		id TEXT PRIMARY KEY,
-		label TEXT NOT NULL COLLATE NOCASE UNIQUE,
-		endpoint TEXT NOT NULL,
-		token_hint TEXT NOT NULL,
-		created_at INTEGER NOT NULL,
-		updated_at INTEGER NOT NULL
 	)`,
 	`CREATE INDEX IF NOT EXISTS external_trigger_requests_time_idx ON external_trigger_requests(occurred_at DESC)`,
 	`CREATE INDEX IF NOT EXISTS external_trigger_requests_key_time_idx ON external_trigger_requests(key_id, occurred_at DESC)`,
@@ -218,7 +209,50 @@ type QuickRunConfig struct {
 	ScriptSHA256 string `json:"script_sha256"`
 }
 
-type WebsiteMonitorConfig struct{}
+// RebindQuickRunEntries updates every external entry bound to a Quick Run inside
+// the caller's publication transaction, so the new version is never visible
+// without its explicitly synchronized bindings.
+func RebindQuickRunEntries(ctx context.Context, transaction *sql.Tx, quickRunID string, revision int64, scriptSHA256 string, updatedAt time.Time) (int64, error) {
+	rows, err := transaction.QueryContext(ctx, `SELECT id, config_json FROM external_trigger_entries WHERE action_type = 'quick_run'`)
+	if err != nil {
+		return 0, fmt.Errorf("list Quick Run external entries: %w", err)
+	}
+	type binding struct{ id, configJSON string }
+	var bindings []binding
+	for rows.Next() {
+		var candidate binding
+		if err := rows.Scan(&candidate.id, &candidate.configJSON); err != nil {
+			_ = rows.Close()
+			return 0, err
+		}
+		bindings = append(bindings, candidate)
+	}
+	if err := rows.Close(); err != nil {
+		return 0, err
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	var rebound int64
+	for _, binding := range bindings {
+		var config QuickRunConfig
+		if err := json.Unmarshal([]byte(binding.configJSON), &config); err != nil || config.QuickRunID != quickRunID {
+			continue
+		}
+		config.Revision, config.ScriptSHA256 = revision, scriptSHA256
+		encoded, err := json.Marshal(config)
+		if err != nil {
+			return 0, err
+		}
+		result, err := transaction.ExecContext(ctx, `UPDATE external_trigger_entries SET config_json = ?, updated_at = ? WHERE id = ?`, string(encoded), updatedAt.UTC().Unix(), binding.id)
+		if err != nil {
+			return 0, fmt.Errorf("rebind Quick Run external entry: %w", err)
+		}
+		changed, _ := result.RowsAffected()
+		rebound += changed
+	}
+	return rebound, nil
+}
 
 type VariableConfig struct {
 	VariableName string       `json:"variable_name"`
@@ -350,10 +384,6 @@ type Manager struct {
 	reconciliationDirectory string
 }
 
-type RemoteWebsiteCredentialDestination interface {
-	Store(context.Context, string, string, string) error
-}
-
 func New(db *sql.DB, options Options) *Manager {
 	now := options.Now
 	if now == nil {
@@ -421,49 +451,6 @@ func (manager *Manager) Secret(id string) (string, error) {
 
 func (manager *Manager) DeleteSecret(id string) error {
 	return manager.secretStore.delete(id)
-}
-
-// MigrateRemoteWebsiteCredentials moves legacy remote-monitor credentials into
-// their endpoint-bound domain store before the generic encrypted store is no
-// longer available to managed Web.
-func (manager *Manager) MigrateRemoteWebsiteCredentials(ctx context.Context, destination RemoteWebsiteCredentialDestination) error {
-	if destination == nil {
-		return errors.New("remote website credential destination is unavailable")
-	}
-	rows, err := manager.db.QueryContext(ctx, `SELECT id, endpoint FROM website_monitor_remote_sources ORDER BY id`)
-	if err != nil {
-		return fmt.Errorf("list remote website credentials for migration: %w", err)
-	}
-	defer rows.Close()
-	type source struct{ id, endpoint string }
-	var sources []source
-	for rows.Next() {
-		var value source
-		if err := rows.Scan(&value.id, &value.endpoint); err != nil {
-			return err
-		}
-		sources = append(sources, value)
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for _, value := range sources {
-		legacyID := "remote-website:" + value.id
-		secret, err := manager.Secret(legacyID)
-		if errors.Is(err, ErrSecretUnavailable) {
-			continue
-		}
-		if err != nil {
-			return fmt.Errorf("read legacy remote website credential %q: %w", value.id, err)
-		}
-		if err := destination.Store(ctx, value.id, value.endpoint, secret); err != nil {
-			return fmt.Errorf("migrate remote website credential %q: %w", value.id, err)
-		}
-		if err := manager.DeleteSecret(legacyID); err != nil {
-			return fmt.Errorf("remove migrated remote website credential %q: %w", value.id, err)
-		}
-	}
-	return nil
 }
 
 // PurgeLegacyKeySecrets removes complete External Interface keys persisted by
@@ -818,11 +805,6 @@ func validateEntry(name, label string, actionType ActionType, config any) (strin
 			return "", "", err
 		}
 		normalized, target = value, value.VariableName
-	case ActionWebsiteMonitor:
-		if _, ok := config.(WebsiteMonitorConfig); !ok {
-			return "", "", fmt.Errorf("%w: website monitor config", ErrInvalidInput)
-		}
-		normalized, target = WebsiteMonitorConfig{}, ""
 	default:
 		return "", "", fmt.Errorf("%w: action type", ErrInvalidInput)
 	}
@@ -904,7 +886,7 @@ func (manager *Manager) Resolve(ctx context.Context, token, name string) (Key, E
 	var entryEnabled, requireSignature int
 	var entryCreatedAt, entryUpdatedAt int64
 	err = manager.db.QueryRowContext(ctx, `SELECT id, group_id, COALESCE(key_id, ''), name, label, action_type, target, config_json, require_signature, enabled, created_at, updated_at
-		FROM external_trigger_entries WHERE group_id = ? AND name = ?`, key.GroupID, name).Scan(
+		FROM external_trigger_entries WHERE group_id = ? AND name = ? AND action_type <> 'website_monitor'`, key.GroupID, name).Scan(
 		&entry.ID, &entry.GroupID, &entry.KeyID, &entry.Name, &entry.Label, &entry.Type, &entry.Target, &entry.ConfigJSON, &requireSignature, &entryEnabled, &entryCreatedAt, &entryUpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return key, Entry{}, ErrEntryNotFound
@@ -957,7 +939,7 @@ func (manager *Manager) Entry(ctx context.Context, id string) (Entry, error) {
 	var enabled, requireSignature int
 	var createdAt, updatedAt int64
 	err := manager.db.QueryRowContext(ctx, `SELECT id, group_id, COALESCE(key_id, ''), name, label, action_type, target, config_json, require_signature, enabled, created_at, updated_at
-		FROM external_trigger_entries WHERE id = ?`, id).Scan(&entry.ID, &entry.GroupID, &entry.KeyID, &entry.Name, &entry.Label, &entry.Type, &entry.Target, &entry.ConfigJSON, &requireSignature, &enabled, &createdAt, &updatedAt)
+		FROM external_trigger_entries WHERE id = ? AND action_type <> 'website_monitor'`, id).Scan(&entry.ID, &entry.GroupID, &entry.KeyID, &entry.Name, &entry.Label, &entry.Type, &entry.Target, &entry.ConfigJSON, &requireSignature, &enabled, &createdAt, &updatedAt)
 	if err != nil {
 		return Entry{}, err
 	}
@@ -1011,7 +993,7 @@ func (manager *Manager) entriesForKey(ctx context.Context, keyID string) ([]Entr
 
 func (manager *Manager) entriesForGroup(ctx context.Context, groupID string) ([]Entry, error) {
 	rows, err := manager.db.QueryContext(ctx, `SELECT id, group_id, COALESCE(key_id, ''), name, label, action_type, target, config_json, require_signature, enabled, created_at, updated_at
-		FROM external_trigger_entries WHERE group_id = ? ORDER BY created_at, id`, groupID)
+		FROM external_trigger_entries WHERE group_id = ? AND action_type <> 'website_monitor' ORDER BY created_at, id`, groupID)
 	if err != nil {
 		return nil, err
 	}

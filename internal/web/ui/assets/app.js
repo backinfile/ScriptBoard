@@ -6380,10 +6380,10 @@
     });
   }
 
-  function initStateBackupDrawers(cleanups) {
-    const root = document.querySelector("[data-state-backups-page]");
+  function initDetailsDrawers(cleanups, { rootSelector, drawerSelector, closeSelector, sheetSelector }) {
+    const root = document.querySelector(rootSelector);
     if (!root) return;
-    const drawers = [...root.querySelectorAll("details[data-state-backup-drawer]")];
+    const drawers = [...root.querySelectorAll(drawerSelector)];
     if (!drawers.length) return;
     let active = null;
 
@@ -6413,12 +6413,12 @@
       drawers.forEach(candidate => { if (candidate !== drawer && candidate.open) close(candidate, false); });
       active = drawer;
       document.body.style.overflow = "hidden";
-      window.setTimeout(() => drawer.querySelector(".state-backup-drawer__sheet")?.focus(), 180);
+      window.setTimeout(() => drawer.querySelector(sheetSelector)?.focus(), 180);
     };
     const onClick = event => {
-      const control = event.target.closest("[data-state-backup-drawer-close]");
+      const control = event.target.closest(closeSelector);
       if (!control) return;
-      const drawer = control.closest("details[data-state-backup-drawer]");
+      const drawer = control.closest(drawerSelector);
       if (!drawer) return;
       event.preventDefault();
       close(drawer);
@@ -6431,7 +6431,7 @@
         return;
       }
       if (event.key !== "Tab") return;
-      const sheet = active.querySelector(".state-backup-drawer__sheet");
+      const sheet = active.querySelector(sheetSelector);
       const focusable = [...sheet.querySelectorAll("a[href],button:not([disabled]),input:not([disabled]):not([type='hidden']),[tabindex]:not([tabindex='-1'])")]
         .filter(element => element.getClientRects().length > 0);
       if (!focusable.length) { event.preventDefault(); sheet.focus(); return; }
@@ -6452,6 +6452,24 @@
       root.removeEventListener("click", onClick);
       document.removeEventListener("keydown", onKeydown);
       document.body.style.overflow = "";
+    });
+  }
+
+  function initStateBackupDrawers(cleanups) {
+    initDetailsDrawers(cleanups, {
+      rootSelector: "[data-state-backups-page]",
+      drawerSelector: "details[data-state-backup-drawer]",
+      closeSelector: "[data-state-backup-drawer-close]",
+      sheetSelector: ".state-backup-drawer__sheet",
+    });
+  }
+
+  function initTrashCleanupDrawer(cleanups) {
+    initDetailsDrawers(cleanups, {
+      rootSelector: "[data-trash-page]",
+      drawerSelector: "details[data-trash-cleanup-drawer]",
+      closeSelector: "[data-trash-cleanup-drawer-close]",
+      sheetSelector: ".trash-cleanup-drawer__sheet",
     });
   }
 
@@ -7255,6 +7273,7 @@
 	initMySQLDrawers(cleanups);
     initExternalKeyManagers(cleanups);
     initStateBackupDrawers(cleanups);
+    initTrashCleanupDrawer(cleanups);
     initSecurityBanDrawer(cleanups);
     initUpdateSourceDrawer(cleanups);
     initAssistantWorkspace(cleanups);

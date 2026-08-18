@@ -1150,7 +1150,7 @@ func (executor *assistantToolExecutor) planStartQuickRun(authorization assistant
 				return nil, "Quick Run is no longer available.", false, errors.New("quick run script changed")
 			}
 			workingDirectory := hostfiles.PreparedDirectory{Path: prepared.Directory}
-			runID, err := executor.app.runs.Start(runmanager.StartRequest{ScriptPath: quick.ScriptPath, ExpectedDigest: quick.ScriptSHA256, ArgumentsTemplate: quick.ArgumentsTemplate, TimeoutSeconds: quick.TimeoutSeconds, SourceType: "assistant/quick-run", SourceName: quick.Name, SourceID: parameters.ID, Variables: variables, InitiatorUserID: authorization.Actor.UserID, InitiatorUsername: authorization.Actor.Username, PreparedScript: &prepared, PreparedDirectory: &workingDirectory})
+			runID, err := executor.app.runs.Start(runmanager.StartRequest{ScriptPath: quick.ScriptPath, ExpectedDigest: quick.ScriptSHA256, ArgumentsTemplate: quick.ArgumentsTemplate, TimeoutSeconds: quick.TimeoutSeconds, SourceType: "assistant/quick-run", SourceName: executor.app.quickRunSourceSnapshot(quick), SourceID: parameters.ID, Variables: variables, InitiatorUserID: authorization.Actor.UserID, InitiatorUsername: authorization.Actor.Username, PreparedScript: &prepared, PreparedDirectory: &workingDirectory})
 			if err != nil {
 				return nil, "", false, err
 			}

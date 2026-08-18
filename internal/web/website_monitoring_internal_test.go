@@ -7,23 +7,6 @@ import (
 	"scriptboard/internal/websitemonitor"
 )
 
-func TestRemoteWebsiteMonitorEndpointAndPayloadValidation(t *testing.T) {
-	for _, invalid := range []string{
-		"file:///state/app.db",
-		"http://example.com/trigger/monitoring/websites",
-		"https://user:password@example.com/trigger/monitoring/websites",
-		"https://example.com/trigger",
-		"https://example.com/trigger/monitoring/websites#secret",
-	} {
-		if _, err := normalizeRemoteWebsiteEndpoint(invalid); err == nil {
-			t.Fatalf("invalid endpoint accepted: %s", invalid)
-		}
-	}
-	if _, err := decodeRemoteWebsiteMonitors([]byte(`{"ok":true,"action":"wrong","schema_version":1,"data":{}}`)); err == nil {
-		t.Fatal("invalid remote website payload was accepted")
-	}
-}
-
 func TestWebsiteSecuritySummaryDistinguishesImminentAndExpiredCertificates(t *testing.T) {
 	checkedAt := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
 	monitor := websitemonitor.Monitor{

@@ -250,10 +250,16 @@ func TestRegistryCardCanBeConfiguredWithHTTPAndMultipleImages(t *testing.T) {
 			return
 		}
 		switch request.URL.Path {
+		case "/v2/_catalog":
+			_, _ = response.Write([]byte(`{"repositories":["team/web","team/api","other/db"]}`))
 		case "/v2/team/api/tags/list":
 			_, _ = response.Write([]byte(`{"tags":["v2.4.0","v2.5.0"]}`))
 		case "/v2/team/web/tags/list":
 			_, _ = response.Write([]byte(`{"tags":["1.8.1"]}`))
+		case "/api/v2.0/projects/team/repositories/api/artifacts/v2.5.0":
+			_, _ = response.Write([]byte(`{"push_time":"2026-08-18T10:30:00Z"}`))
+		case "/api/v2.0/projects/team/repositories/web/artifacts/1.8.1":
+			_, _ = response.Write([]byte(`{"push_time":"2026-08-18T11:45:00Z"}`))
 		default:
 			http.NotFound(response, request)
 		}
@@ -285,7 +291,7 @@ func TestRegistryCardCanBeConfiguredWithHTTPAndMultipleImages(t *testing.T) {
 	response.Body.Close()
 	response, err = client.PostForm(serverURL+"/config/dashboards/"+dashboardID+"/cards", url.Values{
 		"csrf_token": {formToken(t, page)}, "name": {"生产镜像"}, "type": {"registry"},
-		"registry_endpoint": {registry.URL}, "registry_images": {"team/api\nteam/web"},
+		"registry_endpoint": {registry.URL}, "registry_images": {"team/*"},
 		"registry_auth_mode": {"basic"}, "registry_username": {"robot$board"},
 		"registry_password": {"registry-secret"}, "refresh_seconds": {"60"},
 	})
@@ -303,7 +309,7 @@ func TestRegistryCardCanBeConfiguredWithHTTPAndMultipleImages(t *testing.T) {
 	renderedBytes, _ := io.ReadAll(response.Body)
 	response.Body.Close()
 	rendered := string(renderedBytes)
-	for _, expected := range []string{"生产镜像", "team/api", "v2.5.0", "team/web", "1.8.1", "仓库未提供"} {
+	for _, expected := range []string{"生产镜像", "team/api", "v2.5.0", "team/web", "1.8.1", "上传时间 2026-08-18"} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("registry card missing %q", expected)
 		}
@@ -743,6 +749,9 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	failedRendered := string(failedPage)
 	if !strings.Contains(failedRendered, `custom-dashboard-card__status-badge`) || !strings.Contains(failedRendered, `>Error</span>`) || !strings.Contains(failedRendered, `stroke-dasharray="63.24 100"`) || !strings.Contains(failedRendered, `custom-dashboard-card__quota-value">63.24`) || !strings.Contains(failedRendered, `custom-dashboard-card__retained`) {
 		t.Fatalf("failed card did not retain its last successful value with a generic status: %s", failedRendered)
+	}
+	if !strings.Contains(failedRendered, `custom-dashboard-card__refresh-time`) || !strings.Contains(failedRendered, `Refreshed `) {
+		t.Fatalf("card title does not show the last successful refresh time: %s", failedRendered)
 	}
 	if strings.Contains(failedRendered, api.URL) || strings.Contains(failedRendered, "HTTP 503") || strings.Contains(failedRendered, `custom-dashboard-diagnostic`) || strings.Contains(failedRendered, `data-dashboard-drawer`) {
 		t.Fatal("public dashboard exposed private request diagnostics")

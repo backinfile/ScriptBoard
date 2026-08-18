@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"scriptboard/internal/externaltrigger"
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/runmanager"
 )
@@ -166,6 +167,17 @@ func (a *App) loadQuickRun(id string) (quickRunRecord, error) {
 		quick.GroupID = groupID.String
 	}
 	return quick, err
+}
+
+func (a *App) quickRunSourceSnapshot(quick quickRunRecord) string {
+	if quick.GroupID == "" {
+		return quick.Name
+	}
+	var groupName string
+	if err := a.db.QueryRow(`SELECT name FROM quick_run_groups WHERE id = ?`, quick.GroupID).Scan(&groupName); err != nil || groupName == "" {
+		return quick.Name
+	}
+	return groupName + " / " + quick.Name
 }
 
 func (a *App) parseQuickRunEditableRequest(request *http.Request) (string, string, int, error) {
@@ -570,10 +582,18 @@ func (a *App) updateQuickRun(response http.ResponseWriter, request *http.Request
 		http.Error(response, "快捷执行脚本不可用", http.StatusConflict)
 		return
 	}
-	result, err := a.db.Exec(`UPDATE quick_runs
-		SET name = ?, arguments_template = ?, timeout_seconds = ?, script_sha256 = ?, revision = revision + 1, updated_at = ?
-		WHERE id = ? AND locked = 0`,
-		name, arguments, timeoutSeconds, prepared.Digest, time.Now().UTC().Unix(), id)
+	now := time.Now().UTC()
+	transaction, err := a.db.BeginTx(request.Context(), nil)
+	if err != nil {
+		http.Error(response, "无法更新快捷执行", http.StatusInternalServerError)
+		return
+	}
+	defer transaction.Rollback()
+	newRevision := quick.Revision + 1
+	result, err := transaction.ExecContext(request.Context(), `UPDATE quick_runs
+		SET name = ?, arguments_template = ?, timeout_seconds = ?, script_sha256 = ?, revision = ?, updated_at = ?
+		WHERE id = ? AND locked = 0 AND revision = ?`,
+		name, arguments, timeoutSeconds, prepared.Digest, newRevision, now.Unix(), id, quick.Revision)
 	count := int64(0)
 	if err == nil {
 		count, _ = result.RowsAffected()
@@ -590,7 +610,21 @@ func (a *App) updateQuickRun(response http.ResponseWriter, request *http.Request
 		http.Error(response, "快捷执行不存在", http.StatusNotFound)
 		return
 	}
-	a.recordQuickRunAuditForRequest(request, "update_quick_run", id, "succeeded")
+	synchronizeExternal := request.FormValue("sync_external_interfaces") == "1"
+	if synchronizeExternal {
+		if _, err = externaltrigger.RebindQuickRunEntries(request.Context(), transaction, id, newRevision, prepared.Digest, now); err != nil {
+			http.Error(response, "无法同步外部接口", http.StatusInternalServerError)
+			return
+		}
+	}
+	if err := transaction.Commit(); err != nil {
+		http.Error(response, "无法更新快捷执行", http.StatusInternalServerError)
+		return
+	}
+	a.recordAuditResourceForRequest(request, "update_quick_run", id, "succeeded", strconv.FormatInt(newRevision, 10), prepared.Digest)
+	if synchronizeExternal {
+		a.recordAuditResourceForRequest(request, "sync_quick_run_external_interfaces", id, "succeeded", strconv.FormatInt(newRevision, 10), prepared.Digest)
+	}
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }
 
@@ -737,17 +771,15 @@ func (a *App) setQuickRunLocked(response http.ResponseWriter, request *http.Requ
 	}
 	locked := value == "1"
 	id := request.PathValue("id")
-	result, err := a.db.Exec(`UPDATE quick_runs SET locked = ?, revision = revision + 1, updated_at = ? WHERE id = ?`,
-		locked, time.Now().UTC().Unix(), id)
-	count := int64(0)
-	if err == nil {
-		count, _ = result.RowsAffected()
-	}
-	if err != nil {
+	var revision int64
+	var scriptSHA256 string
+	err := a.db.QueryRowContext(request.Context(), `UPDATE quick_runs SET locked = ?, updated_at = ? WHERE id = ? RETURNING revision, script_sha256`,
+		locked, time.Now().UTC().Unix(), id).Scan(&revision, &scriptSHA256)
+	if err != nil && err != sql.ErrNoRows {
 		http.Error(response, "无法更改快捷执行锁定状态", http.StatusInternalServerError)
 		return
 	}
-	if count == 0 {
+	if err == sql.ErrNoRows {
 		http.Error(response, "快捷执行不存在", http.StatusNotFound)
 		return
 	}
@@ -755,6 +787,6 @@ func (a *App) setQuickRunLocked(response http.ResponseWriter, request *http.Requ
 	if locked {
 		action = "lock_quick_run"
 	}
-	a.recordQuickRunAuditForRequest(request, action, id, "succeeded")
+	a.recordAuditResourceForRequest(request, action, id, "succeeded", strconv.FormatInt(revision, 10), scriptSHA256)
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }

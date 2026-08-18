@@ -42,6 +42,14 @@
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <label>{{t .Locale "login.username"}} <input name="username" autocomplete="username" spellcheck="false" maxlength="64" required autofocus></label>
       <label>{{t .Locale "users.role"}} <select name="role" required><option value="maintainer">{{t .Locale "users.role.maintainer"}}</option><option value="operator">{{t .Locale "users.role.operator"}}</option><option value="viewer">{{t .Locale "users.role.viewer"}}</option></select></label>
+      <section class="user-role-guide" aria-labelledby="user-role-guide-title" data-user-role-guide>
+        <header><span data-lucide="shield-question" aria-hidden="true"></span><div><h2 id="user-role-guide-title">{{t .Locale "users.role_guide_title"}}</h2><p>{{t .Locale "users.role_guide_description"}}</p></div></header>
+        <dl>
+          <div><dt><span data-lucide="wrench" aria-hidden="true"></span>{{t .Locale "users.role.maintainer"}}</dt><dd>{{t .Locale "users.role.maintainer_permissions"}}</dd></div>
+          <div><dt><span data-lucide="square-terminal" aria-hidden="true"></span>{{t .Locale "users.role.operator"}}</dt><dd>{{t .Locale "users.role.operator_permissions"}}</dd></div>
+          <div><dt><span data-lucide="eye" aria-hidden="true"></span>{{t .Locale "users.role.viewer"}}</dt><dd>{{t .Locale "users.role.viewer_permissions"}}</dd></div>
+        </dl>
+      </section>
       <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="user-plus" aria-hidden="true"></span>{{t .Locale "users.create"}}</button></footer>
     </form>
     {{else if eq .Kind "user-edit"}}
@@ -197,6 +205,7 @@
       <label>{{t .Locale "run_detail.quick_name"}} <input name="name" autocomplete="off" value="{{.Name}}" required autofocus></label>
       <label>{{t .Locale "task.arguments"}} <input name="arguments" autocomplete="off" spellcheck="false" value="{{.Arguments}}"></label>
       <label>{{t .Locale "task.timeout_seconds"}} <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}"></label>
+      <label class="check-field"><input type="checkbox" name="sync_external_interfaces" value="1"> <span>{{t .Locale "task.quick_edit.sync_external"}}<small>{{t .Locale "task.quick_edit.sync_external_hint"}}</small></span></label>
       <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "task.save_changes"}}</button></footer>
     </form>
     {{else if eq .Kind "quick-copy"}}
