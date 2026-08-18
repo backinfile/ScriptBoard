@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"math"
 	"net/http"
 	"strconv"
@@ -23,7 +24,7 @@ func (a *App) stepUpTask(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	returnTo := safeStepUpReturnTo(request.URL.Query().Get("return_to"))
-	secondFactorOnly := request.URL.Query().Get("mode") == "second-factor" && (mfaStatus.Enabled || len(passkeyUser.Credentials) > 0)
+	secondFactorOnly := mfaStatus.Enabled || len(passkeyUser.Credentials) > 0
 	a.renderTaskPage(response, request, taskPageData{
 		Kind:             "step-up",
 		Title:            webText(resolveWebLocale(request), "step_up.title"),
@@ -45,7 +46,12 @@ func (a *App) stepUp(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	returnTo := safeStepUpReturnTo(request.FormValue("return_to"))
-	secondFactorOnly := request.FormValue("verification_mode") == "second-factor"
+	challenge, challengeErr := a.currentStepUpChallenge(request, current)
+	if challengeErr != nil {
+		a.writeStepUpError(response, request, http.StatusServiceUnavailable, "mfa.unavailable", stepUpChallenge{})
+		return
+	}
+	secondFactorOnly := challenge.Method == "second_factor"
 	keys := []string{
 		a.loginRateKey("step-up-ip", request.RemoteAddr),
 		a.loginRateKey("step-up-account", current.userID),
@@ -53,7 +59,7 @@ func (a *App) stepUp(response http.ResponseWriter, request *http.Request) {
 	if retryAfter := a.loginRetryAfter(keys...); retryAfter > 0 {
 		response.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(retryAfter.Seconds()))))
 		a.recordAuditForRequest(request, "step_up_authentication", current.username, "rate_limited")
-		a.renderStepUpFailure(response, request, http.StatusTooManyRequests, returnTo, "step_up.rate_limited", secondFactorOnly)
+		a.writeStepUpError(response, request, http.StatusTooManyRequests, "step_up.rate_limited", challenge)
 		return
 	}
 	if !secondFactorOnly {
@@ -69,7 +75,7 @@ func (a *App) stepUp(response http.ResponseWriter, request *http.Request) {
 		if !verifyPasswordContext(request.Context(), request.FormValue("current_password"), passwordHash) {
 			a.recordLoginFailure(keys...)
 			a.recordAuditForRequest(request, "step_up_authentication", current.username, "failed")
-			a.renderStepUpFailure(response, request, http.StatusUnauthorized, returnTo, "step_up.failed", false)
+			a.writeStepUpError(response, request, http.StatusUnauthorized, "step_up.failed", challenge)
 			return
 		}
 	}
@@ -99,13 +105,10 @@ func (a *App) stepUp(response http.ResponseWriter, request *http.Request) {
 		if !verified {
 			a.recordLoginFailure(keys...)
 			a.recordAuditForRequest(request, "step_up_authentication", current.username, "failed")
-			a.renderStepUpFailure(response, request, http.StatusUnauthorized, returnTo, "mfa.invalid_code", secondFactorOnly)
+			a.writeStepUpError(response, request, http.StatusUnauthorized, "mfa.invalid_code", challenge)
 			return
 		}
 		authenticationAssurance = 2
-	} else if secondFactorOnly {
-		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
-		return
 	}
 	now := time.Now().UTC().Unix()
 	result, err := a.db.ExecContext(request.Context(), `UPDATE sessions
@@ -125,7 +128,24 @@ func (a *App) stepUp(response http.ResponseWriter, request *http.Request) {
 	current.reauthenticatedAt = now
 	auditRequest := request.WithContext(context.WithValue(request.Context(), sessionContextKey, current))
 	a.recordAuditForRequest(auditRequest, "step_up_authentication", current.username, "succeeded")
+	if request.Header.Get(inlineStepUpHeader) == "dialog" {
+		response.Header().Set("Cache-Control", "no-store")
+		response.WriteHeader(http.StatusNoContent)
+		return
+	}
 	http.Redirect(response, request, returnTo, http.StatusSeeOther)
+}
+
+func (a *App) writeStepUpError(response http.ResponseWriter, request *http.Request, status int, messageKey string, challenge stepUpChallenge) {
+	if request.Header.Get(inlineStepUpHeader) != "dialog" {
+		a.renderStepUpFailure(response, request, status, safeStepUpReturnTo(request.FormValue("return_to")), messageKey, challenge.Method == "second_factor")
+		return
+	}
+	challenge.Error = webText(resolveWebLocale(request), messageKey)
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Content-Type", "application/json; charset=utf-8")
+	response.WriteHeader(status)
+	_ = json.NewEncoder(response).Encode(challenge)
 }
 
 func (a *App) renderStepUpFailure(response http.ResponseWriter, request *http.Request, status int, returnTo, messageKey string, secondFactorOnly bool) {

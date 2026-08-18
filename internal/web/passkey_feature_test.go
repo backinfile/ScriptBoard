@@ -1,6 +1,7 @@
 package web_test
 
 import (
+	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -43,7 +44,8 @@ func TestPasskeyCeremoniesRequireCSRFAndUserVerification(t *testing.T) {
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	passwordBytes, _ := os.ReadFile(filepath.Join(stateRoot, "secrets", "initial-admin-password"))
-	login(t, client, server.URL, strings.TrimSpace(string(passwordBytes)), http.StatusSeeOther)
+	password := strings.TrimSpace(string(passwordBytes))
+	login(t, client, server.URL, password, http.StatusSeeOther)
 	mfaPage := getBody(t, client, server.URL+"/settings/account/mfa", http.StatusOK)
 
 	request, _ := http.NewRequest(http.MethodPost, server.URL+"/settings/account/passkeys/register/options", strings.NewReader("{}"))
@@ -56,10 +58,43 @@ func TestPasskeyCeremoniesRequireCSRFAndUserVerification(t *testing.T) {
 	if denied.StatusCode != http.StatusForbidden {
 		t.Fatalf("missing CSRF status=%d", denied.StatusCode)
 	}
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if _, err := database.Exec(`UPDATE sessions SET reauthenticated_at = 0`); err != nil {
+		t.Fatal(err)
+	}
 
 	request, _ = http.NewRequest(http.MethodPost, server.URL+"/settings/account/passkeys/register/options", strings.NewReader("{}"))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-CSRF-Token", formToken(t, mfaPage))
+	request.Header.Set("X-ScriptBoard-Step-Up", "dialog")
+	challengeResponse, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inlineChallengeBody, _ := io.ReadAll(challengeResponse.Body)
+	_ = challengeResponse.Body.Close()
+	if challengeResponse.StatusCode != http.StatusPreconditionRequired || !strings.Contains(string(inlineChallengeBody), `"method":"password"`) {
+		t.Fatalf("passkey registration challenge status=%d body=%s", challengeResponse.StatusCode, inlineChallengeBody)
+	}
+	stepped, err := client.PostForm(server.URL+"/auth/step-up", url.Values{
+		"csrf_token": {formToken(t, mfaPage)}, "current_password": {password},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = stepped.Body.Close()
+	if stepped.StatusCode != http.StatusSeeOther {
+		t.Fatalf("password step-up status=%d", stepped.StatusCode)
+	}
+
+	request, _ = http.NewRequest(http.MethodPost, server.URL+"/settings/account/passkeys/register/options", strings.NewReader("{}"))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-CSRF-Token", formToken(t, mfaPage))
+	request.Header.Set("X-ScriptBoard-Step-Up", "dialog")
 	started, err := client.Do(request)
 	if err != nil {
 		t.Fatal(err)

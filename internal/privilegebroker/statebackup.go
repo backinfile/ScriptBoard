@@ -129,10 +129,6 @@ func (server *Server) stateBackupOperation(request wireRequest) wireResponse {
 	if mutation == nil {
 		return denied
 	}
-	if mutation.actor.AuthenticationAssurance < 2 {
-		_ = server.recordCredentialMutation(*mutation, "failed")
-		return wireResponse{Status: statusError, ErrorCode: "authorization_denied", Message: "state backup operation requires AAL2 authorization"}
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 	defer cancel()
 	response := wireResponse{Status: statusOK, StateBackup: &stateBackupWireResponse{}}

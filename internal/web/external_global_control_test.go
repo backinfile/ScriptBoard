@@ -24,9 +24,6 @@ func TestExternalGlobalControlFailsClosedAndCanResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if _, err := database.Exec(`UPDATE sessions SET reauthenticated_at = 0`); err != nil {
-		t.Fatal(err)
-	}
 	_, keyID := createExternalTestKey(t, client, serverURL, "Emergency control")
 	logFile := filepath.Join(hostRoot, "controlled.log")
 	secret := createExternalTestEntry(t, client, serverURL, keyID, url.Values{

@@ -747,7 +747,7 @@ func (a *App) externalTargetOptions(ctx context.Context, locale webLocale) ([]ex
 	quickRows, err := a.db.Query(`SELECT quick_runs.id, quick_runs.name, quick_runs.script_path, quick_runs.script_sha256,
 		quick_runs.revision, COALESCE(quick_run_groups.name, '')
 		FROM quick_runs LEFT JOIN quick_run_groups ON quick_run_groups.id = quick_runs.group_id
-		WHERE quick_runs.locked = 1 AND quick_runs.script_sha256 != ''
+		WHERE quick_runs.script_sha256 != ''
 		ORDER BY COALESCE(quick_run_groups.sort_order, 2147483647), quick_runs.name, quick_runs.id`)
 	if err != nil {
 		return nil, nil, err
@@ -980,8 +980,8 @@ func (a *App) externalEntryConfig(request *http.Request, actionType externaltrig
 			return nil, errors.New("quick run does not exist")
 		}
 		prepared, err := a.hostPrepareScript(request.Context(), quick.ScriptPath)
-		if err != nil || !quick.Locked || quick.ScriptSHA256 == "" || subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(quick.ScriptSHA256)) != 1 {
-			return nil, errors.New("quick run must be locked and republished with its current script digest")
+		if err != nil || quick.ScriptSHA256 == "" || subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(quick.ScriptSHA256)) != 1 {
+			return nil, errors.New("quick run must be published with its current script digest")
 		}
 		return externaltrigger.QuickRunConfig{QuickRunID: id, Revision: quick.Revision, ScriptSHA256: quick.ScriptSHA256}, nil
 	case externaltrigger.ActionVariable:
@@ -1414,7 +1414,7 @@ func (a *App) executeExternalQuickRun(response http.ResponseWriter, request *htt
 	if err != nil {
 		return externalFailure(http.StatusConflict, "target_unavailable")
 	}
-	if !quick.Locked || quick.Revision != config.Revision || subtle.ConstantTimeCompare([]byte(quick.ScriptSHA256), []byte(config.ScriptSHA256)) != 1 {
+	if quick.Revision != config.Revision || subtle.ConstantTimeCompare([]byte(quick.ScriptSHA256), []byte(config.ScriptSHA256)) != 1 {
 		return externalFailure(http.StatusConflict, "target_unavailable")
 	}
 	prepared, err := a.hostPrepareScript(request.Context(), quick.ScriptPath)

@@ -281,7 +281,7 @@ scriptboard backup export-recovery --output ABSOLUTE_RECOVERY_PATH --passphrase-
 scriptboard backup recover-host --archive ABSOLUTE_BACKUP_PATH --passphrase-file ABSOLUTE_PASSPHRASE_FILE --recovery-material ABSOLUTE_RECOVERY_PATH --recovery-passphrase-file ABSOLUTE_RECOVERY_PASSPHRASE_FILE --confirm-backup-id BACKUP_ID --config CONFIG_PATH
 ```
 
-受管安装还可在“系统设置 → 私有状态备份”中创建、验证和暂存恢复。页面只接受服务器本地绝对路径；所有写操作均要求近期 AAL2，并由同版本 Privileged Broker 执行。暂存恢复会验证加密包、SQLite、schema 和签名审计 checkpoint，撤销备份内 Web Session，并绑定暂存后文件摘要；它不会替换在线数据库。最终提交仍须停止 Web、Broker、Runner 与 AI Host 后使用离线恢复流程。
+受管安装还可在“系统设置 → 私有状态备份”中创建、验证和暂存恢复。页面只接受服务器本地绝对路径；所有写操作均要求近期身份验证（已配置双重认证时验证第二因素，否则验证当前密码），并由同版本 Privileged Broker 执行。暂存恢复会验证加密包、SQLite、schema 和签名审计 checkpoint，撤销备份内 Web Session，并绑定暂存后文件摘要；它不会替换在线数据库。最终提交仍须停止 Web、Broker、Runner 与 AI Host 后使用离线恢复流程。
 
 状态包只包含一致性 SQLite snapshot、Broker 密文和固定私有证据，不包含外部主密钥、审计签名
 私钥、配置、TLS 材料、诊断日志、上传 inbox 或 MySQL 备份。常规 `restore` 要求同一 State Root

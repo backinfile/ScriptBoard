@@ -3275,7 +3275,7 @@ body.has-update-source-drawer { overflow: hidden; }
 .mfa-stage__number { display: grid; width: 28px; height: 28px; place-items: center; color: var(--accent); background: var(--accent-soft); border: 1px solid var(--accent-border); border-radius: 999px; font-size: .75rem; font-weight: 700; }
 .mfa-enrollment-setup { display: grid; grid-template-columns: 256px minmax(0, 1fr); align-items: center; gap: 24px; margin: 20px 0 0 46px; }
 .mfa-qr-code { display: grid; gap: 9px; justify-items: center; margin: 0; }
-.mfa-qr-code img { display: block; box-sizing: border-box; width: 256px; height: 256px; padding: 8px; background: #fff; border: 1px solid var(--rule-strong); border-radius: 7px; image-rendering: pixelated; }
+.mfa-qr-code img, .mfa-qr-code svg { display: block; box-sizing: border-box; width: 256px; height: 256px; padding: 8px; background: #fff; border: 1px solid var(--rule-strong); border-radius: 7px; image-rendering: pixelated; }
 .mfa-qr-code figcaption { color: var(--muted); font-size: .75rem; text-align: center; }
 .mfa-credential-list, .mfa-stage > form { margin: 20px 0 0 46px; }
 .mfa-enrollment-setup .mfa-credential-list { margin: 0; }
@@ -3807,6 +3807,13 @@ body.has-update-source-drawer { overflow: hidden; }
   background: var(--canvas);
   border-top: 1px solid var(--rule);
 }
+.step-up-dialog { width: min(560px, calc(100vw - 32px)); }
+.step-up-dialog__form { display: grid; gap: 18px; padding: 0 26px 22px; }
+.step-up-dialog__form > label { display: grid; gap: 8px; font-size: .78rem; font-weight: 650; }
+.step-up-dialog__form > label small { color: var(--muted); font-size: .7rem; font-weight: 450; line-height: 1.5; }
+.step-up-dialog__form > .page-error { margin: 0; }
+.step-up-dialog__form > footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; padding-top: 4px; }
+.step-up-dialog__form[aria-busy="true"] { opacity: .78; }
 @keyframes action-dialog-enter {
   from { opacity: 0; transform: translateY(8px) scale(.985); }
 }
@@ -3815,6 +3822,8 @@ body.has-update-source-drawer { overflow: hidden; }
   .action-dialog__sheet > header { padding: 20px 18px 19px; }
   .action-dialog__sheet > footer { padding: 13px 18px 18px; }
   .action-dialog__sheet > footer .button { min-width: 0; flex: 1; }
+	.step-up-dialog__form { padding: 0 18px 18px; }
+	.step-up-dialog__form > footer .button { flex: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
   .action-dialog { animation: none; }

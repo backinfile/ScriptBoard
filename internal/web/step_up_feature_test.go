@@ -2,6 +2,7 @@ package web_test
 
 import (
 	"database/sql"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -14,6 +15,57 @@ import (
 
 	app "scriptboard/internal/web"
 )
+
+func TestExpiredRecentAuthenticationOffersInlinePasswordChallenge(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	application, err := app.Open(app.Config{StateRoot: stateRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = application.Close() })
+	server := httptest.NewServer(application.Handler())
+	t.Cleanup(server.Close)
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	passwordBytes, _ := os.ReadFile(filepath.Join(stateRoot, "secrets", "initial-admin-password"))
+	login(t, client, server.URL, strings.TrimSpace(string(passwordBytes)), http.StatusSeeOther)
+
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if _, err := database.Exec(`UPDATE sessions SET reauthenticated_at = 0`); err != nil {
+		t.Fatal(err)
+	}
+
+	page := getBody(t, client, server.URL+"/settings/name", http.StatusOK)
+	form := url.Values{"csrf_token": {formToken(t, page)}, "display_name": {"Inline challenge"}}
+	request, _ := http.NewRequest(http.MethodPost, server.URL+"/settings/name", strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("X-ScriptBoard-Step-Up", "dialog")
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusPreconditionRequired {
+		t.Fatalf("inline challenge status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+	var challenge struct {
+		Method string `json:"method"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&challenge); err != nil {
+		t.Fatal(err)
+	}
+	if challenge.Method != "password" {
+		t.Fatalf("inline challenge method=%q", challenge.Method)
+	}
+	var displayName string
+	if err := database.QueryRow(`SELECT display_name FROM instance_settings WHERE singleton = 1`).Scan(&displayName); err != sql.ErrNoRows {
+		t.Fatalf("challenge executed protected action: name=%q err=%v", displayName, err)
+	}
+}
 
 func TestExpiredRecentAuthenticationRequiresPasswordStepUp(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "state")

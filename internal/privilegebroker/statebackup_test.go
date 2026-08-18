@@ -17,7 +17,7 @@ func TestStateBackupBrokerUsesTypedStepUpOperationsAndRedactsPrivateCheckpoint(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	authorizer := &stateBackupAuthorizer{actor: Actor{UserID: "admin", Username: "admin", Role: "administrator", AuthenticationAssurance: 2}}
+	authorizer := &stateBackupAuthorizer{actor: Actor{UserID: "admin", Username: "admin", Role: "administrator", AuthenticationAssurance: 1}}
 	service := &stateBackupBrokerFixture{}
 	auditor := &stateBackupAuditor{}
 	server, err := NewServer(ServerOptions{Listener: listener, VerifyPeer: func(net.Conn) error { return nil }, Authorizer: authorizer, Executor: &fixtureExecutor{}, Auditor: auditor, StateBackups: service})

@@ -129,6 +129,11 @@
   let activeActionDialog = null;
   let activeUploadResultsDialog = null;
 
+  class StepUpCancelledError extends Error {
+    constructor() { super("Step-up cancelled"); this.name = "StepUpCancelledError"; }
+  }
+  window.ScriptBoardStepUpCancelled = error => error instanceof StepUpCancelledError;
+
   const locale = () => document.documentElement.lang === "zh-CN" ? "zh-CN" : "en-US";
   const copy = {
     "zh-CN": {
@@ -142,6 +147,9 @@
       serverErrorCopyDetails: "复制错误详情", serverErrorDetailsCopied: "错误详情已复制", serverErrorDetailsCopyFailed: "复制错误详情失败",
       serverErrorPreserved: "当前工作区已保留", serverErrorNoResubmit: "未自动重试，避免重复执行写操作",
       confirmTitle: "确认操作", confirmDescription: "请确认是否继续执行此操作。", confirmCancel: "取消", confirmAction: "确认",
+	  stepUpTitle: "再次验证身份", stepUpDescription: "此操作需要近期身份验证。验证完成后会自动继续当前操作。",
+	  stepUpPassword: "当前密码", stepUpCode: "安全验证码或恢复码", stepUpCodeHint: "请输入认证器动态码或一个未使用的恢复码",
+	  stepUpUsePasskey: "使用通行密钥", stepUpContinue: "验证并继续", stepUpUnavailable: "暂时无法完成身份验证，请稍后重试。",
       websiteNormal: "网站监控正常", websiteNoOpenIssues: "没有故障或待复核项",
       websiteDownOne: "个网站故障", websiteDownMany: "个网站故障",
       websiteVerifyingOne: "个正在复核", websiteVerifyingMany: "个正在复核",
@@ -169,6 +177,9 @@
       serverErrorCopyDetails: "Copy error details", serverErrorDetailsCopied: "Error details copied", serverErrorDetailsCopyFailed: "Failed to copy error details",
       serverErrorPreserved: "The current workspace is preserved", serverErrorNoResubmit: "Not retried automatically to avoid repeating a write",
       confirmTitle: "Confirm action", confirmDescription: "Confirm that you want to continue with this action.", confirmCancel: "Cancel", confirmAction: "Confirm",
+	  stepUpTitle: "Verify your identity", stepUpDescription: "This action requires recent authentication. The current action will continue automatically after verification.",
+	  stepUpPassword: "Current password", stepUpCode: "Security or recovery code", stepUpCodeHint: "Enter an authenticator code or an unused recovery code",
+	  stepUpUsePasskey: "Use passkey", stepUpContinue: "Verify and continue", stepUpUnavailable: "Identity verification is temporarily unavailable. Try again later.",
       websiteNormal: "Website monitoring normal", websiteNoOpenIssues: "No failures or pending verifications",
       websiteDownOne: "website down", websiteDownMany: "websites down",
       websiteVerifyingOne: "website under verification", websiteVerifyingMany: "websites under verification",
@@ -188,6 +199,7 @@
     }
   };
   const words = () => copy[locale()];
+	window.ScriptBoardWords = words;
 
   function makeIcon(name) {
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -648,12 +660,29 @@
       destination.pathname.endsWith(".csv");
   }
 
+  async function fetchWithStepUp(url, options = {}, returnFocus = null) {
+    const headers = new Headers(options.headers || {});
+    headers.set("X-ScriptBoard-Step-Up", "dialog");
+    const requestOptions = { credentials: "same-origin", ...options, headers };
+    let response = await fetch(url, requestOptions);
+    if (response.status !== 428) return response;
+    let challenge;
+    try { challenge = await response.clone().json(); }
+    catch { return response; }
+    const verified = await window.ScriptBoardShowStepUp?.(challenge, returnFocus);
+    if (!verified) throw new StepUpCancelledError();
+    response = await fetch(url, requestOptions);
+    return response;
+  }
+	window.ScriptBoardFetchWithStepUp = fetchWithStepUp;
+
   async function fetchDocument(url, options = {}) {
-    const response = await fetch(url, {
+    const { stepUpReturnFocus = null, ...requestOptions } = options;
+    const response = await fetchWithStepUp(url, {
       credentials: "same-origin",
-      ...options,
-      headers: { "X-ScriptBoard-Navigation": "pjax", "Accept": "text/html", ...(options.headers || {}) }
-    });
+      ...requestOptions,
+      headers: { "X-ScriptBoard-Navigation": "pjax", "Accept": "text/html", ...(requestOptions.headers || {}) }
+    }, stepUpReturnFocus);
     const type = response.headers.get("content-type") || "";
     if (!type.includes("text/html")) return { response, document: null, text: await response.text() };
     const text = await response.text();
@@ -2043,7 +2072,7 @@
     }
     try {
       const action = formActionURL(form, submitter);
-      const result = await fetchDocument(action, { method: form.method, body: data });
+      const result = await fetchDocument(action, { method: form.method, body: data, stepUpReturnFocus: submitter || form });
       if (submittingTaskState && taskPanelState !== submittingTaskState) return;
       if (!submittingTaskState && !form.isConnected) return;
       const fileConflict = result.document?.querySelector("main[data-file-conflict]");
@@ -2135,7 +2164,8 @@
         return;
       }
       if (!result.response.ok) throw new Error(`HTTP ${result.response.status}`);
-    } catch {
+    } catch (error) {
+	  if (window.ScriptBoardStepUpCancelled?.(error)) return;
       const message = document.createElement("p");
       message.className = "async-submit-error";
       message.dataset.asyncSubmitError = "";
@@ -2167,12 +2197,12 @@
     const data = new FormData(form);
     if (submitter?.name) data.set(submitter.name, submitter.value);
     try {
-      const response = await fetch(form.action, {
+	  const response = await fetchWithStepUp(form.action, {
         method: "POST",
         body: data,
         credentials: "same-origin",
         headers: { "Accept": "application/json" },
-      });
+	  }, submitter || form);
       if (!response.ok) {
         throw new Error((await response.text()).trim() || `HTTP ${response.status}`);
       }
@@ -2206,6 +2236,7 @@
       }
       location.assign("/settings/updates");
     } catch (error) {
+	  if (window.ScriptBoardStepUpCancelled?.(error)) { resetSubmit(form); return; }
       const main = document.querySelector("[data-updates-page]");
       const title = main?.dataset.updateStartError || "Unable to start the update.";
       showActionDialog({
@@ -2224,12 +2255,12 @@
     if (submitter?.name) data.set(submitter.name, submitter.value);
     const main = document.querySelector("[data-updates-page]");
     try {
-      const response = await fetch(form.action, {
+	  const response = await fetchWithStepUp(form.action, {
         method: "POST",
         body: data,
         credentials: "same-origin",
         headers: { "Accept": "application/json" },
-      });
+	  }, submitter || form);
       if (!response.ok) {
         throw new Error((await response.text()).trim() || `HTTP ${response.status}`);
       }
@@ -2258,6 +2289,7 @@
       }
       location.assign("/settings/updates");
     } catch (error) {
+	  if (window.ScriptBoardStepUpCancelled?.(error)) { resetSubmit(form); return; }
       const title = main?.dataset.restartError || "Unable to restart the service.";
       showActionDialog({
         title,
@@ -7268,6 +7300,7 @@
     initGroupedRecords(cleanups);
     initScheduleCron(cleanups);
     initExternalEntryForm(document, cleanups);
+	initVariableForm(document, cleanups);
     initDisplaySettings(cleanups);
 	initSecurityDialogs(cleanups);
 	initMySQLDrawers(cleanups);
@@ -8042,6 +8075,182 @@ document.addEventListener("input", function (event) {
       response
     };
   };
+
+  let activeInlineStepUp = null;
+  const closeInlineStepUp = (verified) => {
+    if (!activeInlineStepUp) return;
+    const state = activeInlineStepUp;
+    activeInlineStepUp = null;
+    if (state.dialog.open) state.dialog.close();
+    state.dialog.remove();
+    state.resolve(Boolean(verified));
+    if (!verified && state.returnFocus instanceof HTMLElement && state.returnFocus.isConnected) {
+      requestAnimationFrame(() => state.returnFocus.focus({ preventScroll: true }));
+    }
+  };
+
+  window.ScriptBoardShowStepUp = (challenge, returnFocus) => {
+    closeInlineStepUp(false);
+    const words = window.ScriptBoardWords?.() || {};
+    return new Promise(resolve => {
+      const dialog = document.createElement("dialog");
+      dialog.className = "action-dialog step-up-dialog";
+      dialog.setAttribute("aria-labelledby", "inline-step-up-title");
+      dialog.setAttribute("aria-describedby", "inline-step-up-description");
+
+      const sheet = document.createElement("section");
+      sheet.className = "action-dialog__sheet step-up-dialog__sheet";
+      const header = document.createElement("header");
+      const mark = document.createElement("span");
+      mark.className = "action-dialog__mark";
+      mark.innerHTML = '<span data-lucide="shield-check" aria-hidden="true"></span>';
+      const heading = document.createElement("div");
+      const title = document.createElement("h2");
+      title.id = "inline-step-up-title";
+      title.textContent = challenge.title || words.stepUpTitle;
+      const description = document.createElement("p");
+      description.id = "inline-step-up-description";
+      description.textContent = words.stepUpDescription || challenge.description;
+      heading.append(title, description);
+      const close = document.createElement("button");
+      close.className = "icon-button icon-button--quiet";
+      close.type = "button";
+      close.setAttribute("aria-label", words.confirmCancel || "Cancel");
+      close.innerHTML = '<span data-lucide="x" aria-hidden="true"></span>';
+      header.append(mark, heading, close);
+
+      const form = document.createElement("form");
+      form.className = "step-up-dialog__form";
+      const error = document.createElement("p");
+      error.className = "page-error";
+      error.setAttribute("role", "alert");
+      error.hidden = true;
+      form.append(error);
+
+      let input = null;
+      if (challenge.method === "second_factor" && challenge.mfa_enabled) {
+        const label = document.createElement("label");
+        label.append(document.createTextNode(words.stepUpCode || "Security code"));
+        input = document.createElement("input");
+        input.name = "mfa_code";
+        input.inputMode = "numeric";
+        input.autocomplete = "one-time-code";
+        input.maxLength = 64;
+        input.required = !challenge.passkey_enabled;
+        const hint = document.createElement("small");
+        hint.textContent = words.stepUpCodeHint || "";
+        label.append(input, hint);
+        form.append(label);
+      } else if (challenge.method === "password") {
+        const label = document.createElement("label");
+        label.append(document.createTextNode(words.stepUpPassword || "Current password"));
+        input = document.createElement("input");
+        input.name = "current_password";
+        input.type = "password";
+        input.autocomplete = "current-password";
+        input.required = true;
+        label.append(input);
+        form.append(label);
+      }
+
+      const footer = document.createElement("footer");
+      const cancel = document.createElement("button");
+      cancel.className = "button button--quiet";
+      cancel.type = "button";
+      cancel.textContent = words.confirmCancel || "Cancel";
+      footer.append(cancel);
+      let submit = null;
+      if (challenge.method === "password" || challenge.mfa_enabled) {
+        submit = document.createElement("button");
+        submit.className = "button button--primary";
+        submit.type = "submit";
+        submit.textContent = words.stepUpContinue || "Verify and continue";
+        footer.append(submit);
+      }
+      let passkey = null;
+      if (challenge.method === "second_factor" && challenge.passkey_enabled) {
+        passkey = document.createElement("button");
+        passkey.className = challenge.mfa_enabled ? "button" : "button button--primary";
+        passkey.type = "button";
+        passkey.innerHTML = '<span data-lucide="key-round" aria-hidden="true"></span>';
+        passkey.append(document.createTextNode(words.stepUpUsePasskey || "Use passkey"));
+        footer.append(passkey);
+      }
+      form.append(footer);
+      sheet.append(header, form);
+      dialog.append(sheet);
+      document.body.append(dialog);
+      window.ScriptBoardRenderIcons?.(dialog);
+
+      const setBusy = busy => {
+        form.setAttribute("aria-busy", String(busy));
+        if (submit) submit.disabled = busy;
+        if (passkey) passkey.disabled = busy;
+        close.disabled = busy;
+        cancel.disabled = busy;
+      };
+      const verify = async values => {
+        setBusy(true);
+        error.hidden = true;
+        const body = new URLSearchParams({ csrf_token: challenge.csrf_token || "", ...values });
+        try {
+          const response = await fetch("/auth/step-up", {
+            method: "POST", body, credentials: "same-origin",
+            headers: { "Accept": "application/json", "X-ScriptBoard-Step-Up": "dialog" },
+          });
+          if (response.ok) { closeInlineStepUp(true); return true; }
+          let payload = null;
+          try { payload = await response.json(); } catch { /* use localized fallback */ }
+          error.textContent = payload?.error || words.stepUpUnavailable;
+          error.hidden = false;
+          error.focus();
+        } catch {
+          error.textContent = words.stepUpUnavailable;
+          error.hidden = false;
+          error.focus();
+        } finally {
+          if (activeInlineStepUp) setBusy(false);
+        }
+        return false;
+      };
+
+      form.addEventListener("submit", event => {
+        event.preventDefault();
+        if (!form.reportValidity()) return;
+        verify(challenge.method === "password" ? { current_password: input?.value || "" } : { mfa_code: input?.value || "" });
+      });
+      passkey?.addEventListener("click", async () => {
+        if (!window.PublicKeyCredential) {
+          error.textContent = words.stepUpUnavailable;
+          error.hidden = false;
+          return;
+        }
+        setBusy(true);
+        error.hidden = true;
+        try {
+          const optionsResponse = await fetch("/auth/passkey/step-up/options", {
+            method: "POST", credentials: "same-origin", headers: { "X-CSRF-Token": challenge.csrf_token || "" },
+          });
+          if (!optionsResponse.ok) throw new Error(await optionsResponse.text());
+          const options = await optionsResponse.json();
+          const credential = await navigator.credentials.get({ publicKey: decodePublicKey(options.options) });
+          await verify({ passkey_ceremony: options.ceremony_id, passkey_response: JSON.stringify(credentialJSON(credential)) });
+        } catch (passkeyError) {
+          error.textContent = messageFor(passkeyError);
+          error.hidden = false;
+          if (activeInlineStepUp) setBusy(false);
+        }
+      });
+      close.addEventListener("click", () => closeInlineStepUp(false));
+      cancel.addEventListener("click", () => closeInlineStepUp(false));
+      dialog.addEventListener("cancel", event => { event.preventDefault(); closeInlineStepUp(false); });
+      dialog.addEventListener("click", event => { if (event.target === dialog) closeInlineStepUp(false); });
+      activeInlineStepUp = { dialog, resolve, returnFocus };
+      dialog.showModal();
+      (input || passkey || close).focus();
+    });
+  };
+
   const messageFor = (error) => error?.name === "NotAllowedError"
     ? (document.documentElement.lang === "zh-CN" ? "认证器未确认操作或请求已取消。" : "The authenticator did not confirm the operation or the request was cancelled.")
     : (error?.message || (document.documentElement.lang === "zh-CN" ? "通行密钥操作失败。" : "The passkey operation failed."));
@@ -8112,17 +8321,18 @@ document.addEventListener("input", function (event) {
     if (errorBox) errorBox.hidden = true;
     try {
       const headers = { "X-CSRF-Token": root.dataset.csrf, "Content-Type": "application/json" };
-      const optionResponse = await fetch(root.dataset.optionsUrl, { method: "POST", credentials: "same-origin", headers });
+	  const optionResponse = await window.ScriptBoardFetchWithStepUp(root.dataset.optionsUrl, { method: "POST", credentials: "same-origin", headers }, registerButton);
       if (!optionResponse.ok) throw new Error(await optionResponse.text());
       const challenge = await optionResponse.json();
       const credential = await navigator.credentials.create({ publicKey: decodePublicKey(challenge.options) });
-      const finishResponse = await fetch(root.dataset.finishUrl, {
+	  const finishResponse = await window.ScriptBoardFetchWithStepUp(root.dataset.finishUrl, {
         method: "POST", credentials: "same-origin", headers,
         body: JSON.stringify({ ceremony_id: challenge.ceremony_id, name: root.querySelector('[name="passkey_name"]')?.value || "Passkey", credential: credentialJSON(credential) })
-      });
+	  }, registerButton);
       if (!finishResponse.ok) throw new Error(await finishResponse.text());
       location.assign("/login");
     } catch (error) {
+	  if (window.ScriptBoardStepUpCancelled?.(error)) return;
       if (errorBox) {
         errorBox.hidden = false;
         errorBox.textContent = messageFor(error);

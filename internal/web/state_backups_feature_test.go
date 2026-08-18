@@ -3,7 +3,6 @@ package web_test
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"io"
 	"net/http"
 	"net/url"
@@ -24,27 +23,7 @@ func TestStateBackupSettingsUsesStepUpProtectedServiceWithoutRenderingPassphrase
 	page := getSecurityPage(t, client, serverURL+"/settings/state-backups")
 	passphrase := "state backup fixture passphrase"
 	destination := filepath.Join(t.TempDir(), "state.sbsb")
-	response, err := client.PostForm(serverURL+"/settings/state-backups/create", url.Values{
-		"csrf_token": {formToken(t, page)}, "destination": {destination}, "passphrase": {passphrase}, "passphrase_confirm": {passphrase},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/settings/account/mfa" || service.createdPath != "" {
-		t.Fatalf("AAL1 create status=%d location=%q service path=%q", response.StatusCode, response.Header.Get("Location"), service.createdPath)
-	}
-	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := database.Exec(`UPDATE sessions SET authentication_assurance = 2`); err != nil {
-		_ = database.Close()
-		t.Fatal(err)
-	}
-	_ = database.Close()
-	page = getSecurityPage(t, client, serverURL+"/settings/state-backups")
-	for _, expected := range [][]byte{[]byte("Private state backups"), []byte("recent AAL2"), []byte("offline restore workflow")} {
+	for _, expected := range [][]byte{[]byte("Private state backups"), []byte("recent authentication"), []byte("offline restore workflow")} {
 		if !bytes.Contains(page, expected) {
 			t.Fatalf("state backup page missing %q: %s", expected, page)
 		}

@@ -768,7 +768,7 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 	}
 	scriptDigest := fmt.Sprintf("%x", sha256.Sum256([]byte(scriptContent)))
 	if _, err := database.Exec(`INSERT INTO quick_runs(id, name, script_path, script_path_key, arguments_template, timeout_seconds, sort_order, created_at, locked, script_sha256, revision, updated_at)
-		VALUES ('external-quick', 'External quick run', ?, ?, '', 30, 1, 1, 1, ?, 1, 1)`, scriptPath, hostfiles.ComparisonKey(scriptPath), scriptDigest); err != nil {
+		VALUES ('external-quick', 'External quick run', ?, ?, '', 30, 1, 1, 0, ?, 1, 1)`, scriptPath, hostfiles.ComparisonKey(scriptPath), scriptDigest); err != nil {
 		t.Fatal(err)
 	}
 

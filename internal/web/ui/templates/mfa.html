@@ -16,7 +16,7 @@
     {{else if .Enrollment}}
       <section class="mfa-stage"><header><span class="mfa-stage__number">1</span><div><h2>{{t .Locale "mfa.add_authenticator"}}</h2><p>{{t .Locale "mfa.add_authenticator_hint"}}</p></div></header>
       <div class="mfa-enrollment-setup">
-        <figure class="mfa-qr-code"><img data-mfa-qr src="data:image/png;base64,{{.QRCodeBase64}}" width="256" height="256" alt="{{t .Locale "mfa.qr_alt"}}"><figcaption>{{t .Locale "mfa.scan_qr"}}</figcaption></figure>
+		<figure class="mfa-qr-code">{{.QRCode}}<figcaption>{{t .Locale "mfa.scan_qr"}}</figcaption></figure>
         <div class="mfa-credential-list"><div class="field-readonly"><span>{{t .Locale "mfa.secret"}}</span><code data-mfa-secret>{{.Enrollment.Secret}}</code></div>
         <details><summary>{{t .Locale "mfa.show_uri"}}</summary><div class="field-readonly"><span>{{t .Locale "mfa.uri"}}</span><code>{{.Enrollment.URI}}</code></div></details></div>
       </div></section>

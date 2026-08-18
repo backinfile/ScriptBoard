@@ -1,11 +1,7 @@
 package web_test
 
 import (
-	"bytes"
 	"database/sql"
-	"encoding/base64"
-	"html"
-	"image/png"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -63,27 +59,15 @@ func TestTOTPEnrollmentRequiresSecondFactorForLoginAndStepUp(t *testing.T) {
 	if enrollmentResponse.StatusCode != http.StatusOK {
 		t.Fatalf("enrollment status=%d body=%s", enrollmentResponse.StatusCode, enrollmentPage)
 	}
-	if policy := enrollmentResponse.Header.Get("Content-Security-Policy"); !strings.Contains(policy, "img-src 'self' data:") {
-		t.Fatalf("enrollment CSP does not allow the embedded QR image: %q", policy)
+	if policy := enrollmentResponse.Header.Get("Content-Security-Policy"); strings.Contains(policy, "data:") {
+		t.Fatalf("enrollment CSP unexpectedly allows data images: %q", policy)
 	}
 	secretMatch := regexp.MustCompile(`data-mfa-secret>([A-Z2-7]+)</code>`).FindSubmatch(enrollmentPage)
 	if len(secretMatch) != 2 {
 		t.Fatalf("enrollment secret missing: %s", enrollmentPage)
 	}
-	qrMatch := regexp.MustCompile(`data-mfa-qr[^>]+src="data:image/png;base64,([A-Za-z0-9+/=]+)"`).FindStringSubmatch(html.UnescapeString(string(enrollmentPage)))
-	if len(qrMatch) != 2 {
-		t.Fatalf("enrollment QR code missing: %s", enrollmentPage)
-	}
-	qrPNG, err := base64.StdEncoding.DecodeString(qrMatch[1])
-	if err != nil {
-		t.Fatalf("decode enrollment QR code: %v", err)
-	}
-	qrImage, err := png.Decode(bytes.NewReader(qrPNG))
-	if err != nil {
-		t.Fatalf("decode enrollment QR PNG: %v", err)
-	}
-	if bounds := qrImage.Bounds(); bounds.Dx() != 256 || bounds.Dy() != 256 {
-		t.Fatalf("enrollment QR dimensions=%v, want 256x256", bounds)
+	if !strings.Contains(string(enrollmentPage), `<svg data-mfa-qr`) || strings.Contains(string(enrollmentPage), `data:image/`) {
+		t.Fatalf("enrollment QR code is not an inline same-document SVG: %s", enrollmentPage)
 	}
 	code, err := mfa.TOTPCode(string(secretMatch[1]), time.Now().UTC())
 	if err != nil {
@@ -149,6 +133,20 @@ func TestTOTPEnrollmentRequiresSecondFactorForLoginAndStepUp(t *testing.T) {
 	if _, err := database.Exec(`UPDATE sessions SET reauthenticated_at = 0`); err != nil {
 		t.Fatal(err)
 	}
+	namePage := getBody(t, client, server.URL+"/settings/name", http.StatusOK)
+	inlineForm := url.Values{"csrf_token": {formToken(t, namePage)}, "display_name": {"Must not change"}}
+	inlineRequest, _ := http.NewRequest(http.MethodPost, server.URL+"/settings/name", strings.NewReader(inlineForm.Encode()))
+	inlineRequest.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	inlineRequest.Header.Set("X-ScriptBoard-Step-Up", "dialog")
+	inlineResponse, err := client.Do(inlineRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inlineBody, _ := io.ReadAll(inlineResponse.Body)
+	_ = inlineResponse.Body.Close()
+	if inlineResponse.StatusCode != http.StatusPreconditionRequired || !strings.Contains(string(inlineBody), `"method":"second_factor"`) {
+		t.Fatalf("configured MFA inline challenge status=%d body=%s", inlineResponse.StatusCode, inlineBody)
+	}
 	blocked, err := client.PostForm(server.URL+"/config/external-interfaces/control", url.Values{"csrf_token": {"invalid"}, "enabled": {"0"}})
 	if err != nil {
 		t.Fatal(err)
@@ -159,7 +157,6 @@ func TestTOTPEnrollmentRequiresSecondFactorForLoginAndStepUp(t *testing.T) {
 	}
 	stepPage := getBody(t, client, server.URL+blocked.Header.Get("Location"), http.StatusOK)
 	if !strings.Contains(string(stepPage), `name="mfa_code"`) ||
-		!strings.Contains(string(stepPage), `name="verification_mode" value="second-factor"`) ||
 		strings.Contains(string(stepPage), `name="current_password"`) {
 		t.Fatalf("second-factor-only verification form is invalid: %s", stepPage)
 	}
