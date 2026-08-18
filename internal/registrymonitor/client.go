@@ -440,7 +440,7 @@ func (client *Client) exchangeToken(ctx context.Context, challenge string, confi
 	if config.AuthMode == "basic" || config.Username != "" {
 		request.SetBasicAuth(config.Username, config.Password)
 	}
-	response, err := client.client.Do(request)
+	response, err := client.doRegistryRequest(request)
 	if err != nil {
 		return "", err
 	}
@@ -477,7 +477,7 @@ func (client *Client) harborPushTime(ctx context.Context, config Config, image, 
 	if config.AuthMode == "basic" || config.Username != "" {
 		request.SetBasicAuth(config.Username, config.Password)
 	}
-	response, err := client.client.Do(request)
+	response, err := client.doRegistryRequest(request)
 	if err != nil {
 		return time.Time{}, false
 	}
