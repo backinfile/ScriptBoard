@@ -27,6 +27,7 @@ import (
 	"scriptboard/internal/privatepath"
 	"scriptboard/internal/runmanager"
 	"scriptboard/internal/uploadinbox"
+	"scriptboard/internal/variables"
 	"scriptboard/internal/websitemonitor"
 )
 
@@ -1479,7 +1480,16 @@ func (a *App) executeExternalVariable(response http.ResponseWriter, request *htt
 	if err != nil {
 		return externalFailure(http.StatusBadRequest, "invalid_value")
 	}
-	result, err := a.db.ExecContext(request.Context(), "UPDATE variables SET value = ?, updated_at = ? WHERE name = ? AND is_password = 0", value, time.Now().UTC().Unix(), config.VariableName)
+	var valueType variables.Kind
+	var isPassword bool
+	if err := a.db.QueryRowContext(request.Context(), "SELECT value_type, is_password FROM variables WHERE name = ?", config.VariableName).Scan(&valueType, &isPassword); err != nil || isPassword {
+		return externalFailure(http.StatusConflict, "target_unavailable")
+	}
+	value, err = variables.Parse(valueType, value)
+	if err != nil {
+		return externalFailure(http.StatusBadRequest, "invalid_value")
+	}
+	result, err := a.db.ExecContext(request.Context(), "UPDATE variables SET value = ?, updated_at = ? WHERE name = ? AND is_password = 0 AND value_type = ?", value, time.Now().UTC().Unix(), config.VariableName, valueType)
 	if err != nil {
 		return externalFailure(http.StatusInternalServerError, "action_failed")
 	}

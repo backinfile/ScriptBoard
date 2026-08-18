@@ -56,6 +56,17 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 			}
 		}
 	}
+	if schemaVersion >= 20 && schemaVersion <= 48 {
+		exists, err := storesqlite.ColumnExists(migration, "variables", "value_type")
+		if err != nil {
+			return fmt.Errorf("inspect Variable type migration: %w", err)
+		}
+		if !exists {
+			if _, err := migration.Exec(`ALTER TABLE variables ADD COLUMN value_type TEXT NOT NULL DEFAULT 'text' CHECK (value_type IN ('text', 'bool', 'integer', 'float', 'version'))`); err != nil {
+				return fmt.Errorf("add Variable value type: %w", err)
+			}
+		}
+	}
 	if err := migrateKubernetesConnections(migration); err != nil {
 		return err
 	}

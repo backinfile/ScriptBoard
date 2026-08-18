@@ -21,6 +21,7 @@
           </button>
           <span class="sr-only" role="status" aria-live="polite" data-copy-status></span>
         </div>
+        <small data-variable-type="{{.ValueType}}">{{t $.Locale (printf "variables.type.%s" .ValueType)}}</small>
         {{if .IsPassword}}<small>{{t $.Locale "variables.password_type"}}</small>{{end}}
       </div></div></td>
       <td data-label="{{t $.Locale "common.value"}}">{{if .IsPassword}}

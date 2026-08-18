@@ -18,6 +18,7 @@ ScriptBoard 是一款面向单台 Windows 或 Linux 主机的自托管脚本操�
 - 浏览、搜索、上传、下载、预览和编辑主机文件；
 - 运行 PowerShell、Python、Shell、Batch 和 CMD 脚本，实时查看输出；
 - 将常用脚本保存为快捷执行，复用参数与变量，并快速查看最近执行结果；
+- 变量可选择文本、布尔值、整数、浮点数或 `x.y.z` 版本号格式，所有类型在运行时仍安全地作为单个字符串参数展开；
 - 使用五字段 Cron 创建计划任务；
 - 通过受限外部接口接收日志、文件上传、快捷执行和约束变量修改；
 - 审查远程登录活动，并管理 Windows Defender 防火墙或 Linux UFW 与 Fail2Ban；
@@ -289,7 +290,7 @@ scriptboard backup recover-host --archive ABSOLUTE_BACKUP_PATH --passphrase-file
 目录，且拒绝覆盖任何已有外部信任材料；它使用单独口令认证 recovery 材料、重新封装主密钥、验证备份
 内 checkpoint 与恢复出的审计链，撤销全部 Web Session，再记录 `state_backup.recover_host` 并推进新主机 checkpoint。
 
-从旧版本升级前请先备份。当前版本使用数据库 schema 48，可自动迁移 schema 20–47；更早版本的数据库和旧式配置不会自动迁移。schema 45 增加 Registry 连接跨进程操作日志，schema 46 增加崩溃安全的完成阶段，schema 47 为外部接口分组拆分显示名称与 URL 调用名，schema 48 将单个 Kubernetes 连接及其历史迁移为可独立监控的多连接结构。schema 40 会记录会话认证保证级别和最近再次认证时间；新登录视为最近认证，高风险操作在 10 分钟后要求于受保护的浏览器会话中重新输入当前密码。schema 41 为审计事件增加服务端 Request ID 与认证保证字段，并把新字段纳入兼容旧事件的 v2 哈希。schema 42 为 Administrator/Maintainer 记录 MFA 注册截止时间；到期未注册 TOTP 或 passkey 的账户只能进入 MFA 设置与登出路径。旧实例获得七天注册窗口，首次管理员与新 Maintainer 获得 24 小时窗口。旧快捷执行项会以未发布状态迁移，在管理员重新保存前不能启动或绑定外部入口。旧版本中共享一个 Key 的多个外部功能会拆成独立 Key：保留最早功能的原 Key，其余功能迁移到默认停用、必须轮换并显式启用 Key 与功能后才能使用的新 Key。为保持兼容，迁移后的外部功能不会自动要求 HMAC；管理员可在编辑页启用，新建功能默认启用。外部接口页面提供持久化全局紧急开关；暂停后所有有效外部调用以低信息 503 响应拒绝且不会执行操作。审计记录形成带保留锚点与链尾的 SHA-256 哈希链，并由 State Root 外 Ed25519 checkpoint 锚定；服务启动时会 fail closed 验证，正常关闭及每五分钟刷新。面板不可用时可运行 `scriptboard audit verify --config CONFIG_PATH`，离线检查中间记录修改、删除、截断，以及链尾和同库状态一起回退；取证导出也执行相同验证。此 checkpoint 仍是主机本地边界，不替代远端不可变日志。
+从旧版本升级前请先备份。当前版本使用数据库 schema 49，可自动迁移 schema 20–48；更早版本的数据库和旧式配置不会自动迁移。schema 45 增加 Registry 连接跨进程操作日志，schema 46 增加崩溃安全的完成阶段，schema 47 为外部接口分组拆分显示名称与 URL 调用名，schema 48 将单个 Kubernetes 连接及其历史迁移为可独立监控的多连接结构，schema 49 为变量增加值类型并将旧变量迁移为 `text`。schema 40 会记录会话认证保证级别和最近再次认证时间；新登录视为最近认证，高风险操作在 10 分钟后要求于受保护的浏览器会话中重新输入当前密码。schema 41 为审计事件增加服务端 Request ID 与认证保证字段，并把新字段纳入兼容旧事件的 v2 哈希。schema 42 为 Administrator/Maintainer 记录 MFA 注册截止时间；到期未注册 TOTP 或 passkey 的账户只能进入 MFA 设置与登出路径。旧实例获得七天注册窗口，首次管理员与新 Maintainer 获得 24 小时窗口。旧快捷执行项会以未发布状态迁移，在管理员重新保存前不能启动或绑定外部入口。旧版本中共享一个 Key 的多个外部功能会拆成独立 Key：保留最早功能的原 Key，其余功能迁移到默认停用、必须轮换并显式启用 Key 与功能后才能使用的新 Key。为保持兼容，迁移后的外部功能不会自动要求 HMAC；管理员可在编辑页启用，新建功能默认启用。外部接口页面提供持久化全局紧急开关；暂停后所有有效外部调用以低信息 503 响应拒绝且不会执行操作。审计记录形成带保留锚点与链尾的 SHA-256 哈希链，并由 State Root 外 Ed25519 checkpoint 锚定；服务启动时会 fail closed 验证，正常关闭及每五分钟刷新。面板不可用时可运行 `scriptboard audit verify --config CONFIG_PATH`，离线检查中间记录修改、删除、截断，以及链尾和同库状态一起回退；取证导出也执行相同验证。此 checkpoint 仍是主机本地边界，不替代远端不可变日志。
 
 面板不可用或疑似遭入侵时，可在主机本地使用带外应急命令。写操作要求重复输入固定确认值或完整 Key ID，并作为 `local-administrator` 原子写入审计链；取证导出先验证审计链，只创建新文件且不会覆盖已有证据：
 

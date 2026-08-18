@@ -99,7 +99,9 @@ Pin 是展示状态，不赋予应用控制能力。Docker Pin 的 `identity` �
 |---|---|
 | id | UUID |
 | name | 唯一；`[A-Z][A-Z0-9_]{0,63}` |
-| value | 普通明文；最大 4 KiB；允许空 |
+| value | 普通明文；最大 4 KiB；按 `value_type` 校验格式 |
+| value_type | `text`、`bool`、`integer`、`float` 或严格 `x.y.z` 的 `version`；不保存业务范围约束 |
+| is_password | 仅控制变量页面默认遮罩，不改变明文存储或解析 |
 | created_at / updated_at | UTC |
 
 删除前必须检查 QuickRun 和 Schedule 引用；重命名在同一事务更新活动引用。
