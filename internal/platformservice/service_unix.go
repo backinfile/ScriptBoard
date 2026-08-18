@@ -222,7 +222,7 @@ RemoveOnStop=true
 
 [Install]
 WantedBy=sockets.target
-`, systemdQuote(aiEndpoint))
+	`, systemdSocketAddress(aiEndpoint))
 	runnerUser, runnerGroup := linuxRunnerServiceAccount(runnerIdentityMode)
 	runnerPolicy := linuxRunnerServicePolicy(runnerIdentityMode)
 	runnerUnit := fmt.Sprintf(`[Unit]
@@ -252,7 +252,7 @@ RemoveOnStop=true
 
 [Install]
 WantedBy=sockets.target
-`, systemdQuote(runnerEndpoint))
+	`, systemdSocketAddress(runnerEndpoint))
 	updaterUnit := fmt.Sprintf(`[Unit]
 Description=ScriptBoard update operation %%i
 After=network.target
@@ -329,6 +329,9 @@ func prepareLinuxWebServiceIdentity(configPath, stateRoot string, webReadPaths .
 	if err != nil {
 		return fmt.Errorf("parse Linux Web service UID: %w", err)
 	}
+	if err := prepareLinuxStateParent(stateRoot); err != nil {
+		return err
+	}
 	gid, err := strconv.Atoi(account.Gid)
 	if err != nil {
 		return fmt.Errorf("parse Linux Web service GID: %w", err)
@@ -382,6 +385,30 @@ func prepareLinuxWebServiceIdentity(configPath, stateRoot string, webReadPaths .
 		if err := os.Chmod(path, 0o600); err != nil {
 			return fmt.Errorf("protect Linux Web startup file %s: %w", path, err)
 		}
+	}
+	return nil
+}
+
+// systemd socket address directives parse their value as a socket address,
+// not as an ExecStart command line. Quotation marks are therefore data and
+// make an otherwise valid AF_UNIX path fail unit validation.
+func systemdSocketAddress(endpoint string) string { return endpoint }
+
+func prepareLinuxStateParent(stateRoot string) error {
+	parent := filepath.Dir(filepath.Clean(stateRoot))
+	if parent == string(filepath.Separator) {
+		return nil
+	}
+	info, err := os.Stat(parent)
+	if err != nil {
+		return fmt.Errorf("inspect Linux State Root parent: %w", err)
+	}
+	if !info.IsDir() {
+		return errors.New("Linux State Root parent is not a directory")
+	}
+	mode := info.Mode() | 0o111
+	if err := os.Chmod(parent, mode); err != nil {
+		return fmt.Errorf("allow managed service identities to traverse Linux State Root parent: %w", err)
 	}
 	return nil
 }

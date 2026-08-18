@@ -104,7 +104,12 @@ func RunBroker(ctx context.Context, arguments []string, getenv func(string) stri
 			return fmt.Errorf("start Broker-owned email notifications: %w", err)
 		}
 	}
-	vault, err := secretstore.New(absolute)
+	var vault *secretstore.Store
+	if strings.TrimSpace(*allowedIdentity) != "" {
+		vault, err = secretstore.OpenForIdentity(absolute, strings.TrimSpace(*allowedIdentity))
+	} else {
+		vault, err = secretstore.New(absolute)
+	}
 	if err != nil {
 		return err
 	}

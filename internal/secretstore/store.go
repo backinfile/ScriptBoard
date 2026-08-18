@@ -50,11 +50,25 @@ func New(stateRoot string) (*Store, error) {
 // Open loads an existing host key without creating directories or key
 // material. Read-only verification commands use it to avoid mutating evidence.
 func Open(stateRoot string) (*Store, error) {
+	return openWithKeyReader(stateRoot, readWrappedKey)
+}
+
+// OpenForIdentity loads an existing host key whose Unix owner is the named
+// service identity. The privileged Broker uses this to share the Web-owned
+// credential key without weakening the owner-only permission check. Windows
+// keeps using the host ACL validation performed by Open.
+func OpenForIdentity(stateRoot, identity string) (*Store, error) {
+	return openWithKeyReader(stateRoot, func(path string) ([]byte, error) {
+		return readWrappedKeyForIdentity(path, identity)
+	})
+}
+
+func openWithKeyReader(stateRoot string, readKey func(string) ([]byte, error)) (*Store, error) {
 	keyPath, err := KeyPathForStateRoot(stateRoot)
 	if err != nil {
 		return nil, err
 	}
-	body, err := readWrappedKey(keyPath)
+	body, err := readKey(keyPath)
 	if err != nil {
 		return nil, fmt.Errorf("read external credential key: %w", err)
 	}

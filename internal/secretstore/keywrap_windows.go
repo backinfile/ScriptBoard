@@ -41,6 +41,13 @@ func validateKeyPath(path string) error {
 	return nil
 }
 
+func readWrappedKeyForIdentity(path, _ string) ([]byte, error) {
+	if err := validateKeyPath(path); err != nil {
+		return nil, err
+	}
+	return os.ReadFile(path)
+}
+
 func unwrapKey(body []byte) ([]byte, error) {
 	return cryptDPAPI(body, false)
 }

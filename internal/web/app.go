@@ -1799,17 +1799,24 @@ func (w *pageResponseWriter) Write(value []byte) (int, error) {
 	return w.ResponseWriter.Write(value)
 }
 
+func (w *pageResponseWriter) bufferedBody() []byte {
+	body := w.body.Bytes()
+	preserveAuthenticatedChallenge := w.Header().Get(inlineStepUpResponseBodyPolicy) == inlineStepUpChallengePolicy
+	w.Header().Del(inlineStepUpResponseBodyPolicy)
+	if w.status >= 400 && !preserveAuthenticatedChallenge {
+		body = secretredaction.Bytes(body)
+	}
+	return body
+}
+
 func (w *pageResponseWriter) Flush() {
 	if !w.committed {
 		w.WriteHeader(http.StatusOK)
 	}
 	if w.buffering {
 		w.Header().Del("Content-Length")
+		body := w.bufferedBody()
 		w.ResponseWriter.WriteHeader(w.status)
-		body := w.body.Bytes()
-		if w.status >= 400 {
-			body = secretredaction.Bytes(body)
-		}
 		_, _ = w.ResponseWriter.Write(body)
 		w.body.Reset()
 		w.buffering = false
@@ -1827,10 +1834,7 @@ func (w *pageResponseWriter) finish(a *App, request *http.Request) {
 	if !w.buffering {
 		return
 	}
-	body := w.body.Bytes()
-	if w.status >= 400 {
-		body = secretredaction.Bytes(body)
-	}
+	body := w.bufferedBody()
 	if w.status >= 400 && strings.HasPrefix(w.Header().Get("Content-Type"), "text/plain") {
 		body = renderApplicationError(request, w.status, strings.TrimSpace(string(body)))
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

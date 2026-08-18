@@ -10,7 +10,11 @@ import (
 	"scriptboard/internal/identity"
 )
 
-const inlineStepUpHeader = "X-ScriptBoard-Step-Up"
+const (
+	inlineStepUpHeader             = "X-ScriptBoard-Step-Up"
+	inlineStepUpResponseBodyPolicy = "X-ScriptBoard-Internal-Response-Body-Policy"
+	inlineStepUpChallengePolicy    = "authenticated-step-up-challenge"
+)
 
 type stepUpChallenge struct {
 	Method         string `json:"method"`
@@ -65,6 +69,7 @@ func (a *App) requireRecentAuthentication(required identity.Permission, next htt
 			if request.Header.Get(inlineStepUpHeader) == "dialog" {
 				response.Header().Set("Cache-Control", "no-store")
 				response.Header().Set("Content-Type", "application/json; charset=utf-8")
+				response.Header().Set(inlineStepUpResponseBodyPolicy, inlineStepUpChallengePolicy)
 				response.WriteHeader(http.StatusPreconditionRequired)
 				_ = json.NewEncoder(response).Encode(challenge)
 				return

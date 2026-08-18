@@ -40,7 +40,8 @@ func TestExpiredRecentAuthenticationOffersInlinePasswordChallenge(t *testing.T) 
 	}
 
 	page := getBody(t, client, server.URL+"/settings/name", http.StatusOK)
-	form := url.Values{"csrf_token": {formToken(t, page)}, "display_name": {"Inline challenge"}}
+	csrfToken := formToken(t, page)
+	form := url.Values{"csrf_token": {csrfToken}, "display_name": {"Inline challenge"}}
 	request, _ := http.NewRequest(http.MethodPost, server.URL+"/settings/name", strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("X-ScriptBoard-Step-Up", "dialog")
@@ -52,14 +53,21 @@ func TestExpiredRecentAuthenticationOffersInlinePasswordChallenge(t *testing.T) 
 	if response.StatusCode != http.StatusPreconditionRequired {
 		t.Fatalf("inline challenge status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
+	if leaked := response.Header.Get("X-ScriptBoard-Internal-Response-Body-Policy"); leaked != "" {
+		t.Fatalf("inline challenge leaked internal response policy %q", leaked)
+	}
 	var challenge struct {
-		Method string `json:"method"`
+		Method    string `json:"method"`
+		CSRFToken string `json:"csrf_token"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&challenge); err != nil {
 		t.Fatal(err)
 	}
 	if challenge.Method != "password" {
 		t.Fatalf("inline challenge method=%q", challenge.Method)
+	}
+	if challenge.CSRFToken != csrfToken {
+		t.Fatalf("inline challenge csrf_token=%q, want current session token", challenge.CSRFToken)
 	}
 	var displayName string
 	if err := database.QueryRow(`SELECT display_name FROM instance_settings WHERE singleton = 1`).Scan(&displayName); err != sql.ErrNoRows {

@@ -4,6 +4,7 @@ package platformservice
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -100,5 +101,33 @@ func TestLinuxWebStartupSecretsAreNotSharedWithRunnerGroup(t *testing.T) {
 	}
 	if strings.Contains(text, "assign Linux Web startup file group") {
 		t.Fatal("Linux Web startup files are still shared through the Web group used by Runner")
+	}
+}
+
+func TestSystemdSocketAddressIsNotShellQuoted(t *testing.T) {
+	endpoint := "/run/scriptboard-ai/runtime-test.sock"
+	if got := systemdSocketAddress(endpoint); got != endpoint {
+		t.Fatalf("systemd socket address = %q, want %q", got, endpoint)
+	}
+}
+
+func TestLinuxStateParentAllowsServiceIdentityTraversal(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "scriptboard")
+	stateRoot := filepath.Join(parent, "state")
+	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareLinuxStateParent(stateRoot); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o711 {
+		t.Fatalf("state parent mode = %#o, want 0711", got)
 	}
 }

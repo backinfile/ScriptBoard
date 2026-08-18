@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"syscall"
 )
 
@@ -25,6 +27,22 @@ func unwrapKey(body []byte) ([]byte, error) {
 }
 
 func validateKeyPath(path string) error {
+	return validateKeyPathOwner(path, os.Geteuid())
+}
+
+func validateKeyPathForIdentity(path, identity string) error {
+	account, err := user.Lookup(identity)
+	if err != nil {
+		return fmt.Errorf("resolve credential key service identity %q: %w", identity, err)
+	}
+	uid, err := strconv.Atoi(account.Uid)
+	if err != nil {
+		return fmt.Errorf("parse credential key service identity UID: %w", err)
+	}
+	return validateKeyPathOwner(path, uid)
+}
+
+func validateKeyPathOwner(path string, expectedUID int) error {
 	for _, candidate := range []struct {
 		path      string
 		directory bool
@@ -40,9 +58,16 @@ func validateKeyPath(path string) error {
 			return fmt.Errorf("credential master path %s grants group or other permissions", candidate.path)
 		}
 		stat, ok := info.Sys().(*syscall.Stat_t)
-		if !ok || int(stat.Uid) != os.Geteuid() {
+		if !ok || int(stat.Uid) != expectedUID {
 			return fmt.Errorf("credential master path %s is not owned by the service identity", candidate.path)
 		}
 	}
 	return nil
+}
+
+func readWrappedKeyForIdentity(path, identity string) ([]byte, error) {
+	if err := validateKeyPathForIdentity(path, identity); err != nil {
+		return nil, err
+	}
+	return os.ReadFile(path)
 }
