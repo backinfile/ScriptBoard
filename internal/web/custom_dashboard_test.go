@@ -750,6 +750,9 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	if !strings.Contains(failedRendered, `custom-dashboard-card__status-badge`) || !strings.Contains(failedRendered, `>Error</span>`) || !strings.Contains(failedRendered, `stroke-dasharray="63.24 100"`) || !strings.Contains(failedRendered, `custom-dashboard-card__quota-value">63.24`) || !strings.Contains(failedRendered, `custom-dashboard-card__retained`) {
 		t.Fatalf("failed card did not retain its last successful value with a generic status: %s", failedRendered)
 	}
+	if !strings.Contains(failedRendered, `custom-dashboard-card__refresh-time`) || !strings.Contains(failedRendered, `Refreshed `) {
+		t.Fatalf("card title does not show the last successful refresh time: %s", failedRendered)
+	}
 	if strings.Contains(failedRendered, api.URL) || strings.Contains(failedRendered, "HTTP 503") || strings.Contains(failedRendered, `custom-dashboard-diagnostic`) || strings.Contains(failedRendered, `data-dashboard-drawer`) {
 		t.Fatal("public dashboard exposed private request diagnostics")
 	}

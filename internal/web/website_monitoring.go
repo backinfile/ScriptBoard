@@ -60,22 +60,21 @@ type websiteMonitorCounts struct {
 }
 
 type websiteMonitorListView struct {
-	Monitors      []websiteMonitorPageView
-	Alerts        []websiteMonitorPageView
-	Counts        websiteMonitorCounts
-	Locale        webLocale
-	State         websitemonitor.State
-	Scope         websitemonitor.Scope
-	CSRFToken     string
-	Total         int
-	NeedsCare     int
-	HasFilters    bool
-	HasAny        bool
-	Reorder       bool
-	CanManage     bool
-	DataURL       string
-	RefreshURL    string
-	RemoteSources []websiteMonitorRemoteSourceView
+	Monitors   []websiteMonitorPageView
+	Alerts     []websiteMonitorPageView
+	Counts     websiteMonitorCounts
+	Locale     webLocale
+	State      websitemonitor.State
+	Scope      websitemonitor.Scope
+	CSRFToken  string
+	Total      int
+	NeedsCare  int
+	HasFilters bool
+	HasAny     bool
+	Reorder    bool
+	CanManage  bool
+	DataURL    string
+	RefreshURL string
 }
 
 type websiteMonitorFormView struct {
@@ -193,18 +192,12 @@ func (a *App) websiteMonitorList(response http.ResponseWriter, request *http.Req
 		http.Error(response, webText(locale, "website.error.summarize_monitors")+": "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	remoteSources, err := a.websiteMonitorRemoteSources(request.Context(), locale)
-	if err != nil {
-		http.Error(response, webText(locale, "website.remote.read_failed"), http.StatusInternalServerError)
-		return
-	}
 	current := request.Context().Value(sessionContextKey).(session)
 	view := websiteMonitorListView{
 		Locale: locale, State: state, Scope: scope, CSRFToken: current.csrfToken,
 		Total: len(monitors), HasFilters: state != "" || scope != "",
 		HasAny: len(all) > 0, CanManage: identity.Allows(current.role, identity.PermissionManageOperations),
 		DataURL: "/monitor/websites/data", RefreshURL: request.URL.RequestURI(),
-		RemoteSources: remoteSources,
 	}
 	view.Reorder = view.CanManage && request.URL.Query().Get("reorder") == "1"
 	query := request.URL.Query()

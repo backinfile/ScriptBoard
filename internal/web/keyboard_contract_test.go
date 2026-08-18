@@ -105,15 +105,20 @@ func TestDrawersUseSharedNonBouncingMotionTokens(t *testing.T) {
 	}
 	source := string(stylesheet)
 	for _, expected := range []string{
-		`--drawer-offset: 28px`,
-		`--drawer-enter-transition: 180ms ease-out`,
-		`--drawer-exit-transition: 140ms ease-in`,
-		`--drawer-scrim-transition: 150ms linear`,
+		`--drawer-offset: 10px`,
+		`--drawer-enter-transition: 130ms ease-out`,
+		`--drawer-exit-transition: 100ms ease-in`,
+		`--drawer-scrim-transition: 110ms linear`,
 		`transform: translateX(var(--drawer-offset))`,
 		`:is(.kubernetes-drawer, .container-drawer)[open]`,
 	} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("shared drawer motion is missing %q", expected)
+		}
+	}
+	for _, obsolete := range []string{`transform:translateX(100%)`} {
+		if strings.Contains(source, obsolete) {
+			t.Fatalf("drawer motion still contains the exaggerated rule %q", obsolete)
 		}
 	}
 }

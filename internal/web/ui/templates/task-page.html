@@ -205,6 +205,7 @@
       <label>{{t .Locale "run_detail.quick_name"}} <input name="name" autocomplete="off" value="{{.Name}}" required autofocus></label>
       <label>{{t .Locale "task.arguments"}} <input name="arguments" autocomplete="off" spellcheck="false" value="{{.Arguments}}"></label>
       <label>{{t .Locale "task.timeout_seconds"}} <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}"></label>
+      <label class="check-field"><input type="checkbox" name="sync_external_interfaces" value="1"> <span>{{t .Locale "task.quick_edit.sync_external"}}<small>{{t .Locale "task.quick_edit.sync_external_hint"}}</small></span></label>
       <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "task.save_changes"}}</button></footer>
     </form>
     {{else if eq .Kind "quick-copy"}}

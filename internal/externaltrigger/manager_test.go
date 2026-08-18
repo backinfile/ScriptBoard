@@ -75,30 +75,6 @@ func TestCreateKeyAndResolveEnabledLogEntry(t *testing.T) {
 	}
 }
 
-func TestCreateAndResolveWebsiteMonitorEntry(t *testing.T) {
-	manager, _ := testManager(t, time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC))
-	key, _, err := manager.CreateKey(context.Background(), CreateKeyInput{
-		Label: "Remote dashboard", Enabled: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	entry, secret, err := manager.CreateEntry(context.Background(), CreateEntryInput{
-		KeyID: key.ID, Name: "website-status", Label: "Website monitoring",
-		Type: ActionWebsiteMonitor, Enabled: true, Config: WebsiteMonitorConfig{},
-	})
-	if err != nil {
-		t.Fatalf("create website monitor entry: %v", err)
-	}
-	_, resolved, err := manager.Resolve(context.Background(), secret, entry.Name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resolved.Type != ActionWebsiteMonitor || resolved.Target != "" || resolved.ConfigJSON != "{}" {
-		t.Fatalf("website monitor entry = %#v", resolved)
-	}
-}
-
 func TestGroupSupportsMultipleImmutableEntriesWithoutDeletingKeys(t *testing.T) {
 	manager, _ := testManager(t, time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC))
 	key, _, err := manager.CreateKey(context.Background(), CreateKeyInput{Label: "Single capability", Enabled: true})
@@ -317,33 +293,6 @@ func TestPurgeLegacyKeySecretsKeepsUnrelatedSecrets(t *testing.T) {
 	if secret, err := manager.Secret("remote-website:one"); err != nil || secret != "remote-secret" {
 		t.Fatalf("unrelated secret changed: secret=%q err=%v", secret, err)
 	}
-}
-
-func TestMigrateRemoteWebsiteCredentialsBindsEndpointBeforeRemovingLegacySecret(t *testing.T) {
-	manager, db := testManager(t, time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC))
-	if _, err := db.Exec(`INSERT INTO website_monitor_remote_sources (id, label, endpoint, token_hint, created_at, updated_at) VALUES ('source-one', 'Branch', 'https://example.com/trigger/monitoring/status', 'hint', 1, 1)`); err != nil {
-		t.Fatal(err)
-	}
-	if err := manager.StoreSecret("remote-website:source-one", "remote-secret"); err != nil {
-		t.Fatal(err)
-	}
-	destination := &capturingRemoteWebsiteDestination{}
-	if err := manager.MigrateRemoteWebsiteCredentials(context.Background(), destination); err != nil {
-		t.Fatal(err)
-	}
-	if destination.id != "source-one" || destination.endpoint != "https://example.com/trigger/monitoring/status" || destination.key != "remote-secret" {
-		t.Fatalf("migration binding=%+v", destination)
-	}
-	if _, err := manager.Secret("remote-website:source-one"); !errors.Is(err, ErrSecretUnavailable) {
-		t.Fatalf("legacy secret remained after migration: %v", err)
-	}
-}
-
-type capturingRemoteWebsiteDestination struct{ id, endpoint, key string }
-
-func (destination *capturingRemoteWebsiteDestination) Store(_ context.Context, id, endpoint, key string) error {
-	destination.id, destination.endpoint, destination.key = id, endpoint, key
-	return nil
 }
 
 func TestResolveRejectsExpiredKeyAndDisabledEntry(t *testing.T) {

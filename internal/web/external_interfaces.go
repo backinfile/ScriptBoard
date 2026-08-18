@@ -28,7 +28,6 @@ import (
 	"scriptboard/internal/runmanager"
 	"scriptboard/internal/uploadinbox"
 	"scriptboard/internal/variables"
-	"scriptboard/internal/websitemonitor"
 )
 
 type externalKeyView struct {
@@ -324,8 +323,11 @@ func externalTargetText(locale webLocale, entry externaltrigger.Entry) string {
 		if entry.DecodeConfig(&config) == nil {
 			return config.File
 		}
-	case externaltrigger.ActionWebsiteMonitor:
-		return webText(locale, "external.website_monitor_target")
+	case externaltrigger.ActionQuickRun:
+		var config externaltrigger.QuickRunConfig
+		if entry.DecodeConfig(&config) == nil {
+			return fmt.Sprintf("%s · v%d", entry.Target, config.Revision)
+		}
 	}
 	return entry.Target
 }
@@ -653,7 +655,7 @@ func (a *App) newExternalEntryTask(response http.ResponseWriter, request *http.R
 	}
 	current := request.Context().Value(sessionContextKey).(session)
 	locale := resolveWebLocale(request)
-	quickRuns, variables, err := a.externalTargetOptions(request.Context())
+	quickRuns, variables, err := a.externalTargetOptions(request.Context(), locale)
 	if err != nil {
 		http.Error(response, "Unable to read action targets", http.StatusInternalServerError)
 		return
@@ -697,13 +699,8 @@ func (a *App) externalEntryDetail(response http.ResponseWriter, request *http.Re
 		callBodyKey = "external.call_body.upload"
 	case externaltrigger.ActionVariable:
 		callBodyKey = "external.call_body.variable"
-	case externaltrigger.ActionWebsiteMonitor:
-		callBodyKey = "external.call_body.website_monitor"
 	}
 	callMethod := http.MethodPost
-	if entry.Type == externaltrigger.ActionWebsiteMonitor {
-		callMethod = http.MethodGet
-	}
 	renderExternalInterfaceForm(response, externalInterfaceFormData{
 		Kind: "entry-detail", Title: entry.Label, Description: webText(locale, "external.function_details_description"),
 		BackURL: "/config/external-interfaces", CSRFToken: current.csrfToken, Locale: locale, Group: group, Key: key, Entry: entry, EntryEnabled: entry.Enabled, RequireSignature: entry.RequireSignature,
@@ -713,6 +710,7 @@ func (a *App) externalEntryDetail(response http.ResponseWriter, request *http.Re
 }
 
 func (a *App) editExternalEntryTask(response http.ResponseWriter, request *http.Request) {
+	locale := resolveWebLocale(request)
 	entry, err := a.externalTriggers.Entry(request.Context(), request.PathValue("id"))
 	if err != nil {
 		http.Error(response, "External Interface entry not found", http.StatusNotFound)
@@ -723,13 +721,13 @@ func (a *App) editExternalEntryTask(response http.ResponseWriter, request *http.
 		http.Error(response, "External Interface group not found", http.StatusNotFound)
 		return
 	}
-	quickRuns, variables, err := a.externalTargetOptions(request.Context())
+	quickRuns, variables, err := a.externalTargetOptions(request.Context(), locale)
 	if err != nil {
 		http.Error(response, "Unable to read action targets", http.StatusInternalServerError)
 		return
 	}
 	data := externalInterfaceFormData{Kind: "entry-edit", BackURL: "/config/external-interfaces", Action: "/config/external-interfaces/entries/" + entry.ID, Group: group, Entry: entry, EntryEnabled: entry.Enabled, RequireSignature: entry.RequireSignature, QuickRuns: quickRuns, Variables: variables}
-	data.Locale = resolveWebLocale(request)
+	data.Locale = locale
 	data.Title, data.Description = webText(data.Locale, "external.edit_function"), webText(data.Locale, "external.edit_function_description")
 	data.CSRFToken = request.Context().Value(sessionContextKey).(session).csrfToken
 	switch entry.Type {
@@ -741,21 +739,25 @@ func (a *App) editExternalEntryTask(response http.ResponseWriter, request *http.
 		_ = entry.DecodeConfig(&data.QuickRunConfig)
 	case externaltrigger.ActionVariable:
 		_ = entry.DecodeConfig(&data.VariableConfig)
-	case externaltrigger.ActionWebsiteMonitor:
 	}
 	renderExternalInterfaceForm(response, data)
 }
 
-func (a *App) externalTargetOptions(ctx context.Context) ([]externalTargetOption, []externalTargetOption, error) {
-	quickRows, err := a.db.Query("SELECT id, name, script_path, script_sha256 FROM quick_runs WHERE locked = 1 AND script_sha256 != '' ORDER BY name, id")
+func (a *App) externalTargetOptions(ctx context.Context, locale webLocale) ([]externalTargetOption, []externalTargetOption, error) {
+	quickRows, err := a.db.Query(`SELECT quick_runs.id, quick_runs.name, quick_runs.script_path, quick_runs.script_sha256,
+		quick_runs.revision, COALESCE(quick_run_groups.name, '')
+		FROM quick_runs LEFT JOIN quick_run_groups ON quick_run_groups.id = quick_runs.group_id
+		WHERE quick_runs.locked = 1 AND quick_runs.script_sha256 != ''
+		ORDER BY COALESCE(quick_run_groups.sort_order, 2147483647), quick_runs.name, quick_runs.id`)
 	if err != nil {
 		return nil, nil, err
 	}
 	var quickRuns []externalTargetOption
 	for quickRows.Next() {
 		var option externalTargetOption
-		var scriptPath, scriptSHA256 string
-		if err := quickRows.Scan(&option.Value, &option.Label, &scriptPath, &scriptSHA256); err != nil {
+		var scriptPath, scriptSHA256, groupName string
+		var revision int64
+		if err := quickRows.Scan(&option.Value, &option.Label, &scriptPath, &scriptSHA256, &revision, &groupName); err != nil {
 			_ = quickRows.Close()
 			return nil, nil, err
 		}
@@ -763,6 +765,10 @@ func (a *App) externalTargetOptions(ctx context.Context) ([]externalTargetOption
 		if err != nil || subtle.ConstantTimeCompare([]byte(prepared.Digest), []byte(scriptSHA256)) != 1 {
 			continue
 		}
+		if groupName == "" {
+			groupName = webText(locale, "quick_runs.ungrouped")
+		}
+		option.Label = fmt.Sprintf("%s / %s · v%d", groupName, option.Label, revision)
 		quickRuns = append(quickRuns, option)
 	}
 	if err := quickRows.Close(); err != nil {
@@ -833,12 +839,12 @@ func (a *App) createExternalEntry(response http.ResponseWriter, request *http.Re
 }
 
 func (a *App) renderExternalEntrySubmissionError(response http.ResponseWriter, request *http.Request, group externaltrigger.Group) {
-	quickRuns, variables, err := a.externalTargetOptions(request.Context())
+	locale := resolveWebLocale(request)
+	quickRuns, variables, err := a.externalTargetOptions(request.Context(), locale)
 	if err != nil {
 		http.Error(response, "Unable to read action targets", http.StatusInternalServerError)
 		return
 	}
-	locale := resolveWebLocale(request)
 	data := externalInterfaceFormData{
 		Kind: "entry-new", Title: webText(locale, "external.add_function_title"), Description: webText(locale, "external.add_function_description"),
 		BackURL: "/config/external-interfaces", Action: "/config/external-interfaces/groups/" + group.ID + "/entries",
@@ -986,8 +992,6 @@ func (a *App) externalEntryConfig(request *http.Request, actionType externaltrig
 		}
 		config, err := parseExternalVariableConfig(request, name)
 		return config, err
-	case externaltrigger.ActionWebsiteMonitor:
-		return externaltrigger.WebsiteMonitorConfig{}, nil
 	default:
 		return nil, errors.New("invalid action type")
 	}
@@ -1215,7 +1219,7 @@ func externalSignedBodyLimit(entry externaltrigger.Entry) (int64, error) {
 	switch entry.Type {
 	case externaltrigger.ActionLog, externaltrigger.ActionVariable:
 		return 8 << 10, nil
-	case externaltrigger.ActionQuickRun, externaltrigger.ActionWebsiteMonitor:
+	case externaltrigger.ActionQuickRun:
 		return 1, nil
 	case externaltrigger.ActionUpload:
 		var config externaltrigger.UploadConfig
@@ -1270,24 +1274,9 @@ func (a *App) executeExternalAction(response http.ResponseWriter, request *http.
 		return a.executeExternalQuickRun(response, request, entry)
 	case externaltrigger.ActionVariable:
 		return a.executeExternalVariable(response, request, entry)
-	case externaltrigger.ActionWebsiteMonitor:
-		return a.executeExternalWebsiteMonitor(request)
 	default:
 		return externalFailure(http.StatusInternalServerError, "action_failed")
 	}
-}
-
-func (a *App) executeExternalWebsiteMonitor(request *http.Request) externalActionResult {
-	if request.Method != http.MethodGet {
-		return externalFailure(http.StatusMethodNotAllowed, "method_not_allowed")
-	}
-	monitors, err := a.websiteMonitor.List(request.Context(), websitemonitor.Filter{})
-	if err != nil {
-		return externalFailure(http.StatusInternalServerError, "action_failed")
-	}
-	locale := resolveWebLocale(request)
-	snapshot := a.newWebsiteMonitorListDataView(request.Context(), monitors, monitors, locale)
-	return externalActionResult{status: http.StatusOK, result: "succeeded", payload: snapshot}
 }
 
 func (a *App) executeExternalLog(response http.ResponseWriter, request *http.Request, entry externaltrigger.Entry, token string) externalActionResult {
@@ -1440,7 +1429,7 @@ func (a *App) executeExternalQuickRun(response http.ResponseWriter, request *htt
 	if err != nil {
 		return externalFailure(http.StatusInternalServerError, "action_failed")
 	}
-	runID, err := a.runs.Start(runmanager.StartRequest{ScriptPath: quick.ScriptPath, ExpectedDigest: config.ScriptSHA256, DisallowOverlap: true, ArgumentsTemplate: quick.ArgumentsTemplate, TimeoutSeconds: quick.TimeoutSeconds, SourceType: "external/quick-run", SourceName: entry.Label, SourceID: entry.ID, Variables: variables, PreparedScript: &prepared, PreparedDirectory: &workingDirectory})
+	runID, err := a.runs.Start(runmanager.StartRequest{ScriptPath: quick.ScriptPath, ExpectedDigest: config.ScriptSHA256, DisallowOverlap: true, ArgumentsTemplate: quick.ArgumentsTemplate, TimeoutSeconds: quick.TimeoutSeconds, SourceType: "external/quick-run", SourceName: entry.Label + " / " + a.quickRunSourceSnapshot(quick), SourceID: entry.ID, Variables: variables, PreparedScript: &prepared, PreparedDirectory: &workingDirectory})
 	if err != nil {
 		return externalFailure(http.StatusConflict, "target_unavailable")
 	}

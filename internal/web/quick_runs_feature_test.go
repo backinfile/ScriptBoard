@@ -1,6 +1,7 @@
 package web_test
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -200,6 +201,28 @@ func TestAdminCanCreateQuickRunInAGroupFromHostFile(t *testing.T) {
 	groupPattern := regexp.MustCompile(`data-quick-run-group="` + regexp.QuoteMeta(groupID) + `"[\s\S]*?Grouped deploy`)
 	if !groupPattern.Match(page) {
 		t.Fatalf("grouped Quick Run is not rendered in its group: %s", page)
+	}
+	var quickRunID string
+	if err := database.QueryRow(`SELECT id FROM quick_runs WHERE name = 'Grouped deploy'`).Scan(&quickRunID); err != nil {
+		t.Fatal(err)
+	}
+	started, err := client.PostForm(serverURL+"/config/quick-runs/"+quickRunID+"/start", url.Values{"csrf_token": {formToken(t, page)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = started.Body.Close()
+	var runID string
+	if err := database.QueryRow(`SELECT id FROM runs WHERE source_type = 'admin/quick-run' AND source_id = ? ORDER BY created_at DESC LIMIT 1`, quickRunID).Scan(&runID); err != nil {
+		t.Fatal(err)
+	}
+	detailResponse, err := client.Get(serverURL + "/history/runs/" + runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, _ := io.ReadAll(detailResponse.Body)
+	_ = detailResponse.Body.Close()
+	if !bytes.Contains(detail, []byte("Deployment / Grouped deploy")) || !bytes.Contains(detail, []byte("Back to Quick Runs")) || !bytes.Contains(detail, []byte(`href="/config/quick-runs"`)) {
+		t.Fatalf("Quick Run detail is missing its group source or return link: %s", detail)
 	}
 }
 
@@ -462,6 +485,9 @@ func TestAdminCanEditQuickRunWithoutChangingItsScript(t *testing.T) {
 	createQuickRunFromFile(t, client, serverURL, scriptPath, "Original name", "")
 	page := getQuickRunsPage(t, client, serverURL)
 	quickRunID := quickRunIDForName(t, page, "Original name")
+	if !strings.Contains(string(page), `data-quick-run-version="1"`) || !strings.Contains(string(page), `>v1<`) {
+		t.Fatalf("Quick Run version is not rendered as a distinct column: %s", page)
+	}
 
 	response, err := client.Get(serverURL + "/config/quick-runs/" + quickRunID + "/edit")
 	if err != nil {
@@ -475,6 +501,7 @@ func TestAdminCanEditQuickRunWithoutChangingItsScript(t *testing.T) {
 		`name="arguments"`,
 		`name="timeout_seconds"`,
 		`<code>` + scriptPath + `</code>`,
+		`name="sync_external_interfaces"`,
 	} {
 		if !strings.Contains(string(taskPage), expected) {
 			t.Fatalf("edit Quick Run task missing %q: %s", expected, taskPage)

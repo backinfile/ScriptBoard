@@ -31,7 +31,6 @@ import (
 	"scriptboard/internal/privilegebroker"
 	"scriptboard/internal/providercredential"
 	"scriptboard/internal/registryconnection"
-	"scriptboard/internal/remotewebsite"
 	"scriptboard/internal/secretstore"
 	"scriptboard/internal/securityevents"
 	"scriptboard/internal/statebackup"
@@ -124,10 +123,6 @@ func RunBroker(ctx context.Context, arguments []string, getenv func(string) stri
 	if err != nil {
 		return fmt.Errorf("initialize Broker-owned passkey state: %w", err)
 	}
-	remoteWebsites, err := remotewebsite.New(remotewebsite.Options{StateRoot: absolute, SecretStore: vault})
-	if err != nil {
-		return fmt.Errorf("initialize Broker-owned remote website credentials: %w", err)
-	}
 	providers, err := providercredential.New(providercredential.Options{StateRoot: absolute, SecretStore: vault})
 	if err != nil {
 		return fmt.Errorf("initialize Broker-owned provider credentials: %w", err)
@@ -199,9 +194,6 @@ func RunBroker(ctx context.Context, arguments []string, getenv func(string) stri
 	if err := legacyExternal.MigrateSecrets(); err != nil {
 		return fmt.Errorf("migrate External Interface secrets in Broker: %w", err)
 	}
-	if err := legacyExternal.MigrateRemoteWebsiteCredentials(context.Background(), remoteWebsites); err != nil {
-		return fmt.Errorf("migrate remote website credentials in Broker: %w", err)
-	}
 	if err := legacyExternal.PurgeLegacyKeySecrets(context.Background()); err != nil {
 		return fmt.Errorf("purge recoverable External Interface keys in Broker: %w", err)
 	}
@@ -228,7 +220,7 @@ func RunBroker(ctx context.Context, arguments []string, getenv func(string) stri
 		Listener: transport.Listener, VerifyPeer: transport.VerifyPeer,
 		Authorizer: databaseSecurity, Executor: executor, Auditor: databaseSecurity,
 		Checkpoint: brokerCheckpointService{store: checkpoint, audit: audit}, Now: time.Now,
-		MFA: mfaStore, Passkeys: passkeyStore, RemoteWebsites: remoteWebsites, Providers: providers,
+		MFA: mfaStore, Passkeys: passkeyStore, Providers: providers,
 		MySQL: mysqlService, HostFiles: hostFilesService,
 		Registry:     registryConnections,
 		Applications: applications, Kubernetes: brokerKubernetesService{db: database, factory: clusterstatus.HTTPFactory{}},

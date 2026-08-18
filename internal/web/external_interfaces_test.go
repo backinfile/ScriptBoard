@@ -184,35 +184,12 @@ func TestExternalInterfaceKeyCannotBeRetrievedAfterCreation(t *testing.T) {
 	}
 }
 
-func TestExternalWebsiteMonitorEntryReturnsReadOnlySnapshot(t *testing.T) {
+func TestExternalWebsiteMonitorTypeIsUnavailable(t *testing.T) {
 	root := t.TempDir()
 	client, serverURL := authenticatedClient(t, filepath.Join(root, "host"), filepath.Join(root, "state"))
-
-	websiteTask, err := client.Get(serverURL + "/monitor/websites/new")
-	if err != nil {
-		t.Fatal(err)
-	}
-	websitePage, _ := io.ReadAll(websiteTask.Body)
-	_ = websiteTask.Body.Close()
-	createdMonitor, err := client.PostForm(serverURL+"/monitor/websites", url.Values{
-		"csrf_token": {formToken(t, websitePage)}, "name": {"Remote-visible site"},
-		"scope": {"external"}, "kind": {"http"}, "url": {"https://status.example/"},
-		"frequency_seconds": {"60"}, "timeout_seconds": {"10"}, "http_method": {"GET"},
-		"follow_redirects": {"1"}, "verify_tls": {"1"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = createdMonitor.Body.Close()
-
-	interfaces, err := client.Get(serverURL + "/config/external-interfaces")
-	if err != nil {
-		t.Fatal(err)
-	}
-	interfacePage, _ := io.ReadAll(interfaces.Body)
-	_ = interfaces.Body.Close()
+	interfaces := getBody(t, client, serverURL+"/config/external-interfaces", http.StatusOK)
 	createdKey, err := client.PostForm(serverURL+"/config/external-interfaces/keys", url.Values{
-		"csrf_token": {formToken(t, interfacePage)}, "label": {"Website reader"}, "duration": {"1d"}, "enabled": {"1"},
+		"csrf_token": {formToken(t, interfaces)}, "label": {"No website reader"}, "duration": {"1d"}, "enabled": {"1"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -220,44 +197,20 @@ func TestExternalWebsiteMonitorEntryReturnsReadOnlySnapshot(t *testing.T) {
 	createdKeyPage, _ := io.ReadAll(createdKey.Body)
 	_ = createdKey.Body.Close()
 	_, keyID := createdExternalTestKey(t, createdKeyPage)
-
-	entryTask, err := client.Get(serverURL + "/config/external-interfaces/keys/" + keyID + "/entries/new")
-	if err != nil {
-		t.Fatal(err)
+	entryPage := getBody(t, client, serverURL+"/config/external-interfaces/keys/"+keyID+"/entries/new", http.StatusOK)
+	if bytes.Contains(entryPage, []byte(`value="website_monitor"`)) {
+		t.Fatal("removed website monitoring action remains visible")
 	}
-	entryPage, _ := io.ReadAll(entryTask.Body)
-	_ = entryTask.Body.Close()
-	createdEntry, err := client.PostForm(serverURL+"/config/external-interfaces/keys/"+keyID+"/entries", url.Values{
+	response, err := client.PostForm(serverURL+"/config/external-interfaces/keys/"+keyID+"/entries", url.Values{
 		"csrf_token": {formToken(t, entryPage)}, "label": {"Website status"}, "name": {"website-status"},
 		"action_type": {"website_monitor"}, "enabled": {"1"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	createdEntryPage, _ := io.ReadAll(createdEntry.Body)
-	_ = createdEntry.Body.Close()
-	secret, _ := createdExternalTestKey(t, createdEntryPage)
-
-	request, _ := http.NewRequest(http.MethodGet, serverURL+externalTriggerPath("legacy", "website-status"), nil)
-	request.Header.Set("Authorization", "Bearer "+secret)
-	response, err := client.Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
 	defer response.Body.Close()
-	var payload struct {
-		Action string `json:"action"`
-		Data   struct {
-			Total    int                          `json:"total"`
-			Monitors []struct{ Name, URL string } `json:"monitors"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		t.Fatal(err)
-	}
-	if response.StatusCode != http.StatusOK || payload.Action != "website_monitor" || payload.Data.Total != 1 ||
-		len(payload.Data.Monitors) != 1 || payload.Data.Monitors[0].Name != "Remote-visible site" {
-		t.Fatalf("status=%d payload=%#v", response.StatusCode, payload)
+	if response.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("removed website monitor action status=%d", response.StatusCode)
 	}
 }
 

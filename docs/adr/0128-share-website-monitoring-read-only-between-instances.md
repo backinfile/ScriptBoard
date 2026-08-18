@@ -1,5 +1,7 @@
 # 在 ScriptBoard 实例之间只读共享网站监控
 
+> 已被 [ADR-0174](./0174-retire-cross-instance-website-monitoring.md) 取代。
+
 > Endpoint 的 HTTP 兼容已被 [ADR-0141](./0141-expire-monitor-tls-exceptions-and-require-https-aggregation.md) 取代；远程 Key 的 State Root 内主密钥保存方式已被 [ADR-0143](./0143-seal-recoverable-secrets-with-an-external-host-key.md) 取代。
 
 ScriptBoard 在 External Interface 中增加 `website_monitor` 条目。该条目只接受带 `Authorization: Bearer` 的 `GET /trigger/{group}/{name}`，返回当前实例全部未删除网站监控的列表快照、状态计数、最近检查证据与有界的 24 小时可用性，不开放创建、检查、暂停、恢复、编辑、排序或删除能力。响应继续受 External Interface 的启停、到期、速率限制、请求记录与审计约束，并禁止缓存。

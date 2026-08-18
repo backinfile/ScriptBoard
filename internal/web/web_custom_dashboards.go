@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"scriptboard/internal/customdashboard"
 	"scriptboard/internal/registrymonitor"
@@ -35,6 +36,7 @@ type customDashboardCardView struct {
 	customdashboard.Card
 	ValueLabel, SecondaryLabel, HeadersText, Unit string
 	StatusLabel, RetainedLabel, UnavailableLabel  string
+	LastSuccessLabel                              string
 	QuotaProgressLabel                            string
 	QuotaProgress                                 float64
 	DisplayIndex                                  int
@@ -148,6 +150,7 @@ func (a *App) newCustomDashboardPageView(request *http.Request, dashboard custom
 	}
 	for _, card := range dashboard.Cards {
 		item := customDashboardCardView{Card: card, SelectedMonitorIDs: map[string]bool{}}
+		item.LastSuccessLabel = dashboardLastSuccessLabel(locale, card.LastSuccessAt)
 		var cardConfig struct {
 			MonitorIDs []string `json:"monitorIds"`
 			Unit       string   `json:"unit"`
@@ -237,19 +240,34 @@ func (a *App) newCustomDashboardPageView(request *http.Request, dashboard custom
 			for _, id := range cardConfig.MonitorIDs {
 				item.SelectedMonitorIDs[id] = true
 			}
-			item.Websites = a.customDashboardWebsiteCards(request, card)
+			item.Websites, card.LastSuccessAt = a.customDashboardWebsiteCards(request, card)
+			item.LastSuccessLabel = dashboardLastSuccessLabel(locale, card.LastSuccessAt)
 		}
 		view.Cards = append(view.Cards, item)
 	}
 	return view
 }
 
-func (a *App) customDashboardWebsiteCards(request *http.Request, card customdashboard.Card) []customDashboardWebsiteView {
+func dashboardLastSuccessLabel(locale webLocale, refreshedAt time.Time) string {
+	if refreshedAt.IsZero() {
+		if locale == localeEnglishUS {
+			return "Not refreshed yet"
+		}
+		return "尚未成功刷新"
+	}
+	if locale == localeEnglishUS {
+		return "Refreshed " + refreshedAt.Local().Format("Jan 02 15:04")
+	}
+	return "刷新于 " + refreshedAt.Local().Format("01-02 15:04")
+}
+
+func (a *App) customDashboardWebsiteCards(request *http.Request, card customdashboard.Card) ([]customDashboardWebsiteView, time.Time) {
 	var config struct {
 		MonitorIDs []string `json:"monitorIds"`
 	}
 	_ = json.Unmarshal(card.Config, &config)
 	result := make([]customDashboardWebsiteView, 0, len(config.MonitorIDs))
+	var lastSuccessAt time.Time
 	locale := resolveWebLocale(request)
 	for _, id := range config.MonitorIDs {
 		monitor, err := a.websiteMonitor.Get(request.Context(), id)
@@ -259,6 +277,9 @@ func (a *App) customDashboardWebsiteCards(request *http.Request, card customdash
 		monitorView := a.newWebsiteMonitorPageView(request.Context(), monitor, locale)
 		item := customDashboardWebsiteView{Name: monitor.Config.Name, State: string(monitor.State), StateLabel: monitorView.StateLabel, LatencyLabel: monitorView.LatencyLabel, AvailabilityLabel: "—", SSLLabel: "无 TLS 证书", SSLTone: "neutral", CheckedLabel: "尚未检查", Availability: monitorView.Availability}
 		if !monitor.Latest.CheckedAt.IsZero() {
+			if monitor.Latest.CheckedAt.After(lastSuccessAt) {
+				lastSuccessAt = monitor.Latest.CheckedAt
+			}
 			item.LatencyLabel = fmt.Sprintf("%d ms", monitor.Latest.Latency.Milliseconds())
 			item.CheckedLabel = monitor.Latest.CheckedAt.Local().Format("01-02 15:04")
 		}
@@ -278,7 +299,7 @@ func (a *App) customDashboardWebsiteCards(request *http.Request, card customdash
 		}
 		result = append(result, item)
 	}
-	return result
+	return result, lastSuccessAt
 }
 
 func (a *App) createCustomDashboard(response http.ResponseWriter, request *http.Request) {
