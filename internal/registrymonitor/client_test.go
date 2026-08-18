@@ -154,6 +154,66 @@ func TestInspectAppliesOneDeadlineAcrossAllImages(t *testing.T) {
 	}
 }
 
+func TestInspectExpandsNamespaceAndAllImageSelectors(t *testing.T) {
+	var catalogRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/v2/_catalog":
+			catalogRequests++
+			if request.URL.Query().Get("last") == "team/web" {
+				_ = json.NewEncoder(response).Encode(map[string]any{"repositories": []string{"tools/worker"}})
+				return
+			}
+			response.Header().Set("Link", `</v2/_catalog?n=100&last=team%2Fweb>; rel="next"`)
+			_ = json.NewEncoder(response).Encode(map[string]any{"repositories": []string{"other/db", "team/web", "team/api"}})
+		case "/v2/team/api/tags/list":
+			_ = json.NewEncoder(response).Encode(map[string]any{"tags": []string{"1.2.0"}})
+		case "/v2/team/web/tags/list":
+			_ = json.NewEncoder(response).Encode(map[string]any{"tags": []string{"2.1.0"}})
+		case "/v2/other/db/tags/list":
+			_ = json.NewEncoder(response).Encode(map[string]any{"tags": []string{"3.0.0"}})
+		case "/v2/tools/worker/tags/list":
+			_ = json.NewEncoder(response).Encode(map[string]any{"tags": []string{"4.0.0"}})
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	results, err := New(server.Client()).Inspect(context.Background(), Config{
+		Endpoint: server.URL,
+		Images:   []string{"team/*", "team/api", "*/*"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if catalogRequests != 2 {
+		t.Fatalf("catalog requests=%d, want 2", catalogRequests)
+	}
+	wantImages := []string{"team/api", "team/web", "other/db", "tools/worker"}
+	if len(results) != len(wantImages) {
+		t.Fatalf("results=%#v", results)
+	}
+	for index, want := range wantImages {
+		if results[index].Image != want || results[index].Error != "" {
+			t.Fatalf("result[%d]=%#v, want image %q", index, results[index], want)
+		}
+	}
+}
+
+func TestValidateConfigAcceptsOnlyCompleteImageWildcards(t *testing.T) {
+	for _, selector := range []string{"team/*", "*", "*/*"} {
+		if err := ValidateConfig(Config{Endpoint: "https://registry.example", Images: []string{selector}}); err != nil {
+			t.Fatalf("selector %q rejected: %v", selector, err)
+		}
+	}
+	for _, selector := range []string{"team*", "team/*/api", "*/api"} {
+		if err := ValidateConfig(Config{Endpoint: "https://registry.example", Images: []string{selector}}); err == nil {
+			t.Fatalf("invalid selector %q accepted", selector)
+		}
+	}
+}
+
 func TestValidateConfigAllowsHTTPAndRejectsTooManyOrTaggedImages(t *testing.T) {
 	images := make([]string, 21)
 	for index := range images {
