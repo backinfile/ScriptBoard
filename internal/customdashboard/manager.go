@@ -791,6 +791,7 @@ func (m *Manager) refreshRegistryCard(ctx context.Context, card Card) (Card, err
 			results[index].Tag = old.Tag
 			results[index].PushedAt = old.PushedAt
 			results[index].PushTimeAvailable = old.PushTimeAvailable
+			results[index].TimeSource = old.TimeSource
 			results[index].Stale = true
 		}
 	}

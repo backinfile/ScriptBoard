@@ -21,9 +21,13 @@ const (
 	maxCatalogPages        = 100
 	maxCatalogRepositories = 480
 	maxExpandedImages      = 500
+	ImageTimePushed        = "pushed"
+	ImageTimeCreated       = "created"
 )
 
 var imagePattern = regexp.MustCompile(`^[a-z0-9]+(?:(?:[._-][a-z0-9]+)|(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*))*$`)
+
+var digestPattern = regexp.MustCompile(`^[a-z0-9]+(?:[+._-][a-z0-9]+)*:[a-fA-F0-9]{32,}$`)
 
 type Config struct {
 	Endpoint string   `json:"endpoint"`
@@ -34,10 +38,13 @@ type Config struct {
 }
 
 type ImageResult struct {
-	Image             string    `json:"image"`
-	Tag               string    `json:"tag,omitempty"`
+	Image string `json:"image"`
+	Tag   string `json:"tag,omitempty"`
+	// PushedAt and PushTimeAvailable keep the persisted snapshot contract. TimeSource
+	// distinguishes an actual Registry push time from the OCI image creation fallback.
 	PushedAt          time.Time `json:"pushedAt,omitempty"`
 	PushTimeAvailable bool      `json:"pushTimeAvailable,omitempty"`
+	TimeSource        string    `json:"timeSource,omitempty"`
 	Error             string    `json:"error,omitempty"`
 	Stale             bool      `json:"stale,omitempty"`
 }
@@ -161,6 +168,11 @@ func (client *Client) Inspect(ctx context.Context, config Config) ([]ImageResult
 		if pushedAt, ok := client.harborPushTime(ctx, config, image, result.Tag); ok {
 			result.PushedAt = pushedAt
 			result.PushTimeAvailable = true
+			result.TimeSource = ImageTimePushed
+		} else if createdAt, ok := client.registryImageCreatedTime(ctx, config, image, result.Tag); ok {
+			result.PushedAt = createdAt
+			result.PushTimeAvailable = true
+			result.TimeSource = ImageTimeCreated
 		}
 		results = append(results, result)
 	}
@@ -383,11 +395,15 @@ func (client *Client) tags(ctx context.Context, config Config, image string) ([]
 }
 
 func (client *Client) doAuthenticated(ctx context.Context, endpoint string, config Config) (*http.Response, error) {
+	return client.doAuthenticatedAccept(ctx, endpoint, config, "application/json")
+}
+
+func (client *Client) doAuthenticatedAccept(ctx context.Context, endpoint string, config Config, accept string) (*http.Response, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
-	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Accept", accept)
 	if config.AuthMode == "basic" || config.Username != "" {
 		request.SetBasicAuth(config.Username, config.Password)
 	}
@@ -492,6 +508,74 @@ func (client *Client) harborPushTime(ctx context.Context, config Config, image, 
 		return time.Time{}, false
 	}
 	return document.PushTime, true
+}
+
+func (client *Client) registryImageCreatedTime(ctx context.Context, config Config, image, reference string) (time.Time, bool) {
+	configDigest, ok := client.registryManifestConfigDigest(ctx, config, image, reference, 2)
+	if !ok {
+		return time.Time{}, false
+	}
+	blobURL := config.Endpoint + "/v2/" + escapeRepository(image) + "/blobs/" + configDigest
+	response, err := client.doAuthenticated(ctx, blobURL, config)
+	if err != nil {
+		return time.Time{}, false
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return time.Time{}, false
+	}
+	var imageConfig struct {
+		Created time.Time `json:"created"`
+	}
+	if decodeJSON(response.Body, &imageConfig) != nil || imageConfig.Created.IsZero() {
+		return time.Time{}, false
+	}
+	return imageConfig.Created, true
+}
+
+func (client *Client) registryManifestConfigDigest(ctx context.Context, config Config, image, reference string, remainingDepth int) (string, bool) {
+	if remainingDepth < 1 {
+		return "", false
+	}
+	manifestURL := config.Endpoint + "/v2/" + escapeRepository(image) + "/manifests/" + url.PathEscape(reference)
+	response, err := client.doAuthenticatedAccept(ctx, manifestURL, config, strings.Join([]string{
+		"application/vnd.oci.image.manifest.v1+json",
+		"application/vnd.oci.image.index.v1+json",
+		"application/vnd.docker.distribution.manifest.v2+json",
+		"application/vnd.docker.distribution.manifest.list.v2+json",
+	}, ", "))
+	if err != nil {
+		return "", false
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		response.Body.Close()
+		return "", false
+	}
+	var manifest struct {
+		Config struct {
+			Digest string `json:"digest"`
+		} `json:"config"`
+		Manifests []struct {
+			Digest string `json:"digest"`
+		} `json:"manifests"`
+	}
+	decodeErr := decodeJSON(response.Body, &manifest)
+	response.Body.Close()
+	if decodeErr != nil {
+		return "", false
+	}
+	if digestPattern.MatchString(manifest.Config.Digest) {
+		return manifest.Config.Digest, true
+	}
+	for _, child := range manifest.Manifests {
+		if !digestPattern.MatchString(child.Digest) {
+			continue
+		}
+		if digest, ok := client.registryManifestConfigDigest(ctx, config, image, child.Digest, remainingDepth-1); ok {
+			return digest, true
+		}
+	}
+	return "", false
 }
 
 func latestTag(tags []string) string {

@@ -53,8 +53,8 @@ type customDashboardCardView struct {
 }
 
 type customDashboardRegistryImageView struct {
-	Image, Tag, PushedLabel string
-	Error, Stale            bool
+	Image, Tag, TimeLabel, TimeKindLabel string
+	Error, Stale                         bool
 }
 
 type customDashboardWebsiteView struct {
@@ -174,9 +174,15 @@ func (a *App) newCustomDashboardPageView(request *http.Request, dashboard custom
 					imageView.Tag = "—"
 				}
 				if image.PushTimeAvailable && !image.PushedAt.IsZero() {
-					imageView.PushedLabel = image.PushedAt.Local().Format("2006-01-02 15:04")
+					imageView.TimeLabel = image.PushedAt.Local().Format("2006-01-02 15:04")
+					if image.TimeSource == registrymonitor.ImageTimeCreated {
+						imageView.TimeKindLabel = "构建时间"
+					} else {
+						imageView.TimeKindLabel = "上传时间"
+					}
 				} else {
-					imageView.PushedLabel = "仓库未提供"
+					imageView.TimeKindLabel = "更新时间"
+					imageView.TimeLabel = "仓库未提供"
 				}
 				item.RegistryImages = append(item.RegistryImages, imageView)
 			}

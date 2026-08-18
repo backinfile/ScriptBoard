@@ -124,6 +124,89 @@ func TestInspectReadsHarborArtifactPushTime(t *testing.T) {
 	}
 }
 
+func TestInspectReadsImageCreatedTimeFromRegistryManifest(t *testing.T) {
+	wantTime := time.Date(2026, 8, 17, 14, 20, 0, 0, time.UTC)
+	configDigest := "sha256:" + strings.Repeat("a", 64)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/v2/team/api/tags/list":
+			_ = json.NewEncoder(response).Encode(map[string]any{"tags": []string{"2.3.0"}})
+		case "/api/v2.0/projects/team/repositories/api/artifacts/2.3.0":
+			http.NotFound(response, request)
+		case "/v2/team/api/manifests/2.3.0":
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"schemaVersion": 2,
+				"mediaType":     "application/vnd.oci.image.manifest.v1+json",
+				"config": map[string]any{
+					"mediaType": "application/vnd.oci.image.config.v1+json",
+					"digest":    configDigest,
+					"size":      256,
+				},
+			})
+		case "/v2/team/api/blobs/" + configDigest:
+			_ = json.NewEncoder(response).Encode(map[string]any{"created": wantTime.Format(time.RFC3339)})
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	results, err := New(server.Client()).Inspect(context.Background(), Config{Endpoint: server.URL, Images: []string{"team/api"}})
+	if err != nil || len(results) != 1 {
+		t.Fatalf("results=%#v err=%v", results, err)
+	}
+	if !results[0].PushedAt.Equal(wantTime) || !results[0].PushTimeAvailable || results[0].TimeSource != ImageTimeCreated {
+		t.Fatalf("image created time was not populated: %#v", results[0])
+	}
+}
+
+func TestInspectReadsImageCreatedTimeFromRegistryIndex(t *testing.T) {
+	wantTime := time.Date(2026, 8, 16, 8, 15, 0, 0, time.UTC)
+	manifestDigest := "sha256:" + strings.Repeat("b", 64)
+	configDigest := "sha256:" + strings.Repeat("c", 64)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/v2/team/api/tags/list":
+			_ = json.NewEncoder(response).Encode(map[string]any{"tags": []string{"3.0.0"}})
+		case "/api/v2.0/projects/team/repositories/api/artifacts/3.0.0":
+			http.NotFound(response, request)
+		case "/v2/team/api/manifests/3.0.0":
+			if !strings.Contains(request.Header.Get("Accept"), "application/vnd.oci.image.index.v1+json") {
+				http.Error(response, "OCI index media type was not accepted", http.StatusNotAcceptable)
+				return
+			}
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"schemaVersion": 2,
+				"mediaType":     "application/vnd.oci.image.index.v1+json",
+				"manifests": []map[string]any{{
+					"mediaType": "application/vnd.oci.image.manifest.v1+json",
+					"digest":    manifestDigest,
+					"size":      512,
+				}},
+			})
+		case "/v2/team/api/manifests/" + manifestDigest:
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"schemaVersion": 2,
+				"mediaType":     "application/vnd.oci.image.manifest.v1+json",
+				"config":        map[string]any{"digest": configDigest},
+			})
+		case "/v2/team/api/blobs/" + configDigest:
+			_ = json.NewEncoder(response).Encode(map[string]any{"created": wantTime.Format(time.RFC3339)})
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	results, err := New(server.Client()).Inspect(context.Background(), Config{Endpoint: server.URL, Images: []string{"team/api"}})
+	if err != nil || len(results) != 1 {
+		t.Fatalf("results=%#v err=%v", results, err)
+	}
+	if !results[0].PushedAt.Equal(wantTime) || results[0].TimeSource != ImageTimeCreated {
+		t.Fatalf("indexed image created time was not populated: %#v", results[0])
+	}
+}
+
 func TestInspectAppliesOneDeadlineAcrossAllImages(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
 		<-request.Context().Done()

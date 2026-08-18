@@ -243,6 +243,7 @@ func TestCustomDashboardCanBeExportedAndImported(t *testing.T) {
 }
 
 func TestRegistryCardCanBeConfiguredWithHTTPAndMultipleImages(t *testing.T) {
+	webConfigDigest := "sha256:" + strings.Repeat("d", 64)
 	registry := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		username, password, ok := request.BasicAuth()
 		if !ok || username != "robot$board" || password != "registry-secret" {
@@ -259,7 +260,11 @@ func TestRegistryCardCanBeConfiguredWithHTTPAndMultipleImages(t *testing.T) {
 		case "/api/v2.0/projects/team/repositories/api/artifacts/v2.5.0":
 			_, _ = response.Write([]byte(`{"push_time":"2026-08-18T10:30:00Z"}`))
 		case "/api/v2.0/projects/team/repositories/web/artifacts/1.8.1":
-			_, _ = response.Write([]byte(`{"push_time":"2026-08-18T11:45:00Z"}`))
+			http.NotFound(response, request)
+		case "/v2/team/web/manifests/1.8.1":
+			_ = json.NewEncoder(response).Encode(map[string]any{"schemaVersion": 2, "config": map[string]any{"digest": webConfigDigest}})
+		case "/v2/team/web/blobs/" + webConfigDigest:
+			_, _ = response.Write([]byte(`{"created":"2026-08-17T11:45:00Z"}`))
 		default:
 			http.NotFound(response, request)
 		}
@@ -309,7 +314,7 @@ func TestRegistryCardCanBeConfiguredWithHTTPAndMultipleImages(t *testing.T) {
 	renderedBytes, _ := io.ReadAll(response.Body)
 	response.Body.Close()
 	rendered := string(renderedBytes)
-	for _, expected := range []string{"生产镜像", "team/api", "v2.5.0", "team/web", "1.8.1", "上传时间 2026-08-18"} {
+	for _, expected := range []string{"生产镜像", "team/api", "v2.5.0", "team/web", "1.8.1", "上传时间 2026-08-18", "构建时间 2026-08-17"} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("registry card missing %q", expected)
 		}
