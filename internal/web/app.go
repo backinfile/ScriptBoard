@@ -4150,6 +4150,68 @@ func (a *App) purgeTrash(response http.ResponseWriter, request *http.Request) {
 	http.Redirect(response, request, "/resources/trash", http.StatusSeeOther)
 }
 
+func (a *App) cleanupTrash(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) || request.FormValue("confirm") != "yes" {
+		http.Error(response, "批量清理需要 CSRF 和明确确认", http.StatusForbidden)
+		return
+	}
+	retention := request.FormValue("retention")
+	retentionDurations := map[string]time.Duration{
+		"1d":  24 * time.Hour,
+		"7d":  7 * 24 * time.Hour,
+		"30d": 30 * 24 * time.Hour,
+	}
+	cutoff := int64(^uint64(0) >> 1)
+	if retention != "all" {
+		duration, ok := retentionDurations[retention]
+		if !ok {
+			http.Error(response, "回收站保留范围无效", http.StatusBadRequest)
+			return
+		}
+		cutoff = time.Now().UTC().Add(-duration).Unix()
+	}
+
+	type purgeTarget struct {
+		id       string
+		original string
+		stored   string
+	}
+	rows, err := a.db.Query("SELECT id, original_path, stored_path FROM trash_entries WHERE deleted_at < ? ORDER BY deleted_at ASC", cutoff)
+	if err != nil {
+		http.Error(response, "无法读取待清理的回收条目", http.StatusInternalServerError)
+		return
+	}
+	var targets []purgeTarget
+	for rows.Next() {
+		var target purgeTarget
+		if err := rows.Scan(&target.id, &target.original, &target.stored); err != nil {
+			_ = rows.Close()
+			http.Error(response, "无法读取待清理的回收条目", http.StatusInternalServerError)
+			return
+		}
+		targets = append(targets, target)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		http.Error(response, "无法读取待清理的回收条目", http.StatusInternalServerError)
+		return
+	}
+	_ = rows.Close()
+
+	for _, target := range targets {
+		if err := a.hostPurgeTrash(request.Context(), target.stored); err != nil {
+			http.Error(response, "无法永久清理条目："+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if _, err := a.db.Exec("DELETE FROM trash_entries WHERE id = ?", target.id); err != nil {
+			http.Error(response, "回收条目已清理，但无法更新记录", http.StatusInternalServerError)
+			return
+		}
+		a.recordAuditForRequest(request, "purge_trash", target.original, "succeeded")
+	}
+	http.Redirect(response, request, "/resources/trash", http.StatusSeeOther)
+}
+
 func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 	locale := resolveWebLocale(request)
 	request.Body = http.MaxBytesReader(response, request.Body, 2<<30)

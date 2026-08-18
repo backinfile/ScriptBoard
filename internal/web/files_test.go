@@ -2,6 +2,7 @@ package web_test
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -15,6 +16,9 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
+
+	_ "modernc.org/sqlite"
 
 	"scriptboard/internal/hostfiles"
 )
@@ -1584,6 +1588,36 @@ func TestAdminCanMoveFileToTrashAndRestoreIt(t *testing.T) {
 	}
 }
 
+func TestTrashPageOffersBulkCleanupRetentionChoices(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
+	response, err := client.Get(serverURL + "/resources/trash")
+	if err != nil {
+		t.Fatalf("get trash: %v", err)
+	}
+	page, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read trash: %v", err)
+	}
+	for _, expected := range []string{
+		`data-trash-cleanup-drawer`,
+		`action="/resources/trash/cleanup"`,
+		`name="retention" value="all"`,
+		`name="retention" value="1d"`,
+		`name="retention" value="7d"`,
+		`name="retention" value="30d"`,
+		`role="dialog"`,
+		`aria-modal="true"`,
+	} {
+		if !bytes.Contains(page, []byte(expected)) {
+			t.Fatalf("trash cleanup drawer does not contain %q: %s", expected, page)
+		}
+	}
+}
+
 func TestAdminCanRestoreTrashEntryWhenOriginalPathIsOccupied(t *testing.T) {
 	t.Parallel()
 
@@ -1756,6 +1790,172 @@ func TestAdminCanPermanentlyPurgeTrashEntry(t *testing.T) {
 	}
 	if markerCount != 2 {
 		t.Fatalf("filesystem and instance ownership markers are missing: %d", markerCount)
+	}
+}
+
+func TestAdminCanCleanTrashWhileKeepingTheMostRecentSevenDays(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatalf("create host root: %v", err)
+	}
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
+	if err != nil {
+		t.Fatalf("get files: %v", err)
+	}
+	filesPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	for _, name := range []string{"recent.txt", "eight-days-old.txt", "thirty-one-days-old.txt"} {
+		path := filepath.Join(hostRoot, name)
+		if err := os.WriteFile(path, []byte(name), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+		response, err = client.PostForm(serverURL+"/resources/files/delete", url.Values{
+			"path":       {path},
+			"csrf_token": {formToken(t, filesPage)},
+		})
+		if err != nil {
+			t.Fatalf("trash %s: %v", name, err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusSeeOther {
+			t.Fatalf("trash %s status = %d", name, response.StatusCode)
+		}
+	}
+
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatalf("open database for fixture timestamps: %v", err)
+	}
+	defer database.Close()
+	now := time.Now().UTC()
+	for name, deletedAt := range map[string]time.Time{
+		"eight-days-old.txt":      now.Add(-8 * 24 * time.Hour),
+		"thirty-one-days-old.txt": now.Add(-31 * 24 * time.Hour),
+	} {
+		if _, err := database.Exec("UPDATE trash_entries SET deleted_at = ? WHERE original_path = ?", deletedAt.Unix(), filepath.Join(hostRoot, name)); err != nil {
+			t.Fatalf("set %s deletion time: %v", name, err)
+		}
+	}
+
+	response, err = client.Get(serverURL + "/resources/trash")
+	if err != nil {
+		t.Fatalf("get trash: %v", err)
+	}
+	trashPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/resources/trash/cleanup", url.Values{
+		"csrf_token": {formToken(t, trashPage)},
+		"retention":  {"7d"},
+		"confirm":    {"yes"},
+	})
+	if err != nil {
+		t.Fatalf("clean trash: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/resources/trash" {
+		t.Fatalf("cleanup response: status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+
+	response, err = client.Get(serverURL + "/resources/trash")
+	if err != nil {
+		t.Fatalf("get cleaned trash: %v", err)
+	}
+	cleanedPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if !bytes.Contains(cleanedPage, []byte("recent.txt")) {
+		t.Fatalf("recent entry was not retained: %s", cleanedPage)
+	}
+	for _, removed := range []string{"eight-days-old.txt", "thirty-one-days-old.txt"} {
+		if bytes.Contains(cleanedPage, []byte(removed)) {
+			t.Fatalf("expired entry %s remains after cleanup: %s", removed, cleanedPage)
+		}
+	}
+}
+
+func TestAdminCanCleanAllTrashEntries(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "managed")
+	stateRoot := filepath.Join(root, "state")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatalf("create host root: %v", err)
+	}
+	path := filepath.Join(hostRoot, "remove-everything.txt")
+	if err := os.WriteFile(path, []byte("remove everything"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
+	if err != nil {
+		t.Fatalf("get files: %v", err)
+	}
+	filesPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/resources/files/delete", url.Values{
+		"path":       {path},
+		"csrf_token": {formToken(t, filesPage)},
+	})
+	if err != nil {
+		t.Fatalf("trash file: %v", err)
+	}
+	_ = response.Body.Close()
+	response, err = client.Get(serverURL + "/resources/trash")
+	if err != nil {
+		t.Fatalf("get trash: %v", err)
+	}
+	trashPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/resources/trash/cleanup", url.Values{
+		"csrf_token": {formToken(t, trashPage)},
+		"retention":  {"all"},
+		"confirm":    {"yes"},
+	})
+	if err != nil {
+		t.Fatalf("clean all trash: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("clean all status = %d", response.StatusCode)
+	}
+	response, err = client.Get(serverURL + "/resources/trash")
+	if err != nil {
+		t.Fatalf("get cleaned trash: %v", err)
+	}
+	cleanedPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if bytes.Contains(cleanedPage, []byte("remove-everything.txt")) || !bytes.Contains(cleanedPage, []byte(`data-trash-cleanup-drawer`)) || !bytes.Contains(cleanedPage, []byte("Trash is empty.")) {
+		t.Fatalf("trash was not emptied through the public interface: %s", cleanedPage)
+	}
+}
+
+func TestTrashCleanupRejectsUnsupportedRetention(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
+	response, err := client.Get(serverURL + "/resources/trash")
+	if err != nil {
+		t.Fatalf("get trash: %v", err)
+	}
+	trashPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/resources/trash/cleanup", url.Values{
+		"csrf_token": {formToken(t, trashPage)},
+		"retention":  {"forever"},
+		"confirm":    {"yes"},
+	})
+	if err != nil {
+		t.Fatalf("submit unsupported retention: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unsupported retention status = %d", response.StatusCode)
 	}
 }
 

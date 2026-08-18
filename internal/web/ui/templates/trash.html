@@ -2,8 +2,36 @@
 <html lang="{{.Locale}}">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "trash.title"}} · ScriptBoard</title></head>
 <body>
-<main class="workspace">
-  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "trash.eyebrow"}}</p><h1>{{t .Locale "trash.title"}}</h1><p>{{t .Locale "trash.description"}}</p></div><a class="button button--quiet" href="/resources/files"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "trash.back_to_files"}}</a></header>
+<main class="workspace" data-trash-page>
+  <header class="page-heading">
+    <div><p class="page-eyebrow">{{t .Locale "trash.eyebrow"}}</p><h1>{{t .Locale "trash.title"}}</h1><p>{{t .Locale "trash.description"}}</p></div>
+    <div class="heading-actions">
+      <a class="button button--quiet" href="/resources/files"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "trash.back_to_files"}}</a>
+      <details class="trash-cleanup-drawer" data-trash-cleanup-drawer>
+        <summary class="button button--danger"><span data-lucide="eraser" aria-hidden="true"></span>{{t .Locale "trash.cleanup"}}</summary>
+        <div class="trash-cleanup-drawer__layer">
+          <a class="trash-cleanup-drawer__scrim" href="/resources/trash" aria-label="{{t .Locale "common.close"}}" data-trash-cleanup-drawer-close></a>
+          <aside class="trash-cleanup-drawer__sheet" role="dialog" aria-modal="true" aria-labelledby="trash-cleanup-title" aria-describedby="trash-cleanup-description" tabindex="-1">
+            <header><div><p>{{t .Locale "trash.eyebrow"}}</p><h2 id="trash-cleanup-title">{{t .Locale "trash.cleanup_title"}}</h2><small id="trash-cleanup-description">{{t .Locale "trash.cleanup_description"}}</small></div><a class="icon-button icon-button--quiet" href="/resources/trash" aria-label="{{t .Locale "common.close"}}" data-trash-cleanup-drawer-close><span data-lucide="x" aria-hidden="true"></span></a></header>
+            <form method="post" action="/resources/trash/cleanup">
+              <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+              <div class="trash-cleanup-drawer__body">
+                <fieldset class="trash-retention-options">
+                  <legend>{{t .Locale "trash.cleanup_scope"}}</legend>
+                  <label><input type="radio" name="retention" value="all" required><span><strong>{{t .Locale "trash.cleanup_all"}}</strong><small>{{t .Locale "trash.cleanup_all_description"}}</small></span></label>
+                  <label><input type="radio" name="retention" value="1d"><span><strong>{{t .Locale "trash.keep_1d"}}</strong><small>{{t .Locale "trash.keep_1d_description"}}</small></span></label>
+                  <label><input type="radio" name="retention" value="7d" checked><span><strong>{{t .Locale "trash.keep_7d"}}</strong><small>{{t .Locale "trash.keep_7d_description"}}</small></span></label>
+                  <label><input type="radio" name="retention" value="30d"><span><strong>{{t .Locale "trash.keep_30d"}}</strong><small>{{t .Locale "trash.keep_30d_description"}}</small></span></label>
+                </fieldset>
+                <aside class="inline-notice inline-notice--warning"><span data-lucide="triangle-alert" aria-hidden="true"></span><p>{{t .Locale "trash.cleanup_warning"}}</p></aside>
+              </div>
+              <footer><a class="button button--quiet" href="/resources/trash" data-trash-cleanup-drawer-close>{{t .Locale "common.cancel"}}</a><button class="button button--danger" type="submit" name="confirm" value="yes"><span data-lucide="eraser" aria-hidden="true"></span>{{t .Locale "trash.cleanup_submit"}}</button></footer>
+            </form>
+          </aside>
+        </div>
+      </details>
+    </div>
+  </header>
   <div data-deferred-region>
   {{if .DeferredData}}
   {{template "deferred-loading" .}}

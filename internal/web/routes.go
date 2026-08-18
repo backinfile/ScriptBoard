@@ -315,6 +315,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /resources/inbox/{id}/discard", a.requirePermission(identity.PermissionWriteFiles, http.HandlerFunc(a.discardInboxUpload)))
 	mux.Handle("POST /resources/trash/restore", a.requirePermission(identity.PermissionWriteFiles, http.HandlerFunc(a.restoreTrash)))
 	mux.Handle("POST /resources/trash/purge", a.requirePermission(identity.PermissionWriteFiles, http.HandlerFunc(a.purgeTrash)))
+	mux.Handle("POST /resources/trash/cleanup", a.requireStepUp(identity.PermissionWriteFiles, http.HandlerFunc(a.cleanupTrash)))
 	mux.Handle("GET /resources/files/edit", a.requirePermission(identity.PermissionWriteFiles, http.HandlerFunc(a.editTextPage)))
 	mux.Handle("POST /resources/files/edit", a.requirePermission(identity.PermissionWriteFiles, http.HandlerFunc(a.saveText)))
 	mux.Handle("POST /history/runs/start", a.requirePermission(identity.PermissionExecute, http.HandlerFunc(a.startRun)))
