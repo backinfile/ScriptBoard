@@ -876,13 +876,17 @@ func TestExternalUploadAndConstrainedVariableActions(t *testing.T) {
 		t.Fatalf("variable trigger status=%d body=%s", response.StatusCode, body)
 	}
 	var value string
-	if err := database.QueryRow("SELECT value FROM variables WHERE name = 'environment'").Scan(&value); err != nil || value != "production" {
-		t.Fatalf("variable value=%q err=%v", value, err)
+	var variableRevision int64
+	if err := database.QueryRow("SELECT value, revision FROM variables WHERE name = 'environment'").Scan(&value, &variableRevision); err != nil || value != "production" || variableRevision != 2 {
+		t.Fatalf("variable value=%q revision=%d err=%v", value, variableRevision, err)
 	}
 	response = invokeExternalForm(t, client, serverURL, variableSecret, "legacy", "environment", url.Values{"value": {"root"}})
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusBadRequest {
 		t.Fatalf("invalid enum status=%d", response.StatusCode)
+	}
+	if err := database.QueryRow("SELECT revision FROM variables WHERE name = 'environment'").Scan(&variableRevision); err != nil || variableRevision != 2 {
+		t.Fatalf("rejected update variable revision=%d err=%v", variableRevision, err)
 	}
 
 	if _, err := database.Exec(`INSERT INTO variables(name, value, value_type, is_password, created_at, updated_at) VALUES ('build_number', '1', 'integer', 0, 1, 1)`); err != nil {

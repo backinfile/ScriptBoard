@@ -2972,6 +2972,8 @@ type variableView struct {
 	Value      string
 	ValueType  variables.Kind
 	IsPassword bool
+	Revision   int64
+	UpdatedAt  time.Time
 }
 
 func (a *App) variablesPage(response http.ResponseWriter, request *http.Request) {
@@ -2994,7 +2996,7 @@ func (a *App) variablesPage(response http.ResponseWriter, request *http.Request)
 		return
 	}
 	pagination := newPagination(request, total)
-	rows, err := a.db.Query("SELECT name, value, value_type, is_password FROM variables ORDER BY name LIMIT ? OFFSET ?", listPageSize, pagination.Start)
+	rows, err := a.db.Query("SELECT name, value, value_type, is_password, revision, updated_at FROM variables ORDER BY name LIMIT ? OFFSET ?", listPageSize, pagination.Start)
 	if err != nil {
 		http.Error(response, "无法读取变量", http.StatusInternalServerError)
 		return
@@ -3002,11 +3004,13 @@ func (a *App) variablesPage(response http.ResponseWriter, request *http.Request)
 	var variables []variableView
 	for rows.Next() {
 		var variable variableView
-		if err := rows.Scan(&variable.Name, &variable.Value, &variable.ValueType, &variable.IsPassword); err != nil {
+		var updatedAt int64
+		if err := rows.Scan(&variable.Name, &variable.Value, &variable.ValueType, &variable.IsPassword, &variable.Revision, &updatedAt); err != nil {
 			_ = rows.Close()
 			http.Error(response, "无法读取变量", http.StatusInternalServerError)
 			return
 		}
+		variable.UpdatedAt = time.Unix(updatedAt, 0)
 		variables = append(variables, variable)
 	}
 	_ = rows.Close()
@@ -3103,7 +3107,7 @@ func (a *App) updateVariable(response http.ResponseWriter, request *http.Request
 		return
 	}
 	defer transaction.Rollback()
-	result, err := transaction.Exec("UPDATE variables SET name = ?, value = ?, value_type = ?, is_password = ?, updated_at = ? WHERE name = ?", name, value, valueType, isPassword, time.Now().UTC().Unix(), original)
+	result, err := transaction.Exec("UPDATE variables SET name = ?, value = ?, value_type = ?, is_password = ?, revision = revision + 1, updated_at = ? WHERE name = ?", name, value, valueType, isPassword, time.Now().UTC().Unix(), original)
 	if err == nil && name != original {
 		oldReference, newReference := "{{"+original+"}}", "{{"+name+"}}"
 		_, err = transaction.Exec("UPDATE quick_runs SET arguments_template = replace(arguments_template, ?, ?), revision = revision + 1 WHERE arguments_template LIKE ?", oldReference, newReference, "%"+oldReference+"%")

@@ -182,6 +182,9 @@ func TestCreateTypedVariablePersistsItsValidatedType(t *testing.T) {
 	if value != "12" || valueType != "integer" {
 		t.Fatalf("value=%q type=%q", value, valueType)
 	}
+	if _, err := database.Exec(`UPDATE variables SET updated_at = 1735689600 WHERE name = 'RETRIES'`); err != nil {
+		t.Fatal(err)
+	}
 
 	response, err = client.Get(serverURL + "/resources/variables")
 	if err != nil {
@@ -189,8 +192,17 @@ func TestCreateTypedVariablePersistsItsValidatedType(t *testing.T) {
 	}
 	page, _ = io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if !strings.Contains(string(page), `data-variable-type="integer">Integer</small>`) {
-		t.Fatalf("Variable list does not show the integer type: %s", page)
+	for _, marker := range []string{
+		`<th>Value type</th>`,
+		`<td data-label="Value type" data-variable-type="integer">Integer</td>`,
+		`<th>Revision</th>`,
+		`<td data-label="Revision"><span class="revision-badge">v1</span></td>`,
+		`<th>Last modified</th>`,
+		`<time datetime="2025-01-01T00:00:00Z">`,
+	} {
+		if !strings.Contains(string(page), marker) {
+			t.Fatalf("Variable list does not show metadata marker %q: %s", marker, page)
+		}
 	}
 }
 
@@ -287,10 +299,21 @@ func TestEditVariableChangesTypeOnlyWhenTheSubmittedValueMatches(t *testing.T) {
 	}
 	defer database.Close()
 	var value, valueType string
-	if err := database.QueryRow(`SELECT value, value_type FROM variables WHERE name = 'RELEASE_VERSION'`).Scan(&value, &valueType); err != nil {
+	var revision int64
+	if err := database.QueryRow(`SELECT value, value_type, revision FROM variables WHERE name = 'RELEASE_VERSION'`).Scan(&value, &valueType, &revision); err != nil {
 		t.Fatal(err)
 	}
-	if value != "2.4.1" || valueType != "version" {
-		t.Fatalf("value=%q type=%q", value, valueType)
+	if value != "2.4.1" || valueType != "version" || revision != 2 {
+		t.Fatalf("value=%q type=%q revision=%d", value, valueType, revision)
+	}
+
+	response, err = client.Get(serverURL + "/resources/variables")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if !strings.Contains(string(page), `<td data-label="Revision"><span class="revision-badge">v2</span></td>`) {
+		t.Fatalf("Variable list does not show the updated revision: %s", page)
 	}
 }

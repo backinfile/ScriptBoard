@@ -1604,6 +1604,8 @@ var webMessages = map[string]localizedMessage{
 	"variables.plaintext_notice":                    {"密码类型只会在页面中默认隐藏；变量仍以明文存储，并可能出现在运行参数与历史中。", "Password type only hides the value by default in this page. Variables are still stored as plain text and may appear in Run arguments and history."},
 	"variables.password_type":                       {"密码类型", "Password type"},
 	"variables.value_type":                          {"值类型", "Value type"},
+	"variables.revision":                            {"修改版本号", "Revision"},
+	"variables.last_modified":                       {"最后修改时间", "Last modified"},
 	"variables.type.text":                           {"文本", "Text"},
 	"variables.type.bool":                           {"布尔值", "Boolean"},
 	"variables.type.integer":                        {"整数", "Integer"},

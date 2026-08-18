@@ -10,7 +10,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func TestApplyMigratesExistingVariablesToText(t *testing.T) {
+func TestApplyMigratesExistingVariableMetadata(t *testing.T) {
 	t.Parallel()
 
 	database, err := sql.Open("sqlite", "file:variable-migration?mode=memory&cache=shared")
@@ -34,7 +34,7 @@ func TestApplyMigratesExistingVariablesToText(t *testing.T) {
 	}
 
 	err = migrations.Apply(database, 48, migrations.Options{
-		CurrentVersion: 49,
+		CurrentVersion: 50,
 		RandomToken:    func(int) (string, error) { return "token", nil },
 		HashToken:      func(value string) string { return value },
 		Now:            func() time.Time { return time.Unix(100, 0) },
@@ -44,11 +44,12 @@ func TestApplyMigratesExistingVariablesToText(t *testing.T) {
 	}
 
 	var value, valueType string
+	var revision int64
 	var isPassword bool
-	if err := database.QueryRow(`SELECT value, value_type, is_password FROM variables WHERE name = 'API_TOKEN'`).Scan(&value, &valueType, &isPassword); err != nil {
+	if err := database.QueryRow(`SELECT value, value_type, is_password, revision FROM variables WHERE name = 'API_TOKEN'`).Scan(&value, &valueType, &isPassword, &revision); err != nil {
 		t.Fatal(err)
 	}
-	if value != "kept-value" || valueType != "text" || !isPassword {
-		t.Fatalf("value=%q type=%q password=%v", value, valueType, isPassword)
+	if value != "kept-value" || valueType != "text" || !isPassword || revision != 1 {
+		t.Fatalf("value=%q type=%q password=%v revision=%d", value, valueType, isPassword, revision)
 	}
 }

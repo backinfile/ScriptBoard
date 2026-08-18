@@ -2824,6 +2824,10 @@ td.record-actions { width: 1%; }
 .inline-notice--warning { color: var(--warning); background: var(--warning-soft); border-color: var(--warning-border); }
 .variables-table th:nth-child(2) { width: 100%; }
 .variables-table td:nth-child(2) { min-width: 0; }
+.variables-table td:nth-child(3),
+.variables-table td:nth-child(4),
+.variables-table td:nth-child(5) { white-space: nowrap; }
+.revision-badge { color: var(--muted); font-family: var(--font-mono); }
 .variable-name-details { display: grid; min-width: 0; }
 .copyable-field {
   display: flex;

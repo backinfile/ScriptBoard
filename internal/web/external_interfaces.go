@@ -1478,7 +1478,7 @@ func (a *App) executeExternalVariable(response http.ResponseWriter, request *htt
 	if err != nil {
 		return externalFailure(http.StatusBadRequest, "invalid_value")
 	}
-	result, err := a.db.ExecContext(request.Context(), "UPDATE variables SET value = ?, updated_at = ? WHERE name = ? AND is_password = 0 AND value_type = ?", value, time.Now().UTC().Unix(), config.VariableName, valueType)
+	result, err := a.db.ExecContext(request.Context(), "UPDATE variables SET value = ?, revision = revision + 1, updated_at = ? WHERE name = ? AND is_password = 0 AND value_type = ?", value, time.Now().UTC().Unix(), config.VariableName, valueType)
 	if err != nil {
 		return externalFailure(http.StatusInternalServerError, "action_failed")
 	}

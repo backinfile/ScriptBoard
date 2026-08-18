@@ -102,6 +102,7 @@ var baseSchemaStatements = []string{
 			value TEXT NOT NULL,
 			value_type TEXT NOT NULL DEFAULT 'text' CHECK (value_type IN ('text', 'bool', 'integer', 'float', 'version')),
 			is_password INTEGER NOT NULL DEFAULT 0,
+			revision INTEGER NOT NULL DEFAULT 1,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		)`,
