@@ -139,6 +139,7 @@
       submitFailed: "操作未完成，请检查网络后重试。为避免重复操作，ScriptBoard 不会自动再次提交。",
       serverErrorClose: "关闭", serverErrorRetry: "重新载入", serverErrorRetryTask: "重新打开", serverErrorRetryAction: "重新提交",
       serverErrorRefresh: "刷新当前页面", serverErrorDetails: "技术详情", serverErrorRequest: "请求",
+      serverErrorCopyDetails: "复制错误详情", serverErrorDetailsCopied: "错误详情已复制", serverErrorDetailsCopyFailed: "复制错误详情失败",
       serverErrorPreserved: "当前工作区已保留", serverErrorNoResubmit: "未自动重试，避免重复执行写操作",
       confirmTitle: "确认操作", confirmDescription: "请确认是否继续执行此操作。", confirmCancel: "取消", confirmAction: "确认",
       websiteNormal: "网站监控正常", websiteNoOpenIssues: "没有故障或待复核项",
@@ -165,6 +166,7 @@
       submitFailed: "The action did not complete. Check your connection and retry. ScriptBoard will not resubmit it automatically.",
       serverErrorClose: "Close", serverErrorRetry: "Reload", serverErrorRetryTask: "Reopen", serverErrorRetryAction: "Submit again",
       serverErrorRefresh: "Refresh current page", serverErrorDetails: "Technical details", serverErrorRequest: "Request",
+      serverErrorCopyDetails: "Copy error details", serverErrorDetailsCopied: "Error details copied", serverErrorDetailsCopyFailed: "Failed to copy error details",
       serverErrorPreserved: "The current workspace is preserved", serverErrorNoResubmit: "Not retried automatically to avoid repeating a write",
       confirmTitle: "Confirm action", confirmDescription: "Confirm that you want to continue with this action.", confirmCancel: "Cancel", confirmAction: "Confirm",
       websiteNormal: "Website monitoring normal", websiteNoOpenIssues: "No failures or pending verifications",
@@ -692,6 +694,14 @@
     const destination = new URL(options.url || result.response.url || location.href, location.href);
     const method = String(options.method || "GET").toUpperCase();
     const returnFocus = options.returnFocus || document.activeElement;
+    const requestDetails = `${method} ${destination.pathname}`;
+    const copyDetailsText = [
+      title,
+      summary,
+      `HTTP: ${status >= 400 ? status : "—"}`,
+      `${words().serverErrorRequest}: ${requestDetails}`,
+      ...(technical ? [`${words().serverErrorDetails}:`, technical] : []),
+    ].join("\n");
 
     const dialog = document.createElement("dialog");
     dialog.className = "server-error-dialog";
@@ -717,7 +727,16 @@
     close.type = "button";
     close.setAttribute("aria-label", words().serverErrorClose);
     close.append(makeIcon("x"));
-    header.append(mark, heading, close);
+    const headerActions = document.createElement("div");
+    headerActions.className = "server-error-header-actions";
+    const copyDetails = document.createElement("button");
+    copyDetails.className = "icon-button icon-button--quiet";
+    copyDetails.type = "button";
+    copyDetails.setAttribute("aria-label", words().serverErrorCopyDetails);
+    copyDetails.setAttribute("data-tooltip", words().serverErrorCopyDetails);
+    copyDetails.append(makeIcon("copy"));
+    headerActions.append(copyDetails, close);
+    header.append(mark, heading, headerActions);
 
     const facts = document.createElement("dl");
     const statusFact = document.createElement("div");
@@ -731,7 +750,7 @@
     requestLabel.textContent = words().serverErrorRequest;
     const requestValue = document.createElement("dd");
     const requestCode = document.createElement("code");
-    requestCode.textContent = `${method} ${destination.pathname}`;
+    requestCode.textContent = requestDetails;
     requestValue.append(requestCode);
     requestFact.append(requestLabel, requestValue);
     facts.append(statusFact, requestFact);
@@ -777,6 +796,22 @@
     document.body.append(dialog);
 
     const dismiss = () => closeServerErrorDialog(true);
+    copyDetails.addEventListener("click", async () => {
+      if (copyDetails.getAttribute("aria-busy") === "true") return;
+      copyDetails.setAttribute("aria-busy", "true");
+      try {
+        await copyTextToClipboard(copyDetailsText);
+        copyDetails.setAttribute("aria-label", words().serverErrorDetailsCopied);
+        copyDetails.setAttribute("data-tooltip", words().serverErrorDetailsCopied);
+        copyDetails.replaceChildren(makeIcon("check"));
+      } catch {
+        copyDetails.setAttribute("aria-label", words().serverErrorDetailsCopyFailed);
+        copyDetails.setAttribute("data-tooltip", words().serverErrorDetailsCopyFailed);
+        copyDetails.replaceChildren(makeIcon("triangle-alert"));
+      } finally {
+        copyDetails.removeAttribute("aria-busy");
+      }
+    });
     close.addEventListener("click", dismiss);
     closeAction.addEventListener("click", dismiss);
     dialog.addEventListener("cancel", event => {

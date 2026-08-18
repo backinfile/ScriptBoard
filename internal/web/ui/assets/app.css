@@ -3632,12 +3632,13 @@ body.has-update-source-drawer { overflow: hidden; }
 .server-error-sheet { overflow: hidden; background: var(--surface); border-radius: 10px; }
 .server-error-sheet > header {
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) 38px;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
   align-items: start;
   gap: 15px;
   padding: 25px 26px 21px;
   border-bottom: 1px solid var(--rule);
 }
+.server-error-header-actions { display: flex; gap: 6px; }
 .server-error-mark {
   display: grid;
   width: 42px;
