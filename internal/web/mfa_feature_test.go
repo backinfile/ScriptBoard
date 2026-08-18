@@ -37,7 +37,18 @@ func TestTOTPEnrollmentRequiresSecondFactorForLoginAndStepUp(t *testing.T) {
 	password := strings.TrimSpace(string(passwordBytes))
 	login(t, client, server.URL, password, http.StatusSeeOther)
 
-	page := getBody(t, client, server.URL+"/settings/account/mfa", http.StatusOK)
+	pageResponse, err := client.Get(server.URL + "/settings/account/mfa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(pageResponse.Body)
+	_ = pageResponse.Body.Close()
+	if pageResponse.StatusCode != http.StatusOK {
+		t.Fatalf("MFA overview status=%d body=%s", pageResponse.StatusCode, page)
+	}
+	if policy := pageResponse.Header.Get("Content-Security-Policy"); strings.Contains(policy, "data:") {
+		t.Fatalf("MFA overview CSP unexpectedly allows data images: %q", policy)
+	}
 	for _, expected := range []string{`class="task-sheet mfa-sheet"`, `class="mfa-content"`, `class="mfa-method`, `mfa-passkeys"`} {
 		if !strings.Contains(string(page), expected) {
 			t.Fatalf("two-factor drawer is missing structured section %q: %s", expected, page)

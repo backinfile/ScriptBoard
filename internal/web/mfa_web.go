@@ -112,6 +112,7 @@ func (a *App) renderMFAPage(response http.ResponseWriter, request *http.Request,
 			return
 		}
 		data.QRCodeBase64 = base64.StdEncoding.EncodeToString(qrPNG)
+		response.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 	}
 	data.Locale = resolveWebLocale(request)
 	data.CSRFToken = current.csrfToken
