@@ -3,6 +3,7 @@ package registrymonitor
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -164,7 +165,7 @@ func TestInspectExpandsNamespaceAndAllImageSelectors(t *testing.T) {
 				_ = json.NewEncoder(response).Encode(map[string]any{"repositories": []string{"tools/worker"}})
 				return
 			}
-			response.Header().Set("Link", `</v2/_catalog?n=100&last=team%2Fweb>; rel="next"`)
+			response.Header().Set("Link", `</v2/_catalog?n=100&last=other%2Fdb>; rel="prev", </v2/_catalog?n=100&last=team%2Fweb>; rel="next"`)
 			_ = json.NewEncoder(response).Encode(map[string]any{"repositories": []string{"other/db", "team/web", "team/api"}})
 		case "/v2/team/api/tags/list":
 			_ = json.NewEncoder(response).Encode(map[string]any{"tags": []string{"1.2.0"}})
@@ -198,6 +199,46 @@ func TestInspectExpandsNamespaceAndAllImageSelectors(t *testing.T) {
 		if results[index].Image != want || results[index].Error != "" {
 			t.Fatalf("result[%d]=%#v, want image %q", index, results[index], want)
 		}
+	}
+}
+
+func TestInspectRejectsCatalogRedirects(t *testing.T) {
+	redirectedRequests := 0
+	redirectTarget := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		redirectedRequests++
+		_ = json.NewEncoder(response).Encode(map[string]any{"repositories": []string{"private/image"}})
+	}))
+	defer redirectTarget.Close()
+	registry := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		http.Redirect(response, request, redirectTarget.URL+"/v2/_catalog", http.StatusFound)
+	}))
+	defer registry.Close()
+
+	results, err := New(registry.Client()).Inspect(context.Background(), Config{Endpoint: registry.URL, Images: []string{"*"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if redirectedRequests != 0 || len(results) != 1 || !strings.Contains(results[0].Error, "302") {
+		t.Fatalf("redirected_requests=%d results=%#v", redirectedRequests, results)
+	}
+}
+
+func TestInspectBoundsCatalogExpansion(t *testing.T) {
+	repositories := make([]string, maxCatalogRepositories+1)
+	for index := range repositories {
+		repositories[index] = fmt.Sprintf("team/image-%04d", index)
+	}
+	registry := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		_ = json.NewEncoder(response).Encode(map[string]any{"repositories": repositories})
+	}))
+	defer registry.Close()
+
+	results, err := New(registry.Client()).Inspect(context.Background(), Config{Endpoint: registry.URL, Images: []string{"*"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || !strings.Contains(results[0].Error, "过多") {
+		t.Fatalf("results=%#v", results)
 	}
 }
 
