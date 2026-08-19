@@ -1869,7 +1869,28 @@ async function assertExternalInterfaces(page, fixture) {
     await operationsGroup.waitFor();
 
     let quickRunRow = page.locator("[data-quick-run-id]").filter({ hasText: "Weekly safety check" });
-    await quickRunRow.locator(".action-menu summary").click();
+    await page.setViewportSize({ width: 1440, height: 720 });
+    const terminalQuickRunRow = page.locator(".ordered-records > li[data-quick-run-id]").last();
+    await terminalQuickRunRow.locator(".action-menu summary").click();
+    const quickRunMenuViewport = await terminalQuickRunRow.locator(".action-menu > div").evaluate(menu => {
+      const menuBounds = menu.getBoundingClientRect();
+      const firstBounds = menu.querySelector("a, button").getBoundingClientRect();
+      return {
+        viewportHeight: innerHeight,
+        menu: { top: Math.round(menuBounds.top), bottom: Math.round(menuBounds.bottom) },
+        firstItem: { top: Math.round(firstBounds.top), bottom: Math.round(firstBounds.bottom) },
+      };
+    });
+    assert.ok(
+      quickRunMenuViewport.menu.top >= 8 &&
+        quickRunMenuViewport.menu.bottom <= quickRunMenuViewport.viewportHeight - 8 &&
+        quickRunMenuViewport.firstItem.top >= 8 &&
+        quickRunMenuViewport.firstItem.bottom <= quickRunMenuViewport.viewportHeight - 8,
+      `Quick Run action menu escaped the viewport: ${JSON.stringify(quickRunMenuViewport)}`,
+    );
+    terminalQuickRunRow.locator(".action-menu").evaluate(menu => menu.removeAttribute("open"));
+    await page.setViewportSize({ width: 1440, height: 1000 });
+		await quickRunRow.locator(".action-menu summary").click();
     await quickRunRow.getByRole("link", { name: "Move to group" }).click();
     await page.locator('[data-task-panel] [data-task-kind="quick-move-group"]').waitFor();
     await page.locator('[data-task-panel] select[name="group_id"]').selectOption({ label: "Operations" });

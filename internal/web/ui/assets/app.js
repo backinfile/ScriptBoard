@@ -7420,6 +7420,36 @@
     }
   });
 
+  function positionActionMenu(menu) {
+    const panel = menu?.querySelector(":scope > div");
+    const trigger = menu?.querySelector(":scope > summary");
+    if (!panel || !trigger) return;
+    panel.style.removeProperty("top");
+    panel.style.removeProperty("bottom");
+    panel.style.removeProperty("--action-menu-max-height");
+    const triggerBounds = trigger.getBoundingClientRect();
+    const viewportMargin = 8;
+    const gap = 5;
+    const spaceAbove = Math.max(0, triggerBounds.top - viewportMargin - gap);
+    const spaceBelow = Math.max(0, innerHeight - triggerBounds.bottom - viewportMargin - gap);
+    const desiredHeight = panel.scrollHeight;
+    const openDown = spaceBelow >= Math.min(desiredHeight, 240) || spaceBelow >= spaceAbove;
+    const availableHeight = openDown ? spaceBelow : spaceAbove;
+    panel.style.top = openDown ? `calc(100% + ${gap}px)` : "auto";
+    panel.style.bottom = openDown ? "auto" : `calc(100% + ${gap}px)`;
+    panel.style.setProperty("--action-menu-max-height", `${Math.max(48, Math.floor(availableHeight))}px`);
+  }
+
+  // Action lists grow over time; choose the usable side of the trigger and scroll inside the viewport.
+  document.addEventListener("toggle", event => {
+    const menu = event.target;
+    if (!(menu instanceof HTMLDetailsElement) || !menu.matches(".action-menu")) return;
+    if (menu.open) positionActionMenu(menu);
+  }, true);
+  window.addEventListener("resize", () => {
+    document.querySelectorAll(".action-menu[open]").forEach(positionActionMenu);
+  });
+
   document.addEventListener("click", event => {
     const menu = event.target.closest(".action-menu");
     document.querySelectorAll(".action-menu[open]").forEach(open => {

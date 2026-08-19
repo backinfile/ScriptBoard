@@ -20,6 +20,10 @@ import (
 )
 
 func TestWebsiteAvailabilityRendersFreshCurrentBucketAsProvisional(t *testing.T) {
+	previousLocal := time.Local
+	time.Local = time.FixedZone("website-test-local", 8*60*60)
+	t.Cleanup(func() { time.Local = previousLocal })
+
 	now := time.Date(2026, time.July, 29, 12, 59, 59, 0, time.UTC)
 	root := t.TempDir()
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{
@@ -127,6 +131,13 @@ func TestWebsiteAvailabilityRendersFreshCurrentBucketAsProvisional(t *testing.T)
 		}
 		if !provisionalLabel.Match(page) {
 			t.Fatalf("%s provisional accessible label missing: %s", path, page)
+		}
+		expectedHoverTime := `title="2026-07-29 20:30–21:00 ·`
+		if path == detailPath {
+			expectedHoverTime = `title="2026-07-29 20:40–21:00 ·`
+		}
+		if !bytes.Contains(page, []byte(expectedHoverTime)) {
+			t.Fatalf("%s availability hover time is not rendered in the server local timezone: %s", path, page)
 		}
 	}
 	if !bytes.Contains(listPage, []byte(

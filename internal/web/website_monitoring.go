@@ -1042,10 +1042,12 @@ func newWebsiteMonitorAvailabilityBucketView(
 	tone := string(bucket.State)
 	title := websiteAvailabilityLabel(locale, bucket.State)
 	if !bucket.StartedAt.IsZero() {
+		startedAt := bucket.StartedAt.Local()
+		endedAtLabel := endedAt.Local()
 		title = fmt.Sprintf(
 			"%s–%s · %s",
-			bucket.StartedAt.Format("2006-01-02 15:04"),
-			endedAt.Format("15:04"),
+			startedAt.Format("2006-01-02 15:04"),
+			endedAtLabel.Format("15:04"),
 			title,
 		)
 	}
