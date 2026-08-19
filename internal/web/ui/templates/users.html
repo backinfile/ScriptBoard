@@ -8,7 +8,7 @@
   <div class="settings-content">
   {{if .GeneratedPassword}}<aside class="inline-notice"><span data-lucide="key-round" aria-hidden="true"></span><div><strong>{{t .Locale "users.password_once"}}</strong><p>{{.GeneratedUsername}}</p><code data-generated-password>{{.GeneratedPassword}}</code></div></aside>{{end}}
   <section class="settings-block">
-    <h2>{{t .Locale "users.accounts"}}</h2>
+    <header class="section-heading"><div><p class="section-index">01</p><h2>{{t .Locale "users.accounts"}}</h2></div></header>
     <div class="table-shell"><table class="records-table">
       <thead><tr><th>{{t .Locale "login.username"}}</th><th>{{t .Locale "users.role"}}</th><th>{{t .Locale "common.status"}}</th></tr></thead>
       <tbody>{{range .Users}}<tr data-user-id="{{.ID}}" data-username="{{.Username}}">

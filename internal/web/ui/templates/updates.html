@@ -6,7 +6,7 @@
   <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "settings.eyebrow"}}</p><h1>{{t .Locale "settings.title"}}</h1><p>{{t .Locale "settings.description"}}</p></div></header>
   {{template "settings-navigation" .SettingsNavigation}}
   <section class="settings-content">
-      <header class="settings-section-heading"><div><h2>{{t .Locale "updates.title"}}</h2><p>{{t .Locale "updates.description"}}</p></div>
+      <header class="settings-section-heading"><div><p class="section-index">01</p><h2>{{t .Locale "updates.title"}}</h2><p>{{t .Locale "updates.description"}}</p></div>
         <div class="settings-section-heading__actions">
           <span class="status-chip" data-state="{{if .Snapshot.UpdateAvailable}}attention{{else}}enabled{{end}}"><span class="status-dot" aria-hidden="true"></span>{{if .Snapshot.UpdateAvailable}}{{t .Locale "updates.available"}}{{else if .Snapshot.LocalNewer}}{{t .Locale "updates.local_newer"}}{{else}}{{t .Locale "updates.current"}}{{end}}</span>
           <div class="settings-section-heading__buttons">
@@ -31,7 +31,7 @@
       {{if .Snapshot.LastError}}<aside class="inline-notice inline-notice--danger"><span data-lucide="triangle-alert" aria-hidden="true"></span><p>{{.Snapshot.LastError}}</p></aside>{{end}}
       {{if .Snapshot.Latest}}
       <section class="settings-block">
-        <header class="section-heading"><div><h3>{{t .Locale "updates.latest"}} <code>{{.Snapshot.Latest.Version}}</code></h3><p>{{if .LatestPublished.IsZero}}{{.Snapshot.Latest.PublishedAt}}{{else}}{{displayTime .LatestPublished}}{{end}}</p></div>{{if .Snapshot.ReleaseURL}}<a class="button button--compact" href="{{.Snapshot.ReleaseURL}}" target="_blank" rel="noreferrer">{{t .Locale "updates.release_page"}}</a>{{end}}</header>
+        <header class="section-heading"><div><p class="section-index">02</p><h3>{{t .Locale "updates.latest"}} <code>{{.Snapshot.Latest.Version}}</code></h3><p>{{if .LatestPublished.IsZero}}{{.Snapshot.Latest.PublishedAt}}{{else}}{{displayTime .LatestPublished}}{{end}}</p></div>{{if .Snapshot.ReleaseURL}}<a class="button button--compact" href="{{.Snapshot.ReleaseURL}}" target="_blank" rel="noreferrer">{{t .Locale "updates.release_page"}}</a>{{end}}</header>
         {{if .LatestAsset}}<p><code>{{.LatestAsset}}</code> · {{.LatestSize}}</p>{{end}}
         {{if .Snapshot.ReleaseNotes}}<pre class="update-release-notes">{{.Snapshot.ReleaseNotes}}</pre>{{end}}
         {{if and .Snapshot.UpdateAvailable .Snapshot.CanApply}}
@@ -46,7 +46,7 @@
         {{end}}
       </section>
       {{end}}
-      {{if .Snapshot.Operation}}<section class="settings-block"><h3>{{t .Locale "updates.operation"}}</h3><dl class="settings-summary"><div><dt>ID</dt><dd><code>{{.Snapshot.Operation.ID}}</code></dd></div><div><dt>{{t .Locale "common.status"}}</dt><dd><code>{{.Snapshot.Operation.Phase}}</code></dd></div><div><dt>{{t .Locale "updates.target"}}</dt><dd><code>{{.Snapshot.Operation.TargetVersion}}</code></dd></div><div><dt>{{t .Locale "updates.operation_started"}}</dt><dd><time datetime="{{.Snapshot.Operation.CreatedAt}}" data-local-time>{{.Snapshot.Operation.CreatedAt}}</time></dd></div></dl>{{if .Snapshot.Operation.Error}}<p class="field-error">{{.Snapshot.Operation.Error}}</p>{{end}}</section>{{end}}
+      {{if .Snapshot.Operation}}<section class="settings-block"><header class="section-heading"><div><p class="section-index">03</p><h3>{{t .Locale "updates.operation"}}</h3></div></header><dl class="settings-summary"><div><dt>ID</dt><dd><code>{{.Snapshot.Operation.ID}}</code></dd></div><div><dt>{{t .Locale "common.status"}}</dt><dd><code>{{.Snapshot.Operation.Phase}}</code></dd></div><div><dt>{{t .Locale "updates.target"}}</dt><dd><code>{{.Snapshot.Operation.TargetVersion}}</code></dd></div><div><dt>{{t .Locale "updates.operation_started"}}</dt><dd><time datetime="{{.Snapshot.Operation.CreatedAt}}" data-local-time>{{.Snapshot.Operation.CreatedAt}}</time></dd></div></dl>{{if .Snapshot.Operation.Error}}<p class="field-error">{{.Snapshot.Operation.Error}}</p>{{end}}</section>{{end}}
   </section>
 
   <div class="update-source-drawer-host{{if .ShowSourceDrawer}} is-open{{end}}" data-update-source-drawer aria-hidden="{{if .ShowSourceDrawer}}false{{else}}true{{end}}">

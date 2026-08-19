@@ -24,7 +24,7 @@ FORM: Responsive signal ledger with a right-side detail task on capable clients 
 </div>
 <div class="heading-actions website-heading-actions">
 <a class="button" href="{{.RefreshURL}}" data-website-refresh>
-<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7L20 8"/><path d="M20 4v4h-4"/></svg>
+<span data-lucide="refresh-cw" aria-hidden="true"></span>
 {{t .Locale "website.refresh"}}
 </a>
 {{if .CanManage}}
@@ -37,11 +37,11 @@ FORM: Responsive signal ledger with a right-side detail task on capable clients 
 {{t .Locale "website.transfer.import"}}
 </a>
 <a class="button" href="/monitor/websites/nginx" data-task-link>
-<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/><path d="m14.5 14.5 3 3"/></svg>
+<span data-lucide="scan-search" aria-hidden="true"></span>
 {{t .Locale "website.scan"}}
 </a>
 <a class="button button--primary" href="/monitor/websites/new" data-task-link>
-<svg class="lucide" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+<span data-lucide="plus" aria-hidden="true"></span>
 {{t .Locale "website.add"}}
 </a>
 {{end}}
@@ -53,7 +53,7 @@ FORM: Responsive signal ledger with a right-side detail task on capable clients 
 <section class="website-verdict website-verdict--{{if gt .Counts.Down 0}}down{{else if gt .Counts.Verifying 0}}verifying{{else}}up{{end}}" aria-labelledby="website-verdict-title">
 <div class="website-verdict__main">
 <span class="website-verdict__icon" aria-hidden="true">
-{{if gt .NeedsCare 0}}<svg class="lucide" viewBox="0 0 24 24"><path d="M10.3 3.7 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>{{else}}<svg class="lucide" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.2 2.2 4.8-5"/></svg>{{end}}
+{{if gt .NeedsCare 0}}<span data-lucide="triangle-alert" aria-hidden="true"></span>{{else}}<span data-lucide="circle-check" aria-hidden="true"></span>{{end}}
 </span>
 <div>
 <p class="website-kicker">{{t .Locale "website.current_state"}}</p>
