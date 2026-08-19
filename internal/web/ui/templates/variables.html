@@ -22,6 +22,7 @@
           <span class="sr-only" role="status" aria-live="polite" data-copy-status></span>
         </div>
         {{if .IsPassword}}<small>{{t $.Locale "variables.password_type"}}</small>{{end}}
+        {{if .Note}}<p class="variable-note">{{.Note}}</p>{{end}}
       </div></div></td>
       <td data-label="{{t $.Locale "common.value"}}">{{if .IsPassword}}
         <div class="secret-value" data-password-value data-copy-field hidden>

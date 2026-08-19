@@ -929,6 +929,9 @@ func TestWebsiteMonitoringLocalizesEnglishAndShowsCheckedZeroLatency(t *testing.
 			t.Fatalf("English detail page does not contain %q: %s", expected, detail)
 		}
 	}
+	if bytes.Contains(detail, []byte(`data-local-time`)) {
+		t.Fatalf("website detail lets the browser override the instance timezone: %s", detail)
+	}
 
 	response, err = client.Get(serverURL + "/monitor/websites")
 	if err != nil {
@@ -946,6 +949,9 @@ func TestWebsiteMonitoringLocalizesEnglishAndShowsCheckedZeroLatency(t *testing.
 		if !bytes.Contains(listPage, []byte(expected)) {
 			t.Fatalf("English list page does not contain %q: %s", expected, listPage)
 		}
+	}
+	if bytes.Contains(listPage, []byte(`data-local-time`)) {
+		t.Fatalf("website list lets the browser override the instance timezone: %s", listPage)
 	}
 	for _, oldLabel := range []string{"Scan Nginx", "Connect ScriptBoard"} {
 		if bytes.Contains(listPage, []byte(oldLabel)) {

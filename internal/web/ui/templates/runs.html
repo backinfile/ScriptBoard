@@ -7,7 +7,8 @@
   <section class="section-tools section-tools--history">
     <form class="history-filter-form" method="get" data-async data-async-push data-focus-after-navigation="#run-search">
       {{if .Filters.ScheduleID}}<input type="hidden" name="schedule_id" value="{{.Filters.ScheduleID}}">{{end}}
-      <label class="search-field history-filter-search"><span data-lucide="search" aria-hidden="true"></span><span class="sr-only">{{t .Locale "runs.search"}}</span><input id="run-search" type="search" name="q" value="{{.Filters.Query}}" autocomplete="off" placeholder="{{t .Locale "runs.search_placeholder"}}"{{if .Filters.ScheduleID}} data-schedule-filter-name="{{.Filters.Query}}"{{end}}{{if .Filters.FocusSearch}} autofocus{{end}}></label>
+      {{if .Filters.QuickRunID}}<input type="hidden" name="quick_run_id" value="{{.Filters.QuickRunID}}">{{end}}
+      <label class="search-field history-filter-search"><span data-lucide="search" aria-hidden="true"></span><span class="sr-only">{{t .Locale "runs.search"}}</span><input id="run-search" type="search" name="q" value="{{.Filters.Query}}" autocomplete="off" placeholder="{{t .Locale "runs.search_placeholder"}}"{{if .Filters.ScheduleID}} data-schedule-filter-name="{{.Filters.Query}}"{{end}}{{if .Filters.QuickRunID}} data-quick-run-filter-name="{{.Filters.Query}}"{{end}}{{if .Filters.FocusSearch}} autofocus{{end}}></label>
       <fieldset class="history-date-range">
         <legend class="sr-only">{{t .Locale "common.date_range"}}</legend>
         <label><span class="sr-only">{{t .Locale "common.start_date"}}</span><input type="date" name="from" value="{{.Filters.FromDate}}" aria-label="{{t .Locale "common.start_date"}}"></label>

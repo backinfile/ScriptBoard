@@ -2060,6 +2060,10 @@
       if (scheduleSearch && scheduleSearch.value.trim() !== scheduleSearch.dataset.scheduleFilterName) {
         destination.searchParams.delete("schedule_id");
       }
+      const quickRunSearch = form.querySelector("[data-quick-run-filter-name]");
+      if (quickRunSearch && quickRunSearch.value.trim() !== quickRunSearch.dataset.quickRunFilterName) {
+        destination.searchParams.delete("quick_run_id");
+      }
       if (form.matches("[data-file-search]") && !destination.searchParams.get("sort")) {
         destination.searchParams.delete("direction");
       }

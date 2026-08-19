@@ -87,6 +87,7 @@ type externalInterfacesPageData struct {
 type externalInterfaceFormData struct {
 	Kind, Title, Description, BackURL, Action, CSRFToken string
 	CallMethod, CallURL, CallBody, TypeText, TargetText  string
+	CallCopyText                                         string
 	PreviewURL, FormError                                string
 	Locale                                               webLocale
 	Key                                                  externaltrigger.Key
@@ -330,6 +331,46 @@ func externalTargetText(locale webLocale, entry externaltrigger.Entry) string {
 		}
 	}
 	return entry.Target
+}
+
+func externalCallCopyText(locale webLocale, entry externaltrigger.Entry, group externaltrigger.Group, method, callURL, callBody, typeText, targetText string) string {
+	statusText := webText(locale, "external.disabled")
+	if entry.Enabled {
+		statusText = webText(locale, "external.enabled")
+	}
+	signatureText := webText(locale, "external.signature_optional")
+	if entry.RequireSignature {
+		signatureText = webText(locale, "external.signature_required")
+	}
+	clean := func(value string) string {
+		return strings.TrimSpace(strings.NewReplacer("\r", " ", "\n", " ", "\t", " ").Replace(value))
+	}
+	lines := []string{
+		webText(locale, "external.copy_call_redacted_note"),
+		"",
+		fmt.Sprintf("%s: %s", webText(locale, "external.display_name"), clean(entry.Label)),
+		fmt.Sprintf("%s: %s · %d %s", webText(locale, "external.function_group"), clean(group.Label), len(group.Keys), webText(locale, "external.keys")),
+		fmt.Sprintf("%s: %s", webText(locale, "common.status"), statusText),
+		fmt.Sprintf("%s: %s", webText(locale, "external.action_type"), clean(typeText)),
+		fmt.Sprintf("%s: %s", webText(locale, "external.target"), clean(targetText)),
+		fmt.Sprintf("%s: %s", webText(locale, "external.signature_requirement"), signatureText),
+		"",
+		webText(locale, "external.call_method"),
+		method + " " + callURL,
+		"Authorization: Bearer YOUR_KEY",
+	}
+	if entry.RequireSignature {
+		lines = append(lines,
+			"X-ScriptBoard-Timestamp: UNIX_SECONDS",
+			"X-ScriptBoard-Nonce: UNIQUE_BASE64URL_VALUE",
+			"X-ScriptBoard-Signature: v2=HMAC_SHA256",
+		)
+	}
+	lines = append(lines, "", callBody)
+	if entry.RequireSignature {
+		lines = append(lines, "", webText(locale, "external.signature_help"))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (a *App) newExternalGroupTask(response http.ResponseWriter, request *http.Request) {
@@ -701,11 +742,15 @@ func (a *App) externalEntryDetail(response http.ResponseWriter, request *http.Re
 		callBodyKey = "external.call_body.variable"
 	}
 	callMethod := http.MethodPost
+	callURL := externalCallPath(group.CallName, entry.Name)
+	callBody := webText(locale, callBodyKey)
+	typeText := externalActionText(locale, entry.Type)
+	targetText := externalTargetText(locale, entry)
 	renderExternalInterfaceForm(response, externalInterfaceFormData{
 		Kind: "entry-detail", Title: entry.Label, Description: webText(locale, "external.function_details_description"),
 		BackURL: "/config/external-interfaces", CSRFToken: current.csrfToken, Locale: locale, Group: group, Key: key, Entry: entry, EntryEnabled: entry.Enabled, RequireSignature: entry.RequireSignature,
-		CallMethod: callMethod, CallURL: externalCallPath(group.CallName, entry.Name), CallBody: webText(locale, callBodyKey),
-		TypeText: externalActionText(locale, entry.Type), TargetText: externalTargetText(locale, entry), PreviewURL: previewURL,
+		CallMethod: callMethod, CallURL: callURL, CallBody: callBody, CallCopyText: externalCallCopyText(locale, entry, group, callMethod, callURL, callBody, typeText, targetText),
+		TypeText: typeText, TargetText: targetText, PreviewURL: previewURL,
 	})
 }
 

@@ -75,11 +75,11 @@ FORM: Responsive signal ledger with a right-side detail task on capable clients 
 <p>{{.LatestSummary}}{{if not .LatestSummary}}{{t $.Locale "website.result_needs_review"}}{{end}}</p>
 <dl class="website-alert__facts">
 <div><dt>{{t $.Locale "website.failure_count"}}</dt><dd>{{.FailureCount}}</dd></div>
-<div><dt>{{t $.Locale "website.incident_started"}}</dt><dd>{{if .IncidentStartedAt.IsZero}}—{{else}}<time datetime="{{machineTime .IncidentStartedAt}}" data-local-time>{{localTime $.Locale .IncidentStartedAt}}</time>{{end}}</dd></div>
+<div><dt>{{t $.Locale "website.incident_started"}}</dt><dd>{{if .IncidentStartedAt.IsZero}}—{{else}}<time datetime="{{machineTime .IncidentStartedAt}}">{{localTime $.Locale .IncidentStartedAt}}</time>{{end}}</dd></div>
 <div><dt>{{t $.Locale "website.incident_duration"}}</dt><dd>{{if .IncidentDurationLabel}}{{.IncidentDurationLabel}}{{else}}—{{end}}</dd></div>
-<div><dt>{{t $.Locale "website.next_check"}}</dt><dd>{{if .NextCheckAt.IsZero}}—{{else}}<time datetime="{{machineTime .NextCheckAt}}" data-local-time>{{localTime $.Locale .NextCheckAt}}</time>{{end}}</dd></div>
+<div><dt>{{t $.Locale "website.next_check"}}</dt><dd>{{if .NextCheckAt.IsZero}}—{{else}}<time datetime="{{machineTime .NextCheckAt}}">{{localTime $.Locale .NextCheckAt}}</time>{{end}}</dd></div>
 </dl>
-<div class="website-alert__latest"><strong>{{.LatestLabel}}</strong><small>{{if .LastCheckedAt.IsZero}}{{t $.Locale "website.never_checked"}}{{else}}{{t $.Locale "website.checked_at"}} <time datetime="{{machineTime .LastCheckedAt}}" data-local-time>{{localTime $.Locale .LastCheckedAt}}</time>{{end}}</small></div>
+<div class="website-alert__latest"><strong>{{.LatestLabel}}</strong><small>{{if .LastCheckedAt.IsZero}}{{t $.Locale "website.never_checked"}}{{else}}{{t $.Locale "website.checked_at"}} <time datetime="{{machineTime .LastCheckedAt}}">{{localTime $.Locale .LastCheckedAt}}</time>{{end}}</small></div>
 </section>
 {{end}}
 
@@ -142,7 +142,7 @@ FORM: Responsive signal ledger with a right-side detail task on capable clients 
 <div class="website-evidence">
 <strong>{{.LatestLabel}} · {{.LatencyLabel}}</strong>
 <span>{{.LatestSummary}}</span>
-<small>{{if .LastCheckedAt.IsZero}}{{t $.Locale "website.waiting_first_check"}}{{else}}<time datetime="{{machineTime .LastCheckedAt}}" data-local-time>{{localTime $.Locale .LastCheckedAt}}</time>{{end}}</small>
+<small>{{if .LastCheckedAt.IsZero}}{{t $.Locale "website.waiting_first_check"}}{{else}}<time datetime="{{machineTime .LastCheckedAt}}">{{localTime $.Locale .LastCheckedAt}}</time>{{end}}</small>
 </div>
 {{if $.Reorder}}
 <form class="website-move-actions" method="post" action="/monitor/websites/{{.ID}}/move" data-reorder-move-form>

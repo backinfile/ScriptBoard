@@ -221,6 +221,7 @@
     <form method="post" action="{{.Action}}" data-async data-variable-form>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <label>{{t .Locale "common.name"}} <input name="name" autocomplete="off" spellcheck="false" pattern="[A-Z][A-Z0-9_]{0,63}" value="{{.Name}}" required autofocus></label>
+      <label>{{t .Locale "variables.note"}} <textarea name="note" maxlength="500">{{.Note}}</textarea><small>{{t .Locale "variables.note_hint"}}</small></label>
       <label>{{t .Locale "variables.value_type"}} <select name="value_type" data-variable-value-type required>
         <option value="text" {{if eq .ValueType "text"}}selected{{end}}>{{t .Locale "variables.type.text"}}</option>
         <option value="bool" {{if eq .ValueType "bool"}}selected{{end}}>{{t .Locale "variables.type.bool"}}</option>

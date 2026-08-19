@@ -42,7 +42,7 @@
 </header>
 
 <div class="website-detail-refresh-rail">
-<span>{{t .Locale "website.detail.frequency"}} {{.Monitor.FrequencyLabel}} · {{t .Locale "website.next_check"}} {{if .Monitor.NextCheckAt.IsZero}}—{{else}}<time datetime="{{machineTime .Monitor.NextCheckAt}}" data-local-time>{{localTime .Locale .Monitor.NextCheckAt}}</time>{{end}}</span>
+<span>{{t .Locale "website.detail.frequency"}} {{.Monitor.FrequencyLabel}} · {{t .Locale "website.next_check"}} {{if .Monitor.NextCheckAt.IsZero}}—{{else}}<time datetime="{{machineTime .Monitor.NextCheckAt}}">{{localTime .Locale .Monitor.NextCheckAt}}</time>{{end}}</span>
 <p class="website-refresh-status" data-website-refresh-status aria-live="polite"></p>
 </div>
 
@@ -55,9 +55,9 @@
 </header>
 <dl>
 <div><dt>{{t $.Locale "website.failure_count"}}</dt><dd>{{.FailureCount}}</dd></div>
-<div><dt>{{t $.Locale "website.incident_started"}}</dt><dd><time datetime="{{machineTime .StartedAt}}" data-local-time>{{localTime $.Locale .StartedAt}}</time></dd></div>
+<div><dt>{{t $.Locale "website.incident_started"}}</dt><dd><time datetime="{{machineTime .StartedAt}}">{{localTime $.Locale .StartedAt}}</time></dd></div>
 <div><dt>{{t $.Locale "website.incident_duration"}}</dt><dd>{{localDuration $.Locale .Duration}}</dd></div>
-<div><dt>{{t $.Locale "website.next_check"}}</dt><dd>{{if .NextCheckAt.IsZero}}—{{else}}<time datetime="{{machineTime .NextCheckAt}}" data-local-time>{{localTime $.Locale .NextCheckAt}}</time>{{end}}</dd></div>
+<div><dt>{{t $.Locale "website.next_check"}}</dt><dd>{{if .NextCheckAt.IsZero}}—{{else}}<time datetime="{{machineTime .NextCheckAt}}">{{localTime $.Locale .NextCheckAt}}</time>{{end}}</dd></div>
 </dl>
 </section>
 {{else}}
@@ -69,9 +69,9 @@
 </header>
 <dl>
 <div><dt>{{t .Locale "website.failure_count"}}</dt><dd>{{.Monitor.FailureCount}}</dd></div>
-<div><dt>{{t .Locale "website.first_failure"}}</dt><dd>{{if or (eq .Monitor.State "pending") .Monitor.LastCheckedAt.IsZero}}—{{else}}<time datetime="{{machineTime .Monitor.LastCheckedAt}}" data-local-time>{{localTime .Locale .Monitor.LastCheckedAt}}</time>{{end}}</dd></div>
+<div><dt>{{t .Locale "website.first_failure"}}</dt><dd>{{if or (eq .Monitor.State "pending") .Monitor.LastCheckedAt.IsZero}}—{{else}}<time datetime="{{machineTime .Monitor.LastCheckedAt}}">{{localTime .Locale .Monitor.LastCheckedAt}}</time>{{end}}</dd></div>
 <div><dt>{{t .Locale "website.incident_duration"}}</dt><dd>—</dd></div>
-<div><dt>{{t .Locale "website.next_check"}}</dt><dd>{{if .Monitor.NextCheckAt.IsZero}}—{{else}}<time datetime="{{machineTime .Monitor.NextCheckAt}}" data-local-time>{{localTime .Locale .Monitor.NextCheckAt}}</time>{{end}}</dd></div>
+<div><dt>{{t .Locale "website.next_check"}}</dt><dd>{{if .Monitor.NextCheckAt.IsZero}}—{{else}}<time datetime="{{machineTime .Monitor.NextCheckAt}}">{{localTime .Locale .Monitor.NextCheckAt}}</time>{{end}}</dd></div>
 </dl>
 </section>
 {{else}}
@@ -83,8 +83,8 @@
 <dl>
 <div><dt>{{t .Locale "common.result"}}</dt><dd>{{.Monitor.LatestLabel}}</dd></div>
 <div><dt>{{t .Locale "website.detail.latency"}}</dt><dd>{{.Monitor.LatencyLabel}}</dd></div>
-<div><dt>{{t .Locale "website.detail.checked_at"}}</dt><dd>{{if .Monitor.LastCheckedAt.IsZero}}—{{else}}<time datetime="{{machineTime .Monitor.LastCheckedAt}}" data-local-time>{{localTime .Locale .Monitor.LastCheckedAt}}</time>{{end}}</dd></div>
-<div><dt>{{t .Locale "website.next_check"}}</dt><dd>{{if .Monitor.NextCheckAt.IsZero}}—{{else}}<time datetime="{{machineTime .Monitor.NextCheckAt}}" data-local-time>{{localTime .Locale .Monitor.NextCheckAt}}</time>{{end}}</dd></div>
+<div><dt>{{t .Locale "website.detail.checked_at"}}</dt><dd>{{if .Monitor.LastCheckedAt.IsZero}}—{{else}}<time datetime="{{machineTime .Monitor.LastCheckedAt}}">{{localTime .Locale .Monitor.LastCheckedAt}}</time>{{end}}</dd></div>
+<div><dt>{{t .Locale "website.next_check"}}</dt><dd>{{if .Monitor.NextCheckAt.IsZero}}—{{else}}<time datetime="{{machineTime .Monitor.NextCheckAt}}">{{localTime .Locale .Monitor.NextCheckAt}}</time>{{end}}</dd></div>
 </dl>
 </section>
 {{end}}
@@ -107,7 +107,7 @@
 <div class="website-recent-checks table-shell">
 <table>
 <thead><tr><th>{{t .Locale "common.time"}}</th><th>{{t .Locale "common.result"}}</th><th>{{t .Locale "website.detail.response"}}</th><th>{{t .Locale "website.detail.latency"}}</th></tr></thead>
-<tbody>{{range .RecentChecks}}<tr><td data-label="{{t $.Locale "common.time"}}"><time datetime="{{machineTime .CheckedAt}}" data-local-time>{{localTime $.Locale .CheckedAt}}</time></td><td data-label="{{t $.Locale "common.result"}}"><span class="website-status website-status--{{if .Success}}up{{else}}down{{end}}">{{if .Success}}{{t $.Locale "website.state.up"}}{{else}}{{t $.Locale "website.state.down"}}{{end}}</span></td><td data-label="{{t $.Locale "website.detail.response"}}"><strong>{{if gt .StatusCode 0}}HTTP {{.StatusCode}}{{else}}{{.Summary}}{{end}}</strong><small>{{.Summary}}</small></td><td data-label="{{t $.Locale "website.detail.latency"}}">{{.Latency.Milliseconds}} ms</td></tr>{{else}}<tr><td colspan="4">{{t .Locale "website.detail.no_recent_checks"}}</td></tr>{{end}}</tbody>
+<tbody>{{range .RecentChecks}}<tr><td data-label="{{t $.Locale "common.time"}}"><time datetime="{{machineTime .CheckedAt}}">{{localTime $.Locale .CheckedAt}}</time></td><td data-label="{{t $.Locale "common.result"}}"><span class="website-status website-status--{{if .Success}}up{{else}}down{{end}}">{{if .Success}}{{t $.Locale "website.state.up"}}{{else}}{{t $.Locale "website.state.down"}}{{end}}</span></td><td data-label="{{t $.Locale "website.detail.response"}}"><strong>{{if gt .StatusCode 0}}HTTP {{.StatusCode}}{{else}}{{.Summary}}{{end}}</strong><small>{{.Summary}}</small></td><td data-label="{{t $.Locale "website.detail.latency"}}">{{.Latency.Milliseconds}} ms</td></tr>{{else}}<tr><td colspan="4">{{t .Locale "website.detail.no_recent_checks"}}</td></tr>{{end}}</tbody>
 </table>
 </div>
 </section>
@@ -123,7 +123,7 @@
 </dd>
 </div>
 <div class="website-security-summary__issuer"><dt>{{t .Locale "website.detail.issuer"}}</dt><dd>{{if .Monitor.Certificate.Issuer}}{{.Monitor.Certificate.Issuer}}{{else}}—{{end}}</dd></div>
-<div class="website-security-summary__valid-until"><dt>{{t .Locale "website.detail.valid_until"}}</dt><dd>{{if .Monitor.Certificate.NotAfter.IsZero}}—{{else}}<time datetime="{{machineTime .Monitor.Certificate.NotAfter}}" data-local-time>{{localTime .Locale .Monitor.Certificate.NotAfter}}</time>{{end}}</dd></div>
+<div class="website-security-summary__valid-until"><dt>{{t .Locale "website.detail.valid_until"}}</dt><dd>{{if .Monitor.Certificate.NotAfter.IsZero}}—{{else}}<time datetime="{{machineTime .Monitor.Certificate.NotAfter}}">{{localTime .Locale .Monitor.Certificate.NotAfter}}</time>{{end}}</dd></div>
 <div class="website-security-summary__remaining"><dt>{{t .Locale "website.detail.remaining"}}</dt><dd>{{if .Monitor.Certificate.NotAfter.IsZero}}—{{else}}{{.Monitor.Certificate.DaysRemaining}} {{if eq .Monitor.Certificate.DaysRemaining 1}}{{t .Locale "website.detail.day"}}{{else}}{{t .Locale "website.detail.days"}}{{end}}{{end}}</dd></div>
 </dl>
 <div class="website-settings-rules website-security-rules">
@@ -137,7 +137,7 @@
 
 <section class="website-detail-section" data-website-detail-section="incidents">
 <header><div><h2>{{t .Locale "website.detail.incidents"}}</h2><p>{{t .Locale "website.detail.incidents_description"}}</p></div><span>{{len .Incidents}} {{t .Locale "website.detail.records"}}</span></header>
-{{if .Incidents}}<ol class="website-incident-list">{{range .Incidents}}<li><time datetime="{{machineTime .StartedAt}}" data-local-time>{{localTime $.Locale .StartedAt}}</time><div><strong>{{.Summary}}</strong><span>{{.Category}}</span></div>{{if .EndedAt.IsZero}}<em>{{t $.Locale "website.detail.not_recovered"}}</em>{{else}}<span>{{t $.Locale "website.detail.ended"}} {{.CloseReason}}</span>{{end}}</li>{{end}}</ol>{{else}}<p class="website-detail-empty">{{t .Locale "website.detail.no_incidents"}}</p>{{end}}
+{{if .Incidents}}<ol class="website-incident-list">{{range .Incidents}}<li><time datetime="{{machineTime .StartedAt}}">{{localTime $.Locale .StartedAt}}</time><div><strong>{{.Summary}}</strong><span>{{.Category}}</span></div>{{if .EndedAt.IsZero}}<em>{{t $.Locale "website.detail.not_recovered"}}</em>{{else}}<span>{{t $.Locale "website.detail.ended"}} {{.CloseReason}}</span>{{end}}</li>{{end}}</ol>{{else}}<p class="website-detail-empty">{{t .Locale "website.detail.no_incidents"}}</p>{{end}}
 </section>
 
 <section class="website-detail-section" data-website-detail-section="settings">

@@ -2996,6 +2996,7 @@ func (a *App) runEventHistory(response http.ResponseWriter, request *http.Reques
 type variableView struct {
 	Name       string
 	Value      string
+	Note       string
 	ValueType  variables.Kind
 	IsPassword bool
 	Revision   int64
@@ -3022,7 +3023,7 @@ func (a *App) variablesPage(response http.ResponseWriter, request *http.Request)
 		return
 	}
 	pagination := newPagination(request, total)
-	rows, err := a.db.Query("SELECT name, value, value_type, is_password, revision, updated_at FROM variables ORDER BY name LIMIT ? OFFSET ?", listPageSize, pagination.Start)
+	rows, err := a.db.Query("SELECT name, value, note, value_type, is_password, revision, updated_at FROM variables ORDER BY name LIMIT ? OFFSET ?", listPageSize, pagination.Start)
 	if err != nil {
 		http.Error(response, "无法读取变量", http.StatusInternalServerError)
 		return
@@ -3031,7 +3032,7 @@ func (a *App) variablesPage(response http.ResponseWriter, request *http.Request)
 	for rows.Next() {
 		var variable variableView
 		var updatedAt int64
-		if err := rows.Scan(&variable.Name, &variable.Value, &variable.ValueType, &variable.IsPassword, &variable.Revision, &updatedAt); err != nil {
+		if err := rows.Scan(&variable.Name, &variable.Value, &variable.Note, &variable.ValueType, &variable.IsPassword, &variable.Revision, &updatedAt); err != nil {
 			_ = rows.Close()
 			http.Error(response, "无法读取变量", http.StatusInternalServerError)
 			return
@@ -3052,6 +3053,16 @@ func (a *App) variablesPage(response http.ResponseWriter, request *http.Request)
 
 var variableNamePattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,63}$`)
 
+const variableNoteMaxRunes = 500
+
+func parseVariableNote(request *http.Request) (string, error) {
+	note := strings.TrimSpace(request.FormValue("note"))
+	if utf8.RuneCountInString(note) > variableNoteMaxRunes {
+		return "", errors.New("Variable note is too long")
+	}
+	return note, nil
+}
+
 func parseVariableValue(request *http.Request) (variables.Kind, string, error) {
 	valueType := variables.Kind(request.FormValue("value_type"))
 	if valueType == "" {
@@ -3067,10 +3078,15 @@ func (a *App) createVariable(response http.ResponseWriter, request *http.Request
 		return
 	}
 	name := request.FormValue("name")
+	note, noteErr := parseVariableNote(request)
 	valueType, value, valueErr := parseVariableValue(request)
 	isPassword := request.FormValue("is_password") == "1"
 	if !variableNamePattern.MatchString(name) {
 		http.Error(response, "变量名称无效", http.StatusBadRequest)
+		return
+	}
+	if noteErr != nil {
+		http.Error(response, "变量文字注释不能超过 500 个字符", http.StatusBadRequest)
 		return
 	}
 	if valueErr != nil {
@@ -3087,7 +3103,7 @@ func (a *App) createVariable(response http.ResponseWriter, request *http.Request
 		return
 	}
 	now := time.Now().UTC().Unix()
-	if _, err := a.db.Exec("INSERT INTO variables (name, value, value_type, is_password, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)", name, value, valueType, isPassword, now, now); err != nil {
+	if _, err := a.db.Exec("INSERT INTO variables (name, value, note, value_type, is_password, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", name, value, note, valueType, isPassword, now, now); err != nil {
 		http.Error(response, "变量已存在或无法保存", http.StatusConflict)
 		return
 	}
@@ -3102,10 +3118,15 @@ func (a *App) updateVariable(response http.ResponseWriter, request *http.Request
 	}
 	original := request.PathValue("name")
 	name := request.FormValue("name")
+	note, noteErr := parseVariableNote(request)
 	valueType, value, valueErr := parseVariableValue(request)
 	isPassword := request.FormValue("is_password") == "1"
 	if !variableNamePattern.MatchString(name) {
 		http.Error(response, "变量名称无效", http.StatusBadRequest)
+		return
+	}
+	if noteErr != nil {
+		http.Error(response, "变量文字注释不能超过 500 个字符", http.StatusBadRequest)
 		return
 	}
 	if valueErr != nil {
@@ -3133,7 +3154,7 @@ func (a *App) updateVariable(response http.ResponseWriter, request *http.Request
 		return
 	}
 	defer transaction.Rollback()
-	result, err := transaction.Exec("UPDATE variables SET name = ?, value = ?, value_type = ?, is_password = ?, revision = revision + 1, updated_at = ? WHERE name = ?", name, value, valueType, isPassword, time.Now().UTC().Unix(), original)
+	result, err := transaction.Exec("UPDATE variables SET name = ?, value = ?, note = ?, value_type = ?, is_password = ?, revision = revision + 1, updated_at = ? WHERE name = ?", name, value, note, valueType, isPassword, time.Now().UTC().Unix(), original)
 	if err == nil && name != original {
 		oldReference, newReference := "{{"+original+"}}", "{{"+name+"}}"
 		_, err = transaction.Exec("UPDATE quick_runs SET arguments_template = replace(arguments_template, ?, ?), revision = revision + 1 WHERE arguments_template LIKE ?", oldReference, newReference, "%"+oldReference+"%")
@@ -3479,6 +3500,7 @@ type runFilters struct {
 	HasActiveSelection  bool
 	FocusSearch         bool
 	ScheduleID          string
+	QuickRunID          string
 }
 
 func exactUnixNano(value time.Time) (int64, bool) {
@@ -3499,6 +3521,7 @@ func parseRunFilters(values url.Values) (runFilters, error) {
 		HasToDate:   dateRange.HasToDate,
 		FocusSearch: values.Get("focus") == "search",
 		ScheduleID:  strings.TrimSpace(values.Get("schedule_id")),
+		QuickRunID:  strings.TrimSpace(values.Get("quick_run_id")),
 	}
 	if filters.HasFromDate {
 		var ok bool
@@ -3514,7 +3537,7 @@ func parseRunFilters(values url.Values) (runFilters, error) {
 			return runFilters{}, errInvalidDateRange
 		}
 	}
-	filters.HasActiveSelection = filters.Query != "" || filters.ScheduleID != "" || filters.HasFromDate || filters.HasToDate
+	filters.HasActiveSelection = filters.Query != "" || filters.ScheduleID != "" || filters.QuickRunID != "" || filters.HasFromDate || filters.HasToDate
 	return filters, nil
 }
 
@@ -3541,12 +3564,13 @@ func (a *App) runsPage(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	managerQuery := filters.Query
-	if filters.ScheduleID != "" {
+	if filters.ScheduleID != "" || filters.QuickRunID != "" {
 		managerQuery = ""
 	}
 	managerFilters := runmanager.Filter{
 		Query:                    managerQuery,
 		ScheduleID:               filters.ScheduleID,
+		QuickRunID:               filters.QuickRunID,
 		CreatedFromUnixNano:      filters.FromUnixNano,
 		CreatedBeforeUnixNano:    filters.ToExclusiveUnixNano,
 		HasCreatedFromBoundary:   filters.HasFromDate,

@@ -11,10 +11,11 @@ package migrations
 // separated External Interface display labels from URL call names, and schema
 // 48 made Kubernetes connections and retained history connection-scoped;
 // schema 49 added intrinsic Variable value types; schema 50 added Variable
-// revisions for visible modification tracking.
+// revisions for visible modification tracking; schema 51 added optional notes
+// to Variables.
 //
 // The explicit current-version guard forces a deliberate policy update when a
 // future schema is introduced instead of silently promising an untested path.
 func Compatible(current, existing int) bool {
-	return existing == current || current == 50 && existing >= 20 && existing <= 49
+	return existing == current || current == 51 && existing >= 20 && existing <= 50
 }
