@@ -836,11 +836,13 @@ func TestQuickRunShowsFiveRecentResultsDurationAndDirectoryAction(t *testing.T) 
 	if count := strings.Count(string(page), "data-quick-run-history-entry"); count != 5 {
 		t.Fatalf("recent result count=%d, want 5: %s", count, page)
 	}
-	if !strings.Contains(string(page), "Most recent run duration") || strings.Contains(string(page), `<dt>Most recent run duration</dt><dd>—</dd>`) {
-		t.Fatalf("latest Quick Run duration missing: %s", page)
+	latestPattern := regexp.MustCompile(`<dt>Most recent</dt><dd><time [^>]+>[^<]+</time></dd><dd>[^—<]+</dd>`)
+	if !latestPattern.Match(page) {
+		t.Fatalf("latest Quick Run time and duration are missing: %s", page)
 	}
-	if !strings.Contains(string(page), "Most recent start time") || strings.Contains(string(page), `<dt>Most recent start time</dt><dd>—</dd>`) {
-		t.Fatalf("latest Quick Run start time missing: %s", page)
+	historyURL := `/history/runs?q=Weather&#43;history&amp;quick_run_id=` + quickRunID + `&amp;focus=search`
+	if !strings.Contains(string(page), historyURL) || !strings.Contains(string(page), "View all runs") {
+		t.Fatalf("all Quick Run history action missing: %s", page)
 	}
 	if count := strings.Count(string(page), `title="Status: Succeeded · Start time:`); count != 5 {
 		t.Fatalf("recent Run hover tips with start time=%d, want 5: %s", count, page)

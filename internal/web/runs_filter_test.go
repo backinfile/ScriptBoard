@@ -99,6 +99,62 @@ func TestRunsPageFiltersBySearchAndInclusiveLocalDateRange(t *testing.T) {
 	}
 }
 
+func TestRunsPageFiltersByQuickRunID(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	stateRoot := filepath.Join(root, "state")
+	hostRoot := filepath.Join(root, "host")
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
+	scriptPath := filepath.Join(hostRoot, "automation", "deploy.ps1")
+	db := openConcurrentAppTestDatabase(t, filepath.Join(stateRoot, "app.db"))
+
+	insert := func(id, sourceType, sourceID string) {
+		t.Helper()
+		if _, err := db.Exec(`INSERT INTO runs
+			(id, script_path, script_path_key, script_sha256, arguments_template, template_arguments_json, arguments_json,
+			 executor, source_type, source_name, source_id, runtime_identity, status, created_at, timeout_seconds, log_path)
+			VALUES (?, ?, ?, 'digest', '', '[]', '[]',
+			 'pwsh', ?, 'Deploy production', ?, 'test', 'succeeded', ?, 0, '')`,
+			id, scriptPath, hostfiles.ComparisonKey(scriptPath), sourceType, sourceID, time.Now().UTC().UnixNano()); err != nil {
+			t.Fatalf("insert %s: %v", id, err)
+		}
+	}
+	insert("matching_admin", "admin/quick-run", "quick-run-1")
+	insert("matching_assistant", "assistant/quick-run", "quick-run-1")
+	insert("matching_legacy", "quick_run", "quick-run-1")
+	insert("different_quick_run", "admin/quick-run", "quick-run-2")
+	insert("same_id_schedule", "scheduler", "quick-run-1")
+
+	response, err := client.Get(serverURL + "/history/runs?q=Deploy+production&quick_run_id=quick-run-1&focus=search")
+	if err != nil {
+		t.Fatalf("get Quick Run history: %v", err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read Quick Run history: %v", err)
+	}
+	html := string(body)
+	for _, marker := range []string{
+		`name="q" value="Deploy production"`,
+		`name="quick_run_id" value="quick-run-1"`,
+		`data-quick-run-filter-name="Deploy production"`,
+		`matching_admin`,
+		`matching_assistant`,
+		`matching_legacy`,
+	} {
+		if !strings.Contains(html, marker) {
+			t.Fatalf("Quick Run history is missing %q: %s", marker, html)
+		}
+	}
+	for _, excluded := range []string{"different_quick_run", "same_id_schedule"} {
+		if strings.Contains(html, excluded) {
+			t.Fatalf("Quick Run history contains unrelated Run %q: %s", excluded, html)
+		}
+	}
+}
+
 func TestRunsPageShowsAndSearchesInitiator(t *testing.T) {
 	t.Parallel()
 

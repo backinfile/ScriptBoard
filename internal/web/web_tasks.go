@@ -23,6 +23,7 @@ type taskPageData struct {
 	Path               string
 	Name               string
 	Value              string
+	Note               string
 	ValueType          variables.Kind
 	Script             string
 	Arguments          string
@@ -222,10 +223,10 @@ func (a *App) saveQuickRunTask(response http.ResponseWriter, request *http.Reque
 }
 
 func (a *App) editVariableTask(response http.ResponseWriter, request *http.Request) {
-	var name, value string
+	var name, value, note string
 	var valueType variables.Kind
 	var isPassword bool
-	if err := a.db.QueryRow("SELECT name, value, value_type, is_password FROM variables WHERE name = ?", request.PathValue("name")).Scan(&name, &value, &valueType, &isPassword); err != nil {
+	if err := a.db.QueryRow("SELECT name, value, note, value_type, is_password FROM variables WHERE name = ?", request.PathValue("name")).Scan(&name, &value, &note, &valueType, &isPassword); err != nil {
 		if err == sql.ErrNoRows {
 			http.Error(response, "Variable not found", http.StatusNotFound)
 			return
@@ -237,7 +238,7 @@ func (a *App) editVariableTask(response http.ResponseWriter, request *http.Reque
 		Kind: "variable-edit", Title: webText(resolveWebLocale(request), "task.variable_edit.title"),
 		Description: webText(resolveWebLocale(request), "task.variable_description"),
 		BackURL:     "/resources/variables", Action: "/resources/variables/" + url.PathEscape(name) + "/update",
-		Name: name, Value: value, ValueType: valueType, IsPassword: isPassword,
+		Name: name, Value: value, Note: note, ValueType: valueType, IsPassword: isPassword,
 	})
 }
 

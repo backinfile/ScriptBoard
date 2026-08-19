@@ -96,6 +96,7 @@ type Run struct {
 type Filter struct {
 	Query                    string
 	ScheduleID               string
+	QuickRunID               string
 	CreatedFromUnixNano      int64
 	CreatedBeforeUnixNano    int64
 	HasCreatedFromBoundary   bool
@@ -1161,10 +1162,12 @@ func (m *Manager) CountFiltered(filter Filter) (int, error) {
 	like := "%" + filter.Query + "%"
 	err := m.db.QueryRow(`SELECT COUNT(*) FROM runs
 		WHERE (? = '' OR (source_id = ? AND source_type IN ('scheduler', 'admin/schedule-now')))
+		AND (? = '' OR (source_id = ? AND source_type IN ('admin/quick-run', 'assistant/quick-run', 'quick_run')))
 		AND (? = '' OR id LIKE ? OR script_path LIKE ? OR source_type LIKE ? OR source_name LIKE ? OR status LIKE ? OR executor LIKE ? OR initiated_by_username LIKE ?)
 		AND (? = 0 OR created_at >= ?)
 		AND (? = 0 OR created_at < ?)`,
 		filter.ScheduleID, filter.ScheduleID,
+		filter.QuickRunID, filter.QuickRunID,
 		filter.Query, like, like, like, like, like, like, like,
 		filter.HasCreatedFromBoundary, filter.CreatedFromUnixNano,
 		filter.HasCreatedBeforeBoundary, filter.CreatedBeforeUnixNano).Scan(&count)
@@ -1185,11 +1188,13 @@ func (m *Manager) ListPageFiltered(filter Filter, limit, offset int) ([]Run, err
 	like := "%" + filter.Query + "%"
 	rows, err := m.db.Query(`SELECT `+runMetadataColumns+` FROM runs
 		WHERE (? = '' OR (source_id = ? AND source_type IN ('scheduler', 'admin/schedule-now')))
+		AND (? = '' OR (source_id = ? AND source_type IN ('admin/quick-run', 'assistant/quick-run', 'quick_run')))
 		AND (? = '' OR id LIKE ? OR script_path LIKE ? OR source_type LIKE ? OR source_name LIKE ? OR status LIKE ? OR executor LIKE ? OR initiated_by_username LIKE ?)
 		AND (? = 0 OR created_at >= ?)
 		AND (? = 0 OR created_at < ?)
 		ORDER BY created_at DESC LIMIT ? OFFSET ?`,
 		filter.ScheduleID, filter.ScheduleID,
+		filter.QuickRunID, filter.QuickRunID,
 		filter.Query, like, like, like, like, like, like, like,
 		filter.HasCreatedFromBoundary, filter.CreatedFromUnixNano,
 		filter.HasCreatedBeforeBoundary, filter.CreatedBeforeUnixNano,

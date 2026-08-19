@@ -523,9 +523,12 @@ func TestAdministratorCreatesKeyAndExternalLogTrigger(t *testing.T) {
 	}
 	detail, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
+	copyTarget := `data-copy-text data-copy-target="external-call-copy-` + entryID + `"`
 	if response.StatusCode != http.StatusOK || !strings.Contains(string(detail), `data-task-kind="external-entry-detail"`) ||
 		!strings.Contains(string(detail), "POST /trigger/legacy/deployment-log") ||
 		!strings.Contains(string(detail), "Authorization: Bearer YOUR_KEY") || !strings.Contains(string(detail), "message") ||
+		!strings.Contains(string(detail), copyTarget) || !strings.Contains(string(detail), `aria-label="Copy redacted call information"`) ||
+		!strings.Contains(string(detail), "sensitive values are replaced with placeholders") || strings.Contains(string(detail), secret) ||
 		!strings.Contains(string(detail), `href="`+previewURL+`"`) || strings.Contains(string(detail), `/entries/`+entryID+`/edit`) ||
 		!strings.Contains(string(detail), `/entries/`+entryID+`/toggle`) || !strings.Contains(string(detail), `/entries/`+entryID+`/delete`) {
 		t.Fatalf("entry detail status=%d body=%s", response.StatusCode, detail)
@@ -967,6 +970,59 @@ func openExternalTestDatabase(t *testing.T, path string) *sql.DB {
 	database.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = database.Close() })
 	return database
+}
+
+func TestExternalEntryDetailCopiesRedactedSignedCallInformation(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	stateRoot := filepath.Join(root, "state")
+	hostRoot := filepath.Join(root, "host")
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
+	_, keyID := createExternalTestKey(t, client, serverURL, "Signed callback key")
+	secret := createExternalTestEntry(t, client, serverURL, keyID, url.Values{
+		"name":              {"signed-callback"},
+		"label":             {"Signed callback"},
+		"action_type":       {"log"},
+		"log_target_mode":   {"custom"},
+		"log_file":          {filepath.Join(hostRoot, "signed-callback.log")},
+		"log_message_limit": {"1024"},
+		"require_signature": {"1"},
+		"enabled":           {"1"},
+	})
+	database := openExternalTestDatabase(t, filepath.Join(stateRoot, "app.db"))
+	var entryID string
+	if err := database.QueryRow(`SELECT id FROM external_trigger_entries WHERE name = 'signed-callback'`).Scan(&entryID); err != nil {
+		t.Fatal(err)
+	}
+
+	response, err := client.Get(serverURL + "/config/external-interfaces/entries/" + entryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	for _, marker := range []string{
+		`data-copy-text data-copy-target="external-call-copy-` + entryID + `"`,
+		`aria-label="Copy redacted call information"`,
+		`Authorization: Bearer YOUR_KEY`,
+		`X-ScriptBoard-Timestamp: UNIX_SECONDS`,
+		`X-ScriptBoard-Nonce: UNIQUE_BASE64URL_VALUE`,
+		`X-ScriptBoard-Signature: v2=HMAC_SHA256`,
+		`Signed requests required`,
+		`sensitive values are replaced with placeholders`,
+	} {
+		if !strings.Contains(html, marker) {
+			t.Fatalf("signed call copy information is missing %q: %s", marker, body)
+		}
+	}
+	if response.StatusCode != http.StatusOK || strings.Contains(html, secret) {
+		t.Fatalf("signed call copy status=%d leaked_secret=%v body=%s", response.StatusCode, strings.Contains(html, secret), body)
+	}
 }
 
 func createExternalTestKey(t *testing.T, client *http.Client, serverURL, label string) (string, string) {

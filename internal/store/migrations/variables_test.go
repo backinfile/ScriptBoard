@@ -34,7 +34,7 @@ func TestApplyMigratesExistingVariableMetadata(t *testing.T) {
 	}
 
 	err = migrations.Apply(database, 48, migrations.Options{
-		CurrentVersion: 50,
+		CurrentVersion: 51,
 		RandomToken:    func(int) (string, error) { return "token", nil },
 		HashToken:      func(value string) string { return value },
 		Now:            func() time.Time { return time.Unix(100, 0) },
@@ -43,13 +43,13 @@ func TestApplyMigratesExistingVariableMetadata(t *testing.T) {
 		t.Fatalf("Apply: %v", err)
 	}
 
-	var value, valueType string
+	var value, valueType, note string
 	var revision int64
 	var isPassword bool
-	if err := database.QueryRow(`SELECT value, value_type, is_password, revision FROM variables WHERE name = 'API_TOKEN'`).Scan(&value, &valueType, &isPassword, &revision); err != nil {
+	if err := database.QueryRow(`SELECT value, value_type, note, is_password, revision FROM variables WHERE name = 'API_TOKEN'`).Scan(&value, &valueType, &note, &isPassword, &revision); err != nil {
 		t.Fatal(err)
 	}
-	if value != "kept-value" || valueType != "text" || !isPassword || revision != 1 {
-		t.Fatalf("value=%q type=%q password=%v revision=%d", value, valueType, isPassword, revision)
+	if value != "kept-value" || valueType != "text" || note != "" || !isPassword || revision != 1 {
+		t.Fatalf("value=%q type=%q note=%q password=%v revision=%d", value, valueType, note, isPassword, revision)
 	}
 }

@@ -78,6 +78,17 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 			}
 		}
 	}
+	if schemaVersion >= 20 && schemaVersion <= 50 {
+		exists, err := storesqlite.ColumnExists(migration, "variables", "note")
+		if err != nil {
+			return fmt.Errorf("inspect Variable note migration: %w", err)
+		}
+		if !exists {
+			if _, err := migration.Exec(`ALTER TABLE variables ADD COLUMN note TEXT NOT NULL DEFAULT ''`); err != nil {
+				return fmt.Errorf("add Variable note: %w", err)
+			}
+		}
+	}
 	if err := migrateKubernetesConnections(migration); err != nil {
 		return err
 	}

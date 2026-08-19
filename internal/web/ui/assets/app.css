@@ -172,6 +172,8 @@ SEED: 94d9bb9f.
 .external-call-guide dd code { margin-left: 8px; color: var(--muted); }
 .external-call-guide section { margin-top: 26px; }
 .external-call-guide section h2 { margin-bottom: 10px; }
+.external-call-guide__heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.external-call-guide__heading h2 { margin: 0; }
 .external-call-code { padding: 14px 16px; color: var(--terminal-ink); background: var(--terminal); border-radius: var(--rounded-control); }
 .external-call-code code { display: block; color: inherit; }
 .external-call-code code + code { margin-top: 7px; }
@@ -2829,6 +2831,18 @@ td.record-actions { width: 1%; }
 .variables-table td:nth-child(5) { white-space: nowrap; }
 .revision-badge { color: var(--muted); font-family: var(--font-mono); }
 .variable-name-details { display: grid; min-width: 0; }
+.variable-note {
+  display: -webkit-box;
+  max-width: 40ch;
+  margin: 5px 0 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: .75rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
 .copyable-field {
   display: flex;
   min-width: 0;
