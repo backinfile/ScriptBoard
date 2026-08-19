@@ -5,7 +5,7 @@
 <main class="workspace">
   <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "inbox.eyebrow"}}</p><h1>{{t .Locale "inbox.title"}}</h1><p>{{t .Locale "inbox.description"}}</p></div><a class="button button--quiet" href="/resources/files"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "trash.back_to_files"}}</a></header>
   {{if .Entries}}
-  <div class="section-heading"><div><p class="section-index">01</p><h2>{{t .Locale "inbox.title"}}</h2><p>{{len .Entries}} {{t .Locale "common.records"}}</p></div></div>
+  <div class="section-heading"><div><p class="section-index">01</p><h2>{{t .Locale "inbox.pending_uploads"}}</h2><p>{{len .Entries}} {{t .Locale "common.records"}}</p></div></div>
   <div class="table-shell"><table class="records-table">
     <thead><tr><th>{{t .Locale "inbox.file"}}</th><th>{{t .Locale "inbox.destination"}}</th><th>SHA-256</th><th>{{t .Locale "common.size"}}</th><th><span class="sr-only">{{t .Locale "common.actions"}}</span></th></tr></thead>
     <tbody>{{range .Entries}}<tr>

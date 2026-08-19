@@ -2960,7 +2960,12 @@ td.record-actions { width: 1%; }
 .inline-notice p { margin: 0; }
 .inline-notice--danger { color: var(--danger); background: var(--danger-soft); border-color: var(--danger); }
 .inline-notice--warning { color: var(--warning); background: var(--warning-soft); border-color: var(--warning-border); }
-.variables-table th:nth-child(2) { width: 100%; }
+.variables-table { table-layout: fixed; }
+.variables-table th:nth-child(1) { width: 230px; }
+.variables-table th:nth-child(3) { width: 110px; }
+.variables-table th:nth-child(4) { width: 80px; }
+.variables-table th:nth-child(5) { width: 170px; }
+.variables-table th:nth-child(6) { width: 146px; }
 .variables-table td:nth-child(2) { min-width: 0; }
 .variables-table td:nth-child(3),
 .variables-table td:nth-child(4),

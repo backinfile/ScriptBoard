@@ -1836,6 +1836,7 @@ var webMessages = map[string]localizedMessage{
 	"trash.empty":                                   {"回收站为空。", "Trash is empty."},
 	"trash.pagination":                              {"回收站分页", "Trash pagination"},
 	"inbox.title":                                   {"上传收件箱", "Upload inbox"},
+	"inbox.pending_uploads":                         {"待审上传", "Pending uploads"},
 	"inbox.eyebrow":                                 {"资源 / 安全审查", "Resources / Security review"},
 	"inbox.description":                             {"外部上传先隔离在私有暂存区。核对文件名、目标和摘要后再发布。", "External uploads remain isolated in private staging until you verify the name, destination, and digest."},
 	"inbox.file":                                    {"待审文件", "Pending file"},
