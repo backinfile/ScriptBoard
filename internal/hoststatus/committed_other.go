@@ -2,4 +2,4 @@
 
 package hoststatus
 
-func committedMemory() (uint64, uint64) { return 0, 0 }
+func committedMemory() (uint64, uint64, bool) { return 0, 0, false }

@@ -2335,24 +2335,47 @@
     }
   }
 
-  function drawPath(points, key, maximum = false) {
-    const values = points.map(point => {
+  function chartValues(points, key, maximum = false) {
+    return points.map(point => {
       const source = maximum ? point.maximum : point.average;
-      return Number(source?.values?.[key] || 0);
+      const values = source?.values;
+      if (!values || !Object.prototype.hasOwnProperty.call(values, key)) return undefined;
+      const value = Number(values[key]);
+      return Number.isFinite(value) ? value : undefined;
     });
+  }
+
+  function chartCeiling(points, series) {
+    if (series.some(({ key }) => key.endsWith("Percent"))) return 100;
+    const values = series.flatMap(({ key, maximum = false }) => chartValues(points, key, maximum).filter(value => value !== undefined));
+    return Math.max(1, ...values);
+  }
+
+  function drawPath(points, key, maximum = false, ceiling = undefined) {
+    const values = chartValues(points, key, maximum);
     if (!values.length) return "";
     const isPercent = key.endsWith("Percent");
-    const ceiling = isPercent ? 100 : Math.max(1, ...values);
+    const scale = ceiling ?? (isPercent ? 100 : Math.max(1, ...values.filter(value => value !== undefined)));
+    let drawing = false;
     return values.map((value, index) => {
+      if (value === undefined) {
+        drawing = false;
+        return "";
+      }
       const x = values.length === 1 ? 0 : index * 1000 / (values.length - 1);
-      const y = 78 - Math.min(1, Math.max(0, value / ceiling)) * 74;
-      return `${index ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`;
-    }).join(" ");
+      const y = 78 - Math.min(1, Math.max(0, value / scale)) * 74;
+      const command = drawing ? "L" : "M";
+      drawing = true;
+      return `${command}${x.toFixed(1)} ${y.toFixed(1)}`;
+    }).filter(Boolean).join(" ");
   }
 
   async function initOverview(cleanups) {
     const root = document.querySelector("[data-host-overview]");
     if (!root) return;
+    const metricCharts = Array.from(root.querySelectorAll("[data-metric-chart]"));
+    const duplexCharts = Array.from(root.querySelectorAll("[data-duplex-chart]"));
+    if (!metricCharts.length && !duplexCharts.length) return;
     const controller = new AbortController();
     cleanups.push(() => controller.abort());
     try {
@@ -2361,10 +2384,16 @@
       });
       if (!response.ok) return;
       const data = await response.json();
-      root.querySelectorAll("[data-metric-chart]").forEach(chart => {
+      metricCharts.forEach(chart => {
         const key = chart.dataset.metricChart;
         chart.querySelector("[data-chart-average]")?.setAttribute("d", drawPath(data.series || [], key, false));
         chart.querySelector("[data-chart-peak]")?.setAttribute("d", drawPath(data.series || [], key, true));
+      });
+      duplexCharts.forEach(chart => {
+        const paths = Array.from(chart.querySelectorAll("[data-chart-series]"));
+        const series = paths.map(path => ({ key: path.dataset.chartSeries }));
+        const ceiling = chartCeiling(data.series || [], series);
+        paths.forEach(path => path.setAttribute("d", drawPath(data.series || [], path.dataset.chartSeries, false, ceiling)));
       });
     } catch (error) {
       if (error.name !== "AbortError") console.debug("Overview update unavailable");

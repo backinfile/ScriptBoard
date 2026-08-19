@@ -328,8 +328,21 @@ func TestAuthenticatedRootRedirectsToOverviewAndOverviewDataIsPrivate(t *testing
 	if response.StatusCode != http.StatusOK || !bytes.Contains(page, []byte("Host overview")) || !bytes.Contains(page, []byte(`data-host-overview`)) {
 		t.Fatalf("overview status=%d body=%s", response.StatusCode, page)
 	}
+	if !bytes.Contains(page, []byte(`data-overview-tab="summary"`)) || !bytes.Contains(page, []byte(`data-metric-card="disk"`)) || bytes.Contains(page, []byte(`data-host-detail`)) {
+		t.Fatalf("overview summary does not keep details out of the fast path: %s", page)
+	}
 	if bytes.Contains(page, []byte(`class="button button--primary" href="/resources/files/"`)) {
 		t.Fatalf("overview should not promote script execution: %s", page)
+	}
+
+	response, err = client.Get(serverURL + "/monitor?tab=details")
+	if err != nil {
+		t.Fatal(err)
+	}
+	detailPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK || !bytes.Contains(detailPage, []byte(`data-overview-tab="details"`)) || !bytes.Contains(detailPage, []byte(`data-host-detail`)) || bytes.Contains(detailPage, []byte(`data-metric-card="cpu"`)) {
+		t.Fatalf("overview detail tab status=%d body=%s", response.StatusCode, detailPage)
 	}
 
 	response, err = client.Get(serverURL + "/monitor/data?range=1h")

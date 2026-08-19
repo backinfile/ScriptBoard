@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"runtime"
 	"sort"
 	"sync"
 	"time"
@@ -37,11 +36,12 @@ type Facts struct {
 }
 
 type CPUCounters struct {
-	TotalSeconds  float64
-	IdleSeconds   float64
-	UserSeconds   float64
-	SystemSeconds float64
-	IOWaitSeconds float64
+	TotalSeconds    float64
+	IdleSeconds     float64
+	UserSeconds     float64
+	SystemSeconds   float64
+	IOWaitSeconds   float64
+	IOWaitAvailable bool
 }
 
 type DiskCounters struct {
@@ -52,13 +52,14 @@ type DiskCounters struct {
 }
 
 type NetworkCounters struct {
-	ReceivedBytes, SentBytes                         uint64
-	ReceivedErrors, SentErrors, ReceivedDrops, Drops uint64
+	ReceivedBytes, SentBytes                             uint64
+	ReceivedErrors, SentErrors, ReceivedDrops, SentDrops uint64
 }
 
 type CPU struct {
 	UsedPercent, UserPercent, SystemPercent, IOWaitPercent float64  `json:",omitempty"`
 	Load1, Load5, Load15                                   *float64 `json:",omitempty"`
+	IOWaitAvailable                                        bool     `json:"ioWaitAvailable"`
 }
 
 type Memory struct {
@@ -67,6 +68,7 @@ type Memory struct {
 	SwapTotalBytes, SwapUsedBytes         uint64  `json:",omitempty"`
 	SwapUsedPercent                       float64 `json:",omitempty"`
 	CommittedBytes, CommitLimitBytes      uint64  `json:",omitempty"`
+	SwapAvailable, CommittedAvailable     bool    `json:",omitempty"`
 }
 
 type Filesystem struct {
@@ -117,6 +119,8 @@ type Process struct {
 	ResidentMemoryBytes uint64  `json:",omitempty"`
 	Threads             int32   `json:",omitempty"`
 	OpenFiles, Handles  int32   `json:",omitempty"`
+	OpenFilesAvailable  bool    `json:"openFilesAvailable,omitempty"`
+	HandlesAvailable    bool    `json:"handlesAvailable,omitempty"`
 }
 
 type InterfaceInfo struct {
@@ -321,10 +325,11 @@ func (m *Monitor) derive(raw RawSample) Sample {
 		idle := raw.CPU.IdleSeconds - m.previous.CPU.IdleSeconds
 		if total > 0 && idle >= 0 && idle <= total {
 			result.CPU = &CPU{
-				UsedPercent:   clampPercent((total - idle) / total * 100),
-				UserPercent:   clampPercent((raw.CPU.UserSeconds - m.previous.CPU.UserSeconds) / total * 100),
-				SystemPercent: clampPercent((raw.CPU.SystemSeconds - m.previous.CPU.SystemSeconds) / total * 100),
-				IOWaitPercent: clampPercent((raw.CPU.IOWaitSeconds - m.previous.CPU.IOWaitSeconds) / total * 100),
+				UsedPercent:     clampPercent((total - idle) / total * 100),
+				UserPercent:     clampPercent((raw.CPU.UserSeconds - m.previous.CPU.UserSeconds) / total * 100),
+				SystemPercent:   clampPercent((raw.CPU.SystemSeconds - m.previous.CPU.SystemSeconds) / total * 100),
+				IOWaitPercent:   clampPercent((raw.CPU.IOWaitSeconds - m.previous.CPU.IOWaitSeconds) / total * 100),
+				IOWaitAvailable: raw.CPU.IOWaitAvailable && m.previous.CPU.IOWaitAvailable,
 			}
 			if raw.Load != nil {
 				result.CPU.Load1, result.CPU.Load5, result.CPU.Load15 = floatPointer(raw.Load[0]), floatPointer(raw.Load[1]), floatPointer(raw.Load[2])
@@ -381,7 +386,7 @@ func deriveNetworks(previous, current map[string]NetworkCounters, info map[strin
 		value := NetworkInterface{ID: name, Name: name, Addresses: append([]string(nil), meta.Addresses...), Online: true,
 			ReceivedBytesPerSecond: float64(now.ReceivedBytes-before.ReceivedBytes) / seconds,
 			SentBytesPerSecond:     float64(now.SentBytes-before.SentBytes) / seconds,
-			ReceivedErrors:         now.ReceivedErrors, SentErrors: now.SentErrors, ReceivedDrops: now.ReceivedDrops, SentDrops: now.Drops,
+			ReceivedErrors:         now.ReceivedErrors, SentErrors: now.SentErrors, ReceivedDrops: now.ReceivedDrops, SentDrops: now.SentDrops,
 		}
 		summary.ReceivedBytesPerSecond += value.ReceivedBytesPerSecond
 		summary.SentBytesPerSecond += value.SentBytesPerSecond
@@ -398,17 +403,12 @@ func deriveNetworks(previous, current map[string]NetworkCounters, info map[strin
 	return values, summary
 }
 
-func (m *Monitor) Overview(ctx context.Context, selectedRange string) (Overview, error) {
-	duration, ok := rangeDuration(selectedRange)
-	if !ok {
-		return Overview{}, errors.New("invalid host status range")
-	}
+func (m *Monitor) Current() Overview {
 	m.mu.RLock()
 	current := m.current
 	facts := m.facts
 	factErr := m.factErr
 	historyErr := m.historyErr
-	live := append([]Sample(nil), m.live...)
 	m.mu.RUnlock()
 	result := Overview{Facts: facts, Current: current, CollectedAt: current.At, Capabilities: capabilities(current), Errors: cloneErrors(current.Errors)}
 	if current.CriticalStorage != nil && current.CriticalStorage.AvailableBytes < diskspace.MinimumWritableBytes {
@@ -435,7 +435,19 @@ func (m *Monitor) Overview(ctx context.Context, selectedRange string) (Overview,
 		result.Errors["history"] = historyErr
 	}
 	result.Stale = current.At.IsZero() || m.options.Now().Sub(current.At) > 15*time.Second
+	return result
+}
+
+func (m *Monitor) Overview(ctx context.Context, selectedRange string) (Overview, error) {
+	duration, ok := rangeDuration(selectedRange)
+	if !ok {
+		return Overview{}, errors.New("invalid host status range")
+	}
+	result := m.Current()
 	if selectedRange == Range15Minutes {
+		m.mu.RLock()
+		live := append([]Sample(nil), m.live...)
+		m.mu.RUnlock()
 		cutoff := m.options.Now().Add(-duration)
 		for _, sample := range live {
 			if !sample.At.Before(cutoff) {
@@ -572,10 +584,28 @@ func sampleMetrics(sample Sample) MetricValues {
 	result := MetricValues{Values: map[string]float64{}, Filesystems: map[string]map[string]float64{}, Disks: map[string]map[string]float64{}, Networks: map[string]map[string]float64{}}
 	if sample.CPU != nil {
 		result.Values["cpu.usedPercent"] = sample.CPU.UsedPercent
+		result.Values["cpu.userPercent"] = sample.CPU.UserPercent
+		result.Values["cpu.systemPercent"] = sample.CPU.SystemPercent
+		if sample.CPU.IOWaitAvailable {
+			result.Values["cpu.ioWaitPercent"] = sample.CPU.IOWaitPercent
+		}
+		for key, value := range map[string]*float64{"cpu.load1": sample.CPU.Load1, "cpu.load5": sample.CPU.Load5, "cpu.load15": sample.CPU.Load15} {
+			if value != nil {
+				result.Values[key] = *value
+			}
+		}
 	}
 	if sample.Memory != nil {
 		result.Values["memory.usedPercent"] = sample.Memory.UsedPercent
 		result.Values["memory.usedBytes"] = float64(sample.Memory.UsedBytes)
+		if sample.Memory.SwapAvailable {
+			result.Values["memory.swapUsedBytes"] = float64(sample.Memory.SwapUsedBytes)
+			result.Values["memory.swapUsedPercent"] = sample.Memory.SwapUsedPercent
+		}
+		if sample.Memory.CommittedAvailable {
+			result.Values["memory.committedBytes"] = float64(sample.Memory.CommittedBytes)
+			result.Values["memory.commitLimitBytes"] = float64(sample.Memory.CommitLimitBytes)
+		}
 	}
 	if sample.Storage != nil {
 		result.Values["storage.usedPercent"] = sample.Storage.UsedPercent
@@ -584,6 +614,8 @@ func sampleMetrics(sample Sample) MetricValues {
 	if sample.Disk != nil {
 		result.Values["disk.readBytesPerSecond"] = sample.Disk.ReadBytesPerSecond
 		result.Values["disk.writeBytesPerSecond"] = sample.Disk.WriteBytesPerSecond
+		result.Values["disk.readOperationsPerSecond"] = sample.Disk.ReadOperationsPerSecond
+		result.Values["disk.writeOperationsPerSecond"] = sample.Disk.WriteOperationsPerSecond
 	}
 	if sample.Network != nil {
 		result.Values["network.receivedBytesPerSecond"] = sample.Network.ReceivedBytesPerSecond
@@ -597,7 +629,17 @@ func sampleMetrics(sample Sample) MetricValues {
 		result.Filesystems[value.ID] = map[string]float64{"usedPercent": value.UsedPercent, "availableBytes": float64(value.AvailableBytes)}
 	}
 	for _, value := range sample.Disks {
-		result.Disks[value.ID] = map[string]float64{"readBytesPerSecond": value.ReadBytesPerSecond, "writeBytesPerSecond": value.WriteBytesPerSecond}
+		metrics := map[string]float64{
+			"readBytesPerSecond": value.ReadBytesPerSecond, "writeBytesPerSecond": value.WriteBytesPerSecond,
+			"readOperationsPerSecond": value.ReadOperationsPerSecond, "writeOperationsPerSecond": value.WriteOperationsPerSecond,
+		}
+		if value.ReadLatencyMS != nil {
+			metrics["readLatencyMS"] = *value.ReadLatencyMS
+		}
+		if value.WriteLatencyMS != nil {
+			metrics["writeLatencyMS"] = *value.WriteLatencyMS
+		}
+		result.Disks[value.ID] = metrics
 	}
 	for _, value := range sample.Interfaces {
 		result.Networks[value.ID] = map[string]float64{"receivedBytesPerSecond": value.ReceivedBytesPerSecond, "sentBytesPerSecond": value.SentBytesPerSecond}
@@ -650,14 +692,21 @@ func summarizeStorage(filesystems []Filesystem) *StorageSummary {
 	return summary
 }
 func capabilities(sample Sample) map[string]bool {
+	diskLatency := false
+	for _, disk := range sample.Disks {
+		diskLatency = diskLatency || disk.ReadLatencyMS != nil || disk.WriteLatencyMS != nil
+	}
 	return map[string]bool{
 		"cpu": sample.CPU != nil, "memory": sample.Memory != nil,
 		"storage": len(sample.Filesystems) > 0, "disk": sample.Disk != nil,
 		"network": sample.Network != nil, "process": sample.Process != nil,
-		"loadAverage": runtime.GOOS != "windows", "cpuIOWait": runtime.GOOS != "windows",
-		"committedMemory":  runtime.GOOS == "windows",
-		"diskLatency":      len(sample.Disks) > 0,
-		"processOpenFiles": runtime.GOOS != "windows", "processHandles": runtime.GOOS == "windows",
+		"loadAverage":      sample.CPU != nil && sample.CPU.Load1 != nil && sample.CPU.Load5 != nil && sample.CPU.Load15 != nil,
+		"cpuIOWait":        sample.CPU != nil && sample.CPU.IOWaitAvailable,
+		"swapMemory":       sample.Memory != nil && sample.Memory.SwapAvailable,
+		"committedMemory":  sample.Memory != nil && sample.Memory.CommittedAvailable,
+		"diskLatency":      diskLatency,
+		"processOpenFiles": sample.Process != nil && sample.Process.OpenFilesAvailable,
+		"processHandles":   sample.Process != nil && sample.Process.HandlesAvailable,
 	}
 }
 func cloneErrors(values map[string]string) map[string]string {

@@ -68,6 +68,7 @@ func (p *SystemProbe) Sample(ctx context.Context) RawSample {
 			TotalSeconds: value.User + value.System + value.Idle + value.Nice + value.Iowait + value.Irq + value.Softirq + value.Steal,
 			IdleSeconds:  value.Idle + value.Iowait, UserSeconds: value.User + value.Nice,
 			SystemSeconds: value.System + value.Irq + value.Softirq, IOWaitSeconds: value.Iowait,
+			IOWaitAvailable: runtime.GOOS != "windows",
 		}
 	}
 	if value, err := mem.VirtualMemoryWithContext(ctx); err != nil {
@@ -79,8 +80,9 @@ func (p *SystemProbe) Sample(ctx context.Context) RawSample {
 		}
 		if swap, swapErr := mem.SwapMemoryWithContext(ctx); swapErr == nil {
 			memory.SwapTotalBytes, memory.SwapUsedBytes, memory.SwapUsedPercent = swap.Total, swap.Used, swap.UsedPercent
+			memory.SwapAvailable = true
 		}
-		memory.CommittedBytes, memory.CommitLimitBytes = committedMemory()
+		memory.CommittedBytes, memory.CommitLimitBytes, memory.CommittedAvailable = committedMemory()
 		result.Memory = memory
 	}
 	if runtime.GOOS != "windows" {
@@ -177,7 +179,7 @@ func (p *SystemProbe) collectNetwork(ctx context.Context, result *RawSample) {
 		if !active[value.Name] {
 			continue
 		}
-		result.Networks[value.Name] = NetworkCounters{ReceivedBytes: value.BytesRecv, SentBytes: value.BytesSent, ReceivedErrors: value.Errin, SentErrors: value.Errout, ReceivedDrops: value.Dropin, Drops: value.Dropout}
+		result.Networks[value.Name] = NetworkCounters{ReceivedBytes: value.BytesRecv, SentBytes: value.BytesSent, ReceivedErrors: value.Errin, SentErrors: value.Errout, ReceivedDrops: value.Dropin, SentDrops: value.Dropout}
 	}
 }
 
@@ -200,8 +202,10 @@ func (p *SystemProbe) collectProcess(ctx context.Context, result *RawSample) {
 	if files, err := p.process.NumFDsWithContext(ctx); err == nil {
 		if runtime.GOOS == "windows" {
 			value.Handles = files
+			value.HandlesAvailable = true
 		} else {
 			value.OpenFiles = files
+			value.OpenFilesAvailable = true
 		}
 	}
 	result.Process = value

@@ -1893,6 +1893,20 @@ func validOverviewRange(value string) bool {
 	}
 }
 
+func validOverviewTab(value string) bool {
+	return value == "" || value == "summary" || value == "details"
+}
+
+func overviewDurations(response *overviewResponse) {
+	now := time.Now().UTC()
+	if !response.Facts.BootedAt.IsZero() {
+		response.HostUptime = now.Sub(response.Facts.BootedAt)
+	}
+	if !response.Facts.ServiceStartedAt.IsZero() {
+		response.ServiceUptime = now.Sub(response.Facts.ServiceStartedAt)
+	}
+}
+
 func (a *App) loadOverview(request *http.Request, selectedRange string) (overviewResponse, error) {
 	if selectedRange == "" {
 		selectedRange = hoststatus.Range1Hour
@@ -1905,14 +1919,21 @@ func (a *App) loadOverview(request *http.Request, selectedRange string) (overvie
 	if err != nil {
 		return overviewResponse{}, err
 	}
-	now := time.Now().UTC()
 	response := overviewResponse{Overview: overview, ActiveRuns: runs}
-	if !overview.Facts.BootedAt.IsZero() {
-		response.HostUptime = now.Sub(overview.Facts.BootedAt)
+	overviewDurations(&response)
+	return response, nil
+}
+
+func (a *App) loadCurrentOverview(includeRuns bool) (overviewResponse, error) {
+	response := overviewResponse{Overview: a.hostStatus.Current()}
+	if includeRuns {
+		runs, err := a.activeOverviewRuns()
+		if err != nil {
+			return overviewResponse{}, err
+		}
+		response.ActiveRuns = runs
 	}
-	if !overview.Facts.ServiceStartedAt.IsZero() {
-		response.ServiceUptime = now.Sub(overview.Facts.ServiceStartedAt)
-	}
+	overviewDurations(&response)
 	return response, nil
 }
 
@@ -1924,7 +1945,11 @@ func (a *App) overviewPage(response http.ResponseWriter, request *http.Request) 
 	if selectedRange == "" {
 		selectedRange = hoststatus.Range1Hour
 	}
-	view, err := a.loadOverview(request, selectedRange)
+	tab := request.URL.Query().Get("tab")
+	if !validOverviewTab(tab) || tab == "" {
+		tab = "summary"
+	}
+	view, err := a.loadCurrentOverview(tab == "summary")
 	if err != nil {
 		http.Error(response, "无法读取宿主状态："+err.Error(), http.StatusInternalServerError)
 		return
@@ -1934,8 +1959,9 @@ func (a *App) overviewPage(response http.ResponseWriter, request *http.Request) 
 	_ = overviewTemplate.Execute(response, struct {
 		overviewResponse
 		Range  string
+		Tab    string
 		Locale webLocale
-	}{overviewResponse: view, Range: selectedRange, Locale: resolveWebLocale(request)})
+	}{overviewResponse: view, Range: selectedRange, Tab: tab, Locale: resolveWebLocale(request)})
 }
 
 func (a *App) overviewData(response http.ResponseWriter, request *http.Request) {
