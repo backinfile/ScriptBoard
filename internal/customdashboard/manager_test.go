@@ -135,6 +135,43 @@ func TestRegistryCardStoresCredentialOutsideDatabaseAndRefreshesMultipleImages(t
 	}
 }
 
+func TestRegistryCardTreatsEmptyWildcardCatalogAsSuccessful(t *testing.T) {
+	registry := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v2/_catalog" {
+			http.NotFound(response, request)
+			return
+		}
+		_ = json.NewEncoder(response).Encode(map[string]any{"repositories": []string{}})
+	}))
+	defer registry.Close()
+
+	manager := testManager(t)
+	ctx := context.Background()
+	dashboard, err := manager.CreateDashboard(ctx, DashboardInput{Name: "镜像", Slug: "empty-registry"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, _ := json.Marshal(map[string]any{
+		"endpoint": registry.URL,
+		"images":   []string{"*"},
+		"authMode": "anonymous",
+	})
+	card, err := manager.CreateCard(ctx, dashboard.ID, CardInput{
+		Name: "全部镜像", Type: CardRegistry, Config: config, RefreshSeconds: 60,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	refreshed, err := manager.RefreshCard(ctx, card.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refreshed.Snapshot.Images) != 0 || refreshed.LastError != "" || refreshed.Stale {
+		t.Fatalf("empty Registry card was marked as failed: %#v", refreshed)
+	}
+}
+
 func TestRegistryCardImportedWithoutCredentialRequiresOneWhenEdited(t *testing.T) {
 	manager := testManager(t)
 	ctx := context.Background()

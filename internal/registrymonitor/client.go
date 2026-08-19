@@ -220,7 +220,7 @@ func expandImageSelectors(ctx context.Context, configured, repositories []string
 			}
 			continue
 		}
-		matched := false
+		// A selector with no catalog matches contributes no result; an empty Registry is a successful state.
 		prefix := strings.TrimSuffix(configuredImage, "*")
 		for _, repository := range repositories {
 			if err := ctx.Err(); err != nil {
@@ -230,14 +230,6 @@ func expandImageSelectors(ctx context.Context, configured, repositories []string
 				if err := appendImage(repository); err != nil {
 					return nil, err
 				}
-				matched = true
-			}
-		}
-		if !matched {
-			// Preserve an empty selector as an error row instead of silently
-			// producing an empty card.
-			if err := appendImage(configuredImage); err != nil {
-				return nil, err
 			}
 		}
 	}

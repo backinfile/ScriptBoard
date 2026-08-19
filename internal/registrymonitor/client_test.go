@@ -286,6 +286,28 @@ func TestInspectExpandsNamespaceAndAllImageSelectors(t *testing.T) {
 	}
 }
 
+func TestInspectTreatsEmptyCatalogAsSuccessfulEmptyResult(t *testing.T) {
+	registry := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v2/_catalog" {
+			http.NotFound(response, request)
+			return
+		}
+		_ = json.NewEncoder(response).Encode(map[string]any{"repositories": []string{}})
+	}))
+	defer registry.Close()
+
+	results, err := New(registry.Client()).Inspect(context.Background(), Config{
+		Endpoint: registry.URL,
+		Images:   []string{"*"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("results=%#v, want an empty successful result", results)
+	}
+}
+
 func TestInspectRejectsCatalogRedirects(t *testing.T) {
 	redirectedRequests := 0
 	redirectTarget := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
