@@ -5,21 +5,62 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}">
   <script defer src="/assets/app-v2.js?v={{assetVersion}}"></script>
-  <title>{{t .Locale "overview.title"}} · ScriptBoard</title>
+  <title>{{if .Fleet}}{{t .Locale "fleet.title"}}{{else}}{{t .Locale "overview.title"}}{{end}} · ScriptBoard</title>
 </head>
 <body>
-<main class="workspace overview-page" data-host-overview data-overview-tab="{{.Tab}}" data-range="{{.Range}}" {{if eq .Tab "summary"}}data-overview-url="/monitor/data"{{end}}>
+<main class="workspace overview-page" data-host-overview {{if .Fleet}}data-fleet-overview{{end}} data-overview-tab="{{.Tab}}" data-range="{{.Range}}" {{if .LocalDetail}}{{if eq .Tab "summary"}}data-overview-url="/monitor/data"{{end}}{{end}}>
+  <nav class="fleet-tabs" aria-label="{{t .Locale "fleet.nodes"}}">
+    <a href="/monitor" {{if .Fleet}}aria-current="page"{{end}}><span data-lucide="layout-grid" aria-hidden="true"></span>{{t .Locale "fleet.all_nodes"}}<small>{{len .Nodes}}</small></a>
+    {{range .Nodes}}<a href="/monitor?node={{urlquery .ID}}" {{if eq $.SelectedNode .ID}}aria-current="page"{{end}}><span class="fleet-tab-state" data-state="{{.State}}" aria-hidden="true"></span>{{.Name}}</a>{{end}}
+    {{if .CanManage}}<a class="fleet-tabs__add" href="/monitor/nodes/new"><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "fleet.add_node"}}</a>{{end}}
+  </nav>
+
+  {{if .Fleet}}
+  <header class="page-heading fleet-heading">
+    <div>
+      <p class="page-eyebrow">{{t .Locale "fleet.eyebrow"}}</p>
+      <h1>{{t .Locale "fleet.title"}}</h1>
+      <p>{{t .Locale "fleet.description"}}</p>
+    </div>
+    {{if .CanManage}}<a class="button button--primary" href="/monitor/nodes/new"><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "fleet.add_node"}}</a>{{end}}
+  </header>
+
+  <section class="fleet-summary" aria-label="{{t .Locale "fleet.summary"}}">
+    <div><span>{{len .Nodes}}</span><small>{{t .Locale "fleet.nodes_total"}}</small></div>
+    <p><span class="fleet-tab-state" data-state="current" aria-hidden="true"></span>{{t .Locale "fleet.polling_note"}}</p>
+  </section>
+
+  <section class="fleet-grid" aria-label="{{t .Locale "fleet.nodes"}}">
+    {{range .Nodes}}
+    <a class="fleet-card" href="/monitor?node={{urlquery .ID}}" data-fleet-node="{{.ID}}" data-state="{{.State}}">
+      <header class="fleet-card__head">
+        <div class="fleet-card__identity"><span class="fleet-card__icon"><span data-lucide="{{if .Local}}server-cog{{else}}server{{end}}" aria-hidden="true"></span></span><div><h2>{{.Name}}</h2><p>{{if .Overview.Facts.Hostname}}{{.Overview.Facts.Hostname}}{{else if .Endpoint}}{{.Endpoint}}{{else}}{{t $.Locale "overview.collecting"}}{{end}}</p></div></div>
+        <span class="fleet-card__status"><i data-state="{{.State}}"></i>{{if eq .State "current"}}{{t $.Locale "status.current"}}{{else if eq .State "attention"}}{{t $.Locale "status.attention"}}{{else}}{{t $.Locale "fleet.offline"}}{{end}}</span>
+      </header>
+      <dl class="fleet-card__metrics">
+        <div><dt><span data-lucide="cpu" aria-hidden="true"></span>CPU</dt><dd>{{if .Overview.Current.CPU}}{{percent .Overview.Current.CPU.UsedPercent}}{{else}}—{{end}}</dd></div>
+        <div><dt><span data-lucide="memory-stick" aria-hidden="true"></span>{{t $.Locale "overview.memory"}}</dt><dd>{{if .Overview.Current.Memory}}{{percent .Overview.Current.Memory.UsedPercent}}{{else}}—{{end}}</dd></div>
+        <div><dt><span data-lucide="hard-drive" aria-hidden="true"></span>{{t $.Locale "overview.storage"}}</dt><dd>{{if .Overview.Current.Storage}}{{percent .Overview.Current.Storage.UsedPercent}}{{else}}—{{end}}</dd></div>
+        <div class="fleet-card__network"><dt><span data-lucide="network" aria-hidden="true"></span>{{t $.Locale "overview.network"}}</dt><dd>{{if .Overview.Current.Network}}<span>↓ {{humanRate .Overview.Current.Network.ReceivedBytesPerSecond}}</span><span>↑ {{humanRate .Overview.Current.Network.SentBytesPerSecond}}</span>{{else}}—{{end}}</dd></div>
+      </dl>
+      <footer class="fleet-card__foot"><span>{{t $.Locale "overview.host_uptime"}} {{localDuration $.Locale .HostUptime}}</span><span>{{if .Local}}{{.ActiveRuns}} {{t $.Locale "fleet.active_tasks"}}{{else}}{{t $.Locale "fleet.last_seen"}} {{localTime $.Locale .LastSeenAt}}{{end}}</span><span data-lucide="arrow-up-right" aria-hidden="true"></span></footer>
+    </a>
+    {{end}}
+    {{if .CanManage}}<a class="fleet-card fleet-card--add" href="/monitor/nodes/new"><span data-lucide="plus" aria-hidden="true"></span><strong>{{t .Locale "fleet.add_node"}}</strong><small>{{t .Locale "fleet.add_node_hint"}}</small></a>{{end}}
+  </section>
+  {{else}}
   <header class="page-heading">
     <div>
       <p class="page-eyebrow">{{t .Locale "overview.eyebrow"}} / {{if .Facts.Hostname}}{{.Facts.Hostname}}{{else}}{{t .Locale "overview.collecting"}}{{end}}</p>
       <h1>{{t .Locale "overview.title"}}</h1>
       <p>{{.Facts.Platform}} {{.Facts.PlatformVersion}} · {{.Facts.Architecture}} · {{t .Locale "overview.host_uptime"}} {{localDuration .Locale .HostUptime}}</p>
     </div>
+    {{if and .CanManage (not .LocalDetail)}}<form method="post" action="/monitor/nodes/{{urlquery .SelectedNode}}/delete" data-confirm="{{t .Locale "fleet.remove_confirm"}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--danger" type="submit"><span data-lucide="trash-2" aria-hidden="true"></span>{{t .Locale "fleet.remove_node"}}</button></form>{{end}}
   </header>
 
   <nav class="overview-tabs" aria-label="{{t .Locale "overview.tabs"}}">
-    <a href="/monitor?range={{.Range}}" {{if eq .Tab "summary"}}aria-current="page"{{end}}><span data-lucide="activity" aria-hidden="true"></span>{{t .Locale "overview.tab.summary"}}</a>
-    <a href="/monitor?tab=details" {{if eq .Tab "details"}}aria-current="page"{{end}}><span data-lucide="list-tree" aria-hidden="true"></span>{{t .Locale "overview.tab.details"}}</a>
+    <a href="/monitor?node={{urlquery .SelectedNode}}&range={{.Range}}" {{if eq .Tab "summary"}}aria-current="page"{{end}}><span data-lucide="activity" aria-hidden="true"></span>{{t .Locale "overview.tab.summary"}}</a>
+    <a href="/monitor?node={{urlquery .SelectedNode}}&tab=details" {{if eq .Tab "details"}}aria-current="page"{{end}}><span data-lucide="list-tree" aria-hidden="true"></span>{{t .Locale "overview.tab.details"}}</a>
   </nav>
 
   <section class="observation-verdict" data-state="{{if .Stale}}stale{{else if .Errors}}attention{{else}}current{{end}}" aria-labelledby="verdict-title">
@@ -46,7 +87,7 @@
   <div class="section-heading section-heading--with-control">
     <div><p class="section-index">01</p><h2>{{t .Locale "overview.measurements"}}</h2></div>
     <nav class="segmented-control" aria-label="{{t .Locale "overview.history_range"}}">
-      {{range $value := (slice "15m" "1h" "6h" "24h")}}<a href="/monitor?range={{$value}}" data-overview-range="{{$value}}" {{if eq $.Range $value}}aria-current="page"{{end}}>{{if eq $value "15m"}}15m{{else if eq $value "1h"}}1h{{else if eq $value "6h"}}6h{{else}}24h{{end}}</a>{{end}}
+      {{range $value := (slice "15m" "1h" "6h" "24h")}}<a href="/monitor?node={{urlquery $.SelectedNode}}&range={{$value}}" data-overview-range="{{$value}}" {{if eq $.Range $value}}aria-current="page"{{end}}>{{if eq $value "15m"}}15m{{else if eq $value "1h"}}1h{{else if eq $value "6h"}}6h{{else}}24h{{end}}</a>{{end}}
     </nav>
   </div>
 
@@ -158,6 +199,7 @@
       </article>
     </section>
   </div>
+  {{end}}
   {{end}}
 </main>
 </body>

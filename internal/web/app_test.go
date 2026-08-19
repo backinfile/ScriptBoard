@@ -325,11 +325,11 @@ func TestAuthenticatedRootRedirectsToOverviewAndOverviewDataIsPrivate(t *testing
 	}
 	page, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusOK || !bytes.Contains(page, []byte("Host overview")) || !bytes.Contains(page, []byte(`data-host-overview`)) {
+	if response.StatusCode != http.StatusOK || !bytes.Contains(page, []byte("Machine status")) || !bytes.Contains(page, []byte(`data-host-overview`)) || !bytes.Contains(page, []byte(`data-fleet-overview`)) {
 		t.Fatalf("overview status=%d body=%s", response.StatusCode, page)
 	}
-	if !bytes.Contains(page, []byte(`data-overview-tab="summary"`)) || !bytes.Contains(page, []byte(`data-metric-card="disk"`)) || bytes.Contains(page, []byte(`data-host-detail`)) {
-		t.Fatalf("overview summary does not keep details out of the fast path: %s", page)
+	if !bytes.Contains(page, []byte(`data-fleet-node="local"`)) || !bytes.Contains(page, []byte(`class="fleet-card__metrics"`)) || bytes.Contains(page, []byte(`data-host-detail`)) {
+		t.Fatalf("fleet overview does not keep details out of the fast path: %s", page)
 	}
 	if bytes.Contains(page, []byte(`class="button button--primary" href="/resources/files/"`)) {
 		t.Fatalf("overview should not promote script execution: %s", page)

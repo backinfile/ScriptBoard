@@ -38,12 +38,10 @@ func renderOverviewFixture(t *testing.T, tab string, capabilities map[string]boo
 		ServiceUptime: 6 * time.Hour,
 	}
 	var output bytes.Buffer
-	if err := overviewTemplate.Execute(&output, struct {
-		overviewResponse
-		Range  string
-		Tab    string
-		Locale webLocale
-	}{overviewResponse: view, Range: hoststatus.Range1Hour, Tab: tab, Locale: localeEnglishUS}); err != nil {
+	if err := overviewTemplate.Execute(&output, overviewPageView{
+		overviewResponse: view, Range: hoststatus.Range1Hour, Tab: tab, SelectedNode: "local",
+		Locale: localeEnglishUS, LocalDetail: true,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	return output.String()

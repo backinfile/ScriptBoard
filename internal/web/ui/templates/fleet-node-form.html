@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="{{.Locale}}">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "fleet.add_node"}} · ScriptBoard</title></head>
+<body>
+<main class="workspace task-page" data-task-page data-task-kind="fleet-node">
+  <a class="task-back" href="/monitor"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "common.back"}}</a>
+  <section class="task-sheet fleet-node-sheet">
+    <header><div><p class="page-eyebrow">{{t .Locale "fleet.nodes"}}</p><h1>{{t .Locale "fleet.add_node"}}</h1><p>{{t .Locale "fleet.add_node_description"}}</p></div><a class="icon-button" href="/monitor" aria-label="{{t .Locale "common.close"}}"><span data-lucide="x" aria-hidden="true"></span></a></header>
+    {{if .Error}}<p class="page-error" role="alert">{{.Error}}</p>{{end}}
+    <form method="post" action="/monitor/nodes">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <label>{{t .Locale "common.name"}} <input name="name" maxlength="64" required autofocus autocomplete="off" value="{{.Name}}" placeholder="prod-web-01"></label>
+      <label>{{t .Locale "fleet.endpoint"}} <input name="endpoint" type="url" maxlength="2048" required autocomplete="off" value="{{.Endpoint}}" placeholder="https://panel.example.com"></label>
+      <label>{{t .Locale "fleet.access_token"}} <input name="access_token" type="password" minlength="16" maxlength="4096" required autocomplete="new-password"><small>{{t .Locale "fleet.access_token_hint"}}</small></label>
+      <aside class="inline-notice"><span data-lucide="shield-check" aria-hidden="true"></span><p>{{t .Locale "fleet.read_only_notice"}}</p></aside>
+      <footer><a class="button button--quiet" href="/monitor">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="plug-zap" aria-hidden="true"></span>{{t .Locale "fleet.connect_node"}}</button></footer>
+    </form>
+  </section>
+</main>
+</body>
+</html>

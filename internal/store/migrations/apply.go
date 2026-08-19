@@ -11,6 +11,7 @@ import (
 	"scriptboard/internal/clusterstatus"
 	"scriptboard/internal/customdashboard"
 	"scriptboard/internal/externaltrigger"
+	"scriptboard/internal/fleetstatus"
 	"scriptboard/internal/mysqlmanager"
 	storesqlite "scriptboard/internal/store/sqlite"
 	"scriptboard/internal/websitemonitor"
@@ -45,6 +46,7 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 		{name: "Website Monitor SQLite", statements: websitemonitor.SchemaStatements},
 		{name: "Assistant SQLite", statements: assistant.SchemaStatements},
 		{name: "External Interface SQLite", statements: externaltrigger.SchemaStatements},
+		{name: "Fleet status SQLite", statements: fleetstatus.SchemaStatements},
 		{name: "MySQL management SQLite", statements: mysqlmanager.SchemaStatements},
 		{name: "custom dashboard SQLite", statements: customdashboard.SchemaStatements},
 		{name: "Kubernetes monitoring SQLite", statements: clusterstatus.SchemaStatements},

@@ -34,7 +34,7 @@ func TestApplyMigratesExistingVariableMetadata(t *testing.T) {
 	}
 
 	err = migrations.Apply(database, 48, migrations.Options{
-		CurrentVersion: 51,
+		CurrentVersion: 52,
 		RandomToken:    func(int) (string, error) { return "token", nil },
 		HashToken:      func(value string) string { return value },
 		Now:            func() time.Time { return time.Unix(100, 0) },

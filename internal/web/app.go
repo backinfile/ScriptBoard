@@ -49,6 +49,7 @@ import (
 	"scriptboard/internal/clusterstatus"
 	"scriptboard/internal/customdashboard"
 	"scriptboard/internal/externaltrigger"
+	"scriptboard/internal/fleetstatus"
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/hostsecurity"
 	"scriptboard/internal/hoststatus"
@@ -383,6 +384,8 @@ type Config struct {
 	SecurityEventTokenFile          string
 	SecurityEventAllowPrivate       bool
 	SecurityEventClient             *http.Client
+	FleetStatusClient               *http.Client
+	FleetStatusInterval             time.Duration
 	NotificationEmailRelayEndpoint  string
 	NotificationEmailRecipient      string
 	NotificationEmailRelayTokenFile string
@@ -491,6 +494,7 @@ type App struct {
 	runs                  *runmanager.Manager
 	scheduler             *scheduler.Manager
 	hostStatus            *hoststatus.Monitor
+	fleetStatus           *fleetstatus.Manager
 	hostSecurity          hostsecurity.Service
 	securityHistory       *securitybaseline.HistoryStore
 	serviceLogs           servicelogs.Reader
@@ -850,6 +854,16 @@ func Open(config Config) (*App, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	application.fleetStatus, err = fleetstatus.New(fleetstatus.Options{
+		DB: db, SecretStore: credentialStore, Client: config.FleetStatusClient, Interval: config.FleetStatusInterval,
+	})
+	if err != nil {
+		application.hostStatus.Close()
+		application.scheduler.Close()
+		application.runs.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("initialize ScriptBoard node observation: %w", err)
+	}
 	applicationProbe := config.ApplicationProbe
 	if applicationProbe == nil {
 		applicationProbe = appstatus.NewSystemProbe()
@@ -949,6 +963,7 @@ func Open(config Config) (*App, error) {
 	application.assistantRuntime.SetBroker(application.assistantBroker)
 	if !validating {
 		application.hostStatus.Start(context.Background())
+		application.fleetStatus.Start(context.Background())
 		application.applicationStatus.Start(context.Background())
 		application.kubernetesStatus.Start(context.Background())
 		if config.MySQLBackend == nil {
@@ -1508,6 +1523,9 @@ func (a *App) Close() error {
 	if a.hostStatus != nil {
 		a.hostStatus.Close()
 	}
+	if a.fleetStatus != nil {
+		a.fleetStatus.Close()
+	}
 	if a.applicationStatus != nil {
 		a.applicationStatus.Close()
 	}
@@ -1884,6 +1902,25 @@ type overviewResponse struct {
 	ServiceUptime time.Duration     `json:"serviceUptime"`
 }
 
+type fleetOverviewNodeView struct {
+	ID, Name, Endpoint, State string
+	Local                     bool
+	Overview                  hoststatus.Overview
+	LastSeenAt                time.Time
+	HostUptime                time.Duration
+	ActiveRuns                int
+}
+
+type overviewPageView struct {
+	overviewResponse
+	Range, Tab, SelectedNode string
+	Locale                   webLocale
+	Fleet, LocalDetail       bool
+	CanManage                bool
+	CSRFToken                string
+	Nodes                    []fleetOverviewNodeView
+}
+
 func validOverviewRange(value string) bool {
 	switch value {
 	case "", hoststatus.Range15Minutes, hoststatus.Range1Hour, hoststatus.Range6Hours, hoststatus.Range24Hours:
@@ -1949,19 +1986,70 @@ func (a *App) overviewPage(response http.ResponseWriter, request *http.Request) 
 	if !validOverviewTab(tab) || tab == "" {
 		tab = "summary"
 	}
-	view, err := a.loadCurrentOverview(tab == "summary")
+	selectedNode := request.URL.Query().Get("node")
+	// Keep previously shared detail links useful while making /monitor the fleet view.
+	if selectedNode == "" && request.URL.Query().Get("tab") != "" {
+		selectedNode = "local"
+	}
+	local, err := a.loadCurrentOverview(true)
 	if err != nil {
 		http.Error(response, "无法读取宿主状态："+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	peers, err := a.fleetStatus.ListPeers(request.Context())
+	if err != nil {
+		http.Error(response, "无法读取节点状态："+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	nodes := make([]fleetOverviewNodeView, 0, len(peers)+1)
+	nodes = append(nodes, fleetNodeView("local", webText(resolveWebLocale(request), "fleet.local_node"), "", true, local.Overview, local.Overview.CollectedAt, "", len(local.ActiveRuns)))
+	now := time.Now().UTC()
+	for _, peer := range peers {
+		node := fleetNodeView(peer.ID, peer.Name, peer.Endpoint, false, peer.Overview, peer.LastSeenAt, peer.LastError, 0)
+		if !peer.Online(now) {
+			node.State = "offline"
+		}
+		nodes = append(nodes, node)
+	}
+
+	view := local
+	localDetail := selectedNode == "local"
+	if selectedNode != "" && !localDetail {
+		peer, peerErr := a.fleetStatus.Peer(request.Context(), selectedNode)
+		if peerErr != nil {
+			if errors.Is(peerErr, sql.ErrNoRows) {
+				http.NotFound(response, request)
+				return
+			}
+			http.Error(response, "无法读取节点状态："+peerErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		view = overviewResponse{Overview: peer.Overview}
+		overviewDurations(&view)
+	}
+	current := request.Context().Value(sessionContextKey).(session)
+	locale := resolveWebLocale(request)
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = overviewTemplate.Execute(response, struct {
-		overviewResponse
-		Range  string
-		Tab    string
-		Locale webLocale
-	}{overviewResponse: view, Range: selectedRange, Tab: tab, Locale: resolveWebLocale(request)})
+	_ = overviewTemplate.Execute(response, overviewPageView{
+		overviewResponse: view, Range: selectedRange, Tab: tab, SelectedNode: selectedNode,
+		Locale: locale, Fleet: selectedNode == "", LocalDetail: localDetail,
+		CanManage: identity.Allows(current.role, identity.PermissionManageOperations), CSRFToken: current.csrfToken, Nodes: nodes,
+	})
+}
+
+func fleetNodeView(id, name, endpoint string, local bool, overview hoststatus.Overview, lastSeen time.Time, lastError string, activeRuns int) fleetOverviewNodeView {
+	state := "current"
+	if lastError != "" || overview.Stale || lastSeen.IsZero() {
+		state = "offline"
+	} else if len(overview.Errors) > 0 || len(overview.Current.Errors) > 0 {
+		state = "attention"
+	}
+	uptime := time.Duration(0)
+	if !overview.Facts.BootedAt.IsZero() {
+		uptime = time.Since(overview.Facts.BootedAt)
+	}
+	return fleetOverviewNodeView{ID: id, Name: name, Endpoint: endpoint, State: state, Local: local, Overview: overview, LastSeenAt: lastSeen, HostUptime: uptime, ActiveRuns: activeRuns}
 }
 
 func (a *App) overviewData(response http.ResponseWriter, request *http.Request) {
