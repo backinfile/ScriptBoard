@@ -6,9 +6,9 @@
   <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "settings.eyebrow"}}</p><h1>{{t .Locale "settings.title"}}</h1><p>{{t .Locale "settings.description"}}</p></div></header>
   {{template "settings-navigation" .SettingsNavigation}}
   <section class="settings-content">
-      <header class="settings-section-heading"><div><h2>{{t .Locale "display.title"}}</h2><p>{{t .Locale "display.description"}}</p></div></header>
+      <header class="settings-section-heading"><div><p class="section-index">01</p><h2>{{t .Locale "display.title"}}</h2><p>{{t .Locale "display.description"}}</p></div></header>
       <section class="settings-block status-display-settings">
-        <header><h3>{{t .Locale "display.website_status_color"}}</h3><p>{{t .Locale "display.website_status_color_description"}}</p></header>
+        <header class="section-heading"><div><p class="section-index">02</p><h3>{{t .Locale "display.website_status_color"}}</h3><p>{{t .Locale "display.website_status_color_description"}}</p></div></header>
         <fieldset class="status-display-options">
           <legend class="sr-only">{{t .Locale "display.website_status_color"}}</legend>
           <label class="status-display-option">

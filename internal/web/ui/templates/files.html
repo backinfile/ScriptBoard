@@ -72,6 +72,7 @@
       <span hidden data-file-quick-many-label>{{t .Locale "files.quick_access_folders"}}</span>
     </details>
 
+    <div class="section-heading"><div><p class="section-index">01</p><h2>{{t .Locale "files.search"}}</h2></div></div>
     <section class="file-search-region" aria-label="{{t .Locale "files.search"}}">
       <form class="file-search-form" method="get" action="{{.SearchURL}}" data-async data-async-push data-file-search data-focus-after-navigation="[data-search-input]">
 		{{if .CurrentPath}}<input type="hidden" name="path" value="{{.CurrentPath}}">{{end}}
@@ -120,6 +121,7 @@
       </form>
     </section>
 
+    <div class="section-heading"><div><p class="section-index">02</p><h2>{{if .Query}}{{t .Locale "files.search"}}{{else}}{{t .Locale "files.title"}}{{end}}</h2>{{if .CurrentPath}}<p><code>{{.CurrentPath}}</code></p>{{end}}</div></div>
     <div data-deferred-region>
     {{if .DeferredData}}
     {{template "deferred-loading" .}}

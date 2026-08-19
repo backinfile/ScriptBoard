@@ -1,11 +1,18 @@
 <!doctype html>
 <html lang="{{.Locale}}">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{if .SecondFactor}}{{t .Locale "login.verify_title"}}{{else}}{{t .Locale "login.title"}}{{end}} · ScriptBoard</title></head>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}">
+  <script defer src="/assets/app-v2.js?v={{assetVersion}}"></script>
+  <title>{{if .SecondFactor}}{{t .Locale "login.verify_title"}}{{else}}{{t .Locale "login.title"}}{{end}} · ScriptBoard</title>
+</head>
 <body class="login-page">
 <main class="login-layout">
   <section class="login-sheet">
-    <a class="brand-wordmark" href="/login">ScriptBoard</a>
+    <a class="brand-wordmark" href="/login"><span class="brand-mark" aria-hidden="true"><span data-lucide="square-terminal"></span></span><span class="brand-name">ScriptBoard</span></a>
     <header>
+      <p class="page-eyebrow">{{t .Locale "login.eyebrow"}}</p>
       <h1>{{if .SecondFactor}}{{t .Locale "login.verify_title"}}{{else}}{{t .Locale "login.title"}}{{end}}</h1>
       <p>{{if .SecondFactor}}{{t .Locale "login.verify_description"}}{{else}}{{t .Locale "login.description"}}{{end}}</p>
     </header>
@@ -13,9 +20,9 @@
     <form method="post" action="{{if .SecondFactor}}/login/verify{{else}}/login{{end}}" data-login-form data-network-error="{{t .Locale "login.network_error"}}">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       {{if .SecondFactor}}
-	  {{if .PasskeyEnabled}}<input type="hidden" name="passkey_ceremony"><input type="hidden" name="passkey_response">{{end}}
+      {{if .PasskeyEnabled}}<input type="hidden" name="passkey_ceremony"><input type="hidden" name="passkey_response">{{end}}
       {{if .MFAEnabled}}<label>{{t .Locale "mfa.code"}} <input name="mfa_code" inputmode="numeric" autocomplete="one-time-code" maxlength="64" autofocus><small>{{t .Locale "login.verification_hint"}}</small></label>{{end}}
-	  {{if .PasskeyEnabled}}<button class="button{{if not .MFAEnabled}} button--primary{{end}}" type="button" data-passkey-login><span data-lucide="key-round" aria-hidden="true"></span>{{t .Locale "passkey.use"}}</button>{{end}}
+      {{if .PasskeyEnabled}}<button class="button{{if not .MFAEnabled}} button--primary{{end}}" type="button" data-passkey-login><span data-lucide="key-round" aria-hidden="true"></span>{{t .Locale "passkey.use"}}</button>{{end}}
       {{if .MFAEnabled}}<button class="button button--primary" type="submit" data-pending-label="{{t .Locale "login.pending"}}">{{t .Locale "login.verify_submit"}}<span data-lucide="arrow-right" aria-hidden="true"></span></button>{{end}}
       {{else}}
       <label>{{t .Locale "login.username"}} <input name="username" value="{{.Username}}" autocomplete="username" spellcheck="false" required></label>

@@ -1,3 +1,30 @@
 <!doctype html>
-<html lang="{{.Locale}}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{.Title}} · ScriptBoard</title></head>
-<body><main class="workspace editor-page" data-text-preview-pager data-text-preview-url="{{.ContentURL}}" data-text-preview-next="{{.NextOffset}}" data-text-preview-version="{{.Version}}" data-text-preview-has-more="{{.HasMore}}"><header class="page-heading"><div><a class="task-back" href="{{.BackURL}}"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "editor.back_directory"}}</a><h1>{{.Title}}</h1><p><code>{{.Path}}</code></p></div><div class="heading-actions"><a class="button" href="{{.DownloadURL}}" data-native><span data-lucide="download" aria-hidden="true"></span>{{t .Locale "common.download"}}</a><a class="button" href="{{.LogURL}}"><span data-lucide="scroll-text" aria-hidden="true"></span>{{t .Locale "logs.follow"}}</a><a class="button button--primary" href="{{.EditURL}}"><span data-lucide="square-pen" aria-hidden="true"></span>{{t .Locale "common.edit"}}</a></div></header>{{if .Markdown}}<article class="markdown-preview" data-markdown-preview data-markdown-base="{{.MarkdownBaseURL}}" hidden></article><pre class="text-preview markdown-source" data-markdown-source>{{.Content}}</pre>{{else if .HighlightLanguage}}<pre class="text-preview script-preview"><code data-script-preview data-highlight-language="{{.HighlightLanguage}}">{{.Content}}</code></pre>{{else}}<pre class="text-preview" data-plain-text-preview>{{.Content}}</pre>{{end}}<p class="text-preview-status" data-text-preview-status aria-live="polite"{{if not .HasMore}} hidden{{end}}>{{t .Locale "editor.loading_more"}}</p></main></body></html>
+<html lang="{{.Locale}}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}">
+  <script defer src="/assets/app-v2.js?v={{assetVersion}}"></script>
+  <title>{{.Title}} · ScriptBoard</title>
+</head>
+<body>
+<main class="workspace editor-page" data-text-preview-pager data-text-preview-url="{{.ContentURL}}" data-text-preview-next="{{.NextOffset}}" data-text-preview-version="{{.Version}}" data-text-preview-has-more="{{.HasMore}}">
+  <header class="page-heading">
+    <div>
+      <a class="task-back" href="{{.BackURL}}"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "editor.back_directory"}}</a>
+      <p class="page-eyebrow">{{t .Locale "files.eyebrow"}}</p>
+      <h1>{{.Title}}</h1>
+      <p><code>{{.Path}}</code></p>
+    </div>
+    <div class="heading-actions">
+      <a class="button" href="{{.DownloadURL}}" data-native><span data-lucide="download" aria-hidden="true"></span>{{t .Locale "common.download"}}</a>
+      <a class="button" href="{{.LogURL}}"><span data-lucide="scroll-text" aria-hidden="true"></span>{{t .Locale "logs.follow"}}</a>
+      <a class="button button--primary" href="{{.EditURL}}"><span data-lucide="square-pen" aria-hidden="true"></span>{{t .Locale "common.edit"}}</a>
+    </div>
+  </header>
+  {{if .Markdown}}<article class="markdown-preview" data-markdown-preview data-markdown-base="{{.MarkdownBaseURL}}" hidden></article>
+  <pre class="text-preview markdown-source" data-markdown-source>{{.Content}}</pre>{{else if .HighlightLanguage}}<pre class="text-preview script-preview"><code data-script-preview data-highlight-language="{{.HighlightLanguage}}">{{.Content}}</code></pre>{{else}}<pre class="text-preview" data-plain-text-preview>{{.Content}}</pre>{{end}}
+  <p class="text-preview-status" data-text-preview-status aria-live="polite"{{if not .HasMore}} hidden{{end}}>{{t .Locale "editor.loading_more"}}</p>
+</main>
+</body>
+</html>

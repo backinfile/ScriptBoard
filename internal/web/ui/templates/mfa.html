@@ -1,51 +1,81 @@
 <!doctype html>
 <html lang="{{.Locale}}">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "mfa.title"}} · ScriptBoard</title></head>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}">
+  <script defer src="/assets/app-v2.js?v={{assetVersion}}"></script>
+  <title>{{t .Locale "mfa.title"}} · ScriptBoard</title>
+</head>
 <body>
 <main class="workspace task-page" data-task-page data-task-kind="account-mfa">
   <a class="task-back" href="/settings/account"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "common.back"}}</a>
   <section class="task-sheet mfa-sheet">
-    <header><div><p class="page-eyebrow">{{t .Locale "settings.account"}}</p><h1>{{t .Locale "mfa.title"}}</h1><p>{{t .Locale "mfa.description"}}</p></div><span class="mfa-header-mark" data-state="{{if .Enabled}}enabled{{else}}disabled{{end}}"><span data-lucide="{{if .Enabled}}shield-check{{else}}shield{{end}}" aria-hidden="true"></span><span>{{if .Enabled}}{{t .Locale "mfa.enabled"}}{{else}}{{t .Locale "mfa.not_enabled"}}{{end}}</span></span></header>
+    <header>
+      <div>
+        <p class="page-eyebrow">{{t .Locale "settings.account"}}</p>
+        <h1>{{t .Locale "mfa.title"}}</h1>
+        <p>{{t .Locale "mfa.description"}}</p>
+      </div>
+      <span class="mfa-header-mark" data-state="{{if .Enabled}}enabled{{else}}disabled{{end}}"><span data-lucide="{{if .Enabled}}shield-check{{else}}shield{{end}}" aria-hidden="true"></span><span>{{if .Enabled}}{{t .Locale "mfa.enabled"}}{{else}}{{t .Locale "mfa.not_enabled"}}{{end}}</span></span>
+    </header>
     {{if .Error}}<p class="page-error mfa-page-error" role="alert">{{.Error}}</p>{{end}}
     <div class="mfa-content">
-    {{if .RecoveryCodes}}
-      <section class="mfa-stage mfa-stage--recovery"><header><span data-lucide="archive-restore" aria-hidden="true"></span><div><h2>{{t .Locale "mfa.recovery_codes"}}</h2><p>{{t .Locale "mfa.recovery_once"}}</p></div></header>
-      <div class="mfa-recovery-codes" aria-label="{{t .Locale "mfa.recovery_codes"}}"><pre>{{range .RecoveryCodes}}{{.}}
+      {{if .RecoveryCodes}}
+      <section class="mfa-stage mfa-stage--recovery">
+        <header><span data-lucide="archive-restore" aria-hidden="true"></span><div><h2>{{t .Locale "mfa.recovery_codes"}}</h2><p>{{t .Locale "mfa.recovery_once"}}</p></div></header>
+        <div class="mfa-recovery-codes" aria-label="{{t .Locale "mfa.recovery_codes"}}"><pre>{{range .RecoveryCodes}}{{.}}
 {{end}}</pre></div>
-      <footer><a class="button button--primary" href="/login">{{t .Locale "mfa.sign_in_again"}}</a></footer></section>
-    {{else if .Enrollment}}
-      <section class="mfa-stage"><header><span class="mfa-stage__number">1</span><div><h2>{{t .Locale "mfa.add_authenticator"}}</h2><p>{{t .Locale "mfa.add_authenticator_hint"}}</p></div></header>
-      <div class="mfa-enrollment-setup">
-		<figure class="mfa-qr-code">{{.QRCode}}<figcaption>{{t .Locale "mfa.scan_qr"}}</figcaption></figure>
-        <div class="mfa-credential-list"><div class="field-readonly"><span>{{t .Locale "mfa.secret"}}</span><code data-mfa-secret>{{.Enrollment.Secret}}</code></div>
-        <details><summary>{{t .Locale "mfa.show_uri"}}</summary><div class="field-readonly"><span>{{t .Locale "mfa.uri"}}</span><code>{{.Enrollment.URI}}</code></div></details></div>
-      </div></section>
-      <section class="mfa-stage"><header><span class="mfa-stage__number">2</span><div><h2>{{t .Locale "mfa.verify_authenticator"}}</h2><p>{{t .Locale "mfa.verify_authenticator_hint"}}</p></div></header><form method="post" action="/settings/account/mfa/confirm">
-        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <label>{{t .Locale "mfa.code"}} <input name="mfa_code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required autofocus></label>
-        <footer><a class="button button--quiet" href="/settings/account/mfa">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="shield-check" aria-hidden="true"></span>{{t .Locale "mfa.confirm"}}</button></footer>
-      </form></section>
-    {{else if .Enabled}}
-      <section class="mfa-method mfa-method--active"><header><span class="mfa-method__icon" data-lucide="smartphone" aria-hidden="true"></span><div><h2>{{t .Locale "mfa.authenticator_app"}}</h2><p>{{t .Locale "mfa.enabled_hint"}}</p></div><span class="status-chip" data-state="enabled"><span class="status-dot" aria-hidden="true"></span>{{t .Locale "mfa.enabled"}}</span></header><dl><div><dt>{{t .Locale "mfa.recovery_remaining"}}</dt><dd>{{.RecoveryRemaining}}</dd></div></dl>
-      <form class="mfa-danger-action" method="post" action="/settings/account/mfa/reset">
-        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <button class="button button--danger button--compact" type="submit"><span data-lucide="shield-off" aria-hidden="true"></span>{{t .Locale "mfa.reset"}}</button>
-      </form></section>
-    {{else}}
-      <section class="mfa-method"><header><span class="mfa-method__icon" data-lucide="smartphone" aria-hidden="true"></span><div><h2>{{t .Locale "mfa.authenticator_app"}}</h2><p>{{t .Locale "mfa.enroll_hint"}}</p></div></header><form method="post" action="/settings/account/mfa/enroll">
-        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-        <button class="button button--primary" type="submit"><span data-lucide="shield-plus" aria-hidden="true"></span>{{t .Locale "mfa.enroll"}}</button>
-      </form></section>
-    {{end}}
-	{{if and (not .RecoveryCodes) (not .Enrollment)}}
-	  <section class="mfa-method mfa-passkeys" data-passkey-registration data-options-url="/settings/account/passkeys/register/options" data-finish-url="/settings/account/passkeys/register/finish" data-csrf="{{.CSRFToken}}">
-	    <header><span class="mfa-method__icon" data-lucide="key-round" aria-hidden="true"></span><div><h2>{{t .Locale "passkey.title"}}</h2><p>{{t .Locale "passkey.description"}}</p></div>{{if .Passkeys}}<span class="mfa-method__count">{{len .Passkeys}}</span>{{end}}</header>
-	    {{if .Passkeys}}<div class="mfa-passkey-list">{{range .Passkeys}}<article><span><strong>{{.Name}}</strong><small><code>{{.ID}}</code></small></span><form method="post" action="/settings/account/passkeys/{{.ID}}/delete"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="icon-button" type="submit" aria-label="{{t $.Locale "passkey.delete"}}"><span data-lucide="trash-2" aria-hidden="true"></span></button></form></article>{{end}}</div>{{end}}
-	    <div class="mfa-passkey-register"><label>{{t .Locale "passkey.name"}} <input name="passkey_name" maxlength="64" value="{{t .Locale "passkey.default_name"}}" autocomplete="off"></label>
-	    <p class="page-error" role="alert" data-passkey-error hidden></p>
-	    <button class="button" type="button" data-passkey-register><span data-lucide="key-round" aria-hidden="true"></span>{{t .Locale "passkey.register"}}</button></div>
-	  </section>
-	{{end}}
+        <footer><a class="button button--primary" href="/login">{{t .Locale "mfa.sign_in_again"}}</a></footer>
+      </section>
+      {{else if .Enrollment}}
+      <section class="mfa-stage">
+        <header><span class="mfa-stage__number">1</span><div><h2>{{t .Locale "mfa.add_authenticator"}}</h2><p>{{t .Locale "mfa.add_authenticator_hint"}}</p></div></header>
+        <div class="mfa-enrollment-setup">
+          <figure class="mfa-qr-code">{{.QRCode}}<figcaption>{{t .Locale "mfa.scan_qr"}}</figcaption></figure>
+          <div class="mfa-credential-list">
+            <div class="field-readonly"><span>{{t .Locale "mfa.secret"}}</span><code data-mfa-secret>{{.Enrollment.Secret}}</code></div>
+            <details><summary>{{t .Locale "mfa.show_uri"}}</summary><div class="field-readonly"><span>{{t .Locale "mfa.uri"}}</span><code>{{.Enrollment.URI}}</code></div></details>
+          </div>
+        </div>
+      </section>
+      <section class="mfa-stage">
+        <header><span class="mfa-stage__number">2</span><div><h2>{{t .Locale "mfa.verify_authenticator"}}</h2><p>{{t .Locale "mfa.verify_authenticator_hint"}}</p></div></header>
+        <form method="post" action="/settings/account/mfa/confirm">
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <label>{{t .Locale "mfa.code"}} <input name="mfa_code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required autofocus></label>
+          <footer><a class="button button--quiet" href="/settings/account/mfa">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="shield-check" aria-hidden="true"></span>{{t .Locale "mfa.confirm"}}</button></footer>
+        </form>
+      </section>
+      {{else if .Enabled}}
+      <section class="mfa-method mfa-method--active">
+        <header><span class="mfa-method__icon" data-lucide="smartphone" aria-hidden="true"></span><div><h2>{{t .Locale "mfa.authenticator_app"}}</h2><p>{{t .Locale "mfa.enabled_hint"}}</p></div><span class="status-chip" data-state="enabled"><span class="status-dot" aria-hidden="true"></span>{{t .Locale "mfa.enabled"}}</span></header>
+        <dl><div><dt>{{t .Locale "mfa.recovery_remaining"}}</dt><dd>{{.RecoveryRemaining}}</dd></div></dl>
+        <form class="mfa-danger-action" method="post" action="/settings/account/mfa/reset">
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <button class="button button--danger button--compact" type="submit"><span data-lucide="shield-off" aria-hidden="true"></span>{{t .Locale "mfa.reset"}}</button>
+        </form>
+      </section>
+      {{else}}
+      <section class="mfa-method">
+        <header><span class="mfa-method__icon" data-lucide="smartphone" aria-hidden="true"></span><div><h2>{{t .Locale "mfa.authenticator_app"}}</h2><p>{{t .Locale "mfa.enroll_hint"}}</p></div></header>
+        <form method="post" action="/settings/account/mfa/enroll">
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+          <button class="button button--primary" type="submit"><span data-lucide="shield-plus" aria-hidden="true"></span>{{t .Locale "mfa.enroll"}}</button>
+        </form>
+      </section>
+      {{end}}
+      {{if and (not .RecoveryCodes) (not .Enrollment)}}
+      <section class="mfa-method mfa-passkeys" data-passkey-registration data-options-url="/settings/account/passkeys/register/options" data-finish-url="/settings/account/passkeys/register/finish" data-csrf="{{.CSRFToken}}">
+        <header><span class="mfa-method__icon" data-lucide="key-round" aria-hidden="true"></span><div><h2>{{t .Locale "passkey.title"}}</h2><p>{{t .Locale "passkey.description"}}</p></div>{{if .Passkeys}}<span class="mfa-method__count">{{len .Passkeys}}</span>{{end}}</header>
+        {{if .Passkeys}}<div class="mfa-passkey-list">{{range .Passkeys}}<article><span><strong>{{.Name}}</strong><small><code>{{.ID}}</code></small></span><form method="post" action="/settings/account/passkeys/{{.ID}}/delete"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="icon-button" type="submit" aria-label="{{t $.Locale "passkey.delete"}}"><span data-lucide="trash-2" aria-hidden="true"></span></button></form></article>{{end}}</div>{{end}}
+        <div class="mfa-passkey-register">
+          <label>{{t .Locale "passkey.name"}} <input name="passkey_name" maxlength="64" value="{{t .Locale "passkey.default_name"}}" autocomplete="off"></label>
+          <p class="page-error" role="alert" data-passkey-error hidden></p>
+          <button class="button" type="button" data-passkey-register><span data-lucide="key-round" aria-hidden="true"></span>{{t .Locale "passkey.register"}}</button>
+        </div>
+      </section>
+      {{end}}
     </div>
   </section>
 </main>

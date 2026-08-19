@@ -1154,6 +1154,8 @@
       }
       cleanupPage();
       syncPageTheme(result.document);
+      // 标记已发生 pjax 交换：入场动画只在首次完整加载播放，页签/同页操作不再整页重放。
+      document.documentElement.setAttribute("data-pjax-swapped", "");
       currentMain.replaceWith(document.importNode(nextMain, true));
       document.title = result.document.title;
       document.documentElement.lang = result.document.documentElement.lang || document.documentElement.lang;
@@ -2158,6 +2160,7 @@
           return;
         }
         const target = submittingTaskState ? submittingTaskState.host.querySelector("main") : document.querySelector("main");
+        document.documentElement.setAttribute("data-pjax-swapped", "");
         target?.replaceWith(document.importNode(nextMain, true));
         if (!submittingTaskState) document.title = result.document.title;
         initPage();
@@ -7377,7 +7380,8 @@
         immediate: mainNavigation || securityTab,
         title: mainNavigation ? navigationTitle(link) : undefined,
         focusSelector: link.dataset.focusAfterNavigation,
-        preserveScroll: link.hasAttribute("data-preserve-scroll"),
+        // 页签切换、排序、分页等同路径导航保持滚动位置，避免整页“刷新感”。
+        preserveScroll: link.hasAttribute("data-preserve-scroll") || destination.pathname === location.pathname,
         openFileQuickAccess: mainNavigation && destination.pathname === "/resources/files",
       });
     }
