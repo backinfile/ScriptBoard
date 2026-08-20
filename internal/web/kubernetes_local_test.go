@@ -60,7 +60,7 @@ func TestKubernetesLocalManagementPageAndContextActions(t *testing.T) {
 	}
 	page, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, expected := range []string{`data-kubernetes-tab="local"`, `data-kubernetes-local`, `data-kubernetes-import-drawer`, `production-admin`, `staging-dev`, `/monitor/kubernetes/local/download`} {
+	for _, expected := range []string{`data-kubernetes-tab="local"`, `data-kubernetes-local`, `data-kubernetes-import-drawer`, `data-kubernetes-common-paths`, `production-admin`, `staging-dev`, `/monitor/kubernetes/local/download`, `/etc/rancher/k3s/k3s.yaml`, `Default path`} {
 		if response.StatusCode != http.StatusOK || !bytes.Contains(page, []byte(expected)) {
 			t.Fatalf("local page missing %q: status=%d body=%s", expected, response.StatusCode, page)
 		}
@@ -92,6 +92,22 @@ func TestKubernetesLocalManagementPageAndContextActions(t *testing.T) {
 	snapshot, err := kubeconfigmanager.Inspect(path)
 	if err != nil || snapshot.Current != "staging-dev" {
 		t.Fatalf("current context = %q, %v", snapshot.Current, err)
+	}
+}
+
+func TestKubernetesLocalManagementDisablesMissingPathCandidate(t *testing.T) {
+	missingPath := filepath.Join(t.TempDir(), "missing-kubeconfig")
+	t.Setenv("KUBECONFIG", missingPath)
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: filepath.Join(t.TempDir(), "state")})
+
+	response, err := client.Get(serverURL + "/monitor/kubernetes?tab=local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK || !bytes.Contains(page, []byte(`value="`+missingPath+`" selected disabled`)) {
+		t.Fatalf("missing local kubeconfig candidate should be disabled: status=%d body=%s", response.StatusCode, page)
 	}
 }
 

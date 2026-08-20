@@ -7329,7 +7329,12 @@
     const contextUpdateForm = local?.querySelector("[data-kubernetes-context-update-form]");
     const contextRenameForm = local?.querySelector("[data-kubernetes-context-rename-form]");
     const contextSearch = local?.querySelector("[data-kubernetes-context-search]");
+    const connectionDrawer = root.querySelector("[data-kubernetes-connection-drawer]");
+    const connectionDrawerBody = connectionDrawer?.querySelector("[data-kubernetes-connection-drawer-body]");
+    const connectionDrawerTitle = connectionDrawer?.querySelector("[data-kubernetes-connection-drawer-title]");
     let snapshotController = null;
+    let connectionController = null;
+    const connectionCleanups = [];
     const replaceSnapshot = async (destination, options = {}) => {
       const scrollX = window.scrollX, scrollY = window.scrollY;
       snapshotController?.abort(); snapshotController = new AbortController();
@@ -7387,7 +7392,68 @@
         body.innerHTML = `<div class="kubernetes-detail-empty" role="alert">${escapeMarkup(error?.message || kubernetesWords().loadFailed)}</div>`;
       }
     };
+    const clearConnectionBindings = () => connectionCleanups.splice(0).forEach(cleanup => cleanup());
+    const renderConnectionPage = page => {
+      if (!connectionDrawerBody) return;
+      const connectionPage = page?.querySelector("[data-kubernetes-connection-page]");
+      const layout = connectionPage?.querySelector(".kubernetes-connection-layout");
+      if (!connectionPage || !layout) throw new Error("Kubernetes connection form was not present in the response.");
+      clearConnectionBindings();
+      connectionDrawerBody.replaceChildren();
+      const alert = connectionPage.querySelector(".kubernetes-alert");
+      if (alert) connectionDrawerBody.append(alert);
+      connectionDrawerBody.append(layout);
+      const heading = connectionPage.querySelector("h1");
+      if (connectionDrawerTitle && heading) connectionDrawerTitle.textContent = heading.textContent.trim();
+      renderIcons(connectionDrawerBody);
+      bindKubernetesConnection(connectionDrawerBody, connectionCleanups);
+      const form = connectionDrawerBody.querySelector("[data-kubernetes-connection-form]");
+      const onConnectionSubmit = async event => {
+        event.preventDefault();
+        const submitter = event.submitter;
+        if (submitter) { submitter.disabled = true; submitter.setAttribute("aria-busy", "true"); }
+        try {
+          const response = await fetch(form.action, { method: "POST", body: new FormData(form), headers: { "Accept": "text/html" } });
+          if (response.redirected) {
+            window.location.assign(response.url);
+            return;
+          }
+          const markup = await response.text();
+          const nextPage = new DOMParser().parseFromString(markup, "text/html");
+          if (!response.ok && !nextPage.querySelector("[data-kubernetes-connection-page]")) throw new Error(markup.trim() || `HTTP ${response.status}`);
+          renderConnectionPage(nextPage);
+        } catch (error) {
+          connectionDrawerBody.innerHTML = `<div class="kubernetes-detail-empty" role="alert">${escapeMarkup(error?.message || kubernetesWords().loadFailed)}</div>`;
+        } finally {
+          if (submitter?.isConnected) { submitter.disabled = false; submitter.removeAttribute("aria-busy"); }
+        }
+      };
+      form?.addEventListener("submit", onConnectionSubmit);
+      connectionCleanups.push(() => form?.removeEventListener("submit", onConnectionSubmit));
+    };
+    const openConnectionDrawer = async link => {
+      if (!connectionDrawer || !connectionDrawerBody) return;
+      connectionController?.abort();
+      connectionController = new AbortController();
+      clearConnectionBindings();
+      connectionDrawerBody.innerHTML = `<div class="kubernetes-drawer__loading"><span data-lucide="loader-circle" aria-hidden="true"></span>${escapeMarkup(kubernetesWords().loading)}</div>`;
+      renderIcons(connectionDrawerBody);
+      if (!connectionDrawer.open) connectionDrawer.showModal();
+      try {
+        const { response, document: page } = await fetchDocument(link.href, { cache: "no-store", signal: connectionController.signal });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        renderConnectionPage(page);
+      } catch (error) {
+        if (error?.name !== "AbortError") connectionDrawerBody.innerHTML = `<div class="kubernetes-detail-empty" role="alert">${escapeMarkup(error?.message || kubernetesWords().loadFailed)}</div>`;
+      }
+    };
     const onClick = event => {
+      const connectionLink = event.target.closest("[data-kubernetes-connection-open]");
+      if (connectionLink && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+        event.preventDefault();
+        openConnectionDrawer(connectionLink);
+        return;
+      }
       const snapshotLink = event.target.closest(".kubernetes-status-tabs a,.kubernetes-sort-link");
       if (snapshotLink && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
         event.preventDefault();
@@ -7431,6 +7497,12 @@
         contextDrawer?.close();
         return;
       }
+      if (event.target.closest("[data-kubernetes-connection-close]")) {
+        connectionController?.abort();
+        clearConnectionBindings();
+        connectionDrawer?.close();
+        return;
+      }
       if (event.target.closest("[data-kubernetes-drawer-close]")) drawer?.close();
     };
     const onDrawerClick = event => {
@@ -7439,6 +7511,16 @@
     root.addEventListener("click", onClick);
     const onImportDrawerClick = event => { if (event.target === importDrawer) importDrawer.close(); };
     const onContextDrawerClick = event => { if (event.target === contextDrawer) contextDrawer.close(); };
+    const onConnectionDrawerClick = event => {
+      if (event.target !== connectionDrawer) return;
+      connectionController?.abort();
+      clearConnectionBindings();
+      connectionDrawer.close();
+    };
+    const onConnectionDrawerClose = () => {
+      connectionController?.abort();
+      clearConnectionBindings();
+    };
     const onImportFile = async () => {
       const file = importFile?.files?.[0];
       if (!file || !importForm || !importPreview) return;
@@ -7497,6 +7579,8 @@
     drawer?.addEventListener("click", onDrawerClick);
     importDrawer?.addEventListener("click", onImportDrawerClick);
     contextDrawer?.addEventListener("click", onContextDrawerClick);
+    connectionDrawer?.addEventListener("click", onConnectionDrawerClick);
+    connectionDrawer?.addEventListener("close", onConnectionDrawerClose);
     importFile?.addEventListener("change", onImportFile);
     importDrop?.addEventListener("dragover", onImportDragOver);
     importDrop?.addEventListener("dragleave", onImportDragLeave);
@@ -7504,11 +7588,15 @@
     contextSearch?.addEventListener("input", onContextSearch);
     cleanups.push(() => {
       snapshotController?.abort();
+      connectionController?.abort();
+      clearConnectionBindings();
       root.removeEventListener("click", onClick);
       root.removeEventListener("change", onClusterChange);
       drawer?.removeEventListener("click", onDrawerClick);
       importDrawer?.removeEventListener("click", onImportDrawerClick);
       contextDrawer?.removeEventListener("click", onContextDrawerClick);
+      connectionDrawer?.removeEventListener("click", onConnectionDrawerClick);
+      connectionDrawer?.removeEventListener("close", onConnectionDrawerClose);
       importFile?.removeEventListener("change", onImportFile);
       importDrop?.removeEventListener("dragover", onImportDragOver);
       importDrop?.removeEventListener("dragleave", onImportDragLeave);
@@ -7520,21 +7608,12 @@
     });
   }
 
-  function initKubernetesConnection(cleanups) {
-    const root = document.querySelector("[data-kubernetes-connection-page]");
+  function bindKubernetesConnection(root, cleanups) {
     const form = root?.querySelector("[data-kubernetes-connection-form]");
     const button = root?.querySelector("[data-kubernetes-test]");
     const result = root?.querySelector("[data-kubernetes-test-result]");
     if (!form || !button || !result) return;
-    const pathPreset = form.querySelector("[data-kubernetes-path-preset]");
-    const pathInput = form.querySelector("[data-kubernetes-path-input]");
     const message = result.querySelector("[data-kubernetes-test-message]");
-    const onPathPresetChange = () => {
-      if (!pathPreset?.value || !pathInput) return;
-      pathInput.value = pathPreset.value;
-      pathInput.dispatchEvent(new Event("input", { bubbles: true }));
-      pathInput.focus();
-    };
     const onClick = async () => {
       button.disabled = true;
       button.setAttribute("aria-busy", "true");
@@ -7559,12 +7638,14 @@
         button.removeAttribute("aria-busy");
       }
     };
-    pathPreset?.addEventListener("change", onPathPresetChange);
     button.addEventListener("click", onClick);
     cleanups.push(() => {
-      pathPreset?.removeEventListener("change", onPathPresetChange);
       button.removeEventListener("click", onClick);
     });
+  }
+
+  function initKubernetesConnection(cleanups) {
+    bindKubernetesConnection(document.querySelector("[data-kubernetes-connection-page]"), cleanups);
   }
 
   function initPage(options = {}) {

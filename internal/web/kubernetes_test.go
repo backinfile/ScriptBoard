@@ -63,8 +63,11 @@ func TestKubernetesPageSeparatesConnectionsFromSelectedClusterMonitoring(t *test
 	}
 	page, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusOK || !bytes.Contains(page, []byte(`data-kubernetes-tab="connections"`)) || !bytes.Contains(page, []byte(`/monitor/kubernetes/connections/new`)) {
+	if response.StatusCode != http.StatusOK || !bytes.Contains(page, []byte(`data-kubernetes-tab="connections"`)) || !bytes.Contains(page, []byte(`/monitor/kubernetes/connections/new`)) || !bytes.Contains(page, []byte(`data-kubernetes-connection-drawer`)) || !bytes.Contains(page, []byte(`data-kubernetes-connection-open`)) {
 		t.Fatalf("unconfigured page: status=%d body=%s", response.StatusCode, page)
+	}
+	if count := bytes.Count(page, []byte(`href="/monitor/kubernetes/connections/new"`)); count != 1 {
+		t.Fatalf("unconfigured page should have one new connection action, got %d: %s", count, page)
 	}
 	response, err = client.Get(serverURL + "/monitor/kubernetes/connections/new")
 	if err != nil {
@@ -75,10 +78,8 @@ func TestKubernetesPageSeparatesConnectionsFromSelectedClusterMonitoring(t *test
 	if !bytes.Contains(page, []byte("Kubeconfig servers may use HTTP or HTTPS. HTTP sends credentials and cluster data without transport encryption.")) {
 		t.Fatalf("connection page does not explain HTTP support: %s", page)
 	}
-	for _, expected := range [][]byte{[]byte(`data-kubernetes-path-preset`), []byte(`data-kubernetes-path-input`)} {
-		if !bytes.Contains(page, expected) {
-			t.Fatalf("connection page does not provide manual kubeconfig path selection %q: %s", expected, page)
-		}
+	if bytes.Contains(page, []byte(`data-kubernetes-common-paths`)) {
+		t.Fatalf("common kubeconfig paths belong to local management, not the connection form: %s", page)
 	}
 
 	response, err = client.PostForm(serverURL+"/monitor/kubernetes/connections", url.Values{

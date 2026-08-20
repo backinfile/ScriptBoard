@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -36,29 +37,43 @@ type kubernetesPageView struct {
 	CanManage          bool
 	NamespaceOptions   []string
 	LocalConfig        kubeconfigmanager.Snapshot
-	LocalConfigPaths   []string
+	LocalPathOptions   []localKubeconfigPathOption
 	LocalConnectionIDs map[string]string
 	LocalError         string
 	LocalNotice        string
 }
 
 type kubernetesConnectionView struct {
-	Locale                webLocale
-	CSRFToken             string
-	Connection            clusterstatus.Connection
-	Configured            bool
-	Action                string
-	Error                 string
-	Capabilities          clusterstatus.Capabilities
-	KubeconfigPathPresets []string
+	Locale       webLocale
+	CSRFToken    string
+	Connection   clusterstatus.Connection
+	Configured   bool
+	Action       string
+	Error        string
+	Capabilities clusterstatus.Capabilities
 }
 
-func suggestedKubeconfigPaths() []string {
-	paths, err := kubeconfigmanager.SuggestedPaths()
-	if err != nil {
-		return nil
+type localKubeconfigPathOption struct {
+	Label     string
+	Path      string
+	IsDefault bool
+	Available bool
+}
+
+func localKubeconfigPathOptions(paths []string) []localKubeconfigPathOption {
+	labels := map[string]string{
+		"/etc/rancher/k3s/k3s.yaml":                            "k3s",
+		"/etc/rancher/rke2/rke2.yaml":                          "RKE2",
+		"/etc/kubernetes/admin.conf":                           "kubeadm",
+		"/var/snap/microk8s/current/credentials/client.config": "MicroK8s",
+		"/var/lib/k0s/pki/admin.conf":                          "k0s",
 	}
-	return paths
+	options := make([]localKubeconfigPathOption, 0, len(paths))
+	for index, path := range paths {
+		info, statErr := os.Stat(path)
+		options = append(options, localKubeconfigPathOption{Label: labels[path], Path: path, IsDefault: index == 0, Available: statErr == nil && info.Mode().IsRegular()})
+	}
+	return options
 }
 
 func kubernetesQueryURL(query clusterstatus.Query, mutate func(url.Values)) string {
@@ -166,19 +181,25 @@ func selectKubernetesConnection(connections []clusterstatus.ConnectionStatus, re
 }
 
 func localKubeconfigPaths(connections []clusterstatus.ConnectionStatus) ([]string, error) {
-	defaultPath, err := kubeconfigmanager.DefaultPath()
+	paths, err := kubeconfigmanager.SuggestedPaths()
 	if err != nil {
 		return nil, err
 	}
-	paths := []string{defaultPath}
-	seen := map[string]bool{filepath.Clean(defaultPath): true}
 	for _, connection := range connections {
-		path := filepath.Clean(strings.TrimSpace(connection.KubeconfigPath))
-		if !filepath.IsAbs(path) || seen[path] {
+		candidate := filepath.Clean(strings.TrimSpace(connection.KubeconfigPath))
+		if !filepath.IsAbs(candidate) {
 			continue
 		}
-		seen[path] = true
-		paths = append(paths, path)
+		duplicate := false
+		for _, existing := range paths {
+			if sameKubeconfigPath(existing, candidate) {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			paths = append(paths, candidate)
+		}
 	}
 	return paths, nil
 }
@@ -191,9 +212,8 @@ func selectLocalKubeconfigPath(paths []string, requested string) (string, bool) 
 	if requested == "" {
 		return paths[0], true
 	}
-	requested = filepath.Clean(requested)
 	for _, path := range paths {
-		if requested == filepath.Clean(path) {
+		if sameKubeconfigPath(requested, path) {
 			return path, true
 		}
 	}
@@ -265,7 +285,7 @@ func (a *App) kubernetesPage(response http.ResponseWriter, request *http.Request
 	_ = kubernetesTemplate.Execute(response, kubernetesPageView{
 		View: view, Locale: resolveWebLocale(request), CSRFToken: current.csrfToken, Query: query,
 		Connections: sanitizeKubernetesConnections(connections), ActiveTab: activeTab, SelectedConnection: selected,
-		CanManage: canManage, NamespaceOptions: view.AvailableNamespaces, LocalConfig: localConfig, LocalConfigPaths: localPaths, LocalConnectionIDs: localConnectionIDs,
+		CanManage: canManage, NamespaceOptions: view.AvailableNamespaces, LocalConfig: localConfig, LocalPathOptions: localKubeconfigPathOptions(localPaths), LocalConnectionIDs: localConnectionIDs,
 		LocalError: localError, LocalNotice: request.URL.Query().Get("notice"),
 	})
 }
@@ -577,7 +597,7 @@ func (a *App) kubernetesConnectionTask(response http.ResponseWriter, request *ht
 		}
 	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = kubernetesConnectionTemplate.Execute(response, kubernetesConnectionView{Locale: resolveWebLocale(request), CSRFToken: current.csrfToken, Connection: status.Connection, Configured: configured, Action: kubernetesConnectionAction(id), Error: status.Error, Capabilities: status.Capabilities, KubeconfigPathPresets: suggestedKubeconfigPaths()})
+	_ = kubernetesConnectionTemplate.Execute(response, kubernetesConnectionView{Locale: resolveWebLocale(request), CSRFToken: current.csrfToken, Connection: status.Connection, Configured: configured, Action: kubernetesConnectionAction(id), Error: status.Error, Capabilities: status.Capabilities})
 }
 
 func kubernetesConnectionFromRequest(request *http.Request) clusterstatus.Connection {
@@ -596,7 +616,7 @@ func (a *App) saveKubernetesConnection(response http.ResponseWriter, request *ht
 		response.Header().Set("Cache-Control", "no-store")
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		response.WriteHeader(http.StatusUnprocessableEntity)
-		_ = kubernetesConnectionTemplate.Execute(response, kubernetesConnectionView{Locale: resolveWebLocale(request), CSRFToken: current.csrfToken, Connection: connection, Configured: connection.ID != "", Action: kubernetesConnectionAction(connection.ID), Error: err.Error(), KubeconfigPathPresets: suggestedKubeconfigPaths()})
+		_ = kubernetesConnectionTemplate.Execute(response, kubernetesConnectionView{Locale: resolveWebLocale(request), CSRFToken: current.csrfToken, Connection: connection, Configured: connection.ID != "", Action: kubernetesConnectionAction(connection.ID), Error: err.Error()})
 		return
 	}
 	if err := a.kubernetesStatus.Refresh(request.Context(), result.ID); err != nil {

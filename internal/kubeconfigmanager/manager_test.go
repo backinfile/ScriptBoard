@@ -62,6 +62,15 @@ func TestSuggestedPathsIncludesCommonLinuxDistributions(t *testing.T) {
 	}
 }
 
+func TestSuggestedPathsKeepsServerCandidatesVisibleOnWindows(t *testing.T) {
+	paths := suggestedPaths("windows", `C:\Users\operator\.kube\config`)
+	for _, expected := range []string{"/etc/rancher/k3s/k3s.yaml", "/etc/rancher/rke2/rke2.yaml", "/etc/kubernetes/admin.conf"} {
+		if !containsPath(paths, expected) {
+			t.Fatalf("Windows suggested paths %q do not keep server candidate %q visible", paths, expected)
+		}
+	}
+}
+
 func containsPath(paths []string, expected string) bool {
 	for _, path := range paths {
 		if path == expected {

@@ -27,7 +27,7 @@
   <section class="kubernetes-connections" aria-labelledby="kubernetes-connections-heading">
     <header class="section-heading kubernetes-section-heading">
       <div><p class="section-index">{{len .Connections}} {{t .Locale "kubernetes.connection_count"}}</p><h2 id="kubernetes-connections-heading">{{t .Locale "kubernetes.connections_title"}}</h2><p>{{t .Locale "kubernetes.connections_description"}}</p></div>
-      {{if .CanManage}}<a class="button button--primary" href="/monitor/kubernetes/connections/new"><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "kubernetes.new_connection"}}</a>{{end}}
+      {{if .CanManage}}<a class="button button--primary" href="/monitor/kubernetes/connections/new" data-kubernetes-connection-open><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "kubernetes.new_connection"}}</a>{{end}}
     </header>
     <div class="kubernetes-connection-list">
       {{range .Connections}}
@@ -36,13 +36,12 @@
         <div class="kubernetes-connection-row__identity"><strong>{{.Name}}</strong><small>{{if .Context}}{{.Context}}{{else}}{{t $.Locale "kubernetes.current_context"}}{{end}}</small></div>
         <div><small>{{t $.Locale "kubernetes.mode"}}</small><strong>{{if eq .Mode "limited"}}{{t $.Locale "kubernetes.limited_operations"}}{{else}}{{t $.Locale "kubernetes.observe_only"}}{{end}}</strong></div>
         <div><small>{{t $.Locale "kubernetes.last_snapshot"}}</small><strong>{{if .TestedAt.IsZero}}—{{else}}<time datetime="{{machineTime .TestedAt}}" data-local-time>{{localTime $.Locale .TestedAt}}</time>{{end}}</strong></div>
-        <div class="kubernetes-connection-row__actions"><a class="button button--compact" href="/monitor/kubernetes?cluster={{.ID}}"><span data-lucide="activity" aria-hidden="true"></span>{{t $.Locale "kubernetes.open_monitor"}}</a>{{if $.CanManage}}<a class="icon-button" href="/monitor/kubernetes/connections/{{.ID}}" aria-label="{{t $.Locale "kubernetes.edit_connection"}} {{.Name}}"><span data-lucide="settings" aria-hidden="true"></span></a>{{end}}</div>
+        <div class="kubernetes-connection-row__actions"><a class="button button--compact" href="/monitor/kubernetes?cluster={{.ID}}"><span data-lucide="activity" aria-hidden="true"></span>{{t $.Locale "kubernetes.open_monitor"}}</a>{{if $.CanManage}}<a class="icon-button" href="/monitor/kubernetes/connections/{{.ID}}" aria-label="{{t $.Locale "kubernetes.edit_connection"}} {{.Name}}" data-kubernetes-connection-open><span data-lucide="settings" aria-hidden="true"></span></a>{{end}}</div>
       </article>
       {{else}}
       <div class="kubernetes-onboarding">
         <div class="kubernetes-onboarding__mark"><span data-lucide="network" aria-hidden="true"></span></div>
         <div><h2>{{t .Locale "kubernetes.connect_title"}}</h2><p>{{t .Locale "kubernetes.no_connections"}}</p></div>
-        {{if .CanManage}}<a class="button button--primary" href="/monitor/kubernetes/connections/new"><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "kubernetes.new_connection"}}</a>{{end}}
       </div>
       {{end}}
     </div>
@@ -60,7 +59,7 @@
     {{if .LocalNotice}}<div class="notice" role="status"><span data-lucide="circle-check" aria-hidden="true"></span>{{if eq .LocalNotice "connection_added"}}{{t .Locale "kubernetes.local.connection_added_notice"}}{{else if eq .LocalNotice "connection_exists"}}{{t .Locale "kubernetes.local.connection_exists_notice"}}{{else}}{{t .Locale "kubernetes.local.saved"}}{{end}}</div>{{end}}
     <form class="kubernetes-local__target" method="get" action="/monitor/kubernetes">
       <input type="hidden" name="tab" value="local">
-      <label><span>{{t .Locale "kubernetes.local.target"}}</span><select name="path">{{range .LocalConfigPaths}}<option value="{{.}}" {{if eq . $.LocalConfig.Path}}selected{{end}}>{{.}}</option>{{end}}</select></label>
+      <label><span>{{t .Locale "kubernetes.local.target"}}</span><select name="path" data-kubernetes-common-paths>{{range .LocalPathOptions}}<option value="{{.Path}}" {{if eq .Path $.LocalConfig.Path}}selected{{end}} {{if not .Available}}disabled{{end}}>{{if .IsDefault}}{{t $.Locale "kubernetes.default_kubeconfig_path"}} · {{else if .Label}}{{.Label}} · {{end}}{{.Path}}{{if not .Available}} · {{t $.Locale "kubernetes.kubeconfig_path_missing"}}{{end}}</option>{{end}}</select></label>
       <button class="button button--compact" type="submit"><span data-lucide="folder-sync" aria-hidden="true"></span>{{t .Locale "kubernetes.local.change_target"}}</button>
     </form>
     <dl class="kubernetes-local__facts">
@@ -107,7 +106,7 @@
     <form method="get" action="/monitor/kubernetes">
       <label for="kubernetes-cluster"><span>{{t .Locale "kubernetes.select_cluster"}}</span><select id="kubernetes-cluster" name="cluster" data-kubernetes-cluster-select>{{range .Connections}}<option value="{{.ID}}" {{if eq $.SelectedConnection .ID}}selected{{end}}>{{.Name}}{{if .Context}} · {{.Context}}{{end}}</option>{{end}}</select></label>
       <button class="button button--compact" type="submit">{{t .Locale "kubernetes.switch_cluster"}}</button>
-      {{if .CanManage}}<a class="icon-button" href="/monitor/kubernetes/connections/{{.SelectedConnection}}" aria-label="{{t .Locale "kubernetes.connection_settings"}}"><span data-lucide="settings" aria-hidden="true"></span></a>{{end}}
+      {{if .CanManage}}<a class="icon-button" href="/monitor/kubernetes/connections/{{.SelectedConnection}}" aria-label="{{t .Locale "kubernetes.connection_settings"}}" data-kubernetes-connection-open><span data-lucide="settings" aria-hidden="true"></span></a>{{end}}
     </form>
   </section>
   <section class="kubernetes-control-line" aria-label="{{t .Locale "kubernetes.connection"}}">
@@ -186,6 +185,10 @@
     <div class="kubernetes-drawer__body" data-kubernetes-drawer-body><div class="kubernetes-drawer__loading"><span data-lucide="loader-circle" aria-hidden="true"></span>{{t .Locale "common.loading"}}</div></div>
   </dialog>
   {{end}}
+  {{if .CanManage}}<dialog class="kubernetes-drawer kubernetes-connection-drawer" data-kubernetes-connection-drawer aria-labelledby="kubernetes-connection-drawer-title">
+    <header><div><p class="page-eyebrow">KUBECONFIG</p><h2 id="kubernetes-connection-drawer-title" data-kubernetes-connection-drawer-title>{{t .Locale "kubernetes.connect_title"}}</h2><p>{{t .Locale "kubernetes.connection_description"}}</p></div><button class="icon-button" type="button" data-kubernetes-connection-close aria-label="{{t .Locale "common.close"}}"><span data-lucide="x" aria-hidden="true"></span></button></header>
+    <div class="kubernetes-connection-drawer__body" data-kubernetes-connection-drawer-body><div class="kubernetes-drawer__loading"><span data-lucide="loader-circle" aria-hidden="true"></span>{{t .Locale "common.loading"}}</div></div>
+  </dialog>{{end}}
 </main>
 </body>
 </html>

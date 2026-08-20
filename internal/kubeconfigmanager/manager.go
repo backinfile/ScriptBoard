@@ -77,21 +77,19 @@ func SuggestedPaths() ([]string, error) {
 }
 
 func suggestedPaths(goos, defaultPath string) []string {
-	paths := []string{defaultPath}
-	if goos == "linux" {
-		paths = append(paths,
-			"/etc/rancher/k3s/k3s.yaml",
-			"/etc/rancher/rke2/rke2.yaml",
-			"/etc/kubernetes/admin.conf",
-			"/var/snap/microk8s/current/credentials/client.config",
-			"/var/lib/k0s/pki/admin.conf",
-		)
+	paths := []string{
+		defaultPath,
+		"/etc/rancher/k3s/k3s.yaml",
+		"/etc/rancher/rke2/rke2.yaml",
+		"/etc/kubernetes/admin.conf",
+		"/var/snap/microk8s/current/credentials/client.config",
+		"/var/lib/k0s/pki/admin.conf",
 	}
 	result := make([]string, 0, len(paths))
 	seen := make(map[string]struct{}, len(paths))
 	for _, candidate := range paths {
 		candidate = strings.TrimSpace(candidate)
-		if goos == "linux" {
+		if strings.HasPrefix(candidate, "/") {
 			candidate = path.Clean(candidate)
 		} else {
 			candidate = filepath.Clean(candidate)
