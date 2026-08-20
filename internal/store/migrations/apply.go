@@ -448,19 +448,14 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 			}
 		}
 	}
-	if schemaVersion >= 20 && schemaVersion <= 43 {
+	if schemaVersion >= 20 && schemaVersion <= 52 {
 		exists, err := storesqlite.ColumnExists(migration, "users", "mfa_required_at")
 		if err != nil {
-			return fmt.Errorf("inspect privileged MFA policy migration: %w", err)
+			return fmt.Errorf("inspect legacy MFA enrollment deadline: %w", err)
 		}
-		if !exists {
-			if _, err := migration.Exec(`ALTER TABLE users ADD COLUMN mfa_required_at INTEGER NOT NULL DEFAULT 0`); err != nil {
-				return fmt.Errorf("add privileged MFA policy: %w", err)
-			}
-			// Existing privileged accounts receive a bounded enrollment window so an
-			// upgrade cannot strand the only local administrator outside the panel.
-			if _, err := migration.Exec(`UPDATE users SET mfa_required_at = ? WHERE role IN ('administrator', 'maintainer')`, options.Now().UTC().Add(7*24*time.Hour).Unix()); err != nil {
-				return fmt.Errorf("schedule privileged MFA enrollment: %w", err)
+		if exists {
+			if _, err := migration.Exec(`ALTER TABLE users DROP COLUMN mfa_required_at`); err != nil {
+				return fmt.Errorf("remove legacy MFA enrollment deadline: %w", err)
 			}
 		}
 	}

@@ -13,10 +13,11 @@ package migrations
 // schema 49 added intrinsic Variable value types; schema 50 added Variable
 // revisions for visible modification tracking; schema 51 added optional notes
 // to Variables; schema 52 added ScriptBoard node observation connections and
-// read-only access tokens.
+// read-only access tokens; schema 53 removed the obsolete privileged-account
+// MFA enrollment deadline.
 //
 // The explicit current-version guard forces a deliberate policy update when a
 // future schema is introduced instead of silently promising an untested path.
 func Compatible(current, existing int) bool {
-	return existing == current || current == 52 && existing >= 20 && existing <= 51
+	return existing == current || current == 53 && existing >= 20 && existing <= 52
 }

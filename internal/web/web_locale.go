@@ -2044,7 +2044,6 @@ var webMessages = map[string]localizedMessage{
 	"mfa.disabled_hint":                             {"尚未配置认证器和恢复码", "No authenticator or recovery codes are configured"},
 	"mfa.enroll":                                    {"配置认证器", "Set up authenticator"},
 	"mfa.enroll_hint":                               {"继续前会要求近期身份验证。请将显示的密钥添加到兼容 TOTP 的认证器。", "Recent authentication is required. Add the displayed key to a compatible TOTP authenticator."},
-	"mfa.enrollment_required":                       {"此高权限账户必须先注册双重认证", "This privileged account must enroll a second factor before continuing"},
 	"passkey.title":                                 {"通行密钥", "Passkeys"},
 	"passkey.description":                           {"使用 Windows Hello、安全密钥或设备通行密钥完成抗钓鱼的双重认证。", "Use Windows Hello, a security key, or a device passkey for phishing-resistant two-factor authentication."},
 	"passkey.name":                                  {"设备名称", "Device name"},

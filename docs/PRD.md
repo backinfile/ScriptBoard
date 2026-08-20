@@ -178,7 +178,7 @@ AI
 - TOTP 状态整体由 State Root 外的统一主密钥密封；单独复制 State Root 不能恢复认证器 secret。
 - 启用或网页重置 MFA 撤销该账户全部 Session；本机管理员重置同时清除管理员 MFA，作为丢失认证器和恢复码后的带外恢复路径。
 - 账户可注册要求 authenticator user verification 的 WebAuthn/passkey；challenge 只在服务端短期保存并一次性消费，凭据记录由外部主密钥整体密封，登录与 step-up 成功后更新计数器与 flags。
-- Administrator、Maintainer 默认带 MFA 注册截止时间。超过截止时间且未配置 TOTP 或 passkey 时，只允许进入账户/MFA/登出路径，其他状态改变请求在业务 Handler 前 fail closed 并审计；旧实例和首次部署使用有界注册窗口避免锁死唯一管理员。
+- MFA 注册由账户自行选择，不设置注册截止时间，也不因未配置第二因素限制页面访问。高风险操作仍要求近期 step-up；已配置 TOTP 或 passkey 的账户必须使用第二因素，未配置 MFA 的账户使用当前密码完成 step-up。
 
 ## 6. 主机文件管理
 

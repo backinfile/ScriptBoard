@@ -8,7 +8,6 @@ var baseSchemaStatements = []string{
 			role TEXT NOT NULL CHECK (role IN ('administrator', 'maintainer', 'operator', 'viewer')),
 			enabled INTEGER NOT NULL DEFAULT 1,
 			auth_version INTEGER NOT NULL DEFAULT 1,
-			mfa_required_at INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
 		)`,

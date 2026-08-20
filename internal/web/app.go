@@ -1695,8 +1695,8 @@ func (a *App) initializeAdmin(stateRoot string) error {
 	}
 	now := time.Now().UTC().Unix()
 	if _, err := transaction.Exec(
-		"INSERT INTO users (id, username, password_hash, role, enabled, auth_version, mfa_required_at, created_at, updated_at) VALUES ('administrator', 'admin', ?, 'administrator', 1, 1, ?, ?, ?)",
-		hash, time.Now().UTC().Add(24*time.Hour).Unix(), now, now,
+		"INSERT INTO users (id, username, password_hash, role, enabled, auth_version, created_at, updated_at) VALUES ('administrator', 'admin', ?, 'administrator', 1, 1, ?, ?)",
+		hash, now, now,
 	); err != nil {
 		return fmt.Errorf("创建 admin: %w", err)
 	}
@@ -5427,7 +5427,6 @@ type session struct {
 	tokenHash               string
 	rawToken                string
 	csrfToken               string
-	mfaRequiredAt           int64
 }
 
 func (a *App) loadSession(request *http.Request) (session, string, bool) {
@@ -5442,11 +5441,11 @@ func (a *App) loadSession(request *http.Request) (session, string, bool) {
 	err = a.db.QueryRow(`
 		SELECT sessions.csrf_token, sessions.last_seen_at, sessions.expires_at,
 			sessions.authentication_assurance, sessions.reauthenticated_at,
-			users.id, users.username, users.role, users.auth_version, users.mfa_required_at
+			users.id, users.username, users.role, users.auth_version
 		FROM sessions JOIN users ON users.id = sessions.user_id
 		WHERE sessions.token_hash = ? AND sessions.auth_version = users.auth_version AND users.enabled = 1`, current.tokenHash,
 	).Scan(&current.csrfToken, &lastSeen, &expiresAt, &current.authenticationAssurance, &current.reauthenticatedAt,
-		&current.userID, &current.username, &current.role, &current.authVersion, &current.mfaRequiredAt)
+		&current.userID, &current.username, &current.role, &current.authVersion)
 	now := time.Now().UTC()
 	if err != nil || now.Unix() >= expiresAt || now.Sub(time.Unix(lastSeen, 0)) >= 12*time.Hour {
 		if err == nil {
@@ -5473,29 +5472,6 @@ func (a *App) requireSession(next http.Handler) http.Handler {
 			http.Redirect(response, request, "/login", http.StatusSeeOther)
 			return
 		}
-		if privilegedMFAEnrollmentDue(current, time.Now().UTC()) {
-			status, statusErr := a.mfa.Status(current.userID)
-			if statusErr != nil {
-				http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusServiceUnavailable)
-				return
-			}
-			passkeyUser, passkeyErr := a.passkeys.User(current.userID, current.username)
-			if passkeyErr != nil {
-				http.Error(response, webText(resolveWebLocale(request), "mfa.unavailable"), http.StatusServiceUnavailable)
-				return
-			}
-			if !status.Enabled && len(passkeyUser.Credentials) == 0 && !mfaEnrollmentRouteAllowed(request.URL.Path) {
-				response.Header().Set("Cache-Control", "no-store")
-				auditRequest := request.WithContext(context.WithValue(request.Context(), sessionContextKey, current))
-				a.recordAuditWithRequestActor(auditRequest, "mfa_enrollment_required", current.username, "blocked", request.RemoteAddr, current.userID, current.username, current.role)
-				if request.Method == http.MethodGet || request.Method == http.MethodHead {
-					http.Redirect(response, request, "/settings/account/mfa", http.StatusSeeOther)
-				} else {
-					http.Error(response, webText(resolveWebLocale(request), "mfa.enrollment_required"), http.StatusForbidden)
-				}
-				return
-			}
-		}
 		cookie, _ := request.Cookie(sessionCookieName)
 		now := time.Now().UTC()
 		if !a.validation.Load() {
@@ -5512,17 +5488,6 @@ func (a *App) requireSession(next http.Handler) http.Handler {
 		defer cancel()
 		next.ServeHTTP(response, request.WithContext(authenticatedContext))
 	})
-}
-
-func privilegedMFAEnrollmentDue(current session, now time.Time) bool {
-	return (current.role == identity.RoleAdministrator || current.role == identity.RoleMaintainer) &&
-		current.mfaRequiredAt > 0 && !now.Before(time.Unix(current.mfaRequiredAt, 0))
-}
-
-func mfaEnrollmentRouteAllowed(path string) bool {
-	return path == "/settings/account" || strings.HasPrefix(path, "/settings/account/mfa") ||
-		strings.HasPrefix(path, "/settings/account/passkeys") ||
-		path == "/auth/step-up" || path == "/logout" || path == "/settings/locale"
 }
 
 func (a *App) registerAuthenticatedRequest(userID string, cancel context.CancelFunc) uint64 {

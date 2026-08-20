@@ -677,63 +677,38 @@ func TestOpenDatabaseMigratesSchema40AuditCorrelationMetadata(t *testing.T) {
 	}
 }
 
-func TestOpenDatabaseRollsBackSchema41MFAEnrollmentOnInjectedFailure(t *testing.T) {
+func TestOpenDatabaseMigratesSchema52WithoutLegacyMFADeadline(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "app.db")
 	database, err := openDatabase(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, statement := range []string{
-		`INSERT INTO users (id, username, password_hash, role, enabled, auth_version, mfa_required_at, created_at, updated_at)
-			VALUES ('administrator', 'admin', 'preserve-hash', 'administrator', 1, 1, 0, 1, 1)`,
-		`ALTER TABLE users DROP COLUMN mfa_required_at`,
-		`CREATE TRIGGER inject_mfa_enrollment_failure
-			BEFORE UPDATE OF mfa_required_at ON users
-			BEGIN SELECT RAISE(ABORT, 'injected State Root migration failure'); END`,
-		`PRAGMA user_version=41`,
-		`PRAGMA wal_checkpoint(TRUNCATE)`,
-	} {
-		if _, err := database.Exec(statement); err != nil {
-			t.Fatalf("prepare schema 41 failure injection with %q: %v", statement, err)
+	var deadlineColumn int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('users') WHERE name='mfa_required_at'`).Scan(&deadlineColumn); err != nil {
+		t.Fatal(err)
+	}
+	if deadlineColumn == 0 {
+		if _, err := database.Exec(`ALTER TABLE users ADD COLUMN mfa_required_at INTEGER NOT NULL DEFAULT 0`); err != nil {
+			t.Fatal(err)
 		}
+	}
+	if _, err := database.Exec(`PRAGMA user_version=52; PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		t.Fatal(err)
 	}
 	if err := database.Close(); err != nil {
 		t.Fatal(err)
 	}
 
 	migrated, err := openDatabase(path)
-	if migrated != nil {
-		_ = migrated.Close()
-		t.Fatal("migration unexpectedly succeeded")
-	}
-	if err == nil || !strings.Contains(err.Error(), "injected State Root migration failure") {
-		t.Fatalf("expected injected migration failure, got %v", err)
-	}
-
-	unchanged, err := sql.Open("sqlite", path)
 	if err != nil {
+		t.Fatalf("migrate schema 52: %v", err)
+	}
+	defer migrated.Close()
+	if err := migrated.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('users') WHERE name='mfa_required_at'`).Scan(&deadlineColumn); err != nil {
 		t.Fatal(err)
 	}
-	defer unchanged.Close()
-	var version, mfaColumn int
-	if err := unchanged.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
-		t.Fatal(err)
-	}
-	if version != 41 {
-		t.Fatalf("schema version=%d, want rollback to 41", version)
-	}
-	if err := unchanged.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('users') WHERE name='mfa_required_at'`).Scan(&mfaColumn); err != nil {
-		t.Fatal(err)
-	}
-	if mfaColumn != 0 {
-		t.Fatal("mfa_required_at survived the failed transactional migration")
-	}
-	var username, role string
-	if err := unchanged.QueryRow(`SELECT username, role FROM users WHERE id='administrator'`).Scan(&username, &role); err != nil {
-		t.Fatalf("read preserved administrator: %v", err)
-	}
-	if username != "admin" || role != "administrator" {
-		t.Fatalf("administrator changed to username=%q role=%q", username, role)
+	if deadlineColumn != 0 {
+		t.Fatal("legacy MFA enrollment deadline column survived schema 52 migration")
 	}
 }
 

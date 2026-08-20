@@ -1,5 +1,7 @@
 # 为高权限账户增加受验证的 passkey 与注册截止策略
 
+> 状态：注册截止策略已被 [ADR-0175](./0175-keep-mfa-enrollment-optional.md) 取代；本文的 passkey 验证要求仍然有效。
+
 ScriptBoard 把 WebAuthn/passkey 作为 TOTP 的并列第二因素，而不是无密码登录入口。账户密码先通过 Argon2id 验证；若账户已配置 TOTP 或 passkey，登录和高风险 step-up 必须再验证其中一个因素，成功会话记为 `aal2`。这样新增 passkey 不会为已启用 MFA 的账户形成仅密码旁路。
 
 WebAuthn RP ID 与 Origin 来自经过 Host/代理边界校验的 `canonical_external_url`（测试和未显式配置的回环部署使用当前已验证 Origin）。注册与断言都要求 authenticator user verification，注册优先 discoverable credential 且不要求可识别 attestation。challenge 只在服务端内存保存，绑定 ceremony 类型、用户、浏览器会话和精确 Origin，五分钟过期并在 finish 时先消费。未知用户名和未注册账户返回带随机不可验证 credential descriptor 的同形登录 challenge，避免显式账户/passkey 枚举接口。
