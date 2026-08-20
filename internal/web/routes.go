@@ -231,6 +231,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /settings/name", a.requirePermission(identity.PermissionManageSystem, http.HandlerFunc(a.instanceNameSettingsPage)))
 	mux.Handle("POST /settings/name", a.requireStepUp(identity.PermissionManageSystem, http.HandlerFunc(a.updateInstanceName)))
 	mux.Handle("GET /settings/nodes", a.requirePermission(identity.PermissionManageSystem, http.HandlerFunc(a.fleetNodeSettingsPage)))
+	mux.Handle("GET /settings/nodes/access-tokens/new", a.requirePermission(identity.PermissionManageSystem, http.HandlerFunc(a.newFleetAccessTokenTask)))
 	mux.Handle("POST /settings/nodes/access-tokens", a.requireStepUp(identity.PermissionManageSystem, http.HandlerFunc(a.createFleetAccessToken)))
 	mux.Handle("POST /settings/nodes/access-tokens/{id}/delete", a.requireStepUp(identity.PermissionManageSystem, http.HandlerFunc(a.revokeFleetAccessToken)))
 	mux.Handle("GET /settings/display", a.requirePermission(identity.PermissionManageSystem, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {

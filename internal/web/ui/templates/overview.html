@@ -12,7 +12,6 @@
   <nav class="fleet-tabs mtabs" aria-label="{{t .Locale "fleet.nodes"}}">
     <a href="/monitor" {{if .Fleet}}aria-current="page"{{end}}><span data-lucide="layout-grid" aria-hidden="true"></span>{{t .Locale "fleet.all_nodes"}}</a>
     {{range .Nodes}}<a href="/monitor?node={{urlquery .ID}}" {{if eq $.SelectedNode .ID}}aria-current="page"{{end}}><span class="mdot {{if eq .State "current"}}ok{{else if eq .State "attention"}}warn{{else}}danger{{end}}" data-state="{{.State}}" aria-hidden="true"></span>{{.Name}}</a>{{end}}
-    {{if .CanManage}}<a class="fleet-tabs__add add-node" href="/monitor/nodes/new"><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "fleet.add_node"}}</a>{{end}}
   </nav>
 
   {{if .Fleet}}
@@ -46,7 +45,6 @@
       </div>
     </a>
     {{end}}
-    {{if .CanManage}}<a class="fleet-card fleet-card--add add" href="/monitor/nodes/new"><span data-lucide="plus" aria-hidden="true"></span><b>{{t .Locale "fleet.add_node"}}</b><small>{{t .Locale "fleet.add_node_hint"}}</small></a>{{end}}
   </section>
   {{else}}
   <header class="page-heading page-head">

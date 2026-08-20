@@ -11,17 +11,20 @@ import (
 )
 
 type fleetNodeSettingsView struct {
-	Locale      webLocale
-	Navigation  settingsNavigationData
-	CSRFToken   string
-	Tokens      []fleetstatus.AccessToken
-	IssuedToken string
-	Error       string
+	Locale     webLocale
+	Navigation settingsNavigationData
+	CSRFToken  string
+	Tokens     []fleetstatus.AccessToken
 }
 
 type fleetNodeFormView struct {
 	Locale                           webLocale
 	CSRFToken, Name, Endpoint, Error string
+}
+
+type fleetTokenFormView struct {
+	Locale                               webLocale
+	CSRFToken, Label, IssuedToken, Error string
 }
 
 func (a *App) fleetNodeSettingsPage(response http.ResponseWriter, request *http.Request) {
@@ -46,22 +49,25 @@ func (a *App) createFleetAccessToken(response http.ResponseWriter, request *http
 		http.Error(response, webText(locale, "error.csrf"), http.StatusForbidden)
 		return
 	}
-	_, secret, err := a.fleetStatus.CreateAccessToken(request.Context(), request.FormValue("label"))
-	tokens, listErr := a.fleetStatus.ListAccessTokens(request.Context())
-	if listErr != nil {
-		http.Error(response, webText(locale, "fleet.load_failed"), http.StatusInternalServerError)
-		return
-	}
-	view := fleetNodeSettingsView{Locale: locale, Navigation: newSettingsNavigation(current, locale, "nodes"), CSRFToken: current.csrfToken, Tokens: tokens, IssuedToken: secret}
+	label := request.FormValue("label")
+	_, secret, err := a.fleetStatus.CreateAccessToken(request.Context(), label)
+	view := fleetTokenFormView{Locale: locale, CSRFToken: current.csrfToken, Label: label, IssuedToken: secret}
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err != nil {
 		view.Error = err.Error()
 		response.WriteHeader(http.StatusUnprocessableEntity)
 	} else {
-		a.recordAuditForRequest(request, "fleet_access_token_created", strings.TrimSpace(request.FormValue("label")), "succeeded")
+		a.recordAuditForRequest(request, "fleet_access_token_created", strings.TrimSpace(label), "succeeded")
 	}
-	_ = fleetNodeSettingsTemplate.Execute(response, view)
+	_ = fleetTokenFormTemplate.Execute(response, view)
+}
+
+func (a *App) newFleetAccessTokenTask(response http.ResponseWriter, request *http.Request) {
+	current := request.Context().Value(sessionContextKey).(session)
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = fleetTokenFormTemplate.Execute(response, fleetTokenFormView{Locale: resolveWebLocale(request), CSRFToken: current.csrfToken})
 }
 
 func (a *App) revokeFleetAccessToken(response http.ResponseWriter, request *http.Request) {

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="{{.Locale}}">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "fleet.create_token"}} · ScriptBoard</title></head>
+<body>
+<main class="workspace task-page" data-task-page data-task-kind="fleet-access-token" data-task-close-label="{{t .Locale "common.close"}}" {{if .IssuedToken}}data-task-refresh-on-close{{end}}>
+  <a class="task-back" href="/settings/nodes"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "common.back"}}</a>
+  <section class="task-sheet fleet-token-sheet">
+    <header><div><p class="page-eyebrow">{{t .Locale "fleet.settings_title"}}</p><h1>{{if .IssuedToken}}{{t .Locale "fleet.token_created"}}{{else}}{{t .Locale "fleet.create_token"}}{{end}}</h1><p>{{if .IssuedToken}}{{t .Locale "fleet.token_once"}}{{else}}{{t .Locale "fleet.access_tokens_description"}}{{end}}</p></div><a class="icon-button" href="/settings/nodes" aria-label="{{t .Locale "common.close"}}"><span data-lucide="x" aria-hidden="true"></span></a></header>
+    {{if .IssuedToken}}
+    <div class="credential-reveal" role="status"><div><span data-lucide="key-round" aria-hidden="true"></span><div><strong>{{t .Locale "fleet.token_created"}}</strong><p>{{t .Locale "fleet.token_once"}}</p></div></div><code data-node-access-token>{{.IssuedToken}}</code></div>
+    <footer class="task-result-actions"><a class="button button--primary" href="/settings/nodes">{{t .Locale "common.done"}}</a></footer>
+    {{else}}
+    {{if .Error}}<p class="page-error" role="alert">{{.Error}}</p>{{end}}
+    <form class="fleet-token-form" method="post" action="/settings/nodes/access-tokens" data-async>
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <label>{{t .Locale "fleet.token_label"}} <input name="label" maxlength="64" required autofocus autocomplete="off" value="{{.Label}}" placeholder="{{t .Locale "fleet.token_label_placeholder"}}"></label>
+      <footer><a class="button button--quiet" href="/settings/nodes">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="key-round" aria-hidden="true"></span>{{t .Locale "fleet.create_token"}}</button></footer>
+    </form>
+    {{end}}
+  </section>
+</main>
+</body>
+</html>

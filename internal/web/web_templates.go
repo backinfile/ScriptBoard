@@ -35,6 +35,7 @@ var (
 	instanceNameSettingsTemplate      = mustWebTemplate("instance-name-settings")
 	fleetNodeSettingsTemplate         = mustWebTemplate("fleet-node-settings")
 	fleetNodeFormTemplate             = mustWebTemplate("fleet-node-form")
+	fleetTokenFormTemplate            = mustWebTemplate("fleet-token-form")
 	kubernetesTemplate                = mustWebTemplate("kubernetes")
 	kubernetesConnectionTemplate      = mustWebTemplate("kubernetes-connection")
 	kubernetesLogsTemplate            = mustWebTemplate("kubernetes-logs")

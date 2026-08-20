@@ -26,9 +26,24 @@ func TestScriptBoardInstancesShareReadOnlyStatusWithFleetOverview(t *testing.T) 
 	if response.StatusCode != http.StatusOK || !strings.Contains(string(settings), `data-node-settings`) {
 		t.Fatalf("node settings status=%d body=%s", response.StatusCode, settings)
 	}
+	if !strings.Contains(string(settings), `href="/settings/nodes/access-tokens/new" data-task-link`) ||
+		strings.Contains(string(settings), `class="fleet-token-form"`) {
+		t.Fatalf("node settings must launch token creation as a task drawer: %s", settings)
+	}
+
+	response, err = remoteClient.Get(remoteURL + "/settings/nodes/access-tokens/new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokenTask, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK || !strings.Contains(string(tokenTask), `data-task-kind="fleet-access-token"`) ||
+		!strings.Contains(string(tokenTask), `class="fleet-token-form"`) {
+		t.Fatalf("token task status=%d body=%s", response.StatusCode, tokenTask)
+	}
 
 	response, err = remoteClient.PostForm(remoteURL+"/settings/nodes/access-tokens", url.Values{
-		"csrf_token": {formToken(t, settings)}, "label": {"Primary overview"},
+		"csrf_token": {formToken(t, tokenTask)}, "label": {"Primary overview"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -38,6 +53,9 @@ func TestScriptBoardInstancesShareReadOnlyStatusWithFleetOverview(t *testing.T) 
 	match := regexp.MustCompile(`data-node-access-token>([^<]+)<`).FindSubmatch(issuedPage)
 	if response.StatusCode != http.StatusOK || len(match) != 2 {
 		t.Fatalf("issue token status=%d body=%s", response.StatusCode, issuedPage)
+	}
+	if !strings.Contains(string(issuedPage), `data-task-refresh-on-close`) {
+		t.Fatalf("issued token task must refresh settings after close: %s", issuedPage)
 	}
 	token := string(match[1])
 

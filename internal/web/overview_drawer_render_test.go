@@ -35,4 +35,7 @@ func TestOverviewPageRendersDrawerSurface(t *testing.T) {
 	if strings.Contains(page, "overview.open_full_page") {
 		t.Error("untranslated key leaked")
 	}
+	if count := strings.Count(page, `href="/monitor/nodes/new"`); count != 1 {
+		t.Errorf("overview add-machine action count=%d, want one page-level action", count)
+	}
 }
