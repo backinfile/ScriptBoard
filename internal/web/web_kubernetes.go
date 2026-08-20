@@ -1,13 +1,13 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -60,7 +60,7 @@ type localKubeconfigPathOption struct {
 	Available bool
 }
 
-func localKubeconfigPathOptions(paths []string) []localKubeconfigPathOption {
+func localKubeconfigPathOptions(ctx context.Context, manager kubeconfigmanager.Manager, paths []string) []localKubeconfigPathOption {
 	labels := map[string]string{
 		"/etc/rancher/k3s/k3s.yaml":                            "k3s",
 		"/etc/rancher/rke2/rke2.yaml":                          "RKE2",
@@ -70,8 +70,8 @@ func localKubeconfigPathOptions(paths []string) []localKubeconfigPathOption {
 	}
 	options := make([]localKubeconfigPathOption, 0, len(paths))
 	for index, path := range paths {
-		info, statErr := os.Stat(path)
-		options = append(options, localKubeconfigPathOption{Label: labels[path], Path: path, IsDefault: index == 0, Available: statErr == nil && info.Mode().IsRegular()})
+		available, _ := manager.Exists(ctx, path)
+		options = append(options, localKubeconfigPathOption{Label: labels[path], Path: path, IsDefault: index == 0, Available: available})
 	}
 	return options
 }
@@ -260,7 +260,7 @@ func (a *App) kubernetesPage(response http.ResponseWriter, request *http.Request
 			if !valid {
 				localError = "The selected kubeconfig path is not managed by ScriptBoard"
 			}
-			localConfig, err = kubeconfigmanager.Inspect(localPath)
+			localConfig, err = a.kubeconfigs.Inspect(request.Context(), localPath)
 		}
 		if err != nil {
 			localError = err.Error()
@@ -285,7 +285,7 @@ func (a *App) kubernetesPage(response http.ResponseWriter, request *http.Request
 	_ = kubernetesTemplate.Execute(response, kubernetesPageView{
 		View: view, Locale: resolveWebLocale(request), CSRFToken: current.csrfToken, Query: query,
 		Connections: sanitizeKubernetesConnections(connections), ActiveTab: activeTab, SelectedConnection: selected,
-		CanManage: canManage, NamespaceOptions: view.AvailableNamespaces, LocalConfig: localConfig, LocalPathOptions: localKubeconfigPathOptions(localPaths), LocalConnectionIDs: localConnectionIDs,
+		CanManage: canManage, NamespaceOptions: view.AvailableNamespaces, LocalConfig: localConfig, LocalPathOptions: localKubeconfigPathOptions(request.Context(), a.kubeconfigs, localPaths), LocalConnectionIDs: localConnectionIDs,
 		LocalError: localError, LocalNotice: request.URL.Query().Get("notice"),
 	})
 }
@@ -347,7 +347,7 @@ func (a *App) downloadLocalKubeconfig(response http.ResponseWriter, request *htt
 		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
 	}
-	raw, err := kubeconfigmanager.Download(path)
+	raw, err := a.kubeconfigs.Download(request.Context(), path)
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusNotFound)
 		return
@@ -364,7 +364,7 @@ func (a *App) downloadLocalKubeconfigContext(response http.ResponseWriter, reque
 		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
 	}
-	raw, err := kubeconfigmanager.DownloadContext(path, request.PathValue("context"))
+	raw, err := a.kubeconfigs.DownloadContext(request.Context(), path, request.PathValue("context"))
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusNotFound)
 		return
@@ -408,7 +408,7 @@ func (a *App) previewLocalKubeconfigImport(response http.ResponseWriter, request
 		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
 	}
-	preview, err := kubeconfigmanager.PreviewImport(path, raw)
+	preview, err := a.kubeconfigs.PreviewImport(request.Context(), path, raw)
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
 		return
@@ -432,7 +432,7 @@ func (a *App) importLocalKubeconfig(response http.ResponseWriter, request *http.
 		http.Error(response, err.Error(), http.StatusBadRequest)
 		return
 	}
-	_, err = kubeconfigmanager.Import(path, raw, request.FormValue("current_context") == "import")
+	_, err = a.kubeconfigs.Import(request.Context(), path, raw, request.FormValue("current_context") == "import")
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
 		return
@@ -457,13 +457,13 @@ func (a *App) mutateLocalKubeconfigContext(response http.ResponseWriter, request
 	action := request.FormValue("action")
 	switch action {
 	case "use":
-		err = kubeconfigmanager.UseContext(path, name)
+		err = a.kubeconfigs.UseContext(request.Context(), path, name)
 	case "update":
-		err = kubeconfigmanager.UpdateContext(path, name, request.FormValue("cluster"), request.FormValue("user"), request.FormValue("namespace"))
+		err = a.kubeconfigs.UpdateContext(request.Context(), path, name, request.FormValue("cluster"), request.FormValue("user"), request.FormValue("namespace"))
 	case "rename":
-		err = kubeconfigmanager.RenameContext(path, name, request.FormValue("name"))
+		err = a.kubeconfigs.RenameContext(request.Context(), path, name, request.FormValue("name"))
 	case "delete":
-		err = kubeconfigmanager.DeleteContext(path, name)
+		err = a.kubeconfigs.DeleteContext(request.Context(), path, name)
 	default:
 		err = fmt.Errorf("unsupported context action %q", action)
 	}
@@ -502,7 +502,7 @@ func (a *App) addLocalKubeconfigConnection(response http.ResponseWriter, request
 		return
 	}
 	contextName := strings.TrimSpace(request.PathValue("context"))
-	snapshot, err := kubeconfigmanager.Inspect(path)
+	snapshot, err := a.kubeconfigs.Inspect(request.Context(), path)
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
 		return

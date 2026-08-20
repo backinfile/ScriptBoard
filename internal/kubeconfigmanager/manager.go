@@ -29,6 +29,7 @@ type Snapshot struct {
 	Path       string
 	Exists     bool
 	Writable   bool
+	Exportable bool
 	ModifiedAt time.Time
 	Size       int64
 	Contexts   []Context
@@ -138,7 +139,7 @@ func Inspect(path string) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	return Snapshot{Path: path, Exists: true, Writable: fileWritable(path), ModifiedAt: info.ModTime(), Size: info.Size(), Contexts: contexts, Current: current}, nil
+	return Snapshot{Path: path, Exists: true, Writable: fileWritable(path), Exportable: true, ModifiedAt: info.ModTime(), Size: info.Size(), Contexts: contexts, Current: current}, nil
 }
 
 func Download(path string) ([]byte, error) {

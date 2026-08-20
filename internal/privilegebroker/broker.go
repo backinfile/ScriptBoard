@@ -25,6 +25,7 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 
 	"scriptboard/internal/hostfiles"
+	"scriptboard/internal/kubeconfigmanager"
 	"scriptboard/internal/logstream"
 	"scriptboard/internal/mfa"
 	"scriptboard/internal/mysqlmanager"
@@ -35,8 +36,8 @@ import (
 )
 
 const (
-	ProtocolVersion                     = 3
-	MaxRequestBytes                     = 128 << 10
+	ProtocolVersion                     = 4
+	MaxRequestBytes                     = 3 << 20
 	MaxResponseBytes                    = 5 << 20
 	capabilityLifetime                  = 30 * time.Second
 	maxCapabilities                     = 1024
@@ -136,6 +137,16 @@ const (
 	operationKubernetesDetail           = "kubernetes_detail"
 	operationKubernetesLogs             = "kubernetes_logs"
 	operationKubernetesOperate          = "kubernetes_operate"
+	operationKubeconfigInspect          = "kubeconfig_inspect"
+	operationKubeconfigExists           = "kubeconfig_exists"
+	operationKubeconfigDownload         = "kubeconfig_download"
+	operationKubeconfigDownloadContext  = "kubeconfig_download_context"
+	operationKubeconfigPreviewImport    = "kubeconfig_preview_import"
+	operationKubeconfigImport           = "kubeconfig_import"
+	operationKubeconfigUseContext       = "kubeconfig_use_context"
+	operationKubeconfigUpdateContext    = "kubeconfig_update_context"
+	operationKubeconfigRenameContext    = "kubeconfig_rename_context"
+	operationKubeconfigDeleteContext    = "kubeconfig_delete_context"
 	statusOK                            = "ok"
 	statusError                         = "error"
 	defaultCallDeadline                 = 35 * time.Second
@@ -187,6 +198,8 @@ const (
 	ActionRegistryDockerConfigure Action = "registry_docker_configure"
 	ActionApplicationOperate      Action = "application_operate"
 	ActionKubernetesOperate       Action = "kubernetes_operate"
+	ActionKubeconfigRead          Action = "kubeconfig_read"
+	ActionKubeconfigWrite         Action = "kubeconfig_write"
 )
 
 var (
@@ -361,6 +374,11 @@ type RegistryService interface {
 	RegisterInsecure(context.Context, string) (bool, error)
 }
 
+type KubeconfigService interface {
+	kubeconfigmanager.Manager
+	Exportable(context.Context, string) (bool, error)
+}
+
 type ServerOptions struct {
 	Listener       net.Listener
 	VerifyPeer     func(net.Conn) error
@@ -378,6 +396,7 @@ type ServerOptions struct {
 	Registry       RegistryService
 	Applications   ApplicationService
 	Kubernetes     KubernetesService
+	Kubeconfigs    KubeconfigService
 	Now            func() time.Time
 }
 
@@ -398,6 +417,7 @@ type Server struct {
 	registry       RegistryService
 	applications   ApplicationService
 	kubernetes     KubernetesService
+	kubeconfigs    KubeconfigService
 	now            func() time.Time
 
 	mu                sync.Mutex
@@ -459,6 +479,7 @@ type wireRequest struct {
 	StateBackup           *stateBackupWireRequest `json:"state_backup,omitempty"`
 	Registry              *registryWireRequest    `json:"registry,omitempty"`
 	Runtime               *runtimeWireRequest     `json:"runtime,omitempty"`
+	Kubeconfig            *kubeconfigWireRequest  `json:"kubeconfig,omitempty"`
 }
 
 type wireResponse struct {
@@ -484,6 +505,7 @@ type wireResponse struct {
 	StateBackup           *stateBackupWireResponse `json:"state_backup,omitempty"`
 	Registry              *registryWireResponse    `json:"registry,omitempty"`
 	Runtime               *runtimeWireResponse     `json:"runtime,omitempty"`
+	Kubeconfig            *kubeconfigWireResponse  `json:"kubeconfig,omitempty"`
 }
 
 func NewServer(options ServerOptions) (*Server, error) {
@@ -496,7 +518,7 @@ func NewServer(options ServerOptions) (*Server, error) {
 	}
 	return &Server{
 		listener: options.Listener, verifyPeer: options.VerifyPeer, authorizer: options.Authorizer,
-		executor: options.Executor, auditor: options.Auditor, checkpoint: options.Checkpoint, mfa: options.MFA, passkeys: options.Passkeys, remoteWebsites: options.RemoteWebsites, providers: options.Providers, mysql: options.MySQL, hostFiles: options.HostFiles, stateBackups: options.StateBackups, registry: options.Registry, applications: options.Applications, kubernetes: options.Kubernetes, now: now,
+		executor: options.Executor, auditor: options.Auditor, checkpoint: options.Checkpoint, mfa: options.MFA, passkeys: options.Passkeys, remoteWebsites: options.RemoteWebsites, providers: options.Providers, mysql: options.MySQL, hostFiles: options.HostFiles, stateBackups: options.StateBackups, registry: options.Registry, applications: options.Applications, kubernetes: options.Kubernetes, kubeconfigs: options.Kubeconfigs, now: now,
 		capabilities: make(map[string]capabilityBinding), done: make(chan struct{}),
 		mfaVerifyFailures: make(map[string]mfaVerifyFailure),
 	}, nil
@@ -586,6 +608,10 @@ func (server *Server) handle(connection net.Conn) {
 		operationApplicationLogOpen, operationApplicationLogHistory, operationApplicationLogFollow,
 		operationKubernetesOpen, operationKubernetesSnapshot, operationKubernetesDetail, operationKubernetesLogs, operationKubernetesOperate:
 		response = server.runtimeOperation(request)
+	case operationKubeconfigExists, operationKubeconfigInspect, operationKubeconfigDownload, operationKubeconfigDownloadContext,
+		operationKubeconfigPreviewImport, operationKubeconfigImport, operationKubeconfigUseContext,
+		operationKubeconfigUpdateContext, operationKubeconfigRenameContext, operationKubeconfigDeleteContext:
+		response = server.kubeconfigOperation(request)
 	default:
 		response = wireResponse{Status: statusError, ErrorCode: "operation_forbidden", Message: "operation is not supported"}
 	}
@@ -1266,6 +1292,9 @@ func validateWireRequest(request wireRequest) error {
 	}
 	if request.Runtime != nil || isRuntimeOperation(request.Operation) {
 		return validateRuntimeRequest(request)
+	}
+	if request.Kubeconfig != nil || isKubeconfigOperation(request.Operation) {
+		return validateKubeconfigRequest(request)
 	}
 	if request.StateBackup != nil && !isStateBackupOperation(request.Operation) {
 		return errors.New("request contains unrelated state backup fields")

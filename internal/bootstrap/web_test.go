@@ -12,6 +12,7 @@ import (
 
 	"scriptboard/internal/clusterstatus"
 	"scriptboard/internal/config"
+	"scriptboard/internal/kubeconfigmanager"
 	"scriptboard/internal/privilegebroker"
 )
 
@@ -36,6 +37,9 @@ func TestRuntimeDependenciesFollowDeploymentMode(t *testing.T) {
 	if _, ok := managed.kubernetesFactory.(privilegebroker.KubernetesFactory); !ok {
 		t.Fatalf("managed Kubernetes factory type = %T", managed.kubernetesFactory)
 	}
+	if _, ok := managed.kubeconfigManager.(*privilegebroker.RemoteKubeconfigManager); !ok {
+		t.Fatalf("managed kubeconfig manager type = %T", managed.kubeconfigManager)
+	}
 }
 
 func TestBrokerKubernetesServiceResolvesSavedConnection(t *testing.T) {
@@ -54,6 +58,43 @@ func TestBrokerKubernetesServiceResolvesSavedConnection(t *testing.T) {
 	if err != nil || !found || connection.Name != "Local" || connection.Context != "production" || connection.Mode != clusterstatus.ModeLimited {
 		t.Fatalf("connection=%#v found=%v err=%v", connection, found, err)
 	}
+}
+
+func TestBrokerKubeconfigManagerReadsRegisteredExternalPathWithoutExportingCredentials(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:broker-kubeconfig-manager?mode=memory&cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE kubernetes_connection (id TEXT PRIMARY KEY, kubeconfig_path TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "root-only-k3s.yaml")
+	fixture := `apiVersion: v1
+kind: Config
+clusters: []
+users: []
+contexts: []
+current-context: ""
+`
+	if err := os.WriteFile(path, []byte(fixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO kubernetes_connection VALUES ('k3s', ?)`, path); err != nil {
+		t.Fatal(err)
+	}
+	manager := newBrokerKubeconfigManager(db, filepath.Join(t.TempDir(), "state"), "")
+	snapshot, err := manager.Inspect(context.Background(), path)
+	if err != nil || !snapshot.Exists {
+		t.Fatalf("snapshot=%#v err=%v", snapshot, err)
+	}
+	if exportable, err := manager.Exportable(context.Background(), path); err != nil || exportable {
+		t.Fatalf("external kubeconfig exportable=%v err=%v", exportable, err)
+	}
+	if _, err := manager.Download(context.Background(), path); err == nil {
+		t.Fatal("Broker exported credentials from an external privileged kubeconfig")
+	}
+	var _ kubeconfigmanager.Manager = manager
 }
 
 func TestConnectOnDemandHostRetriesUntilEndpointIsReady(t *testing.T) {

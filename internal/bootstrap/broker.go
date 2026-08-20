@@ -229,6 +229,7 @@ func RunBroker(ctx context.Context, arguments []string, getenv func(string) stri
 		MySQL: mysqlService, HostFiles: hostFilesService,
 		Registry:     registryConnections,
 		Applications: applications, Kubernetes: brokerKubernetesService{db: database, factory: clusterstatus.HTTPFactory{}},
+		Kubeconfigs:  newBrokerKubeconfigManager(database, absolute, *allowedIdentity),
 		StateBackups: &brokerStateBackupService{stateRoot: absolute, database: database, checkpoint: checkpoint, audit: audit},
 	})
 	if err != nil {

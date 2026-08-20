@@ -54,6 +54,7 @@ import (
 	"scriptboard/internal/hostsecurity"
 	"scriptboard/internal/hoststatus"
 	"scriptboard/internal/instancelock"
+	"scriptboard/internal/kubeconfigmanager"
 	"scriptboard/internal/logstream"
 	"scriptboard/internal/mfa"
 	"scriptboard/internal/mysqlmanager"
@@ -364,6 +365,7 @@ type Config struct {
 	RequestRestart                  func() error
 	ApplicationProbe                appstatus.Probe
 	KubernetesFactory               clusterstatus.Factory
+	KubeconfigManager               kubeconfigmanager.Manager
 	AssistantRuntimeSource          runtimeinstall.Source
 	HostSecurity                    hostsecurity.Service
 	ServiceLogs                     servicelogs.Reader
@@ -502,6 +504,7 @@ type App struct {
 	securityDrafts        map[string]securityFirewallDraft
 	applicationStatus     *appstatus.Monitor
 	kubernetesStatus      *clusterstatus.Manager
+	kubeconfigs           kubeconfigmanager.Manager
 	logStreamSlots        chan struct{}
 	logHistorySlots       chan struct{}
 	shellStatusCache      *shellStatusCache
@@ -945,6 +948,10 @@ func Open(config Config) (*App, error) {
 		application.runs.Close()
 		_ = db.Close()
 		return nil, fmt.Errorf("initialize Kubernetes monitoring: %w", err)
+	}
+	application.kubeconfigs = config.KubeconfigManager
+	if application.kubeconfigs == nil {
+		application.kubeconfigs = kubeconfigmanager.DirectManager{}
 	}
 	application.assistantTools = newAssistantToolExecutor(application)
 	application.assistantRuntime.SetTurnSettled(application.assistantTools.releaseTurn)

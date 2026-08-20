@@ -21,6 +21,7 @@ import (
 	"scriptboard/internal/config"
 	"scriptboard/internal/customdashboard"
 	"scriptboard/internal/installation"
+	"scriptboard/internal/kubeconfigmanager"
 	"scriptboard/internal/mysqlmanager"
 	"scriptboard/internal/platformservice"
 	"scriptboard/internal/privilegebroker"
@@ -73,7 +74,8 @@ func RunWeb(runContext context.Context, arguments []string, getenv func(string) 
 		RequestRestart: requestRestart, AssistantProcessLauncher: dependencies.assistantLauncher,
 		RunnerProcessLauncher: dependencies.runnerLauncher, PrivilegedBrokerEndpoint: dependencies.brokerEndpoint,
 		ApplicationProbe: dependencies.applicationProbe, KubernetesFactory: dependencies.kubernetesFactory,
-		AuditCheckpoint: dependencies.auditCheckpoint, MFAStore: dependencies.mfaStore, PasskeyStore: dependencies.passkeyStore,
+		KubeconfigManager: dependencies.kubeconfigManager,
+		AuditCheckpoint:   dependencies.auditCheckpoint, MFAStore: dependencies.mfaStore, PasskeyStore: dependencies.passkeyStore,
 		RegistryConnections: dependencies.registryConnections,
 		ProviderCredentials: dependencies.providerCredentials, MySQLBackend: dependencies.mysqlBackend,
 		HostFilesBackend: dependencies.hostFilesBackend, StateBackups: dependencies.stateBackups,
@@ -136,6 +138,7 @@ type composedWebDependencies struct {
 	stateBackups        webapp.StateBackupService
 	applicationProbe    appstatus.Probe
 	kubernetesFactory   clusterstatus.Factory
+	kubeconfigManager   kubeconfigmanager.Manager
 	brokerEndpoint      string
 }
 
@@ -180,6 +183,7 @@ func webDependenciesWithIdentity(loaded config.Config, installRoot string, valid
 	result.mysqlBackend = privilegebroker.NewMySQLBackend(client, mysqlmanager.ToolSettings{DumpExecutable: "mysqldump", ClientExecutable: "mysql"})
 	result.hostFilesBackend = privilegebroker.NewHostFilesBackend(client, filepath.Join(loaded.StateRoot, "inbox", "host-files-broker"))
 	result.stateBackups = privilegebroker.NewStateBackups(client)
+	result.kubeconfigManager = privilegebroker.NewRemoteKubeconfigManager(client)
 	result.applicationProbe, result.kubernetesFactory = brokerRuntimeDependencies(client)
 	return result, nil
 }

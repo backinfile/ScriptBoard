@@ -1013,7 +1013,7 @@ var webMessages = map[string]localizedMessage{
 	"kubernetes.tab.connections":                    {"集群连接", "Cluster connections"},
 	"kubernetes.tab.local":                          {"本地管理", "Local management"},
 	"kubernetes.local.title":                        {"本地 kubectl 配置", "Local kubectl configuration"},
-	"kubernetes.local.description":                  {"管理 ScriptBoard 服务身份使用的 kubeconfig 和全部 Context。", "Manage the kubeconfig and contexts used by the ScriptBoard service identity."},
+	"kubernetes.local.description":                  {"通过特权 Broker 管理本机 kubeconfig 和全部 Context。", "Manage host kubeconfig files and contexts through the privileged Broker."},
 	"kubernetes.local.download_all":                 {"下载 YAML", "Download YAML"},
 	"kubernetes.local.import":                       {"导入 kubeconfig", "Import kubeconfig"},
 	"kubernetes.local.read_failed":                  {"无法读取本地配置", "Unable to read local configuration"},

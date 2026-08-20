@@ -2,6 +2,7 @@ package web_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"mime/multipart"
@@ -45,6 +46,41 @@ contexts:
     namespace: preview
 current-context: production-admin
 `
+
+type fixtureKubeconfigManager struct {
+	kubeconfigmanager.DirectManager
+	snapshot kubeconfigmanager.Snapshot
+}
+
+func (manager fixtureKubeconfigManager) Inspect(_ context.Context, path string) (kubeconfigmanager.Snapshot, error) {
+	snapshot := manager.snapshot
+	snapshot.Path = path
+	return snapshot, nil
+}
+
+func TestKubernetesLocalManagementUsesConfiguredKubeconfigManager(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "root-only-k3s.yaml")
+	if err := os.WriteFile(path, []byte("not readable by the Web control plane"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KUBECONFIG", path)
+	manager := fixtureKubeconfigManager{snapshot: kubeconfigmanager.Snapshot{
+		Exists: true, Current: "k3s-admin", Contexts: []kubeconfigmanager.Context{{Name: "k3s-admin", Current: true}},
+	}}
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{
+		StateRoot: filepath.Join(t.TempDir(), "state"), KubeconfigManager: manager,
+	})
+
+	response, err := client.Get(serverURL + "/monitor/kubernetes?tab=local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK || !bytes.Contains(page, []byte("k3s-admin")) {
+		t.Fatalf("local management bypassed configured kubeconfig manager: status=%d body=%s", response.StatusCode, page)
+	}
+}
 
 func TestKubernetesLocalManagementPageAndContextActions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config")
