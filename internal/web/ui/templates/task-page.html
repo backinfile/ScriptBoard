@@ -5,54 +5,75 @@
 <main class="workspace task-page" data-task-page data-task-kind="{{.Kind}}" data-task-close-label="{{t .Locale "common.close"}}">
   <a class="task-back" href="{{.BackURL}}"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "common.back"}}</a>
   <section class="task-sheet">
-    <header><div><p class="page-eyebrow">{{if eq .Kind "step-up"}}{{t .Locale "step_up.eyebrow"}}{{else if eq .Kind "external-global-control"}}{{t .Locale "external.global_control"}}{{else if or (eq .Kind "user-edit") (eq .Kind "user-create")}}{{t .Locale "users.accounts"}}{{else if or (eq .Kind "account-username") (eq .Kind "account-password")}}{{t .Locale "settings.account"}}{{else if eq .Kind "move-file"}}{{t .Locale "files.move"}}{{else}}{{t .Locale "common.create"}}{{end}}</p><h1>{{.Title}}</h1><p>{{.Description}}</p></div><a class="icon-button" href="{{.BackURL}}" aria-label="{{t .Locale "common.close"}}"><span data-lucide="x" aria-hidden="true"></span></a></header>
+    <header><span class="dico{{if and (eq .Kind "external-global-control") (not .Enabled)}} dico--danger{{end}}" aria-hidden="true"><span data-lucide="{{if eq .Kind "step-up"}}shield-check{{else if eq .Kind "external-global-control"}}power{{else if eq .Kind "windows-firewall-rule"}}shield-plus{{else if eq .Kind "user-create"}}user-plus{{else if eq .Kind "user-edit"}}square-pen{{else if eq .Kind "account-username"}}circle-user-round{{else if eq .Kind "account-password"}}lock{{else if eq .Kind "new-directory"}}folder-plus{{else if eq .Kind "upload"}}upload{{else if or (eq .Kind "move-file") (eq .Kind "quick-move-group")}}folder-input{{else if or (eq .Kind "run") (eq .Kind "one-time-run")}}play{{else if eq .Kind "quick-create"}}plus{{else if or (eq .Kind "quick-save") (eq .Kind "quick-new")}}bookmark-plus{{else if eq .Kind "quick-copy"}}copy{{else if or (eq .Kind "quick-group-new") (eq .Kind "quick-group-edit") (eq .Kind "schedule-group-new") (eq .Kind "schedule-group-edit")}}folder{{else if or (eq .Kind "variable-new") (eq .Kind "variable-edit")}}braces{{else if or (eq .Kind "schedule-new") (eq .Kind "schedule-edit")}}calendar-clock{{else}}square-pen{{end}}"></span></span><div><p class="page-eyebrow">{{if eq .Kind "step-up"}}{{t .Locale "step_up.eyebrow"}}{{else if eq .Kind "external-global-control"}}{{t .Locale "external.global_control"}}{{else if or (eq .Kind "user-edit") (eq .Kind "user-create")}}{{t .Locale "users.accounts"}}{{else if or (eq .Kind "account-username") (eq .Kind "account-password")}}{{t .Locale "settings.account"}}{{else if eq .Kind "move-file"}}{{t .Locale "files.move"}}{{else}}{{t .Locale "common.create"}}{{end}}</p><h1>{{.Title}}</h1><p class="dsub">{{.Description}}</p></div><a class="icon-button" href="{{.BackURL}}" aria-label="{{t .Locale "common.close"}}"><span data-lucide="x" aria-hidden="true"></span></a></header>
     {{if .Error}}<p class="page-error" role="alert">{{.Error}}</p>{{end}}
     {{if eq .Kind "external-global-control"}}
     <form method="post" action="{{.Action}}">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <input type="hidden" name="enabled" value="{{if .Enabled}}1{{else}}0{{end}}">
       <input type="hidden" name="confirmed" value="yes">
-      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button {{if .Enabled}}button--primary{{else}}button--danger{{end}}" type="submit"><span data-lucide="{{if .Enabled}}play{{else}}circle-stop{{end}}" aria-hidden="true"></span>{{if .Enabled}}{{t .Locale "external.resume_all"}}{{else}}{{t .Locale "external.pause_all"}}{{end}}</button></footer>
+      <div class="drawer-body">
+        {{if not .Enabled}}<div class="danger-box">{{t .Locale "external.global_control_disabled_description"}}</div>{{end}}
+      </div>
+      <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button {{if .Enabled}}button--primary{{else}}button--danger{{end}}" type="submit"><span data-lucide="{{if .Enabled}}play{{else}}circle-stop{{end}}" aria-hidden="true"></span>{{if .Enabled}}{{t .Locale "external.resume_all"}}{{else}}{{t .Locale "external.pause_all"}}{{end}}</button></footer>
     </form>
     {{else if eq .Kind "step-up"}}
     <form method="post" action="{{.Action}}">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <input type="hidden" name="return_to" value="{{.ReturnTo}}">
 	  <input type="hidden" name="passkey_ceremony"><input type="hidden" name="passkey_response">
-	  {{if not .SecondFactorOnly}}<label>{{t .Locale "account.current_password"}} <input name="current_password" type="password" autocomplete="current-password" required autofocus></label>{{end}}
-	  {{if .MFAEnabled}}<label>{{t .Locale "mfa.code"}} <input name="mfa_code" inputmode="numeric" autocomplete="one-time-code" maxlength="64"><small>{{t .Locale "mfa.step_up_hint"}}</small></label>{{end}}
-	  {{if .PasskeyEnabled}}<button class="button" type="button" data-passkey-step-up><span data-lucide="key-round" aria-hidden="true"></span>{{t .Locale "passkey.use"}}</button>{{end}}
-      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="shield-check" aria-hidden="true"></span>{{t .Locale "step_up.continue"}}</button></footer>
+      <div class="drawer-body">
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="shield-check" aria-hidden="true"></span>{{t .Locale "account.security"}}</p>
+		  {{if not .SecondFactorOnly}}<label>{{t .Locale "account.current_password"}} <input name="current_password" type="password" autocomplete="current-password" required autofocus></label>{{end}}
+		  {{if .MFAEnabled}}<label>{{t .Locale "mfa.code"}} <input name="mfa_code" inputmode="numeric" autocomplete="one-time-code" maxlength="64"><small>{{t .Locale "mfa.step_up_hint"}}</small></label>{{end}}
+		  {{if .PasskeyEnabled}}<button class="button" type="button" data-passkey-step-up><span data-lucide="key-round" aria-hidden="true"></span>{{t .Locale "passkey.use"}}</button>{{end}}
+        </section>
+      </div>
+      <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="shield-check" aria-hidden="true"></span>{{t .Locale "step_up.continue"}}</button></footer>
     </form>
     {{else if eq .Kind "windows-firewall-rule"}}
     <form method="post" action="{{.Action}}">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <label>{{t .Locale "security.direction"}} <select name="direction" required autofocus><option value="in">{{t .Locale "security.inbound"}}</option><option value="out">{{t .Locale "security.outbound"}}</option></select></label>
-      <label>{{t .Locale "security.action"}} <select name="action" required><option value="allow">{{t .Locale "security.allow"}}</option><option value="deny">{{t .Locale "security.deny"}}</option></select></label>
-      <label>{{t .Locale "security.protocol"}} <select name="protocol" required><option value="tcp">TCP</option><option value="udp">UDP</option></select></label>
-      <label>{{t .Locale "security.port"}} <input name="port" inputmode="numeric" autocomplete="off" required placeholder="3389"></label>
-      <label>{{t .Locale "security.address"}} <input name="address" autocomplete="off" required value="any"></label>
-      <label>{{t .Locale "security.firewall_profile"}} <select name="profile"><option value="any">{{t .Locale "security.all_profiles"}}</option><option value="domain">Domain</option><option value="private">Private</option><option value="public">Public</option></select></label>
-      <label>{{t .Locale "common.name"}} <input name="name" autocomplete="off" maxlength="120" required placeholder="Remote Desktop"></label>
-      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="shield-plus" aria-hidden="true"></span>{{t .Locale "security.add_rule"}}</button></footer>
+      <div class="drawer-body">
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="globe-2" aria-hidden="true"></span>{{t .Locale "common.target"}}</p>
+          <label>{{t .Locale "security.direction"}} <select name="direction" required autofocus><option value="in">{{t .Locale "security.inbound"}}</option><option value="out">{{t .Locale "security.outbound"}}</option></select></label>
+          <label>{{t .Locale "security.action"}} <select name="action" required><option value="allow">{{t .Locale "security.allow"}}</option><option value="deny">{{t .Locale "security.deny"}}</option></select></label>
+          <label>{{t .Locale "security.protocol"}} <select name="protocol" required><option value="tcp">TCP</option><option value="udp">UDP</option></select></label>
+          <label>{{t .Locale "security.port"}} <input name="port" inputmode="numeric" autocomplete="off" required placeholder="3389"></label>
+          <label>{{t .Locale "security.address"}} <input name="address" autocomplete="off" required value="any"></label>
+        </section>
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="settings" aria-hidden="true"></span>{{t .Locale "common.details"}}</p>
+          <label>{{t .Locale "security.firewall_profile"}} <select name="profile"><option value="any">{{t .Locale "security.all_profiles"}}</option><option value="domain">Domain</option><option value="private">Private</option><option value="public">Public</option></select></label>
+          <label>{{t .Locale "common.name"}} <input name="name" autocomplete="off" maxlength="120" required placeholder="Remote Desktop"></label>
+        </section>
+      </div>
+      <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="shield-plus" aria-hidden="true"></span>{{t .Locale "security.add_rule"}}</button></footer>
     </form>
     {{else if eq .Kind "user-create"}}
     <form method="post" action="{{.Action}}">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <label>{{t .Locale "login.username"}} <input name="username" autocomplete="username" spellcheck="false" maxlength="64" required autofocus></label>
-      <label>{{t .Locale "users.role"}} <select name="role" required><option value="maintainer">{{t .Locale "users.role.maintainer"}}</option><option value="operator">{{t .Locale "users.role.operator"}}</option><option value="viewer">{{t .Locale "users.role.viewer"}}</option></select></label>
-      <section class="user-role-guide" aria-labelledby="user-role-guide-title" data-user-role-guide>
-        <header><span data-lucide="shield-question" aria-hidden="true"></span><div><h2 id="user-role-guide-title">{{t .Locale "users.role_guide_title"}}</h2><p>{{t .Locale "users.role_guide_description"}}</p></div></header>
-        <dl>
-          <div><dt><span data-lucide="wrench" aria-hidden="true"></span>{{t .Locale "users.role.maintainer"}}</dt><dd>{{t .Locale "users.role.maintainer_permissions"}}</dd></div>
-          <div><dt><span data-lucide="square-terminal" aria-hidden="true"></span>{{t .Locale "users.role.operator"}}</dt><dd>{{t .Locale "users.role.operator_permissions"}}</dd></div>
-          <div><dt><span data-lucide="eye" aria-hidden="true"></span>{{t .Locale "users.role.viewer"}}</dt><dd>{{t .Locale "users.role.viewer_permissions"}}</dd></div>
-        </dl>
-      </section>
-      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="user-plus" aria-hidden="true"></span>{{t .Locale "users.create"}}</button></footer>
+      <div class="drawer-body">
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="user-plus" aria-hidden="true"></span>{{t .Locale "common.details"}}</p>
+          <label>{{t .Locale "login.username"}} <input name="username" autocomplete="username" spellcheck="false" maxlength="64" required autofocus></label>
+          <label>{{t .Locale "users.role"}} <select name="role" required><option value="maintainer">{{t .Locale "users.role.maintainer"}}</option><option value="operator">{{t .Locale "users.role.operator"}}</option><option value="viewer">{{t .Locale "users.role.viewer"}}</option></select></label>
+        </section>
+        <section class="user-role-guide" aria-labelledby="user-role-guide-title" data-user-role-guide>
+          <header><span data-lucide="shield-question" aria-hidden="true"></span><div><h2 id="user-role-guide-title">{{t .Locale "users.role_guide_title"}}</h2><p>{{t .Locale "users.role_guide_description"}}</p></div></header>
+          <dl>
+            <div><dt><span data-lucide="wrench" aria-hidden="true"></span>{{t .Locale "users.role.maintainer"}}</dt><dd>{{t .Locale "users.role.maintainer_permissions"}}</dd></div>
+            <div><dt><span data-lucide="square-terminal" aria-hidden="true"></span>{{t .Locale "users.role.operator"}}</dt><dd>{{t .Locale "users.role.operator_permissions"}}</dd></div>
+            <div><dt><span data-lucide="eye" aria-hidden="true"></span>{{t .Locale "users.role.viewer"}}</dt><dd>{{t .Locale "users.role.viewer_permissions"}}</dd></div>
+          </dl>
+        </section>
+      </div>
+      <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="user-plus" aria-hidden="true"></span>{{t .Locale "users.create"}}</button></footer>
     </form>
     {{else if eq .Kind "user-edit"}}
-    <div class="user-edit-content">
+    <div class="user-edit-content drawer-body">
       <dl class="user-edit-summary">
         <div><dt>{{t .Locale "login.username"}}</dt><dd>{{.User.Username}}</dd></div>
         <div><dt>{{t .Locale "users.role"}}</dt><dd>{{roleText .Locale .User.Role}}</dd></div>
@@ -80,160 +101,294 @@
     {{else if eq .Kind "account-username"}}
     <form method="post" action="{{.Action}}">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <label>{{t .Locale "login.username"}} <input name="username" value="{{.Name}}" autocomplete="username" spellcheck="false" required autofocus></label>
-      <label>{{t .Locale "account.current_password"}} <input name="current_password" type="password" autocomplete="current-password" required></label>
-      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "task.save_changes"}}</button></footer>
+      <div class="drawer-body">
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="circle-user-round" aria-hidden="true"></span>{{t .Locale "account.change_username"}}</p>
+          <label>{{t .Locale "login.username"}} <input name="username" value="{{.Name}}" autocomplete="username" spellcheck="false" required autofocus></label>
+        </section>
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="lock" aria-hidden="true"></span>{{t .Locale "account.security"}}</p>
+          <label>{{t .Locale "account.current_password"}} <input name="current_password" type="password" autocomplete="current-password" required></label>
+        </section>
+      </div>
+      <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "task.save_changes"}}</button></footer>
     </form>
     {{else if eq .Kind "account-password"}}
     <form method="post" action="{{.Action}}">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <label>{{t .Locale "account.current_password"}} <input name="current_password" type="password" autocomplete="current-password" required autofocus></label>
-      <label>{{t .Locale "account.new_password"}} <input name="new_password" type="password" autocomplete="new-password" minlength="15" maxlength="256" required><small>{{t .Locale "account.password_policy"}}</small></label>
-      <label>{{t .Locale "account.confirm_password"}} <input name="confirm_password" type="password" autocomplete="new-password" required></label>
-      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "account.save"}}</button></footer>
+      <div class="drawer-body">
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="lock" aria-hidden="true"></span>{{t .Locale "account.security"}}</p>
+          <label>{{t .Locale "account.current_password"}} <input name="current_password" type="password" autocomplete="current-password" required autofocus></label>
+        </section>
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="key-round" aria-hidden="true"></span>{{t .Locale "account.change_password"}}</p>
+          <label>{{t .Locale "account.new_password"}} <input name="new_password" type="password" autocomplete="new-password" minlength="15" maxlength="256" required><small>{{t .Locale "account.password_policy"}}</small></label>
+          <label>{{t .Locale "account.confirm_password"}} <input name="confirm_password" type="password" autocomplete="new-password" required></label>
+        </section>
+      </div>
+      <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "account.save"}}</button></footer>
     </form>
     {{else if eq .Kind "new-directory"}}
     <form method="post" action="{{.Action}}" data-async>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value="{{.Path}}">
-      <label>{{t .Locale "task.directory_name"}} <input name="name" autocomplete="off" spellcheck="false" required autofocus></label>
-      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "common.create"}}</button></footer>
+      <div class="drawer-body">
+        <label>{{t .Locale "task.directory_name"}} <input name="name" autocomplete="off" spellcheck="false" required autofocus></label>
+      </div>
+      <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "common.create"}}</button></footer>
     </form>
     {{else if eq .Kind "upload"}}
     <form method="post" action="{{.Action}}" enctype="multipart/form-data" data-native data-file-upload-form>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value="{{.Path}}"><input type="hidden" name="conflict_action" value="">
-      <label class="file-picker">{{t .Locale "task.select_files"}} <input name="files" type="file" multiple required autofocus></label>
-      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "task.start_upload"}}</button></footer>
+      <div class="drawer-body">
+        <label class="file-picker">{{t .Locale "task.select_files"}} <input name="files" type="file" multiple required autofocus></label>
+      </div>
+      <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "task.start_upload"}}</button></footer>
     </form>
     {{else if eq .Kind "move-file"}}
     <form method="post" action="{{.Action}}" data-async>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="source" value="{{.Path}}"><input type="hidden" name="conflict_action" value="">
-      <div class="field-readonly"><span>{{t .Locale "common.path"}}</span><code>{{.Path}}</code></div>
-      <div class="directory-tree-picker" data-directory-picker data-endpoint="/resources/directories"{{if .IsDirectory}} data-exclude-path="{{.Path}}"{{end}} data-root-label="{{t .Locale "task.directory_picker.root"}}" data-loading-label="{{t .Locale "task.directory_picker.loading"}}" data-empty-label="{{t .Locale "task.directory_picker.empty"}}" data-autofocus>
-        <input type="hidden" name="working_directory" value="{{.WorkingDirectory}}" required>
-        <div class="directory-tree-picker__heading"><span>{{t .Locale "task.move_file.destination"}}</span><code data-directory-selection>{{.WorkingDirectory}}</code></div>
-        <div class="directory-tree-picker__tree" data-directory-tree data-directory-options aria-label="{{t .Locale "task.move_file.destination"}}"></div>
+      <div class="drawer-body">
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="file" aria-hidden="true"></span>{{t .Locale "common.path"}}</p>
+          <div class="field-readonly"><span data-lucide="file" aria-hidden="true"></span><span>{{t .Locale "common.path"}}</span><code>{{.Path}}</code></div>
+        </section>
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="folder-input" aria-hidden="true"></span>{{t .Locale "task.move_file.destination"}}</p>
+          <div class="directory-tree-picker" data-directory-picker data-endpoint="/resources/directories"{{if .IsDirectory}} data-exclude-path="{{.Path}}"{{end}} data-root-label="{{t .Locale "task.directory_picker.root"}}" data-loading-label="{{t .Locale "task.directory_picker.loading"}}" data-empty-label="{{t .Locale "task.directory_picker.empty"}}" data-autofocus>
+            <input type="hidden" name="working_directory" value="{{.WorkingDirectory}}" required>
+            <div class="directory-tree-picker__heading"><span>{{t .Locale "task.move_file.destination"}}</span><code data-directory-selection>{{.WorkingDirectory}}</code></div>
+            <div class="directory-tree-picker__tree" data-directory-tree data-directory-options aria-label="{{t .Locale "task.move_file.destination"}}"></div>
+          </div>
+        </section>
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="pencil" aria-hidden="true"></span>{{if .IsDirectory}}{{t .Locale "task.move_directory.name"}}{{else}}{{t .Locale "task.move_file.name"}}{{end}}</p>
+          <label>{{if .IsDirectory}}{{t .Locale "task.move_directory.name"}}{{else}}{{t .Locale "task.move_file.name"}}{{end}} <input name="name" value="{{.Name}}" autocomplete="off" spellcheck="false" required></label>
+        </section>
       </div>
-      <label>{{if .IsDirectory}}{{t .Locale "task.move_directory.name"}}{{else}}{{t .Locale "task.move_file.name"}}{{end}} <input name="name" value="{{.Name}}" autocomplete="off" spellcheck="false" required></label>
-      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="folder-input" aria-hidden="true"></span>{{t .Locale "files.move"}}</button></footer>
+      <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="folder-input" aria-hidden="true"></span>{{t .Locale "files.move"}}</button></footer>
     </form>
     {{else if eq .Kind "one-time-run"}}
     <form method="post" action="{{.Action}}">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <div class="directory-tree-picker" data-directory-picker data-endpoint="/resources/directories" data-root-label="{{t .Locale "task.directory_picker.root"}}" data-loading-label="{{t .Locale "task.directory_picker.loading"}}" data-empty-label="{{t .Locale "task.directory_picker.empty"}}" data-autofocus>
-        <input type="hidden" name="working_directory" value="{{.WorkingDirectory}}" required>
-        <div class="directory-tree-picker__heading"><span>{{t .Locale "task.working_directory"}}</span><code data-directory-selection>{{.WorkingDirectory}}</code></div>
-        <div class="directory-tree-picker__tree" data-directory-tree data-directory-options aria-label="{{t .Locale "task.working_directory"}}"></div>
+      <div class="drawer-body">
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="folder-open" aria-hidden="true"></span>{{t .Locale "task.working_directory"}}</p>
+          <div class="directory-tree-picker" data-directory-picker data-endpoint="/resources/directories" data-root-label="{{t .Locale "task.directory_picker.root"}}" data-loading-label="{{t .Locale "task.directory_picker.loading"}}" data-empty-label="{{t .Locale "task.directory_picker.empty"}}" data-autofocus>
+            <input type="hidden" name="working_directory" value="{{.WorkingDirectory}}" required>
+            <div class="directory-tree-picker__heading"><span>{{t .Locale "task.working_directory"}}</span><code data-directory-selection>{{.WorkingDirectory}}</code></div>
+            <div class="directory-tree-picker__tree" data-directory-tree data-directory-options aria-label="{{t .Locale "task.working_directory"}}"></div>
+          </div>
+        </section>
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="braces" aria-hidden="true"></span>{{t .Locale "task.source"}}</p>
+          <label>{{t .Locale "task.language"}} <span class="task-select"><select name="language" required>{{range .Languages}}<option value="{{.ID}}" {{if eq .ID $.Language}}selected{{end}}>{{.Label}} ({{.Extension}})</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
+          <label>{{t .Locale "task.source"}} <textarea name="source" autocomplete="off" spellcheck="false" maxlength="1048576" required>{{.Source}}</textarea></label>
+        </section>
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="sliders-horizontal" aria-hidden="true"></span>{{t .Locale "common.arguments"}}</p>
+          <label>{{t .Locale "task.arguments"}} <input name="arguments" autocomplete="off" spellcheck="false" value="{{.Arguments}}"></label>
+          <label class="timeout-field">{{t .Locale "task.timeout_seconds"}}
+            <span class="timeout-presets"><button type="button" data-timeout-preset="30">30 {{t .Locale "common.second_short"}}</button><button type="button" data-timeout-preset="300">5 {{t .Locale "cron.unit.minute"}}</button><button type="button" data-timeout-preset="1800">30 {{t .Locale "cron.unit.minute"}}</button><button type="button" data-timeout-preset="86400">24 {{t .Locale "cron.unit.hour"}}</button></span>
+            <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}">
+            <small>{{t .Locale "schedules.timeout_hint"}}</small>
+          </label>
+        </section>
       </div>
-      <label>{{t .Locale "task.language"}} <span class="task-select"><select name="language" required>{{range .Languages}}<option value="{{.ID}}" {{if eq .ID $.Language}}selected{{end}}>{{.Label}} ({{.Extension}})</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
-      <label>{{t .Locale "task.source"}} <textarea name="source" autocomplete="off" spellcheck="false" maxlength="1048576" required>{{.Source}}</textarea></label>
-      <label>{{t .Locale "task.arguments"}} <input name="arguments" autocomplete="off" spellcheck="false" value="{{.Arguments}}"></label>
-      <label>{{t .Locale "task.timeout_seconds"}} <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}"></label>
-      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="play" aria-hidden="true"></span>{{t .Locale "quick_runs.run_once"}}</button></footer>
+      <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="play" aria-hidden="true"></span>{{t .Locale "quick_runs.run_once"}}</button></footer>
     </form>
     {{else if eq .Kind "quick-create"}}
     <form method="post" action="{{.Action}}" data-async>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <div class="directory-tree-picker" data-directory-picker data-endpoint="/resources/directories" data-root-label="{{t .Locale "task.directory_picker.root"}}" data-loading-label="{{t .Locale "task.directory_picker.loading"}}" data-empty-label="{{t .Locale "task.directory_picker.empty"}}" data-autofocus>
-        <input type="hidden" name="working_directory" value="{{.WorkingDirectory}}" required>
-        <div class="directory-tree-picker__heading"><span>{{t .Locale "task.working_directory"}}</span><code data-directory-selection>{{.WorkingDirectory}}</code></div>
-        <div class="directory-tree-picker__tree" data-directory-tree data-directory-options aria-label="{{t .Locale "task.working_directory"}}"></div>
+      <div class="drawer-body">
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="folder-open" aria-hidden="true"></span>{{t .Locale "task.working_directory"}}</p>
+          <div class="directory-tree-picker" data-directory-picker data-endpoint="/resources/directories" data-root-label="{{t .Locale "task.directory_picker.root"}}" data-loading-label="{{t .Locale "task.directory_picker.loading"}}" data-empty-label="{{t .Locale "task.directory_picker.empty"}}" data-autofocus>
+            <input type="hidden" name="working_directory" value="{{.WorkingDirectory}}" required>
+            <div class="directory-tree-picker__heading"><span>{{t .Locale "task.working_directory"}}</span><code data-directory-selection>{{.WorkingDirectory}}</code></div>
+            <div class="directory-tree-picker__tree" data-directory-tree data-directory-options aria-label="{{t .Locale "task.working_directory"}}"></div>
+          </div>
+        </section>
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="braces" aria-hidden="true"></span>{{t .Locale "task.source"}}</p>
+          <label>{{t .Locale "task.language"}} <span class="task-select"><select name="language" required>{{range .Languages}}<option value="{{.ID}}" {{if eq .ID $.Language}}selected{{end}}>{{.Label}} ({{.Extension}})</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
+          <label>{{t .Locale "task.file_name"}} <input name="file_name" autocomplete="off" spellcheck="false" value="{{.FileName}}" required></label>
+          <label>{{t .Locale "task.source"}} <textarea name="source" autocomplete="off" spellcheck="false" maxlength="1048576" required>{{.Source}}</textarea></label>
+        </section>
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="sliders-horizontal" aria-hidden="true"></span>{{t .Locale "common.details"}}</p>
+          <label>{{t .Locale "run_detail.quick_name"}} <input name="name" autocomplete="off" value="{{.Name}}" required data-quick-name></label>
+          <label>{{t .Locale "task.arguments"}} <input name="arguments" autocomplete="off" spellcheck="false" value="{{.Arguments}}"></label>
+          <label class="timeout-field">{{t .Locale "task.timeout_seconds"}}
+            <span class="timeout-presets"><button type="button" data-timeout-preset="30">30 {{t .Locale "common.second_short"}}</button><button type="button" data-timeout-preset="300">5 {{t .Locale "cron.unit.minute"}}</button><button type="button" data-timeout-preset="1800">30 {{t .Locale "cron.unit.minute"}}</button><button type="button" data-timeout-preset="86400">24 {{t .Locale "cron.unit.hour"}}</button></span>
+            <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}">
+            <small>{{t .Locale "schedules.timeout_hint"}}</small>
+          </label>
+          <label>{{t .Locale "quick_runs.group"}} <span class="task-select task-select--group"><span class="task-select__icon" data-lucide="folder-open" aria-hidden="true"></span><select name="group_id"><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}" {{if eq .ID $.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
+        </section>
+        {{if .Conflict}}
+        <section class="page-error" role="alert">
+          <strong>{{t .Locale "task.source_conflict.title"}}</strong>
+          <p>{{t .Locale "task.source_conflict.description"}} <code>{{.ConflictPath}}</code></p>
+          <p>{{t .Locale "task.source_conflict.references"}} {{.QuickReferences}} {{t .Locale "task.source_conflict.quick_runs"}}, {{.ScheduleReferences}} {{t .Locale "task.source_conflict.schedules"}}.</p>
+          {{if not .CanOverwrite}}<p>{{t .Locale "task.source_conflict.overwrite_blocked"}}</p>{{end}}
+          <label>{{t .Locale "task.source_conflict.rename"}} <input name="rename_file_name" value="{{.SuggestedName}}" autocomplete="off" spellcheck="false"></label>
+        </section>
+        {{end}}
       </div>
-      <label>{{t .Locale "task.language"}} <span class="task-select"><select name="language" required>{{range .Languages}}<option value="{{.ID}}" {{if eq .ID $.Language}}selected{{end}}>{{.Label}} ({{.Extension}})</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
-      <label>{{t .Locale "task.file_name"}} <input name="file_name" autocomplete="off" spellcheck="false" value="{{.FileName}}" required></label>
-      <label>{{t .Locale "task.source"}} <textarea name="source" autocomplete="off" spellcheck="false" maxlength="1048576" required>{{.Source}}</textarea></label>
-      <label>{{t .Locale "run_detail.quick_name"}} <input name="name" autocomplete="off" value="{{.Name}}" required data-quick-name></label>
-      <label>{{t .Locale "task.arguments"}} <input name="arguments" autocomplete="off" spellcheck="false" value="{{.Arguments}}"></label>
-      <label>{{t .Locale "task.timeout_seconds"}} <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}"></label>
-      <label>{{t .Locale "quick_runs.group"}} <span class="task-select task-select--group"><span class="task-select__icon" data-lucide="folder-open" aria-hidden="true"></span><select name="group_id"><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}" {{if eq .ID $.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
       {{if .Conflict}}
-      <section class="page-error" role="alert">
-        <strong>{{t .Locale "task.source_conflict.title"}}</strong>
-        <p>{{t .Locale "task.source_conflict.description"}} <code>{{.ConflictPath}}</code></p>
-        <p>{{t .Locale "task.source_conflict.references"}} {{.QuickReferences}} {{t .Locale "task.source_conflict.quick_runs"}}, {{.ScheduleReferences}} {{t .Locale "task.source_conflict.schedules"}}.</p>
-        {{if not .CanOverwrite}}<p>{{t .Locale "task.source_conflict.overwrite_blocked"}}</p>{{end}}
-        <label>{{t .Locale "task.source_conflict.rename"}} <input name="rename_file_name" value="{{.SuggestedName}}" autocomplete="off" spellcheck="false"></label>
-      </section>
-      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button" type="submit" name="conflict_action" value="rename"><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "task.source_conflict.use_rename"}}</button>{{if .CanOverwrite}}<button class="button button--primary" type="submit" name="conflict_action" value="overwrite"><span data-lucide="refresh-cw" aria-hidden="true"></span>{{t .Locale "task.source_conflict.overwrite"}}</button>{{end}}</footer>
+      <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button" type="submit" name="conflict_action" value="rename"><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "task.source_conflict.use_rename"}}</button>{{if .CanOverwrite}}<button class="button button--primary" type="submit" name="conflict_action" value="overwrite"><span data-lucide="refresh-cw" aria-hidden="true"></span>{{t .Locale "task.source_conflict.overwrite"}}</button>{{end}}</footer>
       {{else}}
-      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "common.create"}}</button></footer>
+      <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "common.create"}}</button></footer>
       {{end}}
     </form>
     {{else if eq .Kind "run"}}
     <form method="post" action="{{.Action}}">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="script" value="{{.Path}}">
-      <div class="field-readonly"><span>{{t .Locale "common.script"}}</span><code>{{.Path}}</code></div>
-      <label>{{t .Locale "task.arguments"}} <input name="arguments" autocomplete="off" spellcheck="false" value="{{.Arguments}}" autofocus></label>
-      <label>{{t .Locale "task.timeout_seconds"}} <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}"></label>
-      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="play" aria-hidden="true"></span>{{t .Locale "task.start_run"}}</button></footer>
+      <div class="drawer-body">
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="terminal" aria-hidden="true"></span>{{t .Locale "common.script"}}</p>
+          <div class="field-readonly"><span data-lucide="file-terminal" aria-hidden="true"></span><span>{{t .Locale "common.script"}}</span><code>{{.Path}}</code></div>
+        </section>
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="sliders-horizontal" aria-hidden="true"></span>{{t .Locale "common.arguments"}}</p>
+          <label>{{t .Locale "task.arguments"}} <input name="arguments" autocomplete="off" spellcheck="false" value="{{.Arguments}}" autofocus></label>
+          <label class="timeout-field">{{t .Locale "task.timeout_seconds"}}
+            <span class="timeout-presets"><button type="button" data-timeout-preset="30">30 {{t .Locale "common.second_short"}}</button><button type="button" data-timeout-preset="300">5 {{t .Locale "cron.unit.minute"}}</button><button type="button" data-timeout-preset="1800">30 {{t .Locale "cron.unit.minute"}}</button><button type="button" data-timeout-preset="86400">24 {{t .Locale "cron.unit.hour"}}</button></span>
+            <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}">
+            <small>{{t .Locale "schedules.timeout_hint"}}</small>
+          </label>
+        </section>
+      </div>
+      <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="play" aria-hidden="true"></span>{{t .Locale "task.start_run"}}</button></footer>
     </form>
     {{else if eq .Kind "quick-save"}}
     <form method="post" action="{{.Action}}" data-async>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <div class="field-readonly"><span>{{t .Locale "common.script"}}</span><code>{{.Path}}</code></div>
-      <label>{{t .Locale "run_detail.quick_name"}} <input name="name" autocomplete="off" required autofocus></label>
-      <label>{{t .Locale "quick_runs.group"}} <span class="task-select task-select--group"><span class="task-select__icon" data-lucide="folder-open" aria-hidden="true"></span><select name="group_id"><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
-      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "run_detail.save_quick"}}</button></footer>
+      <div class="drawer-body">
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="terminal" aria-hidden="true"></span>{{t .Locale "common.script"}}</p>
+          <div class="field-readonly"><span data-lucide="file-terminal" aria-hidden="true"></span><span>{{t .Locale "common.script"}}</span><code>{{.Path}}</code></div>
+        </section>
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="bookmark-plus" aria-hidden="true"></span>{{t .Locale "common.details"}}</p>
+          <label>{{t .Locale "run_detail.quick_name"}} <input name="name" autocomplete="off" required autofocus></label>
+          <label>{{t .Locale "quick_runs.group"}} <span class="task-select task-select--group"><span class="task-select__icon" data-lucide="folder-open" aria-hidden="true"></span><select name="group_id"><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}">{{.Name}}</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
+        </section>
+      </div>
+      <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "run_detail.save_quick"}}</button></footer>
     </form>
     {{else if eq .Kind "quick-new"}}
     <form method="post" action="{{.Action}}" data-async>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="script" value="{{.Path}}"><input type="hidden" name="return_to" value="{{.ReturnTo}}">
-      <div class="field-readonly"><span>{{t .Locale "common.script"}}</span><code>{{.Path}}</code></div>
-      <label>{{t .Locale "run_detail.quick_name"}} <input name="name" autocomplete="off" value="{{.Name}}" required autofocus></label>
-      <label>{{t .Locale "task.arguments"}} <input name="arguments" autocomplete="off" spellcheck="false" value="{{.Arguments}}"></label>
-      <label>{{t .Locale "task.timeout_seconds"}} <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}"></label>
-      <label>{{t .Locale "quick_runs.group"}} <span class="task-select task-select--group"><span class="task-select__icon" data-lucide="folder-open" aria-hidden="true"></span><select name="group_id"><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}" {{if eq .ID $.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
-      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="bookmark-plus" aria-hidden="true"></span>{{t .Locale "run_detail.save_quick"}}</button></footer>
+      <div class="drawer-body">
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="terminal" aria-hidden="true"></span>{{t .Locale "common.script"}}</p>
+          <div class="field-readonly"><span data-lucide="file-terminal" aria-hidden="true"></span><span>{{t .Locale "common.script"}}</span><code>{{.Path}}</code></div>
+        </section>
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="sliders-horizontal" aria-hidden="true"></span>{{t .Locale "common.details"}}</p>
+          <label>{{t .Locale "run_detail.quick_name"}} <input name="name" autocomplete="off" value="{{.Name}}" required autofocus></label>
+          <label>{{t .Locale "task.arguments"}} <input name="arguments" autocomplete="off" spellcheck="false" value="{{.Arguments}}"></label>
+          <label class="timeout-field">{{t .Locale "task.timeout_seconds"}}
+            <span class="timeout-presets"><button type="button" data-timeout-preset="30">30 {{t .Locale "common.second_short"}}</button><button type="button" data-timeout-preset="300">5 {{t .Locale "cron.unit.minute"}}</button><button type="button" data-timeout-preset="1800">30 {{t .Locale "cron.unit.minute"}}</button><button type="button" data-timeout-preset="86400">24 {{t .Locale "cron.unit.hour"}}</button></span>
+            <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}">
+            <small>{{t .Locale "schedules.timeout_hint"}}</small>
+          </label>
+          <label>{{t .Locale "quick_runs.group"}} <span class="task-select task-select--group"><span class="task-select__icon" data-lucide="folder-open" aria-hidden="true"></span><select name="group_id"><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}" {{if eq .ID $.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
+        </section>
+      </div>
+      <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="bookmark-plus" aria-hidden="true"></span>{{t .Locale "run_detail.save_quick"}}</button></footer>
     </form>
     {{else if or (or (eq .Kind "quick-group-new") (eq .Kind "quick-group-edit")) (or (eq .Kind "schedule-group-new") (eq .Kind "schedule-group-edit"))}}
     <form method="post" action="{{.Action}}" data-async>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <label>{{t .Locale "common.name"}} <input name="name" autocomplete="off" maxlength="256" value="{{.Name}}" required autofocus></label>
-      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{if or (eq .Kind "quick-group-edit") (eq .Kind "schedule-group-edit")}}{{t .Locale "task.save_changes"}}{{else}}{{t .Locale "common.create"}}{{end}}</button></footer>
+      <div class="drawer-body">
+        <label>{{t .Locale "common.name"}} <input name="name" autocomplete="off" maxlength="256" value="{{.Name}}" required autofocus></label>
+      </div>
+      <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{if or (eq .Kind "quick-group-edit") (eq .Kind "schedule-group-edit")}}{{t .Locale "task.save_changes"}}{{else}}{{t .Locale "common.create"}}{{end}}</button></footer>
     </form>
     {{else if eq .Kind "quick-move-group"}}
     <form method="post" action="{{.Action}}" data-async>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <div class="field-readonly"><span>{{t .Locale "run_detail.quick_name"}}</span><strong>{{.Name}}</strong></div>
-      <label>{{t .Locale "quick_runs.group"}} <span class="task-select task-select--group"><span class="task-select__icon" data-lucide="folder-open" aria-hidden="true"></span><select name="group_id" autofocus><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}" {{if eq .ID $.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
-      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "quick_runs.move_group"}}</button></footer>
+      <div class="drawer-body">
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="folder" aria-hidden="true"></span>{{t .Locale "quick_runs.move_group"}}</p>
+          <div class="field-readonly"><span data-lucide="zap" aria-hidden="true"></span><span>{{t .Locale "run_detail.quick_name"}}</span><strong>{{.Name}}</strong></div>
+          <label>{{t .Locale "quick_runs.group"}} <span class="task-select task-select--group"><span class="task-select__icon" data-lucide="folder-open" aria-hidden="true"></span><select name="group_id" autofocus><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}" {{if eq .ID $.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
+        </section>
+      </div>
+      <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "quick_runs.move_group"}}</button></footer>
     </form>
     {{else if eq .Kind "quick-edit"}}
     <form method="post" action="{{.Action}}" data-async>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <div class="field-readonly"><span>{{t .Locale "common.script"}}</span><code>{{.Path}}</code></div>
-      <label>{{t .Locale "run_detail.quick_name"}} <input name="name" autocomplete="off" value="{{.Name}}" required autofocus></label>
-      <label>{{t .Locale "task.arguments"}} <input name="arguments" autocomplete="off" spellcheck="false" value="{{.Arguments}}"></label>
-      <label>{{t .Locale "task.timeout_seconds"}} <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}"></label>
-      <label class="check-field"><input type="checkbox" name="sync_external_interfaces" value="1"> <span>{{t .Locale "task.quick_edit.sync_external"}}<small>{{t .Locale "task.quick_edit.sync_external_hint"}}</small></span></label>
-      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "task.save_changes"}}</button></footer>
+      <div class="drawer-body">
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="terminal" aria-hidden="true"></span>{{t .Locale "common.script"}}</p>
+          <div class="field-readonly"><span data-lucide="file-terminal" aria-hidden="true"></span><span>{{t .Locale "common.script"}}</span><code>{{.Path}}</code></div>
+        </section>
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="sliders-horizontal" aria-hidden="true"></span>{{t .Locale "common.details"}}</p>
+          <label>{{t .Locale "run_detail.quick_name"}} <input name="name" autocomplete="off" value="{{.Name}}" required autofocus></label>
+          <label>{{t .Locale "task.arguments"}} <input name="arguments" autocomplete="off" spellcheck="false" value="{{.Arguments}}"></label>
+          <label class="timeout-field">{{t .Locale "task.timeout_seconds"}}
+            <span class="timeout-presets"><button type="button" data-timeout-preset="30">30 {{t .Locale "common.second_short"}}</button><button type="button" data-timeout-preset="300">5 {{t .Locale "cron.unit.minute"}}</button><button type="button" data-timeout-preset="1800">30 {{t .Locale "cron.unit.minute"}}</button><button type="button" data-timeout-preset="86400">24 {{t .Locale "cron.unit.hour"}}</button></span>
+            <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}">
+            <small>{{t .Locale "schedules.timeout_hint"}}</small>
+          </label>
+          <label class="switch-row"><span class="switch-row__text"><strong>{{t .Locale "task.quick_edit.sync_external"}}</strong><small>{{t .Locale "task.quick_edit.sync_external_hint"}}</small></span><input class="switch" type="checkbox" name="sync_external_interfaces" value="1"></label>
+        </section>
+      </div>
+      <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{t .Locale "task.save_changes"}}</button></footer>
     </form>
     {{else if eq .Kind "quick-copy"}}
     <form method="post" action="{{.Action}}" data-async>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <label>{{t .Locale "common.script"}} <input name="script" autocomplete="off" spellcheck="false" value="{{.Path}}" required></label>
-      <label>{{t .Locale "run_detail.quick_name"}} <input name="name" autocomplete="off" value="{{.Name}}" required autofocus></label>
-      <label>{{t .Locale "task.arguments"}} <input name="arguments" autocomplete="off" spellcheck="false" value="{{.Arguments}}"></label>
-      <label>{{t .Locale "task.timeout_seconds"}} <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}"></label>
-      <label>{{t .Locale "quick_runs.group"}} <span class="task-select task-select--group"><span class="task-select__icon" data-lucide="folder-open" aria-hidden="true"></span><select name="group_id"><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}" {{if eq .ID $.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
-      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="copy" aria-hidden="true"></span>{{t .Locale "quick_runs.copy"}}</button></footer>
+      <div class="drawer-body">
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="terminal" aria-hidden="true"></span>{{t .Locale "common.script"}}</p>
+          <label>{{t .Locale "common.script"}} <input name="script" autocomplete="off" spellcheck="false" value="{{.Path}}" required></label>
+        </section>
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="sliders-horizontal" aria-hidden="true"></span>{{t .Locale "common.details"}}</p>
+          <label>{{t .Locale "run_detail.quick_name"}} <input name="name" autocomplete="off" value="{{.Name}}" required autofocus></label>
+          <label>{{t .Locale "task.arguments"}} <input name="arguments" autocomplete="off" spellcheck="false" value="{{.Arguments}}"></label>
+          <label class="timeout-field">{{t .Locale "task.timeout_seconds"}}
+            <span class="timeout-presets"><button type="button" data-timeout-preset="30">30 {{t .Locale "common.second_short"}}</button><button type="button" data-timeout-preset="300">5 {{t .Locale "cron.unit.minute"}}</button><button type="button" data-timeout-preset="1800">30 {{t .Locale "cron.unit.minute"}}</button><button type="button" data-timeout-preset="86400">24 {{t .Locale "cron.unit.hour"}}</button></span>
+            <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{.TimeoutSeconds}}">
+            <small>{{t .Locale "schedules.timeout_hint"}}</small>
+          </label>
+          <label>{{t .Locale "quick_runs.group"}} <span class="task-select task-select--group"><span class="task-select__icon" data-lucide="folder-open" aria-hidden="true"></span><select name="group_id"><option value="">{{t .Locale "quick_runs.ungrouped"}}</option>{{range .Groups}}<option value="{{.ID}}" {{if eq .ID $.GroupID}}selected{{end}}>{{.Name}}</option>{{end}}</select><span class="task-select__chevron" data-lucide="chevron-down" aria-hidden="true"></span></span></label>
+        </section>
+      </div>
+      <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="copy" aria-hidden="true"></span>{{t .Locale "quick_runs.copy"}}</button></footer>
     </form>
     {{else if or (eq .Kind "variable-new") (eq .Kind "variable-edit")}}
     <form method="post" action="{{.Action}}" data-async data-variable-form>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-      <label>{{t .Locale "common.name"}} <input name="name" autocomplete="off" spellcheck="false" pattern="[A-Z][A-Z0-9_]{0,63}" value="{{.Name}}" required autofocus></label>
-      <label>{{t .Locale "variables.note"}} <textarea name="note" maxlength="500">{{.Note}}</textarea><small>{{t .Locale "variables.note_hint"}}</small></label>
-      <label>{{t .Locale "variables.value_type"}} <select name="value_type" data-variable-value-type required>
-        <option value="text" {{if eq .ValueType "text"}}selected{{end}}>{{t .Locale "variables.type.text"}}</option>
-        <option value="bool" {{if eq .ValueType "bool"}}selected{{end}}>{{t .Locale "variables.type.bool"}}</option>
-        <option value="integer" {{if eq .ValueType "integer"}}selected{{end}}>{{t .Locale "variables.type.integer"}}</option>
-        <option value="float" {{if eq .ValueType "float"}}selected{{end}}>{{t .Locale "variables.type.float"}}</option>
-        <option value="version" {{if eq .ValueType "version"}}selected{{end}}>{{t .Locale "variables.type.version"}}</option>
-      </select></label>
-      <label data-variable-value-field="text" {{if ne .ValueType "text"}}hidden{{end}}>{{t .Locale "common.value"}} <textarea name="value" autocomplete="off" maxlength="4096" {{if ne .ValueType "text"}}disabled{{end}}>{{.Value}}</textarea></label>
-      <label data-variable-value-field="bool" {{if ne .ValueType "bool"}}hidden{{end}}>{{t .Locale "common.value"}} <select name="value" {{if ne .ValueType "bool"}}disabled{{end}}><option value="false" {{if ne .Value "true"}}selected{{end}}>false</option><option value="true" {{if eq .Value "true"}}selected{{end}}>true</option></select></label>
-      <label data-variable-value-field="scalar" {{if or (eq .ValueType "text") (eq .ValueType "bool")}}hidden{{end}}>{{t .Locale "common.value"}} <input name="value" value="{{.Value}}" autocomplete="off" spellcheck="false" maxlength="4096" inputmode="decimal" {{if or (eq .ValueType "text") (eq .ValueType "bool")}}disabled{{end}}><small data-variable-version-hint {{if ne .ValueType "version"}}hidden{{end}}>{{t .Locale "variables.version_hint"}}</small></label>
-      <label class="check-field"><input type="checkbox" name="is_password" value="1" {{if .IsPassword}}checked{{end}}> {{t .Locale "task.password_type"}}</label>
-      <footer><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{if eq .Kind "variable-edit"}}{{t .Locale "task.save_changes"}}{{else}}{{t .Locale "common.create"}}{{end}}</button></footer>
+      <div class="drawer-body">
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="settings" aria-hidden="true"></span>{{t .Locale "common.details"}}</p>
+          <label>{{t .Locale "common.name"}} <input name="name" autocomplete="off" spellcheck="false" pattern="[A-Z][A-Z0-9_]{0,63}" value="{{.Name}}" required autofocus></label>
+          <label>{{t .Locale "variables.note"}} <textarea name="note" maxlength="500">{{.Note}}</textarea><small>{{t .Locale "variables.note_hint"}}</small></label>
+        </section>
+        <section class="d-section">
+          <p class="ds-title"><span data-lucide="braces" aria-hidden="true"></span>{{t .Locale "variables.value_type"}}</p>
+          <label>{{t .Locale "variables.value_type"}} <select name="value_type" data-variable-value-type required>
+            <option value="text" {{if eq .ValueType "text"}}selected{{end}}>{{t .Locale "variables.type.text"}}</option>
+            <option value="bool" {{if eq .ValueType "bool"}}selected{{end}}>{{t .Locale "variables.type.bool"}}</option>
+            <option value="integer" {{if eq .ValueType "integer"}}selected{{end}}>{{t .Locale "variables.type.integer"}}</option>
+            <option value="float" {{if eq .ValueType "float"}}selected{{end}}>{{t .Locale "variables.type.float"}}</option>
+            <option value="version" {{if eq .ValueType "version"}}selected{{end}}>{{t .Locale "variables.type.version"}}</option>
+          </select></label>
+          <label data-variable-value-field="text" {{if ne .ValueType "text"}}hidden{{end}}>{{t .Locale "common.value"}} <textarea name="value" autocomplete="off" maxlength="4096" {{if ne .ValueType "text"}}disabled{{end}}>{{.Value}}</textarea></label>
+          <label data-variable-value-field="bool" {{if ne .ValueType "bool"}}hidden{{end}}>{{t .Locale "common.value"}} <select name="value" {{if ne .ValueType "bool"}}disabled{{end}}><option value="false" {{if ne .Value "true"}}selected{{end}}>false</option><option value="true" {{if eq .Value "true"}}selected{{end}}>true</option></select></label>
+          <label data-variable-value-field="scalar" {{if or (eq .ValueType "text") (eq .ValueType "bool")}}hidden{{end}}>{{t .Locale "common.value"}} <input name="value" value="{{.Value}}" autocomplete="off" spellcheck="false" maxlength="4096" inputmode="decimal" {{if or (eq .ValueType "text") (eq .ValueType "bool")}}disabled{{end}}><small data-variable-version-hint {{if ne .ValueType "version"}}hidden{{end}}>{{t .Locale "variables.version_hint"}}</small></label>
+          <label class="switch-row"><span class="switch-row__text"><strong>{{t .Locale "task.password_type"}}</strong><small>{{t .Locale "variables.plaintext_notice"}}</small></span><input class="switch" type="checkbox" name="is_password" value="1" {{if .IsPassword}}checked{{end}}></label>
+        </section>
+      </div>
+      <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit">{{if eq .Kind "variable-edit"}}{{t .Locale "task.save_changes"}}{{else}}{{t .Locale "common.create"}}{{end}}</button></footer>
     </form>
     {{else if or (eq .Kind "schedule-new") (eq .Kind "schedule-edit")}}
     <form class="schedule-plan-form" method="post" action="{{.Action}}" data-async data-schedule-form data-preview-action="{{.PreviewAction}}" data-cron-next-label="{{t .Locale "cron.next_five"}}" data-cron-idle="{{t .Locale "cron.preview_idle"}}" data-cron-pending="{{t .Locale "cron.preview_pending"}}" data-cron-unavailable="{{t .Locale "cron.preview_unavailable"}}" data-cron-guided-synced="{{t .Locale "cron.guided_synced"}}" data-cron-guided-waiting="{{t .Locale "cron.guided_waiting"}}" data-cron-guided-parsed="{{t .Locale "cron.guided_parsed"}}" data-cron-guided-custom="{{t .Locale "cron.guided_custom"}}">
@@ -313,11 +468,15 @@
       <section class="schedule-form-section schedule-policy" aria-labelledby="schedule-policy-title">
         <header class="schedule-section-heading"><div><span class="section-index">04</span><h2 id="schedule-policy-title">{{t .Locale "schedules.policy_title"}}</h2></div></header>
         <div class="schedule-policy-grid">
-          <label>{{t .Locale "task.timeout_seconds"}} <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{if .TimeoutInput}}{{.TimeoutInput}}{{else}}{{.TimeoutSeconds}}{{end}}"></label>
-          <div class="schedule-policy-field"><span>{{t .Locale "schedules.overlap_policy"}}</span><label class="check-field schedule-switch"><input name="disallow_overlap" type="checkbox" value="1" {{if .DisallowOverlap}}checked{{end}}> <strong>{{t .Locale "task.disallow_overlap"}}</strong></label></div>
+          <label class="timeout-field">{{t .Locale "task.timeout_seconds"}}
+            <span class="timeout-presets"><button type="button" data-timeout-preset="30">30 {{t .Locale "common.second_short"}}</button><button type="button" data-timeout-preset="300">5 {{t .Locale "cron.unit.minute"}}</button><button type="button" data-timeout-preset="1800">30 {{t .Locale "cron.unit.minute"}}</button><button type="button" data-timeout-preset="86400">24 {{t .Locale "cron.unit.hour"}}</button></span>
+            <input name="timeout_seconds" type="number" inputmode="numeric" min="0" max="86400" value="{{if .TimeoutInput}}{{.TimeoutInput}}{{else}}{{.TimeoutSeconds}}{{end}}">
+            <small>{{t .Locale "schedules.timeout_hint"}}</small>
+          </label>
+          <div class="schedule-policy-field"><span>{{t .Locale "schedules.overlap_policy"}}</span><label class="switch-row schedule-switch"><span class="switch-row__text"><strong>{{t .Locale "task.disallow_overlap"}}</strong><small>{{t .Locale "schedules.overlap_hint"}}</small></span><input class="switch" name="disallow_overlap" type="checkbox" value="1" {{if .DisallowOverlap}}checked{{end}}></label></div>
         </div>
       </section>
-      <footer class="schedule-form-actions"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><div><button class="button" type="submit" formaction="{{.PreviewAction}}" formnovalidate data-cron-preview-submit><span data-lucide="calendar-clock" aria-hidden="true"></span>{{t .Locale "cron.preview_action"}}</button><button class="button button--primary" type="submit">{{if eq .Kind "schedule-edit"}}{{t .Locale "task.save_changes"}}{{else}}{{t .Locale "common.create"}}{{end}}</button></div></footer>
+      <footer class="schedule-form-actions drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><div><button class="button" type="submit" formaction="{{.PreviewAction}}" formnovalidate data-cron-preview-submit><span data-lucide="calendar-clock" aria-hidden="true"></span>{{t .Locale "cron.preview_action"}}</button><button class="button button--primary" type="submit">{{if eq .Kind "schedule-edit"}}{{t .Locale "task.save_changes"}}{{else}}{{t .Locale "common.create"}}{{end}}</button></div></footer>
     </form>
     {{end}}
   </section>

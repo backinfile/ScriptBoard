@@ -32,13 +32,13 @@
         <div class="record-order" aria-hidden="true">{{printf "%02d" $index}}</div>
         <div class="ordered-record__identity"><span data-lucide="calendar-clock" aria-hidden="true"></span><div>
           <h3>{{.Name}}</h3>
-          <code>{{.ScriptPath}}</code>
+          <code title="{{.ScriptPath}}">{{.ScriptPath}}</code>
           {{if .LastResult}}<div class="schedule-record__state"><small>{{resultText $.Locale .LastResult}}{{if .LastRunID}} · <a href="/history/runs?q={{urlquery .Name}}&amp;schedule_id={{urlquery .ID}}&amp;focus=search" data-focus-after-navigation="#run-search">{{t $.Locale "schedules.view_run"}}</a>{{end}}</small></div>{{end}}
           <input type="hidden" name="last_run_id" value="{{.LastRunID}}">
         </div></div>
         <div class="schedule-record__enabled" data-label="{{t $.Locale "common.status"}}"><span class="status-chip" data-state="{{if .Enabled}}enabled{{else}}disabled{{end}}"><span class="status-dot" aria-hidden="true"></span>{{if .Enabled}}{{t $.Locale "common.enabled"}}{{else}}{{t $.Locale "common.disabled"}}{{end}}</span></div>
         <dl class="ordered-record__facts schedule-record__facts">
-          <div><dt>{{t $.Locale "schedules.timing"}}</dt><dd><code>{{.Expression}}</code><small>{{if .AllowOverlap}}{{t $.Locale "schedules.overlap_allowed"}}{{else}}{{t $.Locale "schedules.overlap_blocked"}}{{end}} · {{.TimeoutSeconds}}s</small></dd></div>
+          <div><dt>{{t $.Locale "schedules.timing"}}</dt><dd><code title="{{.Expression}}">{{.Expression}}</code><small>{{if .AllowOverlap}}{{t $.Locale "schedules.overlap_allowed"}}{{else}}{{t $.Locale "schedules.overlap_blocked"}}{{end}} · {{.TimeoutSeconds}}s</small></dd></div>
           <div><dt>{{t $.Locale "schedules.next_run"}}</dt><dd>{{if and .Enabled (not .NextFireAt.IsZero)}}<time datetime="{{instanceMachineTime .NextFireAt}}">{{instanceTime $.Locale .NextFireAt}}</time>{{else}}—{{end}}</dd></div>
         </dl>
         {{if $.CanManage}}<div class="record-actions record-actions__group">

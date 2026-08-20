@@ -4780,8 +4780,10 @@ func (a *App) classifyFileContent(listed listedFile) (fileCategory, bool) {
 }
 
 type fileBreadcrumbView struct {
-	Label string
-	URL   string
+	Label     string
+	URL       string
+	Title     string
+	Collapsed bool
 }
 
 func buildHostBreadcrumbs(path, sortField, direction string, showHidden bool) []fileBreadcrumbView {
@@ -4792,6 +4794,17 @@ func buildHostBreadcrumbs(path, sortField, direction string, showHidden bool) []
 	}
 	if len(items) > 0 {
 		items[len(items)-1].URL = ""
+	}
+	// Collapse long middle segments into a single ellipsis node so deep paths
+	// cannot stretch the location bar; the tooltip keeps the collapsed parent path.
+	if len(items) > 4 {
+		ellipsis := fileBreadcrumbView{
+			Label:     "…",
+			URL:       items[len(items)-2].URL,
+			Title:     crumbs[len(crumbs)-2].Path,
+			Collapsed: true,
+		}
+		items = []fileBreadcrumbView{items[0], ellipsis, items[len(items)-1]}
 	}
 	return items
 }

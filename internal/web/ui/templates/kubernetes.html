@@ -157,7 +157,7 @@
           <th scope="col"><span class="sr-only">{{t .Locale "applications.more_actions"}}</span></th>
         </tr></thead>
         <tbody>{{range .Workloads}}<tr>
-          <td><button type="button" class="kubernetes-workload-open" data-kubernetes-detail-url="/monitor/kubernetes/clusters/{{$.SelectedConnection}}/workloads/{{.Namespace}}/{{.Kind}}/{{.Name}}/details"><span><strong>{{.Name}}</strong><small>{{.Kind}} · {{.Image}}</small></span></button></td>
+          <td><button type="button" class="kubernetes-workload-open" data-kubernetes-detail-url="/monitor/kubernetes/clusters/{{$.SelectedConnection}}/workloads/{{.Namespace}}/{{.Kind}}/{{.Name}}/details"><span><strong>{{.Name}}</strong><small title="{{.Image}}">{{.Kind}} · {{.Image}}</small></span></button></td>
           <td><code>{{.Namespace}}</code></td>
           <td><span class="kubernetes-state" data-state="{{.Status}}"><i></i>{{if eq .Status "ready"}}{{t $.Locale "kubernetes.ready"}}{{else if eq .Status "progressing"}}{{t $.Locale "kubernetes.progressing"}}{{else}}{{t $.Locale "kubernetes.needs_attention"}}{{end}}</span></td>
           <td><strong>{{.Ready}} / {{.Desired}}</strong></td>

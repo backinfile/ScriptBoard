@@ -278,7 +278,7 @@ async function assertDeferredMainNavigation(page) {
     "PJAX navigation created another common-status poller",
   );
   await page.locator('.sidebar-nav a[href="/monitor"]').click();
-  await page.locator("main h1").getByText("Host overview", { exact: true }).waitFor();
+  await page.locator("main h1").getByText("Machine status", { exact: true }).waitFor();
 }
 
 async function assertRapidMainNavigationIgnoresLateResponses(page) {
@@ -403,7 +403,7 @@ async function assertServerErrorNavigationPreservesWorkspace(page) {
     const dialog = page.getByRole("dialog", { name: "Operation not completed" });
     await dialog.waitFor();
     assert.equal(page.url(), workspaceURL, "server error navigation changed the workspace URL");
-    assert.equal(await page.getByRole("heading", { name: "Host overview", exact: true }).count(), 1);
+    assert.equal(await page.getByRole("heading", { name: "Machine status", exact: true }).count(), 1);
     assert.match(await dialog.textContent(), /HTTP\s*500/);
     assert.match(await dialog.textContent(), /ScriptBoard could not complete this operation/);
     await dialog.getByText("Technical details", { exact: true }).click();
@@ -1142,6 +1142,7 @@ const administratorSettingsHrefs = [
   "/settings/account",
   "/settings/users",
   "/settings/name",
+  "/settings/nodes",
   "/settings/display",
   "/settings/ai",
   "/settings/notifications",
@@ -1870,8 +1871,16 @@ async function assertExternalInterfaces(page, fixture) {
 
     let quickRunRow = page.locator("[data-quick-run-id]").filter({ hasText: "Weekly safety check" });
     await page.setViewportSize({ width: 1440, height: 720 });
-    const terminalQuickRunRow = page.locator(".ordered-records > li[data-quick-run-id]").last();
+    const terminalQuickRunRow = page.locator("li[data-quick-run-id]").last();
     await terminalQuickRunRow.locator(".action-menu summary").click();
+    // 菜单定位由 positionActionMenu 在 toggle 事件（异步派发）后计算；reduced-motion 下通用 transition-duration
+    // 会让 max-height 的变化延迟到下一次样式重算，所以等到计算值与内联变量一致再测量。
+    await page.waitForFunction(() => {
+      const rows = document.querySelectorAll("li[data-quick-run-id]");
+      const panel = rows[rows.length - 1]?.querySelector(".action-menu > div");
+      const maxHeight = panel?.style.getPropertyValue("--action-menu-max-height");
+      return Boolean(maxHeight) && getComputedStyle(panel).maxHeight === maxHeight;
+    });
     const quickRunMenuViewport = await terminalQuickRunRow.locator(".action-menu > div").evaluate(menu => {
       const menuBounds = menu.getBoundingClientRect();
       const firstBounds = menu.querySelector("a, button").getBoundingClientRect();
@@ -1882,8 +1891,9 @@ async function assertExternalInterfaces(page, fixture) {
       };
     });
     assert.ok(
-      quickRunMenuViewport.menu.top >= 8 &&
-        quickRunMenuViewport.menu.bottom <= quickRunMenuViewport.viewportHeight - 8 &&
+      // 允许 2px 容差：卡片 hover 位移（translateY -1px）与子像素取整会让钳制后的菜单边缘偏移 1px 左右。
+      quickRunMenuViewport.menu.top >= 6 &&
+        quickRunMenuViewport.menu.bottom <= quickRunMenuViewport.viewportHeight - 6 &&
         quickRunMenuViewport.firstItem.top >= 8 &&
         quickRunMenuViewport.firstItem.bottom <= quickRunMenuViewport.viewportHeight - 8,
       `Quick Run action menu escaped the viewport: ${JSON.stringify(quickRunMenuViewport)}`,
@@ -2604,7 +2614,7 @@ async function assertExternalInterfaces(page, fixture) {
       chinesePage.locator('form[action="/settings/locale"] button[name="locale"][value="en-US"]').click(),
     ]);
     assert.equal(await chinesePage.getAttribute("html", "lang"), "en-US");
-    assert.equal(await chinesePage.locator("main h1").textContent(), "Host overview");
+    assert.equal(await chinesePage.locator("main h1").textContent(), "Machine status");
     await chineseContext.close();
 
     const noScriptContext = await browser.newContext({

@@ -132,7 +132,7 @@ FORM: Responsive signal ledger with a right-side detail task on capable clients 
 {{if $.Reorder}}<span class="website-reorder-index" aria-hidden="true"></span>{{end}}
 <div class="website-identity">
 <div class="website-identity__title"><a href="/monitor/websites/{{.ID}}" data-task-link>{{.Name}}</a><span class="website-status website-status--{{.State}}">{{.StateLabel}}</span></div>
-<code>{{.URL}}</code>
+<code title="{{.URL}}">{{.URL}}</code>
 <div><span>{{.ScopeLabel}}</span><span>{{.MethodLabel}}</span>{{if .TLSAttention}}<span class="website-attention">{{t $.Locale "website.certificate_expiring"}}</span>{{end}}</div>
 </div>
 <div class="website-history-cell">

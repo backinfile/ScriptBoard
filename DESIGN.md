@@ -2,35 +2,40 @@
 name: ScriptBoard Calibration Ledger
 description: A light, precise operating ledger for observing one host and running scripts with confidence.
 colors:
-  canvas: "#F6F7F9"
+  canvas: "#F2F3F7"
   surface: "#FFFFFF"
-  ink: "#171A1F"
-  muted: "#5F6875"
-  faint: "#7B8491"
-  rule: "#D9DEE7"
-  rule-strong: "#BBC3CF"
-  accent: "#3659C9"
-  accent-hover: "#2949B0"
-  accent-soft: "#EDF1FF"
-  success: "#18794E"
-  success-soft: "#EAF6F0"
-  success-border: "#A8D5BF"
-  website-success: "#007F5F"
-  website-success-signal: "#00B884"
-  website-success-soft: "#E2F8F0"
-  website-fault-red: "#C42B21"
+  surface-2: "#F7F8FB"
+  ink: "#171A21"
+  muted: "#4A5261"
+  faint: "#8A92A3"
+  rule: "#E4E7EE"
+  rule-strong: "#D4D8E2"
+  accent: "#3B5BFD"
+  accent-hover: "#2F49D9"
+  accent-text: "#2C46D6"
+  accent-soft: "#EEF1FF"
+  accent-border: "#C6D0FF"
+  success: "#0F9960"
+  success-soft: "#E6F6EF"
+  success-border: "#B8E3CF"
+  success-signal: "#14A06C"
+  website-success: "#0F9960"
+  website-success-signal: "#14A06C"
+  website-success-soft: "#E6F6EF"
+  website-fault: "#D33A2C"
+  website-fault-soft: "#FDECEA"
   website-fault-magenta: "#A32167"
-  warning: "#8A5A00"
-  warning-soft: "#FFF5DA"
-  danger: "#B42318"
-  danger-soft: "#FFF0EE"
-  danger-border: "#DFA19B"
-  warning-border: "#E9C789"
-  terminal: "#171A1F"
-  terminal-ink: "#ECF0F5"
-  terminal-rule: "#363B43"
-  terminal-muted: "#AEB7C4"
-  terminal-danger: "#FFAAA4"
+  warning: "#B57908"
+  warning-soft: "#FDF3E0"
+  warning-border: "#F0DCAE"
+  danger: "#D33A2C"
+  danger-soft: "#FDECEA"
+  danger-border: "#F3C2BC"
+  terminal: "#14161C"
+  terminal-ink: "#E8EAF0"
+  sidebar-bg: "#14161C"
+  sidebar-ink: "#AEB4C2"
+  sidebar-muted: "#5D6474"
 typography:
   root:
     fontSize: "17px"
@@ -84,11 +89,11 @@ typography:
     fontWeight: 650
     lineHeight: 1.25
 rounded:
-  compact: "4px"
-  small: "5px"
-  control: "6px"
+  compact: "7px"
+  small: "8px"
+  control: "8px"
   menu: "8px"
-  panel: "10px"
+  panel: "12px"
   pill: "999px"
 spacing:
   micro: "4px"
@@ -134,7 +139,7 @@ components:
 
 ScriptBoard is a quiet operational ledger, not a dramatic command center. It should feel like a calibrated instrument sheet: cool white paper, graphite rules, compact labels, precise measurements, and one muted blue that always means selection or action.
 
-The interface is visually light while remaining information-dense. Hierarchy comes from alignment, spacing, rule weight, and typography—not dark panels, gradients, ornamental canvases, or stacks of floating cards.
+The interface is visually light while remaining information-dense. Hierarchy comes from alignment, spacing, rule weight, and typography—not ornamental canvases. A single dark navigation rail frames the light workspace; the overview may gather several machines into quiet node cards, but each fact still reads flat.
 
 ## Core principles
 
@@ -150,15 +155,17 @@ The interface is visually light while remaining information-dense. Hierarchy com
 
 ### Color
 
-- Canvas `#F6F7F9`; working surfaces `#FFFFFF`.
-- Primary text `#171A1F`; secondary text `#5F6875`.
-- Rules `#D9DEE7`, strengthened to `#BBC3CF` where separation must be explicit.
-- Calibration blue `#3659C9`, with `#EDF1FF` for selected rows and quiet focus context.
-- Website-monitoring success text uses accessible emerald `#007F5F`; compact success signals use brighter teal-green `#00B884` so healthy and fault states retain a strong luminance and hue difference under reduced red-green perception.
+- Canvas `#F2F3F7`; working surfaces `#FFFFFF`.
+- Primary text `#171A21`; secondary text `#4A5261`.
+- Rules `#E4E7EE`, strengthened to `#D4D8E2` where separation must be explicit.
+- Calibration blue `#3B5BFD`, with `#EEF1FF` for selected rows and quiet focus context; accent-colored text and icons on light surfaces use `#2C46D6`.
+- Website-monitoring success text uses accessible emerald `#0F9960`; compact success signals use brighter teal-green `#14A06C` so healthy and fault states retain a strong luminance and hue difference under reduced red-green perception.
 - Success, warning, and danger colors always pair with text, shape, or an icon; color never carries state alone.
-- The log terminal is the only persistent dark surface because it is a distinct reading mode.
+- The navigation rail (`#14161C`) and the log terminal are the only persistent dark surfaces; the rail frames the workspace, the terminal is a distinct reading mode.
 
 All body copy and controls target WCAG 2.2 AA contrast. Muted copy remains at least 4.5:1 against its resting surface.
+
+Colors live as semantic custom properties in `app.css` `:root` (`--canvas`, `--ink`, `--accent`, `--sb-*` for the rail). The light theme is the shipped default; a future dark theme only overrides that block (e.g. `[data-theme="dark"]`), never individual components.
 
 ### Typography
 
@@ -169,10 +176,10 @@ All body copy and controls target WCAG 2.2 AA contrast. Muted copy remains at le
 
 ### Shape and elevation
 
-- Inline actions use 4–5px corners, standard controls use 6px, menus use 8px, and task panels or dialogs use 10px.
-- Tables and page sections remain unboxed.
+- Inline actions use 7px corners, standard controls use 8px, menus use 8px, and cards, task panels, or dialogs use 12px.
+- Tables and page sections remain unboxed; cards are reserved for fleet nodes, resource stats, and empty states.
 - Pills are reserved for short status labels and filters.
-- No gradient, glass, glow, backdrop blur, or ambient drop shadow.
+- No glass, backdrop blur, or decorative gradient. Soft layered shadows (`--shadow-card`, `--shadow-lift`) lift cards, drawers, and menus; a restrained status glow may tint the host verdict card.
 
 ### Button system
 

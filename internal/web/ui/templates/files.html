@@ -19,8 +19,8 @@
 
   <div class="file-location-bar">
     <nav class="breadcrumb" aria-label="{{t .Locale "files.breadcrumb"}}">
-      <a href="{{.RootURL}}"><span data-lucide="hard-drive" aria-hidden="true"></span>{{t .Locale "files.root"}}</a>
-      {{range .Breadcrumbs}}<span data-lucide="chevron-right" aria-hidden="true"></span>{{if .URL}}<a href="{{.URL}}">{{.Label}}</a>{{else}}<code>{{.Label}}</code>{{end}}{{end}}
+      <a class="breadcrumb-root" href="{{.RootURL}}"><span data-lucide="hard-drive" aria-hidden="true"></span>{{t .Locale "files.root"}}</a>
+      {{range .Breadcrumbs}}<span class="breadcrumb-sep" aria-hidden="true">/</span>{{if .Collapsed}}<a class="breadcrumb-ellipsis" href="{{.URL}}" title="{{.Title}}" aria-label="{{.Title}}">{{.Label}}</a>{{else if .URL}}<a href="{{.URL}}">{{.Label}}</a>{{else}}<span class="breadcrumb-current">{{.Label}}</span>{{end}}{{end}}
     </nav>
     <div class="file-location-actions">
       {{if .ParentURL}}<a class="icon-button icon-tooltip" href="{{.ParentURL}}" aria-label="{{t .Locale "files.parent_directory"}}" data-tooltip="{{t .Locale "files.parent_directory"}}" data-file-parent><span data-lucide="arrow-up" aria-hidden="true"></span></a>{{else}}<button class="icon-button icon-tooltip" type="button" aria-label="{{t .Locale "files.parent_unavailable"}}" data-tooltip="{{t .Locale "files.parent_unavailable"}}" disabled data-file-parent><span data-lucide="arrow-up" aria-hidden="true"></span></button>{{end}}
@@ -72,7 +72,6 @@
       <span hidden data-file-quick-many-label>{{t .Locale "files.quick_access_folders"}}</span>
     </details>
 
-    <div class="section-heading"><div><p class="section-index">01</p><h2>{{t .Locale "files.search"}}</h2></div></div>
     <section class="file-search-region" aria-label="{{t .Locale "files.search"}}">
       <form class="file-search-form" method="get" action="{{.SearchURL}}" data-async data-async-push data-file-search data-focus-after-navigation="[data-search-input]">
 		{{if .CurrentPath}}<input type="hidden" name="path" value="{{.CurrentPath}}">{{end}}
@@ -117,11 +116,10 @@
           <span class="file-hidden-toggle__track" aria-hidden="true"><span></span></span>
           <span>{{t .Locale "files.show_hidden"}}</span>
         </label>
-        {{if .CanWrite}}<span class="file-search-links"><a class="button button--quiet" href="/resources/inbox"><span data-lucide="shield-check" aria-hidden="true"></span>{{t .Locale "inbox.title"}}</a><a class="button button--quiet file-trash-link" href="/resources/trash"><span data-lucide="trash-2" aria-hidden="true"></span>{{t .Locale "files.trash"}}</a></span>{{end}}
+        {{if .CanWrite}}<span class="file-search-links"><a class="button button--quiet" href="/resources/inbox"><span data-lucide="inbox" aria-hidden="true"></span>{{t .Locale "inbox.title"}}</a><a class="button button--quiet file-trash-link" href="/resources/trash"><span data-lucide="trash-2" aria-hidden="true"></span>{{t .Locale "files.trash"}}</a></span>{{end}}
       </form>
     </section>
 
-    <div class="section-heading"><div><p class="section-index">02</p><h2>{{if .Query}}{{t .Locale "files.search"}}{{else}}{{t .Locale "files.title"}}{{end}}</h2>{{if .CurrentPath}}<p><code>{{.CurrentPath}}</code></p>{{end}}</div></div>
     <div data-deferred-region>
     {{if .DeferredData}}
     {{template "deferred-loading" .}}
@@ -151,12 +149,12 @@
           <tr>
             <td data-label="{{t $.Locale "common.name"}}" class="record-primary">
               <div class="record-primary__content">
-                <span class="record-icon" aria-hidden="true" data-lucide="{{.IconClass}}"></span>
-                <div>{{if .BrowseURL}}<a href="{{.BrowseURL}}">{{range .NameParts}}{{if .Match}}<mark>{{.Text}}</mark>{{else}}{{.Text}}{{end}}{{end}}</a>{{else if .ViewURL}}<a href="{{.ViewURL}}">{{range .NameParts}}{{if .Match}}<mark>{{.Text}}</mark>{{else}}{{.Text}}{{end}}{{end}}</a>{{else}}<span>{{range .NameParts}}{{if .Match}}<mark>{{.Text}}</mark>{{else}}{{.Text}}{{end}}{{end}}</span>{{end}}<small><span>{{.CategoryLabel}}</span>{{if .IsHidden}}<span class="file-hidden-badge">{{t $.Locale "files.hidden"}}</span>{{end}} · <code>{{.Path}}</code></small></div>
+                <span class="record-icon file-icon" aria-hidden="true" data-lucide="{{.IconClass}}"></span>
+                <div class="file-name-cell">{{if .BrowseURL}}<a href="{{.BrowseURL}}">{{range .NameParts}}{{if .Match}}<mark>{{.Text}}</mark>{{else}}{{.Text}}{{end}}{{end}}</a>{{else if .ViewURL}}<a href="{{.ViewURL}}">{{range .NameParts}}{{if .Match}}<mark>{{.Text}}</mark>{{else}}{{.Text}}{{end}}{{end}}</a>{{else}}<span>{{range .NameParts}}{{if .Match}}<mark>{{.Text}}</mark>{{else}}{{.Text}}{{end}}{{end}}</span>{{end}}<small class="file-meta"><span class="file-type-badge">{{.CategoryLabel}}</span>{{if .IsHidden}}<span class="file-hidden-badge">{{t $.Locale "files.hidden"}}</span>{{end}}</small></div>
               </div>
             </td>
-            <td data-label="{{t $.Locale "common.size"}}">{{.Size}}</td>
-            <td data-label="{{t $.Locale "common.modified"}}"><time datetime="{{machineTime .ModifiedAt}}" data-local-time>{{localTime $.Locale .ModifiedAt}}</time></td>
+            <td data-label="{{t $.Locale "common.size"}}" class="file-size">{{.Size}}</td>
+            <td data-label="{{t $.Locale "common.modified"}}" class="file-modified"><time datetime="{{machineTime .ModifiedAt}}" data-local-time>{{localTime $.Locale .ModifiedAt}}</time></td>
             <td class="record-actions">
               <div class="record-actions__group">
               {{if .BrowseURL}}<button class="icon-button file-pin-button" type="button" hidden data-file-pin data-file-pin-path="{{.Path}}" data-file-pin-label="{{.Name}}" data-file-pin-href="{{.PinURL}}" data-pin-label="{{t $.Locale "files.pin_directory"}}" data-unpin-label="{{t $.Locale "files.unpin_directory"}}" aria-label="{{t $.Locale "files.pin_directory"}}" aria-pressed="false"><span data-lucide="pin" aria-hidden="true"></span></button><a class="button button--quiet button--compact" href="{{.BrowseURL}}">{{t $.Locale "common.open"}}</a>{{end}}

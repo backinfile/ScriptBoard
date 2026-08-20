@@ -328,7 +328,7 @@ func TestAuthenticatedRootRedirectsToOverviewAndOverviewDataIsPrivate(t *testing
 	if response.StatusCode != http.StatusOK || !bytes.Contains(page, []byte("Machine status")) || !bytes.Contains(page, []byte(`data-host-overview`)) || !bytes.Contains(page, []byte(`data-fleet-overview`)) {
 		t.Fatalf("overview status=%d body=%s", response.StatusCode, page)
 	}
-	if !bytes.Contains(page, []byte(`data-fleet-node="local"`)) || !bytes.Contains(page, []byte(`class="fleet-card__metrics"`)) || bytes.Contains(page, []byte(`data-host-detail`)) {
+	if !bytes.Contains(page, []byte(`data-fleet-node="local"`)) || !bytes.Contains(page, []byte(`class="fc-ms"`)) || bytes.Contains(page, []byte(`data-host-detail`)) {
 		t.Fatalf("fleet overview does not keep details out of the fast path: %s", page)
 	}
 	if bytes.Contains(page, []byte(`class="button button--primary" href="/resources/files/"`)) {
@@ -715,9 +715,9 @@ func TestFileWorkspaceOffersPreviewForUnknownTextButNotUnknownBinary(t *testing.
 		t.Fatalf("content-detected text unexpectedly has an edit link: %s", html)
 	}
 	for _, expected := range []string{
-		`>notes.payload</a><small><span>Previewable text</span>`,
-		`>archive.payload</span><small><span>Other file</span>`,
-		`>renamed.txt</span><small><span>Other file</span>`,
+		`>notes.payload</a><small class="file-meta"><span class="file-type-badge">Previewable text</span>`,
+		`>archive.payload</span><small class="file-meta"><span class="file-type-badge">Other file</span>`,
+		`>renamed.txt</span><small class="file-meta"><span class="file-type-badge">Other file</span>`,
 	} {
 		if !strings.Contains(html, expected) {
 			t.Errorf("content-based preview state is missing %q: %s", expected, html)
