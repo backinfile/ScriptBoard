@@ -27,19 +27,20 @@
   {{else}}
   {{if .Runs}}
   <div class="table-shell"><table class="records-table runs-table">
+    <colgroup><col class="runs-col-time"><col class="runs-col-script"><col class="runs-col-source"><col class="runs-col-status"><col class="runs-col-duration"><col class="runs-col-actor"><col class="runs-col-executor"><col></colgroup>
     <thead><tr><th>{{t .Locale "common.time"}}</th><th>{{t .Locale "common.script"}}</th><th>{{t .Locale "common.source"}}</th><th>{{t .Locale "common.status"}}</th><th>{{t .Locale "runs.duration"}}</th><th>{{t .Locale "audit.actor"}}</th><th>{{t .Locale "runs.executor"}}</th><th><span class="sr-only">{{t .Locale "common.actions"}}</span></th></tr></thead>
     <tbody>{{range .Runs}}<tr>
-      <td data-label="{{t $.Locale "common.time"}}"><time datetime="{{machineTime .CreatedAt}}" data-local-time>{{localTime $.Locale .CreatedAt}}</time></td>
-      <td data-label="{{t $.Locale "common.script"}}" class="record-primary"><div class="record-primary__content"><span class="record-icon" data-lucide="square-terminal" aria-hidden="true"></span><div><a href="/history/runs/{{.ID}}">{{.ScriptPath}}</a><small><code>{{.ID}}</code></small></div></div></td>
-      <td data-label="{{t $.Locale "common.source"}}">{{runSourceText $.Locale .SourceType}}{{if and .SourceName (ne .SourceName "manual")}}<small>{{.SourceName}}</small>{{end}}</td>
+      <td class="runs-time" data-label="{{t $.Locale "common.time"}}"><time datetime="{{machineTime .CreatedAt}}" data-local-time>{{localTime $.Locale .CreatedAt}}</time></td>
+      <td data-label="{{t $.Locale "common.script"}}" class="record-primary runs-script"><div class="record-primary__content"><span class="record-icon" data-lucide="square-terminal" aria-hidden="true"></span><div><a class="runs-script__name" href="/history/runs/{{.ID}}" title="{{.ScriptPath}}">{{.ScriptPath}}</a><small class="runs-script__id"><code>{{.ID}}</code></small></div></div></td>
+      <td data-label="{{t $.Locale "common.source"}}"><span class="status-chip runs-source">{{runSourceText $.Locale .SourceType}}</span>{{if and .SourceName (ne .SourceName "manual")}}<small class="runs-source__name" title="{{.SourceName}}">{{.SourceName}}</small>{{end}}</td>
       <td data-label="{{t $.Locale "common.status"}}"><span class="status-chip" data-state="{{.Status}}"><span class="status-dot" aria-hidden="true"></span>{{statusText $.Locale .Status}}</span></td>
-      <td data-label="{{t $.Locale "runs.duration"}}">{{if .HasDuration}}{{.Duration}}{{else}}{{t $.Locale "common.not_available"}}{{end}}</td>
+      <td class="runs-duration" data-label="{{t $.Locale "runs.duration"}}">{{if .HasDuration}}{{.Duration}}{{else}}{{t $.Locale "common.not_available"}}{{end}}</td>
       <td data-label="{{t $.Locale "audit.actor"}}" class="runs-actor"><span data-run-initiator>{{if .InitiatorUsername}}{{.InitiatorUsername}}{{else}}{{t $.Locale "run_detail.system_initiator"}}{{end}}</span></td>
-      <td data-label="{{t $.Locale "runs.executor"}}"><code>{{.Executor}}</code></td>
+      <td data-label="{{t $.Locale "runs.executor"}}"><code class="runs-executor" title="{{.Executor}}">{{.Executor}}</code></td>
       <td class="record-actions"><div class="record-actions__group"><a class="button button--quiet button--compact" href="{{.ScriptDirectoryURL}}" data-script-directory-link><span data-lucide="folder-open" aria-hidden="true"></span>{{t $.Locale "runs.open_script_directory"}}</a></div></td>
     </tr>{{end}}</tbody>
-  </table></div>
-  <nav class="pagination" aria-label="{{t .Locale "runs.pagination"}}"><span>{{.Pagination.Total}} {{t .Locale "common.records"}} · {{.Pagination.Page}} / {{.Pagination.PageCount}}</span><div>{{if .Pagination.HasPrevious}}<a href="{{.Pagination.PreviousURL}}">{{t .Locale "common.previous"}}</a>{{else}}<span aria-disabled="true">{{t .Locale "common.previous"}}</span>{{end}}{{if .Pagination.HasNext}}<a href="{{.Pagination.NextURL}}">{{t .Locale "common.next"}}</a>{{else}}<span aria-disabled="true">{{t .Locale "common.next"}}</span>{{end}}</div></nav>
+  </table>
+  <nav class="pagination runs-pagination" aria-label="{{t .Locale "runs.pagination"}}"><span>{{.Pagination.Total}} {{t .Locale "common.records"}} · {{.Pagination.Page}} / {{.Pagination.PageCount}}</span><div>{{if .Pagination.HasPrevious}}<a href="{{.Pagination.PreviousURL}}">{{t .Locale "common.previous"}}</a>{{else}}<span aria-disabled="true">{{t .Locale "common.previous"}}</span>{{end}}{{if .Pagination.HasNext}}<a href="{{.Pagination.NextURL}}">{{t .Locale "common.next"}}</a>{{else}}<span aria-disabled="true">{{t .Locale "common.next"}}</span>{{end}}</div></nav></div>
   {{else if .Filters.HasActiveSelection}}
   <section class="empty-state"><span data-lucide="search-x" aria-hidden="true"></span><p>{{t .Locale "runs.no_matches"}}</p><a class="button button--quiet" href="/history/runs" data-focus-after-navigation="#run-search">{{t .Locale "common.clear"}}</a></section>
   {{else}}

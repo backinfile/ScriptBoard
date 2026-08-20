@@ -10,7 +10,7 @@
 <body>
 <main class="workspace kubernetes-connection-page" data-kubernetes-connection-page>
   <header class="page-heading kubernetes-heading">
-    <div><h1>{{if .Configured}}{{t .Locale "kubernetes.connection_settings"}}{{else}}{{t .Locale "kubernetes.connect_title"}}{{end}}</h1><p>{{t .Locale "kubernetes.connection_description"}}</p></div>
+    <div><p class="page-eyebrow">{{t .Locale "nav.monitor"}} / {{t .Locale "nav.kubernetes"}}</p><h1>{{if .Configured}}{{t .Locale "kubernetes.connection_settings"}}{{else}}{{t .Locale "kubernetes.connect_title"}}{{end}}</h1><p>{{t .Locale "kubernetes.connection_description"}}</p></div>
     <a class="button" href="/monitor/kubernetes?tab=connections"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "kubernetes.back_to_connections"}}</a>
   </header>
   {{if .Error}}<div class="kubernetes-alert" role="alert"><span data-lucide="triangle-alert" aria-hidden="true"></span><div><strong>{{t .Locale "kubernetes.connection_failed"}}</strong><p>{{.Error}}</p></div></div>{{end}}

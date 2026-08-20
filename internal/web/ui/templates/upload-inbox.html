@@ -9,7 +9,7 @@
   <div class="table-shell"><table class="records-table">
     <thead><tr><th>{{t .Locale "inbox.file"}}</th><th>{{t .Locale "inbox.destination"}}</th><th>SHA-256</th><th>{{t .Locale "common.size"}}</th><th><span class="sr-only">{{t .Locale "common.actions"}}</span></th></tr></thead>
     <tbody>{{range .Entries}}<tr>
-      <td class="record-primary"><div class="record-primary__content"><span class="record-icon" data-lucide="shield-check" aria-hidden="true"></span><div><strong>{{.OriginalName}}</strong><small><time datetime="{{machineTime .CreatedAt}}" data-local-time>{{localTime $.Locale .CreatedAt}}</time></small></div></div></td>
+      <td class="record-primary"><div class="record-primary__content"><span class="record-icon file-icon" data-lucide="shield-check" aria-hidden="true"></span><div><strong>{{.OriginalName}}</strong><small><time datetime="{{machineTime .CreatedAt}}" data-local-time>{{localTime $.Locale .CreatedAt}}</time></small></div></div></td>
       <td><code>{{.TargetDirectory}}</code></td><td><code title="{{.SHA256}}">{{shortDigest .SHA256}}</code></td><td>{{.Size}}</td>
       <td class="record-actions"><div class="record-actions__group">
         <form method="post" action="/resources/inbox/{{.ID}}/publish" data-confirm="{{t $.Locale "inbox.publish_confirm"}}"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="sha256" value="{{.SHA256}}"><button class="button button--compact button--primary" name="confirm" value="yes" type="submit"><span data-lucide="package-check" aria-hidden="true"></span>{{t $.Locale "inbox.publish"}}</button></form>

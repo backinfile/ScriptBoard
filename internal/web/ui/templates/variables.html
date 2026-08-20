@@ -2,7 +2,7 @@
 <html lang="{{.Locale}}">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "variables.title"}} · ScriptBoard</title></head>
 <body>
-<main class="workspace">
+<main class="workspace" data-variables-page>
   <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "variables.eyebrow"}}</p><h1>{{t .Locale "variables.title"}}</h1><p>{{t .Locale "variables.description"}}</p></div><a class="button button--primary" href="/resources/variables/new" data-task-link><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "variables.create"}}</a></header>
   <aside class="inline-notice"><span data-lucide="info" aria-hidden="true"></span><p>{{t .Locale "variables.plaintext_notice"}}</p></aside>
   <div data-deferred-region>
@@ -15,7 +15,7 @@
     <tbody>{{range $index, $variable := .Variables}}<tr>
       <td data-label="{{t $.Locale "common.name"}}" class="record-primary"><div class="record-primary__content"><span class="record-icon" data-lucide="{{if .IsPassword}}key-round{{else}}braces{{end}}" aria-hidden="true"></span><div class="variable-name-details">
         <div class="copyable-field copyable-field--name" data-copy-field>
-          <code id="variable-name-{{$index}}">{{.Name}}</code>
+          <code title="{{.Name}}" id="variable-name-{{$index}}">{{.Name}}</code>
           <button type="button" class="copy-control icon-tooltip" data-copy-text data-copy-name data-copy-target="variable-name-{{$index}}" aria-label="{{t $.Locale "variables.copy_name"}} {{.Name}}" data-tooltip="{{t $.Locale "variables.copy_name"}}" data-copy-label="{{t $.Locale "variables.copy_name"}} {{.Name}}" data-copy-tooltip="{{t $.Locale "variables.copy_name"}}" data-copied-label="{{t $.Locale "variables.copied"}}" data-copy-failed-label="{{t $.Locale "variables.copy_failed"}}" hidden>
             <span data-copy-icon data-lucide="copy" aria-hidden="true"></span>
           </button>
@@ -44,7 +44,7 @@
         </details></noscript>
       {{else}}
         <div class="copyable-field copyable-field--value" data-copy-field>
-          <pre id="variable-value-{{$index}}" class="value-preview">{{.Value}}</pre>
+          <pre title="{{.Value}}" id="variable-value-{{$index}}" class="value-preview">{{.Value}}</pre>
           <button type="button" class="copy-control icon-tooltip" data-copy-text data-copy-value data-copy-target="variable-value-{{$index}}" aria-label="{{t $.Locale "variables.copy_value"}} {{.Name}}" data-tooltip="{{t $.Locale "variables.copy_value"}}" data-copy-label="{{t $.Locale "variables.copy_value"}} {{.Name}}" data-copy-tooltip="{{t $.Locale "variables.copy_value"}}" data-copied-label="{{t $.Locale "variables.copied"}}" data-copy-failed-label="{{t $.Locale "variables.copy_failed"}}" hidden>
             <span data-copy-icon data-lucide="copy" aria-hidden="true"></span>
           </button>

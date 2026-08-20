@@ -44,7 +44,7 @@ FORM: Flat measurement rails and a responsive record ledger; no control-plane ac
         <div class="pinned-application__summary">
           <div class="pinned-application__identity">
             <span data-lucide="app-window" aria-hidden="true"></span>
-            <div><h3>{{.Name}}</h3><p>{{.Technical}}</p><small>{{if .Running}}{{t $.Locale "applications.running"}}{{else}}{{t $.Locale "applications.stopped"}}{{end}} · {{.ProcessCount}} {{t $.Locale "applications.processes"}}</small></div>
+            <div><h3>{{.Name}}</h3><p title="{{.Technical}}">{{.Technical}}</p><small>{{if .Running}}{{t $.Locale "applications.running"}}{{else}}{{t $.Locale "applications.stopped"}}{{end}} · {{.ProcessCount}} {{t $.Locale "applications.processes"}}</small></div>
           </div>
           <dl class="pinned-application__metrics">
             <div><dt>CPU</dt><dd>{{if .RateAvailable}}{{percent .CPUPercent}}{{else}}&ndash;{{end}}<small>{{t $.Locale "applications.current_value"}}</small></dd></div>
@@ -128,7 +128,7 @@ FORM: Flat measurement rails and a responsive record ledger; no control-plane ac
             <td class="application-table-identity" data-label="{{t $.Locale "applications.application"}}">
               <div class="application-table-identity__content">
                 <span data-lucide="app-window" aria-hidden="true"></span>
-                <div><strong>{{.Name}}</strong><code>{{.Technical}}</code><small>{{t $.Locale "applications.running"}} · {{.ThreadCount}} {{t $.Locale "applications.threads"}}</small></div>
+                <div><strong>{{.Name}}</strong><code title="{{.Technical}}">{{.Technical}}</code><small>{{t $.Locale "applications.running"}} · {{.ThreadCount}} {{t $.Locale "applications.threads"}}</small></div>
               </div>
             </td>
             <td class="application-table-metric" data-label="CPU"><strong>{{if .RateAvailable}}{{percent .CPUPercent}}{{else}}&ndash;{{end}}</strong><small>{{t $.Locale "applications.current_value"}}</small></td>

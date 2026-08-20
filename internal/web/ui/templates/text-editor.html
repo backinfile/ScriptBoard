@@ -14,7 +14,7 @@
       <a class="task-back" href="{{.BackURL}}"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "editor.back_directory"}}</a>
       <p class="page-eyebrow">{{t .Locale "files.eyebrow"}}</p>
       <h1>{{t .Locale "editor.edit_title"}}</h1>
-      <p><code>{{.Path}}</code></p>
+      <p><code title="{{.Path}}">{{.Path}}</code></p>
     </div>
     <div class="heading-actions">
       <a class="button" href="{{.ViewURL}}">{{t .Locale "editor.read_only"}}</a>

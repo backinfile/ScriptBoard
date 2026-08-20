@@ -12,7 +12,7 @@
   <span class="confirmation-icon" data-lucide="copy" aria-hidden="true"></span>
   <h1>{{t .Locale "overlap.title"}}</h1>
   <p>{{t .Locale "overlap.description"}}</p>
-  <code>{{.Script}}</code>
+  <code title="{{.Script}}">{{.Script}}</code>
   <form method="post" action="{{.Action}}">
     <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
     <input type="hidden" name="script" value="{{.Script}}">

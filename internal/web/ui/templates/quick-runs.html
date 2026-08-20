@@ -11,13 +11,11 @@
   {{range .Groups}}
   <section class="quick-run-group" data-record-group="{{.ID}}" data-quick-run-group="{{.ID}}" data-group-name="{{.Name}}">
     <header class="quick-run-group__header">
-      <div class="quick-run-group__heading">
-        <h2><button class="quick-run-group__toggle" type="button" data-group-toggle aria-expanded="true" aria-controls="quick-run-group-{{.ID}}">
-          <span class="quick-run-group__chevron" data-lucide="chevron-right" aria-hidden="true"></span>
-          <span class="quick-run-group__identity"><span data-lucide="{{if .Ungrouped}}folder-open{{else}}folder{{end}}" aria-hidden="true"></span><span class="quick-run-group__name">{{.Name}}</span></span>
-        </button></h2>
-        <small>{{.QuickRunCount}} {{t $.Locale "quick_runs.items"}}</small>
-      </div>
+      <h2 class="quick-run-group__heading"><button class="quick-run-group__toggle" type="button" data-group-toggle aria-expanded="true" aria-controls="quick-run-group-{{.ID}}">
+        <span class="quick-run-group__chevron" data-lucide="chevron-right" aria-hidden="true"></span>
+        <span class="quick-run-group__identity"><span data-lucide="{{if .Ungrouped}}folder-open{{else}}folder{{end}}" aria-hidden="true"></span><span class="quick-run-group__name">{{.Name}}</span></span>
+        <span class="quick-run-group__count">{{.QuickRunCount}} {{t $.Locale "quick_runs.items"}}</span>
+      </button></h2>
       {{if and $.CanManage (not .Ungrouped)}}
       <details class="action-menu quick-run-group__menu"><summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
         <a href="/config/quick-runs/groups/{{.ID}}/edit" data-task-link><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a>
@@ -27,21 +25,10 @@
       {{end}}
     </header>
     <div class="quick-run-group__body" id="quick-run-group-{{.ID}}" data-group-body>
-    {{if .Items}}<ol class="ordered-records">
-      {{range $index, $quick := .Items}}<li data-quick-run-id="{{.ID}}" data-locked="{{if .Locked}}true{{else}}false{{end}}" data-quick-run-version="{{.Revision}}">
-        <div class="record-order" aria-hidden="true">{{printf "%02d" $index}}</div>
-        <div class="ordered-record__identity"><span data-lucide="zap" aria-hidden="true"></span><div><h3>{{.Name}}</h3><code>{{.ScriptPath}}</code>{{if .Locked}}<span class="status-chip" data-state="locked"><span data-lucide="lock" aria-hidden="true"></span>{{t $.Locale "quick_runs.locked"}}</span>{{end}}</div></div>
-        <div class="quick-run-version"><span>{{t $.Locale "quick_runs.version"}}</span><strong>v{{.Revision}}</strong></div>
-        <div class="quick-run-history">
-          <div class="quick-run-history__barometer" data-quick-run-history role="group" aria-label="{{t $.Locale "quick_runs.recent_runs"}}">
-            {{range .RecentRuns}}<a href="/history/runs/{{.ID}}" data-quick-run-history-entry data-state="{{.Status}}" aria-label="{{t $.Locale "common.status"}}: {{statusText $.Locale .Status}} · {{t $.Locale "quick_runs.started_at"}}: {{if .StartedAt.IsZero}}{{t $.Locale "common.not_available"}}{{else}}{{localTime $.Locale .StartedAt}}{{end}} · {{t $.Locale "quick_runs.duration"}}: {{if .HasDuration}}{{.Duration}}{{else}}{{t $.Locale "common.not_available"}}{{end}}" title="{{t $.Locale "common.status"}}: {{statusText $.Locale .Status}} · {{t $.Locale "quick_runs.started_at"}}: {{if .StartedAt.IsZero}}{{t $.Locale "common.not_available"}}{{else}}{{localTime $.Locale .StartedAt}}{{end}} · {{t $.Locale "quick_runs.duration"}}: {{if .HasDuration}}{{.Duration}}{{else}}{{t $.Locale "common.not_available"}}{{end}}"><span data-lucide="{{.Icon}}" aria-hidden="true"></span></a>{{else}}<span class="quick-run-history__empty">{{t $.Locale "quick_runs.no_recent_runs"}}</span>{{end}}
-          </div>
-          <dl class="quick-run-history__latest">
-            <div><dt>{{t $.Locale "quick_runs.last_run"}}</dt><dd>{{if .LastStartedAt.IsZero}}—{{else}}<time datetime="{{machineTime .LastStartedAt}}" data-local-time>{{localTime $.Locale .LastStartedAt}}</time>{{end}}</dd><dd>{{if .HasLastDuration}}{{.LastDuration}}{{else}}—{{end}}</dd></div>
-          </dl>
-        </div>
-        <div class="record-actions record-actions__group">
-          {{if $.CanExecute}}<form method="post" action="/config/quick-runs/{{.ID}}/start"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button class="button button--compact" type="submit" {{if not .Valid}}disabled aria-disabled="true"{{end}} title="{{if not .Valid}}{{t $.Locale "quick_runs.invalid_path"}}{{end}}"><span data-lucide="play" aria-hidden="true"></span>{{if .Valid}}{{t $.Locale "common.run"}}{{else}}{{t $.Locale "quick_runs.invalid"}}{{end}}</button></form>{{end}}
+    {{if .Items}}<ol class="qr-grid">
+      {{range .Items}}<li class="qr" data-quick-run-id="{{.ID}}" data-locked="{{if .Locked}}true{{else}}false{{end}}" data-quick-run-version="{{.Revision}}">
+        <div class="qr__head">
+          <div class="qr__identity"><h3>{{.Name}}</h3><code class="qr__path" title="{{.ScriptPath}}">{{.ScriptPath}}</code></div>
           {{if $.CanManage}}<details class="action-menu"><summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
             <a href="/history/runs?q={{urlquery .Name}}&amp;quick_run_id={{urlquery .ID}}&amp;focus=search" data-focus-after-navigation="#run-search"><span data-lucide="history" aria-hidden="true"></span>{{t $.Locale "quick_runs.view_all_runs"}}</a>
             {{if .Locked}}<span class="action-menu__disabled" data-locked-action="edit" aria-disabled="true"><span data-lucide="lock" aria-hidden="true"></span>{{t $.Locale "common.edit"}}<small>{{t $.Locale "quick_runs.unlock_to_edit"}}</small></span>{{else}}<a href="/config/quick-runs/{{.ID}}/edit" data-task-link data-locked-action="edit"><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a>{{end}}
@@ -52,6 +39,19 @@
             <form method="post" action="/config/quick-runs/{{.ID}}/move" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" name="direction" value="up"><span data-lucide="arrow-up" aria-hidden="true"></span>{{t $.Locale "quick_runs.move_up"}}</button><button type="submit" name="direction" value="down"><span data-lucide="arrow-down" aria-hidden="true"></span>{{t $.Locale "quick_runs.move_down"}}</button></form>
             {{if .Locked}}<span class="action-menu__disabled action-menu__disabled--danger" data-locked-action="delete" aria-disabled="true"><span data-lucide="lock" aria-hidden="true"></span>{{t $.Locale "common.delete"}}<small>{{t $.Locale "quick_runs.unlock_to_delete"}}</small></span>{{else}}<form method="post" action="/config/quick-runs/{{.ID}}/delete" data-confirm="{{t $.Locale "quick_runs.delete_confirm"}}" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-action" type="submit" name="confirm" value="yes"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "common.delete"}}</button></form>{{end}}
           </div></details>{{end}}
+        </div>
+        <div class="qr__meta">
+          <span class="qr__version" title="{{t $.Locale "quick_runs.version"}}">v{{.Revision}}</span>
+          {{if .Locked}}<span class="status-chip" data-state="locked"><span data-lucide="lock" aria-hidden="true"></span>{{t $.Locale "quick_runs.locked"}}</span>{{end}}
+          <div class="quick-run-history__barometer qr__barometer" data-quick-run-history role="group" aria-label="{{t $.Locale "quick_runs.recent_runs"}}">
+            {{range .RecentRuns}}<a href="/history/runs/{{.ID}}" data-quick-run-history-entry data-state="{{.Status}}" aria-label="{{t $.Locale "common.status"}}: {{statusText $.Locale .Status}} · {{t $.Locale "quick_runs.started_at"}}: {{if .StartedAt.IsZero}}{{t $.Locale "common.not_available"}}{{else}}{{localTime $.Locale .StartedAt}}{{end}} · {{t $.Locale "quick_runs.duration"}}: {{if .HasDuration}}{{.Duration}}{{else}}{{t $.Locale "common.not_available"}}{{end}}" title="{{t $.Locale "common.status"}}: {{statusText $.Locale .Status}} · {{t $.Locale "quick_runs.started_at"}}: {{if .StartedAt.IsZero}}{{t $.Locale "common.not_available"}}{{else}}{{localTime $.Locale .StartedAt}}{{end}} · {{t $.Locale "quick_runs.duration"}}: {{if .HasDuration}}{{.Duration}}{{else}}{{t $.Locale "common.not_available"}}{{end}}"><span data-lucide="{{.Icon}}" aria-hidden="true"></span></a>{{else}}<span class="quick-run-history__empty">{{t $.Locale "quick_runs.no_recent_runs"}}</span>{{end}}
+          </div>
+        </div>
+        <div class="qr__foot">
+          <dl class="quick-run-history__latest qr__last">
+            <div><dt>{{t $.Locale "quick_runs.last_run"}}</dt><dd>{{if .LastStartedAt.IsZero}}—{{else}}<time datetime="{{machineTime .LastStartedAt}}" data-local-time>{{localTime $.Locale .LastStartedAt}}</time>{{end}}</dd><dd>{{if .HasLastDuration}}{{.LastDuration}}{{else}}—{{end}}</dd></div>
+          </dl>
+          {{if $.CanExecute}}<form method="post" action="/config/quick-runs/{{.ID}}/start"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button class="button button--compact qr__run" type="submit" {{if not .Valid}}disabled aria-disabled="true"{{end}} title="{{if not .Valid}}{{t $.Locale "quick_runs.invalid_path"}}{{end}}"><span data-lucide="play" aria-hidden="true"></span>{{if .Valid}}{{t $.Locale "common.run"}}{{else}}{{t $.Locale "quick_runs.invalid"}}{{end}}</button></form>{{end}}
         </div>
       </li>{{end}}
     </ol>{{else}}<p class="empty-copy">{{t $.Locale "quick_runs.group_empty"}}</p>{{end}}
