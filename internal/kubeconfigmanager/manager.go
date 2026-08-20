@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -62,6 +64,52 @@ func DefaultPath() (string, error) {
 		return "", fmt.Errorf("resolve user home: %w", err)
 	}
 	return filepath.Join(home, ".kube", "config"), nil
+}
+
+// SuggestedPaths returns common kubeconfig locations without probing the host.
+// The caller still decides when to read or save a selected path.
+func SuggestedPaths() ([]string, error) {
+	defaultPath, err := DefaultPath()
+	if err != nil {
+		return nil, err
+	}
+	return suggestedPaths(runtime.GOOS, defaultPath), nil
+}
+
+func suggestedPaths(goos, defaultPath string) []string {
+	paths := []string{defaultPath}
+	if goos == "linux" {
+		paths = append(paths,
+			"/etc/rancher/k3s/k3s.yaml",
+			"/etc/rancher/rke2/rke2.yaml",
+			"/etc/kubernetes/admin.conf",
+			"/var/snap/microk8s/current/credentials/client.config",
+			"/var/lib/k0s/pki/admin.conf",
+		)
+	}
+	result := make([]string, 0, len(paths))
+	seen := make(map[string]struct{}, len(paths))
+	for _, candidate := range paths {
+		candidate = strings.TrimSpace(candidate)
+		if goos == "linux" {
+			candidate = path.Clean(candidate)
+		} else {
+			candidate = filepath.Clean(candidate)
+		}
+		if candidate == "." {
+			continue
+		}
+		key := candidate
+		if goos == "windows" {
+			key = strings.ToLower(candidate)
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, candidate)
+	}
+	return result
 }
 
 func Inspect(path string) (Snapshot, error) {

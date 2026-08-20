@@ -21,7 +21,8 @@
         <label><span>{{t .Locale "kubernetes.connection_name"}}</span><input name="name" value="{{.Connection.Name}}" required autocomplete="off" placeholder="Home cluster"></label>
       </section>
       <section><header><div><h2>kubeconfig</h2><p>{{t .Locale "kubernetes.kubeconfig_description"}}</p></div></header>
-        <label><span>{{t .Locale "kubernetes.kubeconfig_path"}}</span><input name="kubeconfig_path" value="{{.Connection.KubeconfigPath}}" required autocomplete="off" spellcheck="false" placeholder="C:\Users\admin\.kube\config"></label>
+        {{if .KubeconfigPathPresets}}<label><span>{{t .Locale "kubernetes.common_kubeconfig_paths"}}</span><select data-kubernetes-path-preset><option value="">{{t .Locale "kubernetes.choose_kubeconfig_path"}}</option>{{range .KubeconfigPathPresets}}<option value="{{.}}">{{.}}</option>{{end}}</select><small class="field-hint">{{t .Locale "kubernetes.common_kubeconfig_paths_hint"}}</small></label>{{end}}
+        <label><span>{{t .Locale "kubernetes.kubeconfig_path"}}</span><input name="kubeconfig_path" value="{{.Connection.KubeconfigPath}}" required autocomplete="off" spellcheck="false" placeholder="C:\Users\admin\.kube\config" data-kubernetes-path-input></label>
         <label><span>{{t .Locale "kubernetes.context_optional"}}</span><input name="context" value="{{.Connection.Context}}" autocomplete="off" spellcheck="false" placeholder="{{t .Locale "kubernetes.current_context"}}"></label>
       </section>
       <section><header><div><h2>{{t .Locale "kubernetes.operation_mode"}}</h2></div></header>

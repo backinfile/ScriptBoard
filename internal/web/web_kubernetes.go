@@ -43,13 +43,22 @@ type kubernetesPageView struct {
 }
 
 type kubernetesConnectionView struct {
-	Locale       webLocale
-	CSRFToken    string
-	Connection   clusterstatus.Connection
-	Configured   bool
-	Action       string
-	Error        string
-	Capabilities clusterstatus.Capabilities
+	Locale                webLocale
+	CSRFToken             string
+	Connection            clusterstatus.Connection
+	Configured            bool
+	Action                string
+	Error                 string
+	Capabilities          clusterstatus.Capabilities
+	KubeconfigPathPresets []string
+}
+
+func suggestedKubeconfigPaths() []string {
+	paths, err := kubeconfigmanager.SuggestedPaths()
+	if err != nil {
+		return nil
+	}
+	return paths
 }
 
 func kubernetesQueryURL(query clusterstatus.Query, mutate func(url.Values)) string {
@@ -568,7 +577,7 @@ func (a *App) kubernetesConnectionTask(response http.ResponseWriter, request *ht
 		}
 	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = kubernetesConnectionTemplate.Execute(response, kubernetesConnectionView{Locale: resolveWebLocale(request), CSRFToken: current.csrfToken, Connection: status.Connection, Configured: configured, Action: kubernetesConnectionAction(id), Error: status.Error, Capabilities: status.Capabilities})
+	_ = kubernetesConnectionTemplate.Execute(response, kubernetesConnectionView{Locale: resolveWebLocale(request), CSRFToken: current.csrfToken, Connection: status.Connection, Configured: configured, Action: kubernetesConnectionAction(id), Error: status.Error, Capabilities: status.Capabilities, KubeconfigPathPresets: suggestedKubeconfigPaths()})
 }
 
 func kubernetesConnectionFromRequest(request *http.Request) clusterstatus.Connection {
@@ -587,7 +596,7 @@ func (a *App) saveKubernetesConnection(response http.ResponseWriter, request *ht
 		response.Header().Set("Cache-Control", "no-store")
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		response.WriteHeader(http.StatusUnprocessableEntity)
-		_ = kubernetesConnectionTemplate.Execute(response, kubernetesConnectionView{Locale: resolveWebLocale(request), CSRFToken: current.csrfToken, Connection: connection, Configured: connection.ID != "", Action: kubernetesConnectionAction(connection.ID), Error: err.Error()})
+		_ = kubernetesConnectionTemplate.Execute(response, kubernetesConnectionView{Locale: resolveWebLocale(request), CSRFToken: current.csrfToken, Connection: connection, Configured: connection.ID != "", Action: kubernetesConnectionAction(connection.ID), Error: err.Error(), KubeconfigPathPresets: suggestedKubeconfigPaths()})
 		return
 	}
 	if err := a.kubernetesStatus.Refresh(request.Context(), result.ID); err != nil {

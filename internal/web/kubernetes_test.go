@@ -75,6 +75,11 @@ func TestKubernetesPageSeparatesConnectionsFromSelectedClusterMonitoring(t *test
 	if !bytes.Contains(page, []byte("Kubeconfig servers may use HTTP or HTTPS. HTTP sends credentials and cluster data without transport encryption.")) {
 		t.Fatalf("connection page does not explain HTTP support: %s", page)
 	}
+	for _, expected := range [][]byte{[]byte(`data-kubernetes-path-preset`), []byte(`data-kubernetes-path-input`)} {
+		if !bytes.Contains(page, expected) {
+			t.Fatalf("connection page does not provide manual kubeconfig path selection %q: %s", expected, page)
+		}
+	}
 
 	response, err = client.PostForm(serverURL+"/monitor/kubernetes/connections", url.Values{
 		"csrf_token": {formToken(t, page)}, "name": {"edge-home"}, "kubeconfig_path": {"/etc/scriptboard/kubeconfig"}, "context": {"default"}, "mode": {"limited"},

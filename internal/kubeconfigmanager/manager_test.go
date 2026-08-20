@@ -46,6 +46,31 @@ func writeFixture(t *testing.T) string {
 	return path
 }
 
+func TestSuggestedPathsIncludesCommonLinuxDistributions(t *testing.T) {
+	paths := suggestedPaths("linux", "/home/scriptboard/.kube/config")
+	for _, expected := range []string{
+		"/home/scriptboard/.kube/config",
+		"/etc/rancher/k3s/k3s.yaml",
+		"/etc/rancher/rke2/rke2.yaml",
+		"/etc/kubernetes/admin.conf",
+		"/var/snap/microk8s/current/credentials/client.config",
+		"/var/lib/k0s/pki/admin.conf",
+	} {
+		if !containsPath(paths, expected) {
+			t.Fatalf("suggested paths %q do not include %q", paths, expected)
+		}
+	}
+}
+
+func containsPath(paths []string, expected string) bool {
+	for _, path := range paths {
+		if path == expected {
+			return true
+		}
+	}
+	return false
+}
+
 func TestContextLifecycleAndDownloads(t *testing.T) {
 	path := writeFixture(t)
 	snapshot, err := Inspect(path)

@@ -7526,7 +7526,15 @@
     const button = root?.querySelector("[data-kubernetes-test]");
     const result = root?.querySelector("[data-kubernetes-test-result]");
     if (!form || !button || !result) return;
+    const pathPreset = form.querySelector("[data-kubernetes-path-preset]");
+    const pathInput = form.querySelector("[data-kubernetes-path-input]");
     const message = result.querySelector("[data-kubernetes-test-message]");
+    const onPathPresetChange = () => {
+      if (!pathPreset?.value || !pathInput) return;
+      pathInput.value = pathPreset.value;
+      pathInput.dispatchEvent(new Event("input", { bubbles: true }));
+      pathInput.focus();
+    };
     const onClick = async () => {
       button.disabled = true;
       button.setAttribute("aria-busy", "true");
@@ -7551,8 +7559,12 @@
         button.removeAttribute("aria-busy");
       }
     };
+    pathPreset?.addEventListener("change", onPathPresetChange);
     button.addEventListener("click", onClick);
-    cleanups.push(() => button.removeEventListener("click", onClick));
+    cleanups.push(() => {
+      pathPreset?.removeEventListener("change", onPathPresetChange);
+      button.removeEventListener("click", onClick);
+    });
   }
 
   function initPage(options = {}) {
