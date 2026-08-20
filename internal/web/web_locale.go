@@ -914,6 +914,7 @@ var webMessages = map[string]localizedMessage{
 	"overview.write":                                {"写入", "Write"},
 	"overview.active_runs":                          {"活动 Run", "Active Runs"},
 	"overview.view_all":                             {"查看全部", "View all"},
+	"overview.open_full_page":                       {"打开完整页面", "Open full page"},
 	"overview.no_active_runs":                       {"当前没有活动 Run。", "There are no active Runs."},
 	"overview.service":                              {"ScriptBoard 服务", "ScriptBoard service"},
 	"overview.service_uptime":                       {"服务已运行", "Service uptime"},

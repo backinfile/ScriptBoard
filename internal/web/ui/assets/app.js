@@ -3086,6 +3086,206 @@
     });
   }
 
+  function initOverviewDrawer(cleanups) {
+    const root = document.querySelector("[data-host-overview]");
+    const host = root?.querySelector("[data-overview-drawer]");
+    if (!root || !host) return;
+    const sheet = host.querySelector(".overview-drawer");
+    const kicker = host.querySelector("[data-overview-drawer-kicker]");
+    const title = host.querySelector("[data-overview-drawer-title]");
+    const fullLink = host.querySelector("[data-overview-drawer-full]");
+    const form = host.querySelector("[data-overview-node-form]");
+    const formError = host.querySelector("[data-overview-node-form-error]");
+    const content = host.querySelector("[data-overview-drawer-content]");
+    if (!sheet || !content) return;
+    let opener = null;
+    let requestToken = 0;
+    let lastRunsURL = "";
+    const controller = new AbortController();
+
+    const closeDrawer = (restoreFocus = true) => {
+      if (!host.classList.contains("is-open")) return;
+      requestToken += 1;
+      host.classList.remove("is-open");
+      host.setAttribute("aria-hidden", "true");
+      document.body.style.overflow = "";
+      if (restoreFocus && opener?.isConnected) opener.focus();
+    };
+
+    const openDrawer = (mode, trigger) => {
+      opener = trigger;
+      const isForm = mode === "form";
+      if (kicker) kicker.textContent = isForm ? host.dataset.formKicker || "" : host.dataset.runsKicker || "";
+      if (title) title.textContent = isForm ? host.dataset.formTitle || "" : host.dataset.runsKicker || "";
+      if (fullLink) fullLink.hidden = isForm;
+      if (form) form.hidden = !isForm;
+      content.hidden = isForm;
+      if (isForm && formError) {
+        formError.hidden = true;
+        formError.textContent = "";
+      }
+      host.setAttribute("aria-hidden", "false");
+      host.classList.add("is-open");
+      document.body.style.overflow = "hidden";
+      window.setTimeout(() => host.querySelector(".overview-drawer__close")?.focus(), 180);
+    };
+
+    const drawerLoading = () =>
+      `<div class="overview-drawer__loading" role="status"><span data-lucide="loader-circle" aria-hidden="true"></span><p>${escapeMarkup(words().loading)}</p></div>`;
+    const drawerError = message =>
+      `<div class="overview-drawer__error" role="alert"><span data-lucide="triangle-alert" aria-hidden="true"></span><p>${escapeMarkup(message)}</p><button class="button button--compact" type="button" data-overview-drawer-retry>${escapeMarkup(words().retry)}</button></div>`;
+
+    const importContent = async main => {
+      try {
+        const purify = await loadScriptAsset("/assets/purify.min.js", () => window.DOMPurify);
+        return purify.sanitize(main.innerHTML, { RETURN_DOM_FRAGMENT: true });
+      } catch {
+        // 同源服务端渲染内容，净化器不可用退化为直接导入。
+        const fragment = document.createDocumentFragment();
+        main.childNodes.forEach(node => fragment.append(document.importNode(node, true)));
+        return fragment;
+      }
+    };
+
+    const loadRuns = async url => {
+      const token = ++requestToken;
+      lastRunsURL = url;
+      if (fullLink) fullLink.href = url;
+      content.innerHTML = drawerLoading();
+      renderIcons(content);
+      try {
+        const result = await fetchDocument(url, { cache: "no-store", signal: controller.signal });
+        if (token !== requestToken || !host.classList.contains("is-open")) return;
+        const main = result.document?.querySelector("main");
+        if (!result.response.ok || !main) throw new Error(words().loadFailed);
+        const heading = main.querySelector("h1");
+        if (title && heading?.textContent.trim()) title.textContent = heading.textContent.trim();
+        main.querySelector(".page-heading")?.remove();
+        const fragment = await importContent(main);
+        if (token !== requestToken || !host.classList.contains("is-open")) return;
+        content.replaceChildren(fragment);
+        renderIcons(content);
+        localizeTimes(content);
+      } catch (error) {
+        if (error.name === "AbortError" || token !== requestToken || !host.classList.contains("is-open")) return;
+        content.innerHTML = drawerError(error?.message || words().loadFailed);
+        renderIcons(content);
+      }
+    };
+
+    const submitNodeForm = async event => {
+      if (!form || event.target !== form) return;
+      event.preventDefault();
+      const submitButton = form.querySelector('button[type="submit"]');
+      if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.setAttribute("aria-busy", "true");
+      }
+      const showError = message => {
+        if (!formError) return;
+        formError.textContent = message;
+        formError.hidden = false;
+      };
+      if (formError) {
+        formError.hidden = true;
+        formError.textContent = "";
+      }
+      try {
+        const result = await fetchDocument(form.action, {
+          method: "POST", body: new FormData(form), signal: controller.signal
+        });
+        if (result.response.ok) {
+          form.reset();
+          closeDrawer(false);
+          navigate(safeInternalURL(result.response.url, "/monitor"), true);
+          return;
+        }
+        const message = result.document?.querySelector(".page-error")?.textContent.trim() ||
+          result.text?.trim() || words().submitFailed;
+        showError(message);
+      } catch (error) {
+        if (error.name !== "AbortError") showError(words().submitFailed);
+      } finally {
+        if (submitButton) {
+          submitButton.disabled = false;
+          submitButton.removeAttribute("aria-busy");
+        }
+      }
+    };
+
+    const onOverviewClick = event => {
+      if (event.target.closest("[data-overview-drawer-close]")) {
+        closeDrawer();
+        return;
+      }
+      if (event.target.closest("[data-overview-drawer-retry]")) {
+        if (lastRunsURL) loadRuns(lastRunsURL);
+        return;
+      }
+      const link = event.target.closest("a[href]");
+      if (!link || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      let destination;
+      try { destination = new URL(link.href, location.href); } catch { return; }
+      if (destination.origin !== location.origin) return;
+      if (content.contains(link)) {
+        // 抽屉内的 Run 链接继续留在抽屉中加载，其余链接走常规 pjax。
+        if (destination.pathname === "/history/runs" || destination.pathname.startsWith("/history/runs/")) {
+          event.preventDefault();
+          loadRuns(destination.pathname + destination.search);
+        }
+        return;
+      }
+      if (link.closest("[data-overview-drawer]")) return;
+      if (form && destination.pathname === "/monitor/nodes/new") {
+        event.preventDefault();
+        openDrawer("form", link);
+        return;
+      }
+      const runsTrigger = destination.pathname === "/history/runs" ||
+        (destination.pathname.startsWith("/history/runs/") && link.closest("[data-active-runs]"));
+      if (runsTrigger) {
+        event.preventDefault();
+        openDrawer("runs", link);
+        loadRuns(destination.pathname + destination.search);
+      }
+    };
+
+    const onOverviewKeydown = event => {
+      if (!host.classList.contains("is-open")) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeDrawer();
+        return;
+      }
+      if (event.key === "Tab") {
+        const focusable = Array.from(sheet.querySelectorAll("button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex='-1'])"))
+          .filter(element => !element.hidden && element.getClientRects().length > 0);
+        if (focusable.length) {
+          const first = focusable[0];
+          const last = focusable[focusable.length - 1];
+          if (event.shiftKey && (event.target === first || !sheet.contains(event.target))) {
+            event.preventDefault();
+            last.focus();
+          } else if (!event.shiftKey && event.target === last) {
+            event.preventDefault();
+            first.focus();
+          }
+        }
+      }
+    };
+
+    root.addEventListener("click", onOverviewClick);
+    root.addEventListener("keydown", onOverviewKeydown);
+    form?.addEventListener("submit", submitNodeForm);
+    cleanups.push(() => {
+      root.removeEventListener("click", onOverviewClick);
+      root.removeEventListener("keydown", onOverviewKeydown);
+      form?.removeEventListener("submit", submitNodeForm);
+      controller.abort();
+      closeDrawer(false);
+    });
+  }
+
   function initRun(cleanups) {
     const root = document.querySelector("[data-run-events-url]");
     if (!root) return;
@@ -7373,6 +7573,7 @@
     initDirectoryPickers(document, cleanups);
     initQuickCreateDefaults(document, cleanups);
     initOverview(cleanups);
+    initOverviewDrawer(cleanups);
     initApplications(cleanups);
     initContainers(cleanups);
     initKubernetes(cleanups);
