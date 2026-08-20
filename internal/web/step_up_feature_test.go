@@ -30,11 +30,7 @@ func TestExpiredRecentAuthenticationOffersInlinePasswordChallenge(t *testing.T) 
 	passwordBytes, _ := os.ReadFile(filepath.Join(stateRoot, "secrets", "initial-admin-password"))
 	login(t, client, server.URL, strings.TrimSpace(string(passwordBytes)), http.StatusSeeOther)
 
-	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer database.Close()
+	database := openConcurrentAppTestDatabase(t, filepath.Join(stateRoot, "app.db"))
 	if _, err := database.Exec(`UPDATE sessions SET reauthenticated_at = 0`); err != nil {
 		t.Fatal(err)
 	}
@@ -96,11 +92,7 @@ func TestExpiredRecentAuthenticationRequiresPasswordStepUp(t *testing.T) {
 	password := strings.TrimSpace(string(passwordBytes))
 	login(t, client, server.URL, password, http.StatusSeeOther)
 
-	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer database.Close()
+	database := openConcurrentAppTestDatabase(t, filepath.Join(stateRoot, "app.db"))
 	if _, err := database.Exec(`UPDATE sessions SET reauthenticated_at = 0`); err != nil {
 		t.Fatal(err)
 	}

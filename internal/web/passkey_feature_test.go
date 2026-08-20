@@ -1,7 +1,6 @@
 package web_test
 
 import (
-	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -58,11 +57,7 @@ func TestPasskeyCeremoniesRequireCSRFAndUserVerification(t *testing.T) {
 	if denied.StatusCode != http.StatusForbidden {
 		t.Fatalf("missing CSRF status=%d", denied.StatusCode)
 	}
-	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer database.Close()
+	database := openConcurrentAppTestDatabase(t, filepath.Join(stateRoot, "app.db"))
 	if _, err := database.Exec(`UPDATE sessions SET reauthenticated_at = 0`); err != nil {
 		t.Fatal(err)
 	}

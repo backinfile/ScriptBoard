@@ -250,7 +250,8 @@ func openConcurrentAppTestDatabase(t *testing.T, path string) *sql.DB {
 	}
 	db.SetMaxOpenConns(1)
 	// The running app and the test connection can write the same WAL at once.
-	// Wait out the app's short transaction instead of failing with SQLITE_BUSY.
+	// Keep every test-side connection that races the app on this helper so short
+	// application transactions are waited out instead of failing with SQLITE_BUSY.
 	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
 		_ = db.Close()
 		t.Fatalf("configure test SQLite database: %v", err)

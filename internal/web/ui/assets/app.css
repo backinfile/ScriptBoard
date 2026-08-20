@@ -747,10 +747,12 @@ body[data-app-shell] { padding-left: var(--sidebar-width); }
    only elevated surface, keeping the screen out of dashboard-card territory. */
 .assistant-workspace {
   display: grid;
-  width: 100%;
+  width: min(100%, var(--content-max));
+  max-width: var(--content-max);
   height: 100vh;
   min-height: 640px;
   grid-template-columns: 258px minmax(0, 1fr);
+  margin: 0 auto;
   overflow: hidden;
   background: var(--surface);
 }

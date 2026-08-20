@@ -30,6 +30,7 @@ func TestPrimaryWorkspacesShareTheApplicationContentWidth(t *testing.T) {
 
 	css := string(stylesheet)
 	selectors := []string{
+		`\.assistant-workspace`,
 		`\.website-monitor-page`,
 		`\.workspace\[data-mysql-workspace\]`,
 		`\.applications-page`,
