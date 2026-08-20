@@ -25,6 +25,7 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 
 	"scriptboard/internal/hostfiles"
+	"scriptboard/internal/hostsecurity"
 	"scriptboard/internal/kubeconfigmanager"
 	"scriptboard/internal/logstream"
 	"scriptboard/internal/mfa"
@@ -32,11 +33,12 @@ import (
 	"scriptboard/internal/passkey"
 	"scriptboard/internal/providercredential"
 	"scriptboard/internal/registrymonitor"
+	"scriptboard/internal/servicelogs"
 	"scriptboard/internal/statebackup"
 )
 
 const (
-	ProtocolVersion                     = 4
+	ProtocolVersion                     = 5
 	MaxRequestBytes                     = 3 << 20
 	MaxResponseBytes                    = 5 << 20
 	capabilityLifetime                  = 30 * time.Second
@@ -147,6 +149,11 @@ const (
 	operationKubeconfigUpdateContext    = "kubeconfig_update_context"
 	operationKubeconfigRenameContext    = "kubeconfig_rename_context"
 	operationKubeconfigDeleteContext    = "kubeconfig_delete_context"
+	operationHostSecurityCapabilities   = "host_security_capabilities"
+	operationHostSecurityUpdates        = "host_security_updates"
+	operationHostSecurityLogins         = "host_security_logins"
+	operationHostSecurityBans           = "host_security_bans"
+	operationServiceLogsList            = "service_logs_list"
 	statusOK                            = "ok"
 	statusError                         = "error"
 	defaultCallDeadline                 = 35 * time.Second
@@ -397,6 +404,8 @@ type ServerOptions struct {
 	Applications   ApplicationService
 	Kubernetes     KubernetesService
 	Kubeconfigs    KubeconfigService
+	HostSecurity   hostsecurity.Service
+	ServiceLogs    servicelogs.Reader
 	Now            func() time.Time
 }
 
@@ -418,6 +427,8 @@ type Server struct {
 	applications   ApplicationService
 	kubernetes     KubernetesService
 	kubeconfigs    KubeconfigService
+	hostSecurity   hostsecurity.Service
+	serviceLogs    servicelogs.Reader
 	now            func() time.Time
 
 	mu                sync.Mutex
@@ -445,67 +456,71 @@ type capabilityBinding struct {
 }
 
 type wireRequest struct {
-	Version               int                     `json:"version"`
-	Operation             string                  `json:"operation"`
-	RequestID             string                  `json:"request_id"`
-	SessionToken          string                  `json:"session_token,omitempty"`
-	Capability            string                  `json:"capability,omitempty"`
-	Action                Action                  `json:"action"`
-	Resource              string                  `json:"resource"`
-	Revision              string                  `json:"revision"`
-	ParametersSHA256      string                  `json:"parameters_sha256"`
-	Parameters            json.RawMessage         `json:"parameters,omitempty"`
-	MFAUserID             string                  `json:"mfa_user_id,omitempty"`
-	MFAAccount            string                  `json:"mfa_account,omitempty"`
-	MFACode               string                  `json:"mfa_code,omitempty"`
-	PasskeyUserID         string                  `json:"passkey_user_id,omitempty"`
-	PasskeyUsername       string                  `json:"passkey_username,omitempty"`
-	PasskeyName           string                  `json:"passkey_name,omitempty"`
-	PasskeyCredentialID   string                  `json:"passkey_credential_id,omitempty"`
-	PasskeyCredential     *webauthn.Credential    `json:"passkey_credential,omitempty"`
-	RemoteWebsiteID       string                  `json:"remote_website_id,omitempty"`
-	RemoteWebsiteEndpoint string                  `json:"remote_website_endpoint,omitempty"`
-	RemoteWebsiteKey      string                  `json:"remote_website_key,omitempty"`
-	RemoteWebsiteLocale   string                  `json:"remote_website_locale,omitempty"`
-	ProviderID            string                  `json:"provider_id,omitempty"`
-	ProviderName          string                  `json:"provider_name,omitempty"`
-	ProviderModel         string                  `json:"provider_model,omitempty"`
-	ProviderEndpoint      string                  `json:"provider_endpoint,omitempty"`
-	ProviderCredential    string                  `json:"provider_credential,omitempty"`
-	ProviderShared        bool                    `json:"provider_shared,omitempty"`
-	ProviderSessionHandle string                  `json:"provider_session_handle,omitempty"`
-	MySQL                 *mysqlWireRequest       `json:"mysql,omitempty"`
-	HostFiles             *hostFilesWireRequest   `json:"host_files,omitempty"`
-	StateBackup           *stateBackupWireRequest `json:"state_backup,omitempty"`
-	Registry              *registryWireRequest    `json:"registry,omitempty"`
-	Runtime               *runtimeWireRequest     `json:"runtime,omitempty"`
-	Kubeconfig            *kubeconfigWireRequest  `json:"kubeconfig,omitempty"`
+	Version               int                      `json:"version"`
+	Operation             string                   `json:"operation"`
+	RequestID             string                   `json:"request_id"`
+	SessionToken          string                   `json:"session_token,omitempty"`
+	Capability            string                   `json:"capability,omitempty"`
+	Action                Action                   `json:"action"`
+	Resource              string                   `json:"resource"`
+	Revision              string                   `json:"revision"`
+	ParametersSHA256      string                   `json:"parameters_sha256"`
+	Parameters            json.RawMessage          `json:"parameters,omitempty"`
+	MFAUserID             string                   `json:"mfa_user_id,omitempty"`
+	MFAAccount            string                   `json:"mfa_account,omitempty"`
+	MFACode               string                   `json:"mfa_code,omitempty"`
+	PasskeyUserID         string                   `json:"passkey_user_id,omitempty"`
+	PasskeyUsername       string                   `json:"passkey_username,omitempty"`
+	PasskeyName           string                   `json:"passkey_name,omitempty"`
+	PasskeyCredentialID   string                   `json:"passkey_credential_id,omitempty"`
+	PasskeyCredential     *webauthn.Credential     `json:"passkey_credential,omitempty"`
+	RemoteWebsiteID       string                   `json:"remote_website_id,omitempty"`
+	RemoteWebsiteEndpoint string                   `json:"remote_website_endpoint,omitempty"`
+	RemoteWebsiteKey      string                   `json:"remote_website_key,omitempty"`
+	RemoteWebsiteLocale   string                   `json:"remote_website_locale,omitempty"`
+	ProviderID            string                   `json:"provider_id,omitempty"`
+	ProviderName          string                   `json:"provider_name,omitempty"`
+	ProviderModel         string                   `json:"provider_model,omitempty"`
+	ProviderEndpoint      string                   `json:"provider_endpoint,omitempty"`
+	ProviderCredential    string                   `json:"provider_credential,omitempty"`
+	ProviderShared        bool                     `json:"provider_shared,omitempty"`
+	ProviderSessionHandle string                   `json:"provider_session_handle,omitempty"`
+	MySQL                 *mysqlWireRequest        `json:"mysql,omitempty"`
+	HostFiles             *hostFilesWireRequest    `json:"host_files,omitempty"`
+	StateBackup           *stateBackupWireRequest  `json:"state_backup,omitempty"`
+	Registry              *registryWireRequest     `json:"registry,omitempty"`
+	Runtime               *runtimeWireRequest      `json:"runtime,omitempty"`
+	Kubeconfig            *kubeconfigWireRequest   `json:"kubeconfig,omitempty"`
+	HostSecurity          *hostSecurityWireRequest `json:"host_security,omitempty"`
+	ServiceLogs           *serviceLogsWireRequest  `json:"service_logs,omitempty"`
 }
 
 type wireResponse struct {
-	Status                string                   `json:"status"`
-	Capability            string                   `json:"capability,omitempty"`
-	ExpiresAt             int64                    `json:"expires_at,omitempty"`
-	ErrorCode             string                   `json:"error_code,omitempty"`
-	Message               string                   `json:"message,omitempty"`
-	EventID               int64                    `json:"event_id,omitempty"`
-	MFAEnabled            bool                     `json:"mfa_enabled,omitempty"`
-	MFARecoveryCodes      int                      `json:"mfa_recovery_codes,omitempty"`
-	MFAEnrollment         *mfa.Enrollment          `json:"mfa_enrollment,omitempty"`
-	MFARecoveryValues     []string                 `json:"mfa_recovery_values,omitempty"`
-	MFAVerified           bool                     `json:"mfa_verified,omitempty"`
-	PasskeyUser           *passkey.User            `json:"passkey_user,omitempty"`
-	PasskeyCredentials    []passkey.CredentialView `json:"passkey_credentials,omitempty"`
-	RemoteWebsitePayload  json.RawMessage          `json:"remote_website_payload,omitempty"`
-	ProviderProxyEndpoint string                   `json:"provider_proxy_endpoint,omitempty"`
-	ProviderCapability    string                   `json:"provider_capability,omitempty"`
-	ProviderSessionHandle string                   `json:"provider_session_handle,omitempty"`
-	MySQL                 *mysqlWireResponse       `json:"mysql,omitempty"`
-	HostFiles             *hostFilesWireResponse   `json:"host_files,omitempty"`
-	StateBackup           *stateBackupWireResponse `json:"state_backup,omitempty"`
-	Registry              *registryWireResponse    `json:"registry,omitempty"`
-	Runtime               *runtimeWireResponse     `json:"runtime,omitempty"`
-	Kubeconfig            *kubeconfigWireResponse  `json:"kubeconfig,omitempty"`
+	Status                string                    `json:"status"`
+	Capability            string                    `json:"capability,omitempty"`
+	ExpiresAt             int64                     `json:"expires_at,omitempty"`
+	ErrorCode             string                    `json:"error_code,omitempty"`
+	Message               string                    `json:"message,omitempty"`
+	EventID               int64                     `json:"event_id,omitempty"`
+	MFAEnabled            bool                      `json:"mfa_enabled,omitempty"`
+	MFARecoveryCodes      int                       `json:"mfa_recovery_codes,omitempty"`
+	MFAEnrollment         *mfa.Enrollment           `json:"mfa_enrollment,omitempty"`
+	MFARecoveryValues     []string                  `json:"mfa_recovery_values,omitempty"`
+	MFAVerified           bool                      `json:"mfa_verified,omitempty"`
+	PasskeyUser           *passkey.User             `json:"passkey_user,omitempty"`
+	PasskeyCredentials    []passkey.CredentialView  `json:"passkey_credentials,omitempty"`
+	RemoteWebsitePayload  json.RawMessage           `json:"remote_website_payload,omitempty"`
+	ProviderProxyEndpoint string                    `json:"provider_proxy_endpoint,omitempty"`
+	ProviderCapability    string                    `json:"provider_capability,omitempty"`
+	ProviderSessionHandle string                    `json:"provider_session_handle,omitempty"`
+	MySQL                 *mysqlWireResponse        `json:"mysql,omitempty"`
+	HostFiles             *hostFilesWireResponse    `json:"host_files,omitempty"`
+	StateBackup           *stateBackupWireResponse  `json:"state_backup,omitempty"`
+	Registry              *registryWireResponse     `json:"registry,omitempty"`
+	Runtime               *runtimeWireResponse      `json:"runtime,omitempty"`
+	Kubeconfig            *kubeconfigWireResponse   `json:"kubeconfig,omitempty"`
+	HostSecurity          *hostSecurityWireResponse `json:"host_security,omitempty"`
+	ServiceLogs           *serviceLogsWireResponse  `json:"service_logs,omitempty"`
 }
 
 func NewServer(options ServerOptions) (*Server, error) {
@@ -518,7 +533,7 @@ func NewServer(options ServerOptions) (*Server, error) {
 	}
 	return &Server{
 		listener: options.Listener, verifyPeer: options.VerifyPeer, authorizer: options.Authorizer,
-		executor: options.Executor, auditor: options.Auditor, checkpoint: options.Checkpoint, mfa: options.MFA, passkeys: options.Passkeys, remoteWebsites: options.RemoteWebsites, providers: options.Providers, mysql: options.MySQL, hostFiles: options.HostFiles, stateBackups: options.StateBackups, registry: options.Registry, applications: options.Applications, kubernetes: options.Kubernetes, kubeconfigs: options.Kubeconfigs, now: now,
+		executor: options.Executor, auditor: options.Auditor, checkpoint: options.Checkpoint, mfa: options.MFA, passkeys: options.Passkeys, remoteWebsites: options.RemoteWebsites, providers: options.Providers, mysql: options.MySQL, hostFiles: options.HostFiles, stateBackups: options.StateBackups, registry: options.Registry, applications: options.Applications, kubernetes: options.Kubernetes, kubeconfigs: options.Kubeconfigs, hostSecurity: options.HostSecurity, serviceLogs: options.ServiceLogs, now: now,
 		capabilities: make(map[string]capabilityBinding), done: make(chan struct{}),
 		mfaVerifyFailures: make(map[string]mfaVerifyFailure),
 	}, nil
@@ -612,6 +627,8 @@ func (server *Server) handle(connection net.Conn) {
 		operationKubeconfigPreviewImport, operationKubeconfigImport, operationKubeconfigUseContext,
 		operationKubeconfigUpdateContext, operationKubeconfigRenameContext, operationKubeconfigDeleteContext:
 		response = server.kubeconfigOperation(request)
+	case operationHostSecurityCapabilities, operationHostSecurityUpdates, operationHostSecurityLogins, operationHostSecurityBans, operationServiceLogsList:
+		response = server.observabilityOperation(request)
 	default:
 		response = wireResponse{Status: statusError, ErrorCode: "operation_forbidden", Message: "operation is not supported"}
 	}
@@ -1295,6 +1312,9 @@ func validateWireRequest(request wireRequest) error {
 	}
 	if request.Kubeconfig != nil || isKubeconfigOperation(request.Operation) {
 		return validateKubeconfigRequest(request)
+	}
+	if request.HostSecurity != nil || request.ServiceLogs != nil || isObservabilityOperation(request.Operation) {
+		return validateObservabilityRequest(request)
 	}
 	if request.StateBackup != nil && !isStateBackupOperation(request.Operation) {
 		return errors.New("request contains unrelated state backup fields")

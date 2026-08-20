@@ -33,6 +33,7 @@ import (
 	"scriptboard/internal/registryconnection"
 	"scriptboard/internal/secretstore"
 	"scriptboard/internal/securityevents"
+	"scriptboard/internal/servicelogs"
 	"scriptboard/internal/statebackup"
 )
 
@@ -208,6 +209,7 @@ func RunBroker(ctx context.Context, arguments []string, getenv func(string) stri
 	}
 	databaseSecurity.SetAuditAnchor(checkpoint)
 	directHostSecurity := hostsecurity.NewManager(hostsecurity.Options{CapabilityCacheTTL: -1, LoginCacheTTL: -1})
+	directServiceLogs := servicelogs.New(servicelogs.Options{})
 	executor, err := privilegebroker.NewHostSecurityExecutor(directHostSecurity)
 	if err != nil {
 		return err
@@ -230,6 +232,7 @@ func RunBroker(ctx context.Context, arguments []string, getenv func(string) stri
 		Registry:     registryConnections,
 		Applications: applications, Kubernetes: brokerKubernetesService{db: database, factory: clusterstatus.HTTPFactory{}},
 		Kubeconfigs:  newBrokerKubeconfigManager(database, absolute, *allowedIdentity),
+		HostSecurity: directHostSecurity, ServiceLogs: directServiceLogs,
 		StateBackups: &brokerStateBackupService{stateRoot: absolute, database: database, checkpoint: checkpoint, audit: audit},
 	})
 	if err != nil {

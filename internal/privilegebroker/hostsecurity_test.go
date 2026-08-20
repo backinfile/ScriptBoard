@@ -67,23 +67,34 @@ func TestBrokerExecutorRejectsResourceThatDisagreesWithTypedParameters(t *testin
 }
 
 type fixtureHostSecurity struct {
-	capabilities  hostsecurity.Capabilities
-	mutationCalls int
-	lastID        string
-	lastEnabled   bool
+	capabilities    hostsecurity.Capabilities
+	updateReport    hostsecurity.SecurityUpdateReport
+	logins          hostsecurity.LoginPage
+	bans            hostsecurity.BanPage
+	capabilityReads int
+	updateReads     int
+	loginReads      int
+	banReads        int
+	mutationCalls   int
+	lastID          string
+	lastEnabled     bool
 }
 
 func (fixture *fixtureHostSecurity) Capabilities(context.Context) hostsecurity.Capabilities {
+	fixture.capabilityReads++
 	return fixture.capabilities
 }
-func (*fixtureHostSecurity) SecurityUpdates(context.Context, bool) (hostsecurity.SecurityUpdateReport, error) {
-	return hostsecurity.SecurityUpdateReport{}, nil
+func (fixture *fixtureHostSecurity) SecurityUpdates(context.Context, bool) (hostsecurity.SecurityUpdateReport, error) {
+	fixture.updateReads++
+	return fixture.updateReport, nil
 }
-func (*fixtureHostSecurity) Logins(context.Context, hostsecurity.LoginQuery) (hostsecurity.LoginPage, error) {
-	return hostsecurity.LoginPage{}, nil
+func (fixture *fixtureHostSecurity) Logins(context.Context, hostsecurity.LoginQuery) (hostsecurity.LoginPage, error) {
+	fixture.loginReads++
+	return fixture.logins, nil
 }
-func (*fixtureHostSecurity) Bans(context.Context, int, int) (hostsecurity.BanPage, error) {
-	return hostsecurity.BanPage{}, nil
+func (fixture *fixtureHostSecurity) Bans(context.Context, int, int) (hostsecurity.BanPage, error) {
+	fixture.banReads++
+	return fixture.bans, nil
 }
 func (fixture *fixtureHostSecurity) Install(context.Context, string) error {
 	fixture.mutationCalls++

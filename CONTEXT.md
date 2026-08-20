@@ -57,7 +57,7 @@ _Avoid_: 权限模式、启动用户、应用角色
 _Avoid_: 后台单体、执行服务、特权服务
 
 **特权操作 Broker（Privileged Broker）**：
-通过固定领域操作持有主机修改能力、Broker-owned 秘密，以及受管部署的 Docker/Kubernetes 宿主访问能力的受信组件。它不是任意命令、Shell、Docker/Kubernetes 请求透传或通用提权代理。
+通过固定领域操作持有主机修改能力、Broker-owned 秘密，以及受管部署的 Docker/Kubernetes、主机安全快照和服务诊断日志等宿主访问能力的受信组件。它不是任意命令、Shell、Docker/Kubernetes 请求透传或通用提权代理。
 _Avoid_: root Web、命令代理、通用 Agent
 
 **Runner**：

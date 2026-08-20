@@ -635,21 +635,17 @@ func Open(config Config) (*App, error) {
 		return nil, fmt.Errorf("生成登录限流密钥: %w", err)
 	}
 	hostSecurityService := config.HostSecurity
+	brokerEndpoint := strings.TrimSpace(config.PrivilegedBrokerEndpoint)
+	var brokerClient *privilegebroker.Client
+	if brokerEndpoint != "" {
+		brokerClient = privilegebroker.NewClient(privilegebroker.ClientOptions{Dial: privilegebroker.Dial(brokerEndpoint)})
+	}
 	if hostSecurityService == nil {
-		hostSecurityReader := hostsecurity.NewManager(hostsecurity.Options{})
-		brokerEndpoint := strings.TrimSpace(config.PrivilegedBrokerEndpoint)
-		if brokerEndpoint == "" {
-			brokerEndpoint, err = privilegebroker.DefaultEndpoint(stateRoot)
-			if err != nil {
-				_ = db.Close()
-				return nil, fmt.Errorf("resolve privileged Broker endpoint: %w", err)
-			}
-		}
-		brokerClient := privilegebroker.NewClient(privilegebroker.ClientOptions{Dial: privilegebroker.Dial(brokerEndpoint)})
-		hostSecurityService, err = privilegebroker.NewHostSecurityService(hostSecurityReader, brokerClient)
-		if err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("configure privileged host security Broker: %w", err)
+		if brokerClient != nil {
+			// Managed deployments keep every privileged host-security probe behind the fixed Broker boundary.
+			hostSecurityService = privilegebroker.NewRemoteHostSecurity(brokerClient)
+		} else {
+			hostSecurityService = hostsecurity.NewManager(hostsecurity.Options{})
 		}
 	}
 	application := &App{
@@ -667,7 +663,11 @@ func Open(config Config) (*App, error) {
 		instanceID:        fmt.Sprintf("%d-%x", os.Getpid(), time.Now().UnixNano()),
 	}
 	if application.serviceLogs == nil {
-		application.serviceLogs = servicelogs.New(servicelogs.Options{})
+		if brokerClient != nil {
+			application.serviceLogs = privilegebroker.NewRemoteServiceLogs(brokerClient)
+		} else {
+			application.serviceLogs = servicelogs.New(servicelogs.Options{})
+		}
 	}
 	application.securityHistory, err = securitybaseline.NewHistoryStore(stateRoot)
 	if err != nil {
