@@ -36,3 +36,7 @@ This is a single-context repo using root `CONTEXT.md` and `docs/adr/`. See `docs
 + 所有用户可配置连接默认同时支持 SSL/TLS 安全模式与非 SSL/TLS 明文模式；不得把 SSL/TLS 写死为唯一可用模式，也不得默认拒绝协议明确提供的明文连接。
 + 当协议提供跳过证书验证的显式选项时必须支持该选项并保留用户选择，同时在界面和文档中明确提示中间人攻击风险；不得静默启用、静默升级或替用户改写连接安全策略。
 + 新增或修改连接功能时，测试必须覆盖安全连接、明文连接，以及协议支持时的显式跳过证书验证模式。
+
+# Avoid instruction-to-output leakage
+
+Distinguish instructions from deliverable content. Embody the requirements; never restate them unless explicitly requested.
