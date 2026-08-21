@@ -13,16 +13,16 @@ import (
 
 func TestRemoteHostSecurityReadsEverySnapshotThroughBroker(t *testing.T) {
 	host := &fixtureHostSecurity{
-		capabilities: hostsecurity.Capabilities{OS: "linux", Hostname: "root-visible-host", UFWEnabled: true},
+		capabilities: hostsecurity.Capabilities{OS: "linux", Hostname: "root-visible-host", UFWEnabled: true, CollectorPrivilege: hostsecurity.RuntimePrivilege{Known: true, Administrator: true}, ControlPlanePrivilege: hostsecurity.RuntimePrivilege{Known: true, Administrator: true}},
 		updateReport: hostsecurity.SecurityUpdateReport{Supported: true, Provider: "root-updates"},
 		logins:       hostsecurity.LoginPage{Total: 7, Page: 2, Pages: 4},
 		bans:         hostsecurity.BanPage{Total: 3, Page: 1, Pages: 1},
 	}
 	server, client := observabilityFixture(t, host, &fixtureServiceLogs{})
 	defer server.Close()
-	service := NewRemoteHostSecurity(client)
+	service := NewRemoteHostSecurity(client, hostsecurity.RuntimePrivilege{Known: true})
 
-	if capabilities := service.Capabilities(context.Background()); capabilities.Hostname != "root-visible-host" || !capabilities.UFWEnabled {
+	if capabilities := service.Capabilities(context.Background()); capabilities.Hostname != "root-visible-host" || !capabilities.UFWEnabled || !capabilities.CollectorPrivilege.Administrator || capabilities.ControlPlanePrivilege.Administrator {
 		t.Fatalf("capabilities=%#v", capabilities)
 	}
 	if report, err := service.SecurityUpdates(context.Background(), true); err != nil || report.Provider != "root-updates" {

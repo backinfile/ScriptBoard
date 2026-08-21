@@ -246,7 +246,7 @@ var webMessages = map[string]localizedMessage{
 	"security.observed":                             {"已观察", "Observed"},
 	"security.no_risk_events":                       {"当前没有需要处理的登录风险。", "No sign-in risk currently needs attention."},
 	"security.capabilities":                         {"防护能力", "Protection capabilities"},
-	"security.runtime_privilege":                    {"运行权限", "Runtime privilege"},
+	"security.collection_privilege":                 {"采集权限", "Collection privilege"},
 	"security.administrator_privilege":              {"管理员权限", "Administrator privileges"},
 	"security.standard_privilege":                   {"标准用户权限", "Standard user privileges"},
 	"security.root_privilege":                       {"root 权限", "root privileges"},

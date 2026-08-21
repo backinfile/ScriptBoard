@@ -73,22 +73,27 @@ type SSHLoginSurface struct {
 	MaxAuthTries                      int
 }
 
+type RuntimePrivilege struct {
+	Administrator bool
+	Known         bool
+}
+
 type Capabilities struct {
-	OS                 string
-	Hostname           string
-	CollectedAt        time.Time
-	Administrator      bool
-	AdministratorKnown bool
-	SSH                Component
-	SSHLogin           SSHLoginSurface
-	Fail2Ban           Component
-	UFW                Component
-	Firewall           Component
-	UFWEnabled         bool
-	UFWDefaults        UFWDefaults
-	SSHPort            string
-	Rules              []FirewallRule
-	Profiles           []FirewallProfile
+	OS                    string
+	Hostname              string
+	CollectedAt           time.Time
+	CollectorPrivilege    RuntimePrivilege
+	ControlPlanePrivilege RuntimePrivilege
+	SSH                   Component
+	SSHLogin              SSHLoginSurface
+	Fail2Ban              Component
+	UFW                   Component
+	Firewall              Component
+	UFWEnabled            bool
+	UFWDefaults           UFWDefaults
+	SSHPort               string
+	Rules                 []FirewallRule
+	Profiles              []FirewallProfile
 }
 
 type LoginRecord struct {
@@ -347,7 +352,10 @@ func (m *Manager) collectCapabilities(ctx context.Context, now time.Time) Capabi
 			view.Firewall.Error = conciseError(err)
 			return view
 		}
-		view.Profiles, view.Rules, view.Administrator, view.AdministratorKnown = parseWindowsFirewall(output)
+		var administrator, administratorKnown bool
+		view.Profiles, view.Rules, administrator, administratorKnown = parseWindowsFirewall(output)
+		view.CollectorPrivilege = RuntimePrivilege{Administrator: administrator, Known: administratorKnown}
+		view.ControlPlanePrivilege = view.CollectorPrivilege
 		for _, profile := range view.Profiles {
 			view.Firewall.Running = view.Firewall.Running || profile.Enabled
 		}
@@ -357,8 +365,8 @@ func (m *Manager) collectCapabilities(ctx context.Context, now time.Time) Capabi
 		return view
 	}
 	if current, err := user.Current(); err == nil {
-		view.AdministratorKnown = true
-		view.Administrator = current.Uid == "0"
+		view.CollectorPrivilege = RuntimePrivilege{Administrator: current.Uid == "0", Known: true}
+		view.ControlPlanePrivilege = view.CollectorPrivilege
 	}
 	view.SSHPort = "22"
 	if m.runner.LookPath("sshd") {

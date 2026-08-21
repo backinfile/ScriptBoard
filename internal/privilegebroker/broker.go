@@ -38,7 +38,7 @@ import (
 )
 
 const (
-	ProtocolVersion                     = 5
+	ProtocolVersion                     = 6
 	MaxRequestBytes                     = 3 << 20
 	MaxResponseBytes                    = 5 << 20
 	capabilityLifetime                  = 30 * time.Second

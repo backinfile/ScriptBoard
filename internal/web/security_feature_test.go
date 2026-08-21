@@ -21,7 +21,7 @@ func TestHostSecurityPageAndUFWDraftFlow(t *testing.T) {
 	t.Parallel()
 	service := &securityFixtureService{capabilities: hostsecurity.Capabilities{
 		OS: "linux", Hostname: "prod-web-01", CollectedAt: time.Now().UTC(),
-		Administrator: true, AdministratorKnown: true,
+		CollectorPrivilege: hostsecurity.RuntimePrivilege{Administrator: true, Known: true}, ControlPlanePrivilege: hostsecurity.RuntimePrivilege{Known: true},
 		SSH: hostsecurity.Component{Installed: true, Running: true},
 		SSHLogin: hostsecurity.SSHLoginSurface{
 			Port: "22", ListenAddresses: []string{"0.0.0.0:22", "[::]:22"},
@@ -164,7 +164,7 @@ func TestHostSecurityLoginFiltersArePassedToService(t *testing.T) {
 	service := &securityFixtureService{
 		capabilities: hostsecurity.Capabilities{
 			OS: "windows", Hostname: "win-app-02", CollectedAt: time.Now().UTC(), Firewall: hostsecurity.Component{Installed: true, Running: true},
-			Administrator: true, AdministratorKnown: true,
+			CollectorPrivilege: hostsecurity.RuntimePrivilege{Administrator: true, Known: true}, ControlPlanePrivilege: hostsecurity.RuntimePrivilege{Known: true},
 			Profiles: []hostsecurity.FirewallProfile{{Name: "Public", Enabled: true}},
 			Rules:    []hostsecurity.FirewallRule{{ID: "RemoteDesktop-Rule-ID", Direction: hostsecurity.DirectionInbound, Action: hostsecurity.ActionAllow, Protocol: "tcp", Port: "3389", Address: "10.0.0.0/24", Name: "Remote Desktop", Profile: "Public", Enabled: true}},
 		},
@@ -226,7 +226,7 @@ func TestHostSecurityBaselineExplainsEffectiveChecksAndCapturesStatusOnlyHistory
 	t.Parallel()
 	service := &securityFixtureService{
 		capabilities: hostsecurity.Capabilities{
-			OS: "linux", Hostname: "baseline-01", CollectedAt: time.Now().UTC(), AdministratorKnown: true,
+			OS: "linux", Hostname: "baseline-01", CollectedAt: time.Now().UTC(), CollectorPrivilege: hostsecurity.RuntimePrivilege{Administrator: true, Known: true}, ControlPlanePrivilege: hostsecurity.RuntimePrivilege{Known: true},
 			Firewall: hostsecurity.Component{Installed: true, Running: true}, SSH: hostsecurity.Component{Installed: true, Running: true},
 			SSHLogin: hostsecurity.SSHLoginSurface{PublicKeyAuthentication: "yes", PasswordAuthentication: "yes", RootLogin: "prohibit-password", EmptyPasswords: "no", MaxAuthTries: 3},
 			Fail2Ban: hostsecurity.Component{Installed: true, Running: true},
@@ -301,7 +301,7 @@ func TestHostSecurityPageShowsStandardUserPrivilege(t *testing.T) {
 	t.Parallel()
 	service := &securityFixtureService{capabilities: hostsecurity.Capabilities{
 		OS: "windows", Hostname: "win-standard", CollectedAt: time.Now().UTC(),
-		AdministratorKnown: true, Firewall: hostsecurity.Component{Installed: true, Running: true},
+		CollectorPrivilege: hostsecurity.RuntimePrivilege{Known: true}, ControlPlanePrivilege: hostsecurity.RuntimePrivilege{Known: true}, Firewall: hostsecurity.Component{Installed: true, Running: true},
 	}, logins: hostsecurity.LoginPage{Page: 1, Pages: 1}}
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: filepath.Join(t.TempDir(), "state"), HostSecurity: service})
 
@@ -343,7 +343,7 @@ func TestHostSecurityDeferredShellSkipsSystemCollection(t *testing.T) {
 func TestHostSecurityCanToggleFirstAddedDraftRule(t *testing.T) {
 	t.Parallel()
 	service := &securityFixtureService{capabilities: hostsecurity.Capabilities{
-		OS: "linux", Administrator: true, AdministratorKnown: true,
+		OS: "linux", CollectorPrivilege: hostsecurity.RuntimePrivilege{Administrator: true, Known: true}, ControlPlanePrivilege: hostsecurity.RuntimePrivilege{Known: true},
 		UFW: hostsecurity.Component{Installed: true, Running: true},
 	}}
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: filepath.Join(t.TempDir(), "state"), HostSecurity: service})

@@ -643,7 +643,7 @@ func Open(config Config) (*App, error) {
 	if hostSecurityService == nil {
 		if brokerClient != nil {
 			// Managed deployments keep every privileged host-security probe behind the fixed Broker boundary.
-			hostSecurityService = privilegebroker.NewRemoteHostSecurity(brokerClient)
+			hostSecurityService = privilegebroker.NewRemoteHostSecurity(brokerClient, hostsecurity.RuntimePrivilege{Known: true})
 		} else {
 			hostSecurityService = hostsecurity.NewManager(hostsecurity.Options{})
 		}

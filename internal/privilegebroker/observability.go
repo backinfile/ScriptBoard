@@ -158,10 +158,13 @@ func (server *Server) observabilityOperation(request wireRequest) wireResponse {
 	return wireResponse{Status: statusOK, HostSecurity: response}
 }
 
-type RemoteHostSecurity struct{ client *Client }
+type RemoteHostSecurity struct {
+	client                *Client
+	controlPlanePrivilege hostsecurity.RuntimePrivilege
+}
 
-func NewRemoteHostSecurity(client *Client) *RemoteHostSecurity {
-	return &RemoteHostSecurity{client: client}
+func NewRemoteHostSecurity(client *Client, controlPlanePrivilege hostsecurity.RuntimePrivilege) *RemoteHostSecurity {
+	return &RemoteHostSecurity{client: client, controlPlanePrivilege: controlPlanePrivilege}
 }
 
 func (service *RemoteHostSecurity) call(ctx context.Context, operation string, payload hostSecurityWireRequest) (*hostSecurityWireResponse, error) {
@@ -188,7 +191,10 @@ func (service *RemoteHostSecurity) Capabilities(ctx context.Context) hostsecurit
 		}
 		return hostsecurity.Capabilities{SSH: hostsecurity.Component{Error: message}, UFW: hostsecurity.Component{Error: message}, Firewall: hostsecurity.Component{Error: message}}
 	}
-	return *response.Capabilities
+	capabilities := *response.Capabilities
+	// Broker reports the collector identity; only Web composition can state the control-plane identity.
+	capabilities.ControlPlanePrivilege = service.controlPlanePrivilege
+	return capabilities
 }
 
 func (service *RemoteHostSecurity) SecurityUpdates(ctx context.Context, refresh bool) (hostsecurity.SecurityUpdateReport, error) {

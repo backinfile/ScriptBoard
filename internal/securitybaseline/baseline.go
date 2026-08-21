@@ -35,9 +35,9 @@ type Report struct {
 func Evaluate(capabilities hostsecurity.Capabilities, updates hostsecurity.SecurityUpdateReport, updateErr error) Report {
 	report := Report{}
 	add := func(check Check) { report.Checks = append(report.Checks, check) }
-	if capabilities.AdministratorKnown {
+	if capabilities.ControlPlanePrivilege.Known {
 		check := Check{ID: "least-privilege", Category: "service", Title: "Web control plane least privilege", Status: StatusPass, Evidence: "Web process is not running with host administrator privileges"}
-		if capabilities.Administrator {
+		if capabilities.ControlPlanePrivilege.Administrator {
 			check.Status = StatusAttention
 			check.Evidence = "Web process has host administrator privileges"
 			check.Guidance = "Use the managed four-service installation so privileged mutations stay in Broker."

@@ -3,6 +3,8 @@
 受管 Web 使用低权限服务身份后，主机安全页的 SSH 有效配置、登录 journal、Fail2Ban/UFW 状态，
 以及 ScriptBoard 四个 systemd/Windows 服务的诊断日志，统一由 root/LocalSystem Broker 读取。
 Web 只接收结构化、有界、已脱敏的领域结果；便携模式仍可使用进程内读取器。
+返回模型分别标记 Broker 的采集权限与 Web 控制面权限；页面顶部展示前者，最小权限基线只判断后者，
+不得因为 Broker 以 root/LocalSystem 采集而误报 Web 拥有宿主管理员权限。
 
 Broker 协议只发布五个固定只读操作：主机安全能力、系统安全更新、登录记录、封禁记录和服务日志。
 登录、封禁、日志的范围、分页、服务、级别和搜索字段都有明确白名单与上限；协议拒绝跨领域字段、

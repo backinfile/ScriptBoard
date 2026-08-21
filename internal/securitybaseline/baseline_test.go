@@ -8,7 +8,7 @@ import (
 
 func TestLinuxBaselineUsesEffectiveValuesAndPendingSecurityUpdates(t *testing.T) {
 	report := Evaluate(hostsecurity.Capabilities{
-		OS: "linux", AdministratorKnown: true, Administrator: false,
+		OS: "linux", CollectorPrivilege: hostsecurity.RuntimePrivilege{Known: true}, ControlPlanePrivilege: hostsecurity.RuntimePrivilege{Known: true},
 		Firewall: hostsecurity.Component{Installed: true, Running: true},
 		SSH:      hostsecurity.Component{Installed: true, Running: true},
 		SSHLogin: hostsecurity.SSHLoginSurface{PublicKeyAuthentication: "yes", PasswordAuthentication: "yes", RootLogin: "prohibit-password", EmptyPasswords: "no", MaxAuthTries: 3},
@@ -24,7 +24,7 @@ func TestLinuxBaselineUsesEffectiveValuesAndPendingSecurityUpdates(t *testing.T)
 
 func TestWindowsBaselineFlagsAdministratorWebAndDisabledProfile(t *testing.T) {
 	report := Evaluate(hostsecurity.Capabilities{
-		OS: "windows", AdministratorKnown: true, Administrator: true,
+		OS: "windows", CollectorPrivilege: hostsecurity.RuntimePrivilege{Known: true, Administrator: true}, ControlPlanePrivilege: hostsecurity.RuntimePrivilege{Known: true, Administrator: true},
 		Firewall: hostsecurity.Component{Installed: true, Running: true},
 		Profiles: []hostsecurity.FirewallProfile{{Name: "Domain", Enabled: true}, {Name: "Public", Enabled: false}},
 	}, hostsecurity.SecurityUpdateReport{Supported: true, Provider: "Windows Update Agent"}, nil)
@@ -33,6 +33,16 @@ func TestWindowsBaselineFlagsAdministratorWebAndDisabledProfile(t *testing.T) {
 	if report.Attention != 2 || report.Passed != 2 || report.Score != 50 {
 		t.Fatalf("baseline report = %#v", report)
 	}
+}
+
+func TestBaselineSeparatesPrivilegedCollectorFromLeastPrivilegeWeb(t *testing.T) {
+	report := Evaluate(hostsecurity.Capabilities{
+		OS:                    "linux",
+		CollectorPrivilege:    hostsecurity.RuntimePrivilege{Known: true, Administrator: true},
+		ControlPlanePrivilege: hostsecurity.RuntimePrivilege{Known: true, Administrator: false},
+		Firewall:              hostsecurity.Component{Installed: true, Running: true},
+	}, hostsecurity.SecurityUpdateReport{Supported: true, Provider: "APT"}, nil)
+	assertCheck(t, report, "least-privilege", StatusPass)
 }
 
 func assertCheck(t *testing.T, report Report, id string, status Status) {
