@@ -3,6 +3,7 @@ package privilegebroker
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"testing"
 
 	"scriptboard/internal/hostsecurity"
@@ -74,10 +75,10 @@ func TestBrokeredHostSecurityBansThroughTypedAction(t *testing.T) {
 	defer server.Close()
 	service, _ := NewHostSecurityService(reader, client)
 	ctx := WithAuthorization(context.Background(), Authorization{SessionToken: "session-token-fixture-0123456789", RequestID: "request-host-ban"})
-	if err := service.Ban(ctx, "sshd", "203.0.113.8"); err != nil {
+	if err := service.Ban(ctx, "sshd", "203.0.113.8", 86400); err != nil {
 		t.Fatal(err)
 	}
-	if reader.mutationCalls != 0 || direct.mutationCalls != 1 || direct.lastID != "sshd:203.0.113.8" {
+	if reader.mutationCalls != 0 || direct.mutationCalls != 1 || direct.lastID != "sshd:203.0.113.8:86400" {
 		t.Fatalf("reader mutations=%d direct mutations=%d target=%q", reader.mutationCalls, direct.mutationCalls, direct.lastID)
 	}
 }
@@ -120,9 +121,9 @@ func (fixture *fixtureHostSecurity) Unban(context.Context, string, string) error
 	fixture.mutationCalls++
 	return nil
 }
-func (fixture *fixtureHostSecurity) Ban(_ context.Context, jail, ip string) error {
+func (fixture *fixtureHostSecurity) Ban(_ context.Context, jail, ip string, seconds int) error {
 	fixture.mutationCalls++
-	fixture.lastID = jail + ":" + ip
+	fixture.lastID = jail + ":" + ip + ":" + strconv.Itoa(seconds)
 	return nil
 }
 func (fixture *fixtureHostSecurity) EnableUFW(context.Context, []hostsecurity.FirewallRule) error {

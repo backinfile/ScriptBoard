@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 	"unicode"
@@ -240,9 +241,10 @@ func (service *RemoteHostSecurity) Unban(ctx context.Context, jail, ip string) e
 	return service.client.Invoke(ctx, ActionFail2BanUnban, jail+":"+ip, "ban-v1", parameters)
 }
 
-func (service *RemoteHostSecurity) Ban(ctx context.Context, jail, ip string) error {
-	parameters, _ := json.Marshal(unbanParameters{Jail: jail, IP: ip})
-	return service.client.Invoke(ctx, ActionFail2BanBan, jail+":"+ip, "ban-v1", parameters)
+func (service *RemoteHostSecurity) Ban(ctx context.Context, jail, ip string, durationSeconds int) error {
+	parameters, _ := json.Marshal(banParameters{Jail: jail, IP: ip, DurationSeconds: durationSeconds})
+	resource := fmt.Sprintf("%s:%s:%d", jail, ip, durationSeconds)
+	return service.client.Invoke(ctx, ActionFail2BanBan, resource, "ban-v2", parameters)
 }
 
 func (service *RemoteHostSecurity) EnableUFW(ctx context.Context, baseline []hostsecurity.FirewallRule) error {

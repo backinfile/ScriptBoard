@@ -609,6 +609,31 @@ func (a *App) newWindowsFirewallRuleTask(response http.ResponseWriter, request *
 	})
 }
 
+func (a *App) newLinuxFirewallRuleTask(response http.ResponseWriter, request *http.Request) {
+	a.renderTaskPage(response, request, taskPageData{
+		Kind: "linux-firewall-rule", Title: webText(resolveWebLocale(request), "security.add_rule"),
+		Description: webText(resolveWebLocale(request), "security.linux_rule_task_description"),
+		BackURL:     "/monitor/security?tab=defense", Action: "/monitor/security/firewall/draft/rules",
+	})
+}
+
+func (a *App) reviewSecurityFirewallTask(response http.ResponseWriter, request *http.Request) {
+	current := request.Context().Value(sessionContextKey).(session)
+	draft, ok := a.securityDraft(current.userID)
+	if !ok || len(draft.Changes) == 0 {
+		http.Redirect(response, request, "/monitor/security?tab=defense", http.StatusSeeOther)
+		return
+	}
+	capabilities := a.hostSecurity.Capabilities(request.Context())
+	hasSSHRule := securityHasSSHAllowRule(draft.Desired, capabilities.SSHPort)
+	canApply := !capabilities.UFWEnabled || draft.DesiredDefaults.Incoming != hostsecurity.PolicyDeny || hasSSHRule
+	a.renderTaskPage(response, request, taskPageData{
+		Kind: "ufw-review", Title: webText(resolveWebLocale(request), "security.review_changes"),
+		Description: webText(resolveWebLocale(request), "security.review_changes_description"),
+		BackURL:     "/monitor/security?tab=defense", DraftChanges: draft.Changes, CanApplyDraft: canApply,
+	})
+}
+
 func (a *App) newFail2BanBanTask(response http.ResponseWriter, request *http.Request) {
 	a.renderTaskPage(response, request, taskPageData{
 		Kind: "fail2ban-ban", Title: webText(resolveWebLocale(request), "security.manual_ban"),
@@ -705,9 +730,14 @@ func (a *App) banSecurityIP(response http.ResponseWriter, request *http.Request)
 		return
 	}
 	ip := strings.TrimSpace(request.FormValue("ip"))
+	durationSeconds, err := strconv.Atoi(strings.TrimSpace(request.FormValue("duration_seconds")))
+	if err != nil || !hostsecurity.ValidBanDuration(durationSeconds) {
+		writeSecurityError(response, request, hostsecurity.ErrInvalidBanDuration)
+		return
+	}
 	ctx, cancel := context.WithTimeout(request.Context(), 15*time.Second)
 	defer cancel()
-	if err := a.hostSecurity.Ban(ctx, "sshd", ip); err != nil {
+	if err := a.hostSecurity.Ban(ctx, "sshd", ip, durationSeconds); err != nil {
 		a.recordAuditForRequest(request, "fail2ban_ban", "sshd:"+ip, "failed")
 		writeSecurityError(response, request, err)
 		return

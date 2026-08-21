@@ -102,9 +102,16 @@ func TestHostSecurityPageAndUFWDraftFlow(t *testing.T) {
 		[]byte(`class="security-ban-drawer-host"`), []byte(`data-security-ban-loading`), []byte(`aria-hidden="true"`),
 		[]byte(`action="/monitor/security/firewall/draft/defaults"`), []byte("Default traffic policy"),
 		[]byte("IPv4 / IPv6"), []byte(`rule_sort=family`), []byte(`/monitor/security/fail2ban/ban`),
+		[]byte(`/monitor/security/firewall/rules/new`),
 	} {
 		if !bytes.Contains(page, expected) {
 			t.Fatalf("security page missing %q: %s", expected, page)
+		}
+	}
+	ruleTask := getSecurityPage(t, client, serverURL+"/monitor/security/firewall/rules/new")
+	for _, expected := range [][]byte{[]byte(`data-task-kind="linux-firewall-rule"`), []byte(`action="/monitor/security/firewall/draft/rules"`), []byte(`name="direction"`), []byte(`name="protocol"`)} {
+		if !bytes.Contains(ruleTask, expected) {
+			t.Fatalf("Linux firewall rule drawer missing %q: %s", expected, ruleTask)
 		}
 	}
 	for _, forbidden := range [][]byte{[]byte("关闭 UFW"), []byte("/monitor/security/firewall/disable")} {
@@ -113,13 +120,13 @@ func TestHostSecurityPageAndUFWDraftFlow(t *testing.T) {
 		}
 	}
 	banTask := getSecurityPage(t, client, serverURL+"/monitor/security/fail2ban/ban")
-	for _, expected := range [][]byte{[]byte(`data-task-kind="fail2ban-ban"`), []byte(`name="ip"`), []byte(`action="/monitor/security/fail2ban/ban"`)} {
+	for _, expected := range [][]byte{[]byte(`data-task-kind="fail2ban-ban"`), []byte(`name="ip"`), []byte(`name="duration_seconds"`), []byte(`value="3600" selected`), []byte(`action="/monitor/security/fail2ban/ban"`)} {
 		if !bytes.Contains(banTask, expected) {
 			t.Fatalf("manual ban drawer missing %q: %s", expected, banTask)
 		}
 	}
 	response, err := client.PostForm(serverURL+"/monitor/security/fail2ban/ban", url.Values{
-		"csrf_token": {formToken(t, banTask)}, "ip": {"2001:db8::8"},
+		"csrf_token": {formToken(t, banTask)}, "ip": {"2001:db8::8"}, "duration_seconds": {"86400"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -131,7 +138,7 @@ func TestHostSecurityPageAndUFWDraftFlow(t *testing.T) {
 	service.mu.Lock()
 	banTarget := service.banTarget
 	service.mu.Unlock()
-	if banTarget != "sshd:2001:db8::8" {
+	if banTarget != "sshd:2001:db8::8:86400" {
 		t.Fatalf("manual ban target = %q", banTarget)
 	}
 
@@ -176,9 +183,9 @@ func TestHostSecurityPageAndUFWDraftFlow(t *testing.T) {
 		t.Fatalf("update default policies status = %d", response.StatusCode)
 	}
 
-	review := getSecurityPage(t, client, serverURL+"/monitor/security?tab=defense&full=1&review=1")
-	if !bytes.Contains(review, []byte("Review UFW changes")) || !bytes.Contains(review, []byte("DNS")) || !bytes.Contains(review, []byte("Default outgoing")) {
-		t.Fatalf("review dialog missing draft: %s", review)
+	review := getSecurityPage(t, client, serverURL+"/monitor/security/firewall/review")
+	if !bytes.Contains(review, []byte(`data-task-kind="ufw-review"`)) || !bytes.Contains(review, []byte("Review UFW changes")) || !bytes.Contains(review, []byte("DNS")) || !bytes.Contains(review, []byte("Default outgoing")) {
+		t.Fatalf("review drawer missing draft: %s", review)
 	}
 	response, err = client.PostForm(serverURL+"/monitor/security/firewall/draft/apply", url.Values{"csrf_token": {formToken(t, review)}})
 	if err != nil {
@@ -485,10 +492,10 @@ func (s *securityFixtureService) Install(context.Context, string) error { return
 
 func (s *securityFixtureService) Unban(context.Context, string, string) error { return nil }
 
-func (s *securityFixtureService) Ban(_ context.Context, jail, ip string) error {
+func (s *securityFixtureService) Ban(_ context.Context, jail, ip string, seconds int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.banTarget = jail + ":" + ip
+	s.banTarget = jail + ":" + ip + ":" + strconv.Itoa(seconds)
 	return nil
 }
 

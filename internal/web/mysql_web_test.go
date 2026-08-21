@@ -170,3 +170,70 @@ func TestBackupRecordsFilterAndOpenConfirmationDrawers(t *testing.T) {
 		t.Fatalf("invalid backup filter status=%d", response.StatusCode)
 	}
 }
+
+func TestBackupPlanCanBeEditedInDrawerAndRequiresTypedDeleteConfirmation(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: stateRoot})
+	page := getBody(t, client, serverURL+"/resources/databases", http.StatusOK)
+	response, err := client.PostForm(serverURL+"/resources/databases/instances", url.Values{
+		"csrf_token": {formToken(t, page)}, "name": {"Plan fixture"}, "host": {"127.0.0.1"}, "port": {"1"},
+		"username": {"scriptboard"}, "password": {"database-password"}, "tls_mode": {"preferred"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	page = getBody(t, client, serverURL+"/resources/databases", http.StatusOK)
+	instanceMatch := regexp.MustCompile(`/resources/databases\?instance=([a-f0-9]+)`).FindStringSubmatch(string(page))
+	if len(instanceMatch) != 2 {
+		t.Fatalf("database instance link missing: %s", page)
+	}
+	instanceID := instanceMatch[1]
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	now := time.Now().UTC().UnixNano()
+	if _, err := database.Exec(`INSERT INTO mysql_backup_plans
+		(id,name,instance_id,databases_json,expression,retention_count,enabled,next_fire_at,created_at,updated_at)
+		VALUES ('plan-edit-fixture','Nightly',?, '["inventory"]','0 2 * * *',7,1,?,?,?)`, instanceID, now, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	page = getBody(t, client, serverURL+"/resources/databases?instance="+instanceID+"&tab=plans", http.StatusOK)
+	for _, expected := range []string{
+		`action="/resources/databases/plans/plan-edit-fixture"`, `value="Nightly"`, `value="0 2 * * *"`,
+		`value="inventory" checked`, `data-mysql-plan-delete-trigger`, `data-mysql-plan-delete-drawer`, `data-mysql-plan-delete-form`,
+	} {
+		if !strings.Contains(string(page), expected) {
+			t.Fatalf("plan drawer missing %q: %s", expected, page)
+		}
+	}
+	response, err = client.PostForm(serverURL+"/resources/databases/plans/plan-edit-fixture", url.Values{
+		"csrf_token": {formToken(t, page)}, "name": {"Weeknight"}, "expression": {"30 1 * * 1-5"},
+		"retention_count": {"14"}, "databases": {"inventory"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || !strings.Contains(response.Header.Get("Location"), "tab=plans") {
+		t.Fatalf("update plan status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+	var name, expression string
+	var retention int
+	if err := database.QueryRow("SELECT name,expression,retention_count FROM mysql_backup_plans WHERE id='plan-edit-fixture'").Scan(&name, &expression, &retention); err != nil || name != "Weeknight" || expression != "30 1 * * 1-5" || retention != 14 {
+		t.Fatalf("updated plan = %q %q %d, err=%v", name, expression, retention, err)
+	}
+	response, err = client.PostForm(serverURL+"/resources/databases/plans/plan-edit-fixture/delete", url.Values{
+		"csrf_token": {formToken(t, page)}, "confirmation": {"wrong"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unconfirmed delete status=%d", response.StatusCode)
+	}
+}

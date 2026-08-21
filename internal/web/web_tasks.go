@@ -58,6 +58,8 @@ type taskPageData struct {
 	QuickReferences    int
 	ScheduleReferences int
 	User               userView
+	DraftChanges       []securityFirewallChange
+	CanApplyDraft      bool
 }
 
 func (a *App) renderTaskPage(response http.ResponseWriter, request *http.Request, data taskPageData) {

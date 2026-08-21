@@ -5,7 +5,7 @@
 <main class="workspace task-page" data-task-page data-task-kind="{{.Kind}}" data-task-close-label="{{t .Locale "common.close"}}">
   <a class="task-back" href="{{.BackURL}}"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "common.back"}}</a>
   <section class="task-sheet">
-    <header><span class="dico{{if and (eq .Kind "external-global-control") (not .Enabled)}} dico--danger{{end}}" aria-hidden="true"><span data-lucide="{{if eq .Kind "step-up"}}shield-check{{else if eq .Kind "external-global-control"}}power{{else if or (eq .Kind "windows-firewall-rule") (eq .Kind "fail2ban-ban")}}shield-plus{{else if eq .Kind "user-create"}}user-plus{{else if eq .Kind "user-edit"}}square-pen{{else if eq .Kind "account-username"}}circle-user-round{{else if eq .Kind "account-password"}}lock{{else if eq .Kind "new-directory"}}folder-plus{{else if eq .Kind "upload"}}upload{{else if or (eq .Kind "move-file") (eq .Kind "quick-move-group")}}folder-input{{else if or (eq .Kind "run") (eq .Kind "one-time-run")}}play{{else if eq .Kind "quick-create"}}plus{{else if or (eq .Kind "quick-save") (eq .Kind "quick-new")}}bookmark-plus{{else if eq .Kind "quick-copy"}}copy{{else if or (eq .Kind "quick-group-new") (eq .Kind "quick-group-edit") (eq .Kind "schedule-group-new") (eq .Kind "schedule-group-edit")}}folder{{else if or (eq .Kind "variable-new") (eq .Kind "variable-edit")}}braces{{else if or (eq .Kind "schedule-new") (eq .Kind "schedule-edit")}}calendar-clock{{else}}square-pen{{end}}"></span></span><div><p class="page-eyebrow">{{if eq .Kind "step-up"}}{{t .Locale "step_up.eyebrow"}}{{else if eq .Kind "external-global-control"}}{{t .Locale "external.global_control"}}{{else if eq .Kind "fail2ban-ban"}}Fail2Ban / sshd{{else if or (eq .Kind "user-edit") (eq .Kind "user-create")}}{{t .Locale "users.accounts"}}{{else if or (eq .Kind "account-username") (eq .Kind "account-password")}}{{t .Locale "settings.account"}}{{else if eq .Kind "move-file"}}{{t .Locale "files.move"}}{{else}}{{t .Locale "common.create"}}{{end}}</p><h1>{{.Title}}</h1><p class="dsub">{{.Description}}</p></div><a class="icon-button" href="{{.BackURL}}" aria-label="{{t .Locale "common.close"}}"><span data-lucide="x" aria-hidden="true"></span></a></header>
+    <header><span class="dico{{if and (eq .Kind "external-global-control") (not .Enabled)}} dico--danger{{end}}" aria-hidden="true"><span data-lucide="{{if eq .Kind "step-up"}}shield-check{{else if eq .Kind "external-global-control"}}power{{else if eq .Kind "ufw-review"}}clipboard-check{{else if or (eq .Kind "windows-firewall-rule") (eq .Kind "linux-firewall-rule") (eq .Kind "fail2ban-ban")}}shield-plus{{else if eq .Kind "user-create"}}user-plus{{else if eq .Kind "user-edit"}}square-pen{{else if eq .Kind "account-username"}}circle-user-round{{else if eq .Kind "account-password"}}lock{{else if eq .Kind "new-directory"}}folder-plus{{else if eq .Kind "upload"}}upload{{else if or (eq .Kind "move-file") (eq .Kind "quick-move-group")}}folder-input{{else if or (eq .Kind "run") (eq .Kind "one-time-run")}}play{{else if eq .Kind "quick-create"}}plus{{else if or (eq .Kind "quick-save") (eq .Kind "quick-new")}}bookmark-plus{{else if eq .Kind "quick-copy"}}copy{{else if or (eq .Kind "quick-group-new") (eq .Kind "quick-group-edit") (eq .Kind "schedule-group-new") (eq .Kind "schedule-group-edit")}}folder{{else if or (eq .Kind "variable-new") (eq .Kind "variable-edit")}}braces{{else if or (eq .Kind "schedule-new") (eq .Kind "schedule-edit")}}calendar-clock{{else}}square-pen{{end}}"></span></span><div><p class="page-eyebrow">{{if eq .Kind "step-up"}}{{t .Locale "step_up.eyebrow"}}{{else if eq .Kind "external-global-control"}}{{t .Locale "external.global_control"}}{{else if eq .Kind "fail2ban-ban"}}Fail2Ban / sshd{{else if eq .Kind "ufw-review"}}UFW / {{t .Locale "security.pending_changes"}}{{else if or (eq .Kind "user-edit") (eq .Kind "user-create")}}{{t .Locale "users.accounts"}}{{else if or (eq .Kind "account-username") (eq .Kind "account-password")}}{{t .Locale "settings.account"}}{{else if eq .Kind "move-file"}}{{t .Locale "files.move"}}{{else}}{{t .Locale "common.create"}}{{end}}</p><h1>{{.Title}}</h1><p class="dsub">{{.Description}}</p></div><a class="icon-button" href="{{.BackURL}}" aria-label="{{t .Locale "common.close"}}"><span data-lucide="x" aria-hidden="true"></span></a></header>
     {{if .Error}}<p class="page-error" role="alert">{{.Error}}</p>{{end}}
     {{if eq .Kind "external-global-control"}}
     <form method="post" action="{{.Action}}">
@@ -39,32 +39,39 @@
         <section class="d-section">
           <p class="ds-title"><span data-lucide="network" aria-hidden="true"></span>{{t .Locale "common.target"}}</p>
           <label>{{t .Locale "security.ip_address"}} <input name="ip" inputmode="text" autocomplete="off" spellcheck="false" required autofocus placeholder="203.0.113.8 / 2001:db8::8"></label>
+          <label>{{t .Locale "security.ban_duration"}} <select name="duration_seconds" required><option value="600">10 {{t .Locale "security.minutes"}}</option><option value="3600" selected>1 {{t .Locale "security.hour"}}</option><option value="86400">24 {{t .Locale "security.hours"}}</option><option value="604800">7 {{t .Locale "security.days"}}</option><option value="2592000">30 {{t .Locale "security.days"}}</option><option value="-1">{{t .Locale "security.permanent"}}</option></select></label>
           <p class="field-hint">{{t .Locale "security.manual_ban_scope"}}</p>
         </section>
         <aside class="inline-notice"><span data-lucide="shield-alert" aria-hidden="true"></span><p>{{t .Locale "security.manual_ban_warning"}}</p></aside>
       </div>
       <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="shield-plus" aria-hidden="true"></span>{{t .Locale "security.manual_ban"}}</button></footer>
     </form>
-    {{else if eq .Kind "windows-firewall-rule"}}
-    <form method="post" action="{{.Action}}">
+    {{else if or (eq .Kind "windows-firewall-rule") (eq .Kind "linux-firewall-rule")}}
+    <form method="post" action="{{.Action}}"{{if eq .Kind "linux-firewall-rule"}} data-async{{end}}>
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <div class="drawer-body">
         <section class="d-section">
           <p class="ds-title"><span data-lucide="globe-2" aria-hidden="true"></span>{{t .Locale "common.target"}}</p>
           <label>{{t .Locale "security.direction"}} <select name="direction" required autofocus><option value="in">{{t .Locale "security.inbound"}}</option><option value="out">{{t .Locale "security.outbound"}}</option></select></label>
           <label>{{t .Locale "security.action"}} <select name="action" required><option value="allow">{{t .Locale "security.allow"}}</option><option value="deny">{{t .Locale "security.deny"}}</option></select></label>
-          <label>{{t .Locale "security.protocol"}} <select name="protocol" required><option value="tcp">TCP</option><option value="udp">UDP</option></select></label>
+          <label>{{t .Locale "security.protocol"}} <select name="protocol" required><option value="tcp">TCP</option><option value="udp">UDP</option>{{if eq .Kind "linux-firewall-rule"}}<option value="any">{{t .Locale "security.any"}}</option>{{end}}</select></label>
           <label>{{t .Locale "security.port"}} <input name="port" inputmode="numeric" autocomplete="off" required placeholder="3389"></label>
-          <label>{{t .Locale "security.address"}} <input name="address" autocomplete="off" required value="any"></label>
+          <label>{{t .Locale "security.address"}} <input name="address" autocomplete="off" required value="{{if eq .Kind "linux-firewall-rule"}}Anywhere{{else}}any{{end}}"></label>
         </section>
         <section class="d-section">
           <p class="ds-title"><span data-lucide="settings" aria-hidden="true"></span>{{t .Locale "common.details"}}</p>
-          <label>{{t .Locale "security.firewall_profile"}} <select name="profile"><option value="any">{{t .Locale "security.all_profiles"}}</option><option value="domain">Domain</option><option value="private">Private</option><option value="public">Public</option></select></label>
+          {{if eq .Kind "windows-firewall-rule"}}<label>{{t .Locale "security.firewall_profile"}} <select name="profile"><option value="any">{{t .Locale "security.all_profiles"}}</option><option value="domain">Domain</option><option value="private">Private</option><option value="public">Public</option></select></label>{{end}}
           <label>{{t .Locale "common.name"}} <input name="name" autocomplete="off" maxlength="120" required placeholder="Remote Desktop"></label>
         </section>
       </div>
       <footer class="drawer-foot"><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit"><span data-lucide="shield-plus" aria-hidden="true"></span>{{t .Locale "security.add_rule"}}</button></footer>
     </form>
+    {{else if eq .Kind "ufw-review"}}
+    <div class="drawer-body">
+      <div class="security-change-list">{{range .DraftChanges}}<article><span data-kind="{{.Kind}}">{{if eq .Kind "add"}}{{t $.Locale "security.change_add"}}{{else if eq .Kind "delete"}}{{t $.Locale "security.change_delete"}}{{else}}{{t $.Locale "security.change_update"}}{{end}}</span><div><strong>{{.Title}}</strong><small>{{.Detail}}</small></div></article>{{end}}</div>
+      {{if not .CanApplyDraft}}<div class="security-warning"><span data-lucide="shield-alert" aria-hidden="true"></span><span>{{t .Locale "security.default_policy_ssh_required"}}</span></div>{{end}}
+    </div>
+    <footer class="drawer-foot"><form method="post" action="/monitor/security/firewall/draft/discard" data-confirm="{{t .Locale "security.discard_confirm"}}" data-async><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--quiet button--danger" type="submit">{{t .Locale "security.discard_all"}}</button></form><a class="button button--quiet" href="{{.BackURL}}">{{t .Locale "common.cancel"}}</a><form method="post" action="/monitor/security/firewall/draft/apply" data-confirm="{{t .Locale "security.sync_confirm"}}" data-async><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--primary" type="submit" {{if not .CanApplyDraft}}disabled{{end}}>{{t .Locale "security.confirm_sync"}}</button></form></footer>
     {{else if eq .Kind "user-create"}}
     <form method="post" action="{{.Action}}">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">

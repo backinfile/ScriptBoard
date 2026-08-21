@@ -52,9 +52,10 @@ func (service *HostSecurityService) Unban(ctx context.Context, jail, ip string) 
 	return service.client.Invoke(ctx, ActionFail2BanUnban, jail+":"+ip, "ban-v1", parameters)
 }
 
-func (service *HostSecurityService) Ban(ctx context.Context, jail, ip string) error {
-	parameters, _ := json.Marshal(unbanParameters{Jail: jail, IP: ip})
-	return service.client.Invoke(ctx, ActionFail2BanBan, jail+":"+ip, "ban-v1", parameters)
+func (service *HostSecurityService) Ban(ctx context.Context, jail, ip string, durationSeconds int) error {
+	parameters, _ := json.Marshal(banParameters{Jail: jail, IP: ip, DurationSeconds: durationSeconds})
+	resource := fmt.Sprintf("%s:%s:%d", jail, ip, durationSeconds)
+	return service.client.Invoke(ctx, ActionFail2BanBan, resource, "ban-v2", parameters)
 }
 
 func (service *HostSecurityService) EnableUFW(ctx context.Context, baseline []hostsecurity.FirewallRule) error {
@@ -131,14 +132,15 @@ func (executor *HostSecurityExecutor) Execute(ctx context.Context, request Execu
 		}
 		return executor.service.Unban(ctx, parameters.Jail, parameters.IP)
 	case ActionFail2BanBan:
-		var parameters unbanParameters
+		var parameters banParameters
 		if err := decodeParameters(request.Parameters, &parameters); err != nil {
 			return err
 		}
-		if request.Resource != parameters.Jail+":"+parameters.IP || request.Revision != "ban-v1" {
+		resource := fmt.Sprintf("%s:%s:%d", parameters.Jail, parameters.IP, parameters.DurationSeconds)
+		if request.Resource != resource || request.Revision != "ban-v2" {
 			return errors.New("privileged ban binding does not match parameters")
 		}
-		return executor.service.Ban(ctx, parameters.Jail, parameters.IP)
+		return executor.service.Ban(ctx, parameters.Jail, parameters.IP, parameters.DurationSeconds)
 	case ActionUFWEnable:
 		var parameters enableUFWParameters
 		if err := decodeParameters(request.Parameters, &parameters); err != nil {
@@ -223,6 +225,12 @@ type installComponentParameters struct {
 type unbanParameters struct {
 	Jail string `json:"jail"`
 	IP   string `json:"ip"`
+}
+
+type banParameters struct {
+	Jail            string `json:"jail"`
+	IP              string `json:"ip"`
+	DurationSeconds int    `json:"duration_seconds"`
 }
 
 type enableUFWParameters struct {

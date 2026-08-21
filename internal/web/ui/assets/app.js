@@ -2147,6 +2147,23 @@
       }
       if (result.response.redirected && result.response.ok) {
         const destination = result.response.url;
+        const redirectedTask = result.document?.querySelector("main[data-task-page]");
+        if (!submittingTaskState && redirectedTask && matchMedia("(min-width: 761px)").matches) {
+          buildTaskPanel(redirectedTask, destination, true);
+          return;
+        }
+        const refreshSelector = form.dataset.asyncRefresh;
+        const currentRegion = refreshSelector ? document.querySelector(refreshSelector) : null;
+        const nextRegion = refreshSelector ? result.document?.querySelector(refreshSelector) : null;
+        if (currentRegion && nextRegion) {
+          // Database mutations update their workspace region without replacing the page shell or losing scroll state.
+          currentRegion.replaceWith(document.importNode(nextRegion, true));
+          document.title = result.document.title;
+          history.replaceState({ pjax: true }, "", destination);
+          updateShellLocation(destination);
+          initPage();
+          return;
+        }
         if (options.fullNavigationOnSuccess) {
           location.assign(destination);
           return;
@@ -6485,11 +6502,15 @@
   function initMySQLDrawers(cleanups) {
     const root = document.querySelector("[data-mysql-workspace]");
     if (!root) return;
-    root.querySelectorAll('form[method="post"]:not([data-connection-test])').forEach(form => form.dataset.async = "");
+    root.querySelectorAll('form[method="post"]:not([data-connection-test])').forEach(form => {
+      form.dataset.async = "";
+      form.dataset.asyncRefresh = "[data-mysql-instances-region]";
+    });
     const drawers = [...root.querySelectorAll("details.mysql-drawer")];
     const dropDrawer = root.querySelector("[data-mysql-drop-drawer]");
     const backupRestoreDrawer = root.querySelector("[data-mysql-backup-restore-drawer]");
     const backupDeleteDrawer = root.querySelector("[data-mysql-backup-delete-drawer]");
+    const planDeleteDrawer = root.querySelector("[data-mysql-plan-delete-drawer]");
     let active = null;
     const returnFocus = new WeakMap();
 
@@ -7392,6 +7413,20 @@
         body.innerHTML = `<div class="kubernetes-detail-empty" role="alert">${escapeMarkup(error?.message || kubernetesWords().loadFailed)}</div>`;
       }
     };
+    const onSubmit = event => {
+      const form = event.target.closest("[data-mysql-batch-backup-form]");
+      if (!form || form.querySelector('input[name="databases"]:checked')) return;
+      event.preventDefault();
+      form.querySelector("[data-async-submit-error]")?.remove();
+      const message = document.createElement("p");
+      message.className = "async-submit-error";
+      message.dataset.asyncSubmitError = "";
+      message.setAttribute("role", "alert");
+      message.tabIndex = -1;
+      message.textContent = form.dataset.selectionRequired || words().submitFailed;
+      form.querySelector(".mysql-drawer-body")?.prepend(message);
+      message.focus();
+    };
     const clearConnectionBindings = () => connectionCleanups.splice(0).forEach(cleanup => cleanup());
     const renderConnectionPage = page => {
       if (!connectionDrawerBody) return;
@@ -7454,6 +7489,22 @@
         openConnectionDrawer(connectionLink);
         return;
       }
+      const planDeleteTrigger = event.target.closest("[data-mysql-plan-delete-trigger]");
+      if (planDeleteTrigger && planDeleteDrawer) {
+        event.preventDefault();
+        returnFocus.set(planDeleteDrawer, planDeleteTrigger);
+        const planID = planDeleteTrigger.dataset.planId || "";
+        const planName = planDeleteTrigger.dataset.planName || "";
+        const form = planDeleteDrawer.querySelector("[data-mysql-plan-delete-form]");
+        const target = planDeleteDrawer.querySelector("[data-mysql-plan-delete-name]");
+        const confirmation = planDeleteDrawer.querySelector("[data-mysql-plan-delete-confirmation]");
+        if (form) form.action = `/resources/databases/plans/${encodeURIComponent(planID)}/delete`;
+        if (target) target.textContent = planName;
+        if (confirmation) confirmation.value = "";
+        planDeleteDrawer.open = true;
+        window.setTimeout(() => confirmation?.focus(), 190);
+        return;
+      }
       const snapshotLink = event.target.closest(".kubernetes-status-tabs a,.kubernetes-sort-link");
       if (snapshotLink && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
         event.preventDefault();
@@ -7509,6 +7560,7 @@
       if (event.target === drawer) drawer.close();
     };
     root.addEventListener("click", onClick);
+    root.addEventListener("submit", onSubmit);
     const onImportDrawerClick = event => { if (event.target === importDrawer) importDrawer.close(); };
     const onContextDrawerClick = event => { if (event.target === contextDrawer) contextDrawer.close(); };
     const onConnectionDrawerClick = event => {
@@ -7591,6 +7643,7 @@
       connectionController?.abort();
       clearConnectionBindings();
       root.removeEventListener("click", onClick);
+      root.removeEventListener("submit", onSubmit);
       root.removeEventListener("change", onClusterChange);
       drawer?.removeEventListener("click", onDrawerClick);
       importDrawer?.removeEventListener("click", onImportDrawerClick);
@@ -7650,8 +7703,8 @@
     const controller = new AbortController();
     cleanups.push(() => controller.abort());
 
-    const segmentURL = mode => {
-      const url = new URL(location.href);
+    const segmentURL = (mode, sourceURL = location.href) => {
+      const url = new URL(sourceURL, location.href);
       url.searchParams.set("tab", "defense");
       url.searchParams.set("full", "1");
       url.searchParams.delete("bans");
@@ -7670,15 +7723,16 @@
       if (!slot) return;
       const state = document.createElement("div");
       state.className = "data-load-state data-load-state--error security-segment-error";
+      state.dataset.securityDefenseSegment = name;
       state.setAttribute("role", "alert");
       state.innerHTML = `<span class="data-load-state__icon" data-lucide="triangle-alert" aria-hidden="true"></span><div><strong>${words().loadFailed}</strong><button class="button button--compact" type="button">${words().retry}</button></div>`;
       state.querySelector("button")?.addEventListener("click", retry, { once: true });
       slot.replaceWith(state);
       renderIcons(state);
     });
-    const load = async (mode, names) => {
+    const load = async (mode, names, sourceURL = location.href, options = {}) => {
       try {
-        const result = await fetchDocument(segmentURL(mode), { cache: "no-store", signal: controller.signal });
+        const result = await fetchDocument(segmentURL(mode, sourceURL), { cache: "no-store", signal: controller.signal });
         if (!result.response.ok || !result.document) throw new Error(`HTTP ${result.response.status}`);
         names.forEach(name => {
           const current = document.querySelector(`[data-security-defense-segment="${name}"]`);
@@ -7687,10 +7741,37 @@
         });
         renderIcons(document.querySelector("[data-security-page]"));
         localizeTimes(document.querySelector("[data-security-page]"));
+        if (options.pushState) {
+          history.pushState({ pjax: true }, "", sourceURL);
+          updateShellLocation(sourceURL);
+        }
       } catch (error) {
-        if (error?.name !== "AbortError") showFailure(names, () => load(mode, names));
+        if (error?.name !== "AbortError") showFailure(names, () => load(mode, names, sourceURL, options));
       }
     };
+    let sortPending = false;
+    const onSort = async event => {
+      const link = event.target.closest(".security-sort-link");
+      if (!link || !root.contains(link) || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (sortPending) return;
+      sortPending = true;
+      const firewall = document.querySelector('[data-security-defense-segment="firewall"]');
+      firewall?.setAttribute("aria-busy", "true");
+      root.querySelectorAll(".security-sort-link").forEach(item => item.setAttribute("aria-disabled", "true"));
+      try {
+        // Sorting is a firewall-segment concern; retain the page shell and all other loaded protection data.
+        await load("capabilities", ["firewall"], link.href, { pushState: true });
+      } finally {
+        sortPending = false;
+        const current = document.querySelector('[data-security-defense-segment="firewall"]');
+        current?.removeAttribute("aria-busy");
+        current?.querySelectorAll(".security-sort-link").forEach(item => item.removeAttribute("aria-disabled"));
+      }
+    };
+    root.addEventListener("click", onSort);
+    cleanups.push(() => root.removeEventListener("click", onSort));
     load("capabilities", ["detection", "components", "firewall"]);
     load("bans", ["fail2ban"]);
   }

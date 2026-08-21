@@ -189,14 +189,15 @@ type FirewallProfile struct {
 }
 
 var (
-	ErrUnsupported      = errors.New("host security operation is not supported on this platform")
-	ErrInvalidComponent = errors.New("invalid security component")
-	ErrInvalidRule      = errors.New("invalid firewall rule")
-	ErrInvalidPolicy    = errors.New("invalid firewall default policy")
-	ErrFirewallConflict = errors.New("firewall rules changed since the draft was created")
-	ErrSSHRuleRequired  = errors.New("an enabled inbound SSH allow rule is required")
-	ErrInvalidIPAddress = errors.New("invalid IP address")
-	ErrComponentMissing = errors.New("security component is not installed")
+	ErrUnsupported        = errors.New("host security operation is not supported on this platform")
+	ErrInvalidComponent   = errors.New("invalid security component")
+	ErrInvalidRule        = errors.New("invalid firewall rule")
+	ErrInvalidPolicy      = errors.New("invalid firewall default policy")
+	ErrFirewallConflict   = errors.New("firewall rules changed since the draft was created")
+	ErrSSHRuleRequired    = errors.New("an enabled inbound SSH allow rule is required")
+	ErrInvalidIPAddress   = errors.New("invalid IP address")
+	ErrInvalidBanDuration = errors.New("invalid ban duration")
+	ErrComponentMissing   = errors.New("security component is not installed")
 )
 
 type Runner interface {
@@ -224,7 +225,7 @@ type Service interface {
 	Logins(context.Context, LoginQuery) (LoginPage, error)
 	Bans(context.Context, int, int) (BanPage, error)
 	Install(context.Context, string) error
-	Ban(context.Context, string, string) error
+	Ban(context.Context, string, string, int) error
 	Unban(context.Context, string, string) error
 	EnableUFW(context.Context, []FirewallRule) error
 	ApplyUFW(context.Context, []FirewallRule, []FirewallRule, UFWDefaults, UFWDefaults) error
@@ -701,19 +702,43 @@ func (m *Manager) Unban(ctx context.Context, jail, ip string) error {
 
 // Ban only accepts a single parsed address and the supported SSH jail so user
 // input can never alter the structured fail2ban-client invocation.
-func (m *Manager) Ban(ctx context.Context, jail, ip string) error {
+func (m *Manager) Ban(ctx context.Context, jail, ip string, durationSeconds int) error {
 	if m.goos != "linux" {
 		return ErrUnsupported
 	}
 	if jail != "sshd" || net.ParseIP(ip) == nil {
 		return ErrInvalidIPAddress
 	}
+	if !ValidBanDuration(durationSeconds) {
+		return ErrInvalidBanDuration
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	previous, err := m.runner.Run(ctx, "fail2ban-client", "get", jail, "bantime")
+	if err != nil {
+		return fmt.Errorf("read Fail2Ban ban duration: %w", err)
+	}
+	// Fail2Ban 1.0 exposes bantime at Jail scope. Keep the selected value as
+	// the explicit sshd policy so the UI never implies unsupported per-IP TTLs.
+	if _, err := m.runner.Run(ctx, "fail2ban-client", "set", jail, "bantime", strconv.Itoa(durationSeconds)); err != nil {
+		return fmt.Errorf("set Fail2Ban ban duration: %w", err)
+	}
 	if _, err := m.runner.Run(ctx, "fail2ban-client", "set", jail, "banip", ip); err != nil {
+		if original := strings.TrimSpace(previous); original != "" {
+			_, _ = m.runner.Run(ctx, "fail2ban-client", "set", jail, "bantime", original)
+		}
 		return fmt.Errorf("ban IP: %w", err)
 	}
 	return nil
+}
+
+func ValidBanDuration(seconds int) bool {
+	switch seconds {
+	case 600, 3600, 86400, 604800, 2592000, -1:
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *Manager) EnableUFW(ctx context.Context, rules []FirewallRule) error {

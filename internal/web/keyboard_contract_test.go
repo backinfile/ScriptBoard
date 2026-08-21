@@ -19,6 +19,45 @@ func TestGlobalKeyboardShortcutGuardsMissingEventKey(t *testing.T) {
 	}
 }
 
+func TestSecurityFirewallSortReplacesOnlyItsProgressiveSegment(t *testing.T) {
+	t.Parallel()
+
+	script, err := webFiles.ReadFile("ui/assets/app.js")
+	if err != nil {
+		t.Fatalf("read application script: %v", err)
+	}
+	source := string(script)
+	for _, contract := range []string{
+		`event.target.closest(".security-sort-link")`,
+		`event.stopPropagation()`,
+		`await load("capabilities", ["firewall"], link.href, { pushState: true })`,
+		`history.pushState({ pjax: true }, "", sourceURL)`,
+	} {
+		if !strings.Contains(source, contract) {
+			t.Fatalf("security firewall sorting no longer satisfies local segment navigation contract %q", contract)
+		}
+	}
+}
+
+func TestMySQLMutationsRefreshOnlyTheDatabaseWorkspaceRegion(t *testing.T) {
+	t.Parallel()
+
+	script, err := webFiles.ReadFile("ui/assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(script)
+	for _, contract := range []string{
+		`form.dataset.asyncRefresh = "[data-mysql-instances-region]"`,
+		`currentRegion.replaceWith(document.importNode(nextRegion, true))`,
+		`[data-mysql-batch-backup-form]`,
+	} {
+		if !strings.Contains(source, contract) {
+			t.Fatalf("MySQL local refresh contract missing %q", contract)
+		}
+	}
+}
+
 func TestImportSuccessUsesDOMConstructionAndSameOriginURLValidation(t *testing.T) {
 	t.Parallel()
 	script, err := webFiles.ReadFile("ui/assets/app.js")

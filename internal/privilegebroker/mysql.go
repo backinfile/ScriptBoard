@@ -286,9 +286,25 @@ func (server *Server) mysqlOperation(parent context.Context, request wireRequest
 		}
 	}
 	if err != nil {
-		return wireResponse{Status: statusError, ErrorCode: "mysql_failed", Message: "MySQL operation failed"}
+		return mysqlFailureResponse(err)
 	}
 	return response
+}
+
+func mysqlFailureResponse(err error) wireResponse {
+	message := strings.ToLower(err.Error())
+	// Keep server details private while returning enough category information for an administrator to repair grants or host paths.
+	if strings.Contains(message, "access denied") || strings.Contains(message, "command denied") || strings.Contains(message, "insufficient privilege") ||
+		strings.Contains(message, "error 1044") || strings.Contains(message, "error 1045") || strings.Contains(message, "error 1142") || strings.Contains(message, "error 1227") {
+		return wireResponse{Status: statusError, ErrorCode: "mysql_permission_denied", Message: "MySQL account lacks permission for this database operation"}
+	}
+	if strings.Contains(message, "executable is unavailable") || strings.Contains(message, "executable file not found") {
+		return wireResponse{Status: statusError, ErrorCode: "mysql_tools_unavailable", Message: "MySQL client tools are unavailable in the privileged Broker"}
+	}
+	if strings.Contains(message, "permission denied") || strings.Contains(message, "access is denied") {
+		return wireResponse{Status: statusError, ErrorCode: "mysql_artifact_permission_denied", Message: "Privileged Broker cannot access the configured MySQL backup path"}
+	}
+	return wireResponse{Status: statusError, ErrorCode: "mysql_failed", Message: "MySQL operation failed"}
 }
 
 func (server *Server) authorizeMySQLOperation(request wireRequest) (Actor, Action, error) {

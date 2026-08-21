@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -58,6 +59,17 @@ func TestMySQLUsesTypedAuthorizedBrokerOperations(t *testing.T) {
 	}
 	if service.password != "secret" || service.instance.Host != instance.Host || service.dumps != 1 || service.tests != 1 {
 		t.Fatalf("typed MySQL fields were not preserved: %+v", service)
+	}
+}
+
+func TestMySQLFailureResponseSeparatesDatabaseAndHostPermissions(t *testing.T) {
+	t.Parallel()
+
+	if response := mysqlFailureResponse(errors.New("mysqldump: Error 1142 command denied")); response.ErrorCode != "mysql_permission_denied" {
+		t.Fatalf("database grant failure = %#v", response)
+	}
+	if response := mysqlFailureResponse(errors.New("open /backups/file: permission denied")); response.ErrorCode != "mysql_artifact_permission_denied" {
+		t.Fatalf("artifact permission failure = %#v", response)
 	}
 }
 

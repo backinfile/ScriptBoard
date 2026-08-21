@@ -127,10 +127,32 @@ func webTemplateFunctions() template.FuncMap {
 	return template.FuncMap{
 		"assetVersion": func() string { return webAssetVersion },
 		"join":         strings.Join,
-		"stringSlice":  func(values ...string) []string { return values },
-		"addInt":       func(value, delta int) int { return value + delta },
-		"pathEscape":   url.PathEscape,
-		"queryEscape":  url.QueryEscape,
+		"containsString": func(values []string, target string) bool {
+			for _, value := range values {
+				if value == target {
+					return true
+				}
+			}
+			return false
+		},
+		"mysqlPlanDatabaseOptions": func(live []mysqlmanager.Database, selected []string) []mysqlmanager.Database {
+			result := append([]mysqlmanager.Database(nil), live...)
+			seen := make(map[string]bool, len(result))
+			for _, database := range result {
+				seen[database.Name] = true
+			}
+			for _, name := range selected {
+				if name != "" && !seen[name] {
+					result = append(result, mysqlmanager.Database{Name: name})
+					seen[name] = true
+				}
+			}
+			return result
+		},
+		"stringSlice": func(values ...string) []string { return values },
+		"addInt":      func(value, delta int) int { return value + delta },
+		"pathEscape":  url.PathEscape,
+		"queryEscape": url.QueryEscape,
 		"shortDigest": func(value string) string {
 			if len(value) <= 12 {
 				return value

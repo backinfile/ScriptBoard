@@ -36,6 +36,7 @@ type mysqlDatabasesPageData struct {
 	ActiveTab                                     string
 	DatabaseCount, BackupCount, BackupResultCount int
 	PlanCount, OperationCount                     int
+	OperationAccepted                             bool
 	Pagination                                    mysqlPagination
 	InstancePagination                            mysqlPagination
 }
@@ -99,8 +100,9 @@ func (a *App) mysqlDatabasesPage(response http.ResponseWriter, request *http.Req
 	data := mysqlDatabasesPageData{
 		Locale: resolveWebLocale(request), CSRFToken: current.csrfToken,
 		BackupRoot: a.mysql.BackupRoot(), Instances: instances,
-		Tools:     a.mysql.Tools(),
-		ActiveTab: "overview",
+		Tools:             a.mysql.Tools(),
+		ActiveTab:         "overview",
+		OperationAccepted: request.URL.Query().Get("accepted") == "backup",
 	}
 	if tab := strings.TrimSpace(request.URL.Query().Get("tab")); tab == "databases" || tab == "backups" || tab == "plans" || tab == "operations" {
 		data.ActiveTab = tab
@@ -292,7 +294,7 @@ func (a *App) startMySQLBackup(response http.ResponseWriter, request *http.Reque
 	a.startMySQLBackgroundOperation(request, "start_mysql_backup", id+"/"+database, func(operationContext context.Context) {
 		_, _ = a.mysql.Backup(operationContext, mysqlmanager.BackupRequest{InstanceID: id, Database: database, Kind: mysqlmanager.BackupManual, ActorUserID: actor.UserID, ActorUsername: actor.Username})
 	})
-	http.Redirect(response, request, "/resources/databases?instance="+url.QueryEscape(id), http.StatusSeeOther)
+	http.Redirect(response, request, "/resources/databases?instance="+url.QueryEscape(id)+"&tab=operations&accepted=backup", http.StatusSeeOther)
 }
 
 func (a *App) startMySQLBatchBackup(response http.ResponseWriter, request *http.Request) {
@@ -312,7 +314,7 @@ func (a *App) startMySQLBatchBackup(response http.ResponseWriter, request *http.
 	a.startMySQLBackgroundOperation(request, "start_mysql_batch_backup", id, func(operationContext context.Context) {
 		_, _ = a.mysql.BackupBatch(operationContext, mysqlmanager.BatchBackupRequest{InstanceID: id, Databases: databases, Actor: actor})
 	})
-	http.Redirect(response, request, "/resources/databases?instance="+url.QueryEscape(id), http.StatusSeeOther)
+	http.Redirect(response, request, "/resources/databases?instance="+url.QueryEscape(id)+"&tab=operations&accepted=backup", http.StatusSeeOther)
 }
 
 func (a *App) startMySQLRestore(response http.ResponseWriter, request *http.Request) {
@@ -479,7 +481,32 @@ func (a *App) saveMySQLPlan(response http.ResponseWriter, request *http.Request)
 		return
 	}
 	a.recordAuditForRequest(request, "save_mysql_backup_plan", plan.ID, "succeeded")
-	http.Redirect(response, request, "/resources/databases?instance="+url.QueryEscape(plan.InstanceID), http.StatusSeeOther)
+	http.Redirect(response, request, "/resources/databases?instance="+url.QueryEscape(plan.InstanceID)+"&tab=plans", http.StatusSeeOther)
+}
+
+func (a *App) updateMySQLPlan(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
+		return
+	}
+	if err := request.ParseForm(); err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
+	current, err := a.mysql.Plan(request.Context(), request.PathValue("plan_id"))
+	if err != nil {
+		http.Error(response, "MySQL backup plan not found", http.StatusNotFound)
+		return
+	}
+	retention, _ := strconv.Atoi(request.FormValue("retention_count"))
+	plan, err := a.mysql.SavePlan(request.Context(), mysqlmanager.PlanInput{ID: current.ID, Name: request.FormValue("name"), InstanceID: current.InstanceID,
+		Databases: request.Form["databases"], Expression: request.FormValue("expression"), RetentionCount: retention, Enabled: current.Enabled})
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
+	a.recordAuditForRequest(request, "update_mysql_backup_plan", plan.ID, "succeeded")
+	http.Redirect(response, request, "/resources/databases?instance="+url.QueryEscape(plan.InstanceID)+"&tab=plans", http.StatusSeeOther)
 }
 
 func (a *App) deleteMySQLPlan(response http.ResponseWriter, request *http.Request) {
@@ -492,12 +519,16 @@ func (a *App) deleteMySQLPlan(response http.ResponseWriter, request *http.Reques
 		http.Error(response, "MySQL backup plan not found", http.StatusNotFound)
 		return
 	}
+	if request.FormValue("confirmation") != plan.Name {
+		http.Error(response, "enter the complete plan name to confirm deletion", http.StatusBadRequest)
+		return
+	}
 	if err := a.mysql.DeletePlan(request.Context(), plan.ID); err != nil {
 		http.Error(response, err.Error(), http.StatusConflict)
 		return
 	}
 	a.recordAuditForRequest(request, "delete_mysql_backup_plan", plan.ID, "succeeded")
-	http.Redirect(response, request, "/resources/databases?instance="+url.QueryEscape(plan.InstanceID), http.StatusSeeOther)
+	http.Redirect(response, request, "/resources/databases?instance="+url.QueryEscape(plan.InstanceID)+"&tab=plans", http.StatusSeeOther)
 }
 
 func (a *App) mysqlOperationStatus(response http.ResponseWriter, request *http.Request) {
