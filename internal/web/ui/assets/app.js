@@ -6452,19 +6452,30 @@
     });
   }
 
-  function showConnectionTestError(form, message) {
+  function showConnectionTestDialog(form, message, state, returnFocus) {
     const dialog = document.createElement("dialog");
     dialog.className = "connection-test-dialog";
+    dialog.dataset.state = state;
+    dialog.setAttribute("aria-labelledby", "connection-test-dialog-title");
+    dialog.setAttribute("aria-describedby", "connection-test-dialog-message");
     dialog.innerHTML = '<header><div><p></p><h2></h2></div><button class="icon-button icon-button--quiet" type="button" data-dialog-close><span data-lucide="x" aria-hidden="true"></span></button></header><p class="connection-test-dialog__message"></p><footer><button class="button" type="button" data-dialog-close></button></footer>';
     const title = form.dataset.connectionTitle || "Connection test";
-    dialog.querySelector("header p").textContent = form.dataset.connectionFailure || "Connection failed";
+    const successful = state === "success";
+    dialog.querySelector("header p").textContent = successful
+      ? (form.dataset.connectionSuccess || "Connected")
+      : (form.dataset.connectionFailure || "Connection failed");
+    dialog.querySelector("h2").id = "connection-test-dialog-title";
     dialog.querySelector("h2").textContent = title;
+    dialog.querySelector(".connection-test-dialog__message").id = "connection-test-dialog-message";
     dialog.querySelector(".connection-test-dialog__message").textContent = message;
     dialog.querySelector("footer button").textContent = form.dataset.closeLabel || "Close";
     dialog.querySelector("header button").setAttribute("aria-label", form.dataset.closeLabel || "Close");
     const close = () => dialog.close();
     dialog.querySelectorAll("[data-dialog-close]").forEach(button => button.addEventListener("click", close));
-    dialog.addEventListener("close", () => dialog.remove(), { once: true });
+    dialog.addEventListener("close", () => {
+      dialog.remove();
+      if (returnFocus?.isConnected) returnFocus.focus();
+    }, { once: true });
     document.body.append(dialog);
     renderIcons(dialog);
     dialog.showModal();
@@ -6493,14 +6504,15 @@
       const detail = payload.message || payload.Error || payload.error || "";
       if (!ok) throw new Error(detail || `HTTP ${response.status}`);
       const version = payload.Version ? ` · ${payload.Version}` : "";
+      const message = `${form.dataset.connectionSuccess || detail || "Connected"}${version}`;
       if (result) {
-        result.classList.remove("sr-only");
         result.dataset.state = "success";
-        result.textContent = `${form.dataset.connectionSuccess || detail || "Connected"}${version}`;
+        result.textContent = message;
       }
+      showConnectionTestDialog(form, message, "success", submitter);
     } catch (error) {
       const message = error?.message || form.dataset.connectionFailure || words().submitFailed;
-      showConnectionTestError(form, message);
+      showConnectionTestDialog(form, message, "error", submitter);
     } finally {
       resetSubmit(form);
     }
@@ -6509,6 +6521,15 @@
   function initMySQLDrawers(cleanups) {
     const root = document.querySelector("[data-mysql-workspace]");
     if (!root) return;
+    root.querySelectorAll("[data-mysql-plan-delete-trigger]").forEach(trigger => {
+      const editDrawer = trigger.closest(".record-actions__group")?.querySelector("details.mysql-drawer");
+      const footer = editDrawer?.querySelector(".mysql-plan-form > footer");
+      if (footer) {
+        trigger.classList.remove("button--quiet", "button--compact");
+        trigger.classList.add("button--danger");
+        footer.prepend(trigger);
+      }
+    });
     root.querySelectorAll('form[method="post"]:not([data-connection-test])').forEach(form => {
       form.dataset.async = "";
       form.dataset.asyncRefresh = "[data-mysql-instances-region]";
@@ -6587,7 +6608,8 @@
       const planDeleteTrigger = event.target.closest("[data-mysql-plan-delete-trigger]");
       if (planDeleteTrigger && planDeleteDrawer) {
         event.preventDefault();
-        returnFocus.set(planDeleteDrawer, planDeleteTrigger);
+        const editDrawerSummary = planDeleteTrigger.closest("details.mysql-drawer")?.querySelector(":scope > summary");
+        returnFocus.set(planDeleteDrawer, editDrawerSummary || planDeleteTrigger);
         const planID = planDeleteTrigger.dataset.planId || "";
         const planName = planDeleteTrigger.dataset.planName || "";
         const form = planDeleteDrawer.querySelector("[data-mysql-plan-delete-form]");

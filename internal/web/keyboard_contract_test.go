@@ -102,6 +102,46 @@ func TestMySQLInstanceCreationClosesItsDrawerAfterLocalRefresh(t *testing.T) {
 	}
 }
 
+func TestMySQLPlanDeleteActionLivesInsideTheEditDrawer(t *testing.T) {
+	t.Parallel()
+
+	script, err := webFiles.ReadFile("ui/assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(script)
+	for _, contract := range []string{
+		`root.querySelectorAll("[data-mysql-plan-delete-trigger]").forEach(trigger => {`,
+		`const footer = editDrawer?.querySelector(".mysql-plan-form > footer")`,
+		`trigger.classList.add("button--danger")`,
+		`footer.prepend(trigger)`,
+	} {
+		if !strings.Contains(source, contract) {
+			t.Fatalf("MySQL plan edit drawer does not own the delete action: missing %q", contract)
+		}
+	}
+}
+
+func TestConnectionTestResultsUsePopupDialogs(t *testing.T) {
+	t.Parallel()
+
+	script, err := webFiles.ReadFile("ui/assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(script)
+	for _, contract := range []string{
+		`function showConnectionTestDialog(form, message, state, returnFocus)`,
+		`showConnectionTestDialog(form, message, "success", submitter)`,
+		`showConnectionTestDialog(form, message, "error", submitter)`,
+		`dialog.dataset.state = state`,
+	} {
+		if !strings.Contains(source, contract) {
+			t.Fatalf("connection test popup contract missing %q", contract)
+		}
+	}
+}
+
 func TestImportSuccessUsesDOMConstructionAndSameOriginURLValidation(t *testing.T) {
 	t.Parallel()
 	script, err := webFiles.ReadFile("ui/assets/app.js")

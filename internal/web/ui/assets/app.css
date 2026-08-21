@@ -2780,14 +2780,13 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .mysql-detail__head h2 { margin: 3px 0 5px; font-size: clamp(1.75rem, 3vw, 2.6rem); letter-spacing: -.035em; }
 .mysql-detail__head p { margin: 0; color: var(--muted); }
 .mysql-instance-actions > form { display: flex; align-items: center; gap: 8px; }
-.connection-test-result { color: var(--muted); font-size: .78rem; }
-.connection-test-result[data-state="success"] { color: var(--success); }
 .connection-test-dialog { width: min(460px, calc(100vw - 32px)); padding: 0; color: var(--ink); background: var(--surface); border: 1px solid var(--rule-strong); border-radius: 9px; box-shadow: var(--overlay-shadow); }
 .connection-test-dialog::backdrop { background: var(--overlay-scrim); }
 .connection-test-dialog > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 20px 22px 16px; border-bottom: 1px solid var(--rule); }
 .connection-test-dialog > header div { display: grid; gap: 5px; }
 .connection-test-dialog > header p, .connection-test-dialog > header h2 { margin: 0; }
 .connection-test-dialog > header p { color: var(--danger); font-size: .72rem; font-weight: 650; letter-spacing: .035em; text-transform: uppercase; }
+.connection-test-dialog[data-state="success"] > header p { color: var(--success); }
 .connection-test-dialog > header h2 { font-size: 1.1rem; }
 .connection-test-dialog__message { margin: 0; padding: 22px; color: var(--muted); line-height: 1.6; overflow-wrap: anywhere; }
 .connection-test-dialog > footer { display: flex; justify-content: flex-end; padding: 14px 22px 18px; background: var(--canvas); border-top: 1px solid var(--rule); }
@@ -2823,6 +2822,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .mysql-plan-row { display: flex; justify-content: space-between; gap: 20px; padding: 16px 0; border-top: 1px solid var(--rule); }
 .mysql-plan-row div { display: grid; gap: 5px; }
 .mysql-plan-row small { color: var(--muted); }
+.mysql-plan-form > footer [data-mysql-plan-delete-trigger] { margin-right: auto; }
 .mysql-operation-list { border-top: 1px solid var(--rule-strong); }
 .mysql-operation-list a { display: grid; grid-template-columns: 22px 1fr; gap: 13px; align-items: center; padding: 14px 0; border-bottom: 1px solid var(--rule); color: inherit; text-decoration: none; }
 .mysql-operation-list a span:last-child { display: grid; gap: 3px; }

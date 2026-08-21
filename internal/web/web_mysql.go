@@ -627,7 +627,12 @@ func (a *App) saveMySQLInstance(response http.ResponseWriter, request *http.Requ
 		return
 	}
 	a.recordAuditForRequest(request, "save_mysql_instance", instance.ID, "succeeded")
-	http.Redirect(response, request, "/resources/databases", http.StatusSeeOther)
+	destination := "/resources/databases"
+	if strings.TrimSpace(request.FormValue("id")) != "" {
+		// Keep an edited instance selected after the drawer refreshes its workspace region.
+		destination += "?instance=" + instance.ID
+	}
+	http.Redirect(response, request, destination, http.StatusSeeOther)
 }
 
 func (a *App) setMySQLBackupRoot(response http.ResponseWriter, request *http.Request) {

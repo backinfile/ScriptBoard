@@ -73,16 +73,42 @@ func TestAdministratorCanRegisterMySQLInstanceFromDatabaseWorkspace(t *testing.T
 	}
 	selectedBody, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, expected := range []string{`class="mysql-instance-workspace"`, `class="mysql-instance-rail"`, `class="mysql-instance-tabs"`, `class="mysql-instance-tabs__state" data-state="failed"`, `Connection failed`, `class="mysql-tabs"`, `tab=overview`, `tab=backups`, `data-connection-test`, `data-preserve-scroll`, `aria-current="page"`, `data-mysql-drop-drawer`, `class="mysql-overview-facts"`, `TLS mode`, `Preferred`, `Refresh status`} {
+	for _, expected := range []string{`class="mysql-instance-workspace"`, `class="mysql-instance-rail"`, `class="mysql-instance-tabs"`, `class="mysql-instance-tabs__state" data-state="failed"`, `Connection failed`, `class="mysql-tabs"`, `tab=overview`, `tab=backups`, `data-connection-test`, `connection-test-result sr-only`, `data-preserve-scroll`, `aria-current="page"`, `data-mysql-drop-drawer`, `class="mysql-overview-facts"`, `TLS mode`, `Preferred`, `Refresh status`, `mysql-edit-instance-title`, `Edit instance`, `Leave blank to keep the current password.`, `name="id" value="` + string(instanceMatch[1]) + `"`, `name="name" value="Production"`} {
 		if !strings.Contains(string(selectedBody), expected) {
 			t.Fatalf("selected database workspace missing %q: %s", expected, selectedBody)
 		}
+	}
+	if strings.Contains(string(selectedBody), `mysql-remove-title`) {
+		t.Fatalf("database overview still exposes the remove-instance action: %s", selectedBody)
 	}
 	if strings.Contains(string(selectedBody), `mysql-instance-tabs__tls`) {
 		t.Fatalf("database instance rail still exposes TLS mode: %s", selectedBody)
 	}
 	if tlsIndex, indexSizeIndex := strings.Index(string(selectedBody), `TLS mode`), strings.Index(string(selectedBody), `Index size`); indexSizeIndex >= 0 && tlsIndex < indexSizeIndex {
 		t.Fatalf("TLS mode should be the final overview fact: %s", selectedBody)
+	}
+	instanceID := string(instanceMatch[1])
+	response, err = client.PostForm(serverURL+"/resources/databases/instances", url.Values{
+		"csrf_token": {formToken(t, selectedBody)}, "id": {instanceID}, "name": {"Production renamed"},
+		"host": {"db2.internal"}, "port": {"3307"}, "username": {"scriptboard2"}, "password": {""}, "tls_mode": {"disabled"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/resources/databases?instance="+instanceID {
+		t.Fatalf("edit instance status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+	response, err = client.Get(serverURL + "/resources/databases?instance=" + instanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	editedBody, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	for _, expected := range []string{"Production renamed", "db2.internal", `value="3307"`, `value="scriptboard2"`, `<option value="disabled" selected>`} {
+		if !strings.Contains(string(editedBody), expected) {
+			t.Fatalf("edited database workspace missing %q: %s", expected, editedBody)
+		}
 	}
 }
 
