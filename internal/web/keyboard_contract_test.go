@@ -58,6 +58,50 @@ func TestMySQLMutationsRefreshOnlyTheDatabaseWorkspaceRegion(t *testing.T) {
 	}
 }
 
+func TestMySQLPlanDeleteTriggerIsBoundInsideMySQLDrawerInitializer(t *testing.T) {
+	t.Parallel()
+
+	script, err := webFiles.ReadFile("ui/assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(script)
+	start := strings.Index(source, "  function initMySQLDrawers(")
+	end := strings.Index(source, "  function initExternalKeyManagers(")
+	if start < 0 || end <= start {
+		t.Fatal("MySQL drawer initializer boundary is missing")
+	}
+	initializer := source[start:end]
+	for _, contract := range []string{
+		`event.target.closest("[data-mysql-plan-delete-trigger]")`,
+		`planDeleteDrawer.open = true`,
+		`/resources/databases/plans/${encodeURIComponent(planID)}/delete`,
+	} {
+		if !strings.Contains(initializer, contract) {
+			t.Fatalf("MySQL plan deletion is not bound inside its drawer initializer: missing %q", contract)
+		}
+	}
+}
+
+func TestMySQLInstanceCreationClosesItsDrawerAfterLocalRefresh(t *testing.T) {
+	t.Parallel()
+
+	script, err := webFiles.ReadFile("ui/assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	template, err := webFiles.ReadFile("ui/templates/mysql-databases.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(template), `action="/resources/databases/instances" data-async-close-drawer`) {
+		t.Fatal("MySQL instance creation form does not request drawer closure after success")
+	}
+	if !strings.Contains(string(script), `form.hasAttribute("data-async-close-drawer")`) {
+		t.Fatal("async form success does not honor drawer closure")
+	}
+}
+
 func TestImportSuccessUsesDOMConstructionAndSameOriginURLValidation(t *testing.T) {
 	t.Parallel()
 	script, err := webFiles.ReadFile("ui/assets/app.js")

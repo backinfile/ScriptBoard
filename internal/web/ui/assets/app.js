@@ -2156,8 +2156,15 @@
         const currentRegion = refreshSelector ? document.querySelector(refreshSelector) : null;
         const nextRegion = refreshSelector ? result.document?.querySelector(refreshSelector) : null;
         if (currentRegion && nextRegion) {
+          const drawerToClose = form.hasAttribute("data-async-close-drawer")
+            ? form.closest("details.mysql-drawer")
+            : null;
           // Database mutations update their workspace region without replacing the page shell or losing scroll state.
           currentRegion.replaceWith(document.importNode(nextRegion, true));
+          if (drawerToClose) {
+            drawerToClose.open = false;
+            document.body.style.overflow = "";
+          }
           document.title = result.document.title;
           history.replaceState({ pjax: true }, "", destination);
           updateShellLocation(destination);
@@ -6577,6 +6584,22 @@
         window.setTimeout(() => confirmation?.focus(), 190);
         return;
       }
+      const planDeleteTrigger = event.target.closest("[data-mysql-plan-delete-trigger]");
+      if (planDeleteTrigger && planDeleteDrawer) {
+        event.preventDefault();
+        returnFocus.set(planDeleteDrawer, planDeleteTrigger);
+        const planID = planDeleteTrigger.dataset.planId || "";
+        const planName = planDeleteTrigger.dataset.planName || "";
+        const form = planDeleteDrawer.querySelector("[data-mysql-plan-delete-form]");
+        const target = planDeleteDrawer.querySelector("[data-mysql-plan-delete-name]");
+        const confirmation = planDeleteDrawer.querySelector("[data-mysql-plan-delete-confirmation]");
+        if (form) form.action = `/resources/databases/plans/${encodeURIComponent(planID)}/delete`;
+        if (target) target.textContent = planName;
+        if (confirmation) confirmation.value = "";
+        planDeleteDrawer.open = true;
+        window.setTimeout(() => confirmation?.focus(), 190);
+        return;
+      }
       const dropTrigger = event.target.closest("[data-mysql-drop-trigger]");
       if (dropTrigger && dropDrawer) {
         event.preventDefault();
@@ -7487,22 +7510,6 @@
       if (connectionLink && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
         event.preventDefault();
         openConnectionDrawer(connectionLink);
-        return;
-      }
-      const planDeleteTrigger = event.target.closest("[data-mysql-plan-delete-trigger]");
-      if (planDeleteTrigger && planDeleteDrawer) {
-        event.preventDefault();
-        returnFocus.set(planDeleteDrawer, planDeleteTrigger);
-        const planID = planDeleteTrigger.dataset.planId || "";
-        const planName = planDeleteTrigger.dataset.planName || "";
-        const form = planDeleteDrawer.querySelector("[data-mysql-plan-delete-form]");
-        const target = planDeleteDrawer.querySelector("[data-mysql-plan-delete-name]");
-        const confirmation = planDeleteDrawer.querySelector("[data-mysql-plan-delete-confirmation]");
-        if (form) form.action = `/resources/databases/plans/${encodeURIComponent(planID)}/delete`;
-        if (target) target.textContent = planName;
-        if (confirmation) confirmation.value = "";
-        planDeleteDrawer.open = true;
-        window.setTimeout(() => confirmation?.focus(), 190);
         return;
       }
       const snapshotLink = event.target.closest(".kubernetes-status-tabs a,.kubernetes-sort-link");
