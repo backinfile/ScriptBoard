@@ -119,7 +119,27 @@ func TestScriptBoardInstancesShareReadOnlyStatusWithFleetOverview(t *testing.T) 
 	}
 	peerDetail, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusOK || !strings.Contains(string(peerDetail), "Remove machine") || strings.Contains(string(peerDetail), token) {
+	for _, expected := range []string{"Remove machine", `data-overview-tab="summary"`, `data-metric-card="cpu"`, "ScriptBoard service"} {
+		if !strings.Contains(string(peerDetail), expected) {
+			t.Fatalf("peer detail missing %q: %s", expected, peerDetail)
+		}
+	}
+	for _, forbidden := range []string{`tab=details`, `data-overview-range`, `data-metric-chart`, `data-duplex-chart`, `data-active-runs>`, `data-host-detail`, `data-overview-drawer`, token} {
+		if strings.Contains(string(peerDetail), forbidden) {
+			t.Fatalf("peer detail exposes unavailable UI or a secret %q: %s", forbidden, peerDetail)
+		}
+	}
+	if response.StatusCode != http.StatusOK {
 		t.Fatalf("peer detail status=%d body=%s", response.StatusCode, peerDetail)
+	}
+
+	response, err = hubClient.Get(hubURL + "/monitor?node=" + url.QueryEscape(string(peerMatches[1][1])) + "&tab=details")
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleDetail, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK || !strings.Contains(string(staleDetail), `data-overview-tab="summary"`) || strings.Contains(string(staleDetail), `data-host-detail`) {
+		t.Fatalf("stale remote detail URL did not fall back to summary: status=%d body=%s", response.StatusCode, staleDetail)
 	}
 }

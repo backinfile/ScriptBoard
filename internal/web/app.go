@@ -2055,6 +2055,11 @@ func (a *App) overviewPage(response http.ResponseWriter, request *http.Request) 
 		}
 		view = overviewResponse{Overview: peer.Overview}
 		overviewDurations(&view)
+		// Remote fleet snapshots intentionally omit host paths, interfaces, devices,
+		// Runs, and history, so stale detail URLs fall back to the useful summary.
+		if tab == "details" {
+			tab = "summary"
+		}
 	}
 	current := request.Context().Value(sessionContextKey).(session)
 	locale := resolveWebLocale(request)
