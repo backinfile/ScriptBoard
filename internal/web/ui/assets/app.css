@@ -2851,10 +2851,8 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .mysql-danger-zone { margin-top: 64px; border-top: 1px solid var(--danger); padding-top: 18px; }
 .mysql-danger-zone form { display: flex; gap: 12px; align-items: end; margin-top: 18px; }
 .mysql-danger-zone label { display: grid; gap: 6px; min-width: min(100%, 320px); }
-.mysql-instance-delete { margin: 0 var(--overlay-header-x) 30px; padding-top: 22px; border-color: var(--danger-border); }
-.mysql-instance-delete header { margin: 0; }
-.mysql-instance-delete h3 { margin: 0 0 6px; color: var(--danger); font-size: .9rem; }
-.mysql-instance-delete p { margin: 0; max-width: 58ch; color: var(--muted); font-size: .76rem; line-height: 1.55; }
+.mysql-instance-delete { display: flex; justify-content: flex-start; margin: 0 var(--overlay-header-x) 30px; padding-top: 22px; border-color: var(--danger-border); }
+.mysql-instance-delete form { margin: 0; }
 
 @media (max-width: 1000px) {
   .mysql-instance-workspace { min-height: 0; grid-template-columns: 1fr; }

@@ -73,7 +73,7 @@ func TestAdministratorCanRegisterMySQLInstanceFromDatabaseWorkspace(t *testing.T
 	}
 	selectedBody, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, expected := range []string{`class="mysql-instance-workspace"`, `class="mysql-instance-rail"`, `class="mysql-instance-tabs"`, `class="mysql-instance-tabs__state" data-state="failed"`, `Connection failed`, `class="mysql-tabs"`, `tab=overview`, `tab=backups`, `data-connection-test`, `connection-test-result sr-only`, `data-preserve-scroll`, `aria-current="page"`, `data-mysql-drop-drawer`, `class="mysql-overview-facts"`, `TLS mode`, `Preferred`, `Refresh status`, `mysql-edit-instance-title`, `Edit instance`, `Leave blank to keep the current password.`, `name="id" value="` + string(instanceMatch[1]) + `"`, `name="name" value="Production"`, `class="mysql-danger-zone mysql-instance-delete"`, `action="/resources/databases/instances/` + string(instanceMatch[1]) + `/delete"`, `Enter the complete instance name`} {
+	for _, expected := range []string{`class="mysql-instance-workspace"`, `class="mysql-instance-rail"`, `class="mysql-instance-tabs"`, `class="mysql-instance-tabs__state" data-state="failed"`, `Connection failed`, `class="mysql-tabs"`, `tab=overview`, `tab=backups`, `data-connection-test`, `connection-test-result sr-only`, `data-preserve-scroll`, `aria-current="page"`, `data-mysql-drop-drawer`, `class="mysql-overview-facts"`, `TLS mode`, `Preferred`, `Refresh status`, `mysql-edit-instance-title`, `Edit instance`, `Leave blank to keep the current password.`, `name="id" value="` + string(instanceMatch[1]) + `"`, `name="name" value="Production"`, `class="mysql-danger-zone mysql-instance-delete"`, `action="/resources/databases/instances/` + string(instanceMatch[1]) + `/delete"`, `name="confirm" value="yes"`, `data-confirm="Remove this instance connection?`} {
 		if !strings.Contains(string(selectedBody), expected) {
 			t.Fatalf("selected database workspace missing %q: %s", expected, selectedBody)
 		}
@@ -108,7 +108,17 @@ func TestAdministratorCanRegisterMySQLInstanceFromDatabaseWorkspace(t *testing.T
 		}
 	}
 	response, err = client.PostForm(serverURL+"/resources/databases/instances/"+instanceID+"/delete", url.Values{
-		"csrf_token": {formToken(t, editedBody)}, "confirmation": {"Production renamed"},
+		"csrf_token": {formToken(t, editedBody)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("delete instance without explicit confirmation status=%d", response.StatusCode)
+	}
+	response, err = client.PostForm(serverURL+"/resources/databases/instances/"+instanceID+"/delete", url.Values{
+		"csrf_token": {formToken(t, editedBody)}, "confirm": {"yes"},
 	})
 	if err != nil {
 		t.Fatal(err)

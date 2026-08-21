@@ -258,8 +258,8 @@ func (a *App) deleteMySQLInstance(response http.ResponseWriter, request *http.Re
 		return
 	}
 	instance, err := a.mysql.Instance(request.Context(), request.PathValue("id"))
-	if err != nil || request.FormValue("confirmation") != instance.Name {
-		http.Error(response, "enter the complete instance name to confirm removal", http.StatusBadRequest)
+	if err != nil || request.FormValue("confirm") != "yes" {
+		http.Error(response, "explicit confirmation is required to remove the instance", http.StatusBadRequest)
 		return
 	}
 	if err := a.mysql.DeleteInstance(request.Context(), instance.ID); err != nil {

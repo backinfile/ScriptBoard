@@ -848,6 +848,7 @@ var webMessages = map[string]localizedMessage{
 	"mysql.cancel":                                  {"取消", "Cancel"},
 	"mysql.batch_backup":                            {"批量备份", "Batch backup"},
 	"mysql.remove_instance":                         {"移除实例", "Remove instance"},
+	"mysql.remove_instance_confirm":                 {"确认移除此实例连接？仅删除 ScriptBoard 中保存的连接配置，远端数据库和已有备份不会被删除。", "Remove this instance connection? Only the saved ScriptBoard connection is deleted; remote databases and existing backups remain untouched."},
 	"mysql.type_instance":                           {"输入完整实例名确认", "Enter the complete instance name"},
 	"mysql.tools":                                   {"MySQL 客户端工具", "MySQL client tools"},
 	"mysql.settings":                                {"数据库设置", "Database settings"},
