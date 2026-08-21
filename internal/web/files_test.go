@@ -2,6 +2,7 @@ package web_test
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -1106,6 +1107,10 @@ func TestMoveNameConflictRequiresAChoiceAndKeepsOverwriteRecoverable(t *testing.
 }
 
 func postHostUpload(t *testing.T, client *http.Client, serverURL, csrfToken, directory, name, content, conflictAction string) (int, []byte) {
+	return postHostUploadWithQuickRunSync(t, client, serverURL, csrfToken, directory, name, content, conflictAction, false)
+}
+
+func postHostUploadWithQuickRunSync(t *testing.T, client *http.Client, serverURL, csrfToken, directory, name, content, conflictAction string, syncQuickRuns bool) (int, []byte) {
 	t.Helper()
 	var requestBody bytes.Buffer
 	writer := multipart.NewWriter(&requestBody)
@@ -1116,6 +1121,11 @@ func postHostUpload(t *testing.T, client *http.Client, serverURL, csrfToken, dir
 	} {
 		if err := writer.WriteField(field.name, field.value); err != nil {
 			t.Fatalf("write upload field %s: %v", field.name, err)
+		}
+	}
+	if syncQuickRuns {
+		if err := writer.WriteField("sync_quick_runs", "1"); err != nil {
+			t.Fatalf("write Quick Run synchronization field: %v", err)
 		}
 	}
 	filePart, err := writer.CreateFormFile("files", name)
@@ -1143,6 +1153,79 @@ func postHostUpload(t *testing.T, client *http.Client, serverURL, csrfToken, dir
 		t.Fatalf("read upload response: %v", err)
 	}
 	return response.StatusCode, body
+}
+
+func TestOverwritingUploadedScriptCanSynchronizeQuickRunVersions(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	hostRoot, stateRoot := filepath.Join(root, "managed"), filepath.Join(root, "state")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	scriptName := "deploy.sh"
+	if runtime.GOOS == "windows" {
+		scriptName = "deploy.cmd"
+	}
+	scriptPath := filepath.Join(hostRoot, scriptName)
+	original := "original script"
+	if err := os.WriteFile(scriptPath, []byte(original), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
+	database := openExternalTestDatabase(t, filepath.Join(stateRoot, "app.db"))
+	originalDigest := fmt.Sprintf("%x", sha256.Sum256([]byte(original)))
+	if _, err := database.Exec(`INSERT INTO quick_runs
+		(id, name, script_path, script_path_key, arguments_template, timeout_seconds, sort_order, created_at, locked, script_sha256, revision, updated_at)
+		VALUES ('upload-quick', 'Deploy service', ?, ?, '', 30, 1, 1, 1, ?, 4, 1)`, scriptPath, hostfiles.ComparisonKey(scriptPath), originalDigest); err != nil {
+		t.Fatal(err)
+	}
+
+	response, err := client.Get(hostFilesRequestURL(serverURL, hostRoot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	csrfToken := formToken(t, page)
+	response, err = client.PostForm(serverURL+"/resources/files/conflicts", url.Values{
+		"csrf_token": {csrfToken}, "path": {hostRoot}, "name": {scriptName},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	preflight, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK || !bytes.Contains(preflight, []byte(`"quickRunCount":1`)) || !bytes.Contains(preflight, []byte(`"Deploy service"`)) {
+		t.Fatalf("upload preflight did not disclose Quick Run impact: status=%d body=%s", response.StatusCode, preflight)
+	}
+
+	withoutSync := "replacement without sync"
+	status, body := postHostUpload(t, client, serverURL, csrfToken, hostRoot, scriptName, withoutSync, "overwrite")
+	if status != http.StatusOK {
+		t.Fatalf("overwrite without synchronization: status=%d body=%s", status, body)
+	}
+	var digest string
+	var revision int64
+	if err := database.QueryRow("SELECT script_sha256, revision FROM quick_runs WHERE id = 'upload-quick'").Scan(&digest, &revision); err != nil {
+		t.Fatal(err)
+	}
+	if digest != originalDigest || revision != 4 {
+		t.Fatalf("unsynchronized Quick Run changed: digest=%s revision=%d", digest, revision)
+	}
+
+	withSync := "replacement with sync"
+	status, body = postHostUploadWithQuickRunSync(t, client, serverURL, csrfToken, hostRoot, scriptName, withSync, "overwrite", true)
+	if status != http.StatusOK || !bytes.Contains(body, []byte("Quick Run version(s) synchronized")) {
+		t.Fatalf("overwrite with synchronization: status=%d body=%s", status, body)
+	}
+	if err := database.QueryRow("SELECT script_sha256, revision FROM quick_runs WHERE id = 'upload-quick'").Scan(&digest, &revision); err != nil {
+		t.Fatal(err)
+	}
+	wantDigest := fmt.Sprintf("%x", sha256.Sum256([]byte(withSync)))
+	if digest != wantDigest || revision != 5 {
+		t.Fatalf("synchronized Quick Run digest=%s revision=%d, want digest=%s revision=5", digest, revision, wantDigest)
+	}
 }
 
 func TestExecutableHostUploadIsSavedLikeRegularFile(t *testing.T) {

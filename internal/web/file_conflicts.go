@@ -71,9 +71,68 @@ func validConflictAction(value string) bool {
 }
 
 type uploadConflictItem struct {
-	Name         string `json:"name"`
-	Suggested    string `json:"suggested"`
-	CanOverwrite bool   `json:"canOverwrite"`
+	Name          string   `json:"name"`
+	Suggested     string   `json:"suggested"`
+	CanOverwrite  bool     `json:"canOverwrite"`
+	QuickRunCount int      `json:"quickRunCount"`
+	QuickRunNames []string `json:"quickRunNames,omitempty"`
+}
+
+type uploadQuickRunSync struct {
+	Count  int64
+	Digest string
+}
+
+func (a *App) commitUploadReplacement(ctx context.Context, targetPath, storedID string, trashed *hostfiles.Trashed, synchronizeQuickRuns bool) (uploadQuickRunSync, error) {
+	if trashed == nil {
+		return uploadQuickRunSync{}, nil
+	}
+	rollbackFile := func(cause error) (uploadQuickRunSync, error) {
+		if rollbackErr := a.hostRollbackTextSave(ctx, targetPath, trashed.StoredPath); rollbackErr != nil {
+			return uploadQuickRunSync{}, fmt.Errorf("%w; restore overwritten file: %v", cause, rollbackErr)
+		}
+		return uploadQuickRunSync{}, cause
+	}
+
+	syncResult := uploadQuickRunSync{}
+	if synchronizeQuickRuns {
+		var references int
+		if err := a.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM quick_runs WHERE script_path_key = ?", hostfiles.ComparisonKey(targetPath)).Scan(&references); err != nil {
+			return rollbackFile(fmt.Errorf("check related Quick Runs: %w", err))
+		}
+		if references > 0 {
+			prepared, err := a.hostPrepareScript(ctx, targetPath)
+			if err != nil {
+				return rollbackFile(fmt.Errorf("prepare uploaded script for Quick Run synchronization: %w", err))
+			}
+			syncResult.Digest = prepared.Digest
+		}
+	}
+
+	transaction, err := a.db.BeginTx(ctx, nil)
+	if err != nil {
+		return rollbackFile(fmt.Errorf("begin upload metadata transaction: %w", err))
+	}
+	defer transaction.Rollback()
+	if _, err := transaction.ExecContext(ctx, `INSERT INTO trash_entries
+		(id, original_path, original_path_key, stored_path, stored_path_key, deleted_at, size, is_directory)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 0)`, storedID, trashed.OriginalPath, hostfiles.ComparisonKey(trashed.OriginalPath),
+		trashed.StoredPath, hostfiles.ComparisonKey(trashed.StoredPath), time.Now().UTC().Unix(), trashed.Size); err != nil {
+		return rollbackFile(fmt.Errorf("record overwritten file: %w", err))
+	}
+	if syncResult.Digest != "" {
+		result, err := transaction.ExecContext(ctx, `UPDATE quick_runs
+			SET script_sha256 = ?, revision = revision + 1, updated_at = ?
+			WHERE script_path_key = ?`, syncResult.Digest, time.Now().UTC().Unix(), hostfiles.ComparisonKey(targetPath))
+		if err != nil {
+			return rollbackFile(fmt.Errorf("synchronize Quick Run versions: %w", err))
+		}
+		syncResult.Count, _ = result.RowsAffected()
+	}
+	if err := transaction.Commit(); err != nil {
+		return rollbackFile(fmt.Errorf("commit upload metadata: %w", err))
+	}
+	return syncResult, nil
 }
 
 func (a *App) uploadConflicts(response http.ResponseWriter, request *http.Request) {
@@ -119,9 +178,34 @@ func (a *App) uploadConflicts(response http.ResponseWriter, request *http.Reques
 			http.Error(response, "无法生成可用名称："+err.Error(), http.StatusBadRequest)
 			return
 		}
+		canOverwrite := info.Mode().IsRegular() && !a.runs.ConflictsPath(target)
+		var quickRunNames []string
+		if canOverwrite {
+			quickRows, err := a.db.QueryContext(request.Context(), "SELECT name FROM quick_runs WHERE script_path_key = ? ORDER BY sort_order, created_at", hostfiles.ComparisonKey(target))
+			if err != nil {
+				http.Error(response, "无法检查关联快捷执行："+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			for quickRows.Next() {
+				var quickRunName string
+				if err := quickRows.Scan(&quickRunName); err != nil {
+					_ = quickRows.Close()
+					http.Error(response, "无法读取关联快捷执行："+err.Error(), http.StatusInternalServerError)
+					return
+				}
+				quickRunNames = append(quickRunNames, quickRunName)
+			}
+			if err := quickRows.Err(); err != nil {
+				_ = quickRows.Close()
+				http.Error(response, "无法读取关联快捷执行："+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			_ = quickRows.Close()
+		}
 		conflicts = append(conflicts, uploadConflictItem{
 			Name: name, Suggested: suggested,
-			CanOverwrite: info.Mode().IsRegular() && !a.runs.ConflictsPath(target),
+			CanOverwrite:  canOverwrite,
+			QuickRunCount: len(quickRunNames), QuickRunNames: quickRunNames,
 		})
 	}
 	response.Header().Set("Cache-Control", "no-store")

@@ -4464,6 +4464,7 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 	}
 	var csrfToken, relative string
 	conflictAction := ""
+	synchronizeQuickRuns := false
 	fileCount := 0
 	type uploadResult struct {
 		Name, Result, Detail string
@@ -4499,6 +4500,8 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 				}
 			case "conflict_action":
 				conflictAction = string(value)
+			case "sync_quick_runs":
+				synchronizeQuickRuns = string(value) == "1"
 			}
 			continue
 		}
@@ -4604,23 +4607,22 @@ func (a *App) uploadFiles(response http.ResponseWriter, request *http.Request) {
 			continue
 		}
 		_ = part.Close()
-		if trashed != nil {
-			_, err = a.db.Exec(`INSERT INTO trash_entries
-				(id, original_path, original_path_key, stored_path, stored_path_key, deleted_at, size, is_directory)
-				VALUES (?, ?, ?, ?, ?, ?, ?, 0)`, storedID, trashed.OriginalPath, hostfiles.ComparisonKey(trashed.OriginalPath),
-				trashed.StoredPath, hostfiles.ComparisonKey(trashed.StoredPath), time.Now().UTC().Unix(), trashed.Size)
-			if err != nil {
-				_ = a.hostRollbackTextSave(request.Context(), targetPath, trashed.StoredPath)
-				release()
-				results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: "替换已回滚：无法记录旧文件"})
-				a.recordAuditForRequest(request, "upload_file", filename, "failed")
-				continue
-			}
+		syncResult, metadataErr := a.commitUploadReplacement(request.Context(), targetPath, storedID, trashed, synchronizeQuickRuns && replace)
+		if metadataErr != nil {
+			release()
+			results = append(results, uploadResult{Name: filename, Result: webText(locale, "upload_results.failed"), Detail: secretredaction.String("替换已回滚：" + metadataErr.Error())})
+			a.recordAuditForRequest(request, "upload_file", filename, "failed")
+			continue
 		}
 		release()
 		a.recordAuditForRequest(request, "upload_file", uploadName, "succeeded")
+		if syncResult.Count > 0 {
+			a.recordAuditResourceForRequest(request, "sync_quick_runs_after_upload", targetPath, "succeeded", "", syncResult.Digest)
+		}
 		detail := webText(locale, "upload_results.saved")
-		if uploadName != filename {
+		if syncResult.Count > 0 {
+			detail = fmt.Sprintf(webText(locale, "upload_results.saved_quick_runs"), syncResult.Count)
+		} else if uploadName != filename {
 			detail = fmt.Sprintf(webText(locale, "upload_results.renamed"), uploadName)
 		}
 		results = append(results, uploadResult{Name: uploadName, Result: webText(locale, "upload_results.succeeded"), Detail: detail, Succeeded: true})

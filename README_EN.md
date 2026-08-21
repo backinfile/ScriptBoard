@@ -129,7 +129,7 @@ System Settings → Service Logs reads only the four fixed managed services from
 
 On Windows, Files starts from the available volumes. On Linux, it starts from `/`. File operations affect the host filesystem directly. Files deleted or replaced through the web interface first go to ScriptBoard Trash. Files with unknown extensions also receive a read-only preview when bounded content detection recognizes safe UTF-8 text; files that do not pass detection remain download-only.
 
-After a multi-file upload, a dialog reports every successful, skipped, or failed item. Closing it refreshes the current directory without leaving Files.
+After a multi-file upload, a dialog reports every successful, skipped, or failed item. Closing it refreshes the current directory without leaving Files. When an overwrite targets a script referenced by Quick Runs, the conflict dialog lists the affected items and lets the administrator choose whether to publish synchronized Quick Run versions with the new script digest.
 
 Separate script arguments with spaces and quote arguments that contain spaces. The argument field does not expand pipes, redirections, wildcards, or command substitutions.
 

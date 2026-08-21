@@ -159,7 +159,7 @@
     </form>
     {{else if eq .Kind "upload"}}
     <form method="post" action="{{.Action}}" enctype="multipart/form-data" data-native data-file-upload-form>
-      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value="{{.Path}}"><input type="hidden" name="conflict_action" value="">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="path" value="{{.Path}}"><input type="hidden" name="conflict_action" value=""><input type="hidden" name="sync_quick_runs" value="">
       <div class="drawer-body">
         <label class="file-picker">{{t .Locale "task.select_files"}} <input name="files" type="file" multiple required autofocus></label>
       </div>

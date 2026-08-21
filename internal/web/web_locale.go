@@ -2366,6 +2366,7 @@ var webMessages = map[string]localizedMessage{
 	"upload_results.executable_overwrite":           {"可执行文件不能通过普通上传直接覆盖；请改名上传并从私有收件箱发布。", "Executable files cannot be overwritten by a normal upload; upload under a new name and publish from the private inbox."},
 	"upload_results.cannot_overwrite":               {"当前条目正在使用或不是普通文件，不能覆盖", "This item is in use or is not a regular file, so it cannot be overwritten"},
 	"upload_results.saved":                          {"文件已保存", "File saved"},
+	"upload_results.saved_quick_runs":               {"文件已保存，并同步了 %d 个快捷执行版本", "File saved and %d Quick Run version(s) synchronized"},
 	"upload_results.renamed":                        {"已重命名为 %s", "Renamed to %s"},
 	"delete_impact.title":                           {"确认引用影响", "Confirm reference impact"},
 	"delete_impact.description":                     {"删除此路径会使快捷执行失效并停用相关计划；恢复文件不会自动重新启用计划。", "Deleting this path invalidates Quick Runs and disables related schedules. Restoring the file does not re-enable schedules automatically."},

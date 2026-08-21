@@ -202,6 +202,9 @@
       conflictSkip: "跳过", conflictOverwrite: "覆盖", conflictRename: "重命名", conflictClose: "关闭",
       conflictOverwriteNote: "覆盖前，当前文件会先移入回收站。",
       conflictOverwriteUnavailable: "部分条目正在使用或不是普通文件，不能覆盖。",
+      conflictQuickRunTitle: "同步快捷执行版本",
+      conflictQuickRunDescription: "覆盖会使关联快捷执行的脚本摘要失效。选择同步后，将为关联项发布包含新脚本摘要的下一版本。",
+      conflictQuickRunChoice: "同步更新 %d 个快捷执行版本",
       conflictMore: "个其他同名文件",
       statuses: {
         starting: "正在启动", running: "运行中", stopping: "正在停止", timing_out: "正在超时终止",
@@ -233,6 +236,9 @@
       conflictSkip: "Skip", conflictOverwrite: "Overwrite", conflictRename: "Rename", conflictClose: "Close",
       conflictOverwriteNote: "Before overwriting, the current file is moved to Trash.",
       conflictOverwriteUnavailable: "Some items are in use or are not regular files and cannot be overwritten.",
+      conflictQuickRunTitle: "Synchronize Quick Run versions",
+      conflictQuickRunDescription: "Overwriting invalidates the saved script digest for related Quick Runs. Synchronizing publishes their next version with the new digest.",
+      conflictQuickRunChoice: "Synchronize %d Quick Run version(s)",
       conflictMore: "more name conflicts",
       statuses: {
         starting: "Starting", running: "Running", stopping: "Stopping", timing_out: "Timing out",
@@ -1929,6 +1935,30 @@
         noteCopy.append(unavailable);
       }
 
+      const quickRunNames = [...new Set(conflicts.flatMap(conflict => Array.isArray(conflict.quickRunNames) ? conflict.quickRunNames : []))];
+      const quickRunCount = conflicts.reduce((total, conflict) => total + (Number(conflict.quickRunCount) || 0), 0);
+      let synchronizeQuickRuns = null;
+      let quickRunNotice = null;
+      if (quickRunNames.length) {
+        quickRunNotice = document.createElement("label");
+        quickRunNotice.className = "file-conflict-quick-runs";
+        const quickRunCopy = document.createElement("span");
+        quickRunCopy.className = "file-conflict-quick-runs__copy";
+        const quickRunTitle = document.createElement("strong");
+        quickRunTitle.textContent = words().conflictQuickRunTitle;
+        const quickRunDescription = document.createElement("small");
+        quickRunDescription.textContent = words().conflictQuickRunDescription;
+        const quickRunList = document.createElement("small");
+        quickRunList.className = "file-conflict-quick-runs__names";
+        quickRunList.textContent = quickRunNames.join(" · ");
+        quickRunCopy.append(quickRunTitle, quickRunDescription, quickRunList);
+        synchronizeQuickRuns = document.createElement("input");
+        synchronizeQuickRuns.className = "switch";
+        synchronizeQuickRuns.type = "checkbox";
+        synchronizeQuickRuns.setAttribute("aria-label", words().conflictQuickRunChoice.replace("%d", String(quickRunCount)));
+        quickRunNotice.append(quickRunCopy, synchronizeQuickRuns);
+      }
+
       const footer = document.createElement("footer");
       const skip = document.createElement("button");
       skip.className = "button button--quiet";
@@ -1944,7 +1974,9 @@
       rename.type = "button";
       rename.append(makeIcon("file-pen-line"), document.createTextNode(words().conflictRename));
       footer.append(skip, overwrite, rename);
-      sheet.append(header, list, note, footer);
+      sheet.append(header, list, note);
+      if (quickRunNotice) sheet.append(quickRunNotice);
+      sheet.append(footer);
       dialog.append(sheet);
       dialog.setAttribute("aria-labelledby", heading.id);
       document.body.append(dialog);
@@ -1961,7 +1993,7 @@
       };
       close.addEventListener("click", () => finish(""));
       skip.addEventListener("click", () => finish("skip"));
-      overwrite.addEventListener("click", () => finish("overwrite"));
+      overwrite.addEventListener("click", () => finish({ action: "overwrite", syncQuickRuns: Boolean(synchronizeQuickRuns?.checked) }));
       rename.addEventListener("click", () => finish("rename"));
       dialog.addEventListener("cancel", event => {
         event.preventDefault();
@@ -2032,11 +2064,16 @@
         const payload = await response.json();
         const conflicts = Array.isArray(payload.conflicts) ? payload.conflicts : [];
         if (conflicts.length) {
-          action = await chooseUploadConflict(conflicts);
-          if (!action) {
+          const choice = await chooseUploadConflict(conflicts);
+          if (!choice) {
             resetSubmit(form);
             form.dispatchEvent(new CustomEvent("file-upload-cancelled"));
             return;
+          }
+          if (typeof choice === "string") action = choice;
+          else {
+            action = choice.action;
+            data.set("sync_quick_runs", choice.syncQuickRuns ? "1" : "");
           }
         }
       }
