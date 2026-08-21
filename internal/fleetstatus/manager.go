@@ -75,6 +75,10 @@ type AddPeerInput struct {
 	Name, Endpoint, AccessToken string
 }
 
+type UpdatePeerInput struct {
+	Name, Endpoint, AccessToken string
+}
+
 type Peer struct {
 	ID, Name, Endpoint   string
 	Enabled              bool
@@ -286,6 +290,67 @@ func (manager *Manager) AddPeer(ctx context.Context, input AddPeerInput) (Peer, 
 		return Peer{}, err
 	}
 	return Peer{ID: id, Name: name, Endpoint: endpoint, Enabled: true, Overview: overview, LastSeenAt: now, LastAttemptAt: now, CreatedAt: now, UpdatedAt: now}, nil
+}
+
+// UpdatePeer validates the replacement connection before committing it. A
+// blank access token preserves the existing encrypted credential.
+func (manager *Manager) UpdatePeer(ctx context.Context, id string, input UpdatePeerInput) (Peer, error) {
+	id = strings.TrimSpace(id)
+	name := strings.TrimSpace(input.Name)
+	endpoint, err := normalizeEndpoint(input.Endpoint)
+	if id == "" || !validLabel(name, 64) || err != nil {
+		return Peer{}, errors.New("ScriptBoard node configuration is invalid")
+	}
+
+	var existingCiphertext []byte
+	if err := manager.db.QueryRowContext(ctx, `SELECT access_token_cipher FROM fleet_peers WHERE id = ?`, id).Scan(&existingCiphertext); err != nil {
+		return Peer{}, err
+	}
+	token := input.AccessToken
+	keepExistingToken := token == ""
+	var plaintext []byte
+	if keepExistingToken {
+		plaintext, err = manager.vault.Unseal(credentialUse, existingCiphertext)
+		if err != nil {
+			return Peer{}, err
+		}
+		token = string(plaintext)
+	} else if !validSecret(token) {
+		return Peer{}, errors.New("ScriptBoard node configuration is invalid")
+	}
+	if len(plaintext) > 0 {
+		defer func() {
+			for index := range plaintext {
+				plaintext[index] = 0
+			}
+		}()
+	}
+
+	overview, err := manager.fetch(ctx, endpoint, token)
+	if err != nil {
+		return Peer{}, err
+	}
+	ciphertext := existingCiphertext
+	if !keepExistingToken {
+		ciphertext, err = manager.vault.Seal(credentialUse, []byte(token))
+		if err != nil {
+			return Peer{}, err
+		}
+	}
+	encoded, err := json.Marshal(overview)
+	if err != nil {
+		return Peer{}, err
+	}
+	now := manager.now().UTC().Unix()
+	result, err := manager.db.ExecContext(ctx, `UPDATE fleet_peers SET name = ?, endpoint = ?, access_token_cipher = ?, overview_json = ?, last_seen_at = ?, last_attempt_at = ?, last_error = '', updated_at = ? WHERE id = ?`,
+		name, endpoint, ciphertext, string(encoded), now, now, now, id)
+	if err != nil {
+		return Peer{}, err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return Peer{}, sql.ErrNoRows
+	}
+	return manager.Peer(ctx, id)
 }
 
 func (manager *Manager) DeletePeer(ctx context.Context, id string) error {

@@ -3120,6 +3120,7 @@
     const fullLink = host.querySelector("[data-overview-drawer-full]");
     const form = host.querySelector("[data-overview-node-form]");
     const formError = host.querySelector("[data-overview-node-form-error]");
+    const nodeDanger = host.querySelector("[data-overview-node-danger]");
     const content = host.querySelector("[data-overview-drawer-content]");
     if (!sheet || !content) return;
     let opener = null;
@@ -3143,6 +3144,7 @@
       if (title) title.textContent = isForm ? host.dataset.formTitle || "" : host.dataset.runsKicker || "";
       if (fullLink) fullLink.hidden = isForm;
       if (form) form.hidden = !isForm;
+      if (nodeDanger) nodeDanger.hidden = !isForm;
       content.hidden = isForm;
       if (isForm && formError) {
         formError.hidden = true;
@@ -3260,7 +3262,9 @@
         return;
       }
       if (link.closest("[data-overview-drawer]")) return;
-      if (form && destination.pathname === "/monitor/nodes/new") {
+      const nodeFormPath = destination.pathname === "/monitor/nodes/new" ||
+        /^\/monitor\/nodes\/[^/]+\/edit$/.test(destination.pathname);
+      if (form && nodeFormPath) {
         event.preventDefault();
         openDrawer("form", link);
         return;

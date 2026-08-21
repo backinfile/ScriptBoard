@@ -68,8 +68,9 @@ func TestAccessTokenAuthenticatesAndCanBeRevoked(t *testing.T) {
 
 func TestAddPeerFetchesAndPersistsBoundedOverview(t *testing.T) {
 	now := time.Date(2026, 8, 19, 8, 0, 0, 0, time.UTC)
+	expectedToken := "remote-secret-value"
 	remote := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != ExportPath || request.Header.Get("Authorization") != "Bearer remote-secret-value" {
+		if request.URL.Path != ExportPath || request.Header.Get("Authorization") != "Bearer "+expectedToken {
 			http.Error(response, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -96,6 +97,21 @@ func TestAddPeerFetchesAndPersistsBoundedOverview(t *testing.T) {
 	peers, err := manager.ListPeers(context.Background())
 	if err != nil || len(peers) != 1 || peers[0].Overview.Current.CPU.UsedPercent != 41.2 {
 		t.Fatalf("peers=%#v err=%v", peers, err)
+	}
+	updated, err := manager.UpdatePeer(context.Background(), peer.ID, UpdatePeerInput{Name: "Production renamed", Endpoint: remote.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Name != "Production renamed" || updated.Endpoint != remote.URL {
+		t.Fatalf("updated peer = %#v", updated)
+	}
+	expectedToken = "replacement-secret-value"
+	updated, err = manager.UpdatePeer(context.Background(), peer.ID, UpdatePeerInput{Name: "Production final", Endpoint: remote.URL, AccessToken: expectedToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Name != "Production final" {
+		t.Fatalf("rotated peer = %#v", updated)
 	}
 }
 

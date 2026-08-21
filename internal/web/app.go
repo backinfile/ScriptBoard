@@ -1948,6 +1948,7 @@ type overviewPageView struct {
 	CanManage                bool
 	CSRFToken                string
 	Nodes                    []fleetOverviewNodeView
+	SelectedPeer             *fleetstatus.Peer
 }
 
 func validOverviewRange(value string) bool {
@@ -2043,6 +2044,7 @@ func (a *App) overviewPage(response http.ResponseWriter, request *http.Request) 
 
 	view := local
 	localDetail := selectedNode == "local"
+	var selectedPeer *fleetstatus.Peer
 	if selectedNode != "" && !localDetail {
 		peer, peerErr := a.fleetStatus.Peer(request.Context(), selectedNode)
 		if peerErr != nil {
@@ -2053,6 +2055,7 @@ func (a *App) overviewPage(response http.ResponseWriter, request *http.Request) 
 			http.Error(response, "无法读取节点状态："+peerErr.Error(), http.StatusInternalServerError)
 			return
 		}
+		selectedPeer = &peer
 		view = overviewResponse{Overview: peer.Overview}
 		overviewDurations(&view)
 		// Remote fleet snapshots intentionally omit host paths, interfaces, devices,
@@ -2068,7 +2071,7 @@ func (a *App) overviewPage(response http.ResponseWriter, request *http.Request) 
 	_ = overviewTemplate.Execute(response, overviewPageView{
 		overviewResponse: view, Range: selectedRange, Tab: tab, SelectedNode: selectedNode,
 		Locale: locale, Fleet: selectedNode == "", LocalDetail: localDetail,
-		CanManage: identity.Allows(current.role, identity.PermissionManageOperations), CSRFToken: current.csrfToken, Nodes: nodes,
+		CanManage: identity.Allows(current.role, identity.PermissionManageOperations), CSRFToken: current.csrfToken, Nodes: nodes, SelectedPeer: selectedPeer,
 	})
 }
 

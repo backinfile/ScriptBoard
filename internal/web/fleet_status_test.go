@@ -119,12 +119,13 @@ func TestScriptBoardInstancesShareReadOnlyStatusWithFleetOverview(t *testing.T) 
 	}
 	peerDetail, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, expected := range []string{"Remove machine", `data-overview-tab="summary"`, `data-metric-card="cpu"`, "ScriptBoard service"} {
+	peerID := string(peerMatches[1][1])
+	for _, expected := range []string{"Edit", `data-overview-node-edit`, `data-overview-tab="summary"`, `data-metric-card="cpu"`, "ScriptBoard service", `data-overview-drawer`, `data-overview-node-danger`, `action="/monitor/nodes/` + peerID + `/delete"`} {
 		if !strings.Contains(string(peerDetail), expected) {
 			t.Fatalf("peer detail missing %q: %s", expected, peerDetail)
 		}
 	}
-	for _, forbidden := range []string{`tab=details`, `data-overview-range`, `data-metric-chart`, `data-duplex-chart`, `data-active-runs>`, `data-host-detail`, `data-overview-drawer`, token} {
+	for _, forbidden := range []string{`tab=details`, `data-overview-range`, `data-metric-chart`, `data-duplex-chart`, `data-active-runs>`, `data-host-detail`, token} {
 		if strings.Contains(string(peerDetail), forbidden) {
 			t.Fatalf("peer detail exposes unavailable UI or a secret %q: %s", forbidden, peerDetail)
 		}
@@ -132,8 +133,31 @@ func TestScriptBoardInstancesShareReadOnlyStatusWithFleetOverview(t *testing.T) 
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("peer detail status=%d body=%s", response.StatusCode, peerDetail)
 	}
+	if count := strings.Count(string(peerDetail), `action="/monitor/nodes/`+peerID+`/delete"`); count != 1 {
+		t.Fatalf("peer delete action count=%d, want drawer-only action: %s", count, peerDetail)
+	}
 
-	response, err = hubClient.Get(hubURL + "/monitor?node=" + url.QueryEscape(string(peerMatches[1][1])) + "&tab=details")
+	response, err = hubClient.Get(hubURL + "/monitor/nodes/" + url.PathEscape(peerID) + "/edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	editPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK || !strings.Contains(string(editPage), `value="Production"`) || !strings.Contains(string(editPage), `Leave blank to keep the current access token.`) {
+		t.Fatalf("edit node task status=%d body=%s", response.StatusCode, editPage)
+	}
+	response, err = hubClient.PostForm(hubURL+"/monitor/nodes/"+url.PathEscape(peerID), url.Values{
+		"csrf_token": {formToken(t, editPage)}, "name": {"Production renamed"}, "endpoint": {remoteURL}, "access_token": {""},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/monitor?node="+url.QueryEscape(peerID) {
+		t.Fatalf("edit node status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+
+	response, err = hubClient.Get(hubURL + "/monitor?node=" + url.QueryEscape(peerID) + "&tab=details")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"scriptboard/internal/fleetstatus"
@@ -18,8 +19,9 @@ type fleetNodeSettingsView struct {
 }
 
 type fleetNodeFormView struct {
-	Locale                           webLocale
-	CSRFToken, Name, Endpoint, Error string
+	Locale                               webLocale
+	CSRFToken, ID, Name, Endpoint, Error string
+	Editing                              bool
 }
 
 type fleetTokenFormView struct {
@@ -96,6 +98,25 @@ func (a *App) newFleetNodeTask(response http.ResponseWriter, request *http.Reque
 	_ = fleetNodeFormTemplate.Execute(response, fleetNodeFormView{Locale: resolveWebLocale(request), CSRFToken: current.csrfToken})
 }
 
+func (a *App) editFleetNodeTask(response http.ResponseWriter, request *http.Request) {
+	current := request.Context().Value(sessionContextKey).(session)
+	peer, err := a.fleetStatus.Peer(request.Context(), request.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.NotFound(response, request)
+			return
+		}
+		http.Error(response, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = fleetNodeFormTemplate.Execute(response, fleetNodeFormView{
+		Locale: resolveWebLocale(request), CSRFToken: current.csrfToken, ID: peer.ID,
+		Name: peer.Name, Endpoint: peer.Endpoint, Editing: true,
+	})
+}
+
 func (a *App) createFleetNode(response http.ResponseWriter, request *http.Request) {
 	current := request.Context().Value(sessionContextKey).(session)
 	locale := resolveWebLocale(request)
@@ -114,6 +135,34 @@ func (a *App) createFleetNode(response http.ResponseWriter, request *http.Reques
 	}
 	a.recordAuditForRequest(request, "fleet_node_added", peer.ID+" "+peer.Name, "succeeded")
 	http.Redirect(response, request, "/monitor", http.StatusSeeOther)
+}
+
+func (a *App) updateFleetNode(response http.ResponseWriter, request *http.Request) {
+	current := request.Context().Value(sessionContextKey).(session)
+	locale := resolveWebLocale(request)
+	if !validSessionCSRF(request) {
+		http.Error(response, webText(locale, "error.csrf"), http.StatusForbidden)
+		return
+	}
+	id := request.PathValue("id")
+	input := fleetstatus.UpdatePeerInput{Name: request.FormValue("name"), Endpoint: request.FormValue("endpoint"), AccessToken: request.FormValue("access_token")}
+	peer, err := a.fleetStatus.UpdatePeer(request.Context(), id, input)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.NotFound(response, request)
+			return
+		}
+		response.Header().Set("Cache-Control", "no-store")
+		response.Header().Set("Content-Type", "text/html; charset=utf-8")
+		response.WriteHeader(http.StatusUnprocessableEntity)
+		_ = fleetNodeFormTemplate.Execute(response, fleetNodeFormView{
+			Locale: locale, CSRFToken: current.csrfToken, ID: id, Name: input.Name,
+			Endpoint: input.Endpoint, Error: err.Error(), Editing: true,
+		})
+		return
+	}
+	a.recordAuditForRequest(request, "fleet_node_updated", peer.ID+" "+peer.Name, "succeeded")
+	http.Redirect(response, request, "/monitor?node="+url.QueryEscape(peer.ID), http.StatusSeeOther)
 }
 
 func (a *App) deleteFleetNode(response http.ResponseWriter, request *http.Request) {

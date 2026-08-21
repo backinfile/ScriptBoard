@@ -53,7 +53,7 @@
       <h1>{{t .Locale "overview.title"}}</h1>
       <p class="sub">{{.Facts.Platform}} {{.Facts.PlatformVersion}} · {{.Facts.Architecture}} · {{t .Locale "overview.host_uptime"}} {{localDuration .Locale .HostUptime}}</p>
     </div>
-    {{if and .CanManage (not .LocalDetail)}}<form method="post" action="/monitor/nodes/{{urlquery .SelectedNode}}/delete" data-confirm="{{t .Locale "fleet.remove_confirm"}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--danger" type="submit"><span data-lucide="trash-2" aria-hidden="true"></span>{{t .Locale "fleet.remove_node"}}</button></form>{{end}}
+    {{if and .CanManage .SelectedPeer}}<a class="button" href="/monitor/nodes/{{urlquery .SelectedPeer.ID}}/edit" data-overview-node-edit><span data-lucide="square-pen" aria-hidden="true"></span>{{t .Locale "common.edit"}}</a>{{end}}
   </header>
 
   {{if .LocalDetail}}<nav class="overview-tabs mtabs" aria-label="{{t .Locale "overview.tabs"}}">
@@ -211,8 +211,8 @@
   {{end}}
   {{end}}
 
-  {{if or .Fleet .LocalDetail}}<div class="overview-drawer-host" data-overview-drawer aria-hidden="true"
-    data-form-kicker="{{t .Locale "fleet.nodes"}}" data-form-title="{{t .Locale "fleet.add_node"}}"
+  <div class="overview-drawer-host" data-overview-drawer aria-hidden="true"
+    data-form-kicker="{{t .Locale "fleet.nodes"}}" data-form-title="{{if .SelectedPeer}}{{t .Locale "fleet.edit_node"}}{{else}}{{t .Locale "fleet.add_node"}}{{end}}"
     data-runs-kicker="{{t .Locale "overview.active_runs"}}">
     <button class="overview-drawer-scrim" type="button" aria-label="{{t .Locale "common.close"}}" data-overview-drawer-close></button>
     <aside class="overview-drawer" role="dialog" aria-modal="true" aria-labelledby="overview-drawer-title" tabindex="-1">
@@ -228,21 +228,22 @@
       </header>
       <div class="overview-drawer__body">
         {{if .CanManage}}
-        <form class="overview-drawer__form" method="post" action="/monitor/nodes" data-overview-node-form hidden>
+        <form class="overview-drawer__form" method="post" action="{{if .SelectedPeer}}/monitor/nodes/{{urlquery .SelectedPeer.ID}}{{else}}/monitor/nodes{{end}}" data-overview-node-form hidden>
           <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
-          <p class="overview-drawer__description">{{t .Locale "fleet.add_node_description"}}</p>
+          <p class="overview-drawer__description">{{if .SelectedPeer}}{{t .Locale "fleet.edit_node_description"}}{{else}}{{t .Locale "fleet.add_node_description"}}{{end}}</p>
           <p class="page-error" role="alert" data-overview-node-form-error hidden></p>
-          <label>{{t .Locale "common.name"}} <input name="name" maxlength="64" required autocomplete="off" placeholder="prod-web-01"></label>
-          <label>{{t .Locale "fleet.endpoint"}} <input name="endpoint" type="url" maxlength="2048" required autocomplete="off" placeholder="https://panel.example.com"></label>
-          <label>{{t .Locale "fleet.access_token"}} <input name="access_token" type="password" minlength="16" maxlength="4096" required autocomplete="new-password"><small>{{t .Locale "fleet.access_token_hint"}}</small></label>
+          <label>{{t .Locale "common.name"}} <input name="name" maxlength="64" required autocomplete="off" value="{{if .SelectedPeer}}{{.SelectedPeer.Name}}{{end}}" placeholder="prod-web-01"></label>
+          <label>{{t .Locale "fleet.endpoint"}} <input name="endpoint" type="url" maxlength="2048" required autocomplete="off" value="{{if .SelectedPeer}}{{.SelectedPeer.Endpoint}}{{end}}" placeholder="https://panel.example.com"></label>
+          <label>{{t .Locale "fleet.access_token"}} <input name="access_token" type="password" minlength="16" maxlength="4096" {{if not .SelectedPeer}}required{{end}} autocomplete="new-password"><small>{{if .SelectedPeer}}{{t .Locale "fleet.access_token_optional"}}{{else}}{{t .Locale "fleet.access_token_hint"}}{{end}}</small></label>
           <aside class="inline-notice"><span data-lucide="shield-check" aria-hidden="true"></span><p>{{t .Locale "fleet.read_only_notice"}}</p></aside>
-          <footer><button class="button button--quiet" type="button" data-overview-drawer-close>{{t .Locale "common.cancel"}}</button><button class="button" type="submit"><span data-lucide="plug-zap" aria-hidden="true"></span>{{t .Locale "fleet.connect_node"}}</button></footer>
+          <footer><button class="button button--quiet" type="button" data-overview-drawer-close>{{t .Locale "common.cancel"}}</button><button class="button" type="submit"><span data-lucide="{{if .SelectedPeer}}save{{else}}plug-zap{{end}}" aria-hidden="true"></span>{{if .SelectedPeer}}{{t .Locale "fleet.update_node"}}{{else}}{{t .Locale "fleet.connect_node"}}{{end}}</button></footer>
         </form>
+        {{if .SelectedPeer}}<section class="overview-drawer__danger" data-overview-node-danger hidden><div><h3>{{t .Locale "fleet.remove_node"}}</h3><p>{{t .Locale "fleet.remove_node_description"}}</p></div><form method="post" action="/monitor/nodes/{{urlquery .SelectedPeer.ID}}/delete" data-confirm="{{t .Locale "fleet.remove_confirm"}}" data-async><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--danger" type="submit"><span data-lucide="trash-2" aria-hidden="true"></span>{{t .Locale "fleet.remove_node"}}</button></form></section>{{end}}
         {{end}}
         <div class="overview-drawer__content" data-overview-drawer-content hidden></div>
       </div>
     </aside>
-  </div>{{end}}
+  </div>
 </main>
 </body>
 </html>

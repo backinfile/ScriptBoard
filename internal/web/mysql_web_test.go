@@ -73,13 +73,10 @@ func TestAdministratorCanRegisterMySQLInstanceFromDatabaseWorkspace(t *testing.T
 	}
 	selectedBody, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, expected := range []string{`class="mysql-instance-workspace"`, `class="mysql-instance-rail"`, `class="mysql-instance-tabs"`, `class="mysql-instance-tabs__state" data-state="failed"`, `Connection failed`, `class="mysql-tabs"`, `tab=overview`, `tab=backups`, `data-connection-test`, `connection-test-result sr-only`, `data-preserve-scroll`, `aria-current="page"`, `data-mysql-drop-drawer`, `class="mysql-overview-facts"`, `TLS mode`, `Preferred`, `Refresh status`, `mysql-edit-instance-title`, `Edit instance`, `Leave blank to keep the current password.`, `name="id" value="` + string(instanceMatch[1]) + `"`, `name="name" value="Production"`} {
+	for _, expected := range []string{`class="mysql-instance-workspace"`, `class="mysql-instance-rail"`, `class="mysql-instance-tabs"`, `class="mysql-instance-tabs__state" data-state="failed"`, `Connection failed`, `class="mysql-tabs"`, `tab=overview`, `tab=backups`, `data-connection-test`, `connection-test-result sr-only`, `data-preserve-scroll`, `aria-current="page"`, `data-mysql-drop-drawer`, `class="mysql-overview-facts"`, `TLS mode`, `Preferred`, `Refresh status`, `mysql-edit-instance-title`, `Edit instance`, `Leave blank to keep the current password.`, `name="id" value="` + string(instanceMatch[1]) + `"`, `name="name" value="Production"`, `class="mysql-danger-zone mysql-instance-delete"`, `action="/resources/databases/instances/` + string(instanceMatch[1]) + `/delete"`, `Enter the complete instance name`} {
 		if !strings.Contains(string(selectedBody), expected) {
 			t.Fatalf("selected database workspace missing %q: %s", expected, selectedBody)
 		}
-	}
-	if strings.Contains(string(selectedBody), `mysql-remove-title`) {
-		t.Fatalf("database overview still exposes the remove-instance action: %s", selectedBody)
 	}
 	if strings.Contains(string(selectedBody), `mysql-instance-tabs__tls`) {
 		t.Fatalf("database instance rail still exposes TLS mode: %s", selectedBody)
@@ -109,6 +106,16 @@ func TestAdministratorCanRegisterMySQLInstanceFromDatabaseWorkspace(t *testing.T
 		if !strings.Contains(string(editedBody), expected) {
 			t.Fatalf("edited database workspace missing %q: %s", expected, editedBody)
 		}
+	}
+	response, err = client.PostForm(serverURL+"/resources/databases/instances/"+instanceID+"/delete", url.Values{
+		"csrf_token": {formToken(t, editedBody)}, "confirmation": {"Production renamed"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/resources/databases" {
+		t.Fatalf("delete instance status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
 }
 
@@ -179,8 +186,8 @@ func TestBackupRecordsFilterAndOpenConfirmationDrawers(t *testing.T) {
 	if strings.Contains(page, "backup-reporting-13") {
 		t.Fatalf("database filter returned another database: %s", page)
 	}
-	if strings.Contains(page, `id="mysql-remove-title"`) || strings.Contains(page, `action="/resources/databases/instances/`+instanceID+`/delete"`) {
-		t.Fatalf("backup tab exposes the overview-only remove-instance action: %s", page)
+	if !strings.Contains(page, `action="/resources/databases/instances/`+instanceID+`/delete"`) {
+		t.Fatalf("backup tab edit drawer is missing the remove-instance action: %s", page)
 	}
 	actionMenu := regexp.MustCompile(`(?s)<details class="action-menu">.*?</details>`).FindString(page)
 	if strings.Contains(actionMenu, "<input") || strings.Contains(actionMenu, "<form") {
