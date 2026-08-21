@@ -6198,6 +6198,24 @@ body.has-task-panel { overflow: hidden; }
 .security-ban-drawer__state .button { margin-top: 14px; }
 .security-ban-drawer .security-pagination { flex: 0 0 auto; margin: 0; padding: 14px 30px 18px; background: var(--canvas); border-top: 1px solid var(--rule); }
 .security-ban-drawer .security-pagination.is-loading { display: none; }
+.security-segment-skeleton { min-height: 180px; padding: 28px 0; border-bottom: 1px solid var(--rule); }
+.security-segment-skeleton--detection { display: grid; min-height: 54px; padding: 15px 0; grid-template-columns: 1fr 180px 100px; gap: 18px; }
+.security-segment-skeleton header, .security-segment-skeleton__rows, .security-segment-skeleton__facts, .security-segment-skeleton__table { display: grid; gap: 12px; }
+.security-segment-skeleton header span:first-child { width: min(260px, 70%); height: 22px; }
+.security-segment-skeleton header span:last-child { width: min(480px, 90%); height: 13px; }
+.security-segment-skeleton__rows { margin-top: 28px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.security-segment-skeleton__facts { margin-top: 28px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.security-segment-skeleton__table { margin-top: 28px; }
+.security-segment-skeleton span { display: block; min-height: 13px; border-radius: var(--rounded-compact); background: var(--surface-2); animation: security-segment-pulse 1.25s ease-in-out infinite alternate; }
+.security-segment-skeleton__rows > span, .security-segment-skeleton__facts > span { min-height: 76px; }
+.security-segment-skeleton__table > span { min-height: 38px; }
+.security-jail-note { display: flex; align-items: flex-start; gap: 9px; margin: 16px 0 0; color: var(--muted); font-size: .82rem; }
+.security-jail-note svg { width: 16px; height: 16px; flex: 0 0 auto; margin-top: 1px; color: var(--accent); }
+.security-sort-link { display: inline-flex; align-items: center; gap: 6px; color: inherit; text-decoration: none; }
+.security-sort-link svg { width: 13px; height: 13px; color: var(--muted); }
+.security-sort-link:hover, .security-sort-link:focus-visible { color: var(--accent); }
+.security-segment-error { min-height: 180px; }
+@keyframes security-segment-pulse { from { opacity: .55; } to { opacity: 1; } }
 .security-ban-table { min-width: 680px; }
 @starting-style {
   .security-ban-drawer-host.is-open .security-ban-drawer__scrim { opacity: 0; }

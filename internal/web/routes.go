@@ -71,6 +71,8 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /monitor/security/baseline/snapshot", a.requirePermission(identity.PermissionManageSystem, http.HandlerFunc(a.captureSecurityBaseline)))
 	mux.Handle("POST /monitor/security/components/{component}/install", a.requireStepUp(identity.PermissionManageSystem, http.HandlerFunc(a.installSecurityComponent)))
 	mux.Handle("POST /monitor/security/fail2ban/unban", a.requireStepUp(identity.PermissionManageSystem, http.HandlerFunc(a.unbanSecurityIP)))
+	mux.Handle("GET /monitor/security/fail2ban/ban", a.requirePermission(identity.PermissionManageSystem, http.HandlerFunc(a.newFail2BanBanTask)))
+	mux.Handle("POST /monitor/security/fail2ban/ban", a.requireStepUp(identity.PermissionManageSystem, http.HandlerFunc(a.banSecurityIP)))
 	mux.Handle("POST /monitor/security/firewall/draft/rules", a.requirePermission(identity.PermissionManageSystem, http.HandlerFunc(a.addSecurityFirewallDraftRule)))
 	mux.Handle("POST /monitor/security/firewall/draft/defaults", a.requirePermission(identity.PermissionManageSystem, http.HandlerFunc(a.updateSecurityFirewallDraftDefaults)))
 	mux.Handle("POST /monitor/security/firewall/draft/toggle", a.requirePermission(identity.PermissionManageSystem, http.HandlerFunc(a.toggleSecurityFirewallDraftRule)))

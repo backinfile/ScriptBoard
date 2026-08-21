@@ -52,6 +52,11 @@ func (service *HostSecurityService) Unban(ctx context.Context, jail, ip string) 
 	return service.client.Invoke(ctx, ActionFail2BanUnban, jail+":"+ip, "ban-v1", parameters)
 }
 
+func (service *HostSecurityService) Ban(ctx context.Context, jail, ip string) error {
+	parameters, _ := json.Marshal(unbanParameters{Jail: jail, IP: ip})
+	return service.client.Invoke(ctx, ActionFail2BanBan, jail+":"+ip, "ban-v1", parameters)
+}
+
 func (service *HostSecurityService) EnableUFW(ctx context.Context, baseline []hostsecurity.FirewallRule) error {
 	parameters, _ := json.Marshal(enableUFWParameters{Baseline: baseline})
 	return service.client.Invoke(ctx, ActionUFWEnable, "ufw", rulesRevision(baseline, hostsecurity.UFWDefaults{}), parameters)
@@ -125,6 +130,15 @@ func (executor *HostSecurityExecutor) Execute(ctx context.Context, request Execu
 			return errors.New("privileged unban binding does not match parameters")
 		}
 		return executor.service.Unban(ctx, parameters.Jail, parameters.IP)
+	case ActionFail2BanBan:
+		var parameters unbanParameters
+		if err := decodeParameters(request.Parameters, &parameters); err != nil {
+			return err
+		}
+		if request.Resource != parameters.Jail+":"+parameters.IP || request.Revision != "ban-v1" {
+			return errors.New("privileged ban binding does not match parameters")
+		}
+		return executor.service.Ban(ctx, parameters.Jail, parameters.IP)
 	case ActionUFWEnable:
 		var parameters enableUFWParameters
 		if err := decodeParameters(request.Parameters, &parameters); err != nil {

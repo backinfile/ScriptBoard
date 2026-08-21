@@ -81,13 +81,27 @@ func TestHostSecurityPageAndUFWDraftFlow(t *testing.T) {
 	if defaultPageSize != 5 {
 		t.Fatalf("default login page size = %d, want 5", defaultPageSize)
 	}
-	page := getSecurityPage(t, client, serverURL+"/monitor/security?tab=defense")
+	service.mu.Lock()
+	capabilityCallsBeforeShell := service.capabilityCalls
+	service.mu.Unlock()
+	shell := getSecurityPage(t, client, serverURL+"/monitor/security?tab=defense")
+	if !bytes.Contains(shell, []byte(`data-security-defense-segments`)) || !bytes.Contains(shell, []byte(`data-security-defense-segment="fail2ban"`)) {
+		t.Fatalf("defense shell does not expose independently loadable segments: %s", shell)
+	}
+	service.mu.Lock()
+	capabilityCallsAfterShell := service.capabilityCalls
+	service.mu.Unlock()
+	if capabilityCallsAfterShell != capabilityCallsBeforeShell {
+		t.Fatalf("defense shell performed %d capability probes before rendering", capabilityCallsAfterShell-capabilityCallsBeforeShell)
+	}
+	page := getSecurityPage(t, client, serverURL+"/monitor/security?tab=defense&full=1")
 	for _, expected := range [][]byte{
 		[]byte(`href="/monitor/security" aria-current="page"`),
 		[]byte("Host Security"), []byte("Fail2Ban"), []byte("UFW Firewall"), []byte("root privileges"),
 		[]byte(`data-security-ban-drawer-trigger`), []byte(`aria-haspopup="dialog"`),
 		[]byte(`class="security-ban-drawer-host"`), []byte(`data-security-ban-loading`), []byte(`aria-hidden="true"`),
 		[]byte(`action="/monitor/security/firewall/draft/defaults"`), []byte("Default traffic policy"),
+		[]byte("IPv4 / IPv6"), []byte(`rule_sort=family`), []byte(`/monitor/security/fail2ban/ban`),
 	} {
 		if !bytes.Contains(page, expected) {
 			t.Fatalf("security page missing %q: %s", expected, page)
@@ -98,8 +112,30 @@ func TestHostSecurityPageAndUFWDraftFlow(t *testing.T) {
 			t.Fatalf("security page exposes removed UFW close action %q", forbidden)
 		}
 	}
+	banTask := getSecurityPage(t, client, serverURL+"/monitor/security/fail2ban/ban")
+	for _, expected := range [][]byte{[]byte(`data-task-kind="fail2ban-ban"`), []byte(`name="ip"`), []byte(`action="/monitor/security/fail2ban/ban"`)} {
+		if !bytes.Contains(banTask, expected) {
+			t.Fatalf("manual ban drawer missing %q: %s", expected, banTask)
+		}
+	}
+	response, err := client.PostForm(serverURL+"/monitor/security/fail2ban/ban", url.Values{
+		"csrf_token": {formToken(t, banTask)}, "ip": {"2001:db8::8"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("manual ban status = %d", response.StatusCode)
+	}
+	service.mu.Lock()
+	banTarget := service.banTarget
+	service.mu.Unlock()
+	if banTarget != "sshd:2001:db8::8" {
+		t.Fatalf("manual ban target = %q", banTarget)
+	}
 
-	bans := getSecurityPage(t, client, serverURL+"/monitor/security?tab=defense&bans=1")
+	bans := getSecurityPage(t, client, serverURL+"/monitor/security?tab=defense&full=1&bans=1")
 	for _, expected := range [][]byte{
 		[]byte(`data-security-ban-drawer`), []byte(`class="security-ban-drawer-host is-open"`),
 		[]byte(`role="dialog"`), []byte(`aria-modal="true"`), []byte("203.0.113.8"),
@@ -112,7 +148,7 @@ func TestHostSecurityPageAndUFWDraftFlow(t *testing.T) {
 		t.Fatalf("ban details still render as a modal dialog: %s", bans)
 	}
 
-	response, err := client.PostForm(serverURL+"/monitor/security/firewall/draft/rules", url.Values{
+	response, err = client.PostForm(serverURL+"/monitor/security/firewall/draft/rules", url.Values{
 		"csrf_token": {formToken(t, page)}, "direction": {"out"}, "action": {"allow"},
 		"protocol": {"udp"}, "port": {"53"}, "address": {"1.1.1.1"}, "name": {"DNS"},
 	})
@@ -140,7 +176,7 @@ func TestHostSecurityPageAndUFWDraftFlow(t *testing.T) {
 		t.Fatalf("update default policies status = %d", response.StatusCode)
 	}
 
-	review := getSecurityPage(t, client, serverURL+"/monitor/security?tab=defense&review=1")
+	review := getSecurityPage(t, client, serverURL+"/monitor/security?tab=defense&full=1&review=1")
 	if !bytes.Contains(review, []byte("Review UFW changes")) || !bytes.Contains(review, []byte("DNS")) || !bytes.Contains(review, []byte("Default outgoing")) {
 		t.Fatalf("review dialog missing draft: %s", review)
 	}
@@ -181,7 +217,7 @@ func TestHostSecurityLoginFiltersArePassedToService(t *testing.T) {
 	if query.Range != "7d" || query.Result != hostsecurity.ResultFailure || query.Type != "rdp" || query.PageSize != 50 || query.Start.IsZero() || query.End.IsZero() || !query.Refresh {
 		t.Fatalf("query = %#v", query)
 	}
-	defense := getSecurityPage(t, client, serverURL+"/monitor/security?tab=defense")
+	defense := getSecurityPage(t, client, serverURL+"/monitor/security?tab=defense&full=1")
 	for _, expected := range [][]byte{[]byte("Windows Defender Firewall"), []byte("Remote Desktop"), []byte(`/monitor/security/windows-firewall/rules/new`), []byte(`data-task-link`), []byte(`data-security-tabs`), []byte(`name="rule_protocol"`), []byte(`name="rule_port"`), []byte(`name="rule_address"`), []byte("Refresh data"), []byte("Administrator privileges")} {
 		if !bytes.Contains(defense, expected) {
 			t.Fatalf("Windows security page missing %q: %s", expected, defense)
@@ -287,11 +323,11 @@ func TestWindowsFirewallRulesSupportFilteringAndPagination(t *testing.T) {
 	}
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: filepath.Join(t.TempDir(), "state"), HostSecurity: service})
 
-	secondPage := getSecurityPage(t, client, serverURL+"/monitor/security?tab=defense&rule_page=2")
+	secondPage := getSecurityPage(t, client, serverURL+"/monitor/security?tab=defense&full=1&rule_page=2")
 	if !bytes.Contains(secondPage, []byte("10020")) || bytes.Contains(secondPage, []byte("10000")) || !bytes.Contains(secondPage, []byte("25 records · 2 / 2")) {
 		t.Fatalf("Windows firewall pagination is incomplete: %s", secondPage)
 	}
-	filtered := getSecurityPage(t, client, serverURL+"/monitor/security?tab=defense&rule_protocol=udp&rule_port=1001&rule_address=10.20.0.13&rule_direction=in&rule_status=enabled")
+	filtered := getSecurityPage(t, client, serverURL+"/monitor/security?tab=defense&full=1&rule_protocol=udp&rule_port=1001&rule_address=10.20.0.13&rule_direction=in&rule_status=enabled")
 	if !bytes.Contains(filtered, []byte("10013")) || bytes.Contains(filtered, []byte("10011")) || !bytes.Contains(filtered, []byte(`value="udp" selected`)) {
 		t.Fatalf("Windows firewall filters are incomplete: %s", filtered)
 	}
@@ -348,7 +384,7 @@ func TestHostSecurityCanToggleFirstAddedDraftRule(t *testing.T) {
 	}}
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: filepath.Join(t.TempDir(), "state"), HostSecurity: service})
 
-	page := getSecurityPage(t, client, serverURL+"/monitor/security?tab=defense")
+	page := getSecurityPage(t, client, serverURL+"/monitor/security?tab=defense&full=1")
 	response, err := client.PostForm(serverURL+"/monitor/security/firewall/draft/rules", url.Values{
 		"csrf_token": {formToken(t, page)}, "direction": {"in"}, "action": {"allow"},
 		"protocol": {"tcp"}, "port": {"22"}, "address": {"Anywhere"}, "name": {"SSH"},
@@ -361,7 +397,7 @@ func TestHostSecurityCanToggleFirstAddedDraftRule(t *testing.T) {
 		t.Fatalf("add first draft status = %d", response.StatusCode)
 	}
 
-	draftPage := getSecurityPage(t, client, serverURL+"/monitor/security?tab=defense")
+	draftPage := getSecurityPage(t, client, serverURL+"/monitor/security?tab=defense&full=1")
 	response, err = client.PostForm(serverURL+"/monitor/security/firewall/draft/toggle", url.Values{
 		"csrf_token": {formToken(t, draftPage)}, "index": {"0"},
 	})
@@ -374,7 +410,7 @@ func TestHostSecurityCanToggleFirstAddedDraftRule(t *testing.T) {
 		t.Fatalf("toggle first draft status = %d body=%s", response.StatusCode, toggleBody)
 	}
 
-	toggledPage := getSecurityPage(t, client, serverURL+"/monitor/security?tab=defense")
+	toggledPage := getSecurityPage(t, client, serverURL+"/monitor/security?tab=defense&full=1")
 	if !bytes.Contains(toggledPage, []byte(`data-enabled="false"`)) || !bytes.Contains(toggledPage, []byte("Enable rule")) {
 		t.Fatalf("first added draft rule was not disabled: %s", toggledPage)
 	}
@@ -412,6 +448,7 @@ type securityFixtureService struct {
 	applyCalls      int
 	appliedDesired  []hostsecurity.FirewallRule
 	appliedDefaults hostsecurity.UFWDefaults
+	banTarget       string
 }
 
 func (s *securityFixtureService) Capabilities(context.Context) hostsecurity.Capabilities {
@@ -447,6 +484,13 @@ func (s *securityFixtureService) Bans(context.Context, int, int) (hostsecurity.B
 func (s *securityFixtureService) Install(context.Context, string) error { return nil }
 
 func (s *securityFixtureService) Unban(context.Context, string, string) error { return nil }
+
+func (s *securityFixtureService) Ban(_ context.Context, jail, ip string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.banTarget = jail + ":" + ip
+	return nil
+}
 
 func (s *securityFixtureService) EnableUFW(context.Context, []hostsecurity.FirewallRule) error {
 	return nil

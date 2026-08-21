@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"runtime"
 	"scriptboard/internal/identity"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -64,6 +66,9 @@ type securityPageView struct {
 	RuleAddress          string
 	RuleDirection        string
 	RuleStatus           string
+	RuleSort             string
+	RuleOrder            string
+	RuleSortURLs         map[string]string
 	RulePageSize         int
 	RulePage             int
 	RulePages            int
@@ -91,6 +96,7 @@ type securityPageView struct {
 	RemoteLoginRows      []securityRemoteLoginRow
 	RemoteLogin          securityRemoteLoginSummary
 	DeferredData         bool
+	DefenseShell         bool
 }
 
 type securityRemoteLoginSummary struct {
@@ -139,6 +145,14 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 	ruleStatus := allowedSecurityFilter(request.URL.Query().Get("rule_status"), "enabled", "disabled")
 	rulePort := boundedSecurityFilter(request.URL.Query().Get("rule_port"), 64)
 	ruleAddress := boundedSecurityFilter(request.URL.Query().Get("rule_address"), 128)
+	ruleSort := allowedSecurityFilter(request.URL.Query().Get("rule_sort"), "number", "status", "direction", "action", "family", "protocol", "port", "address", "name")
+	if ruleSort == "" {
+		ruleSort = "number"
+	}
+	ruleOrder := allowedSecurityFilter(request.URL.Query().Get("rule_order"), "asc", "desc")
+	if ruleOrder == "" {
+		ruleOrder = "asc"
+	}
 	rulePage := positiveInt(request.URL.Query().Get("rule_page"), 1)
 	rulePageSize := positiveInt(request.URL.Query().Get("rule_page_size"), 20)
 	if rulePageSize != 50 && rulePageSize != 100 {
@@ -152,6 +166,38 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 	}
 	if query.Result != hostsecurity.ResultSuccess && query.Result != hostsecurity.ResultFailure {
 		query.Result = ""
+	}
+	if tab == "defense" && request.URL.Query().Get("full") != "1" {
+		view := securityPageView{
+			Locale: locale, CSRFToken: current.csrfToken, Tab: tab, Range: rangeValue,
+			CanManage: identity.Allows(current.role, identity.PermissionManageSystem), DefenseShell: true,
+			Linux: runtime.GOOS == "linux", Windows: runtime.GOOS == "windows",
+			RuleSort: ruleSort, RuleOrder: ruleOrder, RefreshURL: securityRefreshURL(request.URL.Query()),
+		}
+		response.Header().Set("Cache-Control", "no-store")
+		response.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = securityTemplate.Execute(response, view)
+		return
+	}
+	if tab == "defense" && request.URL.Query().Get("only_bans") == "1" {
+		view := securityPageView{
+			Locale: locale, CSRFToken: current.csrfToken, Tab: tab, Range: rangeValue, Linux: true,
+			CanManage:    identity.Allows(current.role, identity.PermissionManageSystem),
+			Capabilities: hostsecurity.Capabilities{OS: "linux", Fail2Ban: hostsecurity.Component{Installed: true, Running: true}},
+			RuleSort:     ruleSort, RuleOrder: ruleOrder,
+		}
+		banContext, cancelBans := context.WithTimeout(request.Context(), 8*time.Second)
+		banPage, err := a.hostSecurity.Bans(banContext, 1, 20)
+		cancelBans()
+		if err != nil {
+			view.BanError = secretredaction.String(err.Error())
+		} else {
+			view.BanPage, view.BanDataLoaded = banPage, true
+		}
+		response.Header().Set("Cache-Control", "no-store")
+		response.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = securityTemplate.Execute(response, view)
+		return
 	}
 	if isDeferredDataShell(request) {
 		response.Header().Set("Cache-Control", "no-store")
@@ -177,7 +223,7 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 		ShowBans: request.URL.Query().Get("bans") == "1", ShowReview: request.URL.Query().Get("review") == "1",
 		Notice: securityNotice(locale, request.URL.Query().Get("notice")), Linux: capabilities.OS == "linux", Windows: capabilities.OS == "windows",
 		RuleProtocol: ruleProtocol, RulePort: rulePort, RuleAddress: ruleAddress, RuleDirection: ruleDirection,
-		RuleStatus: ruleStatus, RulePage: rulePage, RulePageSize: rulePageSize,
+		RuleStatus: ruleStatus, RulePage: rulePage, RulePageSize: rulePageSize, RuleSort: ruleSort, RuleOrder: ruleOrder,
 		RefreshURL: securityRefreshURL(request.URL.Query()),
 	}
 
@@ -202,7 +248,7 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 		}
 	}
 	// Fail2Ban details include journal enrichment; keep that work on the defense tab instead of blocking the Linux overview.
-	if capabilities.Fail2Ban.Installed && capabilities.Fail2Ban.Running && tab == "defense" {
+	if capabilities.Fail2Ban.Installed && capabilities.Fail2Ban.Running && tab == "defense" && request.URL.Query().Get("skip_bans") != "1" {
 		banContext, cancelBans := context.WithTimeout(request.Context(), 8*time.Second)
 		banPage, err := a.hostSecurity.Bans(banContext, positiveInt(request.URL.Query().Get("ban_page"), 1), 20)
 		cancelBans()
@@ -243,6 +289,8 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 		view.DraftUpdatedAt = draft.UpdatedAt
 		view.HasDraft = len(draft.Changes) > 0
 	}
+	sortSecurityFirewallRules(view.Rules, ruleSort, ruleOrder)
+	view.RuleSortURLs = securityFirewallSortURLs(request.URL.Query(), ruleSort, ruleOrder)
 	if view.Windows {
 		view.Rules = filterWindowsFirewallRules(view.Rules, ruleProtocol, rulePort, ruleAddress, ruleDirection, ruleStatus)
 		view.RuleFiltering = ruleProtocol != "" || rulePort != "" || ruleAddress != "" || ruleDirection != "" || ruleStatus != ""
@@ -266,6 +314,75 @@ func (a *App) securityPage(response http.ResponseWriter, request *http.Request) 
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = securityTemplate.Execute(response, view)
+}
+
+func sortSecurityFirewallRules(rules []hostsecurity.FirewallRule, field, order string) {
+	if field == "number" {
+		return
+	}
+	value := func(rule hostsecurity.FirewallRule) string {
+		switch field {
+		case "status":
+			if rule.Enabled {
+				return "0"
+			}
+			return "1"
+		case "direction":
+			return string(rule.Direction)
+		case "action":
+			return string(rule.Action)
+		case "family":
+			if rule.IPv6 {
+				return "ipv6"
+			}
+			return "ipv4"
+		case "protocol":
+			return strings.ToLower(rule.Protocol)
+		case "port":
+			return strings.ToLower(rule.Port)
+		case "address":
+			return strings.ToLower(rule.Address)
+		case "name":
+			return strings.ToLower(rule.Name)
+		default:
+			return ""
+		}
+	}
+	sort.SliceStable(rules, func(i, j int) bool {
+		left, right := value(rules[i]), value(rules[j])
+		if left == right {
+			return rules[i].Number < rules[j].Number
+		}
+		if order == "desc" {
+			return left > right
+		}
+		return left < right
+	})
+}
+
+func securityFirewallSortURLs(query url.Values, currentField, currentOrder string) map[string]string {
+	result := make(map[string]string)
+	segmentRequest := query.Get("skip_bans") == "1" || query.Get("only_bans") == "1"
+	for _, field := range []string{"status", "direction", "action", "family", "protocol", "port", "address", "name"} {
+		values := url.Values{}
+		for key, entries := range query {
+			if key == "skip_bans" || key == "only_bans" || key == "rule_page" || key == "full" && segmentRequest {
+				continue
+			}
+			for _, entry := range entries {
+				values.Add(key, entry)
+			}
+		}
+		values.Set("tab", "defense")
+		values.Set("rule_sort", field)
+		order := "asc"
+		if field == currentField && currentOrder == "asc" {
+			order = "desc"
+		}
+		values.Set("rule_order", order)
+		result[field] = "/monitor/security?" + values.Encode()
+	}
+	return result
 }
 
 func securityRemoteLoginSummaryFor(locale webLocale, capabilities hostsecurity.Capabilities) securityRemoteLoginSummary {
@@ -417,6 +534,9 @@ func fallbackSecurityValue(value, fallback string) string {
 func securityRefreshURL(query url.Values) string {
 	values := url.Values{}
 	for key, items := range query {
+		if key == "full" || key == "skip_bans" || key == "only_bans" {
+			continue
+		}
 		for _, item := range items {
 			values.Add(key, item)
 		}
@@ -489,6 +609,14 @@ func (a *App) newWindowsFirewallRuleTask(response http.ResponseWriter, request *
 	})
 }
 
+func (a *App) newFail2BanBanTask(response http.ResponseWriter, request *http.Request) {
+	a.renderTaskPage(response, request, taskPageData{
+		Kind: "fail2ban-ban", Title: webText(resolveWebLocale(request), "security.manual_ban"),
+		Description: webText(resolveWebLocale(request), "security.manual_ban_description"),
+		BackURL:     "/monitor/security?tab=defense", Action: "/monitor/security/fail2ban/ban",
+	})
+}
+
 func positiveInt(value string, fallback int) int {
 	parsed, err := strconv.Atoi(value)
 	if err != nil || parsed < 1 {
@@ -502,7 +630,7 @@ func securityNotice(locale webLocale, code string) string {
 		return ""
 	}
 	allowed := map[string]string{
-		"installed": "security.notice_installed", "unbanned": "security.notice_unbanned",
+		"installed": "security.notice_installed", "unbanned": "security.notice_unbanned", "banned": "security.notice_banned",
 		"drafted": "security.notice_drafted", "discarded": "security.notice_discarded",
 		"synced": "security.notice_synced", "ufw_enabled": "security.notice_ufw_enabled",
 		"windows_rule_saved": "security.notice_windows_rule_saved",
@@ -569,6 +697,23 @@ func (a *App) unbanSecurityIP(response http.ResponseWriter, request *http.Reques
 	}
 	a.recordAuditForRequest(request, "fail2ban_unban", jail+":"+ip, "succeeded")
 	securityRedirect(response, request, "defense", "unbanned", url.Values{"bans": {"1"}})
+}
+
+func (a *App) banSecurityIP(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
+		return
+	}
+	ip := strings.TrimSpace(request.FormValue("ip"))
+	ctx, cancel := context.WithTimeout(request.Context(), 15*time.Second)
+	defer cancel()
+	if err := a.hostSecurity.Ban(ctx, "sshd", ip); err != nil {
+		a.recordAuditForRequest(request, "fail2ban_ban", "sshd:"+ip, "failed")
+		writeSecurityError(response, request, err)
+		return
+	}
+	a.recordAuditForRequest(request, "fail2ban_ban", "sshd:"+ip, "succeeded")
+	securityRedirect(response, request, "defense", "banned", nil)
 }
 
 func (a *App) addSecurityFirewallDraftRule(response http.ResponseWriter, request *http.Request) {

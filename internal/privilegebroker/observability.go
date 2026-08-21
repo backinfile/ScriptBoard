@@ -240,6 +240,11 @@ func (service *RemoteHostSecurity) Unban(ctx context.Context, jail, ip string) e
 	return service.client.Invoke(ctx, ActionFail2BanUnban, jail+":"+ip, "ban-v1", parameters)
 }
 
+func (service *RemoteHostSecurity) Ban(ctx context.Context, jail, ip string) error {
+	parameters, _ := json.Marshal(unbanParameters{Jail: jail, IP: ip})
+	return service.client.Invoke(ctx, ActionFail2BanBan, jail+":"+ip, "ban-v1", parameters)
+}
+
 func (service *RemoteHostSecurity) EnableUFW(ctx context.Context, baseline []hostsecurity.FirewallRule) error {
 	parameters, _ := json.Marshal(enableUFWParameters{Baseline: baseline})
 	return service.client.Invoke(ctx, ActionUFWEnable, "ufw", rulesRevision(baseline, hostsecurity.UFWDefaults{}), parameters)

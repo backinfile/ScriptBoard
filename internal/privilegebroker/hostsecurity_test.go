@@ -66,6 +66,22 @@ func TestBrokerExecutorRejectsResourceThatDisagreesWithTypedParameters(t *testin
 	}
 }
 
+func TestBrokeredHostSecurityBansThroughTypedAction(t *testing.T) {
+	reader := &fixtureHostSecurity{}
+	direct := &fixtureHostSecurity{}
+	executor, _ := NewHostSecurityExecutor(direct)
+	server, client := brokerFixture(t, &fixtureAuthorizer{actor: Actor{UserID: "user-1", Role: "administrator"}}, executor)
+	defer server.Close()
+	service, _ := NewHostSecurityService(reader, client)
+	ctx := WithAuthorization(context.Background(), Authorization{SessionToken: "session-token-fixture-0123456789", RequestID: "request-host-ban"})
+	if err := service.Ban(ctx, "sshd", "203.0.113.8"); err != nil {
+		t.Fatal(err)
+	}
+	if reader.mutationCalls != 0 || direct.mutationCalls != 1 || direct.lastID != "sshd:203.0.113.8" {
+		t.Fatalf("reader mutations=%d direct mutations=%d target=%q", reader.mutationCalls, direct.mutationCalls, direct.lastID)
+	}
+}
+
 type fixtureHostSecurity struct {
 	capabilities    hostsecurity.Capabilities
 	updateReport    hostsecurity.SecurityUpdateReport
@@ -102,6 +118,11 @@ func (fixture *fixtureHostSecurity) Install(context.Context, string) error {
 }
 func (fixture *fixtureHostSecurity) Unban(context.Context, string, string) error {
 	fixture.mutationCalls++
+	return nil
+}
+func (fixture *fixtureHostSecurity) Ban(_ context.Context, jail, ip string) error {
+	fixture.mutationCalls++
+	fixture.lastID = jail + ":" + ip
 	return nil
 }
 func (fixture *fixtureHostSecurity) EnableUFW(context.Context, []hostsecurity.FirewallRule) error {

@@ -569,6 +569,29 @@ func TestEnableUFWUsesDetectedSSHPort(t *testing.T) {
 	}
 }
 
+func TestBanUsesStructuredFail2BanArguments(t *testing.T) {
+	runner := &fakeRunner{}
+	manager := NewManager(Options{GOOS: "linux", Runner: runner, Now: time.Now})
+	if err := manager.Ban(context.Background(), "sshd", "2001:db8::8"); err != nil {
+		t.Fatalf("Ban: %v", err)
+	}
+	want := []string{"fail2ban-client set sshd banip 2001:db8::8"}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
+	}
+}
+
+func TestBanRejectsInvalidAddressBeforeExecution(t *testing.T) {
+	runner := &fakeRunner{}
+	manager := NewManager(Options{GOOS: "linux", Runner: runner, Now: time.Now})
+	if err := manager.Ban(context.Background(), "sshd", "203.0.113.8; reboot"); err != ErrInvalidIPAddress {
+		t.Fatalf("Ban error = %v, want %v", err, ErrInvalidIPAddress)
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("unexpected calls: %#v", runner.calls)
+	}
+}
+
 func TestWindowsFirewallUsesStructuredNetshArguments(t *testing.T) {
 	runner := &fakeRunner{}
 	manager := NewManager(Options{GOOS: "windows", Runner: runner, Now: time.Now})

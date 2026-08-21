@@ -38,7 +38,7 @@ import (
 )
 
 const (
-	ProtocolVersion                     = 6
+	ProtocolVersion                     = 7
 	MaxRequestBytes                     = 3 << 20
 	MaxResponseBytes                    = 5 << 20
 	capabilityLifetime                  = 30 * time.Second
@@ -164,6 +164,7 @@ type Action string
 const (
 	ActionInstallComponent        Action = "install_component"
 	ActionFail2BanUnban           Action = "fail2ban_unban"
+	ActionFail2BanBan             Action = "fail2ban_ban"
 	ActionUFWEnable               Action = "ufw_enable"
 	ActionUFWApply                Action = "ufw_apply"
 	ActionWindowsFirewallAdd      Action = "windows_firewall_add"
@@ -212,7 +213,7 @@ const (
 var (
 	requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,160}$`)
 	actions          = map[Action]struct{}{
-		ActionInstallComponent: {}, ActionFail2BanUnban: {}, ActionUFWEnable: {}, ActionUFWApply: {},
+		ActionInstallComponent: {}, ActionFail2BanUnban: {}, ActionFail2BanBan: {}, ActionUFWEnable: {}, ActionUFWApply: {},
 		ActionWindowsFirewallAdd: {}, ActionWindowsFirewallSet: {}, ActionWindowsFirewallDelete: {},
 		ActionApplicationOperate: {}, ActionKubernetesOperate: {},
 	}

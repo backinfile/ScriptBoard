@@ -224,6 +224,7 @@ type Service interface {
 	Logins(context.Context, LoginQuery) (LoginPage, error)
 	Bans(context.Context, int, int) (BanPage, error)
 	Install(context.Context, string) error
+	Ban(context.Context, string, string) error
 	Unban(context.Context, string, string) error
 	EnableUFW(context.Context, []FirewallRule) error
 	ApplyUFW(context.Context, []FirewallRule, []FirewallRule, UFWDefaults, UFWDefaults) error
@@ -694,6 +695,23 @@ func (m *Manager) Unban(ctx context.Context, jail, ip string) error {
 	defer m.mu.Unlock()
 	if _, err := m.runner.Run(ctx, "fail2ban-client", "set", jail, "unbanip", ip); err != nil {
 		return fmt.Errorf("unban IP: %w", err)
+	}
+	return nil
+}
+
+// Ban only accepts a single parsed address and the supported SSH jail so user
+// input can never alter the structured fail2ban-client invocation.
+func (m *Manager) Ban(ctx context.Context, jail, ip string) error {
+	if m.goos != "linux" {
+		return ErrUnsupported
+	}
+	if jail != "sshd" || net.ParseIP(ip) == nil {
+		return ErrInvalidIPAddress
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, err := m.runner.Run(ctx, "fail2ban-client", "set", jail, "banip", ip); err != nil {
+		return fmt.Errorf("ban IP: %w", err)
 	}
 	return nil
 }

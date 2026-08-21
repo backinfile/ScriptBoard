@@ -7644,6 +7644,57 @@
     });
   }
 
+  function initSecurityDefenseSegments(cleanups) {
+    const root = document.querySelector("[data-security-defense-segments]");
+    if (!root) return;
+    const controller = new AbortController();
+    cleanups.push(() => controller.abort());
+
+    const segmentURL = mode => {
+      const url = new URL(location.href);
+      url.searchParams.set("tab", "defense");
+      url.searchParams.set("full", "1");
+      url.searchParams.delete("bans");
+      url.searchParams.delete("ban_page");
+      if (mode === "capabilities") {
+        url.searchParams.set("skip_bans", "1");
+        url.searchParams.delete("only_bans");
+      } else {
+        url.searchParams.set("only_bans", "1");
+        url.searchParams.delete("skip_bans");
+      }
+      return url.href;
+    };
+    const showFailure = (names, retry) => names.forEach(name => {
+      const slot = document.querySelector(`[data-security-defense-segment="${name}"]`);
+      if (!slot) return;
+      const state = document.createElement("div");
+      state.className = "data-load-state data-load-state--error security-segment-error";
+      state.setAttribute("role", "alert");
+      state.innerHTML = `<span class="data-load-state__icon" data-lucide="triangle-alert" aria-hidden="true"></span><div><strong>${words().loadFailed}</strong><button class="button button--compact" type="button">${words().retry}</button></div>`;
+      state.querySelector("button")?.addEventListener("click", retry, { once: true });
+      slot.replaceWith(state);
+      renderIcons(state);
+    });
+    const load = async (mode, names) => {
+      try {
+        const result = await fetchDocument(segmentURL(mode), { cache: "no-store", signal: controller.signal });
+        if (!result.response.ok || !result.document) throw new Error(`HTTP ${result.response.status}`);
+        names.forEach(name => {
+          const current = document.querySelector(`[data-security-defense-segment="${name}"]`);
+          const next = result.document.querySelector(`[data-security-defense-segment="${name}"]`);
+          if (current && next) current.replaceWith(document.importNode(next, true));
+        });
+        renderIcons(document.querySelector("[data-security-page]"));
+        localizeTimes(document.querySelector("[data-security-page]"));
+      } catch (error) {
+        if (error?.name !== "AbortError") showFailure(names, () => load(mode, names));
+      }
+    };
+    load("capabilities", ["detection", "components", "firewall"]);
+    load("bans", ["fail2ban"]);
+  }
+
   function initKubernetesConnection(cleanups) {
     bindKubernetesConnection(document.querySelector("[data-kubernetes-connection-page]"), cleanups);
   }
@@ -7685,6 +7736,7 @@
     initStateBackupDrawers(cleanups);
     initTrashCleanupDrawer(cleanups);
     initSecurityBanDrawer(cleanups);
+    initSecurityDefenseSegments(cleanups);
     initUpdateSourceDrawer(cleanups);
     initAssistantWorkspace(cleanups);
     initAssistantSettings(cleanups);
