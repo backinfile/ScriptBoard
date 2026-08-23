@@ -876,11 +876,12 @@ async function assertWebsiteMonitoring(page, baseURL) {
   await form.locator('input[name="url"]').fill(targetURL);
   await form.locator('select[name="frequency_seconds"]').selectOption("30");
   await form.locator('select[name="timeout_seconds"]').selectOption("3");
-  await Promise.all([
-    page.waitForURL(url => /^\/monitor\/websites\/[^/]+$/.test(url.pathname) && !url.pathname.endsWith("/new")),
-    form.locator('button[type="submit"]').click(),
-  ]);
-  const detailURL = page.url();
+  await form.locator('button[type="submit"]').click();
+  const createdDetail = page.locator('[data-task-panel] main[data-website-detail]');
+  await createdDetail.waitFor();
+  const detailPath = await createdDetail.getAttribute("data-detail-url");
+  assert.match(detailPath || "", /^\/monitor\/websites\/[^/]+$/);
+  const detailURL = new URL(detailPath, baseURL).href;
   await page.waitForFunction(async url => {
     const response = await fetch(`${url}/data`, { cache: "no-store" });
     if (!response.ok) return false;
@@ -1521,6 +1522,11 @@ async function assertExternalInterfaces(page, fixture) {
     if (process.env.SCRIPTBOARD_BROWSER_SCOPE === "connection-test") {
       await assertAssistantSettingsAndWorkspace(page, fixture.baseURL);
       process.stdout.write("Chromium connection-test error regressions passed.\n");
+      return;
+    }
+    if (process.env.SCRIPTBOARD_BROWSER_SCOPE === "website") {
+      await assertWebsiteMonitoring(page, fixture.baseURL);
+      process.stdout.write("Chromium website monitoring regressions passed.\n");
       return;
     }
 
