@@ -3199,15 +3199,9 @@
       `<div class="overview-drawer__error" role="alert"><span data-lucide="triangle-alert" aria-hidden="true"></span><p>${escapeMarkup(message)}</p><button class="button button--compact" type="button" data-overview-drawer-retry>${escapeMarkup(words().retry)}</button></div>`;
 
     const importContent = async main => {
-      try {
-        const purify = await loadScriptAsset("/assets/purify.min.js", () => window.DOMPurify);
-        return purify.sanitize(main.innerHTML, { RETURN_DOM_FRAGMENT: true });
-      } catch {
-        // 同源服务端渲染内容，净化器不可用退化为直接导入。
-        const fragment = document.createDocumentFragment();
-        main.childNodes.forEach(node => fragment.append(document.importNode(node, true)));
-        return fragment;
-      }
+      const purify = await loadScriptAsset("/assets/purify.min.js", () => window.DOMPurify);
+      if (!purify?.sanitize) throw new Error(words().loadFailed);
+      return purify.sanitize(main.innerHTML, { RETURN_DOM_FRAGMENT: true });
     };
 
     const loadRuns = async url => {

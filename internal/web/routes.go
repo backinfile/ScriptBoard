@@ -52,11 +52,8 @@ func (a *App) routes() http.Handler {
 	mux.Public("POST /login/verify", a.verifyLoginFactor)
 	mux.Public("POST /auth/passkey/options", a.beginPasskeyLogin)
 	mux.Public("POST /settings/locale", a.setWebLocale)
-	mux.External("GET /trigger", a.externalTrigger)
 	mux.External("POST /trigger", a.externalTrigger)
-	mux.External("GET /trigger/{name}", a.externalTrigger)
 	mux.External("POST /trigger/{name}", a.externalTrigger)
-	mux.External("GET /trigger/{group}/{name}", a.externalTrigger)
 	mux.External("POST /trigger/{group}/{name}", a.externalTrigger)
 	mux.External("GET /api/fleet/v1/status", a.fleetStatusExport)
 	mux.Handle("GET /auth/step-up", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.stepUpTask)))
@@ -425,6 +422,10 @@ func (a *App) routes() http.Handler {
 		}
 		request = request.WithContext(context.WithValue(request.Context(), requestIDContextKey, requestID))
 		response.Header().Set("X-Request-ID", requestID)
+		if !validRequestTarget(request) {
+			http.Error(response, "ambiguous request target", http.StatusBadRequest)
+			return
+		}
 		request, err = a.applyTrustedProxy(request)
 		if err != nil {
 			http.Error(response, "invalid trusted proxy headers", http.StatusBadRequest)

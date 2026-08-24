@@ -1086,7 +1086,7 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 	response.Header().Set("Cache-Control", "no-store")
 	response.Header().Set("Content-Type", "application/json; charset=utf-8")
 	token := ""
-	if authorization := strings.TrimSpace(request.Header.Get("Authorization")); strings.HasPrefix(authorization, "Bearer ") {
+	if authorization, single := singleRequestHeader(request.Header, "Authorization"); single && strings.HasPrefix(authorization, "Bearer ") {
 		token = strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer "))
 	}
 	groupName, name := request.PathValue("group"), request.PathValue("name")
@@ -1137,6 +1137,19 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 		return
 	}
 	if entry.RequireSignature {
+		timestampRaw, timestampHeaderOK := singleRequestHeader(request.Header, "X-ScriptBoard-Timestamp")
+		nonce, nonceHeaderOK := singleRequestHeader(request.Header, "X-ScriptBoard-Nonce")
+		signature, signatureHeaderOK := singleRequestHeader(request.Header, "X-ScriptBoard-Signature")
+		contentTypeValues := request.Header.Values("Content-Type")
+		if !timestampHeaderOK || !nonceHeaderOK || !signatureHeaderOK || len(contentTypeValues) > 1 {
+			_ = a.externalTriggers.RecordInvocation(request.Context(), externaltrigger.Invocation{
+				ID: requestID, KeyID: key.ID, KeyLabel: key.Label, EntryID: entry.ID, EntryName: entry.Name,
+				ActionType: entry.Type, Result: "rejected", HTTPStatus: http.StatusUnauthorized, Source: request.RemoteAddr,
+			})
+			a.recordAuditWithRequestActor(request, "external_trigger_"+string(entry.Type), "key="+key.ID+" entry="+entry.Name, "rejected", request.RemoteAddr, "", key.Label, identity.Role("external"))
+			writeExternalTriggerError(response, http.StatusUnauthorized, "invalid_key")
+			return
+		}
 		bodyLength, bodySHA256, cleanupBody, bodyErr := a.stageExternalSignedBody(request, entry)
 		if bodyErr != nil {
 			status, code := http.StatusBadRequest, "invalid_request"
@@ -1152,11 +1165,10 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 			return
 		}
 		defer cleanupBody()
-		timestampRaw := request.Header.Get("X-ScriptBoard-Timestamp")
 		timestamp, timestampErr := strconv.ParseInt(timestampRaw, 10, 64)
 		if timestampErr != nil || timestampRaw != strconv.FormatInt(timestamp, 10) || a.externalTriggers.VerifyAndConsumeSignature(
-			request.Context(), key.ID, token, timestamp, request.Header.Get("X-ScriptBoard-Nonce"), request.Method,
-			request.URL.RequestURI(), request.Header.Get("Content-Type"), bodyLength, bodySHA256, request.Header.Get("X-ScriptBoard-Signature"),
+			request.Context(), key.ID, token, timestamp, nonce, request.Method,
+			request.URL.RequestURI(), request.Header.Get("Content-Type"), bodyLength, bodySHA256, signature,
 		) != nil {
 			_ = a.externalTriggers.RecordInvocation(request.Context(), externaltrigger.Invocation{
 				ID: requestID, KeyID: key.ID, KeyLabel: key.Label, EntryID: entry.ID, EntryName: entry.Name,
@@ -1166,6 +1178,26 @@ func (a *App) externalTrigger(response http.ResponseWriter, request *http.Reques
 			writeExternalTriggerError(response, http.StatusUnauthorized, "invalid_key")
 			return
 		}
+	}
+	currentKey, currentEntry, currentErr := a.externalTriggers.ResolveScoped(request.Context(), token, groupName, name)
+	if currentErr != nil || currentKey.ID != key.ID || currentEntry != entry {
+		_ = a.externalTriggers.RecordInvocation(request.Context(), externaltrigger.Invocation{
+			ID: requestID, KeyID: key.ID, KeyLabel: key.Label, EntryID: entry.ID, EntryName: entry.Name,
+			ActionType: entry.Type, Result: "rejected", HTTPStatus: http.StatusUnauthorized, Source: request.RemoteAddr,
+		})
+		a.recordAuditWithRequestActor(request, "external_trigger_"+string(entry.Type), "key="+key.ID+" entry="+entry.Name, "revoked", request.RemoteAddr, "", key.Label, identity.Role("external"))
+		writeExternalTriggerError(response, http.StatusUnauthorized, "invalid_key")
+		return
+	}
+	globalEnabled, _, controlErr = a.externalTriggers.GlobalEnabled(request.Context())
+	if controlErr != nil || !globalEnabled {
+		_ = a.externalTriggers.RecordInvocation(request.Context(), externaltrigger.Invocation{
+			ID: requestID, KeyID: key.ID, KeyLabel: key.Label, EntryID: entry.ID, EntryName: entry.Name,
+			ActionType: entry.Type, Result: "rejected", HTTPStatus: http.StatusServiceUnavailable, Source: request.RemoteAddr,
+		})
+		a.recordAuditWithRequestActor(request, "external_trigger_"+string(entry.Type), "key="+key.ID+" entry="+entry.Name, "revoked", request.RemoteAddr, "", key.Label, identity.Role("external"))
+		writeExternalTriggerError(response, http.StatusServiceUnavailable, "unavailable")
+		return
 	}
 	started := time.Now()
 	invocation := externaltrigger.Invocation{

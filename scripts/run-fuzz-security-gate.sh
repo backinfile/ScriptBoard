@@ -7,5 +7,9 @@ go test ./internal/outboundpolicy \
   -run='^$' -fuzz=FuzzPolicyAllowsAddress -fuzztime="$fuzz_time" -parallel=4
 go test ./internal/web \
   -run='^$' -fuzz=FuzzNormalizeHTTPHost -fuzztime="$fuzz_time" -parallel=4
+go test ./internal/web \
+  -run='^$' -fuzz=FuzzValidRequestTarget -fuzztime="$fuzz_time" -parallel=4
+go test ./internal/update \
+  -run='^$' -fuzz=FuzzSafeArchivePath -fuzztime="$fuzz_time" -parallel=4
 go test ./internal/runmanager \
   -run='^$' -fuzz=FuzzParseArgumentsRejectsControlCharacters -fuzztime="$fuzz_time" -parallel=4

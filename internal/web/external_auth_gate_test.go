@@ -3,8 +3,10 @@ package web_test
 import (
 	"bytes"
 	"database/sql"
+	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -83,5 +85,60 @@ func TestExternalAuthenticationFailuresAreAuditedAndSourceLimited(t *testing.T) 
 	}
 	if _, err := os.Stat(filepath.Join(hostRoot, "ignored")); err == nil {
 		t.Fatal("unauthenticated action changed Host Files")
+	}
+}
+
+func TestExternalTriggerRejectsDuplicateAuthorizationBeforeAction(t *testing.T) {
+	root := t.TempDir()
+	hostRoot, stateRoot := filepath.Join(root, "host"), filepath.Join(root, "state")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
+	_, keyID := createExternalTestKey(t, client, serverURL, "Duplicate header")
+	logFile := filepath.Join(hostRoot, "duplicate-header.log")
+	secret := createExternalTestEntry(t, client, serverURL, keyID, url.Values{
+		"name": {"duplicate-header"}, "label": {"Duplicate header"}, "action_type": {"log"}, "enabled": {"1"},
+		"log_file": {logFile}, "log_message_limit": {"1024"},
+	})
+
+	request, err := http.NewRequest(http.MethodPost, serverURL+externalTriggerPath("legacy", "duplicate-header"), strings.NewReader("message=must-not-run"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Add("Authorization", "Bearer "+secret)
+	request.Header.Add("Authorization", "Bearer "+secret)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("duplicate Authorization status = %d, want %d", response.StatusCode, http.StatusUnauthorized)
+	}
+	if _, err := os.Stat(logFile); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("duplicate Authorization reached action: %v", err)
+	}
+}
+
+func TestRetiredExternalGetMethodIsRejectedBeforeAuthentication(t *testing.T) {
+	root := t.TempDir()
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "host"), filepath.Join(root, "state"))
+	request, err := http.NewRequest(http.MethodGet, serverURL+externalTriggerPath("legacy", "retired-read"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer sbk_AAAAAAAAAAAAAAAA."+strings.Repeat("B", 43))
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("retired external GET status = %d, want %d", response.StatusCode, http.StatusMethodNotAllowed)
+	}
+	if allow := response.Header.Get("Allow"); !strings.Contains(allow, http.MethodPost) {
+		t.Fatalf("retired external GET Allow = %q, want POST", allow)
 	}
 }

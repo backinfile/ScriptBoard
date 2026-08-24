@@ -283,11 +283,13 @@ func extractTarGZ(archivePath, destination string, limit int64, seen map[string]
 }
 
 func safeArchivePath(name string) (string, error) {
-	name = strings.ReplaceAll(name, "\\", "/")
-	if name == "" || strings.ContainsRune(name, 0) || strings.HasPrefix(name, "/") || strings.HasPrefix(name, "//") {
+	if name == "" || strings.ContainsRune(name, 0) || strings.Contains(name, "\\") || strings.HasPrefix(name, "/") || strings.HasPrefix(name, "//") {
 		return "", fmt.Errorf("unsafe archive path %q", name)
 	}
 	cleaned := path.Clean(name)
+	if cleaned != strings.TrimSuffix(name, "/") {
+		return "", fmt.Errorf("unsafe archive path %q", name)
+	}
 	if cleaned == "." {
 		return "", nil
 	}

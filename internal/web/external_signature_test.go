@@ -2,6 +2,7 @@ package web_test
 
 import (
 	"database/sql"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -120,5 +121,130 @@ func TestExternalSignedRequestRejectsUnsignedAndReplay(t *testing.T) {
 	}
 	if rejectedRequests != 3 || succeededRequests != 1 || rejectedAudits != 3 || correlatedAudits != 4 {
 		t.Fatalf("rejected requests=%d succeeded requests=%d rejected audits=%d correlated audits=%d", rejectedRequests, succeededRequests, rejectedAudits, correlatedAudits)
+	}
+}
+
+func TestExternalSignedRequestRejectsDuplicateProofHeadersBeforeAction(t *testing.T) {
+	root := t.TempDir()
+	hostRoot, stateRoot := filepath.Join(root, "host"), filepath.Join(root, "state")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
+	_, keyID := createExternalTestKey(t, client, serverURL, "Duplicate proof")
+	logFile := filepath.Join(hostRoot, "duplicate-proof.log")
+	secret := createExternalTestEntry(t, client, serverURL, keyID, url.Values{
+		"name": {"duplicate-proof"}, "label": {"Duplicate proof"}, "action_type": {"log"}, "enabled": {"1"},
+		"require_signature": {"1"}, "log_file": {logFile}, "log_message_limit": {"1024"},
+	})
+
+	timestamp := time.Now().UTC().Unix()
+	nonce := "nonce_duplicate_proof_123"
+	requestURI := externalTriggerPath("legacy", "duplicate-proof")
+	contentType := "application/x-www-form-urlencoded"
+	body := []byte("message=must-not-run")
+	signature := externaltrigger.RequestSignature(secret, timestamp, nonce, http.MethodPost, requestURI, contentType, body)
+	request, err := http.NewRequest(http.MethodPost, serverURL+requestURI, strings.NewReader(string(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+secret)
+	request.Header.Set("Content-Type", contentType)
+	request.Header.Set("X-ScriptBoard-Timestamp", strconv.FormatInt(timestamp, 10))
+	request.Header.Set("X-ScriptBoard-Nonce", nonce)
+	request.Header.Add("X-ScriptBoard-Signature", signature)
+	request.Header.Add("X-ScriptBoard-Signature", signature)
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("duplicate signature status = %d, want %d", response.StatusCode, http.StatusUnauthorized)
+	}
+	if _, err := os.Stat(logFile); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("duplicate signature reached action: %v", err)
+	}
+}
+
+func TestExternalKeyRevocationDuringSignedBodyStagingPreventsAction(t *testing.T) {
+	root := t.TempDir()
+	hostRoot, stateRoot := filepath.Join(root, "host"), filepath.Join(root, "state")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
+	_, keyID := createExternalTestKey(t, client, serverURL, "Revoke in flight")
+	logFile := filepath.Join(hostRoot, "revoked-in-flight.log")
+	secret := createExternalTestEntry(t, client, serverURL, keyID, url.Values{
+		"name": {"revoke-in-flight"}, "label": {"Revoke in flight"}, "action_type": {"log"}, "enabled": {"1"},
+		"require_signature": {"1"}, "log_file": {logFile}, "log_message_limit": {"1024"},
+	})
+
+	body := []byte("message=must-not-run-after-revocation")
+	timestamp := time.Now().UTC().Unix()
+	nonce := "nonce_revoke_in_flight_123"
+	requestURI := externalTriggerPath("legacy", "revoke-in-flight")
+	contentType := "application/x-www-form-urlencoded"
+	reader, writer := io.Pipe()
+	request, err := http.NewRequest(http.MethodPost, serverURL+requestURI, reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.ContentLength = int64(len(body))
+	request.Header.Set("Authorization", "Bearer "+secret)
+	request.Header.Set("Content-Type", contentType)
+	request.Header.Set("X-ScriptBoard-Timestamp", strconv.FormatInt(timestamp, 10))
+	request.Header.Set("X-ScriptBoard-Nonce", nonce)
+	request.Header.Set("X-ScriptBoard-Signature", externaltrigger.RequestSignature(secret, timestamp, nonce, http.MethodPost, requestURI, contentType, body))
+	type requestResult struct {
+		response *http.Response
+		err      error
+	}
+	result := make(chan requestResult, 1)
+	go func() {
+		response, requestErr := client.Do(request)
+		result <- requestResult{response: response, err: requestErr}
+	}()
+	if _, err := writer.Write(body[:8]); err != nil {
+		t.Fatal(err)
+	}
+	stagingDirectory := filepath.Join(stateRoot, "inbox", "external-bodies")
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		entries, readErr := os.ReadDir(stagingDirectory)
+		if readErr == nil && len(entries) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("signed request did not enter staging: %v", readErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`UPDATE external_trigger_keys SET enabled = 0 WHERE id = ?`, keyID); err != nil {
+		_ = database.Close()
+		t.Fatal(err)
+	}
+	_ = database.Close()
+	if _, err := writer.Write(body[8:]); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	completed := <-result
+	if completed.err != nil {
+		t.Fatal(completed.err)
+	}
+	defer completed.response.Body.Close()
+	if completed.response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("revoked in-flight key status = %d, want %d", completed.response.StatusCode, http.StatusUnauthorized)
+	}
+	if _, err := os.Stat(logFile); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("revoked in-flight key reached action: %v", err)
 	}
 }

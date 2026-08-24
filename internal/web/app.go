@@ -2160,6 +2160,7 @@ func newPagination(request *http.Request, total int) paginationView {
 }
 
 func renderApplicationError(request *http.Request, status int, message string) []byte {
+	message = safeWebErrorMessage(message)
 	destination, label := "/resources/files", "返回文件"
 	switch {
 	case strings.HasPrefix(request.URL.Path, "/monitor/websites"):
@@ -2201,6 +2202,29 @@ func renderApplicationError(request *http.Request, status int, message string) [
 		Locale             webLocale
 	}{Status: status, Message: message, Summary: webText(locale, summaryKey), Destination: destination, Label: label, Locale: locale})
 	return page.Bytes()
+}
+
+const maxWebErrorMessageRunes = 2048
+
+// safeWebErrorMessage is the final boundary for errors that are promoted from
+// plain-text handler responses into an HTML page. Templates still perform the
+// context-specific escaping; this step removes secrets, terminal controls and
+// unbounded downstream text before that happens.
+func safeWebErrorMessage(message string) string {
+	message = secretredaction.String(strings.ToValidUTF8(message, "\uFFFD"))
+	clean := make([]rune, 0, min(len(message), maxWebErrorMessageRunes))
+	for _, character := range message {
+		if len(clean) == maxWebErrorMessageRunes {
+			clean = append(clean, '…')
+			break
+		}
+		if unicode.IsControl(character) || unicode.Is(unicode.Cf, character) {
+			clean = append(clean, ' ')
+			continue
+		}
+		clean = append(clean, character)
+	}
+	return strings.TrimSpace(string(clean))
 }
 
 var appCSS = mustWebAsset("ui/assets/app.css")

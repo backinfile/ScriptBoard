@@ -5,6 +5,8 @@
 适用范围：ScriptBoard Web 服务、脚本执行、文件管理、网站监控、外部接口、MySQL、AI Runtime、更新与服务安装  
 研究基线：截至 2026-08-11 已公开的运维面板漏洞、厂商公告和当前仓库实现
 
+> 2026-08-24 增量：补充 Portainer、Coolify、Pterodactyl 与 1Panel 的 2025—2026 新披露案例及对应 ScriptBoard 回归切片。原计划已完成项仍作为基线，增量计划不把外部 CVE 误报为本项目已确认漏洞。
+
 ## 1. 结论先行
 
 ScriptBoard 已有一批值得保留的安全基础：Argon2id 密码哈希、服务端会话、CSRF、CSP/HSTS、请求体和超时限制、非回环监听强制 TLS、受保护路径、文件原子替换与回收站、参数化 SQL、更新包 Ed25519 签名与摘要校验、归档路径穿越防护、外部 Key 哈希与限流、AI 工具审批和固定 Tool Broker。
@@ -148,6 +150,16 @@ flowchart LR
 | aaPanel CVE-2026-29859 | 任意文件上传最终造成代码执行 | 文件管理、外部上传、AI Runtime 离线包、数据库导入 | 上传写入非执行目录；文件名与目标路径由服务端决定；内容/大小/格式校验；隔离、原子发布、禁止上传后自动执行；执行文件另走签名发布流程 |
 | Pterodactyl CVE-2024-34067 | 恶意导入配置或受控远端 Agent 字段形成存储型 XSS，可夺取管理员账户 | 监控导入、远端快照、日志、文件名、自定义面板 | 服务端模板转义；Markdown 禁原生 HTML 后再净化；SVG/HTML 默认下载而非内联；远端和导入字段长度/字符限制；CSP 与 XSS 回归测试 |
 | MaxKB 2026 安全修复 | MCP 恶意配置命令注入、SSRF hook 绕过、`LD_PRELOAD`/`ctypes`/syscall 沙箱逃逸、结果伪造和存储型 XSS | Pi Runtime、Tool Broker、自定义模型 Endpoint、AI 输出 | AI 进程使用 OS 级隔离和网络策略；清空危险环境；不可由 Agent 配置 MCP/插件；Broker 不信任进程返回的“成功”；工具结果由服务端事实校验 |
+| Portainer CVE-2026-72533 | 授权层规范化后的路径与实际转发路径不一致；三段版本号和编码分隔符跳过全部 Docker API 授权，并使既有修复重新可绕过 | `ServeMux`、RouteSpec、External Interface 签名、Provider proxy | 请求目标先得到唯一规范表示；授权、审计、签名与执行只使用同一表示；拒绝编码分隔符、反斜杠、点段和歧义转义并建立 fuzz/黑盒回归 |
+| Portainer / Coolify / Pterodactyl 2026 公告 | 鉴权失败后继续、空 HMAC 允许部署、跨资源 IDOR、权限变化后旧会话继续、归档穿越和符号链接读取 | 外部入口、Fleet/AI capability、长连接、更新/恢复、Host Files | 认证失败副作用哨兵；空/重复/过期/撤销凭据 fail closed；owner/connection/revision 原子绑定；撤销传播；共享恶意归档和链接语料 |
+
+本轮增量已落地以下回归边界：
+
+- 请求进入路由前拒绝编码分隔符、反斜杠、点段、重复斜杠和 absolute-form 等歧义目标；已退役的 GET Trigger 不再登记。
+- External Interface 与 AI Provider Proxy 对重复或并存的认证/签名 Header fail closed，拒绝发生在读取业务载荷或触发上游副作用之前。
+- External Interface 在真正执行前重新解析 Key、Entry 和全局开关，使请求暂存期间发生的禁用、权限或资源绑定变更立即生效。
+- Updater 与 State Root 恢复共用恶意归档路径语料；ZIP/TAR 拒绝静默规范化、Windows 设备名/ADS、符号链接、硬链接和特殊文件。
+- 浏览器文档导入在 DOMPurify 不可用时 fail closed；服务端可信 HTML 仅保留不插值 URI 的 MFA QR SVG，错误页统一做秘密脱敏、控制字符清理和长度限制，并由静态契约阻止危险输出入口扩散。
 
 跨产品的共同规律是：**低级输入验证错误之所以变成整机接管，是因为请求处理进程本身拥有 root/SYSTEM 或能无约束调用高权限工具。** 因此 P0 的核心不是再增加一层字符串过滤，而是缩小高权限接口和爆炸半径。
 
