@@ -117,9 +117,14 @@ func mustWebAsset(path string) string {
 
 func mustWebTemplate(name string) *template.Template {
 	path := "ui/templates/" + name + ".html"
+	databaseShared := ""
+	if name == "mysql-databases" || name == "redis-databases" {
+		databaseShared = mustWebAsset("ui/templates/database-shared.html")
+	}
 	return template.Must(template.New(name).Funcs(webTemplateFunctions()).Parse(
 		mustWebAsset("ui/templates/deferred-region.html") +
 			mustWebAsset("ui/templates/settings-navigation.html") +
+			databaseShared +
 			mustWebAsset(path),
 	))
 }

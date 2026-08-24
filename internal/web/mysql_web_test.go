@@ -17,16 +17,31 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func TestDatabasesPageSwitchesBetweenMySQLAndRedisWithoutChangingNavigationEntry(t *testing.T) {
+func TestDatabasesPageCombinesMySQLAndRedisConnectionsAndOffersOneAddFlow(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: stateRoot})
 	page := string(getBody(t, client, serverURL+"/resources/databases", http.StatusOK))
-	if !strings.Contains(page, `href="/resources/databases?engine=redis"`) || !strings.Contains(page, `aria-current="page">MySQL`) {
-		t.Fatalf("MySQL page does not expose the shared database engine switch")
+	for _, expected := range []string{
+		`data-database-workspace`,
+		`class="database-connection-group" data-engine="mysql"`,
+		`class="database-connection-group" data-engine="redis"`,
+		`href="/resources/databases?add=mysql"`,
+		`href="/resources/databases?add=redis"`,
+		`data-database-engine-choice`,
+	} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("combined database workspace is missing %q: %s", expected, page)
+		}
 	}
-	redisPage := string(getBody(t, client, serverURL+"/resources/databases?engine=redis", http.StatusOK))
-	if !strings.Contains(redisPage, `data-redis-workspace`) || !strings.Contains(redisPage, `aria-current="page">Redis`) {
-		t.Fatalf("Redis page is not rendered inside the shared database entry")
+	if strings.Contains(page, `class="database-engine-switch"`) {
+		t.Fatalf("combined database workspace still renders the old page-level engine switch: %s", page)
+	}
+
+	redisAddPage := string(getBody(t, client, serverURL+"/resources/databases?add=redis", http.StatusOK))
+	for _, expected := range []string{`data-database-add-drawer open`, `data-database-engine-choice="redis"`, `action="/resources/databases/redis/instances"`} {
+		if !strings.Contains(redisAddPage, expected) {
+			t.Fatalf("Redis choice in the shared add flow is missing %q: %s", expected, redisAddPage)
+		}
 	}
 }
 
@@ -71,7 +86,7 @@ func TestAdministratorCanRegisterMySQLInstanceFromDatabaseWorkspace(t *testing.T
 	}
 	body, _ = io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, expected := range []string{"Production", "db.internal", "preferred", "Database backups", `class="mysql-instance-tabs__state" data-state="untried"`, "Not connected yet"} {
+	for _, expected := range []string{"Production", "db.internal", "preferred", "Databases", `class="mysql-instance-tabs__state" data-state="untried"`, "Not connected yet"} {
 		if !strings.Contains(string(body), expected) {
 			t.Fatalf("database workspace missing %q: %s", expected, body)
 		}
@@ -86,7 +101,7 @@ func TestAdministratorCanRegisterMySQLInstanceFromDatabaseWorkspace(t *testing.T
 	}
 	selectedBody, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, expected := range []string{`class="mysql-instance-workspace"`, `class="mysql-instance-rail"`, `class="mysql-instance-tabs"`, `class="mysql-instance-tabs__state" data-state="failed"`, `Connection failed`, `class="mysql-tabs"`, `tab=overview`, `tab=backups`, `data-connection-test`, `connection-test-result sr-only`, `data-preserve-scroll`, `aria-current="page"`, `data-mysql-drop-drawer`, `class="mysql-overview-facts"`, `TLS mode`, `Preferred`, `Refresh status`, `mysql-edit-instance-title`, `Edit instance`, `Leave blank to keep the current password.`, `name="id" value="` + string(instanceMatch[1]) + `"`, `name="name" value="Production"`, `class="mysql-danger-zone mysql-instance-delete"`, `action="/resources/databases/instances/` + string(instanceMatch[1]) + `/delete"`, `name="confirm" value="yes"`, `data-confirm="Remove this instance connection?`} {
+	for _, expected := range []string{`class="mysql-instance-workspace"`, `class="mysql-instance-rail database-connection-rail"`, `class="mysql-instance-tabs"`, `class="mysql-instance-tabs__state" data-state="failed"`, `Connection failed`, `class="mysql-tabs"`, `tab=overview`, `tab=backups`, `data-connection-test`, `connection-test-result sr-only`, `data-preserve-scroll`, `aria-current="page"`, `data-mysql-drop-drawer`, `class="mysql-overview-facts"`, `TLS mode`, `Preferred`, `Refresh status`, `mysql-edit-instance-title`, `Edit instance`, `Leave blank to keep the current password.`, `name="id" value="` + string(instanceMatch[1]) + `"`, `name="name" value="Production"`, `class="mysql-danger-zone mysql-instance-delete"`, `action="/resources/databases/instances/` + string(instanceMatch[1]) + `/delete"`, `name="confirm" value="yes"`, `data-confirm="Remove this instance connection?`} {
 		if !strings.Contains(string(selectedBody), expected) {
 			t.Fatalf("selected database workspace missing %q: %s", expected, selectedBody)
 		}

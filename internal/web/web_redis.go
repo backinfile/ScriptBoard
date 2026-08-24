@@ -9,11 +9,13 @@ import (
 	"strings"
 	"time"
 
+	"scriptboard/internal/mysqlmanager"
 	"scriptboard/internal/redismanager"
 	"scriptboard/internal/secretredaction"
 )
 
 type redisDatabasesPageData struct {
+	databaseWorkspaceData
 	Locale    webLocale
 	CSRFToken string
 	Instances []redismanager.Instance
@@ -23,6 +25,36 @@ type redisDatabasesPageData struct {
 	Pattern   string
 	ActiveTab string
 	LoadError string
+}
+
+// databaseWorkspaceData keeps the shared connection inventory and add flow
+// identical while each engine retains its own detail operations.
+type databaseWorkspaceData struct {
+	Locale                  webLocale
+	CSRFToken               string
+	BackupRoot              string
+	Tools                   mysqlmanager.ToolSettings
+	MySQLInstanceRows       []mysqlmanager.Instance
+	MySQLInstancePagination mysqlPagination
+	RedisInstances          []redismanager.Instance
+	SelectedMySQL           *mysqlmanager.Instance
+	SelectedRedis           *redismanager.Instance
+	AddEngine               string
+	AddDrawerOpen           bool
+}
+
+func newDatabaseWorkspaceData(request *http.Request, selectedEngine string, locale webLocale, csrfToken, backupRoot string, tools mysqlmanager.ToolSettings, mysqlInstances []mysqlmanager.Instance, redisInstances []redismanager.Instance) databaseWorkspaceData {
+	mysqlRows, pagination := mysqlSlicePageWithSize(mysqlInstances, mysqlRequestedNamedPage(request, "instance_page"), mysqlInstancePageSize)
+	addEngine := strings.TrimSpace(request.URL.Query().Get("add"))
+	addDrawerOpen := addEngine == "mysql" || addEngine == "redis"
+	if !addDrawerOpen {
+		addEngine = selectedEngine
+	}
+	return databaseWorkspaceData{
+		Locale: locale, CSRFToken: csrfToken, BackupRoot: backupRoot, Tools: tools,
+		MySQLInstanceRows: mysqlRows, MySQLInstancePagination: pagination, RedisInstances: redisInstances,
+		AddEngine: addEngine, AddDrawerOpen: addDrawerOpen,
+	}
 }
 
 func (a *App) databasesPage(response http.ResponseWriter, request *http.Request) {
@@ -39,8 +71,14 @@ func (a *App) redisDatabasesPage(response http.ResponseWriter, request *http.Req
 		http.Error(response, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	mysqlInstances, err := a.mysql.Instances(request.Context())
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	current := request.Context().Value(sessionContextKey).(session)
 	data := redisDatabasesPageData{Locale: resolveWebLocale(request), CSRFToken: current.csrfToken, Instances: instances, ActiveTab: "overview", Pattern: strings.TrimSpace(request.URL.Query().Get("pattern"))}
+	data.databaseWorkspaceData = newDatabaseWorkspaceData(request, "redis", data.Locale, data.CSRFToken, a.mysql.BackupRoot(), a.mysql.Tools(), mysqlInstances, instances)
 	if request.URL.Query().Get("tab") == "keys" || request.URL.Query().Get("tab") == "diagnostics" {
 		data.ActiveTab = request.URL.Query().Get("tab")
 	}
@@ -60,6 +98,7 @@ func (a *App) redisDatabasesPage(response http.ResponseWriter, request *http.Req
 		return
 	}
 	if data.Selected != nil {
+		data.SelectedRedis = data.Selected
 		ctx, cancel := context.WithTimeout(request.Context(), 8*time.Second)
 		defer cancel()
 		switch data.ActiveTab {

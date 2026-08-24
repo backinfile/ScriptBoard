@@ -17,6 +17,7 @@ import (
 )
 
 type mysqlDatabasesPageData struct {
+	databaseWorkspaceData
 	Locale                                        webLocale
 	CSRFToken                                     string
 	BackupRoot                                    string
@@ -97,6 +98,11 @@ func (a *App) mysqlDatabasesPage(response http.ResponseWriter, request *http.Req
 		return
 	}
 	current := request.Context().Value(sessionContextKey).(session)
+	redisInstances, err := a.redis.Instances(request.Context())
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	data := mysqlDatabasesPageData{
 		Locale: resolveWebLocale(request), CSRFToken: current.csrfToken,
 		BackupRoot: a.mysql.BackupRoot(), Instances: instances,
@@ -104,6 +110,7 @@ func (a *App) mysqlDatabasesPage(response http.ResponseWriter, request *http.Req
 		ActiveTab:         "overview",
 		OperationAccepted: request.URL.Query().Get("accepted") == "backup",
 	}
+	data.databaseWorkspaceData = newDatabaseWorkspaceData(request, "mysql", data.Locale, data.CSRFToken, data.BackupRoot, data.Tools, instances, redisInstances)
 	if tab := strings.TrimSpace(request.URL.Query().Get("tab")); tab == "databases" || tab == "backups" || tab == "plans" || tab == "operations" {
 		data.ActiveTab = tab
 	}
@@ -121,6 +128,7 @@ func (a *App) mysqlDatabasesPage(response http.ResponseWriter, request *http.Req
 			http.Error(response, "MySQL instance not found", http.StatusNotFound)
 			return
 		}
+		data.SelectedMySQL = data.Selected
 		allPlans, _ := a.mysql.Plans(request.Context())
 		for _, plan := range allPlans {
 			if plan.InstanceID == selectedID {
