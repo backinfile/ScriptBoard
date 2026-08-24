@@ -1,0 +1,14 @@
+title = "ScriptBoard secret scanning"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "generic-api-key"
+
+  [[rules.allowlists]]
+  description = "Known Kubernetes workload identifier in a historical test fixture"
+  condition = "AND"
+  regexTarget = "line"
+  regexes = ['''WorkloadKey:\s*"default/CronJob/nightly"''']
+  paths = ['''^internal/privilegebroker/runtime_access_test\.go$''']

@@ -497,12 +497,14 @@ func TestKubernetesFactoryRejectsScaleLargerThanOneStep(t *testing.T) {
 }
 
 func TestBrokerRejectsKubernetesOperationForWrongWorkloadType(t *testing.T) {
+	// Keep synthetic workload identifiers visibly test-only so secret scanning stays meaningful.
+	const cronJobKey = "test/CronJob/job"
 	for name, test := range map[string]struct {
 		workload  clusterstatus.Workload
 		operation clusterstatus.Operation
 	}{
-		"scale CronJob":    {clusterstatus.Workload{Key: "default/CronJob/nightly", Kind: "CronJob", Desired: 1}, clusterstatus.Operation{Kind: clusterstatus.OperationScale, WorkloadKey: "default/CronJob/nightly", Replicas: 2}},
-		"redeploy CronJob": {clusterstatus.Workload{Key: "default/CronJob/nightly", Kind: "CronJob"}, clusterstatus.Operation{Kind: clusterstatus.OperationRedeploy, WorkloadKey: "default/CronJob/nightly"}},
+		"scale CronJob":    {clusterstatus.Workload{Key: cronJobKey, Kind: "CronJob", Desired: 1}, clusterstatus.Operation{Kind: clusterstatus.OperationScale, WorkloadKey: cronJobKey, Replicas: 2}},
+		"redeploy CronJob": {clusterstatus.Workload{Key: cronJobKey, Kind: "CronJob"}, clusterstatus.Operation{Kind: clusterstatus.OperationRedeploy, WorkloadKey: cronJobKey}},
 		"run Deployment":   {clusterstatus.Workload{Key: "default/Deployment/api", Kind: "Deployment"}, clusterstatus.Operation{Kind: clusterstatus.OperationRunCron, WorkloadKey: "default/Deployment/api"}},
 	} {
 		t.Run(name, func(t *testing.T) {
