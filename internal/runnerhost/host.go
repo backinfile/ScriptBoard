@@ -179,8 +179,9 @@ func (server *Server) serve(connection net.Conn) {
 	streams.Add(2)
 	go copyStream(frameStdout, process.Stdout())
 	go copyStream(frameStderr, process.Stderr())
-	waitErr := process.Wait()
+	// Drain both child pipes before Wait; exec.Cmd.Wait closes them and could truncate final output.
 	streams.Wait()
+	waitErr := process.Wait()
 	result := exitFrame{}
 	if waitErr != nil {
 		result.Error = waitErr.Error()

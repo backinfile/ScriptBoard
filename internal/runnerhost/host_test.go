@@ -65,8 +65,9 @@ func TestIsolatedRunnerHostTracerBullet(t *testing.T) {
 	if err := process.Wait(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(<-stdoutDone, "runner stdout") || !strings.Contains(<-stderrDone, "runner stderr") {
-		t.Fatal("Runner Host did not preserve stdout/stderr")
+	stdout, stderr := <-stdoutDone, <-stderrDone
+	if !strings.Contains(stdout, "runner stdout") || !strings.Contains(stderr, "runner stderr") {
+		t.Fatalf("Runner Host streams stdout=%q stderr=%q", stdout, stderr)
 	}
 	if !filepath.IsAbs(gotExecutor) {
 		t.Fatalf("executor is not absolute: %q", gotExecutor)
