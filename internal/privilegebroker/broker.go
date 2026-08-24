@@ -32,6 +32,7 @@ import (
 	"scriptboard/internal/mysqlmanager"
 	"scriptboard/internal/passkey"
 	"scriptboard/internal/providercredential"
+	"scriptboard/internal/redismanager"
 	"scriptboard/internal/registrymonitor"
 	"scriptboard/internal/servicelogs"
 	"scriptboard/internal/statebackup"
@@ -83,6 +84,11 @@ const (
 	operationMySQLTestTools             = "mysql_test_tools"
 	operationMySQLCancel                = "mysql_cancel"
 	operationMySQLBackupChunk           = "mysql_backup_chunk"
+	operationRedisStore                 = "redis_store"
+	operationRedisDelete                = "redis_delete"
+	operationRedisTest                  = "redis_test"
+	operationRedisOverview              = "redis_overview"
+	operationRedisScan                  = "redis_scan"
 	operationHostFilesRoots             = "host_files_roots"
 	operationHostFilesList              = "host_files_list"
 	operationHostFilesInfo              = "host_files_info"
@@ -192,6 +198,9 @@ const (
 	ActionMySQLImport             Action = "mysql_import"
 	ActionMySQLSetTools           Action = "mysql_set_tools"
 	ActionMySQLCancel             Action = "mysql_cancel"
+	ActionRedisRead               Action = "redis_read"
+	ActionRedisStore              Action = "redis_store"
+	ActionRedisDelete             Action = "redis_delete"
 	ActionHostFilesRead           Action = "host_files_read"
 	ActionHostFilesWrite          Action = "host_files_write"
 	ActionHostFilesDelete         Action = "host_files_delete"
@@ -328,6 +337,12 @@ type MySQLService interface {
 	ReadBackupChunk(context.Context, string, int64, int) ([]byte, int64, string, error)
 }
 
+type RedisService interface {
+	redismanager.Backend
+	ValidateInstance(context.Context, redismanager.Instance) error
+	ValidateInstanceID(context.Context, string) error
+}
+
 type HostFilesService interface {
 	Roots(context.Context) ([]hostfiles.Entry, error)
 	List(context.Context, string) ([]hostfiles.Entry, error)
@@ -399,6 +414,7 @@ type ServerOptions struct {
 	RemoteWebsites RemoteWebsiteService
 	Providers      ProviderCredentialService
 	MySQL          MySQLService
+	Redis          RedisService
 	HostFiles      HostFilesService
 	StateBackups   StateBackupService
 	Registry       RegistryService
@@ -422,6 +438,7 @@ type Server struct {
 	remoteWebsites RemoteWebsiteService
 	providers      ProviderCredentialService
 	mysql          MySQLService
+	redis          RedisService
 	hostFiles      HostFilesService
 	stateBackups   StateBackupService
 	registry       RegistryService
@@ -487,6 +504,7 @@ type wireRequest struct {
 	ProviderShared        bool                     `json:"provider_shared,omitempty"`
 	ProviderSessionHandle string                   `json:"provider_session_handle,omitempty"`
 	MySQL                 *mysqlWireRequest        `json:"mysql,omitempty"`
+	Redis                 *redisWireRequest        `json:"redis,omitempty"`
 	HostFiles             *hostFilesWireRequest    `json:"host_files,omitempty"`
 	StateBackup           *stateBackupWireRequest  `json:"state_backup,omitempty"`
 	Registry              *registryWireRequest     `json:"registry,omitempty"`
@@ -515,6 +533,7 @@ type wireResponse struct {
 	ProviderCapability    string                    `json:"provider_capability,omitempty"`
 	ProviderSessionHandle string                    `json:"provider_session_handle,omitempty"`
 	MySQL                 *mysqlWireResponse        `json:"mysql,omitempty"`
+	Redis                 *redisWireResponse        `json:"redis,omitempty"`
 	HostFiles             *hostFilesWireResponse    `json:"host_files,omitempty"`
 	StateBackup           *stateBackupWireResponse  `json:"state_backup,omitempty"`
 	Registry              *registryWireResponse     `json:"registry,omitempty"`
@@ -534,7 +553,7 @@ func NewServer(options ServerOptions) (*Server, error) {
 	}
 	return &Server{
 		listener: options.Listener, verifyPeer: options.VerifyPeer, authorizer: options.Authorizer,
-		executor: options.Executor, auditor: options.Auditor, checkpoint: options.Checkpoint, mfa: options.MFA, passkeys: options.Passkeys, remoteWebsites: options.RemoteWebsites, providers: options.Providers, mysql: options.MySQL, hostFiles: options.HostFiles, stateBackups: options.StateBackups, registry: options.Registry, applications: options.Applications, kubernetes: options.Kubernetes, kubeconfigs: options.Kubeconfigs, hostSecurity: options.HostSecurity, serviceLogs: options.ServiceLogs, now: now,
+		executor: options.Executor, auditor: options.Auditor, checkpoint: options.Checkpoint, mfa: options.MFA, passkeys: options.Passkeys, remoteWebsites: options.RemoteWebsites, providers: options.Providers, mysql: options.MySQL, redis: options.Redis, hostFiles: options.HostFiles, stateBackups: options.StateBackups, registry: options.Registry, applications: options.Applications, kubernetes: options.Kubernetes, kubeconfigs: options.Kubeconfigs, hostSecurity: options.HostSecurity, serviceLogs: options.ServiceLogs, now: now,
 		capabilities: make(map[string]capabilityBinding), done: make(chan struct{}),
 		mfaVerifyFailures: make(map[string]mfaVerifyFailure),
 	}, nil
@@ -603,6 +622,8 @@ func (server *Server) handle(connection net.Conn) {
 		}()
 		response = server.mysqlOperation(operationContext, request)
 		cancelOperation()
+	case operationRedisStore, operationRedisDelete, operationRedisTest, operationRedisOverview, operationRedisScan:
+		response = server.redisOperation(context.Background(), request)
 	case operationHostFilesRoots, operationHostFilesList, operationHostFilesInfo, operationHostFilesReadText,
 		operationHostFilesCanonical, operationHostFilesAvailable, operationHostFilesMkdir, operationHostFilesToggleExec,
 		operationHostFilesTrash, operationHostFilesRestore, operationHostFilesPurge, operationHostFilesMove,
@@ -1325,14 +1346,14 @@ func validateWireRequest(request wireRequest) error {
 	}
 	if request.Operation == operationCheckpointVerify || request.Operation == operationCheckpointWrite {
 		if request.SessionToken != "" || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
-			request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || request.HostFiles != nil {
+			request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || request.Redis != nil || request.HostFiles != nil {
 			return errors.New("checkpoint request is invalid")
 		}
 		return nil
 	}
 	if isMFAOperation(request.Operation) {
 		if request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
-			request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || request.HostFiles != nil || len(request.MFAUserID) == 0 || len(request.MFAUserID) > 160 || strings.ContainsAny(request.MFAUserID, "\r\n\x00") {
+			request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || request.Redis != nil || request.HostFiles != nil || len(request.MFAUserID) == 0 || len(request.MFAUserID) > 160 || strings.ContainsAny(request.MFAUserID, "\r\n\x00") {
 			return errors.New("MFA request is invalid")
 		}
 		switch request.Operation {
@@ -1371,6 +1392,9 @@ func validateWireRequest(request wireRequest) error {
 	if isMySQLOperation(request.Operation) {
 		return validateMySQLRequest(request)
 	}
+	if isRedisOperation(request.Operation) {
+		return validateRedisRequest(request)
+	}
 	if isStateBackupOperation(request.Operation) {
 		return validateStateBackupRequest(request)
 	}
@@ -1386,7 +1410,7 @@ func validateWireRequest(request wireRequest) error {
 	if isHostFilesOperation(request.Operation) {
 		return validateHostFilesRequest(request)
 	}
-	if hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || request.HostFiles != nil || request.StateBackup != nil {
+	if hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || request.Redis != nil || request.HostFiles != nil || request.StateBackup != nil {
 		return errors.New("privileged action contains credential-domain fields")
 	}
 	if _, ok := actions[request.Action]; !ok {
@@ -1419,7 +1443,7 @@ func validateWireRequest(request wireRequest) error {
 
 func validatePasskeyRequest(request wireRequest) error {
 	if request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
-		request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || request.HostFiles != nil || len(request.PasskeyUserID) == 0 ||
+		request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || request.Redis != nil || request.HostFiles != nil || len(request.PasskeyUserID) == 0 ||
 		len(request.PasskeyUserID) > 160 || strings.ContainsAny(request.PasskeyUserID, "\r\n\x00") {
 		return errors.New("passkey request is invalid")
 	}
@@ -1460,7 +1484,7 @@ func validatePasskeyRequest(request wireRequest) error {
 
 func validateRemoteWebsiteRequest(request wireRequest) error {
 	if request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" || request.ParametersSHA256 != "" ||
-		len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasProviderFields(request) || request.MySQL != nil || request.HostFiles != nil || !validRemoteWebsiteID(request.RemoteWebsiteID) ||
+		len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasProviderFields(request) || request.MySQL != nil || request.Redis != nil || request.HostFiles != nil || !validRemoteWebsiteID(request.RemoteWebsiteID) ||
 		!validCredentialSessionToken(request.SessionToken) {
 		return errors.New("remote website request is invalid")
 	}
@@ -1484,7 +1508,7 @@ func validateRemoteWebsiteRequest(request wireRequest) error {
 
 func validateProviderRequest(request wireRequest) error {
 	if request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" || request.ParametersSHA256 != "" ||
-		len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || request.MySQL != nil || request.HostFiles != nil {
+		len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || request.MySQL != nil || request.Redis != nil || request.HostFiles != nil {
 		return errors.New("provider request is invalid")
 	}
 	if request.Operation == operationProviderStop {

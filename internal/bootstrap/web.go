@@ -25,6 +25,7 @@ import (
 	"scriptboard/internal/mysqlmanager"
 	"scriptboard/internal/platformservice"
 	"scriptboard/internal/privilegebroker"
+	"scriptboard/internal/redismanager"
 	"scriptboard/internal/runmanager"
 	"scriptboard/internal/runnerhost"
 	updatepkg "scriptboard/internal/update"
@@ -77,7 +78,7 @@ func RunWeb(runContext context.Context, arguments []string, getenv func(string) 
 		KubeconfigManager: dependencies.kubeconfigManager,
 		AuditCheckpoint:   dependencies.auditCheckpoint, MFAStore: dependencies.mfaStore, PasskeyStore: dependencies.passkeyStore,
 		RegistryConnections: dependencies.registryConnections,
-		ProviderCredentials: dependencies.providerCredentials, MySQLBackend: dependencies.mysqlBackend,
+		ProviderCredentials: dependencies.providerCredentials, MySQLBackend: dependencies.mysqlBackend, RedisBackend: dependencies.redisBackend,
 		HostFilesBackend: dependencies.hostFilesBackend, StateBackups: dependencies.stateBackups,
 	})
 	if err != nil {
@@ -134,6 +135,7 @@ type composedWebDependencies struct {
 	registryConnections customdashboard.RegistryConnections
 	providerCredentials *privilegebroker.ProviderCredentials
 	mysqlBackend        mysqlmanager.Backend
+	redisBackend        redismanager.Backend
 	hostFilesBackend    *privilegebroker.HostFilesBackend
 	stateBackups        webapp.StateBackupService
 	applicationProbe    appstatus.Probe
@@ -181,6 +183,7 @@ func webDependenciesWithIdentity(loaded config.Config, installRoot string, valid
 	result.registryConnections = privilegebroker.NewRegistryConnections(client)
 	result.providerCredentials = privilegebroker.NewProviderCredentials(client)
 	result.mysqlBackend = privilegebroker.NewMySQLBackend(client, mysqlmanager.ToolSettings{DumpExecutable: "mysqldump", ClientExecutable: "mysql"})
+	result.redisBackend = privilegebroker.NewRedisBackend(client)
 	result.hostFilesBackend = privilegebroker.NewHostFilesBackend(client, filepath.Join(loaded.StateRoot, "inbox", "host-files-broker"))
 	result.stateBackups = privilegebroker.NewStateBackups(client)
 	result.kubeconfigManager = privilegebroker.NewRemoteKubeconfigManager(client)

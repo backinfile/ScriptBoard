@@ -628,6 +628,8 @@ schema 44 收敛了并行开发期间重复使用 35–43 版本号的两条数�
 
 schema 45 增加 `custom_dashboard_registry_operations`。Registry 连接在 Broker 中 prepare 后，卡片配置和操作 ID 在同一 SQLite 事务提交；随后 Broker 幂等激活连接并删除操作行。启动时残留行会被重放，因此数据库不会把尚未激活的连接误报为已经完成，也不会把新 Endpoint 与旧密码组合使用。
 
+schema 54 增加 `redis_instances`，只保存连接名称、环境、地址、ACL 用户、数据库索引、TLS 策略、CA 路径、凭据已配置事实和最近连接状态。密码使用用途绑定的 AES-GCM 密封保存在独立凭据文件中，不进入 SQLite、HTML、审计或错误信息。受管部署的 Web 只提交元数据，Privileged Broker 在执行前将完整连接配置与已提交行逐项校验；凭据写入和删除要求近期身份验证并记录不含明文密码的摘要审计。
+
 `audit_events` 按 ID 顺序链接 `previous_hash` 与 `event_hash`，`audit_chain_state` 保存保留锚点和
 当前链尾。为防止事件尾部与同库链尾状态一起回退后仍通过本地校验，每个 State Root 另有一份
 Ed25519 签名 checkpoint，记录实例路径身份、最后事件 ID/摘要、签名时间和公钥。签名私钥密文

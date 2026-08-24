@@ -30,6 +30,7 @@ import (
 	"scriptboard/internal/privatepath"
 	"scriptboard/internal/privilegebroker"
 	"scriptboard/internal/providercredential"
+	"scriptboard/internal/redismanager"
 	"scriptboard/internal/registryconnection"
 	"scriptboard/internal/secretstore"
 	"scriptboard/internal/securityevents"
@@ -158,6 +159,11 @@ func RunBroker(ctx context.Context, arguments []string, getenv func(string) stri
 	if err != nil {
 		return err
 	}
+	redisExecutionManager, err := redismanager.New(redismanager.Options{DB: database, StateRoot: absolute, SecretStore: vault})
+	if err != nil {
+		return fmt.Errorf("initialize Broker-owned Redis execution backend: %w", err)
+	}
+	redisService := privilegebroker.NewBrokerRedisService(database, redisExecutionManager.ExecutionBackend())
 	executable, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("resolve privileged Broker executable: %w", err)
@@ -228,7 +234,7 @@ func RunBroker(ctx context.Context, arguments []string, getenv func(string) stri
 		Authorizer: databaseSecurity, Executor: executor, Auditor: databaseSecurity,
 		Checkpoint: brokerCheckpointService{store: checkpoint, audit: audit}, Now: time.Now,
 		MFA: mfaStore, Passkeys: passkeyStore, Providers: providers,
-		MySQL: mysqlService, HostFiles: hostFilesService,
+		MySQL: mysqlService, Redis: redisService, HostFiles: hostFilesService,
 		Registry:     registryConnections,
 		Applications: applications, Kubernetes: brokerKubernetesService{db: database, factory: clusterstatus.HTTPFactory{}},
 		Kubeconfigs:  newBrokerKubeconfigManager(database, absolute, *allowedIdentity),

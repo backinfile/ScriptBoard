@@ -61,6 +61,7 @@ import (
 	"scriptboard/internal/passkey"
 	"scriptboard/internal/privatepath"
 	"scriptboard/internal/privilegebroker"
+	"scriptboard/internal/redismanager"
 	"scriptboard/internal/registryconnection"
 	"scriptboard/internal/runmanager"
 	"scriptboard/internal/scheduler"
@@ -401,6 +402,7 @@ type Config struct {
 	RegistryDockerDaemonConfigPath  string
 	ProviderCredentials             *privilegebroker.ProviderCredentials
 	MySQLBackend                    mysqlmanager.Backend
+	RedisBackend                    redismanager.Backend
 	HostFilesBackend                *privilegebroker.HostFilesBackend
 	StateBackups                    StateBackupService
 	SecurityEventEndpoint           string
@@ -540,6 +542,7 @@ type App struct {
 	externalAuthLimit     *externaltrigger.Limiter
 	externalLimit         *externaltrigger.Limiter
 	mysql                 *mysqlmanager.Manager
+	redis                 *redismanager.Manager
 	mfa                   MFAStore
 	passkeys              PasskeyStore
 	passkeyCeremonies     *passkeyCeremonyStore
@@ -759,6 +762,11 @@ func Open(config Config) (*App, error) {
 	if err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("initialize MySQL management module: %w", err)
+	}
+	application.redis, err = redismanager.New(redismanager.Options{DB: db, StateRoot: stateRoot, SecretStore: credentialStore, Backend: config.RedisBackend})
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("initialize Redis management module: %w", err)
 	}
 	if err := application.files.Protect(application.mysql.BackupRoot()); err != nil {
 		_ = db.Close()

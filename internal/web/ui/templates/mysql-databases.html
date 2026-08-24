@@ -3,6 +3,7 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "mysql.title"}} · ScriptBoard</title></head>
 <body>
 <main class="workspace" data-mysql-workspace>
+  <nav class="database-engine-switch" aria-label="Database engine"><a href="/resources/databases" aria-current="page">MySQL</a><a href="/resources/databases?engine=redis">Redis</a></nav>
   <header class="page-heading mysql-page-heading">
     <div><p class="page-eyebrow">{{t .Locale "mysql.eyebrow"}}</p><h1>{{t .Locale "mysql.title"}}</h1><p>{{t .Locale "mysql.description"}}</p></div>
     <div class="mysql-heading-actions">

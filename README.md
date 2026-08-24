@@ -23,7 +23,7 @@ ScriptBoard 是一款面向单台 Windows 或 Linux 主机的自托管脚本操�
 - 通过受限外部接口接收日志、文件上传、快捷执行和约束变量修改；
 - 审查远程登录活动，并管理 Windows Defender 防火墙或 Linux UFW 与 Fail2Ban；
 - 查看宿主资源、本机应用、Docker 容器、多个 Kubernetes 集群、网站状态、运行历史和审计记录，并创建可导入导出的自定义监控看板（含多镜像 Registry 版本卡片）；
-- 管理本机或远程 MySQL/MariaDB 实例，执行带校验和及安全回滚的逻辑备份与恢复；
+- 在统一数据库页管理 MySQL/MariaDB 与 Redis 连接，执行 MySQL 逻辑备份恢复，并只读查看 Redis 运行状态和键空间；
 - 通过可选的 AI 助手引用当前资源并辅助分析；
 - 从 ScriptBoard 回收站恢复通过网页误删的文件；
 - 在网页中检查、下载并安装经过签名验证的正式更新。
@@ -187,6 +187,10 @@ Kubeconfig 的 `server` 可使用 `http://` 或 `https://`。HTTPS 连接按 kub
 
 每个数据库生成独立的 `.sql.gz` 和 SHA-256。恢复已有数据库或删除数据库前必须先完成安全备份并输入完整库名；恢复失败时会自动尝试回滚。默认产物位于 `state_root/database-backups/mysql`，自定义目录也会加入受保护路径。请仍将这些产物纳入独立的异机备份策略。
 
+### Redis 连接管理
+
+“资源 → 数据库”页面可在 MySQL 与 Redis 页签之间切换。Redis 页签支持登记 ACL 用户、数据库索引和自定义 CA，查看版本、内存、客户端、命中率与持久化状态，并以有界 `SCAN` 只读浏览键名、类型、TTL 和内存占用。连接可选择验证证书与主机名、明文连接，或显式跳过证书验证；明文会暴露凭据和数据，跳过验证存在中间人攻击风险。连接测试只使用 `PING`、`INFO`、`ROLE` 和 `SCAN`，不会写入临时键或开放任意命令终端。
+
 ### AI 助手
 
 AI 功能默认关闭。管理员可在“系统设置 → AI”安装与当前版本匹配的 Pi Runtime，再添加 OpenAI、Anthropic 或 OpenAI 兼容服务。模型 Endpoint 支持 HTTP 与 HTTPS；HTTP 会明文传输 API Key、提示词和模型响应。
@@ -296,7 +300,7 @@ scriptboard backup recover-host --archive ABSOLUTE_BACKUP_PATH --passphrase-file
 目录，且拒绝覆盖任何已有外部信任材料；它使用单独口令认证 recovery 材料、重新封装主密钥、验证备份
 内 checkpoint 与恢复出的审计链，撤销全部 Web Session，再记录 `state_backup.recover_host` 并推进新主机 checkpoint。
 
-从旧版本升级前请先备份。当前版本使用数据库 schema 53，可自动迁移 schema 20–52；更早版本的数据库和旧式配置不会自动迁移。schema 53 删除旧的高权限账户 MFA 注册截止字段：账户可以自行选择是否配置 TOTP 或 passkey，未配置时不会限制普通页面访问；高风险操作仍要求近期 step-up，未配置 MFA 时验证当前密码，已配置 MFA 时必须验证第二因素。其他迁移继续保留快捷执行发布、外部接口 Key 拆分与 HMAC、安全审计链、Registry 操作日志、多 Kubernetes 连接、Variable 类型/版本/注释和多节点概览等既有数据。
+从旧版本升级前请先备份。当前版本使用数据库 schema 54，可自动迁移 schema 20–53；更早版本的数据库和旧式配置不会自动迁移。schema 54 增加受管 Redis 连接元数据；密码仍只保存在用途绑定的加密凭据文件中。schema 53 删除旧的高权限账户 MFA 注册截止字段：账户可以自行选择是否配置 TOTP 或 passkey，未配置时不会限制普通页面访问；高风险操作仍要求近期 step-up，未配置 MFA 时验证当前密码，已配置 MFA 时必须验证第二因素。
 
 面板不可用或疑似遭入侵时，可在主机本地使用带外应急命令。写操作要求重复输入固定确认值或完整 Key ID，并作为 `local-administrator` 原子写入审计链；取证导出先验证审计链，只创建新文件且不会覆盖已有证据：
 
