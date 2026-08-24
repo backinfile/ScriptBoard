@@ -71,15 +71,20 @@ FORM: Responsive signal ledger with a right-side detail task on capable clients 
 
 {{range .Alerts}}
 <section class="website-alert website-alert--{{.State}}">
-<div><span class="website-status website-status--{{.State}}">{{.StateLabel}}</span><h3><a href="/monitor/websites/{{.ID}}" data-task-link>{{.Name}}</a></h3><code class="website-alert__url">{{.URL}}</code><small>{{.ScopeLabel}} · {{.MethodLabel}}</small></div>
+<header class="website-alert__head">
+<div class="website-alert__identity"><span class="website-status website-status--{{.State}}">{{.StateLabel}}</span><h3><a href="/monitor/websites/{{.ID}}" data-task-link>{{.Name}}</a></h3></div>
+<div class="website-alert__latest">{{if or (not .LatestSummary) (ne .LatestLabel .LatestSummary)}}<strong>{{.LatestLabel}}</strong>{{end}}<small>{{if .LastCheckedAt.IsZero}}{{t $.Locale "website.never_checked"}}{{else}}{{t $.Locale "website.checked_at"}} <time datetime="{{machineTime .LastCheckedAt}}">{{localTime $.Locale .LastCheckedAt}}</time>{{end}}</small></div>
+</header>
+<div class="website-alert__content">
 <p>{{.LatestSummary}}{{if not .LatestSummary}}{{t $.Locale "website.result_needs_review"}}{{end}}</p>
+<div class="website-alert__target"><code class="website-alert__url">{{.URL}}</code><small>{{.ScopeLabel}} · {{.MethodLabel}}</small></div>
+</div>
 <dl class="website-alert__facts">
 <div><dt>{{t $.Locale "website.failure_count"}}</dt><dd>{{.FailureCount}}</dd></div>
 <div><dt>{{t $.Locale "website.incident_started"}}</dt><dd>{{if .IncidentStartedAt.IsZero}}—{{else}}<time datetime="{{machineTime .IncidentStartedAt}}">{{localTime $.Locale .IncidentStartedAt}}</time>{{end}}</dd></div>
 <div><dt>{{t $.Locale "website.incident_duration"}}</dt><dd>{{if .IncidentDurationLabel}}{{.IncidentDurationLabel}}{{else}}—{{end}}</dd></div>
 <div><dt>{{t $.Locale "website.next_check"}}</dt><dd>{{if .NextCheckAt.IsZero}}—{{else}}<time datetime="{{machineTime .NextCheckAt}}">{{localTime $.Locale .NextCheckAt}}</time>{{end}}</dd></div>
 </dl>
-<div class="website-alert__latest"><strong>{{.LatestLabel}}</strong><small>{{if .LastCheckedAt.IsZero}}{{t $.Locale "website.never_checked"}}{{else}}{{t $.Locale "website.checked_at"}} <time datetime="{{machineTime .LastCheckedAt}}">{{localTime $.Locale .LastCheckedAt}}</time>{{end}}</small></div>
 </section>
 {{end}}
 

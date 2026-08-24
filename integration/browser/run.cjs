@@ -927,6 +927,13 @@ async function assertWebsiteMonitoring(page, baseURL) {
   const attentionURL = page.locator(".website-alert").filter({ hasText: monitorName }).locator(".website-alert__url");
   await attentionURL.waitFor();
   assert.equal((await attentionURL.textContent()).trim(), targetURL);
+  const attention = page.locator(".website-alert").filter({ hasText: monitorName });
+  const desktopAlertLayout = await attention.evaluate(element => ({
+    fits: element.scrollWidth <= element.clientWidth + 1,
+    factColumns: getComputedStyle(element.querySelector(".website-alert__facts")).gridTemplateColumns.split(" ").length,
+    summaryWraps: getComputedStyle(element.querySelector(".website-alert__content p")).whiteSpace === "normal",
+  }));
+  assert.deepEqual(desktopAlertLayout, { fits: true, factColumns: 4, summaryWraps: true });
   await page.evaluate(() => {
     const maximum = document.documentElement.scrollHeight - innerHeight;
     scrollTo(0, Math.min(320, maximum));
