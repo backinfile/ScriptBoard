@@ -5417,6 +5417,11 @@ func (a *App) logout(response http.ResponseWriter, request *http.Request) {
 	}
 	current := request.Context().Value(sessionContextKey).(session)
 	a.cancelAuthenticatedRequests(current.userID)
+	a.securityDraftMu.Lock()
+	if draft, exists := a.securityDrafts[current.userID]; exists && !draft.Applying {
+		delete(a.securityDrafts, current.userID)
+	}
+	a.securityDraftMu.Unlock()
 	a.recordAuditForRequest(request, "logout", current.username, "succeeded")
 	http.SetCookie(response, &http.Cookie{Name: sessionCookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(request), SameSite: http.SameSiteLaxMode})
 	http.Redirect(response, request, "/login", http.StatusSeeOther)

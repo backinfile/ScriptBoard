@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -18,6 +19,21 @@ func TestConfigureProcessUsesAHeadlessProcessGroup(t *testing.T) {
 	want := uint32(windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW)
 	if command.SysProcAttr == nil || command.SysProcAttr.CreationFlags&want != want {
 		t.Fatalf("creation flags = %#x, want %#x", command.SysProcAttr.CreationFlags, want)
+	}
+}
+
+func TestWindowsRunnerAggregateJobBoundsAllRuns(t *testing.T) {
+	job, err := runnerAggregateJob()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var limits windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+	if err := windows.QueryInformationJobObject(job, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&limits)), uint32(unsafe.Sizeof(limits)), nil); err != nil {
+		t.Fatal(err)
+	}
+	required := uint32(windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | windows.JOB_OBJECT_LIMIT_ACTIVE_PROCESS | windows.JOB_OBJECT_LIMIT_JOB_MEMORY)
+	if limits.BasicLimitInformation.LimitFlags&required != required || limits.BasicLimitInformation.ActiveProcessLimit != 64 || limits.JobMemoryLimit != 4<<30 {
+		t.Fatalf("aggregate limits = %#v", limits)
 	}
 }
 

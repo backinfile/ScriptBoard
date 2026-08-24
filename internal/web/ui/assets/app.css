@@ -937,6 +937,8 @@ body[data-app-shell] { padding-left: var(--sidebar-width); }
 .assistant-runtime-notice strong { display: block; color: var(--ink); font-size: .72rem; }
 .assistant-runtime-notice p { max-width: 62ch; margin: 3px 0 0; font-size: .65rem; }
 .assistant-runtime-notice .button { align-self: center; white-space: nowrap; }
+.assistant-history-notice { display: flex; align-items: center; gap: 8px; padding: 8px 10px; color: var(--muted); border: 1px solid var(--rule); font-size: .65rem; }
+.assistant-history-notice > svg { width: 14px; height: 14px; flex: 0 0 auto; color: var(--accent); }
 .assistant-prompts { display: grid; width: 100%; grid-template-columns: 1fr 1fr; gap: 0 18px; margin-top: 34px; border-top: 1px solid var(--rule-strong); }
 .assistant-prompts button { display: grid; min-height: 58px; grid-template-columns: 18px 1fr; gap: 10px; align-items: center; padding: 10px 4px; color: var(--ink); background: transparent; border: 0; border-bottom: 1px solid var(--rule); text-align: left; }
 .assistant-prompts button:hover { color: var(--accent); }

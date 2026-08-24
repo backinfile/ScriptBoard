@@ -668,6 +668,7 @@ var webMessages = map[string]localizedMessage{
 	"assistant.invalid_input":                       {"AI 配置或对话参数无效。", "The AI configuration or conversation input is invalid."},
 	"assistant.model_required":                      {"必须为对话选择一个已配置的模型。", "A configured model must be selected for the conversation."},
 	"assistant.message_required":                    {"请输入要发送的消息。", "Enter a message to send."},
+	"assistant.history_window":                      {"为控制内存，此处仅显示最近的对话历史；完整记录仍保留。", "Only the most recent conversation history is shown to bound memory; the complete record is still retained."},
 	"assistant.remove_reference":                    {"移除引用", "Remove reference"},
 	"assistant.disabled":                            {"AI 助手当前未启用。请先在系统设置中启用。", "The AI assistant is disabled. Enable it in system settings first."},
 	"assistant.status.idle":                         {"空闲", "Idle"},

@@ -93,6 +93,7 @@ type assistantPageData struct {
 	Messages            []assistant.Message
 	Timeline            []assistantMessageView
 	ToolCalls           []assistant.ToolCall
+	HistoryTruncated    bool
 	Operations          []assistantOperationView
 	PendingApproval     *assistant.Approval
 	PendingApprovalCall *assistant.ToolCall
@@ -150,6 +151,7 @@ func (a *App) renderAssistantPage(response http.ResponseWriter, request *http.Re
 	var contextReferences []assistant.ContextRef
 	var messages []assistant.Message
 	var toolCalls []assistant.ToolCall
+	historyTruncated := false
 	var pendingApproval *assistant.Approval
 	var pendingApprovalCall *assistant.ToolCall
 	selectedModelID := ""
@@ -172,16 +174,13 @@ func (a *App) renderAssistantPage(response http.ResponseWriter, request *http.Re
 			http.Error(response, webText(resolveWebLocale(request), "assistant.load_failed"), http.StatusInternalServerError)
 			return
 		}
-		messages, err = a.assistant.Messages(request.Context(), actor, conversationID)
+		history, historyErr := a.assistant.ConversationWindow(request.Context(), actor, conversationID)
+		err = historyErr
 		if err != nil {
 			http.Error(response, webText(resolveWebLocale(request), "assistant.load_failed"), http.StatusInternalServerError)
 			return
 		}
-		toolCalls, err = a.assistant.ToolCalls(request.Context(), actor, conversationID)
-		if err != nil {
-			http.Error(response, webText(resolveWebLocale(request), "assistant.load_failed"), http.StatusInternalServerError)
-			return
-		}
+		messages, toolCalls, historyTruncated = history.Messages, history.ToolCalls, history.Truncated
 		if approval, approvalErr := a.assistant.PendingApproval(request.Context(), actor, conversationID); approvalErr == nil && approval.Status == "pending" {
 			pendingApproval = &approval
 			if call, callErr := a.assistant.ToolCallByID(request.Context(), actor, conversationID, approval.ToolCallID); callErr == nil {
@@ -237,7 +236,7 @@ func (a *App) renderAssistantPage(response http.ResponseWriter, request *http.Re
 		CanManageAI: identity.Allows(currentSession.role, identity.PermissionManageSystem),
 		Resources:   resources, ContextReferences: contextReferences,
 		InspectorReferences: inspectorReferences, Usage: usage,
-		Messages: messages, Timeline: assistantMessageTimeline(messages, toolCalls, locale), ToolCalls: toolCalls,
+		Messages: messages, Timeline: assistantMessageTimeline(messages, toolCalls, locale), ToolCalls: toolCalls, HistoryTruncated: historyTruncated,
 		Operations:      assistantOperationViews(toolCalls, locale),
 		PendingApproval: pendingApproval, PendingApprovalCall: pendingApprovalCall, AssistantEnabled: settings.Enabled,
 	})
@@ -676,19 +675,16 @@ func (a *App) assistantConversationEvents(response http.ResponseWriter, request 
 	response.Header().Set("X-Accel-Buffering", "no")
 	response.WriteHeader(http.StatusOK)
 	if after == 0 || subscription.reset {
-		messages, err := a.assistant.Messages(request.Context(), actor, id)
+		history, err := a.assistant.ConversationWindow(request.Context(), actor, id)
 		if err != nil {
 			return
 		}
-		toolCalls, err := a.assistant.ToolCalls(request.Context(), actor, id)
-		if err != nil {
-			return
-		}
+		messages, toolCalls := history.Messages, history.ToolCalls
 		var pendingApproval *assistant.Approval
 		if approval, approvalErr := a.assistant.PendingApproval(request.Context(), actor, id); approvalErr == nil && approval.Status == "pending" {
 			pendingApproval = &approval
 		}
-		if !writeAssistantSSE(response, subscription.watermark, "snapshot", map[string]any{"messages": messages, "toolCalls": toolCalls, "approval": pendingApproval}) {
+		if !writeAssistantSSE(response, subscription.watermark, "snapshot", map[string]any{"messages": messages, "toolCalls": toolCalls, "approval": pendingApproval, "historyTruncated": history.Truncated}) {
 			return
 		}
 	}

@@ -36,8 +36,10 @@ func TestLinuxRunnerDefaultsToPrivilegedRoot(t *testing.T) {
 	if user != runnerServiceUser || group != runnerServiceUser {
 		t.Fatalf("isolated Runner account = %s:%s", user, group)
 	}
-	if policy := linuxRunnerServicePolicy(RunnerIdentityPrivileged); policy != "" {
-		t.Fatalf("privileged Runner should not receive isolated systemd policy: %q", policy)
+	if policy := linuxRunnerServicePolicy(RunnerIdentityPrivileged); !strings.Contains(policy, "MemoryMax=2G") || !strings.Contains(policy, "MemorySwapMax=0") || !strings.Contains(policy, "TasksMax=64") {
+		t.Fatalf("privileged Runner is missing host resource limits: %q", policy)
+	} else if strings.Contains(policy, "IPAddressDeny=any") {
+		t.Fatalf("privileged Runner unexpectedly received isolated network policy: %q", policy)
 	}
 	if policy := linuxRunnerServicePolicy(RunnerIdentityIsolated); !strings.Contains(policy, "IPAddressDeny=any") {
 		t.Fatalf("isolated Runner policy is missing network denial: %q", policy)
@@ -86,7 +88,7 @@ func TestLinuxRuntimeUnitsRequireSeccompAndNetworkIsolation(t *testing.T) {
 		}
 	}
 	if count := strings.Count(text, "MemorySwapMax=0"); count != 2 {
-		t.Fatalf("Linux runtime units require two swap limits, found %d", count)
+		t.Fatalf("Linux runtime units require AI and shared Runner swap limits, found %d", count)
 	}
 }
 
