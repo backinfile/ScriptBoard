@@ -171,13 +171,18 @@ func (handler *proxyHandler) ServeHTTP(response http.ResponseWriter, request *ht
 func (handler *proxyHandler) authorized(header http.Header) bool {
 	provided := ""
 	if handler.provider == "anthropic" {
-		provided = header.Get("X-Api-Key")
-		if header.Get("Authorization") != "" {
+		values := header.Values("X-Api-Key")
+		if len(values) != 1 || len(header.Values("Authorization")) != 0 {
 			return false
 		}
+		provided = values[0]
 	} else {
-		provided = strings.TrimPrefix(header.Get("Authorization"), "Bearer ")
-		if provided == header.Get("Authorization") || header.Get("X-Api-Key") != "" {
+		values := header.Values("Authorization")
+		if len(values) != 1 || len(header.Values("X-Api-Key")) != 0 {
+			return false
+		}
+		provided = strings.TrimPrefix(values[0], "Bearer ")
+		if provided == values[0] {
 			return false
 		}
 	}

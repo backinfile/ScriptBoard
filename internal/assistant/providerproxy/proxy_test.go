@@ -97,6 +97,38 @@ func TestSessionRejectsWrongCapabilityModelMethodAndPath(t *testing.T) {
 	}
 }
 
+func TestSessionRejectsDuplicateCapabilityHeadersBeforeUpstream(t *testing.T) {
+	var upstreamRequests int
+	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { upstreamRequests++ }))
+	defer upstream.Close()
+	session, err := Start(Config{
+		Provider: "openai-compatible", Model: "allowed", Endpoint: upstream.URL + "/v1", Credential: "secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close(context.Background()) })
+
+	request, err := http.NewRequest(http.MethodPost, session.Endpoint()+"/chat/completions", strings.NewReader(`{"model":"allowed"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Add("Authorization", "Bearer "+session.Capability())
+	request.Header.Add("Authorization", "Bearer "+session.Capability())
+	request.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("duplicate provider capability status = %d, want %d", response.StatusCode, http.StatusUnauthorized)
+	}
+	if upstreamRequests != 0 {
+		t.Fatalf("duplicate provider capability reached upstream: %d", upstreamRequests)
+	}
+}
+
 func TestSessionUsesAnthropicCapabilityAndCredentialHeaders(t *testing.T) {
 	var apiKey string
 	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
