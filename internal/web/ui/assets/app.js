@@ -5944,6 +5944,13 @@
 		try { payload = JSON.parse(event.data); } catch { return; }
 		if (event.type === "snapshot") {
 			if (messageList) messageList.replaceChildren();
+			if (messageList && payload.historyTruncated) {
+				const notice = document.createElement("div");
+				notice.className = "assistant-history-notice";
+				notice.dataset.assistantHistoryNotice = "";
+				notice.textContent = locale() === "zh-CN" ? "为控制内存，此处仅显示最近的对话历史；完整记录仍保留。" : "Only the most recent conversation history is shown to bound memory; the complete record is still retained.";
+				messageList.append(notice);
+			}
 			if (operationList) operationList.replaceChildren();
 			if (operationCount) operationCount.textContent = "0";
 			pendingToolCalls.clear();

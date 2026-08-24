@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"unsafe"
 
@@ -17,6 +18,30 @@ import (
 
 	"golang.org/x/sys/windows"
 )
+
+var (
+	aggregateJobOnce sync.Once
+	aggregateJob     windows.Handle
+	aggregateJobErr  error
+)
+
+func runnerAggregateJob() (windows.Handle, error) {
+	aggregateJobOnce.Do(func() {
+		aggregateJob, aggregateJobErr = windows.CreateJobObject(nil, nil)
+		if aggregateJobErr != nil {
+			return
+		}
+		information := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
+		information.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | windows.JOB_OBJECT_LIMIT_ACTIVE_PROCESS | windows.JOB_OBJECT_LIMIT_JOB_MEMORY
+		information.BasicLimitInformation.ActiveProcessLimit = 64
+		information.JobMemoryLimit = 4 << 30
+		if _, aggregateJobErr = windows.SetInformationJobObject(aggregateJob, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&information)), uint32(unsafe.Sizeof(information))); aggregateJobErr != nil {
+			windows.CloseHandle(aggregateJob)
+			aggregateJob = 0
+		}
+	})
+	return aggregateJob, aggregateJobErr
+}
 
 func newExecutorCommand(executor executorCandidate, script string, arguments []string) (*exec.Cmd, error) {
 	commandArguments := append(append([]string{}, executor.prefix...), script)
@@ -90,6 +115,10 @@ func configureProcess(command *exec.Cmd) {
 }
 
 func attachProcess(process *os.Process) (func(), error) {
+	aggregate, err := runnerAggregateJob()
+	if err != nil {
+		return nil, fmt.Errorf("create aggregate Runner Job Object: %w", err)
+	}
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create Job Object: %w", err)
@@ -108,7 +137,12 @@ func attachProcess(process *os.Process) (func(), error) {
 		windows.CloseHandle(job)
 		return nil, fmt.Errorf("open child process: %w", err)
 	}
-	err = windows.AssignProcessToJobObject(job, processHandle)
+	// The aggregate job bounds all concurrent Runs; the nested job retains the
+	// per-Run process and cleanup limits used by cancellation.
+	err = windows.AssignProcessToJobObject(aggregate, processHandle)
+	if err == nil {
+		err = windows.AssignProcessToJobObject(job, processHandle)
+	}
 	windows.CloseHandle(processHandle)
 	if err != nil {
 		windows.CloseHandle(job)

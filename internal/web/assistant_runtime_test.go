@@ -399,6 +399,21 @@ func TestAssistantEventReplayRequestsSnapshotForUnknownCursor(t *testing.T) {
 	}
 }
 
+func TestAssistantRuntimeReleasesIdleConversationEventStateAfterSubscribersLeave(t *testing.T) {
+	coordinator := newAssistantRuntimeCoordinator(t.TempDir(), nil, 1)
+	coordinator.publish("conversation-1", assistantBrowserEvent{Type: "message"})
+	subscription := coordinator.Subscribe("conversation-1", 0)
+
+	coordinator.releaseIdleConversationState("conversation-1")
+	if len(coordinator.hubs) != 1 {
+		t.Fatal("active subscriber lost its replay hub")
+	}
+	subscription.unsubscribe()
+	if len(coordinator.hubs) != 0 {
+		t.Fatal("idle conversation replay hub was retained")
+	}
+}
+
 func TestResolveAssistantThinkingLevelFallsBackWithoutBlockingTheTurn(t *testing.T) {
 	tests := []struct {
 		requested string

@@ -157,6 +157,50 @@ func TestModelConfigurationAcceptsRemoteHTTPServer(t *testing.T) {
 	}
 }
 
+func TestConversationWindowBoundsLongPersistentHistory(t *testing.T) {
+	service, _, _ := newTestService(t)
+	ctx := context.Background()
+	actor := Actor{UserID: "history-owner", Username: "operator"}
+	model, err := service.SaveModel(ctx, actor, "", ModelInput{
+		Name: "Fixture", Provider: ProviderOpenAICompatible, Model: "fixture", Endpoint: "http://127.0.0.1:11434/v1", APIKey: "fixture-key", MakeDefault: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.UpdateSettings(ctx, actor, SettingsInput{Enabled: true, MaxActiveConversations: 1}); err != nil {
+		t.Fatal(err)
+	}
+	conversation, err := service.CreateConversation(ctx, actor, ConversationInput{ModelID: model.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := strings.Repeat("x", 32<<10)
+	for index := 0; index < 70; index++ {
+		turn, turnErr := service.BeginTurn(ctx, actor, conversation.ID, message)
+		if turnErr != nil {
+			t.Fatal(turnErr)
+		}
+		if finishErr := service.FinishTurn(ctx, actor, conversation.ID, turn.Assistant.ID, "complete", "fixture"); finishErr != nil {
+			t.Fatal(finishErr)
+		}
+	}
+
+	window, err := service.ConversationWindow(ctx, actor, conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bytes := 0
+	for _, item := range window.Messages {
+		bytes += len(item.Body)
+	}
+	if !window.Truncated || bytes > maxConversationWindowMessageBytes || len(window.Messages) >= 140 {
+		t.Fatalf("window messages=%d bytes=%d truncated=%v", len(window.Messages), bytes, window.Truncated)
+	}
+	if got := window.Messages[len(window.Messages)-1].Sequence; got != 140 {
+		t.Fatalf("latest sequence=%d, want 140", got)
+	}
+}
+
 func TestModelReasoningDefaultsArePersistedAndInheritedByNewConversations(t *testing.T) {
 	t.Parallel()
 

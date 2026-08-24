@@ -18,6 +18,15 @@ import (
 	"scriptboard/internal/securitybaseline"
 )
 
+const (
+	maxSecurityDraftChanges    = 256
+	maxSecurityDraftAddedRules = 128
+	maxSecurityDrafts          = 64
+	securityDraftLifetime      = 30 * time.Minute
+)
+
+var errSecurityDraftLimit = errors.New("pending firewall draft reached its safety limit")
+
 type securityFirewallDraft struct {
 	Baseline         []hostsecurity.FirewallRule
 	Desired          []hostsecurity.FirewallRule
@@ -30,6 +39,16 @@ type securityFirewallDraft struct {
 
 type securityFirewallChange struct {
 	Kind, Title, Detail string
+}
+
+func (draft *securityFirewallDraft) appendChange(changes ...securityFirewallChange) error {
+	// A draft is a short-lived editing transaction; bound its retained history
+	// while leaving the complete host firewall baseline untouched.
+	if len(draft.Changes)+len(changes) > maxSecurityDraftChanges {
+		return errSecurityDraftLimit
+	}
+	draft.Changes = append(draft.Changes, changes...)
+	return nil
 }
 
 type securityPageView struct {
@@ -770,19 +789,30 @@ func (a *App) addSecurityFirewallDraftRule(response http.ResponseWriter, request
 		return
 	}
 	a.securityDraftMu.Lock()
-	draft, exists := a.securityDrafts[current.userID]
-	if !exists {
-		draft = newSecurityFirewallDraft(capabilities)
-	}
+	now := time.Now().UTC()
+	draft := a.securityDraftForUpdateLocked(current.userID, capabilities, now)
 	if draft.Applying {
 		a.securityDraftMu.Unlock()
 		writeSecurityError(response, request, hostsecurity.ErrFirewallConflict)
 		return
 	}
+	if len(draft.Desired) >= len(draft.Baseline)+maxSecurityDraftAddedRules {
+		a.securityDraftMu.Unlock()
+		writeSecurityError(response, request, errSecurityDraftLimit)
+		return
+	}
+	if err := draft.appendChange(securityFirewallChange{Kind: "add", Title: rule.Name, Detail: securityRuleDescription(rule)}); err != nil {
+		a.securityDraftMu.Unlock()
+		writeSecurityError(response, request, err)
+		return
+	}
 	draft.Desired = append(draft.Desired, rule)
-	draft.Changes = append(draft.Changes, securityFirewallChange{Kind: "add", Title: rule.Name, Detail: securityRuleDescription(rule)})
-	draft.UpdatedAt = time.Now().UTC()
-	a.securityDrafts[current.userID] = draft
+	draft.UpdatedAt = now
+	if err := a.storeSecurityDraftLocked(current.userID, draft); err != nil {
+		a.securityDraftMu.Unlock()
+		writeSecurityError(response, request, err)
+		return
+	}
 	a.securityDraftMu.Unlock()
 	securityRedirect(response, request, "defense", "drafted", nil)
 }
@@ -799,10 +829,8 @@ func (a *App) toggleSecurityFirewallDraftRule(response http.ResponseWriter, requ
 	current := request.Context().Value(sessionContextKey).(session)
 	capabilities := a.hostSecurity.Capabilities(request.Context())
 	a.securityDraftMu.Lock()
-	draft, exists := a.securityDrafts[current.userID]
-	if !exists {
-		draft = newSecurityFirewallDraft(capabilities)
-	}
+	now := time.Now().UTC()
+	draft := a.securityDraftForUpdateLocked(current.userID, capabilities, now)
 	if draft.Applying {
 		a.securityDraftMu.Unlock()
 		writeSecurityError(response, request, hostsecurity.ErrFirewallConflict)
@@ -813,11 +841,20 @@ func (a *App) toggleSecurityFirewallDraftRule(response http.ResponseWriter, requ
 		writeSecurityError(response, request, hostsecurity.ErrInvalidRule)
 		return
 	}
-	draft.Desired[index].Enabled = !draft.Desired[index].Enabled
 	rule := draft.Desired[index]
-	draft.Changes = append(draft.Changes, securityFirewallChange{Kind: "update", Title: rule.Name, Detail: securityRuleDescription(rule)})
-	draft.UpdatedAt = time.Now().UTC()
-	a.securityDrafts[current.userID] = draft
+	rule.Enabled = !rule.Enabled
+	if err := draft.appendChange(securityFirewallChange{Kind: "update", Title: rule.Name, Detail: securityRuleDescription(rule)}); err != nil {
+		a.securityDraftMu.Unlock()
+		writeSecurityError(response, request, err)
+		return
+	}
+	draft.Desired[index] = rule
+	draft.UpdatedAt = now
+	if err := a.storeSecurityDraftLocked(current.userID, draft); err != nil {
+		a.securityDraftMu.Unlock()
+		writeSecurityError(response, request, err)
+		return
+	}
 	a.securityDraftMu.Unlock()
 	securityRedirect(response, request, "defense", "drafted", nil)
 }
@@ -834,10 +871,8 @@ func (a *App) deleteSecurityFirewallDraftRule(response http.ResponseWriter, requ
 	current := request.Context().Value(sessionContextKey).(session)
 	capabilities := a.hostSecurity.Capabilities(request.Context())
 	a.securityDraftMu.Lock()
-	draft, exists := a.securityDrafts[current.userID]
-	if !exists {
-		draft = newSecurityFirewallDraft(capabilities)
-	}
+	now := time.Now().UTC()
+	draft := a.securityDraftForUpdateLocked(current.userID, capabilities, now)
 	if draft.Applying {
 		a.securityDraftMu.Unlock()
 		writeSecurityError(response, request, hostsecurity.ErrFirewallConflict)
@@ -849,10 +884,18 @@ func (a *App) deleteSecurityFirewallDraftRule(response http.ResponseWriter, requ
 		return
 	}
 	rule := draft.Desired[index]
+	if err := draft.appendChange(securityFirewallChange{Kind: "delete", Title: rule.Name, Detail: securityRuleDescription(rule)}); err != nil {
+		a.securityDraftMu.Unlock()
+		writeSecurityError(response, request, err)
+		return
+	}
 	draft.Desired = append(draft.Desired[:index], draft.Desired[index+1:]...)
-	draft.Changes = append(draft.Changes, securityFirewallChange{Kind: "delete", Title: rule.Name, Detail: securityRuleDescription(rule)})
-	draft.UpdatedAt = time.Now().UTC()
-	a.securityDrafts[current.userID] = draft
+	draft.UpdatedAt = now
+	if err := a.storeSecurityDraftLocked(current.userID, draft); err != nil {
+		a.securityDraftMu.Unlock()
+		writeSecurityError(response, request, err)
+		return
+	}
 	a.securityDraftMu.Unlock()
 	securityRedirect(response, request, "defense", "drafted", nil)
 }
@@ -893,25 +936,33 @@ func (a *App) updateSecurityFirewallDraftDefaults(response http.ResponseWriter, 
 		return
 	}
 	a.securityDraftMu.Lock()
-	draft, exists := a.securityDrafts[current.userID]
-	if !exists {
-		draft = newSecurityFirewallDraft(capabilities)
-	}
+	now := time.Now().UTC()
+	draft := a.securityDraftForUpdateLocked(current.userID, capabilities, now)
 	if draft.Applying {
 		a.securityDraftMu.Unlock()
 		writeSecurityError(response, request, hostsecurity.ErrFirewallConflict)
 		return
 	}
+	var changes []securityFirewallChange
 	if draft.DesiredDefaults.Incoming != defaults.Incoming {
-		draft.Changes = append(draft.Changes, securityFirewallChange{Kind: "update", Title: webText(resolveWebLocale(request), "security.default_incoming"), Detail: string(defaults.Incoming)})
+		changes = append(changes, securityFirewallChange{Kind: "update", Title: webText(resolveWebLocale(request), "security.default_incoming"), Detail: string(defaults.Incoming)})
 	}
 	if draft.DesiredDefaults.Outgoing != defaults.Outgoing {
-		draft.Changes = append(draft.Changes, securityFirewallChange{Kind: "update", Title: webText(resolveWebLocale(request), "security.default_outgoing"), Detail: string(defaults.Outgoing)})
+		changes = append(changes, securityFirewallChange{Kind: "update", Title: webText(resolveWebLocale(request), "security.default_outgoing"), Detail: string(defaults.Outgoing)})
+	}
+	if err := draft.appendChange(changes...); err != nil {
+		a.securityDraftMu.Unlock()
+		writeSecurityError(response, request, err)
+		return
 	}
 	draft.DesiredDefaults = defaults
-	draft.UpdatedAt = time.Now().UTC()
+	draft.UpdatedAt = now
 	if len(draft.Changes) > 0 {
-		a.securityDrafts[current.userID] = draft
+		if err := a.storeSecurityDraftLocked(current.userID, draft); err != nil {
+			a.securityDraftMu.Unlock()
+			writeSecurityError(response, request, err)
+			return
+		}
 	}
 	a.securityDraftMu.Unlock()
 	securityRedirect(response, request, "defense", "drafted", nil)
@@ -923,6 +974,7 @@ func (a *App) applySecurityFirewallDraft(response http.ResponseWriter, request *
 	}
 	current := request.Context().Value(sessionContextKey).(session)
 	a.securityDraftMu.Lock()
+	a.pruneSecurityDraftsLocked(time.Now().UTC())
 	draft, ok := a.securityDrafts[current.userID]
 	if !ok || len(draft.Changes) == 0 {
 		a.securityDraftMu.Unlock()
@@ -1057,6 +1109,7 @@ func (a *App) validSecurityWrite(response http.ResponseWriter, request *http.Req
 func (a *App) securityDraft(userID string) (securityFirewallDraft, bool) {
 	a.securityDraftMu.Lock()
 	defer a.securityDraftMu.Unlock()
+	a.pruneSecurityDraftsLocked(time.Now().UTC())
 	draft, ok := a.securityDrafts[userID]
 	if !ok {
 		return securityFirewallDraft{}, false
@@ -1065,6 +1118,47 @@ func (a *App) securityDraft(userID string) (securityFirewallDraft, bool) {
 	draft.Desired = cloneSecurityRules(draft.Desired)
 	draft.Changes = append([]securityFirewallChange(nil), draft.Changes...)
 	return draft, true
+}
+
+func (a *App) securityDraftForUpdateLocked(userID string, capabilities hostsecurity.Capabilities, now time.Time) securityFirewallDraft {
+	a.pruneSecurityDraftsLocked(now)
+	if draft, exists := a.securityDrafts[userID]; exists {
+		return draft
+	}
+	return newSecurityFirewallDraft(capabilities)
+}
+
+func (a *App) storeSecurityDraftLocked(userID string, draft securityFirewallDraft) error {
+	if len(a.securityDrafts) >= maxSecurityDrafts {
+		if _, exists := a.securityDrafts[userID]; exists {
+			a.securityDrafts[userID] = draft
+			return nil
+		}
+		oldestUserID := ""
+		var oldest time.Time
+		for candidate, draft := range a.securityDrafts {
+			if !draft.Applying && (oldestUserID == "" || draft.UpdatedAt.Before(oldest)) {
+				oldestUserID, oldest = candidate, draft.UpdatedAt
+			}
+		}
+		if oldestUserID == "" {
+			return errSecurityDraftLimit
+		}
+		// Bound concurrent editors as well as each draft; the oldest idle edit
+		// is discarded when the bounded workspace is full.
+		delete(a.securityDrafts, oldestUserID)
+	}
+	a.securityDrafts[userID] = draft
+	return nil
+}
+
+func (a *App) pruneSecurityDraftsLocked(now time.Time) {
+	for userID, draft := range a.securityDrafts {
+		age := now.Sub(draft.UpdatedAt)
+		if !draft.Applying && (draft.UpdatedAt.IsZero() || age < 0 || age >= securityDraftLifetime) {
+			delete(a.securityDrafts, userID)
+		}
+	}
 }
 
 func newSecurityFirewallDraft(capabilities hostsecurity.Capabilities) securityFirewallDraft {

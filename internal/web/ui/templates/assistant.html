@@ -65,6 +65,7 @@
         <div class="assistant-transcript" aria-live="polite">
           {{if .Current}}
           <div class="assistant-message-list" data-assistant-message-list>
+            <div class="assistant-history-notice" data-assistant-history-notice {{if not .HistoryTruncated}}hidden{{end}}><span data-lucide="archive" aria-hidden="true"></span><span>{{t .Locale "assistant.history_window"}}</span></div>
             {{range .Timeline}}<article class="assistant-message assistant-message--{{.Role}}" data-message-id="{{.ID}}" data-message-status="{{.Status}}" data-message-source="{{.Body}}">
               <header><strong>{{if eq .Role "user"}}YOU{{else}}PI{{end}}</strong><time datetime="{{machineTime .CreatedAt}}">{{displayTime .CreatedAt}}</time></header>
               {{range .Parts}}{{if eq .Kind "text"}}<div data-message-body data-message-segment>{{.Body}}</div>{{else}}{{template "assistant-tool-cluster" .}}{{end}}{{end}}

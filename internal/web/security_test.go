@@ -9,6 +9,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"scriptboard/internal/hostsecurity"
 )
 
 func TestPrepareStateRootProtectsExistingDirectory(t *testing.T) {
@@ -60,6 +63,43 @@ func TestLoginFailureTrackingHasABoundedCardinality(t *testing.T) {
 	}
 	if got := len(application.loginFailures); got == 0 || got > loginRateBucketCount {
 		t.Fatalf("login failure entries = %d, want 1..%d", got, loginRateBucketCount)
+	}
+}
+
+func TestSecurityFirewallDraftBoundsPendingChanges(t *testing.T) {
+	draft := securityFirewallDraft{}
+	for index := 0; index < maxSecurityDraftChanges; index++ {
+		if err := draft.appendChange(securityFirewallChange{Kind: "update", Title: strconv.Itoa(index)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := draft.appendChange(securityFirewallChange{Kind: "update", Title: "overflow"}); err == nil {
+		t.Fatal("unbounded firewall draft change was accepted")
+	}
+}
+
+func TestSecurityFirewallDraftExpiresWhenRead(t *testing.T) {
+	application := &App{securityDrafts: map[string]securityFirewallDraft{
+		"operator": {Desired: []hostsecurity.FirewallRule{{Name: "pending"}}, UpdatedAt: time.Now().Add(-securityDraftLifetime - time.Minute)},
+	}}
+	if _, ok := application.securityDraft("operator"); ok || len(application.securityDrafts) != 0 {
+		t.Fatal("expired firewall draft was retained")
+	}
+}
+
+func TestSecurityFirewallDraftEvictsOldestIdleEditorAtCapacity(t *testing.T) {
+	application := &App{securityDrafts: make(map[string]securityFirewallDraft)}
+	now := time.Now().UTC()
+	for index := 0; index < maxSecurityDrafts; index++ {
+		application.securityDrafts[strconv.Itoa(index)] = securityFirewallDraft{UpdatedAt: now.Add(-time.Duration(maxSecurityDrafts-index) * time.Second)}
+	}
+	draft := application.securityDraftForUpdateLocked("new-editor", hostsecurity.Capabilities{}, now)
+	draft.UpdatedAt = now
+	if err := application.storeSecurityDraftLocked("new-editor", draft); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := application.securityDrafts["0"]; exists {
+		t.Fatal("oldest idle firewall draft was retained at capacity")
 	}
 }
 

@@ -64,7 +64,7 @@ type assistantRuntimeCoordinator struct {
 	turns            map[string]*assistantRuntimeTurn
 	sessionConfigs   map[string]string
 	hubs             map[string]*assistantEventHub
-	lifecycleGates   map[string]*sync.Mutex
+	lifecycleGates   [64]sync.Mutex
 	idleStops        map[string]*time.Timer
 	brokerSessions   map[string]assistantBrokerRuntimeSession
 	providerSessions map[string]assistantProviderSession
@@ -185,7 +185,7 @@ func newAssistantRuntimeCoordinatorWithLauncher(stateRoot string, store *assista
 		stateRoot: stateRoot, store: store, supervisor: pirpc.NewSupervisorWithLauncher(maximum, launcher),
 		providers: localAssistantProviderSessions{store: store},
 		turns:     make(map[string]*assistantRuntimeTurn), sessionConfigs: make(map[string]string),
-		hubs: make(map[string]*assistantEventHub), lifecycleGates: make(map[string]*sync.Mutex),
+		hubs:      make(map[string]*assistantEventHub),
 		idleStops: make(map[string]*time.Timer), brokerSessions: make(map[string]assistantBrokerRuntimeSession), providerSessions: make(map[string]assistantProviderSession), approvals: make(map[string]*assistantRuntimeApproval), warmDuration: defaultAssistantWarmDuration,
 		maxTurnDuration: defaultAssistantTurnDuration, maximum: maximum, browserStreams: make(chan struct{}, 16),
 	}
@@ -644,6 +644,7 @@ func (runtime *assistantRuntimeCoordinator) releaseCapabilitiesWhenProcessStops(
 }
 
 func (runtime *assistantRuntimeCoordinator) stopManagedSession(ctx context.Context, conversationID string) error {
+	defer runtime.releaseIdleConversationState(conversationID)
 	stopErr := runtime.supervisor.Stop(ctx, conversationID)
 	runtime.mu.Lock()
 	bound := runtime.brokerSessions[conversationID]
@@ -867,14 +868,10 @@ func (runtime *assistantRuntimeCoordinator) settleTurn(turn *assistantRuntimeTur
 }
 
 func (runtime *assistantRuntimeCoordinator) lifecycleGate(conversationID string) *sync.Mutex {
-	runtime.mu.Lock()
-	defer runtime.mu.Unlock()
-	gate := runtime.lifecycleGates[conversationID]
-	if gate == nil {
-		gate = &sync.Mutex{}
-		runtime.lifecycleGates[conversationID] = gate
-	}
-	return gate
+	// Fixed stripes keep lifecycle operations for one conversation serialized
+	// without retaining one mutex for every conversation ever opened.
+	digest := sha256.Sum256([]byte(conversationID))
+	return &runtime.lifecycleGates[int(digest[0])%len(runtime.lifecycleGates)]
 }
 
 func (runtime *assistantRuntimeCoordinator) scheduleIdleStop(conversationID string) {
@@ -1117,8 +1114,23 @@ func (runtime *assistantRuntimeCoordinator) hub(conversationID string) *assistan
 	return hub
 }
 
+func (runtime *assistantRuntimeCoordinator) releaseIdleConversationState(conversationID string) {
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	hub := runtime.hubs[conversationID]
+	if hub != nil && hub.unused() {
+		delete(runtime.hubs, conversationID)
+	}
+}
+
 func (runtime *assistantRuntimeCoordinator) Subscribe(conversationID string, after uint64) assistantSubscription {
-	return runtime.hub(conversationID).subscribe(after)
+	subscription := runtime.hub(conversationID).subscribe(after)
+	unsubscribe := subscription.unsubscribe
+	subscription.unsubscribe = func() {
+		unsubscribe()
+		runtime.releaseIdleConversationState(conversationID)
+	}
+	return subscription
 }
 
 func (runtime *assistantRuntimeCoordinator) AcquireBrowserStream() bool {
@@ -1244,6 +1256,12 @@ func (hub *assistantEventHub) subscribe(after uint64) assistantSubscription {
 		hub.mu.Unlock()
 	}
 	return subscription
+}
+
+func (hub *assistantEventHub) unused() bool {
+	hub.mu.Lock()
+	defer hub.mu.Unlock()
+	return len(hub.subscribers) == 0
 }
 
 func assistantRuntimeWebError(err error) (int, string) {

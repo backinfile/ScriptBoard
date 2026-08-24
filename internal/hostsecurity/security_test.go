@@ -113,6 +113,28 @@ func TestLinuxLoginCacheAvoidsRepeatedJournalProbes(t *testing.T) {
 	}
 }
 
+func TestLinuxLoginCacheEvictsOldDateRangesAtCapacity(t *testing.T) {
+	now := time.Date(2026, time.August, 6, 2, 0, 0, 0, time.UTC)
+	runner := &fakeRunner{}
+	manager := NewManager(Options{GOOS: "linux", Runner: runner, Now: func() time.Time { return now }, LoginCacheTTL: time.Hour})
+	first := LoginQuery{Range: "30d", Start: now.AddDate(0, 0, -30), Page: 1, PageSize: 20}
+
+	for index := 0; index <= maxLoginCacheEntries; index++ {
+		query := first
+		query.Start = query.Start.AddDate(0, 0, index)
+		if _, err := manager.Logins(context.Background(), query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := manager.Logins(context.Background(), first); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := len(runner.calls), maxLoginCacheEntries+2; got != want {
+		t.Fatalf("journal probes=%d, want %d after the oldest date range is evicted", got, want)
+	}
+}
+
 func TestFail2BanJournalReadUsesBoundedTail(t *testing.T) {
 	runner := &fakeRunner{responses: map[string]fakeResponse{
 		"lookpath fail2ban-client": {},

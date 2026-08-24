@@ -42,7 +42,10 @@ const (
 	ActionReject FirewallAction = "reject"
 )
 
-const linuxSecurityJournalLimit = 5000
+const (
+	linuxSecurityJournalLimit = 5000
+	maxLoginCacheEntries      = 8
+)
 
 type FirewallPolicy string
 
@@ -224,6 +227,7 @@ type Options struct {
 type loginCacheEntry struct {
 	records     []LoginRecord
 	collectedAt time.Time
+	lastUsed    uint64
 }
 
 type Service interface {
@@ -250,6 +254,7 @@ type Manager struct {
 	capabilityCacheValid bool
 	loginCacheTTL        time.Duration
 	loginCache           map[string]loginCacheEntry
+	loginCacheSequence   uint64
 	updateCacheTTL       time.Duration
 	updateCache          SecurityUpdateReport
 	updateCacheValid     bool
@@ -479,7 +484,9 @@ func (m *Manager) cachedWindowsLogins(ctx context.Context, query, loadQuery Logi
 	m.loginMu.Lock()
 	defer m.loginMu.Unlock()
 	now := m.now().UTC()
+	m.pruneLoginCacheLocked(now)
 	if entry, ok := m.loginCache[key]; ok && !query.Refresh && m.loginCacheTTL > 0 && now.Sub(entry.collectedAt) >= 0 && now.Sub(entry.collectedAt) < m.loginCacheTTL {
+		m.touchLoginCacheLocked(key, entry)
 		return append([]LoginRecord(nil), entry.records...), entry.collectedAt, true, nil
 	}
 	records, err := m.windowsLogins(ctx, loadQuery)
@@ -488,7 +495,7 @@ func (m *Manager) cachedWindowsLogins(ctx context.Context, query, loadQuery Logi
 	}
 	collectedAt := m.now().UTC()
 	if m.loginCacheTTL > 0 {
-		m.loginCache[key] = loginCacheEntry{records: append([]LoginRecord(nil), records...), collectedAt: collectedAt}
+		m.storeLoginCacheLocked(key, records, collectedAt)
 	}
 	return records, collectedAt, false, nil
 }
@@ -498,7 +505,9 @@ func (m *Manager) cachedLinuxLogins(ctx context.Context, query, loadQuery LoginQ
 	m.loginMu.Lock()
 	defer m.loginMu.Unlock()
 	now := m.now().UTC()
+	m.pruneLoginCacheLocked(now)
 	if entry, ok := m.loginCache[key]; ok && !query.Refresh && m.loginCacheTTL > 0 && now.Sub(entry.collectedAt) >= 0 && now.Sub(entry.collectedAt) < m.loginCacheTTL {
+		m.touchLoginCacheLocked(key, entry)
 		return append([]LoginRecord(nil), entry.records...), entry.collectedAt, true, nil
 	}
 	records, err := m.linuxLogins(ctx, loadQuery)
@@ -507,9 +516,41 @@ func (m *Manager) cachedLinuxLogins(ctx context.Context, query, loadQuery LoginQ
 	}
 	collectedAt := m.now().UTC()
 	if m.loginCacheTTL > 0 {
-		m.loginCache[key] = loginCacheEntry{records: append([]LoginRecord(nil), records...), collectedAt: collectedAt}
+		m.storeLoginCacheLocked(key, records, collectedAt)
 	}
 	return records, collectedAt, false, nil
+}
+
+func (m *Manager) pruneLoginCacheLocked(now time.Time) {
+	for key, entry := range m.loginCache {
+		age := now.Sub(entry.collectedAt)
+		if m.loginCacheTTL <= 0 || age < 0 || age >= m.loginCacheTTL {
+			delete(m.loginCache, key)
+		}
+	}
+}
+
+func (m *Manager) storeLoginCacheLocked(key string, records []LoginRecord, collectedAt time.Time) {
+	// Keep custom date ranges useful without retaining every range requested
+	// during the lifetime of the host security manager.
+	if _, exists := m.loginCache[key]; !exists && len(m.loginCache) >= maxLoginCacheEntries {
+		oldestKey := ""
+		var oldest uint64
+		for candidate, entry := range m.loginCache {
+			if oldestKey == "" || entry.lastUsed < oldest {
+				oldestKey, oldest = candidate, entry.lastUsed
+			}
+		}
+		delete(m.loginCache, oldestKey)
+	}
+	m.loginCacheSequence++
+	m.loginCache[key] = loginCacheEntry{records: append([]LoginRecord(nil), records...), collectedAt: collectedAt, lastUsed: m.loginCacheSequence}
+}
+
+func (m *Manager) touchLoginCacheLocked(key string, entry loginCacheEntry) {
+	m.loginCacheSequence++
+	entry.lastUsed = m.loginCacheSequence
+	m.loginCache[key] = entry
 }
 
 func loginCacheKey(query LoginQuery) string {

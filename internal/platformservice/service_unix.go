@@ -745,10 +745,16 @@ func linuxRunnerServiceAccount(mode string) (string, string) {
 }
 
 func linuxRunnerServicePolicy(mode string) string {
+	// Trusted privileged Runs still share one bounded Runner cgroup so a script
+	// cannot consume all host memory or create an unbounded process tree.
+	resourcePolicy := `TasksMax=64
+MemoryMax=2G
+MemorySwapMax=0
+`
 	if mode != RunnerIdentityIsolated {
-		return ""
+		return resourcePolicy
 	}
-	return `NoNewPrivileges=true
+	return resourcePolicy + `NoNewPrivileges=true
 UMask=0077
 CapabilityBoundingSet=
 AmbientCapabilities=
@@ -768,9 +774,6 @@ RestrictRealtime=true
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
-TasksMax=64
-MemoryMax=2G
-MemorySwapMax=0
 RestrictAddressFamilies=AF_UNIX
 IPAddressDeny=any
 `
