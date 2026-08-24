@@ -67,7 +67,7 @@ func isRuntimeOperation(operation string) bool {
 
 func validateRuntimeRequest(request wireRequest) error {
 	if !isRuntimeOperation(request.Operation) || request.Runtime == nil || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" || request.ParametersSHA256 != "" || len(request.Parameters) != 0 ||
-		hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || request.HostFiles != nil || request.StateBackup != nil || request.Registry != nil || request.Kubeconfig != nil {
+		hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || request.Redis != nil || request.HostFiles != nil || request.StateBackup != nil || request.Registry != nil || request.Kubeconfig != nil {
 		return errors.New("runtime request contains unrelated fields")
 	}
 	if strings.HasPrefix(request.Operation, "application_") && (request.Runtime.Kubernetes != nil || request.Runtime.KubernetesOperation != nil || request.Runtime.WorkloadKey != "" || request.Runtime.LogLimit != 0) {

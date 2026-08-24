@@ -206,7 +206,7 @@ func (server *Server) executeRegistryOperation(operation string, payload registr
 
 func validateRegistryRequest(request wireRequest) error {
 	if request.Registry == nil || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" || request.ParametersSHA256 != "" ||
-		len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || request.HostFiles != nil || request.StateBackup != nil {
+		len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || request.Redis != nil || request.HostFiles != nil || request.StateBackup != nil {
 		return errors.New("Registry request is invalid")
 	}
 	payload := request.Registry

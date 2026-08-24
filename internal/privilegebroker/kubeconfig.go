@@ -54,7 +54,7 @@ func validateKubeconfigRequest(request wireRequest) error {
 	if request.Kubeconfig == nil || !isKubeconfigOperation(request.Operation) || !validCredentialSessionToken(request.SessionToken) ||
 		request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
 		request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) ||
-		hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || request.HostFiles != nil ||
+		hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || request.Redis != nil || request.HostFiles != nil ||
 		request.StateBackup != nil || request.Registry != nil || request.Runtime != nil {
 		return errors.New("kubeconfig request contains unrelated fields")
 	}

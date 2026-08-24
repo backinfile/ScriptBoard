@@ -17,6 +17,19 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+func TestDatabasesPageSwitchesBetweenMySQLAndRedisWithoutChangingNavigationEntry(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: stateRoot})
+	page := string(getBody(t, client, serverURL+"/resources/databases", http.StatusOK))
+	if !strings.Contains(page, `href="/resources/databases?engine=redis"`) || !strings.Contains(page, `aria-current="page">MySQL`) {
+		t.Fatalf("MySQL page does not expose the shared database engine switch")
+	}
+	redisPage := string(getBody(t, client, serverURL+"/resources/databases?engine=redis", http.StatusOK))
+	if !strings.Contains(redisPage, `data-redis-workspace`) || !strings.Contains(redisPage, `aria-current="page">Redis`) {
+		t.Fatalf("Redis page is not rendered inside the shared database entry")
+	}
+}
+
 func TestAdministratorCanRegisterMySQLInstanceFromDatabaseWorkspace(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: stateRoot})

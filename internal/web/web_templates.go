@@ -49,6 +49,7 @@ var (
 	notificationsTemplate             = mustWebTemplate("notifications")
 	stateBackupsTemplate              = mustWebTemplate("state-backups")
 	mysqlDatabasesTemplate            = mustWebTemplate("mysql-databases")
+	redisDatabasesTemplate            = mustWebTemplate("redis-databases")
 	liveLogTemplate                   = mustWebTemplate("live-log")
 	overlapTemplate                   = mustWebTemplate("overlap")
 	overviewTemplate                  = mustWebTemplate("overview")

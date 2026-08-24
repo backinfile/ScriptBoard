@@ -23,7 +23,7 @@ ScriptBoard is a self-hosted script console for a single Windows or Linux host. 
 - expose bounded inbound triggers for logs, uploads, Quick Runs, and constrained variable updates;
 - review remote-login activity and manage Windows Defender Firewall or Linux UFW and Fail2Ban;
 - view host resources, local applications, Docker containers, multiple Kubernetes clusters, websites, run history, and audit records, and compose importable custom monitoring dashboards, including multi-image Registry version cards;
-- manage local or remote MySQL/MariaDB instances with checksummed logical backups and safety rollback;
+- manage MySQL/MariaDB and Redis connections on one database page, with MySQL backup/restore and read-only Redis health and keyspace inspection;
 - use the optional AI assistant with resources you choose to reference;
 - restore files deleted through the web interface from ScriptBoard Trash;
 - check, download, and install signed stable updates from the web interface.
@@ -171,6 +171,10 @@ Every role can inspect the detected state; only Administrators and Maintainers c
 
 Administrators and Maintainers can register local or remote MySQL/MariaDB instances under Resources → Databases, inspect databases and core status, run manual or five-field Cron logical backups, and restore `.sql` or `.sql.gz` files. Each connection can explicitly disable TLS, prefer TLS, require TLS, or verify the certificate and host identity; disabling TLS sends credentials and database traffic in plaintext. ScriptBoard does not bundle database clients; install `mysqldump` and `mysql` on the host PATH or configure their absolute paths in the page.
 
+### Redis connection management
+
+Resources → Databases switches between MySQL and Redis tabs. The Redis tab registers ACL users, database indexes, and custom CAs; shows version, memory, clients, hit rate, and persistence health; and uses bounded `SCAN` calls to inspect key names, types, TTLs, and memory use without mutation. Connections can verify the certificate and hostname, use plaintext, or explicitly skip certificate verification. Plaintext exposes credentials and data, while skipping verification risks man-in-the-middle attacks. Tests use only `PING`, `INFO`, `ROLE`, and `SCAN`; there is no arbitrary command console or temporary-key write.
+
 Each database is stored in a separate `.sql.gz` file with a SHA-256 digest. Replacing or deleting a database requires a successful safety backup and full-name confirmation; a failed replacement automatically attempts rollback. Artifacts default to `state_root/database-backups/mysql`, and a custom directory is also protected from host-file operations. Keep an independent off-host copy for disaster recovery.
 
 ### AI assistant
@@ -244,7 +248,7 @@ the current signed checkpoint for the same State Root path. It revokes restored
 web sessions, preserves the previous private state and checkpoint, and records
 an audit-continuity event before issuing a new checkpoint.
 
-Back up before upgrading from an older version. The current release uses database schema 53 and can migrate schemas 20–52 automatically; older databases and legacy configuration files are not migrated automatically. Schema 53 removes the legacy privileged-account MFA enrollment deadline. Accounts may choose whether to configure TOTP or a passkey and are not blocked from ordinary pages when MFA is absent. High-risk operations still require recent step-up authentication: accounts without MFA use the current password, while accounts with MFA must use a configured second factor.
+Back up before upgrading from an older version. The current release uses database schema 54 and can migrate schemas 20–53 automatically; older databases and legacy configuration files are not migrated automatically. Schema 54 adds managed Redis connection metadata while passwords remain in purpose-bound encrypted credential storage. Schema 53 removed the legacy privileged-account MFA enrollment deadline. Accounts may choose whether to configure TOTP or a passkey and are not blocked from ordinary pages when MFA is absent. High-risk operations still require recent step-up authentication: accounts without MFA use the current password, while accounts with MFA must use a configured second factor.
 
 When the panel is unavailable or compromise is suspected, use the local out-of-band emergency commands below. Mutations require an exact fixed confirmation or the complete Key ID and are atomically appended to the audit chain as `local-administrator`; evidence export verifies the chain first, creates only a new file, and never overwrites existing evidence:
 
