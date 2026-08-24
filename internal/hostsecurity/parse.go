@@ -269,6 +269,15 @@ func parseUFWStatus(output string) (bool, []FirewallRule) {
 		ipv6 := match[3] != ""
 		direction := DirectionInbound
 		address := strings.TrimSpace(match[6])
+		name := fmt.Sprintf("UFW #%d", number)
+		// UFW renders persisted rule comments after the source address. Split the
+		// comment here so a refresh keeps the user-facing name and address intact.
+		if commentAt := strings.Index(address, " # "); commentAt >= 0 {
+			if comment := strings.TrimSpace(address[commentAt+3:]); comment != "" {
+				name = comment
+			}
+			address = strings.TrimSpace(address[:commentAt])
+		}
 		if strings.HasSuffix(strings.ToLower(address), "(v6)") {
 			ipv6 = true
 			address = strings.TrimSpace(address[:len(address)-len("(v6)")])
@@ -285,7 +294,7 @@ func parseUFWStatus(output string) (bool, []FirewallRule) {
 		}
 		rules = append(rules, FirewallRule{
 			Number: number, Direction: direction, Action: action, Protocol: protocol,
-			Port: port, Address: address, Name: fmt.Sprintf("UFW #%d", number), Enabled: true, IPv6: ipv6,
+			Port: port, Address: address, Name: name, Enabled: true, IPv6: ipv6,
 		})
 	}
 	return active, rules
@@ -350,6 +359,37 @@ func parseFail2BanStatus(output, jail string) []Ban {
 		bans = append(bans, Ban{IP: ip, Jail: jail})
 	}
 	return bans
+}
+
+func parseFail2BanJails(output string) []string {
+	for _, line := range strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n") {
+		if index := strings.Index(line, "Jail list:"); index >= 0 {
+			var jails []string
+			for _, value := range strings.Split(line[index+len("Jail list:"):], ",") {
+				if jail := strings.TrimSpace(value); jail != "" {
+					jails = append(jails, jail)
+				}
+			}
+			return jails
+		}
+	}
+	return nil
+}
+
+func parseFail2BanJailSummary(output, jail string) JailSummary {
+	summary := JailSummary{Name: jail}
+	for _, line := range strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n") {
+		trimmed := strings.TrimSpace(strings.TrimLeft(line, "|`- "))
+		for label, target := range map[string]*int{
+			"Currently banned:": &summary.CurrentlyBanned,
+			"Total banned:":     &summary.TotalBanned,
+		} {
+			if strings.HasPrefix(trimmed, label) {
+				*target, _ = strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(trimmed, label)))
+			}
+		}
+	}
+	return summary
 }
 
 func parseFail2BanEvents(output, jail string) map[string]time.Time {

@@ -6252,6 +6252,12 @@ body.has-task-panel { overflow: hidden; }
 .security-segment-skeleton__table > span { min-height: 38px; }
 .security-jail-note { display: flex; align-items: flex-start; gap: 9px; margin: 16px 0 0; color: var(--muted); font-size: .82rem; }
 .security-jail-note svg { width: 16px; height: 16px; flex: 0 0 auto; margin-top: 1px; color: var(--accent); }
+.security-jail-summaries { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1px; margin-top: 16px; background: var(--rule); border: 1px solid var(--rule); }
+.security-jail-summaries article { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 14px; padding: 12px 14px; background: var(--paper); }
+.security-jail-summaries strong { grid-column: 1 / -1; overflow-wrap: anywhere; font-family: var(--font-mono); }
+.security-jail-summaries span { color: var(--muted); font-size: .72rem; }
+.security-jail-summaries b { margin-left: 4px; color: var(--ink); font-family: var(--font-mono); }
+.security-jail-summaries--drawer { margin: 0 0 14px; }
 .security-sort-link { display: inline-flex; align-items: center; gap: 6px; color: inherit; text-decoration: none; }
 .security-sort-link svg { width: 13px; height: 13px; color: var(--muted); }
 .security-sort-link:hover, .security-sort-link:focus-visible { color: var(--accent); }
@@ -6532,7 +6538,7 @@ body.custom-dashboard-admin .custom-dashboard-tabs{
 body.custom-dashboard-admin .custom-dashboard-tabs::before{display:none}
 body.custom-dashboard-admin .custom-dashboard-tabs>a{min-width:190px;padding:14px 16px;color:var(--ink);background:transparent;border:0;border-right:1px solid var(--rule)}
 body.custom-dashboard-admin .custom-dashboard-tabs>a:hover{color:var(--ink);background:var(--surface);border-color:var(--rule)}
-body.custom-dashboard-admin .custom-dashboard-tabs>a[aria-current=page]{color:var(--ink);background:var(--accent-soft);border-color:var(--rule);box-shadow:inset 0 -2px var(--accent)}
+body.custom-dashboard-admin .custom-dashboard-tabs>a[aria-current=page]{color:var(--ink);background:transparent;border-color:var(--rule);box-shadow:none}
 body.custom-dashboard-admin .custom-dashboard-tabs span{font-size:.85rem}
 body.custom-dashboard-admin .custom-dashboard-tabs small,body.custom-dashboard-admin .custom-dashboard-tabs a[aria-current=page] small{color:var(--muted);font-family:var(--font-ui)}
 body.custom-dashboard-admin .custom-dashboard-empty-tab{padding:15px 0;color:var(--muted)}

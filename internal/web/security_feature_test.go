@@ -37,7 +37,14 @@ func TestHostSecurityPageAndUFWDraftFlow(t *testing.T) {
 	}, logins: hostsecurity.LoginPage{
 		Records: []hostsecurity.LoginRecord{{Time: time.Now().UTC(), Result: hostsecurity.ResultFailure, User: "root", SourceIP: "203.0.113.8", Type: "ssh", Authentication: "password"}},
 		Total:   1, Page: 1, Pages: 1, Stats: hostsecurity.LoginStats{Failure: 1, UniqueSources: 1},
-	}, bans: hostsecurity.BanPage{Bans: []hostsecurity.Ban{{IP: "203.0.113.8", Jail: "sshd"}}, Total: 1, Page: 1, Pages: 1}}
+	}, bans: hostsecurity.BanPage{
+		Bans: []hostsecurity.Ban{{IP: "203.0.113.8", Jail: "sshd"}},
+		Jails: []hostsecurity.JailSummary{
+			{Name: "nginx-http-auth", CurrentlyBanned: 0, TotalBanned: 3},
+			{Name: "sshd", CurrentlyBanned: 1, TotalBanned: 8},
+		},
+		Total: 1, Page: 1, Pages: 1,
+	}}
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: filepath.Join(t.TempDir(), "state"), HostSecurity: service})
 
 	overview := getSecurityPage(t, client, serverURL+"/monitor/security")
@@ -102,6 +109,7 @@ func TestHostSecurityPageAndUFWDraftFlow(t *testing.T) {
 		[]byte(`class="security-ban-drawer-host"`), []byte(`data-security-ban-loading`), []byte(`aria-hidden="true"`),
 		[]byte(`action="/monitor/security/firewall/draft/defaults"`), []byte("Default traffic policy"),
 		[]byte("IPv4 / IPv6"), []byte(`rule_sort=family`), []byte(`/monitor/security/fail2ban/ban`),
+		[]byte("nginx-http-auth"), []byte("Total bans"),
 		[]byte(`/monitor/security/firewall/rules/new`),
 	} {
 		if !bytes.Contains(page, expected) {

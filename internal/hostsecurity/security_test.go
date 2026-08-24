@@ -131,6 +131,46 @@ func TestFail2BanJournalReadUsesBoundedTail(t *testing.T) {
 	}
 }
 
+func TestBansIncludesCurrentBansFromEveryActiveJail(t *testing.T) {
+	runner := &fakeRunner{responses: map[string]fakeResponse{
+		"lookpath fail2ban-client":                                              {},
+		"fail2ban-client status":                                                {stdout: "Status\n|- Number of jail:\t2\n`- Jail list:\tsshd, nginx-http-auth\n"},
+		"fail2ban-client status nginx-http-auth":                                {stdout: "Status for the jail: nginx-http-auth\n`- Actions\n   |- Currently banned:\t1\n   |- Total banned:\t3\n   `- Banned IP list:\t198.51.100.9\n"},
+		"fail2ban-client status sshd":                                           {stdout: "Status for the jail: sshd\n`- Actions\n   |- Currently banned:\t1\n   |- Total banned:\t8\n   `- Banned IP list:\t203.0.113.8\n"},
+		"fail2ban-client get nginx-http-auth bantime":                           {stdout: "600\n"},
+		"fail2ban-client get sshd bantime":                                      {stdout: "600\n"},
+		"journalctl -u fail2ban --lines 5000 --no-pager -o short-iso --reverse": {},
+	}}
+	manager := NewManager(Options{GOOS: "linux", Runner: runner, Now: time.Now})
+
+	page, err := manager.Bans(context.Background(), 1, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 2 || len(page.Bans) != 2 || page.Bans[0].Jail != "nginx-http-auth" || page.Bans[1].Jail != "sshd" {
+		t.Fatalf("page = %#v, want current bans from both active jails", page)
+	}
+}
+
+func TestBansReportsActiveJailWithoutCurrentBans(t *testing.T) {
+	runner := &fakeRunner{responses: map[string]fakeResponse{
+		"lookpath fail2ban-client":         {},
+		"fail2ban-client status":           {stdout: "Status\n|- Number of jail:\t1\n`- Jail list:\tsshd\n"},
+		"fail2ban-client status sshd":      {stdout: "Status for the jail: sshd\n`- Actions\n   |- Currently banned:\t0\n   |- Total banned:\t8\n   `- Banned IP list:\t\n"},
+		"fail2ban-client get sshd bantime": {stdout: "600\n"},
+		"journalctl -u fail2ban --lines 5000 --no-pager -o short-iso --reverse": {},
+	}}
+	manager := NewManager(Options{GOOS: "linux", Runner: runner, Now: time.Now})
+
+	page, err := manager.Bans(context.Background(), 1, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 0 || len(page.Jails) != 1 || page.Jails[0].Name != "sshd" || page.Jails[0].CurrentlyBanned != 0 || page.Jails[0].TotalBanned != 8 {
+		t.Fatalf("page = %#v, want the active jail summary even without a current ban", page)
+	}
+}
+
 func TestCapabilitiesCacheAvoidsRepeatedWindowsFirewallProbes(t *testing.T) {
 	now := time.Date(2026, time.August, 6, 2, 0, 0, 0, time.UTC)
 	runner := &fakeRunner{}
@@ -368,6 +408,21 @@ To                         Action      From
 	}
 }
 
+func TestParseUFWStatusKeepsRuleCommentAsName(t *testing.T) {
+	input := `Status: active
+
+To                         Action      From
+--                         ------      ----
+[ 1] 18080/tcp              ALLOW IN    Anywhere                   # ScriptBoard`
+	active, rules := parseUFWStatus(input)
+	if !active || len(rules) != 1 {
+		t.Fatalf("active=%v rules=%#v", active, rules)
+	}
+	if rules[0].Name != "ScriptBoard" || rules[0].Address != "Anywhere" {
+		t.Fatalf("rule = %#v, want comment as name and a clean address", rules[0])
+	}
+}
+
 func TestParseUFWStatusIncludesIPv6Rules(t *testing.T) {
 	input := `Status: active
 [ 1] 22/tcp                    ALLOW IN    Anywhere
@@ -389,6 +444,16 @@ func TestDiffRulesDistinguishesIPv4AndIPv6(t *testing.T) {
 	deletes, additions := diffRules(baseline, baseline[1:])
 	if !reflect.DeepEqual(deletes, []int{1}) || len(additions) != 0 {
 		t.Fatalf("deletes=%v additions=%#v, want only IPv4 rule 1 deleted", deletes, additions)
+	}
+}
+
+func TestDiffRulesTreatsNameChangeAsRuleReplacement(t *testing.T) {
+	baseline := []FirewallRule{{Number: 1, Direction: DirectionInbound, Action: ActionAllow, Protocol: "tcp", Port: "18080", Address: "Anywhere", Name: "Old name", Enabled: true}}
+	desired := []FirewallRule{{Number: 1, Direction: DirectionInbound, Action: ActionAllow, Protocol: "tcp", Port: "18080", Address: "Anywhere", Name: "New name", Enabled: true}}
+
+	deletes, additions := diffRules(baseline, desired)
+	if !reflect.DeepEqual(deletes, []int{1}) || len(additions) != 1 || additions[0].Name != "New name" {
+		t.Fatalf("deletes=%v additions=%#v, want the renamed rule to be replaced", deletes, additions)
 	}
 }
 
@@ -448,7 +513,7 @@ func TestApplyUFWAddsBeforeDeleting(t *testing.T) {
 	}
 	desired := []FirewallRule{
 		baseline[0],
-		{Direction: DirectionOutbound, Action: ActionAllow, Protocol: "udp", Port: "53", Address: "Anywhere", Enabled: true},
+		{Direction: DirectionOutbound, Action: ActionAllow, Protocol: "udp", Port: "53", Address: "Anywhere", Name: "DNS egress", Enabled: true},
 	}
 	defaults := UFWDefaults{Incoming: PolicyDeny, Outgoing: PolicyAllow}
 	if err := manager.ApplyUFW(context.Background(), baseline, desired, defaults, defaults); err != nil {
@@ -458,7 +523,7 @@ func TestApplyUFWAddsBeforeDeleting(t *testing.T) {
 		"ufw status numbered",
 		"ufw status verbose",
 		"sshd -T",
-		"ufw allow out proto udp to any port 53",
+		"ufw allow out proto udp to any port 53 comment DNS egress",
 		"ufw --force delete 2",
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
@@ -576,6 +641,18 @@ func TestBanUsesStructuredFail2BanArguments(t *testing.T) {
 		t.Fatalf("Ban: %v", err)
 	}
 	want := []string{"fail2ban-client get sshd bantime", "fail2ban-client set sshd bantime 3600", "fail2ban-client set sshd banip 2001:db8::8"}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
+	}
+}
+
+func TestUnbanSupportsValidatedActiveJailNames(t *testing.T) {
+	runner := &fakeRunner{}
+	manager := NewManager(Options{GOOS: "linux", Runner: runner, Now: time.Now})
+	if err := manager.Unban(context.Background(), "nginx-http-auth", "198.51.100.9"); err != nil {
+		t.Fatalf("Unban: %v", err)
+	}
+	want := []string{"fail2ban-client set nginx-http-auth unbanip 198.51.100.9"}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
 	}

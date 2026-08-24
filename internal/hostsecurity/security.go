@@ -164,9 +164,16 @@ type Ban struct {
 
 type BanPage struct {
 	Bans  []Ban
+	Jails []JailSummary
 	Total int
 	Page  int
 	Pages int
+}
+
+type JailSummary struct {
+	Name            string
+	CurrentlyBanned int
+	TotalBanned     int
 }
 
 type FirewallRule struct {
@@ -627,23 +634,40 @@ func (m *Manager) Bans(ctx context.Context, page, pageSize int) (BanPage, error)
 	if !m.runner.LookPath("fail2ban-client") {
 		return BanPage{}, ErrComponentMissing
 	}
-	output, err := m.runner.Run(ctx, "fail2ban-client", "status", "sshd")
+	output, err := m.runner.Run(ctx, "fail2ban-client", "status")
 	if err != nil {
 		return BanPage{}, fmt.Errorf("read Fail2Ban status: %w", err)
 	}
-	bans := parseFail2BanStatus(output, "sshd")
-	var duration time.Duration
-	if value, durationErr := m.runner.Run(ctx, "fail2ban-client", "get", "sshd", "bantime"); durationErr == nil {
-		if seconds, parseErr := strconv.ParseInt(strings.TrimSpace(value), 10, 64); parseErr == nil && seconds > 0 {
-			duration = time.Duration(seconds) * time.Second
+	jails := parseFail2BanJails(output)
+	sort.Strings(jails)
+	var bans []Ban
+	var summaries []JailSummary
+	durations := make(map[string]time.Duration, len(jails))
+	// Fail2Ban can protect several surfaces at once. Enumerate its active jails
+	// so the detail view does not silently omit non-SSH bans.
+	for _, jail := range jails {
+		status, statusErr := m.runner.Run(ctx, "fail2ban-client", "status", jail)
+		if statusErr != nil {
+			return BanPage{}, fmt.Errorf("read Fail2Ban jail %s: %w", jail, statusErr)
+		}
+		bans = append(bans, parseFail2BanStatus(status, jail)...)
+		summaries = append(summaries, parseFail2BanJailSummary(status, jail))
+		if value, durationErr := m.runner.Run(ctx, "fail2ban-client", "get", jail, "bantime"); durationErr == nil {
+			if seconds, parseErr := strconv.ParseInt(strings.TrimSpace(value), 10, 64); parseErr == nil && seconds > 0 {
+				durations[jail] = time.Duration(seconds) * time.Second
+			}
 		}
 	}
 	if events, eventsErr := m.runner.Run(ctx, "journalctl", "-u", "fail2ban", "--lines", strconv.Itoa(linuxSecurityJournalLimit), "--no-pager", "-o", "short-iso", "--reverse"); eventsErr == nil {
-		started := parseFail2BanEvents(events, "sshd")
 		now := m.now().UTC()
+		startedByJail := make(map[string]map[string]time.Time, len(jails))
+		for _, jail := range jails {
+			startedByJail[jail] = parseFail2BanEvents(events, jail)
+		}
 		for index := range bans {
+			duration := durations[bans[index].Jail]
 			bans[index].Duration = duration
-			bans[index].BannedAt = started[bans[index].IP]
+			bans[index].BannedAt = startedByJail[bans[index].Jail][bans[index].IP]
 			if duration > 0 && !bans[index].BannedAt.IsZero() {
 				bans[index].Remaining = max(time.Duration(0), duration-now.Sub(bans[index].BannedAt))
 			}
@@ -656,7 +680,7 @@ func (m *Manager) Bans(ctx context.Context, page, pageSize int) (BanPage, error)
 	page = min(max(1, page), pages)
 	start := min((page-1)*pageSize, len(bans))
 	end := min(start+pageSize, len(bans))
-	return BanPage{Bans: bans[start:end], Total: len(bans), Page: page, Pages: pages}, nil
+	return BanPage{Bans: bans[start:end], Jails: summaries, Total: len(bans), Page: page, Pages: pages}, nil
 }
 
 func (m *Manager) Install(ctx context.Context, component string) error {
@@ -689,7 +713,9 @@ func (m *Manager) Unban(ctx context.Context, jail, ip string) error {
 	if m.goos != "linux" {
 		return ErrUnsupported
 	}
-	if jail != "sshd" || net.ParseIP(ip) == nil {
+	// Detail rows can come from any active Fail2Ban jail. Accept only the jail
+	// name grammar while retaining structured arguments for the host mutation.
+	if !validFail2BanJailName(jail) || net.ParseIP(ip) == nil {
 		return ErrInvalidIPAddress
 	}
 	m.mu.Lock()
@@ -698,6 +724,19 @@ func (m *Manager) Unban(ctx context.Context, jail, ip string) error {
 		return fmt.Errorf("unban IP: %w", err)
 	}
 	return nil
+}
+
+func validFail2BanJailName(value string) bool {
+	if value == "" || len(value) > 128 {
+		return false
+	}
+	for _, character := range value {
+		if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '-' || character == '_' || character == '.' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // Ban only accepts a single parsed address and the supported SSH jail so user
@@ -1077,7 +1116,15 @@ func ruleKey(rule FirewallRule) string {
 	if rule.IPv6 {
 		family = "ipv6"
 	}
-	return strings.Join([]string{family, string(rule.Direction), string(rule.Action), strings.ToLower(rule.Protocol), rule.Port, address}, "|")
+	// A UFW name is persisted as part of the host rule, so renaming must replace
+	// the old rule instead of being mistaken for an unchanged network policy.
+	name := strings.ToLower(strings.TrimSpace(rule.Name))
+	if strings.HasPrefix(name, "ufw #") {
+		if _, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(name, "ufw #"))); err == nil {
+			name = ""
+		}
+	}
+	return strings.Join([]string{family, string(rule.Direction), string(rule.Action), strings.ToLower(rule.Protocol), rule.Port, address, name}, "|")
 }
 
 func ufwAddArguments(rule FirewallRule) []string {
@@ -1095,6 +1142,11 @@ func ufwAddArguments(rule FirewallRule) []string {
 		args = append(args, "from", address, "to", "any", "port", rule.Port)
 	} else {
 		args = append(args, "to", address, "port", rule.Port)
+	}
+	// Persist the display name as a native UFW comment so applying the draft
+	// does not discard it when the rule is read back from the host.
+	if name := strings.TrimSpace(rule.Name); name != "" {
+		args = append(args, "comment", name)
 	}
 	return args
 }
