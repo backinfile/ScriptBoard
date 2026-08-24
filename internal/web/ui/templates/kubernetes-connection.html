@@ -46,6 +46,13 @@
           <li data-capability="scale"><span data-lucide="{{if .Capabilities.Scale}}check{{else}}minus{{end}}" aria-hidden="true"></span>{{t .Locale "kubernetes.scale"}}</li>
         </ul><p data-kubernetes-test-message></p>
       </div>
+      {{if .Configured}}<section class="kubernetes-connection-danger">
+        <div><h3>{{t .Locale "kubernetes.delete_connection"}}</h3><p>{{t .Locale "kubernetes.delete_connection_description"}}</p></div>
+        <form method="post" action="/monitor/kubernetes/connections/{{pathEscape .Connection.ID}}/delete" data-confirm="{{t .Locale "kubernetes.delete_connection_confirm"}} {{.Connection.Name}}?">
+          <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="confirm" value="yes">
+          <button class="button button--danger" type="submit"><span data-lucide="trash-2" aria-hidden="true"></span>{{t .Locale "kubernetes.delete_connection"}}</button>
+        </form>
+      </section>{{end}}
     </aside>
   </div>
 </main>

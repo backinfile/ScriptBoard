@@ -218,6 +218,57 @@ func (manager *Manager) SaveConnection(ctx context.Context, connection Connectio
 	return ConnectionStatus{Connection: connection, Connected: true, Fingerprint: client.Fingerprint(), Capabilities: capabilities, TestedAt: now}, nil
 }
 
+// DeleteConnection removes the saved connection and its connection-scoped
+// history, then closes the live client so deleted credentials are no longer used.
+func (manager *Manager) DeleteConnection(ctx context.Context, id string) (bool, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false, nil
+	}
+	runtime := manager.runtime(id)
+	runtime.operationMu.Lock()
+	defer runtime.operationMu.Unlock()
+	transaction, err := manager.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer transaction.Rollback()
+	for _, table := range []string{"kubernetes_versions", "kubernetes_metric_minutes"} {
+		if _, err := transaction.ExecContext(ctx, "DELETE FROM "+table+" WHERE connection_id=?", id); err != nil {
+			return false, err
+		}
+	}
+	result, err := transaction.ExecContext(ctx, `DELETE FROM kubernetes_connection WHERE id=?`, id)
+	if err != nil {
+		return false, err
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if deleted == 0 {
+		manager.mu.Lock()
+		if manager.runtimes[id] == runtime && runtime.client == nil {
+			delete(manager.runtimes, id)
+		}
+		manager.mu.Unlock()
+		return false, nil
+	}
+	if err := transaction.Commit(); err != nil {
+		return false, err
+	}
+	manager.mu.Lock()
+	delete(manager.runtimes, id)
+	client := runtime.client
+	runtime.client = nil
+	runtime.current = Snapshot{}
+	manager.mu.Unlock()
+	if client != nil {
+		_ = client.Close()
+	}
+	return true, nil
+}
+
 type rowScanner interface {
 	Scan(...any) error
 }

@@ -81,6 +81,9 @@ func TestKubernetesPageSeparatesConnectionsFromSelectedClusterMonitoring(t *test
 	if bytes.Contains(page, []byte(`data-kubernetes-common-paths`)) {
 		t.Fatalf("common kubeconfig paths belong to local management, not the connection form: %s", page)
 	}
+	if bytes.Contains(page, []byte(`kubernetes-connection-danger`)) {
+		t.Fatalf("new connection form must not offer deletion: %s", page)
+	}
 
 	response, err = client.PostForm(serverURL+"/monitor/kubernetes/connections", url.Values{
 		"csrf_token": {formToken(t, page)}, "name": {"edge-home"}, "kubeconfig_path": {"/etc/scriptboard/kubeconfig"}, "context": {"default"}, "mode": {"limited"},
@@ -138,6 +141,43 @@ func TestKubernetesPageSeparatesConnectionsFromSelectedClusterMonitoring(t *test
 		if !bytes.Contains(connectionsPage, expected) {
 			t.Fatalf("connections page missing %q: %s", expected, connectionsPage)
 		}
+	}
+	response, err = client.Get(serverURL + "/monitor/kubernetes/connections/" + firstID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connectionPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	deleteAction := `/monitor/kubernetes/connections/` + firstID + `/delete`
+	for _, expected := range [][]byte{[]byte(`class="kubernetes-connection-danger"`), []byte(`action="` + deleteAction + `"`), []byte(`data-confirm=`), []byte("Delete connection")} {
+		if !bytes.Contains(connectionPage, expected) {
+			t.Fatalf("connection settings missing delete control %q: %s", expected, connectionPage)
+		}
+	}
+	response, err = client.PostForm(serverURL+deleteAction, url.Values{"csrf_token": {"invalid"}, "confirm": {"yes"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("delete connection without CSRF status=%d", response.StatusCode)
+	}
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+deleteAction, url.Values{"csrf_token": {formToken(t, connectionPage)}, "confirm": {"yes"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusSeeOther || response.Header.Get("Location") != "/monitor/kubernetes?tab=connections" {
+		t.Fatalf("delete connection status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+	_ = response.Body.Close()
+	response, err = client.Get(serverURL + "/monitor/kubernetes?tab=connections")
+	if err != nil {
+		t.Fatal(err)
+	}
+	connectionsPage, _ = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if bytes.Contains(connectionsPage, []byte("edge-home")) || !bytes.Contains(connectionsPage, []byte("staging")) {
+		t.Fatalf("connection list after delete: %s", connectionsPage)
 	}
 	for _, forbidden := range [][]byte{[]byte("Pinned workloads"), []byte("/monitor/kubernetes/workloads/production/Deployment/api/pin")} {
 		if bytes.Contains(page, forbidden) {

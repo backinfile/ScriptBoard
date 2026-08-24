@@ -34,9 +34,10 @@ type fakeClient struct {
 	snapshot     Snapshot
 	details      map[string]Detail
 	operations   []Operation
+	closed       int
 }
 
-func (client *fakeClient) Close() error { return nil }
+func (client *fakeClient) Close() error { client.closed++; return nil }
 func (client *fakeClient) Capabilities(context.Context) (Capabilities, error) {
 	return client.capabilities, nil
 }
@@ -216,6 +217,43 @@ func TestReplacingConnectionClearsClusterBoundHistory(t *testing.T) {
 		if err := manager.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table+" WHERE connection_id=?", other.ID).Scan(&count); err != nil || count != 1 {
 			t.Fatalf("%s other connection count=%d error=%v", table, count, err)
 		}
+	}
+}
+
+func TestDeleteConnectionClearsHistoryAndRuntime(t *testing.T) {
+	client := &fakeClient{fingerprint: "sha256:delete", capabilities: Capabilities{Workloads: true}}
+	manager := testManager(t, &fakeFactory{client: client})
+	ctx := context.Background()
+	saved, err := manager.SaveConnection(ctx, Connection{Name: "obsolete", KubeconfigPath: "/obsolete", Mode: ModeObserve})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`INSERT INTO kubernetes_versions (connection_id, workload_key, observed_at, image, revision) VALUES (?, 'default/Deployment/api', 1, 'api:v1', 'rev 1')`,
+		`INSERT INTO kubernetes_metric_minutes (connection_id, workload_key, bucket_at, cpu_millicores, memory_bytes, ready, desired, restarts) VALUES (?, 'default/Deployment/api', 1, 10, 20, 1, 1, 0)`,
+	} {
+		if _, err := manager.db.ExecContext(ctx, statement, saved.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deleted, err := manager.DeleteConnection(ctx, saved.ID)
+	if err != nil || !deleted {
+		t.Fatalf("delete connection: deleted=%v err=%v", deleted, err)
+	}
+	if _, ok, err := manager.Connection(ctx, saved.ID); err != nil || ok {
+		t.Fatalf("deleted connection still exists: ok=%v err=%v", ok, err)
+	}
+	for _, table := range []string{"kubernetes_versions", "kubernetes_metric_minutes"} {
+		var count int
+		if err := manager.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table+" WHERE connection_id=?", saved.ID).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("%s count=%d error=%v", table, count, err)
+		}
+	}
+	if client.closed != 1 {
+		t.Fatalf("runtime client close count=%d", client.closed)
+	}
+	if deleted, err := manager.DeleteConnection(ctx, saved.ID); err != nil || deleted {
+		t.Fatalf("delete missing connection: deleted=%v err=%v", deleted, err)
 	}
 }
 

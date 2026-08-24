@@ -627,6 +627,31 @@ func (a *App) saveKubernetesConnection(response http.ResponseWriter, request *ht
 	http.Redirect(response, request, "/monitor/kubernetes?cluster="+url.QueryEscape(result.ID), http.StatusSeeOther)
 }
 
+func (a *App) deleteKubernetesConnection(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "CSRF validation failed", http.StatusForbidden)
+		return
+	}
+	if request.FormValue("confirm") != "yes" {
+		http.Error(response, "Connection deletion requires confirmation", http.StatusBadRequest)
+		return
+	}
+	id := request.PathValue("connection")
+	deleted, err := a.kubernetesStatus.DeleteConnection(request.Context(), id)
+	if err != nil {
+		http.Error(response, "Unable to delete Kubernetes connection", http.StatusInternalServerError)
+		return
+	}
+	if !deleted {
+		http.NotFound(response, request)
+		return
+	}
+	// Connection deletion removes ScriptBoard history only; kubeconfig and
+	// cluster resources remain untouched.
+	a.recordAuditForRequest(request, "delete_kubernetes_connection", id, "succeeded")
+	http.Redirect(response, request, "/monitor/kubernetes?tab=connections", http.StatusSeeOther)
+}
+
 func (a *App) testKubernetesConnection(response http.ResponseWriter, request *http.Request) {
 	if !validSessionCSRF(request) {
 		http.Error(response, "CSRF validation failed", http.StatusForbidden)
