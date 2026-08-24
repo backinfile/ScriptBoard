@@ -698,6 +698,8 @@ func sortWorkloads(workloads []Workload, field, direction string) {
 			comparison = strings.Compare(strings.ToLower(left.Name), strings.ToLower(right.Name))
 		case "ready":
 			comparison = left.Ready - right.Ready
+		case "node":
+			comparison = strings.Compare(strings.ToLower(left.Nodes), strings.ToLower(right.Nodes))
 		case "cpu":
 			comparison = int(left.CPUMillicores - right.CPUMillicores)
 		case "memory":

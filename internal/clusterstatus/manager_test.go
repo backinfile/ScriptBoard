@@ -327,6 +327,17 @@ func TestFilteredViewKeepsAllNamespaceOptionsAndHidesConnectionPath(t *testing.T
 	}
 }
 
+func TestWorkloadsSortByNodeName(t *testing.T) {
+	workloads := []Workload{
+		{Key: "default/Deployment/api", Nodes: "worker-02"},
+		{Key: "default/Deployment/web", Nodes: "worker-01"},
+	}
+	sortWorkloads(workloads, "node", "asc")
+	if workloads[0].Nodes != "worker-01" || workloads[1].Nodes != "worker-02" {
+		t.Fatalf("workloads sorted by node = %#v", workloads)
+	}
+}
+
 func TestLimitedOperationsAllowOnlyOneReplicaStep(t *testing.T) {
 	client := &fakeClient{fingerprint: "sha256:cluster", capabilities: Capabilities{Workloads: true, Scale: true}, snapshot: Snapshot{
 		CollectedAt: time.Now(), Workloads: []Workload{{Key: "production/Deployment/api", Namespace: "production", Kind: "Deployment", Name: "api", Desired: 2, Ready: 2}},

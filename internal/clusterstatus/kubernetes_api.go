@@ -400,13 +400,9 @@ func formatNodeNames(names map[string]struct{}) string {
 		values = append(values, name)
 	}
 	sort.Strings(values)
-	if len(values) == 1 {
-		return values[0]
-	}
-	if len(values) > 1 {
-		return fmt.Sprintf("%d 个节点", len(values))
-	}
-	return "—"
+	// Keep exact node identities available to both the workload table and
+	// detail drawer instead of replacing multi-node placement with a count.
+	return strings.Join(values, ", ")
 }
 
 func nodeRole(labels map[string]string) string {

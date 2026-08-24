@@ -87,7 +87,7 @@ func TestHTTPSnapshotAggregatesPodsAndMetricsByStableWorkload(t *testing.T) {
 		t.Fatalf("workloads: %#v", snapshot.Workloads)
 	}
 	workload := snapshot.Workloads[0]
-	if workload.Key != "production/Deployment/api" || workload.Ready != 2 || workload.Desired != 2 || workload.Restarts != 1 || workload.CPUMillicores != 200 || workload.MemoryBytes != 224*1024*1024 {
+	if workload.Key != "production/Deployment/api" || workload.Ready != 2 || workload.Desired != 2 || workload.Restarts != 1 || workload.CPUMillicores != 200 || workload.MemoryBytes != 224*1024*1024 || workload.Nodes != "worker-01, worker-02" {
 		t.Fatalf("aggregated workload: %#v", workload)
 	}
 	if len(snapshot.Nodes) != 2 || snapshot.Nodes[0].CPUPercent != 10 || snapshot.Nodes[0].MemoryPercent != 25 {

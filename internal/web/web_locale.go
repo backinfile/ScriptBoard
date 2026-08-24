@@ -1125,6 +1125,7 @@ var webMessages = map[string]localizedMessage{
 	"kubernetes.column.namespace":                   {"命名空间", "Namespace"},
 	"kubernetes.column.status":                      {"状态", "Status"},
 	"kubernetes.column.ready":                       {"就绪", "Ready"},
+	"kubernetes.column.node":                        {"所在节点", "Node"},
 	"kubernetes.column.cpu":                         {"CPU", "CPU"},
 	"kubernetes.column.memory":                      {"内存", "Memory"},
 	"kubernetes.column.restarts":                    {"重启", "Restarts"},

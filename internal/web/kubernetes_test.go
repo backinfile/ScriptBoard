@@ -53,7 +53,7 @@ func TestKubernetesPageSeparatesConnectionsFromSelectedClusterMonitoring(t *test
 	fixture := &kubernetesFixtureClient{snapshot: clusterstatus.Snapshot{
 		CollectedAt: time.Now().UTC(), ServerVersion: "v1.35.1+k3s1", PodsReady: 2, PodsTotal: 2, Namespaces: 2, MetricsAvailable: true,
 		Nodes:     []clusterstatus.Node{{Name: "edge-control-01", Role: "control-plane", Ready: true, CPUPercent: 12}},
-		Workloads: []clusterstatus.Workload{{Key: "production/Deployment/api", Namespace: "production", Kind: "Deployment", Name: "api", Image: "ghcr.io/acme/api:v2", Status: "ready", StatusLabel: "正常", Ready: 2, Desired: 2, CPUMillicores: 200, MemoryBytes: 224 << 20, Revision: "rev 2"}},
+		Workloads: []clusterstatus.Workload{{Key: "production/Deployment/api", Namespace: "production", Kind: "Deployment", Name: "api", Image: "ghcr.io/acme/api:v2", Status: "ready", StatusLabel: "正常", Ready: 2, Desired: 2, CPUMillicores: 200, MemoryBytes: 224 << 20, Nodes: "edge-worker-01", Revision: "rev 2"}},
 	}}
 	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: filepath.Join(t.TempDir(), "state"), KubernetesFactory: kubernetesFixtureFactory{client: fixture}})
 
@@ -126,7 +126,7 @@ func TestKubernetesPageSeparatesConnectionsFromSelectedClusterMonitoring(t *test
 	}
 	page, _ = io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, expected := range [][]byte{[]byte(`data-kubernetes-tab="monitor"`), []byte(`data-monitor-refresh`), []byte("Showing the latest snapshot"), []byte(`name="cluster"`), []byte(`value="` + firstID + `"`), []byte(`value="` + secondID + `" selected`), []byte("edge-home"), []byte("staging"), []byte("ghcr.io/acme/api:v2"), []byte("production"), []byte(`href="/monitor/kubernetes?tab=connections"`), []byte(`/monitor/kubernetes/clusters/` + secondID + `/workloads/production/Deployment/api/details`), []byte(`data-kubernetes-can-manage="true"`), []byte(`class="kubernetes-drawer"`), []byte(">Ready<")} {
+	for _, expected := range [][]byte{[]byte(`data-kubernetes-tab="monitor"`), []byte(`data-monitor-refresh`), []byte("Showing the latest snapshot"), []byte(`name="cluster"`), []byte(`value="` + firstID + `"`), []byte(`value="` + secondID + `" selected`), []byte("edge-home"), []byte("staging"), []byte("ghcr.io/acme/api:v2"), []byte("production"), []byte(`>Node<`), []byte(`class="kubernetes-workload-node"><code title="edge-worker-01">edge-worker-01</code>`), []byte(`href="/monitor/kubernetes?tab=connections"`), []byte(`/monitor/kubernetes/clusters/` + secondID + `/workloads/production/Deployment/api/details`), []byte(`data-kubernetes-can-manage="true"`), []byte(`class="kubernetes-drawer"`), []byte(">Ready<")} {
 		if !bytes.Contains(page, expected) {
 			t.Fatalf("configured page missing %q: %s", expected, page)
 		}

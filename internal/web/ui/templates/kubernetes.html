@@ -152,7 +152,7 @@
       <table class="kubernetes-table">
         <caption class="sr-only">{{t .Locale "kubernetes.workloads"}}</caption>
         <thead><tr>
-          {{range $field := (stringSlice "name" "namespace" "status" "ready" "cpu" "memory" "restarts")}}<th scope="col" {{if eq $.Query.Sort $field}}aria-sort="{{if eq $.Query.Direction "asc"}}ascending{{else}}descending{{end}}"{{end}}><a class="kubernetes-sort-link" href="{{kubernetesSortURL $.Query $field}}"><span>{{t $.Locale (printf "kubernetes.column.%s" $field)}}</span><span data-lucide="{{if eq $.Query.Sort $field}}{{if eq $.Query.Direction "asc"}}arrow-up{{else}}arrow-down{{end}}{{else}}arrow-up-down{{end}}" aria-hidden="true"></span></a></th>{{end}}
+          {{range $field := (stringSlice "name" "namespace" "status" "ready" "node" "cpu" "memory" "restarts")}}<th scope="col" {{if eq $.Query.Sort $field}}aria-sort="{{if eq $.Query.Direction "asc"}}ascending{{else}}descending{{end}}"{{end}}><a class="kubernetes-sort-link" href="{{kubernetesSortURL $.Query $field}}"><span>{{t $.Locale (printf "kubernetes.column.%s" $field)}}</span><span data-lucide="{{if eq $.Query.Sort $field}}{{if eq $.Query.Direction "asc"}}arrow-up{{else}}arrow-down{{end}}{{else}}arrow-up-down{{end}}" aria-hidden="true"></span></a></th>{{end}}
           <th scope="col"><span class="sr-only">{{t .Locale "applications.more_actions"}}</span></th>
         </tr></thead>
         <tbody>{{range .Workloads}}<tr>
@@ -160,6 +160,7 @@
           <td><code>{{.Namespace}}</code></td>
           <td><span class="kubernetes-state" data-state="{{.Status}}"><i></i>{{if eq .Status "ready"}}{{t $.Locale "kubernetes.ready"}}{{else if eq .Status "progressing"}}{{t $.Locale "kubernetes.progressing"}}{{else}}{{t $.Locale "kubernetes.needs_attention"}}{{end}}</span></td>
           <td><strong>{{.Ready}} / {{.Desired}}</strong></td>
+          <td class="kubernetes-workload-node">{{if .Nodes}}<code title="{{.Nodes}}">{{.Nodes}}</code>{{else}}—{{end}}</td>
           <td>{{.CPUMillicores}}m</td><td>{{humanBytes .MemoryBytes}}</td><td>{{.Restarts}}</td>
           <td>{{if $.CanManage}}<details class="action-menu"><summary aria-label="{{t $.Locale "applications.more_actions"}} {{.Name}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
             {{if and (eq $.Connection.Mode "limited") $.Connection.Capabilities.Redeploy (ne .Kind "CronJob")}}<form method="post" action="/monitor/kubernetes/clusters/{{$.SelectedConnection}}/workloads/{{.Namespace}}/{{.Kind}}/{{.Name}}/operate" data-kubernetes-confirm="{{t $.Locale "kubernetes.confirm_redeploy"}}"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="operation" value="redeploy"><button type="submit"><span data-lucide="rotate-cw" aria-hidden="true"></span>{{t $.Locale "kubernetes.redeploy"}}</button></form>{{end}}
@@ -170,7 +171,7 @@
             {{if and (eq $.Connection.Mode "limited") $.Connection.Capabilities.RunCron (eq .Kind "CronJob")}}<form method="post" action="/monitor/kubernetes/clusters/{{$.SelectedConnection}}/workloads/{{.Namespace}}/{{.Kind}}/{{.Name}}/operate" data-kubernetes-confirm="{{t $.Locale "kubernetes.confirm_run"}}"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="operation" value="run_cron"><button type="submit"><span data-lucide="play" aria-hidden="true"></span>{{t $.Locale "kubernetes.run_now"}}</button></form>{{end}}
             <button type="button" data-kubernetes-detail-url="/monitor/kubernetes/clusters/{{$.SelectedConnection}}/workloads/{{.Namespace}}/{{.Kind}}/{{.Name}}/details"><span data-lucide="chevron-right" aria-hidden="true"></span>{{t $.Locale "kubernetes.open_details"}}</button>
           </div></details>{{end}}</td>
-        </tr>{{else}}<tr><td colspan="8" class="kubernetes-table-empty">{{t .Locale "kubernetes.no_matches"}}</td></tr>{{end}}</tbody>
+        </tr>{{else}}<tr><td colspan="9" class="kubernetes-table-empty">{{t .Locale "kubernetes.no_matches"}}</td></tr>{{end}}</tbody>
       </table>
     </div>
   </section>
