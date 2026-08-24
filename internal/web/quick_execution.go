@@ -206,7 +206,9 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 	}
 	targetInfo, _, targetErr := a.hostInfo(request.Context(), targetPath)
 	targetExists := targetErr == nil
-	if targetErr != nil && !os.IsNotExist(targetErr) {
+	// Broker Host Files preserves not-found through wrapped errors, so use errors.Is
+	// to keep a new script destination available for Quick Create.
+	if targetErr != nil && !errors.Is(targetErr, os.ErrNotExist) {
 		http.Error(response, "Unable to inspect target: "+targetErr.Error(), http.StatusBadRequest)
 		return
 	}
@@ -241,7 +243,7 @@ func (a *App) createQuickRunFromSource(response http.ResponseWriter, request *ht
 		if _, _, err := a.hostInfo(request.Context(), targetPath); err == nil {
 			http.Error(response, "renamed target already exists", http.StatusConflict)
 			return
-		} else if !os.IsNotExist(err) {
+		} else if !errors.Is(err, os.ErrNotExist) {
 			http.Error(response, "Unable to inspect renamed target: "+err.Error(), http.StatusBadRequest)
 			return
 		}

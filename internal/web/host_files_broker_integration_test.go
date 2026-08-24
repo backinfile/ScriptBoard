@@ -6,8 +6,10 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -88,6 +90,65 @@ func TestManagedFilesPageReadsHostThroughBroker(t *testing.T) {
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("Host Files without Broker status=%d, want %d", response.StatusCode, http.StatusServiceUnavailable)
+	}
+}
+
+func TestQuickCreateTreatsBrokerNotFoundAsAvailableDestination(t *testing.T) {
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "broker-host")
+	stagingRoot := filepath.Join(root, "exchange")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	brokerManager, err := hostfiles.Open(hostfiles.Options{Topology: testHostTopology{root: hostRoot}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := privilegebroker.NewBrokerHostFilesService(brokerManager, stagingRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := privilegebroker.NewServer(privilegebroker.ServerOptions{
+		Listener: listener, VerifyPeer: func(net.Conn) error { return nil }, Authorizer: allowHostFilesAuthorizer{},
+		Executor: rejectGenericPrivilegedExecutor{}, HostFiles: service,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.Start()
+	t.Cleanup(func() { _ = server.Close() })
+	client := privilegebroker.NewClient(privilegebroker.ClientOptions{Dial: func(ctx context.Context) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", listener.Addr().String())
+	}})
+	httpClient, serverURL := authenticatedClientWithConfig(t, app.Config{
+		StateRoot: filepath.Join(root, "state"), FileTopology: rejectingHostTopology{},
+		HostFilesBackend: privilegebroker.NewHostFilesBackend(client, stagingRoot),
+	})
+	page := getBody(t, httpClient, serverURL+"/config/quick-runs/from-source/new", http.StatusOK)
+	language, extension, source := "shell", ".sh", "#!/bin/sh\nprintf broker-quick-create\\n"
+	if runtime.GOOS == "windows" {
+		language, extension, source = "batch", ".cmd", "@echo off\r\necho broker-quick-create\r\n"
+	}
+	response, err := httpClient.PostForm(serverURL+"/config/quick-runs/from-source", url.Values{
+		"csrf_token": {formToken(t, page)}, "language": {language}, "source": {source},
+		"working_directory": {hostRoot}, "file_name": {"broker-created"}, "name": {"Broker created"},
+		"timeout_seconds": {"30"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("Broker-backed Quick Create status=%d body=%s", response.StatusCode, body)
+	}
+	created, err := os.ReadFile(filepath.Join(hostRoot, "broker-created"+extension))
+	if err != nil || string(created) != source {
+		t.Fatalf("Broker-backed Quick Create source=%q error=%v", created, err)
 	}
 }
 
