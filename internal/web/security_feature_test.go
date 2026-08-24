@@ -3,6 +3,7 @@ package web_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -423,6 +424,81 @@ func TestHostSecurityCanToggleFirstAddedDraftRule(t *testing.T) {
 	}
 }
 
+func TestApplyingUFWDraftDoesNotBlockSecurityDraftReads(t *testing.T) {
+	t.Parallel()
+	applyStarted := make(chan struct{})
+	applyRelease := make(chan struct{})
+	defer func() {
+		if applyRelease != nil {
+			close(applyRelease)
+		}
+	}()
+	service := &securityFixtureService{
+		capabilities: hostsecurity.Capabilities{
+			OS: "linux", CollectorPrivilege: hostsecurity.RuntimePrivilege{Administrator: true, Known: true}, ControlPlanePrivilege: hostsecurity.RuntimePrivilege{Known: true},
+			UFW: hostsecurity.Component{Installed: true, Running: true},
+		},
+		applyStarted: applyStarted,
+		applyRelease: applyRelease,
+	}
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: filepath.Join(t.TempDir(), "state"), HostSecurity: service})
+	page := getSecurityPage(t, client, serverURL+"/monitor/security?tab=defense&full=1")
+	response, err := client.PostForm(serverURL+"/monitor/security/firewall/draft/rules", url.Values{
+		"csrf_token": {formToken(t, page)}, "direction": {"out"}, "action": {"allow"},
+		"protocol": {"udp"}, "port": {"53"}, "address": {"1.1.1.1"}, "name": {"DNS"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("add draft status=%d", response.StatusCode)
+	}
+	review := getSecurityPage(t, client, serverURL+"/monitor/security/firewall/review")
+	applyResult := make(chan error, 1)
+	go func() {
+		response, err := client.PostForm(serverURL+"/monitor/security/firewall/draft/apply", url.Values{"csrf_token": {formToken(t, review)}})
+		if err == nil {
+			_ = response.Body.Close()
+			if response.StatusCode != http.StatusSeeOther {
+				err = fmt.Errorf("apply draft status=%d", response.StatusCode)
+			}
+		}
+		applyResult <- err
+	}()
+	select {
+	case <-applyStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("UFW apply did not reach the host security module")
+	}
+
+	readResult := make(chan error, 1)
+	go func() {
+		response, err := client.Get(serverURL + "/monitor/security?tab=defense&full=1")
+		if err == nil {
+			_ = response.Body.Close()
+			if response.StatusCode != http.StatusOK {
+				err = fmt.Errorf("security draft read status=%d", response.StatusCode)
+			}
+		}
+		readResult <- err
+	}()
+	select {
+	case err := <-readResult:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("security draft read blocked behind the in-flight UFW apply")
+	}
+
+	close(applyRelease)
+	applyRelease = nil
+	if err := <-applyResult; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func getSecurityPage(t *testing.T, client *http.Client, target string) []byte {
 	t.Helper()
 	response, err := client.Get(target)
@@ -456,6 +532,8 @@ type securityFixtureService struct {
 	appliedDesired  []hostsecurity.FirewallRule
 	appliedDefaults hostsecurity.UFWDefaults
 	banTarget       string
+	applyStarted    chan struct{}
+	applyRelease    chan struct{}
 }
 
 func (s *securityFixtureService) Capabilities(context.Context) hostsecurity.Capabilities {
@@ -505,10 +583,17 @@ func (s *securityFixtureService) EnableUFW(context.Context, []hostsecurity.Firew
 
 func (s *securityFixtureService) ApplyUFW(_ context.Context, _ []hostsecurity.FirewallRule, desired []hostsecurity.FirewallRule, _ hostsecurity.UFWDefaults, desiredDefaults hostsecurity.UFWDefaults) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.applyCalls++
 	s.appliedDesired = append([]hostsecurity.FirewallRule(nil), desired...)
 	s.appliedDefaults = desiredDefaults
+	started, release := s.applyStarted, s.applyRelease
+	s.mu.Unlock()
+	if started != nil {
+		close(started)
+	}
+	if release != nil {
+		<-release
+	}
 	return nil
 }
 

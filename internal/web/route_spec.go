@@ -1,9 +1,12 @@
 package web
 
 import (
+	"errors"
+	"mime"
 	"net/http"
-	"scriptboard/internal/identity"
 	"strings"
+
+	"scriptboard/internal/identity"
 )
 
 const maxExternalRequestBytes int64 = (1 << 30) + (1 << 20)
@@ -115,8 +118,26 @@ func enforceRouteRequestPolicy(spec RouteSpec, next http.Handler) http.Handler {
 			http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
 			return
 		}
+		if mutating && spec.Auth == routeAuthSession && spec.MaxBodyBytes > 0 && isFormRequest(request) {
+			// Reject streaming forms that cross the route limit before handlers use
+			// FormValue, which intentionally hides parsing and MaxBytesReader errors.
+			if err := parseRequestForm(request, spec.MaxBodyBytes); err != nil {
+				var maximum *http.MaxBytesError
+				if errors.As(err, &maximum) {
+					http.Error(response, "request body is too large", http.StatusRequestEntityTooLarge)
+				} else {
+					http.Error(response, "request form is invalid", http.StatusBadRequest)
+				}
+				return
+			}
+		}
 		next.ServeHTTP(response, request)
 	})
+}
+
+func isFormRequest(request *http.Request) bool {
+	mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
+	return err == nil && (mediaType == "application/x-www-form-urlencoded" || mediaType == "multipart/form-data")
 }
 
 func (mux *declaredRouteMux) ServeHTTP(response http.ResponseWriter, request *http.Request) {

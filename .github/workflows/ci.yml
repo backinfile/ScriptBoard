@@ -29,6 +29,18 @@ jobs:
       - name: Build
         run: go build ./cmd/...
 
+  go-linux:
+    # Linux is a release target; exercise packages omitted from the narrower race gate.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test
+        run: go test ./... -count=1
+
   race:
     runs-on: ubuntu-latest
     steps:

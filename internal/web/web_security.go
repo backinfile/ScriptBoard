@@ -7,13 +7,13 @@ import (
 	"net/http"
 	"net/url"
 	"runtime"
-	"scriptboard/internal/identity"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"scriptboard/internal/hostsecurity"
+	"scriptboard/internal/identity"
 	"scriptboard/internal/secretredaction"
 	"scriptboard/internal/securitybaseline"
 )
@@ -25,6 +25,7 @@ type securityFirewallDraft struct {
 	DesiredDefaults  hostsecurity.UFWDefaults
 	Changes          []securityFirewallChange
 	UpdatedAt        time.Time
+	Applying         bool
 }
 
 type securityFirewallChange struct {
@@ -773,6 +774,11 @@ func (a *App) addSecurityFirewallDraftRule(response http.ResponseWriter, request
 	if !exists {
 		draft = newSecurityFirewallDraft(capabilities)
 	}
+	if draft.Applying {
+		a.securityDraftMu.Unlock()
+		writeSecurityError(response, request, hostsecurity.ErrFirewallConflict)
+		return
+	}
 	draft.Desired = append(draft.Desired, rule)
 	draft.Changes = append(draft.Changes, securityFirewallChange{Kind: "add", Title: rule.Name, Detail: securityRuleDescription(rule)})
 	draft.UpdatedAt = time.Now().UTC()
@@ -796,6 +802,11 @@ func (a *App) toggleSecurityFirewallDraftRule(response http.ResponseWriter, requ
 	draft, exists := a.securityDrafts[current.userID]
 	if !exists {
 		draft = newSecurityFirewallDraft(capabilities)
+	}
+	if draft.Applying {
+		a.securityDraftMu.Unlock()
+		writeSecurityError(response, request, hostsecurity.ErrFirewallConflict)
+		return
 	}
 	if index < 0 || index >= len(draft.Desired) {
 		a.securityDraftMu.Unlock()
@@ -827,6 +838,11 @@ func (a *App) deleteSecurityFirewallDraftRule(response http.ResponseWriter, requ
 	if !exists {
 		draft = newSecurityFirewallDraft(capabilities)
 	}
+	if draft.Applying {
+		a.securityDraftMu.Unlock()
+		writeSecurityError(response, request, hostsecurity.ErrFirewallConflict)
+		return
+	}
 	if index < 0 || index >= len(draft.Desired) {
 		a.securityDraftMu.Unlock()
 		writeSecurityError(response, request, hostsecurity.ErrInvalidRule)
@@ -847,6 +863,11 @@ func (a *App) discardSecurityFirewallDraft(response http.ResponseWriter, request
 	}
 	current := request.Context().Value(sessionContextKey).(session)
 	a.securityDraftMu.Lock()
+	if draft, ok := a.securityDrafts[current.userID]; ok && draft.Applying {
+		a.securityDraftMu.Unlock()
+		writeSecurityError(response, request, hostsecurity.ErrFirewallConflict)
+		return
+	}
 	delete(a.securityDrafts, current.userID)
 	a.securityDraftMu.Unlock()
 	a.recordAuditForRequest(request, "discard_ufw_draft", "ufw", "succeeded")
@@ -876,6 +897,11 @@ func (a *App) updateSecurityFirewallDraftDefaults(response http.ResponseWriter, 
 	if !exists {
 		draft = newSecurityFirewallDraft(capabilities)
 	}
+	if draft.Applying {
+		a.securityDraftMu.Unlock()
+		writeSecurityError(response, request, hostsecurity.ErrFirewallConflict)
+		return
+	}
 	if draft.DesiredDefaults.Incoming != defaults.Incoming {
 		draft.Changes = append(draft.Changes, securityFirewallChange{Kind: "update", Title: webText(resolveWebLocale(request), "security.default_incoming"), Detail: string(defaults.Incoming)})
 	}
@@ -903,11 +929,28 @@ func (a *App) applySecurityFirewallDraft(response http.ResponseWriter, request *
 		writeSecurityError(response, request, hostsecurity.ErrInvalidRule)
 		return
 	}
+	if draft.Applying {
+		a.securityDraftMu.Unlock()
+		writeSecurityError(response, request, hostsecurity.ErrFirewallConflict)
+		return
+	}
+	draft.Applying = true
+	a.securityDrafts[current.userID] = draft
+	// Host security can take tens of seconds. Mark this user's draft in flight,
+	// then release the global draft lock so read-only pages and other users remain responsive.
+	a.securityDraftMu.Unlock()
 	ctx, cancel := context.WithTimeout(request.Context(), 45*time.Second)
 	err := a.hostSecurity.ApplyUFW(ctx, cloneSecurityRules(draft.Baseline), cloneSecurityRules(draft.Desired), draft.BaselineDefaults, draft.DesiredDefaults)
 	cancel()
-	if err == nil {
-		delete(a.securityDrafts, current.userID)
+	a.securityDraftMu.Lock()
+	currentDraft, exists := a.securityDrafts[current.userID]
+	if exists && currentDraft.Applying {
+		if err == nil {
+			delete(a.securityDrafts, current.userID)
+		} else {
+			currentDraft.Applying = false
+			a.securityDrafts[current.userID] = currentDraft
+		}
 	}
 	a.securityDraftMu.Unlock()
 	if err != nil {
