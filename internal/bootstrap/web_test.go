@@ -21,6 +21,13 @@ import (
 
 func TestApplicationInstallRootRejectsExecutableOutsideManagedRelease(t *testing.T) {
 	root := t.TempDir()
+	// GitHub-hosted Windows runners may expose Temp through a directory link.
+	// Canonicalize the fixture root so only the executable-location check fails.
+	var err error
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	stateRoot := filepath.Join(root, "state")
 	installRoot := filepath.Join(root, "install")
 	if err := os.MkdirAll(filepath.Join(stateRoot, "updates"), 0o700); err != nil {

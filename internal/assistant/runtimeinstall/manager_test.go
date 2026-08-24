@@ -1,8 +1,10 @@
 package runtimeinstall
 
 import (
+	"archive/tar"
 	"archive/zip"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -97,25 +99,51 @@ func fixturePackage(t *testing.T, version string) ([]byte, []byte, []byte) {
 		"runtime.json":             append(metadataRaw, '\n'),
 	}
 	var archive bytes.Buffer
-	writer := zip.NewWriter(&archive)
 	var unpacked int64
-	for name, body := range files {
-		header := &zip.FileHeader{Name: name, Method: zip.Deflate}
-		header.SetMode(0o600)
-		if name == runtimeExecutableName() {
-			header.SetMode(0o700)
+	// Match the signed asset format for the target platform so this shared fixture
+	// exercises the same extraction boundary on Windows and Linux.
+	if runtime.GOOS == "windows" {
+		writer := zip.NewWriter(&archive)
+		for name, body := range files {
+			header := &zip.FileHeader{Name: name, Method: zip.Deflate}
+			header.SetMode(0o600)
+			if name == runtimeExecutableName() {
+				header.SetMode(0o700)
+			}
+			entry, err := writer.CreateHeader(header)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := entry.Write(body); err != nil {
+				t.Fatal(err)
+			}
+			unpacked += int64(len(body))
 		}
-		entry, err := writer.CreateHeader(header)
-		if err != nil {
+		if err := writer.Close(); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := entry.Write(body); err != nil {
+	} else {
+		compressed := gzip.NewWriter(&archive)
+		writer := tar.NewWriter(compressed)
+		for name, body := range files {
+			mode := int64(0o600)
+			if name == runtimeExecutableName() {
+				mode = 0o700
+			}
+			if err := writer.WriteHeader(&tar.Header{Name: name, Mode: mode, Size: int64(len(body)), Typeflag: tar.TypeReg}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := writer.Write(body); err != nil {
+				t.Fatal(err)
+			}
+			unpacked += int64(len(body))
+		}
+		if err := writer.Close(); err != nil {
 			t.Fatal(err)
 		}
-		unpacked += int64(len(body))
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
+		if err := compressed.Close(); err != nil {
+			t.Fatal(err)
+		}
 	}
 	digest := sha256.Sum256(archive.Bytes())
 	manifest := validManifestForTest()

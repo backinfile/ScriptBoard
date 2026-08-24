@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -66,9 +67,21 @@ func (executor *fixtureExecutor) Invoke(_ context.Context, invocation Invocation
 	return Response{Status: StatusSuccess, Content: map[string]any{"ok": true}}
 }
 
+func shortStateRoot(t *testing.T) string {
+	t.Helper()
+	// Unix sockets have a small absolute-path limit; keep the fixture root short
+	// so long Go test names do not consume the production endpoint budget.
+	root, err := os.MkdirTemp("", "tb-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	return root
+}
+
 func TestSessionAuthenticatesBoundedVersionedToolCallsAndRevokesOnClose(t *testing.T) {
 	executor := &fixtureExecutor{calls: make(chan Invocation, 1)}
-	broker, err := New(t.TempDir(), executor)
+	broker, err := New(shortStateRoot(t), executor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +120,7 @@ func TestSessionAuthenticatesBoundedVersionedToolCallsAndRevokesOnClose(t *testi
 }
 
 func TestSessionCloseInterruptsStalledLocalConnections(t *testing.T) {
-	broker, err := New(t.TempDir(), &fixtureExecutor{calls: make(chan Invocation, 1)})
+	broker, err := New(shortStateRoot(t), &fixtureExecutor{calls: make(chan Invocation, 1)})
 	if err != nil {
 		t.Fatal(err)
 	}
