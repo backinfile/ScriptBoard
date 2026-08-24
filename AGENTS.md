@@ -40,3 +40,15 @@ This is a single-context repo using root `CONTEXT.md` and `docs/adr/`. See `docs
 # Avoid instruction-to-output leakage
 
 Distinguish instructions from deliverable content. Embody the requirements; never restate them unless explicitly requested.
+
+
+# 本地部署测试流程
+1. 列出所有需要进行测试的条目，额外添加一些基础访问测试
+2. 重新本地部署，获取登录用户名密码
+3. 使用外部浏览器或者直接使用http接口访问进行逐项测试,本地部署允许创建测试数据来进行。不要使用内部浏览器。测试数据在测试后保留。
+4. 保留当前的部署，生成测试报告。
+
+# 基本要求
++ 当进行修改时，要在保证正确的前提下选择最小改动。
++ 当玩家对ai生成内容纠错时，文本或注释中多写正向引导，直接移除错误内容的所有信息（不写入注释）。
++ 进行bug修复时，要求在附近简要注明修复的问题和修复的方式。
