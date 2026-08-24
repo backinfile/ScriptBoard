@@ -4,8 +4,10 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"scriptboard/internal/identity"
+	"strings"
 	"testing"
+
+	"scriptboard/internal/identity"
 )
 
 func TestCancellingUserAccessEndsOnlyThatUsersActiveConnections(t *testing.T) {
@@ -157,6 +159,33 @@ func TestExternalTriggerRoutesShareOneExplicitAbsoluteBodyLimit(t *testing.T) {
 		if !ok || spec.Auth != routeAuthExternal || spec.MaxBodyBytes != maxExternalRequestBytes {
 			t.Fatalf("POST %s spec=%+v declared=%v", path, spec, ok)
 		}
+	}
+}
+
+func TestSessionRouteRejectsChunkedFormThatExceedsItsBodyLimit(t *testing.T) {
+	t.Parallel()
+
+	const maximum = int64(64)
+	body := "csrf_token=valid&name=node&padding=" + strings.Repeat("x", 128)
+	request := httptest.NewRequest(http.MethodPost, "http://scriptboard.test/config", strings.NewReader(body))
+	request.ContentLength = -1 // Exercise the streaming limit instead of the header fast path.
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	recorder := httptest.NewRecorder()
+	called := false
+	handler := enforceRouteRequestPolicy(RouteSpec{
+		Method: http.MethodPost, Path: "/config", Auth: routeAuthSession, MaxBodyBytes: maximum,
+	}, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		called = request.FormValue("csrf_token") == "valid" && request.FormValue("name") == "node"
+		response.WriteHeader(http.StatusNoContent)
+	}))
+
+	handler.ServeHTTP(recorder, request)
+
+	if called {
+		t.Fatal("oversized chunked form reached the state-changing handler with its leading fields intact")
+	}
+	if recorder.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized chunked form status=%d, want %d", recorder.Code, http.StatusRequestEntityTooLarge)
 	}
 }
 

@@ -1,7 +1,6 @@
 package web_test
 
 import (
-	"database/sql"
 	"io"
 	"net/http"
 	"os"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"scriptboard/internal/hostfiles"
+	storesqlite "scriptboard/internal/store/sqlite"
 )
 
 func TestRunsPageLinksEveryRecordBackToItsScriptDirectory(t *testing.T) {
@@ -25,9 +25,16 @@ func TestRunsPageLinksEveryRecordBackToItsScriptDirectory(t *testing.T) {
 	}
 
 	client, serverURL := authenticatedClient(t, hostRoot, stateRoot)
-	db, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	databasePath := filepath.Join(stateRoot, "app.db")
+	schemaVersion, err := storesqlite.HeaderUserVersion(databasePath)
 	if err != nil {
-		t.Fatalf("open database: %v", err)
+		t.Fatalf("read application schema: %v", err)
+	}
+	// Use the application SQLite opener so concurrent background probes and
+	// fixture writes share the same WAL, busy-timeout, and connection limits.
+	db, _, err := storesqlite.OpenSQLite(databasePath, schemaVersion, func(existing int) bool { return existing == schemaVersion })
+	if err != nil {
+		t.Fatalf("open application database: %v", err)
 	}
 	defer db.Close()
 	for _, fixture := range []struct {
