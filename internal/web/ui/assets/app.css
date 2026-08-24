@@ -6669,6 +6669,23 @@ body.custom-dashboard-monitor .navigation-progress>span[aria-hidden=true]{backgr
 .custom-dashboard-admin .custom-dashboard-card--registry .custom-dashboard-card__config{flex-wrap:wrap;gap:8px 12px}.custom-dashboard-admin .custom-dashboard-card--registry .custom-dashboard-card__config>span:first-child{flex:1 1 320px}.custom-dashboard-admin .custom-dashboard-card--registry .custom-dashboard-card__config form{display:inline-flex;margin-inline-start:auto}.custom-dashboard-registry-registration{color:var(--warning);font-size:.7rem;font-weight:650;white-space:nowrap}.custom-dashboard-registry-registration[data-state=registered]{color:var(--success)}.custom-dashboard-registry-registration svg{color:currentColor!important}
 .custom-dashboard-registry-fields{display:grid;grid-column:1/-1;gap:14px}.custom-dashboard-registry-fields>label,.custom-dashboard-registry-fields>div{display:grid;gap:7px}.custom-dashboard-registry-fields small,.custom-dashboard-card-form label>small{color:var(--muted);font-size:.67rem;font-weight:450;line-height:1.45}[data-dashboard-registry-credentials]{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}[data-dashboard-registry-credentials][hidden]{display:none}
 .custom-dashboard-admin .custom-dashboard-card--registry{display:grid}.custom-dashboard-admin .custom-dashboard-card--registry .custom-dashboard-card__config span{min-width:0}.custom-dashboard-admin .custom-dashboard-card--registry .custom-dashboard-card__config code{flex:1}
+
+/* Dashboard cards stay on one neutral ledger palette; semantic colors remain
+   limited to compact status text, dots, and measurement signals. */
+.custom-dashboard-card,.custom-dashboard-card--percentage{background:var(--surface);border-color:var(--rule)}
+.custom-dashboard-card:hover{background:var(--surface-2);border-color:var(--rule-strong)}
+.custom-dashboard-card__status-badge{background:var(--surface-2);border-color:var(--rule-strong)}
+.custom-dashboard-card__value small,.custom-dashboard-card__percentage-unit{color:var(--instrument-muted)}
+.custom-dashboard-card__quota-track{stroke:var(--rule-strong)}
+.custom-dashboard-registry-row__mark{color:var(--instrument-muted);background:var(--surface-2);border-color:var(--rule)}
+.custom-dashboard-registry-row>code,.custom-dashboard-card--registry>code{color:var(--instrument-ink);background:var(--surface-2);border-color:var(--rule)}
+.custom-dashboard-registry-row[data-state=error] .custom-dashboard-registry-row__mark,.custom-dashboard-registry-row[data-state=error] .custom-dashboard-registry-row__state{border-color:var(--warning-border)}
+.custom-dashboard-form-grid input,.custom-dashboard-form-grid select,.custom-dashboard-form-grid textarea,.custom-dashboard-popover input{color:var(--ink);background:var(--surface);border-color:var(--rule-strong);border-radius:var(--radius-sm)}
+.custom-dashboard-popover{color:var(--ink);background:var(--surface);border-color:var(--rule-strong);box-shadow:var(--shadow-menu)}
+.custom-dashboard-switch{background:var(--rule);border-color:var(--rule-strong)}
+.custom-dashboard-switch i{background:var(--faint)}
+.custom-dashboard-switch.is-on{background:var(--accent-soft);border-color:var(--accent)}
+.custom-dashboard-toolbar .button--primary,.custom-dashboard-drawer .button--primary,.custom-dashboard-surface .custom-dashboard-drawer .button--primary{color:var(--surface);background:var(--accent);border-color:var(--accent)}
 @media(max-width:640px){.custom-dashboard-registry-row{grid-template-columns:30px minmax(0,1fr) auto}.custom-dashboard-registry-row__state{display:none}.custom-dashboard-registry-row>code{grid-column:3;grid-row:1}.custom-dashboard-registry-row__image small{white-space:normal}[data-dashboard-registry-credentials]{grid-template-columns:1fr}.custom-dashboard-admin .custom-dashboard-card--registry .custom-dashboard-card__config form{width:100%;margin-inline-start:0}.custom-dashboard-admin .custom-dashboard-card--registry .custom-dashboard-card__config form .button{width:100%;min-height:44px}}
 
 /* Test requests stay secondary to card configuration and expand only when needed. */
