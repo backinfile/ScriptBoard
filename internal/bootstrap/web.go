@@ -45,7 +45,10 @@ func RunWeb(runContext context.Context, arguments []string, getenv func(string) 
 	if err != nil {
 		return err
 	}
-	installRoot := applicationInstallRoot(loaded.StateRoot)
+	installRoot, err := applicationInstallRoot(loaded.StateRoot)
+	if err != nil {
+		return err
+	}
 	dependencies, err := webDependencies(loaded, installRoot)
 	if err != nil {
 		return err
@@ -255,12 +258,15 @@ func validateNetworkConfiguration(address, certificate, key string) error {
 	return nil
 }
 
-func applicationInstallRoot(stateRoot string) string {
-	metadata, err := installation.Detect(stateRoot)
+func applicationInstallRoot(stateRoot string) (string, error) {
+	metadata, managed, err := installation.DetectOptional(stateRoot)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("detect managed installation: %w", err)
 	}
-	return metadata.InstallRoot
+	if !managed {
+		return "", nil
+	}
+	return metadata.InstallRoot, nil
 }
 
 func canRestartManagedService(stateRoot, configPath string) bool {

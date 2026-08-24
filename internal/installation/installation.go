@@ -157,6 +157,28 @@ func Detect(stateRoot string) (Metadata, error) {
 	return metadata, nil
 }
 
+// DetectOptional distinguishes a portable State Root from a broken managed
+// installation. Existing installation evidence must fail closed so callers do
+// not silently cross from managed service boundaries into portable behavior.
+func DetectOptional(stateRoot string) (Metadata, bool, error) {
+	absolute, err := filepath.Abs(stateRoot)
+	if err != nil {
+		return Metadata{}, false, err
+	}
+	referencePath := filepath.Join(absolute, updatesDirName, installRefName)
+	if _, err := os.Stat(referencePath); err != nil {
+		if os.IsNotExist(err) {
+			return Metadata{}, false, nil
+		}
+		return Metadata{}, false, err
+	}
+	metadata, err := Detect(stateRoot)
+	if err != nil {
+		return Metadata{}, false, err
+	}
+	return metadata, true, nil
+}
+
 func Load(stateRoot string) (Metadata, error) {
 	canonicalStateRoot, err := canonicalDirectory(stateRoot)
 	if err != nil {

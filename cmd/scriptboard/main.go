@@ -485,8 +485,12 @@ func resetAdmin(arguments []string) error {
 	if err != nil {
 		return err
 	}
+	installRoot, err := applicationInstallRoot(loaded.StateRoot)
+	if err != nil {
+		return err
+	}
 	application, err := app.Open(app.Config{
-		StateRoot: loaded.StateRoot, InstallRoot: applicationInstallRoot(loaded.StateRoot), ConfigPath: loaded.ConfigPath, TLSKey: loaded.TLSKey,
+		StateRoot: loaded.StateRoot, InstallRoot: installRoot, ConfigPath: loaded.ConfigPath, TLSKey: loaded.TLSKey,
 		AdminPasswordFile: loaded.AdminPasswordFile, RunTimeoutGrace: loaded.RunTimeoutGrace, ExecutorChains: loaded.ExecutorChains,
 	})
 	if err != nil {
@@ -532,12 +536,15 @@ func serveContext(runContext context.Context, arguments []string) error {
 	return bootstrap.RunWeb(runContext, arguments, os.Getenv, os.Stdout)
 }
 
-func applicationInstallRoot(stateRoot string) string {
-	metadata, err := installation.Detect(stateRoot)
+func applicationInstallRoot(stateRoot string) (string, error) {
+	metadata, managed, err := installation.DetectOptional(stateRoot)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("detect managed installation: %w", err)
 	}
-	return metadata.InstallRoot
+	if !managed {
+		return "", nil
+	}
+	return metadata.InstallRoot, nil
 }
 
 func validateConfig(arguments []string) error {

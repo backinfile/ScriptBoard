@@ -3,18 +3,56 @@ package bootstrap
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"scriptboard/internal/clusterstatus"
 	"scriptboard/internal/config"
+	"scriptboard/internal/installation"
 	"scriptboard/internal/kubeconfigmanager"
 	"scriptboard/internal/privilegebroker"
 )
+
+func TestApplicationInstallRootRejectsExecutableOutsideManagedRelease(t *testing.T) {
+	root := t.TempDir()
+	stateRoot := filepath.Join(root, "state")
+	installRoot := filepath.Join(root, "install")
+	if err := os.MkdirAll(filepath.Join(stateRoot, "updates"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(installRoot, "versions", "1.0.0"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	metadata := installation.Metadata{
+		Schema: installation.MetadataSchema, InstallID: "test-install", InstallRoot: installRoot,
+		StateRoot: stateRoot, ServiceName: "ScriptBoard", ConfigPath: filepath.Join(root, "config.yaml"),
+		OS: runtime.GOOS, Arch: runtime.GOARCH, ManagedLayout: true, Current: "1.0.0",
+	}
+	write := func(path string, value any) {
+		t.Helper()
+		raw, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(installRoot, "install.json"), metadata)
+	write(filepath.Join(stateRoot, "updates", "install-ref.json"), map[string]any{
+		"schema": installation.MetadataSchema, "install_id": metadata.InstallID, "install_root": installRoot,
+	})
+
+	if _, err := applicationInstallRoot(stateRoot); err == nil || !strings.Contains(err.Error(), "outside the active Installed Release") {
+		t.Fatalf("managed executable mismatch did not fail closed: %v", err)
+	}
+}
 
 func TestRuntimeDependenciesFollowDeploymentMode(t *testing.T) {
 	portable, err := webDependencies(config.Config{}, "")

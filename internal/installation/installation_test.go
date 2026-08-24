@@ -90,6 +90,25 @@ func TestPrepareCreatesVersionedInstallation(t *testing.T) {
 	assertSameFile(t, "state root", metadata.StateRoot, state)
 }
 
+func TestDetectOptionalOnlyTreatsMissingReferenceAsPortable(t *testing.T) {
+	stateRoot := t.TempDir()
+	if _, managed, err := DetectOptional(stateRoot); err != nil || managed {
+		t.Fatalf("empty portable state managed=%v err=%v", managed, err)
+	}
+	updates := filepath.Join(stateRoot, updatesDirName)
+	if err := os.MkdirAll(updates, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	reference := Reference{Schema: MetadataSchema, InstallID: "missing-install", InstallRoot: filepath.Join(t.TempDir(), "missing")}
+	raw, _ := json.Marshal(reference)
+	if err := os.WriteFile(filepath.Join(updates, installRefName), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := DetectOptional(stateRoot); err == nil {
+		t.Fatal("existing managed reference with missing metadata was treated as portable")
+	}
+}
+
 func assertSameFile(t *testing.T, label, got, want string) {
 	t.Helper()
 	gotInfo, err := os.Stat(got)
