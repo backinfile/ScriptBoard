@@ -7980,7 +7980,14 @@
     if (!panel || !trigger) return;
     panel.style.removeProperty("top");
     panel.style.removeProperty("bottom");
+    panel.style.removeProperty("left");
+    panel.style.removeProperty("right");
     panel.style.removeProperty("--action-menu-max-height");
+    const useTopLayer = typeof panel.showPopover === "function";
+    if (useTopLayer && !panel.matches(":popover-open")) {
+      panel.setAttribute("popover", "manual");
+      panel.showPopover();
+    }
     const triggerBounds = trigger.getBoundingClientRect();
     const viewportMargin = 8;
     const gap = 5;
@@ -7992,6 +7999,19 @@
     panel.style.top = openDown ? `calc(100% + ${gap}px)` : "auto";
     panel.style.bottom = openDown ? "auto" : `calc(100% + ${gap}px)`;
     panel.style.setProperty("--action-menu-max-height", `${Math.max(48, Math.floor(availableHeight))}px`);
+    if (useTopLayer) {
+      const panelBounds = panel.getBoundingClientRect();
+      const alignLeft = matchMedia("(max-width: 760px)").matches;
+      const desiredLeft = alignLeft ? triggerBounds.left : triggerBounds.right - panelBounds.width;
+      const left = Math.max(viewportMargin, Math.min(desiredLeft, innerWidth - viewportMargin - panelBounds.width));
+      const top = openDown
+        ? triggerBounds.bottom + gap
+        : Math.max(viewportMargin, triggerBounds.top - gap - panelBounds.height);
+      panel.style.top = `${Math.round(top)}px`;
+      panel.style.right = "auto";
+      panel.style.bottom = "auto";
+      panel.style.left = `${Math.round(left)}px`;
+    }
   }
 
   // Action lists grow over time; choose the usable side of the trigger and scroll inside the viewport.
@@ -8005,13 +8025,21 @@
       return;
     }
     // 关闭时清掉内联定位，让 CSS 在下次打开的瞬时窗口先接管，避免残留旧几何下的位置。
+    if (typeof panel.hidePopover === "function") {
+      try { panel.hidePopover(); } catch (_) {}
+    }
     panel.style.removeProperty("top");
     panel.style.removeProperty("bottom");
+    panel.style.removeProperty("left");
+    panel.style.removeProperty("right");
     panel.style.removeProperty("--action-menu-max-height");
   }, true);
   window.addEventListener("resize", () => {
     document.querySelectorAll(".action-menu[open]").forEach(positionActionMenu);
   });
+  document.addEventListener("scroll", () => {
+    document.querySelectorAll(".action-menu[open]").forEach(positionActionMenu);
+  }, true);
 
   document.addEventListener("click", event => {
     const menu = event.target.closest(".action-menu");
