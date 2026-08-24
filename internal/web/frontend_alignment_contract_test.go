@@ -169,7 +169,8 @@ func TestApplicationsPageExposesLiveFactsAndExpandableObservationDetails(t *test
 		`.application-drawer-host {`,
 		`.task-panel > main[data-task-page] {`,
 		`.task-panel .task-panel-close {`,
-		`@media (max-width: 1400px) {`,
+		// Verify the applications layout itself instead of relying on an unrelated page's breakpoint.
+		`.pinned-application__summary { grid-template-columns: minmax(220px, .9fr) minmax(330px, 1fr) 104px; gap: 18px; }`,
 	)
 }
 
