@@ -14,6 +14,8 @@ type fakeWindowsServiceRestriction struct {
 	}
 }
 
+func (fake *fakeWindowsServiceRestriction) RemoveRule(string) error { return nil }
+
 func (fake *fakeWindowsServiceRestriction) Restrict(service, executable string, enabled, _ bool) error {
 	fake.restrictions = append(fake.restrictions, struct {
 		service, executable string

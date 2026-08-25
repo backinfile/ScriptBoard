@@ -82,6 +82,20 @@ func TestWindowsRunnerIsDemandStartService(t *testing.T) {
 	}
 }
 
+func TestWindowsLifecycleRetiresLegacyAIService(t *testing.T) {
+	source, err := os.ReadFile("service_windows.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	if !strings.Contains(text, "retiredAIServiceName") || !strings.Contains(text, `"ScriptBoardAI"`) {
+		t.Fatal("Windows lifecycle no longer recognizes the retired AI service")
+	}
+	if count := strings.Count(text, "retireWindowsAIService(manager)"); count < 3 {
+		t.Fatalf("retired AI service cleanup is not applied to install, version switch, and uninstall: count=%d", count)
+	}
+}
+
 func TestWindowsInstallGrantsRunDirectoryProtectionAccess(t *testing.T) {
 	source, err := os.ReadFile("service_windows.go")
 	if err != nil {

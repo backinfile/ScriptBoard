@@ -17,14 +17,16 @@ import (
 )
 
 const (
-	serviceName       = "ScriptBoard"
-	unitPath          = "/etc/systemd/system/scriptboard.service"
-	brokerUnitPath    = "/etc/systemd/system/scriptboard-broker.service"
-	runnerUnitPath    = "/etc/systemd/system/scriptboard-runner.service"
-	runnerSocketPath  = "/etc/systemd/system/scriptboard-runner.socket"
-	updaterUnitPath   = "/etc/systemd/system/scriptboard-updater@.service"
-	webServiceUser    = "scriptboard-web"
-	runnerServiceUser = "scriptboard-runner"
+	serviceName         = "ScriptBoard"
+	unitPath            = "/etc/systemd/system/scriptboard.service"
+	brokerUnitPath      = "/etc/systemd/system/scriptboard-broker.service"
+	retiredAIUnitPath   = "/etc/systemd/system/scriptboard-ai.service"
+	retiredAISocketPath = "/etc/systemd/system/scriptboard-ai.socket"
+	runnerUnitPath      = "/etc/systemd/system/scriptboard-runner.service"
+	runnerSocketPath    = "/etc/systemd/system/scriptboard-runner.socket"
+	updaterUnitPath     = "/etc/systemd/system/scriptboard-updater@.service"
+	webServiceUser      = "scriptboard-web"
+	runnerServiceUser   = "scriptboard-runner"
 )
 
 const (
@@ -88,6 +90,10 @@ func validateLinuxWebRuntimeIdentity(effectiveUID, expectedUID int) error {
 
 func Install(executable, configPath, updaterExecutable, stateRoot, runnerIdentityMode string, webReadPaths ...string) error {
 	if err := prepareLinuxWebServiceIdentity(configPath, stateRoot, webReadPaths...); err != nil {
+		return err
+	}
+	// Upgrades from v2.3.0 must stop and remove the socket-activated AI host before installing the three-component layout.
+	if err := retireLinuxAIUnits(); err != nil {
 		return err
 	}
 	brokerExecutable := filepath.Join(filepath.Dir(executable), "scriptboard-broker")
@@ -359,10 +365,13 @@ func prepareLinuxRunnerServiceIdentity() error {
 func SwitchExecutable(_, _, _ string) error {
 	// The systemd service points at Install Root/current. installation.SetCurrent
 	// atomically changes that symlink, so the unit never needs to be rewritten.
-	return nil
+	return retireLinuxAIUnits()
 }
 
 func Uninstall() error {
+	if err := retireLinuxAIUnits(); err != nil {
+		return err
+	}
 	exists, err := Exists()
 	if err != nil {
 		return err
@@ -391,6 +400,66 @@ func Uninstall() error {
 		},
 		func() error { return systemctl("daemon-reload") },
 	)
+}
+
+type retiredLinuxUnit struct {
+	name   string
+	path   string
+	action []string
+}
+
+func retireLinuxAIUnits() error {
+	if err := removeRetiredAIUnitDependencies(unitPath); err != nil {
+		return err
+	}
+	units := []retiredLinuxUnit{
+		{name: "scriptboard-ai.socket", path: retiredAISocketPath, action: []string{"disable", "--now"}},
+		{name: "scriptboard-ai.service", path: retiredAIUnitPath, action: []string{"stop"}},
+	}
+	if err := retireLinuxAIUnitsWith(units, systemctl); err != nil {
+		return err
+	}
+	return systemctl("daemon-reload")
+}
+
+func removeRetiredAIUnitDependencies(path string) error {
+	body, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read Linux Web service unit before retiring AI Runtime: %w", err)
+	}
+	updated := strings.ReplaceAll(string(body), " scriptboard-ai.socket", "")
+	updated = strings.ReplaceAll(updated, "scriptboard-ai.socket ", "")
+	if updated == string(body) {
+		return nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, []byte(updated), info.Mode().Perm()); err != nil {
+		return fmt.Errorf("remove retired AI Runtime dependency from Linux Web service: %w", err)
+	}
+	return nil
+}
+
+func retireLinuxAIUnitsWith(units []retiredLinuxUnit, control func(...string) error) error {
+	for _, unit := range units {
+		if _, err := os.Stat(unit.path); errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return fmt.Errorf("inspect retired Linux AI Runtime unit %s: %w", unit.name, err)
+		}
+		if err := control(append(unit.action, unit.name)...); err != nil {
+			return fmt.Errorf("stop retired Linux AI Runtime unit %s: %w", unit.name, err)
+		}
+		if err := os.Remove(unit.path); err != nil {
+			return fmt.Errorf("remove retired Linux AI Runtime unit %s: %w", unit.name, err)
+		}
+	}
+	return nil
 }
 
 func Start() error {

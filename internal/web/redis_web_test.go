@@ -13,7 +13,10 @@ import (
 	app "scriptboard/internal/web"
 )
 
-type redisWebBackend struct{}
+type redisWebBackend struct {
+	lastScan redismanager.ScanRequest
+	lastKey  string
+}
 
 func (redisWebBackend) StoreCredential(context.Context, redismanager.Instance, string) error {
 	return nil
@@ -25,16 +28,19 @@ func (redisWebBackend) Test(context.Context, redismanager.Instance) (redismanage
 func (redisWebBackend) Overview(context.Context, redismanager.Instance) (redismanager.Overview, error) {
 	return redismanager.Overview{Version: "8.0.0", KeyCount: 42, UsedMemory: 4 << 20}, nil
 }
-func (redisWebBackend) Scan(context.Context, redismanager.Instance, redismanager.ScanRequest) (redismanager.ScanPage, error) {
-	return redismanager.ScanPage{Keys: []redismanager.KeySummary{{Name: "order::42", Type: "hash", SizeBytes: 512}, {Name: "session::7", Type: "string", SizeBytes: 16}, {Name: "cache:item", Type: "string", SizeBytes: 12}, {Name: "ungrouped", Type: "string", SizeBytes: 8}}}, nil
+func (backend *redisWebBackend) Scan(_ context.Context, _ redismanager.Instance, request redismanager.ScanRequest) (redismanager.ScanPage, error) {
+	backend.lastScan = request
+	return redismanager.ScanPage{Cursor: 73, Keys: []redismanager.KeySummary{{Name: "order::42", Type: "hash", SizeBytes: 512}, {Name: "session::7", Type: "string", SizeBytes: 16}, {Name: "cache:item", Type: "string", SizeBytes: 12}, {Name: "ungrouped", Type: "string", SizeBytes: 8}}}, nil
 }
-func (redisWebBackend) ReadKey(context.Context, redismanager.Instance, string) (redismanager.KeyValue, error) {
-	return redismanager.KeyValue{Name: "order::42", Type: "hash", Items: []redismanager.KeyValueItem{{Field: "status", Value: "paid"}}}, nil
+func (backend *redisWebBackend) ReadKey(_ context.Context, _ redismanager.Instance, key string) (redismanager.KeyValue, error) {
+	backend.lastKey = key
+	return redismanager.KeyValue{Name: key, Type: "hash", Items: []redismanager.KeyValueItem{{Field: "status", Value: "paid"}}}, nil
 }
 
 func TestAdministratorCanRegisterAndInspectRedisConnection(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "state")
-	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: stateRoot, RedisBackend: redisWebBackend{}})
+	backend := &redisWebBackend{}
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: stateRoot, RedisBackend: backend})
 	response, err := client.Get(serverURL + "/resources/databases?engine=redis")
 	if err != nil {
 		t.Fatal(err)
@@ -94,6 +100,18 @@ func TestAdministratorCanRegisterAndInspectRedisConnection(t *testing.T) {
 	}
 	if strings.Contains(keyspace, `data-redis-key-namespace="cache"`) {
 		t.Fatalf("single-colon key was incorrectly split into a namespace: %s", keyspace)
+	}
+	if !strings.Contains(keyspace, `name="cursor" value="73"`) {
+		t.Fatalf("Redis key browser does not expose the next SCAN cursor: %s", keyspace)
+	}
+	_ = getBody(t, client, serverURL+"/resources/databases?engine=redis&instance="+url.QueryEscape(instanceID)+"&tab=keys&cursor=73", http.StatusOK)
+	if backend.lastScan.Cursor != 73 {
+		t.Fatalf("continued Redis scan cursor=%d, want 73", backend.lastScan.Cursor)
+	}
+	paddedKey := "  padded Redis key  "
+	_ = getBody(t, client, serverURL+"/resources/databases?engine=redis&instance="+url.QueryEscape(instanceID)+"&tab=keys&key="+url.QueryEscape(paddedKey), http.StatusOK)
+	if backend.lastKey != paddedKey {
+		t.Fatalf("Redis key preview received %q, want exact key %q", backend.lastKey, paddedKey)
 	}
 	for _, endpoint := range []string{"test", "delete"} {
 		response, err = client.PostForm(serverURL+"/resources/databases/redis/instances/"+instanceID+"/"+endpoint, nil)

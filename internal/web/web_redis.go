@@ -27,6 +27,7 @@ type redisDatabasesPageData struct {
 	KeyValue    *redismanager.KeyValue
 	Pattern     string
 	SelectedKey string
+	ScanCursor  uint64
 	ActiveTab   string
 	LoadError   string
 }
@@ -137,7 +138,8 @@ func (a *App) redisDatabasesPage(response http.ResponseWriter, request *http.Req
 		return
 	}
 	current := request.Context().Value(sessionContextKey).(session)
-	data := redisDatabasesPageData{Locale: resolveWebLocale(request), CSRFToken: current.csrfToken, Instances: instances, ActiveTab: "overview", Pattern: strings.TrimSpace(request.URL.Query().Get("pattern")), SelectedKey: strings.TrimSpace(request.URL.Query().Get("key"))}
+	// Redis keys are binary-safe identifiers; preserve URL-decoded leading and trailing spaces exactly.
+	data := redisDatabasesPageData{Locale: resolveWebLocale(request), CSRFToken: current.csrfToken, Instances: instances, ActiveTab: "overview", Pattern: strings.TrimSpace(request.URL.Query().Get("pattern")), SelectedKey: request.URL.Query().Get("key")}
 	data.databaseWorkspaceData = newDatabaseWorkspaceData(request, "redis", data.Locale, data.CSRFToken, a.mysql.BackupRoot(), a.mysql.Tools(), mysqlInstances, instances)
 	if request.URL.Query().Get("tab") == "keys" || request.URL.Query().Get("tab") == "diagnostics" {
 		data.ActiveTab = request.URL.Query().Get("tab")
@@ -163,7 +165,15 @@ func (a *App) redisDatabasesPage(response http.ResponseWriter, request *http.Req
 		defer cancel()
 		switch data.ActiveTab {
 		case "keys":
-			scan, scanErr := a.redis.Scan(ctx, id, redismanager.ScanRequest{Pattern: data.Pattern, Count: 200})
+			if rawCursor := strings.TrimSpace(request.URL.Query().Get("cursor")); rawCursor != "" {
+				data.ScanCursor, err = strconv.ParseUint(rawCursor, 10, 64)
+				if err != nil {
+					http.Error(response, "Redis scan cursor is invalid", http.StatusBadRequest)
+					return
+				}
+			}
+			// Preserve Redis' opaque cursor so large keyspaces remain browsable without an unbounded server-side scan.
+			scan, scanErr := a.redis.Scan(ctx, id, redismanager.ScanRequest{Cursor: data.ScanCursor, Pattern: data.Pattern, Count: 200})
 			if scanErr != nil {
 				data.LoadError = secretredaction.String(scanErr.Error())
 			} else {

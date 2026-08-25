@@ -22,6 +22,7 @@ const (
 	serviceName                 = "ScriptBoard"
 	brokerServiceName           = "ScriptBoardBroker"
 	runnerServiceName           = "ScriptBoardRunner"
+	retiredAIServiceName        = "ScriptBoardAI"
 	webServiceAccount           = `NT AUTHORITY\LocalService`
 	webServiceSID               = `NT SERVICE\ScriptBoard`
 	runnerServiceSID            = `NT SERVICE\ScriptBoardRunner`
@@ -153,6 +154,10 @@ func Install(executable, configPath, _ string, stateRoot, runnerIdentityMode str
 		return err
 	}
 	defer manager.Disconnect()
+	// Retire the pre-three-component AI service before installing definitions that no longer own it.
+	if err := retireWindowsAIService(manager); err != nil {
+		return err
+	}
 	brokerExecutable := filepath.Join(filepath.Dir(executable), "scriptboard-broker.exe")
 	runnerExecutable := filepath.Join(filepath.Dir(executable), "scriptboard-runner.exe")
 	brokerConfiguration := mgr.Config{
@@ -537,6 +542,10 @@ func SwitchExecutable(executable, configPath, runnerIdentityMode string) error {
 		return err
 	}
 	defer manager.Disconnect()
+	// Version switches from v2.3.0 must not leave the removed AI host running from an old version directory.
+	if err := retireWindowsAIService(manager); err != nil {
+		return err
+	}
 	service, err := manager.OpenService(serviceName)
 	if err != nil {
 		return err
@@ -605,6 +614,9 @@ func Uninstall() error {
 		return err
 	}
 	defer manager.Disconnect()
+	if err := retireWindowsAIService(manager); err != nil {
+		return err
+	}
 	// DeleteService only marks running services for deletion. Stop dependents
 	// first so uninstall removes every definition before the command returns.
 	for _, name := range []string{serviceName, runnerServiceName, brokerServiceName} {
@@ -642,6 +654,41 @@ func Uninstall() error {
 		}
 	}
 	return nil
+}
+
+func retireWindowsAIService(manager *mgr.Mgr) error {
+	service, err := manager.OpenService(retiredAIServiceName)
+	if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
+		return removeRetiredWindowsAIFirewall("")
+	}
+	if err != nil {
+		return fmt.Errorf("open retired Windows AI Runtime service: %w", err)
+	}
+	configuration, configErr := service.Config()
+	var executable string
+	if configErr == nil {
+		if arguments, parseErr := windows.DecomposeCommandLine(configuration.BinaryPathName); parseErr == nil && len(arguments) > 0 {
+			executable = arguments[0]
+		}
+	}
+	if configErr != nil {
+		_ = service.Close()
+		return fmt.Errorf("read retired Windows AI Runtime service: %w", configErr)
+	}
+	if err := stopWindowsService(manager, retiredAIServiceName); err != nil {
+		_ = service.Close()
+		return fmt.Errorf("stop retired Windows AI Runtime service: %w", err)
+	}
+	if err := removeRetiredWindowsAIFirewall(executable); err != nil {
+		_ = service.Close()
+		return err
+	}
+	deleteErr := service.Delete()
+	closeErr := service.Close()
+	if deleteErr != nil {
+		return fmt.Errorf("delete retired Windows AI Runtime service: %w", deleteErr)
+	}
+	return closeErr
 }
 
 func Start() error {
