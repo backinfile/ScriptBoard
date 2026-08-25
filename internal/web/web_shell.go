@@ -215,6 +215,21 @@ func (a *App) addApplicationShell(request *http.Request, body []byte) []byte {
 	statusState := shellStatus.State
 	status := webText(locale, "status."+statusState)
 	navigation := shellNavigation(locale, request.URL.Path, current.role)
+	if identity.Allows(current.role, identity.PermissionObserve) && a.customTabs != nil {
+		if tabs, tabsErr := a.customTabs.List(request.Context()); tabsErr == nil {
+			defined := shellNavigationGroup{Label: webText(locale, "nav.defined")}
+			for _, tab := range tabs {
+				if !tab.Enabled || (tab.CredentialMode == "key" && !identity.Allows(current.role, identity.PermissionManageOperations)) {
+					continue
+				}
+				href := "/defined/tabs/" + tab.ID
+				defined.Items = append(defined.Items, shellNavigationItem{Href: href, Label: tab.Name, Icon: "panel-top", Current: request.URL.Path == href})
+			}
+			if len(defined.Items) > 0 {
+				navigation = append(navigation, defined)
+			}
+		}
+	}
 	if identity.Allows(current.role, identity.PermissionObserve) {
 		if dashboards, dashboardErr := a.customDashboards.ListDashboards(request.Context()); dashboardErr == nil {
 			for index := range navigation {
@@ -303,7 +318,7 @@ func shellNavigation(locale webLocale, path string, role identity.Role) []shellN
 	}{
 		{key: "nav.monitor", items: []itemSpec{{"/monitor", "nav.overview", "activity", identity.PermissionObserve}, {"/monitor/applications", "nav.applications", "app-window", identity.PermissionObserve}, {"/monitor/containers", "nav.containers", "package", identity.PermissionObserve}, {"/monitor/kubernetes", "nav.kubernetes", "box", identity.PermissionObserve}, {"/monitor/websites", "nav.websites", "network", identity.PermissionObserve}, {"/monitor/security", "nav.security", "shield-check", identity.PermissionObserve}}},
 		{key: "nav.resources", items: []itemSpec{{"/resources/files", "nav.files", "folder-code", identity.PermissionReadFiles}, {"/resources/variables", "nav.variables", "braces", identity.PermissionManageExecution}, {"/resources/databases", "nav.databases", "database", identity.PermissionManageDatabases}}},
-		{key: "nav.configuration", items: []itemSpec{{"/config/quick-runs", "nav.quick_runs", "zap", identity.PermissionObserve}, {"/config/schedules", "nav.schedules", "calendar-clock", identity.PermissionObserve}, {"/config/external-interfaces", "nav.external_interfaces", "plug", identity.PermissionManageExecution}, {"/config/dashboards", "nav.dashboards", "layout-dashboard", identity.PermissionObserve}}},
+		{key: "nav.configuration", items: []itemSpec{{"/config/quick-runs", "nav.quick_runs", "zap", identity.PermissionObserve}, {"/config/schedules", "nav.schedules", "calendar-clock", identity.PermissionObserve}, {"/config/external-interfaces", "nav.external_interfaces", "plug", identity.PermissionManageExecution}, {"/config/dashboards", "nav.dashboards", "layout-dashboard", identity.PermissionObserve}, {"/config/custom-tabs", "nav.custom_tabs", "panel-top", identity.PermissionManageOperations}}},
 		{key: "nav.history", items: []itemSpec{{"/history/runs", "nav.runs", "square-terminal", identity.PermissionObserve}, {"/history/audit", "nav.audit", "scroll-text", identity.PermissionReadAudit}}},
 		{key: "nav.assistant", items: []itemSpec{{"/ai", "nav.ai", "sparkles", identity.PermissionObserve}}},
 	}

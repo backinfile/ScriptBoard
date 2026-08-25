@@ -353,3 +353,11 @@ _Avoid_: Run、SQL 查询、后台作业日志
 **MySQL 备份计划（MySQL Backup Plan）**：
 绑定单个 MySQL 实例、数据库集合和五字段 Cron 的逻辑备份规则。同一实例串行执行；重叠触发被记录为跳过且不补跑。
 _Avoid_: ScriptBoard 脚本计划、系统 crontab、复制计划
+
+**自定义页签（Custom Tab）**：
+管理员定义的浏览器直连 HTTP/HTTPS 页面引用。启用后出现在“已定义”导航中，由受限 iframe 打开；它不是服务端代理、反向代理或单点登录连接。
+_Avoid_: 内嵌应用、反向代理、SSO 应用
+
+**页签 Key（Tab Key）**：
+绑定一个自定义页签和目标 Origin 的可选静态凭据。它以主机密钥密封，只能在目标 iframe 完成一次性、精确 Origin 的消息握手后交付；它不会进入 URL、HTML 或目标页面的初始请求。
+_Avoid_: Session Cookie、查询参数 Token、ScriptBoard 登录态

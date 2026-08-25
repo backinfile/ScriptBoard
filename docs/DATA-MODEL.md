@@ -2,6 +2,12 @@
 
 本文描述冻结 MVP 的逻辑数据模型。字段类型用于表达约束，具体 SQL 类型由实现选择；所有 ID 建议使用不可预测的 UUID，所有绝对时间以 UTC 保存。
 
+## 自定义页签（Custom Tab）
+
+`custom_tabs` 保存页签稳定 ID、名称、目标 HTTP/HTTPS URL、启用状态、凭据模式与顺序。`credential_mode` 为 `isolated`、`target_state` 或 `key`；Key 模式只保存由主机密钥按页签 ID 和目标 Origin 密封的密文。目标 URL 由浏览器直接访问，服务端不会抓取或代理该地址。
+
+启用项按 `sort_order` 出现在“已定义”导航。普通模式对可观察用户可见；Key 模式仅对具备运行配置管理权限的用户存在。Key 交付 challenge 是进程内短期状态，不进入持久数据模型，消费或过期后立即失效。
+
 ## 宿主分钟指标（Host Metric Minute）
 
 宿主状态以五秒实时样本形成完整自然分钟聚合，固定保留 24 小时：

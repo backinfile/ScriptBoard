@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="{{.Locale}}">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{.Name}} · ScriptBoard</title></head>
+<body>
+<main class="custom-tab-frame-page" data-custom-tab-frame data-tab-id="{{.ID}}" data-target-origin="{{.Origin}}" data-credential-mode="{{.CredentialMode}}" data-challenge-endpoint="{{.ChallengeEndpoint}}" data-delivery-endpoint="{{.DeliveryEndpoint}}" data-csrf-token="{{.CSRFToken}}">
+  <header class="custom-tab-frame-bar"><div><p class="page-eyebrow">已定义</p><h1>{{.Name}}</h1></div><a class="button button--quiet" href="{{.TargetURL}}" target="_blank" rel="noopener noreferrer"><span data-lucide="external-link" aria-hidden="true"></span>在新窗口打开</a></header>
+  <iframe class="custom-tab-frame" title="{{.Name}}" src="{{.TargetURL}}" sandbox="{{.Sandbox}}" referrerpolicy="no-referrer" data-custom-tab-iframe></iframe>
+</main>
+</body></html>

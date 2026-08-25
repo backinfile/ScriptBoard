@@ -8686,7 +8686,7 @@ document.addEventListener("click", function (event) {
 	const drawerButton = event.target.closest("[data-dashboard-open-drawer]");
 	if (drawerButton) {
 		const name = drawerButton.dataset.dashboardOpenDrawer;
-		const drawer = document.querySelector(`[data-dashboard-drawer-name="${CSS.escape(name)}"]`);
+		const drawer = document.querySelector(`[data-dashboard-drawer-name="${CSS.escape(name)}"], [data-dashboard-drawer-id="${CSS.escape(name)}"]`);
 		openDashboardDrawer(drawer);
 		return;
 	}
@@ -9341,6 +9341,54 @@ document.addEventListener("input", function (event) {
       }
     } finally {
       registerButton.disabled = false;
+    }
+  });
+})();
+
+(() => {
+  document.querySelectorAll("[data-custom-tab-mode]").forEach((select) => {
+    const sync = () => {
+      const fields = select.closest("form")?.querySelector("[data-custom-tab-key-fields]");
+      if (!fields) return;
+      fields.hidden = select.value !== "key";
+      fields.querySelectorAll("input").forEach((input) => {
+        if (input.name === "key_name") input.required = select.value === "key";
+      });
+    };
+    select.addEventListener("change", sync);
+    sync();
+  });
+
+  const root = document.querySelector("[data-custom-tab-frame]");
+  const frame = root?.querySelector("[data-custom-tab-iframe]");
+  if (!root || !frame || root.dataset.credentialMode !== "key") return;
+  let delivered = false;
+	let challenge = null;
+	frame.addEventListener("load", async () => {
+		try {
+			const body = new URLSearchParams({ csrf_token: root.dataset.csrfToken });
+			const response = await fetch(root.dataset.challengeEndpoint, { method: "POST", credentials: "same-origin", body });
+			if (!response.ok) return;
+			challenge = await response.json();
+			frame.contentWindow.postMessage(challenge, root.dataset.targetOrigin);
+		} catch (_) {
+			challenge = null;
+		}
+	});
+  window.addEventListener("message", async (event) => {
+    if (delivered || event.source !== frame.contentWindow || event.origin !== root.dataset.targetOrigin) return;
+		if (!challenge || event.data?.type !== "scriptboard.custom-tab.ready" || event.data?.version !== 1 || event.data?.tabId !== root.dataset.tabId || event.data?.nonce !== challenge.nonce) return;
+    try {
+			const body = new URLSearchParams({ csrf_token: root.dataset.csrfToken, nonce: challenge.nonce });
+			const response = await fetch(root.dataset.deliveryEndpoint, { method: "POST", credentials: "same-origin", body });
+      if (!response.ok) return;
+			let credential = await response.json();
+      delivered = true;
+      frame.contentWindow.postMessage(credential, root.dataset.targetOrigin);
+			credential = null;
+			challenge = null;
+    } catch (_) {
+			challenge = null;
     }
   });
 })();

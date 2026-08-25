@@ -10,6 +10,7 @@ import (
 	"scriptboard/internal/auditlog"
 	"scriptboard/internal/clusterstatus"
 	"scriptboard/internal/customdashboard"
+	"scriptboard/internal/customtab"
 	"scriptboard/internal/externaltrigger"
 	"scriptboard/internal/fleetstatus"
 	"scriptboard/internal/mysqlmanager"
@@ -51,6 +52,7 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 		{name: "MySQL management SQLite", statements: mysqlmanager.SchemaStatements},
 		{name: "Redis management SQLite", statements: redismanager.SchemaStatements},
 		{name: "custom dashboard SQLite", statements: customdashboard.SchemaStatements},
+		{name: "custom tab SQLite", statements: customtab.SchemaStatements},
 		{name: "Kubernetes monitoring SQLite", statements: clusterstatus.SchemaStatements},
 	}
 	for _, schema := range schemas {
