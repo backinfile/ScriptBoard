@@ -8292,34 +8292,46 @@ Only consumes existing :root tokens — do not redefine them here.
 Merge target: append to internal/web/ui/assets/app.css.
 */
 
-/* ---------------------------------------------------------------- *
- * A. Page head — preview .page-head pattern (h1 22px / 680 / -.02em,
- *    muted 13px sub, actions bottom-aligned)                        *
- * ---------------------------------------------------------------- */
-[data-variables-page] .page-heading,
-[data-audit-page] .page-heading,
-[data-schedules-page] .page-heading,
-[data-external-interfaces-page] .page-heading,
+/* Primary navigation pages share the applications/containers heading scale. */
+.primary-page-heading {
+  align-items: flex-end;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+.primary-page-heading h1 {
+  max-width: none;
+  font-size: clamp(1.8rem, 3vw, 2.4rem);
+  font-weight: 660;
+  line-height: 1.1;
+  letter-spacing: -.022em;
+}
+.primary-page-heading .page-eyebrow {
+  margin-bottom: 6px;
+  font-size: .75rem;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+}
+.primary-page-heading > div > p:last-child {
+  max-width: 68ch;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: .86rem;
+}
+
+/* Compact headings are reserved for secondary settings and editor surfaces. */
 .settings-workspace .page-heading,
 .editor-page .page-heading {
   align-items: flex-end;
   gap: 16px;
   margin-bottom: 18px;
 }
-[data-variables-page] .page-heading h1,
-[data-audit-page] .page-heading h1,
-[data-schedules-page] .page-heading h1,
-[data-external-interfaces-page] .page-heading h1,
 .settings-workspace .page-heading h1,
 .editor-page .page-heading h1 {
   font-size: 1.375rem; /* 22px */
   font-weight: 680;
   letter-spacing: -.02em;
 }
-[data-variables-page] .page-heading .page-eyebrow,
-[data-audit-page] .page-heading .page-eyebrow,
-[data-schedules-page] .page-heading .page-eyebrow,
-[data-external-interfaces-page] .page-heading .page-eyebrow,
 .settings-workspace .page-heading .page-eyebrow,
 .editor-page .page-heading .page-eyebrow {
   margin-bottom: 4px;
@@ -8328,10 +8340,6 @@ Merge target: append to internal/web/ui/assets/app.css.
   letter-spacing: .08em;
   text-transform: uppercase;
 }
-[data-variables-page] .page-heading > div > p:last-child,
-[data-audit-page] .page-heading > div > p:last-child,
-[data-schedules-page] .page-heading > div > p:last-child,
-[data-external-interfaces-page] .page-heading > div > p:last-child,
 .settings-workspace .page-heading > div > p:last-child,
 .editor-page .page-heading > div > p:last-child {
   margin-top: 2px;
@@ -9190,6 +9198,11 @@ body:has(> .error-page) {
 
 @media (max-width: 1000px) {
   .database-detail { height: auto; min-height: 0; overflow-y: visible; }
+}
+
+@media (max-width: 760px) {
+  .primary-page-heading { align-items: flex-start; }
+  .primary-page-heading > .heading-actions { width: 100%; justify-content: flex-start; }
 }
 
 @media (max-width: 860px) {

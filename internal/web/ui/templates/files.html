@@ -9,7 +9,7 @@
 </head>
 <body>
 <main class="workspace files-page">
-  <header class="page-heading">
+  <header class="page-heading primary-page-heading">
     <div><p class="page-eyebrow">{{t .Locale "files.eyebrow"}}</p><h1>{{t .Locale "files.title"}}</h1><p>{{t .Locale "files.description"}}</p></div>
     {{if .CanMutateCurrent}}<div class="heading-actions files-heading-actions">
       <a class="button" href="/resources/files/new-directory?path={{urlquery .CurrentPath}}" data-task-link><span data-lucide="folder-plus" aria-hidden="true"></span>{{t .Locale "files.new_directory"}}</a>

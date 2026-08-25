@@ -3,7 +3,7 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "service_logs.title"}} · ScriptBoard</title></head>
 <body>
 <main class="workspace audit-workspace" data-service-logs-page>
-  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "audit.eyebrow"}}</p><h1>{{t .Locale "audit.title"}}</h1><p>{{t .Locale "audit.description"}}</p></div></header>
+  <header class="page-heading primary-page-heading"><div><p class="page-eyebrow">{{t .Locale "audit.eyebrow"}}</p><h1>{{t .Locale "audit.title"}}</h1><p>{{t .Locale "audit.description"}}</p></div></header>
   <nav class="audit-source-tabs" aria-label="{{t .Locale "audit.sources"}}"><a href="/history/audit"><span data-lucide="list-checks" aria-hidden="true"></span>{{t .Locale "audit.events"}}</a><a href="/history/audit/service-logs" aria-current="page"><span data-lucide="scroll-text" aria-hidden="true"></span>{{t .Locale "service_logs.title"}}</a></nav>
   <section class="audit-service-logs">
     <header class="audit-service-logs__heading"><div><h2>{{t .Locale "service_logs.title"}}</h2><p>{{t .Locale "service_logs.description"}}</p></div></header>

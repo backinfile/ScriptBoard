@@ -3,7 +3,7 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "variables.title"}} · ScriptBoard</title></head>
 <body>
 <main class="workspace" data-variables-page>
-  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "variables.eyebrow"}}</p><h1>{{t .Locale "variables.title"}}</h1><p>{{t .Locale "variables.description"}}</p></div><a class="button button--primary" href="/resources/variables/new" data-task-link><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "variables.create"}}</a></header>
+  <header class="page-heading primary-page-heading"><div><p class="page-eyebrow">{{t .Locale "variables.eyebrow"}}</p><h1>{{t .Locale "variables.title"}}</h1><p>{{t .Locale "variables.description"}}</p></div><a class="button button--primary" href="/resources/variables/new" data-task-link><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "variables.create"}}</a></header>
   <aside class="inline-notice"><span data-lucide="info" aria-hidden="true"></span><p>{{t .Locale "variables.plaintext_notice"}}</p></aside>
   <div data-deferred-region>
   {{if .DeferredData}}

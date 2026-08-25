@@ -3,7 +3,7 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "external.title"}} · ScriptBoard</title></head>
 <body>
 <main class="workspace external-interfaces-page" data-external-interfaces-page>
-  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "external.eyebrow"}}</p><h1>{{t .Locale "external.title"}}</h1><p>{{t .Locale "external.description"}}</p></div>{{if eq .ActiveTab "interfaces"}}<a class="button button--primary" href="/config/external-interfaces/groups/new" data-task-link><span data-lucide="folder-plus" aria-hidden="true"></span>{{t .Locale "external.create_group"}}</a>{{end}}</header>
+  <header class="page-heading primary-page-heading"><div><p class="page-eyebrow">{{t .Locale "external.eyebrow"}}</p><h1>{{t .Locale "external.title"}}</h1><p>{{t .Locale "external.description"}}</p></div>{{if eq .ActiveTab "interfaces"}}<a class="button button--primary" href="/config/external-interfaces/groups/new" data-task-link><span data-lucide="folder-plus" aria-hidden="true"></span>{{t .Locale "external.create_group"}}</a>{{end}}</header>
   <nav class="external-interface-tabs" aria-label="{{t .Locale "external.sections"}}">
     <a href="/config/external-interfaces" {{if eq .ActiveTab "interfaces"}}aria-current="page"{{end}}><span data-lucide="network" aria-hidden="true"></span>{{t .Locale "external.interface_list"}}</a>
     <a href="/config/external-interfaces?tab=activity" {{if eq .ActiveTab "activity"}}aria-current="page"{{end}}><span data-lucide="scroll-text" aria-hidden="true"></span>{{t .Locale "external.activity"}}</a>

@@ -3,7 +3,7 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "audit.title"}} · ScriptBoard</title></head>
 <body>
 <main class="workspace" data-audit-page>
-  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "audit.eyebrow"}}</p><h1>{{t .Locale "audit.title"}}</h1><p>{{t .Locale "audit.description"}}</p></div><a class="button button--quiet" href="/history/audit.csv" data-native><span data-lucide="download" aria-hidden="true"></span>{{t .Locale "audit.download_csv"}}</a></header>
+  <header class="page-heading primary-page-heading"><div><p class="page-eyebrow">{{t .Locale "audit.eyebrow"}}</p><h1>{{t .Locale "audit.title"}}</h1><p>{{t .Locale "audit.description"}}</p></div><a class="button button--quiet" href="/history/audit.csv" data-native><span data-lucide="download" aria-hidden="true"></span>{{t .Locale "audit.download_csv"}}</a></header>
   <nav class="audit-source-tabs" aria-label="{{t .Locale "audit.sources"}}"><a href="/history/audit" aria-current="page"><span data-lucide="list-checks" aria-hidden="true"></span>{{t .Locale "audit.events"}}</a><a href="/history/audit/service-logs"><span data-lucide="scroll-text" aria-hidden="true"></span>{{t .Locale "service_logs.title"}}</a></nav>
   <section class="section-tools section-tools--history">
     <form class="history-filter-form" method="get" data-async data-async-push>

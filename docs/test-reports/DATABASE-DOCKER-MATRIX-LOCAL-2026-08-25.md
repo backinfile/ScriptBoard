@@ -130,7 +130,7 @@
 
 | 项目 | 当前状态 |
 | --- | --- |
-| ScriptBoard | `http://127.0.0.1:18788`，PID 38348，保持运行 |
+| ScriptBoard | `http://127.0.0.1:18788`，PID 33076，保持运行 |
 | State Root | `D:\Github\worktrees\ScriptBoard\database-unified\.scratch\database-unified-deployment\state` |
 | 管理员 | `admin`；密码仅保留在 State Root 私有文件中 |
 | Docker 项目 | `scriptboard-database-qa`，7 个容器均保持运行 |
@@ -229,6 +229,16 @@
 - 日志表格不再额外右移 28px；来源、文件、大小、更新时间和操作采用共享固定轨道，大小列右对齐、操作列靠右收束。
 - 430px 窄屏恢复为标签—内容卡片排版，大小与操作改为左对齐；页面无横向溢出。
 - 外部 Playwright 验证桌面、移动端、折叠交互和控制台错误均通过；截图保留为 `.scratch/database-docker-matrix/external-logs-desktop.png` 与 `external-logs-mobile.png`。
+
+## 一级页面标题格式补充验收
+
+本轮逐项测试清单：应用、容器、文件、变量、运行记录、审计事件、服务日志、快捷运行、计划任务和外部接口共十个一级页面；逐页核对主标题字号/字重/行高/字距、眉题、说明文字、操作区、桌面底部对齐、移动端左对齐、横向溢出与控制台错误。
+
+- 十个页面统一使用 `primary-page-heading`，紧凑标题仅保留在设置和编辑器等二级页面。
+- 1440px 下十页计算样式一致：主标题 `40.8px / 660 / 44.88px`，说明文字 `14.62px`，标题区底部间距 `18px`。
+- 430px 下十页主标题均为 `30.6px`，标题区左对齐且无横向溢出；操作按钮按窄屏规则换行或铺满。
+- 外部 Playwright 共访问十条真实路由，桌面与移动端均通过，控制台错误为 0；截图保留为 `.scratch/database-docker-matrix/page-heading-audit-desktop.png` 与 `page-heading-variables-mobile.png`。
+- 新增白盒契约测试，防止一级页面重新引入独立的 22px 紧凑标题覆盖。
 
 ## 关键命令与限制
 
