@@ -56,6 +56,13 @@ type databaseServer interface {
 	NonTransactionalTables(context.Context, Instance, string, string) ([]string, error)
 }
 
+type queryDatabaseServer interface {
+	DatabasesIncludingSystem(context.Context, Instance, string) ([]Database, error)
+	Objects(context.Context, Instance, string, string) ([]DatabaseObject, error)
+	ObjectDetails(context.Context, Instance, string, string, string) (ObjectDetails, error)
+	ExecuteSQL(context.Context, Instance, string, SQLRequest) (SQLResult, error)
+}
+
 type mysqlDatabaseServer struct {
 	tlsNames sync.Map
 }
@@ -128,8 +135,10 @@ func (server *mysqlDatabaseServer) Test(ctx context.Context, instance Instance, 
 		return ConnectionTest{Error: secretredaction.String(err.Error())}, err
 	}
 	result := ConnectionTest{OK: true, CanReadDatabases: true}
-	_ = database.QueryRowContext(ctx, `SELECT @@version, @@version_comment,
-		COALESCE((SELECT VARIABLE_VALUE FROM performance_schema.session_status WHERE VARIABLE_NAME='Ssl_cipher'), '')`).Scan(&result.Version, &result.Server, &result.Cipher)
+	_ = database.QueryRowContext(ctx, `SELECT @@version, @@version_comment`).Scan(&result.Version, &result.Server)
+	// MariaDB may not expose the current cipher through performance_schema; session status works for both engines.
+	var cipherName string
+	_ = database.QueryRowContext(ctx, `SHOW SESSION STATUS LIKE 'Ssl_cipher'`).Scan(&cipherName, &result.Cipher)
 	result.TLS = result.Cipher != ""
 	var grants strings.Builder
 	if rows, queryErr := database.QueryContext(ctx, "SHOW GRANTS"); queryErr == nil {
@@ -152,6 +161,14 @@ func (server *mysqlDatabaseServer) Test(ctx context.Context, instance Instance, 
 }
 
 func (server *mysqlDatabaseServer) Databases(ctx context.Context, instance Instance, password string) ([]Database, error) {
+	return server.databases(ctx, instance, password, false)
+}
+
+func (server *mysqlDatabaseServer) DatabasesIncludingSystem(ctx context.Context, instance Instance, password string) ([]Database, error) {
+	return server.databases(ctx, instance, password, true)
+}
+
+func (server *mysqlDatabaseServer) databases(ctx context.Context, instance Instance, password string, includeSystem bool) ([]Database, error) {
 	database, err := server.open(instance, password)
 	if err != nil {
 		return nil, err
@@ -172,11 +189,153 @@ func (server *mysqlDatabaseServer) Databases(ctx context.Context, instance Insta
 		if err := rows.Scan(&item.Name, &item.Charset, &item.Collation, &item.SizeBytes, &item.NonTransactionalTables); err != nil {
 			return nil, err
 		}
-		if !IsSystemDatabase(item.Name) {
+		if includeSystem || !IsSystemDatabase(item.Name) {
 			result = append(result, item)
 		}
 	}
 	return result, rows.Err()
+}
+
+func (server *mysqlDatabaseServer) Objects(ctx context.Context, instance Instance, password, databaseName string) ([]DatabaseObject, error) {
+	database, err := server.open(instance, password)
+	if err != nil {
+		return nil, err
+	}
+	defer database.Close()
+	rows, err := database.QueryContext(ctx, `SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE, COALESCE(ENGINE,''),
+		COALESCE(TABLE_ROWS,0), COALESCE(DATA_LENGTH + INDEX_LENGTH,0)
+		FROM information_schema.TABLES WHERE TABLE_SCHEMA=? ORDER BY TABLE_TYPE, TABLE_NAME`, databaseName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []DatabaseObject
+	for rows.Next() {
+		var object DatabaseObject
+		if err := rows.Scan(&object.Database, &object.Name, &object.Type, &object.Engine, &object.Rows, &object.SizeBytes); err != nil {
+			return nil, err
+		}
+		result = append(result, object)
+	}
+	return result, rows.Err()
+}
+
+func (server *mysqlDatabaseServer) ObjectDetails(ctx context.Context, instance Instance, password, databaseName, objectName string) (ObjectDetails, error) {
+	database, err := server.open(instance, password)
+	if err != nil {
+		return ObjectDetails{}, err
+	}
+	defer database.Close()
+	var details ObjectDetails
+	err = database.QueryRowContext(ctx, `SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE, COALESCE(ENGINE,''),
+		COALESCE(TABLE_ROWS,0), COALESCE(DATA_LENGTH + INDEX_LENGTH,0)
+		FROM information_schema.TABLES WHERE TABLE_SCHEMA=? AND TABLE_NAME=?`, databaseName, objectName).
+		Scan(&details.Object.Database, &details.Object.Name, &details.Object.Type, &details.Object.Engine, &details.Object.Rows, &details.Object.SizeBytes)
+	if err != nil {
+		return ObjectDetails{}, err
+	}
+	columns, err := database.QueryContext(ctx, `SELECT COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE,
+		COLUMN_DEFAULT, EXTRA, COLUMN_COMMENT, ORDINAL_POSITION, COLUMN_KEY
+		FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION`, databaseName, objectName)
+	if err != nil {
+		return ObjectDetails{}, err
+	}
+	for columns.Next() {
+		var column ObjectColumn
+		var nullable, key string
+		var defaultValue sql.NullString
+		if err := columns.Scan(&column.Name, &column.DataType, &column.ColumnType, &nullable, &defaultValue, &column.Extra, &column.Comment, &column.Ordinal, &key); err != nil {
+			_ = columns.Close()
+			return ObjectDetails{}, err
+		}
+		column.Nullable, column.PrimaryKey = nullable == "YES", key == "PRI"
+		if defaultValue.Valid {
+			value := defaultValue.String
+			column.Default = &value
+		}
+		details.Columns = append(details.Columns, column)
+	}
+	if err := columns.Close(); err != nil {
+		return ObjectDetails{}, err
+	}
+	indexes, err := database.QueryContext(ctx, `SELECT INDEX_NAME, NON_UNIQUE, INDEX_TYPE, COLUMN_NAME, SEQ_IN_INDEX
+		FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY INDEX_NAME, SEQ_IN_INDEX`, databaseName, objectName)
+	if err != nil {
+		return ObjectDetails{}, err
+	}
+	defer indexes.Close()
+	positions := make(map[string]int)
+	for indexes.Next() {
+		var name, indexType, column string
+		var nonUnique, sequence int
+		if err := indexes.Scan(&name, &nonUnique, &indexType, &column, &sequence); err != nil {
+			return ObjectDetails{}, err
+		}
+		position, ok := positions[name]
+		if !ok {
+			position = len(details.Indexes)
+			positions[name] = position
+			details.Indexes = append(details.Indexes, ObjectIndex{Name: name, Type: indexType, Unique: nonUnique == 0, Primary: name == "PRIMARY"})
+		}
+		details.Indexes[position].Columns = append(details.Indexes[position].Columns, column)
+	}
+	return details, indexes.Err()
+}
+
+func (server *mysqlDatabaseServer) ExecuteSQL(ctx context.Context, instance Instance, password string, request SQLRequest) (SQLResult, error) {
+	classification, err := classifySQL(request.Statement)
+	if err != nil {
+		return SQLResult{}, err
+	}
+	if request.Mode == SQLModeReadOnly && !classification.readOnly {
+		return SQLResult{StatementType: classification.kind}, errors.New("write SQL is blocked in read-only mode")
+	}
+	if classification.dangerous && !request.AllowDangerous {
+		return SQLResult{StatementType: classification.kind}, errors.New("dangerous SQL requires explicit confirmation")
+	}
+	timeout, maximumRows := boundedSQLLimits(request.Timeout, request.MaxRows)
+	queryContext, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	database, err := server.open(instance, password)
+	if err != nil {
+		return SQLResult{}, err
+	}
+	defer database.Close()
+	connection, err := database.Conn(queryContext)
+	if err != nil {
+		return SQLResult{}, err
+	}
+	defer connection.Close()
+	if _, err := connection.ExecContext(queryContext, "USE "+quoteIdentifier(request.Database)); err != nil {
+		return SQLResult{}, err
+	}
+	started := time.Now()
+	if classification.readOnly {
+		if _, err := connection.ExecContext(queryContext, "SET TRANSACTION READ ONLY"); err != nil {
+			return SQLResult{}, err
+		}
+		transaction, err := connection.BeginTx(queryContext, &sql.TxOptions{ReadOnly: true})
+		if err != nil {
+			return SQLResult{}, err
+		}
+		defer transaction.Rollback()
+		result, err := executeRows(queryContext, transaction, classification.normalized, maximumRows)
+		result.StatementType, result.Duration = classification.kind, time.Since(started)
+		return result, err
+	}
+	if request.Mode != SQLModeWrite {
+		return SQLResult{StatementType: classification.kind}, errors.New("write SQL is blocked in read-only mode")
+	}
+	if _, err := connection.ExecContext(queryContext, "SET SESSION sql_safe_updates=1"); err != nil {
+		return SQLResult{}, err
+	}
+	execution, err := connection.ExecContext(queryContext, classification.normalized)
+	result := SQLResult{StatementType: classification.kind, Duration: time.Since(started)}
+	if err != nil {
+		return result, err
+	}
+	result.AffectedRows, _ = execution.RowsAffected()
+	return result, nil
 }
 
 func (server *mysqlDatabaseServer) Status(ctx context.Context, instance Instance, password string) (Status, error) {
@@ -191,21 +350,22 @@ func (server *mysqlDatabaseServer) Status(ctx context.Context, instance Instance
 	}
 	values := make(map[string]float64)
 	rows, err := database.QueryContext(ctx, `SHOW GLOBAL STATUS WHERE Variable_name IN
-		('Uptime','Threads_connected','Threads_running','Questions','Com_commit','Com_rollback','Slow_queries','Ssl_cipher')`)
+		('Uptime','Threads_connected','Threads_running','Questions','Com_commit','Com_rollback','Slow_queries')`)
 	if err != nil {
 		return Status{}, err
 	}
 	for rows.Next() {
 		var name, value string
 		if rows.Scan(&name, &value) == nil {
-			if name == "Ssl_cipher" {
-				result.Cipher = value
-			} else if number, parseErr := strconv.ParseFloat(value, 64); parseErr == nil {
+			if number, parseErr := strconv.ParseFloat(value, 64); parseErr == nil {
 				values[name] = number
 			}
 		}
 	}
 	_ = rows.Close()
+	// Read the TLS state from this session instead of the global status, which is empty on MariaDB.
+	var cipherName string
+	_ = database.QueryRowContext(ctx, `SHOW SESSION STATUS LIKE 'Ssl_cipher'`).Scan(&cipherName, &result.Cipher)
 	uptime := values["Uptime"]
 	result.Uptime = time.Duration(uptime) * time.Second
 	result.CurrentConnections = uint64(values["Threads_connected"])

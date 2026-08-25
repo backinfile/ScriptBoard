@@ -615,7 +615,7 @@ func TestExternalLogFilesTabListsSearchesAndDownloadsCurrentAndRotatedFiles(t *t
 	logsPage := readLogs("")
 	for _, expected := range []string{
 		`href="/config/external-interfaces?tab=logs" aria-current="page"`, `data-external-log-files`, `Archive receiver`,
-		`<details class="external-log-group" open>`, `class="external-log-group__chevron"`, `class="external-log-entry__identity"`, `<h3>Archive receivers</h3>`, `<code>archive-receivers</code>`,
+		`<details class="external-log-group" open>`, `class="external-log-group__chevron"`, `class="external-log-entry__identity"`, `class="external-log-files-table__columns"`, `class="external-log-column--location"`, `class="external-log-cell--size"`, `<h3>Archive receivers</h3>`, `<code>archive-receivers</code>`,
 		`data-preserve-scroll`,
 		`incoming.log`, `incoming.log.1`, `name="tab" value="logs"`, `/resources/files/log?path=` + url.QueryEscape(logFile), `/resources/files/log/download?path=` + url.QueryEscape(logFile),
 	} {

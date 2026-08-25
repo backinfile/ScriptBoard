@@ -233,8 +233,18 @@ SEED: 94d9bb9f.
 .external-log-group__meta { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: .72rem; white-space: nowrap; }
 .external-log-group > summary .external-log-group__chevron { width: 16px; height: 16px; color: var(--faint); transition: transform 160ms ease; }
 .external-log-group:not([open]) .external-log-group__chevron { transform: rotate(-90deg); }
-.external-log-group > .table-shell { margin-left: 28px; border-left: 1px solid var(--rule); }
+/* Fixed shared tracks align every disclosure header, table edge, and metadata column. */
+.external-log-group > .table-shell { margin-left: 0; border-left: 0; }
+.external-log-column--source { width: 24%; }
+.external-log-column--location { width: 34%; }
+.external-log-column--size { width: 9%; }
+.external-log-column--updated { width: 19%; }
+.external-log-column--actions { width: 14%; }
 .external-log-files-table tbody tr { background: var(--surface); }
+.external-log-files-table th, .external-log-files-table td { vertical-align: top; }
+.external-log-files-table .external-log-cell--size { text-align: right; }
+.external-log-files-table .external-log-cell--updated { white-space: nowrap; }
+.external-log-files-table .external-log-cell--actions { text-align: right; }
 .external-log-entry__identity { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 9px; align-items: start; }
 .external-log-entry__identity > svg { width: 16px; height: 16px; margin-top: 2px; color: var(--faint); }
 .external-log-entry__identity strong, .external-log-entry__identity small { display: block; }
@@ -314,6 +324,8 @@ SEED: 94d9bb9f.
   .external-log-filter-form .search-field { width: 100%; max-width: none; flex-basis: auto; }
   .external-log-file code, .external-log-file > small { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
   .external-log-group > .table-shell { margin-left: 0; border-left: 0; }
+  .external-log-files-table .external-log-cell--size, .external-log-files-table .external-log-cell--actions { text-align: left; }
+  .external-log-files-table .external-log-cell--updated { white-space: normal; }
   .external-log-files-table .record-actions__group { justify-content: flex-start; }
 }
 
@@ -2700,11 +2712,13 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .mysql-overview-strip div { display: grid; gap: 4px; min-width: 0; }
 .mysql-overview-strip code { overflow-wrap: anywhere; }
 .workspace[data-mysql-workspace] { width: min(100%, var(--content-max)); max-width: var(--content-max); margin: 0 auto; padding: 0; }
+.workspace[data-database-workspace] { width: min(100%, var(--content-max)); max-width: var(--content-max); margin: 0 auto; padding: 0; }
 .mysql-instance-workspace { display: grid; min-height: max(600px, calc(100vh - 154px)); grid-template-columns: minmax(240px, 280px) minmax(0, 1fr); align-items: stretch; margin-top: 0; border-top: 1px solid var(--rule-strong); }
 .mysql-instance-rail { min-width: 0; padding: 28px 22px 72px var(--workspace-gutter); border-right: 1px solid var(--rule); }
-.mysql-instance-rail__head { margin-bottom: 18px; }
+.mysql-instance-rail__head { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
 .mysql-instance-rail__head p { margin: 0 0 5px; }
 .mysql-instance-rail__head h2 { margin: 0; font-size: 1rem; letter-spacing: -.02em; }
+.mysql-instance-rail__head > small { color: var(--faint); font: 600 .7rem/1.4 var(--font-mono); }
 .mysql-instance-tabs { display: grid; gap: 2px; }
 .mysql-instance-tabs a { display: grid; min-width: 0; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 3px 10px; padding: 11px 12px; color: var(--ink); background: transparent; border-radius: var(--radius-sm); text-decoration: none; }
 .mysql-instance-tabs a:hover { color: var(--ink); background: var(--surface); }
@@ -2714,6 +2728,12 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .mysql-instance-tabs__copy strong, .mysql-instance-tabs__copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mysql-instance-tabs__copy strong { font-size: .8rem; }
 .mysql-instance-tabs__copy small { color: var(--muted); font: .64rem/1.35 var(--font-mono); }
+.database-connection-title { display: flex; min-width: 0; align-items: baseline; gap: 7px; }
+.database-connection-title strong { min-width: 0; }
+.database-connection-title > small { flex: 0 0 auto; color: var(--faint); font-family: var(--font-sans); font-size: .7rem; font-weight: 650; letter-spacing: .025em; }
+.database-connection-tabs a[data-engine="redis"] .mysql-instance-tabs__icon { color: var(--accent-text); }
+.database-connection-tabs .mysql-instance-tabs__state { grid-column: 2; justify-self: start; }
+.database-connection-empty { margin: 0; padding: 24px 10px; color: var(--muted); font-size: .75rem; line-height: 1.55; }
 .mysql-instance-tabs__state { display: inline-flex; align-items: center; gap: 4px; font-size: .62rem; font-weight: 650; white-space: nowrap; }
 .mysql-instance-tabs__state[data-state="failed"] { color: var(--danger); }
 .mysql-instance-tabs__state[data-state="untried"] { color: var(--text-muted); }
@@ -8351,34 +8371,46 @@ Only consumes existing :root tokens — do not redefine them here.
 Merge target: append to internal/web/ui/assets/app.css.
 */
 
-/* ---------------------------------------------------------------- *
- * A. Page head — preview .page-head pattern (h1 22px / 680 / -.02em,
- *    muted 13px sub, actions bottom-aligned)                        *
- * ---------------------------------------------------------------- */
-[data-variables-page] .page-heading,
-[data-audit-page] .page-heading,
-[data-schedules-page] .page-heading,
-[data-external-interfaces-page] .page-heading,
+/* Primary navigation pages share the applications/containers heading scale. */
+.primary-page-heading {
+  align-items: flex-end;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+.primary-page-heading h1 {
+  max-width: none;
+  font-size: clamp(1.8rem, 3vw, 2.4rem);
+  font-weight: 660;
+  line-height: 1.1;
+  letter-spacing: -.022em;
+}
+.primary-page-heading .page-eyebrow {
+  margin-bottom: 6px;
+  font-size: .75rem;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+}
+.primary-page-heading > div > p:last-child {
+  max-width: 68ch;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: .86rem;
+}
+
+/* Compact headings are reserved for secondary settings and editor surfaces. */
 .settings-workspace .page-heading,
 .editor-page .page-heading {
   align-items: flex-end;
   gap: 16px;
   margin-bottom: 18px;
 }
-[data-variables-page] .page-heading h1,
-[data-audit-page] .page-heading h1,
-[data-schedules-page] .page-heading h1,
-[data-external-interfaces-page] .page-heading h1,
 .settings-workspace .page-heading h1,
 .editor-page .page-heading h1 {
   font-size: 1.375rem; /* 22px */
   font-weight: 680;
   letter-spacing: -.02em;
 }
-[data-variables-page] .page-heading .page-eyebrow,
-[data-audit-page] .page-heading .page-eyebrow,
-[data-schedules-page] .page-heading .page-eyebrow,
-[data-external-interfaces-page] .page-heading .page-eyebrow,
 .settings-workspace .page-heading .page-eyebrow,
 .editor-page .page-heading .page-eyebrow {
   margin-bottom: 4px;
@@ -8387,10 +8419,6 @@ Merge target: append to internal/web/ui/assets/app.css.
   letter-spacing: .08em;
   text-transform: uppercase;
 }
-[data-variables-page] .page-heading > div > p:last-child,
-[data-audit-page] .page-heading > div > p:last-child,
-[data-schedules-page] .page-heading > div > p:last-child,
-[data-external-interfaces-page] .page-heading > div > p:last-child,
 .settings-workspace .page-heading > div > p:last-child,
 .editor-page .page-heading > div > p:last-child {
   margin-top: 2px;
@@ -9233,17 +9261,177 @@ body:has(> .error-page) {
 .assistant-chat { background: var(--canvas); }
 .assistant-header { background: var(--surface); }
 
+/* Let the operational transcript use the full chat column; message internals
+   still own their wrapping rules so long prose, tables, and tool output remain safe. */
+.assistant-transcript { width: 100%; align-self: stretch; padding-right: clamp(24px, 3vw, 48px); padding-left: clamp(24px, 3vw, 48px); }
+.assistant-composer-zone { width: 100%; align-self: stretch; padding-right: clamp(24px, 3vw, 48px); padding-left: clamp(24px, 3vw, 48px); }
+.assistant-message--assistant { max-width: 100%; }
+
+/* MySQL and Redis share this invariant detail stage, preventing a connection
+   switch from changing the right-hand panel's dimensions. */
+.database-detail { width: 100%; height: max(600px, calc(100vh - 154px)); min-height: max(600px, calc(100vh - 154px)); align-self: stretch; overflow-y: auto; }
+
+@media (max-width: 1000px) {
+  .database-detail { height: auto; min-height: 0; overflow-y: visible; }
+}
+
+@media (max-width: 760px) {
+  .primary-page-heading { align-items: flex-start; }
+  .primary-page-heading > .heading-actions { width: 100%; justify-content: flex-start; }
+}
+
 @media (max-width: 860px) {
   .assistant-workspace { grid-template-columns: minmax(0, 1fr); }
-  .assistant-message--user, .assistant-message--assistant { max-width: 88%; }
+  .assistant-transcript { padding-right: 18px; padding-left: 18px; }
+  .assistant-composer-zone { width: 100%; padding-right: 10px; padding-left: 10px; }
+  .assistant-message--user { max-width: 88%; }
+  .assistant-message--assistant { max-width: 100%; }
 }
-.database-engine-switch{display:inline-flex;align-items:center;gap:.2rem;padding:.22rem;margin:0 0 1rem;border:1px solid var(--border);border-radius:.7rem;background:var(--surface-raised)}
-.database-engine-switch a{min-width:5.5rem;padding:.48rem .9rem;border-radius:.5rem;color:var(--text-muted);font-size:.78rem;font-weight:750;text-align:center;text-decoration:none}
-.database-engine-switch a[aria-current="page"]{background:var(--surface-strong);color:var(--text)}
-.redis-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-top:1px solid var(--border)}
-.redis-metrics>div{display:grid;gap:.35rem;padding:1.2rem;border-bottom:1px solid var(--border)}
-.redis-metrics>div:not(:nth-child(3n+1)){border-left:1px solid var(--border)}
-.redis-metrics small{color:var(--text-muted)}.redis-metrics strong{font-size:1.2rem}
-.redis-pattern{display:flex;align-items:center;gap:.5rem;color:var(--text-muted);font-size:.78rem}.redis-pattern input{min-width:14rem}
-.redis-key-list{border-top:1px solid var(--border)}.redis-key-row{display:grid;grid-template-columns:minmax(0,1fr) 7rem 7rem 7rem;gap:1rem;align-items:center;min-height:3rem;border-bottom:1px solid var(--border);font-size:.78rem}.redis-key-row code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.redis-key-row--head{color:var(--text-muted);font-size:.68rem;text-transform:uppercase;letter-spacing:.08em}
-@media(max-width:760px){.redis-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.redis-metrics>div:not(:nth-child(3n+1)){border-left:0}.redis-metrics>div:nth-child(even){border-left:1px solid var(--border)}.redis-key-row{grid-template-columns:minmax(0,1fr) 5rem}.redis-key-row>*:nth-child(n+3){display:none}}
+.database-connection-rail { display: flex; flex-direction: column; gap: 24px; }
+.database-connection-rail > .mysql-instance-rail__head { margin-bottom: 0; }
+.database-engine-choice { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin: 0; padding: 18px var(--overlay-header-x); background: var(--rule); border-bottom: 1px solid var(--rule); }
+.database-engine-choice a { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px; align-items: center; min-height: 58px; padding: 10px 12px; color: var(--muted); background: var(--surface); text-decoration: none; }
+.database-engine-choice a:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+.database-engine-choice a:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+.database-engine-choice a:hover { color: var(--ink); background: var(--surface-2); }
+.database-engine-choice a[aria-current="page"] { position: relative; z-index: 1; color: var(--accent-text); background: var(--accent-soft); outline: 1px solid var(--accent-border); outline-offset: -1px; }
+.database-engine-choice a > svg { width: 20px; height: 20px; justify-self: center; }
+.database-engine-choice a > span { display: grid; gap: 2px; min-width: 0; }
+.database-engine-choice strong { color: inherit; font-size: .85rem; }
+.database-engine-choice small { color: var(--faint); font-size: .7rem; }
+.redis-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--rule); }
+.redis-metrics > div { display: grid; gap: .35rem; padding: 1.2rem; border-bottom: 1px solid var(--rule); }
+.redis-metrics > div:not(:nth-child(3n+1)) { border-left: 1px solid var(--rule); }
+.redis-metrics small { color: var(--muted); }
+.redis-metrics strong { font-size: 1.125rem; }
+.redis-scan-toolbar { display: grid; grid-template-columns: minmax(16rem, 1fr) auto auto; gap: 14px; align-items: end; padding: 18px 20px; background: var(--canvas); border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+.redis-pattern { display: grid; gap: 7px; color: var(--muted); font-size: .72rem; font-weight: 650; letter-spacing: .04em; }
+.redis-pattern__control { position: relative; display: block; }
+.redis-pattern__control > svg { position: absolute; top: 50%; left: 12px; width: 16px; height: 16px; color: var(--faint); transform: translateY(-50%); pointer-events: none; }
+.redis-pattern input { width: 100%; min-width: 14rem; padding-left: 38px; }
+.redis-scan-toolbar__status { display: flex; align-items: center; gap: 8px; min-height: 42px; padding: 0 4px; color: var(--muted); font-size: .75rem; white-space: nowrap; }
+.redis-scan-toolbar__status > svg { width: 15px; height: 15px; color: var(--accent); }
+.redis-key-browser { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(20rem, .85fr); min-height: 31rem; }
+.redis-key-groups { min-width: 0; border-right: 1px solid var(--rule); }
+.redis-key-group > summary { min-height: 54px; padding: 8px 16px; background: var(--surface); }
+.redis-key-group > summary h3 { font-size: .84rem; }
+.redis-key-group > summary code { font-size: .65rem; }
+.redis-key-group > summary > div > svg { width: 18px; height: 18px; }
+.redis-key-list { border-top: 1px solid var(--rule); }
+.redis-key-row { display: grid; grid-template-columns: minmax(0, 1fr) 5rem 6rem 6rem; gap: 1rem; align-items: center; min-height: 3rem; padding: 0 16px; color: var(--ink); border-bottom: 1px solid var(--rule); font-size: .8125rem; text-decoration: none; }
+.redis-key-row:not(.redis-key-row--head):hover { background: var(--surface-2); }
+.redis-key-row.is-selected { color: var(--accent-text); background: var(--accent-soft); box-shadow: inset 3px 0 var(--accent); }
+.redis-key-row code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.redis-key-row--head { color: var(--muted); font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; }
+.redis-key-empty, .redis-value-inspector__empty { display: grid; place-items: center; align-content: center; gap: 10px; min-height: 20rem; padding: 32px; color: var(--muted); text-align: center; }
+.redis-key-empty > svg, .redis-value-inspector__empty > svg { width: 26px; height: 26px; color: var(--faint); }
+.redis-value-inspector { min-width: 0; background: var(--canvas); }
+.redis-value-inspector > header { display: flex; min-height: 76px; align-items: center; justify-content: space-between; gap: 18px; padding: 14px 18px; border-bottom: 1px solid var(--rule); }
+.redis-value-inspector > header h3 { max-width: 34rem; margin: 4px 0 0; overflow: hidden; font-size: .9rem; text-overflow: ellipsis; white-space: nowrap; }
+.redis-value-inspector__meta { display: flex; flex-wrap: wrap; gap: 14px; padding: 10px 18px; color: var(--muted); border-bottom: 1px solid var(--rule); font-size: .72rem; }
+.redis-value-content { min-height: 20rem; margin: 0; padding: 18px; overflow: auto; color: var(--ink); background: transparent; font: .78rem/1.65 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.redis-value-items { min-width: 0; }
+.redis-value-item { display: grid; grid-template-columns: minmax(7rem, .4fr) minmax(0, 1fr); gap: 16px; padding: 10px 18px; border-bottom: 1px solid var(--rule); font-size: .76rem; }
+.redis-value-item pre { min-width: 0; margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.redis-value-item--head { color: var(--muted); font-size: .67rem; text-transform: uppercase; letter-spacing: .08em; }
+@media (max-width: 760px) {
+  .database-engine-choice { grid-template-columns: 1fr; padding: 14px 18px; }
+  .database-engine-choice a:first-child, .database-engine-choice a:last-child { border-radius: var(--radius-sm); }
+  .redis-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .redis-metrics > div:not(:nth-child(3n+1)) { border-left: 0; }
+  .redis-metrics > div:nth-child(even) { border-left: 1px solid var(--rule); }
+  .redis-key-row { grid-template-columns: minmax(0, 1fr) 5rem; }
+  .redis-key-row > *:nth-child(n+3) { display: none; }
+	.redis-scan-toolbar { grid-template-columns: 1fr; align-items: stretch; }
+	.redis-scan-toolbar__status { min-height: auto; }
+	.redis-key-browser { grid-template-columns: 1fr; }
+	.redis-key-groups { border-right: 0; }
+	.redis-value-inspector { border-top: 1px solid var(--rule-strong); }
+}
+
+/* MySQL object browser and SQL console extend the shared database detail stage. */
+.database-tab-panel { width: 100%; min-width: 0; }
+.mysql-detail > .database-tab-panel { min-height: calc(100% - 176px); margin-top: 0; padding-top: 28px; }
+.mysql-workbench-panel > .section-heading { margin-bottom: 18px; }
+.mysql-object-controls, .mysql-object-controls form { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.mysql-object-controls label { display: grid; min-width: 190px; gap: 5px; color: var(--muted); font-size: .72rem; font-weight: 600; }
+.mysql-object-controls select { min-height: 36px; }
+.mysql-object-browser { display: grid; min-height: 34rem; grid-template-columns: minmax(15rem, .34fr) minmax(0, 1fr); border: 1px solid var(--rule); border-radius: var(--radius); overflow: hidden; }
+.mysql-object-list { min-width: 0; background: var(--surface); border-right: 1px solid var(--rule); }
+.mysql-object-list > header { display: flex; min-height: 54px; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--rule); }
+.mysql-object-list > header small { color: var(--faint); font-size: .7rem; }
+.mysql-object-list > a { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 10px; align-items: center; min-height: 52px; padding: 8px 14px; color: var(--ink); border-bottom: 1px solid var(--rule); text-decoration: none; }
+.mysql-object-list > a:hover { background: var(--surface-2); }
+.mysql-object-list > a[aria-current="page"] { color: var(--accent-text); background: var(--accent-soft); box-shadow: inset 3px 0 var(--accent); }
+.mysql-object-list > a > svg { width: 16px; height: 16px; color: var(--faint); }
+.mysql-object-list > a > span { display: grid; min-width: 0; gap: 2px; }
+.mysql-object-list > a strong, .mysql-object-list > a small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mysql-object-list > a small { color: var(--faint); font-size: .68rem; }
+.mysql-object-inspector { min-width: 0; background: var(--canvas); }
+.mysql-object-inspector > header { display: flex; min-height: 82px; align-items: center; justify-content: space-between; gap: 18px; padding: 14px 18px; background: var(--surface); border-bottom: 1px solid var(--rule); }
+.mysql-object-inspector > header p, .mysql-object-inspector > header h4, .mysql-object-inspector > header small { margin: 0; }
+.mysql-object-inspector > header p { color: var(--faint); font-size: .68rem; text-transform: uppercase; letter-spacing: .07em; }
+.mysql-object-inspector > header h4 { margin: 4px 0; font-size: 1.05rem; }
+.mysql-object-inspector > header > div:last-child { display: flex; flex-wrap: wrap; gap: 8px; }
+.mysql-object-inspector > header form { display: contents; }
+.mysql-schema-group { border-bottom: 1px solid var(--rule); }
+.mysql-schema-group > summary { display: flex; min-height: 48px; align-items: center; justify-content: space-between; padding: 10px 18px; color: var(--ink); background: var(--surface); cursor: pointer; }
+.mysql-schema-group > summary > span { display: inline-flex; align-items: center; gap: 8px; font-weight: 650; }
+.mysql-schema-group > summary svg { width: 16px; height: 16px; color: var(--faint); }
+.mysql-schema-group > summary small { min-width: 24px; padding: 2px 7px; color: var(--faint); background: var(--surface-2); border-radius: 999px; text-align: center; }
+.mysql-schema-table { min-width: 760px; }
+.mysql-index-list > div { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 18px; border-top: 1px solid var(--rule); }
+.mysql-index-list > div > svg { width: 16px; height: 16px; color: var(--faint); }
+.mysql-index-list > div > span:nth-child(2) { display: grid; gap: 2px; }
+.mysql-index-list small { color: var(--faint); }
+.mysql-workbench-empty { display: grid; min-height: 14rem; place-items: center; align-content: center; gap: 9px; padding: 24px; color: var(--muted); text-align: center; }
+.mysql-workbench-empty--inspector { min-height: 34rem; }
+.mysql-workbench-empty > svg { width: 26px; height: 26px; color: var(--faint); }
+.mysql-workbench-empty h4, .mysql-workbench-empty p { max-width: 42ch; margin: 0; }
+.mysql-sql-console { overflow: hidden; background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); }
+.mysql-sql-context { display: grid; grid-template-columns: minmax(12rem, 1fr) minmax(12rem, .7fr) auto; gap: 16px; align-items: end; padding: 16px 18px; background: var(--surface-2); border-bottom: 1px solid var(--rule); }
+.mysql-sql-context > div, .mysql-sql-context > label { display: grid; gap: 4px; min-width: 0; }
+.mysql-sql-context span, .mysql-sql-context legend { color: var(--faint); font-size: .68rem; font-weight: 650; }
+.mysql-sql-context code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mysql-sql-context fieldset { display: flex; gap: 4px; margin: 0; padding: 0; border: 0; }
+.mysql-sql-context fieldset legend { margin-bottom: 5px; }
+.mysql-sql-context fieldset label > input { position: absolute; opacity: 0; pointer-events: none; }
+.mysql-sql-context fieldset label > span { display: inline-flex; min-height: 36px; align-items: center; gap: 7px; padding: 7px 10px; color: var(--muted); background: var(--surface); border: 1px solid var(--rule); cursor: pointer; }
+.mysql-sql-context fieldset label:first-of-type > span { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+.mysql-sql-context fieldset label:last-of-type > span { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+.mysql-sql-context fieldset input:checked + span { color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent-border); }
+.mysql-sql-context fieldset svg { width: 15px; height: 15px; }
+.mysql-sql-editor__bar { display: flex; justify-content: space-between; gap: 10px; padding: 8px 14px; color: var(--faint); background: var(--canvas); border-bottom: 1px solid var(--rule); font: 600 .7rem/1.4 var(--font-mono); }
+.mysql-sql-editor textarea { display: block; width: 100%; min-height: 15rem; padding: 16px 18px; resize: vertical; color: var(--ink); background: var(--surface); border: 0; border-radius: 0; font: .82rem/1.65 var(--font-mono); }
+.mysql-sql-editor textarea:focus { box-shadow: inset 0 0 0 2px var(--accent); outline: 0; }
+.mysql-write-confirm { display: flex; gap: 12px; padding: 14px 18px; color: var(--warning); background: var(--warning-soft); border-top: 1px solid var(--warning-border); }
+.mysql-write-confirm[hidden] { display: none; }
+.mysql-write-confirm > svg { flex: 0 0 auto; width: 18px; height: 18px; margin-top: 2px; }
+.mysql-write-confirm p { margin: 4px 0 9px; color: var(--muted); }
+.mysql-write-confirm label { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: .76rem; }
+.mysql-sql-console > footer { display: flex; align-items: end; justify-content: space-between; gap: 18px; padding: 12px 18px; background: var(--surface-2); border-top: 1px solid var(--rule); }
+.mysql-sql-limits { display: flex; gap: 10px; }
+.mysql-sql-limits label { display: grid; gap: 4px; color: var(--faint); font-size: .68rem; font-weight: 650; }
+.mysql-sql-limits input { width: 92px; }
+.mysql-sql-limits label > span { display: flex; align-items: center; gap: 5px; }
+.mysql-query-result { margin-top: 18px; overflow: hidden; background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); }
+.mysql-query-result > header { display: flex; min-height: 52px; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 14px; background: var(--surface-2); border-bottom: 1px solid var(--rule); }
+.mysql-query-result > header > div { display: flex; align-items: center; gap: 8px; }
+.mysql-query-result > header small { color: var(--muted); }
+.mysql-query-result .table-shell { max-height: 32rem; overflow: auto; }
+.mysql-query-result .records-table { min-width: max-content; }
+.mysql-query-result td code { max-width: 28rem; }
+.mysql-null { color: var(--faint); font: italic .72rem/1 var(--font-mono); }
+.mysql-query-result__empty { display: flex; align-items: center; gap: 9px; padding: 18px; color: var(--muted); }
+.mysql-query-result__empty svg { width: 18px; height: 18px; color: var(--success); }
+.mysql-sql-error { display: flex; gap: 10px; margin-top: 18px; }
+@media (max-width: 900px) {
+  .mysql-object-browser, .mysql-sql-context { grid-template-columns: 1fr; }
+  .mysql-object-list { max-height: 22rem; overflow: auto; border-right: 0; border-bottom: 1px solid var(--rule); }
+}
+@media (max-width: 760px) {
+  .mysql-detail > .database-tab-panel { min-height: 0; }
+  .mysql-object-controls, .mysql-object-controls form, .mysql-object-controls label { width: 100%; }
+  .mysql-object-inspector > header, .mysql-query-result > header, .mysql-sql-console > footer { align-items: stretch; flex-direction: column; }
+  .mysql-sql-limits { flex-wrap: wrap; }
+}

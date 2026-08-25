@@ -33,6 +33,7 @@ func TestPrimaryWorkspacesShareTheApplicationContentWidth(t *testing.T) {
 		`\.assistant-workspace`,
 		`\.website-monitor-page`,
 		`\.workspace\[data-mysql-workspace\]`,
+		`\.workspace\[data-database-workspace\]`,
 		`\.applications-page`,
 		`\.editor-page`,
 		`\.custom-dashboard-workspace`,
@@ -44,6 +45,23 @@ func TestPrimaryWorkspacesShareTheApplicationContentWidth(t *testing.T) {
 		pattern := regexp.MustCompile(selector + `\s*\{[^}]*max-width:\s*var\(--content-max\)`)
 		if !pattern.MatchString(css) {
 			t.Errorf("primary workspace %q does not inherit --content-max", selector)
+		}
+	}
+}
+
+func TestAssistantAndDatabaseDetailStagesUseAvailableWidth(t *testing.T) {
+	t.Parallel()
+
+	stylesheet, err := webFiles.ReadFile("ui/assets/app.css")
+	if err != nil {
+		t.Fatalf("read application stylesheet: %v", err)
+	}
+
+	css := string(stylesheet)
+	for _, selector := range []string{`\.assistant-transcript`, `\.assistant-composer-zone`, `\.assistant-message--assistant`, `\.database-detail`} {
+		pattern := regexp.MustCompile(selector + `\s*\{[^}]*width:\s*100%`)
+		if !pattern.MatchString(css) {
+			t.Errorf("right-hand content selector %q does not use the available width", selector)
 		}
 	}
 }

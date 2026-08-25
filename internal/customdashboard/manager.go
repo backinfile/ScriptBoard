@@ -653,12 +653,14 @@ func (m *Manager) MoveCard(ctx context.Context, id string, direction int) (strin
 	if destination < 0 || destination >= len(cards) {
 		return dashboardID, nil
 	}
+	// Reassign visible positions instead of swapping stored values: legacy or
+	// imported cards can share a sort_order, making an equal-value swap a no-op.
+	cards[index], cards[destination] = cards[destination], cards[index]
 	now := m.now().UTC().UnixNano()
-	if _, err := transaction.ExecContext(ctx, `UPDATE custom_dashboard_cards SET sort_order=?,updated_at=? WHERE id=?`, cards[destination].order, now, cards[index].id); err != nil {
-		return "", err
-	}
-	if _, err := transaction.ExecContext(ctx, `UPDATE custom_dashboard_cards SET sort_order=?,updated_at=? WHERE id=?`, cards[index].order, now, cards[destination].id); err != nil {
-		return "", err
+	for position, card := range cards {
+		if _, err := transaction.ExecContext(ctx, `UPDATE custom_dashboard_cards SET sort_order=?,updated_at=? WHERE id=?`, position+1, now, card.id); err != nil {
+			return "", err
+		}
 	}
 	if err := transaction.Commit(); err != nil {
 		return "", err

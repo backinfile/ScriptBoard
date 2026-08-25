@@ -15,11 +15,13 @@ type redisWireRequest struct {
 	Instance redismanager.Instance    `json:"instance"`
 	Password string                   `json:"password,omitempty"`
 	Scan     redismanager.ScanRequest `json:"scan"`
+	Key      string                   `json:"key,omitempty"`
 }
 type redisWireResponse struct {
 	Test     *redismanager.ConnectionTest `json:"test,omitempty"`
 	Overview *redismanager.Overview       `json:"overview,omitempty"`
 	Scan     *redismanager.ScanPage       `json:"scan,omitempty"`
+	KeyValue *redismanager.KeyValue       `json:"key_value,omitempty"`
 }
 
 type brokerRedisService struct {
@@ -97,6 +99,10 @@ func (s *Server) redisOperation(ctx context.Context, request wireRequest) wireRe
 		var v redismanager.ScanPage
 		v, err = s.redis.Scan(ctx, payload.Instance, payload.Scan)
 		response.Redis.Scan = &v
+	case operationRedisReadKey:
+		var v redismanager.KeyValue
+		v, err = s.redis.ReadKey(ctx, payload.Instance, payload.Key)
+		response.Redis.KeyValue = &v
 	}
 	result := "succeeded"
 	if err != nil {
@@ -128,7 +134,7 @@ func redisAction(operation string) (Action, bool) {
 
 func isRedisOperation(operation string) bool {
 	switch operation {
-	case operationRedisStore, operationRedisDelete, operationRedisTest, operationRedisOverview, operationRedisScan:
+	case operationRedisStore, operationRedisDelete, operationRedisTest, operationRedisOverview, operationRedisScan, operationRedisReadKey:
 		return true
 	}
 	return false
@@ -139,7 +145,7 @@ func validateRedisRequest(request wireRequest) error {
 	}
 	p := request.Redis
 	minimal := request.Operation == operationRedisDelete
-	if !validCredentialSessionToken(request.SessionToken) || (!minimal && !validRedisInstance(p.Instance)) || (minimal && !validRemoteWebsiteID(p.Instance.ID)) || len(p.Password) > 8<<10 || len(p.Scan.Pattern) > 512 || len(p.Scan.Type) > 32 || strings.ContainsAny(p.Scan.Pattern+p.Scan.Type, "\r\n\x00") {
+	if !validCredentialSessionToken(request.SessionToken) || (!minimal && !validRedisInstance(p.Instance)) || (minimal && !validRemoteWebsiteID(p.Instance.ID)) || len(p.Password) > 8<<10 || len(p.Scan.Pattern) > 512 || len(p.Scan.Type) > 32 || len(p.Key) > 512 || strings.ContainsAny(p.Scan.Pattern+p.Scan.Type+p.Key, "\r\n\x00") {
 		return errors.New("Redis request is invalid")
 	}
 	if request.Operation != operationRedisStore && p.Password != "" {
@@ -147,6 +153,9 @@ func validateRedisRequest(request wireRequest) error {
 	}
 	if request.Operation != operationRedisScan && p.Scan != (redismanager.ScanRequest{}) {
 		return errors.New("Redis scan is unrelated")
+	}
+	if (request.Operation == operationRedisReadKey) != (strings.TrimSpace(p.Key) != "") {
+		return errors.New("Redis key is missing or unrelated")
 	}
 	return nil
 }
@@ -205,6 +214,13 @@ func (b *RedisBackend) Scan(ctx context.Context, i redismanager.Instance, r redi
 		return redismanager.ScanPage{}, errors.Join(e, errors.New("missing Redis scan"))
 	}
 	return *v.Scan, e
+}
+func (b *RedisBackend) ReadKey(ctx context.Context, i redismanager.Instance, key string) (redismanager.KeyValue, error) {
+	v, e := b.call(ctx, operationRedisReadKey, redisWireRequest{Instance: i, Key: key})
+	if v.KeyValue == nil {
+		return redismanager.KeyValue{}, errors.Join(e, errors.New("missing Redis key value"))
+	}
+	return *v.KeyValue, e
 }
 
 var _ redismanager.Backend = (*RedisBackend)(nil)

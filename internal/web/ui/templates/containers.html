@@ -16,7 +16,7 @@ FORM: An application-style fact strip and responsive record ledger; state tabs u
 </head>
 <body>
 <main class="workspace container-page" data-container-page data-refresh-unavailable="{{t .Locale "applications.refresh_unavailable"}}" data-csrf-token="{{.CSRFToken}}" data-container-can-manage="{{if .CanManage}}true{{else}}false{{end}}" data-container-return-to="{{containerStatusURL .Query .Query.Status}}">
-  <header class="page-heading container-heading">
+  <header class="page-heading primary-page-heading container-heading">
     <div><p class="page-eyebrow">{{t .Locale "containers.eyebrow"}}</p><h1>{{t .Locale "containers.title"}}</h1><p>{{t .Locale "containers.description"}}</p></div>
   </header>
 

@@ -17,6 +17,7 @@ import (
 )
 
 type mysqlDatabasesPageData struct {
+	databaseWorkspaceData
 	Locale                                        webLocale
 	CSRFToken                                     string
 	BackupRoot                                    string
@@ -39,7 +40,26 @@ type mysqlDatabasesPageData struct {
 	OperationAccepted                             bool
 	Pagination                                    mysqlPagination
 	InstancePagination                            mysqlPagination
+	ObjectDatabases                               []mysqlmanager.Database
+	ObjectRows                                    []mysqlmanager.DatabaseObject
+	ObjectDetails                                 *mysqlmanager.ObjectDetails
+	ObjectPreview                                 *mysqlmanager.SQLResult
+	ObjectDatabase, ObjectName                    string
+	ShowSystemDatabases                           bool
+	SQLDatabase, SQLStatement, SQLMode            string
+	SQLTimeoutSeconds, SQLMaxRows                 int
+	SQLResult                                     *mysqlmanager.SQLResult
+	SQLError                                      string
 }
+
+type mysqlSQLPageState struct {
+	Database, Statement, Mode string
+	TimeoutSeconds, MaxRows   int
+	Result                    *mysqlmanager.SQLResult
+	Error                     string
+}
+
+type mysqlSQLPageStateKey struct{}
 
 type mysqlPagination struct {
 	Page, Pages, Total, Previous, Next int
@@ -97,6 +117,11 @@ func (a *App) mysqlDatabasesPage(response http.ResponseWriter, request *http.Req
 		return
 	}
 	current := request.Context().Value(sessionContextKey).(session)
+	redisInstances, err := a.redis.Instances(request.Context())
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	data := mysqlDatabasesPageData{
 		Locale: resolveWebLocale(request), CSRFToken: current.csrfToken,
 		BackupRoot: a.mysql.BackupRoot(), Instances: instances,
@@ -104,7 +129,8 @@ func (a *App) mysqlDatabasesPage(response http.ResponseWriter, request *http.Req
 		ActiveTab:         "overview",
 		OperationAccepted: request.URL.Query().Get("accepted") == "backup",
 	}
-	if tab := strings.TrimSpace(request.URL.Query().Get("tab")); tab == "databases" || tab == "backups" || tab == "plans" || tab == "operations" {
+	data.databaseWorkspaceData = newDatabaseWorkspaceData(request, "mysql", data.Locale, data.CSRFToken, data.BackupRoot, data.Tools, instances, redisInstances)
+	if tab := strings.TrimSpace(request.URL.Query().Get("tab")); tab == "databases" || tab == "objects" || tab == "sql" || tab == "backups" || tab == "plans" || tab == "operations" {
 		data.ActiveTab = tab
 	}
 	data.InstanceRows, data.InstancePagination = mysqlSlicePageWithSize(instances, mysqlRequestedNamedPage(request, "instance_page"), mysqlInstancePageSize)
@@ -121,6 +147,7 @@ func (a *App) mysqlDatabasesPage(response http.ResponseWriter, request *http.Req
 			http.Error(response, "MySQL instance not found", http.StatusNotFound)
 			return
 		}
+		data.SelectedMySQL = data.Selected
 		allPlans, _ := a.mysql.Plans(request.Context())
 		for _, plan := range allPlans {
 			if plan.InstanceID == selectedID {
@@ -143,11 +170,20 @@ func (a *App) mysqlDatabasesPage(response http.ResponseWriter, request *http.Req
 				break
 			}
 		}
+		for index := range data.ConnectionRows {
+			if data.ConnectionRows[index].Engine == "mysql" && data.ConnectionRows[index].ID == selectedID {
+				data.ConnectionRows[index].ConnectionState = string(data.Selected.ConnectionState)
+				break
+			}
+		}
 		cancel()
 		if statusErr != nil {
 			data.LoadError = secretredaction.String(statusErr.Error())
 		}
 		data.DatabaseCount = len(data.Databases)
+		if data.ActiveTab == "objects" || data.ActiveTab == "sql" {
+			a.loadMySQLWorkbench(request, selectedID, &data)
+		}
 		page := mysqlRequestedPage(request)
 		if data.ActiveTab == "databases" {
 			data.DatabaseRows, data.Pagination = mysqlSlicePage(data.Databases, page)
@@ -213,6 +249,131 @@ func (a *App) mysqlDatabasesPage(response http.ResponseWriter, request *http.Req
 	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = mysqlDatabasesTemplate.Execute(response, data)
+}
+
+func (a *App) loadMySQLWorkbench(request *http.Request, instanceID string, data *mysqlDatabasesPageData) {
+	data.SQLTimeoutSeconds = 10
+	data.SQLMaxRows = 200
+	data.SQLMode = string(mysqlmanager.SQLModeReadOnly)
+	data.ShowSystemDatabases = request.URL.Query().Get("show_system") == "1"
+	data.ObjectDatabases = data.Databases
+	workbenchContext, cancel := context.WithTimeout(request.Context(), 10*time.Second)
+	defer cancel()
+	if data.ShowSystemDatabases {
+		allDatabases, err := a.mysql.DatabasesIncludingSystem(workbenchContext, instanceID)
+		if err != nil {
+			data.LoadError = secretredaction.String(err.Error())
+			return
+		}
+		data.ObjectDatabases = allDatabases
+	}
+	requestedDatabase := strings.TrimSpace(request.URL.Query().Get("database"))
+	for _, database := range data.ObjectDatabases {
+		if requestedDatabase == "" || database.Name == requestedDatabase {
+			data.ObjectDatabase = database.Name
+			if requestedDatabase != "" || data.ObjectDatabase != "" {
+				break
+			}
+		}
+	}
+	data.SQLDatabase = data.ObjectDatabase
+	data.SQLStatement = strings.TrimSpace(request.URL.Query().Get("statement"))
+	if state, ok := request.Context().Value(mysqlSQLPageStateKey{}).(mysqlSQLPageState); ok {
+		data.SQLDatabase = state.Database
+		data.SQLStatement = state.Statement
+		data.SQLMode = state.Mode
+		data.SQLTimeoutSeconds = state.TimeoutSeconds
+		data.SQLMaxRows = state.MaxRows
+		data.SQLResult = state.Result
+		data.SQLError = state.Error
+	}
+	if data.ActiveTab != "objects" || data.ObjectDatabase == "" {
+		return
+	}
+	objects, err := a.mysql.Objects(workbenchContext, instanceID, data.ObjectDatabase)
+	if err != nil {
+		data.LoadError = secretredaction.String(err.Error())
+		return
+	}
+	data.ObjectRows = objects
+	requestedObject := strings.TrimSpace(request.URL.Query().Get("object"))
+	if requestedObject == "" {
+		return
+	}
+	for _, object := range objects {
+		if object.Name == requestedObject {
+			data.ObjectName = object.Name
+			break
+		}
+	}
+	if data.ObjectName == "" {
+		return
+	}
+	details, err := a.mysql.ObjectDetails(workbenchContext, instanceID, data.ObjectDatabase, data.ObjectName)
+	if err != nil {
+		data.LoadError = secretredaction.String(err.Error())
+		return
+	}
+	data.ObjectDetails = &details
+	if request.URL.Query().Get("preview") == "1" {
+		preview, previewErr := a.mysql.PreviewRows(workbenchContext, instanceID, data.ObjectDatabase, data.ObjectName, 200)
+		if previewErr != nil {
+			data.LoadError = secretredaction.String(previewErr.Error())
+			return
+		}
+		data.ObjectPreview = &preview
+	}
+}
+
+func (a *App) executeMySQLReadOnlySQL(response http.ResponseWriter, request *http.Request) {
+	a.executeMySQLSQL(response, request, mysqlmanager.SQLModeReadOnly)
+}
+
+func (a *App) executeMySQLWriteSQL(response http.ResponseWriter, request *http.Request) {
+	a.executeMySQLSQL(response, request, mysqlmanager.SQLModeWrite)
+}
+
+func (a *App) executeMySQLSQL(response http.ResponseWriter, request *http.Request, mode mysqlmanager.SQLMode) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	if err := request.ParseForm(); err != nil {
+		http.Error(response, "invalid SQL request", http.StatusBadRequest)
+		return
+	}
+	instanceID := strings.TrimSpace(request.PathValue("id"))
+	database := strings.TrimSpace(request.FormValue("database"))
+	statement := strings.TrimSpace(request.FormValue("statement"))
+	timeoutSeconds := mysqlBoundedInt(request.FormValue("timeout_seconds"), 10, 1, 60)
+	maxRows := mysqlBoundedInt(request.FormValue("max_rows"), 200, 1, 1000)
+	state := mysqlSQLPageState{Database: database, Statement: statement, Mode: string(mode), TimeoutSeconds: timeoutSeconds, MaxRows: maxRows}
+	result, err := a.mysql.ExecuteSQL(request.Context(), instanceID, mysqlmanager.SQLRequest{
+		Database: database, Statement: statement, Mode: mode,
+		Timeout: time.Duration(timeoutSeconds) * time.Second, MaxRows: maxRows,
+		AllowDangerous: request.FormValue("allow_dangerous") == "yes", Actor: mysqlActor(request),
+	})
+	if err != nil {
+		state.Error = secretredaction.String(err.Error())
+	} else {
+		state.Result = &result
+	}
+	query := request.URL.Query()
+	query.Set("instance", instanceID)
+	query.Set("tab", "sql")
+	query.Set("database", database)
+	request.URL.Path = "/resources/databases"
+	request.URL.RawQuery = query.Encode()
+	request = request.WithContext(context.WithValue(request.Context(), mysqlSQLPageStateKey{}, state))
+	a.mysqlDatabasesPage(response, request)
+}
+
+func mysqlBoundedInt(raw string, fallback, minimum, maximum int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || value < minimum || value > maximum {
+		return fallback
+	}
+	return value
 }
 
 func mysqlActor(request *http.Request) mysqlmanager.Actor {

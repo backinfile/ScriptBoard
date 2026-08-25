@@ -239,6 +239,80 @@ func (b *localBackend) Scan(ctx context.Context, i Instance, r ScanRequest) (Sca
 	}
 	return out, nil
 }
+func (b *localBackend) ReadKey(ctx context.Context, i Instance, key string) (KeyValue, error) {
+	c, e := b.client(i)
+	if e != nil {
+		return KeyValue{}, e
+	}
+	defer c.Close()
+	typ, e := c.Type(ctx, key).Result()
+	if e != nil {
+		return KeyValue{}, e
+	}
+	if typ == "none" {
+		return KeyValue{}, errors.New("Redis key no longer exists")
+	}
+	result := KeyValue{Name: key, Type: typ}
+	const previewLimit = int64(100)
+	switch typ {
+	case "string":
+		result.Value, e = c.GetRange(ctx, key, 0, 64*1024-1).Result()
+		if e == nil {
+			if length, lengthErr := c.StrLen(ctx, key).Result(); lengthErr == nil {
+				result.Truncated = length > 64*1024
+			}
+		}
+	case "hash":
+		var values []string
+		values, _, e = c.HScan(ctx, key, 0, "*", previewLimit).Result()
+		for index := 0; index+1 < len(values); index += 2 {
+			result.Items = append(result.Items, KeyValueItem{Field: values[index], Value: values[index+1]})
+		}
+		if length, lengthErr := c.HLen(ctx, key).Result(); lengthErr == nil {
+			result.Truncated = length > int64(len(result.Items))
+		}
+	case "list":
+		var values []string
+		values, e = c.LRange(ctx, key, 0, previewLimit-1).Result()
+		for index, value := range values {
+			result.Items = append(result.Items, KeyValueItem{Field: strconv.Itoa(index), Value: value})
+		}
+		if length, lengthErr := c.LLen(ctx, key).Result(); lengthErr == nil {
+			result.Truncated = length > int64(len(result.Items))
+		}
+	case "set":
+		var values []string
+		values, _, e = c.SScan(ctx, key, 0, "*", previewLimit).Result()
+		for index, value := range values {
+			result.Items = append(result.Items, KeyValueItem{Field: strconv.Itoa(index + 1), Value: value})
+		}
+		if length, lengthErr := c.SCard(ctx, key).Result(); lengthErr == nil {
+			result.Truncated = length > int64(len(result.Items))
+		}
+	case "zset":
+		var values []redis.Z
+		values, e = c.ZRangeWithScores(ctx, key, 0, previewLimit-1).Result()
+		for _, value := range values {
+			result.Items = append(result.Items, KeyValueItem{Field: fmt.Sprint(value.Score), Value: fmt.Sprint(value.Member)})
+		}
+		if length, lengthErr := c.ZCard(ctx, key).Result(); lengthErr == nil {
+			result.Truncated = length > int64(len(result.Items))
+		}
+	case "stream":
+		var values []redis.XMessage
+		values, e = c.XRangeN(ctx, key, "-", "+", previewLimit).Result()
+		for _, value := range values {
+			encoded, _ := json.Marshal(value.Values)
+			result.Items = append(result.Items, KeyValueItem{Field: value.ID, Value: string(encoded)})
+		}
+		if length, lengthErr := c.XLen(ctx, key).Result(); lengthErr == nil {
+			result.Truncated = length > int64(len(result.Items))
+		}
+	default:
+		result.Value = typ
+	}
+	return result, e
+}
 func parseInfo(raw string) map[string]string {
 	m := map[string]string{}
 	for _, line := range strings.Split(raw, "\n") {
