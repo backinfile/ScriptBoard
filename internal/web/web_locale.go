@@ -85,8 +85,6 @@ var webMessages = map[string]localizedMessage{
 	"login.submit":                                  {"登录", "Sign in"},
 	"login.pending":                                 {"正在登录…", "Signing in…"},
 	"login.network_error":                           {"网络连接失败，请稍后重试。", "Network connection failed. Try again."},
-	"login.description":                             {"一台主机，一份清晰的运行记录。", "One host. One clear operational record."},
-	"login.eyebrow":                                 {"本机管理员", "Local administrator"},
 	"login.language":                                {"切换为 English", "切换为中文"},
 	"login.invalid_credentials":                     {"用户名或密码错误", "The username or password is incorrect"},
 	"login.verify_title":                            {"验证身份", "Verify your identity"},

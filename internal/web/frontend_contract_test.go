@@ -364,6 +364,16 @@ func TestLoginNegotiatesSupportedWebLocale(t *testing.T) {
 				!strings.Contains(string(body), test.heading) {
 				t.Fatalf("status=%d body=%s", response.StatusCode, body)
 			}
+			for _, removed := range []string{
+				"One host. One clear operational record.",
+				"Local administrator",
+				"一台主机，一份清晰的运行记录。",
+				"本机管理员",
+			} {
+				if strings.Contains(string(body), removed) {
+					t.Fatalf("login page still contains removed copy %q: %s", removed, body)
+				}
+			}
 		})
 	}
 }

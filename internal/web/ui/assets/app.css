@@ -8649,18 +8649,12 @@ body.login-page {
   font-weight: 650;
   font-size: .875rem;
 }
-.login-sheet header .page-eyebrow {
-  margin-bottom: 4px;
-  font-size: .72rem;
-  font-weight: 600;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-}
 .login-sheet header h1 {
   font-size: 1.375rem;
   font-weight: 680;
   letter-spacing: -.02em;
 }
+.login-sheet header h1:only-child { margin-bottom: 0; }
 .login-sheet form[data-login-form] label {
   display: grid;
   gap: 5px;
