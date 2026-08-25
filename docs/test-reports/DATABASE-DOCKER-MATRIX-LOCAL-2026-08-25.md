@@ -130,7 +130,7 @@
 
 | 项目 | 当前状态 |
 | --- | --- |
-| ScriptBoard | `http://127.0.0.1:18788`，PID 33076，保持运行 |
+| ScriptBoard | `http://127.0.0.1:18788`，PID 37008，保持运行；二进制由合并后的 `dev` 构建 |
 | State Root | `D:\Github\worktrees\ScriptBoard\database-unified\.scratch\database-unified-deployment\state` |
 | 管理员 | `admin`；密码仅保留在 State Root 私有文件中 |
 | Docker 项目 | `scriptboard-database-qa`，7 个容器均保持运行 |
@@ -246,3 +246,10 @@
 - 白盒：目标包测试与两次全仓 `go test ./... -count=1`，最终一次在所有修复后执行。
 - 未运行仓库的完整浏览器快照刷新套件，以免改写无关的跟踪截图；本轮使用独立的本地部署 Playwright 脚本与 `.scratch` 截图。
 - `npm ci` 报告一个测试依赖树中的 moderate audit 提示；未执行会升级依赖并扩大修改范围的 `npm audit fix --force`。
+
+## 合并至 dev 后重新部署
+
+- 功能分支 `codex/database-unified` 已通过合并提交 `3244e17` 进入 `dev`；唯一冲突位于快捷运行模板，同时保留了 `dev` 的拖拽排序模式与统一一级标题契约。
+- 合并态执行 `go test ./... -count=1` 全部通过，并从 `dev` 构建 `D:\Github\ScriptBoard\.scratch\database-unified-dev-deployment\scriptboard-dev.exe`。
+- 新进程 PID 为 `37008`，继续监听 `127.0.0.1:18788`；沿用原 State Root，所有数据库容器、连接、SQL 审计、Redis 键及外部日志测试数据均保留。
+- 外部 Playwright 基础矩阵、MySQL/MariaDB SQL 工作台、外部日志排版及十个一级页面标题回归全部通过，控制台错误为 0。
