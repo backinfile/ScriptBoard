@@ -62,6 +62,11 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 			}
 		}
 	}
+	if schemaVersion == 55 {
+		if _, err := migration.Exec(`ALTER TABLE custom_tabs ADD COLUMN visibility_roles TEXT NOT NULL DEFAULT 'administrator,maintainer,operator,viewer'`); err != nil {
+			return fmt.Errorf("add custom tab role visibility: %w", err)
+		}
+	}
 	if schemaVersion >= 20 && schemaVersion <= 48 {
 		exists, err := storesqlite.ColumnExists(migration, "variables", "value_type")
 		if err != nil {

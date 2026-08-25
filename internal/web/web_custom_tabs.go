@@ -55,7 +55,8 @@ func (a *App) customTabsPage(response http.ResponseWriter, request *http.Request
 func customTabInput(request *http.Request, enabled bool) customtab.Input {
 	mode := customtab.CredentialMode(request.FormValue("credential_mode"))
 	key := request.FormValue("key")
-	return customtab.Input{Name: request.FormValue("name"), TargetURL: request.FormValue("target_url"), CredentialMode: mode, KeyName: request.FormValue("key_name"), Key: key, Enabled: enabled, PreserveKey: mode == customtab.ModeKey && key == ""}
+	roles := append([]string{}, request.Form["visible_role"]...)
+	return customtab.Input{Name: request.FormValue("name"), TargetURL: request.FormValue("target_url"), CredentialMode: mode, VisibilityRoles: roles, KeyName: request.FormValue("key_name"), Key: key, Enabled: enabled, PreserveKey: mode == customtab.ModeKey && key == ""}
 }
 
 func (a *App) createCustomTab(response http.ResponseWriter, request *http.Request) {
@@ -138,7 +139,7 @@ func (a *App) deleteCustomTab(response http.ResponseWriter, request *http.Reques
 func (a *App) customTabFramePage(response http.ResponseWriter, request *http.Request) {
 	current := request.Context().Value(sessionContextKey).(session)
 	tab, err := a.customTabs.Get(request.Context(), request.PathValue("id"))
-	if errors.Is(err, sql.ErrNoRows) || err == nil && !tab.Enabled {
+	if errors.Is(err, sql.ErrNoRows) || err == nil && (!tab.Enabled || !tab.VisibleTo(string(current.role))) {
 		http.NotFound(response, request)
 		return
 	}
@@ -165,12 +166,12 @@ func (a *App) customTabKeyChallenge(response http.ResponseWriter, request *http.
 		http.Error(response, "页面已过期，请重试", http.StatusForbidden)
 		return
 	}
+	current := request.Context().Value(sessionContextKey).(session)
 	tab, err := a.customTabs.Get(request.Context(), request.PathValue("id"))
-	if err != nil || !tab.Enabled || tab.CredentialMode != customtab.ModeKey {
+	if err != nil || !tab.Enabled || !tab.VisibleTo(string(current.role)) || tab.CredentialMode != customtab.ModeKey {
 		http.NotFound(response, request)
 		return
 	}
-	current := request.Context().Value(sessionContextKey).(session)
 	nonce, err := randomToken(24)
 	if err != nil {
 		http.Error(response, "无法创建页签凭据挑战", http.StatusInternalServerError)
@@ -207,7 +208,7 @@ func (a *App) customTabKeyDelivery(response http.ResponseWriter, request *http.R
 		return
 	}
 	tab, err := a.customTabs.Get(request.Context(), request.PathValue("id"))
-	if err != nil || !tab.Enabled || tab.CredentialMode != customtab.ModeKey || tab.Origin != challenge.Origin {
+	if err != nil || !tab.Enabled || !tab.VisibleTo(string(current.role)) || tab.CredentialMode != customtab.ModeKey || tab.Origin != challenge.Origin {
 		http.NotFound(response, request)
 		return
 	}

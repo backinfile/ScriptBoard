@@ -39,9 +39,12 @@ func testManager(t *testing.T) (*Manager, *sql.DB) {
 func TestLifecycleSealsKeyAndPreservesOrder(t *testing.T) {
 	manager, db := testManager(t)
 	ctx := context.Background()
-	first, err := manager.Create(ctx, Input{Name: "服务控制台", TargetURL: "http://127.0.0.1:3000/path?q=1", Enabled: true, CredentialMode: ModeTargetState})
+	first, err := manager.Create(ctx, Input{Name: "服务控制台", TargetURL: "http://127.0.0.1:3000/path?q=1", Enabled: true, CredentialMode: ModeTargetState, VisibilityRoles: []string{"administrator", "operator"}})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !first.VisibleTo("administrator") || !first.VisibleTo("operator") || first.VisibleTo("viewer") {
+		t.Fatalf("visibility roles=%v", first.VisibilityRoles)
 	}
 	second, err := manager.Create(ctx, Input{Name: "内部工单", TargetURL: "https://tickets.local:8443/", CredentialMode: ModeKey, KeyName: "access_key", Key: "never-store-plaintext"})
 	if err != nil {
@@ -91,6 +94,21 @@ func TestValidationAcceptsBrowserLocalHTTPButRejectsUnsafeURLs(t *testing.T) {
 		if _, err := manager.Create(ctx, Input{Name: "Unsafe", TargetURL: target, CredentialMode: ModeIsolated}); err == nil {
 			t.Fatalf("target %q accepted", target)
 		}
+	}
+}
+
+func TestVisibilityRequiresKnownRoleAndDefaultsForInternalCallers(t *testing.T) {
+	manager, _ := testManager(t)
+	ctx := context.Background()
+	tab, err := manager.Create(ctx, Input{Name: "Default", TargetURL: "https://example.test", CredentialMode: ModeIsolated})
+	if err != nil || !tab.VisibleTo("administrator") || !tab.VisibleTo("viewer") {
+		t.Fatalf("default visibility=%v err=%v", tab.VisibilityRoles, err)
+	}
+	if _, err := manager.Create(ctx, Input{Name: "Empty", TargetURL: "https://example.test", CredentialMode: ModeIsolated, VisibilityRoles: []string{}}); err == nil {
+		t.Fatal("empty visibility accepted")
+	}
+	if _, err := manager.Create(ctx, Input{Name: "Unknown", TargetURL: "https://example.test", CredentialMode: ModeIsolated, VisibilityRoles: []string{"root"}}); err == nil {
+		t.Fatal("unknown visibility role accepted")
 	}
 }
 

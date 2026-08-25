@@ -168,7 +168,7 @@ func (a *App) shellStatus(response http.ResponseWriter, request *http.Request) {
 
 type shellNavigationItem struct {
 	Href, Label, Icon string
-	Current           bool
+	Current, Native   bool
 }
 
 type shellNavigationGroup struct {
@@ -219,11 +219,12 @@ func (a *App) addApplicationShell(request *http.Request, body []byte) []byte {
 		if tabs, tabsErr := a.customTabs.List(request.Context()); tabsErr == nil {
 			defined := shellNavigationGroup{Label: webText(locale, "nav.defined")}
 			for _, tab := range tabs {
-				if !tab.Enabled || (tab.CredentialMode == "key" && !identity.Allows(current.role, identity.PermissionManageOperations)) {
+				if !tab.Enabled || !tab.VisibleTo(string(current.role)) || (tab.CredentialMode == "key" && !identity.Allows(current.role, identity.PermissionManageOperations)) {
 					continue
 				}
 				href := "/defined/tabs/" + tab.ID
-				defined.Items = append(defined.Items, shellNavigationItem{Href: href, Label: tab.Name, Icon: "panel-top", Current: request.URL.Path == href})
+				// 外部页签使用完整导航，让目标来源专属 CSP 在首次打开时立即生效。
+				defined.Items = append(defined.Items, shellNavigationItem{Href: href, Label: tab.Name, Icon: "panel-top", Current: request.URL.Path == href, Native: true})
 			}
 			if len(defined.Items) > 0 {
 				navigation = append(navigation, defined)

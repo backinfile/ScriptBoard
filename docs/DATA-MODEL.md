@@ -4,9 +4,9 @@
 
 ## 自定义页签（Custom Tab）
 
-`custom_tabs` 保存页签稳定 ID、名称、目标 HTTP/HTTPS URL、启用状态、凭据模式与顺序。`credential_mode` 为 `isolated`、`target_state` 或 `key`；Key 模式只保存由主机密钥按页签 ID 和目标 Origin 密封的密文。目标 URL 由浏览器直接访问，服务端不会抓取或代理该地址。
+`custom_tabs` 保存页签稳定 ID、名称、目标 HTTP/HTTPS URL、启用状态、凭据模式、可见角色与顺序。`credential_mode` 为 `isolated`、`target_state` 或 `key`；`visibility_roles` 保存系统管理员、维护员、执行员和观察员中的非空子集。Key 模式只保存由主机密钥按页签 ID 和目标 Origin 密封的密文。目标 URL 由浏览器直接访问，服务端不会抓取或代理该地址。
 
-启用项按 `sort_order` 出现在“已定义”导航。普通模式对可观察用户可见；Key 模式仅对具备运行配置管理权限的用户存在。Key 交付 challenge 是进程内短期状态，不进入持久数据模型，消费或过期后立即失效。
+启用项按 `sort_order` 出现在“外部”导航，并按当前用户固定角色过滤；无权角色直接访问稳定路由时表现为不存在。Key 模式在角色配置之上继续限制为具备运行配置管理权限的用户。Key 交付 challenge 是进程内短期状态，不进入持久数据模型，消费或过期后立即失效。
 
 ## 宿主分钟指标（Host Metric Minute）
 

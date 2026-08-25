@@ -7,7 +7,7 @@
 
 在“配置”大类中新增“自定义页签”管理页。管理员或维护员可以新增、编辑、排序、启用、停用和删除一个指向本地或受信网络页面的 HTTP/HTTPS 引用。
 
-启用后的引用出现在主导航新增的“已定义”大类中。用户点击后进入 ScriptBoard 自己的稳定路由，由页面主体中的全尺寸 `iframe` 打开目标地址，主导航、登录会话和 ScriptBoard 页面框架保持不变。
+启用后的引用出现在主导航新增的“外部”大类中。用户点击后进入 ScriptBoard 自己的稳定路由，由页面主体中的全尺寸 `iframe` 打开目标地址，主导航、登录会话和 ScriptBoard 页面框架保持不变。
 
 每个自定义页签支持三种凭据行为：
 
@@ -23,8 +23,8 @@
 
 - 配置入口：`GET /config/custom-tabs`。
 - 新建、编辑、排序、启用、停用、删除自定义页签。
-- 字段：名称、绝对 HTTP/HTTPS URL、启用状态、凭据模式、可选 Key 名称与 Key。
-- 启用项按配置顺序动态加入“已定义”导航大类。
+- 字段：名称、绝对 HTTP/HTTPS URL、启用状态、凭据模式、可见角色、可选 Key 名称与 Key。
+- 启用项按配置顺序动态加入“外部”导航大类。
 - 访问入口：`GET /defined/tabs/{id}`。
 - iframe 全尺寸展示、加载提示、配置说明及“在新窗口打开”备用入口。
 - HTTP 和 HTTPS 地址都可显式保存；HTTP 页面明确提示明文传输与混合内容限制，不静默升级为 HTTPS。
@@ -116,7 +116,7 @@ internal/web/ui/templates/custom-tab-frame.html
 
 在 `CONTEXT.md` 增加：
 
-- **自定义页签（Custom Tab）**：实例级、可排序且可启停的受信页面引用；启用后在“已定义”导航中拥有稳定入口。
+- **自定义页签（Custom Tab）**：实例级、可排序且可启停的受信页面引用；启用后在“外部”导航中拥有稳定入口。
 - **目标站登录状态（Target Login State）**：目标 origin 自己在浏览器中的 Cookie 或 Web Storage 状态，不包含 ScriptBoard 会话。
 - **页签 Key（Tab Key）**：由管理员配置、面向一个目标 origin、只在显式握手时交给 iframe 的静态凭据。
 
@@ -132,6 +132,8 @@ CREATE TABLE IF NOT EXISTS custom_tabs (
     enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
     credential_mode TEXT NOT NULL DEFAULT 'isolated'
         CHECK (credential_mode IN ('isolated', 'target_state', 'key')),
+    visibility_roles TEXT NOT NULL
+        DEFAULT 'administrator,maintainer,operator,viewer',
     key_name TEXT NOT NULL DEFAULT '',
     key_ciphertext BLOB NOT NULL DEFAULT X'',
     sort_order INTEGER NOT NULL,
@@ -150,6 +152,7 @@ CREATE INDEX custom_tabs_order_idx
 - URL 可包含普通业务 query，但保存 Key 时不允许 Key 被模板替换进 URL。
 - 私网、回环、`.local`、主机名和自定义端口都允许，因为请求由当前浏览器直接发出；Manager 和 Web handler 不对目标发起 DNS、探测或预览请求。
 - Key 名称限制为 1–64 个安全字符；Key 限制为有效 UTF-8、1–4 KiB。
+- 可见角色必须是四种固定角色中的非空集合；未知角色拒绝保存。
 - `isolated` 和 `target_state` 模式必须把 `key_name`、`key_ciphertext` 清空。
 - 更新时 Key 输入为空表示保留已有 Key；“移除 Key”必须是独立且明确的操作。
 - 删除记录必须同时删除密文；审计只记录页签 ID、动作与结果。
@@ -235,6 +238,7 @@ POST /defined/tabs/{id}/key-delivery
 - URL。
 - 启用开关。
 - 凭据模式：隔离打开 / 保留目标登录状态 / 注入 Key。
+- 可见权限：系统管理员、维护员、执行员、观察员的非空多选；默认全部可见。
 - Key 模式下的 Key 名称和 Key；编辑时空值保持原 Key。
 - HTTP 明文风险提示。
 - 登录态兼容性提示：第三方 Cookie 或 Web Storage 仍受浏览器策略与目标站 Cookie 属性限制。
@@ -250,9 +254,9 @@ POST /defined/tabs/{id}/key-delivery
 - 支持上移、下移；边界动作不改变顺序。
 - 删除需要明确确认；Key 模式删除前提示密文会同时删除。
 
-## 8. “已定义”动态导航
+## 8. “外部”动态导航
 
-在 `shellNavigation` 的静态组之后、历史组之前插入动态“已定义”组。仅当当前用户至少有一个可见且已启用的自定义页签时显示该组。
+在 `shellNavigation` 的静态组之后、历史组之前插入动态“外部”组。仅当当前用户至少有一个可见且已启用的自定义页签时显示该组。
 
 每项只包含：
 
@@ -382,7 +386,7 @@ URL 校验同时接受 HTTP 和 HTTPS，不默认拒绝回环、私网或本地�
 4. 新增 `custom_tabs` schema、提升 schema version，补充升级与新库初始化测试。
 5. 注册管理路由与 handlers，完成 CRUD、启停、排序、step-up Key 变更和审计。
 6. 增加管理模板、中英文文案和现有视觉系统样式；图标只使用 Lucide。
-7. 扩展 `web_shell.go`，按当前会话权限加载启用项并生成“已定义”动态组。
+7. 扩展 `web_shell.go`，按当前会话权限加载启用项并生成“外部”动态组。
 8. 实现 iframe 页面、逐响应 CSP、sandbox 模式和新窗口备用入口。
 9. 实现 nonce challenge 与 exact-origin `postMessage` Key 交付，增加前端 listener 清理和 PJAX 回归保护。
 10. 完成 Go、Web、浏览器契约测试和安全回归测试。
@@ -405,8 +409,8 @@ URL 校验同时接受 HTTP 和 HTTPS，不默认拒绝回环、私网或本地�
 - 未登录请求跳转登录；viewer/operator 不能访问管理路由。
 - 管理员和维护员可以 CRUD；缺少 CSRF 的写请求被拒绝。
 - Key 新增、替换、移除缺少近期身份验证时进入 step-up。
-- 普通启用项对所有 `PermissionObserve` 用户可见；Key 项只对 `PermissionManageOperations` 用户存在。
-- 停用/删除项从“已定义”消失，稳定路由返回 404。
+- 普通启用项按配置的固定角色集合可见；Key 项在此基础上只对 `PermissionManageOperations` 用户存在。
+- 停用/删除项从“外部”消失，稳定路由返回 404。
 - 页面、表单、错误、审计 CSV 和响应 JSON 均不出现 Key 明文。
 - iframe 页 CSP 只允许当前目标 origin；其他 ScriptBoard 页面维持原 CSP。
 - HTTP 不被改写，页面显示明文风险；HTTPS 页面嵌 HTTP 显示混合内容说明。
@@ -421,7 +425,7 @@ URL 校验同时接受 HTTP 和 HTTPS，不默认拒绝回环、私网或本地�
 
 逐项验证：
 
-1. 基础访问：登录、主导航、配置页、已定义页、退出均可访问。
+1. 基础访问：登录、主导航、配置页、外部页、退出均可访问。
 2. 新增停用页签后不显示；打开开关后显示；关闭后消失。
 3. 点击动态项后 ScriptBoard 外壳保留，iframe 占满工作区。
 4. `isolated` 模式不能复用目标 Cookie/Storage。
@@ -447,7 +451,7 @@ URL 校验同时接受 HTTP 和 HTTPS，不默认拒绝回环、私网或本地�
 ## 13. 验收标准
 
 - “配置”中存在“自定义页签”入口，管理员和维护员可以管理记录。
-- 启用记录按顺序出现在“已定义”大类，停用或删除后立即消失。
+- 启用记录按顺序出现在“外部”大类，停用或删除后立即消失。
 - 点击记录只访问 ScriptBoard 稳定路由，并在 iframe 打开配置的 HTTP/HTTPS 页面。
 - HTTP 与 HTTPS 均可显式保存；明文与混合内容限制有清晰说明且不会被静默改写。
 - 隔离模式不交付身份或 Key。
@@ -464,7 +468,7 @@ URL 校验同时接受 HTTP 和 HTTPS，不默认拒绝回环、私网或本地�
 本计划采用以下默认解释，进入实现前只需确认是否维持：
 
 - 管理入口位于左侧“配置”大类，而不是底部“设置”的横向页签。
-- 动态导航新建独立“已定义”大类，不并入现有“监控”或“配置”。
+- 动态导航新建独立“外部”大类，不并入现有“监控”或“配置”。
 - “保留登录状态”指目标站自己的浏览器状态，不转发 ScriptBoard 登录会话。
 - Key 目标页面需要实现 `postMessage` 协议；MVP 不提供不安全的 query Key 兼容模式。
-- Key 模式页签只对管理员和维护员可见；不含 Key 的页签对所有已登录用户可见。
+- Key 模式页签只对配置允许的管理员和维护员可见；不含 Key 的页签按配置的固定角色集合可见。

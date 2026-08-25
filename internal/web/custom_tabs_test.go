@@ -29,7 +29,7 @@ func TestCustomTabsDrawerActivationReorderAndFrameContract(t *testing.T) {
 	}
 
 	response, err = client.PostForm(serverURL+"/config/custom-tabs", url.Values{
-		"csrf_token": {formToken(t, page)}, "name": {"本地文档"}, "target_url": {"http://127.0.0.1:8080/docs"}, "credential_mode": {"target_state"},
+		"csrf_token": {formToken(t, page)}, "name": {"本地文档"}, "target_url": {"http://127.0.0.1:8080/docs"}, "credential_mode": {"target_state"}, "visible_role": {"administrator"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -48,7 +48,7 @@ func TestCustomTabsDrawerActivationReorderAndFrameContract(t *testing.T) {
 	}
 	id := string(match[1])
 	if strings.Contains(string(page), `href="/defined/tabs/`+id+`"`) {
-		t.Fatal("disabled tab appeared in Defined navigation")
+		t.Fatal("disabled tab appeared in External navigation")
 	}
 	response, err = client.PostForm(serverURL+"/config/custom-tabs/"+id+"/toggle", url.Values{"csrf_token": {formToken(t, page)}, "enabled": {"true"}})
 	if err != nil {
@@ -59,8 +59,8 @@ func TestCustomTabsDrawerActivationReorderAndFrameContract(t *testing.T) {
 	response, _ = client.Get(serverURL + "/config/custom-tabs?reorder=1")
 	reorder, _ := io.ReadAll(response.Body)
 	response.Body.Close()
-	if !strings.Contains(string(reorder), `/config/custom-tabs/`+id+`/move`) || !strings.Contains(string(reorder), `>完成排序</a>`) || !strings.Contains(string(reorder), `href="/defined/tabs/`+id+`"`) {
-		t.Fatal("reorder controls or Defined navigation missing after activation")
+	if !strings.Contains(string(reorder), `/config/custom-tabs/`+id+`/move`) || !strings.Contains(string(reorder), `>完成排序</a>`) || !strings.Contains(string(reorder), `href="/defined/tabs/`+id+`"`) || !strings.Contains(string(reorder), `data-native`) {
+		t.Fatal("reorder controls or External navigation missing after activation")
 	}
 	response, err = client.PostForm(serverURL+"/config/custom-tabs/"+id+"/move", url.Values{"csrf_token": {formToken(t, reorder)}, "direction": {"up"}})
 	if err != nil {
@@ -80,6 +80,9 @@ func TestCustomTabsDrawerActivationReorderAndFrameContract(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !strings.Contains(response.Header.Get("Content-Security-Policy"), "frame-src http://127.0.0.1:8080") || !strings.Contains(string(frame), `sandbox="allow-scripts allow-forms allow-same-origin allow-storage-access-by-user-activation"`) {
 		t.Fatal("frame origin or sandbox contract is incorrect")
 	}
+	if refreshAt, openAt := strings.Index(string(frame), `data-custom-tab-refresh`), strings.Index(string(frame), `>在新窗口打开</a>`); refreshAt < 0 || openAt < 0 || refreshAt > openAt {
+		t.Fatal("refresh action is missing or not placed before open-in-new-window")
+	}
 }
 
 func TestCustomTabKeyUsesOneTimeChallengeAndNeverRendersSecret(t *testing.T) {
@@ -89,7 +92,7 @@ func TestCustomTabKeyUsesOneTimeChallengeAndNeverRendersSecret(t *testing.T) {
 	page, _ := io.ReadAll(response.Body)
 	response.Body.Close()
 	const secret = "local-preview-secret"
-	response, err := client.PostForm(serverURL+"/config/custom-tabs", url.Values{"csrf_token": {formToken(t, page)}, "name": {"密钥页面"}, "target_url": {"https://example.test/app"}, "credential_mode": {"key"}, "key_name": {"access_token"}, "key": {secret}})
+	response, err := client.PostForm(serverURL+"/config/custom-tabs", url.Values{"csrf_token": {formToken(t, page)}, "name": {"密钥页面"}, "target_url": {"https://example.test/app"}, "credential_mode": {"key"}, "key_name": {"access_token"}, "key": {secret}, "visible_role": {"administrator"}})
 	if err != nil {
 		t.Fatal(err)
 	}

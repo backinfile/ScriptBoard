@@ -355,7 +355,7 @@ _Avoid_: Run、SQL 查询、后台作业日志
 _Avoid_: ScriptBoard 脚本计划、系统 crontab、复制计划
 
 **自定义页签（Custom Tab）**：
-管理员定义的浏览器直连 HTTP/HTTPS 页面引用。启用后出现在“已定义”导航中，由受限 iframe 打开；它不是服务端代理、反向代理或单点登录连接。
+管理员定义的浏览器直连 HTTP/HTTPS 页面引用。启用后出现在“外部”导航中，由受限 iframe 打开；它不是服务端代理、反向代理或单点登录连接。
 _Avoid_: 内嵌应用、反向代理、SSO 应用
 
 **页签 Key（Tab Key）**：

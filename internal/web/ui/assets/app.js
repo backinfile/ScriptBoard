@@ -1267,6 +1267,7 @@
   }
 
   function databaseRegionSelector(source, destination) {
+	if (source?.closest?.("[data-custom-tabs-page]") && destination.pathname === "/config/custom-tabs") return "[data-custom-tabs-page]";
     if (!source?.closest?.("[data-database-workspace]") || destination.pathname !== "/resources/databases") return "";
     if (source.closest(".database-detail")) return ".database-detail";
     if (source.closest("[data-mysql-instances-region]")) return "[data-mysql-instances-region]";
@@ -2373,6 +2374,7 @@
           history.replaceState({ pjax: true }, "", destination);
           updateShellLocation(destination);
           initPage();
+		  document.body.classList.toggle("has-custom-dashboard-drawer", Boolean(document.querySelector("[data-dashboard-drawer][open]")));
           return;
         }
         if (options.fullNavigationOnSuccess) {
@@ -8420,6 +8422,10 @@
     } else if (form.hasAttribute("data-async")) {
       event.preventDefault();
       submitAsync(form, submitter);
+	} else if (form.closest("[data-custom-tabs-page]")) {
+		event.preventDefault();
+		form.dataset.asyncRefresh = "[data-custom-tabs-page]";
+		submitAsync(form, submitter);
     } else if (form.method.toLowerCase() === "post" &&
         document.querySelector("[data-app-shell]") &&
         !form.hasAttribute("data-native") &&
@@ -9346,24 +9352,33 @@ document.addEventListener("input", function (event) {
 })();
 
 (() => {
-  document.querySelectorAll("[data-custom-tab-mode]").forEach((select) => {
-    const sync = () => {
-      const fields = select.closest("form")?.querySelector("[data-custom-tab-key-fields]");
-      if (!fields) return;
-      fields.hidden = select.value !== "key";
-      fields.querySelectorAll("input").forEach((input) => {
-        if (input.name === "key_name") input.required = select.value === "key";
-      });
-    };
-    select.addEventListener("change", sync);
-    sync();
-  });
+	const syncMode = (select) => {
+		const fields = select.closest("form")?.querySelector("[data-custom-tab-key-fields]");
+		if (!fields) return;
+		fields.hidden = select.value !== "key";
+		fields.querySelectorAll("input").forEach((input) => {
+			if (input.name === "key_name") input.required = select.value === "key";
+		});
+	};
+	document.querySelectorAll("[data-custom-tab-mode]").forEach(syncMode);
+	document.addEventListener("change", (event) => {
+		const select = event.target.closest?.("[data-custom-tab-mode]");
+		if (select) syncMode(select);
+	});
 
   const root = document.querySelector("[data-custom-tab-frame]");
   const frame = root?.querySelector("[data-custom-tab-iframe]");
-  if (!root || !frame || root.dataset.credentialMode !== "key") return;
+	const refresh = root?.querySelector("[data-custom-tab-refresh]");
+	if (!root || !frame) return;
   let delivered = false;
 	let challenge = null;
+	refresh?.addEventListener("click", () => {
+		delivered = false;
+		challenge = null;
+		const source = frame.getAttribute("src");
+		if (source) frame.setAttribute("src", source);
+	});
+	if (root.dataset.credentialMode !== "key") return;
 	frame.addEventListener("load", async () => {
 		try {
 			const body = new URLSearchParams({ csrf_token: root.dataset.csrfToken });

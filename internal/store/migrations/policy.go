@@ -15,10 +15,11 @@ package migrations
 // to Variables; schema 52 added ScriptBoard node observation connections and
 // read-only access tokens; schema 53 removed the obsolete privileged-account
 // MFA enrollment deadline; schema 54 adds managed Redis connections; schema
-// 55 adds custom browser tabs and encrypted optional tab credentials.
+// 55 adds custom browser tabs and encrypted optional tab credentials; schema
+// 56 adds per-role visibility for custom tabs.
 //
 // The explicit current-version guard forces a deliberate policy update when a
 // future schema is introduced instead of silently promising an untested path.
 func Compatible(current, existing int) bool {
-	return existing == current || current == 55 && existing >= 20 && existing <= 54
+	return existing == current || current == 56 && existing >= 20 && existing <= 55
 }
