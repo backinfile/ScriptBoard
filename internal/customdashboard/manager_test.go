@@ -570,3 +570,38 @@ func TestMoveCardChangesOnlyItsDashboardOrder(t *testing.T) {
 		t.Fatal("invalid direction was accepted")
 	}
 }
+
+func TestMoveCardRepairsDuplicateSortOrdersBeforeMoving(t *testing.T) {
+	manager := testManager(t)
+	ctx := context.Background()
+	dashboard, err := manager.CreateDashboard(ctx, DashboardInput{Name: "重复顺序面板", Slug: "duplicate-order"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := manager.CreateCard(ctx, dashboard.ID, CardInput{Name: "第一项", Type: CardNumber, SourceURL: "https://example.test/first", ValuePath: "value"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := manager.CreateCard(ctx, dashboard.ID, CardInput{Name: "第二项", Type: CardNumber, SourceURL: "https://example.test/second", ValuePath: "value"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	third, err := manager.CreateCard(ctx, dashboard.ID, CardInput{Name: "第三项", Type: CardNumber, SourceURL: "https://example.test/third", ValuePath: "value"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.db.ExecContext(ctx, `UPDATE custom_dashboard_cards SET sort_order=1 WHERE dashboard_id=?`, dashboard.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := manager.MoveCard(ctx, second.ID, -1); err != nil {
+		t.Fatal(err)
+	}
+	view, err := manager.GetDashboard(ctx, dashboard.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := []string{view.Cards[0].ID, view.Cards[1].ID, view.Cards[2].ID}; got[0] != second.ID || got[1] != first.ID || got[2] != third.ID {
+		t.Fatalf("duplicate sort orders prevented the move: %v", got)
+	}
+}

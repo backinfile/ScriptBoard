@@ -12,7 +12,7 @@
 
 | 项目 | 当前状态 |
 | --- | --- |
-| ScriptBoard | `http://127.0.0.1:18788`，PID 21764，保持运行 |
+| ScriptBoard | `http://127.0.0.1:18788`，PID 29172，保持运行 |
 | State Root | `D:\Github\worktrees\ScriptBoard\database-unified\.scratch\database-unified-deployment\state` |
 | 管理员 | `admin`；密码仅保留在 State Root 私有文件中 |
 | Docker 项目 | `scriptboard-database-qa`，7 个容器均保持运行 |
@@ -99,6 +99,7 @@
 - MySQL 与 Redis 详情统一为“详情头部、内部页签、活动内容面板”框架；Redis 页签补齐图标、滚动保持、连接列表页码保持和概览刷新入口。
 - MySQL 与 Redis 切换前后的右侧详情宽高保持一致；桌面端共享固定详情舞台，移动端保留自然高度。
 - AI 对话记录与输入区已从固定 `790px` 扩展为占满右侧聊天列；1920px 视口实测聊天列、记录区和输入区均为 `1430px`。
+- 自定义面板“调整顺序”会先按可见顺序重新编号再移动，重复排序值和顺序空洞不再导致操作无效；外部 Playwright 已验证移动并刷新后顺序保持，测试面板与卡片保留。
 - 真实保留数据下的 Playwright 桌面、移动端、键盘、中文、禁用 JavaScript 和控制台检查全部通过。
 
 ## 关键命令与限制

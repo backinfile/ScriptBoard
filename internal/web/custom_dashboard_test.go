@@ -732,6 +732,28 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	if reorderRendered := string(reorderPage); !strings.Contains(reorderRendered, "完成排序") || !strings.Contains(reorderRendered, `/config/dashboard-cards/`) || !strings.Contains(reorderRendered, `/move`) {
 		t.Fatal("dashboard card reorder mode is missing")
 	}
+	moveMatches := regexp.MustCompile(`action="/config/dashboard-cards/([^/"]+)/move"`).FindAllStringSubmatch(string(reorderPage), -1)
+	if len(moveMatches) != 2 {
+		t.Fatalf("dashboard reorder controls=%d, want 2", len(moveMatches))
+	}
+	moveResponse, err := client.PostForm(serverURL+"/config/dashboard-cards/"+moveMatches[0][1]+"/move", url.Values{"csrf_token": {formToken(t, reorderPage)}, "direction": {"down"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	moveResponse.Body.Close()
+	if moveResponse.StatusCode != http.StatusSeeOther {
+		t.Fatalf("dashboard reorder status=%d", moveResponse.StatusCode)
+	}
+	moveResult, err := client.Get(serverURL + moveResponse.Header.Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	movePage, _ := io.ReadAll(moveResult.Body)
+	moveResult.Body.Close()
+	accountIndex, usageIndex := strings.Index(string(movePage), "账户额度"), strings.Index(string(movePage), "使用率")
+	if moveResult.StatusCode != http.StatusOK || accountIndex < 0 || usageIndex < 0 || accountIndex > usageIndex {
+		t.Fatalf("dashboard reorder did not move and persist the first card: status=%d", moveResult.StatusCode)
+	}
 	if regexp.MustCompile(`action="/config/dashboard-cards/[^/"]+/refresh"`).MatchString(configRendered) {
 		t.Fatal("dashboard configuration row still exposes a refresh action")
 	}
