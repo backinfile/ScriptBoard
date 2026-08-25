@@ -6867,14 +6867,62 @@
     });
 	const sqlForm = root.querySelector("[data-mysql-sql-form]");
 	const writeConfirmation = sqlForm?.querySelector("[data-mysql-write-confirm]");
+	let sqlModeRequest = 0;
 	const syncSQLMode = () => {
 	  if (!sqlForm) return;
 	  const writable = sqlForm.querySelector('input[name="ui_mode"]:checked')?.value === "write";
 	  sqlForm.action = writable ? sqlForm.dataset.writeAction : sqlForm.dataset.readAction;
 	  if (writeConfirmation) writeConfirmation.hidden = !writable;
 	};
+	const setSQLModeBusy = busy => {
+	  const mode = sqlForm?.querySelector("[data-mysql-sql-mode]");
+	  if (!mode) return;
+	  mode.setAttribute("aria-busy", String(busy));
+	  mode.querySelectorAll('input[name="ui_mode"]').forEach(input => { input.disabled = busy; });
+	};
+	const selectReadMode = () => {
+	  const read = sqlForm?.querySelector('input[name="ui_mode"][value="read"]');
+	  if (read) read.checked = true;
+	  syncSQLMode();
+	};
+	const requestWriteMode = async writeInput => {
+	  const sequence = ++sqlModeRequest;
+	  selectReadMode();
+	  setSQLModeBusy(true);
+	  const returnFocus = writeInput;
+	  try {
+	    const body = new URLSearchParams({ csrf_token: sqlForm.elements.csrf_token?.value || "" });
+	    const response = await fetch(sqlForm.dataset.writeAccessAction, {
+	      method: "POST", body, credentials: "same-origin",
+	      headers: { "Accept": "application/json", "X-ScriptBoard-Step-Up": "dialog" },
+	    });
+	    if (!response.ok) {
+	      const text = await response.text();
+	      showServerError({ response, text }, {
+	        url: sqlForm.dataset.writeAccessAction, method: "POST", returnFocus,
+	        includeClientErrors: true, force: true,
+	      });
+	      return;
+	    }
+	    const challenge = await response.json();
+	    const verified = await window.ScriptBoardShowStepUp?.(challenge, returnFocus);
+	    if (!verified || sequence !== sqlModeRequest || !sqlForm.isConnected) return;
+	    writeInput.checked = true;
+	    syncSQLMode();
+	    requestAnimationFrame(() => writeInput.isConnected && writeInput.focus({ preventScroll: true }));
+	  } catch (error) {
+	    if (sequence !== sqlModeRequest || !sqlForm?.isConnected) return;
+	    showServerError({ response: { status: 0, url: sqlForm.dataset.writeAccessAction }, text: error?.message || words().loadFailed }, {
+	      url: sqlForm.dataset.writeAccessAction, method: "POST", returnFocus, force: true,
+	    });
+	  } finally {
+	    if (sequence === sqlModeRequest && sqlForm?.isConnected) setSQLModeBusy(false);
+	  }
+	};
 	const onSQLModeChange = event => {
-	  if (event.target.matches('input[name="ui_mode"]')) syncSQLMode();
+	  if (!event.target.matches('input[name="ui_mode"]')) return;
+	  if (event.target.value === "write") requestWriteMode(event.target);
+	  else { ++sqlModeRequest; syncSQLMode(); }
 	};
 	if (sqlForm) {
 	  // SQL results belong to the active connection detail; keep the connection rail and page shell mounted.
@@ -6883,6 +6931,7 @@
 	  sqlForm.dataset.asyncRefresh = ".database-detail";
 	  syncSQLMode();
 	  sqlForm.addEventListener("change", onSQLModeChange);
+	  cleanups.push(() => { ++sqlModeRequest; });
 	}
     const drawers = [...root.querySelectorAll("details.mysql-drawer")];
     const dropDrawer = root.querySelector("[data-mysql-drop-drawer]");
@@ -9112,7 +9161,7 @@ document.addEventListener("input", function (event) {
       title.textContent = challenge.title || words.stepUpTitle;
       const description = document.createElement("p");
       description.id = "inline-step-up-description";
-      description.textContent = words.stepUpDescription || challenge.description;
+      description.textContent = challenge.description || words.stepUpDescription;
       heading.append(title, description);
       const close = document.createElement("button");
       close.className = "icon-button icon-button--quiet";

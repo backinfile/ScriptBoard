@@ -9396,6 +9396,8 @@ body:has(> .error-page) {
 .mysql-sql-context fieldset label:first-of-type > span { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
 .mysql-sql-context fieldset label:last-of-type > span { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
 .mysql-sql-context fieldset input:checked + span { color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent-border); }
+.mysql-sql-context fieldset[aria-busy="true"] { opacity: .68; }
+.mysql-sql-context fieldset[aria-busy="true"] label > span { cursor: wait; }
 .mysql-sql-context fieldset svg { width: 15px; height: 15px; }
 .mysql-sql-editor__bar { display: flex; justify-content: space-between; gap: 10px; padding: 8px 14px; color: var(--faint); background: var(--canvas); border-bottom: 1px solid var(--rule); font: 600 .7rem/1.4 var(--font-mono); }
 .mysql-sql-editor textarea { display: block; width: 100%; min-height: 15rem; padding: 16px 18px; resize: vertical; color: var(--ink); background: var(--surface); border: 0; border-radius: 0; font: .82rem/1.65 var(--font-mono); }

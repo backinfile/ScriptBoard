@@ -402,3 +402,14 @@
 - 外部 Playwright 最终输出：`inventory=19`、`sqlConnections=4`、`retainedRowsPerSQL=250`、`redisTypes=6`、局部导航/错误重试/响应式均通过，非预期控制台错误 0。
 - 截图保留为 `.scratch/database-unified-dev-deployment/database-retained-matrix.png` 和 `database-partial-navigation.png`。
 - 当前部署二进制为 `.scratch/database-unified-dev-deployment/scriptboard-dev-database-matrix-final.exe`，PID `38176`，监听 `127.0.0.1:18788`；登录页返回 200，七个 Docker 数据库容器全部运行。
+
+## MySQL 可写模式弹窗二次验证复验
+
+- 选择“可写模式”时不再先展示“可写模式需要二次验证”的内联提示，而是在当前数据库工作台上原地打开“确认启用可写模式”身份验证弹窗。
+- 弹窗复用统一 step-up 能力，覆盖当前密码、MFA/恢复码与通行密钥；弹窗挑战接口要求数据库管理权限和 CSRF，响应禁止缓存。
+- 取消、Escape、错误密码、网络或服务错误均保持只读单选状态与只读提交地址；焦点返回“可写模式”选项。验证成功后才切换写入地址并显示“可写模式已启用”及 Safe Updates 提示。
+- 写 SQL 路由继续由后端独立强制 recent authentication；直接绕过弹窗不能获得写权限。
+- Go 定向测试、`internal/web`、`mysqlmanager` 与全仓 `go test ./... -count=1` 全部通过。
+- 外部 Playwright 验证取消、错误密码、成功验证、实际写入、页面局部保持、430px 响应式及控制台错误；除错误密码预期产生的一次 HTTP 401 外，非预期错误为 0。
+- 写入测试数据保留为 `scriptboard_qa.widgets.id=2 / status=write-dialog-retained`，未执行清理。截图保留为 `.scratch/database-unified-dev-deployment/mysql-write-mode-dialog-open.png`。
+- 当前重新部署二进制为 `.scratch/database-unified-dev-deployment/scriptboard-dev-write-mode-dialog.exe`，PID `34844`，登录页返回 200。

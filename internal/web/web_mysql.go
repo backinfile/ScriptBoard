@@ -329,6 +329,27 @@ func (a *App) executeMySQLReadOnlySQL(response http.ResponseWriter, request *htt
 	a.executeMySQLSQL(response, request, mysqlmanager.SQLModeReadOnly)
 }
 
+func (a *App) mysqlWriteAccessChallenge(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "invalid CSRF token", http.StatusForbidden)
+		return
+	}
+	current := request.Context().Value(sessionContextKey).(session)
+	challenge, err := a.currentStepUpChallenge(request, current)
+	if err != nil {
+		http.Error(response, webText(resolveWebLocale(request), "step_up.unavailable"), http.StatusServiceUnavailable)
+		return
+	}
+	// Write mode always opens an explicit identity prompt; the write endpoint still
+	// independently enforces recent authentication if a client bypasses this UI flow.
+	locale := resolveWebLocale(request)
+	challenge.Title = webText(locale, "mysql.write_access_title")
+	challenge.Description = webText(locale, "mysql.write_access_description")
+	response.Header().Set("Cache-Control", "no-store")
+	response.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(response).Encode(challenge)
+}
+
 func (a *App) executeMySQLWriteSQL(response http.ResponseWriter, request *http.Request) {
 	a.executeMySQLSQL(response, request, mysqlmanager.SQLModeWrite)
 }

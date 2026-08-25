@@ -2,6 +2,7 @@ package web_test
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,50 @@ import (
 
 	_ "modernc.org/sqlite"
 )
+
+func TestMySQLWriteModeChallengeRequiresCSRFAndReturnsLocalizedStepUpDialog(t *testing.T) {
+	stateRoot := filepath.Join(t.TempDir(), "state")
+	client, serverURL := authenticatedClientWithConfig(t, app.Config{StateRoot: stateRoot})
+	page := getBody(t, client, serverURL+"/resources/databases", http.StatusOK)
+
+	response, err := client.PostForm(serverURL+"/resources/databases/sql/write-access/challenge", url.Values{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("write-mode challenge without CSRF status=%d, want %d", response.StatusCode, http.StatusForbidden)
+	}
+
+	request, err := http.NewRequest(http.MethodPost, serverURL+"/resources/databases/sql/write-access/challenge", strings.NewReader(url.Values{
+		"csrf_token": {formToken(t, page)},
+	}.Encode()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Accept-Language", "zh-CN")
+	response, err = client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK || response.Header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("write-mode challenge status=%d cache=%q", response.StatusCode, response.Header.Get("Cache-Control"))
+	}
+	var challenge struct {
+		Method      string `json:"method"`
+		CSRFToken   string `json:"csrf_token"`
+		Title       string `json:"title"`
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&challenge); err != nil {
+		t.Fatal(err)
+	}
+	if challenge.Method != "password" || challenge.CSRFToken == "" || challenge.Title != "确认启用可写模式" || !strings.Contains(challenge.Description, "再次验证") {
+		t.Fatalf("unexpected write-mode challenge: %+v", challenge)
+	}
+}
 
 func TestDatabasesPageCombinesMySQLAndRedisConnectionsAndOffersOneAddFlow(t *testing.T) {
 	stateRoot := filepath.Join(t.TempDir(), "state")

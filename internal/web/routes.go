@@ -280,6 +280,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /resources/databases/settings/tools", a.requireStepUp(identity.PermissionManageDatabases, http.HandlerFunc(a.setMySQLTools)))
 	mux.Handle("POST /resources/databases/instances/{id}/test", a.requirePermission(identity.PermissionManageDatabases, http.HandlerFunc(a.testMySQLInstance)))
 	mux.Handle("POST /resources/databases/instances/{id}/sql", a.requirePermission(identity.PermissionManageDatabases, http.HandlerFunc(a.executeMySQLReadOnlySQL)))
+	mux.Handle("POST /resources/databases/sql/write-access/challenge", a.requirePermission(identity.PermissionManageDatabases, http.HandlerFunc(a.mysqlWriteAccessChallenge)))
 	mux.Handle("POST /resources/databases/instances/{id}/sql/write", a.requireStepUp(identity.PermissionManageDatabases, http.HandlerFunc(a.executeMySQLWriteSQL)))
 	mux.Handle("POST /resources/databases/instances/{id}/delete", a.requireStepUp(identity.PermissionManageDatabases, http.HandlerFunc(a.deleteMySQLInstance)))
 	mux.Handle("POST /resources/databases/instances/{id}/databases", a.requirePermission(identity.PermissionManageDatabases, http.HandlerFunc(a.createMySQLDatabase)))
