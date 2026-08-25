@@ -8658,7 +8658,7 @@ function clearDashboardDrawerCloseWait(drawer) {
 function closeDashboardDrawer(drawer, returnFocus = true) {
 	if (!drawer?.open || drawer.classList.contains("is-closing")) return;
 	clearDashboardDrawerCloseWait(drawer);
-	const panel = drawer.querySelector(".custom-dashboard-drawer");
+  const panel = drawer.querySelector(".custom-dashboard-drawer, .custom-tab-drawer");
 	drawer.classList.remove("is-opening");
 	drawer.classList.add("is-closing");
 	const complete = () => {

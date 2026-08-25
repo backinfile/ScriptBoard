@@ -21,7 +21,7 @@ func TestCustomTabsDrawerActivationReorderAndFrameContract(t *testing.T) {
 	page, _ := io.ReadAll(response.Body)
 	response.Body.Close()
 	rendered := string(page)
-	if !strings.Contains(rendered, `class="page-heading primary-page-heading"`) || !strings.Contains(rendered, `data-dashboard-drawer-id="custom-tab-create"`) {
+	if !strings.Contains(rendered, `class="page-heading primary-page-heading"`) || !strings.Contains(rendered, `data-dashboard-drawer-id="custom-tab-create"`) || !strings.Contains(rendered, `class="overview-drawer custom-tab-drawer"`) || !strings.Contains(rendered, `class="overview-drawer__body"`) || !strings.Contains(rendered, `class="overview-drawer__form"`) {
 		t.Fatal("custom tabs page does not use the shared title and drawer structure")
 	}
 	if strings.Contains(rendered, `/move`) || !strings.Contains(rendered, `>调整顺序</a>`) {

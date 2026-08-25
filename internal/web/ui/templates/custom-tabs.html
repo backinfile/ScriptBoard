@@ -16,8 +16,41 @@
   </tr>{{end}}
   </tbody></table></div>{{else}}<section class="empty-state"><span data-lucide="panel-top" aria-hidden="true"></span><h2>还没有自定义页签</h2><p>新建后先检查目标页面，再手动开启。</p></section>{{end}}
 
-  <details class="custom-dashboard-drawer-host" data-dashboard-drawer data-dashboard-drawer-id="custom-tab-create"><summary class="sr-only">新建页签</summary><div class="custom-dashboard-drawer-layer"><button class="custom-dashboard-drawer-scrim" type="button" aria-label="关闭新建页签" data-dashboard-drawer-close></button><section class="custom-dashboard-drawer" role="dialog" aria-modal="true" aria-labelledby="custom-tab-create-title"><header class="custom-dashboard-drawer__head"><div><p class="page-eyebrow">自定义页签</p><h2 id="custom-tab-create-title">新建页签</h2></div><button class="icon-button" type="button" aria-label="关闭" data-dashboard-drawer-close><span data-lucide="x" aria-hidden="true"></span></button></header><form class="custom-dashboard-drawer__form" method="post" action="/config/custom-tabs" data-custom-tab-form><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><div class="custom-dashboard-drawer__body">{{template "custom-tab-fields" .}}</div><footer class="custom-dashboard-drawer__footer"><button class="button button--quiet" type="button" data-dashboard-drawer-close>取消</button><button class="button button--primary" type="submit">创建页签</button></footer></form></section></div></details>
-  {{range .Tabs}}<details class="custom-dashboard-drawer-host" data-dashboard-drawer data-dashboard-drawer-id="custom-tab-edit-{{.ID}}"><summary class="sr-only">编辑 {{.Name}}</summary><div class="custom-dashboard-drawer-layer"><button class="custom-dashboard-drawer-scrim" type="button" aria-label="关闭编辑页签" data-dashboard-drawer-close></button><section class="custom-dashboard-drawer" role="dialog" aria-modal="true" aria-labelledby="custom-tab-edit-title-{{.ID}}"><header class="custom-dashboard-drawer__head"><div><p class="page-eyebrow">自定义页签</p><h2 id="custom-tab-edit-title-{{.ID}}">编辑页签</h2></div><button class="icon-button" type="button" aria-label="关闭" data-dashboard-drawer-close><span data-lucide="x" aria-hidden="true"></span></button></header><form class="custom-dashboard-drawer__form" method="post" action="/config/custom-tabs/{{.ID}}" data-custom-tab-form><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><div class="custom-dashboard-drawer__body">{{template "custom-tab-edit-fields" .}}</div><footer class="custom-dashboard-drawer__footer"><button class="button button--danger" type="submit" form="custom-tab-delete-{{.ID}}" name="confirm" value="yes"><span data-lucide="trash-2" aria-hidden="true"></span>删除</button><button class="button button--quiet" type="button" data-dashboard-drawer-close>取消</button><button class="button button--primary" type="submit">保存</button></footer></form><form id="custom-tab-delete-{{.ID}}" method="post" action="/config/custom-tabs/{{.ID}}/delete"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"></form></section></div></details>{{end}}
+  <details class="custom-dashboard-drawer-host" data-dashboard-drawer data-dashboard-drawer-id="custom-tab-create">
+    <summary class="sr-only">新建页签</summary>
+    <div class="custom-dashboard-drawer-layer">
+      <button class="custom-dashboard-drawer-scrim" type="button" aria-label="关闭新建页签" data-dashboard-drawer-close></button>
+      <aside class="overview-drawer custom-tab-drawer" role="dialog" aria-modal="true" aria-labelledby="custom-tab-create-title">
+        <header class="overview-drawer__head"><div><p>自定义页签</p><h2 id="custom-tab-create-title">新建页签</h2></div><div class="overview-drawer__head-actions"><button class="icon-button overview-drawer__close" type="button" aria-label="关闭" data-dashboard-drawer-close><span data-lucide="x" aria-hidden="true"></span></button></div></header>
+        <div class="overview-drawer__body">
+          <form class="overview-drawer__form" method="post" action="/config/custom-tabs" data-custom-tab-form>
+            <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+            <p class="overview-drawer__description">配置目标地址、登录状态和可见权限；创建后默认保持关闭。</p>
+            {{template "custom-tab-fields" .}}
+            <footer><button class="button button--quiet" type="button" data-dashboard-drawer-close>取消</button><button class="button button--primary" type="submit">创建页签</button></footer>
+          </form>
+        </div>
+      </aside>
+    </div>
+  </details>
+  {{range .Tabs}}<details class="custom-dashboard-drawer-host" data-dashboard-drawer data-dashboard-drawer-id="custom-tab-edit-{{.ID}}">
+    <summary class="sr-only">编辑 {{.Name}}</summary>
+    <div class="custom-dashboard-drawer-layer">
+      <button class="custom-dashboard-drawer-scrim" type="button" aria-label="关闭编辑页签" data-dashboard-drawer-close></button>
+      <aside class="overview-drawer custom-tab-drawer" role="dialog" aria-modal="true" aria-labelledby="custom-tab-edit-title-{{.ID}}">
+        <header class="overview-drawer__head"><div><p>自定义页签</p><h2 id="custom-tab-edit-title-{{.ID}}">编辑页签</h2></div><div class="overview-drawer__head-actions"><button class="icon-button overview-drawer__close" type="button" aria-label="关闭" data-dashboard-drawer-close><span data-lucide="x" aria-hidden="true"></span></button></div></header>
+        <div class="overview-drawer__body">
+          <form class="overview-drawer__form" method="post" action="/config/custom-tabs/{{.ID}}" data-custom-tab-form>
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+            <p class="overview-drawer__description">更新目标地址、登录状态和可见权限。</p>
+            {{template "custom-tab-edit-fields" .}}
+            <footer><button class="button button--quiet" type="button" data-dashboard-drawer-close>取消</button><button class="button button--primary" type="submit">保存</button></footer>
+          </form>
+          <section class="overview-drawer__danger"><div><h3>删除页签</h3><p>删除后会立即从“外部”导航移除，已保存的 Key 也会一并删除。</p></div><form id="custom-tab-delete-{{.ID}}" method="post" action="/config/custom-tabs/{{.ID}}/delete"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="button button--danger" type="submit" name="confirm" value="yes"><span data-lucide="trash-2" aria-hidden="true"></span>删除</button></form></section>
+        </div>
+      </aside>
+    </div>
+  </details>{{end}}
 </main>
 </body></html>
 
