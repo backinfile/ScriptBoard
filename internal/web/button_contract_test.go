@@ -134,3 +134,34 @@ func TestCreateGroupButtonsShareTheSecondaryContract(t *testing.T) {
 		}
 	}
 }
+
+func TestImportExportActionsUseConsistentLucideIcons(t *testing.T) {
+	t.Parallel()
+
+	// 导入/导出动作固定使用文件流向图标，避免与普通上传、下载动作混淆。
+	targets := []struct {
+		path        string
+		inputCount  int
+		outputCount int
+	}{
+		{"ui/templates/custom-dashboard.html", 2, 2},
+		{"ui/templates/website-monitor-list.html", 1, 1},
+		{"ui/templates/website-monitor-transfer.html", 1, 1},
+		{"ui/templates/mysql-databases.html", 3, 0},
+		{"ui/templates/kubernetes.html", 3, 0},
+		{"ui/templates/service-logs.html", 0, 1},
+	}
+
+	for _, target := range targets {
+		source, err := webFiles.ReadFile(target.path)
+		if err != nil {
+			t.Fatalf("read %s: %v", target.path, err)
+		}
+		if got := strings.Count(string(source), `data-lucide="file-input"`); got != target.inputCount {
+			t.Errorf("%s uses file-input %d times; want %d", target.path, got, target.inputCount)
+		}
+		if got := strings.Count(string(source), `data-lucide="file-output"`); got != target.outputCount {
+			t.Errorf("%s uses file-output %d times; want %d", target.path, got, target.outputCount)
+		}
+	}
+}

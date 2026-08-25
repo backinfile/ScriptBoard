@@ -52,7 +52,7 @@
       <div><p class="section-index">kubectl / kubeconfig</p><h2>{{t .Locale "kubernetes.local.title"}}</h2><p>{{t .Locale "kubernetes.local.description"}}</p></div>
       <div class="kubernetes-local__actions">
         {{if .LocalConfig.Exportable}}<a class="button" href="/monitor/kubernetes/local/download?path={{queryEscape .LocalConfig.Path}}"><span data-lucide="download" aria-hidden="true"></span>{{t .Locale "kubernetes.local.download_all"}}</a>{{end}}
-        <button class="button button--primary" type="button" data-kubernetes-import-open><span data-lucide="upload" aria-hidden="true"></span>{{t .Locale "kubernetes.local.import"}}</button>
+        <button class="button button--primary" type="button" data-kubernetes-import-open><span data-lucide="file-input" aria-hidden="true"></span>{{t .Locale "kubernetes.local.import"}}</button>
       </div>
     </header>
     {{if .LocalError}}<div class="kubernetes-alert" role="alert"><span data-lucide="triangle-alert" aria-hidden="true"></span><div><strong>{{t .Locale "kubernetes.local.read_failed"}}</strong><p>{{.LocalError}}</p></div></div>{{end}}
@@ -83,7 +83,7 @@
           <form method="post" action="/monitor/kubernetes/local/contexts/{{pathEscape .Name}}" data-confirm="{{t $.Locale "kubernetes.local.delete_context_confirm"}} {{.Name}}?"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="path" value="{{$.LocalConfig.Path}}"><input type="hidden" name="action" value="delete"><button class="icon-button" type="submit" aria-label="{{t $.Locale "common.delete"}} {{.Name}}"><span data-lucide="trash-2" aria-hidden="true"></span></button></form>
         </div>
       </article>
-      {{else}}<div class="kubernetes-onboarding"><div class="kubernetes-onboarding__mark"><span data-lucide="terminal-square" aria-hidden="true"></span></div><div><h2>{{t .Locale "kubernetes.local.empty_title"}}</h2><p>{{t .Locale "kubernetes.local.empty"}}</p></div><button class="button button--primary" type="button" data-kubernetes-import-open><span data-lucide="upload" aria-hidden="true"></span>{{t .Locale "kubernetes.local.import"}}</button></div>{{end}}
+      {{else}}<div class="kubernetes-onboarding"><div class="kubernetes-onboarding__mark"><span data-lucide="terminal-square" aria-hidden="true"></span></div><div><h2>{{t .Locale "kubernetes.local.empty_title"}}</h2><p>{{t .Locale "kubernetes.local.empty"}}</p></div><button class="button button--primary" type="button" data-kubernetes-import-open><span data-lucide="file-input" aria-hidden="true"></span>{{t .Locale "kubernetes.local.import"}}</button></div>{{end}}
     </div>
     <dialog class="kubernetes-drawer kubernetes-import-drawer" data-kubernetes-import-drawer aria-labelledby="kubernetes-import-title">
       <header><div><p class="page-eyebrow">KUBECONFIG</p><h2 id="kubernetes-import-title">{{t .Locale "kubernetes.local.import"}}</h2><p>{{t .Locale "kubernetes.local.import_description"}}</p></div><button class="icon-button" type="button" data-kubernetes-import-close aria-label="{{t .Locale "common.close"}}"><span data-lucide="x" aria-hidden="true"></span></button></header>
@@ -92,7 +92,7 @@
         <div class="kubernetes-import-rules"><h3>{{t .Locale "kubernetes.local.merge_rules"}}</h3><p>{{t .Locale "kubernetes.local.merge_description"}}</p><ul><li>{{t .Locale "kubernetes.local.max_size"}}</li><li>YAML / YML / config</li><li>{{t .Locale "kubernetes.local.atomic_write"}}</li></ul></div>
         <label class="kubernetes-import-drop" data-kubernetes-import-drop><input type="file" name="kubeconfig" accept=".yaml,.yml,.config,application/yaml,text/yaml" required data-kubernetes-import-file><span data-lucide="file-up" aria-hidden="true"></span><strong data-kubernetes-import-filename>{{t .Locale "kubernetes.local.choose_file"}}</strong><small>{{t .Locale "kubernetes.local.choose_hint"}}</small></label>
         <div class="kubernetes-import-preview" data-kubernetes-import-preview hidden><dl><div><dt>CLUSTERS</dt><dd data-import-clusters>0</dd></div><div><dt>USERS</dt><dd data-import-users>0</dd></div><div><dt>CONTEXTS</dt><dd data-import-contexts>0</dd></div></dl><p data-import-conflicts></p><label><span>{{t .Locale "kubernetes.local.import_current"}}</span><select name="current_context"><option value="keep">{{t .Locale "kubernetes.local.keep_current"}}</option><option value="import">{{t .Locale "kubernetes.local.use_imported_current"}}</option></select></label></div>
-        <p class="form-error" data-kubernetes-import-error hidden></p><button class="button button--primary" type="submit"><span data-lucide="merge" aria-hidden="true"></span>{{t .Locale "kubernetes.local.confirm_import"}}</button>
+        <p class="form-error" data-kubernetes-import-error hidden></p><button class="button button--primary" type="submit"><span data-lucide="file-input" aria-hidden="true"></span>{{t .Locale "kubernetes.local.confirm_import"}}</button>
       </form>
     </dialog>
     <dialog class="kubernetes-drawer kubernetes-context-drawer" data-kubernetes-context-drawer aria-labelledby="kubernetes-context-title">

@@ -130,7 +130,7 @@
 
 | 项目 | 当前状态 |
 | --- | --- |
-| ScriptBoard | `http://127.0.0.1:18788`，PID 27704，保持运行；二进制由当前 `dev` 工作区构建 |
+| ScriptBoard | `http://127.0.0.1:18788`，PID 12084，保持运行；二进制由当前 `dev` 工作区构建 |
 | State Root | `D:\Github\worktrees\ScriptBoard\database-unified\.scratch\database-unified-deployment\state` |
 | 管理员 | `admin`；密码仅保留在 State Root 私有文件中 |
 | Docker 项目 | `scriptboard-database-qa`，7 个容器均保持运行 |
@@ -295,3 +295,12 @@
 - 1920px 视口下，两个工作区均为 `left=248px / right=1910px / width=1662px`；AI 记录区与输入区均为 `1430px`。
 - 外部 Playwright 验证 MySQL/Redis 切换后的详情宽高一致，430px 下 AI 与数据库页均无横向溢出，控制台错误为 0。
 - 截图保留为 `.scratch/database-unified-dev-deployment/assistant-full-width.png` 与 `database-full-width.png`；重新部署 PID 为 `27704`，登录页返回 200。
+
+## 导入与导出图标统一复验
+
+本轮先逐项审计所有明确标注“导入/Import”与“导出/Export”的操作，并区分普通上传、下载和文件选择动作。业务导入统一使用 Lucide `file-input`，业务导出统一使用 Lucide `file-output`；普通下载仍使用 `download`，文件选择仍使用对应文件类型图标。
+
+- 白盒覆盖自定义面板、网站监控、MySQL、Kubernetes 和服务日志六个模板族；新增契约测试锁定 10 个导入动作和 5 个导出动作的图标映射。
+- 目标 Web 测试与全仓 `go test ./... -count=1` 均通过，前端规范检测结果为空。
+- 外部 Playwright 在保留数据上验证自定义面板、网站监控及确认页、MySQL 导入、Kubernetes 导入和服务日志 CSV 导出；五类页面全部通过，430px 无横向溢出，控制台错误为 0。
+- 截图保留为 `.scratch/database-unified-dev-deployment/transfer-icons-desktop.png`；重新部署 PID 为 `12084`，登录页返回 200，原有数据库及测试数据均保留。

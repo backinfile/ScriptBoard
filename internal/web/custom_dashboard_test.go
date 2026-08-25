@@ -79,10 +79,10 @@ func TestCustomDashboardCanBeExportedAndImported(t *testing.T) {
 		t.Fatalf("expected two selectable cards, got %d", len(cardMatches))
 	}
 	if rendered := string(page); !strings.Contains(rendered, `data-dashboard-drawer-name="export"`) || !strings.Contains(rendered, `data-dashboard-import-selection`) || strings.Count(rendered, `name="selection"`) != 2 ||
-		!strings.Contains(rendered, `data-dashboard-open-drawer="export"><span data-lucide="upload"`) ||
-		!strings.Contains(rendered, `data-dashboard-open-drawer="import"><span data-lucide="download"`) ||
-		!strings.Contains(rendered, `data-lucide="upload" aria-hidden="true"></span>导出所选节点`) ||
-		!strings.Contains(rendered, `data-lucide="download" aria-hidden="true"></span>导入所选节点`) ||
+		!strings.Contains(rendered, `data-dashboard-open-drawer="export"><span data-lucide="file-output"`) ||
+		!strings.Contains(rendered, `data-dashboard-open-drawer="import"><span data-lucide="file-input"`) ||
+		!strings.Contains(rendered, `data-lucide="file-output" aria-hidden="true"></span>导出所选节点`) ||
+		!strings.Contains(rendered, `data-lucide="file-input" aria-hidden="true"></span>导入所选节点`) ||
 		!strings.Contains(rendered, "导入到当前面板") || strings.Contains(rendered, "创建一个新的私有面板") {
 		t.Fatal("dashboard node transfer UI is incomplete")
 	}

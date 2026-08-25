@@ -42,8 +42,8 @@
     <a class="button" href="/monitor/dashboard/{{.Dashboard.ID}}"><span data-lucide="panel-top" aria-hidden="true"></span>打开监控页</a>
 		<form method="post" action="/config/dashboards/{{.Dashboard.ID}}/refresh"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button" type="submit"><span data-lucide="refresh-cw" aria-hidden="true"></span>刷新数据</button></form>
     <a class="button" href="/config/dashboards?dashboard={{.Dashboard.ID}}{{if not .Reorder}}&amp;reorder=1{{end}}"><span data-lucide="arrow-up-down" aria-hidden="true"></span>{{if .Reorder}}完成排序{{else}}调整顺序{{end}}</a>
-		<button class="button" type="button" data-dashboard-open-drawer="export"><span data-lucide="upload" aria-hidden="true"></span>导出</button>
-		<button class="button" type="button" data-dashboard-open-drawer="import"><span data-lucide="download" aria-hidden="true"></span>导入</button>
+		<button class="button" type="button" data-dashboard-open-drawer="export"><span data-lucide="file-output" aria-hidden="true"></span>导出</button>
+		<button class="button" type="button" data-dashboard-open-drawer="import"><span data-lucide="file-input" aria-hidden="true"></span>导入</button>
 		<details class="custom-dashboard-drawer-host" data-dashboard-drawer data-dashboard-drawer-name="export">
 			<summary class="sr-only">导出节点配置</summary>
 			<div class="custom-dashboard-drawer-layer">
@@ -60,7 +60,7 @@
 							</div>
 							<div class="custom-dashboard-import-warning"><span data-lucide="shield-alert" aria-hidden="true"></span><p><strong>文件可能包含敏感请求头</strong><small>API Key 或 Authorization 请求头会随所选节点导出；Registry 密码不会导出，请妥善保管文件。</small></p></div>
 						</div>
-						<footer class="custom-dashboard-drawer__footer"><a class="button button--quiet" href="/config/dashboards?dashboard={{.Dashboard.ID}}" data-dashboard-drawer-close>取消</a><button class="button button--primary" type="submit" data-dashboard-selection-submit {{if not .Cards}}disabled{{end}}><span data-lucide="upload" aria-hidden="true"></span>导出所选节点</button></footer>
+						<footer class="custom-dashboard-drawer__footer"><a class="button button--quiet" href="/config/dashboards?dashboard={{.Dashboard.ID}}" data-dashboard-drawer-close>取消</a><button class="button button--primary" type="submit" data-dashboard-selection-submit {{if not .Cards}}disabled{{end}}><span data-lucide="file-output" aria-hidden="true"></span>导出所选节点</button></footer>
 					</form>
 				</section>
 			</div>
@@ -86,7 +86,7 @@
 							</div>
 							<div class="custom-dashboard-import-warning"><span data-lucide="shield-alert" aria-hidden="true"></span><p><strong>文件可能包含敏感请求头</strong><small>导出文件会包含节点使用的 API Key 或 Authorization 请求头，请仅在可信环境中保存和传输。</small></p></div>
 						</div>
-						<footer class="custom-dashboard-drawer__footer"><a class="button button--quiet" href="/config/dashboards?dashboard={{.Dashboard.ID}}" data-dashboard-drawer-close>取消</a><button class="button button--primary" type="submit" data-dashboard-selection-submit><span data-lucide="download" aria-hidden="true"></span>导入所选节点</button></footer>
+						<footer class="custom-dashboard-drawer__footer"><a class="button button--quiet" href="/config/dashboards?dashboard={{.Dashboard.ID}}" data-dashboard-drawer-close>取消</a><button class="button button--primary" type="submit" data-dashboard-selection-submit><span data-lucide="file-input" aria-hidden="true"></span>导入所选节点</button></footer>
 					</form>
 				</section>
 			</div>

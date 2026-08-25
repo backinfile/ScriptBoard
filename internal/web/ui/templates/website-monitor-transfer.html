@@ -46,7 +46,7 @@
 {{end}}
 </div>
 <aside class="website-transfer-note"><span data-lucide="shield-alert" aria-hidden="true"></span><p>{{t .Locale "website.transfer.sensitive_note"}}</p></aside>
-<footer class="website-form-actions"><a href="/monitor/websites">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit" data-website-selection-submit {{if not .HasSelectable}}disabled{{end}}><span data-website-submit-label>{{t .Locale "website.transfer.download"}}</span> <span data-website-submit-count>(0)</span></button></footer>
+<footer class="website-form-actions"><a href="/monitor/websites">{{t .Locale "common.cancel"}}</a><button class="button button--primary" type="submit" data-website-selection-submit {{if not .HasSelectable}}disabled{{end}}><span data-lucide="file-output" aria-hidden="true"></span><span data-website-submit-label>{{t .Locale "website.transfer.download"}}</span> <span data-website-submit-count>(0)</span></button></footer>
 </form>
 {{else if .Preview}}
 <form class="website-transfer-form" method="post" action="/monitor/websites/import" data-website-selection-form>
@@ -69,7 +69,7 @@
 </label>
 {{end}}
 </div>
-<footer class="website-form-actions"><a href="/monitor/websites/import" data-task-link>{{t .Locale "website.transfer.choose_another_file"}}</a><button class="button button--primary" type="submit" data-website-selection-submit {{if not .HasSelectable}}disabled{{end}}><span data-website-submit-label>{{t .Locale "website.transfer.import_selected"}}</span> <span data-website-submit-count>(0)</span></button></footer>
+<footer class="website-form-actions"><a href="/monitor/websites/import" data-task-link>{{t .Locale "website.transfer.choose_another_file"}}</a><button class="button button--primary" type="submit" data-website-selection-submit {{if not .HasSelectable}}disabled{{end}}><span data-lucide="file-input" aria-hidden="true"></span><span data-website-submit-label>{{t .Locale "website.transfer.import_selected"}}</span> <span data-website-submit-count>(0)</span></button></footer>
 </form>
 {{else}}
 <form class="website-monitor-form website-transfer-upload" method="post" action="/monitor/websites/import/preview" enctype="multipart/form-data">
