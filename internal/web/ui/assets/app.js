@@ -6938,11 +6938,35 @@
     const backupRestoreDrawer = root.querySelector("[data-mysql-backup-restore-drawer]");
     const backupDeleteDrawer = root.querySelector("[data-mysql-backup-delete-drawer]");
     const planDeleteDrawer = root.querySelector("[data-mysql-plan-delete-drawer]");
+	const querySettingsDrawer = root.querySelector("[data-mysql-query-settings-drawer]");
+	const queryTimeout = querySettingsDrawer?.querySelector("[data-mysql-query-timeout]");
+	const queryMaxRows = querySettingsDrawer?.querySelector("[data-mysql-query-max-rows]");
+	const timeoutSummary = querySettingsDrawer?.querySelector("[data-mysql-timeout-summary]");
+	const maxRowsSummary = querySettingsDrawer?.querySelector("[data-mysql-max-rows-summary]");
+	let querySettingsSnapshot = null;
+	let keepQuerySettingsOnClose = false;
+	const captureQuerySettings = () => {
+	  querySettingsSnapshot = { timeout: queryTimeout?.value || "", maxRows: queryMaxRows?.value || "" };
+	};
+	const restoreQuerySettings = () => {
+	  if (!querySettingsSnapshot) return;
+	  if (queryTimeout) queryTimeout.value = querySettingsSnapshot.timeout;
+	  if (queryMaxRows) queryMaxRows.value = querySettingsSnapshot.maxRows;
+	};
+	const updateQuerySettingsSummary = () => {
+	  if (timeoutSummary) timeoutSummary.textContent = `${queryTimeout?.value || ""}s`;
+	  if (maxRowsSummary) maxRowsSummary.textContent = queryMaxRows?.value || "";
+	};
     let active = null;
     const returnFocus = new WeakMap();
 
-    const close = (drawer, restoreFocus = true) => {
+    const close = (drawer, restoreFocus = true, keepQuerySettings = false) => {
       if (!drawer?.open) return;
+	  if (drawer === querySettingsDrawer) {
+		keepQuerySettingsOnClose = keepQuerySettings;
+		// Restore cancelled edits synchronously; the native details toggle event is queued after open changes.
+		if (!keepQuerySettings) restoreQuerySettings();
+	  }
       drawer.open = false;
       drawer.querySelector(":scope > summary")?.setAttribute("aria-expanded", "false");
       if (active === drawer) active = null;
@@ -6958,6 +6982,10 @@
       const summary = drawer.querySelector(":scope > summary");
       summary?.setAttribute("aria-expanded", String(drawer.open));
       if (!drawer.open) {
+		if (drawer === querySettingsDrawer) {
+		  if (!keepQuerySettingsOnClose) restoreQuerySettings();
+		  keepQuerySettingsOnClose = false;
+		}
         if (active === drawer) {
           active = null;
           document.body.style.overflow = "";
@@ -6965,11 +6993,27 @@
         return;
       }
       drawers.forEach(candidate => { if (candidate !== drawer && candidate.open) close(candidate, false); });
+	  if (drawer === querySettingsDrawer) captureQuerySettings();
       active = drawer;
       document.body.style.overflow = "hidden";
       window.setTimeout(() => drawer.querySelector(".mysql-drawer-sheet")?.focus(), 180);
     };
     const onClick = event => {
+	  const querySettingsApply = event.target.closest("[data-mysql-query-settings-apply]");
+	  if (querySettingsApply && querySettingsDrawer) {
+		event.preventDefault();
+		if (!queryTimeout?.reportValidity() || !queryMaxRows?.reportValidity()) return;
+		updateQuerySettingsSummary();
+		captureQuerySettings();
+		close(querySettingsDrawer, true, true);
+		return;
+	  }
+	  const querySettingsCancel = event.target.closest("[data-mysql-query-settings-cancel]");
+	  if (querySettingsCancel && querySettingsDrawer) {
+		event.preventDefault();
+		close(querySettingsDrawer);
+		return;
+	  }
       const restoreTrigger = event.target.closest("[data-mysql-backup-restore-trigger]");
       if (restoreTrigger && backupRestoreDrawer) {
         event.preventDefault();

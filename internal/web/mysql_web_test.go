@@ -190,6 +190,19 @@ func TestAdministratorCanRegisterMySQLInstanceFromDatabaseWorkspace(t *testing.T
 		t.Fatalf("TLS mode should be the final overview fact: %s", selectedBody)
 	}
 	instanceID := string(instanceMatch[1])
+	sqlPage := string(getBody(t, client, serverURL+"/resources/databases?instance="+instanceID+"&tab=sql", http.StatusOK))
+	for _, expected := range []string{
+		`data-mysql-query-settings-drawer`, `data-lucide="sliders-horizontal"`, `data-mysql-timeout-summary`,
+		`data-mysql-max-rows-summary`, `data-mysql-query-timeout`, `data-mysql-query-max-rows`,
+		`data-mysql-query-settings-apply`, `name="timeout_seconds"`, `name="max_rows"`,
+	} {
+		if !strings.Contains(sqlPage, expected) {
+			t.Fatalf("SQL query settings drawer missing %q: %s", expected, sqlPage)
+		}
+	}
+	if strings.Contains(sqlPage, `class="mysql-sql-limits"`) {
+		t.Fatalf("SQL execution limits still occupy the persistent footer: %s", sqlPage)
+	}
 	for _, endpoint := range []string{"sql", "sql/write"} {
 		response, err = client.PostForm(serverURL+"/resources/databases/instances/"+instanceID+"/"+endpoint, url.Values{
 			"database": {"scriptboard_qa"}, "statement": {"SELECT 1"},

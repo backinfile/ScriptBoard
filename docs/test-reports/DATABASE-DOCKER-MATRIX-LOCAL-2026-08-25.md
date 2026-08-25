@@ -413,3 +413,12 @@
 - 外部 Playwright 验证取消、错误密码、成功验证、实际写入、页面局部保持、430px 响应式及控制台错误；除错误密码预期产生的一次 HTTP 401 外，非预期错误为 0。
 - 写入测试数据保留为 `scriptboard_qa.widgets.id=2 / status=write-dialog-retained`，未执行清理。截图保留为 `.scratch/database-unified-dev-deployment/mysql-write-mode-dialog-open.png`。
 - 当前重新部署二进制为 `.scratch/database-unified-dev-deployment/scriptboard-dev-write-mode-dialog.exe`，PID `34844`，登录页返回 200。
+
+## MySQL 查询设置抽屉复验
+
+- SQL 控制台底部不再常驻展示“超时”和“最大返回行数”输入框；新增带当前值摘要的“查询设置”按钮，在右侧抽屉中统一修改 1–60 秒超时与 1–1000 行返回上限。
+- 黑盒覆盖：抽屉打开和关闭、取消恢复、非法范围阻止应用、应用后摘要更新、焦点返回、25 行后端截断、SQL 结果局部更新且页面外壳保持、430px 无横向溢出、Escape、禁用 JavaScript 提交和控制台错误。
+- 白盒覆盖：查询设置选择器、Lucide 图标、表单字段名、应用操作及旧常驻布局移除；JavaScript 语法、模板渲染、服务端参数绑定和全仓回归均通过。
+- 外部 Playwright 结果：`drawer/cancelRestore/validation/appliedSummary/serverLimits/partialPage/mobile/noJavaScript` 全部通过，非预期控制台错误 0；写模式弹窗与数据库局部导航两组既有回归也全部通过。
+- `go test ./... -count=1` 全部通过，其中 `internal/web` 98.865s；测试数据继续保留，四个 SQL 容器中的 `sb_partial_nav_20260825.navigation_samples` 仍各有 250 行。
+- 截图保留为 `.scratch/database-unified-dev-deployment/mysql-query-settings-drawer-open.png`。当前部署二进制为 `.scratch/database-unified-dev-deployment/scriptboard-dev-query-settings-drawer.exe`，PID `24028`，监听 `127.0.0.1:18788`。
