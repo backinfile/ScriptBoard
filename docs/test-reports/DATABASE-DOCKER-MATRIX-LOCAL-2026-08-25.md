@@ -324,3 +324,81 @@
 - 外部 Playwright 验证混合连接切换、MySQL 对象筛选、SQL `SELECT` 结果、Redis 页签与 SCAN、连接测试、局部加载态和 430px 响应式全部通过，控制台错误为 0。
 - 干净验证 worktree 执行 `go test ./... -count=1` 全部通过；首次全仓运行出现一条五秒状态缓存时序抖动，单测复跑与最终全仓复跑均通过。
 - 截图保留为 `.scratch/database-unified-dev-deployment/database-partial-navigation.png`；重新部署 PID 为 `39428`，登录页返回 200，现有数据库和测试数据全部保留。
+
+## 数据库完整白盒与黑盒保留数据复验
+
+本轮在当前 `dev` 合并态重新建立编号清单、造数、逐项执行并重新部署。测试数据只新增或幂等更新，没有执行清理。
+
+### 白盒条目（WB-01–WB-20）
+
+| 编号 | 条目 | 结果 |
+| --- | --- | --- |
+| WB-01 | 数据库路由、静态脚本、样式加载及 JavaScript 语法 | 通过 |
+| WB-02 | MySQL、MariaDB、Redis 统一工作台与局部区域标记 | 通过 |
+| WB-03 | 混排连接切换、分页、选择参数和连接区域响应 | 通过 |
+| WB-04 | MySQL/MariaDB 七个内部页签与路由 | 通过 |
+| WB-05 | Redis 概览、键空间、诊断页签与路由 | 通过 |
+| WB-06 | database/object/preview/pattern/含 `::` key 的编码与回显 | 通过 |
+| WB-07 | 字段、类型、可空、默认值、主键、索引及 200 行预览 | 通过 |
+| WB-08 | SELECT/SHOW/DESC/DESCRIBE/EXPLAIN/只读 WITH 分类 | 通过 |
+| WB-09 | 注释、大小写、CTE 写入、多语句、存储过程与 DDL 绕过拦截 | 通过 |
+| WB-10 | 后端只读、写模式权限、step-up、Safe Updates 与危险确认 | 通过 |
+| WB-11 | 列名、返回/影响行数、耗时、错误、超时、最大行数和截断 | 通过 |
+| WB-12 | CSRF、授权、SQL 审计与敏感信息脱敏 | 通过 |
+| WB-13 | MySQL/Redis POST、GET 与重定向局部区域契约 | 通过 |
+| WB-14 | 禁用 JavaScript 的原生链接和表单后备 | 通过 |
+| WB-15 | `aria-current`、`aria-busy`、可访问名称、焦点和按钮类型 | 通过 |
+| WB-16 | history URL 的连接、引擎、页签、database、pattern、key 参数 | 通过 |
+| WB-17 | MySQL/MariaDB/Redis 明文、TLS 与显式跳过验证表达能力 | 通过 |
+| WB-18 | 中英文数据库、SQL、SCAN、结果和错误文案 | 通过 |
+| WB-19 | 桌面/移动布局、详情尺寸稳定和横向溢出规则 | 通过 |
+| WB-20 | 数据库定向包与 `go test ./... -count=1` 全仓回归 | 通过 |
+
+首次单独运行 `internal/web` 时，五秒状态快照测试受并行活动 Run 时序影响读到一次 `activeRuns=1`；该公开行为单测连续复跑 3 次通过，最终全仓回归通过（`internal/web` 96.765s）。数据库定向包 `mysqlmanager`、`redismanager`、`privilegebroker` 均通过。静态检查使用当前资源路径 `internal/web/ui/assets/app.js` 通过。
+
+### 黑盒条目（BB-01–BB-30）
+
+| 编号 | 条目 | 结果 |
+| --- | --- | --- |
+| BB-01 | 健康检查、登录页、认证登录、数据库页 | 通过 |
+| BB-02 | 19 个连接中的 MySQL/MariaDB/Redis 混排与分页 | 通过 |
+| BB-03 | MySQL → Redis → MySQL 仅替换连接工作区 | 通过 |
+| BB-04 | 连接分页仅替换连接工作区且尺寸稳定 | 通过 |
+| BB-05 | MySQL/MariaDB 七个内部页签仅替换详情 | 通过 |
+| BB-06 | MySQL 概览刷新仅替换详情 | 通过 |
+| BB-07 | 系统库显隐、库/表/视图、结构、前 200 行、发送 SQL | 通过 |
+| BB-08 | SELECT/SHOW/DESC/EXPLAIN/CTE 结果、计数、耗时、截断 | 通过 |
+| BB-09 | SQL 错误、超时、只读、多语句、写授权和危险保护 | 通过 |
+| BB-10 | MySQL/Redis 连接测试保持原地交互 | 通过 |
+| BB-11 | 四个 SQL 容器读取新建库、表、视图、索引和 250 行 | 通过 |
+| BB-12 | MySQL/MariaDB 明文与 TLS 对象和查询 | 通过 |
+| BB-13 | Redis 概览刷新及三个页签局部替换 | 通过 |
+| BB-14 | Redis SCAN 空/通配/`::`/特殊字符模式 | 通过 |
+| BB-15 | Redis string/hash/list/set/zset/stream、永久键与 TTL 值 | 通过 |
+| BB-16 | 双冒号分段；单冒号和无分隔键保持未分组 | 通过 |
+| BB-17 | Redis 键选择、关闭检查器、前后导航保持详情边界 | 通过 |
+| BB-18 | Redis 明文、认证、TLS 与跳过验证连接矩阵 | 通过 |
+| BB-19 | 目标区域 busy、无全局进度、重复交互保护 | 通过 |
+| BB-20 | 连续局部导航最终内容与最后请求一致 | 通过 |
+| BB-21 | 注入网络失败时保留内容、显示错误并成功重试 | 通过 |
+| BB-22 | 后退/前进恢复连接与内部页签 | 通过 |
+| BB-23 | 原生新开页、下载行为不被局部导航劫持 | 通过 |
+| BB-24 | 禁用 JavaScript 后完整导航和新增 Redis 表单 | 通过 |
+| BB-25 | 1920/1440/430/390 宽度无溢出且详情尺寸稳定 | 通过 |
+| BB-26 | 中文与英文核心路径 | 通过 |
+| BB-27 | Tab/Enter/Escape、抽屉焦点和键盘交互 | 通过 |
+| BB-28 | 除主动注入的一次 `ERR_FAILED` 外控制台/页面错误为 0 | 通过 |
+| BB-29 | 新建数据结束后从四个 SQL 容器和 Redis 再次查询仍存在 | 通过 |
+| BB-30 | 最终部署、登录和七个 Docker 数据库容器持续运行 | 通过 |
+
+旧 `playwright-blackbox.cjs` 与 `redis-values-playwright.cjs` 原先把单冒号 `qa:string` 视为 `qa` 分组，与现行 `::` 规范冲突；测试夹具已按双冒号更新。旧 HTTP 脚本只读取连接第一页，连接增至 19 个后三页 ID 解析失效；最终矩阵改由 Playwright 遍历全部分页。SQL 黑盒夹具还修复了复用旧结果节点的等待竞争；修正后四个连接的完整 SQL 安全矩阵全部通过，`blocked` 数据行复核为 0。
+
+### 保留数据与最终部署
+
+- `sb-qa-mysql-plain`、`sb-qa-mysql-tls`、`sb-qa-mariadb-plain`、`sb-qa-mariadb-tls` 均保留数据库 `sb_partial_nav_20260825`。
+- 每个数据库保留 `navigation_samples`（250 行）、`active_navigation_samples` 视图、主键、唯一索引和 `(active, created_at)` 复合索引；字段覆盖非空、可空、默认值、布尔、日期和 JSON。
+- `sb-qa-redis-noauth` 保留 `sb_partial_nav::string/hash/list/set/zset/stream/ttl`、`sb_partial_nav::encoded key`、`sb_partial_nav::中文`、`sb_partial_nav:single` 和 `sb_partial_nav-root` 共 11 个本轮键；TTL 设置为一周，测试结束时仍有效。
+- SQL 写模式保留 `scriptboard_qa.widgets.id=1` 的 `status=write-tested-retained`；所有只读绕过候选均未写入。
+- 外部 Playwright 最终输出：`inventory=19`、`sqlConnections=4`、`retainedRowsPerSQL=250`、`redisTypes=6`、局部导航/错误重试/响应式均通过，非预期控制台错误 0。
+- 截图保留为 `.scratch/database-unified-dev-deployment/database-retained-matrix.png` 和 `database-partial-navigation.png`。
+- 当前部署二进制为 `.scratch/database-unified-dev-deployment/scriptboard-dev-database-matrix-final.exe`，PID `38176`，监听 `127.0.0.1:18788`；登录页返回 200，七个 Docker 数据库容器全部运行。
