@@ -123,6 +123,11 @@ func (a *App) redisDatabasesPage(response http.ResponseWriter, request *http.Req
 }
 
 func (a *App) saveRedisInstance(response http.ResponseWriter, request *http.Request) {
+	// Reject cross-site connection mutations before parsing or persisting attacker-controlled fields.
+	if !validSessionCSRF(request) {
+		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
+		return
+	}
 	if err := request.ParseForm(); err != nil {
 		http.Error(response, "invalid form", http.StatusBadRequest)
 		return
@@ -146,6 +151,11 @@ func (a *App) saveRedisInstance(response http.ResponseWriter, request *http.Requ
 }
 
 func (a *App) testRedisInstance(response http.ResponseWriter, request *http.Request) {
+	// Connection tests update persisted health state, so they require the same CSRF boundary as MySQL tests.
+	if !validSessionCSRF(request) {
+		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
+		return
+	}
 	result, err := a.redis.TestInstance(request.Context(), request.PathValue("id"))
 	response.Header().Set("Content-Type", "application/json")
 	if err != nil {
@@ -158,6 +168,11 @@ func (a *App) testRedisInstance(response http.ResponseWriter, request *http.Requ
 	}{OK: result.OK, Version: result.Version})
 }
 func (a *App) deleteRedisInstance(response http.ResponseWriter, request *http.Request) {
+	// Protect destructive connection removal even when the administrator session is already stepped up.
+	if !validSessionCSRF(request) {
+		http.Error(response, webText(resolveWebLocale(request), "error.forbidden"), http.StatusForbidden)
+		return
+	}
 	if err := a.redis.DeleteInstance(request.Context(), request.PathValue("id")); err != nil {
 		http.Error(response, secretredaction.String(err.Error()), http.StatusBadRequest)
 		return

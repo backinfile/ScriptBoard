@@ -128,8 +128,10 @@ func (server *mysqlDatabaseServer) Test(ctx context.Context, instance Instance, 
 		return ConnectionTest{Error: secretredaction.String(err.Error())}, err
 	}
 	result := ConnectionTest{OK: true, CanReadDatabases: true}
-	_ = database.QueryRowContext(ctx, `SELECT @@version, @@version_comment,
-		COALESCE((SELECT VARIABLE_VALUE FROM performance_schema.session_status WHERE VARIABLE_NAME='Ssl_cipher'), '')`).Scan(&result.Version, &result.Server, &result.Cipher)
+	_ = database.QueryRowContext(ctx, `SELECT @@version, @@version_comment`).Scan(&result.Version, &result.Server)
+	// MariaDB may not expose the current cipher through performance_schema; session status works for both engines.
+	var cipherName string
+	_ = database.QueryRowContext(ctx, `SHOW SESSION STATUS LIKE 'Ssl_cipher'`).Scan(&cipherName, &result.Cipher)
 	result.TLS = result.Cipher != ""
 	var grants strings.Builder
 	if rows, queryErr := database.QueryContext(ctx, "SHOW GRANTS"); queryErr == nil {
@@ -191,21 +193,22 @@ func (server *mysqlDatabaseServer) Status(ctx context.Context, instance Instance
 	}
 	values := make(map[string]float64)
 	rows, err := database.QueryContext(ctx, `SHOW GLOBAL STATUS WHERE Variable_name IN
-		('Uptime','Threads_connected','Threads_running','Questions','Com_commit','Com_rollback','Slow_queries','Ssl_cipher')`)
+		('Uptime','Threads_connected','Threads_running','Questions','Com_commit','Com_rollback','Slow_queries')`)
 	if err != nil {
 		return Status{}, err
 	}
 	for rows.Next() {
 		var name, value string
 		if rows.Scan(&name, &value) == nil {
-			if name == "Ssl_cipher" {
-				result.Cipher = value
-			} else if number, parseErr := strconv.ParseFloat(value, 64); parseErr == nil {
+			if number, parseErr := strconv.ParseFloat(value, 64); parseErr == nil {
 				values[name] = number
 			}
 		}
 	}
 	_ = rows.Close()
+	// Read the TLS state from this session instead of the global status, which is empty on MariaDB.
+	var cipherName string
+	_ = database.QueryRowContext(ctx, `SHOW SESSION STATUS LIKE 'Ssl_cipher'`).Scan(&cipherName, &result.Cipher)
 	uptime := values["Uptime"]
 	result.Uptime = time.Duration(uptime) * time.Second
 	result.CurrentConnections = uint64(values["Threads_connected"])

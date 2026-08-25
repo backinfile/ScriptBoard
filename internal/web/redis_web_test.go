@@ -39,6 +39,17 @@ func TestAdministratorCanRegisterAndInspectRedisConnection(t *testing.T) {
 	body, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	response, err = client.PostForm(serverURL+"/resources/databases/redis/instances", url.Values{
+		"name": {"Missing CSRF"}, "environment": {"production"}, "host": {"redis.internal"},
+		"port": {"6379"}, "database": {"0"}, "tls_mode": {"disabled"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("create Redis connection without CSRF status=%d, want %d", response.StatusCode, http.StatusForbidden)
+	}
+	response, err = client.PostForm(serverURL+"/resources/databases/redis/instances", url.Values{
 		"csrf_token": {formToken(t, body)}, "name": {"Cache production"}, "environment": {"production"},
 		"host": {"redis.internal"}, "port": {"6379"}, "username": {"scriptboard"}, "database": {"2"},
 		"password": {"redis-password"}, "tls_mode": {"insecure_skip_verify"},
@@ -58,5 +69,23 @@ func TestAdministratorCanRegisterAndInspectRedisConnection(t *testing.T) {
 	}
 	if !strings.Contains(page, "man-in-the-middle") {
 		t.Fatalf("Redis connection form does not explain skip-verification risk: %s", page)
+	}
+	location, err := url.Parse(response.Header.Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	instanceID := location.Query().Get("instance")
+	if instanceID == "" {
+		t.Fatalf("Redis connection redirect missing instance id: %q", response.Header.Get("Location"))
+	}
+	for _, endpoint := range []string{"test", "delete"} {
+		response, err = client.PostForm(serverURL+"/resources/databases/redis/instances/"+instanceID+"/"+endpoint, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusForbidden {
+			t.Fatalf("Redis %s without CSRF status=%d, want %d", endpoint, response.StatusCode, http.StatusForbidden)
+		}
 	}
 }

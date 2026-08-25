@@ -6662,7 +6662,8 @@
       drawer.open = false;
       drawer.querySelector(":scope > summary")?.setAttribute("aria-expanded", "false");
       if (active === drawer) active = null;
-      if (guardrailLayer?.dataset.open !== "true") document.body.style.overflow = "";
+      // MySQL drawers own the page scroll lock; clear it without referencing assistant-only state.
+      document.body.style.overflow = "";
       const trigger = returnFocus.get(drawer);
       if (restoreFocus && trigger) trigger.focus();
       else if (restoreFocus) drawer.querySelector(":scope > summary")?.focus();
