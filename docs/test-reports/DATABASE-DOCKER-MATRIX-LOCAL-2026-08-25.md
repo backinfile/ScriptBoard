@@ -130,7 +130,7 @@
 
 | 项目 | 当前状态 |
 | --- | --- |
-| ScriptBoard | `http://127.0.0.1:18788`，PID 3900，保持运行；二进制由当前 `dev` 工作区构建 |
+| ScriptBoard | `http://127.0.0.1:18788`，PID 39428，保持运行；二进制由当前 `dev` 提交构建 |
 | State Root | `D:\Github\worktrees\ScriptBoard\database-unified\.scratch\database-unified-deployment\state` |
 | 管理员 | `admin`；密码仅保留在 State Root 私有文件中 |
 | Docker 项目 | `scriptboard-database-qa`，7 个容器均保持运行 |
@@ -313,3 +313,14 @@
 - Docker `sb-qa-redis-noauth` 新增并保留 `qa::accounts::42`、`qa:single`、`qa-ungrouped` 三条边界测试数据。
 - 外部 Playwright 遍历 10 个 Redis 连接，确认双冒号键进入 `qa` 折叠段、单冒号及普通键进入未分组段；折叠/展开、值预览、430px 响应式均通过，控制台错误为 0。
 - 全仓 `go test ./... -count=1` 通过；截图保留为 `.scratch/database-unified-dev-deployment/redis-double-colon-keyspace.png`。重新部署 PID 为 `3900`，登录页返回 200。
+
+## MySQL 与 Redis 工作台局部导航复验
+
+本轮将数据库工作台交互拆为明确的局部更新边界：连接切换及连接分页替换“连接栏＋详情”，MySQL/Redis 内部页签、对象浏览、Redis SCAN、键值查看和 SQL 执行仅替换当前连接详情；抽屉开关与连接测试保持原地交互。
+
+- 修复前浏览器回归稳定复现连接切换会替换整个数据库 `<main>`；修复后页面主节点与标题保持挂载，只有目标连接区或详情区被替换。
+- GET 表单、重定向 POST、非重定向 SQL POST 和浏览器历史导航均接入相同区域边界；无 JavaScript 时保留原生表单及链接回退。
+- 局部请求只在目标区域显示 `aria-busy` 加载态，不显示全局导航进度条；跨一级页面的导航进度契约保持不变。
+- 外部 Playwright 验证混合连接切换、MySQL 对象筛选、SQL `SELECT` 结果、Redis 页签与 SCAN、连接测试、局部加载态和 430px 响应式全部通过，控制台错误为 0。
+- 干净验证 worktree 执行 `go test ./... -count=1` 全部通过；首次全仓运行出现一条五秒状态缓存时序抖动，单测复跑与最终全仓复跑均通过。
+- 截图保留为 `.scratch/database-unified-dev-deployment/database-partial-navigation.png`；重新部署 PID 为 `39428`，登录页返回 200，现有数据库和测试数据全部保留。
