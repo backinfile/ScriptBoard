@@ -60,6 +60,18 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 			}
 		}
 	}
+	if schemaVersion >= 20 && schemaVersion <= 54 {
+		exists, err := storesqlite.ColumnExists(migration, "custom_dashboards", "show_as_tab")
+		if err != nil {
+			return fmt.Errorf("inspect custom dashboard tab visibility migration: %w", err)
+		}
+		if !exists {
+			// Existing panels remain available in configuration and opt into the application tab bar explicitly.
+			if _, err := migration.Exec(`ALTER TABLE custom_dashboards ADD COLUMN show_as_tab INTEGER NOT NULL DEFAULT 0 CHECK (show_as_tab IN (0,1))`); err != nil {
+				return fmt.Errorf("add custom dashboard tab visibility: %w", err)
+			}
+		}
+	}
 	if schemaVersion >= 20 && schemaVersion <= 48 {
 		exists, err := storesqlite.ColumnExists(migration, "variables", "value_type")
 		if err != nil {

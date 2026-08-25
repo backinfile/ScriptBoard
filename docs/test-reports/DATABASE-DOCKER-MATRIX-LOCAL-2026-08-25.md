@@ -422,3 +422,13 @@
 - 外部 Playwright 结果：`drawer/cancelRestore/validation/appliedSummary/serverLimits/partialPage/mobile/noJavaScript` 全部通过，非预期控制台错误 0；写模式弹窗与数据库局部导航两组既有回归也全部通过。
 - `go test ./... -count=1` 全部通过，其中 `internal/web` 98.865s；测试数据继续保留，四个 SQL 容器中的 `sb_partial_nav_20260825.navigation_samples` 仍各有 250 行。
 - 截图保留为 `.scratch/database-unified-dev-deployment/mysql-query-settings-drawer-open.png`。当前部署二进制为 `.scratch/database-unified-dev-deployment/scriptboard-dev-query-settings-drawer.exe`，PID `24028`，监听 `127.0.0.1:18788`。
+
+## MySQL 页签高度与自定义面板页签开关复验
+
+- MySQL 的概览、业务数据库、对象/表、SQL 控制台、备份记录、备份计划和操作七个内容区使用相同的详情舞台最小高度，切换时右侧详情实测均为 `846px`；内容标题与横向页签栏的最大间距收紧为 `26px`。
+- 自定义面板新增独立“显示为页签”开关；新建和从 schema 54 升级的既有面板均默认关闭，只在开启后加入应用左侧监控页签栏。自定义面板管理页仍展示全部面板，关闭页签后可以继续管理并重新开启。
+- 页签开关与公开访问开关分别保存，任一表单更新都保留另一项状态。数据库 schema 升至 55，并覆盖 54→55 默认值迁移及 20–54 兼容策略。
+- 白盒测试覆盖默认值、创建/读取/更新、页面表单、导航过滤、开关状态保持、迁移列和兼容策略；`internal/customdashboard`、`internal/store/migrations`、`internal/web` 及 `go test ./... -count=1` 全部通过。
+- 外部 Playwright 覆盖默认不显示、开启后显示、刷新持久化、七个 MySQL 页签高度、页签后间距、430px 横向溢出和控制台错误；全部通过，控制台错误 0。查询设置抽屉、数据库局部导航和写模式弹窗三组既有回归也再次通过。
+- 多轮浏览器重试创建的“页签开关保留”测试面板均未删除；最终成功样本为 `页签开关保留 retained-mt8d3yzd`。数据库矩阵及原有 250 行 SQL 测试数据继续保留。
+- 截图保留为 `.scratch/database-unified-dev-deployment/custom-dashboard-tab-visibility-retained.png` 与 `mysql-tab-height-consistency.png`。当前部署二进制为 `.scratch/database-unified-dev-deployment/scriptboard-dev-dashboard-tabs.exe`，PID `14668`，登录页返回 200，七个 Docker 数据库容器持续运行。

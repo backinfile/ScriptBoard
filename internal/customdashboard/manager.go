@@ -32,7 +32,8 @@ var ErrCredentialUnavailable = errors.New("Registry 凭据未配置")
 var SchemaStatements = []string{
 	`CREATE TABLE IF NOT EXISTS custom_dashboards (
 		id TEXT PRIMARY KEY, name TEXT NOT NULL, slug TEXT NOT NULL UNIQUE,
-		is_public INTEGER NOT NULL CHECK (is_public IN (0,1)), sort_order INTEGER NOT NULL,
+		is_public INTEGER NOT NULL CHECK (is_public IN (0,1)),
+		show_as_tab INTEGER NOT NULL DEFAULT 0 CHECK (show_as_tab IN (0,1)), sort_order INTEGER NOT NULL,
 		created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
 	)`,
 	`CREATE TABLE IF NOT EXISTS custom_dashboard_cards (
@@ -66,8 +67,8 @@ const (
 )
 
 type DashboardInput struct {
-	Name, Slug string
-	Public     bool
+	Name, Slug        string
+	Public, ShowAsTab bool
 }
 type CardInput struct {
 	Name                              string
@@ -103,7 +104,7 @@ type Card struct {
 }
 type Dashboard struct {
 	ID, Name, Slug       string
-	Public               bool
+	Public, ShowAsTab    bool
 	SortOrder            int
 	Cards                []Card
 	CreatedAt, UpdatedAt time.Time
@@ -236,7 +237,7 @@ func (m *Manager) CreateDashboard(ctx context.Context, input DashboardInput) (Da
 	if err = m.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(sort_order),0)+1 FROM custom_dashboards`).Scan(&order); err != nil {
 		return Dashboard{}, err
 	}
-	_, err = m.db.ExecContext(ctx, `INSERT INTO custom_dashboards(id,name,slug,is_public,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, id, input.Name, input.Slug, boolInt(input.Public), order, now.UnixNano(), now.UnixNano())
+	_, err = m.db.ExecContext(ctx, `INSERT INTO custom_dashboards(id,name,slug,is_public,show_as_tab,sort_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, id, input.Name, input.Slug, boolInt(input.Public), boolInt(input.ShowAsTab), order, now.UnixNano(), now.UnixNano())
 	if err != nil {
 		return Dashboard{}, friendlyUnique(err)
 	}
@@ -248,7 +249,7 @@ func (m *Manager) UpdateDashboard(ctx context.Context, id string, input Dashboar
 	if input.Name == "" || !validSlug(input.Slug) {
 		return Dashboard{}, errors.New("面板名称或公开地址标识无效")
 	}
-	result, err := m.db.ExecContext(ctx, `UPDATE custom_dashboards SET name=?,slug=?,is_public=?,updated_at=? WHERE id=?`, input.Name, input.Slug, boolInt(input.Public), m.now().UnixNano(), id)
+	result, err := m.db.ExecContext(ctx, `UPDATE custom_dashboards SET name=?,slug=?,is_public=?,show_as_tab=?,updated_at=? WHERE id=?`, input.Name, input.Slug, boolInt(input.Public), boolInt(input.ShowAsTab), m.now().UnixNano(), id)
 	if err != nil {
 		return Dashboard{}, friendlyUnique(err)
 	}
@@ -307,7 +308,7 @@ func (m *Manager) DeleteDashboard(ctx context.Context, id string) error {
 	return m.completeRegistryOperations(ctx, operations)
 }
 func (m *Manager) ListDashboards(ctx context.Context) ([]Dashboard, error) {
-	rows, err := m.db.QueryContext(ctx, `SELECT id,name,slug,is_public,sort_order,created_at,updated_at FROM custom_dashboards ORDER BY sort_order,created_at`)
+	rows, err := m.db.QueryContext(ctx, `SELECT id,name,slug,is_public,show_as_tab,sort_order,created_at,updated_at FROM custom_dashboards ORDER BY sort_order,created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -323,7 +324,7 @@ func (m *Manager) ListDashboards(ctx context.Context) ([]Dashboard, error) {
 	return result, rows.Err()
 }
 func (m *Manager) GetDashboard(ctx context.Context, id string) (Dashboard, error) {
-	row := m.db.QueryRowContext(ctx, `SELECT id,name,slug,is_public,sort_order,created_at,updated_at FROM custom_dashboards WHERE id=?`, id)
+	row := m.db.QueryRowContext(ctx, `SELECT id,name,slug,is_public,show_as_tab,sort_order,created_at,updated_at FROM custom_dashboards WHERE id=?`, id)
 	d, err := scanDashboard(row)
 	if err != nil {
 		return Dashboard{}, err
@@ -333,7 +334,7 @@ func (m *Manager) GetDashboard(ctx context.Context, id string) (Dashboard, error
 }
 func (m *Manager) GetPublicDashboard(ctx context.Context, slug string) (Dashboard, error) {
 	slug = strings.TrimSpace(strings.ToLower(slug))
-	row := m.db.QueryRowContext(ctx, `SELECT id,name,slug,is_public,sort_order,created_at,updated_at FROM custom_dashboards WHERE slug=? AND is_public=1`, slug)
+	row := m.db.QueryRowContext(ctx, `SELECT id,name,slug,is_public,show_as_tab,sort_order,created_at,updated_at FROM custom_dashboards WHERE slug=? AND is_public=1`, slug)
 	d, err := scanDashboard(row)
 	if err != nil {
 		return Dashboard{}, err
@@ -358,10 +359,11 @@ type scanner interface{ Scan(...any) error }
 
 func scanDashboard(row scanner) (Dashboard, error) {
 	var d Dashboard
-	var public int
+	var public, showAsTab int
 	var created, updated int64
-	err := row.Scan(&d.ID, &d.Name, &d.Slug, &public, &d.SortOrder, &created, &updated)
+	err := row.Scan(&d.ID, &d.Name, &d.Slug, &public, &showAsTab, &d.SortOrder, &created, &updated)
 	d.Public = public == 1
+	d.ShowAsTab = showAsTab == 1
 	d.CreatedAt = time.Unix(0, created).UTC()
 	d.UpdatedAt = time.Unix(0, updated).UTC()
 	return d, err
