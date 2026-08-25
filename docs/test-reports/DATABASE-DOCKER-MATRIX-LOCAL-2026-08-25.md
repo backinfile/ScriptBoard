@@ -110,7 +110,7 @@
 | # | 测试条目 | 结果 |
 | --- | --- | --- |
 | REDIS-K01 | SCAN 工具栏中英文、空模式等同 `*`、`qa:*` 匹配 | 通过 |
-| REDIS-K02 | 按冒号 namespace 分组，未分组键进入独立分段 | 通过 |
+| REDIS-K02 | 按双冒号（`::`）namespace 分组，单冒号及无分隔符键进入独立未分组分段 | 通过 |
 | REDIS-K03 | namespace 原生 details 展开/折叠及无 JavaScript 可用性 | 通过 |
 | REDIS-K04 | String 键值预览 | 通过，`qa:string=retained` |
 | REDIS-K05 | Hash/List/Set/ZSet/Stream 类型化预览和 100 项截断 | 部分通过；保留数据与后端路径覆盖 Hash/List/Set/ZSet，浏览器逐键实测 String，本轮未创建 Stream 夹具 |
@@ -130,7 +130,7 @@
 
 | 项目 | 当前状态 |
 | --- | --- |
-| ScriptBoard | `http://127.0.0.1:18788`，PID 12084，保持运行；二进制由当前 `dev` 工作区构建 |
+| ScriptBoard | `http://127.0.0.1:18788`，PID 3900，保持运行；二进制由当前 `dev` 工作区构建 |
 | State Root | `D:\Github\worktrees\ScriptBoard\database-unified\.scratch\database-unified-deployment\state` |
 | 管理员 | `admin`；密码仅保留在 State Root 私有文件中 |
 | Docker 项目 | `scriptboard-database-qa`，7 个容器均保持运行 |
@@ -304,3 +304,12 @@
 - 目标 Web 测试与全仓 `go test ./... -count=1` 均通过，前端规范检测结果为空。
 - 外部 Playwright 在保留数据上验证自定义面板、网站监控及确认页、MySQL 导入、Kubernetes 导入和服务日志 CSV 导出；五类页面全部通过，430px 无横向溢出，控制台错误为 0。
 - 截图保留为 `.scratch/database-unified-dev-deployment/transfer-icons-desktop.png`；重新部署 PID 为 `12084`，登录页返回 200，原有数据库及测试数据均保留。
+
+## Redis 双冒号键空间分段复验
+
+本轮将 Redis 键空间的显式层级分隔符修正为双冒号（`::`）。单冒号属于普通键名字符，不再触发命名空间折叠；无分隔符键与单冒号键统一进入“未分组键”。
+
+- 白盒回归先复现 `cache:item` 被错误拆到 `cache` 分组，修复后验证 `order::42`、`session::7` 正确分组，`cache:item` 与无分隔符键保持未分组；键值预览与 SCAN 查询继续通过。
+- Docker `sb-qa-redis-noauth` 新增并保留 `qa::accounts::42`、`qa:single`、`qa-ungrouped` 三条边界测试数据。
+- 外部 Playwright 遍历 10 个 Redis 连接，确认双冒号键进入 `qa` 折叠段、单冒号及普通键进入未分组段；折叠/展开、值预览、430px 响应式均通过，控制台错误为 0。
+- 全仓 `go test ./... -count=1` 通过；截图保留为 `.scratch/database-unified-dev-deployment/redis-double-colon-keyspace.png`。重新部署 PID 为 `3900`，登录页返回 200。

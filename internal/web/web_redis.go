@@ -42,7 +42,8 @@ func groupRedisKeys(keys []redismanager.KeySummary) []redisKeyGroup {
 	order := make([]string, 0)
 	for _, key := range keys {
 		namespace := ""
-		if prefix, _, found := strings.Cut(key.Name, ":"); found {
+		// Redis 键空间仅将显式 "::" 视为层级分隔符，避免拆散包含普通冒号的键名。
+		if prefix, _, found := strings.Cut(key.Name, "::"); found {
 			namespace = strings.TrimSpace(prefix)
 		}
 		if _, exists := groups[namespace]; !exists {
