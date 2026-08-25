@@ -253,3 +253,26 @@
 - 合并态执行 `go test ./... -count=1` 全部通过，并从 `dev` 构建 `D:\Github\ScriptBoard\.scratch\database-unified-dev-deployment\scriptboard-dev.exe`。
 - 新进程 PID 为 `37008`，继续监听 `127.0.0.1:18788`；沿用原 State Root，所有数据库容器、连接、SQL 审计、Redis 键及外部日志测试数据均保留。
 - 外部 Playwright 基础矩阵、MySQL/MariaDB SQL 工作台、外部日志排版及十个一级页面标题回归全部通过，控制台错误为 0。
+
+## 合并态全功能 Playwright 复验
+
+本轮在合并后的 `dev` 部署上按以下清单逐项执行，测试使用外部 Playwright Chromium；允许创建且不清理测试数据。
+
+| # | 测试范围 | 结果 | 实测摘要 |
+| --- | --- | --- | --- |
+| PW-01 | 基础访问、登录、导航、浏览器控制台 | 通过 | `/login` 返回 200，桌面与移动端完成登录和导航，控制台错误 0 |
+| PW-02 | 数据库融合页、混排连接、稳定切换、新增引擎选择 | 通过 | MySQL/Redis 混合排序及分页可用；连接类型可选；两类详情切换宽高稳定 |
+| PW-03 | MySQL/MariaDB 对象浏览与 SQL 控制台 | 通过 | 四个明文/TLS 连接完成对象、字段、索引、前 200 行、发送编辑器及查询结果验证 |
+| PW-04 | SQL 后端安全与审计 | 通过 | 只读、注释/大小写/CTE/多语句绕过、截断、超时、CSRF、step-up、Safe Updates 和审计全部通过 |
+| PW-05 | Redis 内部页签、SCAN、namespace 与键值 | 通过 | 遍历 6 个 Docker Redis 连接；String、Hash、List、Set、ZSet、TTL 六类保留键均可打开并显示值 |
+| PW-06 | 外部接口日志文件排版 | 通过 | 两个保留日志分组的五列轨道、边界、折叠、桌面与移动端全部通过 |
+| PW-07 | 十个一级页面标题格式 | 通过 | 应用、容器、文件、变量、运行、审计、服务日志、快捷运行、计划任务和外部接口桌面/移动端一致且无溢出 |
+| PW-08 | 快捷运行调整顺序 | 通过 | 浏览器拖拽与键盘 ArrowDown 均成功，完成后刷新仍保持顺序 |
+| PW-09 | 自定义面板调整顺序 | 通过 | 在保留面板中移动卡片，等待实际 DOM 更新后刷新，顺序持久化 |
+| PW-10 | 响应式、键盘、本地化、禁用 JavaScript | 通过 | 1440×1000、390×844/430px、中英文、Escape、键盘操作及无 JavaScript 路径均通过 |
+
+新增并保留了快捷运行分组 `PW retained mt86l5kr A`、`PW retained mt86l5kr B` 及三个运行项；自定义面板卡片的新顺序、Redis 键、SQL 写模式验证数据也保持在当前 State Root。快捷运行源文件保留在 `D:\Github\ScriptBoard-QA\playwright-all-modified-qa.cmd`。
+
+测试脚本探索阶段发现四项测试夹具假设：受保护 `.scratch` 文件不能作为 Host Files 来源、默认 `dragTo` 落点不触发列表换位、面板排序需等待异步 DOM 更新、Redis 连接列表需要遍历分页。脚本分别改为仓库外 QA 文件、Playwright 页面内 DragEvent、基于名称变化等待和分页遍历后，完整复验全部通过；未发现产品回归，也未删除探索阶段创建的数据。
+
+复验截图保留为 `.scratch/database-unified-dev-deployment/quick-run-reorder-dragged.png`、`custom-dashboard-reorder-retained.png`、`redis-values-retained.png`，并继续保留数据库、SQL 控制台、外部日志和页面标题截图。复验结束时 ScriptBoard PID 仍为 `37008`，`http://127.0.0.1:18788/login` 返回 200，7 个数据库容器全部保持运行。
