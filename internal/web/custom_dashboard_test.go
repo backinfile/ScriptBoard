@@ -559,8 +559,8 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	if !strings.Contains(string(page), `aria-labelledby="custom-dashboard-edit-title"`) {
 		t.Fatal("edit dashboard drawer missing")
 	}
-	if rendered := string(page); !strings.Contains(rendered, `href="/monitor/dashboard/`+dashboardID+`"`) {
-		t.Fatal("created dashboard was not appended to monitor navigation")
+	if rendered := string(page); strings.Count(rendered, `href="/monitor/dashboard/`+dashboardID+`"`) != 1 || !strings.Contains(rendered, `data-dashboard-tab-visibility`) || !strings.Contains(rendered, `aria-label="显示到页签栏"`) {
+		t.Fatal("new dashboard tab visibility was not disabled by default")
 	}
 	if rendered := string(page); strings.Contains(rendered, "更多面板操作") || !strings.Contains(rendered, `data-dashboard-delete-drawer`) || !strings.Contains(rendered, `data-dashboard-delete-open`) || !strings.Contains(rendered, `data-dashboard-slug-preview`) {
 		t.Fatal("dashboard settings controls do not match the drawer contract")
@@ -578,6 +578,20 @@ func TestCustomDashboardCanBeCreatedPublishedAndDeleted(t *testing.T) {
 	privateResponse.Body.Close()
 	if privateResponse.StatusCode != http.StatusNotFound {
 		t.Fatalf("new dashboard was public by default: %d", privateResponse.StatusCode)
+	}
+	response, err = client.PostForm(serverURL+"/config/dashboards/"+dashboardID, url.Values{"csrf_token": {formToken(t, page)}, "name": {"API 与额度"}, "slug": {"api-credits"}, "show_as_tab": {"1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	response, err = client.Get(dashboardURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ = io.ReadAll(response.Body)
+	response.Body.Close()
+	if rendered := string(page); strings.Count(rendered, `href="/monitor/dashboard/`+dashboardID+`"`) < 2 || !strings.Contains(rendered, `aria-label="从页签栏隐藏"`) {
+		t.Fatal("enabled dashboard was not appended to the monitor tab bar")
 	}
 	response, err = client.PostForm(serverURL+"/config/dashboards/"+dashboardID, url.Values{"csrf_token": {formToken(t, page)}, "name": {"API 与额度"}, "slug": {"api-credits"}, "public": {"1"}})
 	if err != nil {

@@ -313,7 +313,7 @@ func (a *App) createCustomDashboard(response http.ResponseWriter, request *http.
 		http.Error(response, "页面已过期，请重试", http.StatusForbidden)
 		return
 	}
-	dashboard, err := a.customDashboards.CreateDashboard(request.Context(), customdashboard.DashboardInput{Name: request.FormValue("name"), Slug: request.FormValue("slug"), Public: false})
+	dashboard, err := a.customDashboards.CreateDashboard(request.Context(), customdashboard.DashboardInput{Name: request.FormValue("name"), Slug: request.FormValue("slug"), Public: false, ShowAsTab: request.FormValue("show_as_tab") == "1"})
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
 		return
@@ -337,7 +337,11 @@ func (a *App) updateCustomDashboard(response http.ResponseWriter, request *http.
 	if _, provided := request.Form["public"]; provided {
 		public = request.FormValue("public") == "1"
 	}
-	_, err = a.customDashboards.UpdateDashboard(request.Context(), id, customdashboard.DashboardInput{Name: request.FormValue("name"), Slug: request.FormValue("slug"), Public: public})
+	showAsTab := current.ShowAsTab
+	if _, provided := request.Form["show_as_tab"]; provided {
+		showAsTab = request.FormValue("show_as_tab") == "1"
+	}
+	_, err = a.customDashboards.UpdateDashboard(request.Context(), id, customdashboard.DashboardInput{Name: request.FormValue("name"), Slug: request.FormValue("slug"), Public: public, ShowAsTab: showAsTab})
 	if err != nil {
 		http.Error(response, err.Error(), http.StatusUnprocessableEntity)
 		return

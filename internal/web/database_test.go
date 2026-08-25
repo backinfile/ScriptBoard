@@ -778,6 +778,36 @@ func TestOpenDatabaseRejectsNewerSchema(t *testing.T) {
 	}
 }
 
+func TestOpenDatabaseAddsCustomDashboardTabVisibilityFromSchema54(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.db")
+	db, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		ALTER TABLE custom_dashboards DROP COLUMN show_as_tab;
+		INSERT INTO custom_dashboards(id,name,slug,is_public,sort_order,created_at,updated_at)
+		VALUES('retained-dashboard','Retained','retained',0,1,1,1);
+		PRAGMA user_version=54;
+		PRAGMA wal_checkpoint(TRUNCATE);`); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := openDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var showAsTab int
+	if err := migrated.QueryRow(`SELECT show_as_tab FROM custom_dashboards WHERE id='retained-dashboard'`).Scan(&showAsTab); err != nil || showAsTab != 0 {
+		t.Fatalf("migrated tab visibility=%d error=%v, want disabled", showAsTab, err)
+	}
+}
+
 func TestOpenDatabaseMigratesInstanceSettingsFromSchema35(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "app.db")
 	db, err := openDatabase(path)

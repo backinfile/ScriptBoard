@@ -28,6 +28,11 @@
     <span><strong>{{if .Dashboard.Public}}公开访问已开启{{else}}此面板仅自己可见{{end}}</strong></span>
 		<button class="custom-dashboard-switch {{if .Dashboard.Public}}is-on{{end}}" type="submit" role="switch" aria-checked="{{if .Dashboard.Public}}true{{else}}false{{end}}" aria-label="{{if .Dashboard.Public}}关闭公开访问{{else}}开启公开访问{{end}}"><i></i></button>
 	</form>
+	<form class="custom-dashboard-publish" method="post" action="/config/dashboards/{{.Dashboard.ID}}" data-dashboard-tab-visibility>
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><input type="hidden" name="name" value="{{.Dashboard.Name}}"><input type="hidden" name="slug" value="{{.Dashboard.Slug}}"><input type="hidden" name="show_as_tab" value="{{if .Dashboard.ShowAsTab}}0{{else}}1{{end}}">
+    <span><strong>{{if .Dashboard.ShowAsTab}}已显示为页签{{else}}不显示为页签{{end}}</strong></span>
+		<button class="custom-dashboard-switch {{if .Dashboard.ShowAsTab}}is-on{{end}}" type="submit" role="switch" aria-checked="{{if .Dashboard.ShowAsTab}}true{{else}}false{{end}}" aria-label="{{if .Dashboard.ShowAsTab}}从页签栏隐藏{{else}}显示到页签栏{{end}}"><i></i></button>
+	</form>
 	<div class="custom-dashboard-title__actions">
 		<button class="icon-button" type="button" data-dashboard-open-drawer="edit" aria-label="编辑面板" title="编辑面板"><span data-lucide="square-pen" aria-hidden="true"></span></button>
 		{{if .Dashboard.Public}}<a class="icon-button" href="/public/dashboard/{{.Dashboard.Slug}}" target="_blank" aria-label="预览公开页" title="预览公开页" data-dashboard-public-action><span data-lucide="external-link" aria-hidden="true"></span></a><button class="icon-button icon-tooltip" type="button" data-copy-dashboard-url="/public/dashboard/{{.Dashboard.Slug}}" aria-label="复制公开地址" data-tooltip="复制公开地址" data-dashboard-public-action><span data-lucide="copy" aria-hidden="true"></span><span class="sr-only" data-copy-dashboard-label>复制公开地址</span></button>{{else}}<button class="icon-button" type="button" aria-label="预览公开页" title="开启公开访问后可预览" data-dashboard-public-action disabled><span data-lucide="external-link" aria-hidden="true"></span></button><button class="icon-button icon-tooltip" type="button" aria-label="复制公开地址" data-tooltip="开启公开访问后可复制" data-dashboard-public-action disabled><span data-lucide="copy" aria-hidden="true"></span></button>{{end}}

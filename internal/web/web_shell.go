@@ -222,6 +222,9 @@ func (a *App) addApplicationShell(request *http.Request, body []byte) []byte {
 					continue
 				}
 				for _, dashboard := range dashboards {
+					if !dashboard.ShowAsTab {
+						continue
+					}
 					href := "/monitor/dashboard/" + dashboard.ID
 					navigation[index].Items = append(navigation[index].Items, shellNavigationItem{
 						Href: href, Label: dashboard.Name, Icon: "panel-top", Current: request.URL.Path == href,

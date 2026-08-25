@@ -1266,6 +1266,14 @@
     pageThemes.forEach(className => document.body.classList.toggle(className, nextDocument.body.classList.contains(className)));
   }
 
+  function databaseRegionSelector(source, destination) {
+    if (!source?.closest?.("[data-database-workspace]") || destination.pathname !== "/resources/databases") return "";
+    if (source.closest(".database-detail")) return ".database-detail";
+    if (source.closest("[data-mysql-instances-region]")) return "[data-mysql-instances-region]";
+    if (source.closest(".database-page-heading")) return ".database-page-heading";
+    return "[data-mysql-instances-region]";
+  }
+
   async function navigate(url, push = true, options = {}) {
     closeFileConflictDialog();
     cancelTaskPanelRequest();
@@ -1276,8 +1284,13 @@
     };
     navigationRequest = request;
     navigationBusy = true;
-    document.documentElement.setAttribute("aria-busy", "true");
-    setNavigationProgress(true);
+    const regionSelector = options.regionSelector || "";
+    const initialRegion = regionSelector ? document.querySelector(regionSelector) : null;
+    const partialNavigation = Boolean(regionSelector && initialRegion);
+    if (partialNavigation) initialRegion.setAttribute("aria-busy", "true");
+    else document.documentElement.setAttribute("aria-busy", "true");
+    if (partialNavigation) setNavigationProgress(false);
+    else setNavigationProgress(true);
     const deferredData = options.deferredData ?? isDeferredDataURL(url);
     const immediate = deferredData && options.immediate === true;
     const title = options.title || navigationTitle(mainNavigationLink(url));
@@ -1317,8 +1330,10 @@
         });
         return;
       }
-      const nextMain = result.document.querySelector("main");
-      const currentMain = document.querySelector("main");
+      const nextMain = regionSelector ? result.document.querySelector(regionSelector) : result.document.querySelector("main");
+      const currentMain = partialNavigation && initialRegion.isConnected
+        ? initialRegion
+        : (regionSelector ? document.querySelector(regionSelector) : document.querySelector("main"));
       if (!nextMain || !currentMain) {
         showServerError(result, {
           url, method: "GET", returnFocus, force: true,
@@ -1339,11 +1354,11 @@
           history.replaceState({ pjax: true }, "", result.response.url);
         }
       } else if (push) {
-        history.pushState({ pjax: true }, "", result.response.url);
+        history.pushState({ pjax: true, regionSelector: partialNavigation ? regionSelector : "" }, "", result.response.url);
       }
       updateShellLocation(result.response.url);
       setSidebar(false);
-      window.scrollTo({ top: options.preserveScroll ? previousScrollY : 0, behavior: "auto" });
+      window.scrollTo({ top: partialNavigation || options.preserveScroll ? previousScrollY : 0, behavior: "auto" });
       initPage({ openFileQuickAccess: options.openFileQuickAccess === true });
 
       if (deferredData) {
@@ -1422,6 +1437,7 @@
         navigationRequest = null;
         navigationBusy = false;
         document.documentElement.removeAttribute("aria-busy");
+        if (regionSelector) document.querySelector(regionSelector)?.removeAttribute("aria-busy");
         setNavigationProgress(false);
       }
     }
@@ -2296,8 +2312,10 @@
         destination.searchParams.delete("direction");
       }
       try {
-        await navigate(destination.href, form.hasAttribute("data-async-push"), {
+        await navigate(destination.href, options.pushHistory ?? form.hasAttribute("data-async-push"), {
           focusSelector: form.dataset.focusAfterNavigation,
+          preserveScroll: Boolean(options.regionSelector),
+          regionSelector: options.regionSelector,
         });
       } finally {
         resetSubmit(form);
@@ -2312,6 +2330,7 @@
       const fileConflict = result.document?.querySelector("main[data-file-conflict]");
       if (fileConflict && openDocumentFileConflict(fileConflict)) return;
       const responseMain = result.document?.querySelector("main");
+      const refreshSelector = form.dataset.asyncRefresh;
       const isTaskValidation = result.response.status === 422 && responseMain &&
         !responseMain.matches(".error-page");
       if (!result.response.ok && !isTaskValidation) {
@@ -2338,7 +2357,6 @@
           buildTaskPanel(redirectedTask, destination, true);
           return;
         }
-        const refreshSelector = form.dataset.asyncRefresh;
         const currentRegion = refreshSelector ? document.querySelector(refreshSelector) : null;
         const nextRegion = refreshSelector ? result.document?.querySelector(refreshSelector) : null;
         if (currentRegion && nextRegion) {
@@ -2396,6 +2414,17 @@
       }
       const nextMain = responseMain;
       if (nextMain) {
+        const currentRegion = refreshSelector ? document.querySelector(refreshSelector) : null;
+        const nextRegion = refreshSelector ? result.document?.querySelector(refreshSelector) : null;
+        if (currentRegion && nextRegion) {
+          // SQL execution and other non-redirecting database actions refresh only their owned detail region.
+          cleanupPage();
+          currentRegion.replaceWith(document.importNode(nextRegion, true));
+          document.title = result.document.title;
+          document.documentElement.lang = result.document.documentElement.lang || document.documentElement.lang;
+          initPage();
+          return;
+        }
         if (options.fullNavigationOnSuccess && submittingTaskState && !nextMain.matches("[data-task-page]")) {
           closeTaskPanel(false);
           document.querySelector("main")?.replaceWith(document.importNode(nextMain, true));
@@ -5761,7 +5790,7 @@
   }
 
   function initMySQLDrawers(cleanups) {
-    const root = document.querySelector("[data-mysql-workspace]");
+    const root = document.querySelector("[data-database-workspace]");
     if (!root) return;
     root.querySelectorAll("[data-mysql-plan-delete-trigger]").forEach(trigger => {
       const editDrawer = trigger.closest(".record-actions__group")?.querySelector("details.mysql-drawer");
@@ -5778,29 +5807,106 @@
     });
 	const sqlForm = root.querySelector("[data-mysql-sql-form]");
 	const writeConfirmation = sqlForm?.querySelector("[data-mysql-write-confirm]");
+	let sqlModeRequest = 0;
 	const syncSQLMode = () => {
 	  if (!sqlForm) return;
 	  const writable = sqlForm.querySelector('input[name="ui_mode"]:checked')?.value === "write";
 	  sqlForm.action = writable ? sqlForm.dataset.writeAction : sqlForm.dataset.readAction;
 	  if (writeConfirmation) writeConfirmation.hidden = !writable;
 	};
+	const setSQLModeBusy = busy => {
+	  const mode = sqlForm?.querySelector("[data-mysql-sql-mode]");
+	  if (!mode) return;
+	  mode.setAttribute("aria-busy", String(busy));
+	  mode.querySelectorAll('input[name="ui_mode"]').forEach(input => { input.disabled = busy; });
+	};
+	const selectReadMode = () => {
+	  const read = sqlForm?.querySelector('input[name="ui_mode"][value="read"]');
+	  if (read) read.checked = true;
+	  syncSQLMode();
+	};
+	const requestWriteMode = async writeInput => {
+	  const sequence = ++sqlModeRequest;
+	  selectReadMode();
+	  setSQLModeBusy(true);
+	  const returnFocus = writeInput;
+	  try {
+	    const body = new URLSearchParams({ csrf_token: sqlForm.elements.csrf_token?.value || "" });
+	    const response = await fetch(sqlForm.dataset.writeAccessAction, {
+	      method: "POST", body, credentials: "same-origin",
+	      headers: { "Accept": "application/json", "X-ScriptBoard-Step-Up": "dialog" },
+	    });
+	    if (!response.ok) {
+	      const text = await response.text();
+	      showServerError({ response, text }, {
+	        url: sqlForm.dataset.writeAccessAction, method: "POST", returnFocus,
+	        includeClientErrors: true, force: true,
+	      });
+	      return;
+	    }
+	    const challenge = await response.json();
+	    const verified = await window.ScriptBoardShowStepUp?.(challenge, returnFocus);
+	    if (!verified || sequence !== sqlModeRequest || !sqlForm.isConnected) return;
+	    writeInput.checked = true;
+	    syncSQLMode();
+	    requestAnimationFrame(() => writeInput.isConnected && writeInput.focus({ preventScroll: true }));
+	  } catch (error) {
+	    if (sequence !== sqlModeRequest || !sqlForm?.isConnected) return;
+	    showServerError({ response: { status: 0, url: sqlForm.dataset.writeAccessAction }, text: error?.message || words().loadFailed }, {
+	      url: sqlForm.dataset.writeAccessAction, method: "POST", returnFocus, force: true,
+	    });
+	  } finally {
+	    if (sequence === sqlModeRequest && sqlForm?.isConnected) setSQLModeBusy(false);
+	  }
+	};
 	const onSQLModeChange = event => {
-	  if (event.target.matches('input[name="ui_mode"]')) syncSQLMode();
+	  if (!event.target.matches('input[name="ui_mode"]')) return;
+	  if (event.target.value === "write") requestWriteMode(event.target);
+	  else { ++sqlModeRequest; syncSQLMode(); }
 	};
 	if (sqlForm) {
+	  // SQL results belong to the active connection detail; keep the connection rail and page shell mounted.
+	  sqlForm.removeAttribute("data-native");
+	  sqlForm.dataset.async = "";
+	  sqlForm.dataset.asyncRefresh = ".database-detail";
 	  syncSQLMode();
 	  sqlForm.addEventListener("change", onSQLModeChange);
+	  cleanups.push(() => { ++sqlModeRequest; });
 	}
     const drawers = [...root.querySelectorAll("details.mysql-drawer")];
     const dropDrawer = root.querySelector("[data-mysql-drop-drawer]");
     const backupRestoreDrawer = root.querySelector("[data-mysql-backup-restore-drawer]");
     const backupDeleteDrawer = root.querySelector("[data-mysql-backup-delete-drawer]");
     const planDeleteDrawer = root.querySelector("[data-mysql-plan-delete-drawer]");
+	const querySettingsDrawer = root.querySelector("[data-mysql-query-settings-drawer]");
+	const queryTimeout = querySettingsDrawer?.querySelector("[data-mysql-query-timeout]");
+	const queryMaxRows = querySettingsDrawer?.querySelector("[data-mysql-query-max-rows]");
+	const timeoutSummary = querySettingsDrawer?.querySelector("[data-mysql-timeout-summary]");
+	const maxRowsSummary = querySettingsDrawer?.querySelector("[data-mysql-max-rows-summary]");
+	let querySettingsSnapshot = null;
+	let keepQuerySettingsOnClose = false;
+	const captureQuerySettings = () => {
+	  querySettingsSnapshot = { timeout: queryTimeout?.value || "", maxRows: queryMaxRows?.value || "" };
+	};
+	const restoreQuerySettings = () => {
+	  if (!querySettingsSnapshot) return;
+	  if (queryTimeout) queryTimeout.value = querySettingsSnapshot.timeout;
+	  if (queryMaxRows) queryMaxRows.value = querySettingsSnapshot.maxRows;
+	};
+	const updateQuerySettingsSummary = () => {
+	  if (timeoutSummary) timeoutSummary.textContent = `${queryTimeout?.value || ""}s`;
+	  if (maxRowsSummary) maxRowsSummary.textContent = queryMaxRows?.value || "";
+	};
     let active = null;
     const returnFocus = new WeakMap();
 
-    const close = (drawer, restoreFocus = true) => {
+    const close = (drawer, restoreFocus = true, keepQuerySettings = false) => {
       if (!drawer?.open) return;
+	  if (drawer === querySettingsDrawer) {
+		keepQuerySettingsOnClose = keepQuerySettings;
+		// Restore cancelled edits synchronously; the native details toggle event is queued after open changes.
+		if (!keepQuerySettings) restoreQuerySettings();
+	  }
       drawer.open = false;
       drawer.querySelector(":scope > summary")?.setAttribute("aria-expanded", "false");
       if (active === drawer) active = null;
@@ -5816,6 +5922,10 @@
       const summary = drawer.querySelector(":scope > summary");
       summary?.setAttribute("aria-expanded", String(drawer.open));
       if (!drawer.open) {
+		if (drawer === querySettingsDrawer) {
+		  if (!keepQuerySettingsOnClose) restoreQuerySettings();
+		  keepQuerySettingsOnClose = false;
+		}
         if (active === drawer) {
           active = null;
           document.body.style.overflow = "";
@@ -5823,11 +5933,27 @@
         return;
       }
       drawers.forEach(candidate => { if (candidate !== drawer && candidate.open) close(candidate, false); });
+	  if (drawer === querySettingsDrawer) captureQuerySettings();
       active = drawer;
       document.body.style.overflow = "hidden";
       window.setTimeout(() => drawer.querySelector(".mysql-drawer-sheet")?.focus(), 180);
     };
     const onClick = event => {
+	  const querySettingsApply = event.target.closest("[data-mysql-query-settings-apply]");
+	  if (querySettingsApply && querySettingsDrawer) {
+		event.preventDefault();
+		if (!queryTimeout?.reportValidity() || !queryMaxRows?.reportValidity()) return;
+		updateQuerySettingsSummary();
+		captureQuerySettings();
+		close(querySettingsDrawer, true, true);
+		return;
+	  }
+	  const querySettingsCancel = event.target.closest("[data-mysql-query-settings-cancel]");
+	  if (querySettingsCancel && querySettingsDrawer) {
+		event.preventDefault();
+		close(querySettingsDrawer);
+		return;
+	  }
       const restoreTrigger = event.target.closest("[data-mysql-backup-restore-trigger]");
       if (restoreTrigger && backupRestoreDrawer) {
         event.preventDefault();
@@ -7178,6 +7304,7 @@
     } else {
       const mainNavigation = link.matches(".sidebar-nav a");
       const securityTab = link.matches("[data-security-tabs] a");
+      const partialRegion = databaseRegionSelector(link, destination);
       if (securityTab) {
         link.closest("[data-security-tabs]")?.querySelectorAll("a[aria-current]").forEach(tab => tab.removeAttribute("aria-current"));
         link.setAttribute("aria-current", "page");
@@ -7190,6 +7317,7 @@
         focusSelector: link.dataset.focusAfterNavigation,
         // 页签切换、排序、分页等同路径导航保持滚动位置，避免整页“刷新感”。
         preserveScroll: link.hasAttribute("data-preserve-scroll") || destination.pathname === location.pathname,
+        regionSelector: partialRegion,
         openFileQuickAccess: mainNavigation && destination.pathname === "/resources/files",
       });
     }
@@ -7301,12 +7429,16 @@
       submitter.setAttribute("aria-busy", "true");
     }
     form.setAttribute("aria-busy", "true");
+    const databasePartialRegion = databaseRegionSelector(form, new URL(formActionURL(form, event.submitter), location.href));
     if (form.matches("[data-login-form]")) {
       event.preventDefault();
       submitLogin(form, submitter);
     } else if (form.hasAttribute("data-connection-test")) {
       event.preventDefault();
       submitConnectionTest(form, submitter);
+    } else if (form.method.toLowerCase() === "get" && databasePartialRegion) {
+      event.preventDefault();
+      submitAsync(form, submitter, { regionSelector: databasePartialRegion, pushHistory: true });
     } else if (form.hasAttribute("data-file-upload-form")) {
       event.preventDefault();
       submitFileUpload(form);
@@ -7412,9 +7544,16 @@
       return;
     }
     const navigationLink = mainNavigationLink(location.href, true);
+    const databaseHistoryRegion = event.state?.regionSelector || (
+      document.querySelector("[data-database-workspace]") && location.pathname === "/resources/databases"
+        ? "[data-mysql-instances-region]"
+        : ""
+    );
     navigate(location.href, false, {
       deferredData: isDeferredDataURL(location.href),
       title: navigationLink ? navigationTitle(navigationLink) : undefined,
+      preserveScroll: Boolean(databaseHistoryRegion),
+      regionSelector: databaseHistoryRegion,
     });
   });
 
@@ -8004,7 +8143,7 @@ document.addEventListener("input", function (event) {
       title.textContent = challenge.title || words.stepUpTitle;
       const description = document.createElement("p");
       description.id = "inline-step-up-description";
-      description.textContent = words.stepUpDescription || challenge.description;
+      description.textContent = challenge.description || words.stepUpDescription;
       heading.append(title, description);
       const close = document.createElement("button");
       close.className = "icon-button icon-button--quiet";

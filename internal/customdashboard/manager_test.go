@@ -214,6 +214,13 @@ func TestDashboardLifecycleKeepsCardsInsideTheirDashboard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if second.ShowAsTab {
+		t.Fatal("new dashboards must be hidden from the application tab bar by default")
+	}
+	first, err = manager.UpdateDashboard(ctx, first.ID, DashboardInput{Name: first.Name, Slug: first.Slug, Public: true, ShowAsTab: true})
+	if err != nil || !first.ShowAsTab {
+		t.Fatalf("enable dashboard tab: dashboard=%#v err=%v", first, err)
+	}
 	if _, err := manager.CreateCard(ctx, first.ID, CardInput{Name: "主模型额度", Type: CardQuota, SourceURL: "https://example.test/usage", ValuePath: "remaining", SecondaryPath: "limit"}); err != nil {
 		t.Fatal(err)
 	}
