@@ -16,7 +16,7 @@
     {{range .Navigation}}
     <section class="nav-group">
       <h2>{{.Label}}</h2>
-      {{range .Items}}<a href="{{.Href}}" {{if .Current}}aria-current="page"{{end}}><span data-lucide="{{.Icon}}" aria-hidden="true"></span><span>{{.Label}}</span></a>{{end}}
+      {{range .Items}}<a href="{{.Href}}" {{if .Current}}aria-current="page"{{end}} {{if .Native}}data-native{{end}}><span data-lucide="{{.Icon}}" aria-hidden="true"></span><span>{{.Label}}</span></a>{{end}}
     </section>
     {{end}}
   </nav>

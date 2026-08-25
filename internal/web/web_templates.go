@@ -27,6 +27,8 @@ var (
 	containersTemplate                = mustWebTemplate("containers")
 	containerOperationConfirmTemplate = mustWebTemplate("container-operation-confirm")
 	customDashboardTemplate           = mustWebTemplate("custom-dashboard")
+	customTabsTemplate                = mustWebTemplate("custom-tabs")
+	customTabFrameTemplate            = mustWebTemplate("custom-tab-frame")
 	auditTemplate                     = mustWebTemplate("audit")
 	deleteImpactTemplate              = mustWebTemplate("delete-impact")
 	displaySettingsTemplate           = mustWebTemplate("display-settings")

@@ -43,6 +43,7 @@ import (
 	"scriptboard/internal/buildinfo"
 	"scriptboard/internal/clusterstatus"
 	"scriptboard/internal/customdashboard"
+	"scriptboard/internal/customtab"
 	"scriptboard/internal/externaltrigger"
 	"scriptboard/internal/fleetstatus"
 	"scriptboard/internal/hostfiles"
@@ -524,6 +525,9 @@ type App struct {
 	shellStatusCache      *shellStatusCache
 	websiteMonitor        *websitemonitor.Manager
 	customDashboards      *customdashboard.Manager
+	customTabs            *customtab.Manager
+	customTabChallengeMu  sync.Mutex
+	customTabChallenges   map[string]customTabChallenge
 	registryConnections   customdashboard.RegistryConnections
 	externalTriggers      *externaltrigger.Manager
 	externalReconcileStop context.CancelFunc
@@ -670,12 +674,13 @@ func Open(config Config) (*App, error) {
 		allowedHosts: allowedHosts, canonicalExternalURL: config.CanonicalExternalURL,
 		loginRateSalt:  loginRateSalt,
 		logStreamSlots: make(chan struct{}, 8), logHistorySlots: make(chan struct{}, 4),
-		updateResultsWake: make(chan struct{}, 1),
-		hostSecurity:      hostSecurityService,
-		serviceLogs:       config.ServiceLogs,
-		securityDrafts:    make(map[string]securityFirewallDraft),
-		requestRestart:    config.RequestRestart,
-		instanceID:        fmt.Sprintf("%d-%x", os.Getpid(), time.Now().UnixNano()),
+		updateResultsWake:   make(chan struct{}, 1),
+		hostSecurity:        hostSecurityService,
+		serviceLogs:         config.ServiceLogs,
+		securityDrafts:      make(map[string]securityFirewallDraft),
+		customTabChallenges: make(map[string]customTabChallenge),
+		requestRestart:      config.RequestRestart,
+		instanceID:          fmt.Sprintf("%d-%x", os.Getpid(), time.Now().UnixNano()),
 	}
 	if application.serviceLogs == nil {
 		if brokerClient != nil {
@@ -910,6 +915,17 @@ func Open(config Config) (*App, error) {
 		application.runs.Close()
 		_ = db.Close()
 		return nil, fmt.Errorf("initialize custom dashboards: %w", err)
+	}
+	application.customTabs, err = customtab.New(customtab.Options{DB: db, SecretStore: credentialStore})
+	if err != nil {
+		application.customDashboards.Close()
+		application.websiteMonitor.Close()
+		application.applicationStatus.Close()
+		application.hostStatus.Close()
+		application.scheduler.Close()
+		application.runs.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("initialize custom tabs: %w", err)
 	}
 	kubernetesFactory := config.KubernetesFactory
 	if kubernetesFactory == nil {

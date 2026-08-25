@@ -9,6 +9,7 @@ import (
 	"scriptboard/internal/auditlog"
 	"scriptboard/internal/clusterstatus"
 	"scriptboard/internal/customdashboard"
+	"scriptboard/internal/customtab"
 	"scriptboard/internal/externaltrigger"
 	"scriptboard/internal/fleetstatus"
 	"scriptboard/internal/mysqlmanager"
@@ -49,6 +50,7 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 		{name: "MySQL management SQLite", statements: mysqlmanager.SchemaStatements},
 		{name: "Redis management SQLite", statements: redismanager.SchemaStatements},
 		{name: "custom dashboard SQLite", statements: customdashboard.SchemaStatements},
+		{name: "custom tab SQLite", statements: customtab.SchemaStatements},
 		{name: "Kubernetes monitoring SQLite", statements: clusterstatus.SchemaStatements},
 	}
 	for _, schema := range schemas {
@@ -58,7 +60,7 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 			}
 		}
 	}
-	if schemaVersion >= 20 && schemaVersion <= 54 {
+	if schemaVersion >= 20 && schemaVersion <= 56 {
 		exists, err := storesqlite.ColumnExists(migration, "custom_dashboards", "show_as_tab")
 		if err != nil {
 			return fmt.Errorf("inspect custom dashboard tab visibility migration: %w", err)
@@ -67,6 +69,18 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 			// Existing panels remain available in configuration and opt into the application tab bar explicitly.
 			if _, err := migration.Exec(`ALTER TABLE custom_dashboards ADD COLUMN show_as_tab INTEGER NOT NULL DEFAULT 0 CHECK (show_as_tab IN (0,1))`); err != nil {
 				return fmt.Errorf("add custom dashboard tab visibility: %w", err)
+			}
+		}
+	}
+	if schemaVersion >= 20 && schemaVersion <= 56 {
+		exists, err := storesqlite.ColumnExists(migration, "custom_tabs", "visibility_roles")
+		if err != nil {
+			return fmt.Errorf("inspect custom tab role visibility migration: %w", err)
+		}
+		if !exists {
+			// Feature-line schema 55 databases predate role visibility; current tables already include the column.
+			if _, err := migration.Exec(`ALTER TABLE custom_tabs ADD COLUMN visibility_roles TEXT NOT NULL DEFAULT 'administrator,maintainer,operator,viewer'`); err != nil {
+				return fmt.Errorf("add custom tab role visibility: %w", err)
 			}
 		}
 	}

@@ -823,6 +823,21 @@
     return { response, document: new DOMParser().parseFromString(text, "text/html") };
   }
 
+  async function refreshShellNavigation(responseDocument = null) {
+    let nextNavigation = responseDocument?.querySelector(".sidebar-nav");
+    if (!nextNavigation) {
+      try {
+        const response = await fetch(location.href, { credentials: "same-origin", headers: { "Accept": "text/html" } });
+        if (!response.ok) return;
+        nextNavigation = new DOMParser().parseFromString(await response.text(), "text/html").querySelector(".sidebar-nav");
+      } catch {
+        return;
+      }
+    }
+    const currentNavigation = document.querySelector(".sidebar-nav");
+    if (currentNavigation && nextNavigation) currentNavigation.replaceWith(document.importNode(nextNavigation, true));
+  }
+
   function uploadDocument(url, data, form, files) {
     return new Promise((resolve, reject) => {
       const request = new XMLHttpRequest();
@@ -1267,6 +1282,7 @@
   }
 
   function databaseRegionSelector(source, destination) {
+	if (source?.closest?.("[data-custom-tabs-page]") && destination.pathname === "/config/custom-tabs") return "[data-custom-tabs-page]";
     if (!source?.closest?.("[data-database-workspace]") || destination.pathname !== "/resources/databases") return "";
     if (source.closest(".database-detail")) return ".database-detail";
     if (source.closest("[data-mysql-instances-region]")) return "[data-mysql-instances-region]";
@@ -2365,6 +2381,8 @@
             : null;
           // Database mutations update their workspace region without replacing the page shell or losing scroll state.
           currentRegion.replaceWith(document.importNode(nextRegion, true));
+          // Custom-tab mutations also refresh the dynamic External navigation group immediately.
+          if (currentRegion.matches("[data-custom-tabs-page]")) await refreshShellNavigation(result.document);
           if (drawerToClose) {
             drawerToClose.open = false;
             document.body.style.overflow = "";
@@ -2373,6 +2391,7 @@
           history.replaceState({ pjax: true }, "", destination);
           updateShellLocation(destination);
           initPage();
+		  document.body.classList.toggle("has-custom-dashboard-drawer", Boolean(document.querySelector("[data-dashboard-drawer][open]")));
           return;
         }
         if (options.fullNavigationOnSuccess) {
@@ -2420,6 +2439,7 @@
           // SQL execution and other non-redirecting database actions refresh only their owned detail region.
           cleanupPage();
           currentRegion.replaceWith(document.importNode(nextRegion, true));
+          if (currentRegion.matches("[data-custom-tabs-page]")) await refreshShellNavigation(result.document);
           document.title = result.document.title;
           document.documentElement.lang = result.document.documentElement.lang || document.documentElement.lang;
           initPage();
@@ -7451,6 +7471,10 @@
     } else if (form.hasAttribute("data-async")) {
       event.preventDefault();
       submitAsync(form, submitter);
+	} else if (form.closest("[data-custom-tabs-page]")) {
+		event.preventDefault();
+		form.dataset.asyncRefresh = "[data-custom-tabs-page]";
+		submitAsync(form, submitter);
     } else if (form.method.toLowerCase() === "post" &&
         document.querySelector("[data-app-shell]") &&
         !form.hasAttribute("data-native") &&
@@ -7665,7 +7689,7 @@ function clearDashboardDrawerCloseWait(drawer) {
 function closeDashboardDrawer(drawer, returnFocus = true) {
 	if (!drawer?.open || drawer.classList.contains("is-closing")) return;
 	clearDashboardDrawerCloseWait(drawer);
-	const panel = drawer.querySelector(".custom-dashboard-drawer");
+  const panel = drawer.querySelector(".custom-dashboard-drawer, .custom-tab-drawer");
 	drawer.classList.remove("is-opening");
 	drawer.classList.add("is-closing");
 	const complete = () => {
@@ -7717,7 +7741,7 @@ document.addEventListener("click", function (event) {
 	const drawerButton = event.target.closest("[data-dashboard-open-drawer]");
 	if (drawerButton) {
 		const name = drawerButton.dataset.dashboardOpenDrawer;
-		const drawer = document.querySelector(`[data-dashboard-drawer-name="${CSS.escape(name)}"]`);
+		const drawer = document.querySelector(`[data-dashboard-drawer-name="${CSS.escape(name)}"], [data-dashboard-drawer-id="${CSS.escape(name)}"]`);
 		openDashboardDrawer(drawer);
 		return;
 	}
@@ -8372,6 +8396,63 @@ document.addEventListener("input", function (event) {
       }
     } finally {
       registerButton.disabled = false;
+    }
+  });
+})();
+
+(() => {
+	const syncMode = (select) => {
+		const fields = select.closest("form")?.querySelector("[data-custom-tab-key-fields]");
+		if (!fields) return;
+		fields.hidden = select.value !== "key";
+		fields.querySelectorAll("input").forEach((input) => {
+			if (input.name === "key_name") input.required = select.value === "key";
+		});
+	};
+	document.querySelectorAll("[data-custom-tab-mode]").forEach(syncMode);
+	document.addEventListener("change", (event) => {
+		const select = event.target.closest?.("[data-custom-tab-mode]");
+		if (select) syncMode(select);
+	});
+
+  const root = document.querySelector("[data-custom-tab-frame]");
+  const frame = root?.querySelector("[data-custom-tab-iframe]");
+	const refresh = root?.querySelector("[data-custom-tab-refresh]");
+	if (!root || !frame) return;
+  let delivered = false;
+	let challenge = null;
+	refresh?.addEventListener("click", () => {
+		delivered = false;
+		challenge = null;
+		const source = frame.getAttribute("src");
+		if (source) frame.setAttribute("src", source);
+	});
+	if (root.dataset.credentialMode !== "key") return;
+	frame.addEventListener("load", async () => {
+		try {
+			const body = new URLSearchParams({ csrf_token: root.dataset.csrfToken });
+			const response = await fetch(root.dataset.challengeEndpoint, { method: "POST", credentials: "same-origin", body });
+			if (!response.ok) return;
+			challenge = await response.json();
+			frame.contentWindow.postMessage(challenge, root.dataset.targetOrigin);
+		} catch (_) {
+			challenge = null;
+		}
+	});
+  window.addEventListener("message", async (event) => {
+    if (delivered || event.source !== frame.contentWindow || event.origin !== root.dataset.targetOrigin) return;
+		if (!challenge || event.data?.type !== "scriptboard.custom-tab.ready" || event.data?.version !== 1 || event.data?.tabId !== root.dataset.tabId || event.data?.nonce !== challenge.nonce) return;
+    try {
+			const body = new URLSearchParams({ csrf_token: root.dataset.csrfToken, nonce: challenge.nonce });
+			const response = await fetch(root.dataset.deliveryEndpoint, { method: "POST", credentials: "same-origin", body });
+      if (!response.ok) return;
+			let credential = await response.json();
+      delivered = true;
+      frame.contentWindow.postMessage(credential, root.dataset.targetOrigin);
+			credential = null;
+			challenge = null;
+    } catch (_) {
+			challenge = null;
     }
   });
 })();
