@@ -130,7 +130,7 @@
 
 | 项目 | 当前状态 |
 | --- | --- |
-| ScriptBoard | `http://127.0.0.1:18788`，PID 13576，保持运行；二进制由当前 `dev` 工作区构建 |
+| ScriptBoard | `http://127.0.0.1:18788`，PID 27704，保持运行；二进制由当前 `dev` 工作区构建 |
 | State Root | `D:\Github\worktrees\ScriptBoard\database-unified\.scratch\database-unified-deployment\state` |
 | 管理员 | `admin`；密码仅保留在 State Root 私有文件中 |
 | Docker 项目 | `scriptboard-database-qa`，7 个容器均保持运行 |
@@ -287,3 +287,11 @@
 - 普通分组 `…` 菜单新增“置顶”；它会立即将当前分组移动到首位，同时保持其他分组相对顺序，不创建固定置顶状态。重复操作保持幂等，无 CSRF 请求返回 403。
 - 外部 Playwright 最终输出：`groupButtons/cardLayoutStable/drag/keyboard/moveTop/mobile=pass`，控制台错误 0。保留排序分组 `PW retained mt86bx8w A`，并将 `PW retained mt86l5kr A` 置顶；未删除任何测试数据。
 - 截图保留为 `.scratch/database-unified-dev-deployment/quick-run-group-ordering-retained.png`。全仓 `go test ./... -count=1` 通过；重新部署 PID 为 `13576`，登录页返回 200。
+
+## AI 对话与数据库工作区全宽复验
+
+- 移除 AI 对话工作区和数据库融合工作区的 `--content-max` 上限，两者从应用侧栏右边界铺满到浏览器可布局右边界；消息正文自身的换行和数据库内部轨道继续控制可读性。
+- 2560px 视口下，两个工作区均为 `left=248px / right=2550px / width=2302px`；AI 记录区与输入区均为 `2070px`。
+- 1920px 视口下，两个工作区均为 `left=248px / right=1910px / width=1662px`；AI 记录区与输入区均为 `1430px`。
+- 外部 Playwright 验证 MySQL/Redis 切换后的详情宽高一致，430px 下 AI 与数据库页均无横向溢出，控制台错误为 0。
+- 截图保留为 `.scratch/database-unified-dev-deployment/assistant-full-width.png` 与 `database-full-width.png`；重新部署 PID 为 `27704`，登录页返回 200。

@@ -759,12 +759,13 @@ body[data-app-shell] { padding-left: var(--sidebar-width); }
    only elevated surface, keeping the screen out of dashboard-card territory. */
 .assistant-workspace {
   display: grid;
-  width: min(100%, var(--content-max));
-  max-width: var(--content-max);
+  /* 对话工作台占满应用侧栏右侧的全部可用宽度，避免宽屏出现无效留白。 */
+  width: 100%;
+  max-width: none;
   height: 100vh;
   min-height: 640px;
   grid-template-columns: 258px minmax(0, 1fr);
-  margin: 0 auto;
+  margin: 0;
   overflow: hidden;
   background: var(--surface);
 }
@@ -2711,8 +2712,9 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .mysql-overview-strip > span { width: 20px; color: var(--accent); }
 .mysql-overview-strip div { display: grid; gap: 4px; min-width: 0; }
 .mysql-overview-strip code { overflow-wrap: anywhere; }
-.workspace[data-mysql-workspace] { width: min(100%, var(--content-max)); max-width: var(--content-max); margin: 0 auto; padding: 0; }
-.workspace[data-database-workspace] { width: min(100%, var(--content-max)); max-width: var(--content-max); margin: 0 auto; padding: 0; }
+/* 数据库工作台与连接详情共同铺满内容区，内部轨道继续负责可读宽度和响应式重排。 */
+.workspace[data-mysql-workspace],
+.workspace[data-database-workspace] { width: 100%; max-width: none; margin: 0; padding: 0; }
 .mysql-instance-workspace { display: grid; min-height: max(600px, calc(100vh - 154px)); grid-template-columns: minmax(240px, 280px) minmax(0, 1fr); align-items: stretch; margin-top: 0; border-top: 1px solid var(--rule-strong); }
 .mysql-instance-rail { min-width: 0; padding: 28px 22px 72px var(--workspace-gutter); border-right: 1px solid var(--rule); }
 .mysql-instance-rail__head { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 18px; }

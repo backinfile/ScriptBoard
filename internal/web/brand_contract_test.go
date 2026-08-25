@@ -30,10 +30,7 @@ func TestPrimaryWorkspacesShareTheApplicationContentWidth(t *testing.T) {
 
 	css := string(stylesheet)
 	selectors := []string{
-		`\.assistant-workspace`,
 		`\.website-monitor-page`,
-		`\.workspace\[data-mysql-workspace\]`,
-		`\.workspace\[data-database-workspace\]`,
 		`\.applications-page`,
 		`\.editor-page`,
 		`\.custom-dashboard-workspace`,
@@ -58,6 +55,12 @@ func TestAssistantAndDatabaseDetailStagesUseAvailableWidth(t *testing.T) {
 	}
 
 	css := string(stylesheet)
+	for _, selector := range []string{`\.assistant-workspace`, `\.workspace\[data-database-workspace\]`} {
+		pattern := regexp.MustCompile(selector + `\s*\{[^}]*width:\s*100%[^}]*max-width:\s*none`)
+		if !pattern.MatchString(css) {
+			t.Errorf("operational workspace %q does not fill the available application width", selector)
+		}
+	}
 	for _, selector := range []string{`\.assistant-transcript`, `\.assistant-composer-zone`, `\.assistant-message--assistant`, `\.database-detail`} {
 		pattern := regexp.MustCompile(selector + `\s*\{[^}]*width:\s*100%`)
 		if !pattern.MatchString(css) {
