@@ -1433,6 +1433,8 @@
     initDirectoryPickers(main, cleanups);
     initQuickCreateDefaults(main, cleanups);
     initScheduleCron(cleanups, main);
+    const quickRunReorder = main.matches("[data-quick-run-reorder-url]") ? main : main.querySelector("[data-quick-run-reorder-url]");
+    if (quickRunReorder) cleanups.push(initQuickRunReordering(quickRunReorder));
     initExternalEntryForm(main, cleanups);
 	initVariableForm(main, cleanups);
 	initCopyControls(main, cleanups);
@@ -4322,6 +4324,108 @@
         cleanups.push(() => toggle.removeEventListener("click", onToggle));
       });
     });
+  }
+
+  function initQuickRunReordering(root) {
+    if (!root?.dataset.quickRunReorderUrl) return () => {};
+    const status = root.querySelector("[data-quick-run-reorder-status]");
+    const finish = root.querySelector("[data-quick-run-reorder-finish]");
+    const cancel = root.querySelector("[data-quick-run-reorder-cancel]");
+    const initialGroups = [...root.querySelectorAll("[data-quick-run-group]")].map(group => group.dataset.quickRunGroup);
+    const initialItems = new Map([...root.querySelectorAll("[data-quick-run-group]")].map(group => [group.dataset.quickRunGroup, [...group.querySelectorAll("[data-quick-run-id]")].map(item => item.dataset.quickRunId)]));
+    let dragged;
+    let busy = false;
+    const setBusy = value => {
+      busy = value;
+      if (finish) finish.disabled = value;
+      if (cancel) cancel.disabled = value;
+      root.toggleAttribute("aria-busy", value);
+    };
+    const restoreOrder = () => {
+      const region = root.querySelector("[data-deferred-region]");
+      for (const id of initialGroups) {
+        const group = [...root.querySelectorAll("[data-quick-run-group]")].find(candidate => candidate.dataset.quickRunGroup === id);
+        if (group) region?.append(group);
+      }
+      for (const [groupID, ids] of initialItems) {
+        const grid = [...root.querySelectorAll("[data-quick-run-group]")].find(group => group.dataset.quickRunGroup === groupID)?.querySelector(".qr-grid");
+        for (const id of ids) {
+          const item = [...(grid?.querySelectorAll("[data-quick-run-id]") || [])].find(candidate => candidate.dataset.quickRunId === id);
+          if (item) grid.append(item);
+        }
+      }
+    };
+    const save = async () => {
+      if (busy) return;
+      setBusy(true);
+      if (status) status.textContent = root.dataset.reorderSaving || "Saving order…";
+      const body = new URLSearchParams({ csrf_token: root.dataset.csrfToken || "" });
+      root.querySelectorAll("[data-quick-run-sortable-group]").forEach(group => body.append("group_id", group.dataset.quickRunGroup));
+      root.querySelectorAll("[data-quick-run-id]").forEach(item => body.append("quick_run_id", item.dataset.quickRunId));
+      try {
+        const response = await fetch(root.dataset.quickRunReorderUrl, { method: "POST", body, headers: { Accept: "text/plain" } });
+        if (!response.ok) throw new Error(await response.text());
+        if (status) status.textContent = root.dataset.reorderSaved || "Order saved";
+        await navigate("/config/quick-runs", true);
+      } catch (_) {
+        restoreOrder();
+        if (status) status.textContent = root.dataset.reorderFailed || "Order was not saved. The original order was restored.";
+        setBusy(false);
+      }
+    };
+    const onKeyDown = event => {
+      if (busy || !["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
+      const groupHandle = event.target.closest("[data-quick-run-group-drag-handle]");
+      const itemHandle = event.target.closest("[data-quick-run-drag-handle]");
+      const direction = ["ArrowUp", "ArrowLeft"].includes(event.key) ? -1 : 1;
+      const node = itemHandle?.closest("[data-quick-run-id]") || groupHandle?.closest("[data-quick-run-sortable-group]");
+      const peers = itemHandle ? [...(node?.parentElement.querySelectorAll(":scope > [data-quick-run-id]") || [])] : [...root.querySelectorAll("[data-quick-run-sortable-group]")];
+      const target = peers[peers.indexOf(node) + direction];
+      if (!node || !target) return;
+      event.preventDefault();
+      target.parentElement.insertBefore(node, direction < 0 ? target : target.nextSibling);
+      (itemHandle || groupHandle).focus();
+      if (status) status.textContent = "";
+    };
+    const onDragStart = event => {
+      if (busy) return;
+      const itemHandle = event.target.closest("[data-quick-run-drag-handle]");
+      const groupHandle = event.target.closest("[data-quick-run-group-drag-handle]");
+      const node = itemHandle?.closest("[data-quick-run-id]") || groupHandle?.closest("[data-quick-run-sortable-group]");
+      if (!node) return;
+      dragged = { node, type: itemHandle ? "item" : "group" };
+      node.classList.add("is-dragging");
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", itemHandle ? node.dataset.quickRunId : node.dataset.quickRunGroup);
+    };
+    const onDragOver = event => {
+      if (!dragged) return;
+      const target = dragged.type === "item" ? event.target.closest("[data-quick-run-id]") : event.target.closest("[data-quick-run-sortable-group]");
+      if (!target || target === dragged.node || (dragged.type === "item" && target.parentElement !== dragged.node.parentElement)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      const before = event.clientY < target.getBoundingClientRect().top + target.offsetHeight / 2;
+      target.parentElement.insertBefore(dragged.node, before ? target : target.nextSibling);
+    };
+    const onDrop = event => { if (dragged) { event.preventDefault(); if (status) status.textContent = ""; } };
+    const onDragEnd = () => { dragged?.node.classList.remove("is-dragging"); dragged = undefined; };
+    const onCancel = () => { if (!busy) navigate("/config/quick-runs", true); };
+    root.addEventListener("keydown", onKeyDown);
+    root.addEventListener("dragstart", onDragStart);
+    root.addEventListener("dragover", onDragOver);
+    root.addEventListener("drop", onDrop);
+    root.addEventListener("dragend", onDragEnd);
+    finish?.addEventListener("click", save);
+    cancel?.addEventListener("click", onCancel);
+    return () => {
+      root.removeEventListener("keydown", onKeyDown);
+      root.removeEventListener("dragstart", onDragStart);
+      root.removeEventListener("dragover", onDragOver);
+      root.removeEventListener("drop", onDrop);
+      root.removeEventListener("dragend", onDragEnd);
+      finish?.removeEventListener("click", save);
+      cancel?.removeEventListener("click", onCancel);
+    };
   }
 
   function initScheduleCron(cleanups, root = document) {
@@ -8037,6 +8141,8 @@
     initStaticLogControls(cleanups);
     initRun(cleanups);
     initGroupedRecords(cleanups);
+    const quickRunReorder = document.querySelector("[data-quick-run-reorder-url]");
+    if (quickRunReorder) cleanups.push(initQuickRunReordering(quickRunReorder));
     initScheduleCron(cleanups);
     initExternalEntryForm(document, cleanups);
 	initVariableForm(document, cleanups);

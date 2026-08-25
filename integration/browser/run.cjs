@@ -1829,7 +1829,7 @@ async function assertExternalInterfaces(page, fixture) {
     assert.equal(await savedQuickRun.locator("[data-quick-run-history-entry]").count(), 0);
     assert.equal((await savedQuickRun.locator(".quick-run-history__latest dd").nth(1).textContent()).trim(), "—");
     const quickHeadingActions = page.locator(".quick-run-heading-actions > .button");
-    assert.equal(await quickHeadingActions.count(), 3);
+    assert.equal(await quickHeadingActions.count(), 4);
     const quickHeadingMetrics = await quickHeadingActions.evaluateAll(actions => actions.map(action => {
       const bounds = action.getBoundingClientRect();
       return { top: Math.round(bounds.top), height: Math.round(bounds.height) };
@@ -1837,8 +1837,8 @@ async function assertExternalInterfaces(page, fixture) {
     assert.equal(new Set(quickHeadingMetrics.map(metric => metric.top)).size, 1, JSON.stringify(quickHeadingMetrics));
     assert.equal(new Set(quickHeadingMetrics.map(metric => metric.height)).size, 1, JSON.stringify(quickHeadingMetrics));
     assert.deepEqual(
-      await quickHeadingActions.evaluateAll(actions => actions.map(action => new URL(action.href).pathname)),
-      ["/config/quick-runs/groups/new", "/config/quick-runs/one-time/new", "/config/quick-runs/from-source/new"],
+      await quickHeadingActions.evaluateAll(actions => actions.map(action => `${new URL(action.href).pathname}${new URL(action.href).search}`)),
+      ["/config/quick-runs?reorder=1", "/config/quick-runs/groups/new", "/config/quick-runs/one-time/new", "/config/quick-runs/from-source/new"],
     );
 
     const assertWorkingDirectoryTree = async (href, kind) => {

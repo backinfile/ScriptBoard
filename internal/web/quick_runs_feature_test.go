@@ -106,19 +106,19 @@ func TestAdminCanReorderQuickRunGroups(t *testing.T) {
 
 	root := t.TempDir()
 	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
-	_, _ = createQuickRunGroup(t, client, serverURL, "First")
+	firstID, _ := createQuickRunGroup(t, client, serverURL, "First")
 	secondID, token := createQuickRunGroup(t, client, serverURL, "Second")
 
-	response, err := client.PostForm(serverURL+"/config/quick-runs/groups/"+secondID+"/move", url.Values{
+	response, err := client.PostForm(serverURL+"/config/quick-runs/reorder", url.Values{
 		"csrf_token": {token},
-		"direction":  {"up"},
+		"group_id":   {secondID, firstID},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther {
-		t.Fatalf("move group status=%d", response.StatusCode)
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("reorder groups status=%d", response.StatusCode)
 	}
 
 	response, err = client.Get(serverURL + "/config/quick-runs")
@@ -129,6 +129,78 @@ func TestAdminCanReorderQuickRunGroups(t *testing.T) {
 	_ = response.Body.Close()
 	if first, second := strings.Index(string(page), ">First<"), strings.Index(string(page), ">Second<"); first < 0 || second < 0 || second > first {
 		t.Fatalf("groups were not reordered: %s", page)
+	}
+}
+
+func TestQuickRunReorderModeUsesDragHandlesWithoutLegacyMoveActions(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	hostRoot := filepath.Join(root, "managed")
+	if err := os.MkdirAll(hostRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	scriptName, scriptContent := "reorder.cmd", "@echo off\r\necho reorder\r\n"
+	if runtime.GOOS != "windows" {
+		scriptName, scriptContent = "reorder.sh", "printf 'reorder\\n'\n"
+	}
+	scriptPath := filepath.Join(hostRoot, scriptName)
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
+	groupID, _ := createQuickRunGroup(t, client, serverURL, "Ordered")
+	createQuickRunFromFile(t, client, serverURL, scriptPath, "Deploy", groupID)
+
+	page := getQuickRunsPage(t, client, serverURL)
+	for _, expected := range []string{`href="/config/quick-runs?reorder=1"`, `>Reorder</a>`} {
+		if !strings.Contains(string(page), expected) {
+			t.Fatalf("normal page missing reorder entry %q: %s", expected, page)
+		}
+	}
+	for _, removed := range []string{`action="/config/quick-runs/groups/` + groupID + `/move"`, `action="/config/quick-runs/` + quickRunIDForName(t, page, "Deploy") + `/move"`, `name="direction"`} {
+		if strings.Contains(string(page), removed) {
+			t.Fatalf("normal page still contains legacy move action %q: %s", removed, page)
+		}
+	}
+
+	response, err := client.Get(serverURL + "/config/quick-runs?reorder=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reorderPage, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	for _, expected := range []string{`data-quick-run-reorder-url="/config/quick-runs/reorder"`, `data-quick-run-group-drag-handle`, `data-quick-run-drag-handle`, `data-quick-run-reorder-finish`, `aria-live="polite"`} {
+		if !strings.Contains(string(reorderPage), expected) {
+			t.Fatalf("reorder page missing %q: %s", expected, reorderPage)
+		}
+	}
+}
+
+func TestQuickRunReorderRejectsAnIncompleteInventoryWithoutChangingOrder(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
+	firstID, _ := createQuickRunGroup(t, client, serverURL, "First")
+	_, token := createQuickRunGroup(t, client, serverURL, "Second")
+
+	response, err := client.PostForm(serverURL+"/config/quick-runs/reorder", url.Values{
+		"csrf_token": {token},
+		"group_id":   {firstID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusConflict {
+		t.Fatalf("incomplete reorder status=%d, want %d", response.StatusCode, http.StatusConflict)
+	}
+
+	page := getQuickRunsPage(t, client, serverURL)
+	first, second := strings.Index(string(page), ">First<"), strings.Index(string(page), ">Second<")
+	if first < 0 || second < 0 || first > second {
+		t.Fatalf("rejected reorder changed group order: %s", page)
 	}
 }
 
@@ -349,18 +421,21 @@ func TestQuickRunReorderingStaysWithinCurrentGroup(t *testing.T) {
 	createQuickRunFromFile(t, client, serverURL, filepath.Join(hostRoot, scriptName), "Second item", groupID)
 	createQuickRunFromFile(t, client, serverURL, filepath.Join(hostRoot, scriptName), "Other item", otherGroupID)
 	page := getQuickRunsPage(t, client, serverURL)
+	firstID := quickRunIDForName(t, page, "First item")
 	secondID := quickRunIDForName(t, page, "Second item")
+	otherID := quickRunIDForName(t, page, "Other item")
 
-	response, err := client.PostForm(serverURL+"/config/quick-runs/"+secondID+"/move", url.Values{
-		"csrf_token": {formToken(t, page)},
-		"direction":  {"up"},
+	response, err := client.PostForm(serverURL+"/config/quick-runs/reorder", url.Values{
+		"csrf_token":   {formToken(t, page)},
+		"group_id":     {groupID, otherGroupID},
+		"quick_run_id": {secondID, firstID, otherID},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther {
-		t.Fatalf("move Quick Run status=%d", response.StatusCode)
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("reorder Quick Runs status=%d", response.StatusCode)
 	}
 
 	page = getQuickRunsPage(t, client, serverURL)
@@ -720,10 +795,6 @@ func TestQuickRunSoftLockBlocksEditingAndDeletionUntilUnlocked(t *testing.T) {
 		"/move-group": {
 			"csrf_token": {formToken(t, page)},
 			"group_id":   {targetGroupID},
-		},
-		"/move": {
-			"csrf_token": {formToken(t, page)},
-			"direction":  {"up"},
 		},
 		"/copy": {
 			"csrf_token":      {formToken(t, page)},

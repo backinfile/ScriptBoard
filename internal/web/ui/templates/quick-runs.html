@@ -2,24 +2,32 @@
 <html lang="{{.Locale}}">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "quick_runs.title"}} · ScriptBoard</title></head>
 <body>
-<main class="workspace" data-quick-runs-page data-grouped-records="quick-run-groups">
-  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "quick_runs.eyebrow"}}</p><h1>{{t .Locale "quick_runs.title"}}</h1><p>{{t .Locale "quick_runs.description"}}</p></div>{{if .CanManage}}<div class="heading-actions quick-run-heading-actions"><a class="button" href="/config/quick-runs/groups/new" data-task-link><span data-lucide="folder-plus" aria-hidden="true"></span>{{t .Locale "quick_runs.create_group"}}</a><a class="button" href="/config/quick-runs/one-time/new" data-task-link><span data-lucide="play" aria-hidden="true"></span>{{t .Locale "quick_runs.run_once"}}</a><a class="button button--primary" href="/config/quick-runs/from-source/new" data-task-link><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "common.create"}}</a></div>{{end}}</header>
+<main class="workspace" data-quick-runs-page data-grouped-records="quick-run-groups" {{if .Reorder}}data-quick-run-reorder-url="/config/quick-runs/reorder" data-csrf-token="{{.CSRFToken}}" data-reorder-saving="{{t .Locale "quick_runs.reorder_saving"}}" data-reorder-saved="{{t .Locale "quick_runs.reorder_saved"}}" data-reorder-failed="{{t .Locale "quick_runs.reorder_failed"}}"{{end}}>
+  <header class="page-heading"><div><p class="page-eyebrow">{{t .Locale "quick_runs.eyebrow"}}</p><h1>{{t .Locale "quick_runs.title"}}</h1><p>{{t .Locale "quick_runs.description"}}</p></div>{{if .CanManage}}<div class="heading-actions quick-run-heading-actions">{{if .Reorder}}<a class="button" href="/config/quick-runs"><span data-lucide="x" aria-hidden="true"></span>{{t .Locale "common.cancel"}}</a>{{else}}<a class="button" href="/config/quick-runs?reorder=1"><span data-lucide="grip-vertical" aria-hidden="true"></span>{{t .Locale "quick_runs.reorder"}}</a><a class="button" href="/config/quick-runs/groups/new" data-task-link><span data-lucide="folder-plus" aria-hidden="true"></span>{{t .Locale "quick_runs.create_group"}}</a><a class="button" href="/config/quick-runs/one-time/new" data-task-link><span data-lucide="play" aria-hidden="true"></span>{{t .Locale "quick_runs.run_once"}}</a><a class="button button--primary" href="/config/quick-runs/from-source/new" data-task-link><span data-lucide="plus" aria-hidden="true"></span>{{t .Locale "common.create"}}</a>{{end}}</div>{{end}}</header>
   <div data-deferred-region>
   {{if .DeferredData}}
   {{template "deferred-loading" .}}
   {{else}}
+  {{if .Reorder}}
+  <section class="quick-run-reorder-guidance" aria-label="{{t .Locale "quick_runs.reorder_label"}}">
+    <div><span data-lucide="grip-vertical" aria-hidden="true"></span><strong>{{t .Locale "quick_runs.reordering"}}</strong><span>{{t .Locale "quick_runs.reorder_description"}}</span></div>
+    <div class="quick-run-reorder-actions"><button class="button button--quiet" type="button" data-quick-run-reorder-cancel>{{t .Locale "common.cancel"}}</button><button class="button button--primary" type="button" data-quick-run-reorder-finish>{{t .Locale "quick_runs.finish_reorder"}}</button></div>
+    <noscript><a class="button" href="/config/quick-runs">{{t .Locale "common.cancel"}}</a></noscript>
+  </section>
+  <p class="quick-run-reorder-status" data-quick-run-reorder-status aria-live="polite"></p>
+  {{end}}
   {{range .Groups}}
-  <section class="quick-run-group" data-record-group="{{.ID}}" data-quick-run-group="{{.ID}}" data-group-name="{{.Name}}">
+  <section class="quick-run-group" data-record-group="{{.ID}}" data-quick-run-group="{{.ID}}" data-group-name="{{.Name}}" {{if and $.Reorder (not .Ungrouped)}}data-quick-run-sortable-group{{end}}>
     <header class="quick-run-group__header">
+      {{if and $.Reorder (not .Ungrouped)}}<button class="quick-run-reorder-handle" type="button" draggable="true" data-quick-run-group-drag-handle aria-label="{{t $.Locale "quick_runs.drag_group"}}: {{.Name}}"><span data-lucide="grip-vertical" aria-hidden="true"></span></button>{{end}}
       <h2 class="quick-run-group__heading"><button class="quick-run-group__toggle" type="button" data-group-toggle aria-expanded="true" aria-controls="quick-run-group-{{.ID}}">
         <span class="quick-run-group__chevron" data-lucide="chevron-right" aria-hidden="true"></span>
         <span class="quick-run-group__identity"><span data-lucide="{{if .Ungrouped}}folder-open{{else}}folder{{end}}" aria-hidden="true"></span><span class="quick-run-group__name">{{.Name}}</span></span>
         <span class="quick-run-group__count">{{.QuickRunCount}} {{t $.Locale "quick_runs.items"}}</span>
       </button></h2>
-      {{if and $.CanManage (not .Ungrouped)}}
+      {{if and $.CanManage (not $.Reorder) (not .Ungrouped)}}
       <details class="action-menu quick-run-group__menu"><summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
         <a href="/config/quick-runs/groups/{{.ID}}/edit" data-task-link><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a>
-        <form method="post" action="/config/quick-runs/groups/{{.ID}}/move" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" name="direction" value="up"><span data-lucide="arrow-up" aria-hidden="true"></span>{{t $.Locale "quick_runs.move_up"}}</button><button type="submit" name="direction" value="down"><span data-lucide="arrow-down" aria-hidden="true"></span>{{t $.Locale "quick_runs.move_down"}}</button></form>
         <form method="post" action="/config/quick-runs/groups/{{.ID}}/delete" data-confirm="{{t $.Locale "quick_runs.group_delete_confirm"}}" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-action" type="submit" name="confirm" value="yes"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "common.delete"}}</button></form>
       </div></details>
       {{end}}
@@ -28,15 +36,15 @@
     {{if .Items}}<ol class="qr-grid">
       {{range .Items}}<li class="qr" data-quick-run-id="{{.ID}}" data-locked="{{if .Locked}}true{{else}}false{{end}}" data-quick-run-version="{{.Revision}}">
         <div class="qr__head">
+          {{if $.Reorder}}<button class="quick-run-reorder-handle quick-run-reorder-handle--item" type="button" draggable="true" data-quick-run-drag-handle aria-label="{{t $.Locale "quick_runs.drag_item"}}: {{.Name}}"><span data-lucide="grip-vertical" aria-hidden="true"></span></button>{{end}}
           <div class="qr__identity"><h3>{{.Name}}</h3><code class="qr__path" title="{{.ScriptPath}}">{{.ScriptPath}}</code></div>
-          {{if $.CanManage}}<details class="action-menu"><summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
+          {{if and $.CanManage (not $.Reorder)}}<details class="action-menu"><summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
             <a href="/history/runs?q={{urlquery .Name}}&amp;quick_run_id={{urlquery .ID}}&amp;focus=search" data-focus-after-navigation="#run-search"><span data-lucide="history" aria-hidden="true"></span>{{t $.Locale "quick_runs.view_all_runs"}}</a>
             {{if .Locked}}<span class="action-menu__disabled" data-locked-action="edit" aria-disabled="true"><span data-lucide="lock" aria-hidden="true"></span>{{t $.Locale "common.edit"}}<small>{{t $.Locale "quick_runs.unlock_to_edit"}}</small></span>{{else}}<a href="/config/quick-runs/{{.ID}}/edit" data-task-link data-locked-action="edit"><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a>{{end}}
             {{if $.CanReadFiles}}<a href="{{.DirectoryURL}}"><span data-lucide="folder-search" aria-hidden="true"></span>{{t $.Locale "quick_runs.open_directory"}}</a>{{end}}
             <a href="/config/quick-runs/{{.ID}}/copy" data-task-link><span data-lucide="copy" aria-hidden="true"></span>{{t $.Locale "quick_runs.copy"}}</a>
             <a href="/config/quick-runs/{{.ID}}/move-group" data-task-link><span data-lucide="folder-open" aria-hidden="true"></span>{{t $.Locale "quick_runs.move_group"}}</a>
             <form method="post" action="/config/quick-runs/{{.ID}}/lock" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" name="locked" value="{{if .Locked}}0{{else}}1{{end}}"><span data-lucide="{{if .Locked}}unlock{{else}}lock{{end}}" aria-hidden="true"></span>{{if .Locked}}{{t $.Locale "quick_runs.unlock"}}{{else}}{{t $.Locale "quick_runs.lock"}}{{end}}</button></form>
-            <form method="post" action="/config/quick-runs/{{.ID}}/move" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" name="direction" value="up"><span data-lucide="arrow-up" aria-hidden="true"></span>{{t $.Locale "quick_runs.move_up"}}</button><button type="submit" name="direction" value="down"><span data-lucide="arrow-down" aria-hidden="true"></span>{{t $.Locale "quick_runs.move_down"}}</button></form>
             {{if .Locked}}<span class="action-menu__disabled action-menu__disabled--danger" data-locked-action="delete" aria-disabled="true"><span data-lucide="lock" aria-hidden="true"></span>{{t $.Locale "common.delete"}}<small>{{t $.Locale "quick_runs.unlock_to_delete"}}</small></span>{{else}}<form method="post" action="/config/quick-runs/{{.ID}}/delete" data-confirm="{{t $.Locale "quick_runs.delete_confirm"}}" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-action" type="submit" name="confirm" value="yes"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "common.delete"}}</button></form>{{end}}
           </div></details>{{end}}
         </div>
@@ -51,7 +59,7 @@
           <dl class="quick-run-history__latest qr__last">
             <div><dt>{{t $.Locale "quick_runs.last_run"}}</dt><dd>{{if .LastStartedAt.IsZero}}—{{else}}<time datetime="{{machineTime .LastStartedAt}}" data-local-time>{{localTime $.Locale .LastStartedAt}}</time>{{end}}</dd><dd>{{if .HasLastDuration}}{{.LastDuration}}{{else}}—{{end}}</dd></div>
           </dl>
-          {{if $.CanExecute}}<form method="post" action="/config/quick-runs/{{.ID}}/start"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button class="button button--compact qr__run" type="submit" {{if not .Valid}}disabled aria-disabled="true"{{end}} title="{{if not .Valid}}{{t $.Locale "quick_runs.invalid_path"}}{{end}}"><span data-lucide="play" aria-hidden="true"></span>{{if .Valid}}{{t $.Locale "common.run"}}{{else}}{{t $.Locale "quick_runs.invalid"}}{{end}}</button></form>{{end}}
+          {{if and $.CanExecute (not $.Reorder)}}<form method="post" action="/config/quick-runs/{{.ID}}/start"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><input type="hidden" name="id" value="{{.ID}}"><button class="button button--compact qr__run" type="submit" {{if not .Valid}}disabled aria-disabled="true"{{end}} title="{{if not .Valid}}{{t $.Locale "quick_runs.invalid_path"}}{{end}}"><span data-lucide="play" aria-hidden="true"></span>{{if .Valid}}{{t $.Locale "common.run"}}{{else}}{{t $.Locale "quick_runs.invalid"}}{{end}}</button></form>{{end}}
         </div>
       </li>{{end}}
     </ol>{{else}}<p class="empty-copy">{{t $.Locale "quick_runs.group_empty"}}</p>{{end}}

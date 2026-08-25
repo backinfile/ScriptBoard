@@ -358,52 +358,94 @@ func (a *App) updateQuickRunGroup(response http.ResponseWriter, request *http.Re
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }
 
-func (a *App) moveQuickRunGroup(response http.ResponseWriter, request *http.Request) {
+func (a *App) reorderQuickRuns(response http.ResponseWriter, request *http.Request) {
 	if !validSessionCSRF(request) {
 		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
 		return
 	}
-	operator, order := "<", "DESC"
-	switch request.FormValue("direction") {
-	case "up":
-	case "down":
-		operator, order = ">", "ASC"
-	default:
-		http.Error(response, "排序方向无效", http.StatusBadRequest)
+	if err := request.ParseForm(); err != nil {
+		http.Error(response, "快捷执行顺序无效", http.StatusBadRequest)
 		return
 	}
 	transaction, err := a.db.Begin()
 	if err != nil {
-		http.Error(response, "无法调整快捷执行分组顺序", http.StatusInternalServerError)
+		http.Error(response, "无法调整快捷执行顺序", http.StatusInternalServerError)
 		return
 	}
 	defer transaction.Rollback()
-	id := request.PathValue("id")
-	var currentOrder int
-	if err := transaction.QueryRow("SELECT sort_order FROM quick_run_groups WHERE id = ?", id).Scan(&currentOrder); err != nil {
-		http.Error(response, "快捷执行分组不存在", http.StatusNotFound)
+
+	groupIDs, err := collectQuickRunOrderIDs(transaction, "SELECT id FROM quick_run_groups", request.Form["group_id"])
+	if err != nil {
+		http.Error(response, "分组已发生变化，请刷新后重试", http.StatusConflict)
 		return
 	}
-	var neighborID string
-	var neighborOrder int
-	query := "SELECT id, sort_order FROM quick_run_groups WHERE sort_order " + operator + " ? ORDER BY sort_order " + order + " LIMIT 1"
-	if scanErr := transaction.QueryRow(query, currentOrder).Scan(&neighborID, &neighborOrder); scanErr == nil {
-		_, err = transaction.Exec(`UPDATE quick_run_groups
-			SET sort_order = CASE id WHEN ? THEN ? WHEN ? THEN ? END, updated_at = ?
-			WHERE id IN (?, ?)`,
-			id, neighborOrder, neighborID, currentOrder, time.Now().UTC().Unix(), id, neighborID)
-	} else if !errors.Is(scanErr, sql.ErrNoRows) {
-		err = scanErr
+	quickRunIDs, err := collectQuickRunOrderIDs(transaction, "SELECT id FROM quick_runs", request.Form["quick_run_id"])
+	if err != nil {
+		http.Error(response, "快捷执行已发生变化，请刷新后重试", http.StatusConflict)
+		return
+	}
+
+	// 批量校验完整清单后再写入，确保拖动排序不会因并发增删而部分覆盖。
+	now := time.Now().UTC().Unix()
+	for index, id := range groupIDs {
+		if _, err = transaction.Exec("UPDATE quick_run_groups SET sort_order = ?, updated_at = ? WHERE id = ?", index+1, now, id); err != nil {
+			break
+		}
+	}
+	groupPositions := map[string]int{}
+	for _, id := range quickRunIDs {
+		var groupID sql.NullString
+		if err = transaction.QueryRow("SELECT group_id FROM quick_runs WHERE id = ?", id).Scan(&groupID); err != nil {
+			break
+		}
+		groupKey := groupID.String
+		groupPositions[groupKey]++
+		if _, err = transaction.Exec("UPDATE quick_runs SET sort_order = ?, updated_at = ? WHERE id = ?", groupPositions[groupKey], now, id); err != nil {
+			break
+		}
 	}
 	if err == nil {
 		err = transaction.Commit()
 	}
 	if err != nil {
-		http.Error(response, "无法调整快捷执行分组顺序", http.StatusInternalServerError)
+		http.Error(response, "无法调整快捷执行顺序", http.StatusInternalServerError)
 		return
 	}
-	a.recordAuditForRequest(request, "move_quick_run_group", id, "succeeded")
-	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
+	a.recordAuditForRequest(request, "reorder_quick_runs", fmt.Sprintf("%d groups, %d quick runs", len(groupIDs), len(quickRunIDs)), "succeeded")
+	response.WriteHeader(http.StatusNoContent)
+}
+
+func collectQuickRunOrderIDs(transaction *sql.Tx, query string, submitted []string) ([]string, error) {
+	rows, err := transaction.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	existing := map[string]struct{}{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		existing[id] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(existing) != len(submitted) {
+		return nil, errors.New("incomplete order")
+	}
+	seen := make(map[string]struct{}, len(submitted))
+	for _, id := range submitted {
+		if _, exists := existing[id]; !exists {
+			return nil, errors.New("unknown id")
+		}
+		if _, duplicate := seen[id]; duplicate {
+			return nil, errors.New("duplicate id")
+		}
+		seen[id] = struct{}{}
+	}
+	return submitted, nil
 }
 
 func (a *App) deleteQuickRunGroup(response http.ResponseWriter, request *http.Request) {

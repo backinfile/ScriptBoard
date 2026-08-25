@@ -2839,7 +2839,7 @@ func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request)
 	locale := resolveWebLocale(request)
 	if isDeferredDataShell(request) {
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = quickRunsTemplate.Execute(response, struct {
+		if err := quickRunsTemplate.Execute(response, struct {
 			QuickRuns    []quickRunView
 			Groups       []quickRunGroup
 			CSRFToken    string
@@ -2848,11 +2848,14 @@ func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request)
 			CanExecute   bool
 			CanManage    bool
 			CanReadFiles bool
+			Reorder      bool
 		}{
 			CSRFToken: current.csrfToken, Locale: locale, DeferredData: true,
 			CanExecute: identity.Allows(current.role, identity.PermissionExecute), CanManage: identity.Allows(current.role, identity.PermissionManageExecution),
-			CanReadFiles: identity.Allows(current.role, identity.PermissionReadFiles),
-		})
+			CanReadFiles: identity.Allows(current.role, identity.PermissionReadFiles), Reorder: request.URL.Query().Get("reorder") == "1" && identity.Allows(current.role, identity.PermissionManageExecution),
+		}); err != nil {
+			http.Error(response, "Unable to render Quick Runs: "+err.Error(), http.StatusInternalServerError)
+		}
 		return
 	}
 	groups, err := a.loadQuickRunGroups()
@@ -2919,10 +2922,11 @@ func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request)
 		CanExecute   bool
 		CanManage    bool
 		CanReadFiles bool
+		Reorder      bool
 	}{
 		QuickRuns: quickRuns, Groups: groups, CSRFToken: current.csrfToken, Locale: locale,
 		CanExecute: identity.Allows(current.role, identity.PermissionExecute), CanManage: identity.Allows(current.role, identity.PermissionManageExecution),
-		CanReadFiles: identity.Allows(current.role, identity.PermissionReadFiles),
+		CanReadFiles: identity.Allows(current.role, identity.PermissionReadFiles), Reorder: request.URL.Query().Get("reorder") == "1" && identity.Allows(current.role, identity.PermissionManageExecution),
 	}); err != nil {
 		http.Error(response, "Unable to render Quick Runs: "+err.Error(), http.StatusInternalServerError)
 	}
@@ -2973,54 +2977,6 @@ func (a *App) startQuickRun(response http.ResponseWriter, request *http.Request)
 	a.recordQuickRunAuditForRequest(request, "start_quick_run", quick.ID, "accepted")
 	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/history/runs/"+url.PathEscape(id), http.StatusSeeOther)
-}
-
-func (a *App) moveQuickRun(response http.ResponseWriter, request *http.Request) {
-	if !validSessionCSRF(request) {
-		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
-		return
-	}
-	direction := request.FormValue("direction")
-	operator, order := "<", "DESC"
-	if direction == "down" {
-		operator, order = ">", "ASC"
-	} else if direction != "up" {
-		http.Error(response, "排序方向无效", http.StatusBadRequest)
-		return
-	}
-	transaction, err := a.db.Begin()
-	if err != nil {
-		http.Error(response, "无法调整快捷执行顺序", http.StatusInternalServerError)
-		return
-	}
-	defer transaction.Rollback()
-	var currentOrder int
-	var groupID sql.NullString
-	if err := transaction.QueryRow("SELECT sort_order, group_id FROM quick_runs WHERE id = ?", request.PathValue("id")).Scan(&currentOrder, &groupID); err != nil {
-		http.Error(response, "快捷执行不存在", http.StatusNotFound)
-		return
-	}
-	var groupValue any
-	if groupID.Valid {
-		groupValue = groupID.String
-	}
-	var neighborID string
-	var neighborOrder int
-	query := "SELECT id, sort_order FROM quick_runs WHERE group_id IS ? AND sort_order " + operator + " ? ORDER BY sort_order " + order + " LIMIT 1"
-	if scanErr := transaction.QueryRow(query, groupValue, currentOrder).Scan(&neighborID, &neighborOrder); scanErr == nil {
-		_, err = transaction.Exec("UPDATE quick_runs SET sort_order = CASE id WHEN ? THEN ? WHEN ? THEN ? END WHERE id IN (?, ?)", request.PathValue("id"), neighborOrder, neighborID, currentOrder, request.PathValue("id"), neighborID)
-	} else if !errors.Is(scanErr, sql.ErrNoRows) {
-		err = scanErr
-	}
-	if err == nil {
-		err = transaction.Commit()
-	}
-	if err != nil {
-		http.Error(response, "无法调整快捷执行顺序", http.StatusInternalServerError)
-		return
-	}
-	a.recordAuditForRequest(request, "move_quick_run", request.PathValue("id"), "succeeded")
-	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }
 
 func (a *App) deleteQuickRun(response http.ResponseWriter, request *http.Request) {
