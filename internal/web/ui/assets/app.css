@@ -233,8 +233,18 @@ SEED: 94d9bb9f.
 .external-log-group__meta { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: .72rem; white-space: nowrap; }
 .external-log-group > summary .external-log-group__chevron { width: 16px; height: 16px; color: var(--faint); transition: transform 160ms ease; }
 .external-log-group:not([open]) .external-log-group__chevron { transform: rotate(-90deg); }
-.external-log-group > .table-shell { margin-left: 28px; border-left: 1px solid var(--rule); }
+/* Fixed shared tracks align every disclosure header, table edge, and metadata column. */
+.external-log-group > .table-shell { margin-left: 0; border-left: 0; }
+.external-log-column--source { width: 24%; }
+.external-log-column--location { width: 34%; }
+.external-log-column--size { width: 9%; }
+.external-log-column--updated { width: 19%; }
+.external-log-column--actions { width: 14%; }
 .external-log-files-table tbody tr { background: var(--surface); }
+.external-log-files-table th, .external-log-files-table td { vertical-align: top; }
+.external-log-files-table .external-log-cell--size { text-align: right; }
+.external-log-files-table .external-log-cell--updated { white-space: nowrap; }
+.external-log-files-table .external-log-cell--actions { text-align: right; }
 .external-log-entry__identity { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 9px; align-items: start; }
 .external-log-entry__identity > svg { width: 16px; height: 16px; margin-top: 2px; color: var(--faint); }
 .external-log-entry__identity strong, .external-log-entry__identity small { display: block; }
@@ -314,6 +324,8 @@ SEED: 94d9bb9f.
   .external-log-filter-form .search-field { width: 100%; max-width: none; flex-basis: auto; }
   .external-log-file code, .external-log-file > small { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
   .external-log-group > .table-shell { margin-left: 0; border-left: 0; }
+  .external-log-files-table .external-log-cell--size, .external-log-files-table .external-log-cell--actions { text-align: left; }
+  .external-log-files-table .external-log-cell--updated { white-space: normal; }
   .external-log-files-table .record-actions__group { justify-content: flex-start; }
 }
 
