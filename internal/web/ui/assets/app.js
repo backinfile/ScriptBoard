@@ -823,6 +823,21 @@
     return { response, document: new DOMParser().parseFromString(text, "text/html") };
   }
 
+  async function refreshShellNavigation(responseDocument = null) {
+    let nextNavigation = responseDocument?.querySelector(".sidebar-nav");
+    if (!nextNavigation) {
+      try {
+        const response = await fetch(location.href, { credentials: "same-origin", headers: { "Accept": "text/html" } });
+        if (!response.ok) return;
+        nextNavigation = new DOMParser().parseFromString(await response.text(), "text/html").querySelector(".sidebar-nav");
+      } catch {
+        return;
+      }
+    }
+    const currentNavigation = document.querySelector(".sidebar-nav");
+    if (currentNavigation && nextNavigation) currentNavigation.replaceWith(document.importNode(nextNavigation, true));
+  }
+
   function uploadDocument(url, data, form, files) {
     return new Promise((resolve, reject) => {
       const request = new XMLHttpRequest();
@@ -2366,6 +2381,8 @@
             : null;
           // Database mutations update their workspace region without replacing the page shell or losing scroll state.
           currentRegion.replaceWith(document.importNode(nextRegion, true));
+          // Custom-tab mutations also refresh the dynamic External navigation group immediately.
+          if (currentRegion.matches("[data-custom-tabs-page]")) await refreshShellNavigation(result.document);
           if (drawerToClose) {
             drawerToClose.open = false;
             document.body.style.overflow = "";
@@ -2422,6 +2439,7 @@
           // SQL execution and other non-redirecting database actions refresh only their owned detail region.
           cleanupPage();
           currentRegion.replaceWith(document.importNode(nextRegion, true));
+          if (currentRegion.matches("[data-custom-tabs-page]")) await refreshShellNavigation(result.document);
           document.title = result.document.title;
           document.documentElement.lang = result.document.documentElement.lang || document.documentElement.lang;
           initPage();
