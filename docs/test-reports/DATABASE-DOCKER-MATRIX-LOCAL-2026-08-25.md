@@ -12,7 +12,7 @@
 
 | 项目 | 当前状态 |
 | --- | --- |
-| ScriptBoard | `http://127.0.0.1:18788`，PID 30444，保持运行 |
+| ScriptBoard | `http://127.0.0.1:18788`，PID 30728，保持运行 |
 | State Root | `D:\Github\worktrees\ScriptBoard\database-unified\.scratch\database-unified-deployment\state` |
 | 管理员 | `admin`；密码仅保留在 State Root 私有文件中 |
 | Docker 项目 | `scriptboard-database-qa`，7 个容器均保持运行 |
@@ -96,6 +96,7 @@
 - MySQL 与 Redis 不再按引擎拆成两个分组，统一进入一个按连接名称排序、可分页的连接页签列表。
 - MySQL 使用 Lucide `database` 图标；Redis 使用 Lucide `memory-stick` 图标，并辅以短类型标签。
 - Redis 详情使用与 MySQL 相同的 `.mysql-tabs` 内部页签，在概览、键空间查询和诊断之间切换。
+- MySQL 与 Redis 详情统一为“详情头部、内部页签、活动内容面板”框架；Redis 页签补齐图标、滚动保持、连接列表页码保持和概览刷新入口。
 - 真实保留数据下的 Playwright 桌面、移动端、键盘、中文、禁用 JavaScript 和控制台检查全部通过。
 
 ## 关键命令与限制

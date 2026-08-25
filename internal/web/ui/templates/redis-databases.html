@@ -4,15 +4,48 @@
 <body>
 <main class="workspace" data-database-workspace data-redis-workspace>
   {{template "database-header" .}}
-  <div class="mysql-instance-workspace">
+  <div class="mysql-instance-workspace" data-mysql-instances-region>
     {{template "database-connection-rail" .}}
-    {{if .Selected}}<section class="mysql-detail"><header class="mysql-detail__head"><div><p class="page-eyebrow">{{.Selected.Environment}}</p><h2>{{.Selected.Name}}</h2><p><code>{{.Selected.Username}}@{{.Selected.Host}}:{{.Selected.Port}} / db{{.Selected.Database}}</code></p></div><div class="mysql-instance-actions"><form method="post" action="/resources/databases/redis/instances/{{.Selected.ID}}/test" data-connection-test data-test-kind="redis"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--compact" type="submit"><span data-lucide="plug-zap" aria-hidden="true"></span>{{t .Locale "redis.test"}}</button></form><form method="post" action="/resources/databases/redis/instances/{{.Selected.ID}}/delete" data-confirm="{{t .Locale "redis.delete_confirm"}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--danger button--compact" type="submit"><span data-lucide="trash-2" aria-hidden="true"></span>{{t .Locale "common.delete"}}</button></form></div></header>
+    {{if .Selected}}
+    <section class="mysql-detail database-detail" data-database-engine="redis" data-database-instance="{{.Selected.ID}}" data-database-active-tab="{{.ActiveTab}}">
+      <header class="mysql-detail__head database-detail__head">
+        <div><p class="page-eyebrow">{{.Selected.Environment}}</p><h2>{{.Selected.Name}}</h2><p><code>{{.Selected.Username}}@{{.Selected.Host}}:{{.Selected.Port}} / db{{.Selected.Database}}</code></p></div>
+        <div class="mysql-instance-actions">
+          <form method="post" action="/resources/databases/redis/instances/{{.Selected.ID}}/test" data-connection-test data-test-kind="redis"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--compact" type="submit"><span data-lucide="plug-zap" aria-hidden="true"></span>{{t .Locale "redis.test"}}</button></form>
+          <form method="post" action="/resources/databases/redis/instances/{{.Selected.ID}}/delete" data-confirm="{{t .Locale "redis.delete_confirm"}}"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--danger button--compact" type="submit"><span data-lucide="trash-2" aria-hidden="true"></span>{{t .Locale "common.delete"}}</button></form>
+        </div>
+      </header>
       {{if .LoadError}}<div class="page-error" role="alert"><strong>{{t .Locale "redis.unavailable"}}</strong><code>{{.LoadError}}</code></div>{{end}}
-      <nav class="mysql-tabs" aria-label="Redis detail"><a href="/resources/databases?engine=redis&amp;instance={{.Selected.ID}}" {{if eq .ActiveTab "overview"}}aria-current="page"{{end}}>{{t .Locale "redis.overview"}}</a><a href="/resources/databases?engine=redis&amp;instance={{.Selected.ID}}&amp;tab=keys" {{if eq .ActiveTab "keys"}}aria-current="page"{{end}}>{{t .Locale "redis.keys"}}</a><a href="/resources/databases?engine=redis&amp;instance={{.Selected.ID}}&amp;tab=diagnostics" {{if eq .ActiveTab "diagnostics"}}aria-current="page"{{end}}>{{t .Locale "redis.diagnostics"}}</a></nav>
-      {{if eq .ActiveTab "overview"}}<section class="mysql-record-section"><div class="section-heading"><div><p class="section-index">01</p><h3>{{t .Locale "redis.instance_status"}}</h3></div></div>{{if .Overview}}<div class="redis-metrics"><div><small>Redis {{t .Locale "mysql.version"}}</small><strong>{{.Overview.Version}}</strong></div><div><small>{{t .Locale "redis.memory"}}</small><strong>{{humanBytes .Overview.UsedMemory}}</strong></div><div><small>{{t .Locale "redis.keys"}}</small><strong>{{.Overview.KeyCount}}</strong></div><div><small>{{t .Locale "redis.clients"}}</small><strong>{{.Overview.ConnectedClients}}</strong></div><div><small>{{t .Locale "redis.hit_rate"}}</small><strong>{{percent .Overview.HitRate}}</strong></div><div><small>{{t .Locale "redis.persistence"}}</small><strong>{{.Overview.Persistence}}</strong></div></div>{{end}}</section>{{end}}
-      {{if eq .ActiveTab "keys"}}<section class="mysql-record-section"><div class="section-heading"><div><p class="section-index">02</p><h3>{{t .Locale "redis.keys"}}</h3></div><form method="get"><input type="hidden" name="engine" value="redis"><input type="hidden" name="instance" value="{{.Selected.ID}}"><input type="hidden" name="tab" value="keys"><label class="redis-pattern">Pattern<input name="pattern" value="{{.Pattern}}" placeholder="order:*"></label><button class="button" type="submit">SCAN</button></form></div>{{if .Scan}}<div class="redis-key-list"><div class="redis-key-row redis-key-row--head"><span>{{t .Locale "redis.key"}}</span><span>{{t .Locale "redis.type"}}</span><span>TTL</span><span>{{t .Locale "redis.memory"}}</span></div>{{range .Scan.Keys}}<div class="redis-key-row"><code>{{.Name}}</code><span>{{.Type}}</span><span>{{if .Expires}}{{duration .TTL}}{{else}}{{t $.Locale "redis.persistent"}}{{end}}</span><span>{{humanBytes .SizeBytes}}</span></div>{{else}}<p class="form-hint">{{t $.Locale "redis.no_keys"}}</p>{{end}}</div>{{end}}</section>{{end}}
-      {{if eq .ActiveTab "diagnostics"}}<section class="mysql-record-section"><div class="section-heading"><div><p class="section-index">03</p><h3>{{t .Locale "redis.security_capabilities"}}</h3></div></div><p class="form-hint">{{t .Locale "redis.diagnostics_description"}}</p><div class="connection-security-note"><span data-lucide="shield-check" aria-hidden="true"></span><p>{{t .Locale "redis.tls_mode"}}: <strong>{{.Selected.TLSMode}}</strong>. {{t .Locale "redis.security_note"}}</p></div></section>{{end}}
-    </section>{{else}}<section class="mysql-detail mysql-detail--empty"><span data-lucide="panel-left-open" aria-hidden="true"></span><h2>{{t .Locale "redis.select"}}</h2><p>{{t .Locale "redis.select_description"}}</p></section>{{end}}
+
+      <nav class="mysql-tabs" aria-label="Redis detail" data-database-detail-tabs data-database-tabs>
+        <a href="/resources/databases?engine=redis&amp;instance={{.Selected.ID}}&amp;connection_page={{.ConnectionPagination.Page}}&amp;tab=overview" data-preserve-scroll {{if eq .ActiveTab "overview"}}aria-current="page"{{end}}><span data-lucide="activity" aria-hidden="true"></span>{{t .Locale "redis.overview"}}</a>
+        <a href="/resources/databases?engine=redis&amp;instance={{.Selected.ID}}&amp;connection_page={{.ConnectionPagination.Page}}&amp;tab=keys" data-preserve-scroll {{if eq .ActiveTab "keys"}}aria-current="page"{{end}}><span data-lucide="search" aria-hidden="true"></span>{{t .Locale "redis.keys"}}</a>
+        <a href="/resources/databases?engine=redis&amp;instance={{.Selected.ID}}&amp;connection_page={{.ConnectionPagination.Page}}&amp;tab=diagnostics" data-preserve-scroll {{if eq .ActiveTab "diagnostics"}}aria-current="page"{{end}}><span data-lucide="shield-check" aria-hidden="true"></span>{{t .Locale "redis.diagnostics"}}</a>
+      </nav>
+
+      {{if eq .ActiveTab "overview"}}
+      <section class="mysql-overview-panel database-tab-panel" data-database-tab-panel="overview">
+        <div class="section-heading section-heading--with-control"><div><p class="section-index">01</p><h3>{{t .Locale "redis.instance_status"}}</h3></div><a class="button button--compact" href="/resources/databases?engine=redis&amp;instance={{.Selected.ID}}&amp;connection_page={{.ConnectionPagination.Page}}&amp;tab=overview" data-preserve-scroll><span data-lucide="refresh-cw" aria-hidden="true"></span>{{t .Locale "mysql.refresh_status"}}</a></div>
+        {{if .Overview}}<div class="redis-metrics"><div><small>Redis {{t .Locale "mysql.version"}}</small><strong>{{.Overview.Version}}</strong></div><div><small>{{t .Locale "redis.memory"}}</small><strong>{{humanBytes .Overview.UsedMemory}}</strong></div><div><small>{{t .Locale "redis.keys"}}</small><strong>{{.Overview.KeyCount}}</strong></div><div><small>{{t .Locale "redis.clients"}}</small><strong>{{.Overview.ConnectedClients}}</strong></div><div><small>{{t .Locale "redis.hit_rate"}}</small><strong>{{percent .Overview.HitRate}}</strong></div><div><small>{{t .Locale "redis.persistence"}}</small><strong>{{.Overview.Persistence}}</strong></div></div>{{end}}
+      </section>
+      {{end}}
+
+      {{if eq .ActiveTab "keys"}}
+      <section class="mysql-record-section database-tab-panel" data-database-tab-panel="keys">
+        <div class="section-heading section-heading--with-control"><div><p class="section-index">02</p><h3>{{t .Locale "redis.keys"}}</h3></div><form method="get"><input type="hidden" name="engine" value="redis"><input type="hidden" name="instance" value="{{.Selected.ID}}"><input type="hidden" name="connection_page" value="{{.ConnectionPagination.Page}}"><input type="hidden" name="tab" value="keys"><label class="redis-pattern">Pattern<input name="pattern" value="{{.Pattern}}" placeholder="order:*"></label><button class="button" type="submit">SCAN</button></form></div>
+        {{if .Scan}}<div class="redis-key-list"><div class="redis-key-row redis-key-row--head"><span>{{t .Locale "redis.key"}}</span><span>{{t .Locale "redis.type"}}</span><span>TTL</span><span>{{t .Locale "redis.memory"}}</span></div>{{range .Scan.Keys}}<div class="redis-key-row"><code>{{.Name}}</code><span>{{.Type}}</span><span>{{if .Expires}}{{duration .TTL}}{{else}}{{t $.Locale "redis.persistent"}}{{end}}</span><span>{{humanBytes .SizeBytes}}</span></div>{{else}}<p class="form-hint">{{t $.Locale "redis.no_keys"}}</p>{{end}}</div>{{end}}
+      </section>
+      {{end}}
+
+      {{if eq .ActiveTab "diagnostics"}}
+      <section class="mysql-record-section database-tab-panel" data-database-tab-panel="diagnostics">
+        <div class="section-heading"><div><p class="section-index">03</p><h3>{{t .Locale "redis.security_capabilities"}}</h3></div></div><p class="form-hint">{{t .Locale "redis.diagnostics_description"}}</p><div class="connection-security-note"><span data-lucide="shield-check" aria-hidden="true"></span><p>{{t .Locale "redis.tls_mode"}}: <strong>{{.Selected.TLSMode}}</strong>. {{t .Locale "redis.security_note"}}</p></div>
+      </section>
+      {{end}}
+    </section>
+    {{else}}
+    <section class="mysql-detail mysql-detail--empty database-detail database-detail--empty"><span data-lucide="panel-left-open" aria-hidden="true"></span><h2>{{t .Locale "redis.select"}}</h2><p>{{t .Locale "redis.select_description"}}</p></section>
+    {{end}}
   </div>
 </main>
 </body></html>

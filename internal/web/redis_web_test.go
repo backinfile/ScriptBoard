@@ -67,6 +67,11 @@ func TestAdministratorCanRegisterAndInspectRedisConnection(t *testing.T) {
 			t.Fatalf("Redis workspace missing %q: %s", expected, page)
 		}
 	}
+	for _, expected := range []string{`class="mysql-detail database-detail"`, `data-database-engine="redis"`, `data-database-detail-tabs`, `data-database-tabs`, `data-database-tab-panel="overview"`, `data-lucide="search"`, `data-lucide="shield-check"`, `connection_page=1`} {
+		if !strings.Contains(page, expected) {
+			t.Fatalf("Redis detail does not follow the shared database tab framework; missing %q: %s", expected, page)
+		}
+	}
 	if !strings.Contains(page, "man-in-the-middle") {
 		t.Fatalf("Redis connection form does not explain skip-verification risk: %s", page)
 	}

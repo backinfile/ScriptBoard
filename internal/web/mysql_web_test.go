@@ -133,6 +133,11 @@ func TestAdministratorCanRegisterMySQLInstanceFromDatabaseWorkspace(t *testing.T
 			t.Fatalf("selected database workspace missing %q: %s", expected, selectedBody)
 		}
 	}
+	for _, expected := range []string{`class="mysql-detail database-detail"`, `data-database-engine="mysql"`, `data-database-detail-tabs`, `data-database-tabs`, `data-database-tab-panel="overview"`} {
+		if !strings.Contains(string(selectedBody), expected) {
+			t.Fatalf("MySQL detail does not follow the shared database tab framework; missing %q: %s", expected, selectedBody)
+		}
+	}
 	if strings.Contains(string(selectedBody), `mysql-instance-tabs__tls`) {
 		t.Fatalf("database instance rail still exposes TLS mode: %s", selectedBody)
 	}
