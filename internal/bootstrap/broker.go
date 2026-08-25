@@ -29,7 +29,6 @@ import (
 	"scriptboard/internal/passkey"
 	"scriptboard/internal/privatepath"
 	"scriptboard/internal/privilegebroker"
-	"scriptboard/internal/providercredential"
 	"scriptboard/internal/redismanager"
 	"scriptboard/internal/registryconnection"
 	"scriptboard/internal/secretstore"
@@ -130,13 +129,6 @@ func RunBroker(ctx context.Context, arguments []string, getenv func(string) stri
 	if err != nil {
 		return fmt.Errorf("initialize Broker-owned passkey state: %w", err)
 	}
-	providers, err := providercredential.New(providercredential.Options{StateRoot: absolute, SecretStore: vault})
-	if err != nil {
-		return fmt.Errorf("initialize Broker-owned provider credentials: %w", err)
-	}
-	if err := providers.MigrateLegacy(context.Background(), database); err != nil {
-		return fmt.Errorf("migrate Assistant provider credentials in Broker: %w", err)
-	}
 	registryConnections, err := registryconnection.New(registryconnection.Options{StateRoot: absolute, SecretStore: vault})
 	if err != nil {
 		return fmt.Errorf("initialize Broker-owned Registry connections: %w", err)
@@ -233,7 +225,7 @@ func RunBroker(ctx context.Context, arguments []string, getenv func(string) stri
 		Listener: transport.Listener, VerifyPeer: transport.VerifyPeer,
 		Authorizer: databaseSecurity, Executor: executor, Auditor: databaseSecurity,
 		Checkpoint: brokerCheckpointService{store: checkpoint, audit: audit}, Now: time.Now,
-		MFA: mfaStore, Passkeys: passkeyStore, Providers: providers,
+		MFA: mfaStore, Passkeys: passkeyStore,
 		MySQL: mysqlService, Redis: redisService, HostFiles: hostFilesService,
 		Registry:     registryConnections,
 		Applications: applications, Kubernetes: brokerKubernetesService{db: database, factory: clusterstatus.HTTPFactory{}},

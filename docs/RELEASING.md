@@ -55,50 +55,6 @@ go run ./cmd/scriptboard-release keygen
 
 Tag Release 的任一安全门禁失败、缺少任何必需 Secret、私钥与公钥不匹配、安装器数量错误或清单校验失败时，工作流必须失败，不得手工发布部分产物。
 
-## Pi Runtime 配套资产
-
-启用 AI 的正式 Release 必须固定一个经过兼容测试的 Pi 版本，并为每个平台另外发布
-Runtime 资产、`ASSISTANT-RUNTIME.json` 及 `ASSISTANT-RUNTIME.json.sig`。Runtime
-清单与主应用 `release-manifest.json` 使用同一信任根但不同的产品域和 Schema，不能把
-Runtime 条目塞入既有应用更新清单。
-
-每个 Runtime 资产至少包含：
-
-- 与目标平台/架构匹配的唯一 `pi` 或 `pi.exe` 入口；
-- Pi 启动时读取的全部同版本伴随资源（例如内置主题和原生模块）；不得只从上游归档中复制可执行文件；
-- 固定的 ScriptBoard Extension（若本版本启用工具）；
-- `capabilities.json` 及其显式列出的 Operational Playbook；每个资源记录稳定 ID、版本、
-  相对路径、字节数和 SHA-256，且只能位于 Runtime 自身目录；
-- Pi LICENSE、上游来源、精确版本、构建方式和 SHA-256 元数据；
-- ScriptBoard 兼容版本范围和 RPC contract 版本；
-- Runtime 自身的 `runtime.json`，其内容必须与签名清单一致。
-
-发布流水线必须从固定上游引用获取源或资产，先验证仓库、版本和维护者记录的摘要，再在
-隔离构建环境重打包；禁止追随 `latest`、执行 npm 全局安装或把维护者机器 PATH 中的 Pi
-复制进 Release。正式构建需要通过真实 Pi RPC 合同测试、无工具启动测试和固定 Extension
-测试，并验证 Capability Bundle 摘要/路径/重复资源校验、Profile 指导注入、旧 Runtime
-确定降级，以及用户 Pi 配置、Extensions、Skills 和 session 不影响受管 Runtime。
-
-Runtime 安装器必须对在线下载和管理员上传的离线资产执行相同检查：签名、产品域、仓库、
-兼容版本、平台、架构、文件与解压大小、SHA-256、路径穿越、绝对路径、链接、特殊文件、
-重复路径、许可证和唯一入口。验证及 RPC 验活完成前只能写入
-`state-root/assistant/downloads/<operation-id>`；通过后移动到
-`state-root/assistant/runtime/versions/<version>` 并原子更新 `active.json`。
-
-Runtime 安装、切换和回退必须由管理员明确发起。存在活动 Agent Turn、待处理审批或正在
-启动的 Pi 时拒绝切换；失败不得修改活动指针。至少保留活动版本和一个已验证回退版本，
-清理不得触碰对话、Provider 凭据、Pi home、session 或 workspace。用户自行安装或更新 Pi
-与此流程完全独立。
-
-开发构建可以使用显式放入私有版本目录的 deterministic fake Pi 做 tracer bullet，但
-`active.json` 必须标记 development/fixture，且该目录不得进入正式归档。
-
-正式 Tag 构建由 `scripts/build-release.ps1` 自动调用
-`scripts/build-assistant-runtime.ps1`。后者只接受 `runtime/pi-runtime-lock.json` 中固定的
-Pi 版本、四个平台资产大小与 SHA-256，加入 `runtime/scriptboard-extension.ts`、LICENSE、
-上游 commit 和合同元数据，再生成独立域签名的 Runtime 清单。修改 lock 或升级 Pi 后必须
-重新完成四个平台打包、真实 RPC/Extension 合同测试、在线安装及回退验收。
-
 ## 本地开发构建
 
 无需密钥即可生成明确标记为 `development` 的未签名单文件安装器：

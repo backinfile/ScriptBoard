@@ -11,10 +11,10 @@ if (-not $dist.StartsWith($root + [IO.Path]::DirectorySeparatorChar)) {
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $contracts = @(
-    @{ Name = "scriptboard-development-windows-amd64-setup.exe"; Files = @("scriptboard.exe", "scriptboard-broker.exe", "scriptboard-ai-host.exe", "scriptboard-runner.exe", "scriptboard-tray.exe", "scriptboard-tray-launcher.exe", "scriptboard-updater.exe", "RELEASE.json") },
-    @{ Name = "scriptboard-development-windows-arm64-setup.exe"; Files = @("scriptboard.exe", "scriptboard-broker.exe", "scriptboard-ai-host.exe", "scriptboard-runner.exe", "scriptboard-tray.exe", "scriptboard-tray-launcher.exe", "scriptboard-updater.exe", "RELEASE.json") },
-    @{ Name = "scriptboard-development-linux-amd64.run"; Files = @("scriptboard", "scriptboard-broker", "scriptboard-ai-host", "scriptboard-runner", "scriptboard-updater", "RELEASE.json") },
-    @{ Name = "scriptboard-development-linux-arm64.run"; Files = @("scriptboard", "scriptboard-broker", "scriptboard-ai-host", "scriptboard-runner", "scriptboard-updater", "RELEASE.json") }
+    @{ Name = "scriptboard-development-windows-amd64-setup.exe"; Files = @("scriptboard.exe", "scriptboard-broker.exe", "scriptboard-runner.exe", "scriptboard-tray.exe", "scriptboard-tray-launcher.exe", "scriptboard-updater.exe", "RELEASE.json") },
+    @{ Name = "scriptboard-development-windows-arm64-setup.exe"; Files = @("scriptboard.exe", "scriptboard-broker.exe", "scriptboard-runner.exe", "scriptboard-tray.exe", "scriptboard-tray-launcher.exe", "scriptboard-updater.exe", "RELEASE.json") },
+    @{ Name = "scriptboard-development-linux-amd64.run"; Files = @("scriptboard", "scriptboard-broker", "scriptboard-runner", "scriptboard-updater", "RELEASE.json") },
+    @{ Name = "scriptboard-development-linux-arm64.run"; Files = @("scriptboard", "scriptboard-broker", "scriptboard-runner", "scriptboard-updater", "RELEASE.json") }
 )
 
 foreach ($contract in $contracts) {

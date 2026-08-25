@@ -83,7 +83,7 @@ func TestMySQLPlanDeleteTriggerIsBoundInsideMySQLDrawerInitializer(t *testing.T)
 	}
 }
 
-func TestMySQLDrawerCloseDoesNotReferenceAssistantState(t *testing.T) {
+func TestMySQLDrawerCloseReleasesPageScrollLock(t *testing.T) {
 	t.Parallel()
 
 	script, err := webFiles.ReadFile("ui/assets/app.js")
@@ -97,9 +97,6 @@ func TestMySQLDrawerCloseDoesNotReferenceAssistantState(t *testing.T) {
 		t.Fatal("MySQL drawer initializer boundary is missing")
 	}
 	initializer := source[start:end]
-	if strings.Contains(initializer, "guardrailLayer") {
-		t.Fatal("MySQL drawer close references assistant-only guardrail state")
-	}
 	if !strings.Contains(initializer, `document.body.style.overflow = ""`) {
 		t.Fatal("MySQL drawer close no longer releases the page scroll lock")
 	}

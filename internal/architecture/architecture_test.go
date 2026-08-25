@@ -108,7 +108,7 @@ func TestADRNumbersDoNotAcquireNewDuplicates(t *testing.T) {
 
 func TestRuntimeCommandsDelegateCompositionToBootstrap(t *testing.T) {
 	root := repositoryRoot(t)
-	for _, command := range []string{"scriptboard", "scriptboard-broker", "scriptboard-runner", "scriptboard-ai-host"} {
+	for _, command := range []string{"scriptboard", "scriptboard-broker", "scriptboard-runner"} {
 		path := filepath.Join(root, "cmd", command, "main.go")
 		body, err := os.ReadFile(path)
 		if err != nil {
@@ -121,7 +121,6 @@ func TestRuntimeCommandsDelegateCompositionToBootstrap(t *testing.T) {
 		forbiddenImports := []string{
 			`internal/privilegebroker`,
 			`internal/runnerhost`,
-			`internal/assistant/runtimehost`,
 		}
 		if command != "scriptboard" {
 			forbiddenImports = append(forbiddenImports, `"database/sql"`, `"modernc.org/sqlite"`)

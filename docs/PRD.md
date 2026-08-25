@@ -15,29 +15,15 @@
 > 启动，不迁移、不修改也不删除。下文冲突表述均由本修订与
 > [ADR-0122](./adr/0122-browse-the-host-filesystem-with-protected-paths.md) 取代。
 
-> **2026-08-01 修订**：增加可选 AI 对话工作区，以 ScriptBoard 私有 Pi RPC Runtime
-> 运行 Agent Turn；LLM、对话、资源引用、固定 Tool Broker 和一次性审批由 ScriptBoard 管理。
-> schema 20 状态库可在单事务内前向迁移到 schema 21，早于 20 的旧库仍在写入前拒绝。
-> 工具代理、状态修改审批与 Runtime 分发必须分别满足
-> [ADR-0123](./adr/0123-use-pi-rpc-as-a-private-assistant-runtime.md)、
-> [ADR-0124](./adr/0124-broker-assistant-tools-and-bind-state-changes-to-approvals.md) 和
-> [ADR-0125](./adr/0125-pin-pi-runtime-to-signed-scriptboard-releases.md)。
-
-> **2026-08-02 修订**：AI 对话增加显式 Conversation Profile、Pi Session Telemetry、
-> 有界 Evidence Query 与安全光栅图片上下文。能力由签名 Runtime 中摘要固定的
-> Capability Bundle 提供，不开放用户/第三方 Skill 或任意网络；安全边界见
-> [ADR-0126](./adr/0126-version-assistant-playbooks-with-the-signed-runtime.md)。数据库当前为
-> schema 24，schema 20–23 可在单事务内前向迁移。
-
-> **2026-08-12 安全修订**：受管部署改为 Web、特权 Broker、AI Host 与 Runner 四服务边界。
-> Web 使用专用低权限身份；Broker 保留 root/LocalSystem；AI 使用独立受限身份。Runner 保留
+> **2026-08-12 安全修订**：受管部署改为 Web、特权 Broker 与 Runner 三服务边界。
+> Web 使用专用低权限身份；Broker 保留 root/LocalSystem。Runner 保留
 > 独立服务边界与受保护 IPC，默认以 root/LocalSystem 执行可信脚本；显式
 > `runner_identity_mode: isolated` 时才使用受限身份、默认拒绝网络和资源/系统调用限制。
 > Run 只继承 Runner 构造的最小环境，不再继承
 > Web 身份与环境。此修订取代下文关于“单进程”、root/LocalSystem Web 和脚本继承 Web 身份的
-> 冲突表述；Host Files、MFA、Passkey、远程网站、Assistant Provider、MySQL、审计签名与备份
-> 密钥能力均由 Broker 持有，Web 只调用固定领域协议。四个二进制作为一个版本化发布单元整体
-> 安装、升级、回滚和卸载，Linux Runner/AI Host 使用 socket activation，Windows 使用 SCM
+> 冲突表述；Host Files、MFA、Passkey、远程网站、MySQL、审计签名与备份
+> 密钥能力均由 Broker 持有，Web 只调用固定领域协议。三个二进制作为一个版本化发布单元整体
+> 安装、升级、回滚和卸载，Linux Runner 使用 socket activation，Windows 使用 SCM
 > demand-start。完整最小权限工作见
 > [安全加固计划](./OPERATIONS-PANEL-SECURITY-HARDENING-PLAN.md)。当前数据库为 schema 45，
 > schema 20–43 仅沿显式事务迁移路径前向升级；下文固定 schema 24 的旧表述不再适用。
@@ -58,15 +44,15 @@ ScriptBoard 是一个自托管、单机、少量可信用户使用的主机文�
      → 保存快捷执行或计划 → 必要时从文件系统回收区恢复误删文件
 ```
 
-MVP 保持 SQLite、单机文件系统与平台原生服务部署，不引入运行时集群依赖。一个 ScriptBoard 产品版本包含 Web、Privileged Broker、Runner 与 AI Host 四个内部组件；它们共享一个发布事务，但保持独立 OS 身份和 IPC 边界。
+MVP 保持 SQLite、单机文件系统与平台原生服务部署，不引入运行时集群依赖。一个 ScriptBoard 产品版本包含 Web、Privileged Broker 与 Runner 三个内部组件；它们共享一个发布事务，但保持独立 OS 身份和 IPC 边界。
 
 ## 3. 信任与权限边界
 
 - 实例使用固定四角色多用户模型，并且只允许一个系统管理员；脚本发布、执行和高风险操作仍受角色、step-up 与审计约束。
 - 管理员发布的脚本视为可信业务代码，默认由独立 Runner 以 root/LocalSystem 执行；`runner_identity_mode: isolated` 可改为受限 Runner 身份和资源边界。
 - Web 默认低权限：Windows 使用 LocalService + 独立服务 SID，Linux 使用无登录 `scriptboard-web`；只有固定 Broker 保留 LocalSystem/root。
-- Runner 与 AI Host 都不由 Web 直接派生；AI Host 始终使用独立受限身份，Runner 默认使用 root/LocalSystem，显式 isolated 模式使用独立受限身份。Web 不能直接解封 Broker 秘密、读取 Host Files 或把任意命令交给高权限进程。
-- 四组件必须来自同一发布版本；混合二进制/IPC 协议组合 fail closed。Web 与 Broker 常驻，Runner/AI Host 按需启动。
+- Runner 不由 Web 直接派生；Runner 默认使用 root/LocalSystem，显式 isolated 模式使用独立受限身份。Web 不能直接解封 Broker 秘密、读取 Host Files 或把任意命令交给高权限进程。
+- 三组件必须来自同一发布版本；混合二进制/IPC 协议组合 fail closed。Web 与 Broker 常驻，Runner 按需启动。
 - 明文 HTTP 只能监听回环地址。非回环访问必须使用内置 TLS，或由同机可信 HTTPS 反向代理转发到回环后端。
 - 所有文件、日志、SSE、变量和执行入口必须验证用户 Session 与声明式角色权限；匿名仅允许登录入口和无敏感内容的静态资源。
 
@@ -78,8 +64,6 @@ MVP 保持 SQLite、单机文件系统与平台原生服务部署，不引入运
 监控
   宿主概览
   应用
-AI
-  AI 助手
 资源
   文件 | 变量 | 回收站
 配置
@@ -87,7 +71,7 @@ AI
 历史
   运行记录 | 审计
 设置
-  账户 | 用户 | 显示 | AI | 应用更新
+  账户 | 用户 | 显示 | 应用更新
 ```
 
 侧栏底部显示服务状态、当前运行数、语言选择和账户入口。新增、上传、运行、编辑与保存等聚焦任务使用可分享的语义化 GET 地址；桌面端支持 JavaScript 时在当前工作区右侧任务面板打开且不替换地址栏中的工作区 URL，不支持 JavaScript、移动端或直接访问任务地址时显示完整服务端页面。
@@ -100,8 +84,6 @@ AI
 - `/monitor/status`
 - `/monitor/applications`
 - `/monitor/applications/data`
-- `/ai`
-- `/ai/conversations/{id}`
 - `/history/runs`
 - `/history/runs/{id}`
 - `/resources/files`（绝对路径通过 `path` 查询参数或表单字段传递）
@@ -111,7 +93,6 @@ AI
 - `/config/schedules`
 - `/history/audit`
 - `/settings/account`
-- `/settings/ai`
 - `/settings/updates`
 
 根路径与已登录访问 `/login` 均重定向到 `/monitor`。本次信息架构是破坏性升级，不为旧 Web 路由提供重定向或兼容别名。
@@ -545,29 +526,3 @@ scriptboard version
 - 从源码创建快捷项遇到同名文件时必须显式改名、覆盖或取消；覆盖先把旧文件移入
   回收站，并展示现有快捷执行与计划引用影响。
 - 详见 [一次性执行与快捷创建实施计划](./ONE-TIME-AND-QUICK-EXECUTION-PLAN.md)。
-
-## 23. AI 助手与 Pi Runtime
-
-- `/ai` 是所有已登录固定角色可访问的原生对话工作区；左侧对话 Rail、中部消息与
-  Composer、右侧上下文 Inspector 共同组成桌面布局，移动端以分层布局保留核心操作。
-- 每个对话由当前用户独占并必须选择一个已配置、带服务端 API Key 的 LLM；设置页可
-  新增、修改、删除未引用配置并选择唯一默认模型。API Key 以 State Root 外部主密钥密封后只写入私有凭据
-  文件，页面、SQLite、审计和普通日志均不回显。
-- 新对话继承系统设置中的自动审批默认值；每个对话可在模型选择旁直接切换审批模式。
-  该开关不改变固定角色权限；状态修改执行前仍重新授权并建立一次性审批记录。
-- Composer 可引用经过当前角色实时校验的目录、文件、应用、网站、Run、快捷执行和
-  计划。持久记录只保存稳定标识与安全标签；引用内容始终视为不可信数据。
-- 每个对话同一时间只有一个 Agent Turn；消息先写数据库，再通过有界 SSE 流式更新。
-  用户可以停止当前 Turn，断线可通过 Last-Event-ID 续传；服务重启把未完成内容标记为
-  中断且不自动重放。
-- Pi 只从 State Root 私有 Runtime 的绝对路径启动，并使用隔离的 home、session 和
-  workspace。它不读取 PATH、全局 Pi、用户 Extensions/Skills/Prompts/Themes 或项目
-  上下文，因此可与本机手工启动的 Pi 并存。
-- 没有受信 Runtime 时保留历史和设置，但拒绝新 Prompt。正式 Runtime 固定携带
-  ScriptBoard Extension，并通过进程绑定 Tool Broker 提供有界领域工具和覆盖网页动作的
-  统一工具目录；不得以开放 Shell 或任意文件工具作为降级路径。
-- 系统设置支持检查、在线安装、离线三件套上传、原子激活和回退签名 Runtime；离线
-  安装仍校验 ScriptBoard 版本、系统平台、签名和归档摘要，并可使用 Pi 对单条 LLM
-  配置执行不持久化正文的连接测试。
-- AI 能力默认关闭，由系统设置显式启用。Provider 调用由部署者自行承担费用和数据
-  合规责任；即使工具受限，Prompt 中引用的主机信息仍可能发送给所选外部 Provider。

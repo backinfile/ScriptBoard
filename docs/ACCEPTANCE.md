@@ -126,14 +126,14 @@
 
 ## 10. 服务、托盘与配置
 
-- [ ] 一个版本化发布单元同时包含 Web、Privileged Broker、Runner 与 AI Host，安装、升级、回滚和卸载始终绑定四个二进制版本、摘要与 IPC 协议。
-- [ ] Windows Web 使用 LocalService + `NT SERVICE\ScriptBoard`，Broker 使用 LocalSystem，Runner/AI Host 使用独立 restricted service SID；Linux 使用 `scriptboard-web`、root Broker 和独立 Runner/AI UID。
-- [ ] Web 与 Broker 常驻；Windows Runner/AI Host 为 SCM demand-start，Linux Runner/AI Host 由受保护的 systemd socket activation 按需启动；Web 不因空闲组件未运行而降级为进程内执行。
-- [ ] Web 不能读取 Broker-only secret 目录；Runner/AI Host 不能读取应用数据库、Broker 密钥或彼此私有工作区；Named Pipe/Unix Socket 拒绝非授权 peer。
+- [ ] 一个版本化发布单元同时包含 Web、Privileged Broker 与 Runner，安装、升级、回滚和卸载始终绑定三个二进制版本、摘要与 IPC 协议。
+- [ ] Windows Web 使用 LocalService + `NT SERVICE\ScriptBoard`，Broker 使用 LocalSystem，Runner 使用独立 restricted service SID；Linux 使用 `scriptboard-web`、root Broker 和独立 Runner UID。
+- [ ] Web 与 Broker 常驻；Windows Runner 为 SCM demand-start，Linux Runner 由受保护的 systemd socket activation 按需启动；Web 不因空闲 Runner 未运行而降级为进程内执行。
+- [ ] Web 不能读取 Broker-only secret 目录；Runner 不能读取应用数据库或 Broker 密钥；Named Pipe/Unix Socket 拒绝非授权 peer。
 - [ ] 手动运行时继承当前用户且不因不是最高权限而拒绝启动。
 - [ ] 服务安装、卸载、启停、状态、admin reset、config validate、doctor、version 命令可用。
 - [ ] 正式发布包提供一个平台安装入口；默认配置和自定义配置均能在一次调用内安装、自动验证、启动，并输出产品版本与 `STATE: RUNNING`。
-- [ ] 卸载会移除全部四个服务/socket 定义，但不删除配置、主机文件、数据库、外部密钥、备份或磁盘上已有 Git 历史。
+- [ ] 卸载会移除全部三个服务/socket 定义，但不删除配置、主机文件、数据库、外部密钥、备份或磁盘上已有 Git 历史。
 - [ ] `backup create|inspect|stage|commit|export-recovery|recover-host` 与 `update status|check|recover|verify-package` 可在 Web 不可用时执行；所有破坏性恢复均要求完整 ID/目标二次确认并保留可逆副本。
 - [ ] Windows 托盘无主窗口、单实例，菜单与 PRD 一致；退出托盘不停止服务。
 - [ ] 托盘区分服务进程运行与 HTTP 就绪；端口错误时显示异常并可打开日志。
@@ -246,62 +246,6 @@ MVP 不验收自定义 RBAC、恶意脚本的通用沙箱、公共 API、DAG、�
   放入回收站；数据库失败时恢复原文件并移除新文件。
 - [ ] 一次性源码随关联审计条目删除：源码删除失败保留审计等待重试；成功后源码
   入口返回 410，而 Run 元数据、结果及独立日志生命周期不变。
-
-## 19. AI 助手与 Pi Runtime
-
-- [x] `/ai` 及对话、消息、停止、归档、恢复、模型、审批模式和 SSE 路由均要求有效
-  Session；所有 POST 验证 CSRF，跨用户猜测对话 ID 返回不可见结果。
-- [x] 每个新对话必须选择一个已配置凭据的 LLM；设置页可新增、修改、删除未引用模型并
-  选择唯一默认项，API Key 不回显且不出现在 SQLite、HTML、审计或普通日志中。
-- [x] LLM 配置按所有者隔离且默认私有；所有者可显式公开供其他用户选择和测试，但只有
-  所有者可以编辑、设为自己的默认项或删除配置，各用户的默认配置互不影响。
-- [x] 新对话继承系统自动审批默认值，每个对话可在模型旁直接切换；模型选择器支持鼠标、
-  键盘和 Escape，审批按钮直接切换而不弹窗。
-- [x] Composer 可通过按钮或 `@` 选择当前角色有权看见的目录、文件、应用、网站、Run、
-  快捷执行和计划；每次提交都以同一事务保存完整引用集合并重新校验稳定 ID，伪造的新
-  引用被拒绝，已保存但降权或消失的引用分别进入 forbidden 或 unavailable 状态。
-- [x] 每个 Agent Turn 都重新鉴权并生成有界资源快照；目录快照不含宿主绝对路径、不自动
-  读取文件正文；明确引用的普通 UTF-8 文本文件最多读取 16 KiB，脚本路径字段只发送
-  basename，降权、资源消失和超出上限分别返回 forbidden、unavailable 和 truncated。
-- [x] 同一对话只允许一个活动 Agent Turn；消息先持久化再流式发送，`agent_settled`
-  后仍按最后一个 assistant message 的 `stopReason` 区分 complete 与 error。停止、Pi
-  崩溃、服务重启和数据库写入失败都产生确定状态且不隐式重放。
-- [x] SSE 具有 snapshot、Last-Event-ID 续传、心跳、有界 replay 和慢消费者断开；一个
-  慢浏览器不能阻塞 Pi stdout 或消耗现有 Source Log SSE 槽位；delta 同时携带累计正文，
-  snapshot 与实时事件竞态不会重复拼接文本。
-- [x] Pi 只从 State Root 内活动版本的绝对路径启动；每用户/对话使用隔离 home、session
-  与 workspace，环境最小化且 API Key 不出现在参数或 `models.json` 实值中。
-- [x] 保温进程关闭或服务重启后，已有私有 session 通过 `--continue` 恢复；每个 Turn 在
-  Prompt 前通过 RPC `set_model` 重选对话模型，模型切换不会沿用旧进程状态。
-- [x] Windows Job Object 与 Linux 进程组只终止目标受管 Pi 树；全局 Pi、其他 AI 对话、
-  Run 和用户 Pi 的配置、session、Extensions、Skills 与更新均不受影响。
-- [x] 缺少受信 Runtime 时历史与设置可读而 Prompt 返回 503；Runtime 未包含固定
-  Extension 时以 `--no-tools` 启动，不开放 Shell、读取或写入工具作为降级。
-- [x] 固定 Extension/Tool Broker 上线后，每次调用重新校验 capability、用户状态、角色、
-  授权版本、参数和目标；结果有界、脱敏并标记来源和不可信内容。
-- [x] 每个状态修改工具都建立参数绑定、有期限、一次性的审批；自动审批仍创建同样记录并
-  重新授权。参数、目标或授权变化会失效，未知结果在重启后不得重放。
-- [x] Runtime 在线安装验证独立签名清单、仓库、版本、平台、架构、大小、SHA-256、
-  安全归档、许可证和 RPC 验活；活动 Turn/审批时拒绝切换，失败不改变活动指针。
-- [x] 桌面 Chromium 和目标移动视口覆盖对话 Rail、Transcript、Composer、资源选择、
-  Inspector、LLM 抽屉、侧栏折叠与中英文；无横向溢出、导航滚动条或未对齐图标。
-
-### 19.1 Pi Agent 能力增强
-
-- [x] schema 24 保存 Conversation Profile、Profile 版本、thinking level、Pi session
-  telemetry 和模型 `supports_images` 事实；schema 21–23 单事务迁移，旧值采用安全默认。
-- [x] 活动 Runtime 可选携带摘要固定的 Capability Bundle；非通用 Profile 只解析完全
-  匹配的 Playbook，缺失或校验失败时拒绝 Turn，且不改变角色、工具权限和审批策略。
-- [x] Inspector 展示最后采集的 Token、上下文、工具调用和估算费用；thinking 与手动压缩
-  只在空闲状态修改，Pi 自动压缩和自动重试在新进程上明确启用。
-- [x] Run/Source Log 搜索、Run 窗口、Run 对比、计划历史与审计列表经 Tool Broker 返回
-  有界证据；分页游标签名、短期过期并绑定用户、对话、工具、目标和查询。
-- [x] 明确引用的 PNG/JPEG/WebP 重新授权后由服务端限量、缩放、重新编码和移除元数据；
-  每次最多四张，只在模型配置和 Pi session 都确认图片输入时发送，base64 不持久化。
-- [ ] 五个候选 Playbook 尚需在正式发布模型集合上完成相对基线、held-out 与 pass^5 门禁；
-  未通过者不得在正式 Release 中宣称为稳定能力。
-- [ ] 正式签名 Runtime 安装/回退和桌面/移动 Chromium 视觉门禁须在发布候选资产上执行。
-- [x] 外部知识 Adapter 未启用；默认运行不会因此增加 DNS、HTTP、第三方 OAuth 或遥测。
 
 ## 20. 外部接口
 

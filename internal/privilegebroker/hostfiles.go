@@ -843,7 +843,7 @@ func hostFilesResource(payload *hostFilesWireRequest) string {
 
 func validateHostFilesRequest(request wireRequest) error {
 	if request.HostFiles == nil || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
-		request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || request.Redis != nil || !validCredentialSessionToken(request.SessionToken) {
+		request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || request.MySQL != nil || request.Redis != nil || !validCredentialSessionToken(request.SessionToken) {
 		return errors.New("Host Files request contains unrelated fields")
 	}
 	payload := request.HostFiles
@@ -979,7 +979,7 @@ func isAbsoluteHostFilePath(path string) bool {
 }
 
 func validateExternalHostFilesLogRequest(request wireRequest) error {
-	if request.HostFiles == nil || request.SessionToken != "" || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" || request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || request.Redis != nil {
+	if request.HostFiles == nil || request.SessionToken != "" || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" || request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || request.MySQL != nil || request.Redis != nil {
 		return errors.New("External Host Files log request contains unrelated fields")
 	}
 	payload := request.HostFiles
@@ -994,7 +994,7 @@ func validateExternalHostFilesLogRequest(request wireRequest) error {
 }
 
 func validateHostFilesScheduleRequest(request wireRequest) error {
-	if request.HostFiles == nil || request.SessionToken != "" || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" || request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || request.Redis != nil {
+	if request.HostFiles == nil || request.SessionToken != "" || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" || request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || request.MySQL != nil || request.Redis != nil {
 		return errors.New("Scheduled Host Files request contains unrelated fields")
 	}
 	payload := request.HostFiles

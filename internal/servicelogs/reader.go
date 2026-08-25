@@ -33,14 +33,12 @@ const (
 var serviceUnits = map[string]string{
 	"web":    "scriptboard.service",
 	"broker": "scriptboard-broker.service",
-	"ai":     "scriptboard-ai.service",
 	"runner": "scriptboard-runner.service",
 }
 
 var windowsServices = map[string]string{
 	"web":    "ScriptBoard",
 	"broker": "ScriptBoardBroker",
-	"ai":     "ScriptBoardAI",
 	"runner": "ScriptBoardRunner",
 }
 
@@ -119,7 +117,7 @@ func (reader *SystemReader) List(ctx context.Context, raw Query) (Report, error)
 		}
 		report.Supported, report.Provider = true, "systemd journal"
 		arguments := []string{"--no-pager", "--output=json", "--reverse", "--lines", strconv.Itoa(maximumSourceEntries), "--since", rangeSince(query.Range)}
-		for _, service := range []string{"web", "broker", "ai", "runner"} {
+		for _, service := range []string{"web", "broker", "runner"} {
 			arguments = append(arguments, "--unit", serviceUnits[service])
 		}
 		output, runErr := reader.runner.Run(ctx, "journalctl", arguments...)
@@ -395,7 +393,7 @@ $utf8 = New-Object System.Text.UTF8Encoding($false)
 $OutputEncoding = $utf8
 [Console]::OutputEncoding = $utf8
 $since = [DateTime]::Parse('__SINCE__').ToUniversalTime()
-$names = @('ScriptBoard','ScriptBoardBroker','ScriptBoardAI','ScriptBoardRunner')
+$names = @('ScriptBoard','ScriptBoardBroker','ScriptBoardRunner')
 function Encode-Field([object]$value) {[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes([string]$value))}
 $count = 0
 $events = @()

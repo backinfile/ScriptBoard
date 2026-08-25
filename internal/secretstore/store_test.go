@@ -15,15 +15,15 @@ func TestStateRootCopyCannotDecryptSealedSecretWithoutExternalKey(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	sealed, err := first.Seal("assistant-provider", []byte("provider-secret"))
+	sealed, err := first.Seal("registry-credential", []byte("registry-secret"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(sealed, []byte("provider-secret")) {
+	if bytes.Contains(sealed, []byte("registry-secret")) {
 		t.Fatal("sealed value contains plaintext")
 	}
-	plain, err := first.Unseal("assistant-provider", sealed)
-	if err != nil || string(plain) != "provider-secret" {
+	plain, err := first.Unseal("registry-credential", sealed)
+	if err != nil || string(plain) != "registry-secret" {
 		t.Fatalf("unseal=%q err=%v", plain, err)
 	}
 	if relative, err := filepath.Rel(firstRoot, first.KeyPath()); err != nil || (!strings.HasPrefix(relative, ".."+string(filepath.Separator)) && relative != "..") {
@@ -35,7 +35,7 @@ func TestStateRootCopyCannotDecryptSealedSecretWithoutExternalKey(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := second.Unseal("assistant-provider", sealed); err == nil {
+	if _, err := second.Unseal("registry-credential", sealed); err == nil {
 		t.Fatal("a copied State Root decrypted without the original external key")
 	}
 }
@@ -49,7 +49,7 @@ func TestPurposeIsAuthenticated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Unseal("assistant-provider", sealed); err == nil {
+	if _, err := store.Unseal("registry-credential", sealed); err == nil {
 		t.Fatal("sealed secret was accepted for another purpose")
 	}
 	if _, err := os.Stat(store.KeyPath()); err != nil {

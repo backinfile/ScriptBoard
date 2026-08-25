@@ -1162,7 +1162,7 @@ func (m *Manager) CountFiltered(filter Filter) (int, error) {
 	like := "%" + filter.Query + "%"
 	err := m.db.QueryRow(`SELECT COUNT(*) FROM runs
 		WHERE (? = '' OR (source_id = ? AND source_type IN ('scheduler', 'admin/schedule-now')))
-		AND (? = '' OR (source_id = ? AND source_type IN ('admin/quick-run', 'assistant/quick-run', 'quick_run')))
+		AND (? = '' OR (source_id = ? AND source_type IN ('admin/quick-run', 'quick_run')))
 		AND (? = '' OR id LIKE ? OR script_path LIKE ? OR source_type LIKE ? OR source_name LIKE ? OR status LIKE ? OR executor LIKE ? OR initiated_by_username LIKE ?)
 		AND (? = 0 OR created_at >= ?)
 		AND (? = 0 OR created_at < ?)`,
@@ -1188,7 +1188,7 @@ func (m *Manager) ListPageFiltered(filter Filter, limit, offset int) ([]Run, err
 	like := "%" + filter.Query + "%"
 	rows, err := m.db.Query(`SELECT `+runMetadataColumns+` FROM runs
 		WHERE (? = '' OR (source_id = ? AND source_type IN ('scheduler', 'admin/schedule-now')))
-		AND (? = '' OR (source_id = ? AND source_type IN ('admin/quick-run', 'assistant/quick-run', 'quick_run')))
+		AND (? = '' OR (source_id = ? AND source_type IN ('admin/quick-run', 'quick_run')))
 		AND (? = '' OR id LIKE ? OR script_path LIKE ? OR source_type LIKE ? OR source_name LIKE ? OR status LIKE ? OR executor LIKE ? OR initiated_by_username LIKE ?)
 		AND (? = 0 OR created_at >= ?)
 		AND (? = 0 OR created_at < ?)

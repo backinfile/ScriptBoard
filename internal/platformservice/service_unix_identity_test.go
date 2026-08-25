@@ -5,9 +5,37 @@ package platformservice
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestRemoveLegacyAIUnitsStopsAndDeletesRetiredUnits(t *testing.T) {
+	root := t.TempDir()
+	servicePath := filepath.Join(root, "scriptboard-ai.service")
+	socketPath := filepath.Join(root, "scriptboard-ai.socket")
+	for _, path := range []string{servicePath, socketPath} {
+		if err := os.WriteFile(path, []byte("legacy"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var calls [][]string
+	if err := removeLegacyAIUnits(func(arguments ...string) error {
+		calls = append(calls, append([]string(nil), arguments...))
+		return nil
+	}, servicePath, socketPath); err != nil {
+		t.Fatal(err)
+	}
+	wantCalls := [][]string{{"disable", "--now", "scriptboard-ai.socket"}, {"stop", "scriptboard-ai.service"}}
+	if !reflect.DeepEqual(calls, wantCalls) {
+		t.Fatalf("systemctl calls = %#v, want %#v", calls, wantCalls)
+	}
+	for _, path := range []string{servicePath, socketPath} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("legacy unit %q still exists: %v", path, err)
+		}
+	}
+}
 
 func TestLinuxWebServiceIdentityIsDedicated(t *testing.T) {
 	if webServiceUser == "" || webServiceUser == "root" || webServiceUser == "nobody" {
@@ -15,14 +43,8 @@ func TestLinuxWebServiceIdentityIsDedicated(t *testing.T) {
 	}
 }
 
-func TestLinuxAIRuntimeIdentityIsDedicatedAndSeparate(t *testing.T) {
-	if aiServiceUser == "" || aiServiceUser == "root" || aiServiceUser == "nobody" || aiServiceUser == webServiceUser {
-		t.Fatalf("AI Runtime service identity is not dedicated: %q", aiServiceUser)
-	}
-}
-
 func TestLinuxRunnerIdentityIsDedicatedAndSeparate(t *testing.T) {
-	if runnerServiceUser == "" || runnerServiceUser == "root" || runnerServiceUser == webServiceUser || runnerServiceUser == aiServiceUser {
+	if runnerServiceUser == "" || runnerServiceUser == "root" || runnerServiceUser == webServiceUser {
 		t.Fatalf("Runner service identity is not dedicated: %q", runnerServiceUser)
 	}
 }
@@ -58,7 +80,7 @@ func TestLinuxManagedWebRuntimeRejectsRootAndOtherUsers(t *testing.T) {
 	}
 }
 
-func TestLinuxRuntimeUnitsRequireSeccompAndNetworkIsolation(t *testing.T) {
+func TestLinuxRunnerUnitRequiresSeccompAndNetworkIsolation(t *testing.T) {
 	source, err := os.ReadFile("service_unix.go")
 	if err != nil {
 		t.Fatal(err)
@@ -69,26 +91,24 @@ func TestLinuxRuntimeUnitsRequireSeccompAndNetworkIsolation(t *testing.T) {
 		"MemorySwapMax=0",
 		"SystemCallArchitectures=native", "SystemCallFilter=@system-service", "SystemCallErrorNumber=EPERM",
 		"PrivateDevices=true", "ProtectKernelLogs=true", "RestrictRealtime=true",
-		"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6", "IPAddressAllow=localhost",
 		"RestrictAddressFamilies=AF_UNIX", "IPAddressDeny=any",
-		"Requires=scriptboard-broker.service scriptboard-ai.socket scriptboard-runner.socket",
-		"FileDescriptorName=scriptboard-ai", "FileDescriptorName=scriptboard-runner",
-		"systemctl(\"enable\", \"scriptboard-ai.socket\")", "systemctl(\"enable\", \"scriptboard-runner.socket\")",
+		"Requires=scriptboard-broker.service scriptboard-runner.socket",
+		"FileDescriptorName=scriptboard-runner",
+		"systemctl(\"enable\", \"scriptboard-runner.socket\")",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("Linux runtime units are missing %q", required)
 		}
 	}
 	for _, forbidden := range []string{
-		"systemctl(\"enable\", \"scriptboard-ai.service\")",
 		"systemctl(\"enable\", \"scriptboard-runner.service\")",
 	} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("Linux runtime service is still enabled eagerly: %q", forbidden)
 		}
 	}
-	if count := strings.Count(text, "MemorySwapMax=0"); count != 2 {
-		t.Fatalf("Linux runtime units require AI and shared Runner swap limits, found %d", count)
+	if count := strings.Count(text, "MemorySwapMax=0"); count != 1 {
+		t.Fatalf("Linux Runner unit requires a swap limit, found %d", count)
 	}
 }
 
@@ -107,7 +127,7 @@ func TestLinuxWebStartupSecretsAreNotSharedWithRunnerGroup(t *testing.T) {
 }
 
 func TestSystemdSocketAddressIsNotShellQuoted(t *testing.T) {
-	endpoint := "/run/scriptboard-ai/runtime-test.sock"
+	endpoint := "/run/scriptboard-runner/runtime-test.sock"
 	if got := systemdSocketAddress(endpoint); got != endpoint {
 		t.Fatalf("systemd socket address = %q, want %q", got, endpoint)
 	}

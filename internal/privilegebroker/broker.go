@@ -31,7 +31,6 @@ import (
 	"scriptboard/internal/mfa"
 	"scriptboard/internal/mysqlmanager"
 	"scriptboard/internal/passkey"
-	"scriptboard/internal/providercredential"
 	"scriptboard/internal/redismanager"
 	"scriptboard/internal/registrymonitor"
 	"scriptboard/internal/servicelogs"
@@ -65,10 +64,6 @@ const (
 	operationRemoteWebsiteStore         = "remote_website_store"
 	operationRemoteWebsiteFetch         = "remote_website_fetch"
 	operationRemoteWebsiteDelete        = "remote_website_delete"
-	operationProviderStore              = "provider_store"
-	operationProviderDelete             = "provider_delete"
-	operationProviderStart              = "provider_start"
-	operationProviderStop               = "provider_stop"
 	operationMySQLStore                 = "mysql_store"
 	operationMySQLDelete                = "mysql_delete"
 	operationMySQLTest                  = "mysql_test"
@@ -191,9 +186,6 @@ const (
 	ActionRemoteWebsiteStore      Action = "remote_website_store"
 	ActionRemoteWebsiteFetch      Action = "remote_website_fetch"
 	ActionRemoteWebsiteDelete     Action = "remote_website_delete"
-	ActionProviderStore           Action = "provider_store"
-	ActionProviderDelete          Action = "provider_delete"
-	ActionProviderStart           Action = "provider_start"
 	ActionMySQLRead               Action = "mysql_read"
 	ActionMySQLStore              Action = "mysql_store"
 	ActionMySQLDelete             Action = "mysql_delete"
@@ -327,14 +319,6 @@ type RemoteWebsiteService interface {
 	Delete(context.Context, string) error
 }
 
-type ProviderCredentialService interface {
-	Store(context.Context, string, providercredential.Record, string) error
-	Delete(context.Context, string, string) error
-	Start(context.Context, string, string) (providercredential.Session, error)
-	Stop(context.Context, string) error
-	Close(context.Context) error
-}
-
 type MySQLService interface {
 	mysqlmanager.Backend
 	ValidateInstance(context.Context, mysqlmanager.Instance) error
@@ -420,7 +404,6 @@ type ServerOptions struct {
 	MFA            MFAService
 	Passkeys       PasskeyService
 	RemoteWebsites RemoteWebsiteService
-	Providers      ProviderCredentialService
 	MySQL          MySQLService
 	Redis          RedisService
 	HostFiles      HostFilesService
@@ -444,7 +427,6 @@ type Server struct {
 	mfa            MFAService
 	passkeys       PasskeyService
 	remoteWebsites RemoteWebsiteService
-	providers      ProviderCredentialService
 	mysql          MySQLService
 	redis          RedisService
 	hostFiles      HostFilesService
@@ -504,13 +486,6 @@ type wireRequest struct {
 	RemoteWebsiteEndpoint string                   `json:"remote_website_endpoint,omitempty"`
 	RemoteWebsiteKey      string                   `json:"remote_website_key,omitempty"`
 	RemoteWebsiteLocale   string                   `json:"remote_website_locale,omitempty"`
-	ProviderID            string                   `json:"provider_id,omitempty"`
-	ProviderName          string                   `json:"provider_name,omitempty"`
-	ProviderModel         string                   `json:"provider_model,omitempty"`
-	ProviderEndpoint      string                   `json:"provider_endpoint,omitempty"`
-	ProviderCredential    string                   `json:"provider_credential,omitempty"`
-	ProviderShared        bool                     `json:"provider_shared,omitempty"`
-	ProviderSessionHandle string                   `json:"provider_session_handle,omitempty"`
 	MySQL                 *mysqlWireRequest        `json:"mysql,omitempty"`
 	Redis                 *redisWireRequest        `json:"redis,omitempty"`
 	HostFiles             *hostFilesWireRequest    `json:"host_files,omitempty"`
@@ -523,32 +498,29 @@ type wireRequest struct {
 }
 
 type wireResponse struct {
-	Status                string                    `json:"status"`
-	Capability            string                    `json:"capability,omitempty"`
-	ExpiresAt             int64                     `json:"expires_at,omitempty"`
-	ErrorCode             string                    `json:"error_code,omitempty"`
-	Message               string                    `json:"message,omitempty"`
-	EventID               int64                     `json:"event_id,omitempty"`
-	MFAEnabled            bool                      `json:"mfa_enabled,omitempty"`
-	MFARecoveryCodes      int                       `json:"mfa_recovery_codes,omitempty"`
-	MFAEnrollment         *mfa.Enrollment           `json:"mfa_enrollment,omitempty"`
-	MFARecoveryValues     []string                  `json:"mfa_recovery_values,omitempty"`
-	MFAVerified           bool                      `json:"mfa_verified,omitempty"`
-	PasskeyUser           *passkey.User             `json:"passkey_user,omitempty"`
-	PasskeyCredentials    []passkey.CredentialView  `json:"passkey_credentials,omitempty"`
-	RemoteWebsitePayload  json.RawMessage           `json:"remote_website_payload,omitempty"`
-	ProviderProxyEndpoint string                    `json:"provider_proxy_endpoint,omitempty"`
-	ProviderCapability    string                    `json:"provider_capability,omitempty"`
-	ProviderSessionHandle string                    `json:"provider_session_handle,omitempty"`
-	MySQL                 *mysqlWireResponse        `json:"mysql,omitempty"`
-	Redis                 *redisWireResponse        `json:"redis,omitempty"`
-	HostFiles             *hostFilesWireResponse    `json:"host_files,omitempty"`
-	StateBackup           *stateBackupWireResponse  `json:"state_backup,omitempty"`
-	Registry              *registryWireResponse     `json:"registry,omitempty"`
-	Runtime               *runtimeWireResponse      `json:"runtime,omitempty"`
-	Kubeconfig            *kubeconfigWireResponse   `json:"kubeconfig,omitempty"`
-	HostSecurity          *hostSecurityWireResponse `json:"host_security,omitempty"`
-	ServiceLogs           *serviceLogsWireResponse  `json:"service_logs,omitempty"`
+	Status               string                    `json:"status"`
+	Capability           string                    `json:"capability,omitempty"`
+	ExpiresAt            int64                     `json:"expires_at,omitempty"`
+	ErrorCode            string                    `json:"error_code,omitempty"`
+	Message              string                    `json:"message,omitempty"`
+	EventID              int64                     `json:"event_id,omitempty"`
+	MFAEnabled           bool                      `json:"mfa_enabled,omitempty"`
+	MFARecoveryCodes     int                       `json:"mfa_recovery_codes,omitempty"`
+	MFAEnrollment        *mfa.Enrollment           `json:"mfa_enrollment,omitempty"`
+	MFARecoveryValues    []string                  `json:"mfa_recovery_values,omitempty"`
+	MFAVerified          bool                      `json:"mfa_verified,omitempty"`
+	PasskeyUser          *passkey.User             `json:"passkey_user,omitempty"`
+	PasskeyCredentials   []passkey.CredentialView  `json:"passkey_credentials,omitempty"`
+	RemoteWebsitePayload json.RawMessage           `json:"remote_website_payload,omitempty"`
+	MySQL                *mysqlWireResponse        `json:"mysql,omitempty"`
+	Redis                *redisWireResponse        `json:"redis,omitempty"`
+	HostFiles            *hostFilesWireResponse    `json:"host_files,omitempty"`
+	StateBackup          *stateBackupWireResponse  `json:"state_backup,omitempty"`
+	Registry             *registryWireResponse     `json:"registry,omitempty"`
+	Runtime              *runtimeWireResponse      `json:"runtime,omitempty"`
+	Kubeconfig           *kubeconfigWireResponse   `json:"kubeconfig,omitempty"`
+	HostSecurity         *hostSecurityWireResponse `json:"host_security,omitempty"`
+	ServiceLogs          *serviceLogsWireResponse  `json:"service_logs,omitempty"`
 }
 
 func NewServer(options ServerOptions) (*Server, error) {
@@ -561,7 +533,7 @@ func NewServer(options ServerOptions) (*Server, error) {
 	}
 	return &Server{
 		listener: options.Listener, verifyPeer: options.VerifyPeer, authorizer: options.Authorizer,
-		executor: options.Executor, auditor: options.Auditor, checkpoint: options.Checkpoint, mfa: options.MFA, passkeys: options.Passkeys, remoteWebsites: options.RemoteWebsites, providers: options.Providers, mysql: options.MySQL, redis: options.Redis, hostFiles: options.HostFiles, stateBackups: options.StateBackups, registry: options.Registry, applications: options.Applications, kubernetes: options.Kubernetes, kubeconfigs: options.Kubeconfigs, hostSecurity: options.HostSecurity, serviceLogs: options.ServiceLogs, now: now,
+		executor: options.Executor, auditor: options.Auditor, checkpoint: options.Checkpoint, mfa: options.MFA, passkeys: options.Passkeys, remoteWebsites: options.RemoteWebsites, mysql: options.MySQL, redis: options.Redis, hostFiles: options.HostFiles, stateBackups: options.StateBackups, registry: options.Registry, applications: options.Applications, kubernetes: options.Kubernetes, kubeconfigs: options.Kubeconfigs, hostSecurity: options.HostSecurity, serviceLogs: options.ServiceLogs, now: now,
 		capabilities: make(map[string]capabilityBinding), done: make(chan struct{}),
 		mfaVerifyFailures: make(map[string]mfaVerifyFailure),
 	}, nil
@@ -614,8 +586,6 @@ func (server *Server) handle(connection net.Conn) {
 		response = server.passkeyOperation(request)
 	case operationRemoteWebsiteStore, operationRemoteWebsiteFetch, operationRemoteWebsiteDelete:
 		response = server.remoteWebsiteOperation(request)
-	case operationProviderStore, operationProviderDelete, operationProviderStart, operationProviderStop:
-		response = server.providerOperation(request)
 	case operationMySQLStore, operationMySQLDelete, operationMySQLTest, operationMySQLDatabases, operationMySQLStatus,
 		operationMySQLExists, operationMySQLCreate, operationMySQLReplace, operationMySQLDrop, operationMySQLDump,
 		operationMySQLImport, operationMySQLSetTools, operationMySQLTestTools, operationMySQLCancel, operationMySQLBackupChunk,
@@ -698,97 +668,6 @@ func (server *Server) remoteWebsiteOperation(request wireRequest) wireResponse {
 		_ = server.recordCredentialMutation(*mutation, "failed")
 	}
 	return wireResponse{Status: statusError, ErrorCode: "remote_website_failed", Message: "remote website operation failed"}
-}
-
-func (server *Server) providerOperation(request wireRequest) wireResponse {
-	if server.providers == nil {
-		return wireResponse{Status: statusError, ErrorCode: "provider_unavailable", Message: "provider credential service is unavailable"}
-	}
-	if request.Operation == operationProviderStop {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := server.providers.Stop(ctx, request.ProviderSessionHandle); err != nil {
-			return wireResponse{Status: statusError, ErrorCode: "provider_stop_failed", Message: "provider proxy session could not be stopped"}
-		}
-		return wireResponse{Status: statusOK}
-	}
-
-	action := ActionProviderStart
-	if request.Operation == operationProviderStore {
-		action = ActionProviderStore
-	} else if request.Operation == operationProviderDelete {
-		action = ActionProviderDelete
-	}
-	parameters, _ := json.Marshal(struct {
-		Provider   string `json:"provider,omitempty"`
-		Model      string `json:"model,omitempty"`
-		Endpoint   string `json:"endpoint,omitempty"`
-		Credential string `json:"credential,omitempty"`
-		Shared     bool   `json:"shared,omitempty"`
-	}{request.ProviderName, request.ProviderModel, request.ProviderEndpoint, request.ProviderCredential, request.ProviderShared})
-	authorization := AuthorizationRequest{
-		SessionToken: request.SessionToken, RequestID: request.RequestID, Action: action,
-		Resource: request.ProviderID, Revision: "assistant-provider-record-v1", ParametersSHA256: parametersDigest(parameters),
-	}
-	var (
-		actor Actor
-		err   error
-	)
-	if request.Operation == operationProviderStart {
-		if authorizer, ok := server.authorizer.(SessionAuthorizer); ok {
-			actor, err = authorizer.AuthorizeSession(context.Background(), authorization)
-		} else {
-			actor, err = server.authorizer.Authorize(context.Background(), authorization)
-		}
-	} else {
-		actor, err = server.authorizer.Authorize(context.Background(), authorization)
-	}
-	if err != nil {
-		return wireResponse{Status: statusError, ErrorCode: "authorization_denied", Message: "provider operation authorization denied"}
-	}
-
-	var mutation *credentialMutation
-	if request.Operation != operationProviderStart {
-		value := credentialMutation{
-			action: action, resource: request.ProviderID, revision: "assistant-provider-record-v1",
-			requestID: request.RequestID, parametersSHA256: authorization.ParametersSHA256, actor: actor,
-		}
-		if err := server.recordCredentialMutation(value, "attempted"); err != nil {
-			return wireResponse{Status: statusError, ErrorCode: "audit_failed", Message: "provider operation was not executed because intent audit failed"}
-		}
-		mutation = &value
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	response := wireResponse{Status: statusOK}
-	switch request.Operation {
-	case operationProviderStore:
-		err = server.providers.Store(ctx, actor.UserID, providercredential.Record{
-			ID: request.ProviderID, OwnerUserID: actor.UserID, Provider: request.ProviderName,
-			Model: request.ProviderModel, Endpoint: request.ProviderEndpoint, Shared: request.ProviderShared,
-		}, request.ProviderCredential)
-	case operationProviderDelete:
-		err = server.providers.Delete(ctx, actor.UserID, request.ProviderID)
-	case operationProviderStart:
-		var session providercredential.Session
-		session, err = server.providers.Start(ctx, actor.UserID, request.ProviderID)
-		response.ProviderProxyEndpoint = session.Endpoint
-		response.ProviderCapability = session.Capability
-		response.ProviderSessionHandle = session.Handle
-	}
-	if err == nil {
-		if mutation != nil {
-			if auditErr := server.recordCredentialMutation(*mutation, "succeeded"); auditErr != nil {
-				return wireResponse{Status: statusError, ErrorCode: "audit_failed_after_execution", Message: "provider operation completed but result audit failed"}
-			}
-		}
-		return response
-	}
-	if mutation != nil {
-		_ = server.recordCredentialMutation(*mutation, "failed")
-	}
-	return wireResponse{Status: statusError, ErrorCode: "provider_failed", Message: "provider operation failed"}
 }
 
 func (server *Server) authorizeRemoteWebsiteOperation(request wireRequest) (*credentialMutation, wireResponse) {
@@ -1222,14 +1101,6 @@ func (server *Server) Close() error {
 		closeErr = server.listener.Close()
 		<-server.done
 		server.connections.Wait()
-		if server.providers != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			providerErr := server.providers.Close(ctx)
-			cancel()
-			if closeErr == nil {
-				closeErr = providerErr
-			}
-		}
 		if server.applications != nil {
 			applicationErr := server.applications.Close()
 			if closeErr == nil {
@@ -1355,14 +1226,14 @@ func validateWireRequest(request wireRequest) error {
 	}
 	if request.Operation == operationCheckpointVerify || request.Operation == operationCheckpointWrite {
 		if request.SessionToken != "" || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
-			request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || request.Redis != nil || request.HostFiles != nil {
+			request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || request.MySQL != nil || request.Redis != nil || request.HostFiles != nil {
 			return errors.New("checkpoint request is invalid")
 		}
 		return nil
 	}
 	if isMFAOperation(request.Operation) {
 		if request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
-			request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || request.Redis != nil || request.HostFiles != nil || len(request.MFAUserID) == 0 || len(request.MFAUserID) > 160 || strings.ContainsAny(request.MFAUserID, "\r\n\x00") {
+			request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || request.MySQL != nil || request.Redis != nil || request.HostFiles != nil || len(request.MFAUserID) == 0 || len(request.MFAUserID) > 160 || strings.ContainsAny(request.MFAUserID, "\r\n\x00") {
 			return errors.New("MFA request is invalid")
 		}
 		switch request.Operation {
@@ -1395,9 +1266,6 @@ func validateWireRequest(request wireRequest) error {
 	if isRemoteWebsiteOperation(request.Operation) {
 		return validateRemoteWebsiteRequest(request)
 	}
-	if isProviderOperation(request.Operation) {
-		return validateProviderRequest(request)
-	}
 	if isMySQLOperation(request.Operation) {
 		return validateMySQLRequest(request)
 	}
@@ -1419,7 +1287,7 @@ func validateWireRequest(request wireRequest) error {
 	if isHostFilesOperation(request.Operation) {
 		return validateHostFilesRequest(request)
 	}
-	if hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || request.Redis != nil || request.HostFiles != nil || request.StateBackup != nil {
+	if hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || request.MySQL != nil || request.Redis != nil || request.HostFiles != nil || request.StateBackup != nil {
 		return errors.New("privileged action contains credential-domain fields")
 	}
 	if _, ok := actions[request.Action]; !ok {
@@ -1452,7 +1320,7 @@ func validateWireRequest(request wireRequest) error {
 
 func validatePasskeyRequest(request wireRequest) error {
 	if request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
-		request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || request.Redis != nil || request.HostFiles != nil || len(request.PasskeyUserID) == 0 ||
+		request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasRemoteWebsiteFields(request) || request.MySQL != nil || request.Redis != nil || request.HostFiles != nil || len(request.PasskeyUserID) == 0 ||
 		len(request.PasskeyUserID) > 160 || strings.ContainsAny(request.PasskeyUserID, "\r\n\x00") {
 		return errors.New("passkey request is invalid")
 	}
@@ -1493,7 +1361,7 @@ func validatePasskeyRequest(request wireRequest) error {
 
 func validateRemoteWebsiteRequest(request wireRequest) error {
 	if request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" || request.ParametersSHA256 != "" ||
-		len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasProviderFields(request) || request.MySQL != nil || request.Redis != nil || request.HostFiles != nil || !validRemoteWebsiteID(request.RemoteWebsiteID) ||
+		len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || request.MySQL != nil || request.Redis != nil || request.HostFiles != nil || !validRemoteWebsiteID(request.RemoteWebsiteID) ||
 		!validCredentialSessionToken(request.SessionToken) {
 		return errors.New("remote website request is invalid")
 	}
@@ -1513,45 +1381,6 @@ func validateRemoteWebsiteRequest(request wireRequest) error {
 		}
 	}
 	return nil
-}
-
-func validateProviderRequest(request wireRequest) error {
-	if request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" || request.ParametersSHA256 != "" ||
-		len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || request.MySQL != nil || request.Redis != nil || request.HostFiles != nil {
-		return errors.New("provider request is invalid")
-	}
-	if request.Operation == operationProviderStop {
-		if request.SessionToken != "" || request.ProviderID != "" || request.ProviderName != "" || request.ProviderModel != "" || request.ProviderEndpoint != "" ||
-			request.ProviderCredential != "" || request.ProviderShared || !validProviderSessionHandle(request.ProviderSessionHandle) {
-			return errors.New("provider stop request is invalid")
-		}
-		return nil
-	}
-	if !validCredentialSessionToken(request.SessionToken) || !validRemoteWebsiteID(request.ProviderID) || request.ProviderSessionHandle != "" {
-		return errors.New("provider request is invalid")
-	}
-	switch request.Operation {
-	case operationProviderStore:
-		if len(request.ProviderName) == 0 || len(request.ProviderName) > 32 || strings.ContainsAny(request.ProviderName, "\r\n\x00") ||
-			len(request.ProviderModel) == 0 || len(request.ProviderModel) > 160 || strings.ContainsAny(request.ProviderModel, "\r\n\x00") ||
-			len(request.ProviderEndpoint) == 0 || len(request.ProviderEndpoint) > 2048 || strings.ContainsAny(request.ProviderEndpoint, "\r\n\x00") ||
-			len(request.ProviderCredential) > 8<<10 || strings.ContainsAny(request.ProviderCredential, "\r\n\x00") {
-			return errors.New("provider store request is invalid")
-		}
-	case operationProviderDelete, operationProviderStart:
-		if request.ProviderName != "" || request.ProviderModel != "" || request.ProviderEndpoint != "" || request.ProviderCredential != "" || request.ProviderShared {
-			return errors.New("provider request contains unrelated fields")
-		}
-	}
-	return nil
-}
-
-func validProviderSessionHandle(value string) bool {
-	if len(value) != 43 || !isBase64URLValue(value) {
-		return false
-	}
-	decoded, err := base64.RawURLEncoding.DecodeString(value)
-	return err == nil && len(decoded) == 32
 }
 
 func validRemoteWebsiteID(value string) bool {
@@ -1603,11 +1432,6 @@ func hasRemoteWebsiteFields(request wireRequest) bool {
 	return request.RemoteWebsiteID != "" || request.RemoteWebsiteEndpoint != "" || request.RemoteWebsiteKey != "" || request.RemoteWebsiteLocale != ""
 }
 
-func hasProviderFields(request wireRequest) bool {
-	return request.ProviderID != "" || request.ProviderName != "" || request.ProviderModel != "" || request.ProviderEndpoint != "" ||
-		request.ProviderCredential != "" || request.ProviderShared || request.ProviderSessionHandle != ""
-}
-
 func isMFAOperation(operation string) bool {
 	switch operation {
 	case operationMFAStatus, operationMFABegin, operationMFAConfirm, operationMFAVerify, operationMFAReset:
@@ -1629,15 +1453,6 @@ func isPasskeyOperation(operation string) bool {
 func isRemoteWebsiteOperation(operation string) bool {
 	switch operation {
 	case operationRemoteWebsiteStore, operationRemoteWebsiteFetch, operationRemoteWebsiteDelete:
-		return true
-	default:
-		return false
-	}
-}
-
-func isProviderOperation(operation string) bool {
-	switch operation {
-	case operationProviderStore, operationProviderDelete, operationProviderStart, operationProviderStop:
 		return true
 	default:
 		return false

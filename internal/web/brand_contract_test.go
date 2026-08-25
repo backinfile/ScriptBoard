@@ -46,7 +46,7 @@ func TestPrimaryWorkspacesShareTheApplicationContentWidth(t *testing.T) {
 	}
 }
 
-func TestAssistantAndDatabaseDetailStagesUseAvailableWidth(t *testing.T) {
+func TestDatabaseDetailStageUsesAvailableWidth(t *testing.T) {
 	t.Parallel()
 
 	stylesheet, err := webFiles.ReadFile("ui/assets/app.css")
@@ -55,13 +55,13 @@ func TestAssistantAndDatabaseDetailStagesUseAvailableWidth(t *testing.T) {
 	}
 
 	css := string(stylesheet)
-	for _, selector := range []string{`\.assistant-workspace`, `\.workspace\[data-database-workspace\]`} {
+	for _, selector := range []string{`\.workspace\[data-database-workspace\]`} {
 		pattern := regexp.MustCompile(selector + `\s*\{[^}]*width:\s*100%[^}]*max-width:\s*none`)
 		if !pattern.MatchString(css) {
 			t.Errorf("operational workspace %q does not fill the available application width", selector)
 		}
 	}
-	for _, selector := range []string{`\.assistant-transcript`, `\.assistant-composer-zone`, `\.assistant-message--assistant`, `\.database-detail`} {
+	for _, selector := range []string{`\.database-detail`} {
 		pattern := regexp.MustCompile(selector + `\s*\{[^}]*width:\s*100%`)
 		if !pattern.MatchString(css) {
 			t.Errorf("right-hand content selector %q does not use the available width", selector)

@@ -5,11 +5,9 @@ import (
 	"database/sql"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -22,7 +20,6 @@ import (
 	"scriptboard/internal/mysqlmanager"
 	"scriptboard/internal/passkey"
 	"scriptboard/internal/privilegebroker"
-	"scriptboard/internal/providercredential"
 	"scriptboard/internal/secretstore"
 	app "scriptboard/internal/web"
 )
@@ -117,97 +114,6 @@ func TestManagedMySQLCredentialAndExecutionAreOwnedByPrivilegedBroker(t *testing
 	}
 	if strings.Contains(string(getBody(t, client, serverURL+"/resources/databases", http.StatusOK)), "broker-mysql-secret") {
 		t.Fatal("MySQL password was rendered into the managed Web page")
-	}
-}
-
-func TestManagedProviderCredentialAndProxyAreOwnedByPrivilegedBroker(t *testing.T) {
-	root := t.TempDir()
-	stateRoot := filepath.Join(root, "web-state")
-	brokerSecretRoot := filepath.Join(root, "broker-secrets")
-	transportOptions := privilegebroker.TransportOptions{StateRoot: stateRoot, DevelopmentCurrentUser: true}
-	if runtime.GOOS == "linux" {
-		transportOptions.Endpoint = shortPrivilegedBrokerSocket(t, "provider-broker-")
-	}
-	transport, err := privilegebroker.Listen(transportOptions)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var authorization string
-	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		authorization = request.Header.Get("Authorization")
-		response.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(response, `{"choices":[{"message":{"content":"OK"}}]}`)
-	}))
-	defer upstream.Close()
-	vault, err := secretstore.New(brokerSecretRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	providerService, err := providercredential.New(providercredential.Options{StateRoot: brokerSecretRoot, SecretStore: vault})
-	if err != nil {
-		t.Fatal(err)
-	}
-	server, err := privilegebroker.NewServer(privilegebroker.ServerOptions{
-		Listener: transport.Listener, VerifyPeer: transport.VerifyPeer, Authorizer: &capturingPrivilegedAuthorizer{},
-		Executor: &capturingPrivilegedExecutor{}, Providers: providerService,
-	})
-	if err != nil {
-		_ = transport.Close()
-		t.Fatal(err)
-	}
-	server.Start()
-	t.Cleanup(func() {
-		_ = server.Close()
-		_ = transport.Close()
-	})
-	brokerClient := privilegebroker.NewClient(privilegebroker.ClientOptions{Dial: privilegebroker.Dial(transport.Endpoint)})
-	providers := privilegebroker.NewProviderCredentials(brokerClient)
-	client, serverURL := authenticatedClientWithConfig(t, app.Config{
-		StateRoot: stateRoot, PrivilegedBrokerEndpoint: transport.Endpoint, ProviderCredentials: providers,
-	})
-	page := getBody(t, client, serverURL+"/settings/ai", http.StatusOK)
-	response, err := client.PostForm(serverURL+"/settings/ai/llms", url.Values{
-		"csrf_token": {formToken(t, page)}, "name": {"Broker Provider"}, "provider": {"openai-compatible"},
-		"model": {"fixture-model"}, "endpoint": {upstream.URL + "/v1"}, "api_key": {"provider-secret"}, "make_default": {"true"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = response.Body.Close()
-	if response.StatusCode != http.StatusSeeOther {
-		t.Fatalf("create provider status=%d", response.StatusCode)
-	}
-	page = getBody(t, client, serverURL+"/settings/ai", http.StatusOK)
-	match := regexp.MustCompile(`data-llm-id="([^"]+)"`).FindSubmatch(page)
-	if len(match) != 2 {
-		t.Fatalf("provider model ID missing from page: %s", page)
-	}
-	authorized := privilegebroker.WithAuthorization(context.Background(), privilegebroker.Authorization{
-		SessionToken: strings.Repeat("s", 32), RequestID: "managed-provider-start",
-	})
-	providerSession, err := providers.Start(authorized, string(match[1]))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer providerSession.Close(context.Background())
-	request, _ := http.NewRequest(http.MethodPost, providerSession.Endpoint()+"/chat/completions", strings.NewReader(`{"model":"fixture-model"}`))
-	request.Header.Set("Authorization", "Bearer "+providerSession.Capability())
-	response, err = http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = response.Body.Close()
-	if response.StatusCode != http.StatusOK || authorization != "Bearer provider-secret" {
-		t.Fatalf("proxy status=%d upstream authorization=%q", response.StatusCode, authorization)
-	}
-	if _, err := os.Stat(filepath.Join(brokerSecretRoot, "secrets", "assistant-provider-records.enc")); err != nil {
-		t.Fatalf("Broker-owned provider state missing: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(stateRoot, "secrets", "assistant-provider.enc")); !os.IsNotExist(err) {
-		t.Fatalf("Web State Root unexpectedly owns provider ciphertext: %v", err)
-	}
-	if strings.Contains(string(page), "provider-secret") {
-		t.Fatal("provider credential was rendered into the Web page")
 	}
 }
 

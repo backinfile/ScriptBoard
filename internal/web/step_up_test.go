@@ -1,7 +1,6 @@
 package web
 
 import (
-	"net/http"
 	"scriptboard/internal/identity"
 	"testing"
 	"time"
@@ -37,26 +36,5 @@ func TestStepUpReturnTargetRejectsExternalAndRecursiveLocations(t *testing.T) {
 	}
 	if got := safeStepUpReturnTo("/settings/users?view=active"); got != "/settings/users?view=active" {
 		t.Fatalf("safe local target=%q", got)
-	}
-}
-
-func TestStepUpUIActionsRemainBrowserOnly(t *testing.T) {
-	application := &App{}
-	application.routes()
-	want := map[string]bool{"users.disable": false, "updates.apply": false, "files.toggle_executable": false}
-	for _, spec := range application.assistantUIActions() {
-		if _, ok := want[spec.Key]; ok {
-			want[spec.Key] = spec.BrowserOnly != "" && spec.Handler == nil
-		}
-	}
-	for key, protected := range want {
-		if !protected {
-			t.Errorf("step-up UI action %s is callable outside the browser session", key)
-		}
-	}
-	request, _ := http.NewRequest(http.MethodPost, "/settings/updates/apply", nil)
-	declared, ok := declaredSpecForRequest(application.routeSpecs, request)
-	if !ok || !declared.StepUp {
-		t.Fatal("test fixture route is not step-up protected")
 	}
 }

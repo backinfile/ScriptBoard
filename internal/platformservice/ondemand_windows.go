@@ -12,10 +12,6 @@ import (
 	"golang.org/x/sys/windows/svc/mgr"
 )
 
-func EnsureAIRuntimeHostRunning(ctx context.Context) error {
-	return ensureWindowsServiceRunning(ctx, aiServiceName)
-}
-
 func EnsureRunnerHostRunning(ctx context.Context) error {
 	return ensureWindowsServiceRunning(ctx, runnerServiceName)
 }

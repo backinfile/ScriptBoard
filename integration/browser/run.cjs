@@ -1121,7 +1121,7 @@ async function assertMySQLManagement(page, baseURL) {
   await page.goto(`${baseURL}/resources/databases`);
   const workspace = page.locator("[data-mysql-workspace]");
   await workspace.waitFor();
-  assert.equal((await workspace.locator("h1").textContent()).trim(), "Database backups");
+  assert.equal((await workspace.locator("h1").textContent()).trim(), "Databases");
   assert.equal(await workspace.locator('form[action="/resources/databases/instances"]').count(), 1);
   assert.equal(await workspace.locator('input[name="password"][type="password"]').count(), 1);
   assert.equal(await workspace.locator('form[action="/resources/databases/settings/tools"]').count(), 1);
@@ -1152,7 +1152,6 @@ const administratorSettingsHrefs = [
   "/settings/name",
   "/settings/nodes",
   "/settings/display",
-  "/settings/ai",
   "/settings/notifications",
   "/settings/state-backups",
   "/settings/updates",
@@ -1223,134 +1222,6 @@ async function assertAccountSettings(page, baseURL) {
   await assertNoHorizontalOverflow(page, "Account settings mobile");
   assert.equal(await page.locator('.settings-nav a[href="/settings/users"]').isVisible(), true);
   assert.equal(await page.locator(".settings-nav").evaluate(element => getComputedStyle(element).overflowX), "auto");
-  await page.setViewportSize({ width: 1440, height: 1000 });
-}
-
-async function assertAssistantSettingsAndWorkspace(page, baseURL) {
-  await page.goto(`${baseURL}/settings/ai`);
-  await page.locator("[data-assistant-settings]").waitFor();
-  await assertNoHorizontalOverflow(page, "AI settings");
-  await assertAdministratorSettingsNavigation(page);
-
-  await page.locator("[data-add-llm]").click();
-  const drawer = page.locator('[data-llm-drawer][data-open="true"]');
-  await drawer.waitFor();
-  await drawer.locator('input[name="name"]').fill("Fixture · DeepSeek");
-  await drawer.locator('select[name="provider"]').selectOption("openai-compatible");
-  await drawer.locator('input[name="model"]').fill("fixture-model");
-  await drawer.locator('input[name="endpoint"]').fill("http://127.0.0.1:11434/v1");
-  await drawer.locator('input[name="api_key"]').fill("browser-fixture-key");
-  await drawer.locator('input[name="make_default"]').check();
-  await saveSnapshot(page, "ai-settings-drawer");
-  await Promise.all([
-    page.waitForURL("**/settings/ai"),
-    drawer.locator('button[type="submit"]').click(),
-  ]);
-
-  const configuredRow = page.locator('[data-llm-id][data-name="Fixture · DeepSeek"]');
-  await configuredRow.waitFor();
-  assert.equal(await configuredRow.locator('input:not([type="hidden"])').count(), 0);
-  assert.match(await configuredRow.textContent(), /Credential configured/);
-
-  const connectionForm = configuredRow.locator("form[data-connection-test]");
-  const connectionRoute = route => route.fulfill({
-    status: 200,
-    contentType: "application/json; charset=utf-8",
-    body: JSON.stringify({ ok: false, message: "Upstream refused connection" }),
-  });
-  await page.route("**/settings/ai/llms/*/test", connectionRoute);
-  try {
-    await connectionForm.locator('button[type="submit"]').click();
-    const failureDialog = page.locator(".connection-test-dialog");
-    await failureDialog.waitFor();
-    assert.match(await failureDialog.textContent(), /Upstream refused connection/);
-    const inlineResult = connectionForm.locator("[data-connection-test-result]");
-    assert.equal(await inlineResult.textContent(), "", "connection failure was repeated beside the test button");
-    assert.equal(await inlineResult.evaluate(element => element.classList.contains("sr-only")), true, "empty connection failure status remained visible");
-    await failureDialog.locator("[data-dialog-close]").last().click();
-  } finally {
-    await page.unroute("**/settings/ai/llms/*/test", connectionRoute);
-  }
-  if (process.env.SCRIPTBOARD_BROWSER_SCOPE === "connection-test") return;
-
-  await configuredRow.locator("[data-edit-llm]").click();
-  await drawer.waitFor();
-  assert.equal(await drawer.locator('input[name="api_key"]').inputValue(), "");
-  await drawer.locator("[data-close-llm]").last().click();
-  await drawer.waitFor({ state: "hidden" });
-
-  await page.locator("[data-open-guardrails]").click();
-  await page.locator('[data-guardrail-drawer][data-open="true"]').waitFor();
-  const policy = page.locator('form[action="/settings/ai/defaults"]');
-  const enabledInput = policy.locator('input[name="enabled"]');
-  if (!await enabledInput.isChecked()) await policy.locator('label:has(input[name="enabled"])').click();
-  const defaultApprovalInput = policy.locator('input[name="default_auto_approval"]');
-  if (await defaultApprovalInput.isChecked()) await policy.locator('label:has(input[name="default_auto_approval"])').click();
-  await policy.locator('select[name="max_active_conversations"]').selectOption("2");
-  await policy.locator('button[type="submit"]').click();
-  await page.waitForTimeout(300);
-  assert.equal(await page.locator('form[action="/settings/ai/defaults"] [data-async-submit-error]').count(), 0);
-  assert.equal(await page.locator('form[action="/settings/ai/defaults"] input[name="enabled"]').isChecked(), true);
-
-  const offlineRuntime = page.locator(".assistant-runtime-offline");
-  const offlineForm = offlineRuntime.locator('form[action="/settings/ai/runtime/offline"]');
-  assert.equal(await offlineForm.getAttribute("enctype"), "multipart/form-data");
-  assert.equal(await offlineForm.getAttribute("data-native"), "");
-  for (const field of ["runtime_manifest", "runtime_signature", "runtime_archive"]) {
-    const input = offlineForm.locator(`input[type="file"][name="${field}"]`);
-    assert.equal(await input.count(), 1);
-    assert.equal(await input.getAttribute("required"), "");
-  }
-  await offlineRuntime.locator("summary").click();
-  assert.equal(await offlineForm.isVisible(), true);
-  await assertNoHorizontalOverflow(page, "AI settings offline Runtime expanded");
-  await saveSnapshot(page, "ai-settings");
-
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.reload();
-  await page.locator(".assistant-runtime-offline summary").click();
-  await assertNoHorizontalOverflow(page, "AI settings mobile");
-  await saveSnapshot(page, "ai-settings-mobile");
-  await page.setViewportSize({ width: 1440, height: 1000 });
-
-  await page.goto(`${baseURL}/ai`);
-  await page.locator("[data-assistant-workspace]").waitFor();
-  await assertNoHorizontalOverflow(page, "AI workspace");
-  assert.equal((await page.locator("[data-model-picker-label]").textContent()).trim(), "Fixture · DeepSeek");
-
-  const modelToggle = page.locator("[data-model-picker-toggle]");
-  await modelToggle.click();
-  const modelPicker = page.locator('.assistant-model-picker[data-open="true"]');
-  await modelPicker.waitFor();
-  assert.equal(await modelPicker.locator('[role="option"][aria-selected="true"]').count(), 1);
-  await saveSnapshot(page, "ai-chat-model-picker");
-  await modelToggle.click();
-
-  const approvalToggle = page.locator("[data-auto-approval-toggle]");
-  assert.equal(await approvalToggle.getAttribute("aria-pressed"), "false");
-  await approvalToggle.click();
-  assert.equal(await approvalToggle.getAttribute("aria-pressed"), "true");
-  assert.equal(await page.locator('[role="dialog"]').count(), 0);
-
-  await page.locator("[data-resource-picker-toggle]").click();
-  const resourcePicker = page.locator('[data-resource-picker][data-open="true"]');
-  await resourcePicker.waitFor();
-  const hostResource = resourcePicker.locator('[data-resource-kind="directory"][data-resource-id="host"]');
-  assert.equal(await hostResource.count(), 1);
-  await hostResource.click();
-  const directoryResource = resourcePicker.locator('[data-resource-kind="directory"][data-resource-label="automation"]');
-  assert.equal(await directoryResource.count(), 1);
-  await directoryResource.click();
-  const fileResource = resourcePicker.locator('[data-resource-kind="file"][data-resource-label="README.md"]');
-  assert.equal(await fileResource.count(), 1);
-  await fileResource.click();
-  assert.equal((await page.locator("[data-assistant-context-count]").textContent()).trim(), "3");
-  await saveSnapshot(page, "ai-chat");
-
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.reload();
-  await assertNoHorizontalOverflow(page, "AI workspace mobile");
-  await saveSnapshot(page, "ai-chat-mobile");
   await page.setViewportSize({ width: 1440, height: 1000 });
 }
 
@@ -1527,7 +1398,6 @@ async function assertExternalInterfaces(page, fixture) {
       return;
     }
     if (process.env.SCRIPTBOARD_BROWSER_SCOPE === "connection-test") {
-      await assertAssistantSettingsAndWorkspace(page, fixture.baseURL);
       process.stdout.write("Chromium connection-test error regressions passed.\n");
       return;
     }
@@ -1546,7 +1416,6 @@ async function assertExternalInterfaces(page, fixture) {
 	const viewerPassword = await assertUserManagement(page, fixture.baseURL);
 	await assertMySQLManagement(page, fixture.baseURL);
 	await assertViewerCannotManageMySQL(browser, fixture.baseURL, viewerPassword);
-    await assertAssistantSettingsAndWorkspace(page, fixture.baseURL);
     await assertExternalInterfaces(page, fixture);
 
     const status = await page.evaluate(async () => {
@@ -1829,7 +1698,7 @@ async function assertExternalInterfaces(page, fixture) {
     assert.equal(await savedQuickRun.locator("[data-quick-run-history-entry]").count(), 0);
     assert.equal((await savedQuickRun.locator(".quick-run-history__latest dd").nth(1).textContent()).trim(), "—");
     const quickHeadingActions = page.locator(".quick-run-heading-actions > .button");
-    assert.equal(await quickHeadingActions.count(), 4);
+    assert.equal(await quickHeadingActions.count(), 3);
     const quickHeadingMetrics = await quickHeadingActions.evaluateAll(actions => actions.map(action => {
       const bounds = action.getBoundingClientRect();
       return { top: Math.round(bounds.top), height: Math.round(bounds.height) };
@@ -1838,7 +1707,7 @@ async function assertExternalInterfaces(page, fixture) {
     assert.equal(new Set(quickHeadingMetrics.map(metric => metric.height)).size, 1, JSON.stringify(quickHeadingMetrics));
     assert.deepEqual(
       await quickHeadingActions.evaluateAll(actions => actions.map(action => `${new URL(action.href).pathname}${new URL(action.href).search}`)),
-      ["/config/quick-runs?reorder=1", "/config/quick-runs/groups/new", "/config/quick-runs/one-time/new", "/config/quick-runs/from-source/new"],
+      ["/config/quick-runs/groups/new", "/config/quick-runs/one-time/new", "/config/quick-runs/from-source/new"],
     );
 
     const assertWorkingDirectoryTree = async (href, kind) => {
@@ -2620,7 +2489,7 @@ async function assertExternalInterfaces(page, fixture) {
     await assertNoHorizontalOverflow(chinesePage, "用户管理移动端");
     await chinesePage.setViewportSize({ width: 1440, height: 1000 });
 	await chinesePage.goto(`${fixture.baseURL}/resources/databases`);
-	assert.equal((await chinesePage.locator("main h1").textContent()).trim(), "数据库备份");
+	assert.equal((await chinesePage.locator("main h1").textContent()).trim(), "数据库");
     await chinesePage.goto(`${fixture.baseURL}/monitor`);
     await Promise.all([
       chinesePage.waitForNavigation(),

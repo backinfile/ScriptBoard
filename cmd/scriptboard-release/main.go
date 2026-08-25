@@ -33,7 +33,7 @@ func main() {
 
 func run(arguments []string) error {
 	if len(arguments) == 0 {
-		return errors.New("usage: scriptboard-release keygen|info|manifest|runtime-package|runtime-manifest")
+		return errors.New("usage: scriptboard-release keygen|info|manifest")
 	}
 	switch arguments[0] {
 	case "keygen":
@@ -42,10 +42,6 @@ func run(arguments []string) error {
 		return generateReleaseInfo(arguments[1:])
 	case "manifest":
 		return generateManifest(arguments[1:])
-	case "runtime-package":
-		return generateRuntimePackage(arguments[1:])
-	case "runtime-manifest":
-		return generateRuntimeManifest(arguments[1:])
 	default:
 		return fmt.Errorf("unknown command %q", arguments[0])
 	}

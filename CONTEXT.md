@@ -4,7 +4,7 @@ ScriptBoard 是面向单机、少量可信用户场景的主机文件与脚本�
 
 ## Code architecture
 
-进程入口遵循 `cmd -> bootstrap -> web / domain -> store / leaf packages`。`internal/bootstrap` 是 Web、Broker、Runner 与 AI Host 的唯一运行时组合根；`internal/web` 只拥有 HTTP、路由和 UI 适配；SQLite 生命周期与迁移由 `internal/store` 统一管理。身份授权、快捷执行规则、可恢复文件操作与审计保留分别位于 `internal/identity`、`internal/quickrun`、`internal/fileworkflow` 和 `internal/audit`。旧 `internal/app` 已删除，架构测试禁止其恢复。
+进程入口遵循 `cmd -> bootstrap -> web / domain -> store / leaf packages`。`internal/bootstrap` 是 Web、Broker 与 Runner 的唯一运行时组合根；`internal/web` 只拥有 HTTP、路由和 UI 适配；SQLite 生命周期与迁移由 `internal/store` 统一管理。身份授权、快捷执行规则、可恢复文件操作与审计保留分别位于 `internal/identity`、`internal/quickrun`、`internal/fileworkflow` 和 `internal/audit`。旧 `internal/app` 已删除，架构测试禁止其恢复。
 
 ## Language
 
@@ -53,7 +53,7 @@ _Avoid_: 沙箱脚本、安全脚本
 _Avoid_: 权限模式、启动用户、应用角色
 
 **Web 控制面（Web Control Plane）**：
-处理 HTTP、身份、授权与页面状态的低权限组件。它协调领域操作，但不拥有主机特权、脚本执行身份或 AI Runtime 能力。
+处理 HTTP、身份、授权与页面状态的低权限组件。它协调领域操作，但不拥有主机特权或脚本执行身份。
 _Avoid_: 后台单体、执行服务、特权服务
 
 **特权操作 Broker（Privileged Broker）**：
@@ -61,12 +61,8 @@ _Avoid_: 后台单体、执行服务、特权服务
 _Avoid_: root Web、命令代理、通用 Agent
 
 **Runner**：
-在独立运行身份中复核并执行已绑定脚本与作业描述的组件。它不继承 Web 凭据，也不拥有 Broker 秘密或 AI 工作区。
+在独立运行身份中复核并执行已绑定脚本与作业描述的组件。它不继承 Web 凭据，也不拥有 Broker 秘密。
 _Avoid_: Web 子进程、脚本沙箱、启动用户
-
-**AI Host**：
-在独立运行身份中承载受管 AI Runtime 的组件。它只持有会话绑定的短期能力，不拥有 Web 会话或 Broker 秘密。
-_Avoid_: Web 子进程、Tool Broker、模型提供商
 
 **触发来源（Run Source）**：
 发起一次执行的入口类型，区分手动、快捷执行和内置调度器，不等同于启动用户或进程的运行身份。
@@ -91,58 +87,6 @@ _Avoid_: 主机文件系统、共享目录、文件库
 **私有状态备份（Private State Backup）**：
 由 ScriptBoard 从一致性 SQLite snapshot 和固定私有状态白名单生成的认证加密恢复包。它携带逐文件摘要与签名审计 checkpoint，但不包含外部主密钥、checkpoint 签名私钥、启动配置、TLS 材料、诊断日志、上传 inbox 或 MySQL 备份；因此不是 State Root 的目录副本，也不是完整主机灾备。
 _Avoid_: State Root 副本、配置导出、MySQL 备份、整机镜像
-
-**AI 对话（Assistant Conversation）**：
-由一个 ScriptBoard 用户拥有、绑定一个必选 LLM 配置并保存消息、资源引用、审批模式和 Pi session 身份的持久对话。用户只能查看、订阅和修改自己的 AI 对话；归档不删除历史或 session。
-_Avoid_: 全局聊天室、Pi 终端会话、共享提示词
-
-**LLM 配置（LLM Configuration）**：
-由一个 ScriptBoard 用户拥有的模型端点与服务端凭据配置。端点可显式使用 HTTP 或 HTTPS；HTTP 是明文传输选择，不改变凭据仍只保存在服务端私有文件的边界。配置默认私有；所有者可以显式公开，允许其他用户在自己的 AI 对话中选择和测试，但其他用户不能编辑、设为默认或删除该配置。每个用户的默认配置彼此独立。
-_Avoid_: 全局模型列表、共享默认模型、客户端 API Key
-
-**Agent Turn**：
-从一条用户消息被持久接受，到对应助手消息完成、中断或失败的一次处理。一个 AI 对话同一时间最多有一个活动 Agent Turn，服务重启不会自动重放未完成 Turn。
-_Avoid_: Run、消息、后台队列
-
-**Pi Runtime**：
-由 ScriptBoard 明确解析和启动、位于 State Root 私有版本目录的 Pi Agent 可执行程序及固定扩展。它不使用 PATH 中的全局 Pi，也不共享用户级 Pi 配置、会话、扩展、Skill 或工作目录。
-_Avoid_: Installed Release、系统 Node.js、用户安装的 Pi
-
-**Assistant Capability Bundle**：
-随受信 Pi Runtime 一起发布并由摘要清单固定的能力集合，包含 ScriptBoard Extension 和 Operational Playbook。它不从用户目录或项目目录发现资源，也不是可动态安装的第三方 Pi Package。
-_Avoid_: 插件市场、用户 Skill、动态提示词目录
-
-**Operational Playbook**：
-面向一种明确运维意图的版本化受信指导，例如失败 Run 诊断或网站事故调查。Playbook 只约束证据收集和结论表达，不授予权限、不改变审批，也不是可执行脚本。
-_Avoid_: 自动化脚本、永久系统提示、权限模板
-
-**Conversation Profile**：
-AI 对话显式选择的工作模式；通用模式不加载 Playbook，其余模式只引用当前 Runtime Capability Bundle 中版本匹配的一个 Operational Playbook。
-_Avoid_: 角色、模型、工具权限
-
-**Session Telemetry**：
-Pi 为持久 session 报告的累计输入/输出/缓存 Token、估算费用、上下文占用、消息数和工具调用数。它不包含原始 thinking、提示正文或凭据。
-_Avoid_: 账单、思维链、审计事件
-
-**Evidence Query**：
-通过 Tool Broker 执行的有界只读查询，用于搜索或分段读取日志、比较 Run、读取计划触发历史或审计事实。结果携带来源、截断状态和绑定当前用户、对话、工具及查询的不透明短期游标。
-_Avoid_: 任意 SQL、完整日志导出、永久书签
-
-**Safe Raster Processor**：
-对用户明确引用的 PNG、JPEG 或 WebP 进行类型探测、尺寸限制、缩放、重新编码和元数据移除的进程内边界。只有已配置且由 Pi 确认支持图片输入的模型才能接收处理后的图片。
-_Avoid_: 任意附件解析、原文件直传、OCR 存储
-
-**工具调用（Tool Invocation）**：
-Pi 在一个 Agent Turn 内请求 ScriptBoard 执行某个版本化工具及固定参数的记录。它不是 Run，也不能直接访问数据库、任意主机文件、Shell 或内部 Go 对象。
-_Avoid_: 脚本执行、RPC 消息、审批
-
-**操作审批（Action Approval）**：
-将单次状态修改工具调用绑定到参数摘要、目标状态、对话所有者和授权快照的有时限一次性决定。自动审批只自动产生同样受约束的批准，不放宽角色权限或领域校验。
-_Avoid_: 永久授权、角色权限、确认弹窗状态
-
-**工具代理（Tool Broker）**：
-ScriptBoard 在 Pi 与现有领域模块之间提供的版本化本地能力边界。它负责 capability、实时授权、参数限制、结果脱敏、审批和审计；没有已发布 Broker/Extension 时 Pi 必须以无工具模式运行。
-_Avoid_: 插件系统、公共 API、Pi 内置工具
 
 **文件快捷访问固定项（File Quick Access Pin）**：
 当前 ScriptBoard 实例中保存、供所有有文件页权限的用户共用的常用主机目录入口。它只保存规范绝对路径、平台比较键、显示名称与顺序，不复制目录内容；路径暂时不可访问时保留固定项但禁用打开。固定项不依赖浏览器本地存储。

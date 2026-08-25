@@ -12,23 +12,21 @@ import (
 	"strconv"
 	"strings"
 
-	"scriptboard/internal/assistant/runtimehost"
 	"scriptboard/internal/processlaunch"
 	"scriptboard/internal/runnerhost"
 )
 
 const (
-	serviceName       = "ScriptBoard"
-	unitPath          = "/etc/systemd/system/scriptboard.service"
-	brokerUnitPath    = "/etc/systemd/system/scriptboard-broker.service"
-	aiUnitPath        = "/etc/systemd/system/scriptboard-ai.service"
-	aiSocketUnitPath  = "/etc/systemd/system/scriptboard-ai.socket"
-	runnerUnitPath    = "/etc/systemd/system/scriptboard-runner.service"
-	runnerSocketPath  = "/etc/systemd/system/scriptboard-runner.socket"
-	updaterUnitPath   = "/etc/systemd/system/scriptboard-updater@.service"
-	webServiceUser    = "scriptboard-web"
-	aiServiceUser     = "scriptboard-ai"
-	runnerServiceUser = "scriptboard-runner"
+	serviceName        = "ScriptBoard"
+	unitPath           = "/etc/systemd/system/scriptboard.service"
+	brokerUnitPath     = "/etc/systemd/system/scriptboard-broker.service"
+	legacyAIUnitPath   = "/etc/systemd/system/scriptboard-ai.service"
+	legacyAISocketPath = "/etc/systemd/system/scriptboard-ai.socket"
+	runnerUnitPath     = "/etc/systemd/system/scriptboard-runner.service"
+	runnerSocketPath   = "/etc/systemd/system/scriptboard-runner.socket"
+	updaterUnitPath    = "/etc/systemd/system/scriptboard-updater@.service"
+	webServiceUser     = "scriptboard-web"
+	runnerServiceUser  = "scriptboard-runner"
 )
 
 const (
@@ -57,21 +55,6 @@ func ValidateWebRuntimeIdentity() error {
 		return fmt.Errorf("parse managed Web service UID: %w", err)
 	}
 	return validateLinuxWebRuntimeIdentity(os.Geteuid(), uid)
-}
-
-func ValidateAIRuntimeIdentity() error {
-	account, err := user.Lookup(aiServiceUser)
-	if err != nil {
-		return fmt.Errorf("resolve managed AI Runtime service account: %w", err)
-	}
-	uid, err := strconv.Atoi(account.Uid)
-	if err != nil {
-		return fmt.Errorf("parse managed AI Runtime service UID: %w", err)
-	}
-	if os.Geteuid() == 0 || os.Geteuid() != uid {
-		return fmt.Errorf("effective UID %d is not dedicated AI Runtime service UID %d", os.Geteuid(), uid)
-	}
-	return nil
 }
 
 func ValidateRunnerRuntimeIdentity(mode string) error {
@@ -109,13 +92,13 @@ func Install(executable, configPath, updaterExecutable, stateRoot, runnerIdentit
 	if err := prepareLinuxWebServiceIdentity(configPath, stateRoot, webReadPaths...); err != nil {
 		return err
 	}
-	brokerExecutable := filepath.Join(filepath.Dir(executable), "scriptboard-broker")
-	aiExecutable := filepath.Join(filepath.Dir(executable), "scriptboard-ai-host")
-	runnerExecutable := filepath.Join(filepath.Dir(executable), "scriptboard-runner")
-	aiEndpoint, err := runtimehost.DefaultEndpoint(stateRoot)
-	if err != nil {
+	// Upgrades must stop and remove the retired AI host units so an older
+	// installation cannot keep the removed assistant process running.
+	if err := removeLegacyAIUnits(systemctl, legacyAIUnitPath, legacyAISocketPath); err != nil {
 		return err
 	}
+	brokerExecutable := filepath.Join(filepath.Dir(executable), "scriptboard-broker")
+	runnerExecutable := filepath.Join(filepath.Dir(executable), "scriptboard-runner")
 	runnerEndpoint, err := runnerhost.DefaultEndpoint(stateRoot)
 	if err != nil {
 		return err
@@ -123,8 +106,8 @@ func Install(executable, configPath, updaterExecutable, stateRoot, runnerIdentit
 	unit := fmt.Sprintf(`[Unit]
 Description=ScriptBoard
 After=network.target
-Requires=scriptboard-broker.service scriptboard-ai.socket scriptboard-runner.socket
-After=scriptboard-broker.service scriptboard-ai.socket scriptboard-runner.socket
+Requires=scriptboard-broker.service scriptboard-runner.socket
+After=scriptboard-broker.service scriptboard-runner.socket
 
 [Service]
 Type=simple
@@ -166,63 +149,6 @@ LockPersonality=true
 [Install]
 WantedBy=multi-user.target
 `, systemdQuote(brokerExecutable), systemdQuote(configPath), systemdQuote(stateRoot))
-	aiUnit := fmt.Sprintf(`[Unit]
-Description=ScriptBoard isolated AI Runtime Host
-Requires=scriptboard-ai.socket
-After=network.target scriptboard-ai.socket
-
-[Service]
-Type=simple
-User=scriptboard-ai
-Group=scriptboard-ai
-SupplementaryGroups=scriptboard-ai
-ExecStart=%s --state-root %s --allowed-identity scriptboard-web
-Restart=on-failure
-NoNewPrivileges=true
-UMask=0007
-CapabilityBoundingSet=
-AmbientCapabilities=
-PrivateTmp=true
-PrivateDevices=true
-ProtectHome=true
-ProtectSystem=strict
-ReadWritePaths=%s
-ProtectClock=true
-ProtectHostname=true
-ProtectKernelLogs=true
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
-RestrictSUIDSGID=true
-LockPersonality=true
-RestrictNamespaces=true
-RestrictRealtime=true
-SystemCallArchitectures=native
-SystemCallFilter=@system-service
-SystemCallErrorNumber=EPERM
-TasksMax=64
-MemoryMax=1G
-MemorySwapMax=0
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-IPAddressDeny=any
-IPAddressAllow=localhost
-`, systemdQuote(aiExecutable), systemdQuote(stateRoot), systemdQuote(filepath.Join(stateRoot, "assistant")))
-	aiSocketUnit := fmt.Sprintf(`[Unit]
-Description=ScriptBoard AI Runtime Host activation socket
-
-[Socket]
-ListenStream=%s
-FileDescriptorName=scriptboard-ai
-Service=scriptboard-ai.service
-SocketUser=scriptboard-ai
-SocketGroup=scriptboard-ai
-SocketMode=0660
-DirectoryMode=0755
-RemoveOnStop=true
-
-[Install]
-WantedBy=sockets.target
-	`, systemdSocketAddress(aiEndpoint))
 	runnerUser, runnerGroup := linuxRunnerServiceAccount(runnerIdentityMode)
 	runnerPolicy := linuxRunnerServicePolicy(runnerIdentityMode)
 	runnerUnit := fmt.Sprintf(`[Unit]
@@ -269,12 +195,6 @@ TimeoutStartSec=0
 	if err := os.WriteFile(brokerUnitPath, []byte(brokerUnit), 0o644); err != nil {
 		return err
 	}
-	if err := os.WriteFile(aiUnitPath, []byte(aiUnit), 0o644); err != nil {
-		return err
-	}
-	if err := os.WriteFile(aiSocketUnitPath, []byte(aiSocketUnit), 0o644); err != nil {
-		return err
-	}
 	if err := os.WriteFile(runnerUnitPath, []byte(runnerUnit), 0o644); err != nil {
 		return err
 	}
@@ -288,9 +208,6 @@ TimeoutStartSec=0
 		return err
 	}
 	if err := systemctl("enable", "scriptboard-broker.service"); err != nil {
-		return err
-	}
-	if err := systemctl("enable", "scriptboard-ai.socket"); err != nil {
 		return err
 	}
 	if err := systemctl("enable", "scriptboard-runner.socket"); err != nil {
@@ -350,9 +267,6 @@ func prepareLinuxWebServiceIdentity(configPath, stateRoot string, webReadPaths .
 		}); err != nil {
 			return fmt.Errorf("assign %s to Linux Web service account: %w", root, err)
 		}
-	}
-	if err := prepareLinuxAIServiceIdentity(stateRoot); err != nil {
-		return err
 	}
 	if err := prepareLinuxRunnerServiceIdentity(); err != nil {
 		return err
@@ -439,136 +353,12 @@ func prepareLinuxRunnerServiceIdentity() error {
 	if output, runErr := command.CombinedOutput(); runErr != nil {
 		return fmt.Errorf("grant Linux Web access to Runner IPC: %w: %s", runErr, strings.TrimSpace(string(output)))
 	}
-	command, err = processlaunch.Prepare(processlaunch.Spec{Context: context.Background(), Executable: "/usr/sbin/usermod", Arguments: []string{"--append", "--groups", webServiceUser + "," + aiServiceUser, runnerServiceUser}, Environment: processlaunch.EnvironmentInherit})
+	command, err = processlaunch.Prepare(processlaunch.Spec{Context: context.Background(), Executable: "/usr/sbin/usermod", Arguments: []string{"--append", "--groups", webServiceUser, runnerServiceUser}, Environment: processlaunch.EnvironmentInherit})
 	if err != nil {
 		return err
 	}
 	if output, runErr := command.CombinedOutput(); runErr != nil {
 		return fmt.Errorf("grant Linux Runner read access to service config: %w: %s", runErr, strings.TrimSpace(string(output)))
-	}
-	return nil
-}
-
-func prepareLinuxAIServiceIdentity(stateRoot string) error {
-	webAccount, err := user.Lookup(webServiceUser)
-	if err != nil {
-		return fmt.Errorf("resolve Linux Web service account for AI Runtime ACL: %w", err)
-	}
-	webUID, err := strconv.Atoi(webAccount.Uid)
-	if err != nil {
-		return fmt.Errorf("parse Linux Web service UID for AI Runtime ACL: %w", err)
-	}
-	account, err := user.Lookup(aiServiceUser)
-	if _, unknown := err.(user.UnknownUserError); unknown {
-		command, commandErr := processlaunch.Prepare(processlaunch.Spec{
-			Context: context.Background(), Executable: "/usr/sbin/useradd",
-			Arguments:   []string{"--system", "--user-group", "--no-create-home", "--home-dir", "/nonexistent", "--shell", "/usr/sbin/nologin", aiServiceUser},
-			Environment: processlaunch.EnvironmentInherit,
-		})
-		if commandErr != nil {
-			return fmt.Errorf("prepare Linux AI Runtime service account: %w", commandErr)
-		}
-		if output, runErr := command.CombinedOutput(); runErr != nil {
-			return fmt.Errorf("create Linux AI Runtime service account: %w: %s", runErr, strings.TrimSpace(string(output)))
-		}
-		account, err = user.Lookup(aiServiceUser)
-	}
-	if err != nil {
-		return fmt.Errorf("resolve Linux AI Runtime service account: %w", err)
-	}
-	group, err := user.LookupGroup(aiServiceUser)
-	if err != nil || group.Gid != account.Gid {
-		return fmt.Errorf("Linux AI Runtime service account must use its dedicated %s group", aiServiceUser)
-	}
-	command, err := processlaunch.Prepare(processlaunch.Spec{
-		Context: context.Background(), Executable: "/usr/sbin/usermod",
-		Arguments:   []string{"--append", "--groups", aiServiceUser, webServiceUser},
-		Environment: processlaunch.EnvironmentInherit,
-	})
-	if err != nil {
-		return fmt.Errorf("prepare Linux Web access to Runtime Host IPC: %w", err)
-	}
-	if output, runErr := command.CombinedOutput(); runErr != nil {
-		return fmt.Errorf("grant Linux Web access to Runtime Host IPC: %w: %s", runErr, strings.TrimSpace(string(output)))
-	}
-	uid, err := strconv.Atoi(account.Uid)
-	if err != nil {
-		return fmt.Errorf("parse Linux AI Runtime UID: %w", err)
-	}
-	gid, err := strconv.Atoi(account.Gid)
-	if err != nil {
-		return fmt.Errorf("parse Linux AI Runtime GID: %w", err)
-	}
-	assistantRoot := filepath.Join(stateRoot, "assistant")
-	stateInfo, err := os.Stat(stateRoot)
-	if err != nil {
-		return err
-	}
-	// Web remains the State Root owner; the AI group receives traverse only so
-	// it can reach its Assistant subtree without reading the database/secrets.
-	if err := os.Lchown(stateRoot, webUID, gid); err != nil {
-		return err
-	}
-	if err := os.Chmod(stateRoot, stateInfo.Mode().Perm()&0o700|0o010); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(assistantRoot, 0o770); err != nil {
-		return err
-	}
-	if err := os.Lchown(assistantRoot, webUID, gid); err != nil {
-		return err
-	}
-	if err := os.Chmod(assistantRoot, 0o750); err != nil {
-		return err
-	}
-	runtimeRoot := filepath.Join(assistantRoot, "runtime")
-	if _, statErr := os.Lstat(runtimeRoot); statErr == nil {
-		if err := filepath.WalkDir(runtimeRoot, func(path string, entry os.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
-			}
-			if err := os.Lchown(path, webUID, gid); err != nil {
-				return err
-			}
-			if entry.Type()&os.ModeSymlink != 0 {
-				return nil
-			}
-			info, err := entry.Info()
-			if err != nil {
-				return err
-			}
-			owner := info.Mode().Perm() & 0o700
-			permissions := owner | (owner>>3)&0o050
-			return os.Chmod(path, permissions)
-		}); err != nil {
-			return fmt.Errorf("make Linux AI Runtime payload read-only to Runtime identity: %w", err)
-		}
-	} else if !errors.Is(statErr, os.ErrNotExist) {
-		return statErr
-	}
-	for _, name := range []string{"pi-home", "sessions", "workspaces"} {
-		privateRoot := filepath.Join(assistantRoot, name)
-		if err := os.MkdirAll(privateRoot, 0o700); err != nil {
-			return err
-		}
-		if err := filepath.WalkDir(privateRoot, func(path string, entry os.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
-			}
-			if err := os.Lchown(path, uid, gid); err != nil {
-				return err
-			}
-			if entry.Type()&os.ModeSymlink != 0 {
-				return nil
-			}
-			info, err := entry.Info()
-			if err != nil {
-				return err
-			}
-			return os.Chmod(path, info.Mode().Perm()&0o700)
-		}); err != nil {
-			return fmt.Errorf("isolate Linux AI Runtime private directory %s: %w", name, err)
-		}
 	}
 	return nil
 }
@@ -592,18 +382,14 @@ func Uninstall() error {
 			if err := systemctl("disable", "--now", "scriptboard.service"); err != nil {
 				return err
 			}
-			if err := systemctl("disable", "--now", "scriptboard-ai.socket"); err != nil {
-				return err
-			}
 			if err := systemctl("disable", "--now", "scriptboard-runner.socket"); err != nil {
 				return err
 			}
-			_ = systemctl("stop", "scriptboard-ai.service")
 			_ = systemctl("stop", "scriptboard-runner.service")
 			return systemctl("disable", "--now", "scriptboard-broker.service")
 		},
 		func() error {
-			for _, path := range []string{unitPath, brokerUnitPath, aiUnitPath, aiSocketUnitPath, runnerUnitPath, runnerSocketPath, updaterUnitPath} {
+			for _, path := range []string{unitPath, brokerUnitPath, legacyAIUnitPath, legacyAISocketPath, runnerUnitPath, runnerSocketPath, updaterUnitPath} {
 				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 					return err
 				}
@@ -614,11 +400,19 @@ func Uninstall() error {
 	)
 }
 
+func removeLegacyAIUnits(runSystemctl func(...string) error, servicePath, socketPath string) error {
+	_ = runSystemctl("disable", "--now", "scriptboard-ai.socket")
+	_ = runSystemctl("stop", "scriptboard-ai.service")
+	for _, path := range []string{servicePath, socketPath} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
 func Start() error {
 	if err := systemctl("start", "scriptboard-broker.service"); err != nil {
-		return err
-	}
-	if err := systemctl("start", "scriptboard-ai.socket"); err != nil {
 		return err
 	}
 	if err := systemctl("start", "scriptboard-runner.socket"); err != nil {
@@ -630,13 +424,7 @@ func Stop() error {
 	if err := systemctl("stop", "scriptboard.service"); err != nil {
 		return err
 	}
-	if err := systemctl("stop", "scriptboard-ai.service"); err != nil {
-		return err
-	}
 	if err := systemctl("stop", "scriptboard-runner.service"); err != nil {
-		return err
-	}
-	if err := systemctl("stop", "scriptboard-ai.socket"); err != nil {
 		return err
 	}
 	if err := systemctl("stop", "scriptboard-runner.socket"); err != nil {
@@ -708,12 +496,6 @@ func MatchesExecutable(executable, configPath, stateRoot, runnerIdentityMode str
 	for _, line := range strings.Split(string(brokerUnit), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == expectedBroker {
-			aiUnit, err := os.ReadFile(aiUnitPath)
-			if err != nil {
-				return false, err
-			}
-			expectedAI := "ExecStart=" + systemdQuote(filepath.Join(filepath.Dir(executable), "scriptboard-ai-host")) + " --state-root " + systemdQuote(stateRoot) + " --allowed-identity " + webServiceUser
-			aiText := string(aiUnit)
 			runnerUnit, err := os.ReadFile(runnerUnitPath)
 			if err != nil {
 				return false, err
@@ -728,10 +510,7 @@ func MatchesExecutable(executable, configPath, stateRoot, runnerIdentityMode str
 					strings.Contains(runnerText, "SystemCallFilter=@system-service") &&
 					strings.Contains(runnerText, "SystemCallArchitectures=native")
 			}
-			return strings.Contains(aiText, expectedAI) && strings.Contains(aiText, "User="+aiServiceUser) &&
-				strings.Contains(aiText, "IPAddressDeny=any") && strings.Contains(aiText, "IPAddressAllow=localhost") &&
-				strings.Contains(aiText, "SystemCallFilter=@system-service") && strings.Contains(aiText, "SystemCallArchitectures=native") &&
-				runnerMatches, nil
+			return runnerMatches, nil
 		}
 	}
 	return false, nil

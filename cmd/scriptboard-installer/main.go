@@ -107,9 +107,9 @@ func extractAndVerify(installerPath, destination string, unpackedSize int64) err
 }
 
 func preparePayloadExecutables(root string) error {
-	names := []string{"scriptboard", "scriptboard-broker", "scriptboard-ai-host", "scriptboard-runner", "scriptboard-updater"}
+	names := []string{"scriptboard", "scriptboard-broker", "scriptboard-runner", "scriptboard-updater"}
 	if runtime.GOOS == "windows" {
-		names = []string{"scriptboard.exe", "scriptboard-broker.exe", "scriptboard-ai-host.exe", "scriptboard-runner.exe", "scriptboard-updater.exe", "scriptboard-tray.exe", "scriptboard-tray-launcher.exe"}
+		names = []string{"scriptboard.exe", "scriptboard-broker.exe", "scriptboard-runner.exe", "scriptboard-updater.exe", "scriptboard-tray.exe", "scriptboard-tray-launcher.exe"}
 	}
 	for _, name := range names {
 		path := filepath.Join(root, name)

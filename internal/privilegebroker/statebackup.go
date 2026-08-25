@@ -202,7 +202,7 @@ func stateBackupMutationBinding(operation string, request stateBackupWireRequest
 
 func validateStateBackupRequest(request wireRequest) error {
 	if request.StateBackup == nil || !validCredentialSessionToken(request.SessionToken) || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" || request.ParametersSHA256 != "" || len(request.Parameters) != 0 ||
-		hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || request.Redis != nil || request.HostFiles != nil {
+		hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) || request.MySQL != nil || request.Redis != nil || request.HostFiles != nil {
 		return errors.New("state backup request is invalid")
 	}
 	payload := request.StateBackup

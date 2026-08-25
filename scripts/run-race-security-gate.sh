@@ -3,9 +3,6 @@ set -euo pipefail
 
 go test -race \
   ./internal/web \
-  ./internal/assistant/pirpc \
-  ./internal/assistant/providerproxy \
-  ./internal/assistant/runtimehost \
   ./internal/auditlog \
   ./internal/auditnotification \
   ./internal/customdashboard \

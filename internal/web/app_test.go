@@ -1122,10 +1122,10 @@ func TestUpdateSourcesRenderInRightmostSettingsDrawer(t *testing.T) {
 			t.Fatalf("update source drawer does not contain %q: %s", expected, html)
 		}
 	}
-	aiIndex := strings.Index(html, `href="/settings/ai"`)
+	displayIndex := strings.Index(html, `href="/settings/display"`)
 	updateIndex := strings.Index(html, `href="/settings/updates"`)
-	if aiIndex < 0 || updateIndex < aiIndex {
-		t.Fatalf("updates tab is not after AI settings: ai=%d updates=%d", aiIndex, updateIndex)
+	if displayIndex < 0 || updateIndex < displayIndex {
+		t.Fatalf("updates tab is not after display settings: display=%d updates=%d", displayIndex, updateIndex)
 	}
 }
 

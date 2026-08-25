@@ -140,7 +140,7 @@ func isRedisOperation(operation string) bool {
 	return false
 }
 func validateRedisRequest(request wireRequest) error {
-	if request.Redis == nil || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" || request.ParametersSHA256 != "" || len(request.Parameters) != 0 || request.MySQL != nil || request.HostFiles != nil || request.StateBackup != nil || request.Registry != nil || request.Kubeconfig != nil || hasMFAFields(request) || hasPasskeyFields(request) || hasProviderFields(request) || hasRemoteWebsiteFields(request) {
+	if request.Redis == nil || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" || request.ParametersSHA256 != "" || len(request.Parameters) != 0 || request.MySQL != nil || request.HostFiles != nil || request.StateBackup != nil || request.Registry != nil || request.Kubeconfig != nil || hasMFAFields(request) || hasPasskeyFields(request) || hasRemoteWebsiteFields(request) {
 		return errors.New("Redis request contains unrelated fields")
 	}
 	p := request.Redis

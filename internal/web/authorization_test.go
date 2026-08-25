@@ -204,8 +204,6 @@ func TestHighRiskRoutesDeclareRecentAuthentication(t *testing.T) {
 		{http.MethodPost, "/settings/updates/apply"},
 		{http.MethodPost, "/resources/databases/backups/backup-one/restore"},
 		{http.MethodPost, "/resources/inbox/upload-one/publish"},
-		{http.MethodPost, "/settings/ai/llms"},
-		{http.MethodPost, "/settings/ai/llms/model-one/delete"},
 	} {
 		request := httptest.NewRequest(route.method, route.path, nil)
 		spec, ok := declaredSpecForRequest(application.routeSpecs, request)

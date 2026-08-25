@@ -153,8 +153,6 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Building Windows $arch service failed" }
         go build -trimpath -ldflags $commonLDFlags -o (Join-Path $stage "scriptboard-broker.exe") ./cmd/scriptboard-broker
         if ($LASTEXITCODE -ne 0) { throw "Building Windows $arch privileged Broker failed" }
-        go build -trimpath -ldflags $commonLDFlags -o (Join-Path $stage "scriptboard-ai-host.exe") ./cmd/scriptboard-ai-host
-        if ($LASTEXITCODE -ne 0) { throw "Building Windows $arch AI Runtime Host failed" }
         go build -trimpath -ldflags $commonLDFlags -o (Join-Path $stage "scriptboard-runner.exe") ./cmd/scriptboard-runner
         if ($LASTEXITCODE -ne 0) { throw "Building Windows $arch Runner Host failed" }
         go build -trimpath -ldflags "$commonLDFlags -H=windowsgui" -o (Join-Path $stage "scriptboard-tray.exe") ./cmd/scriptboard-tray
@@ -181,8 +179,6 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Building Linux $arch service failed" }
         go build -trimpath -ldflags $commonLDFlags -o (Join-Path $stage "scriptboard-broker") ./cmd/scriptboard-broker
         if ($LASTEXITCODE -ne 0) { throw "Building Linux $arch privileged Broker failed" }
-        go build -trimpath -ldflags $commonLDFlags -o (Join-Path $stage "scriptboard-ai-host") ./cmd/scriptboard-ai-host
-        if ($LASTEXITCODE -ne 0) { throw "Building Linux $arch AI Runtime Host failed" }
         go build -trimpath -ldflags $commonLDFlags -o (Join-Path $stage "scriptboard-runner") ./cmd/scriptboard-runner
         if ($LASTEXITCODE -ne 0) { throw "Building Linux $arch Runner Host failed" }
         go build -trimpath -ldflags $commonLDFlags -o (Join-Path $stage "scriptboard-updater") ./cmd/scriptboard-updater
@@ -202,8 +198,6 @@ try {
         # the caller's host target before PowerShell tries to execute them.
         $env:GOOS = $originalGOOS
         $env:GOARCH = $originalGOARCH
-        & (Join-Path $PSScriptRoot "build-assistant-runtime.ps1") -ScriptBoardVersion $Version -Output $Output
-        if ($LASTEXITCODE -ne 0) { throw "Building signed assistant Runtime assets failed" }
     }
 
     Get-ChildItem -LiteralPath $outputRoot -File | Sort-Object Name | ForEach-Object {

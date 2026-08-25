@@ -20,7 +20,7 @@ ScriptBoard is built for personal servers, small-team utility hosts, and interna
 - **Reuse tasks:** save scripts as Quick Runs with parameters, variables, timeouts, and five-field Cron schedules.
 - **Observe the host:** inspect CPU, memory, storage, applications, Docker, Kubernetes, websites, and run history.
 - **Manage data connections:** back up and restore MySQL/MariaDB; inspect Redis health, key types, TTLs, and memory without mutation.
-- **Keep boundaries visible:** use fixed roles, audit records, host-security checks, bounded external triggers, signed updates, and an optional AI assistant.
+- **Keep boundaries visible:** use fixed roles, audit records, host-security checks, bounded external triggers, and signed updates.
 
 <p align="center">
   <img src="./docs/images/readme/files-en.png" alt="ScriptBoard Host Files" width="49%">
@@ -120,10 +120,6 @@ MySQL, Redis, Kubernetes, website, and model endpoints preserve the secure and p
 | Viewer | Read-only monitoring and history |
 
 Roles apply to the whole instance. Custom roles and per-script permissions are not currently supported.
-
-### AI assistant
-
-AI is disabled by default. An Administrator can install the Pi Runtime matching this ScriptBoard version, then configure OpenAI, Anthropic, or an OpenAI-compatible provider. Only conversation content and resources explicitly referenced by the user are sent to the selected provider. Review its pricing, privacy, and data-residency terms first.
 
 ## Network and configuration
 

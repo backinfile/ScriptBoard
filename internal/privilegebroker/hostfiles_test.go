@@ -155,7 +155,6 @@ func TestHostFilesProtocolRejectsGenericAndUnrelatedFields(t *testing.T) {
 		SessionToken: strings.Repeat("s", 32), HostFiles: &hostFilesWireRequest{Path: filepath.Clean(t.TempDir()), Limit: hostFilesPageSize}}
 	requests := []wireRequest{
 		func() wireRequest { value := valid; value.Parameters = json.RawMessage(`{"path":"no"}`); return value }(),
-		func() wireRequest { value := valid; value.ProviderID = "credential-domain"; return value }(),
 		func() wireRequest { value := valid; value.MySQL = &mysqlWireRequest{}; return value }(),
 		func() wireRequest { value := valid; value.SessionToken = ""; return value }(),
 		func() wireRequest { value := valid; value.HostFiles.Limit = hostFilesPageSize + 1; return value }(),

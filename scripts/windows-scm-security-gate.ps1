@@ -34,7 +34,7 @@ $brokerSecrets = Join-Path $gateRoot "broker-secrets"
 $relayTokenPath = Join-Path $brokerSecrets "mail-relay-token"
 $windowsTemp = [IO.Path]::GetFullPath((Join-Path $env:windir "Temp"))
 $runWorkRoot = Join-Path $windowsTemp ("scriptboard-scm-gate-" + [Guid]::NewGuid().ToString("N"))
-$serviceNames = @("ScriptBoard", "ScriptBoardBroker", "ScriptBoardRunner", "ScriptBoardAI")
+$serviceNames = @("ScriptBoard", "ScriptBoardBroker", "ScriptBoardRunner")
 $installed = $false
 $gateStartedAt = Get-Date
 
@@ -183,7 +183,6 @@ try {
         @{ Name = "scriptboard.exe"; Package = "./cmd/scriptboard"; GUI = $false },
         @{ Name = "scriptboard-broker.exe"; Package = "./cmd/scriptboard-broker"; GUI = $false },
         @{ Name = "scriptboard-runner.exe"; Package = "./cmd/scriptboard-runner"; GUI = $false },
-        @{ Name = "scriptboard-ai-host.exe"; Package = "./cmd/scriptboard-ai-host"; GUI = $false },
         @{ Name = "scriptboard-updater.exe"; Package = "./cmd/scriptboard-updater"; GUI = $false },
         @{ Name = "scriptboard-tray.exe"; Package = "./cmd/scriptboard-tray"; GUI = $true },
         @{ Name = "scriptboard-tray-launcher.exe"; Package = "./cmd/scriptboard-tray-launcher"; GUI = $true }
@@ -234,7 +233,6 @@ notification_email_recipient: 'security@example.invalid'
     Assert-ServiceDefinition "ScriptBoard" "NT AUTHORITY\LocalService" "Auto"
     Assert-ServiceDefinition "ScriptBoardBroker" "LocalSystem" "Auto"
     Assert-ServiceDefinition "ScriptBoardRunner" "LocalSystem" "Manual"
-    Assert-ServiceDefinition "ScriptBoardAI" "NT AUTHORITY\LocalService" "Manual"
 
     Write-Host ("STATE_ROOT_ACL: " + (Get-Acl -LiteralPath $stateRoot).Sddl)
     Write-Host ("EXTERNAL_SECRETS_ACL: " + (Get-Acl -LiteralPath (Join-Path $gateRoot "secrets")).Sddl)
@@ -250,7 +248,6 @@ notification_email_recipient: 'security@example.invalid'
     $web = Wait-ServiceState "ScriptBoard" "Running"
     $broker = Wait-ServiceState "ScriptBoardBroker" "Running"
     Wait-ServiceState "ScriptBoardRunner" "Stopped" | Out-Null
-    Wait-ServiceState "ScriptBoardAI" "Stopped" | Out-Null
     $deadline = [DateTime]::UtcNow.AddSeconds(45)
     do {
         try { $response = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/login" -TimeoutSec 2 } catch { $response = $null }
@@ -320,22 +317,19 @@ notification_email_recipient: 'security@example.invalid'
         # Runtime hosts report startup failures to the Application log because
         # SCM services do not own a dependable stderr stream.
         Get-WinEvent -FilterHashtable @{ LogName = "Application"; StartTime = $gateStartedAt } -MaxEvents 200 -ErrorAction SilentlyContinue |
-            Where-Object ProviderName -In @("ScriptBoardRunner", "ScriptBoardAI") |
+            Where-Object ProviderName -In @("ScriptBoardRunner") |
             Select-Object TimeCreated, ProviderName, Id, LevelDisplayName, Message |
             Format-List | Out-String | Write-Warning
         throw "Web could not demand-start Runner and complete a managed Run"
     }
 
-    Start-Service -Name "ScriptBoardAI"
-    $ai = Wait-ServiceState "ScriptBoardAI" "Running"
     Assert-PipeDenied (Wait-Pipe "scriptboard-runner-*")
-    Assert-PipeDenied (Wait-Pipe "scriptboard-ai-runtime-*")
 
     $webSID = Get-ServiceSID "ScriptBoard"
     Assert-PrivateBrokerPath $brokerSecrets $webSID
     Assert-PrivateBrokerPath $relayTokenPath $webSID
 
-    foreach ($running in @($web, $broker, $runner, $ai)) {
+    foreach ($running in @($web, $broker, $runner)) {
         Stop-Process -Id $running.ProcessId -Force
         Wait-NewServiceProcess $running.Name $running.ProcessId | Out-Null
     }

@@ -121,7 +121,6 @@ func TestRunsPageFiltersByQuickRunID(t *testing.T) {
 		}
 	}
 	insert("matching_admin", "admin/quick-run", "quick-run-1")
-	insert("matching_assistant", "assistant/quick-run", "quick-run-1")
 	insert("matching_legacy", "quick_run", "quick-run-1")
 	insert("different_quick_run", "admin/quick-run", "quick-run-2")
 	insert("same_id_schedule", "scheduler", "quick-run-1")
@@ -141,7 +140,6 @@ func TestRunsPageFiltersByQuickRunID(t *testing.T) {
 		`name="quick_run_id" value="quick-run-1"`,
 		`data-quick-run-filter-name="Deploy production"`,
 		`matching_admin`,
-		`matching_assistant`,
 		`matching_legacy`,
 	} {
 		if !strings.Contains(html, marker) {

@@ -377,8 +377,6 @@ stateDiagram-v2
 - AuditEvent(occurred_at DESC), AuditEvent(action, occurred_at)
 - TrashEntry(original_path_key), TrashEntry(deleted_at)
 - FileOperation(phase, updated_at), FileOperation(source_path_key), FileOperation(destination_path_key)
-- AssistantModel(is_default), AssistantConversation(owner_user_id, archived_at, updated_at), AssistantMessage(conversation_id, sequence)
-- AssistantToolCall(conversation_id, started_at), AssistantApproval(conversation_id, status, expires_at)
 
 ## 7. 文件布局
 
@@ -428,7 +426,6 @@ install-root/
     RELEASE.json
     scriptboard[.exe]
     scriptboard-broker[.exe]       # 固定主机写动作的独立特权进程
-    scriptboard-ai-host[.exe]      # 独立身份运行 Pi 的受限 Runtime Host
     scriptboard-runner[.exe]       # 复核摘要并按配置身份执行 Run 的 Worker
     scriptboard-updater[.exe]
     ...                            # 对应平台完整 Release 内容
@@ -442,9 +439,9 @@ State Root 中的 Web-owned 数据修改权限。特权 Broker 分别保留 root
 本机 IPC 接受该 Web 服务身份；Broker-owned 外部密钥、`broker-secrets` 与 Host Files 不向 Web
 授予读取权限。Run 由独立 Runner 服务执行，默认使用 root/LocalSystem；配置
 `runner_identity_mode: isolated` 时改用独立受限 Runner 身份与额外网络/系统调用边界。
-Assistant 由独立受限 AI Host 身份执行。Linux 使用 systemd 地址，Windows 使用 demand-start
-服务 ACL；AI Host 以及 isolated Runner 使用 seccomp 或 Windows Service Hardening。四组件版本、
-摘要和 IPC 协议由同一 Installed Release 绑定。
+Linux Runner 使用 systemd socket activation，Windows Runner 使用 demand-start 服务 ACL；
+isolated Runner 使用 seccomp 或 Windows Service Hardening。三个组件的版本、摘要和 IPC 协议
+由同一 Installed Release 绑定。
 
 Update Operation 是文件系统持久化事务，不写入 SQLite 作为事实来源，以便数据库本身被恢复时仍能继续判断更新阶段。终态结果由应用在正常启动后幂等导入审计一次。
 
@@ -515,96 +512,6 @@ Custom Dashboard 的 HTTP 数据源继续允许保存 `Authorization`、`Cookie`
 设置 `source_expired=1`、清空审计引用并删除审计条目。文件删除失败时三个数据库
 变更均不得发生。RunLogManifest 的 90 天/容量清理不处理源码文件。
 
-## 10. AI Assistant
-
-schema 21 在 schema 20 主机文件基线上增加 Assistant 自有表；schema 24 在兼容的
-schema 21–23 上增加 Conversation Profile、Session Telemetry 与模型图片输入事实。
-迁移在同一事务内补列、建索引并更新 `user_version`；早于 20 或高于当前版本的状态库
-仍在任何写入前拒绝。
-
-| 实体 | 关键字段与语义 |
-| --- | --- |
-| AssistantSettings | 单例；功能启用、最大活动对话数、新对话自动审批默认值、更新者和时间 |
-| AssistantModel | 名称、Provider、模型 ID、HTTPS/回环 Endpoint、凭据已配置事实、`supports_images` 管理员声明、唯一默认项；不保存 API Key |
-| AssistantConversation | 所有者、标题、必选模型、审批模式、Pi session 相对标识、Runtime 版本、Conversation Profile 与版本、思考级别、Session Telemetry、状态、revision、归档时间 |
-| AssistantMessage | 对话内稳定 sequence、user/assistant、正文、streaming/complete/interrupted/error 与完成时间 |
-| AssistantContextRef | 对话、资源种类、稳定 ID、安全标签和展示顺序；不复制文件或日志正文 |
-| AssistantToolCall | 工具名、目标/参数摘要、状态、稳定错误码、结果摘要、时间，以及对话内可检查的有界调用/返回 JSON；调用 JSON 不含 capability 或 Provider 凭据 |
-| AssistantApproval | 工具调用、参数摘要、pending/approved/rejected/expired/cancelled、过期时间和决定者 |
-
-AssistantConversation 只能由 `owner_user_id` 对应用户列出、读取、订阅和修改。每个对话
-同一时间最多存在一个 streaming assistant message；服务启动时，仍为 running 或
-waiting_approval 的对话及消息原位转为 interrupted，不创建重放任务。归档只设置时间，
-不会级联删除消息、资源引用或 Pi session。
-
-提交消息时，用户消息、streaming assistant message、conversation running 状态和该次
-完整资源引用集合在一个事务内写入；遗漏的旧引用会被移除。每个 Agent Turn 随后重新校验
-引用权限并生成有界快照。目录只包含逻辑名称与最多 48 个直接子项元数据；明确引用的普通
-UTF-8 文本文件最多附带 16 KiB 正文并记录 SHA-256，不把宿主绝对路径送入 Prompt。
-明确引用的 PNG、JPEG 或 WebP 在当前角色重新授权后进入 Safe Raster Processor；输入
-最多 10 MiB/40 MP，输出最长边 2048、单图最多 4 MiB、每次最多四图，只在内存中保存
-重新编码后的 base64。原图、EXIF、GPS 和处理后图片均不持久化到 Assistant 表、审计或日志。
-
-Provider API Key 按 AssistantModel ID 保存到
-`state-root/secrets/assistant-provider.json`，使用私有权限与同目录原子替换；它不进入
-SQLite、HTML、审计、SSE 或普通日志。删除仍被对话引用的模型受外键和领域检查共同拒绝。
-
-```text
-state-root/
-  secrets/
-    assistant-provider.json
-  assistant/
-    runtime/
-      active.json
-      versions/<version>/
-        pi[.exe]
-        scriptboard-extension.ts     # 正式签名 Runtime 的唯一固定 Extension
-        capabilities.json            # 版本、大小和 SHA-256 固定的能力清单
-        playbooks/*.md                # 由清单显式列出的 Operational Playbook
-        runtime.json                 # Pi/RPC/Broker 合同和上游 commit
-        LICENSE
-    pi-home/<user-id>/<conversation-id>/
-      models.json                    # 只引用会话 Provider capability，不含上游 Endpoint 或实际 API Key
-    sessions/<user-id>/<conversation-id>/
-    workspaces/<user-id>/<conversation-id>/
-```
-
-所有 Assistant 目录都属于 State Root 受保护范围，不显示为 Host Entry。活动 Runtime
-解析只接受 `active.json` 指向自身版本目录内的普通文件，绝不查询 PATH 或用户 Pi 目录。
-私有 session 目录已有非空 JSONL 时，下一次受管进程使用 `--continue` 恢复；每个 Turn
-开始前仍通过 RPC `set_model` 重选该对话当前模型，避免保温进程沿用过期模型。
-非通用 Conversation Profile 必须能在活动 Runtime 的 Capability Bundle 中解析出完全匹配
-的版本；缺失、摘要不符或路径越界时拒绝本次 Turn，不回退到用户级 Skill。每个 Turn 还会
-重设思考级别和自动压缩/重试策略；settled 后把 Pi session stats 写回 Conversation，手动
-压缩只允许空闲的活动 session。
-
-Tool Broker 使用每个受管 Pi 进程独有的 Named Pipe/Unix Socket 与 256-bit capability。
-capability 不持久化；AssistantToolCall 记录规范参数、目标、有界结果摘要，以及不含
-capability 和 Provider 凭据的有界调用/返回 JSON，
-AssistantApproval 绑定用户、角色、授权版本、对话、Tool Call、参数和目标当前状态。
-服务重启把尚未完成的工具标记为 interrupted，并取消 pending/approved 的状态修改。
-
-Provider 凭据 JSON 先由统一 credential store 以用途绑定的 AES-GCM 密封，再写入 State
-Root；其主密钥在 State Root 同级受保护目录，Windows key blob 使用机器级 DPAPI，Unix
-key 文件仅允许服务身份/root。旧明文 `assistant-provider.json` 在启动时原子迁移并删除。
-
-每个受管 Pi 进程同时获得独立的环回 Provider 代理和 256-bit capability。代理在 Web
-进程内持有实际 Provider Endpoint 与 API Key，只接受绑定模型对应的固定推理 POST 路径，
-禁止重定向并复用共享出站策略；Pi 的参数、环境和 `models.json` 不再包含上游 Endpoint
-或真实 API Key。代理随 Pi 进程退出或会话停止而关闭。该进程内边界不替代 P0-08 要求的
-独立 OS 身份、秘密目录 ACL 和 Runtime 网络默认拒绝；正式受管部署已经通过独立 AI Host
-落实这些边界，便携模式不提供同等级隔离。
-
-Windows 上每个 Pi 进程还进入独立 Job Object：最多一个活动进程，进程与作业内存各限
-1 GiB，累计用户态 CPU 限 15 分钟，并禁止桌面、显示设置、退出系统、全局 atom、句柄、
-剪贴板和系统参数 UI 能力；Job 句柄关闭时终止剩余进程。AI Host 本身使用 restricted
-service SID 与私有目录 ACL，Windows Service Hardening 默认拒绝非环回网络；Job Object
-只负责进程树资源与生命周期，不替代这些身份和网络边界。
-
-Evidence Query 仍走相同 Tool Broker 和实时角色授权。日志搜索、日志窗口、Run 对比、计划
-历史和审计列表都有结果条数与文本字节上限；继续读取使用带 HMAC、五分钟过期并绑定用户、
-对话、工具、目标和查询的不透明游标，不能跨查询或跨对话复用。
-
 ## 11. 文件快捷访问
 
 `file_quick_access_pins` 持久化当前实例的全局文件页固定目录，最多 30 项：
@@ -624,7 +531,7 @@ schema 27 增加 `external_trigger_keys`、`external_trigger_entries` 和 `exter
 
 schema 38 增加持久化单例 `external_trigger_control`，用于全局紧急暂停所有有效外部调用。schema 39 在 Entry 上增加 `require_signature`，并用 `external_trigger_nonces` 原子消费短期 nonce；nonce 按 Key 唯一并带过期时间。迁移的旧 Entry 默认保持 Bearer 兼容，新 Entry 默认要求 5 分钟时间戳、唯一 nonce 和 HMAC-SHA256 签名。schema 40 在 `sessions` 增加 `authentication_assurance` 和 `reauthenticated_at`；高风险声明式路由要求 10 分钟内的浏览器会话近期认证，未配置 MFA 时使用当前密码，已配置 TOTP 或 passkey 时使用第二因素。schema 41 在 `audit_events` 增加 `request_id` 与 `authentication_assurance`；新事件把两者纳入 v2 哈希，历史空字段事件继续按 v1 验证。schema 42 曾在 `users` 增加 `mfa_required_at`；schema 53 删除该字段及强制注册策略。schema 43 在 `audit_events` 增加 `resource_revision` 与 `resource_digest_sha256`；字段存在的事件使用 v3 哈希，Broker、Quick Run 和一次性 Run 从自己的领域事实填充。
 
-schema 44 收敛了并行开发期间重复使用 35–43 版本号的两条数据库历史：一条包含 Assistant reasoning、实例品牌、Registry 卡片与 Kubernetes/容器监控，另一条包含上述安全能力。迁移会检查实际表和列，并在事务中补齐缺失部分，因此任一 schema 20–43 前身都可前向升级；更早或更新的未知 schema 会拒绝启动并提示使用新的 State Root，而不会尝试猜测性修改数据。
+schema 44 收敛了并行开发期间重复使用 35–43 版本号的两条数据库历史：一条包含实例品牌、Registry 卡片与 Kubernetes/容器监控，另一条包含上述安全能力。迁移会检查实际表和列，并在事务中补齐缺失部分，因此任一 schema 20–43 前身都可前向升级；更早或更新的未知 schema 会拒绝启动并提示使用新的 State Root，而不会尝试猜测性修改数据。
 
 schema 45 增加 `custom_dashboard_registry_operations`。Registry 连接在 Broker 中 prepare 后，卡片配置和操作 ID 在同一 SQLite 事务提交；随后 Broker 幂等激活连接并删除操作行。启动时残留行会被重放，因此数据库不会把尚未激活的连接误报为已经完成，也不会把新 Endpoint 与旧密码组合使用。
 

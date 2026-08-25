@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	app "scriptboard/internal/web"
 	"scriptboard/internal/doctor"
+	app "scriptboard/internal/web"
 )
 
 func TestDoctorReportsHealthyDirectoriesAndSQLite(t *testing.T) {

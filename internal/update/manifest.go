@@ -20,7 +20,7 @@ const (
 	MaxSignatureBytes = 16 << 10
 	MaxArchiveBytes   = 256 << 20
 	MaxUnpackedBytes  = 512 << 20
-	// Keep extraction bounded while leaving headroom for the pinned Pi Runtime,
+	// Keep extraction bounded while leaving headroom for release metadata,
 	// whose upstream files plus ScriptBoard metadata currently total 260 entries.
 	MaxArchiveFileCount  = 512
 	SignatureAlgorithm   = "ed25519"

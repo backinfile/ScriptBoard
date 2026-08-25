@@ -26,14 +26,8 @@ func TestWindowsWebServiceIdentityIsNotHighlyPrivileged(t *testing.T) {
 	}
 }
 
-func TestWindowsAIRuntimeUsesSeparateServiceSID(t *testing.T) {
-	if strings.EqualFold(aiServiceSID, webServiceSID) || !strings.HasPrefix(strings.ToLower(aiServiceSID), `nt service\`) {
-		t.Fatalf("AI Runtime service SID is not separate: %q", aiServiceSID)
-	}
-}
-
 func TestWindowsRunnerUsesSeparateServiceSID(t *testing.T) {
-	if strings.EqualFold(runnerServiceSID, webServiceSID) || strings.EqualFold(runnerServiceSID, aiServiceSID) {
+	if strings.EqualFold(runnerServiceSID, webServiceSID) {
 		t.Fatalf("Runner service SID is not separate: %q", runnerServiceSID)
 	}
 }
@@ -61,21 +55,21 @@ func TestWindowsManagedWebRuntimeRequiresLowIdentityAndServiceSID(t *testing.T) 
 	}
 }
 
-func TestWindowsRunnerAndAIHostAreDemandStartServices(t *testing.T) {
+func TestWindowsRunnerIsDemandStartService(t *testing.T) {
 	source, err := os.ReadFile("service_windows.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(source)
-	if strings.Count(text, "StartType: mgr.StartManual") < 2 || strings.Count(text, "current.StartType = mgr.StartManual") < 2 {
-		t.Fatal("Windows Runner and AI Host are not both installed and upgraded as demand-start services")
+	if !strings.Contains(text, "StartType: mgr.StartManual") || !strings.Contains(text, "current.StartType = mgr.StartManual") {
+		t.Fatal("Windows Runner is not installed and upgraded as a demand-start service")
 	}
 	if !strings.Contains(text, "Dependencies: []string{brokerServiceName}") {
 		t.Fatal("managed Web must depend only on the resident Broker")
 	}
 	if !strings.Contains(text, "windows.SERVICE_START | windows.SERVICE_QUERY_STATUS") ||
-		!strings.Contains(text, "[]string{aiServiceName, runnerServiceName}") {
-		t.Fatal("managed Web is not granted narrow demand-start access to both isolated services")
+		!strings.Contains(text, "[]string{runnerServiceName}") {
+		t.Fatal("managed Web is not granted narrow demand-start access to the Runner service")
 	}
 	onDemandSource, err := os.ReadFile("ondemand_windows.go")
 	if err != nil {

@@ -91,7 +91,7 @@ func (mux *declaredRouteMux) register(pattern string, declared declaredRouteHand
 	maxBodyBytes := declared.maxBody
 	if method != http.MethodGet && method != http.MethodHead &&
 		maxBodyBytes == 0 && declared.auth != routeAuthExternal &&
-		path != "/resources/files/upload" && path != "/resources/files/upload-batch" && path != "/settings/ai/runtime/offline" {
+		path != "/resources/files/upload" && path != "/resources/files/upload-batch" {
 		maxBodyBytes = maxFormRequestBytes
 	}
 	spec := RouteSpec{

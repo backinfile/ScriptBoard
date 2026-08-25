@@ -54,7 +54,7 @@ func validateObservabilityRequest(request wireRequest) error {
 	}
 	if request.SessionToken != "" || request.Capability != "" || request.Action != "" || request.Resource != "" || request.Revision != "" ||
 		request.ParametersSHA256 != "" || len(request.Parameters) != 0 || hasMFAFields(request) || hasPasskeyFields(request) ||
-		hasRemoteWebsiteFields(request) || hasProviderFields(request) || request.MySQL != nil || request.Redis != nil || request.HostFiles != nil ||
+		hasRemoteWebsiteFields(request) || request.MySQL != nil || request.Redis != nil || request.HostFiles != nil ||
 		request.StateBackup != nil || request.Registry != nil || request.Runtime != nil || request.Kubeconfig != nil {
 		return errors.New("observability request contains unrelated fields")
 	}

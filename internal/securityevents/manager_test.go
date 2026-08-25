@@ -166,10 +166,6 @@ func TestRunTemplateOnlyAcceptsTerminalRunAudit(t *testing.T) {
 	if run == nil || run.Template != "run-result-v1" || run.Severity != "high" {
 		t.Fatalf("run notification=%#v", run)
 	}
-	runtimeFailure := NotificationFor(auditlog.CommittedEvent{Event: auditlog.Event{Action: "assistant_runtime_install", Target: "runtime", Result: "failed"}})
-	if runtimeFailure == nil || runtimeFailure.Template != "security-alert-v1" {
-		t.Fatalf("runtime failure was misclassified: %#v", runtimeFailure)
-	}
 }
 
 func TestNotificationOnlyEmailChannelSendsFixedTemplateAndRecipient(t *testing.T) {

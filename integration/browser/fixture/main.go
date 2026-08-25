@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"scriptboard/internal/appstatus"
-	"scriptboard/internal/assistant/runtimehost"
 	"scriptboard/internal/hostfiles"
 	"scriptboard/internal/logstream"
 	"scriptboard/internal/mysqlmanager"
@@ -198,10 +197,6 @@ func main() {
 		if endpointErr != nil {
 			panic(endpointErr)
 		}
-		assistantEndpoint, endpointErr := runtimehost.DefaultEndpoint(stateRoot)
-		if endpointErr != nil {
-			panic(endpointErr)
-		}
 		runnerEndpoint, endpointErr := runnerhost.DefaultEndpoint(stateRoot)
 		if endpointErr != nil {
 			panic(endpointErr)
@@ -211,12 +206,10 @@ func main() {
 		applicationConfig.AuditCheckpoint = privilegebroker.NewRemoteCheckpoint(brokerClient)
 		applicationConfig.MFAStore = privilegebroker.NewRemoteMFA(brokerClient)
 		applicationConfig.PasskeyStore = privilegebroker.NewRemotePasskey(brokerClient)
-		applicationConfig.ProviderCredentials = privilegebroker.NewProviderCredentials(brokerClient)
 		applicationConfig.MySQLBackend = privilegebroker.NewMySQLBackend(brokerClient, mysqlmanager.ToolSettings{DumpExecutable: "mysqldump", ClientExecutable: "mysql"})
 		applicationConfig.RedisBackend = privilegebroker.NewRedisBackend(brokerClient)
 		applicationConfig.HostFilesBackend = privilegebroker.NewHostFilesBackend(brokerClient, filepath.Join(stateRoot, "inbox", "host-files-broker"))
 		applicationConfig.StateBackups = privilegebroker.NewStateBackups(brokerClient)
-		applicationConfig.AssistantProcessLauncher = runtimehost.NewClientLauncher(runtimehost.Dial(assistantEndpoint))
 		applicationConfig.RunnerProcessLauncher = runnerhost.NewClientLauncher(runnerhost.Dial(runnerEndpoint))
 	}
 

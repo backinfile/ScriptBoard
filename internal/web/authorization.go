@@ -118,7 +118,6 @@ func stepUpReturnTarget(request *http.Request) string {
 		{"/monitor/security", "/monitor/security"},
 		{"/settings/updates", "/settings/updates"},
 		{"/settings/state-backups", "/settings/state-backups"},
-		{"/settings/ai", "/settings/ai"},
 		{"/resources/databases", "/resources/databases"},
 		{"/resources/inbox", "/resources/inbox"},
 		{"/resources/files", "/resources/files"},

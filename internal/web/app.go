@@ -37,11 +37,6 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	"golang.org/x/crypto/argon2"
 	"scriptboard/internal/appstatus"
-	"scriptboard/internal/assistant"
-	"scriptboard/internal/assistant/pirpc"
-	"scriptboard/internal/assistant/raster"
-	"scriptboard/internal/assistant/runtimeinstall"
-	"scriptboard/internal/assistant/toolbroker"
 	auditdomain "scriptboard/internal/audit"
 	"scriptboard/internal/auditcheckpoint"
 	"scriptboard/internal/auditlog"
@@ -83,18 +78,17 @@ const initialPasswordFilename = "initial-admin-password"
 const currentSchemaVersion = buildinfo.DatabaseSchemaVersion
 
 const (
-	passwordMemory                         uint32 = 64 * 1024
-	passwordIterations                     uint32 = 3
-	passwordParallelism                    uint8  = 2
-	passwordSaltLength                            = 16
-	passwordKeyLength                             = 32
-	maxPasswordBytes                              = 256
-	maxLoginRequestBytes                   int64  = 16 << 10
-	maxLocaleRequestBytes                  int64  = 4 << 10
-	maxFormRequestBytes                    int64  = 8 << 20
-	maxAssistantRuntimeOfflineRequestBytes int64  = runtimeinstall.MaxArchiveBytes + runtimeinstall.MaxManifestBytes + runtimeinstall.MaxSignatureBytes + (1 << 20)
-	loginRateBucketCount                          = 1 << 14
-	maxLoginFailureEntries                        = 2 * loginRateBucketCount
+	passwordMemory         uint32 = 64 * 1024
+	passwordIterations     uint32 = 3
+	passwordParallelism    uint8  = 2
+	passwordSaltLength            = 16
+	passwordKeyLength             = 32
+	maxPasswordBytes              = 256
+	maxLoginRequestBytes   int64  = 16 << 10
+	maxLocaleRequestBytes  int64  = 4 << 10
+	maxFormRequestBytes    int64  = 8 << 20
+	loginRateBucketCount          = 1 << 14
+	maxLoginFailureEntries        = 2 * loginRateBucketCount
 )
 
 const dummyPasswordHash = "$argon2id$v=19$m=65536,t=3,p=2$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -394,18 +388,15 @@ type Config struct {
 	ApplicationProbe                appstatus.Probe
 	KubernetesFactory               clusterstatus.Factory
 	KubeconfigManager               kubeconfigmanager.Manager
-	AssistantRuntimeSource          runtimeinstall.Source
 	HostSecurity                    hostsecurity.Service
 	ServiceLogs                     servicelogs.Reader
 	PrivilegedBrokerEndpoint        string
-	AssistantProcessLauncher        pirpc.ProcessLauncher
 	RunnerProcessLauncher           runmanager.ProcessLauncher
 	AuditCheckpoint                 AuditCheckpoint
 	MFAStore                        MFAStore
 	PasskeyStore                    PasskeyStore
 	RegistryConnections             customdashboard.RegistryConnections
 	RegistryDockerDaemonConfigPath  string
-	ProviderCredentials             *privilegebroker.ProviderCredentials
 	MySQLBackend                    mysqlmanager.Backend
 	RedisBackend                    redismanager.Backend
 	HostFilesBackend                *privilegebroker.HostFilesBackend
@@ -503,12 +494,6 @@ func deletePasskeyWithContext(ctx context.Context, store PasskeyStore, userID, c
 type App struct {
 	db                    *sql.DB
 	stateRoot             string
-	assistant             *assistant.Service
-	assistantRuntime      *assistantRuntimeCoordinator
-	assistantRuntimes     *runtimeinstall.Manager
-	assistantTools        *assistantToolExecutor
-	assistantRaster       *raster.Processor
-	assistantBroker       *toolbroker.Broker
 	files                 *hostfiles.Manager
 	hostFilesBackend      *privilegebroker.HostFilesBackend
 	auditLog              *auditlog.Store
@@ -778,49 +763,6 @@ func Open(config Config) (*App, error) {
 		return nil, fmt.Errorf("protect MySQL backup root: %w", err)
 	}
 	application.mysqlContext, application.mysqlCancel = context.WithCancel(context.Background())
-	assistantOptions := assistant.Options{StateRoot: stateRoot, SecretStore: credentialStore}
-	if config.ProviderCredentials != nil {
-		assistantOptions.ProviderCredentials = config.ProviderCredentials
-	}
-	application.assistant, err = assistant.New(db, assistantOptions)
-	if err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("initialize assistant module: %w", err)
-	}
-	application.assistantRaster = raster.New(2)
-	if !validating {
-		if _, err := application.assistant.RecoverInterruptedTurns(context.Background()); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("recover assistant turns: %w", err)
-		}
-	}
-	assistantSettings, err := application.assistant.Settings(context.Background())
-	if err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("load assistant settings: %w", err)
-	}
-	application.assistantRuntime = newAssistantRuntimeCoordinatorWithLauncher(stateRoot, application.assistant, assistantSettings.MaxActiveConversations, config.AssistantProcessLauncher)
-	if config.ProviderCredentials != nil {
-		application.assistantRuntime.SetProviderSessions(brokerAssistantProviderSessions{providers: config.ProviderCredentials})
-	}
-	application.assistantRuntime.SetApprovalAudit(func(actor assistant.Actor, conversationID, approvalID, result string) {
-		var role identity.Role
-		_ = application.db.QueryRow("SELECT role FROM users WHERE id = ?", actor.UserID).Scan(&role)
-		action := "assistant_tool_approval"
-		application.recordAuditWithActor(action, fmt.Sprintf("conversation=%s approval=%s", conversationID, approvalID), result, "assistant", actor.UserID, actor.Username, role)
-	})
-	runtimeSource := config.AssistantRuntimeSource
-	if runtimeSource == nil {
-		runtimeSource = runtimeinstall.NewGitHubSource()
-	}
-	currentBuild := buildinfo.Current()
-	application.assistantRuntimes = runtimeinstall.NewManager(runtimeinstall.Config{
-		StateRoot:     stateRoot,
-		Compatibility: runtimeinstall.Compatibility{ScriptBoardVersion: currentBuild.Version, ScriptBoardTag: currentBuild.Tag},
-		Source:        runtimeSource,
-		SwitchGuard:   application.assistantRuntime.CanSwitchRuntime,
-		Protected:     application.assistant.ReferencedRuntimeVersions,
-	})
 	application.fileOperations = newSQLiteFileOperationStore(db)
 	if application.hostFilesBackend == nil {
 		application.fileMoves = hostfiles.NewMoveEngine(files, application.fileOperations)
@@ -988,21 +930,6 @@ func Open(config Config) (*App, error) {
 	if application.kubeconfigs == nil {
 		application.kubeconfigs = kubeconfigmanager.DirectManager{}
 	}
-	application.assistantTools = newAssistantToolExecutor(application)
-	application.assistantRuntime.SetTurnSettled(application.assistantTools.releaseTurn)
-	application.assistantBroker, err = toolbroker.New(stateRoot, application.assistantTools)
-	if err != nil {
-		application.kubernetesStatus.Close()
-		application.customDashboards.Close()
-		application.websiteMonitor.Close()
-		application.applicationStatus.Close()
-		application.hostStatus.Close()
-		application.scheduler.Close()
-		application.runs.Close()
-		_ = db.Close()
-		return nil, fmt.Errorf("initialize Assistant Tool Broker: %w", err)
-	}
-	application.assistantRuntime.SetBroker(application.assistantBroker)
 	if !validating {
 		application.hostStatus.Start(context.Background())
 		application.fleetStatus.Start(context.Background())
@@ -1546,14 +1473,6 @@ func (a *App) Close() error {
 	if a.mysqlCancel != nil {
 		a.mysqlCancel()
 		a.mysqlWG.Wait()
-	}
-	if a.assistantRuntime != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = a.assistantRuntime.Close(ctx)
-		cancel()
-	}
-	if a.assistantBroker != nil {
-		_ = a.assistantBroker.Close()
 	}
 	if a.fileOperationStop != nil {
 		a.fileOperationStop()
@@ -2560,7 +2479,6 @@ func (a *App) createSchedule(response http.ResponseWriter, request *http.Request
 		return
 	}
 	a.recordAuditForRequest(request, "create_schedule", id, "succeeded")
-	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/config/schedules", http.StatusSeeOther)
 }
 
@@ -2644,7 +2562,6 @@ func (a *App) runScheduleNow(response http.ResponseWriter, request *http.Request
 		return
 	}
 	a.recordAuditForRequest(request, "run_schedule_now", request.PathValue("id"), "accepted")
-	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/history/runs/"+url.PathEscape(id), http.StatusSeeOther)
 }
 
@@ -2768,7 +2685,6 @@ func (a *App) saveQuickRun(response http.ResponseWriter, request *http.Request) 
 		return
 	}
 	a.recordQuickRunAuditForRequest(request, "create_quick_run", id, "succeeded")
-	response.Header().Set(assistantResourceIDHeader, id)
 	destination := "/config/quick-runs"
 	if request.Header.Get("X-ScriptBoard-Navigation") == "pjax" {
 		destination = "/history/runs/" + url.PathEscape(source.ID)
@@ -2829,7 +2745,6 @@ func (a *App) createQuickRunFromFile(response http.ResponseWriter, request *http
 		return
 	}
 	a.recordQuickRunAuditForRequest(request, "create_quick_run", id, "succeeded")
-	response.Header().Set(assistantResourceIDHeader, id)
 	destination := "/config/quick-runs"
 	if request.Header.Get("X-ScriptBoard-Navigation") == "pjax" {
 		if returnTo := safeFilesReturnTo(request.FormValue("return_to")); returnTo != "" {
@@ -2998,7 +2913,6 @@ func (a *App) startQuickRun(response http.ResponseWriter, request *http.Request)
 		return
 	}
 	a.recordQuickRunAuditForRequest(request, "start_quick_run", quick.ID, "accepted")
-	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/history/runs/"+url.PathEscape(id), http.StatusSeeOther)
 }
 
@@ -3481,7 +3395,6 @@ func (a *App) startRun(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	a.recordAuditResourceForRequest(request, "start_run", id, "accepted", "", script.Digest)
-	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/history/runs/"+url.PathEscape(id), http.StatusSeeOther)
 }
 
@@ -3549,7 +3462,7 @@ func (a *App) runDetails(response http.ResponseWriter, request *http.Request) {
 
 func (a *App) runQuickRunSource(_ context.Context, run runmanager.Run, _ webLocale) (string, string) {
 	switch run.SourceType {
-	case "admin/quick-run", "assistant/quick-run", "external/quick-run":
+	case "admin/quick-run", "external/quick-run":
 		return run.SourceName, "/config/quick-runs"
 	default:
 		return "", ""
@@ -4157,7 +4070,6 @@ func (a *App) saveText(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	a.recordAuditForRequest(request, "edit_text", relative, "succeeded")
-	response.Header().Set(assistantResourceIDHeader, id)
 	parent, _ := hostPathParent(relative)
 	http.Redirect(response, request, filesURL(parent), http.StatusSeeOther)
 }
@@ -4294,7 +4206,6 @@ func (a *App) deleteFile(response http.ResponseWriter, request *http.Request) {
 		return
 	}
 	a.recordAuditForRequest(request, "trash_entry", trashed.OriginalPath, "succeeded")
-	response.Header().Set(assistantResourceIDHeader, id)
 	http.Redirect(response, request, "/resources/trash", http.StatusSeeOther)
 }
 

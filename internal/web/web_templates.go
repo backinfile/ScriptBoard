@@ -21,8 +21,6 @@ func newSettingsNavigation(current session, locale webLocale, active string) set
 // preserving the single-binary deployment provided by go:embed.
 var (
 	accountTemplate                   = mustWebTemplate("account")
-	assistantTemplate                 = mustWebTemplate("assistant")
-	assistantSettingsTemplate         = mustWebTemplate("assistant-settings")
 	applicationErrorTemplate          = mustWebTemplate("application-error")
 	applicationShellTemplate          = mustWebTemplate("application-shell")
 	applicationsTemplate              = mustWebTemplate("applications")

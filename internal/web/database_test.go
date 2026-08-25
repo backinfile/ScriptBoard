@@ -16,7 +16,6 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"scriptboard/internal/assistant"
 	"scriptboard/internal/hostfiles"
 )
 
@@ -166,7 +165,7 @@ func TestOpenDatabaseCreatesFixedRoleUserSchema(t *testing.T) {
 	if adminTable != 0 {
 		t.Fatal("legacy admin table should not exist")
 	}
-	for _, table := range []string{"file_operations", "file_quick_access_pins", "trash_entries", "assistant_settings", "assistant_models", "assistant_conversations", "assistant_messages", "external_trigger_keys", "external_trigger_entries", "external_trigger_requests", "application_versions", "kubernetes_connection", "kubernetes_versions", "kubernetes_metric_minutes"} {
+	for _, table := range []string{"file_operations", "file_quick_access_pins", "trash_entries", "external_trigger_keys", "external_trigger_entries", "external_trigger_requests", "application_versions", "kubernetes_connection", "kubernetes_versions", "kubernetes_metric_minutes"} {
 		var count int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil || count != 1 {
 			t.Fatalf("required schema table %q is missing: count=%d error=%v", table, count, err)
@@ -254,23 +253,13 @@ func TestOpenDatabaseMigratesSchema28QuickAccessPinsToGlobalScope(t *testing.T) 
 	}
 }
 
-func TestOpenDatabaseMigratesSchema20ToAssistantSchema23(t *testing.T) {
+func TestOpenDatabaseKeepsLegacyAssistantSchemaUpgradeCompatible(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "app.db")
 	db, err := openDatabase(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO users
-		(id, username, password_hash, role, enabled, auth_version, created_at, updated_at)
-		VALUES ('preserved-admin', 'preserved', 'hash', 'administrator', 1, 1, 1, 1)`); err != nil {
-		t.Fatal(err)
-	}
-	for _, table := range []string{"assistant_approvals", "assistant_tool_calls", "assistant_context_refs", "assistant_messages", "assistant_conversations", "assistant_models", "assistant_settings"} {
-		if _, err := db.Exec("DROP TABLE " + table); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := db.Exec("PRAGMA user_version=20; PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+	if _, err := db.Exec(`CREATE TABLE assistant_models (id TEXT PRIMARY KEY); PRAGMA user_version=43; PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
@@ -279,245 +268,14 @@ func TestOpenDatabaseMigratesSchema20ToAssistantSchema23(t *testing.T) {
 
 	migrated, err := openDatabase(path)
 	if err != nil {
-		t.Fatalf("migrate schema 20: %v", err)
+		t.Fatalf("upgrade database containing retired Assistant schema: %v", err)
 	}
 	defer migrated.Close()
-	var version int
-	if err := migrated.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != currentSchemaVersion {
-		t.Fatalf("version = %d, error = %v", version, err)
-	}
-	var username string
-	if err := migrated.QueryRow("SELECT username FROM users WHERE id = 'preserved-admin'").Scan(&username); err != nil || username != "preserved" {
-		t.Fatalf("preserved user = %q, error = %v", username, err)
-	}
-	for _, table := range []string{"assistant_settings", "assistant_models", "assistant_conversations", "assistant_messages"} {
+	for _, column := range []string{"supports_reasoning", "default_thinking_level"} {
 		var count int
-		if err := migrated.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?", table).Scan(&count); err != nil || count != 1 {
-			t.Fatalf("migrated table %q count=%d error=%v", table, count, err)
+		if err := migrated.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('assistant_models') WHERE name = ?`, column).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("legacy Assistant column %q count=%d error=%v", column, count, err)
 		}
-	}
-}
-
-func TestOpenDatabaseMigratesSchema21ToolCallsToTextPositions(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "app.db")
-	db, err := openDatabase(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	statements := []string{
-		`INSERT INTO assistant_models (id, owner_user_id, name, provider, model, endpoint, credential_configured, is_default, created_at, updated_at, updated_by_user_id) VALUES ('model', 'owner', 'Model', 'openai-compatible', 'model', 'http://localhost', 1, 1, 1, 1, 'owner')`,
-		`INSERT INTO assistant_conversations (id, owner_user_id, title, model_id, status, created_at, updated_at) VALUES ('conversation', 'owner', 'Conversation', 'model', 'idle', 1, 1)`,
-		`DROP INDEX assistant_models_owner_default_idx`,
-		`DROP INDEX assistant_models_visibility_idx`,
-		`ALTER TABLE assistant_models DROP COLUMN is_shared`,
-		`ALTER TABLE assistant_models DROP COLUMN owner_user_id`,
-		`ALTER TABLE assistant_models DROP COLUMN supports_images`,
-		`INSERT INTO assistant_messages (id, conversation_id, sequence, role, body, status, created_at, finished_at) VALUES ('message', 'conversation', 1, 'assistant', 'Before after', 'complete', 1, 2)`,
-		`INSERT INTO assistant_tool_calls (id, conversation_id, message_id, tool_name, status, started_at) VALUES ('tool', 'conversation', 'message', 'inspect_host', 'complete', 1)`,
-		`ALTER TABLE assistant_tool_calls DROP COLUMN body_offset`,
-		`ALTER TABLE assistant_tool_calls DROP COLUMN request_json`,
-		`ALTER TABLE assistant_tool_calls DROP COLUMN response_json`,
-		`PRAGMA user_version=21`,
-		`PRAGMA wal_checkpoint(TRUNCATE)`,
-	}
-	for _, statement := range statements {
-		if _, err := db.Exec(statement); err != nil {
-			t.Fatalf("prepare schema 21 with %q: %v", statement, err)
-		}
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	migrated, err := openDatabase(path)
-	if err != nil {
-		t.Fatalf("migrate schema 21: %v", err)
-	}
-	defer migrated.Close()
-	var version, offset int
-	if err := migrated.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != currentSchemaVersion {
-		t.Fatalf("version = %d, error = %v", version, err)
-	}
-	if err := migrated.QueryRow("SELECT body_offset FROM assistant_tool_calls WHERE id = 'tool'").Scan(&offset); err != nil || offset != 12 {
-		t.Fatalf("migrated body offset = %d, error = %v", offset, err)
-	}
-	var requestJSON, responseJSON string
-	if err := migrated.QueryRow("SELECT request_json, response_json FROM assistant_tool_calls WHERE id = 'tool'").Scan(&requestJSON, &responseJSON); err != nil || requestJSON != "{}" || responseJSON != "null" {
-		t.Fatalf("migrated JSON = %q / %q, error = %v", requestJSON, responseJSON, err)
-	}
-}
-
-func TestOpenDatabaseMigratesSchema22ToolCallsToJSONPayloads(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "app.db")
-	db, err := openDatabase(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	statements := []string{
-		`INSERT INTO assistant_models (id, owner_user_id, name, provider, model, endpoint, credential_configured, is_default, created_at, updated_at, updated_by_user_id) VALUES ('model', 'owner', 'Model', 'openai-compatible', 'model', 'http://localhost', 1, 1, 1, 1, 'owner')`,
-		`INSERT INTO assistant_conversations (id, owner_user_id, title, model_id, status, created_at, updated_at) VALUES ('conversation', 'owner', 'Conversation', 'model', 'idle', 1, 1)`,
-		`DROP INDEX assistant_models_owner_default_idx`,
-		`DROP INDEX assistant_models_visibility_idx`,
-		`ALTER TABLE assistant_models DROP COLUMN is_shared`,
-		`ALTER TABLE assistant_models DROP COLUMN owner_user_id`,
-		`INSERT INTO assistant_messages (id, conversation_id, sequence, role, body, status, created_at, finished_at) VALUES ('message', 'conversation', 1, 'assistant', 'Done', 'complete', 1, 2)`,
-		`INSERT INTO assistant_tool_calls (id, conversation_id, message_id, body_offset, tool_name, status, started_at) VALUES ('tool', 'conversation', 'message', 0, 'inspect_host', 'complete', 1)`,
-		`ALTER TABLE assistant_tool_calls DROP COLUMN request_json`,
-		`ALTER TABLE assistant_tool_calls DROP COLUMN response_json`,
-		`PRAGMA user_version=22`,
-		`PRAGMA wal_checkpoint(TRUNCATE)`,
-	}
-	for _, statement := range statements {
-		if _, err := db.Exec(statement); err != nil {
-			t.Fatalf("prepare schema 22 with %q: %v", statement, err)
-		}
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	migrated, err := openDatabase(path)
-	if err != nil {
-		t.Fatalf("migrate schema 22: %v", err)
-	}
-	defer migrated.Close()
-	var version int
-	var requestJSON, responseJSON string
-	if err := migrated.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != currentSchemaVersion {
-		t.Fatalf("version = %d, error = %v", version, err)
-	}
-	if err := migrated.QueryRow("SELECT request_json, response_json FROM assistant_tool_calls WHERE id = 'tool'").Scan(&requestJSON, &responseJSON); err != nil || requestJSON != "{}" || responseJSON != "null" {
-		t.Fatalf("migrated JSON = %q / %q, error = %v", requestJSON, responseJSON, err)
-	}
-}
-
-func TestOpenDatabaseMigratesSchema23ConversationCapabilitiesAndTelemetry(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "app.db")
-	db, err := openDatabase(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	statements := []string{
-		`INSERT INTO assistant_models (id, owner_user_id, name, provider, model, endpoint, credential_configured, is_default, created_at, updated_at, updated_by_user_id) VALUES ('model', 'owner', 'Model', 'openai-compatible', 'model', 'http://localhost', 1, 1, 1, 1, 'owner')`,
-		`INSERT INTO assistant_conversations (id, owner_user_id, title, model_id, status, created_at, updated_at) VALUES ('conversation', 'owner', 'Conversation', 'model', 'idle', 1, 1)`,
-		`DROP INDEX assistant_models_owner_default_idx`,
-		`DROP INDEX assistant_models_visibility_idx`,
-		`ALTER TABLE assistant_models DROP COLUMN is_shared`,
-		`ALTER TABLE assistant_models DROP COLUMN owner_user_id`,
-		`ALTER TABLE assistant_models DROP COLUMN supports_images`,
-	}
-	for _, column := range []string{
-		"capability_profile", "profile_version", "thinking_level", "stats_user_messages", "stats_assistant_messages", "stats_tool_calls", "stats_tool_results", "stats_total_messages",
-		"stats_input_tokens", "stats_output_tokens", "stats_cache_read_tokens", "stats_cache_write_tokens", "stats_total_tokens", "stats_cost",
-		"stats_context_tokens", "stats_context_window", "stats_context_percent", "stats_updated_at",
-	} {
-		statements = append(statements, `ALTER TABLE assistant_conversations DROP COLUMN `+column)
-	}
-	statements = append(statements, `PRAGMA user_version=23`, `PRAGMA wal_checkpoint(TRUNCATE)`)
-	for _, statement := range statements {
-		if _, err := db.Exec(statement); err != nil {
-			t.Fatalf("prepare schema 23 with %q: %v", statement, err)
-		}
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	migrated, err := openDatabase(path)
-	if err != nil {
-		t.Fatalf("migrate schema 23: %v", err)
-	}
-	defer migrated.Close()
-	var version int
-	var profile, thinking string
-	var totalTokens int64
-	var supportsImages int
-	if err := migrated.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != currentSchemaVersion {
-		t.Fatalf("version = %d, error = %v", version, err)
-	}
-	if err := migrated.QueryRow(`SELECT capability_profile, thinking_level, stats_total_tokens FROM assistant_conversations WHERE id = 'conversation'`).Scan(&profile, &thinking, &totalTokens); err != nil {
-		t.Fatal(err)
-	}
-	if profile != assistant.ProfileGeneral || thinking != "medium" || totalTokens != 0 {
-		t.Fatalf("migrated defaults = %q %q %d", profile, thinking, totalTokens)
-	}
-	if err := migrated.QueryRow(`SELECT supports_images FROM assistant_models WHERE id = 'model'`).Scan(&supportsImages); err != nil || supportsImages != 0 {
-		t.Fatalf("migrated image capability = %d, error = %v", supportsImages, err)
-	}
-}
-
-func TestOpenDatabaseMigratesSchema24ModelVisibility(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "app.db")
-	db, err := openDatabase(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, statement := range []string{
-		`INSERT INTO assistant_models (id, owner_user_id, name, provider, model, endpoint, credential_configured, is_default, created_at, updated_at, updated_by_user_id) VALUES ('model', 'owner', 'Model', 'openai-compatible', 'model', 'http://localhost', 1, 1, 1, 1, 'owner')`,
-		`DROP INDEX assistant_models_owner_default_idx`,
-		`DROP INDEX assistant_models_visibility_idx`,
-		`ALTER TABLE assistant_models DROP COLUMN is_shared`,
-		`ALTER TABLE assistant_models DROP COLUMN owner_user_id`,
-		`PRAGMA user_version=24`,
-		`PRAGMA wal_checkpoint(TRUNCATE)`,
-	} {
-		if _, err := db.Exec(statement); err != nil {
-			t.Fatalf("prepare schema 24 with %q: %v", statement, err)
-		}
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	migrated, err := openDatabase(path)
-	if err != nil {
-		t.Fatalf("migrate schema 24: %v", err)
-	}
-	defer migrated.Close()
-	var version, shared int
-	var owner string
-	if err := migrated.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != currentSchemaVersion {
-		t.Fatalf("version = %d, error = %v", version, err)
-	}
-	if err := migrated.QueryRow(`SELECT owner_user_id, is_shared FROM assistant_models WHERE id = 'model'`).Scan(&owner, &shared); err != nil {
-		t.Fatal(err)
-	}
-	if owner != "owner" || shared != 0 {
-		t.Fatalf("migrated model visibility = owner %q shared %d", owner, shared)
-	}
-}
-
-func TestOpenDatabaseMigratesSchema25ModelConnectionStatus(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "app.db")
-	db, err := openDatabase(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, statement := range []string{
-		`INSERT INTO assistant_models (id, owner_user_id, name, provider, model, endpoint, credential_configured, is_default, created_at, updated_at, updated_by_user_id) VALUES ('model', 'owner', 'Model', 'openai-compatible', 'model', 'http://localhost', 1, 1, 1, 1, 'owner')`,
-		`ALTER TABLE assistant_models DROP COLUMN connection_ok`,
-		`PRAGMA user_version=25`,
-		`PRAGMA wal_checkpoint(TRUNCATE)`,
-	} {
-		if _, err := db.Exec(statement); err != nil {
-			t.Fatalf("prepare schema 25 with %q: %v", statement, err)
-		}
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	migrated, err := openDatabase(path)
-	if err != nil {
-		t.Fatalf("migrate schema 25: %v", err)
-	}
-	defer migrated.Close()
-	var version, connectionOK int
-	if err := migrated.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != currentSchemaVersion {
-		t.Fatalf("version = %d, error = %v", version, err)
-	}
-	if err := migrated.QueryRow(`SELECT connection_ok FROM assistant_models WHERE id = 'model'`).Scan(&connectionOK); err != nil || connectionOK != 0 {
-		t.Fatalf("migrated connection status = %d, error = %v", connectionOK, err)
 	}
 }
 
@@ -752,8 +510,6 @@ func TestOpenDatabaseMigratesSecuritySchema43WithDevSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, statement := range []string{
-		`ALTER TABLE assistant_models DROP COLUMN default_thinking_level`,
-		`ALTER TABLE assistant_models DROP COLUMN supports_reasoning`,
 		`DROP TABLE instance_settings`,
 		`DROP TABLE kubernetes_connection`,
 		`DROP TABLE kubernetes_versions`,
@@ -774,12 +530,6 @@ func TestOpenDatabaseMigratesSecuritySchema43WithDevSchema(t *testing.T) {
 		t.Fatalf("migrate security schema 43: %v", err)
 	}
 	defer migrated.Close()
-	for _, column := range []string{"supports_reasoning", "default_thinking_level"} {
-		var count int
-		if err := migrated.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('assistant_models') WHERE name=?`, column).Scan(&count); err != nil || count != 1 {
-			t.Fatalf("Assistant model column %s count=%d err=%v", column, count, err)
-		}
-	}
 	for _, table := range []string{"instance_settings", "kubernetes_connection", "kubernetes_versions", "kubernetes_metric_minutes"} {
 		var count int
 		if err := migrated.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&count); err != nil || count != 1 {
@@ -1051,41 +801,6 @@ func TestOpenDatabaseRejectsNewerSchema(t *testing.T) {
 	_, err = openDatabase(path)
 	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("incompatible with schema %d", currentSchemaVersion)) || !strings.Contains(err.Error(), "new State Root") {
 		t.Fatalf("expected newer-schema rejection, got %v", err)
-	}
-}
-
-func TestOpenDatabaseMigratesModelReasoningDefaultsFromSchema34(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "app.db")
-	db, err := openDatabase(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`INSERT INTO assistant_models
-		(id, owner_user_id, name, provider, model, endpoint, credential_configured, is_default, created_at, updated_at, updated_by_user_id)
-		VALUES ('model', 'owner', 'Model', 'openai', 'gpt-5.2', 'https://api.openai.com/v1', 1, 1, 1, 1, 'owner');
-		ALTER TABLE assistant_models DROP COLUMN default_thinking_level;
-		ALTER TABLE assistant_models DROP COLUMN supports_reasoning;
-		PRAGMA user_version=34;
-		PRAGMA wal_checkpoint(TRUNCATE);`); err != nil {
-		_ = db.Close()
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	migrated, err := openDatabase(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer migrated.Close()
-	var supportsReasoning int
-	var defaultThinkingLevel string
-	if err := migrated.QueryRow(`SELECT supports_reasoning, default_thinking_level FROM assistant_models WHERE id = 'model'`).Scan(&supportsReasoning, &defaultThinkingLevel); err != nil {
-		t.Fatal(err)
-	}
-	if supportsReasoning != 0 || defaultThinkingLevel != "medium" {
-		t.Fatalf("migrated reasoning defaults = %d %q, want 0 medium", supportsReasoning, defaultThinkingLevel)
 	}
 }
 

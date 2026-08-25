@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"scriptboard/internal/assistant"
 	"scriptboard/internal/auditlog"
 	"scriptboard/internal/clusterstatus"
 	"scriptboard/internal/customdashboard"
@@ -45,7 +44,6 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 	}{
 		{name: "SQLite", statements: baseSchemaStatements},
 		{name: "Website Monitor SQLite", statements: websitemonitor.SchemaStatements},
-		{name: "Assistant SQLite", statements: assistant.SchemaStatements},
 		{name: "External Interface SQLite", statements: externaltrigger.SchemaStatements},
 		{name: "Fleet status SQLite", statements: fleetstatus.SchemaStatements},
 		{name: "MySQL management SQLite", statements: mysqlmanager.SchemaStatements},
@@ -59,6 +57,10 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 				return fmt.Errorf("initialize %s schema: %w", schema.name, err)
 			}
 		}
+	}
+	var legacyAssistantSchema bool
+	if err := migration.QueryRow(`SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'assistant_models')`).Scan(&legacyAssistantSchema); err != nil {
+		return fmt.Errorf("inspect legacy Assistant schema: %w", err)
 	}
 	if schemaVersion >= 20 && schemaVersion <= 48 {
 		exists, err := storesqlite.ColumnExists(migration, "variables", "value_type")
@@ -96,7 +98,7 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 	if err := migrateKubernetesConnections(migration); err != nil {
 		return err
 	}
-	if schemaVersion == 21 {
+	if legacyAssistantSchema && schemaVersion == 21 {
 		if _, err := migration.Exec(`ALTER TABLE assistant_tool_calls ADD COLUMN body_offset INTEGER NOT NULL DEFAULT 0`); err != nil {
 			return fmt.Errorf("migrate Assistant tool-call positions: %w", err)
 		}
@@ -105,7 +107,7 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 			return fmt.Errorf("backfill Assistant tool-call positions: %w", err)
 		}
 	}
-	if schemaVersion == 21 || schemaVersion == 22 {
+	if legacyAssistantSchema && (schemaVersion == 21 || schemaVersion == 22) {
 		for _, statement := range []string{
 			`ALTER TABLE assistant_tool_calls ADD COLUMN request_json TEXT NOT NULL DEFAULT '{}'`,
 			`ALTER TABLE assistant_tool_calls ADD COLUMN response_json TEXT NOT NULL DEFAULT 'null'`,
@@ -115,7 +117,7 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 			}
 		}
 	}
-	if schemaVersion >= 21 && schemaVersion <= 23 {
+	if legacyAssistantSchema && schemaVersion >= 21 && schemaVersion <= 23 {
 		exists, err := storesqlite.ColumnExists(migration, "assistant_models", "supports_images")
 		if err != nil {
 			return fmt.Errorf("inspect Assistant model capability migration: %w", err)
@@ -157,7 +159,7 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 			}
 		}
 	}
-	if schemaVersion >= 20 && schemaVersion <= 24 {
+	if legacyAssistantSchema && schemaVersion >= 20 && schemaVersion <= 24 {
 		for _, column := range []struct{ name, definition string }{
 			{"owner_user_id", `owner_user_id TEXT NOT NULL DEFAULT ''`},
 			{"is_shared", `is_shared INTEGER NOT NULL DEFAULT 0`},
@@ -182,7 +184,7 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 			return fmt.Errorf("replace Assistant model default index: %w", err)
 		}
 	}
-	if schemaVersion >= 20 && schemaVersion <= 25 {
+	if legacyAssistantSchema && schemaVersion >= 20 && schemaVersion <= 25 {
 		exists, err := storesqlite.ColumnExists(migration, "assistant_models", "connection_ok")
 		if err != nil {
 			return fmt.Errorf("inspect Assistant model connection migration: %w", err)
@@ -224,7 +226,7 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 			}
 		}
 	}
-	if schemaVersion >= 20 && schemaVersion <= 43 {
+	if legacyAssistantSchema && schemaVersion >= 20 && schemaVersion <= 43 {
 		for _, column := range []struct{ name, definition string }{
 			{"supports_reasoning", `supports_reasoning INTEGER NOT NULL DEFAULT 0`},
 			{"default_thinking_level", `default_thinking_level TEXT NOT NULL DEFAULT 'medium' CHECK (default_thinking_level IN ('off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'))`},
@@ -514,8 +516,6 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 		"CREATE INDEX IF NOT EXISTS kubernetes_connection_name_idx ON kubernetes_connection(name)",
 		"CREATE INDEX IF NOT EXISTS kubernetes_versions_workload_idx ON kubernetes_versions(connection_id, workload_key, observed_at DESC)",
 		"CREATE INDEX IF NOT EXISTS kubernetes_metric_minutes_bucket_idx ON kubernetes_metric_minutes(connection_id, bucket_at)",
-		"CREATE UNIQUE INDEX IF NOT EXISTS assistant_models_owner_default_idx ON assistant_models(owner_user_id) WHERE is_default = 1",
-		"CREATE INDEX IF NOT EXISTS assistant_models_visibility_idx ON assistant_models(owner_user_id, is_shared, is_default DESC, created_at, name)",
 	} {
 		if _, err := migration.Exec(statement); err != nil {
 			return fmt.Errorf("initialize SQLite indexes: %w", err)

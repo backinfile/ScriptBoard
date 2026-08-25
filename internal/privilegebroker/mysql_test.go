@@ -147,7 +147,6 @@ func TestMySQLProtocolRejectsGenericAndUnrelatedFields(t *testing.T) {
 			value.Parameters = json.RawMessage(`{"secret":"no"}`)
 			return value
 		}(),
-		func() wireRequest { value := valid; value.ProviderID = "model-one"; return value }(),
 		func() wireRequest { value := valid; value.MySQL.Password = "not-allowed"; return value }(),
 		func() wireRequest { value := valid; value.SessionToken = ""; return value }(),
 	}

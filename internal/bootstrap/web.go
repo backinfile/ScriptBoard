@@ -15,8 +15,6 @@ import (
 	"time"
 
 	"scriptboard/internal/appstatus"
-	"scriptboard/internal/assistant/pirpc"
-	"scriptboard/internal/assistant/runtimehost"
 	"scriptboard/internal/clusterstatus"
 	"scriptboard/internal/config"
 	"scriptboard/internal/customdashboard"
@@ -75,13 +73,13 @@ func RunWeb(runContext context.Context, arguments []string, getenv func(string) 
 			default:
 			}
 		},
-		RequestRestart: requestRestart, AssistantProcessLauncher: dependencies.assistantLauncher,
+		RequestRestart:        requestRestart,
 		RunnerProcessLauncher: dependencies.runnerLauncher, PrivilegedBrokerEndpoint: dependencies.brokerEndpoint,
 		ApplicationProbe: dependencies.applicationProbe, KubernetesFactory: dependencies.kubernetesFactory,
 		KubeconfigManager: dependencies.kubeconfigManager,
 		AuditCheckpoint:   dependencies.auditCheckpoint, MFAStore: dependencies.mfaStore, PasskeyStore: dependencies.passkeyStore,
 		RegistryConnections: dependencies.registryConnections,
-		ProviderCredentials: dependencies.providerCredentials, MySQLBackend: dependencies.mysqlBackend, RedisBackend: dependencies.redisBackend,
+		MySQLBackend:        dependencies.mysqlBackend, RedisBackend: dependencies.redisBackend,
 		HostFilesBackend: dependencies.hostFilesBackend, StateBackups: dependencies.stateBackups,
 	})
 	if err != nil {
@@ -130,13 +128,11 @@ func RunWeb(runContext context.Context, arguments []string, getenv func(string) 
 }
 
 type composedWebDependencies struct {
-	assistantLauncher   pirpc.ProcessLauncher
 	runnerLauncher      runmanager.ProcessLauncher
 	auditCheckpoint     webapp.AuditCheckpoint
 	mfaStore            webapp.MFAStore
 	passkeyStore        webapp.PasskeyStore
 	registryConnections customdashboard.RegistryConnections
-	providerCredentials *privilegebroker.ProviderCredentials
 	mysqlBackend        mysqlmanager.Backend
 	redisBackend        redismanager.Backend
 	hostFilesBackend    *privilegebroker.HostFilesBackend
@@ -159,14 +155,6 @@ func webDependenciesWithIdentity(loaded config.Config, installRoot string, valid
 	if err := validateIdentity(); err != nil {
 		return result, fmt.Errorf("refuse managed Web service with unsafe OS identity: %w", err)
 	}
-	endpoint, err := runtimehost.DefaultEndpoint(loaded.StateRoot)
-	if err != nil {
-		return result, fmt.Errorf("resolve isolated Runtime Host endpoint: %w", err)
-	}
-	assistantDial := runtimehost.Dial(endpoint)
-	result.assistantLauncher = runtimehost.NewClientLauncher(func(ctx context.Context) (net.Conn, error) {
-		return connectOnDemandHost(ctx, platformservice.EnsureAIRuntimeHostRunning, assistantDial, "isolated AI Runtime Host")
-	})
 	runnerEndpoint, err := runnerhost.DefaultEndpoint(loaded.StateRoot)
 	if err != nil {
 		return result, fmt.Errorf("resolve Runner Host endpoint: %w", err)
@@ -184,7 +172,6 @@ func webDependenciesWithIdentity(loaded config.Config, installRoot string, valid
 	result.mfaStore = privilegebroker.NewRemoteMFA(client)
 	result.passkeyStore = privilegebroker.NewRemotePasskey(client)
 	result.registryConnections = privilegebroker.NewRegistryConnections(client)
-	result.providerCredentials = privilegebroker.NewProviderCredentials(client)
 	result.mysqlBackend = privilegebroker.NewMySQLBackend(client, mysqlmanager.ToolSettings{DumpExecutable: "mysqldump", ClientExecutable: "mysql"})
 	result.redisBackend = privilegebroker.NewRedisBackend(client)
 	result.hostFilesBackend = privilegebroker.NewHostFilesBackend(client, filepath.Join(loaded.StateRoot, "inbox", "host-files-broker"))
