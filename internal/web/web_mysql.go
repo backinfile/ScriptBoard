@@ -151,6 +151,12 @@ func (a *App) mysqlDatabasesPage(response http.ResponseWriter, request *http.Req
 				break
 			}
 		}
+		for index := range data.ConnectionRows {
+			if data.ConnectionRows[index].Engine == "mysql" && data.ConnectionRows[index].ID == selectedID {
+				data.ConnectionRows[index].ConnectionState = string(data.Selected.ConnectionState)
+				break
+			}
+		}
 		cancel()
 		if statusErr != nil {
 			data.LoadError = secretredaction.String(statusErr.Error())

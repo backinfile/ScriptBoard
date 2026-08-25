@@ -62,7 +62,7 @@ func TestAdministratorCanRegisterAndInspectRedisConnection(t *testing.T) {
 		t.Fatalf("create Redis connection status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
 	page := string(getBody(t, client, serverURL+response.Header.Get("Location"), http.StatusOK))
-	for _, expected := range []string{"Cache production", "redis.internal:6379", "8.0.0", "4.0 MiB"} {
+	for _, expected := range []string{"Cache production", "redis.internal:6379", "8.0.0", "4.0 MiB", `class="mysql-tabs"`, `tab=keys`, `tab=diagnostics`} {
 		if !strings.Contains(page, expected) {
 			t.Fatalf("Redis workspace missing %q: %s", expected, page)
 		}

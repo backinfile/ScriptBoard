@@ -12,7 +12,7 @@
 
 | 项目 | 当前状态 |
 | --- | --- |
-| ScriptBoard | `http://127.0.0.1:18788`，PID 8720，保持运行 |
+| ScriptBoard | `http://127.0.0.1:18788`，PID 30444，保持运行 |
 | State Root | `D:\Github\worktrees\ScriptBoard\database-unified\.scratch\database-unified-deployment\state` |
 | 管理员 | `admin`；密码仅保留在 State Root 私有文件中 |
 | Docker 项目 | `scriptboard-database-qa`，7 个容器均保持运行 |
@@ -45,7 +45,7 @@
 | 7 | Redis 明文无鉴权 | 通过 | Redis 8.2.9；空密码连接成功 |
 | 8 | Redis TLS 验证、跳过验证、错误 CA | 通过 | 验证与显式跳过均成功；独立错误 CA 返回 502 |
 | 9 | 登录、导航、数据库页基础访问 | 通过 | 登录后进入 `/monitor`；数据库页 HTTP 200 |
-| 10 | MySQL 与 Redis 融合连接栏 | 通过 | 同一工作台同时存在两个连接分组 |
+| 10 | MySQL 与 Redis 融合连接栏 | 通过 | 同一列表混合排列两类连接，并按连接名称排序、分页 |
 | 11 | 单一新增入口可选引擎 | 通过 | MySQL/MariaDB 与 Redis 选择器均存在 |
 | 12 | MySQL/MariaDB 表单安全选项与提示 | 通过 | 明文、preferred、required、身份验证及 CA 路径齐全 |
 | 13 | Redis 表单安全选项与风险提示 | 通过 | 明文、身份验证、显式跳过验证及中间人风险提示齐全 |
@@ -71,7 +71,7 @@
 | 33 | CSRF、权限、step-up | 通过 | MySQL/Redis 无令牌均 403；权限与 step-up 全仓测试通过 |
 | 34 | 非法输入 | 通过 | 越界端口、负 Redis DB 均返回 400 |
 | 35 | 中英文 | 通过 | Playwright 中文 `lang=zh-CN` 与英文页面通过 |
-| 36 | 禁用 JavaScript 渐进增强 | 通过 | 禁用 JS 后登录、工作台、两分组和 Redis 表单均可用 |
+| 36 | 禁用 JavaScript 渐进增强 | 通过 | 禁用 JS 后登录、混合连接列表和 Redis 表单均可用 |
 | 37 | 响应式、键盘、控制台 | 通过 | 1440×1000 与 390×844 无横向溢出；Esc 关闭抽屉；控制台错误为 0 |
 | 38 | 保留部署与测试数据 | 通过 | 容器、卷、State Root、连接、数据库、键、计划、操作历史和截图均保留 |
 
@@ -91,10 +91,16 @@
 | 48 | 全仓回归 | 通过 | `go test ./... -count=1`，所有包通过 |
 | 49 | 格式、差异、部署版本与运行状态 | 通过 | `gofmt`、`git diff --check`、重新构建部署、监听与容器核验通过 |
 
+## 混合连接页签补充验收
+
+- MySQL 与 Redis 不再按引擎拆成两个分组，统一进入一个按连接名称排序、可分页的连接页签列表。
+- MySQL 使用 Lucide `database` 图标；Redis 使用 Lucide `memory-stick` 图标，并辅以短类型标签。
+- Redis 详情使用与 MySQL 相同的 `.mysql-tabs` 内部页签，在概览、键空间查询和诊断之间切换。
+- 真实保留数据下的 Playwright 桌面、移动端、键盘、中文、禁用 JavaScript 和控制台检查全部通过。
+
 ## 关键命令与限制
 
 - 黑盒：PowerShell HTTP 会话、Docker 容器内客户端、Playwright Chromium。
 - 白盒：目标包测试与两次全仓 `go test ./... -count=1`，最终一次在所有修复后执行。
 - 未运行仓库的完整浏览器快照刷新套件，以免改写无关的跟踪截图；本轮使用独立的本地部署 Playwright 脚本与 `.scratch` 截图。
 - `npm ci` 报告一个测试依赖树中的 moderate audit 提示；未执行会升级依赖并扩大修改范围的 `npm audit fix --force`。
-

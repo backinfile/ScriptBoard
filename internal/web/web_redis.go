@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -30,21 +31,41 @@ type redisDatabasesPageData struct {
 // databaseWorkspaceData keeps the shared connection inventory and add flow
 // identical while each engine retains its own detail operations.
 type databaseWorkspaceData struct {
-	Locale                  webLocale
-	CSRFToken               string
-	BackupRoot              string
-	Tools                   mysqlmanager.ToolSettings
-	MySQLInstanceRows       []mysqlmanager.Instance
-	MySQLInstancePagination mysqlPagination
-	RedisInstances          []redismanager.Instance
-	SelectedMySQL           *mysqlmanager.Instance
-	SelectedRedis           *redismanager.Instance
-	AddEngine               string
-	AddDrawerOpen           bool
+	Locale               webLocale
+	CSRFToken            string
+	BackupRoot           string
+	Tools                mysqlmanager.ToolSettings
+	ConnectionRows       []databaseConnectionRow
+	ConnectionPagination mysqlPagination
+	SelectedMySQL        *mysqlmanager.Instance
+	SelectedRedis        *redismanager.Instance
+	ActiveEngine         string
+	AddEngine            string
+	AddDrawerOpen        bool
+}
+
+type databaseConnectionRow struct {
+	Engine, ID, Name, Username, Host, ConnectionState string
+	Port, Database                                    int
 }
 
 func newDatabaseWorkspaceData(request *http.Request, selectedEngine string, locale webLocale, csrfToken, backupRoot string, tools mysqlmanager.ToolSettings, mysqlInstances []mysqlmanager.Instance, redisInstances []redismanager.Instance) databaseWorkspaceData {
-	mysqlRows, pagination := mysqlSlicePageWithSize(mysqlInstances, mysqlRequestedNamedPage(request, "instance_page"), mysqlInstancePageSize)
+	connections := make([]databaseConnectionRow, 0, len(mysqlInstances)+len(redisInstances))
+	for _, instance := range mysqlInstances {
+		connections = append(connections, databaseConnectionRow{Engine: "mysql", ID: instance.ID, Name: instance.Name, Username: instance.Username, Host: instance.Host, Port: instance.Port, ConnectionState: string(instance.ConnectionState)})
+	}
+	for _, instance := range redisInstances {
+		connections = append(connections, databaseConnectionRow{Engine: "redis", ID: instance.ID, Name: instance.Name, Username: instance.Username, Host: instance.Host, Port: instance.Port, Database: instance.Database, ConnectionState: string(instance.ConnectionState)})
+	}
+	// A single name-ordered inventory lets related MySQL and Redis connections sit together.
+	sort.SliceStable(connections, func(left, right int) bool {
+		leftName, rightName := strings.ToLower(connections[left].Name), strings.ToLower(connections[right].Name)
+		if leftName == rightName {
+			return connections[left].Engine < connections[right].Engine
+		}
+		return leftName < rightName
+	})
+	connectionRows, pagination := mysqlSlicePageWithSize(connections, mysqlRequestedNamedPage(request, "connection_page"), mysqlInstancePageSize)
 	addEngine := strings.TrimSpace(request.URL.Query().Get("add"))
 	addDrawerOpen := addEngine == "mysql" || addEngine == "redis"
 	if !addDrawerOpen {
@@ -52,7 +73,7 @@ func newDatabaseWorkspaceData(request *http.Request, selectedEngine string, loca
 	}
 	return databaseWorkspaceData{
 		Locale: locale, CSRFToken: csrfToken, BackupRoot: backupRoot, Tools: tools,
-		MySQLInstanceRows: mysqlRows, MySQLInstancePagination: pagination, RedisInstances: redisInstances,
+		ConnectionRows: connectionRows, ConnectionPagination: pagination, ActiveEngine: selectedEngine,
 		AddEngine: addEngine, AddDrawerOpen: addDrawerOpen,
 	}
 }

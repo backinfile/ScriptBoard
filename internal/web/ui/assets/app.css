@@ -2702,9 +2702,10 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .workspace[data-mysql-workspace] { width: min(100%, var(--content-max)); max-width: var(--content-max); margin: 0 auto; padding: 0; }
 .mysql-instance-workspace { display: grid; min-height: max(600px, calc(100vh - 154px)); grid-template-columns: minmax(240px, 280px) minmax(0, 1fr); align-items: stretch; margin-top: 0; border-top: 1px solid var(--rule-strong); }
 .mysql-instance-rail { min-width: 0; padding: 28px 22px 72px var(--workspace-gutter); border-right: 1px solid var(--rule); }
-.mysql-instance-rail__head { margin-bottom: 18px; }
+.mysql-instance-rail__head { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
 .mysql-instance-rail__head p { margin: 0 0 5px; }
 .mysql-instance-rail__head h2 { margin: 0; font-size: 1rem; letter-spacing: -.02em; }
+.mysql-instance-rail__head > small { color: var(--faint); font: 600 .7rem/1.4 var(--font-mono); }
 .mysql-instance-tabs { display: grid; gap: 2px; }
 .mysql-instance-tabs a { display: grid; min-width: 0; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 3px 10px; padding: 11px 12px; color: var(--ink); background: transparent; border-radius: var(--radius-sm); text-decoration: none; }
 .mysql-instance-tabs a:hover { color: var(--ink); background: var(--surface); }
@@ -2714,6 +2715,12 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .mysql-instance-tabs__copy strong, .mysql-instance-tabs__copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mysql-instance-tabs__copy strong { font-size: .8rem; }
 .mysql-instance-tabs__copy small { color: var(--muted); font: .64rem/1.35 var(--font-mono); }
+.database-connection-title { display: flex; min-width: 0; align-items: baseline; gap: 7px; }
+.database-connection-title strong { min-width: 0; }
+.database-connection-title > small { flex: 0 0 auto; color: var(--faint); font-family: var(--font-sans); font-size: .7rem; font-weight: 650; letter-spacing: .025em; }
+.database-connection-tabs a[data-engine="redis"] .mysql-instance-tabs__icon { color: var(--accent-text); }
+.database-connection-tabs .mysql-instance-tabs__state { grid-column: 2; justify-self: start; }
+.database-connection-empty { margin: 0; padding: 24px 10px; color: var(--muted); font-size: .75rem; line-height: 1.55; }
 .mysql-instance-tabs__state { display: inline-flex; align-items: center; gap: 4px; font-size: .62rem; font-weight: 650; white-space: nowrap; }
 .mysql-instance-tabs__state[data-state="failed"] { color: var(--danger); }
 .mysql-instance-tabs__state[data-state="untried"] { color: var(--text-muted); }
@@ -9164,13 +9171,6 @@ body:has(> .error-page) {
 }
 .database-connection-rail { display: flex; flex-direction: column; gap: 24px; }
 .database-connection-rail > .mysql-instance-rail__head { margin-bottom: 0; }
-.database-connection-group { min-width: 0; }
-.database-connection-group + .database-connection-group { padding-top: 22px; border-top: 1px solid var(--rule); }
-.database-connection-group > header { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 8px; align-items: center; margin-bottom: 8px; color: var(--muted); }
-.database-connection-group > header svg { width: 16px; height: 16px; }
-.database-connection-group > header h3 { margin: 0; color: var(--ink); font-size: .75rem; font-weight: 650; }
-.database-connection-group > header small { min-width: 20px; color: var(--faint); font: 600 .7rem/1.4 var(--font-mono); text-align: right; }
-.database-connection-group__empty { margin: 0; padding: 10px 0 4px 28px; color: var(--muted); font-size: .75rem; line-height: 1.5; }
 .database-engine-choice { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin: 0; padding: 18px var(--overlay-header-x); background: var(--rule); border-bottom: 1px solid var(--rule); }
 .database-engine-choice a { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px; align-items: center; min-height: 58px; padding: 10px 12px; color: var(--muted); background: var(--surface); text-decoration: none; }
 .database-engine-choice a:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
