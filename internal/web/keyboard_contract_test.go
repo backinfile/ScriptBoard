@@ -58,6 +58,28 @@ func TestMySQLMutationsRefreshOnlyTheDatabaseWorkspaceRegion(t *testing.T) {
 	}
 }
 
+func TestDatabaseNavigationReplacesOnlyItsOwnedRegion(t *testing.T) {
+	t.Parallel()
+
+	script, err := webFiles.ReadFile("ui/assets/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(script)
+	for _, contract := range []string{
+		`function databaseRegionSelector(source, destination)`,
+		`if (source.closest(".database-detail")) return ".database-detail"`,
+		`if (source.closest("[data-mysql-instances-region]")) return "[data-mysql-instances-region]"`,
+		`regionSelector: partialRegion`,
+		`submitAsync(form, submitter, { regionSelector: databasePartialRegion, pushHistory: true })`,
+		`sqlForm.dataset.asyncRefresh = ".database-detail"`,
+	} {
+		if !strings.Contains(source, contract) {
+			t.Fatalf("database partial-navigation contract missing %q", contract)
+		}
+	}
+}
+
 func TestMySQLPlanDeleteTriggerIsBoundInsideMySQLDrawerInitializer(t *testing.T) {
 	t.Parallel()
 

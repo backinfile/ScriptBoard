@@ -1266,6 +1266,14 @@
     pageThemes.forEach(className => document.body.classList.toggle(className, nextDocument.body.classList.contains(className)));
   }
 
+  function databaseRegionSelector(source, destination) {
+    if (!source?.closest?.("[data-database-workspace]") || destination.pathname !== "/resources/databases") return "";
+    if (source.closest(".database-detail")) return ".database-detail";
+    if (source.closest("[data-mysql-instances-region]")) return "[data-mysql-instances-region]";
+    if (source.closest(".database-page-heading")) return ".database-page-heading";
+    return "[data-mysql-instances-region]";
+  }
+
   async function navigate(url, push = true, options = {}) {
     closeFileConflictDialog();
     cancelTaskPanelRequest();
@@ -1276,8 +1284,13 @@
     };
     navigationRequest = request;
     navigationBusy = true;
-    document.documentElement.setAttribute("aria-busy", "true");
-    setNavigationProgress(true);
+    const regionSelector = options.regionSelector || "";
+    const initialRegion = regionSelector ? document.querySelector(regionSelector) : null;
+    const partialNavigation = Boolean(regionSelector && initialRegion);
+    if (partialNavigation) initialRegion.setAttribute("aria-busy", "true");
+    else document.documentElement.setAttribute("aria-busy", "true");
+    if (partialNavigation) setNavigationProgress(false);
+    else setNavigationProgress(true);
     const deferredData = options.deferredData ?? isDeferredDataURL(url);
     const immediate = deferredData && options.immediate === true;
     const title = options.title || navigationTitle(mainNavigationLink(url));
@@ -1317,8 +1330,10 @@
         });
         return;
       }
-      const nextMain = result.document.querySelector("main");
-      const currentMain = document.querySelector("main");
+      const nextMain = regionSelector ? result.document.querySelector(regionSelector) : result.document.querySelector("main");
+      const currentMain = partialNavigation && initialRegion.isConnected
+        ? initialRegion
+        : (regionSelector ? document.querySelector(regionSelector) : document.querySelector("main"));
       if (!nextMain || !currentMain) {
         showServerError(result, {
           url, method: "GET", returnFocus, force: true,
@@ -1339,11 +1354,11 @@
           history.replaceState({ pjax: true }, "", result.response.url);
         }
       } else if (push) {
-        history.pushState({ pjax: true }, "", result.response.url);
+        history.pushState({ pjax: true, regionSelector: partialNavigation ? regionSelector : "" }, "", result.response.url);
       }
       updateShellLocation(result.response.url);
       setSidebar(false);
-      window.scrollTo({ top: options.preserveScroll ? previousScrollY : 0, behavior: "auto" });
+      window.scrollTo({ top: partialNavigation || options.preserveScroll ? previousScrollY : 0, behavior: "auto" });
       initPage({ openFileQuickAccess: options.openFileQuickAccess === true });
 
       if (deferredData) {
@@ -1422,6 +1437,7 @@
         navigationRequest = null;
         navigationBusy = false;
         document.documentElement.removeAttribute("aria-busy");
+        if (regionSelector) document.querySelector(regionSelector)?.removeAttribute("aria-busy");
         setNavigationProgress(false);
       }
     }
@@ -2296,8 +2312,10 @@
         destination.searchParams.delete("direction");
       }
       try {
-        await navigate(destination.href, form.hasAttribute("data-async-push"), {
+        await navigate(destination.href, options.pushHistory ?? form.hasAttribute("data-async-push"), {
           focusSelector: form.dataset.focusAfterNavigation,
+          preserveScroll: Boolean(options.regionSelector),
+          regionSelector: options.regionSelector,
         });
       } finally {
         resetSubmit(form);
@@ -2312,6 +2330,7 @@
       const fileConflict = result.document?.querySelector("main[data-file-conflict]");
       if (fileConflict && openDocumentFileConflict(fileConflict)) return;
       const responseMain = result.document?.querySelector("main");
+      const refreshSelector = form.dataset.asyncRefresh;
       const isTaskValidation = result.response.status === 422 && responseMain &&
         !responseMain.matches(".error-page");
       if (!result.response.ok && !isTaskValidation) {
@@ -2338,7 +2357,6 @@
           buildTaskPanel(redirectedTask, destination, true);
           return;
         }
-        const refreshSelector = form.dataset.asyncRefresh;
         const currentRegion = refreshSelector ? document.querySelector(refreshSelector) : null;
         const nextRegion = refreshSelector ? result.document?.querySelector(refreshSelector) : null;
         if (currentRegion && nextRegion) {
@@ -2396,6 +2414,17 @@
       }
       const nextMain = responseMain;
       if (nextMain) {
+        const currentRegion = refreshSelector ? document.querySelector(refreshSelector) : null;
+        const nextRegion = refreshSelector ? result.document?.querySelector(refreshSelector) : null;
+        if (currentRegion && nextRegion) {
+          // SQL execution and other non-redirecting database actions refresh only their owned detail region.
+          cleanupPage();
+          currentRegion.replaceWith(document.importNode(nextRegion, true));
+          document.title = result.document.title;
+          document.documentElement.lang = result.document.documentElement.lang || document.documentElement.lang;
+          initPage();
+          return;
+        }
         if (options.fullNavigationOnSuccess && submittingTaskState && !nextMain.matches("[data-task-page]")) {
           closeTaskPanel(false);
           document.querySelector("main")?.replaceWith(document.importNode(nextMain, true));
@@ -6821,7 +6850,7 @@
   }
 
   function initMySQLDrawers(cleanups) {
-    const root = document.querySelector("[data-mysql-workspace]");
+    const root = document.querySelector("[data-database-workspace]");
     if (!root) return;
     root.querySelectorAll("[data-mysql-plan-delete-trigger]").forEach(trigger => {
       const editDrawer = trigger.closest(".record-actions__group")?.querySelector("details.mysql-drawer");
@@ -6848,6 +6877,10 @@
 	  if (event.target.matches('input[name="ui_mode"]')) syncSQLMode();
 	};
 	if (sqlForm) {
+	  // SQL results belong to the active connection detail; keep the connection rail and page shell mounted.
+	  sqlForm.removeAttribute("data-native");
+	  sqlForm.dataset.async = "";
+	  sqlForm.dataset.asyncRefresh = ".database-detail";
 	  syncSQLMode();
 	  sqlForm.addEventListener("change", onSQLModeChange);
 	}
@@ -8240,6 +8273,7 @@
     } else {
       const mainNavigation = link.matches(".sidebar-nav a");
       const securityTab = link.matches("[data-security-tabs] a");
+      const partialRegion = databaseRegionSelector(link, destination);
       if (securityTab) {
         link.closest("[data-security-tabs]")?.querySelectorAll("a[aria-current]").forEach(tab => tab.removeAttribute("aria-current"));
         link.setAttribute("aria-current", "page");
@@ -8252,6 +8286,7 @@
         focusSelector: link.dataset.focusAfterNavigation,
         // 页签切换、排序、分页等同路径导航保持滚动位置，避免整页“刷新感”。
         preserveScroll: link.hasAttribute("data-preserve-scroll") || destination.pathname === location.pathname,
+        regionSelector: partialRegion,
         openFileQuickAccess: mainNavigation && destination.pathname === "/resources/files",
       });
     }
@@ -8363,12 +8398,16 @@
       submitter.setAttribute("aria-busy", "true");
     }
     form.setAttribute("aria-busy", "true");
+    const databasePartialRegion = databaseRegionSelector(form, new URL(formActionURL(form, event.submitter), location.href));
     if (form.matches("[data-login-form]")) {
       event.preventDefault();
       submitLogin(form, submitter);
     } else if (form.hasAttribute("data-connection-test")) {
       event.preventDefault();
       submitConnectionTest(form, submitter);
+    } else if (form.method.toLowerCase() === "get" && databasePartialRegion) {
+      event.preventDefault();
+      submitAsync(form, submitter, { regionSelector: databasePartialRegion, pushHistory: true });
     } else if (form.hasAttribute("data-file-upload-form")) {
       event.preventDefault();
       submitFileUpload(form);
@@ -8474,9 +8513,16 @@
       return;
     }
     const navigationLink = mainNavigationLink(location.href, true);
+    const databaseHistoryRegion = event.state?.regionSelector || (
+      document.querySelector("[data-database-workspace]") && location.pathname === "/resources/databases"
+        ? "[data-mysql-instances-region]"
+        : ""
+    );
     navigate(location.href, false, {
       deferredData: isDeferredDataURL(location.href),
       title: navigationLink ? navigationTitle(navigationLink) : undefined,
+      preserveScroll: Boolean(databaseHistoryRegion),
+      regionSelector: databaseHistoryRegion,
     });
   });
 

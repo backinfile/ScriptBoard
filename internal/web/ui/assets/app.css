@@ -2807,6 +2807,10 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .mysql-instance-form .field-grid { display: grid; grid-template-columns: minmax(0, 1fr) 96px; gap: 12px; }
 .mysql-instance-form .button { justify-self: start; }
 .mysql-detail { min-width: 0; margin: 0; padding: 28px var(--workspace-gutter) 72px; }
+[data-mysql-instances-region][aria-busy="true"], .database-detail[aria-busy="true"] { cursor: progress; opacity: .64; pointer-events: none; transition: opacity 120ms cubic-bezier(.22, 1, .36, 1); }
+@media (prefers-reduced-motion: reduce) {
+  [data-mysql-instances-region][aria-busy="true"], .database-detail[aria-busy="true"] { transition: none; }
+}
 .mysql-detail--empty { display: grid; min-height: 520px; align-content: center; justify-items: center; gap: 9px; color: var(--muted); text-align: center; }
 .mysql-detail--empty > svg { width: 28px; height: 28px; color: var(--faint); }
 .mysql-detail--empty h2, .mysql-detail--empty p { margin: 0; }
