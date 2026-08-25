@@ -70,6 +70,7 @@ func TestFixedRolesCoverEveryProtectedRouteClass(t *testing.T) {
 		{"file quick access pin", http.MethodPost, "/resources/files/quick-access", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator}},
 		{"file script task", http.MethodGet, "/resources/files/run?path=C%3A%5Cscripts%5Cscript.ps1", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator}},
 		{"quick run start", http.MethodPost, "/config/quick-runs/quick-one/start", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator}},
+		{"quick run group move top", http.MethodPost, "/config/quick-runs/groups/group-one/move-top", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"one time source", http.MethodPost, "/config/quick-runs/one-time", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"schedule list", http.MethodGet, "/config/schedules", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator, identity.RoleViewer}},
 		{"schedule run now", http.MethodPost, "/config/schedules/schedule-one/run", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},

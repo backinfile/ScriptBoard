@@ -2842,22 +2842,26 @@ func (a *App) createQuickRunFromFile(response http.ResponseWriter, request *http
 func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request) {
 	current := request.Context().Value(sessionContextKey).(session)
 	locale := resolveWebLocale(request)
+	canManage := identity.Allows(current.role, identity.PermissionManageExecution)
+	reorderGroupID := strings.TrimSpace(request.URL.Query().Get("reorder"))
+	reorder := canManage && reorderGroupID != ""
 	if isDeferredDataShell(request) {
 		response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := quickRunsTemplate.Execute(response, struct {
-			QuickRuns    []quickRunView
-			Groups       []quickRunGroup
-			CSRFToken    string
-			Locale       webLocale
-			DeferredData bool
-			CanExecute   bool
-			CanManage    bool
-			CanReadFiles bool
-			Reorder      bool
+			QuickRuns      []quickRunView
+			Groups         []quickRunGroup
+			CSRFToken      string
+			Locale         webLocale
+			DeferredData   bool
+			CanExecute     bool
+			CanManage      bool
+			CanReadFiles   bool
+			Reorder        bool
+			ReorderGroupID string
 		}{
 			CSRFToken: current.csrfToken, Locale: locale, DeferredData: true,
-			CanExecute: identity.Allows(current.role, identity.PermissionExecute), CanManage: identity.Allows(current.role, identity.PermissionManageExecution),
-			CanReadFiles: identity.Allows(current.role, identity.PermissionReadFiles), Reorder: request.URL.Query().Get("reorder") == "1" && identity.Allows(current.role, identity.PermissionManageExecution),
+			CanExecute: identity.Allows(current.role, identity.PermissionExecute), CanManage: canManage,
+			CanReadFiles: identity.Allows(current.role, identity.PermissionReadFiles), Reorder: reorder, ReorderGroupID: reorderGroupID,
 		}); err != nil {
 			http.Error(response, "Unable to render Quick Runs: "+err.Error(), http.StatusInternalServerError)
 		}
@@ -2917,21 +2921,35 @@ func (a *App) quickRunsPage(response http.ResponseWriter, request *http.Request)
 			QuickRunCount: len(ungrouped), Items: ungrouped, Ungrouped: true,
 		})
 	}
+	if reorder {
+		found := false
+		for _, group := range groups {
+			if group.ID == reorderGroupID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			reorder = false
+			reorderGroupID = ""
+		}
+	}
 	response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := quickRunsTemplate.Execute(response, struct {
-		QuickRuns    []quickRunView
-		Groups       []quickRunGroup
-		CSRFToken    string
-		Locale       webLocale
-		DeferredData bool
-		CanExecute   bool
-		CanManage    bool
-		CanReadFiles bool
-		Reorder      bool
+		QuickRuns      []quickRunView
+		Groups         []quickRunGroup
+		CSRFToken      string
+		Locale         webLocale
+		DeferredData   bool
+		CanExecute     bool
+		CanManage      bool
+		CanReadFiles   bool
+		Reorder        bool
+		ReorderGroupID string
 	}{
 		QuickRuns: quickRuns, Groups: groups, CSRFToken: current.csrfToken, Locale: locale,
-		CanExecute: identity.Allows(current.role, identity.PermissionExecute), CanManage: identity.Allows(current.role, identity.PermissionManageExecution),
-		CanReadFiles: identity.Allows(current.role, identity.PermissionReadFiles), Reorder: request.URL.Query().Get("reorder") == "1" && identity.Allows(current.role, identity.PermissionManageExecution),
+		CanExecute: identity.Allows(current.role, identity.PermissionExecute), CanManage: canManage,
+		CanReadFiles: identity.Allows(current.role, identity.PermissionReadFiles), Reorder: reorder, ReorderGroupID: reorderGroupID,
 	}); err != nil {
 		http.Error(response, "Unable to render Quick Runs: "+err.Error(), http.StatusInternalServerError)
 	}

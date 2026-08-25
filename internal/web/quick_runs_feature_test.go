@@ -151,12 +151,20 @@ func TestQuickRunReorderModeUsesDragHandlesWithoutLegacyMoveActions(t *testing.T
 	client, serverURL := authenticatedClient(t, hostRoot, filepath.Join(root, "state"))
 	groupID, _ := createQuickRunGroup(t, client, serverURL, "Ordered")
 	createQuickRunFromFile(t, client, serverURL, scriptPath, "Deploy", groupID)
+	createQuickRunFromFile(t, client, serverURL, scriptPath, "Deploy backup", groupID)
 
 	page := getQuickRunsPage(t, client, serverURL)
-	for _, expected := range []string{`href="/config/quick-runs?reorder=1"`, `>Reorder</a>`} {
+	for _, expected := range []string{`href="/config/quick-runs?reorder=` + groupID + `"`, `>Reorder</a>`} {
 		if !strings.Contains(string(page), expected) {
 			t.Fatalf("normal page missing reorder entry %q: %s", expected, page)
 		}
+	}
+	groupHeader := regexp.MustCompile(`(?s)data-quick-run-group="` + regexp.QuoteMeta(groupID) + `".*?<header class="quick-run-group__header">(.*?)</header>`).FindSubmatch(page)
+	if len(groupHeader) != 2 || strings.Index(string(groupHeader[1]), `quick-run-group__reorder`) > strings.Index(string(groupHeader[1]), `quick-run-group__menu`) {
+		t.Fatalf("group reorder button must appear before the more-actions menu: %s", page)
+	}
+	if strings.Contains(string(page), `href="/config/quick-runs?reorder=1"`) {
+		t.Fatalf("page still contains the global reorder entry: %s", page)
 	}
 	for _, removed := range []string{`action="/config/quick-runs/groups/` + groupID + `/move"`, `action="/config/quick-runs/` + quickRunIDForName(t, page, "Deploy") + `/move"`, `name="direction"`} {
 		if strings.Contains(string(page), removed) {
@@ -164,15 +172,20 @@ func TestQuickRunReorderModeUsesDragHandlesWithoutLegacyMoveActions(t *testing.T
 		}
 	}
 
-	response, err := client.Get(serverURL + "/config/quick-runs?reorder=1")
+	response, err := client.Get(serverURL + "/config/quick-runs?reorder=" + url.QueryEscape(groupID))
 	if err != nil {
 		t.Fatal(err)
 	}
 	reorderPage, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
-	for _, expected := range []string{`data-quick-run-reorder-url="/config/quick-runs/reorder"`, `data-quick-run-group-drag-handle`, `data-quick-run-drag-handle`, `data-quick-run-reorder-finish`, `aria-live="polite"`} {
+	for _, expected := range []string{`data-quick-run-reorder-url="/config/quick-runs/reorder"`, `data-quick-run-active-reorder`, `data-quick-run-drag-handle`, `data-quick-run-reorder-finish`, `aria-live="polite"`, `class="action-menu"`, `class="button button--compact qr__run"`} {
 		if !strings.Contains(string(reorderPage), expected) {
 			t.Fatalf("reorder page missing %q: %s", expected, reorderPage)
+		}
+	}
+	for _, removed := range []string{`data-quick-run-group-drag-handle`, `class="quick-run-reorder-handle`} {
+		if strings.Contains(string(reorderPage), removed) {
+			t.Fatalf("reorder page changed the normal card structure with %q: %s", removed, reorderPage)
 		}
 	}
 }
@@ -201,6 +214,66 @@ func TestQuickRunReorderRejectsAnIncompleteInventoryWithoutChangingOrder(t *test
 	first, second := strings.Index(string(page), ">First<"), strings.Index(string(page), ">Second<")
 	if first < 0 || second < 0 || first > second {
 		t.Fatalf("rejected reorder changed group order: %s", page)
+	}
+}
+
+func TestQuickRunGroupMoveTopIsImmediateAndPreservesRelativeOrder(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), filepath.Join(root, "state"))
+	firstID, _ := createQuickRunGroup(t, client, serverURL, "First")
+	secondID, _ := createQuickRunGroup(t, client, serverURL, "Second")
+	thirdID, token := createQuickRunGroup(t, client, serverURL, "Third")
+
+	page := getQuickRunsPage(t, client, serverURL)
+	for _, groupID := range []string{firstID, secondID, thirdID} {
+		action := `action="/config/quick-runs/groups/` + groupID + `/move-top"`
+		if !strings.Contains(string(page), action) {
+			t.Fatalf("group menu missing one-time move-to-top action %q: %s", action, page)
+		}
+	}
+
+	response, err := client.PostForm(serverURL+"/config/quick-runs/groups/"+thirdID+"/move-top", url.Values{"csrf_token": {token}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("move group to top status=%d", response.StatusCode)
+	}
+	assertQuickRunGroupOrder(t, getQuickRunsPage(t, client, serverURL), "Third", "First", "Second")
+
+	response, err = client.PostForm(serverURL+"/config/quick-runs/groups/"+thirdID+"/move-top", url.Values{"csrf_token": {token}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusSeeOther {
+		t.Fatalf("repeat move group to top status=%d", response.StatusCode)
+	}
+	assertQuickRunGroupOrder(t, getQuickRunsPage(t, client, serverURL), "Third", "First", "Second")
+
+	response, err = client.PostForm(serverURL+"/config/quick-runs/groups/"+secondID+"/move-top", url.Values{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("move group to top without CSRF status=%d, want %d", response.StatusCode, http.StatusForbidden)
+	}
+	assertQuickRunGroupOrder(t, getQuickRunsPage(t, client, serverURL), "Third", "First", "Second")
+}
+
+func assertQuickRunGroupOrder(t *testing.T, page []byte, names ...string) {
+	t.Helper()
+	last := -1
+	for _, name := range names {
+		position := strings.Index(string(page), `data-group-name="`+name+`"`)
+		if position < 0 || position <= last {
+			t.Fatalf("Quick Run group order does not contain %v in sequence: %s", names, page)
+		}
+		last = position
 	}
 }
 

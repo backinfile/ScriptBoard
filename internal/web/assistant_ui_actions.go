@@ -162,6 +162,7 @@ func (a *App) assistantUIActions() []assistantUIActionSpec {
 		action("quick_runs.create_from_source", "Create Quick Run from source", "quick_runs", "/config/quick-runs/from-source", "/config/quick-runs", nil, []string{"language", "source", "working_directory", "file_name", "name", "timeout_seconds", "arguments", "group_id", "conflict_action", "rename_file_name"}, a.createQuickRunFromSource),
 		action("quick_run_groups.create", "Create Quick Run group", "quick_runs", "/config/quick-runs/groups", "/config/quick-runs", nil, []string{"name"}, a.createQuickRunGroup),
 		action("quick_run_groups.update", "Update Quick Run group", "quick_runs", "/config/quick-runs/groups/{id}/update", "/config/quick-runs", []string{"id"}, []string{"name"}, a.updateQuickRunGroup),
+		action("quick_run_groups.move_top", "Move Quick Run group to top", "quick_runs", "/config/quick-runs/groups/{id}/move-top", "/config/quick-runs", []string{"id"}, nil, a.moveQuickRunGroupToTop),
 		action("quick_run_groups.delete", "Delete Quick Run group", "quick_runs", "/config/quick-runs/groups/{id}/delete", "/config/quick-runs", []string{"id"}, []string{"confirm"}, a.deleteQuickRunGroup),
 		action("quick_runs.reorder", "Reorder Quick Runs", "quick_runs", "/config/quick-runs/reorder", "/config/quick-runs", nil, []string{"group_id", "quick_run_id"}, a.reorderQuickRuns),
 		action("quick_runs.move_group", "Move Quick Run to group", "quick_runs", "/config/quick-runs/{id}/move-group", "/config/quick-runs", []string{"id"}, []string{"group_id"}, a.moveQuickRunToGroup),

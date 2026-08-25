@@ -7379,13 +7379,14 @@ and contract tests depend on them.
 .quick-run-group__identity > svg { width: 14px; height: 14px; color: var(--faint); }
 .quick-run-group__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .quick-run-group__count { color: var(--faint); font-size: 12px; font-weight: 500; white-space: nowrap; }
-.quick-run-group__menu { flex: 0 0 auto; }
+.quick-run-group__menu, .quick-run-group__reorder { flex: 0 0 auto; }
+.quick-run-group__reorder[aria-current="true"] { color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent-border); }
 .quick-run-group__body[hidden] { display: none; }
 .quick-run-group[data-record-group="ungrouped"] .quick-run-group__identity > svg { color: var(--faint); }
 
 .quick-run-reorder-guidance {
   display: flex; align-items: center; justify-content: space-between; gap: 20px;
-  margin: 24px 0 8px; padding: 13px 14px;
+  margin: 0 0 8px; padding: 13px 14px;
   color: var(--ink); background: var(--accent-soft);
   border-top: 1px solid var(--accent); border-bottom: 1px solid var(--accent);
 }
@@ -7395,23 +7396,12 @@ and contract tests depend on them.
 .quick-run-reorder-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
 .quick-run-reorder-status { min-height: 20px; margin: 0; color: var(--muted); font-size: .7rem; }
 .quick-run-reorder-status:empty { visibility: hidden; }
-.quick-run-reorder-handle {
-  display: grid; width: 32px; height: 32px; flex: 0 0 auto; place-items: center;
-  padding: 0; color: var(--muted); background: transparent; border: 1px solid transparent;
-  border-radius: var(--control-radius); cursor: grab;
-}
-.quick-run-reorder-handle:hover { color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent); }
-.quick-run-reorder-handle:focus-visible { color: var(--accent-text); outline: 2px solid var(--accent); outline-offset: 2px; }
-.quick-run-reorder-handle:active { cursor: grabbing; }
-.quick-run-reorder-handle svg { width: 16px; height: 16px; }
-[data-quick-run-reorder-url] .qr-grid { grid-template-columns: minmax(0, 1fr); }
-[data-quick-run-reorder-url] .qr__head { align-items: center; }
-[data-quick-run-reorder-url] .qr__identity { min-width: 0; }
-[data-quick-run-reorder-url] [data-quick-run-sortable-group],
-[data-quick-run-reorder-url] [data-quick-run-id] { transition: border-color 160ms ease, background 160ms ease, opacity 160ms ease, transform 160ms ease; }
-[data-quick-run-reorder-url] [data-quick-run-sortable-group].is-dragging,
-[data-quick-run-reorder-url] [data-quick-run-id].is-dragging { opacity: .42; background: var(--accent-soft); }
-[data-quick-run-reorder-url][aria-busy] .quick-run-reorder-handle { cursor: wait; opacity: .55; }
+/* 分组内排序直接复用常态卡片结构，让进入排序模式前后的布局保持稳定。 */
+[data-quick-run-drag-handle] { cursor: grab; }
+[data-quick-run-drag-handle]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+[data-quick-run-drag-handle]:active { cursor: grabbing; }
+[data-quick-run-drag-handle].is-dragging { opacity: .42; background: var(--accent-soft); }
+[data-quick-run-reorder-url][aria-busy] [data-quick-run-drag-handle] { cursor: wait; opacity: .55; }
 
 @media (max-width: 680px) {
   .quick-run-reorder-guidance { align-items: stretch; flex-direction: column; }

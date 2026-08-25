@@ -194,8 +194,8 @@ func TestAssistantUIActionCatalogAndExecutorReuseWebValidation(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = application.Close() })
 	specs := application.assistantUIActions()
-	if len(specs) != 83 {
-		t.Fatalf("UI action catalog has %d entries, want one for each of the 83 POST routes", len(specs))
+	if len(specs) != 84 {
+		t.Fatalf("UI action catalog has %d entries, want one for each of the 84 POST routes", len(specs))
 	}
 	keys, paths := make(map[string]bool, len(specs)), make(map[string]bool, len(specs))
 	for _, spec := range specs {

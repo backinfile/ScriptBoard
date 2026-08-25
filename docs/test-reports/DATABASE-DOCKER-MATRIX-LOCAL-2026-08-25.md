@@ -130,7 +130,7 @@
 
 | 项目 | 当前状态 |
 | --- | --- |
-| ScriptBoard | `http://127.0.0.1:18788`，PID 37008，保持运行；二进制由合并后的 `dev` 构建 |
+| ScriptBoard | `http://127.0.0.1:18788`，PID 13576，保持运行；二进制由当前 `dev` 工作区构建 |
 | State Root | `D:\Github\worktrees\ScriptBoard\database-unified\.scratch\database-unified-deployment\state` |
 | 管理员 | `admin`；密码仅保留在 State Root 私有文件中 |
 | Docker 项目 | `scriptboard-database-qa`，7 个容器均保持运行 |
@@ -276,3 +276,14 @@
 测试脚本探索阶段发现四项测试夹具假设：受保护 `.scratch` 文件不能作为 Host Files 来源、默认 `dragTo` 落点不触发列表换位、面板排序需等待异步 DOM 更新、Redis 连接列表需要遍历分页。脚本分别改为仓库外 QA 文件、Playwright 页面内 DragEvent、基于名称变化等待和分页遍历后，完整复验全部通过；未发现产品回归，也未删除探索阶段创建的数据。
 
 复验截图保留为 `.scratch/database-unified-dev-deployment/quick-run-reorder-dragged.png`、`custom-dashboard-reorder-retained.png`、`redis-values-retained.png`，并继续保留数据库、SQL 控制台、外部日志和页面标题截图。复验结束时 ScriptBoard PID 仍为 `37008`，`http://127.0.0.1:18788/login` 返回 200，7 个数据库容器全部保持运行。
+
+## 快捷执行分组排序与一次性置顶复验
+
+本轮先固定黑盒清单：分组级入口位置、单组作用域、常态/排序态卡片尺寸和内容一致、鼠标拖动持久化、方向键持久化、其他分组不变、一次性置顶、重复置顶幂等、移动端溢出、本地化和控制台错误。白盒清单覆盖完整清单并发校验、CSRF、权限、审计、相对顺序、未知分组和辅助操作目录契约。
+
+- 页面级“调整顺序”入口已移除；每个分组标题的“调整顺序”位于 `…` 按钮前，未分组区同样可按组调整卡片顺序。
+- 仅被选中的分组卡片可拖动；排序态继续使用原响应式卡片网格，卡片尺寸、名称、路径、最近记录、运行按钮及 `…` 菜单保持不变。
+- 鼠标拖动与聚焦卡片后的方向键均已实际保存并刷新验证；保存请求提交完整分组/快捷执行清单，后端并发完整性保护继续生效。
+- 普通分组 `…` 菜单新增“置顶”；它会立即将当前分组移动到首位，同时保持其他分组相对顺序，不创建固定置顶状态。重复操作保持幂等，无 CSRF 请求返回 403。
+- 外部 Playwright 最终输出：`groupButtons/cardLayoutStable/drag/keyboard/moveTop/mobile=pass`，控制台错误 0。保留排序分组 `PW retained mt86bx8w A`，并将 `PW retained mt86l5kr A` 置顶；未删除任何测试数据。
+- 截图保留为 `.scratch/database-unified-dev-deployment/quick-run-group-ordering-retained.png`。全仓 `go test ./... -count=1` 通过；重新部署 PID 为 `13576`，登录页返回 200。

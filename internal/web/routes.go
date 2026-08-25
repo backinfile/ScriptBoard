@@ -362,6 +362,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("POST /config/quick-runs/groups", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.createQuickRunGroup)))
 	mux.Handle("GET /config/quick-runs/groups/{id}/edit", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.editQuickRunGroupTask)))
 	mux.Handle("POST /config/quick-runs/groups/{id}/update", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.updateQuickRunGroup)))
+	mux.Handle("POST /config/quick-runs/groups/{id}/move-top", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.moveQuickRunGroupToTop)))
 	mux.Handle("POST /config/quick-runs/groups/{id}/delete", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.deleteQuickRunGroup)))
 	mux.Handle("POST /config/quick-runs/reorder", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.reorderQuickRuns)))
 	mux.Handle("GET /config/quick-runs/{id}/move-group", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.moveQuickRunToGroupTask)))

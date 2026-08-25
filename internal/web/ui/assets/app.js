@@ -4331,7 +4331,6 @@
     const status = root.querySelector("[data-quick-run-reorder-status]");
     const finish = root.querySelector("[data-quick-run-reorder-finish]");
     const cancel = root.querySelector("[data-quick-run-reorder-cancel]");
-    const initialGroups = [...root.querySelectorAll("[data-quick-run-group]")].map(group => group.dataset.quickRunGroup);
     const initialItems = new Map([...root.querySelectorAll("[data-quick-run-group]")].map(group => [group.dataset.quickRunGroup, [...group.querySelectorAll("[data-quick-run-id]")].map(item => item.dataset.quickRunId)]));
     let dragged;
     let busy = false;
@@ -4342,11 +4341,6 @@
       root.toggleAttribute("aria-busy", value);
     };
     const restoreOrder = () => {
-      const region = root.querySelector("[data-deferred-region]");
-      for (const id of initialGroups) {
-        const group = [...root.querySelectorAll("[data-quick-run-group]")].find(candidate => candidate.dataset.quickRunGroup === id);
-        if (group) region?.append(group);
-      }
       for (const [groupID, ids] of initialItems) {
         const grid = [...root.querySelectorAll("[data-quick-run-group]")].find(group => group.dataset.quickRunGroup === groupID)?.querySelector(".qr-grid");
         for (const id of ids) {
@@ -4360,7 +4354,8 @@
       setBusy(true);
       if (status) status.textContent = root.dataset.reorderSaving || "Saving order…";
       const body = new URLSearchParams({ csrf_token: root.dataset.csrfToken || "" });
-      root.querySelectorAll("[data-quick-run-sortable-group]").forEach(group => body.append("group_id", group.dataset.quickRunGroup));
+      // 分组内排序仍提交完整真实分组清单，满足并发变更校验且不改动分组顺序。
+      root.querySelectorAll('[data-quick-run-group]:not([data-quick-run-group="ungrouped"])').forEach(group => body.append("group_id", group.dataset.quickRunGroup));
       root.querySelectorAll("[data-quick-run-id]").forEach(item => body.append("quick_run_id", item.dataset.quickRunId));
       try {
         const response = await fetch(root.dataset.quickRunReorderUrl, { method: "POST", body, headers: { Accept: "text/plain" } });
@@ -4375,36 +4370,38 @@
     };
     const onKeyDown = event => {
       if (busy || !["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
-      const groupHandle = event.target.closest("[data-quick-run-group-drag-handle]");
       const itemHandle = event.target.closest("[data-quick-run-drag-handle]");
       const direction = ["ArrowUp", "ArrowLeft"].includes(event.key) ? -1 : 1;
-      const node = itemHandle?.closest("[data-quick-run-id]") || groupHandle?.closest("[data-quick-run-sortable-group]");
-      const peers = itemHandle ? [...(node?.parentElement.querySelectorAll(":scope > [data-quick-run-id]") || [])] : [...root.querySelectorAll("[data-quick-run-sortable-group]")];
+      const node = itemHandle?.closest("[data-quick-run-id]");
+      const peers = [...(node?.parentElement.querySelectorAll(":scope > [data-quick-run-id]") || [])];
       const target = peers[peers.indexOf(node) + direction];
       if (!node || !target) return;
       event.preventDefault();
       target.parentElement.insertBefore(node, direction < 0 ? target : target.nextSibling);
-      (itemHandle || groupHandle).focus();
+      itemHandle.focus();
       if (status) status.textContent = "";
     };
     const onDragStart = event => {
       if (busy) return;
       const itemHandle = event.target.closest("[data-quick-run-drag-handle]");
-      const groupHandle = event.target.closest("[data-quick-run-group-drag-handle]");
-      const node = itemHandle?.closest("[data-quick-run-id]") || groupHandle?.closest("[data-quick-run-sortable-group]");
+      const node = itemHandle?.closest("[data-quick-run-id]");
       if (!node) return;
-      dragged = { node, type: itemHandle ? "item" : "group" };
+      dragged = { node };
       node.classList.add("is-dragging");
       event.dataTransfer.effectAllowed = "move";
-      event.dataTransfer.setData("text/plain", itemHandle ? node.dataset.quickRunId : node.dataset.quickRunGroup);
+      event.dataTransfer.setData("text/plain", node.dataset.quickRunId);
     };
     const onDragOver = event => {
       if (!dragged) return;
-      const target = dragged.type === "item" ? event.target.closest("[data-quick-run-id]") : event.target.closest("[data-quick-run-sortable-group]");
-      if (!target || target === dragged.node || (dragged.type === "item" && target.parentElement !== dragged.node.parentElement)) return;
+      const target = event.target.closest("[data-quick-run-drag-handle]");
+      if (!target || target === dragged.node || target.parentElement !== dragged.node.parentElement) return;
       event.preventDefault();
       event.dataTransfer.dropEffect = "move";
-      const before = event.clientY < target.getBoundingClientRect().top + target.offsetHeight / 2;
+      const targetRect = target.getBoundingClientRect();
+      const columns = getComputedStyle(target.parentElement).gridTemplateColumns.split(" ").length;
+      const before = columns > 1
+        ? event.clientX < targetRect.left + targetRect.width / 2
+        : event.clientY < targetRect.top + targetRect.height / 2;
       target.parentElement.insertBefore(dragged.node, before ? target : target.nextSibling);
     };
     const onDrop = event => { if (dragged) { event.preventDefault(); if (status) status.textContent = ""; } };

@@ -358,6 +358,67 @@ func (a *App) updateQuickRunGroup(response http.ResponseWriter, request *http.Re
 	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
 }
 
+func (a *App) moveQuickRunGroupToTop(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
+		return
+	}
+	id := request.PathValue("id")
+	transaction, err := a.db.Begin()
+	if err != nil {
+		http.Error(response, "无法置顶快捷执行分组", http.StatusInternalServerError)
+		return
+	}
+	defer transaction.Rollback()
+
+	rows, err := transaction.Query("SELECT id FROM quick_run_groups ORDER BY sort_order, created_at")
+	if err != nil {
+		http.Error(response, "无法置顶快捷执行分组", http.StatusInternalServerError)
+		return
+	}
+	var ordered []string
+	found := false
+	for rows.Next() {
+		var groupID string
+		if err = rows.Scan(&groupID); err != nil {
+			break
+		}
+		if groupID == id {
+			found = true
+			continue
+		}
+		ordered = append(ordered, groupID)
+	}
+	if closeErr := rows.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		http.Error(response, "无法置顶快捷执行分组", http.StatusInternalServerError)
+		return
+	}
+	if !found {
+		http.Error(response, "快捷执行分组不存在", http.StatusNotFound)
+		return
+	}
+	ordered = append([]string{id}, ordered...)
+	// 一次性置顶会重编号完整分组清单，同时保留其他分组原有相对顺序。
+	now := time.Now().UTC().Unix()
+	for index, groupID := range ordered {
+		if _, err = transaction.Exec("UPDATE quick_run_groups SET sort_order = ?, updated_at = ? WHERE id = ?", index+1, now, groupID); err != nil {
+			break
+		}
+	}
+	if err == nil {
+		err = transaction.Commit()
+	}
+	if err != nil {
+		http.Error(response, "无法置顶快捷执行分组", http.StatusInternalServerError)
+		return
+	}
+	a.recordAuditForRequest(request, "move_quick_run_group_to_top", id, "succeeded")
+	http.Redirect(response, request, "/config/quick-runs", http.StatusSeeOther)
+}
+
 func (a *App) reorderQuickRuns(response http.ResponseWriter, request *http.Request) {
 	if !validSessionCSRF(request) {
 		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
