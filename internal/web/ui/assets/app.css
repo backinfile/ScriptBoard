@@ -2700,6 +2700,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .mysql-overview-strip div { display: grid; gap: 4px; min-width: 0; }
 .mysql-overview-strip code { overflow-wrap: anywhere; }
 .workspace[data-mysql-workspace] { width: min(100%, var(--content-max)); max-width: var(--content-max); margin: 0 auto; padding: 0; }
+.workspace[data-database-workspace] { width: min(100%, var(--content-max)); max-width: var(--content-max); margin: 0 auto; padding: 0; }
 .mysql-instance-workspace { display: grid; min-height: max(600px, calc(100vh - 154px)); grid-template-columns: minmax(240px, 280px) minmax(0, 1fr); align-items: stretch; margin-top: 0; border-top: 1px solid var(--rule-strong); }
 .mysql-instance-rail { min-width: 0; padding: 28px 22px 72px var(--workspace-gutter); border-right: 1px solid var(--rule); }
 .mysql-instance-rail__head { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
@@ -9165,9 +9166,26 @@ body:has(> .error-page) {
 .assistant-chat { background: var(--canvas); }
 .assistant-header { background: var(--surface); }
 
+/* Let the operational transcript use the full chat column; message internals
+   still own their wrapping rules so long prose, tables, and tool output remain safe. */
+.assistant-transcript { width: 100%; align-self: stretch; padding-right: clamp(24px, 3vw, 48px); padding-left: clamp(24px, 3vw, 48px); }
+.assistant-composer-zone { width: 100%; align-self: stretch; padding-right: clamp(24px, 3vw, 48px); padding-left: clamp(24px, 3vw, 48px); }
+.assistant-message--assistant { max-width: 100%; }
+
+/* MySQL and Redis share this invariant detail stage, preventing a connection
+   switch from changing the right-hand panel's dimensions. */
+.database-detail { width: 100%; height: max(600px, calc(100vh - 154px)); min-height: max(600px, calc(100vh - 154px)); align-self: stretch; overflow-y: auto; }
+
+@media (max-width: 1000px) {
+  .database-detail { height: auto; min-height: 0; overflow-y: visible; }
+}
+
 @media (max-width: 860px) {
   .assistant-workspace { grid-template-columns: minmax(0, 1fr); }
-  .assistant-message--user, .assistant-message--assistant { max-width: 88%; }
+  .assistant-transcript { padding-right: 18px; padding-left: 18px; }
+  .assistant-composer-zone { width: 100%; padding-right: 10px; padding-left: 10px; }
+  .assistant-message--user { max-width: 88%; }
+  .assistant-message--assistant { max-width: 100%; }
 }
 .database-connection-rail { display: flex; flex-direction: column; gap: 24px; }
 .database-connection-rail > .mysql-instance-rail__head { margin-bottom: 0; }
