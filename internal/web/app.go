@@ -3335,6 +3335,59 @@ func (a *App) updateVariable(response http.ResponseWriter, request *http.Request
 	http.Redirect(response, request, "/resources/variables", http.StatusSeeOther)
 }
 
+func (a *App) incrementVariableVersion(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "CSRF Token 无效", http.StatusForbidden)
+		return
+	}
+	part := variables.VersionPart(request.FormValue("part"))
+	if part != variables.VersionPartMajor && part != variables.VersionPartMinor && part != variables.VersionPartPatch {
+		http.Error(response, "版本号递增类型无效", http.StatusBadRequest)
+		return
+	}
+
+	name := request.PathValue("name")
+	var value string
+	var valueType variables.Kind
+	var revision int64
+	if err := a.db.QueryRow("SELECT value, value_type, revision FROM variables WHERE name = ?", name).Scan(&value, &valueType, &revision); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(response, "变量不存在", http.StatusNotFound)
+			return
+		}
+		http.Error(response, "无法读取变量", http.StatusInternalServerError)
+		return
+	}
+	if valueType != variables.KindVersion {
+		http.Error(response, "变量不是版本号类型", http.StatusConflict)
+		return
+	}
+	next, err := variables.IncrementVersion(value, part)
+	if err != nil {
+		http.Error(response, "当前变量值不是有效的版本号", http.StatusConflict)
+		return
+	}
+
+	// Derive from the stored revision and compare it during the write so a
+	// concurrent edit is surfaced instead of overwriting the newer value.
+	result, err := a.db.Exec(`UPDATE variables SET value = ?, revision = revision + 1, updated_at = ?
+		WHERE name = ? AND value_type = ? AND revision = ?`, next, time.Now().UTC().Unix(), name, variables.KindVersion, revision)
+	count := int64(0)
+	if err == nil {
+		count, _ = result.RowsAffected()
+	}
+	if err != nil {
+		http.Error(response, "无法增加版本号", http.StatusInternalServerError)
+		return
+	}
+	if count == 0 {
+		http.Error(response, "变量已被其他操作更新，请刷新后重试", http.StatusConflict)
+		return
+	}
+	a.recordAuditForRequest(request, "increment_variable_"+string(part), name, "succeeded")
+	http.Redirect(response, request, "/resources/variables", http.StatusSeeOther)
+}
+
 func (a *App) deleteVariable(response http.ResponseWriter, request *http.Request) {
 	if !validSessionCSRF(request) || request.FormValue("confirm") != "yes" {
 		http.Error(response, "删除变量需要页面安全令牌和明确确认", http.StatusForbidden)

@@ -378,3 +378,151 @@ func TestEditVariableChangesTypeOnlyWhenTheSubmittedValueMatches(t *testing.T) {
 		t.Fatalf("Variable list does not show the updated revision: %s", page)
 	}
 }
+
+func TestVersionVariableMenuOffersAndAppliesThreeIncrementActions(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	stateRoot := filepath.Join(root, "state")
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), stateRoot)
+	response, err := client.Get(serverURL + "/resources/variables/new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	response, err = client.PostForm(serverURL+"/resources/variables", url.Values{
+		"name": {"RELEASE_VERSION"}, "value": {"2.4.9"}, "value_type": {"version"}, "csrf_token": {formToken(t, page)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+
+	response, err = client.Get(serverURL + "/resources/variables")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	html := string(page)
+	for _, marker := range []string{
+		`action="/resources/variables/RELEASE_VERSION/increment"`,
+		`name="part" value="major"`,
+		`name="part" value="minor"`,
+		`name="part" value="patch"`,
+		`Increase major version`,
+		`Increase minor version`,
+		`Increase patch version`,
+	} {
+		if !strings.Contains(html, marker) {
+			t.Fatalf("version action menu is missing %q: %s", marker, html)
+		}
+	}
+
+	token := formToken(t, page)
+	for _, test := range []struct {
+		part string
+		want string
+	}{
+		{"patch", "2.4.10"},
+		{"minor", "2.5.0"},
+		{"major", "3.0.0"},
+	} {
+		response, err = client.PostForm(serverURL+"/resources/variables/RELEASE_VERSION/increment", url.Values{
+			"part": {test.part}, "csrf_token": {token},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusSeeOther {
+			t.Fatalf("increment %s status=%d", test.part, response.StatusCode)
+		}
+		database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var value string
+		var revision int64
+		if err := database.QueryRow(`SELECT value, revision FROM variables WHERE name = 'RELEASE_VERSION'`).Scan(&value, &revision); err != nil {
+			_ = database.Close()
+			t.Fatal(err)
+		}
+		_ = database.Close()
+		if value != test.want {
+			t.Fatalf("increment %s value=%q, want %q", test.part, value, test.want)
+		}
+	}
+
+	database, err := sql.Open("sqlite", filepath.Join(stateRoot, "app.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	var revision int64
+	if err := database.QueryRow(`SELECT revision FROM variables WHERE name = 'RELEASE_VERSION'`).Scan(&revision); err != nil {
+		t.Fatal(err)
+	}
+	if revision != 4 {
+		t.Fatalf("revision=%d, want 4", revision)
+	}
+	for _, action := range []string{"increment_variable_patch", "increment_variable_minor", "increment_variable_major"} {
+		var count int
+		if err := database.QueryRow(`SELECT COUNT(*) FROM audit_events WHERE action = ? AND target = 'RELEASE_VERSION' AND result = 'succeeded'`, action).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("audit %s count=%d err=%v", action, count, err)
+		}
+	}
+}
+
+func TestVersionIncrementRejectsInvalidRequestsAndNonVersionVariables(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	stateRoot := filepath.Join(root, "state")
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "managed"), stateRoot)
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	response, err := client.Get(serverURL + "/resources/variables/new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	token := formToken(t, page)
+	response, err = client.PostForm(serverURL+"/resources/variables", url.Values{
+		"name": {"CHANNEL"}, "value": {"stable"}, "value_type": {"text"}, "csrf_token": {token},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+
+	response, err = client.Get(serverURL + "/resources/variables")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if strings.Contains(string(page), `action="/resources/variables/CHANNEL/increment"`) {
+		t.Fatalf("text variable unexpectedly exposes version actions: %s", page)
+	}
+	token = formToken(t, page)
+
+	for _, test := range []struct {
+		values url.Values
+		want   int
+	}{
+		{url.Values{"part": {"patch"}}, http.StatusForbidden},
+		{url.Values{"part": {"build"}, "csrf_token": {token}}, http.StatusBadRequest},
+		{url.Values{"part": {"patch"}, "csrf_token": {token}}, http.StatusConflict},
+	} {
+		response, err = client.PostForm(serverURL+"/resources/variables/CHANNEL/increment", test.values)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != test.want {
+			t.Fatalf("values=%v status=%d, want %d", test.values, response.StatusCode, test.want)
+		}
+	}
+}

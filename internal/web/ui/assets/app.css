@@ -3233,6 +3233,49 @@ td.record-actions { width: 1%; }
   opacity: 1;
   transform: translate(-50%, 0);
 }
+.has-icon-tooltip-layer .icon-tooltip::before,
+.has-icon-tooltip-layer .icon-tooltip::after { display: none; }
+.icon-tooltip-layer {
+  position: fixed;
+  z-index: 1300;
+  inset: auto;
+  width: max-content;
+  max-width: min(240px, calc(100vw - 16px));
+  margin: 0;
+  padding: 5px 8px;
+  overflow: visible;
+  color: var(--terminal-ink);
+  background: var(--terminal);
+  border: 0;
+  border-radius: 4px;
+  box-shadow: 0 5px 14px rgba(23, 26, 31, .18);
+  font: 550 .7rem/1.35 var(--font-ui);
+  letter-spacing: 0;
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(3px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+.icon-tooltip-layer::before {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  content: "";
+  border: 4px solid transparent;
+  border-top-color: var(--terminal);
+  transform: translateX(-50%);
+}
+.icon-tooltip-layer[data-placement="bottom"]::before {
+  top: auto;
+  bottom: 100%;
+  border-top-color: transparent;
+  border-bottom-color: var(--terminal);
+}
+.icon-tooltip-layer[data-visible="true"] { opacity: 1; transform: translateY(0); }
+@media (prefers-reduced-motion: reduce) {
+  .icon-tooltip-layer { transition: none; }
+}
 .secret-mask {
   flex: 0 1 auto;
   min-width: 0;
@@ -7893,7 +7936,8 @@ Markup notes for the integrator (internal/web/ui/templates/overview.html):
 
 /* ---------- Two-column card grid + cards ---------- */
 .overview-page .grid-2 { display: grid; grid-template-columns: 1.6fr 1fr; gap: 12px; margin-bottom: 14px; }
-.overview-page .grid-2:has(.overview-detail-section--flat) { grid-template-columns: 1fr 1fr; }
+/* Keep both wide detail tables readable instead of compressing them side by side. */
+.overview-page .grid-2:has(.overview-detail-section--flat) { grid-template-columns: 1fr; }
 .overview-page .card {
   background: var(--surface);
   border: 1px solid var(--rule);

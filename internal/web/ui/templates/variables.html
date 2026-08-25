@@ -57,7 +57,14 @@
       <td class="record-actions">
         <div class="record-actions__group">
         <a class="button button--quiet button--compact" href="/resources/variables/{{.Name}}/edit" data-task-link><span data-lucide="square-pen" aria-hidden="true"></span>{{t $.Locale "common.edit"}}</a>
-        <details class="action-menu"><summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div><form method="post" action="/resources/variables/{{.Name}}/delete" data-confirm="{{t $.Locale "variables.delete_confirm"}}" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-action" type="submit" name="confirm" value="yes"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "common.delete"}}</button></form></div></details>
+        <details class="action-menu"><summary aria-label="{{t $.Locale "common.more_actions"}}"><span data-lucide="ellipsis" aria-hidden="true"></span></summary><div>
+          {{if eq .ValueType "version"}}
+          <form method="post" action="/resources/variables/{{.Name}}/increment" data-async data-async-refresh="[data-deferred-region]"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" name="part" value="major"><span data-lucide="chevrons-up" aria-hidden="true"></span>{{t $.Locale "variables.increment_major"}}</button></form>
+          <form method="post" action="/resources/variables/{{.Name}}/increment" data-async data-async-refresh="[data-deferred-region]"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" name="part" value="minor"><span data-lucide="arrow-up" aria-hidden="true"></span>{{t $.Locale "variables.increment_minor"}}</button></form>
+          <form method="post" action="/resources/variables/{{.Name}}/increment" data-async data-async-refresh="[data-deferred-region]"><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button type="submit" name="part" value="patch"><span data-lucide="plus" aria-hidden="true"></span>{{t $.Locale "variables.increment_patch"}}</button></form>
+          {{end}}
+          <form method="post" action="/resources/variables/{{.Name}}/delete" data-confirm="{{t $.Locale "variables.delete_confirm"}}" data-async><input type="hidden" name="csrf_token" value="{{$.CSRFToken}}"><button class="danger-action" type="submit" name="confirm" value="yes"><span data-lucide="trash-2" aria-hidden="true"></span>{{t $.Locale "common.delete"}}</button></form>
+        </div></details>
         </div>
       </td>
     </tr>{{end}}</tbody>

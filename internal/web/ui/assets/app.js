@@ -312,6 +312,92 @@
   }
   window.ScriptBoardRenderIcons = renderIcons;
 
+  function initIconTooltipLayer() {
+    const tooltip = document.createElement("div");
+    tooltip.id = "icon-tooltip-layer";
+    tooltip.className = "icon-tooltip-layer";
+    tooltip.setAttribute("role", "tooltip");
+    tooltip.setAttribute("popover", "manual");
+    tooltip.hidden = true;
+    document.body.append(tooltip);
+    document.documentElement.classList.add("has-icon-tooltip-layer");
+
+    let activeTarget = null;
+    let revealFrame = 0;
+    const supportsPopover = typeof tooltip.showPopover === "function";
+    const isTooltipTarget = target => target instanceof Element
+      ? target.closest(".icon-tooltip[data-tooltip]")
+      : null;
+    const position = () => {
+      if (!activeTarget || tooltip.hidden) return;
+      const anchor = activeTarget.getBoundingClientRect();
+      const bounds = tooltip.getBoundingClientRect();
+      const viewportPadding = 8;
+      const gap = 11;
+      let top = anchor.top - bounds.height - gap;
+      let placement = "top";
+      if (top < viewportPadding) {
+        top = anchor.bottom + gap;
+        placement = "bottom";
+      }
+      const left = Math.min(
+        Math.max(anchor.left + (anchor.width - bounds.width) / 2, viewportPadding),
+        Math.max(viewportPadding, window.innerWidth - bounds.width - viewportPadding),
+      );
+      tooltip.dataset.placement = placement;
+      tooltip.style.top = `${Math.round(top)}px`;
+      tooltip.style.left = `${Math.round(left)}px`;
+    };
+    const hide = target => {
+      if (!activeTarget || (target && target !== activeTarget)) return;
+      activeTarget = null;
+      window.cancelAnimationFrame(revealFrame);
+      delete tooltip.dataset.visible;
+      delete tooltip.dataset.open;
+      if (supportsPopover && tooltip.matches(":popover-open")) tooltip.hidePopover();
+      tooltip.hidden = true;
+    };
+    const show = target => {
+      const label = target?.dataset.tooltip?.trim();
+      if (!label) return;
+      activeTarget = target;
+      tooltip.textContent = label;
+      tooltip.hidden = false;
+      tooltip.dataset.open = "true";
+      if (supportsPopover && !tooltip.matches(":popover-open")) tooltip.showPopover();
+      position();
+      window.cancelAnimationFrame(revealFrame);
+      revealFrame = window.requestAnimationFrame(() => {
+        if (activeTarget === target) tooltip.dataset.visible = "true";
+      });
+    };
+
+    document.addEventListener("pointerover", event => {
+      const target = isTooltipTarget(event.target);
+      if (target && !target.contains(event.relatedTarget)) show(target);
+    });
+    document.addEventListener("pointerout", event => {
+      const target = isTooltipTarget(event.target);
+      if (target && !target.contains(event.relatedTarget)) hide(target);
+    });
+    document.addEventListener("focusin", event => {
+      const target = isTooltipTarget(event.target);
+      if (target) show(target);
+    });
+    document.addEventListener("focusout", event => {
+      const target = isTooltipTarget(event.target);
+      if (target) hide(target);
+    });
+    document.addEventListener("keydown", event => {
+      if (event.key === "Escape") hide();
+    });
+    document.addEventListener("scroll", position, true);
+    window.addEventListener("resize", position);
+    new MutationObserver(records => {
+      if (activeTarget && records.some(record => record.target === activeTarget)) show(activeTarget);
+    }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-tooltip"], subtree: true });
+  }
+
   function localizeTimes(root = document) {
     const formatter = new Intl.DateTimeFormat(locale(), {
       year: "numeric", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit"
@@ -847,7 +933,7 @@
     const headerActions = document.createElement("div");
     headerActions.className = "server-error-header-actions";
     const copyDetails = document.createElement("button");
-    copyDetails.className = "icon-button icon-button--quiet";
+    copyDetails.className = "icon-button icon-button--quiet icon-tooltip";
     copyDetails.type = "button";
     copyDetails.setAttribute("aria-label", words().serverErrorCopyDetails);
     copyDetails.setAttribute("data-tooltip", words().serverErrorCopyDetails);
@@ -8274,6 +8360,9 @@
     });
   });
 
+  // Fix: render icon hover labels in the browser top layer so drawers,
+  // dialogs, and clipped record containers cannot cover copy feedback.
+  initIconTooltipLayer();
   initPage();
   initStatus();
 })();
@@ -8508,10 +8597,15 @@ document.addEventListener("click", async function (event) {
   try {
     await window.ScriptBoardCopyText(new URL(button.dataset.copyDashboardUrl, window.location.origin).href);
     if (label) label.textContent = "已复制";
+    button.dataset.tooltip = "已复制";
   } catch (_) {
     if (label) label.textContent = "复制失败";
+    button.dataset.tooltip = "复制失败";
   }
-  window.setTimeout(() => { if (label) label.textContent = "复制公开地址"; }, 1800);
+  window.setTimeout(() => {
+    if (label) label.textContent = "复制公开地址";
+    button.dataset.tooltip = "复制公开地址";
+  }, 1800);
 });
 
 syncDashboardDrawerState();
@@ -8689,11 +8783,12 @@ function renderDashboardJSONTree(root, value, path = "", search = "") {
     const type = document.createElement("small"); type.textContent = dashboardValueType(current);
     const copy = document.createElement("button");
     copy.type = "button";
-    copy.className = "icon-button icon-button--quiet custom-dashboard-json-copy";
+    copy.className = "icon-button icon-button--quiet icon-tooltip custom-dashboard-json-copy";
     const copyLabel = dashboardLocaleText(`复制字段路径：${currentPath}`, `Copy field path: ${currentPath}`);
     const copiedLabel = dashboardLocaleText(`已复制：${currentPath}`, `Copied: ${currentPath}`);
     const failedLabel = dashboardLocaleText(`复制失败：${currentPath}`, `Copy failed: ${currentPath}`);
     copy.setAttribute("aria-label", copyLabel);
+    copy.dataset.tooltip = copyLabel;
     const renderCopyIcon = (name) => {
       const icon = document.createElement("span");
       icon.dataset.lucide = name;
@@ -8708,15 +8803,18 @@ function renderDashboardJSONTree(root, value, path = "", search = "") {
         await copyDashboardFieldPath(currentPath);
         copy.dataset.state = "success";
         copy.setAttribute("aria-label", copiedLabel);
+        copy.dataset.tooltip = copiedLabel;
         renderCopyIcon("check");
       } catch (_) {
         copy.dataset.state = "error";
         copy.setAttribute("aria-label", failedLabel);
+        copy.dataset.tooltip = failedLabel;
         renderCopyIcon("triangle-alert");
       }
       copy._dashboardCopyTimer = window.setTimeout(() => {
         delete copy.dataset.state;
         copy.setAttribute("aria-label", copyLabel);
+        copy.dataset.tooltip = copyLabel;
         renderCopyIcon("copy");
       }, 1800);
     });

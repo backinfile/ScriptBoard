@@ -347,6 +347,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /resources/variables/{name}/edit", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.editVariableTask)))
 	mux.Handle("POST /resources/variables", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.createVariable)))
 	mux.Handle("POST /resources/variables/{name}/update", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.updateVariable)))
+	mux.Handle("POST /resources/variables/{name}/increment", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.incrementVariableVersion)))
 	mux.Handle("POST /resources/variables/{name}/delete", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.deleteVariable)))
 	mux.Handle("POST /history/runs/{id}/quick-run", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.saveQuickRun)))
 	mux.Handle("GET /config/quick-runs", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.quickRunsPage)))

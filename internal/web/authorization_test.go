@@ -74,6 +74,7 @@ func TestFixedRolesCoverEveryProtectedRouteClass(t *testing.T) {
 		{"schedule list", http.MethodGet, "/config/schedules", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer, identity.RoleOperator, identity.RoleViewer}},
 		{"schedule run now", http.MethodPost, "/config/schedules/schedule-one/run", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"variables", http.MethodGet, "/resources/variables", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
+		{"variable version increment", http.MethodPost, "/resources/variables/RELEASE_VERSION/increment", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"mysql databases", http.MethodGet, "/resources/databases", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"mysql backup mutation", http.MethodPost, "/resources/databases/instances/instance-one/backup", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},
 		{"external interfaces", http.MethodGet, "/config/external-interfaces", []identity.Role{identity.RoleAdministrator, identity.RoleMaintainer}},

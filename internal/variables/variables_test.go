@@ -101,6 +101,40 @@ func TestParseVersionRequiresThreeCanonicalNumericParts(t *testing.T) {
 	}
 }
 
+func TestIncrementVersionAppliesSemanticVersionCarryRules(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		part variables.VersionPart
+		want string
+	}{
+		{variables.VersionPartMajor, "3.0.0"},
+		{variables.VersionPartMinor, "2.5.0"},
+		{variables.VersionPartPatch, "2.4.10"},
+	} {
+		got, err := variables.IncrementVersion("2.4.9", test.part)
+		if err != nil || got != test.want {
+			t.Fatalf("IncrementVersion(2.4.9, %q) = %q, %v; want %q", test.part, got, err, test.want)
+		}
+	}
+
+	got, err := variables.IncrementVersion("999999999999999999999.0.0", variables.VersionPartMajor)
+	if err != nil || got != "1000000000000000000000.0.0" {
+		t.Fatalf("large major increment = %q, %v", got, err)
+	}
+}
+
+func TestIncrementVersionRejectsInvalidValuesAndParts(t *testing.T) {
+	t.Parallel()
+
+	if _, err := variables.IncrementVersion("2.4", variables.VersionPartPatch); !errors.Is(err, variables.ErrInvalidValue) {
+		t.Fatalf("invalid stored value error = %v", err)
+	}
+	if _, err := variables.IncrementVersion("2.4.9", variables.VersionPart("build")); !errors.Is(err, variables.ErrInvalidVersionPart) {
+		t.Fatalf("invalid part error = %v", err)
+	}
+}
+
 func TestParseRejectsUnsupportedKindsAndInvalidUTF8(t *testing.T) {
 	t.Parallel()
 
