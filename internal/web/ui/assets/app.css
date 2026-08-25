@@ -8848,8 +8848,10 @@ body:has(> .error-page) {
   font-size: .75rem;
 }
 .editor-page .text-preview {
-  background: var(--surface);
-  border: 1px solid var(--rule);
+  /* 修复浅色编辑器表面覆盖终端底色后造成的低对比度：文本与语法高亮统一回到其设计对应的深色预览面。 */
+  color: var(--terminal-ink);
+  background: var(--terminal);
+  border: 1px solid #2b303a;
   border-radius: var(--radius);
   box-shadow: var(--shadow-card);
   font-family: var(--font-mono);
