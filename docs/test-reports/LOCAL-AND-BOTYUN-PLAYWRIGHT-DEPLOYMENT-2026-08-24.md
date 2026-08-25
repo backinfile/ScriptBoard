@@ -19,7 +19,7 @@
 7. `1440 × 1000` 桌面布局与 `390 × 844` 移动布局的横向溢出检查。
 8. 浏览器控制台错误、页面异常和失败请求。
 9. 本地进程、标准错误和登录页存活检查。
-10. botyun Web、Broker、AI Socket、Runner Socket、Doctor、SQLite schema 和 HTTPS 存活检查。
+10. botyun Web、Broker、Runner Socket、Doctor、SQLite schema 和 HTTPS 存活检查。
 
 ## 2. 本地部署
 
@@ -50,13 +50,13 @@
 | State Root | `/var/lib/scriptboard/state-v20` |
 | 登录用户 | `admin` |
 | 密码位置 | 服务器私有文件 `/var/lib/scriptboard/state-v20/secrets/initial-admin-password`，未写入报告或版本库 |
-| systemd | Web、Broker、AI Socket、Runner Socket 均为 `active` |
+| systemd | Web、Broker、Runner Socket 均为 `active` |
 | Doctor | 全项 `[OK]`，SQLite schema 54 |
 | 最终登录页 | HTTPS 200 |
 | 部署后错误日志 | Web 与 Broker 无 error 级别记录 |
 | 部署状态 | 保留运行 |
 
-部署前停止四组件并保留了可恢复副本：
+部署前停止三个组件并保留了可恢复副本：
 
 - State Root：`/root/.scriptboard-backups/state-v20-predeploy-dev-e3d47ac-20260824T084346Z`
 - 旧二进制：`/opt/scriptboard/versions/0.0.1-pre-e3d47ac-20260824T084346Z`
@@ -114,4 +114,4 @@ botyun 证据：
 - `.scratch/deploy-botyun-e3d47ac/redis-desktop.png`
 - `.scratch/deploy-botyun-e3d47ac/redis-mobile.png`
 
-共享 Playwright 探针保留于 `.scratch/deployment-smoke-e3d47ac.mjs`。本地进程与 botyun 四组件在报告生成后继续运行。
+共享 Playwright 探针保留于 `.scratch/deployment-smoke-e3d47ac.mjs`。本地进程与 botyun 三个组件在报告生成后继续运行。

@@ -87,6 +87,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Verify four-service SCM security boundary
+      - name: Verify three-service SCM security boundary
         shell: pwsh
         run: ./scripts/windows-scm-security-gate.ps1

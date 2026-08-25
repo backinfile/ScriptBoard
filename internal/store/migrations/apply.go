@@ -58,10 +58,6 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 			}
 		}
 	}
-	var legacyAssistantSchema bool
-	if err := migration.QueryRow(`SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'assistant_models')`).Scan(&legacyAssistantSchema); err != nil {
-		return fmt.Errorf("inspect legacy Assistant schema: %w", err)
-	}
 	if schemaVersion >= 20 && schemaVersion <= 48 {
 		exists, err := storesqlite.ColumnExists(migration, "variables", "value_type")
 		if err != nil {
@@ -98,103 +94,6 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 	if err := migrateKubernetesConnections(migration); err != nil {
 		return err
 	}
-	if legacyAssistantSchema && schemaVersion == 21 {
-		if _, err := migration.Exec(`ALTER TABLE assistant_tool_calls ADD COLUMN body_offset INTEGER NOT NULL DEFAULT 0`); err != nil {
-			return fmt.Errorf("migrate Assistant tool-call positions: %w", err)
-		}
-		if _, err := migration.Exec(`UPDATE assistant_tool_calls SET body_offset = COALESCE(
-			(SELECT LENGTH(body) FROM assistant_messages WHERE id = assistant_tool_calls.message_id), 0)`); err != nil {
-			return fmt.Errorf("backfill Assistant tool-call positions: %w", err)
-		}
-	}
-	if legacyAssistantSchema && (schemaVersion == 21 || schemaVersion == 22) {
-		for _, statement := range []string{
-			`ALTER TABLE assistant_tool_calls ADD COLUMN request_json TEXT NOT NULL DEFAULT '{}'`,
-			`ALTER TABLE assistant_tool_calls ADD COLUMN response_json TEXT NOT NULL DEFAULT 'null'`,
-		} {
-			if _, err := migration.Exec(statement); err != nil {
-				return fmt.Errorf("migrate Assistant tool-call JSON payloads: %w", err)
-			}
-		}
-	}
-	if legacyAssistantSchema && schemaVersion >= 21 && schemaVersion <= 23 {
-		exists, err := storesqlite.ColumnExists(migration, "assistant_models", "supports_images")
-		if err != nil {
-			return fmt.Errorf("inspect Assistant model capability migration: %w", err)
-		}
-		if !exists {
-			if _, err := migration.Exec(`ALTER TABLE assistant_models ADD COLUMN supports_images INTEGER NOT NULL DEFAULT 0`); err != nil {
-				return fmt.Errorf("migrate Assistant model image capability: %w", err)
-			}
-		}
-		for _, column := range []struct{ name, definition string }{
-			{"capability_profile", `capability_profile TEXT NOT NULL DEFAULT 'general' CHECK (capability_profile IN ('general', 'diagnose-failed-run', 'investigate-website-incident', 'triage-host-pressure', 'review-script-safety', 'design-schedule'))`},
-			{"profile_version", `profile_version TEXT NOT NULL DEFAULT ''`},
-			{"thinking_level", `thinking_level TEXT NOT NULL DEFAULT 'medium' CHECK (thinking_level IN ('off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'))`},
-			{"stats_user_messages", `stats_user_messages INTEGER NOT NULL DEFAULT 0`},
-			{"stats_assistant_messages", `stats_assistant_messages INTEGER NOT NULL DEFAULT 0`},
-			{"stats_tool_calls", `stats_tool_calls INTEGER NOT NULL DEFAULT 0`},
-			{"stats_tool_results", `stats_tool_results INTEGER NOT NULL DEFAULT 0`},
-			{"stats_total_messages", `stats_total_messages INTEGER NOT NULL DEFAULT 0`},
-			{"stats_input_tokens", `stats_input_tokens INTEGER NOT NULL DEFAULT 0`},
-			{"stats_output_tokens", `stats_output_tokens INTEGER NOT NULL DEFAULT 0`},
-			{"stats_cache_read_tokens", `stats_cache_read_tokens INTEGER NOT NULL DEFAULT 0`},
-			{"stats_cache_write_tokens", `stats_cache_write_tokens INTEGER NOT NULL DEFAULT 0`},
-			{"stats_total_tokens", `stats_total_tokens INTEGER NOT NULL DEFAULT 0`},
-			{"stats_cost", `stats_cost REAL NOT NULL DEFAULT 0`},
-			{"stats_context_tokens", `stats_context_tokens INTEGER NOT NULL DEFAULT 0`},
-			{"stats_context_window", `stats_context_window INTEGER NOT NULL DEFAULT 0`},
-			{"stats_context_percent", `stats_context_percent REAL`},
-			{"stats_updated_at", `stats_updated_at INTEGER NOT NULL DEFAULT 0`},
-		} {
-			exists, err := storesqlite.ColumnExists(migration, "assistant_conversations", column.name)
-			if err != nil {
-				return fmt.Errorf("inspect Assistant capability migration: %w", err)
-			}
-			if exists {
-				continue
-			}
-			if _, err := migration.Exec(`ALTER TABLE assistant_conversations ADD COLUMN ` + column.definition); err != nil {
-				return fmt.Errorf("migrate Assistant capability profiles and telemetry: %w", err)
-			}
-		}
-	}
-	if legacyAssistantSchema && schemaVersion >= 20 && schemaVersion <= 24 {
-		for _, column := range []struct{ name, definition string }{
-			{"owner_user_id", `owner_user_id TEXT NOT NULL DEFAULT ''`},
-			{"is_shared", `is_shared INTEGER NOT NULL DEFAULT 0`},
-		} {
-			exists, err := storesqlite.ColumnExists(migration, "assistant_models", column.name)
-			if err != nil {
-				return fmt.Errorf("inspect Assistant model visibility migration: %w", err)
-			}
-			if !exists {
-				if _, err := migration.Exec(`ALTER TABLE assistant_models ADD COLUMN ` + column.definition); err != nil {
-					return fmt.Errorf("migrate Assistant model visibility: %w", err)
-				}
-			}
-		}
-		if _, err := migration.Exec(`UPDATE assistant_models SET owner_user_id = COALESCE(
-			NULLIF(owner_user_id, ''), NULLIF(updated_by_user_id, ''),
-			(SELECT id FROM users WHERE role = 'administrator' LIMIT 1), 'legacy-owner')
-			WHERE owner_user_id = ''`); err != nil {
-			return fmt.Errorf("backfill Assistant model owners: %w", err)
-		}
-		if _, err := migration.Exec(`DROP INDEX IF EXISTS assistant_models_default_idx`); err != nil {
-			return fmt.Errorf("replace Assistant model default index: %w", err)
-		}
-	}
-	if legacyAssistantSchema && schemaVersion >= 20 && schemaVersion <= 25 {
-		exists, err := storesqlite.ColumnExists(migration, "assistant_models", "connection_ok")
-		if err != nil {
-			return fmt.Errorf("inspect Assistant model connection migration: %w", err)
-		}
-		if !exists {
-			if _, err := migration.Exec(`ALTER TABLE assistant_models ADD COLUMN connection_ok INTEGER NOT NULL DEFAULT 0`); err != nil {
-				return fmt.Errorf("migrate Assistant model connection status: %w", err)
-			}
-		}
-	}
 	if schemaVersion == 28 {
 		for _, statement := range []string{
 			`ALTER TABLE file_quick_access_pins RENAME TO file_quick_access_pins_user_scoped`,
@@ -223,22 +122,6 @@ func Apply(db *sql.DB, schemaVersion int, options Options) error {
 		if !exists {
 			if _, err := migration.Exec(`ALTER TABLE mysql_instances ADD COLUMN connection_state TEXT NOT NULL DEFAULT 'untried' CHECK (connection_state IN ('untried', 'connected', 'failed'))`); err != nil {
 				return fmt.Errorf("migrate MySQL connection state: %w", err)
-			}
-		}
-	}
-	if legacyAssistantSchema && schemaVersion >= 20 && schemaVersion <= 43 {
-		for _, column := range []struct{ name, definition string }{
-			{"supports_reasoning", `supports_reasoning INTEGER NOT NULL DEFAULT 0`},
-			{"default_thinking_level", `default_thinking_level TEXT NOT NULL DEFAULT 'medium' CHECK (default_thinking_level IN ('off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'))`},
-		} {
-			exists, err := storesqlite.ColumnExists(migration, "assistant_models", column.name)
-			if err != nil {
-				return fmt.Errorf("inspect Assistant model reasoning migration: %w", err)
-			}
-			if !exists {
-				if _, err := migration.Exec(`ALTER TABLE assistant_models ADD COLUMN ` + column.definition); err != nil {
-					return fmt.Errorf("migrate Assistant model reasoning defaults: %w", err)
-				}
 			}
 		}
 	}

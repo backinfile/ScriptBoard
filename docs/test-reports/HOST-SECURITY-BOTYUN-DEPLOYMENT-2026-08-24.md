@@ -43,7 +43,7 @@
 
 | 测试项 | 结果 | 证据 |
 | --- | --- | --- |
-| systemd | 通过 | Web、Broker、AI Socket、Runner Socket 均为 `active` |
+| systemd | 通过 | Web、Broker、Runner Socket 均为 `active` |
 | Doctor | 通过 | State Root、密钥、审计 checkpoint、SQLite schema 53、执行器、监听端口和服务状态均为 `[OK]` |
 | 登录页 | 通过 | HTTPS 200 |
 | UFW comment 命令 | 通过 | `ufw --dry-run ... comment "ScriptBoard smoke"` 退出码 0，未修改防火墙 |

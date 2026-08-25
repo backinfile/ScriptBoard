@@ -17,16 +17,14 @@ import (
 )
 
 const (
-	serviceName        = "ScriptBoard"
-	unitPath           = "/etc/systemd/system/scriptboard.service"
-	brokerUnitPath     = "/etc/systemd/system/scriptboard-broker.service"
-	legacyAIUnitPath   = "/etc/systemd/system/scriptboard-ai.service"
-	legacyAISocketPath = "/etc/systemd/system/scriptboard-ai.socket"
-	runnerUnitPath     = "/etc/systemd/system/scriptboard-runner.service"
-	runnerSocketPath   = "/etc/systemd/system/scriptboard-runner.socket"
-	updaterUnitPath    = "/etc/systemd/system/scriptboard-updater@.service"
-	webServiceUser     = "scriptboard-web"
-	runnerServiceUser  = "scriptboard-runner"
+	serviceName       = "ScriptBoard"
+	unitPath          = "/etc/systemd/system/scriptboard.service"
+	brokerUnitPath    = "/etc/systemd/system/scriptboard-broker.service"
+	runnerUnitPath    = "/etc/systemd/system/scriptboard-runner.service"
+	runnerSocketPath  = "/etc/systemd/system/scriptboard-runner.socket"
+	updaterUnitPath   = "/etc/systemd/system/scriptboard-updater@.service"
+	webServiceUser    = "scriptboard-web"
+	runnerServiceUser = "scriptboard-runner"
 )
 
 const (
@@ -90,11 +88,6 @@ func validateLinuxWebRuntimeIdentity(effectiveUID, expectedUID int) error {
 
 func Install(executable, configPath, updaterExecutable, stateRoot, runnerIdentityMode string, webReadPaths ...string) error {
 	if err := prepareLinuxWebServiceIdentity(configPath, stateRoot, webReadPaths...); err != nil {
-		return err
-	}
-	// Upgrades must stop and remove the retired AI host units so an older
-	// installation cannot keep the removed assistant process running.
-	if err := removeLegacyAIUnits(systemctl, legacyAIUnitPath, legacyAISocketPath); err != nil {
 		return err
 	}
 	brokerExecutable := filepath.Join(filepath.Dir(executable), "scriptboard-broker")
@@ -389,7 +382,7 @@ func Uninstall() error {
 			return systemctl("disable", "--now", "scriptboard-broker.service")
 		},
 		func() error {
-			for _, path := range []string{unitPath, brokerUnitPath, legacyAIUnitPath, legacyAISocketPath, runnerUnitPath, runnerSocketPath, updaterUnitPath} {
+			for _, path := range []string{unitPath, brokerUnitPath, runnerUnitPath, runnerSocketPath, updaterUnitPath} {
 				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 					return err
 				}
@@ -398,17 +391,6 @@ func Uninstall() error {
 		},
 		func() error { return systemctl("daemon-reload") },
 	)
-}
-
-func removeLegacyAIUnits(runSystemctl func(...string) error, servicePath, socketPath string) error {
-	_ = runSystemctl("disable", "--now", "scriptboard-ai.socket")
-	_ = runSystemctl("stop", "scriptboard-ai.service")
-	for _, path := range []string{servicePath, socketPath} {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-	}
-	return nil
 }
 
 func Start() error {

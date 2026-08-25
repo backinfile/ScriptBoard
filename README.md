@@ -108,7 +108,7 @@ mkdir -p state
 
 ScriptBoard 可查看本机资源、应用、Docker 容器、多个 Kubernetes 集群、网站和其他 ScriptBoard 机器。Kubernetes 连接默认仅观察，可明确开启有限操作。
 
-MySQL、Redis、Kubernetes、网站和模型 Endpoint 均保留协议支持的安全与明文模式。选择明文会暴露凭据和数据；显式跳过证书验证会带来中间人攻击风险，界面会保留并提示你的选择。
+MySQL、Redis、Kubernetes 和网站连接均保留协议支持的安全与明文模式。选择明文会暴露凭据和数据；显式跳过证书验证会带来中间人攻击风险，界面会保留并提示你的选择。
 
 ### 用户角色
 

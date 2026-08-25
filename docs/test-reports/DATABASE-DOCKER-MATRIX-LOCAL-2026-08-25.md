@@ -216,7 +216,6 @@
 - Redis 详情使用与 MySQL 相同的 `.mysql-tabs` 内部页签，在概览、键空间查询和诊断之间切换。
 - MySQL 与 Redis 详情统一为“详情头部、内部页签、活动内容面板”框架；Redis 页签补齐图标、滚动保持、连接列表页码保持和概览刷新入口。
 - MySQL 与 Redis 切换前后的右侧详情宽高保持一致；桌面端共享固定详情舞台，移动端保留自然高度。
-- AI 对话记录与输入区已从固定 `790px` 扩展为占满右侧聊天列；1920px 视口实测聊天列、记录区和输入区均为 `1430px`。
 - 自定义面板“调整顺序”会先按可见顺序重新编号再移动，重复排序值和顺序空洞不再导致操作无效；外部 Playwright 已验证移动并刷新后顺序保持，测试面板与卡片保留。
 - 真实保留数据下的 Playwright 桌面、移动端、键盘、中文、禁用 JavaScript 和控制台检查全部通过。
 
@@ -288,13 +287,7 @@
 - 外部 Playwright 最终输出：`groupButtons/cardLayoutStable/drag/keyboard/moveTop/mobile=pass`，控制台错误 0。保留排序分组 `PW retained mt86bx8w A`，并将 `PW retained mt86l5kr A` 置顶；未删除任何测试数据。
 - 截图保留为 `.scratch/database-unified-dev-deployment/quick-run-group-ordering-retained.png`。全仓 `go test ./... -count=1` 通过；重新部署 PID 为 `13576`，登录页返回 200。
 
-## AI 对话与数据库工作区全宽复验
-
-- 移除 AI 对话工作区和数据库融合工作区的 `--content-max` 上限，两者从应用侧栏右边界铺满到浏览器可布局右边界；消息正文自身的换行和数据库内部轨道继续控制可读性。
-- 2560px 视口下，两个工作区均为 `left=248px / right=2550px / width=2302px`；AI 记录区与输入区均为 `2070px`。
-- 1920px 视口下，两个工作区均为 `left=248px / right=1910px / width=1662px`；AI 记录区与输入区均为 `1430px`。
-- 外部 Playwright 验证 MySQL/Redis 切换后的详情宽高一致，430px 下 AI 与数据库页均无横向溢出，控制台错误为 0。
-- 截图保留为 `.scratch/database-unified-dev-deployment/assistant-full-width.png` 与 `database-full-width.png`；重新部署 PID 为 `27704`，登录页返回 200。
+- 截图保留为 `.scratch/database-unified-dev-deployment/database-full-width.png`；重新部署 PID 为 `27704`，登录页返回 200。
 
 ## 导入与导出图标统一复验
 

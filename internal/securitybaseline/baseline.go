@@ -40,7 +40,7 @@ func Evaluate(capabilities hostsecurity.Capabilities, updates hostsecurity.Secur
 		if capabilities.ControlPlanePrivilege.Administrator {
 			check.Status = StatusAttention
 			check.Evidence = "Web process has host administrator privileges"
-			check.Guidance = "Use the managed four-service installation so privileged mutations stay in Broker."
+			check.Guidance = "Use the managed three-service installation so privileged mutations stay in Broker."
 		}
 		add(check)
 	} else {

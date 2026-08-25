@@ -444,7 +444,7 @@ func verifyManagedService(loaded config.Config) error {
 		return fmt.Errorf("verify managed service definitions: %w", err)
 	}
 	if !matches {
-		return errors.New("managed service definitions do not match the installed four-component release")
+		return errors.New("managed service definitions do not match the installed three-component release")
 	}
 	return nil
 }

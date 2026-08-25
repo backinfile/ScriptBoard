@@ -26,7 +26,7 @@
 
 1. 完整 Go 测试与 Web 包回归测试。
 2. Go Vet 与全部命令入口构建。
-3. Web、Broker、AI Socket、Runner Socket systemd 状态。
+3. Web、Broker、Runner Socket systemd 状态。
 4. 以 Web 服务身份运行 Doctor。
 5. HTTP 登录页、未认证重定向及静态资源访问。
 6. Playwright Chromium 管理员登录。
@@ -42,7 +42,7 @@
 | `go test ./internal/web -count=1` | 通过 | `ok scriptboard/internal/web` |
 | `go vet ./...` | 通过 | 退出码 0 |
 | `go build ./cmd/...` | 通过 | 退出码 0 |
-| systemd 单元 | 通过 | `scriptboard.service`、`scriptboard-broker.service`、`scriptboard-ai.socket`、`scriptboard-runner.socket` 均为 `active` |
+| systemd 单元 | 通过 | `scriptboard.service`、`scriptboard-broker.service`、`scriptboard-runner.socket` 均为 `active` |
 | Doctor | 通过 | 以 `scriptboard-web` 身份执行，全部检查为 `[OK]` |
 | 登录页 | 通过 | HTTP 200 |
 | 未认证 `/monitor` | 通过 | HTTP 303，重定向登录 |

@@ -77,17 +77,15 @@ cmd/
   scriptboard/                 # 参数解析和进程入口
   scriptboard-broker/
   scriptboard-runner/
-  scriptboard-ai-host/
   scriptboard-installer/
   scriptboard-updater/
   scriptboard-release/
   scriptboard-tray*/
 internal/
-  bootstrap/                   # 四个运行时的唯一组合根
+  bootstrap/                   # 三个运行时的唯一组合根
     web.go
     broker.go
     runner.go
-    ai_host.go
     runtime.go
   store/                       # SQLite 生命周期和 schema
     sqlite.go
@@ -106,7 +104,7 @@ internal/
   scheduling/                  # cron、并发策略、调度持久化
   fileworkflow/                # 托管文件、引用、冲突、Host Files 边界
   audit/                       # Web 侧审计查询、保留和外部记录 reconciliation
-  platform/windowsservice/     # AI/Broker/Runner 共用的 SCM 包装
+  platform/windowsservice/     # Broker/Runner 共用的 SCM 包装
   ...                          # customdashboard、runner、privilegebroker 等既有叶子包
 ```
 
@@ -143,7 +141,6 @@ cmd -> bootstrap -> web / domain services -> leaf packages / store
 | `file_*`、`host_files_boundary.go` | `internal/fileworkflow/` | 所有路径/引用/冲突规则集中；特权操作仍通过 Broker |
 | `audit_retention.go`、外部 invocation reconciliation | `internal/audit/` | 审计链写入仍复用既有安全包；Web 只查询/触发策略 |
 | `custom_dashboard_transfer.go` | `internal/customdashboard/` | import/export 与 manager 同属一个深模块 |
-| AI assistant 的 Web handler/view model | `internal/web/assistant_routes.go` | assistant 执行、runtime、evidence 逻辑仍留在现有领域包 |
 | `cmd/scriptboard-broker/main.go` 的 DB/MySQL/Host Files 装配 | `internal/bootstrap/broker.go` | main 收敛为 flags + signal + bootstrap |
 | 三份重复 `service_windows.go` | `internal/platform/windowsservice/` | 共用 install/start/stop/status wrapper，服务参数由各 cmd 提供 |
 
@@ -153,7 +150,7 @@ cmd -> bootstrap -> web / domain services -> leaf packages / store
 
 ### 6.1 Bootstrap
 
-对外只暴露四个启动函数和统一 Runtime 生命周期：
+对外只暴露三个启动函数和统一 Runtime 生命周期：
 
 ```go
 type Runtime interface {
@@ -164,7 +161,6 @@ type Runtime interface {
 func OpenWeb(WebConfig) (Runtime, error)
 func OpenBroker(BrokerConfig) (Runtime, error)
 func OpenRunner(RunnerConfig) (Runtime, error)
-func OpenAIHost(AIHostConfig) (Runtime, error)
 ```
 
 配置按信任边界分组；禁止重建当前约 40 字段的平铺 `app.Config`。
@@ -179,7 +175,7 @@ func OpenAIHost(AIHostConfig) (Runtime, error)
 
 ### 6.4 能力接口
 
-删除运行时 type assertion 检测 MFA/Passkey 等可选能力。身份模块在构造时提供显式完整能力；测试替身必须实现同一合同。Broker、Runner 和 AI Host 的 IPC adapter 继续 fail closed，并保持协议版本矩阵测试。
+删除运行时 type assertion 检测 MFA/Passkey 等可选能力。身份模块在构造时提供显式完整能力；测试替身必须实现同一合同。Broker 和 Runner 的 IPC adapter 继续 fail closed，并保持协议版本矩阵测试。
 
 ## 7. 单分支实施顺序
 
@@ -251,12 +247,12 @@ func OpenAIHost(AIHostConfig) (Runtime, error)
 
 验收：路由快照差异为空或仅包含本计划明确新增的内部协议端点；页面、locale、键盘和响应式 contract 通过。
 
-### 提交 9：收敛四进程组合根和 Windows service wrapper
+### 提交 9：收敛三进程组合根和 Windows service wrapper
 
-- 把 Web/Broker/Runner/AI Host 的构造移入 `bootstrap`。
+- 把 Web/Broker/Runner 的构造移入 `bootstrap`。
 - 三份 Windows SCM wrapper 合并到 `platform/windowsservice`。
 - `cmd/*` 仅保留 flags、signal、退出码和 bootstrap 调用。
-- 保持四信任边界、服务 SID、Named Pipe DACL 和整体版本 fail-closed 行为。
+- 保持三信任边界、服务 SID、Named Pipe DACL 和整体版本 fail-closed 行为。
 
 验收：`go build ./cmd/...`、Windows SCM security gate、Linux build/smoke 和混合协议版本拒绝测试通过。
 
@@ -274,7 +270,7 @@ func OpenAIHost(AIHostConfig) (Runtime, error)
 
 - 执行第 9 节全部本地和 CI 门禁。
 - 对生产等价 State Root 副本执行 Registry 迁移演练和恢复演练。
-- 对 Windows 与至少两个 systemd Linux 环境执行安装、整体升级、失败回滚、四服务逐一崩溃恢复和卸载无残留测试。
+- 对 Windows 与至少两个 systemd Linux 环境执行安装、整体升级、失败回滚、三服务逐一崩溃恢复和卸载无残留测试。
 - 生成最终 diff、依赖图、迁移报告和 release note 草稿。
 
 验收：无豁免失败、无未解释快照变化、无中间兼容层。
@@ -317,7 +313,7 @@ pnpm exec playwright install chromium
 pnpm test
 ```
 
-CI 必须完整通过 `.github/workflows/ci.yml` 和 `.github/workflows/security.yml`，包括 Windows Go、race、Chromium、四服务 SCM 安全矩阵、fuzz、govulncheck、gitleaks、SBOM 和 CodeQL。正式 Tag 还必须在目标 Tag commit 上重新通过 `.github/workflows/release.yml` 的全部门禁；不得用功能分支历史结果替代。
+CI 必须完整通过 `.github/workflows/ci.yml` 和 `.github/workflows/security.yml`，包括 Windows Go、race、Chromium、三服务 SCM 安全矩阵、fuzz、govulncheck、gitleaks、SBOM 和 CodeQL。正式 Tag 还必须在目标 Tag commit 上重新通过 `.github/workflows/release.yml` 的全部门禁；不得用功能分支历史结果替代。
 
 ## 10. 量化完成标准
 
@@ -325,8 +321,8 @@ CI 必须完整通过 `.github/workflows/ci.yml` 和 `.github/workflows/security
 
 - `internal/app` 目录和 import 数均为 0。
 - `internal/web` 对 `database/sql` 的直接 import 和直接 SQL 调用均为 0。
-- `cmd/scriptboard-broker`、`cmd/scriptboard-runner`、`cmd/scriptboard-ai-host` 不再构造数据库或领域 manager。
-- 四个进程只有 `internal/bootstrap` 是跨领域组合根；架构测试阻止依赖逆流。
+- `cmd/scriptboard-broker`、`cmd/scriptboard-runner` 不再构造数据库或领域 manager。
+- 三个进程只有 `internal/bootstrap` 是跨领域组合根；架构测试阻止依赖逆流。
 - schema 和 migration 只有一个有序 registry，所有历史版本升级测试通过。
 - Registry 主密钥不在 State Root、备份或日志中；故障注入证明配置/凭据最终一致。
 - 外部动作 completion 失败可观测、可幂等恢复，动作不会因记录失败被重复执行。
@@ -353,7 +349,7 @@ CI 必须完整通过 `.github/workflows/ci.yml` 和 `.github/workflows/security
 
 ### 发布后
 
-- 重点观察 Registry migration/reconciliation、外部 invocation backlog、四服务 IPC 协议拒绝和数据库 migration 指标。
+- 重点观察 Registry migration/reconciliation、外部 invocation backlog、三服务 IPC 协议拒绝和数据库 migration 指标。
 - 正式 release 分支和 Tag 不可修改。若发现问题，回到 `dev` 修复、测试并发布更高版本；不得移动 Tag 或热改 release 分支。
 - 数据迁移必须 forward-safe。回滚旧二进制前先验证其 schema/IPC 兼容性；不兼容时使用新版本修复，不允许旧进程读写新 schema。
 

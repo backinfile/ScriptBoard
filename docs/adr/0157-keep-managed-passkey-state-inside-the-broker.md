@@ -8,4 +8,4 @@
 
 协议拒绝任意参数 payload、通用密文、MFA 字段和宿主特权动作。集成测试用不同的 Web State Root 和 Broker 凭据根确认账户页面可读取 Broker 侧 Passkey，而 `account-passkeys.enc` 不会出现在 Web 侧。Broker 不可用时相关页面和登录路径 fail closed，不回退到本地 Store。
 
-这一迁移仍不代表 P0-02 完成。Assistant Provider、MySQL、External Interface/远程连接凭据和 Host Files 特权仍需独立的代理或执行边界；Passkey 断言验证目前仍在 Web 中完成，Broker 仅以不可变身份校验约束其计数器更新，因此未来可进一步把完整 assertion ceremony 下沉为 Broker 领域服务。
+这一迁移仍不代表 P0-02 完成。MySQL、External Interface/远程连接凭据和 Host Files 特权仍需独立的代理或执行边界；Passkey 断言验证目前仍在 Web 中完成，Broker 仅以不可变身份校验约束其计数器更新，因此未来可进一步把完整 assertion ceremony 下沉为 Broker 领域服务。

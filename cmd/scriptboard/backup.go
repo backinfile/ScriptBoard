@@ -215,7 +215,7 @@ func runBackup(action string, arguments []string) error {
 		if jsonOutput {
 			return json.NewEncoder(os.Stdout).Encode(result)
 		}
-		fmt.Fprintf(os.Stdout, "Replacement host recovered from Backup ID %s. All restored Web sessions were revoked; keep all four components stopped until doctor and audit verification pass.\n", result.Manifest.ID)
+		fmt.Fprintf(os.Stdout, "Replacement host recovered from Backup ID %s. All restored Web sessions were revoked; keep all three components stopped until doctor and audit verification pass.\n", result.Manifest.ID)
 		return nil
 	default:
 		return fmt.Errorf("未知备份命令 %q；可用命令：backup create|inspect|restore|export-recovery|recover-host", action)

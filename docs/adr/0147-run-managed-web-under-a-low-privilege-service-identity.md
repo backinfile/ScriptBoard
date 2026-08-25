@@ -15,8 +15,8 @@ Windows Web 改用低权限 `NT AUTHORITY\LocalService`，同时启用 `NT SERVI
 `NT SERVICE\ScriptBoard` SID。身份不符时 Web 在打开数据库和监听端口前 fail closed。
 
 这使 Web 漏洞不再自动继承防火墙、包管理和其他 Broker 主机权限。后续切片已经把 Host Files、
-审计 checkpoint、MFA、Passkey、远程网站、Assistant Provider、MySQL 与 State Root 备份能力迁入
-Broker-owned 固定协议；Run 与 Assistant Runtime 也由独立 Runner/AI Host 身份执行。Web 不再读取
-这些领域的外部主密钥或 Broker-only relay token。Ubuntu 26.04 的实际权限探针已确认 Runner/AI
+审计 checkpoint、MFA、Passkey、远程网站、MySQL 与 State Root 备份能力迁入
+Broker-owned 固定协议；Run 由独立 Runner 身份执行。Web 不再读取
+这些领域的外部主密钥或 Broker-only relay token。Ubuntu 26.04 的实际权限探针已确认 Runner
 身份无法读取应用数据库和实例主密钥；Windows 对应 SCM 身份、文件/Named Pipe DACL、demand-start、
 崩溃恢复与卸载矩阵已经自动化为提升权限发布门禁，本地非提升功能部署不能替代其通过结果。

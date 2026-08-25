@@ -278,11 +278,6 @@ func Install(executable, configPath, _ string, stateRoot, runnerIdentityMode str
 	if err := grantWindowsRunnerServiceAccess(installRoot, configPath, stateRoot); err != nil {
 		return err
 	}
-	if legacy, openErr := manager.OpenService("ScriptBoardAI"); openErr == nil {
-		_ = stopWindowsService(manager, "ScriptBoardAI")
-		_ = legacy.Delete()
-		_ = legacy.Close()
-	}
 	return configureWindowsRunnerFirewall(runnerExecutable, runnerIdentityMode)
 }
 
@@ -612,7 +607,7 @@ func Uninstall() error {
 	defer manager.Disconnect()
 	// DeleteService only marks running services for deletion. Stop dependents
 	// first so uninstall removes every definition before the command returns.
-	for _, name := range []string{serviceName, runnerServiceName, "ScriptBoardAI", brokerServiceName} {
+	for _, name := range []string{serviceName, runnerServiceName, brokerServiceName} {
 		if stopErr := stopWindowsService(manager, name); stopErr != nil && !errors.Is(stopErr, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
 			return fmt.Errorf("stop Windows service %s before uninstall: %w", name, stopErr)
 		}
@@ -629,7 +624,7 @@ func Uninstall() error {
 	if err := removeWindowsRunnerFirewall(runnerExecutable); err != nil {
 		return err
 	}
-	for _, name := range []string{serviceName, runnerServiceName, "ScriptBoardAI", brokerServiceName} {
+	for _, name := range []string{serviceName, runnerServiceName, brokerServiceName} {
 		service, err := manager.OpenService(name)
 		if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
 			continue

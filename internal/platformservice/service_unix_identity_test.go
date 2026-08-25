@@ -5,37 +5,9 @@ package platformservice
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 )
-
-func TestRemoveLegacyAIUnitsStopsAndDeletesRetiredUnits(t *testing.T) {
-	root := t.TempDir()
-	servicePath := filepath.Join(root, "scriptboard-ai.service")
-	socketPath := filepath.Join(root, "scriptboard-ai.socket")
-	for _, path := range []string{servicePath, socketPath} {
-		if err := os.WriteFile(path, []byte("legacy"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	var calls [][]string
-	if err := removeLegacyAIUnits(func(arguments ...string) error {
-		calls = append(calls, append([]string(nil), arguments...))
-		return nil
-	}, servicePath, socketPath); err != nil {
-		t.Fatal(err)
-	}
-	wantCalls := [][]string{{"disable", "--now", "scriptboard-ai.socket"}, {"stop", "scriptboard-ai.service"}}
-	if !reflect.DeepEqual(calls, wantCalls) {
-		t.Fatalf("systemctl calls = %#v, want %#v", calls, wantCalls)
-	}
-	for _, path := range []string{servicePath, socketPath} {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Fatalf("legacy unit %q still exists: %v", path, err)
-		}
-	}
-}
 
 func TestLinuxWebServiceIdentityIsDedicated(t *testing.T) {
 	if webServiceUser == "" || webServiceUser == "root" || webServiceUser == "nobody" {

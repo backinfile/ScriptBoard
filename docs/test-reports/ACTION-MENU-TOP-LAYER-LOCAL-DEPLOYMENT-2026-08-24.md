@@ -48,7 +48,6 @@
 7. `/config/schedules`
 8. `/resources/variables`
 9. `/resources/databases`
-10. `/ai`
 
 ## 4. “更多操作”菜单部署态验证（7/7）
 

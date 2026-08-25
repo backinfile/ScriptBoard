@@ -12,7 +12,6 @@ type fakeWindowsServiceRestriction struct {
 		service, executable string
 		enabled             bool
 	}
-	removed []string
 }
 
 func (fake *fakeWindowsServiceRestriction) Restrict(service, executable string, enabled, _ bool) error {
@@ -20,11 +19,6 @@ func (fake *fakeWindowsServiceRestriction) Restrict(service, executable string, 
 		service, executable string
 		enabled             bool
 	}{service, executable, enabled})
-	return nil
-}
-
-func (fake *fakeWindowsServiceRestriction) RemoveRule(name string) error {
-	fake.removed = append(fake.removed, name)
 	return nil
 }
 
@@ -42,9 +36,6 @@ func TestWindowsRunnerFirewallMatchesIdentityMode(t *testing.T) {
 			}
 			if len(fake.restrictions) != 1 || fake.restrictions[0].service != runnerServiceName || fake.restrictions[0].enabled != test.enabled {
 				t.Fatalf("restrictions=%#v", fake.restrictions)
-			}
-			if len(fake.removed) != 1 || fake.removed[0] != legacyAILoopbackFirewallRuleName {
-				t.Fatalf("removed rules=%#v", fake.removed)
 			}
 		})
 	}

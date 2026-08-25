@@ -22,5 +22,5 @@ ADR-0145 的外部 checkpoint。checkpoint 写入使用跨进程锁，只采纳�
 这是 P0-02 的协议、进程和首批调用迁移切片，不是身份拆分完成声明。ADR-0147 已进一步把受管
 Web 改为 Linux `scriptboard-web` 和 Windows `LocalService` + 独立服务 SID，Broker 继续使用
 root/LocalSystem；获得 Web 进程代码执行已不再直接获得 Broker 的主机权限。后续仍必须把凭据
-解封、Host Files 和 Run 各自移出 Web，并为 Runner 与 AI Runtime 建立独立身份和目录 ACL；
+解封、Host Files 和 Run 各自移出 Web，并为 Runner 建立独立身份和目录 ACL；
 完成这些验收前 P0-02 保持“部分完成”。

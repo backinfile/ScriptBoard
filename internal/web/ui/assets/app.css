@@ -7010,7 +7010,7 @@ New classes introduced by files.html / trash.html / upload-inbox.html:
 
 /*
 TASK / DRAWER FORMS (task-page.html)
-Pattern source: ui-redesign preview "抽屉面板" (shot-drawer-run/llm/danger).
+Pattern source: ui-redesign preview "抽屉面板" (shot-drawer-run/danger).
 Maps preview tokens onto app.css tokens:
   --ink-2 → --muted, --ink-3 → --faint, --border → --rule,
   --border-strong → --rule-strong, --mono → --font-mono,

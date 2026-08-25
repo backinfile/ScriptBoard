@@ -253,32 +253,6 @@ func TestOpenDatabaseMigratesSchema28QuickAccessPinsToGlobalScope(t *testing.T) 
 	}
 }
 
-func TestOpenDatabaseKeepsLegacyAssistantSchemaUpgradeCompatible(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "app.db")
-	db, err := openDatabase(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`CREATE TABLE assistant_models (id TEXT PRIMARY KEY); PRAGMA user_version=43; PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	migrated, err := openDatabase(path)
-	if err != nil {
-		t.Fatalf("upgrade database containing retired Assistant schema: %v", err)
-	}
-	defer migrated.Close()
-	for _, column := range []string{"supports_reasoning", "default_thinking_level"} {
-		var count int
-		if err := migrated.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('assistant_models') WHERE name = ?`, column).Scan(&count); err != nil || count != 1 {
-			t.Fatalf("legacy Assistant column %q count=%d error=%v", column, count, err)
-		}
-	}
-}
-
 func TestOpenDatabaseMigratesSchema26ExternalInterfaceTables(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "app.db")
 	db, err := openDatabase(path)

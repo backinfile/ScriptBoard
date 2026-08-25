@@ -106,7 +106,7 @@ func validHostSecurityLoginQuery(query hostsecurity.LoginQuery) bool {
 }
 
 func validServiceLogQuery(query servicelogs.Query) bool {
-	if query.Service != "" && query.Service != "web" && query.Service != "broker" && query.Service != "ai" && query.Service != "runner" {
+	if query.Service != "" && query.Service != "web" && query.Service != "broker" && query.Service != "runner" {
 		return false
 	}
 	if query.Range != "24h" && query.Range != "7d" && query.Range != "30d" {

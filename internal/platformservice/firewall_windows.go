@@ -12,11 +12,8 @@ import (
 	"github.com/go-ole/go-ole/oleutil"
 )
 
-const legacyAILoopbackFirewallRuleName = "ScriptBoard AI Runtime loopback provider access"
-
 type windowsServiceRestriction interface {
 	Restrict(serviceName, executable string, enabled, restrictedSID bool) error
-	RemoveRule(name string) error
 }
 
 func configureWindowsRunnerFirewall(runnerExecutable, runnerIdentityMode string) error {
@@ -31,11 +28,6 @@ func configureWindowsRunnerFirewall(runnerExecutable, runnerIdentityMode string)
 func applyWindowsRunnerFirewall(policy windowsServiceRestriction, runnerExecutable, runnerIdentityMode string) error {
 	if !filepath.IsAbs(runnerExecutable) {
 		return errors.New("Windows Runner firewall executable path must be absolute")
-	}
-	// Remove the obsolete AI loopback exception while applying the current
-	// Runner-only service-hardening policy during upgrades.
-	if err := policy.RemoveRule(legacyAILoopbackFirewallRuleName); err != nil && !isWindowsFirewallRuleNotFound(err) {
-		return fmt.Errorf("remove obsolete AI Runtime loopback rule: %w", err)
 	}
 	if runnerIdentityMode != RunnerIdentityIsolated {
 		if err := policy.Restrict(runnerServiceName, runnerExecutable, false, true); err != nil {
@@ -59,9 +51,6 @@ func removeWindowsRunnerFirewall(runnerExecutable string) error {
 }
 
 func removeWindowsRunnerFirewallWith(policy windowsServiceRestriction, runnerExecutable string) error {
-	if err := policy.RemoveRule(legacyAILoopbackFirewallRuleName); err != nil && !isWindowsFirewallRuleNotFound(err) {
-		return err
-	}
 	if runnerExecutable != "" {
 		if err := policy.Restrict(runnerServiceName, runnerExecutable, false, true); err != nil {
 			return fmt.Errorf("remove Windows Service Hardening restriction for %s: %w", runnerServiceName, err)
@@ -87,7 +76,6 @@ func retireWindowsRunnerFirewall(oldRunner, newRunner string) error {
 
 type oleWindowsServiceRestriction struct {
 	serviceRestriction *ole.IDispatch
-	rules              *ole.IDispatch
 }
 
 func openWindowsServiceRestriction() (*oleWindowsServiceRestriction, func(), error) {
@@ -123,25 +111,11 @@ func openWindowsServiceRestriction() (*oleWindowsServiceRestriction, func(), err
 		cleanup()
 		return nil, func() {}, errors.New("Windows Service Hardening policy is unavailable")
 	}
-	rulesVariant, err := oleutil.GetProperty(serviceRestriction, "Rules")
-	if err != nil {
-		restrictionVariant.Clear()
-		cleanup()
-		return nil, func() {}, fmt.Errorf("get Windows Service Hardening rules: %w", err)
-	}
-	rules := rulesVariant.ToIDispatch()
-	if rules == nil {
-		rulesVariant.Clear()
-		restrictionVariant.Clear()
-		cleanup()
-		return nil, func() {}, errors.New("Windows Service Hardening rule collection is unavailable")
-	}
 	closePolicy := func() {
-		rulesVariant.Clear()
 		restrictionVariant.Clear()
 		cleanup()
 	}
-	return &oleWindowsServiceRestriction{serviceRestriction: serviceRestriction, rules: rules}, closePolicy, nil
+	return &oleWindowsServiceRestriction{serviceRestriction: serviceRestriction}, closePolicy, nil
 }
 
 func (policy *oleWindowsServiceRestriction) Restrict(serviceName, executable string, enabled, restrictedSID bool) error {
@@ -150,18 +124,6 @@ func (policy *oleWindowsServiceRestriction) Restrict(serviceName, executable str
 		result.Clear()
 	}
 	return err
-}
-
-func (policy *oleWindowsServiceRestriction) RemoveRule(name string) error {
-	result, err := oleutil.CallMethod(policy.rules, "Remove", name)
-	if result != nil {
-		result.Clear()
-	}
-	return err
-}
-
-func isWindowsFirewallRuleNotFound(err error) bool {
-	return isOLECode(err, 0x80070002)
 }
 
 func isOLECode(err error, code uint32) bool {

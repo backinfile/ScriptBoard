@@ -27,7 +27,7 @@ jobs:
         run: go vet ./...
       - name: Build
         run: go build ./cmd/...
-      - name: Verify four-service SCM security boundary
+      - name: Verify three-service SCM security boundary
         shell: pwsh
         run: ./scripts/windows-scm-security-gate.ps1
 

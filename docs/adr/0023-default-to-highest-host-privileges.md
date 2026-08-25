@@ -4,7 +4,7 @@ status: accepted
 
 # 默认使用宿主系统最高权限
 
-> **已被取代（2026-08-12）**：受管部署的 Web、Runner 与 AI Host 不再使用最高宿主权限；当前决定见 [ADR-0147](./0147-run-managed-web-under-a-low-privilege-service-identity.md)、[ADR-0148](./0148-isolate-ai-runtime-behind-a-dedicated-host.md)、[ADR-0149](./0149-isolate-runs-behind-a-dedicated-worker.md) 与 [ADR-0163](./0163-ship-four-trust-boundaries-as-one-versioned-product.md)。本文仅保留为历史记录，不能作为新安装或发布验收依据。
+> **已被取代（2026-08-12）**：受管部署的 Web 与 Runner 不再共享最高宿主权限；当前决定见 [ADR-0147](./0147-run-managed-web-under-a-low-privilege-service-identity.md)、[ADR-0149](./0149-isolate-runs-behind-a-dedicated-worker.md) 与 [ADR-0163](./0163-ship-four-trust-boundaries-as-one-versioned-product.md)。本文仅保留为历史记录，不能作为新安装或发布验收依据。
 
 > 非回环监听的当前决定另见 [ADR-0165](./0165-default-to-loopback-and-allow-configured-listen-addresses.md)。
 

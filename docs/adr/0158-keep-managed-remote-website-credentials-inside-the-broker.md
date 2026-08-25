@@ -10,4 +10,4 @@ IPC 只接受固定的 `Store`、`Fetch` 与 `Delete` 字段，拒绝通用 payl
 
 升级时 Broker 使用数据库中已保存的 Endpoint 绑定旧版可恢复 Key，确认新记录持久化后才删除旧秘密。迁移失败会拒绝继续启动，不允许 Web 回退到本地 secret store。不同 Web/Broker 凭据根的集成测试确认密文只在 Broker 侧产生；外部浏览器故障测试确认 Broker 下线时删除受控失败且元数据保留，Broker 恢复后同一会话可以清理，页面不会显示完整 Key。
 
-这项决定进一步收窄 ADR-0143 的受管部署适用范围：远程网站 Key 不再由通用外部主密钥服务给 Web 解封。External Interface 入站 Trigger Key 继续只显示一次并仅保存不可逆 verifier。P0-02 仍未完成；Assistant Provider、MySQL 与 Host Files 特权仍需迁入独立代理或执行边界。
+这项决定进一步收窄 ADR-0143 的受管部署适用范围：远程网站 Key 不再由通用外部主密钥服务给 Web 解封。External Interface 入站 Trigger Key 继续只显示一次并仅保存不可逆 verifier。P0-02 仍未完成；MySQL 与 Host Files 特权仍需迁入独立代理或执行边界。

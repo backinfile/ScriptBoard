@@ -11,7 +11,7 @@
 
 | 项目 | 结果 |
 | --- | --- |
-| 部署模式 | Windows 便携部署；用于功能与协议验证，不替代四服务 SCM 身份/ACL 门禁 |
+| 部署模式 | Windows 便携部署；用于功能与协议验证，不替代三服务 SCM 身份/ACL 门禁 |
 | 地址 | `http://127.0.0.1:18787` |
 | 进程 | PID `26368`，报告生成时仍在监听 |
 | 部署目录 | `.scratch/local-deploy-security-panel-gap-b6ae795` |
@@ -60,7 +60,6 @@ HTTP 探针源码保留为部署目录中的 `http_security_probe.go`，可使�
 
 | # | 测试条目 | 结果 |
 | --- | --- | --- |
-| 1 | Provider Proxy 重复/混用 capability Header 在访问上游前拒绝 | 通过 |
 | 2 | 签名 External 请求重复证明 Header 在动作前拒绝 | 通过 |
 | 3 | 签名请求暂存期间禁用 Key，执行前撤销复核阻止动作 | 通过 |
 | 4 | 下游错误秘密脱敏、控制字符清理、UTF-8 和 2048 rune 上限 | 通过 |
@@ -75,7 +74,6 @@ HTTP 探针源码保留为部署目录中的 `http_security_probe.go`，可使�
 执行命令覆盖：
 
 ```text
-go test ./internal/assistant/providerproxy -run TestSessionRejectsDuplicateCapabilityHeadersBeforeUpstream -count=1
 go test ./internal/web -run <本轮安全边界测试集合> -count=1
 go test ./internal/update -run <归档安全测试集合> -count=1
 go test ./internal/statebackup -run TestStateBackupRejectsSharedUnsafeArchivePathCorpus -count=1

@@ -330,14 +330,14 @@ func naturalNameCompare(left, right string) int {
 	a, b := strings.ToLower(left), strings.ToLower(right)
 	for len(a) > 0 && len(b) > 0 {
 		if isASCIIDigit(a[0]) && isASCIIDigit(b[0]) {
-			ai, bi := 0, 0
-			for ai < len(a) && isASCIIDigit(a[ai]) {
-				ai++
+			aIndex, bIndex := 0, 0
+			for aIndex < len(a) && isASCIIDigit(a[aIndex]) {
+				aIndex++
 			}
-			for bi < len(b) && isASCIIDigit(b[bi]) {
-				bi++
+			for bIndex < len(b) && isASCIIDigit(b[bIndex]) {
+				bIndex++
 			}
-			an, bn := strings.TrimLeft(a[:ai], "0"), strings.TrimLeft(b[:bi], "0")
+			an, bn := strings.TrimLeft(a[:aIndex], "0"), strings.TrimLeft(b[:bIndex], "0")
 			if an == "" {
 				an = "0"
 			}
@@ -350,7 +350,7 @@ func naturalNameCompare(left, right string) int {
 			if an != bn {
 				return strings.Compare(an, bn)
 			}
-			a, b = a[ai:], b[bi:]
+			a, b = a[aIndex:], b[bIndex:]
 			continue
 		}
 		if a[0] != b[0] {

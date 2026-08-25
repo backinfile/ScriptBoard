@@ -14,7 +14,7 @@
 - `release-manifest.json`
 - `release-manifest.json.sig`
 
-每个平台只发布一个原生自解包安装文件，其 ZIP 载荷必须包含与组件一致的 `RELEASE.json`。Windows Setup 内含四个服务组件、托盘、稳定托盘启动器和 updater；Linux `.run` 内含四个服务组件和 updater。安装器与自动更新器复用同一套有界 ZIP 解包、完整发布校验和 `service install --start` 流程。正式发布不允许缺少安装器、签名、平台或使用 prerelease 版本号。
+每个平台只发布一个原生自解包安装文件，其 ZIP 载荷必须包含与组件一致的 `RELEASE.json`。Windows Setup 内含三个服务组件、托盘、稳定托盘启动器和 updater；Linux `.run` 内含三个服务组件和 updater。安装器与自动更新器复用同一套有界 ZIP 解包、完整发布校验和 `service install --start` 流程。正式发布不允许缺少安装器、签名、平台或使用 prerelease 版本号。
 
 单文件安装器资产属于 updater protocol 2。protocol 1 客户端不能解析新的资产名称与载荷格式，必须手工下载并执行一次 protocol 2 安装器；进入该基线后，后续版本继续通过应用内事务更新。不得为了兼容旧客户端在同一清单混入旧 ZIP/tar 资产或降低 `minimum_updater_protocol`。
 
@@ -42,7 +42,7 @@ go run ./cmd/scriptboard-release keygen
 
 1. 确认工作树、版本内容和文档已经完成评审。
 2. 在 Windows 与至少两个代表性 systemd Linux 环境完成服务安装、更新、验活失败回滚和人工恢复演练。
-3. 确认正式 Tag 的发布门禁将直接执行全量测试、vet/构建、关键安全包 race、安全边界 fuzz、Chromium 浏览器、`govulncheck`、gitleaks、CodeQL 和提升权限 Windows SCM 四服务矩阵；不得用早先分支上的普通 CI 结果替代 Tag commit 的结果。
+3. 确认正式 Tag 的发布门禁将直接执行全量测试、vet/构建、关键安全包 race、安全边界 fuzz、Chromium 浏览器、`govulncheck`、gitleaks、CodeQL 和提升权限 Windows SCM 三服务矩阵；不得用早先分支上的普通 CI 结果替代 Tag commit 的结果。
 4. 创建严格稳定版 Tag，格式只能为 `vX.Y.Z`，并推送该 Tag：
 
    ```powershell

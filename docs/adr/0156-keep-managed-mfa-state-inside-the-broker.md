@@ -8,4 +8,4 @@
 
 集成测试使用不同的 Web State Root 和 Broker 凭据根完成 MFA 注册，确认 `account-mfa.enc` 只在 Broker 侧产生。协议测试覆盖全部五种操作、领域错误映射，以及对通用密文、宿主动作和无关字段的拒绝。
 
-该决定只迁移 MFA 领域，不代表 P0-02 已完成。Passkey 随后由 ADR-0157 迁入 Broker；Assistant Provider、MySQL、External Interface/远程连接凭据以及 Host Files 特权仍需分别改造成验证、代理或执行型接口；不得以返回任意明文的通用 Broker RPC 代替这些迁移。
+该决定只迁移 MFA 领域，不代表 P0-02 已完成。Passkey 随后由 ADR-0157 迁入 Broker；MySQL、External Interface/远程连接凭据以及 Host Files 特权仍需分别改造成验证、代理或执行型接口；不得以返回任意明文的通用 Broker RPC 代替这些迁移。

@@ -121,8 +121,8 @@ func managedScriptBoardServiceToken() bool {
 	if err != nil {
 		return false
 	}
-	allowed := make([]*windows.SID, 0, 3)
-	for _, account := range []string{`NT SERVICE\ScriptBoard`, `NT SERVICE\ScriptBoardAI`, `NT SERVICE\ScriptBoardRunner`} {
+	allowed := make([]*windows.SID, 0, 2)
+	for _, account := range []string{`NT SERVICE\ScriptBoard`, `NT SERVICE\ScriptBoardRunner`} {
 		// Derive virtual service SIDs locally: account lookup can block an SCM
 		// service before its IPC endpoint has been created.
 		sid, lookupErr := windowsidentity.ResolveSID(account)
