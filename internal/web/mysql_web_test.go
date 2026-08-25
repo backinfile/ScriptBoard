@@ -145,6 +145,18 @@ func TestAdministratorCanRegisterMySQLInstanceFromDatabaseWorkspace(t *testing.T
 		t.Fatalf("TLS mode should be the final overview fact: %s", selectedBody)
 	}
 	instanceID := string(instanceMatch[1])
+	for _, endpoint := range []string{"sql", "sql/write"} {
+		response, err = client.PostForm(serverURL+"/resources/databases/instances/"+instanceID+"/"+endpoint, url.Values{
+			"database": {"scriptboard_qa"}, "statement": {"SELECT 1"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusForbidden {
+			t.Fatalf("MySQL %s without CSRF status=%d, want %d", endpoint, response.StatusCode, http.StatusForbidden)
+		}
+	}
 	response, err = client.PostForm(serverURL+"/resources/databases/instances", url.Values{
 		"csrf_token": {formToken(t, selectedBody)}, "id": {instanceID}, "name": {"Production renamed"},
 		"host": {"db2.internal"}, "port": {"3307"}, "username": {"scriptboard2"}, "password": {""}, "tls_mode": {"disabled"},

@@ -74,12 +74,22 @@ type ScanPage struct {
 	Keys   []KeySummary
 }
 
+type KeyValueItem struct {
+	Field, Value string
+}
+type KeyValue struct {
+	Name, Type, Value string
+	Items             []KeyValueItem
+	Truncated         bool
+}
+
 type Backend interface {
 	StoreCredential(context.Context, Instance, string) error
 	DeleteCredential(context.Context, string) error
 	Test(context.Context, Instance) (ConnectionTest, error)
 	Overview(context.Context, Instance) (Overview, error)
 	Scan(context.Context, Instance, ScanRequest) (ScanPage, error)
+	ReadKey(context.Context, Instance, string) (KeyValue, error)
 }
 
 type Options struct {
@@ -256,5 +266,16 @@ func (m *Manager) Scan(ctx context.Context, id string, r ScanRequest) (ScanPage,
 		return ScanPage{}, e
 	}
 	return m.backend.Scan(ctx, i, r)
+}
+func (m *Manager) ReadKey(ctx context.Context, id, key string) (KeyValue, error) {
+	key = strings.TrimSpace(key)
+	if key == "" || len(key) > 512 || strings.ContainsAny(key, "\r\n\x00") {
+		return KeyValue{}, errors.New("Redis key is invalid")
+	}
+	i, e := m.Instance(ctx, id)
+	if e != nil {
+		return KeyValue{}, e
+	}
+	return m.backend.ReadKey(ctx, i, key)
 }
 func randomID() string { b := make([]byte, 16); _, _ = rand.Read(b); return hex.EncodeToString(b) }

@@ -2,22 +2,140 @@
 
 测试日期：2026-08-25（Asia/Shanghai）
 
+## MySQL/MariaDB 对象浏览与 SQL 控制台预执行清单（部署前快照）
+
+> 以下“待测”状态保留功能部署前固化的原始快照；部署后的逐项结论记录在本清单后方，避免事后改写测试范围。
+
+### 黑盒测试（SQL-B01–SQL-B32）
+
+| # | 测试条目 | 预期结果 | 状态 |
+| --- | --- | --- | --- |
+| SQL-B01 | MySQL 明文连接打开“对象/表”页签 | 页面 200，显示当前连接、当前数据库和对象树 | 待测 |
+| SQL-B02 | MySQL TLS 连接打开“对象/表”页签 | TLS 连接下功能与明文一致 | 待测 |
+| SQL-B03 | MariaDB 明文/TLS 连接打开对象页 | 两种模式均正确识别 MariaDB 并列表 | 待测 |
+| SQL-B04 | 数据库选择与表/视图列表 | `scriptboard_qa.widgets` 可见，表与视图类型可区分 | 待测 |
+| SQL-B05 | 系统库默认状态 | `mysql`/`information_schema`/`performance_schema`/`sys` 默认隐藏或折叠 | 待测 |
+| SQL-B06 | 显式展开系统库 | 四个系统库可查看，选择状态可保持 | 待测 |
+| SQL-B07 | `widgets` 字段结构 | 显示字段名、完整类型、可空、默认值、自增和主键 | 待测 |
+| SQL-B08 | `widgets` 索引结构 | PRIMARY 索引的名称、唯一性、列和顺序正确 | 待测 |
+| SQL-B09 | “查看前 200 行” | 跳转 SQL 结果并最多返回 200 行，不修改数据 | 待测 |
+| SQL-B10 | “发送到 SQL 编辑器” | 编辑器填入安全引用的库名/表名，不自动执行 | 待测 |
+| SQL-B11 | 只读 `SELECT` 单条执行 | 显示列名、2 行种子数据、返回行数和耗时 | 待测 |
+| SQL-B12 | 只读 `SHOW`/`DESC`/`DESCRIBE`/`EXPLAIN` | 各语句均执行成功且结果列完整 | 待测 |
+| SQL-B13 | 无副作用 `WITH ... SELECT` | CTE 成功执行并返回预期结果 | 待测 |
+| SQL-B14 | 只读模式写入/DDL 拦截 | INSERT/UPDATE/DELETE/CREATE/ALTER/DROP/TRUNCATE 均由后端拒绝 | 待测 |
+| SQL-B15 | 注释绕过 | `/*x*/INSERT`、`--x\nDELETE`、`#x\nUPDATE` 均被拒绝 | 待测 |
+| SQL-B16 | 大小写/空白绕过 | 混合大小写、BOM、前导空白不改变分类结果 | 待测 |
+| SQL-B17 | CTE 写入绕过 | `WITH ... DELETE/UPDATE/INSERT` 以及隐藏写 CTE 均被拒绝 | 待测 |
+| SQL-B18 | 多语句绕过 | `SELECT 1; DROP ...`、注释后第二语句、多分隔符均被拒绝 | 待测 |
+| SQL-B19 | 字符串/标识符内分号 | `SELECT ';'`和反引号标识符不被误判为多语句 | 待测 |
+| SQL-B20 | 存储过程、`CALL`、`DELIMITER`、导入脚本 | 第一版全部拒绝，无任何部分执行 | 待测 |
+| SQL-B21 | 结果上限 | 超过最大行数时截断，页面显示截断标识和实际返回行数 | 待测 |
+| SQL-B22 | 超时 | 长查询在配置超时后中止，连接可继续使用 | 待测 |
+| SQL-B23 | SQL 错误显示与脱敏 | 显示可操作的错误，不包含密码、DSN、CA 路径或完整服务端敏感信息 | 待测 |
+| SQL-B24 | 无 CSRF 令牌执行 SQL/切换模式 | 请求 403，数据与模式不变 | 待测 |
+| SQL-B25 | 维护者/管理员访问与无权用户 | 仅持有现有数据库权限的用户可访问，其他角色被拒绝 | 待测 |
+| SQL-B26 | 只读到可写模式切换 | 未 step-up 进入二次验证；最近验证且有权限时才成功 | 待测 |
+| SQL-B27 | 可写模式安全会话 | `@@sql_safe_updates=1`，服务端会话与页面模式一致 | 待测 |
+| SQL-B28 | 无 WHERE UPDATE/DELETE 与危险 DDL | 额外确认缺失时拒绝；当前版本若选择全禁止则恒定拒绝 | 待测 |
+| SQL-B29 | 有 WHERE 的可写语句 | 授权后仅更新 QA 数据，影响行数正确，数据保留 | 待测 |
+| SQL-B30 | SQL 审计成功/拒绝/失败 | 记录操作者、连接、库、语句类型、时间、耗时、行数和结果，不记录敏感值 | 待测 |
+| SQL-B31 | MySQL/MariaDB 结果类型兼容 | NULL、数字、布尔/位、时间、JSON、BLOB 均稳定渲染且有边界 | 待测 |
+| SQL-B32 | 响应式、键盘、本地化和无 JS | 中英文、窄屏、键盘焦点正确；无 JS 至少可导航和执行安全单条查询 | 待测 |
+
+### 白盒测试（SQL-W01–SQL-W28）
+
+| # | 测试条目 | 关键断言 | 状态 |
+| --- | --- | --- | --- |
+| SQL-W01 | SQL 词法前缀分类 | SELECT/SHOW/DESC/DESCRIBE/EXPLAIN 分类正确 | 待测 |
+| SQL-W02 | 注释/BOM/空白规范化 | 移除前导噪声后仍不可绕过 | 待测 |
+| SQL-W03 | CTE 主语句分类 | 嵌套 CTE 正确定位最终 SELECT，写主语句拒绝 | 待测 |
+| SQL-W04 | CTE 副作用检查 | CTE 体内非只读语法不可通过 | 待测 |
+| SQL-W05 | 多语句扫描 | 忽略字符串/引用标识符/注释中的分号，拒绝真实第二语句 | 待测 |
+| SQL-W06 | 禁止语句类型 | DML/DDL/CALL/DO/LOAD/LOCK/SET/USE 的只读策略有明确断言 | 待测 |
+| SQL-W07 | 只读后端强制 | 伪造前端 mode 值仍由服务端模式判定 | 待测 |
+| SQL-W08 | 只读事务 | 连接使用只读事务，提交/回滚/异常路径均关闭资源 | 待测 |
+| SQL-W09 | 可写会话 Safe Updates | 执行前设置 `sql_safe_updates=1`，不泄漏到其他模式 | 待测 |
+| SQL-W10 | 危险语句检查 | 无 WHERE UPDATE/DELETE 和 DROP/TRUNCATE/ALTER 需额外确认或被禁止 | 待测 |
+| SQL-W11 | 模式切换权限 | PermissionManageDatabases 和最近 step-up 缺一不可 | 待测 |
+| SQL-W12 | 模式作用域/过期 | 连接级或会话级作用域明确，超时、登出或连接切换后回到只读 | 待测 |
+| SQL-W13 | 对象列表查询 | information_schema 参数化，表/视图类型与排序正确 | 待测 |
+| SQL-W14 | 字段元数据查询 | 字段、类型、NULL、默认、extra、主键映射正确 | 待测 |
+| SQL-W15 | 索引元数据查询 | 复合/唯一/前缀/降序索引可稳定聚合 | 待测 |
+| SQL-W16 | 标识符安全 | 库名/表名包含反引号时正确引用，不可注入 | 待测 |
+| SQL-W17 | 系统库过滤 | 默认过滤与显式 include-system 参数均覆盖 | 待测 |
+| SQL-W18 | 结果集解码 | 动态列、NULL、`[]byte`、时间与数字无 panic/乱码 | 待测 |
+| SQL-W19 | 返回行上限 | 服务端强制 clamp，通过额外取一行判定 truncated | 待测 |
+| SQL-W20 | 超时与取消 | context deadline 传到 driver，rows/tx/db 均关闭 | 待测 |
+| SQL-W21 | 参数边界 | 空 SQL、过长 SQL、非法库、超大 max rows/超时被拒绝或 clamp | 待测 |
+| SQL-W22 | Web handler CSRF/状态码 | 缺 token=403，分类拒绝=400/422，超时和上游错误映射稳定 | 待测 |
+| SQL-W23 | Web 权限与 step-up 路由声明 | 新增路由全部纳入 authorization 契约测试 | 待测 |
+| SQL-W24 | SQL 审计完整性 | 成功/失败/拒绝/超时均写操作者、请求 ID、类型、耗时和行数 | 待测 |
+| SQL-W25 | 审计脱敏 | 字面量中的密码/token/连接信息不进 target/result/日志 | 待测 |
+| SQL-W26 | Privilege Broker 边界 | 托管模式不把密码或原始 DB 能力返回 Web 进程 | 待测 |
+| SQL-W27 | MySQL/MariaDB 方言兼容 | 两引擎的 information_schema、只读事务、安全更新均在集成测试执行 | 待测 |
+| SQL-W28 | 模板/本地化/响应式契约 | 中英文 key 齐全，窄屏不溢出，连接页签切换尺寸不变 | 待测 |
+
+### 部署后逐项执行结果
+
+| 条目 | 结果 | 实测证据 |
+| --- | --- | --- |
+| SQL-B01、B02、B03 | 通过 | 外部 Playwright 分别打开 MySQL 8.4/MariaDB 11.8 的明文与 TLS 连接，对象页和 SQL 页均可用 |
+| SQL-B04、B05、B06 | 通过 | `scriptboard_qa.widgets` 可见；系统库默认隐藏，显式显示后按服务端实际系统库集合列出 |
+| SQL-B07、B08、B09、B10 | 通过 | 字段、类型、NULL、默认值、PK、PRIMARY 索引、前 200 行和发送编辑器逐项通过 |
+| SQL-B11、B12、B13 | 通过 | 四种连接均执行 SELECT、SHOW、DESC、DESCRIBE、EXPLAIN 和只读 CTE |
+| SQL-B14、B15、B16、B17、B18、B19、B20 | 通过 | 写入/DDL、三种注释、混合大小写、写 CTE、多语句和 CALL/DELIMITER 绕过逐条执行；全部被后端拒绝，字符串内分号正常返回 |
+| SQL-B21、B22、B23、B24 | 通过 | 1 行上限显示截断；1 秒 SLEEP 超时后 SELECT 1 恢复；错误脱敏；读写路由无 CSRF 均为 403 |
+| SQL-B25、B26 | 通过 | 全仓授权契约通过；写路由要求数据库权限与 step-up，近期验证后才执行 |
+| SQL-B27、B28、B29 | 通过 | 非键 WHERE 更新被 MySQL Safe Updates 拒绝；无 WHERE 更新无额外确认被拒绝；按主键更新成功并保留 `write-tested-retained` 数据 |
+| SQL-B30 | 通过 | 审计页检索到 `execute_mysql_sql`、管理员和执行结果；只记录 SQL SHA-256，不含密码或 SQL 原文 |
+| SQL-B31 | 部分通过 | MySQL/MariaDB 的 NULL、整数、文本、时间及动态列渲染通过；本轮未额外创建 JSON/BLOB/bit 边界数据 |
+| SQL-B32 | 通过 | 中英文、1440×1000、390×844、键盘、禁用 JavaScript和控制台零错误检查通过 |
+| SQL-W01、W02、W03、W04、W05 | 通过 | `query_test.go` 覆盖词法前缀、注释、大小写、CTE 主语句/副作用、真实与引用内分号 |
+| SQL-W06、W07 | 通过 | 分类器拒绝不支持语句；Web 读写路由固定后端模式，不能用表单伪造 |
+| SQL-W08、W09、W10 | 通过 | 只读路径执行 `SET TRANSACTION READ ONLY` 与只读 Tx；写路径启用 `sql_safe_updates=1`；危险语句必须显式确认 |
+| SQL-W11、W12 | 通过 | 路由授权测试覆盖 PermissionManageDatabases/recent step-up；模式不持久化且每次页面/连接默认只读 |
+| SQL-W13、W14、W15 | 通过 | 四实例 information_schema 实测返回对象、字段、默认值、主键和索引聚合 |
+| SQL-W16 | 部分通过 | 标识符由反引号转义且库/对象长度和 NUL 校验已审查；未创建名称含反引号的实库夹具 |
+| SQL-W17 | 通过 | 默认数据库列表与显式系统数据库列表均在四实例执行 |
+| SQL-W18 | 部分通过 | 动态列、NULL、`[]byte`、整数和时间解码路径通过；未补充最大 BLOB 单元格夹具 |
+| SQL-W19、W20、W21 | 通过 | 1000 行/4 MiB/64 KiB 单元格边界、context 超时以及参数默认值/clamp 的单元测试和实库测试通过 |
+| SQL-W22、W23 | 通过 | 读写 handler CSRF 单测、实际 403、权限与 step-up 路由声明全仓测试通过；分类错误在同页安全显示 |
+| SQL-W24 | 部分通过 | 成功、分类拒绝和超时均经过统一审计路径；实测审计检索通过，未单独故障注入审计存储失败 |
+| SQL-W25、W26 | 通过 | 审计仅含语句类型/耗时/行数/hash；Privilege Broker 校验请求边界并清除客户端 Actor |
+| SQL-W27、W28 | 通过 | MySQL/MariaDB 明文/TLS 四实例逐项执行；模板本地化、响应式、页签尺寸和 CSP/控制台检查通过 |
+
+### Redis 键空间补充测试
+
+| # | 测试条目 | 结果 |
+| --- | --- | --- |
+| REDIS-K01 | SCAN 工具栏中英文、空模式等同 `*`、`qa:*` 匹配 | 通过 |
+| REDIS-K02 | 按冒号 namespace 分组，未分组键进入独立分段 | 通过 |
+| REDIS-K03 | namespace 原生 details 展开/折叠及无 JavaScript 可用性 | 通过 |
+| REDIS-K04 | String 键值预览 | 通过，`qa:string=retained` |
+| REDIS-K05 | Hash/List/Set/ZSet/Stream 类型化预览和 100 项截断 | 部分通过；保留数据与后端路径覆盖 Hash/List/Set/ZSet，浏览器逐键实测 String，本轮未创建 Stream 夹具 |
+| REDIS-K06 | TTL、永久键、内存占用与选中态 | 通过 |
+| REDIS-K07 | 键名/模式 URL 编码与特殊冒号 | 通过；修复了首次实测发现的二次编码 |
+| REDIS-K08 | Broker 读取键边界、无效键名和错误脱敏 | 通过 |
+| REDIS-K09 | 桌面/移动宽度、MySQL/Redis 页签尺寸稳定 | 通过 |
+| REDIS-K10 | 外部 Playwright 控制台与页面错误 | 通过，0 条错误 |
+
 ## 结论
 
 预先列出的 49 项测试中，48 项通过，1 项因宿主缺少 `mysql`/`mysqldump` 客户端而环境受限。环境受限项的 HTTP 受理、失败状态落库与全部白盒路径均已验证，不属于连接功能失败。
 
-本轮发现并修复了三个问题：Redis 连接新增/测试/删除缺少 CSRF 校验；MariaDB TLS 会话的状态探测误报为未加密；数据库抽屉关闭时引用了助手页面的局部变量并在浏览器控制台抛错。修复后已重新部署并完成全量回归。
+本轮在原有修复基础上新增了 MySQL/MariaDB 对象浏览、SQL 控制台和 Redis namespace 键值浏览。真实浏览器测试又发现并修复了 Redis 键链接二次编码、SQL 错误结果被异步导航丢弃、对象库选择的内联事件违反 CSP，以及亚秒 SQL 耗时被显示为 0 分钟四个问题。修复后已重新部署并完成全量回归。
 
 ## 保留的部署与数据
 
 | 项目 | 当前状态 |
 | --- | --- |
-| ScriptBoard | `http://127.0.0.1:18788`，PID 29172，保持运行 |
+| ScriptBoard | `http://127.0.0.1:18788`，PID 33964，保持运行 |
 | State Root | `D:\Github\worktrees\ScriptBoard\database-unified\.scratch\database-unified-deployment\state` |
 | 管理员 | `admin`；密码仅保留在 State Root 私有文件中 |
 | Docker 项目 | `scriptboard-database-qa`，7 个容器均保持运行 |
 | 测试定义与证书 | `.scratch/database-docker-matrix/` |
-| Playwright 截图 | `.scratch/database-docker-matrix/database-desktop.png`、`database-mobile.png` |
+| Playwright 截图 | `.scratch/database-docker-matrix/database-desktop.png`、`database-mobile.png`、`mysql-sql-console-desktop.png` |
 | 数据持久化 | 7 个 `sb_qa_*` 命名卷全部保留 |
 
 | 服务 | 镜像 | 端口 | 模式 |

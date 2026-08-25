@@ -17,15 +17,53 @@ import (
 
 type redisDatabasesPageData struct {
 	databaseWorkspaceData
-	Locale    webLocale
-	CSRFToken string
-	Instances []redismanager.Instance
-	Selected  *redismanager.Instance
-	Overview  *redismanager.Overview
-	Scan      *redismanager.ScanPage
-	Pattern   string
-	ActiveTab string
-	LoadError string
+	Locale      webLocale
+	CSRFToken   string
+	Instances   []redismanager.Instance
+	Selected    *redismanager.Instance
+	Overview    *redismanager.Overview
+	Scan        *redismanager.ScanPage
+	KeyGroups   []redisKeyGroup
+	KeyValue    *redismanager.KeyValue
+	Pattern     string
+	SelectedKey string
+	ActiveTab   string
+	LoadError   string
+}
+
+type redisKeyGroup struct {
+	Namespace string
+	Root      bool
+	Keys      []redismanager.KeySummary
+}
+
+func groupRedisKeys(keys []redismanager.KeySummary) []redisKeyGroup {
+	groups := make(map[string][]redismanager.KeySummary)
+	order := make([]string, 0)
+	for _, key := range keys {
+		namespace := ""
+		if prefix, _, found := strings.Cut(key.Name, ":"); found {
+			namespace = strings.TrimSpace(prefix)
+		}
+		if _, exists := groups[namespace]; !exists {
+			order = append(order, namespace)
+		}
+		groups[namespace] = append(groups[namespace], key)
+	}
+	sort.SliceStable(order, func(left, right int) bool {
+		if order[left] == "" {
+			return false
+		}
+		if order[right] == "" {
+			return true
+		}
+		return strings.ToLower(order[left]) < strings.ToLower(order[right])
+	})
+	result := make([]redisKeyGroup, 0, len(order))
+	for _, namespace := range order {
+		result = append(result, redisKeyGroup{Namespace: namespace, Root: namespace == "", Keys: groups[namespace]})
+	}
+	return result
 }
 
 // databaseWorkspaceData keeps the shared connection inventory and add flow
@@ -98,7 +136,7 @@ func (a *App) redisDatabasesPage(response http.ResponseWriter, request *http.Req
 		return
 	}
 	current := request.Context().Value(sessionContextKey).(session)
-	data := redisDatabasesPageData{Locale: resolveWebLocale(request), CSRFToken: current.csrfToken, Instances: instances, ActiveTab: "overview", Pattern: strings.TrimSpace(request.URL.Query().Get("pattern"))}
+	data := redisDatabasesPageData{Locale: resolveWebLocale(request), CSRFToken: current.csrfToken, Instances: instances, ActiveTab: "overview", Pattern: strings.TrimSpace(request.URL.Query().Get("pattern")), SelectedKey: strings.TrimSpace(request.URL.Query().Get("key"))}
 	data.databaseWorkspaceData = newDatabaseWorkspaceData(request, "redis", data.Locale, data.CSRFToken, a.mysql.BackupRoot(), a.mysql.Tools(), mysqlInstances, instances)
 	if request.URL.Query().Get("tab") == "keys" || request.URL.Query().Get("tab") == "diagnostics" {
 		data.ActiveTab = request.URL.Query().Get("tab")
@@ -129,6 +167,15 @@ func (a *App) redisDatabasesPage(response http.ResponseWriter, request *http.Req
 				data.LoadError = secretredaction.String(scanErr.Error())
 			} else {
 				data.Scan = &scan
+				data.KeyGroups = groupRedisKeys(scan.Keys)
+				if data.SelectedKey != "" {
+					value, valueErr := a.redis.ReadKey(ctx, id, data.SelectedKey)
+					if valueErr != nil {
+						data.LoadError = secretredaction.String(valueErr.Error())
+					} else {
+						data.KeyValue = &value
+					}
+				}
 			}
 		case "overview":
 			overview, overviewErr := a.redis.Overview(ctx, id)

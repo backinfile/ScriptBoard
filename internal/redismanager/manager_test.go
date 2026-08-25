@@ -172,3 +172,25 @@ func (backend *recordingBackend) Scan(_ context.Context, _ Instance, request Sca
 	backend.lastScan = request
 	return ScanPage{}, nil
 }
+func (backend *recordingBackend) ReadKey(_ context.Context, _ Instance, key string) (KeyValue, error) {
+	return KeyValue{Name: key, Type: "string", Value: "preview"}, nil
+}
+
+func TestManagerReadKeyValidatesNameAndReturnsPreview(t *testing.T) {
+	backend := &recordingBackend{}
+	manager, err := New(Options{DB: openTestDatabase(t), StateRoot: t.TempDir(), Backend: backend})
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := manager.SaveInstance(context.Background(), InstanceInput{Name: "cache", Host: "127.0.0.1", Port: 6379, Database: 0, TLSMode: TLSDisabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := manager.ReadKey(context.Background(), instance.ID, "qa:string")
+	if err != nil || value.Value != "preview" || value.Name != "qa:string" {
+		t.Fatalf("read preview = %#v, %v", value, err)
+	}
+	if _, err := manager.ReadKey(context.Background(), instance.ID, "bad\nkey"); err == nil {
+		t.Fatal("control characters in Redis key must be rejected")
+	}
+}

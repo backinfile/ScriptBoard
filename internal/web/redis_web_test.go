@@ -26,7 +26,10 @@ func (redisWebBackend) Overview(context.Context, redismanager.Instance) (redisma
 	return redismanager.Overview{Version: "8.0.0", KeyCount: 42, UsedMemory: 4 << 20}, nil
 }
 func (redisWebBackend) Scan(context.Context, redismanager.Instance, redismanager.ScanRequest) (redismanager.ScanPage, error) {
-	return redismanager.ScanPage{Keys: []redismanager.KeySummary{{Name: "order:42", Type: "hash", SizeBytes: 512}}}, nil
+	return redismanager.ScanPage{Keys: []redismanager.KeySummary{{Name: "order:42", Type: "hash", SizeBytes: 512}, {Name: "session:7", Type: "string", SizeBytes: 16}, {Name: "ungrouped", Type: "string", SizeBytes: 8}}}, nil
+}
+func (redisWebBackend) ReadKey(context.Context, redismanager.Instance, string) (redismanager.KeyValue, error) {
+	return redismanager.KeyValue{Name: "order:42", Type: "hash", Items: []redismanager.KeyValueItem{{Field: "status", Value: "paid"}}}, nil
 }
 
 func TestAdministratorCanRegisterAndInspectRedisConnection(t *testing.T) {
@@ -82,6 +85,12 @@ func TestAdministratorCanRegisterAndInspectRedisConnection(t *testing.T) {
 	instanceID := location.Query().Get("instance")
 	if instanceID == "" {
 		t.Fatalf("Redis connection redirect missing instance id: %q", response.Header.Get("Location"))
+	}
+	keyspace := string(getBody(t, client, serverURL+"/resources/databases?engine=redis&instance="+url.QueryEscape(instanceID)+"&tab=keys&pattern=order:*&key=order:42", http.StatusOK))
+	for _, expected := range []string{`data-redis-scan-form`, "Scan keyspace", "Match pattern", `data-redis-key-namespace="order"`, `data-redis-key-namespace="session"`, "Ungrouped keys", `data-redis-value-inspector`, "order:42", "status", "paid"} {
+		if !strings.Contains(keyspace, expected) {
+			t.Fatalf("Redis key browser missing %q: %s", expected, keyspace)
+		}
 	}
 	for _, endpoint := range []string{"test", "delete"} {
 		response, err = client.PostForm(serverURL+"/resources/databases/redis/instances/"+instanceID+"/"+endpoint, nil)

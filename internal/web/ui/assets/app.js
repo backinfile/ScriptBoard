@@ -6645,10 +6645,25 @@
         footer.prepend(trigger);
       }
     });
-    root.querySelectorAll('form[method="post"]:not([data-connection-test])').forEach(form => {
+    root.querySelectorAll('form[method="post"]:not([data-connection-test]):not([data-mysql-sql-form])').forEach(form => {
       form.dataset.async = "";
       form.dataset.asyncRefresh = "[data-mysql-instances-region]";
     });
+	const sqlForm = root.querySelector("[data-mysql-sql-form]");
+	const writeConfirmation = sqlForm?.querySelector("[data-mysql-write-confirm]");
+	const syncSQLMode = () => {
+	  if (!sqlForm) return;
+	  const writable = sqlForm.querySelector('input[name="ui_mode"]:checked')?.value === "write";
+	  sqlForm.action = writable ? sqlForm.dataset.writeAction : sqlForm.dataset.readAction;
+	  if (writeConfirmation) writeConfirmation.hidden = !writable;
+	};
+	const onSQLModeChange = event => {
+	  if (event.target.matches('input[name="ui_mode"]')) syncSQLMode();
+	};
+	if (sqlForm) {
+	  syncSQLMode();
+	  sqlForm.addEventListener("change", onSQLModeChange);
+	}
     const drawers = [...root.querySelectorAll("details.mysql-drawer")];
     const dropDrawer = root.querySelector("[data-mysql-drop-drawer]");
     const backupRestoreDrawer = root.querySelector("[data-mysql-backup-restore-drawer]");
@@ -6786,6 +6801,7 @@
     root.addEventListener("click", onClick);
     document.addEventListener("keydown", onKeydown);
     cleanups.push(() => {
+	  sqlForm?.removeEventListener("change", onSQLModeChange);
       drawers.forEach(drawer => drawer.removeEventListener("toggle", onToggle));
       root.removeEventListener("click", onClick);
       document.removeEventListener("keydown", onKeydown);

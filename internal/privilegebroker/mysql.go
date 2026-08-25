@@ -28,18 +28,23 @@ type mysqlWireRequest struct {
 	BackupID    string                           `json:"backup_id,omitempty"`
 	Offset      int64                            `json:"offset,omitempty"`
 	Limit       int                              `json:"limit,omitempty"`
+	Object      string                           `json:"object,omitempty"`
+	SQL         mysqlmanager.SQLRequest          `json:"sql"`
 }
 
 type mysqlWireResponse struct {
-	ConnectionTest *mysqlmanager.ConnectionTest `json:"connection_test,omitempty"`
-	Databases      []mysqlmanager.Database      `json:"databases,omitempty"`
-	Status         *mysqlmanager.Status         `json:"status,omitempty"`
-	Exists         bool                         `json:"exists,omitempty"`
-	Dump           *mysqlmanager.DumpResult     `json:"dump,omitempty"`
-	ToolStatus     *mysqlmanager.ToolStatus     `json:"tool_status,omitempty"`
-	Content        []byte                       `json:"content,omitempty"`
-	TotalBytes     int64                        `json:"total_bytes,omitempty"`
-	Filename       string                       `json:"filename,omitempty"`
+	ConnectionTest *mysqlmanager.ConnectionTest  `json:"connection_test,omitempty"`
+	Databases      []mysqlmanager.Database       `json:"databases,omitempty"`
+	Status         *mysqlmanager.Status          `json:"status,omitempty"`
+	Exists         bool                          `json:"exists,omitempty"`
+	Dump           *mysqlmanager.DumpResult      `json:"dump,omitempty"`
+	ToolStatus     *mysqlmanager.ToolStatus      `json:"tool_status,omitempty"`
+	Content        []byte                        `json:"content,omitempty"`
+	TotalBytes     int64                         `json:"total_bytes,omitempty"`
+	Filename       string                        `json:"filename,omitempty"`
+	Objects        []mysqlmanager.DatabaseObject `json:"objects,omitempty"`
+	ObjectDetails  *mysqlmanager.ObjectDetails   `json:"object_details,omitempty"`
+	SQLResult      *mysqlmanager.SQLResult       `json:"sql_result,omitempty"`
 }
 
 type brokerMySQLService struct {
@@ -245,6 +250,26 @@ func (server *Server) mysqlOperation(parent context.Context, request wireRequest
 		response.MySQL.ConnectionTest = &value
 	case operationMySQLDatabases:
 		response.MySQL.Databases, err = server.mysql.Databases(ctx, payload.Instance)
+	case operationMySQLDatabasesAll, operationMySQLObjects, operationMySQLObjectDetails, operationMySQLExecuteSQL:
+		queryBackend, ok := server.mysql.(mysqlmanager.QueryBackend)
+		if !ok {
+			err = errors.New("MySQL query browsing is unavailable")
+			break
+		}
+		switch request.Operation {
+		case operationMySQLDatabasesAll:
+			response.MySQL.Databases, err = queryBackend.DatabasesIncludingSystem(ctx, payload.Instance)
+		case operationMySQLObjects:
+			response.MySQL.Objects, err = queryBackend.Objects(ctx, payload.Instance, payload.Database)
+		case operationMySQLObjectDetails:
+			var value mysqlmanager.ObjectDetails
+			value, err = queryBackend.ObjectDetails(ctx, payload.Instance, payload.Database, payload.Object)
+			response.MySQL.ObjectDetails = &value
+		case operationMySQLExecuteSQL:
+			var value mysqlmanager.SQLResult
+			value, err = queryBackend.ExecuteSQL(ctx, payload.Instance, payload.SQL)
+			response.MySQL.SQLResult = &value
+		}
 	case operationMySQLStatus:
 		var value mysqlmanager.Status
 		value, err = server.mysql.Status(ctx, payload.Instance)
@@ -310,6 +335,10 @@ func mysqlFailureResponse(err error) wireResponse {
 func (server *Server) authorizeMySQLOperation(request wireRequest) (Actor, Action, error) {
 	payload := request.MySQL
 	action, recent := mysqlAction(request.Operation)
+	if request.Operation == operationMySQLExecuteSQL {
+		action = ActionMySQLExecute
+		recent = payload.SQL.Mode == mysqlmanager.SQLModeWrite
+	}
 	body, _ := json.Marshal(payload)
 	resource := payload.Instance.ID
 	if request.Operation == operationMySQLBackupChunk {
@@ -347,6 +376,8 @@ func mysqlAction(operation string) (Action, bool) {
 		return ActionMySQLSetTools, true
 	case operationMySQLCancel:
 		return ActionMySQLCancel, false
+	case operationMySQLExecuteSQL:
+		return ActionMySQLExecute, false
 	default:
 		return ActionMySQLRead, false
 	}
@@ -381,7 +412,7 @@ func validateMySQLRequest(request wireRequest) error {
 	if request.Operation == operationMySQLBackupChunk {
 		validMinimalInstance = payload.Instance == (mysqlmanager.Instance{})
 	}
-	if (!minimalInstance && !validMySQLInstance(payload.Instance)) || (minimalInstance && !validMinimalInstance) || len(payload.Password) > 8<<10 || len(payload.Database) > 64 || strings.ContainsAny(payload.Database+payload.Path+payload.OperationID+payload.BackupID, "\r\n\x00") || len(payload.Path) > 4096 || len(payload.OperationID) > 160 || len(payload.BackupID) > 160 {
+	if (!minimalInstance && !validMySQLInstance(payload.Instance)) || (minimalInstance && !validMinimalInstance) || len(payload.Password) > 8<<10 || len(payload.Database) > 64 || len(payload.Object) > 64 || len(payload.SQL.Database) > 64 || strings.ContainsAny(payload.Database+payload.Object+payload.SQL.Database+payload.Path+payload.OperationID+payload.BackupID, "\r\n\x00") || len(payload.Path) > 4096 || len(payload.OperationID) > 160 || len(payload.BackupID) > 160 || len(payload.SQL.Statement) > 256<<10 {
 		return errors.New("MySQL request fields are invalid")
 	}
 	if !validCredentialSessionToken(request.SessionToken) {
@@ -395,14 +426,34 @@ func validateMySQLRequest(request wireRequest) error {
 	}
 	emptyCreate := payload.Create == (mysqlmanager.CreateDatabaseInput{})
 	emptyTools := payload.Tools == (mysqlmanager.ToolSettings{})
+	emptySQL := payload.SQL == (mysqlmanager.SQLRequest{})
+	if request.Operation != operationMySQLExecuteSQL && !emptySQL {
+		return errors.New("MySQL request contains unrelated SQL fields")
+	}
+	if request.Operation != operationMySQLObjectDetails && payload.Object != "" {
+		return errors.New("MySQL request contains an unrelated object")
+	}
 	switch request.Operation {
 	case operationMySQLStore:
 		if payload.Password == "" || payload.Database != "" || payload.Path != "" || !emptyCreate || !emptyTools {
 			return errors.New("MySQL credential store request is invalid")
 		}
-	case operationMySQLDelete, operationMySQLTest, operationMySQLDatabases, operationMySQLStatus, operationMySQLTestTools:
-		if payload.Password != "" || payload.Database != "" || payload.Path != "" || !emptyCreate || !emptyTools {
+	case operationMySQLDelete, operationMySQLTest, operationMySQLDatabases, operationMySQLStatus, operationMySQLTestTools, operationMySQLDatabasesAll:
+		if payload.Password != "" || payload.Database != "" || payload.Object != "" || payload.Path != "" || !emptyCreate || !emptyTools || !emptySQL {
 			return errors.New("MySQL request contains operation-forbidden fields")
+		}
+	case operationMySQLObjects:
+		if payload.Password != "" || payload.Database == "" || payload.Object != "" || payload.Path != "" || !emptyCreate || !emptyTools || !emptySQL {
+			return errors.New("MySQL object list request is invalid")
+		}
+	case operationMySQLObjectDetails:
+		if payload.Password != "" || payload.Database == "" || payload.Object == "" || payload.Path != "" || !emptyCreate || !emptyTools || !emptySQL {
+			return errors.New("MySQL object details request is invalid")
+		}
+	case operationMySQLExecuteSQL:
+		validMode := payload.SQL.Mode == mysqlmanager.SQLModeReadOnly || payload.SQL.Mode == mysqlmanager.SQLModeWrite
+		if payload.Password != "" || payload.Database != "" || payload.Object != "" || payload.Path != "" || !emptyCreate || !emptyTools || payload.SQL.Database == "" || payload.SQL.Statement == "" || payload.SQL.Actor != (mysqlmanager.Actor{}) || !validMode || payload.SQL.Timeout <= 0 || payload.SQL.Timeout > 2*time.Minute || payload.SQL.MaxRows <= 0 || payload.SQL.MaxRows > 1000 {
+			return errors.New("MySQL SQL execution request is invalid")
 		}
 	case operationMySQLCreate:
 		if payload.Password != "" || payload.Database != "" || payload.Path != "" || emptyCreate || !emptyTools {
@@ -524,6 +575,29 @@ func (backend *MySQLBackend) Databases(ctx context.Context, instance mysqlmanage
 	value, err := backend.call(ctx, operationMySQLDatabases, mysqlWireRequest{Instance: instance})
 	return value.Databases, err
 }
+func (backend *MySQLBackend) DatabasesIncludingSystem(ctx context.Context, instance mysqlmanager.Instance) ([]mysqlmanager.Database, error) {
+	value, err := backend.call(ctx, operationMySQLDatabasesAll, mysqlWireRequest{Instance: instance})
+	return value.Databases, err
+}
+func (backend *MySQLBackend) Objects(ctx context.Context, instance mysqlmanager.Instance, database string) ([]mysqlmanager.DatabaseObject, error) {
+	value, err := backend.call(ctx, operationMySQLObjects, mysqlWireRequest{Instance: instance, Database: database})
+	return value.Objects, err
+}
+func (backend *MySQLBackend) ObjectDetails(ctx context.Context, instance mysqlmanager.Instance, database, object string) (mysqlmanager.ObjectDetails, error) {
+	value, err := backend.call(ctx, operationMySQLObjectDetails, mysqlWireRequest{Instance: instance, Database: database, Object: object})
+	if value.ObjectDetails == nil {
+		return mysqlmanager.ObjectDetails{}, errors.Join(err, errors.New("privileged Broker returned no MySQL object details"))
+	}
+	return *value.ObjectDetails, err
+}
+func (backend *MySQLBackend) ExecuteSQL(ctx context.Context, instance mysqlmanager.Instance, request mysqlmanager.SQLRequest) (mysqlmanager.SQLResult, error) {
+	request.Actor = mysqlmanager.Actor{}
+	value, err := backend.call(ctx, operationMySQLExecuteSQL, mysqlWireRequest{Instance: instance, SQL: request})
+	if value.SQLResult == nil {
+		return mysqlmanager.SQLResult{}, errors.Join(err, errors.New("privileged Broker returned no MySQL SQL result"))
+	}
+	return *value.SQLResult, err
+}
 func (backend *MySQLBackend) Status(ctx context.Context, instance mysqlmanager.Instance) (mysqlmanager.Status, error) {
 	value, err := backend.call(ctx, operationMySQLStatus, mysqlWireRequest{Instance: instance})
 	if value.Status == nil {
@@ -586,3 +660,4 @@ func (backend *MySQLBackend) CancelOperation(ctx context.Context, id string) err
 }
 
 var _ mysqlmanager.Backend = (*MySQLBackend)(nil)
+var _ mysqlmanager.QueryBackend = (*MySQLBackend)(nil)

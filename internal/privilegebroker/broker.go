@@ -84,11 +84,16 @@ const (
 	operationMySQLTestTools             = "mysql_test_tools"
 	operationMySQLCancel                = "mysql_cancel"
 	operationMySQLBackupChunk           = "mysql_backup_chunk"
+	operationMySQLDatabasesAll          = "mysql_databases_all"
+	operationMySQLObjects               = "mysql_objects"
+	operationMySQLObjectDetails         = "mysql_object_details"
+	operationMySQLExecuteSQL            = "mysql_execute_sql"
 	operationRedisStore                 = "redis_store"
 	operationRedisDelete                = "redis_delete"
 	operationRedisTest                  = "redis_test"
 	operationRedisOverview              = "redis_overview"
 	operationRedisScan                  = "redis_scan"
+	operationRedisReadKey               = "redis_read_key"
 	operationHostFilesRoots             = "host_files_roots"
 	operationHostFilesList              = "host_files_list"
 	operationHostFilesInfo              = "host_files_info"
@@ -199,6 +204,7 @@ const (
 	ActionMySQLImport             Action = "mysql_import"
 	ActionMySQLSetTools           Action = "mysql_set_tools"
 	ActionMySQLCancel             Action = "mysql_cancel"
+	ActionMySQLExecute            Action = "mysql_execute"
 	ActionRedisRead               Action = "redis_read"
 	ActionRedisStore              Action = "redis_store"
 	ActionRedisDelete             Action = "redis_delete"
@@ -612,7 +618,8 @@ func (server *Server) handle(connection net.Conn) {
 		response = server.providerOperation(request)
 	case operationMySQLStore, operationMySQLDelete, operationMySQLTest, operationMySQLDatabases, operationMySQLStatus,
 		operationMySQLExists, operationMySQLCreate, operationMySQLReplace, operationMySQLDrop, operationMySQLDump,
-		operationMySQLImport, operationMySQLSetTools, operationMySQLTestTools, operationMySQLCancel, operationMySQLBackupChunk:
+		operationMySQLImport, operationMySQLSetTools, operationMySQLTestTools, operationMySQLCancel, operationMySQLBackupChunk,
+		operationMySQLDatabasesAll, operationMySQLObjects, operationMySQLObjectDetails, operationMySQLExecuteSQL:
 		_ = connection.SetDeadline(server.now().Add(2 * time.Hour))
 		operationContext, cancelOperation := context.WithCancel(context.Background())
 		peerClosed := make(chan struct{})
@@ -1641,7 +1648,8 @@ func isMySQLOperation(operation string) bool {
 	switch operation {
 	case operationMySQLStore, operationMySQLDelete, operationMySQLTest, operationMySQLDatabases, operationMySQLStatus,
 		operationMySQLExists, operationMySQLCreate, operationMySQLReplace, operationMySQLDrop, operationMySQLDump,
-		operationMySQLImport, operationMySQLSetTools, operationMySQLTestTools, operationMySQLCancel, operationMySQLBackupChunk:
+		operationMySQLImport, operationMySQLSetTools, operationMySQLTestTools, operationMySQLCancel, operationMySQLBackupChunk,
+		operationMySQLDatabasesAll, operationMySQLObjects, operationMySQLObjectDetails, operationMySQLExecuteSQL:
 		return true
 	default:
 		return false

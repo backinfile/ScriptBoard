@@ -3,6 +3,7 @@ package mysqlmanager
 import (
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -75,6 +76,54 @@ func (backend *localBackend) Databases(ctx context.Context, instance Instance) (
 		return nil, err
 	}
 	return backend.manager.server.Databases(ctx, instance, password)
+}
+
+func (backend *localBackend) DatabasesIncludingSystem(ctx context.Context, instance Instance) ([]Database, error) {
+	password, err := backend.manager.secrets.getForInstance(instance)
+	if err != nil {
+		return nil, err
+	}
+	server, ok := backend.manager.server.(queryDatabaseServer)
+	if !ok {
+		return nil, errors.New("MySQL query browsing is unavailable")
+	}
+	return server.DatabasesIncludingSystem(ctx, instance, password)
+}
+
+func (backend *localBackend) Objects(ctx context.Context, instance Instance, database string) ([]DatabaseObject, error) {
+	password, err := backend.manager.secrets.getForInstance(instance)
+	if err != nil {
+		return nil, err
+	}
+	server, ok := backend.manager.server.(queryDatabaseServer)
+	if !ok {
+		return nil, errors.New("MySQL query browsing is unavailable")
+	}
+	return server.Objects(ctx, instance, password, database)
+}
+
+func (backend *localBackend) ObjectDetails(ctx context.Context, instance Instance, database, object string) (ObjectDetails, error) {
+	password, err := backend.manager.secrets.getForInstance(instance)
+	if err != nil {
+		return ObjectDetails{}, err
+	}
+	server, ok := backend.manager.server.(queryDatabaseServer)
+	if !ok {
+		return ObjectDetails{}, errors.New("MySQL query browsing is unavailable")
+	}
+	return server.ObjectDetails(ctx, instance, password, database, object)
+}
+
+func (backend *localBackend) ExecuteSQL(ctx context.Context, instance Instance, request SQLRequest) (SQLResult, error) {
+	password, err := backend.manager.secrets.getForInstance(instance)
+	if err != nil {
+		return SQLResult{}, err
+	}
+	server, ok := backend.manager.server.(queryDatabaseServer)
+	if !ok {
+		return SQLResult{}, errors.New("MySQL query browsing is unavailable")
+	}
+	return server.ExecuteSQL(ctx, instance, password, request)
 }
 
 func (backend *localBackend) Status(ctx context.Context, instance Instance) (Status, error) {
@@ -196,3 +245,4 @@ func (backend *localBackend) TestTools(ctx context.Context) ToolStatus {
 }
 
 var _ Backend = (*localBackend)(nil)
+var _ QueryBackend = (*localBackend)(nil)
