@@ -544,7 +544,7 @@ schema 45 增加 `custom_dashboard_registry_operations`。Registry 连接在 Bro
 
 schema 54 增加 `redis_instances`，只保存连接名称、环境、地址、ACL 用户、数据库索引、TLS 策略、CA 路径、凭据已配置事实和最近连接状态。密码使用用途绑定的 AES-GCM 密封保存在独立凭据文件中，不进入 SQLite、HTML、审计或错误信息。受管部署的 Web 只提交元数据，Privileged Broker 在执行前将完整连接配置与已提交行逐项校验；凭据写入和删除要求近期身份验证并记录不含明文密码的摘要审计。
 
-schema 58 在 Entry 增加默认关闭的 `require_approval`，并增加 `external_trigger_approvals`。需要审批的调用先保存动作类型、配置修订快照和经过类型校验的输入；上传内容以私有固定文件缓存并记录实际大小与 SHA-256。批准先原子领取 `pending` 行，再复核全局开关、Key、分组、Entry 和配置修订后执行一次；拒绝直接删除缓存。进程在执行中退出时，审批与调用记录恢复为 `failed/unknown`，处理中或孤立 payload 会被删除以避免重放。
+schema 58 在 Entry 增加默认关闭的 `require_approval`，并增加 `external_trigger_approvals`。需要审批的调用先保存动作类型、配置修订快照和经过类型校验的输入；上传内容以私有固定文件缓存并记录实际大小与 SHA-256。审批详情只读解析这些快照；上传预览从对应审批目录读取有界前缀，不移动、不领取 payload。批准先原子领取 `pending` 行，再复核全局开关、Key、分组、Entry 和配置修订后执行一次；拒绝直接删除缓存。进程在执行中退出时，审批与调用记录恢复为 `failed/unknown`，处理中或孤立 payload 会被删除以避免重放。
 
 `audit_events` 按 ID 顺序链接 `previous_hash` 与 `event_hash`，`audit_chain_state` 保存保留锚点和
 当前链尾。为防止事件尾部与同库链尾状态一起回退后仍通过本地校验，每个 State Root 另有一份

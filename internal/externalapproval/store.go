@@ -122,6 +122,28 @@ func (store *Store) Claim(id string) (*os.File, *Claim, error) {
 	return payload, &Claim{path: claimed}, nil
 }
 
+// Preview reads a bounded prefix without moving the payload into processing.
+// Approval review must never claim or mutate the staged upload.
+func (store *Store) Preview(id string, maximum int64) ([]byte, bool, error) {
+	if !identifierPattern.MatchString(id) || maximum <= 0 {
+		return nil, false, errors.New("invalid approval preview")
+	}
+	payload, err := os.Open(filepath.Join(store.root, id, "payload"))
+	if err != nil {
+		return nil, false, err
+	}
+	defer payload.Close()
+	content, err := io.ReadAll(io.LimitReader(payload, maximum+1))
+	if err != nil {
+		return nil, false, err
+	}
+	truncated := int64(len(content)) > maximum
+	if truncated {
+		content = content[:maximum]
+	}
+	return content, truncated, nil
+}
+
 func (store *Store) Remove(id string) error {
 	if !identifierPattern.MatchString(id) {
 		return errors.New("invalid approval identifier")

@@ -35,6 +35,33 @@ func TestStagedUploadCanBeClaimedOnlyOnce(t *testing.T) {
 	}
 }
 
+func TestPendingUploadCanBePreviewedWithoutClaimingIt(t *testing.T) {
+	store, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := "previewpendingupload1234"
+	if _, err := store.Stage(id, strings.NewReader("first line\nsecond line\n"), 128); err != nil {
+		t.Fatal(err)
+	}
+	preview, truncated, err := store.Preview(id, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(preview) != "first line" || !truncated {
+		t.Fatalf("preview=%q truncated=%v", preview, truncated)
+	}
+	payload, claim, err := store.Claim(id)
+	if err != nil {
+		t.Fatalf("preview claimed or removed payload: %v", err)
+	}
+	_ = payload.Close()
+	_ = claim.Complete()
+	if _, _, err := store.Preview("../outside", 10); err == nil {
+		t.Fatal("path traversal identifier was accepted")
+	}
+}
+
 func TestRetainRemovesOrphanedPayloadsAfterRecovery(t *testing.T) {
 	root := t.TempDir()
 	store, err := New(root)

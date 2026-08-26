@@ -6,7 +6,7 @@
 
 对比基线：`v2.3.0`
 
-结论：**通过**。当前分支相对 `v2.3.0` 的功能变更已分类盘点；全仓 Go 白盒测试和仓库 Chromium 浏览器回归门禁通过，外部 Chrome Playwright/HTTP 黑盒验证 9/9 场景组通过，浏览器控制台错误为 0。隔离部署、State Root、测试数据、JSON 结果与截图均保留。
+结论：**通过**。当前分支相对 `v2.3.0` 的功能变更已分类盘点；全仓 Go 白盒测试和仓库 Chromium 浏览器回归门禁通过，外部 Chrome Playwright/HTTP 主流程黑盒验证 9/9 场景组通过，审批详情追加验证 6/6 通过，浏览器控制台错误为 0。隔离部署、State Root、测试数据、JSON 结果与截图均保留。
 
 ## 1. 自上个 Release 以来涉及的功能
 
@@ -42,6 +42,9 @@
 8. 受管 Host Files 后端执行已批准日志时保留原配置的轮转大小与备份数量。
 9. 未开启审批的外部上传直接通过受限 Host Files 批次边界写入目标。
 10. 旧上传收件箱的包、模板、路由、授权规则、文件页入口和遗留暂存目录全部删除。
+11. 每条待审批记录新增仅图标的查看入口，桌面端在当前审批页打开右侧抽屉，移动端使用完整页面回退。
+12. 变量详情显示当前值与请求值；日志详情显示待写内容；快捷执行详情显示名称、脚本、参数、超时和修订。
+13. 上传详情只读预览对应私有缓存的前 64 KiB；文本直接显示，二进制显示十六进制，并展示目标目录、同名策略及新建、拒绝或自动重命名的实际结果。
 
 ### 1.4 文件快捷访问
 
@@ -91,6 +94,11 @@
 13. 批准与拒绝都校验会话权限和 CSRF，并写入审批、调用与审计状态。
 14. 默认不审批的四类动作继续走即时执行路径。
 15. 旧 `/resources/inbox` 路由及子路由返回 404。
+16. 审批详情路由只允许具备执行管理权限的会话读取，查看不会领取审批或移动缓存。
+17. 上传缓存预览限制审批 ID 格式和读取上限；路径穿越被拒绝，预览后 payload 仍只能领取一次。
+18. 上传目标状态使用 Host Filesystem 边界实时检查；同名 `rename` 显示实际可用名称且不改写既有文件。
+19. 四种动作均渲染独立语义区域和可访问的数据契约，列表查看按钮具有本地化 accessible name。
+20. 抽屉保留批准与拒绝动作、配置修订一致性提示，以及无 JavaScript 的完整详情页能力。
 
 ### 2.3 文件快捷访问
 
@@ -107,7 +115,7 @@
 
 | 命令 | 结果 |
 | --- | --- |
-| `go test ./... -count=1` | 通过；全部 Go 包通过，`internal/web` 约 86 秒 |
+| `go test ./... -count=1` | 通过；全部 Go 包通过，`internal/web` 约 102 秒 |
 | `npm test`（`integration/browser`） | 通过；全部契约测试与 Chromium desktop gate 通过 |
 | `git diff --check` | 通过 |
 
@@ -139,6 +147,13 @@
 | 22 | 重复批准 | 通过；第二次返回 409，未重复执行 |
 | 23 | 旧上传收件箱 | 通过；路由 404，文件页无入口 |
 | 24 | 浏览器运行时 | 通过；console error 与 page error 均为 0 |
+| 25 | 每条审批的查看图标 | 通过；4/4 条均有 accessible icon link |
+| 26 | 变量审批详情 | 通过；显示 `staging → production-candidate` |
+| 27 | 日志审批详情 | 通过；完整显示待写日志消息与目标 |
+| 28 | 上传审批详情 | 通过；显示缓存 JSON 内容、大小、SHA-256 和目标目录链接 |
+| 29 | 上传同名判断 | 通过；既有文件保持不变，详情显示不覆盖并自动使用新文件名 |
+| 30 | 快捷执行审批详情 | 通过；显示快捷执行名称、脚本路径、参数、超时和修订 |
+| 31 | 审批详情响应式与运行时 | 通过；桌面无刷新抽屉、移动完整页面无横向溢出、console/page error 为 0 |
 
 ## 4. 部署与证据
 
@@ -146,13 +161,13 @@
 | --- | --- |
 | 部署模式 | Windows 隔离便携部署 |
 | 地址 | `http://127.0.0.1:5778` |
-| 进程 | PID `44420`，最终构建复验时仍在监听 |
+| 进程 | PID `11204`，最终构建复验时仍在监听 |
 | Worktree | `D:\Github\worktrees\ScriptBoard\quick-run-inline-sort` |
 | State Root | `.scratch/local-deploy-approval-quick-access-20260826/state` |
 | 测试数据 | `D:\Github\ScriptBoard-QA\approval-quick-access-20260826` |
 | 管理员 | `admin`；密码保留在 State Root 私有文件中 |
 | 标准错误 | 0 字节 |
-| 审计校验 | 33 条事件；哈希链和外部签名 checkpoint 有效 |
+| 审计校验 | 73 条事件；哈希链和外部签名 checkpoint 有效 |
 
 保留证据：
 
@@ -163,10 +178,13 @@
 - `.scratch/local-deploy-approval-quick-access-20260826/artifacts/file-quick-access-focused.png`
 - `.scratch/local-deploy-approval-quick-access-20260826/artifacts/external-approvals-pending.png`
 - `.scratch/local-deploy-approval-quick-access-20260826/artifacts/external-activity-complete.png`
+- `.scratch/local-deploy-approval-quick-access-20260826/approval-preview-blackbox-results.json`
+- `.scratch/local-deploy-approval-quick-access-20260826/artifacts/external-approval-upload-preview.png`
+- `.scratch/local-deploy-approval-quick-access-20260826/artifacts/external-approval-quick-run-preview.png`
 
 ## 5. 保留状态
 
-- 最终构建重启后继续监听 `127.0.0.1:5778`（PID `44420`），并通过 7/7 保留状态复验；未停止或替换原有 `127.0.0.1:18788` 部署。
+- 最终构建重启后继续监听 `127.0.0.1:5778`（PID `11204`），原 7/7 保留状态复验继续有效，新增审批详情验证 6/6 通过；未停止或替换原有 `127.0.0.1:18788` 部署。
 - 使用系统 Chrome 的外部 Playwright 驱动与 HTTP 请求上下文，没有使用应用内浏览器。
 - State Root、审批/调用/审计记录、快捷执行、变量、快捷访问顺序、测试文件和截图全部保留。
 - 初始管理员密码未写入报告或版本库，仅保留在部署 State Root 的秘密文件中。

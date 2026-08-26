@@ -57,6 +57,20 @@ type externalApprovalView struct {
 	ActionText, TargetText string
 }
 
+type externalApprovalDetailData struct {
+	externaltrigger.Approval
+	Locale                                                                      webLocale
+	CSRFToken, BackURL, ActionText, StatusText, TargetText, ConfigurationNotice string
+	Kind, TargetPath, TargetDirectoryURL, TargetPreviewURL                      string
+	TargetOutcome, TargetOutcomeText, ConflictPolicyText                        string
+	PreviewText, PreviewMode, PreviewContentType, PreviewNotice                 string
+	BeforeValue, AfterValue, VariableName, VariableType, VariableRevision       string
+	LogMessage                                                                  string
+	QuickRunName, QuickRunGroup, QuickRunScript, QuickRunDirectoryURL           string
+	QuickRunArguments, QuickRunTimeout, QuickRunRevision                        string
+	PreviewTruncated, ConfigurationCurrent                                      bool
+}
+
 type externalLogFileView struct {
 	EntryID, EntryName, EntryLabel, GroupLabel        string
 	Path, FileName, PreviewURL, DownloadURL, CallPath string
@@ -776,6 +790,189 @@ func (a *App) externalEntryDetail(response http.ResponseWriter, request *http.Re
 		CallMethod: callMethod, CallURL: callURL, CallBody: callBody, CallCopyText: externalCallCopyText(locale, entry, group, callMethod, callURL, callBody, typeText, targetText),
 		TypeText: typeText, TargetText: targetText, PreviewURL: previewURL,
 	})
+}
+
+const externalApprovalPreviewLimit = int64(64 << 10)
+
+func (a *App) externalApprovalDetail(response http.ResponseWriter, request *http.Request) {
+	approval, err := a.externalTriggers.Approval(request.Context(), request.PathValue("id"))
+	if err != nil {
+		http.Error(response, "External Interface approval not found", http.StatusNotFound)
+		return
+	}
+	locale := resolveWebLocale(request)
+	current := request.Context().Value(sessionContextKey).(session)
+	data := externalApprovalDetailData{
+		Approval: approval, Locale: locale, CSRFToken: current.csrfToken, BackURL: "/config/external-interfaces?tab=approvals",
+		Kind: string(approval.ActionType), ActionText: externalActionText(locale, approval.ActionType),
+		StatusText:          webText(locale, "external.approval_status."+string(approval.Status)),
+		ConfigurationNotice: webText(locale, "external.approval_configuration_missing"),
+	}
+	entry, entryErr := a.externalTriggers.Entry(request.Context(), approval.EntryID)
+	if entryErr == nil {
+		data.TargetText = externalTargetText(locale, entry)
+		data.ConfigurationCurrent = entry.Enabled && entry.RequireApproval && entry.Type == approval.ActionType && entry.UpdatedAt.Equal(approval.EntryUpdatedAt)
+		if data.ConfigurationCurrent {
+			data.ConfigurationNotice = webText(locale, "external.approval_configuration_current")
+		} else {
+			data.ConfigurationNotice = webText(locale, "external.approval_configuration_changed")
+		}
+	}
+
+	switch approval.ActionType {
+	case externaltrigger.ActionVariable:
+		a.externalVariableApprovalPreview(request.Context(), entry, entryErr, &data)
+	case externaltrigger.ActionUpload:
+		a.externalUploadApprovalPreview(request.Context(), entry, entryErr, &data)
+	case externaltrigger.ActionLog:
+		a.externalLogApprovalPreview(request.Context(), entry, entryErr, &data)
+	case externaltrigger.ActionQuickRun:
+		a.externalQuickRunApprovalPreview(entry, entryErr, &data)
+	}
+	response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := externalApprovalDetailTemplate.Execute(response, data); err != nil {
+		http.Error(response, "Unable to render External Interface approval", http.StatusInternalServerError)
+	}
+}
+
+func (a *App) externalVariableApprovalPreview(ctx context.Context, entry externaltrigger.Entry, entryErr error, data *externalApprovalDetailData) {
+	var payload struct {
+		Value string `json:"value"`
+	}
+	if json.Unmarshal([]byte(data.PayloadJSON), &payload) == nil {
+		data.AfterValue = payload.Value
+	}
+	if entryErr != nil {
+		return
+	}
+	var config externaltrigger.VariableConfig
+	if entry.DecodeConfig(&config) != nil {
+		return
+	}
+	data.VariableName, data.VariableType = config.VariableName, string(config.Type)
+	var revision int64
+	var valueType string
+	var isPassword bool
+	if err := a.db.QueryRowContext(ctx, `SELECT value, value_type, revision, is_password FROM variables WHERE name = ?`, config.VariableName).
+		Scan(&data.BeforeValue, &valueType, &revision, &isPassword); err == nil && !isPassword {
+		data.VariableRevision = strconv.FormatInt(revision, 10)
+		if data.VariableType == "" {
+			data.VariableType = valueType
+		}
+	}
+}
+
+func (a *App) externalUploadApprovalPreview(ctx context.Context, entry externaltrigger.Entry, entryErr error, data *externalApprovalDetailData) {
+	content, truncated, previewErr := a.approvalUploads.Preview(data.ID, externalApprovalPreviewLimit)
+	data.PreviewTruncated = truncated
+	if previewErr == nil {
+		data.PreviewContentType = http.DetectContentType(content)
+		if approvalPreviewIsText(content) {
+			data.PreviewMode, data.PreviewText = "text", string(content)
+		} else {
+			if len(content) > 2048 {
+				content, data.PreviewTruncated = content[:2048], true
+			}
+			data.PreviewMode, data.PreviewText = "hex", hex.Dump(content)
+		}
+	} else {
+		data.PreviewMode = "unavailable"
+		data.PreviewNotice = webText(data.Locale, "external.approval_preview_unavailable")
+	}
+	if entryErr != nil {
+		return
+	}
+	var config externaltrigger.UploadConfig
+	if entry.DecodeConfig(&config) != nil {
+		return
+	}
+	data.TargetDirectoryURL = filesURL(config.Directory)
+	data.ConflictPolicyText = webText(data.Locale, "external.approval_conflict."+config.ConflictPolicy)
+	target, err := a.hostDestination(ctx, config.Directory, data.UploadName)
+	if err != nil {
+		data.TargetOutcome, data.TargetOutcomeText = "unavailable", webText(data.Locale, "external.approval_outcome.unavailable")
+		return
+	}
+	data.TargetPath = target
+	if _, _, statErr := a.hostInfo(ctx, target); statErr == nil {
+		if config.ConflictPolicy == "rename" {
+			availableName, availableErr := a.hostAvailableName(ctx, config.Directory, data.UploadName)
+			if availableErr == nil {
+				if availableTarget, destinationErr := a.hostDestination(ctx, config.Directory, availableName); destinationErr == nil {
+					data.TargetPath, data.TargetOutcome = availableTarget, "rename"
+					data.TargetOutcomeText = webText(data.Locale, "external.approval_outcome.rename")
+					return
+				}
+			}
+		}
+		data.TargetOutcome, data.TargetOutcomeText = "conflict", webText(data.Locale, "external.approval_outcome.conflict")
+		return
+	} else if !os.IsNotExist(statErr) {
+		data.TargetOutcome, data.TargetOutcomeText = "unavailable", webText(data.Locale, "external.approval_outcome.unavailable")
+		return
+	}
+	data.TargetOutcome, data.TargetOutcomeText = "create", webText(data.Locale, "external.approval_outcome.create")
+}
+
+func (a *App) externalLogApprovalPreview(ctx context.Context, entry externaltrigger.Entry, entryErr error, data *externalApprovalDetailData) {
+	var payload struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal([]byte(data.PayloadJSON), &payload) == nil {
+		data.LogMessage = payload.Message
+	}
+	if entryErr != nil {
+		return
+	}
+	var config externaltrigger.LogConfig
+	if entry.DecodeConfig(&config) != nil {
+		return
+	}
+	data.TargetPath = config.File
+	data.TargetDirectoryURL = filesURL(filepath.Dir(config.File))
+	if _, _, err := a.hostInfo(ctx, config.File); err == nil {
+		data.TargetOutcome, data.TargetOutcomeText = "append", webText(data.Locale, "external.approval_outcome.append")
+		data.TargetPreviewURL = routeFileURL("/resources/files/log", config.File)
+	} else if os.IsNotExist(err) {
+		data.TargetOutcome, data.TargetOutcomeText = "create", webText(data.Locale, "external.approval_outcome.create_log")
+	} else {
+		data.TargetOutcome, data.TargetOutcomeText = "unavailable", webText(data.Locale, "external.approval_outcome.unavailable")
+	}
+}
+
+func (a *App) externalQuickRunApprovalPreview(entry externaltrigger.Entry, entryErr error, data *externalApprovalDetailData) {
+	if entryErr != nil {
+		return
+	}
+	var config externaltrigger.QuickRunConfig
+	if entry.DecodeConfig(&config) != nil {
+		return
+	}
+	quick, err := a.loadQuickRun(config.QuickRunID)
+	if err != nil {
+		return
+	}
+	data.QuickRunName = quick.Name
+	if quick.GroupID != "" {
+		_ = a.db.QueryRow(`SELECT name FROM quick_run_groups WHERE id = ?`, quick.GroupID).Scan(&data.QuickRunGroup)
+	}
+	data.QuickRunScript = quick.ScriptPath
+	data.QuickRunDirectoryURL = filesURL(filepath.Dir(quick.ScriptPath))
+	data.QuickRunArguments = quick.ArgumentsTemplate
+	data.QuickRunTimeout = strconv.Itoa(quick.TimeoutSeconds)
+	data.QuickRunRevision = strconv.FormatInt(quick.Revision, 10)
+}
+
+func approvalPreviewIsText(content []byte) bool {
+	if !utf8.Valid(content) {
+		return false
+	}
+	for _, character := range string(content) {
+		if character != '\n' && character != '\r' && character != '\t' && !unicode.IsPrint(character) {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *App) editExternalEntryTask(response http.ResponseWriter, request *http.Request) {

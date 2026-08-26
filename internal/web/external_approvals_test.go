@@ -52,6 +52,21 @@ func TestExternalVariableWaitsForApprovalAndExecutesOnlyOnce(t *testing.T) {
 		t.Fatalf("approval row missing: %s", page)
 	}
 	approvalID := string(match[1])
+	if !bytes.Contains(page, []byte(`/config/external-interfaces/approvals/`+approvalID)) ||
+		!bytes.Contains(page, []byte(`data-lucide="eye"`)) || !bytes.Contains(page, []byte(`aria-label="View approval details"`)) {
+		t.Fatalf("approval detail icon link missing: %s", page)
+	}
+	detailResponse, err := client.Get(serverURL + "/config/external-interfaces/approvals/" + approvalID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, _ := io.ReadAll(detailResponse.Body)
+	_ = detailResponse.Body.Close()
+	if detailResponse.StatusCode != http.StatusOK || !bytes.Contains(detail, []byte(`data-task-kind="external-approval-detail"`)) ||
+		!bytes.Contains(detail, []byte(`data-approval-kind="variable"`)) || !bytes.Contains(detail, []byte(`data-approval-before>staging`)) ||
+		!bytes.Contains(detail, []byte(`data-approval-after>production`)) {
+		t.Fatalf("variable approval detail status=%d body=%s", detailResponse.StatusCode, detail)
+	}
 	approved, err := client.PostForm(serverURL+"/config/external-interfaces/approvals/"+approvalID+"/approve", url.Values{"csrf_token": {formToken(t, page)}})
 	if err != nil {
 		t.Fatal(err)
@@ -70,6 +85,57 @@ func TestExternalVariableWaitsForApprovalAndExecutesOnlyOnce(t *testing.T) {
 	_ = again.Body.Close()
 	if again.StatusCode != http.StatusConflict {
 		t.Fatalf("second approval status=%d, want conflict", again.StatusCode)
+	}
+}
+
+func TestExternalUploadApprovalPreviewReportsAutomaticRenameWithoutOverwrite(t *testing.T) {
+	root := t.TempDir()
+	stateRoot, uploadRoot := filepath.Join(root, "state"), filepath.Join(root, "uploads")
+	if err := os.MkdirAll(uploadRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(uploadRoot, "result.txt"), []byte("existing target"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	client, serverURL := authenticatedClient(t, filepath.Join(root, "host"), stateRoot)
+	_, keyID := createExternalTestKey(t, client, serverURL, "Rename preview agent")
+	secret := createExternalTestEntry(t, client, serverURL, keyID, url.Values{
+		"name": {"artifact-rename"}, "label": {"Artifact rename"}, "action_type": {"upload"}, "enabled": {"1"}, "require_approval": {"1"},
+		"upload_directory": {uploadRoot}, "upload_max_bytes": {"64"}, "upload_extensions": {".txt"}, "upload_conflict": {"rename"},
+	})
+	var upload bytes.Buffer
+	writer := multipart.NewWriter(&upload)
+	part, _ := writer.CreateFormFile("file", "result.txt")
+	_, _ = part.Write([]byte("pending replacement"))
+	_ = writer.Close()
+	request, _ := http.NewRequest(http.MethodPost, serverURL+externalTriggerPath("legacy", "artifact-rename"), &upload)
+	request.Header.Set("Authorization", "Bearer "+secret)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	pageResponse, _ := client.Get(serverURL + "/config/external-interfaces?tab=approvals")
+	page, _ := io.ReadAll(pageResponse.Body)
+	_ = pageResponse.Body.Close()
+	match := regexp.MustCompile(`data-external-approval-id="([A-Za-z0-9_-]+)"`).FindSubmatch(page)
+	if response.StatusCode != http.StatusAccepted || len(match) != 2 {
+		t.Fatalf("rename approval status=%d page=%s", response.StatusCode, page)
+	}
+	detailResponse, err := client.Get(serverURL + "/config/external-interfaces/approvals/" + string(match[1]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, _ := io.ReadAll(detailResponse.Body)
+	_ = detailResponse.Body.Close()
+	if detailResponse.StatusCode != http.StatusOK || !bytes.Contains(detail, []byte(`data-approval-target-outcome="rename"`)) ||
+		!bytes.Contains(detail, []byte("No overwrite")) || bytes.Contains(detail, []byte(`data-approval-target-outcome="conflict"`)) {
+		t.Fatalf("rename preview status=%d body=%s", detailResponse.StatusCode, detail)
+	}
+	existing, err := os.ReadFile(filepath.Join(uploadRoot, "result.txt"))
+	if err != nil || string(existing) != "existing target" {
+		t.Fatalf("preview changed existing target: content=%q error=%v", existing, err)
 	}
 }
 
@@ -111,6 +177,17 @@ func TestExternalUploadIsCachedUntilApprovalThenWrittenToTarget(t *testing.T) {
 	match := regexp.MustCompile(`data-external-approval-id="([A-Za-z0-9_-]+)"`).FindSubmatch(page)
 	if len(match) != 2 || !bytes.Contains(page, []byte("result.txt")) {
 		t.Fatalf("cached upload approval missing: %s", page)
+	}
+	detailResponse, err := client.Get(serverURL + "/config/external-interfaces/approvals/" + string(match[1]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, _ := io.ReadAll(detailResponse.Body)
+	_ = detailResponse.Body.Close()
+	if detailResponse.StatusCode != http.StatusOK || !bytes.Contains(detail, []byte(`data-approval-kind="upload"`)) ||
+		!bytes.Contains(detail, []byte(`data-approval-upload-preview`)) || !bytes.Contains(detail, []byte("approved upload")) ||
+		!bytes.Contains(detail, []byte(`data-approval-target-outcome="create"`)) || !bytes.Contains(detail, []byte(`/resources/files?path=`)) {
+		t.Fatalf("upload approval detail status=%d body=%s", detailResponse.StatusCode, detail)
 	}
 	approved, err := client.PostForm(serverURL+"/config/external-interfaces/approvals/"+string(match[1])+"/approve", url.Values{"csrf_token": {formToken(t, page)}})
 	if err != nil {
@@ -232,6 +309,16 @@ func TestExternalLogWaitsForApproval(t *testing.T) {
 	if len(match) != 2 || !bytes.Contains(page, []byte("deploy complete")) {
 		t.Fatalf("log approval missing: %s", page)
 	}
+	detailResponse, err := client.Get(serverURL + "/config/external-interfaces/approvals/" + string(match[1]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, _ := io.ReadAll(detailResponse.Body)
+	_ = detailResponse.Body.Close()
+	if detailResponse.StatusCode != http.StatusOK || !bytes.Contains(detail, []byte(`data-approval-kind="log"`)) ||
+		!bytes.Contains(detail, []byte(`data-approval-log-message`)) || !bytes.Contains(detail, []byte("deploy complete")) {
+		t.Fatalf("log approval detail status=%d body=%s", detailResponse.StatusCode, detail)
+	}
 	approved, err := client.PostForm(serverURL+"/config/external-interfaces/approvals/"+string(match[1])+"/approve", url.Values{"csrf_token": {formToken(t, page)}})
 	if err != nil {
 		t.Fatal(err)
@@ -285,6 +372,17 @@ func TestExternalQuickRunWaitsForApproval(t *testing.T) {
 	match := regexp.MustCompile(`data-external-approval-id="([A-Za-z0-9_-]+)"`).FindSubmatch(page)
 	if len(match) != 2 {
 		t.Fatalf("quick run approval missing: %s", page)
+	}
+	detailResponse, err := client.Get(serverURL + "/config/external-interfaces/approvals/" + string(match[1]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, _ := io.ReadAll(detailResponse.Body)
+	_ = detailResponse.Body.Close()
+	if detailResponse.StatusCode != http.StatusOK || !bytes.Contains(detail, []byte(`data-approval-kind="quick_run"`)) ||
+		!bytes.Contains(detail, []byte(`data-approval-quick-run`)) || !bytes.Contains(detail, []byte("Approved quick")) ||
+		!bytes.Contains(detail, []byte(scriptName)) {
+		t.Fatalf("quick run approval detail status=%d body=%s", detailResponse.StatusCode, detail)
 	}
 	approved, err := client.PostForm(serverURL+"/config/external-interfaces/approvals/"+string(match[1])+"/approve", url.Values{"csrf_token": {formToken(t, page)}})
 	if err != nil {

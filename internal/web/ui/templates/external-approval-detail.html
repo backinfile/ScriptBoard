@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="{{.Locale}}">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/app.css?v={{assetVersion}}"><script defer src="/assets/app-v2.js?v={{assetVersion}}"></script><title>{{t .Locale "external.approval_detail_title"}} · ScriptBoard</title></head>
+<body>
+<main class="workspace task-page external-approval-detail-page" data-task-page data-task-kind="external-approval-detail" data-task-close-label="{{t .Locale "common.close"}}" data-approval-kind="{{.Kind}}">
+  <a class="task-back" href="{{.BackURL}}"><span data-lucide="arrow-left" aria-hidden="true"></span>{{t .Locale "external.back_to_approvals"}}</a>
+  <section class="task-sheet external-approval-sheet">
+    <header><div><p class="page-eyebrow">{{.ActionText}}</p><h1>{{t .Locale "external.approval_detail_title"}}</h1><p>{{.KeyLabel}} · {{.EntryName}}</p></div><span class="status-chip" data-state="{{.Status}}"><span class="status-dot" aria-hidden="true"></span>{{.StatusText}}</span></header>
+    <div class="external-approval-review">
+      <dl class="external-approval-ledger">
+        <div><dt>{{t .Locale "external.request_id"}}</dt><dd><code>{{.ID}}</code></dd></div>
+        <div><dt>{{t .Locale "external.when"}}</dt><dd><time datetime="{{machineTime .OccurredAt}}" data-local-time>{{localTime .Locale .OccurredAt}}</time></dd></div>
+        <div><dt>{{t .Locale "external.source"}}</dt><dd><code>{{.Source}}</code></dd></div>
+        <div><dt>{{t .Locale "external.action_target"}}</dt><dd>{{if .TargetText}}{{.TargetText}}{{else}}—{{end}}</dd></div>
+      </dl>
+      <aside class="external-approval-config-state" data-state="{{if .ConfigurationCurrent}}current{{else}}changed{{end}}"><span data-lucide="{{if .ConfigurationCurrent}}shield-check{{else}}triangle-alert{{end}}" aria-hidden="true"></span><p>{{.ConfigurationNotice}}</p></aside>
+
+      {{if eq .Kind "variable"}}
+      <section class="external-approval-section" data-approval-variable>
+        <header><div><p class="page-eyebrow">{{t .Locale "external.action.variable"}}</p><h2>{{t .Locale "external.approval_variable_change"}}</h2></div><code>{{.VariableName}}</code></header>
+        <div class="external-approval-variable-diff">
+          <div><span>{{t .Locale "external.approval_current_value"}}</span><code data-approval-before>{{.BeforeValue}}</code></div>
+          <span data-lucide="arrow-right" aria-hidden="true"></span>
+          <div><span>{{t .Locale "external.approval_requested_value"}}</span><code data-approval-after>{{.AfterValue}}</code></div>
+        </div>
+        <dl class="external-approval-inline-facts"><div><dt>{{t .Locale "external.type"}}</dt><dd>{{.VariableType}}</dd></div><div><dt>{{t .Locale "variables.revision"}}</dt><dd>{{if .VariableRevision}}{{.VariableRevision}}{{else}}—{{end}}</dd></div></dl>
+      </section>
+      {{else if eq .Kind "upload"}}
+      <section class="external-approval-section" data-approval-upload>
+        <header><div><p class="page-eyebrow">{{t .Locale "external.action.upload"}}</p><h2>{{.UploadName}}</h2></div><span>{{humanBytes .BytesReceived}}</span></header>
+        <div class="external-approval-target" data-approval-target-outcome="{{.TargetOutcome}}"><span data-lucide="{{if eq .TargetOutcome "conflict"}}circle-alert{{else if eq .TargetOutcome "rename"}}file-output{{else}}file-plus-2{{end}}" aria-hidden="true"></span><div><strong>{{.TargetOutcomeText}}</strong><code>{{if .TargetPath}}{{.TargetPath}}{{else}}{{.TargetText}}{{end}}</code><small>{{t .Locale "external.approval_conflict_policy"}}：{{.ConflictPolicyText}}</small></div>{{if .TargetDirectoryURL}}<a class="button button--compact button--quiet" href="{{.TargetDirectoryURL}}"><span data-lucide="folder-open" aria-hidden="true"></span>{{t .Locale "external.open_target_directory"}}</a>{{end}}</div>
+        <div class="external-approval-preview-head"><div><h3>{{t .Locale "external.approval_file_content"}}</h3><p>{{.PreviewContentType}} · SHA-256 <code>{{shortDigest .UploadSHA256}}</code></p></div>{{if .PreviewTruncated}}<span>{{t .Locale "external.approval_preview_truncated"}}</span>{{end}}</div>
+        {{if eq .PreviewMode "unavailable"}}<p class="external-approval-preview-empty">{{.PreviewNotice}}</p>{{else}}<pre class="external-approval-content" data-mode="{{.PreviewMode}}" data-approval-upload-preview>{{.PreviewText}}</pre>{{end}}
+      </section>
+      {{else if eq .Kind "log"}}
+      <section class="external-approval-section" data-approval-log>
+        <header><div><p class="page-eyebrow">{{t .Locale "external.action.log"}}</p><h2>{{t .Locale "external.approval_log_content"}}</h2></div></header>
+        <div class="external-approval-target" data-approval-target-outcome="{{.TargetOutcome}}"><span data-lucide="file-clock" aria-hidden="true"></span><div><strong>{{.TargetOutcomeText}}</strong><code>{{.TargetPath}}</code></div><div class="external-approval-target__actions">{{if .TargetPreviewURL}}<a class="button button--compact button--quiet" href="{{.TargetPreviewURL}}"><span data-lucide="file-text" aria-hidden="true"></span>{{t .Locale "external.preview_log"}}</a>{{end}}{{if .TargetDirectoryURL}}<a class="button button--compact button--quiet" href="{{.TargetDirectoryURL}}"><span data-lucide="folder-open" aria-hidden="true"></span>{{t .Locale "external.open_target_directory"}}</a>{{end}}</div></div>
+        <pre class="external-approval-content external-approval-content--message" data-approval-log-message>{{.LogMessage}}</pre>
+      </section>
+      {{else if eq .Kind "quick_run"}}
+      <section class="external-approval-section" data-approval-quick-run>
+        <header><div><p class="page-eyebrow">{{t .Locale "external.action.quick_run"}}</p><h2>{{if .QuickRunName}}{{.QuickRunName}}{{else}}{{.TargetText}}{{end}}</h2></div>{{if .QuickRunGroup}}<span>{{.QuickRunGroup}}</span>{{end}}</header>
+        <dl class="external-approval-run-facts">
+          <div><dt>{{t .Locale "common.script"}}</dt><dd><code>{{.QuickRunScript}}</code>{{if .QuickRunDirectoryURL}}<a href="{{.QuickRunDirectoryURL}}">{{t .Locale "external.open_target_directory"}}</a>{{end}}</dd></div>
+          <div><dt>{{t .Locale "task.arguments"}}</dt><dd><code>{{if .QuickRunArguments}}{{.QuickRunArguments}}{{else}}—{{end}}</code></dd></div>
+          <div><dt>{{t .Locale "common.timeout"}}</dt><dd>{{.QuickRunTimeout}} s</dd></div>
+          <div><dt>{{t .Locale "variables.revision"}}</dt><dd>{{.QuickRunRevision}}</dd></div>
+        </dl>
+      </section>
+      {{end}}
+    </div>
+    <footer class="external-approval-review-actions">{{if eq .Status "pending"}}<form method="post" action="/config/external-interfaces/approvals/{{.ID}}/reject"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--quiet button--danger" type="submit"><span data-lucide="x" aria-hidden="true"></span>{{t .Locale "external.reject"}}</button></form><form method="post" action="/config/external-interfaces/approvals/{{.ID}}/approve"><input type="hidden" name="csrf_token" value="{{.CSRFToken}}"><button class="button button--primary" type="submit"><span data-lucide="check" aria-hidden="true"></span>{{t .Locale "external.approve"}}</button></form>{{else}}<a class="button button--primary" href="{{.BackURL}}">{{t .Locale "common.done"}}</a>{{end}}</footer>
+  </section>
+</main>
+</body>
+</html>

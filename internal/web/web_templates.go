@@ -41,6 +41,7 @@ var (
 	kubernetesLogsTemplate            = mustWebTemplate("kubernetes-logs")
 	externalInterfacesTemplate        = mustWebTemplate("external-interfaces")
 	externalInterfaceFormTemplate     = mustWebTemplate("external-interface-form")
+	externalApprovalDetailTemplate    = mustWebTemplate("external-approval-detail")
 	fileConflictTemplate              = mustWebTemplate("file-conflict")
 	fileOperationTemplate             = mustWebTemplate("file-operation")
 	filesTemplate                     = mustWebTemplate("files")
