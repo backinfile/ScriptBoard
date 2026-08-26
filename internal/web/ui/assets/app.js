@@ -4193,8 +4193,6 @@
       control.setAttribute("aria-label", label);
       control.dataset.tooltip = label;
       setControlIcon(control.querySelector("span"), pinned ? "pin-off" : "pin");
-      const actionLabel = control.querySelector("[data-file-pin-action-label]");
-      if (actionLabel) actionLabel.textContent = label;
     };
     const closeEditor = () => {
       if (!drawerHost) return;

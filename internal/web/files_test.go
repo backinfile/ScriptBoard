@@ -467,8 +467,7 @@ func TestFilesPageOffersCollapsedInstanceQuickAccess(t *testing.T) {
 		`data-file-quick-many-label>items</span>`,
 		"Quick access",
 		"Pin directory",
-		`data-file-pin-path="` + html.EscapeString(filepath.Join(hostRoot, "notes.txt")) + `"`,
-		`data-file-pin-action-label>Pin to Quick access</span>`,
+		`class="icon-button file-pin-button" type="button" hidden data-file-pin data-file-pin-path="` + html.EscapeString(filepath.Join(hostRoot, "notes.txt")) + `"`,
 		`data-file-quick-edit-drawer`,
 		`data-file-quick-edit-form`,
 	} {
@@ -481,6 +480,9 @@ func TestFilesPageOffersCollapsedInstanceQuickAccess(t *testing.T) {
 	}
 	if strings.Contains(page, "Pinned folders are saved") {
 		t.Fatalf("Quick access still renders explanatory copy: %s", page)
+	}
+	if strings.Contains(page, `data-file-pin-action-label`) {
+		t.Fatalf("file Pin action should use the same icon-button treatment as directories: %s", page)
 	}
 
 	response, err = client.Get(serverURL + "/assets/app-v2.js")
