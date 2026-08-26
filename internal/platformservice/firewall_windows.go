@@ -12,8 +12,11 @@ import (
 	"github.com/go-ole/go-ole/oleutil"
 )
 
+const retiredAILoopbackFirewallRuleName = "ScriptBoard AI Runtime loopback provider access"
+
 type windowsServiceRestriction interface {
 	Restrict(serviceName, executable string, enabled, restrictedSID bool) error
+	RemoveRule(name string) error
 }
 
 func configureWindowsRunnerFirewall(runnerExecutable, runnerIdentityMode string) error {
@@ -55,6 +58,23 @@ func removeWindowsRunnerFirewallWith(policy windowsServiceRestriction, runnerExe
 		if err := policy.Restrict(runnerServiceName, runnerExecutable, false, true); err != nil {
 			return fmt.Errorf("remove Windows Service Hardening restriction for %s: %w", runnerServiceName, err)
 		}
+	}
+	return nil
+}
+
+func removeRetiredWindowsAIFirewall(aiExecutable string) error {
+	policy, closePolicy, err := openWindowsServiceRestriction()
+	if err != nil {
+		return err
+	}
+	defer closePolicy()
+	if aiExecutable != "" {
+		if err := policy.Restrict(retiredAIServiceName, aiExecutable, false, true); err != nil {
+			return fmt.Errorf("remove retired Windows AI Runtime restriction: %w", err)
+		}
+	}
+	if err := policy.RemoveRule(retiredAILoopbackFirewallRuleName); err != nil && !isWindowsFirewallRuleNotFound(err) {
+		return fmt.Errorf("remove retired Windows AI Runtime loopback rule: %w", err)
 	}
 	return nil
 }
@@ -125,6 +145,25 @@ func (policy *oleWindowsServiceRestriction) Restrict(serviceName, executable str
 	}
 	return err
 }
+
+func (policy *oleWindowsServiceRestriction) RemoveRule(name string) error {
+	rulesVariant, err := oleutil.GetProperty(policy.serviceRestriction, "Rules")
+	if err != nil {
+		return err
+	}
+	defer rulesVariant.Clear()
+	rules := rulesVariant.ToIDispatch()
+	if rules == nil {
+		return errors.New("Windows Service Hardening rule collection is unavailable")
+	}
+	result, err := oleutil.CallMethod(rules, "Remove", name)
+	if result != nil {
+		result.Clear()
+	}
+	return err
+}
+
+func isWindowsFirewallRuleNotFound(err error) bool { return isOLECode(err, 0x80070002) }
 
 func isOLECode(err error, code uint32) bool {
 	var oleError *ole.OleError

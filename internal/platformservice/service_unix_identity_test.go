@@ -3,6 +3,7 @@
 package platformservice
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -102,6 +103,59 @@ func TestSystemdSocketAddressIsNotShellQuoted(t *testing.T) {
 	endpoint := "/run/scriptboard-runner/runtime-test.sock"
 	if got := systemdSocketAddress(endpoint); got != endpoint {
 		t.Fatalf("systemd socket address = %q, want %q", got, endpoint)
+	}
+}
+
+func TestRetireLinuxAIUnitsStopsAndRemovesEveryLegacyUnit(t *testing.T) {
+	root := t.TempDir()
+	units := []retiredLinuxUnit{
+		{name: "scriptboard-ai.socket", path: filepath.Join(root, "scriptboard-ai.socket"), action: []string{"disable", "--now"}},
+		{name: "scriptboard-ai.service", path: filepath.Join(root, "scriptboard-ai.service"), action: []string{"stop"}},
+	}
+	for _, unit := range units {
+		if err := os.WriteFile(unit.path, []byte("legacy"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var stopped []string
+	err := retireLinuxAIUnitsWith(units, func(arguments ...string) error {
+		stopped = append(stopped, strings.Join(arguments, " "))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(stopped, "|"); got != "disable --now scriptboard-ai.socket|stop scriptboard-ai.service" {
+		t.Fatalf("legacy unit stop calls = %q", got)
+	}
+	for _, unit := range units {
+		if _, err := os.Stat(unit.path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("legacy unit %s remains: %v", unit.name, err)
+		}
+	}
+}
+
+func TestRemoveRetiredAIUnitDependenciesKeepsCurrentServiceRequirements(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "scriptboard.service")
+	input := "[Unit]\nRequires=scriptboard-broker.service scriptboard-ai.socket scriptboard-runner.socket\nAfter=scriptboard-broker.service scriptboard-ai.socket scriptboard-runner.socket\n"
+	if err := os.WriteFile(path, []byte(input), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeRetiredAIUnitDependencies(path); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	if strings.Contains(text, "scriptboard-ai.socket") {
+		t.Fatalf("retired AI socket dependency remains: %s", text)
+	}
+	for _, required := range []string{"scriptboard-broker.service", "scriptboard-runner.socket"} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("current dependency %s was removed: %s", required, text)
+		}
 	}
 }
 

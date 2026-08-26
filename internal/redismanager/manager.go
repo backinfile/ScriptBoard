@@ -268,7 +268,7 @@ func (m *Manager) Scan(ctx context.Context, id string, r ScanRequest) (ScanPage,
 	return m.backend.Scan(ctx, i, r)
 }
 func (m *Manager) ReadKey(ctx context.Context, id, key string) (KeyValue, error) {
-	key = strings.TrimSpace(key)
+	// Do not normalize Redis key bytes: surrounding spaces are part of the stored key name.
 	if key == "" || len(key) > 512 || strings.ContainsAny(key, "\r\n\x00") {
 		return KeyValue{}, errors.New("Redis key is invalid")
 	}
