@@ -321,6 +321,7 @@ func (a *App) routes() http.Handler {
 	mux.Handle("GET /history/runs", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.runsPage)))
 	mux.Handle("GET /history/runs/{id}/save-quick-run", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.saveQuickRunTask)))
 	mux.Handle("GET /history/runs/{id}/source", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.runSource)))
+	mux.Handle("POST /history/runs/{id}/rerun", a.requirePermission(identity.PermissionManageExecution, http.HandlerFunc(a.rerunOneTimeRun)))
 	mux.Handle("GET /history/runs/{id}/download", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.downloadRun)))
 	mux.Handle("GET /history/runs/{id}", a.requirePermission(identity.PermissionObserve, http.HandlerFunc(a.runDetails)))
 	mux.Handle("POST /history/runs/{id}/stop", a.requirePermission(identity.PermissionExecute, http.HandlerFunc(a.stopRun)))

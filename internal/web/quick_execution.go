@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -444,4 +445,54 @@ func (a *App) runSource(response http.ResponseWriter, request *http.Request) {
 	response.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	response.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = response.Write(source)
+}
+
+func (a *App) rerunOneTimeRun(response http.ResponseWriter, request *http.Request) {
+	if !validSessionCSRF(request) {
+		http.Error(response, "CSRF token is invalid", http.StatusForbidden)
+		return
+	}
+	sourceRun, err := a.runs.GetMetadata(request.PathValue("id"))
+	if err != nil || sourceRun.ScriptKind != "one_time" {
+		http.Error(response, "one-time Run is unavailable", http.StatusNotFound)
+		return
+	}
+	source, err := a.runs.ReadSource(sourceRun.ID)
+	if errors.Is(err, runmanager.ErrSourceExpired) {
+		http.Error(response, "one-time source has expired", http.StatusGone)
+		return
+	}
+	if err != nil {
+		http.Error(response, "one-time source is unavailable", http.StatusNotFound)
+		return
+	}
+	preparedDirectory, err := a.hostPrepareDirectory(request.Context(), sourceRun.WorkingDirectory)
+	if err != nil {
+		http.Error(response, "working directory is invalid: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	variables, err := a.loadVariables()
+	if err != nil {
+		http.Error(response, "Unable to read variables", http.StatusInternalServerError)
+		return
+	}
+	current := request.Context().Value(sessionContextKey).(session)
+	id, err := a.runs.StartOneTime(runmanager.OneTimeStartRequest{
+		WorkingDirectory:  preparedDirectory.Path,
+		Extension:         filepath.Ext(sourceRun.SourceFilename),
+		Source:            string(source),
+		ArgumentsTemplate: sourceRun.ArgumentsTemplate,
+		TimeoutSeconds:    sourceRun.TimeoutSeconds,
+		Variables:         variables,
+		AuditSource:       request.RemoteAddr,
+		InitiatorUserID:   current.userID,
+		InitiatorUsername: current.username,
+		InitiatorRole:     string(current.role),
+		PreparedDirectory: &preparedDirectory,
+	})
+	if err != nil {
+		http.Error(response, "Unable to rerun one-time Run: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	http.Redirect(response, request, "/history/runs/"+url.PathEscape(id), http.StatusSeeOther)
 }
