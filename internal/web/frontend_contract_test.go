@@ -724,7 +724,7 @@ func TestEachWorkspaceAndTaskExposeAtMostOnePrimaryAction(t *testing.T) {
 	for _, path := range []string{
 		"/monitor",
 		"/history/runs",
-		"/resources/files",
+		hostFileHref("/resources/files", hostRoot),
 		hostFileHref("/resources/files/new-directory", hostRoot),
 		hostFileHref("/resources/files/upload", hostRoot),
 		"/resources/variables",

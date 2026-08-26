@@ -80,7 +80,8 @@
         <form data-file-quick-edit-form>
           <input type="hidden" name="path" data-file-quick-edit-path>
           <div class="file-quick-edit-drawer__body"><label>{{t .Locale "files.quick_access_display_name"}} <input name="label" maxlength="128" autocomplete="off" required data-file-quick-edit-label></label><small data-file-quick-edit-technical></small></div>
-          <footer><button class="button button--quiet" type="button" data-file-quick-edit-close>{{t .Locale "common.cancel"}}</button><button class="button button--primary" type="submit">{{t .Locale "task.save_changes"}}</button></footer>
+          <!-- Keep Upload as the workspace's single primary action while this drawer provides contextual editing. -->
+          <footer><button class="button button--quiet" type="button" data-file-quick-edit-close>{{t .Locale "common.cancel"}}</button><button class="button" type="submit">{{t .Locale "task.save_changes"}}</button></footer>
         </form>
       </aside>
     </div>

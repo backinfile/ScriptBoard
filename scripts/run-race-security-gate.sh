@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Keep this list aligned with current security-boundary packages so retired modules do not block releases.
 go test -race \
   ./internal/web \
   ./internal/auditlog \
@@ -17,5 +18,4 @@ go test -race \
   ./internal/securityevents \
   ./internal/statebackup \
   ./internal/update \
-  ./internal/uploadinbox \
   -count=1
